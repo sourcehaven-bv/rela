@@ -74,14 +74,44 @@ triggers:
 | `lifecycle` | `close`, `reopen`, `archive` and `delete`. An operation you leave out is not offered. |
 | `message_ops` | `edit_own`, `delete_own` and `remove`. |
 | `on_entity_delete` | `detach` (default) keeps the channels, `delete` removes them, `block` refuses to delete an entity that has channels. |
+| `detached_retention` | How long a detached channel is kept before it is erased. A period; default `30d`. |
 
-`on_entity_delete` applies to deletes made through rela. An entity deleted
-another way, such as a file removed by hand or by git, keeps its channels
-as they were. Nobody can reach them: every channel request reads the entity
-first, and a missing entity gives a 404. When rela creates a new entity
-with the same id, it detaches those channels, so the new entity starts
-without them. When the old entity comes back outside rela, for example
-through a git checkout, it gets its channels back.
+### When an entity is deleted
+
+`on_entity_delete` applies to deletes made through rela:
+
+- `block` refuses the delete while the entity has channels of this type.
+- `detach` moves the channels out of reach of the entity. They are erased
+  after `detached_retention`.
+- `delete` moves the channels out of reach in the same way, and erases
+  them at the next retention sweep. The sweep runs every hour, and also
+  right after the delete.
+
+A delete that fails puts the channels back. A channel is never erased
+before its `lifecycle.delete.retention` has passed, counted from when the
+channel was closed. That is why rela refuses a file that combines
+`on_entity_delete: delete` with `lifecycle.delete.retention`: use `detach`
+with a `detached_retention` instead. A channel whose type the file no
+longer declares is detached and kept for the default of 30 days.
+
+A soft delete (moving the entity to the trash) keeps the channels in
+place, so a restore finds them. They are moved out of reach when the
+trash is emptied.
+
+Erasing a channel removes its messages. Its audit trail is kept.
+
+An entity deleted another way, such as a file removed by hand or by git,
+keeps its channels for a while. Nobody can reach them: every channel
+request reads the entity first, and a missing entity gives a 404. When the
+entity has been missing for an hour, the sweep detaches its channels, and
+`detached_retention` starts. If the entity comes back before they are
+erased, for example through a git checkout, it gets its channels back.
+When rela creates a new entity with the same id, it detaches the old
+channels at once, so the new entity starts without them.
+
+Only a long-running rela process sweeps: `rela-server` and the desktop
+app. With several server processes against one database, one of them runs
+the sweep at a time.
 
 Names of channel types, message types, roles, actions and triggers use
 lowercase letters, digits and hyphens, and start with a letter. Property
@@ -177,7 +207,9 @@ unknown entity type "nope"`. It checks:
 - that every condition compiles;
 - that each `promote_to` fills every required property of its type from a
   required message property, maps each property to one of a matching type,
-  sets no computed property, and names a face when the type declares faces.
+  sets no computed property, and names a face when the type declares faces;
+- that no channel type combines `on_entity_delete: delete` with
+  `lifecycle.delete.retention`.
 
 Three more rules stop a message from revealing what `acl.yaml` hides:
 
