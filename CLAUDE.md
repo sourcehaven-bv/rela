@@ -307,8 +307,9 @@ your session id or `"$(hostname)-$$"`:
   authorization; it never feeds the write. The manager still diffs against
   its own raw read of the stored row. The early authorization is
   `entitymanager.Manager.AuthorizeUpdate`, which runs the manager's own write
-  check and audit. Don't rebuild the ACL request or the `denied-write` row in
-  a handler.
+  check and audit. The handler writes through the `entitymanager.UpdateGrant`
+  it returns, so the update is authorized once. Don't rebuild the ACL request
+  or the `denied-write` row in a handler.
 
 ### Subsystem-specific rules (nested CLAUDE.md / godoc)
 

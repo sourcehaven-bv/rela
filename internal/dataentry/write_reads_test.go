@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
@@ -65,6 +66,15 @@ func writeReadsApp(
 	t *testing.T, neighbors int, role acl.RoleDef,
 ) (*App, *acl.Declarative, *storetest.Counting, *audit.Memory) {
 	t.Helper()
+	return writeReadsAppWith(t, neighbors, role, nil)
+}
+
+// writeReadsAppWith is [writeReadsApp] whose manager asks managerACL, when
+// set, in place of the policy. managerACL.inner is set to the policy.
+func writeReadsAppWith(
+	t *testing.T, neighbors int, role acl.RoleDef, managerACL *countingWriteACL,
+) (*App, *acl.Declarative, *storetest.Counting, *audit.Memory) {
+	t.Helper()
 	meta, err := metamodel.Parse([]byte(writeReadsMeta))
 	if err != nil {
 		t.Fatalf("parse metamodel: %v", err)
@@ -102,8 +112,17 @@ func writeReadsApp(
 		Assignments: map[string]string{"alice": "r"},
 	}, st)
 	sink := &audit.Memory{}
-	svc := appbuildtest.New(meta, appbuildtest.WithFS(fs, paths), appbuildtest.WithStore(st),
-		appbuildtest.WithDeclarative(d), appbuildtest.WithAudit(sink))
+	opts := []appbuildtest.Option{appbuildtest.WithFS(fs, paths), appbuildtest.WithStore(st),
+		appbuildtest.WithDeclarative(d), appbuildtest.WithAudit(sink)}
+	if managerACL != nil {
+		// The fixture requires its ACL to be the Declarative itself, so the
+		// counting manager is wired without one. The handler still uses d
+		// for reads and affordances (app.acl, app.fieldResolver below).
+		managerACL.inner = d
+		opts = []appbuildtest.Option{appbuildtest.WithFS(fs, paths), appbuildtest.WithStore(st),
+			appbuildtest.WithACL(managerACL), appbuildtest.WithAudit(sink)}
+	}
+	svc := appbuildtest.New(meta, opts...)
 	app := newAppFromParts(&Config{}, nil, newFixture())
 	rebindApp(app, fs, paths, svc)
 	app.acl = d
@@ -202,6 +221,54 @@ func TestUpdate_ReadBudget(t *testing.T) {
 			}
 			if totals[0] != totals[1] {
 				t.Errorf("PATCH cost grows with neighbors: %d reads at 10, %d at 50", totals[0], totals[1])
+			}
+		})
+	}
+}
+
+// countingWriteACL counts the write authorizations the manager asks for and
+// forwards them to inner.
+type countingWriteACL struct {
+	inner *acl.Declarative
+	calls atomic.Int64
+}
+
+func (c *countingWriteACL) AuthorizeWrite(ctx context.Context, req acl.WriteRequest) acl.Decision {
+	c.calls.Add(1)
+	return c.inner.AuthorizeWrite(ctx, req)
+}
+
+// TestUpdate_AuthorizesOnce pins that a PATCH of an entity's properties asks
+// the manager's ACL once. The early check and the write share one decision
+// through the grant; asking twice doubled the evaluator's work per update.
+// A denied PATCH asks once too, and audits its denial once.
+func TestUpdate_AuthorizesOnce(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		update   bool
+		wantCode int
+	}{
+		{name: "allowed", update: true, wantCode: http.StatusOK},
+		{name: "denied", update: false, wantCode: http.StatusForbidden},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			counter := &countingWriteACL{}
+			app, d, _, sink := writeReadsAppWith(t, 10, ticketRole(tc.update), counter)
+			rec := patchAsAlice(t, app, d, `{"properties":{"title":"changed"}}`, "")
+			if rec.Code != tc.wantCode {
+				t.Fatalf("PATCH = %d %s, want %d", rec.Code, rec.Body, tc.wantCode)
+			}
+			if got := counter.calls.Load(); got != 1 {
+				t.Errorf("manager AuthorizeWrite calls = %d, want 1", got)
+			}
+			denied := 0
+			for _, r := range sink.Records() {
+				if r.Op == audit.OpDeniedWrite {
+					denied++
+				}
+			}
+			if want := map[bool]int{true: 0, false: 1}[tc.update]; denied != want {
+				t.Errorf("denied-write rows = %d, want %d", denied, want)
 			}
 		})
 	}
@@ -313,8 +380,8 @@ func TestUpdate_ETagHidesHiddenFields(t *testing.T) {
 // the two reads. Only the early check is overridden.
 type managerHidesRow struct{ entityMutator }
 
-func (managerHidesRow) AuthorizeUpdate(_ context.Context, row *entity.Entity) error {
-	return fmt.Errorf("%w: %s", entitymanager.ErrEntityNotFound, row.ID)
+func (managerHidesRow) AuthorizeUpdate(_ context.Context, row *entity.Entity) (entitymanager.UpdateGrant, error) {
+	return entitymanager.UpdateGrant{}, fmt.Errorf("%w: %s", entitymanager.ErrEntityNotFound, row.ID)
 }
 
 // TestUpdate_EarlyCheckHiddenRowIs404 pins that a principal who may update

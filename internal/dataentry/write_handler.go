@@ -79,9 +79,26 @@ type entityMutator interface {
 	) (*entityPkg.UpdateResult, error)
 
 	// AuthorizeUpdate is the manager's own update check, read gate first,
-	// asked before a PATCH spends work on the write. See
-	// entitymanager.Manager.AuthorizeUpdate.
-	AuthorizeUpdate(ctx context.Context, row *entityPkg.Entity) error
+	// X	// through the grant it returns. See entitymanager.Manager.AuthorizeUpdate.
+	AuthorizeUpdate(ctx context.Context, row *entityPkg.Entity) (entitymanager.UpdateGrant, error)
+
+	// PatchGranted is PatchEntity for the row grant names, without asking
+	// the ACL again. See entitymanager.UpdateGrant.PatchEntity.
+	PatchGranted(
+		ctx context.Context, grant entitymanager.UpdateGrant, id string, patch entityPkg.Patch,
+	) (*entityPkg.UpdateResult, error)
+}
+
+// grantedManager is the production [entityMutator]: the manager, plus the
+// granted write as a method, so tests can wrap it like any other write.
+type grantedManager struct{ *entitymanager.Manager }
+
+// PatchGranted writes through the grant. The grant names its own manager,
+// which in production is the embedded one.
+func (grantedManager) PatchGranted(
+	ctx context.Context, grant entitymanager.UpdateGrant, id string, patch entityPkg.Patch,
+) (*entityPkg.UpdateResult, error) {
+	return grant.PatchEntity(ctx, id, patch)
 }
 
 // writeHandler owns the data-entry write nucleus: the entity/relation CRUD
@@ -923,19 +940,22 @@ func (h *writeHandler) handleV1UpdateEntity(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	// Authorize the entity write before any further work. The manager
-	// re-authorizes against the raw stored row and stays the authority; this
-	// early ask only stops a denied caller from costing an ETag, affordance
-	// verdicts and relation validation first. It runs after the resolver
-	// read, so a hidden entity is still the uniform 404, never a 403. A
-	// relations-only PATCH is not an entity update: its edges are authorized
-	// one by one by the manager.
+	// Authorize the entity write before any further work, so a denied
+	// caller does not cost an ETag, affordance verdicts and relation
+	// validation first. The patch below writes through the grant this
+	// returns, so the update is authorized once, here. It runs after the
+	// resolver read, so a hidden entity is still the uniform 404, never a
+	// 403. A relations-only PATCH is not an entity update: its edges are
+	// authorized one by one by the manager.
 	entityChanged := req.Properties != nil || len(req.PropertiesUnset) > 0 || req.Content != nil
+	var grant entitymanager.UpdateGrant
 	if entityChanged {
-		if err := h.manager.AuthorizeUpdate(r.Context(), entity); err != nil {
+		g, err := h.manager.AuthorizeUpdate(r.Context(), entity)
+		if err != nil {
 			writeEarlyUpdateError(w, r, err)
 			return
 		}
+		grant = g
 	}
 
 	// Check If-Match for optimistic locking
@@ -1049,7 +1069,7 @@ func (h *writeHandler) handleV1UpdateEntity(w http.ResponseWriter, r *http.Reque
 		// default face — so a write to POL-1@published would be authorized
 		// (and applied) against POL-1's default state instead.
 		stateRef := entityPkg.FormatStateRef(entity.ID, entity.Face)
-		updateResult, err := h.manager.PatchEntity(r.Context(), stateRef, patch)
+		updateResult, err := h.manager.PatchGranted(r.Context(), grant, stateRef, patch)
 		if err != nil {
 			if req.Preconditions != nil && h.writeLostRace(w, r, err, req.Preconditions, typeName, ref, plural) {
 				return
