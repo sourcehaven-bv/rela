@@ -292,19 +292,28 @@ A `one` channel that holds no message has no lifecycle operations.
 A message page takes one cursor:
 
 - `?after_rev=r` returns the messages that changed after revision `r`, so a
-  client catches up after a live frame. The answer has `next_after_rev`.
+  client catches up after a live frame. `r` may be 0. The answer always has
+  `next_after_rev`, also when the page is empty.
 - `?after=n` returns the messages after sequence number `n`, oldest first.
-  The answer has `next_after`.
+  The answer has `next_after`: the last sequence number on the page, or `n`
+  when the page is empty.
 - `?before=n` returns the messages before `n`, for scrolling back. The
-  answer has `next_before`.
+  answer has `next_before` when the page holds a message.
 - Without a cursor, the page holds the newest messages. The answer has
-  `next_before`, to scroll back from there.
+  `next_before`, to scroll back from there, and `next_after_rev`, the
+  channel's revision, to follow the channel from there.
 - `?limit=` caps the page. The default and the maximum come from
   `page_limit`.
 
-Each page names one cursor, the one that continues it in the direction it
-was read. An empty page names none. `has_more` means the page is full: there
-may be more messages past the cursor, and only the next request can tell.
+A page names the cursor that continues it in the direction it was read. The
+newest page also names `next_after_rev`. A message posted between reading the
+channel and reading the page can then show up twice, but never goes missing,
+so a client removes duplicates by `seq`. `has_more` means the page is full:
+there may be more messages past the cursor, and only the next request can
+tell.
+
+The cursors are the same on the HTTP API, the MCP tools and the CLI. Before
+this rule, an empty `after_rev` page named no `next_after_rev`.
 
 A `ref` property is served with the target's id, type and display title. A
 target the caller cannot read, or that no longer exists, is served as
@@ -353,6 +362,44 @@ not at the channel's next message.
 
 A single server process delivers frames for the messages posted through it;
 it does not yet poll for messages posted by another process.
+
+## Agents and other processes
+
+Agents use channels through the MCP channel tools (see the MCP server
+guide). Remote MCP runs inside rela-server; stdio `rela mcp` is a separate
+process.
+
+**Process locality.** Signals (`ephemeral` messages), rate-limit buckets and
+change subscriptions live in the memory of one process. A separate process,
+such as stdio `rela mcp`, therefore behaves differently from rela-server:
+
+- It refuses a post of an `ephemeral` message type with `signals_not_kept`,
+  because no one else would see the signal. Remote MCP keeps signals.
+- Its rate limits count per process, not across all writers.
+- A `watch` on `read_channel` learns about posts from other processes by
+  polling every 2 seconds. On remote MCP the poll runs every 5 seconds and
+  only matters for posts made by another rela-server process; a post in the
+  same process ends the wait at once.
+- A post from another process reaches open browsers only when they fetch the
+  channel again. rela-server does not send a live frame for it.
+
+**SQLite.** The SQLite backend admits one process at a time. While
+rela-server runs on it, stdio `rela mcp` cannot open the project, and remote
+MCP is the only way for an agent to use channels.
+
+**Access control.** Stdio `rela mcp` leaves its entity tools open, because
+the local user can edit the files anyway. Its channel tools apply `acl.yaml`
+when the project has one, as `rela lease` does, so an agent identity stays
+inside the channel roles the project gives it. Locally this is not a
+security boundary: a local user can edit `acl.yaml`. Without `acl.yaml`,
+access is open.
+
+**Prompt injection.** Message content is written by other people and agents.
+Every channel tool answer starts with a `notice` that says the content is
+untrusted user data, and the content is delivered as JSON values. A model
+may still follow instructions written in a message. That risk remains. Limit
+what an agent may write: give its identity only the roles it needs, and keep
+it out of roles that post on channels other agents act on.
 
 ## Reloading
 

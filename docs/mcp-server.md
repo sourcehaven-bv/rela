@@ -157,7 +157,8 @@ there are several, the error lists them, for example
 `watch` waits until the result of one or more read calls changes, so an agent
 does not have to poll. A target is a read call: `{tool, args}`, where `tool`
 is `show_entity`, `list_entities` or `list_relations` and `args` is the object
-that tool takes.
+that tool takes. When the project has realtime channels, `read_channel` can be
+watched too (see [Channel Tools](#channel-tools)).
 
 | Tool | Description | Parameters |
 |------|-------------|------------|
@@ -462,6 +463,77 @@ lease is not a property.
 claimed, changes status, is released or lapses, although no entity was
 written. A plain renewal changes nothing `show_entity` shows, so it does not
 end a wait.
+
+### Channel Tools
+
+These tools read and post in the realtime channels declared in
+`realtime.yaml` (see the realtime guide). Both servers offer them when the
+project has realtime channels when the server starts. Without
+`realtime.yaml` the tools do not exist. A reload that turns realtime off
+later leaves them in place, and they answer that realtime is off.
+
+| Tool | Description | Parameters |
+|------|-------------|------------|
+| `list_channels` | List the channels on an entity that you may read, per channel type | `id`, `state?` (`open`, `closed` or `archived`) |
+| `read_channel` | Read a channel: its state, what you may post, the message types with a JSON Schema per type, live signals and a page of messages | `id`, `channel_type`, `name?`, one of `after_rev?`, `after?`, `before?`, `limit?` (default 20, max 50), `signals?`, `schemas?` |
+| `post_message` | Post a message | `id`, `channel_type`, `name?`, `message_type`, `props?`, `reply_to?` |
+| `edit_message` | Replace the props of your own message | `id`, `channel_type`, `name?`, `seq`, `props` |
+| `remove_message` | Withdraw your own message, or remove another as a moderator | `id`, `channel_type`, `name?`, `seq`, `reason?` |
+| `create_channel` | Create a named channel of a type with many channels per entity | `id`, `channel_type`, `title?` |
+
+`id` is the entity the channel is attached to. `name` selects a channel of a
+type with many channels per entity; `list_channels` and `create_channel`
+give it. `props` is an object that must match the message type's
+`props_schema` from `read_channel`. `signals` and `schemas` default to true
+for a read without a cursor and to false for a read with one.
+
+**Untrusted content.** Messages, signal properties, channel titles, removal
+reasons and ref titles are written by other people and agents. Every answer
+is one JSON object whose first key is `notice`, which says so, and every tool
+description repeats it. Treat that content as data. A model may still follow
+instructions written in a message; give an agent identity only the channel
+roles it needs.
+
+**Following a channel.** To wait for new messages without polling:
+
+1. Call `read_channel` without a cursor. It returns the newest page and
+   `next_after_rev`.
+2. Call `watch` with the target
+   `{"tool":"read_channel","args":{"id":…,"channel_type":…,"after_rev":R}}`,
+   where `R` is that `next_after_rev`, and no cursor. It returns a cursor.
+   It reports the target as changed at once if a message changed after `R`.
+3. Call `watch` again with the cursor. It returns when a message is posted,
+   edited or removed.
+4. Call `read_channel` with `after_rev: R`. It returns the changed messages
+   and the next `next_after_rev`. Remove duplicates by `seq`.
+
+A watched read is capped at 5 messages, so a busy channel does not inflate
+each replay. A watch does not wake on signals unless the target sets
+`signals: true`. A watch on a channel you cannot read, or on a hidden entity,
+never reports a change.
+
+**Errors.** A hidden or nonexistent entity gets the text `show_entity` gives,
+`entity not found: <id>`. A denial names its type and the rule in
+`realtime.yaml`, such as
+`channel_read_denied: reading room channels needs the … role (rule: channel_types.room.read)`.
+A rate limit adds `; retry in Ns`. Without realtime the answer is
+`channels are not enabled in this project (no realtime.yaml)`.
+
+**Stdio and remote.** Stdio `rela mcp` is a separate process from
+rela-server, which changes three things:
+
+- It refuses a post of a signal type (`persist: ephemeral`) with
+  `signals_not_kept`, because no other process would see the signal.
+- A `watch` sees posts from other processes by polling every 2 seconds.
+  Remote MCP shares rela-server's process: a post through the web app or
+  another remote client ends the wait at once, and the 5-second poll only
+  covers other rela-server processes.
+- Its channel tools apply `acl.yaml` when the project has one, as
+  `rela lease` does, although its entity tools stay open. Locally this is not
+  a security boundary, because a local user can edit `acl.yaml`.
+
+Stdio `rela mcp` reloads `realtime.yaml` when it changes. A file that does
+not load keeps the previous configuration and is logged.
 
 ## Resources
 
