@@ -207,41 +207,19 @@ type MessagePage struct {
 	Full     bool          `json:"full"`
 }
 
-// Messages returns one page of messages. The limit is clamped to the
-// configured page limit.
+// Messages returns one page of messages through [Service.Read]. A
+// positive page.AfterRev is the after_rev cursor.
 func (s *Service) Messages(ctx context.Context, addr RawAddress, page channels.Page) (MessagePage, error) {
-	c, err := s.open(ctx, addr)
+	req := ReadRequest{AfterSeq: page.AfterSeq, BeforeSeq: page.BeforeSeq, Limit: page.Limit}
+	if page.RevOrder() {
+		rev := page.AfterRev
+		req.AfterRev = &rev
+	}
+	v, err := s.Read(ctx, addr, req)
 	if err != nil {
 		return MessagePage{}, err
 	}
-	limit := c.snap.Config.Limits().PageLimit
-	if page.Limit <= 0 || page.Limit > limit {
-		page.Limit = limit
-	}
-	page, err = page.Normalize()
-	if err != nil {
-		return MessagePage{}, storeError(err)
-	}
-	out := MessagePage{Channel: channelView(c.key, c.head), Messages: []MessageView{}}
-	if c.head == nil {
-		return out, nil
-	}
-	msgs, err := s.store.Messages(c.ctx, c.key, page)
-	if err != nil {
-		if errors.Is(err, channels.ErrNotFound) {
-			return out, nil
-		}
-		return MessagePage{}, storeError(err)
-	}
-	r, err := s.renderer(c, msgs, nil)
-	if err != nil {
-		return MessagePage{}, err
-	}
-	for _, m := range msgs {
-		out.Messages = append(out.Messages, r.message(m))
-	}
-	out.Full = len(msgs) >= page.Limit
-	return out, nil
+	return MessagePage{Channel: v.Channel, Messages: v.Messages, Full: v.HasMore}, nil
 }
 
 // PostInput is a message to post.
@@ -249,6 +227,11 @@ type PostInput struct {
 	Type    string
 	Props   map[string]any
 	ReplyTo int64
+	// LogOnly is set by a transport that runs in a process other than the
+	// server's, such as the CLI or stdio MCP. A signal lives only in the
+	// process that receives it, so nobody would see one posted there; such
+	// a post is refused with 422 signals_not_kept, after authorization.
+	LogOnly bool
 }
 
 // PostResult is a posted message. A log message has Message set. An
@@ -262,7 +245,8 @@ type PostResult struct {
 }
 
 // Post posts a message. The checks run in this order: read access, a post
-// role of the message type, an open channel, the rate limit, the
+// role of the message type, a transport that keeps the type (see
+// [PostInput.LogOnly]), an open channel, the rate limit, the
 // properties, the type's `when:`, the refs. A denied caller is not charged
 // a token; an invalid message is.
 func (s *Service) Post(ctx context.Context, addr RawAddress, in PostInput) (PostResult, error) {
@@ -280,10 +264,13 @@ func (s *Service) Post(ctx context.Context, addr RawAddress, in PostInput) (Post
 	if !c.mayPost(mt) {
 		return PostResult{}, postDenied(c.ct, mt)
 	}
+	ephemeral := mt.Persist == realtimecfg.PersistEphemeral
+	if ephemeral && in.LogOnly {
+		return PostResult{}, signalsNotKept(mt.Name)
+	}
 	if err := c.requireOpen(); err != nil {
 		return PostResult{}, err
 	}
-	ephemeral := mt.Persist == realtimecfg.PersistEphemeral
 	if err := s.local.limiter.take(c.now, bucketIdentity(c.p), c.key, opPostPfx+mt.Name,
 		postRate(c.snap.Config.Limits(), mt)); err != nil {
 		return PostResult{}, err
@@ -386,10 +373,7 @@ func (s *Service) postSignal(
 	if replyTo != 0 {
 		return PostResult{}, invalid("an ephemeral message cannot reply")
 	}
-	ttl := realtimelimits.MaxEphemeralTTL
-	if mt.TTL > 0 {
-		ttl = min(mt.TTL, ttl)
-	}
+	ttl := signalTTL(mt)
 	sg := signal{
 		id: channels.NewName(), typ: mt.Name, author: authorOf(c.p), identity: bucketIdentity(c.p),
 		at: c.now, expires: c.now.Add(ttl), props: vp.props, size: vp.size,
