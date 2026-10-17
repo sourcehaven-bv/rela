@@ -194,9 +194,15 @@ func (h *webhookRouter) handle(w http.ResponseWriter, r *http.Request, hookID st
 	// the same ceiling.
 	ctx = principal.With(ctx, principal.Webhook(hookID))
 	// This route is outside /api/, so attachACLRequest did not run: resolve
-	// the hook's identity here, once, as every request edge does. Binding
-	// replaces any Request already on ctx.
+	// the hook's identity here, once, as every request edge does, and attach
+	// its read gate (a request under a policy with no gate is denied every
+	// read). Binding replaces any Request already on ctx.
 	ctx, err = acl.BindRequest(ctx, h.write.acl())
+	if err != nil {
+		writeWebhookError(w, hookID, err)
+		return
+	}
+	ctx, err = attachBoundReadGate(ctx, h.write.acl())
 	if err != nil {
 		writeWebhookError(w, hookID, err)
 		return
