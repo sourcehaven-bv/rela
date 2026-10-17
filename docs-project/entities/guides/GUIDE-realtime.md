@@ -210,6 +210,77 @@ averages less than `30/m` but allows 1000 posts at once, so it is refused.
 | `channels_per_entity` | 200 per channel type |
 | `page_limit` | 200 |
 
+## HTTP API
+
+The data-entry API serves channels under the entity they are attached to.
+`{plural}` and `{id}` are the entity's collection and id, as in
+`/api/v1/{plural}/{id}`. On a type with faces, write the face as
+`{id}@{face}`. A bare id on such a type gets a 422 `face_required`.
+
+| Method and path | Does |
+| --- | --- |
+| `GET /api/v1/{plural}/{id}/_channels` | Lists the channels the caller may read, per channel type. `?state=` filters on a period. |
+| `POST /api/v1/{plural}/{id}/_channels/{type}` | Opens a named channel of a `many` type. The body may hold a `title`. |
+| `GET .../_channels/{type}` | The head of a `one` channel: its last sequence number, revision, and `_actions`, the operations the caller may perform. |
+| `GET .../_channels/{type}/{name}` | The head of a named channel. |
+| `GET .../{channel}/messages` | A page of messages. See below. |
+| `POST .../{channel}/messages` | Posts a message: `{"type": ..., "props": {...}, "reply_to": n}`. A `log` message gets a 201 with the message; an `ephemeral` one gets a 202. |
+| `PATCH .../{channel}/messages/{seq}` | Edits a message: `{"props": {...}}`. |
+| `DELETE .../{channel}/messages/{seq}` | Removes a message. The body may hold a `reason`. |
+
+`{channel}` is `_channels/{type}` or `_channels/{type}/{name}`.
+
+A message page takes one cursor:
+
+- `?after_rev=r` returns the messages that changed after revision `r`, so a
+  client catches up after a live frame. The answer has `next_after_rev`.
+- `?after=n` returns the messages after sequence number `n`, oldest first.
+- `?before=n` returns the messages before `n`, for scrolling back.
+- `?limit=` caps the page. The default and the maximum come from
+  `page_limit`.
+
+A `ref` property is served with the target's id, type and display title. A
+target the caller cannot read, or that no longer exists, is served as
+`{"restricted": true}`, without its id.
+
+### Errors
+
+Every error is a problem body (`application/problem+json`) with a `type`.
+
+| Status | When |
+| --- | --- |
+| 404 `not_found` | Realtime is off, or the entity is hidden, does not exist, or is not of the collection's type. The body is the same as for the entity `GET`. |
+| 404 | The channel type is not attached to the entity type, or the channel or the message does not exist. |
+| 403 | The caller may not perform the operation, or the edit window has passed. `title` says what the operation needs and `detail` names the rule in `realtime.yaml`, such as `channel_types.room.message_types.text.post`. |
+| 400 | The message does not match its type (`invalid_message`), has too many properties, or a removal lacks a required reason. |
+| 400 | The body is not valid JSON, has unknown fields, or a query parameter is not a positive number. |
+| 413 `too_large` | The message is over `message_bytes`. |
+| 422 | A `ref` names an entity that does not exist or that the caller cannot read. Both get the same body. |
+| 409 | The channel is not open, the message was removed, `channels_per_entity` is reached, the POST tried to open a channel of a `one` type, or the configuration changed during the request. |
+| 429 | A rate limit. `Retry-After` gives the seconds to wait, rounded up. |
+
+The OpenAPI document at `/api/v1/_openapi.json` lists these paths for every
+entity type a channel type attaches to, with one request body per message
+type. It follows a reload of `realtime.yaml`.
+
+### Live updates
+
+Two channel paths can be subscribed to on the live event stream: the
+channel list (`.../_channels`) and a channel head (`.../_channels/{type}` or
+`.../_channels/{type}/{name}`). A message path cannot. A frame on a head
+means the channel changed: fetch `messages?after_rev=` with the revision you
+last saw. A frame on the list means a channel of the entity was opened,
+closed, or got a message.
+
+An `ephemeral` message changes the head only. It is not stored, so a client
+that was not subscribed when it was posted does not see it.
+
+The server re-checks a subscription only when its channel changes. A
+subscription to a channel the caller cannot read gets no frames. A reader
+who loses access gets one frame, on which the head answers 404, and no frames
+after that. A single server process delivers frames for the messages posted
+through it; it does not yet poll for messages posted by another process.
+
 ## Reloading
 
 - An invalid `realtime.yaml` stops the server from starting.

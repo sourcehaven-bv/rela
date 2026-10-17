@@ -83,6 +83,11 @@ func New(d Deps) (*Service, error) {
 // Subscribe registers a live consumer of channel changes.
 func (s *Service) Subscribe() *Subscription { return s.local.Subscribe() }
 
+// Config returns the realtime configuration in force now, or nil when
+// realtime is off. It is for describing the API (the OpenAPI document);
+// an operation loads its own snapshot.
+func (s *Service) Config() *realtimecfg.Compiled { return s.cfg.Load().Config }
+
 // Affordances are what the caller may do in a channel now.
 type Affordances struct {
 	// Post lists the message types the caller may post, sorted. A type's
