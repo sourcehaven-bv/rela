@@ -38,9 +38,12 @@ type call struct {
 	p    principal.Principal
 	now  time.Time
 
-	ct     realtimecfg.ChannelType
-	anchor AnchorView
-	key    channels.Key
+	ct realtimecfg.ChannelType
+	// entityType is the entity type the route names, empty when it names
+	// none. The anchor must be of that type.
+	entityType string
+	anchor     AnchorView
+	key        channels.Key
 	// head is the stored channel, nil for a cardinality-one channel that
 	// holds no message yet.
 	head *channels.Channel
@@ -88,14 +91,15 @@ func (c *call) channelType(entityType, typ string) error {
 	if !ok || (entityType != "" && !slices.Contains(ct.AttachTo, entityType)) {
 		return unknownChannelType(typ)
 	}
-	c.ct = ct
+	c.ct, c.entityType = ct, entityType
 	return nil
 }
 
 // resolveAnchor reads the anchor of c.ct and sets c.anchor and the anchor
 // part of c.key. A face-anchored type needs `ID@face` (422 face_required,
-// before the read). A miss, or an entity whose type the channel type does
-// not attach to, is [ErrAnchorNotFound].
+// before the read). A miss, an entity of another type than the route names,
+// or one whose type the channel type does not attach to, is
+// [ErrAnchorNotFound], as the entity GET under that plural answers 404.
 func (s *Service) resolveAnchor(c *call, raw string) error {
 	addr, err := entity.ParseAddress(raw)
 	if err != nil {
@@ -113,7 +117,7 @@ func (s *Service) resolveAnchor(c *call, raw string) error {
 		}
 		return fmt.Errorf("realtime: read anchor: %w", err)
 	}
-	if !slices.Contains(c.ct.AttachTo, view.Type) {
+	if (c.entityType != "" && view.Type != c.entityType) || !slices.Contains(c.ct.AttachTo, view.Type) {
 		return ErrAnchorNotFound
 	}
 	c.anchor = view
