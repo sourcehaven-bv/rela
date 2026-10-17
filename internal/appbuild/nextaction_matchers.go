@@ -157,8 +157,8 @@ func nextActionRequestScope(ctx context.Context) (context.Context, error) {
 // identity comparison then matches nothing for that request rather than
 // erroring, and a negated one (`not related(..., { id = current_user.id })`)
 // matches every row the reader can already see. Neither reaches past the read
-// gate; predicatefns.ResolveQueryIdentity is the stricter shape the
-// boundary stamp (TKT-ZQV9O5) should adopt.
+// gate. The boundary stamp (TKT-ZQV9O5) should surface the lookup error
+// instead of deriving the raw identifier.
 func queryIdentityFor(ctx context.Context) (predicatefns.QueryIdentity, bool) {
 	p, ok := principal.Stamped(ctx)
 	if !ok || p.User == "" || p.User == principal.Unknown {

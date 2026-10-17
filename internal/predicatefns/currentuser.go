@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"sort"
-	"strings"
 
 	"github.com/Sourcehaven-BV/rela/internal/predicate"
 )
@@ -371,66 +370,6 @@ func hasCurrentUser(identity string) predicate.FuncFunc {
 			return nil, errArg
 		}
 	}
-}
-
-// PrincipalResolver maps a raw principal identifier to the user entity
-// that represents it, or "" when the deployment configures no user
-// entity type or the identifier matches none.
-//
-// Consumer-side interface (see docs/architecture/consumer-side-interfaces.md):
-// the one implementation is acl.IdentityResolver.ResolvePrincipal, but
-// predicatefns must not depend on internal/acl — and the one method it
-// needs is far narrower than that type's surface. The wiring site
-// supplies it.
-//
-// Nil: accepted by [ResolveQueryIdentity], which then treats the
-// deployment as having no user entity type.
-type PrincipalResolver interface {
-	ResolvePrincipal(ctx context.Context, rawUser string) (string, error)
-}
-
-// ResolveQueryIdentity builds the [QueryIdentity] for the principal
-// carried on ctx, resolving it through r when one is supplied.
-//
-// This is the single place a transport turns "who is calling" into "what
-// string do I compare against graph data", so every surface agrees. Call
-// it once per request at the boundary and stamp the result with
-// [WithQueryIdentity]; do not call it per row.
-//
-// A resolver error is returned rather than swallowed. The caller decides
-// whether to fail the request or proceed without an identity — but an
-// identity that silently degrades to the raw principal after a backend
-// error would compare against a DIFFERENT namespace than the one the
-// operator wrote the condition for, and match the wrong rows rather than
-// none.
-//
-// An unstamped context yields an invalid identity (not an error): "no
-// identity" is a legitimate state for the CLI and the scheduler, and it
-// is [BindCurrentUser] that refuses to evaluate against it.
-//
-// No request boundary calls this yet. The next-action adapter
-// (internal/appbuild) reads the principal the data-entry router has
-// ALREADY resolved instead, which is equivalent on that transport; the
-// boundary stamp that makes every surface share one derivation is the
-// first step of the `where:`-surfaces follow-up (TKT-ZQV9O5).
-func ResolveQueryIdentity(
-	ctx context.Context, r PrincipalResolver, rawUser, tool string,
-) (QueryIdentity, error) {
-	q := QueryIdentity{Raw: strings.TrimSpace(rawUser), Tool: tool}
-	if q.Raw == "" || r == nil {
-		return q, nil
-	}
-	id, err := r.ResolvePrincipal(ctx, q.Raw)
-	if err != nil {
-		return QueryIdentity{}, fmt.Errorf("predicatefns: resolve current user: %w", err)
-	}
-	// id == raw means "resolved to itself", which carries no more
-	// information than Raw already does; leaving EntityID empty keeps
-	// ID()'s fallback the single explanation of the value.
-	if id != "" && id != q.Raw {
-		q.EntityID = id
-	}
-	return q, nil
 }
 
 // DeclareCurrentUserFuncs registers ONLY the sugar functions, without
