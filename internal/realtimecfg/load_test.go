@@ -155,6 +155,12 @@ func TestParse_Golden(t *testing.T) {
 	if threads.Read.Source.Kind != SourceAttached || !threads.Read.RequireAnchorRead {
 		t.Errorf("default read = %+v; want attached, requiring anchor read", threads.Read)
 	}
+	if d, _ := threads.DetachedRetention.Fixed(); d != realtimelimits.DetachedRetention {
+		t.Errorf("default detached retention = %v; want %v", threads.DetachedRetention, realtimelimits.DetachedRetention)
+	}
+	if room.DetachedRetention.String() != "90d" {
+		t.Errorf("detached retention = %q; want 90d", room.DetachedRetention)
+	}
 
 	trs := c.Triggers()
 	if len(trs) != 1 {
@@ -408,6 +414,10 @@ func TestParse_Invalid(t *testing.T) {
 		{"promote computed", []replace{{"promote_to: { type: decision }",
 			"promote_to: { type: memo, face: draft, map: { title: summary, double: summary } }"}},
 			"channel_types.incident-room.message_types.status-update.actions.accept.promote_to.map.double", "computed"},
+		{"delete policy with retention", []replace{{"on_entity_delete: block", "on_entity_delete: delete"}},
+			"channel_types.incident-room.on_entity_delete", "lifecycle.delete.retention must keep"},
+		{"detached retention syntax", []replace{{"detached_retention: 90d", "detached_retention: soon"}},
+			"channel_types.incident-room.detached_retention", "a count from 1"},
 		{"limit int", []replace{{"page_limit: 100", "page_limit: 500"}}, "limits.page_limit", "between 1 and 200"},
 	}
 	meta, policy := testMeta(t), testPolicy(t)

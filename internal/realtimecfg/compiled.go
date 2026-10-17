@@ -166,6 +166,19 @@ type ChannelType struct {
 	Lifecycle      Lifecycle
 	MessageOps     MessageOps
 	OnEntityDelete OnEntityDelete
+	// DetachedRetention is how long a detached channel of this type is
+	// kept before the sweep erases it: after a detach or block delete,
+	// and after the sweep detaches an orphan. It is never zero; the
+	// default is [realtimelimits.DetachedRetention]. A channel under
+	// lifecycle.delete.retention is kept until that ends too.
+	DetachedRetention Period
+}
+
+// DefaultDetachedRetention is the [ChannelType.DetachedRetention] of a type
+// that does not set `detached_retention:`, and of a type the config no
+// longer declares.
+func DefaultDetachedRetention() Period {
+	return Period{fixed: realtimelimits.DetachedRetention, text: "30d"}
 }
 
 // Role is a named set of principals, defined by exactly one source.

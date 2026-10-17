@@ -23,17 +23,18 @@ type rawLimits struct {
 }
 
 type rawChannelType struct {
-	Label          string                    `yaml:"label"`
-	AttachTo       []string                  `yaml:"attach_to"`
-	Anchor         string                    `yaml:"anchor"`
-	Cardinality    string                    `yaml:"cardinality"`
-	Create         *rawCreate                `yaml:"create"`
-	Read           *rawRole                  `yaml:"read"`
-	Roles          map[string]rawRole        `yaml:"roles"`
-	MessageTypes   map[string]rawMessageType `yaml:"message_types"`
-	Lifecycle      *rawLifecycle             `yaml:"lifecycle"`
-	MessageOps     *rawMessageOps            `yaml:"message_ops"`
-	OnEntityDelete string                    `yaml:"on_entity_delete"`
+	Label             string                    `yaml:"label"`
+	AttachTo          []string                  `yaml:"attach_to"`
+	Anchor            string                    `yaml:"anchor"`
+	Cardinality       string                    `yaml:"cardinality"`
+	Create            *rawCreate                `yaml:"create"`
+	Read              *rawRole                  `yaml:"read"`
+	Roles             map[string]rawRole        `yaml:"roles"`
+	MessageTypes      map[string]rawMessageType `yaml:"message_types"`
+	Lifecycle         *rawLifecycle             `yaml:"lifecycle"`
+	MessageOps        *rawMessageOps            `yaml:"message_ops"`
+	OnEntityDelete    string                    `yaml:"on_entity_delete"`
+	DetachedRetention string                    `yaml:"detached_retention"`
 }
 
 type rawCreate struct {
