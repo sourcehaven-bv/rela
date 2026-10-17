@@ -5,6 +5,7 @@ import (
 	"errors"
 	"slices"
 	"strings"
+	"sync"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
@@ -26,9 +27,11 @@ type GlobalRoles struct {
 }
 
 // Request is a per-operation evaluation scope. Constructed via
-// [Declarative.ForIdentity]; methods are not safe for concurrent use
-// by multiple goroutines — open one Request per logical operation and
-// let it go out of scope when the operation completes.
+// [Declarative.ForIdentity]. Open one Request per logical operation and
+// let it go out of scope when the operation completes. It is safe for
+// concurrent use: it travels by pointer on ctx, so a goroutine spawned
+// within the operation may share it. Its fields are fixed at construction,
+// except for a memo that a mutex guards.
 //
 // Its global roles are computed at construction from the [Identity] and
 // the policy; no Request method walks membership. The principal is bound
@@ -49,7 +52,10 @@ type Request struct {
 	// roleVerbAnswers memoises [Request.RoleGrantsVerbOnFace], which the field
 	// verdicts ask per role per row. Under an active ceiling each answer
 	// clamps the role, so a list page would otherwise clamp the same role
-	// once per row. Allocated on first use.
+	// once per row. Allocated on first use, and guarded by roleVerbMu: a
+	// Request travels by pointer on ctx, so any goroutine that inherits the
+	// ctx can ask. It is the only state a Request mutates after construction.
+	roleVerbMu      sync.Mutex
 	roleVerbAnswers map[roleVerbQuestion]bool
 	// unmatchedVerified is set by [Declarative.ForIdentity] when the
 	// Identity was unmatched and came from a verified assertion; see
