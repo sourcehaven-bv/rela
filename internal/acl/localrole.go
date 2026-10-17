@@ -33,7 +33,7 @@ func (r *Request) LocalRolePredicate(role string) (pred store.RelationPredicate,
 		return store.RelationPredicate{}, false
 	}
 	sort.Strings(conferring)
-	p, ok := r.conferredEdge(r.Globals().Members, conferring)
+	p, ok := conferredEdge(r.d.policy, r.Globals().Members, conferring)
 	if !ok {
 		return store.RelationPredicate{}, false
 	}
@@ -48,13 +48,13 @@ func (r *Request) LocalRolePredicate(role string) (pred store.RelationPredicate,
 //
 // ok is false for an empty members: empty Endpoints means "any endpoint" to
 // the store, so an empty member set must never become a predicate.
-func (r *Request) conferredEdge(members, relTypes []string) (*store.RelationPredicate, bool) {
+func conferredEdge(policy *Policy, members, relTypes []string) (*store.RelationPredicate, bool) {
 	if len(members) == 0 {
 		return nil, false
 	}
 	p := &store.RelationPredicate{Endpoints: members, OfTypes: relTypes}
-	if len(r.d.policy.InheritRolesThrough) > 0 {
-		p.EntityInheritThrough = append([]string(nil), r.d.policy.InheritRolesThrough...)
+	if len(policy.InheritRolesThrough) > 0 {
+		p.EntityInheritThrough = append([]string(nil), policy.InheritRolesThrough...)
 		p.EntityDepth = depthCap
 	}
 	return p, true
