@@ -379,9 +379,56 @@ func TestChannelToolDescriptions_Notice(t *testing.T) {
 // generically, without its text.
 func TestChannelFailed_Internal(t *testing.T) {
 	t.Parallel()
-	res := channelFailed(context.Background(), "read", "REQ-001", errors.New("disk on fire"))
+	res := channelHandler{}.failed(context.Background(), "read", "REQ-001", errors.New("disk on fire"))
 	if text := res.Content[0].(*mcpgo.TextContent).Text; !res.IsError || text != channelFailedText {
 		t.Errorf("internal failure = %q", text)
+	}
+}
+
+// TestChannelFailed_NoPrincipalHint pins that only a transport whose
+// identity comes from $USER tells the caller to set it.
+func TestChannelFailed_NoPrincipalHint(t *testing.T) {
+	t.Parallel()
+	f := newChannelFixture(t)
+	_, err := f.svc.Read(context.Background(), realtime.RawAddress{Anchor: "REQ-001", Type: "room"},
+		realtime.ReadRequest{})
+	if !realtime.IsNoPrincipal(err) {
+		t.Fatalf("read without identity = %v, want no_principal", err)
+	}
+	for _, local := range []bool{false, true} {
+		res := channelHandler{localIdentity: local}.failed(context.Background(), "read", "REQ-001", err)
+		text := res.Content[0].(*mcpgo.TextContent).Text
+		if got := strings.HasSuffix(text, realtime.NoPrincipalHint); got != local {
+			t.Errorf("local identity %v: text %q", local, text)
+		}
+	}
+}
+
+// TestUnavailableChannels pins that every channel tool answers the reason,
+// and that the tools stay registered.
+func TestUnavailableChannels(t *testing.T) {
+	t.Parallel()
+	f := newChannelFixture(t)
+	deps := f.deps(t, true)
+	deps.Channels = UnavailableChannels("acl.yaml cannot be loaded: broken")
+	srv, err := NewServer(deps, "test", WithPrincipal(principal.Principal{User: "bob", Tool: principal.ToolMCP}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	cs := connect(t, srv)
+	addr := map[string]any{"id": "REQ-001", chanTypeArg: "room"}
+	for tool, args := range map[string]map[string]any{
+		"list_channels":  {"id": "REQ-001"},
+		toolReadChannel:  addr,
+		"post_message":   {"id": "REQ-001", chanTypeArg: "room", "message_type": "text"},
+		"edit_message":   {"id": "REQ-001", chanTypeArg: "room", chanSeqArg: 1, chanPropsArg: map[string]any{}},
+		"remove_message": {"id": "REQ-001", chanTypeArg: "room", chanSeqArg: 1},
+		"create_channel": {"id": "REQ-001", chanTypeArg: "threads"},
+	} {
+		text, isErr := call(t, cs, tool, args)
+		if !isErr || text != "acl.yaml cannot be loaded: broken" {
+			t.Errorf("%s = %q (error %v)", tool, text, isErr)
+		}
 	}
 }
 

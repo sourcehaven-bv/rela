@@ -83,8 +83,7 @@ func RemoteMCPServer(svc *appbuild.Services, host dataentry.MCPHost, version str
 
 // RemoteMCPDeps builds the MCP dependencies for the remote endpoint. Every
 // read handle, including search, comes from [appbuild.Services.GatedReads].
-// Lua stays zero because the remote server has no Lua
-// tools.
+// Lua stays zero because the remote server has no Lua tools.
 //
 // A bare id resolves in the compiled default world, as on the data-entry API
 // (BUG-6XTX0G), and a read tool's `world` argument selects another through
@@ -136,7 +135,7 @@ func RemoteMCPDeps(svc *appbuild.Services, host dataentry.MCPHost) (relamcp.Deps
 	// reads the realtime config holder on every call, so a realtime.yaml
 	// reload applies to the next tool call.
 	if cs := appbuild.ChannelService(svc); cs != nil {
-		deps.Channels = relamcp.ChannelDeps{Reader: cs, Writer: cs}
+		deps.Channels = relamcp.ChannelDeps{Reader: cs, Writer: cs, Creator: cs, Waker: cs}
 	}
 	return deps, nil
 }

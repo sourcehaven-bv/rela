@@ -15,49 +15,119 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
-// ChannelReader is the read half of the channel capability: the read tools
-// and the watch use it. The wiring site passes *realtime.Service, which
-// authorizes every call.
+// ChannelReader backs the channel read tools. The wiring site passes
+// *realtime.Service, which authorizes every call.
 type ChannelReader interface {
 	// Enabled reports whether realtime.yaml is loaded now.
 	Enabled() bool
 	ListAnchor(ctx context.Context, entityType, anchor string, state realtime.State) (realtime.AnchorChannels, error)
 	Read(ctx context.Context, addr realtime.RawAddress, req realtime.ReadRequest) (realtime.ReadView, error)
-	// Subscribe wakes a watch when a channel in this process changes.
-	Subscribe() *realtime.Subscription
 }
 
-// ChannelWriter is the write half of the channel capability. The wiring
-// site passes *realtime.Service.
+// ChannelWriter backs the message tools. The wiring site passes
+// *realtime.Service.
 type ChannelWriter interface {
 	Post(ctx context.Context, addr realtime.RawAddress, in realtime.PostInput) (realtime.PostResult, error)
 	Edit(ctx context.Context, addr realtime.RawAddress, seq int64, props map[string]any) (realtime.MessageView, error)
 	Delete(ctx context.Context, addr realtime.RawAddress, seq int64, reason string) (realtime.MessageView, error)
+}
+
+// ChannelCreator backs create_channel. The wiring site passes
+// *realtime.Service.
+type ChannelCreator interface {
 	Create(ctx context.Context, entityType, anchor, typ string, in realtime.CreateInput) (realtime.ChannelView, error)
+}
+
+// ChannelWaker wakes a watch on read_channel when a channel in this process
+// changes. The wiring site passes *realtime.Service.
+type ChannelWaker interface {
+	Subscribe() *realtime.Subscription
 }
 
 // ChannelDeps backs the channel tools.
 //
-// Nil: Reader and Writer are accepted as a pair. Both nil registers no
-// channel tool; one without the other is refused.
+// Nil: Reader, Writer and Creator are accepted together. All nil registers
+// no channel tool; a partial set is refused. Waker is accepted: without it
+// a watch sees changes by its poll only.
 //
 // The tools are registered once, by [NewServer], when Reader reports
 // realtime enabled. A reload that turns realtime off leaves them answering
 // that channels are not enabled; one that turns it on does not add them.
 type ChannelDeps struct {
-	Reader ChannelReader
-	Writer ChannelWriter
+	Reader  ChannelReader
+	Writer  ChannelWriter
+	Creator ChannelCreator
+	Waker   ChannelWaker
 	// RefuseSignals is set by a wiring that runs in another process than
 	// rela-server (stdio). A signal lives only in the process that receives
 	// it, so the tools refuse to post one ([realtime.PostInput.LogOnly]).
 	RefuseSignals bool
+	// LocalIdentity is set by a wiring whose caller identity comes from
+	// $USER (stdio). A no_principal refusal then says so.
+	LocalIdentity bool
 }
 
 func (c ChannelDeps) validate() error {
-	if (c.Reader == nil) != (c.Writer == nil) {
-		return errors.New("mcp: Deps.Channels needs both Reader and Writer, or neither")
+	if (c.Reader == nil) != (c.Writer == nil) || (c.Reader == nil) != (c.Creator == nil) {
+		return errors.New("mcp: Deps.Channels needs Reader, Writer and Creator, or none of them")
 	}
 	return nil
+}
+
+// UnavailableChannels backs the channel tools with a refusal: every call
+// answers reason. A wiring uses it when the channel service cannot be
+// built safely, such as an acl.yaml that does not load, so the tools stay
+// registered and answer why, rather than open up or disappear.
+func UnavailableChannels(reason string) ChannelDeps {
+	u := unavailableChannels{err: &channelUnavailableError{reason: reason}}
+	return ChannelDeps{Reader: u, Writer: u, Creator: u}
+}
+
+// channelUnavailableError is the refusal of [UnavailableChannels]. Its text
+// is shown to the caller as is.
+type channelUnavailableError struct{ reason string }
+
+func (e *channelUnavailableError) Error() string { return e.reason }
+
+// unavailableChannels refuses every channel call.
+type unavailableChannels struct{ err error }
+
+func (unavailableChannels) Enabled() bool { return true }
+
+func (u unavailableChannels) ListAnchor(
+	context.Context, string, string, realtime.State,
+) (realtime.AnchorChannels, error) {
+	return realtime.AnchorChannels{}, u.err
+}
+
+func (u unavailableChannels) Read(
+	context.Context, realtime.RawAddress, realtime.ReadRequest,
+) (realtime.ReadView, error) {
+	return realtime.ReadView{}, u.err
+}
+
+func (u unavailableChannels) Post(
+	context.Context, realtime.RawAddress, realtime.PostInput,
+) (realtime.PostResult, error) {
+	return realtime.PostResult{}, u.err
+}
+
+func (u unavailableChannels) Edit(
+	context.Context, realtime.RawAddress, int64, map[string]any,
+) (realtime.MessageView, error) {
+	return realtime.MessageView{}, u.err
+}
+
+func (u unavailableChannels) Delete(
+	context.Context, realtime.RawAddress, int64, string,
+) (realtime.MessageView, error) {
+	return realtime.MessageView{}, u.err
+}
+
+func (u unavailableChannels) Create(
+	context.Context, string, string, string, realtime.CreateInput,
+) (realtime.ChannelView, error) {
+	return realtime.ChannelView{}, u.err
 }
 
 // Channel tool names and arguments.
@@ -66,6 +136,7 @@ const (
 	chanTypeArg        = "channel_type"
 	chanNameArg        = "name"
 	chanAfterRevArg    = "after_rev"
+	chanAfterArg       = "after"
 	chanPropsArg       = "props"
 	chanSeqArg         = "seq"
 	chanDefaultLimit   = 20
@@ -79,7 +150,9 @@ const (
 type channelHandler struct {
 	reader        ChannelReader
 	writer        ChannelWriter
+	creator       ChannelCreator
 	refuseSignals bool
+	localIdentity bool
 }
 
 func selChannels(h handlerSet) channelHandler { return h.channels }
@@ -240,7 +313,7 @@ func (h channelHandler) handleList(ctx context.Context, args toolRequest) *mcpgo
 	}
 	got, err := h.reader.ListAnchor(ctx, "", id, st)
 	if err != nil {
-		return channelFailed(ctx, "list", id, err)
+		return h.failed(ctx, "list", id, err)
 	}
 	return channelJSON(listChannelsResult{Notice: realtime.UntrustedNotice, AnchorChannels: got})
 }
@@ -254,11 +327,12 @@ func (h channelHandler) handleRead(ctx context.Context, args toolRequest) *mcpgo
 	if err != nil {
 		return errorResult(err.Error())
 	}
-	req.LogOnly = h.refuseSignals
+	req.LogOnly, req.Actions = h.refuseSignals, true
 	got, err := h.reader.Read(ctx, addr, req)
 	if err != nil {
-		return channelFailed(ctx, "read", addr.Anchor, err)
+		return h.failed(ctx, "read", addr.Anchor, err)
 	}
+	noteRead(ctx, got)
 	return channelJSON(readChannelResult{Notice: realtime.UntrustedNotice, ReadView: got})
 }
 
@@ -270,7 +344,7 @@ func readRequest(args toolRequest) (realtime.ReadRequest, error) {
 		name string
 		dst  *int64
 		min  int64
-	}{{"after", &req.AfterSeq, 1}, {"before", &req.BeforeSeq, 1}} {
+	}{{chanAfterArg, &req.AfterSeq, 1}, {"before", &req.BeforeSeq, 1}} {
 		v, err := wholeArg(args, f.name, f.min)
 		if err != nil {
 			return req, err
@@ -341,7 +415,7 @@ func (h channelHandler) handlePost(ctx context.Context, args toolRequest) *mcpgo
 	}
 	got, err := h.writer.Post(ctx, addr, in)
 	if err != nil {
-		return channelFailed(ctx, "post", addr.Anchor, err)
+		return h.failed(ctx, "post", addr.Anchor, err)
 	}
 	if got.Ephemeral {
 		return channelJSON(signalResult{
@@ -362,7 +436,7 @@ func (h channelHandler) handleEdit(ctx context.Context, args toolRequest) *mcpgo
 	}
 	got, err := h.writer.Edit(ctx, addr, seq, props)
 	if err != nil {
-		return channelFailed(ctx, "edit", addr.Anchor, err)
+		return h.failed(ctx, "edit", addr.Anchor, err)
 	}
 	return channelJSON(messageResult{Notice: realtime.UntrustedNotice, Message: got})
 }
@@ -382,7 +456,7 @@ func (h channelHandler) handleRemove(ctx context.Context, args toolRequest) *mcp
 	}
 	got, err := h.writer.Delete(ctx, addr, seq, r)
 	if err != nil {
-		return channelFailed(ctx, "remove", addr.Anchor, err)
+		return h.failed(ctx, "remove", addr.Anchor, err)
 	}
 	return channelJSON(messageResult{Notice: realtime.UntrustedNotice, Message: got})
 }
@@ -400,9 +474,9 @@ func (h channelHandler) handleCreate(ctx context.Context, args toolRequest) *mcp
 	if title != nil {
 		in.Title = *title
 	}
-	got, err := h.writer.Create(ctx, "", addr.Anchor, addr.Type, in)
+	got, err := h.creator.Create(ctx, "", addr.Anchor, addr.Type, in)
 	if err != nil {
-		return channelFailed(ctx, "create", addr.Anchor, err)
+		return h.failed(ctx, "create", addr.Anchor, err)
 	}
 	return channelJSON(channelResult{Notice: realtime.UntrustedNotice, Channel: got})
 }
@@ -480,13 +554,21 @@ func propsArg(args toolRequest, need bool) (map[string]any, error) {
 // channelFailed answers a failed channel call. An anchor miss gets the text
 // show_entity gives for the same id, so a channel call tells a hidden
 // entity from a missing one no better than a read does. A refusal gets
-// [realtime.UserText]. Anything else is logged with the caller's user and
-// tool, never the message content, and answered generically.
-func channelFailed(ctx context.Context, op, id string, err error) *mcpgo.CallToolResult {
+// [realtime.UserText], plus [realtime.NoPrincipalHint] on a transport whose
+// identity comes from $USER. A refusal of [UnavailableChannels] gets its
+// reason. Anything else is logged with the caller's user and tool, never
+// the message content, and answered generically.
+func (h channelHandler) failed(ctx context.Context, op, id string, err error) *mcpgo.CallToolResult {
 	if errors.Is(err, realtime.ErrAnchorNotFound) {
 		return entityReadFailed("entity", id, store.ErrNotFound)
 	}
+	if u, ok := errors.AsType[*channelUnavailableError](err); ok {
+		return errorResult(u.reason)
+	}
 	if text, ok := realtime.UserText(err); ok {
+		if h.localIdentity && realtime.IsNoPrincipal(err) {
+			text += realtime.NoPrincipalHint
+		}
 		return errorResult(text)
 	}
 	p := principal.From(ctx)

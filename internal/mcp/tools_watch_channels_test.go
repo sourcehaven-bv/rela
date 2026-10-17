@@ -134,6 +134,35 @@ func TestWatch_ReadChannelBaselineNotEmpty(t *testing.T) {
 	if got := mustWatch(t, cs, watchArgs("", 0, newest)); len(got.Changed) != 0 {
 		t.Errorf("a newest-page target at baseline = %+v, want unchanged", got)
 	}
+
+	// The same holds for a follower by seq: message 1 exists, and message 2
+	// lands between the read and the watch.
+	postAsBob(t, f.svc, "REQ-001", "after the seq read")
+	after := readChannelTarget(map[string]any{"id": "REQ-001", "channel_type": "room", "after": 1})
+	if got := mustWatch(t, cs, watchArgs("", 0, after)); len(got.Changed) != 1 {
+		t.Errorf("an after follower at baseline = %+v, want the target reported", got)
+	}
+}
+
+// TestWatch_ReadChannelPageTargetSeesOlderEdit pins that a page target
+// replays its own limit: an edit to a message deep in its page, past the
+// follower cap, wakes it.
+func TestWatch_ReadChannelPageTargetSeesOlderEdit(t *testing.T) {
+	t.Parallel()
+	f := newChannelFixture(t)
+	cs := channelWatchClient(t, f, "alice", time.Hour)
+	for i := range watchChannelLimit + 3 {
+		postAsBob(t, f.svc, "REQ-001", fmt.Sprintf("m%d", i))
+	}
+	target := readChannelTarget(map[string]any{"id": "REQ-001", "channel_type": "room", "limit": 20})
+	base := mustWatch(t, cs, watchArgs("", 0, target))
+	if _, err := f.svc.Edit(asBob(), realtime.RawAddress{Anchor: "REQ-001", Type: "room"}, 1,
+		map[string]any{"body": "edited"}); err != nil {
+		t.Fatal(err)
+	}
+	if got := mustWatch(t, cs, watchArgs(base.Cursor, 0, target)); len(got.Changed) != 1 {
+		t.Errorf("after an edit of message 1 = %+v, want the page target reported", got)
+	}
 }
 
 // TestWatch_ReadChannelHiddenActivity pins AC 8: watches on a hidden
@@ -279,11 +308,20 @@ func TestWatchChannel_TargetAndWakeFilter(t *testing.T) {
 	if c.anchor != "REQ-001" || c.typ != "room" || !c.follows || replay["limit"] != float64(watchChannelLimit) {
 		t.Errorf("channel target = %+v, replay args %v", c, replay)
 	}
-	if _, replay := channelTarget(map[string]any{"limit": float64(2)}); replay["limit"] != float64(2) {
+	if c, replay := channelTarget(map[string]any{"after": float64(3)}); !c.follows ||
+		replay["limit"] != float64(watchChannelLimit) {
+		t.Errorf("an after follower = %+v, replay args %v", c, replay)
+	}
+	if _, replay := channelTarget(map[string]any{"after_rev": float64(1), "limit": float64(2)}); replay["limit"] != float64(2) {
 		t.Errorf("a small limit was raised: %v", replay)
 	}
-	if _, replay := channelTarget(map[string]any{"limit": "x"}); replay["limit"] != "x" {
+	if _, replay := channelTarget(map[string]any{"after_rev": float64(1), "limit": "x"}); replay["limit"] != "x" {
 		t.Errorf("a mistyped limit was replaced: %v", replay)
+	}
+	for _, args := range []map[string]any{{"limit": float64(40)}, {"before": float64(9)}, {}} {
+		if c, replay := channelTarget(args); c.follows || replay["limit"] != args["limit"] {
+			t.Errorf("page target %v = %+v, replay args %v; want its own limit", args, c, replay)
+		}
 	}
 	named := &watchChannel{anchor: "REQ-001", typ: "threads", name: "a"}
 	for _, tc := range []struct {

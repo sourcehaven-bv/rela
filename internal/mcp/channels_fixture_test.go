@@ -166,14 +166,16 @@ func (f *channelFixture) deps(t *testing.T, refuseSignals bool) Deps {
 		Validator:     reads.Validator,
 		EntityManager: f.bndl.EntityManager(),
 		Config:        f.bndl.Config(),
-		LuaWriteDeps:  f.bndl.LuaWriteDeps(),
+		Lua:           LuaDeps{WriteDeps: f.bndl.LuaWriteDeps()},
 		Watcher:       nopWatcher{},
 		Watch:         WatchDeps{Changes: f.st, Rebind: reads.Rebind, ChannelPoll: 100 * time.Millisecond},
 		ProjectRoot:   t.TempDir(),
 		Attachments:   testAttachmentDeps(t, f.bndl, f.meta),
 		World:         store.TrivialScope(),
 		Families:      store.TrivialScope(),
-		Channels:      ChannelDeps{Reader: f.svc, Writer: f.svc, RefuseSignals: refuseSignals},
+		Channels: ChannelDeps{
+			Reader: f.svc, Writer: f.svc, Creator: f.svc, Waker: f.svc, RefuseSignals: refuseSignals,
+		},
 	}
 }
 

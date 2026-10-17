@@ -4,11 +4,17 @@ package dataentrywire
 
 import (
 	"context"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
+	"strings"
 	"testing"
 
+	mcpgo "github.com/modelcontextprotocol/go-sdk/mcp"
+
 	"github.com/Sourcehaven-BV/rela/internal/appbuild"
+	"github.com/Sourcehaven-BV/rela/internal/attachment"
 	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/project"
 	"github.com/Sourcehaven-BV/rela/internal/script"
@@ -81,14 +87,21 @@ func TestRemoteMCPDeps_Channels(t *testing.T) {
 		t.Fatalf("RemoteMCPDeps: %v", err)
 	}
 	cs := appbuild.ChannelService(svc)
-	if cs == nil || deps.Channels.Reader != cs || deps.Channels.Writer != cs {
+	ch := deps.Channels
+	if cs == nil || ch.Reader != cs || ch.Writer != cs || ch.Creator != cs || ch.Waker != cs {
 		t.Fatal("the channel tools must use the bundle's channel service")
 	}
-	if deps.Channels.RefuseSignals {
+	if ch.RefuseSignals {
 		t.Error("rela-server keeps signals; the remote tools must not refuse them")
+	}
+	if ch.LocalIdentity {
+		t.Error("a remote caller's identity is not $USER; the hint must stay off")
 	}
 	if deps.Watch.ChannelPoll != remoteChannelPoll {
 		t.Errorf("ChannelPoll = %v, want %v", deps.Watch.ChannelPoll, remoteChannelPoll)
+	}
+	if names := remoteToolNames(t, svc); !slices.Contains(names, "read_channel") {
+		t.Errorf("remote MCP does not list read_channel: %v", names)
 	}
 
 	if err := os.WriteFile(filepath.Join(root, "realtime.yaml"), []byte(channelsRealtimeWithNotes), 0o600); err != nil {
@@ -103,17 +116,59 @@ func TestRemoteMCPDeps_Channels(t *testing.T) {
 }
 
 // TestRemoteMCPDeps_NoChannelsWithoutRealtime pins that a project without
-// realtime.yaml wires no channel tools.
+// realtime.yaml registers no channel tool on the remote server. The service
+// exists, so a realtime.yaml added later needs only a reload, but it reports
+// itself disabled.
 func TestRemoteMCPDeps_NoChannelsWithoutRealtime(t *testing.T) {
 	_, svc := channelsServices(t, "")
+	cs := appbuild.ChannelService(svc)
+	if cs == nil {
+		t.Fatal("the bundle has no channel service")
+	}
 	deps, err := RemoteMCPDeps(svc, testHost(t, svc))
 	if err != nil {
 		t.Fatalf("RemoteMCPDeps: %v", err)
 	}
-	if appbuild.ChannelService(svc) == nil && deps.Channels.Reader != nil {
-		t.Error("channel tools wired without a channel service")
+	if deps.Channels.Reader != cs {
+		t.Fatal("the channel tools must use the bundle's channel service")
 	}
-	if deps.Channels.Reader != nil && deps.Channels.Reader.Enabled() {
-		t.Error("channel tools enabled without realtime.yaml")
+	if cs.Enabled() {
+		t.Fatal("the channel service is enabled without realtime.yaml")
 	}
+	for _, name := range remoteToolNames(t, svc) {
+		if strings.Contains(name, "channel") || strings.Contains(name, "message") {
+			t.Errorf("remote MCP lists %s without realtime.yaml", name)
+		}
+	}
+}
+
+// remoteToolNames lists the tools of the remote server over svc.
+func remoteToolNames(t *testing.T, svc *appbuild.Services) []string {
+	t.Helper()
+	ctx := context.Background()
+	host := testHost(t, svc)
+	host.AttachmentUploads = attachment.NewLimiter(attachment.DefaultMaxUploads)
+	srv, err := RemoteMCPServer(svc, host, "test")
+	if err != nil {
+		t.Fatalf("RemoteMCPServer: %v", err)
+	}
+	ts := httptest.NewServer(srv.HTTPHandler())
+	t.Cleanup(ts.Close)
+	client := mcpgo.NewClient(&mcpgo.Implementation{Name: "test", Version: "0"}, nil)
+	session, err := client.Connect(ctx, &mcpgo.StreamableClientTransport{
+		Endpoint: ts.URL, DisableStandaloneSSE: true,
+	}, nil)
+	if err != nil {
+		t.Fatalf("client connect: %v", err)
+	}
+	t.Cleanup(func() { _ = session.Close() })
+	tools, err := session.ListTools(ctx, nil)
+	if err != nil {
+		t.Fatalf("tools/list: %v", err)
+	}
+	names := make([]string, 0, len(tools.Tools))
+	for _, tool := range tools.Tools {
+		names = append(names, tool.Name)
+	}
+	return names
 }

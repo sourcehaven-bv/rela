@@ -58,9 +58,10 @@ const (
 	watchTargetsArgument = "targets"
 )
 
-// Channel targets. A read_channel replay reads at most watchChannelLimit
-// messages: a waiting target's page is empty (see [watchRun.pass]), so a
-// short page sees every change and keeps a poll cheap.
+// Channel targets. A read_channel follower (after_rev or after) replays at
+// most watchChannelLimit messages: a waiting follower's page is empty (see
+// [watchRun.pass]), so a short page sees every change and keeps a poll
+// cheap. A page target replays its own limit.
 const (
 	watchChannelPoll  = 2 * time.Second
 	watchChannelLimit = 5
@@ -158,7 +159,8 @@ type watchChannel struct {
 	anchor string // entity id, without a face
 	typ    string
 	name   string
-	// follows is set when the target pages by after_rev.
+	// follows is set when the target follows the channel, by after_rev or
+	// by after.
 	follows bool
 }
 
@@ -356,11 +358,13 @@ func newChannelWake(d Deps, targets []watchTarget) *channelWake {
 			c.targets = append(c.targets, t.channel)
 		}
 	}
-	if len(c.targets) == 0 || d.Channels.Reader == nil {
+	if len(c.targets) == 0 {
 		return c
 	}
-	c.sub = d.Channels.Reader.Subscribe()
-	c.wake = c.sub.Wake()
+	if d.Channels.Waker != nil {
+		c.sub = d.Channels.Waker.Subscribe()
+		c.wake = c.sub.Wake()
+	}
 	// A post made in another process wakes no subscription here; only the
 	// poll sees it.
 	every := d.Watch.ChannelPoll
@@ -407,11 +411,11 @@ func (c *channelWake) close() {
 // means read access could not be resolved for the caller. channelOnly
 // replays only the read_channel targets.
 //
-// A read_channel target that follows by after_rev and is missing from the
-// cursor is reported when its page is not empty. An agent that moves its
-// after_rev forward starts a new target, and a message posted between its
-// read and that baseline would otherwise be part of the baseline, and be
-// lost.
+// A read_channel target that follows by after_rev or after and is missing
+// from the cursor is reported when its page is not empty. An agent that
+// moves its cursor forward starts a new target, and a message posted
+// between its read and that baseline would otherwise be part of the
+// baseline, and be lost.
 func (r *watchRun) pass(
 	ctx context.Context, deadline time.Time, channelOnly bool,
 ) (changed []int, incomplete bool, err error) {
@@ -500,7 +504,7 @@ func (r *watchRun) result(changed []int, timedOut bool) (*mcpgo.CallToolResult, 
 }
 
 // replay runs t as the caller and returns the digest of its result. pending
-// reports a read_channel target following by after_rev whose page holds
+// reports a read_channel follower (after_rev or after) whose page holds
 // messages. ok is false when the replay did not finish: no slot before ctx
 // ended, a panic, the replay timeout, or a cancelled ctx.
 func (w *watchHandler) replay(
@@ -527,28 +531,36 @@ func (w *watchHandler) replay(
 			digest, pending, ok = "", false, false
 		}
 	}()
+	var probe *readProbe
+	if t.channel != nil && t.channel.follows {
+		rctx, probe = withReadProbe(rctx)
+	}
 	res, err := t.handler(rctx, &mcpgo.CallToolRequest{
 		Params: &mcpgo.CallToolParamsRaw{Name: t.tool, Arguments: t.args},
 	})
 	if err != nil || res == nil || rctx.Err() != nil {
 		return "", false, false
 	}
-	return w.digest(shareKey, t.key, res), t.channel != nil && t.channel.follows && pageHasMessages(res), true
+	return w.digest(shareKey, t.key, res), probe != nil && probe.messages > 0, true
 }
 
-// pageHasMessages reports whether a read_channel result holds messages.
-func pageHasMessages(res *mcpgo.CallToolResult) bool {
-	if res.IsError || len(res.Content) == 0 {
-		return false
+// readProbe receives what a read_channel replay read, so the watch learns
+// whether the page held messages without parsing the tool's text.
+type readProbe struct{ messages int }
+
+type readProbeKey struct{}
+
+// withReadProbe returns ctx carrying a fresh probe.
+func withReadProbe(ctx context.Context) (context.Context, *readProbe) {
+	p := &readProbe{}
+	return context.WithValue(ctx, readProbeKey{}, p), p
+}
+
+// noteRead records a read_channel page on the probe in ctx, if any.
+func noteRead(ctx context.Context, v realtime.ReadView) {
+	if p, ok := ctx.Value(readProbeKey{}).(*readProbe); ok {
+		p.messages = len(v.Messages)
 	}
-	tc, ok := res.Content[0].(*mcpgo.TextContent)
-	if !ok {
-		return false
-	}
-	var page struct {
-		Messages []json.RawMessage `json:"messages"`
-	}
-	return json.Unmarshal([]byte(tc.Text), &page) == nil && len(page.Messages) > 0
 }
 
 // digest keys a result to the caller and the target, so a cursor cannot be
@@ -662,9 +674,11 @@ func (w *watchHandler) parseTargets(raw any) ([]watchTarget, error) {
 }
 
 // channelTarget returns the channel a read_channel target names, and the
-// arguments its replay passes: the target's own, with the page limit capped
-// at watchChannelLimit. Arguments of the wrong type are kept as given, so
-// the replay answers the same error the tool does.
+// arguments its replay passes: the target's own, with the page limit of a
+// follower capped at watchChannelLimit. A page target keeps its own limit,
+// which the tool bounds, so a change to any message on its page is seen.
+// Arguments of the wrong type are kept as given, so the replay answers the
+// same error the tool does.
 func channelTarget(args map[string]any) (c *watchChannel, replay map[string]any) {
 	c = &watchChannel{}
 	if id, ok := args["id"].(string); ok {
@@ -672,7 +686,10 @@ func channelTarget(args map[string]any) (c *watchChannel, replay map[string]any)
 	}
 	c.typ, _ = args[chanTypeArg].(string)
 	c.name, _ = args[chanNameArg].(string)
-	c.follows = args[chanAfterRevArg] != nil
+	c.follows = args[chanAfterRevArg] != nil || args[chanAfterArg] != nil
+	if !c.follows {
+		return c, args
+	}
 	replay = maps.Clone(args)
 	switch limit := args["limit"].(type) {
 	case nil:

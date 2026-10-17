@@ -56,12 +56,6 @@ import (
 // resolve relative script paths. It is the only piece of the project
 // context MCP consumes — passing the string instead of a
 // `*project.Context` keeps that type from leaking into MCP test stubs.
-//
-// Over the field load line by one since Channels (TKT-76G6M7). Each optional
-// capability is already its own sub-struct; the next one should first
-// group the Lua pair or the two world scopes.
-//
-//plimsoll:max-fields=21
 type Deps struct {
 	// Store is the READ handle for every MCP read surface — tools,
 	// resources, prompts and analyze alike. It is deliberately
@@ -153,6 +147,9 @@ type Deps struct {
 
 // LuaDeps backs the lua_* tools, which exist only when the server is built
 // [WithLuaTools]. A wiring that does not pass that option leaves it zero.
+//
+// Nil: Cache is accepted; a nil cache is the "no cache" signal that
+// lua.WithCache tolerates.
 type LuaDeps struct {
 	WriteDeps lua.WriteDeps
 	Cache     *lua.Cache
@@ -380,7 +377,7 @@ type Watcher interface {
 // registerTools points the affected AddTool lines at the field's methods.
 //
 // 38 → 25 (TKT-MGNE5L): the lua tools moved to luaHandler (the sole user of
-// Lua / ProjectRoot), the schema tools + resource reads
+// Lua deps / ProjectRoot), the schema tools + resource reads
 // to schemaResourceHandler (store + metamodel), and the prompt handlers to
 // promptHandler (store + metamodel + tracer + resolver). register* stay on
 // Server and point at the fields' methods. The remaining handlers genuinely
@@ -524,7 +521,8 @@ func (d Deps) handlers() handlerSet {
 		actions:   actionHandler{runner: d.Actions},
 		leases:    leaseHandler{svc: d.Leases},
 		channels: channelHandler{
-			reader: d.Channels.Reader, writer: d.Channels.Writer, refuseSignals: d.Channels.RefuseSignals,
+			reader: d.Channels.Reader, writer: d.Channels.Writer, creator: d.Channels.Creator,
+			refuseSignals: d.Channels.RefuseSignals, localIdentity: d.Channels.LocalIdentity,
 		},
 	}
 }
