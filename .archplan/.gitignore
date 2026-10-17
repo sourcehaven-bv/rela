@@ -6,3 +6,4 @@ server.log
 .*.lock
 # The as-is model is generated: `just archplan-export`.
 model.archmodel.json
+vocab-cache.json

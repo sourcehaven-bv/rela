@@ -159,6 +159,8 @@ func NewDeclarative(p *Policy, g Graph, fm FaceMatcher, opts ...DeclarativeOptio
 // (`X-Forwarded-User`) path carries an identity worth resolving. If a
 // future entry point needs the same resolution, wire this in there too —
 // don't assume one `acl.yaml` means the same thing on every transport.
+//
+//archplan:guard=authn reason="maps the identity from the JWT gate or the trusted proxy header to a person entity; verifies nothing itself"
 func (d *Declarative) ResolvePrincipal(ctx context.Context, rawUser string) (string, error) {
 	if !d.policy.principalPropertyLookupEnabled() || strings.TrimSpace(rawUser) == "" {
 		return "", nil
@@ -214,6 +216,8 @@ func (d *Declarative) Policy() *Policy {
 // the principal carried on ctx, then delegates to
 // [Request.AuthorizeWrite] which dispatches on Subject variant. An
 // unstamped principal short-circuits to a structured deny.
+//
+//archplan:guard=authz reason="checks the write against the ACL policy"
 func (d *Declarative) AuthorizeWrite(ctx context.Context, req WriteRequest) Decision {
 	// unmatched_principal gate: a verified principal that resolved to no user
 	// entity (flagged by the data-entry middleware) is denied its writes when

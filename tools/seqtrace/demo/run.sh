@@ -175,12 +175,13 @@ step "Sending scenarios"
 mkdir -p "$WORK/responses"
 n=0
 # req NAME USER METHOD PATH [BODY]: one request, recorded as one diagram.
+# USER - sends no identity header.
 req() {
     local name=$1 user=$2 method=$3 path=$4 body=${5:-}
     n=$((n + 1))
     echo "$name" >>"$WORK/names.txt"
-    local args=(-s -o "$WORK/responses/$(printf %02d $n).json" -w '%{http_code}' -X "$method"
-        -H "X-Forwarded-User: $user" -H "Origin: $BASE")
+    local args=(-s -o "$WORK/responses/$(printf %02d $n).json" -w '%{http_code}' -X "$method" -H "Origin: $BASE")
+    [[ $user != - ]] && args+=(-H "X-Forwarded-User: $user")
     [[ -n "$body" ]] && args+=(-H 'Content-Type: application/json' -d "$body")
     local code
     code=$(curl "${args[@]}" "$BASE$path") || true
@@ -204,6 +205,31 @@ req "update task as reader, denied" "$CAROL" PATCH "/api/v1/tasks/$TASK" '{"prop
 req "create task as editor" "$BOB" POST "/api/v1/tasks" \
     '{"id":"TSK-SEQTRACE","properties":{"title":"Traced task","status":"todo","priority":"low"}}'
 req "delete task as editor" "$BOB" DELETE "/api/v1/tasks/TSK-SEQTRACE"
+
+# SEQTRACE_SUITE=routes adds one request per route family, so a trace shows
+# the identity and access checks on each: reads as the reader, writes the
+# reader may not make, requests without an identity header, and the routes
+# outside /api/. The labels say what should happen ("denied"); the trace
+# shows what did. It runs against the throwaway demo database.
+if [[ ${SEQTRACE_SUITE:-} == routes ]]; then
+    for p in _me _schema _config _sidebar _nav_status _nav_items _dashboard _conflicts _commands _transforms \
+        _piles _settings _palette _theme/export _git/status _copies _leases _openapi.json _feeds/ _documents/ \
+        _templates/ _views/ _apps/ _next_action "_comments/tasks/$TASK" "_history/tasks/$TASK"; do
+        req "route GET /api/v1/$p as reader" "$CAROL" GET "/api/v1/$p"
+    done
+    req "route GET /api/help/task as reader" "$CAROL" GET "/api/help/task"
+    req "route GET /api/v1/_configure as reader" "$CAROL" GET "/api/v1/_configure"
+    req "route PUT /api/v1/_settings as reader, denied" "$CAROL" PUT "/api/v1/_settings" '{}'
+    req "route POST /api/v1/_git/sync as reader, denied" "$CAROL" POST "/api/v1/_git/sync" '{}'
+    req "route POST /api/command/x as reader, denied" "$CAROL" POST "/api/command/x" '{}'
+    req "route DELETE task as reader, denied" "$CAROL" DELETE "/api/v1/tasks/$TASK"
+    req "route GET task without identity" - GET "/api/v1/tasks/$TASK"
+    req "route GET /api/v1/_me without identity" - GET "/api/v1/_me"
+    req "route PATCH task without identity" - PATCH "/api/v1/tasks/$TASK" '{"properties":{"priority":"low"}}'
+    req "route GET / (SPA shell)" - GET "/"
+    req "route GET /_custom/custom.css" - GET "/_custom/custom.css"
+    req "route GET /static/missing" - GET "/static/missing"
+fi
 
 sleep 1 # the runtime flushes every 250 ms
 kill -0 "$SERVER_PID" 2>/dev/null || { cat "$WORK/server.log" >&2; die "server exited during the scenarios"; }

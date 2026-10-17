@@ -128,6 +128,7 @@ func (v *ValidatedKV) Get(ctx context.Context, key string) ([]byte, error) {
 	return v.inner.Get(ctx, key)
 }
 
+//archplan:sink=write reason="project-wide UI state (settings, palette, logo)"
 func (v *ValidatedKV) Put(ctx context.Context, key string, data []byte) error {
 	if err := ValidateKey(key); err != nil {
 		return err
@@ -135,6 +136,7 @@ func (v *ValidatedKV) Put(ctx context.Context, key string, data []byte) error {
 	return v.inner.Put(ctx, key, data)
 }
 
+//archplan:sink=write reason="project-wide UI state (settings, palette, logo)"
 func (v *ValidatedKV) Delete(ctx context.Context, key string) error {
 	if err := ValidateKey(key); err != nil {
 		return err

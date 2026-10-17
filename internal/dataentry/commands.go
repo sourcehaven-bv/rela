@@ -667,6 +667,7 @@ func (h *commandHandler) buildCommandInput(
 // browser tab, bypassing same-origin policy entirely.
 //
 //nolint:funlen // dispatches over every command context and argument shape inline; each branch is one command variant, and extracting them would fragment the request lifecycle.
+//archplan:auth=required
 func (h *commandHandler) handleCommandExec(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)

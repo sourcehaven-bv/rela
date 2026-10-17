@@ -408,6 +408,7 @@ func (h *writeHandler) writeCreateRelations(
 	return warnings, true
 }
 
+//archplan:auth=required
 func (h *writeHandler) handleV1CreateEntity(w http.ResponseWriter, r *http.Request, typeName, plural string) {
 	r = h.withProvision(r)
 
@@ -844,6 +845,7 @@ func writeFieldConflict(
 }
 
 //nolint:gocognit,funlen // update handler threads the validation-policy classes (400/422/200-with-warnings) through each field; the branches are the documented write-policy cases, not extractable shared logic.
+//archplan:auth=required
 func (h *writeHandler) handleV1UpdateEntity(w http.ResponseWriter, r *http.Request, typeName, plural, entityID string) {
 	r = h.withProvision(r)
 
@@ -1082,6 +1084,7 @@ func (h *writeHandler) handleV1UpdateEntity(w http.ResponseWriter, r *http.Reque
 	writeV1JSON(w, http.StatusOK, result)
 }
 
+//archplan:auth=required
 func (h *writeHandler) handleV1DeleteEntity(w http.ResponseWriter, r *http.Request, typeName, _, entityID string) {
 	r = h.withProvision(r)
 
