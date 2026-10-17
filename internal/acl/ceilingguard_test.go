@@ -263,6 +263,62 @@ client_baselines:
 	}
 }
 
+// TestCeilingPermitsVerb pins the exported ceiling check to the ceiling
+// alone: it ignores the roles and the rows (a principal with no write grant
+// is still admitted when no ceiling applies), it narrows like permitsVerb,
+// and it refuses an op it does not map to a ceiling axis.
+func TestCeilingPermitsVerb(t *testing.T) {
+	t.Parallel()
+	p := mustPolicy(t, `
+roles:
+  reader:
+    read: ["*"]
+assignments:
+  alice: reader
+client_baselines:
+  apps:
+    applies_to: [app]
+    read: ["*"]
+    deny_write: [ticket]
+`)
+	d, err := NewDeclarative(p, NullGraph{}, NullGraphQueryer{})
+	if err != nil {
+		t.Fatalf("NewDeclarative: %v", err)
+	}
+	user, err := d.ForPrincipal(verifiedClient("alice", "user"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	app, err := d.ForPrincipal(verifiedClient("alice", "app"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	tests := []struct {
+		name string
+		req  *Request
+		op   Op
+		typ  string
+		want bool
+	}{
+		{"no ceiling admits an update the roles do not grant", user, OpUpdate, "ticket", true},
+		{"no ceiling admits create", user, OpCreate, "ticket", true},
+		{"ceiling denies update on a denied type", app, OpUpdate, "ticket", false},
+		{"ceiling denies delete on a denied type", app, OpDelete, "ticket", false},
+		{"ceiling denies rename on a denied type", app, OpRename, "ticket", false},
+		{"ceiling admits update on another type", app, OpUpdate, "doc", true},
+		{"unhandled op is refused without a ceiling", user, Op("read"), "ticket", false},
+		{"unhandled op is refused under a ceiling", app, Op(""), "doc", false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if got := CeilingPermitsVerb(tc.req, tc.op, tc.typ); got != tc.want {
+				t.Errorf("CeilingPermitsVerb(%q, %q) = %v, want %v", tc.op, tc.typ, got, tc.want)
+			}
+		})
+	}
+}
+
 func equalStrings(a, b []string) bool {
 	if len(a) != len(b) {
 		return false

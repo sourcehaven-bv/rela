@@ -48,9 +48,10 @@ type Store interface {
 	SetAction(ctx context.Context, key Key, seq int64, name string, expect ActionStatus, next Action) (Message, error)
 
 	// CreateMany creates a named channel on anchor, with a minted name, and
-	// returns it. The anchor may hold at most [MaxChannelsPerType] named
+	// returns it. The anchor may hold at most [NewChannel.Cap] named
 	// channels of the type, counting channels of every incarnation; the
-	// check and the create are one step. Writes an audit record.
+	// check and the create are one step, so concurrent creates never
+	// exceed it. Writes an audit record.
 	CreateMany(ctx context.Context, anchor Anchor, nc NewChannel) (Channel, error)
 
 	// SetLifecycle moves the channel from state expect to t.To as one
@@ -137,14 +138,19 @@ type Store interface {
 
 	// TypeRecords returns the record of each channel type the store holds
 	// one for (see [TypeRecord]). A store that recorded nothing returns an
-	// empty map. Compare it with the configuration through
+	// empty map. A record written before cardinality was kept reads with
+	// [CardinalityUnknown]. Compare it with the configuration through
 	// [TypeRecordChanges].
 	TypeRecords(ctx context.Context) (map[string]TypeRecord, error)
 
-	// RecordTypes records each given type, replacing a record already held
-	// for it, and writes nothing for a type whose record is unchanged.
-	// Types not given keep theirs. An invalid type is [ErrInvalidKey], an
-	// unknown mode or cardinality [ErrInvalidMessage]; either way nothing
-	// is recorded.
+	// RecordTypes records each given type that the store holds no record
+	// for, and adds the given refs to the record of a type it does hold.
+	// It never replaces an anchor mode or cardinality: a record that
+	// differs from the held one in either, or whose Plain names a held
+	// ref, is [ErrTypeShapeConflict] (see [MergeTypeRecord]). A held
+	// [CardinalityUnknown] is the exception: it matches, and the call sets
+	// it to the given cardinality. It writes nothing when nothing is new. Types not given keep theirs. An invalid
+	// type is [ErrInvalidKey], an unknown mode or cardinality
+	// [ErrInvalidMessage]; on any error nothing is recorded.
 	RecordTypes(ctx context.Context, records map[string]TypeRecord) error
 }

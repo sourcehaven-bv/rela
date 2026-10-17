@@ -31,6 +31,45 @@ const (
 	MaxTitleRunes = 200
 	// MaxReasonRunes caps the reason given for removing a message.
 	MaxReasonRunes = 500
+	// MaxEphemeralBytes caps the JSON encoding of one signal's properties.
+	// A signal is held in memory, so it is far smaller than a message.
+	MaxEphemeralBytes = 1 << 10
+	// MaxEphemeralTotalBytes caps the properties of every live signal in
+	// one process together. A signal over the budget is refused.
+	MaxEphemeralTotalBytes = 8 << 20
+	// MaxEphemeralPerIdentity caps the live signals of one identity in one
+	// process. A signal over the cap is refused; none is evicted.
+	MaxEphemeralPerIdentity = 32
+	// EphemeralRingShare caps the live signals of one identity in one
+	// channel's ring. It is well below half of [EphemeralRingSize], so no
+	// two identities can fill a ring between them. A signal over the share
+	// replaces the poster's own oldest signal in that ring.
+	EphemeralRingShare = 8
+	// MaxEphemeralChannelsPerIdentity caps the channels in which one
+	// identity holds live signals in one process. With
+	// [MaxEphemeralChannels], it takes 1024 identities to occupy every
+	// channel slot.
+	MaxEphemeralChannelsPerIdentity = 4
+	// MaxEphemeralChannels caps the channels that hold live signals in one
+	// process. A signal to another channel is refused while the cap holds.
+	MaxEphemeralChannels = 4096
+	// MaxRateBucketsPerIdentity caps the per-channel rate-limit buckets of
+	// one identity in one process. A request that needs another one is
+	// refused for that identity only.
+	MaxRateBucketsPerIdentity = 64
+	// MaxRateBuckets caps the per-channel rate-limit buckets of one process,
+	// across identities. At [MaxRateBucketsPerIdentity] each, it takes 512
+	// identities writing at once to fill it. A request that needs a new
+	// bucket is refused while the cap holds.
+	MaxRateBuckets = 32768
+	// MaxRateIdentities caps the identities one process keeps rate-limit
+	// state for. Their aggregate buckets live apart from the per-channel
+	// ones, so filling [MaxRateBuckets] never keeps a new identity out.
+	MaxRateIdentities = 16384
+	// MaxSubscriberChanges caps the changed channels one live subscriber
+	// accumulates between two takes. Past it, the subscriber is told to
+	// resync everything instead.
+	MaxSubscriberChanges = 1024
 )
 
 // Rate is a token-bucket rate: Count events per Per.
@@ -45,6 +84,12 @@ var (
 	DefaultLogRate = Rate{Count: 30, Per: time.Minute}
 	// DefaultEphemeralRate applies to signals (ephemeral message types).
 	DefaultEphemeralRate = Rate{Count: 2, Per: time.Second}
+	// IdentityRate caps every channel write of one identity together
+	// (user and organization), across channels, operations and types.
+	IdentityRate = Rate{Count: 300, Per: time.Minute}
+	// OpRate applies to the channel operations that are not a post: create,
+	// edit and remove.
+	OpRate = Rate{Count: 30, Per: time.Minute}
 )
 
 // PerSecond returns the rate as events per second.

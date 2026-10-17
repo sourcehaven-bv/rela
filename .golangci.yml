@@ -355,6 +355,16 @@ linters:
           - contextcheck
         path: internal/dataentry/comments_handler\.go
         text: commentAccept
+      # contextcheck in internal/realtime: the same derivation seam. Every
+      # channel operation opens one realtime.Access through AccessSource.For,
+      # which returns the caller's context with the operation's acl.Request
+      # attached (acl.WithRequest, a context.WithValue). The operation keeps
+      # that context on its per-call state (call.ctx), so the gated anchor and
+      # ref reads evaluate against the same request; contextcheck cannot trace
+      # the derivation through the returned context and flags every store call.
+      - linters:
+          - contextcheck
+        path: internal/realtime/(service|ops)\.go
       - linters:
           - dupl
           - errcheck

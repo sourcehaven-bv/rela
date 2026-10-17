@@ -1,0 +1,285 @@
+package appbuild
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"sync"
+	"time"
+
+	"github.com/Sourcehaven-BV/rela/internal/access"
+	"github.com/Sourcehaven-BV/rela/internal/acl"
+	"github.com/Sourcehaven-BV/rela/internal/channels"
+	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/metamodel"
+	"github.com/Sourcehaven-BV/rela/internal/predicatefns"
+	"github.com/Sourcehaven-BV/rela/internal/principal"
+	"github.com/Sourcehaven-BV/rela/internal/realtime"
+	"github.com/Sourcehaven-BV/rela/internal/realtimecfg"
+	"github.com/Sourcehaven-BV/rela/internal/store"
+	"github.com/Sourcehaven-BV/rela/internal/visibility"
+)
+
+// ChannelService returns the channel service of s. A package function
+// because [Services] is at its plimsoll cap.
+//
+// Nil: s is accepted and returns nil, as does a Services built by
+// [NewFromCollaborators], which has no channel store.
+func ChannelService(s *Services) *realtime.Service {
+	if s == nil {
+		return nil
+	}
+	return s.channelService
+}
+
+// buildRealtimeService builds the channel service over cs for one assembly.
+// The service is per assembly, so its access checks follow the current ACL;
+// local is the process-local state successive assemblies share (see
+// [SharedBase.ForReassembly]), or nil for a first assembly, which makes it.
+//
+// Reads of anchors and refs go through the gated, redacted reader
+// [scriptReads] builds from the same inputs as the entity read paths, so a
+// channel route answers not-found exactly where an entity GET does.
+func buildRealtimeService(
+	base *SharedBase, st store.Store, cs channels.Store, local *realtime.Local,
+	d *acl.Declarative, redactor visibility.FieldRedactor, writes acl.ACL,
+) (*realtime.Service, *realtime.Local, error) {
+	if local == nil {
+		var err error
+		if local, err = realtime.NewLocal(time.Now); err != nil {
+			return nil, nil, err
+		}
+	}
+	rows, _ := scriptReads(st, d, redactor, base.worlds)
+	svc, err := realtime.New(realtime.Deps{
+		Store:   cs,
+		Config:  realtimeConfigSource{h: base.realtime},
+		Access:  aclAccessSource{d: d, writes: writes},
+		Anchors: anchorReader{rows: rows},
+		Refs:    refResolver{rows: rows, meta: base.meta},
+		Local:   local,
+	})
+	if err != nil {
+		return nil, nil, err
+	}
+	return svc, local, nil
+}
+
+// headerReader is the batch header read of the gated reader.
+type headerReader interface {
+	ResolveHeadersErr(ctx context.Context, refs []entity.Ref) (map[entity.Ref]visibility.ResolvedHeader, error)
+}
+
+// realtimeConfigSource adapts the holder to [realtime.ConfigSource].
+type realtimeConfigSource struct{ h *RealtimeConfig }
+
+func (s realtimeConfigSource) Load() realtime.Snapshot {
+	snap := s.h.Load()
+	return realtime.Snapshot{Config: snap.Config, Degraded: snap.Degraded}
+}
+
+// aclAccessSource opens one [realtime.Access] per operation. Under a
+// declarative policy it reuses the request's acl.Request when the handler
+// attached one, else opens one, and attaches it to the context it returns,
+// so the gated reads of that operation evaluate against the same request.
+// Without a policy (NopACL, ReadOnlyACL) every permission is held, and the
+// write ACL decides whether anything may be written.
+type aclAccessSource struct {
+	d      *acl.Declarative
+	writes acl.ACL
+}
+
+func (s aclAccessSource) For(ctx context.Context) (context.Context, realtime.Access, error) {
+	q, _ := queryIdentityFor(ctx)
+	if s.d == nil {
+		writable := !access.ModeOf(s.writes).RefusesWrites()
+		return ctx, openAccess{p: principal.From(ctx), q: q, writable: writable}, nil
+	}
+	req := acl.FromContext(ctx)
+	if req == nil {
+		var err error
+		if req, err = s.d.ForPrincipal(principal.From(ctx)); err != nil {
+			if errors.Is(err, acl.ErrUnstampedPrincipal) {
+				return nil, nil, fmt.Errorf("%w: %w", realtime.ErrNoPrincipal, err)
+			}
+			return nil, nil, err
+		}
+		ctx = acl.WithRequest(ctx, req)
+	}
+	return ctx, requestAccess{req: req, q: q}, nil
+}
+
+// requestAccess answers from one acl.Request.
+type requestAccess struct {
+	req *acl.Request
+	q   predicatefns.QueryIdentity
+}
+
+func (a requestAccess) Principal() principal.Principal            { return a.req.Principal() }
+func (a requestAccess) QueryIdentity() predicatefns.QueryIdentity { return a.q }
+
+func (a requestAccess) HoldsPermissionFor(ctx context.Context, anchorID, perm string) bool {
+	return a.req.HoldsPermissionForEntity(ctx, anchorID, perm)
+}
+
+func (a requestAccess) CeilingAdmitsUpdate(entityType string) bool {
+	return acl.CeilingPermitsVerb(a.req, acl.OpUpdate, entityType)
+}
+
+// openAccess answers without a policy: every permission is held and there
+// is no client ceiling. writable is false under ReadOnlyACL, which refuses
+// every write.
+type openAccess struct {
+	p        principal.Principal
+	q        predicatefns.QueryIdentity
+	writable bool
+}
+
+func (a openAccess) Principal() principal.Principal                          { return a.p }
+func (a openAccess) QueryIdentity() predicatefns.QueryIdentity               { return a.q }
+func (a openAccess) HoldsPermissionFor(context.Context, string, string) bool { return true }
+func (a openAccess) CeilingAdmitsUpdate(string) bool                         { return a.writable }
+
+// anchorReader reads a channel anchor through one batch header read: the
+// row gate, the readable faces and field redaction all apply, and a bare id
+// serves the face the world ranks first among the readable ones.
+type anchorReader struct{ rows headerReader }
+
+func (r anchorReader) Anchor(ctx context.Context, addr entity.Address, props []string) (realtime.AnchorView, error) {
+	ref, named := addr.Named()
+	if !named {
+		// A bare id parses to the implicit face, the form ResolveHeaders
+		// reads as the whole family.
+		var err error
+		if ref, err = entity.ParseRef(addr.ID()); err != nil {
+			return realtime.AnchorView{}, realtime.ErrAnchorNotFound
+		}
+	}
+	got, err := r.rows.ResolveHeadersErr(ctx, []entity.Ref{ref})
+	if err != nil {
+		return realtime.AnchorView{}, err
+	}
+	h, ok := got[ref]
+	if !ok || !h.Served() {
+		return realtime.AnchorView{}, realtime.ErrAnchorNotFound
+	}
+	view := realtime.AnchorView{ID: h.Header.ID, Face: h.Header.Face, Type: h.Header.Type}
+	if len(props) > 0 {
+		view.Props = make(map[string]any, len(props))
+		for _, p := range props {
+			if v, ok := h.Header.Properties[p]; ok {
+				view.Props[p] = v
+			}
+		}
+	}
+	return view, nil
+}
+
+// refResolver resolves ref properties through one batch header read. The
+// headers are already redacted, so a title built from a hidden property
+// falls back to the id.
+type refResolver struct {
+	rows headerReader
+	meta *metamodel.Metamodel
+}
+
+func (r refResolver) Resolve(ctx context.Context, ids []string) (map[string]realtime.RefView, error) {
+	refs := make([]entity.Ref, 0, len(ids))
+	for _, id := range ids {
+		if ref, err := entity.ParseRef(id); err == nil && ref.Face.IsImplicit() {
+			refs = append(refs, ref)
+		}
+	}
+	got, err := r.rows.ResolveHeadersErr(ctx, refs)
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[string]realtime.RefView, len(got))
+	for ref, h := range got {
+		if !h.Served() {
+			continue
+		}
+		out[ref.ID] = realtime.RefView{
+			ID: ref.ID, Type: h.Header.Type,
+			Title: r.meta.DisplayTitle(ref.ID, h.Header.Type, h.Header.Properties),
+		}
+	}
+	return out, nil
+}
+
+// typeRecordReader is the part of a channel store a reload checks.
+type typeRecordReader interface {
+	TypeRecords(ctx context.Context) (map[string]channels.TypeRecord, error)
+}
+
+// recordSources are the channel stores of the live assemblies of one
+// holder. Reload holds a new config against the type records of each.
+type recordSources struct {
+	mu   sync.Mutex
+	next int
+	srcs map[int]typeRecordReader
+}
+
+// watchTypeRecords makes Reload check src's type records until the
+// returned stop is called.
+//
+// Nil: r and src are accepted; either makes it a no-op.
+func (r *RealtimeConfig) watchTypeRecords(src typeRecordReader) func() {
+	if r == nil || src == nil {
+		return func() {}
+	}
+	r.records.mu.Lock()
+	defer r.records.mu.Unlock()
+	if r.records.srcs == nil {
+		r.records.srcs = map[int]typeRecordReader{}
+	}
+	id := r.records.next
+	r.records.next++
+	r.records.srcs[id] = src
+	return func() {
+		r.records.mu.Lock()
+		defer r.records.mu.Unlock()
+		delete(r.records.srcs, id)
+	}
+}
+
+// checkTypeRecords refuses next when it changes the anchor or cardinality
+// of a channel type a watched store has recorded, or declares one of its
+// recorded refs as another property type.
+func (r *RealtimeConfig) checkTypeRecords(ctx context.Context, next *realtimecfg.Compiled) error {
+	if next == nil {
+		return nil
+	}
+	r.records.mu.Lock()
+	srcs := make([]typeRecordReader, 0, len(r.records.srcs))
+	for _, s := range r.records.srcs {
+		srcs = append(srcs, s)
+	}
+	r.records.mu.Unlock()
+	for _, src := range srcs {
+		if err := checkRecords(ctx, src, next); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// checkRecords holds cfg against the type records of src: a changed anchor
+// or cardinality of a recorded type, or a recorded ref cfg declares as
+// another property type, is a [realtimecfg.ShapeMismatch]. Boot and reload
+// both report through it.
+func checkRecords(ctx context.Context, src typeRecordReader, cfg *realtimecfg.Compiled) error {
+	recs, err := src.TypeRecords(ctx)
+	if err != nil {
+		return fmt.Errorf("channels: read the recorded channel types: %w", err)
+	}
+	stored := make(map[string]realtimecfg.TypeShape, len(recs))
+	for typ, rec := range recs {
+		stored[typ] = realtimecfg.TypeShape{
+			Anchor:      realtimecfg.Anchor(rec.Anchor),
+			Cardinality: realtimecfg.Cardinality(rec.Cardinality),
+			Refs:        rec.Refs,
+		}
+	}
+	return realtimecfg.ShapeMismatchError(realtimecfg.ShapeMismatches(cfg, stored))
+}

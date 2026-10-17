@@ -44,6 +44,14 @@ func TestConformance(t *testing.T) {
 		require.NoError(t, err)
 		return channelstest.Harness{
 			Store: s,
+			// A row from before migration 28: the column default fills
+			// cardinality.
+			SeedLegacyType: func(t *testing.T, typ string, anchor channels.AnchorMode) {
+				t.Helper()
+				_, err := pool.Exec(context.Background(),
+					`INSERT INTO channel_types (type, anchor_mode) VALUES ($1, $2)`, typ, string(anchor))
+				require.NoError(t, err)
+			},
 			Raw: func(t *testing.T) []byte {
 				t.Helper()
 				raw, err := sqlchannels.Raw(context.Background(), s)

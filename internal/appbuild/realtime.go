@@ -57,6 +57,9 @@ type RealtimeConfig struct {
 	// anchors against it so deleting realtime.yaml and adding it back with
 	// another anchor cannot bypass [realtimecfg.CheckReload].
 	last *realtimecfg.Compiled
+	// records are the channel stores Reload checks a new config against
+	// (see watchTypeRecords).
+	records recordSources
 }
 
 // Load returns the current snapshot.
@@ -68,8 +71,9 @@ func (r *RealtimeConfig) Load() RealtimeSnapshot {
 }
 
 // Reload re-reads realtime.yaml against the schema and policy the holder
-// was built with. A file that fails to load, or a change [realtimecfg.CheckReload]
-// refuses, leaves the previous snapshot in place and returns the problem:
+// was built with. A file that fails to load, a change [realtimecfg.CheckReload]
+// refuses, or a changed anchor or cardinality of a channel type a channel
+// store has recorded, leaves the previous snapshot in place and returns the problem:
 // the schema and acl.yaml did not change, so the previous config is still
 // valid. A deleted file turns realtime off.
 func (r *RealtimeConfig) Reload(ctx context.Context) error {
@@ -83,6 +87,9 @@ func (r *RealtimeConfig) Reload(ctx context.Context) error {
 		return err
 	}
 	if err := realtimecfg.CheckReload(r.last, next); err != nil {
+		return err
+	}
+	if err := r.checkTypeRecords(ctx, next); err != nil {
 		return err
 	}
 	if next != nil {

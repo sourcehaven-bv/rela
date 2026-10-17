@@ -65,6 +65,10 @@ override:
     threshold: 90
   - path: ^internal/realtimelimits$
     threshold: 95
+  # The channel service (TKT-ZU7P13) decides who may read and write a
+  # channel, so it is pinned above the default floor (~90% today).
+  - path: ^internal/realtime$
+    threshold: 85
 
   # Data classification overlay (TKT-8UCV32): a parser and a file rewriter
   # whose mistakes silently mislabel data, so pinned above the default floor.
