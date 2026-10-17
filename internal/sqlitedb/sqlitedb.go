@@ -277,8 +277,6 @@ func dsn(opts Options) string {
 // silent no-op against an existing table of a different shape — carrying an
 // older database forward is migrate.go's job, and every change here needs a
 // matching step there.
-//
-//nolint:gosec // G202: joins constant DDL only; no input reaches it
 var schemaSQL = `
 CREATE TABLE IF NOT EXISTS entities (
 	id          TEXT NOT NULL,
@@ -775,6 +773,8 @@ CREATE TABLE IF NOT EXISTS entity_search_key (
 //
 // It runs after the ladder, as mentionsDDL does, because it reads
 // entities.search_text, which a pre-v20 table gains only in the v20 rung.
+//
+//nolint:gosec // G202: joins constant DDL only; no input reaches it
 var searchDDL = searchKeyDDL + `
 CREATE VIRTUAL TABLE IF NOT EXISTS entity_search USING fts5(body, tokenize = 'trigram case_sensitive 1');
 CREATE INDEX IF NOT EXISTS entities_search_pending_idx ON entities(id, face) WHERE search_text IS NULL;
