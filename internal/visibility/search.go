@@ -188,6 +188,8 @@ func SearchScoped(
 }
 
 // withFieldScopes returns a copy of scope with each type's field scope set.
+// A field scope the caller already set is kept when the policy hides nothing
+// for the type, and refused when the policy has one too; it is never widened.
 // Under a wildcard entry, every type in types without an entry of its own
 // gets one carrying the wildcard's verdict, so its field scope has a place to
 // ride. The row verdict is unchanged: an explicit entry wins over the
@@ -212,8 +214,15 @@ func withFieldScopes(
 		if err != nil {
 			return nil, fmt.Errorf("%w: field scope for %q: %w", search.ErrScope, typ, err)
 		}
-		if fs == nil && ts.Fields == nil {
+		switch {
+		case fs == nil:
+			// The policy hides nothing here; a scope the caller set stays.
+			// Replacing it with nil would widen what the search may match.
 			continue
+		case ts.Fields != nil:
+			// Two scopes would have to be intersected, and nothing composes
+			// them yet; refuse rather than drop either.
+			return nil, fmt.Errorf("%w: type %q already carries a field scope", search.ErrScope, typ)
 		}
 		ts.Fields = fs
 		out[typ] = ts
