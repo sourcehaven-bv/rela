@@ -707,8 +707,8 @@ CREATE TABLE IF NOT EXISTS channel_types (
 ) STRICT;` + channelTypeRefsDDL
 
 // channelTypeRefsDDL holds the ref properties recorded for each channel
-// type (see channels.TypeRecord). Shared between channelsDDL and the v18 to
-// v19 rung.
+// type (see channels.TypeRecord). Shared between channelsDDL and the v19 to
+// v20 rung.
 const channelTypeRefsDDL = `
 CREATE TABLE IF NOT EXISTS channel_type_refs (
 	type TEXT NOT NULL,

@@ -4,6 +4,6 @@ type: review-response
 title: Changing a property away from ref exposes stored entity ids
 finding: render.go decides ref rendering from the current config; CheckReload compares only anchor and cardinality. Changing a ref property to string (or replacing a message type) renders stored ref ids as plain strings to every reader, including readers who cannot see the entity.
 severity: significant
-resolution: Ref properties are recorded in the store (migration 0027 / sqlite v19) and only grow; boot and reload refuse a config turning a recorded ref into another type and writes under it get 409; rendering omits undeclared properties and message types.
+resolution: Ref properties are recorded in the store (migration 0028 / sqlite v20) and only grow; boot and reload refuse a config turning a recorded ref into another type and writes under it get 409; rendering omits undeclared properties and message types.
 status: addressed
 ---
