@@ -13,13 +13,25 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/realtimelimits"
 )
 
+// LifecycleDelete and [IsLifecycleOp] carry the lifecycle names across the
+// package boundary: the channel routes in dataentry may not import
+// realtimecfg (see .go-arch-lint.yml), so they learn the names here.
+
 // LifecycleDelete names the delete operation, which leaves no channel to
 // answer with.
 const LifecycleDelete = realtimecfg.LifecycleDelete
 
 // IsLifecycleOp reports whether op names a lifecycle operation. A route
-// naming anything else is not a channel route.
-func IsLifecycleOp(op string) bool { return slices.Contains(realtimecfg.LifecycleOpNames(), op) }
+// naming anything else is not a channel route. It runs on every route
+// parse, so it compares without building the name list.
+func IsLifecycleOp(op string) bool {
+	switch op {
+	case realtimecfg.LifecycleClose, realtimecfg.LifecycleReopen,
+		realtimecfg.LifecycleArchive, realtimecfg.LifecycleDelete:
+		return true
+	}
+	return false
+}
 
 // Lifecycle runs the lifecycle operation op (close, reopen, archive or
 // delete) on the channel at addr, and returns the channel as it is after
@@ -55,6 +67,7 @@ func (s *Service) Lifecycle(ctx context.Context, addr RawAddress, op string) (Ch
 		return ChannelView{}, err
 	}
 	if op == realtimecfg.LifecycleDelete {
+		//nolint:contextcheck // c.ctx is ctx with the acl.Request attached; see .golangci.yml on realtime.
 		err = s.store.Delete(c.ctx, c.key, channels.Deletion{
 			Expect: c.head.State, Rev: c.head.Rev, By: authorOf(c.p), At: c.now,
 		})
@@ -64,6 +77,7 @@ func (s *Service) Lifecycle(ctx context.Context, addr RawAddress, op string) (Ch
 		s.local.mark(c.key)
 		return ChannelView{}, nil
 	}
+	//nolint:contextcheck // c.ctx is ctx with the acl.Request attached; see .golangci.yml on realtime.
 	ch, err := s.store.SetLifecycle(c.ctx, c.key, c.head.State,
 		channels.Transition{To: target, By: authorOf(c.p), At: c.now})
 	if err != nil {

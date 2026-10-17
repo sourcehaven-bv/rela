@@ -505,3 +505,15 @@ func TestLifecycle_AffordanceAndGateAgree(t *testing.T) {
 		}
 	}
 }
+
+// TestIsLifecycleOp pins that the route check knows exactly the operation
+// names realtimecfg lists.
+func TestIsLifecycleOp(t *testing.T) {
+	t.Parallel()
+	for _, op := range realtimecfg.LifecycleOpNames() {
+		require.True(t, IsLifecycleOp(op), op)
+	}
+	for _, op := range []string{"", "explode", "Close", "messages"} {
+		require.False(t, IsLifecycleOp(op), op)
+	}
+}

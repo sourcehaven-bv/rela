@@ -522,7 +522,7 @@ func TestChannels_ErrorMapping(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			app := newTestAppV1(t)
 			stub := stubChannels{err: tc.err}
-			app.channels = &channelsHandler{svc: stub, on: stub}
+			app.channels = &channelsHandler{read: stub, messageOps: stub, channels: stub, on: stub}
 			router := app.NewRouter()
 			for _, rq := range []struct{ method, path, body string }{
 				{http.MethodGet, "/api/v1/tickets/TKT-1/_channels", ""},

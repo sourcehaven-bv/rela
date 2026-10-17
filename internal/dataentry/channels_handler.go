@@ -28,17 +28,29 @@ const (
 	channelBodyLimit = realtimelimits.MaxMessageBytes + 1<<10
 )
 
-// ChannelService is the channel capability the channel routes use. The
-// wiring site passes the project's *realtime.Service, which authorizes
-// every operation itself.
-type ChannelService interface {
+// The channel routes use the channel service through three narrow
+// capabilities, one per kind of route. The wiring site passes the
+// project's *realtime.Service for all three; it authorizes every
+// operation itself.
+
+// channelReader serves the read routes: the list, the head and the pages.
+type channelReader interface {
 	ListAnchor(ctx context.Context, entityType, anchor string, state channels.State) (realtime.AnchorChannels, error)
 	Head(ctx context.Context, addr realtime.RawAddress) (realtime.HeadView, error)
 	Messages(ctx context.Context, addr realtime.RawAddress, page channels.Page) (realtime.MessagePage, error)
+}
+
+// messageWriter serves the message routes: post, edit and delete.
+type messageWriter interface {
 	Post(ctx context.Context, addr realtime.RawAddress, in realtime.PostInput) (realtime.PostResult, error)
-	Create(ctx context.Context, entityType, anchor, typ string, in realtime.CreateInput) (realtime.ChannelView, error)
 	Edit(ctx context.Context, addr realtime.RawAddress, seq int64, props map[string]any) (realtime.MessageView, error)
 	Delete(ctx context.Context, addr realtime.RawAddress, seq int64, reason string) (realtime.MessageView, error)
+}
+
+// channelWriter serves the routes that act on a channel itself: create and
+// the lifecycle operations.
+type channelWriter interface {
+	Create(ctx context.Context, entityType, anchor, typ string, in realtime.CreateInput) (realtime.ChannelView, error)
 	Lifecycle(ctx context.Context, addr realtime.RawAddress, op string) (realtime.ChannelView, error)
 }
 
@@ -67,7 +79,9 @@ type realtimeSwitch interface {
 // A nil *channelsHandler is "channels not wired": every route answers the
 // entity GET's uniform 404, as with realtime off. [SetChannels] installs it.
 type channelsHandler struct {
-	svc ChannelService
+	read       channelReader
+	messageOps messageWriter
+	channels   channelWriter
 	// on answers whether realtime is on; see [channelsHandler.serve].
 	on realtimeSwitch
 	// changes subscribes the live worker to channel changes.
@@ -85,7 +99,7 @@ func SetChannels(a *App, svc *realtime.Service) error {
 		return errors.New("dataentry: SetChannels requires a channel service")
 	}
 	a.channels = &channelsHandler{
-		svc:     svc,
+		read: svc, messageOps: svc, channels: svc,
 		on:      svc,
 		changes: func() channelChanges { return svc.Subscribe() },
 	}
@@ -218,7 +232,7 @@ func (h *channelsHandler) list(w http.ResponseWriter, r *http.Request, typeName,
 			"state must be open, closed or archived")
 		return
 	}
-	got, err := h.svc.ListAnchor(r.Context(), typeName, ref, state)
+	got, err := h.read.ListAnchor(r.Context(), typeName, ref, state)
 	if err != nil {
 		writeChannelError(w, r, err)
 		return
@@ -230,7 +244,7 @@ func (h *channelsHandler) list(w http.ResponseWriter, r *http.Request, typeName,
 }
 
 func (h *channelsHandler) head(w http.ResponseWriter, r *http.Request, rt channelRoute) {
-	got, err := h.svc.Head(r.Context(), rt.addr)
+	got, err := h.read.Head(r.Context(), rt.addr)
 	if err != nil {
 		writeChannelError(w, r, err)
 		return
@@ -244,7 +258,7 @@ func (h *channelsHandler) messages(w http.ResponseWriter, r *http.Request, rt ch
 	if !ok {
 		return
 	}
-	got, err := h.svc.Messages(r.Context(), rt.addr, page)
+	got, err := h.read.Messages(r.Context(), rt.addr, page)
 	if err != nil {
 		writeChannelError(w, r, err)
 		return
@@ -303,7 +317,7 @@ func (h *channelsHandler) post(w http.ResponseWriter, r *http.Request, rt channe
 		return
 	}
 	in := realtime.PostInput{Type: req.Type, Props: req.Props, ReplyTo: req.ReplyTo}
-	got, err := h.svc.Post(r.Context(), rt.addr, in)
+	got, err := h.messageOps.Post(r.Context(), rt.addr, in)
 	if err != nil {
 		writeChannelError(w, r, err)
 		return
@@ -320,7 +334,7 @@ func (h *channelsHandler) create(w http.ResponseWriter, r *http.Request, rt chan
 	if !decodeChannelBody(w, r, &req, true) {
 		return
 	}
-	got, err := h.svc.Create(r.Context(), rt.addr.EntityType, rt.addr.Anchor, rt.addr.Type,
+	got, err := h.channels.Create(r.Context(), rt.addr.EntityType, rt.addr.Anchor, rt.addr.Type,
 		realtime.CreateInput{Title: req.Title})
 	if err != nil {
 		writeChannelError(w, r, err)
@@ -334,7 +348,7 @@ func (h *channelsHandler) edit(w http.ResponseWriter, r *http.Request, rt channe
 	if !decodeChannelBody(w, r, &req, false) {
 		return
 	}
-	got, err := h.svc.Edit(r.Context(), rt.addr, rt.seq, req.Props)
+	got, err := h.messageOps.Edit(r.Context(), rt.addr, rt.seq, req.Props)
 	if err != nil {
 		writeChannelError(w, r, err)
 		return
@@ -349,7 +363,7 @@ func (h *channelsHandler) remove(w http.ResponseWriter, r *http.Request, rt chan
 	if !decodeChannelBody(w, r, &req, true) {
 		return
 	}
-	got, err := h.svc.Delete(r.Context(), rt.addr, rt.seq, req.Reason)
+	got, err := h.messageOps.Delete(r.Context(), rt.addr, rt.seq, req.Reason)
 	if err != nil {
 		writeChannelError(w, r, err)
 		return
@@ -364,7 +378,7 @@ func (h *channelsHandler) runLifecycle(w http.ResponseWriter, r *http.Request, r
 	if !decodeChannelBody(w, r, &req, true) {
 		return
 	}
-	got, err := h.svc.Lifecycle(r.Context(), rt.addr, rt.lifecycle)
+	got, err := h.channels.Lifecycle(r.Context(), rt.addr, rt.lifecycle)
 	if err != nil {
 		writeChannelError(w, r, err)
 		return
