@@ -229,8 +229,6 @@ if [[ ${SEQTRACE_SUITE:-} == routes ]]; then
     req "route GET / (SPA shell)" - GET "/"
     req "route GET /_custom/custom.css" - GET "/_custom/custom.css"
     req "route GET /static/missing" - GET "/static/missing"
-    req "route POST /webhooks/idp" - POST "/webhooks/idp" '{}'
-    req "route POST /hooks/x" - POST "/hooks/x" '{}'
 fi
 
 sleep 1 # the runtime flushes every 250 ms

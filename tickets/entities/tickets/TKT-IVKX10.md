@@ -3,7 +3,9 @@ id: TKT-IVKX10
 type: ticket
 title: Archplan security declarations and a seqtrace routes suite
 kind: chore
-status: review
+started: "2026-10-17"
+completed: "2026-10-17"
+status: done
 ---
 
 ## Description

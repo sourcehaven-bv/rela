@@ -160,7 +160,7 @@ func NewDeclarative(p *Policy, g Graph, fm FaceMatcher, opts ...DeclarativeOptio
 // future entry point needs the same resolution, wire this in there too —
 // don't assume one `acl.yaml` means the same thing on every transport.
 //
-//archplan:guard=authn reason="resolves the caller to a person entity"
+//archplan:guard=authn reason="maps the identity from the JWT gate or the trusted proxy header to a person entity; verifies nothing itself"
 func (d *Declarative) ResolvePrincipal(ctx context.Context, rawUser string) (string, error) {
 	if !d.policy.principalPropertyLookupEnabled() || strings.TrimSpace(rawUser) == "" {
 		return "", nil
