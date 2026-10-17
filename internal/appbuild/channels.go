@@ -96,14 +96,17 @@ type channelAliases struct {
 // channelAliasesFor returns the alias subscriber for cs.
 //
 // Nil: returns a nil *channelAliases when cs is nil, which newAliasFanout
-// drops. tombs is required with cs; rt is accepted (realtime off).
+// drops. st and tombs are rejected with cs; rt is accepted (realtime off).
 func channelAliasesFor(
 	cs channels.Store, st store.EntityLister, tombs *tombstoneConfirmer, rt *RealtimeConfig,
-) *channelAliases {
+) (*channelAliases, error) {
 	if cs == nil {
-		return nil
+		return nil, nil
 	}
-	return &channelAliases{store: cs, families: st, tombs: tombs, rt: rt, now: time.Now}
+	if st == nil || tombs == nil {
+		return nil, errors.New("channels: the alias hooks need an entity lister and a tombstone confirmer")
+	}
+	return &channelAliases{store: cs, families: st, tombs: tombs, rt: rt, now: time.Now}, nil
 }
 
 // tombstone files the channels of id@face as one confirmed batch for
@@ -128,6 +131,10 @@ func (a *channelAliases) tombstone(
 // If the rekey still fails, the channels stay under oldID, where
 // EntityCreated detaches them before a new entity at oldID could read them.
 func (a *channelAliases) EntityRenamed(ctx context.Context, oldID, newID string) error {
+	// The rename committed: the batch the guard filed on newID is final.
+	if err := a.tombs.confirm(ctx, newID, "", true); err != nil {
+		return err
+	}
 	at := a.now()
 	err := a.store.Rekey(ctx, oldID, newID, at)
 	if errors.Is(err, channels.ErrRekeyConflict) {
@@ -180,6 +187,12 @@ func (a *channelAliases) EntityFaceDeleted(ctx context.Context, id string, face 
 // exist, only channels anchored to the created face can be left over, from
 // a deleted face of that name.
 //
+// It also makes final every batch already filed for what it clears: a
+// pending batch of an earlier delete, or an orphan batch, is never put back
+// onto the new entity (see [channels.Store.ConfirmTombstones]). A store
+// refuses to restore a final batch, so a sweep that judged the batch before
+// this hook ran cannot put it back either.
+//
 // A message appended to the new entity between the create's commit and this
 // hook is detached with the leftovers. The window is the hook's own run
 // time; closing it needs the create and the tombstone in one transaction,
@@ -189,11 +202,18 @@ func (a *channelAliases) EntityCreated(ctx context.Context, id string, face enti
 	if err != nil {
 		return fmt.Errorf("channels: read faces of %s: %w", id, err)
 	}
+	var clear entity.Face
 	switch {
 	case len(headers) <= 1:
-		err = a.tombstone(ctx, id, "", a.now(), channels.PolicyDetach)
+		clear = ""
 	case face != "":
-		err = a.tombstone(ctx, id, face, a.now(), channels.PolicyDetach)
+		clear = face
+	default:
+		return nil
+	}
+	err = a.store.ConfirmTombstones(ctx, channels.Anchor{ID: id, Face: clear})
+	if err == nil {
+		err = a.tombstone(ctx, id, clear, a.now(), channels.PolicyDetach)
 	}
 	if err != nil {
 		return fmt.Errorf("channels: clear %s on create: %w", entity.FormatStateRef(id, face), err)

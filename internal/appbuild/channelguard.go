@@ -38,9 +38,11 @@ import (
 // held when the channels were written still apply. One delete operation reads
 // the config once, in Scope, and judges every entity it removes under it.
 //
-// A block is best effort against a concurrent first post: a channel created
-// after the guard listed the entity's channels is swept up by the post-commit
-// alias hook as a detach.
+// The block rule is checked twice: in Scope over the listed channels, and
+// again inside the tombstone over the channels the store moves, so a
+// blocking channel created between the two refuses the delete. A channel
+// created after the tombstone, while the delete's transaction runs, is
+// swept up by the post-commit alias hook as a detach.
 //
 // The guard sees only deletes made through the manager. The channels of an
 // entity deleted outside it (a file removed by hand or by git, or a write
@@ -152,7 +154,11 @@ func (s *channelScope) BeforeDelete(
 	}
 	g := s.guard
 	at := g.now()
-	h, err := g.tombstone(ctx, d.ID, face, at, realtime.Filer(s.cfg, channels.PolicyDelete, at, true))
+	h, err := g.tombstone(ctx, d.ID, face, at, s.deleteFiler(d, at))
+	var blocked *entitymanager.AnchorBlockedError
+	if errors.As(err, &blocked) {
+		return nil, blocked
+	}
 	if err != nil {
 		return nil, fmt.Errorf("channels: detach %s before delete: %w", entity.FormatStateRef(d.ID, face), err)
 	}
@@ -161,6 +167,20 @@ func (s *channelScope) BeforeDelete(
 	}
 	g.tombs.add(h)
 	return tombstoneUndo{store: g.store, h: h, now: g.now, tombs: g.tombs}, nil
+}
+
+// deleteFiler files the batch of d pending, under the delete policy. It
+// checks the block rule again over the channels the store actually moves:
+// a channel of a blocking type created after Scope listed the entity
+// refuses the delete, and the store moves nothing.
+func (s *channelScope) deleteFiler(d entitymanager.AnchorDelete, at time.Time) channels.Filer {
+	file := realtime.Filer(s.cfg, channels.PolicyDelete, at, true)
+	return func(moved []channels.Channel) (channels.Filing, error) {
+		if blocked := blocking(s.cfg, moved, d); blocked != "" && !d.Purge {
+			return channels.Filing{}, &entitymanager.AnchorBlockedError{ChannelType: blocked}
+		}
+		return file(moved)
+	}
 }
 
 // CheckDelete implements [entitymanager.AnchorScope].
@@ -194,6 +214,14 @@ func (g *channelGuard) tombstone(
 // belong to an earlier entity with that id; once free confirms the id can be
 // taken, they are detached, so the renamed entity does not inherit them. The
 // undo puts them back when the rename then fails.
+//
+// The batch is filed pending, like a delete's, so the undo can still put it
+// back and retention cannot erase it first. The post-commit rename hook
+// confirms it (see [channelAliases.EntityRenamed]). If the process stops
+// between the commit and that hook, the sweep finds the batch pending on an
+// existing id and puts it back after the orphan grace. The
+// renamed entity's own channels are then still under the old id, as the
+// hook never moved them; that loss is documented on EntityRenamed.
 func (g *channelGuard) BeforeRename(
 	ctx context.Context, newID string, free func(context.Context) error,
 ) (entitymanager.AnchorUndo, error) {
@@ -208,35 +236,32 @@ func (g *channelGuard) BeforeRename(
 		return nil, freeErr
 	}
 	at := g.now()
-	h, err := g.tombstone(ctx, newID, "", at, realtime.Filer(g.config(), channels.PolicyDetach, at, false))
+	h, err := g.tombstone(ctx, newID, "", at, realtime.Filer(g.config(), channels.PolicyDetach, at, true))
 	if err != nil {
 		return nil, fmt.Errorf("channels: clear %s before rename: %w", newID, err)
 	}
 	if h.IsZero() {
 		return nil, nil //nolint:nilnil // nothing was tombstoned: nothing to undo
 	}
-	return tombstoneUndo{store: g.store, h: h, now: g.now}, nil
+	g.tombs.add(h)
+	return tombstoneUndo{store: g.store, h: h, now: g.now, tombs: g.tombs}, nil
 }
 
-// tombstoneUndo is the [entitymanager.AnchorUndo] of one tombstone batch.
+// tombstoneUndo is the [entitymanager.AnchorUndo] of one pending tombstone
+// batch.
 type tombstoneUndo struct {
 	store channels.Store
 	h     channels.TombstoneHandle
 	now   func() time.Time
-	// tombs forgets the batch once restored. Nil for a batch that was
-	// never pending.
 	tombs *tombstoneConfirmer
 }
 
-// Restore implements [entitymanager.AnchorUndo].
+// Restore implements [entitymanager.AnchorUndo]. The confirmer forgets the
+// batch whether or not the restore works: the write failed, so no commit
+// hook will confirm it, and a batch left pending is put back by the sweep.
 func (u tombstoneUndo) Restore(ctx context.Context) error {
-	if err := u.store.Untombstone(ctx, u.h, u.now()); err != nil {
-		return err
-	}
-	if u.tombs != nil {
-		u.tombs.drop(u.h)
-	}
-	return nil
+	u.tombs.drop(u.h)
+	return u.store.Untombstone(ctx, u.h, u.now())
 }
 
 // String implements [entitymanager.AnchorUndo]: the handle's text form,

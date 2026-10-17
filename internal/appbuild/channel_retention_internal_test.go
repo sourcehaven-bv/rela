@@ -156,16 +156,44 @@ func TestChannelGuard_FaceDeleteConfirmsFace(t *testing.T) {
 	mgr := f.manager(t, f.guard)
 	f.seed(t, "inc-a", "draft", "final")
 	appendTo(t, f.cs, chanKey("inc-a", "draft", "chat"))
-	other, err := f.cs.Tombstone(ctx, "inc-a", "final", time.Now(), channels.FileAs(channels.Filing{Pending: true}))
+	// A delete of the final face is in flight: its batch is pending.
+	appendTo(t, f.cs, chanKey("inc-a", "final", "chat"))
+	other, err := f.cs.Tombstone(ctx, "inc-a", "final", time.Now(),
+		realtime.Filer(f.cfg, channels.PolicyDelete, time.Now(), true))
 	require.NoError(t, err)
-	require.True(t, other.IsZero(), "no final channels yet")
+	require.False(t, other.IsZero())
+	f.guard.tombs.add(other)
 
 	_, err = mgr.DeleteEntityFace(ctx, "inc-a", "draft", true)
 	require.NoError(t, err)
-	got := batchesOf(t, f.cs, "inc-a")
-	require.Len(t, got, 1)
-	assert.Equal(t, entity.Face("draft"), got[0].Handle.Anchor().Face)
-	assert.False(t, got[0].Filing.Pending)
+	byFace := map[entity.Face]channels.TombstoneBatch{}
+	for _, b := range batchesOf(t, f.cs, "inc-a") {
+		byFace[b.Handle.Anchor().Face] = b
+	}
+	require.Len(t, byFace, 2)
+	assert.False(t, byFace["draft"].Filing.Pending, "the deleted face's batch is confirmed")
+	assert.True(t, byFace["final"].Filing.Pending, "the other face's batch stays pending")
+	assert.Equal(t, 1, pendingCount(f.guard.tombs), "the other face's batch is still remembered")
+}
+
+// A channel of a blocking type created after Scope listed the entity
+// refuses the delete, and nothing is moved.
+func TestChannelGuard_LateBlockingChannelRefuses(t *testing.T) {
+	ctx := t.Context()
+	f := newGuardFixture(t)
+	appendTo(t, f.cs, chanKey("INC-1", "", "chat"))
+	d := entitymanager.AnchorDelete{ID: "INC-1", Block: true, Detach: true}
+	s, err := f.guard.Scope(ctx, []string{d.ID})
+	require.NoError(t, err)
+
+	appendTo(t, f.cs, chanKey("INC-1", "", "war-room"))
+	_, err = s.BeforeDelete(ctx, d)
+	var blocked *entitymanager.AnchorBlockedError
+	require.ErrorAs(t, err, &blocked)
+	assert.Equal(t, "war-room", blocked.ChannelType)
+	assert.Empty(t, batchesOf(t, f.cs, "INC-1"))
+	assert.Zero(t, pendingCount(f.guard.tombs))
+	assert.Len(t, entityKeys(t, f.cs, "INC-1"), 2)
 }
 
 // A soft delete tombstones nothing: a restore must find the channels where
@@ -240,44 +268,85 @@ func TestTombstoneConfirmer(t *testing.T) {
 	require.NoError(t, c.confirm(ctx, "A-1", "", true))
 }
 
+// The worker lock of one directory is held by one process at a time: a
+// second taker is refused at once, and takes it once the first lets go.
 func TestRealtimeLeaderLock(t *testing.T) {
 	st := memstore.New()
 	l, err := realtimeLeaderLock(nil, "", st)
 	require.NoError(t, err)
-	release, err := l(t.Context())
+	release, ok, err := l(t.Context())
 	require.NoError(t, err)
+	require.True(t, ok)
 	release()
 
 	dir := t.TempDir()
-	l, err = realtimeLeaderLock(storage.NewSafeFS(storage.NewOsFS()), dir, st)
+	a, err := realtimeLeaderLock(storage.NewSafeFS(storage.NewOsFS()), dir, st)
 	require.NoError(t, err)
-	release, err = l(t.Context())
+	b, err := realtimeLeaderLock(storage.NewSafeFS(storage.NewOsFS()), dir, st)
 	require.NoError(t, err)
+	releaseA, ok, err := a(t.Context())
+	require.NoError(t, err)
+	require.True(t, ok)
 	assert.FileExists(t, dir+"/"+realtimeWorkerLockFile)
-	release()
+	_, ok, err = b(t.Context())
+	require.NoError(t, err)
+	assert.False(t, ok, "a second process does not take a held lock")
+	releaseA()
+	releaseB, ok, err := b(t.Context())
+	require.NoError(t, err)
+	assert.True(t, ok, "the lock passes on once released")
+	releaseB()
 }
 
-// countingLock fails its first takes, then grants the lead.
-type countingLock struct {
-	mu    sync.Mutex
-	fails int
-	takes int
+// switchLock is a worker lock another process may hold. It counts the runs
+// it granted and refused.
+type switchLock struct {
+	mu       sync.Mutex
+	other    bool
+	err      error
+	granted  int
+	refused  int
+	attempts int
 }
 
-func (l *countingLock) take(context.Context) (func(), error) {
+func (l *switchLock) take(context.Context) (func(), bool, error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	l.takes++
-	if l.takes <= l.fails {
-		return nil, errDiskFull
+	l.attempts++
+	if l.err != nil {
+		return nil, false, l.err
 	}
-	return func() {}, nil
+	if l.other {
+		l.refused++
+		return nil, false, nil
+	}
+	l.granted++
+	return func() {}, true, nil
 }
 
-// The worker purges a due batch on its first lead and again on a wake, and
-// stop ends it.
-func TestRealtimeWorker_RunsAndStops(t *testing.T) {
-	ctx := context.Background()
+func (l *switchLock) set(other bool, err error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.other, l.err = other, err
+}
+
+func (l *switchLock) counts() (granted, refused, attempts int) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.granted, l.refused, l.attempts
+}
+
+// workerFixture is a worker over a file channel store, with a sweeper that
+// erases a due batch.
+type workerFixture struct {
+	cs    channels.Store
+	tombs *tombstoneConfirmer
+	w     *realtimeWorker
+	lock  *switchLock
+}
+
+func newWorkerFixture(t *testing.T) workerFixture {
+	t.Helper()
 	_, cs, st := newChannelAliases(t)
 	tombs, err := newTombstoneConfirmer(cs)
 	require.NoError(t, err)
@@ -288,40 +357,49 @@ func TestRealtimeWorker_RunsAndStops(t *testing.T) {
 		Marker: local, Clock: time.Now,
 	})
 	require.NoError(t, err)
-
-	_, err = newRealtimeWorker(nil, nil, nil)
-	require.Error(t, err)
-	lock := &countingLock{}
-	w, err := newRealtimeWorker(sweeper, lock.take, tombs.wake)
+	l := &switchLock{}
+	w, err := newRealtimeWorker(sweeper, l.take, tombs.wake)
 	require.NoError(t, err)
+	return workerFixture{cs: cs, tombs: tombs, w: w, lock: l}
+}
 
+// fileDue files a confirmed batch for id that is already due.
+func (f workerFixture) fileDue(ctx context.Context, t *testing.T, id string) {
+	t.Helper()
 	past := time.Now().Add(-time.Minute)
-	file := func(id string) {
-		appendCtx(ctx, t, cs, chanKey(id, "", "room"))
-		due := channels.Filing{Policy: channels.PolicyDelete, PurgeAfter: past}
-		_, err := cs.Tombstone(ctx, id, "", past, channels.FileAs(due))
-		require.NoError(t, err)
-	}
-	file("GONE-1")
+	appendCtx(ctx, t, f.cs, chanKey(id, "", "room"))
+	due := channels.Filing{Policy: channels.PolicyDelete, PurgeAfter: past}
+	_, err := f.cs.Tombstone(ctx, id, "", past, channels.FileAs(due))
+	require.NoError(t, err)
+}
 
-	s := &Services{realtimeWorker: w}
+// The worker purges a due batch on its first run and again on a wake, and
+// stop ends it.
+func TestRealtimeWorker_RunsAndStops(t *testing.T) {
+	ctx := context.Background()
+	f := newWorkerFixture(t)
+	_, err := newRealtimeWorker(nil, nil, nil)
+	require.Error(t, err)
+	f.fileDue(ctx, t, "GONE-1")
+
+	s := &Services{realtimeWorker: f.w}
 	done := RunRealtimeWorker(ctx, s)
-	require.Eventually(t, func() bool { return len(batchesOf(t, cs, "GONE-1")) == 0 },
-		5*time.Second, 10*time.Millisecond, "the first lead purges")
+	require.Eventually(t, func() bool { return len(batchesOf(t, f.cs, "GONE-1")) == 0 },
+		5*time.Second, 10*time.Millisecond, "the first run purges")
 	select {
 	case <-RunRealtimeWorker(ctx, s):
 	default:
 		t.Fatal("a second run returns at once")
 	}
 
-	file("GONE-2")
-	tombs.ping()
-	require.Eventually(t, func() bool { return len(batchesOf(t, cs, "GONE-2")) == 0 },
+	f.fileDue(ctx, t, "GONE-2")
+	f.tombs.ping()
+	require.Eventually(t, func() bool { return len(batchesOf(t, f.cs, "GONE-2")) == 0 },
 		5*time.Second, 10*time.Millisecond, "a wake purges")
 
-	w.stop()
+	f.w.stop()
 	<-done
-	w.stop()
+	f.w.stop()
 
 	select {
 	case <-RunRealtimeWorker(ctx, &Services{}):
@@ -330,18 +408,37 @@ func TestRealtimeWorker_RunsAndStops(t *testing.T) {
 	}
 }
 
-// A lock that is not taken is retried until ctx ends.
-func TestRealtimeWorker_LockRetryEndsWithContext(t *testing.T) {
-	lock := &countingLock{fails: 1 << 30}
-	w := &realtimeWorker{lock: lock.take, closed: make(chan struct{})}
+// While another process holds the lock, every run is skipped at once and
+// erases nothing; once that process lets go, the next run takes over.
+func TestRealtimeWorker_SkipsWhileHeldElsewhereThenTakesOver(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	f := newWorkerFixture(t)
+	f.lock.set(true, nil)
+	f.fileDue(ctx, t, "GONE-1")
+
 	done := make(chan struct{})
-	go func() { w.run(ctx); close(done) }()
-	require.Eventually(t, func() bool {
-		lock.mu.Lock()
-		defer lock.mu.Unlock()
-		return lock.takes > 0
-	}, 5*time.Second, 10*time.Millisecond)
+	go func() { f.w.run(ctx); close(done) }()
+	require.Eventually(t, func() bool { _, refused, _ := f.lock.counts(); return refused == 1 },
+		5*time.Second, 10*time.Millisecond, "the start run is refused")
+	f.tombs.ping()
+	require.Eventually(t, func() bool { _, refused, _ := f.lock.counts(); return refused == 2 },
+		5*time.Second, 10*time.Millisecond, "a wake run is refused, not queued behind the lock")
+	assert.Len(t, batchesOf(t, f.cs, "GONE-1"), 1, "a refused run erases nothing")
+
+	f.lock.set(false, errDiskFull)
+	f.tombs.ping()
+	require.Eventually(t, func() bool { _, _, attempts := f.lock.counts(); return attempts == 3 },
+		5*time.Second, 10*time.Millisecond)
+	assert.Len(t, batchesOf(t, f.cs, "GONE-1"), 1, "a lock error skips the run")
+
+	// The holder stopped: the next run takes over.
+	f.lock.set(false, nil)
+	f.tombs.ping()
+	require.Eventually(t, func() bool { return len(batchesOf(t, f.cs, "GONE-1")) == 0 },
+		5*time.Second, 10*time.Millisecond, "the next run takes over")
+	granted, _, _ := f.lock.counts()
+	assert.Equal(t, 1, granted)
 	cancel()
 	<-done
 }

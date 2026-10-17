@@ -13,3 +13,9 @@ import (
 //
 // Nil: always returns a genuinely nil interface, never a typed nil.
 func storeChannelsFor(_ store.Store) channels.Store { return nil }
+
+// storeLeaderLockFor returns nil outside the postgres build: the other
+// tiers take the realtime worker lock on a lock file.
+//
+// Nil: always returned.
+func storeLeaderLockFor(_ store.Store) leaderLock { return nil }

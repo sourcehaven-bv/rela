@@ -3,6 +3,7 @@
 package appbuild
 
 import (
+	"context"
 	"log/slog"
 
 	"github.com/Sourcehaven-BV/rela/internal/channels"
@@ -30,4 +31,20 @@ func storeChannelsFor(st store.Store) channels.Store {
 		panic(err)
 	}
 	return s
+}
+
+// storeLeaderLockFor returns the realtime worker lock on st's database: a
+// keyed advisory lock tried once per run (see [pgstore.TryKeyedLock]), so
+// every rela-server process on the schema contends on one lock and none
+// waits on it.
+//
+// Nil: returned when st is not a pgstore; the caller falls back to a lock
+// file.
+func storeLeaderLockFor(st store.Store) leaderLock {
+	if pgstore.HandleFor(st) == nil {
+		return nil
+	}
+	return func(ctx context.Context) (func(), bool, error) {
+		return pgstore.TryKeyedLock(ctx, st, realtimeWorkerLockKey)
+	}
 }

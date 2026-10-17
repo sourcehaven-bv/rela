@@ -12,23 +12,21 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/channels"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/filelock"
-	"github.com/Sourcehaven-BV/rela/internal/lock"
 	"github.com/Sourcehaven-BV/rela/internal/realtime"
 	"github.com/Sourcehaven-BV/rela/internal/storage"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
 // The realtime worker is the one host for realtime background work: the
-// automatic close and archive every minute, retention every hour, and a
-// retention run as soon as an entity delete commits. Only the process that
-// holds the worker lock runs it, so several rela-server processes against
-// one database do the work once.
+// automatic close and archive and a poll for due purges every minute, full
+// retention every hour, and a purge poll as soon as an entity delete
+// commits in this process. Each run takes the worker lock first and is
+// skipped when another process holds it, so several rela-server processes
+// against one database do each run once. A delete in another process is
+// purged by the next minute's poll of whichever process runs it.
 const (
 	realtimeLifecycleInterval = time.Minute
 	realtimeRetentionInterval = time.Hour
-	// realtimeLeaderRetry is how long a process that could not take the
-	// worker lock waits before it tries again.
-	realtimeLeaderRetry = 30 * time.Second
 	// realtimeWorkerLockFile is the worker lock of the file backend, in the
 	// project's cache directory.
 	realtimeWorkerLockFile = "realtime-worker.lock"
@@ -175,26 +173,26 @@ func (a anchorExistence) Faces(ctx context.Context, ids []string) (map[string][]
 	return out, nil
 }
 
-// leaderLock takes the worker lock, blocking until it is held or ctx ends,
-// and returns its release.
-type leaderLock func(ctx context.Context) (func(), error)
+// leaderLock takes the worker lock if it is free and returns at once. It
+// reports false, with a nil release, when another process holds it.
+type leaderLock func(ctx context.Context) (release func(), ok bool, err error)
 
 // realtimeLeaderLock returns the worker lock for st: the database's own lock
-// on a backend that runs several processes, a lock file in the cache
-// directory on disk, and a lock that is always free in memory.
+// on a backend that runs several processes (see storeLeaderLockFor), a lock
+// file in the cache directory on disk, and a lock that is always free in
+// memory.
 func realtimeLeaderLock(fs storage.FS, cacheDir string, st store.Store) (leaderLock, error) {
-	if _, ok := st.(lock.KeyedLockBackend); ok {
-		l := lock.For(st)
-		return func(ctx context.Context) (func(), error) { return l.Acquire(ctx, realtimeWorkerLockKey) }, nil
+	if l := storeLeaderLockFor(st); l != nil {
+		return l, nil
 	}
 	if _, mem := fs.(*storage.MemFS); mem || fs == nil || cacheDir == "" {
-		return filelock.ProcessPrivate{}.Lock, nil
+		return func(context.Context) (func(), bool, error) { return func() {}, true, nil }, nil
 	}
 	l, err := filelock.New(filepath.Join(cacheDir, realtimeWorkerLockFile))
 	if err != nil {
 		return nil, fmt.Errorf("realtime worker: %w", err)
 	}
-	return l.Lock, nil
+	return func(context.Context) (func(), bool, error) { return l.TryLock() }, nil
 }
 
 // realtimeWorker runs the [realtime.Sweeper] while this process holds the
@@ -299,47 +297,53 @@ func (w *realtimeWorker) stop() {
 	}
 }
 
-// run takes the worker lock and leads until ctx ends. A failed attempt is
-// retried after realtimeLeaderRetry.
+// run runs the sweeps until ctx ends: everything once at start, then the
+// lifecycle sweep and the purge poll every minute, full retention every
+// hour, and the purge poll on every wake. Each run takes the worker lock
+// and is skipped when another process holds it, so no process waits on
+// the lock and a process that stops lets the next run elsewhere take over.
 func (w *realtimeWorker) run(ctx context.Context) {
-	for ctx.Err() == nil {
-		release, err := w.lock(ctx)
-		if err != nil {
-			if ctx.Err() == nil {
-				slog.Debug("realtime worker: lock not taken; retrying", "error", err)
-			}
-			select {
-			case <-ctx.Done():
-			case <-time.After(realtimeLeaderRetry):
-			}
-			continue
-		}
-		w.lead(ctx)
-		release()
-	}
-}
-
-// lead runs the sweeps on their intervals, and retention on every wake,
-// until ctx ends.
-func (w *realtimeWorker) lead(ctx context.Context) {
-	w.retention(ctx)
-	w.lifecycle(ctx)
-	lifecycle := time.NewTicker(realtimeLifecycleInterval)
-	defer lifecycle.Stop()
-	retention := time.NewTicker(realtimeRetentionInterval)
-	defer retention.Stop()
+	w.locked(ctx, "start", func() {
+		w.retention(ctx)
+		w.lifecycle(ctx)
+	})
+	minute := time.NewTicker(realtimeLifecycleInterval)
+	defer minute.Stop()
+	hour := time.NewTicker(realtimeRetentionInterval)
+	defer hour.Stop()
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case <-lifecycle.C:
-			w.lifecycle(ctx)
-		case <-retention.C:
-			w.retention(ctx)
+		case <-minute.C:
+			w.locked(ctx, "minute", func() {
+				w.lifecycle(ctx)
+				w.purge(ctx)
+			})
+		case <-hour.C:
+			w.locked(ctx, "retention", func() { w.retention(ctx) })
 		case <-w.wake:
-			w.retention(ctx)
+			w.locked(ctx, "wake", func() { w.purge(ctx) })
 		}
 	}
+}
+
+// locked runs fn while holding the worker lock, or skips it when the lock
+// is held elsewhere or cannot be taken.
+func (w *realtimeWorker) locked(ctx context.Context, what string, fn func()) {
+	release, ok, err := w.lock(ctx)
+	switch {
+	case err != nil:
+		if ctx.Err() == nil {
+			slog.Warn("realtime worker: cannot take the worker lock; run skipped", "run", what, "error", err)
+		}
+		return
+	case !ok:
+		slog.Debug("realtime worker: another process holds the worker lock; run skipped", "run", what)
+		return
+	}
+	defer release()
+	fn()
 }
 
 func (w *realtimeWorker) lifecycle(ctx context.Context) {
@@ -356,13 +360,22 @@ func (w *realtimeWorker) lifecycle(ctx context.Context) {
 	}
 }
 
+func (w *realtimeWorker) purge(ctx context.Context) {
+	rep, err := w.sweeper.RunPurge(ctx)
+	w.report(ctx, "purge", rep, err)
+}
+
 func (w *realtimeWorker) retention(ctx context.Context) {
 	rep, err := w.sweeper.RunRetention(ctx)
+	w.report(ctx, "retention", rep, err)
+}
+
+func (w *realtimeWorker) report(ctx context.Context, what string, rep realtime.RetentionReport, err error) {
 	if err != nil && ctx.Err() == nil {
-		slog.Warn("realtime: retention sweep failed", "error", err)
+		slog.Warn("realtime: "+what+" sweep failed", "error", err)
 	}
 	if rep != (realtime.RetentionReport{}) {
-		slog.Info("realtime: retention sweep", "purged", rep.Purged, "confirmed", rep.Confirmed,
+		slog.Info("realtime: "+what+" sweep", "purged", rep.Purged, "confirmed", rep.Confirmed,
 			"restored", rep.Restored, "detached", rep.Detached, "types_cleared", rep.TypesCleared)
 	}
 }
