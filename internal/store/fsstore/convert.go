@@ -14,62 +14,33 @@ import (
 
 var _ store.FamilyReplacer = (*FSStore)(nil)
 
-//nolint:gocognit // Validate the whole family before changing any row.
+// replaceEntityFamily writes the converted rows, then removes the source
+// files. fsstore's Tx cannot roll back, so this function undoes its own
+// partial work: on any failure it removes the target files it wrote and
+// rewrites the source files it removed, and the index is only touched once
+// every file operation has succeeded. Disk never keeps both types for one id.
 func replaceEntityFamily(_ context.Context, s *FSStore, id string, replacements []store.FamilyReplacement) error {
-	if err := storeutil.ValidateID(id); err != nil {
-		return err
-	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	family, _ := s.stateFamily(id)
-	if len(family) == 0 {
-		return store.ErrNotFound
-	}
-	if len(replacements) == 0 {
-		return errors.New("fsstore: replacement family must not be empty")
-	}
-	seen := make(map[entity.Face]bool, len(replacements))
-	seenSource := make(map[entity.Face]bool, len(replacements))
-	oldFaces := make(map[entity.Face]bool, len(family))
+	current := make([]entity.Face, 0, len(family))
 	for _, meta := range family {
-		oldFaces[meta.Face] = true
+		current = append(current, meta.Face)
 	}
-	typeName := ""
+	emptied, err := storeutil.ValidateFamilyReplacement(id, current, replacements)
+	if err != nil {
+		return err
+	}
 	newRows := make([]*entity.Entity, 0, len(replacements))
-	for _, replacement := range replacements {
-		target := replacement.Entity
-		if target == nil || target.ID != id || target.Type == "" {
-			return fmt.Errorf("fsstore: replacement rows must use id %q and a declared type", id)
+	for _, r := range replacements {
+		if _, ok := s.layout.schemas[r.Entity.Type]; !ok {
+			return fmt.Errorf("%w: type %q is not declared", store.ErrInvalidFamilyReplacement, r.Entity.Type)
 		}
-		if !oldFaces[replacement.SourceFace] || seenSource[replacement.SourceFace] {
-			return fmt.Errorf("fsstore: replacement source face %q is missing or repeated", replacement.SourceFace)
-		}
-		seenSource[replacement.SourceFace] = true
-		if typeName == "" {
-			typeName = target.Type
-		} else if target.Type != typeName {
-			return errors.New("fsstore: replacement family has mixed entity types")
-		}
-		if _, ok := s.layout.schemas[target.Type]; !ok {
-			return fmt.Errorf("fsstore: replacement type %q is not declared", target.Type)
-		}
-		if seen[target.Face] {
-			return fmt.Errorf("fsstore: replacement family maps multiple rows to face %q", target.Face)
-		}
-		seen[target.Face] = true
-		if err := storeutil.ValidateProperties(target.Properties); err != nil {
-			return err
-		}
-		newRows = append(newRows, target.Clone())
+		newRows = append(newRows, r.Entity.Clone())
 	}
-	if len(seenSource) != len(oldFaces) {
-		return errors.New("fsstore: replacement must account for every source face")
-	}
-
-	// Check every destination before writing any of them. Conversion targets
-	// use a different type directory, so an existing file there is a real
-	// collision rather than one of the source rows being replaced.
+	// A conversion target lives in another type directory, so an existing
+	// file there is a real collision, not one of the rows being replaced.
 	for _, row := range newRows {
 		key := s.layout.entityFileKey(row.Type, stateKey(row.ID, row.Face))
 		if _, err := s.rooted.Stat(key); err == nil {
@@ -78,31 +49,80 @@ func replaceEntityFamily(_ context.Context, s *FSStore, id string, replacements 
 			return fmt.Errorf("fsstore: inspect conversion target %s: %w", key, err)
 		}
 	}
-
-	now := time.Now()
-	for _, row := range newRows {
-		row.UpdatedAt = now
-		if err := s.writeEntity(row); err != nil {
-			return fmt.Errorf("fsstore: write converted row %s: %w", entity.FormatStateRef(id, row.Face), err)
-		}
-	}
+	oldRows := make([]*entity.Entity, 0, len(family))
 	for _, meta := range family {
-		oldKey := s.layout.entityFileKey(meta.Type, stateKey(meta.ID, meta.Face))
-		if err := s.rooted.Remove(oldKey); err != nil && !errors.Is(err, fs.ErrNotExist) {
-			return fmt.Errorf("fsstore: remove converted source row %s: %w", entity.FormatStateRef(id, meta.Face), err)
+		e, err := s.loadEntityMeta(meta)
+		if err != nil {
+			return err
 		}
-		s.echoes.Forget(s.layout.absPath(oldKey))
+		oldRows = append(oldRows, e)
+	}
+
+	if err := swapFamilyFiles(s, oldRows, newRows); err != nil {
+		return err
+	}
+
+	oldType := ""
+	for _, meta := range family {
+		oldType = meta.Type
+		s.echoes.Forget(s.layout.absPath(s.layout.entityFileKey(meta.Type, stateKey(meta.ID, meta.Face))))
 		movedKey := stateKey(meta.ID, meta.Face)
 		delete(s.entities, movedKey)
 		s.entityOrder = storeutil.SortedRemoveFunc(s.entityOrder, movedKey, storeutil.CompareStateKeys)
 		s.notifyFaceDelete(id, meta.Face)
 	}
+	// Bare-id observers index the family under one id; drop it before the
+	// rows come back under the new type.
+	s.notifyLastFaceDelete(id)
 	for _, row := range newRows {
 		key := stateKey(row.ID, row.Face)
 		s.entities[key] = entityMeta{ID: row.ID, Type: row.Type, Face: row.Face}
 		s.entityOrder = storeutil.SortedInsertFunc(s.entityOrder, key, storeutil.CompareStateKeys)
 		s.notifyPut(row)
 		s.emit(store.Event{Op: store.EventEntityUpdated, EntityType: row.Type, EntityID: row.ID, Face: row.Face})
+	}
+	for _, face := range emptied {
+		s.emit(store.Event{Op: store.EventEntityDeleted, EntityType: oldType, EntityID: id, Face: face})
+	}
+	return nil
+}
+
+// swapFamilyFiles writes newRows and removes oldRows' files. On failure it
+// restores the starting disk state as far as the filesystem allows and
+// returns the original error joined with any undo failure.
+func swapFamilyFiles(s *FSStore, oldRows, newRows []*entity.Entity) error {
+	var written, removed []*entity.Entity
+	undo := func(cause error) error {
+		errs := []error{cause}
+		for _, row := range written {
+			key := s.layout.entityFileKey(row.Type, stateKey(row.ID, row.Face))
+			if err := s.rooted.Remove(key); err != nil && !errors.Is(err, fs.ErrNotExist) {
+				errs = append(errs, fmt.Errorf("fsstore: undo converted row %s: %w", key, err))
+			}
+		}
+		for _, row := range removed {
+			if err := s.writeEntity(row); err != nil {
+				errs = append(errs, fmt.Errorf("fsstore: restore source row %s: %w",
+					entity.FormatStateRef(row.ID, row.Face), err))
+			}
+		}
+		return errors.Join(errs...)
+	}
+	now := time.Now()
+	for _, row := range newRows {
+		row.UpdatedAt = now
+		if err := s.writeEntity(row); err != nil {
+			return undo(fmt.Errorf("fsstore: write converted row %s: %w", entity.FormatStateRef(row.ID, row.Face), err))
+		}
+		written = append(written, row)
+	}
+	for _, row := range oldRows {
+		key := s.layout.entityFileKey(row.Type, stateKey(row.ID, row.Face))
+		if err := s.rooted.Remove(key); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			return undo(fmt.Errorf("fsstore: remove converted source row %s: %w",
+				entity.FormatStateRef(row.ID, row.Face), err))
+		}
+		removed = append(removed, row)
 	}
 	return nil
 }

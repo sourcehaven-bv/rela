@@ -8,6 +8,7 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/store"
+	"github.com/Sourcehaven-BV/rela/internal/store/storeutil"
 )
 
 var _ store.FamilyReplacer = (*Store)(nil)
@@ -28,41 +29,21 @@ func (s *Store) ReplaceEntityFamily(ctx context.Context, id string, replacements
 			)
 		})
 	}
-	if id == "" || len(replacements) == 0 {
-		return errors.New("pgstore: replacement family requires an id and rows")
-	}
 
-	current := map[entity.Face]bool{}
+	var current []entity.Face
+	oldType := ""
 	for row, err := range s.ListEntities(ctx, store.EntityQuery{IDs: []string{id}, Faces: store.AllFaces()}) {
 		if err != nil {
 			return err
 		}
-		current[row.Face] = true
-	}
-	if len(current) == 0 {
-		return store.ErrNotFound
-	}
-	seenSource := make(map[entity.Face]bool, len(replacements))
-	seenTarget := make(map[entity.Face]bool, len(replacements))
-	typeName := ""
-	for _, replacement := range replacements {
-		e := replacement.Entity
-		if e == nil || e.ID != id || e.Type == "" || !current[replacement.SourceFace] || seenSource[replacement.SourceFace] {
-			return fmt.Errorf("pgstore: invalid replacement for source face %q", replacement.SourceFace)
+		if row.ID == id {
+			current = append(current, row.Face)
+			oldType = row.Type
 		}
-		if typeName == "" {
-			typeName = e.Type
-		} else if e.Type != typeName {
-			return errors.New("pgstore: replacement family has mixed entity types")
-		}
-		if seenTarget[e.Face] {
-			return fmt.Errorf("pgstore: replacement family maps multiple rows to face %q", e.Face)
-		}
-		seenSource[replacement.SourceFace] = true
-		seenTarget[e.Face] = true
 	}
-	if len(seenSource) != len(current) {
-		return errors.New("pgstore: replacement must account for every source face")
+	emptied, err := storeutil.ValidateFamilyReplacement(id, current, replacements)
+	if err != nil {
+		return err
 	}
 
 	for i, replacement := range replacements {
@@ -76,7 +57,8 @@ func (s *Store) ReplaceEntityFamily(ctx context.Context, id string, replacements
 
 	editorUser, editorTool := store.AttributionColumns(ctx)
 	origin := originValues(ctx)
-	events := make([]store.Event, 0, len(replacements))
+	stored := make([]*entity.Entity, 0, len(replacements))
+	events := make([]store.Event, 0, len(replacements)+len(emptied))
 	for i, replacement := range replacements {
 		e := replacement.Entity
 		props, err := marshalProps(e.Properties)
@@ -100,13 +82,34 @@ func (s *Store) ReplaceEntityFamily(ctx context.Context, id string, replacements
 			mentionTargets, mentionHash).Scan(&updatedAt); err != nil {
 			return s.mapConflict(err)
 		}
-		stored := e.Clone()
-		stored.UpdatedAt = updatedAt
-		notifyFaceDelete(s, id, replacement.SourceFace)
-		s.notifyPut(stored)
-		ev := store.Event{Op: store.EventEntityUpdated, EntityType: e.Type, EntityID: e.ID, Face: e.Face}
+		row := e.Clone()
+		row.UpdatedAt = updatedAt
+		stored = append(stored, row)
+		events = append(events, store.Event{
+			Op: store.EventEntityUpdated, EntityType: e.Type, EntityID: e.ID, Face: e.Face,
+		})
+	}
+	// A source face no target occupies is gone: tombstone it like any
+	// face delete so other processes' catch-up drops the old coordinate.
+	for _, face := range emptied {
+		events = append(events, store.Event{
+			Op: store.EventEntityDeleted, EntityType: oldType, EntityID: id, Face: face,
+		})
+	}
+	if err := s.writeTombstonesForEvents(ctx, s.db, events); err != nil {
+		return err
+	}
+	for _, ev := range events {
 		s.notify(ctx, s.db, ev)
-		events = append(events, ev)
+	}
+	for _, face := range current {
+		notifyFaceDelete(s, id, face)
+	}
+	// Bare-id observers index the family under one id; drop it before the
+	// rows come back under the new type.
+	notifyLastFaceDelete(s, id)
+	for _, row := range stored {
+		s.notifyPut(row)
 	}
 	s.emitAll(events)
 	return nil

@@ -79,6 +79,12 @@ type Capabilities struct {
 	// [store.SoftDeleteProvider]. Setting it runs [RunSoftDeleteTests], which
 	// fails rather than skips when the capability is missing.
 	SoftDelete bool
+
+	// FamilyReplace declares that the backend implements
+	// [store.FamilyReplacer] (entity type conversion). Setting it runs
+	// [RunFamilyReplaceTests], which fails rather than skips when the
+	// capability is missing.
+	FamilyReplace bool
 }
 
 func ctx() context.Context { return context.Background() }
@@ -274,5 +280,8 @@ func RunAll(t *testing.T, f Factory, sf SearchFactory, vsf VisibleSearchFactory,
 	}
 	if caps.SoftDelete {
 		t.Run("SoftDelete", func(t *testing.T) { RunSoftDeleteTests(t, f, sf, caps.Attachments) })
+	}
+	if caps.FamilyReplace {
+		t.Run("FamilyReplace", func(t *testing.T) { RunFamilyReplaceTests(t, f, caps) })
 	}
 }

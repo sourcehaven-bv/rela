@@ -20,7 +20,8 @@ import (
 func TestConformance(t *testing.T) {
 	pgstore.SetIteratorPageSizeForTest(t, 2)
 	storetest.RunAll(t, factory, searchFactory, visibleSearchFactory, storetest.Capabilities{
-		SoftDelete: true,
+		SoftDelete:    true,
+		FamilyReplace: true,
 		Observers: func(t *testing.T, obs ...store.EntityObserver) store.Store {
 			t.Helper()
 			opts := make([]pgstore.Option, 0, len(obs))

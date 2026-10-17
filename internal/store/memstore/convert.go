@@ -2,8 +2,6 @@ package memstore
 
 import (
 	"context"
-	"errors"
-	"fmt"
 	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
@@ -14,77 +12,43 @@ import (
 var _ store.FamilyReplacer = (*MemStore)(nil)
 
 func replaceEntityFamily(_ context.Context, m *MemStore, id string, replacements []store.FamilyReplacement) error {
-	if err := validateID(id); err != nil {
-		return err
-	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
 	var oldKeys []string
-	for key, current := range m.entities {
-		if current.ID == id {
+	var current []entity.Face
+	for key, row := range m.entities {
+		if row.ID == id {
 			oldKeys = append(oldKeys, key)
+			current = append(current, row.Face)
 		}
 	}
-	if len(oldKeys) == 0 {
-		return store.ErrNotFound
+	emptied, err := storeutil.ValidateFamilyReplacement(id, current, replacements)
+	if err != nil {
+		return err
 	}
-	if len(replacements) == 0 {
-		return errors.New("memstore: replacement family must not be empty")
-	}
-	seen := make(map[entity.Face]bool, len(replacements))
-	seenSource := make(map[entity.Face]bool, len(replacements))
-	oldFaces := make(map[entity.Face]bool, len(oldKeys))
+	oldType := ""
 	for _, key := range oldKeys {
-		oldFaces[m.entities[key].Face] = true
-	}
-	newRows := make([]*entity.Entity, 0, len(replacements))
-	targetType := ""
-	for _, replacement := range replacements {
-		target := replacement.Entity
-		if target == nil || target.ID != id || target.Type == "" {
-			return fmt.Errorf("memstore: replacement rows must use id %q and a declared type", id)
-		}
-		if !oldFaces[replacement.SourceFace] || seenSource[replacement.SourceFace] {
-			return fmt.Errorf("memstore: replacement source face %q is missing or repeated", replacement.SourceFace)
-		}
-		seenSource[replacement.SourceFace] = true
-		if targetType == "" {
-			targetType = target.Type
-		} else if target.Type != targetType {
-			return fmt.Errorf("memstore: replacement family has mixed types %q and %q", targetType, target.Type)
-		}
-		if seen[target.Face] {
-			return fmt.Errorf("memstore: replacement family maps multiple rows to face %q", target.Face)
-		}
-		seen[target.Face] = true
-		if err := storeutil.ValidateProperties(target.Properties); err != nil {
-			return err
-		}
-		newRows = append(newRows, target.Clone())
-	}
-	if len(seenSource) != len(oldFaces) {
-		return errors.New("memstore: replacement must account for every source face")
-	}
-
-	for _, key := range oldKeys {
+		oldType = m.entities[key].Type
 		m.notifyFaceDelete(id, m.entities[key].Face)
 		delete(m.entities, key)
 		m.entityOrder = entityRemove(m.entityOrder, key)
 	}
+	// Bare-id observers index the family under one id; drop it before the
+	// rows come back under the new type.
+	m.notifyLastFaceDelete(id)
 	now := time.Now()
-	for _, row := range newRows {
+	for _, r := range replacements {
+		row := r.Entity.Clone()
 		row.UpdatedAt = now
 		key := entity.FormatStateRef(row.ID, row.Face)
 		m.entities[key] = row
 		m.entityOrder = entityInsert(m.entityOrder, key)
-	}
-	// Replace the indexed family as a whole: search and backlink observers
-	// must not retain old face or type keys after a conversion.
-	m.notifyLastFaceDelete(id)
-	for _, row := range newRows {
 		m.notifyPut(row)
 		m.emit(store.Event{Op: store.EventEntityUpdated, EntityType: row.Type, EntityID: row.ID, Face: row.Face})
+	}
+	for _, face := range emptied {
+		m.emit(store.Event{Op: store.EventEntityDeleted, EntityType: oldType, EntityID: id, Face: face})
 	}
 	return nil
 }

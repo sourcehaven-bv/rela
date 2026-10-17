@@ -86,7 +86,8 @@ func visibleSearchFactory(t *testing.T) (store.Store, search.Searcher, search.Vi
 // contract out of pgstore's own tests and into storetest.
 func TestConformance(t *testing.T) {
 	storetest.RunAll(t, factory, searchFactory, visibleSearchFactory, storetest.Capabilities{
-		SoftDelete: true,
+		SoftDelete:    true,
+		FamilyReplace: true,
 		Observers: func(t *testing.T, obs ...store.EntityObserver) store.Store {
 			t.Helper()
 			opts := make([]sqlitestore.Option, 0, len(obs))

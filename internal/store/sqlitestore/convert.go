@@ -9,11 +9,14 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/sqlitedb"
 	"github.com/Sourcehaven-BV/rela/internal/store"
+	"github.com/Sourcehaven-BV/rela/internal/store/storeutil"
 )
 
 var _ store.FamilyReplacer = (*Store)(nil)
 
-//nolint:gocognit // Validate the whole family before changing any row.
+// ReplaceEntityFamily implements store.FamilyReplacer. Like pgstore it parks
+// every source row on a temporary face first, so a face swap never collides
+// with the family primary key mid-transaction.
 func (s *Store) ReplaceEntityFamily(ctx context.Context, id string, replacements []store.FamilyReplacement) error {
 	if s.conn == nil {
 		return s.Tx(ctx, func(tx store.Store) error {
@@ -27,40 +30,20 @@ func (s *Store) ReplaceEntityFamily(ctx context.Context, id string, replacements
 			)
 		})
 	}
-	if id == "" || len(replacements) == 0 {
-		return errors.New("sqlitestore: replacement family requires an id and rows")
-	}
-	current := map[entity.Face]bool{}
+	var current []entity.Face
+	oldType := ""
 	for row, err := range s.ListEntities(ctx, store.EntityQuery{IDs: []string{id}, Faces: store.AllFaces()}) {
 		if err != nil {
 			return err
 		}
-		current[row.Face] = true
-	}
-	if len(current) == 0 {
-		return store.ErrNotFound
-	}
-	seenSource := make(map[entity.Face]bool, len(replacements))
-	seenTarget := make(map[entity.Face]bool, len(replacements))
-	typeName := ""
-	for _, replacement := range replacements {
-		e := replacement.Entity
-		if e == nil || e.ID != id || e.Type == "" || !current[replacement.SourceFace] || seenSource[replacement.SourceFace] {
-			return fmt.Errorf("sqlitestore: invalid replacement for source face %q", replacement.SourceFace)
+		if row.ID == id {
+			current = append(current, row.Face)
+			oldType = row.Type
 		}
-		if typeName == "" {
-			typeName = e.Type
-		} else if e.Type != typeName {
-			return errors.New("sqlitestore: replacement family has mixed entity types")
-		}
-		if seenTarget[e.Face] {
-			return fmt.Errorf("sqlitestore: replacement family maps multiple rows to face %q", e.Face)
-		}
-		seenSource[replacement.SourceFace] = true
-		seenTarget[e.Face] = true
 	}
-	if len(seenSource) != len(current) {
-		return errors.New("sqlitestore: replacement must account for every source face")
+	emptied, err := storeutil.ValidateFamilyReplacement(id, current, replacements)
+	if err != nil {
+		return err
 	}
 
 	for i, replacement := range replacements {
@@ -73,7 +56,8 @@ func (s *Store) ReplaceEntityFamily(ctx context.Context, id string, replacements
 
 	editorUser, editorTool := store.AttributionColumns(ctx)
 	origin := originColumns(store.OriginFrom(ctx))
-	events := make([]store.Event, 0, len(replacements))
+	stored := make([]*entity.Entity, 0, len(replacements))
+	events := make([]store.Event, 0, len(replacements)+len(emptied))
 	for i, replacement := range replacements {
 		e := replacement.Entity
 		props, err := marshalProps(e.Properties)
@@ -100,12 +84,26 @@ func (s *Store) ReplaceEntityFamily(ctx context.Context, id string, replacements
 		} else if affected == 0 {
 			return store.ErrNotFound
 		}
-		stored := e.Clone()
-		stored.UpdatedAt = updated
-		s.notifyFaceDelete(id, replacement.SourceFace)
-		s.notifyPut(stored)
-		ev := store.Event{Op: store.EventEntityUpdated, EntityID: id, EntityType: e.Type, Face: e.Face}
-		events = append(events, ev)
+		row := e.Clone()
+		row.UpdatedAt = updated
+		stored = append(stored, row)
+		events = append(events, store.Event{
+			Op: store.EventEntityUpdated, EntityID: id, EntityType: e.Type, Face: e.Face,
+		})
+	}
+	for _, face := range emptied {
+		events = append(events, store.Event{
+			Op: store.EventEntityDeleted, EntityID: id, EntityType: oldType, Face: face,
+		})
+	}
+	for _, face := range current {
+		s.notifyFaceDelete(id, face)
+	}
+	// Bare-id observers index the family under one id; drop it before the
+	// rows come back under the new type.
+	s.notifyLastFaceDelete(id)
+	for _, row := range stored {
+		s.notifyPut(row)
 	}
 	for _, ev := range events {
 		s.emit(ev)
