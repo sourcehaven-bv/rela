@@ -12,7 +12,7 @@ import (
 // schemaVersion is the shape of the tables this binary expects. Bump it
 // whenever schemaSQL changes shape, and append the step that carries an
 // existing database forward to [migrations].
-const schemaVersion = 19
+const schemaVersion = 20
 
 // SchemaVersion reports the table shape this binary expects, so the CLI can
 // show a real number rather than prose.
@@ -227,6 +227,12 @@ var migrations = []migration{
 				`CREATE INDEX entity_versions_prev_id_idx ON entity_versions (prev_id, (COALESCE(prev_face, face))) WHERE prev_id IS NOT NULL`,
 			),
 		),
+	},
+	{
+		// v19 → v20: the ref properties of each channel type's record
+		// (TKT-ZU7P13). Pure CREATE IF NOT EXISTS.
+		to:    20,
+		apply: sqlSteps(channelTypeRefsDDL),
 	},
 }
 

@@ -71,9 +71,16 @@ var (
 	// ErrTooLarge reports a value over one of the caps below.
 	ErrTooLarge = errors.New("channels: value too large")
 
-	// ErrTooManyChannels reports an anchor that already holds
-	// [MaxChannelsPerType] channels of the type.
+	// ErrTooManyChannels reports an anchor that already holds as many
+	// channels of the type as allowed: [NewChannel.Max], at most
+	// [MaxChannelsPerType].
 	ErrTooManyChannels = errors.New("channels: too many channels")
+
+	// ErrTypeShapeConflict reports a type record that differs from the one
+	// the store holds for the type: another anchor mode or cardinality, or
+	// a property the store recorded as a ref that the new record declares
+	// as something else. Nothing was recorded. See [TypeRecord].
+	ErrTypeShapeConflict = errors.New("channels: channel type is recorded with another shape")
 
 	// ErrConflict reports a compare-and-set that lost: the lifecycle state
 	// or the action status was not the expected one.
@@ -396,6 +403,19 @@ type NewChannel struct {
 	Incarnation string
 	By          Author
 	At          time.Time
+	// Max caps the named channels of Type the anchor may hold, counting
+	// this one. Zero, or a value over [MaxChannelsPerType], means
+	// [MaxChannelsPerType].
+	Max int
+}
+
+// Cap is the most named channels of the type the anchor may hold: Max,
+// bounded by [MaxChannelsPerType].
+func (nc NewChannel) Cap() int {
+	if nc.Max <= 0 || nc.Max > MaxChannelsPerType {
+		return MaxChannelsPerType
+	}
+	return nc.Max
 }
 
 // StateSince returns when the channel entered its current state: the close

@@ -56,7 +56,7 @@ func TestPost_PersistsAndRecords(t *testing.T) {
 	require.Equal(t, "note", m.Type)
 	require.EqualValues(t, 2, m.Props["level"])
 	require.Equal(t, "high", m.Props["pick"])
-	require.Equal(t, []channels.Key{roomKey()}, sub.Take())
+	require.Equal(t, []channels.Key{roomKey()}, takeKeys(t, sub))
 	h.post(t, user("bob"), text("again"))
 	require.EqualValues(t, 1, h.store.records.Load(), "type records are written once per process")
 }
@@ -127,7 +127,7 @@ func TestMessages_PageClamp(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t)
 	for i := range 55 {
-		h.local.limiter = newLimiter(8192) // keep the rate limit out of this test
+		h.local.limiter = newLimiter(defaultLimitCaps()) // keep the rate limit out of this test
 		h.post(t, user("bob"), text(fmt.Sprintf("m%d", i)))
 	}
 	page, err := h.svc.Messages(as(user("bob")), room, channels.Page{Limit: 500})

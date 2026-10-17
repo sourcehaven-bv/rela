@@ -3,6 +3,7 @@ package realtime
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -169,12 +170,23 @@ func as(a *fakeAccess) context.Context {
 	return context.WithValue(context.Background(), accessKey{}, a)
 }
 
+// accessErrKey carries an error the fake access source fails with.
+type accessErrKey struct{}
+
+// failingAccess is a context whose access source fails with err.
+func failingAccess(err error) context.Context {
+	return context.WithValue(context.Background(), accessErrKey{}, err)
+}
+
 type fakeAccessSource struct{}
 
 func (fakeAccessSource) For(ctx context.Context) (context.Context, Access, error) {
+	if err, ok := ctx.Value(accessErrKey{}).(error); ok {
+		return nil, nil, err
+	}
 	a, ok := ctx.Value(accessKey{}).(*fakeAccess)
 	if !ok {
-		return nil, nil, errors.New("no principal")
+		return nil, nil, fmt.Errorf("%w: unstamped", ErrNoPrincipal)
 	}
 	return ctx, a, nil
 }
@@ -254,6 +266,12 @@ func (f *fakeConfig) Load() Snapshot {
 	return f.snap
 }
 
+func (f *fakeConfig) set(s Snapshot) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.snap = s
+}
+
 // testClock is a settable clock.
 type testClock struct {
 	mu  sync.Mutex
@@ -279,6 +297,8 @@ type countingStore struct {
 	appends atomic.Int64
 	records atomic.Int64
 	onHead  func()
+	// onRecord runs before RecordTypes.
+	onRecord func()
 }
 
 func (s *countingStore) Head(ctx context.Context, k channels.Key) (channels.Channel, error) {
@@ -296,6 +316,9 @@ func (s *countingStore) Append(ctx context.Context, k channels.Key, m channels.N
 
 func (s *countingStore) RecordTypes(ctx context.Context, r map[string]channels.TypeRecord) error {
 	s.records.Add(1)
+	if s.onRecord != nil {
+		s.onRecord()
+	}
 	return s.Store.RecordTypes(ctx, r)
 }
 
@@ -312,17 +335,17 @@ type harness struct {
 type harnessOpt func(*harnessOpts)
 
 type harnessOpts struct {
-	yaml       string
-	lim        ephemeralLimits
-	maxBuckets int
+	yaml string
+	lim  ephemeralLimits
+	caps limitCaps
 }
 
 func withEphemeral(l ephemeralLimits) harnessOpt { return func(o *harnessOpts) { o.lim = l } }
-func withBuckets(n int) harnessOpt               { return func(o *harnessOpts) { o.maxBuckets = n } }
+func withBuckets(n int) harnessOpt               { return func(o *harnessOpts) { o.caps.buckets = n } }
 
 func newHarness(t *testing.T, opts ...harnessOpt) *harness {
 	t.Helper()
-	o := harnessOpts{yaml: testRealtime, lim: defaultEphemeralLimits(), maxBuckets: 8192}
+	o := harnessOpts{yaml: testRealtime, lim: defaultEphemeralLimits(), caps: defaultLimitCaps()}
 	for _, f := range opts {
 		f(&o)
 	}
@@ -330,7 +353,7 @@ func newHarness(t *testing.T, opts ...harnessOpt) *harness {
 	require.NoError(t, err)
 	st := &countingStore{Store: fs}
 	clock := &testClock{now: time.Date(2026, 10, 12, 9, 0, 0, 0, time.UTC)}
-	local, err := newLocal(clock.Now, o.lim, o.maxBuckets)
+	local, err := newLocal(clock.Now, o.lim, o.caps)
 	require.NoError(t, err)
 	t.Cleanup(local.Stop)
 	h := &harness{
@@ -367,6 +390,14 @@ func roomKey() channels.Key {
 
 func text(body string) PostInput {
 	return PostInput{Type: "text", Props: map[string]any{"body": body}}
+}
+
+// takeKeys returns the keys of a Take and fails on a resync.
+func takeKeys(t *testing.T, sub *Subscription) []channels.Key {
+	t.Helper()
+	keys, resync := sub.Take()
+	require.False(t, resync, "unexpected resync")
+	return keys
 }
 
 // requireDenial asserts err is a *DenialError with status and type.

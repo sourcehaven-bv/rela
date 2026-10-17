@@ -68,7 +68,7 @@ func TestEphemeral_TTLClamp(t *testing.T) {
 func TestEphemeral_RingWrap64(t *testing.T) {
 	t.Parallel()
 	lim := defaultEphemeralLimits()
-	lim.perIdentity = 1000
+	lim.perIdentity, lim.ringShare = 1000, realtimelimits.EphemeralRingSize
 	h := newHarness(t, withEphemeral(lim))
 	first := ""
 	for i := range realtimelimits.EphemeralRingSize {
@@ -79,7 +79,7 @@ func TestEphemeral_RingWrap64(t *testing.T) {
 			first = res.ID
 		}
 		h.clock.Add(100 * time.Millisecond)
-		h.local.limiter = newLimiter(8192) // isolate the ring from the rate limit
+		h.local.limiter = newLimiter(defaultLimitCaps()) // isolate the ring from the rate limit
 	}
 	head, err := h.svc.Head(as(user("u0")), room)
 	require.NoError(t, err)
@@ -123,9 +123,15 @@ func TestEphemeral_Caps(t *testing.T) {
 			require.NoError(t, err)
 			h.clock.Add(time.Second)
 		}
-		_, err := h.svc.Post(as(user("bob")), room, PostInput{Type: "cursor"})
+		other := RawAddress{EntityType: "ticket", Anchor: "TKT-2", Type: "room"}
+		_, err := h.svc.Post(as(user("bob")), other, PostInput{Type: "cursor"})
 		d := requireDenial(t, err, http.StatusTooManyRequests, TypeRateLimited)
 		require.Positive(t, d.RetryAfter)
+		_, err = h.svc.Post(as(user("bob")), room, PostInput{Type: "cursor"})
+		require.NoError(t, err, "at the cap, a signal replaces the poster's own oldest one in the ring")
+		head, err := h.svc.Head(as(user("bob")), room)
+		require.NoError(t, err)
+		require.Len(t, head.Ephemeral, 2)
 		_, err = h.svc.Post(as(user("carol")), room, PostInput{Type: "cursor"})
 		require.NoError(t, err, "another identity is not affected")
 	})
@@ -163,12 +169,12 @@ func TestEphemeral_ExpiryMarksChanged(t *testing.T) {
 	_, err := h.svc.Post(as(user("bob")), room, typing())
 	require.NoError(t, err)
 	<-sub.Wake()
-	require.Equal(t, []channels.Key{roomKey()}, sub.Take())
-	require.Empty(t, sub.Take())
+	require.Equal(t, []channels.Key{roomKey()}, takeKeys(t, sub))
+	require.Empty(t, takeKeys(t, sub))
 
 	h.clock.Add(6 * time.Second)
-	require.Equal(t, []channels.Key{roomKey()}, sub.Take(), "expiry is a change")
-	require.Empty(t, sub.Take())
+	require.Equal(t, []channels.Key{roomKey()}, takeKeys(t, sub), "expiry is a change")
+	require.Empty(t, takeKeys(t, sub))
 }
 
 // TestEphemeral_TimerWakes pins that the expiry timer wakes a subscriber
@@ -190,24 +196,25 @@ func TestEphemeral_TimerWakes(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("the expiry timer did not wake the subscriber")
 	}
-	require.Equal(t, []channels.Key{key}, sub.Take())
+	require.Equal(t, []channels.Key{key}, takeKeys(t, sub))
 }
 
 // TestEphemeral_DropOnDeleteAndRename pins that a deleted or renamed
-// entity takes its signals and rate buckets with it, and a deleted face
-// only its own.
+// entity takes its signals with it, a deleted entity its rate buckets too,
+// and a deleted face only its own. A rename moves the rate buckets.
 func TestEphemeral_DropOnDeleteAndRename(t *testing.T) {
 	t.Parallel()
 	draft := RawAddress{EntityType: "page", Anchor: "PAGE-1@draft", Type: "facechat"}
 	tests := []struct {
-		name string
-		drop func(*Local) error
-		room bool // the TKT-1 room signal survives
+		name    string
+		drop    func(*Local) error
+		room    bool // the TKT-1 room signal survives
+		buckets int  // buckets left: the aggregate, and a moved per-channel one
 	}{
-		{"delete", func(l *Local) error { return l.EntityDeleted(t.Context(), "TKT-1") }, false},
-		{"rename", func(l *Local) error { return l.EntityRenamed(t.Context(), "TKT-1", "TKT-7") }, false},
-		{"other face", func(l *Local) error { return l.EntityFaceDeleted(t.Context(), "TKT-1", "draft") }, true},
-		{"family face no-op", func(l *Local) error { return l.EntityFaceDeleted(t.Context(), "TKT-1", "") }, true},
+		{"delete", func(l *Local) error { return l.EntityDeleted(t.Context(), "TKT-1") }, false, 1},
+		{"rename", func(l *Local) error { return l.EntityRenamed(t.Context(), "TKT-1", "TKT-7") }, false, 2},
+		{"other face", func(l *Local) error { return l.EntityFaceDeleted(t.Context(), "TKT-1", "draft") }, true, 2},
+		{"family face no-op", func(l *Local) error { return l.EntityFaceDeleted(t.Context(), "TKT-1", "") }, true, 2},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -222,13 +229,13 @@ func TestEphemeral_DropOnDeleteAndRename(t *testing.T) {
 			require.NoError(t, tc.drop(h.local))
 			head, err := h.svc.Head(as(bob), room)
 			require.NoError(t, err)
+			require.Equal(t, tc.buckets, h.local.limiter.size())
 			if tc.room {
 				require.Len(t, head.Ephemeral, 1)
 				return
 			}
 			require.Empty(t, head.Ephemeral)
-			require.Equal(t, []channels.Key{roomKey()}, sub.Take())
-			require.Equal(t, 1, h.local.limiter.size(), "only the identity's aggregate bucket stays")
+			require.Equal(t, []channels.Key{roomKey()}, takeKeys(t, sub))
 		})
 	}
 	t.Run("face delete drops the face", func(t *testing.T) {
@@ -237,8 +244,10 @@ func TestEphemeral_DropOnDeleteAndRename(t *testing.T) {
 		_, err := h.svc.Post(as(user("bob")), draft, PostInput{Type: "text", Props: map[string]any{"body": "x"}})
 		require.NoError(t, err)
 		require.NoError(t, h.local.EntityFaceDeleted(t.Context(), "PAGE-1", "draft"))
-		for k := range h.local.limiter.buckets {
-			require.NotEqual(t, "PAGE-1", k.key.ID)
+		for _, ib := range h.local.limiter.ids {
+			for co := range ib.perOp {
+				require.NotEqual(t, "PAGE-1", co.key.ID)
+			}
 		}
 	})
 }

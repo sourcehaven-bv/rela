@@ -318,7 +318,7 @@ func (s *Store) CreateMany(
 			taken[n] = true
 		}
 	}
-	if len(taken) >= channels.MaxChannelsPerType {
+	if len(taken) >= nc.Cap() {
 		return channels.Channel{}, fmt.Errorf("%w: %s holds %d %s channels",
 			channels.ErrTooManyChannels, a.ID, len(taken), typ)
 	}
@@ -937,7 +937,8 @@ func (s *Store) TypeRecords(ctx context.Context) (map[string]channels.TypeRecord
 
 // RecordTypes implements [channels.Store].
 func (s *Store) RecordTypes(ctx context.Context, records map[string]channels.TypeRecord) error {
-	if err := channels.PrepareTypeRecords(records); err != nil {
+	records, err := channels.PrepareTypeRecords(records)
+	if err != nil {
 		return err
 	}
 	unlock, err := s.lock(ctx)
@@ -949,11 +950,26 @@ func (s *Store) RecordTypes(ctx context.Context, records map[string]channels.Typ
 	if err != nil {
 		return err
 	}
-	changed := channels.ChangedTypeRecords(cur, records)
-	if len(changed) == 0 {
+	changed := false
+	for _, typ := range slices.Sorted(maps.Keys(records)) {
+		given := records[typ]
+		held, ok := cur[typ]
+		added, mergeErr := channels.MergeTypeRecord(typ, held, ok, given)
+		if mergeErr != nil {
+			return mergeErr
+		}
+		if ok && len(added) == 0 {
+			continue
+		}
+		if !ok {
+			held = channels.TypeRecord{Anchor: given.Anchor, Cardinality: given.Cardinality}
+		}
+		held.Refs = slices.Sorted(slices.Values(slices.Concat(held.Refs, added)))
+		cur[typ], changed = held, true
+	}
+	if !changed {
 		return nil
 	}
-	maps.Copy(cur, changed)
 	data, err := yaml.Marshal(cur)
 	if err != nil { // coverage-ignore: a map of plain structs always encodes
 		return fmt.Errorf("filechannels: encode type records: %w", err)

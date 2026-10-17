@@ -84,18 +84,24 @@ func (s *Service) Edit(ctx context.Context, addr RawAddress, seq int64, props ma
 	if err != nil {
 		return MessageView{}, err
 	}
+	// The new props may hold a ref the type's record lacks.
+	if recErr := s.record(c); recErr != nil {
+		return MessageView{}, recErr
+	}
 	got, err := s.store.Edit(c.ctx, c.key, seq, vp.props, c.now)
 	if err != nil {
-		return MessageView{}, storeError(err)
+		return MessageView{}, messageStoreError(err)
 	}
 	s.local.mark(c.key)
 	return s.rendererWith(c, refs).message(got), nil
 }
 
-// Delete removes a message. The author's own delete (delete_own) is tried
-// first: the caller wrote the message, passes its gate and, when `from:` is
-// set, the channel is in that state. Otherwise the moderator's remove is
-// tried: the remove gate, and a reason when one is required. A caller who
+// Delete removes a message. A caller who gives a reason and passes the
+// remove gate removes it as a moderator, so the reason is kept even on
+// their own message. Otherwise the author's own delete (delete_own) is
+// tried first: the caller wrote the message, passes its gate and, when
+// `from:` is set, the channel is in that state. Then the moderator's
+// remove: the remove gate, and a reason when one is required. A caller who
 // passes neither is refused naming both rules.
 //
 // The reason is kept for moderators and the audit trail; an author's own
@@ -114,12 +120,15 @@ func (s *Service) Delete(ctx context.Context, addr RawAddress, seq int64, reason
 	}
 	removal := channels.Removal{By: authorOf(c.p), At: c.now}
 	ops := c.ct.MessageOps
+	moderator := c.moderator()
 	ownRefusal := c.deleteOwn(ops.DeleteOwn, m)
 	switch {
+	case moderator && reason != "":
+		removal.Kind, removal.Reason = channels.RemovalModerator, reason
 	case ownRefusal == nil:
 		removal.Kind = channels.RemovalAuthor
-	case ops.Remove != nil && c.gate(ops.Remove.Gate):
-		if ops.Remove.ReasonRequired && reason == "" {
+	case moderator:
+		if ops.Remove.ReasonRequired {
 			return MessageView{}, deny(http.StatusBadRequest, TypeReasonRequired,
 				"removing a message needs a reason")
 		}
@@ -136,7 +145,7 @@ func (s *Service) Delete(ctx context.Context, addr RawAddress, seq int64, reason
 	}
 	got, err := s.store.Remove(c.ctx, c.key, seq, removal)
 	if err != nil {
-		return MessageView{}, storeError(err)
+		return MessageView{}, messageStoreError(err)
 	}
 	s.local.mark(c.key)
 	return s.rendererWith(c, nil).message(got), nil

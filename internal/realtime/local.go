@@ -29,7 +29,12 @@ type Local struct {
 	timerMu sync.Mutex
 	timer   *time.Timer
 	timerAt time.Time
+	// stopped is set by Stop; the expiry timer is never armed again.
+	stopped bool
 
+	// recorded caches the type records this process has written, so a
+	// write costs no store call once its type is recorded. The store
+	// decides conflicts; the cache only skips repeats.
 	recMu    sync.Mutex
 	recorded map[string]channels.TypeRecord
 }
@@ -39,17 +44,17 @@ type Local struct {
 //
 // Nil: clock is rejected.
 func NewLocal(clock Clock) (*Local, error) {
-	return newLocal(clock, defaultEphemeralLimits(), realtimelimits.MaxRateBuckets)
+	return newLocal(clock, defaultEphemeralLimits(), defaultLimitCaps())
 }
 
-func newLocal(clock Clock, lim ephemeralLimits, maxBuckets int) (*Local, error) {
+func newLocal(clock Clock, lim ephemeralLimits, caps limitCaps) (*Local, error) {
 	if clock == nil {
 		return nil, errNil("clock")
 	}
 	return &Local{
 		clock:     clock,
 		ephemeral: newEphemeralStore(lim),
-		limiter:   newLimiter(maxBuckets),
+		limiter:   newLimiter(caps),
 		subs:      map[*Subscription]struct{}{},
 		recorded:  map[string]channels.TypeRecord{},
 	}, nil
@@ -57,16 +62,25 @@ func newLocal(clock Clock, lim ephemeralLimits, maxBuckets int) (*Local, error) 
 
 // Subscription is one live consumer's view of channel changes. Each
 // subscriber has its own change set: Take empties only its own.
+//
+// The set holds at most [realtimelimits.MaxSubscriberChanges] keys. A
+// subscriber that falls further behind gets a resync flag from Take instead
+// of the keys, and rechecks every channel it follows.
 type Subscription struct {
 	local   *Local
 	wake    chan struct{}
 	mu      sync.Mutex
 	changed map[channels.Key]struct{}
+	resync  bool
+	max     int
 }
 
 // Subscribe registers a consumer. Close it when done.
 func (l *Local) Subscribe() *Subscription {
-	s := &Subscription{local: l, wake: make(chan struct{}, 1), changed: map[channels.Key]struct{}{}}
+	s := &Subscription{
+		local: l, wake: make(chan struct{}, 1), changed: map[channels.Key]struct{}{},
+		max: realtimelimits.MaxSubscriberChanges,
+	}
 	l.subMu.Lock()
 	l.subs[s] = struct{}{}
 	l.subMu.Unlock()
@@ -78,19 +92,26 @@ func (l *Local) Subscribe() *Subscription {
 func (s *Subscription) Wake() <-chan struct{} { return s.wake }
 
 // Take returns the keys that changed since the previous Take, sorted, and
-// empties the set. It first drops expired signals, so their expiry shows up
-// here even before the expiry timer fires.
-func (s *Subscription) Take() []channels.Key {
+// empties the set. When more channels changed than the set holds, it
+// returns no keys and resync set: every channel may have changed. It first
+// drops expired signals, so their expiry shows up here even before the
+// expiry timer fires.
+func (s *Subscription) Take() (keys []channels.Key, resync bool) {
 	s.local.expire()
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.resync {
+		s.resync = false
+		clear(s.changed)
+		return []channels.Key{}, true
+	}
 	out := make([]channels.Key, 0, len(s.changed))
 	for k := range s.changed {
 		out = append(out, k)
 	}
 	clear(s.changed)
 	channels.SortKeys(out)
-	return out
+	return out, false
 }
 
 // Close unregisters the subscription. Take keeps working and returns
@@ -115,7 +136,14 @@ func (l *Local) mark(keys ...channels.Key) {
 	for _, s := range subs {
 		s.mu.Lock()
 		for _, k := range keys {
+			if s.resync {
+				break
+			}
 			s.changed[k] = struct{}{}
+			if len(s.changed) > s.max {
+				s.resync = true
+				clear(s.changed)
+			}
 		}
 		s.mu.Unlock()
 		select {
@@ -139,7 +167,7 @@ func (l *Local) scheduleExpiry() {
 	}
 	l.timerMu.Lock()
 	defer l.timerMu.Unlock()
-	if l.timer != nil && !l.timerAt.After(next) {
+	if l.stopped || (l.timer != nil && !l.timerAt.After(next)) {
 		return
 	}
 	if l.timer != nil {
@@ -158,10 +186,12 @@ func (l *Local) fire() {
 	l.scheduleExpiry()
 }
 
-// Stop stops the expiry timer. Signals still expire on the next Take.
+// Stop stops the expiry timer for good: a later post does not arm it
+// again. Signals still expire on the next Take.
 func (l *Local) Stop() {
 	l.timerMu.Lock()
 	defer l.timerMu.Unlock()
+	l.stopped = true
 	if l.timer != nil {
 		l.timer.Stop()
 		l.timer, l.timerAt = nil, time.Time{}
@@ -175,10 +205,12 @@ func (l *Local) dropAnchor(id string, face entity.Face) {
 	l.mark(l.ephemeral.dropAnchor(id, face)...)
 }
 
-// EntityRenamed drops what was held for the channels of oldID. The stored
-// channels move to newID; signals and rate buckets start afresh there.
-func (l *Local) EntityRenamed(_ context.Context, oldID, _ string) error {
-	l.dropAnchor(oldID, "")
+// EntityRenamed moves the rate buckets of the channels of oldID to newID,
+// where the stored channels move, so a rename does not refill anyone's
+// per-channel tokens. The live signals of oldID are dropped.
+func (l *Local) EntityRenamed(_ context.Context, oldID, newID string) error {
+	l.limiter.rekey(oldID, newID)
+	l.mark(l.ephemeral.dropAnchor(oldID, "")...)
 	return nil
 }
 
@@ -204,7 +236,7 @@ func (l *Local) needsRecord(typ string, rec channels.TypeRecord) bool {
 	l.recMu.Lock()
 	defer l.recMu.Unlock()
 	got, ok := l.recorded[typ]
-	return !ok || got != rec
+	return !ok || !got.Equal(rec)
 }
 
 // noteRecorded remembers that the store holds rec for typ.

@@ -16,6 +16,12 @@ import (
 // better than the entity route does.
 var ErrAnchorNotFound = errors.New("realtime: anchor entity not found")
 
+// ErrNoPrincipal is what an [AccessSource] wraps when the request carries
+// no identity the ACL can evaluate, such as an unstamped principal under a
+// declarative policy. The service answers it with a 403 no_principal; any
+// other error from the source is a server error.
+var ErrNoPrincipal = errors.New("realtime: the request carries no identity the ACL can evaluate")
+
 // DenialError types: the stable `type` of an error answer.
 const (
 	TypeUnknownChannelType = "unknown_channel_type"
@@ -41,6 +47,16 @@ const (
 	TypeTooLarge           = "too_large"
 	TypeInvalidRef         = "invalid_ref"
 	TypeRateLimited        = "rate_limited"
+	// TypeChannelTypeConflict is a 409 for a write to a channel type whose
+	// record in the channel store differs from realtime.yaml: another
+	// anchor or cardinality, or a recorded ref declared as another type.
+	// Writes to the type stay refused until realtime.yaml matches the
+	// record again. The HTTP layer (T3b) answers it as 409
+	// channel_type_conflict, with the title naming the type.
+	TypeChannelTypeConflict = "channel_type_conflict"
+	// TypeConfigChanged is a 409 for a write during which realtime.yaml was
+	// reloaded. Nothing was written; a retry runs under the new config.
+	TypeConfigChanged = "config_changed"
 )
 
 // DenialError is a refused operation: an HTTP status, a stable type, a title for
@@ -106,12 +122,39 @@ func invalidRef() *DenialError {
 		"a referenced entity does not exist, cannot be read, or is not of an allowed type")
 }
 
+// typeConflict is the 409 for a write to channel type typ whose store
+// record conflicts with the configuration.
+func typeConflict(typ string) *DenialError {
+	return &DenialError{
+		Status: http.StatusConflict, Type: TypeChannelTypeConflict,
+		Title: fmt.Sprintf("channel type %s is recorded with another anchor, cardinality or ref properties "+
+			"than realtime.yaml declares; writes stay refused until they match", typ),
+		Rule: "channel_types." + typ,
+	}
+}
+
+func configChanged() *DenialError {
+	return deny(http.StatusConflict, TypeConfigChanged, "realtime.yaml was reloaded during the request; try again")
+}
+
+// messageStoreError is [storeError] for an operation on one message: a
+// missing channel or message is message_not_found.
+func messageStoreError(err error) error {
+	if errors.Is(err, channels.ErrNotFound) {
+		return messageNotFound()
+	}
+	return storeError(err)
+}
+
 // storeError maps a channel store error on a write to a [DenialError], and
-// returns any other error unchanged.
+// returns any other error unchanged. A missing channel is
+// channel_not_found: it was deleted after the operation read it.
 func storeError(err error) error {
 	switch {
 	case err == nil:
 		return nil
+	case errors.Is(err, channels.ErrNotFound):
+		return channelNotFound()
 	case errors.Is(err, channels.ErrRemoved):
 		return deny(http.StatusConflict, TypeRemoved, "the message was removed")
 	case errors.Is(err, channels.ErrTooManyChannels):

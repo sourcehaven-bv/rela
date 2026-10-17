@@ -47,12 +47,21 @@ type call struct {
 }
 
 // begin captures the per-operation state: one config snapshot, one Access
-// over one ACL request, one clock reading.
+// over one ACL request, one clock reading. With realtime off it answers
+// [ErrRealtimeOff] before it asks anything about the caller. A caller the
+// ACL cannot evaluate ([ErrNoPrincipal]) is a 403 no_principal; any other
+// failure to open the access is a server error.
 func (s *Service) begin(ctx context.Context) (*call, error) {
 	snap := s.cfg.Load()
+	if snap.Config == nil {
+		return nil, ErrRealtimeOff
+	}
 	actx, acc, err := s.access.For(ctx)
-	if err != nil {
+	if errors.Is(err, ErrNoPrincipal) {
 		return nil, noPrincipal()
+	}
+	if err != nil {
+		return nil, fmt.Errorf("realtime: open access: %w", err)
 	}
 	return &call{ctx: actx, snap: snap, acc: acc, p: acc.Principal(), now: s.clock()}, nil
 }
@@ -71,13 +80,10 @@ func (c *call) requireCaller() error {
 }
 
 // channelType resolves the channel type named typ for a route on
-// entityType. An unknown type, realtime being off, or a type that does not
-// attach to entityType is 404 unknown_channel_type, answered before the
-// anchor is read: the configuration is not secret.
+// entityType. An unknown type, or a type that does not attach to
+// entityType, is 404 unknown_channel_type, answered before the anchor is
+// read: the configuration is not secret.
 func (c *call) channelType(entityType, typ string) error {
-	if c.snap.Config == nil {
-		return unknownChannelType(typ)
-	}
 	ct, ok := c.snap.Config.ChannelType(typ)
 	if !ok || (entityType != "" && !slices.Contains(ct.AttachTo, entityType)) {
 		return unknownChannelType(typ)
@@ -150,7 +156,7 @@ func (s *Service) open(ctx context.Context, addr RawAddress) (*call, error) {
 		return nil, err
 	}
 	if err := c.channelType(addr.EntityType, addr.Type); err != nil {
-		return nil, s.offError(c, err)
+		return nil, err
 	}
 	if err := s.resolveAnchor(c, addr.Anchor); err != nil {
 		return nil, err
@@ -342,6 +348,14 @@ func roleLabel(r realtimecfg.Role) string {
 		return r.Name
 	}
 	return "read"
+}
+
+// moderator reports whether the caller passes the remove gate of c's
+// channel type: they may remove any message, and see who removed one and
+// why. Every renderer and the delete path decide it here.
+func (c *call) moderator() bool {
+	ops := c.ct.MessageOps
+	return ops.Remove != nil && c.requireCaller() == nil && c.gate(ops.Remove.Gate)
 }
 
 // mayPost reports whether the caller holds a post role of mt.
