@@ -360,10 +360,6 @@ func (fakeResolver) SearchFieldScope(context.Context, string) (*search.FieldScop
 	return nil, errNoSearchForm
 }
 
-func (byTypeResolver) SearchFieldScope(context.Context, string) (*search.FieldScope, error) {
-	return nil, errNoSearchForm
-}
-
 func (f fakeResolver) FieldVerdicts(context.Context, *entity.Entity) FieldVerdicts {
 	return f.fv
 }
@@ -400,6 +396,10 @@ func (r byTypeResolver) UnconditionalRelationVerdicts(ctx context.Context, e *en
 	return r.RelationVerdicts(ctx, e)
 }
 func (r byTypeResolver) FieldVisibleOnEveryRow(context.Context, string, string) bool { return true }
+
+func (byTypeResolver) SearchFieldScope(context.Context, string) (*search.FieldScope, error) {
+	return nil, errNoSearchForm
+}
 
 // affordanceServiceWithResolver builds a bare affordanceService over a fixed
 // resolver — no App. The resolver-driven affordance methods
