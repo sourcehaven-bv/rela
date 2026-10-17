@@ -141,7 +141,8 @@ func (s *Store) createEntityLocked(ctx context.Context, e *entity.Entity) error 
 		SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
 		WHERE NOT EXISTS (SELECT 1 FROM marked_entities WHERE lower(id) = lower(?))`,
 		e.ID, string(e.Face), e.Type, props, e.Content, sqlitedb.FormatTime(updated), editorUser, editorTool,
-		o.kind, o.source, o.sourceFace, o.sourceType, o.definition, mentionTargetsJSON(e.Content), search.IndexText(e), e.ID)
+		o.kind, o.source, o.sourceFace, o.sourceType, o.definition, mentionTargetsJSON(e.Content),
+		search.IndexText(e), e.ID)
 	var inserted int64
 	if err == nil {
 		inserted, err = res.RowsAffected()

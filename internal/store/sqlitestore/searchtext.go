@@ -42,30 +42,8 @@ func reindexSearchTextBatch(ctx context.Context, tx store.Store) error {
 	if !ok { // unreachable: Tx always hands back our own view type
 		return errors.New("sqlitestore: unexpected transaction view type")
 	}
-	rows, err := view.q().QueryContext(ctx,
-		`SELECT id, face, properties, content FROM entities WHERE search_text IS NULL LIMIT ?`,
-		searchTextReindexBatch)
+	batch, err := pendingSearchText(ctx, view)
 	if err != nil {
-		return err
-	}
-	var batch []*entity.Entity
-	for rows.Next() {
-		var id, face, props, content string
-		if err := rows.Scan(&id, &face, &props, &content); err != nil {
-			_ = rows.Close()
-			return err
-		}
-		p, err := unmarshalProps(props)
-		if err != nil {
-			_ = rows.Close()
-			return fmt.Errorf("entity %s face %q: %w", id, face, err)
-		}
-		batch = append(batch, &entity.Entity{ID: id, Face: entity.Face(face), Properties: p, Content: content})
-	}
-	if err := rows.Close(); err != nil {
-		return err
-	}
-	if err := rows.Err(); err != nil {
 		return err
 	}
 	for _, e := range batch {
@@ -75,4 +53,30 @@ func reindexSearchTextBatch(ctx context.Context, tx store.Store) error {
 		}
 	}
 	return nil
+}
+
+// pendingSearchText reads one batch of rows that have no search text. The
+// rows are closed before the caller writes, since the view has one
+// connection.
+func pendingSearchText(ctx context.Context, view *Store) ([]*entity.Entity, error) {
+	rows, err := view.q().QueryContext(ctx,
+		`SELECT id, face, properties, content FROM entities WHERE search_text IS NULL LIMIT ?`,
+		searchTextReindexBatch)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	var batch []*entity.Entity
+	for rows.Next() {
+		var id, face, props, content string
+		if err := rows.Scan(&id, &face, &props, &content); err != nil {
+			return nil, err
+		}
+		p, err := unmarshalProps(props)
+		if err != nil {
+			return nil, fmt.Errorf("entity %s face %q: %w", id, face, err)
+		}
+		batch = append(batch, &entity.Entity{ID: id, Face: entity.Face(face), Properties: p, Content: content})
+	}
+	return batch, rows.Err()
 }
