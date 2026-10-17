@@ -342,13 +342,13 @@ func TestAnchorGuard_FaceDeleteIgnoresHiddenSibling(t *testing.T) {
 			ctx := context.Background()
 			withSibling := &fakeGuard{blockWhole: true}
 			f := newFaceEdgeFixtureWith(t, b, withSibling)
-			_, errWith := f.mgr.DeleteEntityFace(asUser("blind-admin"), "POL-1", "draft", true)
+			_, errWith := f.mgr.DeleteEntityFace(entitymanager.BindAs(asUser("blind-admin"), t, f.mgr), "POL-1", "draft", true)
 
 			without := &fakeGuard{blockWhole: true}
 			f2 := newFaceEdgeFixtureWith(t, b, without)
 			_, err := f2.st.DeleteFace(ctx, entity.Ref{ID: "POL-1", Face: "published"})
 			require.NoError(t, err)
-			_, errWithout := f2.mgr.DeleteEntityFace(asUser("blind-admin"), "POL-1", "draft", true)
+			_, errWithout := f2.mgr.DeleteEntityFace(entitymanager.BindAs(asUser("blind-admin"), t, f2.mgr), "POL-1", "draft", true)
 
 			var blocked *entitymanager.AnchorBlockedError
 			require.ErrorAs(t, errWith, &blocked)
@@ -364,14 +364,14 @@ func TestAnchorGuard_FaceDeleteIgnoresHiddenSibling(t *testing.T) {
 			// channel on the whole entity does not block.
 			admin := &fakeGuard{blockWhole: true}
 			f3 := newFaceEdgeFixtureWith(t, b, admin)
-			_, err = f3.mgr.DeleteEntityFace(asUser("admin"), "POL-1", "draft", true)
+			_, err = f3.mgr.DeleteEntityFace(entitymanager.BindAs(asUser("admin"), t, f3.mgr), "POL-1", "draft", true)
 			require.NoError(t, err)
 			assert.Equal(t, []entitymanager.AnchorDelete{{ID: "POL-1", Face: "draft"}}, admin.deletes)
 
 			// A channel on the face itself always blocks.
 			faceBlock := &fakeGuard{blockFace: "draft"}
 			f4 := newFaceEdgeFixtureWith(t, b, faceBlock)
-			_, err = f4.mgr.DeleteEntityFace(asUser("admin"), "POL-1", "draft", true)
+			_, err = f4.mgr.DeleteEntityFace(entitymanager.BindAs(asUser("admin"), t, f4.mgr), "POL-1", "draft", true)
 			require.ErrorAs(t, err, &blocked)
 		})
 	}
