@@ -420,6 +420,7 @@ func isAPIPath(p string) bool {
 func attachACLRequest(next http.Handler, d *acl.Declarative, jwtVerified bool) http.Handler {
 	opener, oerr := access.NewOpener(d, jwtVerified)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		r = r.WithContext(withACLEnforced(r.Context()))
 		if !isAPIPath(r.URL.Path) {
 			next.ServeHTTP(w, r)
 			return

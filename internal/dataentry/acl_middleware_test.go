@@ -203,3 +203,42 @@ func TestACLMiddleware_WalkFailureFailsTheRequest(t *testing.T) {
 		t.Error("next handler ran without a resolved identity")
 	}
 }
+
+// TestReadGateFromContext_DeniesUnderPolicyWithoutGate pins that a request
+// served under a Declarative policy that reaches a read with no gate attached
+// (a route outside /api/, such as a webhook that forgot to attach one) is
+// denied every read. Allow-all is only for the wiring with no policy.
+func TestReadGateFromContext_DeniesUnderPolicyWithoutGate(t *testing.T) {
+	d := mustNewACL(t, &acl.Policy{}, newTestAppV1(t).store)
+
+	var got readGate
+	next := http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		got = readGateFromContext(r.Context())
+	})
+	attachACLRequest(next, d, false).ServeHTTP(httptest.NewRecorder(),
+		httptest.NewRequest(http.MethodPost, "/hooks/example", http.NoBody))
+
+	ctx := context.Background()
+	if ok, err := got.PermitsRead(ctx, "ticket", "TKT-1"); ok || err != nil {
+		t.Errorf("PermitsRead = %v, %v; want false", ok, err)
+	}
+	if rq := got.ReadQuery(ctx, "ticket"); !rq.DenyAll {
+		t.Errorf("ReadQuery = %+v; want DenyAll", rq)
+	}
+	if scope := got.SearchScope(ctx, []string{"ticket"}); len(scope) != 0 {
+		t.Errorf("SearchScope = %v; want empty", scope)
+	}
+	if got.HoldsPermission(ctx, acl.PermHistoryRead) {
+		t.Error("HoldsPermission = true; want false")
+	}
+	if ok, _ := got.PermitsWorld(ctx, "draft"); ok {
+		t.Error("PermitsWorld = true; want false")
+	}
+	if v, _ := got.ReadableFacesMany(ctx, "ticket", []string{"TKT-1"}); !v.For("TKT-1").None() {
+		t.Errorf("ReadableFacesMany admits TKT-1")
+	}
+
+	if _, nop := readGateFromContext(context.Background()).(nopReadGate); !nop {
+		t.Error("a context with no policy mark must keep the nop gate")
+	}
+}
