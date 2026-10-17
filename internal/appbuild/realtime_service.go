@@ -166,9 +166,10 @@ func (a openAccess) CeilingAdmitsUpdate(string) bool                         { r
 // row gate, the readable faces and field redaction all apply, and a bare id
 // serves the face the world ranks first among the readable ones.
 //
-// When properties are requested it also binds the record a lifecycle
-// condition reads, from the same redacted properties, so a hidden property
-// reads as absent there too.
+// It also binds the record a lifecycle condition reads, from the same
+// redacted properties, so a hidden property reads as absent there too. The
+// record is bound even when no property is requested: a condition may read
+// only the id, the type or the clock.
 type anchorReader struct {
 	rows headerReader
 	meta *metamodel.Metamodel
@@ -200,9 +201,9 @@ func (r anchorReader) Anchor(ctx context.Context, addr entity.Address, props []s
 				view.Props[p] = v
 			}
 		}
-		if def, ok := r.meta.GetEntityDef(view.Type); ok {
-			view.Record = predicatefns.EntityRecord(r.meta, def, view.ID, view.Type, view.Props)
-		}
+	}
+	if def, ok := r.meta.GetEntityDef(view.Type); ok {
+		view.Record = predicatefns.EntityRecord(r.meta, def, view.ID, view.Type, view.Props)
 	}
 	return view, nil
 }

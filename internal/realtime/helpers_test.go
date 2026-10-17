@@ -245,7 +245,7 @@ func (f *fakeAnchors) Anchor(_ context.Context, addr entity.Address, props []str
 			out.Props[p] = val
 		}
 	}
-	if def, ok := f.entityDef(v.Type); ok && len(props) > 0 {
+	if def, ok := f.entityDef(v.Type); ok {
 		out.Record = predicatefns.EntityRecord(f.meta, def, v.ID, v.Type, out.Props)
 	}
 	return out, nil

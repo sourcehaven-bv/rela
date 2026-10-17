@@ -69,8 +69,9 @@ type AnchorView struct {
 	// Record is the served face as the `entity` record a lifecycle
 	// `condition:` reads, bound from the same redacted properties as Props:
 	// a property that was not requested, or that the caller may not see,
-	// reads as absent. Nil when no property was requested; a condition then
-	// does not hold.
+	// reads as absent. It is bound whether or not properties were requested.
+	// Nil only for a type the schema does not define; a condition then does
+	// not hold.
 	Record predicate.Value
 }
 
