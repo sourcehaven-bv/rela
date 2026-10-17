@@ -12,6 +12,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
 	"slices"
 	"strings"
 	"sync"
@@ -20,6 +21,7 @@ import (
 	mcpgo "github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/Sourcehaven-BV/rela/internal/principal"
+	"github.com/Sourcehaven-BV/rela/internal/realtime"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
@@ -56,8 +58,28 @@ const (
 	watchTargetsArgument = "targets"
 )
 
-// watchableTools are the read tools a watch target may name.
-var watchableTools = []string{"show_entity", "list_entities", "list_relations"}
+// Channel targets. A read_channel replay reads at most watchChannelLimit
+// messages: a waiting target's page is empty (see [watchRun.pass]), so a
+// short page sees every change and keeps a poll cheap.
+const (
+	watchChannelPoll  = 2 * time.Second
+	watchChannelLimit = 5
+)
+
+// watchOrder lists the read tools a watch target may name, in the order the
+// watch tool describes them. Only those registered on the server count.
+var watchOrder = []string{"show_entity", "list_entities", "list_relations", toolReadChannel}
+
+// watchNames returns the tools of watchOrder that reads holds.
+func watchNames(reads map[string]mcpgo.ToolHandler) []string {
+	var out []string
+	for _, name := range watchOrder {
+		if _, ok := reads[name]; ok {
+			out = append(out, name)
+		}
+	}
+	return out
+}
 
 // ChangeSource pokes a watch when the store changes. It has the method set of
 // [store.Watcher]; it is declared here so MCP depends on the one method it
@@ -66,18 +88,23 @@ type ChangeSource interface {
 	Subscribe(bufSize int) (events <-chan store.Event, cancel func())
 }
 
-func toolWatch() *mcpgo.Tool {
+// toolWatch describes the watch tool for the watchable tools names.
+func toolWatch(names []string) *mcpgo.Tool {
+	enumJSON, err := json.Marshal(names)
+	if err != nil { // coverage-ignore: a string slice always marshals
+		panic("mcp: marshal watch tool names: " + err.Error())
+	}
 	return newTool("watch",
 		withDescription("Wait until the result of read-tool calls changes. Call it first without cursor, "+
 			"then read, then call it again with the returned cursor; it returns when a target's result "+
 			"changes for you, or at the timeout. Result: {cursor,changed,timed_out}, changed being "+
 			"indices into targets. Re-read the changed targets yourself."),
 		withArray(watchTargetsArgument, required(), description(
-			"Up to 16 read calls: [{tool, args}], tool one of show_entity, list_entities, list_relations; "+
+			"Up to 16 read calls: [{tool, args}], tool one of "+strings.Join(names, ", ")+"; "+
 				"args is the object that tool takes"),
 			func(p *schemaProperty, _ *toolSpec, _ string) {
 				p.Items = json.RawMessage(`{"type":"object","properties":{` +
-					`"tool":{"type":"string","enum":["show_entity","list_entities","list_relations"]},` +
+					`"tool":{"type":"string","enum":` + string(enumJSON) + `},` +
 					`"args":{"type":"object"}},"required":["tool"]}`)
 			}),
 		withString("cursor", description("Cursor from a previous watch")),
@@ -93,6 +120,8 @@ type watchHandler struct {
 	// addTool so a target's unknown arguments are refused the same way.
 	// Never written after construction.
 	reads map[string]mcpgo.ToolHandler
+	// names lists the keys of reads in watchOrder.
+	names []string
 	// key keys the cursor digests. It is per process: a cursor from another
 	// process reports every target changed once, which is safe.
 	key   []byte
@@ -119,6 +148,25 @@ type watchTarget struct {
 	args    json.RawMessage
 	key     string
 	handler mcpgo.ToolHandler
+	// channel is set for a read_channel target.
+	channel *watchChannel
+}
+
+// watchChannel is the channel a read_channel target reads, as its
+// arguments name it. A wake for another channel skips the target.
+type watchChannel struct {
+	anchor string // entity id, without a face
+	typ    string
+	name   string
+	// follows is set when the target pages by after_rev.
+	follows bool
+}
+
+// matches reports whether a change to the channel (id, typ, name) may
+// change the target's result. A target without a name matches every name,
+// so a wake is never missed; an extra wake costs one replay.
+func (c *watchChannel) matches(id, typ, name string) bool {
+	return c.anchor == id && c.typ == typ && (c.name == "" || c.name == name)
 }
 
 type watchResult struct {
@@ -136,7 +184,7 @@ func newWatchHandler(s *Server, reads map[string]mcpgo.ToolHandler) *watchHandle
 	key := make([]byte, sha256.Size)
 	_, _ = rand.Read(key) // never fails (crypto/rand)
 	return &watchHandler{
-		s: s, reads: reads, key: key,
+		s: s, reads: reads, names: watchNames(reads), key: key,
 		slots:  make(chan struct{}, watchParallel),
 		tick:   watchTick,
 		budget: watchPassBudget, replayTimeout: watchReplayTimeout,
@@ -181,6 +229,8 @@ func (w *watchHandler) handle(ctx context.Context, req *mcpgo.CallToolRequest) (
 		defer cancelWake()
 		leaseWake = wake
 	}
+	chans := newChannelWake(d, targets)
+	defer chans.close()
 
 	run := &watchRun{w: w, d: d, entry: entry, targets: targets, shareKey: p.ShareKey(),
 		digests: make(map[string]string, len(targets))}
@@ -197,7 +247,7 @@ func (w *watchHandler) handle(ctx context.Context, req *mcpgo.CallToolRequest) (
 	if !waits {
 		deadline = time.Now().Add(w.budget)
 	}
-	changed, incomplete, err := run.pass(ctx, deadline)
+	changed, incomplete, err := run.pass(ctx, deadline, false)
 	switch {
 	case err != nil:
 		return errorResult(watchNoAccess), nil
@@ -208,45 +258,7 @@ func (w *watchHandler) handle(ctx context.Context, req *mcpgo.CallToolRequest) (
 	case !waits:
 		return run.result(nil, cursor != "")
 	}
-
-	timer := time.NewTimer(time.Until(deadline))
-	defer timer.Stop()
-	ticker := time.NewTicker(w.tick)
-	defer ticker.Stop()
-	// A pass that skipped or did not finish a target runs again at the next
-	// tick: the event that woke it may have been about that target.
-	dirty := incomplete
-	for {
-		select {
-		case <-ctx.Done():
-			return nil, ctx.Err()
-		case <-timer.C:
-			return run.result(nil, true)
-		case _, open := <-events:
-			if !open {
-				events = nil
-			}
-			dirty = true
-		case <-leaseWake:
-			dirty = true
-		case <-ticker.C:
-			if !dirty {
-				continue
-			}
-			changed, incomplete, err := run.pass(ctx, deadline)
-			switch {
-			case err != nil:
-				return errorResult(watchNoAccess), nil
-			case ctx.Err() != nil:
-				return nil, ctx.Err()
-			case len(changed) > 0:
-				return run.result(changed, false)
-			case !time.Now().Before(deadline):
-				return run.result(nil, true)
-			}
-			dirty = incomplete
-		}
-	}
+	return run.wait(ctx, deadline, watchWakes{events: events, lease: leaseWake, chans: chans}, incomplete)
 }
 
 // watchRun is the state of one watch call.
@@ -264,14 +276,145 @@ type watchRun struct {
 	next int
 }
 
+// watchWakes are the wake sources of one watch call. A nil channel never
+// fires.
+type watchWakes struct {
+	events <-chan store.Event
+	lease  <-chan struct{}
+	chans  *channelWake
+}
+
+// wait replays the targets on the tick after a wake until one changes or
+// deadline passes. dirty starts it with a full pass due.
+func (r *watchRun) wait(
+	ctx context.Context, deadline time.Time, wakes watchWakes, dirty bool,
+) (*mcpgo.CallToolResult, error) {
+	timer := time.NewTimer(time.Until(deadline))
+	defer timer.Stop()
+	ticker := time.NewTicker(r.w.tick)
+	defer ticker.Stop()
+	// A pass that skipped or did not finish a target runs again at the next
+	// tick: the event that woke it may have been about that target. chanDirty
+	// replays only the channel targets.
+	chanDirty := false
+	for {
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-timer.C:
+			return r.result(nil, true)
+		case _, open := <-wakes.events:
+			if !open {
+				wakes.events = nil
+			}
+			dirty = true
+		case <-wakes.lease:
+			dirty = true
+		case <-wakes.chans.wake:
+			chanDirty = chanDirty || wakes.chans.take()
+		case <-wakes.chans.poll:
+			chanDirty = true
+		case <-ticker.C:
+			if !dirty && !chanDirty {
+				continue
+			}
+			changed, incomplete, err := r.pass(ctx, deadline, !dirty)
+			switch {
+			case err != nil:
+				return errorResult(watchNoAccess), nil
+			case ctx.Err() != nil:
+				return nil, ctx.Err()
+			case len(changed) > 0:
+				return r.result(changed, false)
+			case !time.Now().Before(deadline):
+				return r.result(nil, true)
+			}
+			if dirty {
+				dirty, chanDirty = incomplete, false
+			} else {
+				chanDirty = incomplete
+			}
+		}
+	}
+}
+
+// channelWake holds the channel wake sources of one watch call: the
+// in-process channel subscription and the channel poll. Both stay nil, and
+// never fire, without a read_channel target.
+type channelWake struct {
+	sub     *realtime.Subscription
+	ticker  *time.Ticker
+	wake    <-chan struct{}
+	poll    <-chan time.Time
+	targets []*watchChannel
+}
+
+func newChannelWake(d Deps, targets []watchTarget) *channelWake {
+	c := &channelWake{}
+	for _, t := range targets {
+		if t.channel != nil {
+			c.targets = append(c.targets, t.channel)
+		}
+	}
+	if len(c.targets) == 0 || d.Channels.Reader == nil {
+		return c
+	}
+	c.sub = d.Channels.Reader.Subscribe()
+	c.wake = c.sub.Wake()
+	// A post made in another process wakes no subscription here; only the
+	// poll sees it.
+	every := d.Watch.ChannelPoll
+	if every <= 0 {
+		every = watchChannelPoll
+	}
+	c.ticker = time.NewTicker(every)
+	c.poll = c.ticker.C
+	return c
+}
+
+// take drains the subscription and reports whether a changed channel is
+// one a target reads.
+func (c *channelWake) take() bool {
+	keys, resync := c.sub.Take()
+	if resync {
+		return true
+	}
+	for _, k := range keys {
+		for _, t := range c.targets {
+			if t.matches(k.ID, k.Type, k.Name) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func (c *channelWake) close() {
+	if c.sub != nil {
+		c.sub.Close()
+	}
+	if c.ticker != nil {
+		c.ticker.Stop()
+	}
+}
+
 // pass replays every target once with freshly resolved read access and
 // returns the indices of the targets whose digest moved. A target missing
 // from the cursor takes its first digest as the baseline and is not
 // reported; a replay that does not finish keeps the target's previous
 // digest, and makes the pass incomplete, as does running out of budget.
 // A pass ends at its budget or at deadline, whichever is first. An error
-// means read access could not be resolved for the caller.
-func (r *watchRun) pass(ctx context.Context, deadline time.Time) (changed []int, incomplete bool, err error) {
+// means read access could not be resolved for the caller. channelOnly
+// replays only the read_channel targets.
+//
+// A read_channel target that follows by after_rev and is missing from the
+// cursor is reported when its page is not empty. An agent that moves its
+// after_rev forward starts a new target, and a message posted between its
+// read and that baseline would otherwise be part of the baseline, and be
+// lost.
+func (r *watchRun) pass(
+	ctx context.Context, deadline time.Time, channelOnly bool,
+) (changed []int, incomplete bool, err error) {
 	rctx, err := r.d.Watch.Rebind(ctx)
 	if err != nil {
 		slog.Warn("mcp: watch: could not resolve read access", "err", err)
@@ -292,7 +435,7 @@ func (r *watchRun) pass(ctx context.Context, deadline time.Time) (changed []int,
 	for i := range n {
 		idx := (first + i) % n
 		t := r.targets[idx]
-		if done[t.key] {
+		if done[t.key] || (channelOnly && t.channel == nil) {
 			continue
 		}
 		// The clock, not only rctx: the deadline timer that cancels rctx can
@@ -302,12 +445,12 @@ func (r *watchRun) pass(ctx context.Context, deadline time.Time) (changed []int,
 			return r.moved(moved), true, nil
 		}
 		done[t.key] = true
-		dg, ok := r.w.replay(rctx, r.entry, r.shareKey, t)
+		dg, pending, ok := r.w.replay(rctx, r.entry, r.shareKey, t)
 		if !ok {
 			incomplete = true
 			continue
 		}
-		if old, had := r.digests[t.key]; had && old != dg {
+		if old, had := r.digests[t.key]; (had && old != dg) || (!had && pending) {
 			moved[t.key] = true
 		}
 		r.digests[t.key] = dg
@@ -356,22 +499,23 @@ func (r *watchRun) result(changed []int, timedOut bool) (*mcpgo.CallToolResult, 
 	return textResult(text), nil
 }
 
-// replay runs t as the caller and returns the digest of its result. ok is
-// false when the replay did not finish: no slot before ctx ended, a panic,
-// the replay timeout, or a cancelled ctx.
+// replay runs t as the caller and returns the digest of its result. pending
+// reports a read_channel target following by after_rev whose page holds
+// messages. ok is false when the replay did not finish: no slot before ctx
+// ended, a panic, the replay timeout, or a cancelled ctx.
 func (w *watchHandler) replay(
 	ctx context.Context, e *watchEntry, shareKey string, t watchTarget,
-) (digest string, ok bool) {
+) (digest string, pending, ok bool) {
 	select {
 	case e.slot <- struct{}{}:
 	case <-ctx.Done():
-		return "", false
+		return "", false, false
 	}
 	defer func() { <-e.slot }()
 	select {
 	case w.slots <- struct{}{}:
 	case <-ctx.Done():
-		return "", false
+		return "", false, false
 	}
 	defer func() { <-w.slots }()
 
@@ -380,16 +524,31 @@ func (w *watchHandler) replay(
 	defer func() {
 		if p := recover(); p != nil {
 			slog.Error("mcp: watch: replay panicked", "tool", t.tool, "panic", p)
-			digest, ok = "", false
+			digest, pending, ok = "", false, false
 		}
 	}()
 	res, err := t.handler(rctx, &mcpgo.CallToolRequest{
 		Params: &mcpgo.CallToolParamsRaw{Name: t.tool, Arguments: t.args},
 	})
 	if err != nil || res == nil || rctx.Err() != nil {
-		return "", false
+		return "", false, false
 	}
-	return w.digest(shareKey, t.key, res), true
+	return w.digest(shareKey, t.key, res), t.channel != nil && t.channel.follows && pageHasMessages(res), true
+}
+
+// pageHasMessages reports whether a read_channel result holds messages.
+func pageHasMessages(res *mcpgo.CallToolResult) bool {
+	if res.IsError || len(res.Content) == 0 {
+		return false
+	}
+	tc, ok := res.Content[0].(*mcpgo.TextContent)
+	if !ok {
+		return false
+	}
+	var page struct {
+		Messages []json.RawMessage `json:"messages"`
+	}
+	return json.Unmarshal([]byte(tc.Text), &page) == nil && len(page.Messages) > 0
 }
 
 // digest keys a result to the caller and the target, so a cursor cannot be
@@ -472,7 +631,7 @@ func (w *watchHandler) parseTargets(raw any) ([]watchTarget, error) {
 		tool, _ := obj["tool"].(string)
 		h, ok := w.reads[tool]
 		if !ok {
-			return nil, fmt.Errorf("targets[%d]: tool must be one of %s", i, strings.Join(watchableTools, ", "))
+			return nil, fmt.Errorf("targets[%d]: tool must be one of %s", i, strings.Join(w.names, ", "))
 		}
 		args := map[string]any{}
 		if a, present := obj["args"]; present && a != nil {
@@ -480,22 +639,50 @@ func (w *watchHandler) parseTargets(raw any) ([]watchTarget, error) {
 				return nil, fmt.Errorf("targets[%d]: args must be an object", i)
 			}
 		}
-		rawArgs, err := json.Marshal(args)
-		if err != nil { // coverage-ignore: decoded JSON always re-marshals
-			return nil, fmt.Errorf("targets[%d]: %w", i, err)
-		}
 		// encoding/json sorts map keys, so equal targets get equal keys.
 		canon, err := json.Marshal(map[string]any{"tool": tool, "args": args})
 		if err != nil { // coverage-ignore: decoded JSON always re-marshals
 			return nil, fmt.Errorf("targets[%d]: %w", i, err)
 		}
+		var channel *watchChannel
+		if tool == toolReadChannel {
+			channel, args = channelTarget(args)
+		}
+		rawArgs, err := json.Marshal(args)
+		if err != nil { // coverage-ignore: decoded JSON always re-marshals
+			return nil, fmt.Errorf("targets[%d]: %w", i, err)
+		}
 		sum := sha256.Sum256(canon)
 		out = append(out, watchTarget{
-			tool: tool, args: rawArgs, handler: h,
+			tool: tool, args: rawArgs, handler: h, channel: channel,
 			key: hex.EncodeToString(sum[:watchDigestBytes]),
 		})
 	}
 	return out, nil
+}
+
+// channelTarget returns the channel a read_channel target names, and the
+// arguments its replay passes: the target's own, with the page limit capped
+// at watchChannelLimit. Arguments of the wrong type are kept as given, so
+// the replay answers the same error the tool does.
+func channelTarget(args map[string]any) (c *watchChannel, replay map[string]any) {
+	c = &watchChannel{}
+	if id, ok := args["id"].(string); ok {
+		c.anchor, _, _ = strings.Cut(trimID(id), "@")
+	}
+	c.typ, _ = args[chanTypeArg].(string)
+	c.name, _ = args[chanNameArg].(string)
+	c.follows = args[chanAfterRevArg] != nil
+	replay = maps.Clone(args)
+	switch limit := args["limit"].(type) {
+	case nil:
+		replay["limit"] = float64(watchChannelLimit)
+	case float64:
+		if limit > watchChannelLimit {
+			replay["limit"] = float64(watchChannelLimit)
+		}
+	}
+	return c, replay
 }
 
 func parseWatchTimeout(raw any) (time.Duration, error) {

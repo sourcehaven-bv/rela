@@ -1266,11 +1266,11 @@ func TestServerInstructions(t *testing.T) {
 	meta := &metamodel.Metamodel{Entities: map[string]metamodel.EntityDef{
 		"ticket10": {}, "ticket2": {}, "bug": {},
 	}}
-	got := serverInstructions(meta)
+	got := serverInstructions(meta, false)
 	if !strings.Contains(got, "Entity types: bug, ticket2, ticket10.") {
 		t.Errorf("types missing or not in natural order: %s", got)
 	}
-	if empty := serverInstructions(&metamodel.Metamodel{}); strings.Contains(empty, "Entity types") {
+	if empty := serverInstructions(&metamodel.Metamodel{}, false); strings.Contains(empty, "Entity types") {
 		t.Errorf("empty metamodel should list no types: %s", empty)
 	}
 }

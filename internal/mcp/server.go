@@ -27,6 +27,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
+	"time"
 
 	mcpgo "github.com/modelcontextprotocol/go-sdk/mcp"
 
@@ -55,6 +56,12 @@ import (
 // resolve relative script paths. It is the only piece of the project
 // context MCP consumes — passing the string instead of a
 // `*project.Context` keeps that type from leaking into MCP test stubs.
+//
+// Over the field load line by one since Channels (TKT-76G6M7). Each optional
+// capability is already its own sub-struct; the next one should first
+// group the Lua pair or the two world scopes.
+//
+//plimsoll:max-fields=21
 type Deps struct {
 	// Store is the READ handle for every MCP read surface — tools,
 	// resources, prompts and analyze alike. It is deliberately
@@ -138,6 +145,10 @@ type Deps struct {
 	// Nil: accepted, for a wiring whose ACL has no request scope or whose
 	// transport always stamps the identity.
 	BindIdentity func(context.Context) (context.Context, error)
+
+	// Channels backs the channel tools and the read_channel wake of watch;
+	// see [ChannelDeps].
+	Channels ChannelDeps
 }
 
 // LuaDeps backs the lua_* tools, which exist only when the server is built
@@ -157,6 +168,10 @@ type WatchDeps struct {
 	// may be stale. Required; wiring passes
 	// [appbuild.GatedReadBundle.Rebind].
 	Rebind func(context.Context) (context.Context, error)
+	// ChannelPoll is how often a watch with a read_channel target replays
+	// those targets without a wake, to see posts made in another process:
+	// rela-server, the CLI, another node. Zero means 2 seconds.
+	ChannelPoll time.Duration
 }
 
 // GraphReader is the read capability MCP requires of its store — the exact
@@ -309,11 +324,15 @@ func (d Deps) validate() error {
 	case !d.Families.IsSet():
 		return errors.New("mcp: Deps.Families is required (worlds.Compiled.Families)")
 	}
+	if err := d.Channels.validate(); err != nil {
+		return err
+	}
 	return d.Attachments.validate()
 }
 
 // validateFor is Deps.validate plus the checks that depend on how s was
-// built: a server [WithLuaTools] needs the Lua write deps. A free function to
+// built: a server [WithLuaTools] needs the Lua write deps, and a server whose
+// channel tools are registered needs the channel service. A free function to
 // keep Server under its plimsoll load line.
 func validateFor(s *Server, d Deps) error {
 	if err := d.validate(); err != nil {
@@ -321,6 +340,9 @@ func validateFor(s *Server, d Deps) error {
 	}
 	if s.luaTools && d.Lua.WriteDeps.EntityManager == nil {
 		return errors.New("mcp: WithLuaTools requires Deps.Lua.WriteDeps")
+	}
+	if s.channelTools && d.Channels.Reader == nil {
+		return errors.New("mcp: the channel tools are registered, so Deps.Channels is required")
 	}
 	return nil
 }
@@ -381,6 +403,10 @@ type Server struct {
 	// luaTools registers lua_eval / lua_run. Off unless the wiring
 	// asks for it with [WithLuaTools]; see that option for why.
 	luaTools bool
+
+	// channelTools records that the channel tools are registered: realtime
+	// was on when [NewServer] ran. A reload must then keep Deps.Channels.
+	channelTools bool
 
 	// pileReader and pileWriter back the pile tools, registered only when
 	// both are set ([WithPiles]). pilesSet records that WithPiles was used,
@@ -479,6 +505,7 @@ type handlerSet struct {
 	comments  commentHandler
 	actions   actionHandler
 	leases    leaseHandler
+	channels  channelHandler
 }
 
 // handlers builds the extracted handler groups a [Server] carries. One
@@ -496,6 +523,9 @@ func (d Deps) handlers() handlerSet {
 		comments:  commentHandler{reader: d.Comments.Reader, writer: d.Comments.Writer},
 		actions:   actionHandler{runner: d.Actions},
 		leases:    leaseHandler{svc: d.Leases},
+		channels: channelHandler{
+			reader: d.Channels.Reader, writer: d.Channels.Writer, refuseSignals: d.Channels.RefuseSignals,
+		},
 	}
 }
 
@@ -606,6 +636,7 @@ func NewServer(deps Deps, version string, opts ...Option) (*Server, error) {
 		return nil, errors.New("mcp.NewServer: WithPiles requires both a PileReader and a PileWriter")
 	}
 	setDeps(s, deps)
+	s.channelTools = deps.Channels.Reader != nil && deps.Channels.Reader.Enabled()
 
 	// Capabilities are inferred by the go-sdk from the features actually
 	// registered below (tools/resources/prompts each gain listChanged when
@@ -614,7 +645,7 @@ func NewServer(deps Deps, version string, opts ...Option) (*Server, error) {
 	mcpServer := mcpgo.NewServer(
 		&mcpgo.Implementation{Name: "rela", Version: version},
 		&mcpgo.ServerOptions{
-			Instructions: serverInstructions(deps.Meta),
+			Instructions: serverInstructions(deps.Meta, s.channelTools),
 		},
 	)
 
@@ -637,8 +668,9 @@ func NewServer(deps Deps, version string, opts ...Option) (*Server, error) {
 // can decide whether the tools are relevant at all without spending a call.
 // It is built at construction: a schema hot-reload (TKT-NU247U) does not
 // renegotiate the session, so a type added later appears in the schema tool
-// but not here.
-func serverInstructions(meta *metamodel.Metamodel) string {
+// but not here. With the channel tools registered, it adds the rule for
+// their untrusted content.
+func serverInstructions(meta *metamodel.Metamodel, channels bool) string {
 	types := meta.EntityTypes()
 	natsort.Strings(types)
 	var b strings.Builder
@@ -653,6 +685,9 @@ func serverInstructions(meta *metamodel.Metamodel) string {
 		"Write results start with `WARNINGS (n):` when soft validation failed; the write still succeeded. " +
 		"In update_entity, a null property value removes the property; an empty string is ignored. " +
 		"To wait for changes instead of polling, use watch.")
+	if channels {
+		b.WriteString(channelInstruction)
+	}
 	return b.String()
 }
 

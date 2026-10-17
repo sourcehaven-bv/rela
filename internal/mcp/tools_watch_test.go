@@ -585,7 +585,7 @@ func TestWatchRun_BudgetRotates(t *testing.T) {
 	ctx := principal.With(context.Background(), p)
 	far := time.Now().Add(time.Minute)
 	for range 3 {
-		if _, incomplete, err := run.pass(ctx, far); err != nil || !incomplete {
+		if _, incomplete, err := run.pass(ctx, far, false); err != nil || !incomplete {
 			t.Fatalf("pass: incomplete=%v err=%v; want an incomplete pass", incomplete, err)
 		}
 	}
@@ -615,7 +615,7 @@ func TestWatchHandler_PanickingReplay(t *testing.T) {
 	t.Parallel()
 	w := newWatchHandler(nil, nil)
 	e, _ := w.acquire(principal.Principal{User: "u", Tool: principal.ToolMCP})
-	_, ok := w.replay(context.Background(), e, "k", watchTarget{
+	_, _, ok := w.replay(context.Background(), e, "k", watchTarget{
 		tool: "show_entity",
 		handler: func(context.Context, *mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
 			panic("boom")
