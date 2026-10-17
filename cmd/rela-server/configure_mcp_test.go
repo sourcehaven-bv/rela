@@ -38,13 +38,13 @@ channel_types:
         post: [member]
 `
 
-// testIdP is a throwaway ES256 issuer with a JWKS server on loopback.
-type testIdP struct {
+// testIDP is a throwaway ES256 issuer with a JWKS server on loopback.
+type testIDP struct {
 	url  string
 	mint func(sub string) string
 }
 
-func newTestIdP(t *testing.T) testIdP {
+func newTestIDP(t *testing.T) testIDP {
 	t.Helper()
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	require.NoError(t, err)
@@ -62,7 +62,7 @@ func newTestIdP(t *testing.T) testIdP {
 		_ = json.NewEncoder(w).Encode(doc)
 	}))
 	t.Cleanup(jwks.Close)
-	return testIdP{url: jwks.URL, mint: func(sub string) string {
+	return testIDP{url: jwks.URL, mint: func(sub string) string {
 		tok := jwt.NewWithClaims(jwt.SigningMethodES256, jwt.MapClaims{
 			"iss": "https://idp.test", "aud": "rela", "sub": sub,
 			"exp": time.Now().Add(time.Hour).Unix(),
@@ -76,10 +76,10 @@ func newTestIdP(t *testing.T) testIdP {
 
 // mcpConfigServer starts a server with --config-editing, -mcp and JWT
 // identity over a project with realtime.yaml.
-func mcpConfigServer(t *testing.T) (*server, string, testIdP) {
+func mcpConfigServer(t *testing.T) (*server, string, testIDP) {
 	t.Helper()
 	t.Setenv(dataentry.EnvDataEntryUserVar, "")
-	idp := newTestIdP(t)
+	idp := newTestIDP(t)
 	dir := newConfigProject(t)
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "realtime.yaml"), []byte(mcpRealtime), 0o644))
 	f := &serverFlags{
@@ -116,7 +116,7 @@ func (h handlerTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 
 // readRoom calls read_channel on TSK-001's room over the MCP endpoint as
 // user and returns the answer text and whether it is an error.
-func readRoom(t *testing.T, srv *server, idp testIdP, user string) (string, bool) {
+func readRoom(t *testing.T, srv *server, idp testIDP, user string) (string, bool) {
 	t.Helper()
 	ctx := context.Background()
 	client := mcpgo.NewClient(&mcpgo.Implementation{Name: "test", Version: "0"}, nil)
@@ -141,7 +141,7 @@ func readRoom(t *testing.T, srv *server, idp testIdP, user string) (string, bool
 }
 
 // jwtCall serves one Configure request as user.
-func jwtCall(t *testing.T, srv *server, idp testIdP, user, method, path string, body any) *httptest.ResponseRecorder {
+func jwtCall(t *testing.T, srv *server, idp testIDP, user, method, path string, body any) *httptest.ResponseRecorder {
 	t.Helper()
 	var buf bytes.Buffer
 	if body != nil {

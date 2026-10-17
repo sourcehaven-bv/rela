@@ -308,8 +308,8 @@ func TestWatchChannel_TargetAndWakeFilter(t *testing.T) {
 	if c.anchor != "REQ-001" || c.typ != "room" || !c.follows || replay["limit"] != float64(watchChannelLimit) {
 		t.Errorf("channel target = %+v, replay args %v", c, replay)
 	}
-	if c, replay := channelTarget(map[string]any{"after": float64(3)}); !c.follows ||
-		replay["limit"] != float64(watchChannelLimit) {
+	c, replay = channelTarget(map[string]any{"after": float64(3)})
+	if !c.follows || replay["limit"] != float64(watchChannelLimit) {
 		t.Errorf("an after follower = %+v, replay args %v", c, replay)
 	}
 	if _, replay := channelTarget(map[string]any{"after_rev": float64(1), "limit": float64(2)}); replay["limit"] != float64(2) {
