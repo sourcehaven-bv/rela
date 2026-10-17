@@ -418,6 +418,8 @@ func TestParse_Invalid(t *testing.T) {
 			"channel_types.incident-room.on_entity_delete", "lifecycle.delete.retention must keep"},
 		{"detached retention syntax", []replace{{"detached_retention: 90d", "detached_retention: soon"}},
 			"channel_types.incident-room.detached_retention", "a count from 1"},
+		{"detached retention below the orphan grace", []replace{{"detached_retention: 90d", "detached_retention: 30m"}},
+			"channel_types.incident-room.detached_retention", "at least 1h0m0s"},
 		{"limit int", []replace{{"page_limit: 100", "page_limit: 500"}}, "limits.page_limit", "between 1 and 200"},
 	}
 	meta, policy := testMeta(t), testPolicy(t)

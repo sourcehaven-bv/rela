@@ -160,7 +160,13 @@ func (v *validator) channelType(name string, raw *rawChannelType, limits Limits)
 	ct.Lifecycle = v.lifecycle(key+".lifecycle", raw.Lifecycle, ct)
 	ct.DetachedRetention = DefaultDetachedRetention()
 	if raw.DetachedRetention != "" {
-		if p := v.period(key+".detached_retention", raw.DetachedRetention); !p.IsZero() {
+		p := v.period(key+".detached_retention", raw.DetachedRetention)
+		if d, fixed := p.Fixed(); !p.IsZero() && fixed && d < realtimelimits.OrphanGrace {
+			// A shorter retention could erase a batch the sweep would still
+			// put back: an orphan whose entity returns, or a pending batch
+			// whose write failed.
+			v.add(key+".detached_retention", fmt.Sprintf("must be at least %s", realtimelimits.OrphanGrace))
+		} else if !p.IsZero() {
 			ct.DetachedRetention = p
 		}
 	}
