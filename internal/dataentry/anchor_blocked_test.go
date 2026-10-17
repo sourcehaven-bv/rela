@@ -10,7 +10,6 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
-	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
 // blockingMutator refuses every delete the way the channel guard does.
@@ -28,7 +27,8 @@ func (blockingMutator) DeleteEntityFace(context.Context, string, entity.Face, bo
 // or owned-entity change does.
 type conflictingMutator struct{ entityMutator }
 
-var errRaced = fmt.Errorf("delete: the entities it owns changed during the delete; retry: %w", store.ErrConflict)
+var errRaced = fmt.Errorf("delete: the entities it owns changed during the delete: %w",
+	entitymanager.ErrConcurrentChange)
 
 func (conflictingMutator) DeleteEntity(context.Context, string, bool) (*entity.DeleteResult, error) {
 	return nil, errRaced

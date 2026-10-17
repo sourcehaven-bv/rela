@@ -83,20 +83,17 @@ type channelAliases struct {
 	// new face of an existing one.
 	families store.EntityLister
 	now      func() time.Time
-	// detached holds the batches the reconciler detached; a create through
-	// the manager forgets them for its id (see [externalDetaches]).
-	detached *externalDetaches
 }
 
 // channelAliasesFor returns the alias subscriber for cs.
 //
 // Nil: returns a nil *channelAliases when cs is nil, which newAliasFanout
-// drops. A nil detached remembers nothing.
-func channelAliasesFor(cs channels.Store, st store.EntityLister, detached *externalDetaches) *channelAliases {
+// drops.
+func channelAliasesFor(cs channels.Store, st store.EntityLister) *channelAliases {
 	if cs == nil {
 		return nil
 	}
-	return &channelAliases{store: cs, families: st, now: time.Now, detached: detached}
+	return &channelAliases{store: cs, families: st, now: time.Now}
 }
 
 // EntityRenamed moves the channels of oldID to newID. The guard already
@@ -175,9 +172,6 @@ func (a *channelAliases) EntityFaceDeleted(ctx context.Context, id string, face 
 // time; closing it needs the create and the tombstone in one transaction,
 // which the store seam does not offer.
 func (a *channelAliases) EntityCreated(ctx context.Context, id string, face entity.Face) error {
-	// The entity is new, so the batches the reconciler detached when an
-	// earlier one went outside the manager are not its to get back.
-	a.detached.forget(id)
 	headers, err := store.FamilyHeaders(ctx, a.families, id)
 	if err != nil {
 		return fmt.Errorf("channels: read faces of %s: %w", id, err)

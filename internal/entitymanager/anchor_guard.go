@@ -135,13 +135,13 @@ func (NopAnchorGuard) BeforeRename(context.Context, string, func(context.Context
 // errFacesChanged reports a face delete whose last-face answer changed
 // between the guard and the transaction. The guard acted on the old answer,
 // so the delete is refused and can be retried.
-var errFacesChanged = fmt.Errorf("delete face: the entity's faces changed during the delete; retry: %w",
-	store.ErrConflict)
+var errFacesChanged = fmt.Errorf("delete face: the entity's faces changed during the delete: %w",
+	ErrConcurrentChange)
 
 // errOwnedChanged reports an owned entity the guard did not see, refused for
 // the same reason as errFacesChanged.
-var errOwnedChanged = fmt.Errorf("delete: the entities it owns changed during the delete; retry: %w",
-	store.ErrConflict)
+var errOwnedChanged = fmt.Errorf("delete: the entities it owns changed during the delete: %w",
+	ErrConcurrentChange)
 
 // The functions below take *Manager rather than being methods on it, for the
 // reason softdelete.go gives: Manager sits on its plimsoll method load line.
@@ -335,10 +335,12 @@ func undoFailedDelete(ctx context.Context, m *Manager, undo anchorUndo, txErr er
 // undo for a failed transaction, and the owned ids it guarded so the
 // transaction can refuse an owned entity that appeared since.
 //
-// When none of those entities has channels, it skips the pre-pass. When the
-// guard detached nothing, it returns a nil set, which the transaction reads
-// as "do not check": there is nothing for a changed owned set to make
-// inconsistent, and a channel created meanwhile is the post-commit sweep's.
+// When none of those entities has channels, it skips the pre-pass and
+// returns a nil set, which the transaction reads as "do not check". When any
+// has channels, the set is non-nil, and empty when nothing is owned, even if
+// the guard detached nothing: an owned entity that appears after the scope
+// was taken was never checked for a block, so the transaction must refuse
+// it rather than delete it unchecked.
 func guardFamilyDelete(
 	ctx context.Context, m *Manager, id string, cascade bool,
 ) (anchorUndo, map[string]bool, error) {
@@ -367,9 +369,6 @@ func guardFamilyDelete(
 	if err != nil {
 		return nil, nil, err
 	}
-	if len(undo) == 0 {
-		return nil, nil, nil
-	}
 	return undo, ownedSet, nil
 }
 
@@ -377,7 +376,7 @@ func guardFamilyDelete(
 // owning edge added between the pre-pass and the transaction would
 // otherwise take an entity along without its channels being checked, while
 // the channels the guard did detach could no longer be put back as one
-// batch. A nil set means the guard detached nothing.
+// batch. A nil set means no entity the delete removes had channels.
 func requireGuardedOwned(guardedOwned map[string]bool, owned []ownedDeletion) error {
 	if guardedOwned == nil {
 		return nil
@@ -408,9 +407,11 @@ func faceLastness(
 
 // faceDeleteGuard is the guard step of one DeleteEntityFace: the last-face
 // answers the guard acted on, so the transaction can refuse when they
-// changed, and the undo for a failed transaction. active is set only when
-// the guard detached something; otherwise there is nothing a changed answer
-// could make inconsistent.
+// changed, and the undo for a failed transaction. active is set whenever the
+// entity has channels, whether or not the guard detached any: the block
+// check was judged on those answers too, and a sibling face that goes
+// meanwhile can turn a face delete the guard let through into the removal
+// of the entity's last face.
 type faceDeleteGuard struct {
 	callerLast, storedLast bool
 	undo                   anchorUndo
@@ -442,7 +443,7 @@ func guardFaceDelete(
 	if err != nil {
 		return faceDeleteGuard{}, err
 	}
-	return faceDeleteGuard{callerLast: callerLast, storedLast: storedLast, undo: undo, active: len(undo) > 0}, nil
+	return faceDeleteGuard{callerLast: callerLast, storedLast: storedLast, undo: undo, active: true}, nil
 }
 
 // checkFaceDeleteEdges makes the checks a face delete makes on the edges it
@@ -550,10 +551,72 @@ func guardRename(ctx context.Context, m *Manager, oldID, newID string) (anchorUn
 // undoFailedRename puts back the channels the guard detached from newID,
 // unless the rename happened anyway (fs and memstore cannot roll back) and
 // the renamed entity now holds newID.
+//
+// An entity can take newID between that check and the restore, for example
+// through a concurrent create whose EntityCreated hook ran before the
+// restore. The restored channels would then be live on an entity they do
+// not belong to, so newID is checked again after the restore and, when it
+// is taken, they are detached again.
+//
+// Whenever it cannot tell whether newID is taken, it leaves the channels
+// detached, which hides them but loses nothing, and logs the batch at error
+// so an operator can restore it by hand. Like [anchorUndo.restore] it runs
+// on a context the request's cancellation does not reach.
 func undoFailedRename(ctx context.Context, m *Manager, undo anchorUndo) {
-	undo.restore(ctx, func(ctx context.Context, newID string, _ entity.Face) bool {
-		return !familyStillStored(ctx, m.deps.Store, newID)
-	}, nil)
+	if len(undo) == 0 {
+		return
+	}
+	ctx, cancel := aliasHookContext(ctx)
+	defer cancel()
+	for _, n := range undo {
+		taken, err := familyStored(ctx, m.deps.Store, n.id)
+		if err != nil {
+			slog.Error("entitymanager: cannot tell whether a failed rename took the new id; "+
+				"the channels detached from it stay detached",
+				"id", n.id, "tombstone", n.undo.String(), "error", err)
+			continue
+		}
+		if taken {
+			continue
+		}
+		if rErr := n.undo.Restore(ctx); rErr != nil {
+			slog.Error("entitymanager: cannot restore the channels detached for a failed write",
+				"id", n.id, "tombstone", n.undo.String(), "error", rErr)
+			continue
+		}
+		taken, err = familyStored(ctx, m.deps.Store, n.id)
+		if err == nil && !taken {
+			continue
+		}
+		redetachAfterRename(ctx, m, n, err)
+	}
+}
+
+// redetachAfterRename detaches again the channels undoFailedRename restored
+// to n.id, because an entity holds n.id now, or because checkErr means it
+// cannot tell. The id is taken by an entity the rename did not create, so
+// its free check is skipped: whatever is on the id now is left over, as the
+// EntityCreated alias hook treats it.
+func redetachAfterRename(ctx context.Context, m *Manager, n namedUndo, checkErr error) {
+	u, err := m.deps.AnchorGuard.BeforeRename(ctx, n.id, func(context.Context) error { return nil })
+	if err != nil {
+		slog.Error("entitymanager: an entity took the id a failed rename freed, and the channels put back "+
+			"on it cannot be detached again", "id", n.id, "tombstone", n.undo.String(), "error", err)
+		return
+	}
+	if checkErr != nil && u != nil {
+		slog.Error("entitymanager: cannot tell whether an entity took the id a failed rename freed; "+
+			"its channels are detached again", "id", n.id, "tombstone", u.String(), "error", checkErr)
+	}
+}
+
+// familyStored reports whether any face of id is stored.
+func familyStored(ctx context.Context, st store.Store, id string) (bool, error) {
+	family, err := familyRows(ctx, st, id)
+	if err != nil {
+		return false, err
+	}
+	return len(family) > 0, nil
 }
 
 // requireIDFree returns [ErrEntityAlreadyExists] when id is taken by an

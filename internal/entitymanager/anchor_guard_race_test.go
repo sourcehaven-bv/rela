@@ -200,7 +200,8 @@ func TestAnchorGuard_OwnedRaceIsConflict(t *testing.T) {
 			st, own = f.st, f.owner
 
 			_, err := f.mgr.DeleteEntity(aliceCtx(), f.owner, true)
-			require.ErrorIs(t, err, store.ErrConflict)
+			require.ErrorIs(t, err, entitymanager.ErrConcurrentChange)
+			require.NotErrorIs(t, err, store.ErrConflict)
 			assert.Len(t, g.undoneRefs(), 3, "every detach is put back")
 			for _, id := range []string{f.owner, f.c1, f.c2, "NOTE-99"} {
 				assert.True(t, f.exists(t, id), "%s survives", id)
@@ -230,10 +231,68 @@ func TestAnchorGuard_FacesChangedIsConflict(t *testing.T) {
 			st = f.st
 
 			_, err := f.mgr.DeleteEntityFace(asUser("admin"), "POL-1", "draft", true)
-			require.ErrorIs(t, err, store.ErrConflict)
+			require.ErrorIs(t, err, entitymanager.ErrConcurrentChange)
+			require.NotErrorIs(t, err, store.ErrConflict)
 			assert.Equal(t, []string{"POL-1@draft"}, g.undoneRefs())
 			_, gErr := f.st.GetEntity(context.Background(), entity.Ref{ID: "POL-1", Face: "draft"})
 			require.NoError(t, gErr)
+		})
+	}
+}
+
+// The guard's conflict checks run whenever the delete's entities have
+// channels, not only when it detached some: a block-only scope was judged
+// on the same answers. A sibling face that goes, or an owned entity that
+// appears, after the scope was taken is a retryable conflict even though
+// nothing was detached.
+func TestAnchorGuard_ConflictWithoutDetach(t *testing.T) {
+	t.Parallel()
+	for _, b := range concBackends {
+		t.Run(b.name+"/face", func(t *testing.T) {
+			t.Parallel()
+			var (
+				once sync.Once
+				st   store.Store
+			)
+			g := &fakeGuard{noDetach: true, onDelete: func(entitymanager.AnchorDelete) {
+				once.Do(func() {
+					_, err := st.DeleteFace(context.Background(), entity.Ref{ID: "POL-1", Face: "published"})
+					require.NoError(t, err)
+				})
+			}}
+			f := newFaceEdgeFixtureWith(t, b, g)
+			st = f.st
+
+			_, err := f.mgr.DeleteEntityFace(asUser("admin"), "POL-1", "draft", true)
+			require.ErrorIs(t, err, entitymanager.ErrConcurrentChange)
+			assert.Empty(t, g.undoneRefs(), "nothing was detached")
+			_, gErr := f.st.GetEntity(context.Background(), entity.Ref{ID: "POL-1", Face: "draft"})
+			require.NoError(t, gErr)
+		})
+		t.Run(b.name+"/owned", func(t *testing.T) {
+			t.Parallel()
+			var (
+				once sync.Once
+				st   store.Store
+				own  string
+			)
+			g := &fakeGuard{noDetach: true, onDelete: func(entitymanager.AnchorDelete) {
+				once.Do(func() {
+					ctx := context.Background()
+					require.NoError(t, st.CreateEntity(ctx, entity.New("NOTE-99", "note")))
+					_, err := st.CreateRelation(ctx, entity.RelationKey{From: own, Type: "part", To: "NOTE-99"}, nil)
+					require.NoError(t, err)
+				})
+			}}
+			f := newOwnedDeleteFixtureWith(t, b, g)
+			st, own = f.st, f.owner
+
+			_, err := f.mgr.DeleteEntity(aliceCtx(), f.owner, true)
+			require.ErrorIs(t, err, entitymanager.ErrConcurrentChange)
+			assert.Empty(t, g.undoneRefs(), "nothing was detached")
+			for _, id := range []string{f.owner, f.c1, f.c2, "NOTE-99"} {
+				assert.True(t, f.exists(t, id), "%s survives", id)
+			}
 		})
 	}
 }
@@ -324,4 +383,22 @@ func TestAnchorGuard_RenameTxFailureRestores(t *testing.T) {
 	assert.Equal(t, []string{"gateway"}, g.detached)
 	assert.Equal(t, []string{"rename:gateway"}, g.undoneRefs())
 	assert.NotContains(t, strings.Join(g.undoneRefs(), ","), "auth")
+}
+
+// An entity that takes the new id after a failed rename put its channels
+// back gets them detached again: they belong to the earlier entity, not to
+// the new one.
+func TestAnchorGuard_RenameUndoRechecksNewID(t *testing.T) {
+	t.Parallel()
+	mem := memstore.New()
+	require.NoError(t, mem.CreateEntity(context.Background(), entity.New("auth", "component")))
+	g := &fakeGuard{}
+	g.onRestore = func() {
+		require.NoError(t, mem.CreateEntity(context.Background(), entity.New("gateway", "component")))
+	}
+	mgr := newGuardedManager(t, failingTx{mem}, g, audit.Nop{})
+	_, err := mgr.RenameEntity(context.Background(), "auth", "gateway", entity.RenameOptions{})
+	require.ErrorIs(t, err, errTxFailed)
+	assert.Equal(t, []string{"rename:gateway"}, g.undoneRefs())
+	assert.Equal(t, []string{"gateway", "gateway"}, g.detached, "the restored channels are detached again")
 }

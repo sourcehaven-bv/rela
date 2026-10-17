@@ -13,6 +13,14 @@ import (
 // is false but the entity has incident relations.
 var ErrHasRelations = errors.New("entity has relations; set cascade=true to delete")
 
+// ErrConcurrentChange reports a write the manager refused because what it
+// acts on changed between a check made before the transaction and the
+// transaction itself. Nothing was written, and the same request can
+// succeed when retried. The channel guard returns it when a delete's faces
+// or owned entities change after the guard judged them. It is not
+// [store.ErrConflict], which the stores return for other conflicts.
+var ErrConcurrentChange = errors.New("concurrent change; nothing was written, retry")
+
 // ErrEntityNotFound is returned when an entity lookup fails. Wraps the
 // underlying [store.ErrNotFound] via %w so callers can use
 // [errors.Is].

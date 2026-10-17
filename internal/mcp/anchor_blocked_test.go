@@ -22,7 +22,7 @@ func TestWriteErrorResult(t *testing.T) {
 	}{
 		{"blocked", fmt.Errorf("delete: %w", &entitymanager.AnchorBlockedError{ChannelType: "incident-room"}),
 			[]string{"conflict:", "incident-room", "on_entity_delete: block"}},
-		{"conflict", fmt.Errorf("delete: owned entities changed: %w", store.ErrConflict),
+		{"conflict", fmt.Errorf("delete: owned entities changed: %w", entitymanager.ErrConcurrentChange),
 			[]string{"conflict:", "retry"}},
 		{"other", errors.New("disk full"), []string{"disk full"}},
 	}
@@ -39,5 +39,11 @@ func TestWriteErrorResult(t *testing.T) {
 				}
 			}
 		})
+	}
+
+	// Only the guard's sentinel gets the retry hint, not every store conflict.
+	text := writeErrorResult(fmt.Errorf("create: %w", store.ErrConflict)).Content[0].(*mcpgo.TextContent).Text
+	if strings.Contains(text, "retry") {
+		t.Errorf("result %q should not carry the retry hint", text)
 	}
 }

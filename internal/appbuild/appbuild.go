@@ -235,10 +235,6 @@ type Services struct {
 	// stopped in stopBackgroundServices, so Close and CloseAssembly stop the
 	// sweep their own Assemble started and no sibling's.
 	versionSweep versionSweep
-	// channelReconcileStop stops the reconciler that detaches the channels of
-	// entities deleted outside the manager (see startChannelReconciler).
-	// Per-assembled like versionSweep.
-	channelReconcileStop func()
 	// fieldRedactor applies field-level `visible:` policy to the unattended
 	// and identity-bearing read paths (TKT-425426). Never nil after
 	// construction: [visibility.NopRedactor] when no policy declares
@@ -2553,7 +2549,7 @@ func assemble(
 	// comment fanout wrapping the alias rewriter.
 	attachLocker := base.attachmentLocker(st)
 	fanout := newAliasFanout(aliases, refs.comments, refs.piles, refs.leases, autoJobs,
-		channelAliasesFor(refs.channels, st, refs.detached))
+		channelAliasesFor(refs.channels, st))
 	mgr, err := buildEntityManager(base, st, fanout, templater,
 		resolvedACL, autoEngine, cascadeRunner, readDeps, pileWriterFor(refs.piles), versions, tw, computedSet,
 		attachLocker, fieldPol.gate, refs.channels)
@@ -2673,7 +2669,6 @@ func finishAssembly(
 		s.versionSweep = sweep
 		sweep.Start()
 	}
-	s.channelReconcileStop = startChannelReconciler(s.store, refs.channels, refs.detached)
 	return s, nil
 }
 
@@ -2925,10 +2920,6 @@ func (s *Services) stopBackgroundServices() {
 	if s.versionSweep != nil {
 		s.versionSweep.Stop()
 		s.versionSweep = nil
-	}
-	if s.channelReconcileStop != nil {
-		s.channelReconcileStop()
-		s.channelReconcileStop = nil
 	}
 	if s.jobQueue != nil {
 		closeJobQueue(s.jobQueue)

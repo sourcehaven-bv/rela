@@ -1124,7 +1124,7 @@ func (h *writeHandler) handleV1DeleteEntity(w http.ResponseWriter, r *http.Reque
 		// guard ran. Nothing was deleted, and the same request can succeed.
 		// The manager authorizes before it reports this, so a caller who
 		// would be refused never sees it.
-		if errors.Is(err, store.ErrConflict) {
+		if errors.Is(err, entitymanager.ErrConcurrentChange) {
 			writeV1Error(w, r, http.StatusConflict, "conflict", "Entity is being modified concurrently",
 				"retry the delete")
 			return

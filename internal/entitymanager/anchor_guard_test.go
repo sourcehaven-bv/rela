@@ -37,7 +37,11 @@ type fakeGuard struct {
 	blockFace  entity.Face
 	noChannels bool
 	errIDs     map[string]bool // ids whose detach fails
+	noDetach   bool            // BeforeDelete checks blocks but detaches nothing
 	undoErr    error
+	// onRestore runs at the end of each Restore, outside the lock: a write
+	// that lands right after channels are put back.
+	onRestore func()
 	// onDelete runs at the end of each BeforeDelete, outside the lock: a
 	// write that lands between the guard and the transaction.
 	onDelete func(entitymanager.AnchorDelete)
@@ -90,6 +94,9 @@ func (g *fakeGuard) BeforeDelete(
 	if hook != nil {
 		hook(d)
 	}
+	if g.noDetach {
+		return nil, nil //nolint:nilnil // the interface's "nothing detached"
+	}
 	return fakeUndo{g: g, ref: entity.FormatStateRef(d.ID, d.Face)}, nil
 }
 
@@ -132,10 +139,14 @@ type fakeUndo struct {
 
 func (u fakeUndo) Restore(ctx context.Context) error {
 	u.g.mu.Lock()
-	defer u.g.mu.Unlock()
 	u.g.undone = append(u.g.undone, u.ref)
 	u.g.undoCtxErrs = append(u.g.undoCtxErrs, ctx.Err())
-	return u.g.undoErr
+	err, hook := u.g.undoErr, u.g.onRestore
+	u.g.mu.Unlock()
+	if hook != nil {
+		hook()
+	}
+	return err
 }
 
 func (u fakeUndo) String() string { return "tombstone:" + u.ref }

@@ -2,19 +2,15 @@ package appbuild
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"log/slog"
-	"slices"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/channels"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
 	"github.com/Sourcehaven-BV/rela/internal/realtimecfg"
-	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
 // channelGuard is the [entitymanager.AnchorGuard] over the channel store. It
@@ -36,6 +32,17 @@ import (
 // A block is best effort against a concurrent first post: a channel created
 // after the guard listed the entity's channels is swept up by the post-commit
 // alias hook as a detach.
+//
+// The guard sees only deletes made through the manager. The channels of an
+// entity deleted outside it (a file removed by hand or by git, or a write
+// to the database that bypasses rela) stay live, and nothing detaches them.
+// They are unreachable all the same: every channel request reads the anchor
+// entity first, and a missing anchor gets the uniform 404. A create at the
+// id through any process's manager tombstones them, through the
+// EntityCreated alias hook on the shared channel store (see
+// [channelAliases.EntityCreated]), so a new entity never inherits them. An
+// entity that comes back outside the manager, as a git checkout or stash
+// puts a file back, gets them back unchanged.
 type channelGuard struct {
 	store  channels.Store
 	config func() *realtimecfg.Compiled
@@ -292,258 +299,4 @@ func configuredTypeRecords(cfg *realtimecfg.Compiled) map[string]channels.TypeRe
 		}
 	}
 	return out
-}
-
-// channelReconcileBuffer is the event buffer of the reconciler. A burst of
-// external deletes larger than this drops events; the channels of a dropped
-// delete stay where they are until EntityCreated clears them for a new
-// entity with the same id.
-const channelReconcileBuffer = 256
-
-// externalDetachCap bounds how many ids [externalDetaches] remembers.
-const externalDetachCap = 1024
-
-// externalDetaches remembers the batches the reconciler tombstoned for
-// entities that went outside the manager, so an entity that comes back the
-// same way gets its channels back. On the file backend a file that vanishes
-// is often only away for a moment: a git checkout or stash removes it and
-// puts it back. Without this, that round trip would detach its channels for
-// good.
-//
-// It holds at most externalDetachCap ids. Beyond that the oldest id is
-// dropped, and each of its batches is logged at warn with its handle, so an
-// operator can still restore it by hand. It is in memory: a restart forgets
-// every batch the same way.
-//
-// Nil: a nil *externalDetaches remembers nothing, and every method is a
-// no-op.
-type externalDetaches struct {
-	mu    sync.Mutex
-	limit int
-	order []string // ids, oldest first
-	byID  map[string][]channels.TombstoneHandle
-}
-
-// newExternalDetaches returns an empty ledger that remembers at most limit
-// ids.
-func newExternalDetaches(limit int) *externalDetaches {
-	return &externalDetaches{limit: limit, byID: make(map[string][]channels.TombstoneHandle)}
-}
-
-// add records batch h for id.
-func (d *externalDetaches) add(id string, h channels.TombstoneHandle) {
-	if d == nil || h.IsZero() {
-		return
-	}
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	if _, ok := d.byID[id]; !ok {
-		d.order = append(d.order, id)
-	}
-	d.byID[id] = append(d.byID[id], h)
-	for len(d.order) > d.limit {
-		old := d.order[0]
-		d.order = d.order[1:]
-		for _, oh := range d.byID[old] {
-			slog.Warn("channels: too many entities removed outside rela; forgetting one's detached channels, "+
-				"which stay tombstoned", "id", old, "tombstone", oh.String())
-		}
-		delete(d.byID, old)
-	}
-}
-
-// forget drops every batch of id. The alias hook calls it when the manager
-// creates an entity at id: that entity is new and must not receive them.
-func (d *externalDetaches) forget(id string) {
-	if d == nil {
-		return
-	}
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	d.dropLocked(id)
-}
-
-func (d *externalDetaches) dropLocked(id string) {
-	if _, ok := d.byID[id]; !ok {
-		return
-	}
-	delete(d.byID, id)
-	d.order = slices.DeleteFunc(d.order, func(o string) bool { return o == id })
-}
-
-// restore puts back the batches of id that a create of id@face brings back:
-// a whole-entity batch on any face, a face batch on its own face. Each batch
-// is tried once and then forgotten; a refusal because live channels now
-// occupy the anchor is logged.
-//
-// The lock is held across the restore. forget takes it too, so a create by
-// the manager, whose alias hook calls forget and then tombstones whatever is
-// on the id, runs either wholly before the restore (and nothing is restored)
-// or wholly after (and the restored channels are tombstoned again).
-func (d *externalDetaches) restore(
-	ctx context.Context, id string, face entity.Face, untombstone func(context.Context, channels.TombstoneHandle) error,
-) {
-	if d == nil {
-		return
-	}
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	var keep []channels.TombstoneHandle
-	for _, h := range d.byID[id] {
-		if hf := h.Anchor().Face; hf != "" && hf != face {
-			keep = append(keep, h)
-			continue
-		}
-		err := untombstone(ctx, h)
-		var occupied *channels.OccupiedError
-		switch {
-		case err == nil:
-		case errors.As(err, &occupied):
-			slog.Warn("channels: an entity removed outside rela came back, but live channels now occupy it; "+
-				"its old channels stay tombstoned", "id", id, "tombstone", h.String())
-		default:
-			slog.Error("channels: cannot restore the channels of an entity that came back",
-				"id", id, "tombstone", h.String(), "error", err)
-		}
-	}
-	if len(keep) == 0 {
-		d.dropLocked(id)
-		return
-	}
-	d.byID[id] = keep
-}
-
-// startChannelReconciler detaches the channels of entities deleted outside
-// the manager, which on the file backend means a file removed by hand or by
-// git. The store reports such a removal as an entity-deleted event, as it
-// reports the manager's own deletes. The reconciler acts only when the event
-// still holds once it runs: the face or family is gone and not soft-deleted
-// (a soft-deleted entity keeps its channels until it is purged). For a delete
-// the manager made, the guard has already detached everything, so the
-// reconciler finds nothing or a concurrent first post, which the alias hook
-// would sweep too.
-//
-// It records each batch it detaches in detached, and on an entity-created
-// event for the id it puts the batch back (see [externalDetaches]). A create
-// through the manager forgets the batch first, through the alias hook. An
-// event cannot say which process made a delete, so a leftover the reconciler
-// swept after a manager delete is restored too if the id then comes back
-// outside the manager.
-//
-// Events are handled on a goroutine of their own, never on the store's
-// emitting path. The returned stop cancels the subscription and waits for
-// the goroutine.
-//
-// Nil: cs is accepted and starts nothing; detached is accepted and
-// remembers nothing.
-func startChannelReconciler(st store.Store, cs channels.Store, detached *externalDetaches) func() {
-	if cs == nil {
-		return func() {}
-	}
-	events, cancel := st.Subscribe(channelReconcileBuffer)
-	r := channelReconciler{store: st, channels: cs, now: time.Now, detached: detached}
-	var wg sync.WaitGroup
-	wg.Go(func() {
-		for ev := range events {
-			switch ev.Op {
-			case store.EventEntityDeleted:
-				r.handle(context.Background(), ev.EntityID, ev.Face)
-			case store.EventEntityCreated:
-				r.restore(context.Background(), ev.EntityID, ev.Face)
-			case store.EventEntityUpdated, store.EventRelationCreated,
-				store.EventRelationUpdated, store.EventRelationDeleted:
-				// Channels follow entity existence only.
-			}
-		}
-	})
-	var once sync.Once
-	return func() {
-		once.Do(func() {
-			cancel()
-			wg.Wait()
-		})
-	}
-}
-
-// channelReconciler is the state of startChannelReconciler's goroutine.
-type channelReconciler struct {
-	store    store.Store
-	channels channels.Store
-	now      func() time.Time
-	detached *externalDetaches
-}
-
-// handle detaches the channels of id, or of id@face when other faces of the
-// family survive. Failures are logged; the next create at the id clears
-// whatever is left.
-func (r channelReconciler) handle(ctx context.Context, id string, face entity.Face) {
-	if err := r.reconcile(ctx, id, face); err != nil {
-		slog.Error("channels: detach the channels of an entity deleted outside rela",
-			"id", id, "face", face, "error", err)
-	}
-}
-
-// restore puts back the channels the reconciler detached for id when id@face
-// is created again.
-func (r channelReconciler) restore(ctx context.Context, id string, face entity.Face) {
-	r.detached.restore(ctx, id, face, func(ctx context.Context, h channels.TombstoneHandle) error {
-		return r.channels.Untombstone(ctx, h, r.now())
-	})
-}
-
-// reconcile reads the channels first: most ids have none, and the store
-// reads after it (the family, and the soft-delete marks) are the expensive
-// part.
-func (r channelReconciler) reconcile(ctx context.Context, id string, face entity.Face) error {
-	list, err := r.channels.ListEntity(ctx, id)
-	if err != nil || len(list) == 0 {
-		return err
-	}
-	headers, err := store.FamilyHeaders(ctx, r.store, id)
-	if err != nil {
-		return err
-	}
-	target := entity.Face("")
-	if len(headers) > 0 {
-		if face == "" {
-			return nil // the family is back, or only another face went
-		}
-		for _, h := range headers {
-			if h.Face == face {
-				return nil // the face is back
-			}
-		}
-		target = face
-	} else if marked, mErr := isMarked(ctx, r.store, id); mErr != nil || marked {
-		return mErr
-	}
-	if target != "" && !hasFaceChannel(list, target) {
-		return nil
-	}
-	h, err := r.channels.Tombstone(ctx, id, target, r.now())
-	// A batch moved part way is still recorded, so a return can restore it.
-	r.detached.add(id, h)
-	return err
-}
-
-// isMarked reports whether id is soft-deleted in st. Ids are compared
-// case-folded, as the stores compare them.
-func isMarked(ctx context.Context, st store.Store, id string) (bool, error) {
-	sd, ok := st.(store.SoftDeleteProvider)
-	if !ok {
-		return false, nil
-	}
-	marked, err := sd.SoftDelete().ListMarked(ctx)
-	if errors.Is(err, store.ErrNotFound) {
-		return false, nil
-	}
-	if err != nil {
-		return false, err
-	}
-	for _, me := range marked {
-		if strings.EqualFold(me.ID, id) {
-			return true, nil
-		}
-	}
-	return false, nil
 }

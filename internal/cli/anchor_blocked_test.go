@@ -26,14 +26,21 @@ func TestAnchorConflict(t *testing.T) {
 		t.Error("the typed error must stay in the chain")
 	}
 
-	raced := anchorConflict("INC-1", fmt.Errorf("delete: owned entities changed: %w", store.ErrConflict))
+	raced := anchorConflict("INC-1",
+		fmt.Errorf("delete: owned entities changed: %w", entitymanager.ErrConcurrentChange))
 	for _, w := range []string{"conflict:", "INC-1", "retry"} {
 		if !strings.Contains(raced.Error(), w) {
 			t.Errorf("error %q lacks %q", raced, w)
 		}
 	}
-	if !errors.Is(raced, store.ErrConflict) {
-		t.Error("store.ErrConflict must stay in the chain")
+	if !errors.Is(raced, entitymanager.ErrConcurrentChange) {
+		t.Error("ErrConcurrentChange must stay in the chain")
+	}
+
+	// Only the guard's sentinel gets the retry hint, not every store conflict.
+	storeConflict := fmt.Errorf("create: %w", store.ErrConflict)
+	if got := anchorConflict("INC-1", storeConflict); got != storeConflict { //nolint:errorlint // identity is the assertion
+		t.Errorf("anchorConflict(store conflict) = %v, want it unchanged", got)
 	}
 
 	other := errors.New("disk full")

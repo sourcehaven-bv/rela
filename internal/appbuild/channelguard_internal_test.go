@@ -88,7 +88,7 @@ func newGuardFixture(t *testing.T) guardFixture {
 // the real channel alias hook, as assemble wires them.
 func (f guardFixture) manager(t *testing.T, g entitymanager.AnchorGuard) *entitymanager.Manager {
 	t.Helper()
-	aliases := channelAliasesFor(f.cs, f.st, nil)
+	aliases := channelAliasesFor(f.cs, f.st)
 	mgr, err := entitymanager.New(entitymanager.Deps{
 		Store: f.st, Meta: f.meta, Templater: gcNopTemplater{}, Audit: audit.Nop{},
 		ACL: acl.NopACL{}, Transitions: statemachine.EmptySet(), FieldGate: entitymanager.AllowAllFieldGate{},
@@ -243,7 +243,7 @@ func TestChannelGuard_BeforeRename(t *testing.T) {
 	require.NoError(t, undo.Restore(ctx))
 	assert.Equal(t, []string{"INC-2/chat"}, entityKeys(t, f.cs, "INC-2"))
 
-	require.Nil(t, channelAliasesFor(nil, f.st, nil))
+	require.Nil(t, channelAliasesFor(nil, f.st))
 	_, nop := newChannelGuard(nil, nil).(entitymanager.NopAnchorGuard)
 	assert.True(t, nop)
 	assert.True(t, f.guard.Active())
@@ -454,51 +454,25 @@ func (failingRecords) TypeRecords(context.Context) (map[string]channels.TypeReco
 	return nil, errDiskFull
 }
 
-// The reconciler detaches the channels of an entity removed outside the
-// manager, and of a face removed while the family survives. A soft-deleted
-// entity keeps its channels, and so does a family that is back.
-func TestChannelReconciler(t *testing.T) {
+// The channels of an entity deleted outside the manager stay live: nothing
+// detaches them, and a channel request finds no anchor. A create at the id
+// through the manager tombstones them, so the new entity starts without
+// them.
+func TestChannelAliases_ManagerCreateClearsExternalLeftovers(t *testing.T) {
 	ctx := context.Background()
 	f := newGuardFixture(t)
-	f.seed(t, "inc-a", "draft", "final")
-	f.seed(t, "inc-b", "draft")
-	f.seed(t, "inc-c", "draft")
-	appendTo(t, f.cs, chanKey("inc-a", "", "chat"))
-	appendTo(t, f.cs, chanKey("inc-a", "final", "notes"))
-	appendTo(t, f.cs, chanKey("inc-b", "", "chat"))
-	appendTo(t, f.cs, chanKey("inc-c", "", "chat"))
+	f.seed(t, "inc-a", "draft")
+	appendTo(t, f.cs, chanKey("inc-a", "", "war-room"))
+	appendTo(t, f.cs, chanKey("inc-a", "draft", "notes"))
 
-	stop := startChannelReconciler(f.st, f.cs, newExternalDetaches(externalDetachCap))
-	t.Cleanup(stop)
-
-	_, err := f.st.DeleteFace(ctx, entity.Ref{ID: "inc-a", Face: "final"})
+	_, err := f.st.DeleteFamily(ctx, "inc-a", true)
 	require.NoError(t, err)
-	_, err = f.st.DeleteFamily(ctx, "inc-b", true)
+	assert.Len(t, entityKeys(t, f.cs, "inc-a"), 2, "an external delete leaves the channels live")
+
+	mgr := f.manager(t, f.guard)
+	_, err = mgr.CreateEntity(ctx,
+		&entity.Entity{Type: "incident", Properties: map[string]any{}},
+		entity.CreateOptions{ID: "inc-a", Face: "draft"})
 	require.NoError(t, err)
-	require.Eventually(t, func() bool {
-		return len(entityKeys(t, f.cs, "inc-b")) == 0 && len(entityKeys(t, f.cs, "inc-a")) == 1
-	}, 5*time.Second, 10*time.Millisecond)
-	assert.Equal(t, []string{"inc-a/chat"}, entityKeys(t, f.cs, "inc-a"))
-
-	mgr := f.manager(t, entitymanager.NopAnchorGuard{})
-	_, err = entitymanager.SoftDeleteEntity(ctx, mgr, "inc-c")
-	require.NoError(t, err)
-	r := channelReconciler{store: f.st, channels: f.cs, now: time.Now}
-	require.NoError(t, r.reconcile(ctx, "inc-c", ""))
-	assert.Equal(t, []string{"inc-c/chat"}, entityKeys(t, f.cs, "inc-c"), "a soft-deleted entity keeps its channels")
-
-	require.NoError(t, r.reconcile(ctx, "inc-a", ""), "the family is still there")
-	require.NoError(t, r.reconcile(ctx, "inc-a", "draft"), "the face is still there")
-	assert.Equal(t, []string{"inc-a/chat"}, entityKeys(t, f.cs, "inc-a"))
-
-	r.channels = failingChannels{Store: f.cs}
-	_, err = f.st.DeleteFamily(ctx, "inc-a", true)
-	require.NoError(t, err)
-	require.ErrorIs(t, r.reconcile(ctx, "inc-a", ""), errDiskFull)
-	r.handle(ctx, "inc-a", "") // logs
-
-	stop()
-	stop() // idempotent
-	nilStop := startChannelReconciler(f.st, nil, nil)
-	nilStop()
+	assert.Empty(t, entityKeys(t, f.cs, "inc-a"), "the new entity does not inherit them")
 }
