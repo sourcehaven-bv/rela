@@ -474,6 +474,14 @@ func (f FieldCeiling) Hides(property string) bool {
 	return ceilingHidesField(f, property)
 }
 
+// CeilingBaseline returns the name of the client baseline r's principal is
+// subject to, or "" when no baseline matches and the principal is
+// unrestricted. A function rather than a method: [Request] is at its plimsoll
+// method load line.
+func CeilingBaseline(r *Request) string {
+	return r.ceiling.name
+}
+
 // FieldCeilingFor returns the field ceiling this request's principal is subject
 // to for entityType. A zero value (Constrains() == false) means unrestricted —
 // either no baseline matched, or the baseline says nothing about this type.

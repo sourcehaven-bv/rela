@@ -141,6 +141,44 @@ func (d *Declarative) AssertedGrants(verb Verb, entityType string) []AssertedGra
 	return out
 }
 
+// ClampedEveryoneGrants is [Declarative.EveryoneGrants] for r's principal: the client ceiling applies first, then the everyone role as
+// roleFor narrows it. A report about one principal's effective access asks
+// this one. The policy-wide answer would show an everyone grant that a
+// `client_baselines:` entry removes, so a restricted client (a webhook, an
+// app) would appear to hold it.
+//
+// It and [ClampedAssertedGrants] are functions rather than [Request] methods
+// because Request is at its plimsoll method load line.
+func ClampedEveryoneGrants(r *Request, verb Verb, entityType string) EveryoneGrant {
+	if !r.ceilingPermitsVerb(verb, entityType) {
+		return EveryoneGrant{}
+	}
+	role, ok := r.roleFor(EveryoneRole)
+	if !ok {
+		return EveryoneGrant{}
+	}
+	return grantForRole(role, verb, entityType)
+}
+
+// ClampedAssertedGrants is [Declarative.AssertedGrants] for r's principal,
+// with the client ceiling applied the same way as in [ClampedEveryoneGrants].
+func ClampedAssertedGrants(r *Request, verb Verb, entityType string) []AssertedGrant {
+	if !r.ceilingPermitsVerb(verb, entityType) {
+		return nil
+	}
+	var out []AssertedGrant
+	for _, g := range r.d.AssertedGrants(verb, entityType) {
+		role, ok := r.roleFor(g.Role)
+		if !ok {
+			continue
+		}
+		if clamped := grantForRole(role, verb, entityType); clamped.Granted {
+			out = append(out, AssertedGrant{Claim: g.Claim, Role: g.Role, Wildcard: clamped.Wildcard})
+		}
+	}
+	return out
+}
+
 // grantForRole reports whether one role grants verb on entityType and
 // whether the match came from a "*" wildcard. It is the single place
 // the verb→field mapping lives, shared by EveryoneGrants and

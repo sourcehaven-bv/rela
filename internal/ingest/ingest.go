@@ -417,7 +417,20 @@ func createEntity(ctx context.Context, d Deps, m ingestspec.Mapping, src Source)
 	if res == nil || res.Entity == nil {
 		return nil, errors.New("ingest: create returned no entity")
 	}
+	logAutomationErrors(d, res.Entity.ID, res.AutomationErrors)
 	return res.Entity, nil
+}
+
+// logAutomationErrors records automation failures that followed a successful
+// write. The write itself stands and the record reports success, so without
+// this line a refused cascade (for example one a client ceiling denies) would
+// leave no trace.
+func logAutomationErrors(d Deps, entityID string, errs []string) {
+	if len(errs) == 0 {
+		return
+	}
+	slog.Warn("ingest: automations failed after write",
+		"mapping", d.Label, "entity", entityID, "errors", errs)
 }
 
 // applySteps runs the then: steps against target.
@@ -490,8 +503,12 @@ func applySteps(
 		return nil
 	}
 
-	if _, err := d.Writer.PatchEntity(ctx, target.Ref().String(), patch); err != nil {
+	res, err := d.Writer.PatchEntity(ctx, target.Ref().String(), patch)
+	if err != nil {
 		return fmt.Errorf("ingest apply: %w", err)
+	}
+	if res != nil {
+		logAutomationErrors(d, target.ID, res.AutomationErrors)
 	}
 	return nil
 }

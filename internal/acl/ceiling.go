@@ -6,6 +6,8 @@ import (
 	"slices"
 	"sort"
 	"strings"
+
+	"github.com/Sourcehaven-BV/rela/internal/principal"
 )
 
 // Client attenuation (TKT-IAC8TX) restricts a non-interactive client BELOW the
@@ -45,6 +47,11 @@ import (
 // overlap), so exactly one baseline matches any principal_type. There is
 // deliberately no baseline-vs-baseline precedence to specify, document, or get
 // wrong. A principal_type matching no baseline is unrestricted.
+
+// PrincipalTypeWebhook is the principal_type of every declarative webhook
+// delivery ([principal.TypeWebhook]). It is re-exported for aclaudit, which
+// .go-arch-lint.yml allows to depend on acl only.
+const PrincipalTypeWebhook = principal.TypeWebhook
 
 // ClientBaseline is the ceiling applied to a client of a given principal_type.
 // It is keyed by NAME in `acl.yaml` (so it can be talked about in diagnostics

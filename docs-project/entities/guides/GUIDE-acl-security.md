@@ -735,9 +735,18 @@ fails to restrict, and nobody files a bug about access they still have.
 - `B8` / `B9` — a ceiling naming an entity type or field the metamodel
   does not declare. A typo in a *denial* is worse than in a grant: it
   silently fails to protect.
+- `A15-webhook-uncapped` — `data-entry.yaml` declares webhooks and no
+  baseline lists `webhook` in `applies_to`, so every hook has its role's
+  full access. A15 and A11 together cover the webhook case: A15 reports a
+  missing baseline, A11 reports one that narrows nothing. A project with
+  webhooks and no `webhook` baseline gets this finding after an upgrade,
+  so `rela acl audit --fail-on=medium` fails in CI until the baseline is
+  added.
 
 Run `rela acl map --principal <user> --as <type>` to see what a client
-actually gets, rather than inferring it from the policy file.
+actually gets, rather than inferring it from the policy file. For a
+webhook, run `rela acl map --webhook <id>`; see
+[Webhooks](webhooks.md#acl).
 
 ### `deny_worlds` selects a lens; it does not guard content
 
