@@ -56,6 +56,14 @@ var callerGates = map[string]string{
 	"authorizeRestore":    "restoreInTx calls it; RestoreEntity leaves the read gate to its caller",
 	"restoreInTx":         "RestoreEntity's critical section; RestoreEntity leaves the read gate to its caller",
 	"authorizeCopy":       "planCopy gates the source and the target before calling it",
+	"deletePrepass": "guardFamilyDelete and checkSoftDelete call it; DeleteEntity and " +
+		"SoftDeleteEntity run requireReadableRow on the family before them",
+	"checkFaceDeleteEdges": "guardFaceDelete and the face delete's txEdges call it; the face " +
+		"delete runs requireReadableRow on the face before guardFaceDelete",
+	"guardFamilyDelete": "DeleteEntity runs requireReadableRow on the family before it",
+	"checkSoftDelete":   "SoftDeleteEntity runs requireReadableRow on the family before it",
+	"guardFaceDelete":   "the face delete runs requireReadableRow on the face before it",
+	"txEdges":           "faceDeleteGuard.txEdges: the face delete gated the face before the transaction",
 }
 
 // noReadGateNeeded lists the functions that ask the ACL with no read gate

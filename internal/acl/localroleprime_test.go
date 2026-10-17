@@ -96,7 +96,7 @@ func TestPrimeLocalRoles_MatchesPerEntityWalk(t *testing.T) {
 			plain, _ := d.ForIdentity(identityFor(context.Background(), t, d, p))
 			primedReq, _ := d.ForIdentity(identityFor(context.Background(), t, d, p))
 			ctx := context.Background()
-			pctx := PrimeLocalRoles(WithRequest(ctx, primedReq), append(ids, "f0", "f1"))
+			pctx := PrimeLocalRoles(bindTo(ctx, primedReq), append(ids, "f0", "f1"))
 			for _, id := range append(ids, "f0", "f1") {
 				if _, ok := primedLocalRoles(pctx, primedReq, id); !ok {
 					t.Fatalf("%s not primed", id)
@@ -150,7 +150,7 @@ func TestPrimeLocalRoles_ReadsAreSizeIndependent(t *testing.T) {
 		}
 		alice := principal.Principal{User: "alice", Tool: principal.ToolDataEntry}
 		req, _ := d.ForIdentity(identityFor(context.Background(), t, d, alice))
-		ctx = WithRequest(ctx, req)
+		ctx = bindTo(ctx, req)
 		req.Globals()
 		st.Reset()
 		pctx := PrimeLocalRoles(ctx, ids)
@@ -175,7 +175,7 @@ func TestPrimeLocalRoles_ScopedToRequest(t *testing.T) {
 	p := principal.Principal{User: "alice", Tool: principal.ToolDataEntry}
 	first, _ := d.ForIdentity(identityFor(context.Background(), t, d, p))
 	second, _ := d.ForIdentity(identityFor(context.Background(), t, d, p))
-	pctx := PrimeLocalRoles(WithRequest(context.Background(), first), ids)
+	pctx := PrimeLocalRoles(bindTo(context.Background(), first), ids)
 	if _, ok := primedLocalRoles(pctx, second, ids[0]); ok {
 		t.Error("a prime computed for one Request answered another")
 	}
@@ -183,6 +183,32 @@ func TestPrimeLocalRoles_ScopedToRequest(t *testing.T) {
 	again := PrimeLocalRoles(pctx, ids)
 	if again != pctx {
 		t.Error("re-priming covered ids allocated a new prime")
+	}
+}
+
+// bindTo attaches r to ctx the way the request edge does: under the
+// principal r was opened for.
+func bindTo(ctx context.Context, r *Request) context.Context {
+	return WithRequest(principal.With(ctx, r.principal), r)
+}
+
+// The prime is for the Request bound at the edge. A Request attached under
+// another principal is not bound, so nothing is primed for it.
+func TestPrimeLocalRoles_OnlyBoundRequest(t *testing.T) {
+	st, ids := randomPrimeGraph(t, 5, 5)
+	d, err := NewDeclarative(primePolicy(), aclstore.MustNewGraph(st), st)
+	if err != nil {
+		t.Fatal(err)
+	}
+	alice := principal.Principal{User: "alice", Tool: principal.ToolDataEntry}
+	req, _ := d.ForIdentity(identityFor(context.Background(), t, d, alice))
+	bob := principal.Principal{User: "bob", Tool: principal.ToolDataEntry}
+	ctx := WithRequest(principal.With(context.Background(), bob), req)
+	if got := PrimeLocalRoles(ctx, ids); got != ctx {
+		t.Error("primed a Request bound to another principal")
+	}
+	if got := PrimeLocalRoles(WithRequest(context.Background(), req), ids); got.Value(localRolePrimeKey{}) != nil {
+		t.Error("primed a Request attached without its principal")
 	}
 }
 
@@ -202,7 +228,7 @@ func TestWithoutLocalRolePrime_SeesLaterEdges(t *testing.T) {
 	}
 	alice := principal.Principal{User: "alice", Tool: principal.ToolDataEntry}
 	req, _ := d.ForIdentity(identityFor(context.Background(), t, d, alice))
-	pctx := PrimeLocalRoles(WithRequest(ctx, req), []string{"d1"})
+	pctx := PrimeLocalRoles(bindTo(ctx, req), []string{"d1"})
 	if _, err := st.CreateRelation(ctx, entity.RelationKey{From: "alice", Type: "owns", To: "d1"}, nil); err != nil {
 		t.Fatal(err)
 	}

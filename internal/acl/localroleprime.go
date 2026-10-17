@@ -44,13 +44,21 @@ type localRolePrimeKey struct{}
 // edge; a read path primes its own ctx, so a later write never sees an answer
 // computed before it. Only read paths should call this.
 //
-// A ctx without a Request, a Graph that cannot batch, or a failed batch read
-// returns ctx unchanged: the per-entity probes then answer as before, so a
+// It primes the Request bound at the request edge, checked as
+// [Declarative.RequestFrom] checks it, so the checks that resolve that
+// Request read the prime and nothing else does.
+//
+// A ctx without a bound Request (none attached, or one bound to another
+// principal), a Graph that cannot batch, or a failed batch read returns ctx
+// unchanged: the per-entity probes then answer as before, so a
 // prime can only make a check cheaper, never different. Priming again on a
 // primed ctx adds the new ids; ids already primed are not recomputed.
 func PrimeLocalRoles(ctx context.Context, ids []string) context.Context {
 	r := FromContext(ctx)
 	if r == nil || len(ids) == 0 {
+		return ctx
+	}
+	if _, err := r.d.RequestFrom(ctx); err != nil {
 		return ctx
 	}
 	b, ok := r.d.graph.(edgeBatcher)

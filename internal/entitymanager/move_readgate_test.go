@@ -83,6 +83,7 @@ func readGatedOrderManager(
 		Store: st, Meta: orderableMetamodel(t, mode), Templater: nopTemplater{}, Audit: sink,
 		ACL:         hideOneACL{hidden: hidden},
 		Transitions: statemachine.EmptySet(), FieldGate: entitymanager.AllowAllFieldGate{},
+		AnchorGuard: entitymanager.NopAnchorGuard{},
 	})
 	if err != nil {
 		t.Fatalf("entitymanager.New: %v", err)
