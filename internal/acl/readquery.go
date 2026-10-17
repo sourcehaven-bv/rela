@@ -150,7 +150,7 @@ func (r *Request) readQuery(entityType string) ReadQueryResult {
 	// ANYONE". Today the membership walk only returns empty for an
 	// unstamped principal, which the IdentityResolver already rejects; the
 	// check here keeps the gate safe without that validation.
-	inbound, ok := r.conferredEdge(globals.Members, conferring)
+	inbound, ok := conferredEdge(r.d.policy, globals.Members, conferring)
 	if !ok {
 		return ReadQueryResult{DenyAll: true}
 	}
@@ -167,7 +167,7 @@ func (r *Request) readQuery(entityType string) ReadQueryResult {
 	// consumers that never see a query.
 	for _, relType := range conferring {
 		// Members is non-empty here, checked above, so ok always holds.
-		edge, _ := r.conferredEdge(globals.Members, []string{relType})
+		edge, _ := conferredEdge(r.d.policy, globals.Members, []string{relType})
 		br := store.GraphBranch{HasInbound: edge}
 		if !allByRel[relType] {
 			br.FaceIn = facesByRel[relType]
