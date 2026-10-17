@@ -609,6 +609,12 @@ deps:
       - lease
       # Presence over live views (TKT-MHXH87): the live hub owns a tracker.
       - presence
+      # Channels (TKT-ZU7P13): the routes speak the channel service's views
+      # and errors, and the live hub reads its channel keys. The store
+      # backend is the wiring site's choice.
+      - realtime
+      - channels
+      - realtimelimits
       - cmdexec
       - config
       - conflict
@@ -757,6 +763,9 @@ deps:
   openapi:
     mayDependOn:
       - metamodel
+      # The channel paths (TKT-ZU7P13) describe the loaded realtime.yaml,
+      # which the server hands over as a loader of the compiled config.
+      - realtimecfg
 
   # Application services
   app:

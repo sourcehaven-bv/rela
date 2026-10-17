@@ -291,7 +291,11 @@ type App struct {
 	// leases owns the lease routes and `_lease` (TKT-4YPG4Q). Nil until
 	// [SetLeases], which is the "feature absent" signal; its methods accept
 	// a nil receiver.
-	leases   *leasesHandler
+	leases *leasesHandler
+	// channels owns the channel routes (TKT-ZU7P13). Nil until
+	// [SetChannels], which is the "feature absent" signal; its methods
+	// accept a nil receiver.
+	channels *channelsHandler
 	searcher search.Searcher
 	// visibleSearcher is the ACL-scoped search seam (TKT-BA8BSX):
 	// executeQuery routes free-text searches through it so /_search

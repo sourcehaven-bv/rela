@@ -218,6 +218,13 @@ func (a *App) handleV1DynamicRoutes(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// /{plural}/{ref}/_channels[/...] (TKT-ZU7P13) has routes of several
+	// depths, so it is matched before the switch on depth.
+	if rest, ok := splitChannelRoute(parts); ok {
+		a.channels.serve(w, r, typeName, parts[1], rest)
+		return
+	}
+
 	switch len(parts) {
 	case 1:
 		// /{plural} - collection

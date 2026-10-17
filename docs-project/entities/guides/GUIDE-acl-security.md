@@ -1653,6 +1653,34 @@ configuration.
 - **The anonymous principal never joins.** All unauthenticated callers share
   it, so it would name nobody.
 
+## Realtime channel routes
+
+The channel routes under `/api/v1/{plural}/{id}/_channels` (TKT-ZU7P13)
+follow the row-level rule. The channel roles themselves are described in
+the realtime guide.
+
+- **Hidden means nonexistent.** A hidden entity, a missing one, an entity of
+  another type than the collection, and realtime being off all get the same
+  404 body as the entity `GET`. The channel service resolves the entity
+  through the gated reader before it reads any channel.
+- **A ref is not an existence oracle.** A post whose `ref` property names a
+  hidden entity gets the same 422 as one naming a missing entity. A page
+  serves a ref the reader cannot read as `{"restricted": true}`, without its
+  id.
+- **A 403 names the rule.** Its `detail` is the `realtime.yaml` path of the
+  gate that refused, such as `channel_types.room.read`. That file is
+  configuration, which is not a secret. The 403 comes only after the entity
+  read passed.
+- **Live frames come from the replay, not the client.** A subscription to a
+  channel head or a channel list takes its topic only from a successful
+  replay of its own `GET`, and loses it on any other answer. A message on a
+  channel the subscriber cannot read therefore never re-checks that
+  subscription, and sends no frame. A reader who loses access gets one frame,
+  on which the `GET` answers 404, and none after that.
+- **Message pages are not live.** A frame only says the head changed; the
+  client fetches the messages through the same gated `GET` as any other
+  read.
+
 ## What still leaks (deferred)
 
 - **`/api/v1/_position` per-id semantics** — `_position` is gated on

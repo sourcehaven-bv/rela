@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/changefeed"
+	"github.com/Sourcehaven-BV/rela/internal/channels"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/presence"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
@@ -147,9 +148,14 @@ type liveConn struct {
 //     a cap refuses the join; each presence round over watching tries again.
 //   - left is the face it watched before a replay that did not finish. A
 //     presence round over that face replays it again so it can rejoin.
+//
+// A channel subscription (channel set) has a topic: the channel head or
+// anchor its last finished replay resolved with a 200 (see live_topics.go).
 type liveSub struct {
 	url        string // replay URL rebuilt by livePath.String
 	presenceID string // livePath.presenceID
+	channel    bool   // livePath.channel
+	topic      string
 	hash       string
 	syncing    bool
 	watching   string
@@ -162,6 +168,7 @@ type liveSub struct {
 type liveTarget struct {
 	url        string
 	presenceID string
+	channel    bool
 }
 
 // keyedSub is a subscription with its key.
@@ -295,7 +302,7 @@ func (h *liveHub) handlePut(w http.ResponseWriter, r *http.Request) {
 			writeV1Error(w, r, http.StatusBadRequest, "invalid_path", err.Error(), at+".path")
 			return
 		}
-		next[s.Key] = liveTarget{url: lp.String(), presenceID: lp.presenceID()}
+		next[s.Key] = liveTarget{url: lp.String(), presenceID: lp.presenceID(), channel: lp.isChannel()}
 	}
 	added, ok := h.replace(c, next)
 	if !ok {
@@ -341,7 +348,7 @@ func (h *liveHub) replace(c *liveConn, next map[string]liveTarget) (added []keye
 		if old := c.subs[key]; old != nil && old.url == target.url {
 			subs[key] = old // unchanged: keep its baseline
 		} else {
-			s := &liveSub{url: target.url, presenceID: target.presenceID, syncing: true}
+			s := &liveSub{url: target.url, presenceID: target.presenceID, channel: target.channel, syncing: true}
 			subs[key] = s
 			added = append(added, keyedSub{key: key, sub: s})
 		}
@@ -399,6 +406,7 @@ func (h *liveHub) baseline(ctx context.Context, c *liveConn, added []keyedSub) b
 		}
 		if current && c.subs[ks.key] == s {
 			h.applyPresenceLocked(c, ks.key, s, results[i])
+			applyTopic(s, results[i])
 			if s.recheck {
 				h.addPendingLocked(s)
 			}
@@ -485,9 +493,10 @@ type leaseWaker interface {
 	Subscribe() (wake <-chan struct{}, cancel func())
 }
 
-// start runs the live worker on feed, and on leases when it is non-nil,
-// until stop. A second start before stop is a no-op.
-func (h *liveHub) start(feed *changefeed.Bus, leases leaseWaker) {
+// start runs the live worker on feed, on leases when it is non-nil, and on
+// the channel changes chans subscribes to when it is non-nil, until stop. A
+// second start before stop is a no-op.
+func (h *liveHub) start(feed *changefeed.Bus, leases leaseWaker, chans func() channelChanges) {
 	h.runMu.Lock()
 	defer h.runMu.Unlock()
 	if h.cancel != nil {
@@ -501,11 +510,18 @@ func (h *liveHub) start(feed *changefeed.Bus, leases leaseWaker) {
 	if leases != nil {
 		leaseWake, unsubscribe = leases.Subscribe()
 	}
+	var chanSub channelChanges
+	if chans != nil {
+		chanSub = chans()
+	}
 	go func() {
 		defer close(h.done)
 		defer sub.Close()
 		defer unsubscribe()
-		h.run(ctx, sub, leaseWake)
+		if chanSub != nil {
+			defer chanSub.Close()
+		}
+		h.run(ctx, sub, leaseWake, chanSub)
 	}()
 }
 
@@ -535,11 +551,22 @@ type liveFeed interface {
 // arrived. If the first change started the window instead, a write to a
 // type the subscriber cannot read would move when its next frame arrives,
 // which polling would not reveal. The same holds for a lease on an entity
-// the subscriber cannot read.
-func (h *liveHub) run(ctx context.Context, feed liveFeed, leaseWake <-chan struct{}) {
+// the subscriber cannot read, and for a message on a channel the
+// subscriber cannot read.
+//
+// A channel change (chans, nil when channels are off) does not dirty the
+// round: on the tick it runs a topic round over the heads and channel lists
+// of the channels that changed, together with the presence faces that
+// changed. A channel subscription that lost count (resync) replays every
+// channel subscription.
+func (h *liveHub) run(ctx context.Context, feed liveFeed, leaseWake <-chan struct{}, chans channelChanges) {
 	tick := time.NewTicker(h.window)
 	defer tick.Stop()
-	dirty := false
+	var chanWake <-chan struct{} // nil: never ready
+	if chans != nil {
+		chanWake = chans.Wake()
+	}
+	dirty, channelsDirty := false, false
 	for {
 		select {
 		case <-ctx.Done():
@@ -548,19 +575,27 @@ func (h *liveHub) run(ctx context.Context, feed liveFeed, leaseWake <-chan struc
 			dirty = true
 		case <-leaseWake:
 			dirty = true
+		case <-chanWake:
+			channelsDirty = true
 		case <-h.kick:
 			h.round(ctx, false) // baselines only; nothing changed
 		case <-tick.C:
 			// Presence expiry takes effect here, on the fixed clock, so
 			// when a viewer drops out never depends on when a replay ran.
 			faces := h.presence.TakeChanged(h.now())
+			var keys []channels.Key
+			resync := false
+			if channelsDirty {
+				channelsDirty = false
+				keys, resync = chans.Take()
+			}
 			switch {
 			case dirty:
 				dirty = false
 				feed.Take() // any change re-reads every subscription
 				h.round(ctx, true)
-			case len(faces) > 0 || h.hasPending():
-				h.presenceRound(ctx, faces)
+			case len(faces) > 0 || len(keys) > 0 || resync || h.hasPending():
+				h.replayRound(ctx, true, newRoundFilter(faces, keys, resync))
 			}
 			h.ticks.Add(1)
 		}
@@ -593,15 +628,11 @@ func (h *liveHub) round(ctx context.Context, changed bool) {
 // an earlier round could not replay. A subscriber who got a 404 watches no
 // face, so a change of viewers never replays it.
 func (h *liveHub) presenceRound(ctx context.Context, faces []string) {
-	only := make(map[string]bool, len(faces))
-	for _, f := range faces {
-		only[f] = true
-	}
-	h.replayRound(ctx, true, only)
+	h.replayRound(ctx, true, newRoundFilter(faces, nil, false))
 }
 
 // replayRound replays what collect(changed, only) selects.
-func (h *liveHub) replayRound(ctx context.Context, changed bool, only map[string]bool) {
+func (h *liveHub) replayRound(ctx context.Context, changed bool, only *roundFilter) {
 	hp := h.replay.Load()
 	if hp == nil {
 		h.noReplay.Do(func() {
@@ -684,6 +715,7 @@ func (h *liveHub) commitRound(pairs []*replayPair) {
 					s.hash = p.res.hash
 				}
 				h.applyPresenceLocked(ref.conn, ref.key, s, p.res)
+				applyTopic(s, p.res)
 			}
 			ref.conn.mu.Unlock()
 		}
@@ -692,13 +724,14 @@ func (h *liveHub) commitRound(pairs []*replayPair) {
 
 // collect groups the current subscriptions into distinct replays, in a
 // stable order; round rotates where the cap cuts it. A non-nil only keeps
-// the presence subscriptions that watch, or left, one of its faces, and the
-// pending ones. A changed round takes the pending set: a full round selects
-// those subscriptions anyway, and a baseline round (changed false) does
-// not, so it leaves the set alone. A changed round also marks the syncing
-// subscriptions it skips for a recheck; a presence round marks only the
-// presence ones, since a change of viewers moves no other response.
-func (h *liveHub) collect(changed bool, only map[string]bool) []*replayPair {
+// the subscriptions it selects ([roundFilter.selects]) and the pending
+// ones. A changed round takes the pending set: a full round selects those
+// subscriptions anyway, and a baseline round (changed false) does not, so
+// it leaves the set alone. A changed round also marks the syncing
+// subscriptions it skips for a recheck; a topic round marks only the
+// presence and channel ones, since a change of viewers or of a channel
+// moves no other response.
+func (h *liveHub) collect(changed bool, only *roundFilter) []*replayPair {
 	byKey := make(map[string]*replayPair)
 	h.mu.Lock()
 	var due map[*liveSub]struct{}
@@ -709,13 +742,13 @@ func (h *liveHub) collect(changed bool, only map[string]bool) []*replayPair {
 		c.mu.Lock()
 		for key, s := range c.subs {
 			if s.syncing {
-				s.recheck = s.recheck || changed && (only == nil || s.presenceID != "")
+				s.recheck = s.recheck || changed && (only == nil || s.presenceID != "" || s.channel)
 				continue
 			}
 			if !changed && s.hash != "" {
 				continue
 			}
-			if _, ok := due[s]; only != nil && !ok && !only[s.watching] && !only[s.left] {
+			if _, ok := due[s]; only != nil && !ok && !only.selects(s) {
 				continue
 			}
 			k := c.fp + " " + s.url
@@ -795,6 +828,7 @@ type replayResult struct {
 	status int
 	ok     bool
 	probe  presenceProbe
+	topic  string // the topic a channel route recorded, see live_topics.go
 }
 
 // presenceJoin returns the face to join and who joins it, for a presence
@@ -825,6 +859,7 @@ func replayHash(
 	ctx, cancel := context.WithTimeout(principal.With(ctx, p), liveReplayTimeout)
 	defer cancel()
 	ctx, probe := withPresenceProbe(ctx)
+	ctx, topic := withTopicProbe(ctx)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, http.NoBody)
 	if err != nil {
 		slog.Warn("live: build replay request", "err", err)
@@ -841,7 +876,7 @@ func replayHash(
 		status = http.StatusOK
 	}
 	return replayResult{
-		hash: fmt.Sprintf("%d:%x", status, hw.h.Sum(nil)), status: status, ok: true, probe: *probe,
+		hash: fmt.Sprintf("%d:%x", status, hw.h.Sum(nil)), status: status, ok: true, probe: *probe, topic: topic.topic,
 	}
 }
 
