@@ -42,6 +42,7 @@ channel_types:
       delete_own: { roles: [lead, dpo, member], from: open }
       remove:     { roles: [lead], reason_required: true }
     on_entity_delete: block
+    detached_retention: 90d
   page-threads:
     attach_to: [page]
     anchor: face

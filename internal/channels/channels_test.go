@@ -126,7 +126,7 @@ func TestPrepareAction(t *testing.T) {
 
 	a, err = PrepareAction("accept", Action{By: alice, At: t0})
 	require.NoError(t, err)
-	require.Equal(t, Action{}, a)
+	require.Equal(t, Action{By: alice, At: NormTime(t0)}, a, "clearing keeps only who and when, for a release record")
 
 	for _, next := range []Action{
 		{Status: "weird", By: alice, At: t0},

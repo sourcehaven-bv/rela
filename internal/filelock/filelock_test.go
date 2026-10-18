@@ -50,6 +50,36 @@ func TestLock_ReleaseLetsTheNextHolderIn(t *testing.T) {
 	unlock()
 }
 
+// TryLock fails at once while another locker holds the lock, and takes it
+// once that locker lets go.
+func TestTryLock(t *testing.T) {
+	t.Parallel()
+	path := filepath.Join(t.TempDir(), "sub", "x.lock")
+	a, err := New(path)
+	require.NoError(t, err)
+	b, err := New(path)
+	require.NoError(t, err)
+
+	release, ok, err := a.TryLock()
+	require.NoError(t, err)
+	require.True(t, ok)
+	_, ok, err = b.TryLock()
+	require.NoError(t, err)
+	require.False(t, ok, "a held lock must not be taken twice")
+	release()
+	release, ok, err = b.TryLock()
+	require.NoError(t, err)
+	require.True(t, ok)
+	release()
+
+	blocked := filepath.Join(t.TempDir(), "file")
+	require.NoError(t, os.WriteFile(blocked, nil, 0o600))
+	c, err := New(filepath.Join(blocked, "x.lock"))
+	require.NoError(t, err)
+	_, _, err = c.TryLock()
+	require.Error(t, err)
+}
+
 // The lock file is created private to the user and is never truncated, so a
 // file that happens to have content keeps it.
 func TestLock_FileIsPrivateAndNeverTruncated(t *testing.T) {

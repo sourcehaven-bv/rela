@@ -64,6 +64,42 @@ func TestKeyedLock_ExclusiveAcrossStores(t *testing.T) {
 	got()
 }
 
+// TryKeyedLock fails at once while another store holds the key, takes it
+// once released, and excludes AcquireKeyedLock on the same key.
+func TestTryKeyedLock(t *testing.T) {
+	_ = testDSN(t)
+	pool := newScopedPool(t)
+	a, err := pgstore.New(pool)
+	require.NoError(t, err)
+	b, err := pgstore.New(pool)
+	require.NoError(t, err)
+	ctx := context.Background()
+
+	release, ok, err := pgstore.TryKeyedLock(ctx, a, "realtime-worker")
+	require.NoError(t, err)
+	require.True(t, ok)
+	_, ok, err = pgstore.TryKeyedLock(ctx, b, "realtime-worker")
+	require.NoError(t, err)
+	require.False(t, ok, "a held key is not taken twice")
+	waitCtx, cancel := context.WithTimeout(ctx, 200*time.Millisecond)
+	defer cancel()
+	_, err = b.AcquireKeyedLock(waitCtx, "realtime-worker")
+	require.Error(t, err, "the two share one key space")
+	release()
+	release()
+
+	// The timed-out waiter's session may still be queued on the server for
+	// a moment and take the key before it ends, so poll.
+	require.Eventually(t, func() bool {
+		release, ok, err = pgstore.TryKeyedLock(ctx, b, "realtime-worker")
+		return err == nil && ok
+	}, 5*time.Second, 20*time.Millisecond, "a released key is free")
+	release()
+
+	_, _, err = pgstore.TryKeyedLock(ctx, nil, "realtime-worker")
+	require.Error(t, err, "a store without a pool cannot lock")
+}
+
 // TestKeyedLock_DistinctKeysDoNotContendAcrossStores is the burst property: two
 // processes locking DIFFERENT keys never wait on each other. If this regressed,
 // a monitoring fan-out would serialize database-wide.

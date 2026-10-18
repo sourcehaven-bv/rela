@@ -87,7 +87,7 @@ func TestDamagedRows(t *testing.T) {
 	require.ErrorContains(t, err, "damaged")
 	_, err = s.Keys(ctx)
 	require.Error(t, err)
-	_, err = s.ListByLifecycle(ctx, "bogus", channelstest.T0)
+	_, err = s.ListByLifecycle(ctx, "room", "bogus", channelstest.T0)
 	require.ErrorIs(t, err, channels.ErrInvalidMessage)
 }
 

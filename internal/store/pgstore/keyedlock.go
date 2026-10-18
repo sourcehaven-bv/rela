@@ -8,6 +8,8 @@ import (
 	"sync"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
 // keyedLockClassKey namespaces the caller-keyed advisory locks, distinct from
@@ -118,6 +120,62 @@ func (s *Store) AcquireKeyedLock(ctx context.Context, key string) (release func(
 			conn.Release()
 		})
 	}, nil
+}
+
+// TryKeyedLock takes the keyed lock named key on the database st writes to,
+// if no session holds it, and returns at once. It reports false, with a nil
+// release, when another holder has it.
+//
+// It is for work any one process may do, such as a periodic sweep: the
+// caller takes it once per run and skips the run when it is held. So no
+// process waits on it, and a process that stops holding it (a crash, a lost
+// connection) lets the next run of another process take over.
+//
+// Like [Store.AcquireKeyedLock] it pins one pool connection until release,
+// because the lock is session-scoped, and it shares that method's key space,
+// so the two exclude each other on one key. It takes no keyed slot: a held
+// lock never makes another caller wait for one. A store that is not a
+// pool-backed pgstore is an error.
+func TryKeyedLock(ctx context.Context, st store.Store, key string) (release func(), ok bool, err error) {
+	pool, isPool := HandleFor(st).(*pgxpool.Pool)
+	if !isPool {
+		return nil, false, errors.New("pgstore: keyed lock requires a pgxpool-backed store")
+	}
+	if pool.Config().MaxConns < 2 {
+		return nil, false, errors.New(
+			"pgstore: keyed lock needs pool_max_conns >= 2 (the lock pins one connection while the caller's writes use others)")
+	}
+	conn, err := pool.Acquire(ctx)
+	if err != nil {
+		return nil, false, fmt.Errorf("pgstore: keyed lock acquire connection: %w", err)
+	}
+	if err := conn.QueryRow(ctx,
+		`SELECT pg_try_advisory_lock($1::int, hashtext(current_schema() || '/' || $2::text))`,
+		keyedLockClassKey, key,
+	).Scan(&ok); err != nil {
+		// The answer is lost, so the session may hold the lock: destroy it.
+		conn.Hijack().Close(context.WithoutCancel(ctx))
+		return nil, false, fmt.Errorf("pgstore: keyed lock %q: %w", key, err)
+	}
+	if !ok {
+		conn.Release()
+		return nil, false, nil
+	}
+	var releaseOnce sync.Once
+	return func() {
+		releaseOnce.Do(func() {
+			unlockCtx := context.WithoutCancel(ctx)
+			if _, err := conn.Exec(unlockCtx,
+				`SELECT pg_advisory_unlock($1::int, hashtext(current_schema() || '/' || $2::text))`,
+				keyedLockClassKey, key,
+			); err != nil {
+				slog.Warn("pgstore: keyed advisory unlock failed", "key", key, "error", err)
+				conn.Hijack().Close(unlockCtx)
+				return
+			}
+			conn.Release()
+		})
+	}, true, nil
 }
 
 // keyedLockSlots caps how many keyed locks one store holds at once: half the

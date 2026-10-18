@@ -437,6 +437,10 @@ const (
 	// script (TKT-2Q4UFI); paired with [UserAutomation] unless the action
 	// declares `run_as`.
 	ToolAutomationJob = "automation-job"
+	// ToolRealtime attributes the channel writes of the realtime background
+	// worker: automatic close and archive, and the retention purge. Paired
+	// with [UserRealtime].
+	ToolRealtime = "realtime"
 )
 
 // TypeWebhook is the [Principal.PrincipalType] of a declarative webhook
@@ -503,6 +507,11 @@ const UserProvisioner = "system:provisioner"
 // nothing by itself: an operator assigns it a role in acl.yaml, or the
 // action names another identity with `run_as`.
 const UserAutomation = "system:automation"
+
+// UserRealtime is the fixed [Principal.User] of the realtime background
+// worker. Its writes go to the channel store and its audit trail, not to the
+// graph, so it needs no role in acl.yaml. Paired with [ToolRealtime].
+const UserRealtime = "system:realtime"
 
 // ReservedPrefix namespaces the [Principal.User] values that only rela's own
 // in-process entry points may assert. [UserScheduler] and [UserProvisioner] are

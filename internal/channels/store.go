@@ -45,6 +45,9 @@ type Store interface {
 	// next, as one compare-and-set; a lost race is [ErrConflict]. A next
 	// status of [ActionNone] clears the action, which is how a failed side
 	// effect is reverted. Reaching [ActionDone] writes an audit record.
+	// Clearing a pending action is a release: next must carry By and At
+	// (see [CheckRelease]), and an audit record with status
+	// [AuditReleased] is written.
 	SetAction(ctx context.Context, key Key, seq int64, name string, expect ActionStatus, next Action) (Message, error)
 
 	// CreateMany creates a named channel on anchor, with a minted name, and
@@ -82,12 +85,61 @@ type Store interface {
 	// takes only the channels anchored to that face. An id without channels
 	// is not an error: nothing moves and the handle is zero.
 	//
-	// Nothing in this interface reads a tombstoned channel again, except
-	// [Store.Untombstone] given its handle: no list, sweep, Remove or Delete
-	// reaches it, so neither retention nor erasure does. Purging tombstoned
-	// content is the retention work of TKT-964SIS, which adds the method
-	// that reaches it.
-	Tombstone(ctx context.Context, id string, face entity.Face, at time.Time) (TombstoneHandle, error)
+	// The batch records what file returns for the channels it moves (see
+	// [Filer] and [Filing]). file runs under the same lock or transaction
+	// as the move, and not at all when nothing moves. An invalid filing, or
+	// an error from file, moves nothing and is returned.
+	//
+	// No list, Remove or Delete reaches a tombstoned channel. Only the
+	// batch methods do: [Store.Tombstones] lists batches,
+	// [Store.Untombstone] puts one back and [Store.Purge] erases one.
+	Tombstone(ctx context.Context, id string, face entity.Face, at time.Time, file Filer) (TombstoneHandle, error)
+
+	// ConfirmTombstone makes the batch h names final (see
+	// [Filing.Confirmed]): it clears the pending mark, so [Store.Purge] may
+	// erase it, and turns an orphan batch into a detach batch. A batch that
+	// is already final is left as it is. A batch already restored or
+	// purged, or one that recorded no filing, is [ErrNotFound].
+	ConfirmTombstone(ctx context.Context, h TombstoneHandle) error
+
+	// ConfirmTombstones confirms, as ConfirmTombstone does, every batch of
+	// anchor: every batch of the id for an empty face, the face's batches
+	// otherwise. A new entity reusing an id calls it, so no batch of the
+	// old entity can be restored onto the new one. An anchor without
+	// batches is not an error.
+	ConfirmTombstones(ctx context.Context, anchor Anchor) error
+
+	// Tombstones returns the batches filed before the given time, oldest
+	// first. A batch holding no channel is left out: it has nothing to
+	// purge.
+	Tombstones(ctx context.Context, before time.Time) ([]TombstoneBatch, error)
+
+	// DueTombstones returns the confirmed batches with something due at or
+	// before the given time (see [Filing.DueAt]), oldest first. Batches
+	// that recorded no purge time are left out, as are those holding no
+	// channel. It reads an index, so the purge poll can call it often.
+	DueTombstones(ctx context.Context, at time.Time) ([]TombstoneBatch, error)
+
+	// Purge erases channels and messages of exactly the batch h names:
+	// the channels of the given types, or every channel when types is
+	// empty. A partial purge leaves the rest of the batch where it is,
+	// drops the erased types from the filing's TypeAfter, and becomes a
+	// whole purge when it erases the last channel. A whole purge also ends
+	// the batch: its filed audit trail is kept, and the records
+	// [PurgeAudit] returns are appended to it, never to the live trail of
+	// the id, since that id may belong to a new entity by now. A partial
+	// purge appends its records the same way.
+	//
+	// A pending batch is [ErrConflict]. A batch already restored or
+	// purged is [ErrNotFound]. The zero handle is a no-op.
+	Purge(ctx context.Context, h TombstoneHandle, types []string, by Author, at time.Time) error
+
+	// DropTypeRecord removes the record of typ (see [TypeRecord]) when no
+	// channel of typ exists, live or tombstoned; otherwise it is
+	// [ErrTypeInUse] and nothing changes. A type without a record is not an
+	// error. The check and the removal are one step, so a channel created
+	// concurrently either blocks the drop or is created after it.
+	DropTypeRecord(ctx context.Context, typ string) error
 
 	// Untombstone puts back exactly the batch h names, with the audit trail
 	// a whole-entity tombstone filed away, and records the restore in the
@@ -96,9 +148,10 @@ type Store interface {
 	//
 	// When live channels sit on the batch's anchor (any channel of the id
 	// for a whole-entity batch, any channel of the face for a face batch),
-	// it refuses with [*OccupiedError] and nothing changes. A batch already
-	// restored, or never filed, is [ErrNotFound]. The zero handle is a
-	// no-op.
+	// it refuses with [*OccupiedError] and nothing changes. A batch whose
+	// filing is final (see [Filing.Restorable]) is [ErrConflict] and
+	// nothing changes. A batch already restored or purged, or never filed,
+	// is [ErrNotFound]. The zero handle is a no-op.
 	Untombstone(ctx context.Context, h TombstoneHandle, at time.Time) error
 
 	// Head returns the channel's metadata, including the last seq and rev a
@@ -120,10 +173,10 @@ type Store interface {
 	// by face, type and name.
 	ListEntity(ctx context.Context, id string) ([]Channel, error)
 
-	// ListByLifecycle returns the channels in state that entered it before
-	// the given time (see [Channel.StateSince]), for the retention and
-	// archive sweeps.
-	ListByLifecycle(ctx context.Context, state State, before time.Time) ([]Channel, error)
+	// ListByLifecycle returns the channels of type typ in state that
+	// entered it before the given time (see [Channel.StateSince]), for the
+	// close and archive sweeps. typ is required.
+	ListByLifecycle(ctx context.Context, typ string, state State, before time.Time) ([]Channel, error)
 
 	// StalePending returns the actions left pending since before the given
 	// time, for the sweep that settles them.

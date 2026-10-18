@@ -100,11 +100,13 @@ type Locker interface {
 // Store is the file backend. It adds locking and the [channels.Store]
 // operations to the file layout that disk reads and writes.
 //
-// 20 -> 21 (TKT-ZU7P13): Untombstone. The exported methods are the mandated
-// [channels.Store] interface, so this is a required-interface exception
-// rather than a ratchet target.
+// 20 -> 21 (TKT-ZU7P13): Untombstone. 21 -> 25 (TKT-964SIS):
+// ConfirmTombstone, Tombstones, Purge and DropTypeRecord. The exported
+// methods are the mandated [channels.Store] interface, so this is a
+// required-interface exception rather than a ratchet target. Helpers stay
+// free functions.
 //
-//plimsoll:max-exported-methods=21
+//plimsoll:max-exported-methods=27
 type Store struct {
 	disk
 	locker Locker
@@ -296,6 +298,7 @@ type meta struct {
 	CreatedAt   time.Time            `yaml:"created_at"`
 	ClosedAt    time.Time            `yaml:"closed_at,omitempty"`
 	ArchivedAt  time.Time            `yaml:"archived_at,omitempty"`
+	ReopenedAt  time.Time            `yaml:"reopened_at,omitempty"`
 	LastSeq     int64                `yaml:"last_seq"`
 	Rev         int64                `yaml:"rev"`
 	SegRev      []int64              `yaml:"seg_rev,omitempty"`
@@ -306,7 +309,8 @@ func (m *meta) channel(k channels.Key) channels.Channel {
 	return channels.Channel{
 		Key: k, Incarnation: m.Incarnation, State: m.State, Title: m.Title, CreatedBy: m.CreatedBy,
 		CreatedAt: m.CreatedAt.UTC(), ClosedAt: utc(m.ClosedAt), ArchivedAt: utc(m.ArchivedAt),
-		LastSeq: m.LastSeq, Rev: m.Rev,
+		ReopenedAt: utc(m.ReopenedAt),
+		LastSeq:    m.LastSeq, Rev: m.Rev,
 	}
 }
 
@@ -327,8 +331,12 @@ func (m *meta) bump(idx int64) int64 {
 	return m.Rev
 }
 
-func (d *disk) readMeta(k channels.Key) (*meta, error) {
-	data, err := d.readFile(chanDir(k) + "/" + metaFile)
+func (d *disk) readMeta(k channels.Key) (*meta, error) { return readMetaAt(d, chanDir(k), k) }
+
+// readMetaAt reads the meta.yaml of channel k from the channel directory
+// dir, which is chanDir(k) for a live channel.
+func readMetaAt(d *disk, dir string, k channels.Key) (*meta, error) {
+	data, err := d.readFile(dir + "/" + metaFile)
 	if err != nil {
 		return nil, fmt.Errorf("filechannels: read %s: %w", k, err)
 	}
@@ -685,10 +693,16 @@ func (d *disk) pruneEmpty(k channels.Key) {
 
 // --- listing ---
 
-// visit calls fn for every channel at the face directory of anchor, in
+// visitFace calls fn for every channel at the face directory of anchor, in
 // type and name order. typ narrows to one type.
 func (d *disk) visitFace(a channels.Anchor, typ string, fn func(channels.Key, *meta) error) error {
-	types, err := d.readDir(faceDir(a))
+	return visitFaceAt(d, faceDir(a), a, typ, fn)
+}
+
+// visitFaceAt calls fn for every channel in dir, laid out as the face
+// directory of anchor a. A face batch under ~detached has that layout too.
+func visitFaceAt(d *disk, dir string, a channels.Anchor, typ string, fn func(channels.Key, *meta) error) error {
+	types, err := d.readDir(dir)
 	if err != nil {
 		return fmt.Errorf("filechannels: list %s: %w", a.ID, err)
 	}
@@ -697,7 +711,7 @@ func (d *disk) visitFace(a channels.Anchor, typ string, fn func(channels.Key, *m
 		if (typ != "" && t != typ) || !channels.ValidName(t) {
 			continue
 		}
-		names, err := d.readDir(faceDir(a) + "/" + t)
+		names, err := d.readDir(dir + "/" + t)
 		if err != nil {
 			return fmt.Errorf("filechannels: list %s: %w", a.ID, err)
 		}
@@ -710,7 +724,7 @@ func (d *disk) visitFace(a channels.Anchor, typ string, fn func(channels.Key, *m
 			if k.Validate() != nil {
 				continue
 			}
-			m, err := d.readMeta(k)
+			m, err := readMetaAt(d, dir+"/"+t+"/"+n, k)
 			if errors.Is(err, channels.ErrNotFound) {
 				continue
 			}
@@ -725,9 +739,17 @@ func (d *disk) visitFace(a channels.Anchor, typ string, fn func(channels.Key, *m
 	return nil
 }
 
-// visitEntity calls fn for every channel of the entity id.
-func (d *disk) visitEntity(id string, fn func(channels.Key, *meta) error) error {
-	faces, err := d.readDir(enc(id))
+// visitEntity calls fn for every channel of the entity id. typ narrows to
+// one type.
+func (d *disk) visitEntity(id, typ string, fn func(channels.Key, *meta) error) error {
+	return visitEntityAt(d, enc(id), id, typ, fn)
+}
+
+// visitEntityAt calls fn for every channel in dir, laid out as the
+// directory of entity id: one directory per face. A whole-entity batch
+// under ~detached has that layout too.
+func visitEntityAt(d *disk, dir, id, typ string, fn func(channels.Key, *meta) error) error {
+	faces, err := d.readDir(dir)
 	if err != nil {
 		return fmt.Errorf("filechannels: list %s: %w", id, err)
 	}
@@ -747,15 +769,16 @@ func (d *disk) visitEntity(id string, fn func(channels.Key, *meta) error) error 
 	}
 	sort.Slice(anchors, func(i, j int) bool { return anchors[i].Face < anchors[j].Face })
 	for _, a := range anchors {
-		if err := d.visitFace(a, "", fn); err != nil {
+		if err := visitFaceAt(d, dir+"/"+faceSeg(a.Face), a, typ, fn); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-// visitAll calls fn for every live channel.
-func (d *disk) visitAll(fn func(channels.Key, *meta) error) error {
+// visitAll calls fn for every live channel. typ narrows to one type, and
+// then only that type's metadata is read.
+func (d *disk) visitAll(typ string, fn func(channels.Key, *meta) error) error {
 	ids, err := d.rootDirs()
 	if err != nil {
 		return fmt.Errorf("filechannels: list: %w", err)
@@ -768,7 +791,7 @@ func (d *disk) visitAll(fn func(channels.Key, *meta) error) error {
 		if !ok || entity.ValidateID(id) != nil {
 			continue
 		}
-		if err := d.visitEntity(id, fn); err != nil {
+		if err := d.visitEntity(id, typ, fn); err != nil {
 			return err
 		}
 	}

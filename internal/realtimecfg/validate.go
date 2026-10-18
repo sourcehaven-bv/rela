@@ -158,6 +158,22 @@ func (v *validator) channelType(name string, raw *rawChannelType, limits Limits)
 		}
 	}
 	ct.Lifecycle = v.lifecycle(key+".lifecycle", raw.Lifecycle, ct)
+	ct.DetachedRetention = DefaultDetachedRetention()
+	if raw.DetachedRetention != "" {
+		p := v.period(key+".detached_retention", raw.DetachedRetention)
+		if d, fixed := p.Fixed(); !p.IsZero() && fixed && d < realtimelimits.OrphanGrace {
+			// A shorter retention could erase a batch the sweep would still
+			// put back: an orphan whose entity returns, or a pending batch
+			// whose write failed.
+			v.add(key+".detached_retention", fmt.Sprintf("must be at least %s", realtimelimits.OrphanGrace))
+		} else if !p.IsZero() {
+			ct.DetachedRetention = p
+		}
+	}
+	if ct.OnEntityDelete == OnDeleteDelete && ct.Lifecycle.Delete != nil && !ct.Lifecycle.Delete.Retention.IsZero() {
+		v.add(key+".on_entity_delete", "on_entity_delete: delete would erase channels that "+
+			"lifecycle.delete.retention must keep; use detach or block, or drop the retention")
+	}
 	ct.MessageOps = v.messageOps(key+".message_ops", raw.MessageOps, ct)
 	return ct
 }

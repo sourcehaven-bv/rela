@@ -293,7 +293,7 @@ func TestFaceTombstonePrunes(t *testing.T) {
 	faced := channels.Key{Anchor: channels.Anchor{ID: "TKT-1", Face: "draft"}, Type: "room"}
 	_, err := s.Append(ctx, faced, msg("one"))
 	require.NoError(t, err)
-	_, err = s.Tombstone(ctx, "TKT-1", "draft", time.Now())
+	_, err = s.Tombstone(ctx, "TKT-1", "draft", time.Now(), nil)
 	require.NoError(t, err)
 	require.NoDirExists(t, filepath.Join(dir, enc("TKT-1")))
 }

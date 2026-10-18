@@ -103,11 +103,13 @@ type Dialect struct {
 
 // Store is the SQL backend.
 //
-// 20 -> 21 (TKT-ZU7P13): Untombstone. The exported methods are the mandated
-// [channels.Store] interface, so this is a required-interface exception
-// rather than a ratchet target.
+// 20 -> 21 (TKT-ZU7P13): Untombstone. 21 -> 25 (TKT-964SIS):
+// ConfirmTombstone, Tombstones, Purge and DropTypeRecord. The exported
+// methods are the mandated [channels.Store] interface, so this is a
+// required-interface exception rather than a ratchet target. Helpers stay
+// free functions.
 //
-//plimsoll:max-exported-methods=21
+//plimsoll:max-exported-methods=27
 type Store struct {
 	db DB
 	d  Dialect
@@ -202,7 +204,11 @@ func utc(t time.Time) time.Time {
 }
 
 const chanCols = `id, anchor_id, anchor_face, type, name, incarnation, state, title, created_by,
-	created_at, closed_at, archived_at, last_seq, rev`
+	created_at, closed_at, archived_at, reopened_at, last_seq, rev`
+
+// openSinceSQL is when an open channel entered its state, as
+// [channels.Channel.StateSince] reads it.
+const openSinceSQL = `(CASE WHEN reopened_at > 0 THEN reopened_at ELSE created_at END)`
 
 // row is a channel row: the channel and its surrogate id.
 type row struct {
@@ -213,10 +219,10 @@ type row struct {
 func scanChannel(r interface{ Scan(...any) error }) (row, error) {
 	var out row
 	var face, by string
-	var created, closed, archived int64
+	var created, closed, archived, reopened int64
 	c := &out.c
 	if err := r.Scan(&out.id, &c.Key.ID, &face, &c.Key.Type, &c.Key.Name, &c.Incarnation, &c.State, &c.Title, &by,
-		&created, &closed, &archived, &c.LastSeq, &c.Rev); err != nil {
+		&created, &closed, &archived, &reopened, &c.LastSeq, &c.Rev); err != nil {
 		return out, err
 	}
 	c.Key.Face = entity.Face(face)
@@ -224,6 +230,7 @@ func scanChannel(r interface{ Scan(...any) error }) (row, error) {
 		return out, fmt.Errorf("channel %s has a damaged created_by: %w", c.Key, err)
 	}
 	c.CreatedAt, c.ClosedAt, c.ArchivedAt = fromMicros(created), fromMicros(closed), fromMicros(archived)
+	c.ReopenedAt = fromMicros(reopened)
 	return out, nil
 }
 
@@ -238,6 +245,7 @@ func (s *Store) wrap(err error, format string, args ...any) error {
 		channels.ErrNotFound, channels.ErrInvalidKey, channels.ErrInvalidMessage, channels.ErrTooLarge,
 		channels.ErrTooManyChannels, channels.ErrConflict, channels.ErrRemoved, channels.ErrInvalidReply,
 		channels.ErrInvalidPage, channels.ErrRekeyConflict, channels.ErrStaleAnchor, channels.ErrTypeShapeConflict,
+		channels.ErrTypeInUse,
 	} {
 		if errors.Is(err, sentinel) {
 			return err
@@ -385,8 +393,15 @@ func (s *Store) checkParent(ctx context.Context, q Querier, channelID int64, k c
 }
 
 // insertChannel inserts the channel k. Only the title, incarnation, author
-// and time of nc are read; k carries the type.
+// and time of nc are read; k carries the type. It takes the type's lock
+// (see typeLock) after the caller's entity lock, so a create and a
+// DropTypeRecord of the type serialize.
 func (s *Store) insertChannel(ctx context.Context, q Querier, k channels.Key, nc channels.NewChannel) (row, error) {
+	if s.d.LockEntity != "" {
+		if _, err := q.Exec(ctx, s.d.LockEntity, typeLock(k.Type)); err != nil {
+			return row{}, fmt.Errorf("lock type %s: %w", k.Type, err)
+		}
+	}
 	_, err := q.Exec(ctx, `INSERT INTO channels
 		(anchor_id, anchor_face, type, name, tomb, incarnation, state, title, created_by, created_at, closed_at,
 		 archived_at, last_seq, rev)
@@ -483,21 +498,23 @@ func (s *Store) SetAction(
 	if err != nil {
 		return channels.Message{}, err
 	}
+	if err := channels.CheckRelease(expect, next); err != nil {
+		return channels.Message{}, err
+	}
 	return s.update(ctx, k, seq, "act on", func(q Querier, _ row, m *channels.Message) error {
 		if err := channels.CheckActionCAS(m.Action, name, expect); err != nil {
 			return err
 		}
 		if next.Status == channels.ActionNone {
 			m.Action = nil
+		} else {
+			a := next
+			m.Action = &a
+		}
+		rec, ok := channels.ActionAudit(k, seq, name, expect, next)
+		if !ok {
 			return nil
 		}
-		a := next
-		m.Action = &a
-		if next.Status != channels.ActionDone {
-			return nil
-		}
-		rec := channels.KeyAudit(k, channels.AuditAction, next.At)
-		rec.Seq, rec.By, rec.Action, rec.Promoted = seq, next.By, name, next.Promoted
 		return s.audit(ctx, q, k.ID, rec)
 	})
 }
@@ -558,13 +575,14 @@ func (s *Store) SetLifecycle(
 		c := r.c
 		channels.ApplyTransition(&c, t)
 		c.Rev++
-		if _, err := q.Exec(ctx, `UPDATE channels SET state = ?, closed_at = ?, archived_at = ?, rev = ?
-			WHERE id = ?`, string(c.State), micros(c.ClosedAt), micros(c.ArchivedAt), c.Rev, r.id); err != nil {
+		if _, err := q.Exec(ctx, `UPDATE channels SET state = ?, closed_at = ?, archived_at = ?, reopened_at = ?,
+			rev = ? WHERE id = ?`, string(c.State), micros(c.ClosedAt), micros(c.ArchivedAt), micros(c.ReopenedAt),
+			c.Rev, r.id); err != nil {
 			return err
 		}
 		out = c
 		rec := channels.KeyAudit(k, channels.AuditLifecycle, t.At)
-		rec.By, rec.From, rec.To = t.By, string(expect), string(t.To)
+		rec.By, rec.From, rec.To, rec.TriggeredBy = t.By, string(expect), string(t.To), t.TriggeredBy
 		return s.audit(ctx, q, k.ID, rec)
 	})
 	return out, s.wrap(werr, "move %s", k)
@@ -630,9 +648,10 @@ func (s *Store) Rekey(ctx context.Context, oldID, newID string, at time.Time) er
 }
 
 // Tombstone implements [channels.Store]. The batch's rows keep their
-// place and get the stamp in their tomb column.
+// place and get the stamp in their tomb column; its filing is a row of
+// channel_tombstones.
 func (s *Store) Tombstone(
-	ctx context.Context, id string, face entity.Face, at time.Time,
+	ctx context.Context, id string, face entity.Face, at time.Time, file channels.Filer,
 ) (channels.TombstoneHandle, error) {
 	a := channels.Anchor{ID: id, Face: face}
 	if err := a.Validate(); err != nil {
@@ -641,38 +660,83 @@ func (s *Store) Tombstone(
 	h := channels.NewTombstoneHandle(a, channels.TombstoneStamp(at))
 	rec := channels.AuditRecord{At: channels.NormTime(at), Op: channels.AuditTombstone, Face: face}
 	filed := false
+	var fileErr error
 	err := s.write(ctx, []string{id}, func(q Querier) error {
+		// The filing is computed from the rows this transaction moves,
+		// read under the same write lock (see channels.Filer).
+		where, args := `AND anchor_id = ?`, []any{id}
 		if face != "" {
-			moved, err := q.Exec(ctx, `UPDATE channels SET tomb = ?
-				WHERE anchor_id = ? AND anchor_face = ? AND tomb = ''`, h.Stamp(), id, string(face))
-			if err != nil || moved == 0 {
-				return err
-			}
-			filed = true
-			return s.audit(ctx, q, id, rec)
+			where, args = where+` AND anchor_face = ?`, append(args, string(face))
 		}
-		moved, err := q.Exec(ctx, `UPDATE channels SET tomb = ? WHERE anchor_id = ? AND tomb = ''`,
-			h.Stamp(), id)
+		batch, err := queryChannels(ctx, q, where, args...)
 		if err != nil {
 			return err
 		}
-		filed = moved > 0
-		var n int
-		if cErr := q.QueryRow(ctx, `SELECT COUNT(*) FROM channel_audit WHERE anchor_id = ? AND tomb = ''`,
-			id).Scan(&n); cErr != nil || n == 0 {
-			return cErr
+		var f channels.Filing
+		if len(batch) > 0 {
+			if f, fileErr = channels.FileBatch(file, batch); fileErr != nil {
+				return fileErr
+			}
 		}
-		filed = true
-		if aErr := s.audit(ctx, q, id, rec); aErr != nil {
-			return aErr
+		if face != "" {
+			filed, err = tombstoneFace(ctx, s, q, h, f, rec)
+		} else {
+			filed, err = tombstoneEntity(ctx, s, q, h, f, rec)
 		}
-		_, err = q.Exec(ctx, `UPDATE channel_audit SET tomb = ? WHERE anchor_id = ? AND tomb = ''`, h.Stamp(), id)
 		return err
 	})
+	if fileErr != nil {
+		return channels.TombstoneHandle{}, fileErr
+	}
 	if err != nil || !filed {
 		return channels.TombstoneHandle{}, s.wrap(err, "tombstone %s", entity.FormatStateRef(id, face))
 	}
 	return h, nil
+}
+
+// tombstoneFace moves the channels of a face to the batch h and files it
+// with f. It reports whether it moved any.
+func tombstoneFace(
+	ctx context.Context, s *Store, q Querier, h channels.TombstoneHandle, f channels.Filing, rec channels.AuditRecord,
+) (bool, error) {
+	a := h.Anchor()
+	moved, err := q.Exec(ctx, `UPDATE channels SET tomb = ?
+		WHERE anchor_id = ? AND anchor_face = ? AND tomb = ''`, h.Stamp(), a.ID, string(a.Face))
+	if err != nil || moved == 0 {
+		return false, err
+	}
+	if err := insertFiling(ctx, q, h, f); err != nil {
+		return true, err
+	}
+	return true, s.audit(ctx, q, a.ID, rec)
+}
+
+// tombstoneEntity moves every channel of an entity, and its audit trail,
+// to the batch h and files it with f. It reports whether it moved
+// anything: a channel, or an audit trail left by channels removed before.
+func tombstoneEntity(
+	ctx context.Context, s *Store, q Querier, h channels.TombstoneHandle, f channels.Filing, rec channels.AuditRecord,
+) (bool, error) {
+	id := h.Anchor().ID
+	moved, err := q.Exec(ctx, `UPDATE channels SET tomb = ? WHERE anchor_id = ? AND tomb = ''`, h.Stamp(), id)
+	if err != nil {
+		return false, err
+	}
+	if moved > 0 {
+		if fileErr := insertFiling(ctx, q, h, f); fileErr != nil {
+			return true, fileErr
+		}
+	}
+	var n int
+	if err = q.QueryRow(ctx, `SELECT COUNT(*) FROM channel_audit WHERE anchor_id = ? AND tomb = ''`,
+		id).Scan(&n); err != nil || n == 0 {
+		return moved > 0, err
+	}
+	if auditErr := s.audit(ctx, q, id, rec); auditErr != nil {
+		return true, auditErr
+	}
+	_, err = q.Exec(ctx, `UPDATE channel_audit SET tomb = ? WHERE anchor_id = ? AND tomb = ''`, h.Stamp(), id)
+	return true, err
 }
 
 // Untombstone implements [channels.Store]. A stamp is unique to one
@@ -698,6 +762,13 @@ func (s *Store) Untombstone(ctx context.Context, h channels.TombstoneHandle, at 
 		if filedChannels == 0 && filedAudit == 0 {
 			return fmt.Errorf("%w: tombstone %s", channels.ErrNotFound, h)
 		}
+		f, ok, err := readFiling(ctx, q, h)
+		if err != nil {
+			return err
+		}
+		if ok && !f.filing.Restorable() {
+			return fmt.Errorf("%w: tombstone %s is final", channels.ErrConflict, h)
+		}
 		liveQuery, liveArgs := `SELECT COUNT(*) FROM channels WHERE anchor_id = ? AND tomb = ''`, []any{a.ID}
 		if a.Face != "" {
 			liveQuery += ` AND anchor_face = ?`
@@ -715,6 +786,9 @@ func (s *Store) Untombstone(ctx context.Context, h channels.TombstoneHandle, at 
 		}
 		if _, err := q.Exec(ctx, `UPDATE channel_audit SET tomb = '' WHERE anchor_id = ? AND tomb = ?`,
 			a.ID, h.Stamp()); err != nil {
+			return err
+		}
+		if err := deleteFiling(ctx, q, h); err != nil {
 			return err
 		}
 		return s.audit(ctx, q, a.ID, channels.AuditRecord{
@@ -808,7 +882,13 @@ func collect[T any](ctx context.Context, q Querier, query string, args []any,
 }
 
 func (s *Store) channels(ctx context.Context, where string, args ...any) ([]channels.Channel, error) {
-	rows, err := collect(ctx, s.db, `SELECT `+chanCols+` FROM channels WHERE tomb = '' `+where+
+	return queryChannels(ctx, s.db, where, args...)
+}
+
+// queryChannels lists live channels over q, so a transaction can read the
+// rows it is about to change.
+func queryChannels(ctx context.Context, q Querier, where string, args ...any) ([]channels.Channel, error) {
+	rows, err := collect(ctx, q, `SELECT `+chanCols+` FROM channels WHERE tomb = '' `+where+
 		` ORDER BY anchor_id, anchor_face, type, name`, args, scanChannel)
 	if err != nil {
 		return nil, err
@@ -848,18 +928,23 @@ func (s *Store) ListEntity(ctx context.Context, id string) ([]channels.Channel, 
 	return out, s.wrap(err, "list %s", id)
 }
 
-// ListByLifecycle implements [channels.Store].
+// ListByLifecycle implements [channels.Store]. channels_type_state_idx
+// narrows the scan to the type and state.
 func (s *Store) ListByLifecycle(
-	ctx context.Context, state channels.State, before time.Time,
+	ctx context.Context, typ string, state channels.State, before time.Time,
 ) ([]channels.Channel, error) {
+	if !channels.ValidName(typ) {
+		return nil, fmt.Errorf("%w: channel type %q", channels.ErrInvalidKey, typ)
+	}
 	col := map[channels.State]string{
-		channels.StateOpen: "created_at", channels.StateClosed: "closed_at", channels.StateArchived: "archived_at",
+		channels.StateOpen: openSinceSQL, channels.StateClosed: "closed_at", channels.StateArchived: "archived_at",
 	}[state]
 	if col == "" {
 		return nil, fmt.Errorf("%w: state %q", channels.ErrInvalidMessage, state)
 	}
-	out, err := s.channels(ctx, `AND state = ? AND `+col+` < ?`, string(state), micros(channels.NormTime(before)))
-	return out, s.wrap(err, "list %s channels", state)
+	out, err := s.channels(ctx, `AND type = ? AND state = ? AND `+col+` < ?`,
+		typ, string(state), micros(channels.NormTime(before)))
+	return out, s.wrap(err, "list %s %s channels", state, typ)
 }
 
 // StalePending implements [channels.Store].
@@ -964,6 +1049,13 @@ func (s *Store) typeRecords(ctx context.Context, q Querier) (map[string]channels
 // recording the same type serialize. It cannot collide with an entity id,
 // which never holds a slash.
 const typeRecordsLock = "channel-types/records"
+
+// typeLock is the entity lock of one channel type, which a channel create
+// and DropTypeRecord take. Like typeRecordsLock it holds a slash, so it
+// cannot collide with an entity id; and a type name holds none, so it
+// cannot collide with typeRecordsLock. It is always the last lock a
+// transaction takes, so it adds no lock-order cycle.
+func typeLock(typ string) string { return "channel-types/type/" + typ }
 
 // RecordTypes implements [channels.Store]. It reads the held records and
 // writes what [channels.MergeTypeRecord] adds in one transaction under

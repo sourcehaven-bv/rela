@@ -30,7 +30,10 @@ func newChannelAliases(t *testing.T) (*channelAliases, channels.Store, *memstore
 	cs, err := filechannels.New(storage.NewMemFS(), "/p/.rela/channels", filelock.ProcessPrivate{})
 	require.NoError(t, err)
 	st := memstore.New()
-	a := channelAliasesFor(cs, st)
+	tombs, err := newTombstoneConfirmer(cs)
+	require.NoError(t, err)
+	a, err := channelAliasesFor(cs, st, tombs, nil)
+	require.NoError(t, err)
 	a.now = func() time.Time { return time.Date(2026, 10, 12, 9, 0, 0, 0, time.UTC) }
 	return a, cs, st
 }
@@ -103,16 +106,20 @@ func (r *rekeyRacer) Rekey(ctx context.Context, oldID, newID string, at time.Tim
 }
 
 func (r *rekeyRacer) Tombstone(
-	ctx context.Context, id string, face entity.Face, at time.Time,
+	ctx context.Context, id string, face entity.Face, at time.Time, f channels.Filer,
 ) (channels.TombstoneHandle, error) {
-	r.tombs = append(r.tombs, entity.FormatStateRef(id, face))
-	return r.Store.Tombstone(ctx, id, face, at)
+	h, err := r.Store.Tombstone(ctx, id, face, at, f)
+	if !h.IsZero() {
+		r.tombs = append(r.tombs, entity.FormatStateRef(id, face))
+	}
+	return h, err
 }
 
 func TestChannelAliases_RenameRaces(t *testing.T) {
 	ctx := context.Background()
 	a, cs, _ := newChannelAliases(t)
 	appendTo(t, cs, chanKey("OLD-1", "", "room"))
+	appendTo(t, cs, chanKey("NEW-1", "", "stale"))
 	racer := &rekeyRacer{Store: cs, t: t, conflicts: 1}
 	a.store = racer
 	require.NoError(t, a.EntityRenamed(ctx, "OLD-1", "NEW-1"))
@@ -131,16 +138,23 @@ func TestChannelAliases_RenameRaces(t *testing.T) {
 	// A failing store surfaces the error to the hook.
 	a.store = failingChannels{Store: cs}
 	require.Error(t, a.EntityRenamed(ctx, "A-1", "B-1"))
+	appendTo(t, cs, chanKey("A-1", "draft", "room"))
 	require.Error(t, a.EntityFaceDeleted(ctx, "A-1", "draft"))
 }
 
 type failingChannels struct{ channels.Store }
 
-func (failingChannels) Tombstone(context.Context, string, entity.Face, time.Time) (channels.TombstoneHandle, error) {
+func (failingChannels) Tombstone(
+	context.Context, string, entity.Face, time.Time, channels.Filer,
+) (channels.TombstoneHandle, error) {
 	return channels.TombstoneHandle{}, errDiskFull
 }
 
 func (failingChannels) Rekey(context.Context, string, string, time.Time) error { return errDiskFull }
+
+func (failingChannels) Untombstone(context.Context, channels.TombstoneHandle, time.Time) error {
+	return errDiskFull
+}
 
 var errDiskFull = errors.New("disk full")
 
@@ -181,6 +195,7 @@ func TestChannelAliases_Create(t *testing.T) {
 	require.Equal(t, []string{"T-1/room"}, entityKeys(t, cs, "T-1"))
 
 	a.store = failingChannels{Store: cs}
+	appendTo(t, cs, chanKey("T-9", "", "room"))
 	require.Error(t, a.EntityCreated(ctx, "T-9", ""))
 }
 
@@ -197,8 +212,11 @@ func TestAliasFanout_EntityCreated(t *testing.T) {
 	require.Empty(t, entityKeys(t, cs, "T-1"))
 
 	a.store = failingChannels{Store: cs}
+	appendTo(t, cs, chanKey("T-1", "", "room"))
 	require.Error(t, n.EntityCreated(ctx, "T-1", ""))
-	require.Nil(t, channelAliasesFor(nil, st))
+	none, err := channelAliasesFor(nil, st, nil, nil)
+	require.NoError(t, err)
+	require.Nil(t, none)
 }
 
 type nopRewriter struct{}

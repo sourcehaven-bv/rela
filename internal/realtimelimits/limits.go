@@ -72,6 +72,22 @@ const (
 	MaxSubscriberChanges = 1024
 )
 
+// Retention defaults and waits of the background sweep.
+const (
+	// DetachedRetention is how long a channel detached from its entity is
+	// kept before the sweep erases it, unless the channel type sets
+	// `detached_retention:`. It covers the detach and block policies, an
+	// orphaned channel, and a channel of a type the config no longer
+	// declares.
+	DetachedRetention = 30 * 24 * time.Hour
+	// OrphanGrace is how long a channel's entity must be missing, or a
+	// detached batch must stay unconfirmed, before the sweep acts on it.
+	OrphanGrace = time.Hour
+	// PendingRelease is how long an action must stay pending before the
+	// sweep reports it and a moderator may release it.
+	PendingRelease = 15 * time.Minute
+)
+
 // Rate is a token-bucket rate: Count events per Per.
 type Rate struct {
 	Count int

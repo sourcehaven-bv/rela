@@ -71,14 +71,9 @@ func New(path string) (*Locker, error) {
 // belongs to this open file, so two Lockers in one process exclude each other
 // just as two processes do.
 func (l *Locker) Lock(ctx context.Context) (func(), error) {
-	if err := os.MkdirAll(filepath.Dir(l.path), dirPerm); err != nil {
-		return nil, fmt.Errorf("create lock directory: %w", err)
-	}
-	// No O_TRUNC: the lock file is never written, so opening it must not
-	// change it either.
-	f, err := os.OpenFile(l.path, os.O_RDWR|os.O_CREATE|oNoFollow, filePerm)
+	f, err := l.open()
 	if err != nil {
-		return nil, fmt.Errorf("open lock file: %w", err)
+		return nil, err
 	}
 	ctx, cancel := context.WithTimeout(ctx, lockWait)
 	defer cancel()
@@ -105,4 +100,39 @@ func (l *Locker) Lock(ctx context.Context) (func(), error) {
 		}
 		delay = min(2*delay, maxPoll)
 	}
+}
+
+// TryLock takes the lock if it is free and returns at once. It reports
+// false, with a nil release, when another holder has it.
+func (l *Locker) TryLock() (release func(), ok bool, err error) {
+	f, err := l.open()
+	if err != nil {
+		return nil, false, err
+	}
+	held, err := tryLock(f)
+	if err != nil || !held {
+		_ = f.Close()
+		if err != nil {
+			return nil, false, fmt.Errorf("lock file: %w", err)
+		}
+		return nil, false, nil
+	}
+	return func() {
+		_ = unlockFile(f)
+		_ = f.Close()
+	}, true, nil
+}
+
+// open opens the lock file, creating it and its directory as needed.
+func (l *Locker) open() (*os.File, error) {
+	if err := os.MkdirAll(filepath.Dir(l.path), dirPerm); err != nil {
+		return nil, fmt.Errorf("create lock directory: %w", err)
+	}
+	// No O_TRUNC: the lock file is never written, so opening it must not
+	// change it either.
+	f, err := os.OpenFile(l.path, os.O_RDWR|os.O_CREATE|oNoFollow, filePerm)
+	if err != nil {
+		return nil, fmt.Errorf("open lock file: %w", err)
+	}
+	return f, nil
 }

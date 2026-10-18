@@ -234,6 +234,9 @@ func (s *Store) SetAction(
 	if err != nil {
 		return channels.Message{}, err
 	}
+	if relErr := channels.CheckRelease(expect, next); relErr != nil {
+		return channels.Message{}, relErr
+	}
 	unlock, err := s.lock(ctx)
 	if err != nil {
 		return channels.Message{}, err
@@ -284,9 +287,7 @@ func (s *Store) SetAction(
 	if err := s.appendLog(k, idx, cur, encodeLine(l)); err != nil {
 		return channels.Message{}, err
 	}
-	if next.Status == channels.ActionDone {
-		rec := channels.KeyAudit(k, channels.AuditAction, next.At)
-		rec.Seq, rec.By, rec.Action, rec.Promoted = seq, next.By, name, next.Promoted
+	if rec, ok := channels.ActionAudit(k, seq, name, expect, next); ok {
 		if err := s.appendAudit(k.ID, rec); err != nil {
 			return channels.Message{}, err
 		}
@@ -366,13 +367,13 @@ func (s *Store) SetLifecycle(
 	}
 	c := m.channel(k)
 	channels.ApplyTransition(&c, t)
-	m.State, m.ClosedAt, m.ArchivedAt = c.State, c.ClosedAt, c.ArchivedAt
+	m.State, m.ClosedAt, m.ArchivedAt, m.ReopenedAt = c.State, c.ClosedAt, c.ArchivedAt, c.ReopenedAt
 	m.Rev++
 	if err := s.writeMeta(k, m); err != nil {
 		return channels.Channel{}, err
 	}
 	rec := channels.KeyAudit(k, channels.AuditLifecycle, t.At)
-	rec.By, rec.From, rec.To = t.By, string(expect), string(t.To)
+	rec.By, rec.From, rec.To, rec.TriggeredBy = t.By, string(expect), string(t.To), t.TriggeredBy
 	if err := s.appendAudit(k.ID, rec); err != nil {
 		return channels.Channel{}, err
 	}
@@ -424,7 +425,7 @@ func (s *Store) Rekey(ctx context.Context, oldID, newID string, at time.Time) er
 	}
 	defer unlock()
 	occupied := false
-	err = s.visitEntity(newID, func(channels.Key, *meta) error {
+	err = s.visitEntity(newID, "", func(channels.Key, *meta) error {
 		occupied = true
 		return nil
 	})
@@ -480,8 +481,11 @@ func (s *Store) Rekey(ctx context.Context, oldID, newID string, at time.Time) er
 // Tombstone implements [channels.Store]. A face batch goes to
 // ~detached/<id>-<face>-<stamp>, a whole-entity batch to
 // ~detached/<id>-<stamp> with its audit trail at _audit/<id>-<stamp>.jsonl.
+// The filing is written before the batch moves (see filingKey), so a
+// crash between the two leaves a filing without a batch,
+// never a batch without its filing.
 func (s *Store) Tombstone(
-	ctx context.Context, id string, face entity.Face, at time.Time,
+	ctx context.Context, id string, face entity.Face, at time.Time, file channels.Filer,
 ) (channels.TombstoneHandle, error) {
 	a := channels.Anchor{ID: id, Face: face}
 	if err := a.Validate(); err != nil {
@@ -494,11 +498,19 @@ func (s *Store) Tombstone(
 	defer unlock()
 	h := channels.NewTombstoneHandle(a, channels.TombstoneStamp(at))
 	rec := channels.AuditRecord{At: channels.NormTime(at), Op: channels.AuditTombstone, Face: face}
+	var f channels.Filing
 
 	if face != "" {
 		ok, existsErr := s.exists(faceDir(a))
 		if existsErr != nil || !ok {
 			return channels.TombstoneHandle{}, existsErr
+		}
+		f, err = s.fileBatch(id, face, file)
+		if err != nil {
+			return channels.TombstoneHandle{}, err
+		}
+		if fileErr := writeFiling(&s.disk, h, f); fileErr != nil {
+			return channels.TombstoneHandle{}, fileErr
 		}
 		if moveErr := s.move(faceDir(a), detachedKey(h)); moveErr != nil {
 			return channels.TombstoneHandle{}, fmt.Errorf("filechannels: tombstone %s@%s: %w", id, face, moveErr)
@@ -512,6 +524,13 @@ func (s *Store) Tombstone(
 		return channels.TombstoneHandle{}, err
 	}
 	if moved {
+		f, err = s.fileBatch(id, "", file)
+		if err != nil {
+			return channels.TombstoneHandle{}, err
+		}
+		if fileErr := writeFiling(&s.disk, h, f); fileErr != nil {
+			return channels.TombstoneHandle{}, fileErr
+		}
 		if err = s.move(enc(id), detachedKey(h)); err != nil {
 			return channels.TombstoneHandle{}, fmt.Errorf("filechannels: tombstone %s: %w", id, err)
 		}
@@ -533,6 +552,25 @@ func (s *Store) Tombstone(
 		return h, fmt.Errorf("filechannels: tombstone audit of %s: %w", id, err)
 	}
 	return h, nil
+}
+
+// fileBatch reads the channels a tombstone of id@face moves and runs file
+// over them. The caller holds the store lock, so the list is the batch.
+func (s *Store) fileBatch(id string, face entity.Face, file channels.Filer) (channels.Filing, error) {
+	if file == nil {
+		return channels.Filing{}, nil
+	}
+	var moved []channels.Channel
+	err := s.visitEntity(id, "", func(k channels.Key, m *meta) error {
+		if face == "" || k.Face == face {
+			moved = append(moved, m.channel(k))
+		}
+		return nil
+	})
+	if err != nil {
+		return channels.Filing{}, err
+	}
+	return channels.FileBatch(file, moved)
 }
 
 // detachedKey is where the batch h was filed.
@@ -576,6 +614,13 @@ func (s *Store) Untombstone(ctx context.Context, h channels.TombstoneHandle, at 
 	if !hasDir && tombAudit == nil {
 		return fmt.Errorf("%w: tombstone %s", channels.ErrNotFound, h)
 	}
+	f, hasFiling, err := readFiling(&s.disk, h)
+	if err != nil {
+		return err
+	}
+	if hasFiling && !f.Restorable() {
+		return fmt.Errorf("%w: tombstone %s is final", channels.ErrConflict, h)
+	}
 	occupied, err := s.occupied(a)
 	if err != nil {
 		return err
@@ -597,6 +642,9 @@ func (s *Store) Untombstone(ctx context.Context, h channels.TombstoneHandle, at 
 			return fmt.Errorf("filechannels: untombstone %s: %w", h, err)
 		}
 	}
+	if err := removeFiling(&s.disk, h); err != nil {
+		return err
+	}
 	return s.restoreAudit(h, tombAudit, at)
 }
 
@@ -610,7 +658,7 @@ func (s *Store) occupied(a channels.Anchor) (bool, error) {
 	}
 	var err error
 	if a.Face == "" {
-		err = s.visitEntity(a.ID, visit)
+		err = s.visitEntity(a.ID, "", visit)
 	} else {
 		err = s.visitFace(a, "", visit)
 	}
@@ -844,21 +892,27 @@ func (s *Store) ListEntity(_ context.Context, id string) ([]channels.Channel, er
 		return nil, err
 	}
 	out := []channels.Channel{}
-	err := s.visitEntity(id, func(k channels.Key, m *meta) error {
+	err := s.visitEntity(id, "", func(k channels.Key, m *meta) error {
 		out = append(out, m.channel(k))
 		return nil
 	})
 	return out, err
 }
 
-// ListByLifecycle implements [channels.Store].
-func (s *Store) ListByLifecycle(_ context.Context, state channels.State, before time.Time) ([]channels.Channel, error) {
+// ListByLifecycle implements [channels.Store]. It walks every entity
+// directory but reads only the metadata of channels of typ.
+func (s *Store) ListByLifecycle(
+	_ context.Context, typ string, state channels.State, before time.Time,
+) ([]channels.Channel, error) {
+	if !channels.ValidName(typ) {
+		return nil, fmt.Errorf("%w: channel type %q", channels.ErrInvalidKey, typ)
+	}
 	if !state.Valid() {
 		return nil, fmt.Errorf("%w: state %q", channels.ErrInvalidMessage, state)
 	}
 	before = channels.NormTime(before)
 	out := []channels.Channel{}
-	err := s.visitAll(func(k channels.Key, m *meta) error {
+	err := s.visitAll(typ, func(k channels.Key, m *meta) error {
 		c := m.channel(k)
 		if c.State == state && c.StateSince().Before(before) {
 			out = append(out, c)
@@ -873,7 +927,7 @@ func (s *Store) ListByLifecycle(_ context.Context, state channels.State, before 
 func (s *Store) StalePending(_ context.Context, before time.Time) ([]channels.PendingAction, error) {
 	before = channels.NormTime(before)
 	out := []channels.PendingAction{}
-	err := s.visitAll(func(k channels.Key, m *meta) error {
+	err := s.visitAll("", func(k channels.Key, m *meta) error {
 		seqs := make([]int64, 0, len(m.Pending))
 		for seq := range m.Pending {
 			seqs = append(seqs, seq)
@@ -917,7 +971,7 @@ func (s *Store) Audit(_ context.Context, id string) ([]channels.AuditRecord, err
 // Keys implements [channels.Store].
 func (s *Store) Keys(_ context.Context) ([]channels.Key, error) {
 	out := []channels.Key{}
-	err := s.visitAll(func(k channels.Key, _ *meta) error {
+	err := s.visitAll("", func(k channels.Key, _ *meta) error {
 		out = append(out, k)
 		return nil
 	})

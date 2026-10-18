@@ -2,6 +2,7 @@ package appbuild
 
 import (
 	"context"
+	"slices"
 	"testing"
 	"time"
 
@@ -14,6 +15,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
+	"github.com/Sourcehaven-BV/rela/internal/realtime"
 	"github.com/Sourcehaven-BV/rela/internal/realtimecfg"
 	"github.com/Sourcehaven-BV/rela/internal/statemachine"
 	"github.com/Sourcehaven-BV/rela/internal/store"
@@ -79,8 +81,8 @@ func newGuardFixture(t *testing.T) guardFixture {
 	require.NoError(t, err)
 	cfg, err := realtimecfg.Parse([]byte(guardRealtime), meta, nil)
 	require.NoError(t, err)
-	_, cs, st := newChannelAliases(t)
-	g := &channelGuard{store: cs, config: func() *realtimecfg.Compiled { return cfg }, now: time.Now}
+	a, cs, st := newChannelAliases(t)
+	g := &channelGuard{store: cs, tombs: a.tombs, config: func() *realtimecfg.Compiled { return cfg }, now: time.Now}
 	return guardFixture{meta: meta, cfg: cfg, cs: cs, st: st, guard: g}
 }
 
@@ -88,7 +90,8 @@ func newGuardFixture(t *testing.T) guardFixture {
 // the real channel alias hook, as assemble wires them.
 func (f guardFixture) manager(t *testing.T, g entitymanager.AnchorGuard) *entitymanager.Manager {
 	t.Helper()
-	aliases := channelAliasesFor(f.cs, f.st)
+	aliases, err := channelAliasesFor(f.cs, f.st, f.guard.tombs, nil)
+	require.NoError(t, err)
 	mgr, err := entitymanager.New(entitymanager.Deps{
 		Store: f.st, Meta: f.meta, Templater: gcNopTemplater{}, Audit: audit.Nop{},
 		ACL: acl.NopACL{}, Transitions: statemachine.EmptySet(), FieldGate: entitymanager.AllowAllFieldGate{},
@@ -243,8 +246,16 @@ func TestChannelGuard_BeforeRename(t *testing.T) {
 	require.NoError(t, undo.Restore(ctx))
 	assert.Equal(t, []string{"INC-2/chat"}, entityKeys(t, f.cs, "INC-2"))
 
-	require.Nil(t, channelAliasesFor(nil, f.st))
-	_, nop := newChannelGuard(nil, nil).(entitymanager.NopAnchorGuard)
+	noAliases, err := channelAliasesFor(nil, f.st, nil, nil)
+	require.NoError(t, err)
+	require.Nil(t, noAliases)
+	_, err = channelAliasesFor(f.cs, f.st, nil, nil)
+	require.Error(t, err, "the alias hooks over a store need a confirmer")
+	nopGuard, err := newChannelGuard(nil, nil, nil)
+	require.NoError(t, err)
+	_, nop := nopGuard.(entitymanager.NopAnchorGuard)
+	_, err = newChannelGuard(f.cs, nil, nil)
+	require.Error(t, err, "a guard over a store needs a confirmer")
 	assert.True(t, nop)
 	assert.True(t, f.guard.Active())
 }
@@ -277,9 +288,9 @@ func (failingTxStore) Tx(context.Context, func(store.Store) error) error { retur
 type partialTombstone struct{ channels.Store }
 
 func (p partialTombstone) Tombstone(
-	ctx context.Context, id string, face entity.Face, at time.Time,
+	ctx context.Context, id string, face entity.Face, at time.Time, f channels.Filer,
 ) (channels.TombstoneHandle, error) {
-	h, err := p.Store.Tombstone(ctx, id, face, at)
+	h, err := p.Store.Tombstone(ctx, id, face, at, f)
 	if err != nil {
 		return h, err
 	}
@@ -354,6 +365,61 @@ func TestChannelGuard_RenameEndToEnd(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, entityKeys(t, f.cs, "inc-a"))
 	assert.Equal(t, []string{"inc-b/chat", "inc-b@draft/notes"}, entityKeys(t, f.cs, "inc-b"))
+
+	// The earlier entity's batch was filed pending and confirmed on commit.
+	all, err := f.cs.Tombstones(ctx, time.Now().Add(time.Hour))
+	require.NoError(t, err)
+	var cleared []channels.TombstoneBatch
+	for _, b := range all {
+		if slices.ContainsFunc(b.Channels, func(c channels.Channel) bool { return c.Key.Type == "war-room" }) {
+			cleared = append(cleared, b)
+		}
+	}
+	require.Len(t, cleared, 1)
+	assert.False(t, cleared[0].Filing.Pending)
+	assert.Zero(t, pendingCount(f.guard.tombs))
+}
+
+// The guard files the batch it clears before a rename as pending, so
+// retention cannot erase it before a failed rename puts it back.
+func TestChannelGuard_RenameBatchIsPending(t *testing.T) {
+	ctx := context.Background()
+	f := newGuardFixture(t)
+	appendTo(t, f.cs, chanKey("INC-2", "", "chat"))
+	undo, err := f.guard.BeforeRename(ctx, "INC-2", func(context.Context) error { return nil })
+	require.NoError(t, err)
+	got := batchesOf(t, f.cs, "INC-2")
+	require.Len(t, got, 1)
+	assert.True(t, got[0].Filing.Pending)
+	assert.Equal(t, 1, pendingCount(f.guard.tombs))
+
+	// A restore that fails still forgets the batch: no commit will confirm it.
+	broken := undo.(tombstoneUndo)
+	broken.store = failingChannels{Store: f.cs}
+	require.Error(t, broken.Restore(ctx))
+	assert.Zero(t, pendingCount(f.guard.tombs))
+}
+
+// A new entity at an id makes the old entity's batches final: a pending
+// batch whose confirmation was lost is not put back onto it.
+func TestChannelAliases_CreateMakesOldBatchesFinal(t *testing.T) {
+	ctx := context.Background()
+	f := newGuardFixture(t)
+	appendTo(t, f.cs, chanKey("inc-a", "", "chat"))
+	h, err := f.cs.Tombstone(ctx, "inc-a", "", time.Now(),
+		realtime.Filer(f.cfg, channels.PolicyDelete, time.Now(), true))
+	require.NoError(t, err)
+
+	mgr := f.manager(t, f.guard)
+	_, err = mgr.CreateEntity(ctx,
+		&entity.Entity{Type: "incident", Properties: map[string]any{}},
+		entity.CreateOptions{ID: "inc-a", Face: "draft"})
+	require.NoError(t, err)
+	got := batchesOf(t, f.cs, "inc-a")
+	require.Len(t, got, 1)
+	assert.False(t, got[0].Filing.Pending)
+	require.ErrorIs(t, f.cs.Untombstone(ctx, h, time.Now()), channels.ErrConflict)
+	assert.Empty(t, entityKeys(t, f.cs, "inc-a"))
 }
 
 // postingGuard runs the real guard and then appends a channel, the way a
