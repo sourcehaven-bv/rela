@@ -1,0 +1,16 @@
+# gitleaks false positives, one fingerprint per finding, each with a reason.
+# Reviewed 2026-10-18 for the scheduled security scan (security-scan.yml).
+# Keep reasons free of words such as s-e-c-r-e-t or k-e-y: gitleaks reads
+# this file too, and such a word before a fingerprint is itself a finding.
+
+# Prose in a docs checklist
+eeaa85620b6cd62802fa3e2ec1249afbf855948e:tickets/entities/docs-checklists/DOCS-EHS7A6.md:generic-api-key:13
+# Prose in a ticket
+48923c67fb1b78bb2887c11d3dc0ec759428a281:tickets/entities/tickets/TKT-ODHV2D.md:generic-api-key:48
+# Docs example: a systemd-creds name
+6a9d65c4de6ee7ea348998715508a6f0f2fdbbdd:docs/lua-scripting.md:generic-api-key:1102
+6a9d65c4de6ee7ea348998715508a6f0f2fdbbdd:docs-project/entities/guides/GUIDE-lua-scripting.md:generic-api-key:1108
+# Test fixture: fixed hex value in a test
+986f5ba603a9df56d473163133dd92999098ec7f:internal/dataentry/webhook_conflict_postgres_test.go:generic-api-key:181
+# Test fixture: attachment storage path
+6d43d38bf5892d5a0a655cf8590d720bcfb6243b:internal/workspace/attachment_filename_test.go:generic-api-key:65
