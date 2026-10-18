@@ -104,7 +104,7 @@ func TestNewMCPServices_Succeeds(t *testing.T) {
 	assert.NotNil(t, deps.Config)
 	assert.NotNil(t, deps.Lua.Cache)
 	assert.NotNil(t, deps.Watcher)
-	assert.NotEmpty(t, deps.ProjectRoot)
+	assert.NotEmpty(t, deps.Lua.ProjectRoot)
 	assert.NotNil(t, deps.Leases, "an assembled project has a lease service")
 }
 

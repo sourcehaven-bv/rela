@@ -364,15 +364,14 @@ func (s *mcpServices) deps(svc *appbuild.Services) relamcp.Deps {
 		EntityManager: svc.EntityManager(),
 		Config:        svc.Config(),
 		Lua: relamcp.LuaDeps{
-			WriteDeps: svc.LuaWriteDeps(), Cache: svc.ScriptEngine().LuaCache(),
+			WriteDeps: svc.LuaWriteDeps(), Cache: svc.ScriptEngine().LuaCache(), ProjectRoot: svc.Paths().Root,
 		},
 		Watcher: s.watcher,
 		Watch: relamcp.WatchDeps{
 			Changes: svc.Store(), Rebind: reads.Rebind, ChannelPoll: stdioChannelPoll,
 		},
-		ProjectRoot: svc.Paths().Root,
-		World:       reads.LuaReads.World,
-		Families:    appbuild.CompiledWorlds(svc).Families(),
+		World:    reads.LuaReads.World,
+		Families: appbuild.CompiledWorlds(svc).Families(),
 		// The request edge for stdio: resolve the fallback principal against
 		// THIS assembly's ACL (NopACL here, so it binds nothing today). It is
 		// the IdentityBinder step, taken from the same GatedReads as the
@@ -409,7 +408,7 @@ const stdioChannelPoll = 2 * time.Second
 // rest of the server keeps working. The tools stay registered, so a fixed
 // acl.yaml brings them back on the next reload.
 func channelDeps(svc *appbuild.Services) relamcp.ChannelDeps {
-	cs, err := appbuild.PolicyChannelService(svc)
+	cs, bind, err := appbuild.PolicyChannelService(svc)
 	if err != nil {
 		slog.Warn("mcp: channel tools refuse every call: acl.yaml cannot be loaded", "error", err)
 		return relamcp.UnavailableChannels("acl.yaml cannot be loaded: " + err.Error())
@@ -420,7 +419,7 @@ func channelDeps(svc *appbuild.Services) relamcp.ChannelDeps {
 	}
 	return relamcp.ChannelDeps{
 		Reader: cs, Writer: cs, Creator: cs, Waker: cs,
-		RefuseSignals: true, LocalIdentity: true,
+		RefuseSignals: true, LocalIdentity: true, BindIdentity: bind,
 	}
 }
 

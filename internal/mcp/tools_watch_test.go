@@ -715,7 +715,6 @@ func watchPolicyServer(t *testing.T) (*mcpgo.ClientSession, store.Store) {
 		Config:        svc.Config(),
 		Watcher:       nopWatcher{},
 		Watch:         WatchDeps{Changes: st, Rebind: reads.Rebind},
-		ProjectRoot:   t.TempDir(),
 		Attachments:   testAttachmentDeps(t, svc, meta),
 		World:         store.TrivialScope(),
 		Families:      store.TrivialScope(),

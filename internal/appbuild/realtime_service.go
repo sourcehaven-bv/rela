@@ -45,28 +45,36 @@ func ChannelService(s *Services) *realtime.Service {
 // state, gated by a Declarative built from the policy. A policy that does
 // not load, validate or compile is an error, never an open fallback.
 //
-// Nil: s is accepted and returns nil, as does an s without channels.
-func PolicyChannelService(s *Services) (*realtime.Service, error) {
+// The returned bind is the request-edge step for that service: it binds
+// the principal on ctx against the service's own policy, which is not the
+// one s's readers use. The caller runs it before every channel call.
+//
+// Nil: s is accepted and returns a nil service, as does an s without
+// channels.
+func PolicyChannelService(s *Services) (*realtime.Service, func(context.Context) (context.Context, error), error) {
 	if s == nil || s.channelService == nil || s.base == nil {
-		return ChannelService(s), nil
+		return ChannelService(s), identityBinderFor(nil), nil
 	}
 	policy, err := loadACLPolicy(s.base.cfg)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if policy == nil {
-		return s.channelService, nil
+		return s.channelService, identityBinderFor(s.ACLDeclarative()), nil
 	}
 	c, err := compileDeclarative(policy, s.base.meta, s.Store())
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	svc, _, err := newRealtimeService(realtimeInputs{
 		meta: s.base.meta, worlds: s.base.worlds, config: realtimeConfigSource{h: s.base.realtime},
 		store: s.Store(), channels: s.channels, local: s.realtimeLocal,
 		declarative: c.declarative, redactor: c.fields.redactor, writes: c.acl,
 	})
-	return svc, err
+	if err != nil {
+		return nil, nil, err
+	}
+	return svc, identityBinderFor(c.declarative), nil
 }
 
 // ACLAssignsNoRole reports whether the project has an acl.yaml whose

@@ -126,14 +126,23 @@ assignments:
 	as := func(user string) context.Context {
 		return principal.With(context.Background(), principal.Principal{User: user, Tool: principal.ToolMCP})
 	}
+	// asChannels is as, bound for the channel service the way the channel
+	// tools bind each call.
+	asChannels := func(user string) context.Context {
+		ctx, bindErr := deps.Channels.BindIdentity(as(user))
+		require.NoError(t, bindErr)
+		return ctx
+	}
 	created, err := deps.EntityManager.CreateEntity(as("alice"),
 		&entity.Entity{Type: "item", Properties: map[string]any{"title": "one"}}, entity.CreateOptions{})
 	require.NoError(t, err, "entity writes stay open on stdio")
 
 	addr := realtime.RawAddress{Anchor: created.Entity.ID, Type: "room"}
 	_, err = deps.Channels.Reader.Read(as("alice"), addr, realtime.ReadRequest{})
+	assert.True(t, realtime.IsNoPrincipal(err), "a call not bound for the channel service is refused: %v", err)
+	_, err = deps.Channels.Reader.Read(asChannels("alice"), addr, realtime.ReadRequest{})
 	require.NoError(t, err, "alice reads items")
-	_, err = deps.Channels.Reader.Read(as("mallory"), addr, realtime.ReadRequest{})
+	_, err = deps.Channels.Reader.Read(asChannels("mallory"), addr, realtime.ReadRequest{})
 	assert.ErrorIs(t, err, realtime.ErrAnchorNotFound, "mallory reads no item under acl.yaml")
 }
 

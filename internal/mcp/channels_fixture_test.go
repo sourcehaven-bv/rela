@@ -12,6 +12,8 @@ import (
 	mcpgo "github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
+	"github.com/Sourcehaven-BV/rela/internal/acl/acltest"
+	"github.com/Sourcehaven-BV/rela/internal/aclstore"
 	"github.com/Sourcehaven-BV/rela/internal/appbuild"
 	"github.com/Sourcehaven-BV/rela/internal/appbuild/appbuildtest"
 	"github.com/Sourcehaven-BV/rela/internal/channels"
@@ -125,7 +127,7 @@ func newChannelFixture(t *testing.T) *channelFixture {
 			},
 		},
 		Assignments: map[string]string{"alice": "editor", "carol": "viewer", "bob": "admin"},
-	}, acl.NewStoreGraph(st), st)
+	}, aclstore.MustNewGraph(st), st)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -166,13 +168,13 @@ func (f *channelFixture) deps(t *testing.T, refuseSignals bool) Deps {
 		Validator:     reads.Validator,
 		EntityManager: f.bndl.EntityManager(),
 		Config:        f.bndl.Config(),
-		Lua:           LuaDeps{WriteDeps: f.bndl.LuaWriteDeps()},
+		Lua:           LuaDeps{WriteDeps: f.bndl.LuaWriteDeps(), ProjectRoot: t.TempDir()},
 		Watcher:       nopWatcher{},
 		Watch:         WatchDeps{Changes: f.st, Rebind: reads.Rebind, ChannelPoll: 100 * time.Millisecond},
-		ProjectRoot:   t.TempDir(),
 		Attachments:   testAttachmentDeps(t, f.bndl, f.meta),
 		World:         store.TrivialScope(),
 		Families:      store.TrivialScope(),
+		BindIdentity:  reads.Rebind,
 		Channels: ChannelDeps{
 			Reader: f.svc, Writer: f.svc, Creator: f.svc, Waker: f.svc, RefuseSignals: refuseSignals,
 		},
@@ -197,13 +199,18 @@ func (f *channelFixture) client(t *testing.T, user string) *mcpgo.ClientSession 
 	return connect(t, f.server(t, user, false))
 }
 
-// asBob is bob's context, for direct service calls.
-func asBob() context.Context { return as("bob") }
+// asBob is bob's context bound on the fixture's ACL, for direct service
+// calls.
+func (f *channelFixture) asBob(t *testing.T) context.Context {
+	t.Helper()
+	bob := principal.Principal{User: "bob", Tool: principal.ToolMCP}
+	return acltest.Bind(principal.With(context.Background(), bob), t, f.d)
+}
 
 // postAsBob posts a text message in the room of anchor as bob through svc.
-func postAsBob(t *testing.T, svc *realtime.Service, anchor, body string) {
+func (f *channelFixture) postAsBob(t *testing.T, svc *realtime.Service, anchor, body string) {
 	t.Helper()
-	_, err := svc.Post(asBob(), realtime.RawAddress{Anchor: anchor, Type: "room"},
+	_, err := svc.Post(f.asBob(t), realtime.RawAddress{Anchor: anchor, Type: "room"},
 		realtime.PostInput{Type: "text", Props: map[string]any{"body": body}})
 	if err != nil {
 		t.Fatalf("post in the room of %s as bob: %v", anchor, err)

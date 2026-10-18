@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"maps"
 	"sort"
 	"strings"
@@ -88,7 +89,7 @@ func TestChannelTools_OffAfterReload(t *testing.T) {
 func TestChannelTools_HiddenAnchorTextEqualsShowEntity(t *testing.T) {
 	t.Parallel()
 	f := newChannelFixture(t)
-	postAsBob(t, f.svc, "DEC-001", "hidden talk")
+	f.postAsBob(t, f.svc, "DEC-001", "hidden talk")
 	cs := f.client(t, "alice")
 
 	for _, id := range []string{"DEC-001", "REQ-404"} {
@@ -152,13 +153,54 @@ func TestChannelTools_DenialsAndUnknownType(t *testing.T) {
 	}
 }
 
+// TestChannelTools_BindIdentity pins that the channel tools run
+// Deps.Channels.BindIdentity before each call: it binds a caller the
+// server's own edge left unbound, and its error fails the call with the
+// fixed message.
+func TestChannelTools_BindIdentity(t *testing.T) {
+	t.Parallel()
+	f := newChannelFixture(t)
+	tests := []struct {
+		name    string
+		bind    func(context.Context) (context.Context, error)
+		wantErr string
+	}{
+		{"binds the caller", f.bndl.GatedReads().Rebind, ""},
+		{"error fails the call", func(ctx context.Context) (context.Context, error) {
+			return ctx, errors.New("resolve failed")
+		}, errIdentityUnresolved.Error()},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			d := f.deps(t, false)
+			d.BindIdentity = nil
+			d.Channels.BindIdentity = tc.bind
+			srv, err := NewServer(d, "test",
+				WithPrincipal(principal.Principal{User: "alice", Tool: principal.ToolMCP}))
+			if err != nil {
+				t.Fatalf("NewServer: %v", err)
+			}
+			srv.logger = slog.New(slog.DiscardHandler)
+			got, isErr := call(t, connect(t, srv), toolReadChannel,
+				map[string]any{"id": "REQ-001", "channel_type": "room"})
+			if tc.wantErr == "" && isErr {
+				t.Errorf("read_channel = %q, want success", got)
+			}
+			if tc.wantErr != "" && (!isErr || got != tc.wantErr) {
+				t.Errorf("read_channel = %q (error %v), want %q", got, isErr, tc.wantErr)
+			}
+		})
+	}
+}
+
 // TestChannelTools_RestrictedRef pins AC 4: a ref the reader cannot read
 // renders restricted with no id, and posting a hidden and a missing ref
 // answer the same text.
 func TestChannelTools_RestrictedRef(t *testing.T) {
 	t.Parallel()
 	f := newChannelFixture(t)
-	_, err := f.svc.Post(as("bob"), realtime.RawAddress{Anchor: "REQ-001", Type: "room"},
+	_, err := f.svc.Post(f.asBob(t), realtime.RawAddress{Anchor: "REQ-001", Type: "room"},
 		realtime.PostInput{Type: "text", Props: map[string]any{"body": "see", "about": "DEC-001"}})
 	if err != nil {
 		t.Fatal(err)

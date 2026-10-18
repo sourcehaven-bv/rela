@@ -110,7 +110,6 @@ func RemoteMCPDeps(svc *appbuild.Services, host dataentry.MCPHost) (relamcp.Deps
 		Watch: relamcp.WatchDeps{
 			Changes: svc.Store(), Rebind: reads.Rebind, ChannelPoll: remoteChannelPoll,
 		},
-		ProjectRoot: svc.Paths().Root,
 		Attachments: remoteAttachmentDeps(svc, host),
 		World:       reads.LuaReads.World,
 		Families:    appbuild.CompiledWorlds(svc).Families(),

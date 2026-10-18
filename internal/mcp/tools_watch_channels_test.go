@@ -70,7 +70,7 @@ func TestWatch_ReadChannelReturnsOnPost(t *testing.T) {
 	done := waitChanged(cs, watchArgs(base.Cursor, 20, target))
 	time.Sleep(200 * time.Millisecond)
 	start := time.Now()
-	postAsBob(t, f.svc, "REQ-001", "hello")
+	f.postAsBob(t, f.svc, "REQ-001", "hello")
 	select {
 	case got := <-done:
 		if len(got.Changed) != 1 || got.Changed[0] != 0 {
@@ -98,7 +98,7 @@ func TestWatch_ReadChannelCrossInstancePoll(t *testing.T) {
 
 	done := waitChanged(cs, watchArgs(base.Cursor, 20, target))
 	time.Sleep(200 * time.Millisecond)
-	postAsBob(t, other, "REQ-001", "from elsewhere")
+	f.postAsBob(t, other, "REQ-001", "from elsewhere")
 	select {
 	case got := <-done:
 		if len(got.Changed) != 1 {
@@ -118,7 +118,7 @@ func TestWatch_ReadChannelBaselineNotEmpty(t *testing.T) {
 	f := newChannelFixture(t)
 	cs := channelWatchClient(t, f, "alice", time.Hour)
 	rev := headRev(t, cs, "REQ-001", "room")
-	postAsBob(t, f.svc, "REQ-001", "between read and watch")
+	f.postAsBob(t, f.svc, "REQ-001", "between read and watch")
 
 	target := readChannelTarget(map[string]any{"id": "REQ-001", "channel_type": "room", "after_rev": rev})
 	got := mustWatch(t, cs, watchArgs("", 0, target))
@@ -137,7 +137,7 @@ func TestWatch_ReadChannelBaselineNotEmpty(t *testing.T) {
 
 	// The same holds for a follower by seq: message 1 exists, and message 2
 	// lands between the read and the watch.
-	postAsBob(t, f.svc, "REQ-001", "after the seq read")
+	f.postAsBob(t, f.svc, "REQ-001", "after the seq read")
 	after := readChannelTarget(map[string]any{"id": "REQ-001", "channel_type": "room", "after": 1})
 	if got := mustWatch(t, cs, watchArgs("", 0, after)); len(got.Changed) != 1 {
 		t.Errorf("an after follower at baseline = %+v, want the target reported", got)
@@ -152,11 +152,11 @@ func TestWatch_ReadChannelPageTargetSeesOlderEdit(t *testing.T) {
 	f := newChannelFixture(t)
 	cs := channelWatchClient(t, f, "alice", time.Hour)
 	for i := range watchChannelLimit + 3 {
-		postAsBob(t, f.svc, "REQ-001", fmt.Sprintf("m%d", i))
+		f.postAsBob(t, f.svc, "REQ-001", fmt.Sprintf("m%d", i))
 	}
 	target := readChannelTarget(map[string]any{"id": "REQ-001", "channel_type": "room", "limit": 20})
 	base := mustWatch(t, cs, watchArgs("", 0, target))
-	if _, err := f.svc.Edit(asBob(), realtime.RawAddress{Anchor: "REQ-001", Type: "room"}, 1,
+	if _, err := f.svc.Edit(f.asBob(t), realtime.RawAddress{Anchor: "REQ-001", Type: "room"}, 1,
 		map[string]any{"body": "edited"}); err != nil {
 		t.Fatal(err)
 	}
@@ -172,7 +172,7 @@ func TestWatch_ReadChannelPageTargetSeesOlderEdit(t *testing.T) {
 func TestWatch_ReadChannelHiddenActivity(t *testing.T) {
 	t.Parallel()
 	f := newChannelFixture(t)
-	thread, err := f.svc.Create(asBob(), "", "DEC-001", "threads", realtime.CreateInput{Title: "t"})
+	thread, err := f.svc.Create(f.asBob(t), "", "DEC-001", "threads", realtime.CreateInput{Title: "t"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -192,15 +192,15 @@ func TestWatch_ReadChannelHiddenActivity(t *testing.T) {
 		{"DEC-001", "room", ""}, {"REQ-001", "secret", ""}, {"DEC-001", "threads", thread.Name},
 	} {
 		addr := realtime.RawAddress{Anchor: at.id, Type: at.typ, Name: at.name}
-		got, err := f.svc.Post(asBob(), addr, realtime.PostInput{Type: "text", Props: map[string]any{"body": "x"}})
+		got, err := f.svc.Post(f.asBob(t), addr, realtime.PostInput{Type: "text", Props: map[string]any{"body": "x"}})
 		if err != nil {
 			t.Fatalf("post %v: %v", addr, err)
 		}
 		if at.typ == "room" {
-			if _, err := f.svc.Edit(asBob(), addr, got.Message.Seq, map[string]any{"body": "y"}); err != nil {
+			if _, err := f.svc.Edit(f.asBob(t), addr, got.Message.Seq, map[string]any{"body": "y"}); err != nil {
 				t.Fatal(err)
 			}
-			if _, err := f.svc.Delete(asBob(), addr, got.Message.Seq, ""); err != nil {
+			if _, err := f.svc.Delete(f.asBob(t), addr, got.Message.Seq, ""); err != nil {
 				t.Fatal(err)
 			}
 		}
@@ -217,8 +217,8 @@ func TestWatch_ReadChannelHiddenActivity(t *testing.T) {
 func TestReadChannel_Deterministic(t *testing.T) {
 	t.Parallel()
 	f := newChannelFixture(t)
-	postAsBob(t, f.svc, "REQ-001", "hello")
-	if _, err := f.svc.Post(asBob(), realtime.RawAddress{Anchor: "REQ-001", Type: "room"},
+	f.postAsBob(t, f.svc, "REQ-001", "hello")
+	if _, err := f.svc.Post(f.asBob(t), realtime.RawAddress{Anchor: "REQ-001", Type: "room"},
 		realtime.PostInput{Type: "typing"}); err != nil {
 		t.Fatal(err)
 	}

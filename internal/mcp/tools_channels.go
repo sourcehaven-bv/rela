@@ -65,6 +65,14 @@ type ChannelDeps struct {
 	// LocalIdentity is set by a wiring whose caller identity comes from
 	// $USER (stdio). A no_principal refusal then says so.
 	LocalIdentity bool
+	// BindIdentity is the request-edge step for a channel service that
+	// applies another ACL than the server's readers, as stdio's does with
+	// acl.yaml. Every channel call runs it after [Deps.BindIdentity]; an
+	// error fails the call.
+	//
+	// Nil: accepted, for a wiring whose channel service shares the readers'
+	// ACL; [Deps.BindIdentity] already bound the caller.
+	BindIdentity func(context.Context) (context.Context, error)
 }
 
 func (c ChannelDeps) validate() error {
@@ -153,6 +161,7 @@ type channelHandler struct {
 	creator       ChannelCreator
 	refuseSignals bool
 	localIdentity bool
+	bindIdentity  func(context.Context) (context.Context, error)
 }
 
 func selChannels(h handlerSet) channelHandler { return h.channels }
@@ -179,6 +188,16 @@ func channelTool(
 	return bind(s, selChannels, func(
 		h channelHandler, ctx context.Context, req *mcpgo.CallToolRequest,
 	) (*mcpgo.CallToolResult, error) {
+		if h.bindIdentity != nil {
+			bound, err := h.bindIdentity(ctx)
+			if err != nil {
+				// As in principalMiddleware: the cause is logged, the client
+				// gets a fixed message.
+				slog.WarnContext(ctx, "mcp: could not resolve the caller's channel identity", "err", err)
+				return errorResult(errIdentityUnresolved.Error()), nil
+			}
+			ctx = bound
+		}
 		return method(h, ctx, newToolRequest(req)), nil
 	})
 }
