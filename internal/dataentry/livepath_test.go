@@ -22,6 +22,16 @@ func TestParseLivePath(t *testing.T) {
 		{"presence", "/api/v1/tickets/TKT-1/_presence", "/api/v1/tickets/TKT-1/_presence"},
 		{"presence with face and world", "/api/v1/tickets/TKT-1@draft/_presence?world=main",
 			"/api/v1/tickets/TKT-1@draft/_presence?world=main"},
+		{"channel list", "/api/v1/tickets/TKT-1/_channels", "/api/v1/tickets/TKT-1/_channels"},
+		{"channel list by state", "/api/v1/tickets/TKT-1/_channels?state=open&world=main",
+			"/api/v1/tickets/TKT-1/_channels?state=open&world=main"},
+		{"channel head", "/api/v1/tickets/TKT-1/_channels/room", "/api/v1/tickets/TKT-1/_channels/room"},
+		// `messages` is a subresource only after a type; a channel type may
+		// carry the name.
+		{"head of a type named messages", "/api/v1/tickets/TKT-1/_channels/messages",
+			"/api/v1/tickets/TKT-1/_channels/messages"},
+		{"named channel head", "/api/v1/tickets/TKT-1@draft/_channels/threads/0a1b2c3d4e5f6",
+			"/api/v1/tickets/TKT-1@draft/_channels/threads/0a1b2c3d4e5f6"},
 		// Every ListParams key in frontend/src/types/entity.ts except the
 		// search box's q: EntityList subscribes the params it fetches with,
 		// and one refused path fails the whole PUT.
@@ -83,6 +93,19 @@ func TestParseLivePath(t *testing.T) {
 		{"presence on unknown plural", "/api/v1/nopes/TKT-1/_presence"},
 		{"presence on reserved collection", "/api/v1/_views/TKT-1/_presence"},
 		{"presence on sub-resource id", "/api/v1/tickets/_export/_presence"},
+		// A frame on the head is the signal to fetch messages?after_rev=;
+		// the messages are not a live shape.
+		{"channel messages", "/api/v1/tickets/TKT-1/_channels/room/messages"},
+		{"messages of a type named messages", "/api/v1/tickets/TKT-1/_channels/messages/messages"},
+		{"named channel messages", "/api/v1/tickets/TKT-1/_channels/threads/0a1b2c3d4e5f6/messages"},
+		{"channel message", "/api/v1/tickets/TKT-1/_channels/room/messages/1"},
+		{"channel too deep", "/api/v1/tickets/TKT-1/_channels/threads/0a1b2c3d4e5f6/x"},
+		{"channel invalid type", "/api/v1/tickets/TKT-1/_channels/Room"},
+		{"channel invalid name", "/api/v1/tickets/TKT-1/_channels/threads/NAME"},
+		{"channels on unknown plural", "/api/v1/nopes/TKT-1/_channels"},
+		{"channels on sub-resource id", "/api/v1/tickets/_export/_channels"},
+		{"channel list unknown query key", "/api/v1/tickets/TKT-1/_channels?include=x"},
+		{"channel head state", "/api/v1/tickets/TKT-1/_channels/room?state=open"},
 	}
 	for _, tc := range rejected {
 		t.Run("rejects "+tc.name, func(t *testing.T) {

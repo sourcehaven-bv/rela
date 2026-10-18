@@ -1,0 +1,199 @@
+package dataentry
+
+import (
+	"sync/atomic"
+	"testing"
+
+	"github.com/Sourcehaven-BV/rela/internal/acl"
+	"github.com/Sourcehaven-BV/rela/internal/appbuild"
+	"github.com/Sourcehaven-BV/rela/internal/appbuild/appbuildtest"
+	"github.com/Sourcehaven-BV/rela/internal/channels"
+	"github.com/Sourcehaven-BV/rela/internal/channels/filechannels"
+	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/filelock"
+	"github.com/Sourcehaven-BV/rela/internal/metamodel"
+	"github.com/Sourcehaven-BV/rela/internal/realtime"
+	"github.com/Sourcehaven-BV/rela/internal/realtimecfg"
+	"github.com/Sourcehaven-BV/rela/internal/storage"
+	"github.com/Sourcehaven-BV/rela/internal/store"
+)
+
+// Channel route tests (TKT-ZU7P13) run a real channel service over a file
+// channel store on an in-memory FS. appbuildtest builds it with the
+// production constructor, so its anchor and ref reads go through the gated
+// reader the app's declarative ACL builds, as in a deployment.
+
+// channelTestRealtime attaches room and threads to tickets and features,
+// so a hidden feature is a hidden anchor. Nobody holds chat.read or
+// chat.moderate, so nobody reads secret, posts an announce or creates a
+// topic.
+const channelTestRealtime = `
+version: 1
+channel_types:
+  room:
+    label: Room
+    attach_to: [ticket, feature]
+    read: { from: attached }
+    roles:
+      member: { from: attached }
+      mod:    { permission: chat.moderate }
+    message_types:
+      text:
+        properties:
+          body:  { type: string, required: true }
+          about: { type: ref, to: [ticket, feature] }
+        post: [member]
+      typing: { persist: ephemeral, ttl: 5s, post: [member] }
+      announce:
+        properties: { body: { type: string } }
+        post: [mod]
+    message_ops:
+      edit_own:   { roles: [member], within: 15m }
+      delete_own: { roles: [member], from: open }
+  threads:
+    attach_to: [ticket]
+    cardinality: many
+    read: { from: attached }
+    create: { roles: [member] }
+    roles:
+      member: { from: attached }
+    message_types:
+      text:
+        properties: { body: { type: string } }
+        post: [member]
+  topics:
+    attach_to: [ticket]
+    cardinality: many
+    read: { from: attached }
+    create: { roles: [mod] }
+    roles:
+      member: { from: attached }
+      mod:    { permission: chat.moderate }
+    message_types:
+      text:
+        properties: { body: { type: string } }
+        post: [member]
+  secret:
+    attach_to: [ticket]
+    read: { permission: chat.read }
+    roles:
+      member: { from: attached }
+    message_types:
+      text:
+        properties: { body: { type: string } }
+        post: [member]
+`
+
+// testRealtimeConfig is a realtime.ConfigSource over a pointer a test can
+// swap; nil is realtime off.
+type testRealtimeConfig struct {
+	p *atomic.Pointer[realtimecfg.Compiled]
+}
+
+func (c testRealtimeConfig) Load() realtime.Snapshot { return realtime.Snapshot{Config: c.p.Load()} }
+
+// channelService is a running channel service and the handles a test
+// turns.
+type channelService struct {
+	svc   *realtime.Service
+	store channels.Store
+	cfg   *atomic.Pointer[realtimecfg.Compiled]
+	meta  *metamodel.Metamodel
+}
+
+// parse compiles yaml as realtime.yaml against the service's schema.
+func (c *channelService) parse(t *testing.T, yaml string) *realtimecfg.Compiled {
+	t.Helper()
+	compiled, err := realtimecfg.Parse([]byte(yaml), c.meta, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return compiled
+}
+
+// newChannelService builds a channel service over st for meta, gated by d,
+// with yaml as realtime.yaml, over a fresh file channel store.
+func newChannelService(
+	t *testing.T, meta *metamodel.Metamodel, st store.Store, d *acl.Declarative, yaml string,
+) *channelService {
+	t.Helper()
+	cs, err := filechannels.New(storage.NewMemFS(), "/channels", filelock.ProcessPrivate{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return newChannelServiceOver(t, meta, st, d, yaml, cs)
+}
+
+// newChannelServiceOver is newChannelService over the channel store cs.
+func newChannelServiceOver(
+	t *testing.T, meta *metamodel.Metamodel, st store.Store, d *acl.Declarative, yaml string, cs channels.Store,
+) *channelService {
+	t.Helper()
+	out := &channelService{store: cs, cfg: &atomic.Pointer[realtimecfg.Compiled]{}, meta: meta}
+	out.cfg.Store(out.parse(t, yaml))
+	bundle := appbuildtest.New(meta, appbuildtest.WithStore(st), appbuildtest.WithDeclarative(d),
+		appbuildtest.WithChannels(cs, testRealtimeConfig{p: out.cfg}))
+	t.Cleanup(func() { _ = bundle.Close() })
+	if out.svc = appbuild.ChannelService(bundle); out.svc == nil {
+		t.Fatal("appbuildtest built no channel service")
+	}
+	return out
+}
+
+// channelPolicy: alice and bob are editors through their membership of the
+// editors group (read and update tickets); carol reads tickets; dave reads
+// and updates tickets and features. Only dave reads features.
+func channelPolicy(t *testing.T, app *App) *acl.Declarative {
+	t.Helper()
+	return mustNewACL(t, &acl.Policy{
+		Roles: map[string]acl.RoleDef{
+			"editor": {Read: []string{"ticket"}, Update: []string{"ticket"}},
+			"viewer": {Read: []string{"ticket"}},
+			"admin":  {Read: []string{"ticket", "feature"}, Update: []string{"ticket", "feature"}},
+		},
+		Assignments: map[string]string{"editors": "editor", "carol": "viewer", "dave": "admin"},
+	}, app.store)
+}
+
+// channelEnv is a running app with channels wired.
+type channelEnv struct {
+	*liveEnv
+	ch *channelService
+}
+
+// newChannelEnv seeds TKT-1, TKT-2 and FEAT-1, makes alice and bob members
+// of editors, applies channelPolicy and wires a channel service.
+func newChannelEnv(t *testing.T) *channelEnv {
+	t.Helper()
+	return newChannelEnvWith(t, channelPolicy, nil)
+}
+
+// newChannelEnvWith is newChannelEnv with policy as the ACL. wired, when
+// set, runs after the channel service is installed and before the live
+// worker starts.
+func newChannelEnvWith(
+	t *testing.T, policy func(*testing.T, *App) *acl.Declarative, wired func(*App),
+) *channelEnv {
+	t.Helper()
+	env := &channelEnv{}
+	env.liveEnv = newLiveEnv(t, func(app *App) {
+		seedEntity(app, ticket1("one"))
+		seedEntity(app, &entity.Entity{ID: "TKT-2", Type: "ticket", Properties: map[string]any{"title": "two"}})
+		seedEntity(app, feature("FEAT-1", "hidden"))
+		for _, id := range []string{"alice", "bob", "editors"} {
+			seedEntity(app, &entity.Entity{ID: id, Type: "person", Properties: map[string]any{"title": id}})
+		}
+		seedRelation(app, entity.NewRelation("alice", "member-of", "editors"))
+		seedRelation(app, entity.NewRelation("bob", "member-of", "editors"))
+		d := policy(t, app)
+		setTestACL(t, app, d)
+		env.ch = newChannelService(t, app.Meta(), app.store, d, channelTestRealtime)
+		if err := SetChannels(app, env.ch.svc); err != nil {
+			t.Fatal(err)
+		}
+		if wired != nil {
+			wired(app)
+		}
+	})
+	return env
+}
