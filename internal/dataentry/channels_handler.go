@@ -258,7 +258,13 @@ func parseMessagePage(w http.ResponseWriter, r *http.Request) (channels.Page, bo
 		writeV1Error(w, r, http.StatusBadRequest, "invalid_request", "Invalid query", "limit must be a positive number")
 		return page, false
 	}
-	page.Limit = int(min(limit, int64(realtimelimits.MaxPageLimit)))
+	switch {
+	case !ok:
+	case limit < int64(realtimelimits.MaxPageLimit):
+		page.Limit = int(limit)
+	default:
+		page.Limit = realtimelimits.MaxPageLimit
+	}
 	return page, true
 }
 
