@@ -186,7 +186,7 @@ CREATE TRIGGER entity_search_delete AFTER DELETE ON entities BEGIN
 END;
 INSERT INTO entity_search(rowid, body) SELECT rowid, id || char(10) || content FROM entities;`
 
-// foldingSearchIndex is the v13 to v19 index: keyed, but with a tokenizer
+// foldingSearchIndex is the v13 to v21 index: keyed, but with a tokenizer
 // that folds case itself (BUG-YG126C). Filled with ids only, which is enough
 // to see that the migration rebuilds it.
 const foldingSearchIndex = `CREATE TABLE entity_search_key (
@@ -233,7 +233,7 @@ func TestSearch_MigrationRebuildsIndex(t *testing.T) {
 	}{
 		{"v11 without an index", "", 11},
 		{"v12 keyed by rowid", rowidSearchIndex, 12},
-		{"v19 folding case", foldingSearchIndex, 19},
+		{"v21 folding case", foldingSearchIndex, 21},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

@@ -285,11 +285,11 @@ client_baselines:
 	if err != nil {
 		t.Fatalf("NewDeclarative: %v", err)
 	}
-	user, err := d.ForPrincipal(verifiedClient("alice", "user"))
+	user, err := OpenRequest(t.Context(), d, verifiedClient("alice", "user"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	app, err := d.ForPrincipal(verifiedClient("alice", "app"))
+	app, err := OpenRequest(t.Context(), d, verifiedClient("alice", "app"))
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -111,28 +111,33 @@ assignments:
 `})
 	cs := appbuild.ChannelService(svc)
 	require.NotNil(t, cs)
+	as := func(name string) context.Context { return bindAt(asUser(name), t, svc) }
 
-	res, err := cs.Post(asUser("alice"), doc1Room, note("hi"))
+	// A context the edge did not bind fails closed.
+	_, err := cs.Head(asUser("alice"), doc1Room)
+	requireStatus(t, err, http.StatusForbidden)
+
+	res, err := cs.Post(as("alice"), doc1Room, note("hi"))
 	require.NoError(t, err)
 	require.EqualValues(t, 1, res.Message.Seq)
 
-	_, err = cs.Head(asUser("bob"), doc1Room)
+	_, err = cs.Head(as("bob"), doc1Room)
 	require.ErrorIs(t, err, realtime.ErrAnchorNotFound)
-	_, err = cs.Head(asUser("carol"), doc1Room)
+	_, err = cs.Head(as("carol"), doc1Room)
 	require.ErrorIs(t, err, realtime.ErrAnchorNotFound)
 
 	memo := realtime.RawAddress{EntityType: "memo", Anchor: "MEMO-1", Type: "room"}
-	_, err = cs.Post(asUser("bob"), memo, note("mine"))
+	_, err = cs.Post(as("bob"), memo, note("mine"))
 	require.NoError(t, err)
-	_, err = cs.Post(asUser("bob"), memo, realtime.PostInput{Type: "note", Props: map[string]any{"about": "DOC-1"}})
+	_, err = cs.Post(as("bob"), memo, realtime.PostInput{Type: "note", Props: map[string]any{"about": "DOC-1"}})
 	requireStatus(t, err, http.StatusUnprocessableEntity)
 
-	got, err := cs.Post(asUser("alice"), doc1Room,
+	got, err := cs.Post(as("alice"), doc1Room,
 		realtime.PostInput{Type: "note", Props: map[string]any{"about": "DOC-2"}})
 	require.NoError(t, err)
 	require.Equal(t, &realtime.RefValue{ID: "DOC-2", Type: "doc", Title: "Two"}, got.Message.Props["about"])
 
-	_, err = cs.Post(asUser("alice"), realtime.RawAddress{EntityType: "doc", Anchor: "DOC-2", Type: "room"}, note("x"))
+	_, err = cs.Post(as("alice"), realtime.RawAddress{EntityType: "doc", Anchor: "DOC-2", Type: "room"}, note("x"))
 	requireStatus(t, err, http.StatusForbidden)
 }
 

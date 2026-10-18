@@ -138,7 +138,7 @@ func (d softDeleter) Unmark(ctx context.Context, id string) (*store.DeleteResult
 				return fmt.Errorf("sqlitestore: restore %s: %w", id, err)
 			}
 		}
-		// A row marked before the v20 rung carries no search text, and
+		// A row marked before the v22 rung carries no search text, and
 		// reindexSearchText runs only at open, so each face gets it here.
 		for _, e := range family {
 			if _, err := v.write(ctx, `UPDATE entities SET search_text = ? WHERE id = ? AND face = ?`,

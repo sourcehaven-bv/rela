@@ -212,7 +212,7 @@ type pendingEvents struct {
 // wiring site owns and closes.
 //
 // ctx bounds the search-text backfill New runs for rows written before the
-// v19 rung; see reindexSearchText.
+// v22 rung; see reindexSearchText.
 //
 // Nil: rejected — a nil database is a wiring mistake, and failing here beats a
 // panic on the first query.

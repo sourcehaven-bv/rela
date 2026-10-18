@@ -164,7 +164,7 @@ var migrations = []migration{
 	{
 		// v11 → v12: the FTS5 search index (DEC-10Z731). schemaSQL has
 		// already created its key table; the index itself is created after
-		// the ladder in its v20 shape, so this rung only moves the stamp.
+		// the ladder in its v22 shape, so this rung only moves the stamp.
 		to:    12,
 		apply: sqlSteps(searchKeyDDL),
 	},
@@ -172,7 +172,7 @@ var migrations = []migration{
 		// v12 → v13: key the search index by entity_search_key rather than
 		// by the entities rowid, which VACUUM may renumber (RR-44YDTU). The
 		// rung drops the v12 index and triggers; the index is created after
-		// the ladder and filled by the store, as for v20.
+		// the ladder and filled by the store, as for v22.
 		to:    13,
 		apply: sqlSteps(dropSearchSQL),
 	},

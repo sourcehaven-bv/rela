@@ -16,7 +16,7 @@ import (
 const searchTextReindexBatch = 500
 
 // reindexSearchText fills entities.search_text for every row that has none:
-// the rows written before the v20 rung (BUG-YG126C). Until it runs, such a
+// the rows written before the v22 rung (BUG-YG126C). Until it runs, such a
 // row is out of the search index. [New] runs it, so a store never serves a
 // search over a half-filled index. Each batch is one write transaction.
 func reindexSearchText(ctx context.Context, s *Store) error {

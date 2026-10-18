@@ -161,7 +161,7 @@ func (c *DB) init(ctx context.Context) error {
 		return fmt.Errorf("sqlitedb: create mention index: %w", err)
 	}
 	// After the ladder for the same reason: searchDDL reads
-	// entities.search_text, which a pre-v20 table gains in the v20 rung.
+	// entities.search_text, which a pre-v22 table gains in the v22 rung.
 	if _, err := c.db.ExecContext(ctx, searchDDL); err != nil {
 		return fmt.Errorf("sqlitedb: create search index: %w", err)
 	}
@@ -320,7 +320,7 @@ CREATE TABLE IF NOT EXISTS entities (
 	mention_targets    TEXT,
 	-- search_text is the lowered text the search index matches
 	-- (search.IndexText), written by the store with the row. NULL means not
-	-- indexed yet; see searchDDL. Added to older databases by the v20 rung.
+	-- indexed yet; see searchDDL. Added to older databases by the v22 rung.
 	search_text        TEXT,
 	PRIMARY KEY (id, face)
 ) STRICT;
@@ -772,7 +772,7 @@ CREATE TABLE IF NOT EXISTS entity_search_key (
 // without firing the delete trigger.
 //
 // It runs after the ladder, as mentionsDDL does, because it reads
-// entities.search_text, which a pre-v20 table gains only in the v20 rung.
+// entities.search_text, which a pre-v22 table gains only in the v22 rung.
 //
 //nolint:gosec // G202: joins constant DDL only; no input reaches it
 var searchDDL = searchKeyDDL + `
@@ -834,7 +834,7 @@ CREATE TRIGGER IF NOT EXISTS entity_mentions_delete AFTER DELETE ON entities BEG
 END;`
 
 // dropSearchSQL removes the search index and its triggers, keeping the key
-// table. The v13 rung ran it to drop the rowid-keyed v12 index, and the v20
+// table. The v13 rung ran it to drop the rowid-keyed v12 index, and the v22
 // rung to drop the case-folding index; searchDDL then creates the current one
 // after the ladder. The triggers must go too: they share the new triggers'
 // names, so CREATE TRIGGER IF NOT EXISTS would otherwise keep the old ones.
