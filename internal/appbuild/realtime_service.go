@@ -52,15 +52,25 @@ func ChannelService(s *Services) *realtime.Service {
 // Nil: s is accepted and returns a nil service, as does an s without
 // channels.
 func PolicyChannelService(s *Services) (*realtime.Service, func(context.Context) (context.Context, error), error) {
+	svc, d, err := policyChannelService(s)
+	if err != nil {
+		return nil, nil, err
+	}
+	return svc, identityBinderFor(d), nil
+}
+
+// policyChannelService is [PolicyChannelService] without the binder: it
+// returns the service and the policy the service evaluates, nil for none.
+func policyChannelService(s *Services) (*realtime.Service, *acl.Declarative, error) {
 	if s == nil || s.channelService == nil || s.base == nil {
-		return ChannelService(s), identityBinderFor(nil), nil
+		return ChannelService(s), nil, nil
 	}
 	policy, err := loadACLPolicy(s.base.cfg)
 	if err != nil {
 		return nil, nil, err
 	}
 	if policy == nil {
-		return s.channelService, identityBinderFor(s.ACLDeclarative()), nil
+		return s.channelService, s.ACLDeclarative(), nil
 	}
 	c, err := compileDeclarative(policy, s.base.meta, s.Store())
 	if err != nil {
@@ -74,7 +84,7 @@ func PolicyChannelService(s *Services) (*realtime.Service, func(context.Context)
 	if err != nil {
 		return nil, nil, err
 	}
-	return svc, identityBinderFor(c.declarative), nil
+	return svc, c.declarative, nil
 }
 
 // ACLAssignsNoRole reports whether the project has an acl.yaml whose
