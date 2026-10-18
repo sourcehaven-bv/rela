@@ -379,8 +379,8 @@ github.com/teekennedy/goldmark-markdown v0.5.1 h1:2lIlJ3AcIwaD1wFl4dflJSJFMhRTKE
 github.com/teekennedy/goldmark-markdown v0.5.1/go.mod h1:so260mNSPELuRyynZY18719dRYlD+OSnAovqsyrOMOM=
 github.com/vloothuis/textanchor v0.3.1 h1:g1Ki1NF1Z9KkglcCekPcXZLLGqfBomrNVgF5xTpKfLg=
 github.com/vloothuis/textanchor v0.3.1/go.mod h1:UU2SGgqVOUYV4H8V8ctFfooeyA96Fln4gf5dVe4/sqU=
-github.com/wailsapp/wails/v3 v3.0.0-beta.28 h1:JcJ5bsCVM44sTtOtJB2EtVV44sJSW18yevpMW+jO5Bs=
-github.com/wailsapp/wails/v3 v3.0.0-beta.28/go.mod h1:5DR/EG5FHU8+BNV7tQYQ/rJMjoFsVlYpM+0gp1+gcTI=
+github.com/wailsapp/wails/v3 v3.0.0-beta.29 h1:oJbXasfieQmMkYtqPlFSPnDe0RwpzA5BKiov8WPD5lo=
+github.com/wailsapp/wails/v3 v3.0.0-beta.29/go.mod h1:5DR/EG5FHU8+BNV7tQYQ/rJMjoFsVlYpM+0gp1+gcTI=
 github.com/wneessen/go-mail v0.8.1 h1:tVcncj02/QySVFw3zr/kXOzZcuFQqBNT6K+Rbgm/pcM=
 github.com/wneessen/go-mail v0.8.1/go.mod h1:dWZ61zadzCIyvB4y1/YzC5O7MrbbzBfPkARmbosdf8w=
 github.com/xanzy/ssh-agent v0.3.3 h1:+/15pJfg/RsTxqYcX6fHqOXZwwMP+2VyYWJeWM2qQFM=
