@@ -5,7 +5,6 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -241,7 +240,7 @@ func (s *Service) Claim(ctx context.Context, req ClaimRequest) (Claimed, error) 
 	if err != nil {
 		return Claimed{}, err
 	}
-	h := Holder{Identity: Identity(p), User: p.User, Tool: p.Tool, Label: req.Label}
+	h := Holder{Identity: principal.Identity(p), User: p.User, Tool: p.Tool, Label: req.Label}
 	now := s.clock.Now()
 	l, err := s.store.Claim(ctx, ref.ID, h, hashLeaseID(id), now, now.Add(ttl), req.Status)
 	var held *HeldError
@@ -276,7 +275,7 @@ func (s *Service) Renew(ctx context.Context, leaseID string, ttl time.Duration, 
 	if err != nil {
 		return Lease{}, err
 	}
-	identity, hash := Identity(p), hashLeaseID(leaseID)
+	identity, hash := principal.Identity(p), hashLeaseID(leaseID)
 	now := s.clock.Now()
 	cur, err := s.store.Lookup(ctx, hash, identity, now)
 	if err != nil {
@@ -337,7 +336,7 @@ func (s *Service) Release(ctx context.Context, leaseID string) error {
 	if err := checkLeaseID(leaseID); err != nil {
 		return err
 	}
-	if err := s.store.Release(ctx, hashLeaseID(leaseID), Identity(p), s.clock.Now()); err != nil {
+	if err := s.store.Release(ctx, hashLeaseID(leaseID), principal.Identity(p), s.clock.Now()); err != nil {
 		return err
 	}
 	s.hub.wake()
@@ -369,7 +368,7 @@ func (s *Service) GetReadable(ctx context.Context, ids []string) (map[string]Lea
 // caller's ceiling hides; that lease is left out, as if it did not exist.
 // The ids (at most [MaxPerIdentity]) are gated in one [Gate.Readable] batch.
 func (s *Service) Mine(ctx context.Context) ([]Lease, error) {
-	got, err := s.store.ListByHolder(ctx, Identity(principal.From(ctx)), s.clock.Now())
+	got, err := s.store.ListByHolder(ctx, principal.Identity(principal.From(ctx)), s.clock.Now())
 	if err != nil || len(got) == 0 {
 		return nil, err
 	}
@@ -412,17 +411,6 @@ func (s *Service) EntityDeleted(ctx context.Context, entityID string) error {
 func (s *Service) EntityFaceDeleted(context.Context, string, entity.Face) error {
 	s.hub.wake()
 	return nil
-}
-
-// Identity returns the holder identity of p: the hex SHA-256 of the fields
-// [principal.Principal.SameIdentity] compares. A token refresh keeps it.
-func Identity(p principal.Principal) string {
-	b, err := json.Marshal([]string{p.User, p.Tool, p.RawUser, p.OrgID()})
-	if err != nil { // coverage-ignore: unreachable: a string slice always marshals
-		panic(err)
-	}
-	sum := sha256.Sum256(b)
-	return hex.EncodeToString(sum[:])
 }
 
 // authorize asks whether the caller may update the face ref of type typ.

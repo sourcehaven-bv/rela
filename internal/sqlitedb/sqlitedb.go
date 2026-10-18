@@ -700,10 +700,23 @@ CREATE TABLE IF NOT EXISTS channel_audit (
 	record    TEXT NOT NULL
 ) STRICT;
 CREATE INDEX IF NOT EXISTS channel_audit_anchor_idx ON channel_audit(anchor_id, tomb, id);
+-- A cardinality of '' is a type recorded before v21, when only the anchor
+-- mode was kept. The v20 to v21 rung adds the column with the same default,
+-- so a fresh and an upgraded table have the same shape.
 CREATE TABLE IF NOT EXISTS channel_types (
 	type        TEXT PRIMARY KEY,
 	anchor_mode TEXT NOT NULL,
-	cardinality TEXT NOT NULL
+	cardinality TEXT NOT NULL DEFAULT ''
+) STRICT;` + channelTypeRefsDDL
+
+// channelTypeRefsDDL holds the ref properties recorded for each channel
+// type (see channels.TypeRecord). Shared between channelsDDL and the v19 to
+// v20 rung.
+const channelTypeRefsDDL = `
+CREATE TABLE IF NOT EXISTS channel_type_refs (
+	type TEXT NOT NULL,
+	ref  TEXT NOT NULL,
+	PRIMARY KEY (type, ref)
 ) STRICT;`
 
 // searchDDL is the full-text search index (DEC-10Z731): an FTS5 table with

@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"strings"
 	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/channels"
@@ -251,17 +250,20 @@ func hasFaceChannel(list []channels.Channel, face entity.Face) bool {
 	return false
 }
 
-// checkChannelTypeRecords refuses a realtime config that changes the anchor
-// or cardinality of a channel type the store has already written channels
-// for: they are keyed by both, so serving them under the new values would
-// strand them. Only recorded types are compared, and nothing is written; the
-// channel service records a type on its first channel write.
+// checkChannelTypeRecords refuses, at boot, a realtime config that does not
+// fit the channel types the store has already written channels for: a
+// changed anchor or cardinality would strand them, since they are keyed by
+// both, and a recorded ref declared as another property type would show
+// stored entity ids as plain text. It reads the records once and reports
+// in the format a refused reload uses (see [RealtimeConfig.Reload]). Only
+// recorded types are compared, and nothing is written; the channel service
+// records a type on its first channel write.
 //
 // It also warns about each channel type whose `on_entity_delete: delete` is
 // still treated as detach.
 //
-// Nil: cfg is accepted and means realtime is off.
-func checkChannelTypeRecords(ctx context.Context, cs channels.Store, cfg *realtimecfg.Compiled) error {
+// Nil: cs is accepted (no channel store); cfg is accepted (realtime off).
+func checkChannelTypeRecords(ctx context.Context, cs typeRecordReader, cfg *realtimecfg.Compiled) error {
 	if cfg == nil || cs == nil {
 		return nil
 	}
@@ -271,32 +273,5 @@ func checkChannelTypeRecords(ctx context.Context, cs channels.Store, cfg *realti
 				"deleting them with their entity is not supported yet", "channel_type", ct.Name)
 		}
 	}
-	recorded, err := cs.TypeRecords(ctx)
-	if err != nil {
-		return fmt.Errorf("channels: read the recorded channel types: %w", err)
-	}
-	changes := channels.TypeRecordChanges(recorded, configuredTypeRecords(cfg))
-	if len(changes) == 0 {
-		return nil
-	}
-	parts := make([]string, 0, len(changes))
-	for _, c := range changes {
-		parts = append(parts, fmt.Sprintf("%s: anchor %s and cardinality %s are recorded, %s and %s configured",
-			c.Type, c.Recorded.Anchor, c.Recorded.Cardinality, c.Configured.Anchor, c.Configured.Cardinality))
-	}
-	return fmt.Errorf("%s: stored channels cannot change anchor or cardinality (%s); "+
-		"restore the recorded values", realtimecfg.FileName, strings.Join(parts, "; "))
-}
-
-// configuredTypeRecords returns the type record each channel type of cfg
-// would write.
-func configuredTypeRecords(cfg *realtimecfg.Compiled) map[string]channels.TypeRecord {
-	out := make(map[string]channels.TypeRecord)
-	for _, ct := range cfg.ChannelTypes() {
-		out[ct.Name] = channels.TypeRecord{
-			Anchor:      channels.AnchorMode(ct.Anchor),
-			Cardinality: channels.Cardinality(ct.Cardinality),
-		}
-	}
-	return out
+	return checkRecords(ctx, cs, cfg)
 }

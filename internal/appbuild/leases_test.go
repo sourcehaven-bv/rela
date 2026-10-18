@@ -200,7 +200,7 @@ client_baselines:
 	browser := principal.With(context.Background(), principal.Principal{User: "alice", Tool: principal.ToolDataEntry})
 	agent := principal.With(context.Background(), principal.VerifiedFrom(
 		"alice", principal.ToolDataEntry, principal.Claims{PrincipalType: "app"}))
-	require.Equal(t, lease.Identity(principal.From(browser)), lease.Identity(principal.From(agent)),
+	require.Equal(t, principal.Identity(principal.From(browser)), principal.Identity(principal.From(agent)),
 		"the session and the token share one lease identity")
 
 	for _, addr := range []string{"T-1", "S-1"} {

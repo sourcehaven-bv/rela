@@ -145,7 +145,20 @@ func TestShapeMismatches(t *testing.T) {
 			Configured:  TypeShape{Anchor: AnchorFace, Cardinality: CardinalityMany},
 		},
 	}
-	if !slices.Equal(got, want) {
+	type key struct {
+		name               string
+		stored, configured [2]string
+	}
+	project := func(ms []ShapeMismatch) []key {
+		var out []key
+		for _, m := range ms {
+			out = append(out, key{m.ChannelType,
+				[2]string{string(m.Stored.Anchor), string(m.Stored.Cardinality)},
+				[2]string{string(m.Configured.Anchor), string(m.Configured.Cardinality)}})
+		}
+		return out
+	}
+	if !slices.Equal(project(got), project(want)) {
 		t.Fatalf("ShapeMismatches = %+v; want %+v", got, want)
 	}
 	err = ShapeMismatchError(got)
@@ -156,6 +169,31 @@ func TestShapeMismatches(t *testing.T) {
 	}
 	if ShapeMismatchError(nil) != nil || ShapeMismatches(nil, stored) != nil || ShapeMismatches(c, nil) != nil {
 		t.Error("no mismatches expected for empty input")
+	}
+}
+
+// A stored shape with an empty cardinality was recorded before the channel
+// store kept one. It matches any configured cardinality, but the anchor is
+// still compared.
+func TestShapeMismatchesUnknownStoredCardinality(t *testing.T) {
+	c, err := Parse([]byte(golden(t)), testMeta(t), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// incident-room is configured family/one, page-threads face/many.
+	if got := ShapeMismatches(c, map[string]TypeShape{
+		"incident-room": {Anchor: AnchorFamily},
+		"page-threads":  {Anchor: AnchorFace},
+	}); len(got) != 0 {
+		t.Fatalf("ShapeMismatches = %+v; want none", got)
+	}
+	got := ShapeMismatches(c, map[string]TypeShape{"incident-room": {Anchor: AnchorFace}})
+	if len(got) != 1 {
+		t.Fatalf("ShapeMismatches = %+v; want one anchor mismatch", got)
+	}
+	problems := got[0].Problems()
+	if len(problems) != 1 || problems[0].Key != "channel_types.incident-room.anchor" {
+		t.Fatalf("Problems = %+v; want the anchor only", problems)
 	}
 }
 

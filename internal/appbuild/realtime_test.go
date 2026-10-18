@@ -240,5 +240,31 @@ func TestRealtime_BootRefusesRecordedShapeChange(t *testing.T) {
 	require.NoError(t, svc.Close())
 
 	_, err = base.Assemble(st, search.New(st, search.NewLinearSearch()), nil, nil)
-	require.ErrorContains(t, err, "room: anchor family and cardinality many are recorded, family and one configured")
+	require.ErrorContains(t, err, "channel_types.room.cardinality: cannot change from many to one")
+}
+
+// A type record written by a release before cardinality was kept (here the
+// file store's anchor-modes file) does not refuse boot: its cardinality is
+// unknown and matches the configured one. Its anchor mode is still checked.
+func TestRealtime_BootAcceptsLegacyTypeRecord(t *testing.T) {
+	root := realtimeProject(t, map[string]string{"realtime.yaml": realtimeYAML})
+	legacy := filepath.Join(root, ".rela", "channels", "_types", "anchor-modes.yaml")
+	require.NoError(t, os.MkdirAll(filepath.Dir(legacy), 0o755))
+	require.NoError(t, os.WriteFile(legacy, []byte("room: family\n"), 0o644))
+	base, err := realtimeBase(t, root)
+	require.NoError(t, err)
+
+	svc := realtimeServices(t, base)
+	got, err := appbuild.Channels(svc).TypeRecords(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, map[string]channels.TypeRecord{
+		"room": {Anchor: channels.AnchorFamily, Cardinality: channels.CardinalityUnknown},
+	}, got)
+	require.NoError(t, svc.Close())
+
+	require.NoError(t, os.WriteFile(legacy, []byte("room: face\n"), 0o644))
+	st := memstore.New()
+	_, err = base.Assemble(st, search.New(st, search.NewLinearSearch()), nil, nil)
+	require.ErrorContains(t, err, "channel_types.room.anchor: cannot change from face to family")
+	require.NotContains(t, err.Error(), "channel_types.room.cardinality", "an unknown cardinality is not a change")
 }

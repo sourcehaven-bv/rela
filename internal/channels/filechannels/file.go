@@ -7,7 +7,7 @@
 //	<root>/<b32(id)>/<b32(face)|_>/<type>/<name|_>/meta.yaml
 //	                                              /log-0000.jsonl ...
 //	<root>/_audit/<b32(id)>.jsonl
-//	<root>/_types/anchor-modes.yaml
+//	<root>/_types/records.yaml
 //	<root>/~detached/<b32(id)>-<stamp>/...
 //
 // b32 is lowercase unpadded base32. It keeps an entity id that differs
@@ -77,13 +77,16 @@ import (
 const SegmentSize = 1000
 
 const (
-	metaFile    = "meta.yaml"
-	auditDir    = "_audit"
-	typesFile   = "_types/records.yaml"
-	detachedDir = "~detached"
-	trashDir    = "~trash"
-	none        = "_"
-	filePerm    = 0o600
+	metaFile  = "meta.yaml"
+	auditDir  = "_audit"
+	typesFile = "_types/records.yaml"
+	// legacyTypesFile is the type record of releases before cardinality
+	// was kept: each type's anchor mode only. It is read, never written.
+	legacyTypesFile = "_types/anchor-modes.yaml"
+	detachedDir     = "~detached"
+	trashDir        = "~trash"
+	none            = "_"
+	filePerm        = 0o600
 )
 
 // Locker excludes every other process from the store's directory for the

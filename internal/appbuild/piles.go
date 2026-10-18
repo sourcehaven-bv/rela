@@ -14,6 +14,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/piles"
 	"github.com/Sourcehaven-BV/rela/internal/piles/kvpiles"
 	"github.com/Sourcehaven-BV/rela/internal/project"
+	"github.com/Sourcehaven-BV/rela/internal/realtime"
 	"github.com/Sourcehaven-BV/rela/internal/state"
 	"github.com/Sourcehaven-BV/rela/internal/storage"
 	"github.com/Sourcehaven-BV/rela/internal/store"
@@ -30,6 +31,10 @@ type refHolders struct {
 	leases      *lease.Service
 	leaseShared leaseShared
 	channels    channels.Store
+	// channelService and realtimeLocal are the channel service and its
+	// process-local state; see buildRealtimeService.
+	channelService *realtime.Service
+	realtimeLocal  *realtime.Local
 }
 
 // buildRefHolders builds the services that hold references by entity id:
@@ -62,6 +67,11 @@ func buildRefHolders(
 		return refHolders{}, err
 	}
 	if h.channels, err = buildChannels(base.cfg.FS, base.cfg.Paths, st, overrides.channelStore); err != nil {
+		return refHolders{}, err
+	}
+	h.channelService, h.realtimeLocal, err = buildRealtimeService(
+		base, st, h.channels, base.realtimeLocal, d, redactor, writes)
+	if err != nil {
 		return refHolders{}, err
 	}
 	return h, nil

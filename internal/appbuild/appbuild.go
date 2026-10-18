@@ -56,6 +56,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/piles"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
 	"github.com/Sourcehaven-BV/rela/internal/project"
+	"github.com/Sourcehaven-BV/rela/internal/realtime"
 	"github.com/Sourcehaven-BV/rela/internal/relresolve"
 	"github.com/Sourcehaven-BV/rela/internal/rootfs"
 	"github.com/Sourcehaven-BV/rela/internal/schedulerstate"
@@ -200,6 +201,16 @@ type Services struct {
 	// channels is the realtime channel store (see [Channels]). Stateless
 	// over its backend, so every assembly builds its own.
 	channels channels.Store
+	// channelService is the channel service over channels (see
+	// [ChannelService]), built per assembly so its access checks follow the
+	// current ACL. Nil only for a NewFromCollaborators build.
+	channelService *realtime.Service
+	// realtimeLocal is the process-local state under channelService, which a
+	// re-assembly shares.
+	realtimeLocal *realtime.Local
+	// realtimeRecordsStop stops the realtime holder from checking reloads
+	// against this assembly's channel store. Per-assembled.
+	realtimeRecordsStop func()
 	// comments is the commentary layer (internal/comments). Nil when the
 	// metamodel declares no `comments:` block — the feature then does not
 	// exist, and the data-entry app serves no comment routes.
@@ -1943,6 +1954,10 @@ type SharedBase struct {
 	// leaseShared is the predecessor's lease backend and hub, reused for the
 	// same reason. Empty for a first assembly.
 	leaseShared leaseShared
+	// realtimeLocal is the predecessor's process-local channel state (rate
+	// buckets, ephemeral signals, live subscribers), reused so a schema
+	// reload resets none of them. Nil for a first assembly.
+	realtimeLocal *realtime.Local
 }
 
 // attachmentLocker is the predecessor's attachment lock on a re-assembly,
@@ -1984,6 +1999,7 @@ func (b *SharedBase) ForReassembly(prev *Services) *SharedBase {
 	next.attachLocker = prev.attachLocker
 	next.pileStore = prev.pileStore
 	next.leaseShared = prev.leaseShared
+	next.realtimeLocal = prev.realtimeLocal
 	return &next
 }
 
@@ -2556,7 +2572,7 @@ func assemble(
 	// comment fanout wrapping the alias rewriter.
 	attachLocker := base.attachmentLocker(st)
 	fanout := newAliasFanout(aliases, refs.comments, refs.piles, refs.leases, autoJobs,
-		channelAliasesFor(refs.channels, st))
+		channelAliasesFor(refs.channels, st), refs.realtimeLocal)
 	mgr, err := buildEntityManager(base, st, fanout, templater,
 		resolvedACL, autoEngine, cascadeRunner, readDeps, pileWriterFor(refs.piles), versions, tw, computedSet,
 		attachLocker, fieldPol.gate, refs.channels)
@@ -2663,6 +2679,7 @@ func finishAssembly(
 	s.piles, s.pileStore = refs.piles, refs.pileStore
 	s.leases, s.leaseShared = refs.leases, refs.leaseShared
 	s.channels = refs.channels
+	s.channelService, s.realtimeLocal = refs.channelService, refs.realtimeLocal
 	tags, err := buildVersionTags(s)
 	if err != nil {
 		return nil, err
@@ -2676,6 +2693,7 @@ func finishAssembly(
 		s.versionSweep = sweep
 		sweep.Start()
 	}
+	s.realtimeRecordsStop = s.realtime.watchTypeRecords(refs.channels)
 	return s, nil
 }
 
@@ -2930,6 +2948,10 @@ func (s *Services) stopBackgroundServices() {
 		s.versionSweep.Stop()
 		s.versionSweep = nil
 	}
+	if s.realtimeRecordsStop != nil {
+		s.realtimeRecordsStop()
+		s.realtimeRecordsStop = nil
+	}
 	if s.jobQueue != nil {
 		closeJobQueue(s.jobQueue)
 		s.jobQueue = nil
@@ -2996,6 +3018,9 @@ func (s *Services) Close() error {
 		// Neither backend fails on close; pglease leaves the pool to its owner.
 		if s.leaseShared.store != nil {
 			_ = s.leaseShared.store.Close()
+		}
+		if s.realtimeLocal != nil {
+			s.realtimeLocal.Stop()
 		}
 	})
 	return s.closeErr

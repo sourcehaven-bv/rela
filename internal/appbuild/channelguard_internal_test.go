@@ -425,10 +425,18 @@ func TestCheckChannelTypeRecords(t *testing.T) {
 	require.NoError(t, checkChannelTypeRecords(ctx, f.cs, nil))
 	require.NoError(t, checkChannelTypeRecords(ctx, f.cs, f.cfg), "nothing recorded yet")
 
-	matching := configuredTypeRecords(f.cfg)
+	matching := map[string]channels.TypeRecord{}
+	for _, ct := range f.cfg.ChannelTypes() {
+		matching[ct.Name] = channels.TypeRecord{
+			Anchor: channels.AnchorMode(ct.Anchor), Cardinality: channels.Cardinality(ct.Cardinality),
+		}
+	}
 	require.NoError(t, f.cs.RecordTypes(ctx, matching))
 	require.NoError(t, checkChannelTypeRecords(ctx, f.cs, f.cfg))
 
+	// RecordTypes refuses to change a recorded shape, so the mismatched
+	// records go into a fresh store.
+	f = newGuardFixture(t)
 	require.NoError(t, f.cs.RecordTypes(ctx, map[string]channels.TypeRecord{
 		"chat":    {Anchor: channels.AnchorFace, Cardinality: channels.CardinalityOne},
 		"notes":   {Anchor: channels.AnchorFace, Cardinality: channels.CardinalityMany},
@@ -437,15 +445,36 @@ func TestCheckChannelTypeRecords(t *testing.T) {
 	before, err := f.cs.TypeRecords(ctx)
 	require.NoError(t, err)
 	err = checkChannelTypeRecords(ctx, f.cs, f.cfg)
-	require.ErrorContains(t, err, "chat: anchor face")
-	require.ErrorContains(t, err, "notes: anchor face and cardinality many")
+	require.ErrorContains(t, err, "channel_types.chat.anchor: cannot change from face to family")
+	require.ErrorContains(t, err, "channel_types.notes.cardinality: cannot change from many to one")
 	assert.NotContains(t, err.Error(), "retired", "a type the config dropped is not compared")
 	after, err := f.cs.TypeRecords(ctx)
 	require.NoError(t, err)
 	assert.Equal(t, before, after, "the check writes nothing")
 
+	// A record with an unknown cardinality (written before cardinality was
+	// kept) matches the configured one; its anchor is still compared.
+	err = checkChannelTypeRecords(ctx, legacyCardinality{Store: f.cs}, f.cfg)
+	require.ErrorContains(t, err, "channel_types.chat.anchor: cannot change from face to family")
+	assert.NotContains(t, err.Error(), "cardinality", "an unknown cardinality is not a change")
+	ok := newGuardFixture(t)
+	require.NoError(t, ok.cs.RecordTypes(ctx, matching))
+	require.NoError(t, checkChannelTypeRecords(ctx, legacyCardinality{Store: ok.cs}, ok.cfg))
+
 	f.guard.store = failingRecords{Store: f.cs}
 	require.ErrorIs(t, checkChannelTypeRecords(ctx, f.guard.store, f.cfg), errDiskFull)
+}
+
+// legacyCardinality reads every record with an unknown cardinality.
+type legacyCardinality struct{ channels.Store }
+
+func (l legacyCardinality) TypeRecords(ctx context.Context) (map[string]channels.TypeRecord, error) {
+	recs, err := l.Store.TypeRecords(ctx)
+	for typ, r := range recs {
+		r.Cardinality = channels.CardinalityUnknown
+		recs[typ] = r
+	}
+	return recs, err
 }
 
 type failingRecords struct{ channels.Store }

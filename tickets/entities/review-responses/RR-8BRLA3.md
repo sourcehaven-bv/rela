@@ -4,5 +4,6 @@ type: review-response
 title: Idle subscriber change set grows without bound
 finding: Local.mark accumulates every changed channel key for a stalled subscriber.
 severity: minor
-status: open
+resolution: The change set is capped at 1024; past that Take returns a resync flag.
+status: addressed
 ---

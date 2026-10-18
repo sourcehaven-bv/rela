@@ -5,7 +5,7 @@
 //
 // # Schema
 //
-// Four tables, created by the pgstore and sqlitedb migrations:
+// Five tables, created by the pgstore and sqlitedb migrations:
 //
 //   - channels: one row per channel, keyed by (anchor_id, anchor_face, type,
 //     name, tomb). tomb is empty for a live channel and holds the tombstone
@@ -18,7 +18,9 @@
 //   - channel_audit: the audit trail, one JSON record per row, with the same
 //     tomb column as channels.
 //   - channel_types: the anchor mode and cardinality recorded for each
-//     channel type.
+//     channel type, and channel_type_refs its ref properties. An empty
+//     cardinality is a row from before the column existed
+//     ([channels.CardinalityUnknown]).
 //
 // # Erasure
 //
@@ -235,7 +237,7 @@ func (s *Store) wrap(err error, format string, args ...any) error {
 	for _, sentinel := range []error{
 		channels.ErrNotFound, channels.ErrInvalidKey, channels.ErrInvalidMessage, channels.ErrTooLarge,
 		channels.ErrTooManyChannels, channels.ErrConflict, channels.ErrRemoved, channels.ErrInvalidReply,
-		channels.ErrInvalidPage, channels.ErrRekeyConflict, channels.ErrStaleAnchor,
+		channels.ErrInvalidPage, channels.ErrRekeyConflict, channels.ErrStaleAnchor, channels.ErrTypeShapeConflict,
 	} {
 		if errors.Is(err, sentinel) {
 			return err
@@ -517,7 +519,7 @@ func (s *Store) CreateMany(
 			a.ID, string(a.Face), typ).Scan(&n); err != nil {
 			return err
 		}
-		if n >= channels.MaxChannelsPerType {
+		if n >= nc.Cap() {
 			return fmt.Errorf("%w: %s holds %d %s channels", channels.ErrTooManyChannels, a.ID, n, typ)
 		}
 		k := channels.Key{Anchor: a, Type: typ, Name: channels.NewName()}
@@ -920,15 +922,24 @@ func (s *Store) Keys(ctx context.Context) ([]channels.Key, error) {
 
 // TypeRecords implements [channels.Store].
 func (s *Store) TypeRecords(ctx context.Context) (map[string]channels.TypeRecord, error) {
+	out, err := s.typeRecords(ctx, s.db)
+	return out, s.wrap(err, "read type records")
+}
+
+func (s *Store) typeRecords(ctx context.Context, q Querier) (map[string]channels.TypeRecord, error) {
 	type row struct{ typ, mode, card string }
-	rows, err := collect(ctx, s.db, `SELECT type, anchor_mode, cardinality FROM channel_types`, nil,
-		func(r interface{ Scan(...any) error }) (row, error) {
-			var p row
-			err := r.Scan(&p.typ, &p.mode, &p.card)
-			return p, err
-		})
+	scan := func(r interface{ Scan(...any) error }) (row, error) {
+		var p row
+		err := r.Scan(&p.typ, &p.mode, &p.card)
+		return p, err
+	}
+	rows, err := collect(ctx, q, `SELECT type, anchor_mode, cardinality FROM channel_types`, nil, scan)
 	if err != nil {
-		return nil, s.wrap(err, "read type records")
+		return nil, err
+	}
+	refs, err := collect(ctx, q, `SELECT type, ref, '' FROM channel_type_refs ORDER BY type, ref`, nil, scan)
+	if err != nil {
+		return nil, err
 	}
 	out := make(map[string]channels.TypeRecord, len(rows))
 	for _, p := range rows {
@@ -936,26 +947,66 @@ func (s *Store) TypeRecords(ctx context.Context) (map[string]channels.TypeRecord
 			Anchor: channels.AnchorMode(p.mode), Cardinality: channels.Cardinality(p.card),
 		}
 	}
+	for _, p := range refs {
+		if r, ok := out[p.typ]; ok {
+			r.Refs = append(r.Refs, p.mode)
+			out[p.typ] = r
+		}
+	}
+	for typ, r := range out {
+		slices.Sort(r.Refs)
+		out[typ] = r
+	}
 	return out, nil
 }
 
-// RecordTypes implements [channels.Store]. The upsert's WHERE clause skips
-// the update of a row that already holds the record.
+// typeRecordsLock is the entity lock RecordTypes takes, so two processes
+// recording the same type serialize. It cannot collide with an entity id,
+// which never holds a slash.
+const typeRecordsLock = "channel-types/records"
+
+// RecordTypes implements [channels.Store]. It reads the held records and
+// writes what [channels.MergeTypeRecord] adds in one transaction under
+// typeRecordsLock, so a concurrent record cannot slip a ref in between
+// the check and the write.
 func (s *Store) RecordTypes(ctx context.Context, records map[string]channels.TypeRecord) error {
-	if err := channels.PrepareTypeRecords(records); err != nil {
+	records, err := channels.PrepareTypeRecords(records)
+	if err != nil {
 		return err
 	}
+	if len(records) == 0 {
+		return nil
+	}
 	types := slices.Sorted(maps.Keys(records))
-	werr := s.db.Transact(ctx, func(q Querier) error {
+	werr := s.write(ctx, []string{typeRecordsLock}, func(q Querier) error {
+		cur, err := s.typeRecords(ctx, q)
+		if err != nil {
+			return err
+		}
 		for _, typ := range types {
-			r := records[typ]
-			if _, err := q.Exec(ctx, `INSERT INTO channel_types (type, anchor_mode, cardinality) VALUES (?, ?, ?)
-				ON CONFLICT (type) DO UPDATE SET anchor_mode = excluded.anchor_mode,
-					cardinality = excluded.cardinality
-				WHERE channel_types.anchor_mode <> excluded.anchor_mode
-					OR channel_types.cardinality <> excluded.cardinality`,
-				typ, string(r.Anchor), string(r.Cardinality)); err != nil {
+			given := records[typ]
+			held, ok := cur[typ]
+			added, fill, err := channels.MergeTypeRecord(typ, held, ok, given)
+			if err != nil {
 				return err
+			}
+			switch {
+			case !ok:
+				if _, err := q.Exec(ctx, `INSERT INTO channel_types (type, anchor_mode, cardinality)
+					VALUES (?, ?, ?)`, typ, string(given.Anchor), string(given.Cardinality)); err != nil {
+					return err
+				}
+			case fill:
+				if _, err := q.Exec(ctx, `UPDATE channel_types SET cardinality = ? WHERE type = ?`,
+					string(given.Cardinality), typ); err != nil {
+					return err
+				}
+			}
+			for _, ref := range added {
+				if _, err := q.Exec(ctx, `INSERT INTO channel_type_refs (type, ref) VALUES (?, ?)`,
+					typ, ref); err != nil {
+					return err
+				}
 			}
 		}
 		return nil

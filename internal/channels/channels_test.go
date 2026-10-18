@@ -242,23 +242,89 @@ func TestTypeRecords(t *testing.T) {
 	famOne := TypeRecord{Anchor: AnchorFamily, Cardinality: CardinalityOne}
 	faceOne := TypeRecord{Anchor: AnchorFace, Cardinality: CardinalityOne}
 	famMany := TypeRecord{Anchor: AnchorFamily, Cardinality: CardinalityMany}
-	require.NoError(t, PrepareTypeRecords(nil))
-	require.ErrorIs(t, PrepareTypeRecords(map[string]TypeRecord{"CON": famOne}), ErrInvalidKey)
-	require.ErrorIs(t, PrepareTypeRecords(map[string]TypeRecord{"room": {Anchor: "x", Cardinality: CardinalityOne}}),
+	prepErr := func(r map[string]TypeRecord) error {
+		_, err := PrepareTypeRecords(r)
+		return err
+	}
+	require.NoError(t, prepErr(nil))
+	require.ErrorIs(t, prepErr(map[string]TypeRecord{"CON": famOne}), ErrInvalidKey)
+	require.ErrorIs(t, prepErr(map[string]TypeRecord{"room": {Anchor: "x", Cardinality: CardinalityOne}}),
 		ErrInvalidMessage)
-	require.ErrorIs(t, PrepareTypeRecords(map[string]TypeRecord{"room": {Anchor: AnchorFace}}), ErrInvalidMessage)
+	require.ErrorIs(t, prepErr(map[string]TypeRecord{"room": {Anchor: AnchorFace}}), ErrInvalidMessage)
+	require.ErrorIs(t, prepErr(map[string]TypeRecord{"room": {
+		Anchor: AnchorFace, Cardinality: CardinalityOne, Refs: []string{""},
+	}}), ErrInvalidMessage)
+	require.ErrorIs(t, prepErr(map[string]TypeRecord{"room": {
+		Anchor: AnchorFace, Cardinality: CardinalityOne, Plain: []string{"a\nb"},
+	}}), ErrInvalidMessage)
+	got, err := PrepareTypeRecords(map[string]TypeRecord{"room": {
+		Anchor: AnchorFace, Cardinality: CardinalityOne, Refs: []string{"b.x", "a.y", "b.x"}, Plain: []string{"c.z"},
+	}})
+	require.NoError(t, err)
+	require.Equal(t, TypeRecord{
+		Anchor: AnchorFace, Cardinality: CardinalityOne, Refs: []string{"a.y", "b.x"}, Plain: []string{"c.z"},
+	}, got["room"], "refs and plain are sorted and deduplicated")
+	same := TypeRecord{Anchor: AnchorFace, Cardinality: CardinalityOne, Refs: []string{"a.y", "b.x"}, Plain: []string{"c.z"}}
+	require.True(t, got["room"].Equal(same))
+	same.Plain = nil
+	require.False(t, got["room"].Equal(same))
+	require.False(t, got["room"].Equal(faceOne))
 
 	recorded := map[string]TypeRecord{"room": famOne, "review": faceOne, "old": faceOne, "a": famOne, "b": famOne}
 	configured := map[string]TypeRecord{"room": faceOne, "review": faceOne, "new": famOne, "a": famMany, "b": famOne}
+	configured["b"] = TypeRecord{Anchor: AnchorFamily, Cardinality: CardinalityOne, Refs: []string{"m.p"}}
 	require.Equal(t, []TypeRecordChange{
 		{Type: "a", Recorded: famOne, Configured: famMany},
 		{Type: "room", Recorded: famOne, Configured: faceOne},
-	}, TypeRecordChanges(recorded, configured))
+	}, TypeRecordChanges(recorded, configured), "refs are not compared")
 	require.Empty(t, TypeRecordChanges(nil, configured), "a store with no record has no changes")
+}
 
-	require.Equal(t, map[string]TypeRecord{"room": faceOne, "new": famOne, "a": famMany},
-		ChangedTypeRecords(recorded, configured))
-	require.Empty(t, ChangedTypeRecords(configured, configured))
+func TestMergeTypeRecord(t *testing.T) {
+	held := TypeRecord{Anchor: AnchorFamily, Cardinality: CardinalityOne, Refs: []string{"note.about"}}
+	legacy := TypeRecord{Anchor: AnchorFamily, Cardinality: CardinalityUnknown}
+	tests := []struct {
+		name     string
+		cur      TypeRecord
+		held     bool
+		given    TypeRecord
+		want     []string
+		fill     bool
+		conflict bool
+	}{
+		{"nothing held records every ref", TypeRecord{}, false,
+			TypeRecord{Anchor: AnchorFace, Cardinality: CardinalityMany, Refs: []string{"a.b"}}, []string{"a.b"}, false, false},
+		{"same record adds nothing", held, true, held, nil, false, false},
+		{"new ref is added", held, true, TypeRecord{
+			Anchor: AnchorFamily, Cardinality: CardinalityOne, Refs: []string{"note.about", "note.also"},
+		}, []string{"note.also"}, false, false},
+		{"dropped ref is kept", held, true,
+			TypeRecord{Anchor: AnchorFamily, Cardinality: CardinalityOne}, nil, false, false},
+		{"anchor differs", held, true,
+			TypeRecord{Anchor: AnchorFace, Cardinality: CardinalityOne}, nil, false, true},
+		{"cardinality differs", held, true,
+			TypeRecord{Anchor: AnchorFamily, Cardinality: CardinalityMany}, nil, false, true},
+		{"ref turned plain", held, true, TypeRecord{
+			Anchor: AnchorFamily, Cardinality: CardinalityOne, Plain: []string{"note.about"},
+		}, nil, false, true},
+		{"unknown cardinality is filled in", legacy, true,
+			TypeRecord{Anchor: AnchorFamily, Cardinality: CardinalityMany, Refs: []string{"a.b"}},
+			[]string{"a.b"}, true, false},
+		{"unknown cardinality keeps the anchor", legacy, true,
+			TypeRecord{Anchor: AnchorFace, Cardinality: CardinalityOne}, nil, false, true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got, fill, err := MergeTypeRecord("room", tc.cur, tc.held, tc.given)
+			if tc.conflict {
+				require.ErrorIs(t, err, ErrTypeShapeConflict)
+				return
+			}
+			require.NoError(t, err)
+			require.Equal(t, tc.want, got)
+			require.Equal(t, tc.fill, fill)
+		})
+	}
 }
 
 func TestTombstoneHandle(t *testing.T) {
