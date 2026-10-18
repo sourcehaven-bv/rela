@@ -650,11 +650,15 @@ func TestConvert_RefusesToCopyAnUnreadableField(t *testing.T) {
 			}
 			f.seed(t, "NOTE-1", "note", props)
 			req := entitymanager.ConversionRequest{Definition: "note-to-task", SourceID: "NOTE-1"}
-			for name, call := range map[string]func() error{
-				"preview": func() error { _, err := f.conv.Preview(context.Background(), req); return err },
-				"convert": func() error { _, err := f.conv.Convert(context.Background(), req); return err },
+			// Preview first: a successful convert consumes the source.
+			for _, step := range []struct {
+				name string
+				call func() error
+			}{
+				{"preview", func() error { _, err := f.conv.Preview(context.Background(), req); return err }},
+				{"convert", func() error { _, err := f.conv.Convert(context.Background(), req); return err }},
 			} {
-				err := call()
+				name, err := step.name, step.call()
 				if tc.allow && err != nil {
 					t.Errorf("%s: %v", name, err)
 				}
