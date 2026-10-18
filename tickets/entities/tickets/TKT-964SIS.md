@@ -5,8 +5,7 @@ title: 'Realtime 3/4: channel lifecycle, actions and promote-to-graph'
 kind: enhancement
 priority: medium
 effort: l
-started: "2026-10-17"
-status: in-progress
+status: backlog
 description: Declared lifecycle ops with from/condition/denied, retention, message actions, promote-to-graph through entitymanager with exactly-once semantics, and the on_entity_delete policy including a DeleteGuard.
 ---
 
