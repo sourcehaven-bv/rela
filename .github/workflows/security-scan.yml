@@ -121,7 +121,9 @@ jobs:
             local tool=$1 sarif=$2 details=${3:-}
             local title="Security scan: $tool findings"
             local count body existing previous
-            count=$(jq '[.runs[].results[]] | length' "$sarif")
+            # Results silenced in code (e.g. `nosemgrep`) stay in the SARIF
+            # with a non-empty `suppressions` array; do not count them.
+            count=$(jq '[.runs[].results[] | select((.suppressions // []) | length == 0)] | length' "$sarif")
             echo "$tool: $count finding(s)" | tee -a "$GITHUB_STEP_SUMMARY"
             existing=$(gh issue list --state open --label security --search "\"$title\" in:title" \
               --json number,title --jq "map(select(.title == \"$title\")) | .[0].number // empty")
