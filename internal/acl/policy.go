@@ -450,12 +450,18 @@ func (p *Policy) MembershipSelfPromotionOpen() bool {
 //
 // Affordance grants (Fields / Visible / Options / Relations) drive
 // the data-entry _fields / _relations wire shape via the
-// affordances resolver. Each is keyed by entity type and is
-// opt-in per type: a type that appears as a key is closed-world for
-// that affordance dimension (only listed fields/options/relations
-// are granted); a type absent from the map defaults permissive.
-// A present-but-empty list (`fields: {ticket: []}`) is closed-world
-// deny-all for that type, distinct from an absent or null value.
+// affordances resolver. Each is keyed by entity type. Within one role a
+// type that appears as a key is closed-world for that dimension: only the
+// listed fields/options/relations are granted. A present-but-empty list
+// (`fields: {ticket: []}`) grants none, distinct from an absent or null
+// value.
+//
+// Across roles the grants are a union (BUG-Y5UF3K): a field or option is
+// allowed when any role that applies to the row allows it. A role with no
+// block for the type grants every field of it when it holds the
+// dimension's verb on the type (read for Visible, update or create for
+// Fields and Options), so adding a role never narrows what another role
+// grants. affordances.PolicyResolver.FieldVerdicts applies this.
 type RoleDef struct {
 	// Description is optional operator-facing prose describing what this
 	// role is for, in plain language. Like [Policy.Description] it is
@@ -1214,7 +1220,7 @@ func (g RelationWriteGrant) validate(relType string) error {
 //
 //   - InheritRolesThrough entries must be non-empty and non-whitespace.
 //     A blank entry would expand ancestor sets through every relation
-//     type (StoreGraph treats RelationQuery.Type=="" as "all relations"),
+//     type (aclstore.Graph treats RelationQuery.Type=="" as "all relations"),
 //     silently turning a typo into a containment widening.
 //
 //   - RoleRelations keys must be non-empty and non-whitespace, for the
@@ -1277,7 +1283,7 @@ func (p *Policy) validateUnmatchedPrincipal() error {
 	}
 	// reject and provision key off the principal_property lookup: "unmatched"
 	// only has meaning when the resolver maps an identifier to a user entity.
-	// Without the lookup enabled, ResolvePrincipal returns no-match for EVERY
+	// Without the lookup enabled, IdentityResolver.ResolvePrincipal returns no-match for EVERY
 	// request, so every principal would look unmatched — a foot-gun that would
 	// reject (or provision for) everyone. Fail loud at load rather than mis-gate
 	// at runtime.

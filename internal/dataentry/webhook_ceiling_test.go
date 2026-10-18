@@ -232,17 +232,19 @@ func TestWebhookCeiling_UnreadableFindTypeDuplicates(t *testing.T) {
 	}
 }
 
-// TestWebhookRoute_ClearsAttachedRequest pins that an acl.Request opened for
-// another principal before the route does not survive into the delivery. The
-// stale Request belongs to a principal with no grants; if the find reused it,
-// it would never match and every delivery would create a new incident.
-func TestWebhookRoute_ClearsAttachedRequest(t *testing.T) {
+// TestWebhookRoute_ReadsAsTheHook pins that the delivery's find reads through
+// a gate bound to the hook principal. A Request opened for another principal
+// before the route must not survive into the delivery: it belongs to a
+// principal with no grants, so a find that reused it would never match. A
+// missing gate denies every read under the policy, with the same effect.
+// Either way every delivery would create a new incident.
+func TestWebhookRoute_ReadsAsTheHook(t *testing.T) {
 	app, st, _ := hookACLApp(t, nil)
 	d, ok := app.acl.(*acl.Declarative)
 	if !ok {
 		t.Fatalf("app ACL is %T, want *acl.Declarative", app.acl)
 	}
-	stale, err := d.ForPrincipal(principal.Principal{User: "nobody", Tool: principal.ToolDataEntry})
+	stale, err := acl.OpenRequest(t.Context(), d, principal.Principal{User: "nobody", Tool: principal.ToolDataEntry})
 	if err != nil {
 		t.Fatal(err)
 	}

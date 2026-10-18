@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
+	"github.com/Sourcehaven-BV/rela/internal/aclstore"
 	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
@@ -29,6 +30,14 @@ func (h hideOneACL) PermitsReadFace(_ context.Context, _, id string, _ entity.Fa
 // may be unable to read, and builds a manager over it with the ACL a makes.
 func writeBlindManager(t *testing.T, a func(store.Store) acl.ACL) (*entitymanager.Manager, store.Store) {
 	t.Helper()
+	return writeBlindManagerAudit(t, a, audit.Nop{})
+}
+
+// writeBlindManagerAudit is writeBlindManager recording into aud.
+func writeBlindManagerAudit(
+	t *testing.T, a func(store.Store) acl.ACL, aud audit.Audit,
+) (*entitymanager.Manager, store.Store) {
+	t.Helper()
 	st := memstore.New()
 	seedHidden(t, st,
 		[]*entity.Entity{
@@ -43,7 +52,7 @@ func writeBlindManager(t *testing.T, a func(store.Store) acl.ACL) (*entitymanage
 		})
 	mgr, err := entitymanager.New(entitymanager.Deps{
 		Store: st, Meta: parseMeta(t), Templater: nopTemplater{},
-		Audit: audit.Nop{}, ACL: a(st),
+		Audit: aud, ACL: a(st),
 		Transitions:    statemachine.EmptySet(),
 		FieldGate:      entitymanager.AllowAllFieldGate{},
 		AnchorGuard:    entitymanager.NopAnchorGuard{},
@@ -202,7 +211,71 @@ func TestWriteRequiresRead_Relation(t *testing.T) {
 			t.Errorf("delete of a visible relation: %v", err)
 		}
 	})
+
+	// A replace skips a remove whose head the caller cannot read, as it
+	// skips one already gone, and still removes the edges it can read.
+	t.Run("replace remove to a hidden head", func(t *testing.T) {
+		t.Parallel()
+		mgr, st := writeBlindManager(t, hiding)
+		hiddenKey := entity.RelationKey{From: "api", Type: "depends-on", To: "DEC-1"}
+		visibleKey := entity.RelationKey{From: "api", Type: "depends-on", To: "db"}
+		missingKey := entity.RelationKey{From: "api", Type: "depends-on", To: "DEC-404"}
+		if _, err := mgr.ReplaceRelations(writer(), nil,
+			[]entity.RelationKey{hiddenKey, visibleKey, missingKey}); err != nil {
+			t.Fatalf("replace: %v", err)
+		}
+		if _, err := st.GetRelation(writer(), hiddenKey); err != nil {
+			t.Errorf("hidden relation is gone: %v", err)
+		}
+		if _, err := st.GetRelation(writer(), visibleKey); !errors.Is(err, store.ErrNotFound) {
+			t.Errorf("visible relation after replace: %v, want it removed", err)
+		}
+		seer, seen := writeBlindManager(t, seeing)
+		if _, err := seer.ReplaceRelations(writer(), nil, []entity.RelationKey{hiddenKey}); err != nil {
+			t.Fatalf("replace as a reader of DEC-1: %v", err)
+		}
+		if _, err := seen.GetRelation(writer(), hiddenKey); !errors.Is(err, store.ErrNotFound) {
+			t.Errorf("readable relation after replace: %v, want it removed", err)
+		}
+	})
+
+	// The target is gated before the ACL is asked. A caller who may not
+	// delete the edge type gets the same silent skip for an edge to a hidden
+	// row as for one to a missing row, and the audit log names neither.
+	t.Run("replace remove to a hidden head is skipped before the ACL", func(t *testing.T) {
+		t.Parallel()
+		aud := audit.NewMemory()
+		mgr, st := writeBlindManagerAudit(t, hidingDenying, aud)
+		hiddenKey := entity.RelationKey{From: "api", Type: "depends-on", To: "DEC-1"}
+		missingKey := entity.RelationKey{From: "api", Type: "depends-on", To: "DEC-404"}
+		if _, err := mgr.ReplaceRelations(writer(), nil,
+			[]entity.RelationKey{hiddenKey, missingKey}); err != nil {
+			t.Fatalf("replace naming only unreadable edges: %v, want a silent skip", err)
+		}
+		if recs := aud.Records(); len(recs) != 0 {
+			t.Errorf("audit records = %+v, want none", recs)
+		}
+		if _, err := st.GetRelation(writer(), hiddenKey); err != nil {
+			t.Errorf("hidden relation is gone: %v", err)
+		}
+		visibleKey := entity.RelationKey{From: "api", Type: "depends-on", To: "db"}
+		if _, err := mgr.ReplaceRelations(writer(), nil, []entity.RelationKey{visibleKey}); err == nil {
+			t.Error("replace removing a readable edge without the grant succeeded")
+		}
+		if recs := aud.Records(); len(recs) != 1 || recs[0].Op != audit.OpDeniedWrite {
+			t.Errorf("audit records = %+v, want one denied write", recs)
+		}
+	})
 }
+
+// hideDenyACL hides DEC-1 from every reader and denies every write.
+type hideDenyACL struct{ hideOneACL }
+
+func (hideDenyACL) AuthorizeWrite(context.Context, acl.WriteRequest) acl.Decision {
+	return acl.Decision{Allow: false, RuleKind: "role-grant", RuleID: "-"}
+}
+
+func hidingDenying(store.Store) acl.ACL { return hideDenyACL{hideOneACL{hidden: "DEC-1"}} }
 
 // A copy onto a stored target the caller cannot read is refused as a taken
 // id, the answer a create with that id gets. The refusal does not say the
@@ -294,7 +367,7 @@ func TestWriteRequiresRead_DeclarativeHiddenSource(t *testing.T) {
 		if err != nil {
 			t.Fatalf("load policy: %v", err)
 		}
-		d, err := acl.NewDeclarative(p, acl.NewStoreGraph(st), st)
+		d, err := acl.NewDeclarative(p, aclstore.MustNewGraph(st), st)
 		if err != nil {
 			t.Fatalf("NewDeclarative: %v", err)
 		}

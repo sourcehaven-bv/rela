@@ -3,8 +3,12 @@ package dataentry
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
+
+	"github.com/Sourcehaven-BV/rela/internal/acl/acltest"
+	"github.com/Sourcehaven-BV/rela/internal/search"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	v1 "github.com/Sourcehaven-BV/rela/internal/apiwire/v1"
@@ -150,10 +154,10 @@ func TestComputeActions_MixedTypeDeclarative(t *testing.T) {
 
 	// Declarative looks up the principal by Principal.User against
 	// Assignments. Stamp a matching User on ctx.
-	ctx := principal.With(t.Context(), principal.Principal{
+	ctx := acltest.Bind(principal.With(t.Context(), principal.Principal{
 		User: "test-user",
 		Tool: principal.ToolDataEntry,
-	})
+	}), t, app.acl)
 
 	ticket := &entity.Entity{ID: "TKT-001", Type: "ticket"}
 	got := app.affordances.computeActions(ctx, ticket)
@@ -347,6 +351,15 @@ type fakeResolver struct {
 	rv RelationVerdicts
 }
 
+// errNoSearchForm is the search form of a test resolver that has none. It
+// refuses every search, so a stub that hides fields cannot pair with a
+// search that hides nothing.
+var errNoSearchForm = errors.New("test resolver has no search field scope")
+
+func (fakeResolver) SearchFieldScope(context.Context, string) (*search.FieldScope, error) {
+	return nil, errNoSearchForm
+}
+
 func (f fakeResolver) FieldVerdicts(context.Context, *entity.Entity) FieldVerdicts {
 	return f.fv
 }
@@ -383,6 +396,10 @@ func (r byTypeResolver) UnconditionalRelationVerdicts(ctx context.Context, e *en
 	return r.RelationVerdicts(ctx, e)
 }
 func (r byTypeResolver) FieldVisibleOnEveryRow(context.Context, string, string) bool { return true }
+
+func (byTypeResolver) SearchFieldScope(context.Context, string) (*search.FieldScope, error) {
+	return nil, errNoSearchForm
+}
 
 // affordanceServiceWithResolver builds a bare affordanceService over a fixed
 // resolver — no App. The resolver-driven affordance methods

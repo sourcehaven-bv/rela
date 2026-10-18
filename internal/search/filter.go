@@ -3,6 +3,7 @@ package search
 import (
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
@@ -160,4 +161,39 @@ func MatchTextFields(e *entity.Entity, text string) map[string]struct{} {
 		}
 	}
 	return fields
+}
+
+// IndexText is the text a database search backend matches a needle against:
+// the entity's id, its string-valued properties in key order and its body,
+// one per line, each lowered with [strings.ToLower]. That is the fold
+// [MatchTextFields] uses, so a backend that tests whether this text contains
+// strings.ToLower(needle) matches a row only when some field of it matches.
+// A backend that folds case its own way, as SQL lower() and LIKE do, can
+// match a row through a hidden field while the Go judgement credits a
+// visible one.
+//
+// Order matters (TKT-1U8XYN): the id and title-like properties come first,
+// because ranking compares the needle against the start of the text.
+func IndexText(e *entity.Entity) string {
+	var b strings.Builder
+	b.WriteString(strings.ToLower(e.ID))
+	b.WriteByte('\n')
+	keys := make([]string, 0, len(e.Properties))
+	strs := make(map[string]string, len(e.Properties))
+	for k, v := range e.Properties {
+		if s, ok := v.(string); ok {
+			keys = append(keys, k)
+			strs[k] = s
+		}
+	}
+	sort.Strings(keys)
+	for i, k := range keys {
+		if i > 0 {
+			b.WriteByte('\n')
+		}
+		b.WriteString(strings.ToLower(strs[k]))
+	}
+	b.WriteByte('\n')
+	b.WriteString(strings.ToLower(e.Content))
+	return b.String()
 }

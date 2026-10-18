@@ -51,7 +51,7 @@ func TestDeleteEntityFace_LastFaceAuthorizesInboundEdges(t *testing.T) {
 		t.Run(b.name, func(t *testing.T) {
 			f := lastFaceFixture(t, b)
 
-			_, err := f.mgr.DeleteEntityFace(asUser("drafter"), "POL-1", "draft", true)
+			_, err := f.mgr.DeleteEntityFace(entitymanager.BindAs(asUser("drafter"), t, f.mgr), "POL-1", "draft", true)
 			var forbidden *acl.ForbiddenError
 			if !errors.As(err, &forbidden) {
 				t.Fatalf("DeleteEntityFace as drafter = %v, want *acl.ForbiddenError for the inbound edge", err)
@@ -74,7 +74,7 @@ func TestDeleteEntityFace_LastFaceRemovesInboundEdges(t *testing.T) {
 		t.Run(b.name, func(t *testing.T) {
 			f := lastFaceFixture(t, b)
 
-			res, err := f.mgr.DeleteEntityFace(asUser("admin"), "POL-1", "draft", true)
+			res, err := f.mgr.DeleteEntityFace(entitymanager.BindAs(asUser("admin"), t, f.mgr), "POL-1", "draft", true)
 			if err != nil {
 				t.Fatalf("DeleteEntityFace as admin: %v", err)
 			}
@@ -108,7 +108,7 @@ func TestDeleteEntityFace_NotLastKeepsInboundEdges(t *testing.T) {
 			}
 			// drafter cannot delete a covers edge, so success also shows the
 			// inbound edge was not part of the authorized cascade.
-			if _, err := f.mgr.DeleteEntityFace(asUser("drafter"), "POL-1", "draft", true); err != nil {
+			if _, err := f.mgr.DeleteEntityFace(entitymanager.BindAs(asUser("drafter"), t, f.mgr), "POL-1", "draft", true); err != nil {
 				t.Fatalf("DeleteEntityFace as drafter: %v", err)
 			}
 			if n := f.inboundCovers(t); n != 1 {
@@ -124,7 +124,7 @@ func TestDeleteEntityFace_LastFaceNeedsCascade(t *testing.T) {
 	for _, b := range deleteACLBackends() {
 		t.Run(b.name, func(t *testing.T) {
 			f := lastFaceFixture(t, b)
-			_, err := f.mgr.DeleteEntityFace(asUser("admin"), "POL-1", "draft", false)
+			_, err := f.mgr.DeleteEntityFace(entitymanager.BindAs(asUser("admin"), t, f.mgr), "POL-1", "draft", false)
 			if !errors.Is(err, entitymanager.ErrHasRelations) {
 				t.Fatalf("DeleteEntityFace without cascade = %v, want ErrHasRelations", err)
 			}
@@ -143,7 +143,7 @@ func TestDeleteEntityFace_NotLastIgnoresCascade(t *testing.T) {
 	for _, b := range deleteACLBackends() {
 		t.Run(b.name, func(t *testing.T) {
 			f := newFaceEdgeFixture(t, b)
-			if _, err := f.mgr.DeleteEntityFace(asUser("drafter"), "POL-1", "draft", false); err != nil {
+			if _, err := f.mgr.DeleteEntityFace(entitymanager.BindAs(asUser("drafter"), t, f.mgr), "POL-1", "draft", false); err != nil {
 				t.Fatalf("DeleteEntityFace without cascade: %v", err)
 			}
 		})
@@ -181,7 +181,7 @@ func TestDeleteEntityFace_HiddenSiblingIsNoOracle(t *testing.T) {
 							t.Fatalf("seed POL-1@published: %v", err)
 						}
 					}
-					_, err := f.mgr.DeleteEntityFace(asUser(tc.user), "POL-1", "draft", tc.cascade)
+					_, err := f.mgr.DeleteEntityFace(entitymanager.BindAs(asUser(tc.user), t, f.mgr), "POL-1", "draft", tc.cascade)
 					if !tc.want(err) {
 						t.Fatalf("hidden=%v: DeleteEntityFace as %s = %v", hidden, tc.user, err)
 					}

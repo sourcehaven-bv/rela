@@ -138,7 +138,7 @@ func withDatabase(t *testing.T, root string, fn func(store.Store)) {
 		t.Fatal(err)
 	}
 	defer func() { _ = db.Close() }()
-	st, err := sqlitestore.New(db)
+	st, err := sqlitestore.New(context.Background(), db)
 	if err != nil {
 		t.Fatal(err)
 	}

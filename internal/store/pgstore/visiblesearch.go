@@ -32,7 +32,9 @@ var _ search.VisibleSearcher = (*Store)(nil)
 // matches the ungated backend (`similarity DESC, id ASC`; plain id
 // order for empty text) so the gated stream is the ungated stream
 // minus hidden rows — the conformance suite's ordered-subsequence
-// invariant.
+// invariant. A [search.TypeScope.Fields] entry adds the field check (see
+// [fieldCheck]): the statement reports which field grants hold on each row,
+// and Go judges which fields matched.
 //
 // Because search and visibility execute as one statement, any query
 // failure is wrapped in [search.ErrScope]: the statement IS the gate
@@ -40,8 +42,8 @@ var _ search.VisibleSearcher = (*Store)(nil)
 // (cancel-silent / deadline-504 mapping included — ctx is threaded
 // into the query, unlike the legacy ctx-less Backend.Search).
 //
-// Go-side residue: q.Filters cannot be pushed down, so the limit is
-// enforced after filtering. The result is read in keyset pages (see
+// Go-side residue: q.Filters and the field check run in Go, so the limit is
+// enforced after them. The result is read in keyset pages (see
 // visiblePages) until that many rows passed, so a page LIMIT never
 // starves the filtered result the way a single SQL LIMIT would.
 func (s *Store) SearchVisible(
@@ -84,18 +86,21 @@ type visibleKey struct {
 }
 
 // visiblePages reads a visible search in keyset pages and yields each page's
-// rows that pass q.Filters, with the page's rows already closed, so no
-// connection is held while the caller yields or runs a hidden-fields callback
-// (see defaultIteratorPageSize). The rows carry no bodies. Nothing is yielded
-// when the scope admits nothing. A page is at most q.Limit rows when no
-// Go-side filter can drop any, so a limited search usually costs one
-// statement.
+// rows that pass q.Filters and the field check, with the page's rows already
+// closed, so no connection is held while the caller yields (see
+// defaultIteratorPageSize). The rows carry no bodies. Nothing is yielded when
+// the scope admits nothing.
+//
+// A page is at most q.Limit rows when no Go-side check can drop any, so a
+// limited search usually costs one statement. Otherwise a page costs the
+// search statement plus at most one body read for the field check.
 func visiblePages(
 	ctx context.Context, db DBTX, titles SearchTitles, q search.Query, scope map[string]search.TypeScope,
 ) iter.Seq2[[]*entity.Entity, error] {
 	return func(yield func([]*entity.Entity, error) bool) {
+		gated := q.Text != "" && fieldGated(scope)
 		size := int(iteratorPageSize.Load())
-		if q.Limit > 0 && q.Limit < size && len(q.Filters) == 0 {
+		if q.Limit > 0 && q.Limit < size && len(q.Filters) == 0 && !gated {
 			size = q.Limit
 		}
 		var after *visibleKey
@@ -108,11 +113,10 @@ func visiblePages(
 			if !anyVisible {
 				return // empty effective scope: deny everything, skip the query
 			}
-			page := make([]*entity.Entity, 0, len(rows))
-			for _, r := range rows {
-				if search.MatchFilters(r.e, q.Filters) {
-					page = append(page, r.e)
-				}
+			page, err := keepRows(ctx, db, q, scope, gated, rows)
+			if err != nil {
+				yield(nil, err)
+				return
 			}
 			if len(page) > 0 && !yield(page, nil) {
 				return
@@ -144,10 +148,35 @@ func readVisiblePage(
 	return rows, err == nil, err
 }
 
-// visibleRow is one visible-search row and its keyset key.
+// keepRows returns the entities of rows that pass the field check (when
+// gated) and q.Filters, in order.
+func keepRows(
+	ctx context.Context, db DBTX, q search.Query, scope map[string]search.TypeScope, gated bool, rows []visibleRow,
+) ([]*entity.Entity, error) {
+	kept := rows
+	if gated {
+		var err error
+		if kept, err = fieldCheck(ctx, db, q.Text, scope, rows); err != nil {
+			return nil, err
+		}
+	}
+	page := make([]*entity.Entity, 0, len(kept))
+	for _, r := range kept {
+		if search.MatchFilters(r.e, q.Filters) {
+			page = append(page, r.e)
+		}
+	}
+	return page, nil
+}
+
+// visibleRow is one visible-search row and its keyset key. grants is the
+// row's field-grant verdicts (see [fieldGrantColumn]): grants[i] reports
+// whether grant i of its type's field scope holds on the row. It is nil for
+// a type without a field scope.
 type visibleRow struct {
-	e   *entity.Entity
-	key visibleKey
+	e      *entity.Entity
+	key    visibleKey
+	grants []bool
 }
 
 func scanVisibleRow(row scanner) (visibleRow, error) {
@@ -156,8 +185,9 @@ func scanVisibleRow(row scanner) (visibleRow, error) {
 		props                 []byte
 		updatedAt             time.Time
 		rank                  float32
+		grants                []bool
 	)
-	if err := row.Scan(&id, &typ, &ptr, &props, &content, &updatedAt, &rank); err != nil {
+	if err := row.Scan(&id, &typ, &ptr, &props, &content, &updatedAt, &rank, &grants); err != nil {
 		return visibleRow{}, err
 	}
 	e := entity.New(id, typ)
@@ -167,192 +197,14 @@ func scanVisibleRow(row scanner) (visibleRow, error) {
 	if e.Properties, err = unmarshalProps(props); err != nil {
 		return visibleRow{}, err
 	}
-	return visibleRow{e: e, key: visibleKey{rank: rank, id: id}}, nil
-}
-
-// compile-time check: the postgres store also filters at the property level.
-var _ search.FieldVisibleSearcher = (*Store)(nil)
-
-// SearchVisibleFields is [Store.SearchVisible] plus property-level redaction of the
-// match-on-hidden-field oracle. A hit whose text matched only fields the
-// principal may not see (per hidden) is dropped, so a search cannot confirm a
-// redacted property's value by returning its entity.
-//
-// The per-field match is computed in Go with [search.MatchTextFields] — the
-// same ground-truth matcher the generic backend uses — so pgstore and the
-// simple backends agree. It runs in TWO passes (TKT-U9DYW4), because the
-// candidate rows no longer carry bodies:
-//
-//  1. Every row is judged from its id and properties. A row with no hidden
-//     fields, or whose match a VISIBLE property or the id already explains,
-//     is kept here.
-//  2. The rows left over are those only a body can decide. Their bodies are
-//     fetched in one statement, for exactly the (id, face) pairs the gated
-//     query resolved, and the verdict is recomputed with the body in place.
-//
-// Pass 1 can only over-approximate "needs a body": a blank Content can remove
-// the content field from the matched set, never add a field to it. So no row
-// is kept in pass 1 that the single-pass code would have dropped.
-func (s *Store) SearchVisibleFields(
-	ctx context.Context, q search.Query, scope map[string]search.TypeScope, hidden search.HiddenFieldsFunc,
-) iter.Seq2[search.Hit, error] {
-	return func(yield func(search.Hit, error) bool) {
-		if err := search.ValidateQuery(q); err != nil {
-			yield(search.Hit{}, err)
-			return
-		}
-		if err := search.ValidateScope(scope); err != nil {
-			yield(search.Hit{}, err)
-			return
-		}
-
-		emitted := 0
-		for page, err := range visiblePages(ctx, s.db, s.searchTitles, q, scope) {
-			if err != nil {
-				yield(search.Hit{}, err)
-				return
-			}
-			remaining := 0
-			if q.Limit > 0 {
-				remaining = q.Limit - emitted
-			}
-			n, more := emitFieldVisibleRows(ctx, s.db, page, q, hidden, remaining, yield)
-			emitted += n
-			if !more || (q.Limit > 0 && emitted >= q.Limit) {
-				return
-			}
-		}
-	}
-}
-
-// emitFieldVisibleRows applies the property-level (hidden-field) drop to one
-// page of filtered visible-search rows and yields the survivors, at most
-// limit of them when limit > 0. It reports how many it yielded, and more is
-// false once iteration must stop: the consumer broke off, or a hidden-func
-// or body-read error was yielded. Extracted from SearchVisibleFields to keep
-// that closure's branching within the complexity budget.
-func emitFieldVisibleRows(
-	ctx context.Context, db DBTX, ents []*entity.Entity, q search.Query, hidden search.HiddenFieldsFunc,
-	limit int, yield func(search.Hit, error) bool,
-) (emitted int, more bool) {
-	// Pass 1 decides every row it can from id and properties alone, and
-	// remembers the rows whose verdict depends on the body.
-	var (
-		cands    []searchCandidate
-		bodyless []entity.Ref
-		decided  int
-	)
-	for _, e := range ents {
-		c, err := judgeWithoutBody(ctx, q, e, hidden)
-		if err != nil {
-			yield(search.Hit{}, err)
-			return 0, false
-		}
-		if c.needBody {
-			bodyless = append(bodyless, e.Ref())
-		}
-		cands = append(cands, c)
-		if !c.needBody {
-			decided++
-		}
-		// Rows are emitted in order, up to limit. Once that many rows are
-		// already KEPT, nothing further can be emitted — the undecided rows
-		// ahead of them can only add to the kept set — so stop judging.
-		if limit > 0 && decided >= limit {
-			break
-		}
-	}
-
-	bodies, err := searchBodies(ctx, db, bodyless)
-	if err != nil {
-		yield(search.Hit{}, fmt.Errorf("%w: pgstore visible search bodies: %w", search.ErrScope, err))
-		return 0, false
-	}
-
-	for _, c := range cands {
-		if c.needBody {
-			c.e.Content = bodies[c.e.Ref()]
-			if !search.MatchHasVisibleField(search.MatchTextFields(c.e, q.Text), c.hidden) {
-				continue
-			}
-		}
-		if limit > 0 && emitted >= limit {
-			return emitted, true
-		}
-		if !yield(c.hit, nil) {
-			return emitted, false
-		}
-		emitted++
-	}
-	return emitted, true
-}
-
-// searchCandidate is one gated search row between the two passes.
-type searchCandidate struct {
-	hit      search.Hit
-	e        *entity.Entity
-	hidden   map[string]struct{}
-	needBody bool
-}
-
-// judgeWithoutBody is pass 1 for one row: needBody is set only when the row
-// has hidden fields and neither its id nor a visible property explains the
-// match, so only its body can.
-func judgeWithoutBody(
-	ctx context.Context, q search.Query, e *entity.Entity, hidden search.HiddenFieldsFunc,
-) (searchCandidate, error) {
-	c := searchCandidate{hit: search.Hit{ID: e.ID, Type: e.Type, Title: e.Title(), Face: e.Face}, e: e}
-	if hidden == nil || q.Text == "" {
-		return c, nil
-	}
-	hf, err := hidden(ctx, c.hit, e)
-	if err != nil {
-		return c, fmt.Errorf("%w: hidden-fields for %q: %w", search.ErrScope, c.hit.ID, err)
-	}
-	if len(hf) > 0 && !search.MatchHasVisibleField(search.MatchTextFields(e, q.Text), hf) {
-		c.hidden, c.needBody = hf, true
-	}
-	return c, nil
-}
-
-// searchBodies loads the bodies of exactly the given states. The keys are the
-// (id, face) pairs the GATED query resolved, so this statement reads no row
-// the gate did not already admit — it must never widen to "every state of
-// these ids", which would pull a face the world or the ACL withheld.
-func searchBodies(ctx context.Context, db DBTX, keys []entity.Ref) (map[entity.Ref]string, error) {
-	if len(keys) == 0 {
-		return map[entity.Ref]string{}, nil
-	}
-	ids, faces := make([]string, len(keys)), make([]string, len(keys))
-	for i, k := range keys {
-		ids[i], faces[i] = k.ID, string(k.Face)
-	}
-	rows, err := db.Query(ctx,
-		"SELECT e.id, e.face, e.content FROM entities e"+
-			" JOIN unnest($1::text[], $2::text[]) AS k(id, face) ON e.id = k.id AND e.face = k.face",
-		ids, faces)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	out := make(map[entity.Ref]string, len(keys))
-	for rows.Next() {
-		var id, face, content string
-		if err := rows.Scan(&id, &face, &content); err != nil {
-			return nil, err
-		}
-		out[entity.Ref{ID: id, Face: entity.Face(face)}] = content
-	}
-	return out, rows.Err()
+	return visibleRow{e: e, key: visibleKey{rank: rank, id: id}, grants: grants}, nil
 }
 
 // visibleSearchColumns is scanEntity's column list with the body projected
 // away (TKT-U9DYW4). A hit is an id, a type and a title; the property filters
-// read properties only. The one consumer of a body is the hidden-field check,
-// and only for a row whose match is not already explained by a visible
-// property — those bodies are fetched afterwards, for exactly those rows
-// (see emitFieldVisibleRows). Shipping every candidate's body was 280 ms of a
-// 290 ms search at 1000 hits.
+// read properties only. The field check reads a body only for a row that
+// no visible property admits (see [fieldCheck]). Shipping every candidate's
+// body was 280 ms of a 290 ms search at 1000 hits.
 const visibleSearchColumns = "e.id, e.type, e.face, e.properties, ''::text AS content, e.updated_at"
 
 // buildVisibleSearchSQL emits the combined search+visibility statement.
@@ -368,7 +220,8 @@ const visibleSearchColumns = "e.id, e.type, e.face, e.properties, ''::text AS co
 //
 // It reads one keyset page of at most pageLimit rows after the key after (nil
 // for the first page). Each row carries its rank as a seventh column, which
-// is the key's first part; see visiblePages.
+// is the key's first part, and its field-grant verdicts as an eighth; see
+// visiblePages.
 func buildVisibleSearchSQL(
 	q search.Query, scope map[string]search.TypeScope, titles SearchTitles, after *visibleKey, pageLimit int,
 ) (sqlText string, args []any, anyVisible bool, err error) {
@@ -388,11 +241,6 @@ func buildVisibleSearchSQL(
 	}
 
 	var sb strings.Builder
-	if len(withParts) > 0 {
-		sb.WriteString("WITH RECURSIVE ")
-		sb.WriteString(strings.Join(withParts, ",\n"))
-		sb.WriteByte('\n')
-	}
 	// The world scope rides q.World (TKT-9KZGJO). Two shapes, exactly as in
 	// SearchBackend.Search:
 	//
@@ -434,7 +282,13 @@ func buildVisibleSearchSQL(
 		rankCol = titles.rankSQL("e", func(v any) string { return b.arg(v) }, needle)
 		orderBy = " ORDER BY search_rank DESC, e.id ASC"
 	}
-	columns := visibleSearchColumns + ", " + rankCol + " AS search_rank"
+	grantsCol := "NULL::boolean[]"
+	if q.Text != "" {
+		var w []string
+		w, grantsCol = fieldGrantColumn(b, scope)
+		withParts = append(withParts, w...)
+	}
+	columns := visibleSearchColumns + ", " + rankCol + " AS search_rank, " + grantsCol + " AS field_grants"
 	if q.World.IsTrivial() {
 		sb.WriteString("SELECT " + columns + " FROM entities e WHERE e.face = ''" + visCond)
 	} else {
@@ -463,7 +317,177 @@ func buildVisibleSearchSQL(
 	if b.err != nil {
 		return "", nil, false, b.err
 	}
-	return sb.String(), b.args, true, nil
+	return withClause(withParts) + sb.String(), b.args, true, nil
+}
+
+// fieldGated reports whether some entry of scope gates properties.
+func fieldGated(scope map[string]search.TypeScope) bool {
+	for typ, ts := range scope {
+		if typ != search.WildcardType && ts.Fields != nil {
+			return true
+		}
+	}
+	return false
+}
+
+// fieldGrantColumn renders the field-grant verdicts of a row as one
+// boolean[] column: for a row of a type whose entry carries
+// [search.TypeScope.Fields], element i+1 says whether grant i's When holds on
+// the row (true for a nil When); for any other row, NULL. The When
+// predicates render through the graph query builder with a per-grant CTE
+// prefix, against every face of their endpoints, as MatchingFaces would
+// evaluate them.
+//
+// The statement decides only which grants hold on which rows. Which fields
+// the text matched is judged in Go ([fieldCheck]), because only Go folds
+// case the way search_text was folded.
+func fieldGrantColumn(b *sqlBuilder, scope map[string]search.TypeScope) (with []string, column string) {
+	types := make([]string, 0, len(scope))
+	for typ, ts := range scope {
+		if typ != search.WildcardType && ts.Fields != nil {
+			types = append(types, typ)
+		}
+	}
+	if len(types) == 0 {
+		return nil, "NULL::boolean[]"
+	}
+	slices.Sort(types)
+	var cases strings.Builder
+	cases.WriteString("CASE")
+	for i, typ := range types {
+		typeArg := b.arg(typ)
+		elems := make([]string, 0, len(scope[typ].Fields.Grants))
+		for j, g := range scope[typ].Fields.Grants {
+			if g.When == nil {
+				elems = append(elems, "TRUE")
+				continue
+			}
+			w, conds := fieldGrantCond(b, fmt.Sprintf("f%d_%d_", i, j), *g.When, typeArg)
+			with = append(with, w...)
+			cond := "TRUE"
+			if len(conds) > 0 {
+				cond = strings.Join(conds, " AND ")
+			}
+			elems = append(elems, "COALESCE(("+cond+"), FALSE)")
+		}
+		cases.WriteString(" WHEN e.type = " + typeArg + " THEN ARRAY[" + strings.Join(elems, ", ") + "]::boolean[]")
+	}
+	cases.WriteString(" ELSE NULL END")
+	return with, cases.String()
+}
+
+// fieldCheck keeps the rows whose text match the field scope admits, in
+// order, so a hit whose only match is a property the reader may not see is
+// never returned (the match-on-hidden-field oracle).
+//
+// The matched fields come from [search.MatchTextFields], the matcher the
+// generic searcher uses. It folds case with Go's strings.ToLower, as the
+// store does when it writes search_text, so the trigram pre-filter and this
+// check agree. PostgreSQL's lower() folds some characters differently (for
+// example 'İ'); judging in SQL with it could admit a row whose real match
+// is in a hidden field.
+//
+// A row is first judged on its id and properties. Only a row they do not
+// admit has its body read, in one batch per page, because the body is never
+// property-gated and may still admit it.
+func fieldCheck(
+	ctx context.Context, db DBTX, text string, scope map[string]search.TypeScope, rows []visibleRow,
+) ([]visibleRow, error) {
+	verdict := make([]bool, len(rows))
+	var pending []entity.Ref
+	for i, r := range rows {
+		fs := scope[r.e.Type].Fields
+		if fs == nil {
+			verdict[i] = true
+			continue
+		}
+		if admits(fs, r, text) {
+			verdict[i] = true
+			continue
+		}
+		pending = append(pending, r.e.Ref())
+	}
+	if len(pending) > 0 {
+		bodies, err := readBodies(ctx, db, pending)
+		if err != nil {
+			return nil, fmt.Errorf("%w: pgstore visible search: field check: %w", search.ErrScope, err)
+		}
+		for i, r := range rows {
+			if verdict[i] {
+				continue
+			}
+			body, ok := bodies[r.e.Ref()]
+			if !ok || body == "" {
+				continue // gone, or no body to match: nothing visible matched
+			}
+			withBody := *r.e
+			withBody.Content = body
+			verdict[i] = admits(scope[r.e.Type].Fields, visibleRow{e: &withBody, grants: r.grants}, text)
+		}
+	}
+	out := rows[:0:0]
+	for i, r := range rows {
+		if verdict[i] {
+			out = append(out, r)
+		}
+	}
+	return out, nil
+}
+
+// admits reports whether fs keeps r for text. A grant the statement did not
+// report as holding is treated as not holding, which can only hide more.
+func admits(fs *search.FieldScope, r visibleRow, text string) bool {
+	matched := search.MatchTextFields(r.e, text)
+	return fs.AdmitsMatch(matched, func(i int) bool { return i < len(r.grants) && r.grants[i] })
+}
+
+// readBodies reads the bodies of the face rows refs in one statement.
+func readBodies(ctx context.Context, db DBTX, refs []entity.Ref) (map[entity.Ref]string, error) {
+	ids := make([]string, len(refs))
+	faces := make([]string, len(refs))
+	for i, r := range refs {
+		ids[i], faces[i] = r.ID, r.Face.String()
+	}
+	type body struct {
+		ref     entity.Ref
+		content string
+	}
+	got, err := queryAll(ctx, db,
+		"SELECT e.id, e.face, e.content FROM entities e"+
+			" JOIN unnest($1::text[], $2::text[]) AS k(id, face) ON e.id = k.id AND e.face = k.face",
+		[]any{ids, faces},
+		func(row scanner) (body, error) {
+			var id, face, content string
+			if err := row.Scan(&id, &face, &content); err != nil {
+				return body{}, err
+			}
+			return body{ref: entity.Ref{ID: id, Face: entity.Face(face)}, content: content}, nil
+		})
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[entity.Ref]string, len(got))
+	for _, g := range got {
+		out[g.ref] = g.content
+	}
+	return out, nil
+}
+
+// fieldGrantCond renders a field grant's When as conjuncts on e. Its
+// relation predicates read every face of their endpoints, and its FaceIn
+// restricts the row's own face.
+func fieldGrantCond(b *sqlBuilder, prefix string, when store.GraphQuery, typeArg string) (with, conds []string) {
+	when.Faces = store.AllFaces()
+	with, pre, post := buildPredicatePartsPrefixed(b, prefix, when, typeArg)
+	conds = slices.Concat(pre, post)
+	if len(when.FaceIn) > 0 {
+		faces := make([]string, len(when.FaceIn))
+		for i, f := range when.FaceIn {
+			faces[i] = f.String()
+		}
+		conds = append(conds, "e.face = ANY("+b.arg(faces)+")")
+	}
+	return with, conds
 }
 
 // buildVisibilityDisjunction emits the per-type OR-parts of the

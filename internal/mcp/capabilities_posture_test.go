@@ -18,7 +18,7 @@ import (
 // Both call sites carry a comment saying the grant must stay empty, but a
 // comment cannot fail a build. This test can. It matters especially because
 // [lua.WithCapabilities] treats an empty grant as "no opinion" rather than as a
-// revocation: if a deps-carried grant ever appeared on Deps.LuaWriteDeps,
+// revocation: if a deps-carried grant ever appeared on Deps.Lua.WriteDeps,
 // the tools would inherit it and NO option at the call site could take it back.
 func TestLuaToolsHoldNoAmbientCapabilities(t *testing.T) {
 	t.Parallel()
@@ -29,13 +29,13 @@ func TestLuaToolsHoldNoAmbientCapabilities(t *testing.T) {
 	}
 
 	// Guard the field the tools actually read. If someone populates
-	// Deps.LuaWriteDeps.Capabilities at a wiring site, this fails and they are
+	// Deps.Lua.WriteDeps.Capabilities at a wiring site, this fails and they are
 	// forced to reckon with lua_eval inheriting it.
 	d := Deps{}
-	if d.LuaWriteDeps.Capabilities.Any() {
-		t.Errorf("Deps.LuaWriteDeps carries an ambient capability grant (%+v). "+
+	if d.Lua.WriteDeps.Capabilities.Any() {
+		t.Errorf("Deps.Lua.WriteDeps carries an ambient capability grant (%+v). "+
 			"lua_eval/lua_run execute client-supplied code and must reach no "+
 			"http/ai/secrets; there is no way to revoke it at the call site",
-			d.LuaWriteDeps.Capabilities)
+			d.Lua.WriteDeps.Capabilities)
 	}
 }

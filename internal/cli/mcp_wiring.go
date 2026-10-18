@@ -254,13 +254,18 @@ func (s *mcpServices) deps() relamcp.Deps {
 		Validator:     reads.Validator,
 		EntityManager: s.svc.EntityManager(),
 		Config:        s.svc.Config(),
-		LuaWriteDeps:  s.svc.LuaWriteDeps(),
-		LuaCache:      s.svc.ScriptEngine().LuaCache(),
+		Lua:           relamcp.LuaDeps{WriteDeps: s.svc.LuaWriteDeps(), Cache: s.svc.ScriptEngine().LuaCache()},
 		Watcher:       s.watcher,
 		Watch:         relamcp.WatchDeps{Changes: s.svc.Store(), Rebind: reads.Rebind},
 		ProjectRoot:   s.svc.Paths().Root,
 		World:         reads.LuaReads.World,
 		Families:      appbuild.CompiledWorlds(s.svc).Families(),
+		// The request edge for stdio: resolve the fallback principal against
+		// THIS assembly's ACL (NopACL here, so it binds nothing today). It is
+		// the IdentityBinder step, taken from the same GatedReads as the
+		// readers above and published with them, so a reload cannot pair a
+		// Request with foreign readers.
+		BindIdentity: reads.Rebind,
 	}
 	if reads.Traversals != nil {
 		deps.Traversals = reads.Traversals

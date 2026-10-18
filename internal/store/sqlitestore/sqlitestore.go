@@ -39,6 +39,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"sync"
 	"time"
 
@@ -210,9 +211,12 @@ type pendingEvents struct {
 // It also mirrors pgstore, whose New likewise takes an injected pool that the
 // wiring site owns and closes.
 //
+// ctx bounds the search-text backfill New runs for rows written before the
+// v22 rung; see reindexSearchText.
+//
 // Nil: rejected — a nil database is a wiring mistake, and failing here beats a
 // panic on the first query.
-func New(db *sqlitedb.DB, options ...Option) (*Store, error) {
+func New(ctx context.Context, db *sqlitedb.DB, options ...Option) (*Store, error) {
 	if db == nil {
 		return nil, errors.New("sqlitestore: nil database")
 	}
@@ -222,6 +226,9 @@ func New(db *sqlitedb.DB, options ...Option) (*Store, error) {
 	}
 	for _, opt := range options {
 		opt(s)
+	}
+	if err := reindexSearchText(ctx, s); err != nil {
+		return nil, fmt.Errorf("sqlitestore: index search text: %w", err)
 	}
 	return s, nil
 }

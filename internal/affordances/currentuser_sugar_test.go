@@ -11,6 +11,10 @@ import (
 // (is_current_user / has_current_user) is usable in an affordance
 // `when:` and agrees with the explicit current_user.id comparison it
 // replaces. Same package, same semantics, one implementation.
+//
+// It uses a `fields:` block: a `visible:` condition must also lower to a
+// store query, which refuses `or` and list membership (see
+// TestNew_VisibleWhenMustLower). The sugar evaluates the same in every block.
 func TestAffordances_CurrentUserSugar(t *testing.T) {
 	t.Parallel()
 
@@ -78,7 +82,7 @@ func TestAffordances_CurrentUserSugar(t *testing.T) {
 			p := policyFromYAML(t, `
 roles:
   viewer:
-    visible:
+    fields:
       ticket:
         - field: assignee
           when: `+quoteYAML(tc.when)+`
@@ -90,10 +94,10 @@ assignments:
 			if err != nil {
 				t.Fatalf("New: %v", err)
 			}
-			fv := r.FieldVerdicts(ctxAs(tc.user), ticket("T-1", tc.props))
+			fv := r.FieldVerdicts(ctxFor(t, r, tc.user), ticket("T-1", tc.props))
 			// A field is hidden only when the map says so explicitly;
 			// absence means no grant narrowed it.
-			v, ok := fv.Visible["assignee"]
+			v, ok := fv.Writable["assignee"]
 			hidden := ok && !v
 			if hidden == tc.wantVisible {
 				t.Fatalf("when %q as %q: visible=%v, want visible=%v",
@@ -111,13 +115,13 @@ func quoteYAML(s string) string {
 }
 
 // TestAffordances_CurrentUserSugar_UnknownPlaceholderNeverMatches pins the
-// fail-closed reading on the one path where an UNIDENTIFIED caller reaches a
-// `when:` clause: the `everyone` role, which the resolver applies to an
-// unstamped principal and to the "unknown" attribution placeholder alike.
-// An entity whose property literally holds "unknown" is not owned by an
-// anonymous caller, in any of the three spellings. The control case proves
-// the same grant DOES evaluate for a real principal, so the refusal is not
-// an artifact of the role never applying.
+// fail-closed reading for an UNIDENTIFIED caller: an unstamped ctx, or the
+// "unknown" attribution placeholder the data-entry server stamps when it has
+// no identity source. Neither resolves into an identity, so no request scope
+// is bound and the resolver denies. An entity whose property literally holds
+// "unknown" is not owned by an anonymous caller, in any of the three
+// spellings. The control case proves the same grant DOES evaluate for a real
+// principal, so the refusal is not an artifact of the role never applying.
 func TestAffordances_CurrentUserSugar_UnknownPlaceholderNeverMatches(t *testing.T) {
 	t.Parallel()
 
@@ -125,21 +129,21 @@ func TestAffordances_CurrentUserSugar_UnknownPlaceholderNeverMatches(t *testing.
 		name        string
 		when        string
 		props       map[string]any
-		ctx         context.Context //nolint:containedctx // table fixture
+		user        string // "" means an unstamped, unbound context
 		wantVisible bool
 	}{
 		{"control: a real principal matches via everyone",
-			"is_current_user(entity.assignee)", map[string]any{"assignee": "alice"}, ctxAs("alice"), true},
+			"is_current_user(entity.assignee)", map[string]any{"assignee": "alice"}, "alice", true},
 		{"unknown placeholder, sugar",
-			"is_current_user(entity.assignee)", map[string]any{"assignee": "unknown"}, ctxAs("unknown"), false},
+			"is_current_user(entity.assignee)", map[string]any{"assignee": "unknown"}, "unknown", false},
 		{"unknown placeholder, explicit comparison",
-			"entity.assignee == current_user.id", map[string]any{"assignee": "unknown"}, ctxAs("unknown"), false},
+			"entity.assignee == current_user.id", map[string]any{"assignee": "unknown"}, "unknown", false},
 		{"unknown placeholder, list membership",
-			"has_current_user(entity.tags)", map[string]any{"tags": []any{"unknown"}}, ctxAs("unknown"), false},
+			"has_current_user(entity.tags)", map[string]any{"tags": []any{"unknown"}}, "unknown", false},
 		{"unstamped context, sugar",
-			"is_current_user(entity.assignee)", map[string]any{"assignee": "unknown"}, context.Background(), false},
+			"is_current_user(entity.assignee)", map[string]any{"assignee": "unknown"}, "", false},
 		{"unstamped context, explicit comparison against an empty owner",
-			"entity.assignee == current_user.id", map[string]any{"assignee": ""}, context.Background(), false},
+			"entity.assignee == current_user.id", map[string]any{"assignee": ""}, "", false},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -147,7 +151,7 @@ func TestAffordances_CurrentUserSugar_UnknownPlaceholderNeverMatches(t *testing.
 			p := policyFromYAML(t, `
 roles:
   everyone:
-    visible:
+    fields:
       ticket:
         - field: assignee
           when: `+quoteYAML(tc.when)+`
@@ -156,8 +160,18 @@ roles:
 			if err != nil {
 				t.Fatalf("New: %v", err)
 			}
-			fv := r.FieldVerdicts(tc.ctx, ticket("T-1", tc.props))
-			v, ok := fv.Visible["assignee"]
+			// The "unknown" placeholder cannot be resolved into an identity,
+			// so the edge binds nothing: stamp it without binding.
+			ctx := context.Background()
+			switch tc.user {
+			case "":
+			case "unknown":
+				ctx = ctxAs(tc.user)
+			default:
+				ctx = ctxFor(t, r, tc.user)
+			}
+			fv := r.FieldVerdicts(ctx, ticket("T-1", tc.props))
+			v, ok := fv.Writable["assignee"]
 			hidden := ok && !v
 			if hidden == tc.wantVisible {
 				t.Fatalf("when %q: visible=%v, want visible=%v", tc.when, !hidden, tc.wantVisible)

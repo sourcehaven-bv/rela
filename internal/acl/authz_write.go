@@ -24,7 +24,7 @@ func (r *Request) authorizeWrite(ctx context.Context, req WriteRequest) Decision
 	case EntitySubject:
 		return r.authorizeEntityWrite(ctx, req.Op, s)
 	case RelationSubject:
-		return r.authorizeRelationWrite(ctx, req.Op, s)
+		return r.authorizeRelationWrite(req.Op, s)
 	default:
 		// Sealed sum (incl. nil Subject): unreachable from any well-formed
 		// caller. Panic so a missing case or a forgotten Subject surfaces
@@ -40,7 +40,7 @@ func (r *Request) authorizeEntityWrite(ctx context.Context, op Op, s EntitySubje
 	if s.id != "" {
 		attrs = r.computeForEntity(ctx, s.id)
 	} else {
-		attrs = r.Globals(ctx).Attributions
+		attrs = r.Globals().Attributions
 	}
 	if s.family {
 		return r.decideFamily(attrs, op, s.typ, s.convertTo)
@@ -118,10 +118,10 @@ func grantsFamilyRename(role RoleDef, target string) bool {
 	return false
 }
 
-func (r *Request) authorizeRelationWrite(ctx context.Context, op Op, s RelationSubject) Decision {
+func (r *Request) authorizeRelationWrite(op Op, s RelationSubject) Decision {
 	// Delegate-X gate for role-relation writes.
 	if rr, ok := r.d.policy.RoleRelations[s.Type]; ok && rr.RequiresPermission != "" {
-		if !r.holdsPermission(ctx, rr.RequiresPermission) {
+		if !r.holdsPermission(rr.RequiresPermission) {
 			return Decision{
 				Allow:    false,
 				RuleKind: "delegate-permission",
@@ -139,7 +139,7 @@ func (r *Request) authorizeRelationWrite(ctx context.Context, op Op, s RelationS
 	// Globals only, never computeForEntity: sourcing this from locally-conferred
 	// roles would let a role conferred ON an entity authorize edges FROM it,
 	// which is the delegate-X inversion in a different dress.
-	attrs := r.Globals(ctx).Attributions
+	attrs := r.Globals().Attributions
 
 	// The ceiling is checked before any grant, exactly as on the entity path —
 	// see ceilingDenial for why roleFor alone is not enough. Note it keys on
@@ -279,9 +279,8 @@ func (r *Request) decideFromAttrs(
 	}
 	for _, a := range attrs {
 		role, ok := r.roleFor(a.Role)
-		// coverage-ignore: defensive: attrs come from computeGlobals/computeForEntity which already skip roles not
-		// defined in policy.Roles, so
-		// ok is always true here
+		// coverage-ignore: defensive: attrs come from Declarative.globalRoles/computeForEntity, which already skip
+		// roles not defined in policy.Roles, so ok is always true here
 		if !ok {
 			continue
 		}

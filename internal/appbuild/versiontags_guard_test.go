@@ -5,11 +5,14 @@ import (
 	"testing"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
+	"github.com/Sourcehaven-BV/rela/internal/acl/acltest"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
 )
 
 // TestTagPermissionGuard pins where the guard takes its subject from: the
-// acl.Request on ctx when there is one, else the ctx principal.
+// acl.Request the operation's edge attached, for the principal on ctx. A
+// stamped principal with no attached Request, or a Request bound to another
+// principal, is denied (fail closed, like acl.Declarative.AuthorizeWrite).
 func TestTagPermissionGuard(t *testing.T) {
 	t.Parallel()
 	policy := &acl.Policy{
@@ -23,20 +26,20 @@ func TestTagPermissionGuard(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewDeclarative: %v", err)
 	}
-	request := func(user string) *acl.Request {
-		r, rerr := d.ForPrincipal(principal.Principal{User: user, Tool: principal.ToolCLI})
-		if rerr != nil {
-			t.Fatalf("ForPrincipal(%s): %v", user, rerr)
-		}
-		return r
-	}
 	stamped := func(user string) func() context.Context {
 		return func() context.Context {
 			return principal.With(context.Background(), principal.Principal{User: user, Tool: principal.ToolCLI})
 		}
 	}
-	withRequest := func(base func() context.Context, user string) func() context.Context {
-		return func() context.Context { return acl.WithRequest(base(), request(user)) }
+	bound := func(user string) func() context.Context {
+		return func() context.Context { return acltest.Bind(stamped(user)(), t, d) }
+	}
+	foreign := func(ctxUser, reqUser string) func() context.Context {
+		return func() context.Context {
+			req := acltest.RequestFor(context.Background(), t, d,
+				principal.Principal{User: reqUser, Tool: principal.ToolCLI})
+			return acl.WithRequest(stamped(ctxUser)(), req)
+		}
 	}
 
 	cases := []struct {
@@ -46,13 +49,11 @@ func TestTagPermissionGuard(t *testing.T) {
 		want  bool
 	}{
 		{"no policy allows", tagPermissionGuard{}, context.Background, true},
-		{"stamped holder", tagPermissionGuard{d: d}, stamped("alice"), true},
-		{"stamped non-holder", tagPermissionGuard{d: d}, stamped("bob"), false},
+		{"bound holder", tagPermissionGuard{d: d}, bound("alice"), true},
+		{"bound non-holder", tagPermissionGuard{d: d}, bound("bob"), false},
+		{"stamped, no request", tagPermissionGuard{d: d}, stamped("alice"), false},
 		{"unstamped, no request", tagPermissionGuard{d: d}, context.Background, false},
-		{"attached request is reused", tagPermissionGuard{d: d},
-			withRequest(context.Background, "alice"), true},
-		{"attached request wins over the principal", tagPermissionGuard{d: d},
-			withRequest(stamped("alice"), "bob"), false},
+		{"request for another principal", tagPermissionGuard{d: d}, foreign("alice", "bob"), false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

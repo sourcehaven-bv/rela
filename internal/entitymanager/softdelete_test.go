@@ -10,6 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
+	"github.com/Sourcehaven-BV/rela/internal/aclstore"
 	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
@@ -262,7 +263,7 @@ role_relations:
 	_, err = seed.CreateRelation(ctx, entity.RelationKey{From: "alice", Type: "assigned-to", To: tkt.Entity.ID}, entity.RelationOptions{})
 	require.NoError(t, err)
 
-	declarative, err := acl.NewDeclarative(policy, acl.NewStoreGraph(st), st)
+	declarative, err := acl.NewDeclarative(policy, aclstore.MustNewGraph(st), st)
 	require.NoError(t, err)
 	mgr, err := entitymanager.New(entitymanager.Deps{
 		Store: st, Meta: meta, Templater: nopTemplater{}, Audit: audit.Nop{}, ACL: declarative,
@@ -285,14 +286,14 @@ func TestSoftDelete_RestoreUsesLocalRolesThroughReveal(t *testing.T) {
 	t.Parallel()
 	mgr, st, tktID := newRestoreACLFixture(t)
 
-	_, err := entitymanager.SoftDeleteEntity(userCtx("alice"), mgr, tktID)
+	_, err := entitymanager.SoftDeleteEntity(entitymanager.BindAs(userCtx("alice"), t, mgr), mgr, tktID)
 	require.NoError(t, err)
 
-	_, err = entitymanager.RestoreEntity(userCtx("bob"), mgr, tktID)
+	_, err = entitymanager.RestoreEntity(entitymanager.BindAs(userCtx("bob"), t, mgr), mgr, tktID)
 	var forbidden *acl.ForbiddenError
 	require.ErrorAs(t, err, &forbidden, "bob holds no role on the ticket")
 
-	_, err = entitymanager.RestoreEntity(userCtx("alice"), mgr, tktID)
+	_, err = entitymanager.RestoreEntity(entitymanager.BindAs(userCtx("alice"), t, mgr), mgr, tktID)
 	require.NoError(t, err, "alice's role comes from the hidden assigned-to edge")
 	_, err = st.GetRelation(context.Background(), entity.RelationKey{From: "alice", Type: "assigned-to", To: tktID})
 	require.NoError(t, err)
@@ -305,14 +306,14 @@ func TestSoftDelete_RestoreChecksRelationGrants(t *testing.T) {
 	t.Parallel()
 	mgr, st, tktID := newRestoreACLFixture(t)
 
-	_, err := entitymanager.SoftDeleteEntity(userCtx("carol"), mgr, tktID)
+	_, err := entitymanager.SoftDeleteEntity(entitymanager.BindAs(userCtx("carol"), t, mgr), mgr, tktID)
 	var forbidden *acl.ForbiddenError
 	require.ErrorAs(t, err, &forbidden, "the delete itself needs the edge grant")
 
-	_, err = entitymanager.SoftDeleteEntity(userCtx("alice"), mgr, tktID)
+	_, err = entitymanager.SoftDeleteEntity(entitymanager.BindAs(userCtx("alice"), t, mgr), mgr, tktID)
 	require.NoError(t, err)
 
-	_, err = entitymanager.RestoreEntity(userCtx("carol"), mgr, tktID)
+	_, err = entitymanager.RestoreEntity(entitymanager.BindAs(userCtx("carol"), t, mgr), mgr, tktID)
 	require.ErrorAs(t, err, &forbidden, "carol has no delete grant on assigned-to from person")
 
 	_, found, err := entitymanager.FindSoftDeleted(context.Background(), mgr, tktID)

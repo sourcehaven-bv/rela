@@ -75,7 +75,7 @@ func (h luaHandler) handleLuaEval(ctx context.Context, req *mcpgo.CallToolReques
 	// Since TKT-BDG8U9 the MCP endpoint can also be mounted over HTTP, so this
 	// is reachable off-host rather than only over stdio — which raises the
 	// stakes rather than changing the answer.
-	// LuaWriteDeps.Capabilities is the zero value here and must stay that way;
+	// Lua.WriteDeps.Capabilities is the zero value here and must stay that way;
 	// do not "fix" a script that fails with "attempt to index a nil value
 	// (global http)" by granting it here.
 	runtime, err := script.NewWriterRuntime(h.writeDeps, "",

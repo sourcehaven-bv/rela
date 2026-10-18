@@ -509,8 +509,10 @@ and validation results.
 
 MCP reads go through the same read-side ACL path as every other read shape.
 The server does not hold a raw `store.Store`: it takes a narrow `GraphReader`
-capability, and the wiring site supplies a visibility-wrapped reader that
-resolves the principal from the call context. Row-level gating and field-level
+capability, and the wiring site supplies a visibility-wrapped reader. The
+server middleware resolves the caller's identity once per call and attaches
+the request scope to the call context; the reader evaluates against it, and
+denies when it is missing. Row-level gating and field-level
 `visible:` redaction therefore apply to MCP tools and resources exactly as they
 do to the HTTP API — a hidden entity is absent, and a redacted property's value
 is withheld.

@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
+	"github.com/Sourcehaven-BV/rela/internal/aclstore"
 	"github.com/Sourcehaven-BV/rela/internal/appbuild/appbuildtest"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
@@ -165,7 +166,7 @@ func buildSecretNoteApp(t *testing.T, policyYAML, user string) *App {
 	}
 
 	svc := appbuildtest.New(meta, appbuildtest.WithFS(fs, ctx))
-	d, err := acl.NewDeclarative(policy, acl.NewStoreGraph(svc.Store()), svc.Store())
+	d, err := acl.NewDeclarative(policy, aclstore.MustNewGraph(svc.Store()), svc.Store())
 	if err != nil {
 		t.Fatalf("NewDeclarative: %v", err)
 	}

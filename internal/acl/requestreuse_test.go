@@ -2,6 +2,7 @@ package acl
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/Sourcehaven-BV/rela/internal/principal"
@@ -36,7 +37,7 @@ func TestAuthorizeWrite_ReusesContextRequest(t *testing.T) {
 	g := membershipGraph()
 	d := newTestDeclarative(t, membershipPolicy(), g)
 	p := aliceDataEntry()
-	req, err := d.ForPrincipal(p)
+	req, err := d.ForIdentity(identityFor(t.Context(), t, d, p))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -52,80 +53,80 @@ func TestAuthorizeWrite_ReusesContextRequest(t *testing.T) {
 	}
 }
 
-// Without a bound Request the old behavior stands: each call opens its own
-// scope. This is the fallback single-entity handlers and tests rely on.
-func TestAuthorizeWrite_NoContextRequestOpensFresh(t *testing.T) {
+// Without a bound Request there is no identity to evaluate. AuthorizeWrite
+// denies and does not resolve the principal itself: resolution belongs to
+// the request edge.
+func TestAuthorizeWrite_NoContextRequestFailsClosed(t *testing.T) {
 	t.Parallel()
 	g := membershipGraph()
 	d := newTestDeclarative(t, membershipPolicy(), g)
 	ctx := principal.With(context.Background(), aliceDataEntry())
-	d.AuthorizeWrite(ctx, writeTicket(OpCreate))
-	d.AuthorizeWrite(ctx, writeTicket(OpUpdate))
-	if g.outgoingCalls != 4 {
-		t.Errorf("OutgoingRelations calls = %d, want 4 (two fresh walks)", g.outgoingCalls)
+	if got := d.AuthorizeWrite(ctx, writeTicket(OpCreate)); got.Allow {
+		t.Fatalf("AuthorizeWrite without a bound Request allowed: %+v", got)
+	}
+	if g.outgoingCalls != 0 {
+		t.Errorf("OutgoingRelations calls = %d, want 0 (no lazy resolution)", g.outgoingCalls)
+	}
+	if _, err := d.RequestFrom(ctx); !errors.Is(err, ErrNoIdentity) {
+		t.Errorf("RequestFrom error = %v, want ErrNoIdentity", err)
 	}
 }
 
 // A Request bound to a different principal than ctx's (the provisioning
 // seam re-stamps ctx) or to a different Declarative (another tenant's
-// policy) must NOT be reused — that would evaluate the wrong identity or
-// the wrong policy.
-func TestAuthorizeWrite_IgnoresForeignContextRequest(t *testing.T) {
+// policy) must NOT be used — that would evaluate the wrong identity or
+// the wrong policy. The write is denied instead.
+func TestAuthorizeWrite_RefusesForeignContextRequest(t *testing.T) {
 	t.Parallel()
 	t.Run("different principal", func(t *testing.T) {
 		t.Parallel()
-		g := membershipGraph()
-		d := newTestDeclarative(t, membershipPolicy(), g)
-		bobReq, err := d.ForPrincipal(principal.Principal{User: "bob", Tool: principal.ToolDataEntry})
+		d := newTestDeclarative(t, membershipPolicy(), membershipGraph())
+		bobReq, err := d.ForIdentity(identityFor(t.Context(), t, d, principal.Principal{User: "bob", Tool: principal.ToolDataEntry}))
 		if err != nil {
 			t.Fatal(err)
 		}
 		ctx := WithRequest(principal.With(context.Background(), aliceDataEntry()), bobReq)
-		if got := d.AuthorizeWrite(ctx, writeTicket(OpCreate)); !got.Allow {
-			t.Fatalf("alice must be evaluated as alice (allowed), got %+v", got)
-		}
-		if g.outgoingCalls == 0 {
-			t.Error("bob's Request must not be reused for alice; d had to open its own scope")
+		if got := d.AuthorizeWrite(ctx, writeTicket(OpCreate)); got.Allow {
+			t.Fatalf("bob's Request was used for alice: %+v", got)
 		}
 	})
 	t.Run("same user, different verified claims", func(t *testing.T) {
 		t.Parallel()
 		// Same User and Tool, but the ctx principal carries verified claims
 		// (a principal type and scopes — the inputs of a client ceiling) the
-		// bound Request was not built from. Reusing it would evaluate the
-		// wrong ceiling, so it must be ignored.
-		g := membershipGraph()
-		d := newTestDeclarative(t, membershipPolicy(), g)
+		// bound Request was not built from. Using it would evaluate the
+		// wrong ceiling.
+		d := newTestDeclarative(t, membershipPolicy(), membershipGraph())
 		plain := aliceDataEntry()
-		wideReq, err := d.ForPrincipal(plain)
+		wideReq, err := d.ForIdentity(identityFor(t.Context(), t, d, plain))
 		if err != nil {
 			t.Fatal(err)
 		}
-		g.outgoingCalls = 0
 		attenuated := principal.VerifiedFrom(plain.User, plain.Tool, principal.Claims{
 			PrincipalType: "rela.client", Scopes: []string{"read"},
 		})
 		ctx := WithRequest(principal.With(context.Background(), attenuated), wideReq)
-		d.AuthorizeWrite(ctx, writeTicket(OpCreate))
-		if g.outgoingCalls == 0 {
-			t.Error("a Request bound to a principal with different claims must not be reused")
+		if got := d.AuthorizeWrite(ctx, writeTicket(OpCreate)); got.Allow {
+			t.Fatalf("a Request bound to different claims was used: %+v", got)
 		}
 	})
 	t.Run("different declarative", func(t *testing.T) {
 		t.Parallel()
-		g := membershipGraph()
-		d := newTestDeclarative(t, membershipPolicy(), g)
+		d := newTestDeclarative(t, membershipPolicy(), membershipGraph())
 		other := newTestDeclarative(t, &Policy{Roles: map[string]RoleDef{"nobody": {}}}, newFakeGraph())
-		otherReq, err := other.ForPrincipal(aliceDataEntry())
+		otherReq, err := other.ForIdentity(identityFor(t.Context(), t, other, aliceDataEntry()))
 		if err != nil {
 			t.Fatal(err)
 		}
 		ctx := WithRequest(principal.With(context.Background(), aliceDataEntry()), otherReq)
-		if got := d.AuthorizeWrite(ctx, writeTicket(OpCreate)); !got.Allow {
-			t.Fatalf("d's own policy must decide (allowed), got %+v", got)
+		if got := d.AuthorizeWrite(ctx, writeTicket(OpCreate)); got.Allow {
+			t.Fatalf("a foreign Request was used: %+v", got)
 		}
-		if g.outgoingCalls == 0 {
-			t.Error("a foreign Request must not be reused; d had to open its own scope")
+		if _, err := d.ForIdentity(identityFor(t.Context(), t, other, aliceDataEntry())); !errors.Is(err, ErrForeignIdentity) {
+			t.Errorf("ForIdentity(foreign identity) error = %v, want ErrForeignIdentity", err)
+		}
+		if _, err := d.ForIdentity(Identity{}); !errors.Is(err, ErrNoIdentity) {
+			t.Errorf("ForIdentity(zero Identity) error = %v, want ErrNoIdentity", err)
 		}
 	})
 }

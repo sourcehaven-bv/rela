@@ -407,8 +407,8 @@ func TestResolutionRule(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := resolutionRule(tc.scope, tc.entityType, tc.face); got != tc.want {
-				t.Errorf("resolutionRule(%q, %q) = %q, want %q — %s",
+			if got, _ := resolutionRuleAt(tc.scope, tc.entityType, tc.face); got != tc.want {
+				t.Errorf("resolutionRuleAt(%q, %q) = %q, want %q — %s",
 					tc.entityType, tc.face, got, tc.want, tc.why)
 			}
 		})
@@ -458,7 +458,7 @@ func TestWorldProvenance_NamesTheWorld(t *testing.T) {
 // Mutation-checked per Ruling 10: this test's failure mode is "proves nothing"
 // — a provenance block asserted against ONE entity passes trivially if the
 // derivation is a constant. Verified to die in BOTH directions: with
-// resolutionRule stubbed to return ruleChain unconditionally, and with it
+// resolutionRuleAt stubbed to return ruleChain unconditionally, and with it
 // stubbed to return ruleFallbackDefault unconditionally. One direction would
 // not have been enough; a constant is only caught by asserting two entities
 // that must disagree, which is why both live in this one test rather than in

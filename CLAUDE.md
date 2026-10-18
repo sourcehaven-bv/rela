@@ -114,6 +114,32 @@ your session id or `"$(hostname)-$$"`:
   collaborators returns `error` and validates them up front. Never substitute a
   no-op or sentinel implementation silently — that defers the failure to a
   downstream symptom that is much harder to diagnose.
+- **Search applies `visible:` inside the store query; nothing calls back into
+  the ACL per hit.** `affordances.PolicyResolver.SearchFieldScope` compiles one
+  type's `visible:` grants for the bound request into a `search.FieldScope`: the
+  gated properties, and per grant the fields it shows plus a `store.GraphQuery`
+  for the rows it applies to. A role held through `role_relations` becomes
+  `acl.Request.LocalRolePredicate`, the same predicate the row gate uses.
+  Grants follow the role union (BUG-Y5UF3K): a role without a `visible:`
+  block for the type shows every property on the rows it applies to and
+  reads. The
+  scope rides on `search.TypeScope.Fields`; each backend applies it in one
+  batch per page (pgstore computes the grant predicates in the search SQL).
+  Which fields matched is always judged in Go: `search.MatchTextFields`, or
+  bleve's `MatchedFields`. Never judge it with SQL `lower()`, which folds case
+  differently from the Go-lowered `search_text` and can count a visible field
+  the search did not match on. A matcher may leave a field out, never add
+  one. `visibility.SearchScoped` is the one gated search path (the MCP
+  searcher and `/_search` both run it).
+  This only works because **every `visible:` `when:` must lower exactly
+  through `queryplan.LowerScope`, or the policy fails to load** (AND of
+  property equalities and `related(...)`; no `or`, `not`, ordered
+  comparisons, `~=`, `has_role`, `has_global_role`, `has_relation`,
+  `count_relations`, `has_current_user`). Do not loosen that check into a Go
+  fallback: a condition the store cannot answer would need the per-row
+  callback back. `TestSearchFieldScope_AgreesWithFieldVerdicts` pins the
+  compiled scope to `FieldVerdicts`; `storetest.RunFieldScopeSearchTests` pins
+  every backend.
 - **Read-out paths go through visibility wrappers, base readers stay ungated.**
   Read-side ACL (entity row-gating + field-level `visible:` redaction) is
   enforced by `internal/visibility` decorators (`Reader`, the tracer decorator)
@@ -131,6 +157,43 @@ your session id or `"$(hostname)-$$"`:
   genuine `system:*` principal for audit — allow-all is never inferred from
   identity. Write-prep reads (entitymanager diffing) keep raw store access: a
   redacted read-modify-write would clobber hidden fields.
+- **Resolve identity once, at the request edge.** Every transport resolves
+  the stamped principal once, opens a `Request` on it and attaches it to ctx.
+  Resolution is the `principal_property` lookup plus the member-of walk. A
+  walk error is an error, never a partial closure. Nothing caches an
+  `Identity` across requests, so a membership change applies on the next one.
+
+  There is one binding shape, `func(context.Context) (context.Context,
+  error)`, and `appbuild.IdentityBinder(svc)` builds it. The CLI, rela-docs,
+  the scheduler (`scheduler.New` takes it) and stdio MCP (`mcp.Deps.BindIdentity`,
+  taken from the same snapshot as the call's other deps) all receive it at
+  wiring. `appbuild.BindOrWarn` is the log-and-continue form for the CLI.
+  Below that sit `acl.BindRequest` and `acl.OpenRequest`. The data-entry
+  edge (`access.Opener.Open`, and `access.Restamp` after provisioning) calls
+  the resolver directly, because it needs the lookup and the verified-JWT
+  mark. `TestIdentityEdgeCallers`
+  (`internal/archguard`) pins every reference to these to an allowlist with a
+  reason, including `ForIdentity`, `ResolveDirect`, `ResolvePrincipal`, the
+  `IdentityResolver` type and method values taken without a call. A new
+  caller must be a genuine edge.
+
+  Code below the edge reads the attached `Request` via
+  `Declarative.RequestFrom` and **fails closed** without one: affordances
+  deny every field, relation and guarded transition (attribution
+  `no-identity`), and the visibility gate returns `acl.ErrNoIdentity`. A
+  `Request` bound to another principal returns `acl.ErrIdentityMismatch`;
+  the ids go to the log, not the error. `acl.FromContext` does neither
+  check, so `TestNoACLFromContext` forbids it outside `internal/acl`. Do not
+  add a fallback that resolves the principal from ctx; bind at the edge
+  instead. `TestEvaluatorDoesNotResolveIdentity` fails if a `Declarative` or
+  `Request` method, or a package function or method of another acl type it
+  reaches, walks membership.
+
+  Whether a principal is a verified but unmatched assertion is a fact about
+  the identity, so it lives on the `Request` (`Request.UnmatchedVerified`),
+  set from `Identity.WithVerifiedAssertion`. Provisioning rebinds a new
+  `Request` rather than clearing a ctx flag. In tests, bind with
+  `acltest.Bind`, `acltest.BindVerified` or `acltest.RequestFor`.
 - **Aggregates computed over the graph gate BEFORE they fold.** The gantt
   endpoint (`internal/dataentry/gantt_handler.go`, TKT-MW28U5) pins the pattern:
   row-gate the node set, redact each entity ONCE, then run the roll-up fold,
@@ -238,6 +301,15 @@ your session id or `"$(hostname)-$$"`:
   take the face the world ranks first; a write may not, because the world's
   first face is a presentation choice, not the author's intent. Rename and a
   bare-id delete act on the whole family instead (`authorizeFamily`).
+  A handler that also needs the target's gated row uses
+  `visibility.Resolver.WriteRow`, which applies the same rule and loads the
+  row in the same pass. That row only shapes the response and the early
+  authorization; it never feeds the write. The manager still diffs against
+  its own raw read of the stored row. The early authorization is
+  `entitymanager.Manager.AuthorizeUpdate`, which runs the manager's own write
+  check and audit. The handler writes through the `entitymanager.UpdateGrant`
+  it returns, so the update is authorized once. Don't rebuild the ACL request
+  or the `denied-write` row in a handler.
 
 ### Subsystem-specific rules (nested CLAUDE.md / godoc)
 

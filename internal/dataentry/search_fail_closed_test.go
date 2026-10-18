@@ -6,117 +6,119 @@ import (
 	"iter"
 	"testing"
 
-	"github.com/Sourcehaven-BV/rela/internal/acl"
-	entityPkg "github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/search"
-	"github.com/Sourcehaven-BV/rela/internal/store"
+	"github.com/Sourcehaven-BV/rela/internal/search/searchparser"
+	"github.com/Sourcehaven-BV/rela/internal/store/memstore"
+	"github.com/Sourcehaven-BV/rela/internal/visibility"
 )
 
-// entityOnlySearcher is a VisibleSearcher that does NOT implement
-// search.FieldVisibleSearcher — the shape a future decorator (cache, metrics,
-// tracing) produces when it wraps the searcher without forwarding
-// SearchVisibleFields.
-type entityOnlySearcher struct{ served bool }
+// scopeRecordingSearcher records the scope it was handed and serves one hit.
+type scopeRecordingSearcher struct {
+	scope  map[string]search.TypeScope
+	served bool
+}
 
-func (s *entityOnlySearcher) SearchVisible(
-	_ context.Context, _ search.Query, _ map[string]search.TypeScope,
+func (s *scopeRecordingSearcher) SearchVisible(
+	_ context.Context, _ search.Query, scope map[string]search.TypeScope,
 ) iter.Seq2[search.Hit, error] {
 	return func(yield func(search.Hit, error) bool) {
-		// Serving even one hit here means un-redacted results reached the
-		// caller — the oracle this path must refuse to open.
+		s.scope = scope
 		s.served = true
-		yield(search.Hit{ID: "TKT-001"}, nil)
+		yield(search.Hit{ID: "TKT-001", Type: "ticket"}, nil)
 	}
 }
 
-// hidingResolver reports that it can hide fields, so hidesAnyField() is true
-// and redaction is genuinely in play.
-type hidingResolver struct{}
+// scopeResolver answers SearchFieldScope with a fixed scope or error.
+type scopeResolver struct {
+	fs  *search.FieldScope
+	err error
+}
 
-func (hidingResolver) FieldVerdicts(context.Context, *entityPkg.Entity) FieldVerdicts {
-	return FieldVerdicts{}
+func (r scopeResolver) SearchFieldScope(context.Context, string) (*search.FieldScope, error) {
+	return r.fs, r.err
 }
-func (hidingResolver) RelationVerdicts(context.Context, *entityPkg.Entity) RelationVerdicts {
-	return RelationVerdicts{}
-}
-func (hidingResolver) UnconditionalRelationVerdicts(context.Context, *entityPkg.Entity) RelationVerdicts {
-	return RelationVerdicts{}
-}
-func (hidingResolver) FieldVisibleOnEveryRow(context.Context, string, string) bool { return false }
 
-// TestSearchVisibleHits_FailsClosedWithoutFieldSearcher pins TKT-NCLA67
-// (gh#1093): when the ACL policy hides fields but the wired searcher cannot
-// redact them, search must REFUSE rather than fall back to un-redacted results.
-//
-// The failure this prevents is silent by construction: a decorator wraps the
-// searcher, the type assertion misses, and search stops redacting while the
-// policy still hides — no error, no log, no test failure. The only signal would
-// be a user seeing a value they should not.
-//
-// search.Visible.SearchVisibleFields already fails closed one layer down for
-// the same reason ("silently skipping redaction is exactly the oracle this
-// closes", RR-8W40EW). This is that principle applied to the outer seam.
-func TestSearchVisibleHits_FailsClosedWithoutFieldSearcher(t *testing.T) {
+func runFreeText(t *testing.T, vs search.VisibleSearcher, res visibility.FieldScoper) error {
+	t.Helper()
+	q := &queryService{
+		visibleSearcher: func() search.VisibleSearcher { return vs },
+		fields:          func() visibility.FieldScoper { return res },
+	}
+	sq := searchparser.ParseQuery("anything")
+	scope := map[string]search.TypeScope{"ticket": {AllowAll: true}}
+	_, err := q.runVisibleFreeTextSearch(context.Background(), Services{Store: memstore.New()}, sq, scope)
+	return err
+}
+
+// TestFreeTextSearch_HandsTheFieldScopeToTheSearcher pins the wiring: the
+// free-text branch passes the field resolver's scope to the searcher with
+// the row scope, so the backend drops hidden-field-only matches.
+func TestFreeTextSearch_HandsTheFieldScopeToTheSearcher(t *testing.T) {
 	t.Parallel()
-
-	vs := &entityOnlySearcher{}
-	aff := affordanceService{
-		acl:      func() acl.ACL { return acl.NopACL{} },
-		resolver: func() FieldVerdictResolver { return hidingResolver{} },
+	vs := &scopeRecordingSearcher{}
+	fs := &search.FieldScope{Gated: []string{"secret"}}
+	if err := runFreeText(t, vs, scopeResolver{fs: fs}); err != nil {
+		t.Fatalf("search: %v", err)
 	}
-
-	var gotErr error
-	var hits int
-	for _, err := range searchVisibleHits(
-		context.Background(), vs, aff, search.Query{Text: "anything", World: store.TrivialScope()}, nil,
-	) {
-		if err != nil {
-			gotErr = err
-			break
-		}
-		hits++
+	if got := vs.scope["ticket"].Fields; got != fs {
+		t.Errorf("searcher got field scope %+v, want the resolver's %+v", got, fs)
 	}
+}
 
-	if gotErr == nil {
-		t.Fatalf("want an error when the searcher cannot redact; got %d hit(s) and no error", hits)
-	}
-	// ErrScope specifically: the caller (queryservice) maps it to
-	// errACLListQuery, so it surfaces as an authorization failure rather than
-	// a generic search error.
-	if !errors.Is(gotErr, search.ErrScope) {
-		t.Errorf("want search.ErrScope so the caller reports an ACL failure, got %v", gotErr)
+// TestFreeTextSearch_FieldScopeErrorFailsClosed: a resolver that cannot
+// compile a field scope must stop the search before the backend runs, as an
+// ACL failure (errACLListQuery), never serve unchecked hits.
+func TestFreeTextSearch_FieldScopeErrorFailsClosed(t *testing.T) {
+	t.Parallel()
+	vs := &scopeRecordingSearcher{}
+	err := runFreeText(t, vs, scopeResolver{err: errors.New("no request")})
+	if !errors.Is(err, errACLListQuery) || !errors.Is(err, search.ErrScope) {
+		t.Errorf("err = %v, want errACLListQuery wrapping search.ErrScope", err)
 	}
 	if vs.served {
-		t.Error("un-redacted hits were served before the refusal — the fallback must not run at all")
+		t.Error("the backend ran despite the field scope failure")
 	}
 }
 
-// TestSearchVisibleHits_NoRedactionNeededStillWorks pins the other half: when
-// the policy hides nothing, an entity-level-only searcher is CORRECT and must
-// keep working.
-//
-// Without this, "fail closed whenever the searcher isn't a FieldVisibleSearcher"
-// would also pass — and would break every deployment running the Nop resolver,
-// where redaction is a provable no-op.
-func TestSearchVisibleHits_NoRedactionNeededStillWorks(t *testing.T) {
+// TestSearchFieldScope_FollowsTheResolver pins the search form of each
+// production resolver kind.
+func TestSearchFieldScope_FollowsTheResolver(t *testing.T) {
 	t.Parallel()
+	ctx := context.Background()
 
-	vs := &entityOnlySearcher{}
-	aff := affordanceService{
-		acl:      func() acl.ACL { return acl.NopACL{} },
-		resolver: func() FieldVerdictResolver { return NopFieldVerdictResolver{} },
+	if fs, err := (NopFieldVerdictResolver{}).SearchFieldScope(ctx, "ticket"); fs != nil || err != nil {
+		t.Errorf("nop: scope=%+v err=%v, want nothing hidden", fs, err)
 	}
+	fs, err := (DemoFieldVerdictResolver{}).SearchFieldScope(ctx, "ticket")
+	if err != nil || fs == nil || !fs.Gates("priority") {
+		t.Errorf("demo: scope=%+v err=%v, want priority gated on ticket", fs, err)
+	}
+}
 
-	var hits int
-	for _, err := range searchVisibleHits(
-		context.Background(), vs, aff, search.Query{Text: "anything", World: store.TrivialScope()}, nil,
-	) {
-		if err != nil {
-			t.Fatalf("no redaction is in play, so this must not error: %v", err)
-		}
-		hits++
+// TestFreeTextSearch_DemoProfileHidesPriority: the demo profile runs with no
+// ACL, so the row scope is the wildcard. Its field scope must still reach
+// the backend, so a match on the hidden priority alone is not returned.
+func TestFreeTextSearch_DemoProfileHidesPriority(t *testing.T) {
+	app := newTestAppV1(t)
+	app.fieldResolver = DemoFieldVerdictResolver{}
+	seedEntity(app, &entity.Entity{
+		ID: "TKT-001", Type: "ticket",
+		Properties: map[string]any{"title": "visible words", "priority": "zzhiddenprio"},
+	})
+
+	got, err := app.queries.executeQuery(context.Background(), "zzhiddenprio")
+	if err != nil {
+		t.Fatalf("executeQuery: %v", err)
 	}
-	if hits != 1 {
-		t.Errorf("want the entity-level search to serve its hit, got %d", hits)
+	if len(got) != 0 {
+		t.Errorf("a match on the demo-hidden priority returned %d hits", len(got))
+	}
+	got, err = app.queries.executeQuery(context.Background(), "visible")
+	if err != nil {
+		t.Fatalf("executeQuery: %v", err)
+	}
+	if len(got) != 1 {
+		t.Errorf("a title match returned %d hits, want 1", len(got))
 	}
 }

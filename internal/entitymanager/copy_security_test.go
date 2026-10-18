@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Sourcehaven-BV/rela/internal/acl/acltest"
+
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
@@ -369,8 +371,8 @@ func TestCopy_GuardedFaceIsWritableOnlyViaDefinition(t *testing.T) {
 		t.Fatalf("entitymanager.New: %v", merr)
 	}
 
-	ctx := principal.With(context.Background(),
-		principal.Principal{User: "alice", Tool: principal.ToolCLI})
+	ctx := entitymanager.BindAs(principal.With(context.Background(),
+		principal.Principal{User: "alice", Tool: principal.ToolCLI}), t, mgr)
 	if err := st.CreateEntity(ctx, &entity.Entity{
 		ID: "PAGE-1", Type: "page", Face: entity.Face("draft"),
 		Properties: map[string]any{"title": "Draft"},
@@ -459,9 +461,9 @@ func TestCopy_StrangerCannotPromote(t *testing.T) {
 	if derr != nil {
 		t.Fatalf("NewDeclarative: %v", derr)
 	}
-	req, rerr := d.ForPrincipal(principal.Principal{User: "mallory", Tool: principal.ToolCLI})
+	req, rerr := d.ForIdentity(acltest.IdentityFor(t.Context(), t, d, principal.Principal{User: "mallory", Tool: principal.ToolCLI}))
 	if rerr != nil {
-		t.Fatalf("ForPrincipal: %v", rerr)
+		t.Fatalf("ForIdentity: %v", rerr)
 	}
 	mgr, merr := entitymanager.New(entitymanager.Deps{
 		Store: st, Meta: meta, Templater: nopTemplater{},

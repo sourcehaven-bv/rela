@@ -5,6 +5,8 @@ import (
 	"testing"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
+	"github.com/Sourcehaven-BV/rela/internal/acl/acltest"
+	"github.com/Sourcehaven-BV/rela/internal/aclstore"
 	"github.com/Sourcehaven-BV/rela/internal/affordances"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
@@ -74,6 +76,7 @@ assignments:
 
 type roleUnionWorld struct {
 	resolver *affordances.PolicyResolver
+	decl     *acl.Declarative
 	watched  *entity.Entity
 	other    *entity.Entity
 }
@@ -98,7 +101,7 @@ func newRoleUnionWorld(t *testing.T, policyYAML string) roleUnionWorld {
 	for _, user := range []string{"alice", "rita", "vic"} {
 		mustCreateRelation(t, ms, user, "watches", "TKT-1")
 	}
-	decl, err := acl.NewDeclarative(policy, acl.NewStoreGraph(ms), ms)
+	decl, err := acl.NewDeclarative(policy, aclstore.MustNewGraph(ms), ms)
 	if err != nil {
 		t.Fatalf("NewDeclarative: %v", err)
 	}
@@ -106,12 +109,16 @@ func newRoleUnionWorld(t *testing.T, policyYAML string) roleUnionWorld {
 	if err != nil {
 		t.Fatalf("affordances.New: %v", err)
 	}
-	return roleUnionWorld{resolver: resolver, watched: watched, other: other}
+	return roleUnionWorld{resolver: resolver, decl: decl, watched: watched, other: other}
 }
 
-func userCtx(user string) context.Context {
-	return principal.With(context.Background(),
+// userCtx stamps user on a context and binds its Request on decl, as the
+// request edge does.
+func userCtx(tb testing.TB, decl *acl.Declarative, user string) context.Context {
+	tb.Helper()
+	ctx := principal.With(context.Background(),
 		principal.Principal{User: user, Tool: principal.ToolDataEntry})
+	return acltest.Bind(ctx, tb, decl)
 }
 
 // deniedFields returns the fields a sparse verdict map marks false.
@@ -189,7 +196,7 @@ func TestRoleUnion_ConferredRoleNeverNarrows(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			fv := w.resolver.FieldVerdicts(userCtx(tc.user), tc.row(w))
+			fv := w.resolver.FieldVerdicts(userCtx(t, w.decl, tc.user), tc.row(w))
 			if got := deniedFields(fv.Visible); !sameStrings(got, tc.hidden) {
 				t.Errorf("hidden = %v, want %v", got, tc.hidden)
 			}

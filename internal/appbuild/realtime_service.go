@@ -104,9 +104,10 @@ func (s realtimeConfigSource) Load() realtime.Snapshot {
 }
 
 // aclAccessSource opens one [realtime.Access] per operation. Under a
-// declarative policy it reuses the request's acl.Request when the handler
-// attached one, else opens one, and attaches it to the context it returns,
-// so the gated reads of that operation evaluate against the same request.
+// declarative policy it reads the acl.Request the edge bound on ctx and
+// fails closed without one: no Request is [realtime.ErrNoPrincipal], and a
+// foreign or mismatched one is an error. It never resolves the principal
+// itself, so the gated reads of that operation evaluate the edge's request.
 // Without a policy (NopACL, ReadOnlyACL) every permission is held, and the
 // write ACL decides whether anything may be written.
 type aclAccessSource struct {
@@ -120,16 +121,12 @@ func (s aclAccessSource) For(ctx context.Context) (context.Context, realtime.Acc
 		writable := !access.ModeOf(s.writes).RefusesWrites()
 		return ctx, openAccess{p: principal.From(ctx), q: q, writable: writable}, nil
 	}
-	req := acl.FromContext(ctx)
-	if req == nil {
-		var err error
-		if req, err = s.d.ForPrincipal(principal.From(ctx)); err != nil {
-			if errors.Is(err, acl.ErrUnstampedPrincipal) {
-				return nil, nil, fmt.Errorf("%w: %w", realtime.ErrNoPrincipal, err)
-			}
-			return nil, nil, err
-		}
-		ctx = acl.WithRequest(ctx, req)
+	req, err := s.d.RequestFrom(ctx)
+	if errors.Is(err, acl.ErrNoIdentity) {
+		return nil, nil, fmt.Errorf("%w: %w", realtime.ErrNoPrincipal, err)
+	}
+	if err != nil {
+		return nil, nil, err
 	}
 	return ctx, requestAccess{req: req, q: q}, nil
 }

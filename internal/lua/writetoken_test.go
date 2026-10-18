@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Sourcehaven-BV/rela/internal/acl/acltest"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/entitymanager/entitymanagertest"
 	"github.com/Sourcehaven-BV/rela/internal/lua"
@@ -104,11 +105,11 @@ rela.output(e.id .. "," .. tostring(tok))`,
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			deps := newHistoryWorld(t)
+			deps, decl := newHistoryWorld(t)
 			w := &tokenTagWriter{tokenErr: tc.tokenErr}
 			deps.VersionTags = w
 			deps.EntityManager = &patchingManager{}
-			out := runAsAlice(t, deps, tc.src)
+			out := runAsAlice(t, decl, deps, tc.src)
 			if !strings.Contains(out, tc.wantOut) {
 				t.Errorf("output %q lacks %q", out, tc.wantOut)
 			}
@@ -120,10 +121,10 @@ rela.output(e.id .. "," .. tostring(tok))`,
 }
 
 func TestWriteToken_BadTokenOption(t *testing.T) {
-	deps := newHistoryWorld(t)
+	deps, decl := newHistoryWorld(t)
 	deps.VersionTags = &tokenTagWriter{}
 	deps.EntityManager = &patchingManager{}
-	err := runAsAliceErr(deps, `rela.update_entity("TKT-1", {title = "x"}, nil, {token = "yes"})`)
+	err := runAsAliceErr(t, decl, deps, `rela.update_entity("TKT-1", {title = "x"}, nil, {token = "yes"})`)
 	if err == nil || !strings.Contains(err.Error(), "boolean") {
 		t.Fatalf("err = %v, want a boolean refusal", err)
 	}
@@ -133,7 +134,7 @@ func TestWriteToken_BadTokenOption(t *testing.T) {
 // refs; a plain writer runtime (what MCP lua_eval builds) may not.
 func TestExternalRefWrites_OnlyWhenGranted(t *testing.T) {
 	for _, granted := range []bool{false, true} {
-		deps := newHistoryWorld(t)
+		deps, decl := newHistoryWorld(t)
 		m := &patchingManager{}
 		deps.EntityManager = m
 		var opts []lua.Option
@@ -141,7 +142,8 @@ func TestExternalRefWrites_OnlyWhenGranted(t *testing.T) {
 			opts = append(opts, lua.WithExternalRefWrites())
 		}
 		var out strings.Builder
-		ctx := principal.With(context.Background(), principal.Principal{User: "alice", Tool: principal.ToolScheduler})
+		ctx := acltest.Bind(principal.With(context.Background(),
+			principal.Principal{User: "alice", Tool: principal.ToolScheduler}), t, decl)
 		rt := lua.NewWriter(deps, &out, append(opts, lua.WithContext(ctx), lua.WithPrincipal(principal.From(ctx)))...)
 		err := rt.RunString(`rela.update_entity("TKT-1", {title = "x"}); rela.create_entity("ticket", {title = "y"})`)
 		rt.Close()

@@ -346,32 +346,22 @@ func headOnWire(id string, heads map[string]*entityPkg.Entity, visible map[strin
 // returned row was stored at, which Neighbors uses as the content-edge tail.
 //
 // Via is filled for completeness and is NOT consulted by Neighbors — it
-// labels provenance for callers that render a badge. It is computed by the
-// same total mapping [worldProvenance] uses, so a Resolved built here and a
-// `_world` block on the same response cannot disagree.
+// labels provenance for callers that render a badge. It is the typed rule
+// [store.WorldScope.RuleAt] returns, the same lookup [worldProvenance]
+// stringifies for the wire, so a Resolved built here and a `_world` block on
+// the same response cannot disagree.
 //
 // Found is true unconditionally: this is only ever called with a face the
 // store actually returned. A world that excluded the entity produces no
 // entity at all, and the handler has already rendered a 404 by then.
 func resolvedFromStoreFace(ctx context.Context, e *entityPkg.Entity) worldreader.Resolved {
+	via, _ := worldScopeFrom(ctx).RuleAt(e.Type, e.Face)
 	return worldreader.Resolved{
 		Entity: e,
 		Face:   e.Face,
-		Via:    ruleFromName(resolutionRule(worldScopeFrom(ctx), e.Type, e.Face)),
+		Via:    via,
 		Found:  true,
 	}
-}
-
-// ruleFromName maps the wire vocabulary back to [worldreader.Rule].
-//
-// The two vocabularies are deliberately the same strings (see the
-// resolutionRule constants in world.go), so this is a lookup rather than a
-// translation. RuleUnscoped is the default arm because it is the rule for a
-// type the world applies no resolution to — the same direction
-// resolutionRule takes for an unknown type, and the one that keeps a
-// faceless project unchanged.
-func ruleFromName(name string) worldreader.Rule {
-	return store.ParseResolutionRule(name)
 }
 
 // worldOutgoingForEntity resolves one entity's OUTGOING links under the
@@ -423,11 +413,10 @@ func worldOutgoingForEntity(
 //
 // # The edge queries are batched too
 //
-// [worldreader.RelationReader.NeighborsForPage] issues one identity-tail
-// query for the page plus one content-tail query per DISTINCT face on the
-// page (store.RelationQuery.EntityIDs, TKT-1U8XYN). A 50-row page at two faces
-// is therefore three relation queries, not a hundred, while each row still
-// receives exactly the edges its own resolved face carries.
+// [worldreader.RelationReader.NeighborsForPage] issues ONE relation query
+// for the page (store.RelationQuery.EntityIDs, TKT-1U8XYN), not one per row,
+// while each row still receives exactly the edges its own resolved face
+// carries.
 //
 // Rows are matched to their edges positionally, so the returned slices are
 // index-aligned with entities — a row with no links keeps a nil entry rather
@@ -446,8 +435,8 @@ func worldNeighborsForPage(
 	}
 
 	// Pass 1: each row's edges, under that row's own resolved face — batched
-	// into one identity query plus one content query per distinct face on the
-	// page (TKT-1U8XYN), with the same per-row result the per-row calls gave.
+	// into one relation query for the page (TKT-1U8XYN), with the same per-row
+	// result the per-row calls gave.
 	rows := make([]worldreader.Resolved, len(entities))
 	for i, e := range entities {
 		rows[i] = resolvedFromStoreFace(ctx, e)
@@ -845,23 +834,50 @@ func worldBoundRelations(ctx context.Context) bool {
 	return !worldFromContext(ctx).ranksNothing()
 }
 
-// etagEdges returns the outgoing edges a cache validator must hash for e
-// under world w.
+// faceEdgeReader is the one gated read of the outgoing edges of the face an
+// entity is ([servedFaceEdges]), bound to the App's neighbor wiring. Every
+// response that serves one entity reads its edges through it: the GET, the
+// create, update, attachment and restore responses, the view entry, and the
+// ETag an If-Match is checked against. They cannot drift apart because
+// there is one binding.
 //
-// It mirrors the branch App.handleV1GetEntity takes for the response body,
-// because a validator computed from a different edge set than the body
-// describes a different document — which is the whole failure mode an ETag
-// exists to prevent.
+// neighbors is late-bound because [SetWorldNeighbors] runs after NewApp
+// builds the handlers that hold this value. A captured pointer would keep
+// the nil it held at construction.
+//
+// The zero value fails closed: with no neighbor wiring every read is an
+// error, never an ungated read.
+type faceEdgeReader struct {
+	neighbors func() *worldNeighbors
+}
+
+// faceEdgesOf binds the face-edge read to a's neighbor wiring.
+func faceEdgesOf(a *App) faceEdgeReader {
+	return faceEdgeReader{neighbors: func() *worldNeighbors { return a.worldNeighbors }}
+}
+
+// read returns e's served-face edges and the neighbor ids the caller may
+// see. See [servedFaceEdges].
+func (f faceEdgeReader) read(
+	ctx context.Context, e *entityPkg.Entity,
+) ([]*entityPkg.Relation, map[string]bool, error) {
+	var wn *worldNeighbors
+	if f.neighbors != nil {
+		wn = f.neighbors()
+	}
+	return servedFaceEdges(ctx, wn, e)
+}
+
+// edges is [faceEdgeReader.read] without the neighbor set, for a caller
+// that hashes or renders the edges only.
 //
 // Errors are RETURNED, not swallowed. The tempting shortcut is to treat a
 // resolution fault as "no edges", but the hash of an edge-less entity is a
 // perfectly valid validator for a real document state, so a fault would mint
 // a validator that a later If-None-Match matches against a body that does have
-// edges. The caller folds a sentinel instead. See the call site.
-func etagEdges(
-	ctx context.Context, wn *worldNeighbors, e *entityPkg.Entity,
-) ([]*entityPkg.Relation, error) {
-	edges, _, err := servedFaceEdges(ctx, wn, e)
+// edges. The ETag caller folds a sentinel instead (see etagUnresolved).
+func (f faceEdgeReader) edges(ctx context.Context, e *entityPkg.Entity) ([]*entityPkg.Relation, error) {
+	edges, _, err := f.read(ctx, e)
 	return edges, err
 }
 
@@ -903,7 +919,7 @@ func etagEdges(
 // identity-vs-content dispatch rather than growing a second, subtly
 // different copy on the default path.
 //
-// # No unwired fallback
+// # No fallback
 //
 // wn is nil only when the composition root never called
 // [SetWorldNeighbors]. That is a wiring error, and it fails closed: a raw

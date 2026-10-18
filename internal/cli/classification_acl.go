@@ -104,7 +104,7 @@ func classificationViewFor(
 	pr := principal.VerifiedFrom(classificationAuditUser, principal.ToolCLI, principal.Claims{
 		PrincipalType: v.principalType, Scopes: v.scopes,
 	})
-	req, err := decl.ForPrincipal(pr)
+	req, err := acl.OpenRequest(ctx, decl, pr)
 	if err != nil {
 		return classification.View{}, err
 	}

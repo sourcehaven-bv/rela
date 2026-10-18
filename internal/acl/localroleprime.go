@@ -5,14 +5,11 @@ import (
 	"log/slog"
 	"maps"
 	"slices"
-
-	"github.com/Sourcehaven-BV/rela/internal/entity"
-	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
 // edgeBatcher is the batch read a [Graph] may offer so [PrimeLocalRoles] can
 // answer a whole page of local-role probes in a fixed number of queries.
-// [StoreGraph] implements it; a Graph without it is never primed and keeps
+// aclstore.Graph implements it; a Graph without it is never primed and keeps
 // the per-entity probes.
 type edgeBatcher interface {
 	// EdgesBetween returns the zero-tail relType edges from one of fromIDs
@@ -47,13 +44,21 @@ type localRolePrimeKey struct{}
 // edge; a read path primes its own ctx, so a later write never sees an answer
 // computed before it. Only read paths should call this.
 //
-// A ctx without a Request, a Graph that cannot batch, or a failed batch read
-// returns ctx unchanged: the per-entity probes then answer as before, so a
+// It primes the Request bound at the request edge, checked as
+// [Declarative.RequestFrom] checks it, so the checks that resolve that
+// Request read the prime and nothing else does.
+//
+// A ctx without a bound Request (none attached, or one bound to another
+// principal), a Graph that cannot batch, or a failed batch read returns ctx
+// unchanged: the per-entity probes then answer as before, so a
 // prime can only make a check cheaper, never different. Priming again on a
 // primed ctx adds the new ids; ids already primed are not recomputed.
 func PrimeLocalRoles(ctx context.Context, ids []string) context.Context {
 	r := FromContext(ctx)
 	if r == nil || len(ids) == 0 {
+		return ctx
+	}
+	if _, err := r.d.RequestFrom(ctx); err != nil {
 		return ctx
 	}
 	b, ok := r.d.graph.(edgeBatcher)
@@ -120,7 +125,7 @@ func (p *localRolePrime) lookup(r *Request, id string) ([]RoleAttribution, bool)
 func batchLocalRoles(
 	ctx context.Context, r *Request, b edgeBatcher, ids []string,
 ) (map[string][]RoleAttribution, error) {
-	globals := r.Globals(ctx)
+	globals := r.Globals()
 	relTypes := r.conferringRelations()
 	byID := make(map[string][]RoleAttribution, len(ids))
 	if len(relTypes) == 0 || len(globals.Members) == 0 {
@@ -251,56 +256,4 @@ func loadOutgoing(
 		}
 	}
 	return nil
-}
-
-// EdgesBetween implements [edgeBatcher] with ONE store query. Both ends are
-// filtered: a shared ancestor (a project every task is in) may hold edges
-// from thousands of non-members, and those must not be read.
-func (g *StoreGraph) EdgesBetween(
-	ctx context.Context, relType string, fromIDs, toIDs []string,
-) (map[string]map[string]bool, error) {
-	out := map[string]map[string]bool{}
-	if len(fromIDs) == 0 || len(toIDs) == 0 {
-		return out, nil
-	}
-	// The zero tail, as HasEdge reads it: membership edges are identity-scoped.
-	zero := entity.Face("")
-	for rel, err := range g.S.ListRelations(ctx, store.RelationQuery{
-		Type:      relType,
-		EntityIDs: toIDs,
-		PeerIDs:   fromIDs,
-		Direction: store.DirectionIncoming,
-		FromFace:  &zero,
-	}) {
-		if err != nil {
-			return nil, err
-		}
-		if out[rel.From] == nil {
-			out[rel.From] = map[string]bool{}
-		}
-		out[rel.From][rel.To] = true
-	}
-	return out, nil
-}
-
-// OutgoingFrom implements [edgeBatcher] with ONE store query. Like
-// [StoreGraph.OutgoingRelations] it reads every tail.
-func (g *StoreGraph) OutgoingFrom(
-	ctx context.Context, relType string, fromIDs []string,
-) (map[string][]string, error) {
-	out := map[string][]string{}
-	if len(fromIDs) == 0 {
-		return out, nil
-	}
-	for rel, err := range g.S.ListRelations(ctx, store.RelationQuery{
-		Type:      relType,
-		EntityIDs: fromIDs,
-		Direction: store.DirectionOutgoing,
-	}) {
-		if err != nil {
-			return nil, err
-		}
-		out[rel.From] = append(out[rel.From], rel.To)
-	}
-	return out, nil
 }

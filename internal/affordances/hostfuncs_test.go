@@ -39,10 +39,10 @@ assignments:
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	if _, denied := r.FieldVerdicts(ctxAs("alice"), ticket("T-1", nil)).Writable["status"]; denied {
+	if _, denied := r.FieldVerdicts(ctxFor(t, r, "alice"), ticket("T-1", nil)).Writable["status"]; denied {
 		t.Errorf("T-1 has blocks edge → status should be writable")
 	}
-	if v, ok := r.FieldVerdicts(ctxAs("alice"), ticket("T-2", nil)).Writable["status"]; !ok || v {
+	if v, ok := r.FieldVerdicts(ctxFor(t, r, "alice"), ticket("T-2", nil)).Writable["status"]; !ok || v {
 		t.Errorf("T-2 has no blocks edge → status should be denied")
 	}
 }
@@ -69,10 +69,10 @@ assignments:
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	if _, denied := r.FieldVerdicts(ctxAs("alice"), ticket("T-1", nil)).Writable["status"]; denied {
+	if _, denied := r.FieldVerdicts(ctxFor(t, r, "alice"), ticket("T-1", nil)).Writable["status"]; denied {
 		t.Errorf("T-1 has 2 blocks → status writable")
 	}
-	if v, ok := r.FieldVerdicts(ctxAs("alice"), ticket("T-2", nil)).Writable["status"]; !ok || v {
+	if v, ok := r.FieldVerdicts(ctxFor(t, r, "alice"), ticket("T-2", nil)).Writable["status"]; !ok || v {
 		t.Errorf("T-2 has 1 block → status denied")
 	}
 }
@@ -98,14 +98,14 @@ assignments:
 		t.Fatalf("New: %v", err)
 	}
 	// status "open" is in labels → writable.
-	if _, denied := r.FieldVerdicts(ctxAs("alice"),
+	if _, denied := r.FieldVerdicts(ctxFor(t, r, "alice"),
 		ticket("T-1", map[string]any{
 			"status": "open", "labels": []any{"open", "review"},
 		})).Writable["status"]; denied {
 		t.Errorf("status in labels → writable")
 	}
 	// status "done" not in labels → denied.
-	if v, ok := r.FieldVerdicts(ctxAs("alice"),
+	if v, ok := r.FieldVerdicts(ctxFor(t, r, "alice"),
 		ticket("T-2", map[string]any{
 			"status": "done", "labels": []any{"open", "review"},
 		})).Writable["status"]; !ok || v {
@@ -131,12 +131,12 @@ assignments:
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	if _, denied := r.FieldVerdicts(ctxAs("alice"),
+	if _, denied := r.FieldVerdicts(ctxFor(t, r, "alice"),
 		ticket("T-1", map[string]any{"urgent": true})).Writable["status"]; denied {
 		t.Errorf("urgent=true → status writable")
 	}
 	// stored as the string "false" → coerces to bool false → denied.
-	if v, ok := r.FieldVerdicts(ctxAs("alice"),
+	if v, ok := r.FieldVerdicts(ctxFor(t, r, "alice"),
 		ticket("T-2", map[string]any{"urgent": "false"})).Writable["status"]; !ok || v {
 		t.Errorf("urgent='false' coerces to false → status denied")
 	}
@@ -162,7 +162,7 @@ assignments:
 		t.Fatalf("New: %v", err)
 	}
 	// labels mixes a string and a number; "vip" is still found.
-	if _, denied := r.FieldVerdicts(ctxAs("alice"),
+	if _, denied := r.FieldVerdicts(ctxFor(t, r, "alice"),
 		ticket("T-1", map[string]any{
 			"labels": []any{"vip", 42},
 		})).Writable["status"]; denied {
@@ -187,12 +187,12 @@ assignments:
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	if _, denied := r.FieldVerdicts(ctxAs("alice"),
+	if _, denied := r.FieldVerdicts(ctxFor(t, r, "alice"),
 		ticket("T-1", map[string]any{"labels": []any{"vip", "urgent"}})).Writable["status"]; denied {
 		t.Errorf("labels contains vip → status writable")
 	}
 	// single scalar promoted to one-element list; "vip" not present.
-	if v, ok := r.FieldVerdicts(ctxAs("alice"),
+	if v, ok := r.FieldVerdicts(ctxFor(t, r, "alice"),
 		ticket("T-2", map[string]any{"labels": "other"})).Writable["status"]; !ok || v {
 		t.Errorf("labels=[other] lacks vip → status denied")
 	}

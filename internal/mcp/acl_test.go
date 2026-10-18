@@ -11,6 +11,8 @@ import (
 	mcpgo "github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
+	"github.com/Sourcehaven-BV/rela/internal/acl/acltest"
+	"github.com/Sourcehaven-BV/rela/internal/aclstore"
 	"github.com/Sourcehaven-BV/rela/internal/appbuild/appbuildtest"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/lua"
@@ -51,6 +53,14 @@ const (
 // tickets but not features. The returned ctx carries that principal; the
 // gate resolves identity from ctx per call, exactly as in production.
 func gatedServer(t *testing.T) (*Server, context.Context) {
+	t.Helper()
+	srv, as := gatedServerAs(t)
+	return srv, as("alice")
+}
+
+// gatedServerAs is gatedServer with a ctx builder for any caller. Each ctx
+// is bound against the server's policy, as the transport edge does.
+func gatedServerAs(t *testing.T) (srv *Server, as func(user string) context.Context) {
 	t.Helper()
 
 	meta := &metamodel.Metamodel{
@@ -94,7 +104,7 @@ func gatedServer(t *testing.T) (*Server, context.Context) {
 			"editor": {Read: []string{"ticket"}, Update: []string{"ticket"}, Delete: []string{"ticket"}},
 		},
 		Assignments: map[string]string{"alice": "viewer", "carol": "editor"},
-	}, acl.NewStoreGraph(st), st)
+	}, aclstore.MustNewGraph(st), st)
 	if err != nil {
 		t.Fatalf("acl.NewDeclarative: %v", err)
 	}
@@ -115,7 +125,7 @@ func gatedServer(t *testing.T) (*Server, context.Context) {
 		Validator:     reads.Validator,
 		EntityManager: svc.EntityManager(),
 		Config:        svc.Config(),
-		LuaWriteDeps:  lua.WriteDeps{ReadDeps: reads.LuaReads, EntityManager: svc.EntityManager()},
+		Lua:           LuaDeps{WriteDeps: lua.WriteDeps{ReadDeps: reads.LuaReads, EntityManager: svc.EntityManager()}},
 		Watcher:       nopWatcher{},
 		Watch:         WatchDeps{Changes: st, Rebind: reads.Rebind},
 		ProjectRoot:   t.TempDir(),
@@ -124,9 +134,11 @@ func gatedServer(t *testing.T) (*Server, context.Context) {
 		Families:      store.TrivialScope(),
 	}
 
-	srv := &Server{logger: slog.New(slog.DiscardHandler)}
+	srv = &Server{logger: slog.New(slog.DiscardHandler)}
 	setDeps(srv, deps)
-	return srv, principal.With(ctx, principal.Principal{User: "alice", Tool: principal.ToolMCP})
+	return srv, func(user string) context.Context {
+		return acltest.Bind(principal.With(ctx, principal.Principal{User: user, Tool: principal.ToolMCP}), t, d)
+	}
 }
 
 func newEntity(id, typ, title string) *entity.Entity {
@@ -185,11 +197,11 @@ func TestACL_ShowEntity_HiddenIsIndistinguishableFromAbsent(t *testing.T) {
 // privileged — he is unprivileged, and must not see alice's ticket.
 func TestACL_TwoPrincipals_SeeDifferentRows(t *testing.T) {
 	t.Parallel()
-	s, aliceCtx := gatedServer(t)
+	s, as := gatedServerAs(t)
+	aliceCtx := as("alice")
 
 	// Same server, a different caller on the ctx.
-	bobCtx := principal.With(context.Background(),
-		principal.Principal{User: "bob", Tool: principal.ToolMCP})
+	bobCtx := as("bob")
 
 	aliceRes, err := s.handleListEntities(aliceCtx, makeToolRequest(map[string]any{}))
 	if err != nil {
@@ -645,8 +657,8 @@ func TestACL_LuaEval_WritesNamingHiddenIds(t *testing.T) {
 // ticket has one edge, to the hidden feature, so a raw count would say 1.
 func TestACL_WriteCounts_OmitHiddenEdges(t *testing.T) {
 	t.Parallel()
-	s, _ := gatedServer(t)
-	ctx := principal.With(context.Background(), principal.Principal{User: "carol", Tool: principal.ToolMCP})
+	s, as := gatedServerAs(t)
+	ctx := as("carol")
 
 	res, err := s.handleRenameEntity(ctx, makeToolRequest(map[string]any{
 		"id": visibleID, "new_id": "TKT-NEW", "dry_run": true,

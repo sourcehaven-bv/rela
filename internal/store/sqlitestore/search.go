@@ -24,7 +24,9 @@ import (
 //
 // It matches case-insensitive substrings of an entity's id, string-valued
 // properties and body, the same text and semantics as pgstore's
-// SearchBackend, so the two database builds find the same entities.
+// SearchBackend, so the two database builds find the same entities. Both
+// fold case with Go's strings.ToLower only (search.IndexText), so a row
+// matches exactly when search.MatchTextFields finds a field (BUG-YG126C).
 type SearchBackend struct {
 	db     *sql.DB
 	titles SearchTitles
@@ -36,7 +38,7 @@ var (
 )
 
 // minTrigramRunes is the shortest needle the trigram index can answer. A
-// shorter one is matched with LIKE over the indexed text, which scans it.
+// shorter one is matched with instr over the indexed text, which scans it.
 const minTrigramRunes = 3
 
 // NewSearchBackend returns the search backend over db.
@@ -270,8 +272,9 @@ func matchSQL(b *sqlBuilder, needle string) string {
 		hits = `SELECT rowid FROM entity_search WHERE entity_search MATCH ` +
 			b.arg(`"`+strings.ReplaceAll(needle, `"`, `""`)+`"`)
 	} else {
-		hits = `SELECT rowid FROM entity_search WHERE body LIKE ` +
-			b.arg("%"+escapeLike(needle)+"%") + ` ESCAPE '\'`
+		// instr, not LIKE: LIKE folds ASCII case, and the indexed text is
+		// already lowered by Go, which is the only fold that may apply.
+		hits = `SELECT rowid FROM entity_search WHERE instr(body, ` + b.arg(needle) + `) > 0`
 	}
 	return `SELECT id, face FROM entity_search_key WHERE key IN (` + hits + `)`
 }
@@ -317,9 +320,4 @@ func titleRankSQL(b *sqlBuilder, needle string) string {
 	return `CASE WHEN t = ` + n + ` THEN 3` +
 		` WHEN substr(t, 1, ` + strconv.Itoa(utf8.RuneCountInString(needle)) + `) = ` + n + ` THEN 2` +
 		` WHEN instr(t, ` + n + `) > 0 THEN 1 ELSE 0 END`
-}
-
-// escapeLike escapes LIKE's wildcards and its escape character.
-func escapeLike(s string) string {
-	return strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`).Replace(s)
 }

@@ -45,17 +45,25 @@ func GrantsVerbOnFace(role RoleDef, verb Verb, entityType string, face entity.Fa
 // anyway. An undeclared role grants nothing.
 //
 // The answer is memoised per (role, verb, type, face) for the life of the
-// Request; the inputs are the immutable policy and the bound principal.
+// Request; the inputs are the immutable policy and the bound principal. It is
+// safe to call from several goroutines.
 func (r *Request) RoleGrantsVerbOnFace(roleName string, verb Verb, entityType string, face entity.Face) bool {
 	question := roleVerbQuestion{role: roleName, verb: verb, entityType: entityType, face: face}
-	if held, seen := r.roleVerbAnswers[question]; seen {
+	r.roleVerbMu.Lock()
+	held, seen := r.roleVerbAnswers[question]
+	r.roleVerbMu.Unlock()
+	if seen {
 		return held
 	}
-	held := r.roleGrantsVerbOnFace(question)
+	// Computed outside the lock: the answer is a pure function of immutable
+	// inputs, so two goroutines racing on one question store the same value.
+	held = r.roleGrantsVerbOnFace(question)
+	r.roleVerbMu.Lock()
 	if r.roleVerbAnswers == nil {
 		r.roleVerbAnswers = map[roleVerbQuestion]bool{}
 	}
 	r.roleVerbAnswers[question] = held
+	r.roleVerbMu.Unlock()
 	return held
 }
 

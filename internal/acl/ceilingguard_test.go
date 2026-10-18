@@ -150,9 +150,9 @@ client_baselines:
 
 	t.Run("attenuated client", func(t *testing.T) {
 		t.Parallel()
-		req, err := d.ForPrincipal(verifiedClient("svc", "app"))
+		req, err := d.ForIdentity(identityFor(t.Context(), t, d, verifiedClient("svc", "app")))
 		if err != nil {
-			t.Fatalf("ForPrincipal: %v", err)
+			t.Fatalf("ForIdentity: %v", err)
 		}
 		role, ok := req.roleFor("admin")
 		if !ok {
@@ -181,9 +181,9 @@ client_baselines:
 
 	t.Run("interactive user is untouched", func(t *testing.T) {
 		t.Parallel()
-		req, err := d.ForPrincipal(verifiedClient("alice", "user"))
+		req, err := d.ForIdentity(identityFor(t.Context(), t, d, verifiedClient("alice", "user")))
 		if err != nil {
-			t.Fatalf("ForPrincipal: %v", err)
+			t.Fatalf("ForIdentity: %v", err)
 		}
 		role, ok := req.roleFor("admin")
 		if !ok {
@@ -239,7 +239,7 @@ client_baselines:
 	}
 	ctx := context.Background()
 
-	unrestricted, err := d.ForPrincipal(verifiedClient("alice", "user"))
+	unrestricted, err := d.ForIdentity(identityFor(t.Context(), t, d, verifiedClient("alice", "user")))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -250,7 +250,7 @@ client_baselines:
 		t.Fatal("precondition: alice should hold establish for the entity")
 	}
 
-	client, err := d.ForPrincipal(verifiedClient("alice", "app"))
+	client, err := d.ForIdentity(identityFor(t.Context(), t, d, verifiedClient("alice", "app")))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -285,11 +285,11 @@ client_baselines:
 	if err != nil {
 		t.Fatalf("NewDeclarative: %v", err)
 	}
-	user, err := d.ForPrincipal(verifiedClient("alice", "user"))
+	user, err := OpenRequest(t.Context(), d, verifiedClient("alice", "user"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	app, err := d.ForPrincipal(verifiedClient("alice", "app"))
+	app, err := OpenRequest(t.Context(), d, verifiedClient("alice", "app"))
 	if err != nil {
 		t.Fatal(err)
 	}

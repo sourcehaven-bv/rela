@@ -5,6 +5,7 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/affordances"
 	entityPkg "github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/search"
 	"github.com/Sourcehaven-BV/rela/internal/statemachine"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
@@ -67,6 +68,11 @@ func (p *policyResolver) UnconditionalRelationVerdicts(ctx context.Context, e *e
 // [affordances.PolicyResolver.FieldVisibleOnEveryRow].
 func (p *policyResolver) FieldVisibleOnEveryRow(ctx context.Context, entityType, property string) bool {
 	return p.inner.FieldVisibleOnEveryRow(ctx, entityType, property)
+}
+
+// SearchFieldScope delegates to [affordances.PolicyResolver.SearchFieldScope].
+func (p *policyResolver) SearchFieldScope(ctx context.Context, entityType string) (*search.FieldScope, error) {
+	return p.inner.SearchFieldScope(ctx, entityType)
 }
 
 // relationVerdictsWire maps affordances relation verdicts onto the wire

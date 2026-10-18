@@ -1075,8 +1075,7 @@ func (a *App) handleV1GetEntity(w http.ResponseWriter, r *http.Request, typeName
 	// edges, so a draft carried the published face's links too — the
 	// mixed-face response that reads as correct because the entity looks
 	// right and only its links are wrong.
-	outgoing, visibleNeighbors, werr := servedFaceEdges(
-		ctx, a.worldNeighbors, entity)
+	outgoing, visibleNeighbors, werr := a.faceEdges.read(ctx, entity)
 	if werr != nil {
 		// A neighbor-resolution fault is an infrastructure failure, not an
 		// empty link set. Rendering it as "this world links to nothing"
@@ -1142,7 +1141,7 @@ func (a *App) handleV1GetEntity(w http.ResponseWriter, r *http.Request, typeName
 	// RR-FRK1 duplication this PR is careful to avoid one function over — and
 	// it also opens a window in which the validator could describe a
 	// different edge set than the body it is validating.
-	etag := entityETagWithEdges(a.affordances.withoutHidden(ctx, entity), outgoing)
+	etag := servedETag(ctx, a.affordances, entity, outgoing)
 	w.Header().Set("ETag", etag)
 
 	// Check If-None-Match. When leases are wired the GET never answers 304:
@@ -2597,33 +2596,46 @@ func addPaginationLinks(w http.ResponseWriter, _ *http.Request, page, perPage, t
 	w.Header().Set("Link", strings.Join(links, ", "))
 }
 
-// computeEntityETag reads the entity's edges itself and hashes the caller's
-// view of e ([affordanceService.withoutHidden]). Callers that ALREADY hold
-// the edges they served should use [entityETagWithEdges] instead — see the
+// computeEntityETag reads the entity's edges itself. Callers that ALREADY hold
+// the edges they served should use [servedETag] instead — see the
 // duplication note at the single-entity GET's call site.
 func (a *App) computeEntityETag(ctx context.Context, e *entityPkg.Entity) string {
-	e = a.affordances.withoutHidden(ctx, e)
-	edges, err := etagEdges(ctx, a.worldNeighbors, e)
+	edges, err := a.faceEdges.edges(ctx, e)
 	if err != nil {
-		return etagUnresolved(ctx, e)
+		return etagUnresolved(ctx, a.affordances, e)
 	}
-	return entityETagWithEdges(e, edges)
+	return servedETag(ctx, a.affordances, e, edges)
 }
 
 // etagUnresolved is the validator for an entity whose edges could not be
 // resolved. See the sentinel rationale on [entityETagWithEdges].
-func etagUnresolved(ctx context.Context, e *entityPkg.Entity) string {
+func etagUnresolved(ctx context.Context, aff affordanceService, e *entityPkg.Entity) string {
 	slog.Warn("dataentry: ETag: world-scoped edge read failed; "+
 		"folding a sentinel so the validator matches nothing",
 		"entity", e.ID, "world", worldFromContext(ctx).name)
-	return entityETagWithEdges(e, []*entityPkg.Relation{
+	return servedETag(ctx, aff, e, []*entityPkg.Relation{
 		{Type: "!unresolved", To: "!unresolved"},
 	})
 }
 
+// servedETag is the validator for e as the caller sees it: e's properties
+// minus those the caller's `visible:` grants hide, together with the edges
+// the response carried. Every entity ETag goes through it, so a GET, an
+// If-Match check and a PATCH response agree for one caller.
+//
+// Hashing a hidden value would make the ETag an offline guessing oracle for
+// it: a caller could hash candidate values and compare. It would also change
+// the ETag when only a hidden value changed, so the caller's next If-Match
+// would fail for a change it cannot see.
+func servedETag(
+	ctx context.Context, aff affordanceService, e *entityPkg.Entity, edges []*entityPkg.Relation,
+) string {
+	return entityETagWithEdges(e, aff.hiddenProperties(ctx, e), edges)
+}
+
 // entityETagWithEdges hashes e together with the edges the response actually
-// carried. e is the caller's view ([affordanceService.withoutHidden]), never
-// a row with hidden values in it.
+// carried, leaving out the properties named in hidden. Callers use
+// [servedETag], which supplies hidden from the caller's grants.
 //
 // Taking the edges as a PARAMETER rather than reading them is what keeps the
 // validator and the body describing the same document: the GET computes them
@@ -2632,7 +2644,9 @@ func etagUnresolved(ctx context.Context, e *entityPkg.Entity) string {
 // A package function, not a method: it needs nothing from App, and App is
 // pinned at its plimsoll cap. (The ETag split briefly took it to 105, which is
 // the load line doing its job — see the App type doc.)
-func entityETagWithEdges(e *entityPkg.Entity, edges []*entityPkg.Relation) string {
+func entityETagWithEdges(
+	e *entityPkg.Entity, hidden map[string]struct{}, edges []*entityPkg.Relation,
+) string {
 	h := sha256.New()
 	_, _ = h.Write([]byte(e.ID))
 	_, _ = h.Write([]byte(e.Type))
@@ -2641,7 +2655,9 @@ func entityETagWithEdges(e *entityPkg.Entity, edges []*entityPkg.Relation) strin
 	// Sort properties so the hash is stable across map iteration order.
 	propKeys := make([]string, 0, len(e.Properties))
 	for k := range e.Properties {
-		propKeys = append(propKeys, k)
+		if _, h := hidden[k]; !h {
+			propKeys = append(propKeys, k)
+		}
 	}
 	sort.Strings(propKeys)
 	for _, k := range propKeys {

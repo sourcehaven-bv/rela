@@ -469,31 +469,17 @@ func (d *Desktop) loadProject(dir string, keepExisting bool) string {
 		return d.failLoad(cfgErr)
 	}
 
-	fieldResolver, err := dataentry.ResolverFromServices(svc)
+	app, err := newDesktopApp(fsys, projCtx, svc)
 	if err != nil {
 		return d.failLoad(err)
 	}
-
-	app, err := dataentry.NewApp(
-		fsys, projCtx, svc.ProjectFiles(), svc.Templater(), svc.Meta(), svc.Store(), svc.Versions(),
-		svc.EntityManager(), svc.Searcher(), svc.VisibleSearcher(), svc.ACL(),
-		fieldResolver,
-		svc.Audit(),
-		svc.State(),
-		// Wails asset server, no network listener: the server host IS the
-		// user's machine, so commands run ungated like any local desktop app.
-		dataentry.UngatedCommandAuthorizer(),
-		appbuild.CompiledWorlds(svc),
-	)
-	if err != nil {
-		return d.failLoad(err)
-	}
-	if err := dataentrywire.Services(app, svc); err != nil {
-		return d.failLoad(err)
-	}
-	app.SetPrincipalResolver(desktopPrincipalResolver())
 	handler := app.NewRouter()
 	opened, name := openedAs(projCtx, app.ProjectRoot(), app.ProjectName())
+
+	bind, err := appbuild.IdentityBinder(svc)
+	if err != nil {
+		return d.failLoad(err)
+	}
 
 	// Start background scheduler for the new project.
 	schedCtx, schedCancel := context.WithCancel(context.Background())
@@ -509,7 +495,7 @@ func (d *Desktop) loadProject(dir string, keepExisting bool) string {
 	d.pendingSetupDir = ""
 	d.pendingSetupMeta = nil
 	d.stopScheduler = schedCancel
-	d.leasesDone = startBackground(schedCtx, svc)
+	d.leasesDone = startBackground(schedCtx, svc, bind)
 	d.mu.Unlock()
 	handedOff = true
 
@@ -1420,11 +1406,40 @@ func desktopPrincipalResolver() dataentry.PrincipalResolver {
 	)
 }
 
+// newDesktopApp builds the data-entry app for svc, wired for the desktop.
+func newDesktopApp(fsys storage.FS, projCtx *project.Context, svc *appbuild.Services) (*dataentry.App, error) {
+	fieldResolver, err := dataentry.ResolverFromServices(svc)
+	if err != nil {
+		return nil, err
+	}
+	app, err := dataentry.NewApp(
+		fsys, projCtx, svc.ProjectFiles(), svc.Templater(), svc.Meta(), svc.Store(), svc.Versions(),
+		svc.EntityManager(), svc.Searcher(), svc.VisibleSearcher(), svc.ACL(),
+		fieldResolver,
+		svc.Audit(),
+		svc.State(),
+		// Wails asset server, no network listener: the server host IS the
+		// user's machine, so commands run ungated like any local desktop app.
+		dataentry.UngatedCommandAuthorizer(),
+		appbuild.CompiledWorlds(svc),
+	)
+	if err != nil {
+		return nil, err
+	}
+	if err := dataentrywire.Services(app, svc); err != nil {
+		return nil, err
+	}
+	app.SetPrincipalResolver(desktopPrincipalResolver())
+	return app, nil
+}
+
 // startBackground starts svc's scheduler and lease watcher. Both stop with
 // ctx; the returned channel closes once both have, and is awaited before svc
 // closes.
-func startBackground(ctx context.Context, svc *appbuild.Services) <-chan struct{} {
-	sched := scheduler.StartBackground(ctx, svc, slog.Default())
+func startBackground(
+	ctx context.Context, svc *appbuild.Services, bind func(context.Context) (context.Context, error),
+) <-chan struct{} {
+	sched := scheduler.StartBackground(ctx, svc, bind, slog.Default())
 	leases := appbuild.WatchLeases(ctx, svc)
 	done := make(chan struct{})
 	go func() {

@@ -1,6 +1,7 @@
 package acl
 
 import (
+	"sync"
 	"testing"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
@@ -31,7 +32,7 @@ client_baselines:
     deny_update: [ticket]
 `)
 	published, draft := entity.Face("published"), entity.Face("draft")
-	// A Request is single-goroutine, so each parallel subtest opens its own.
+	// Each subtest opens its own Request so the memo starts empty.
 	user, app := "user", "app"
 
 	tests := []struct {
@@ -63,9 +64,9 @@ client_baselines:
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			req, err := d.ForPrincipal(verifiedClient("alice", tc.client))
+			req, err := d.ForIdentity(identityFor(t.Context(), t, d, verifiedClient("alice", tc.client)))
 			if err != nil {
-				t.Fatalf("ForPrincipal: %v", err)
+				t.Fatalf("ForIdentity: %v", err)
 			}
 			// Asked twice: the second answer comes from the memo.
 			for range 2 {
@@ -76,4 +77,52 @@ client_baselines:
 			}
 		})
 	}
+}
+
+// TestRoleGrantsVerbOnFace_ConcurrentCallers shares one Request between
+// goroutines, as a ctx handed to a worker pool would. Under -race it fails if
+// the memo is unguarded; every goroutine must also get the right answer.
+func TestRoleGrantsVerbOnFace_ConcurrentCallers(t *testing.T) {
+	t.Parallel()
+	d := mustDeclarative(t, `
+roles:
+  admin:
+    read: ["*"]
+    update: ["*"]
+  reader:
+    read: [ticket, "policy@published"]
+`)
+	req, err := d.ForIdentity(identityFor(t.Context(), t, d, verifiedClient("alice", "user")))
+	if err != nil {
+		t.Fatalf("ForIdentity: %v", err)
+	}
+	type question struct {
+		role string
+		verb Verb
+		typ  string
+		face entity.Face
+		want bool
+	}
+	questions := []question{
+		{"admin", VerbRead, "ticket", "", true},
+		{"admin", VerbUpdate, "policy", "draft", false},
+		{"reader", VerbRead, "policy", "published", true},
+		{"reader", VerbRead, "policy", "draft", false},
+		{"reader", VerbUpdate, "ticket", "", false},
+	}
+	const goroutines, rounds = 8, 200
+	var wg sync.WaitGroup
+	for g := range goroutines {
+		wg.Go(func() {
+			for i := range rounds {
+				q := questions[(g+i)%len(questions)]
+				if got := req.RoleGrantsVerbOnFace(q.role, q.verb, q.typ, q.face); got != q.want {
+					t.Errorf("RoleGrantsVerbOnFace(%q, %s, %s, %q) = %v, want %v",
+						q.role, q.verb, q.typ, q.face, got, q.want)
+					return
+				}
+			}
+		})
+	}
+	wg.Wait()
 }

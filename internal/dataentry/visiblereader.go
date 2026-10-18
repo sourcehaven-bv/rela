@@ -325,9 +325,13 @@ func readAddressedOr404(
 }
 
 // writeTargetOr404 resolves a write's path address to the one face it
-// edits ([visibility.Resolver.WriteTarget]) in the request's world, and
-// reads that face. A miss is the uniform 404; a bare id on a faced type is a
-// 422 `face_required` listing the readable faces.
+// edits in the request's world, and reads that face, in one resolver pass
+// ([visibility.Resolver.WriteRow]). A miss is the uniform 404; a bare id on
+// a faced type is a 422 `face_required` listing the readable faces.
+//
+// The row is the caller's gated, redacted view. It serves the response, the
+// affordance checks and the If-Match compare; it never feeds the write,
+// whose merge base is the raw stored row entitymanager reads itself.
 func writeTargetOr404(
 	w http.ResponseWriter, r *http.Request, vr visibleReader, entityType, addr string,
 ) (*entitypkg.Entity, bool) {
@@ -354,14 +358,7 @@ func (vr visibleReader) writeTarget(ctx context.Context, entityType, addr string
 		return nil, errWriteTargetNotFound
 	}
 	world := worldFromContext(ctx).visibility()
-	ref, ok, err := vr.resolver.WriteTarget(ctx, world, entityType, parsed)
-	if err != nil {
-		return nil, err
-	}
-	if !ok {
-		return nil, errWriteTargetNotFound
-	}
-	e, ok, err := rowOf(vr.resolver.Ref(ctx, world, entityType, ref))
+	e, ok, err := rowOf(vr.resolver.WriteRow(ctx, world, entityType, parsed))
 	if err != nil {
 		return nil, err
 	}

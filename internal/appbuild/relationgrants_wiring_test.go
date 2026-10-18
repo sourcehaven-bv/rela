@@ -6,6 +6,8 @@ import (
 	"testing"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
+	"github.com/Sourcehaven-BV/rela/internal/aclstore"
+	"github.com/Sourcehaven-BV/rela/internal/appbuild"
 	"github.com/Sourcehaven-BV/rela/internal/appbuild/appbuildtest"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/lua"
@@ -83,7 +85,7 @@ func newSpawntHarness(t *testing.T, policyBody string) spawntHarness {
 	if err != nil {
 		t.Fatalf("load policy: %v", err)
 	}
-	d, err := acl.NewDeclarative(p, acl.NewStoreGraph(st), st)
+	d, err := acl.NewDeclarative(p, aclstore.MustNewGraph(st), st)
 	if err != nil {
 		t.Fatalf("NewDeclarative: %v", err)
 	}
@@ -93,6 +95,10 @@ func newSpawntHarness(t *testing.T, policyBody string) spawntHarness {
 		taskCtx := principal.With(ctx, principal.Principal{
 			User: "system:scheduler", Tool: principal.ToolScheduler,
 		})
+		taskCtx, bindErr := appbuild.MustIdentityBinder(svc)(taskCtx)
+		if bindErr != nil {
+			t.Fatalf("IdentityBinder: %v", bindErr)
+		}
 		var out strings.Builder
 		rt := lua.NewWriter(svc.ScheduledLuaWriteDeps(), &out,
 			lua.WithContext(taskCtx), lua.WithPrincipal(principal.From(taskCtx)))

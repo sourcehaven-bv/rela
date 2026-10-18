@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
+	"github.com/Sourcehaven-BV/rela/internal/acl/acltest"
 	"github.com/Sourcehaven-BV/rela/internal/appbuild/appbuildtest"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
@@ -138,8 +139,8 @@ func relationETag(t *testing.T, reason, secret string) string {
 		t.Fatalf("CreateRelation: %v", err)
 	}
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/tickets/TKT-001/relations/depends_on/TKT-002", http.NoBody)
-	req = req.WithContext(principal.With(req.Context(),
-		principal.Principal{User: "alice", Tool: principal.ToolDataEntry}))
+	req = req.WithContext(acltest.Bind(principal.With(req.Context(),
+		principal.Principal{User: "alice", Tool: principal.ToolDataEntry}), t, app.acl))
 	rec := httptest.NewRecorder()
 	handleV1GetRelationTarget(app, rec, req, "ticket", "TKT-001", "depends_on", "TKT-002")
 	if rec.Code != http.StatusOK {

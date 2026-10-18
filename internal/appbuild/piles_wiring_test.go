@@ -58,7 +58,7 @@ func TestPiles_CascadeWiring(t *testing.T) {
 	require.NoError(t, err)
 	defer svc.Close()
 
-	ctx := bobCtx(principal.ToolDataEntry)
+	ctx := bobCtx(t, svc, principal.ToolDataEntry)
 	res, err := svc.EntityManager().PatchEntity(ctx, "TKT-1", entity.Patch{
 		Properties: map[string]any{"title": "New"},
 	})

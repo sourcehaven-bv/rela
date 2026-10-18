@@ -79,7 +79,7 @@ func TestViewCondition_RelatedWithTraversingGrantIsSizeIndependent(t *testing.T)
 				Read: []string{"*"},
 				Visible: map[string][]acl.FieldGrant{"ticket": {
 					{Field: "title"},
-					{Field: "status", When: "not related(entity, 'implements', { title = 'Feature 2' })"},
+					{Field: "status", When: "related(entity, 'implements', { title = 'Feature 2' })"},
 				}},
 			}},
 			Assignments: map[string]string{"T1": "editor"},

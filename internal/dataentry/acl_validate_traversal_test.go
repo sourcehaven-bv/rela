@@ -1,7 +1,10 @@
 package dataentry
 
 import (
+	"errors"
 	"testing"
+
+	"github.com/Sourcehaven-BV/rela/internal/acl/acltest"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
@@ -62,12 +65,20 @@ func TestGatedValidator_TraversalIgnoresHiddenEntity(t *testing.T) {
 	// traversal takes its tier from the policy, as the reads do, rather than
 	// running ungated.
 	t.Run("no read gate on ctx", func(t *testing.T) {
-		ids, err := app.validator.CheckRule(principalCtx("alice"), rule)
+		ids, err := app.validator.CheckRule(acltest.Bind(principalCtx("alice"), t, app.acl), rule)
 		if err != nil {
 			t.Fatal(err)
 		}
 		if len(ids) != 1 {
 			t.Fatalf("violations = %v, want 1: the hidden feature must not count", ids)
+		}
+	})
+
+	// With no resolved identity either, the traversal fails closed: it
+	// errors rather than counting with no gate.
+	t.Run("no identity on ctx", func(t *testing.T) {
+		if _, err := app.validator.CheckRule(principalCtx("alice"), rule); !errors.Is(err, acl.ErrNoIdentity) {
+			t.Fatalf("CheckRule without an identity: err = %v, want acl.ErrNoIdentity", err)
 		}
 	})
 }

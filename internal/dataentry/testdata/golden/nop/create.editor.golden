@@ -2,8 +2,8 @@ request: POST /api/v1/tickets/
 identity: header editor@example.test
 status: 201
 header Location: /api/v1/tickets/TKT-008
-reads: GetRelation=2 ListEntities=1 ListEntityHeaders=9 ListRelations=3
-breadth: ListEntities=0/1 ListEntityHeaders=10/9 ListRelations=0/3
+reads: GetRelation=2 ListEntities=1 ListEntityHeaders=9 ListRelations=2
+breadth: ListEntities=0/1 ListEntityHeaders=10/9 ListRelations=0/2
 bodies: ListEntities=4/1 ListEntityHeaders=0/9
 versions: 
 body:

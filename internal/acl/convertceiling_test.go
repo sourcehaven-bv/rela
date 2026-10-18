@@ -49,7 +49,7 @@ func TestConvert_CeilingBoundsDestinationAndSource(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			r, err := d.ForPrincipal(verifiedClient("converter", tc.principalType))
+			r, err := OpenRequest(t.Context(), d, verifiedClient("converter", tc.principalType))
 			if err != nil {
 				t.Fatal(err)
 			}

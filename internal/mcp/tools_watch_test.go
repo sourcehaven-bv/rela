@@ -15,6 +15,7 @@ import (
 	mcpgo "github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
+	"github.com/Sourcehaven-BV/rela/internal/aclstore"
 	"github.com/Sourcehaven-BV/rela/internal/appbuild/appbuildtest"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
@@ -696,7 +697,7 @@ func watchPolicyServer(t *testing.T) (*mcpgo.ClientSession, store.Store) {
 	d, err := acl.NewDeclarative(&acl.Policy{
 		Roles:       map[string]acl.RoleDef{"viewer": {Read: []string{"ticket"}}},
 		Assignments: map[string]string{"readers": "viewer"},
-	}, acl.NewStoreGraph(st), st)
+	}, aclstore.MustNewGraph(st), st)
 	if err != nil {
 		t.Fatalf("acl.NewDeclarative: %v", err)
 	}
@@ -728,7 +729,7 @@ func watchPolicyServer(t *testing.T) (*mcpgo.ClientSession, store.Store) {
 	// MCP. It caches alice's roles for the whole call.
 	srv.mcp.AddReceivingMiddleware(func(next mcpgo.MethodHandler) mcpgo.MethodHandler {
 		return func(ctx context.Context, method string, req mcpgo.Request) (mcpgo.Result, error) {
-			r, err := d.ForPrincipal(alice)
+			r, err := acl.OpenRequest(ctx, d, alice)
 			if err != nil {
 				return nil, err
 			}

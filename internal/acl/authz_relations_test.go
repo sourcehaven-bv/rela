@@ -43,9 +43,9 @@ func mustDeclarative(t *testing.T, body string) *Declarative {
 // ceiling applies). Tests that need a ceiling use verifiedClient instead.
 func mustRequest(t *testing.T, d *Declarative, user string) *Request {
 	t.Helper()
-	r, err := d.ForPrincipal(principal.Principal{User: user, Tool: principal.ToolCLI})
+	r, err := d.ForIdentity(identityFor(t.Context(), t, d, principal.Principal{User: user, Tool: principal.ToolCLI}))
 	if err != nil {
-		t.Fatalf("ForPrincipal(%q): %v", user, err)
+		t.Fatalf("ForIdentity(%q): %v", user, err)
 	}
 	return r
 }
@@ -65,7 +65,7 @@ func TestRelationGrant_AllowsEdgeWithoutEntityCreate(t *testing.T) {
 	ctx := context.Background()
 	r := mustRequest(t, d, "system:scheduler")
 
-	if got := r.authorizeRelationWrite(ctx, OpCreate, spawnt("terugkerend")); !got.Allow {
+	if got := r.authorizeRelationWrite(OpCreate, spawnt("terugkerend")); !got.Allow {
 		t.Fatalf("relation create denied: %s", got.Reason)
 	} else if got.RuleKind != "relation-grant" || got.RuleID != "create-spawnt" {
 		t.Errorf("allow attributed to %q/%q, want relation-grant/create-spawnt — "+
@@ -84,14 +84,13 @@ func TestRelationGrant_AllowsEdgeWithoutEntityCreate(t *testing.T) {
 func TestRelationGrant_DoesNotLeakToOtherVerbsOrTypes(t *testing.T) {
 	t.Parallel()
 	d := mustDeclarative(t, relationGrantsPolicy)
-	ctx := context.Background()
 	r := mustRequest(t, d, "system:scheduler")
 
-	if got := r.authorizeRelationWrite(ctx, OpDelete, spawnt("terugkerend")); got.Allow {
+	if got := r.authorizeRelationWrite(OpDelete, spawnt("terugkerend")); got.Allow {
 		t.Error("create-spawnt satisfied a DELETE")
 	}
 	other := RelationSubject{Type: "hoort-bij", FromType: "terugkerend", FromID: "TERUG-1"}
-	if got := r.authorizeRelationWrite(ctx, OpCreate, other); got.Allow {
+	if got := r.authorizeRelationWrite(OpCreate, other); got.Allow {
 		t.Error("create-spawnt satisfied a different relation type")
 	}
 }
@@ -107,16 +106,15 @@ func TestRelationGrant_DoesNotLeakToOtherVerbsOrTypes(t *testing.T) {
 func TestRelationGrant_RequiresResolvedSourceType(t *testing.T) {
 	t.Parallel()
 	d := mustDeclarative(t, relationGrantsPolicy)
-	ctx := context.Background()
 	r := mustRequest(t, d, "system:scheduler")
 
 	// Precondition: with the type resolved, this same principal IS allowed.
-	if got := r.authorizeRelationWrite(ctx, OpCreate, spawnt("terugkerend")); !got.Allow {
+	if got := r.authorizeRelationWrite(OpCreate, spawnt("terugkerend")); !got.Allow {
 		t.Fatalf("precondition: resolved source should be allowed: %s", got.Reason)
 	}
 
 	for _, op := range []Op{OpCreate, OpUpdate, OpDelete} {
-		got := r.authorizeRelationWrite(ctx, op, spawnt(""))
+		got := r.authorizeRelationWrite(op, spawnt(""))
 		if got.Allow {
 			t.Errorf("%s allowed with an unresolved source type — an empty FromType "+
 				"is a fail-closed sentinel, not a wildcard", op)
@@ -158,24 +156,23 @@ relation_grants:
 	if err != nil {
 		t.Fatalf("NewDeclarative: %v", err)
 	}
-	ctx := context.Background()
 
-	unrestricted, err := d.ForPrincipal(verifiedClient("alice", "user"))
+	unrestricted, err := d.ForIdentity(identityFor(t.Context(), t, d, verifiedClient("alice", "user")))
 	if err != nil {
 		t.Fatal(err)
 	}
 	for _, op := range []Op{OpCreate, OpUpdate, OpDelete} {
-		if got := unrestricted.authorizeRelationWrite(ctx, op, spawnt("terugkerend")); !got.Allow {
+		if got := unrestricted.authorizeRelationWrite(op, spawnt("terugkerend")); !got.Allow {
 			t.Fatalf("precondition: unattenuated alice should be allowed %s: %s", op, got.Reason)
 		}
 	}
 
-	client, err := d.ForPrincipal(verifiedClient("alice", "readonly-client"))
+	client, err := d.ForIdentity(identityFor(t.Context(), t, d, verifiedClient("alice", "readonly-client")))
 	if err != nil {
 		t.Fatal(err)
 	}
 	for _, op := range []Op{OpCreate, OpUpdate, OpDelete} {
-		got := client.authorizeRelationWrite(ctx, op, spawnt("terugkerend"))
+		got := client.authorizeRelationWrite(op, spawnt("terugkerend"))
 		if got.Allow {
 			t.Errorf("%s: relation grant escaped the client ceiling — a ceiling that "+
 				"GRANTS violates the only-ever-narrows invariant", op)
@@ -215,7 +212,7 @@ role_relations:
 	}
 	r := mustRequest(t, d, "alice")
 
-	got := r.authorizeRelationWrite(context.Background(), OpCreate,
+	got := r.authorizeRelationWrite(OpCreate,
 		RelationSubject{Type: "owner-of", FromType: "persoon", FromID: "P-1"})
 	if got.Allow {
 		t.Fatal("relation grant satisfied the delegate-X gate — a principal could " +
@@ -242,7 +239,7 @@ relation_grants:
     create: create-spawnt
 `)
 	r := mustRequest(t, d, "bob")
-	got := r.authorizeRelationWrite(context.Background(), OpCreate, spawnt("terugkerend"))
+	got := r.authorizeRelationWrite(OpCreate, spawnt("terugkerend"))
 	if got.Allow {
 		t.Fatal("bob holds neither the source-type grant nor the permission")
 	}
@@ -287,14 +284,13 @@ relation_grants:
 	if err != nil {
 		t.Fatalf("NewDeclarative: %v", err)
 	}
-	ctx := context.Background()
 
 	// Precondition: unattenuated, the relation grant allows.
-	full, err := d.ForPrincipal(verifiedClient("alice", "user"))
+	full, err := d.ForIdentity(identityFor(t.Context(), t, d, verifiedClient("alice", "user")))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := full.authorizeRelationWrite(ctx, OpCreate, spawnt("terugkerend")); !got.Allow {
+	if got := full.authorizeRelationWrite(OpCreate, spawnt("terugkerend")); !got.Allow {
 		t.Fatalf("precondition: unattenuated alice should be allowed: %s", got.Reason)
 	}
 
@@ -302,11 +298,11 @@ relation_grants:
 	// is only reachable via grantsPermission — a direct map read would sail
 	// past it, and filterPermissions preserves a "*" under a pure denial just
 	// as filterTypes does.
-	limited, err := d.ForPrincipal(verifiedClient("alice", "limited"))
+	limited, err := d.ForIdentity(identityFor(t.Context(), t, d, verifiedClient("alice", "limited")))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := limited.authorizeRelationWrite(ctx, OpCreate, spawnt("terugkerend")); got.Allow {
+	if got := limited.authorizeRelationWrite(OpCreate, spawnt("terugkerend")); got.Allow {
 		t.Error("the relation grant honored a permission the client ceiling " +
 			"withholds — the permission check is not routing through " +
 			"grantsPermission")

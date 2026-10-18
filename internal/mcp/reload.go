@@ -63,6 +63,29 @@ func bind[G, Req, Res any](
 	s *Server, sel func(handlerSet) G, method func(G, context.Context, Req) (Res, error),
 ) func(context.Context, Req) (Res, error) {
 	return func(ctx context.Context, req Req) (Res, error) {
-		return method(group(s, sel), ctx, req)
+		return method(sel(snapshotFor(ctx, s).handlers), ctx, req)
 	}
+}
+
+// snapshotKey is the ctx key for the snapshot a call pinned.
+type snapshotKey struct{}
+
+// withSnapshot pins snap on ctx for the rest of one call.
+// Server.principalMiddleware does it before anything else, so the identity
+// binder and every handler of the call read the same snapshot. Without the
+// pin, a reload landing between the bind and the handler would hand the
+// handler readers built on another acl.Declarative than the one its Request
+// was opened on, and the call would fail with acl.ErrForeignIdentity.
+func withSnapshot(ctx context.Context, snap *snapshot) context.Context {
+	return context.WithValue(ctx, snapshotKey{}, snap)
+}
+
+// snapshotFor returns the snapshot pinned on ctx, or the currently published
+// one for a call that did not pass through the middleware (direct handler
+// calls in tests).
+func snapshotFor(ctx context.Context, s *Server) *snapshot {
+	if snap, ok := ctx.Value(snapshotKey{}).(*snapshot); ok && snap != nil {
+		return snap
+	}
+	return s.state.current()
 }

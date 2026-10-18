@@ -12,7 +12,7 @@ import (
 // schemaVersion is the shape of the tables this binary expects. Bump it
 // whenever schemaSQL changes shape, and append the step that carries an
 // existing database forward to [migrations].
-const schemaVersion = 21
+const schemaVersion = 22
 
 // SchemaVersion reports the table shape this binary expects, so the CLI can
 // show a real number rather than prose.
@@ -163,20 +163,18 @@ var migrations = []migration{
 	},
 	{
 		// v11 → v12: the FTS5 search index (DEC-10Z731). schemaSQL has
-		// already created the table and its triggers. The v13 rung fills
-		// it, so this rung only moves the stamp.
+		// already created its key table; the index itself is created after
+		// the ladder in its v22 shape, so this rung only moves the stamp.
 		to:    12,
-		apply: sqlSteps(searchDDL),
+		apply: sqlSteps(searchKeyDDL),
 	},
 	{
 		// v12 → v13: key the search index by entity_search_key rather than
-		// by the entities rowid, which VACUUM may renumber (RR-44YDTU).
-		// schemaSQL has created the key table, but on a v12 database it
-		// kept the old triggers, which share the new ones' names. The rung
-		// drops the old index and triggers, recreates them and refills the
-		// index. A re-run after a crash repeats the same full refill.
+		// by the entities rowid, which VACUUM may renumber (RR-44YDTU). The
+		// rung drops the v12 index and triggers; the index is created after
+		// the ladder and filled by the store, as for v22.
 		to:    13,
-		apply: sqlSteps(dropRowidSearchSQL, searchDDL, rebuildSearchSQL),
+		apply: sqlSteps(dropSearchSQL),
 	},
 	{
 		// v13 → v14: the content hash on live rows, which the version sweep
@@ -241,6 +239,22 @@ var migrations = []migration{
 		to:    21,
 		apply: addChannelTypeCardinality,
 	},
+	{
+		// v21 → v22: the search index matches Go-lowered text
+		// (BUG-YG126C). The rung adds search_text and drops the index that
+		// folded case itself; init creates the new one after the ladder.
+		// Every row gets a NULL search_text, so it is out of the index until
+		// sqlitestore's reindex pass fills it in Go. The rung sets that
+		// NULL itself rather than trusting the new column's default, so a
+		// re-run after a crash, with the index dropped, reindexes every row.
+		to: 22,
+		apply: func(ctx context.Context, conn *sql.Conn) error {
+			if err := addColumns(searchTextColumns)(ctx, conn); err != nil {
+				return err
+			}
+			return sqlSteps(dropSearchSQL, `UPDATE entities SET search_text = NULL`)(ctx, conn)
+		},
+	},
 }
 
 // addChannelTypeCardinality adds channel_types.cardinality when it is
@@ -261,6 +275,12 @@ func addChannelTypeCardinality(ctx context.Context, conn *sql.Conn) error {
 		return fmt.Errorf("add channel_types.cardinality: %w", err)
 	}
 	return nil
+}
+
+// searchTextColumns are the search text columns, on the live and the marked
+// table.
+var searchTextColumns = []addedColumn{
+	{"entities", "search_text"}, {"marked_entities", "search_text"},
 }
 
 // mentionColumns are the backlink columns, on the live and the marked table.

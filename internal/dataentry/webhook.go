@@ -3,12 +3,14 @@ package dataentry
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
 	"sync"
 	"time"
 
+	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
 )
 
@@ -183,6 +185,17 @@ func dispatchWebhookAction(ctx context.Context, h *writeHandler, actionID string
 		User: "webhook:" + claims.Event,
 		Tool: principal.ToolWebhookReceiver,
 	})
+	// The webhook route is outside /api/, so attachACLRequest did not run:
+	// resolve the receiver's identity here, once, as every request edge does,
+	// and attach its read gate.
+	ctx, err := acl.BindRequest(ctx, h.acl())
+	if err != nil {
+		return fmt.Errorf("idp webhook: resolve identity: %w", err)
+	}
+	ctx, err = attachBoundReadGate(ctx, h.acl())
+	if err != nil {
+		return fmt.Errorf("idp webhook: read gate: %w", err)
+	}
 
 	params := map[string]string{
 		"event":   claims.Event,
@@ -198,7 +211,7 @@ func dispatchWebhookAction(ctx context.Context, h *writeHandler, actionID string
 	// by default.
 	deps := h.luaDeps()
 	deps.Capabilities = luaCapabilities(action.Capabilities)
-	_, err := h.engine().ExecuteAction(ctx, action.Script, deps,
+	_, err = h.engine().ExecuteAction(ctx, action.Script, deps,
 		nil, params, webhookActionTimeout, newCorrelationID())
 	return err
 }

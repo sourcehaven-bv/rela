@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"strings"
 	"sync"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
@@ -31,14 +30,29 @@ import (
 //     listed in [Policy.RoleRelations] require the writer to hold the
 //     declared permission. See [RoleRelationDef.RequiresPermission].
 //   - **Unstamped principals are hard-denied.** A principal with
-//     User="" / User="unknown" or Tool="" / Tool="unknown" fails the
-//     [Declarative.ForPrincipal] check; the deny surfaces as RuleKind="role-grant"
-//     with a Reason that names ErrUnstampedPrincipal.
+//     User="" / User="unknown" or Tool="" / Tool="unknown" fails
+//     identity resolution, so no [Request] exists for it and every
+//     evaluation path fails closed.
+//
+// # Identity resolution is a separate step
+//
+// The Declarative evaluates; it does not resolve who the caller is. The
+// request edge (HTTP middleware, MCP call, CLI command, scheduler run)
+// resolves the principal once with [Declarative.IdentityResolver], opens a
+// [Request] with [Declarative.ForIdentity], and attaches it with
+// [WithRequest]. Evaluation paths read that Request from ctx. When none is
+// attached they fail closed with [ErrNoIdentity]; they never resolve the
+// principal themselves.
 type Declarative struct {
 	policy          *Policy
 	graph           Graph           // required: NewDeclarative rejects nil
 	faceMatcher     FaceMatcher     // required: needed by Request.ReadableFacesMany
 	principalLookup PrincipalLookup // optional: required only when principal_property lookup is enabled
+
+	// identities resolves principals for this Declarative's policy and
+	// store. Built by NewDeclarative; evaluator code never calls it (pinned
+	// by TestEvaluatorDoesNotResolveIdentity).
+	identities *IdentityResolver
 
 	// provisionWarn logs "provision not yet implemented" at most once per
 	// Declarative (i.e. per policy load), so a `unmatched_principal: provision`
@@ -53,7 +67,7 @@ type DeclarativeOption func(*Declarative)
 // WithPrincipalLookup supplies the [PrincipalLookup] used to resolve the
 // raw principal to a user entity ID when the policy sets both
 // `user_entity_type` and `principal_property`. Wiring (appbuild) passes
-// [NewStorePrincipalLookup] over the store. When the policy enables the
+// aclstore.PrincipalLookup over the store. When the policy enables the
 // lookup but no PrincipalLookup was supplied, [NewDeclarative] fails — a
 // silent no-op would degrade every authenticated user to the raw
 // principal without any signal (constructors-reject-nil rule).
@@ -65,8 +79,9 @@ func WithPrincipalLookup(l PrincipalLookup) DeclarativeOption {
 // an [ACL]. The first three must be non-nil:
 //
 //   - Policy is the static role / assignment definitions.
-//   - Graph supplies the read-side access the resolver needs for
-//     member-of walks and ancestor probes used by AuthorizeWrite.
+//   - Graph supplies the per-subject probes the evaluator needs (local
+//     roles, containment ancestors, world grants through relations), and
+//     the membership reads of the [IdentityResolver] it builds.
 //   - FaceMatcher runs the per-row read verdict for
 //     [Request.ReadableFacesMany] and the gates built on it.
 //
@@ -77,7 +92,7 @@ func WithPrincipalLookup(l PrincipalLookup) DeclarativeOption {
 // Tests that don't exercise group expansion can pass [NullGraph];
 // tests that don't exercise read gating can pass [NullGraphQueryer]
 // (matches no row). Production wiring (appbuild) passes the store as both
-// Graph (via [NewStoreGraph]) and as the FaceMatcher, and supplies
+// Graph (via aclstore.Graph) and as the FaceMatcher, and supplies
 // [WithPrincipalLookup].
 func NewDeclarative(p *Policy, g Graph, fm FaceMatcher, opts ...DeclarativeOption) (*Declarative, error) {
 	if p == nil {
@@ -125,66 +140,14 @@ func NewDeclarative(p *Policy, g Graph, fm FaceMatcher, opts ...DeclarativeOptio
 		return nil, errors.New("acl: NewDeclarative: policy enables principal_property lookup " +
 			"but no PrincipalLookup was supplied (use WithPrincipalLookup)")
 	}
+	d.identities = newIdentityResolver(p, g, d.principalLookup)
 	return d, nil
 }
 
-// ResolvePrincipal maps a raw principal identifier (e.g. the value of the
-// `X-Forwarded-User` header) to a user entity ID via the policy's
-// `principal_property` lookup. It returns:
-//
-//   - ("", nil)  when the lookup is disabled, rawUser is blank, or no
-//     entity matches — the caller keeps the raw principal.
-//   - (id, nil)  on exactly one match — the caller substitutes id.
-//   - ("", err)  when the lookup errored OR more than one entity matched
-//     (ambiguous natural key). The caller keeps the raw principal and
-//     logs; ambiguity is a data-integrity failure the resolver refuses
-//     to guess through.
-//
-// Substitution is performed by the wiring layer (the data-entry
-// attachACLRequest middleware) so the resolved ID reaches both the ACL
-// walk and the audit log; the resolver itself never mutates ctx.
-//
-// **Scope limitation — data-entry only (deliberate).** This method is
-// wired into exactly one caller: the `/api/` data-entry middleware. The
-// CLI, MCP, scheduler, and desktop entry points stamp their principal via
-// [principal.With] but do NOT call ResolvePrincipal, so a write over those
-// transports authorizes against the RAW principal, never the resolved
-// entity ID. Consequence: an `assignments`/`member-of`/`role_relations`
-// grant keyed on the resolved entity ID (e.g. `PERS-JV`) applies to
-// data-entry writes but not to the same human's CLI/MCP writes — those
-// fall back to whatever the raw identifier is assigned (typically
-// `everyone` only). This is fail-CLOSED (an unresolved principal loses
-// grants, never gains them — see the multi-match/no-match handling below),
-// and it matches the intended deployment: only the reverse-proxy
-// (`X-Forwarded-User`) path carries an identity worth resolving. If a
-// future entry point needs the same resolution, wire this in there too —
-// don't assume one `acl.yaml` means the same thing on every transport.
-//
-//archplan:guard=authn reason="maps the identity from the JWT gate or the trusted proxy header to a person entity; verifies nothing itself"
-func (d *Declarative) ResolvePrincipal(ctx context.Context, rawUser string) (string, error) {
-	if !d.policy.principalPropertyLookupEnabled() || strings.TrimSpace(rawUser) == "" {
-		return "", nil
-	}
-	if d.principalLookup == nil {
-		// Defense in depth: NewDeclarative rejects this combination, but a
-		// future direct construction path must not silently over-resolve.
-		return "", errors.New("acl: ResolvePrincipal: lookup enabled but no PrincipalLookup configured")
-	}
-	ids, err := d.principalLookup.LookupEntityByProperty(
-		ctx, d.policy.UserEntityType, d.policy.PrincipalProperty, rawUser)
-	if err != nil {
-		return "", err
-	}
-	switch len(ids) {
-	case 0:
-		return "", nil
-	case 1:
-		return ids[0], nil
-	default:
-		return "", fmt.Errorf("acl: principal %q matches %d %s entities on %q (ambiguous natural key)",
-			rawUser, len(ids), d.policy.UserEntityType, d.policy.PrincipalProperty)
-	}
-}
+// IdentityResolver returns the resolver for this Declarative's policy and
+// store. Request edges use it to resolve the principal once per operation;
+// [Declarative.ForIdentity] accepts only identities it produced.
+func (d *Declarative) IdentityResolver() *IdentityResolver { return d.identities }
 
 // Policy returns the policy this Declarative was constructed with.
 // Exposed so downstream consumers (chiefly the affordance resolver)
@@ -212,21 +175,32 @@ func (d *Declarative) Policy() *Policy {
 	return d.policy
 }
 
-// AuthorizeWrite implements [ACL.AuthorizeWrite]. Opens a Request for
-// the principal carried on ctx, then delegates to
-// [Request.AuthorizeWrite] which dispatches on Subject variant. An
-// unstamped principal short-circuits to a structured deny.
+// AuthorizeWrite implements [ACL.AuthorizeWrite]. It evaluates with the
+// [Request] the operation's edge attached to ctx (see [Declarative.RequestFrom])
+// and delegates to [Request.AuthorizeWrite], which dispatches on Subject
+// variant. A ctx with no usable Request is a structured deny.
 //
 //archplan:guard=authz reason="checks the write against the ACL policy"
 func (d *Declarative) AuthorizeWrite(ctx context.Context, req WriteRequest) Decision {
+	r, err := d.RequestFrom(ctx)
+	if err != nil {
+		// The error text is fixed (sentinels only), so it is safe to return
+		// to a caller; RequestFrom logs any principal ids.
+		return Decision{
+			Allow:    false,
+			RuleKind: "role-grant",
+			RuleID:   "-",
+			Reason:   fmt.Sprintf("acl: no request scope: %v", err),
+		}
+	}
 	// unmatched_principal gate: a verified principal that resolved to no user
-	// entity (flagged by the data-entry middleware) is denied its writes when
-	// the policy is `reject`. This runs before role evaluation because it is a
+	// entity (the edge marks it on the Request) is denied its writes when the
+	// policy is `reject`. This runs before role evaluation because it is a
 	// deployment posture ("unknown identities don't mutate"), not a role
 	// decision — and because it is the single write-authz point every entity
 	// write reaches, so it covers CRUD, sync, action, and attachment writes
 	// uniformly (TKT-0C3II2).
-	if UnmatchedVerifiedFrom(ctx) {
+	if r.UnmatchedVerified() {
 		switch d.policy.effectiveUnmatchedPrincipal() {
 		case UnmatchedReject:
 			return Decision{
@@ -237,9 +211,9 @@ func (d *Declarative) AuthorizeWrite(ctx context.Context, req WriteRequest) Deci
 			}
 		case UnmatchedProvision:
 			// Provision is implemented at the data-entry write seam (maybeProvision,
-			// TKT-ANUJDS): a successful provision re-stamps ctx to the resolved
-			// entity and CLEARS this flag (acl.WithMatchedVerified), so the write
-			// never reaches here still-flagged. Arriving here under provision means
+			// TKT-ANUJDS): a successful provision binds a new Request on the
+			// provisioned identity, which is not unmatched, so the write never
+			// reaches here still-flagged. Arriving here under provision means
 			// provisioning did NOT fire or failed — a non-data-entry transport (this
 			// gate is transport-agnostic), or a create/re-resolve error the seam
 			// logged. Fall through to normal role evaluation (the principal's
@@ -248,18 +222,8 @@ func (d *Declarative) AuthorizeWrite(ctx context.Context, req WriteRequest) Deci
 			d.provisionWarn.Do(func() {
 				slog.Warn("acl: unmatched_principal: provision reached the write-authz gate " +
 					"still unmatched; provisioning did not fire (non-data-entry transport) or " +
-					"failed (see earlier provision warnings) — treating as anonymous")
+					"failed (see earlier provision warnings); evaluating the roles it holds without a user entity")
 			})
-		}
-	}
-
-	r, err := d.requestFor(ctx)
-	if err != nil {
-		return Decision{
-			Allow:    false,
-			RuleKind: "role-grant",
-			RuleID:   "-",
-			Reason:   fmt.Sprintf("acl.ForPrincipal: %v", err),
 		}
 	}
 	return r.AuthorizeWrite(ctx, req)
@@ -274,36 +238,47 @@ func (d *Declarative) AuthorizeWrite(ctx context.Context, req WriteRequest) Deci
 func (d *Declarative) PermitsReadFace(
 	ctx context.Context, entityType, entityID string, face entity.Face,
 ) (bool, error) {
-	r, err := d.requestFor(ctx)
+	r, err := d.RequestFrom(ctx)
 	if err != nil {
 		return false, err
 	}
 	return r.PermitsReadFace(ctx, entityType, entityID, face)
 }
 
-// requestFor returns the per-operation [Request] for ctx: the one the
-// operation's entry point attached via [WithRequest] when it is bound to
-// THIS policy and to ctx's principal, else a fresh one for ctx's principal.
+// RequestFrom returns the per-operation [Request] the operation's edge
+// attached to ctx via [WithRequest]. It fails closed:
 //
-// Reusing the attached scope is what keeps write authorization O(1) in graph
-// traffic per operation. A Request memoizes the principal's membership walk;
-// opening a new one per AuthorizeWrite re-ran that walk for every verb of
-// every row on a list page — six membership queries per row, more SQL than
-// the page itself (TKT-1U8XYN baseline). The two guards are what make reuse
-// safe: a Request from another Declarative would evaluate another tenant's
-// policy, and one bound to a different principal (the provisioning seam
-// re-stamps ctx, see dataentry.enterWrite) would evaluate the wrong identity.
-// Both cases fall back to a fresh scope, which is exactly the old behavior.
-func (d *Declarative) requestFor(ctx context.Context) (*Request, error) {
-	p := principal.From(ctx)
-	// Equal compares the whole principal — identity AND the verified claims
-	// (type, scopes, roles) the Request's client ceiling was compiled from —
-	// so a scope-attenuated client can never borrow a wider scope bound to
-	// the same user by an earlier layer.
-	if r := FromContext(ctx); r != nil && r.d == d && r.principal.Equal(p) {
-		return r, nil
+//   - no Request on ctx → [ErrNoIdentity];
+//   - a Request from another Declarative → [ErrForeignIdentity], because it
+//     would evaluate another tenant's or another load's policy;
+//   - a Request bound to a principal other than ctx's →
+//     [ErrIdentityMismatch], because it would evaluate the wrong identity
+//     (the provisioning seam re-stamps ctx and must attach a new Request
+//     with it). The two principal ids are logged, not put in the error,
+//     because the error text can reach a client.
+//
+// It never resolves the principal itself; resolution is the edge's job. The
+// write gate and the read paths outside this package (visibility,
+// affordances) all use it, so they fail closed the same way.
+//
+// Equal compares the whole principal — identity AND the verified claims
+// (type, scopes, roles) the Request's client ceiling was compiled from — so a
+// scope-attenuated client can never borrow a wider scope bound to the same
+// user by an earlier layer.
+func (d *Declarative) RequestFrom(ctx context.Context) (*Request, error) {
+	r := FromContext(ctx)
+	if r == nil {
+		return nil, ErrNoIdentity
 	}
-	return d.ForPrincipal(p)
+	if r.d != d {
+		return nil, ErrForeignIdentity
+	}
+	if p := principal.From(ctx); !r.principal.Equal(p) {
+		slog.WarnContext(ctx, "acl: attached request is bound to another principal",
+			"request_user", r.principal.User, "ctx_user", p.User)
+		return nil, ErrIdentityMismatch
+	}
+	return r, nil
 }
 
 // (roleGrantsWrite removed in TKT-4LQMWP — write grants are now per-verb;

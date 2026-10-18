@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Sourcehaven-BV/rela/internal/acl/acltest"
+
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	v1 "github.com/Sourcehaven-BV/rela/internal/apiwire/v1"
 	"github.com/Sourcehaven-BV/rela/internal/audit"
@@ -54,11 +56,12 @@ func (permGate) PermitsWorld(context.Context, string) (bool, error) { return tru
 // The entity type is fixed to historyEntityType: every scenario in this file is
 // expressed against the one type historyRedactionACL grants on, so a type
 // parameter would only ever receive that value.
-func getHistoryVersion(app *App, user, id string, gate readGate) *httptest.ResponseRecorder {
+func getHistoryVersion(t *testing.T, app *App, user, id string, gate readGate) *httptest.ResponseRecorder {
+	t.Helper()
 	req := httptest.NewRequest(http.MethodGet,
 		"/api/v1/_history/"+historyEntityType+"/"+id+"/1", http.NoBody)
-	ctx := principal.With(req.Context(),
-		principal.Principal{User: user, Tool: principal.ToolDataEntry})
+	ctx := acltest.Bind(principal.With(req.Context(),
+		principal.Principal{User: user, Tool: principal.ToolDataEntry}), t, app.acl)
 	ctx = withReadGate(ctx, gate)
 	req = req.WithContext(ctx)
 	rec := httptest.NewRecorder()
@@ -86,7 +89,8 @@ const historyEntityType = "ticket"
 
 // TKT-73C6B2 — the conditional-visible policy shared by the redaction tests:
 // `priority` is visible only when the entity has an outgoing `depends_on` edge (a
-// subject-world condition). Live, with the edge present, it shows; in history
+// subject-world condition, written as related() because `visible:` conditions
+// must lower to a store query). Live, with the edge present, it shows; in history
 // the marker neuters the lookup so it fails closed.
 const historyRedactionACL = `
 roles:
@@ -98,13 +102,13 @@ roles:
         - field: title
         - field: status
         - field: priority
-          when: "has_relation(entity, 'depends_on')"
+          when: "related(entity, 'depends_on')"
 assignments:
   alice: triager
   dana: triager
 `
 
-// Scenario 1/2 (fail closed): a has_relation-gated visible field that is shown
+// Scenario 1/2 (fail closed): a related()-gated visible field that is shown
 // on the LIVE entity (edge present) is HIDDEN in the historical snapshot — the
 // marker neuters the subject-world lookup so the grant can't be affirmed. This
 // holds even though the live store STILL has the edge, which is exactly the
@@ -117,6 +121,8 @@ func TestHistoryRedaction_SubjectConditional_FailsClosed(t *testing.T) {
 		Type:       "ticket",
 		Properties: map[string]any{"title": "t", "priority": "high", "status": "open"},
 	})
+	// related(...) matches an edge to an entity that exists.
+	seedEntity(app, &entity.Entity{ID: "TKT-002", Type: "ticket", Properties: map[string]any{"title": "dep"}})
 	// Live edge present → the grant passes on a LIVE read.
 	if _, err := app.store.CreateRelation(context.Background(),
 		entity.RelationKey{From: "TKT-001", Type: "depends_on", To: "TKT-002"}, nil); err != nil {
@@ -137,7 +143,7 @@ func TestHistoryRedaction_SubjectConditional_FailsClosed(t *testing.T) {
 
 	// Historical read (no reveal permission): priority must be stripped.
 	gate := permGate{perms: map[string]bool{acl.PermHistoryRead: true}}
-	hist := decodeHistoryEntity(t, getHistoryVersion(app, "alice", "TKT-001", gate))
+	hist := decodeHistoryEntity(t, getHistoryVersion(t, app, "alice", "TKT-001", gate))
 	if _, ok := hist.Properties["priority"]; ok {
 		t.Errorf("historical read must fail closed: priority should be stripped, got %v", hist.Properties["priority"])
 	}
@@ -198,7 +204,7 @@ role_relations:
 	// role that grants `priority` → it must be stripped. Before the C1 fix this
 	// leaked (owner selected against the live edge).
 	gate := permGate{perms: map[string]bool{acl.PermHistoryRead: true}}
-	hist := decodeHistoryEntity(t, getHistoryVersion(app, "alice", "TKT-001", gate))
+	hist := decodeHistoryEntity(t, getHistoryVersion(t, app, "alice", "TKT-001", gate))
 	if _, ok := hist.Properties["priority"]; ok {
 		t.Errorf("historical read must fail closed on local-role-conferred visibility: priority should be stripped, got %v",
 			hist.Properties["priority"])
@@ -226,7 +232,7 @@ func TestHistoryRedaction_RevealPermission_ShowsFrozenField(t *testing.T) {
 		acl.PermHistoryRead:         true,
 		acl.PermHistoryReadRedacted: true,
 	}}
-	hist := decodeHistoryEntity(t, getHistoryVersion(app, "alice", "TKT-001", gate))
+	hist := decodeHistoryEntity(t, getHistoryVersion(t, app, "alice", "TKT-001", gate))
 	if got, ok := hist.Properties["priority"]; !ok || got != "high" {
 		t.Errorf("reveal: priority should be present=high, got ok=%v v=%v", ok, got)
 	}
@@ -276,7 +282,7 @@ func TestHistoryReveal_Audited(t *testing.T) {
 	// Read as dana rather than alice (the user every other test in this file
 	// uses), so the principal assertion below cannot pass by coincidence.
 	const auditor = "dana"
-	hist := decodeHistoryEntity(t, getHistoryVersion(app, auditor, "TKT-001", gate))
+	hist := decodeHistoryEntity(t, getHistoryVersion(t, app, auditor, "TKT-001", gate))
 	if got := hist.Properties["priority"]; got != "high" {
 		t.Fatalf("precondition: expected the reveal to expose priority=high, got %v", got)
 	}
@@ -321,7 +327,7 @@ func TestHistoryReveal_OrdinaryReadNotAudited(t *testing.T) {
 	gate := permGate{perms: map[string]bool{acl.PermHistoryRead: true}}
 
 	// Precondition: this really is the redacted arm.
-	hist := decodeHistoryEntity(t, getHistoryVersion(app, "alice", "TKT-001", gate))
+	hist := decodeHistoryEntity(t, getHistoryVersion(t, app, "alice", "TKT-001", gate))
 	if _, present := hist.Properties["priority"]; present {
 		t.Fatalf("precondition: ordinary reader should have priority redacted, got %v",
 			hist.Properties["priority"])
@@ -354,7 +360,7 @@ func TestHistoryReveal_AuditedEvenWhenNothingWasHidden(t *testing.T) {
 		acl.PermHistoryReadRedacted: true,
 	}}
 
-	decodeHistoryEntity(t, getHistoryVersion(app, "alice", "TKT-002", gate))
+	decodeHistoryEntity(t, getHistoryVersion(t, app, "alice", "TKT-002", gate))
 
 	if recs := sink.Records(); len(recs) != 1 {
 		t.Errorf("reveal with nothing hidden must still be recorded, got %d records", len(recs))

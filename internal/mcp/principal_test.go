@@ -3,6 +3,7 @@ package mcp
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"testing"
 
 	mcpgo "github.com/modelcontextprotocol/go-sdk/mcp"
@@ -205,5 +206,73 @@ func TestPrincipalMiddleware_RegisteredOnEveryTool(t *testing.T) {
 
 	if !captured.Equal(want) {
 		t.Errorf("Principal stamped on handler ctx = %+v, want %+v", captured, want)
+	}
+}
+
+// TestPrincipalMiddleware_BindsWithThePinnedSnapshot pins that one call binds
+// its identity and runs its handler against the SAME published snapshot. A
+// reload landing mid-call must not pair a Request with readers from another
+// assembly; that would fail the call with acl.ErrForeignIdentity.
+func TestPrincipalMiddleware_BindsWithThePinnedSnapshot(t *testing.T) {
+	t.Parallel()
+	s, st := makeTestServerWithStore(t)
+	s.principal = principal.Principal{User: "alice", Tool: principal.ToolMCP}
+
+	type boundBy struct{}
+	first := s.deps()
+	first.BindIdentity = func(ctx context.Context) (context.Context, error) {
+		return context.WithValue(ctx, boundBy{}, "first"), nil
+	}
+	if err := s.ReloadDeps(first); err != nil {
+		t.Fatalf("ReloadDeps: %v", err)
+	}
+	pinned := s.state.current()
+
+	second := newTestDeps(t, metaWithRisk(), st)
+	second.BindIdentity = func(ctx context.Context) (context.Context, error) {
+		return context.WithValue(ctx, boundBy{}, "second"), nil
+	}
+	var gotBinder string
+	var gotSnap *snapshot
+	h := s.principalMiddleware(func(ctx context.Context, _ string, _ mcpgo.Request) (mcpgo.Result, error) {
+		// A reload lands between the bind and the handler's reads.
+		if err := s.ReloadDeps(second); err != nil {
+			t.Errorf("ReloadDeps: %v", err)
+		}
+		gotBinder, _ = ctx.Value(boundBy{}).(string)
+		gotSnap = snapshotFor(ctx, s)
+		return &mcpgo.CallToolResult{}, nil
+	})
+	if _, err := h(context.Background(), "tools/call", &mcpgo.CallToolRequest{}); err != nil {
+		t.Fatalf("call: %v", err)
+	}
+	if gotBinder != "first" {
+		t.Errorf("bound by %q, want the binder of the snapshot the call started on", gotBinder)
+	}
+	if gotSnap != pinned {
+		t.Error("the handler read a snapshot other than the one the call pinned")
+	}
+}
+
+// TestPrincipalMiddleware_ResolveErrorIsFixed pins that a resolve failure
+// reaches the client as a fixed message; the cause is only logged.
+func TestPrincipalMiddleware_ResolveErrorIsFixed(t *testing.T) {
+	t.Parallel()
+	s, _ := makeTestServerWithStore(t)
+	s.principal = principal.Principal{User: "alice", Tool: principal.ToolMCP}
+	d := s.deps()
+	d.BindIdentity = func(ctx context.Context) (context.Context, error) {
+		return ctx, errors.New("store down at db.internal:5432 for alice")
+	}
+	if err := s.ReloadDeps(d); err != nil {
+		t.Fatalf("ReloadDeps: %v", err)
+	}
+	h := s.principalMiddleware(func(_ context.Context, _ string, _ mcpgo.Request) (mcpgo.Result, error) {
+		t.Error("the handler ran without a resolved identity")
+		return &mcpgo.CallToolResult{}, nil
+	})
+	_, err := h(context.Background(), "tools/call", &mcpgo.CallToolRequest{})
+	if !errors.Is(err, errIdentityUnresolved) || err.Error() != errIdentityUnresolved.Error() {
+		t.Errorf("err = %v, want exactly %v", err, errIdentityUnresolved)
 	}
 }

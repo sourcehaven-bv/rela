@@ -94,7 +94,10 @@ func (s *Scheduler) expand(ctx context.Context, run schedulerstate.Run, occurren
 		return 0, errors.New("scheduler: workspace provides no for_each graph capabilities")
 	}
 
-	selectionCtx := stampTaskAuditContext(ctx, name, "")
+	selectionCtx, err := s.taskContext(ctx, name, "")
+	if err != nil {
+		return 0, err
+	}
 	ids, dropped, err := provider.ScheduledForEachEntities(
 		selectionCtx, task.ForEach.EntityType, task.ForEach.Where, task.ForEach.EffectiveLimit())
 	if err != nil {
@@ -214,7 +217,10 @@ func (s *Scheduler) runChild(ctx context.Context, name, subject string) error {
 		return nil
 	}
 	task.RunAs = user
-	childCtx := stampTaskAuditContext(ctx, name, user)
+	childCtx, err := s.taskContext(ctx, name, user)
+	if err != nil {
+		return err
+	}
 	if task.Template != "" {
 		runner, ok := s.ws.(TemplateRunner)
 		if !ok {

@@ -6,7 +6,10 @@ import (
 	"iter"
 	"testing"
 
+	"github.com/Sourcehaven-BV/rela/internal/acl/acltest"
+
 	"github.com/Sourcehaven-BV/rela/internal/acl"
+	"github.com/Sourcehaven-BV/rela/internal/aclstore"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
 	"github.com/Sourcehaven-BV/rela/internal/store"
@@ -278,11 +281,11 @@ func TestListPushdown_AllFacesScopedPrincipalGetsGrantedFaceRowsOnly(t *testing.
 	d, err := acl.NewDeclarative(&acl.Policy{
 		Roles:         map[string]acl.RoleDef{"reviewer": {Read: []string{"policy@published"}}},
 		RoleRelations: map[string]acl.RoleRelationDef{"reviews": {Confers: "reviewer"}},
-	}, acl.NewStoreGraph(st), st)
+	}, aclstore.MustNewGraph(st), st)
 	if err != nil {
 		t.Fatal(err)
 	}
-	req, err := d.ForPrincipal(principal.Principal{User: "alice", Tool: principal.ToolDataEntry})
+	req, err := d.ForIdentity(acltest.IdentityFor(t.Context(), t, d, principal.Principal{User: "alice", Tool: principal.ToolDataEntry}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -359,7 +362,7 @@ func assertCountMatchesList(t *testing.T, st store.Store) {
 		},
 		Assignments:   map[string]string{"bob": "readers", "carol": "publishedreaders"},
 		RoleRelations: map[string]acl.RoleRelationDef{"reviews": {Confers: "reviewer"}},
-	}, acl.NewStoreGraph(st), st)
+	}, aclstore.MustNewGraph(st), st)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -388,10 +391,7 @@ func assertCountMatchesList(t *testing.T, st store.Store) {
 	} {
 		t.Run(tc.user+"/"+tc.world, func(t *testing.T) {
 			t.Parallel()
-			req, err := d.ForPrincipal(principal.Principal{User: tc.user, Tool: principal.ToolDataEntry})
-			if err != nil {
-				t.Fatal(err)
-			}
+			req := acltest.RequestFor(ctx, t, d, principal.Principal{User: tc.user, Tool: principal.ToolDataEntry})
 			p := stubProvider{res: req.ReadQuery(ctx, "policy")}
 			q := store.EntityQuery{Type: "policy", Faces: tc.faces}
 

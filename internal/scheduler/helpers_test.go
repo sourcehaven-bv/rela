@@ -11,6 +11,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/config"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/jobs"
@@ -32,6 +33,8 @@ type mockWorkspace struct {
 	runs            schedulerstate.Store
 	luaDepsCalls    int
 	luaDepsProvider func() lua.WriteDeps
+	// acl is what bind binds against; nil means NopACL.
+	acl acl.ACL
 }
 
 func newMockWorkspace(t *testing.T) *mockWorkspace {
@@ -63,6 +66,26 @@ func (m *mockWorkspace) ScheduledLuaWriteDeps() lua.WriteDeps {
 		return provider()
 	}
 	return lua.WriteDeps{}
+}
+
+// bind is the identity binder a test wires next to this workspace, as
+// appbuild.IdentityBinder does in production.
+func (m *mockWorkspace) bind(ctx context.Context) (context.Context, error) {
+	if m.acl == nil {
+		return ctx, nil
+	}
+	return acl.BindRequest(ctx, m.acl)
+}
+
+// testBinder returns the binder to wire next to ws: the mock's own when ws
+// wraps a mockWorkspace, else a pass-through.
+func testBinder(ws WorkspaceProvider) IdentityBinder {
+	if b, ok := ws.(interface {
+		bind(context.Context) (context.Context, error)
+	}); ok {
+		return b.bind
+	}
+	return func(ctx context.Context) (context.Context, error) { return ctx, nil }
 }
 
 type mockConfig struct{ m *mockWorkspace }
@@ -264,7 +287,7 @@ func newTestScheduler(
 	t *testing.T, ws WorkspaceProvider, now time.Time, tasks ...TaskConfig,
 ) (*Scheduler, *fakeQueue, *clock) {
 	t.Helper()
-	s, err := New(&Config{Tasks: tasks}, script.NewEngine(), ws, discardLogger())
+	s, err := New(&Config{Tasks: tasks}, script.NewEngine(), ws, testBinder(ws), discardLogger())
 	require.NoError(t, err)
 	c := &clock{now: now}
 	s.now = c.Now

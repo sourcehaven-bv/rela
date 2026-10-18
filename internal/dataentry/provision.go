@@ -42,7 +42,7 @@ import (
 // acl.Request + read gate built on that principal (so the write handler's
 // read-back through h.reader/h.serializer cannot redact or 404 the entity it
 // just created — RR-VI9XMY gap 2). On every non-provision path it returns ctx
-// UNCHANGED, so a normal write pays only a flag check.
+// UNCHANGED, so a normal write pays only a Request lookup.
 //
 // It never fails the request: a provision error is logged and the ORIGINAL ctx
 // is returned, so the write proceeds under the unmatched principal and is
@@ -52,8 +52,12 @@ func maybeProvision(
 	ctx context.Context, d *acl.Declarative, m entityProvisioner, meta metaView,
 ) context.Context {
 	// Fast path: only a verified-but-unmatched principal under a provision
-	// policy does anything. Both are cheap ctx/field reads.
-	if d == nil || !acl.UnmatchedVerifiedFrom(ctx) {
+	// policy does anything. Both are cheap ctx/field reads. A ctx without a
+	// usable Request is not provisioned; the write gate denies it.
+	if d == nil {
+		return ctx
+	}
+	if req, err := d.RequestFrom(ctx); err != nil || !req.UnmatchedVerified() {
 		return ctx
 	}
 	pol := d.Policy()
@@ -69,7 +73,7 @@ func maybeProvision(
 	// mean a `system:*` subject cannot reach here today, but the invariant "a
 	// reserved name never becomes durable graph state" must not depend on an
 	// upstream check: a stub carrying `system:scheduler` as its join key would
-	// make ResolvePrincipal map that name to a real entity. Belt and braces on
+	// make the principal_property lookup map that name to a real entity. Belt and braces on
 	// the write side, matching the read-side rejection.
 	//
 	// This gates the SUBJECT, not the actor: the create below is stamped
@@ -83,12 +87,18 @@ func maybeProvision(
 	// Create the stub under system:provisioner — a create-user-only identity, so
 	// the write authorizes and audits to it while it cannot touch anything but a
 	// fresh stub of the user type (bare-stub containment, RR-28SCW3).
-	provCtx := principal.With(ctx, principal.Principal{
+	// The provisioner is its own identity, resolved here like any other.
+	provCtx, err := acl.BindRequest(principal.With(ctx, principal.Principal{
 		User: principal.UserProvisioner,
 		Tool: principal.ToolProvisioner,
-	})
+	}), d)
+	if err != nil {
+		slog.Warn("dataentry: provision: could not resolve the provisioner identity",
+			"sub", sub, "err", err)
+		return ctx
+	}
 	stub := buildStubEntity(pol, meta, p)
-	_, err := m.CreateEntity(provCtx, stub, entity.CreateOptions{})
+	_, err = m.CreateEntity(provCtx, stub, entity.CreateOptions{})
 	switch {
 	case err == nil:
 		// created
@@ -107,7 +117,7 @@ func maybeProvision(
 	// Re-resolve the (now-existing) entity and re-stamp ctx to it, rebuilding the
 	// ACL request + read gate on the resolved principal so both the manager call
 	// and the response-shaping read see the new entity.
-	provisioned, req, rerr := access.Restamp(ctx, d, sub)
+	provisioned, req, rerr := access.Restamp(ctx, d)
 	if rerr != nil {
 		// Ambiguous or errored re-resolve, or no request for the resolved
 		// principal: proceed as unmatched rather than guess. The write is then

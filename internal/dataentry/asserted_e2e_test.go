@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
+	"github.com/Sourcehaven-BV/rela/internal/aclstore"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
 )
@@ -15,7 +16,7 @@ import (
 // End-to-end: a verified assertion drives an authorization decision and lands
 // in the audit log (TKT-RP3X3Q).
 //
-// Unit tests on the resolver and on acl.computeGlobals both pass even when a
+// Unit tests on the resolver and on acl.Declarative.globalRoles both pass even when a
 // field is silently DROPPED between them — and there is a real dropper in the
 // path: access.Opener.Open rebuilds the Principal field by field, so a
 // plain composite literal there loses org and roles while every unit test
@@ -158,8 +159,8 @@ func TestE2E_ClaimsSurvivePrincipalPropertyReStamp(t *testing.T) {
 			}},
 			AssertedRoles: map[string]acl.RoleList{"admin": {"editor"}},
 		},
-		acl.NewStoreGraph(app.store), app.store,
-		acl.WithPrincipalLookup(acl.NewStorePrincipalLookup(app.store)),
+		aclstore.MustNewGraph(app.store), app.store,
+		acl.WithPrincipalLookup(aclstore.MustNewPrincipalLookup(app.store)),
 	)
 	if err != nil {
 		t.Fatalf("NewDeclarative: %v", err)
@@ -232,8 +233,8 @@ func TestE2E_UnmatchedPrincipalStillCarriesClaims(t *testing.T) {
 			Roles:             map[string]acl.RoleDef{"viewer": {Read: []string{"ticket"}}},
 			AssertedRoles:     map[string]acl.RoleList{"admin": {"viewer"}},
 		},
-		acl.NewStoreGraph(app.store), app.store,
-		acl.WithPrincipalLookup(acl.NewStorePrincipalLookup(app.store)),
+		aclstore.MustNewGraph(app.store), app.store,
+		acl.WithPrincipalLookup(aclstore.MustNewPrincipalLookup(app.store)),
 	)
 	if err != nil {
 		t.Fatalf("NewDeclarative: %v", err)

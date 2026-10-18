@@ -13,6 +13,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/search"
 	"github.com/Sourcehaven-BV/rela/internal/search/searchparser"
 	"github.com/Sourcehaven-BV/rela/internal/store"
+	"github.com/Sourcehaven-BV/rela/internal/visibility"
 )
 
 // queryService owns the search-query pipeline: the `/_search` and
@@ -27,9 +28,9 @@ import (
 // App for the same closures.
 //
 // Collaborator rationale differs from the sibling handlers in one respect
-// that is load-bearing. The ACL-scoped searcher and the affordance service
+// that is load-bearing. The ACL-scoped searcher and the field resolver
 // are held as CLOSURES rather than values, because tests reassign
-// `app.visibleSearcher` (see rebindVisibleSearcher) and `app.affordances`
+// `app.visibleSearcher` (see rebindVisibleSearcher) and `app.fieldResolver`
 // after construction; a captured value would silently keep the searcher from
 // construction time and a test injecting a recording/denying searcher would
 // exercise the wrong one.
@@ -52,10 +53,11 @@ type queryService struct {
 	// visibleSearcher is the ACL-scoped search seam. Late-bound: tests
 	// reassign App.visibleSearcher after construction.
 	visibleSearcher func() search.VisibleSearcher
-	// affordances supplies the per-hit field-verdict source used to drop
-	// hits that matched only a `visible:`-hidden property. Late-bound for
-	// the same reason as visibleSearcher.
-	affordances func() affordanceService
+	// fields supplies each type's search field scope, so a hit that matched
+	// only a `visible:`-hidden property is dropped. It is the App's field
+	// resolver ([FieldVerdictResolver.SearchFieldScope]), late-bound for the
+	// same reason as visibleSearcher.
+	fields func() visibility.FieldScoper
 }
 
 // newQueryService wires the leaf over the App's current collaborators.
@@ -65,7 +67,7 @@ func newQueryService(app *App) *queryService {
 		schema:          app.State,
 		services:        app.Services,
 		visibleSearcher: func() search.VisibleSearcher { return app.visibleSearcher },
-		affordances:     func() affordanceService { return app.affordances },
+		fields:          func() visibility.FieldScoper { return app.fieldResolver },
 	}
 }
 
@@ -223,8 +225,15 @@ func (q *queryService) runVisibleFreeTextSearch(
 		Limit: limit,
 		World: worldScopeFrom(ctx),
 	}
+	// The one gated search path ([visibility.SearchScoped]): the field scope
+	// and the face check are added there, as for every other gated search.
 	var hits []search.Hit
-	for hit, err := range searchVisibleHits(ctx, q.visibleSearcher(), q.affordances(), sQuery, scope) {
+	var types []string
+	if svc.Meta != nil {
+		types = svc.Meta.EntityTypes()
+	}
+	stream := visibility.SearchScoped(ctx, q.visibleSearcher(), ctxRowGate{}, q.fields(), sQuery, scope, types)
+	for hit, err := range stream {
 		if err != nil {
 			if errors.Is(err, search.ErrScope) {
 				return nil, fmt.Errorf("%w: %w", errACLListQuery, err)
@@ -307,7 +316,7 @@ func (q *queryService) freeTextIDsForType(
 	if len(scope) == 0 {
 		return freeTextIDsForTypeResult{IDs: map[string]struct{}{}, HasFilter: true}, nil
 	}
-	ids, err := freeTextIDs(ctx, q.visibleSearcher(), q.affordances(), sq, scope,
+	ids, err := freeTextIDs(ctx, q.visibleSearcher(), q.fields(), sq, scope,
 		worldScopeFrom(ctx), maxFreeTextSearchResults)
 	if err != nil {
 		return freeTextIDsForTypeResult{}, err

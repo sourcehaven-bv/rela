@@ -1,9 +1,11 @@
 package storetest
 
 import (
-	"context"
 	"errors"
+	"fmt"
+	"math/rand/v2"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -329,6 +331,7 @@ func RunVisibleSearchTests(t *testing.T, vsf VisibleSearchFactory) {
 	})
 
 	RunFacedVisibleSearchTests(t, vsf)
+	t.Run("FieldScope", func(t *testing.T) { RunFieldScopeSearchTests(t, vsf) })
 }
 
 // RunFacedVisibleSearchTests pins the per-face half of the scope
@@ -457,150 +460,459 @@ func RunFacedVisibleSearchTests(t *testing.T, vsf VisibleSearchFactory) {
 	}
 }
 
-// VisibleFieldSearchFactory returns a fresh store, the ungated searcher, and
-// the FieldVisibleSearcher under test. Mirrors [VisibleSearchFactory] but for
-// the property-level seam (TKT-GGQ0JT).
-type VisibleFieldSearchFactory func(t *testing.T) (store.Store, search.Searcher, search.FieldVisibleSearcher)
-
-// RunVisibleFieldSearchTests is the conformance suite for the property-level
-// filter [search.FieldVisibleSearcher.SearchVisibleFields]. It pins the
-// match-on-hidden-field oracle closure: a hit whose text matched ONLY fields
-// the principal may not see is dropped, while a hit that matched a visible
-// field (or id/content, never property-gated) survives.
+// RunFieldScopeSearchTests pins [search.TypeScope.Fields], the closure of the
+// match-on-hidden-field oracle: a hit whose text matched ONLY properties the
+// reader may not see is dropped, while a hit that matched a visible property,
+// an ungated property, the id or the content survives. The limit counts the
+// surviving hits.
 //
-// The fixture adds a `code` property carrying a value ("zeta777") that appears
-// in NO title, so a search for it can only match via the property — making the
-// hidden-only case unambiguous. Every backend's own matcher must agree with
-// the ground-truth (search.MatchTextFields over the visible projection).
-func RunVisibleFieldSearchTests(t *testing.T, vsf VisibleFieldSearchFactory) {
+// The fixture's `code` value ("zeta777") appears in no title, so a search for
+// it can only match through that property.
+func RunFieldScopeSearchTests(t *testing.T, vsf VisibleSearchFactory) {
 	t.Helper()
 
-	allowTickets := map[string]search.TypeScope{"ticket": {AllowAll: true}}
-
-	// hideCode hides the `code` property (search vocabulary "prop:code") for
-	// every hit — the common closed-world case.
-	hideCode := func(_ context.Context, _ search.Hit, _ *entity.Entity) (map[string]struct{}, error) {
-		return map[string]struct{}{search.PropFieldPrefix + "code": {}}, nil
+	q := func(text string) search.Query { return search.Query{Text: text, World: store.TrivialScope()} }
+	// codeHidden gates title, code and status and shows title only.
+	codeHidden := func() *search.FieldScope {
+		return &search.FieldScope{
+			Gated:  []string{"code", "status", "title"},
+			Grants: []search.FieldGrant{{Fields: []string{"title"}}},
+		}
+	}
+	tickets := func(fs *search.FieldScope) map[string]search.TypeScope {
+		return map[string]search.TypeScope{"ticket": {AllowAll: true, Fields: fs}}
+	}
+	run := func(t *testing.T, vs search.VisibleSearcher, query search.Query, scope map[string]search.TypeScope) []search.Hit {
+		t.Helper()
+		return collectHits(t, vs.SearchVisible(ctx(), query, scope))
 	}
 
 	t.Run("HiddenOnlyMatchDropped", func(t *testing.T) {
 		s, _, vs := vsf(t)
 		seedVisibleFieldWorld(t, s)
-		// "zeta777" lives only in TKT-1's hidden `code` property.
-		q := search.Query{Text: "zeta777", World: store.TrivialScope()}
-		got := collectHits(t, vs.SearchVisibleFields(ctx(), q, allowTickets, hideCode))
-		require.Empty(t, got, "a hit matching only a hidden field must be dropped (oracle closed)")
+		require.Empty(t, run(t, vs, q("zeta777"), tickets(codeHidden())),
+			"a hit matching only a hidden field must be dropped")
 	})
 
-	t.Run("HiddenOnlyMatchSurvivesWhenVisible", func(t *testing.T) {
+	t.Run("NoFieldScopeShowsEverything", func(t *testing.T) {
 		s, _, vs := vsf(t)
 		seedVisibleFieldWorld(t, s)
-		q := search.Query{Text: "zeta777", World: store.TrivialScope()}
-		// No hidden fields: the property is visible, so the hit stands.
-		got := collectHits(t, vs.SearchVisibleFields(ctx(), q, allowTickets, nil))
-		requireSameIDSet(t, []string{"TKT-1"}, got)
+		requireSameIDSet(t, []string{"TKT-1", "TKT-3"}, run(t, vs, q("zeta777"), tickets(nil)))
 	})
 
-	t.Run("VisibleFieldMatchKeptDespiteHiddenField", func(t *testing.T) {
+	t.Run("VisibleFieldMatchKept", func(t *testing.T) {
 		s, _, vs := vsf(t)
 		seedVisibleFieldWorld(t, s)
-		// "alpha" matches TKT-1's visible title AND (hypothetically) other
-		// fields; with `code` hidden the title match alone keeps the hit.
-		q := search.Query{Text: "alpha", World: store.TrivialScope()}
-		got := collectHits(t, vs.SearchVisibleFields(ctx(), q, allowTickets, hideCode))
-		require.True(t, hitInSet(got, "TKT-1"),
-			"a hit matching a visible field must survive even when another matched field is hidden")
+		requireSameIDSet(t, []string{"TKT-1"}, run(t, vs, q("alpha"), tickets(codeHidden())))
 	})
 
-	t.Run("IDMatchSurvivesHiddenProperty", func(t *testing.T) {
+	t.Run("UndeclaredPropertyMatchKept", func(t *testing.T) {
 		s, _, vs := vsf(t)
 		seedVisibleFieldWorld(t, s)
-		// The consumer only ever hides declared PROPERTIES ("prop:<name>"), so
-		// id/content are never in the hidden set. A hit that matches by id
-		// survives even though its `code` property is hidden — id is never
-		// property-gated by construction of the hidden set.
-		q := search.Query{Text: "TKT-1", World: store.TrivialScope()}
-		got := collectHits(t, vs.SearchVisibleFields(ctx(), q, allowTickets, hideCode))
-		require.True(t, hitInSet(got, "TKT-1"), "an id match must survive: id is never property-gated")
+		// `extra` is in no Gated list, so no grant decides it: it is visible.
+		requireSameIDSet(t, []string{"TKT-2"}, run(t, vs, q("undeclaredvalue"), tickets(codeHidden())))
 	})
 
-	t.Run("FailClosedOnHiddenFuncError", func(t *testing.T) {
+	t.Run("IDMatchSurvives", func(t *testing.T) {
 		s, _, vs := vsf(t)
 		seedVisibleFieldWorld(t, s)
-		boom := func(_ context.Context, _ search.Hit, _ *entity.Entity) (map[string]struct{}, error) {
-			return nil, errors.New("acl resolution boom")
-		}
-		q := search.Query{Text: "zeta777", World: store.TrivialScope()}
-		var streamErr error
-		hits := 0
-		for _, err := range vs.SearchVisibleFields(ctx(), q, allowTickets, boom) {
-			if err != nil {
-				streamErr = err
-				break
-			}
-			hits++
-		}
-		require.Zero(t, hits, "no hit may survive a hidden-fields resolution failure")
-		require.ErrorIs(t, streamErr, search.ErrScope, "hidden-func errors fail closed via ErrScope")
+		require.True(t, hitInSet(run(t, vs, q("TKT-1"), tickets(codeHidden())), "TKT-1"),
+			"an id match must survive: the id is never property-gated")
+	})
+
+	t.Run("ContentMatchSurvives", func(t *testing.T) {
+		s, _, vs := vsf(t)
+		seedVisibleFieldWorld(t, s)
+		require.True(t, hitInSet(run(t, vs, q("uniquebodytoken"), tickets(codeHidden())), "TKT-3"),
+			"a content match must survive: content is never property-gated")
 	})
 
 	t.Run("EntityLevelStillApplies", func(t *testing.T) {
 		s, _, vs := vsf(t)
 		seedVisibleFieldWorld(t, s)
-		// Scope denies tickets entirely: field filter never even runs.
-		q := search.Query{Text: "zeta777", World: store.TrivialScope()}
-		got := collectHits(t, vs.SearchVisibleFields(ctx(), q, map[string]search.TypeScope{}, nil))
-		require.Empty(t, got, "empty scope denies everything before field filtering")
+		require.Empty(t, run(t, vs, q("zeta777"), map[string]search.TypeScope{}),
+			"an empty scope denies everything before the field check")
 	})
 
-	t.Run("ContentMatchSurvivesHiddenProperty", func(t *testing.T) {
+	t.Run("OtherTypesUngated", func(t *testing.T) {
 		s, _, vs := vsf(t)
-		e := entity.New("TKT-9", "ticket")
-		e.SetString("title", "gamma orbiter")
-		e.SetString("code", "zeta777")
-		e.Content = "uniquebodytoken operational notes"
-		require.NoError(t, s.CreateEntity(ctx(), e), "create TKT-9")
-		// The query matches the entity body (content), which is never
-		// property-gated, so hiding `code` must not drop it.
-		q := search.Query{Text: "uniquebodytoken", World: store.TrivialScope()}
-		got := collectHits(t, vs.SearchVisibleFields(ctx(), q, allowTickets, hideCode))
-		require.True(t, hitInSet(got, "TKT-9"),
-			"a content match must survive: content is never property-gated")
+		seedVisibleFieldWorld(t, s)
+		scope := tickets(codeHidden())
+		scope["memo"] = search.TypeScope{AllowAll: true}
+		requireSameIDSet(t, []string{"MEMO-1"}, run(t, vs, q("zeta777"), scope))
 	})
 
-	t.Run("CallerCannotFalseDropViaIDOrContent", func(t *testing.T) {
+	t.Run("GrantUnion", func(t *testing.T) {
 		s, _, vs := vsf(t)
-		e := entity.New("TKT-9", "ticket")
-		e.SetString("title", "delta probe")
-		e.Content = "singularcontentword"
-		require.NoError(t, s.CreateEntity(ctx(), e), "create TKT-9")
-		// A buggy HiddenFieldsFunc that (wrongly) lists id/content must NOT be
-		// able to drop a hit that matched id/content — the seam guards the
-		// never-gated invariant (MatchHasVisibleField special-cases them).
-		hideIDAndContent := func(_ context.Context, _ search.Hit, _ *entity.Entity) (map[string]struct{}, error) {
-			return map[string]struct{}{search.FieldID: {}, search.FieldContent: {}}, nil
+		seedVisibleFieldWorld(t, s)
+		// Two grants, as two roles compile: code is visible through the second.
+		fs := codeHidden()
+		fs.Grants = append(fs.Grants, search.FieldGrant{Fields: []string{"code"}})
+		requireSameIDSet(t, []string{"TKT-1", "TKT-3"}, run(t, vs, q("zeta777"), tickets(fs)))
+	})
+
+	t.Run("ConditionalGrantOnProperty", func(t *testing.T) {
+		s, _, vs := vsf(t)
+		seedVisibleFieldWorld(t, s)
+		fs := codeHidden()
+		fs.Grants = append(fs.Grants, search.FieldGrant{Fields: []string{"code"}, When: &store.GraphQuery{
+			Props: []store.PropPredicate{{Property: "status", Op: store.PropEqual, Value: "open", Scalar: true}},
+		}})
+		requireSameIDSet(t, []string{"TKT-1"}, run(t, vs, q("zeta777"), tickets(fs)))
+	})
+
+	t.Run("EdgeGrantedRole", func(t *testing.T) {
+		s, _, vs := vsf(t)
+		seedVisibleFieldWorld(t, s)
+		// carol holds a role on TKT-1 through an owner-of edge.
+		held := store.RelationPredicate{Endpoints: []string{"carol"}, OfTypes: []string{"owner-of"}}
+		fs := codeHidden()
+		fs.Grants = append(fs.Grants, search.FieldGrant{Fields: []string{"code"}, When: &store.GraphQuery{
+			Related: []store.DirectedRelation{{Incoming: true, Pred: held}},
+		}})
+		requireSameIDSet(t, []string{"TKT-1"}, run(t, vs, q("zeta777"), tickets(fs)))
+
+		// The open rows where the role is NOT held see every gated property.
+		notHeld := held
+		notHeld.Negate = true
+		open := &search.FieldScope{Gated: []string{"code", "status", "title"}, Grants: []search.FieldGrant{
+			{Fields: []string{"title"}, When: &store.GraphQuery{Related: []store.DirectedRelation{{Incoming: true, Pred: held}}}},
+			{Fields: []string{"code", "status", "title"}, When: &store.GraphQuery{
+				Related: []store.DirectedRelation{{Incoming: true, Pred: notHeld}},
+			}},
+		}}
+		requireSameIDSet(t, []string{"TKT-3"}, run(t, vs, q("zeta777"), tickets(open)))
+	})
+
+	t.Run("LimitCountsVisibleHitsOnly", func(t *testing.T) {
+		s, _, vs := vsf(t)
+		for i := range 6 {
+			e := entity.New(fmt.Sprintf("HID-%d", i), "ticket")
+			e.SetString("title", "plain")
+			e.SetString("code", "omega42")
+			require.NoError(t, s.CreateEntity(ctx(), e))
 		}
-		q := search.Query{Text: "singularcontentword", World: store.TrivialScope()}
-		got := collectHits(t, vs.SearchVisibleFields(ctx(), q, allowTickets, hideIDAndContent))
-		require.True(t, hitInSet(got, "TKT-9"),
-			"id/content are never property-gated even if a caller mis-lists them")
+		for i := range 3 {
+			e := entity.New(fmt.Sprintf("VIS-%d", i), "ticket")
+			e.SetString("title", "omega42 shown")
+			require.NoError(t, s.CreateEntity(ctx(), e))
+		}
+		query := q("omega42")
+		query.Limit = 2
+		got := run(t, vs, query, tickets(codeHidden()))
+		require.Len(t, got, 2, "the limit counts surviving hits, not candidates")
+		for _, h := range got {
+			require.True(t, strings.HasPrefix(h.ID, "VIS-"), "hidden-only hit %s returned", h.ID)
+		}
+		query.Limit = 5
+		require.Len(t, run(t, vs, query, tickets(codeHidden())), 3)
+	})
+
+	t.Run("NonASCIICaseFolding", func(t *testing.T) {
+		s, _, vs := vsf(t)
+		e := entity.New("TKT-U", "ticket")
+		e.SetString("title", "ÉCLAIR Ärger")
+		e.SetString("code", "ØRESUND")
+		require.NoError(t, s.CreateEntity(ctx(), e))
+		requireSameIDSet(t, []string{"TKT-U"}, run(t, vs, q("éclair"), tickets(codeHidden())))
+		requireSameIDSet(t, []string{"TKT-U"}, run(t, vs, q("ärger"), tickets(codeHidden())))
+		require.Empty(t, run(t, vs, q("øresund"), tickets(codeHidden())),
+			"a case-folded match in a hidden field must be dropped")
+		requireSameIDSet(t, []string{"TKT-U"}, run(t, vs, q("øresund"), tickets(nil)))
+	})
+
+	t.Run("BackendFoldsLikeGo", func(t *testing.T) {
+		// BUG-YG126C. Each pair holds the needle in the visible title only
+		// under Go's fold, and once more literally in the hidden code of the
+		// first entity. Whether an entity is a hit must not depend on its
+		// hidden field, so both must be found. A backend that folds case
+		// its own way finds only the first: through the hidden field, while
+		// the Go judgement credits the title. "é" is a short needle (LIKE
+		// folds ASCII only); "ԩab" a long one (FTS5's fold skips U+0528).
+		for _, tc := range []struct{ needle, title, code string }{
+			{"é", "CAFÉ", "café"},
+			{"ԩab", "ԨAB", "xԩab"},
+		} {
+			t.Run(tc.needle, func(t *testing.T) {
+				s, _, vs := vsf(t)
+				both := entity.New("TKT-B", "ticket")
+				both.SetString("title", tc.title)
+				both.SetString("code", tc.code)
+				require.NoError(t, s.CreateEntity(ctx(), both))
+				titled := entity.New("TKT-T", "ticket")
+				titled.SetString("title", tc.title)
+				require.NoError(t, s.CreateEntity(ctx(), titled))
+				requireSameIDSet(t, []string{"TKT-B", "TKT-T"}, run(t, vs, q(tc.needle), tickets(codeHidden())))
+				requireSameIDSet(t, []string{"TKT-B", "TKT-T"}, run(t, vs, q(tc.needle), tickets(nil)))
+			})
+		}
+	})
+
+	t.Run("FoldDiffersBetweenGoAndSQL", func(t *testing.T) {
+		s, ungated, vs := vsf(t)
+		// Go folds 'İ' to "i"; PostgreSQL folds it to "i" plus U+0307. The
+		// needle "i\u0307" is therefore in the visible title only under
+		// PostgreSQL's fold, and in the hidden code under both.
+		e := entity.New("TKT-I", "ticket")
+		e.SetString("title", "İstanbul")
+		e.SetString("code", "xi\u0307x")
+		require.NoError(t, s.CreateEntity(ctx(), e))
+		needle := "i\u0307"
+		require.Empty(t, run(t, vs, q(needle), tickets(codeHidden())),
+			"a needle only the hidden field holds under the search fold must not return the entity")
+		if hitInSet(collectHits(t, ungated.Search(ctx(), q(needle))), "TKT-I") {
+			requireSameIDSet(t, []string{"TKT-I"}, run(t, vs, q(needle), tickets(nil)))
+		}
+	})
+
+	t.Run("TwoGatedTypesInOneStatement", func(t *testing.T) {
+		s, _, vs := vsf(t)
+		seedVisibleFieldWorld(t, s)
+		held := store.RelationPredicate{Endpoints: []string{"carol"}, OfTypes: []string{"owner-of"}}
+		ownedCode := func() *search.FieldScope {
+			fs := codeHidden()
+			fs.Grants = append(fs.Grants, search.FieldGrant{Fields: []string{"code"}, When: &store.GraphQuery{
+				Related: []store.DirectedRelation{{Incoming: true, Pred: held}},
+			}})
+			return fs
+		}
+		// Both types render a relation condition, each with its own CTE.
+		scope := tickets(ownedCode())
+		scope["memo"] = search.TypeScope{AllowAll: true, Fields: ownedCode()}
+		requireSameIDSet(t, []string{"TKT-1"}, run(t, vs, q("zeta777"), scope))
+
+		mustRel(t, s, "carol", "owner-of", "MEMO-1")
+		requireSameIDSet(t, []string{"TKT-1", "MEMO-1"}, run(t, vs, q("zeta777"), scope))
+	})
+
+	t.Run("RoleUnion", func(t *testing.T) {
+		// The shapes the role union compiles (BUG-Y5UF3K). A global role
+		// with a block shows title on every row. A role without a block,
+		// conferred on TKT-1 through owner-of, shows every gated property
+		// there; a role with a block conferred through the same edge adds
+		// title only. Holding the second role must not take away what the
+		// first shows.
+		s, _, vs := vsf(t)
+		seedVisibleFieldWorld(t, s)
+		held := store.RelationPredicate{Endpoints: []string{"carol"}, OfTypes: []string{"owner-of"}}
+		onHeld := func() *store.GraphQuery {
+			return &store.GraphQuery{Related: []store.DirectedRelation{{Incoming: true, Pred: held}}}
+		}
+		fs := codeHidden()
+		fs.Grants = append(fs.Grants,
+			search.FieldGrant{Fields: []string{"code", "status", "title"}, When: onHeld()},
+			search.FieldGrant{Fields: []string{"title"}, When: onHeld()},
+		)
+		requireSameIDSet(t, []string{"TKT-1"}, run(t, vs, q("zeta777"), tickets(fs)))
+
+		// A role without a block held globally shows every gated property
+		// on every row: a grant with no condition.
+		fs.Grants = append(fs.Grants, search.FieldGrant{Fields: []string{"code", "status", "title"}})
+		requireSameIDSet(t, []string{"TKT-1", "TKT-3"}, run(t, vs, q("zeta777"), tickets(fs)))
+	})
+
+	t.Run("FacedRowsAndInheritedHolder", func(t *testing.T) {
+		runFacedFieldScope(t, vsf)
+	})
+
+	t.Run("DifferentialAgainstMatchTextFields", func(t *testing.T) {
+		s, ungated, vs := vsf(t)
+		runFieldScopeDifferential(t, s, ungated, vs)
 	})
 }
 
-// seedVisibleFieldWorld builds a small fixture for the property-level suite:
-// TKT-1 carries a visible title ("alpha rocket") and a `code` property whose
-// value ("zeta777") appears nowhere else, so a search for it matches ONLY via
-// that property.
+// runFacedFieldScope pins field grants on faced rows and on a role held
+// through an inherited relation, the two shapes the ACL compiles that a flat
+// fixture does not exercise. POL-1 belongs to PRJ-9, which carol owns, so a
+// grant held through owner-of (inherited through belongs-to) holds on POL-1;
+// POL-2 belongs to nothing. Both faces of POL-1 carry the same code, so only
+// the grant's FaceIn decides between them.
+func runFacedFieldScope(t *testing.T, vsf VisibleSearchFactory) {
+	t.Helper()
+	draft, published := entity.Face("draft"), entity.Face("published")
+	world := store.NewWorldScope(map[string]store.TypeResolution{
+		"policy": {Chain: []entity.Face{draft, published}, Fallback: store.FallbackExclude},
+	})
+	seed := func(t *testing.T, s store.Store) {
+		t.Helper()
+		for _, e := range []struct {
+			id, typ string
+			face    entity.Face
+		}{
+			{"carol", "person", ""},
+			{"PRJ-9", "project", ""},
+			{"POL-1", "policy", draft},
+			{"POL-1", "policy", published},
+			{"POL-2", "policy", draft},
+		} {
+			ent := entity.New(e.id, e.typ)
+			ent.Face = e.face
+			ent.SetString("title", "policy "+e.id)
+			if e.typ == "policy" {
+				ent.SetString("code", "zeta777")
+			}
+			require.NoError(t, s.CreateEntity(ctx(), ent), "create %s@%s", e.id, e.face)
+		}
+		mustRel(t, s, "carol", "owner-of", "PRJ-9")
+		mustRel(t, s, "POL-1", "belongs-to", "PRJ-9")
+	}
+	held := store.RelationPredicate{
+		Endpoints: []string{"carol"}, OfTypes: []string{"owner-of"},
+		EntityInheritThrough: []string{"belongs-to"}, EntityDepth: 10,
+	}
+	scopeOn := func(faceIn []entity.Face, faces []entity.Face) map[string]search.TypeScope {
+		fs := &search.FieldScope{Gated: []string{"code", "title"}, Grants: []search.FieldGrant{
+			{Fields: []string{"title"}},
+			{Fields: []string{"code"}, When: &store.GraphQuery{
+				Related: []store.DirectedRelation{{Incoming: true, Pred: held}},
+				FaceIn:  faceIn,
+			}},
+		}}
+		return map[string]search.TypeScope{"policy": {AllowAll: true, Faces: faces, Fields: fs}}
+	}
+	query := search.Query{Text: "zeta777", World: world}
+	// A global role without a block that reads only published rows
+	// compiles to a grant whose condition is the face alone (BUG-Y5UF3K).
+	t.Run("face-only grant of a block-less role", func(t *testing.T) {
+		s, _, vs := vsf(t)
+		seed(t, s)
+		fs := &search.FieldScope{Gated: []string{"code", "title"}, Grants: []search.FieldGrant{
+			{Fields: []string{"title"}},
+			{Fields: []string{"code", "title"}, When: &store.GraphQuery{FaceIn: []entity.Face{published}}},
+		}}
+		got := map[string]entity.Face{}
+		for _, h := range collectHits(t, vs.SearchVisible(ctx(), query,
+			map[string]search.TypeScope{"policy": {AllowAll: true, Faces: []entity.Face{published}, Fields: fs}})) {
+			got[h.ID] = h.Face
+		}
+		require.Equal(t, map[string]entity.Face{"POL-1": published}, got)
+		got = map[string]entity.Face{}
+		for _, h := range collectHits(t, vs.SearchVisible(ctx(), query,
+			map[string]search.TypeScope{"policy": {AllowAll: true, Faces: []entity.Face{draft}, Fields: fs}})) {
+			got[h.ID] = h.Face
+		}
+		require.Empty(t, got, "the grant does not hold on draft rows")
+	})
+	for _, tc := range []struct {
+		name          string
+		faceIn, faces []entity.Face
+		want          map[string]entity.Face
+	}{
+		{"inherited holder on the served face", []entity.Face{draft}, nil, map[string]entity.Face{"POL-1": draft}},
+		{"grant on another face than the served one", []entity.Face{draft}, []entity.Face{published},
+			map[string]entity.Face{}},
+		{"grant on the served fallback face", []entity.Face{published}, []entity.Face{published},
+			map[string]entity.Face{"POL-1": published}},
+		// The form a related() condition lowers to: never on a named face.
+		{"zero-face grant on faced rows", []entity.Face{""}, nil, map[string]entity.Face{}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s, _, vs := vsf(t)
+			seed(t, s)
+			got := map[string]entity.Face{}
+			for _, h := range collectHits(t, vs.SearchVisible(ctx(), query, scopeOn(tc.faceIn, tc.faces))) {
+				got[h.ID] = h.Face
+			}
+			require.Equal(t, tc.want, got)
+		})
+	}
+}
+
+// runFieldScopeDifferential compares the backend's field check against the
+// ground truth, [search.MatchTextFields] plus [search.FieldScope.AdmitsMatch],
+// on generated entities and scopes. The candidates are the backend's own
+// ungated hits. A backend that reports its own match provenance (bleve
+// tokenizes and folds accents) is judged on that provenance; every other
+// backend, pgstore and sqlitestore included, on MatchTextFields itself.
+func runFieldScopeDifferential(t *testing.T, s store.Store, ungated search.Searcher, vs search.VisibleSearcher) {
+	t.Helper()
+	matchFields := search.MatchTextFields
+	if p, ok := ungated.(interface {
+		MatchedFields(*entity.Entity, string) map[string]struct{}
+	}); ok {
+		matchFields = p.MatchedFields
+	}
+	rng := rand.New(rand.NewPCG(7, 11))
+	words := []string{"kiwi", "Kiwi", "KIWIS", "émile", "ÉMILE", "straße", "lime", "plum"}
+	props := []string{"a", "b", "c", "d"}
+	statuses := []string{"open", "done"}
+	pick := func(xs []string) string { return xs[rng.IntN(len(xs))] }
+	all := make([]*entity.Entity, 0, 40)
+	for i := range 40 {
+		e := entity.New(fmt.Sprintf("DIF-%02d", i), "ticket")
+		for _, p := range props {
+			if rng.IntN(2) == 0 {
+				e.SetString(p, pick(words)+" "+pick(words))
+			}
+		}
+		e.SetString("st", pick(statuses))
+		if rng.IntN(4) == 0 {
+			e.Content = pick(words)
+		}
+		require.NoError(t, s.CreateEntity(ctx(), e))
+		all = append(all, e)
+	}
+	for round := range 12 {
+		var gated []string
+		for _, p := range props {
+			if rng.IntN(3) > 0 {
+				gated = append(gated, p)
+			}
+		}
+		fs := &search.FieldScope{Gated: gated}
+		fs.Grants = append(fs.Grants, search.FieldGrant{Fields: []string{pick(props)}})
+		status := pick(statuses)
+		fs.Grants = append(fs.Grants, search.FieldGrant{Fields: []string{pick(props), pick(props)}, When: &store.GraphQuery{
+			Props: []store.PropPredicate{{Property: "st", Op: store.PropEqual, Value: status, Scalar: true}},
+		}})
+		text := strings.Fields(pick(words))[0]
+		if round%3 == 0 {
+			text = strings.ToUpper(text[:2])
+		}
+		byID := make(map[string]*entity.Entity, len(all))
+		for _, e := range all {
+			byID[e.ID] = e
+		}
+		want := []string{}
+		for _, h := range collectHits(t, ungated.Search(ctx(), search.Query{Text: text, World: store.TrivialScope()})) {
+			e := byID[h.ID]
+			matched := matchFields(e, text)
+			if matched == nil {
+				continue
+			}
+			if fs.AdmitsMatch(matched, func(int) bool { return e.Properties["st"] == status }) {
+				want = append(want, e.ID)
+			}
+		}
+		scope := map[string]search.TypeScope{"ticket": {AllowAll: true, Fields: fs}}
+		got := collectHits(t, vs.SearchVisible(ctx(), search.Query{Text: text, World: store.TrivialScope()}, scope))
+		requireSameIDSet(t, want, got)
+	}
+}
+
+// seedVisibleFieldWorld builds the fixture of [RunFieldScopeSearchTests]:
+//
+//	TKT-1 "alpha rocket"  code=zeta777  status=open   (carol owner-of)
+//	TKT-2 "beta lander"   extra=undeclaredvalue
+//	TKT-3 "gamma orbiter" code=zeta777  status=done   body "uniquebodytoken"
+//	MEMO-1 "memo"         code=zeta777
 func seedVisibleFieldWorld(t *testing.T, s store.Store) {
 	t.Helper()
-	e := entity.New("TKT-1", "ticket")
-	e.SetString("title", "alpha rocket")
-	e.SetString("code", "zeta777")
-	require.NoError(t, s.CreateEntity(ctx(), e), "create TKT-1")
-
-	e2 := entity.New("TKT-2", "ticket")
-	e2.SetString("title", "beta lander")
-	require.NoError(t, s.CreateEntity(ctx(), e2), "create TKT-2")
+	seed := func(id, typ string, props map[string]string, content string) {
+		e := entity.New(id, typ)
+		for k, v := range props {
+			e.SetString(k, v)
+		}
+		e.Content = content
+		require.NoError(t, s.CreateEntity(ctx(), e), "create %s", id)
+	}
+	seed("carol", "person", map[string]string{"title": "Carol"}, "")
+	seed("TKT-1", "ticket", map[string]string{"title": "alpha rocket", "code": "zeta777", "status": "open"}, "")
+	seed("TKT-2", "ticket", map[string]string{"title": "beta lander", "extra": "undeclaredvalue"}, "")
+	seed("TKT-3", "ticket", map[string]string{"title": "gamma orbiter", "code": "zeta777", "status": "done"},
+		"uniquebodytoken operational notes")
+	seed("MEMO-1", "memo", map[string]string{"title": "memo", "code": "zeta777"}, "")
+	mustRel(t, s, "carol", "owner-of", "TKT-1")
 }
 
 // seedVisibleSearchWorld builds the shared fixture graph:

@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Sourcehaven-BV/rela/internal/acl/acltest"
+
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
@@ -50,9 +52,9 @@ func TestFaceGrantParity_ListAndGetAgree(t *testing.T) {
 		Assignments: map[string]string{"alice": "viewer"},
 	}, app.store)
 	setTestACL(t, app, d)
-	req, rerr := d.ForPrincipal(principal.Principal{User: "alice", Tool: principal.ToolDataEntry})
+	req, rerr := d.ForIdentity(acltest.IdentityFor(t.Context(), t, d, principal.Principal{User: "alice", Tool: principal.ToolDataEntry}))
 	if rerr != nil {
-		t.Fatalf("ForPrincipal: %v", rerr)
+		t.Fatalf("ForIdentity: %v", rerr)
 	}
 	gate, gerr := newACLReadGate(req)
 	if gerr != nil {
@@ -122,7 +124,7 @@ func TestFaceGrant_BareGrantReadsEveryFace(t *testing.T) {
 		Assignments: map[string]string{"alice": "viewer"},
 	}, app.store)
 	setTestACL(t, app, d)
-	req, _ := d.ForPrincipal(principal.Principal{User: "alice", Tool: principal.ToolDataEntry})
+	req, _ := d.ForIdentity(acltest.IdentityFor(t.Context(), t, d, principal.Principal{User: "alice", Tool: principal.ToolDataEntry}))
 	gate, gerr := newACLReadGate(req)
 	if gerr != nil {
 		t.Fatalf("newACLReadGate: %v", gerr)
@@ -174,9 +176,9 @@ func TestFaceGrant_ViewEntryIsFaceGated(t *testing.T) {
 		Assignments: map[string]string{"alice": "viewer"},
 	}, app.store)
 	setTestACL(t, app, d)
-	req, rerr := d.ForPrincipal(principal.Principal{User: "alice", Tool: principal.ToolDataEntry})
+	req, rerr := d.ForIdentity(acltest.IdentityFor(t.Context(), t, d, principal.Principal{User: "alice", Tool: principal.ToolDataEntry}))
 	if rerr != nil {
-		t.Fatalf("ForPrincipal: %v", rerr)
+		t.Fatalf("ForIdentity: %v", rerr)
 	}
 	gate, gerr := newACLReadGate(req)
 	if gerr != nil {

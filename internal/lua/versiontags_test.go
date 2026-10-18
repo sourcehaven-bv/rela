@@ -99,15 +99,15 @@ func TestVersionTags_WriteBindings(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			deps := newHistoryWorld(t)
+			deps, decl := newHistoryWorld(t)
 			w := &recordingTagWriter{err: tc.err}
 			deps.VersionTags = w
 			var out string
 			var err error
 			if tc.wantErr == "" {
-				out = runAsAlice(t, deps, tc.src)
+				out = runAsAlice(t, decl, deps, tc.src)
 			} else {
-				err = runAsAliceErr(deps, tc.src)
+				err = runAsAliceErr(t, decl, deps, tc.src)
 				if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
 					t.Fatalf("err = %v, want it to contain %q", err, tc.wantErr)
 				}
@@ -123,16 +123,16 @@ func TestVersionTags_WriteBindings(t *testing.T) {
 }
 
 func TestVersionTags_WriteBindingsAbsentWithoutWriter(t *testing.T) {
-	deps := newHistoryWorld(t)
-	out := runAsAlice(t, deps, `rela.output(type(rela.tag_version) .. "," .. type(rela.untag_version))`)
+	deps, decl := newHistoryWorld(t)
+	out := runAsAlice(t, decl, deps, `rela.output(type(rela.tag_version) .. "," .. type(rela.untag_version))`)
 	if !strings.Contains(out, "nil,nil") {
 		t.Errorf("output %q: the write bindings exist without a writer", out)
 	}
 }
 
 func TestVersionTags_TokenAndHistoryTags(t *testing.T) {
-	deps := newHistoryWorld(t)
-	out := runAsAlice(t, deps, `
+	deps, decl := newHistoryWorld(t)
+	out := runAsAlice(t, decl, deps, `
 rela.output("hidden=" .. tostring(rela.version_token("SEC-1")))
 rela.output("missing=" .. tostring(rela.version_token("NOPE-1")))
 local tok = rela.version_token("P-1")

@@ -207,7 +207,7 @@ func (w *loopWorld) round() (changes, retries int) {
 	data, err := json.Marshal(w.remote)
 	require.NoError(w.t, err)
 	src := "local REMOTE = " + strconv.Quote(string(data)) + "\n" + loopScript
-	got, err := syncLua(asUser("connector"), w.t, w.svc, src)
+	got, err := syncLua(asUser(w.t, w.svc, "connector"), w.t, w.svc, src)
 	require.NoError(w.t, err)
 	require.Empty(w.t, got["unsettled"])
 	require.NoError(w.t, json.Unmarshal([]byte(got["remote"]), &w.remote))
@@ -248,7 +248,7 @@ func (w *loopWorld) baseToken(id string) string {
 	require.NotNil(w.t, tr, "the store serves no version tags")
 	name, err := store.ParseVersionTagName("sync/basecamp")
 	require.NoError(w.t, err)
-	snap, err := tr.VersionByTag(asUser("connector"), entity.Ref{ID: id}, name)
+	snap, err := tr.VersionByTag(asUser(w.t, w.svc, "connector"), entity.Ref{ID: id}, name)
 	if errors.Is(err, store.ErrNotFound) {
 		return ""
 	}
@@ -261,7 +261,7 @@ func (w *loopWorld) baseToken(id string) string {
 // currentToken is rela.version_token(id) as the connector reads it.
 func (w *loopWorld) currentToken(id string) string {
 	w.t.Helper()
-	got, err := syncLua(asUser("connector"), w.t, w.svc, `rela.output("tok=" .. rela.version_token("`+id+`"))`)
+	got, err := syncLua(asUser(w.t, w.svc, "connector"), w.t, w.svc, `rela.output("tok=" .. rela.version_token("`+id+`"))`)
 	require.NoError(w.t, err)
 	return got["tok"]
 }
@@ -282,7 +282,7 @@ func (w *loopWorld) requireBaseAt(id string, atCurrent bool) {
 
 func (w *loopWorld) local(id string) *entity.Entity {
 	w.t.Helper()
-	got, err := w.svc.Store().GetEntity(asUser("connector"), entity.Ref{ID: id})
+	got, err := w.svc.Store().GetEntity(asUser(w.t, w.svc, "connector"), entity.Ref{ID: id})
 	require.NoError(w.t, err)
 	return got
 }
@@ -324,7 +324,7 @@ func TestSyncLoop_ReachesFixedPoint(t *testing.T) {
 	// Concurrent edits on both sides: rela edits the body, the remote
 	// renames and completes.
 	body := "first\nsecond\nthird"
-	_, err = svc.EntityManager().PatchEntity(asUser("user"), found.ID, entity.Patch{Content: &body})
+	_, err = svc.EntityManager().PatchEntity(asUser(t, svc, "user"), found.ID, entity.Patch{Content: &body})
 	require.NoError(t, err)
 	w.remote[0].Title = "Plan v2"
 	w.remote[0].Completed = true
@@ -349,7 +349,7 @@ func TestSyncLoop_ReachesFixedPoint(t *testing.T) {
 	// The stamp has settled and does not change for this edit, so the tag
 	// must end on the current token.
 	before := w.tagged[found.ID]
-	_, err = svc.EntityManager().PatchEntity(asUser("user"), found.ID, entity.Patch{MetaUnset: []string{"due"}})
+	_, err = svc.EntityManager().PatchEntity(asUser(t, svc, "user"), found.ID, entity.Patch{MetaUnset: []string{"due"}})
 	require.NoError(t, err)
 	w.remote[0].DueOn = nil
 	w.remote[0].ETag++
@@ -373,7 +373,7 @@ func waitStamp(t *testing.T, w *loopWorld, id, want string) {
 
 func findTicket(t *testing.T, w *loopWorld, extID string) *entity.Entity {
 	t.Helper()
-	got, err := syncLua(asUser("connector"), t, w.svc,
+	got, err := syncLua(asUser(w.t, w.svc, "connector"), t, w.svc,
 		`rela.output("id=" .. rela.find_by_external_ref("basecamp", "`+extID+`").id)`)
 	require.NoError(t, err)
 	return w.local(got["id"])

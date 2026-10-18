@@ -138,7 +138,7 @@ func nextActionRequestScope(ctx context.Context) (context.Context, error) {
 // queryIdentityFor derives the query identity from the principal on ctx.
 //
 // It does NOT call the ACL resolver: on the data-entry API the router has
-// already run access.Opener, so principal.User IS the resolved user
+// already run access.Opener (acl.IdentityResolver.Resolve), so principal.User IS the resolved user
 // entity id when the policy has a user_entity_type and the principal matched
 // one, with RawUser holding the original identifier. When no resolution
 // happened, User is the raw identifier and that is what graph data can be
@@ -152,13 +152,13 @@ func nextActionRequestScope(ctx context.Context) (context.Context, error) {
 //
 // One degradation is inherited from the router and worth knowing: when the
 // principal_property lookup fails with a BACKEND error, access.Opener
-// keeps the raw principal, so this derives the raw identifier while the
+// falls back to the raw principal, so this derives the raw identifier while the
 // operator's condition compares against user-entity ids. A positive
 // identity comparison then matches nothing for that request rather than
 // erroring, and a negated one (`not related(..., { id = current_user.id })`)
 // matches every row the reader can already see. Neither reaches past the read
-// gate; predicatefns.ResolveQueryIdentity is the stricter shape the
-// boundary stamp (TKT-ZQV9O5) should adopt.
+// gate. The boundary stamp (TKT-ZQV9O5) should surface the lookup error
+// instead of deriving the raw identifier.
 func queryIdentityFor(ctx context.Context) (predicatefns.QueryIdentity, bool) {
 	p, ok := principal.Stamped(ctx)
 	if !ok || p.User == "" || p.User == principal.Unknown {

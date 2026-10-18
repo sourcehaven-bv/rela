@@ -366,7 +366,7 @@ func (h *viewsHandler) gateLoadedEntities(
 // It never fetches and never walks the chain, so it cannot disagree with the
 // store about WHICH face was served, because it is handed that face.
 //
-// It shares [resolutionRule] with the entity GET's `_world` block rather than
+// It shares [resolutionRuleAt] with the entity GET's `_world` block rather than
 // deriving the rule again, so a view row and a GET of the same entity under
 // the same world report identical provenance. Two implementations of that
 // mapping would be free to drift, and the drift would be invisible — both
@@ -387,9 +387,8 @@ func (h *viewsHandler) gateLoadedEntities(
 // `select: [published, draft]` a genuine published face and a draft standing
 // in for a missing one both report "chain". A view row is exactly where that
 // matters — a section can mix a first-choice hit and a stand-in, and the two
-// are byte-identical. So this shares [resolutionRuleAt] with the entity GET
-// rather than the rule-only [resolutionRule], for the same
-// one-implementation reason the paragraph above gives.
+// are byte-identical. That is why the shared mapping returns the position
+// beside the rule.
 //
 // e must be non-nil; callers hold a resolved entity by construction.
 func (w viewWorld) provenanceFor(e *entityPkg.Entity) *v1.EntityWorld {
@@ -462,7 +461,7 @@ func (h *viewsHandler) writeWorldAbsentView(
 	// That face's own edges, via the same face-scoped seam every other surface
 	// uses — never the bare-id reader, which returns the union of every face's
 	// edges (the face-merging bug fixed in 8b476cd1).
-	rels, ferr := h.faceEdges(ctx, e)
+	rels, ferr := h.faceEdges.edges(ctx, e)
 	if ferr != nil {
 		writeGateError(w, r, ferr)
 		return

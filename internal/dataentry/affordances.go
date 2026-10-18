@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/affordances"
+	"github.com/Sourcehaven-BV/rela/internal/search"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	v1 "github.com/Sourcehaven-BV/rela/internal/apiwire/v1"
@@ -278,6 +279,12 @@ type FieldVerdictResolver interface {
 	// a resolver missing it would otherwise default to "visible" and reopen
 	// the hidden-value oracle (BUG-WJSYQT).
 	FieldVisibleOnEveryRow(ctx context.Context, entityType, property string) bool
+	// SearchFieldScope is the search form of FieldVerdicts: what the
+	// resolver hides on an entity read, compiled for a search over
+	// entityType. Required for the same reason as FieldVisibleOnEveryRow:
+	// a resolver that hides fields must never pair with a search that
+	// hides nothing. A nil scope means nothing is hidden.
+	SearchFieldScope(ctx context.Context, entityType string) (*search.FieldScope, error)
 }
 
 // traversalPrimer is the OPTIONAL capability of a [FieldVerdictResolver]
@@ -1099,16 +1106,6 @@ func (v FieldVerdicts) IsOptionAllowed(name, opt string) bool {
 // phrase the check in the negative form.
 func (v FieldVerdicts) isHidden(name string) bool { return !v.IsVisible(name) }
 
-// hidesAnyField reports whether the active resolver can ever hide a property.
-// The Nop resolver returns empty verdicts for every entity, so field-level
-// redaction is a provable no-op under it; a policy-backed resolver may hide.
-// Search uses this to decide whether the property-level filter needs to run at
-// all (and thus whether a non-provenance searcher is acceptable).
-func (svc affordanceService) hidesAnyField() bool {
-	_, isNop := svc.resolver().(NopFieldVerdictResolver)
-	return !isNop
-}
-
 // hiddenProperties returns the set of property names that should be
 // stripped from v1.Entity.Properties before serialization. Caller uses
 // this to enforce the omit-on-hidden invariant.
@@ -1124,25 +1121,6 @@ func (svc affordanceService) hiddenProperties(ctx context.Context, e *entityPkg.
 		}
 	}
 	return out
-}
-
-// withoutHidden returns e as an ETag may hash it: a shallow copy without the
-// properties field-level ACL hides from the caller, or e itself when none
-// are hidden. A digest over a hidden value lets the caller guess that value
-// offline (BUG-J01V0Q), so every entity ETag hashes this view.
-func (svc affordanceService) withoutHidden(ctx context.Context, e *entityPkg.Entity) *entityPkg.Entity {
-	hidden := svc.hiddenProperties(ctx, e)
-	if len(hidden) == 0 {
-		return e
-	}
-	view := *e
-	view.Properties = make(map[string]any, len(e.Properties))
-	for k, v := range e.Properties {
-		if _, h := hidden[k]; !h {
-			view.Properties[k] = v
-		}
-	}
-	return &view
 }
 
 // redactedPropertyNames returns the sorted names of properties withheld by

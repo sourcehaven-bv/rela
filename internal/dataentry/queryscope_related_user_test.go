@@ -10,6 +10,7 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/access"
 	"github.com/Sourcehaven-BV/rela/internal/acl"
+	"github.com/Sourcehaven-BV/rela/internal/aclstore"
 	"github.com/Sourcehaven-BV/rela/internal/appbuild"
 	"github.com/Sourcehaven-BV/rela/internal/appbuild/appbuildtest"
 	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
@@ -61,7 +62,7 @@ func newRelatedUserApp(t *testing.T) (*App, *acl.Declarative, *storetest.Countin
 		UserEntityType:    "persoon",
 		PrincipalProperty: "pratique_sub",
 		Roles:             map[string]acl.RoleDef{"everyone": {Read: []string{"*"}}},
-	}, acl.NewStoreGraph(counting), counting, acl.WithPrincipalLookup(acl.NewStorePrincipalLookup(counting)))
+	}, aclstore.MustNewGraph(counting), counting, acl.WithPrincipalLookup(aclstore.MustNewPrincipalLookup(counting)))
 	if err != nil {
 		t.Fatalf("NewDeclarative: %v", err)
 	}
@@ -171,7 +172,7 @@ func TestQueryScope_RelatedToCurrentUser(t *testing.T) {
 }
 
 // An unidentified caller has no current_user.id. With an ACL policy the
-// request never gets this far (ForPrincipal refuses an unstamped principal);
+// request never gets this far (identity resolution refuses an unstamped principal);
 // without one it does, as the "unknown" placeholder the server stamps with no
 // identity source. Every such scope must then fail the request rather than
 // answer it: an unbound id reaching the store would be "any persoon", and
@@ -260,7 +261,7 @@ func TestQueryScope_RelatedToCurrentUserUnreadableUserType(t *testing.T) {
 		PrincipalProperty: "pratique_sub",
 		Roles:             map[string]acl.RoleDef{"everyone": {Read: []string{"taak"}}},
 		Assignments:       map[string]string{"*": "everyone"},
-	}, acl.NewStoreGraph(counting), counting, acl.WithPrincipalLookup(acl.NewStorePrincipalLookup(counting)))
+	}, aclstore.MustNewGraph(counting), counting, acl.WithPrincipalLookup(aclstore.MustNewPrincipalLookup(counting)))
 	if err != nil {
 		t.Fatalf("NewDeclarative: %v", err)
 	}
