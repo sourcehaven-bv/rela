@@ -292,6 +292,69 @@ must have `cardinality: one` and attach to `entity_type`. `props` are
 literal values: a trigger posts your text and a reference to the entity,
 never a value read from it.
 
+| Key | Meaning |
+| --- | --- |
+| `entity_type` | The type whose entities the trigger watches. |
+| `on` | `enter`, `leave` or `change`. |
+| `when` | The condition, over `entity.<property>`. |
+| `channel` | The channel type to post into. |
+| `post` | The message `type` and its literal `props`. |
+| `when_closed` | `skip` (default) posts nothing while the channel is closed or archived; `post` posts anyway. |
+
+The message type must be a `log` type: a signal would reach only the
+readers connected to the process that runs triggers. rela checks the
+`props` against the message type when the file loads, including each
+property's `max`, `message_bytes` and the type's `when`.
+
+A trigger's message has the author `system:realtime`. The API marks it
+with `author.system: true` and `triggered_by: trigger:<name>`, so a client
+can show it apart from a person's message. A trigger needs no role in
+`acl.yaml` and is not held to `post_rate`.
+
+How triggers run:
+
+- **They start from now.** A new trigger, or one whose `entity_type` or
+  `when` you change, first records which entities match, without
+  posting. Only changes after that post.
+- **Changes close together are seen together.** rela looks at changed
+  entities twice a second. An entity that starts and stops matching in
+  between posts nothing. One trigger posts at most once a minute about one
+  entity; the changes in between are seen together when the minute ends.
+- **Posts are capped.** rela posts at most 64 trigger messages per look,
+  shared by the triggers in turn, so one busy trigger cannot hold back
+  the others. The rest post at the next look.
+- **Deleting is not leaving.** A deleted entity posts no `leave`. When it
+  comes back, for example through a restore, it posts `enter` again. A
+  renamed entity counts as a new one and posts `enter` under its new id.
+- **A missed change is caught later.** Every 15 minutes, and when the
+  process starts, rela compares every entity with what it has seen. That
+  catches a change that raised no event, and a `when` on `today()` that
+  starts to hold as the date changes. `today()` is the date in UTC.
+- **A post is delivered at least once.** A crash between posting and
+  recording the post can post it again. A post that keeps failing is
+  retried for three looks, then logged and counted as done, so it never
+  repeats forever.
+- **Only a long-running process runs triggers:** `rela-server` and the
+  desktop app. With several server processes, the process that holds the
+  realtime worker lock runs them, as it runs the sweep. The CLI and the
+  MCP server run none: their changes reach a running server and post
+  there.
+- **Without a valid file, triggers stop.** While `realtime.yaml` is
+  missing or kept from an earlier load after an error, no trigger posts.
+  When the file loads again, the next comparison catches up.
+
+On a type with faces, a trigger on a channel type with `anchor: face`
+watches each face on its own and posts into that face's channel. A
+trigger on a channel type anchored to the whole entity reads the default
+world's face. rela leaves such a trigger out, with a warning in the log,
+when `acl.yaml` lets some readers see only certain faces: its message
+would describe a face they may not see. The rest of the file stays in
+force.
+
+A trigger creates the channel when it posts first. Under
+`on_entity_delete: block`, that channel then blocks deleting the entity,
+as a channel a person started does.
+
 ## Checks when the file loads
 
 rela checks the whole file when it loads and lists every problem by key,
@@ -321,6 +384,10 @@ Three more rules stop a message from revealing what `acl.yaml` hides:
   baseline restricts. A message posted on a hidden value would reveal it to
   every channel reader.
 - `from: entity.<property>` may not name such a property either.
+
+rela refuses the whole file for any of these problems, except one: a
+trigger it must leave out because of faces (see Triggers) is dropped with
+a warning, and the rest of the file stays in force.
 
 ## Limits
 
