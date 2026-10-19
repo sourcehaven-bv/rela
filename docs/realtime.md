@@ -130,8 +130,10 @@ Only a long-running rela process sweeps: `rela-server` and the desktop
 app. The sweep checks every minute for channels to close, archive or
 erase, and checks for missing entities every hour. With several server
 processes against one database, one process leads and runs every
-check: it holds a shared lock while it runs. If that process stops,
-another one takes over within ten seconds.
+check: it holds a shared lock while it runs. If that process stops, or
+the database drops its connection, another one takes over within ten
+seconds. The lock keeps one database connection for as long as it is
+held, so with postgres `pool_max_conns` must be at least 3.
 
 Names of channel types, message types, roles, actions and triggers use
 lowercase letters, digits and hyphens, and start with a letter. Property
