@@ -35,11 +35,11 @@ import (
 // process sees every entity change (the fsstore watcher, pg NOTIFY); only
 // the leader notes them for the triggers.
 //
-// On postgres the lock is a session lock on one pinned connection. The
-// worker cannot tell when the database drops that session, so it leads on
-// until it stops; a second leader may then run alongside it. The triggers
-// stay correct, because what they have seen is shared in the KV and a
-// post is at least once, and the sweeps are idempotent.
+// On postgres the lock is a session lock on one pinned connection, which
+// the database frees when it drops the session. The leader checks the
+// session every realtimeTakeoverInterval and stops leading when the check
+// fails, so two leaders overlap for at most that long. In that window a
+// trigger may post twice: posts are at least once.
 const (
 	realtimeLifecycleInterval = time.Minute
 	realtimeRetentionInterval = time.Hour
@@ -191,8 +191,21 @@ func (a anchorExistence) Faces(ctx context.Context, ids []string) (map[string][]
 }
 
 // leaderLock takes the worker lock if it is free and returns at once. It
-// reports false, with a nil release, when another process holds it.
-type leaderLock func(ctx context.Context) (release func(), ok bool, err error)
+// reports false, with a zero heldLock, when another process holds it.
+type leaderLock func(ctx context.Context) (lock heldLock, ok bool, err error)
+
+// heldLock is a worker lock this process took.
+type heldLock struct {
+	release func()
+	// check reports whether the lock is still held. Nil for a lock that
+	// holds as long as the process lives (a lock file, the memory lock).
+	check func(ctx context.Context) error
+}
+
+// heldFor wraps a release func that comes with no check.
+func heldFor(release func(), ok bool, err error) (heldLock, bool, error) {
+	return heldLock{release: release}, ok, err
+}
 
 // realtimeLeaderLock returns the worker lock for st: the database's own lock
 // on a backend that runs several processes (see storeLeaderLockFor), a lock
@@ -203,13 +216,13 @@ func realtimeLeaderLock(fs storage.FS, cacheDir string, st store.Store) (leaderL
 		return l, nil
 	}
 	if _, mem := fs.(*storage.MemFS); mem || fs == nil || cacheDir == "" {
-		return func(context.Context) (func(), bool, error) { return func() {}, true, nil }, nil
+		return func(context.Context) (heldLock, bool, error) { return heldLock{release: func() {}}, true, nil }, nil
 	}
 	l, err := filelock.New(filepath.Join(cacheDir, realtimeWorkerLockFile))
 	if err != nil {
 		return nil, fmt.Errorf("realtime worker: %w", err)
 	}
-	return func(context.Context) (func(), bool, error) { return l.TryLock() }, nil
+	return func(context.Context) (heldLock, bool, error) { return heldFor(l.TryLock()) }, nil
 }
 
 // realtimeWorker runs the [realtime.Sweeper] and the [realtime.Triggers]
@@ -351,7 +364,8 @@ func (w *realtimeWorker) stop() {
 }
 
 // run tries to take the worker lock until it gets it or ctx ends, and
-// then leads until ctx ends. Store events are drained on a goroutine of
+// then leads until ctx ends or the lock is lost, when it goes back to
+// trying. Store events are drained on a goroutine of
 // their own, so a long round never fills the subscription.
 func (w *realtimeWorker) run(ctx context.Context) {
 	events, cancel := w.changes.Subscribe(triggerEventBuffer)
@@ -362,16 +376,18 @@ func (w *realtimeWorker) run(ctx context.Context) {
 	takeover := time.NewTicker(w.takeover)
 	defer takeover.Stop()
 	for {
-		release, ok, err := w.lock(ctx)
+		held, ok, err := w.lock(ctx)
 		switch {
 		case err != nil:
 			if ctx.Err() == nil {
 				slog.Warn("realtime worker: cannot take the worker lock; trying again", "error", err)
 			}
 		case ok:
-			w.lead(ctx)
-			release()
-			return
+			w.lead(ctx, held.check)
+			held.release()
+			if ctx.Err() != nil {
+				return
+			}
 		default:
 			slog.Debug("realtime worker: another process leads")
 		}
@@ -403,13 +419,14 @@ func (w *realtimeWorker) drain(ctx context.Context, events <-chan store.Event) {
 	}
 }
 
-// lead runs the sweeps and the triggers until ctx ends: everything once
+// lead runs the sweeps and the triggers until ctx ends or check fails,
+// which it calls every takeover interval: everything once
 // at start, then the lifecycle sweep and the purge poll every minute, full
 // retention every hour, the purge poll on every wake, a trigger round on
 // every tick that has work, and a trigger reconcile on its timer. The
 // trigger engine starts and ends with nothing in memory, so it never acts
 // on what it held while another process led.
-func (w *realtimeWorker) lead(ctx context.Context) {
+func (w *realtimeWorker) lead(ctx context.Context, check func(context.Context) error) {
 	ctx = principal.With(ctx, principal.Principal{User: principal.UserRealtime, Tool: principal.ToolRealtime})
 	w.leading.Store(true)
 	w.triggers.Reset()
@@ -429,10 +446,22 @@ func (w *realtimeWorker) lead(ctx context.Context) {
 	defer tick.Stop()
 	reconcile := time.NewTimer(reconcileDelay())
 	defer reconcile.Stop()
+	verify := time.NewTicker(w.takeover)
+	defer verify.Stop()
 	for {
 		select {
 		case <-ctx.Done():
 			return
+		case <-verify.C:
+			if check == nil {
+				continue
+			}
+			if err := check(ctx); err != nil {
+				if ctx.Err() == nil {
+					slog.Warn("realtime worker: lost the worker lock; this process stops leading", "error", err)
+				}
+				return
+			}
 		case <-tick.C:
 			if w.triggers.Pending() {
 				rep, err := w.triggers.RunRound(ctx)

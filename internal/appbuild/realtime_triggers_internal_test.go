@@ -157,11 +157,11 @@ func TestEntitySource_ReadsTheFaceTheChannelShows(t *testing.T) {
 // oneLock is a worker lock that one worker holds at a time.
 type oneLock struct{ held atomic.Bool }
 
-func (l *oneLock) take(context.Context) (release func(), ok bool, err error) {
+func (l *oneLock) take(context.Context) (lock heldLock, ok bool, err error) {
 	if !l.held.CompareAndSwap(false, true) {
-		return nil, false, nil
+		return heldLock{}, false, nil
 	}
-	return func() { l.held.Store(false) }, true, nil
+	return heldLock{release: func() { l.held.Store(false) }}, true, nil
 }
 
 // testWorker is a worker of its own process over the fixture's stores.

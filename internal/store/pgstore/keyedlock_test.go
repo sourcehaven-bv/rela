@@ -68,16 +68,17 @@ func TestKeyedLock_ExclusiveAcrossStores(t *testing.T) {
 // once released, and excludes AcquireKeyedLock on the same key.
 func TestTryKeyedLock(t *testing.T) {
 	_ = testDSN(t)
-	pool := newScopedPool(t)
+	pool := newScopedPoolSized(t, 3)
 	a, err := pgstore.New(pool)
 	require.NoError(t, err)
 	b, err := pgstore.New(pool)
 	require.NoError(t, err)
 	ctx := context.Background()
 
-	release, ok, err := pgstore.TryKeyedLock(ctx, a, "realtime-worker")
+	held, ok, err := pgstore.TryKeyedLock(ctx, a, "realtime-worker")
 	require.NoError(t, err)
 	require.True(t, ok)
+	require.NoError(t, held.Check(ctx), "a held lock checks out")
 	_, ok, err = pgstore.TryKeyedLock(ctx, b, "realtime-worker")
 	require.NoError(t, err)
 	require.False(t, ok, "a held key is not taken twice")
@@ -85,19 +86,52 @@ func TestTryKeyedLock(t *testing.T) {
 	defer cancel()
 	_, err = b.AcquireKeyedLock(waitCtx, "realtime-worker")
 	require.Error(t, err, "the two share one key space")
-	release()
-	release()
+	held.Release()
+	held.Release()
+	require.Error(t, held.Check(ctx), "a released lock is not held")
 
 	// The timed-out waiter's session may still be queued on the server for
 	// a moment and take the key before it ends, so poll.
 	require.Eventually(t, func() bool {
-		release, ok, err = pgstore.TryKeyedLock(ctx, b, "realtime-worker")
+		held, ok, err = pgstore.TryKeyedLock(ctx, b, "realtime-worker")
 		return err == nil && ok
 	}, 5*time.Second, 20*time.Millisecond, "a released key is free")
-	release()
+	held.Release()
 
 	_, _, err = pgstore.TryKeyedLock(ctx, nil, "realtime-worker")
 	require.Error(t, err, "a store without a pool cannot lock")
+
+	small, err := pgstore.New(newScopedPool(t))
+	require.NoError(t, err)
+	_, _, err = pgstore.TryKeyedLock(ctx, small, "realtime-worker")
+	require.ErrorContains(t, err, "pool_max_conns >= 3")
+}
+
+// A held lock whose session the server drops fails its check, and the key
+// is free for another holder.
+func TestTryKeyedLock_LostSession(t *testing.T) {
+	_ = testDSN(t)
+	pool := newScopedPoolSized(t, 3)
+	a, err := pgstore.New(pool)
+	require.NoError(t, err)
+	ctx := context.Background()
+	held, ok, err := pgstore.TryKeyedLock(ctx, a, "realtime-worker")
+	require.NoError(t, err)
+	require.True(t, ok)
+	_, err = pool.Exec(ctx, `SELECT pg_terminate_backend(pid) FROM pg_locks
+		WHERE locktype = 'advisory' AND granted AND pid <> pg_backend_pid()
+		AND objid = ((hashtext(current_schema() || '/realtime-worker')::bigint & 4294967295)::oid)`)
+	require.NoError(t, err)
+	require.Eventually(t, func() bool { return held.Check(ctx) != nil },
+		5*time.Second, 20*time.Millisecond, "the check sees the lost session")
+	require.Error(t, held.Check(ctx), "and keeps failing")
+	held.Release()
+	var other *pgstore.HeldLock
+	require.Eventually(t, func() bool {
+		other, ok, err = pgstore.TryKeyedLock(ctx, a, "realtime-worker")
+		return err == nil && ok
+	}, 5*time.Second, 20*time.Millisecond, "the key is free again")
+	other.Release()
 }
 
 // TestKeyedLock_DistinctKeysDoNotContendAcrossStores is the burst property: two

@@ -2,6 +2,7 @@ package appbuild
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"testing"
 	"time"
@@ -276,10 +277,11 @@ func TestRealtimeLeaderLock(t *testing.T) {
 	st := memstore.New()
 	l, err := realtimeLeaderLock(nil, "", st)
 	require.NoError(t, err)
-	release, ok, err := l(t.Context())
+	held, ok, err := l(t.Context())
 	require.NoError(t, err)
 	require.True(t, ok)
-	release()
+	require.Nil(t, held.check, "the memory lock cannot be lost")
+	held.release()
 
 	dir := t.TempDir()
 	a, err := realtimeLeaderLock(storage.NewSafeFS(storage.NewOsFS()), dir, st)
@@ -293,11 +295,11 @@ func TestRealtimeLeaderLock(t *testing.T) {
 	_, ok, err = b(t.Context())
 	require.NoError(t, err)
 	assert.False(t, ok, "a second process does not take a held lock")
-	releaseA()
+	releaseA.release()
 	releaseB, ok, err := b(t.Context())
 	require.NoError(t, err)
 	assert.True(t, ok, "the lock passes on once released")
-	releaseB()
+	releaseB.release()
 }
 
 // switchLock is a worker lock another process may hold. It counts the runs
@@ -305,6 +307,7 @@ func TestRealtimeLeaderLock(t *testing.T) {
 type switchLock struct {
 	mu       sync.Mutex
 	other    bool
+	lost     bool
 	err      error
 	granted  int
 	refused  int
@@ -312,23 +315,41 @@ type switchLock struct {
 	released int
 }
 
-func (l *switchLock) take(context.Context) (release func(), ok bool, err error) {
+func (l *switchLock) take(context.Context) (lock heldLock, ok bool, err error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	l.attempts++
 	if l.err != nil {
-		return nil, false, l.err
+		return heldLock{}, false, l.err
 	}
 	if l.other {
 		l.refused++
-		return nil, false, nil
+		return heldLock{}, false, nil
 	}
 	l.granted++
-	return func() {
-		l.mu.Lock()
-		defer l.mu.Unlock()
-		l.released++
+	l.lost = false
+	return heldLock{
+		release: func() {
+			l.mu.Lock()
+			defer l.mu.Unlock()
+			l.released++
+		},
+		check: func(context.Context) error {
+			l.mu.Lock()
+			defer l.mu.Unlock()
+			if l.lost {
+				return errors.New("session gone")
+			}
+			return nil
+		},
 	}, true, nil
+}
+
+// lose drops the held lock's session and hands the lock to another process.
+func (l *switchLock) lose() {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.lost, l.other = true, true
 }
 
 func (l *switchLock) set(other bool, err error) {
@@ -468,6 +489,33 @@ func TestRealtimeWorker_SkipsWhileHeldElsewhereThenTakesOver(t *testing.T) {
 	f.lock.mu.Lock()
 	assert.Equal(t, 1, f.lock.released, "the lock is released when the worker stops")
 	f.lock.mu.Unlock()
+}
+
+// A leader whose lock check fails stops leading: it stops noting changes,
+// releases the lock and goes back to trying it, and leads again once it
+// gets it.
+func TestRealtimeWorker_StepsDownOnLostLock(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	f := newWorkerFixture(t)
+	f.w.takeover = 10 * time.Millisecond
+	done := make(chan struct{})
+	go func() { f.w.run(ctx); close(done) }()
+	require.Eventually(t, f.w.leading.Load, 5*time.Second, 5*time.Millisecond)
+	f.lock.lose()
+	require.Eventually(t, func() bool { return !f.w.leading.Load() }, 5*time.Second, 5*time.Millisecond,
+		"a lost lock ends the lead")
+	require.Eventually(t, func() bool { _, refused, _ := f.lock.counts(); return refused >= 1 },
+		5*time.Second, 5*time.Millisecond, "and the worker tries the lock again")
+	f.lock.mu.Lock()
+	assert.Equal(t, 1, f.lock.released)
+	f.lock.mu.Unlock()
+	f.lock.set(false, nil)
+	require.Eventually(t, func() bool { granted, _, _ := f.lock.counts(); return granted == 2 },
+		5*time.Second, 5*time.Millisecond, "it leads again once the lock is free")
+	require.Eventually(t, f.w.leading.Load, 5*time.Second, 5*time.Millisecond)
+	cancel()
+	<-done
 }
 
 // A follower tries the lock again on its takeover timer, without a wake.

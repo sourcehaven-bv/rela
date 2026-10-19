@@ -124,26 +124,33 @@ func (s *Store) AcquireKeyedLock(ctx context.Context, key string) (release func(
 
 // TryKeyedLock takes the keyed lock named key on the database st writes to,
 // if no session holds it, and returns at once. It reports false, with a nil
-// release, when another holder has it.
+// lock, when another holder has it.
 //
-// It is for work any one process may do, such as a periodic sweep: the
-// caller takes it once per run and skips the run when it is held. So no
-// process waits on it, and a process that stops holding it (a crash, a lost
-// connection) lets the next run of another process take over.
+// It is for work one process does on behalf of all, such as the realtime
+// worker: the leader holds it for as long as it leads, and the others try
+// it now and then to take over. Holding it pins one pool connection for
+// that whole time, because the lock is session-scoped, so it needs
+// pool_max_conns >= 3: one for the lock, and at least two left for the
+// leader's writes and for requests.
 //
-// Like [Store.AcquireKeyedLock] it pins one pool connection until release,
-// because the lock is session-scoped, and it shares that method's key space,
-// so the two exclude each other on one key. It takes no keyed slot: a held
-// lock never makes another caller wait for one. A store that is not a
-// pool-backed pgstore is an error.
-func TryKeyedLock(ctx context.Context, st store.Store, key string) (release func(), ok bool, err error) {
+// The database frees the lock when it drops the session (an idle timeout,
+// a proxy cut, a failover), and the holder is not told. A holder calls
+// [HeldLock.Check] now and then and stops acting as the holder once it
+// fails.
+//
+// It shares the key space of [Store.AcquireKeyedLock], so the two exclude
+// each other on one key. It takes no keyed slot: a held lock never makes
+// another caller wait for one. A store that is not a pool-backed pgstore is
+// an error.
+func TryKeyedLock(ctx context.Context, st store.Store, key string) (lock *HeldLock, ok bool, err error) {
 	pool, isPool := HandleFor(st).(*pgxpool.Pool)
 	if !isPool {
 		return nil, false, errors.New("pgstore: keyed lock requires a pgxpool-backed store")
 	}
-	if pool.Config().MaxConns < 2 {
+	if pool.Config().MaxConns < 3 {
 		return nil, false, errors.New(
-			"pgstore: keyed lock needs pool_max_conns >= 2 (the lock pins one connection while the caller's writes use others)")
+			"pgstore: a held keyed lock needs pool_max_conns >= 3 (the lock pins one connection for as long as " +
+				"it is held, and writes and requests need the others)")
 	}
 	conn, err := pool.Acquire(ctx)
 	if err != nil {
@@ -161,21 +168,58 @@ func TryKeyedLock(ctx context.Context, st store.Store, key string) (release func
 		conn.Release()
 		return nil, false, nil
 	}
-	var releaseOnce sync.Once
-	return func() {
-		releaseOnce.Do(func() {
-			unlockCtx := context.WithoutCancel(ctx)
-			if _, err := conn.Exec(unlockCtx,
-				`SELECT pg_advisory_unlock($1::int, hashtext(current_schema() || '/' || $2::text))`,
-				keyedLockClassKey, key,
-			); err != nil {
-				slog.Warn("pgstore: keyed advisory unlock failed", "key", key, "error", err)
-				conn.Hijack().Close(unlockCtx)
-				return
-			}
-			conn.Release()
-		})
-	}, true, nil
+	return &HeldLock{conn: conn, key: key}, true, nil
+}
+
+// HeldLock is a keyed lock taken with [TryKeyedLock].
+type HeldLock struct {
+	mu   sync.Mutex
+	conn *pgxpool.Conn
+	key  string
+}
+
+// Check reports whether the lock's session is still alive, with a round
+// trip on its connection. A session lock lives exactly as long as its
+// session, so a live session still holds the lock. On failure the
+// connection is destroyed and the lock counts as lost: Check keeps failing
+// and Release does nothing.
+func (l *HeldLock) Check(ctx context.Context) error {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.conn == nil {
+		return fmt.Errorf("pgstore: keyed lock %q is no longer held", l.key)
+	}
+	if _, err := l.conn.Exec(ctx, `SELECT 1`); err != nil {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		l.conn.Hijack().Close(context.WithoutCancel(ctx))
+		l.conn = nil
+		return fmt.Errorf("pgstore: keyed lock %q lost its session: %w", l.key, err)
+	}
+	return nil
+}
+
+// Release frees the lock and returns its connection to the pool. Safe to
+// call more than once.
+func (l *HeldLock) Release() {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.conn == nil {
+		return
+	}
+	conn := l.conn
+	l.conn = nil
+	ctx := context.Background()
+	if _, err := conn.Exec(ctx,
+		`SELECT pg_advisory_unlock($1::int, hashtext(current_schema() || '/' || $2::text))`,
+		keyedLockClassKey, l.key,
+	); err != nil {
+		slog.Warn("pgstore: keyed advisory unlock failed", "key", l.key, "error", err)
+		conn.Hijack().Close(ctx)
+		return
+	}
+	conn.Release()
 }
 
 // keyedLockSlots caps how many keyed locks one store holds at once: half the
