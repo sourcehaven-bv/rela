@@ -347,6 +347,8 @@ func TestParse_Invalid(t *testing.T) {
 			"channel_types.incident-room.lifecycle.archive.retention", "only delete"},
 		{"period syntax", []replace{{"within: 15m", "within: 15w"}},
 			"channel_types.incident-room.message_ops.edit_own.within", "count from 1 to 100000"},
+		{"auto when restricted field", []replace{{`auto: { when: "entity.status == 'closed'" }`, `auto: { when: "entity.notes == 'x'" }`}},
+			"channel_types.incident-room.lifecycle.close.auto.when", "visible: grant in acl.yaml restricts"},
 		{"auto when traversal", []replace{{`auto: { when: "entity.status == 'closed'" }`, `auto: { when: "related(entity, 'about')" }`}},
 			"channel_types.incident-room.lifecycle.close.auto.when", "may not follow relations"},
 		{"auto when whole entity", []replace{{`auto: { when: "entity.status == 'closed'" }`, `auto: { when: "related(entity, 'about')" }`}},
@@ -701,6 +703,57 @@ triggers:
 			}
 			w := c.Warnings()
 			if tc.warn != (len(w) == 1) || (tc.warn && w[0].Key != "triggers.page-owned") {
+				t.Errorf("warnings = %v", w)
+			}
+		})
+	}
+}
+
+// TestParse_FamilyFacedAutoUnderFaceGrants pins D5 for auto.when: the rule
+// is left out for a faced type under face grants, with a warning, and the
+// operation and the rest of the file stay in force.
+func TestParse_FamilyFacedAutoUnderFaceGrants(t *testing.T) {
+	const src = `version: 1
+channel_types:
+  page-room:
+    attach_to: [page]
+    roles: { member: { from: attached } }
+    message_types:
+      note:
+        properties: { body: { type: string } }
+        post: [member]
+    lifecycle:
+      close: { roles: [member], auto: { when: "entity.owner ~= ''" } }
+`
+	policy, err := acl.ParsePolicy([]byte("roles:\n  drafter:\n    read: [page@draft]\n"), "acl.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name   string
+		src    string
+		policy *acl.Policy
+		rules  int
+		warn   bool
+	}{
+		{"family under face grants", src, policy, 0, true},
+		{"family without face grants", src, nil, 1, false},
+		{"face anchor", strings.Replace(src, "attach_to: [page]", "attach_to: [page]\n    anchor: face", 1), policy, 1, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c, err := Parse([]byte(tc.src), testMeta(t), tc.policy)
+			if err != nil {
+				t.Fatalf("Parse: %v", err)
+			}
+			ct, ok := c.ChannelType("page-room")
+			if !ok || ct.Lifecycle.Close == nil || ct.Lifecycle.Close.Auto == nil {
+				t.Fatal("the channel type or its close was dropped with the rule")
+			}
+			if got := len(ct.Lifecycle.Close.Auto.When); got != tc.rules {
+				t.Errorf("auto.when rules = %d; want %d", got, tc.rules)
+			}
+			w := c.Warnings()
+			if tc.warn != (len(w) == 1) || (tc.warn && w[0].Key != "channel_types.page-room.lifecycle.close.auto.when") {
 				t.Errorf("warnings = %v", w)
 			}
 		})

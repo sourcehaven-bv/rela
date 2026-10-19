@@ -655,9 +655,17 @@ func (v *validator) auto(key string, raw *rawAuto, ct *ChannelType, target State
 	}
 	if raw.When != "" {
 		for _, t := range ct.AttachTo {
-			if rule, ok := v.compileRule(key+".when", t, raw.When); ok {
-				a.When[t] = rule
+			rule, ok := v.compileRule(key+".when", t, raw.When)
+			if !ok {
+				continue
 			}
+			if ct.Anchor == AnchorFamily && v.facedAndRestricted(t) {
+				v.warn(key+".when", fmt.Sprintf("left out for %s: it declares faces and acl.yaml lets some "+
+					"readers see a face other than the default world's, so the rule would judge a face they "+
+					"may not see; use a channel type with anchor: face", t))
+				continue
+			}
+			a.When[t] = rule
 		}
 	}
 	return a
@@ -826,9 +834,12 @@ func (v *validator) triggerMessage(key string, mt *MessageType, t *Trigger, limi
 // faces (see facesRestricted).
 func (v *validator) facesUnsafe(entityType string, c *Compiled, channel string) bool {
 	ct, ok := c.channelTypes[channel]
-	if !ok || ct.Anchor != AnchorFamily {
-		return false
-	}
+	return ok && ct.Anchor == AnchorFamily && v.facedAndRestricted(entityType)
+}
+
+// facedAndRestricted reports whether entityType declares faces and
+// acl.yaml restricts which of them some readers see.
+func (v *validator) facedAndRestricted(entityType string) bool {
 	def, ok := v.meta.GetEntityDef(entityType)
 	return ok && len(def.Faces) > 0 && facesRestricted(v.policy, entityType)
 }
