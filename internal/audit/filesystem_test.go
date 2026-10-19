@@ -254,10 +254,11 @@ func TestFilesystem_SanitizationStripsControlChars(t *testing.T) {
 	}
 
 	a.Record(audit.Record{
-		Op:        audit.OpCreateEntity,
-		Subject:   &audit.Subject{Kind: "entity", Type: "tick\net", ID: "TKT-\x001"},
-		Principal: principal.Principal{User: "al\x1bice", Tool: principal.ToolCLI},
-		Summary:   "created\nwith newline",
+		Op:         audit.OpCreateEntity,
+		Subject:    &audit.Subject{Kind: "entity", Type: "tick\net", ID: "TKT-\x001"},
+		Principal:  principal.Principal{User: "al\x1bice", Tool: principal.ToolCLI},
+		AssertedBy: "b\x1bob",
+		Summary:    "created\nwith newline",
 	})
 
 	lines := readLines(t, mustGlobOne(t, filepath.Join(auditDir, "*.jsonl")))
@@ -280,6 +281,9 @@ func TestFilesystem_SanitizationStripsControlChars(t *testing.T) {
 	}
 	if !strings.Contains(rec.Summary, "created") {
 		t.Errorf("Summary lost its content: %q", rec.Summary)
+	}
+	if !strings.HasPrefix(rec.AssertedBy, "b") || !strings.HasSuffix(rec.AssertedBy, "ob") {
+		t.Errorf("AssertedBy lost its content: %q", rec.AssertedBy)
 	}
 }
 

@@ -87,6 +87,9 @@ func TestRecord_OmitemptyOnOptionalFields(t *testing.T) {
 	if strings.Contains(string(data), "triggered_by") {
 		t.Errorf("expected triggered_by to be omitted, got: %s", data)
 	}
+	if strings.Contains(string(data), "asserted_by") {
+		t.Errorf("expected asserted_by to be omitted, got: %s", data)
+	}
 	if strings.Contains(string(data), "summary") {
 		t.Errorf("expected summary to be omitted, got: %s", data)
 	}

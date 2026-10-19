@@ -38,3 +38,13 @@ func TestPrincipalAndTriggeredBy_Orthogonal(t *testing.T) {
 		t.Errorf("triggered-by missing: got %q", got)
 	}
 }
+
+func TestWithAssertedBy_RoundTrip(t *testing.T) {
+	if got := audit.AssertedByFrom(context.Background()); got != "" {
+		t.Errorf("AssertedByFrom(empty ctx) = %q, want empty", got)
+	}
+	ctx := audit.WithAssertedBy(context.Background(), "alice")
+	if got := audit.AssertedByFrom(ctx); got != "alice" {
+		t.Errorf("AssertedByFrom = %q, want alice", got)
+	}
+}

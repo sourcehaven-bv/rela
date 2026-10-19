@@ -33,6 +33,7 @@ func (m *Manager) recordEntityAudit(ctx context.Context, op string, e *entity.En
 		},
 		Principal:   principal.From(ctx),
 		TriggeredBy: audit.TriggeredByFrom(ctx),
+		AssertedBy:  audit.AssertedByFrom(ctx),
 		Summary:     summary,
 	})
 }
@@ -55,6 +56,7 @@ func (m *Manager) recordRelationAudit(ctx context.Context, op string, rel *entit
 		},
 		Principal:   principal.From(ctx),
 		TriggeredBy: audit.TriggeredByFrom(ctx),
+		AssertedBy:  audit.AssertedByFrom(ctx),
 		Summary:     summary,
 	})
 }
@@ -96,6 +98,7 @@ func (m *Manager) recordRenameAudit(ctx context.Context, oldID string, after *en
 		},
 		Principal:   principal.From(ctx),
 		TriggeredBy: audit.TriggeredByFrom(ctx),
+		AssertedBy:  audit.AssertedByFrom(ctx),
 		Summary:     summary,
 	})
 }

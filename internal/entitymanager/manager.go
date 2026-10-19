@@ -199,6 +199,7 @@ func recordFieldDenial(ctx context.Context, m *Manager, e *entity.Entity, err er
 		Subject:     &audit.Subject{Kind: "entity", Type: e.Type, ID: e.ID},
 		Principal:   principal.From(ctx),
 		TriggeredBy: audit.TriggeredByFrom(ctx),
+		AssertedBy:  audit.AssertedByFrom(ctx),
 		Summary:     summary,
 	})
 	return err
@@ -791,6 +792,7 @@ func (m *Manager) recordACLBypass(ctx context.Context, req acl.WriteRequest) {
 		Subject:     subject,
 		Principal:   principal.From(ctx),
 		TriggeredBy: audit.TriggeredByFrom(ctx),
+		AssertedBy:  audit.AssertedByFrom(ctx),
 		Summary:     fmt.Sprintf("acl_bypass=true op=%s", req.Op),
 	})
 }
@@ -826,6 +828,7 @@ func deniedWriteRecord(ctx context.Context, d acl.Decision, req acl.WriteRequest
 		Subject:     subject,
 		Principal:   principal.From(ctx),
 		TriggeredBy: audit.TriggeredByFrom(ctx),
+		AssertedBy:  audit.AssertedByFrom(ctx),
 		Summary:     formatDeniedSummary(d, req.Op),
 	}
 }

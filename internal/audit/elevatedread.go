@@ -59,6 +59,7 @@ func (r *ElevationRecorder) RecordElevatedRead(ctx context.Context, bindings []s
 		Op:          OpACLBypassRead,
 		Principal:   principal.From(ctx),
 		TriggeredBy: TriggeredByFrom(ctx),
+		AssertedBy:  AssertedByFrom(ctx),
 		Summary:     "acl_bypass_read=true bindings=" + strings.Join(bindings, ","),
 	})
 }

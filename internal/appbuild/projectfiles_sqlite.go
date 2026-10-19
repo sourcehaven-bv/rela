@@ -324,10 +324,11 @@ func recordConfigImport(ctx context.Context, opts ConfigImportOptions, count int
 		summary = fmt.Sprintf("config import from %s FAILED, nothing written: %s", source, err)
 	}
 	opts.Audit.Record(audit.Record{
-		Time:      time.Now().UTC(),
-		Op:        audit.OpConfigImport,
-		Principal: principal.From(ctx),
-		Summary:   summary,
+		Time:       time.Now().UTC(),
+		Op:         audit.OpConfigImport,
+		Principal:  principal.From(ctx),
+		AssertedBy: audit.AssertedByFrom(ctx),
+		Summary:    summary,
 	})
 }
 

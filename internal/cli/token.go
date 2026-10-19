@@ -198,10 +198,11 @@ func recordToken(ctx context.Context, sink audit.Audit, op, name string) {
 		return
 	}
 	sink.Record(audit.Record{
-		Time:      time.Now().UTC(),
-		Op:        op,
-		Principal: principal.From(ctx),
-		Summary:   "connection=" + name,
+		Time:       time.Now().UTC(),
+		Op:         op,
+		Principal:  principal.From(ctx),
+		AssertedBy: audit.AssertedByFrom(ctx),
+		Summary:    "connection=" + name,
 	})
 }
 

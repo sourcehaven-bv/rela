@@ -215,6 +215,7 @@ func sanitize(rec Record) Record {
 	// only ever set from an already-sanitized value) but an unpinned invariant.
 	rec.Principal = rec.Principal.Sanitized(clean)
 	rec.TriggeredBy = clean(rec.TriggeredBy)
+	rec.AssertedBy = clean(rec.AssertedBy)
 	rec.Summary = clean(rec.Summary)
 	return rec
 }

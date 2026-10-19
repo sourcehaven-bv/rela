@@ -256,7 +256,11 @@ type Record struct {
 	After       *Subject            `json:"after,omitempty"`
 	Principal   principal.Principal `json:"principal"`
 	TriggeredBy string              `json:"triggered_by,omitempty"`
-	Summary     string              `json:"summary,omitempty"`
+	// AssertedBy is the OS user who asserted Principal with `--run-as`
+	// (see [WithAssertedBy]); empty for a principal that was not
+	// self-asserted.
+	AssertedBy string `json:"asserted_by,omitempty"`
+	Summary    string `json:"summary,omitempty"`
 }
 
 // Audit is the package's published sink shape — not a consumer-side

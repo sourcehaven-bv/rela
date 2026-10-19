@@ -929,6 +929,7 @@ func (ce *copyEngine) recordCopyAudit(ctx context.Context, plan *copyPlan, res C
 		},
 		Principal:   p,
 		TriggeredBy: audit.TriggeredByFrom(ctx),
+		AssertedBy:  audit.AssertedByFrom(ctx),
 		Summary: fmt.Sprintf(
 			"copy %q: %s -> %s (created=%t)",
 			plan.name, copyFaceLabel(plan.sourceID, plan.from),
