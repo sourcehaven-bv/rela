@@ -87,9 +87,9 @@ channel_types:
 
 // promoteServices assembles the promote project on the build's backend
 // and creates the anchor doc as alice.
-func promoteServices(t *testing.T) (*appbuild.Services, string) {
+func promoteServices(t *testing.T) (svc *appbuild.Services, root string) {
 	t.Helper()
-	root := t.TempDir()
+	root = t.TempDir()
 	writeMetamodelBody(t, root, promoteMetamodel)
 	writePolicy(t, root, promotePolicy)
 	require.NoError(t, os.WriteFile(filepath.Join(root, "realtime.yaml"), []byte(promoteRealtime), 0o600))

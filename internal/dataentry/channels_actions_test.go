@@ -92,9 +92,9 @@ func TestChannels_Actions(t *testing.T) {
 		{http.MethodDelete, youngPath, ""},
 		{http.MethodDelete, youngPath + "/_action", ""},
 	} {
-		res, b := env.do(t, "alice", rq.method, rq.path, rq.body, nil)
-		if res.StatusCode != http.StatusConflict || problemType(t, b) != realtime.TypeActionPending {
-			t.Errorf("%s %s = %d %s, want 409 action_pending", rq.method, rq.path, res.StatusCode, b)
+		got, body := env.do(t, "alice", rq.method, rq.path, rq.body, nil)
+		if got.StatusCode != http.StatusConflict || problemType(t, body) != realtime.TypeActionPending {
+			t.Errorf("%s %s = %d %s, want 409 action_pending", rq.method, rq.path, got.StatusCode, body)
 		}
 	}
 

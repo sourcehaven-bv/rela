@@ -63,8 +63,8 @@ func (s *Service) Edit(ctx context.Context, addr RawAddress, seq int64, props ma
 		return MessageView{}, err
 	}
 	rule := "channel_types." + c.ct.Name + ".message_ops.edit_own"
-	if err := requireNotPending(m); err != nil {
-		return MessageView{}, err
+	if pendErr := requireNotPending(m); pendErr != nil {
+		return MessageView{}, pendErr
 	}
 	if !sameAuthor(m.Author, c.p) {
 		return MessageView{}, forbidden(TypeEditDenied, "only the author may edit a message", rule)
@@ -130,8 +130,8 @@ func (s *Service) Delete(ctx context.Context, addr RawAddress, seq int64, reason
 	if err != nil {
 		return MessageView{}, err
 	}
-	if err := requireNotPending(m); err != nil {
-		return MessageView{}, err
+	if pendErr := requireNotPending(m); pendErr != nil {
+		return MessageView{}, pendErr
 	}
 	removal := channels.Removal{By: authorOf(c.p), At: c.now}
 	ops := c.ct.MessageOps

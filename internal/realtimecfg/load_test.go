@@ -111,6 +111,7 @@ func TestParse_Golden(t *testing.T) {
 	}
 	if lg := su.Actions["log"]; lg == nil || lg.PromoteTo == nil || lg.PromoteTo.Relate != "about" ||
 		lg.PromoteTo.Map["title"] != "summary" || lg.Roles[0] != "lead" {
+
 		t.Errorf("log action = %+v", lg)
 	}
 	if a := su.Actions["accept"]; a == nil || a.Permission != "incident.decide" || a.PromoteTo.Type != "decision" {

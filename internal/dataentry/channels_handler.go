@@ -23,6 +23,9 @@ const (
 	messagesSegment  = "messages"
 	lifecycleSegment = "_lifecycle"
 	actionSegment    = "_action"
+	// messageRouteDepth is the most segments a message route has:
+	// messages/{seq}/_action/{name}.
+	messageRouteDepth = 4
 	// channelBodyLimit caps a channel request body: the largest message
 	// realtime.yaml may allow, plus room for the JSON envelope. The service
 	// applies the configured, possibly smaller, limit to the properties.
@@ -236,7 +239,7 @@ func parseChannelRoute(typeName, ref string, rest []string) (channelRoute, bool)
 		rt.lifecycle = tail[1]
 	case len(tail) == 1 && tail[0] == messagesSegment:
 		rt.msgs = true
-	case len(tail) >= 2 && len(tail) <= 4 && tail[0] == messagesSegment:
+	case len(tail) >= 2 && len(tail) <= messageRouteDepth && tail[0] == messagesSegment:
 		seq, err := strconv.ParseInt(tail[1], 10, 64)
 		if err != nil || seq <= 0 {
 			return channelRoute{}, false
@@ -246,10 +249,9 @@ func parseChannelRoute(typeName, ref string, rest []string) (channelRoute, bool)
 			if tail[2] != actionSegment {
 				return channelRoute{}, false
 			}
-			if len(tail) == 4 {
+			rt.release = len(tail) == 3
+			if !rt.release {
 				rt.action = tail[3]
-			} else {
-				rt.release = true
 			}
 		}
 	default:

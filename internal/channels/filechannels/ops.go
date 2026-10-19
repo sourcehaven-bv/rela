@@ -262,8 +262,8 @@ func (s *Store) SetAction(
 	if err != nil {
 		return channels.Message{}, err
 	}
-	if err := channels.CheckActionState(m.State, expect, next); err != nil {
-		return channels.Message{}, err
+	if stateErr := channels.CheckActionState(m.State, expect, next); stateErr != nil {
+		return channels.Message{}, stateErr
 	}
 	idx := s.idx(seq)
 	msg.Rev = m.bump(idx)

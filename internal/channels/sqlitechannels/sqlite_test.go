@@ -74,25 +74,25 @@ func TestNewInTxJoinsTransaction(t *testing.T) {
 	msg := channels.NewMessage{Type: "text", Author: channelstest.Alice, At: channelstest.T0}
 
 	inTx := func(commit bool) {
-		conn, err := db.DB().Conn(ctx)
-		require.NoError(t, err)
+		conn, cerr := db.DB().Conn(ctx)
+		require.NoError(t, cerr)
 		defer func() { _ = conn.Close() }()
-		_, err = conn.ExecContext(ctx, "BEGIN IMMEDIATE")
-		require.NoError(t, err)
-		s, err := sqlitechannels.NewInTx(conn)
-		require.NoError(t, err)
-		_, err = s.Append(ctx, k, msg)
-		require.NoError(t, err)
+		_, cerr = conn.ExecContext(ctx, "BEGIN IMMEDIATE")
+		require.NoError(t, cerr)
+		s, cerr := sqlitechannels.NewInTx(conn)
+		require.NoError(t, cerr)
+		_, cerr = s.Append(ctx, k, msg)
+		require.NoError(t, cerr)
 		bad := msg
 		bad.ReplyTo = 99
-		_, err = s.Append(ctx, k, bad)
-		require.ErrorIs(t, err, channels.ErrInvalidReply)
+		_, cerr = s.Append(ctx, k, bad)
+		require.ErrorIs(t, cerr, channels.ErrInvalidReply)
 		end := "ROLLBACK"
 		if commit {
 			end = "COMMIT"
 		}
-		_, err = conn.ExecContext(ctx, end)
-		require.NoError(t, err)
+		_, cerr = conn.ExecContext(ctx, end)
+		require.NoError(t, cerr)
 	}
 
 	inTx(false)

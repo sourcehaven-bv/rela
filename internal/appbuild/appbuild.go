@@ -2672,11 +2672,6 @@ func assemble(
 		return nil, err
 	}
 	// coverage-ignore-end
-	refs.channelService, err = buildRealtimeService(
-		base, st, refs, mgr, aclDeclarative, fieldPol.redactor, resolvedACL)
-	if err != nil {
-		return nil, err
-	}
 
 	val, err := validator.New(st, base.meta, readDeps, ungatedBinder(base.meta, st))
 	if err != nil { // coverage-ignore: defensive: validator.New only fails on a nil dep; all are built above
@@ -2773,7 +2768,13 @@ func finishAssembly(
 	s.piles, s.pileStore = refs.piles, refs.pileStore
 	s.leases, s.leaseShared = refs.leases, refs.leaseShared
 	s.channels = refs.channels
-	s.channelService, s.realtimeLocal = refs.channelService, refs.realtimeLocal
+	// The channel service promotes through the entity manager, so it is
+	// built once the manager exists.
+	svc, err := buildRealtimeService(s.base, s.store, refs, s.entityManager, s.aclDeclarative, s.fieldReads, s.acl)
+	if err != nil {
+		return nil, err
+	}
+	s.channelService, s.realtimeLocal = svc, refs.realtimeLocal
 	tags, err := buildVersionTags(s)
 	if err != nil {
 		return nil, err

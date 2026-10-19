@@ -32,11 +32,10 @@ type refHolders struct {
 	leases      *lease.Service
 	leaseShared leaseShared
 	channels    channels.Store
-	// channelService and realtimeLocal are the channel service and its
-	// process-local state; see buildRealtimeService. Assembly sets
-	// channelService after the entity manager is built.
-	channelService *realtime.Service
-	realtimeLocal  *realtime.Local
+	// realtimeLocal is the process-local state of the channel service,
+	// which finishAssembly builds once the entity manager exists; see
+	// buildRealtimeService.
+	realtimeLocal *realtime.Local
 	// channelTombs connects the channel guard's pending tombstones to the
 	// post-commit delete hooks and the realtime worker.
 	channelTombs *tombstoneConfirmer

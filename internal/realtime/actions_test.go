@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -410,20 +411,11 @@ func TestAction_AffordanceAndGateAgree(t *testing.T) {
 					}
 					offered := h.offeredOn(t, caller(), room, m.Seq)
 					_, err := h.svc.RunAction(as(caller()), room, m.Seq, action)
-					require.Equal(t, err == nil, contains(offered, action), "offered %v, run error %v", offered, err)
+					require.Equal(t, err == nil, slices.Contains(offered, action), "offered %v, run error %v", offered, err)
 				})
 			}
 		}
 	}
-}
-
-func contains(ss []string, s string) bool {
-	for _, x := range ss {
-		if x == s {
-			return true
-		}
-	}
-	return false
 }
 
 // TestAction_GatesOncePerPage pins that a page asks each action's gate

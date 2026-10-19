@@ -71,6 +71,7 @@ func (s *Service) RunAction(ctx context.Context, addr RawAddress, seq int64, nam
 	}
 	s.local.mark(c.key)
 	done := channels.Action{Status: channels.ActionDone, By: by, At: c.now, PendingAt: c.now}
+	//nolint:contextcheck // c.ctx is ctx with the acl.Request attached; see .golangci.yml on realtime.
 	got, warnings, err := s.promote(c, a, pending, done)
 	if err != nil {
 		return ActionResult{}, err
@@ -103,15 +104,15 @@ func (s *Service) ReleaseAction(ctx context.Context, addr RawAddress, seq int64)
 	if err != nil {
 		return MessageView{}, err
 	}
-	if err := c.requireCaller(); err != nil {
-		return MessageView{}, err
+	if callerErr := c.requireCaller(); callerErr != nil {
+		return MessageView{}, callerErr
 	}
 	m, err := s.message(c, seq)
 	if err != nil {
 		return MessageView{}, err
 	}
-	if err := c.releaseCheck(m); err != nil {
-		return MessageView{}, err
+	if checkErr := c.releaseCheck(m); checkErr != nil {
+		return MessageView{}, checkErr
 	}
 	err = s.local.limiter.take(c.now, bucketIdentity(c.p), c.key, opAction, realtimelimits.OpRate)
 	if err != nil {
@@ -197,12 +198,12 @@ func (c *call) actionCheck(m channels.Message, name string) (*realtimecfg.Action
 		return nil, err
 	}
 	switch m.ActionStatus() {
+	case channels.ActionNone:
 	case channels.ActionDone:
-		return nil, deny(http.StatusConflict, TypeActionTaken,
-			fmt.Sprintf("the message already carries the action %s", m.Action.Name))
+		return nil, deny(http.StatusConflict, TypeActionTaken, "the message already carries the action "+m.Action.Name)
 	case channels.ActionPending:
 		return nil, deny(http.StatusConflict, TypeActionPending,
-			fmt.Sprintf("the action %s is pending on this message", m.Action.Name))
+			"the action "+m.Action.Name+" is pending on this message")
 	}
 	return a, nil
 }
