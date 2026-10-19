@@ -14,6 +14,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/channels"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
+	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/realtime"
 	"github.com/Sourcehaven-BV/rela/internal/realtimelimits"
 	"github.com/Sourcehaven-BV/rela/internal/statemachine"
@@ -357,8 +358,17 @@ func newWorkerFixture(t *testing.T) workerFixture {
 		Marker: local, Clock: time.Now,
 	})
 	require.NoError(t, err)
+	meta, err := metamodel.Parse([]byte(guardSchema))
+	require.NoError(t, err)
+	triggers, err := realtime.NewTriggers(realtime.TriggerDeps{
+		Store: cs, Config: realtimeConfigSource{}, Local: local, Meta: meta,
+		Rows: entitySource{st: st}, Seen: &mapKV{m: map[string][]byte{}},
+	})
+	require.NoError(t, err)
 	l := &switchLock{}
-	w, err := newRealtimeWorker(sweeper, l.take, tombs.wake)
+	w, err := newRealtimeWorker(realtimeWorkerParts{
+		sweeper: sweeper, triggers: triggers, changes: st, lock: l.take, wake: tombs.wake,
+	})
 	require.NoError(t, err)
 	return workerFixture{cs: cs, tombs: tombs, w: w, lock: l}
 }
@@ -378,7 +388,7 @@ func (f workerFixture) fileDue(ctx context.Context, t *testing.T, id string) {
 func TestRealtimeWorker_RunsAndStops(t *testing.T) {
 	ctx := context.Background()
 	f := newWorkerFixture(t)
-	_, err := newRealtimeWorker(nil, nil, nil)
+	_, err := newRealtimeWorker(realtimeWorkerParts{})
 	require.Error(t, err)
 	f.fileDue(ctx, t, "GONE-1")
 

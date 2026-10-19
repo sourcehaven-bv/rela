@@ -2784,7 +2784,7 @@ func finishAssembly(
 		return nil, bindErr
 	}
 	// Built, not started: the host starts it (see RunRealtimeWorker).
-	if s.realtimeWorker, err = buildRealtimeWorker(s.base, s.store, refs); err != nil {
+	if s.realtimeWorker, err = buildRealtimeWorker(s.base, s.store, s.stateKV, refs); err != nil {
 		return nil, err
 	}
 	// Last, so a failed assembly never leaves a sweep goroutine running.

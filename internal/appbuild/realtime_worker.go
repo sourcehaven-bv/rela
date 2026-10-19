@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"math/rand/v2"
 	"path/filepath"
 	"sync"
 	"time"
@@ -13,17 +14,23 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/filelock"
 	"github.com/Sourcehaven-BV/rela/internal/realtime"
+	"github.com/Sourcehaven-BV/rela/internal/state"
 	"github.com/Sourcehaven-BV/rela/internal/storage"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
 // The realtime worker is the one host for realtime background work: the
 // automatic close and archive and a poll for due purges every minute, full
-// retention every hour, and a purge poll as soon as an entity delete
-// commits in this process. Each run takes the worker lock first and is
-// skipped when another process holds it, so several rela-server processes
-// against one database do each run once. A delete in another process is
-// purged by the next minute's poll of whichever process runs it.
+// retention every hour, a purge poll as soon as an entity delete commits in
+// this process, and the triggers (a round every
+// [realtime.TriggerTick] while entities changed, a reconcile every
+// [realtime.TriggerReconcile]). Each run takes the worker lock first
+// and is skipped when another process holds it, so several rela-server
+// processes against one database do each run once. A delete in another
+// process is purged by the next minute's poll of whichever process runs
+// it. Every process sees every entity change (the fsstore watcher, pg
+// NOTIFY), so a process that does not hold the lock drops its changes:
+// the holder handles them.
 const (
 	realtimeLifecycleInterval = time.Minute
 	realtimeRetentionInterval = time.Hour
@@ -197,9 +204,15 @@ func realtimeLeaderLock(fs storage.FS, cacheDir string, st store.Store) (leaderL
 // worker lock. A host starts it with [RunRealtimeWorker] and stops it by
 // canceling the context it passed; [Services.Close] stops it too.
 type realtimeWorker struct {
-	sweeper *realtime.Sweeper
-	lock    leaderLock
-	wake    <-chan struct{}
+	sweeper  *realtime.Sweeper
+	triggers *realtime.Triggers
+	changes  store.Watcher
+	lock     leaderLock
+	wake     <-chan struct{}
+	// leading is set while the last trigger run held the lock. A run
+	// that takes the lock without it reconciles first, because the
+	// changes noted while another process led were dropped.
+	leading bool
 
 	mu      sync.Mutex
 	running chan struct{}
@@ -207,29 +220,52 @@ type realtimeWorker struct {
 	once    sync.Once
 }
 
-// newRealtimeWorker returns the worker over its parts.
+// realtimeWorkerParts are the collaborators of a [realtimeWorker].
+type realtimeWorkerParts struct {
+	sweeper  *realtime.Sweeper
+	triggers *realtime.Triggers
+	// changes reports the entity changes the triggers look at.
+	changes store.Watcher
+	lock    leaderLock
+	wake    <-chan struct{}
+}
+
+// newRealtimeWorker returns the worker over p.
 //
-// Nil: every argument is rejected.
-func newRealtimeWorker(sweeper *realtime.Sweeper, l leaderLock, wake <-chan struct{}) (*realtimeWorker, error) {
-	if sweeper == nil || l == nil || wake == nil {
-		return nil, errors.New("realtime worker: sweeper, lock and wake are required")
+// Nil: every field of p is rejected.
+func newRealtimeWorker(p realtimeWorkerParts) (*realtimeWorker, error) {
+	if p.sweeper == nil || p.triggers == nil || p.changes == nil || p.lock == nil || p.wake == nil {
+		return nil, errors.New("realtime worker: sweeper, triggers, changes, lock and wake are required")
 	}
-	return &realtimeWorker{sweeper: sweeper, lock: l, wake: wake, closed: make(chan struct{})}, nil
+	return &realtimeWorker{
+		sweeper: p.sweeper, triggers: p.triggers, changes: p.changes, lock: p.lock, wake: p.wake,
+		closed: make(chan struct{}),
+	}, nil
 }
 
 // buildRealtimeWorker builds the worker of an assembled Services, or
 // returns nil when the process is not long-running or has no channels.
 //
 // Nil: refs.channels and refs.channelTombs are accepted (no worker).
-func buildRealtimeWorker(base *SharedBase, st store.Store, refs refHolders) (*realtimeWorker, error) {
+func buildRealtimeWorker(
+	base *SharedBase, st store.Store, kv state.KV, refs refHolders,
+) (*realtimeWorker, error) {
 	if !base.opts.backgroundAutomationJobs || refs.channels == nil || refs.channelTombs == nil ||
 		refs.realtimeLocal == nil {
 
 		return nil, nil //nolint:nilnil // not a long-running process: no worker
 	}
+	cfg := realtimeConfigSource{h: base.realtime}
 	sweeper, err := realtime.NewSweeper(realtime.SweepDeps{
-		Store: refs.channels, Config: realtimeConfigSource{h: base.realtime},
+		Store: refs.channels, Config: cfg,
 		Anchors: anchorExistence{st: st}, Marker: refs.realtimeLocal, Clock: time.Now,
+	})
+	if err != nil {
+		return nil, err
+	}
+	triggers, err := realtime.NewTriggers(realtime.TriggerDeps{
+		Store: refs.channels, Config: cfg, Local: refs.realtimeLocal, Meta: base.meta,
+		Rows: entitySource{st: st, world: base.worlds.DefaultWorld()}, Seen: kv,
 	})
 	if err != nil {
 		return nil, err
@@ -242,7 +278,9 @@ func buildRealtimeWorker(base *SharedBase, st store.Store, refs refHolders) (*re
 	if err != nil {
 		return nil, err
 	}
-	return newRealtimeWorker(sweeper, l, refs.channelTombs.wake)
+	return newRealtimeWorker(realtimeWorkerParts{
+		sweeper: sweeper, triggers: triggers, changes: st, lock: l, wake: refs.channelTombs.wake,
+	})
 }
 
 // RunRealtimeWorker runs the realtime worker of s until ctx is cancelled or
@@ -295,24 +333,44 @@ func (w *realtimeWorker) stop() {
 	}
 }
 
-// run runs the sweeps until ctx ends: everything once at start, then the
-// lifecycle sweep and the purge poll every minute, full retention every
-// hour, and the purge poll on every wake. Each run takes the worker lock
-// and is skipped when another process holds it, so no process waits on
-// the lock and a process that stops lets the next run elsewhere take over.
+// run runs the sweeps and the triggers until ctx ends: everything once at
+// start, then the lifecycle sweep and the purge poll every minute, full
+// retention every hour, the purge poll on every wake, a trigger round on
+// every tick that has changes, and a trigger reconcile on its timer. Each
+// run takes the worker lock and is skipped when another process holds it,
+// so no process waits on the lock and a process that stops lets the next
+// run elsewhere take over.
 func (w *realtimeWorker) run(ctx context.Context) {
-	w.locked(ctx, "start", func() {
+	events, cancel := w.changes.Subscribe(triggerEventBuffer)
+	defer cancel()
+	w.leading = w.locked(ctx, "start", func() {
 		w.retention(ctx)
 		w.lifecycle(ctx)
-	})
+		w.reconcile(ctx)
+	}) && w.leading
 	minute := time.NewTicker(realtimeLifecycleInterval)
 	defer minute.Stop()
 	hour := time.NewTicker(realtimeRetentionInterval)
 	defer hour.Stop()
+	tick := time.NewTicker(realtime.TriggerTick)
+	defer tick.Stop()
+	reconcile := time.NewTimer(reconcileDelay())
+	defer reconcile.Stop()
 	for {
 		select {
 		case <-ctx.Done():
 			return
+		case ev := <-events:
+			if c, ok := changeOf(ev); ok {
+				w.triggers.Note(c)
+			}
+		case <-tick.C:
+			if w.triggers.Pending() {
+				w.triggerRound(ctx)
+			}
+		case <-reconcile.C:
+			w.leading = w.locked(ctx, "reconcile", func() { w.reconcile(ctx) }) && w.leading
+			reconcile.Reset(reconcileDelay())
 		case <-minute.C:
 			w.locked(ctx, "minute", func() {
 				w.lifecycle(ctx)
@@ -327,21 +385,64 @@ func (w *realtimeWorker) run(ctx context.Context) {
 }
 
 // locked runs fn while holding the worker lock, or skips it when the lock
-// is held elsewhere or cannot be taken.
-func (w *realtimeWorker) locked(ctx context.Context, what string, fn func()) {
+// is held elsewhere or cannot be taken. It reports whether fn ran.
+func (w *realtimeWorker) locked(ctx context.Context, what string, fn func()) bool {
 	release, ok, err := w.lock(ctx)
 	switch {
 	case err != nil:
 		if ctx.Err() == nil {
 			slog.Warn("realtime worker: cannot take the worker lock; run skipped", "run", what, "error", err)
 		}
-		return
+		return false
 	case !ok:
 		slog.Debug("realtime worker: another process holds the worker lock; run skipped", "run", what)
-		return
+		return false
 	}
 	defer release()
 	fn()
+	return true
+}
+
+// reconcileDelay is [realtime.TriggerReconcile] with up to a tenth
+// of jitter either way, so processes started together do not reconcile
+// together.
+func reconcileDelay() time.Duration {
+	const tenth = realtime.TriggerReconcile / 10
+	return realtime.TriggerReconcile - tenth + rand.N(2*tenth) //nolint:gosec // jitter, not a secret
+}
+
+// triggerRound runs a trigger round under the worker lock, after a
+// reconcile when this process has just taken over. Without the lock the
+// noted changes are dropped: the holder sees them too.
+func (w *realtimeWorker) triggerRound(ctx context.Context) {
+	ran := w.locked(ctx, "triggers", func() {
+		if !w.leading {
+			w.reconcile(ctx)
+		}
+		rep, err := w.triggers.RunRound(ctx)
+		w.triggerReport(ctx, "round", rep, err)
+	})
+	if !ran {
+		w.leading = false
+		w.triggers.Drop()
+	}
+}
+
+// reconcile runs a trigger reconcile; the caller holds the worker lock.
+func (w *realtimeWorker) reconcile(ctx context.Context) {
+	rep, err := w.triggers.RunReconcile(ctx)
+	w.leading = err == nil
+	w.triggerReport(ctx, "reconcile", rep, err)
+}
+
+func (w *realtimeWorker) triggerReport(ctx context.Context, what string, rep realtime.TriggerReport, err error) {
+	if err != nil && ctx.Err() == nil {
+		slog.Warn("realtime: trigger "+what+" failed", "error", err)
+	}
+	if rep != (realtime.TriggerReport{}) {
+		slog.Info("realtime: trigger "+what, "posted", rep.Posted, "skipped", rep.Skipped, "failed", rep.Failed,
+			"baselined", rep.Baselined)
+	}
 }
 
 func (w *realtimeWorker) lifecycle(ctx context.Context) {
