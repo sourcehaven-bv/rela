@@ -24,6 +24,9 @@ channel_types:
           body: { type: string, required: true }
           about: { type: ref, to: [task, note] }
         post: [member]
+        actions:
+          ack: { roles: [member] }
+          accept: { roles: [member], promote_to: { type: note, map: { title: body } } }
       typing: { persist: ephemeral, post: [member] }
     lifecycle:
       close: { roles: [member] }
@@ -100,6 +103,12 @@ func TestChannelPaths(t *testing.T) {
 			[]string{"204", "400", "403", "404", "409", "413", "422", "429"}},
 		{"/api/v1/tasks/{id}/_channels/threads/{name}/_lifecycle/archive", "POST",
 			[]string{"200", "400", "403", "404", "409", "429"}},
+		{"/api/v1/tasks/{id}/_channels/room/messages/{seq}/_action/ack", "POST",
+			[]string{"200", "400", "403", "404", "409", "413", "422", "429"}},
+		{"/api/v1/tasks/{id}/_channels/room/messages/{seq}/_action/accept", "POST",
+			[]string{"200", "400", "403", "404", "409", "413", "422", "429"}},
+		{"/api/v1/tasks/{id}/_channels/room/messages/{seq}/_action", "DELETE",
+			[]string{"200", "400", "403", "404", "409", "413", "429"}},
 	} {
 		t.Run(tc.method+" "+tc.path, func(t *testing.T) {
 			item, ok := spec.Paths[tc.path]
@@ -122,7 +131,8 @@ func TestChannelPaths(t *testing.T) {
 	}
 
 	for _, p := range []string{"/api/v1/notes/{id}/_channels", "/api/v1/tasks/{id}/_channels/room/{name}",
-		"/api/v1/tasks/{id}/_channels/room/_lifecycle/reopen", "/api/v1/tasks/{id}/_channels/threads/{name}/_lifecycle/close"} {
+		"/api/v1/tasks/{id}/_channels/room/_lifecycle/reopen", "/api/v1/tasks/{id}/_channels/threads/{name}/_lifecycle/close",
+		"/api/v1/tasks/{id}/_channels/threads/{name}/messages/{seq}/_action"} {
 		if _, ok := spec.Paths[p]; ok {
 			t.Errorf("spec has %s, which no channel type serves", p)
 		}
@@ -175,7 +185,15 @@ func TestChannelPaths(t *testing.T) {
 			t.Errorf("MessagePage has no %s", cursor)
 		}
 	}
-	for _, name := range []string{channelHeadSchema, messageSchema, messagePageSchema, refPropSchema, ephemeralAccSchema} {
+	accept := spec.Paths["/api/v1/tasks/{id}/_channels/room/messages/{seq}/_action/accept"].Post
+	if !strings.Contains(accept.Description, "creates a note") {
+		t.Errorf("accept description does not name what it promotes to: %q", accept.Description)
+	}
+	if _, ok := spec.Components.Schemas[messageSchema].Properties["_actions"]; !ok {
+		t.Error("Message has no _actions")
+	}
+	for _, name := range []string{channelHeadSchema, messageSchema, messagePageSchema, refPropSchema, ephemeralAccSchema,
+		actionAnswerSchema, "Warning"} {
 		if _, ok := spec.Components.Schemas[name]; !ok {
 			t.Errorf("spec has no %s schema", name)
 		}
@@ -192,8 +210,12 @@ func TestChannelPaths_FollowReload(t *testing.T) {
 		t.Fatal("channel paths before realtime.yaml loaded")
 	}
 	cur.Store(channelTestConfig(t))
-	if _, ok := g.Generate().Paths["/api/v1/tasks/{id}/_channels"]; !ok {
+	paths := g.Generate().Paths
+	if _, ok := paths["/api/v1/tasks/{id}/_channels"]; !ok {
 		t.Fatal("no channel paths after realtime.yaml loaded")
+	}
+	if _, ok := paths["/api/v1/tasks/{id}/_channels/room/messages/{seq}/_action/ack"]; !ok {
+		t.Fatal("no action path after realtime.yaml loaded")
 	}
 	data, err := g.GenerateJSON()
 	if err != nil || !strings.Contains(string(data), "_channels") {

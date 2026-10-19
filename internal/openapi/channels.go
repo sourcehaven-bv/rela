@@ -1,6 +1,7 @@
 package openapi
 
 import (
+	"maps"
 	"slices"
 
 	"github.com/Sourcehaven-BV/rela/internal/realtimecfg"
@@ -20,6 +21,7 @@ const (
 	ephemeralSchema    = "EphemeralMessage"
 	ephemeralAccSchema = "EphemeralAccepted"
 	channelAuthorRef   = "ChannelAuthor"
+	actionAnswerSchema = "MessageActionResponse"
 )
 
 // addChannelPaths adds the channel routes of every entity type in
@@ -167,6 +169,66 @@ func addChannelTypePaths(spec *Spec, basePath, typeName, tag string, ct realtime
 		},
 	}
 	addLifecyclePaths(spec, headPath, opID, tag, params, ct.Lifecycle)
+	addActionPaths(spec, headPath+"/messages/{seq}", opID, tag, seqParams, ct)
+}
+
+// addActionPaths adds one `POST …/messages/{seq}/_action/{name}` path per
+// action name the channel type's message types declare, and the release
+// path `DELETE …/messages/{seq}/_action` when there is any action. An
+// action name several message types declare shares one path, whose
+// description names each of them. The body is empty or `{}`.
+func addActionPaths(spec *Spec, msgPath, opID, tag string, params []Parameter, ct realtimecfg.ChannelType) {
+	byName := map[string][]string{}
+	for _, typ := range slices.Sorted(maps.Keys(ct.MessageTypes)) {
+		for name, a := range ct.MessageTypes[typ].Actions {
+			line := "`" + typ + "`"
+			if p := a.PromoteTo; p != nil {
+				line += ", which creates a " + p.Type
+				if p.Relate != "" {
+					line += " related to the channel's entity by " + p.Relate
+				}
+			}
+			byName[name] = append(byName[name], line)
+		}
+	}
+	if len(byName) == 0 {
+		return
+	}
+	// The server decodes the body strictly into an empty object.
+	body := ObjectSchema(map[string]*Schema{}, nil)
+	body.AdditionalProperties = &Schema{Not: &Schema{}}
+	errs := []string{"400", "403", "404", "409", "413", "422", "429"}
+	for _, name := range slices.Sorted(maps.Keys(byName)) {
+		spec.Paths[msgPath+"/_action/"+name] = PathItem{
+			Parameters: params,
+			Post: &Operation{
+				OperationID: "action" + capitalize(name) + opID,
+				Summary:     "Run the " + name + " action on a message",
+				Description: "Declared on the message types " + strings.Join(byName[name], "; ") + ". " +
+					"A message carries one action. A promoting action creates its entity as you, and the " +
+					"message shows the action pending until the entity exists. The action is offered in " +
+					"the message's `_actions`.",
+				Tags:        []string{tag},
+				RequestBody: &RequestBody{Content: jsonContent(body)},
+				Responses: channelResponses("200", "The message after the action, and the promote's warnings",
+					Ref(actionAnswerSchema), errs...),
+			},
+		}
+	}
+	spec.Paths[msgPath+"/_action"] = PathItem{
+		Parameters: params,
+		Delete: &Operation{
+			OperationID: "releaseAction" + opID,
+			Summary:     "Release a pending action",
+			Description: "Clears an action that stayed pending after a promote failed, so the message can " +
+				"take an action again. Needs message_ops.remove, or the action's own gate when the channel " +
+				"type declares no remove. The action must have been pending for 15 minutes.",
+			Tags:        []string{tag},
+			RequestBody: &RequestBody{Content: jsonContent(body)},
+			Responses: channelResponses("200", "The message without its action", Ref(messageSchema),
+				"400", "403", "404", "409", "413", "429"),
+		},
+	}
 }
 
 // lifecycleDoc is the summary and description of a lifecycle operation's
@@ -356,11 +418,20 @@ func addChannelSchemas(spec *Spec) {
 				"reason": str(),
 			}, []string{"at", "kind"}),
 			"action": ObjectSchema(map[string]*Schema{
-				"name": str(), "status": str(), "at": dateTimeSchema(), "promoted": Ref(refPropSchema),
+				"name": str(),
+				"status": {Type: "string", Enum: []string{"pending", "done"},
+					Description: "pending while a promote runs, or after one failed until it is released"},
+				"at": dateTimeSchema(), "promoted": Ref(refPropSchema),
 			}, []string{"name", "status", "at"}),
+			"_actions": {Type: "array", Items: str(),
+				Description: "The actions you may run on the message now"},
 		},
 		Required: []string{"seq", "rev"},
 	}
+	sc[actionAnswerSchema] = ObjectSchema(map[string]*Schema{
+		"message":  Ref(messageSchema),
+		"warnings": ArraySchema(Ref("Warning")),
+	}, []string{"message"})
 	sc[messagePageSchema] = ObjectSchema(map[string]*Schema{
 		"channel":        Ref(channelSchema),
 		"messages":       ArraySchema(Ref(messageSchema)),
