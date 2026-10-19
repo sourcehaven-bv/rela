@@ -88,6 +88,37 @@ const (
 	PendingRelease = 15 * time.Minute
 )
 
+// Pace and caps of the trigger engine.
+const (
+	// TriggerTick is how often the engine looks at the entities that
+	// changed. Changes inside one tick are seen together, so an entity
+	// that starts and stops matching between two ticks posts nothing.
+	TriggerTick = 500 * time.Millisecond
+	// TriggerReconcile is how often the engine compares every entity with
+	// what it has seen. It catches changes that raised no event, such as a
+	// rule on today() that starts to hold or an event the store dropped.
+	TriggerReconcile = 15 * time.Minute
+	// MaxTriggerPending caps the changed entities the engine holds between
+	// ticks. Past it, the changes of a type are dropped and the type is
+	// compared in full at the next tick instead.
+	MaxTriggerPending = 8192
+	// MaxSystemPostsPerRound caps the messages the engine posts in one
+	// tick, shared by its rules in turn. The rest post at later ticks.
+	MaxSystemPostsPerRound = 64
+	// TriggerCooldown is the least time between two posts of one trigger
+	// about one entity. Changes in between are seen together when it ends.
+	TriggerCooldown = time.Minute
+	// TriggerRetries is how many ticks the engine retries a failing post
+	// or a failing save of what it has seen. Then it logs the failure and
+	// counts the change as seen, so it never repeats a post forever.
+	TriggerRetries = 3
+	// SeenPerShard is how many seen entities one stored shard of a rule
+	// holds before the rule is split over more shards.
+	SeenPerShard = 2048
+	// MaxSeenShards caps the shards of one rule.
+	MaxSeenShards = 256
+)
+
 // Rate is a token-bucket rate: Count events per Per.
 type Rate struct {
 	Count int
