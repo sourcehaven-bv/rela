@@ -19,6 +19,7 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/mail"
 	"github.com/Sourcehaven-BV/rela/internal/mail/mailtest"
+	"github.com/Sourcehaven-BV/rela/internal/testutil/logtest"
 )
 
 // TestMain adds leak detection: this package owns a background goroutine, and a
@@ -854,7 +855,7 @@ func TestOutbox_ConcurrentEnqueue(t *testing.T) {
 // which names the wrong cause and is a genuinely hard bug to chase when the
 // real fault is inside a TPM-encrypted credential they cannot easily read.
 func TestConfig_MalformedSecretsFallsBackAndWarns(t *testing.T) {
-	// No t.Parallel: t.Setenv and slog.SetDefault below.
+	// No t.Parallel: t.Setenv and logtest.SetDefault below.
 	dir := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "secrets.yaml"),
 		[]byte("{{ this is not yaml\n"), 0o600))
@@ -862,9 +863,7 @@ func TestConfig_MalformedSecretsFallsBackAndWarns(t *testing.T) {
 		[]byte("transport: smtp\nhost: h\nfrom: f@e.com\nusername: relay\npassword_env: RELA_TEST_SMTP_PW\n"), 0o600))
 
 	var buf bytes.Buffer
-	prev := slog.Default()
-	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn})))
-	t.Cleanup(func() { slog.SetDefault(prev) })
+	logtest.SetDefault(t, slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn}))
 
 	cfg, err := mail.LoadConfig(dir)
 	require.NoError(t, err)
@@ -880,15 +879,13 @@ func TestConfig_MalformedSecretsFallsBackAndWarns(t *testing.T) {
 // TestConfig_AbsentSecretsIsSilent is the counterpart: no secrets.yaml at all is
 // the ordinary password_env deployment and must not produce a warning.
 func TestConfig_AbsentSecretsIsSilent(t *testing.T) {
-	// No t.Parallel: t.Setenv and slog.SetDefault below.
+	// No t.Parallel: t.Setenv and logtest.SetDefault below.
 	dir := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(dir, mail.ConfigFile),
 		[]byte("transport: smtp\nhost: h\nfrom: f@e.com\nusername: relay\npassword_env: RELA_TEST_SMTP_PW2\n"), 0o600))
 
 	var buf bytes.Buffer
-	prev := slog.Default()
-	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn})))
-	t.Cleanup(func() { slog.SetDefault(prev) })
+	logtest.SetDefault(t, slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn}))
 
 	cfg, err := mail.LoadConfig(dir)
 	require.NoError(t, err)

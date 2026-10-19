@@ -20,6 +20,7 @@ import (
 	relamcp "github.com/Sourcehaven-BV/rela/internal/mcp"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
 	"github.com/Sourcehaven-BV/rela/internal/realtime"
+	"github.com/Sourcehaven-BV/rela/internal/testutil/logtest"
 )
 
 const stdioRealtimeYAML = `version: 1
@@ -314,9 +315,7 @@ func TestMCPStdio_WarnsUnassignedUser(t *testing.T) {
 			}
 			t.Setenv("USER", tc.user)
 			var logs bytes.Buffer
-			prev := slog.Default()
-			slog.SetDefault(slog.New(slog.NewTextHandler(&logs, nil)))
-			t.Cleanup(func() { slog.SetDefault(prev) })
+			logtest.SetDefault(t, slog.NewTextHandler(&logs, nil))
 
 			svc, err := mcpServicesForTest(t, root)
 			require.NoError(t, err)

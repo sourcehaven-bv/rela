@@ -25,6 +25,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/state"
 	"github.com/Sourcehaven-BV/rela/internal/storage"
 	"github.com/Sourcehaven-BV/rela/internal/store"
+	"github.com/Sourcehaven-BV/rela/internal/testutil/logtest"
 	"github.com/Sourcehaven-BV/rela/internal/visibility"
 )
 
@@ -459,9 +460,7 @@ func TestRelease_SameAnswerForEveryLeaseID(t *testing.T) {
 
 func TestLeaseID_NeverStoredOrLogged(t *testing.T) { //nolint:paralleltest // replaces the default logger
 	var buf bytes.Buffer
-	prev := slog.Default()
-	slog.SetDefault(slog.New(slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
-	t.Cleanup(func() { slog.SetDefault(prev) })
+	logtest.SetDefault(t, slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
 
 	e := newEnv(t)
 	const status = "rewriting the parser"

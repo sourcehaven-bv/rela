@@ -20,6 +20,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/lease/leasetest"
 	"github.com/Sourcehaven-BV/rela/internal/state"
 	"github.com/Sourcehaven-BV/rela/internal/storage"
+	"github.com/Sourcehaven-BV/rela/internal/testutil/logtest"
 )
 
 var t0 = time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC)
@@ -180,9 +181,7 @@ func TestDeletedDocument_TokenAndVersionKeepIncreasing(t *testing.T) {
 func TestCorruptDocument_ResetOnceWithoutLoggingContents(t *testing.T) {
 	ctx := context.Background()
 	var buf bytes.Buffer
-	prev := slog.Default()
-	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, nil)))
-	t.Cleanup(func() { slog.SetDefault(prev) })
+	logtest.SetDefault(t, slog.NewTextHandler(&buf, nil))
 
 	kv := newMemKV(t)
 	secret := `{"leases": SECRET-CONTENT`
@@ -239,9 +238,7 @@ func TestStoreCap_CountsLiveLeasesOnly(t *testing.T) {
 func TestVersion_ReadsOnlyTheVersionKey(t *testing.T) {
 	ctx := context.Background()
 	var buf bytes.Buffer
-	prev := slog.Default()
-	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, nil)))
-	t.Cleanup(func() { slog.SetDefault(prev) })
+	logtest.SetDefault(t, slog.NewTextHandler(&buf, nil))
 
 	kv := newMemKV(t)
 	s, err := New(kv, filelock.ProcessPrivate{})

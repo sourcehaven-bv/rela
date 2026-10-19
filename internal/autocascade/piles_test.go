@@ -11,6 +11,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/autocascade"
 	"github.com/Sourcehaven-BV/rela/internal/automation"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/testutil/logtest"
 )
 
 func TestRunner_PushesTriggerOntoPiles(t *testing.T) {
@@ -72,9 +73,7 @@ func TestRunner_NoPusherSkipsPiles(t *testing.T) {
 // pile name or owner. Not parallel: it swaps the default logger.
 func TestRunner_FailedPushLogOmitsPileAndOwner(t *testing.T) {
 	var buf bytes.Buffer
-	prev := slog.Default()
-	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, nil)))
-	t.Cleanup(func() { slog.SetDefault(prev) })
+	logtest.SetDefault(t, slog.NewTextHandler(&buf, nil))
 
 	pusher := autocascade.PilePushFunc(func(context.Context, autocascade.PileRequest) error {
 		return errors.New("push failed")

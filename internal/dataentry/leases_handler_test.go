@@ -27,6 +27,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/principal"
 	"github.com/Sourcehaven-BV/rela/internal/state"
 	"github.com/Sourcehaven-BV/rela/internal/storage"
+	"github.com/Sourcehaven-BV/rela/internal/testutil/logtest"
 	"github.com/Sourcehaven-BV/rela/internal/visibility"
 )
 
@@ -943,9 +944,7 @@ func (b *syncBuffer) String() string {
 // the success paths and the renew and release error paths.
 func TestLease_IDNeverLeaks(t *testing.T) {
 	var logs syncBuffer
-	prev := slog.Default()
-	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug})))
-	t.Cleanup(func() { slog.SetDefault(prev) })
+	logtest.SetDefault(t, slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug}))
 
 	env := newLeaseEnv(t)
 	stream, conn := env.open(t, "carol")

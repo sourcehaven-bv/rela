@@ -38,6 +38,17 @@ type neoqQueue struct {
 	started  bool
 	closed   bool
 
+	// running counts dispatches in progress, so Close can wait for them.
+	// neoq's memory backend Shutdown does not: it cancels the handlers'
+	// contexts and returns (BUG-FLON0Z). The postgres backend waits only
+	// up to neoq's cancel grace period, as a side effect of closing its
+	// pool. [neoqQueue.enter] adds under mu.RLock while closed is false, so
+	// every Add precedes the Wait in Close.
+	running sync.WaitGroup
+	// drained is closed once every dispatch running at Close has returned.
+	// Set by the first Close; later calls wait on it too.
+	drained chan struct{}
+
 	// enqueueMu serializes calls into the backend's Enqueue.
 	//
 	// WORKAROUND for an upstream data race: neoq's memory backend assigns
@@ -344,9 +355,29 @@ func (q *neoqQueue) Start(ctx context.Context) error {
 	return nil
 }
 
+// enter registers a dispatch with [neoqQueue.running], or reports false
+// once the queue is closed.
+func (q *neoqQueue) enter() bool {
+	q.mu.RLock()
+	defer q.mu.RUnlock()
+	if q.closed {
+		return false
+	}
+	q.running.Add(1)
+	return true
+}
+
 // dispatch is the single neoq handler. It resolves the rela handler by kind
 // and invokes it.
 func (q *neoqQueue) dispatch(ctx context.Context) error {
+	if !q.enter() {
+		// Wrapping context.Canceled makes the memory backend's worker
+		// stop quietly instead of logging the job as failed and
+		// requeueing it after Close has returned.
+		return fmt.Errorf("%w: %w", ErrClosed, context.Canceled)
+	}
+	defer q.running.Done()
+
 	nj, err := neoqjobs.FromContext(ctx)
 	if err != nil {
 		return fmt.Errorf("jobs: no job on context: %w", err)
@@ -458,18 +489,37 @@ func (q *neoqQueue) dispatch(ctx context.Context) error {
 // and evicts them (appbuild.SharedBase documents that shape): each eviction
 // would leak a goroutine permanently. Fix upstream before relying on tenant
 // churn.
+//
+// When ctx ends before the handlers return, the goroutine that waits for them
+// lives on until they do.
 func (q *neoqQueue) Close(ctx context.Context) error {
 	q.mu.Lock()
-	if q.closed {
-		q.mu.Unlock()
-		return nil
+	if !q.closed {
+		q.closed = true
+		// Held across Shutdown for the same reason Start holds it — see there.
+		q.nq.Shutdown(ctx)
+		drained := make(chan struct{})
+		go func() {
+			q.running.Wait()
+			close(drained)
+		}()
+		q.drained = drained
 	}
-	q.closed = true
-	// Held across Shutdown for the same reason Start holds it — see there.
-	defer q.mu.Unlock()
+	drained := q.drained
+	q.mu.Unlock()
 
-	q.nq.Shutdown(ctx)
-	return nil
+	// Wait outside mu: a handler that enqueues takes mu.RLock.
+	select {
+	case <-drained:
+		return nil
+	case <-ctx.Done():
+	}
+	select {
+	case <-drained: // both were ready; the handlers did finish
+		return nil
+	default:
+		return fmt.Errorf("jobs: handlers still running at close: %w", ctx.Err())
+	}
 }
 
 // retryOf reads the retry policy back out of a neoq payload.

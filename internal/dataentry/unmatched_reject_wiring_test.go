@@ -9,6 +9,7 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/aclstore"
+	"github.com/Sourcehaven-BV/rela/internal/testutil/logtest"
 )
 
 // `unmatched_principal: reject` only takes effect when a JWT gate is wired:
@@ -56,9 +57,7 @@ func (w *lockedWriter) String() string {
 func captureWarnings(t *testing.T) *lockedWriter {
 	t.Helper()
 	w := &lockedWriter{}
-	prev := slog.Default()
-	slog.SetDefault(slog.New(slog.NewJSONHandler(w, &slog.HandlerOptions{Level: slog.LevelDebug})))
-	t.Cleanup(func() { slog.SetDefault(prev) })
+	logtest.SetDefault(t, slog.NewJSONHandler(w, &slog.HandlerOptions{Level: slog.LevelDebug}))
 	return w
 }
 

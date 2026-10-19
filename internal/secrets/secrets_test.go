@@ -10,6 +10,8 @@ import (
 	"strings"
 	"sync"
 	"testing"
+
+	"github.com/Sourcehaven-BV/rela/internal/testutil/logtest"
 )
 
 func TestLoad_FileNotFound(t *testing.T) {
@@ -144,12 +146,8 @@ func captureWarnings(t *testing.T) *bytes.Buffer {
 	t.Helper()
 	resetPermissionWarnings()
 	var buf bytes.Buffer
-	prev := slog.Default()
-	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn})))
-	t.Cleanup(func() {
-		slog.SetDefault(prev)
-		resetPermissionWarnings()
-	})
+	t.Cleanup(resetPermissionWarnings)
+	logtest.SetDefault(t, slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn}))
 	return &buf
 }
 

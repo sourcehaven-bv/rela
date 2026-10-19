@@ -13,6 +13,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/predicate"
 	"github.com/Sourcehaven-BV/rela/internal/statemachine"
+	"github.com/Sourcehaven-BV/rela/internal/testutil/logtest"
 )
 
 // stubBinder answers every traversal with answer[rowID] and counts binds.
@@ -234,9 +235,7 @@ roles:
 	}
 
 	var buf bytes.Buffer
-	prev := slog.Default()
-	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, nil)))
-	defer slog.SetDefault(prev)
+	logtest.SetDefault(t, slog.NewTextHandler(&buf, nil))
 	r.WithMachines(machines)
 
 	if out := buf.String(); !strings.Contains(out, "transition ticket.stage a→b") || !strings.Contains(out, "property=title") {

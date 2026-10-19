@@ -17,6 +17,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/Sourcehaven-BV/rela/internal/store"
+	"github.com/Sourcehaven-BV/rela/internal/testutil/logtest"
 )
 
 // withLogLevel installs a default slog logger at the given level writing to
@@ -24,9 +25,7 @@ import (
 func withLogLevel(t *testing.T, level slog.Level) *bytes.Buffer {
 	t.Helper()
 	var buf bytes.Buffer
-	prev := slog.Default()
-	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: level})))
-	t.Cleanup(func() { slog.SetDefault(prev) })
+	logtest.SetDefault(t, slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: level}))
 	return &buf
 }
 
