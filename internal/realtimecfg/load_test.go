@@ -438,6 +438,8 @@ func TestParse_Invalid(t *testing.T) {
 			"post: { type: typing }"}}, "triggers.breach-escalated.post.type", "is ephemeral"},
 		{"trigger props fail when", []replace{{`when: "message.severity ~= ''"`,
 			`when: "message.summary == 'x'"`}}, "triggers.breach-escalated.post.props", "when: condition"},
+		{"trigger message when on today", []replace{{`when: "message.severity ~= ''"`,
+			`when: "message.severity ~= '' or today() == today()"`}}, "triggers.breach-escalated.post.props", "calls today()"},
 		{"trigger prop over max", []replace{{"summary:  { type: string, required: true }",
 			"summary:  { type: string, required: true, max: 5 }"}}, "triggers.breach-escalated.post.props.summary",
 			"max of 5"},

@@ -16,7 +16,6 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/predicate"
-	"github.com/Sourcehaven-BV/rela/internal/predicatefns"
 	"github.com/Sourcehaven-BV/rela/internal/realtimecfg"
 )
 
@@ -162,19 +161,7 @@ func whenHolds(ctx context.Context, mt *realtimecfg.MessageType, props map[strin
 	for name, p := range mt.Properties {
 		fields[name] = predicateValue(p, props[name])
 	}
-	b := predicate.NewBindings()
-	if err := b.SetVar("message", predicate.NewRecord(fields)); err != nil {
-		return false
-	}
-	if err := predicatefns.Bind(b, now); err != nil {
-		return false
-	}
-	v, err := mt.When.Eval(ctx, b)
-	if err != nil {
-		return false
-	}
-	got, ok := v.(predicate.Bool)
-	return ok && got.Bool()
+	return mt.Holds(ctx, fields, now)
 }
 
 // predicateValue binds a stored property value as the type the `message`

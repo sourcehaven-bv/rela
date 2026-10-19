@@ -801,6 +801,13 @@ func (v *validator) triggerMessage(key string, mt *MessageType, t *Trigger, limi
 	if mt.When == nil {
 		return
 	}
+	// A when: on today() would make the file load on one day and fail on
+	// the next, so it is refused rather than evaluated at an arbitrary date.
+	if slices.Contains(mt.When.Functions(), predicatefns.FuncToday) {
+		v.add(key, "the when: condition of message type "+mt.Name+" calls today(), so whether this "+
+			"trigger's message meets it would depend on the date")
+		return
+	}
 	fields := make(map[string]predicate.Value, len(mt.Properties))
 	for name := range mt.Properties {
 		fields[name] = predicate.NewNil()
@@ -808,16 +815,7 @@ func (v *validator) triggerMessage(key string, mt *MessageType, t *Trigger, limi
 			fields[name] = predicate.NewString(val)
 		}
 	}
-	b := predicate.NewBindings()
-	err := b.SetVar("message", predicate.NewRecord(fields))
-	if err == nil {
-		err = predicatefns.Bind(b, time.Now())
-	}
-	var got predicate.Value
-	if err == nil {
-		got, err = mt.When.Eval(context.Background(), b)
-	}
-	if ok, isBool := got.(predicate.Bool); err != nil || !isBool || !ok.Bool() {
+	if !mt.Holds(context.Background(), fields, time.Time{}) {
 		v.add(key, "the message does not meet the when: condition of message type "+mt.Name)
 	}
 }

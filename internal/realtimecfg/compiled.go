@@ -1,11 +1,13 @@
 package realtimecfg
 
 import (
+	"context"
 	"slices"
 	"sort"
 	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/predicate"
+	"github.com/Sourcehaven-BV/rela/internal/predicatefns"
 	"github.com/Sourcehaven-BV/rela/internal/realtimelimits"
 )
 
@@ -414,6 +416,30 @@ type MessageType struct {
 	// Actions are the buttons on a message. Promoting a message to an
 	// entity is always an action, so its gate is explicit.
 	Actions map[string]*Action
+}
+
+// Holds reports whether a message whose `message` record has fields meets
+// mt's `when:`, evaluated at now. It holds without a `when:`, and fails
+// closed when the condition does not evaluate to a boolean. The channel
+// service and the load check of a trigger's literal props both call it, so
+// the two cannot drift apart.
+func (mt *MessageType) Holds(ctx context.Context, fields map[string]predicate.Value, now time.Time) bool {
+	if mt.When == nil {
+		return true
+	}
+	b := predicate.NewBindings()
+	if err := b.SetVar("message", predicate.NewRecord(fields)); err != nil {
+		return false
+	}
+	if err := predicatefns.Bind(b, now); err != nil {
+		return false
+	}
+	v, err := mt.When.Eval(ctx, b)
+	if err != nil {
+		return false
+	}
+	got, ok := v.(predicate.Bool)
+	return ok && got.Bool()
 }
 
 // PropertyType is the type of a message property.
