@@ -1,0 +1,9 @@
+---
+id: RR-GHI4GX
+type: review-response
+title: Per-run try-lock instead of a held leader lock causes full-reconcile ping-pong between processes
+finding: 'internal/appbuild/realtime_worker.go:389,417-427 (with channels_postgres.go:46 TryKeyedLock and the filelock TryLock). Design section 12 D1 and section 13 say one leader holds lock.For (pg) or the filelock (fs) for its lifetime. The code takes and releases the lock around every run. A run that loses the lock sets leading=false (line 426), and that process''s next successful tick runs RunReconcile first (line 419). Every process gets every change (pg NOTIFY, fs watcher), so under steady writes both processes are Pending on most ticks. Scenario with two rela-server processes and a rule over a 100k-entity type: P1 reconciles (full Scan of every rule type plus every shard load) while holding the lock. P2''s 500 ms ticks fail during that time, so P2 drops to leading=false. When P1 releases, P2 takes the lock on its next tick and runs its own full reconcile, which makes P1''s ticks fail in turn. The result is continuous full table scans for as long as writes keep arriving, and the lock stays held so lifecycle and retention sweeps keep skipping. Any user who can write entities of a rule''s type triggers this, so it is a resource-exhaustion amplifier on the multi-process deployments D1 exists for. Fix: implement D1 as designed. Take the lock once, hold it for the worker''s lifetime (or until ctx ends or the session is lost), and let non-holders keep only a takeover attempt on a slow timer. Reconcile only on the not-held to held edge. Pin it with a two-worker test that counts reconciles under a stream of changes.'
+severity: significant
+resolution: 'Same fix as the code review: one process holds the lock for its lifetime, so the full reconcile runs once per takeover instead of on every lock switch.'
+status: addressed
+---
