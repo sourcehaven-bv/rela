@@ -217,6 +217,11 @@ create carry a `triggered_by` such as
 `channel:INC-7/incident-room#12/log`: the channel, the message sequence
 number and the action.
 
+A `ref` property that `map` copies is checked as the person who runs the
+action, not as the poster. If that person cannot read the entity, or it no
+longer exists, the promote is refused with `promote_invalid`. The answer
+names the message property and not the entity.
+
 While the promote runs, the message shows the action as `pending`. A
 pending message cannot be edited, removed or take another action. When the
 entity exists, the action becomes `done` and names the entity.
@@ -226,25 +231,35 @@ What happens when a promote fails depends on the storage backend:
 - **PostgreSQL and SQLite.** The entity, its relation and the action
   commit in one transaction. If any of them fails, none is written, and the
   message is free for another action. A failing automation after the
-  commit does not undo the entity; the answer carries a warning instead.
+  commit does not undo the entity; the answer carries a
+  `promote_followup_failed` warning instead.
 - **Files (the default).** The entity is written first, then the action.
   If the create is refused before anything is written, such as by the ACL
   or validation, the message is free again. If the relation fails, the
   entity stays and the answer carries a `promote_relate_failed` warning.
-  If marking the action fails after the entity exists, the answer carries
-  a `promote_unconfirmed` warning. For any other failure the action stays
+  If an automation after the create fails, the entity stays and the
+  answer carries a `promote_followup_failed` warning. If marking the
+  action fails after the entity exists, the answer carries a
+  `promote_unconfirmed` warning. For any other failure the action stays
   `pending`, because rela cannot tell whether the entity was written.
+
+When a promote fails and the message is free again, the channel audit log
+records the action with the status `reverted`.
 
 A pending action that stays pending can be released, so the message can
 take an action again. Check first whether the entity exists. Releasing
 needs `message_ops.remove`, or the action's own gate when the channel type
 declares no `remove`. The action must have been pending for 15 minutes,
-so a promote that is still running is not released under it. The channel
-audit log records each release.
+so a promote that is still running is not released under it. This wait is
+the release window. The channel audit log records each release with the
+status `released`.
 
 A message lists the actions the caller may run on it now in `_actions`.
-It runs the same checks as the `POST`, except the rate limit. A promoting
-action is not offered by a process that cannot write the graph.
+It runs the same checks as the `POST`, except the rate limit and the
+`ref` check above. A promoting action is offered only to a caller the
+create ACL lets create its entity. A process that cannot write the graph
+does not offer a promoting action and answers its `POST` with 403
+`action_not_offered`.
 
 ## Lifecycle and periods
 
@@ -391,8 +406,8 @@ Every error is a problem body (`application/problem+json`) with a `type`.
 | 400 | The body is not valid JSON, has unknown fields, or a query parameter is not a positive number. |
 | 413 `too_large` | The message is over `message_bytes`. |
 | 422 | A `ref` names an entity that does not exist or that the caller cannot read. Both get the same body. |
-| 422 `promote_invalid` | The promoted entity or its relation fails validation, for example a `unique` property that another entity already has. |
-| 409 | The channel is not open, the channel is not in a state the lifecycle operation starts from (`lifecycle_wrong_state`), `retention` keeps the channel (`retention_active`), a concurrent change won (`conflict`), the message was removed, `channels_per_entity` is reached, the POST tried to open a channel of a `one` type, or the configuration changed during the request. For actions: the message already carries an action (`action_taken`), its action is pending (`action_pending`, also for an edit, a removal, or a release before 15 minutes), a release finds no pending action (`action_not_pending`), or the promoted entity already exists (`promote_conflict`). |
+| 422 `promote_invalid` | The promoted entity or its relation fails validation, for example a `unique` property that another entity already has, or a mapped `ref` names an entity the caller cannot read. The body names properties, never entity ids. |
+| 409 | The channel is not open, the channel is not in a state the lifecycle operation starts from (`lifecycle_wrong_state`), `retention` keeps the channel (`retention_active`), a concurrent change won (`conflict`), the message was removed, `channels_per_entity` is reached, the POST tried to open a channel of a `one` type, or the configuration changed during the request. For actions: the message already carries an action (`action_taken`), its action is pending (`action_pending`, also for an edit, a removal, a release within the release window, or an action that lost a race to a promote that started first), a release finds no pending action (`action_not_pending`), or the promoted entity already exists (`promote_conflict`). |
 | 429 | A rate limit. `Retry-After` gives the seconds to wait, rounded up. |
 
 The OpenAPI document at `/api/v1/_openapi.json` lists these paths for every

@@ -6,8 +6,10 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/realtimecfg"
+	"github.com/Sourcehaven-BV/rela/internal/realtimelimits"
 )
 
 const channelTestRealtime = `
@@ -138,6 +140,20 @@ func TestChannelPaths(t *testing.T) {
 		}
 	}
 
+	release := spec.Paths["/api/v1/tasks/{id}/_channels/room/messages/{seq}/_action"].Delete
+	if !strings.Contains(release.Description, releaseWindow()) {
+		t.Errorf("release description %q does not quote the release window %q", release.Description, releaseWindow())
+	}
+	if time.Duration(realtimelimits.PendingRelease.Minutes())*time.Minute != realtimelimits.PendingRelease {
+		t.Error("PendingRelease is not whole minutes; releaseWindow would misstate it")
+	}
+	accept := spec.Paths["/api/v1/tasks/{id}/_channels/room/messages/{seq}/_action/accept"].Post
+	for _, code := range []string{"promote_relate_failed", "promote_followup_failed", "action_not_offered"} {
+		if !strings.Contains(accept.Description, code) {
+			t.Errorf("action description does not document %s", code)
+		}
+	}
+
 	post := spec.Paths["/api/v1/tasks/{id}/_channels/room/messages"].Post
 	body := post.RequestBody.Content["application/json"].Schema
 	if len(body.OneOf) != 2 || body.OneOf[0].Title != "text" || body.OneOf[1].Title != "typing" {
@@ -185,7 +201,7 @@ func TestChannelPaths(t *testing.T) {
 			t.Errorf("MessagePage has no %s", cursor)
 		}
 	}
-	accept := spec.Paths["/api/v1/tasks/{id}/_channels/room/messages/{seq}/_action/accept"].Post
+	accept = spec.Paths["/api/v1/tasks/{id}/_channels/room/messages/{seq}/_action/accept"].Post
 	if !strings.Contains(accept.Description, "creates a note") {
 		t.Errorf("accept description does not name what it promotes to: %q", accept.Description)
 	}

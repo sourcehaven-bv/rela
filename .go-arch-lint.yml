@@ -774,6 +774,8 @@ deps:
       # The channel paths (TKT-ZU7P13) describe the loaded realtime.yaml,
       # which the server hands over as a loader of the compiled config.
       - realtimecfg
+      # The release window the channel paths quote.
+      - realtimelimits
 
   # Application services
   app:

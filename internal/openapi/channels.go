@@ -3,8 +3,11 @@ package openapi
 import (
 	"maps"
 	"slices"
+	"strconv"
+	"strings"
 
 	"github.com/Sourcehaven-BV/rela/internal/realtimecfg"
+	"github.com/Sourcehaven-BV/rela/internal/realtimelimits"
 )
 
 // Realtime channel paths (TKT-ZU7P13). They are emitted only while a
@@ -207,7 +210,11 @@ func addActionPaths(spec *Spec, msgPath, opID, tag string, params []Parameter, c
 				Description: "Declared on the message types " + strings.Join(byName[name], "; ") + ". " +
 					"A message carries one action. A promoting action creates its entity as you, and the " +
 					"message shows the action pending until the entity exists. The action is offered in " +
-					"the message's `_actions`.",
+					"the message's `_actions`, and a promoting one only to a caller who may create its " +
+					"entity. A server that cannot write the graph answers a promoting action 403 " +
+					"action_not_offered. A promote that created its entity answers 200 with warnings when " +
+					"a later step failed: promote_relate_failed when the relation to the anchor was not " +
+					"written, promote_followup_failed when an automation after the create failed.",
 				Tags:        []string{tag},
 				RequestBody: &RequestBody{Content: jsonContent(body)},
 				Responses: channelResponses("200", "The message after the action, and the promote's warnings",
@@ -222,13 +229,20 @@ func addActionPaths(spec *Spec, msgPath, opID, tag string, params []Parameter, c
 			Summary:     "Release a pending action",
 			Description: "Clears an action that stayed pending after a promote failed, so the message can " +
 				"take an action again. Needs message_ops.remove, or the action's own gate when the channel " +
-				"type declares no remove. The action must have been pending for 15 minutes.",
+				"type declares no remove. The action must have been pending for " +
+				releaseWindow() + ".",
 			Tags:        []string{tag},
 			RequestBody: &RequestBody{Content: jsonContent(body)},
 			Responses: channelResponses("200", "The message without its action", Ref(messageSchema),
 				"400", "403", "404", "409", "413", "429"),
 		},
 	}
+}
+
+// releaseWindow is [realtimelimits.PendingRelease] in words, such as
+// "15 minutes".
+func releaseWindow() string {
+	return strconv.Itoa(int(realtimelimits.PendingRelease.Minutes())) + " minutes"
 }
 
 // lifecycleDoc is the summary and description of a lifecycle operation's
