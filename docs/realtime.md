@@ -267,7 +267,7 @@ does not offer a promoting action and answers its `POST` with 403
 
 Each lifecycle operation names `roles` or a `permission`. `from` is the
 state it starts from: `open`, `closed` or `archived`. `condition` must hold
-for the entity. An operation with a `condition` is open only to principals
+for the entity when a person asks; an `auto` step does not check it. An operation with a `condition` is open only to principals
 who can read the entity, because its answer says something about the
 entity. `auto` runs `close` or `archive` without a request, when
 `when` holds or `after` has passed. `after` counts from when the channel
@@ -289,16 +289,27 @@ first records which entities meet it, without moving their channels. It
 creates no channel either: an entity whose channel was never written has
 nothing to close.
 
+`auto.when` and `auto.after` ignore the operation's `roles`,
+`permission` and `condition`: the rule is its own condition. So whoever
+may change the properties an `auto.when` reads can close or archive the
+entity's channels, and can close a reopened channel again by moving the
+entity out of the condition and back. Treat write access to those
+properties as part of the operation's control, not only its `roles`.
+
 An automatic close or archive has the author `system:realtime`, and its
 audit record names the rule, for example `triggered_by:
-auto:incident-room/close`. `auto.after` and `auto.when` of one operation
+auto:incident-room/close`. The person whose change set it off is in the
+entity's history, not in the channel's. `auto.after` and `auto.when` of one operation
 share that label. Both use the compare-and-set a person's request uses,
 so a channel a person moved first is left as it is. `auto.when` runs in
 the same worker as triggers and follows the same rules (see Triggers):
 it looks at changed entities twice a second, catches missed changes every
 15 minutes, acts at most once a minute per entity, and stops while the
-file is not valid. A trigger into the same channel type that fires on the
-same change posts first, so its message lands before the channel closes.
+file is not valid. Each channel it moves counts against the 64 attempts
+per look; the rest move at the next look. A trigger into the same channel
+type that posts about the same entity goes first, so its message lands
+before the channel closes. When that post waits for its once-a-minute
+limit or for a retry, the close waits too, up to a minute.
 On a type with faces, the same face rule as for triggers applies.
 
 Deleting a channel removes it and all its messages. A `one` channel starts
