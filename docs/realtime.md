@@ -550,17 +550,19 @@ it does not yet poll for messages posted by another process.
 
 Agents use channels through the MCP channel tools (see the MCP server
 guide). Remote MCP runs inside rela-server; stdio `rela mcp` is a separate
-process.
+process. Scripts and shell users can use `rela channel` (see the CLI
+reference), which is a separate process too.
 
 **Process locality.** Signals (`ephemeral` messages), rate-limit buckets and
 change subscriptions live in the memory of one process. A separate process,
-such as stdio `rela mcp`, therefore behaves differently from rela-server:
+such as stdio `rela mcp` or `rela channel`, therefore behaves differently
+from rela-server:
 
 - It refuses a post of an `ephemeral` message type with `signals_not_kept`,
   because no one else would see the signal. Remote MCP keeps signals.
 - Its rate limits count per process, not across all writers.
-- A `watch` on `read_channel` learns about posts from other processes by
-  polling every 2 seconds. On remote MCP the poll runs every 5 seconds and
+- A `watch` on `read_channel`, and `rela channel watch`, learn about posts
+  from other processes by polling every 2 seconds. On remote MCP the poll runs every 5 seconds and
   only matters for posts made by another rela-server process; a post in the
   same process ends the wait at once.
 - A post from another process reaches open browsers only when they fetch the
@@ -568,7 +570,8 @@ such as stdio `rela mcp`, therefore behaves differently from rela-server:
 
 **SQLite.** The SQLite backend admits one process at a time. While
 rela-server runs on it, stdio `rela mcp` cannot open the project, and remote
-MCP is the only way for an agent to use channels.
+MCP is the only way for an agent to use channels, and `rela channel` cannot
+run either.
 
 **Access control.** Stdio `rela mcp` leaves its entity tools open, because
 the local user can edit the files anyway. Its channel tools apply `acl.yaml`
@@ -577,11 +580,20 @@ inside the channel roles the project gives it. Locally this is not a
 security boundary: a local user can edit `acl.yaml`. Without `acl.yaml`,
 access is open.
 
-The channel tools act as `$USER`. When `acl.yaml` exists and its
-`assignments` give that user no role, and no user entity or membership
+`rela channel` applies `acl.yaml` the same way.
+
+**Identity.** The channel tools and `rela channel` act as `$USER`, or as the
+job identity in `RELA_RUN_AS` (`--run-as`), such as `integration:triage-bot`.
+Give an agent its own job identity and an `acl.yaml` assignment, so it holds
+only the channel roles it needs. Messages show the job identity as their
+author. The OS user who started the process is recorded only in the graph
+audit log, as `asserted_by`, not in the channel. The name is self-asserted:
+it is attribution, not authentication.
+
+When `acl.yaml` exists and its `assignments` give that identity no role, and no user entity or membership
 gives it one, the channel tools can answer `entity not found` for an entity that
 `show_entity` returns, and `rela mcp` logs a warning at startup. Add the
-user under `assignments`. `rela mcp` reloads `acl.yaml` when it changes.
+identity under `assignments`. `rela mcp` reloads `acl.yaml` when it changes.
 An `acl.yaml` that does not apply makes every channel tool answer
 `acl.yaml cannot be loaded: <reason>` until it is fixed.
 

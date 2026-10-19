@@ -14,6 +14,7 @@ These options work with any command:
 | `-o, --output`  | Output format: `table` (default) or `json`                           |
 | `-v, --verbose` | Enable verbose output                                                |
 | `-q, --quiet`   | Suppress non-essential output                                        |
+| `--run-as`      | Act as a job identity; see [Acting as a job identity](#acting-as-a-job-identity) |
 | `-h, --help`    | Show help for any command                                            |
 
 ## Environment Variables
@@ -22,6 +23,39 @@ These options work with any command:
 | -------------- | ---------------------------------------------------------------- |
 | `RELA_PROJECT` | Default project directory when `--project` flag is not specified |
 | `RELA_TOKEN_KEY` | Key that seals stored OAuth tokens, when `token_key` is not in `.rela/secrets.yaml` |
+| `RELA_RUN_AS` | The job identity commands act as, like `--run-as` |
+
+### Acting as a job identity
+
+By default a command acts as the user in `$USER` (`%USERNAME%` on Windows).
+`--run-as NAME`, or `RELA_RUN_AS=NAME` in the environment, makes it act as a
+job identity instead, such as a cron job or an agent:
+
+```bash
+RELA_RUN_AS=integration:triage-bot rela channel post TKT-12 room text -P body="Triaged"
+```
+
+- The name must start with `system:` or `integration:`. A person's name is
+  refused, and so are rela's own identities: `system:realtime`,
+  `system:scheduler`, `system:automation`, `system:provisioner` and the
+  `system:webhook:` names.
+- The identity has no principal type and no roles of its own. `acl.yaml`
+  decides what it may do through its `assignments`, so give it one.
+- This is attribution, not authentication. A local user can name any job
+  identity, and can edit `acl.yaml` too. The graph audit log records your OS
+  user as `asserted_by` next to the identity, so the write can be traced to
+  who ran it. Version history records the identity and tool only.
+- A command that writes prints `acting as NAME (asserted by USER)` on stderr.
+- The name is checked only for a command that acts as someone. `rela version`,
+  `rela init` and the other commands that act as no one ignore it, so a value
+  left in the environment does not break them.
+- `rela scheduler` refuses it: each task names its own identity with `run_as`
+  in `schedules.yaml`. `rela-server` and `rela-desktop` refuse to start while
+  `RELA_RUN_AS` is set.
+- `rela mcp` acts as the identity too, with tool `mcp`.
+
+When `$USER` is not set, as under cron or systemd, the user is `unknown` and
+writes are refused. Set `$USER`, or set `RELA_RUN_AS` to a job identity.
 
 ## Project Configuration
 
@@ -2102,6 +2136,67 @@ is set the user is `unknown`; `claim`, `renew` and `release` then refuse
 to run, and `list` shows nothing. The access check uses that identity, so it
 is not a security boundary against a local shell user, who can set `$USER`
 or edit the lease files directly.
+
+---
+
+### rela channel
+
+Read and write the realtime channels on an entity (see the realtime guide).
+The project needs a `realtime.yaml`.
+
+```bash
+rela channel list ID [--state open|closed|archived]
+rela channel read ID TYPE [--name N] [--limit N] [--before S | --after S | --after-rev R] [--schemas]
+rela channel post ID TYPE MESSAGE_TYPE [--name N] [-P key=value ...] [--props-json JSON|@FILE|-] [--reply-to S]
+rela channel edit ID TYPE SEQ [--name N] [-P key=value ...] [--props-json JSON|@FILE|-]
+rela channel remove ID TYPE SEQ [--name N] [--reason R]
+rela channel create ID TYPE [--title T]
+rela channel watch ID TYPE [--name N] [--after-rev R] [--timeout 30s] [--follow] [--poll 2s] [--limit N]
+```
+
+`ID` is an entity id, or `ID@face` for a channel type that anchors to a face.
+`TYPE` is a channel type from `rela channel list`, and `--name` names one
+channel of a type with many channels.
+
+| Option         | Description                                                                                    |
+| -------------- | ---------------------------------------------------------------------------------------------- |
+| `-P`           | One message property (repeatable). Commas in the value are kept. The value is read as the property's declared type: a whole number for `integer`, `true` or `false` for `boolean`, text otherwise |
+| `--props-json` | All properties as one JSON object: inline, from a file (`@path`) or from stdin (`-`). Not together with `-P` |
+| `--limit`      | Page size for `read` and `watch`, 1 to 200 (default 20). The project's page limit may cap it   |
+| `--before`, `--after`, `--after-rev` | Page cursors; name at most one. `read` prints the flag that continues from the page |
+| `--schemas`    | Show each message type's properties                                                            |
+| `--reason`     | Why a message was removed; shown to moderators                                                 |
+
+`edit` replaces all properties of your message, so name every property you
+keep.
+
+The table output prints each message as a header line, `#seq  time  user (tool)  type`,
+followed by its properties. Every line of message content starts with `  | `,
+and control and bidi characters are replaced, so content cannot pass for
+output of its own. A ref shows `ID "title"`, or `(restricted)` when you may
+not read the entity. A removed message shows `[removed by author]` or
+`[removed]`. `-o json` prints one JSON object whose first key, `notice`,
+warns that the content was written by other people and agents.
+
+`watch` waits for new, edited or removed messages after `--after-rev`
+(default: the channel's rev when the watch starts). It prints the change and
+exits 0. Without a change it prints `no change` and exits 2 after
+`--timeout` (at most 1 hour). With `--follow` it prints every change until you
+interrupt it. Another process's change is seen within `--poll` (1 to 60
+seconds). With `-o json` each change is one line of JSON (JSON Lines). An error
+exits 1 at once.
+
+The CLI opens the project itself; it does not talk to a running
+`rela-server`. Each call applies `acl.yaml` for the CLI's identity, as
+`rela lease` does. A signal (a message type with `persist: ephemeral`) lives
+only in the process that receives it, so the CLI cannot post one and answers
+`signals_not_kept`.
+
+Errors exit 1. A missing entity, and one you may not read, give the same
+answer as `rela show`. A refusal names its type, such as
+`channel_read_denied: ... (rule: ...)`, `invalid_message: ...` or
+`rate_limited: ...; retry in 5s`. An unexpected error answers
+`channel request failed`; the details are in the log.
 
 ---
 

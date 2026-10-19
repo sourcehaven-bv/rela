@@ -1065,6 +1065,30 @@ The CLI acts as the operating-system user: the principal is `$USER` (or
 - If `$USER` is empty, the principal cannot be resolved. The CLI logs a
   warning and every gated write is denied; reads still return everything.
 
+`rela channel` and `rela lease` are the exception: they go through their
+services, which apply `acl.yaml` to reads as well as writes.
+
+**`--run-as`.** `--run-as NAME` or `RELA_RUN_AS=NAME` makes the CLI and
+stdio `rela mcp` act as a job identity instead of `$USER`:
+
+- Only `system:` and `integration:` names are accepted. A person's name is
+  refused, so the flag cannot impersonate a human. rela's own identities
+  (`system:realtime`, `system:scheduler`, `system:automation`,
+  `system:provisioner`, `system:webhook:*`) are refused, so a message cannot
+  pass for a trigger post or a scheduled task.
+- The identity carries no principal type and no roles. Only `acl.yaml`
+  `assignments` (or a user entity) give it access.
+- The OS user who asserted it is recorded as `asserted_by` in every graph
+  audit record of the command. Version history records user and tool only.
+  Channel messages carry no marker; their author is the job identity.
+- `rela scheduler` refuses the flag, and `rela-server` and `rela-desktop`
+  refuse to start while `RELA_RUN_AS` is set: their identity comes from a
+  verified login or the desktop user.
+
+The name is self-asserted, so it is attribution, not authentication. It
+keeps an honest agent inside the roles the project gave it; it does not stop
+a local user, who can name any job identity or edit `acl.yaml`.
+
 This is deliberate. Whoever runs the CLI can read and edit the project's
 data files, or connect to its database, directly, so read gating there
 would not protect anything. Do not rely on `acl.yaml` to keep data from
