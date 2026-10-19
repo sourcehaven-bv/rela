@@ -137,6 +137,7 @@ type rawTrigger struct {
 	On         string         `yaml:"on"`
 	When       string         `yaml:"when"`
 	Channel    string         `yaml:"channel"`
+	WhenClosed string         `yaml:"when_closed"`
 	Post       rawTriggerPost `yaml:"post"`
 }
 

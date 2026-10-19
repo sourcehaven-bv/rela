@@ -87,7 +87,7 @@ func (v *validator) compileRule(key, entityType, src string) (Rule, bool) {
 		return Rule{}, false
 	}
 	ok := v.allowRule(key, entityType, prog)
-	return Rule{Program: prog, Fields: prog.Attributes("entity")}, ok
+	return Rule{Program: prog, Fields: prog.Attributes("entity"), Source: src}, ok
 }
 
 // allowRule holds a compiled rule to the allowlist [validator.compileRule]

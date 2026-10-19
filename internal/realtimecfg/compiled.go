@@ -22,6 +22,7 @@ type Compiled struct {
 	channelTypes map[string]*ChannelType
 	triggers     map[string]*Trigger
 	permissions  []string
+	warnings     []Problem
 }
 
 // Limits are the effective caps: the built-in ones from [realtimelimits],
@@ -64,6 +65,16 @@ func (c *Compiled) ChannelTypes() []ChannelType {
 		out = append(out, ct.clone())
 	}
 	return out
+}
+
+// Warnings returns the parts of realtime.yaml that loaded but were left
+// out, such as a trigger the policy makes unsafe, each with its reason. The
+// rest of the file is in force; the caller logs them.
+func (c *Compiled) Warnings() []Problem {
+	if c == nil {
+		return nil
+	}
+	return slices.Clone(c.warnings)
 }
 
 // Triggers returns a copy of every trigger, sorted by name.
@@ -283,6 +294,9 @@ type Gate struct {
 type Rule struct {
 	Program *predicate.Program
 	Fields  []string
+	// Source is the rule as realtime.yaml spells it. The trigger engine
+	// keys what it has seen by it, so an edited rule starts over.
+	Source string
 }
 
 // Lifecycle holds the declared lifecycle operations. A nil operation is not
@@ -459,6 +473,18 @@ const (
 	TriggerChange TriggerOn = "change"
 )
 
+// WhenClosed is what a trigger does when its channel is closed or
+// archived.
+type WhenClosed string
+
+// Trigger behaviors for a channel that is not open.
+const (
+	// WhenClosedSkip posts nothing and records the change as seen.
+	WhenClosedSkip WhenClosed = "skip"
+	// WhenClosedPost posts all the same.
+	WhenClosedPost WhenClosed = "post"
+)
+
 // Trigger posts a message into an entity's channel when the entity starts
 // matching (enter), stops matching (leave), or changes a property its rule
 // reads while matching (change).
@@ -469,6 +495,7 @@ type Trigger struct {
 	When       Rule
 	Channel    string
 	PostType   string
+	WhenClosed WhenClosed
 	// Props are literal values: a trigger posts operator text and a
 	// reference to the entity, never a value read from it.
 	Props map[string]string
