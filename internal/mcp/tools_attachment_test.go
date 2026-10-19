@@ -129,10 +129,9 @@ func newAttachFixture(t *testing.T, opts attachOpts) attachFixture {
 		Validator:     reads.Validator,
 		EntityManager: svc.EntityManager(),
 		Config:        svc.Config(),
-		Lua:           LuaDeps{WriteDeps: svc.LuaWriteDeps()},
+		Lua:           LuaDeps{WriteDeps: svc.LuaWriteDeps(), ProjectRoot: t.TempDir()},
 		Watcher:       nopWatcher{},
 		Watch:         WatchDeps{Changes: svc.Store(), Rebind: reads.Rebind},
-		ProjectRoot:   t.TempDir(),
 		Attachments: AttachmentDeps{
 			Snapshot:   func() (AttachmentSnapshot, error) { return snap, nil },
 			Uploads:    attachment.NewLimiter(attachment.DefaultMaxUploads),

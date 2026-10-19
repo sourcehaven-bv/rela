@@ -318,6 +318,13 @@ func TestNewServer_LuaToolsAreOptIn(t *testing.T) {
 		WithPrincipal(principal.Principal{User: "tester", Tool: principal.ToolMCP}), WithLuaTools()); err == nil {
 		t.Error("NewServer accepted WithLuaTools without Lua.WriteDeps")
 	}
+
+	noRoot := newTestDeps(t, meta, st)
+	noRoot.Lua.ProjectRoot = ""
+	if _, err := NewServer(noRoot, "test",
+		WithPrincipal(principal.Principal{User: "tester", Tool: principal.ToolMCP}), WithLuaTools()); err == nil {
+		t.Error("NewServer accepted WithLuaTools without Lua.ProjectRoot")
+	}
 }
 
 // TestDispatch_EveryToolDecodesAndRuns drives each registered tool

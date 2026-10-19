@@ -4,7 +4,6 @@ import (
 	"time"
 
 	v1 "github.com/Sourcehaven-BV/rela/internal/apiwire/v1"
-	"github.com/Sourcehaven-BV/rela/internal/channels"
 	"github.com/Sourcehaven-BV/rela/internal/realtime"
 )
 
@@ -122,28 +121,15 @@ func wireHead(h realtime.HeadView) v1.ChannelHead {
 	return out
 }
 
-// wirePage renders p, the answer to req. Each page names the cursor that
-// continues it in its own direction: an after_rev page, ordered by rev,
-// continues at next_after_rev; an after page continues forward at
-// next_after; a newest or before page continues backward at next_before,
-// its first seq. has_more is set when the page is full.
-func wirePage(p realtime.MessagePage, req channels.Page) v1.MessagePage {
+// wirePage renders p with the cursors the service named (see
+// [realtime.Cursors]). has_more is set when the page is full.
+func wirePage(p realtime.ReadView) v1.MessagePage {
 	out := v1.MessagePage{
-		Channel: wireChannel(p.Channel), Messages: make([]v1.Message, 0, len(p.Messages)), HasMore: p.Full,
+		Channel: wireChannel(p.Channel), Messages: make([]v1.Message, 0, len(p.Messages)), HasMore: p.HasMore,
+		NextAfter: p.NextAfter, NextBefore: p.NextBefore, NextAfterRev: p.NextAfterRev,
 	}
 	for _, m := range p.Messages {
 		out.Messages = append(out.Messages, wireMessage(m))
-	}
-	if n := len(p.Messages); n > 0 {
-		first, last := p.Messages[0], p.Messages[n-1]
-		switch {
-		case req.AfterRev > 0:
-			out.NextAfterRev = last.Rev
-		case req.AfterSeq > 0:
-			out.NextAfter = last.Seq
-		default:
-			out.NextBefore = first.Seq
-		}
 	}
 	return out
 }

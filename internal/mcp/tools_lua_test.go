@@ -92,11 +92,11 @@ func TestHandleLuaRun_ListsScriptsWithoutPath(t *testing.T) {
 	t.Parallel()
 	meta, st := makeTestFixture(t)
 	deps := newTestDeps(t, meta, st)
-	if err := os.MkdirAll(filepath.Join(deps.ProjectRoot, "scripts", "reports"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(deps.Lua.ProjectRoot, "scripts", "reports"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	for _, name := range []string{"reports/weekly.lua", "notes.txt"} {
-		if err := os.WriteFile(filepath.Join(deps.ProjectRoot, "scripts", name), []byte("return 1"), 0o600); err != nil {
+		if err := os.WriteFile(filepath.Join(deps.Lua.ProjectRoot, "scripts", name), []byte("return 1"), 0o600); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -120,14 +120,14 @@ func TestHandleLua_ErrorInModule(t *testing.T) {
 	meta, st := makeTestFixture(t)
 	deps := newTestDeps(t, meta, st)
 	// Read scripts and modules from the temp project on disk.
-	deps.Lua.WriteDeps.ProjectRoot = deps.ProjectRoot
+	deps.Lua.WriteDeps.ProjectRoot = deps.Lua.ProjectRoot
 	deps.Lua.WriteDeps.Files = nil
 	files := map[string]string{
 		"lib/fail.lua":  "local M = {}\nfunction M.run()\n  error(\"inside module\")\nend\nreturn M\n",
 		"scripts/s.lua": "local m = require(\"fail\")\nm.run()\n",
 	}
 	for name, body := range files {
-		p := filepath.Join(deps.ProjectRoot, filepath.FromSlash(name))
+		p := filepath.Join(deps.Lua.ProjectRoot, filepath.FromSlash(name))
 		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
 			t.Fatal(err)
 		}

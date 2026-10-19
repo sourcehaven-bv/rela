@@ -120,7 +120,8 @@ func TestAuthz_Order_NameAfterRead(t *testing.T) {
 
 // TestAuthz_HiddenAnchor pins the resolution order before the read role:
 // an unknown type or a type that does not attach to the route's entity type
-// is 404 unknown_channel_type without reading the anchor; a face type needs
+// is 404 unknown_channel_type without reading the anchor (after the read
+// for a route naming no type); a face type needs
 // a face before the read; every anchor miss is ErrAnchorNotFound.
 func TestAuthz_HiddenAnchor(t *testing.T) {
 	t.Parallel()
@@ -137,7 +138,10 @@ func TestAuthz_HiddenAnchor(t *testing.T) {
 		{"type not attached to route type", RawAddress{EntityType: "doc", Anchor: "DOC-1", Type: "room"},
 			http.StatusNotFound, TypeUnknownChannelType, false, 0},
 		{"missing anchor", RawAddress{EntityType: "ticket", Anchor: "TKT-9", Type: "room"}, 0, "", true, 1},
-		{"anchor of another type", RawAddress{Anchor: "DOC-1", Type: "room"}, 0, "", true, 1},
+		// A route that names no entity type reads the anchor first; the
+		// entity is readable, so its type may be named.
+		{"untyped route, readable anchor outside attach_to", RawAddress{Anchor: "DOC-1", Type: "room"},
+			http.StatusNotFound, TypeUnknownChannelType, false, 1},
 		{"malformed anchor", RawAddress{Anchor: "not an id", Type: "room"}, 0, "", true, 0},
 		{"face type with bare id", RawAddress{EntityType: "page", Anchor: "PAGE-1", Type: "facechat"},
 			http.StatusUnprocessableEntity, TypeFaceRequired, false, 0},
@@ -315,7 +319,7 @@ func TestAuthz_ACLModes(t *testing.T) {
 
 	_, err = h.svc.Head(as(readOnly), room)
 	require.NoError(t, err)
-	_, err = h.svc.Messages(as(readOnly), room, pageAll())
+	_, err = h.svc.Read(as(readOnly), room, ReadRequest{})
 	require.NoError(t, err)
 	_, err = h.svc.Post(as(readOnly), room, text("x"))
 	requireDenial(t, err, http.StatusForbidden, TypePostDenied)

@@ -13,7 +13,7 @@ import (
 // (trace direction, analyze check, schema type) rather than one tool each.
 func (s *Server) registerTools() {
 	// Entity tools. The read tools a watch may replay are collected as
-	// they register; see watchableTools.
+	// they register; see watchOrder.
 	reads := map[string]mcpgo.ToolHandler{}
 	reads["list_entities"] = addTool(s, toolListEntities(), s.handleListEntities)
 	reads["show_entity"] = addTool(s, toolShowEntity(), s.handleShowEntity)
@@ -28,8 +28,10 @@ func (s *Server) registerTools() {
 
 	// Relation tools
 	reads["list_relations"] = addTool(s, toolListRelations(), s.handleListRelations)
+	// Channel tools, when realtime is on; read_channel joins reads.
+	registerChannelTools(s, reads)
 	s.watch = newWatchHandler(s, reads)
-	addTool(s, toolWatch(), s.watch.handle)
+	addTool(s, toolWatch(s.watch.names), s.watch.handle)
 	addTool(s, toolCreateRelation(), s.handleCreateRelation)
 	addTool(s, toolDeleteRelation(), s.handleDeleteRelation)
 

@@ -33,6 +33,81 @@ func ChannelService(s *Services) *realtime.Service {
 	return s.channelService
 }
 
+// PolicyChannelService returns a channel service of s that applies the
+// project's acl.yaml, for a wiring that assembled s with an injected ACL.
+// Stdio `rela mcp` does that (NopACL), so its entity tools stay open as
+// before, while its channel tools apply acl.yaml as `rela lease` does. That
+// is not a security boundary for a local user, who can edit acl.yaml; it
+// keeps an agent identity inside the limits the project set for it.
+//
+// Without acl.yaml it returns [ChannelService]. With one it builds a
+// service over the same channel store, realtime config and process-local
+// state, gated by a Declarative built from the policy. A policy that does
+// not load, validate or compile is an error, never an open fallback.
+//
+// The returned bind is the request-edge step for that service: it binds
+// the principal on ctx against the service's own policy, which is not the
+// one s's readers use. The caller runs it before every channel call.
+//
+// Nil: s is accepted and returns a nil service, as does an s without
+// channels.
+func PolicyChannelService(s *Services) (*realtime.Service, func(context.Context) (context.Context, error), error) {
+	svc, d, err := policyChannelService(s)
+	if err != nil {
+		return nil, nil, err
+	}
+	return svc, identityBinderFor(d), nil
+}
+
+// policyChannelService is [PolicyChannelService] without the binder: it
+// returns the service and the policy the service evaluates, nil for none.
+func policyChannelService(s *Services) (*realtime.Service, *acl.Declarative, error) {
+	if s == nil || s.channelService == nil || s.base == nil {
+		return ChannelService(s), nil, nil
+	}
+	policy, err := loadACLPolicy(s.base.cfg)
+	if err != nil {
+		return nil, nil, err
+	}
+	if policy == nil {
+		return s.channelService, s.ACLDeclarative(), nil
+	}
+	c, err := compileDeclarative(policy, s.base.meta, s.Store())
+	if err != nil {
+		return nil, nil, err
+	}
+	svc, _, err := newRealtimeService(realtimeInputs{
+		meta: s.base.meta, worlds: s.base.worlds, config: realtimeConfigSource{h: s.base.realtime},
+		store: s.Store(), channels: s.channels, local: s.realtimeLocal,
+		declarative: c.declarative, redactor: c.fields.redactor, writes: c.acl,
+	})
+	if err != nil {
+		return nil, nil, err
+	}
+	return svc, c.declarative, nil
+}
+
+// ACLAssignsNoRole reports whether the project has an acl.yaml whose
+// assignments name no role for user. A local process uses it to warn that
+// its identity reaches the channels with the "everyone" role only. It looks
+// at assignments alone: a role a user entity or a membership grants is not
+// seen, so the answer is a hint for a log line, not an access decision. An
+// acl.yaml that does not load reports false; [PolicyChannelService] reports
+// that error.
+//
+// Nil: s is accepted and reports false.
+func ACLAssignsNoRole(s *Services, user string) bool {
+	if s == nil || s.base == nil {
+		return false
+	}
+	policy, err := loadACLPolicy(s.base.cfg)
+	if err != nil || policy == nil {
+		return false
+	}
+	_, ok := policy.Assignments[user]
+	return !ok
+}
+
 // buildRealtimeService builds the channel service over cs for one assembly.
 // The service is per assembly, so its access checks follow the current ACL;
 // local is the process-local state successive assemblies share (see

@@ -18,6 +18,8 @@ var identityEdgeAllowlist = map[string]allowed{
 		"identityBinderFor so a long-lived reader re-resolves through the same edge step"},
 	"internal/appbuild/automationjobs.go": {1, "servicesJobRunner.BindIdentity: a background job is its " +
 		"own edge; it binds through identityBinderFor"},
+	"internal/appbuild/realtime_service.go": {1, "PolicyChannelService: the binder for stdio's channel " +
+		"service, which evaluates acl.yaml while the rest of stdio MCP stays open; the channel tools run it per call"},
 	"internal/appbuild/identity.go": {2, "IdentityBinder: the one binder every graph-identity " +
 		"transport (CLI, rela-docs, scheduler, stdio MCP) takes at wiring; identityBinderFor is its body"},
 	"internal/cli/classification_acl.go": {1, "acl audit: opens a Request for a synthetic " +

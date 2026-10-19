@@ -124,17 +124,19 @@ type Message struct {
 // MessagePage is one page of messages, oldest first, or by rev for an
 // after_rev page. HasMore is set when the page is full: there may be more
 // past its cursor, and only the next request can tell. A page names one
-// cursor, in the direction it was read: NextAfterRev, the rev to pass as
+// cursor in the direction it was read: NextAfterRev, the rev to pass as
 // `after_rev`, for a page read by rev; NextAfter, the seq to pass as
 // `after`, for an `after` page; NextBefore, the seq to pass as `before`,
-// for the newest page and a `before` page. An empty page names none.
+// for the newest page and a `before` page when they hold a message. The
+// newest page also names NextAfterRev, the channel's rev, to start
+// following the channel from. NextAfterRev is sent even when it is 0.
 type MessagePage struct {
 	Channel      Channel   `json:"channel"`
 	Messages     []Message `json:"messages"`
 	HasMore      bool      `json:"has_more"`
 	NextAfter    int64     `json:"next_after,omitempty"`
 	NextBefore   int64     `json:"next_before,omitempty"`
-	NextAfterRev int64     `json:"next_after_rev,omitempty"`
+	NextAfterRev *int64    `json:"next_after_rev,omitempty"`
 }
 
 // EphemeralMessage is a live ephemeral message. It is kept in memory for

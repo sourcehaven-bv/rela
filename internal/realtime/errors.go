@@ -69,6 +69,9 @@ const (
 	// TypeConfigChanged is a 409 for a write during which realtime.yaml was
 	// reloaded. Nothing was written; a retry runs under the new config.
 	TypeConfigChanged = "config_changed"
+	// TypeSignalsNotKept is a 422 for a signal posted through a transport
+	// in another process than the server (see [PostInput.LogOnly]).
+	TypeSignalsNotKept = "signals_not_kept"
 )
 
 // DenialError is a refused operation: an HTTP status, a stable type, a title for
@@ -143,6 +146,12 @@ func typeConflict(typ string) *DenialError {
 			"than realtime.yaml declares; writes stay refused until they match", typ),
 		Rule: "channel_types." + typ,
 	}
+}
+
+func signalsNotKept(typ string) *DenialError {
+	return deny(http.StatusUnprocessableEntity, TypeSignalsNotKept, fmt.Sprintf(
+		"message type %s is a signal; signals live in the server process that receives them, "+
+			"so post them through rela-server", typ))
 }
 
 func configChanged() *DenialError {

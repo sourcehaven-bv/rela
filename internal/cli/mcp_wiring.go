@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"path/filepath"
 	"sync"
+	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/appbuild"
@@ -14,6 +15,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/config"
 	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
 	relamcp "github.com/Sourcehaven-BV/rela/internal/mcp"
+	"github.com/Sourcehaven-BV/rela/internal/principal"
 	"github.com/Sourcehaven-BV/rela/internal/script"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
@@ -46,6 +48,12 @@ type mcpServices struct {
 	// stopSchemaWatch releases the schema.yaml subscription. Nil until
 	// [mcpServices.watchSchema] runs.
 	stopSchemaWatch func()
+	// stopRealtimeWatch releases the realtime.yaml subscription. Nil until
+	// [mcpServices.watchRealtime] runs.
+	stopRealtimeWatch func()
+	// stopACLWatch releases the acl.yaml subscription. Nil until
+	// [mcpServices.watchACL] runs.
+	stopACLWatch func()
 	// closed is set by Close. The watcher's Stop does NOT wait for an
 	// in-flight callback, so a change event can be mid-flight when shutdown
 	// begins; without this flag that callback would assemble a whole new
@@ -77,11 +85,16 @@ func (s *mcpServices) current() *appbuild.Services {
 // nothing. Access control that matters belongs on the deployed HTTP API,
 // which serves callers who do not have direct file access. WithACL makes
 // this an explicit, justified opt-out rather than a silent default.
+//
+// The channel tools are the exception: they apply acl.yaml when the project
+// has one ([mcpServices.channelDeps]), so an agent identity stays inside
+// the channel roles the project gave it.
 func newMCPServices(startDir string) (*mcpServices, error) {
 	svc, err := appbuild.Discover(startDir, script.NewEngine(), appbuild.WithACL(acl.NopACL{}))
 	if err != nil {
 		return nil, err
 	}
+	warnUnassignedUser(svc)
 	return &mcpServices{
 		svc:           svc,
 		origin:        svc,
@@ -110,7 +123,12 @@ func newMCPServices(startDir string) (*mcpServices, error) {
 // place and returns the error. The caller logs it and keeps serving — a broken
 // intermediate save while the operator is mid-edit must not take the session
 // down.
-func (s *mcpServices) reload() (relamcp.Deps, error) {
+//
+// publish hands the new bundle to the server. It runs under mu, before the
+// successor replaces the current services, so a bundle the server rejects
+// leaves the old assembly both current and serving; the successor is
+// retired instead. Nil: publish is accepted and skipped.
+func (s *mcpServices) reload(publish func(relamcp.Deps) error) error {
 	// Read the current assembly under the lock, then build the successor
 	// OUTSIDE it. Assembly re-reads the schema, compiles transitions and
 	// computed properties and starts a job queue; holding mu across all of
@@ -120,7 +138,7 @@ func (s *mcpServices) reload() (relamcp.Deps, error) {
 		s.mu.Unlock()
 		// Shutdown won the race with a file event. Returning an error rather
 		// than assembling is the whole point: watchSchema logs and moves on.
-		return relamcp.Deps{}, errors.New("reload schema: services are closed")
+		return errors.New("reload schema: services are closed")
 	}
 	old := s.svc
 	s.mu.Unlock()
@@ -131,7 +149,7 @@ func (s *mcpServices) reload() (relamcp.Deps, error) {
 	base, err := appbuild.NewSharedBase(old.Base().Config(), appbuild.WithACL(acl.NopACL{}),
 		appbuild.WithRealtimeFallback(old))
 	if err != nil {
-		return relamcp.Deps{}, fmt.Errorf("reload schema: %w", err)
+		return fmt.Errorf("reload schema: %w", err)
 	}
 
 	// searchCloser is nil on purpose: the closer belongs to the ORIGIN
@@ -139,7 +157,7 @@ func (s *mcpServices) reload() (relamcp.Deps, error) {
 	// successor too would give two bundles the same closer and close it twice.
 	next, err := base.ForReassembly(old).Assemble(old.Store(), old.Searcher(), old.VisibleSearcher(), nil)
 	if err != nil {
-		return relamcp.Deps{}, fmt.Errorf("reload schema: %w", err)
+		return fmt.Errorf("reload schema: %w", err)
 	}
 
 	s.mu.Lock()
@@ -155,10 +173,16 @@ func (s *mcpServices) reload() (relamcp.Deps, error) {
 	if s.closed || s.svc != old {
 		s.mu.Unlock()
 		next.CloseAssembly()
-		return relamcp.Deps{}, errors.New("reload schema: superseded before publish")
+		return errors.New("reload schema: superseded before publish")
+	}
+	if publish != nil {
+		if err := publish(s.deps(next)); err != nil {
+			s.mu.Unlock()
+			next.CloseAssembly()
+			return fmt.Errorf("reload schema: server rejected the new services: %w", err)
+		}
 	}
 	s.svc = next
-	deps := s.deps()
 	s.mu.Unlock()
 
 	// Retire the superseded assembly's background workers (job queue, mail,
@@ -167,7 +191,20 @@ func (s *mcpServices) reload() (relamcp.Deps, error) {
 	// bound, for an in-flight tick, and nothing reaches old once next is
 	// published.
 	old.CloseAssembly()
-	return deps, nil
+	return nil
+}
+
+// republish rebuilds the bundle from the current services and hands it to
+// the server. An acl.yaml edit needs this: the channel tools build their
+// service from acl.yaml when the bundle is built, so a new bundle applies
+// the edit. It does nothing once Close has run.
+func (s *mcpServices) republish(publish func(relamcp.Deps) error) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed {
+		return errors.New("republish: services are closed")
+	}
+	return publish(s.deps(s.svc))
 }
 
 // watchSchema subscribes to schema.yaml and publishes a rebuilt dependency
@@ -193,15 +230,10 @@ func (s *mcpServices) watchSchema(srv *relamcp.Server) {
 	name := filepath.Base(svc.Paths().SchemaPath)
 
 	stop, err := sub.Subscribe(context.Background(), name, func() {
-		deps, err := s.reload()
-		if err != nil {
+		if err := s.reload(srv.ReloadDeps); err != nil {
 			// Keep serving the last-good schema. A save mid-edit is
 			// routinely unparseable and must not end the session.
 			slog.Warn("mcp: schema reload failed; keeping previous schema", "error", err)
-			return
-		}
-		if err := srv.ReloadDeps(deps); err != nil {
-			slog.Warn("mcp: schema reload rejected; keeping previous schema", "error", err)
 			return
 		}
 		// The filename is not logged: it is derived from a discovered path,
@@ -213,15 +245,92 @@ func (s *mcpServices) watchSchema(srv *relamcp.Server) {
 		slog.Warn("mcp: schema watcher not started; hot-reload disabled", "error", err)
 		return
 	}
+	if !s.keepWatch(stop, &s.stopSchemaWatch) {
+		return
+	}
+	s.watchRealtime(sub)
+	s.watchACL(sub, srv)
+}
 
+// watchACL subscribes to acl.yaml and republishes the bundle on every change,
+// so the channel tools apply an edit from the next call. A file that does not
+// load makes the channel tools refuse every call until it is fixed (see
+// [channelDeps]). The rest of the stdio server runs without an ACL, so
+// nothing else changes.
+func (s *mcpServices) watchACL(sub config.Subscriber, srv *relamcp.Server) {
+	stop, err := sub.Subscribe(context.Background(), aclFile, func() {
+		if err := s.republish(srv.ReloadDeps); err != nil {
+			slog.Warn("mcp: acl.yaml reload rejected", "error", err)
+			return
+		}
+		slog.Info("mcp: channel tools reloaded acl.yaml")
+	})
+	if err != nil {
+		slog.Warn("mcp: acl.yaml watcher not started; channel tools keep the startup acl.yaml", "error", err)
+		return
+	}
+	s.keepWatch(stop, &s.stopACLWatch)
+}
+
+// aclFile is the policy file the channel tools apply. The name is fixed by
+// appbuild; cli may not import the package that owns it.
+const aclFile = "acl.yaml"
+
+// warnUnassignedUser logs once, at startup, when acl.yaml exists and names no
+// role for the local user. The channel tools then answer as for a stranger,
+// and an entity show_entity returns reads as not found there.
+func warnUnassignedUser(svc *appbuild.Services) {
+	user := principal.SystemUser()
+	if appbuild.ACLAssignsNoRole(svc, user) {
+		slog.Warn("mcp: acl.yaml assigns no role to the local user; channel tools may answer not found "+
+			"for entities it can otherwise read. Add the user under assignments in acl.yaml", "user", user)
+	}
+}
+
+// watchRealtime subscribes to realtime.yaml and reloads the realtime config
+// of the current services on every change, so the channel tools follow an
+// edit from the next call. A file that does not load keeps the previous
+// config serving. The callback resolves the current services per event,
+// because a schema reload builds a new config holder, and does nothing once
+// Close has run.
+func (s *mcpServices) watchRealtime(sub config.Subscriber) {
+	const realtimeFile = "realtime.yaml"
+	stop, err := sub.Subscribe(context.Background(), realtimeFile, func() { s.reloadRealtime() })
+	if err != nil {
+		slog.Warn("mcp: realtime.yaml watcher not started; realtime hot-reload disabled", "error", err)
+		return
+	}
+	s.keepWatch(stop, &s.stopRealtimeWatch)
+}
+
+// reloadRealtime re-reads realtime.yaml for the current services.
+func (s *mcpServices) reloadRealtime() {
+	s.mu.Lock()
+	if s.closed {
+		s.mu.Unlock()
+		return
+	}
+	cur := s.svc
+	s.mu.Unlock()
+	if err := appbuild.Realtime(cur).Reload(context.Background()); err != nil {
+		slog.Warn("mcp: realtime.yaml reload rejected; keeping previous config", "error", err)
+		return
+	}
+	slog.Info("mcp: realtime config reloaded")
+}
+
+// keepWatch stores a subscription's stop handle in dst, or stops it and
+// reports false when Close ran while it was subscribing.
+func (s *mcpServices) keepWatch(stop func(), dst *func()) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.closed {
 		// Close ran while we were subscribing; nothing will read the handle.
 		stop()
-		return
+		return false
 	}
-	s.stopSchemaWatch = stop
+	*dst = stop
+	return true
 }
 
 // Deps flattens the per-project services into the focused [mcp.Deps]
@@ -239,27 +348,30 @@ func (s *mcpServices) watchSchema(srv *relamcp.Server) {
 func (s *mcpServices) Deps() relamcp.Deps {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.deps()
+	return s.deps(s.svc)
 }
 
-// deps builds the bundle from the current services. Caller holds mu.
-func (s *mcpServices) deps() relamcp.Deps {
-	reads := s.svc.GatedReads()
+// deps builds the bundle from svc. Caller holds mu.
+func (s *mcpServices) deps(svc *appbuild.Services) relamcp.Deps {
+	reads := svc.GatedReads()
 	deps := relamcp.Deps{
-		Attachments:   s.attachmentDeps(),
+		Attachments:   s.attachmentDeps(svc),
 		Store:         reads.Reader,
-		Meta:          s.svc.Meta(),
+		Meta:          svc.Meta(),
 		Tracer:        reads.Tracer,
 		Searcher:      reads.Searcher,
 		Validator:     reads.Validator,
-		EntityManager: s.svc.EntityManager(),
-		Config:        s.svc.Config(),
-		Lua:           relamcp.LuaDeps{WriteDeps: s.svc.LuaWriteDeps(), Cache: s.svc.ScriptEngine().LuaCache()},
-		Watcher:       s.watcher,
-		Watch:         relamcp.WatchDeps{Changes: s.svc.Store(), Rebind: reads.Rebind},
-		ProjectRoot:   s.svc.Paths().Root,
-		World:         reads.LuaReads.World,
-		Families:      appbuild.CompiledWorlds(s.svc).Families(),
+		EntityManager: svc.EntityManager(),
+		Config:        svc.Config(),
+		Lua: relamcp.LuaDeps{
+			WriteDeps: svc.LuaWriteDeps(), Cache: svc.ScriptEngine().LuaCache(), ProjectRoot: svc.Paths().Root,
+		},
+		Watcher: s.watcher,
+		Watch: relamcp.WatchDeps{
+			Changes: svc.Store(), Rebind: reads.Rebind, ChannelPoll: stdioChannelPoll,
+		},
+		World:    reads.LuaReads.World,
+		Families: appbuild.CompiledWorlds(svc).Families(),
 		// The request edge for stdio: resolve the fallback principal against
 		// THIS assembly's ACL (NopACL here, so it binds nothing today). It is
 		// the IdentityBinder step, taken from the same GatedReads as the
@@ -271,35 +383,66 @@ func (s *mcpServices) deps() relamcp.Deps {
 		deps.Traversals = reads.Traversals
 	}
 	// Read only: stdio has no signed-in user to author a comment (TKT-QIQO1W).
-	deps.Comments.Reader = newStdioComments(s.svc.Comments(), reads.Reader, s.svc.Meta())
+	deps.Comments.Reader = newStdioComments(svc.Comments(), reads.Reader, svc.Meta())
 	// Assigned only when set: a nil *lease.Service in the interface would
 	// register the lease tools over an absent service.
-	if leases := appbuild.Leases(s.svc); leases != nil {
+	if leases := appbuild.Leases(svc); leases != nil {
 		deps.Leases = leases
 	}
+	deps.Channels = channelDeps(svc)
 	return deps
+}
+
+// stdioChannelPoll is how often a stdio watch replays its read_channel
+// targets. A post made by rela-server or the CLI wakes nothing in this
+// process, so the poll is how a stdio watch sees it.
+const stdioChannelPoll = 2 * time.Second
+
+// channelDeps wires the channel tools over the channel service that applies
+// acl.yaml (see [appbuild.PolicyChannelService]). Signals are refused: a
+// signal lives only in the process that receives it, and this one is not
+// rela-server.
+//
+// An acl.yaml that does not load, validate or compile fails closed: every
+// channel tool answers "acl.yaml cannot be loaded" with the reason, and the
+// rest of the server keeps working. The tools stay registered, so a fixed
+// acl.yaml brings them back on the next reload.
+func channelDeps(svc *appbuild.Services) relamcp.ChannelDeps {
+	cs, bind, err := appbuild.PolicyChannelService(svc)
+	if err != nil {
+		slog.Warn("mcp: channel tools refuse every call: acl.yaml cannot be loaded", "error", err)
+		return relamcp.UnavailableChannels("acl.yaml cannot be loaded: " + err.Error())
+	}
+	// Assigned only when set, for the reason Leases is.
+	if cs == nil {
+		return relamcp.ChannelDeps{}
+	}
+	return relamcp.ChannelDeps{
+		Reader: cs, Writer: cs, Creator: cs, Waker: cs,
+		RefuseSignals: true, LocalIdentity: true, BindIdentity: bind,
+	}
 }
 
 // attachmentDeps wires the MCP attachment tools like `rela attach`: raw
 // store, no command runner (so a configured scan rejects the upload), and the
 // store's backstop as the size limit, capped at [relamcp.MaxUploadBytes]. The
 // snapshot is built once per assembly because the metamodel only changes on
-// reload, which rebuilds the Deps. Caller holds mu.
-func (s *mcpServices) attachmentDeps() relamcp.AttachmentDeps {
+// reload, which rebuilds the Deps.
+func (s *mcpServices) attachmentDeps(svc *appbuild.Services) relamcp.AttachmentDeps {
 	// The manager's attachment surface carries its lock, which a reload
 	// reuses (appbuild.SharedBase.ForReassembly), so writes under an old and
 	// a new schema still exclude each other.
 	var snap relamcp.AttachmentSnapshot
-	owner, err := entitymanager.AttachmentsOf(s.svc.EntityManager())
+	owner, err := entitymanager.AttachmentsOf(svc.EntityManager())
 	if err == nil {
 		snap, err = relamcp.NewAttachmentSnapshot(
-			s.svc.Store(), owner, s.svc.ACL(), s.svc.Meta(), nil, store.MaxAttachmentBytes)
+			svc.Store(), owner, svc.ACL(), svc.Meta(), nil, store.MaxAttachmentBytes)
 	}
 	return relamcp.AttachmentDeps{
 		Snapshot:   func() (relamcp.AttachmentSnapshot, error) { return snap, err },
 		Uploads:    s.attachUploads,
-		Authorizer: s.svc.ACL(),
-		Audit:      s.svc.Audit(),
+		Authorizer: svc.ACL(),
+		Audit:      svc.Audit(),
 	}
 }
 
@@ -314,13 +457,15 @@ func (s *mcpServices) Close() error {
 	// mu on the captured assemblies: stopping a version sweep waits, without
 	// a bound, for an in-flight tick.
 	s.closed = true
-	stopSchemaWatch := s.stopSchemaWatch
-	s.stopSchemaWatch = nil
+	stops := []func(){s.stopSchemaWatch, s.stopRealtimeWatch, s.stopACLWatch}
+	s.stopSchemaWatch, s.stopRealtimeWatch, s.stopACLWatch = nil, nil, nil
 	watcher, current, origin := s.watcher, s.svc, s.origin
 	s.mu.Unlock()
 
-	if stopSchemaWatch != nil {
-		stopSchemaWatch()
+	for _, stop := range stops {
+		if stop != nil {
+			stop()
+		}
 	}
 	if watcher != nil {
 		watcher.Stop()

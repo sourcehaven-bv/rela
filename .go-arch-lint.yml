@@ -749,6 +749,11 @@ deps:
       - metamodel
       - predicate
       - predicatefns
+      # realtime + realtimecfg: the channel tools (TKT-76G6M7) speak the
+      # channel service's request, view and error types, and the props
+      # schema its views carry. They never touch the channel store.
+      - realtime
+      - realtimecfg
       - relresolve
       - schema
       - script

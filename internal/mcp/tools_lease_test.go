@@ -201,7 +201,6 @@ func newLeaseEnv(t *testing.T) *leaseEnv {
 		Config:        svc.Config(),
 		Watcher:       nopWatcher{},
 		Watch:         WatchDeps{Changes: st, Rebind: reads.Rebind},
-		ProjectRoot:   t.TempDir(),
 		Attachments:   testAttachmentDeps(t, svc, meta),
 		World:         store.TrivialScope(),
 		Families:      store.TrivialScope(),

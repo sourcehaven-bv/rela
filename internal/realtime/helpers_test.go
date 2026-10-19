@@ -332,10 +332,12 @@ func (c *testClock) Add(d time.Duration) {
 // countingStore counts the channel store calls a test cares about.
 type countingStore struct {
 	channels.Store
-	heads   atomic.Int64
-	appends atomic.Int64
-	records atomic.Int64
-	onHead  func()
+	heads    atomic.Int64
+	appends  atomic.Int64
+	records  atomic.Int64
+	messages atomic.Int64
+	typeRecs atomic.Int64
+	onHead   func()
 	// onRecord runs before RecordTypes.
 	onRecord func()
 	// onDelete runs before Delete.
@@ -355,6 +357,16 @@ func (s *countingStore) Head(ctx context.Context, k channels.Key) (channels.Chan
 		s.onHead()
 	}
 	return s.Store.Head(ctx, k)
+}
+
+func (s *countingStore) Messages(ctx context.Context, k channels.Key, p channels.Page) ([]channels.Message, error) {
+	s.messages.Add(1)
+	return s.Store.Messages(ctx, k, p)
+}
+
+func (s *countingStore) TypeRecords(ctx context.Context) (map[string]channels.TypeRecord, error) {
+	s.typeRecs.Add(1)
+	return s.Store.TypeRecords(ctx)
 }
 
 func (s *countingStore) Append(ctx context.Context, k channels.Key, m channels.NewMessage) (channels.Message, error) {
