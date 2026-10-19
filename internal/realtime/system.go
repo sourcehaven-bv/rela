@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/channels"
@@ -58,6 +59,46 @@ func (w systemWriter) post(
 	}
 	w.local.mark(key)
 	return nil
+}
+
+// transition runs the automatic operation a on the channels of type ct
+// at anchor whose state is one of a.from, as [systemAuthor], naming
+// triggeredBy, and returns how many it moved. Each move goes through
+// applyTransition, the compare-and-set the sweep and requests use, so a
+// channel a person or another process moved first is skipped rather than
+// moved again. A channel that was never written does not exist and is not
+// created. After a failure a second call moves the rest: the channels
+// already moved have left a.from.
+func (w systemWriter) transition(
+	ctx context.Context, now time.Time, anchor channels.Anchor, ct realtimecfg.ChannelType, a *autoRule,
+	triggeredBy string,
+) (int, error) {
+	list, err := w.store.List(ctx, anchor, ct.Name, "")
+	if isPermanent(err) {
+		return 0, permanentError{err}
+	}
+	if err != nil {
+		return 0, err
+	}
+	moved := 0
+	for _, c := range list {
+		if !slices.Contains(a.from, c.State) {
+			continue
+		}
+		_, err := applyTransition(ctx, w.store, w.local, c.Key, c.State, channels.Transition{
+			To: a.to, By: systemAuthor(), At: now, TriggeredBy: triggeredBy,
+		})
+		switch {
+		case err == nil:
+			moved++
+		case errors.Is(err, channels.ErrConflict), errors.Is(err, channels.ErrNotFound):
+		case isPermanent(err):
+			return moved, permanentError{err}
+		default:
+			return moved, err
+		}
+	}
+	return moved, nil
 }
 
 // isPermanent reports whether an append error is about this one post and
