@@ -135,9 +135,9 @@ entity keeps its own.
 Only a long-running rela process sweeps: `rela-server` and the desktop
 app. The sweep checks every minute for channels to close, archive or
 erase, and checks for missing entities every hour. With several server
-processes against one database, each check runs in one process only:
-the first process to take a shared lock runs it, and the others skip
-that check. If that process stops, another one runs the next check.
+processes against one database, one process leads and runs every
+check: it holds a shared lock while it runs. If that process stops,
+another one takes over within ten seconds.
 
 Names of channel types, message types, roles, actions and triggers use
 lowercase letters, digits and hyphens, and start with a letter. Property
@@ -310,7 +310,9 @@ never a value read from it.
 The message type must be a `log` type: a signal would reach only the
 readers connected to the process that runs triggers. rela checks the
 `props` against the message type when the file loads, including each
-property's `max`, `message_bytes` and the type's `when`.
+property's `max`, `message_bytes` and the type's `when`. A message type
+whose `when` calls `today()` cannot be a trigger's: whether the `props`
+meet it would change with the date.
 
 A trigger's message has the author `system:realtime`. The API marks it
 with `author.system: true` and `triggered_by: trigger:<name>`, so a client
@@ -326,9 +328,9 @@ How triggers run:
   entities twice a second. An entity that starts and stops matching in
   between posts nothing. One trigger posts at most once a minute about one
   entity; the changes in between are seen together when the minute ends.
-- **Posts are capped.** rela posts at most 64 trigger messages per look,
+- **Posts are capped.** rela tries at most 64 trigger posts per look,
   shared by the triggers in turn, so one busy trigger cannot hold back
-  the others. The rest post at the next look.
+  the others. The rest wait their turn, first come, first served.
 - **Deleting is not leaving.** A deleted entity posts no `leave`. When it
   comes back, for example through a restore, it posts `enter` again. A
   renamed entity counts as a new one and posts `enter` under its new id.
@@ -337,14 +339,17 @@ How triggers run:
   catches a change that raised no event, and a `when` on `today()` that
   starts to hold as the date changes. `today()` is the date in UTC.
 - **A post is delivered at least once.** A crash between posting and
-  recording the post can post it again. A post that keeps failing is
-  retried for three looks, then logged and counted as done, so it never
-  repeats forever.
+  recording the post can post it again. A post that fails, for example
+  while the database fails over, is retried with a growing wait for five
+  minutes, then logged and counted as done, so it never repeats forever.
+  A post that cannot succeed, such as one the channel's limits refuse,
+  is logged and counted as done at once.
 - **Only a long-running process runs triggers:** `rela-server` and the
-  desktop app. With several server processes, the process that holds the
-  realtime worker lock runs them, as it runs the sweep. The CLI and the
-  MCP server run none: their changes reach a running server and post
-  there.
+  desktop app. With several server processes, one leads: it holds the
+  realtime worker lock while it runs, and runs the triggers and the
+  sweep. The others try to take over every ten seconds, and the one that
+  does compares every entity first. The CLI and the MCP server run none:
+  their changes reach a running server and post there.
 - **Without a valid file, triggers stop.** While `realtime.yaml` is
   missing or kept from an earlier load after an error, no trigger posts.
   When the file loads again, the next comparison catches up.
