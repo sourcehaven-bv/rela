@@ -285,6 +285,28 @@ closed first. Retention never blocks removing a single message.
 Without `from`, `close` starts from `open`, `reopen` from `closed` or
 `archived`, `archive` from `open` or `closed`, and `delete` from any state.
 
+`auto.when` acts once, when the entity starts to meet the condition. It
+moves the entity's channels of the type that are in a `from` state, and
+leaves the others alone. A person can reopen such a channel while the
+condition still holds, and the reopen stands: rela acts again only when
+the entity stops meeting the condition and then meets it again. A new
+`auto.when`, or one whose condition you change, starts from now: rela
+first records which entities meet it, without moving their channels. It
+creates no channel either: an entity whose channel was never written has
+nothing to close.
+
+An automatic close or archive has the author `system:realtime`, and its
+audit record names the rule, for example `triggered_by:
+auto:incident-room/close`. `auto.after` and `auto.when` of one operation
+share that label. Both use the compare-and-set a person's request uses,
+so a channel a person moved first is left as it is. `auto.when` runs in
+the same worker as triggers and follows the same rules (see Triggers):
+it looks at changed entities twice a second, catches missed changes every
+15 minutes, acts at most once a minute per entity, and stops while the
+file is not valid. A trigger into the same channel type that fires on the
+same change posts first, so its message lands before the channel closes.
+On a type with faces, the same face rule as for triggers applies.
+
 Deleting a channel removes it and all its messages. A `one` channel starts
 again, empty, at the next post.
 
@@ -399,8 +421,9 @@ Three more rules stop a message from revealing what `acl.yaml` hides:
 - `from: entity.<property>` may not name such a property either.
 
 rela refuses the whole file for any of these problems, except one: a
-trigger it must leave out because of faces (see Triggers) is dropped with
-a warning, and the rest of the file stays in force.
+trigger or an `auto.when` it must leave out because of faces (see
+Triggers) is dropped with a warning, and the rest of the file stays in
+force.
 
 ## Limits
 
