@@ -15,7 +15,6 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/config"
 	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
 	relamcp "github.com/Sourcehaven-BV/rela/internal/mcp"
-	"github.com/Sourcehaven-BV/rela/internal/principal"
 	"github.com/Sourcehaven-BV/rela/internal/script"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
@@ -94,7 +93,6 @@ func newMCPServices(startDir string) (*mcpServices, error) {
 	if err != nil {
 		return nil, err
 	}
-	warnUnassignedUser(svc)
 	return &mcpServices{
 		svc:           svc,
 		origin:        svc,
@@ -277,10 +275,9 @@ func (s *mcpServices) watchACL(sub config.Subscriber, srv *relamcp.Server) {
 const aclFile = "acl.yaml"
 
 // warnUnassignedUser logs once, at startup, when acl.yaml exists and names no
-// role for the local user. The channel tools then answer as for a stranger,
-// and an entity show_entity returns reads as not found there.
-func warnUnassignedUser(svc *appbuild.Services) {
-	user := principal.SystemUser()
+// role for user, the server's principal. The channel tools then answer as for
+// a stranger, and an entity show_entity returns reads as not found there.
+func warnUnassignedUser(svc *appbuild.Services, user string) {
 	if appbuild.ACLAssignsNoRole(svc, user) {
 		slog.Warn("mcp: acl.yaml assigns no role to the local user; channel tools may answer not found "+
 			"for entities it can otherwise read. Add the user under assignments in acl.yaml", "user", user)

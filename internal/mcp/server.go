@@ -31,6 +31,7 @@ import (
 
 	mcpgo "github.com/modelcontextprotocol/go-sdk/mcp"
 
+	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/config"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/lua"
@@ -399,6 +400,9 @@ type Server struct {
 	mcp       *mcpgo.Server
 	logger    *slog.Logger
 	principal principal.Principal
+	// assertedBy is the OS user behind a `--run-as` principal; see
+	// [WithAssertedBy].
+	assertedBy string
 
 	// luaTools registers lua_eval / lua_run. Off unless the wiring
 	// asks for it with [WithLuaTools]; see that option for why.
@@ -543,6 +547,14 @@ func WithPrincipal(p principal.Principal) Option {
 	return func(s *Server) { s.principal = p }
 }
 
+// WithAssertedBy records the OS user who asserted the server's principal
+// with `--run-as`. The fallback stamp in principalMiddleware then carries
+// it to the graph audit (see [audit.WithAssertedBy]). Only stdio passes it;
+// a principal that came with the request is not self-asserted.
+func WithAssertedBy(user string) Option {
+	return func(s *Server) { s.assertedBy = user }
+}
+
 // WithLuaTools registers the Lua scripting tools (lua_eval,
 // lua_run). Only the stdio wiring passes it.
 //
@@ -593,6 +605,9 @@ func (s *Server) principalMiddleware(next mcpgo.MethodHandler) mcpgo.MethodHandl
 			return next(ctx, method, req)
 		}
 		ctx = principal.With(ctx, s.principal)
+		if s.assertedBy != "" {
+			ctx = audit.WithAssertedBy(ctx, s.assertedBy)
+		}
 		if snap == nil {
 			return next(ctx, method, req)
 		}

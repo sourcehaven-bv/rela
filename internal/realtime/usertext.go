@@ -20,7 +20,7 @@ const OffText = "channels are not enabled in this project (no realtime.yaml)"
 // identity comes from $USER (stdio MCP, the CLI): a local command without
 // $USER (cron, systemd) runs as nobody. A remote transport takes identity
 // from a verified token and does not add it.
-const NoPrincipalHint = "; a local command takes its identity from $USER"
+const NoPrincipalHint = "; a local command takes its identity from $USER: set $USER, or set RELA_RUN_AS to a job identity"
 
 // IsNoPrincipal reports whether err is a no_principal denial.
 func IsNoPrincipal(err error) bool {

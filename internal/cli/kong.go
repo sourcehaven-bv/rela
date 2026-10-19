@@ -26,7 +26,6 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/cmdexec"
 	relaerrors "github.com/Sourcehaven-BV/rela/internal/errors"
 	"github.com/Sourcehaven-BV/rela/internal/output"
-	"github.com/Sourcehaven-BV/rela/internal/principal"
 	"github.com/Sourcehaven-BV/rela/internal/scheduler"
 	"github.com/Sourcehaven-BV/rela/internal/script"
 )
@@ -85,13 +84,20 @@ var (
 // (claim, renew, release, list), like token, with no existing group to nest
 // under.
 //
-//plimsoll:max-fields=52
+// Raised 52 → 54 for `channel` and `--run-as` (TKT-76G6M7). `channel` is a
+// verb family of its own (list, read, post, edit, remove, create, watch),
+// like lease. `--run-as` is a global flag because it names the identity of
+// every command that acts as one, and a per-command flag would have to be
+// repeated on each of them.
+//
+//plimsoll:max-fields=54
 type CLI struct {
 	// Global flags.
 	Project string `help:"Project directory (default: auto-detect from cwd)." env:"RELA_PROJECT"`
 	Output  string `help:"Output format (table, json)." short:"o" default:"table"`
 	Verbose bool   `help:"Verbose output." short:"v"`
 	Quiet   bool   `help:"Quiet output."   short:"q"`
+	RunAs   string `name:"run-as" env:"RELA_RUN_AS" help:"Act as this job identity, a system: or integration: name (attribution, not authentication; the audit records your OS user as asserting it)."`
 
 	// NO --world flag, deliberately (TKT-DN37J2 PR-C).
 	//
@@ -161,6 +167,7 @@ type CLI struct {
 	Renumber             RenumberCmd             `cmd:"" help:"Renumber managed order properties on orderable relations."`
 	Secrets              SecretsCmd              `cmd:"" help:"Inspect how project secrets are supplied."`
 	Lease                LeaseCmd                `cmd:"" help:"Claim, renew, release and list advisory leases on entities."`
+	Channel              ChannelCmd              `cmd:"" help:"List, read, post to and watch the realtime channels on an entity."`
 }
 
 // VersionCmd needs no services.
@@ -212,16 +219,20 @@ func runKong() int {
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	ctx = principal.With(ctx, principal.Principal{
-		User: principal.SystemUser(),
-		Tool: principal.ToolCLI,
-	})
+	identity, err := commandIdentity(ktx.Command(), cli.RunAs)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 1
+	}
+	ctx = identity.stamp(ctx)
+	if writesAsIdentity(ktx.Command()) {
+		identity.notice(os.Stderr)
+	}
 
 	var svc *appbuild.Services
 	var bundles *cliBundles
 	var bind func(context.Context) (context.Context, error)
 	if requiresProject(ktx.Command()) {
-		var err error
 		// The postgres build resolves its DSN inside Discover, from
 		// $RELA_DATABASE_URL unless a caller supplies appbuild.WithDatabaseURL.
 		// Neither is a flag, so the credential never lands on a command line.
@@ -256,9 +267,10 @@ func runKong() int {
 	}
 
 	ktx.BindTo(ctx, (*context.Context)(nil))
-	ktx.Bind(out)
+	ktx.Bind(out, identity)
 	if bundles != nil {
-		ktx.Bind(bundles.read, bundles.write, bundles.attachment, bundles.renametype, bundles.analysis, bundles.leases)
+		ktx.Bind(bundles.read, bundles.write, bundles.attachment, bundles.renametype, bundles.analysis, bundles.leases,
+			bundles.channels)
 		// The scheduler command's workspace and request-edge step are
 		// supplied here at the wiring site (consumer-side interface):
 		// appbuild.Services satisfies scheduler.WorkspaceProvider directly.
@@ -304,7 +316,7 @@ func requiresProject(cmd string) bool {
 		"rename", "analyze", "acl", "attach", "attachments", "gc", "renumber",
 		"sync", "history", "restore", "secrets",
 		"relation-history", "relation-restore", "history-tag", "history-purge", "relation-history-purge",
-		"dev", "token", "lease":
+		"dev", "token", "lease", "channel":
 		return true
 	case "migrate":
 		// Bare `rela migrate` (config-file migration) deliberately gets NO

@@ -95,3 +95,29 @@ func TestValidateRunAs(t *testing.T) {
 		})
 	}
 }
+
+func TestRefuseRunAsEnv(t *testing.T) {
+	tests := []struct {
+		name    string
+		env     map[string]string
+		wantErr bool
+	}{
+		{name: "unset", env: map[string]string{}},
+		{name: "empty", env: map[string]string{principal.RunAsEnv: ""}},
+		{name: "set", env: map[string]string{principal.RunAsEnv: "system:ci"}, wantErr: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := principal.RefuseRunAsEnv(func(k string) (string, bool) {
+				v, ok := tt.env[k]
+				return v, ok
+			})
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("RefuseRunAsEnv() error = %v, wantErr %v", err, tt.wantErr)
+			}
+			if err != nil && !strings.Contains(err.Error(), principal.RunAsEnv) {
+				t.Errorf("error %q does not name %s", err, principal.RunAsEnv)
+			}
+		})
+	}
+}

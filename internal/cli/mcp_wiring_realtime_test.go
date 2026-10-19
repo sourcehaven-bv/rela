@@ -297,8 +297,8 @@ func TestMCPStdio_ACLWatch(t *testing.T) {
 	}, 5*time.Second, 50*time.Millisecond, "a broken acl.yaml edit did not close the channel tools")
 }
 
-// TestMCPStdio_WarnsUnassignedUser pins the startup warning for a local user
-// acl.yaml names no role for.
+// TestMCPStdio_WarnsUnassignedUser pins the startup warning for a server
+// principal acl.yaml names no role for: $USER, or the --run-as identity.
 func TestMCPStdio_WarnsUnassignedUser(t *testing.T) {
 	for _, tc := range []struct {
 		name, acl, user string
@@ -307,19 +307,20 @@ func TestMCPStdio_WarnsUnassignedUser(t *testing.T) {
 		{"unassigned", stdioACLAlice, "bob", true},
 		{"assigned", stdioACLAlice, "alice", false},
 		{"no acl.yaml", "", "bob", false},
+		{"run-as unassigned", stdioACLAlice, "system:ci", true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			root := seedProject(t)
 			if tc.acl != "" {
 				writeProjectFile(t, root, "acl.yaml", tc.acl)
 			}
-			t.Setenv("USER", tc.user)
 			var logs bytes.Buffer
 			logtest.SetDefault(t, slog.NewTextHandler(&logs, nil))
 
 			svc, err := mcpServicesForTest(t, root)
 			require.NoError(t, err)
 			t.Cleanup(func() { _ = svc.Close() })
+			warnUnassignedUser(svc.current(), tc.user)
 			assert.Equal(t, tc.want, strings.Contains(logs.String(), "assigns no role to the local user"),
 				"logs: %s", logs.String())
 		})

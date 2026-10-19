@@ -610,6 +610,25 @@ var windowsReservedName = map[string]bool{
 	"lpt6": true, "lpt7": true, "lpt8": true, "lpt9": true,
 }
 
+// RunAsEnv is the environment variable behind the local CLI's `--run-as`
+// flag. It names a self-asserted identity, which only a local process may
+// use: see [RefuseRunAsEnv].
+const RunAsEnv = "RELA_RUN_AS"
+
+// RefuseRunAsEnv answers an error when [RunAsEnv] is set. rela-server and
+// rela-desktop call it at startup: they take identity from a verified login
+// or the desktop user, and an operator who exports RELA_RUN_AS for the CLI
+// must not believe the server now runs as that identity.
+//
+// Nil: lookup is rejected — the caller passes os.LookupEnv.
+func RefuseRunAsEnv(lookup func(string) (string, bool)) error {
+	if v, ok := lookup(RunAsEnv); ok && v != "" {
+		return fmt.Errorf("%s is set to %q; it applies to the local rela CLI only. "+
+			"Unset it to start the server", RunAsEnv, v)
+	}
+	return nil
+}
+
 // ValidateRunAs checks a `run_as` identity from operator-authored config.
 // The scheduler and background automation actions both call it, so the two
 // accept the same names.

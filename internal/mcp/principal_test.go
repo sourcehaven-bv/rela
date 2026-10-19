@@ -8,6 +8,7 @@ import (
 
 	mcpgo "github.com/modelcontextprotocol/go-sdk/mcp"
 
+	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
@@ -82,6 +83,33 @@ func TestPrincipalMiddleware_WithOption(t *testing.T) {
 
 	if !captured.Equal(want) {
 		t.Errorf("Principal = %+v, want %+v", captured, want)
+	}
+}
+
+// TestPrincipalMiddleware_AssertedBy pins that a `--run-as` server stamps
+// the asserting OS user for the graph audit with its fallback principal,
+// and never on a request that came with its own principal.
+func TestPrincipalMiddleware_AssertedBy(t *testing.T) {
+	t.Parallel()
+	s := &Server{principal: principal.Principal{User: "system:ci", Tool: principal.ToolMCP}}
+	WithAssertedBy("alice")(s)
+
+	capture := func(ctx context.Context) string {
+		var got string
+		h := s.principalMiddleware(
+			func(ctx context.Context, _ string, _ mcpgo.Request) (mcpgo.Result, error) {
+				got = audit.AssertedByFrom(ctx)
+				return &mcpgo.CallToolResult{}, nil
+			})
+		_, _ = h(ctx, "tools/call", &mcpgo.CallToolRequest{})
+		return got
+	}
+	if got := capture(context.Background()); got != "alice" {
+		t.Errorf("AssertedBy = %q, want alice", got)
+	}
+	caller := principal.With(context.Background(), principal.Principal{User: "usr_bob", Tool: principal.ToolMCP})
+	if got := capture(caller); got != "" {
+		t.Errorf("AssertedBy on a request-scoped principal = %q, want empty", got)
 	}
 }
 

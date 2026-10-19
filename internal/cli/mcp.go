@@ -11,7 +11,6 @@ import (
 
 	relaerrors "github.com/Sourcehaven-BV/rela/internal/errors"
 	relamcp "github.com/Sourcehaven-BV/rela/internal/mcp"
-	"github.com/Sourcehaven-BV/rela/internal/principal"
 )
 
 // McpCmd starts the MCP (Model Context Protocol) server on stdio.
@@ -20,7 +19,7 @@ import (
 type McpCmd struct{}
 
 // Run dispatches `rela mcp`.
-func (c *McpCmd) Run() error {
+func (c *McpCmd) Run(identity localIdentity) error {
 	// coverage-ignore-start: external-tool: starts the MCP stdio server (blocking Serve loop over os.Stdin/os.Stdout);
 	// requires a real project +
 	// stdio transport
@@ -37,13 +36,11 @@ func (c *McpCmd) Run() error {
 		return fmt.Errorf("mcp startup: %w", err)
 	}
 	defer svc.Close()
+	warnUnassignedUser(svc.current(), identity.Principal.User)
 
-	mcpPrincipal := principal.Principal{
-		User: principal.SystemUser(),
-		Tool: principal.ToolMCP,
-	}
 	srv, srvErr := relamcp.NewServer(svc.Deps(), Version,
-		relamcp.WithPrincipal(mcpPrincipal), relamcp.WithLuaTools(),
+		relamcp.WithPrincipal(identity.Principal), relamcp.WithAssertedBy(identity.AssertedBy),
+		relamcp.WithLuaTools(),
 		// Bound to the startup piles service. A schema reload shares its
 		// backend (ForReassembly) and rebuilds only the owner check, which
 		// under the MCP server's NopACL never has person mapping to change.
