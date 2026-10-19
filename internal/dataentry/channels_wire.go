@@ -22,7 +22,7 @@ func wireChannelAuthor(a *realtime.AuthorView) *v1.ChannelAuthor {
 	if a == nil {
 		return nil
 	}
-	return &v1.ChannelAuthor{User: a.User, Tool: a.Tool, PrincipalType: a.PrincipalType}
+	return &v1.ChannelAuthor{User: a.User, Tool: a.Tool, PrincipalType: a.PrincipalType, System: a.System}
 }
 
 func wireChannel(c realtime.ChannelView) v1.Channel {
@@ -76,7 +76,7 @@ func wireMessage(m realtime.MessageView) v1.Message {
 	out := v1.Message{
 		Seq: m.Seq, Rev: m.Rev, Type: m.Type, Author: wireChannelAuthor(m.Author), At: channelTime(m.At),
 		Props: wireProps(m.Props), ReplyTo: m.ReplyTo, ReplyCount: m.ReplyCount, EditedAt: channelTime(m.EditedAt),
-		Actions: m.Actions,
+		TriggeredBy: m.TriggeredBy, Actions: m.Actions,
 	}
 	if m.Removed != nil {
 		out.Removed = &v1.MessageRemoval{

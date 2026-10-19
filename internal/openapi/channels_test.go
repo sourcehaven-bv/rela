@@ -208,6 +208,12 @@ func TestChannelPaths(t *testing.T) {
 	if _, ok := spec.Components.Schemas[messageSchema].Properties["_actions"]; !ok {
 		t.Error("Message has no _actions")
 	}
+	if _, ok := spec.Components.Schemas[messageSchema].Properties["triggered_by"]; !ok {
+		t.Error("Message has no triggered_by")
+	}
+	if _, ok := spec.Components.Schemas[channelAuthorRef].Properties["system"]; !ok {
+		t.Error("ChannelAuthor has no system")
+	}
 	for _, name := range []string{channelHeadSchema, messageSchema, messagePageSchema, refPropSchema, ephemeralAccSchema,
 		actionAnswerSchema, "Warning"} {
 		if _, ok := spec.Components.Schemas[name]; !ok {
