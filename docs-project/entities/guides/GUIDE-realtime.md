@@ -43,9 +43,15 @@ channel_types:
           severity: { type: severity }
           summary:  { type: string, required: true }
         post: [lead]
-        promote_to: { type: timeline-entry, map: { title: summary }, relate: { type: about } }
         actions:
-          accept: { label: Accept, permission: incident.decide, promote_to: { type: decision } }
+          log:
+            label: Log
+            roles: [lead]
+            promote_to: { type: timeline-entry, map: { title: summary }, relate: { type: about } }
+          accept:
+            label: Accept
+            permission: incident.decide
+            promote_to: { type: decision, map: { title: summary } }
       typing: { persist: ephemeral, ttl: 5s, rate: 1/s, post: [lead, dpo, member, agent] }
     lifecycle:
       close:   { roles: [lead], auto: { when: "entity.status == 'closed'" } }
@@ -188,8 +194,63 @@ client_baselines:
 | `when` | A condition on the `message` record that a post must meet. |
 | `post` | The roles that may post. Receiving needs only `read`. |
 | `rate` | Posts per identity, such as `10/m`. It may only lower the limit. |
-| `promote_to` | Turns a message into an entity: `map` copies message properties to entity properties, and `relate` links the new entity to the channel's entity. Only for `log` messages. A type that declares faces needs `face`, the face to create. |
-| `actions` | Buttons on a message, each gated by `roles` or a `permission`. Only for `log` messages. |
+| `actions` | Buttons on a message, each gated by `roles` or a `permission`. An action may have a `promote_to`. Only for `log` messages. See [Actions and promote](#actions-and-promote). |
+
+## Actions and promote
+
+An action is a button on a message, such as `ack` or `accept`. A message
+carries at most one action. Once someone runs an action on a message, no
+other action can run on it. Actions run only while the channel is open.
+
+`promote_to` on an action turns the message into an entity:
+
+- `type` is the entity type to create. It must have generated ids; a type
+  with `id_type: manual` is refused when the file loads.
+- `map` copies message properties to entity properties, as
+  `entity_property: message_property`.
+- `relate` links the new entity to the channel's entity with a relation
+  type, from the new entity to the channel's entity.
+- `face` is the face to create, and is required when the type declares
+  faces.
+
+A message type cannot have a `promote_to` of its own. Put it on an action,
+so the action's gate decides who may promote.
+
+The entity is created as the person who runs the action. The create ACL,
+the `fields:` grants in `acl.yaml`, validation and automations apply, as
+they do to a create through the entity API. The audit records of the
+create carry a `triggered_by` such as
+`channel:INC-7/incident-room#12/log`: the channel, the message sequence
+number and the action.
+
+While the promote runs, the message shows the action as `pending`. A
+pending message cannot be edited, removed or take another action. When the
+entity exists, the action becomes `done` and names the entity.
+
+What happens when a promote fails depends on the storage backend:
+
+- **PostgreSQL and SQLite.** The entity, its relation and the action
+  commit in one transaction. If any of them fails, none is written, and the
+  message is free for another action. A failing automation after the
+  commit does not undo the entity; the answer carries a warning instead.
+- **Files (the default).** The entity is written first, then the action.
+  If the create is refused before anything is written, such as by the ACL
+  or validation, the message is free again. If the relation fails, the
+  entity stays and the answer carries a `promote_relate_failed` warning.
+  If marking the action fails after the entity exists, the answer carries
+  a `promote_unconfirmed` warning. For any other failure the action stays
+  `pending`, because rela cannot tell whether the entity was written.
+
+A pending action that stays pending can be released, so the message can
+take an action again. Check first whether the entity exists. Releasing
+needs `message_ops.remove`, or the action's own gate when the channel type
+declares no `remove`. The action must have been pending for 15 minutes,
+so a promote that is still running is not released under it. The channel
+audit log records each release.
+
+A message lists the actions the caller may run on it now in `_actions`.
+It runs the same checks as the `POST`, except the rate limit. A promoting
+action is not offered by a process that cannot write the graph.
 
 ## Lifecycle and periods
 
@@ -233,6 +294,8 @@ unknown entity type "nope"`. It checks:
   `schema.yaml`;
 - that some role in `acl.yaml` grants each `permission`;
 - that every condition compiles;
+- that `promote_to` is on an action, not on a message type, and names a
+  type with generated ids;
 - that each `promote_to` fills every required property of its type from a
   required message property, maps each property to one of a matching type,
   sets no computed property, and names a face when the type declares faces;
@@ -281,6 +344,8 @@ The data-entry API serves channels under the entity they are attached to.
 | `POST .../{channel}/messages` | Posts a message: `{"type": ..., "props": {...}, "reply_to": n}`. A `log` message gets a 201 with the message; an `ephemeral` one gets a 202. |
 | `PATCH .../{channel}/messages/{seq}` | Edits a message: `{"props": {...}}`. |
 | `DELETE .../{channel}/messages/{seq}` | Removes a message. The body may hold a `reason`. |
+| `POST .../{channel}/messages/{seq}/_action/{name}` | Runs an action. The body is empty or `{}`. The answer is `{"message": ..., "warnings": [...]}`. |
+| `DELETE .../{channel}/messages/{seq}/_action` | Releases a pending action. The body is empty or `{}`. The answer is the message. |
 | `POST .../{channel}/_lifecycle/{op}` | Runs `close`, `reopen`, `archive` or `delete`. The body is empty or `{}`. A `delete` gets a 204; the other operations get the channel. |
 
 `{channel}` is `_channels/{type}` or `_channels/{type}/{name}`.
@@ -327,12 +392,13 @@ Every error is a problem body (`application/problem+json`) with a `type`.
 | --- | --- |
 | 404 `not_found` | Realtime is off, or the entity is hidden, does not exist, or is not of the collection's type. The body is the same as for the entity `GET`. |
 | 404 | The channel type is not attached to the entity type, or the channel or the message does not exist. |
-| 403 | The caller may not perform the operation, the edit window has passed, the lifecycle operation is not declared (`lifecycle_not_offered`), or its `condition` does not hold (`lifecycle_denied`). `title` says what the operation needs and `detail` names the rule in `realtime.yaml`, such as `channel_types.room.message_types.text.post`. |
+| 403 | The caller may not perform the operation, the edit window has passed, the lifecycle operation is not declared (`lifecycle_not_offered`), or its `condition` does not hold (`lifecycle_denied`). For actions: the message type does not declare the action, or this process cannot promote (`action_not_offered`), the action's gate refuses (`action_denied`), or the create ACL or a `fields:` grant refuses the promote (`promote_denied`). `title` says what the operation needs and `detail` names the rule in `realtime.yaml`, such as `channel_types.room.message_types.text.post`. |
 | 400 | The message does not match its type (`invalid_message`), has too many properties, or a removal lacks a required reason. |
 | 400 | The body is not valid JSON, has unknown fields, or a query parameter is not a positive number. |
 | 413 `too_large` | The message is over `message_bytes`. |
 | 422 | A `ref` names an entity that does not exist or that the caller cannot read. Both get the same body. |
-| 409 | The channel is not open, the channel is not in a state the lifecycle operation starts from (`lifecycle_wrong_state`), `retention` keeps the channel (`retention_active`), a concurrent change won (`conflict`), the message was removed, `channels_per_entity` is reached, the POST tried to open a channel of a `one` type, or the configuration changed during the request. |
+| 422 `promote_invalid` | The promoted entity or its relation fails validation, for example a `unique` property that another entity already has. |
+| 409 | The channel is not open, the channel is not in a state the lifecycle operation starts from (`lifecycle_wrong_state`), `retention` keeps the channel (`retention_active`), a concurrent change won (`conflict`), the message was removed, `channels_per_entity` is reached, the POST tried to open a channel of a `one` type, or the configuration changed during the request. For actions: the message already carries an action (`action_taken`), its action is pending (`action_pending`, also for an edit, a removal, or a release before 15 minutes), a release finds no pending action (`action_not_pending`), or the promoted entity already exists (`promote_conflict`). |
 | 429 | A rate limit. `Retry-After` gives the seconds to wait, rounded up. |
 
 The OpenAPI document at `/api/v1/_openapi.json` lists these paths for every
