@@ -8,8 +8,12 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/Sourcehaven-BV/rela/internal/acl"
+	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
+	"github.com/Sourcehaven-BV/rela/internal/metamodel"
+	"github.com/Sourcehaven-BV/rela/internal/statemachine"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
@@ -19,12 +23,39 @@ func rollsBack(b concBackend) bool {
 	return b.name == "sqlite" || strings.HasPrefix(b.name, "postgres")
 }
 
+// openLinkedBackend is openConcBackend with an audit sink.
+func openLinkedBackend(t *testing.T, b concBackend) (store.Store, *entitymanager.Manager, *audit.Memory) {
+	t.Helper()
+	st := b.open(t)
+	meta, err := metamodel.Parse([]byte(concurrencyMetamodelYAML))
+	require.NoError(t, err)
+	sink := audit.NewMemory()
+	mgr, err := entitymanager.New(entitymanager.Deps{
+		Store: st, Meta: meta, Templater: nopTemplater{}, Audit: sink, ACL: acl.NopACL{},
+		Transitions: statemachine.EmptySet(), FieldGate: entitymanager.AllowAllFieldGate{},
+		AnchorGuard: entitymanager.NopAnchorGuard{},
+	})
+	require.NoError(t, err)
+	return st, mgr, sink
+}
+
+// linkedAuditOps lists the ops of the audit records about id, in order.
+func linkedAuditOps(sink *audit.Memory, id string) []string {
+	var ops []string
+	for _, r := range sink.Records() {
+		if r.Subject != nil && (r.Subject.ID == id || r.Subject.FromID == id) {
+			ops = append(ops, r.Op)
+		}
+	}
+	return ops
+}
+
 // TestCreateLinked_CommitsTogether pins that CreateLinked writes the
 // entity and its edge, and runs InTx on a view that sees both.
 func TestCreateLinked_CommitsTogether(t *testing.T) {
 	for _, backend := range concBackends {
 		t.Run(backend.name, func(t *testing.T) {
-			st, mgr := openConcBackend(t, backend)
+			st, mgr, sink := openLinkedBackend(t, backend)
 			target := mustCreateNote(t, mgr, "target")
 			e := entity.New("", "note")
 			e.SetString("title", "new")
@@ -49,18 +80,20 @@ func TestCreateLinked_CommitsTogether(t *testing.T) {
 			require.NotNil(t, res.Relation)
 			_, err = st.GetRelation(context.Background(), entity.RelationKey{From: id, Type: "links", To: target.ID})
 			require.NoError(t, err)
+			require.Equal(t, []string{audit.OpCreateEntity, audit.OpCreateRelation}, linkedAuditOps(sink, id),
+				"the entity record comes before the edge record")
 		})
 	}
 }
 
 // TestCreateLinked_InTxErrorRollsBack pins the atomicity: when InTx fails,
 // a store with a real transaction keeps neither the entity nor the edge.
-// The filesystem and memory stores keep what they wrote.
+// The filesystem and memory stores keep what they wrote, and audit it.
 func TestCreateLinked_InTxErrorRollsBack(t *testing.T) {
 	boom := errors.New("mark failed")
 	for _, backend := range concBackends {
 		t.Run(backend.name, func(t *testing.T) {
-			st, mgr := openConcBackend(t, backend)
+			st, mgr, sink := openLinkedBackend(t, backend)
 			target := mustCreateNote(t, mgr, "target")
 			e := entity.New("", "note")
 			e.SetString("title", "new")
@@ -78,9 +111,12 @@ func TestCreateLinked_InTxErrorRollsBack(t *testing.T) {
 			if rollsBack(backend) {
 				require.ErrorIs(t, getErr, store.ErrNotFound)
 				require.ErrorIs(t, relErr, store.ErrNotFound)
+				require.Empty(t, linkedAuditOps(sink, id), "nothing is audited for a rolled-back create")
 			} else {
 				require.NoError(t, getErr)
 				require.NoError(t, relErr)
+				require.Equal(t, []string{audit.OpCreateEntity, audit.OpCreateRelation}, linkedAuditOps(sink, id),
+					"a kept entity and edge are audited")
 			}
 		})
 	}
@@ -147,4 +183,39 @@ func TestCreateLinked_RelateBestEffort(t *testing.T) {
 			require.False(t, entitymanager.WroteNothing(err), "the edge failed inside the transaction")
 		}
 	}
+}
+
+// TestCreateLinked_RefusedWriteWroteNothing pins that a refusal of the
+// entity write inside the transaction, here a unique collision, is
+// reported as having written nothing, on every store.
+func TestCreateLinked_RefusedWriteWroteNothing(t *testing.T) {
+	for _, backend := range concBackends {
+		t.Run(backend.name, func(t *testing.T) {
+			_, mgr, sink := openLinkedBackend(t, backend)
+			first := entity.New("", "person")
+			first.SetString("email", "a@example.com")
+			_, err := mgr.CreateEntity(context.Background(), first, entity.CreateOptions{})
+			require.NoError(t, err)
+			before := len(sink.Records())
+			dup := entity.New("", "person")
+			dup.SetString("email", "a@example.com")
+			_, err = entitymanager.CreateLinked(context.Background(), mgr, entitymanager.LinkedCreate{Entity: dup})
+			require.Error(t, err)
+			require.True(t, entitymanager.WroteNothing(err), "%v", err)
+			require.Len(t, sink.Records(), before, "a refused create is not audited")
+		})
+	}
+}
+
+// TestCheckCreate pins that the probe answers the create's ACL question
+// and leaves no audit record, allowed or not.
+func TestCheckCreate(t *testing.T) {
+	t.Parallel()
+	sink := audit.NewMemory()
+	denied, _ := newManagerWithACL(t, acl.ReadOnlyACL{}, sink)
+	var forbidden *acl.ForbiddenError
+	require.ErrorAs(t, entitymanager.CheckCreate(context.Background(), denied, "decision", ""), &forbidden)
+	require.Empty(t, sink.Records(), "a probe is not an attempted write")
+	allowed, _ := newManagerWithACL(t, acl.NopACL{}, sink)
+	require.NoError(t, entitymanager.CheckCreate(context.Background(), allowed, "decision", ""))
 }

@@ -122,6 +122,13 @@ func createCore(
 	}
 }
 
+// entityStoreWriteError is a [createCoreOnce] failure of the store write
+// that is not a refusal of the entity: the store itself failed.
+type entityStoreWriteError struct{ err error }
+
+func (e entityStoreWriteError) Error() string { return "write entity: " + e.err.Error() }
+func (e entityStoreWriteError) Unwrap() error { return e.err }
+
 // idMintAttempts bounds [createCore]'s retry on a generated-ID collision.
 // Each loss means another create of the same type committed in between.
 // With the doubling spread, 10 rounds absorb a burst far larger than the
@@ -180,7 +187,7 @@ func createCoreOnce(
 		if errors.Is(err, store.ErrConflict) {
 			return nil, nil, fmt.Errorf("%w: %s", ErrEntityAlreadyExists, e.ID)
 		}
-		return nil, nil, fmt.Errorf("write entity: %w", err)
+		return nil, nil, entityStoreWriteError{err}
 	}
 
 	return e, warnings, nil

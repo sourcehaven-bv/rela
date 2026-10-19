@@ -5,6 +5,9 @@ import (
 	"errors"
 	"fmt"
 
+	"log/slog"
+
+	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/store"
@@ -51,11 +54,20 @@ type LinkedResult struct {
 // It checks what [Manager.CreateEntity] and [Manager.CreateRelation] check,
 // as the caller, before anything is written: the create ACL, the field
 // gate, the relation ACL, the edge's target and the relation-type tuple.
-// The audit records, the alias notification, the automations and the
-// cascade run after the commit, as they do for CreateEntity. A failure
-// there is [LinkedResult.FollowUpErr], not an error, because the writes
-// are committed. A failed check is reported so that [WroteNothing] knows
-// it.
+// The relation ACL runs before the new entity has an id. That is sound
+// because a relation write is decided from the source type and the
+// caller's global roles only, never from the source id (pinned by
+// acl.TestRelationWrite_DecisionIgnoresSourceID).
+//
+// The entity audit record, the alias notification, the automations and
+// the cascade run after the commit, as they do for CreateEntity, followed
+// by the relation audit record. A failure there is
+// [LinkedResult.FollowUpErr], not an error, because the writes are
+// committed. When the transaction fails on a store that cannot roll back
+// and the entity stays written, those steps still run for it before the
+// error is returned, so no entity exists without its audit record. A
+// failed check, and a refused entity write, are reported so that
+// [WroteNothing] knows them.
 //
 // A package function rather than a Manager method: Manager is at its
 // method cap.
@@ -87,13 +99,19 @@ func CreateLinked(ctx context.Context, m *Manager, lc LinkedCreate) (*LinkedResu
 	out := &LinkedResult{}
 	var created *entity.Entity
 	var warnings []entity.Warning
+	var written *entity.Relation
 	err := m.deps.Store.Tx(ctx, func(view store.Store) error {
 		txCtx := store.ContextInTx(ctx)
 		deps := m.deps
 		deps.Store = view
 		c, w, err := createCore(txCtx, deps, e.Type, createCoreArgs(e, opts))
 		if err != nil {
-			return err
+			if isEntityStoreWriteError(err) {
+				return err
+			}
+			// A refusal: createCore's only write is the entity row, and
+			// it was refused.
+			return beforeWriteError{err}
 		}
 		created, warnings = c, w
 		if rel != nil {
@@ -102,7 +120,9 @@ func CreateLinked(ctx context.Context, m *Manager, lc LinkedCreate) (*LinkedResu
 				if !lc.RelateBestEffort {
 					return err
 				}
-				out.RelateErr, rel = err, nil
+				out.RelateErr = err
+			} else {
+				written = rel
 			}
 		}
 		if lc.InTx != nil {
@@ -111,29 +131,84 @@ func CreateLinked(ctx context.Context, m *Manager, lc LinkedCreate) (*LinkedResu
 		return nil
 	})
 	if err != nil {
+		if created != nil {
+			finishKept(ctx, m, created, warnings, written, opts.SkipAutomation)
+		}
 		return nil, err
-	}
-	if rel != nil {
-		m.recordRelationAudit(ctx, audit.OpCreateRelation, rel, "created")
-		out.Relation = rel
 	}
 	res, err := finishCreate(ctx, m, created, warnings, opts.SkipAutomation)
 	out.Create, out.FollowUpErr = res, err
+	if written != nil {
+		m.recordRelationAudit(ctx, audit.OpCreateRelation, written, "created")
+		out.Relation = written
+	}
 	return out, nil
 }
 
-// beforeWriteError is a [CreateLinked] failure raised before its
-// transaction began; see [WroteNothing].
+// finishKept runs the post-commit steps of [CreateLinked] for an entity
+// that a failed transaction left written, on a store that cannot roll
+// back. On a store that rolled back the entity is gone and nothing runs.
+// Their failures are logged: the caller already gets the transaction's
+// error.
+func finishKept(
+	ctx context.Context, m *Manager, created *entity.Entity, warnings []entity.Warning,
+	rel *entity.Relation, skipAutomation bool,
+) {
+	if _, err := m.deps.Store.GetEntity(ctx, created.Ref()); err != nil {
+		return
+	}
+	if _, err := finishCreate(ctx, m, created, warnings, skipAutomation); err != nil {
+		slog.WarnContext(ctx, "entitymanager: CreateLinked: a step after the kept create failed",
+			"entity", created.ID, "error", err)
+	}
+	if rel == nil {
+		return
+	}
+	if _, err := m.deps.Store.GetRelation(ctx, rel.Identity()); err == nil {
+		m.recordRelationAudit(ctx, audit.OpCreateRelation, rel, "created")
+	}
+}
+
+// CheckCreate answers the create ACL question [Manager.CreateEntity] asks
+// for an entity of typ at face, as the caller on ctx, without writing or
+// auditing: an affordance probe. It reads no store; a refusal is the
+// *[acl.ForbiddenError] the create would return, and a face the type
+// does not admit is the face error.
+//
+// A package function rather than a Manager method: Manager is at its
+// method cap.
+func CheckCreate(ctx context.Context, m *Manager, typ string, face entity.Face) error {
+	if err := m.deps.requireCreateFaceFor(typ, face); err != nil {
+		return err
+	}
+	return m.authorizeAndAudit(withAffordanceProbe(ctx), acl.WriteRequest{
+		Op: acl.OpCreate, Subject: acl.NewEntitySubject(typ, "", face),
+	})
+}
+
+// beforeWriteError is a [CreateLinked] failure after which nothing was
+// written: a refused check before the transaction, or a refused entity
+// write inside it; see [WroteNothing].
 type beforeWriteError struct{ err error }
 
 func (e beforeWriteError) Error() string { return e.err.Error() }
 func (e beforeWriteError) Unwrap() error { return e.err }
 
-// WroteNothing reports whether err is a [CreateLinked] failure raised
-// before anything was written: a refused check of the entity or the edge.
-// An error it does not recognize may still have written nothing.
+// WroteNothing reports whether err is a [CreateLinked] failure after which
+// nothing was written: a refused check of the entity or the edge, or a
+// refused entity write such as a validation failure, an illegal
+// state-machine entry or an existing id. An error it does not recognize
+// may still have written nothing.
 func WroteNothing(err error) bool {
 	_, ok := errors.AsType[beforeWriteError](err)
+	return ok
+}
+
+// isEntityStoreWriteError reports whether err is a [createCore] failure of
+// the store write itself, rather than a refusal. Whether such a write left
+// anything behind is unknown.
+func isEntityStoreWriteError(err error) bool {
+	_, ok := errors.AsType[entityStoreWriteError](err)
 	return ok
 }
 

@@ -74,6 +74,7 @@ var callerGates = map[string]string{
 // deliberate exception.
 var noReadGateNeeded = map[string]string{
 	"prepareCreate": "CreateEntity's checks: creates a row; no stored row exists for a 403 to confirm",
+	"CheckCreate":   "probes CreateEntity's type-level create question; it names no stored row",
 	"CreateLinked": "creates a row and an edge from it: the edge's source is the row being created, so " +
 		"no stored row exists for a 403 to confirm; prepareRelationFrom gates the edge's target",
 	"recreateEntity": "authorizes a create of a face that is not stored, as CreateEntity does",

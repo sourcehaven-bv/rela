@@ -308,3 +308,57 @@ relation_grants:
 			"grantsPermission")
 	}
 }
+
+// TestRelationWrite_DecisionIgnoresSourceID pins that a relation write is
+// decided from the source TYPE and global roles only, never from the
+// source id: a role conferred on the source entity grants no edge from it.
+// entitymanager.CreateLinked relies on this when it authorizes the edge of
+// an entity whose id is not generated yet; if relation writes ever become
+// row-scoped, that pre-check must move to where the id is known.
+func TestRelationWrite_DecisionIgnoresSourceID(t *testing.T) {
+	t.Parallel()
+	g := newFakeGraph()
+	g.add("alice", "owns", "TKT-1")
+	d := newTestDeclarative(t, mustPolicy(t, `
+roles:
+  owner:
+    read: ["*"]
+    create: [ticket]
+    update: [ticket]
+  writer:
+    read: ["*"]
+    create: [ticket]
+assignments:
+  bob: writer
+role_relations:
+  owns:
+    confers: owner
+`), g)
+	for _, user := range []string{"alice", "bob"} {
+		r, err := d.ForIdentity(identityFor(t.Context(), t, d, principal.Principal{User: user, Tool: principal.ToolCLI}))
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, op := range []Op{OpCreate, OpUpdate, OpDelete} {
+			withID := r.AuthorizeWrite(t.Context(), WriteRequest{Op: op,
+				Subject: RelationSubject{Type: "links", FromType: "ticket", FromID: "TKT-1"}})
+			noID := r.AuthorizeWrite(t.Context(), WriteRequest{Op: op,
+				Subject: RelationSubject{Type: "links", FromType: "ticket"}})
+			if withID.Allow != noID.Allow {
+				t.Errorf("%s %s: allow with source id = %v, without = %v", user, op, withID.Allow, noID.Allow)
+			}
+		}
+	}
+	r, err := d.ForIdentity(identityFor(t.Context(), t, d, principal.Principal{User: "alice", Tool: principal.ToolCLI}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := r.AuthorizeWrite(t.Context(), WriteRequest{Op: OpCreate,
+		Subject: RelationSubject{Type: "links", FromType: "ticket", FromID: "TKT-1"}}); got.Allow {
+		t.Error("the owner role conferred on TKT-1 granted an edge from it")
+	}
+	if got := r.AuthorizeWrite(t.Context(), WriteRequest{Op: OpUpdate,
+		Subject: NewFacelessEntitySubject("ticket", "TKT-1")}); !got.Allow {
+		t.Fatalf("precondition: alice owns TKT-1 and may update it: %s", got.Reason)
+	}
+}
