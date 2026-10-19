@@ -216,11 +216,13 @@ func TestRealtimeWorker_TwoProcessesOneLeader(t *testing.T) {
 	done := RunRealtimeWorker(context.Background(), &Services{realtimeWorker: b.w})
 	t.Cleanup(func() { b.w.stop(); <-done })
 
-	scans := a.src.scans.Load()
 	room := channels.Key{Anchor: channels.Anchor{ID: "T-1"}, Type: "room"}
 	f.write(t, "ticket", "T-1", "", map[string]any{"status": "open"})
 	require.Eventually(t, func() bool { return len(f.bodies(t, room)) == 1 },
 		5*time.Second, 10*time.Millisecond, "a store event posts")
+	// The start reconcile keeps scanning after it writes the index; the
+	// leader posts only after it, so the count is stable from here.
+	scans := a.src.scans.Load()
 	for i := range 5 {
 		f.write(t, "ticket", "T-1", "", map[string]any{"status": "open", "n": i})
 	}
