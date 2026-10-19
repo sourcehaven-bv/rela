@@ -181,7 +181,7 @@ func postProposal(t *testing.T, svc *appbuild.Services, props map[string]any) in
 // actionStatus reads the action status of message seq as alice.
 func actionStatus(t *testing.T, svc *appbuild.Services, seq int64) channels.ActionStatus {
 	t.Helper()
-	page, err := appbuild.ChannelService(svc).Messages(promoteAs(t, svc, "alice"), promoteRoom, channels.Page{})
+	page, err := appbuild.ChannelService(svc).Read(promoteAs(t, svc, "alice"), promoteRoom, realtime.ReadRequest{})
 	require.NoError(t, err)
 	for _, m := range page.Messages {
 		if m.Seq == seq {
@@ -347,7 +347,7 @@ func TestPromote_MarkFailureRollsBack(t *testing.T) {
 // messageActions returns the _actions of message seq as user reads them.
 func messageActions(t *testing.T, svc *appbuild.Services, user string, seq int64) []string {
 	t.Helper()
-	page, err := appbuild.ChannelService(svc).Messages(promoteAs(t, svc, user), promoteRoom, channels.Page{})
+	page, err := appbuild.ChannelService(svc).Read(promoteAs(t, svc, user), promoteRoom, realtime.ReadRequest{})
 	require.NoError(t, err)
 	for _, m := range page.Messages {
 		if m.Seq == seq {

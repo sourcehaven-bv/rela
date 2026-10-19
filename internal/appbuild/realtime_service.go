@@ -77,10 +77,16 @@ func policyChannelService(s *Services) (*realtime.Service, *acl.Declarative, err
 	if err != nil {
 		return nil, nil, err
 	}
+	// A promote writes the graph through s's own manager, as s's entity
+	// tools do; acl.yaml decides only whether the action may run.
+	promoter, err := newManagerPromoter(s.entityManager, txChannelsFor(s.Store(), s.channels))
+	if err != nil {
+		return nil, nil, err
+	}
 	svc, _, err := newRealtimeService(realtimeInputs{
 		meta: s.base.meta, worlds: s.base.worlds, config: realtimeConfigSource{h: s.base.realtime},
 		store: s.Store(), channels: s.channels, local: s.realtimeLocal,
-		declarative: c.declarative, redactor: c.fields.redactor, writes: c.acl,
+		declarative: c.declarative, redactor: c.fields.redactor, writes: c.acl, promoter: promoter,
 	})
 	if err != nil {
 		return nil, nil, err

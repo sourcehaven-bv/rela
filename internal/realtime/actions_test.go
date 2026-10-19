@@ -135,7 +135,7 @@ func moderator() *fakeAccess { return user("mo", "chat.moderate") }
 // offered returns the _actions of message seq as a reads them.
 func (h *harness) offeredOn(t *testing.T, a *fakeAccess, addr RawAddress, seq int64) []string {
 	t.Helper()
-	page, err := h.svc.Messages(as(a), addr, channels.Page{})
+	page, err := h.svc.Read(as(a), addr, ReadRequest{})
 	require.NoError(t, err)
 	for _, m := range page.Messages {
 		if m.Seq == seq {
@@ -496,7 +496,7 @@ func TestAction_GatesOncePerPage(t *testing.T) {
 			h.post(t, user("ann"), proposal("x"))
 		}
 		a := decider()
-		_, err := h.svc.Messages(as(a), room, channels.Page{})
+		_, err := h.svc.Read(as(a), room, ReadRequest{})
 		require.NoError(t, err)
 		return a.permCalls.Load(), p.checks.Load()
 	}

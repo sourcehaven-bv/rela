@@ -157,13 +157,17 @@ func TestRead_OneCaptureFlatCost(t *testing.T) {
 
 			acc := &countingAccess{AccessSource: fakeAccessSource{}}
 			cfg := &countingConfig{ConfigSource: h.cfg}
-			svc, err := New(Deps{Store: h.store, Config: cfg, Access: acc, Anchors: h.anchors, Refs: h.refs, Local: h.local})
+			svc, err := New(Deps{
+				Store: h.store, Config: cfg, Access: acc, Anchors: h.anchors, Refs: h.refs, Local: h.local, Promoter: NoPromoter{},
+			})
 			require.NoError(t, err)
 			h.store.heads.Store(0)
 			h.store.messages.Store(0)
 			h.store.typeRecs.Store(0)
 			h.anchors.calls.Store(0)
 			h.refs.calls.Store(0)
+			// New reads the config once to warn about promote actions.
+			cfg.n.Store(0)
 
 			got, err := svc.Read(as(user("bob")), room, ReadRequest{Signals: true, Schemas: true, Actions: true})
 			require.NoError(t, err)

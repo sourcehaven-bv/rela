@@ -67,6 +67,7 @@ func denialConstructors() map[string]*DenialError {
 		"signalsNotKept":     signalsNotKept("typing"),
 		"configChanged":      configChanged(),
 		"noPrincipal":        noPrincipal(),
+		"notPromoting":       notPromoting(),
 		"readDenied":         readDenied(ct),
 		"postDenied":         postDenied(ct, mt),
 		"gateDenied":         gateDenied(TypeCreateDenied, "creating", "r", realtimecfg.Gate{}, nil),
