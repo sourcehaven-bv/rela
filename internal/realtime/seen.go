@@ -66,7 +66,7 @@ func (s seenStore) loadIndex(ctx context.Context) (seenIndex, error) {
 		return idx, fmt.Errorf("realtime: read the trigger index: %w", err)
 	}
 	if err := json.Unmarshal(data, &idx); err != nil {
-		return seenIndex{Rules: map[string]seenRule{}}, fmt.Errorf("realtime: read the trigger index: %w", err)
+		return seenIndex{Rules: map[string]seenRule{}}, corruptError{key: seenIndexKey, err: err}
 	}
 	if idx.Rules == nil {
 		idx.Rules = map[string]seenRule{}
@@ -85,6 +85,19 @@ func (s seenStore) saveIndex(ctx context.Context, idx seenIndex) error {
 	return nil
 }
 
+// corruptError is a seen-set value that does not decode. The engine
+// cannot trust any of it, so it starts the rule over with a silent
+// baseline, rather than stopping every rule on one bad value.
+type corruptError struct {
+	key string
+	err error
+}
+
+func (e corruptError) Error() string {
+	return "realtime: " + e.key + " does not decode: " + e.err.Error()
+}
+func (e corruptError) Unwrap() error { return e.err }
+
 // shardKey is the KV key of shard n of a rule split over shards.
 func shardKey(ruleID string, shards, n int) string {
 	return seenPrefix + ruleID + "/" + strconv.Itoa(shards) + "-" + strconv.Itoa(n)
@@ -100,7 +113,7 @@ func (s seenStore) loadShard(ctx context.Context, key string) (seenShard, error)
 	}
 	out := seenShard{}
 	if err := json.Unmarshal(data, &out); err != nil {
-		return nil, fmt.Errorf("realtime: read %s: %w", key, err)
+		return nil, corruptError{key: key, err: err}
 	}
 	return out, nil
 }

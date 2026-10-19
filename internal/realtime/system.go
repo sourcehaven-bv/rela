@@ -2,6 +2,7 @@ package realtime
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -18,7 +19,8 @@ type systemWriter struct {
 }
 
 // post appends a message of mt with props to key as [systemAuthor], naming
-// triggeredBy. It charges no rate bucket: the trigger engine caps its own
+// triggeredBy. A post that can never succeed returns a permanentError.
+// It charges no rate bucket: the trigger engine caps its own
 // posts per round. With requireOpen the store refuses a channel that is
 // not open with [channels.ErrNotOpen], in the same step as the append. A
 // missing cardinality-one channel is created.
@@ -32,21 +34,35 @@ func (w systemWriter) post(
 ) error {
 	vp, err := validateProps(mt, props, snap.Config.Limits().MessageBytes)
 	if err != nil {
-		return err
+		return permanentError{err}
 	}
 	if !whenHolds(ctx, mt, vp.props, now) {
-		return fmt.Errorf("realtime: the message does not meet the when: condition of %s", mt.Name)
+		return permanentError{fmt.Errorf("realtime: the message does not meet the when: condition of %s", mt.Name)}
 	}
 	if recErr := recordType(ctx, w.store, w.local, w.cfg, snap, ct); recErr != nil {
+		var denial *DenialError
+		if errors.As(recErr, &denial) && denial.Type == TypeChannelTypeConflict {
+			return permanentError{recErr}
+		}
 		return recErr
 	}
 	_, err = w.store.Append(ctx, key, channels.NewMessage{
 		Type: mt.Name, Author: systemAuthor(), At: now, Props: vp.props, TriggeredBy: triggeredBy,
 		RequireOpen: requireOpen,
 	})
+	if errors.Is(err, channels.ErrTooManyChannels) || errors.Is(err, channels.ErrTooLarge) {
+		return permanentError{err}
+	}
 	if err != nil {
 		return err
 	}
 	w.local.mark(key)
 	return nil
 }
+
+// permanentError is a post that fails the same way however often it is
+// tried, so the engine gives it up at once rather than retrying.
+type permanentError struct{ err error }
+
+func (e permanentError) Error() string { return e.err.Error() }
+func (e permanentError) Unwrap() error { return e.err }

@@ -132,11 +132,14 @@ type memKV struct {
 	data    map[string][]byte
 	failPut bool
 	puts    atomic.Int64
+	gets    atomic.Int64
+	bytes   atomic.Int64
 }
 
 func newMemKV() *memKV { return &memKV{data: map[string][]byte{}} }
 
 func (k *memKV) Get(_ context.Context, key string) ([]byte, error) {
+	k.gets.Add(1)
 	k.mu.Lock()
 	defer k.mu.Unlock()
 	v, ok := k.data[key]
@@ -148,6 +151,7 @@ func (k *memKV) Get(_ context.Context, key string) ([]byte, error) {
 
 func (k *memKV) Put(_ context.Context, key string, data []byte) error {
 	k.puts.Add(1)
+	k.bytes.Add(int64(len(data)))
 	k.mu.Lock()
 	defer k.mu.Unlock()
 	if k.failPut {
@@ -516,7 +520,8 @@ func TestTriggers_FailingSaveDoesNotRepost(t *testing.T) {
 	th.kv.failPut = true
 	th.ticket(1, map[string]any{"status": "open"})
 	require.Equal(t, 1, th.round(t).Posted)
-	for range realtimelimits.TriggerRetries + 1 {
+	for range 3 {
+		th.clock.Add(realtimelimits.TriggerRetryMaxDelay)
 		th.ticket(1, map[string]any{"status": "open"})
 		require.Zero(t, th.round(t).Posted, "the unsaved entry is kept in memory")
 	}
@@ -525,39 +530,311 @@ func TestTriggers_FailingSaveDoesNotRepost(t *testing.T) {
 	th.ticket(1, map[string]any{"status": "open"})
 	th.round(t)
 	require.Greater(t, th.kv.puts.Load(), puts)
-	require.Empty(t, th.trg.dirty, "the shard is saved once the KV is back")
+	require.Empty(t, th.trg.lead.dirty, "the shard is saved once the KV is back")
 	require.Equal(t, []string{"Opened"}, th.bodies(t, "TKT-1"))
 }
 
-// failingAppend fails every Append.
+func TestTriggers_ResetForgetsLeaderState(t *testing.T) {
+	th := newTriggerHarness(t, triggerRealtime)
+	th.src.set("ticket", "TKT-1", "", map[string]any{"status": "new", "title": "A"})
+	th.reconcile(t)
+	th.kv.failPut = true
+	th.ticket(1, map[string]any{"status": "open", "title": "A"})
+	require.Equal(t, 1, th.round(t).Posted)
+	th.ticket(1, map[string]any{"status": "open", "title": "B"})
+	require.Equal(t, 1, th.round(t).Posted)
+	th.ticket(1, map[string]any{"status": "open", "title": "C"})
+	th.round(t) // held back by the cooldown
+	th.trg.Note(Change{EntityType: "ticket", ID: "TKT-2"})
+	require.NotEmpty(t, th.trg.lead.dirty)
+	require.NotEmpty(t, th.trg.lead.deferred)
+	require.NotEmpty(t, th.trg.lead.lastPost)
+
+	th.trg.Reset()
+	require.Empty(t, th.trg.lead.dirty, "a stale unsaved shard is never saved over the next leader's")
+	require.Empty(t, th.trg.lead.deferred)
+	require.Empty(t, th.trg.lead.lastPost)
+	require.Empty(t, th.trg.lead.failures)
+	require.Zero(t, th.trg.lead.queued)
+	require.False(t, th.trg.Pending())
+	th.kv.failPut = false
+	require.Equal(t, 1, th.reconcile(t).Posted, "the reconcile finds what was dropped: at least once")
+}
+
+// failingAppend fails every Append with err, or a transient error when
+// err is nil.
 type failingAppend struct {
 	channels.Store
+	err   error
 	calls atomic.Int64
 }
 
 func (s *failingAppend) Append(context.Context, channels.Key, channels.NewMessage) (channels.Message, error) {
 	s.calls.Add(1)
+	if s.err != nil {
+		return channels.Message{}, s.err
+	}
 	return channels.Message{}, errors.New("store down")
 }
 
-func TestTriggers_FailingPostGivesUp(t *testing.T) {
-	th := newTriggerHarness(t, triggerRealtime)
-	fa := &failingAppend{Store: th.store}
+func (th *triggerHarness) withStore(t *testing.T, st channels.Store) {
+	t.Helper()
 	trg, err := NewTriggers(TriggerDeps{
-		Store: fa, Config: th.cfg, Local: th.local, Meta: testMeta(t), Rows: th.src, Seen: th.kv,
+		Store: st, Config: th.cfg, Local: th.local, Meta: testMeta(t), Rows: th.src, Seen: th.kv,
 	})
 	require.NoError(t, err)
 	th.trg = trg
+}
+
+func TestTriggers_FailingPostRetriesForAWindow(t *testing.T) {
+	th := newTriggerHarness(t, triggerRealtime)
+	fa := &failingAppend{Store: th.store}
+	th.withStore(t, fa)
 	th.src.set("ticket", "TKT-1", "", map[string]any{"status": "new"})
 	th.reconcile(t)
 	th.ticket(1, map[string]any{"status": "open"})
-	var failed int
-	for range realtimelimits.TriggerRetries + 2 {
+	require.Zero(t, th.round(t).Failed)
+	require.Equal(t, int64(1), fa.calls.Load())
+	require.False(t, th.trg.Pending(), "the retry waits")
+	th.ticket(1, map[string]any{"status": "open"})
+	th.round(t)
+	require.Equal(t, int64(1), fa.calls.Load(), "a new change does not retry before the delay")
+
+	failed := 0
+	start := th.clock.Now()
+	for th.clock.Now().Sub(start) <= realtimelimits.TriggerRetryWindow+realtimelimits.TriggerRetryMaxDelay {
+		th.clock.Add(realtimelimits.TriggerRetryMaxDelay)
 		failed += th.round(t).Failed
 	}
-	require.Equal(t, 1, failed)
-	require.Equal(t, int64(realtimelimits.TriggerRetries), fa.calls.Load(), "bounded retries")
+	require.Equal(t, 1, failed, "given up once the window passed")
+	calls := fa.calls.Load()
+	require.Greater(t, calls, int64(3))
+	require.Less(t, calls, int64(20), "the delay grows")
+	th.clock.Add(realtimelimits.TriggerRetryMaxDelay)
+	th.round(t)
+	require.Equal(t, calls, fa.calls.Load(), "the change is counted as seen")
 	require.False(t, th.trg.Pending())
+}
+
+func TestTriggers_PermanentFailureGivesUpAtOnce(t *testing.T) {
+	th := newTriggerHarness(t, triggerRealtime)
+	th.withStore(t, &failingAppend{Store: th.store, err: channels.ErrTooManyChannels})
+	th.src.set("ticket", "TKT-1", "", map[string]any{"status": "new"})
+	th.reconcile(t)
+	th.ticket(1, map[string]any{"status": "open"})
+	require.Equal(t, 1, th.round(t).Failed)
+	require.False(t, th.trg.Pending())
+}
+
+func TestTriggers_FailingStoreStopsTheRound(t *testing.T) {
+	th := newTriggerHarness(t, triggerRealtime)
+	fa := &failingAppend{Store: th.store}
+	th.withStore(t, fa)
+	for i := range 10 {
+		th.src.set("ticket", fmt.Sprintf("TKT-%d", i), "", map[string]any{"status": "new"})
+	}
+	th.reconcile(t)
+	for i := range 10 {
+		th.ticket(i, map[string]any{"status": "open"})
+	}
+	th.round(t)
+	require.Equal(t, int64(1), fa.calls.Load(), "one failure stops the round")
+	require.True(t, th.trg.Pending(), "the rest wait in the queue")
+	th.round(t)
+	require.Equal(t, int64(2), fa.calls.Load())
+}
+
+func TestTriggers_CapCountsAttempts(t *testing.T) {
+	th := newTriggerHarness(t, triggerRealtime)
+	n := realtimelimits.MaxSystemPostsPerRound + 10
+	for i := range n {
+		th.src.set("ticket", fmt.Sprintf("TKT-%d", i), "", map[string]any{"status": "new"})
+	}
+	th.reconcile(t)
+	ctx := context.Background()
+	for i := range n {
+		k := channels.Key{Anchor: channels.Anchor{ID: fmt.Sprintf("TKT-%d", i)}, Type: "room"}
+		_, err := th.store.Store.Append(ctx, k, channels.NewMessage{
+			Type: "text", Author: systemAuthor(), At: th.clock.Now(), Props: map[string]any{"body": "first"},
+		})
+		require.NoError(t, err)
+		_, err = th.store.SetLifecycle(ctx, k, channels.StateOpen, channels.Transition{
+			To: channels.StateClosed, By: systemAuthor(), At: th.clock.Now(),
+		})
+		require.NoError(t, err)
+		th.ticket(i, map[string]any{"status": "open"})
+	}
+	rep := th.round(t)
+	require.Equal(t, realtimelimits.MaxSystemPostsPerRound, rep.Skipped, "a skipped post is an attempt")
+	require.Equal(t, 10, th.round(t).Skipped)
+}
+
+// cancelAfter cancels its context after the first Append succeeds.
+type cancelAfter struct {
+	channels.Store
+	cancel context.CancelFunc
+	calls  atomic.Int64
+}
+
+func (s *cancelAfter) Append(ctx context.Context, k channels.Key, nm channels.NewMessage) (channels.Message, error) {
+	if s.calls.Add(1) > 1 {
+		return channels.Message{}, ctx.Err()
+	}
+	m, err := s.Store.Append(ctx, k, nm)
+	s.cancel()
+	return m, err
+}
+
+func TestTriggers_CanceledRoundSavesWhatItPosted(t *testing.T) {
+	th := newTriggerHarness(t, triggerRealtime)
+	for i := range 3 {
+		th.src.set("ticket", fmt.Sprintf("TKT-%d", i), "", map[string]any{"status": "new"})
+	}
+	th.reconcile(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	th.withStore(t, &cancelAfter{Store: th.store, cancel: cancel})
+	for i := range 3 {
+		th.ticket(i, map[string]any{"status": "open"})
+	}
+	rep, err := th.trg.RunRound(ctx)
+	require.NoError(t, err)
+	require.Equal(t, 1, rep.Posted)
+
+	next := th.engine(t, th.kv) // the next leader
+	require.Equal(t, 2, func() int {
+		rep, err := next.RunReconcile(context.Background())
+		require.NoError(t, err)
+		return rep.Posted
+	}(), "the post made before shutdown was saved, so only the other two post")
+	for i := range 3 {
+		require.Equal(t, []string{"Opened"}, th.bodies(t, fmt.Sprintf("TKT-%d", i)))
+	}
+}
+
+func TestTriggers_QueueIsNotReadAgain(t *testing.T) {
+	th := newTriggerHarness(t, triggerRealtime)
+	n := 3 * realtimelimits.MaxSystemPostsPerRound
+	for i := range n {
+		th.src.set("ticket", fmt.Sprintf("TKT-%d", i), "", map[string]any{"status": "new"})
+	}
+	th.reconcile(t)
+	for i := range n {
+		th.ticket(i, map[string]any{"status": "open"})
+	}
+	reads := th.src.reads.Load()
+	posted := 0
+	for th.trg.Pending() {
+		posted += th.round(t).Posted
+	}
+	require.Equal(t, n, posted)
+	require.Equal(t, reads+1, th.src.reads.Load(), "the backlog is read once, not once per round")
+}
+
+// A round's cost does not grow with the number of changed ids: one read
+// per type, the index and the shards the ids fall in, and at most the
+// size of those shards written.
+func TestTriggers_RoundCostIsPerChange(t *testing.T) {
+	type cost struct{ gets, puts, bytes, reads int64 }
+	measure := func(changed int) (cost, int64) {
+		th := newTriggerHarness(t, triggerRealtime)
+		for i := range 500 {
+			th.src.set("ticket", fmt.Sprintf("TKT-%d", i), "", map[string]any{"status": "open"})
+		}
+		th.reconcile(t)
+		before := cost{th.kv.gets.Load(), th.kv.puts.Load(), th.kv.bytes.Load(), th.src.reads.Load()}
+		for i := range changed {
+			th.ticket(i, map[string]any{"status": "done"})
+		}
+		require.Equal(t, changed, th.round(t).Posted)
+		c := cost{
+			th.kv.gets.Load() - before.gets, th.kv.puts.Load() - before.puts,
+			th.kv.bytes.Load() - before.bytes, th.src.reads.Load() - before.reads,
+		}
+		var seen int64
+		for _, k := range th.kv.keys() {
+			if k != seenIndexKey {
+				v, err := th.kv.Get(context.Background(), k)
+				require.NoError(t, err)
+				seen += int64(len(v))
+			}
+		}
+		return c, seen
+	}
+	c10, seen := measure(10)
+	c50, _ := measure(50)
+	require.Equal(t, c10.reads, c50.reads, "one read per type, whatever the number of ids")
+	require.Equal(t, c10.gets, c50.gets, "the index and the shards the ids fall in")
+	require.Equal(t, c10.puts, c50.puts)
+	require.LessOrEqual(t, c10.gets, int64(1+3), "the index and one shard per ticket rule")
+	require.LessOrEqual(t, c50.bytes, 2*seen, "a round writes the shards it touched, nothing more")
+}
+
+func TestTriggers_QueueIsFirstComeFirstServed(t *testing.T) {
+	th := newTriggerHarness(t, triggerRealtime)
+	n := realtimelimits.MaxSystemPostsPerRound + 1
+	for i := range n + 1 {
+		th.src.set("ticket", fmt.Sprintf("TKT-%d", i+100), "", map[string]any{"status": "new"})
+	}
+	th.src.set("ticket", "TKT-0", "", map[string]any{"status": "new"})
+	th.reconcile(t)
+	for i := range n {
+		th.ticket(i+100, map[string]any{"status": "open"})
+	}
+	require.Equal(t, realtimelimits.MaxSystemPostsPerRound, th.round(t).Posted)
+	th.ticket(0, map[string]any{"status": "open"}) // sorts first, came last
+	require.Equal(t, 2, th.round(t).Posted)
+	last := fmt.Sprintf("TKT-%d", n-1+100)
+	require.Equal(t, []string{"Opened"}, th.bodies(t, last), "the old leftover was not starved")
+	require.Equal(t, []string{"Opened"}, th.bodies(t, "TKT-0"))
+}
+
+func TestTriggers_CorruptIndexStartsOver(t *testing.T) {
+	th := newTriggerHarness(t, triggerRealtime)
+	th.src.set("ticket", "TKT-1", "", map[string]any{"status": "open"})
+	th.reconcile(t)
+	require.NoError(t, th.kv.Put(context.Background(), seenIndexKey, []byte("{")))
+	th.ticket(1, map[string]any{"status": "open"})
+	rep := th.round(t)
+	require.Equal(t, 4, rep.Baselined, "every rule baselines again")
+	require.Zero(t, rep.Posted, "silently")
+	th.ticket(1, map[string]any{"status": "new"})
+	require.Equal(t, 1, th.round(t).Posted, "and the rules work again")
+}
+
+func TestTriggers_CorruptShardResetsOneRule(t *testing.T) {
+	th := newTriggerHarness(t, triggerRealtime)
+	th.src.set("ticket", "TKT-1", "", map[string]any{"status": "new", "title": "A"})
+	th.src.set("ticket", "TKT-2", "", map[string]any{"status": "open", "title": "A"})
+	th.reconcile(t)
+	var opened string
+	for _, tr := range th.cfg.Load().Config.Triggers() {
+		if tr.Name == "opened" {
+			opened = ruleID(tr, FacePrime)
+		}
+	}
+	require.NoError(t, th.kv.Put(context.Background(), shardKey(opened, 1, 0), []byte("[")))
+	th.ticket(1, map[string]any{"status": "open", "title": "A"})
+	th.ticket(2, map[string]any{"status": "new", "title": "A"})
+	rep := th.round(t)
+	require.Equal(t, 1, rep.Posted, "the other rules carry on: shut posts")
+	require.Equal(t, []string{"No longer open"}, th.bodies(t, "TKT-2"))
+	require.Empty(t, th.bodies(t, "TKT-1"), "the corrupt rule posts nothing")
+	require.True(t, th.trg.Pending())
+	require.Equal(t, 1, th.round(t).Baselined, "and baselines again")
+	th.clock.Add(realtimelimits.TriggerCooldown)
+	th.ticket(2, map[string]any{"status": "open", "title": "A"})
+	require.Equal(t, 1, th.round(t).Posted)
+	require.Equal(t, []string{"Opened"}, th.bodies(t, "TKT-2")[1:])
+}
+
+func TestTriggers_PruneDropsStaleFailures(t *testing.T) {
+	th := newTriggerHarness(t, triggerRealtime)
+	th.trg.lead.failures["k"] = &failure{first: th.clock.Now()}
+	th.trg.lead.lastPost["k"] = th.clock.Now()
+	th.clock.Add(2 * realtimelimits.TriggerRetryWindow)
+	th.round(t)
+	require.Empty(t, th.trg.lead.failures)
+	require.Empty(t, th.trg.lead.lastPost)
 }
 
 func TestTriggers_WhenClosed(t *testing.T) {
@@ -618,6 +895,17 @@ func TestTriggers_PendingOverflowComparesInFull(t *testing.T) {
 	require.Equal(t, scans+1, th.src.scans.Load(), "one full scan")
 }
 
+func TestTriggers_OverflowFlagsTheBusiestType(t *testing.T) {
+	th := newTriggerHarness(t, triggerRealtime)
+	for i := range realtimelimits.MaxTriggerPending {
+		th.trg.Note(Change{EntityType: "ticket", ID: fmt.Sprintf("TKT-X%d", i)})
+	}
+	th.trg.Note(Change{EntityType: "page", ID: "PAGE-1"})
+	require.True(t, th.trg.full["ticket"], "the type holding the most changes is compared in full")
+	require.False(t, th.trg.full["page"])
+	require.Contains(t, th.trg.pending["page"], "PAGE-1", "the new change is kept")
+}
+
 func TestTriggers_ReadFailureRetries(t *testing.T) {
 	th := newTriggerHarness(t, triggerRealtime)
 	th.src.set("ticket", "TKT-1", "", map[string]any{"status": "new"})
@@ -629,6 +917,15 @@ func TestTriggers_ReadFailureRetries(t *testing.T) {
 	require.True(t, th.trg.Pending(), "the changes are kept for the next round")
 	th.src.fail = nil
 	require.Equal(t, 1, th.round(t).Posted)
+
+	th.ticket(1, map[string]any{"status": "new"})
+	th.src.fail = errors.New("db down")
+	for range 3 {
+		th.clock.Add(realtimelimits.TriggerRetryWindow / 2)
+		_, err = th.trg.RunRound(context.Background())
+		require.Error(t, err)
+	}
+	require.False(t, th.trg.Pending(), "after the window the changes are left to the reconcile")
 }
 
 func TestTriggers_Reshard(t *testing.T) {

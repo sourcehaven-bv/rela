@@ -102,16 +102,27 @@ const (
 	// ticks. Past it, the changes of a type are dropped and the type is
 	// compared in full at the next tick instead.
 	MaxTriggerPending = 8192
-	// MaxSystemPostsPerRound caps the messages the engine posts in one
-	// tick, shared by its rules in turn. The rest post at later ticks.
+	// MaxSystemPostsPerRound caps the posts the engine attempts in one
+	// tick, shared by its rules in turn. Every attempt counts, whether it
+	// posts, finds the channel closed or fails. The rest wait in their
+	// rule's queue for later ticks.
 	MaxSystemPostsPerRound = 64
+	// MaxTriggerQueue caps the posts waiting in the rules' queues. Past it
+	// a post is not queued and its change is not counted as seen, so the
+	// next reconcile finds it again.
+	MaxTriggerQueue = 65536
 	// TriggerCooldown is the least time between two posts of one trigger
 	// about one entity. Changes in between are seen together when it ends.
 	TriggerCooldown = time.Minute
-	// TriggerRetries is how many ticks the engine retries a failing post
-	// or a failing save of what it has seen. Then it logs the failure and
-	// counts the change as seen, so it never repeats a post forever.
-	TriggerRetries = 3
+	// TriggerRetryWindow is how long the engine retries a post that fails
+	// for a reason that may pass, such as a database failover. Then it
+	// logs the failure and counts the change as seen, so it never repeats a
+	// post forever. A post that can never succeed, such as one whose props
+	// no longer fit the message type, is given up at once.
+	TriggerRetryWindow = 5 * time.Minute
+	// TriggerRetryMaxDelay caps the wait between two retries, which
+	// doubles from [TriggerTick].
+	TriggerRetryMaxDelay = time.Minute
 	// SeenPerShard is how many seen entities one stored shard of a rule
 	// holds before the rule is split over more shards.
 	SeenPerShard = 2048
