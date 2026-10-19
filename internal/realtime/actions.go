@@ -55,8 +55,8 @@ func (s *Service) RunAction(ctx context.Context, addr RawAddress, seq int64, nam
 		return ActionResult{}, err
 	}
 	if a.PromoteTo != nil {
-		if err = s.checkPromoteRefs(c, a.PromoteTo, m); err != nil {
-			return ActionResult{}, err
+		if rerr := s.checkPromoteRefs(c, a.PromoteTo, m); rerr != nil {
+			return ActionResult{}, rerr
 		}
 	}
 	by := authorOf(c.p)
@@ -80,6 +80,7 @@ func (s *Service) RunAction(ctx context.Context, addr RawAddress, seq int64, nam
 	if !pending.EditedAt.Equal(m.EditedAt) {
 		// The message was edited after its refs were checked: release the
 		// action rather than promote content nobody checked.
+		//nolint:contextcheck // c.ctx is ctx with the acl.Request attached; see .golangci.yml on realtime.
 		return ActionResult{}, s.promoteFailed(c, pending, name, fmt.Errorf("%w: %w", ErrNothingWritten,
 			deny(http.StatusConflict, TypeConflict, "the message changed while the action started; try again")))
 	}
