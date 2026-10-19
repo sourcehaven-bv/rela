@@ -65,7 +65,8 @@ func TestPrintable(t *testing.T) {
 		{"marks \u200e\u200f\u061c", "marks \uFFFD\uFFFD\uFFFD"},
 		{"c1 \u009b", "c1 \uFFFD"},
 		{"bom\ufeff", "bom\uFFFD"},
-		{"kept: soft\u00adhyphen, word\u2060joiner, zw\u200cnj", "kept: soft\u00adhyphen, word\u2060joiner, zw\u200cnj"},
+		{"kept: soft\u00adhyphen, zw\u200cnj", "kept: soft\u00adhyphen, zw\u200cnj"},
+		{"word\u2060joiner, tag\U000E0041", "word\uFFFDjoiner, tag\uFFFD"},
 	}
 	for _, tc := range tests {
 		assert.Equal(t, tc.want, printable(tc.in), "%q", tc.in)

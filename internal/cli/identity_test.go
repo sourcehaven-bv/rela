@@ -7,6 +7,7 @@ import (
 	"errors"
 	"os"
 	"os/exec"
+	"os/user"
 	"path/filepath"
 	"slices"
 	"strconv"
@@ -130,17 +131,78 @@ func TestAssertingUser(t *testing.T) {
 	assert.Equal(t, "uid:"+strconv.Itoa(os.Getuid()), assertingUser())
 }
 
+// TestAccountName_NoEnvFallback pins that the uid lookup behind
+// asserted_by never answers $USER: a uid with no account fails, so
+// assertingUser falls back to uid:N. Run with -tags osusergo too, the
+// lookup the cgo-free release binaries use.
+func TestAccountName_NoEnvFallback(t *testing.T) {
+	t.Setenv("USER", "alice-spoofed")
+	t.Setenv("HOME", t.TempDir())
+	const noAccount = 2147483600
+	name, err := accountName(noAccount)
+	require.Error(t, err, "got %q", name)
+	assert.NotEqual(t, "alice-spoofed", name)
+
+	own, err := accountName(os.Getuid())
+	if err == nil {
+		assert.NotEqual(t, "alice-spoofed", own)
+	}
+}
+
+func TestPasswdName(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "passwd")
+	require.NoError(t, os.WriteFile(path, []byte("# comment:x:7:7\nroot:x:0:0:root:/root:/bin/sh\n"+
+		"carol:x:1001:1001::/home/carol:/bin/sh\nbroken\n"), 0o600))
+	t.Setenv("USER", "alice-spoofed")
+	name, err := passwdName(path, 1001)
+	require.NoError(t, err)
+	assert.Equal(t, "carol", name)
+	_, err = passwdName(path, 1002)
+	require.ErrorAs(t, err, new(user.UnknownUserIdError))
+	_, err = passwdName(filepath.Join(t.TempDir(), "missing"), 0)
+	require.Error(t, err)
+}
+
 // TestNewLocalIdentity_ReservedUserRefused pins that a job identity can
 // enter only through --run-as: a $USER in the system: or integration:
 // namespace is refused, so it cannot skip the refusals and asserted_by.
 func TestNewLocalIdentity_ReservedUserRefused(t *testing.T) {
-	for _, u := range []string{principal.UserRealtime, principal.UserScheduler, "system:ci", "integration:bot", "\x01system:ci"} {
+	for _, u := range []string{
+		principal.UserRealtime, principal.UserScheduler, "system:ci", "integration:bot", "\x01system:ci",
+		"System:realtime", "INTEGRATION:bot", "\u2060system:realtime", "\u200bsystem:realtime",
+		"alice\u202e", "bo\u2028b",
+	} {
 		t.Run(u, func(t *testing.T) {
 			t.Setenv("USER", u)
 			_, err := newLocalIdentity(principal.ToolCLI, "")
 			require.Error(t, err)
-			assert.Contains(t, err.Error(), runAsFlag)
+			assert.Contains(t, err.Error(), "$USER")
 		})
+	}
+	t.Setenv("USER", "J\u00f6rg system-admin")
+	_, err := newLocalIdentity(principal.ToolCLI, "")
+	assert.NoError(t, err, "a non-ASCII name that names no job identity is fine")
+}
+
+// TestFlagGiven pins that --run-as counts as given only from the command
+// line, also when RELA_RUN_AS names the same identity.
+func TestFlagGiven(t *testing.T) {
+	t.Setenv(principal.RunAsEnv, "system:ci")
+	for _, tc := range []struct {
+		args []string
+		want bool
+	}{
+		{[]string{"version"}, false},
+		{[]string{"--run-as", "system:ci", "version"}, true},
+		{[]string{"--run-as=system:other", "version"}, true},
+	} {
+		var cli CLI
+		parser, err := kong.New(&cli, kong.Name("rela"), kong.Vars{"version": "test"})
+		require.NoError(t, err)
+		ktx, err := parser.Parse(tc.args)
+		require.NoError(t, err)
+		assert.Equal(t, tc.want, flagGiven(ktx, "run-as"), "%v", tc.args)
+		assert.NotEmpty(t, cli.RunAs, "the env value fills the field either way")
 	}
 }
 

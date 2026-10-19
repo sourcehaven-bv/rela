@@ -8,6 +8,7 @@ import (
 	"os/user"
 	"strconv"
 	"strings"
+	"unicode"
 
 	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
@@ -35,15 +36,15 @@ type localIdentity struct {
 // A $USER in the `system:` or `integration:` namespace is refused: such a
 // name may only enter through `--run-as`, which validates it and records
 // asserted_by. Otherwise `USER=system:realtime` would pass for rela's own
-// identity with no trace of who set it.
+// identity with no trace of who set it. See [refuseUser] for the
+// look-alikes refused with it.
 func newLocalIdentity(tool, runAs string) (localIdentity, error) {
 	if runAs == "" {
-		user := principal.SystemUser()
-		if principal.IsReserved(user) {
-			return localIdentity{}, fmt.Errorf("$USER %q names a job identity; "+
-				"set $USER to your own name and pass the job identity with %s", printable(user), runAsFlag)
+		name := principal.SystemUser()
+		if err := refuseUser(name); err != nil {
+			return localIdentity{}, err
 		}
-		return localIdentity{Principal: principal.Principal{User: user, Tool: tool}}, nil
+		return localIdentity{Principal: principal.Principal{User: name, Tool: tool}}, nil
 	}
 	if err := validateRunAs(runAs); err != nil {
 		return localIdentity{}, err
@@ -72,6 +73,28 @@ func (l localIdentity) notice(w io.Writer) {
 		return
 	}
 	_, _ = fmt.Fprintf(w, "acting as %s (asserted by %s)\n", printable(l.Principal.User), printable(l.AssertedBy))
+}
+
+// refuseUser refuses a $USER that names a job identity, or could display
+// as one: a `system:` or `integration:` prefix in any letter case, or any
+// invisible character (control, format, line or paragraph separator),
+// which could hide a prefix or make two names look the same. A letter
+// from another script that looks like an ASCII one is not caught; $USER
+// is free-form, and only `--run-as` names are held to plain ASCII.
+func refuseUser(name string) error {
+	if strings.ContainsFunc(name, isInvisible) {
+		return fmt.Errorf("$USER %q contains an invisible character; set $USER to your own name", printable(name))
+	}
+	if principal.IsReserved(strings.ToLower(name)) {
+		return fmt.Errorf("$USER %q names a job identity; "+
+			"set $USER to your own name and pass the job identity with %s", printable(name), runAsFlag)
+	}
+	return nil
+}
+
+// isInvisible reports a control, format, line or paragraph separator rune.
+func isInvisible(r rune) bool {
+	return unicode.IsControl(r) || unicode.In(r, unicode.Cf, unicode.Zl, unicode.Zp)
 }
 
 // runAsFlag names the flag and its environment variable in error texts.
@@ -107,12 +130,42 @@ func ownJobIdentity(name string) bool {
 
 // lookupOSUser returns the account name of the process's uid. A variable
 // so a test can simulate a uid with no account.
-var lookupOSUser = func() (string, error) {
-	u, err := user.Current()
+var lookupOSUser = func() (string, error) { return accountName(os.Getuid()) }
+
+// accountName looks up the account of uid. Where os/user has no system
+// lookup, as in the cgo-free Linux release binaries, both user.Current and
+// user.LookupId answer the process's own uid from $USER when it is missing
+// from /etc/passwd (an LDAP account, a container run with --user). There
+// it reads /etc/passwd itself, which has no such fallback.
+func accountName(uid int) (string, error) {
+	if osUserFallsBackToEnv {
+		return passwdName(passwdFile, uid)
+	}
+	u, err := user.LookupId(strconv.Itoa(uid))
 	if err != nil {
 		return "", err
 	}
 	return u.Username, nil
+}
+
+// passwdFile is the account database passwdName reads.
+const passwdFile = "/etc/passwd"
+
+// passwdName returns the name of uid in the passwd-format file at path.
+func passwdName(path string, uid int) (string, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "", err
+	}
+	want := strconv.Itoa(uid)
+	for line := range strings.SplitSeq(string(data), "\n") {
+		// name:password:uid:gid:gecos:home:shell
+		fields := strings.SplitN(line, ":", 4)
+		if len(fields) == 4 && fields[2] == want && fields[0] != "" && !strings.HasPrefix(fields[0], "#") {
+			return fields[0], nil
+		}
+	}
+	return "", user.UnknownUserIdError(uid)
 }
 
 // assertingUser is the OS user behind a `--run-as` identity: the account

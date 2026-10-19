@@ -26,7 +26,6 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/cmdexec"
 	relaerrors "github.com/Sourcehaven-BV/rela/internal/errors"
 	"github.com/Sourcehaven-BV/rela/internal/output"
-	"github.com/Sourcehaven-BV/rela/internal/principal"
 	"github.com/Sourcehaven-BV/rela/internal/scheduler"
 	"github.com/Sourcehaven-BV/rela/internal/script"
 )
@@ -220,9 +219,7 @@ func runKong() int {
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	// A value that differs from RELA_RUN_AS came from the flag.
-	runAsFromFlag := cli.RunAs != os.Getenv(principal.RunAsEnv)
-	identity, err := commandIdentity(ktx.Command(), cli.RunAs, runAsFromFlag)
+	identity, err := commandIdentity(ktx.Command(), cli.RunAs, flagGiven(ktx, "run-as"))
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		return 1
@@ -331,6 +328,19 @@ func requiresProject(cmd string) bool {
 			return true
 		}
 		return false
+	}
+	return false
+}
+
+// flagGiven reports whether the command line set flag name. A value kong
+// took from the flag's environment variable leaves no trace in the parse
+// path, so this tells `--run-as X` from `RELA_RUN_AS=X` even when both
+// name the same identity.
+func flagGiven(ktx *kong.Context, name string) bool {
+	for _, p := range ktx.Path {
+		if p.Flag != nil && p.Flag.Name == name {
+			return true
+		}
 	}
 	return false
 }

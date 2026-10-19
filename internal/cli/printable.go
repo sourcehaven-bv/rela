@@ -13,10 +13,10 @@ import (
 // U+FFFD the characters that could change how the line displays:
 // [unicode.IsControl] (newline included), the line and paragraph
 // separators, the bidi controls, which could make a line display in
-// another order than it reads, and the zero-width space and BOM, which
-// hide a difference between two names. Other format characters, such as
-// the soft hyphen, the zero-width joiner and non-joiner and the word
-// joiner, occur in real text and are kept.
+// another order than it reads, and the zero-width space, word joiner, BOM
+// and tag characters, which display as nothing and so hide a difference
+// between two names. Other format characters, such as the soft hyphen and
+// the zero-width joiner and non-joiner, shape real text and are kept.
 func printable(s string) string {
 	return strings.Map(func(r rune) rune {
 		if unicode.IsControl(r) || isDisplayHazard(r) {
@@ -35,7 +35,9 @@ func isDisplayHazard(r rune) bool {
 		return true
 	case r >= '\u202a' && r <= '\u202e', r >= '\u2066' && r <= '\u2069': // bidi embeddings, overrides, isolates
 		return true
-	case r == '\u200b', r == '\ufeff': // zero-width space, BOM
+	case r == '\u200b', r == '\u2060', r == '\ufeff': // zero-width space, word joiner, BOM
+		return true
+	case r >= 0xe0000 && r <= 0xe007f: // tag characters
 		return true
 	}
 	return false
