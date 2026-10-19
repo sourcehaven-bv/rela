@@ -35,27 +35,37 @@ job identity instead, such as a cron job or an agent:
 RELA_RUN_AS=integration:triage-bot rela channel post TKT-12 room text -P body="Triaged"
 ```
 
-- The name must start with `system:` or `integration:`. A person's name is
-  refused, and so are rela's own identities: `system:realtime`,
-  `system:scheduler`, `system:automation`, `system:provisioner` and the
-  `system:webhook:` names.
+- The name must start with `system:` or `integration:`, followed by
+  lowercase ASCII letters, digits, `-` and `_` (a `system:` name may have
+  more segments separated by `:`, such as `system:job:nightly`). A person's
+  name is refused, and so are rela's own identities: `system:realtime`,
+  `system:scheduler`, `system:automation`, `system:provisioner`,
+  `system:mail`, `system:fs-import`, `system:gc-sweep`, `system:perf-seed`,
+  and the `system:webhook:` and `system:subscription:` names.
 - The identity has no principal type and no roles of its own. `acl.yaml`
   decides what it may do through its `assignments`, so give it one.
 - This is attribution, not authentication. A local user can name any job
   identity, and can edit `acl.yaml` too. The graph audit log records your OS
   user as `asserted_by` next to the identity, so the write can be traced to
-  who ran it. Version history records the identity and tool only.
-- A command that writes prints `acting as NAME (asserted by USER)` on stderr.
+  who ran it. The OS user is the account of the process's user id, not
+  `$USER`, or `uid:N` when the id has no account. Version history and
+  channels record the identity and tool only.
+- A command that writes prints `acting as NAME (asserted by USER)` on stderr,
+  unless `--quiet` is given.
 - The name is checked only for a command that acts as someone. `rela version`,
-  `rela init` and the other commands that act as no one ignore it, so a value
-  left in the environment does not break them.
+  `rela init` and the other commands that act as no one ignore
+  `RELA_RUN_AS`, so a value left in the environment does not break them. They
+  refuse the `--run-as` flag. Of the `db` commands, `db load` and
+  `db import-fs` act as the identity; the others act as no one.
 - `rela scheduler` refuses it: each task names its own identity with `run_as`
   in `schedules.yaml`. `rela-server` and `rela-desktop` refuse to start while
   `RELA_RUN_AS` is set.
 - `rela mcp` acts as the identity too, with tool `mcp`.
 
 When `$USER` is not set, as under cron or systemd, the user is `unknown` and
-writes are refused. Set `$USER`, or set `RELA_RUN_AS` to a job identity.
+writes are refused. Set `$USER`, or set `RELA_RUN_AS` to a job identity. A
+`$USER` that starts with `system:` or `integration:` is refused: a job
+identity can only be named with `--run-as`.
 
 ## Project Configuration
 
@@ -2176,15 +2186,18 @@ and control and bidi characters are replaced, so content cannot pass for
 output of its own. A ref shows `ID "title"`, or `(restricted)` when you may
 not read the entity. A removed message shows `[removed by author]` or
 `[removed]`. `-o json` prints one JSON object whose first key, `notice`,
-warns that the content was written by other people and agents.
+warns that the content was written by other people and agents. Control,
+format and line separator characters in it are written as `\uXXXX` escapes,
+so the output is safe to show in a terminal and decodes to the same text.
 
 `watch` waits for new, edited or removed messages after `--after-rev`
 (default: the channel's rev when the watch starts). It prints the change and
 exits 0. Without a change it prints `no change` and exits 2 after
 `--timeout` (at most 1 hour). With `--follow` it prints every change until you
-interrupt it. Another process's change is seen within `--poll` (1 to 60
-seconds). With `-o json` each change is one line of JSON (JSON Lines). An error
-exits 1 at once.
+interrupt it, and then exits 0. Interrupting a watch without `--follow` exits
+130. Another process's change is seen within `--poll` (1 to 60 seconds). With
+`-o json` each change is one line of JSON (JSON Lines). An error exits 1 at
+once.
 
 The CLI opens the project itself; it does not talk to a running
 `rela-server`. Each call applies `acl.yaml` for the CLI's identity, as

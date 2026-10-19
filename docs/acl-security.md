@@ -1071,16 +1071,23 @@ services, which apply `acl.yaml` to reads as well as writes.
 **`--run-as`.** `--run-as NAME` or `RELA_RUN_AS=NAME` makes the CLI and
 stdio `rela mcp` act as a job identity instead of `$USER`:
 
-- Only `system:` and `integration:` names are accepted. A person's name is
-  refused, so the flag cannot impersonate a human. rela's own identities
-  (`system:realtime`, `system:scheduler`, `system:automation`,
-  `system:provisioner`, `system:webhook:*`) are refused, so a message cannot
-  pass for a trigger post or a scheduled task.
+- Only `system:` and `integration:` names are accepted, in lowercase ASCII
+  letters, digits, `-`, `_` and (for `system:`) `:`. A person's name is
+  refused, so the flag cannot impersonate a human. The charset rules out
+  invisible format characters and look-alike letters. rela's own identities
+  are refused, so a message cannot pass for a trigger post, a scheduled task
+  or a mail delivery. `principal.IsRelaIdentity` holds the list.
+- A `$USER` in the `system:` or `integration:` namespace is refused, so a
+  job identity can only enter through `--run-as`, with these checks.
 - The identity carries no principal type and no roles. Only `acl.yaml`
   `assignments` (or a user entity) give it access.
 - The OS user who asserted it is recorded as `asserted_by` in every graph
-  audit record of the command. Version history records user and tool only.
-  Channel messages carry no marker; their author is the job identity.
+  audit record of the command. It is the account of the process's user id,
+  not `$USER`, so the environment cannot name someone else. Version history
+  records user and tool only. Channel posts, edits, removals and creation
+  keep no record of the OS user; their author is the job identity.
+- A command that acts as no one refuses the `--run-as` flag and ignores
+  `RELA_RUN_AS`.
 - `rela scheduler` refuses the flag, and `rela-server` and `rela-desktop`
   refuse to start while `RELA_RUN_AS` is set: their identity comes from a
   verified login or the desktop user.

@@ -586,9 +586,11 @@ access is open.
 job identity in `RELA_RUN_AS` (`--run-as`), such as `integration:triage-bot`.
 Give an agent its own job identity and an `acl.yaml` assignment, so it holds
 only the channel roles it needs. Messages show the job identity as their
-author. The OS user who started the process is recorded only in the graph
-audit log, as `asserted_by`, not in the channel. The name is self-asserted:
-it is attribution, not authentication.
+author. The OS user who asserted the identity is recorded only in graph
+audit records, as `asserted_by`. Channel posts, edits, removals and channel
+creation write no graph audit record, so for them nothing records the OS
+user: the channel and its audit trail name the job identity only. The name is
+self-asserted: it is attribution, not authentication.
 
 When `acl.yaml` exists and its `assignments` give that identity no role, and no user entity or membership
 gives it one, the channel tools can answer `entity not found` for an entity that
