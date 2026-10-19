@@ -2190,7 +2190,7 @@ channel of a type with many channels.
 keep.
 
 The table output prints each message as a header line, `#seq  time  user (tool)  type`,
-followed by its properties. Every line of message content starts with `  | `,
+followed by its properties. Every line of message content starts with two spaces and a `|`,
 and control and bidi characters are replaced, so content cannot pass for
 output of its own. A ref shows `ID "title"`, or `(restricted)` when you may
 not read the entity. A removed message shows `[removed by author]` or
