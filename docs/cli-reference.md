@@ -55,7 +55,8 @@ RELA_RUN_AS=integration:triage-bot rela channel post TKT-12 room text -P body="T
 - The name is checked only for a command that acts as someone. `rela version`,
   `rela init` and the other commands that act as no one ignore
   `RELA_RUN_AS`, so a value left in the environment does not break them. They
-  refuse the `--run-as` flag. Of the `db` commands, `db load` and
+  refuse the `--run-as` flag, also when it names the same identity as
+  `RELA_RUN_AS`. Of the `db` commands, `db load` and
   `db import-fs` act as the identity; the others act as no one.
 - `rela scheduler` refuses it: each task names its own identity with `run_as`
   in `schedules.yaml`. `rela-server` and `rela-desktop` refuse to start while
@@ -64,8 +65,10 @@ RELA_RUN_AS=integration:triage-bot rela channel post TKT-12 room text -P body="T
 
 When `$USER` is not set, as under cron or systemd, the user is `unknown` and
 writes are refused. Set `$USER`, or set `RELA_RUN_AS` to a job identity. A
-`$USER` that starts with `system:` or `integration:` is refused: a job
-identity can only be named with `--run-as`.
+`$USER` that starts with `system:` or `integration:`, in any letter case, is
+refused: a job identity can only be named with `--run-as`. So is a `$USER`
+with an invisible character in it. A `$USER` with letters from another script
+that look like ASCII ones is not caught.
 
 ## Project Configuration
 

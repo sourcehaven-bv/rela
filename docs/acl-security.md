@@ -1077,13 +1077,20 @@ stdio `rela mcp` act as a job identity instead of `$USER`:
   invisible format characters and look-alike letters. rela's own identities
   are refused, so a message cannot pass for a trigger post, a scheduled task
   or a mail delivery. `principal.IsRelaIdentity` holds the list.
-- A `$USER` in the `system:` or `integration:` namespace is refused, so a
-  job identity can only enter through `--run-as`, with these checks.
+- A `$USER` in the `system:` or `integration:` namespace, in any letter
+  case, is refused, so a job identity can only enter through `--run-as`,
+  with these checks. A `$USER` with an invisible character is refused too.
+  `$USER` is otherwise free-form, so a name spelled with look-alike letters
+  from another script can still display like a job identity; ACL grants
+  match the exact name, so it gains no access.
 - The identity carries no principal type and no roles. Only `acl.yaml`
   `assignments` (or a user entity) give it access.
 - The OS user who asserted it is recorded as `asserted_by` in every graph
   audit record of the command. It is the account of the process's user id,
-  not `$USER`, so the environment cannot name someone else. Version history
+  not `$USER`, so the environment cannot name someone else. A uid with no
+  account is recorded as `uid:N`. The cgo-free Linux binaries read
+  `/etc/passwd` for this, so an account that only a directory service
+  (LDAP, SSSD) knows is also recorded as `uid:N`. Version history
   records user and tool only. Channel posts, edits, removals and creation
   keep no record of the OS user; their author is the job identity.
 - A command that acts as no one refuses the `--run-as` flag and ignores
