@@ -67,6 +67,7 @@ func RunAll(t *testing.T, newHarness func(t *testing.T) Harness) {
 		{"EditKeepsNoHistory", testEditErases},
 		{"Replies", testReplies},
 		{"Actions", testActions},
+		{"ActionGuards", testActionGuards},
 		{"Lifecycle", testLifecycle},
 		{"CreateMany", testCreateMany},
 		{"CreateManyCap", testCreateManyCap},
@@ -560,6 +561,39 @@ func testActions(t *testing.T, h Harness) {
 	require.NoError(t, err)
 	_, err = h.Store.SetAction(ctx, k, 2, "accept", channels.ActionNone, pending)
 	require.ErrorIs(t, err, channels.ErrRemoved)
+}
+
+// testActionGuards checks that a pending action freezes its message and
+// that an action can only be taken in an open channel.
+func testActionGuards(t *testing.T, h Harness) {
+	t.Helper()
+	ctx := context.Background()
+	k := key("TKT-1", "room")
+	mustAppend(t, h.Store, k, text("one"))
+	mustAppend(t, h.Store, k, text("two"))
+	at := T0.Add(time.Minute)
+	pending := channels.Action{Status: channels.ActionPending, By: Alice, At: at}
+
+	_, err := h.Store.SetAction(ctx, k, 1, "accept", channels.ActionNone, pending)
+	require.NoError(t, err)
+	_, err = h.Store.Edit(ctx, k, 1, map[string]any{"body": "changed"}, at)
+	require.ErrorIs(t, err, channels.ErrActionPending)
+	_, err = h.Store.Remove(ctx, k, 1, channels.Removal{By: Bob, At: at})
+	require.ErrorIs(t, err, channels.ErrActionPending)
+	got, err := h.Store.Get(ctx, k, 1)
+	require.NoError(t, err)
+	require.Equal(t, "one", got.Props["body"], "a refused edit changes nothing")
+
+	_, err = h.Store.SetLifecycle(ctx, k, channels.StateOpen,
+		channels.Transition{To: channels.StateClosed, By: Bob, At: at})
+	require.NoError(t, err)
+	_, err = h.Store.SetAction(ctx, k, 2, "accept", channels.ActionNone, pending)
+	require.ErrorIs(t, err, channels.ErrNotOpen, "no new action in a closed channel")
+	done := channels.Action{Status: channels.ActionDone, By: Alice, At: at.Add(time.Second), PendingAt: at}
+	_, err = h.Store.SetAction(ctx, k, 1, "accept", channels.ActionPending, done)
+	require.NoError(t, err, "a pending action may finish after the close")
+	_, err = h.Store.Edit(ctx, k, 1, map[string]any{"body": "after"}, at)
+	require.NoError(t, err, "a done action no longer freezes the message")
 }
 
 // assertActionAudit checks the action records testActions leaves.

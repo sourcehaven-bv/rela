@@ -54,3 +54,53 @@ func TestFailedWriteRollsBack(t *testing.T) {
 	_, err = s.Append(cancelled, k, channels.NewMessage{Type: "text", Author: channelstest.Alice, At: channelstest.T0})
 	require.Error(t, err)
 }
+
+func TestNewInTxRejectsNil(t *testing.T) {
+	_, err := sqlitechannels.NewInTx(nil)
+	require.Error(t, err)
+}
+
+// A store from NewInTx writes inside the caller's transaction: its writes
+// commit with it and vanish when it rolls back, and a failed write rolls
+// back only its own savepoint.
+func TestNewInTxJoinsTransaction(t *testing.T) {
+	ctx := context.Background()
+	db, err := sqlitedb.Open(ctx, sqlitedb.Options{Path: filepath.Join(t.TempDir(), "rela.db")})
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = db.Close() })
+	outer, err := sqlitechannels.New(db.DB())
+	require.NoError(t, err)
+	k := channels.Key{Anchor: channels.Anchor{ID: "TKT-1"}, Type: "room"}
+	msg := channels.NewMessage{Type: "text", Author: channelstest.Alice, At: channelstest.T0}
+
+	inTx := func(commit bool) {
+		conn, err := db.DB().Conn(ctx)
+		require.NoError(t, err)
+		defer func() { _ = conn.Close() }()
+		_, err = conn.ExecContext(ctx, "BEGIN IMMEDIATE")
+		require.NoError(t, err)
+		s, err := sqlitechannels.NewInTx(conn)
+		require.NoError(t, err)
+		_, err = s.Append(ctx, k, msg)
+		require.NoError(t, err)
+		bad := msg
+		bad.ReplyTo = 99
+		_, err = s.Append(ctx, k, bad)
+		require.ErrorIs(t, err, channels.ErrInvalidReply)
+		end := "ROLLBACK"
+		if commit {
+			end = "COMMIT"
+		}
+		_, err = conn.ExecContext(ctx, end)
+		require.NoError(t, err)
+	}
+
+	inTx(false)
+	_, err = outer.Head(ctx, k)
+	require.ErrorIs(t, err, channels.ErrNotFound, "a rolled back transaction leaves no channel")
+
+	inTx(true)
+	head, err := outer.Head(ctx, k)
+	require.NoError(t, err)
+	require.Equal(t, int64(1), head.LastSeq, "the failed write rolled back its savepoint only")
+}

@@ -33,12 +33,14 @@ type Store interface {
 	Append(ctx context.Context, key Key, msg NewMessage) (Message, error)
 
 	// Edit replaces a message's properties and sets its edit time. The old
-	// properties are not kept. A removed message is [ErrRemoved].
+	// properties are not kept. A removed message is [ErrRemoved], and a
+	// message with a pending action is [ErrActionPending].
 	Edit(ctx context.Context, key Key, seq int64, props map[string]any, at time.Time) (Message, error)
 
 	// Remove erases a message's content and records the removal. Only the
 	// seq, the thread link and the removal survive, in storage as well as on
-	// read. Writes an audit record without the reason.
+	// read. Writes an audit record without the reason. A message with a
+	// pending action is [ErrActionPending].
 	Remove(ctx context.Context, key Key, seq int64, removal Removal) (Message, error)
 
 	// SetAction moves the message's action named name from status expect to
@@ -47,7 +49,9 @@ type Store interface {
 	// effect is reverted. Reaching [ActionDone] writes an audit record.
 	// Clearing a pending action is a release: next must carry By and At
 	// (see [CheckRelease]), and an audit record with status
-	// [AuditReleased] is written.
+	// [AuditReleased] is written. Taking an action (a step from
+	// [ActionNone]) in a channel that is not open is [ErrNotOpen] (see
+	// [CheckActionState]).
 	SetAction(ctx context.Context, key Key, seq int64, name string, expect ActionStatus, next Action) (Message, error)
 
 	// CreateMany creates a named channel on anchor, with a minted name, and

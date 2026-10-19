@@ -109,6 +109,17 @@ var (
 	// ErrTypeInUse reports a type record that cannot be dropped because a
 	// channel of the type still exists, live or tombstoned.
 	ErrTypeInUse = errors.New("channels: channel type still has channels")
+
+	// ErrNotOpen reports a SetAction that takes an action (a step from
+	// [ActionNone]) in a channel that is not open. Finishing or releasing
+	// an action that is already pending is allowed in every state.
+	ErrNotOpen = errors.New("channels: channel is not open")
+
+	// ErrActionPending reports an edit or removal of a message whose
+	// action is pending. The pending action is building its side effect
+	// from the message as it was, so the message may not change until
+	// the action is done or released.
+	ErrActionPending = errors.New("channels: message has a pending action")
 )
 
 // Caps enforced at the store boundary, so no backend and no caller above it
@@ -720,6 +731,25 @@ func CheckActionCAS(cur *Action, name string, expect ActionStatus) error {
 	}
 	if cur != nil && cur.Name != name {
 		return fmt.Errorf("%w: message carries action %q, not %q", ErrConflict, cur.Name, name)
+	}
+	return nil
+}
+
+// CheckActionState refuses a SetAction that takes an action (expect is
+// [ActionNone] and next is not) in a channel whose state is not
+// [StateOpen].
+func CheckActionState(state State, expect ActionStatus, next Action) error {
+	if expect != ActionNone || next.Status == ActionNone || state == StateOpen {
+		return nil
+	}
+	return fmt.Errorf("%w: channel is %s", ErrNotOpen, state)
+}
+
+// CheckNotPending refuses an edit or removal of m while its action is
+// pending.
+func CheckNotPending(m *Message) error {
+	if m.Action != nil && m.Action.Status == ActionPending {
+		return fmt.Errorf("%w: action %q", ErrActionPending, m.Action.Name)
 	}
 	return nil
 }

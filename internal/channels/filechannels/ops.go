@@ -134,7 +134,8 @@ func (s *Store) replyParent(k channels.Key, replyTo int64) (channels.Message, []
 }
 
 // mutate loads message seq of k under the lock, lets change edit it and
-// reserve its rev, writes meta.yaml and then rewrites the segment.
+// reserve its rev, writes meta.yaml and then rewrites the segment. A
+// removed message and a message with a pending action are refused.
 func (s *Store) mutate(
 	ctx context.Context, k channels.Key, seq int64,
 	change func(m *meta, msg *channels.Message, idx int64) error,
@@ -154,6 +155,9 @@ func (s *Store) mutate(
 	}
 	if msgs[i].Removed != nil {
 		return channels.Message{}, fmt.Errorf("%w: message %d in %s", channels.ErrRemoved, seq, k)
+	}
+	if err := channels.CheckNotPending(&msgs[i]); err != nil {
+		return channels.Message{}, err
 	}
 	idx := s.idx(seq)
 	if err := change(m, &msgs[i], idx); err != nil {
@@ -256,6 +260,9 @@ func (s *Store) SetAction(
 	}
 	err = channels.CheckActionCAS(msg.Action, name, expect)
 	if err != nil {
+		return channels.Message{}, err
+	}
+	if err := channels.CheckActionState(m.State, expect, next); err != nil {
 		return channels.Message{}, err
 	}
 	idx := s.idx(seq)
