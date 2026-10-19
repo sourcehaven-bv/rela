@@ -64,6 +64,8 @@ var callerGates = map[string]string{
 	"checkSoftDelete":   "SoftDeleteEntity runs requireReadableRow on the family before it",
 	"guardFaceDelete":   "the face delete runs requireReadableRow on the face before it",
 	"txEdges":           "faceDeleteGuard.txEdges: the face delete gated the face before the transaction",
+	"prepareRelationFrom": "prepareRelationCreate runs lookupSource before it; CreateLinked passes the " +
+		"source it is creating",
 }
 
 // noReadGateNeeded lists the functions that ask the ACL with no read gate
@@ -71,7 +73,9 @@ var callerGates = map[string]string{
 // to one of these does not count as asking the ACL. Adding a name is a
 // deliberate exception.
 var noReadGateNeeded = map[string]string{
-	"CreateEntity":   "creates a row; no stored row exists for a 403 to confirm",
+	"prepareCreate": "CreateEntity's checks: creates a row; no stored row exists for a 403 to confirm",
+	"CreateLinked": "creates a row and an edge from it: the edge's source is the row being created, so " +
+		"no stored row exists for a 403 to confirm; prepareRelationFrom gates the edge's target",
 	"recreateEntity": "authorizes a create of a face that is not stored, as CreateEntity does",
 	"RestoreEntity": "documented to leave the read gate to its caller (the data-entry restore " +
 		"handler); a marked row is hidden from every read, so the store cannot gate it here",
