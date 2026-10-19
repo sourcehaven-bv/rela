@@ -349,6 +349,17 @@ type countingStore struct {
 	onRecord func()
 	// onDelete runs before Delete.
 	onDelete func()
+	// onSetAction runs before SetAction.
+	onSetAction func()
+}
+
+func (s *countingStore) SetAction(
+	ctx context.Context, k channels.Key, seq int64, name string, expect channels.ActionStatus, next channels.Action,
+) (channels.Message, error) {
+	if s.onSetAction != nil {
+		s.onSetAction()
+	}
+	return s.Store.SetAction(ctx, k, seq, name, expect, next)
 }
 
 func (s *countingStore) Delete(ctx context.Context, k channels.Key, d channels.Deletion) error {

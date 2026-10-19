@@ -24,10 +24,12 @@ type ActionResult struct {
 //
 // The checks run in this order after the read check: the message exists
 // and was not removed, its type declares the action, the caller has an
-// identity, the action's gate, the channel is open, the message carries no
-// action yet, and the rate limit. [MessageView.Actions] offers an action
-// exactly when every check but the rate limit passes; both ask
-// [call.actionCheck].
+// identity, the action's gate, the promoter's create check for a
+// promoting action, the channel is open, the message carries no
+// action yet, and the rate limit. A promoting action then checks that the
+// caller can read every ref it would copy ([Service.checkPromoteRefs]).
+// [MessageView.Actions] offers an action exactly when every check but the
+// rate limit and the ref check passes; both ask [call.actionCheck].
 //
 // A message carries one action. A non-promoting action is one
 // compare-and-set from none to done. A promoting action first moves the
@@ -52,6 +54,11 @@ func (s *Service) RunAction(ctx context.Context, addr RawAddress, seq int64, nam
 	if err != nil {
 		return ActionResult{}, err
 	}
+	if a.PromoteTo != nil {
+		if err = s.checkPromoteRefs(c, a.PromoteTo, m); err != nil {
+			return ActionResult{}, err
+		}
+	}
 	by := authorOf(c.p)
 	if a.PromoteTo == nil {
 		//nolint:contextcheck // c.ctx is ctx with the acl.Request attached; see .golangci.yml on realtime.
@@ -70,6 +77,12 @@ func (s *Service) RunAction(ctx context.Context, addr RawAddress, seq int64, nam
 		return ActionResult{}, actionStoreError(err)
 	}
 	s.local.mark(c.key)
+	if !pending.EditedAt.Equal(m.EditedAt) {
+		// The message was edited after its refs were checked: release the
+		// action rather than promote content nobody checked.
+		return ActionResult{}, s.promoteFailed(c, pending, name, fmt.Errorf("%w: %w", ErrNothingWritten,
+			deny(http.StatusConflict, TypeConflict, "the message changed while the action started; try again")))
+	}
 	done := channels.Action{Status: channels.ActionDone, By: by, At: c.now, PendingAt: c.now}
 	//nolint:contextcheck // c.ctx is ctx with the acl.Request attached; see .golangci.yml on realtime.
 	got, warnings, err := s.promote(c, a, pending, done)
@@ -185,14 +198,16 @@ func (c *call) actionCheck(m channels.Message, name string) (*realtimecfg.Action
 		return nil, forbidden(TypeActionNotOffered,
 			fmt.Sprintf("message type %s does not declare the action %s", m.Type, name), rule)
 	}
-	if a.PromoteTo != nil && !c.promotes {
-		return nil, forbidden(TypeActionNotOffered, "promoting is not available in this process", rule)
-	}
 	if err := c.requireCaller(); err != nil {
 		return nil, err
 	}
 	if !c.actionGate(m.Type, a) {
 		return nil, gateDenied(TypeActionDenied, "running "+name, rule, a.Gate, c.ct.Roles)
+	}
+	if a.PromoteTo != nil {
+		if err := c.promoteCheck(a.PromoteTo, rule); err != nil {
+			return nil, err
+		}
 	}
 	if err := c.requireOpen(); err != nil {
 		return nil, err
@@ -206,6 +221,27 @@ func (c *call) actionCheck(m channels.Message, name string) (*realtimecfg.Action
 			"the action "+m.Action.Name+" is pending on this message")
 	}
 	return a, nil
+}
+
+// promoteCheck asks the promoter whether the caller may create p's
+// entity, once per target per call. A refusal without a rule names the
+// action's.
+func (c *call) promoteCheck(p *realtimecfg.Promote, rule string) error {
+	key := p.Type + "@" + p.Face
+	if err, seen := c.promoteChecks[key]; seen {
+		return err
+	}
+	if c.promoteChecks == nil {
+		c.promoteChecks = map[string]error{}
+	}
+	err := c.promoter.CheckCreate(c.ctx, p.Type, entity.Face(p.Face))
+	if d, ok := errors.AsType[*DenialError](err); ok && d.Rule == "" {
+		named := *d
+		named.Rule = rule
+		err = &named
+	}
+	c.promoteChecks[key] = err
+	return err
 }
 
 // actionGate is c.gate(a.Gate), asked once per action per call.

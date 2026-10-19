@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"slices"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -76,6 +77,14 @@ type fakePromoter struct {
 	block  chan struct{}
 	during func()
 	warn   []entity.Warning
+	// createErr is what CheckCreate answers; checks counts the calls.
+	createErr error
+	checks    atomic.Int64
+}
+
+func (f *fakePromoter) CheckCreate(context.Context, string, entity.Face) error {
+	f.checks.Add(1)
+	return f.createErr
 }
 
 func (f *fakePromoter) Promote(ctx context.Context, r PromoteRequest) (PromoteResult, error) {
@@ -376,8 +385,8 @@ func TestAction_NoPromoterNotOffered(t *testing.T) {
 }
 
 // TestAction_AffordanceAndGateAgree pins AC15: for every caller, message
-// state and action, the action is offered exactly when running it
-// succeeds.
+// state, action and create verdict of the promoter, the action is offered
+// exactly when running it succeeds.
 func TestAction_AffordanceAndGateAgree(t *testing.T) {
 	t.Parallel()
 	callers := map[string]func() *fakeAccess{
@@ -387,51 +396,115 @@ func TestAction_AffordanceAndGateAgree(t *testing.T) {
 		},
 	}
 	states := []string{"fresh", "done", "pending", "closed"}
+	creates := map[string]error{
+		"may create":     nil,
+		"may not create": forbidden(TypePromoteDenied, "no role grants create on doc", "acl"),
+	}
 	for cname, caller := range callers {
 		for _, state := range states {
 			for _, action := range []string{"ack", "triage", "accept", "nope"} {
-				t.Run(cname+"/"+state+"/"+action, func(t *testing.T) {
-					t.Parallel()
-					h := newActionHarness(t, &fakePromoter{})
-					m := h.post(t, user("ann"), proposal("x"))
-					ctx := context.Background()
-					switch state {
-					case "done":
-						_, err := h.svc.RunAction(as(user("ann")), room, m.Seq, "ack")
-						require.NoError(t, err)
-					case "pending":
-						_, err := h.store.SetAction(ctx, roomKey(), m.Seq, "accept", channels.ActionNone,
-							channels.Action{Status: channels.ActionPending, By: channels.Author{User: "x"}, At: h.clock.Now()})
-						require.NoError(t, err)
-					case "closed":
-						_, err := h.store.SetLifecycle(ctx, roomKey(), channels.StateOpen,
-							channels.Transition{To: channels.StateClosed, By: channels.Author{User: "x"}, At: h.clock.Now()})
-						require.NoError(t, err)
-					}
-					offered := h.offeredOn(t, caller(), room, m.Seq)
-					_, err := h.svc.RunAction(as(caller()), room, m.Seq, action)
-					require.Equal(t, err == nil, slices.Contains(offered, action), "offered %v, run error %v", offered, err)
-				})
+				for vname, createErr := range creates {
+					t.Run(cname+"/"+state+"/"+action+"/"+vname, func(t *testing.T) {
+						t.Parallel()
+						h := newActionHarness(t, &fakePromoter{createErr: createErr})
+						m := h.post(t, user("ann"), proposal("x"))
+						ctx := context.Background()
+						switch state {
+						case "done":
+							_, err := h.svc.RunAction(as(user("ann")), room, m.Seq, "ack")
+							require.NoError(t, err)
+						case "pending":
+							_, err := h.store.SetAction(ctx, roomKey(), m.Seq, "accept", channels.ActionNone,
+								channels.Action{Status: channels.ActionPending, By: channels.Author{User: "x"}, At: h.clock.Now()})
+							require.NoError(t, err)
+						case "closed":
+							_, err := h.store.SetLifecycle(ctx, roomKey(), channels.StateOpen,
+								channels.Transition{To: channels.StateClosed, By: channels.Author{User: "x"}, At: h.clock.Now()})
+							require.NoError(t, err)
+						}
+						offered := h.offeredOn(t, caller(), room, m.Seq)
+						_, err := h.svc.RunAction(as(caller()), room, m.Seq, action)
+						require.Equal(t, err == nil, slices.Contains(offered, action), "offered %v, run error %v", offered, err)
+					})
+				}
 			}
 		}
 	}
+}
+
+// TestAction_PromoteRefsCheckedAsCaller pins that a promote refuses to copy
+// a ref the caller cannot read, though the poster could: the answer is
+// 422 promote_invalid naming only the message property, the message keeps
+// no action and nothing is promoted. The resolver does not tell an
+// unreadable entity from a missing one, so a missing one answers the same.
+func TestAction_PromoteRefsCheckedAsCaller(t *testing.T) {
+	t.Parallel()
+	yaml := strings.Replace(actionsRealtime,
+		"promote_to: { type: doc, map: { title: summary }, relate: { type: about } }",
+		"promote_to: { type: doc, map: { title: about }, relate: { type: about } }", 1)
+	p := &fakePromoter{}
+	h := newHarness(t, withYAML(yaml), withPromoter(p))
+	h.refs.views["TKT-7"] = RefView{ID: "TKT-7", Type: "ticket", Title: "Secret"}
+	m := h.post(t, user("ann"), PostInput{Type: "proposal",
+		Props: map[string]any{"summary": "x", "about": "TKT-7"}})
+	// From here on the resolver withholds TKT-7, as it does for a caller
+	// who cannot read it.
+	delete(h.refs.views, "TKT-7")
+	_, err := h.svc.RunAction(as(decider()), room, m.Seq, "accept")
+	d := requireDenial(t, err, http.StatusUnprocessableEntity, TypePromoteInvalid)
+	require.Contains(t, d.Title, "about")
+	require.NotContains(t, d.Error(), "TKT-7")
+	require.Zero(t, p.calls.Load())
+	got, err := h.store.Get(context.Background(), roomKey(), m.Seq)
+	require.NoError(t, err)
+	require.Nil(t, got.Action)
+}
+
+// TestAction_EditBeforePendingReleases pins that a promote does not run on
+// content edited after its refs were checked: the edit lands between the
+// check and the pending write, the action is released and the answer is
+// 409 conflict.
+func TestAction_EditBeforePendingReleases(t *testing.T) {
+	t.Parallel()
+	p := &fakePromoter{}
+	h := newActionHarness(t, p)
+	m := h.post(t, user("ann"), proposal("x"))
+	var once sync.Once
+	h.store.onSetAction = func() {
+		once.Do(func() {
+			_, err := h.store.Store.Edit(context.Background(), roomKey(), m.Seq,
+				map[string]any{"summary": "changed", "about": "TKT-2"}, h.clock.Now().Add(time.Second))
+			require.NoError(t, err)
+		})
+	}
+	_, err := h.svc.RunAction(as(decider()), room, m.Seq, "accept")
+	requireDenial(t, err, http.StatusConflict, TypeConflict)
+	require.Zero(t, p.calls.Load())
+	got, err := h.store.Get(context.Background(), roomKey(), m.Seq)
+	require.NoError(t, err)
+	require.Nil(t, got.Action)
 }
 
 // TestAction_GatesOncePerPage pins that a page asks each action's gate
 // once, however many messages it holds.
 func TestAction_GatesOncePerPage(t *testing.T) {
 	t.Parallel()
-	count := func(n int) int64 {
-		h := newActionHarness(t, &fakePromoter{})
+	count := func(n int) (perms, checks int64) {
+		p := &fakePromoter{}
+		h := newActionHarness(t, p)
 		for range n {
 			h.post(t, user("ann"), proposal("x"))
 		}
 		a := decider()
 		_, err := h.svc.Messages(as(a), room, channels.Page{})
 		require.NoError(t, err)
-		return a.permCalls.Load()
+		return a.permCalls.Load(), p.checks.Load()
 	}
-	require.Equal(t, count(2), count(20))
+	perms2, checks2 := count(2)
+	perms20, checks20 := count(20)
+	require.Equal(t, perms2, perms20)
+	require.Equal(t, int64(1), checks2, "the create check is asked once per promote target")
+	require.Equal(t, checks2, checks20)
 }
 
 // TestRelease_GateAndAge pins AC21: a moderator releases a pending action

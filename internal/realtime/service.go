@@ -81,7 +81,7 @@ func New(d Deps) (*Service, error) {
 	case d.Promoter == nil:
 		return nil, errNil("Promoter")
 	}
-	if _, none := d.Promoter.(NoPromoter); none && declaresPromote(d.Config.Load().Config) {
+	if isNoPromoter(d.Promoter) && declaresPromote(d.Config.Load().Config) {
 		slog.Warn("realtime: realtime.yaml declares promoting actions, but this process cannot promote; " +
 			"they are not offered")
 	}
@@ -89,6 +89,16 @@ func New(d Deps) (*Service, error) {
 		store: d.Store, cfg: d.Config, access: d.Access, anchors: d.Anchors, refs: d.Refs,
 		local: d.Local, clock: d.Local.clock, promoter: d.Promoter,
 	}, nil
+}
+
+// isNoPromoter reports whether p is a [NoPromoter]. It only chooses a log
+// line: what is offered follows [Promoter.CheckCreate].
+func isNoPromoter(p Promoter) bool {
+	switch p.(type) {
+	case NoPromoter, *NoPromoter:
+		return true
+	}
+	return false
 }
 
 // declaresPromote reports whether c declares an action with promote_to.

@@ -49,9 +49,10 @@ type call struct {
 	// holds no message yet.
 	head *channels.Channel
 
-	// promotes is set when a real [Promoter] is wired, so promoting
-	// actions can run.
-	promotes bool
+	// promoter is the service's [Promoter]; promoteChecks caches its
+	// [Promoter.CheckCreate] answer per promote target.
+	promoter      Promoter
+	promoteChecks map[string]error
 	// actionGates caches the gate answer per message type and action.
 	actionGates map[string]bool
 }
@@ -73,9 +74,8 @@ func (s *Service) begin(ctx context.Context) (*call, error) {
 	if err != nil {
 		return nil, fmt.Errorf("realtime: open access: %w", err)
 	}
-	_, noPromoter := s.promoter.(NoPromoter)
 	return &call{
-		ctx: actx, snap: snap, acc: acc, p: acc.Principal(), now: s.clock(), promotes: !noPromoter,
+		ctx: actx, snap: snap, acc: acc, p: acc.Principal(), now: s.clock(), promoter: s.promoter,
 	}, nil
 }
 

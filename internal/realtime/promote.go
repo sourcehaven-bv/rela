@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"slices"
 	"strconv"
 	"time"
 
@@ -29,6 +30,13 @@ import (
 // should see is a *[DenialError].
 type Promoter interface {
 	Promote(ctx context.Context, r PromoteRequest) (PromoteResult, error)
+	// CheckCreate reports whether the caller on ctx may create an entity
+	// of typ at face, from the grants alone: it reads no store. A refusal
+	// is a *[DenialError]. The service asks it once per promote target per
+	// operation, so it offers a promoting action only when its create will
+	// be allowed. The field grants and validation are not part of it; the
+	// promote itself still checks them.
+	CheckCreate(ctx context.Context, typ string, face entity.Face) error
 }
 
 // ErrNothingWritten marks a [Promoter] error after which nothing was
@@ -90,21 +98,37 @@ type PromoteResult struct {
 }
 
 // NoPromoter is the [Promoter] of a process that cannot write the graph.
-// Promoting actions are not offered while it is wired.
+// Promoting actions are not offered while it is wired, because its
+// [NoPromoter.CheckCreate] refuses every create.
 type NoPromoter struct{}
 
 // Promote refuses every promote.
 func (NoPromoter) Promote(context.Context, PromoteRequest) (PromoteResult, error) {
-	return PromoteResult{}, fmt.Errorf("%w: %w", ErrNothingWritten,
-		deny(http.StatusForbidden, TypeActionNotOffered, "promoting is not available in this process"))
+	return PromoteResult{}, fmt.Errorf("%w: %w", ErrNothingWritten, notPromoting())
 }
 
-// Warning codes of an action answer.
+// CheckCreate refuses every create.
+func (NoPromoter) CheckCreate(context.Context, string, entity.Face) error {
+	return notPromoting()
+}
+
+func notPromoting() *DenialError {
+	return deny(http.StatusForbidden, TypeActionNotOffered, "promoting is not available in this process")
+}
+
+// Warning codes of an action answer. A [Promoter] reports the last two.
 const (
 	// WarnPromoteUnconfirmed: the entity was created, but marking the
 	// action done failed. The message shows the action pending until a
 	// moderator releases it.
 	WarnPromoteUnconfirmed = "promote_unconfirmed"
+	// WarnPromoteRelateFailed: the entity was created without its relation
+	// to the anchor. Only a promoter that cannot commit both together
+	// reports it; elsewhere the promote fails instead.
+	WarnPromoteRelateFailed = "promote_relate_failed"
+	// WarnPromoteFollowUpFailed: a step after the create, such as an
+	// automation or the cascade, failed. The entity stays.
+	WarnPromoteFollowUpFailed = "promote_followup_failed"
 )
 
 // Timeouts of the promote steps. They run on a context that the client
@@ -119,7 +143,8 @@ const (
 
 // promoteProps copies the message properties p maps into entity
 // properties. A message property that is absent or null is left out.
-// Ref values are already id strings.
+// Ref values are id strings, which [Service.checkPromoteRefs] has
+// checked the caller may read.
 func promoteProps(p *realtimecfg.Promote, msg channels.Message) map[string]any {
 	out := make(map[string]any, len(p.Map))
 	for ep, mp := range p.Map {
@@ -164,7 +189,7 @@ func (s *Service) promote(
 			"channel", c.key.String(), "seq", msg.Seq, "action", a.Name, "entity", res.ID, "error", err)
 		w := entity.Warning{
 			Code:   WarnPromoteUnconfirmed,
-			Detail: "created " + res.ID + ", but the message still shows the action pending",
+			Detail: "the entity was created, but the message still shows the action pending",
 		}
 		return msg, append(res.Warnings, w), nil
 	}
@@ -194,6 +219,55 @@ func (s *Service) promoteFailed(c *call, msg channels.Message, name string, err 
 		return d
 	}
 	return fmt.Errorf("realtime: promote: %w", err)
+}
+
+// checkPromoteRefs refuses a promote of msg that would copy a ref into the
+// new entity that the caller cannot read. The poster could read it, but
+// the caller may not, and the entity would show them its id. The mapped
+// ref properties resolve as the caller in one batch. An unreadable and a
+// missing entity get the same 422, which names only the message property.
+//
+// A property the store recorded as a ref counts as one whatever the
+// configuration now says, as it does when the message renders.
+func (s *Service) checkPromoteRefs(c *call, p *realtimecfg.Promote, msg channels.Message) error {
+	mt := c.ct.MessageTypes[msg.Type]
+	if mt == nil || len(p.Map) == 0 {
+		return nil
+	}
+	stored, err := s.local.storedRefs(c.ctx, s.store, c.snap.Config, c.ct.Name)
+	if err != nil {
+		return err
+	}
+	byProp := map[string]string{}
+	for _, mp := range p.Map {
+		id, ok := msg.Props[mp].(string)
+		if !ok || id == "" {
+			continue
+		}
+		prop, declared := mt.Properties[mp]
+		if (declared && prop.Type == realtimecfg.PropertyRef) || slices.Contains(stored, msg.Type+"."+mp) {
+			byProp[mp] = id
+		}
+	}
+	if len(byProp) == 0 {
+		return nil
+	}
+	ids := make([]string, 0, len(byProp))
+	for _, id := range byProp {
+		ids = append(ids, id)
+	}
+	slices.Sort(ids)
+	got, err := s.refs.Resolve(c.ctx, slices.Compact(ids))
+	if err != nil {
+		return fmt.Errorf("realtime: resolve refs: %w", err)
+	}
+	for _, mp := range sortedKeys(byProp) {
+		if _, ok := got[byProp[mp]]; !ok {
+			return deny(http.StatusUnprocessableEntity, TypePromoteInvalid,
+				"the message property "+mp+" names an entity that cannot be promoted")
+		}
+	}
+	return nil
 }
 
 // markDone applies m with a few tries, on a context the client cannot
