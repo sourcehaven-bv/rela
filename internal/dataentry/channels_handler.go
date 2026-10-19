@@ -19,25 +19,39 @@ import (
 )
 
 const (
-	channelsSegment = "_channels"
-	messagesSegment = "messages"
+	channelsSegment  = "_channels"
+	messagesSegment  = "messages"
+	lifecycleSegment = "_lifecycle"
 	// channelBodyLimit caps a channel request body: the largest message
 	// realtime.yaml may allow, plus room for the JSON envelope. The service
 	// applies the configured, possibly smaller, limit to the properties.
 	channelBodyLimit = realtimelimits.MaxMessageBytes + 1<<10
 )
 
-// ChannelService is the channel capability the channel routes use. The
-// wiring site passes the project's *realtime.Service, which authorizes
-// every operation itself.
-type ChannelService interface {
+// The channel routes use the channel service through three narrow
+// capabilities, one per kind of route. The wiring site passes the
+// project's *realtime.Service for all three; it authorizes every
+// operation itself.
+
+// channelReader serves the read routes: the list, the head and the pages.
+type channelReader interface {
 	ListAnchor(ctx context.Context, entityType, anchor string, state channels.State) (realtime.AnchorChannels, error)
 	Head(ctx context.Context, addr realtime.RawAddress) (realtime.HeadView, error)
 	Messages(ctx context.Context, addr realtime.RawAddress, page channels.Page) (realtime.MessagePage, error)
+}
+
+// messageWriter serves the message routes: post, edit and delete.
+type messageWriter interface {
 	Post(ctx context.Context, addr realtime.RawAddress, in realtime.PostInput) (realtime.PostResult, error)
-	Create(ctx context.Context, entityType, anchor, typ string, in realtime.CreateInput) (realtime.ChannelView, error)
 	Edit(ctx context.Context, addr realtime.RawAddress, seq int64, props map[string]any) (realtime.MessageView, error)
 	Delete(ctx context.Context, addr realtime.RawAddress, seq int64, reason string) (realtime.MessageView, error)
+}
+
+// channelWriter serves the routes that act on a channel itself: create and
+// the lifecycle operations.
+type channelWriter interface {
+	Create(ctx context.Context, entityType, anchor, typ string, in realtime.CreateInput) (realtime.ChannelView, error)
+	Lifecycle(ctx context.Context, addr realtime.RawAddress, op string) (realtime.ChannelView, error)
 }
 
 // realtimeSwitch reports whether realtime is on now. *realtime.Service
@@ -56,15 +70,18 @@ type realtimeSwitch interface {
 //	POST   …/_channels/{type}[/{name}]/messages                post (201, or 202 ephemeral)
 //	PATCH  …/_channels/{type}[/{name}]/messages/{seq}          edit own message
 //	DELETE …/_channels/{type}[/{name}]/messages/{seq}          delete or remove
+//	POST   …/_channels/{type}[/{name}]/_lifecycle/{op}         close, reopen, archive, delete
 //
-// Parsing is structural: after the type, `messages` is the subresource
-// wherever it stands, and can never be a channel name, because names are minted as 13 base36
-// digits. The service decides by cardinality whether a name belongs.
+// Parsing is structural: after the type, `messages` and `_lifecycle` are
+// subresources wherever they stand, and can never be a channel name,
+// because names are minted as 13 base36 digits. The service decides by cardinality whether a name belongs.
 //
 // A nil *channelsHandler is "channels not wired": every route answers the
 // entity GET's uniform 404, as with realtime off. [SetChannels] installs it.
 type channelsHandler struct {
-	svc ChannelService
+	read       channelReader
+	messageOps messageWriter
+	channels   channelWriter
 	// on answers whether realtime is on; see [channelsHandler.serve].
 	on realtimeSwitch
 	// changes subscribes the live worker to channel changes.
@@ -82,7 +99,7 @@ func SetChannels(a *App, svc *realtime.Service) error {
 		return errors.New("dataentry: SetChannels requires a channel service")
 	}
 	a.channels = &channelsHandler{
-		svc:     svc,
+		read: svc, messageOps: svc, channels: svc,
 		on:      svc,
 		changes: func() channelChanges { return svc.Subscribe() },
 	}
@@ -107,6 +124,8 @@ type channelRoute struct {
 	// msgs is set for …/messages; seq additionally for …/messages/{seq}.
 	msgs bool
 	seq  int64
+	// lifecycle is the operation of …/_lifecycle/{op}.
+	lifecycle string
 }
 
 // serve answers every route under /api/v1/{plural}/{ref}/_channels. rest
@@ -130,6 +149,10 @@ func (h *channelsHandler) serve(w http.ResponseWriter, r *http.Request, typeName
 		return
 	}
 	switch {
+	case rt.lifecycle != "":
+		if allowMethod(w, r, http.MethodPost) {
+			h.runLifecycle(w, r, rt)
+		}
 	case rt.seq != 0:
 		switch r.Method {
 		case http.MethodPatch:
@@ -169,19 +192,25 @@ func methodNotAllowed(w http.ResponseWriter, r *http.Request, allow string) {
 	writeV1Error(w, r, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed", "")
 }
 
-// parseChannelRoute parses {type}[/{name}][/messages[/{seq}]]. It reports
-// false for any other shape.
+// parseChannelRoute parses {type}[/{name}][/messages[/{seq}]] and
+// {type}[/{name}]/_lifecycle/{op}. It reports false for any other shape,
+// including an op that is no lifecycle operation.
 func parseChannelRoute(typeName, ref string, rest []string) (channelRoute, bool) {
 	if slices.Contains(rest, "") {
 		return channelRoute{}, false
 	}
 	rt := channelRoute{addr: realtime.RawAddress{EntityType: typeName, Anchor: ref, Type: rest[0]}}
 	tail := rest[1:]
-	if len(tail) > 0 && tail[0] != messagesSegment {
+	if len(tail) > 0 && tail[0] != messagesSegment && tail[0] != lifecycleSegment {
 		rt.addr.Name, tail = tail[0], tail[1:]
 	}
 	switch {
 	case len(tail) == 0:
+	case len(tail) == 2 && tail[0] == lifecycleSegment:
+		if !realtime.IsLifecycleOp(tail[1]) {
+			return channelRoute{}, false
+		}
+		rt.lifecycle = tail[1]
 	case len(tail) == 1 && tail[0] == messagesSegment:
 		rt.msgs = true
 	case len(tail) == 2 && tail[0] == messagesSegment:
@@ -203,7 +232,7 @@ func (h *channelsHandler) list(w http.ResponseWriter, r *http.Request, typeName,
 			"state must be open, closed or archived")
 		return
 	}
-	got, err := h.svc.ListAnchor(r.Context(), typeName, ref, state)
+	got, err := h.read.ListAnchor(r.Context(), typeName, ref, state)
 	if err != nil {
 		writeChannelError(w, r, err)
 		return
@@ -215,7 +244,7 @@ func (h *channelsHandler) list(w http.ResponseWriter, r *http.Request, typeName,
 }
 
 func (h *channelsHandler) head(w http.ResponseWriter, r *http.Request, rt channelRoute) {
-	got, err := h.svc.Head(r.Context(), rt.addr)
+	got, err := h.read.Head(r.Context(), rt.addr)
 	if err != nil {
 		writeChannelError(w, r, err)
 		return
@@ -229,7 +258,7 @@ func (h *channelsHandler) messages(w http.ResponseWriter, r *http.Request, rt ch
 	if !ok {
 		return
 	}
-	got, err := h.svc.Messages(r.Context(), rt.addr, page)
+	got, err := h.read.Messages(r.Context(), rt.addr, page)
 	if err != nil {
 		writeChannelError(w, r, err)
 		return
@@ -288,7 +317,7 @@ func (h *channelsHandler) post(w http.ResponseWriter, r *http.Request, rt channe
 		return
 	}
 	in := realtime.PostInput{Type: req.Type, Props: req.Props, ReplyTo: req.ReplyTo}
-	got, err := h.svc.Post(r.Context(), rt.addr, in)
+	got, err := h.messageOps.Post(r.Context(), rt.addr, in)
 	if err != nil {
 		writeChannelError(w, r, err)
 		return
@@ -305,7 +334,7 @@ func (h *channelsHandler) create(w http.ResponseWriter, r *http.Request, rt chan
 	if !decodeChannelBody(w, r, &req, true) {
 		return
 	}
-	got, err := h.svc.Create(r.Context(), rt.addr.EntityType, rt.addr.Anchor, rt.addr.Type,
+	got, err := h.channels.Create(r.Context(), rt.addr.EntityType, rt.addr.Anchor, rt.addr.Type,
 		realtime.CreateInput{Title: req.Title})
 	if err != nil {
 		writeChannelError(w, r, err)
@@ -319,7 +348,7 @@ func (h *channelsHandler) edit(w http.ResponseWriter, r *http.Request, rt channe
 	if !decodeChannelBody(w, r, &req, false) {
 		return
 	}
-	got, err := h.svc.Edit(r.Context(), rt.addr, rt.seq, req.Props)
+	got, err := h.messageOps.Edit(r.Context(), rt.addr, rt.seq, req.Props)
 	if err != nil {
 		writeChannelError(w, r, err)
 		return
@@ -334,12 +363,31 @@ func (h *channelsHandler) remove(w http.ResponseWriter, r *http.Request, rt chan
 	if !decodeChannelBody(w, r, &req, true) {
 		return
 	}
-	got, err := h.svc.Delete(r.Context(), rt.addr, rt.seq, req.Reason)
+	got, err := h.messageOps.Delete(r.Context(), rt.addr, rt.seq, req.Reason)
 	if err != nil {
 		writeChannelError(w, r, err)
 		return
 	}
 	writeV1JSON(w, http.StatusOK, wireMessage(got))
+}
+
+// runLifecycle serves POST …/_lifecycle/{op}. The body is empty or `{}`.
+// A delete answers 204; every other operation answers the channel.
+func (h *channelsHandler) runLifecycle(w http.ResponseWriter, r *http.Request, rt channelRoute) {
+	var req struct{}
+	if !decodeChannelBody(w, r, &req, true) {
+		return
+	}
+	got, err := h.channels.Lifecycle(r.Context(), rt.addr, rt.lifecycle)
+	if err != nil {
+		writeChannelError(w, r, err)
+		return
+	}
+	if rt.lifecycle == realtime.LifecycleDelete {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	writeV1JSON(w, http.StatusOK, wireChannel(got))
 }
 
 // decodeChannelBody reads a JSON body of at most [channelBodyLimit] bytes

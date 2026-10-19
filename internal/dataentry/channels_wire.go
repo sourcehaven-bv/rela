@@ -99,11 +99,14 @@ func wireHead(h realtime.HeadView) v1.ChannelHead {
 		Ephemeral: make([]v1.EphemeralMessage, 0, len(h.Ephemeral)),
 		Actions: v1.ChannelActions{
 			Post: h.Actions.Post, EditOwn: h.Actions.EditOwn, DeleteOwn: h.Actions.DeleteOwn,
-			Remove: h.Actions.Remove,
+			Remove: h.Actions.Remove, Lifecycle: h.Actions.Lifecycle,
 		},
 	}
 	if out.Actions.Post == nil {
 		out.Actions.Post = []string{}
+	}
+	if out.Actions.Lifecycle == nil {
+		out.Actions.Lifecycle = []string{}
 	}
 	if h.Last != nil {
 		m := wireMessage(*h.Last)

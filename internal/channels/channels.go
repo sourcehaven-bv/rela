@@ -800,6 +800,43 @@ func PrepareTransition(expect State, t Transition) (Transition, error) {
 	return t, nil
 }
 
+// Deletion is a channel delete: the state and rev the caller read, who
+// deletes and when. The delete compares both, so a lifecycle change since
+// the read (which may have moved the close time a retention counts from)
+// or a new message refuses it, rather than deleting a channel the caller
+// did not judge.
+type Deletion struct {
+	Expect State
+	Rev    int64
+	By     Author
+	At     time.Time
+}
+
+// PrepareDeletion validates d and returns it with its time normalized.
+func PrepareDeletion(d Deletion) (Deletion, error) {
+	if !d.Expect.Valid() || d.Rev < 0 {
+		return d, fmt.Errorf("%w: delete expecting %q at rev %d", ErrInvalidMessage, d.Expect, d.Rev)
+	}
+	if err := checkAuthor(d.By); err != nil {
+		return d, err
+	}
+	if d.At.IsZero() {
+		return d, fmt.Errorf("%w: missing time", ErrInvalidMessage)
+	}
+	d.At = NormTime(d.At)
+	return d, nil
+}
+
+// CheckDeletion reports a channel whose state or rev is not the one d
+// expects as [ErrConflict].
+func CheckDeletion(k Key, state State, rev int64, d Deletion) error {
+	if state != d.Expect || rev != d.Rev {
+		return fmt.Errorf("%w: %s is %s at rev %d, expected %s at rev %d",
+			ErrConflict, k, state, rev, d.Expect, d.Rev)
+	}
+	return nil
+}
+
 // CheckRekey validates the two ids of a rename.
 func CheckRekey(oldID, newID string) error {
 	if err := entity.ValidateID(oldID); err != nil {

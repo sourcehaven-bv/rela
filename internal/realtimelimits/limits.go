@@ -104,7 +104,7 @@ var (
 	// (user and organization), across channels, operations and types.
 	IdentityRate = Rate{Count: 300, Per: time.Minute}
 	// OpRate applies to the channel operations that are not a post: create,
-	// edit and remove.
+	// edit, remove and the lifecycle operations.
 	OpRate = Rate{Count: 30, Per: time.Minute}
 )
 

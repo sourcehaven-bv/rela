@@ -50,6 +50,10 @@ channel_types:
     message_ops:
       edit_own:   { roles: [member], within: 15m }
       delete_own: { roles: [member], from: open }
+    lifecycle:
+      close:  { roles: [member] }
+      reopen: { roles: [mod] }
+      delete: { roles: [member], retention: 7d }
   threads:
     attach_to: [ticket]
     cardinality: many
@@ -57,6 +61,8 @@ channel_types:
     create: { roles: [member] }
     roles:
       member: { from: attached }
+    lifecycle:
+      delete: { roles: [member] }
     message_types:
       text:
         properties: { body: { type: string } }

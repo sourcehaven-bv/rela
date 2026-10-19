@@ -278,9 +278,11 @@ func TestDeleteEmptiesTrash(t *testing.T) {
 	left := filepath.Join(dir, trashDir, "interrupted")
 	require.NoError(t, os.MkdirAll(left, 0o700))
 	require.NoError(t, os.WriteFile(filepath.Join(left, "log-0000.jsonl"), []byte("secret\n"), 0o600))
-	_, err := s.Append(ctx, key, msg("one"))
+	m, err := s.Append(ctx, key, msg("one"))
 	require.NoError(t, err)
-	require.NoError(t, s.Delete(ctx, key, channels.Author{User: "alice"}, time.Now()))
+	require.NoError(t, s.Delete(ctx, key, channels.Deletion{
+		Expect: channels.StateOpen, Rev: m.Rev, By: channels.Author{User: "alice"}, At: time.Now(),
+	}))
 	require.NoDirExists(t, filepath.Join(dir, trashDir))
 }
 

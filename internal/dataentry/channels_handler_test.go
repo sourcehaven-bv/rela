@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -285,6 +286,56 @@ func TestChannels_RefsUniform422(t *testing.T) {
 	}
 }
 
+// TestChannels_Lifecycle walks the lifecycle routes: the affordance, a
+// close, the refusals and a delete.
+func TestChannels_Lifecycle(t *testing.T) {
+	env := newChannelEnv(t)
+	env.postText(t, "alice", roomPath, "hello")
+
+	_, b := env.get(t, "alice", roomPath)
+	if got := decodeAs[v1.ChannelHead](t, b).Actions.Lifecycle; !slices.Equal(got, []string{"close"}) {
+		t.Fatalf("open room lifecycle actions = %v, want [close]", got)
+	}
+
+	resp, b := env.do(t, "alice", http.MethodPost, roomPath+"/_lifecycle/close", `{}`, nil)
+	if resp.StatusCode != http.StatusOK || decodeAs[v1.Channel](t, b).State != "closed" {
+		t.Fatalf("close = %d %s", resp.StatusCode, b)
+	}
+	_, b = env.get(t, "alice", roomPath)
+	if got := decodeAs[v1.ChannelHead](t, b).Actions.Lifecycle; got == nil || len(got) != 0 {
+		t.Fatalf("closed room lifecycle actions = %#v, want []", got)
+	}
+
+	for _, tc := range []struct {
+		op    string
+		code  int
+		ptype string
+	}{
+		{"close", http.StatusConflict, realtime.TypeLifecycleWrongState},
+		{"reopen", http.StatusForbidden, realtime.TypeLifecycleDenied},
+		{"archive", http.StatusForbidden, realtime.TypeLifecycleNotOffered},
+		{"delete", http.StatusConflict, realtime.TypeRetentionActive},
+	} {
+		res, body := env.do(t, "alice", http.MethodPost, roomPath+"/_lifecycle/"+tc.op, "", nil)
+		if res.StatusCode != tc.code || problemType(t, body) != tc.ptype {
+			t.Errorf("%s = %d %s, want %d %s", tc.op, res.StatusCode, body, tc.code, tc.ptype)
+		}
+	}
+
+	resp, b = env.do(t, "alice", http.MethodPost, "/api/v1/tickets/TKT-1/_channels/threads", `{"title":"Design"}`, nil)
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("create = %d %s", resp.StatusCode, b)
+	}
+	named := "/api/v1/tickets/TKT-1/_channels/threads/" + decodeAs[v1.Channel](t, b).Name
+	resp, b = env.do(t, "alice", http.MethodPost, named+"/_lifecycle/delete", "", nil)
+	if resp.StatusCode != http.StatusNoContent || len(b) != 0 {
+		t.Fatalf("delete = %d %s, want 204 and no body", resp.StatusCode, b)
+	}
+	if code, b := env.get(t, "alice", named); code != http.StatusNotFound || problemType(t, b) != realtime.TypeChannelNotFound {
+		t.Fatalf("deleted head = %d %s", code, b)
+	}
+}
+
 // The request checks the handler makes before the service: method, route
 // shape, body and query.
 func TestChannels_RequestChecks(t *testing.T) {
@@ -312,6 +363,9 @@ func TestChannels_RequestChecks(t *testing.T) {
 		{"bad limit", http.MethodGet, roomPath + "/messages?limit=0", "", http.StatusBadRequest, "invalid_request"},
 		{"bad state", http.MethodGet, "/api/v1/tickets/TKT-1/_channels?state=gone", "", http.StatusBadRequest, "invalid_request"},
 		{"two cursors", http.MethodGet, roomPath + "/messages?after=1&before=3", "", http.StatusBadRequest, realtime.TypeInvalid},
+		{"lifecycle GET", http.MethodGet, roomPath + "/_lifecycle/close", "", http.StatusMethodNotAllowed, "method_not_allowed"},
+		{"unknown lifecycle op", http.MethodPost, roomPath + "/_lifecycle/explode", "", http.StatusNotFound, "not_found"},
+		{"lifecycle body", http.MethodPost, roomPath + "/_lifecycle/close", `{"why":"done"}`, http.StatusBadRequest, "invalid_request"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			resp, b := env.do(t, "alice", tc.method, tc.path, tc.body, nil)
@@ -437,6 +491,9 @@ func (s stubChannels) Edit(context.Context, realtime.RawAddress, int64, map[stri
 func (s stubChannels) Delete(context.Context, realtime.RawAddress, int64, string) (realtime.MessageView, error) {
 	return realtime.MessageView{}, s.err
 }
+func (s stubChannels) Lifecycle(context.Context, realtime.RawAddress, string) (realtime.ChannelView, error) {
+	return realtime.ChannelView{}, s.err
+}
 
 // The error mapping every channel route shares, for every entry of the
 // table plus the sentinels and an internal failure.
@@ -465,7 +522,7 @@ func TestChannels_ErrorMapping(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			app := newTestAppV1(t)
 			stub := stubChannels{err: tc.err}
-			app.channels = &channelsHandler{svc: stub, on: stub}
+			app.channels = &channelsHandler{read: stub, messageOps: stub, channels: stub, on: stub}
 			router := app.NewRouter()
 			for _, rq := range []struct{ method, path, body string }{
 				{http.MethodGet, "/api/v1/tickets/TKT-1/_channels", ""},
@@ -475,6 +532,7 @@ func TestChannels_ErrorMapping(t *testing.T) {
 				{http.MethodPost, roomPath + "/messages", `{"type":"text"}`},
 				{http.MethodPatch, roomPath + "/messages/1", `{"props":{}}`},
 				{http.MethodDelete, roomPath + "/messages/1", ""},
+				{http.MethodPost, roomPath + "/_lifecycle/close", ""},
 			} {
 				rec := httptest.NewRecorder()
 				router.ServeHTTP(rec, httptest.NewRequest(rq.method, rq.path, strings.NewReader(rq.body)).
@@ -519,6 +577,11 @@ func TestParseChannelRoute(t *testing.T) {
 		{[]string{"room", "messages", "-1"}, channelRoute{}, false},
 		{[]string{"room", "messages", "1", "x"}, channelRoute{}, false},
 		{[]string{"threads", "a", "b"}, channelRoute{}, false},
+		{[]string{"room", "_lifecycle", "close"}, channelRoute{addr: room, lifecycle: "close"}, true},
+		{[]string{"threads", "0000000000001", "_lifecycle", "delete"}, channelRoute{addr: thread, lifecycle: "delete"}, true},
+		{[]string{"room", "_lifecycle", "explode"}, channelRoute{}, false},
+		{[]string{"room", "_lifecycle"}, channelRoute{}, false},
+		{[]string{"room", "_lifecycle", "close", "x"}, channelRoute{}, false},
 	} {
 		t.Run(strings.Join(tc.rest, "/"), func(t *testing.T) {
 			got, ok := parseChannelRoute("", "", tc.rest)

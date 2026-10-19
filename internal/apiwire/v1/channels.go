@@ -59,6 +59,10 @@ type ChannelActions struct {
 	// Remove is set for a caller who passes the remove gate; such a caller
 	// also sees who removed a message and why.
 	Remove bool `json:"remove"`
+	// Lifecycle lists the lifecycle operations the caller may run now, in
+	// the order close, reopen, archive, delete. Each is a
+	// `POST …/_lifecycle/{op}`.
+	Lifecycle []string `json:"lifecycle"`
 }
 
 // ChannelHead is the `GET` answer for one channel: its metadata, the last

@@ -167,6 +167,67 @@ func addChannelTypePaths(spec *Spec, basePath, typeName, tag string, ct realtime
 				"400", "403", "404", "409", "413", "429"),
 		},
 	}
+	addLifecyclePaths(spec, headPath, opID, tag, params, ct.Lifecycle)
+}
+
+// lifecycleDoc is the summary and description of a lifecycle operation's
+// path.
+type lifecycleDoc struct {
+	summary, description string
+}
+
+var lifecycleText = map[string]lifecycleDoc{
+	realtimecfg.LifecycleClose: {
+		summary:     "Close the channel",
+		description: "Closes the channel: it keeps its messages and takes no new ones.",
+	},
+	realtimecfg.LifecycleReopen: {
+		summary:     "Reopen the channel",
+		description: "Opens a closed or archived channel again.",
+	},
+	realtimecfg.LifecycleArchive: {
+		summary:     "Archive the channel",
+		description: "Archives the channel: it keeps its messages and takes no new ones.",
+	},
+	realtimecfg.LifecycleDelete: {
+		summary: "Delete the channel",
+		description: "Deletes the channel and its messages. " +
+			"A cardinality-one channel starts again at the next post.",
+	},
+}
+
+// addLifecyclePaths adds one `POST …/_lifecycle/{op}` path per operation
+// the channel type declares. The body is empty or `{}`.
+func addLifecyclePaths(
+	spec *Spec, headPath, opID, tag string, params []Parameter, lc realtimecfg.Lifecycle,
+) {
+	for _, name := range realtimecfg.LifecycleOpNames() {
+		if lc.Op(name) == nil {
+			continue
+		}
+		errs := []string{"400", "403", "404", "409", "413", "422", "429"}
+		var responses map[string]Response
+		if name == realtimecfg.LifecycleDelete {
+			responses = withResponse(channelErrors(errs...), "204", Response{Description: "The channel is deleted"})
+		} else {
+			responses = channelResponses("200", "The channel after the change", Ref(channelSchema), errs...)
+		}
+		// The server decodes the body strictly into an empty object.
+		body := ObjectSchema(map[string]*Schema{}, nil)
+		body.AdditionalProperties = &Schema{Not: &Schema{}}
+		doc := lifecycleText[name]
+		spec.Paths[headPath+"/_lifecycle/"+name] = PathItem{
+			Parameters: params,
+			Post: &Operation{
+				OperationID: name + "Channel" + opID,
+				Summary:     doc.summary,
+				Description: doc.description + " The operation is offered in the head's `_actions.lifecycle`.",
+				Tags:        []string{tag},
+				RequestBody: &RequestBody{Content: jsonContent(body)},
+				Responses:   responses,
+			},
+		}
+	}
 }
 
 func refParam() Parameter {
@@ -178,7 +239,8 @@ var channelErrorText = map[string]string{
 	"400": "Invalid JSON, an unknown field, or an invalid message or query",
 	"403": "A role or gate refused; the problem names the rule",
 	"404": "Entity not found (the same body as the entity GET), or no such channel type, channel or message",
-	"409": "The channel is not open, the message was removed, a limit or a concurrent change refused",
+	"409": "The channel is not open or not in the state the operation starts from, the message was removed, " +
+		"a limit, the retention or a concurrent change refused",
 	"413": "Request body or a value too large",
 	"422": "A ref to an entity that cannot be referenced, or a bare id for a face-anchored type",
 	"429": "Rate limited; see Retry-After",
@@ -186,7 +248,12 @@ var channelErrorText = map[string]string{
 
 // channelResponses is the success response plus the listed error ones.
 func channelResponses(code, desc string, schema *Schema, errs ...string) map[string]Response {
-	out := map[string]Response{code: {Description: desc, Content: jsonContent(schema)}}
+	return withResponse(channelErrors(errs...), code, Response{Description: desc, Content: jsonContent(schema)})
+}
+
+// channelErrors is the listed error responses.
+func channelErrors(errs ...string) map[string]Response {
+	out := make(map[string]Response, len(errs)+1)
 	for _, e := range errs {
 		r := Response{Description: channelErrorText[e], Content: problemContent()}
 		if e == "429" {
@@ -337,6 +404,7 @@ func addChannelSchemas(spec *Spec) {
 		"ephemeral": ArraySchema(Ref(ephemeralSchema)),
 		"_actions": ObjectSchema(map[string]*Schema{
 			"post": ArraySchema(str()), "edit_own": b(), "delete_own": b(), "remove": b(),
-		}, []string{"post", "edit_own", "delete_own", "remove"}),
+			"lifecycle": ArraySchema(str()),
+		}, []string{"post", "edit_own", "delete_own", "remove", "lifecycle"}),
 	}, []string{"channel", "ephemeral", "_actions"})
 }

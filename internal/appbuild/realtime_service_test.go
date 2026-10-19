@@ -56,10 +56,13 @@ entities:
 `
 
 // serviceFixture assembles a project with realtime.yaml over a memstore
-// holding DOC-1 (owner alice), DOC-2 (owner bob) and MEMO-1 (owner bob).
+// holding DOC-1 (owner alice), DOC-2 (owner bob) and MEMO-1 (owner bob). files may
+// name its own realtime.yaml.
 func serviceFixture(t *testing.T, files map[string]string, opts ...appbuild.Option) *appbuild.Services {
 	t.Helper()
-	files["realtime.yaml"] = serviceRealtimeYAML
+	if _, ok := files["realtime.yaml"]; !ok {
+		files["realtime.yaml"] = serviceRealtimeYAML
+	}
 	files["schema.yaml"] = serviceSchema
 	base, err := realtimeBase(t, realtimeProject(t, files), opts...)
 	require.NoError(t, err)
@@ -139,6 +142,112 @@ assignments:
 
 	_, err = cs.Post(as("alice"), realtime.RawAddress{EntityType: "doc", Anchor: "DOC-2", Type: "room"}, note("x"))
 	requireStatus(t, err, http.StatusForbidden)
+}
+
+// conditionRealtimeYAML offers close on a doc room when the doc's title is
+// One.
+const conditionRealtimeYAML = `version: 1
+channel_types:
+  room:
+    attach_to: [doc]
+    roles:
+      member: { from: attached }
+    message_types:
+      note: { properties: { body: { type: string } }, post: [member] }
+    lifecycle:
+      close: { roles: [member], condition: "entity.title == 'One'", denied: "Only One closes" }
+`
+
+// TestChannelService_LifecycleConditionReadsAnchor pins the wiring of a
+// lifecycle condition: the anchor reader binds the condition's record from
+// the gated read, so the condition decides per entity.
+func TestChannelService_LifecycleConditionReadsAnchor(t *testing.T) {
+	t.Parallel()
+	svc := serviceFixture(t, map[string]string{"realtime.yaml": conditionRealtimeYAML}, appbuild.WithACL(acl.NopACL{}))
+	cs := appbuild.ChannelService(svc)
+	doc2Room := realtime.RawAddress{EntityType: "doc", Anchor: "DOC-2", Type: "room"}
+	for _, addr := range []realtime.RawAddress{doc1Room, doc2Room} {
+		_, err := cs.Post(asUser("alice"), addr, note("x"))
+		require.NoError(t, err)
+	}
+
+	head, err := cs.Head(asUser("alice"), doc1Room)
+	require.NoError(t, err)
+	require.Equal(t, []string{"close"}, head.Actions.Lifecycle)
+	got, err := cs.Lifecycle(asUser("alice"), doc1Room, "close")
+	require.NoError(t, err)
+	require.Equal(t, channels.StateClosed, got.State)
+
+	head, err = cs.Head(asUser("alice"), doc2Room)
+	require.NoError(t, err)
+	require.Empty(t, head.Actions.Lifecycle)
+	_, err = cs.Lifecycle(asUser("alice"), doc2Room, "close")
+	requireStatus(t, err, http.StatusForbidden)
+}
+
+// TestChannelService_DegradedRefusesConditions pins AC4 through the real
+// wiring: an acl.yaml reload that hides the field a lifecycle condition
+// reads makes realtime.yaml invalid, the successor keeps the previous
+// config in degraded mode, and the operation is then neither offered nor
+// allowed, although the condition would hold on the stored entity.
+func TestChannelService_DegradedRefusesConditions(t *testing.T) {
+	t.Parallel()
+	open := `roles:
+  reader:
+    read: ["*"]
+assignments:
+  alice: reader
+`
+	root := realtimeProject(t, map[string]string{
+		"schema.yaml": serviceSchema, "realtime.yaml": conditionRealtimeYAML, "acl.yaml": open,
+	})
+	st := memstore.New()
+	ctx := context.Background()
+	require.NoError(t, st.CreateEntity(ctx, &entity.Entity{ID: "DOC-1", Type: "doc",
+		Properties: map[string]any{"title": "One", "owner": "alice"}}))
+	assemble := func(base *appbuild.SharedBase) *appbuild.Services {
+		t.Helper()
+		svc, err := base.Assemble(st, search.New(st, search.NewLinearSearch()), nil, nil)
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = svc.Close() })
+		return svc
+	}
+
+	base, err := realtimeBase(t, root)
+	require.NoError(t, err)
+	origin := assemble(base)
+	cs := appbuild.ChannelService(origin)
+	_, err = cs.Post(bindAt(asUser("alice"), t, origin), doc1Room, note("x"))
+	require.NoError(t, err)
+	head, err := cs.Head(bindAt(asUser("alice"), t, origin), doc1Room)
+	require.NoError(t, err)
+	require.Equal(t, []string{"close"}, head.Actions.Lifecycle, "the condition holds before the reload")
+
+	// alice now sees only the owner of a doc: the title is hidden from her.
+	writeProjectFile(t, root, "acl.yaml", `roles:
+  reader:
+    read: ["*"]
+    visible:
+      doc: [{field: owner}]
+assignments:
+  alice: reader
+`)
+	next, err := realtimeBase(t, root, appbuild.WithRealtimeFallback(origin))
+	require.NoError(t, err)
+	svc := assemble(next)
+	snap := appbuild.Realtime(svc).Load()
+	require.True(t, snap.Degraded)
+	require.ErrorContains(t, snap.Problem, "visible: grant in acl.yaml restricts")
+
+	cs = appbuild.ChannelService(svc)
+	head, err = cs.Head(bindAt(asUser("alice"), t, svc), doc1Room)
+	require.NoError(t, err)
+	require.Empty(t, head.Actions.Lifecycle)
+	_, err = cs.Lifecycle(bindAt(asUser("alice"), t, svc), doc1Room, "close")
+	requireStatus(t, err, http.StatusForbidden)
+	d, _ := errors.AsType[*realtime.DenialError](err)
+	require.Equal(t, realtime.TypeLifecycleDenied, d.Type)
+	require.Contains(t, d.Title, "degraded")
 }
 
 // TestChannelService_InjectedACL pins the two policy-free modes: under

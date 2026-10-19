@@ -381,8 +381,12 @@ func (s *Store) SetLifecycle(
 }
 
 // Delete implements [channels.Store].
-func (s *Store) Delete(ctx context.Context, k channels.Key, by channels.Author, at time.Time) error {
+func (s *Store) Delete(ctx context.Context, k channels.Key, d channels.Deletion) error {
 	if err := k.Validate(); err != nil {
+		return err
+	}
+	d, err := channels.PrepareDeletion(d)
+	if err != nil {
 		return err
 	}
 	unlock, err := s.lock(ctx)
@@ -390,11 +394,15 @@ func (s *Store) Delete(ctx context.Context, k channels.Key, by channels.Author, 
 		return err
 	}
 	defer unlock()
-	if _, err := s.readMeta(k); err != nil {
+	m, err := s.readMeta(k)
+	if err != nil {
 		return err
 	}
-	rec := channels.KeyAudit(k, channels.AuditDelete, channels.NormTime(at))
-	rec.By = by
+	if err := channels.CheckDeletion(k, m.State, m.Rev, d); err != nil {
+		return err
+	}
+	rec := channels.KeyAudit(k, channels.AuditDelete, d.At)
+	rec.By = d.By
 	if err := s.appendAudit(k.ID, rec); err != nil {
 		return err
 	}

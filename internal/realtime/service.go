@@ -106,6 +106,10 @@ type Affordances struct {
 	// Remove reports whether the caller passes the remove gate. Such a
 	// reader also sees who removed a message and why.
 	Remove bool `json:"remove"`
+	// Lifecycle lists the lifecycle operations the caller may run on the
+	// channel now, in the order close, reopen, archive, delete. Empty for a
+	// cardinality-one channel that holds no message yet.
+	Lifecycle []string `json:"lifecycle"`
 }
 
 // HeadView is a channel's head: its metadata, the last message, the live
@@ -151,12 +155,13 @@ func (s *Service) Head(ctx context.Context, addr RawAddress) (HeadView, error) {
 
 // affordances answers what the caller may do in c's channel.
 func (c *call) affordances() Affordances {
-	a := Affordances{Post: []string{}}
+	a := Affordances{Post: []string{}, Lifecycle: []string{}}
 	if c.requireCaller() != nil {
 		return a
 	}
 	ops := c.ct.MessageOps
 	a.Remove = c.moderator()
+	a.Lifecycle = c.lifecycleOps()
 	if c.state() == channels.StateOpen {
 		for _, name := range sortedKeys(c.ct.MessageTypes) {
 			if c.mayPost(c.ct.MessageTypes[name]) {
