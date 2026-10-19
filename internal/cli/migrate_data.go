@@ -556,9 +556,10 @@ func (c *MigrateBaselineCmd) Run(ctx context.Context, svc *writeServices) error 
 		return err
 	}
 	svc.Audit.Record(audit.Record{
-		Time:      now,
-		Op:        audit.OpDataMigration,
-		Principal: principal.From(ctx),
+		Time:       now,
+		Op:         audit.OpDataMigration,
+		Principal:  principal.From(ctx),
+		AssertedBy: audit.AssertedByFrom(ctx),
 		Summary: fmt.Sprintf("migration baseline recorded: %d migration(s) marked applied without running",
 			len(entries)),
 	})

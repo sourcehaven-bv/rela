@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 
 	"github.com/Sourcehaven-BV/rela/internal/appbuild"
+	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/fsimport"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
 	"github.com/Sourcehaven-BV/rela/internal/project"
@@ -26,11 +27,12 @@ const dbFileName = "rela.db"
 // project at target.
 func runDBImportFS(ctx context.Context, source, target string) error {
 	rep, err := fsimport.Run(ctx, fsimport.Options{
-		Source:    source,
-		Target:    target,
-		Backend:   sqliteImportBackend(),
-		Principal: principal.From(ctx),
-		Progress:  os.Stderr,
+		Source:     source,
+		Target:     target,
+		Backend:    sqliteImportBackend(),
+		Principal:  principal.From(ctx),
+		AssertedBy: audit.AssertedByFrom(ctx),
+		Progress:   os.Stderr,
 	})
 	printImportReport(os.Stdout, rep, err)
 	return err

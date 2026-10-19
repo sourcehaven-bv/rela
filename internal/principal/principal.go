@@ -513,6 +513,70 @@ const UserAutomation = "system:automation"
 // graph, so it needs no role in acl.yaml. Paired with [ToolRealtime].
 const UserRealtime = "system:realtime"
 
+// UserMail is the [Principal.User] of the mail send script: the identity a
+// delivery's audit names when rela, not a person, sent the message.
+const UserMail = "system:mail"
+
+// UserFSImport is the [Principal.User] that `rela db import-fs` credits the
+// rows it copies to when the source names no editor.
+const UserFSImport = "system:fs-import"
+
+// UserGCSweep is the [Principal.User] of the data GC sweep, which deletes
+// rows no migration owns any more.
+const UserGCSweep = "system:gc-sweep"
+
+// UserPerfSeed is the [Principal.User] of `rela dev seed`, so the generated
+// rows can be found and removed.
+const UserPerfSeed = "system:perf-seed"
+
+// SubscriptionUserPrefix is the [Principal.User] prefix of a scheduled
+// subscription run, `system:subscription:<name>`.
+const SubscriptionUserPrefix = ReservedPrefix + "subscription:"
+
+// relaUsers are rela's own identities, by exact name. A new one is declared
+// as a constant above and listed here, so [IsRelaIdentity] refuses it to
+// self-asserted callers from the start.
+var relaUsers = map[string]bool{
+	UserScheduler: true, UserProvisioner: true, UserAutomation: true, UserRealtime: true,
+	UserMail: true, UserFSImport: true, UserGCSweep: true, UserPerfSeed: true,
+}
+
+// relaUserPrefixes are the families of rela's own identities.
+var relaUserPrefixes = []string{webhookUserPrefix, SubscriptionUserPrefix}
+
+// IsRelaIdentity reports whether user is one of rela's own identities: a
+// name an in-process entry point acts as. Nothing a person or job asserts,
+// such as the local CLI's `--run-as`, may borrow one, because its writes
+// would then pass for rela's own.
+func IsRelaIdentity(user string) bool {
+	if relaUsers[user] {
+		return true
+	}
+	for _, p := range relaUserPrefixes {
+		if strings.HasPrefix(user, p) {
+			return true
+		}
+	}
+	return false
+}
+
+// ValidSystemName reports whether name may follow [ReservedPrefix] in a
+// self-asserted identity: one or more segments separated by ':', each in the
+// [ValidIntegrationName] grammar. Plain lowercase ASCII rules out invisible
+// format characters and look-alike letters, so a name cannot display as one
+// of rela's own while differing from it.
+func ValidSystemName(name string) bool {
+	if name == "" {
+		return false
+	}
+	for seg := range strings.SplitSeq(name, ":") {
+		if !ValidIntegrationName(seg) {
+			return false
+		}
+	}
+	return true
+}
+
 // ReservedPrefix namespaces the [Principal.User] values that only rela's own
 // in-process entry points may assert. [UserScheduler] and [UserProvisioner] are
 // its current members. [IntegrationPrefix] is the second reserved namespace.
@@ -620,7 +684,7 @@ const RunAsEnv = "RELA_RUN_AS"
 // or the desktop user, and an operator who exports RELA_RUN_AS for the CLI
 // must not believe the server now runs as that identity.
 //
-// Nil: lookup is rejected — the caller passes os.LookupEnv.
+// Nil: not accepted; a nil lookup panics. The caller passes os.LookupEnv.
 func RefuseRunAsEnv(lookup func(string) (string, bool)) error {
 	if v, ok := lookup(RunAsEnv); ok && v != "" {
 		return fmt.Errorf("%s is set to %q; it applies to the local rela CLI only. "+

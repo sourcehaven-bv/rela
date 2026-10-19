@@ -182,7 +182,7 @@ func (r *Runner) Run(ctx context.Context, plan []*File, apply bool) (*RunResult,
 			if err := r.advanceMarker(ctx, f); err != nil {
 				return res, err
 			}
-			r.auditFile(p, f, fr)
+			r.auditFile(ctx, p, f, fr)
 		}
 	}
 
@@ -211,15 +211,16 @@ func (r *Runner) advanceMarker(ctx context.Context, f *File) error {
 
 // auditFile emits the per-file audit record: names, hashes and counts —
 // never content (history-purge convention).
-func (r *Runner) auditFile(p principal.Principal, f *File, fr FileResult) {
+func (r *Runner) auditFile(ctx context.Context, p principal.Principal, f *File, fr FileResult) {
 	total := 0
 	for _, s := range fr.Steps {
 		total += s.Affected
 	}
 	r.deps.Audit.Record(audit.Record{
-		Time:      r.now().UTC(),
-		Op:        audit.OpDataMigration,
-		Principal: p,
+		Time:       r.now().UTC(),
+		Op:         audit.OpDataMigration,
+		Principal:  p,
+		AssertedBy: audit.AssertedByFrom(ctx),
 		Summary: fmt.Sprintf("data migration %s applied: %d steps, %d records changed",
 			f.Name, len(fr.Steps), total),
 	})

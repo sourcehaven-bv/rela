@@ -150,7 +150,7 @@ func (g *GC) Tick(ctx context.Context, apply bool) (*GCResult, error) {
 		p := principal.From(ctx)
 		user := p.User
 		if user == "" {
-			user = "system:" + gcTool
+			user = principal.UserGCSweep
 		}
 		ctx = store.WithAttribution(ctx, store.Attribution{User: user, Tool: gcTool})
 	}
@@ -264,7 +264,7 @@ func (g *GC) newCapturer() *capturer {
 		w:           g.deps.Versions,
 		schemaHash:  proj.Hash(),
 		projection:  projJSON,
-		user:        "system:" + gcTool,
+		user:        principal.UserGCSweep,
 		tool:        gcTool,
 		triggeredBy: gcTool,
 	}
@@ -278,10 +278,11 @@ func (g *GC) auditTick(ctx context.Context, res *GCResult) {
 		total += d.Affected
 	}
 	g.deps.Audit.Record(audit.Record{
-		Time:      g.now().UTC(),
-		Op:        audit.OpDataGC,
-		Principal: principal.From(ctx),
-		Summary:   fmt.Sprintf("gc removed %d records for expired drift: %s", total, strings.Join(parts, ", ")),
+		Time:       g.now().UTC(),
+		Op:         audit.OpDataGC,
+		Principal:  principal.From(ctx),
+		AssertedBy: audit.AssertedByFrom(ctx),
+		Summary:    fmt.Sprintf("gc removed %d records for expired drift: %s", total, strings.Join(parts, ", ")),
 	})
 }
 
