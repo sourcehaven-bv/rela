@@ -2,20 +2,16 @@ package realtime
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"log/slog"
 	"maps"
 	"slices"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/channels"
-	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/predicate"
 	"github.com/Sourcehaven-BV/rela/internal/predicatefns"
@@ -197,6 +193,8 @@ func NewTriggers(d TriggerDeps) (*Triggers, error) {
 type TriggerReport struct {
 	// Posted counts the messages posted.
 	Posted int
+	// Moved counts the channels an auto rule closed or archived.
+	Moved int
 	// Skipped counts the posts left out because the channel was not open.
 	Skipped int
 	// Failed counts the posts given up.
@@ -220,10 +218,8 @@ func (t *Triggers) Note(c Change) {
 	defer t.mu.Unlock()
 	if k := (typesKey{config: snap.Config, degraded: snap.Degraded}); !t.typesOK || t.typesOf != k {
 		t.types = map[string]bool{}
-		if !snap.Degraded {
-			for _, tr := range snap.Config.Triggers() {
-				t.types[tr.EntityType] = true
-			}
+		for _, ru := range rulesFor(snap, t.meta) {
+			t.types[ru.entityType] = true
 		}
 		t.typesOf, t.typesOK = k, true
 	}
@@ -432,119 +428,10 @@ func (t *Triggers) RunReconcile(ctx context.Context) (TriggerReport, error) {
 	r := t.newRound(ctx, snap, now, rules)
 	full := map[string]bool{}
 	for i := range rules {
-		full[rules[i].t.EntityType] = true
+		full[rules[i].entityType] = true
 	}
 	err := r.run(map[string]map[string]time.Time{}, full, true)
 	return r.rep, err
-}
-
-// rule is one trigger as a round evaluates it.
-type rule struct {
-	id    string
-	t     realtimecfg.Trigger
-	ct    realtimecfg.ChannelType
-	mt    *realtimecfg.MessageType
-	def   *metamodel.EntityDef
-	faces FaceMode
-	props map[string]any
-}
-
-// rulesFor returns the triggers of snap, sorted by name. It is empty when
-// realtime is off or degraded: the engine fails closed.
-func rulesFor(snap Snapshot, meta *metamodel.Metamodel) []rule {
-	if snap.Config == nil || snap.Degraded {
-		return nil
-	}
-	var out []rule
-	for _, tr := range snap.Config.Triggers() {
-		ct, ok := snap.Config.ChannelType(tr.Channel)
-		if !ok || tr.When.Program == nil {
-			continue
-		}
-		mt := ct.MessageTypes[tr.PostType]
-		def, ok := meta.GetEntityDef(tr.EntityType)
-		if mt == nil || !ok {
-			continue
-		}
-		faces := FacePrime
-		if ct.Anchor == realtimecfg.AnchorFace {
-			faces = FaceEach
-		}
-		props := make(map[string]any, len(tr.Props))
-		for k, v := range tr.Props {
-			props[k] = v
-		}
-		out = append(out, rule{id: ruleID(tr, faces), t: tr, ct: ct, mt: mt, def: def, faces: faces, props: props})
-	}
-	return out
-}
-
-// ruleID identifies a trigger's seen-set. It changes with the entity type,
-// the rule and the faces read, so an edit that changes what matches starts
-// a new seen-set (and a silent baseline) instead of posting a burst.
-func ruleID(tr realtimecfg.Trigger, faces FaceMode) string {
-	sum := sha256.Sum256([]byte("trigger\x00" + tr.EntityType + "\x00" + tr.When.Source + "\x00" +
-		strconv.Itoa(int(faces))))
-	return "t-" + tr.Name + "-" + hex.EncodeToString(sum[:8])
-}
-
-// ref is the seen-set key of row under r: the id, or id@face for a rule
-// that reads each face.
-func (r *rule) ref(row EntityRow) string {
-	if r.faces == FaceEach {
-		return entity.FormatStateRef(row.ID, row.Face)
-	}
-	return row.ID
-}
-
-// key is the channel r posts into for the entity ref.
-func (r *rule) key(ref string) channels.Key {
-	a := channels.Anchor{ID: ref}
-	if r.faces == FaceEach {
-		id, face, err := entity.ParseStateRef(ref)
-		if err == nil {
-			a = channels.Anchor{ID: id, Face: face}
-		}
-	}
-	return channels.Key{Anchor: a, Type: r.ct.Name}
-}
-
-// idOf is the entity id of a seen-set key.
-func idOf(ref string) string {
-	id, _, err := entity.ParseStateRef(ref)
-	if err != nil {
-		return ref
-	}
-	return id
-}
-
-// eval reports whether row matches r and the fingerprint of what r read.
-// b holds the round's functions; eval binds the entity into it. ok is
-// false when the answer is unknown: a property r reads cannot be read, or
-// the rule fails to evaluate. The seen-set then stays as it was, so a
-// broken rule never posts leave.
-func (r *rule) eval(ctx context.Context, meta *metamodel.Metamodel, b *predicate.Bindings, row EntityRow,
-) (match bool, fp string, ok bool) {
-	for _, f := range row.Inaccessible {
-		if slices.Contains(r.t.When.Fields, f) {
-			return false, "", false
-		}
-	}
-	err := b.SetVar("entity", predicatefns.EntityRecord(meta, r.def, row.ID, r.t.EntityType, row.Props))
-	var v predicate.Value
-	if err == nil {
-		v, err = r.t.When.Program.Eval(ctx, b)
-	}
-	if err != nil {
-		slog.DebugContext(ctx, "realtime: trigger rule failed to evaluate; the entity is left as it was",
-			"trigger", r.t.Name, "entity", row.ID, "error", err)
-		return false, "", false
-	}
-	got, isBool := v.(predicate.Bool)
-	if !isBool {
-		return false, "", false
-	}
-	return got.Bool(), fingerprint(r.t.When.Fields, row.Props), true
 }
 
 // effectQueue is one rule's posts waiting for room in a round, in the
@@ -781,7 +668,7 @@ func (r *round) run(work map[string]map[string]time.Time, full map[string]bool, 
 		for i := range r.rules {
 			if dropErr := r.t.seen.dropAllLayouts(r.ctx, r.rules[i].id); dropErr != nil {
 				slog.WarnContext(r.ctx, "realtime: could not delete an old trigger seen-set",
-					"trigger", r.rules[i].t.Name, "error", dropErr)
+					"rule", r.rules[i].name, "error", dropErr)
 			}
 		}
 		err = nil
@@ -826,7 +713,7 @@ func (r *round) active(typ string) []*rule {
 	var out []*rule
 	for i := range r.rules {
 		ru := &r.rules[i]
-		if _, ok := r.idx.Rules[ru.id]; ok && (typ == "" || ru.t.EntityType == typ) {
+		if _, ok := r.idx.Rules[ru.id]; ok && (typ == "" || ru.entityType == typ) {
 			out = append(out, ru)
 		}
 	}
@@ -841,7 +728,7 @@ func (r *round) baseline() error {
 	for i := range r.rules {
 		ru := &r.rules[i]
 		if _, ok := r.idx.Rules[ru.id]; !ok {
-			k := groupKey{typ: ru.t.EntityType, faces: ru.faces}
+			k := groupKey{typ: ru.entityType, faces: ru.faces}
 			groups[k] = append(groups[k], ru)
 		}
 	}
@@ -873,7 +760,7 @@ func (r *round) baseline() error {
 			shards := shardsFor(len(entries[i]))
 			if err := r.writeLayout(ru.id, shards, entries[i]); err != nil {
 				slog.WarnContext(r.ctx, "realtime: trigger baseline not saved; trying again next round",
-					"trigger", ru.t.Name, "error", err)
+					"rule", ru.name, "error", err)
 				continue
 			}
 			r.idx.Rules[ru.id] = seenRule{Shards: shards}
@@ -973,7 +860,7 @@ func (r *round) shard(ru *rule, n int) (*roundShard, error) {
 // nothing.
 func (r *round) reset(ru *rule, cause error) {
 	slog.ErrorContext(r.ctx, "realtime: a trigger seen-set does not decode; the trigger starts over from "+
-		"what matches now", "trigger", ru.t.Name, "error", cause)
+		"what matches now", "rule", ru.name, "error", cause)
 	meta := r.idx.Rules[ru.id]
 	delete(r.idx.Rules, ru.id)
 	for n := range meta.Shards {
@@ -986,7 +873,7 @@ func (r *round) reset(ru *rule, cause error) {
 		return
 	}
 	if err := r.t.seen.dropShards(r.ctx, ru.id, meta.Shards); err != nil {
-		slog.WarnContext(r.ctx, "realtime: could not delete a corrupt trigger seen-set", "trigger", ru.t.Name,
+		slog.WarnContext(r.ctx, "realtime: could not delete a corrupt trigger seen-set", "rule", ru.name,
 			"error", err)
 	}
 }
@@ -1219,7 +1106,7 @@ func (r *round) effects(
 				r.t.dequeue(ru.id, ref)
 				continue
 			}
-			if it.on != ru.t.On {
+			if it.on != ru.on {
 				sh.apply(ref, it)
 				r.t.dequeue(ru.id, ref)
 				continue
@@ -1242,11 +1129,21 @@ func (r *round) refsFor(ru *rule, sh *roundShard, id string, cur map[string]Enti
 	return slices.Compact(refs)
 }
 
-// post takes one post from each rule's queue in turn until
-// [realtimelimits.MaxSystemPostsPerRound] attempts are spent. It stops
+// post takes one post from each rule's queue in turn, in rule order, until
+// [realtimelimits.MaxSystemPostsPerRound] attempts are spent. Each channel
+// an auto rule tries to move is an attempt. It stops
 // early when the store fails or ctx ends; the rest wait in their queues.
+// The queues of rules the config no longer has are dropped.
 func (r *round) post() {
-	ids := sortedKeys(r.t.lead.queues)
+	for id := range r.t.lead.queues {
+		if r.byID[id] == nil {
+			r.t.forgetRule(id)
+		}
+	}
+	ids := make([]string, 0, len(r.rules))
+	for i := range r.rules {
+		ids = append(ids, r.rules[i].id)
+	}
 	attempts := 0
 	for attempts < realtimelimits.MaxSystemPostsPerRound {
 		progressed := false
@@ -1268,10 +1165,8 @@ func (r *round) post() {
 			if _, active := r.idx.Rules[id]; ru == nil || !active {
 				continue
 			}
-			tried, stop := r.postOne(ru, q, ref, it)
-			if tried {
-				attempts++
-			}
+			cost, stop := r.postOne(ru, q, ref, it, realtimelimits.MaxSystemPostsPerRound-attempts)
+			attempts += cost
 			if stop {
 				r.dropEmptyQueues()
 				return
@@ -1288,48 +1183,58 @@ func (r *round) dropEmptyQueues() {
 	maps.DeleteFunc(r.t.lead.queues, func(_ string, q *effectQueue) bool { return len(q.items) == 0 })
 }
 
-// postOne makes one post popped from q. tried reports whether it reached
-// the store, and stop that the round should post no more. A post held
-// back by the cooldown or a retry delay leaves the queue and its entity
-// is read again when it is due, so later changes are seen with it.
-func (r *round) postOne(ru *rule, q *effectQueue, ref string, it queued) (tried, stop bool) {
+// postOne makes one post popped from q, spending at most budget
+// attempts. cost is the attempts it spent, and stop reports that the round
+// should post no more. A post held back by the cooldown, a retry delay or
+// a trigger that goes first leaves the queue, and its entity is read again
+// when it is due, so later changes are seen with it. An auto rule with
+// more channels to move than budget allows moves what it may and goes back
+// to the head of its queue.
+func (r *round) postOne(ru *rule, q *effectQueue, ref string, it queued, budget int) (cost int, stop bool) {
 	k := ru.id + "\x00" + ref
 	id := idOf(ref)
 	if last, ok := r.t.lead.lastPost[k]; ok && r.now.Sub(last) < realtimelimits.TriggerCooldown {
 		r.t.postpone(it.typ, id, last.Add(realtimelimits.TriggerCooldown), it.noted)
-		return false, false
+		return 0, false
 	}
 	f := r.t.lead.failures[k]
 	if f != nil && r.now.Before(f.next) {
 		r.t.postpone(it.typ, id, f.next, it.noted)
-		return false, false
+		return 0, false
+	}
+	if ru.auto != nil {
+		if due, wait := r.waitsForTrigger(ru, it.typ, ref); wait {
+			r.t.postpone(it.typ, id, due, it.noted)
+			return 0, false
+		}
 	}
 	sh, err := r.shard(ru, shardOf(id, r.idx.Rules[ru.id].Shards))
 	if errors.Is(err, errRuleReset) {
-		return false, false
+		return 0, false
 	}
 	if err != nil {
 		r.pushBack(q, ref, it)
-		return false, true
+		return 0, true
 	}
-	err = r.t.w.post(r.ctx, r.snap, r.now, ru.key(ref), ru.ct, ru.mt, ru.props,
-		"trigger:"+ru.t.Name, ru.t.WhenClosed != realtimecfg.WhenClosedPost)
+	cost, more, err := r.act(ru, ref, budget)
 	var permanent permanentError
 	switch {
+	case err == nil && more:
+		r.pushBack(q, ref, it)
+		return cost, true
 	case err == nil:
-		r.rep.Posted++
 		r.t.lead.lastPost[k] = r.now
 	case errors.Is(err, channels.ErrNotOpen):
 		r.rep.Skipped++
 		slog.DebugContext(r.ctx, "realtime: trigger skipped; the channel is not open",
-			"trigger", ru.t.Name, "entity", ref)
+			"rule", ru.name, "entity", ref)
 	case r.ctx.Err() != nil:
 		r.pushBack(q, ref, it)
-		return true, true
+		return cost, true
 	case errors.As(err, &permanent):
 		r.rep.Failed++
-		slog.ErrorContext(r.ctx, "realtime: trigger post cannot succeed; the change is counted as seen",
-			"trigger", ru.t.Name, "entity", ref, "error", err)
+		slog.ErrorContext(r.ctx, "realtime: a rule's write cannot succeed; the change is counted as seen",
+			"rule", ru.name, "entity", ref, "error", err)
 	default:
 		if f == nil {
 			f = &failure{first: r.now}
@@ -1339,16 +1244,73 @@ func (r *round) postOne(ru *rule, q *effectQueue, ref string, it queued) (tried,
 		if r.now.Sub(f.first) < realtimelimits.TriggerRetryWindow {
 			f.next = r.now.Add(retryDelay(f.attempts))
 			r.t.postpone(it.typ, id, f.next, it.noted)
-			return true, true
+			return cost, true
 		}
 		r.rep.Failed++
-		slog.ErrorContext(r.ctx, "realtime: trigger post keeps failing; the change is counted as seen",
-			"trigger", ru.t.Name, "entity", ref, "attempts", f.attempts, "error", err)
+		slog.ErrorContext(r.ctx, "realtime: a rule's write keeps failing; the change is counted as seen",
+			"rule", ru.name, "entity", ref, "attempts", f.attempts, "error", err)
 		stop = true
 	}
 	delete(r.t.lead.failures, k)
 	sh.apply(ref, it)
-	return true, stop
+	return cost, stop
+}
+
+// act does what ru does on its edge for the entity ref: a trigger posts
+// its message, an auto rule moves the entity's channels. cost is the
+// attempts spent: one for a post, one per channel an auto rule tried to
+// move, at most budget. more reports that channels are left to move.
+func (r *round) act(ru *rule, ref string, budget int) (cost int, more bool, err error) {
+	if ru.auto == nil {
+		err = r.t.w.post(r.ctx, r.snap, r.now, ru.key(ref), ru.ct, ru.mt, ru.props,
+			ru.triggeredBy(), ru.trigger.WhenClosed != realtimecfg.WhenClosedPost)
+		if err == nil {
+			r.rep.Posted++
+		}
+		return 1, false, err
+	}
+	res, err := r.t.w.transition(r.ctx, r.now, ru.anchor(ref), ru.ct, ru.auto, ru.triggeredBy(), budget)
+	r.rep.Moved += res.moved
+	return max(res.tried, 1), res.more, err
+}
+
+// waitsForTrigger reports whether a trigger into ru's channel type on the
+// same entity type may still post about the entity ref, and until when ru
+// waits for it. That post goes first: were ru to close the channel now,
+// the post would find it closed. A trigger post may wait in its queue, or
+// be held back by its cooldown or a retry. ru may then wait up to the
+// cooldown although the trigger has nothing more to post.
+func (r *round) waitsForTrigger(ru *rule, typ, ref string) (time.Time, bool) {
+	id := idOf(ref)
+	_, deferred := r.t.lead.deferred[typ][id]
+	var until time.Time
+	for i := range r.rules {
+		o := &r.rules[i]
+		if o.trigger == nil || o.ct.Name != ru.ct.Name || o.entityType != ru.entityType {
+			continue
+		}
+		if len(r.t.queuedRefs(o.id, id)) > 0 {
+			return r.now.Add(TriggerTick), true
+		}
+		if !deferred {
+			continue
+		}
+		k := o.id + "\x00" + ref
+		if last, ok := r.t.lead.lastPost[k]; ok && r.now.Sub(last) < realtimelimits.TriggerCooldown {
+			until = later(until, last.Add(realtimelimits.TriggerCooldown))
+		}
+		if f := r.t.lead.failures[k]; f != nil && r.now.Before(f.next) {
+			until = later(until, f.next)
+		}
+	}
+	return until, !until.IsZero()
+}
+
+func later(a, b time.Time) time.Time {
+	if b.After(a) {
+		return b
+	}
+	return a
 }
 
 func (r *round) pushBack(q *effectQueue, ref string, it queued) {
@@ -1438,18 +1400,18 @@ func (r *round) reshard() {
 			continue
 		}
 		if err := r.writeLayout(ru.id, shards, entries); err != nil {
-			slog.WarnContext(r.ctx, "realtime: could not split a trigger seen-set", "trigger", ru.t.Name, "error", err)
+			slog.WarnContext(r.ctx, "realtime: could not split a trigger seen-set", "rule", ru.name, "error", err)
 			continue
 		}
 		r.idx.Rules[ru.id] = seenRule{Shards: shards}
 		if err := r.t.seen.saveIndex(r.ctx, r.idx); err != nil {
 			r.idx.Rules[ru.id] = meta
-			slog.WarnContext(r.ctx, "realtime: could not split a trigger seen-set", "trigger", ru.t.Name, "error", err)
+			slog.WarnContext(r.ctx, "realtime: could not split a trigger seen-set", "rule", ru.name, "error", err)
 			continue
 		}
 		if err := r.t.seen.dropShards(r.ctx, ru.id, meta.Shards); err != nil {
 			slog.WarnContext(r.ctx, "realtime: could not delete a trigger's old seen-set shards",
-				"trigger", ru.t.Name, "error", err)
+				"rule", ru.name, "error", err)
 		}
 	}
 }

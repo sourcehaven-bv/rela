@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/channels"
@@ -60,8 +61,62 @@ func (w systemWriter) post(
 	return nil
 }
 
-// isPermanent reports whether an append error is about this one post and
-// fails the same way on every try, rather than about the store as a whole.
+// moves is what one systemWriter.transition did.
+type moves struct {
+	// tried counts the channels it tried to move, moved those it moved.
+	tried, moved int
+	// more reports that channels are left that limit kept it from trying.
+	more bool
+}
+
+// transition runs the automatic operation a on the channels of type ct
+// at anchor whose state is one of a.from, as [systemAuthor], naming
+// triggeredBy. It tries at most limit channels. Each move goes through
+// applyTransition, the compare-and-set the sweep and requests use, so a
+// channel a person or another process moved first is skipped rather than
+// moved again. A channel that was never written does not exist and is not
+// created. After a failure, or with more left, a second call moves the
+// rest: the channels already moved have left a.from.
+func (w systemWriter) transition(
+	ctx context.Context, now time.Time, anchor channels.Anchor, ct realtimecfg.ChannelType, a *autoRule,
+	triggeredBy string, limit int,
+) (moves, error) {
+	var res moves
+	list, err := w.store.List(ctx, anchor, ct.Name, "")
+	if isPermanent(err) {
+		return res, permanentError{err}
+	}
+	if err != nil {
+		return res, err
+	}
+	for _, c := range list {
+		if !slices.Contains(a.from, c.State) {
+			continue
+		}
+		if res.tried >= limit {
+			res.more = true
+			return res, nil
+		}
+		res.tried++
+		_, err := applyTransition(ctx, w.store, w.local, c.Key, c.State, channels.Transition{
+			To: a.to, By: systemAuthor(), At: now, TriggeredBy: triggeredBy,
+		})
+		switch {
+		case err == nil:
+			res.moved++
+		case errors.Is(err, channels.ErrConflict), errors.Is(err, channels.ErrNotFound):
+		case isPermanent(err):
+			return res, permanentError{err}
+		default:
+			return res, err
+		}
+	}
+	return res, nil
+}
+
+// isPermanent reports whether a channel write error is about this one
+// write and fails the same way on every try, rather than about the store
+// as a whole.
 func isPermanent(err error) bool {
 	for _, target := range []error{
 		channels.ErrTooManyChannels, channels.ErrTooLarge, channels.ErrStaleAnchor,
