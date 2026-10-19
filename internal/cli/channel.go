@@ -233,17 +233,10 @@ func readPropsJSON(arg string) (map[string]any, error) {
 	return props, nil
 }
 
-// propTypes reads the declared property types of message type typ in the
-// channel at addr, as JSON Schema type names. -P needs them to coerce; the
-// read is the one a caller who may post can make anyway. A type the read
-// does not list yields no types, and the service refuses the post.
-func propTypes(
-	ctx context.Context, svc channelReader, addr realtime.RawAddress, typ string,
-) (map[string]string, error) {
-	view, err := svc.Read(ctx, addr, realtime.ReadRequest{Limit: 1, Schemas: true, LogOnly: true})
-	if err != nil {
-		return nil, err
-	}
+// declaredTypes returns the declared property types of message type typ
+// in view, as JSON Schema type names. -P needs them to coerce. A type the
+// read does not list yields no types, and the service refuses the write.
+func declaredTypes(view realtime.ReadView, typ string) map[string]string {
 	for _, mt := range view.MessageTypes {
 		if mt.Name != typ {
 			continue
@@ -252,24 +245,28 @@ func propTypes(
 		for name, p := range mt.Props.Properties {
 			types[name] = p.Type
 		}
-		return types, nil
+		return types
 	}
-	return map[string]string{}, nil
+	return map[string]string{}
 }
 
-// messageProps collects the props of a post or edit, reading the declared
-// types only when -P needs them.
+// messageProps collects the props of a post or edit. Only -P needs the
+// declared types; it gets them from one read of the page req selects, with
+// the schemas, and typeOf names the message type on that page. The read is
+// one a caller who may write can make anyway.
 func messageProps(
-	ctx context.Context, svc channelReader, addr realtime.RawAddress, typ string, p channelProps,
+	ctx context.Context, svc channelReader, addr realtime.RawAddress, p channelProps,
+	req realtime.ReadRequest, typeOf func(realtime.ReadView) string,
 ) (map[string]any, error) {
 	if len(p.Props) == 0 || p.PropsJSON != "" {
 		return p.collect(nil)
 	}
-	types, err := propTypes(ctx, svc, addr, typ)
+	req.Schemas, req.LogOnly = true, true
+	view, err := svc.Read(ctx, addr, req)
 	if err != nil {
 		return nil, channelFailed(ctx, "read", addr.Anchor, err)
 	}
-	return p.collect(types)
+	return p.collect(declaredTypes(view, typeOf(view)))
 }
 
 // ChannelListCmd lists the channels on an entity.
@@ -394,7 +391,8 @@ func (c *ChannelPostCmd) Run(ctx context.Context, cs *channelServices) error {
 		return errors.New("--reply-to: a seq of at least 1")
 	}
 	addr := c.raw()
-	props, err := messageProps(ctx, svc, addr, c.MessageType, c.channelProps)
+	props, err := messageProps(ctx, svc, addr, c.channelProps, realtime.ReadRequest{Limit: 1},
+		func(realtime.ReadView) string { return c.MessageType })
 	if err != nil {
 		return err
 	}
@@ -431,14 +429,9 @@ func (c *ChannelEditCmd) Run(ctx context.Context, cs *channelServices) error {
 		return errors.New("edit replaces the message props: give -P or --props-json")
 	}
 	addr := c.raw()
-	typ := ""
-	if len(c.Props) > 0 {
-		// The declared types of the message's own type.
-		if typ, err = messageType(ctx, svc, addr, c.Seq); err != nil {
-			return err
-		}
-	}
-	props, err := messageProps(ctx, svc, addr, typ, c.channelProps)
+	// The page that ends at the message gives its type and every schema.
+	props, err := messageProps(ctx, svc, addr, c.channelProps, realtime.ReadRequest{BeforeSeq: c.Seq + 1, Limit: 1},
+		func(view realtime.ReadView) string { return messageType(view, c.Seq) })
 	if err != nil {
 		return err
 	}
@@ -449,20 +442,16 @@ func (c *ChannelEditCmd) Run(ctx context.Context, cs *channelServices) error {
 	return writeMessage(got, "edited")
 }
 
-// messageType reads the type of message seq, so edit can coerce -P by it.
-// A message the read does not return yields "", and the service answers
-// for the edit.
-func messageType(ctx context.Context, svc channelReader, addr realtime.RawAddress, seq int64) (string, error) {
-	view, err := svc.Read(ctx, addr, realtime.ReadRequest{BeforeSeq: seq + 1, Limit: 1, LogOnly: true})
-	if err != nil {
-		return "", channelFailed(ctx, "read", addr.Anchor, err)
-	}
+// messageType returns the type of message seq in view, so edit can coerce
+// -P by it. A message the read does not return yields "", and the service
+// answers for the edit.
+func messageType(view realtime.ReadView, seq int64) string {
 	for _, m := range view.Messages {
 		if m.Seq == seq {
-			return m.Type, nil
+			return m.Type
 		}
 	}
-	return "", nil
+	return ""
 }
 
 // ChannelRemoveCmd removes a message.
@@ -527,7 +516,16 @@ func writeMessage(m realtime.MessageView, verb string) error {
 
 // writeChannelJSON prints v as indented JSON.
 func writeChannelJSON(v any) error {
-	enc := json.NewEncoder(out.Out)
-	enc.SetIndent("", "  ")
-	return enc.Encode(v)
+	data, err := json.MarshalIndent(v, "", "  ")
+	if err != nil {
+		return err
+	}
+	return writeJSONLine(data)
+}
+
+// writeJSONLine writes one encoded JSON document and a newline to out,
+// made safe for a terminal by [terminalSafeJSON].
+func writeJSONLine(data []byte) error {
+	_, err := out.Out.Write(append(terminalSafeJSON(data), '\n'))
+	return err
 }

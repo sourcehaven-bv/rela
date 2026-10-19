@@ -20,6 +20,9 @@ const (
 	watchMaxTimeout = time.Hour
 	// watchTimeoutExit is the exit code of a watch that saw no change.
 	watchTimeoutExit = 2
+	// watchInterruptExit is the exit code of a watch interrupted before a
+	// change, the code a shell gives a process ended by SIGINT.
+	watchInterruptExit = 130
 )
 
 // ChannelWatchCmd waits for changes in a channel.
@@ -43,8 +46,9 @@ type watchTimedOut struct {
 	AfterRev int64  `json:"after_rev"`
 }
 
-// Run watches the channel. It exits 0 after a change, 2 on timeout and 1 on
-// an error. With --follow it prints every change until ctx ends.
+// Run watches the channel. It exits 0 after a change, 2 on timeout, 130
+// when interrupted and 1 on an error. With --follow it prints every change
+// until interrupted, and then exits 0.
 func (c *ChannelWatchCmd) Run(ctx context.Context, cs *channelServices) error {
 	svc, err := cs.svc()
 	if err != nil {
@@ -75,8 +79,15 @@ func (c *ChannelWatchCmd) check() error {
 	return nil
 }
 
+// watchService is what the watch loop uses: reads and the wake-up, no
+// writes.
+type watchService interface {
+	channelReader
+	channelWaker
+}
+
 // watch runs the loop; tick drives the poll, so a test can step it.
-func (c *ChannelWatchCmd) watch(ctx context.Context, svc channelService, tick <-chan time.Time) error {
+func (c *ChannelWatchCmd) watch(ctx context.Context, svc watchService, tick <-chan time.Time) error {
 	addr := c.raw()
 	sub := svc.Subscribe()
 	defer sub.Close()
@@ -94,11 +105,7 @@ func (c *ChannelWatchCmd) watch(ctx context.Context, svc channelService, tick <-
 	for {
 		view, err := svc.Read(ctx, addr, realtime.ReadRequest{AfterRev: &rev, Limit: c.Limit, LogOnly: true})
 		if err != nil {
-			if c.Follow && ctx.Err() != nil {
-				// Interrupted mid-read: the end of a follow, not a failure.
-				return nil
-			}
-			return channelFailed(ctx, "watch", addr.Anchor, err)
+			return c.failed(ctx, addr, err)
 		}
 		if next := nextRev(view, rev); next != rev || len(view.Messages) > 0 {
 			if err := writeChange(view); err != nil {
@@ -112,10 +119,7 @@ func (c *ChannelWatchCmd) watch(ctx context.Context, svc channelService, tick <-
 		}
 		select {
 		case <-ctx.Done():
-			if c.Follow {
-				return nil
-			}
-			return ctx.Err()
+			return c.interrupted()
 		case <-deadline:
 			return writeTimedOut(rev)
 		case <-sub.Wake():
@@ -131,9 +135,27 @@ func (c *ChannelWatchCmd) startRev(ctx context.Context, svc channelReader, addr 
 	}
 	view, err := svc.Read(ctx, addr, realtime.ReadRequest{Limit: 1, LogOnly: true})
 	if err != nil {
-		return 0, channelFailed(ctx, "watch", addr.Anchor, err)
+		return 0, c.failed(ctx, addr, err)
 	}
 	return nextRev(view, 0), nil
+}
+
+// failed answers a failed read. An interrupt that lands during the read is
+// not a channel failure, so it is not logged as one.
+func (c *ChannelWatchCmd) failed(ctx context.Context, addr realtime.RawAddress, err error) error {
+	if ctx.Err() != nil {
+		return c.interrupted()
+	}
+	return channelFailed(ctx, "watch", addr.Anchor, err)
+}
+
+// interrupted is the outcome of an interrupt: the normal end of --follow,
+// else exit code 130 with no message.
+func (c *ChannelWatchCmd) interrupted() error {
+	if c.Follow {
+		return nil
+	}
+	return relaerrors.NewExitError(watchInterruptExit)
 }
 
 // nextRev is the rev to follow from after view: its next_after_rev, else
@@ -151,7 +173,11 @@ func nextRev(view realtime.ReadView, rev int64) int64 {
 // JSON Lines record.
 func writeChange(view realtime.ReadView) error {
 	if out.Format == output.FormatJSON {
-		return json.NewEncoder(out.Out).Encode(readJSON{Notice: realtime.UntrustedNotice, ReadView: view})
+		data, err := json.Marshal(readJSON{Notice: realtime.UntrustedNotice, ReadView: view})
+		if err != nil {
+			return err
+		}
+		return writeJSONLine(data)
 	}
 	return renderRead(out.Out, view)
 }

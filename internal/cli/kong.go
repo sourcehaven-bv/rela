@@ -26,6 +26,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/cmdexec"
 	relaerrors "github.com/Sourcehaven-BV/rela/internal/errors"
 	"github.com/Sourcehaven-BV/rela/internal/output"
+	"github.com/Sourcehaven-BV/rela/internal/principal"
 	"github.com/Sourcehaven-BV/rela/internal/scheduler"
 	"github.com/Sourcehaven-BV/rela/internal/script"
 )
@@ -219,13 +220,15 @@ func runKong() int {
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	identity, err := commandIdentity(ktx.Command(), cli.RunAs)
+	// A value that differs from RELA_RUN_AS came from the flag.
+	runAsFromFlag := cli.RunAs != os.Getenv(principal.RunAsEnv)
+	identity, err := commandIdentity(ktx.Command(), cli.RunAs, runAsFromFlag)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		return 1
 	}
 	ctx = identity.stamp(ctx)
-	if writesAsIdentity(ktx.Command()) {
+	if writesAsIdentity(ktx.Command()) && !quiet {
 		identity.notice(os.Stderr)
 	}
 

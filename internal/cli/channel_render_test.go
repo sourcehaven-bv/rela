@@ -2,9 +2,11 @@ package cli
 
 import (
 	"bytes"
+	"encoding/json"
 	"strings"
 	"testing"
 	"time"
+	"unicode"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -59,10 +61,34 @@ func TestPrintable(t *testing.T) {
 		{"bidi \u202e\u2066x\u2069", "bidi \uFFFD\uFFFDx\uFFFD"},
 		{"zero\u200bwidth", "zero\uFFFDwidth"},
 		{"family \U0001F468\u200d\U0001F469", "family \U0001F468\u200d\U0001F469"},
+		{"line\u2028para\u2029", "line\uFFFDpara\uFFFD"},
+		{"marks \u200e\u200f\u061c", "marks \uFFFD\uFFFD\uFFFD"},
+		{"c1 \u009b", "c1 \uFFFD"},
+		{"bom\ufeff", "bom\uFFFD"},
+		{"kept: soft\u00adhyphen, word\u2060joiner, zw\u200cnj", "kept: soft\u00adhyphen, word\u2060joiner, zw\u200cnj"},
 	}
 	for _, tc := range tests {
 		assert.Equal(t, tc.want, printable(tc.in), "%q", tc.in)
 	}
+}
+
+// TestTerminalSafeJSON pins that -o json escapes every control, format and
+// separator rune, including the C1 CSI and supplementary format runes, and
+// still decodes to the same value.
+func TestTerminalSafeJSON(t *testing.T) {
+	in := map[string]string{"body": "a\u009b[31m \u202eevil\u2066 \u00ad \U000E0041 \u2028 <ok> \U0001F600"}
+	data, err := json.Marshal(in)
+	require.NoError(t, err)
+	safe := terminalSafeJSON(data)
+	for _, r := range string(safe) {
+		assert.False(t, unicode.IsControl(r) || unicode.In(r, unicode.Cf, unicode.Zl, unicode.Zp), "raw %U in %s", r, safe)
+	}
+	assert.Contains(t, string(safe), `\u009b`)
+	assert.Contains(t, string(safe), `\udb40\udc41`)
+	assert.Contains(t, string(safe), "\U0001F600")
+	var back map[string]string
+	require.NoError(t, json.Unmarshal(safe, &back))
+	assert.Equal(t, in, back)
 }
 
 // TestChannelRender_Removed pins the placeholders of removed messages, with

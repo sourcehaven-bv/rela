@@ -112,6 +112,33 @@ func TestChannelWatchCLI_FollowStopsOnCancel(t *testing.T) {
 	assert.Len(t, rec.Messages, 2)
 }
 
+// TestChannelWatchCLI_InterruptExit130 pins that interrupting a watch
+// without --follow exits 130 with no message, whether it lands during a
+// wait or during a read.
+func TestChannelWatchCLI_InterruptExit130(t *testing.T) {
+	p := newChannelProject(t)
+	bctx, svc := appboundChannels(t, p)
+	cmd := &ChannelWatchCmd{
+		channelAddr: channelAddr{ID: p.item, Type: "room"},
+		Timeout:     time.Minute, Poll: time.Second, Limit: channelDefaultLimit,
+	}
+	buf := swapOut(t, "")
+
+	waiting, cancel := context.WithCancel(bctx)
+	done := make(chan error, 1)
+	go func() { done <- cmd.watch(waiting, svc, make(chan time.Time)) }()
+	cancel()
+	var exit *relaerrors.ExitError
+	require.ErrorAs(t, <-done, &exit)
+	assert.Equal(t, watchInterruptExit, exit.Code)
+
+	reading, cancelRead := context.WithCancel(bctx)
+	cancelRead()
+	require.ErrorAs(t, cmd.watch(reading, svc, make(chan time.Time)), &exit)
+	assert.Equal(t, watchInterruptExit, exit.Code)
+	assert.Empty(t, buf.String())
+}
+
 // TestChannelWatchCLI_ErrorReturnsAtOnce pins that a watch the caller may
 // not run fails before it waits.
 func TestChannelWatchCLI_ErrorReturnsAtOnce(t *testing.T) {

@@ -16,6 +16,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/Sourcehaven-BV/rela/internal/appbuild"
+	"github.com/Sourcehaven-BV/rela/internal/appbuild/backendtest"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	relamcp "github.com/Sourcehaven-BV/rela/internal/mcp"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
@@ -301,13 +302,13 @@ func TestMCPStdio_ACLWatch(t *testing.T) {
 // principal acl.yaml names no role for: $USER, or the --run-as identity.
 func TestMCPStdio_WarnsUnassignedUser(t *testing.T) {
 	for _, tc := range []struct {
-		name, acl, user string
-		want            bool
+		name, acl, user, runAs string
+		want                   bool
 	}{
-		{"unassigned", stdioACLAlice, "bob", true},
-		{"assigned", stdioACLAlice, "alice", false},
-		{"no acl.yaml", "", "bob", false},
-		{"run-as unassigned", stdioACLAlice, "system:ci", true},
+		{"unassigned", stdioACLAlice, "bob", "", true},
+		{"assigned", stdioACLAlice, "alice", "", false},
+		{"no acl.yaml", "", "bob", "", false},
+		{"run-as unassigned", stdioACLAlice, "alice", "system:ci", true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			root := seedProject(t)
@@ -317,10 +318,15 @@ func TestMCPStdio_WarnsUnassignedUser(t *testing.T) {
 			var logs bytes.Buffer
 			logtest.SetDefault(t, slog.NewTextHandler(&logs, nil))
 
-			svc, err := mcpServicesForTest(t, root)
+			for k, v := range backendtest.Env(t) {
+				t.Setenv(k, v)
+			}
+			t.Setenv("USER", tc.user)
+			identity, err := newLocalIdentity(principal.ToolMCP, tc.runAs)
+			require.NoError(t, err)
+			svc, err := openMCPServices(root, identity)
 			require.NoError(t, err)
 			t.Cleanup(func() { _ = svc.Close() })
-			warnUnassignedUser(svc.current(), tc.user)
 			assert.Equal(t, tc.want, strings.Contains(logs.String(), "assigns no role to the local user"),
 				"logs: %s", logs.String())
 		})

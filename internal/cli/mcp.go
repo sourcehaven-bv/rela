@@ -13,6 +13,20 @@ import (
 	relamcp "github.com/Sourcehaven-BV/rela/internal/mcp"
 )
 
+// openMCPServices opens the project for `rela mcp` and warns when acl.yaml
+// assigns the identity no role.
+func openMCPServices(startDir string, identity localIdentity) (*mcpServices, error) {
+	svc, err := newMCPServices(startDir)
+	if err != nil {
+		if errors.Is(err, relaerrors.ErrNoProject) {
+			return nil, errors.New("no project found: run 'rela init' to create one")
+		}
+		return nil, fmt.Errorf("mcp startup: %w", err)
+	}
+	warnUnassignedUser(svc.current(), identity.Principal.User)
+	return svc, nil
+}
+
 // McpCmd starts the MCP (Model Context Protocol) server on stdio.
 //
 // coverage-ignore: MCP command - requires stdio server
@@ -28,15 +42,11 @@ func (c *McpCmd) Run(identity localIdentity) error {
 		startDir = os.Getenv("RELA_PROJECT")
 	}
 
-	svc, err := newMCPServices(startDir)
+	svc, err := openMCPServices(startDir, identity)
 	if err != nil {
-		if errors.Is(err, relaerrors.ErrNoProject) {
-			return errors.New("no project found: run 'rela init' to create one")
-		}
-		return fmt.Errorf("mcp startup: %w", err)
+		return err
 	}
 	defer svc.Close()
-	warnUnassignedUser(svc.current(), identity.Principal.User)
 
 	srv, srvErr := relamcp.NewServer(svc.Deps(), Version,
 		relamcp.WithPrincipal(identity.Principal), relamcp.WithAssertedBy(identity.AssertedBy),

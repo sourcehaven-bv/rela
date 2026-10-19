@@ -159,6 +159,11 @@ func TestChannelRequiresProject(t *testing.T) {
 	assert.True(t, requiresProject("channel list <id>"))
 }
 
+// messagesJSON is the part of a read document the tests decode.
+type messagesJSON struct {
+	Messages []realtime.MessageView `json:"messages"`
+}
+
 // TestChannelCLI_Loop runs every command in table and JSON output.
 func TestChannelCLI_Loop(t *testing.T) {
 	p := newChannelProject(t)
@@ -205,7 +210,7 @@ func TestChannelCLI_Loop(t *testing.T) {
 	assert.Contains(t, got, propIndent+"body: from\n"+propIndent+"stdin\n")
 
 	got, err = runChannel(t, p.svc, "alice", "", "channel", "edit", p.item, "room", "1",
-		"-P", "body=changed", "-P", "count=4")
+		"-P", "body=changed\nline2", "-P", "count=4")
 	require.NoError(t, err)
 	assert.Equal(t, "#1 edited\n", got)
 
@@ -217,8 +222,17 @@ func TestChannelCLI_Loop(t *testing.T) {
 
 	got, err = runChannel(t, p.svc, "alice", "", "channel", "read", p.item, "room")
 	require.NoError(t, err)
-	assert.Contains(t, got, propIndent+"body: changed\n")
+	assert.Contains(t, got, propIndent+"body: changed\n"+propIndent+"line2\n", "-P keeps a newline")
+	assert.Contains(t, got, propIndent+"count: 4\n")
 	assert.Contains(t, got, "#2 (reply to #1)  [removed by author]\n")
+
+	got, err = runChannel(t, p.svc, "alice", "", "-o", "json", "channel", "read", p.item, "room")
+	require.NoError(t, err)
+	var reread messagesJSON
+	channelJSONOf(t, got, &reread)
+	require.NotEmpty(t, reread.Messages)
+	assert.Equal(t, "changed\nline2", reread.Messages[0].Props["body"])
+	assert.InDelta(t, 4, reread.Messages[0].Props["count"], 0, "edit coerces -P from one read")
 
 	got, err = runChannel(t, p.svc, "alice", "", "channel", "create", p.item, "threads", "--title", "Design")
 	require.NoError(t, err)

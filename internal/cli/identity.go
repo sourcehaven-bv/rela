@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/user"
 	"strconv"
 	"strings"
 
@@ -28,11 +29,21 @@ type localIdentity struct {
 }
 
 // newLocalIdentity resolves the identity for tool. An empty runAs gives
-// the OS user. Otherwise runAs must be a job identity [validateRunAs]
-// accepts.
+// the OS user from $USER. Otherwise runAs must be a job identity
+// [validateRunAs] accepts.
+//
+// A $USER in the `system:` or `integration:` namespace is refused: such a
+// name may only enter through `--run-as`, which validates it and records
+// asserted_by. Otherwise `USER=system:realtime` would pass for rela's own
+// identity with no trace of who set it.
 func newLocalIdentity(tool, runAs string) (localIdentity, error) {
 	if runAs == "" {
-		return localIdentity{Principal: principal.Principal{User: principal.SystemUser(), Tool: tool}}, nil
+		user := principal.SystemUser()
+		if principal.IsReserved(user) {
+			return localIdentity{}, fmt.Errorf("$USER %q names a job identity; "+
+				"set $USER to your own name and pass the job identity with %s", printable(user), runAsFlag)
+		}
+		return localIdentity{Principal: principal.Principal{User: user, Tool: tool}}, nil
 	}
 	if err := validateRunAs(runAs); err != nil {
 		return localIdentity{}, err
@@ -66,28 +77,19 @@ func (l localIdentity) notice(w io.Writer) {
 // runAsFlag names the flag and its environment variable in error texts.
 const runAsFlag = "--run-as (RELA_RUN_AS)"
 
-// refusedRunAs are rela's own identities. Each one belongs to an
-// in-process entry point whose writes people trust as rela's: a trigger
-// post signed system:realtime, a scheduled task, a background automation,
-// a provisioned user. `--run-as` must not borrow them.
-var refusedRunAs = map[string]bool{
-	principal.UserRealtime:    true,
-	principal.UserScheduler:   true,
-	principal.UserAutomation:  true,
-	principal.UserProvisioner: true,
-}
-
-// webhookUserPrefix names the identities of declarative webhook deliveries
-// (see [principal.Webhook]), which are rela's own too.
-const webhookUserPrefix = principal.ReservedPrefix + "webhook:"
-
-// validateRunAs accepts a job identity: a `system:` name that is not one
-// of rela's own, or an `integration:` name. A person's name is refused, so
-// `--run-as` cannot impersonate a human, and so is `unknown`.
+// validateRunAs accepts a job identity: a `system:` name in the
+// [principal.ValidSystemName] grammar that is not one of rela's own
+// ([principal.IsRelaIdentity]), or an `integration:` name. A person's name
+// is refused, so `--run-as` cannot impersonate a human, and so is
+// `unknown`.
 func validateRunAs(runAs string) error {
 	if !strings.HasPrefix(runAs, principal.ReservedPrefix) && !strings.HasPrefix(runAs, principal.IntegrationPrefix) {
 		return fmt.Errorf("%s: %q is not a job identity; name a %q or %q identity",
 			runAsFlag, runAs, principal.ReservedPrefix, principal.IntegrationPrefix)
+	}
+	if rest, ok := strings.CutPrefix(runAs, principal.ReservedPrefix); ok && !principal.ValidSystemName(rest) {
+		return fmt.Errorf("%s: %q: a system: name is segments of lowercase letters, digits, '_' or '-', "+
+			"separated by ':'", runAsFlag, printable(runAs))
 	}
 	if err := principal.ValidateRunAs(runAs, ownJobIdentity); err != nil {
 		return fmt.Errorf("%s: %w", runAsFlag, err)
@@ -96,29 +98,42 @@ func validateRunAs(runAs string) error {
 }
 
 // ownJobIdentity reports whether a `system:` name is free for `--run-as`.
+// The charset check comes first, so the registry lookup compares plain
+// ASCII and a look-alike of a rela name cannot slip past it.
 func ownJobIdentity(name string) bool {
-	return name != principal.ReservedPrefix && !refusedRunAs[name] && !strings.HasPrefix(name, webhookUserPrefix)
+	rest, _ := strings.CutPrefix(name, principal.ReservedPrefix)
+	return principal.ValidSystemName(rest) && !principal.IsRelaIdentity(name)
 }
 
-// assertingUser is the OS user behind a `--run-as` identity: $USER (or
-// $USERNAME), then $LOGNAME, then the numeric uid. A cron or systemd job
-// often has no $USER, and the audit still needs someone to name.
-func assertingUser() string {
-	if u := principal.SystemUser(); u != principal.Unknown {
-		return u
+// lookupOSUser returns the account name of the process's uid. A variable
+// so a test can simulate a uid with no account.
+var lookupOSUser = func() (string, error) {
+	u, err := user.Current()
+	if err != nil {
+		return "", err
 	}
-	if u := strings.TrimSpace(os.Getenv("LOGNAME")); u != "" {
-		return u
+	return u.Username, nil
+}
+
+// assertingUser is the OS user behind a `--run-as` identity: the account
+// of the process's uid, or `uid:N` when the uid has no account. It is
+// looked up, not read from $USER, because the environment is whatever the
+// caller set: `USER=alice` would otherwise frame alice.
+func assertingUser() string {
+	if name, err := lookupOSUser(); err == nil && name != "" {
+		return name
 	}
 	return "uid:" + strconv.Itoa(os.Getuid())
 }
 
 // commandIdentity resolves the identity of the matched kong command. A
 // command that acts as no one (version, init, completion, bare migrate,
-// validate) ignores runAs, so a RELA_RUN_AS left in the environment does
-// not break it. `rela scheduler` refuses runAs: each task names its own
-// identity with `run_as` in schedules.yaml.
-func commandIdentity(cmd, runAs string) (localIdentity, error) {
+// validate, most of db) ignores a runAs from RELA_RUN_AS, so a value left
+// in the environment does not break it, but refuses one given as the flag
+// (fromFlag): the operator asked for an identity the command cannot use.
+// `rela scheduler` refuses runAs from either source: each task names its
+// own identity with `run_as` in schedules.yaml.
+func commandIdentity(cmd, runAs string, fromFlag bool) (localIdentity, error) {
 	first := firstKongToken(cmd)
 	if first == "scheduler" && runAs != "" {
 		return localIdentity{}, fmt.Errorf("%s does not apply to rela scheduler: "+
@@ -129,6 +144,10 @@ func commandIdentity(cmd, runAs string) (localIdentity, error) {
 		tool = principal.ToolMCP
 	}
 	if !actsAsIdentity(cmd) {
+		if runAs != "" && fromFlag {
+			return localIdentity{}, fmt.Errorf("%s does not apply to rela %s: it records no identity",
+				runAsFlag, leafCommand(cmd))
+		}
 		runAs = ""
 	}
 	return newLocalIdentity(tool, runAs)
@@ -141,20 +160,57 @@ func actsAsIdentity(cmd string) bool {
 	case "mcp", "flow":
 		return true
 	}
+	if _, ok := identityWrites[leafCommand(cmd)]; ok {
+		return true
+	}
 	return requiresProject(cmd)
 }
 
-// readOnlyCommands write nothing to the project, so they print no
-// `--run-as` notice.
-var readOnlyCommands = map[string]bool{
-	"show": true, "list": true, "trace": true, "graph": true, "export": true, "render": true,
-	"schema": true, "analyze": true, "acl": true, "attachments": true, "history": true,
-	"relation-history": true, "secrets": true,
-	"channel list": true, "channel read": true, "channel watch": true, "lease list": true,
+// identityWrites classifies every command that acts as an identity: true
+// when it may write as its principal, so the `--run-as` notice is worth
+// printing. TestIdentityWrites_ClassifiesEveryCommand walks the kong tree
+// and fails on a command missing here, so a new one is classified on
+// purpose. The two db commands are listed because they take no project
+// from [requiresProject] yet credit their audited import to the principal.
+var identityWrites = map[string]bool{
+	"mcp": true, "flow": true, "dev seed": true, "create": true, "update": true, "delete": true,
+	"link": true, "unlink": true, "import": true, "fmt": true, "normalize": true,
+	"rename entity": true, "rename id": true, "restore": true, "relation-restore": true,
+	"token set": true, "token delete": true, "history-tag": true, "history-purge": true,
+	"relation-history-purge": true, "attach": true, "detach": true, "gc": true, "script": true,
+	"scheduler": true, "renumber": true, "lease claim": true, "lease renew": true, "lease release": true,
+	"channel post": true, "channel edit": true, "channel remove": true, "channel create": true,
+	"migrate data": true, "migrate gc": true, "migrate adopt-face": true, "migrate baseline": true,
+	"db load": true, "db import-fs": true,
+
+	"migrate status": false, "migrate gen": false, "show": false, "list": false,
+	"trace from": false, "trace to": false, "trace path": false, "graph": false, "export": false,
+	"render": false, "template init": false, "schema overview": false, "schema entities": false,
+	"schema relations": false, "schema types": false, "schema entity": false, "schema relation": false,
+	"analyze orphans": false, "analyze duplicates": false, "analyze unique": false, "analyze gaps": false,
+	"analyze cardinality": false, "analyze relation-order": false, "analyze relation-files": false,
+	"analyze owning": false, "analyze properties": false, "analyze validations": false,
+	"analyze states": false, "analyze all": false, "analyze schema": false, "acl audit": false,
+	"acl who-can": false, "acl can": false, "acl can-relation": false, "acl map": false,
+	"history": false, "relation-history": false, "token status": false, "attachments": false,
+	"secrets credential-name": false, "lease list": false, "channel list": false, "channel read": false,
+	"channel watch": false,
 }
 
-// writesAsIdentity reports whether cmd may write as its principal, so the
-// `--run-as` notice is worth printing.
+// writesAsIdentity reports whether cmd may write as its principal.
 func writesAsIdentity(cmd string) bool {
-	return actsAsIdentity(cmd) && !readOnlyCommands[firstKongToken(cmd)] && !readOnlyCommands[firstTwoKongTokens(cmd)]
+	return identityWrites[leafCommand(cmd)]
+}
+
+// leafCommand reduces kong's Command() string to the command names, without
+// the positional placeholders: "trace from <id>" gives "trace from".
+func leafCommand(cmd string) string {
+	var names []string
+	for f := range strings.FieldsSeq(cmd) {
+		if strings.HasPrefix(f, "<") || strings.HasPrefix(f, "[") {
+			break
+		}
+		names = append(names, f)
+	}
+	return strings.Join(names, " ")
 }

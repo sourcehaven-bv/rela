@@ -1060,12 +1060,10 @@ func (d *Desktop) refreshMenu() {
 	// coverage-ignore-end
 }
 
-// coverage-ignore-func: main function - entry point
-// coverage-ignore-start: main-or-wiring: process entry point — flag parsing, DI wiring, and wails.Run event loop;
-// exercised only at real
-// process start
 // refuseRunAsEnv exits when RELA_RUN_AS is set: the desktop acts as the
 // desktop user, and the variable is for the local CLI only.
+//
+// coverage-ignore-func: exits the process; the check itself is principal.RefuseRunAsEnv, tested there
 func refuseRunAsEnv() {
 	if err := principal.RefuseRunAsEnv(os.LookupEnv); err != nil {
 		slog.Error("refusing to start", "error", err)
@@ -1073,6 +1071,10 @@ func refuseRunAsEnv() {
 	}
 }
 
+// coverage-ignore-func: main function - entry point
+// coverage-ignore-start: main-or-wiring: process entry point — flag parsing, DI wiring, and wails.Run event loop;
+// exercised only at real
+// process start
 func main() {
 	projectDir := flag.String("project", ".", "Path to the rela project directory")
 	verbose := flag.Bool("verbose", false, "Verbose (debug) logging")
