@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"slices"
+	"strings"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/affordances"
@@ -13,19 +15,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
 	"github.com/Sourcehaven-BV/rela/internal/realtime"
-	"github.com/Sourcehaven-BV/rela/internal/statemachine"
 	"github.com/Sourcehaven-BV/rela/internal/store"
-)
-
-// Warning codes of a promote that created its entity but not everything
-// around it.
-const (
-	// warnPromoteRelateFailed: the relation to the anchor was not written.
-	// Only the filesystem tier reports it; elsewhere the promote fails.
-	warnPromoteRelateFailed = "promote_relate_failed"
-	// warnPromoteFollowUpFailed: an automation or the cascade after the
-	// create failed. The entity stays.
-	warnPromoteFollowUpFailed = "promote_followup_failed"
 )
 
 // joinChannels returns the channel store that writes in the transaction
@@ -92,76 +82,107 @@ func (p managerPromoter) Promote(ctx context.Context, r realtime.PromoteRequest)
 	}
 	if res.RelateErr != nil {
 		out.Warnings = append(out.Warnings, entity.Warning{
-			Code: warnPromoteRelateFailed, Detail: "created " + created.ID + " without its " + r.Relate + " relation",
+			Code: realtime.WarnPromoteRelateFailed, Detail: "the entity was created without its " + r.Relate + " relation",
 		})
 	}
 	if res.FollowUpErr != nil {
 		out.Warnings = append(out.Warnings, entity.Warning{
-			Code: warnPromoteFollowUpFailed, Detail: "created " + created.ID + "; a step after the create failed",
+			Code: realtime.WarnPromoteFollowUpFailed, Detail: "the entity was created; a step after the create failed",
 		})
 	}
 	return out, nil
 }
 
+// CheckCreate asks the manager's create ACL question as a probe; see
+// [entitymanager.CheckCreate].
+func (p managerPromoter) CheckCreate(ctx context.Context, typ string, face entity.Face) error {
+	err := entitymanager.CheckCreate(ctx, p.mgr, typ, face)
+	if err == nil {
+		return nil
+	}
+	if d := classifyPromote(err); d != nil {
+		return d
+	}
+	return err
+}
+
 // promoteError turns a [entitymanager.CreateLinked] error into the error
 // the service answers. It wraps [realtime.ErrNothingWritten] when nothing
-// was written: always when the promote was atomic, and otherwise when the
-// error is a refused check or a refusal of the entity write itself.
+// was written: always when the promote was atomic, and otherwise when
+// [entitymanager.WroteNothing] says so.
 func promoteError(err error, atomic bool) error {
 	d := classifyPromote(err)
-	nothing := atomic || entitymanager.WroteNothing(err) || refusedWrite(err)
 	var out error = d
 	if d == nil {
 		out = err
 	}
-	if nothing {
+	if atomic || entitymanager.WroteNothing(err) {
 		return fmt.Errorf("%w: %w", realtime.ErrNothingWritten, out)
 	}
 	return out
 }
 
-// classifyPromote maps a create error to a caller-facing refusal, with the
-// classes the data-entry create route answers. An error it does not know
-// is a server error, and it returns nil.
+// classifyPromote maps a create error to a caller-facing refusal through
+// the classifier the HTTP create route uses. An error that is not a
+// refusal is a server error, and it returns nil.
 func classifyPromote(err error) *realtime.DenialError {
-	var forbidden *acl.ForbiddenError
-	var fieldWrite *affordances.FieldWriteError
-	var invalid *entitymanager.ValidationError
-	var invalidRel *entitymanager.InvalidRelationError
-	switch {
-	case errors.As(err, &forbidden):
-		return &realtime.DenialError{
+	return promoteDenial(entitymanager.ClassifyCreateError(err), err)
+}
+
+// promoteDenial is the refusal of class. Its title never quotes err: a
+// create error can name entity ids, such as the holder of a unique value,
+// that the caller may not read. Validation names the failing properties
+// only.
+func promoteDenial(class entitymanager.CreateErrorClass, err error) *realtime.DenialError {
+	switch class {
+	case entitymanager.CreateErrForbidden:
+		d := &realtime.DenialError{
 			Status: http.StatusForbidden, Type: realtime.TypePromoteDenied,
-			Title: "the promote's entity create is refused", Rule: forbidden.Decision.RuleID,
+			Title: "the promote's entity create is refused",
 		}
-	case errors.As(err, &fieldWrite):
+		if forbidden, ok := errors.AsType[*acl.ForbiddenError](err); ok {
+			d.Rule = forbidden.Decision.RuleID
+		}
+		if fieldWrite, ok := errors.AsType[*affordances.FieldWriteError](err); ok {
+			d.Title, d.Rule = "the promote writes a field the caller may not write", fieldWrite.RuleID()
+		}
+		return d
+	case entitymanager.CreateErrConflict:
 		return &realtime.DenialError{
-			Status: http.StatusForbidden, Type: realtime.TypePromoteDenied,
-			Title: "the promote writes a field the caller may not write", Rule: fieldWrite.RuleID(),
+			Status: http.StatusConflict, Type: realtime.TypePromoteConflict,
+			Title: "the promoted entity or its relation already exists",
 		}
-	case errors.Is(err, statemachine.ErrGuardDenied):
+	case entitymanager.CreateErrFace:
 		return &realtime.DenialError{
-			Status: http.StatusForbidden, Type: realtime.TypePromoteDenied,
-			Title: "the promote's entity create is refused by its state machine",
+			Status: http.StatusUnprocessableEntity, Type: realtime.TypePromoteInvalid,
+			Title: "the promote names a face its entity type does not admit",
 		}
-	case errors.Is(err, entitymanager.ErrEntityAlreadyExists), errors.Is(err, entitymanager.ErrRelationAlreadyExists):
+	case entitymanager.CreateErrInvalid:
 		return &realtime.DenialError{
-			Status: http.StatusConflict, Type: realtime.TypePromoteConflict, Title: err.Error(),
+			Status: http.StatusUnprocessableEntity, Type: realtime.TypePromoteInvalid, Title: invalidTitle(err),
 		}
-	case errors.As(err, &invalid), errors.As(err, &invalidRel),
-		errors.Is(err, entitymanager.ErrFaceRequired), errors.Is(err, entitymanager.ErrFaceNotDeclared),
-		errors.Is(err, entitymanager.ErrEntityNotFound):
-		return &realtime.DenialError{
-			Status: http.StatusUnprocessableEntity, Type: realtime.TypePromoteInvalid, Title: err.Error(),
-		}
+	case entitymanager.CreateErrUnknown:
 	}
 	return nil
 }
 
-// refusedWrite reports whether err is a refusal of the entity write that
-// leaves nothing written: validation, including a unique collision, or an
-// existing id.
-func refusedWrite(err error) bool {
-	var invalid *entitymanager.ValidationError
-	return errors.As(err, &invalid) || errors.Is(err, entitymanager.ErrEntityAlreadyExists)
+// invalidTitle names the properties a validation error refuses, and
+// nothing else of the error.
+func invalidTitle(err error) string {
+	const base = "the promoted entity is refused by the schema"
+	invalid, ok := errors.AsType[*entitymanager.ValidationError](err)
+	if !ok {
+		return base
+	}
+	var props []string
+	for _, e := range invalid.Errors {
+		if e.Property != "" {
+			props = append(props, e.Property+" ("+string(e.Type)+")")
+		}
+	}
+	if len(props) == 0 {
+		return base
+	}
+	slices.Sort(props)
+	return base + ": " + strings.Join(slices.Compact(props), ", ")
 }
