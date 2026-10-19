@@ -26,8 +26,8 @@ channel_types:
           affects:  { type: ref, to: [maatregel, risico] }
         when: "message.severity ~= ''"
         post: [lead]
-        promote_to: { type: timeline-entry, map: { title: summary }, relate: { type: about } }
         actions:
+          log: { roles: [lead], promote_to: { type: timeline-entry, map: { title: summary }, relate: { type: about } } }
           accept: { label: Accept, permission: incident.decide,
                     denied: Only the lead can decide, promote_to: { type: decision } }
       typing: { persist: ephemeral, ttl: 5s, rate: 1/s, post: [lead, dpo, member, agent] }

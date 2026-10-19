@@ -73,7 +73,7 @@ func TestCompiled_AccessorsReturnCopies(t *testing.T) {
 	su := room.MessageTypes["status-update"]
 	su.Post[0] = "x"
 	su.Properties["severity"].Values[0] = "x"
-	su.PromoteTo.Map["title"] = "x"
+	su.Actions["log"].PromoteTo.Map["title"] = "x"
 	su.Actions["accept"].Permission = "x"
 	su.Actions["accept"].Roles = append(su.Actions["accept"].Roles, "x")
 	room.Lifecycle.Close.Roles[0] = "x"
@@ -96,7 +96,7 @@ func TestCompiled_AccessorsReturnCopies(t *testing.T) {
 		"read":            again.Read.RequireAnchorRead,
 		"post":            asu.Post[0] == "lead",
 		"enum values":     asu.Properties["severity"].Values[0] == "low",
-		"promote map":     asu.PromoteTo.Map["title"] == "summary",
+		"promote map":     asu.Actions["log"].PromoteTo.Map["title"] == "summary",
 		"action":          asu.Actions["accept"].Permission == "incident.decide" && len(asu.Actions["accept"].Roles) == 0,
 		"lifecycle roles": again.Lifecycle.Close.Roles[0] == "lead",
 		"auto fields":     again.Lifecycle.Close.Auto.When["datalek"].Fields[0] == "status",
