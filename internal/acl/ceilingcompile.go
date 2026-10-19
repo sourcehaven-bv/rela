@@ -317,8 +317,14 @@ func filterWorlds(roleWorlds []string, w verbCeiling) []string {
 // of `allow: [ticket]` must become `[ticket]`, NOT stay `["*"]` — otherwise the
 // ceiling would be silently ignored, which is the fail-open direction. So when
 // the role holds a wildcard and the ceiling has a closed allowlist, the
-// ceiling's list becomes the result: it is by construction a subset of "every
-// type".
+// ceiling's list replaces the wildcard: it is by construction a subset of
+// "every type".
+//
+// The ceiling's list replaces the wildcard only, not the role's other entries.
+// On a write "*" covers each type's default face and no named face, so a face
+// grant next to it (`["*", "page@draft"]`) grants something the wildcard does
+// not. It stays when the ceiling permits its type, as it would without the
+// wildcard (BUG-0A2KPC).
 //
 // A wildcard under a pure DENY ceiling is different: a plain list cannot spell
 // "everything except person", and expanding it would reintroduce exactly the
@@ -329,13 +335,20 @@ func filterTypes(roleTypes []string, v verbCeiling) []string {
 	if !v.narrows() || len(roleTypes) == 0 {
 		return roleTypes
 	}
-	if v.allow != nil && slices.Contains(roleTypes, "*") {
-		// "everything" ∩ "exactly these" = "exactly these".
-		return slices.Clone(v.allow)
-	}
 	out := make([]string, 0, len(roleTypes))
+	collapse := v.allow != nil && slices.Contains(roleTypes, "*")
+	if collapse {
+		// "everything" ∩ "exactly these" = "exactly these".
+		out = append(out, v.allow...)
+	}
 	for _, t := range roleTypes {
+		if slices.Contains(out, t) {
+			continue
+		}
 		if t == "*" {
+			if collapse {
+				continue // replaced by the allowlist above
+			}
 			// Wildcard under a pure denial: keep it. The denial is enforced by
 			// permitsVerb, which every predicate consults after the role lists
 			// have been checked — a plain list cannot express "all except X".
@@ -348,7 +361,7 @@ func filterTypes(roleTypes []string, v verbCeiling) []string {
 		// state grant entirely, because "page@draft" never equals "page".
 		//
 		// That failure had an inversion in it worth remembering: the
-		// wildcard branch above returns early, so `update: ["*"]` KEPT the
+		// wildcard branch above returned early then, so `update: ["*"]` KEPT the
 		// state grant while the narrower `update: ["page"]` destroyed it —
 		// a grant surviving the broad ceiling and dying under the specific
 		// one. And the resulting denial named the ROLE, not the ceiling,
