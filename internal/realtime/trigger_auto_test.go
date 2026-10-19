@@ -2,12 +2,17 @@ package realtime
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 
 	"github.com/Sourcehaven-BV/rela/internal/channels"
+	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
 	"github.com/Sourcehaven-BV/rela/internal/realtimelimits"
 )
@@ -211,19 +216,174 @@ func TestAuto_CASConflictSkipped(t *testing.T) {
 	require.Empty(t, trail[len(trail)-1].TriggeredBy, "the person's close is the last record")
 }
 
-func TestAuto_WaitsForTriggerIntoSameType(t *testing.T) {
-	th := newTriggerHarness(t, autoRealtime)
-	rules := rulesFor(th.cfg.Load(), testMeta(t))
-	require.Len(t, rules, 3)
-	require.NotNil(t, rules[0].trigger, "triggers come first")
-	byName := map[string]*rule{}
-	for i := range rules {
-		byName[rules[i].name] = &rules[i]
+// statusRealtime adds to autoRealtime a trigger that posts on every status
+// change, so it is in its cooldown when the auto rule's edge comes.
+const statusRealtime = autoRealtime + `
+  status-note:
+    entity_type: ticket
+    on: change
+    when: "entity.status ~= ''"
+    channel: room
+    post: { type: text, props: { body: "Status" } }
+`
+
+func TestAuto_WaitsForTriggerInCooldown(t *testing.T) {
+	th := newTriggerHarness(t, statusRealtime)
+	th.ticket(1, map[string]any{"status": "doing"})
+	th.openRoom(t, "TKT-1")
+	th.reconcile(t)
+	th.ticket(1, map[string]any{"status": "review"})
+	th.round(t)
+	require.Equal(t, []string{"hi", "Status"}, th.bodies(t, "TKT-1"))
+
+	th.clock.Add(realtimelimits.TriggerCooldown / 2)
+	th.ticket(1, map[string]any{"status": "done"})
+	require.Zero(t, th.round(t).Moved, "the status note in its cooldown goes first")
+	require.Equal(t, channels.StateOpen, th.state(t, roomOf("TKT-1")))
+
+	th.clock.Add(realtimelimits.TriggerCooldown / 2)
+	require.Equal(t, 1, th.round(t).Moved)
+	require.Equal(t, []string{"hi", "Status", "Done", "Status"}, th.bodies(t, "TKT-1"))
+	require.Equal(t, channels.StateClosed, th.state(t, roomOf("TKT-1")))
+}
+
+// failOnce fails the first Append, or the second SetLifecycle, once.
+type failOnce struct {
+	channels.Store
+	appends, sets atomic.Int64
+	append, set   bool
+}
+
+func (s *failOnce) Append(ctx context.Context, k channels.Key, nm channels.NewMessage) (channels.Message, error) {
+	if s.append && s.appends.Add(1) == 1 {
+		return channels.Message{}, errors.New("store down")
 	}
-	r := th.trg.newRound(context.Background(), th.cfg.Load(), th.clock.Now(), rules)
-	th.trg.enqueue(byName["finished"].id, "TKT-1", queued{typ: "ticket", noted: th.clock.Now()})
-	require.True(t, r.waitsForTrigger(byName["room.close.auto"], "TKT-1"))
-	require.False(t, r.waitsForTrigger(byName["room.close.auto"], "TKT-2"))
-	require.False(t, r.waitsForTrigger(byName["threads.archive.auto"], "TKT-1"),
-		"a trigger into another channel type does not hold the rule back")
+	return s.Store.Append(ctx, k, nm)
+}
+
+func (s *failOnce) SetLifecycle(
+	ctx context.Context, k channels.Key, expect channels.State, tr channels.Transition,
+) (channels.Channel, error) {
+	if s.set && s.sets.Add(1) == 2 {
+		return channels.Channel{}, errors.New("store down")
+	}
+	return s.Store.SetLifecycle(ctx, k, expect, tr)
+}
+
+// useStore points the harness's engine at st.
+func (th *triggerHarness) useStore(t *testing.T, st channels.Store) {
+	t.Helper()
+	trg, err := NewTriggers(TriggerDeps{
+		Store: st, Config: th.cfg, Local: th.local, Meta: testMeta(t), Rows: th.src, Seen: th.kv,
+	})
+	require.NoError(t, err)
+	th.trg = trg
+}
+
+func TestAuto_WaitsForTriggerRetry(t *testing.T) {
+	th := autoHarness(t)
+	th.useStore(t, &failOnce{Store: th.store, append: true})
+	th.ticket(1, map[string]any{"status": "done"})
+	_, err := th.trg.RunRound(context.Background())
+	require.NoError(t, err)
+	_, err = th.trg.RunRound(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, channels.StateOpen, th.state(t, roomOf("TKT-1")), "the trigger post waiting for a retry goes first")
+
+	th.clock.Add(time.Second)
+	require.Equal(t, 1, th.round(t).Moved)
+	require.Equal(t, []string{"hi", "Done"}, th.bodies(t, "TKT-1"))
+	require.Equal(t, channels.StateClosed, th.state(t, roomOf("TKT-1")))
+}
+
+// closedThreads creates n closed threads on TKT-1.
+func (th *triggerHarness) closedThreads(t *testing.T, n int) []channels.Key {
+	t.Helper()
+	keys := make([]channels.Key, n)
+	for i := range n {
+		c, err := th.store.CreateMany(context.Background(), channels.Anchor{ID: "TKT-1"}, channels.NewChannel{
+			Type: "threads", Title: fmt.Sprintf("t%d", i), By: channels.Author{User: "alice"}, At: th.clock.Now(),
+		})
+		require.NoError(t, err)
+		th.move(t, c.Key, channels.StateOpen, channels.StateClosed)
+		keys[i] = c.Key
+	}
+	return keys
+}
+
+func noTriggerAuto(t *testing.T) *triggerHarness {
+	t.Helper()
+	noTrigger, _, _ := strings.Cut(autoRealtime, "triggers:")
+	th := newTriggerHarness(t, noTrigger)
+	th.ticket(1, map[string]any{"status": "doing"})
+	th.reconcile(t)
+	return th
+}
+
+func TestAuto_FailedMoveResumes(t *testing.T) {
+	th := noTriggerAuto(t)
+	keys := th.closedThreads(t, 3)
+	th.useStore(t, &failOnce{Store: th.store, set: true})
+	th.ticket(1, map[string]any{"status": "done"})
+	rep, err := th.trg.RunRound(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, 1, rep.Moved, "the second move fails")
+
+	th.clock.Add(time.Second)
+	require.Equal(t, 2, th.round(t).Moved, "the retry moves the rest")
+	for _, k := range keys {
+		require.Equal(t, channels.StateArchived, th.state(t, k))
+	}
+}
+
+func TestAuto_MovesCountAgainstTheCap(t *testing.T) {
+	th := noTriggerAuto(t)
+	n := realtimelimits.MaxSystemPostsPerRound + 6
+	keys := th.closedThreads(t, n)
+	th.ticket(1, map[string]any{"status": "done"})
+	// The room rule finds no room, which still costs one attempt; each
+	// thread moved costs one more.
+	require.Equal(t, realtimelimits.MaxSystemPostsPerRound-1, th.round(t).Moved)
+	require.True(t, th.trg.Pending(), "the rest wait at the head of the queue")
+	require.Equal(t, 7, th.round(t).Moved)
+	for _, k := range keys {
+		require.Equal(t, channels.StateArchived, th.state(t, k))
+	}
+}
+
+const faceAutoRealtime = `
+version: 1
+channel_types:
+  facechat:
+    attach_to: [page]
+    anchor: face
+    roles:
+      member: { from: attached }
+    message_types:
+      text:
+        properties: { body: { type: string } }
+        post: [member]
+    lifecycle:
+      close: { roles: [member], auto: { when: "entity.title == 'done'" } }
+`
+
+func TestAuto_FaceAnchorClosesTheEnteredFace(t *testing.T) {
+	th := newTriggerHarness(t, faceAutoRealtime)
+	ctx := context.Background()
+	chat := func(face entity.Face) channels.Key {
+		return channels.Key{Anchor: channels.Anchor{ID: "PAGE-1", Face: face}, Type: "facechat"}
+	}
+	for _, face := range []entity.Face{"published", "draft"} {
+		th.src.set("page", "PAGE-1", face, map[string]any{"title": "wip"})
+		_, err := th.store.Store.Append(ctx, chat(face), channels.NewMessage{
+			Type: "text", Author: channels.Author{User: "alice"}, At: th.clock.Now(), Props: map[string]any{"body": "hi"},
+		})
+		require.NoError(t, err)
+	}
+	th.reconcile(t)
+	th.src.set("page", "PAGE-1", "draft", map[string]any{"title": "done"})
+	th.trg.Note(Change{EntityType: "page", ID: "PAGE-1"})
+	require.Equal(t, 1, th.round(t).Moved)
+	require.Equal(t, channels.StateClosed, th.state(t, chat("draft")))
+	require.Equal(t, channels.StateOpen, th.state(t, chat("published")))
 }

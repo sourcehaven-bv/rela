@@ -1130,7 +1130,8 @@ func (r *round) refsFor(ru *rule, sh *roundShard, id string, cur map[string]Enti
 }
 
 // post takes one post from each rule's queue in turn, in rule order, until
-// [realtimelimits.MaxSystemPostsPerRound] attempts are spent. It stops
+// [realtimelimits.MaxSystemPostsPerRound] attempts are spent. Each channel
+// an auto rule tries to move is an attempt. It stops
 // early when the store fails or ctx ends; the rest wait in their queues.
 // The queues of rules the config no longer has are dropped.
 func (r *round) post() {
@@ -1164,10 +1165,8 @@ func (r *round) post() {
 			if _, active := r.idx.Rules[id]; ru == nil || !active {
 				continue
 			}
-			tried, stop := r.postOne(ru, q, ref, it)
-			if tried {
-				attempts++
-			}
+			cost, stop := r.postOne(ru, q, ref, it, realtimelimits.MaxSystemPostsPerRound-attempts)
+			attempts += cost
 			if stop {
 				r.dropEmptyQueues()
 				return
@@ -1184,37 +1183,45 @@ func (r *round) dropEmptyQueues() {
 	maps.DeleteFunc(r.t.lead.queues, func(_ string, q *effectQueue) bool { return len(q.items) == 0 })
 }
 
-// postOne makes one post popped from q. tried reports whether it reached
-// the store, and stop that the round should post no more. A post held
-// back by the cooldown or a retry delay leaves the queue and its entity
-// is read again when it is due, so later changes are seen with it.
-func (r *round) postOne(ru *rule, q *effectQueue, ref string, it queued) (tried, stop bool) {
+// postOne makes one post popped from q, spending at most budget
+// attempts. cost is the attempts it spent, and stop reports that the round
+// should post no more. A post held back by the cooldown, a retry delay or
+// a trigger that goes first leaves the queue, and its entity is read again
+// when it is due, so later changes are seen with it. An auto rule with
+// more channels to move than budget allows moves what it may and goes back
+// to the head of its queue.
+func (r *round) postOne(ru *rule, q *effectQueue, ref string, it queued, budget int) (cost int, stop bool) {
 	k := ru.id + "\x00" + ref
 	id := idOf(ref)
 	if last, ok := r.t.lead.lastPost[k]; ok && r.now.Sub(last) < realtimelimits.TriggerCooldown {
 		r.t.postpone(it.typ, id, last.Add(realtimelimits.TriggerCooldown), it.noted)
-		return false, false
+		return 0, false
 	}
 	f := r.t.lead.failures[k]
 	if f != nil && r.now.Before(f.next) {
 		r.t.postpone(it.typ, id, f.next, it.noted)
-		return false, false
+		return 0, false
 	}
-	if ru.auto != nil && r.waitsForTrigger(ru, id) {
-		r.t.postpone(it.typ, id, r.now.Add(TriggerTick), it.noted)
-		return false, false
+	if ru.auto != nil {
+		if due, wait := r.waitsForTrigger(ru, it.typ, ref); wait {
+			r.t.postpone(it.typ, id, due, it.noted)
+			return 0, false
+		}
 	}
 	sh, err := r.shard(ru, shardOf(id, r.idx.Rules[ru.id].Shards))
 	if errors.Is(err, errRuleReset) {
-		return false, false
+		return 0, false
 	}
 	if err != nil {
 		r.pushBack(q, ref, it)
-		return false, true
+		return 0, true
 	}
-	err = r.act(ru, ref)
+	cost, more, err := r.act(ru, ref, budget)
 	var permanent permanentError
 	switch {
+	case err == nil && more:
+		r.pushBack(q, ref, it)
+		return cost, true
 	case err == nil:
 		r.t.lead.lastPost[k] = r.now
 	case errors.Is(err, channels.ErrNotOpen):
@@ -1223,10 +1230,10 @@ func (r *round) postOne(ru *rule, q *effectQueue, ref string, it queued) (tried,
 			"rule", ru.name, "entity", ref)
 	case r.ctx.Err() != nil:
 		r.pushBack(q, ref, it)
-		return true, true
+		return cost, true
 	case errors.As(err, &permanent):
 		r.rep.Failed++
-		slog.ErrorContext(r.ctx, "realtime: trigger post cannot succeed; the change is counted as seen",
+		slog.ErrorContext(r.ctx, "realtime: a rule's write cannot succeed; the change is counted as seen",
 			"rule", ru.name, "entity", ref, "error", err)
 	default:
 		if f == nil {
@@ -1237,45 +1244,73 @@ func (r *round) postOne(ru *rule, q *effectQueue, ref string, it queued) (tried,
 		if r.now.Sub(f.first) < realtimelimits.TriggerRetryWindow {
 			f.next = r.now.Add(retryDelay(f.attempts))
 			r.t.postpone(it.typ, id, f.next, it.noted)
-			return true, true
+			return cost, true
 		}
 		r.rep.Failed++
-		slog.ErrorContext(r.ctx, "realtime: trigger post keeps failing; the change is counted as seen",
+		slog.ErrorContext(r.ctx, "realtime: a rule's write keeps failing; the change is counted as seen",
 			"rule", ru.name, "entity", ref, "attempts", f.attempts, "error", err)
 		stop = true
 	}
 	delete(r.t.lead.failures, k)
 	sh.apply(ref, it)
-	return true, stop
+	return cost, stop
 }
 
 // act does what ru does on its edge for the entity ref: a trigger posts
-// its message, an auto rule moves the entity's channels.
-func (r *round) act(ru *rule, ref string) error {
+// its message, an auto rule moves the entity's channels. cost is the
+// attempts spent: one for a post, one per channel an auto rule tried to
+// move, at most budget. more reports that channels are left to move.
+func (r *round) act(ru *rule, ref string, budget int) (cost int, more bool, err error) {
 	if ru.auto == nil {
-		err := r.t.w.post(r.ctx, r.snap, r.now, ru.key(ref), ru.ct, ru.mt, ru.props,
+		err = r.t.w.post(r.ctx, r.snap, r.now, ru.key(ref), ru.ct, ru.mt, ru.props,
 			ru.triggeredBy(), ru.trigger.WhenClosed != realtimecfg.WhenClosedPost)
 		if err == nil {
 			r.rep.Posted++
 		}
-		return err
+		return 1, false, err
 	}
-	n, err := r.t.w.transition(r.ctx, r.now, ru.anchor(ref), ru.ct, ru.auto, ru.triggeredBy())
-	r.rep.Moved += n
-	return err
+	res, err := r.t.w.transition(r.ctx, r.now, ru.anchor(ref), ru.ct, ru.auto, ru.triggeredBy(), budget)
+	r.rep.Moved += res.moved
+	return max(res.tried, 1), res.more, err
 }
 
-// waitsForTrigger reports whether a trigger into ru's channel type still
-// has a post of entity id in its queue. That post goes first: were the
-// auto rule to close the channel now, the post would find it closed.
-func (r *round) waitsForTrigger(ru *rule, id string) bool {
+// waitsForTrigger reports whether a trigger into ru's channel type on the
+// same entity type may still post about the entity ref, and until when ru
+// waits for it. That post goes first: were ru to close the channel now,
+// the post would find it closed. A trigger post may wait in its queue, or
+// be held back by its cooldown or a retry. ru may then wait up to the
+// cooldown although the trigger has nothing more to post.
+func (r *round) waitsForTrigger(ru *rule, typ, ref string) (time.Time, bool) {
+	id := idOf(ref)
+	_, deferred := r.t.lead.deferred[typ][id]
+	var until time.Time
 	for i := range r.rules {
 		o := &r.rules[i]
-		if o.trigger != nil && o.ct.Name == ru.ct.Name && len(r.t.queuedRefs(o.id, id)) > 0 {
-			return true
+		if o.trigger == nil || o.ct.Name != ru.ct.Name || o.entityType != ru.entityType {
+			continue
+		}
+		if len(r.t.queuedRefs(o.id, id)) > 0 {
+			return r.now.Add(TriggerTick), true
+		}
+		if !deferred {
+			continue
+		}
+		k := o.id + "\x00" + ref
+		if last, ok := r.t.lead.lastPost[k]; ok && r.now.Sub(last) < realtimelimits.TriggerCooldown {
+			until = later(until, last.Add(realtimelimits.TriggerCooldown))
+		}
+		if f := r.t.lead.failures[k]; f != nil && r.now.Before(f.next) {
+			until = later(until, f.next)
 		}
 	}
-	return false
+	return until, !until.IsZero()
+}
+
+func later(a, b time.Time) time.Time {
+	if b.After(a) {
+		return b
+	}
+	return a
 }
 
 func (r *round) pushBack(q *effectQueue, ref string, it queued) {

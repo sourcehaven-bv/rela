@@ -22,7 +22,7 @@ import (
 type rule struct {
 	id string
 	// name names the rule in logs: the trigger's name, or
-	// <channel type>.<op>.auto for an auto rule.
+	// <channel type>.<op>.auto[<entity type>] for an auto rule.
 	name       string
 	entityType string
 	when       realtimecfg.Rule
@@ -105,7 +105,7 @@ func rulesFor(snap Snapshot, meta *metamodel.Metamodel) []rule {
 				}
 				faces := facesOf(ct)
 				out = append(out, rule{
-					id: autoRuleID(ct.Name, name, typ, when, faces), name: ct.Name + "." + name + ".auto",
+					id: autoRuleID(ct.Name, name, typ, when, faces), name: ct.Name + "." + name + ".auto[" + typ + "]",
 					entityType: typ, when: when, on: realtimecfg.TriggerEnter, ct: ct, def: def, faces: faces,
 					auto: &autoRule{op: name, to: lifecycleTarget(name), from: opFrom(name, op)},
 				})
