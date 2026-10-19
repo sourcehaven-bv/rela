@@ -172,11 +172,22 @@ func customIDNotAllowedError(entityType string, def *metamodel.EntityDef, offend
 	if prefixes := def.GetIDPrefixes(); len(prefixes) > 0 {
 		hint = fmt.Sprintf("omit the \"id\" field to auto-generate one (prefix %q)", prefixes[0])
 	}
-	return fmt.Errorf(
+	return customIDError{msg: fmt.Sprintf(
 		"entity type %q uses id_type=%s; custom ID %q not allowed — %s",
 		entityType, def.GetIDType(), offendingID, hint,
-	)
+	)}
 }
+
+// ErrCustomIDNotAllowed reports a create that names an id for a type
+// whose ids are generated.
+var ErrCustomIDNotAllowed = errors.New("custom id not allowed")
+
+// customIDError is [ErrCustomIDNotAllowed] with the message
+// [customIDNotAllowedError] formats.
+type customIDError struct{ msg string }
+
+func (e customIDError) Error() string { return e.msg }
+func (e customIDError) Unwrap() error { return ErrCustomIDNotAllowed }
 
 // ErrRelationNotOrderable reports a move on a relation type whose outgoing
 // side declares no managed order.

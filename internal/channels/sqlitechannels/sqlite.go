@@ -42,6 +42,45 @@ func New(db DB) (*sqlchannels.Store, error) {
 	return sqlchannels.New(&handle{querier: querier{db}, db: db}, sqlchannels.Dialect{Name: "sqlitechannels"})
 }
 
+// NewInTx returns a channel store whose writes join the transaction open on
+// conn: each write runs in a SAVEPOINT on conn, so it commits or rolls back
+// with that transaction. It is for a write that must change the entity graph
+// and a channel atomically; conn is the one sqlitestore.TxConn returns
+// inside a store transaction. The store is valid only until that
+// transaction ends.
+//
+// Nil: rejected, so a wiring mistake fails at construction.
+func NewInTx(conn *sql.Conn) (*sqlchannels.Store, error) {
+	if conn == nil {
+		return nil, errors.New("sqlitechannels: NewInTx requires a connection")
+	}
+	return sqlchannels.New(joined{querier: querier{conn}, conn: conn}, sqlchannels.Dialect{Name: "sqlitechannels"})
+}
+
+// joined runs each write in a savepoint of a transaction someone else owns.
+// It takes no write mutex: the owner already holds SQLite's write lock.
+type joined struct {
+	querier
+	conn *sql.Conn
+}
+
+// Transact runs fn in a savepoint, and rolls back to it when fn fails.
+func (j joined) Transact(ctx context.Context, fn func(sqlchannels.Querier) error) error {
+	if _, err := j.conn.ExecContext(ctx, "SAVEPOINT channels"); err != nil {
+		return fmt.Errorf("savepoint: %w", err)
+	}
+	if err := fn(j.querier); err != nil {
+		undo := context.WithoutCancel(ctx)
+		_, _ = j.conn.ExecContext(undo, "ROLLBACK TO channels")
+		_, _ = j.conn.ExecContext(undo, "RELEASE channels")
+		return err
+	}
+	if _, err := j.conn.ExecContext(context.WithoutCancel(ctx), "RELEASE channels"); err != nil {
+		return fmt.Errorf("release savepoint: %w", err)
+	}
+	return nil
+}
+
 type handle struct {
 	querier
 	db      DB

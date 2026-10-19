@@ -76,6 +76,7 @@ func wireMessage(m realtime.MessageView) v1.Message {
 	out := v1.Message{
 		Seq: m.Seq, Rev: m.Rev, Type: m.Type, Author: wireChannelAuthor(m.Author), At: channelTime(m.At),
 		Props: wireProps(m.Props), ReplyTo: m.ReplyTo, ReplyCount: m.ReplyCount, EditedAt: channelTime(m.EditedAt),
+		Actions: m.Actions,
 	}
 	if m.Removed != nil {
 		out.Removed = &v1.MessageRemoval{
@@ -90,6 +91,10 @@ func wireMessage(m realtime.MessageView) v1.Message {
 		}
 	}
 	return out
+}
+
+func wireActionResult(r realtime.ActionResult) v1.MessageActionResponse {
+	return v1.MessageActionResponse{Message: wireMessage(r.Message), Warnings: r.Warnings}
 }
 
 func wireHead(h realtime.HeadView) v1.ChannelHead {

@@ -59,6 +59,31 @@ const (
 	// TypeRetentionActive is a 409 for a delete before the channel's
 	// retention ends, or of a channel under retention that was never closed.
 	TypeRetentionActive = "retention_active"
+	// TypeActionNotOffered is a 403 for an action the message type does not
+	// declare, or a promoting action in a process that cannot promote.
+	TypeActionNotOffered = "action_not_offered"
+	// TypeActionDenied is a 403 for an action, or a release, whose gate
+	// refuses the caller.
+	TypeActionDenied = "action_denied"
+	// TypeActionTaken is a 409 for an action on a message that already
+	// carries one, or that lost the race for it.
+	TypeActionTaken = "action_taken"
+	// TypeActionPending is a 409 for an action, edit or removal of a message
+	// whose action is pending, and for a release before the action has been
+	// pending long enough.
+	TypeActionPending = "action_pending"
+	// TypeActionNotPending is a 409 for a release of a message whose action
+	// is not pending.
+	TypeActionNotPending = "action_not_pending"
+	// TypePromoteDenied is a 403 for a promote the entity create ACL or the
+	// field grants refuse.
+	TypePromoteDenied = "promote_denied"
+	// TypePromoteInvalid is a 422 for a promote whose entity or relation
+	// fails validation.
+	TypePromoteInvalid = "promote_invalid"
+	// TypePromoteConflict is a 409 for a promote whose entity or relation
+	// already exists.
+	TypePromoteConflict = "promote_conflict"
 	// TypeChannelTypeConflict is a 409 for a write to a channel type whose
 	// record in the channel store differs from realtime.yaml: another
 	// anchor or cardinality, or a recorded ref declared as another type.
@@ -167,6 +192,17 @@ func messageStoreError(err error) error {
 	return storeError(err)
 }
 
+// actionStoreError is [messageStoreError] for an action write: a lost
+// compare-and-set means another action got there first. A pending action
+// that got there first is [channels.ErrActionPending], which
+// [storeError] answers as action_pending.
+func actionStoreError(err error) error {
+	if errors.Is(err, channels.ErrConflict) {
+		return deny(http.StatusConflict, TypeActionTaken, "another action on this message got there first")
+	}
+	return messageStoreError(err)
+}
+
 // storeError maps a channel store error on a write to a [DenialError], and
 // returns any other error unchanged. A missing channel is
 // channel_not_found: it was deleted after the operation read it.
@@ -180,6 +216,10 @@ func storeError(err error) error {
 		return deny(http.StatusConflict, TypeRemoved, "the message was removed")
 	case errors.Is(err, channels.ErrTooManyChannels):
 		return deny(http.StatusConflict, TypeTooManyChannels, "this entity holds the most channels of this type allowed")
+	case errors.Is(err, channels.ErrNotOpen):
+		return deny(http.StatusConflict, TypeChannelNotOpen, "the channel is not open")
+	case errors.Is(err, channels.ErrActionPending):
+		return deny(http.StatusConflict, TypeActionPending, "the message has a pending action")
 	case errors.Is(err, channels.ErrConflict):
 		return deny(http.StatusConflict, TypeConflict, "the channel changed concurrently; try again")
 	case errors.Is(err, channels.ErrTooLarge):

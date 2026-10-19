@@ -395,10 +395,11 @@ type MessageType struct {
 	Rate       realtimelimits.Rate
 	Properties map[string]Property
 	// When is the compiled `when:` over the `message` record, or nil.
-	When      *predicate.Program
-	Post      []string
-	PromoteTo *Promote
-	Actions   map[string]*Action
+	When *predicate.Program
+	Post []string
+	// Actions are the buttons on a message. Promoting a message to an
+	// entity is always an action, so its gate is explicit.
+	Actions map[string]*Action
 }
 
 // PropertyType is the type of a message property.

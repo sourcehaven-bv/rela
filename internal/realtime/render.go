@@ -67,6 +67,9 @@ type MessageView struct {
 	EditedAt   time.Time      `json:"edited_at,omitzero"`
 	Removed    *RemovedView   `json:"removed,omitempty"`
 	Action     *ActionView    `json:"action,omitempty"`
+	// Actions lists the actions the reader may run on the message now,
+	// sorted. Nil when there are none.
+	Actions []string `json:"_actions,omitempty"`
 }
 
 // EphemeralView is one live signal.
@@ -120,6 +123,8 @@ type renderer struct {
 	// removed a message and why.
 	moderator bool
 	refs      map[string]RefView
+	// call, when set, decides the actions each message offers.
+	call *call
 }
 
 // refIDs returns the entity ids msgs and sigs name in ref properties and
@@ -218,6 +223,9 @@ func (r *renderer) message(m channels.Message) MessageView {
 			av.Promoted = r.ref(m.Action.Promoted.ID)
 		}
 		v.Action = av
+	}
+	if r.call != nil {
+		v.Actions = r.call.offeredActions(m)
 	}
 	return v
 }

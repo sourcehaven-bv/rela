@@ -7,7 +7,16 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/autocascade"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/store"
 )
+
+// WithStore returns a handle on m's deps that writes to st. Test-only: it
+// lets an external test put a failing store under a built Manager.
+func WithStore(m *Manager, st store.Store) *Manager {
+	d := m.deps
+	d.Store = st
+	return &Manager{deps: d}
+}
 
 // CascadeHostDelete runs the delete an automation's if_exists: replace
 // performs, through the cascade host m would hand the runner. Test-only: it

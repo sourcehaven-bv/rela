@@ -48,6 +48,13 @@ type call struct {
 	// head is the stored channel, nil for a cardinality-one channel that
 	// holds no message yet.
 	head *channels.Channel
+
+	// promoter is the service's [Promoter]; promoteChecks caches its
+	// [Promoter.CheckCreate] answer per promote target.
+	promoter      Promoter
+	promoteChecks map[string]error
+	// actionGates caches the gate answer per message type and action.
+	actionGates map[string]bool
 }
 
 // begin captures the per-operation state: one config snapshot, one Access
@@ -67,7 +74,9 @@ func (s *Service) begin(ctx context.Context) (*call, error) {
 	if err != nil {
 		return nil, fmt.Errorf("realtime: open access: %w", err)
 	}
-	return &call{ctx: actx, snap: snap, acc: acc, p: acc.Principal(), now: s.clock()}, nil
+	return &call{
+		ctx: actx, snap: snap, acc: acc, p: acc.Principal(), now: s.clock(), promoter: s.promoter,
+	}, nil
 }
 
 func noPrincipal() *DenialError {

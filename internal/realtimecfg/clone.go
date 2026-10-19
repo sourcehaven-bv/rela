@@ -76,7 +76,6 @@ func (mt *MessageType) clone() MessageType {
 		out.Properties[name] = p
 	}
 	out.Post = slices.Clone(mt.Post)
-	out.PromoteTo = clonePtr(mt.PromoteTo, Promote.clone)
 	out.Actions = make(map[string]*Action, len(mt.Actions))
 	for name, a := range mt.Actions {
 		c := *a

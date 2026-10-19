@@ -30,6 +30,15 @@ func (s *Service) message(c *call, seq int64) (channels.Message, error) {
 	return m, nil
 }
 
+// requireNotPending refuses a change to m while its action is pending: the
+// promote builds the entity from the message as it was.
+func requireNotPending(m channels.Message) error {
+	if m.ActionStatus() == channels.ActionPending {
+		return storeError(channels.ErrActionPending)
+	}
+	return nil
+}
+
 // Edit replaces the properties of the caller's own message (edit_own). It
 // needs the edit_own gate and, when `within:` is set, an edit inside the
 // window after posting. The new properties pass every check a post does: a
@@ -54,6 +63,9 @@ func (s *Service) Edit(ctx context.Context, addr RawAddress, seq int64, props ma
 		return MessageView{}, err
 	}
 	rule := "channel_types." + c.ct.Name + ".message_ops.edit_own"
+	if pendErr := requireNotPending(m); pendErr != nil {
+		return MessageView{}, pendErr
+	}
 	if !sameAuthor(m.Author, c.p) {
 		return MessageView{}, forbidden(TypeEditDenied, "only the author may edit a message", rule)
 	}
@@ -117,6 +129,9 @@ func (s *Service) Delete(ctx context.Context, addr RawAddress, seq int64, reason
 	m, err := s.message(c, seq)
 	if err != nil {
 		return MessageView{}, err
+	}
+	if pendErr := requireNotPending(m); pendErr != nil {
+		return MessageView{}, pendErr
 	}
 	removal := channels.Removal{By: authorOf(c.p), At: c.now}
 	ops := c.ct.MessageOps

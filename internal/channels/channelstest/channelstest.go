@@ -67,6 +67,7 @@ func RunAll(t *testing.T, newHarness func(t *testing.T) Harness) {
 		{"EditKeepsNoHistory", testEditErases},
 		{"Replies", testReplies},
 		{"Actions", testActions},
+		{"ActionGuards", testActionGuards},
 		{"Lifecycle", testLifecycle},
 		{"CreateMany", testCreateMany},
 		{"CreateManyCap", testCreateManyCap},
@@ -510,7 +511,7 @@ func testActions(t *testing.T, h Harness) {
 	require.Equal(t, "proposal", got.Props["body"], "an action leaves the content alone")
 
 	_, err = h.Store.SetAction(ctx, k, 1, "accept", channels.ActionNone, pending)
-	require.ErrorIs(t, err, channels.ErrConflict, "a second accept loses")
+	require.ErrorIs(t, err, channels.ErrActionPending, "a second accept loses to the pending one")
 	_, err = h.Store.SetAction(ctx, k, 1, "reject", channels.ActionPending, pending)
 	require.ErrorIs(t, err, channels.ErrConflict, "another action name loses")
 
@@ -547,6 +548,13 @@ func testActions(t *testing.T, h Harness) {
 		channels.Action{By: Bob, At: releasedAt})
 	require.NoError(t, err)
 	require.Nil(t, got.Action)
+	// A promote that wrote nothing reverts its own pending action.
+	_, err = h.Store.SetAction(ctx, k, 2, "accept", channels.ActionNone, pending)
+	require.NoError(t, err)
+	got, err = h.Store.SetAction(ctx, k, 2, "accept", channels.ActionPending,
+		channels.Action{By: Alice, At: releasedAt, Revert: true})
+	require.NoError(t, err)
+	require.Nil(t, got.Action)
 	stale, err = h.Store.StalePending(ctx, at.Add(time.Hour))
 	require.NoError(t, err)
 	require.Empty(t, stale)
@@ -562,6 +570,39 @@ func testActions(t *testing.T, h Harness) {
 	require.ErrorIs(t, err, channels.ErrRemoved)
 }
 
+// testActionGuards checks that a pending action freezes its message and
+// that an action can only be taken in an open channel.
+func testActionGuards(t *testing.T, h Harness) {
+	t.Helper()
+	ctx := context.Background()
+	k := key("TKT-1", "room")
+	mustAppend(t, h.Store, k, text("one"))
+	mustAppend(t, h.Store, k, text("two"))
+	at := T0.Add(time.Minute)
+	pending := channels.Action{Status: channels.ActionPending, By: Alice, At: at}
+
+	_, err := h.Store.SetAction(ctx, k, 1, "accept", channels.ActionNone, pending)
+	require.NoError(t, err)
+	_, err = h.Store.Edit(ctx, k, 1, map[string]any{"body": "changed"}, at)
+	require.ErrorIs(t, err, channels.ErrActionPending)
+	_, err = h.Store.Remove(ctx, k, 1, channels.Removal{By: Bob, At: at})
+	require.ErrorIs(t, err, channels.ErrActionPending)
+	got, err := h.Store.Get(ctx, k, 1)
+	require.NoError(t, err)
+	require.Equal(t, "one", got.Props["body"], "a refused edit changes nothing")
+
+	_, err = h.Store.SetLifecycle(ctx, k, channels.StateOpen,
+		channels.Transition{To: channels.StateClosed, By: Bob, At: at})
+	require.NoError(t, err)
+	_, err = h.Store.SetAction(ctx, k, 2, "accept", channels.ActionNone, pending)
+	require.ErrorIs(t, err, channels.ErrNotOpen, "no new action in a closed channel")
+	done := channels.Action{Status: channels.ActionDone, By: Alice, At: at.Add(time.Second), PendingAt: at}
+	_, err = h.Store.SetAction(ctx, k, 1, "accept", channels.ActionPending, done)
+	require.NoError(t, err, "a pending action may finish after the close")
+	_, err = h.Store.Edit(ctx, k, 1, map[string]any{"body": "after"}, at)
+	require.NoError(t, err, "a done action no longer freezes the message")
+}
+
 // assertActionAudit checks the action records testActions leaves.
 func assertActionAudit(t *testing.T, h Harness, releasedAt time.Time) {
 	t.Helper()
@@ -573,7 +614,7 @@ func assertActionAudit(t *testing.T, h Harness, releasedAt time.Time) {
 			actions = append(actions, r)
 		}
 	}
-	require.Len(t, actions, 2, "a completed and a released action are audited; going pending is not")
+	require.Len(t, actions, 3, "a completed, a released and a reverted action are audited; going pending is not")
 	require.Equal(t, "accept", actions[0].Action)
 	require.Equal(t, int64(1), actions[0].Seq)
 	require.Equal(t, &channels.Promoted{ID: "DEC-1", Type: "decision"}, actions[0].Promoted)
@@ -582,6 +623,8 @@ func assertActionAudit(t *testing.T, h Harness, releasedAt time.Time) {
 		At: channels.NormTime(releasedAt), Op: channels.AuditAction, Type: "room", Seq: 2, By: Bob,
 		Action: "accept", Status: channels.AuditReleased,
 	}, actions[1])
+	require.Equal(t, channels.AuditReverted, actions[2].Status)
+	require.Equal(t, Alice, actions[2].By)
 }
 
 func testLifecycle(t *testing.T, h Harness) {

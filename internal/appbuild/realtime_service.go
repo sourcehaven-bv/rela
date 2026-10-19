@@ -11,6 +11,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/channels"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/predicatefns"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
@@ -76,10 +77,16 @@ func policyChannelService(s *Services) (*realtime.Service, *acl.Declarative, err
 	if err != nil {
 		return nil, nil, err
 	}
+	// A promote writes the graph through s's own manager, as s's entity
+	// tools do; acl.yaml decides only whether the action may run.
+	promoter, err := newManagerPromoter(s.entityManager, txChannelsFor(s.Store(), s.channels))
+	if err != nil {
+		return nil, nil, err
+	}
 	svc, _, err := newRealtimeService(realtimeInputs{
 		meta: s.base.meta, worlds: s.base.worlds, config: realtimeConfigSource{h: s.base.realtime},
 		store: s.Store(), channels: s.channels, local: s.realtimeLocal,
-		declarative: c.declarative, redactor: c.fields.redactor, writes: c.acl,
+		declarative: c.declarative, redactor: c.fields.redactor, writes: c.acl, promoter: promoter,
 	})
 	if err != nil {
 		return nil, nil, err
@@ -108,18 +115,24 @@ func ACLAssignsNoRole(s *Services, user string) bool {
 	return !ok
 }
 
-// buildRealtimeService builds the channel service over cs for one assembly.
-// The service is per assembly, so its access checks follow the current ACL;
-// local is the process-local state successive assemblies share (see
-// [SharedBase.ForReassembly]), or nil for a first assembly, which makes it.
+// buildRealtimeService builds the channel service over refs.channels for one
+// assembly. The service is per assembly, so its access checks follow the
+// current ACL; refs.realtimeLocal is the process-local state successive
+// assemblies share (see [SharedBase.ForReassembly]). Promotes go through mgr.
 func buildRealtimeService(
-	base *SharedBase, st store.Store, cs channels.Store, local *realtime.Local,
+	base *SharedBase, st store.Store, refs refHolders, mgr *entitymanager.Manager,
 	d *acl.Declarative, redactor visibility.FieldRedactor, writes acl.ACL,
-) (*realtime.Service, *realtime.Local, error) {
-	return newRealtimeService(realtimeInputs{
+) (*realtime.Service, error) {
+	promoter, err := newManagerPromoter(mgr, txChannelsFor(st, refs.channels))
+	if err != nil {
+		return nil, err
+	}
+	svc, _, err := newRealtimeService(realtimeInputs{
 		meta: base.meta, worlds: base.worlds, config: realtimeConfigSource{h: base.realtime},
-		store: st, channels: cs, local: local, declarative: d, redactor: redactor, writes: writes,
+		store: st, channels: refs.channels, local: refs.realtimeLocal, declarative: d, redactor: redactor,
+		writes: writes, promoter: promoter,
 	})
+	return svc, err
 }
 
 // realtimeInputs are what [newRealtimeService] builds a channel service
@@ -134,6 +147,9 @@ type realtimeInputs struct {
 	declarative *acl.Declarative
 	redactor    visibility.FieldRedactor
 	writes      acl.ACL
+	// promoter creates the entities of promoting actions;
+	// [realtime.NoPromoter] where nothing may write the graph.
+	promoter realtime.Promoter
 }
 
 // newRealtimeService builds the channel service from in, and makes the
@@ -152,12 +168,13 @@ func newRealtimeService(in realtimeInputs) (*realtime.Service, *realtime.Local, 
 	}
 	rows, _ := scriptReads(in.store, in.declarative, in.redactor, in.worlds)
 	svc, err := realtime.New(realtime.Deps{
-		Store:   in.channels,
-		Config:  in.config,
-		Access:  aclAccessSource{d: in.declarative, writes: in.writes},
-		Anchors: anchorReader{rows: rows, meta: in.meta},
-		Refs:    refResolver{rows: rows, meta: in.meta},
-		Local:   local,
+		Store:    in.channels,
+		Config:   in.config,
+		Access:   aclAccessSource{d: in.declarative, writes: in.writes},
+		Anchors:  anchorReader{rows: rows, meta: in.meta},
+		Refs:     refResolver{rows: rows, meta: in.meta},
+		Local:    local,
+		Promoter: in.promoter,
 	})
 	if err != nil {
 		return nil, nil, err

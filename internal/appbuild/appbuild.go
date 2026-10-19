@@ -1271,6 +1271,8 @@ func collaboratorRefHolders(
 		refs.channelService, refs.realtimeLocal, err = newRealtimeService(realtimeInputs{
 			meta: c.Meta, worlds: w, config: ch.Config, store: c.Store, channels: ch.Store,
 			declarative: c.Declarative, redactor: redactor, writes: c.ACL,
+			// Collaborators carry no entity manager, so nothing promotes.
+			promoter: realtime.NoPromoter{},
 		})
 		if err != nil {
 			return refs, fmt.Errorf("channels: %w", err)
@@ -2766,7 +2768,13 @@ func finishAssembly(
 	s.piles, s.pileStore = refs.piles, refs.pileStore
 	s.leases, s.leaseShared = refs.leases, refs.leaseShared
 	s.channels = refs.channels
-	s.channelService, s.realtimeLocal = refs.channelService, refs.realtimeLocal
+	// The channel service promotes through the entity manager, so it is
+	// built once the manager exists.
+	svc, err := buildRealtimeService(s.base, s.store, refs, s.entityManager, s.aclDeclarative, s.fieldReads, s.acl)
+	if err != nil {
+		return nil, err
+	}
+	s.channelService, s.realtimeLocal = svc, refs.realtimeLocal
 	tags, err := buildVersionTags(s)
 	if err != nil {
 		return nil, err

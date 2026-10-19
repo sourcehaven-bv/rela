@@ -514,16 +514,24 @@ func (h *writeHandler) handleV1CreateEntity(w http.ResponseWriter, r *http.Reque
 		createOpts,
 	)
 	if err != nil {
-		if writeForbiddenIfACLDenied(w, err) {
-			return
-		}
-		// A face error is about the ADDRESS, not the payload, so it gets its
-		// own code: a client that omitted the face must add one, which is a
-		// different fix from a property that failed validation.
-		if errors.Is(err, entitymanager.ErrFaceRequired) || errors.Is(err, entitymanager.ErrFaceNotDeclared) {
+		// The class comes from the classifier the channel promote uses too,
+		// so a new kind of refusal is classified once for both.
+		switch entitymanager.ClassifyCreateError(err) {
+		case entitymanager.CreateErrForbidden:
+			if writeForbiddenIfACLDenied(w, err) {
+				return
+			}
+		case entitymanager.CreateErrFace:
+			// A face error is about the ADDRESS, not the payload, so it gets
+			// its own code: a client that omitted the face must add one,
+			// which is a different fix from a property that failed
+			// validation.
 			writeV1Error(w, r, http.StatusUnprocessableEntity, "face_required", err.Error(), "/face")
 			return
+		case entitymanager.CreateErrUnknown, entitymanager.CreateErrConflict, entitymanager.CreateErrInvalid:
 		}
+		// Every other class, including a field-grant or guard refusal and
+		// an unknown error, answers 422 as this route always has.
 		writeV1Error(w, r, http.StatusUnprocessableEntity, "validation_failed", "Validation failed", err.Error())
 		return
 	}

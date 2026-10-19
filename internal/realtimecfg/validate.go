@@ -385,7 +385,10 @@ func (v *validator) messageType(key, name string, raw *rawMessageType, ct *Chann
 	}
 	mt.Post = v.roleRefs(key+".post", raw.Post, ct)
 	if mt.Persist == PersistLog {
-		mt.PromoteTo = v.promote(key+".promote_to", raw.PromoteTo, mt, ct)
+		if raw.PromoteTo != nil {
+			v.add(key+".promote_to", "promote_to belongs on an action: declare an action with its own "+
+				"roles or permission and put promote_to there")
+		}
 		for _, an := range sortedKeys(raw.Actions) {
 			ra := raw.Actions[an]
 			ak := key + ".actions." + an
@@ -480,6 +483,10 @@ func (v *validator) promote(key string, raw *rawPromote, mt *MessageType, ct *Ch
 	}
 	if canon := v.meta.ResolveAlias(raw.Type); canon != raw.Type {
 		v.add(key+".type", fmt.Sprintf("%q is an alias of %q; name the type itself", raw.Type, canon))
+	}
+	if def.IsManualID() {
+		v.add(key+".type", fmt.Sprintf("%s uses id_type: manual, so each entity needs a typed id; "+
+			"a promote has no id to give it", raw.Type))
 	}
 	v.promoteFace(key+".face", raw)
 	for _, ep := range sortedKeys(raw.Map) {

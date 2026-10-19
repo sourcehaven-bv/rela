@@ -874,19 +874,54 @@ func (m *Manager) CreateEntity(
 	if e == nil {
 		return nil, errors.New("entitymanager: CreateEntity: entity is nil")
 	}
+	if err := prepareCreate(ctx, m, e, opts); err != nil {
+		return nil, err
+	}
+	created, warnings, err := createCore(ctx, m.deps, e.Type, createCoreArgs(e, opts))
+	if err != nil {
+		return nil, err
+	}
+	// State-machine entry is enforced INSIDE createCore, before the durable
+	// write (RR-HETEE), so an illegal entry never persists. No guard applies on
+	// create-entry today; if a future change adds one, route its ErrGuardDenied
+	// through mapTransitionError so it surfaces as 403, not 422 (RR-F30CZ/N2).
+	result, err := finishCreate(ctx, m, created, warnings, opts.SkipAutomation)
+	if err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
+// createCoreArgs are the createCore options of a create of e with opts.
+func createCoreArgs(e *entity.Entity, opts entity.CreateOptions) createCoreOpts {
+	return createCoreOpts{
+		ID:              opts.ID,
+		IDPrefix:        opts.Prefix,
+		TemplateVariant: opts.Variant,
+		Properties:      e.Properties,
+		Content:         e.Content,
+		Face:            opts.Face,
+	}
+}
+
+// prepareCreate runs every check [Manager.CreateEntity] makes before it
+// writes: the face, the create ACL, the field gate, the file and external
+// ref refusals and the custom id. A plain function: Manager is at its
+// method cap.
+func prepareCreate(ctx context.Context, m *Manager, e *entity.Entity, opts entity.CreateOptions) error {
 	// The face is taken from opts, NOT from e — the same value createCore
 	// writes below. Reading it off the caller's carrier entity is what made
 	// the authorized face and the written face two different things
 	// (BUG-HC6I2T); e.Face was structurally always zero, so the check
 	// answered about a row the write never touched.
 	if err := m.deps.requireCreateFaceFor(e.Type, opts.Face); err != nil {
-		return nil, err
+		return err
 	}
 	if err := m.authorizeAndAudit(ctx, acl.WriteRequest{
 		Op:      acl.OpCreate,
 		Subject: acl.NewEntitySubject(e.Type, opts.ID, opts.Face),
 	}); err != nil {
-		return nil, err
+		return err
 	}
 	// Field-level gate on the caller's properties only, after the row-level
 	// decision. Template defaults and automation output are applied later
@@ -895,18 +930,18 @@ func (m *Manager) CreateEntity(
 	if fieldGated(m) {
 		candidate := &entity.Entity{ID: opts.ID, Type: e.Type, Face: opts.Face, Properties: e.Properties}
 		if err := checkCreateFieldWrite(ctx, m, candidate, e.Properties); err != nil {
-			return nil, err
+			return err
 		}
 	}
 	if err := rejectFileCreate(m.deps.Meta, e.Type, e.Properties); err != nil {
-		return nil, err
+		return err
 	}
 	if err := rejectExternalRefCreate(m.deps.Meta, e.Type, e.Properties, opts.WriteExternalRefs); err != nil {
-		return nil, err
+		return err
 	}
 	if opts.ID != "" {
 		if def, ok := m.deps.Meta.GetEntityDef(e.Type); ok && !def.IsManualID() {
-			return nil, customIDNotAllowedError(e.Type, def, opts.ID)
+			return customIDNotAllowedError(e.Type, def, opts.ID)
 		}
 		// No GetEntity pre-check: it was a TOCTOU duplicate of the
 		// store's atomic uniqueness guarantee. createCore now writes
@@ -914,23 +949,17 @@ func (m *Manager) CreateEntity(
 		// ErrEntityAlreadyExists, so a racing create can't slip past a
 		// passed pre-check and become an overwrite.
 	}
+	return nil
+}
 
-	created, warnings, err := createCore(ctx, m.deps, e.Type, createCoreOpts{
-		ID:              opts.ID,
-		IDPrefix:        opts.Prefix,
-		TemplateVariant: opts.Variant,
-		Properties:      e.Properties,
-		Content:         e.Content,
-		Face:            opts.Face,
-	})
-	if err != nil {
-		return nil, err
-	}
-	// State-machine entry is enforced INSIDE createCore, before the durable
-	// write (RR-HETEE), so an illegal entry never persists. No guard applies on
-	// create-entry today; if a future change adds one, route its ErrGuardDenied
-	// through mapTransitionError so it surfaces as 403, not 422 (RR-F30CZ/N2).
-
+// finishCreate runs what [Manager.CreateEntity] does once created is
+// durable: the audit record, the alias notification, the on-create
+// automations and the cascade. On an error the entity stays written, and
+// the returned result holds what was done before the error. A plain
+// function: Manager is at its method cap.
+func finishCreate(
+	ctx context.Context, m *Manager, created *entity.Entity, warnings []entity.Warning, skipAutomation bool,
+) (*entity.CreateResult, error) {
 	result := &entity.CreateResult{Entity: created, Warnings: warnings}
 
 	// Audit the durable write now, before automation re-writes or the
@@ -942,7 +971,7 @@ func (m *Manager) CreateEntity(
 	m.recordEntityAudit(ctx, audit.OpCreateEntity, created, "created")
 	notifyAliasesOfCreate(ctx, m.deps.AliasRewriter, created.ID, created.Face)
 
-	runAutomation := m.deps.Automations != nil && !opts.SkipAutomation
+	runAutomation := m.deps.Automations != nil && !skipAutomation
 	if !runAutomation {
 		return result, nil
 	}
@@ -961,7 +990,7 @@ func (m *Manager) CreateEntity(
 		// already persisted the row (BUG-ZWTDH9).
 		written, err := writeAutomationProperties(ctx, m.deps, created, autoResult.PropertiesSet, nil)
 		if err != nil {
-			return nil, err
+			return result, err
 		}
 		created = written
 		result.Entity = created
@@ -984,7 +1013,7 @@ func (m *Manager) CreateEntity(
 		Mutator:    m.gated(), // gated() so elevation never propagates into a nested cascade (TKT-D8T148)
 	})
 	if cascadeErr != nil {
-		return nil, fmt.Errorf("cascade: %w", cascadeErr)
+		return result, fmt.Errorf("cascade: %w", cascadeErr)
 	}
 	result.RelationsCreated = outcome.RelationsCreated
 	result.EntitiesCreated = outcome.EntitiesCreated
@@ -3028,6 +3057,20 @@ func (m *Manager) CreateRelation(
 func prepareRelationCreate(
 	ctx context.Context, m *Manager, key entity.RelationKey, opts entity.RelationOptions,
 ) (*entity.Relation, error) {
+	// A source the caller cannot see is looked up as a missing one, so the
+	// face check and the ACL below answer as they do for a missing source.
+	source, srcErr := lookupSource(ctx, m, key.From, key.FromFace)
+	return prepareRelationFrom(ctx, m, key, opts, source, srcErr)
+}
+
+// prepareRelationFrom is [prepareRelationCreate] for a source the caller
+// already looked up: source and srcErr are what lookupSource returned. A
+// create of an entity with an edge from it passes the entity it just wrote,
+// which a lookup outside its transaction could not see.
+func prepareRelationFrom(
+	ctx context.Context, m *Manager, key entity.RelationKey, opts entity.RelationOptions,
+	source entityFamily, srcErr error,
+) (*entity.Relation, error) {
 	from, relType, to := key.From, key.Type, key.To
 	// Authorize BEFORE the peer-existence lookups (BUG-K6FEVB). A missing
 	// peer must never let a write skip the ACL: if authz is deferred until
@@ -3039,9 +3082,6 @@ func prepareRelationCreate(
 	// yet), mirroring UpdateRelation/DeleteRelation. Authorization must be
 	// decided from inputs that don't depend on peer existence.
 	//
-	// A source the caller cannot see is looked up as a missing one, so the
-	// face check and the ACL below answer as they do for a missing source.
-	source, srcErr := lookupSource(ctx, m, from, key.FromFace)
 	// BEFORE the ACL, so an unvalidated coordinate never becomes an
 	// authorization coordinate — and so the check still runs on the
 	// bypassACL path, where authorizeAndAudit returns without consulting

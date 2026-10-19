@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/channels"
@@ -31,10 +32,10 @@ type refHolders struct {
 	leases      *lease.Service
 	leaseShared leaseShared
 	channels    channels.Store
-	// channelService and realtimeLocal are the channel service and its
-	// process-local state; see buildRealtimeService.
-	channelService *realtime.Service
-	realtimeLocal  *realtime.Local
+	// realtimeLocal is the process-local state of the channel service,
+	// which finishAssembly builds once the entity manager exists; see
+	// buildRealtimeService.
+	realtimeLocal *realtime.Local
 	// channelTombs connects the channel guard's pending tombstones to the
 	// post-commit delete hooks and the realtime worker.
 	channelTombs *tombstoneConfirmer
@@ -80,10 +81,13 @@ func buildRefHolders(
 	if h.channelAliases, err = channelAliasesFor(h.channels, st, h.channelTombs, base.realtime); err != nil {
 		return refHolders{}, err
 	}
-	h.channelService, h.realtimeLocal, err = buildRealtimeService(
-		base, st, h.channels, base.realtimeLocal, d, redactor, writes)
-	if err != nil {
-		return refHolders{}, err
+	// The channel service needs the entity manager, which needs these
+	// holders, so assembly builds it later (see buildRealtimeService). Its
+	// process-local state is made here: the alias fanout needs it.
+	if h.realtimeLocal = base.realtimeLocal; h.realtimeLocal == nil {
+		if h.realtimeLocal, err = realtime.NewLocal(time.Now); err != nil {
+			return refHolders{}, err
+		}
 	}
 	return h, nil
 }

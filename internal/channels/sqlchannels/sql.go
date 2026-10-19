@@ -245,7 +245,7 @@ func (s *Store) wrap(err error, format string, args ...any) error {
 		channels.ErrNotFound, channels.ErrInvalidKey, channels.ErrInvalidMessage, channels.ErrTooLarge,
 		channels.ErrTooManyChannels, channels.ErrConflict, channels.ErrRemoved, channels.ErrInvalidReply,
 		channels.ErrInvalidPage, channels.ErrRekeyConflict, channels.ErrStaleAnchor, channels.ErrTypeShapeConflict,
-		channels.ErrTypeInUse,
+		channels.ErrTypeInUse, channels.ErrNotOpen, channels.ErrActionPending,
 	} {
 		if errors.Is(err, sentinel) {
 			return err
@@ -465,6 +465,9 @@ func (s *Store) Edit(
 	}
 	at = channels.NormTime(at)
 	return s.update(ctx, k, seq, "edit", func(_ Querier, _ row, m *channels.Message) error {
+		if err := channels.CheckNotPending(m); err != nil {
+			return err
+		}
 		m.Props, m.EditedAt = props, at
 		return nil
 	})
@@ -480,6 +483,9 @@ func (s *Store) Remove(ctx context.Context, k channels.Key, seq int64, rm channe
 		return channels.Message{}, err
 	}
 	return s.update(ctx, k, seq, "remove", func(q Querier, _ row, m *channels.Message) error {
+		if err := channels.CheckNotPending(m); err != nil {
+			return err
+		}
 		*m = channels.Message{Seq: m.Seq, Rev: m.Rev, ReplyTo: m.ReplyTo, ReplyCount: m.ReplyCount, Removed: &rm}
 		rec := channels.KeyAudit(k, channels.AuditRemove, rm.At)
 		rec.Seq, rec.By = seq, rm.By
@@ -501,8 +507,11 @@ func (s *Store) SetAction(
 	if err := channels.CheckRelease(expect, next); err != nil {
 		return channels.Message{}, err
 	}
-	return s.update(ctx, k, seq, "act on", func(q Querier, _ row, m *channels.Message) error {
+	return s.update(ctx, k, seq, "act on", func(q Querier, r row, m *channels.Message) error {
 		if err := channels.CheckActionCAS(m.Action, name, expect); err != nil {
+			return err
+		}
+		if err := channels.CheckActionState(r.c.State, expect, next); err != nil {
 			return err
 		}
 		if next.Status == channels.ActionNone {

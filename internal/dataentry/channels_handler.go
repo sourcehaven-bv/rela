@@ -22,15 +22,19 @@ const (
 	channelsSegment  = "_channels"
 	messagesSegment  = "messages"
 	lifecycleSegment = "_lifecycle"
+	actionSegment    = "_action"
+	// messageRouteDepth is the most segments a message route has:
+	// messages/{seq}/_action/{name}.
+	messageRouteDepth = 4
 	// channelBodyLimit caps a channel request body: the largest message
 	// realtime.yaml may allow, plus room for the JSON envelope. The service
 	// applies the configured, possibly smaller, limit to the properties.
 	channelBodyLimit = realtimelimits.MaxMessageBytes + 1<<10
 )
 
-// The channel routes use the channel service through three narrow
+// The channel routes use the channel service through four narrow
 // capabilities, one per kind of route. The wiring site passes the
-// project's *realtime.Service for all three; it authorizes every
+// project's *realtime.Service for all four; it authorizes every
 // operation itself.
 
 // channelReader serves the read routes: the list, the head and the pages.
@@ -45,6 +49,13 @@ type messageWriter interface {
 	Post(ctx context.Context, addr realtime.RawAddress, in realtime.PostInput) (realtime.PostResult, error)
 	Edit(ctx context.Context, addr realtime.RawAddress, seq int64, props map[string]any) (realtime.MessageView, error)
 	Delete(ctx context.Context, addr realtime.RawAddress, seq int64, reason string) (realtime.MessageView, error)
+}
+
+// messageActor serves the action routes: run an action and release a
+// pending one.
+type messageActor interface {
+	RunAction(ctx context.Context, addr realtime.RawAddress, seq int64, name string) (realtime.ActionResult, error)
+	ReleaseAction(ctx context.Context, addr realtime.RawAddress, seq int64) (realtime.MessageView, error)
 }
 
 // channelWriter serves the routes that act on a channel itself: create and
@@ -70,6 +81,8 @@ type realtimeSwitch interface {
 //	POST   …/_channels/{type}[/{name}]/messages                post (201, or 202 ephemeral)
 //	PATCH  …/_channels/{type}[/{name}]/messages/{seq}          edit own message
 //	DELETE …/_channels/{type}[/{name}]/messages/{seq}          delete or remove
+//	POST   …/messages/{seq}/_action/{name}                      run an action
+//	DELETE …/messages/{seq}/_action                             release a pending action
 //	POST   …/_channels/{type}[/{name}]/_lifecycle/{op}         close, reopen, archive, delete
 //
 // Parsing is structural: after the type, `messages` and `_lifecycle` are
@@ -81,6 +94,7 @@ type realtimeSwitch interface {
 type channelsHandler struct {
 	read       channelReader
 	messageOps messageWriter
+	actions    messageActor
 	channels   channelWriter
 	// on answers whether realtime is on; see [channelsHandler.serve].
 	on realtimeSwitch
@@ -99,7 +113,7 @@ func SetChannels(a *App, svc *realtime.Service) error {
 		return errors.New("dataentry: SetChannels requires a channel service")
 	}
 	a.channels = &channelsHandler{
-		read: svc, messageOps: svc, channels: svc,
+		read: svc, messageOps: svc, actions: svc, channels: svc,
 		on:      svc,
 		changes: func() channelChanges { return svc.Subscribe() },
 	}
@@ -126,6 +140,10 @@ type channelRoute struct {
 	seq  int64
 	// lifecycle is the operation of …/_lifecycle/{op}.
 	lifecycle string
+	// action is the name of …/messages/{seq}/_action/{name}; release is
+	// set for …/messages/{seq}/_action.
+	action  string
+	release bool
 }
 
 // serve answers every route under /api/v1/{plural}/{ref}/_channels. rest
@@ -152,6 +170,14 @@ func (h *channelsHandler) serve(w http.ResponseWriter, r *http.Request, typeName
 	case rt.lifecycle != "":
 		if allowMethod(w, r, http.MethodPost) {
 			h.runLifecycle(w, r, rt)
+		}
+	case rt.action != "":
+		if allowMethod(w, r, http.MethodPost) {
+			h.runAction(w, r, rt)
+		}
+	case rt.release:
+		if allowMethod(w, r, http.MethodDelete) {
+			h.releaseAction(w, r, rt)
 		}
 	case rt.seq != 0:
 		switch r.Method {
@@ -192,8 +218,8 @@ func methodNotAllowed(w http.ResponseWriter, r *http.Request, allow string) {
 	writeV1Error(w, r, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed", "")
 }
 
-// parseChannelRoute parses {type}[/{name}][/messages[/{seq}]] and
-// {type}[/{name}]/_lifecycle/{op}. It reports false for any other shape,
+// parseChannelRoute parses {type}[/{name}][/messages[/{seq}[/_action[/{name}]]]]
+// and {type}[/{name}]/_lifecycle/{op}. It reports false for any other shape,
 // including an op that is no lifecycle operation.
 func parseChannelRoute(typeName, ref string, rest []string) (channelRoute, bool) {
 	if slices.Contains(rest, "") {
@@ -213,12 +239,21 @@ func parseChannelRoute(typeName, ref string, rest []string) (channelRoute, bool)
 		rt.lifecycle = tail[1]
 	case len(tail) == 1 && tail[0] == messagesSegment:
 		rt.msgs = true
-	case len(tail) == 2 && tail[0] == messagesSegment:
+	case len(tail) >= 2 && len(tail) <= messageRouteDepth && tail[0] == messagesSegment:
 		seq, err := strconv.ParseInt(tail[1], 10, 64)
 		if err != nil || seq <= 0 {
 			return channelRoute{}, false
 		}
 		rt.msgs, rt.seq = true, seq
+		if len(tail) > 2 {
+			if tail[2] != actionSegment {
+				return channelRoute{}, false
+			}
+			rt.release = len(tail) == 3
+			if !rt.release {
+				rt.action = tail[3]
+			}
+		}
 	default:
 		return channelRoute{}, false
 	}
@@ -393,6 +428,37 @@ func (h *channelsHandler) runLifecycle(w http.ResponseWriter, r *http.Request, r
 		return
 	}
 	writeV1JSON(w, http.StatusOK, wireChannel(got))
+}
+
+// runAction serves POST …/messages/{seq}/_action/{name}. The body is empty
+// or `{}`. It answers the message after the action, with the warnings of a
+// promote.
+func (h *channelsHandler) runAction(w http.ResponseWriter, r *http.Request, rt channelRoute) {
+	var req struct{}
+	if !decodeChannelBody(w, r, &req, true) {
+		return
+	}
+	got, err := h.actions.RunAction(r.Context(), rt.addr, rt.seq, rt.action)
+	if err != nil {
+		writeChannelError(w, r, err)
+		return
+	}
+	writeV1JSON(w, http.StatusOK, wireActionResult(got))
+}
+
+// releaseAction serves DELETE …/messages/{seq}/_action. The body is empty
+// or `{}`. It answers the message, whose action is cleared.
+func (h *channelsHandler) releaseAction(w http.ResponseWriter, r *http.Request, rt channelRoute) {
+	var req struct{}
+	if !decodeChannelBody(w, r, &req, true) {
+		return
+	}
+	got, err := h.actions.ReleaseAction(r.Context(), rt.addr, rt.seq)
+	if err != nil {
+		writeChannelError(w, r, err)
+		return
+	}
+	writeV1JSON(w, http.StatusOK, wireMessage(got))
 }
 
 // decodeChannelBody reads a JSON body of at most [channelBodyLimit] bytes

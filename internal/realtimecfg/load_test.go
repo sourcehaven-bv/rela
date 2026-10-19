@@ -109,8 +109,10 @@ func TestParse_Golden(t *testing.T) {
 
 		t.Errorf("severity property = %+v", p)
 	}
-	if su.PromoteTo == nil || su.PromoteTo.Relate != "about" || su.PromoteTo.Map["title"] != "summary" {
-		t.Errorf("promote_to = %+v", su.PromoteTo)
+	if lg := su.Actions["log"]; lg == nil || lg.PromoteTo == nil || lg.PromoteTo.Relate != "about" ||
+		lg.PromoteTo.Map["title"] != "summary" || lg.Roles[0] != "lead" {
+
+		t.Errorf("log action = %+v", lg)
 	}
 	if a := su.Actions["accept"]; a == nil || a.Permission != "incident.decide" || a.PromoteTo.Type != "decision" {
 		t.Errorf("accept action = %+v", a)
@@ -306,15 +308,15 @@ func TestParse_Invalid(t *testing.T) {
 		{"ephemeral actions", []replace{{"rate: 1/s,", "rate: 1/s, actions: { ok: { roles: [lead] } },"}},
 			"channel_types.incident-room.message_types.typing.actions", "cannot carry actions"},
 		{"promote type", []replace{{"promote_to: { type: timeline-entry", "promote_to: { type: nope"}},
-			"channel_types.incident-room.message_types.status-update.promote_to.type", "unknown entity type"},
+			"channel_types.incident-room.message_types.status-update.actions.log.promote_to.type", "unknown entity type"},
 		{"promote entity property", []replace{{"map: { title: summary }", "map: { headline: summary }"}},
-			"channel_types.incident-room.message_types.status-update.promote_to.map.headline", "has no property"},
+			"channel_types.incident-room.message_types.status-update.actions.log.promote_to.map.headline", "has no property"},
 		{"promote message property", []replace{{"map: { title: summary }", "map: { title: nope }"}},
-			"channel_types.incident-room.message_types.status-update.promote_to.map.title", "has no property"},
+			"channel_types.incident-room.message_types.status-update.actions.log.promote_to.map.title", "has no property"},
 		{"relate unknown", []replace{{"relate: { type: about }", "relate: { type: nope }"}},
-			"channel_types.incident-room.message_types.status-update.promote_to.relate.type", "cannot link"},
+			"channel_types.incident-room.message_types.status-update.actions.log.promote_to.relate.type", "cannot link"},
 		{"relate wrong endpoint", []replace{{"promote_to: { type: timeline-entry, map", "promote_to: { type: decision, map"}},
-			"channel_types.incident-room.message_types.status-update.promote_to.relate.type", "cannot link decision"},
+			"channel_types.incident-room.message_types.status-update.actions.log.promote_to.relate.type", "cannot link decision"},
 		{"action without gate", []replace{{"accept: { label: Accept, permission: incident.decide,", "accept: { label: Accept,"}},
 			"channel_types.incident-room.message_types.status-update.actions.accept", "roles or a permission"},
 		{"action name", []replace{{"accept: { label", "Accept: { label"}},
@@ -394,6 +396,11 @@ func TestParse_Invalid(t *testing.T) {
 			"channel_types.incident-room.read.from", "visible: grant"},
 		{"trigger entity type alias", []replace{{"entity_type: datalek", "entity_type: breach"}},
 			"triggers.breach-escalated.entity_type", `alias of "datalek"`},
+		{"message-level promote", []replace{{"        actions:\n          log:",
+			"        promote_to: { type: decision }\n        actions:\n          log:"}},
+			"channel_types.incident-room.message_types.status-update.promote_to", "belongs on an action"},
+		{"promote manual id", []replace{{"promote_to: { type: decision }", "promote_to: { type: handbook }"}},
+			"channel_types.incident-room.message_types.status-update.actions.accept.promote_to.type", "id_type: manual"},
 		{"promote alias", []replace{{"promote_to: { type: decision }", "promote_to: { type: breach }"}},
 			"channel_types.incident-room.message_types.status-update.actions.accept.promote_to.type", "alias"},
 		{"promote faced without face", []replace{{"promote_to: { type: decision }", "promote_to: { type: memo, map: { title: summary } }"}},
