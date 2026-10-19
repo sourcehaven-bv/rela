@@ -520,6 +520,10 @@ func TestTriggers_FailingSaveDoesNotRepost(t *testing.T) {
 	th.kv.failPut = true
 	th.ticket(1, map[string]any{"status": "open"})
 	require.Equal(t, 1, th.round(t).Posted)
+	failed := th.kv.puts.Load()
+	th.ticket(1, map[string]any{"status": "open"})
+	th.round(t)
+	require.Equal(t, failed, th.kv.puts.Load(), "a round that reads the shard still waits for its retry delay")
 	for range 3 {
 		th.clock.Add(realtimelimits.TriggerRetryMaxDelay)
 		th.ticket(1, map[string]any{"status": "open"})
@@ -527,6 +531,7 @@ func TestTriggers_FailingSaveDoesNotRepost(t *testing.T) {
 	}
 	puts := th.kv.puts.Load()
 	th.kv.failPut = false
+	th.clock.Add(realtimelimits.TriggerRetryMaxDelay)
 	th.ticket(1, map[string]any{"status": "open"})
 	th.round(t)
 	require.Greater(t, th.kv.puts.Load(), puts)
@@ -792,9 +797,18 @@ func TestTriggers_CorruptIndexStartsOver(t *testing.T) {
 	th := newTriggerHarness(t, triggerRealtime)
 	th.src.set("ticket", "TKT-1", "", map[string]any{"status": "open"})
 	th.reconcile(t)
+	var opened string
+	for _, tr := range th.cfg.Load().Config.Triggers() {
+		if tr.Name == "opened" {
+			opened = ruleID(tr, FacePrime)
+		}
+	}
+	old := shardKey(opened, 4, 3) // a layout the lost index once recorded
+	require.NoError(t, th.kv.Put(context.Background(), old, []byte(`{"TKT-9":"x"}`)))
 	require.NoError(t, th.kv.Put(context.Background(), seenIndexKey, []byte("{")))
 	th.ticket(1, map[string]any{"status": "open"})
 	rep := th.round(t)
+	require.NotContains(t, th.kv.keys(), old, "old layouts of current rules are deleted")
 	require.Equal(t, 4, rep.Baselined, "every rule baselines again")
 	require.Zero(t, rep.Posted, "silently")
 	th.ticket(1, map[string]any{"status": "new"})
@@ -819,6 +833,7 @@ func TestTriggers_CorruptShardResetsOneRule(t *testing.T) {
 	require.Equal(t, 1, rep.Posted, "the other rules carry on: shut posts")
 	require.Equal(t, []string{"No longer open"}, th.bodies(t, "TKT-2"))
 	require.Empty(t, th.bodies(t, "TKT-1"), "the corrupt rule posts nothing")
+	require.NotContains(t, th.kv.keys(), shardKey(opened, 1, 0), "the corrupt shard is deleted")
 	require.True(t, th.trg.Pending())
 	require.Equal(t, 1, th.round(t).Baselined, "and baselines again")
 	th.clock.Add(realtimelimits.TriggerCooldown)
@@ -956,4 +971,103 @@ func TestTriggers_Reshard(t *testing.T) {
 	for _, k := range th.kv.keys() {
 		require.NotContains(t, k, id+"/2-", "the old shards are deleted")
 	}
+}
+
+// A post waiting in the queue is worked out again when its entity is read
+// in full, so a change undone by a lost event posts nothing.
+func TestTriggers_StaleQueuedPostIsDropped(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		undo   func(th *triggerHarness, id string)
+		repair func(t *testing.T, th *triggerHarness) TriggerReport
+	}{
+		// A revert still posts the leave of the shut trigger, whose
+		// seen-set recorded the entity as open: only the stale enter goes.
+		{"deleted, overflow", func(th *triggerHarness, id string) { th.src.set("ticket", id, "", nil) },
+			func(t *testing.T, th *triggerHarness) TriggerReport {
+				t.Helper()
+				for i := range realtimelimits.MaxTriggerPending + 1 {
+					th.trg.Note(Change{EntityType: "ticket", ID: fmt.Sprintf("TKT-X%d", i)})
+				}
+				require.True(t, th.trg.full["ticket"])
+				return th.round(t)
+			}},
+		{"deleted, reconcile", func(th *triggerHarness, id string) { th.src.set("ticket", id, "", nil) },
+			func(t *testing.T, th *triggerHarness) TriggerReport { t.Helper(); return th.reconcile(t) }},
+		{"reverted, reconcile", func(th *triggerHarness, id string) {
+			th.src.set("ticket", id, "", map[string]any{"status": "new"})
+		}, func(t *testing.T, th *triggerHarness) TriggerReport { t.Helper(); return th.reconcile(t) }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			th := newTriggerHarness(t, triggerRealtime)
+			n := realtimelimits.MaxSystemPostsPerRound + 1
+			for i := range n {
+				th.src.set("ticket", fmt.Sprintf("TKT-%d", i), "", map[string]any{"status": "new"})
+			}
+			th.reconcile(t)
+			for i := range n {
+				th.ticket(i, map[string]any{"status": "open"})
+			}
+			require.Equal(t, n-1, th.round(t).Posted)
+			var last string
+			for i := range n {
+				if id := fmt.Sprintf("TKT-%d", i); len(th.bodies(t, id)) == 0 {
+					last = id
+				}
+			}
+			require.NotEmpty(t, last, "one post waits")
+			tc.undo(th, last) // the event is lost
+			tc.repair(t, th)
+			require.Zero(t, th.reconcile(t).Posted)
+			require.NotContains(t, th.bodies(t, last), "Opened", "the stale enter is not posted")
+			require.Zero(t, th.trg.lead.queued)
+		})
+	}
+}
+
+// An error about one post's key does not stop the round for the others.
+func TestTriggers_PerKeyErrorIsPermanent(t *testing.T) {
+	th := newTriggerHarness(t, triggerRealtime)
+	fa := &failingAppend{Store: th.store, err: channels.ErrStaleAnchor}
+	th.withStore(t, fa)
+	for i := range 2 {
+		th.src.set("ticket", fmt.Sprintf("TKT-%d", i), "", map[string]any{"status": "new"})
+	}
+	th.reconcile(t)
+	for i := range 2 {
+		th.ticket(i, map[string]any{"status": "open"})
+	}
+	require.Equal(t, 2, th.round(t).Failed)
+	require.Equal(t, int64(2), fa.calls.Load())
+	require.False(t, th.trg.Pending())
+}
+
+// A post held back by its cooldown keeps its place in the queue, ahead of
+// changes noted after it.
+func TestTriggers_CooldownKeepsQueuePlace(t *testing.T) {
+	th := newTriggerHarness(t, triggerRealtime)
+	n := 2 * realtimelimits.MaxSystemPostsPerRound
+	for i := range n + 1 {
+		th.src.set("ticket", fmt.Sprintf("TKT-%d", i), "", map[string]any{"status": "open", "title": "A"})
+	}
+	th.reconcile(t)
+	th.ticket(0, map[string]any{"status": "open", "title": "B"})
+	require.Equal(t, 1, th.round(t).Posted)
+	th.clock.Add(time.Second)
+	th.ticket(0, map[string]any{"status": "open", "title": "C"})
+	th.clock.Add(time.Second)
+	for i := range n {
+		th.ticket(i+1, map[string]any{"status": "open", "title": "B"})
+	}
+	require.Equal(t, realtimelimits.MaxSystemPostsPerRound, th.round(t).Posted)
+	th.clock.Add(realtimelimits.TriggerCooldown)
+	require.Equal(t, realtimelimits.MaxSystemPostsPerRound, th.round(t).Posted)
+	require.Equal(t, []string{"Changed", "Changed"}, th.bodies(t, "TKT-0"), "it went before the later changes")
+	waiting := 0
+	for i := range n {
+		if len(th.bodies(t, fmt.Sprintf("TKT-%d", i+1))) == 0 {
+			waiting++
+		}
+	}
+	require.Equal(t, 1, waiting, "one later change still waits")
 }

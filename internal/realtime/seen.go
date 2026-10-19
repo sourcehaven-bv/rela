@@ -141,6 +141,18 @@ func (s seenStore) dropShards(ctx context.Context, ruleID string, shards int) er
 	return errors.Join(errs...)
 }
 
+// dropAllLayouts deletes the shards of a rule under every shard count it
+// could have, for when the index that recorded the count is lost.
+func (s seenStore) dropAllLayouts(ctx context.Context, ruleID string) error {
+	var errs []error
+	for shards := 1; shards <= realtimelimits.MaxSeenShards; shards *= 2 {
+		if err := s.dropShards(ctx, ruleID, shards); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	return errors.Join(errs...)
+}
+
 // shardOf is the shard that holds every entry of entity id. All faces of an
 // entity share one, so a round finds them with one read.
 func shardOf(id string, shards int) int {

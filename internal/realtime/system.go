@@ -50,7 +50,7 @@ func (w systemWriter) post(
 		Type: mt.Name, Author: systemAuthor(), At: now, Props: vp.props, TriggeredBy: triggeredBy,
 		RequireOpen: requireOpen,
 	})
-	if errors.Is(err, channels.ErrTooManyChannels) || errors.Is(err, channels.ErrTooLarge) {
+	if isPermanent(err) {
 		return permanentError{err}
 	}
 	if err != nil {
@@ -58,6 +58,20 @@ func (w systemWriter) post(
 	}
 	w.local.mark(key)
 	return nil
+}
+
+// isPermanent reports whether an append error is about this one post and
+// fails the same way on every try, rather than about the store as a whole.
+func isPermanent(err error) bool {
+	for _, target := range []error{
+		channels.ErrTooManyChannels, channels.ErrTooLarge, channels.ErrStaleAnchor,
+		channels.ErrInvalidKey, channels.ErrInvalidMessage, channels.ErrTypeShapeConflict,
+	} {
+		if errors.Is(err, target) {
+			return true
+		}
+	}
+	return false
 }
 
 // permanentError is a post that fails the same way however often it is

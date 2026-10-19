@@ -102,8 +102,8 @@ type typesKey struct {
 // without it.
 type leaderState struct {
 	// deferred holds, per entity type, ids held back by a cooldown or a
-	// retry, with the time they become due.
-	deferred map[string]map[string]time.Time
+	// retry.
+	deferred map[string]map[string]deferral
 	// queues hold, per rule id, the posts waiting for a round with room
 	// under [realtimelimits.MaxSystemPostsPerRound], oldest first.
 	queues map[string]*effectQueue
@@ -126,9 +126,15 @@ type leaderState struct {
 
 func newLeaderState() leaderState {
 	return leaderState{
-		deferred: map[string]map[string]time.Time{}, queues: map[string]*effectQueue{},
+		deferred: map[string]map[string]deferral{}, queues: map[string]*effectQueue{},
 		lastPost: map[string]time.Time{}, failures: map[string]*failure{}, dirty: map[string]*dirtyShard{},
 	}
+}
+
+// deferral is when a held-back id becomes due, and when it was first
+// noted, so it keeps its place in its rule's queue.
+type deferral struct {
+	due, noted time.Time
 }
 
 // failure is the retry state of one post.
@@ -279,8 +285,8 @@ func (t *Triggers) Pending() bool {
 		return true
 	}
 	for _, ids := range t.lead.deferred {
-		for _, due := range ids {
-			if !now.Before(due) {
+		for _, d := range ids {
+			if !now.Before(d.due) {
 				return true
 			}
 		}
@@ -289,18 +295,18 @@ func (t *Triggers) Pending() bool {
 }
 
 // take swaps out the pending changes and the due deferred ones, with when
-// each was noted or fell due.
+// each was first noted.
 func (t *Triggers) take(now time.Time) (work map[string]map[string]time.Time, full map[string]bool) {
 	t.mu.Lock()
 	work, full = t.pending, t.full
 	t.pending, t.full, t.npending = map[string]map[string]time.Time{}, map[string]bool{}, 0
 	t.mu.Unlock()
 	for typ, ids := range t.lead.deferred {
-		for id, due := range ids {
-			if now.Before(due) {
+		for id, d := range ids {
+			if now.Before(d.due) {
 				continue
 			}
-			addID(work, typ, id, due)
+			addID(work, typ, id, d.noted)
 			delete(ids, id)
 		}
 		if len(ids) == 0 {
@@ -324,14 +330,23 @@ func (t *Triggers) putBack(work map[string]map[string]time.Time, full map[string
 	}
 }
 
-// postpone holds id of typ back until due.
-func (t *Triggers) postpone(typ, id string, due time.Time) {
+// postpone holds id of typ, first noted at noted, back until due.
+func (t *Triggers) postpone(typ, id string, due, noted time.Time) {
 	if t.lead.deferred[typ] == nil {
-		t.lead.deferred[typ] = map[string]time.Time{}
+		t.lead.deferred[typ] = map[string]deferral{}
 	}
-	if cur, ok := t.lead.deferred[typ][id]; !ok || due.Before(cur) {
-		t.lead.deferred[typ][id] = due
+	cur, ok := t.lead.deferred[typ][id]
+	if !ok {
+		t.lead.deferred[typ][id] = deferral{due: due, noted: noted}
+		return
 	}
+	if due.Before(cur.due) {
+		cur.due = due
+	}
+	if noted.Before(cur.noted) {
+		cur.noted = noted
+	}
+	t.lead.deferred[typ][id] = cur
 }
 
 // addID adds id of typ to m, keeping the earliest time it was noted.
@@ -375,7 +390,7 @@ func (t *Triggers) RunRound(ctx context.Context) (TriggerReport, error) {
 	t.prune(now)
 	rules := rulesFor(snap, t.meta)
 	if len(rules) == 0 {
-		t.lead.queues, t.lead.queued, t.lead.deferred = map[string]*effectQueue{}, 0, map[string]map[string]time.Time{}
+		t.lead.queues, t.lead.queued, t.lead.deferred = map[string]*effectQueue{}, 0, map[string]map[string]deferral{}
 		return TriggerReport{}, nil
 	}
 	if len(work) == 0 && len(full) == 0 && t.lead.queued == 0 && !t.lead.rebaseline {
@@ -532,33 +547,79 @@ func (r *rule) eval(ctx context.Context, meta *metamodel.Metamodel, b *predicate
 	return got.Bool(), fingerprint(r.t.When.Fields, row.Props), true
 }
 
-// effectQueue is one rule's posts waiting for room in a round, oldest
-// first. A post is keyed by its seen-set ref, so a later change to the
-// same entity replaces the waiting post in place rather than queueing a
-// second one.
+// effectQueue is one rule's posts waiting for room in a round, in the
+// order their changes were first noted. A post is keyed by its seen-set
+// ref, so a later change to the same entity replaces the waiting post in
+// place rather than queueing a second one.
 type effectQueue struct {
-	// order may name refs that items no longer holds; pop skips them.
-	order []string
+	// order is sorted by noted time. It may name refs that items no
+	// longer holds; pop skips them.
+	order []queuedRef
 	items map[string]queued
+	// byID lists the queued refs of each entity id.
+	byID map[string]map[string]bool
+}
+
+type queuedRef struct {
+	ref   string
+	noted time.Time
 }
 
 // queued is a post that waits: what the rule makes of one entity, worked
 // out against the seen-set, which stays as it was until the post is made.
 type queued struct {
-	typ  string
-	on   realtimecfg.TriggerOn
-	fp   string
-	gone bool // leave: the entry goes
+	typ   string
+	on    realtimecfg.TriggerOn
+	fp    string
+	gone  bool // leave: the entry goes
+	noted time.Time
 }
 
-// put queues q for ref and reports whether ref is new to the queue.
+func newEffectQueue() *effectQueue {
+	return &effectQueue{items: map[string]queued{}, byID: map[string]map[string]bool{}}
+}
+
+// put queues it for ref and reports whether ref is new to the queue. A ref
+// already queued keeps its place; a new one goes after every post noted no
+// later than it.
 func (q *effectQueue) put(ref string, it queued) bool {
-	_, had := q.items[ref]
-	q.items[ref] = it
-	if !had {
-		q.order = append(q.order, ref)
+	if cur, had := q.items[ref]; had {
+		it.noted = cur.noted
+		q.items[ref] = it
+		return false
 	}
-	return !had
+	q.insert(ref, it)
+	return true
+}
+
+func (q *effectQueue) insert(ref string, it queued) {
+	q.items[ref] = it
+	id := idOf(ref)
+	if q.byID[id] == nil {
+		q.byID[id] = map[string]bool{}
+	}
+	q.byID[id][ref] = true
+	e := queuedRef{ref: ref, noted: it.noted}
+	if n := len(q.order); n == 0 || !it.noted.Before(q.order[n-1].noted) {
+		q.order = append(q.order, e)
+		return
+	}
+	i, _ := slices.BinarySearchFunc(q.order, it.noted, func(e queuedRef, t time.Time) int {
+		if e.noted.After(t) {
+			return 1
+		}
+		return -1
+	})
+	q.order = slices.Insert(q.order, i, e)
+}
+
+func (q *effectQueue) forget(ref string) {
+	delete(q.items, ref)
+	id := idOf(ref)
+	delete(q.byID[id], ref)
+	if len(q.byID[id]) == 0 {
+		delete(q.byID, id)
+	}
 }
 
 // remove drops ref and reports whether it was queued.
@@ -566,10 +627,10 @@ func (q *effectQueue) remove(ref string) bool {
 	if _, ok := q.items[ref]; !ok {
 		return false
 	}
-	delete(q.items, ref)
+	q.forget(ref)
 	if len(q.order) > 2*len(q.items)+16 {
-		q.order = slices.DeleteFunc(q.order, func(r string) bool {
-			_, ok := q.items[r]
+		q.order = slices.DeleteFunc(q.order, func(e queuedRef) bool {
+			_, ok := q.items[e.ref]
 			return !ok
 		})
 	}
@@ -578,20 +639,34 @@ func (q *effectQueue) remove(ref string) bool {
 
 func (q *effectQueue) pop() (string, queued, bool) {
 	for len(q.order) > 0 {
-		ref := q.order[0]
+		e := q.order[0]
 		q.order = q.order[1:]
-		if it, ok := q.items[ref]; ok {
-			delete(q.items, ref)
-			return ref, it, true
+		if it, ok := q.items[e.ref]; ok && it.noted.Equal(e.noted) {
+			q.forget(e.ref)
+			return e.ref, it, true
 		}
 	}
 	return "", queued{}, false
 }
 
-// pushFront puts a popped post back at the head of the queue.
+// pushFront puts a popped post back in its place, which is the head.
 func (q *effectQueue) pushFront(ref string, it queued) {
 	q.items[ref] = it
-	q.order = append([]string{ref}, q.order...)
+	id := idOf(ref)
+	if q.byID[id] == nil {
+		q.byID[id] = map[string]bool{}
+	}
+	q.byID[id][ref] = true
+	q.order = slices.Insert(q.order, 0, queuedRef{ref: ref, noted: it.noted})
+}
+
+// queuedRefs returns the refs of id that wait in rule ruleID's queue.
+func (t *Triggers) queuedRefs(ruleID, id string) []string {
+	q := t.lead.queues[ruleID]
+	if q == nil {
+		return nil
+	}
+	return sortedKeys(q.byID[id])
 }
 
 // enqueue queues a post of rule ruleID. Past [realtimelimits.MaxTriggerQueue]
@@ -603,7 +678,7 @@ func (t *Triggers) enqueue(ruleID, ref string, it queued) {
 		if t.lead.queued >= realtimelimits.MaxTriggerQueue {
 			return
 		}
-		q = &effectQueue{items: map[string]queued{}}
+		q = newEffectQueue()
 		t.lead.queues[ruleID] = q
 	}
 	if _, had := q.items[ref]; !had && t.lead.queued >= realtimelimits.MaxTriggerQueue {
@@ -700,6 +775,15 @@ func (r *round) run(work map[string]map[string]time.Time, full map[string]bool, 
 			r.t.forgetRule(id)
 		}
 		r.t.lead.dirty = map[string]*dirtyShard{}
+		// The KV cannot list keys, so the shards of the current rules are
+		// deleted under every layout they could have had. Those of rules
+		// removed since are not known and stay behind.
+		for i := range r.rules {
+			if dropErr := r.t.seen.dropAllLayouts(r.ctx, r.rules[i].id); dropErr != nil {
+				slog.WarnContext(r.ctx, "realtime: could not delete an old trigger seen-set",
+					"trigger", r.rules[i].t.Name, "error", dropErr)
+			}
+		}
 		err = nil
 	}
 	if err != nil {
@@ -724,7 +808,7 @@ func (r *round) run(work map[string]map[string]time.Time, full map[string]bool, 
 		}
 	}
 	for _, typ := range sortedKeys(work) {
-		if err := r.process(typ, oldestFirst(work[typ])); err != nil {
+		if err := r.process(typ, oldestFirst(work[typ]), work[typ]); err != nil {
 			return err
 		}
 	}
@@ -899,6 +983,11 @@ func (r *round) reset(ru *rule, cause error) {
 	r.t.lead.rebaseline = true
 	if err := r.t.seen.saveIndex(r.ctx, r.idx); err != nil {
 		slog.WarnContext(r.ctx, "realtime: could not save the trigger index", "error", err)
+		return
+	}
+	if err := r.t.seen.dropShards(r.ctx, ru.id, meta.Shards); err != nil {
+		slog.WarnContext(r.ctx, "realtime: could not delete a corrupt trigger seen-set", "trigger", ru.t.Name,
+			"error", err)
 	}
 }
 
@@ -954,13 +1043,20 @@ func (sh *roundShard) apply(ref string, it queued) {
 
 // candidates scans every entity of typ and returns the ids whose state
 // under some rule differs from what the engine has seen, including ids it
-// has seen that no longer exist. It reads rows without acting on them: the
-// round reads the candidates again by id and acts on what it reads then.
+// has seen that no longer exist, and every id with a post waiting in a
+// queue, whose change may have been undone by an event that was lost. It
+// reads rows without acting on them: the round reads the candidates again
+// by id and acts on what it reads then.
 func (r *round) candidates(typ string) (map[string]bool, error) {
 	out := map[string]bool{}
 	groups := map[FaceMode][]*rule{}
 	for _, ru := range r.active(typ) {
 		groups[ru.faces] = append(groups[ru.faces], ru)
+		if q := r.t.lead.queues[ru.id]; q != nil {
+			for id := range q.byID {
+				out[id] = true
+			}
+		}
 	}
 	for _, faces := range []FaceMode{FacePrime, FaceEach} {
 		if rules := groups[faces]; len(rules) > 0 {
@@ -1048,7 +1144,7 @@ func (r *round) differs(ru *rule, row EntityRow, ref string) bool {
 // process reads ids of typ in chunks, one read per face mode, works out
 // each active rule's effect on each entity, applies the ones that post
 // nothing and queues the rest.
-func (r *round) process(typ string, ids []string) error {
+func (r *round) process(typ string, ids []string, noted map[string]time.Time) error {
 	for chunk := range slices.Chunk(ids, rowsChunk) {
 		rules := r.active(typ)
 		if len(rules) == 0 {
@@ -1070,7 +1166,7 @@ func (r *round) process(typ string, ids []string) error {
 			rows[ru.faces] = byID
 		}
 		for _, ru := range rules {
-			if err := r.effects(ru, typ, chunk, rows[ru.faces]); err != nil {
+			if err := r.effects(ru, typ, chunk, rows[ru.faces], noted); err != nil {
 				return err
 			}
 		}
@@ -1081,8 +1177,10 @@ func (r *round) process(typ string, ids []string) error {
 // effects works out ru's effect on each of ids against the seen-set. It
 // applies the ones that post nothing and queues the ones that post,
 // replacing a post of the same entity that still waits; an entity that
-// came back to what was seen drops its waiting post.
-func (r *round) effects(ru *rule, typ string, ids []string, rows map[string][]EntityRow) error {
+// came back to what was seen, or is gone, drops its waiting post.
+func (r *round) effects(
+	ru *rule, typ string, ids []string, rows map[string][]EntityRow, noted map[string]time.Time,
+) error {
 	shards := r.idx.Rules[ru.id].Shards
 	for _, id := range ids {
 		sh, err := r.shard(ru, shardOf(id, shards))
@@ -1096,13 +1194,7 @@ func (r *round) effects(ru *rule, typ string, ids []string, rows map[string][]En
 		for _, row := range rows[id] {
 			cur[ru.ref(row)] = row
 		}
-		refs := slices.Clone(sh.refsOf(ru, id))
-		for ref := range cur {
-			if !slices.Contains(refs, ref) {
-				refs = append(refs, ref)
-			}
-		}
-		slices.Sort(refs)
+		refs := r.refsFor(ru, sh, id, cur)
 		for _, ref := range refs {
 			row, exists := cur[ref]
 			if !exists {
@@ -1115,7 +1207,7 @@ func (r *round) effects(ru *rule, typ string, ids []string, rows map[string][]En
 				continue
 			}
 			prev, had := sh.data[ref]
-			it := queued{typ: typ, fp: fp}
+			it := queued{typ: typ, fp: fp, noted: noted[id]}
 			switch {
 			case match && !had:
 				it.on = realtimecfg.TriggerEnter
@@ -1136,6 +1228,18 @@ func (r *round) effects(ru *rule, typ string, ids []string, rows map[string][]En
 		}
 	}
 	return nil
+}
+
+// refsFor is every ref of id ru has to look at: the ones it has seen, the
+// ones waiting in its queue and the ones the entity has now.
+func (r *round) refsFor(ru *rule, sh *roundShard, id string, cur map[string]EntityRow) []string {
+	refs := slices.Clone(sh.refsOf(ru, id))
+	refs = append(refs, r.t.queuedRefs(ru.id, id)...)
+	for ref := range cur {
+		refs = append(refs, ref)
+	}
+	slices.Sort(refs)
+	return slices.Compact(refs)
 }
 
 // post takes one post from each rule's queue in turn until
@@ -1192,12 +1296,12 @@ func (r *round) postOne(ru *rule, q *effectQueue, ref string, it queued) (tried,
 	k := ru.id + "\x00" + ref
 	id := idOf(ref)
 	if last, ok := r.t.lead.lastPost[k]; ok && r.now.Sub(last) < realtimelimits.TriggerCooldown {
-		r.t.postpone(it.typ, id, last.Add(realtimelimits.TriggerCooldown))
+		r.t.postpone(it.typ, id, last.Add(realtimelimits.TriggerCooldown), it.noted)
 		return false, false
 	}
 	f := r.t.lead.failures[k]
 	if f != nil && r.now.Before(f.next) {
-		r.t.postpone(it.typ, id, f.next)
+		r.t.postpone(it.typ, id, f.next, it.noted)
 		return false, false
 	}
 	sh, err := r.shard(ru, shardOf(id, r.idx.Rules[ru.id].Shards))
@@ -1234,7 +1338,7 @@ func (r *round) postOne(ru *rule, q *effectQueue, ref string, it queued) (tried,
 		f.attempts++
 		if r.now.Sub(f.first) < realtimelimits.TriggerRetryWindow {
 			f.next = r.now.Add(retryDelay(f.attempts))
-			r.t.postpone(it.typ, id, f.next)
+			r.t.postpone(it.typ, id, f.next, it.noted)
 			return true, true
 		}
 		r.rep.Failed++
@@ -1261,9 +1365,15 @@ func (r *round) save(parent context.Context) {
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(parent), saveTimeout)
 	defer cancel()
 	for _, key := range sortedKeys(r.shards) {
-		if sh := r.shards[key]; sh.changed {
-			r.saveShard(ctx, key, sh)
+		sh := r.shards[key]
+		if !sh.changed {
+			continue
 		}
+		if d := r.t.lead.dirty[key]; d != nil && r.now.Before(d.next) {
+			d.data = sh.data // not due: keep what the round added for the next try
+			continue
+		}
+		r.saveShard(ctx, key, sh)
 	}
 	for _, key := range sortedKeys(r.t.lead.dirty) {
 		d := r.t.lead.dirty[key]
