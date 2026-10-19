@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/testutil/logtest"
 
 	"github.com/stretchr/testify/require"
 
@@ -26,10 +27,7 @@ func TestQueryTracer_FromPoolEmits(t *testing.T) {
 	// default logger, possibly after the query below, so the read must
 	// synchronize with it (BUG-1FFUSO).
 	var buf lockedBuffer
-	h := slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug})
-	prev := slog.Default()
-	slog.SetDefault(slog.New(h))
-	t.Cleanup(func() { slog.SetDefault(prev) })
+	logtest.SetDefault(t, slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
 
 	st := openWriter(t, freshFeedSchema(t))
 

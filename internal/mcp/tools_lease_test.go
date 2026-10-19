@@ -28,6 +28,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/storage"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/store/memstore"
+	"github.com/Sourcehaven-BV/rela/internal/testutil/logtest"
 	"github.com/Sourcehaven-BV/rela/internal/visibility"
 )
 
@@ -683,9 +684,7 @@ func TestWatch_NilLeasesWakesOnStoreWrite(t *testing.T) {
 //nolint:paralleltest // replaces the default logger
 func TestLeaseTools_LeaseIDNeverLogged(t *testing.T) {
 	var buf bytes.Buffer
-	prev := slog.Default()
-	slog.SetDefault(slog.New(slog.NewTextHandler(&lockedWriter{w: &buf}, &slog.HandlerOptions{Level: slog.LevelDebug})))
-	t.Cleanup(func() { slog.SetDefault(prev) })
+	logtest.SetDefault(t, slog.NewTextHandler(&lockedWriter{w: &buf}, &slog.HandlerOptions{Level: slog.LevelDebug}))
 
 	e := newLeaseEnv(t)
 	cs := e.session(t, leaseAlice)

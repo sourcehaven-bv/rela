@@ -23,6 +23,7 @@ linters:
     - errorlint
     - exhaustive
     - fatcontext
+    - forbidigo
     - forcetypeassert
     - funlen
     - gocheckcompilerdirectives
@@ -69,6 +70,10 @@ linters:
           list-mode: lax
           files:
             - '!**/internal/mcp/server.go'
+            # Saves and restores the log package output that
+            # slog.SetDefault redirects (BUG-FLON0Z); it does not log.
+            - '!**/internal/testutil/logtest/logtest.go'
+            - '!**/internal/testutil/logtest/logtest_test.go'
           allow:
             - log/slog
             # Only as an io.Writer sink behind slog (rela-server
@@ -80,6 +85,13 @@ linters:
               desc: use log/slog instead of stdlib log; the stdlib log package is global mutable state with no levels and races with parallel tests
     dupl:
       threshold: 150
+    forbidigo:
+      forbid:
+        - pattern: ^slog\.SetDefault$
+          msg: >-
+            in tests use logtest.SetDefault or logtest.Capture, which also
+            restore the log package output that slog.SetDefault redirects
+            (BUG-FLON0Z)
     errcheck:
       check-type-assertions: true
       check-blank: false
@@ -282,6 +294,14 @@ linters:
       - linters:
           - usetesting
         path: internal/testutil/.*\.go
+      # The slog.SetDefault ban is for tests. Entry points set the process
+      # logger once, and logtest is the helper the ban points to.
+      - linters:
+          - forbidigo
+        path-except: _test\.go
+      - linters:
+          - forbidigo
+        path: internal/testutil/logtest/
       # internal/perfseed is a data generator: its body IS tuning constants
       # (counts per type, date spans, body sizes, edge fan-out) and a seeded
       # math/rand PRNG is the whole point — determinism, not secrecy. Naming

@@ -337,6 +337,11 @@ type Lifecycle interface {
 
 	// Close stops processing and releases resources. It is idempotent.
 	//
+	// It cancels running handlers' contexts, then waits for them to
+	// return until ctx is done; if ctx ends first, it returns an error and
+	// leaves them running. Stopping the backend itself may take longer than
+	// ctx allows. A later call waits for the same handlers.
+	//
 	// On an ephemeral backend, jobs still queued are lost — by design.
 	Close(ctx context.Context) error
 }

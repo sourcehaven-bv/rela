@@ -17,6 +17,7 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
+	"github.com/Sourcehaven-BV/rela/internal/testutil/logtest"
 )
 
 // TestNoInternalErrorDetail is the guard for GitHub #1774: no 500 in this
@@ -134,9 +135,7 @@ func TestWriteInternalError_HidesTheCause(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			var logs bytes.Buffer
-			prev := slog.Default()
-			slog.SetDefault(slog.New(slog.NewTextHandler(&logs, nil)))
-			t.Cleanup(func() { slog.SetDefault(prev) })
+			logtest.SetDefault(t, slog.NewTextHandler(&logs, nil))
 
 			rec := httptest.NewRecorder()
 			write(rec, httptest.NewRequest(http.MethodGet, "/api/v1/x", http.NoBody), errors.New(secret))

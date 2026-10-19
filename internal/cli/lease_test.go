@@ -20,6 +20,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/output"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
 	"github.com/Sourcehaven-BV/rela/internal/script"
+	"github.com/Sourcehaven-BV/rela/internal/testutil/logtest"
 )
 
 // cliSubprocessEnv, when set to 1, makes the test binary run the real CLI
@@ -107,9 +108,7 @@ func runCLI(t *testing.T, svc *appbuild.Services, stdin string, args ...string) 
 func captureLogs(t *testing.T) *bytes.Buffer {
 	t.Helper()
 	buf := new(bytes.Buffer)
-	prev := slog.Default()
-	slog.SetDefault(slog.New(slog.NewTextHandler(buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
-	t.Cleanup(func() { slog.SetDefault(prev) })
+	logtest.SetDefault(t, slog.NewTextHandler(buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
 	return buf
 }
 

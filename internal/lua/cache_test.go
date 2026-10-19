@@ -10,6 +10,8 @@ import (
 	"time"
 
 	glua "github.com/yuin/gopher-lua"
+
+	"github.com/Sourcehaven-BV/rela/internal/testutil/logtest"
 )
 
 // newCachedWriter builds a writer runtime with a fresh Cache and the
@@ -587,10 +589,7 @@ func TestCacheLoggingNeverLeaksRawKey(t *testing.T) {
 	// script path ever appear. This is a defense-in-depth check in
 	// addition to the "never log raw" code path.
 	var logBuf bytes.Buffer
-	prev := slog.Default()
-	h := slog.NewJSONHandler(&logBuf, &slog.HandlerOptions{Level: slog.LevelDebug})
-	slog.SetDefault(slog.New(h))
-	defer slog.SetDefault(prev)
+	logtest.SetDefault(t, slog.NewJSONHandler(&logBuf, &slog.HandlerOptions{Level: slog.LevelDebug}))
 
 	const (
 		secretKey  = "SECRET-KEY-MARKER"

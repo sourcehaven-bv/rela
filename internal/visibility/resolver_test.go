@@ -17,6 +17,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/store/memstore"
 	"github.com/Sourcehaven-BV/rela/internal/store/storetest"
+	"github.com/Sourcehaven-BV/rela/internal/testutil/logtest"
 	"github.com/Sourcehaven-BV/rela/internal/visibility"
 	"github.com/Sourcehaven-BV/rela/internal/visibility/visibilitytest"
 )
@@ -108,9 +109,7 @@ func mustResolver(t *testing.T, gate visibility.RowGate, red visibility.FieldRed
 func captureWarn(t *testing.T) *bytes.Buffer {
 	t.Helper()
 	var buf bytes.Buffer
-	prev := slog.Default()
-	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn})))
-	t.Cleanup(func() { slog.SetDefault(prev) })
+	logtest.SetDefault(t, slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn}))
 	return &buf
 }
 

@@ -1,7 +1,6 @@
 package appbuild
 
 import (
-	"bytes"
 	"context"
 	"log/slog"
 	"testing"
@@ -18,6 +17,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/principal"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/store/memstore"
+	"github.com/Sourcehaven-BV/rela/internal/testutil/logtest"
 	"github.com/Sourcehaven-BV/rela/internal/visibility"
 )
 
@@ -513,16 +513,13 @@ func TestRunScheduledTemplate_SuppressionLogDoesNotDiscloseHiddenContent(t *test
 		mail: &mailRuntime{config: &mail.Config{BaseURL: "https://rela.example"}, sender: sender},
 	}
 
-	var logged bytes.Buffer
-	restore := slog.Default()
-	slog.SetDefault(slog.New(slog.NewTextHandler(&logged, &slog.HandlerOptions{Level: slog.LevelDebug})))
-	t.Cleanup(func() { slog.SetDefault(restore) })
+	logged := logtest.Capture(t, slog.LevelDebug)
 
 	pctx := principal.With(ctx, principal.Principal{User: "alice", Tool: principal.ToolScheduler})
 	require.NoError(t, svc.RunScheduledTemplate(bindForTest(pctx, t, svc), "digest", "alice"))
 	require.Empty(t, sender.Messages(), "precondition: this run must have been suppressed")
 
-	out := logged.String()
+	out := logged()
 	// The positive half: without it, the absence assertions below would pass
 	// against a build that logged nothing at all.
 	require.Contains(t, out, "no visible content", "the operator needs to know a send was skipped")

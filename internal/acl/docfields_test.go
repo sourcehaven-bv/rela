@@ -8,6 +8,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
+	"github.com/Sourcehaven-BV/rela/internal/testutil/logtest"
 )
 
 // docFieldsPolicyYAML exercises both prose doc-fields added in rela-docs
@@ -144,9 +145,7 @@ bogus_key: oops
 	path := writeTempPolicy(t, yaml)
 
 	var buf bytes.Buffer
-	prev := slog.Default()
-	t.Cleanup(func() { slog.SetDefault(prev) })
-	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn})))
+	logtest.SetDefault(t, slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn}))
 
 	p, err := acl.LoadPolicy(path)
 	if err != nil {

@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
+	"github.com/Sourcehaven-BV/rela/internal/testutil/logtest"
 )
 
 // AC2.1: empty file decodes to a zero Policy.
@@ -102,9 +103,7 @@ also_unknown:
 	path := writeTempPolicy(t, yaml)
 
 	var buf bytes.Buffer
-	prev := slog.Default()
-	t.Cleanup(func() { slog.SetDefault(prev) })
-	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn})))
+	logtest.SetDefault(t, slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn}))
 
 	p, err := acl.LoadPolicy(path)
 	if err != nil {
