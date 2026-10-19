@@ -112,7 +112,8 @@ var (
 
 	// ErrNotOpen reports a SetAction that takes an action (a step from
 	// [ActionNone]) in a channel that is not open. Finishing or releasing
-	// an action that is already pending is allowed in every state.
+	// an action that is already pending is allowed in every state. An
+	// append with [NewMessage.RequireOpen] reports it too.
 	ErrNotOpen = errors.New("channels: channel is not open")
 
 	// ErrActionPending reports an edit, a removal or another action on a
@@ -350,6 +351,12 @@ func (m Message) ActionStatus() ActionStatus {
 // Incarnation identifies the anchor's lifetime (see [Channel.Incarnation]).
 // The append records it when it creates an implicit channel, and refuses
 // with [ErrStaleAnchor] when the channel exists with another one.
+//
+// RequireOpen makes the append refuse a channel that is not open with
+// [ErrNotOpen], checked in the same step as the append (see
+// [CheckAppendState]). A request checks the state itself before it
+// appends; the trigger engine, which acts without one, lets the store
+// decide.
 type NewMessage struct {
 	Incarnation string
 	Type        string
@@ -359,6 +366,16 @@ type NewMessage struct {
 	ReplyTo     int64
 	SchemaHash  string
 	TriggeredBy string
+	RequireOpen bool
+}
+
+// CheckAppendState refuses an append that requires an open channel to one
+// in another state, with [ErrNotOpen].
+func CheckAppendState(state State, nm NewMessage) error {
+	if !nm.RequireOpen || state == StateOpen || state == "" {
+		return nil
+	}
+	return fmt.Errorf("%w: channel is %s", ErrNotOpen, state)
 }
 
 // Channel is a channel's metadata. LastSeq and Rev are the head a poller
