@@ -26,7 +26,8 @@ import (
 // channelTestRealtime attaches room and threads to tickets and features,
 // so a hidden feature is a hidden anchor. Nobody holds chat.read or
 // chat.moderate, so nobody reads secret, posts an announce or creates a
-// topic.
+// topic. A room text offers ack, and accept, which promotes; the
+// collaborator wiring has no promoter, so accept is never offered.
 const channelTestRealtime = `
 version: 1
 channel_types:
@@ -43,6 +44,9 @@ channel_types:
           body:  { type: string, required: true }
           about: { type: ref, to: [ticket, feature] }
         post: [member]
+        actions:
+          ack: { roles: [member] }
+          accept: { roles: [member], promote_to: { type: ticket, map: { title: body } } }
       typing: { persist: ephemeral, ttl: 5s, post: [member] }
       announce:
         properties: { body: { type: string } }

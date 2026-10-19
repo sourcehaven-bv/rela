@@ -508,6 +508,12 @@ func (s stubChannels) Delete(context.Context, realtime.RawAddress, int64, string
 func (s stubChannels) Lifecycle(context.Context, realtime.RawAddress, string) (realtime.ChannelView, error) {
 	return realtime.ChannelView{}, s.err
 }
+func (s stubChannels) RunAction(context.Context, realtime.RawAddress, int64, string) (realtime.ActionResult, error) {
+	return realtime.ActionResult{}, s.err
+}
+func (s stubChannels) ReleaseAction(context.Context, realtime.RawAddress, int64) (realtime.MessageView, error) {
+	return realtime.MessageView{}, s.err
+}
 
 // The error mapping every channel route shares, for every entry of the
 // table plus the sentinels and an internal failure.
@@ -536,7 +542,7 @@ func TestChannels_ErrorMapping(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			app := newTestAppV1(t)
 			stub := stubChannels{err: tc.err}
-			app.channels = &channelsHandler{read: stub, messageOps: stub, channels: stub, on: stub}
+			app.channels = &channelsHandler{read: stub, messageOps: stub, actions: stub, channels: stub, on: stub}
 			router := app.NewRouter()
 			for _, rq := range []struct{ method, path, body string }{
 				{http.MethodGet, "/api/v1/tickets/TKT-1/_channels", ""},
@@ -547,6 +553,8 @@ func TestChannels_ErrorMapping(t *testing.T) {
 				{http.MethodPatch, roomPath + "/messages/1", `{"props":{}}`},
 				{http.MethodDelete, roomPath + "/messages/1", ""},
 				{http.MethodPost, roomPath + "/_lifecycle/close", ""},
+				{http.MethodPost, roomPath + "/messages/1/_action/ack", ""},
+				{http.MethodDelete, roomPath + "/messages/1/_action", ""},
 			} {
 				rec := httptest.NewRecorder()
 				router.ServeHTTP(rec, httptest.NewRequest(rq.method, rq.path, strings.NewReader(rq.body)).
@@ -596,6 +604,11 @@ func TestParseChannelRoute(t *testing.T) {
 		{[]string{"room", "_lifecycle", "explode"}, channelRoute{}, false},
 		{[]string{"room", "_lifecycle"}, channelRoute{}, false},
 		{[]string{"room", "_lifecycle", "close", "x"}, channelRoute{}, false},
+		{[]string{"room", "messages", "1", "_action", "ack"}, channelRoute{addr: room, msgs: true, seq: 1, action: "ack"}, true},
+		{[]string{"room", "messages", "1", "_action"}, channelRoute{addr: room, msgs: true, seq: 1, release: true}, true},
+		{[]string{"room", "messages", "1", "_actions", "ack"}, channelRoute{}, false},
+		{[]string{"room", "messages", "1", "_action", "ack", "x"}, channelRoute{}, false},
+		{[]string{"room", "messages", "_action", "ack"}, channelRoute{}, false},
 	} {
 		t.Run(strings.Join(tc.rest, "/"), func(t *testing.T) {
 			got, ok := parseChannelRoute("", "", tc.rest)

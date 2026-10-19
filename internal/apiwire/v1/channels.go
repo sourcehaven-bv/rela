@@ -96,7 +96,9 @@ type MessageRemoval struct {
 	Reason string         `json:"reason,omitempty"`
 }
 
-// MessageAction is the action taken on a message.
+// MessageAction is the action taken on a message. Status is done, or
+// pending while a promote runs or after one failed in a way only a
+// moderator can clear.
 type MessageAction struct {
 	Name     string   `json:"name"`
 	Status   string   `json:"status"`
@@ -106,7 +108,9 @@ type MessageAction struct {
 
 // Message is one stored message. A removed message keeps only seq, rev,
 // reply_to, reply_count and removed. Props holds the properties the
-// message type declares; a ref property is a [RefProp].
+// message type declares; a ref property is a [RefProp]. Actions lists the
+// actions the reader may run on the message now; the POST to
+// `messages/{seq}/_action/{name}` answers the same.
 type Message struct {
 	Seq        int64           `json:"seq"`
 	Rev        int64           `json:"rev"`
@@ -119,6 +123,15 @@ type Message struct {
 	EditedAt   string          `json:"edited_at,omitempty"`
 	Removed    *MessageRemoval `json:"removed,omitempty"`
 	Action     *MessageAction  `json:"action,omitempty"`
+	Actions    []string        `json:"_actions,omitempty"`
+}
+
+// MessageActionResponse answers an action: the message after it, and the
+// warnings of a promote that created its entity with findings, or created
+// it while a later step failed.
+type MessageActionResponse struct {
+	Message  Message   `json:"message"`
+	Warnings []Warning `json:"warnings,omitempty"`
 }
 
 // MessagePage is one page of messages, oldest first, or by rev for an

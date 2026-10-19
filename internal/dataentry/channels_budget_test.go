@@ -6,6 +6,8 @@ import (
 	"maps"
 	"net/http"
 	"net/http/httptest"
+	"slices"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -142,6 +144,12 @@ func (c channelCost) equal(o channelCost) bool {
 // store. alice reads and updates tickets, and cannot read features.
 func newChannelBudget(t *testing.T, n int) *channelBudget {
 	t.Helper()
+	return newChannelBudgetWith(t, n, channelTestRealtime)
+}
+
+// newChannelBudgetWith is newChannelBudget with yaml as realtime.yaml.
+func newChannelBudgetWith(t *testing.T, n int, yaml string) *channelBudget {
+	t.Helper()
 	app := newTestAppV1(t)
 	seedEntity(app, ticket1("one"))
 	for i := range n {
@@ -161,7 +169,7 @@ func newChannelBudget(t *testing.T, n int) *channelBudget {
 	}
 	chans := newCountingChannels(cs)
 	counting := storetest.NewCounting(app.store)
-	ch := newChannelServiceOver(t, app.Meta(), counting, d, channelTestRealtime, chans)
+	ch := newChannelServiceOver(t, app.Meta(), counting, d, yaml, chans)
 	if err := SetChannels(app, ch.svc); err != nil {
 		t.Fatal(err)
 	}
@@ -191,54 +199,81 @@ func budgetRef(i int) string {
 	return fmt.Sprintf("FEAT-%d", 100+i)
 }
 
-func TestChannelsBudget_Messages10vs50(t *testing.T) {
-	cost := func(n int) channelCost {
-		b := newChannelBudget(t, n)
-		ctx := gateCtxFor(aliceCtx(), t, b.d)
-		addr := realtime.RawAddress{EntityType: "ticket", Anchor: "TKT-1", Type: "room"}
-		// The first post goes through the service, which records the
-		// channel type and its refs; the rest go straight to the store,
-		// past the post rate limit and the check that a ref is readable.
-		if _, err := b.ch.svc.Post(ctx, addr, realtime.PostInput{
-			Type: "text", Props: map[string]any{"body": "x", "about": budgetRef(0)},
+// messagesCost is what a page of n messages costs alice under yaml. Every
+// message must offer want as its actions.
+func messagesCost(t *testing.T, n int, yaml string, want []string) channelCost {
+	t.Helper()
+	b := newChannelBudgetWith(t, n, yaml)
+	ctx := gateCtxFor(aliceCtx(), t, b.d)
+	addr := realtime.RawAddress{EntityType: "ticket", Anchor: "TKT-1", Type: "room"}
+	// The first post goes through the service, which records the
+	// channel type and its refs; the rest go straight to the store,
+	// past the post rate limit and the check that a ref is readable.
+	if _, err := b.ch.svc.Post(ctx, addr, realtime.PostInput{
+		Type: "text", Props: map[string]any{"body": "x", "about": budgetRef(0)},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	key := channels.Key{Anchor: channels.Anchor{ID: "TKT-1"}, Type: "room"}
+	for i := 1; i < n; i++ {
+		if _, err := b.ch.store.Append(context.Background(), key, channels.NewMessage{
+			Type: "text", Author: channels.Author{User: "alice"}, At: time.Now(),
+			Props: map[string]any{"body": "x", "about": budgetRef(i)},
 		}); err != nil {
 			t.Fatal(err)
 		}
-		key := channels.Key{Anchor: channels.Anchor{ID: "TKT-1"}, Type: "room"}
-		for i := 1; i < n; i++ {
-			if _, err := b.ch.store.Append(context.Background(), key, channels.NewMessage{
-				Type: "text", Author: channels.Author{User: "alice"}, At: time.Now(),
-				Props: map[string]any{"body": "x", "about": budgetRef(i)},
-			}); err != nil {
-				t.Fatal(err)
-			}
-		}
-		got, body := b.get(t, fmt.Sprintf("%s/messages?limit=%d", roomPath, n))
-		page := decodeAs[v1.MessagePage](t, body)
-		if len(page.Messages) != n {
-			t.Fatalf("page holds %d messages, want %d", len(page.Messages), n)
-		}
-		for _, m := range page.Messages {
-			i := int(m.Seq) - 1
-			ref, _ := m.Props["about"].(map[string]any)
-			if i%2 == 0 {
-				if ref["id"] != budgetRef(i) || ref["title"] == nil {
-					t.Fatalf("message %d: readable ref = %v, want %s with a title", m.Seq, ref, budgetRef(i))
-				}
-				continue
-			}
-			if len(ref) != 1 || ref["restricted"] != true {
-				t.Fatalf("message %d: hidden ref = %v, want only {restricted: true}", m.Seq, ref)
-			}
-		}
-		return got
 	}
+	got, body := b.get(t, fmt.Sprintf("%s/messages?limit=%d", roomPath, n))
+	page := decodeAs[v1.MessagePage](t, body)
+	if len(page.Messages) != n {
+		t.Fatalf("page holds %d messages, want %d", len(page.Messages), n)
+	}
+	for _, m := range page.Messages {
+		i := int(m.Seq) - 1
+		ref, _ := m.Props["about"].(map[string]any)
+		if i%2 == 0 {
+			if ref["id"] != budgetRef(i) || ref["title"] == nil {
+				t.Fatalf("message %d: readable ref = %v, want %s with a title", m.Seq, ref, budgetRef(i))
+			}
+			continue
+		}
+		if len(ref) != 1 || ref["restricted"] != true {
+			t.Fatalf("message %d: hidden ref = %v, want only {restricted: true}", m.Seq, ref)
+		}
+	}
+	for _, m := range page.Messages {
+		if !slices.Equal(m.Actions, want) {
+			t.Fatalf("message %d: _actions = %v, want %v", m.Seq, m.Actions, want)
+		}
+	}
+	return got
+}
+
+func TestChannelsBudget_Messages10vs50(t *testing.T) {
+	cost := func(n int) channelCost { return messagesCost(t, n, channelTestRealtime, []string{"ack"}) }
 	c10, c50 := cost(10), cost(50)
 	if c10.entity["ListEntityHeaders"] == 0 || c10.channel["Messages"] == 0 {
 		t.Fatalf("a counter is not on the read path: %s", c10)
 	}
 	if !c10.equal(c50) {
 		t.Errorf("a message page grows with rows:\n10: %s\n50: %s", c10, c50)
+	}
+}
+
+// TestChannelsBudget_ActionsReadNothing pins that the `_actions`
+// affordance costs no store read: a page whose messages declare actions
+// costs what the same page costs without them.
+func TestChannelsBudget_ActionsReadNothing(t *testing.T) {
+	without := strings.Replace(channelTestRealtime, `        actions:
+          ack: { roles: [member] }
+          accept: { roles: [member], promote_to: { type: ticket, map: { title: body } } }
+`, "", 1)
+	if without == channelTestRealtime {
+		t.Fatal("the fixture no longer declares the actions this test removes")
+	}
+	with, bare := messagesCost(t, 10, channelTestRealtime, []string{"ack"}), messagesCost(t, 10, without, nil)
+	if !with.equal(bare) {
+		t.Errorf("_actions reads the store:\nwith actions: %s\nwithout:      %s", with, bare)
 	}
 }
 
