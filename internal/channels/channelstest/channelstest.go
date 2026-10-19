@@ -511,7 +511,7 @@ func testActions(t *testing.T, h Harness) {
 	require.Equal(t, "proposal", got.Props["body"], "an action leaves the content alone")
 
 	_, err = h.Store.SetAction(ctx, k, 1, "accept", channels.ActionNone, pending)
-	require.ErrorIs(t, err, channels.ErrConflict, "a second accept loses")
+	require.ErrorIs(t, err, channels.ErrActionPending, "a second accept loses to the pending one")
 	_, err = h.Store.SetAction(ctx, k, 1, "reject", channels.ActionPending, pending)
 	require.ErrorIs(t, err, channels.ErrConflict, "another action name loses")
 
@@ -546,6 +546,13 @@ func testActions(t *testing.T, h Harness) {
 	releasedAt := at.Add(2 * time.Second)
 	got, err = h.Store.SetAction(ctx, k, 2, "accept", channels.ActionPending,
 		channels.Action{By: Bob, At: releasedAt})
+	require.NoError(t, err)
+	require.Nil(t, got.Action)
+	// A promote that wrote nothing reverts its own pending action.
+	_, err = h.Store.SetAction(ctx, k, 2, "accept", channels.ActionNone, pending)
+	require.NoError(t, err)
+	got, err = h.Store.SetAction(ctx, k, 2, "accept", channels.ActionPending,
+		channels.Action{By: Alice, At: releasedAt, Revert: true})
 	require.NoError(t, err)
 	require.Nil(t, got.Action)
 	stale, err = h.Store.StalePending(ctx, at.Add(time.Hour))
@@ -607,7 +614,7 @@ func assertActionAudit(t *testing.T, h Harness, releasedAt time.Time) {
 			actions = append(actions, r)
 		}
 	}
-	require.Len(t, actions, 2, "a completed and a released action are audited; going pending is not")
+	require.Len(t, actions, 3, "a completed, a released and a reverted action are audited; going pending is not")
 	require.Equal(t, "accept", actions[0].Action)
 	require.Equal(t, int64(1), actions[0].Seq)
 	require.Equal(t, &channels.Promoted{ID: "DEC-1", Type: "decision"}, actions[0].Promoted)
@@ -616,6 +623,8 @@ func assertActionAudit(t *testing.T, h Harness, releasedAt time.Time) {
 		At: channels.NormTime(releasedAt), Op: channels.AuditAction, Type: "room", Seq: 2, By: Bob,
 		Action: "accept", Status: channels.AuditReleased,
 	}, actions[1])
+	require.Equal(t, channels.AuditReverted, actions[2].Status)
+	require.Equal(t, Alice, actions[2].By)
 }
 
 func testLifecycle(t *testing.T, h Harness) {

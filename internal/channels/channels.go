@@ -115,8 +115,8 @@ var (
 	// an action that is already pending is allowed in every state.
 	ErrNotOpen = errors.New("channels: channel is not open")
 
-	// ErrActionPending reports an edit or removal of a message whose
-	// action is pending. The pending action is building its side effect
+	// ErrActionPending reports an edit, a removal or another action on a
+	// message whose action is pending. The pending action is building its side effect
 	// from the message as it was, so the message may not change until
 	// the action is done or released.
 	ErrActionPending = errors.New("channels: message has a pending action")
@@ -312,6 +312,11 @@ type Action struct {
 	At        time.Time    `json:"at"`
 	PendingAt time.Time    `json:"pending_at,omitzero"`
 	Promoted  *Promoted    `json:"promoted,omitempty"`
+	// Revert marks a step from [ActionPending] to [ActionNone] that undoes
+	// a promote which wrote nothing, as opposed to a person releasing the
+	// action. It only chooses the audit status ([AuditReverted]) and is
+	// never stored.
+	Revert bool `json:"-"`
 }
 
 // Message is one stored message. A removed message keeps only Seq, Rev,
@@ -565,6 +570,11 @@ const (
 // records a pending action put back to none.
 const AuditReleased = "released"
 
+// AuditReverted is the [AuditRecord.Status] of an action record that
+// records a pending action put back to none because its promote wrote
+// nothing. Nobody released it; see [Action.Revert].
+const AuditReverted = "reverted"
+
 // AuditRecord is one entry in an entity's channel audit trail. It never
 // holds message content: no properties, no removal reason, no title.
 //
@@ -690,7 +700,7 @@ func PrepareAction(name string, next Action) (Action, error) {
 	}
 	switch next.Status {
 	case ActionNone:
-		return Action{By: next.By, At: NormTime(next.At)}, nil
+		return Action{By: next.By, At: NormTime(next.At), Revert: next.Revert}, nil
 	case ActionPending, ActionDone:
 	default:
 		return next, fmt.Errorf("%w: action status %q", ErrInvalidMessage, next.Status)
@@ -720,13 +730,18 @@ func PrepareAction(name string, next Action) (Action, error) {
 
 // CheckActionCAS reports whether a message whose current action is cur may
 // move to an action named name: the current status must be expect, and a
-// current action other than none must carry the same name.
+// current action other than none must carry the same name. A pending
+// action where another status was expected is [ErrActionPending]; any
+// other mismatch is [ErrConflict].
 func CheckActionCAS(cur *Action, name string, expect ActionStatus) error {
 	status := ActionNone
 	if cur != nil {
 		status = cur.Status
 	}
 	if status != expect {
+		if status == ActionPending {
+			return fmt.Errorf("%w: action %q, expected %q", ErrActionPending, cur.Name, expect)
+		}
 		return fmt.Errorf("%w: action is %q, expected %q", ErrConflict, status, expect)
 	}
 	if cur != nil && cur.Name != name {
@@ -780,7 +795,10 @@ func ActionAudit(k Key, seq int64, name string, expect ActionStatus, next Action
 	}
 	rec := KeyAudit(k, AuditAction, next.At)
 	rec.Seq, rec.By, rec.Action, rec.Promoted = seq, next.By, name, next.Promoted
-	if release {
+	switch {
+	case release && next.Revert:
+		rec.Status = AuditReverted
+	case release:
 		rec.Status = AuditReleased
 	}
 	return rec, true

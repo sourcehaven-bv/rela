@@ -267,7 +267,7 @@ func TestAction_PromoteFailureReleases(t *testing.T) {
 
 	trail, err := h.store.Audit(context.Background(), "TKT-1")
 	require.NoError(t, err)
-	require.Equal(t, channels.AuditReleased, trail[len(trail)-1].Status)
+	require.Equal(t, channels.AuditReverted, trail[len(trail)-1].Status, "a revert is not a moderator release")
 }
 
 // TestAction_PromoteFailureStaysPending pins that an error after which the
@@ -314,9 +314,8 @@ func TestAction_MarkFailureWarns(t *testing.T) {
 }
 
 // TestAction_DoubleAcceptOneEntity pins AC14: two concurrent accepts
-// promote once. The loser is refused with a 409: action_taken when it lost
-// the compare-and-set, action_pending when it read the message after the
-// winner had taken it.
+// promote once. The loser is refused with 409 action_pending, whether it
+// read the message after the winner took it or lost the compare-and-set.
 func TestAction_DoubleAcceptOneEntity(t *testing.T) {
 	t.Parallel()
 	p := &fakePromoter{block: make(chan struct{})}
@@ -336,7 +335,7 @@ func TestAction_DoubleAcceptOneEntity(t *testing.T) {
 	d, ok := errors.AsType[*DenialError](loser)
 	require.Truef(t, ok, "want a denial, got %v", loser)
 	require.Equal(t, http.StatusConflict, d.Status)
-	require.Contains(t, []string{TypeActionTaken, TypeActionPending}, d.Type)
+	require.Equal(t, TypeActionPending, d.Type)
 	require.Equal(t, int64(1), p.calls.Load())
 }
 
@@ -488,4 +487,17 @@ func TestPromoteProps_MessagePropsOnly(t *testing.T) {
 	p.Map = map[string]string{"title": "summary", "ref": "about", "gone": "note"}
 	got := promoteProps(&p, channels.Message{Props: map[string]any{"summary": "S", "about": "TKT-2"}})
 	require.Equal(t, map[string]any{"title": "S", "ref": "TKT-2"}, got)
+}
+
+// TestActionStoreError_PendingWinsRace pins that a compare-and-set lost to
+// a pending action answers action_pending, and one lost to a done action
+// answers action_taken.
+func TestActionStoreError_PendingWinsRace(t *testing.T) {
+	t.Parallel()
+	pending := &channels.Action{Name: "accept", Status: channels.ActionPending}
+	requireDenial(t, actionStoreError(channels.CheckActionCAS(pending, "ack", channels.ActionNone)),
+		http.StatusConflict, TypeActionPending)
+	done := &channels.Action{Name: "accept", Status: channels.ActionDone}
+	requireDenial(t, actionStoreError(channels.CheckActionCAS(done, "ack", channels.ActionNone)),
+		http.StatusConflict, TypeActionTaken)
 }

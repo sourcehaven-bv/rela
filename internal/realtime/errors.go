@@ -193,7 +193,9 @@ func messageStoreError(err error) error {
 }
 
 // actionStoreError is [messageStoreError] for an action write: a lost
-// compare-and-set means another action got there first.
+// compare-and-set means another action got there first. A pending action
+// that got there first is [channels.ErrActionPending], which
+// [storeError] answers as action_pending.
 func actionStoreError(err error) error {
 	if errors.Is(err, channels.ErrConflict) {
 		return deny(http.StatusConflict, TypeActionTaken, "another action on this message got there first")

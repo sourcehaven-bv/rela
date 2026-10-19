@@ -178,7 +178,7 @@ func (s *Service) promoteFailed(c *call, msg channels.Message, name string, err 
 		rctx, cancel := context.WithTimeout(context.WithoutCancel(c.ctx), markTimeout)
 		defer cancel()
 		_, rerr := s.store.SetAction(rctx, c.key, msg.Seq, name, channels.ActionPending,
-			channels.Action{By: authorOf(c.p), At: c.now})
+			channels.Action{By: authorOf(c.p), At: c.now, Revert: true})
 		if rerr != nil {
 			slog.ErrorContext(c.ctx, "realtime: promote failed and releasing the action failed; "+
 				"it stays pending until a moderator releases it",
