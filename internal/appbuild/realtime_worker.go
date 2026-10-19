@@ -8,11 +8,13 @@ import (
 	"math/rand/v2"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/channels"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/filelock"
+	"github.com/Sourcehaven-BV/rela/internal/principal"
 	"github.com/Sourcehaven-BV/rela/internal/realtime"
 	"github.com/Sourcehaven-BV/rela/internal/state"
 	"github.com/Sourcehaven-BV/rela/internal/storage"
@@ -22,18 +24,28 @@ import (
 // The realtime worker is the one host for realtime background work: the
 // automatic close and archive and a poll for due purges every minute, full
 // retention every hour, a purge poll as soon as an entity delete commits in
-// this process, and the triggers (a round every
-// [realtime.TriggerTick] while entities changed, a reconcile every
-// [realtime.TriggerReconcile]). Each run takes the worker lock first
-// and is skipped when another process holds it, so several rela-server
-// processes against one database do each run once. A delete in another
-// process is purged by the next minute's poll of whichever process runs
-// it. Every process sees every entity change (the fsstore watcher, pg
-// NOTIFY), so a process that does not hold the lock drops its changes:
-// the holder handles them.
+// this process, and the triggers (a round every [realtime.TriggerTick]
+// while entities changed, a reconcile every [realtime.TriggerReconcile]).
+//
+// With several rela-server processes on one database, one leads: it holds
+// the worker lock for as long as it runs, and does all of this work. The
+// others try to take the lock every realtimeTakeoverInterval and do
+// nothing else, so when the leader stops another takes over. A delete in
+// another process is purged by the leader's next minute poll. Every
+// process sees every entity change (the fsstore watcher, pg NOTIFY); only
+// the leader notes them for the triggers.
+//
+// On postgres the lock is a session lock on one pinned connection. The
+// worker cannot tell when the database drops that session, so it leads on
+// until it stops; a second leader may then run alongside it. The triggers
+// stay correct, because what they have seen is shared in the KV and a
+// post is at least once, and the sweeps are idempotent.
 const (
 	realtimeLifecycleInterval = time.Minute
 	realtimeRetentionInterval = time.Hour
+	// realtimeTakeoverInterval is how often a process that does not lead
+	// tries to take the worker lock.
+	realtimeTakeoverInterval = 10 * time.Second
 	// realtimeWorkerLockFile is the worker lock of the file backend, in the
 	// project's cache directory.
 	realtimeWorkerLockFile = "realtime-worker.lock"
@@ -200,19 +212,20 @@ func realtimeLeaderLock(fs storage.FS, cacheDir string, st store.Store) (leaderL
 	return func(context.Context) (func(), bool, error) { return l.TryLock() }, nil
 }
 
-// realtimeWorker runs the [realtime.Sweeper] while this process holds the
-// worker lock. A host starts it with [RunRealtimeWorker] and stops it by
-// canceling the context it passed; [Services.Close] stops it too.
+// realtimeWorker runs the [realtime.Sweeper] and the [realtime.Triggers]
+// while this process holds the worker lock. A host starts it with
+// [RunRealtimeWorker] and stops it by canceling the context it passed;
+// [Services.Close] stops it too.
 type realtimeWorker struct {
 	sweeper  *realtime.Sweeper
 	triggers *realtime.Triggers
 	changes  store.Watcher
 	lock     leaderLock
 	wake     <-chan struct{}
-	// leading is set while the last trigger run held the lock. A run
-	// that takes the lock without it reconciles first, because the
-	// changes noted while another process led were dropped.
-	leading bool
+	takeover time.Duration
+	// leading is set while this process leads; the event drain notes
+	// changes only then.
+	leading atomic.Bool
 
 	mu      sync.Mutex
 	running chan struct{}
@@ -239,7 +252,7 @@ func newRealtimeWorker(p realtimeWorkerParts) (*realtimeWorker, error) {
 	}
 	return &realtimeWorker{
 		sweeper: p.sweeper, triggers: p.triggers, changes: p.changes, lock: p.lock, wake: p.wake,
-		closed: make(chan struct{}),
+		takeover: realtimeTakeoverInterval, closed: make(chan struct{}),
 	}, nil
 }
 
@@ -263,9 +276,13 @@ func buildRealtimeWorker(
 	if err != nil {
 		return nil, err
 	}
+	rows, err := newEntitySource(st, base.worlds.DefaultWorld())
+	if err != nil {
+		return nil, err
+	}
 	triggers, err := realtime.NewTriggers(realtime.TriggerDeps{
 		Store: refs.channels, Config: cfg, Local: refs.realtimeLocal, Meta: base.meta,
-		Rows: entitySource{st: st, world: base.worlds.DefaultWorld()}, Seen: kv,
+		Rows: rows, Seen: kv,
 	})
 	if err != nil {
 		return nil, err
@@ -333,21 +350,77 @@ func (w *realtimeWorker) stop() {
 	}
 }
 
-// run runs the sweeps and the triggers until ctx ends: everything once at
-// start, then the lifecycle sweep and the purge poll every minute, full
-// retention every hour, the purge poll on every wake, a trigger round on
-// every tick that has changes, and a trigger reconcile on its timer. Each
-// run takes the worker lock and is skipped when another process holds it,
-// so no process waits on the lock and a process that stops lets the next
-// run elsewhere take over.
+// run tries to take the worker lock until it gets it or ctx ends, and
+// then leads until ctx ends. Store events are drained on a goroutine of
+// their own, so a long round never fills the subscription.
 func (w *realtimeWorker) run(ctx context.Context) {
 	events, cancel := w.changes.Subscribe(triggerEventBuffer)
 	defer cancel()
-	w.leading = w.locked(ctx, "start", func() {
-		w.retention(ctx)
-		w.lifecycle(ctx)
-		w.reconcile(ctx)
-	}) && w.leading
+	var drained sync.WaitGroup
+	drained.Go(func() { w.drain(ctx, events) })
+	defer drained.Wait()
+	takeover := time.NewTicker(w.takeover)
+	defer takeover.Stop()
+	for {
+		release, ok, err := w.lock(ctx)
+		switch {
+		case err != nil:
+			if ctx.Err() == nil {
+				slog.Warn("realtime worker: cannot take the worker lock; trying again", "error", err)
+			}
+		case ok:
+			w.lead(ctx)
+			release()
+			return
+		default:
+			slog.Debug("realtime worker: another process leads")
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-takeover.C:
+		case <-w.wake: // the leader purges
+		}
+	}
+}
+
+// drain notes the entity changes for the triggers while this process
+// leads, and drops them otherwise.
+func (w *realtimeWorker) drain(ctx context.Context, events <-chan store.Event) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case ev, ok := <-events:
+			if !ok {
+				slog.Warn("realtime worker: the store stopped reporting changes; triggers rely on the reconcile")
+				return
+			}
+			if c, isEntity := changeOf(ev); isEntity && w.leading.Load() {
+				w.triggers.Note(c)
+			}
+		}
+	}
+}
+
+// lead runs the sweeps and the triggers until ctx ends: everything once
+// at start, then the lifecycle sweep and the purge poll every minute, full
+// retention every hour, the purge poll on every wake, a trigger round on
+// every tick that has work, and a trigger reconcile on its timer. The
+// trigger engine starts and ends with nothing in memory, so it never acts
+// on what it held while another process led.
+func (w *realtimeWorker) lead(ctx context.Context) {
+	ctx = principal.With(ctx, principal.Principal{User: principal.UserRealtime, Tool: principal.ToolRealtime})
+	w.leading.Store(true)
+	w.triggers.Reset()
+	defer func() {
+		w.leading.Store(false)
+		w.triggers.Reset()
+	}()
+	slog.Info("realtime worker: this process leads")
+	w.retention(ctx)
+	w.lifecycle(ctx)
+	w.reconcile(ctx)
 	minute := time.NewTicker(realtimeLifecycleInterval)
 	defer minute.Stop()
 	hour := time.NewTicker(realtimeRetentionInterval)
@@ -360,47 +433,23 @@ func (w *realtimeWorker) run(ctx context.Context) {
 		select {
 		case <-ctx.Done():
 			return
-		case ev := <-events:
-			if c, ok := changeOf(ev); ok {
-				w.triggers.Note(c)
-			}
 		case <-tick.C:
 			if w.triggers.Pending() {
-				w.triggerRound(ctx)
+				rep, err := w.triggers.RunRound(ctx)
+				w.triggerReport(ctx, "round", rep, err)
 			}
 		case <-reconcile.C:
-			w.leading = w.locked(ctx, "reconcile", func() { w.reconcile(ctx) }) && w.leading
+			w.reconcile(ctx)
 			reconcile.Reset(reconcileDelay())
 		case <-minute.C:
-			w.locked(ctx, "minute", func() {
-				w.lifecycle(ctx)
-				w.purge(ctx)
-			})
+			w.lifecycle(ctx)
+			w.purge(ctx)
 		case <-hour.C:
-			w.locked(ctx, "retention", func() { w.retention(ctx) })
+			w.retention(ctx)
 		case <-w.wake:
-			w.locked(ctx, "wake", func() { w.purge(ctx) })
+			w.purge(ctx)
 		}
 	}
-}
-
-// locked runs fn while holding the worker lock, or skips it when the lock
-// is held elsewhere or cannot be taken. It reports whether fn ran.
-func (w *realtimeWorker) locked(ctx context.Context, what string, fn func()) bool {
-	release, ok, err := w.lock(ctx)
-	switch {
-	case err != nil:
-		if ctx.Err() == nil {
-			slog.Warn("realtime worker: cannot take the worker lock; run skipped", "run", what, "error", err)
-		}
-		return false
-	case !ok:
-		slog.Debug("realtime worker: another process holds the worker lock; run skipped", "run", what)
-		return false
-	}
-	defer release()
-	fn()
-	return true
 }
 
 // reconcileDelay is [realtime.TriggerReconcile] with up to a tenth
@@ -411,27 +460,8 @@ func reconcileDelay() time.Duration {
 	return realtime.TriggerReconcile - tenth + rand.N(2*tenth) //nolint:gosec // jitter, not a secret
 }
 
-// triggerRound runs a trigger round under the worker lock, after a
-// reconcile when this process has just taken over. Without the lock the
-// noted changes are dropped: the holder sees them too.
-func (w *realtimeWorker) triggerRound(ctx context.Context) {
-	ran := w.locked(ctx, "triggers", func() {
-		if !w.leading {
-			w.reconcile(ctx)
-		}
-		rep, err := w.triggers.RunRound(ctx)
-		w.triggerReport(ctx, "round", rep, err)
-	})
-	if !ran {
-		w.leading = false
-		w.triggers.Drop()
-	}
-}
-
-// reconcile runs a trigger reconcile; the caller holds the worker lock.
 func (w *realtimeWorker) reconcile(ctx context.Context) {
 	rep, err := w.triggers.RunReconcile(ctx)
-	w.leading = err == nil
 	w.triggerReport(ctx, "reconcile", rep, err)
 }
 

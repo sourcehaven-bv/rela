@@ -2,6 +2,7 @@ package appbuild
 
 import (
 	"context"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -87,8 +88,10 @@ func newTriggerFixture(t *testing.T) triggerFixture {
 	_, cs, st := newChannelAliases(t)
 	h := &RealtimeConfig{}
 	h.cur.Store(&RealtimeSnapshot{Config: cfg})
+	src, err := newEntitySource(st, w.DefaultWorld())
+	require.NoError(t, err)
 	return triggerFixture{
-		meta: meta, cs: cs, st: st, src: entitySource{st: st, world: w.DefaultWorld()},
+		meta: meta, cs: cs, st: st, src: src,
 		kv: &mapKV{m: map[string][]byte{}}, cfg: realtimeConfigSource{h: h},
 	}
 }
@@ -151,12 +154,24 @@ func TestEntitySource_ReadsTheFaceTheChannelShows(t *testing.T) {
 	require.Empty(t, none)
 }
 
-// The worker notes store events, runs a round under its lock and posts.
-// A process that does not hold the lock drops its changes, and reconciles
-// when it takes over.
-func TestRealtimeWorker_RunsTriggers(t *testing.T) {
-	f := newTriggerFixture(t)
-	f.write(t, "ticket", "T-1", "", map[string]any{"status": "new"})
+// oneLock is a worker lock that one worker holds at a time.
+type oneLock struct{ held atomic.Bool }
+
+func (l *oneLock) take(context.Context) (release func(), ok bool, err error) {
+	if !l.held.CompareAndSwap(false, true) {
+		return nil, false, nil
+	}
+	return func() { l.held.Store(false) }, true, nil
+}
+
+// testWorker is a worker of its own process over the fixture's stores.
+type testWorker struct {
+	w   *realtimeWorker
+	src *countingSource
+}
+
+func (f triggerFixture) worker(t *testing.T, lock leaderLock) testWorker {
+	t.Helper()
 	tombs, err := newTombstoneConfirmer(f.cs)
 	require.NoError(t, err)
 	local, err := realtime.NewLocal(time.Now)
@@ -166,33 +181,60 @@ func TestRealtimeWorker_RunsTriggers(t *testing.T) {
 		Store: f.cs, Config: f.cfg, Anchors: anchorExistence{st: f.st}, Marker: local, Clock: time.Now,
 	})
 	require.NoError(t, err)
-	l := &switchLock{}
-	w, err := newRealtimeWorker(realtimeWorkerParts{
-		sweeper: sweeper, triggers: f.engine(t), changes: f.st, lock: l.take, wake: tombs.wake,
+	src := &countingSource{inner: f.src}
+	trg, err := realtime.NewTriggers(realtime.TriggerDeps{
+		Store: f.cs, Config: f.cfg, Local: local, Meta: f.meta, Rows: src, Seen: f.kv,
 	})
 	require.NoError(t, err)
-	done := RunRealtimeWorker(context.Background(), &Services{realtimeWorker: w})
-	t.Cleanup(func() { w.stop(); <-done })
+	w, err := newRealtimeWorker(realtimeWorkerParts{
+		sweeper: sweeper, triggers: trg, changes: f.st, lock: lock, wake: tombs.wake,
+	})
+	require.NoError(t, err)
+	w.takeover = 20 * time.Millisecond
+	return testWorker{w: w, src: src}
+}
 
-	room := channels.Key{Anchor: channels.Anchor{ID: "T-1"}, Type: "room"}
+// Two workers share one lock. The leader notes store events and posts;
+// a change stream costs it no reconcile. The other does no trigger work
+// at all, and when the leader stops it takes over, reconciles and posts
+// what changed in between.
+func TestRealtimeWorker_TwoProcessesOneLeader(t *testing.T) {
+	f := newTriggerFixture(t)
+	f.write(t, "ticket", "T-1", "", map[string]any{"status": "new"})
+	lock := &oneLock{}
+	a := f.worker(t, lock.take)
+	ctxA, stopA := context.WithCancel(context.Background())
+	doneA := make(chan struct{})
+	go func() { a.w.run(ctxA); close(doneA) }()
+	t.Cleanup(func() { stopA(); <-doneA })
 	require.Eventually(t, func() bool {
 		idx, err := f.kv.Get(context.Background(), "realtime/seen/index")
 		return err == nil && len(idx) > 0
 	}, 5*time.Second, 10*time.Millisecond, "the start reconcile baselines")
+
+	b := f.worker(t, lock.take)
+	done := RunRealtimeWorker(context.Background(), &Services{realtimeWorker: b.w})
+	t.Cleanup(func() { b.w.stop(); <-done })
+
+	scans := a.src.scans.Load()
+	room := channels.Key{Anchor: channels.Anchor{ID: "T-1"}, Type: "room"}
 	f.write(t, "ticket", "T-1", "", map[string]any{"status": "open"})
 	require.Eventually(t, func() bool { return len(f.bodies(t, room)) == 1 },
 		5*time.Second, 10*time.Millisecond, "a store event posts")
+	for i := range 5 {
+		f.write(t, "ticket", "T-1", "", map[string]any{"status": "open", "n": i})
+	}
+	require.Never(t, func() bool { return b.src.scans.Load()+b.src.rows.Load() > 0 },
+		3*realtime.TriggerTick, 10*time.Millisecond, "a follower reads nothing")
+	require.Equal(t, scans, a.src.scans.Load(), "changes cost the leader no reconcile")
 
-	l.set(true, nil)
+	stopA()
+	<-doneA
 	f.write(t, "ticket", "T-2", "", map[string]any{"status": "open"})
-	time.Sleep(3 * time.Second / 2)
 	room2 := channels.Key{Anchor: channels.Anchor{ID: "T-2"}, Type: "room"}
-	require.Empty(t, f.bodies(t, room2), "without the lock nothing posts")
-
-	l.set(false, nil)
-	f.write(t, "ticket", "T-1", "", map[string]any{"status": "open", "x": 1})
 	require.Eventually(t, func() bool { return len(f.bodies(t, room2)) == 1 },
-		5*time.Second, 10*time.Millisecond, "taking over reconciles the dropped change")
+		5*time.Second, 10*time.Millisecond, "the follower takes over")
+	require.Positive(t, b.src.scans.Load(), "taking over reconciles")
 	require.Equal(t, []string{"Opened"}, f.bodies(t, room))
 }
 
@@ -240,32 +282,33 @@ func TestTriggers_RoundReadsOnlyChangedIDs(t *testing.T) {
 	require.NoError(t, err)
 	_, err = trg.RunReconcile(ctx)
 	require.NoError(t, err)
-	cnt.rows, cnt.scans = 0, 0
+	cnt.rows.Store(0)
+	cnt.scans.Store(0)
 	f.write(t, "ticket", "T-Aa", "", map[string]any{"status": "open"})
 	trg.Note(realtime.Change{EntityType: "ticket", ID: "T-Aa"})
 	rep, err := trg.RunRound(ctx)
 	require.NoError(t, err)
 	require.Equal(t, 1, rep.Posted)
-	require.Equal(t, 1, cnt.rows)
-	require.Zero(t, cnt.scans)
+	require.Equal(t, int64(1), cnt.rows.Load())
+	require.Zero(t, cnt.scans.Load())
 }
 
 type countingSource struct {
 	inner       realtime.EntitySource
-	rows, scans int
+	rows, scans atomic.Int64
 }
 
 func (c *countingSource) Rows(
 	ctx context.Context, typ string, ids []string, m realtime.FaceMode,
 ) ([]realtime.EntityRow, error) {
-	c.rows++
+	c.rows.Add(1)
 	return c.inner.Rows(ctx, typ, ids, m)
 }
 
 func (c *countingSource) Scan(
 	ctx context.Context, typ string, m realtime.FaceMode, page func([]realtime.EntityRow) error,
 ) error {
-	c.scans++
+	c.scans.Add(1)
 	return c.inner.Scan(ctx, typ, m, page)
 }
 
