@@ -1065,6 +1065,44 @@ The CLI acts as the operating-system user: the principal is `$USER` (or
 - If `$USER` is empty, the principal cannot be resolved. The CLI logs a
   warning and every gated write is denied; reads still return everything.
 
+`rela channel` and `rela lease` are the exception: they go through their
+services, which apply `acl.yaml` to reads as well as writes.
+
+**`--run-as`.** `--run-as NAME` or `RELA_RUN_AS=NAME` makes the CLI and
+stdio `rela mcp` act as a job identity instead of `$USER`:
+
+- Only `system:` and `integration:` names are accepted, in lowercase ASCII
+  letters, digits, `-`, `_` and (for `system:`) `:`. A person's name is
+  refused, so the flag cannot impersonate a human. The charset rules out
+  invisible format characters and look-alike letters. rela's own identities
+  are refused, so a message cannot pass for a trigger post, a scheduled task
+  or a mail delivery. `principal.IsRelaIdentity` holds the list.
+- A `$USER` in the `system:` or `integration:` namespace, in any letter
+  case, is refused, so a job identity can only enter through `--run-as`,
+  with these checks. A `$USER` with an invisible character is refused too.
+  `$USER` is otherwise free-form, so a name spelled with look-alike letters
+  from another script can still display like a job identity; ACL grants
+  match the exact name, so it gains no access.
+- The identity carries no principal type and no roles. Only `acl.yaml`
+  `assignments` (or a user entity) give it access.
+- The OS user who asserted it is recorded as `asserted_by` in every graph
+  audit record of the command. It is the account of the process's user id,
+  not `$USER`, so the environment cannot name someone else. A uid with no
+  account is recorded as `uid:N`. The cgo-free Linux binaries read
+  `/etc/passwd` for this, so an account that only a directory service
+  (LDAP, SSSD) knows is also recorded as `uid:N`. Version history
+  records user and tool only. Channel posts, edits, removals and creation
+  keep no record of the OS user; their author is the job identity.
+- A command that acts as no one refuses the `--run-as` flag and ignores
+  `RELA_RUN_AS`.
+- `rela scheduler` refuses the flag, and `rela-server` and `rela-desktop`
+  refuse to start while `RELA_RUN_AS` is set: their identity comes from a
+  verified login or the desktop user.
+
+The name is self-asserted, so it is attribution, not authentication. It
+keeps an honest agent inside the roles the project gave it; it does not stop
+a local user, who can name any job identity or edit `acl.yaml`.
+
 This is deliberate. Whoever runs the CLI can read and edit the project's
 data files, or connect to its database, directly, so read gating there
 would not protect anything. Do not rely on `acl.yaml` to keep data from

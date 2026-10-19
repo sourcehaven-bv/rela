@@ -331,6 +331,7 @@ func recordConversionAudit(ctx context.Context, m *Manager, name, oldID, oldType
 		After:       &audit.Subject{Kind: "entity", Type: after.Type, ID: after.ID},
 		Principal:   principal.From(ctx),
 		TriggeredBy: audit.TriggeredByFrom(ctx),
+		AssertedBy:  audit.AssertedByFrom(ctx),
 		Summary:     summary,
 	})
 }

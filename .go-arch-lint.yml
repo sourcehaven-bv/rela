@@ -537,6 +537,9 @@ deps:
       - project
       - projectsetup
       - queryplan
+      # `rela channel` (TKT-76G6M7) speaks the channel service's views and
+      # errors; the access checks stay in realtime.Service.
+      - realtime
       - renametype
       - scheduler
       - schema

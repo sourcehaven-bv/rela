@@ -16,6 +16,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/Sourcehaven-BV/rela/internal/appbuild"
+	"github.com/Sourcehaven-BV/rela/internal/appbuild/backendtest"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	relamcp "github.com/Sourcehaven-BV/rela/internal/mcp"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
@@ -297,27 +298,33 @@ func TestMCPStdio_ACLWatch(t *testing.T) {
 	}, 5*time.Second, 50*time.Millisecond, "a broken acl.yaml edit did not close the channel tools")
 }
 
-// TestMCPStdio_WarnsUnassignedUser pins the startup warning for a local user
-// acl.yaml names no role for.
+// TestMCPStdio_WarnsUnassignedUser pins the startup warning for a server
+// principal acl.yaml names no role for: $USER, or the --run-as identity.
 func TestMCPStdio_WarnsUnassignedUser(t *testing.T) {
 	for _, tc := range []struct {
-		name, acl, user string
-		want            bool
+		name, acl, user, runAs string
+		want                   bool
 	}{
-		{"unassigned", stdioACLAlice, "bob", true},
-		{"assigned", stdioACLAlice, "alice", false},
-		{"no acl.yaml", "", "bob", false},
+		{"unassigned", stdioACLAlice, "bob", "", true},
+		{"assigned", stdioACLAlice, "alice", "", false},
+		{"no acl.yaml", "", "bob", "", false},
+		{"run-as unassigned", stdioACLAlice, "alice", "system:ci", true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			root := seedProject(t)
 			if tc.acl != "" {
 				writeProjectFile(t, root, "acl.yaml", tc.acl)
 			}
-			t.Setenv("USER", tc.user)
 			var logs bytes.Buffer
 			logtest.SetDefault(t, slog.NewTextHandler(&logs, nil))
 
-			svc, err := mcpServicesForTest(t, root)
+			for k, v := range backendtest.Env(t) {
+				t.Setenv(k, v)
+			}
+			t.Setenv("USER", tc.user)
+			identity, err := newLocalIdentity(principal.ToolMCP, tc.runAs)
+			require.NoError(t, err)
+			svc, err := openMCPServices(root, identity)
 			require.NoError(t, err)
 			t.Cleanup(func() { _ = svc.Close() })
 			assert.Equal(t, tc.want, strings.Contains(logs.String(), "assigns no role to the local user"),

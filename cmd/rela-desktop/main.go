@@ -1060,6 +1060,17 @@ func (d *Desktop) refreshMenu() {
 	// coverage-ignore-end
 }
 
+// refuseRunAsEnv exits when RELA_RUN_AS is set: the desktop acts as the
+// desktop user, and the variable is for the local CLI only.
+//
+// coverage-ignore-func: exits the process; the check itself is principal.RefuseRunAsEnv, tested there
+func refuseRunAsEnv() {
+	if err := principal.RefuseRunAsEnv(os.LookupEnv); err != nil {
+		slog.Error("refusing to start", "error", err)
+		os.Exit(1)
+	}
+}
+
 // coverage-ignore-func: main function - entry point
 // coverage-ignore-start: main-or-wiring: process entry point — flag parsing, DI wiring, and wails.Run event loop;
 // exercised only at real
@@ -1071,6 +1082,7 @@ func main() {
 	flag.Parse()
 
 	configureLogging(*verbose, *quiet)
+	refuseRunAsEnv()
 	// Host-level command settings (RELA_UNCONFINED_COMMANDS,
 	// RELA_SANDBOX_TRANSFORM_READ_PATHS, RELA_SANDBOX_SCAN_READ_PATHS), applied before any project builds its
 	// export/attachment runners. Without them a sandboxed converter sees only

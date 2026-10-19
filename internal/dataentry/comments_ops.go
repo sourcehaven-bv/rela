@@ -450,6 +450,7 @@ func (h *commentsHandler) authorizeBodyWrite(ctx context.Context, e *entity.Enti
 		Subject:     &audit.Subject{Kind: "entity", Type: e.Type, ID: e.ID},
 		Principal:   principal.From(ctx),
 		TriggeredBy: audit.TriggeredByFrom(ctx),
+		AssertedBy:  audit.AssertedByFrom(ctx),
 		Summary: fmt.Sprintf("denied: %s (rule_kind=%s rule_id=%s op=accept-suggestion)",
 			decision.Reason, decision.RuleKind, decision.RuleID),
 	})

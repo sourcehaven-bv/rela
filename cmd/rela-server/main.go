@@ -27,6 +27,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/cmdexec"
 	"github.com/Sourcehaven-BV/rela/internal/dataentry"
 	"github.com/Sourcehaven-BV/rela/internal/jwtauth"
+	"github.com/Sourcehaven-BV/rela/internal/principal"
 	"github.com/Sourcehaven-BV/rela/internal/script"
 )
 
@@ -516,6 +517,10 @@ func main() {
 	f := parseFlags()
 
 	configureLogging(f.verbose, f.quiet)
+	if err := principal.RefuseRunAsEnv(os.LookupEnv); err != nil {
+		slog.Error("refusing to start", "error", err)
+		os.Exit(1)
+	}
 	accessLog := openAccessLog(f.accessLog)
 
 	if err := dataentry.CheckEmbeddedSPA(); err != nil {

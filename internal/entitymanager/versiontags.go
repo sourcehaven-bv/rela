@@ -278,6 +278,7 @@ func (v *VersionTags) record(ctx context.Context, op string, e *entity.Entity, s
 		Subject:     &audit.Subject{Kind: "entity", Type: e.Type, ID: e.ID},
 		Principal:   principal.From(ctx),
 		TriggeredBy: audit.TriggeredByFrom(ctx),
+		AssertedBy:  audit.AssertedByFrom(ctx),
 		Summary:     summary,
 	})
 }

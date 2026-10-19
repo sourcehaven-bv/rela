@@ -235,10 +235,11 @@ func recordACLQuery(ctx context.Context, sink audit.Audit, verb, entityID string
 		return
 	}
 	sink.Record(audit.Record{
-		Time:      time.Now().UTC(),
-		Op:        audit.OpACLQuery,
-		Subject:   &audit.Subject{Kind: "entity", ID: entityID},
-		Principal: principal.From(ctx),
-		Summary:   "who-can " + verb,
+		Time:       time.Now().UTC(),
+		Op:         audit.OpACLQuery,
+		Subject:    &audit.Subject{Kind: "entity", ID: entityID},
+		Principal:  principal.From(ctx),
+		AssertedBy: audit.AssertedByFrom(ctx),
+		Summary:    "who-can " + verb,
 	})
 }

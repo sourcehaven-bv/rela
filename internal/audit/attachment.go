@@ -28,6 +28,7 @@ func AttachmentWriteDenied(ctx context.Context, entityType, entityID, reason, ru
 		Subject:     &Subject{Kind: "entity", Type: entityType, ID: entityID},
 		Principal:   principal.From(ctx),
 		TriggeredBy: TriggeredByFrom(ctx),
+		AssertedBy:  AssertedByFrom(ctx),
 		Summary: fmt.Sprintf("denied: %s (rule_kind=%s rule_id=%s op=attachment-write)",
 			reason, ruleKind, ruleID),
 	}
@@ -45,6 +46,7 @@ func AttachmentRejected(ctx context.Context, entityType, entityID, property, fil
 		Subject:     &Subject{Kind: "entity", Type: entityType, ID: entityID},
 		Principal:   principal.From(ctx),
 		TriggeredBy: TriggeredByFrom(ctx),
+		AssertedBy:  AssertedByFrom(ctx),
 		Summary: fmt.Sprintf("rejected upload %q to property %q: %s (op=attachment-write)",
 			fileName, property, reason),
 	}

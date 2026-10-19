@@ -152,7 +152,7 @@ func NewScriptSender(cfg *Config, opts ...ScriptOption) (*ScriptSender, error) {
 // The concrete consequence: `mail.yaml`'s `script: mail/mailgun.lua` picks up
 // `overrides: {"mail/mailgun.lua": {...}}` from secrets.yaml, and the audit
 // trail for a delivery reads `system:mail`.
-const SendScriptPrincipal = "system:mail"
+const SendScriptPrincipal = principal.UserMail
 
 // SendScriptTool is the tool half of the send script's identity. `principal`
 // carries both, and leaving Tool empty would render as the documented

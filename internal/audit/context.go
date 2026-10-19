@@ -23,3 +23,24 @@ func TriggeredByFrom(ctx context.Context) string {
 	}
 	return ""
 }
+
+// assertedByKey is the context key of the asserting OS user.
+type assertedByKey struct{}
+
+// WithAssertedBy returns a derived context carrying the OS user who
+// asserted the principal on ctx. The local CLI and stdio `rela mcp` stamp
+// it when `--run-as` names the identity: that name is self-asserted, not
+// verified, so the audit records who claimed it. It is attribution only
+// and never reaches an ACL decision or a reader.
+func WithAssertedBy(ctx context.Context, user string) context.Context {
+	return context.WithValue(ctx, assertedByKey{}, user)
+}
+
+// AssertedByFrom returns the asserting OS user carried by ctx, or "" when
+// the principal was not self-asserted (the normal case).
+func AssertedByFrom(ctx context.Context) string {
+	if v, ok := ctx.Value(assertedByKey{}).(string); ok {
+		return v
+	}
+	return ""
+}

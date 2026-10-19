@@ -5,7 +5,9 @@ title: 'Realtime 3/6: channel MCP tools, watch and CLI'
 kind: enhancement
 priority: medium
 effort: m
-status: backlog
+started: "2026-10-17"
+completed: "2026-10-19"
+status: done
 description: MCP tools for channels with per-type JSON schemas and an untrusted-content notice, watch support for read_channel, and rela channel CLI with identity chosen by flag or env.
 ---
 

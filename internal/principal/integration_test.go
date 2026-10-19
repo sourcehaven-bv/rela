@@ -95,3 +95,62 @@ func TestValidateRunAs(t *testing.T) {
 		})
 	}
 }
+
+func TestRefuseRunAsEnv(t *testing.T) {
+	tests := []struct {
+		name    string
+		env     map[string]string
+		wantErr bool
+	}{
+		{name: "unset", env: map[string]string{}},
+		{name: "empty", env: map[string]string{principal.RunAsEnv: ""}},
+		{name: "set", env: map[string]string{principal.RunAsEnv: "system:ci"}, wantErr: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := principal.RefuseRunAsEnv(func(k string) (string, bool) {
+				v, ok := tt.env[k]
+				return v, ok
+			})
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("RefuseRunAsEnv() error = %v, wantErr %v", err, tt.wantErr)
+			}
+			if err != nil && !strings.Contains(err.Error(), principal.RunAsEnv) {
+				t.Errorf("error %q does not name %s", err, principal.RunAsEnv)
+			}
+		})
+	}
+}
+
+func TestIsRelaIdentity(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		user string
+		want bool
+	}{
+		{principal.UserRealtime, true}, {principal.UserScheduler, true}, {principal.UserAutomation, true}, {principal.UserProvisioner, true},
+		{principal.UserMail, true}, {principal.UserFSImport, true}, {principal.UserGCSweep, true}, {principal.UserPerfSeed, true},
+		{"system:webhook:github", true}, {"system:subscription:news", true},
+		{"system:ci", false}, {"system:job:nightly", false}, {"integration:bot", false}, {"alice", false},
+	} {
+		if got := principal.IsRelaIdentity(tc.user); got != tc.want {
+			t.Errorf("principal.IsRelaIdentity(%q) = %v, want %v", tc.user, got, tc.want)
+		}
+	}
+}
+
+func TestValidSystemName(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name string
+		want bool
+	}{
+		{"ci", true}, {"job:nightly", true}, {"a-b_c1", true},
+		{"", false}, {"job:", false}, {":ci", false}, {"Ci", false}, {"c i", false},
+		{"realtime\u200b", false}, {"\u202erealtime", false}, {"r\u0435altime", false},
+	} {
+		if got := principal.ValidSystemName(tc.name); got != tc.want {
+			t.Errorf("principal.ValidSystemName(%q) = %v, want %v", tc.name, got, tc.want)
+		}
+	}
+}

@@ -140,10 +140,11 @@ func ImportMarkdownData(
 		summary = fmt.Sprintf("markdown import from %s FAILED, nothing written: %s", fromDir, err)
 	}
 	opts.Audit.Record(audit.Record{
-		Time:      time.Now().UTC(),
-		Op:        audit.OpFSImport,
-		Principal: p,
-		Summary:   summary,
+		Time:       time.Now().UTC(),
+		Op:         audit.OpFSImport,
+		Principal:  p,
+		AssertedBy: audit.AssertedByFrom(ctx),
+		Summary:    summary,
 	})
 	if err != nil {
 		return rep, fmt.Errorf("import: %w", err)

@@ -41,6 +41,7 @@ func recordHistoryReveal(ctx context.Context, sink audit.Audit, entityType, enti
 		Subject:     &audit.Subject{Kind: "entity", Type: entityType, ID: entityID},
 		Principal:   principal.From(ctx),
 		TriggeredBy: audit.TriggeredByFrom(ctx),
+		AssertedBy:  audit.AssertedByFrom(ctx),
 		Summary:     "history_reveal=true version=" + strconv.Itoa(version),
 	})
 }

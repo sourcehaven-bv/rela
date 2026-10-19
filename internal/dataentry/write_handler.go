@@ -1839,6 +1839,7 @@ func (h *writeHandler) authorizeConflictResolve(
 		Subject:     conflictAuditSubject(e, rel),
 		Principal:   principal.From(ctx),
 		TriggeredBy: audit.TriggeredByFrom(ctx),
+		AssertedBy:  audit.AssertedByFrom(ctx),
 		Summary: fmt.Sprintf("denied: %s (rule_kind=%s rule_id=%s op=conflict-resolve)",
 			decision.Reason, decision.RuleKind, decision.RuleID),
 	})
@@ -1862,6 +1863,7 @@ func (h *writeHandler) recordConflictResolveAudit(
 		Subject:     conflictAuditSubject(e, rel),
 		Principal:   principal.From(ctx),
 		TriggeredBy: audit.TriggeredByFrom(ctx),
+		AssertedBy:  audit.AssertedByFrom(ctx),
 		Summary:     "resolved git conflict in " + relPath,
 	})
 }

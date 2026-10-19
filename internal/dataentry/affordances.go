@@ -621,6 +621,7 @@ func (a *App) denyAffordance(
 		Subject:     subject,
 		Principal:   principal.From(ctx),
 		TriggeredBy: audit.TriggeredByFrom(ctx),
+		AssertedBy:  audit.AssertedByFrom(ctx),
 		Summary:     summary,
 	})
 	writeAffordanceDenialError(w, denial)
