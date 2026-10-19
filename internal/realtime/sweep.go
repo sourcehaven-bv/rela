@@ -87,7 +87,9 @@ func systemAuthor() channels.Author {
 }
 
 // applyTransition moves key from expect to t through the store's
-// compare-and-set and tells m the channel changed. t.TriggeredBy names the
+// compare-and-set and tells m the channel changed. A person's request, the
+// sweep's `auto.after` and an `auto.when` rule all move channels through
+// it, each having checked expect against opFrom. t.TriggeredBy names the
 // rule behind a change no person made; the store keeps it in the audit
 // record.
 func applyTransition(
@@ -100,6 +102,12 @@ func applyTransition(
 	}
 	m.Mark(key)
 	return c, nil
+}
+
+// autoLabel is the triggered-by label of the automatic operation op of
+// channel type typ.
+func autoLabel(typ, op string) string {
+	return "auto:" + typ + "/" + op
 }
 
 // LifecycleReport is what one [Sweeper.RunLifecycle] did.
@@ -120,23 +128,19 @@ type autoStep struct {
 	from   []channels.State
 }
 
-// autoSteps returns the automatic steps ct declares with `after:`. An
-// operation without `from:` starts from its natural states: close from
-// open, archive from open and closed.
+// autoSteps returns the automatic steps ct declares with `after:`, each
+// starting from the states opFrom gives.
 func autoSteps(ct realtimecfg.ChannelType) []autoStep {
 	var out []autoStep
-	add := func(name string, op *realtimecfg.LifecycleOp, target channels.State, natural ...channels.State) {
+	for _, name := range []string{realtimecfg.LifecycleClose, realtimecfg.LifecycleArchive} {
+		op := ct.Lifecycle.Op(name)
 		if op == nil || op.Auto == nil || op.Auto.After.IsZero() {
-			return
+			continue
 		}
-		from := natural
-		if op.From != "" {
-			from = []channels.State{channels.State(op.From)}
-		}
-		out = append(out, autoStep{op: name, target: target, after: op.Auto.After, from: from})
+		out = append(out, autoStep{
+			op: name, target: lifecycleTarget(name), after: op.Auto.After, from: opFrom(name, op),
+		})
 	}
-	add("close", ct.Lifecycle.Close, channels.StateClosed, channels.StateOpen)
-	add("archive", ct.Lifecycle.Archive, channels.StateArchived, channels.StateOpen, channels.StateClosed)
 	return out
 }
 
@@ -190,7 +194,7 @@ func (s *Sweeper) runAutoStep(ctx context.Context, typ string, step autoStep, no
 				continue
 			}
 			_, err := applyTransition(ctx, s.store, s.marker, c.Key, from, channels.Transition{
-				To: step.target, By: systemAuthor(), At: now, TriggeredBy: "auto:" + typ + "/" + step.op,
+				To: step.target, By: systemAuthor(), At: now, TriggeredBy: autoLabel(typ, step.op),
 			})
 			switch {
 			case err == nil:

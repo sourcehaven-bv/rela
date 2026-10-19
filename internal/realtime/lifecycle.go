@@ -78,12 +78,11 @@ func (s *Service) Lifecycle(ctx context.Context, addr RawAddress, op string) (Ch
 		return ChannelView{}, nil
 	}
 	//nolint:contextcheck // c.ctx is ctx with the acl.Request attached; see .golangci.yml on realtime.
-	ch, err := s.store.SetLifecycle(c.ctx, c.key, c.head.State,
+	ch, err := applyTransition(c.ctx, s.store, s.local, c.key, c.head.State,
 		channels.Transition{To: target, By: authorOf(c.p), At: c.now})
 	if err != nil {
 		return ChannelView{}, storeError(err)
 	}
-	s.local.mark(c.key)
 	return channelView(ch.Key, &ch), nil
 }
 
@@ -120,10 +119,7 @@ func (c *call) lifecycleCheck(name string) (channels.State, error) {
 	if !c.gate(op.Gate) {
 		return "", gateDenied(TypeLifecycleDenied, name, rule, op.Gate, c.ct.Roles)
 	}
-	from := naturalFrom(name)
-	if op.From != "" {
-		from = []channels.State{channels.State(op.From)}
-	}
+	from := opFrom(name, op)
 	if !slices.Contains(from, c.head.State) {
 		names := make([]string, len(from))
 		for i, st := range from {
@@ -184,6 +180,16 @@ func retentionCheck(retention realtimecfg.Period, closedAt, now time.Time) error
 			"retention keeps this channel until "+until.UTC().Format(time.RFC3339))
 	}
 	return nil
+}
+
+// opFrom is the states the operation name starts from: op's `from:` when
+// set, its natural states otherwise. A request, the sweep's `auto.after`
+// and an `auto.when` rule all ask it, so they agree on what may move.
+func opFrom(name string, op *realtimecfg.LifecycleOp) []channels.State {
+	if op.From != "" {
+		return []channels.State{channels.State(op.From)}
+	}
+	return naturalFrom(name)
 }
 
 // naturalFrom is the states an operation starts from when its `from:` is
