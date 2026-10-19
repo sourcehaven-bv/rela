@@ -370,6 +370,9 @@ func (s *Store) appendTarget(
 	if err == nil {
 		err = channels.CheckAppendIncarnation(k, r.c.Incarnation, nm.Incarnation)
 	}
+	if err == nil {
+		err = channels.CheckAppendState(r.c.State, nm)
+	}
 	return r, false, err
 }
 

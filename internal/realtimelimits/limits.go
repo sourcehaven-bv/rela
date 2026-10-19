@@ -88,6 +88,48 @@ const (
 	PendingRelease = 15 * time.Minute
 )
 
+// Pace and caps of the trigger engine.
+const (
+	// TriggerTick is how often the engine looks at the entities that
+	// changed. Changes inside one tick are seen together, so an entity
+	// that starts and stops matching between two ticks posts nothing.
+	TriggerTick = 500 * time.Millisecond
+	// TriggerReconcile is how often the engine compares every entity with
+	// what it has seen. It catches changes that raised no event, such as a
+	// rule on today() that starts to hold or an event the store dropped.
+	TriggerReconcile = 15 * time.Minute
+	// MaxTriggerPending caps the changed entities the engine holds between
+	// ticks. Past it, the changes of a type are dropped and the type is
+	// compared in full at the next tick instead.
+	MaxTriggerPending = 8192
+	// MaxSystemPostsPerRound caps the posts the engine attempts in one
+	// tick, shared by its rules in turn. Every attempt counts, whether it
+	// posts, finds the channel closed or fails. The rest wait in their
+	// rule's queue for later ticks.
+	MaxSystemPostsPerRound = 64
+	// MaxTriggerQueue caps the posts waiting in the rules' queues. Past it
+	// a post is not queued and its change is not counted as seen, so the
+	// next reconcile finds it again.
+	MaxTriggerQueue = 65536
+	// TriggerCooldown is the least time between two posts of one trigger
+	// about one entity. Changes in between are seen together when it ends.
+	TriggerCooldown = time.Minute
+	// TriggerRetryWindow is how long the engine retries a post that fails
+	// for a reason that may pass, such as a database failover. Then it
+	// logs the failure and counts the change as seen, so it never repeats a
+	// post forever. A post that can never succeed, such as one whose props
+	// no longer fit the message type, is given up at once.
+	TriggerRetryWindow = 5 * time.Minute
+	// TriggerRetryMaxDelay caps the wait between two retries, which
+	// doubles from [TriggerTick].
+	TriggerRetryMaxDelay = time.Minute
+	// SeenPerShard is how many seen entities one stored shard of a rule
+	// holds before the rule is split over more shards.
+	SeenPerShard = 2048
+	// MaxSeenShards caps the shards of one rule.
+	MaxSeenShards = 256
+)
+
 // Rate is a token-bucket rate: Count events per Per.
 type Rate struct {
 	Count int

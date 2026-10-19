@@ -104,6 +104,9 @@ func (s *Store) appendTarget(k channels.Key, nm channels.NewMessage) (m *meta, c
 	if err == nil {
 		err = channels.CheckAppendIncarnation(k, m.Incarnation, nm.Incarnation)
 	}
+	if err == nil {
+		err = channels.CheckAppendState(m.State, nm)
+	}
 	return m, false, err
 }
 

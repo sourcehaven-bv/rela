@@ -151,7 +151,12 @@ func loadRealtime(ctx context.Context, r configReader, meta *metamodel.Metamodel
 	if err != nil {
 		return nil, err
 	}
-	return realtimecfg.Parse(data, meta, p)
+	//nolint:contextcheck // Parse takes no ctx: checking a trigger's literal props against when: does no I/O
+	c, err := realtimecfg.Parse(data, meta, p)
+	for _, w := range c.Warnings() {
+		slog.Warn("realtime.yaml: part of the file is not in force", "key", w.Key, "reason", w.Reason)
+	}
+	return c, err
 }
 
 // newRealtimeConfig loads realtime.yaml for a base. The policy is the one

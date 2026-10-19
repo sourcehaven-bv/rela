@@ -37,9 +37,10 @@ func storeChannelsFor(st store.Store) channels.Store {
 const realtimeWorkerLockKey = "realtime-worker"
 
 // storeLeaderLockFor returns the realtime worker lock on st's database: a
-// keyed advisory lock tried once per run (see [pgstore.TryKeyedLock]), so
-// every rela-server process on the schema contends on one lock and none
-// waits on it.
+// keyed advisory lock (see [pgstore.TryKeyedLock]) that the leader holds
+// for as long as it leads, and that the other rela-server processes on the
+// schema try now and then without waiting. Its check is a round trip on
+// the lock's session, so the leader learns when the database dropped it.
 //
 // Nil: returned when st is not a pgstore; the caller falls back to a lock
 // file.
@@ -47,7 +48,11 @@ func storeLeaderLockFor(st store.Store) leaderLock {
 	if pgstore.HandleFor(st) == nil {
 		return nil
 	}
-	return func(ctx context.Context) (func(), bool, error) {
-		return pgstore.TryKeyedLock(ctx, st, realtimeWorkerLockKey)
+	return func(ctx context.Context) (heldLock, bool, error) {
+		l, ok, err := pgstore.TryKeyedLock(ctx, st, realtimeWorkerLockKey)
+		if err != nil || !ok {
+			return heldLock{}, ok, err
+		}
+		return heldLock{release: l.Release, check: l.Check}, true, nil
 	}
 }

@@ -10,6 +10,7 @@ type ChannelAuthor struct {
 	User          string `json:"user"`
 	Tool          string `json:"tool,omitempty"`
 	PrincipalType string `json:"principal_type,omitempty"`
+	System        bool   `json:"system,omitempty"`
 }
 
 // Channel is a channel's metadata. Name is set only for a channel type with
@@ -112,18 +113,19 @@ type MessageAction struct {
 // actions the reader may run on the message now; the POST to
 // `messages/{seq}/_action/{name}` answers the same.
 type Message struct {
-	Seq        int64           `json:"seq"`
-	Rev        int64           `json:"rev"`
-	Type       string          `json:"type,omitempty"`
-	Author     *ChannelAuthor  `json:"author,omitempty"`
-	At         string          `json:"at,omitempty"`
-	Props      map[string]any  `json:"props,omitempty"`
-	ReplyTo    int64           `json:"reply_to,omitempty"`
-	ReplyCount int             `json:"reply_count,omitempty"`
-	EditedAt   string          `json:"edited_at,omitempty"`
-	Removed    *MessageRemoval `json:"removed,omitempty"`
-	Action     *MessageAction  `json:"action,omitempty"`
-	Actions    []string        `json:"_actions,omitempty"`
+	Seq         int64           `json:"seq"`
+	Rev         int64           `json:"rev"`
+	Type        string          `json:"type,omitempty"`
+	Author      *ChannelAuthor  `json:"author,omitempty"`
+	At          string          `json:"at,omitempty"`
+	Props       map[string]any  `json:"props,omitempty"`
+	ReplyTo     int64           `json:"reply_to,omitempty"`
+	ReplyCount  int             `json:"reply_count,omitempty"`
+	EditedAt    string          `json:"edited_at,omitempty"`
+	TriggeredBy string          `json:"triggered_by,omitempty"`
+	Removed     *MessageRemoval `json:"removed,omitempty"`
+	Action      *MessageAction  `json:"action,omitempty"`
+	Actions     []string        `json:"_actions,omitempty"`
 }
 
 // MessageActionResponse answers an action: the message after it, and the

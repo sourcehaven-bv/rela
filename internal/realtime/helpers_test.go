@@ -37,6 +37,7 @@ entities:
       owner: {type: string}
       watchers: {type: string, list: true}
       status: {type: string}
+      due: {type: date}
   doc:
     label: Doc
     id_prefix: DOC

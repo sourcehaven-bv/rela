@@ -394,6 +394,7 @@ func addChannelSchemas(spec *Spec) {
 	sc := spec.Components.Schemas
 	sc[channelAuthorRef] = ObjectSchema(map[string]*Schema{
 		"user": str(), "tool": str(), "principal_type": str(),
+		"system": {Type: "boolean", Description: "Set on a message a trigger posted"},
 	}, []string{"user"})
 	sc[refPropSchema] = &Schema{
 		Type:        "object",
@@ -425,6 +426,8 @@ func addChannelSchemas(spec *Spec) {
 			"seq": i64(), "rev": i64(), "type": str(), "author": Ref(channelAuthorRef), "at": dateTimeSchema(),
 			"props":    {Type: "object", AdditionalProperties: &Schema{}},
 			"reply_to": i64(), "reply_count": i64(), "edited_at": dateTimeSchema(),
+			"triggered_by": {Type: "string",
+				Description: "trigger:<name> of the trigger that posted the message; absent for a person's"},
 			"removed": ObjectSchema(map[string]*Schema{
 				"at":     dateTimeSchema(),
 				"kind":   {Type: "string", Enum: []string{"author", "moderator"}},

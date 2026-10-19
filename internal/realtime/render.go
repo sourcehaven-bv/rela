@@ -14,6 +14,9 @@ type AuthorView struct {
 	User          string `json:"user"`
 	Tool          string `json:"tool,omitempty"`
 	PrincipalType string `json:"principal_type,omitempty"`
+	// System is set on a message a trigger posted, so a client tells it
+	// from a person's without reading the user name.
+	System bool `json:"system,omitempty"`
 }
 
 func authorView(a channels.Author) AuthorView {
@@ -67,6 +70,9 @@ type MessageView struct {
 	EditedAt   time.Time      `json:"edited_at,omitzero"`
 	Removed    *RemovedView   `json:"removed,omitempty"`
 	Action     *ActionView    `json:"action,omitempty"`
+	// TriggeredBy names the trigger that posted the message, as
+	// "trigger:<name>"; empty for a message a person or agent posted.
+	TriggeredBy string `json:"triggered_by,omitempty"`
 	// Actions lists the actions the reader may run on the message now,
 	// sorted. Nil when there are none.
 	Actions []string `json:"_actions,omitempty"`
@@ -215,7 +221,8 @@ func (r *renderer) message(m channels.Message) MessageView {
 		return v
 	}
 	a := authorView(m.Author)
-	v.Type, v.Author, v.At, v.EditedAt = m.Type, &a, m.At, m.EditedAt
+	a.System = m.TriggeredBy != ""
+	v.Type, v.Author, v.At, v.EditedAt, v.TriggeredBy = m.Type, &a, m.At, m.EditedAt, m.TriggeredBy
 	v.Props = r.props(m.Type, m.Props)
 	if m.Action != nil {
 		av := &ActionView{Name: m.Action.Name, Status: m.Action.Status, At: m.Action.At}

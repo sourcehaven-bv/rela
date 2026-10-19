@@ -1631,7 +1631,9 @@ deps:
   # The channel service (TKT-ZU7P13): authorization, validation, rate limits
   # and ephemeral signals over the channel store. Every gate comes in through
   # a consumer-side interface appbuild implements, so it lists neither acl,
-  # store nor visibility.
+  # store nor visibility. The trigger engine (TKT-R0Z2G4) posts through the
+  # channel store alone: this list keeps lua, automation and entitymanager
+  # out of its reach, so a trigger can never run a script or write the graph.
   realtime:
     mayDependOn:
       - channels

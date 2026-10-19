@@ -440,22 +440,30 @@ func (s *Service) postSignal(
 // no longer has. It compares shapes, not config generations, so a reload
 // that leaves this type's shape alone refuses nothing.
 func (s *Service) record(c *call) error {
-	rec := typeRecord(c.ct)
-	if s.local.needsRecord(c.ct.Name, rec) {
-		err := s.store.RecordTypes(c.ctx, map[string]channels.TypeRecord{c.ct.Name: rec})
+	return recordType(c.ctx, s.store, s.local, s.cfg, c.snap, c.ct)
+}
+
+// recordType is Service.record for any writer of ct's channels under
+// snap: the channel service and the trigger engine.
+func recordType(
+	ctx context.Context, st channels.Store, local *Local, cfg ConfigSource, snap Snapshot, ct realtimecfg.ChannelType,
+) error {
+	rec := typeRecord(ct)
+	if local.needsRecord(ct.Name, rec) {
+		err := st.RecordTypes(ctx, map[string]channels.TypeRecord{ct.Name: rec})
 		if errors.Is(err, channels.ErrTypeShapeConflict) {
-			s.local.forgetStoredRefs()
-			return typeConflict(c.ct.Name)
+			local.forgetStoredRefs()
+			return typeConflict(ct.Name)
 		}
 		if err != nil {
-			return fmt.Errorf("realtime: record channel type %s: %w", c.ct.Name, err)
+			return fmt.Errorf("realtime: record channel type %s: %w", ct.Name, err)
 		}
-		s.local.noteRecorded(c.ct.Name, rec)
+		local.noteRecorded(ct.Name, rec)
 	}
-	live := s.cfg.Load().Config
-	if live != c.snap.Config {
-		ct, ok := live.ChannelType(c.ct.Name)
-		if !ok || !typeRecord(ct).Equal(rec) {
+	live := cfg.Load().Config
+	if live != snap.Config {
+		lct, ok := live.ChannelType(ct.Name)
+		if !ok || !typeRecord(lct).Equal(rec) {
 			return configChanged()
 		}
 	}

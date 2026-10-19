@@ -2,6 +2,7 @@ package appbuild
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"testing"
 	"time"
@@ -14,10 +15,12 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/channels"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
+	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/realtime"
 	"github.com/Sourcehaven-BV/rela/internal/realtimelimits"
 	"github.com/Sourcehaven-BV/rela/internal/statemachine"
 	"github.com/Sourcehaven-BV/rela/internal/storage"
+	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/store/memstore"
 )
 
@@ -274,10 +277,11 @@ func TestRealtimeLeaderLock(t *testing.T) {
 	st := memstore.New()
 	l, err := realtimeLeaderLock(nil, "", st)
 	require.NoError(t, err)
-	release, ok, err := l(t.Context())
+	held, ok, err := l(t.Context())
 	require.NoError(t, err)
 	require.True(t, ok)
-	release()
+	require.Nil(t, held.check, "the memory lock cannot be lost")
+	held.release()
 
 	dir := t.TempDir()
 	a, err := realtimeLeaderLock(storage.NewSafeFS(storage.NewOsFS()), dir, st)
@@ -291,11 +295,11 @@ func TestRealtimeLeaderLock(t *testing.T) {
 	_, ok, err = b(t.Context())
 	require.NoError(t, err)
 	assert.False(t, ok, "a second process does not take a held lock")
-	releaseA()
+	releaseA.release()
 	releaseB, ok, err := b(t.Context())
 	require.NoError(t, err)
 	assert.True(t, ok, "the lock passes on once released")
-	releaseB()
+	releaseB.release()
 }
 
 // switchLock is a worker lock another process may hold. It counts the runs
@@ -303,25 +307,49 @@ func TestRealtimeLeaderLock(t *testing.T) {
 type switchLock struct {
 	mu       sync.Mutex
 	other    bool
+	lost     bool
 	err      error
 	granted  int
 	refused  int
 	attempts int
+	released int
 }
 
-func (l *switchLock) take(context.Context) (release func(), ok bool, err error) {
+func (l *switchLock) take(context.Context) (lock heldLock, ok bool, err error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	l.attempts++
 	if l.err != nil {
-		return nil, false, l.err
+		return heldLock{}, false, l.err
 	}
 	if l.other {
 		l.refused++
-		return nil, false, nil
+		return heldLock{}, false, nil
 	}
 	l.granted++
-	return func() {}, true, nil
+	l.lost = false
+	return heldLock{
+		release: func() {
+			l.mu.Lock()
+			defer l.mu.Unlock()
+			l.released++
+		},
+		check: func(context.Context) error {
+			l.mu.Lock()
+			defer l.mu.Unlock()
+			if l.lost {
+				return errors.New("session gone")
+			}
+			return nil
+		},
+	}, true, nil
+}
+
+// lose drops the held lock's session and hands the lock to another process.
+func (l *switchLock) lose() {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.lost, l.other = true, true
 }
 
 func (l *switchLock) set(other bool, err error) {
@@ -357,8 +385,19 @@ func newWorkerFixture(t *testing.T) workerFixture {
 		Marker: local, Clock: time.Now,
 	})
 	require.NoError(t, err)
+	meta, err := metamodel.Parse([]byte(guardSchema))
+	require.NoError(t, err)
+	rows, err := newEntitySource(st, store.WorldScope{})
+	require.NoError(t, err)
+	triggers, err := realtime.NewTriggers(realtime.TriggerDeps{
+		Store: cs, Config: realtimeConfigSource{}, Local: local, Meta: meta,
+		Rows: rows, Seen: &mapKV{m: map[string][]byte{}},
+	})
+	require.NoError(t, err)
 	l := &switchLock{}
-	w, err := newRealtimeWorker(sweeper, l.take, tombs.wake)
+	w, err := newRealtimeWorker(realtimeWorkerParts{
+		sweeper: sweeper, triggers: triggers, changes: st, lock: l.take, wake: tombs.wake,
+	})
 	require.NoError(t, err)
 	return workerFixture{cs: cs, tombs: tombs, w: w, lock: l}
 }
@@ -378,7 +417,7 @@ func (f workerFixture) fileDue(ctx context.Context, t *testing.T, id string) {
 func TestRealtimeWorker_RunsAndStops(t *testing.T) {
 	ctx := context.Background()
 	f := newWorkerFixture(t)
-	_, err := newRealtimeWorker(nil, nil, nil)
+	_, err := newRealtimeWorker(realtimeWorkerParts{})
 	require.Error(t, err)
 	f.fileDue(ctx, t, "GONE-1")
 
@@ -408,8 +447,9 @@ func TestRealtimeWorker_RunsAndStops(t *testing.T) {
 	}
 }
 
-// While another process holds the lock, every run is skipped at once and
-// erases nothing; once that process lets go, the next run takes over.
+// While another process holds the lock, the worker only tries to take it,
+// on its takeover timer or a wake, and erases nothing. Once that process
+// lets go, the worker takes over and holds the lock until it stops.
 func TestRealtimeWorker_SkipsWhileHeldElsewhereThenTakesOver(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -420,25 +460,78 @@ func TestRealtimeWorker_SkipsWhileHeldElsewhereThenTakesOver(t *testing.T) {
 	done := make(chan struct{})
 	go func() { f.w.run(ctx); close(done) }()
 	require.Eventually(t, func() bool { _, refused, _ := f.lock.counts(); return refused == 1 },
-		5*time.Second, 10*time.Millisecond, "the start run is refused")
+		5*time.Second, 10*time.Millisecond, "the start attempt is refused")
 	f.tombs.ping()
 	require.Eventually(t, func() bool { _, refused, _ := f.lock.counts(); return refused == 2 },
-		5*time.Second, 10*time.Millisecond, "a wake run is refused, not queued behind the lock")
-	assert.Len(t, batchesOf(t, f.cs, "GONE-1"), 1, "a refused run erases nothing")
+		5*time.Second, 10*time.Millisecond, "a wake tries again, not queued behind the lock")
+	assert.Len(t, batchesOf(t, f.cs, "GONE-1"), 1, "a follower erases nothing")
 
 	f.lock.set(false, errDiskFull)
 	f.tombs.ping()
 	require.Eventually(t, func() bool { _, _, attempts := f.lock.counts(); return attempts == 3 },
 		5*time.Second, 10*time.Millisecond)
-	assert.Len(t, batchesOf(t, f.cs, "GONE-1"), 1, "a lock error skips the run")
+	assert.Len(t, batchesOf(t, f.cs, "GONE-1"), 1, "a lock error leads to nothing")
 
-	// The holder stopped: the next run takes over.
+	// The holder stopped: the next attempt takes over.
 	f.lock.set(false, nil)
 	f.tombs.ping()
 	require.Eventually(t, func() bool { return len(batchesOf(t, f.cs, "GONE-1")) == 0 },
-		5*time.Second, 10*time.Millisecond, "the next run takes over")
-	granted, _, _ := f.lock.counts()
+		5*time.Second, 10*time.Millisecond, "the next attempt takes over")
+	f.fileDue(ctx, t, "GONE-2")
+	f.tombs.ping()
+	require.Eventually(t, func() bool { return len(batchesOf(t, f.cs, "GONE-2")) == 0 },
+		5*time.Second, 10*time.Millisecond, "the leader purges on a wake")
+	granted, _, attempts := f.lock.counts()
 	assert.Equal(t, 1, granted)
+	assert.Equal(t, 4, attempts, "the leader keeps the lock rather than taking it per run")
+	cancel()
+	<-done
+	f.lock.mu.Lock()
+	assert.Equal(t, 1, f.lock.released, "the lock is released when the worker stops")
+	f.lock.mu.Unlock()
+}
+
+// A leader whose lock check fails stops leading: it stops noting changes,
+// releases the lock and goes back to trying it, and leads again once it
+// gets it.
+func TestRealtimeWorker_StepsDownOnLostLock(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	f := newWorkerFixture(t)
+	f.w.takeover = 10 * time.Millisecond
+	done := make(chan struct{})
+	go func() { f.w.run(ctx); close(done) }()
+	require.Eventually(t, f.w.leading.Load, 5*time.Second, 5*time.Millisecond)
+	f.lock.lose()
+	require.Eventually(t, func() bool { return !f.w.leading.Load() }, 5*time.Second, 5*time.Millisecond,
+		"a lost lock ends the lead")
+	require.Eventually(t, func() bool { _, refused, _ := f.lock.counts(); return refused >= 1 },
+		5*time.Second, 5*time.Millisecond, "and the worker tries the lock again")
+	f.lock.mu.Lock()
+	assert.Equal(t, 1, f.lock.released)
+	f.lock.mu.Unlock()
+	f.lock.set(false, nil)
+	require.Eventually(t, func() bool { granted, _, _ := f.lock.counts(); return granted == 2 },
+		5*time.Second, 5*time.Millisecond, "it leads again once the lock is free")
+	require.Eventually(t, f.w.leading.Load, 5*time.Second, 5*time.Millisecond)
+	cancel()
+	<-done
+}
+
+// A follower tries the lock again on its takeover timer, without a wake.
+func TestRealtimeWorker_TakeoverTimer(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	f := newWorkerFixture(t)
+	f.w.takeover = 10 * time.Millisecond
+	f.lock.set(true, nil)
+	done := make(chan struct{})
+	go func() { f.w.run(ctx); close(done) }()
+	require.Eventually(t, func() bool { _, refused, _ := f.lock.counts(); return refused >= 3 },
+		5*time.Second, 5*time.Millisecond)
+	f.lock.set(false, nil)
+	require.Eventually(t, func() bool { granted, _, _ := f.lock.counts(); return granted == 1 },
+		5*time.Second, 5*time.Millisecond)
 	cancel()
 	<-done
 }

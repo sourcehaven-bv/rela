@@ -177,6 +177,12 @@ func TestParse_Golden(t *testing.T) {
 	if !slices.Equal(tr.When.Fields, []string{"due", "severity"}) {
 		t.Errorf("trigger fields = %v", tr.When.Fields)
 	}
+	if tr.WhenClosed != WhenClosedSkip || !strings.Contains(tr.When.Source, "days_between") {
+		t.Errorf("trigger when_closed = %q, source = %q", tr.WhenClosed, tr.When.Source)
+	}
+	if w := c.Warnings(); len(w) != 0 {
+		t.Errorf("warnings = %v", w)
+	}
 
 	want := []string{"incident.decide", "privacy.officer", "records.delete"}
 	if got := c.UsedPermissions(); !slices.Equal(got, want) {
@@ -428,6 +434,19 @@ func TestParse_Invalid(t *testing.T) {
 		{"detached retention below the orphan grace", []replace{{"detached_retention: 90d", "detached_retention: 30m"}},
 			"channel_types.incident-room.detached_retention", "at least 1h0m0s"},
 		{"limit int", []replace{{"page_limit: 100", "page_limit: 500"}}, "limits.page_limit", "between 1 and 200"},
+		{"trigger ephemeral post type", []replace{{"post: { type: status-update, props: { summary: \"Severity raised to high\", severity: high } }",
+			"post: { type: typing }"}}, "triggers.breach-escalated.post.type", "is ephemeral"},
+		{"trigger props fail when", []replace{{`when: "message.severity ~= ''"`,
+			`when: "message.summary == 'x'"`}}, "triggers.breach-escalated.post.props", "when: condition"},
+		{"trigger message when on today", []replace{{`when: "message.severity ~= ''"`,
+			`when: "message.severity ~= '' or today() == today()"`}}, "triggers.breach-escalated.post.props", "calls today()"},
+		{"trigger prop over max", []replace{{"summary:  { type: string, required: true }",
+			"summary:  { type: string, required: true, max: 5 }"}}, "triggers.breach-escalated.post.props.summary",
+			"max of 5"},
+		{"trigger prop over message_bytes", []replace{{"page_limit: 100", "page_limit: 100\n  message_bytes: 20"}},
+			"triggers.breach-escalated.post.props", "over message_bytes"},
+		{"trigger when_closed", []replace{{"channel: incident-room\n", "channel: incident-room\n    when_closed: drop\n"}},
+			"triggers.breach-escalated.when_closed", "skip or post"},
 	}
 	meta, policy := testMeta(t), testPolicy(t)
 	base := golden(t)
@@ -629,5 +648,84 @@ func TestPeriod(t *testing.T) {
 	}
 	if !(Period{}).IsZero() {
 		t.Error("zero Period is not IsZero")
+	}
+}
+
+// TestParse_FamilyFacedUnderFaceGrants pins D5: a trigger on a faced type
+// that posts into a family-anchored channel is left out with a warning when
+// acl.yaml admits readers through other faces, and the rest of the file
+// stays in force. With anchor: face it loads.
+func TestParse_FamilyFacedUnderFaceGrants(t *testing.T) {
+	const src = `version: 1
+channel_types:
+  page-room:
+    attach_to: [page]
+    roles: { member: { from: attached } }
+    message_types:
+      note:
+        properties: { body: { type: string } }
+        post: [member]
+triggers:
+  page-owned:
+    entity_type: page
+    on: enter
+    when: "entity.owner ~= ''"
+    channel: page-room
+    post: { type: note, props: { body: owned } }
+`
+	policy, err := acl.ParsePolicy([]byte("roles:\n  drafter:\n    read: [page@draft]\n"), "acl.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name     string
+		src      string
+		policy   *acl.Policy
+		triggers int
+		warn     bool
+	}{
+		{"family under face grants", src, policy, 0, true},
+		{"family without face grants", src, nil, 1, false},
+		{"face anchor", strings.Replace(src, "attach_to: [page]", "attach_to: [page]\n    anchor: face", 1), policy, 1, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c, err := Parse([]byte(tc.src), testMeta(t), tc.policy)
+			if err != nil {
+				t.Fatalf("Parse: %v", err)
+			}
+			if got := len(c.Triggers()); got != tc.triggers {
+				t.Errorf("triggers = %d; want %d", got, tc.triggers)
+			}
+			if _, ok := c.ChannelType("page-room"); !ok {
+				t.Error("the channel type was dropped with the trigger")
+			}
+			w := c.Warnings()
+			if tc.warn != (len(w) == 1) || (tc.warn && w[0].Key != "triggers.page-owned") {
+				t.Errorf("warnings = %v", w)
+			}
+		})
+	}
+}
+
+func TestFacesRestricted(t *testing.T) {
+	if facesRestricted(nil, "page") {
+		t.Fatal("a nil policy restricted faces")
+	}
+	for _, tc := range []struct {
+		name string
+		role acl.RoleDef
+		want bool
+	}{
+		{"a face-named read grant", acl.RoleDef{Read: []string{"page@draft"}}, true},
+		{"a whole-type read grant", acl.RoleDef{Read: []string{"page", "*"}}, false},
+		{"another type's face grant", acl.RoleDef{Read: []string{"memo@draft"}}, false},
+		{"a world grant", acl.RoleDef{Worlds: []string{"published"}}, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			p := &acl.Policy{Roles: map[string]acl.RoleDef{"r": tc.role}}
+			if got := facesRestricted(p, "page"); got != tc.want {
+				t.Fatalf("facesRestricted(page) = %v; want %v", got, tc.want)
+			}
+		})
 	}
 }

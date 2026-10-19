@@ -1,16 +1,20 @@
 package realtimecfg
 
 import (
+	"context"
+	"encoding/json"
 	"fmt"
 	"regexp"
 	"slices"
 	"sort"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/predicate"
+	"github.com/Sourcehaven-BV/rela/internal/predicatefns"
 	"github.com/Sourcehaven-BV/rela/internal/realtimelimits"
 )
 
@@ -31,11 +35,17 @@ type validator struct {
 	meta     *metamodel.Metamodel
 	policy   *acl.Policy
 	problems []Problem
+	warnings []Problem
 	perms    map[string]bool
 }
 
 func (v *validator) add(key, reason string) {
 	v.problems = append(v.problems, Problem{Key: key, Reason: reason})
+}
+
+// warn records a part of the file that is left out rather than refused.
+func (v *validator) warn(key, reason string) {
+	v.warnings = append(v.warnings, Problem{Key: key, Reason: reason})
 }
 
 func (v *validator) compile(raw *rawFile) *Compiled {
@@ -56,10 +66,11 @@ func (v *validator) compile(raw *rawFile) *Compiled {
 	}
 	for _, name := range sortedKeys(raw.Triggers) {
 		rt := raw.Triggers[name]
-		if t := v.trigger(name, &rt, raw); t != nil {
+		if t := v.trigger(name, &rt, raw, c); t != nil {
 			c.triggers[name] = t
 		}
 	}
+	c.warnings = v.warnings
 	for p := range v.perms {
 		c.permissions = append(c.permissions, p)
 	}
@@ -692,7 +703,7 @@ func (v *validator) period(key, s string) Period {
 	return p
 }
 
-func (v *validator) trigger(name string, raw *rawTrigger, file *rawFile) *Trigger {
+func (v *validator) trigger(name string, raw *rawTrigger, file *rawFile, c *Compiled) *Trigger {
 	key := "triggers." + name
 	if !namePattern.MatchString(name) {
 		v.add(key, "trigger name "+nameRule)
@@ -704,6 +715,14 @@ func (v *validator) trigger(name string, raw *rawTrigger, file *rawFile) *Trigge
 		t.On = TriggerOn(raw.On)
 	default:
 		v.add(key+".on", fmt.Sprintf("must be enter, leave or change, got %q", raw.On))
+	}
+	switch WhenClosed(orDefault(raw.WhenClosed, string(WhenClosedSkip))) {
+	case WhenClosedSkip:
+		t.WhenClosed = WhenClosedSkip
+	case WhenClosedPost:
+		t.WhenClosed = WhenClosedPost
+	default:
+		v.add(key+".when_closed", fmt.Sprintf("must be skip or post, got %q", raw.WhenClosed))
 	}
 	if !v.meta.HasEntityType(raw.EntityType) {
 		v.add(key+".entity_type", fmt.Sprintf("unknown entity type %q", raw.EntityType))
@@ -735,8 +754,83 @@ func (v *validator) trigger(name string, raw *rawTrigger, file *rawFile) *Trigge
 		v.add(key+".post.type", fmt.Sprintf("channel type %s has no message type %q", raw.Channel, raw.Post.Type))
 		return t
 	}
+	if Persist(mt.Persist) == PersistEphemeral {
+		v.add(key+".post.type", fmt.Sprintf("message type %s is ephemeral; a trigger posts only log messages, "+
+			"because a signal would reach only the readers connected to the process that runs triggers", raw.Post.Type))
+		return t
+	}
 	v.triggerProps(key+".post.props", raw.Post.Props, &mt, t)
+	if cmt := compiledMessageType(c, raw.Channel, raw.Post.Type); cmt != nil {
+		v.triggerMessage(key+".post.props", cmt, t, c.limits)
+	}
+	if v.facesUnsafe(raw.EntityType, c, raw.Channel) {
+		v.warn(key, fmt.Sprintf("left out: %s declares faces and acl.yaml lets some readers see a face other "+
+			"than the default world's, so a message about the family would describe a face they may not "+
+			"see; use a channel type with anchor: face", raw.EntityType))
+		return nil
+	}
 	return t
+}
+
+// compiledMessageType returns the compiled message type, or nil when its
+// channel type did not compile.
+func compiledMessageType(c *Compiled, channel, name string) *MessageType {
+	ct, ok := c.channelTypes[channel]
+	if !ok {
+		return nil
+	}
+	return ct.MessageTypes[name]
+}
+
+// triggerMessage checks the message a trigger posts as the service will
+// when it posts it: each literal within its property's max, the whole
+// within message_bytes, and the message type's `when:` holding. A trigger
+// whose message the service would refuse could never post.
+func (v *validator) triggerMessage(key string, mt *MessageType, t *Trigger, limits Limits) {
+	props := make(map[string]any, len(t.Props))
+	for _, pn := range sortedKeys(t.Props) {
+		val := t.Props[pn]
+		props[pn] = val
+		if p, ok := mt.Properties[pn]; ok && p.Max > 0 && utf8.RuneCountInString(val) > p.Max {
+			v.add(key+"."+pn, fmt.Sprintf("is longer than the property's max of %d characters", p.Max))
+		}
+	}
+	if raw, err := json.Marshal(props); err == nil && len(raw) > limits.MessageBytes {
+		v.add(key, fmt.Sprintf("the message is over message_bytes (%d bytes)", limits.MessageBytes))
+	}
+	if mt.When == nil {
+		return
+	}
+	// A when: on today() would make the file load on one day and fail on
+	// the next, so it is refused rather than evaluated at an arbitrary date.
+	if slices.Contains(mt.When.Functions(), predicatefns.FuncToday) {
+		v.add(key, "the when: condition of message type "+mt.Name+" calls today(), so whether this "+
+			"trigger's message meets it would depend on the date")
+		return
+	}
+	fields := make(map[string]predicate.Value, len(mt.Properties))
+	for name := range mt.Properties {
+		fields[name] = predicate.NewNil()
+		if val, ok := t.Props[name]; ok {
+			fields[name] = predicate.NewString(val)
+		}
+	}
+	if !mt.Holds(context.Background(), fields, time.Time{}) {
+		v.add(key, "the message does not meet the when: condition of message type "+mt.Name)
+	}
+}
+
+// facesUnsafe reports whether a rule over entityType that acts on a
+// family-anchored channel would read a face some channel reader may not
+// see: the type declares faces and the policy admits readers through other
+// faces (see facesRestricted).
+func (v *validator) facesUnsafe(entityType string, c *Compiled, channel string) bool {
+	ct, ok := c.channelTypes[channel]
+	if !ok || ct.Anchor != AnchorFamily {
+		return false
+	}
+	def, ok := v.meta.GetEntityDef(entityType)
+	return ok && len(def.Faces) > 0 && facesRestricted(v.policy, entityType)
 }
 
 // triggerProps checks a trigger's literal property values against the
@@ -783,4 +877,29 @@ func sortedKeys[V any](m map[string]V) []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+// facesRestricted reports whether p may admit some reader to entityType
+// through a face other than the default world's prime face: a role reads
+// it through a face-named grant (type@face) or reads another world. A
+// value derived from the prime face is then not one every reader of the
+// family sees. Like [acl.Policy.FieldRestricted] the answer is policy-wide
+// and principal-independent.
+//
+// Nil: p is accepted and restricts nothing (no acl.yaml).
+func facesRestricted(p *acl.Policy, entityType string) bool {
+	if p == nil {
+		return false
+	}
+	for _, role := range p.Roles {
+		if len(role.Worlds) > 0 {
+			return true
+		}
+		for _, key := range role.Read {
+			if strings.HasPrefix(key, entityType+"@") {
+				return true
+			}
+		}
+	}
+	return false
 }

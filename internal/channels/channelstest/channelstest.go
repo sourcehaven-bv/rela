@@ -57,6 +57,7 @@ func RunAll(t *testing.T, newHarness func(t *testing.T) Harness) {
 		fn   func(t *testing.T, h Harness)
 	}{
 		{"ImplicitChannelOnFirstAppend", testImplicitCreate},
+		{"AppendRequireOpen", testAppendRequireOpen},
 		{"NamedChannelMustExist", testNamedMustExist},
 		{"GaplessSeqUnderConcurrency", testGapless},
 		{"Paging", testPaging},
@@ -116,6 +117,31 @@ func RunAll(t *testing.T, newHarness func(t *testing.T) Harness) {
 			tc.fn(t, newHarness(t))
 		})
 	}
+}
+
+// testAppendRequireOpen pins [channels.NewMessage.RequireOpen]: an append
+// that requires an open channel creates an implicit one, appends to an open
+// one, and is refused by a closed or archived one, which an append without
+// it still reaches.
+func testAppendRequireOpen(t *testing.T, h Harness) {
+	t.Helper()
+	s, ctx := h.Store, context.Background()
+	k := key("TKT-1", "room")
+	m := text("first")
+	m.RequireOpen = true
+	mustAppend(t, s, k, m)
+	mustAppend(t, s, k, m)
+	_, err := s.SetLifecycle(ctx, k, channels.StateOpen, channels.Transition{To: channels.StateClosed, By: Bob, At: T0})
+	require.NoError(t, err)
+	_, err = s.Append(ctx, k, m)
+	require.ErrorIs(t, err, channels.ErrNotOpen)
+	_, err = s.SetLifecycle(ctx, k, channels.StateClosed,
+		channels.Transition{To: channels.StateArchived, By: Bob, At: T0})
+	require.NoError(t, err)
+	_, err = s.Append(ctx, k, m)
+	require.ErrorIs(t, err, channels.ErrNotOpen)
+	got := mustAppend(t, s, k, text("anyway"))
+	require.Equal(t, int64(3), got.Seq, "a refused append takes no seq")
 }
 
 func key(id, typ string) channels.Key {
