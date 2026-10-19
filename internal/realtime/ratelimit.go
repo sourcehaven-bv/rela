@@ -17,6 +17,7 @@ const (
 	opEdit      = "edit"
 	opRemove    = "remove"
 	opLifecycle = "lifecycle"
+	opAction    = "action"
 	opPostPfx   = "post:"
 )
 

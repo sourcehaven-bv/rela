@@ -17,6 +17,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"slices"
 	"time"
@@ -43,17 +44,21 @@ type Deps struct {
 	// Local is the process-local state, shared by the services built over
 	// one store.
 	Local *Local
+	// Promoter creates the entities of promoting actions. A process that
+	// cannot write the graph passes [NoPromoter].
+	Promoter Promoter
 }
 
 // Service is the channel service.
 type Service struct {
-	store   channels.Store
-	cfg     ConfigSource
-	access  AccessSource
-	anchors AnchorReader
-	refs    RefResolver
-	local   *Local
-	clock   Clock
+	store    channels.Store
+	cfg      ConfigSource
+	access   AccessSource
+	anchors  AnchorReader
+	refs     RefResolver
+	local    *Local
+	clock    Clock
+	promoter Promoter
 }
 
 // New returns the service over d.
@@ -73,11 +78,34 @@ func New(d Deps) (*Service, error) {
 		return nil, errNil("Refs")
 	case d.Local == nil:
 		return nil, errNil("Local")
+	case d.Promoter == nil:
+		return nil, errNil("Promoter")
+	}
+	if _, none := d.Promoter.(NoPromoter); none && declaresPromote(d.Config.Load().Config) {
+		slog.Warn("realtime: realtime.yaml declares promoting actions, but this process cannot promote; " +
+			"they are not offered")
 	}
 	return &Service{
 		store: d.Store, cfg: d.Config, access: d.Access, anchors: d.Anchors, refs: d.Refs,
-		local: d.Local, clock: d.Local.clock,
+		local: d.Local, clock: d.Local.clock, promoter: d.Promoter,
 	}, nil
+}
+
+// declaresPromote reports whether c declares an action with promote_to.
+func declaresPromote(c *realtimecfg.Compiled) bool {
+	if c == nil {
+		return false
+	}
+	for _, ct := range c.ChannelTypes() {
+		for _, mt := range ct.MessageTypes {
+			for _, a := range mt.Actions {
+				if a.PromoteTo != nil {
+					return true
+				}
+			}
+		}
+	}
+	return false
 }
 
 // Subscribe registers a live consumer of channel changes.
@@ -201,7 +229,7 @@ func (c *call) postable() map[string]bool {
 // in one batch. A property the store recorded as a ref renders as one
 // whatever the configuration now says (see Local.storedRefs).
 func (s *Service) renderer(c *call, msgs []channels.Message, sigs []signal) (*renderer, error) {
-	r := &renderer{ct: c.ct, moderator: c.moderator()}
+	r := &renderer{ct: c.ct, moderator: c.moderator(), call: c}
 	if len(msgs) == 0 && len(sigs) == 0 {
 		return r, nil
 	}
@@ -306,7 +334,7 @@ func (s *Service) Post(ctx context.Context, addr RawAddress, in PostInput) (Post
 // Service.record, which refuses a config that declares a recorded ref as
 // another type, or after a removal, which keeps no properties.
 func (s *Service) rendererWith(c *call, refs map[string]RefView) *renderer {
-	return &renderer{ct: c.ct, refs: refs, moderator: c.moderator()}
+	return &renderer{ct: c.ct, refs: refs, moderator: c.moderator(), call: c}
 }
 
 // postRate is the rate of mt: its own, or the configured default for its

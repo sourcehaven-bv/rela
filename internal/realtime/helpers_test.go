@@ -50,6 +50,10 @@ entities:
     faces:
       draft: {}
       published: {}
+relations:
+  about:
+    from: [doc]
+    to: [ticket]
 `
 
 const testRealtime = `
@@ -162,11 +166,14 @@ type fakeAccess struct {
 	q       predicatefns.QueryIdentity
 	perms   map[string]bool
 	ceiling bool
+	// permCalls counts HoldsPermissionFor calls.
+	permCalls atomic.Int64
 }
 
 func (a *fakeAccess) Principal() principal.Principal            { return a.p }
 func (a *fakeAccess) QueryIdentity() predicatefns.QueryIdentity { return a.q }
 func (a *fakeAccess) HoldsPermissionFor(_ context.Context, _, perm string) bool {
+	a.permCalls.Add(1)
 	return a.perms[perm]
 }
 func (a *fakeAccess) CeilingAdmitsUpdate(string) bool { return a.ceiling }
@@ -395,18 +402,23 @@ type harness struct {
 type harnessOpt func(*harnessOpts)
 
 type harnessOpts struct {
-	yaml string
-	lim  ephemeralLimits
-	caps limitCaps
+	yaml     string
+	lim      ephemeralLimits
+	caps     limitCaps
+	promoter Promoter
 }
 
 func withEphemeral(l ephemeralLimits) harnessOpt { return func(o *harnessOpts) { o.lim = l } }
 func withBuckets(n int) harnessOpt               { return func(o *harnessOpts) { o.caps.buckets = n } }
 func withLifecycleYAML() harnessOpt              { return func(o *harnessOpts) { o.yaml = lifecycleRealtime } }
+func withYAML(y string) harnessOpt               { return func(o *harnessOpts) { o.yaml = y } }
+func withPromoter(p Promoter) harnessOpt         { return func(o *harnessOpts) { o.promoter = p } }
 
 func newHarness(t *testing.T, opts ...harnessOpt) *harness {
 	t.Helper()
-	o := harnessOpts{yaml: testRealtime, lim: defaultEphemeralLimits(), caps: defaultLimitCaps()}
+	o := harnessOpts{
+		yaml: testRealtime, lim: defaultEphemeralLimits(), caps: defaultLimitCaps(), promoter: NoPromoter{},
+	}
 	for _, f := range opts {
 		f(&o)
 	}
@@ -437,6 +449,7 @@ func newHarness(t *testing.T, opts ...harnessOpt) *harness {
 	}
 	h.svc, err = New(Deps{
 		Store: st, Config: h.cfg, Access: fakeAccessSource{}, Anchors: h.anchors, Refs: h.refs, Local: local,
+		Promoter: o.promoter,
 	})
 	require.NoError(t, err)
 	return h

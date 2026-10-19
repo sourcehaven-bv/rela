@@ -15,7 +15,10 @@ import (
 func TestNew_RejectsNil(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t)
-	full := Deps{Store: h.store, Config: h.cfg, Access: fakeAccessSource{}, Anchors: h.anchors, Refs: h.refs, Local: h.local}
+	full := Deps{
+		Store: h.store, Config: h.cfg, Access: fakeAccessSource{}, Anchors: h.anchors, Refs: h.refs, Local: h.local,
+		Promoter: NoPromoter{},
+	}
 	tests := []struct {
 		name string
 		mut  func(*Deps)
@@ -26,6 +29,7 @@ func TestNew_RejectsNil(t *testing.T) {
 		{"Anchors", func(d *Deps) { d.Anchors = nil }},
 		{"Refs", func(d *Deps) { d.Refs = nil }},
 		{"Local", func(d *Deps) { d.Local = nil }},
+		{"Promoter", func(d *Deps) { d.Promoter = nil }},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
