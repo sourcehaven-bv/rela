@@ -143,7 +143,7 @@ const (
 
 // promoteProps copies the message properties p maps into entity
 // properties. A message property that is absent or null is left out.
-// Ref values are id strings, which [Service.checkPromoteRefs] has
+// Ref values are id strings, which checkPromoteRefs has
 // checked the caller may read.
 func promoteProps(p *realtimecfg.Promote, msg channels.Message) map[string]any {
 	out := make(map[string]any, len(p.Map))

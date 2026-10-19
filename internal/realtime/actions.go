@@ -27,7 +27,7 @@ type ActionResult struct {
 // identity, the action's gate, the promoter's create check for a
 // promoting action, the channel is open, the message carries no
 // action yet, and the rate limit. A promoting action then checks that the
-// caller can read every ref it would copy ([Service.checkPromoteRefs]).
+// caller can read every ref it would copy (checkPromoteRefs).
 // [MessageView.Actions] offers an action exactly when every check but the
 // rate limit and the ref check passes; both ask [call.actionCheck].
 //
