@@ -99,6 +99,7 @@ func TestCreateLinked_RelationCheckedBeforeWrite(t *testing.T) {
 	})
 	var invalid *entitymanager.InvalidRelationError
 	require.ErrorAs(t, err, &invalid)
+	require.True(t, entitymanager.WroteNothing(err))
 	_, err = entitymanager.CreateLinked(context.Background(), mgr, entitymanager.LinkedCreate{
 		Entity: e, RelateType: "addresses", RelateTo: "REQ-404",
 	})
@@ -143,6 +144,7 @@ func TestCreateLinked_RelateBestEffort(t *testing.T) {
 			require.NotEmpty(t, res.Create.Entity.ID)
 		} else {
 			require.ErrorIs(t, err, boom)
+			require.False(t, entitymanager.WroteNothing(err), "the edge failed inside the transaction")
 		}
 	}
 }

@@ -54,7 +54,8 @@ type LinkedResult struct {
 // The audit records, the alias notification, the automations and the
 // cascade run after the commit, as they do for CreateEntity. A failure
 // there is [LinkedResult.FollowUpErr], not an error, because the writes
-// are committed.
+// are committed. A failed check is reported so that [WroteNothing] knows
+// it.
 //
 // A package function rather than a Manager method: Manager is at its
 // method cap.
@@ -65,7 +66,7 @@ func CreateLinked(ctx context.Context, m *Manager, lc LinkedCreate) (*LinkedResu
 		return nil, errors.New("entitymanager: CreateLinked: entity is nil")
 	}
 	if err := prepareCreate(ctx, m, e, opts); err != nil {
-		return nil, err
+		return nil, beforeWriteError{err}
 	}
 	var key entity.RelationKey
 	var rel *entity.Relation
@@ -79,7 +80,7 @@ func CreateLinked(ctx context.Context, m *Manager, lc LinkedCreate) (*LinkedResu
 		var err error
 		rel, err = prepareRelationFrom(ctx, m, key, entity.RelationOptions{}, source, nil)
 		if err != nil {
-			return nil, err
+			return nil, beforeWriteError{err}
 		}
 	}
 
@@ -119,6 +120,21 @@ func CreateLinked(ctx context.Context, m *Manager, lc LinkedCreate) (*LinkedResu
 	res, err := finishCreate(ctx, m, created, warnings, opts.SkipAutomation)
 	out.Create, out.FollowUpErr = res, err
 	return out, nil
+}
+
+// beforeWriteError is a [CreateLinked] failure raised before its
+// transaction began; see [WroteNothing].
+type beforeWriteError struct{ err error }
+
+func (e beforeWriteError) Error() string { return e.err.Error() }
+func (e beforeWriteError) Unwrap() error { return e.err }
+
+// WroteNothing reports whether err is a [CreateLinked] failure raised
+// before anything was written: a refused check of the entity or the edge.
+// An error it does not recognize may still have written nothing.
+func WroteNothing(err error) bool {
+	_, ok := errors.AsType[beforeWriteError](err)
+	return ok
 }
 
 // writeLinkedRelation writes rel on view, reporting a duplicate the way

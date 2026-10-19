@@ -1271,6 +1271,8 @@ func collaboratorRefHolders(
 		refs.channelService, refs.realtimeLocal, err = newRealtimeService(realtimeInputs{
 			meta: c.Meta, worlds: w, config: ch.Config, store: c.Store, channels: ch.Store,
 			declarative: c.Declarative, redactor: redactor, writes: c.ACL,
+			// Collaborators carry no entity manager, so nothing promotes.
+			promoter: realtime.NoPromoter{},
 		})
 		if err != nil {
 			return refs, fmt.Errorf("channels: %w", err)
@@ -2670,6 +2672,11 @@ func assemble(
 		return nil, err
 	}
 	// coverage-ignore-end
+	refs.channelService, err = buildRealtimeService(
+		base, st, refs, mgr, aclDeclarative, fieldPol.redactor, resolvedACL)
+	if err != nil {
+		return nil, err
+	}
 
 	val, err := validator.New(st, base.meta, readDeps, ungatedBinder(base.meta, st))
 	if err != nil { // coverage-ignore: defensive: validator.New only fails on a nil dep; all are built above
