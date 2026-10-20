@@ -131,7 +131,10 @@ resolve to `data-entry.yaml` configuration from the backend.
 ESLint flat config with:
 
 - Vue 3 recommended + TypeScript
-- `vue/no-v-html: warn` (XSS risk)
+- `vue/no-v-html: warn` (XSS risk). Channel message markdown is untrusted
+  (any reader with a post role writes it): render it with
+  `renderMessageMarkdown`, never `renderMarkdown`, which allows images and
+  more HTML. The channel components insert the result as it is.
 - `max-lines: 500` warning for Vue files (catches god components)
 - Relaxed rules for test files (`no-explicit-any`, `no-non-null-assertion` allowed)
 

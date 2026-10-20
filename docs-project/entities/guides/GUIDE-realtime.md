@@ -491,6 +491,51 @@ averages less than `30/m` but allows 1000 posts at once, so it is refused.
 | `channels_per_entity` | 200 per channel type |
 | `page_limit` | 200 |
 
+## In the web app
+
+The entity page shows a **Channels** section below the comments. It
+appears only on an entity whose type a channel type attaches to. On a type
+with faces, the section follows the face on screen: an `anchor: face`
+channel is the channel of that face.
+
+When the entity has a single `one` channel type and nobody can open more
+channels, the section shows that channel directly. Otherwise it lists the
+channels by type, with a filter for **Open** or **All** channels, and a
+**New channel** button for each `many` type you may open. Click a channel to
+open it. The section updates live: a new message, a closed channel or a new
+channel shows up without a reload.
+
+A button appears only when you may use it. It is left out, not disabled.
+
+| Control | Shown when |
+| --- | --- |
+| The composer and **Send** | The channel is open and a message type's `post` admits you. With several such types, the composer lets you choose the type. |
+| **Reply** | You may post in the channel now. |
+| **Edit** | The message is yours, `edit_own` admits you, and its time window has not passed. |
+| **Delete** | The message is yours and `delete_own` admits you. The app asks you to confirm. |
+| **Remove** | `message_ops.remove` admits you. The app asks for a reason, and requires one when `reason_required` is set. |
+| An action button, such as **Accept** | The action's `roles` or `permission` admit you. **Release** gives up an action that is pending. |
+| A lifecycle button, such as **Close** | The operation's `roles` admit you and the channel is in a period it starts from. The button shows the operation's `label`. **Delete** asks you to confirm. |
+| **New channel** | The type is `many` and its `create` admits you. |
+
+A closed channel shows "This channel is closed." and an archived one "This
+channel is archived."; neither has a composer.
+
+A `ref` property gets an entity picker that offers only the types in its
+`to:` list. A message that holds a ref you cannot read shows **Restricted
+reference**, with no id, title or link. When you edit such a message, the
+field shows the same placeholder with a **Replace** button. If you leave it,
+the server keeps the stored ref.
+
+Message markdown is limited, because any reader may post it. It allows
+text formatting, lists, quotes, code, tables and links to `http`, `https`
+and `mailto` addresses. It drops images and raw HTML. An entity id in a code
+span, such as `` `FEAT-001` ``, becomes a link when the message holds a
+readable ref to that entity.
+
+Field order, labels and widgets come from the `channels:` block of
+`data-entry.yaml` (see the data-entry guide).
+
 ## HTTP API
 
 The data-entry API serves channels under the entity they are attached to.
