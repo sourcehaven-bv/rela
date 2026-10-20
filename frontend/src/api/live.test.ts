@@ -53,15 +53,15 @@ describe('live subscription paths', () => {
   })
 
   it('builds channel list and channel paths', () => {
-    const anchor = { type: 'ticket', address: 'TKT-1@draft', world: 'main' }
+    const anchor = { type: 'ticket', address: 'TKT-1@draft' }
     expect(liveChannelsPath({ type: 'ticket', address: 'TKT-1' })).toBe(
       '/api/v1/tickets/TKT-1/_channels'
     )
     expect(liveChannelsPath(anchor, 'open')).toBe(
-      '/api/v1/tickets/TKT-1@draft/_channels?state=open&world=main'
+      '/api/v1/tickets/TKT-1@draft/_channels?state=open'
     )
     expect(liveChannelPath({ ...anchor, channelType: 'room' })).toBe(
-      '/api/v1/tickets/TKT-1@draft/_channels/room?world=main'
+      '/api/v1/tickets/TKT-1@draft/_channels/room'
     )
     expect(
       liveChannelPath({ type: 'ticket', address: 'TKT-1', channelType: 'threads', name: 'x1' })

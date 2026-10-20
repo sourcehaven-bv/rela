@@ -9,7 +9,7 @@
  * refusal back in `error`, so the dialog stays open on a failure and the
  * user can fix the text or cancel.
  */
-import { computed, ref } from 'vue'
+import { computed, ref, useId } from 'vue'
 import RlButton from 'rela-components/components/common/RlButton.vue'
 import RlText from 'rela-components/components/common/RlText.vue'
 import RlModal from 'rela-components/components/overlay/RlModal.vue'
@@ -43,6 +43,7 @@ const props = withDefaults(
 
 const emit = defineEmits<{ close: []; submit: [text: string] }>()
 
+const formId = `channel-text-dialog-${useId()}`
 const text = ref('')
 /** Set once the user tried to submit, so an empty field is not an error on open. */
 const attempted = ref(false)
@@ -59,7 +60,7 @@ function submit() {
 
 <template>
   <RlModal :open="true" :title="title" size="sm" :persistent="busy" @close="emit('close')">
-    <form id="channel-text-dialog" class="channel-text-dialog" novalidate @submit.prevent="submit">
+    <form :id="formId" class="channel-text-dialog" novalidate @submit.prevent="submit">
       <RlText v-if="description" as="p" tone="subtle" size="sm">{{ description }}</RlText>
       <RlTextarea
         v-if="multiline"
@@ -86,7 +87,7 @@ function submit() {
         variant="primary"
         :tone="danger ? 'danger' : 'default'"
         type="submit"
-        form="channel-text-dialog"
+        :form="formId"
         :loading="busy"
         :pending-label="pendingLabel"
         data-testid="channel-text-dialog-submit"

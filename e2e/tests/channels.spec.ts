@@ -1,8 +1,8 @@
 import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
-import type { Browser, TestInfo } from "@playwright/test";
-import { test as base, SEED, spawnServer, waitForExit } from "./fixtures";
+import type { Browser } from "@playwright/test";
+import { test as base, SEED, contextsAs, serveWithPrincipalHeader } from "./fixtures";
 import { FACED_SEED, FACED_USERS, writeFacedProject } from "./faced-project";
 import {
   CHANNEL_USERS,
@@ -16,10 +16,8 @@ import { ChannelsPage } from "../pages/channels.page";
 
 // Channels on the entity page (TKT-91BK6F AC 21), seen by several people at
 // once. As in presence.spec.ts, each user is a browser context the proxy
-// header identifies, and the server runs without $RELA_DATAENTRY_USER, which
-// would win over the header.
+// header identifies.
 
-const HEADER = "X-Forwarded-User";
 const FEATURE = SEED.features.authentication;
 
 interface ChannelFixtures {
@@ -27,53 +25,22 @@ interface ChannelFixtures {
   as: (user: string) => Promise<ChannelsPage>;
 }
 
-// The probe names a user: with an acl.yaml, an anonymous request is refused.
-async function serve(
-  serverBinary: string,
-  dir: string,
-  probeUser: string,
-  testInfo: TestInfo,
-  use: (url: string) => Promise<void>,
+// The `as` fixture of both describes below.
+async function asFixture(
+  { browser, serverUrl }: { browser: Browser; serverUrl: string },
+  use: (as: ChannelFixtures["as"]) => Promise<void>,
 ) {
-  const { proc, url, logs } = await spawnServer(
-    serverBinary,
-    dir,
-    { RELA_DATAENTRY_USER: undefined },
-    ["-principal-header", HEADER],
-    { [HEADER]: probeUser },
-  );
-  try {
-    await use(url);
-  } finally {
-    if (testInfo.status !== testInfo.expectedStatus) {
-      await testInfo.attach("rela-server.log", { body: logs(), contentType: "text/plain" });
-    }
-    await waitForExit(proc);
-  }
-}
-
-function pagesAs(browser: Browser, serverUrl: string) {
-  const contexts: Awaited<ReturnType<Browser["newContext"]>>[] = [];
-  return {
-    as: async (user: string) => {
-      const ctx = await browser.newContext({ baseURL: serverUrl, extraHTTPHeaders: { [HEADER]: user } });
-      contexts.push(ctx);
-      return new ChannelsPage(await ctx.newPage());
-    },
-    close: () => Promise.all(contexts.map((c) => c.close().catch(() => {}))),
-  };
+  const pages = contextsAs(browser, serverUrl);
+  await use(async (user) => new ChannelsPage(await pages.as(user)));
+  await pages.close();
 }
 
 const test = base.extend<ChannelFixtures>({
   serverUrl: async ({ testProject, serverBinary }, use, testInfo) => {
     writeRoomProject(testProject);
-    await serve(serverBinary, testProject, CHANNEL_USERS.lead, testInfo, use);
+    await serveWithPrincipalHeader(serverBinary, testProject, testInfo, use, CHANNEL_USERS.lead);
   },
-  as: async ({ browser, serverUrl }, use) => {
-    const pages = pagesAs(browser, serverUrl);
-    await use(pages.as);
-    await pages.close();
-  },
+  as: asFixture,
 });
 
 test.describe("channels", () => {
@@ -134,13 +101,15 @@ test.describe("channels", () => {
     await alice.post("Before the change");
     await bob.expectMessage("Before the change");
 
-    // Only holders of channel-lead (acl.yaml) may read the channel now.
+    // The channel's `read` rule in realtime.yaml narrows to holders of
+    // channel-lead. rela-server reads acl.yaml once at start, so a running
+    // server's read access is revoked through realtime.yaml, which it
+    // applies live.
     writeRoomRealtime(testProject, { leadReadsOnly: true });
     await bob.expectNoPanel(30_000);
 
     await alice.post("After the change");
     await alice.expectMessage("After the change");
-    await bob.expectNoPanel();
   });
 });
 
@@ -158,13 +127,9 @@ const facedTest = base.extend<ChannelFixtures>({
     }
   },
   serverUrl: async ({ testProject, serverBinary }, use, testInfo) => {
-    await serve(serverBinary, testProject, FACED_USERS.editor, testInfo, use);
+    await serveWithPrincipalHeader(serverBinary, testProject, testInfo, use, FACED_USERS.editor);
   },
-  as: async ({ browser, serverUrl }, use) => {
-    const pages = pagesAs(browser, serverUrl);
-    await use(pages.as);
-    await pages.close();
-  },
+  as: asFixture,
 });
 
 facedTest.describe("channels on a faced type", () => {
@@ -182,5 +147,31 @@ facedTest.describe("channels on a faced type", () => {
     await reader.expectMessage("Is the published wording final?");
     await reader.post("Yes");
     await editor.expectMessage("Yes");
+  });
+
+  facedTest("each face has its own channel", async ({ as }) => {
+    const draft = await as(FACED_USERS.editor);
+    const published = await as(FACED_USERS.editor);
+    const reader = await as(FACED_USERS.reader);
+    await published.openEntity("policy", FACED_SEED.both.id);
+    await reader.openEntity("policy", FACED_SEED.both.id);
+    await published.expectChannel(POLICY_ROOM.label);
+    await published.post("On the published face");
+    await reader.expectMessage("On the published face");
+
+    await draft.openEntity("policy", `${FACED_SEED.both.id}@draft`);
+    await draft.expectChannel(POLICY_ROOM.label);
+    await draft.expectComposer();
+    await draft.post("On the draft face");
+    await draft.expectMessage("On the draft face");
+    await draft.expectNoMessage("On the published face");
+
+    // A later published-face post arrives live, so the draft post had its
+    // chance to arrive too; it reaches neither published-face reader.
+    await reader.post("Later on the published face");
+    await published.expectMessage("Later on the published face");
+    await published.expectNoMessage("On the draft face");
+    await reader.expectNoMessage("On the draft face");
+    await draft.expectNoMessage("Later on the published face");
   });
 });

@@ -76,17 +76,17 @@ describe('useEntityChannels', () => {
 
   it('lists and subscribes the channel list path', async () => {
     listMock.mockResolvedValue(list)
-    const ch = host(() => ({ type: 'ticket', address: 'TKT-1@draft', world: 'main' }), {
+    const ch = host(() => ({ type: 'ticket', address: 'TKT-1@draft' }), {
       state: 'open',
     })
     await flushPromises()
     expect(listMock).toHaveBeenCalledWith(
-      { type: 'ticket', address: 'TKT-1@draft', world: 'main' },
+      { type: 'ticket', address: 'TKT-1@draft' },
       'open'
     )
     expect(ch.types.value).toEqual([roomType])
     expect(subs[0]!.label).toBe('entity-channels')
-    expect(subs[0]!.path()).toBe('/api/v1/tickets/TKT-1@draft/_channels?state=open&world=main')
+    expect(subs[0]!.path()).toBe('/api/v1/tickets/TKT-1@draft/_channels?state=open')
   })
 
   it.each([401, 403, 404])(

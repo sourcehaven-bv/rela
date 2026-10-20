@@ -6,7 +6,8 @@
  * The wire-to-view mapping is channelView.ts and the error handling is
  * channelErrors.ts; this component holds the session state between them:
  * which message is being replied to or edited, which operations are in
- * flight, the remove dialog and the ref picker.
+ * flight, the remove dialog and the ref picker. The ephemeral clock is
+ * useExpiryClock and the picker plumbing useRefPicker.
  *
  * It emits `gone` when the channel can no longer be shown: a refused read
  * (the reader lost access, or the channel was deleted) or a refusal that
@@ -14,22 +15,19 @@
  * by then. `changed` asks the host to read the channel list again after a
  * lifecycle operation, since the list is not live while a channel is open.
  */
-import { computed, onBeforeUnmount, ref, shallowRef, useTemplateRef, watch } from 'vue'
+import { computed, ref, useTemplateRef, watch } from 'vue'
 import { useChannel } from '@/composables/useChannel'
 import { useConfirm } from '@/composables/useConfirm'
 import { useChannelSchemaStore } from '@/stores/channelSchema'
 import { useSchemaStore, useUIStore } from '@/stores'
 import { shouldDropHeldContent } from '@/api/errors'
 import { browserTimeZone } from '@/utils/format'
-import { entityDisplayTitle } from '@/utils/entityDisplay'
 import { toEditProps, toProps } from '@/utils/channelValues'
-import type { Entity } from '@/types'
-import type { ChannelTypeSchema } from '@/types/channels'
+import { LIFECYCLE_DELETE, type ChannelTypeSchema, type Message } from '@/types/channels'
 import type {
   ChannelEditEvent,
   ChannelEditing,
   ChannelPostEvent,
-  ChannelReadableRef,
 } from 'rela-components/components/channel/types'
 import {
   lifecyclePendingKey,
@@ -43,13 +41,15 @@ import EntityPickerModal from '@/components/forms/EntityPickerModal.vue'
 import ChannelTextDialog from './ChannelTextDialog.vue'
 import { classifyChannelError } from './channelErrors'
 import { useChannelLinks } from './useChannelLinks'
+import { useExpiryClock } from './useExpiryClock'
+import { usePendingKeys } from './usePendingKeys'
+import { useRefPicker } from './useRefPicker'
 import {
   editingFor,
   enumOptionsFor,
   ephemeralViews,
   lifecycleDefs,
   messageViews,
-  nextExpiry,
   presentationView,
   replyQuote,
   type MarkdownMemo,
@@ -62,7 +62,11 @@ const props = defineProps<{
   channelType: ChannelTypeSchema
   /** Absent for a `one` channel. */
   name?: string
-  /** The page world, carried on entity links only; channel routes take none. */
+  /**
+   * The page world, carried on entity links only. Channel routes take no
+   * `?world=`: the server refuses a non-default world there, and the
+   * address names the face.
+   */
   world?: string
 }>()
 
@@ -107,21 +111,8 @@ const enumOptions = computed(() =>
 const ctx = computed(() => ({ tz, world: props.world }))
 const views = computed(() => messageViews(ch.messages.value, messageType, ctx.value, memo))
 
-// Ephemeral signals show until their expires_at. One timer, for the
-// soonest, moves `now` on; the head brings new signals.
-const now = ref(Date.now())
-let expiryTimer: ReturnType<typeof setTimeout> | undefined
-watch(
-  [() => ch.head.value?.ephemeral, now],
-  ([signals]) => {
-    if (expiryTimer !== undefined) clearTimeout(expiryTimer)
-    expiryTimer = undefined
-    const at = nextExpiry(signals ?? [], now.value)
-    if (at !== undefined) expiryTimer = setTimeout(() => (now.value = Date.now()), at - now.value)
-  },
-  { immediate: true }
-)
-onBeforeUnmount(() => clearTimeout(expiryTimer))
+// Ephemeral signals show until their expires_at; the head brings new ones.
+const now = useExpiryClock(() => ch.head.value?.ephemeral)
 const ephemeral = computed(() =>
   ephemeralViews(
     ch.head.value?.ephemeral ?? [],
@@ -159,32 +150,18 @@ function handle(err: unknown, hasForm: boolean): string | undefined {
   return undefined
 }
 
-const pending = shallowRef<ReadonlySet<string>>(new Set())
-function setPending(key: string, on: boolean) {
-  const next = new Set(pending.value)
-  if (on) next.add(key)
-  else next.delete(key)
-  pending.value = next
-}
-
-async function runPending<T>(key: string, op: () => Promise<T>): Promise<T | undefined> {
-  if (pending.value.has(key)) return undefined
-  setPending(key, true)
-  try {
-    return await op()
-  } catch (err) {
-    handle(err, false)
-    return undefined
-  } finally {
-    setPending(key, false)
-  }
-}
+const { pending, set: setPending, run: runPending } = usePendingKeys((err) => handle(err, false))
 
 // --- Composer ----------------------------------------------------------------
 
 const composer = useTemplateRef<InstanceType<typeof RlChannelComposer>>('composer')
 const replyTo = ref<number | null>(null)
 const editing = ref<ChannelEditing>()
+// The message's stored props when the edit started. An edit replaces every
+// prop (R7), and the held list may drop the message before the save (a
+// reload, the 500 cap), so the save is built from this copy, never from
+// the list at save time.
+let editProps: { seq: number; props: Message['props'] } | undefined
 const submitting = ref(false)
 
 const replyQuoteView = computed(() => {
@@ -199,13 +176,23 @@ function clearErrors() {
   fieldErrors.value = {}
 }
 
-// Another channel starts clean: no reply, edit or error carries over.
-watch(target, () => {
-  memo = new Map()
-  replyTo.value = null
+function stopEditing() {
   editing.value = undefined
-  clearErrors()
-})
+  editProps = undefined
+}
+
+// Another channel starts clean: no reply, edit or error carries over. The
+// key is a string, so a descriptor reload (a new channelType object for the
+// same channel) does not count as another channel.
+watch(
+  () => [props.entityType, props.address, props.channelType.name, props.name ?? ''].join('\u0000'),
+  () => {
+    memo = new Map()
+    replyTo.value = null
+    stopEditing()
+    clearErrors()
+  }
+)
 
 async function onPost(event: ChannelPostEvent) {
   const mt = messageType(event.type)
@@ -234,11 +221,20 @@ async function onPost(event: ChannelPostEvent) {
 
 async function onSave(event: ChannelEditEvent) {
   const mt = messageType(event.type)
-  const held = ch.messages.value.find((m) => m.seq === event.seq)
   if (!mt || submitting.value) return
   // Props the composer did not render are carried as stored, so an edit
-  // never erases a field the user could not see (AC 11).
-  const converted = toEditProps(mt.properties, new Set(event.rendered), event.values, held?.props)
+  // never erases a field the user could not see (AC 11). Without the stored
+  // copy the save would send a partial body, so it is refused instead.
+  if (editProps?.seq !== event.seq) {
+    formError.value = 'This edit lost track of the message. Cancel it and edit the message again.'
+    return
+  }
+  const converted = toEditProps(
+    mt.properties,
+    new Set(event.rendered),
+    event.values,
+    editProps.props
+  )
   if (!converted.ok) {
     fieldErrors.value = converted.errors
     return
@@ -247,7 +243,7 @@ async function onSave(event: ChannelEditEvent) {
   submitting.value = true
   try {
     await ch.edit(event.seq, converted.props)
-    editing.value = undefined
+    stopEditing()
   } catch (err) {
     formError.value = handle(err, true)
   } finally {
@@ -256,7 +252,7 @@ async function onSave(event: ChannelEditEvent) {
 }
 
 function onReply(seq: number) {
-  editing.value = undefined
+  stopEditing()
   replyTo.value = seq
   composer.value?.focus()
 }
@@ -268,11 +264,12 @@ function onEdit(seq: number) {
   replyTo.value = null
   clearErrors()
   editing.value = editingFor(m, mt)
+  editProps = { seq, props: m.props }
   composer.value?.focus()
 }
 
 function onCancelEdit() {
-  editing.value = undefined
+  stopEditing()
   clearErrors()
 }
 
@@ -326,7 +323,7 @@ async function onAction(seq: number, name: string) {
 
 async function onLifecycle(op: string) {
   const def = props.channelType.lifecycle.find((l) => l.name === op)
-  if (op === 'delete') {
+  if (op === LIFECYCLE_DELETE) {
     const ok = await confirm({
       title: `${def?.label ?? 'Delete'} channel?`,
       message: 'The channel and all its messages are deleted. This cannot be undone.',
@@ -335,18 +332,11 @@ async function onLifecycle(op: string) {
     })
     if (!ok) return
   }
-  const key = lifecyclePendingKey(op)
-  if (pending.value.has(key)) return
-  setPending(key, true)
-  try {
-    const channel = await ch.lifecycle(op)
-    emit('changed')
-    if (channel === null) emit('gone')
-  } catch (err) {
-    handle(err, false)
-  } finally {
-    setPending(key, false)
-  }
+  const channel = await runPending(lifecyclePendingKey(op), () => ch.lifecycle(op))
+  // undefined: refused or already running. `gone` reads the list again
+  // too, so a delete emits only that.
+  if (channel === null) emit('gone')
+  else if (channel !== undefined) emit('changed')
 }
 
 const loadingOlder = ref(false)
@@ -381,27 +371,9 @@ async function onJump(seq: number) {
 // --- Links and the ref picker -----------------------------------------------
 
 const { entityHref, onOpenRef, onLogClick } = useChannelLinks(() => props.world)
-
-const picker = ref<{ types: string[]; resolve: (r: ChannelReadableRef | null) => void } | null>(
-  null
-)
-
-function pickRef(to: string[]): Promise<ChannelReadableRef | null> {
-  picker.value?.resolve(null)
-  return new Promise((resolve) => {
-    picker.value = { types: to, resolve }
-  })
-}
-
-function onPicked(_id: string, entity: Entity) {
-  picker.value?.resolve({ id: entity.id, type: entity.type, title: entityDisplayTitle(entity) })
-  picker.value = null
-}
-
-function onPickerClose() {
-  picker.value?.resolve(null)
-  picker.value = null
-}
+const picker = useRefPicker()
+const pickerOpen = picker.open
+const pickerTypes = picker.types
 </script>
 
 <template>
@@ -449,7 +421,7 @@ function onPickerClose() {
           :postable="ch.head.value._actions.post"
           :presentation="presentation"
           :enum-options="enumOptions"
-          :pick-ref="pickRef"
+          :pick-ref="picker.pickRef"
           :reply-to="replyQuoteView"
           :editing="editing"
           :submitting="submitting"
@@ -481,11 +453,11 @@ function onPickerClose() {
       @submit="submitRemove"
     />
     <EntityPickerModal
-      :open="picker !== null"
-      :types="picker?.types"
+      :open="pickerOpen"
+      :types="pickerTypes"
       label="Choose an entity"
-      @select="onPicked"
-      @close="onPickerClose"
+      @select="picker.onPicked"
+      @close="picker.onClose"
     />
   </div>
 </template>

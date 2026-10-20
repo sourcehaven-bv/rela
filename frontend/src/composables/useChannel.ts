@@ -417,7 +417,9 @@ export function useChannel(
     else if (res.kind === 'message') {
       takeWrite(s, res.message)
       // The first message stores the channel, which moves its affordances.
-      if (unstored) await refetchHead(s).catch((err) => fail(s, err))
+      // Through run, so onSeen sees the new head and a frame meanwhile
+      // waits rather than fetching the head a second time.
+      if (unstored) await run(s, refetchHead)
     } else await refetchHead(s).catch((err) => fail(s, err))
     return res
   }
@@ -471,7 +473,7 @@ export function useChannel(
 
   const targetKey = () => {
     const t = toValue(target)
-    return t ? [t.type, t.address, t.world ?? '', t.channelType, t.name ?? ''].join('\u0000') : ''
+    return t ? [t.type, t.address, t.channelType, t.name ?? ''].join('\u0000') : ''
   }
   watch(
     targetKey,

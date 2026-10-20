@@ -27,7 +27,7 @@ const api = vi.hoisted(() => ({
   getChannelSchema: vi.fn<() => Promise<ChannelSchema>>(),
   listChannels: vi.fn<(a: ChannelAnchor, state?: string) => Promise<ChannelList>>(),
   getChannelHead: vi.fn<(t: ChannelTarget) => Promise<ChannelHead>>(),
-  getMessages: vi.fn<(t: ChannelTarget) => Promise<MessagePage>>(),
+  getMessages: vi.fn<(t: ChannelTarget, q?: { afterRev?: number }) => Promise<MessagePage>>(),
   postMessage: vi.fn<(...a: unknown[]) => Promise<PostResult>>(),
   editMessage: vi.fn<(...a: unknown[]) => Promise<Message>>(),
   removeMessage: vi.fn<(...a: unknown[]) => Promise<Message>>(),
@@ -156,9 +156,9 @@ function problem(status: number, type: string, title = 'refused') {
 
 let wrapper: VueWrapper | undefined
 
-async function mountPanel(entityType = 'feature') {
+async function mountPanel(entityType = 'feature', world?: string) {
   wrapper = mount(ChannelsPanel, {
-    props: { entityType, entityId: 'FEAT-1' },
+    props: { entityType, entityId: 'FEAT-1', world },
     attachTo: document.body,
   })
   await flushPromises()
@@ -268,8 +268,61 @@ describe('ChannelsPanel', () => {
     expect(api.getChannelHead).toHaveBeenCalledWith(
       expect.objectContaining({ type: 'feature', address: 'FEAT-1', channelType: 'room' })
     )
-    // Channel routes take no world (R14).
-    expect(api.getChannelHead.mock.calls[0][0]).not.toHaveProperty('world')
+  })
+
+  it('sends no world on channel reads or live paths, even on a world-bound page (R14)', async () => {
+    // The server refuses a non-default ?world= on every channel route; the
+    // address names the face.
+    await mountPanel('feature', 'editorial')
+    for (const call of [
+      api.listChannels.mock.calls[0][0],
+      api.getChannelHead.mock.calls[0][0],
+      api.getMessages.mock.calls[0][0],
+    ]) {
+      expect(call).not.toHaveProperty('world')
+    }
+    const paths = subs.map((s) => s.path()).filter((p): p is string => p !== null)
+    expect(paths.length).toBeGreaterThan(0)
+    for (const p of paths) expect(p).not.toContain('world=')
+  })
+
+  it('drops the draft and the selection when the page moves to another entity', async () => {
+    await mountPanel()
+    await typeBody('half written')
+    await w().setProps({ entityId: 'FEAT-2' })
+    await flushPromises()
+    await flushPromises()
+    expect(api.getChannelHead).toHaveBeenLastCalledWith(
+      expect.objectContaining({ address: 'FEAT-2' })
+    )
+    expect((composerForm().find('textarea').element as HTMLTextAreaElement).value).toBe('')
+  })
+
+  it('keeps the list live in single mode, so a new channel brings the list back', async () => {
+    const thread = { ...room, name: 'thread', label: 'Threads', cardinality: 'many' as const }
+    api.getChannelSchema.mockResolvedValue({ channel_types: [room, thread] })
+    await mountPanel()
+    expect(w().find('.rl-entity-channels').exists()).toBe(false)
+    const listSub = [...subs].reverse().find((s) => s.label === 'entity-channels')!
+    expect(listSub.path()).not.toBeNull()
+
+    api.listChannels.mockResolvedValue({
+      anchor: 'FEAT-1',
+      types: [
+        ...oneRoom().types,
+        {
+          type: 'thread',
+          label: 'Threads',
+          cardinality: 'many',
+          create: false,
+          channels: [channel({ type: 'thread', name: 't1', title: 'Launch' })],
+        },
+      ],
+    })
+    await liveFrame('entity-channels')
+    expect(w().find('.rl-entity-channels').text()).toContain('Launch')
+    // The channel that opened directly stays open.
+    expect(messageEl(1).text()).toContain('message 1')
   })
 
   it('lists several channels and opens the chosen one, dropping the list subscription', async () => {
@@ -389,6 +442,35 @@ describe('ChannelsPanel', () => {
     expect(composerForm().attributes('aria-label')).toBe('New message')
   })
 
+  it('saves an edit from the props held when it started, after a reload dropped the message', async () => {
+    api.getMessages.mockResolvedValue(
+      page([msg(1, { props: { body: 'old', note: 'hidden value' } })])
+    )
+    api.editMessage.mockResolvedValue(
+      msg(1, { rev: 2, props: { body: 'new', note: 'hidden value' } })
+    )
+    await mountPanel()
+    await buttonIn(messageEl(1), 'Edit').trigger('click')
+    await flushPromises()
+
+    // A busy channel: the follow loop hits its page cap and reloads the
+    // newest page, which no longer holds message 1.
+    api.getMessages.mockImplementation(async (_t, q?: { afterRev?: number }) =>
+      q?.afterRev !== undefined
+        ? { ...page([]), has_more: true }
+        : page([msg(600, { props: { body: 'newest' } })])
+    )
+    await liveFrame('channel')
+    expect(messageEl(1).exists()).toBe(false)
+
+    await typeBody('new')
+    await submitComposer()
+    expect(api.editMessage).toHaveBeenCalledWith(expect.anything(), 1, {
+      body: 'new',
+      note: 'hidden value',
+    })
+  })
+
   describe('errors map by problem type (AC 14)', () => {
     const cases: {
       type: string
@@ -430,6 +512,42 @@ describe('ChannelsPanel', () => {
         if (composerForm().exists()) {
           expect((composerForm().find('textarea').element as HTMLTextAreaElement).value).toBe('hi')
         }
+      })
+    }
+  })
+
+  describe('create errors map by problem type (AC 14)', () => {
+    const cases: { type: string; status: number; inForm: boolean; schema: boolean }[] = [
+      { type: 'invalid_message', status: 400, inForm: true, schema: false },
+      { type: 'channel_create_denied', status: 403, inForm: false, schema: false },
+      { type: 'config_changed', status: 409, inForm: false, schema: true },
+      { type: 'channel_type_conflict', status: 409, inForm: false, schema: true },
+    ]
+    for (const tc of cases) {
+      it(`${tc.type}: ${tc.inForm ? 'form' : 'toast'}${tc.schema ? ', reloads the descriptor' : ''}`, async () => {
+        api.listChannels.mockResolvedValue({
+          anchor: 'FEAT-1',
+          types: [
+            { type: 'thread', label: 'Threads', cardinality: 'many', create: true, channels: [] },
+          ],
+        })
+        api.getChannelSchema.mockResolvedValue({
+          channel_types: [{ ...room, name: 'thread', label: 'Threads', cardinality: 'many' }],
+        })
+        api.createChannel.mockRejectedValue(problem(tc.status, tc.type, `refused as ${tc.type}`))
+        await mountPanel()
+        const schemas = api.getChannelSchema.mock.calls.length
+        await buttonIn(w(), 'New channel').trigger('click')
+        await flushPromises()
+        document
+          .querySelector<HTMLButtonElement>('[data-testid="channel-text-dialog-submit"]')!
+          .click()
+        await flushPromises()
+
+        const dialog = document.querySelector('[data-testid="channel-text-dialog-submit"]')
+        expect(dialog !== null).toBe(tc.inForm)
+        expect(toastTitles().length).toBe(tc.inForm ? 0 : 1)
+        expect(api.getChannelSchema.mock.calls.length > schemas).toBe(tc.schema)
       })
     }
   })

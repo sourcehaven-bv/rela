@@ -46,6 +46,10 @@ export class ChannelsPage extends BasePage {
     await expect(this.messages.filter({ hasText: text })).toHaveCount(1, { timeout });
   }
 
+  async expectNoMessage(text: string) {
+    await expect(this.messages.filter({ hasText: text })).toHaveCount(0);
+  }
+
   async expectComposer(timeout = 15_000) {
     await expect(this.composer).toBeVisible({ timeout });
   }

@@ -492,12 +492,15 @@ appears only on an entity whose type a channel type attaches to. On a type
 with faces, the section follows the face on screen: an `anchor: face`
 channel is the channel of that face.
 
-When the entity has a single `one` channel type and nobody can open more
-channels, the section shows that channel directly. Otherwise it lists the
-channels by type, with a filter for **Open** or **All** channels, and a
-**New channel** button for each `many` type you may open. Click a channel to
-open it. The section updates live: a new message, a closed channel or a new
-channel shows up without a reload.
+When the entity has exactly one channel and you may not open another, the
+section shows that channel directly. This includes a single channel of a
+`many` type. Otherwise it lists the channels by type, with a filter for
+**Open** or **All** channels, and a button to open a new channel for each
+`many` type you may open. The button shows the type's `create.label`, or
+**New channel** without one. Click a channel to open it. The section updates
+live: a new message, a closed channel or a new channel shows up without a
+reload. When a second channel appears next to one shown directly, the list
+appears and the channel stays open.
 
 A button appears only when you may use it. It is left out, not disabled.
 
@@ -521,7 +524,8 @@ reference**, with no id, title or link. When you edit such a message, the
 field shows the same placeholder with a **Replace** button. If you leave it,
 the server keeps the stored ref.
 
-Message markdown is limited, because any reader may post it. It allows
+Message markdown is limited, because every user whose message type `post`
+rule admits them may write it, not only the operator. It allows
 text formatting, lists, quotes, code, tables and links to `http`, `https`
 and `mailto` addresses. It drops images and raw HTML. An entity id in a code
 span, such as `` `FEAT-001` ``, becomes a link when the message holds a

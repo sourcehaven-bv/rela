@@ -19,8 +19,9 @@ import type {
  * (TKT-91BK6F) and the channel type descriptor at `/_schema/channels`.
  *
  * `address` names the face (`ID@face`) on a type with faces, as in
- * usePresence. `world` goes on reads only: the server refuses `?world=` on
- * every write and addresses the face directly.
+ * usePresence. No request carries `?world=`: the address already names the
+ * face, and the server answers a non-default world on these routes with 422
+ * `world_unsupported` (worldCapablePath in internal/dataentry/world.go).
  */
 
 /** What names one entity's channels. */
@@ -29,7 +30,6 @@ export interface ChannelAnchor {
   type: string
   /** `ID` on a type without faces, `ID@face` on one with faces. */
   address: string
-  world?: string
 }
 
 /** What names one channel. */
@@ -43,30 +43,24 @@ export interface ChannelTarget extends ChannelAnchor {
  * The anchor path, relative to /api/v1. Throws when the address does not
  * have the shape of an entity address, so it cannot redirect the request.
  */
-export function channelsPath(a: Pick<ChannelAnchor, 'type' | 'address'>): string {
+export function channelsPath(a: ChannelAnchor): string {
   return `/${getPlural(a.type)}/${addressSegment(a.address)}/_channels`
 }
 
 /** The channel path, relative to /api/v1. */
-export function channelPath(t: Omit<ChannelTarget, 'world'>): string {
+export function channelPath(t: ChannelTarget): string {
   const name = t.name ? `/${encodeURIComponent(t.name)}` : ''
   return `${channelsPath(t)}/${encodeURIComponent(t.channelType)}${name}`
 }
 
-function worldParams(world?: string): Record<string, unknown> | undefined {
-  return world ? { world } : undefined
-}
-
 /** GET the channels of one entity, grouped by channel type. */
 export async function listChannels(a: ChannelAnchor, state?: ChannelState): Promise<ChannelList> {
-  const params: Record<string, unknown> = { ...worldParams(a.world) }
-  if (state) params.state = state
-  return api.get<ChannelList>(channelsPath(a), params)
+  return api.get<ChannelList>(channelsPath(a), state ? { state } : undefined)
 }
 
 /** GET the head of a channel: the channel, its last message, signals and affordances. */
 export async function getChannelHead(t: ChannelTarget): Promise<ChannelHead> {
-  return api.get<ChannelHead>(channelPath(t), worldParams(t.world))
+  return api.get<ChannelHead>(channelPath(t))
 }
 
 /**
@@ -87,7 +81,7 @@ export async function getMessages(
   q: MessagePageQuery = {},
   signal?: AbortSignal
 ): Promise<MessagePage> {
-  const params: Record<string, unknown> = { ...worldParams(t.world) }
+  const params: Record<string, unknown> = {}
   if (q.after !== undefined) params.after = q.after
   if (q.before !== undefined) params.before = q.before
   if (q.afterRev !== undefined) params.after_rev = q.afterRev

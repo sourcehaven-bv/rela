@@ -26,11 +26,11 @@ vi.mock('./client', () => ({
   },
 }))
 
-const target = { type: 'ticket', address: 'TKT-1@draft', world: 'main', channelType: 'room' }
+const target = { type: 'ticket', address: 'TKT-1@draft', channelType: 'room' }
 const base = '/tickets/TKT-1@draft/_channels/room'
 
-// The server refuses `?world=` on a write, so the world rides on reads only,
-// and the face rides in the address.
+// The face rides in the address. No request carries `?world=`: the server
+// refuses a non-default world on every channel route.
 describe('channel paths', () => {
   it('refuses an address that would leave the entity path', async () => {
     registerEntityPlurals(new Map([['ticket', 'tickets']]))
@@ -47,20 +47,19 @@ describe('channel requests', () => {
     registerEntityPlurals(new Map([['ticket', 'tickets']]))
   })
 
-  it('reads in the page world', async () => {
+  it('reads by the faced address, without a world', async () => {
     await listChannels(target, 'open')
     await getChannelHead(target)
     await getMessages({ ...target, name: 'x1' }, { afterRev: 0, limit: 50 })
     await getChannelSchema()
     expect(api.get).toHaveBeenNthCalledWith(1, '/tickets/TKT-1@draft/_channels', {
-      world: 'main',
       state: 'open',
     })
-    expect(api.get).toHaveBeenNthCalledWith(2, base, { world: 'main' })
+    expect(api.get).toHaveBeenNthCalledWith(2, base)
     expect(api.get).toHaveBeenNthCalledWith(
       3,
       `${base}/x1/messages`,
-      { world: 'main', after_rev: 0, limit: 50 },
+      { after_rev: 0, limit: 50 },
       undefined
     )
     expect(api.get).toHaveBeenNthCalledWith(4, '/_schema/channels')

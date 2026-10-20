@@ -65,15 +65,12 @@ export function liveListPath(type: string, params?: ListParams): string | null {
  * or the lifecycle changed (TKT-91BK6F).
  */
 export function liveChannelPath(t: ChannelTarget): string {
-  return livePath(channelPath(t), t.world ? { world: t.world } : undefined)
+  return livePath(channelPath(t))
 }
 
 /** The subscription path for listChannels(anchor, state). */
 export function liveChannelsPath(a: ChannelAnchor, state?: ChannelState): string {
-  const params: Record<string, string> = {}
-  if (state) params.state = state
-  if (a.world) params.world = a.world
-  return livePath(channelsPath(a), Object.keys(params).length ? params : undefined)
+  return livePath(channelsPath(a), state ? { state } : undefined)
 }
 
 /** The subscription path for fetchView(type, id, world). */

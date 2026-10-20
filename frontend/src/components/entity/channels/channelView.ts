@@ -26,6 +26,7 @@ import type {
   MessagePropValue,
   ReadableRef,
 } from '@/types/channels'
+import { LIFECYCLE_DELETE } from '@/types/channels'
 import type {
   ChannelAuthorView,
   ChannelEditing,
@@ -81,7 +82,7 @@ export function authorView(a: ChannelAuthor): ChannelAuthorView {
 
 /** The lifecycle labels; delete draws in the danger tone. */
 export function lifecycleDefs(ct: ChannelTypeSchema): ChannelLifecycleDef[] {
-  return ct.lifecycle.map((op) => ({ ...op, danger: op.name === 'delete' }))
+  return ct.lifecycle.map((op) => ({ ...op, danger: op.name === LIFECYCLE_DELETE }))
 }
 
 function isReadableRef(v: MessagePropValue | undefined): v is ReadableRef {
@@ -213,6 +214,19 @@ export function messageView(
   return view
 }
 
+/**
+ * Drops the memo entries of revisions no longer held: an edited message's
+ * old rev and messages the held-list cap let go. The memo then holds at
+ * most one entry per held message and markdown prop (and page world).
+ */
+export function pruneMemo(memo: MarkdownMemo, messages: readonly Message[]) {
+  const held = new Set(messages.map((m) => `${m.seq}:${m.rev}`))
+  for (const key of memo.keys()) {
+    const [seq, rev] = key.split(':', 2)
+    if (!held.has(`${seq}:${rev}`)) memo.delete(key)
+  }
+}
+
 /** Maps a page of messages, quoting each reply from the held list. */
 export function messageViews(
   messages: readonly Message[],
@@ -220,6 +234,7 @@ export function messageViews(
   ctx: ChannelViewContext,
   memo?: MarkdownMemo
 ): ChannelMessageView[] {
+  if (memo) pruneMemo(memo, messages)
   const bySeq = new Map(messages.map((m) => [m.seq, m]))
   return messages.map((m) => {
     const original = m.reply_to ? bySeq.get(m.reply_to) : undefined

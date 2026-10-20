@@ -6,18 +6,22 @@
  *
  * With exactly one channel and nothing to create it opens that channel
  * directly. Otherwise RlEntityChannels lists them and the chosen one opens
- * below the list. One channel is open at a time, and while one is open the
- * list drops its live subscription (R18), so a page holds one channel
- * subscription and the entity's own; the list is read again when the open
- * channel reports a lifecycle change or goes away.
+ * below the list. One channel is open at a time, and while one is chosen
+ * from the list, the list drops its live subscription (R18), so a page holds
+ * one channel subscription and the entity's own; the list is read again when
+ * the open channel reports a lifecycle change or goes away. A channel that
+ * opened directly keeps the list subscription, so a second channel created
+ * meanwhile brings the list back, with the open channel still open.
  *
- * Channel routes take no `?world=`; the address carries the face (R14).
- * The page world goes on entity links only.
+ * Channel routes take no `?world=`: the server refuses a non-default world
+ * there, and the address carries the face (R14). The page world goes on
+ * entity links only.
  */
 import { computed, ref, watch } from 'vue'
 import { createChannel, type ChannelAnchor } from '@/api/channels'
 import { useEntityChannels } from '@/composables/useEntityChannels'
 import { useChannelSchemaStore } from '@/stores/channelSchema'
+import { useSchemaStore } from '@/stores/schema'
 import RlEntityChannels from 'rela-components/components/channel/RlEntityChannels.vue'
 import OpenChannel from './OpenChannel.vue'
 import ChannelTextDialog from './ChannelTextDialog.vue'
@@ -34,6 +38,7 @@ const props = defineProps<{
 }>()
 
 const channelSchema = useChannelSchemaStore()
+const schema = useSchemaStore()
 const ui = useUIStore()
 
 const anchor = computed<ChannelAnchor>(() => ({ type: props.entityType, address: props.entityId }))
@@ -46,7 +51,7 @@ const selected = ref<string | null>(null)
 
 const list = useEntityChannels(anchor, {
   state: () => (filter.value === 'open' ? 'open' : undefined),
-  live: () => !channelOpen.value,
+  live: () => !channelOpen.value || single.value,
 })
 
 const groups = computed(() =>
@@ -57,6 +62,25 @@ const canCreate = computed(() => groups.value.some((g) => g.canCreate))
 
 /** Whether the only channel opens without a list above it. */
 const single = computed(() => rows.value.length === 1 && !canCreate.value)
+
+// When a second channel ends single mode, the list appears and the channel
+// that opened directly stays open, as if the user had chosen it.
+let directKey: string | null = null
+watch(
+  single,
+  (now) => {
+    if (now) {
+      directKey = rows.value[0].key
+      return
+    }
+    const keep = directKey
+    directKey = null
+    if (keep !== null && selected.value === null && rows.value.some((r) => r.key === keep)) {
+      selected.value = keep
+    }
+  },
+  { immediate: true }
+)
 
 const openKey = computed<string | null>(() => {
   if (selected.value !== null) return selected.value
@@ -103,17 +127,20 @@ function onCreate(type: string) {
 
 async function submitCreate(title: string) {
   const type = creating.value
-  const a = anchor.value
-  if (!type || !a) return
+  if (!type) return
   createBusy.value = true
   try {
-    const channel = await createChannel(a, type, title || undefined)
+    const channel = await createChannel(anchor.value, type, title || undefined)
     creating.value = null
     filter.value = 'open'
     selected.value = channelKey(type, channel.name)
     await list.refetch()
   } catch (err) {
     const out = classifyChannelError(err)
+    if (out.then === 'schema') {
+      void channelSchema.reload()
+      void schema.reloadChannelPresentations()
+    }
     if (out.then !== 'none') void list.refetch()
     if (out.place === 'form') createError.value = out.message
     else {

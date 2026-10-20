@@ -115,6 +115,13 @@ export const MESSAGE_OPS: ReadonlySet<string> = new Set<MessageOp>([
   'release',
 ])
 
+/**
+ * The lifecycle operation that deletes a channel, as realtimecfg's
+ * LifecycleDelete names it. It is the one op drawn in the danger tone and
+ * confirmed first.
+ */
+export const LIFECYCLE_DELETE = 'delete'
+
 /** A prop value: a scalar, or a RefProp for a ref property. */
 export type MessagePropValue = string | number | boolean | RefProp
 

@@ -159,6 +159,15 @@ describe('messageViews', () => {
     expect(renderSpy).toHaveBeenCalledTimes(2)
   })
 
+  it('keeps memo entries for held revisions only', () => {
+    const memo = new Map<string, string>()
+    messageViews([m1, m2], byName, ctx, memo)
+    expect([...memo.keys()].sort()).toEqual(['1:1:body:', '2:2:body:'])
+    // m1 edited, m2 dropped by the held-list cap.
+    messageViews([{ ...m1, rev: 3 }], byName, ctx, memo)
+    expect([...memo.keys()]).toEqual(['1:3:body:'])
+  })
+
   it('shows a removed message as its removal only', () => {
     const removed: Message = {
       seq: 3,
