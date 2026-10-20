@@ -1219,9 +1219,14 @@ Each entry takes these keys of a form field (see Field Options):
 | `help` | Help text below the field. |
 | `widget` | `text`, `textarea`, `number`, `checkbox`, `date`, `datetime` or `select`. It must suit the property type: `text` for `string`, `textarea` for `string` or `markdown`, `number` for `integer`, `checkbox` for `boolean`, `date` for `date`, `datetime` for `datetime`, and `select` for an enum. A `ref` property takes no widget; it always gets an entity picker. |
 | `span` | Width on the 12-column grid, 1 to 12. Omit it for full width. |
-| `hidden` | Leaves the field out of the composer. |
+| `hidden` | Leaves the field out of the composer. When the author edits a message, the field keeps its stored value. |
 
 Labels are authored, never derived, as everywhere else in this file.
+
+An edit sends every property of the message, not only the ones the
+composer shows. A `hidden` field, or a value a trigger set, is sent back
+as stored, so editing a message never erases it. A `ref` the author can no
+longer read is left out of the edit, and the server keeps it as stored.
 
 The server refuses the file when the block:
 
@@ -1241,14 +1246,19 @@ server then logs a warning instead of refusing the file, so you can add the
 block before you turn realtime on.
 
 The two files are checked against each other whenever either changes. A
-`data-entry.yaml` reload that breaks the block is refused. A `realtime.yaml`
-reload that breaks it is applied, because realtime itself is still valid,
-and open browsers get a `config-error` event naming `data-entry.yaml`. `rela
-validate` and the Configure space run the same check.
+`data-entry.yaml` reload that breaks the block is refused. After a
+`realtime.yaml` reload, the server reads `data-entry.yaml` from disk again
+and checks it against the new file. If that check fails, the new
+`realtime.yaml` is still applied, because realtime itself is valid, the
+previous `data-entry.yaml` keeps working, and open browsers get a
+`config-error` event that names `data-entry.yaml` and says `realtime.yaml`
+was applied. `rela validate` and the Configure space run the same check.
 
 The block is served in `GET /api/v1/_config` as `channels`, next to `forms`.
 The structure the composer needs, such as property types and labels, comes
-from `GET /api/v1/_schema/channels` (see the realtime guide).
+from `GET /api/v1/_schema/channels` (see the realtime guide). A page that
+shows channels reads both again on a `refresh` event, so a change to
+either file reaches it without a page reload.
 
 ## Lists
 

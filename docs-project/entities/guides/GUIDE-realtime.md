@@ -273,15 +273,30 @@ operations the caller may use now:
 
 - `edit`: the author may edit the message. It disappears when the edit
   window passes, when the channel is not open, and while an action is
-  pending. It is also left out when a `ref` property of the message is
-  restricted for the caller: an edit replaces every property, and the
-  caller cannot send back an id they cannot see.
+  pending. A `ref` property the caller cannot read does not stop an edit:
+  see the `PATCH` row below.
 - `delete`: the author may delete their own message (`delete_own`).
 - `remove`: the caller may remove the message (`remove`), with a reason
   when the channel type requires one.
 - `release`: the caller may release the message's pending action now.
 
-That is why an action cannot take one of these names. A promoting action is offered only to a caller the
+That is why an action cannot take one of these names.
+
+Some of these change with time, without a new revision of the message.
+So a message names when they will change:
+
+- `edit_until`: when `edit` disappears, because the edit window ends.
+  Only present while the message offers `edit` and `edit_own` has a
+  `within`.
+- `release_after`: when `release` appears for a caller the release gate
+  admits, because the release window ends. Only present while the action
+  is pending and the window has not passed.
+
+A client sets a timer for the soonest of these and reads the message
+again when it passes. A change of `acl.yaml` or of a role can also change
+`_actions` without a new revision; the live frame it causes carries no
+message, and the SPA then reads the newest page again. An operation the
+caller may no longer perform is refused either way. A promoting action is offered only to a caller the
 create ACL lets create its entity. A process that cannot write the graph
 does not offer a promoting action and answers its `POST` with 403
 `action_not_offered`.
@@ -453,6 +468,15 @@ trigger or an `auto.when` it must leave out because of faces (see
 Triggers) is dropped with a warning, and the rest of the file stays in
 force.
 
+An action named `edit`, `delete`, `remove` or `release` is refused too.
+Older versions accepted such a name; a file that has one no longer loads,
+so rename the action before you upgrade.
+
+`rela validate` loads `realtime.yaml` the same way when `data-entry.yaml`
+has a `channels:` block, and checks that block against it. It prints a
+`✗` line for each problem, and one for a `realtime.yaml` that does not
+load.
+
 ## Limits
 
 These are the built-in limits. The `limits:` block may only lower them. A
@@ -483,7 +507,7 @@ The data-entry API serves channels under the entity they are attached to.
 | `GET .../_channels/{type}/{name}` | The head of a named channel. |
 | `GET .../{channel}/messages` | A page of messages. See below. |
 | `POST .../{channel}/messages` | Posts a message: `{"type": ..., "props": {...}, "reply_to": n}`. A `log` message gets a 201 with the message; an `ephemeral` one gets a 202. |
-| `PATCH .../{channel}/messages/{seq}` | Edits a message: `{"props": {...}}`. |
+| `PATCH .../{channel}/messages/{seq}` | Edits a message: `{"props": {...}}`. The props replace the message's props, with one exception: a stored `ref` property the caller cannot read, and that the request does not name, is kept as stored. A caller cannot send back an id they cannot see, so leaving it out does not erase it. A property the request does not name is otherwise removed. |
 | `DELETE .../{channel}/messages/{seq}` | Removes a message. The body may hold a `reason`. |
 | `POST .../{channel}/messages/{seq}/_action/{name}` | Runs an action. The body is empty or `{}`. The answer is `{"message": ..., "warnings": [...]}`. |
 | `DELETE .../{channel}/messages/{seq}/_action` | Releases a pending action. The body is empty or `{}`. The answer is the message. |
@@ -654,10 +678,13 @@ it out of roles that post on channels other agents act on.
   the previous one keeps working, and open browsers get a `config-error`
   event naming `realtime.yaml`. After a reload that succeeds, open browsers
   get a `refresh` event, so they read `GET /api/v1/_schema/channels` again.
-- The `channels:` block of `data-entry.yaml` is checked against the file on
-  every reload (see the data-entry guide). A reload that breaks it is still
-  applied, and open browsers get a `config-error` event naming
-  `data-entry.yaml`.
+- After a `realtime.yaml` reload, rela-server reads `data-entry.yaml` from
+  disk again and checks its `channels:` block against the new file (see
+  the data-entry guide). The two reloads run one at a time. If
+  `data-entry.yaml` loads, it is put in force with the new `realtime.yaml`.
+  If it does not, the new `realtime.yaml` stays in force, the previous
+  `data-entry.yaml` keeps working, and open browsers get a `config-error`
+  event naming `data-entry.yaml`, with `"applied": "realtime.yaml"`.
 - A change to `anchor:` of a channel type that has stored channels is
   refused, on reload and when the server starts, because the stored
   channels are keyed by the old anchor. Migrating channels to another
