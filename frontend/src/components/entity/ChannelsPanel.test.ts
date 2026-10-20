@@ -498,7 +498,7 @@ describe('ChannelsPanel', () => {
         await submitComposer()
 
         if (tc.inForm) {
-          expect(composerForm().text()).toContain(`Refused as ${tc.type}`)
+          expect(composerForm().text()).toContain(`refused as ${tc.type}`)
           expect(toastTitles()).toEqual([])
         } else {
           expect(toastTitles().length).toBe(1)

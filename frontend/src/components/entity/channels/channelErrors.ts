@@ -108,17 +108,13 @@ function retryAfterSeconds(err: ApiError): number | undefined {
   return Number.isFinite(n) && n > 0 ? Math.ceil(n) : undefined
 }
 
-/**
- * The server's title as a sentence, with the rule a 403 names in `detail`.
- * Titles are lowercase phrases written for logs and the CLI.
- */
+/** The server's title as written, with the rule a 403 names in `detail`. */
 function problemMessage(err: unknown): string {
   const problem = err instanceof ApiError ? err.problem : undefined
   const title = problem?.title?.trim()
   if (!title) return getErrorMessage(err, 'The channel request failed.')
-  const sentence = title.charAt(0).toUpperCase() + title.slice(1)
   const detail = problem?.detail?.trim()
-  return detail ? `${sentence} (${detail})` : sentence
+  return detail ? `${title} (${detail})` : title
 }
 
 /**

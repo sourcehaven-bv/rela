@@ -150,11 +150,11 @@ describe('classifyChannelError', () => {
     })
   }
 
-  it('writes the title as a sentence and names the rule a 403 gives', () => {
+  it('shows the title as written and names the rule a 403 gives', () => {
     const out = classifyChannelError(
       problem(403, 'channel_post_denied', 'posting is not allowed', 'post: [member]')
     )
-    expect(out.message).toBe('Posting is not allowed (post: [member])')
+    expect(out.message).toBe('posting is not allowed (post: [member])')
   })
 
   it('says how long to wait from Retry-After on a 429', () => {
