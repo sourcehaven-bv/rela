@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
-import { CHANNEL_WIRE_FIELDS } from './channels'
+import { CHANNEL_WIRE_FIELDS, MESSAGE_OPS } from './channels'
 
 // The other half of TestChannelWireGolden (internal/dataentry): Go writes the
 // JSON field set of each channel wire type, and this compares it with the
@@ -10,6 +10,18 @@ import { CHANNEL_WIRE_FIELDS } from './channels'
 const FIXTURE = resolve(__dirname, '../../../internal/dataentry/testdata/channel_wire_fields.json')
 // Real answers of the handlers, written by the same Go test.
 const SAMPLES = resolve(__dirname, '../../../internal/dataentry/testdata/channel_wire.json')
+// realtimecfg.MessageOpNames, written by the same Go test.
+const MESSAGE_OPS_FIXTURE = resolve(
+  __dirname,
+  '../../../internal/dataentry/testdata/channel_message_ops.json'
+)
+
+describe('message operation names agree with the server', () => {
+  it('MESSAGE_OPS is realtimecfg.MessageOpNames', () => {
+    const goOps = JSON.parse(readFileSync(MESSAGE_OPS_FIXTURE, 'utf-8')) as string[]
+    expect([...MESSAGE_OPS].sort()).toEqual([...goOps].sort())
+  })
+})
 
 describe('channel wire types agree with the Go wire', () => {
   const goFields = JSON.parse(readFileSync(FIXTURE, 'utf-8')) as Record<string, string[]>
@@ -33,18 +45,55 @@ describe('real channel answers use only mirrored keys', () => {
     ).toEqual([])
   }
 
+  /** Checks m and every nested wire value it holds. */
+  function messageKeys(m: Json) {
+    keysOf('Message', m)
+    if (m.author) keysOf('ChannelAuthor', m.author)
+    if (m.removed) {
+      const removed = m.removed as Json
+      keysOf('MessageRemoval', removed)
+      if (removed.by) keysOf('ChannelAuthor', removed.by)
+    }
+    if (m.action) {
+      const action = m.action as Json
+      keysOf('MessageAction', action)
+      if (action.promoted) keysOf('RefProp', action.promoted)
+    }
+    for (const v of Object.values((m.props ?? {}) as Json)) {
+      if (v !== null && typeof v === 'object') keysOf('RefProp', v)
+    }
+  }
+
   it('head', () => {
     const head = samples.head!
     keysOf('ChannelHead', head)
     keysOf('Channel', head.channel)
     keysOf('ChannelActions', head._actions)
-    keysOf('Message', head.last)
+    messageKeys(head.last as Json)
+    const signals = head.ephemeral as Json[]
+    expect(signals.length).toBeGreaterThan(0)
+    for (const s of signals) {
+      keysOf('EphemeralMessage', s)
+      keysOf('ChannelAuthor', s.author)
+    }
   })
 
   it('messages', () => {
     const page = samples.messages!
     keysOf('MessagePage', page)
-    for (const m of page.messages as Json[]) keysOf('Message', m)
+    const messages = page.messages as Json[]
+    for (const m of messages) messageKeys(m)
+    // The samples hold the shapes most likely to carry an unmirrored field.
+    expect(messages.some((m) => m.removed)).toBe(true)
+    expect(messages.some((m) => (m.action as Json | undefined)?.status === 'pending')).toBe(true)
+    expect(messages.some((m) => (m.action as Json | undefined)?.status === 'done')).toBe(true)
+    expect(messages.some((m) => m.edit_until && m.release_after === undefined)).toBe(true)
+    expect(messages.some((m) => m.release_after)).toBe(true)
+    expect(
+      messages.some((m) =>
+        Object.values((m.props ?? {}) as Json).some((v) => (v as Json | null)?.restricted === true)
+      )
+    ).toBe(true)
   })
 
   it('list', () => {

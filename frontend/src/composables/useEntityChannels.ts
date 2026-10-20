@@ -1,4 +1,4 @@
-import { shallowRef, watch, type MaybeRefOrGetter, toValue } from 'vue'
+import { onScopeDispose, shallowRef, watch, type MaybeRefOrGetter, toValue } from 'vue'
 import { listChannels, type ChannelAnchor } from '@/api/channels'
 import { liveChannelsPath } from '@/api/live'
 import { shouldDropHeldContent } from '@/api/errors'
@@ -71,6 +71,11 @@ export function useEntityChannels(
   )
   watch(isLive, (live, was) => {
     if (live && !was) void refetch()
+  })
+
+  // An answer that arrives after the component is gone must not land.
+  onScopeDispose(() => {
+    seq++
   })
 
   useLiveSubscription(

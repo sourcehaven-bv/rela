@@ -12,9 +12,20 @@ import type { ChannelPropertySchema, MessagePropInput, MessagePropValue } from '
  *   and is sent as UTC RFC 3339. A local time that does not exist (the
  *   gap when clocks move forward) is refused rather than shifted. A local
  *   time that occurs twice (when clocks move back) takes the first.
+ *   The server stores a datetime in RFC 3339 without fractional seconds,
+ *   so the edit prefill, which shows whole seconds, loses nothing.
  * - An empty optional field is absent, never `''`, 0 or NaN.
+ * - An absent boolean stays absent: an unchecked box that the user never
+ *   touched sends nothing, so `when:` and triggers can still tell "not
+ *   set" from "no". A required boolean has no absent state; the composer
+ *   seeds it with false (initialValues), so "no" needs no extra clicks.
  * - An integer outside the safe range is refused: JSON would round it.
  * - `max` counts Unicode code points, as the server does.
+ *
+ * An edit replaces the message's props, so toEditProps carries every prop
+ * the composer does not render (a `hidden:` field, or one the presentation
+ * leaves out) through unchanged, and leaves out a ref the caller cannot
+ * read, which the server then keeps as stored.
  */
 
 /** A composer field's raw value: input text, or a checkbox state. */
@@ -64,7 +75,11 @@ function localDatetimeToUTC(raw: string): Converted {
   if (!validDate(y, mo, d) || h > 23 || mi > 59 || s > 59) {
     return { ok: false, error: 'must be a date and time' }
   }
-  const local = new Date(y, mo - 1, d, h, mi, s)
+  // The Date constructor maps a year below 100 to 1900 + year; setFullYear
+  // takes the year as given.
+  const local = new Date(2000, 0, 1, h, mi, s)
+  local.setFullYear(y, mo - 1, d)
+  local.setHours(h, mi, s, 0)
   // A time in a forward gap comes back moved; the composer must not post
   // a time other than the one shown.
   if (
@@ -151,16 +166,70 @@ function pad(n: number): string {
 }
 
 /**
+ * The composer's starting values for a new message: false for a required
+ * boolean, which has no absent state, and nothing for every other field.
+ */
+export function initialValues(props: readonly ChannelPropertySchema[]): Record<string, FieldValue> {
+  const out: Record<string, FieldValue> = {}
+  for (const p of props) {
+    if (p.type === 'boolean' && p.required) out[p.name] = false
+  }
+  return out
+}
+
+function isRestrictedRef(value: MessagePropValue | undefined): boolean {
+  return typeof value === 'object' && value !== null && value.restricted === true
+}
+
+/** A stored prop as a request sends it back unchanged; undefined to leave it out. */
+function carryProp(value: MessagePropValue | undefined): MessagePropInput | undefined {
+  if (value === undefined || value === null) return undefined
+  if (typeof value === 'object') return value.restricted ? undefined : value.id
+  return value
+}
+
+/**
+ * The props an edit sends. Fields in `rendered` take the composer's value,
+ * converted by toPropValue; every other prop of the message (`current`) is
+ * carried through unchanged, so a field the composer never shows is not
+ * erased. A ref the caller cannot read is left out, and the server keeps
+ * it as stored; a rendered one left empty is not a missing required value
+ * for the same reason.
+ */
+export function toEditProps(
+  props: readonly ChannelPropertySchema[],
+  rendered: ReadonlySet<string>,
+  values: Record<string, FieldValue>,
+  current: Readonly<Record<string, MessagePropValue>> | undefined
+): ConvertedProps {
+  const out: Record<string, MessagePropInput> = {}
+  const errors: Record<string, string> = {}
+  for (const p of props) {
+    const stored = current?.[p.name]
+    if (!rendered.has(p.name)) {
+      const carried = carryProp(stored)
+      if (carried !== undefined) out[p.name] = carried
+      continue
+    }
+    if (isRestrictedRef(stored) && isEmpty(values[p.name])) continue
+    const c = toPropValue(p, values[p.name])
+    if (!c.ok) errors[p.name] = c.error
+    else if (c.value !== undefined) out[p.name] = c.value
+  }
+  return Object.keys(errors).length ? { ok: false, errors } : { ok: true, props: out }
+}
+
+/**
  * The composer value for a stored prop, to prefill an edit. A datetime
  * shows in the browser's zone; a ref gives its id. A restricted ref gives
- * undefined: the server offers no edit on such a message, since the
- * composer could not send it back.
+ * undefined, and so does an absent boolean (an unchecked box); see
+ * toEditProps for how an edit sends them.
  */
 export function fromPropValue(
   prop: ChannelPropertySchema,
   value: MessagePropValue | undefined
 ): FieldValue {
-  if (value === undefined || value === null) return prop.type === 'boolean' ? false : undefined
+  if (value === undefined || value === null) return undefined
   switch (prop.type) {
     case 'boolean':
       return value === true

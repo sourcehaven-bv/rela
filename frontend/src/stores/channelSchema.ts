@@ -3,6 +3,7 @@ import { ref, shallowRef } from 'vue'
 import { getChannelSchema } from '@/api/channels'
 import { useEvents } from '@/composables/useEvents'
 import { runWhenVisible } from '@/composables/visibleRefetch'
+import { useSchemaStore } from '@/stores/schema'
 import {
   MESSAGE_OPS,
   type ChannelHead,
@@ -17,12 +18,25 @@ import {
  *
  * It is not part of the schema store's boot load. It loads the first time
  * a page needs it, and again on `refresh`, which the server sends after a
- * realtime.yaml reload. A failed load leaves the list empty, so channel
- * surfaces stay hidden while the rest of the app works.
+ * realtime.yaml reload.
+ *
+ * A failed load keeps what is held: before the first success that is an
+ * empty list, so channel surfaces stay hidden while the rest of the app
+ * works; after it, the descriptor that worked, so one failed reload does
+ * not take open channels away. `loaded` stays false until a load succeeds,
+ * and ensureLoaded tries again once RETRY_BASE_MS has passed, doubling up
+ * to RETRY_MAX_MS after each failure.
  */
+export const RETRY_BASE_MS = 5_000
+export const RETRY_MAX_MS = 60_000
+
 export const useChannelSchemaStore = defineStore('channelSchema', () => {
   const channelTypes = shallowRef<ChannelTypeSchema[]>([])
+  /** Whether a load has succeeded; channelTypes is then a real answer. */
   const loaded = ref(false)
+  let failures = 0
+  // Before this time ensureLoaded does not try a failed first load again.
+  let retryAt = 0
   let inflight: Promise<void> | null = null
   // Bumped by reload, so the answer of a superseded load does not land.
   let generation = 0
@@ -31,20 +45,27 @@ export const useChannelSchemaStore = defineStore('channelSchema', () => {
   const reloadedFor = new Set<string>()
 
   async function fetchSchema(gen: number) {
-    let types: ChannelTypeSchema[] = []
     try {
-      types = (await getChannelSchema()).channel_types ?? []
+      const types = (await getChannelSchema()).channel_types ?? []
+      if (gen !== generation) return
+      channelTypes.value = types
+      loaded.value = true
+      failures = 0
     } catch {
-      // Hidden, not broken: an empty list shows no channel surface.
+      if (gen !== generation) return
+      // Keep what is held: hidden before the first load, unchanged after.
+      failures++
+      retryAt = Date.now() + Math.min(RETRY_BASE_MS * 2 ** (failures - 1), RETRY_MAX_MS)
     }
-    if (gen !== generation) return
-    channelTypes.value = types
-    loaded.value = true
   }
 
-  /** Loads once; concurrent callers share the request. */
+  /**
+   * Loads once; concurrent callers share the request. After a failed first
+   * load it tries again only once the retry delay has passed.
+   */
   function ensureLoaded(): Promise<void> {
     if (loaded.value) return Promise.resolve()
+    if (!inflight && Date.now() < retryAt) return Promise.resolve()
     inflight ??= fetchSchema(generation).finally(() => {
       inflight = null
     })
@@ -121,12 +142,20 @@ export const useChannelSchemaStore = defineStore('channelSchema', () => {
 
 /**
  * The channel schema store for a component: loads it when needed and
- * reloads it on `refresh`, once the tab is visible.
+ * reloads it on `refresh`, once the tab is visible, together with the
+ * `channels:` presentation the schema store holds, so a page never mixes a
+ * new descriptor with an old presentation.
  */
 export function useChannelSchema() {
   const store = useChannelSchemaStore()
+  const schema = useSchemaStore()
   void store.ensureLoaded()
   const { on } = useEvents()
-  on('refresh', () => runWhenVisible('channel-schema', () => void store.reload()))
+  on('refresh', () =>
+    runWhenVisible('channel-schema', () => {
+      void store.reload()
+      void schema.reloadChannelPresentations()
+    })
+  )
   return store
 }

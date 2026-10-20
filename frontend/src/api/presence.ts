@@ -1,5 +1,6 @@
 import { api } from './client'
 import { getPlural } from './entities'
+import { addressSegment } from '@/utils/entityAddress'
 import type { PresenceResponse } from '@/types/entity'
 
 /**
@@ -13,7 +14,7 @@ export async function getPresence(
   world?: string
 ): Promise<PresenceResponse> {
   return api.get<PresenceResponse>(
-    `/${getPlural(type)}/${address}/_presence`,
+    `/${getPlural(type)}/${addressSegment(address)}/_presence`,
     world ? { world } : undefined
   )
 }

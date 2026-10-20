@@ -487,6 +487,21 @@ export const useSchemaStore = defineStore('schema', () => {
     await load()
   }
 
+  /**
+   * Re-reads the `channels:` presentation from `/_config` on its own, for
+   * a page that shows channels: a `refresh` (data-entry.yaml or
+   * realtime.yaml changed) reaches the channel descriptor, and this keeps
+   * the presentation in step with it. A failed read keeps what is held.
+   */
+  async function reloadChannelPresentations(): Promise<void> {
+    try {
+      const configData = await getConfig()
+      channelPresentations.value = new Map(Object.entries(configData.channels || {}))
+    } catch {
+      // Keep the presentation held; the next refresh tries again.
+    }
+  }
+
   function setLogoUrl(url: string | null) {
     logoUrl.value = url
   }
@@ -528,6 +543,7 @@ export const useSchemaStore = defineStore('schema', () => {
     worldOrder,
     forms,
     channelPresentations,
+    reloadChannelPresentations,
     lists,
     views,
     entityViews,

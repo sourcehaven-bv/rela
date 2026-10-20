@@ -270,6 +270,26 @@ describe('useEvents', () => {
       expect(mockEntitiesInvalidateAll).not.toHaveBeenCalled()
     })
 
+    it('says which file was applied when a realtime.yaml reload leaves data-entry.yaml behind', async () => {
+      await mountConnected()
+
+      lastSource!._emit(
+        'config-error',
+        JSON.stringify({
+          file: 'data-entry.yaml',
+          applied: 'realtime.yaml',
+          error: 'channels.room: realtime.yaml declares no channel type "room"',
+        })
+      )
+
+      const text = mockUIError.mock.calls[0][0] as string
+      expect(text).toContain(
+        'realtime.yaml was applied, but data-entry.yaml does not load against it'
+      )
+      expect(text).toContain('the previous data-entry.yaml is still in use')
+      expect(text).not.toContain('Configuration not reloaded')
+    })
+
     it('still reports a config-error whose payload does not parse', async () => {
       await mountConnected()
 

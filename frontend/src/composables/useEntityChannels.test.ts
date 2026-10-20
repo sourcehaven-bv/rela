@@ -56,6 +56,24 @@ describe('useEntityChannels', () => {
     subs.length = 0
   })
 
+  it('drops an answer that arrives after the component is gone', async () => {
+    let resolve!: (l: ChannelList) => void
+    listMock.mockReturnValueOnce(new Promise((r) => (resolve = r)))
+    let api!: ReturnType<typeof useEntityChannels>
+    const w = mount(
+      defineComponent({
+        setup() {
+          api = useEntityChannels(() => ({ type: 'ticket', address: 'TKT-1' }))
+          return () => h('div')
+        },
+      })
+    )
+    w.unmount()
+    resolve(list)
+    await flushPromises()
+    expect(api.types.value).toEqual([])
+  })
+
   it('lists and subscribes the channel list path', async () => {
     listMock.mockResolvedValue(list)
     const ch = host(() => ({ type: 'ticket', address: 'TKT-1@draft', world: 'main' }), {

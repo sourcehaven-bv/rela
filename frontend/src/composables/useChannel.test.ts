@@ -9,6 +9,7 @@ import {
   useChannel,
   MAX_FOLLOW_PAGES,
   MAX_HELD_MESSAGES,
+  DEADLINE_SLACK_MS,
   type UseChannelOptions,
 } from './useChannel'
 
@@ -130,9 +131,10 @@ describe('useChannel', () => {
     expect(getHead).not.toHaveBeenCalled()
 
     getPage.mockResolvedValueOnce(page([], { next_after_rev: 4 }))
+    getPage.mockResolvedValueOnce(page([msg(1, 3, 'edited'), msg(2), msg(3, 4)]))
     frame()
     await flushPromises()
-    expect(getPage).toHaveBeenLastCalledWith(room, { afterRev: 4 })
+    expect(getPage).toHaveBeenCalledWith(room, { afterRev: 4 })
   })
 
   it('refetches the head when a frame brings no message', async () => {
@@ -146,11 +148,135 @@ describe('useChannel', () => {
     getPage.mockResolvedValueOnce(
       page([], { next_after_rev: 1, channel: channel({ state: 'closed' }) })
     )
+    // The state moved, so the newest page is read again for its affordances.
+    getPage.mockResolvedValueOnce(page([{ ...msg(1), _actions: [] }]))
+    frame()
+    await flushPromises()
+    expect(getPage).toHaveBeenCalledTimes(2)
+    expect(getPage).toHaveBeenLastCalledWith(room, undefined)
+    expect(getHead).toHaveBeenCalledTimes(1)
+    expect(ch.head.value?.channel.state).toBe('closed')
+    expect(ch.messages.value[0]!._actions).toEqual([])
+  })
+
+  it('reads the newest page again only when a frame on an ephemeral channel moved state or affordances', async () => {
+    getPage.mockResolvedValueOnce(page([msg(1)], { next_after_rev: 1 }))
+    const ch = host(() => room, { ephemeral: true })
+    await flushPromises()
+    getPage.mockClear()
+
+    // A typing signal: nothing but the ephemeral list moved.
+    getPage.mockResolvedValueOnce(page([], { next_after_rev: 1 }))
     frame()
     await flushPromises()
     expect(getPage).toHaveBeenCalledTimes(1)
-    expect(getHead).toHaveBeenCalledTimes(1)
-    expect(ch.head.value?.channel.state).toBe('closed')
+
+    // A policy change: the head affordances moved.
+    getHead.mockResolvedValueOnce({ ...headOf(), _actions: { ...headOf()._actions, post: [] } })
+    getPage.mockResolvedValueOnce(page([], { next_after_rev: 1 }))
+    getPage.mockResolvedValueOnce(page([{ ...msg(1), _actions: [] }]))
+    frame()
+    await flushPromises()
+    expect(getPage).toHaveBeenCalledTimes(3)
+    expect(ch.messages.value[0]!._actions).toEqual([])
+  })
+
+  it('reads a message again once its edit or release deadline passes', async () => {
+    vi.useFakeTimers()
+    try {
+      const now = Date.now()
+      const until = new Date(now + 60_000).toISOString()
+      const after = new Date(now + 120_000).toISOString()
+      getPage.mockResolvedValueOnce(
+        page(
+          [
+            { ...msg(1), _actions: ['edit'], edit_until: until },
+            { ...msg(2), _actions: [], release_after: after },
+          ],
+          { next_after_rev: 2 }
+        )
+      )
+      const ch = host(() => room)
+      await flushPromises()
+      getPage.mockClear()
+
+      getPage.mockResolvedValueOnce(page([{ ...msg(1), _actions: [] }]))
+      await vi.advanceTimersByTimeAsync(60_000 + DEADLINE_SLACK_MS)
+      expect(getPage).toHaveBeenCalledTimes(1)
+      expect(getPage).toHaveBeenLastCalledWith(room, { before: 2 })
+      expect(ch.messages.value[0]!._actions).toEqual([])
+
+      getPage.mockResolvedValueOnce(page([msg(1), { ...msg(2), _actions: ['release'] }]))
+      await vi.advanceTimersByTimeAsync(60_000)
+      expect(getPage).toHaveBeenCalledTimes(2)
+      expect(getPage).toHaveBeenLastCalledWith(room, { before: 3 })
+      expect(ch.messages.value[1]!._actions).toEqual(['release'])
+
+      // No deadline is left, so no timer runs.
+      await vi.advanceTimersByTimeAsync(600_000)
+      expect(getPage).toHaveBeenCalledTimes(2)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('reads a deadline again only once when the server still names it', async () => {
+    vi.useFakeTimers()
+    try {
+      const until = new Date(Date.now() + 1_000).toISOString()
+      const stale = { ...msg(1), _actions: ['edit'], edit_until: until }
+      getPage.mockResolvedValueOnce(page([stale], { next_after_rev: 1 }))
+      host(() => room)
+      await flushPromises()
+      getPage.mockClear()
+
+      getPage.mockResolvedValue(page([{ ...stale }]))
+      await vi.advanceTimersByTimeAsync(60_000)
+      expect(getPage).toHaveBeenCalledTimes(1)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('keeps head.last on the newest held message', async () => {
+    getPage.mockResolvedValueOnce(page([msg(1)], { next_after_rev: 1 }))
+    const ch = host(() => room)
+    await flushPromises()
+    expect(ch.head.value?.last?.seq).toBe(1)
+
+    getPage.mockResolvedValueOnce(page([msg(2)], { next_after_rev: 2 }))
+    frame()
+    await flushPromises()
+    expect(ch.head.value?.last?.seq).toBe(2)
+
+    getPage.mockResolvedValueOnce(page([msg(2, 3, 'edited')], { next_after_rev: 3 }))
+    frame()
+    await flushPromises()
+    expect(ch.head.value?.last?.props?.body).toBe('edited')
+  })
+
+  it('stops after the component is gone', async () => {
+    getPage.mockResolvedValueOnce(page([msg(1)], { next_after_rev: 1 }))
+    let api!: ReturnType<typeof useChannel>
+    const w = mount(
+      defineComponent({
+        setup() {
+          api = useChannel(() => room)
+          return () => h('div')
+        },
+      })
+    )
+    await flushPromises()
+    let release!: (p: MessagePage) => void
+    getPage.mockReturnValueOnce(new Promise((r) => (release = r)))
+    frame()
+    frame()
+    await flushPromises()
+    w.unmount()
+    release(page([msg(2)], { next_after_rev: 2 }))
+    await flushPromises()
+    expect(getPage).toHaveBeenCalledTimes(2)
+    expect(seqs(api.messages.value)).toEqual([1])
   })
 
   it('refetches the head on every frame for a type with ephemeral messages', async () => {
@@ -197,9 +323,10 @@ describe('useChannel', () => {
     expect(ch.messages.value[0]!.props?.body).toBe('new')
 
     getPage.mockResolvedValueOnce(page([], { next_after_rev: 5 }))
+    getPage.mockResolvedValueOnce(page([msg(1, 5, 'new')]))
     frame()
     await flushPromises()
-    expect(getPage).toHaveBeenLastCalledWith(room, { afterRev: 5 })
+    expect(getPage).toHaveBeenCalledWith(room, { afterRev: 5 })
   })
 
   it('merges a write answer at once without moving the held rev', async () => {
@@ -349,6 +476,34 @@ describe('useChannel', () => {
     getPage.mockResolvedValueOnce(page([msg(1)], { has_more: false }))
     await ch.loadOlder()
     expect(getPage).toHaveBeenLastCalledWith(room, { before: 2 })
+  })
+
+  it('drops the newest past the cap after loadOlder and keeps what the user reads', async () => {
+    const newest = Array.from({ length: MAX_HELD_MESSAGES }, (_, i) => msg(i + 101))
+    getPage.mockResolvedValueOnce(
+      page(newest, { next_after_rev: 600, next_before: 101, has_more: true })
+    )
+    const ch = host(() => room)
+    await flushPromises()
+
+    const older = Array.from({ length: 100 }, (_, i) => msg(i + 1))
+    getPage.mockResolvedValueOnce(page(older, { has_more: false }))
+    await ch.loadOlder()
+    expect(ch.messages.value).toHaveLength(MAX_HELD_MESSAGES)
+    expect(ch.messages.value[0]!.seq).toBe(1)
+    expect(ch.hasNewer.value).toBe(true)
+
+    // A live message does not evict the old end the user is reading.
+    getPage.mockResolvedValueOnce(page([msg(601)], { next_after_rev: 601 }))
+    frame()
+    await flushPromises()
+    expect(ch.messages.value[0]!.seq).toBe(1)
+    expect(ch.messages.value).toHaveLength(MAX_HELD_MESSAGES)
+
+    getPage.mockResolvedValueOnce(page([msg(600), msg(601)], { next_after_rev: 601 }))
+    await ch.loadNewest()
+    expect(seqs(ch.messages.value)).toEqual([600, 601])
+    expect(ch.hasNewer.value).toBe(false)
   })
 
   it('reports each head and page to onSeen', async () => {

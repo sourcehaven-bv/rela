@@ -1,4 +1,4 @@
-import { ref, shallowRef, watch, type MaybeRefOrGetter, toValue } from 'vue'
+import { onScopeDispose, ref, shallowRef, watch, type MaybeRefOrGetter, toValue } from 'vue'
 import {
   editMessage,
   getChannelHead,
@@ -25,8 +25,18 @@ import type {
 
 /** The most after_rev pages one live frame reads before it reloads instead. */
 export const MAX_FOLLOW_PAGES = 10
-/** The most messages held; past it the oldest are dropped. */
+/**
+ * The most messages held. Past it, messages are dropped from the end the
+ * user is not reading: the oldest while following live, the newest after
+ * loadOlder.
+ */
 export const MAX_HELD_MESSAGES = 500
+/**
+ * How long after an `edit_until` or `release_after` deadline the message
+ * is read again, so a server clock slightly behind the browser's has
+ * passed it too.
+ */
+export const DEADLINE_SLACK_MS = 1000
 
 export interface UseChannelOptions {
   /**
@@ -64,6 +74,12 @@ interface Session {
   /** Counts head requests, so only the latest head answer lands. */
   headSeq: number
   loadingOlder: boolean
+  /**
+   * The `seq:deadline` pairs already read again once, so a server that
+   * still names the same deadline (its clock is behind) is not asked in
+   * a loop.
+   */
+  refreshed: Set<string>
 }
 
 /**
@@ -80,6 +96,21 @@ interface Session {
  * then a no-op merge. A post the server accepts as an ephemeral signal
  * (202) refetches the head, where signals live.
  *
+ * A message's `_actions` can change without a new rev. Two cases are
+ * covered:
+ * - Time. A message names `edit_until` and `release_after`. One timer runs
+ *   for the soonest deadline among the held messages; it reads the page
+ *   that ends at that message again, and the copy merges in place.
+ * - Policy and lifecycle. A frame that brings no message refetches the
+ *   head. When the channel state or the head affordances moved, or the
+ *   channel type has no ephemeral messages (so the frame cannot have been
+ *   a signal), the newest page is read again too. Older pages the user
+ *   loaded keep their affordances until they are read again; the server
+ *   still refuses an operation the caller may no longer run.
+ *
+ * `head.last` follows the newest held message, so it never lags behind
+ * the list.
+ *
  * A refused refetch (401/403/404, per shouldDropHeldContent) clears the
  * head and the messages: holding them would keep showing a channel the
  * user may no longer read. Any other failure keeps them. The write
@@ -94,21 +125,82 @@ export function useChannel(
   const head = shallowRef<ChannelHead | null>(null)
   const messages = shallowRef<Message[]>([])
   const hasOlder = ref(false)
+  /**
+   * Whether newer messages exist than the newest held: loadOlder dropped
+   * them to stay within MAX_HELD_MESSAGES. Live messages are then not
+   * appended; loadNewest returns to the live end.
+   */
+  const hasNewer = ref(false)
   const error = shallowRef<unknown>(null)
   let session: Session | null = null
+  let deadlineTimer: ReturnType<typeof setTimeout> | undefined
 
   function clear() {
     head.value = null
     messages.value = []
     hasOlder.value = false
+    hasNewer.value = false
+    stopDeadlineTimer()
+  }
+
+  function stopDeadlineTimer() {
+    if (deadlineTimer !== undefined) clearTimeout(deadlineTimer)
+    deadlineTimer = undefined
+  }
+
+  /** The deadlines of m that the client must act on, as `seq:deadline` keys. */
+  function deadlinesOf(m: Message): { key: string; at: number }[] {
+    const out: { key: string; at: number }[] = []
+    for (const d of [m.edit_until, m.release_after]) {
+      if (!d) continue
+      const at = Date.parse(d)
+      if (!Number.isNaN(at)) out.push({ key: `${m.seq}:${d}`, at })
+    }
+    return out
+  }
+
+  /** Arms one timer for the soonest deadline not yet read again. */
+  function scheduleDeadline(s: Session) {
+    stopDeadlineTimer()
+    if (!current(s)) return
+    let soonest: { seq: number; key: string; at: number } | undefined
+    for (const m of messages.value) {
+      for (const d of deadlinesOf(m)) {
+        if (s.refreshed.has(d.key)) continue
+        if (!soonest || d.at < soonest.at) soonest = { seq: m.seq, ...d }
+      }
+    }
+    if (!soonest) return
+    const { seq, key } = soonest
+    const wait = Math.max(0, soonest.at - Date.now() + DEADLINE_SLACK_MS)
+    deadlineTimer = setTimeout(() => {
+      deadlineTimer = undefined
+      if (!current(s)) return
+      s.refreshed.add(key)
+      void run(s, (x) => readAround(x, seq))
+    }, wait)
   }
 
   function current(s: Session): boolean {
     return s === session
   }
 
-  function seen() {
+  function seen(s: Session) {
+    syncLast()
+    scheduleDeadline(s)
     options.onSeen?.(head.value, messages.value)
+  }
+
+  /** Points head.last at the newest held message when that is newer. */
+  function syncLast() {
+    const h = head.value
+    const newest = messages.value[messages.value.length - 1]
+    if (!h || !newest || hasNewer.value) return
+    const last = h.last
+    if (last && (newest.seq < last.seq || (newest.seq === last.seq && newest.rev <= last.rev))) {
+      return
+    }
+    head.value = { ...h, last: newest }
   }
 
   function takeRev(s: Session, page: MessagePage) {
@@ -122,13 +214,16 @@ export function useChannel(
 
   /**
    * Merges ms into the held list by seq. A message replaces the held copy
-   * when its rev is not older. A seq before the oldest held message is
-   * taken only when nothing older exists; otherwise loadOlder brings it.
+   * when its rev is not older. A seq outside the held range is taken only
+   * when nothing exists beyond it on that side: loadOlder brings older
+   * messages and loadNewest newer ones. Past MAX_HELD_MESSAGES the oldest
+   * are dropped.
    */
   function merge(s: Session, ms: Message[]) {
     if (ms.length === 0) return
     const bySeq = new Map(messages.value.map((m) => [m.seq, m]))
     const first = messages.value[0]?.seq
+    const last = messages.value[messages.value.length - 1]?.seq
     let changed = false
     for (const m of ms) {
       const held = bySeq.get(m.seq)
@@ -140,6 +235,7 @@ export function useChannel(
         continue
       }
       if (first !== undefined && m.seq < first && hasOlder.value) continue
+      if (last !== undefined && m.seq > last && hasNewer.value) continue
       bySeq.set(m.seq, m)
       changed = true
     }
@@ -177,6 +273,7 @@ export function useChannel(
     if (mine === s.headSeq) head.value = h
     messages.value = []
     hasOlder.value = false
+    hasNewer.value = false
     merge(s, page.messages)
     hasOlder.value = page.has_more
     s.nextBefore = page.next_before
@@ -195,14 +292,35 @@ export function useChannel(
       brought ||= page.messages.length > 0
       if (!page.has_more) {
         const stateMoved = head.value?.channel.state !== page.channel.state
+        const ephemeral = toValue(options.ephemeral) ?? false
         setChannel(page.channel)
         // A frame that brought no message moved the head itself: a
         // signal, a lifecycle change or the caller's affordances.
-        if (!brought || stateMoved || toValue(options.ephemeral)) await refetchHead(s)
+        if (!brought || stateMoved || ephemeral) {
+          const before = head.value?._actions
+          await refetchHead(s)
+          if (!current(s)) return
+          const actionsMoved = JSON.stringify(before) !== JSON.stringify(head.value?._actions)
+          // A policy change moves message affordances without a new rev.
+          if (!brought && (stateMoved || actionsMoved || !ephemeral)) await readNewest(s)
+        }
         return
       }
     }
     await reload(s)
+  }
+
+  /** Reads the newest page again and merges it in place. */
+  async function readNewest(s: Session) {
+    if (hasNewer.value) return
+    const page = await getMessages(s.target)
+    if (current(s)) merge(s, page.messages)
+  }
+
+  /** Reads the page that ends at seq again and merges it in place. */
+  async function readAround(s: Session, seq: number) {
+    const page = await getMessages(s.target, { before: seq + 1 })
+    if (current(s)) merge(s, page.messages)
   }
 
   async function run(s: Session, step: (s: Session) => Promise<void>) {
@@ -218,7 +336,7 @@ export function useChannel(
           await step(s)
           if (!current(s)) return
           error.value = null
-          seen()
+          seen(s)
         } catch (err) {
           fail(s, err)
         }
@@ -234,6 +352,11 @@ export function useChannel(
     return session ? run(session, follow) : Promise.resolve()
   }
 
+  /**
+   * Loads the page before the oldest held message. Past MAX_HELD_MESSAGES
+   * it drops the newest, since the user is reading the old end, and sets
+   * hasNewer.
+   */
   async function loadOlder(): Promise<void> {
     const s = session
     if (!s || !hasOlder.value || s.nextBefore === undefined || s.loadingOlder) return
@@ -244,10 +367,15 @@ export function useChannel(
       if (!current(s) || reloads !== s.reloads) return
       const first = messages.value[0]?.seq ?? Infinity
       const older = page.messages.filter((m) => m.seq < first)
-      messages.value = [...older, ...messages.value]
+      let next = [...older, ...messages.value]
+      if (next.length > MAX_HELD_MESSAGES) {
+        next = next.slice(0, MAX_HELD_MESSAGES)
+        hasNewer.value = true
+      }
+      messages.value = next
       hasOlder.value = page.has_more
       s.nextBefore = page.next_before
-      seen()
+      seen(s)
     } catch (err) {
       fail(s, err)
     } finally {
@@ -255,11 +383,16 @@ export function useChannel(
     }
   }
 
+  /** Returns to the live end: reads the head and the newest page again. */
+  function loadNewest(): Promise<void> {
+    return session ? run(session, reload) : Promise.resolve()
+  }
+
   /** Merges a write answer, without moving the held rev. */
   function takeWrite(s: Session, m: Message) {
     if (!current(s)) return
     merge(s, [m])
-    seen()
+    seen(s)
   }
 
   function requireSession(): Session {
@@ -274,7 +407,10 @@ export function useChannel(
   ): Promise<PostResult> {
     const s = requireSession()
     const res = await postMessage(s.target, type, props, replyTo)
-    if (res.kind === 'message') takeWrite(s, res.message)
+    // A new message lands at the live end; when the list is not there,
+    // go back to it so the user sees what they posted.
+    if (res.kind === 'message' && hasNewer.value) await loadNewest()
+    else if (res.kind === 'message') takeWrite(s, res.message)
     else await refetchHead(s).catch((err) => fail(s, err))
     return res
   }
@@ -347,12 +483,20 @@ export function useChannel(
             reloads: 0,
             headSeq: 0,
             loadingOlder: false,
+            refreshed: new Set(),
           }
         : null
       if (session) void run(session, reload)
     },
     { immediate: true }
   )
+
+  // A loop that is still running, or a deadline timer, must not issue
+  // requests for a component that is gone.
+  onScopeDispose(() => {
+    session = null
+    stopDeadlineTimer()
+  })
 
   useLiveSubscription(
     'channel',
@@ -367,9 +511,11 @@ export function useChannel(
     head,
     messages,
     hasOlder,
+    hasNewer,
     error,
     refetch,
     loadOlder,
+    loadNewest,
     post,
     edit,
     remove,

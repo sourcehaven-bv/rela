@@ -2,6 +2,7 @@ import { Marked, type Tokens } from 'marked'
 import mermaid from 'mermaid'
 import DOMPurify from 'dompurify'
 import { relaBase } from '@/api/base'
+import { ENTITY_ADDRESS } from './entityAddress'
 
 // Initialize mermaid with strict security
 mermaid.initialize({
@@ -386,7 +387,7 @@ messagePurifier.addHook('afterSanitizeAttributes', (node) => {
 
 // What a ref link may be built from. The server sent these values; checking
 // their shape keeps a malformed one from reaching an href at all.
-const REF_ID = /^[A-Za-z0-9][A-Za-z0-9_.-]*(?:@[A-Za-z0-9][A-Za-z0-9_.-]*)?$/
+const REF_ID = ENTITY_ADDRESS
 const REF_TYPE = /^[A-Za-z][A-Za-z0-9_-]*$/
 
 /**

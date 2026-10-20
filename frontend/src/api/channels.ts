@@ -1,5 +1,6 @@
 import { api } from './client'
 import { getPlural } from './entities'
+import { addressSegment } from '@/utils/entityAddress'
 import type {
   Channel,
   ChannelHead,
@@ -38,9 +39,12 @@ export interface ChannelTarget extends ChannelAnchor {
   name?: string
 }
 
-/** The anchor path, relative to /api/v1. */
+/**
+ * The anchor path, relative to /api/v1. Throws when the address does not
+ * have the shape of an entity address, so it cannot redirect the request.
+ */
 export function channelsPath(a: Pick<ChannelAnchor, 'type' | 'address'>): string {
-  return `/${getPlural(a.type)}/${a.address}/_channels`
+  return `/${getPlural(a.type)}/${addressSegment(a.address)}/_channels`
 }
 
 /** The channel path, relative to /api/v1. */

@@ -31,6 +31,16 @@ const base = '/tickets/TKT-1@draft/_channels/room'
 
 // The server refuses `?world=` on a write, so the world rides on reads only,
 // and the face rides in the address.
+describe('channel paths', () => {
+  it('refuses an address that would leave the entity path', async () => {
+    registerEntityPlurals(new Map([['ticket', 'tickets']]))
+    await expect(getChannelHead({ ...target, address: '../_piles/x?y=' })).rejects.toThrow(
+      /not an entity address/
+    )
+    expect(api.get).not.toHaveBeenCalledWith(expect.stringContaining('_piles'), expect.anything())
+  })
+})
+
 describe('channel requests', () => {
   beforeEach(() => {
     vi.clearAllMocks()

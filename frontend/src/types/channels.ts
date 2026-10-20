@@ -1,9 +1,11 @@
 /**
  * The channel wire types (TKT-91BK6F), mirrored by hand from
  * internal/apiwire/v1/channels.go. CHANNEL_WIRE_FIELDS below lists the JSON
- * keys of each type; wireFields.test.ts compares it with the field sets the
- * Go test TestChannelWireGolden writes, so a field added or renamed on one
- * side alone fails a test. Keep both in step when you change a type here.
+ * keys of each type. Each list is checked against its interface at compile
+ * time (wireKeys), and wireFields.test.ts compares the lists with the field
+ * sets the Go test TestChannelWireGolden writes. A field added or renamed in
+ * Go, in a list or in an interface alone therefore fails the type check or
+ * a test.
  */
 import type { Warning } from './entity'
 
@@ -101,6 +103,7 @@ export interface MessageAction {
 /**
  * The message operations a message's `_actions` names next to its action
  * names. The server reserves these names, so no action takes one.
+ * wireFields.test.ts compares them with realtimecfg.MessageOpNames.
  */
 export type MessageOp = 'edit' | 'delete' | 'remove' | 'release'
 
@@ -131,6 +134,16 @@ export interface Message {
   action?: MessageAction
   /** Action names and MessageOp names the caller may use now. */
   _actions?: string[]
+  /**
+   * When `edit` stops being offered. Set while it is offered and the edit
+   * window applies; re-read the message then.
+   */
+  edit_until?: string
+  /**
+   * When `release` starts being offered. Set while only the pending time
+   * keeps it back; re-read the message then.
+   */
+  release_after?: string
 }
 
 export interface MessageActionResponse {
@@ -188,11 +201,18 @@ export interface ChannelSchema {
   channel_types: ChannelTypeSchema[]
 }
 
+/**
+ * Every `label` in the channel type descriptor is the label realtime.yaml
+ * sets, or the name when it sets none: never empty, so show it as it is.
+ * `create_label` is the one optional label.
+ */
 export interface ChannelTypeSchema {
   name: string
   label: string
   attach_to: string[]
-  anchor: string
+  /** Whether a channel hangs off the entity family or one face. */
+  anchor: 'family' | 'face'
+
   cardinality: 'one' | 'many'
   create_label?: string
   remove_reason_required: boolean
@@ -240,13 +260,30 @@ export interface ChannelActionSchema {
   promote_to?: string
 }
 
+/** Every key of T, of each member when T is a union. */
+type AllKeys<T> = T extends unknown ? keyof T : never
+
 /**
- * The JSON keys of each wire type, by the Go type name. Every key of the
- * interface above, optional or not, appears once.
+ * Returns keys unchanged, and fails to compile unless keys lists every key
+ * of T and no other: a key T lacks is refused by the element type, and a key
+ * keys lacks makes the argument require a `missing` property naming it.
+ */
+function wireKeys<T>() {
+  return <const K extends readonly AllKeys<T>[]>(
+    keys: K &
+      ([Exclude<AllKeys<T>, K[number]>] extends [never]
+        ? unknown
+        : { missing: Exclude<AllKeys<T>, K[number]> })
+  ): readonly string[] => keys as readonly string[]
+}
+
+/**
+ * The JSON keys of each wire type, by the Go type name. Each list is tied to
+ * its interface by wireKeys, so it cannot drift from the interface.
  */
 export const CHANNEL_WIRE_FIELDS: Record<string, readonly string[]> = {
-  ChannelAuthor: ['user', 'tool', 'principal_type', 'system'],
-  Channel: [
+  ChannelAuthor: wireKeys<ChannelAuthor>()(['user', 'tool', 'principal_type', 'system']),
+  Channel: wireKeys<Channel>()([
     'anchor',
     'type',
     'name',
@@ -258,15 +295,27 @@ export const CHANNEL_WIRE_FIELDS: Record<string, readonly string[]> = {
     'archived_at',
     'last_seq',
     'rev',
-  ],
-  ChannelTypeList: ['type', 'label', 'cardinality', 'create', 'channels'],
-  ChannelList: ['anchor', 'types'],
-  ChannelActions: ['post', 'edit_own', 'delete_own', 'remove', 'lifecycle'],
-  ChannelHead: ['channel', 'last', 'ephemeral', '_actions'],
-  RefProp: ['id', 'type', 'title', 'restricted'],
-  MessageRemoval: ['at', 'kind', 'by', 'reason'],
-  MessageAction: ['name', 'status', 'at', 'promoted'],
-  Message: [
+  ]),
+  ChannelTypeList: wireKeys<ChannelTypeList>()([
+    'type',
+    'label',
+    'cardinality',
+    'create',
+    'channels',
+  ]),
+  ChannelList: wireKeys<ChannelList>()(['anchor', 'types']),
+  ChannelActions: wireKeys<ChannelActions>()([
+    'post',
+    'edit_own',
+    'delete_own',
+    'remove',
+    'lifecycle',
+  ]),
+  ChannelHead: wireKeys<ChannelHead>()(['channel', 'last', 'ephemeral', '_actions']),
+  RefProp: wireKeys<RefProp>()(['id', 'type', 'title', 'restricted']),
+  MessageRemoval: wireKeys<MessageRemoval>()(['at', 'kind', 'by', 'reason']),
+  MessageAction: wireKeys<MessageAction>()(['name', 'status', 'at', 'promoted']),
+  Message: wireKeys<Message>()([
     'seq',
     'rev',
     'type',
@@ -280,17 +329,33 @@ export const CHANNEL_WIRE_FIELDS: Record<string, readonly string[]> = {
     'removed',
     'action',
     '_actions',
-  ],
-  MessageActionResponse: ['message', 'warnings'],
-  MessagePage: ['channel', 'messages', 'has_more', 'next_after', 'next_before', 'next_after_rev'],
-  EphemeralMessage: ['id', 'type', 'author', 'at', 'expires_at', 'props'],
-  EphemeralAccepted: ['id', 'expires_at'],
-  PostMessageRequest: ['type', 'props', 'reply_to'],
-  EditMessageRequest: ['props'],
-  RemoveMessageRequest: ['reason'],
-  CreateChannelRequest: ['title'],
-  ChannelSchema: ['channel_types'],
-  ChannelTypeSchema: [
+    'edit_until',
+    'release_after',
+  ]),
+  MessageActionResponse: wireKeys<MessageActionResponse>()(['message', 'warnings']),
+  MessagePage: wireKeys<MessagePage>()([
+    'channel',
+    'messages',
+    'has_more',
+    'next_after',
+    'next_before',
+    'next_after_rev',
+  ]),
+  EphemeralMessage: wireKeys<EphemeralMessage>()([
+    'id',
+    'type',
+    'author',
+    'at',
+    'expires_at',
+    'props',
+  ]),
+  EphemeralAccepted: wireKeys<EphemeralAccepted>()(['id', 'expires_at']),
+  PostMessageRequest: wireKeys<PostMessageRequest>()(['type', 'props', 'reply_to']),
+  EditMessageRequest: wireKeys<EditMessageRequest>()(['props']),
+  RemoveMessageRequest: wireKeys<RemoveMessageRequest>()(['reason']),
+  CreateChannelRequest: wireKeys<CreateChannelRequest>()(['title']),
+  ChannelSchema: wireKeys<ChannelSchema>()(['channel_types']),
+  ChannelTypeSchema: wireKeys<ChannelTypeSchema>()([
     'name',
     'label',
     'attach_to',
@@ -300,9 +365,9 @@ export const CHANNEL_WIRE_FIELDS: Record<string, readonly string[]> = {
     'remove_reason_required',
     'lifecycle',
     'message_types',
-  ],
-  ChannelLifecycleSchema: ['name', 'label'],
-  ChannelMessageTypeSchema: [
+  ]),
+  ChannelLifecycleSchema: wireKeys<ChannelLifecycleSchema>()(['name', 'label']),
+  ChannelMessageTypeSchema: wireKeys<ChannelMessageTypeSchema>()([
     'name',
     'label',
     'persist',
@@ -310,7 +375,16 @@ export const CHANNEL_WIRE_FIELDS: Record<string, readonly string[]> = {
     'reply',
     'properties',
     'actions',
-  ],
-  ChannelPropertySchema: ['name', 'label', 'type', 'required', 'max', 'enum', 'values', 'to'],
-  ChannelActionSchema: ['name', 'label', 'promote_to'],
+  ]),
+  ChannelPropertySchema: wireKeys<ChannelPropertySchema>()([
+    'name',
+    'label',
+    'type',
+    'required',
+    'max',
+    'enum',
+    'values',
+    'to',
+  ]),
+  ChannelActionSchema: wireKeys<ChannelActionSchema>()(['name', 'label', 'promote_to']),
 }

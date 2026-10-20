@@ -1,6 +1,13 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
-import type { ChannelPropertySchema, ChannelPropertyType } from '@/types/channels'
-import { codePoints, fromPropValue, toPropValue, toProps } from './channelValues'
+import type { ChannelPropertySchema, ChannelPropertyType, MessagePropValue } from '@/types/channels'
+import {
+  codePoints,
+  fromPropValue,
+  initialValues,
+  toEditProps,
+  toPropValue,
+  toProps,
+} from './channelValues'
 
 // Composer values convert per type without day shifts, and an empty
 // optional field is absent (TKT-91BK6F R20, AC 17). The zone is fixed so the
@@ -111,7 +118,7 @@ describe('fromPropValue', () => {
     ['string', prop('string'), 'hi', 'hi'],
     ['integer', prop('integer'), 3, '3'],
     ['boolean', prop('boolean'), true, true],
-    ['absent boolean', prop('boolean'), undefined, false],
+    ['absent boolean stays absent', prop('boolean'), undefined, undefined],
     ['date', prop('date'), '2026-03-29', '2026-03-29'],
     ['datetime in the local zone', prop('datetime'), '2026-06-30T22:15:00Z', '2026-07-01T00:15'],
     ['datetime with seconds', prop('datetime'), '2026-06-30T22:15:09Z', '2026-07-01T00:15:09'],
@@ -132,6 +139,68 @@ describe('fromPropValue', () => {
     expect(toPropValue(prop('datetime'), '2026-10-25T02:30')).toEqual({
       ok: true,
       value: '2026-10-25T00:30:00Z',
+    })
+  })
+})
+
+describe('datetime years', () => {
+  it('keeps a year below 100 rather than reading it as 19xx', () => {
+    const c = toPropValue(prop('datetime'), '0050-01-01T10:00')
+    expect(c.ok).toBe(true)
+    if (c.ok) expect(String(c.value).slice(0, 4)).toBe('0050')
+  })
+})
+
+describe('initialValues', () => {
+  it('seeds a required boolean with false and nothing else', () => {
+    expect(
+      initialValues([
+        { name: 'ok', label: 'ok', type: 'boolean', required: true },
+        { name: 'maybe', label: 'maybe', type: 'boolean' },
+        { name: 'body', label: 'body', type: 'string', required: true },
+      ])
+    ).toEqual({ ok: false })
+  })
+})
+
+describe('toEditProps', () => {
+  const schema: ChannelPropertySchema[] = [
+    { name: 'body', label: 'body', type: 'string', required: true },
+    { name: 'note', label: 'note', type: 'string' },
+    { name: 'flag', label: 'flag', type: 'boolean' },
+    { name: 'about', label: 'about', type: 'ref', required: true },
+    { name: 'also', label: 'also', type: 'ref' },
+    { name: 'secret', label: 'secret', type: 'ref' },
+  ]
+  const current: Record<string, MessagePropValue> = {
+    body: 'old',
+    note: 'set by a trigger',
+    flag: true,
+    about: { restricted: true },
+    also: { id: 'TKT-2', type: 'ticket' },
+    secret: { restricted: true },
+  }
+
+  it('carries every prop the composer does not render through unchanged', () => {
+    const rendered = new Set(['body', 'about'])
+    expect(toEditProps(schema, rendered, { body: 'new' }, current)).toEqual({
+      ok: true,
+      props: { body: 'new', note: 'set by a trigger', flag: true, also: 'TKT-2' },
+    })
+  })
+
+  it('lets a rendered field clear an optional prop', () => {
+    const rendered = new Set(['body', 'note', 'flag'])
+    expect(toEditProps(schema, rendered, { body: 'new' }, current)).toEqual({
+      ok: true,
+      props: { body: 'new', also: 'TKT-2' },
+    })
+  })
+
+  it('still requires a rendered required field that was readable', () => {
+    expect(toEditProps(schema, new Set(['body']), { body: '' }, current)).toEqual({
+      ok: false,
+      errors: { body: 'is required' },
     })
   })
 })

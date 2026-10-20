@@ -1,5 +1,6 @@
 import { api } from './client'
 import { getPlural } from './entities'
+import { addressSegment } from '@/utils/entityAddress'
 import { channelPath, channelsPath, type ChannelAnchor, type ChannelTarget } from './channels'
 import type { ChannelState } from '@/types/channels'
 import type { ListParams } from '@/types/entity'
@@ -40,7 +41,10 @@ export function liveEntityPath(
  * face (`ID@face`) on a type with faces; the server refuses a bare id there.
  */
 export function livePresencePath(type: string, address: string, world?: string): string {
-  return livePath(`/${getPlural(type)}/${address}/_presence`, world ? { world } : undefined)
+  return livePath(
+    `/${getPlural(type)}/${addressSegment(address)}/_presence`,
+    world ? { world } : undefined
+  )
 }
 
 /**
