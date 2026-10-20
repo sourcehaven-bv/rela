@@ -1,6 +1,12 @@
 package main
 
-import "testing"
+import (
+	"reflect"
+	"testing"
+	"time"
+
+	"github.com/Sourcehaven-BV/rela/internal/jwtauth"
+)
 
 // jwtFlags returns a serverFlags with JWT identity fully configured, so each
 // test case can express exactly one deviation from a valid config.
@@ -125,5 +131,42 @@ func TestValidateIdentityFlags(t *testing.T) {
 				t.Errorf("mode = %v, want %v", got, tt.want)
 			}
 		})
+	}
+}
+
+// assertedIdentity must copy every claim. A forgotten field fails silently:
+// a dropped role removes access, a dropped principal_type removes a ceiling
+// (TKT-OJL2GN, TKT-IAC8TX), and a dropped expiry keeps streams open past it
+// (TKT-5I6REX). Every input field gets a value unique to it, and each output
+// field must equal the input field of the same name, so a dropped field and
+// a swapped one both fail.
+func TestAssertedIdentity_CopiesEveryField(t *testing.T) {
+	var claims jwtauth.AssertionClaims
+	cv := reflect.ValueOf(&claims).Elem()
+	for i := range cv.NumField() {
+		f, name := cv.Field(i), cv.Type().Field(i).Name
+		switch {
+		case f.Kind() == reflect.String:
+			f.SetString(name)
+		case f.Type() == reflect.TypeFor[[]string]():
+			f.Set(reflect.ValueOf([]string{name}))
+		case f.Type() == reflect.TypeFor[time.Time]():
+			f.Set(reflect.ValueOf(time.Unix(int64(i+1)*1000, 0)))
+		default:
+			t.Fatalf("AssertionClaims.%s: no test value for %s", name, f.Type())
+		}
+	}
+
+	got := reflect.ValueOf(assertedIdentity(claims))
+	for i := range got.NumField() {
+		name := got.Type().Field(i).Name
+		want := cv.FieldByName(name)
+		if !want.IsValid() {
+			t.Errorf("AssertedIdentity.%s has no AssertionClaims field of the same name", name)
+			continue
+		}
+		if !reflect.DeepEqual(got.Field(i).Interface(), want.Interface()) {
+			t.Errorf("AssertedIdentity.%s = %v, want %v", name, got.Field(i), want)
+		}
 	}
 }

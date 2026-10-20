@@ -4,7 +4,7 @@ type: bug
 title: TestWatchRun_BudgetRotates flakes under load
 description: 'internal/mcp TestWatchRun_BudgetRotates relies on a 30 ms budget against a 40 ms sleep; under CI load one pass read two targets (order [a b c a]) and dequeued #1882 from the merge queue.'
 priority: medium
-status: backlog
+status: wont-fix
 ---
 
 ## Description
@@ -21,8 +21,17 @@ depends on scheduling.
 
 ## Root cause
 
-`watchRun.pass` (internal/mcp/tools_watch.go) checks only `rctx.Err()` before the next read. That error comes from a timer, which can fire late on a busy machine, so the pass starts a second read past its budget. This is a code fault, not only a test fault: 2 failures in 600 local runs.
+`watchRun.pass` (internal/mcp/tools_watch.go) checks only `rctx.Err()` before
+the next read. That error comes from a timer, which can fire late on a busy
+machine, so the pass starts a second read past its budget. This is a code fault,
+not only a test fault: 2 failures in 600 local runs.
 
 ## Fix
 
-Also check the clock before each read: `if rctx.Err() != nil || !time.Now().Before(end) {`. With it, 1,200 runs passed.
+Also check the clock before each read: `if rctx.Err() != nil ||
+!time.Now().Before(end) {`. With it, 1,200 runs passed.
+
+## Resolution
+
+Already fixed by #1887 (f6d2dfe6a, "Watch pass checks the clock against its
+budget"), which made exactly this change. Closed without a separate change.

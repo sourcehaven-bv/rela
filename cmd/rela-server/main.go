@@ -480,6 +480,15 @@ func (a assertionVerifierAdapter) VerifyAssertion(
 	if err != nil {
 		return dataentry.AssertedIdentity{}, err
 	}
+	return assertedIdentity(c), nil
+}
+
+// coverage-ignore-end
+
+// assertedIdentity copies every verified claim into the gate's shape. It is
+// split from the adapter so a test can check that no field is forgotten
+// without a live JWKS.
+func assertedIdentity(c jwtauth.AssertionClaims) dataentry.AssertedIdentity {
 	return dataentry.AssertedIdentity{
 		Subject:       c.Subject,
 		OrgID:         c.OrgID,
@@ -489,10 +498,9 @@ func (a assertionVerifierAdapter) VerifyAssertion(
 		PrincipalType: c.PrincipalType,
 		Scopes:        c.Scopes,
 		Email:         c.Email,
-	}, nil
+		ExpiresAt:     c.ExpiresAt,
+	}
 }
-
-// coverage-ignore-end
 
 // webhookVerifierAdapter bridges the concrete jwtauth.WebhookVerifier to the
 // dataentry receiver's expected shape, translating jwtauth.WebhookClaims into
