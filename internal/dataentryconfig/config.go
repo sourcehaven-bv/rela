@@ -220,7 +220,8 @@ func (d *DuplicateConfig) CarriesProperty(name string) bool {
 // An action has either a declarative property mutation (Set) or a Lua script
 // (Script), but not both. When referenced by a list's Actions field, the
 // action is available as a keyboard-driven bulk operation on selected rows.
-// When referenced by a navigation entry, it appears as a sidebar button. With
+// When referenced by a navigation entry, it appears as a sidebar button, and
+// by a list's ToolbarActions, as a button in the list header. With
 // AvailableOn set, it appears on matching entity detail pages instead.
 type Action struct {
 	Description string            `yaml:"description,omitempty" json:"description,omitempty"`
@@ -907,6 +908,22 @@ type List struct {
 	DetailView  string   `yaml:"detail_view" json:"detail_view,omitempty"`
 	PageSize    int      `yaml:"page_size" json:"page_size,omitempty"`
 	Actions     []string `yaml:"actions,omitempty" json:"actions,omitempty"`
+
+	// ToolbarActions are ids of actions offered as buttons in the list's page
+	// header, beside the create button. They run WITHOUT a selected row,
+	// through the same entity-less POST /_action/{id} path as a navigation
+	// entry's `action:`, so each must name a script action that is not
+	// entity-bound (no `available_on:`) and has a label (validateActions).
+	//
+	// A list key rather than an `available_on: {lists: ...}` scope on the
+	// action: available_on makes an action entity-bound, and every surface
+	// that references an action by id (list `actions:`, navigation `action:`,
+	// `piles.actions`) names it from the surface side.
+	//
+	// Placement, not authorization: the list response offers a button as
+	// `_actions["action:<id>"]` only to principals holding the action's
+	// `permission:`, and the action endpoint re-checks it on every run.
+	ToolbarActions []string `yaml:"toolbar_actions,omitempty" json:"toolbar_actions,omitempty"`
 
 	// ExportRender is an optional Lua script (relative path under scripts/,
 	// e.g. "docs/ticket_report.lua") that renders THIS LIST for export. When

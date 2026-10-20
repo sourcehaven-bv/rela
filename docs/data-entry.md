@@ -1230,6 +1230,7 @@ lists:
 | `edit_form`       | string | Form name for the row edit action                           |
 | `page_size`       | int    | Rows per page (default: 25)                                 |
 | `actions`         | list   | Action IDs available as keyboard shortcuts on selected rows |
+| `toolbar_actions` | list   | Action IDs shown as buttons next to "New"; they run without a selected row (see [Buttons on a list](#buttons-on-a-list-toolbar_actions)) |
 | `export_render`   | string | Lua script under `scripts/` that renders this list for export instead of the built-in column table (see View Export & Transforms) |
 
 #### Header and footer info regions
@@ -5098,10 +5099,10 @@ actions:
 | `set`         | map    | Property key-value pairs to set on the entity (mutually exclusive with `script`) |
 | `script`      | string | Lua script path, relative to the `actions/` directory (mutually exclusive with `set`) |
 | `params`      | map    | Static key-value parameters from config, exposed as `rela.params` (values must be strings — quote them in YAML) |
-| `confirm`     | bool or string | Show a confirmation dialog before a list or detail-page action runs (default: `false`). A string is the dialog text. The sidebar does not ask |
+| `confirm`     | bool or string | Show a confirmation dialog before a list, list-button or detail-page action runs (default: `false`). A string is the dialog text. The sidebar does not ask |
 | `available_on`| map    | Offer the action on detail pages — see [Actions on the detail page](#actions-on-the-detail-page). Requires `script` |
 | `when`        | string | Predicate that must hold for the entity. Requires `available_on` |
-| `permission`  | string | Global named permission the caller must hold to run the action from a list, the sidebar, a next-action offer or a detail page |
+| `permission`  | string | Global named permission the caller must hold to run the action from a list, a list button, the sidebar, a next-action offer or a detail page |
 | `request`     | map    | Opt into request-scoped execution — see [Request-scoped actions](#request-scoped-actions). Requires `script` |
 | `capabilities`| map    | Ambient capability grant (`http`, `ai`, `write_file`, named `secrets`). Omitting it grants none |
 
@@ -5144,6 +5145,55 @@ navigation:
 
 When clicked, the action executes. If the action script returns a `redirect`, the UI navigates
 to that path. If it returns a `message`, a toast notification is shown.
+
+### Buttons on a list (`toolbar_actions`)
+
+`toolbar_actions` on a list shows actions as buttons in the list's header, next to the "New"
+button. Use it for an action that does not work on a selected row, such as one that creates a
+new entity from a script:
+
+```yaml
+actions:
+  vvt-nieuw:
+    label: "Nieuwe VvT"
+    script: periodiek/vvt_nieuw.lua
+    permission: "documenten:genereren"
+    confirm: "Een nieuwe VvT aanmaken?"
+
+lists:
+  all_documenten:
+    entity_type: document
+    title: "Documenten"
+    columns:
+      - property: title
+        link: true
+    toolbar_actions: [vvt-nieuw]
+```
+
+A list button runs the action exactly as a [navigation entry](#using-actions-in-navigation)
+does. The script gets no `entity`. If the script returns a `redirect`, the UI navigates there.
+If it returns a `message`, a toast is shown. Otherwise the list reloads, so a new entity the
+script created appears. Unlike the sidebar, a list button asks for confirmation when the action
+has `confirm`.
+
+A button appears only for users who hold the action's `permission:`. This decides where the
+button appears; it is not the access control. `POST /api/v1/_action/<id>` checks the permission
+again on every run, and the script's writes are checked against the user's own ACL. With no
+`acl.yaml`, or under `--read-only`, every user holds every permission, so the button is shown to
+everyone.
+
+Each ID in `toolbar_actions` must name an action that:
+
+- exists;
+- has a `script` (a `set` action has no row to change);
+- has no `available_on` (an action with `available_on` runs only against an entity on its detail
+  page);
+- has a `label`, which is the button text.
+
+An unknown ID, an action that breaks one of these rules, or an ID listed twice is a config error.
+`key` is not used: a list button has no keyboard shortcut.
+
+The same action may appear in `toolbar_actions`, in navigation and in `piles.actions`.
 
 ### Actions on the detail page
 

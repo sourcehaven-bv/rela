@@ -2733,6 +2733,43 @@ func validateActions(cfg *Config, meta *metamodel.Metamodel) []string {
 		}
 	}
 
+	for listID, list := range cfg.Lists {
+		errs = append(errs, validateToolbarActions(listID, list, cfg)...)
+	}
+
+	return errs
+}
+
+// validateToolbarActions checks a list's `toolbar_actions:`. Each id must name
+// an action that can run without a row: a script action (a `set:` has no
+// entity to set on) that is not entity-bound, with a label for the button.
+// These are the rules a navigation `action:` follows, plus the two the button
+// needs to be usable.
+func validateToolbarActions(listID string, list List, cfg *Config) []string {
+	var errs []string
+	where := fmt.Sprintf("list %q toolbar_actions", listID)
+	seen := make(map[string]bool, len(list.ToolbarActions))
+	for _, actionID := range list.ToolbarActions {
+		if seen[actionID] {
+			errs = append(errs, fmt.Sprintf("%s: action %q is listed twice", where, actionID))
+			continue
+		}
+		seen[actionID] = true
+		action, ok := cfg.Actions[actionID]
+		switch {
+		case !ok:
+			errs = append(errs, fmt.Sprintf("%s: references unknown action %q", where, actionID))
+		case action.AvailableOn != nil:
+			errs = append(errs, entityBoundActionRefError(where, actionID))
+		case action.Script == "":
+			errs = append(errs, fmt.Sprintf(
+				"%s: action %q has no script (a toolbar action runs without a selected row, "+
+					"so a set: action has nothing to set)", where, actionID))
+		case action.Label == "":
+			errs = append(errs, fmt.Sprintf(
+				"%s: action %q needs a label to show on the button", where, actionID))
+		}
+	}
 	return errs
 }
 
