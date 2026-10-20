@@ -228,7 +228,7 @@ export {
   FOCUSABLE_SELECTOR,
 } from './composables/useOverlayStack'
 export { provideMessages, useMessages, DEFAULT_MESSAGES } from './composables/useMessages'
-export type { Messages, CountArgs } from './composables/useMessages'
+export type { Messages, CountArgs, ChannelTextKey } from './composables/useMessages'
 export {
   useDelayedPending,
   PENDING_DELAY_MS,

@@ -10,20 +10,29 @@
  * renders only while the channel is open; a closed or archived channel says
  * so instead.
  *
- * The log opens at the newest message and follows new ones only while the
- * reader is already at the bottom, so reading back is never yanked away.
- * Loading older messages keeps the message under the reader in place. New
- * messages are announced through the log role, which is a polite live
- * region.
+ * The log opens at the newest message and follows new ones, and messages
+ * that grow, only while the reader is at the bottom, so reading back is never
+ * yanked away. Any other change (older messages loaded above, the oldest
+ * trimmed at the app's cap, an edit above the viewport) keeps the first
+ * visible message where it was. A log first shown after mounting (a hidden
+ * tab) still opens at the bottom.
+ *
+ * `messages` must be replaced rather than mutated in place: the scroll
+ * handling runs when the array changes identity.
+ *
+ * The log itself is not a live region, so loading a page of older messages
+ * or reloading the whole log is not read out. Messages that arrive at the
+ * end are announced through a separate, visually hidden polite region.
  */
-import { computed, nextTick, onMounted, useTemplateRef, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, useId, useTemplateRef, watch } from 'vue'
 import RlButton from '../common/RlButton.vue'
 import RlButtonGroup from '../common/RlButtonGroup.vue'
+import RlHeading from '../common/RlHeading.vue'
 import RlIcon from '../common/RlIcon.vue'
 import RlTag from '../common/RlTag.vue'
 import RlChannelAuthor from './RlChannelAuthor.vue'
 import RlChannelMessage from './RlChannelMessage.vue'
-import { lifecyclePendingKey } from './channelFields'
+import { lifecyclePendingKey, resolveChannelFields } from './channelFields'
 import type {
   ChannelEnumOption,
   ChannelEphemeralView,
@@ -31,15 +40,16 @@ import type {
   ChannelMessageTypeDef,
   ChannelMessageView,
   ChannelPresentation,
-  ChannelPropValue,
   ChannelReadableRef,
-  ChannelState,
+  ChannelStateView,
 } from './types'
+import { useMessages, type ChannelTextKey } from '../../composables/useMessages'
 
 const props = withDefaults(
   defineProps<{
     title: string
-    state: ChannelState
+    state: ChannelStateView
+    /** Oldest first. Replace the array on every change; see the header comment. */
     messages: ChannelMessageView[]
     /** Every message type of the channel type. */
     messageTypes: ChannelMessageTypeDef[]
@@ -52,6 +62,10 @@ const props = withDefaults(
     ephemeral?: ChannelEphemeralView[]
     presentation?: ChannelPresentation
     enumOptions?: Record<string, ChannelEnumOption[]>
+    /**
+     * The link for a readable ref: an in-app path built from `ref.id`, never
+     * text an author wrote. See `RlRefChip`.
+     */
     entityHref?: (ref: ChannelReadableRef) => string | undefined
     /** Operations in flight, by `messagePendingKey` and `lifecyclePendingKey`. */
     pending?: ReadonlySet<string>
@@ -60,15 +74,22 @@ const props = withDefaults(
     /** Newer messages exist than the newest shown (after reading far back). */
     hasNewer?: boolean
     loadingOlder?: boolean
+    /** The level of the title, so the channel fits the host page's outline. */
+    headingLevel?: 2 | 3 | 4 | 5 | 6
   }>(),
   {
     postable: () => [],
     lifecycle: () => [],
     allowedLifecycle: () => [],
     ephemeral: () => [],
+    presentation: undefined,
+    enumOptions: undefined,
+    entityHref: undefined,
+    pending: undefined,
     hasOlder: false,
     hasNewer: false,
     loadingOlder: false,
+    headingLevel: 3,
   },
 )
 
@@ -87,7 +108,12 @@ const emit = defineEmits<{
   jump: [seq: number]
 }>()
 
+const strings = useMessages()
+const t = (key: ChannelTextKey) => strings.channelText({ key })
+const titleId = useId()
+
 const log = useTemplateRef<HTMLElement>('log')
+const list = useTemplateRef<HTMLElement>('list')
 
 const typeByName = computed(() => new Map(props.messageTypes.map((t) => [t.name, t])))
 
@@ -103,12 +129,33 @@ const canReply = computed(
 )
 
 function ephemeralText(e: ChannelEphemeralView): string {
-  const label = typeByName.value.get(e.type)?.label ?? e.type
-  const parts = Object.values(e.props ?? {})
-    .filter((v): v is Exclude<ChannelPropValue, object> => typeof v !== 'object')
-    .map(String)
+  const type = typeByName.value.get(e.type)
+  const label = type?.label ?? e.type
+  if (e.text !== undefined) return e.text ? `${label} · ${e.text}` : label
+  const values = e.props ?? {}
+  const names = type
+    ? resolveChannelFields(type, props.presentation?.messages?.[type.name]).map((f) => f.property)
+    : Object.keys(values).map((name) => ({ name, enum: undefined }))
+  const parts: string[] = []
+  for (const p of names) {
+    const v = values[p.name]
+    if (v === undefined) continue
+    if (typeof v === 'object') {
+      parts.push(v.restricted ? t('restrictedRef') : (v.title ?? v.id))
+    } else if (typeof v === 'boolean') {
+      parts.push(t(v ? 'yes' : 'no'))
+    } else {
+      const opts = p.enum ? props.enumOptions?.[p.enum] : undefined
+      parts.push(opts?.find((o) => o.value === v)?.label ?? String(v))
+    }
+  }
   return [label, ...parts].join(' · ')
 }
+
+/* Scroll handling ------------------------------------------------------- */
+
+/** Whether the reader is at the bottom; kept up to date on every scroll. */
+const stuck = ref(true)
 
 function atBottom(el: HTMLElement): boolean {
   return el.scrollHeight - el.scrollTop - el.clientHeight < 24
@@ -118,24 +165,81 @@ function scrollToBottom() {
   if (log.value) log.value.scrollTop = log.value.scrollHeight
 }
 
-onMounted(scrollToBottom)
+function onScroll() {
+  // A log with no height (hidden) cannot be scrolled; keep what it was.
+  if (log.value && log.value.clientHeight > 0) stuck.value = atBottom(log.value)
+}
+
+/** The first message whose bottom is below the top of the log, and its offset. */
+function firstVisible(el: HTMLElement): { seq: string; offset: number } | null {
+  const top = el.getBoundingClientRect().top
+  for (const row of el.querySelectorAll<HTMLElement>('[data-seq]')) {
+    const r = row.getBoundingClientRect()
+    if (r.bottom > top) return { seq: row.dataset.seq!, offset: r.top - top }
+  }
+  return null
+}
+
+const announcement = ref('')
+
+function announce(next: ChannelMessageView[], prev: ChannelMessageView[]) {
+  if (prev.length === 0) return
+  const last = prev[prev.length - 1]!.seq
+  const added = next.filter((m) => m.seq > last && !m.removed)
+  if (added.length === 0) return
+  const only = added.length === 1 ? added[0]! : undefined
+  announcement.value = strings.channelNewMessages({
+    count: added.length,
+    type: only?.type ? (typeByName.value.get(only.type)?.label ?? only.type) : undefined,
+    author: only?.author?.name,
+  })
+}
 
 watch(
   () => props.messages,
   (next, prev) => {
+    announce(next, prev)
     const el = log.value
     if (!el) return
-    const before = { height: el.scrollHeight, top: el.scrollTop, bottom: atBottom(el) }
-    const prepended = prev.length > 0 && next.length > 0 && next[0]!.seq < prev[0]!.seq
-    const appended =
-      next.length > 0 && (prev.length === 0 || next[next.length - 1]!.seq > prev[prev.length - 1]!.seq)
+    const follow = stuck.value
+    const anchor = follow ? null : firstVisible(el)
     void nextTick(() => {
-      if (prepended) el.scrollTop = before.top + (el.scrollHeight - before.height)
-      else if (appended && before.bottom) scrollToBottom()
+      if (follow) {
+        scrollToBottom()
+        return
+      }
+      if (!anchor) return
+      const row = el.querySelector<HTMLElement>(`[data-seq="${anchor.seq}"]`)
+      if (!row) return
+      const offset = row.getBoundingClientRect().top - el.getBoundingClientRect().top
+      el.scrollTop += offset - anchor.offset
     })
   },
   { flush: 'pre' },
 )
+
+/**
+ * Follows the bottom when the log gets its first height (a hidden tab shown)
+ * or a message grows (an edit, an action state), while the reader is there.
+ */
+let observer: ResizeObserver | undefined
+
+onMounted(() => {
+  scrollToBottom()
+  if (typeof ResizeObserver === 'undefined') return
+  observer = new ResizeObserver(() => {
+    if (stuck.value) scrollToBottom()
+  })
+  if (log.value) observer.observe(log.value)
+  if (list.value) observer.observe(list.value)
+})
+
+watch(list, (el, old) => {
+  if (old) observer?.unobserve(old)
+  if (el) observer?.observe(el)
+})
+
+onBeforeUnmount(() => observer?.disconnect())
 
 function jumpTo(seq: number) {
   const target = log.value?.querySelector<HTMLElement>(`[data-seq="${seq}"]`)
@@ -149,11 +253,13 @@ function jumpTo(seq: number) {
 </script>
 
 <template>
-  <section class="rl-channel" :aria-label="title">
+  <section class="rl-channel" :aria-labelledby="titleId">
     <header class="rl-channel__head">
       <div class="rl-channel__title">
-        <h2>{{ title }}</h2>
-        <RlTag v-if="state !== 'open'" :label="state === 'closed' ? 'Closed' : 'Archived'" color="grey" />
+        <RlHeading :id="titleId" :level="headingLevel" size="lg" weight="semibold" truncate>
+          {{ title }}
+        </RlHeading>
+        <RlTag v-if="state !== 'open'" :label="t(state)" color="grey" />
         <slot name="header" />
       </div>
       <RlButtonGroup v-if="lifecycleButtons.length" class="rl-channel__lifecycle">
@@ -162,9 +268,9 @@ function jumpTo(seq: number) {
           :key="op.name"
           size="sm"
           variant="secondary"
-          :tone="op.name === 'delete' ? 'danger' : 'default'"
+          :tone="op.danger ? 'danger' : 'default'"
           :loading="pending?.has(lifecyclePendingKey(op.name))"
-          pending-label="Working…"
+          :pending-label="t('working')"
           @click="emit('lifecycle', op.name)"
         >
           {{ op.label }}
@@ -172,14 +278,22 @@ function jumpTo(seq: number) {
       </RlButtonGroup>
     </header>
 
-    <div ref="log" class="rl-channel__log" role="log" aria-label="Messages" :aria-busy="loadingOlder || undefined">
+    <div
+      ref="log"
+      class="rl-channel__log"
+      role="log"
+      aria-live="off"
+      :aria-label="t('messages')"
+      :aria-busy="loadingOlder || undefined"
+      @scroll.passive="onScroll"
+    >
       <div v-if="hasOlder" class="rl-channel__more">
-        <RlButton size="sm" :loading="loadingOlder" pending-label="Loading…" @click="emit('loadOlder')">
-          Load older messages
+        <RlButton size="sm" :loading="loadingOlder" :pending-label="t('loading')" @click="emit('loadOlder')">
+          {{ t('loadOlder') }}
         </RlButton>
       </div>
-      <p v-if="messages.length === 0" class="rl-channel__empty">No messages yet.</p>
-      <ol v-else class="rl-channel__messages">
+      <p v-if="messages.length === 0" class="rl-channel__empty">{{ t('noMessages') }}</p>
+      <ol v-else ref="list" class="rl-channel__messages">
         <li v-for="m in messages" :key="m.seq">
           <RlChannelMessage
             :message="m"
@@ -201,9 +315,10 @@ function jumpTo(seq: number) {
         </li>
       </ol>
       <div v-if="hasNewer" class="rl-channel__more">
-        <RlButton size="sm" @click="emit('loadNewest')">Jump to latest</RlButton>
+        <RlButton size="sm" @click="emit('loadNewest')">{{ t('jumpToLatest') }}</RlButton>
       </div>
     </div>
+    <p class="rl-visually-hidden" aria-live="polite" aria-atomic="true">{{ announcement }}</p>
 
     <template v-if="state === 'open'">
       <div class="rl-channel__ephemeral" aria-live="polite">
@@ -218,11 +333,7 @@ function jumpTo(seq: number) {
     </template>
     <p v-else class="rl-channel__readonly">
       <RlIcon :name="state === 'archived' ? 'archive' : 'lock'" :size="14" />
-      {{
-        state === 'archived'
-          ? 'This channel is archived. It can be read but takes no new messages.'
-          : 'This channel is closed. It can be read but takes no new messages.'
-      }}
+      {{ t(state === 'archived' ? 'archivedNotice' : 'closedNotice') }}
     </p>
   </section>
 </template>
@@ -255,14 +366,8 @@ function jumpTo(seq: number) {
   min-width: 0;
 }
 
-.rl-channel__title h2 {
-  margin: 0;
-  overflow: hidden;
-  font-size: var(--rl-font-size-lg);
-  font-weight: var(--rl-font-weight-semibold);
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
+.rl-channel__title > .rl-heading { min-width: 0; }
+
 
 .rl-channel__log {
   flex: 1;

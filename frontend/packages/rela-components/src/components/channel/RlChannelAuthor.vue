@@ -12,6 +12,7 @@ import RlAvatar from '../data/RlAvatar.vue'
 import RlIcon from '../common/RlIcon.vue'
 import RlTag from '../common/RlTag.vue'
 import type { ChannelAuthorView } from './types'
+import { useMessages } from '../../composables/useMessages'
 
 withDefaults(
   defineProps<{
@@ -21,6 +22,8 @@ withDefaults(
   }>(),
   { compact: false },
 )
+
+const messages = useMessages()
 </script>
 
 <template>
@@ -37,8 +40,8 @@ withDefaults(
       </span>
     </template>
     <span class="rl-channel-author__name">{{ author.name }}</span>
-    <RlTag v-if="author.kind === 'system'" label="system" color="grey" />
-    <RlTag v-else-if="author.kind === 'agent'" label="agent" color="purple" />
+    <RlTag v-if="author.kind === 'system'" :label="messages.channelText({ key: 'system' })" color="grey" />
+    <RlTag v-else-if="author.kind === 'agent'" :label="messages.channelText({ key: 'agent' })" color="purple" />
   </span>
 </template>
 

@@ -67,6 +67,118 @@ export interface CountArgs {
 }
 
 /**
+ * The fixed captions of the channel components. They have no value in them,
+ * but there are too many to give each its own prop, so they come through here
+ * by key: a translation is one lookup table.
+ */
+export type ChannelTextKey =
+  // Composer
+  | 'newMessage'
+  | 'editMessage'
+  | 'messageType'
+  | 'cancelReply'
+  | 'required'
+  | 'toSend'
+  | 'toSave'
+  | 'send'
+  | 'sending'
+  | 'save'
+  | 'saving'
+  | 'cancel'
+  | 'typeGone'
+  // Composer ref field
+  | 'choose'
+  | 'choosing'
+  | 'change'
+  | 'replace'
+  | 'clear'
+  // Channel
+  | 'closed'
+  | 'archived'
+  | 'working'
+  | 'messages'
+  | 'loadOlder'
+  | 'loading'
+  | 'noMessages'
+  | 'jumpToLatest'
+  | 'closedNotice'
+  | 'archivedNotice'
+  // Message
+  | 'yes'
+  | 'no'
+  | 'edited'
+  | 'reply'
+  | 'edit'
+  | 'delete'
+  | 'deleting'
+  | 'remove'
+  | 'removing'
+  | 'release'
+  | 'releasing'
+  // Entity channel list
+  | 'showChannels'
+  | 'filterOpen'
+  | 'filterAll'
+  | 'newChannel'
+  | 'noChannels'
+  // Author badges and ref chips
+  | 'system'
+  | 'agent'
+  | 'restrictedRef'
+  | 'restrictedRefTitle'
+
+const CHANNEL_TEXT: Record<ChannelTextKey, string> = {
+  newMessage: 'New message',
+  editMessage: 'Edit message',
+  messageType: 'Message type',
+  cancelReply: 'Cancel reply',
+  required: 'Required.',
+  toSend: 'to send',
+  toSave: 'to save',
+  send: 'Send',
+  sending: 'Sending…',
+  save: 'Save',
+  saving: 'Saving…',
+  cancel: 'Cancel',
+  typeGone: 'This message type no longer exists, so the message cannot be edited.',
+  choose: 'Choose…',
+  choosing: 'Choosing…',
+  change: 'Change…',
+  replace: 'Replace…',
+  clear: 'Clear',
+  closed: 'Closed',
+  archived: 'Archived',
+  working: 'Working…',
+  messages: 'Messages',
+  loadOlder: 'Load older messages',
+  loading: 'Loading…',
+  noMessages: 'No messages yet.',
+  jumpToLatest: 'Jump to latest',
+  closedNotice: 'This channel is closed. It can be read but takes no new messages.',
+  archivedNotice: 'This channel is archived. It can be read but takes no new messages.',
+  yes: 'Yes',
+  no: 'No',
+  edited: '(edited)',
+  reply: 'Reply',
+  edit: 'Edit',
+  delete: 'Delete',
+  deleting: 'Deleting…',
+  remove: 'Remove…',
+  removing: 'Removing…',
+  release: 'Release',
+  releasing: 'Releasing…',
+  showChannels: 'Show channels',
+  filterOpen: 'Open',
+  filterAll: 'All',
+  newChannel: 'New channel',
+  noChannels: 'No channels yet.',
+  system: 'system',
+  agent: 'agent',
+  restrictedRef: 'Restricted reference',
+  restrictedRefTitle: 'You do not have access to this entity',
+}
+
+/**
  * Every string this library composes rather than receiving.
  *
  * Each entry is a function so a translation can reorder, inflect and pluralise
@@ -165,6 +277,15 @@ export interface Messages {
   channelActionPending: (args: { label: string }) => string
   /** A message whose action ran: `Promote: done`. */
   channelActionDone: (args: { label: string }) => string
+  /** A composer field over its `max`: `At most 140 characters.` */
+  channelTooLong: (args: { max: number }) => string
+  /**
+   * Announced when messages arrive at the end of the log. `type` and `author`
+   * are set when exactly one arrived.
+   */
+  channelNewMessages: (args: { count: number; type?: string; author?: string }) => string
+  /** The channel components' fixed captions; see `ChannelTextKey`. */
+  channelText: (args: { key: ChannelTextKey }) => string
 }
 
 /**
@@ -243,6 +364,10 @@ export const DEFAULT_MESSAGES: Messages = {
     author ? `Replying to ${author}` : 'Replying to an earlier message',
   channelActionPending: ({ label }) => `${label}: pending`,
   channelActionDone: ({ label }) => `${label}: done`,
+  channelTooLong: ({ max }) => `At most ${max} characters.`,
+  channelNewMessages: ({ count, type, author }) =>
+    count === 1 && type ? `${type}${author ? ` from ${author}` : ''}` : `${count} new messages`,
+  channelText: ({ key }) => CHANNEL_TEXT[key],
 }
 
 const MessagesKey: InjectionKey<Messages> = Symbol('rl-messages')

@@ -113,7 +113,7 @@ export const channelLifecycle: ChannelLifecycleDef[] = [
   { name: 'close', label: 'Close' },
   { name: 'reopen', label: 'Reopen' },
   { name: 'archive', label: 'Archive' },
-  { name: 'delete', label: 'Delete channel' },
+  { name: 'delete', label: 'Delete channel', danger: true },
 ]
 
 const marieke = { name: 'Marieke de Vries' }
@@ -246,10 +246,14 @@ export const channelGroups: ChannelGroupView[] = [
 /** The person the stories' ref picker always returns. */
 export const pickedPerson: ChannelReadableRef = { id: 'PER-7', type: 'person', title: 'Sanne Visser' }
 
-/** A long log, for the scrolling and memory budget the app caps at 500. */
-export function manyChannelMessages(count: number): ChannelMessageView[] {
-  return Array.from({ length: count }, (_, i) => {
-    const body = `Message ${i + 1} of ${count}.`
+/**
+ * A long log, for the scrolling and memory budget the app caps at 500.
+ * `first` is the seq of the oldest message, for a page loaded above another.
+ */
+export function manyChannelMessages(count: number, first = 1): ChannelMessageView[] {
+  return Array.from({ length: count }, (_, j) => {
+    const i = first - 1 + j
+    const body = `Message ${i + 1}.`
     return {
       seq: i + 1,
       rev: i + 1,

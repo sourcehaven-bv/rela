@@ -13,8 +13,11 @@
  */
 import type { TagColor } from '../../types'
 
-/** A message property's type, as realtime.yaml declares it. */
-export type ChannelPropertyType =
+/**
+ * A message property's type, as realtime.yaml declares it. Named apart from
+ * the app's wire type of the same shape, so a consumer can import both.
+ */
+export type ChannelPropertyKind =
   | 'string'
   | 'markdown'
   | 'integer'
@@ -29,7 +32,7 @@ export interface ChannelPropertyDef {
   name: string
   /** Shown as it is; the server sends the name when the config sets no label. */
   label: string
-  type: ChannelPropertyType
+  type: ChannelPropertyKind
   required?: boolean
   /** The most Unicode code points a string or markdown value may hold. */
   max?: number
@@ -65,6 +68,8 @@ export interface ChannelMessageTypeDef {
 export interface ChannelLifecycleDef {
   name: string
   label: string
+  /** Draws the button in the danger tone, for an operation such as delete. */
+  danger?: boolean
 }
 
 /**
@@ -225,17 +230,26 @@ export interface ChannelEphemeralView {
   type: string
   author: ChannelAuthorView
   props?: Record<string, ChannelPropValue>
+  /**
+   * The line to show after the type's label, preformatted by the app (times
+   * in the user's zone, enum labels). Without it the props are shown in
+   * presentation order with enum labels, and readable refs by title.
+   */
+  text?: string
 }
 
-/** The state of a channel. */
-export type ChannelState = 'open' | 'closed' | 'archived'
+/**
+ * The state of a channel. Named apart from the app's wire type of the same
+ * shape, so a consumer can import both.
+ */
+export type ChannelStateView = 'open' | 'closed' | 'archived'
 
 /** One channel in an entity's channel list. */
 export interface ChannelRowView {
   /** Unique within the list; the app's key for selecting it. */
   key: string
   title: string
-  state: ChannelState
+  state: ChannelStateView
   /** A preformatted line under the title, such as the last activity. */
   summary?: string
 }
@@ -257,7 +271,11 @@ export interface ChannelPostEvent {
   type: string
   /** One value per rendered field, keyed by property name. */
   values: Record<string, ChannelFieldValue>
-  /** The properties the composer rendered, for an edit that carries the rest. */
+  /**
+   * The properties the composer rendered, for an edit that carries the rest.
+   * A restricted ref the user did not replace is not among them, so the app
+   * sends it as unrendered and the server keeps it.
+   */
   rendered: string[]
   replyTo?: number
 }
@@ -274,4 +292,11 @@ export interface ChannelEditing {
   values: Record<string, ChannelFieldValue>
   /** The current readable refs, so the picker shows titles rather than ids. */
   refs?: Record<string, ChannelReadableRef>
+  /**
+   * Ref properties that hold a ref the user may not read. They show the
+   * restricted placeholder with a Replace button, count as filled for
+   * `required`, and stay out of the emitted `values` and `rendered` unless
+   * the user picks a replacement.
+   */
+  restricted?: string[]
 }

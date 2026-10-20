@@ -7,7 +7,7 @@ import type {
   ChannelMessagePresentation,
   ChannelMessageTypeDef,
   ChannelPropertyDef,
-  ChannelPropertyType,
+  ChannelPropertyKind,
   ChannelWidget,
 } from './types'
 
@@ -22,7 +22,7 @@ export interface ResolvedChannelField {
   span?: number
 }
 
-const DEFAULT_WIDGET: Record<ChannelPropertyType, ChannelWidget> = {
+const DEFAULT_WIDGET: Record<ChannelPropertyKind, ChannelWidget> = {
   string: 'text',
   markdown: 'textarea',
   integer: 'number',
@@ -43,9 +43,21 @@ function widgetFor(property: ChannelPropertyDef, widget: string | undefined): Ch
   return DEFAULT_WIDGET[property.type]
 }
 
+/**
+ * Required first, then by name in code-unit order. The server sorts names by
+ * bytes; for the ASCII names realtime.yaml uses the two agree, where
+ * `localeCompare` would fold case and follow the user's locale.
+ */
 function byRequiredThenName(a: ChannelPropertyDef, b: ChannelPropertyDef): number {
   const req = Number(b.required ?? false) - Number(a.required ?? false)
-  return req || a.name.localeCompare(b.name)
+  if (req) return req
+  return a.name < b.name ? -1 : a.name > b.name ? 1 : 0
+}
+
+/** A span on the 12-column grid, or undefined for the full width. */
+function clampSpan(span: number | undefined): number | undefined {
+  if (!span) return undefined
+  return Math.min(Math.max(Math.round(span), 1), 12)
 }
 
 /**
@@ -74,7 +86,7 @@ export function resolveChannelFields(
       placeholder: f.placeholder,
       help: f.help,
       widget: widgetFor(property, f.widget),
-      span: f.span || undefined,
+      span: clampSpan(f.span),
     })
   }
   const rest = type.properties.filter((p) => !listed.has(p.name)).sort(byRequiredThenName)

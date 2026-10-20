@@ -16,10 +16,19 @@
  * else (dates, integers, the server's own rules) is the app's, which passes
  * field messages back in `errors` and a general one in `error`.
  *
- * Values are emitted raw and per message type, so switching type and back
- * keeps what was typed. The composer does not clear itself on submit, since
- * it cannot know whether the post landed: the app calls `reset()` after a
- * success and leaves the values in place after a failure.
+ * Ctrl+Enter (or Cmd+Enter) and the button send. A plain Enter in a one-line
+ * field does not, so a half-filled card is never sent by accident.
+ *
+ * Values and chosen refs are kept per message type, so switching type and
+ * back keeps what was typed. The composer does not clear itself on submit,
+ * since it cannot know whether the post landed; see `reset`.
+ *
+ * Edit mode starts when `editing` names a new message (by `seq` and `type`).
+ * A new `editing` object for the same message, such as one rebuilt after a
+ * live update, does not reseed the fields: the user's typing wins, and the
+ * app decides whether to warn that the message changed. The new-message
+ * draft and the selected type are put aside for the edit and come back when
+ * `editing` is cleared, whether the edit was saved or cancelled.
  */
 import { computed, nextTick, reactive, ref, useTemplateRef, watch } from 'vue'
 import RlButton from '../common/RlButton.vue'
@@ -41,7 +50,7 @@ import type {
   ChannelReadableRef,
   ChannelReplyQuote,
 } from './types'
-import { useMessages } from '../../composables/useMessages'
+import { useMessages, type ChannelTextKey } from '../../composables/useMessages'
 
 const props = withDefaults(
   defineProps<{
@@ -52,7 +61,10 @@ const props = withDefaults(
     presentation?: ChannelPresentation
     /** Enum labels and colours, keyed by enum type. */
     enumOptions?: Record<string, ChannelEnumOption[]>
-    /** Asks the app to pick an entity of one of the given types. */
+    /**
+     * Asks the app to pick an entity of one of the given types. Resolve null
+     * on cancel; never reject (a rejection is treated as a cancel).
+     */
     pickRef?: (to: string[]) => Promise<ChannelReadableRef | null>
     /** The message being replied to. */
     replyTo?: ChannelReplyQuote
@@ -67,7 +79,18 @@ const props = withDefaults(
     timeZoneLabel?: string
     submitShortcut?: string
   }>(),
-  { submitting: false, submitShortcut: 'Ctrl+Enter' },
+  {
+    presentation: undefined,
+    enumOptions: undefined,
+    pickRef: undefined,
+    replyTo: undefined,
+    editing: undefined,
+    submitting: false,
+    errors: undefined,
+    error: undefined,
+    timeZoneLabel: undefined,
+    submitShortcut: 'Ctrl+Enter',
+  },
 )
 
 const emit = defineEmits<{
@@ -78,26 +101,32 @@ const emit = defineEmits<{
 }>()
 
 const messages = useMessages()
+const t = (key: ChannelTextKey) => messages.channelText({ key })
 const form = useTemplateRef<HTMLFormElement>('form')
 
 const offered = computed(() => {
   if (props.editing) {
-    const t = props.messageTypes.find((m) => m.name === props.editing!.type)
-    return t ? [t] : []
+    const type = props.messageTypes.find((m) => m.name === props.editing!.type)
+    return type ? [type] : []
   }
   const allowed = new Set(props.postable)
-  return props.messageTypes.filter((t) => allowed.has(t.name) && (!props.replyTo || t.reply))
+  return props.messageTypes.filter((m) => allowed.has(m.name) && (!props.replyTo || m.reply))
 })
+
+/** An edit of a message whose type the descriptor no longer has. */
+const typeGone = computed(() => !!props.editing && offered.value.length === 0)
 
 const selected = ref('')
 const current = computed(
-  () => offered.value.find((t) => t.name === selected.value) ?? offered.value[0],
+  () => offered.value.find((m) => m.name === selected.value) ?? offered.value[0],
 )
 
 watch(
   offered,
   (list) => {
-    if (!list.some((t) => t.name === selected.value)) selected.value = list[0]?.name ?? ''
+    // An edit sets and restores the selection itself; see the editing watcher.
+    if (props.editing) return
+    if (!list.some((m) => m.name === selected.value)) selected.value = list[0]?.name ?? ''
   },
   { immediate: true },
 )
@@ -108,64 +137,86 @@ const fields = computed<ResolvedChannelField[]>(() =>
     : [],
 )
 
+type Values = Record<string, ChannelFieldValue>
+type Refs = Record<string, ChannelReadableRef | undefined>
+
 /** Values per message type, so a type switch keeps what was typed. */
-const drafts = reactive<Record<string, Record<string, ChannelFieldValue>>>({})
-const refs = reactive<Record<string, ChannelReadableRef | undefined>>({})
+const drafts = reactive<Record<string, Values>>({})
+/** Chosen refs per message type, next to the ids in `drafts`. */
+const refs = reactive<Record<string, Refs>>({})
+/** In an edit: the ref properties still holding a ref the user may not read. */
+const restricted = reactive(new Set<string>())
 const localErrors = ref<Record<string, string>>({})
 
-function seeded(type: ChannelMessageTypeDef): Record<string, ChannelFieldValue> {
+function seeded(type: ChannelMessageTypeDef): Values {
   // A required boolean has no "not set": it starts unchecked, so "no" needs no click.
-  const out: Record<string, ChannelFieldValue> = {}
+  const out: Values = {}
   for (const p of type.properties) if (p.type === 'boolean' && p.required) out[p.name] = false
   return out
 }
 
+function reseed(type: string) {
+  const def = props.messageTypes.find((m) => m.name === type)
+  drafts[type] = def ? seeded(def) : {}
+  refs[type] = {}
+}
+
 watch(
   current,
-  (t) => {
-    if (t && !drafts[t.name]) drafts[t.name] = seeded(t)
+  (type) => {
+    if (type && !drafts[type.name]) drafts[type.name] = seeded(type)
   },
   { immediate: true },
 )
 
-const values = computed<Record<string, ChannelFieldValue>>(() =>
-  current.value ? (drafts[current.value.name] ?? {}) : {},
-)
+const values = computed<Values>(() => (current.value ? (drafts[current.value.name] ?? {}) : {}))
+const chosen = computed<Refs>(() => (current.value ? (refs[current.value.name] ?? {}) : {}))
 
 /**
- * The new-message draft an edit displaced, put back when the edit ends, so
- * editing an old message never eats a message half written.
+ * What an edit displaced: the selected type, and the draft and refs of the
+ * edited type, put back when the edit ends.
  */
-let stashed: { type: string; values: Record<string, ChannelFieldValue> | undefined } | null = null
+let stashed: { selected: string; type: string; values?: Values; refs?: Refs } | null = null
 
 watch(
-  () => props.editing,
-  (e, prev) => {
+  () => (props.editing ? `${props.editing.seq}:${props.editing.type}` : ''),
+  (_key, prevKey) => {
     localErrors.value = {}
-    for (const k of Object.keys(refs)) delete refs[k]
-    if (prev && stashed) {
-      const t = props.messageTypes.find((m) => m.name === stashed!.type)
-      if (stashed.values) drafts[stashed.type] = stashed.values
-      else if (t) drafts[stashed.type] = seeded(t)
+    restricted.clear()
+    if (prevKey && stashed) {
+      const s = stashed
       stashed = null
+      if (s.values) drafts[s.type] = s.values
+      else reseed(s.type)
+      refs[s.type] = s.refs ?? {}
+      if (offered.value.some((m) => m.name === s.selected)) selected.value = s.selected
     }
+    const e = props.editing
     if (!e) return
-    stashed = { type: e.type, values: drafts[e.type] }
+    stashed = { selected: selected.value, type: e.type, values: drafts[e.type], refs: refs[e.type] }
     selected.value = e.type
     drafts[e.type] = { ...e.values }
-    Object.assign(refs, e.refs ?? {})
+    refs[e.type] = { ...e.refs }
+    for (const name of e.restricted ?? []) restricted.add(name)
   },
   { immediate: true },
 )
 
 function setValue(name: string, v: ChannelFieldValue) {
-  const t = current.value
-  if (!t) return
-  ;(drafts[t.name] ??= seeded(t))[name] = v
+  const type = current.value
+  if (!type) return
+  ;(drafts[type.name] ??= seeded(type))[name] = v
   if (localErrors.value[name]) {
     const { [name]: _, ...rest } = localErrors.value
     localErrors.value = rest
   }
+}
+
+function setRef(name: string, r: ChannelReadableRef | null) {
+  const type = current.value
+  if (!type) return
+  ;(refs[type.name] ??= {})[name] = r ?? undefined
+  if (r) restricted.delete(name)
 }
 
 function isEmpty(v: ChannelFieldValue): boolean {
@@ -175,10 +226,12 @@ function isEmpty(v: ChannelFieldValue): boolean {
 function check(): Record<string, string> {
   const out: Record<string, string> = {}
   for (const f of fields.value) {
-    const v = values.value[f.property.name]
-    if (f.property.required && isEmpty(v)) out[f.property.name] = 'Required.'
+    const name = f.property.name
+    if (restricted.has(name)) continue
+    const v = values.value[name]
+    if (f.property.required && isEmpty(v)) out[name] = t('required')
     else if (f.property.max && typeof v === 'string' && codePointLength(v) > f.property.max) {
-      out[f.property.name] = `At most ${f.property.max} characters.`
+      out[name] = messages.channelTooLong({ max: f.property.max })
     }
   }
   return out
@@ -189,21 +242,23 @@ function errorFor(name: string): string | undefined {
 }
 
 async function submit() {
-  const t = current.value
-  if (!t || props.submitting) return
+  const type = current.value
+  if (!type || props.submitting) return
   localErrors.value = check()
   if (Object.keys(localErrors.value).length) {
     await nextTick()
     form.value?.querySelector<HTMLElement>('[aria-invalid="true"]')?.focus()
     return
   }
-  const rendered = fields.value.map((f) => f.property.name)
-  const out: Record<string, ChannelFieldValue> = {}
+  // An untouched restricted ref is left out, so the app carries it as
+  // unrendered and the server keeps it.
+  const rendered = fields.value.map((f) => f.property.name).filter((n) => !restricted.has(n))
+  const out: Values = {}
   for (const name of rendered) out[name] = values.value[name]
   if (props.editing) {
-    emit('save', { seq: props.editing.seq, type: t.name, values: out, rendered })
+    emit('save', { seq: props.editing.seq, type: type.name, values: out, rendered })
   } else {
-    emit('post', { type: t.name, values: out, rendered, replyTo: props.replyTo?.seq })
+    emit('post', { type: type.name, values: out, rendered, replyTo: props.replyTo?.seq })
   }
 }
 
@@ -212,12 +267,29 @@ function cancelEdit() {
   emit('cancelEdit')
 }
 
-/** Clears the current type's values, for the app to call after a post landed. */
-function reset() {
-  const t = current.value
-  if (t) drafts[t.name] = seeded(t)
-  for (const k of Object.keys(refs)) delete refs[k]
+/**
+ * Clears a message type's values and refs, for the app to call once a post
+ * landed. Pass the `post` event it acknowledges: that clears the posted type
+ * whatever is on screen by then, even if the user switched type or started
+ * an edit while the request was in flight. Without an argument it clears the
+ * current type, outside an edit only.
+ *
+ * Do not call it for a save. Clearing `editing` ends the edit and brings back
+ * the draft the edit put aside; a `save` event passed here is ignored, so a
+ * late call cannot wipe that draft.
+ */
+function reset(posted?: ChannelPostEvent | ChannelEditEvent) {
   localErrors.value = {}
+  if (posted && 'seq' in posted) return
+  const type = posted?.type ?? (props.editing ? undefined : current.value?.name)
+  if (!type) return
+  if (props.editing && stashed?.type === type) {
+    // The posted draft is the one the edit put aside.
+    stashed.values = undefined
+    stashed.refs = undefined
+    return
+  }
+  reseed(type)
 }
 
 defineExpose({
@@ -231,9 +303,9 @@ defineExpose({
     v-if="current"
     ref="form"
     class="rl-channel-composer"
-    :aria-label="editing ? 'Edit message' : 'New message'"
+    :aria-label="t(editing ? 'editMessage' : 'newMessage')"
     novalidate
-    @submit.prevent="submit"
+    @submit.prevent
     @keydown.meta.enter.prevent="submit"
     @keydown.ctrl.enter.prevent="submit"
   >
@@ -241,9 +313,9 @@ defineExpose({
       v-if="offered.length > 1"
       v-model="selected"
       class="rl-channel-composer__types"
-      label="Message type"
+      :label="t('messageType')"
       size="sm"
-      :options="offered.map((t) => ({ value: t.name, label: t.label }))"
+      :options="offered.map((m) => ({ value: m.name, label: m.label }))"
     />
 
     <div v-if="replyTo && !editing" class="rl-channel-composer__reply">
@@ -251,7 +323,7 @@ defineExpose({
         <strong>{{ messages.channelReplyingTo({ author: replyTo.author }) }}</strong>
         <span v-if="replyTo.excerpt"> {{ replyTo.excerpt }}</span>
       </span>
-      <RlIconButton icon="x" label="Cancel reply" :size="14" @click="emit('cancelReply')" />
+      <RlIconButton icon="x" :label="t('cancelReply')" :size="14" @click="emit('cancelReply')" />
     </div>
 
     <RlBanner v-if="error" tone="danger" class="rl-channel-composer__banner">{{ error }}</RlBanner>
@@ -268,36 +340,41 @@ defineExpose({
           :model-value="values[f.property.name]"
           :error="errorFor(f.property.name)"
           :enum-options="enumOptions"
-          :chosen-ref="refs[f.property.name]"
+          :chosen-ref="chosen[f.property.name]"
           :pick-ref="pickRef"
+          :restricted="restricted.has(f.property.name)"
           :time-zone-label="timeZoneLabel"
           @update:model-value="(v) => setValue(f.property.name, v)"
-          @pick="(r) => (refs[f.property.name] = r ?? undefined)"
+          @pick="(r) => setRef(f.property.name, r)"
         />
       </div>
     </div>
 
     <div class="rl-channel-composer__foot">
       <span class="rl-channel-composer__hint">
-        <RlKbd :keys="submitShortcut" size="sm" /> to {{ editing ? 'save' : 'send' }}
+        <RlKbd :keys="submitShortcut" size="sm" /> {{ t(editing ? 'toSave' : 'toSend') }}
       </span>
       <RlButtonGroup>
         <RlButton v-if="editing" variant="ghost" size="sm" :disabled="submitting" @click="cancelEdit">
-          Cancel
+          {{ t('cancel') }}
         </RlButton>
         <RlButton
           variant="primary"
           size="sm"
-          type="submit"
           icon="send"
           :loading="submitting"
-          :pending-label="editing ? 'Saving…' : 'Sending…'"
+          :pending-label="t(editing ? 'saving' : 'sending')"
+          @click="submit"
         >
-          {{ editing ? 'Save' : 'Send' }}
+          {{ t(editing ? 'save' : 'send') }}
         </RlButton>
       </RlButtonGroup>
     </div>
   </form>
+  <div v-else-if="typeGone" class="rl-channel-composer rl-channel-composer--gone" role="status">
+    <span>{{ t('typeGone') }}</span>
+    <RlButton variant="ghost" size="sm" @click="cancelEdit">{{ t('cancel') }}</RlButton>
+  </div>
 </template>
 
 <style scoped>
@@ -310,6 +387,14 @@ defineExpose({
   border: 1px solid var(--rl-color-border-strong);
   border-radius: var(--rl-radius-lg);
   background: var(--rl-color-bg);
+}
+
+.rl-channel-composer--gone {
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+  color: var(--rl-color-text-muted);
+  font-size: var(--rl-font-size-sm);
 }
 
 .rl-channel-composer__types { align-self: flex-start; }

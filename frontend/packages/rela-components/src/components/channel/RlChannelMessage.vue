@@ -34,7 +34,7 @@ import type {
   ChannelReadableRef,
   ChannelRef,
 } from './types'
-import { useMessages } from '../../composables/useMessages'
+import { useMessages, type ChannelTextKey } from '../../composables/useMessages'
 
 const props = withDefaults(
   defineProps<{
@@ -66,6 +66,7 @@ const emit = defineEmits<{
 }>()
 
 const messages = useMessages()
+const t = (key: ChannelTextKey) => messages.channelText({ key })
 
 const allowed = computed(() => new Set(props.message.actions ?? []))
 
@@ -100,7 +101,7 @@ const actionLabel = computed(() => {
 
 const hasControls = computed(
   () =>
-    (props.canReply && props.messageType?.persist !== 'ephemeral') ||
+    props.canReply ||
     actionButtons.value.length > 0 ||
     ['edit', 'delete', 'remove', 'release'].some((op) => allowed.value.has(op)),
 )
@@ -121,7 +122,7 @@ function enumOption(f: ResolvedChannelField, v: ChannelPropValue): ChannelEnumOp
 function plain(f: ResolvedChannelField, v: ChannelPropValue): string {
   const text = props.message.text?.[f.property.name]
   if (text !== undefined) return text
-  if (typeof v === 'boolean') return v ? 'Yes' : 'No'
+  if (typeof v === 'boolean') return t(v ? 'yes' : 'no')
   return String(v)
 }
 
@@ -144,7 +145,7 @@ function hrefFor(v: ChannelRef): string | undefined {
         <time v-if="message.at" class="rl-channel-message__time" :datetime="message.datetime">
           {{ message.at }}
         </time>
-        <span v-if="message.editedAt" class="rl-channel-message__time" :title="message.editedAt">(edited)</span>
+        <span v-if="message.editedAt" class="rl-channel-message__time" :title="message.editedAt">{{ t('edited') }}</span>
       </div>
 
       <button
@@ -228,7 +229,7 @@ function hrefFor(v: ChannelRef): string | undefined {
           :variant="a.promote_to ? 'primary' : 'secondary'"
           size="sm"
           :loading="isPending(a.name)"
-          pending-label="Working…"
+          :pending-label="t('working')"
           @click="emit('action', message.seq, a.name)"
         >
           {{ a.label }}
@@ -238,21 +239,21 @@ function hrefFor(v: ChannelRef): string | undefined {
           variant="secondary"
           size="sm"
           :loading="isPending('release')"
-          pending-label="Releasing…"
+          :pending-label="t('releasing')"
           @click="emit('release', message.seq)"
         >
-          Release
+          {{ t('release') }}
         </RlButton>
         <RlButton
-          v-if="canReply && messageType?.persist !== 'ephemeral'"
+          v-if="canReply"
           variant="ghost"
           size="sm"
           @click="emit('reply', message.seq)"
         >
-          Reply
+          {{ t('reply') }}
         </RlButton>
         <RlButton v-if="allowed.has('edit')" variant="ghost" size="sm" @click="emit('edit', message.seq)">
-          Edit
+          {{ t('edit') }}
         </RlButton>
         <RlButton
           v-if="allowed.has('delete')"
@@ -260,10 +261,10 @@ function hrefFor(v: ChannelRef): string | undefined {
           size="sm"
           tone="danger"
           :loading="isPending('delete')"
-          pending-label="Deleting…"
+          :pending-label="t('deleting')"
           @click="emit('delete', message.seq)"
         >
-          Delete
+          {{ t('delete') }}
         </RlButton>
         <RlButton
           v-if="allowed.has('remove')"
@@ -271,10 +272,10 @@ function hrefFor(v: ChannelRef): string | undefined {
           size="sm"
           tone="danger"
           :loading="isPending('remove')"
-          pending-label="Removing…"
+          :pending-label="t('removing')"
           @click="emit('remove', message.seq)"
         >
-          Remove…
+          {{ t('remove') }}
         </RlButton>
       </RlButtonGroup>
     </template>

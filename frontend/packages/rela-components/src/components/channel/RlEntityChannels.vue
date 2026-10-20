@@ -10,19 +10,27 @@
  * The state filter is the caller's (`v-model:filter`), because the server
  * filters the list; this component only offers the choice.
  */
+import { computed, useId } from 'vue'
 import RlButton from '../common/RlButton.vue'
+import RlHeading from '../common/RlHeading.vue'
 import RlIcon from '../common/RlIcon.vue'
 import RlTag from '../common/RlTag.vue'
 import RlSegmentedControl from '../data/RlSegmentedControl.vue'
 import type { ChannelGroupView } from './types'
+import { useMessages } from '../../composables/useMessages'
 
-defineProps<{
-  groups: ChannelGroupView[]
-  /** The key of the open channel. */
-  activeKey?: string
-  /** Which channels the list holds; omit to hide the filter. */
-  filter?: 'open' | 'all'
-}>()
+withDefaults(
+  defineProps<{
+    groups: ChannelGroupView[]
+    /** The key of the open channel. */
+    activeKey?: string
+    /** Which channels the list holds; omit to hide the filter. */
+    filter?: 'open' | 'all'
+    /** The level of the group headings, so the list fits the host page's outline. */
+    headingLevel?: 2 | 3 | 4 | 5 | 6
+  }>(),
+  { activeKey: undefined, filter: undefined, headingLevel: 3 },
+)
 
 const emit = defineEmits<{
   select: [key: string]
@@ -30,10 +38,17 @@ const emit = defineEmits<{
   'update:filter': [filter: 'open' | 'all']
 }>()
 
-const filterOptions = [
-  { value: 'open', label: 'Open' },
-  { value: 'all', label: 'All' },
-]
+const messages = useMessages()
+const idBase = useId()
+
+const filterOptions = computed(() => [
+  { value: 'open', label: messages.channelText({ key: 'filterOpen' }) },
+  { value: 'all', label: messages.channelText({ key: 'filterAll' }) },
+])
+
+function stateLabel(state: 'closed' | 'archived'): string {
+  return messages.channelText({ key: state })
+}
 </script>
 
 <template>
@@ -41,16 +56,23 @@ const filterOptions = [
     <RlSegmentedControl
       v-if="filter"
       class="rl-entity-channels__filter"
-      label="Show channels"
+      :label="messages.channelText({ key: 'showChannels' })"
       size="sm"
       :model-value="filter"
       :options="filterOptions"
       @update:model-value="(v: string) => emit('update:filter', v === 'all' ? 'all' : 'open')"
     />
 
-    <section v-for="g in groups" :key="g.type" class="rl-entity-channels__group" :aria-label="g.label">
+    <section
+      v-for="g in groups"
+      :key="g.type"
+      class="rl-entity-channels__group"
+      :aria-labelledby="`${idBase}-${g.type}`"
+    >
       <div class="rl-entity-channels__head">
-        <h3>{{ g.label }}</h3>
+        <RlHeading :id="`${idBase}-${g.type}`" :level="headingLevel" size="sm" weight="semibold">
+          {{ g.label }}
+        </RlHeading>
         <RlButton
           v-if="g.cardinality === 'many' && g.canCreate"
           variant="ghost"
@@ -58,7 +80,7 @@ const filterOptions = [
           icon="plus"
           @click="emit('create', g.type)"
         >
-          {{ g.createLabel || 'New channel' }}
+          {{ g.createLabel || messages.channelText({ key: 'newChannel' }) }}
         </RlButton>
       </div>
       <ul v-if="g.channels.length" class="rl-entity-channels__list">
@@ -78,11 +100,11 @@ const filterOptions = [
               <span class="rl-entity-channels__title">{{ c.title }}</span>
               <span v-if="c.summary" class="rl-entity-channels__summary">{{ c.summary }}</span>
             </span>
-            <RlTag v-if="c.state !== 'open'" :label="c.state === 'closed' ? 'Closed' : 'Archived'" color="grey" />
+            <RlTag v-if="c.state !== 'open'" :label="stateLabel(c.state)" color="grey" />
           </button>
         </li>
       </ul>
-      <p v-else class="rl-entity-channels__empty">No channels yet.</p>
+      <p v-else class="rl-entity-channels__empty">{{ messages.channelText({ key: 'noChannels' }) }}</p>
     </section>
   </div>
 </template>
@@ -104,12 +126,6 @@ const filterOptions = [
   justify-content: space-between;
   gap: var(--rl-space-2);
   margin-bottom: var(--rl-space-2);
-}
-
-.rl-entity-channels__head h3 {
-  margin: 0;
-  font-size: var(--rl-font-size-sm);
-  font-weight: var(--rl-font-weight-semibold);
 }
 
 .rl-entity-channels__list {
