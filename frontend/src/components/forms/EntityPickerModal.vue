@@ -31,11 +31,19 @@ const MAX_RESULTS = 50
 
 const props = defineProps<{
   open: boolean
+  /**
+   * Limits the results to these entity types. A single type is passed to
+   * the search; several are filtered from its answer.
+   */
+  types?: readonly string[]
+  /** The dialog's accessible name. */
+  label?: string
 }>()
 
 const emit = defineEmits<{
   close: []
-  select: [id: string]
+  /** The chosen entity's id, and the entity for a caller that needs more. */
+  select: [id: string, entity: Entity]
 }>()
 
 const schemaStore = useSchemaStore()
@@ -94,8 +102,15 @@ async function runSearch(q: string): Promise<void> {
   abort = new AbortController()
   loading.value = true
   try {
-    const resp = await searchEntities(q, undefined, abort.signal, worldParam.value)
-    results.value = resp.data.slice(0, MAX_RESULTS)
+    const types = props.types ?? []
+    const resp = await searchEntities(
+      q,
+      types.length === 1 ? types[0] : undefined,
+      abort.signal,
+      worldParam.value,
+    )
+    const hits = types.length > 1 ? resp.data.filter((e) => types.includes(e.type)) : resp.data
+    results.value = hits.slice(0, MAX_RESULTS)
     errorMsg.value = ''
     highlightedIndex.value = 0
     // Reset scroll to the new top result. Without this, if the previous
@@ -152,7 +167,7 @@ function entityTypeLabel(type: string): string {
 
 function selectEntity(entity: Entity): void {
   if (!entity?.id) return
-  emit('select', entity.id)
+  emit('select', entity.id, entity)
   emit('close')
 }
 
@@ -230,7 +245,7 @@ const showNoMatches = computed(
       class="entity-picker-overlay"
       role="dialog"
       aria-modal="true"
-      aria-label="Insert entity reference"
+      :aria-label="label ?? 'Insert entity reference'"
       @click="handleOverlayClick"
       @keydown="handleKeydown"
     >
