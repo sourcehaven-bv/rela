@@ -573,9 +573,11 @@ export const test = base.extend<TestFixtures, WorkerFixtures>({
   },
 
   appPage: async ({ browser, serverUrl }, use, testInfo) => {
-    const context = await browser.newContext({
-      extraHTTPHeaders: { Origin: serverUrl },
-    });
+    // No context-wide Origin header: Chromium fails every sub-resource request
+    // of the sandboxed custom-app iframe (origin "null") with
+    // ERR_INVALID_ARGUMENT when one is forced. Writes through page.request set
+    // Origin per call instead.
+    const context = await browser.newContext();
     const page = await context.newPage();
 
     // Self-contained-binary guard (TKT-ZDRS): rela-server embeds the SPA via
@@ -683,8 +685,7 @@ export const test = base.extend<TestFixtures, WorkerFixtures>({
     async function call(method: string, apiPath: string, data?: unknown) {
       const options: Record<string, unknown> = {
         method,
-        // Redundant because the context already carries Origin, but keeps
-        // the intent visible for readers auditing a test's API calls.
+        // The CSRF guard rejects a cookie-bearing write without Origin.
         headers: { Origin: serverUrl },
       };
       if (data !== undefined) options.data = data;
