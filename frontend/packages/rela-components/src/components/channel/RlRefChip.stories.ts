@@ -74,6 +74,16 @@ export const UnsafeHref: Story = {
   },
 }
 
+/** A backslash path is ignored too: browsers read `/\host` as `//host`. */
+export const BackslashHref: Story = {
+  args: { href: '/\\evil.example/' },
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement)
+    await expect(canvas.queryByRole('link')).toBeNull()
+    await expect(canvas.getByRole('button', { name: /RISK-88/ })).toBeVisible()
+  },
+}
+
 /** `plain` is text with no click behaviour, for a place where opening the entity means nothing. */
 export const Plain: Story = {
   args: { href: undefined, plain: true },

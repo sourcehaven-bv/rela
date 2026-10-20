@@ -42,11 +42,22 @@ const readable = computed<ChannelReadableRef | null>(() =>
   props.value.restricted ? null : props.value,
 )
 
-/** The href when it is a same-page relative path; otherwise none. */
+/** Any relative path resolved against this base keeps its origin. */
+const relativeBase = 'http://relative.invalid/'
+
+/**
+ * The href when it is a relative path that stays on the page's origin;
+ * otherwise none. Parsing, not a prefix check, because browsers read
+ * `/\host` as `//host`.
+ */
 const safeHref = computed(() => {
   const h = props.href
-  if (!h || h.startsWith('//')) return undefined
-  return h.startsWith('/') || h.startsWith('#') || h.startsWith('?') ? h : undefined
+  if (!h || !/^[/#?]/.test(h) || /[\\\s\u0000-\u001f]/.test(h)) return undefined
+  try {
+    return new URL(h, relativeBase).origin === new URL(relativeBase).origin ? h : undefined
+  } catch {
+    return undefined
+  }
 })
 
 const tag = computed(() => (props.plain ? 'span' : safeHref.value ? 'a' : 'button'))
