@@ -115,6 +115,7 @@ describe('useChannel', () => {
   })
 
   it('follows by rev and merges edits and new messages by seq', async () => {
+    getHead.mockResolvedValue(headOf({ last_seq: 2, rev: 2 }))
     getPage.mockResolvedValueOnce(page([msg(1), msg(2)], { next_after_rev: 2 }))
     const ch = host(() => room)
     await flushPromises()
@@ -343,6 +344,48 @@ describe('useChannel', () => {
     await flushPromises()
     expect(getPage).toHaveBeenLastCalledWith(room, { afterRev: 1 })
     expect(seqs(ch.messages.value)).toEqual([1, 2])
+  })
+
+  it('refetches the head when the first message stores the channel', async () => {
+    getPage.mockResolvedValueOnce(page([], { next_after_rev: 0 }))
+    const ch = host(() => room)
+    await flushPromises()
+    getHead.mockClear()
+
+    const stored = {
+      ...headOf({ last_seq: 1, rev: 1 }),
+      _actions: { ...headOf()._actions, lifecycle: ['close'] },
+    }
+    getHead.mockResolvedValueOnce(stored)
+    post.mockResolvedValueOnce({ kind: 'message', message: msg(1) })
+    await ch.post('text', { body: 'hi' })
+    expect(getHead).toHaveBeenCalledTimes(1)
+    expect(ch.head.value?._actions.lifecycle).toEqual(['close'])
+
+    // Later posts and frames on the stored channel do not read the head.
+    getHead.mockClear()
+    post.mockResolvedValueOnce({ kind: 'message', message: msg(2) })
+    await ch.post('text', { body: 'again' })
+    getPage.mockResolvedValueOnce(page([msg(2)], { next_after_rev: 2 }))
+    frame()
+    await flushPromises()
+    expect(getHead).not.toHaveBeenCalled()
+  })
+
+  it('refetches the head when a frame brings the first message of the channel', async () => {
+    getPage.mockResolvedValueOnce(page([], { next_after_rev: 0 }))
+    const ch = host(() => room)
+    await flushPromises()
+    getHead.mockClear()
+
+    getHead.mockResolvedValueOnce(headOf({ last_seq: 1, rev: 1 }))
+    getPage.mockResolvedValueOnce(
+      page([msg(1)], { next_after_rev: 1, channel: channel({ last_seq: 1, rev: 1 }) })
+    )
+    frame()
+    await flushPromises()
+    expect(getHead).toHaveBeenCalledTimes(1)
+    expect(seqs(ch.messages.value)).toEqual([1])
   })
 
   it('refetches the head after an ephemeral post', async () => {
