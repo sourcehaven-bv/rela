@@ -319,6 +319,135 @@ function inaccessibleTooltipFor(reason: string | undefined): string {
 // would silently mis-align the (n/m) widget with which line a click toggles.
 export { checkboxStats as getCheckboxStats } from './checkboxToggle'
 
+/** A ref the message itself resolved and the reader may open. */
+export interface MessageRefLink {
+  /** The entity id, `ID` or `ID@face`, exactly as the server sent it. */
+  id: string
+  type: string
+  title?: string
+}
+
+export interface RenderMessageMarkdownOptions {
+  /**
+   * The readable refs of the message (its RefProp values). A code span whose
+   * whole text is one of these ids becomes an in-app link; nothing else is
+   * looked up.
+   */
+  refs?: readonly MessageRefLink[]
+  /** The page world, carried on the in-app links. */
+  world?: string
+}
+
+// The only markup a channel message may produce (TKT-91BK6F R2). Nothing in
+// this list can load a remote resource or restyle the app: no img, media,
+// iframe, form, svg, style or class.
+const MESSAGE_TAGS = [
+  'p',
+  'br',
+  'strong',
+  'em',
+  'del',
+  'code',
+  'pre',
+  'blockquote',
+  'ul',
+  'ol',
+  'li',
+  'a',
+  'h1',
+  'h2',
+  'h3',
+  'h4',
+  'h5',
+  'h6',
+  'hr',
+  'table',
+  'thead',
+  'tbody',
+  'tr',
+  'th',
+  'td',
+]
+
+// Links keep only these schemes. A relative or protocol-relative href fails
+// the anchor, so an author cannot point an in-app looking link anywhere.
+const MESSAGE_URI = /^(?:https?|mailto):/i
+
+// A dedicated instance: its hook must not touch renderMarkdown's output.
+const messagePurifier = DOMPurify(window)
+messagePurifier.addHook('afterSanitizeAttributes', (node) => {
+  if (node.nodeName !== 'A') return
+  const el = node as Element
+  const href = el.getAttribute('href')
+  if (href !== null && !MESSAGE_URI.test(href.trim())) el.removeAttribute('href')
+  el.setAttribute('rel', 'noopener noreferrer nofollow')
+  el.setAttribute('target', '_blank')
+})
+
+// What a ref link may be built from. The server sent these values; checking
+// their shape keeps a malformed one from reaching an href at all.
+const REF_ID = /^[A-Za-z0-9][A-Za-z0-9_.-]*(?:@[A-Za-z0-9][A-Za-z0-9_.-]*)?$/
+const REF_TYPE = /^[A-Za-z][A-Za-z0-9_-]*$/
+
+/**
+ * Renders the markdown of a channel message (TKT-91BK6F).
+ *
+ * Stricter than renderMarkdown: messages come from any member, so the
+ * output keeps only MESSAGE_TAGS with `href` and `title`, links keep only
+ * http, https and mailto and open in a new tab with
+ * `rel="noopener noreferrer nofollow"`, and there are no images, diagrams,
+ * checkboxes or comment marks.
+ *
+ * After sanitizing, a code span whose whole text is the id of one of
+ * `refs` becomes an in-app link to that entity, built with DOM APIs from
+ * the id, its type and the page world only.
+ */
+export function renderMessageMarkdown(
+  content: string,
+  options: RenderMessageMarkdownOptions = {}
+): string {
+  if (!content) return ''
+  const rawHtml = new Marked({ gfm: true, breaks: true }).parse(content) as string
+  const clean = messagePurifier.sanitize(rawHtml, {
+    ALLOWED_TAGS: MESSAGE_TAGS,
+    ALLOWED_ATTR: ['href', 'title'],
+    ALLOWED_URI_REGEXP: MESSAGE_URI,
+    ALLOW_DATA_ATTR: false,
+    ALLOW_ARIA_ATTR: false,
+    SANITIZE_NAMED_PROPS: true,
+  })
+  return wrapTablesForScroll(linkMessageRefs(clean, options))
+}
+
+// linkMessageRefs turns ref code spans into in-app links. html is the
+// sanitized output of renderMessageMarkdown; a <template> parses it inertly.
+function linkMessageRefs(html: string, options: RenderMessageMarkdownOptions): string {
+  const refs = new Map<string, MessageRefLink>()
+  for (const r of options.refs ?? []) {
+    if (REF_ID.test(r.id) && REF_TYPE.test(r.type)) refs.set(r.id, r)
+  }
+  if (refs.size === 0 || !html.includes('<code')) return html
+
+  const template = document.createElement('template')
+  // nosemgrep: dom-innerhtml-assignment
+  template.innerHTML = html
+  let changed = false
+  for (const code of template.content.querySelectorAll('code')) {
+    if (code.closest('pre, a')) continue
+    const ref = refs.get(code.textContent ?? '')
+    if (!ref) continue
+    const query = options.world ? `?world=${encodeURIComponent(options.world)}` : ''
+    const a = document.createElement('a')
+    a.setAttribute('href', `${relaBase()}entity/${ref.type}/${ref.id}${query}`)
+    a.className = 'entity-ref'
+    a.textContent = ref.title || ref.id
+    if (ref.title) a.setAttribute('title', ref.id)
+    code.replaceWith(a)
+    changed = true
+  }
+  return changed ? template.innerHTML : html
+}
+
 // Sanitizer instance dedicated to mermaid output. It carries the label-lifting
 // hook below, which must not run for renderMarkdown's ordinary HTML, so it
 // cannot share the default DOMPurify instance.

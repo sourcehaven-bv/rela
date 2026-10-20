@@ -11,6 +11,7 @@ import type {
   CustomType,
   WorldInfo,
   FormConfig,
+  ChannelPresentation,
   ListConfig,
   ViewConfig,
   EntityViewConfig,
@@ -48,6 +49,8 @@ export const useSchemaStore = defineStore('schema', () => {
   // than shipping one that can only 501.
   const historyEnabled = ref<boolean>(false)
   const forms = ref<Map<string, FormConfig>>(new Map())
+  /** data-entry.yaml `channels:`, keyed by channel type (TKT-91BK6F). */
+  const channelPresentations = ref<Map<string, ChannelPresentation>>(new Map())
   const lists = ref<Map<string, ListConfig>>(new Map())
   const views = ref<Map<string, ViewConfig>>(new Map())
   // Keyed by entity TYPE, unlike `views` which is keyed by view id.
@@ -442,6 +445,7 @@ export const useSchemaStore = defineStore('schema', () => {
       aboutDescription.value = configData.about_description || ''
       styles.value = configData.styles || {}
       forms.value = new Map(Object.entries(configData.forms || {}))
+      channelPresentations.value = new Map(Object.entries(configData.channels || {}))
       lists.value = new Map(Object.entries(configData.lists || {}))
       views.value = new Map(Object.entries(configData.views || {}))
       entityViews.value = new Map(Object.entries(configData.entity_views || {}))
@@ -523,6 +527,7 @@ export const useSchemaStore = defineStore('schema', () => {
     worlds,
     worldOrder,
     forms,
+    channelPresentations,
     lists,
     views,
     entityViews,
