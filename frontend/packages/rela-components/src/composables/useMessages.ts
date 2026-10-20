@@ -147,6 +147,24 @@ export interface Messages {
 
   /** A filter chip's remove control: `Remove filter Status: Open`. */
   removeFilter: (args: { label: string; value?: string }) => string
+
+  /**
+   * The placeholder of a removed channel message. `by` and `reason` are set
+   * only for a user the server shows them to.
+   */
+  channelMessageRemoved: (args: {
+    kind: 'author' | 'moderator'
+    by?: string
+    reason?: string
+  }) => string
+  /** The quote above a reply: `Reply to Alice`. */
+  channelReplyTo: (args: { author?: string }) => string
+  /** The composer's note while a reply is being written: `Replying to Alice`. */
+  channelReplyingTo: (args: { author?: string }) => string
+  /** A message whose action waits to complete: `Promote: pending`. */
+  channelActionPending: (args: { label: string }) => string
+  /** A message whose action ran: `Promote: done`. */
+  channelActionDone: (args: { label: string }) => string
 }
 
 /**
@@ -215,6 +233,16 @@ export const DEFAULT_MESSAGES: Messages = {
   pageNumber: ({ page }) => `Page ${page}`,
 
   removeFilter: ({ label, value }) => `Remove filter ${label}${value ? `: ${value}` : ''}`,
+
+  channelMessageRemoved: ({ kind, by, reason }) =>
+    (kind === 'author' ? 'Deleted by its author' : 'Removed by a moderator') +
+    (by ? ` (${by})` : '') +
+    (reason ? `: ${reason}` : ''),
+  channelReplyTo: ({ author }) => (author ? `Reply to ${author}` : 'Reply to an earlier message'),
+  channelReplyingTo: ({ author }) =>
+    author ? `Replying to ${author}` : 'Replying to an earlier message',
+  channelActionPending: ({ label }) => `${label}: pending`,
+  channelActionDone: ({ label }) => `${label}: done`,
 }
 
 const MessagesKey: InjectionKey<Messages> = Symbol('rl-messages')

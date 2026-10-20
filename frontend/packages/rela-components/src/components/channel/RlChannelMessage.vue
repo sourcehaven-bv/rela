@@ -1,0 +1,411 @@
+<script setup lang="ts">
+/**
+ * One message in a channel.
+ *
+ * A message whose type is a single markdown property reads as prose. Any
+ * other type is a card: the type's label, then its properties in
+ * presentation order (see `resolveChannelFields`), then the action state.
+ *
+ * Every control follows `message.actions`, the list the server computed for
+ * this user and this message. A control it does not name is not rendered,
+ * not disabled: the user may not use it, and a greyed button would only
+ * advertise that. Delete (own message, no reason) and Remove (moderator) are
+ * separate controls because they are separate rights.
+ *
+ * Text is text. Titles, names, reasons and string properties render through
+ * interpolation. The one exception is `message.html`: markdown the app has
+ * already rendered and sanitized. It is inserted as it is; this component
+ * never renders or cleans markdown, so the app's sanitizer is the only one.
+ */
+import { computed } from 'vue'
+import RlButton from '../common/RlButton.vue'
+import RlButtonGroup from '../common/RlButtonGroup.vue'
+import RlIcon from '../common/RlIcon.vue'
+import RlTag from '../common/RlTag.vue'
+import RlChannelAuthor from './RlChannelAuthor.vue'
+import RlRefChip from './RlRefChip.vue'
+import { resolveChannelFields, messagePendingKey, type ResolvedChannelField } from './channelFields'
+import type {
+  ChannelEnumOption,
+  ChannelMessagePresentation,
+  ChannelMessageTypeDef,
+  ChannelMessageView,
+  ChannelPropValue,
+  ChannelReadableRef,
+  ChannelRef,
+} from './types'
+import { useMessages } from '../../composables/useMessages'
+
+const props = withDefaults(
+  defineProps<{
+    message: ChannelMessageView
+    /** The message's type. Without it the properties show by name. */
+    messageType?: ChannelMessageTypeDef
+    presentation?: ChannelMessagePresentation
+    /** Enum labels and colours, keyed by enum type. */
+    enumOptions?: Record<string, ChannelEnumOption[]>
+    /** The link for a readable ref; without it a chip is a button. */
+    entityHref?: (ref: ChannelReadableRef) => string | undefined
+    /** Operations in flight, by `messagePendingKey`. */
+    pending?: ReadonlySet<string>
+    /** Whether the user may post a reply in this channel now. */
+    canReply?: boolean
+  }>(),
+  { canReply: false },
+)
+
+const emit = defineEmits<{
+  reply: [seq: number]
+  edit: [seq: number]
+  delete: [seq: number]
+  remove: [seq: number]
+  release: [seq: number]
+  action: [seq: number, name: string]
+  openRef: [ref: ChannelReadableRef, event: MouseEvent]
+  jump: [seq: number]
+}>()
+
+const messages = useMessages()
+
+const allowed = computed(() => new Set(props.message.actions ?? []))
+
+const fields = computed<ResolvedChannelField[]>(() => {
+  if (props.messageType) return resolveChannelFields(props.messageType, props.presentation)
+  // An unknown type (the descriptor is reloading): show what arrived, by name.
+  return Object.keys(props.message.props ?? {})
+    .sort()
+    .map((name) => ({ property: { name, label: name, type: 'string' }, label: name, widget: 'text' }))
+})
+
+const shown = computed(() => fields.value.filter((f) => props.message.props?.[f.property.name] !== undefined))
+
+/** One markdown property and no actions: show it as plain prose, without a card. */
+const prose = computed(
+  () =>
+    !!props.messageType &&
+    fields.value.length === 1 &&
+    fields.value[0]!.property.type === 'markdown' &&
+    props.messageType.actions.length === 0,
+)
+
+const actionButtons = computed(() =>
+  (props.messageType?.actions ?? []).filter((a) => allowed.value.has(a.name)),
+)
+
+const actionLabel = computed(() => {
+  const name = props.message.action?.name
+  if (!name) return ''
+  return props.messageType?.actions.find((a) => a.name === name)?.label ?? name
+})
+
+const hasControls = computed(
+  () =>
+    (props.canReply && props.messageType?.persist !== 'ephemeral') ||
+    actionButtons.value.length > 0 ||
+    ['edit', 'delete', 'remove', 'release'].some((op) => allowed.value.has(op)),
+)
+
+function isPending(op: string): boolean {
+  return props.pending?.has(messagePendingKey(props.message.seq, op)) ?? false
+}
+
+function isRef(v: ChannelPropValue): v is ChannelRef {
+  return typeof v === 'object' && v !== null
+}
+
+function enumOption(f: ResolvedChannelField, v: ChannelPropValue): ChannelEnumOption | undefined {
+  const opts = f.property.enum ? props.enumOptions?.[f.property.enum] : undefined
+  return opts?.find((o) => o.value === v)
+}
+
+function plain(f: ResolvedChannelField, v: ChannelPropValue): string {
+  const text = props.message.text?.[f.property.name]
+  if (text !== undefined) return text
+  if (typeof v === 'boolean') return v ? 'Yes' : 'No'
+  return String(v)
+}
+
+function hrefFor(v: ChannelRef): string | undefined {
+  return v.restricted ? undefined : props.entityHref?.(v)
+}
+</script>
+
+<template>
+  <div class="rl-channel-message" :data-seq="message.seq" tabindex="-1">
+    <p v-if="message.removed" class="rl-channel-message__removed">
+      <RlIcon name="erase" :size="14" />
+      <span>{{ messages.channelMessageRemoved(message.removed) }}</span>
+      <span v-if="message.removed.at" class="rl-channel-message__time">{{ message.removed.at }}</span>
+    </p>
+
+    <template v-else>
+      <div class="rl-channel-message__meta">
+        <RlChannelAuthor v-if="message.author" :author="message.author" />
+        <time v-if="message.at" class="rl-channel-message__time" :datetime="message.datetime">
+          {{ message.at }}
+        </time>
+        <span v-if="message.editedAt" class="rl-channel-message__time" :title="message.editedAt">(edited)</span>
+      </div>
+
+      <button
+        v-if="message.replyTo"
+        type="button"
+        class="rl-channel-message__quote"
+        @click="emit('jump', message.replyTo.seq)"
+      >
+        <span class="rl-channel-message__quote-who">
+          {{ messages.channelReplyTo({ author: message.replyTo.author }) }}
+        </span>
+        <span v-if="message.replyTo.excerpt" class="rl-channel-message__quote-text">
+          {{ message.replyTo.excerpt }}
+        </span>
+      </button>
+
+      <template v-if="prose">
+        <!-- Sanitized by the app before it reaches this component; see the header comment. -->
+        <div
+          v-if="message.html?.[fields[0]!.property.name] !== undefined"
+          class="rl-channel-message__body rl-channel-message__md"
+          v-html="message.html[fields[0]!.property.name]"
+        />
+        <p v-else-if="shown.length" class="rl-channel-message__body rl-channel-message__plain">
+          {{ plain(shown[0]!, message.props![shown[0]!.property.name]!) }}
+        </p>
+      </template>
+
+      <div v-else-if="messageType || shown.length || message.action" class="rl-channel-message__card">
+        <div v-if="messageType" class="rl-channel-message__card-head">{{ messageType.label }}</div>
+        <dl v-if="shown.length" class="rl-channel-message__fields">
+          <template v-for="f in shown" :key="f.property.name">
+            <dt>{{ f.label }}</dt>
+            <dd>
+              <RlRefChip
+                v-if="isRef(message.props![f.property.name]!)"
+                :value="message.props![f.property.name] as ChannelRef"
+                :href="hrefFor(message.props![f.property.name] as ChannelRef)"
+                @open="(r, e) => emit('openRef', r, e)"
+              />
+              <RlTag
+                v-else-if="f.property.type === 'enum'"
+                :label="enumOption(f, message.props![f.property.name]!)?.label ?? plain(f, message.props![f.property.name]!)"
+                :color="enumOption(f, message.props![f.property.name]!)?.color ?? 'grey'"
+              />
+              <!-- Sanitized by the app before it reaches this component; see the header comment. -->
+              <div
+                v-else-if="f.property.type === 'markdown' && message.html?.[f.property.name] !== undefined"
+                class="rl-channel-message__md"
+                v-html="message.html[f.property.name]"
+              />
+              <span v-else class="rl-channel-message__plain">{{ plain(f, message.props![f.property.name]!) }}</span>
+            </dd>
+          </template>
+        </dl>
+
+        <div v-if="message.action" class="rl-channel-message__state">
+          <RlTag
+            :label="
+              message.action.status === 'pending'
+                ? messages.channelActionPending({ label: actionLabel })
+                : messages.channelActionDone({ label: actionLabel })
+            "
+            :color="message.action.status === 'pending' ? 'amber' : 'green'"
+          />
+          <template v-if="message.action.promoted">
+            <RlIcon name="arrow-right" :size="13" />
+            <RlRefChip
+              :value="message.action.promoted"
+              :href="hrefFor(message.action.promoted)"
+              @open="(r, e) => emit('openRef', r, e)"
+            />
+          </template>
+        </div>
+      </div>
+
+      <RlButtonGroup v-if="hasControls" align="start" class="rl-channel-message__controls">
+        <RlButton
+          v-for="a in actionButtons"
+          :key="a.name"
+          :variant="a.promote_to ? 'primary' : 'secondary'"
+          size="sm"
+          :loading="isPending(a.name)"
+          pending-label="Working…"
+          @click="emit('action', message.seq, a.name)"
+        >
+          {{ a.label }}
+        </RlButton>
+        <RlButton
+          v-if="allowed.has('release')"
+          variant="secondary"
+          size="sm"
+          :loading="isPending('release')"
+          pending-label="Releasing…"
+          @click="emit('release', message.seq)"
+        >
+          Release
+        </RlButton>
+        <RlButton
+          v-if="canReply && messageType?.persist !== 'ephemeral'"
+          variant="ghost"
+          size="sm"
+          @click="emit('reply', message.seq)"
+        >
+          Reply
+        </RlButton>
+        <RlButton v-if="allowed.has('edit')" variant="ghost" size="sm" @click="emit('edit', message.seq)">
+          Edit
+        </RlButton>
+        <RlButton
+          v-if="allowed.has('delete')"
+          variant="ghost"
+          size="sm"
+          tone="danger"
+          :loading="isPending('delete')"
+          pending-label="Deleting…"
+          @click="emit('delete', message.seq)"
+        >
+          Delete
+        </RlButton>
+        <RlButton
+          v-if="allowed.has('remove')"
+          variant="ghost"
+          size="sm"
+          tone="danger"
+          :loading="isPending('remove')"
+          pending-label="Removing…"
+          @click="emit('remove', message.seq)"
+        >
+          Remove…
+        </RlButton>
+      </RlButtonGroup>
+    </template>
+  </div>
+</template>
+
+<style scoped>
+.rl-channel-message {
+  padding: var(--rl-space-3) var(--rl-space-5);
+  font-size: var(--rl-font-size-sm);
+  color: var(--rl-color-text);
+}
+
+.rl-channel-message:focus-visible {
+  outline: 2px solid var(--rl-color-focus);
+  outline-offset: -2px;
+}
+
+.rl-channel-message__meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--rl-space-2);
+}
+
+.rl-channel-message__time {
+  color: var(--rl-color-text-subtle);
+  font-size: var(--rl-font-size-xs);
+}
+
+.rl-channel-message__removed {
+  display: flex;
+  align-items: center;
+  gap: var(--rl-space-2);
+  margin: 0;
+  color: var(--rl-color-text-muted);
+  font-style: italic;
+}
+
+.rl-channel-message__quote {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-width: 560px;
+  margin: var(--rl-space-2) 0 0;
+  padding: var(--rl-space-1) var(--rl-space-3);
+  border: 0;
+  border-left: 3px solid var(--rl-color-border-strong);
+  background: var(--rl-color-bg-sunken);
+  color: var(--rl-color-text-muted);
+  font: inherit;
+  font-size: var(--rl-font-size-xs);
+  text-align: left;
+  cursor: pointer;
+}
+
+.rl-channel-message__quote:focus-visible {
+  outline: 2px solid var(--rl-color-focus);
+  outline-offset: 1px;
+}
+
+.rl-channel-message__quote-who { font-weight: var(--rl-font-weight-medium); }
+
+.rl-channel-message__quote-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rl-channel-message__body { margin: var(--rl-space-2) 0 0; }
+
+/* Author-written text: keep their line breaks and break a pasted URL. */
+.rl-channel-message__plain {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.rl-channel-message__md {
+  line-height: var(--rl-line-height-relaxed);
+  overflow-wrap: anywhere;
+}
+
+.rl-channel-message__md :deep(p) { margin: 0 0 var(--rl-space-2); }
+.rl-channel-message__md :deep(p:last-child) { margin-bottom: 0; }
+
+.rl-channel-message__md :deep(code) {
+  padding: 0 var(--rl-space-1);
+  border-radius: var(--rl-radius-sm);
+  background: var(--rl-color-bg-hover);
+  font-family: var(--rl-font-family-mono);
+  font-size: 0.9em;
+}
+
+.rl-channel-message__card {
+  max-width: 560px;
+  margin-top: var(--rl-space-2);
+  border: 1px solid var(--rl-color-border);
+  border-radius: var(--rl-radius-lg);
+  overflow: hidden;
+}
+
+.rl-channel-message__card-head {
+  padding: var(--rl-space-2) var(--rl-space-3);
+  border-bottom: 1px solid var(--rl-color-border);
+  background: var(--rl-color-bg-sunken);
+  font-weight: var(--rl-font-weight-semibold);
+}
+
+.rl-channel-message__fields {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: var(--rl-space-2) var(--rl-space-4);
+  margin: 0;
+  padding: var(--rl-space-3);
+}
+
+.rl-channel-message__fields dt { color: var(--rl-color-text-muted); }
+
+.rl-channel-message__fields dd {
+  min-width: 0;
+  margin: 0;
+}
+
+.rl-channel-message__state {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--rl-space-2);
+  padding: var(--rl-space-2) var(--rl-space-3);
+  border-top: 1px solid var(--rl-color-border);
+}
+
+.rl-channel-message__controls { margin-top: var(--rl-space-2); }
+</style>

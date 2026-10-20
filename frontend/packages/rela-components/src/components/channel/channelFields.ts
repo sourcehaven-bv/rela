@@ -1,0 +1,102 @@
+/**
+ * Field order, labels and widgets for one message type: the composer's form
+ * and the property list under a message both come from here, so the two
+ * cannot disagree.
+ */
+import type {
+  ChannelMessagePresentation,
+  ChannelMessageTypeDef,
+  ChannelPropertyDef,
+  ChannelPropertyType,
+  ChannelWidget,
+} from './types'
+
+/** One property, ready to render. */
+export interface ResolvedChannelField {
+  property: ChannelPropertyDef
+  label: string
+  placeholder?: string
+  help?: string
+  widget: ChannelWidget
+  /** Columns on a 12-column grid; undefined is the full width. */
+  span?: number
+}
+
+const DEFAULT_WIDGET: Record<ChannelPropertyType, ChannelWidget> = {
+  string: 'text',
+  markdown: 'textarea',
+  integer: 'number',
+  boolean: 'checkbox',
+  date: 'date',
+  datetime: 'datetime',
+  enum: 'select',
+  ref: 'ref',
+}
+
+/**
+ * The one widget override that changes anything: a string property shown as
+ * a textarea. Every other configured widget is the type's default, which the
+ * server checks at load; an unknown one falls back to the default.
+ */
+function widgetFor(property: ChannelPropertyDef, widget: string | undefined): ChannelWidget {
+  if (property.type === 'string' && widget === 'textarea') return 'textarea'
+  return DEFAULT_WIDGET[property.type]
+}
+
+function byRequiredThenName(a: ChannelPropertyDef, b: ChannelPropertyDef): number {
+  const req = Number(b.required ?? false) - Number(a.required ?? false)
+  return req || a.name.localeCompare(b.name)
+}
+
+/**
+ * The fields of a message type in presentation order.
+ *
+ * Listed fields come first, in the listed order, without the `hidden` ones.
+ * The properties the presentation does not list follow, required first and
+ * then by name. A listed property the message type lacks is skipped: the
+ * server refuses one at load, so this only happens between two reloads.
+ */
+export function resolveChannelFields(
+  type: ChannelMessageTypeDef,
+  presentation?: ChannelMessagePresentation,
+): ResolvedChannelField[] {
+  const byName = new Map(type.properties.map((p) => [p.name, p]))
+  const listed = new Set<string>()
+  const out: ResolvedChannelField[] = []
+  for (const f of presentation?.fields ?? []) {
+    const property = byName.get(f.property)
+    if (!property || listed.has(f.property)) continue
+    listed.add(f.property)
+    if (f.hidden) continue
+    out.push({
+      property,
+      label: f.label || property.label,
+      placeholder: f.placeholder,
+      help: f.help,
+      widget: widgetFor(property, f.widget),
+      span: f.span || undefined,
+    })
+  }
+  const rest = type.properties.filter((p) => !listed.has(p.name)).sort(byRequiredThenName)
+  for (const property of rest) {
+    out.push({ property, label: property.label, widget: DEFAULT_WIDGET[property.type] })
+  }
+  return out
+}
+
+/** The length of s in Unicode code points, as the server counts `max`. */
+export function codePointLength(s: string): number {
+  let n = 0
+  for (const _ of s) n++
+  return n
+}
+
+/** The key a `pending` set uses for one operation on one message. */
+export function messagePendingKey(seq: number, op: string): string {
+  return `message:${seq}:${op}`
+}
+
+/** The key a `pending` set uses for a lifecycle operation. */
+export function lifecyclePendingKey(op: string): string {
+  return `lifecycle:${op}`
+}
