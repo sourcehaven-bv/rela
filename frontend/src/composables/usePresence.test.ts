@@ -11,10 +11,9 @@ import { usePresence, type PresenceTarget } from './usePresence'
 // them, because the list says who reads an entity this user may no longer
 // see. Any other failure keeps it (TKT-IMBF7U).
 
-const getPresenceMock =
-  vi.fn<(type: string, address: string, world?: string) => Promise<PresenceResponse>>()
+const getPresenceMock = vi.fn<(type: string, address: string) => Promise<PresenceResponse>>()
 vi.mock('@/api/presence', () => ({
-  getPresence: (...a: [string, string, string?]) => getPresenceMock(...a),
+  getPresence: (...a: [string, string]) => getPresenceMock(...a),
 }))
 
 const subs: { label: string; path: () => string | null; onChange: () => void }[] = []
@@ -53,14 +52,14 @@ describe('usePresence', () => {
 
   it('fetches on mount and subscribes the presence path', async () => {
     getPresenceMock.mockResolvedValue({ viewers: [bob], more: 2 })
-    const { api } = host(() => ({ type: 'ticket', address: 'TKT-1@draft', world: 'pub' }))
+    const { api } = host(() => ({ type: 'ticket', address: 'TKT-1@draft' }))
     await flushPromises()
 
-    expect(getPresenceMock).toHaveBeenCalledWith('ticket', 'TKT-1@draft', 'pub')
+    expect(getPresenceMock).toHaveBeenCalledWith('ticket', 'TKT-1@draft')
     expect(api.viewers.value).toEqual([bob])
     expect(api.more.value).toBe(2)
     expect(subs[0]!.label).toBe('entity-presence')
-    expect(subs[0]!.path()).toBe('/api/v1/tickets/TKT-1@draft/_presence?world=pub')
+    expect(subs[0]!.path()).toBe('/api/v1/tickets/TKT-1@draft/_presence')
   })
 
   it('subscribes nothing and fetches nothing without a target', async () => {

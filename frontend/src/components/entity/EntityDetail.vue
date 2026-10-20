@@ -995,7 +995,9 @@ const presence = usePresence(() => {
   if (!addr || !def) return null
   const faced = Object.keys(def.faces ?? {}).length > 0
   if (faced && !refFace(addr)) return null
-  return { type: props.entityType, address: addr, world: worldParam.value }
+  // No world: the server refuses a non-default one on _presence
+  // (world_unsupported), and the address already names the face.
+  return { type: props.entityType, address: addr }
 })
 
 useLiveSubscription(

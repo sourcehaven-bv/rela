@@ -20,10 +20,9 @@ vi.mock('@/api', async (orig) => ({
   getCommands: vi.fn().mockResolvedValue([]),
 }))
 
-const getPresenceMock =
-  vi.fn<(type: string, address: string, world?: string) => Promise<PresenceResponse>>()
+const getPresenceMock = vi.fn<(type: string, address: string) => Promise<PresenceResponse>>()
 vi.mock('@/api/presence', () => ({
-  getPresence: (...a: [string, string, string?]) => getPresenceMock(...a),
+  getPresence: (...a: [string, string]) => getPresenceMock(...a),
 }))
 
 const subs = new Map<string, () => string | null>()
@@ -34,9 +33,10 @@ vi.mock('@/composables/useLiveSubscription', async (orig) => ({
   },
 }))
 
+const routeQuery: Record<string, string> = {}
 vi.mock('vue-router', () => ({
   useRouter: () => ({ push: vi.fn(), replace: vi.fn() }),
-  useRoute: () => ({ query: {}, path: '/entity/task/T-1', name: 'entity' }),
+  useRoute: () => ({ query: routeQuery, path: '/entity/task/T-1', name: 'entity' }),
   RouterLink: { props: ['to'], template: '<a><slot /></a>' },
 }))
 
@@ -81,6 +81,7 @@ describe('EntityDetail presence and claim', () => {
   })
 
   afterEach(() => {
+    delete routeQuery.world
     document.body.innerHTML = ''
   })
 
@@ -102,7 +103,7 @@ describe('EntityDetail presence and claim', () => {
     })
     const w = await mountDetail('task', 'T-1', view({}))
 
-    expect(getPresenceMock).toHaveBeenCalledWith('task', 'T-1', undefined)
+    expect(getPresenceMock).toHaveBeenCalledWith('task', 'T-1')
     expect(subs.get('entity-presence')?.()).toBe('/api/v1/tasks/T-1/_presence')
     const avatar = w.find('.detail-header .presence-avatar')
     expect(avatar.attributes('title')).toBe('bob@example.com (data-entry)')
@@ -136,7 +137,21 @@ describe('EntityDetail presence and claim', () => {
       view({ id: 'POL-1', type: 'policy', _self: '/api/v1/policies/POL-1@draft' })
     )
     expect(subs.get('entity-presence')?.()).toBe('/api/v1/policies/POL-1@draft/_presence')
-    expect(getPresenceMock).toHaveBeenCalledWith('policy', 'POL-1@draft', undefined)
+    expect(getPresenceMock).toHaveBeenCalledWith('policy', 'POL-1@draft')
+  })
+
+  // The server answers a non-default world on _presence with 422
+  // world_unsupported, so a world-bound page must not send one.
+  it('sends no world on a world-bound page', async () => {
+    routeQuery.world = 'editorial'
+    await mountDetail(
+      'policy',
+      'POL-1',
+      view({ id: 'POL-1', type: 'policy', _self: '/api/v1/policies/POL-1@draft' })
+    )
+    expect(subs.get('entity-detail')?.()).toContain('world=editorial')
+    expect(subs.get('entity-presence')?.()).toBe('/api/v1/policies/POL-1@draft/_presence')
+    expect(getPresenceMock).toHaveBeenCalledWith('policy', 'POL-1@draft')
   })
 
   it('does not subscribe a bare id on a type with faces', async () => {

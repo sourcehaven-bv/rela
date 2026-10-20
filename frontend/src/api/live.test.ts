@@ -47,9 +47,7 @@ describe('live subscription paths', () => {
 
   it('builds a presence path', () => {
     expect(livePresencePath('ticket', 'TKT-1')).toBe('/api/v1/tickets/TKT-1/_presence')
-    expect(livePresencePath('ticket', 'TKT-1@draft', 'pub')).toBe(
-      '/api/v1/tickets/TKT-1@draft/_presence?world=pub'
-    )
+    expect(livePresencePath('ticket', 'TKT-1@draft')).toBe('/api/v1/tickets/TKT-1@draft/_presence')
   })
 
   it('builds channel list and channel paths', () => {

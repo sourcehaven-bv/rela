@@ -36,15 +36,12 @@ export function liveEntityPath(
 }
 
 /**
- * The subscription path for getPresence(type, address, world). Subscribing
+ * The subscription path for getPresence(type, address). Subscribing
  * it is what lists the user as a viewer (TKT-MHXH87). `address` names the
  * face (`ID@face`) on a type with faces; the server refuses a bare id there.
  */
-export function livePresencePath(type: string, address: string, world?: string): string {
-  return livePath(
-    `/${getPlural(type)}/${addressSegment(address)}/_presence`,
-    world ? { world } : undefined
-  )
+export function livePresencePath(type: string, address: string): string {
+  return livePath(`/${getPlural(type)}/${addressSegment(address)}/_presence`)
 }
 
 /**

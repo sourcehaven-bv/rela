@@ -10,7 +10,6 @@ export interface PresenceTarget {
   type: string
   /** `ID` on a type without faces, `ID@face` on one with faces. */
   address: string
-  world?: string
 }
 
 /**
@@ -44,7 +43,7 @@ export function usePresence(target: MaybeRefOrGetter<PresenceTarget | null>) {
       return
     }
     try {
-      const res = await getPresence(t.type, t.address, t.world)
+      const res = await getPresence(t.type, t.address)
       if (mine !== seq) return
       viewers.value = res.viewers ?? []
       more.value = res.more ?? 0
@@ -56,7 +55,7 @@ export function usePresence(target: MaybeRefOrGetter<PresenceTarget | null>) {
 
   const targetKey = () => {
     const t = toValue(target)
-    return t ? `${t.type}/${t.address}/${t.world ?? ''}` : ''
+    return t ? `${t.type}/${t.address}` : ''
   }
   watch(
     targetKey,
@@ -72,7 +71,7 @@ export function usePresence(target: MaybeRefOrGetter<PresenceTarget | null>) {
     'entity-presence',
     () => {
       const t = toValue(target)
-      return t ? livePresencePath(t.type, t.address, t.world) : null
+      return t ? livePresencePath(t.type, t.address) : null
     },
     () => void refetch()
   )
