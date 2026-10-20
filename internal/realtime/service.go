@@ -204,7 +204,6 @@ func (c *call) affordancesWith(post map[string]bool) Affordances {
 	if c.requireCaller() != nil {
 		return a
 	}
-	ops := c.ct.MessageOps
 	a.Remove = c.moderator()
 	a.Lifecycle = c.lifecycleOps()
 	for _, name := range sortedKeys(c.ct.MessageTypes) {
@@ -213,9 +212,9 @@ func (c *call) affordancesWith(post map[string]bool) Affordances {
 		}
 	}
 	if c.state() == channels.StateOpen {
-		a.EditOwn = ops.EditOwn != nil && c.gate(ops.EditOwn.Gate)
+		a.EditOwn = c.editGate()
 	}
-	a.DeleteOwn = ops.DeleteOwn != nil && c.gate(ops.DeleteOwn.Gate)
+	a.DeleteOwn = c.deleteOwnGate()
 	return a
 }
 
@@ -372,6 +371,15 @@ func (c *call) requireOpen() error {
 func (s *Service) checkMessage(
 	c *call, mt *realtimecfg.MessageType, props map[string]any, maxBytes int,
 ) (validProps, map[string]RefView, error) {
+	return s.checkMessageKeeping(c, mt, props, maxBytes, nil)
+}
+
+// checkMessageKeeping is Service.checkMessage for an edit that keeps the
+// stored refs in kept (property name to id; see [Service.Edit]): a kept ref
+// skips the readability check, since the caller did not choose it.
+func (s *Service) checkMessageKeeping(
+	c *call, mt *realtimecfg.MessageType, props map[string]any, maxBytes int, kept map[string]string,
+) (validProps, map[string]RefView, error) {
 	vp, err := validateProps(mt, props, maxBytes)
 	if err != nil {
 		return validProps{}, nil, err
@@ -393,7 +401,7 @@ func (s *Service) checkMessage(
 			continue
 		}
 		id, ok := vp.props[name].(string)
-		if !ok {
+		if !ok || (kept[name] == id && kept[name] != "") {
 			continue
 		}
 		ref, readable := got[id]

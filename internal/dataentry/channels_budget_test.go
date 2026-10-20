@@ -242,12 +242,9 @@ func messagesCost(t *testing.T, n int, yaml string, want []string) channelCost {
 		}
 	}
 	for _, m := range page.Messages {
-		// alice wrote every message: she may delete each, and edit each
-		// whose ref she can read.
-		rowWant := append(slices.Clone(want), realtime.OpDelete)
-		if (m.Seq-1)%2 == 0 {
-			rowWant = append(rowWant, realtime.OpEdit)
-		}
+		// alice wrote every message: she may delete and edit each, also
+		// one whose ref she cannot read (the edit keeps it).
+		rowWant := append(slices.Clone(want), realtime.OpDelete, realtime.OpEdit)
 		slices.Sort(rowWant)
 		if !slices.Equal(m.Actions, rowWant) {
 			t.Fatalf("message %d: _actions = %v, want %v", m.Seq, m.Actions, rowWant)

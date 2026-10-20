@@ -121,11 +121,13 @@ func channelsUnknownKeys(data []byte) []string {
 		return nil // the struct unmarshal reports malformed YAML
 	}
 	var errs []string
-	for ctName, ct := range raw.Channels {
+	for _, ctName := range sortedMapKeys(raw.Channels) {
+		ct := raw.Channels[ctName]
 		prefix := "channels." + ctName
 		errs = append(errs, unknownKeysIn(prefix, ct, channelPresentationKeys)...)
 		messages, _ := ct["messages"].(map[string]any)
-		for mtName, mt := range messages {
+		for _, mtName := range sortedMapKeys(messages) {
+			mt := messages[mtName]
 			mprefix := prefix + ".messages." + mtName
 			m, _ := mt.(map[string]any)
 			errs = append(errs, unknownKeysIn(mprefix, m, messagePresentationKeys)...)

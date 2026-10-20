@@ -93,32 +93,41 @@ func watchRealtime(a *App, sub config.Subscriber) error {
 // is not a secret, so the frame carries the problem itself, stripped of
 // the host path.
 //
-// An accepted file can leave data-entry.yaml's `channels:` section naming
-// a type or property that is gone. That does not refuse realtime.yaml,
-// which is already in force: browsers get a config-error frame naming
-// data-entry.yaml, so the operator sees what to fix, and the SPA ignores
-// what the descriptor no longer declares.
+// An accepted file also re-reads data-entry.yaml from disk and checks it
+// against the new realtime config, so the order in which an operator saves
+// the two files does not matter: a data-entry.yaml refused earlier because
+// it named what realtime.yaml did not declare yet goes into force now. When
+// data-entry.yaml does not load against the new realtime config, realtime.yaml
+// stays in force (it is already applied) and browsers get a config-error frame
+// naming data-entry.yaml with applied set to realtime.yaml, then refresh; the
+// SPA ignores what the descriptor no longer declares.
+//
+// It holds a.reloadMu, as App.reloadConfig does, so the two
+// check-and-publish paths never interleave.
 func reloadRealtime(a *App) error {
 	if a.realtime == nil {
 		return nil
 	}
+	a.reloadMu.Lock()
+	defer a.reloadMu.Unlock()
 	err := a.realtime.Reload(context.Background())
-	if err == nil {
-		slog.Info("realtime config reloaded")
-		a.live.policyChanged()
-		if st := a.State(); st != nil {
-			if cerr := checkChannelsPresentation(st.Cfg, a.realtime); cerr != nil {
-				slog.Warn("realtime.yaml reload leaves data-entry.yaml channels: invalid", "error", cerr)
-				a.broker.broadcastConfigError(ConfigFile, &configError{
-					public: publicConfigErrorMessage(cerr, a.paths.Root), err: cerr,
-				})
-			}
-		}
-		a.broker.broadcast("refresh")
-		return nil
+	if err != nil {
+		ce := &configError{public: publicConfigErrorMessage(err, a.paths.Root), err: err}
+		slog.Warn("realtime config reload rejected; keeping previous config", "error", err)
+		a.broker.broadcastConfigError(realtimeFile, ce, "")
+		return ce
 	}
-	ce := &configError{public: publicConfigErrorMessage(err, a.paths.Root), err: err}
-	slog.Warn("realtime config reload rejected; keeping previous config", "error", err)
-	a.broker.broadcastConfigError(realtimeFile, ce)
-	return ce
+	slog.Info("realtime config reloaded")
+	a.live.policyChanged()
+	if a.State() != nil {
+		cfg, ce := readConfig(a)
+		if ce != nil {
+			slog.Warn("realtime.yaml applied; data-entry.yaml does not load against it", "error", ce.err)
+			a.broker.broadcastConfigError(ConfigFile, ce, realtimeFile)
+		} else {
+			publishConfig(a, cfg)
+		}
+	}
+	a.broker.broadcast("refresh")
+	return nil
 }

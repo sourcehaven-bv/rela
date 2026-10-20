@@ -114,9 +114,18 @@ type MessageAction struct {
 // type's actions (`POST messages/{seq}/_action/{name}`) and the
 // operations edit (`PATCH messages/{seq}`), delete (the author's
 // `DELETE messages/{seq}`), remove (a moderator's DELETE with a reason)
-// and release (`DELETE messages/{seq}/_action`). Edit is left out while a
-// ref property renders as restricted. Every operation is authorized
-// again.
+// and release (`DELETE messages/{seq}/_action`). Every operation is
+// authorized again.
+//
+// Actions can change without the message changing: EditUntil is when edit
+// stops being offered (set while it is offered and edit_own has a window),
+// and ReleaseAfter is when release starts being offered (set while it is
+// refused only because the action has not been pending long enough). A
+// client re-reads the message at the soonest one.
+//
+// An edit replaces every property the reader can read. A ref property that
+// renders as restricted, and that the edit does not name, keeps its stored
+// value, so edit is offered on such a message too.
 type Message struct {
 	Seq         int64           `json:"seq"`
 	Rev         int64           `json:"rev"`
@@ -131,6 +140,9 @@ type Message struct {
 	Removed     *MessageRemoval `json:"removed,omitempty"`
 	Action      *MessageAction  `json:"action,omitempty"`
 	Actions     []string        `json:"_actions,omitempty"`
+	EditUntil   string          `json:"edit_until,omitempty"`
+	// ReleaseAfter: see Message.
+	ReleaseAfter string `json:"release_after,omitempty"`
 }
 
 // MessageActionResponse answers an action: the message after it, and the
@@ -184,7 +196,9 @@ type PostMessageRequest struct {
 }
 
 // EditMessageRequest is the `PATCH …/messages/{seq}` body. Props replaces
-// every property of the message.
+// every property of the message the caller can read; a ref property whose
+// entity the caller cannot read keeps its stored value unless Props names
+// it.
 type EditMessageRequest struct {
 	Props map[string]any `json:"props"`
 }
@@ -208,6 +222,11 @@ type CreateChannelRequest struct {
 // every principal, because the configuration is not a secret; what a caller
 // may do is in each channel's `_actions`. With realtime off ChannelTypes
 // is empty.
+//
+// Every `label` in the answer (channel type, lifecycle operation, message
+// type, property, action) is the label realtime.yaml sets or, when it sets
+// none, the name; it is never empty, so a client shows it as it is.
+// create_label is the one optional label.
 type ChannelSchema struct {
 	ChannelTypes []ChannelTypeSchema `json:"channel_types"`
 }

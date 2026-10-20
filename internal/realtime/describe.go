@@ -12,12 +12,18 @@ import (
 // labels of its operations and the remove reason rule. It carries no gate,
 // role or condition; the affordances on each channel say what a caller may
 // do. The configuration is not a secret, so it is the same for everyone.
+//
+// It holds plain values, not realtimecfg types, so a change to the parsed
+// configuration does not ripple into the HTTP mapping. Every Label is the
+// authored label or, when none is authored, the name; it is never empty.
+// CreateLabel is the one exception.
 type ChannelTypeView struct {
-	Name        string
-	Label       string
-	AttachTo    []string
-	Anchor      realtimecfg.Anchor
-	Cardinality realtimecfg.Cardinality
+	Name     string
+	Label    string
+	AttachTo []string
+	// Anchor is "family" or "face"; Cardinality is "one" or "many".
+	Anchor      string
+	Cardinality string
 	// CreateLabel is create.label; empty for a cardinality one type and
 	// when unset.
 	CreateLabel          string
@@ -34,20 +40,36 @@ type LabeledName struct {
 	Label string
 }
 
-// MessageTypeDescription describes one message type. TTLSeconds and Reply
-// follow the rule of [MessageTypeView].
+// MessageTypeDescription describes one message type. Persist is "log" or
+// "ephemeral". TTLSeconds and Reply follow the rule of [MessageTypeView].
 type MessageTypeDescription struct {
 	Name       string
 	Label      string
-	Persist    realtimecfg.Persist
+	Persist    string
 	TTLSeconds int
 	Reply      bool
 	// Properties are sorted with the required ones first, then by name:
 	// realtime.yaml declares them in a map, which has no order.
-	Properties []realtimecfg.Property
+	Properties []PropertyDescription
 	// Actions are sorted by name. PromoteTo is the entity type a promoting
 	// action creates, empty otherwise.
 	Actions []ActionDescription
+}
+
+// PropertyDescription describes one message property. Type is string,
+// markdown, integer, boolean, date, datetime, ref or enum. Max is the most
+// code points a string or markdown value may hold, 0 for no limit. Enum
+// names the schema.yaml enum type and Values its values; To lists the
+// entity types a ref may name.
+type PropertyDescription struct {
+	Name     string
+	Label    string
+	Type     string
+	Required bool
+	Max      int
+	Enum     string
+	Values   []string
+	To       []string
 }
 
 // ActionDescription describes one message action.
@@ -71,8 +93,8 @@ func (s *Service) Describe() []ChannelTypeView {
 
 func describeChannelType(ct realtimecfg.ChannelType) ChannelTypeView {
 	v := ChannelTypeView{
-		Name: ct.Name, Label: ct.Label, AttachTo: slices.Clone(ct.AttachTo), Anchor: ct.Anchor,
-		Cardinality: ct.Cardinality, Lifecycle: []LabeledName{}, MessageTypes: []MessageTypeDescription{},
+		Name: ct.Name, Label: ct.Label, AttachTo: slices.Clone(ct.AttachTo), Anchor: string(ct.Anchor),
+		Cardinality: string(ct.Cardinality), Lifecycle: []LabeledName{}, MessageTypes: []MessageTypeDescription{},
 	}
 	if ct.Create != nil {
 		v.CreateLabel = ct.Create.Label
@@ -94,15 +116,17 @@ func describeChannelType(ct realtimecfg.ChannelType) ChannelTypeView {
 func describeMessageType(mt *realtimecfg.MessageType) MessageTypeDescription {
 	ttl, reply := messageTypeTiming(mt)
 	d := MessageTypeDescription{
-		Name: mt.Name, Label: mt.Label, Persist: mt.Persist, TTLSeconds: ttl, Reply: reply,
-		Properties: make([]realtimecfg.Property, 0, len(mt.Properties)),
+		Name: mt.Name, Label: mt.Label, Persist: string(mt.Persist), TTLSeconds: ttl, Reply: reply,
+		Properties: make([]PropertyDescription, 0, len(mt.Properties)),
 		Actions:    []ActionDescription{},
 	}
 	for _, p := range mt.Properties {
-		p.Values, p.To = slices.Clone(p.Values), slices.Clone(p.To)
-		d.Properties = append(d.Properties, p)
+		d.Properties = append(d.Properties, PropertyDescription{
+			Name: p.Name, Label: p.Label, Type: string(p.Type), Required: p.Required, Max: p.Max,
+			Enum: p.Enum, Values: slices.Clone(p.Values), To: slices.Clone(p.To),
+		})
 	}
-	slices.SortFunc(d.Properties, func(a, b realtimecfg.Property) int {
+	slices.SortFunc(d.Properties, func(a, b PropertyDescription) int {
 		switch {
 		case a.Required && !b.Required:
 			return -1

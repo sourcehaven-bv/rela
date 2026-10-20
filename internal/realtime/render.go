@@ -77,6 +77,12 @@ type MessageView struct {
 	// the message's actions and the operations [OpEdit], [OpDelete],
 	// [OpRemove] and [OpRelease]. Nil when there is nothing.
 	Actions []string `json:"_actions,omitempty"`
+	// EditUntil and ReleaseAfter are when Actions changes by itself: edit
+	// is offered until EditUntil, and release is offered from ReleaseAfter.
+	// Each is set only when that change is the next one for this reader
+	// (see [call.messageDeadlines]); zero otherwise.
+	EditUntil    time.Time `json:"edit_until,omitzero"`
+	ReleaseAfter time.Time `json:"release_after,omitzero"`
 }
 
 // EphemeralView is one live signal.
@@ -233,20 +239,10 @@ func (r *renderer) message(m channels.Message) MessageView {
 		v.Action = av
 	}
 	if r.call != nil {
-		v.Actions = r.call.messageActions(m, hasRestrictedRef(v.Props))
+		v.Actions = r.call.messageActions(m)
+		v.EditUntil, v.ReleaseAfter = r.call.messageDeadlines(m, v.Actions)
 	}
 	return v
-}
-
-// hasRestrictedRef reports whether props, as rendered, hold a ref the
-// reader cannot read.
-func hasRestrictedRef(props map[string]any) bool {
-	for _, v := range props {
-		if ref, ok := v.(*RefValue); ok && ref.Restricted {
-			return true
-		}
-	}
-	return false
 }
 
 func (r *renderer) signal(s signal) EphemeralView {

@@ -20,7 +20,7 @@ func TestDescribe_ReusesMessageTypes(t *testing.T) {
 	}
 	roomType := types["room"]
 	require.Equal(t, "Room", roomType.Label)
-	require.Equal(t, realtimecfg.CardinalityOne, roomType.Cardinality)
+	require.Equal(t, string(realtimecfg.CardinalityOne), roomType.Cardinality)
 	require.True(t, roomType.RemoveReasonRequired)
 	require.Empty(t, roomType.Lifecycle)
 
@@ -36,7 +36,7 @@ func TestDescribe_ReusesMessageTypes(t *testing.T) {
 		require.Equal(t, want.TTLSeconds, got.TTLSeconds, want.Name)
 		require.Equal(t, want.Reply, got.Reply, want.Name)
 		require.Equal(t, want.Label, got.Label, want.Name)
-		require.Equal(t, want.Persist, got.Persist, want.Name)
+		require.Equal(t, string(want.Persist), got.Persist, want.Name)
 	}
 	var names []string
 	for _, p := range byName["note"].Properties {
@@ -44,9 +44,12 @@ func TestDescribe_ReusesMessageTypes(t *testing.T) {
 	}
 	require.Equal(t, []string{"level", "about", "also", "at", "ok", "on", "pick"}, names)
 	require.Equal(t, []string{"ticket"}, byName["note"].Properties[1].To)
+	for _, p := range byName["note"].Properties {
+		require.NotEmpty(t, p.Label, "an unauthored label is the name: %s", p.Name)
+	}
 
 	threads := types["threads"]
-	require.Equal(t, realtimecfg.CardinalityMany, threads.Cardinality)
+	require.Equal(t, string(realtimecfg.CardinalityMany), threads.Cardinality)
 
 	a := newActionHarness(t, &fakePromoter{})
 	for _, ct := range a.svc.Describe() {

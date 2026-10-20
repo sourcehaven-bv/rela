@@ -54,8 +54,11 @@ func addChannelSchemaPath(spec *Spec) {
 // addChannelDescriptorSchema adds the ChannelSchema component.
 func addChannelDescriptorSchema(spec *Spec) {
 	str, b := StringSchema, BooleanSchema
+	// A label is the authored label, or the name when none is authored; it
+	// is never empty.
 	labeled := func(extra map[string]*Schema) *Schema {
-		props := map[string]*Schema{"name": str(), "label": str()}
+		props := map[string]*Schema{"name": str(), "label": {Type: "string",
+			Description: "The label from realtime.yaml, or the name when none is set; never empty"}}
 		maps.Copy(props, extra)
 		return ObjectSchema(props, []string{"name", "label"})
 	}
@@ -81,10 +84,11 @@ func addChannelDescriptorSchema(spec *Spec) {
 	})
 	messageType.Required = append(messageType.Required, "persist", "reply", "properties", "actions")
 	channelType := labeled(map[string]*Schema{
-		"attach_to":              ArraySchema(str()),
-		"anchor":                 {Type: "string", Enum: []string{"family", "face"}},
-		"cardinality":            {Type: "string", Enum: []string{"one", "many"}},
-		"create_label":           str(),
+		"attach_to":   ArraySchema(str()),
+		"anchor":      {Type: "string", Enum: []string{"family", "face"}},
+		"cardinality": {Type: "string", Enum: []string{"one", "many"}},
+		"create_label": {Type: "string",
+			Description: "create.label of a cardinality many type; absent when not set"},
 		"remove_reason_required": b(),
 		"lifecycle": {Type: "array", Items: labeled(nil),
 			Description: "The declared lifecycle operations, in the order close, reopen, archive, delete"},
@@ -513,7 +517,11 @@ func addChannelSchemas(spec *Spec) {
 			"_actions": {Type: "array", Items: str(),
 				Description: "What you may do with the message now, sorted: its actions, and the operations " +
 					"edit (PATCH), delete (your own, DELETE), remove (a moderator's DELETE with a reason) and " +
-					"release (DELETE …/_action). Edit is left out while a ref property is restricted to you."},
+					"release (DELETE …/_action). An edit keeps a restricted ref property it does not name."},
+			"edit_until": {Type: "string", Format: "date-time",
+				Description: "When edit stops being offered; set while it is offered and the edit window applies"},
+			"release_after": {Type: "string", Format: "date-time",
+				Description: "When release starts being offered; set while only the pending time keeps it back"},
 		},
 		Required: []string{"seq", "rev"},
 	}

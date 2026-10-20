@@ -145,3 +145,25 @@ func TestChannelWidgetTypes_KnownWidgets(t *testing.T) {
 		t.Error("textarea must edit markdown")
 	}
 }
+
+// TestChannelsUnknownKeys_Sorted pins that the unknown-key errors come out
+// in the order of the channel and message type names, not map order.
+func TestChannelsUnknownKeys_Sorted(t *testing.T) {
+	data := []byte("channels:\n" +
+		"  zed: {x: 1, messages: {b: {y: 1}, a: {y: 1}}}\n" +
+		"  alpha: {x: 1}\n" +
+		"  mid: {messages: {q: {y: 1}, c: {y: 1}}}\n")
+	want := []string{
+		`channels.alpha: unknown key "x" (valid keys: messages)`,
+		`channels.mid.messages.c: unknown key "y" (valid keys: fields)`,
+		`channels.mid.messages.q: unknown key "y" (valid keys: fields)`,
+		`channels.zed: unknown key "x" (valid keys: messages)`,
+		`channels.zed.messages.a: unknown key "y" (valid keys: fields)`,
+		`channels.zed.messages.b: unknown key "y" (valid keys: fields)`,
+	}
+	for range 20 {
+		if got := channelsUnknownKeys(data); !slices.Equal(got, want) {
+			t.Fatalf("errors =\n%s\nwant\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
+		}
+	}
+}

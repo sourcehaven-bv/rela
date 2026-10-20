@@ -29,10 +29,6 @@ var propertyNamePattern = regexp.MustCompile(`^[a-z][a-z0-9_]{0,62}$`)
 
 const nameRule = "must match ^[a-z][a-z0-9-]{0,62}$"
 
-// reservedActionNames are the message operations a message's _actions list
-// names next to its actions, so no action may take one of them.
-var reservedActionNames = []string{"delete", "edit", "release", "remove"}
-
 // validator collects every problem in one pass, so the operator sees them
 // all at once rather than one per edit.
 type validator struct {
@@ -410,7 +406,7 @@ func (v *validator) messageType(key, name string, raw *rawMessageType, ct *Chann
 			if !namePattern.MatchString(an) {
 				v.add(ak, "action name "+nameRule)
 			}
-			if slices.Contains(reservedActionNames, an) {
+			if slices.Contains(MessageOpNames(), an) {
 				v.add(ak, fmt.Sprintf("%q is reserved: a message's _actions lists it for the message operation "+
 					"of that name; choose another action name", an))
 			}

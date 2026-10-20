@@ -161,13 +161,17 @@ func TestReloadConfig_RefusesInvalidChannels(t *testing.T) {
 }
 
 // A realtime.yaml reload that drops a channel type data-entry.yaml presents
-// is still accepted; browsers get a config-error frame for data-entry.yaml,
-// then refresh.
+// is still accepted; browsers get a config-error frame for data-entry.yaml
+// that says realtime.yaml was applied, then refresh.
 func TestReloadRealtime_ChannelsDrift(t *testing.T) {
-	app, _ := setupReloadTestApp(t)
+	app, fs := setupReloadTestApp(t)
 	fake := &fakeRealtime{schema: roomSchema{types: []string{"room"}}}
-	app.State().Cfg.Channels = channelsCfg(dataentryconfig.FormField{Property: "body"})
 	if err := SetRealtime(app, fake); err != nil {
+		t.Fatal(err)
+	}
+	_ = fs.WriteFile(app.paths.Root+"/"+ConfigFile,
+		[]byte(testReloadConfigYAML+"channels:\n  room: {}\n"), 0o644)
+	if err := app.reloadConfig(); err != nil {
 		t.Fatal(err)
 	}
 	fake.schema = roomSchema{}
@@ -177,10 +181,50 @@ func TestReloadRealtime_ChannelsDrift(t *testing.T) {
 		t.Fatalf("reloadRealtime = %v; the realtime.yaml change is in force", err)
 	}
 	ev := nextEvent(t, ch)
-	if ev.Name != "config-error" || !strings.Contains(ev.Data, `"file":"data-entry.yaml"`) {
-		t.Fatalf("event = %s %s; want a config-error for data-entry.yaml", ev.Name, ev.Data)
+	if ev.Name != "config-error" || !strings.Contains(ev.Data, `"file":"data-entry.yaml"`) ||
+		!strings.Contains(ev.Data, `"applied":"realtime.yaml"`) {
+
+		t.Fatalf("event = %s %s; want a config-error for data-entry.yaml with realtime.yaml applied", ev.Name, ev.Data)
 	}
 	if ev := nextEvent(t, ch); ev.Name != "refresh" {
 		t.Fatalf("second event = %q; want refresh", ev.Name)
+	}
+}
+
+// An operator who saves data-entry.yaml before realtime.yaml gets the
+// data-entry.yaml change refused first (it names a channel type realtime.yaml
+// does not declare yet), and in force once realtime.yaml declares it: the
+// realtime reload re-reads data-entry.yaml from disk.
+func TestReloadRealtime_RereadsDataEntryConfig(t *testing.T) {
+	app, fs := setupReloadTestApp(t)
+	fake := &fakeRealtime{schema: roomSchema{}}
+	if err := SetRealtime(app, fake); err != nil {
+		t.Fatal(err)
+	}
+	_ = fs.WriteFile(app.paths.Root+"/"+ConfigFile,
+		[]byte(testReloadConfigYAML+"channels:\n  room: {}\n"), 0o644)
+	if err := app.reloadConfig(); err == nil {
+		t.Fatal("reloadConfig accepted a channel type realtime.yaml does not declare")
+	}
+	if app.Cfg().Channels != nil {
+		t.Fatal("the refused config was published")
+	}
+
+	fake.schema = roomSchema{types: []string{"room"}}
+	ch := app.broker.subscribe()
+	defer app.broker.unsubscribe(ch)
+	if err := reloadRealtime(app); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := app.Cfg().Channels["room"]; !ok {
+		t.Fatalf("channels = %v; want the on-disk data-entry.yaml in force", app.Cfg().Channels)
+	}
+	if ev := nextEvent(t, ch); ev.Name != "refresh" {
+		t.Fatalf("event = %s %s; want refresh only", ev.Name, ev.Data)
+	}
+	select {
+	case ev := <-ch:
+		t.Fatalf("extra event %s %s", ev.Name, ev.Data)
+	default:
 	}
 }

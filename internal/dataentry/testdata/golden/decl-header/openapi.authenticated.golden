@@ -6530,10 +6530,12 @@ body:
                   ]
                 },
                 "create_label": {
-                  "type": "string"
+                  "type": "string",
+                  "description": "create.label of a cardinality many type; absent when not set"
                 },
                 "label": {
-                  "type": "string"
+                  "type": "string",
+                  "description": "The label from realtime.yaml, or the name when none is set; never empty"
                 },
                 "lifecycle": {
                   "type": "array",
@@ -6541,7 +6543,8 @@ body:
                     "type": "object",
                     "properties": {
                       "label": {
-                        "type": "string"
+                        "type": "string",
+                        "description": "The label from realtime.yaml, or the name when none is set; never empty"
                       },
                       "name": {
                         "type": "string"
@@ -6565,7 +6568,8 @@ body:
                           "type": "object",
                           "properties": {
                             "label": {
-                              "type": "string"
+                              "type": "string",
+                              "description": "The label from realtime.yaml, or the name when none is set; never empty"
                             },
                             "name": {
                               "type": "string"
@@ -6582,7 +6586,8 @@ body:
                         }
                       },
                       "label": {
-                        "type": "string"
+                        "type": "string",
+                        "description": "The label from realtime.yaml, or the name when none is set; never empty"
                       },
                       "name": {
                         "type": "string"
@@ -6604,7 +6609,8 @@ body:
                               "description": "The schema.yaml enum type of an enum property"
                             },
                             "label": {
-                              "type": "string"
+                              "type": "string",
+                              "description": "The label from realtime.yaml, or the name when none is set; never empty"
                             },
                             "max": {
                               "type": "integer",

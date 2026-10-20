@@ -270,6 +270,10 @@ func TestLive_RealtimeReloadRevokes(t *testing.T) {
 		t.Fatal("the room's read rule was not replaced")
 	}
 	next := env.ch.parse(t, restricted)
+	// The reload re-reads data-entry.yaml; give it one to read.
+	if err := env.app.fs.WriteFile(env.app.paths.Root+"/"+ConfigFile, []byte(testReloadConfigYAML), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	if err := SetRealtime(env.app, reloaderFunc(func() { env.ch.cfg.Store(next) })); err != nil {
 		t.Fatal(err)
 	}

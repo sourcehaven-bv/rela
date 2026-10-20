@@ -32,8 +32,8 @@ func serveChannelSchema(w http.ResponseWriter, r *http.Request, d channelDescrib
 
 func wireChannelTypeSchema(ct realtime.ChannelTypeView) v1.ChannelTypeSchema {
 	out := v1.ChannelTypeSchema{
-		Name: ct.Name, Label: ct.Label, AttachTo: ct.AttachTo, Anchor: string(ct.Anchor),
-		Cardinality: string(ct.Cardinality), CreateLabel: ct.CreateLabel,
+		Name: ct.Name, Label: ct.Label, AttachTo: ct.AttachTo, Anchor: ct.Anchor,
+		Cardinality: ct.Cardinality, CreateLabel: ct.CreateLabel,
 		RemoveReasonRequired: ct.RemoveReasonRequired,
 		Lifecycle:            make([]v1.ChannelLifecycleSchema, 0, len(ct.Lifecycle)),
 		MessageTypes:         make([]v1.ChannelMessageTypeSchema, 0, len(ct.MessageTypes)),
@@ -52,13 +52,13 @@ func wireChannelTypeSchema(ct realtime.ChannelTypeView) v1.ChannelTypeSchema {
 
 func wireMessageTypeSchema(mt realtime.MessageTypeDescription) v1.ChannelMessageTypeSchema {
 	out := v1.ChannelMessageTypeSchema{
-		Name: mt.Name, Label: mt.Label, Persist: string(mt.Persist), TTLSeconds: mt.TTLSeconds, Reply: mt.Reply,
+		Name: mt.Name, Label: mt.Label, Persist: mt.Persist, TTLSeconds: mt.TTLSeconds, Reply: mt.Reply,
 		Properties: make([]v1.ChannelPropertySchema, 0, len(mt.Properties)),
 		Actions:    make([]v1.ChannelActionSchema, 0, len(mt.Actions)),
 	}
 	for _, p := range mt.Properties {
 		out.Properties = append(out.Properties, v1.ChannelPropertySchema{
-			Name: p.Name, Label: p.Label, Type: string(p.Type), Required: p.Required, Max: p.Max,
+			Name: p.Name, Label: p.Label, Type: p.Type, Required: p.Required, Max: p.Max,
 			Enum: p.Enum, Values: p.Values, To: p.To,
 		})
 	}

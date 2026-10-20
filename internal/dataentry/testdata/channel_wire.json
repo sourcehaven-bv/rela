@@ -19,29 +19,30 @@
         "tool": "data-entry",
         "user": "alice"
       },
-      "last_seq": 1,
-      "rev": 1,
+      "last_seq": 5,
+      "rev": 8,
       "state": "open",
       "type": "room"
     },
-    "ephemeral": [],
+    "ephemeral": [
+      {
+        "at": "2026-01-02T03:04:05Z",
+        "author": {
+          "tool": "data-entry",
+          "user": "alice"
+        },
+        "expires_at": "2026-01-02T03:04:05Z",
+        "id": "signal-id",
+        "type": "typing"
+      }
+    ],
     "last": {
-      "_actions": [
-        "ack",
-        "delete",
-        "edit"
-      ],
-      "at": "2026-01-02T03:04:05Z",
-      "author": {
-        "tool": "data-entry",
-        "user": "alice"
+      "removed": {
+        "at": "2026-01-02T03:04:05Z",
+        "kind": "author"
       },
-      "props": {
-        "body": "hello"
-      },
-      "rev": 1,
-      "seq": 1,
-      "type": "text"
+      "rev": 8,
+      "seq": 5
     }
   },
   "list": {
@@ -57,8 +58,8 @@
               "tool": "data-entry",
               "user": "alice"
             },
-            "last_seq": 1,
-            "rev": 1,
+            "last_seq": 5,
+            "rev": 8,
             "state": "open",
             "type": "room"
           }
@@ -91,8 +92,8 @@
         "tool": "data-entry",
         "user": "alice"
       },
-      "last_seq": 1,
-      "rev": 1,
+      "last_seq": 5,
+      "rev": 8,
       "state": "open",
       "type": "room"
     },
@@ -109,15 +110,85 @@
           "tool": "data-entry",
           "user": "alice"
         },
+        "edit_until": "2026-01-02T03:04:05Z",
         "props": {
           "body": "hello"
         },
         "rev": 1,
         "seq": 1,
         "type": "text"
+      },
+      {
+        "_actions": [
+          "ack"
+        ],
+        "at": "2026-01-02T03:04:05Z",
+        "author": {
+          "tool": "data-entry",
+          "user": "dave"
+        },
+        "props": {
+          "about": {
+            "restricted": true
+          },
+          "body": "see"
+        },
+        "rev": 2,
+        "seq": 2,
+        "type": "text"
+      },
+      {
+        "_actions": [
+          "delete",
+          "edit"
+        ],
+        "action": {
+          "at": "2026-01-02T03:04:05Z",
+          "name": "ack",
+          "status": "done"
+        },
+        "at": "2026-01-02T03:04:05Z",
+        "author": {
+          "tool": "data-entry",
+          "user": "alice"
+        },
+        "edit_until": "2026-01-02T03:04:05Z",
+        "props": {
+          "body": "acked"
+        },
+        "rev": 4,
+        "seq": 3,
+        "type": "text"
+      },
+      {
+        "action": {
+          "at": "2026-01-02T03:04:05Z",
+          "name": "ack",
+          "status": "pending"
+        },
+        "at": "2026-01-02T03:04:05Z",
+        "author": {
+          "tool": "data-entry",
+          "user": "alice"
+        },
+        "props": {
+          "body": "pending"
+        },
+        "release_after": "2026-01-02T03:04:05Z",
+        "rev": 6,
+        "seq": 4,
+        "type": "text"
+      },
+      {
+        "removed": {
+          "at": "2026-01-02T03:04:05Z",
+          "kind": "author"
+        },
+        "rev": 8,
+        "seq": 5
       }
     ],
-    "next_after_rev": 1,
+    "next_after_rev": 8,
     "next_before": 1
   },
   "schema": {
