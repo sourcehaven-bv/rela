@@ -1,8 +1,10 @@
 import type { Meta, StoryObj } from '@storybook/vue3-vite'
+import { ref } from 'vue'
 import { expect, fn, userEvent, waitFor, within } from 'storybook/test'
 import RlChannel from './RlChannel.vue'
 import RlChannelComposer from './RlChannelComposer.vue'
 import { lifecyclePendingKey } from './channelFields'
+import type { ChannelMessageView } from './types'
 import {
   channelEnumOptions,
   channelEphemeral,
@@ -162,5 +164,124 @@ export const FiveHundredMessages: Story = {
     await expect(canvasElement.querySelectorAll('.rl-channel-message')).toHaveLength(500)
     await userEvent.click(canvas.getByRole('button', { name: 'Load older messages' }))
     await expect(args.onLoadOlder).toHaveBeenCalled()
+  },
+}
+
+/**
+ * A harness around a channel whose messages change: buttons append a new
+ * message, prepend a page of older ones, trim the oldest (the app's cap) and
+ * show a channel that mounted hidden.
+ */
+const liveRender: Story['render'] = (args) => ({
+  components: { RlChannel },
+  setup() {
+    const messages = ref<ChannelMessageView[]>(manyChannelMessages(60, 41))
+    const shown = ref(true)
+    const append = () => {
+      const last = messages.value[messages.value.length - 1]!.seq
+      messages.value = [...messages.value, ...manyChannelMessages(1, last + 1)]
+    }
+    const prepend = () => {
+      const first = messages.value[0]!.seq
+      messages.value = [...manyChannelMessages(20, first - 20), ...messages.value]
+    }
+    const trim = () => {
+      messages.value = messages.value.slice(10)
+    }
+    const hideThenShow = async () => {
+      shown.value = false
+      messages.value = manyChannelMessages(60, 41)
+      await new Promise((r) => setTimeout(r, 20))
+      shown.value = true
+    }
+    return { args, messages, shown, append, prepend, trim, hideThenShow }
+  },
+  template: `
+    <div>
+      <button type="button" data-testid="append" @click="append">Append</button>
+      <button type="button" data-testid="prepend" @click="prepend">Prepend</button>
+      <button type="button" data-testid="trim" @click="trim">Trim</button>
+      <button type="button" data-testid="hide" @click="hideThenShow">Hide then show</button>
+      <div v-show="shown" style="height:400px">
+        <RlChannel v-bind="args" :messages="messages" />
+      </div>
+    </div>`,
+})
+
+/** Offset of a message from the top of the log, in pixels. */
+function offsetOf(log: HTMLElement, seq: number): number {
+  const row = log.querySelector<HTMLElement>(`[data-seq="${seq}"]`)!
+  return row.getBoundingClientRect().top - log.getBoundingClientRect().top
+}
+
+function isAtBottom(log: HTMLElement): boolean {
+  return log.scrollHeight - log.scrollTop - log.clientHeight < 2
+}
+
+/**
+ * A reader at the bottom follows a new message, and hears it announced; a
+ * reader who scrolled up stays where they are.
+ */
+export const FollowAtBottom: Story = {
+  args: { ephemeral: [], hasOlder: true },
+  render: liveRender,
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement)
+    const log = canvas.getByRole('log')
+    await waitFor(() => expect(isAtBottom(log)).toBe(true))
+    await userEvent.click(canvas.getByTestId('append'))
+    await waitFor(() => expect(canvasElement.querySelector('[data-seq="101"]')).not.toBeNull())
+    await waitFor(() => expect(isAtBottom(log)).toBe(true))
+    await expect(canvasElement.querySelector('[aria-live="polite"][aria-atomic="true"]')).toHaveTextContent(
+      'Message from Joost Bakker',
+    )
+
+    log.scrollTop = 200
+    log.dispatchEvent(new Event('scroll'))
+    await waitFor(() => expect(log.scrollTop).toBe(200))
+    const before = offsetOf(log, 50)
+    await userEvent.click(canvas.getByTestId('append'))
+    await waitFor(() => expect(canvasElement.querySelector('[data-seq="102"]')).not.toBeNull())
+    await expect(isAtBottom(log)).toBe(false)
+    await expect(Math.abs(offsetOf(log, 50) - before)).toBeLessThan(2)
+  },
+}
+
+/**
+ * Loading older messages above, or the app trimming the oldest at its cap,
+ * keeps the first visible message where the reader had it.
+ */
+export const PreserveOnPrependAndTrim: Story = {
+  args: { ephemeral: [], hasOlder: true },
+  render: liveRender,
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement)
+    const log = canvas.getByRole('log')
+    await waitFor(() => expect(isAtBottom(log)).toBe(true))
+    log.scrollTop = 300
+    log.dispatchEvent(new Event('scroll'))
+    const anchor = 60
+    const before = offsetOf(log, anchor)
+
+    await userEvent.click(canvas.getByTestId('prepend'))
+    await waitFor(() => expect(canvasElement.querySelector('[data-seq="21"]')).not.toBeNull())
+    await waitFor(() => expect(Math.abs(offsetOf(log, anchor) - before)).toBeLessThan(2))
+
+    await userEvent.click(canvas.getByTestId('trim'))
+    await waitFor(() => expect(canvasElement.querySelector('[data-seq="21"]')).toBeNull())
+    await waitFor(() => expect(Math.abs(offsetOf(log, anchor) - before)).toBeLessThan(2))
+  },
+}
+
+/** A log first shown after it mounted (a hidden tab) still opens at the newest message. */
+export const OpensAtBottomWhenShown: Story = {
+  args: { ephemeral: [] },
+  render: liveRender,
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement)
+    const log = canvas.getByRole('log')
+    await userEvent.click(canvas.getByTestId('hide'))
+    await waitFor(() => expect(log.clientHeight).toBeGreaterThan(0))
+    await waitFor(() => expect(isAtBottom(log)).toBe(true))
   },
 }

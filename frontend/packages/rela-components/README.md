@@ -987,14 +987,28 @@ worth knowing.
   (`storyHtml`), not a second sanitizer.
 - **Values leave raw.** The composer emits each field as typed (`string`,
   `boolean` or a ref's id) and checks only `required` and `max` (in code points,
-  as the server counts). Converting dates, times and integers is the app's, and
-  so is clearing the composer: call its exposed `reset()` once a post landed.
+  as the server counts). An integer is the text the user typed, and an
+  unchecked optional box is absent rather than `false`. Converting dates, times
+  and integers is the app's, and so is clearing the composer: pass the `post`
+  event to its exposed `reset(event)` once the post landed. An edit needs no
+  reset; clearing `editing` ends it and brings back the draft it put aside.
+- **Edits keep what the user cannot see.** `editing.restricted` names the ref
+  properties holding a ref the user may not read. They show the restricted
+  placeholder with a Replace button, count as filled, and stay out of the event's
+  `values` and `rendered` unless replaced, so the app sends them as unrendered
+  and the server keeps them.
 
 Field order, labels, help, placeholders, widgets and spans come from the
 `presentation` (data-entry.yaml `channels:`), resolved by
 `resolveChannelFields`, so the composer and the property list under a message
 use the same order. A restricted ref renders as "Restricted reference" with no
 id, type, title or link; `ChannelRestrictedRef` has no `id` field to read.
+
+The fixed captions (Send, Cancel, Load older messages and so on) come through
+the message seam as `channelText`, one lookup by key, so a localised app
+translates them in one table; `channelTooLong` and `channelNewMessages` compose
+around a value. `RlChannel` and `RlEntityChannels` take a `headingLevel` to fit
+the host page's outline.
 
 The comment components are not reused for messages. `RlCommentThread` rows
 hold one plain-text body and edit it in place with a single textarea, and

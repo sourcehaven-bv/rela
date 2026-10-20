@@ -60,3 +60,27 @@ export const MarkupInTitle: Story = {
     await expect(within(canvasElement).getByRole('link')).toHaveTextContent('<img src=x onerror="alert(1)">')
   },
 }
+
+/**
+ * An href that is not a same-page relative path is ignored, so a
+ * `javascript:` or `data:` URL never becomes a link; the chip is a button.
+ */
+export const UnsafeHref: Story = {
+  args: { href: 'javascript:alert(1)' },
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement)
+    await expect(canvas.queryByRole('link')).toBeNull()
+    await expect(canvas.getByRole('button', { name: /RISK-88/ })).toBeVisible()
+  },
+}
+
+/** `plain` is text with no click behaviour, for a place where opening the entity means nothing. */
+export const Plain: Story = {
+  args: { href: undefined, plain: true },
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement)
+    await expect(canvas.queryByRole('button')).toBeNull()
+    await expect(canvas.queryByRole('link')).toBeNull()
+    await expect(canvas.getByText('RISK-88')).toBeVisible()
+  },
+}
