@@ -44,7 +44,7 @@ function seedSchema() {
   } as never)
 }
 
-function factory(props: { open?: boolean } = {}): VueWrapper {
+function factory(props: { open?: boolean; types?: string[] } = {}): VueWrapper {
   return mount(EntityPickerModal, {
     props: { open: true, ...props },
     attachTo: document.body,
@@ -157,6 +157,29 @@ describe('EntityPickerModal', () => {
       expect(searchSpy).toHaveBeenCalledExactlyOnceWith('fix', undefined, expect.any(AbortSignal), undefined)
       expect(options()).toHaveLength(1)
     })
+
+    it('passes a single allowed type to the search', async () => {
+      factory({ types: ['person'] })
+      await typeQuery('ann')
+      expect(searchSpy).toHaveBeenCalledExactlyOnceWith('ann', 'person', expect.any(AbortSignal), undefined)
+    })
+
+    it('filters the answer to several allowed types', async () => {
+      searchSpy.mockResolvedValueOnce(
+        listResponse([
+          makeEntity({ id: 'P-1', type: 'person' }),
+          makeEntity({ id: 'T-1', type: 'ticket' }),
+          makeEntity({ id: 'G-1', type: 'group' }),
+        ])
+      )
+      factory({ types: ['person', 'group'] })
+      await typeQuery('any')
+      expect(searchSpy).toHaveBeenCalledWith('any', undefined, expect.any(AbortSignal), undefined)
+      expect(options().map((o) => o.id)).toEqual([
+        'entity-picker-option-P-1',
+        'entity-picker-option-G-1',
+      ])
+    })
   })
 
   describe('selection', () => {
@@ -169,7 +192,7 @@ describe('EntityPickerModal', () => {
       options()[0].click()
       await flushPromises()
 
-      expect(wrapper.emitted('select')).toEqual([[entity.id]])
+      expect(wrapper.emitted('select')).toEqual([[entity.id, entity]])
       expect(wrapper.emitted('close')).toHaveLength(1)
       wrapper.unmount()
     })
@@ -186,7 +209,7 @@ describe('EntityPickerModal', () => {
       pressKey('Enter')
       await flushPromises()
 
-      expect(wrapper.emitted('select')).toEqual([[e2.id]])
+      expect(wrapper.emitted('select')).toEqual([[e2.id, e2]])
       wrapper.unmount()
     })
 

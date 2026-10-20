@@ -53,6 +53,7 @@ import type { PropertyDef } from '@/types'
 import type { Component } from 'vue'
 import DocumentsPanel from '@/components/entity/DocumentsPanel.vue'
 import CommentsPanel from '@/components/entity/CommentsPanel.vue'
+import ChannelsPanel from '@/components/entity/ChannelsPanel.vue'
 import MentionedByPanel from '@/components/entity/MentionedByPanel.vue'
 import CommentIndicator from '@/components/entity/CommentIndicator.vue'
 import TextSelectionComment from '@/components/entity/TextSelectionComment.vue'
@@ -994,7 +995,9 @@ const presence = usePresence(() => {
   if (!addr || !def) return null
   const faced = Object.keys(def.faces ?? {}).length > 0
   if (faced && !refFace(addr)) return null
-  return { type: props.entityType, address: addr, world: worldParam.value }
+  // No world: the server refuses a non-default one on _presence
+  // (world_unsupported), and the address already names the face.
+  return { type: props.entityType, address: addr }
 })
 
 useLiveSubscription(
@@ -3105,6 +3108,10 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
           @changed="onCommentsChanged"
           @accept="acceptSuggestion"
         />
+
+        <!-- Channels (TKT-91BK6F). Self-gating: renders nothing unless
+             realtime.yaml attaches a channel type to this entity type. -->
+        <ChannelsPanel :entity-type="entityType" :entity-id="entityRef(entry)" :world="worldParam" />
       </div>
 
       <!-- The ADDRESS, not the bare id: a command acts on the face on screen. -->

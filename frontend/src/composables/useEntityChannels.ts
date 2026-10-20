@@ -57,7 +57,7 @@ export function useEntityChannels(
 
   const key = () => {
     const a = toValue(anchor)
-    return a ? [a.type, a.address, a.world ?? '', toValue(options.state) ?? ''].join('\u0000') : ''
+    return a ? [a.type, a.address, toValue(options.state) ?? ''].join('\u0000') : ''
   }
   watch(
     key,

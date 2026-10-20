@@ -1,5 +1,5 @@
 import type { BrowserContext } from "@playwright/test";
-import { test as base, SEED, spawnServer, waitForExit } from "./fixtures";
+import { test as base, PRINCIPAL_HEADER, SEED, serveWithPrincipalHeader } from "./fixtures";
 import { LeaseClient, PresencePage } from "../pages/presence.page";
 
 // Presence avatars and the claim badge (TKT-IMBF7U), seen by two people at
@@ -7,7 +7,7 @@ import { LeaseClient, PresencePage } from "../pages/presence.page";
 // server runs without $RELA_DATAENTRY_USER, which would win over the header
 // and make both contexts the same user.
 
-const HEADER = "X-Forwarded-User";
+const HEADER = PRINCIPAL_HEADER;
 const ALICE = "alice@example.com";
 const BOB = "bob@example.com";
 const FEATURE = SEED.features.authentication;
@@ -21,20 +21,7 @@ interface PresenceFixtures {
 
 const test = base.extend<PresenceFixtures>({
   serverUrl: async ({ testProject, serverBinary }, use, testInfo) => {
-    const { proc, url, logs } = await spawnServer(
-      serverBinary,
-      testProject,
-      { RELA_DATAENTRY_USER: undefined },
-      ["-principal-header", HEADER],
-    );
-    try {
-      await use(url);
-    } finally {
-      if (testInfo.status !== testInfo.expectedStatus) {
-        await testInfo.attach("rela-server.log", { body: logs(), contentType: "text/plain" });
-      }
-      await waitForExit(proc);
-    }
+    await serveWithPrincipalHeader(serverBinary, testProject, testInfo, use);
   },
   alice: async ({ browser, serverUrl }, use) => {
     const ctx = await browser.newContext({ baseURL: serverUrl, extraHTTPHeaders: { [HEADER]: ALICE } });

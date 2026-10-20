@@ -284,6 +284,9 @@ export function useChannel(
   async function follow(s: Session) {
     if (s.heldRev === null) return reload(s)
     let brought = false
+    // A channel without a message may not be stored yet, and a lifecycle
+    // operation needs a stored channel: the first message moves the head.
+    const unstored = head.value?.channel.last_seq === 0
     for (let i = 0; i < MAX_FOLLOW_PAGES; i++) {
       const page = await getMessages(s.target, { afterRev: s.heldRev })
       if (!current(s)) return
@@ -296,7 +299,7 @@ export function useChannel(
         setChannel(page.channel)
         // A frame that brought no message moved the head itself: a
         // signal, a lifecycle change or the caller's affordances.
-        if (!brought || stateMoved || ephemeral) {
+        if (!brought || stateMoved || ephemeral || unstored) {
           const before = head.value?._actions
           await refetchHead(s)
           if (!current(s)) return
@@ -406,12 +409,18 @@ export function useChannel(
     replyTo?: number
   ): Promise<PostResult> {
     const s = requireSession()
+    const unstored = head.value?.channel.last_seq === 0
     const res = await postMessage(s.target, type, props, replyTo)
     // A new message lands at the live end; when the list is not there,
     // go back to it so the user sees what they posted.
     if (res.kind === 'message' && hasNewer.value) await loadNewest()
-    else if (res.kind === 'message') takeWrite(s, res.message)
-    else await refetchHead(s).catch((err) => fail(s, err))
+    else if (res.kind === 'message') {
+      takeWrite(s, res.message)
+      // The first message stores the channel, which moves its affordances.
+      // Through run, so onSeen sees the new head and a frame meanwhile
+      // waits rather than fetching the head a second time.
+      if (unstored) await run(s, refetchHead)
+    } else await refetchHead(s).catch((err) => fail(s, err))
     return res
   }
 
@@ -464,7 +473,7 @@ export function useChannel(
 
   const targetKey = () => {
     const t = toValue(target)
-    return t ? [t.type, t.address, t.world ?? '', t.channelType, t.name ?? ''].join('\u0000') : ''
+    return t ? [t.type, t.address, t.channelType, t.name ?? ''].join('\u0000') : ''
   }
   watch(
     targetKey,

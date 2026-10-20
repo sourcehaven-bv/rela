@@ -1,7 +1,10 @@
 import {
   test as base,
+  type Browser,
+  type BrowserContext,
   type Page,
   type APIRequestContext,
+  type TestInfo,
 } from "@playwright/test";
 import { spawn, type ChildProcess, execFileSync } from "child_process";
 import * as path from "path";
@@ -312,13 +315,14 @@ async function findFreePort(): Promise<number> {
 async function waitForServer(
   url: string,
   origin: string,
+  headers: Record<string, string> = {},
   timeout = 30000,
 ): Promise<void> {
   const start = Date.now();
   const probeUrl = `${url}/api/v1/_config`;
   while (Date.now() - start < timeout) {
     try {
-      const r = await fetch(probeUrl, { headers: { Origin: origin } });
+      const r = await fetch(probeUrl, { headers: { ...headers, Origin: origin } });
       if (r.ok) return;
     } catch {
       // not ready
@@ -449,12 +453,15 @@ function createTestProject(): string {
  *
  *  A key set to `undefined` in extraEnv is removed from the child's
  *  environment, so a spec can unset a variable the runner's shell exports.
- *  `args` are appended to the server's flags. */
+ *  `args` are appended to the server's flags. `probeHeaders` go on the
+ *  readiness probe: a server with an acl.yaml and `-principal-header`
+ *  answers an anonymous request with an error, so the probe names a user. */
 export async function spawnServer(
   serverBinary: string,
   cwd: string,
   extraEnv: NodeJS.ProcessEnv = {},
   args: string[] = [],
+  probeHeaders: Record<string, string> = {},
 ): Promise<{ proc: ChildProcess; url: string; logs: () => string }> {
   const attempts = 3;
   let lastErr: unknown;
@@ -506,7 +513,7 @@ export async function spawnServer(
     died.catch(() => {});
 
     try {
-      await Promise.race([waitForServer(url, url), died]);
+      await Promise.race([waitForServer(url, url, probeHeaders), died]);
       return {
         proc,
         url,
@@ -520,6 +527,55 @@ export async function spawnServer(
   throw new Error(
     `Failed to start rela-server after ${attempts} attempts: ${String(lastErr)}`,
   );
+}
+
+/** The proxy header the multi-user specs name their principal in. */
+export const PRINCIPAL_HEADER = "X-Forwarded-User";
+
+/** Runs a server in `dir` that takes the principal from PRINCIPAL_HEADER, for
+ *  specs where several users act at once (presence, channels). It runs
+ *  without $RELA_DATAENTRY_USER, which would win over the header. With an
+ *  acl.yaml the readiness probe needs a user, so pass `probeUser`. The
+ *  server log is attached when the test fails. */
+export async function serveWithPrincipalHeader(
+  serverBinary: string,
+  dir: string,
+  testInfo: TestInfo,
+  use: (url: string) => Promise<void>,
+  probeUser?: string,
+): Promise<void> {
+  const { proc, url, logs } = await spawnServer(
+    serverBinary,
+    dir,
+    { RELA_DATAENTRY_USER: undefined },
+    ["-principal-header", PRINCIPAL_HEADER],
+    probeUser ? { [PRINCIPAL_HEADER]: probeUser } : {},
+  );
+  try {
+    await use(url);
+  } finally {
+    if (testInfo.status !== testInfo.expectedStatus) {
+      await testInfo.attach("rela-server.log", { body: logs(), contentType: "text/plain" });
+    }
+    await waitForExit(proc);
+  }
+}
+
+/** Browser contexts that each act as one user through PRINCIPAL_HEADER.
+ *  `as` opens a page as `user`; `close` closes every context it made. */
+export function contextsAs(browser: Browser, serverUrl: string) {
+  const contexts: BrowserContext[] = [];
+  return {
+    as: async (user: string): Promise<Page> => {
+      const ctx = await browser.newContext({
+        baseURL: serverUrl,
+        extraHTTPHeaders: { [PRINCIPAL_HEADER]: user },
+      });
+      contexts.push(ctx);
+      return ctx.newPage();
+    },
+    close: () => Promise.all(contexts.map((c) => c.close().catch(() => {}))),
+  };
 }
 
 export const test = base.extend<TestFixtures, WorkerFixtures>({

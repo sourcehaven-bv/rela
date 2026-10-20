@@ -36,15 +36,12 @@ export function liveEntityPath(
 }
 
 /**
- * The subscription path for getPresence(type, address, world). Subscribing
+ * The subscription path for getPresence(type, address). Subscribing
  * it is what lists the user as a viewer (TKT-MHXH87). `address` names the
  * face (`ID@face`) on a type with faces; the server refuses a bare id there.
  */
-export function livePresencePath(type: string, address: string, world?: string): string {
-  return livePath(
-    `/${getPlural(type)}/${addressSegment(address)}/_presence`,
-    world ? { world } : undefined
-  )
+export function livePresencePath(type: string, address: string): string {
+  return livePath(`/${getPlural(type)}/${addressSegment(address)}/_presence`)
 }
 
 /**
@@ -65,15 +62,12 @@ export function liveListPath(type: string, params?: ListParams): string | null {
  * or the lifecycle changed (TKT-91BK6F).
  */
 export function liveChannelPath(t: ChannelTarget): string {
-  return livePath(channelPath(t), t.world ? { world: t.world } : undefined)
+  return livePath(channelPath(t))
 }
 
 /** The subscription path for listChannels(anchor, state). */
 export function liveChannelsPath(a: ChannelAnchor, state?: ChannelState): string {
-  const params: Record<string, string> = {}
-  if (state) params.state = state
-  if (a.world) params.world = a.world
-  return livePath(channelsPath(a), Object.keys(params).length ? params : undefined)
+  return livePath(channelsPath(a), state ? { state } : undefined)
 }
 
 /** The subscription path for fetchView(type, id, world). */

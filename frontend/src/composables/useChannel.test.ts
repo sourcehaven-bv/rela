@@ -101,20 +101,18 @@ describe('useChannel', () => {
 
   it('loads the head and the newest page and subscribes the head path', async () => {
     getPage.mockResolvedValueOnce(page([msg(1), msg(2)], { next_after_rev: 2, next_before: 1 }))
-    const ch = host(() => ({ ...room, address: 'TKT-1@draft', world: 'main' }))
+    const ch = host(() => ({ ...room, address: 'TKT-1@draft' }))
     await flushPromises()
 
-    expect(getPage).toHaveBeenCalledWith(
-      { ...room, address: 'TKT-1@draft', world: 'main' },
-      undefined
-    )
+    expect(getPage).toHaveBeenCalledWith({ ...room, address: 'TKT-1@draft' }, undefined)
     expect(seqs(ch.messages.value)).toEqual([1, 2])
     expect(ch.head.value?.channel.type).toBe('room')
     expect(subs[0]!.label).toBe('channel')
-    expect(subs[0]!.path()).toBe('/api/v1/tickets/TKT-1@draft/_channels/room?world=main')
+    expect(subs[0]!.path()).toBe('/api/v1/tickets/TKT-1@draft/_channels/room')
   })
 
   it('follows by rev and merges edits and new messages by seq', async () => {
+    getHead.mockResolvedValue(headOf({ last_seq: 2, rev: 2 }))
     getPage.mockResolvedValueOnce(page([msg(1), msg(2)], { next_after_rev: 2 }))
     const ch = host(() => room)
     await flushPromises()
@@ -343,6 +341,54 @@ describe('useChannel', () => {
     await flushPromises()
     expect(getPage).toHaveBeenLastCalledWith(room, { afterRev: 1 })
     expect(seqs(ch.messages.value)).toEqual([1, 2])
+  })
+
+  it('refetches the head when the first message stores the channel', async () => {
+    getPage.mockResolvedValueOnce(page([], { next_after_rev: 0 }))
+    const onSeen = vi.fn()
+    const ch = host(() => room, { onSeen })
+    await flushPromises()
+    getHead.mockClear()
+
+    const stored = {
+      ...headOf({ last_seq: 1, rev: 1 }),
+      _actions: { ...headOf()._actions, lifecycle: ['close'] },
+    }
+    getHead.mockResolvedValueOnce(stored)
+    post.mockResolvedValueOnce({ kind: 'message', message: msg(1) })
+    await ch.post('text', { body: 'hi' })
+    expect(getHead).toHaveBeenCalledTimes(1)
+    expect(ch.head.value?._actions.lifecycle).toEqual(['close'])
+    // The refetched head reaches onSeen, so checkNames can read it.
+    expect(onSeen).toHaveBeenLastCalledWith(
+      expect.objectContaining({ _actions: stored._actions }),
+      [msg(1)]
+    )
+
+    // Later posts and frames on the stored channel do not read the head.
+    getHead.mockClear()
+    post.mockResolvedValueOnce({ kind: 'message', message: msg(2) })
+    await ch.post('text', { body: 'again' })
+    getPage.mockResolvedValueOnce(page([msg(2)], { next_after_rev: 2 }))
+    frame()
+    await flushPromises()
+    expect(getHead).not.toHaveBeenCalled()
+  })
+
+  it('refetches the head when a frame brings the first message of the channel', async () => {
+    getPage.mockResolvedValueOnce(page([], { next_after_rev: 0 }))
+    const ch = host(() => room)
+    await flushPromises()
+    getHead.mockClear()
+
+    getHead.mockResolvedValueOnce(headOf({ last_seq: 1, rev: 1 }))
+    getPage.mockResolvedValueOnce(
+      page([msg(1)], { next_after_rev: 1, channel: channel({ last_seq: 1, rev: 1 }) })
+    )
+    frame()
+    await flushPromises()
+    expect(getHead).toHaveBeenCalledTimes(1)
+    expect(seqs(ch.messages.value)).toEqual([1])
   })
 
   it('refetches the head after an ephemeral post', async () => {

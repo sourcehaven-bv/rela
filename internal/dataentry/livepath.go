@@ -51,11 +51,11 @@ type livePath struct {
 var (
 	liveEntityKeys = keySet("include", "fields", "world")
 	liveViewKeys   = keySet("world")
-	// livePresenceKeys: the presence route reads no parameter but the world
-	// that picks the face.
+	// livePresenceKeys, liveChannelsKeys and liveChannelKeys accept `world`
+	// only as the default world's name: attachWorld refuses any other world
+	// on these routes with world_unsupported, since the address names the
+	// face (worldCapablePath). The channel list also filters on state.
 	livePresenceKeys = keySet("world")
-	// liveChannelsKeys and liveChannelKeys: the channel list filters on
-	// state; both resolve the anchor in a world.
 	liveChannelsKeys = keySet("state", "world")
 	liveChannelKeys  = keySet("world")
 	liveListKeys     = keySet(
