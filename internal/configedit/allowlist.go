@@ -319,7 +319,7 @@ var locked = map[File][]string{
 		// Access control and actions.
 		"nav.permission", "nav.action", "spaces.[].permission", "dashboard.cards.[].permission",
 		"dashboards.*.cards.[].permission",
-		"lists.*.actions.**", "lists.*.export_render",
+		"lists.*.actions.**", "lists.*.toolbar_actions.**", "lists.*.export_render",
 		// The pile menu's actions and export transforms, like a list's.
 		"piles.actions.[]", "piles.export.[]",
 		// Not in the Configure space yet.

@@ -887,6 +887,22 @@ rules before the script runs:
 | 403 | `action_not_available` | Type, face or `when` does not match |
 | 409 | `config_reloaded` | The configuration was reloaded while the request waited; retry |
 
+### List-button actions (`action:<id>` on a list response)
+
+A list response's `_actions` map may carry `action:<id>` keys too: one per
+action in the [`toolbar_actions`](../data-entry.md#buttons-on-a-list-toolbar_actions)
+of a list over that entity type whose `permission:` the principal holds. Like
+the detail-page keys, they are only ever `true`, and absence means "not
+offered". The endpoint is keyed by entity type, so the map covers every list
+over the type; the SPA renders only the IDs in the list on screen.
+
+```json
+"_actions": { "create": true, "action:vvt-nieuw": true }
+```
+
+The SPA runs such an action with `POST /api/v1/_action/<id>` and no body. That
+request checks the permission again (`403 permission_required`).
+
 ### Always present
 
 Every HTTP response from the data-entry server carries `_actions`.

@@ -955,7 +955,9 @@ func (a *App) handleV1ListEntities(w http.ResponseWriter, r *http.Request, typeN
 			// client never has to re-derive the condition.
 			RelationOrder: ordering.wire(),
 		},
-		Actions: a.affordances.computeCollectionActions(r.Context(), typeName),
+		// A list's toolbar buttons ride on the collection map (toolbaractions.go).
+		Actions: addToolbarActions(r.Context(), a.Cfg(), typeName,
+			a.affordances.computeCollectionActions(r.Context(), typeName)),
 	}
 
 	setListHeaders(w, r, page, perPage, total, plural)

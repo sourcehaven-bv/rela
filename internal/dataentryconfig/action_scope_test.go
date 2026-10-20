@@ -109,6 +109,13 @@ func TestValidate_EntityBoundActionReferences(t *testing.T) {
 			check: func(cfg *Config) []string { return validateActions(cfg, actionScopeMeta()) },
 		},
 		{
+			name: "list toolbar",
+			cfg: &Config{Lists: map[string]List{
+				"notes": {EntityType: "note", ToolbarActions: []string{"regen"}},
+			}},
+			check: func(cfg *Config) []string { return validateActions(cfg, actionScopeMeta()) },
+		},
+		{
 			name: "navigation entry",
 			cfg:  &Config{},
 			check: func(cfg *Config) []string {
@@ -227,5 +234,59 @@ func TestActionConditionID_RoundTrips(t *testing.T) {
 	action, et, ok := SplitActionConditionID(ActionConditionID("regenerate-soa", "document"))
 	if !ok || action != "regenerate-soa" || et != "document" {
 		t.Fatalf("got (%q, %q, %v)", action, et, ok)
+	}
+}
+
+// TestValidateToolbarActions pins the load-time rules for a list's
+// toolbar_actions: each id names a labeled, entity-less script action.
+func TestValidateToolbarActions(t *testing.T) {
+	actions := map[string]Action{
+		"new-doc":   {Label: "New document", Script: "new.lua"},
+		"unlabeled": {Script: "new.lua"},
+		"setter":    {Label: "Close", Set: map[string]string{"status": "closed"}},
+	}
+	tests := []struct {
+		name    string
+		ids     []string
+		wantErr string
+	}{
+		{name: "labeled script action", ids: []string{"new-doc"}},
+		{name: "unknown action", ids: []string{"nope"}, wantErr: `list "notes" toolbar_actions: references unknown action "nope"`},
+		{name: "set action", ids: []string{"setter"}, wantErr: `action "setter" has no script`},
+		{name: "no label", ids: []string{"unlabeled"}, wantErr: `action "unlabeled" needs a label`},
+		{name: "listed twice", ids: []string{"new-doc", "new-doc"}, wantErr: `action "new-doc" is listed twice`},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := &Config{
+				Actions: actions,
+				Lists:   map[string]List{"notes": {EntityType: "note", ToolbarActions: tc.ids}},
+			}
+			joined := strings.Join(validateToolbarActions("notes", cfg.Lists["notes"], cfg), "\n")
+			if tc.wantErr == "" {
+				if joined != "" {
+					t.Fatalf("expected no errors, got: %s", joined)
+				}
+				return
+			}
+			if !strings.Contains(joined, tc.wantErr) {
+				t.Fatalf("expected an error containing %q, got: %s", tc.wantErr, joined)
+			}
+		})
+	}
+}
+
+// TestToolbarActions_Serialized pins the wire name the SPA reads.
+func TestToolbarActions_Serialized(t *testing.T) {
+	var l List
+	if err := yaml.Unmarshal([]byte("entity_type: note\ntoolbar_actions: [new-doc]\n"), &l); err != nil {
+		t.Fatal(err)
+	}
+	b, err := json.Marshal(l)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(b), `"toolbar_actions":["new-doc"]`) {
+		t.Errorf("toolbar_actions not served: %s", b)
 	}
 }

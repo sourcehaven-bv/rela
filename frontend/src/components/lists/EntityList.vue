@@ -6,6 +6,7 @@ import { useSchemaStore, useUIStore } from '@/stores'
 import { useListKeyboard } from '@/composables/useListKeyboard'
 import { useListSelection } from '@/composables/useListSelection'
 import { useListActions } from '@/composables/useListActions'
+import { useToolbarActions } from '@/composables/useToolbarActions'
 import { useListReorder } from '@/composables/useListReorder'
 import { useUrlFilterSync } from '@/composables/useUrlFilterSync'
 import { useWorld } from '@/composables/useWorld'
@@ -300,6 +301,12 @@ const { resolvedActions, processing: actionProcessing, executeAction, triggerAct
   onComplete: () => {
     void queryCache.invalidateQueries({ key: entityKeys.list(listConfig.value?.entity ?? '') })
   },
+})
+
+// `toolbar_actions:` buttons in the header. They run without a selection;
+// shown only when the list response offers `action:<id>`.
+const toolbar = useToolbarActions(listIdRef, collectionActions, () => {
+  void queryCache.invalidateQueries({ key: entityKeys.list(listConfig.value?.entity ?? '') })
 })
 
 // Bulk action confirm. We don't pass executeAction as onConfirm because it
@@ -1328,6 +1335,16 @@ watch(searchQuery, () => {
       <template #actions>
         <BackButton v-if="backTarget" :target="backTarget" />
         <ExportMenu :url-for="listExportUrlFor" />
+        <RlButton
+          v-for="a in toolbar.buttons.value"
+          :key="`toolbar-action-${a.id}`"
+          variant="secondary"
+          :disabled="toolbar.busy.value"
+          data-testid="toolbar-action"
+          @click="toolbar.run(a, $event)"
+        >
+          {{ a.label }}
+        </RlButton>
         <RlButton
           v-if="createFormTarget && canCreate()"
           :as="RouterLink"

@@ -290,6 +290,12 @@ export interface ListConfig {
   edit_form?: string
   page_size?: number
   actions?: string[]
+  /**
+   * Actions offered as header buttons that run without a selected row. A
+   * button shows only when the list response's `_actions` carries
+   * `action:<id>: true`; the permission behind it is not served here.
+   */
+  toolbar_actions?: string[]
   /** Splits the list into sections. Absent means a flat, paged list. */
   group_by?: ListGroupBy
 }

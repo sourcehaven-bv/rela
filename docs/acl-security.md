@@ -1341,6 +1341,14 @@ whole `dashboard:` block, `permission:` values included, to everyone.
 `/api/v1/_dashboard` is the per-principal view; `_config` is the config. Do not
 collapse them.
 
+**List buttons work the same way.** A list's `toolbar_actions:` button is
+offered through the list response's `_actions` (`action:<id>`) only to
+principals who hold the action's `permission:`. That is placement, not
+protection: `POST /api/v1/_action/<id>` checks the permission again on every
+run, exactly as for a sidebar action, and the script's writes stay bounded by
+the caller's own ACL. The key reveals only a verdict about config, which is
+not secret; it carries no entity data.
+
 **Nav status counts are per principal and live apart from the sidebar.**
 A `status:` rule on a nav entry puts a count next to it. A count is about
 data, so it is served by `/api/v1/_nav_status` and never by `_sidebar`,
