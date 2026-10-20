@@ -21,6 +21,8 @@ withDefaults(
     type?: 'text' | 'email' | 'url' | 'tel' | 'password' | 'search'
     /** Passed straight through; `off` for anything sensitive. */
     autocomplete?: string
+    /** The on-screen keyboard to offer, such as `numeric` for digits typed as text. */
+    inputmode?: 'text' | 'numeric' | 'decimal' | 'tel' | 'email' | 'url' | 'search'
   }>(),
   {
     modelValue: '',
@@ -56,6 +58,7 @@ defineEmits<{ 'update:modelValue': [value: string] }>()
       :readonly="readonly"
       :required="control.required"
       :autocomplete="autocomplete"
+      :inputmode="inputmode"
       :aria-describedby="control.describedBy"
       :aria-invalid="control.invalid || undefined"
       @input="$emit('update:modelValue', ($event.target as HTMLInputElement).value)"

@@ -1,0 +1,287 @@
+import type { Meta, StoryObj } from '@storybook/vue3-vite'
+import { ref } from 'vue'
+import { expect, fn, userEvent, waitFor, within } from 'storybook/test'
+import RlChannel from './RlChannel.vue'
+import RlChannelComposer from './RlChannelComposer.vue'
+import { lifecyclePendingKey } from './channelFields'
+import type { ChannelMessageView } from './types'
+import {
+  channelEnumOptions,
+  channelEphemeral,
+  channelLifecycle,
+  channelMessages,
+  channelMessageTypes,
+  channelPresentation,
+  manyChannelMessages,
+  pickedPerson,
+} from '../../fixtures/channels'
+
+const meta: Meta<typeof RlChannel> = {
+  title: 'Channel/Channel',
+  component: RlChannel,
+  args: {
+    title: 'Incident room',
+    state: 'open',
+    messages: channelMessages,
+    messageTypes: channelMessageTypes,
+    postable: ['text', 'decision', 'finding'],
+    lifecycle: channelLifecycle,
+    allowedLifecycle: ['close'],
+    ephemeral: channelEphemeral,
+    presentation: channelPresentation,
+    enumOptions: channelEnumOptions,
+    entityHref: (r) => `#/entity/${r.id}`,
+    onLifecycle: fn(),
+    onReply: fn(),
+    onJump: fn(),
+    onLoadOlder: fn(),
+  },
+  render: (args) => ({
+    components: { RlChannel, RlChannelComposer },
+    setup: () => ({ args, pickRef: async () => pickedPerson }),
+    template: `
+      <div style="height:100vh">
+        <RlChannel v-bind="args">
+          <template #composer>
+            <RlChannelComposer
+              :message-types="args.messageTypes"
+              :postable="args.postable"
+              :presentation="args.presentation"
+              :enum-options="args.enumOptions"
+              :pick-ref="pickRef"
+            />
+          </template>
+        </RlChannel>
+      </div>
+    `,
+  }),
+}
+export default meta
+type Story = StoryObj<typeof RlChannel>
+
+/**
+ * An open channel: readable, restricted, removed, pending and system messages,
+ * an ephemeral status line, and the composer. Only the lifecycle operations
+ * the user may run are shown.
+ */
+export const Open: Story = {
+  play: async ({ args, canvasElement }) => {
+    const canvas = within(canvasElement)
+    await expect(canvas.getByRole('button', { name: 'Close' })).toBeVisible()
+    await expect(canvas.queryByRole('button', { name: 'Archive' })).toBeNull()
+    await expect(canvas.queryByRole('button', { name: 'Delete channel' })).toBeNull()
+    await expect(canvas.getByRole('log', { name: 'Messages' })).toBeInTheDocument()
+    await expect(canvas.getByText(/reviewing access logs/)).toBeVisible()
+    await expect(canvas.getByRole('form', { name: 'New message' })).toBeVisible()
+    await userEvent.click(canvas.getByRole('button', { name: 'Close' }))
+    await expect(args.onLifecycle).toHaveBeenCalledWith('close')
+  },
+}
+
+/** A reply quote jumps to the original and focuses it when it is loaded. */
+export const JumpToOriginal: Story = {
+  play: async ({ args, canvasElement }) => {
+    const canvas = within(canvasElement)
+    await userEvent.click(canvas.getByRole('button', { name: /Reply to Triage agent/ }))
+    await waitFor(() => expect(canvasElement.querySelector('[data-seq="2"]')).toHaveFocus())
+    await expect(args.onJump).not.toHaveBeenCalled()
+  },
+}
+
+/** A quote whose original is not loaded asks the app to fetch it. */
+export const JumpToUnloaded: Story = {
+  args: { messages: channelMessages.filter((m) => m.seq !== 2) },
+  play: async ({ args, canvasElement }) => {
+    await userEvent.click(within(canvasElement).getByRole('button', { name: /Reply to Triage agent/ }))
+    await expect(args.onJump).toHaveBeenCalledWith(2)
+  },
+}
+
+/**
+ * A closed channel stays readable and says why it takes no messages. The
+ * composer slot is not rendered, and with nothing postable no reply controls
+ * appear either.
+ */
+export const Closed: Story = {
+  args: { state: 'closed', allowedLifecycle: ['reopen', 'archive'], ephemeral: [] },
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement)
+    await expect(canvas.getByText('Closed')).toBeVisible()
+    await expect(canvas.getByText(/This channel is closed/)).toBeVisible()
+    await expect(canvas.queryByRole('form')).toBeNull()
+    await expect(canvas.queryByRole('button', { name: 'Reply' })).toBeNull()
+    await expect(canvas.getByRole('button', { name: 'Reopen' })).toBeVisible()
+  },
+}
+
+/** Archived reads the same way, with its own wording. */
+export const Archived: Story = {
+  args: { state: 'archived', allowedLifecycle: ['delete'], ephemeral: [] },
+  play: async ({ canvasElement }) => {
+    await expect(within(canvasElement).getByText(/This channel is archived/)).toBeVisible()
+  },
+}
+
+/** A user who may only read: no composer, no lifecycle controls, no reply. */
+export const ReadOnly: Story = {
+  args: { postable: [], allowedLifecycle: [] },
+  render: (args) => ({
+    components: { RlChannel },
+    setup: () => ({ args }),
+    template: '<div style="height:100vh"><RlChannel v-bind="args" /></div>',
+  }),
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement)
+    await expect(canvas.queryByRole('form')).toBeNull()
+    await expect(canvas.queryByRole('button', { name: 'Close' })).toBeNull()
+    await expect(canvas.queryByRole('button', { name: 'Reply' })).toBeNull()
+  },
+}
+
+/** A lifecycle operation in flight. */
+export const LifecyclePending: Story = {
+  args: { pending: new Set([lifecyclePendingKey('close')]) },
+}
+
+/** No messages yet. */
+export const Empty: Story = {
+  args: { messages: [], ephemeral: [] },
+  play: async ({ canvasElement }) => {
+    await expect(within(canvasElement).getByText('No messages yet.')).toBeVisible()
+  },
+}
+
+/**
+ * The most the app holds: 500 messages. The log opens at the newest, and
+ * older ones load on request.
+ */
+export const FiveHundredMessages: Story = {
+  args: { messages: manyChannelMessages(500), hasOlder: true, ephemeral: [] },
+  play: async ({ args, canvasElement }) => {
+    const canvas = within(canvasElement)
+    const log = canvas.getByRole('log')
+    await waitFor(() => expect(log.scrollTop).toBeGreaterThan(0))
+    await expect(canvasElement.querySelectorAll('.rl-channel-message')).toHaveLength(500)
+    await userEvent.click(canvas.getByRole('button', { name: 'Load older messages' }))
+    await expect(args.onLoadOlder).toHaveBeenCalled()
+  },
+}
+
+/**
+ * A harness around a channel whose messages change: buttons append a new
+ * message, prepend a page of older ones, trim the oldest (the app's cap) and
+ * show a channel that mounted hidden.
+ */
+const liveRender: Story['render'] = (args) => ({
+  components: { RlChannel },
+  setup() {
+    const messages = ref<ChannelMessageView[]>(manyChannelMessages(60, 41))
+    const shown = ref(true)
+    const append = () => {
+      const last = messages.value[messages.value.length - 1]!.seq
+      messages.value = [...messages.value, ...manyChannelMessages(1, last + 1)]
+    }
+    const prepend = () => {
+      const first = messages.value[0]!.seq
+      messages.value = [...manyChannelMessages(20, first - 20), ...messages.value]
+    }
+    const trim = () => {
+      messages.value = messages.value.slice(10)
+    }
+    const hideThenShow = async () => {
+      shown.value = false
+      messages.value = manyChannelMessages(60, 41)
+      await new Promise((r) => setTimeout(r, 20))
+      shown.value = true
+    }
+    return { args, messages, shown, append, prepend, trim, hideThenShow }
+  },
+  template: `
+    <div>
+      <button type="button" data-testid="append" @click="append">Append</button>
+      <button type="button" data-testid="prepend" @click="prepend">Prepend</button>
+      <button type="button" data-testid="trim" @click="trim">Trim</button>
+      <button type="button" data-testid="hide" @click="hideThenShow">Hide then show</button>
+      <div v-show="shown" style="height:400px">
+        <RlChannel v-bind="args" :messages="messages" />
+      </div>
+    </div>`,
+})
+
+/** Offset of a message from the top of the log, in pixels. */
+function offsetOf(log: HTMLElement, seq: number): number {
+  const row = log.querySelector<HTMLElement>(`[data-seq="${seq}"]`)!
+  return row.getBoundingClientRect().top - log.getBoundingClientRect().top
+}
+
+function isAtBottom(log: HTMLElement): boolean {
+  return log.scrollHeight - log.scrollTop - log.clientHeight < 2
+}
+
+/**
+ * A reader at the bottom follows a new message, and hears it announced; a
+ * reader who scrolled up stays where they are.
+ */
+export const FollowAtBottom: Story = {
+  args: { ephemeral: [], hasOlder: true },
+  render: liveRender,
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement)
+    const log = canvas.getByRole('log')
+    await waitFor(() => expect(isAtBottom(log)).toBe(true))
+    await userEvent.click(canvas.getByTestId('append'))
+    await waitFor(() => expect(canvasElement.querySelector('[data-seq="101"]')).not.toBeNull())
+    await waitFor(() => expect(isAtBottom(log)).toBe(true))
+    await expect(canvasElement.querySelector('[aria-live="polite"][aria-atomic="true"]')).toHaveTextContent(
+      'Message from Joost Bakker',
+    )
+
+    log.scrollTop = 200
+    log.dispatchEvent(new Event('scroll'))
+    await waitFor(() => expect(log.scrollTop).toBe(200))
+    const before = offsetOf(log, 50)
+    await userEvent.click(canvas.getByTestId('append'))
+    await waitFor(() => expect(canvasElement.querySelector('[data-seq="102"]')).not.toBeNull())
+    await expect(isAtBottom(log)).toBe(false)
+    await expect(Math.abs(offsetOf(log, 50) - before)).toBeLessThan(2)
+  },
+}
+
+/**
+ * Loading older messages above, or the app trimming the oldest at its cap,
+ * keeps the first visible message where the reader had it.
+ */
+export const PreserveOnPrependAndTrim: Story = {
+  args: { ephemeral: [], hasOlder: true },
+  render: liveRender,
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement)
+    const log = canvas.getByRole('log')
+    await waitFor(() => expect(isAtBottom(log)).toBe(true))
+    log.scrollTop = 300
+    log.dispatchEvent(new Event('scroll'))
+    const anchor = 60
+    const before = offsetOf(log, anchor)
+
+    await userEvent.click(canvas.getByTestId('prepend'))
+    await waitFor(() => expect(canvasElement.querySelector('[data-seq="21"]')).not.toBeNull())
+    await waitFor(() => expect(Math.abs(offsetOf(log, anchor) - before)).toBeLessThan(2))
+
+    await userEvent.click(canvas.getByTestId('trim'))
+    await waitFor(() => expect(canvasElement.querySelector('[data-seq="21"]')).toBeNull())
+    await waitFor(() => expect(Math.abs(offsetOf(log, anchor) - before)).toBeLessThan(2))
+  },
+}
+
+/** A log first shown after it mounted (a hidden tab) still opens at the newest message. */
+export const OpensAtBottomWhenShown: Story = {
+  args: { ephemeral: [] },
+  render: liveRender,
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement)
+    const log = canvas.getByRole('log')
+    await userEvent.click(canvas.getByTestId('hide'))
+    await waitFor(() => expect(log.clientHeight).toBeGreaterThan(0))
+    await waitFor(() => expect(isAtBottom(log)).toBe(true))
+  },
+}

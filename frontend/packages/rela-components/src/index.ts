@@ -124,6 +124,20 @@ export { default as RlCommentComposerBox } from './components/comment/RlCommentC
 export { default as RlTextSelectionComment } from './components/comment/RlTextSelectionComment.vue'
 export { default as RlBlockCommentOverlay } from './components/comment/RlBlockCommentOverlay.vue'
 
+export { default as RlChannel } from './components/channel/RlChannel.vue'
+export { default as RlChannelMessage } from './components/channel/RlChannelMessage.vue'
+export { default as RlChannelComposer } from './components/channel/RlChannelComposer.vue'
+export { default as RlChannelAuthor } from './components/channel/RlChannelAuthor.vue'
+export { default as RlEntityChannels } from './components/channel/RlEntityChannels.vue'
+export { default as RlRefChip } from './components/channel/RlRefChip.vue'
+export {
+  resolveChannelFields,
+  codePointLength,
+  messagePendingKey,
+  lifecyclePendingKey,
+} from './components/channel/channelFields'
+export type { ResolvedChannelField } from './components/channel/channelFields'
+
 export { default as RlCalendarGrid } from './components/calendar/RlCalendarGrid.vue'
 export { default as RlCalendarEventChip } from './components/calendar/RlCalendarEventChip.vue'
 export { default as RlCalendarLegend } from './components/calendar/RlCalendarLegend.vue'
@@ -176,6 +190,7 @@ export type {
   CommentAnchorOption,
   NewComment,
 } from './components/comment/types'
+export type * from './components/channel/types'
 export type { CommentableBlock } from './components/comment/RlBlockCommentOverlay.vue'
 export type { EditorCommand, ActiveProbe } from './components/editor/editorCommands'
 export type { IconPart } from './components/editor/editorIcons'
@@ -213,7 +228,7 @@ export {
   FOCUSABLE_SELECTOR,
 } from './composables/useOverlayStack'
 export { provideMessages, useMessages, DEFAULT_MESSAGES } from './composables/useMessages'
-export type { Messages, CountArgs } from './composables/useMessages'
+export type { Messages, CountArgs, ChannelTextKey } from './composables/useMessages'
 export {
   useDelayedPending,
   PENDING_DELAY_MS,
