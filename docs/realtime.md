@@ -50,7 +50,7 @@ channel_types:
     lifecycle:
       close:   { roles: [lead], auto: { when: "entity.status == 'closed'" } }
       reopen:  { roles: [lead, dpo] }
-      archive: { roles: [lead], from: closed, auto: { after: 30d } }
+      archive: { roles: [lead], from: closed, label: Archive the room, auto: { after: 30d } }
       delete:  { permission: records.delete, from: archived, retention: 7y }
     message_ops:
       edit_own:   { roles: [lead, dpo, member, agent], within: 15m }
@@ -77,7 +77,7 @@ triggers:
 | `read` | Who receives the channel. Default: `{ from: attached }`, everyone who can read the entity. Whatever the source, a reader must also be able to read the entity. |
 | `roles` | Named groups of principals, used by every other key. |
 | `message_types` | The kinds of message, at least one. |
-| `lifecycle` | `close`, `reopen`, `archive` and `delete`. An operation you leave out is not offered. |
+| `lifecycle` | `close`, `reopen`, `archive` and `delete`. An operation you leave out is not offered. Each may have a `label` for its button; without one, the label is the operation's name. |
 | `message_ops` | `edit_own`, `delete_own` and `remove`. |
 | `on_entity_delete` | `detach` (default) keeps the channels, `delete` removes them, `block` refuses to delete an entity that has channels. |
 | `detached_retention` | How long a detached channel is kept before it is erased. A period of at least `1h`; default `30d`. |
@@ -185,12 +185,16 @@ client_baselines:
 
 | Key | Meaning |
 | --- | --- |
+| `label` | The name the web app shows for the type. Without it, the type's name. |
 | `persist` | `log` (default) stores messages. `ephemeral` keeps signals such as typing in memory for `ttl`, at most 60s. |
-| `properties` | At most 32. Types: `string`, `markdown`, `integer`, `boolean`, `date`, `datetime`, `ref` (with `to:`), or an enum type from `schema.yaml`. `max` limits a string or markdown property in bytes. |
+| `properties` | At most 32. Types: `string`, `markdown`, `integer`, `boolean`, `date`, `datetime`, `ref` (with `to:`), or an enum type from `schema.yaml`. `max` limits a string or markdown property in characters (Unicode code points). A property may have a `label`; without one, the label is its name. |
 | `when` | A condition on the `message` record that a post must meet. |
 | `post` | The roles that may post. Receiving needs only `read`. |
 | `rate` | Posts per identity, such as `10/m`. It may only lower the limit. |
-| `actions` | Buttons on a message, each gated by `roles` or a `permission`. An action may have a `promote_to`. Only for `log` messages. See [Actions and promote](#actions-and-promote). |
+| `actions` | Buttons on a message, each gated by `roles` or a `permission`. An action may have a `promote_to`. Only for `log` messages. The names `edit`, `delete`, `remove` and `release` are reserved. See [Actions and promote](#actions-and-promote). |
+
+Labels are authored, never derived: rela shows a name as written when no
+`label` is given.
 
 ## Actions and promote
 
@@ -258,7 +262,20 @@ status `released`.
 
 A message lists the actions the caller may run on it now in `_actions`.
 It runs the same checks as the `POST`, except the rate limit and the
-`ref` check above. A promoting action is offered only to a caller the
+`ref` check above. Next to the action names, `_actions` lists the message
+operations the caller may use now:
+
+- `edit`: the author may edit the message. It disappears when the edit
+  window passes, when the channel is not open, and while an action is
+  pending. It is also left out when a `ref` property of the message is
+  restricted for the caller: an edit replaces every property, and the
+  caller cannot send back an id they cannot see.
+- `delete`: the author may delete their own message (`delete_own`).
+- `remove`: the caller may remove the message (`remove`), with a reason
+  when the channel type requires one.
+- `release`: the caller may release the message's pending action now.
+
+That is why an action cannot take one of these names. A promoting action is offered only to a caller the
 create ACL lets create its entity. A process that cannot write the graph
 does not offer a promoting action and answers its `POST` with 403
 `action_not_offered`.
@@ -453,6 +470,7 @@ The data-entry API serves channels under the entity they are attached to.
 
 | Method and path | Does |
 | --- | --- |
+| `GET /api/v1/_schema/channels` | Describes every channel type: its message types with their properties, labels, actions and lifecycle labels. See below. |
 | `GET /api/v1/{plural}/{id}/_channels` | Lists the channels the caller may read, per channel type. `?state=` filters on a period. |
 | `POST /api/v1/{plural}/{id}/_channels/{type}` | Opens a named channel of a `many` type. The body may hold a `title`. |
 | `GET .../_channels/{type}` | The head of a `one` channel: its last sequence number, revision, and `_actions`, the operations the caller may perform. |
@@ -466,6 +484,23 @@ The data-entry API serves channels under the entity they are attached to.
 | `POST .../{channel}/_lifecycle/{op}` | Runs `close`, `reopen`, `archive` or `delete`. The body is empty or `{}`. A `delete` gets a 204; the other operations get the channel. |
 
 `{channel}` is `_channels/{type}` or `_channels/{type}/{name}`.
+
+`GET /api/v1/_schema/channels` describes the channel types in force, so a
+client can build a composer and label buttons. For each channel type it
+gives the label, the entity types it attaches to, the anchor, the
+cardinality, the `create` label, whether a removal needs a reason, and
+the lifecycle operations with their labels. For each message type it gives
+the label, `persist`, the signal lifetime in seconds for an `ephemeral`
+type, whether a message may reply to another, the actions with their
+labels and the entity type a promote creates, and the properties. Each
+property has its name, label, type, and when set `required`, `max`, the
+enum type with its `values`, and the entity types a `ref` may point to
+(`to`). Properties come required first, then by name.
+
+The answer holds no roles, permissions or conditions, and is the same for
+every caller: the configuration is not a secret. What a caller may do
+comes from the `_actions` of each channel and message. With realtime off
+the answer is `{"channel_types": []}`.
 
 The head's `_actions.lifecycle` lists the lifecycle operations the caller
 may run now. It runs the same checks as the `POST`, except the rate limit.
@@ -611,7 +646,12 @@ it out of roles that post on channels other agents act on.
 - An invalid `realtime.yaml` stops the server from starting.
 - rela-server reloads the file when it changes. If the new file is invalid,
   the previous one keeps working, and open browsers get a `config-error`
-  event naming `realtime.yaml`.
+  event naming `realtime.yaml`. After a reload that succeeds, open browsers
+  get a `refresh` event, so they read `GET /api/v1/_schema/channels` again.
+- The `channels:` block of `data-entry.yaml` is checked against the file on
+  every reload (see the data-entry guide). A reload that breaks it is still
+  applied, and open browsers get a `config-error` event naming
+  `data-entry.yaml`.
 - A change to `anchor:` of a channel type that has stored channels is
   refused, on reload and when the server starts, because the stored
   channels are keyed by the old anchor. Migrating channels to another
