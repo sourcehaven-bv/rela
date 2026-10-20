@@ -55,6 +55,8 @@ type call struct {
 	promoteChecks map[string]error
 	// actionGates caches the gate answer per message type and action.
 	actionGates map[string]bool
+	// ops caches the message operation gates; see [call.opGates].
+	ops *opGates
 }
 
 // begin captures the per-operation state: one config snapshot, one Access

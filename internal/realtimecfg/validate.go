@@ -29,6 +29,10 @@ var propertyNamePattern = regexp.MustCompile(`^[a-z][a-z0-9_]{0,62}$`)
 
 const nameRule = "must match ^[a-z][a-z0-9-]{0,62}$"
 
+// reservedActionNames are the message operations a message's _actions list
+// names next to its actions, so no action may take one of them.
+var reservedActionNames = []string{"delete", "edit", "release", "remove"}
+
 // validator collects every problem in one pass, so the operator sees them
 // all at once rather than one per edit.
 type validator struct {
@@ -406,6 +410,10 @@ func (v *validator) messageType(key, name string, raw *rawMessageType, ct *Chann
 			if !namePattern.MatchString(an) {
 				v.add(ak, "action name "+nameRule)
 			}
+			if slices.Contains(reservedActionNames, an) {
+				v.add(ak, fmt.Sprintf("%q is reserved: a message's _actions lists it for the message operation "+
+					"of that name; choose another action name", an))
+			}
 			mt.Actions[an] = &Action{
 				Name:      an,
 				Gate:      v.gate(ak, ra.Roles, ra.Permission, orDefault(ra.Label, an), ra.Denied, ct),
@@ -596,21 +604,24 @@ func (v *validator) lifecycle(key string, raw *rawLifecycle, ct *ChannelType) Li
 		return Lifecycle{}
 	}
 	return Lifecycle{
-		Close:   v.lifecycleOp(key+".close", raw.Close, ct, StateClosed),
-		Reopen:  v.lifecycleOp(key+".reopen", raw.Reopen, ct, StateOpen),
-		Archive: v.lifecycleOp(key+".archive", raw.Archive, ct, StateArchived),
-		Delete:  v.lifecycleOp(key+".delete", raw.Delete, ct, ""),
+		Close:   v.lifecycleOp(key, LifecycleClose, raw.Close, ct, StateClosed),
+		Reopen:  v.lifecycleOp(key, LifecycleReopen, raw.Reopen, ct, StateOpen),
+		Archive: v.lifecycleOp(key, LifecycleArchive, raw.Archive, ct, StateArchived),
+		Delete:  v.lifecycleOp(key, LifecycleDelete, raw.Delete, ct, ""),
 	}
 }
 
-// lifecycleOp compiles one operation. target is the state it moves to, or
-// empty for delete.
-func (v *validator) lifecycleOp(key string, raw *rawLifecycleOp, ct *ChannelType, target State) *LifecycleOp {
+// lifecycleOp compiles the operation name under the lifecycle key
+// lifecycleKey. target is the state it moves to, or empty for delete.
+func (v *validator) lifecycleOp(
+	lifecycleKey, name string, raw *rawLifecycleOp, ct *ChannelType, target State,
+) *LifecycleOp {
 	if raw == nil {
 		return nil
 	}
+	key := lifecycleKey + "." + name
 	op := &LifecycleOp{
-		Gate:       v.gate(key, raw.Roles, raw.Permission, "", raw.Denied, ct),
+		Gate:       v.gate(key, raw.Roles, raw.Permission, orDefault(raw.Label, name), raw.Denied, ct),
 		Conditions: map[string]*predicate.Program{},
 	}
 	if raw.From != "" {

@@ -100,6 +100,14 @@ func TestParse_Golden(t *testing.T) {
 		t.Errorf("role details lost: %+v", room.Roles)
 	}
 
+	// A lifecycle label is authored or the operation's name, never derived.
+	if got := room.Lifecycle.Archive.Label; got != "Archive the room" {
+		t.Errorf("archive label = %q; want the authored label", got)
+	}
+	if got := room.Lifecycle.Reopen.Label; got != LifecycleReopen {
+		t.Errorf("reopen label = %q; want the operation name", got)
+	}
+
 	su := room.MessageTypes["status-update"]
 	if su.Persist != PersistLog || su.When == nil || su.Rate != l.LogRate {
 		t.Errorf("status-update = %+v", su)
@@ -327,6 +335,8 @@ func TestParse_Invalid(t *testing.T) {
 			"channel_types.incident-room.message_types.status-update.actions.accept", "roles or a permission"},
 		{"action name", []replace{{"accept: { label", "Accept: { label"}},
 			"channel_types.incident-room.message_types.status-update.actions.Accept", "must match"},
+		{"action name reserved", []replace{{"accept: { label", "edit: { label"}},
+			"channel_types.incident-room.message_types.status-update.actions.edit", "reserved"},
 		{"lifecycle without gate", []replace{{"reopen:  { roles: [lead, dpo] }", "reopen:  { denied: no }"}},
 			"channel_types.incident-room.lifecycle.reopen", "roles or a permission"},
 		{"lifecycle from", []replace{{"from: closed, auto", "from: shut, auto"}},

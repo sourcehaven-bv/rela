@@ -73,8 +73,9 @@ type MessageView struct {
 	// TriggeredBy names the trigger that posted the message, as
 	// "trigger:<name>"; empty for a message a person or agent posted.
 	TriggeredBy string `json:"triggered_by,omitempty"`
-	// Actions lists the actions the reader may run on the message now,
-	// sorted. Nil when there are none.
+	// Actions lists what the reader may do with the message now, sorted:
+	// the message's actions and the operations [OpEdit], [OpDelete],
+	// [OpRemove] and [OpRelease]. Nil when there is nothing.
 	Actions []string `json:"_actions,omitempty"`
 }
 
@@ -232,9 +233,20 @@ func (r *renderer) message(m channels.Message) MessageView {
 		v.Action = av
 	}
 	if r.call != nil {
-		v.Actions = r.call.offeredActions(m)
+		v.Actions = r.call.messageActions(m, hasRestrictedRef(v.Props))
 	}
 	return v
+}
+
+// hasRestrictedRef reports whether props, as rendered, hold a ref the
+// reader cannot read.
+func hasRestrictedRef(props map[string]any) bool {
+	for _, v := range props {
+		if ref, ok := v.(*RefValue); ok && ref.Restricted {
+			return true
+		}
+	}
+	return false
 }
 
 func (r *renderer) signal(s signal) EphemeralView {

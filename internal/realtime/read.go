@@ -209,16 +209,12 @@ func (c *call) messageTypes(post map[string]bool) []MessageTypeView {
 	out := make([]MessageTypeView, 0, len(c.ct.MessageTypes))
 	for _, name := range sortedKeys(c.ct.MessageTypes) {
 		mt := c.ct.MessageTypes[name]
-		ephemeral := mt.Persist == realtimecfg.PersistEphemeral
-		v := MessageTypeView{
-			Name: mt.Name, Label: mt.Label, Persist: mt.Persist, Reply: !ephemeral,
+		ttl, reply := messageTypeTiming(mt)
+		out = append(out, MessageTypeView{
+			Name: mt.Name, Label: mt.Label, Persist: mt.Persist, TTLSeconds: ttl, Reply: reply,
 			CanPost: post[name],
 			Props:   mt.PropsSchema(),
-		}
-		if ephemeral {
-			v.TTLSeconds = int(signalTTL(mt).Seconds())
-		}
-		out = append(out, v)
+		})
 	}
 	return out
 }
