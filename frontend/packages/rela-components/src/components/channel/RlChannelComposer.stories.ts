@@ -93,7 +93,7 @@ export const Presentation: Story = {
     const canvas = within(canvasElement)
     await userEvent.click(canvas.getByRole('radio', { name: 'Decision' }))
     const labels = [...canvasElement.querySelectorAll('.rl-channel-composer__field')].map((f) =>
-      f.querySelector('.rl-field__label, .rl-field__wrapped-label')?.textContent?.replace('*', '').trim(),
+      f.querySelector('.rl-field__label, .rl-field__wrapped-label')?.textContent?.replaceAll('*', '').trim(),
     )
     await expect(labels).toEqual(['Decision', 'Severity', 'Owner', 'Notify the DPA', 'due'])
     await expect(canvas.getByText('One sentence.')).toBeVisible()
