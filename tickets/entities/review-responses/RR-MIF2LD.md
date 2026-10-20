@@ -1,0 +1,9 @@
+---
+id: RR-MIF2LD
+type: review-response
+title: realtime.yaml reload never re-reads a rejected data-entry.yaml
+finding: 'internal/dataentry/realtime_wiring.go:106-117 checks the HELD data-entry config (st.Cfg) against the new realtime config, and internal/dataentry/watcher.go:334 refuses a data-entry.yaml reload that names something realtime.yaml does not declare yet. Sequence: operator adds property `owner` to both files and saves data-entry.yaml first. That reload is refused (realtime.yaml has no `owner` yet) and the old config stays. Then realtime.yaml is saved: it is accepted, the old held data-entry config still validates, `refresh` goes out, and nothing tells the operator that the server is still running the OLD data-entry.yaml while the valid new one sits on disk. It stays stale until someone touches data-entry.yaml again or restarts. The cross-file check is order dependent, and the order an operator naturally uses (presentation, then structure) is the one that silently loses. Fix: after a successful realtime reload, call reloadConfig() to re-read data-entry.yaml from disk (cheap), or at least when the last data-entry reload was rejected, and only then run the channels check and broadcast once. Add a test for exactly this order. While you are there: the two watcher goroutines run check-then-publish against each other''s state with no shared lock, so two near-simultaneous saves can admit an inconsistent pair. Serialize both reload paths on one mutex.'
+severity: significant
+resolution: reloadRealtime now takes reloadMu, re-reads data-entry.yaml from disk after a realtime.yaml reload, publishes it when it loads, and otherwise broadcasts config-error for data-entry.yaml with applied set to realtime.yaml, pinned by TestReloadRealtime_RereadsDataEntryConfig.
+status: addressed
+---

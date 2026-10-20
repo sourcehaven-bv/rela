@@ -100,11 +100,17 @@ func (b *eventBroker) broadcastEvent(event sseEvent) {
 }
 
 // broadcastConfigError tells subscribers that a reload of file
-// (data-entry.yaml or realtime.yaml) was rejected and the previous config is
-// still serving. The frame carries the file name and the error's public
-// message, never a host path.
-func (b *eventBroker) broadcastConfigError(file string, ce *configError) {
-	data, _ := json.Marshal(map[string]string{"file": file, "error": ce.public})
+// (data-entry.yaml or realtime.yaml) was rejected and the previous version of
+// file is still serving. The frame carries the file name and the error's
+// public message, never a host path. applied names the other file when the
+// same reload put it in force (realtime.yaml applied, data-entry.yaml then
+// refused against it); empty when nothing was applied.
+func (b *eventBroker) broadcastConfigError(file string, ce *configError, applied string) {
+	frame := map[string]string{"file": file, "error": ce.public}
+	if applied != "" {
+		frame["applied"] = applied
+	}
+	data, _ := json.Marshal(frame)
 	b.broadcastEvent(sseEvent{Name: "config-error", Data: string(data)})
 }
 
@@ -318,23 +324,41 @@ func (a *App) reloadConfig() error {
 	if a.State() == nil {
 		return nil
 	}
-
-	reject := func(ce *configError) error {
+	cfg, ce := readConfig(a)
+	if ce != nil {
 		slog.Warn("config reload rejected; keeping previous config", "error", ce.err)
-		a.broker.broadcastConfigError(ConfigFile, ce)
+		a.broker.broadcastConfigError(ConfigFile, ce, "")
 		return ce
 	}
+	publishConfig(a, cfg)
+	a.broker.broadcast("refresh")
+	return nil
+}
 
-	meta := a.Meta()
+// readConfig reads data-entry.yaml from disk and checks it, including its
+// `channels:` section against the realtime config in force. The caller
+// holds a.reloadMu. A free function because App's method count is pinned
+// (plimsoll).
+func readConfig(a *App) (*Config, *configError) {
 	cfgData, err := a.cfgLoader.Load(context.Background(), ConfigFile)
 	if err != nil {
-		return reject(&configError{public: configReadFailedMessage, err: err})
+		return nil, &configError{public: configReadFailedMessage, err: err}
 	}
-	cfg, err := loadConfig(cfgData, meta, a.paths.Root, a.cfgLoader)
+	cfg, err := loadConfig(cfgData, a.Meta(), a.paths.Root, a.cfgLoader)
+	if err == nil {
+		err = checkChannelsPresentation(cfg, a.realtime)
+	}
 	if err != nil {
-		return reject(&configError{public: publicConfigErrorMessage(err, a.paths.Root), err: err})
+		return nil, &configError{public: publicConfigErrorMessage(err, a.paths.Root), err: err}
 	}
+	return cfg, nil
+}
+
+// publishConfig puts cfg in force. The caller holds a.reloadMu and
+// broadcasts refresh.
+func publishConfig(a *App, cfg *Config) {
 	slog.Info("config reloaded")
+	meta := a.Meta()
 	warnListVisibilityConflicts(cfg, meta, a.acl)
 
 	// The provider recomputes the style map + OpenAPI generator (co-derived
@@ -348,8 +372,6 @@ func (a *App) reloadConfig() error {
 		slog.Warn("watcher: keeping previous user palette",
 			"file", userPaletteFile, "error", err)
 	}
-	a.broker.broadcast("refresh")
-	return nil
 }
 
 // handleSSE serves Server-Sent Events for live-reload notifications.
@@ -361,8 +383,10 @@ func (a *App) reloadConfig() error {
 //     in place of ready, with data {"reason":"resync"} when the presented
 //     resume token is unusable; the client cannot know what it missed and
 //     re-fetches everything.
-//   - config-error: a data-entry.yaml reload was rejected; the previous
-//     config keeps serving. Data is {"file": ..., "error": ...}
+//   - config-error: a data-entry.yaml or realtime.yaml reload was rejected;
+//     the previous version of that file keeps serving. Data is
+//     {"file": ..., "error": ..., "applied"?: ...}; applied names a file the
+//     same reload did put in force.
 //   - config-changed: a Configure save replaced the server; the stream ends.
 //   - git / git:status: Git status changed (git:status carries empty JSON)
 //   - entity:changed: Entities of a type changed; data is {"type": "..."}

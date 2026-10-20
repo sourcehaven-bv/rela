@@ -764,9 +764,9 @@ type CustomType struct {
 // Config is the JSON representation of the UI config.
 //
 // It mirrors the top-level keys of data-entry.yaml, so a new key raises the
-// pin by one; `dashboards` (TKT-5LQNLY) is the most recent.
+// pin by one; `channels` (TKT-91BK6F) is the most recent.
 //
-//plimsoll:max-fields=21
+//plimsoll:max-fields=22
 type Config struct {
 	App AppConfig `json:"app"`
 	// AboutDescription is the deployment description shown by the SPA's global
@@ -775,24 +775,28 @@ type Config struct {
 	// AppConfig.Description (which SettingsView renders as a plain one-liner) so
 	// a multi-paragraph markdown metamodel description doesn't leak into that
 	// view. Empty → the About button is hidden.
-	AboutDescription string                                      `json:"about_description,omitempty"`
-	Styles           map[string]map[string]string                `json:"styles"`
-	Forms            map[string]dataentryconfig.Form             `json:"forms"`
-	Lists            map[string]dataentryconfig.List             `json:"lists"`
-	Views            map[string]dataentryconfig.ViewConfig       `json:"views"`
-	EntityViews      map[string]dataentryconfig.EntityViewConfig `json:"entity_views,omitempty"`
-	Kanbans          map[string]dataentryconfig.Kanban           `json:"kanbans"`
-	Calendars        map[string]dataentryconfig.Calendar         `json:"calendars,omitempty"`
-	Gantts           map[string]dataentryconfig.Gantt            `json:"gantts,omitempty"`
-	Dashboard        *dataentryconfig.DashboardConfig            `json:"dashboard,omitempty"`
-	Dashboards       map[string]dataentryconfig.DashboardConfig  `json:"dashboards,omitempty"`
-	Actions          map[string]dataentryconfig.Action           `json:"actions,omitempty"`
-	Navigation       []dataentryconfig.NavigationEntry           `json:"navigation"`
-	Spaces           []dataentryconfig.Space                     `json:"spaces,omitempty"`
-	Pages            map[string]dataentryconfig.Page             `json:"pages,omitempty"`
-	Documents        map[string]dataentryconfig.DocumentConfig   `json:"documents,omitempty"`
-	Apps             map[string]App                              `json:"apps,omitempty"`
-	Palette          *dataentryconfig.ResolvedPalette            `json:"palette,omitempty"`
+	AboutDescription string                          `json:"about_description,omitempty"`
+	Styles           map[string]map[string]string    `json:"styles"`
+	Forms            map[string]dataentryconfig.Form `json:"forms"`
+	// Channels is the data-entry.yaml `channels:` block: the field order,
+	// labels and widgets of each channel message type, keyed by channel
+	// type. The structure comes from `GET /api/v1/_schema/channels`.
+	Channels    map[string]dataentryconfig.ChannelPresentation `json:"channels,omitempty"`
+	Lists       map[string]dataentryconfig.List                `json:"lists"`
+	Views       map[string]dataentryconfig.ViewConfig          `json:"views"`
+	EntityViews map[string]dataentryconfig.EntityViewConfig    `json:"entity_views,omitempty"`
+	Kanbans     map[string]dataentryconfig.Kanban              `json:"kanbans"`
+	Calendars   map[string]dataentryconfig.Calendar            `json:"calendars,omitempty"`
+	Gantts      map[string]dataentryconfig.Gantt               `json:"gantts,omitempty"`
+	Dashboard   *dataentryconfig.DashboardConfig               `json:"dashboard,omitempty"`
+	Dashboards  map[string]dataentryconfig.DashboardConfig     `json:"dashboards,omitempty"`
+	Actions     map[string]dataentryconfig.Action              `json:"actions,omitempty"`
+	Navigation  []dataentryconfig.NavigationEntry              `json:"navigation"`
+	Spaces      []dataentryconfig.Space                        `json:"spaces,omitempty"`
+	Pages       map[string]dataentryconfig.Page                `json:"pages,omitempty"`
+	Documents   map[string]dataentryconfig.DocumentConfig      `json:"documents,omitempty"`
+	Apps        map[string]App                                 `json:"apps,omitempty"`
+	Palette     *dataentryconfig.ResolvedPalette               `json:"palette,omitempty"`
 
 	// NextActionBands is the operator's ordered priority vocabulary, so the
 	// SPA can label a suggestion's band ("Someone is waiting") rather than

@@ -94,11 +94,11 @@ func (d Direction) IsIncoming() bool {
 // sections (a new view kind legitimately adds one) rather than god-object
 // accretion. Splitting it would churn the YAML shape for no design gain —
 // a breaking change to every project's config file, made to satisfy a lint.
-// A genuinely new top-level key therefore raises the pin by one; `spaces`
-// (TKT-GNKR5H), `account` (TKT-MJTD12), `pages` (TKT-ITQ0HL) and `piles`
-// (TKT-K3RJLH) are the most recent.
+// A genuinely new top-level key therefore raises the pin by one; `account`
+// (TKT-MJTD12), `pages` (TKT-ITQ0HL), `piles` (TKT-K3RJLH) and `channels`
+// (TKT-91BK6F) are the most recent.
 //
-//plimsoll:max-fields=27
+//plimsoll:max-fields=28
 type Config struct {
 	Version     string                       `yaml:"version"`
 	App         AppConfig                    `yaml:"app"`
@@ -149,6 +149,12 @@ type Config struct {
 	// Piles configures what a pile panel offers. Nil: accepted, means piles
 	// offer no actions and every registered transform. See [PilesConfig].
 	Piles *PilesConfig `yaml:"piles,omitempty" json:"piles,omitempty"`
+
+	// Channels presents the message types of realtime.yaml, keyed by
+	// channel type. Nil: accepted, means every message type is presented
+	// by its realtime.yaml labels, required properties first. See
+	// [ChannelPresentation].
+	Channels map[string]ChannelPresentation `yaml:"channels,omitempty" json:"channels,omitempty"`
 }
 
 // EntityViewConfig declares UX bindings for a metamodel entity type.

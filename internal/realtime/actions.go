@@ -147,10 +147,25 @@ func (s *Service) ReleaseAction(ctx context.Context, addr RawAddress, seq int64)
 }
 
 // releaseCheck decides whether the caller may release the pending action
-// of m now.
+// of m now: [call.releaseGateCheck], and the action has been pending for
+// [realtimelimits.PendingRelease].
 func (c *call) releaseCheck(m channels.Message) error {
+	if err := c.releaseGateCheck(m); err != nil {
+		return err
+	}
+	if after := m.Action.PendingAt.Add(realtimelimits.PendingRelease); c.now.Before(after) {
+		return deny(http.StatusConflict, TypeActionPending, fmt.Sprintf(
+			"the action is pending since %s; it can be released after %s",
+			m.Action.PendingAt.UTC().Format(time.RFC3339), after.UTC().Format(time.RFC3339)))
+	}
+	return nil
+}
+
+// releaseGateCheck is every check of [call.releaseCheck] that does not
+// depend on the time.
+func (c *call) releaseGateCheck(m channels.Message) error {
 	ops := c.ct.MessageOps
-	if ops.Remove != nil && !c.gate(ops.Remove.Gate) {
+	if ops.Remove != nil && !c.moderator() {
 		return gateDenied(TypeActionDenied, "releasing an action",
 			"channel_types."+c.ct.Name+".message_ops.remove", ops.Remove.Gate, c.ct.Roles)
 	}
@@ -167,11 +182,6 @@ func (c *call) releaseCheck(m channels.Message) error {
 		if !c.gate(a.Gate) {
 			return gateDenied(TypeActionDenied, "releasing "+a.Name, rule, a.Gate, c.ct.Roles)
 		}
-	}
-	if after := m.Action.PendingAt.Add(realtimelimits.PendingRelease); c.now.Before(after) {
-		return deny(http.StatusConflict, TypeActionPending, fmt.Sprintf(
-			"the action is pending since %s; it can be released after %s",
-			m.Action.PendingAt.UTC().Format(time.RFC3339), after.UTC().Format(time.RFC3339)))
 	}
 	return nil
 }

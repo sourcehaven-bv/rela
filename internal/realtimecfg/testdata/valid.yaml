@@ -35,7 +35,7 @@ channel_types:
       close:   { roles: [lead], condition: "entity.status == 'closed'", denied: "Close the breach first",
                  auto: { when: "entity.status == 'closed'" } }
       reopen:  { roles: [lead, dpo] }
-      archive: { roles: [lead], from: closed, auto: { after: 30d } }
+      archive: { label: Archive the room, roles: [lead], from: closed, auto: { after: 30d } }
       delete:  { permission: records.delete, from: archived, retention: 7y }
     message_ops:
       edit_own:   { roles: [lead, dpo, member, agent], within: 15m }

@@ -146,6 +146,7 @@ describe('Schema Store', () => {
         app: { name: 'Test App', description: 'A test app' },
         styles: { status: { open: 'badge-blue' } },
         forms: { 'task-create': { entity: 'task' } },
+        channels: { room: { messages: { text: { fields: [{ property: 'body', label: 'Message' }] } } } },
         lists: { tasks: { entity: 'task', columns: [] } },
         views: { 'task-view': { entity: 'task', sections: [] } },
         kanbans: { 'task-board': { entity: 'task', column_property: 'status', card: { title: 'title' } } },
@@ -180,6 +181,7 @@ describe('Schema Store', () => {
       expect(store.app).toEqual({ name: 'Test App', description: 'A test app' })
       expect(store.styles).toEqual({ status: { open: 'badge-blue' } })
       expect(store.forms.size).toBe(1)
+      expect(store.channelPresentations.get('room')?.messages?.text?.fields?.[0]?.label).toBe('Message')
       expect(store.lists.size).toBe(1)
       expect(store.views.size).toBe(1)
       expect(store.kanbans.size).toBe(1)

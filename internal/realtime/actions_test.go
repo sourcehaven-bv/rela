@@ -158,7 +158,8 @@ func TestAction_NotDeclared(t *testing.T) {
 	require.Equal(t, "channel_types.room.message_types.proposal.actions.nope", d.Rule)
 
 	text := h.post(t, user("ann"), text("plain"))
-	require.Nil(t, h.offeredOn(t, user("ann"), room, text.Seq))
+	require.Equal(t, []string{OpEdit}, h.offeredOn(t, user("ann"), room, text.Seq),
+		"a type without actions offers only the message operations")
 	_, err = h.svc.RunAction(as(user("ann")), room, text.Seq, "ack")
 	requireDenial(t, err, http.StatusForbidden, TypeActionNotOffered)
 }
@@ -170,7 +171,7 @@ func TestAction_GateDenied(t *testing.T) {
 	p := &fakePromoter{}
 	h := newActionHarness(t, p)
 	m := h.post(t, user("ann"), proposal("x"))
-	require.Equal(t, []string{"ack"}, h.offeredOn(t, user("ann"), room, m.Seq))
+	require.Equal(t, []string{"ack", OpEdit}, h.offeredOn(t, user("ann"), room, m.Seq))
 	_, err := h.svc.RunAction(as(user("ann")), room, m.Seq, "accept")
 	d := requireDenial(t, err, http.StatusForbidden, TypeActionDenied)
 	require.Equal(t, "Only the lead decides", d.Title)
@@ -192,7 +193,7 @@ func TestAction_NonPromoting(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, channels.ActionDone, res.Message.Action.Status)
 	require.Equal(t, "ack", res.Message.Action.Name)
-	require.Nil(t, res.Message.Actions)
+	require.Equal(t, []string{OpEdit}, res.Message.Actions, "a done action leaves only the operations")
 	require.Empty(t, res.Warnings)
 
 	_, err = h.svc.RunAction(as(user("ann")), room, m.Seq, "ack")

@@ -1,0 +1,205 @@
+package dataentry
+
+import (
+	"encoding/json"
+	"flag"
+	"fmt"
+	"net/http"
+	"os"
+	"reflect"
+	"slices"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/stretchr/testify/require"
+
+	v1 "github.com/Sourcehaven-BV/rela/internal/apiwire/v1"
+	"github.com/Sourcehaven-BV/rela/internal/realtime"
+)
+
+// The SPA mirrors the channel wire types by hand (frontend/src/types/
+// channels.ts). TestChannelWireGolden writes the JSON field set of each
+// wire type, and sample answers, to testdata; wireFields.test.ts compares
+// the TypeScript key lists with the field sets, so a field added or
+// renamed on one side alone fails a test. Rewrite with
+// `go test ./internal/dataentry -run TestChannelWireGolden -update`.
+const (
+	channelWireFieldsFile = "testdata/channel_wire_fields.json"
+	channelWireFile       = "testdata/channel_wire.json"
+	// channelMessageOpsFile holds the message operation names, which the
+	// SPA's MESSAGE_OPS mirrors.
+	channelMessageOpsFile = "testdata/channel_message_ops.json"
+)
+
+// channelWireTypes are the wire types the SPA mirrors, by TypeScript name.
+var channelWireTypes = map[string]any{
+	"ChannelAuthor":            v1.ChannelAuthor{},
+	"Channel":                  v1.Channel{},
+	"ChannelTypeList":          v1.ChannelTypeList{},
+	"ChannelList":              v1.ChannelList{},
+	"ChannelActions":           v1.ChannelActions{},
+	"ChannelHead":              v1.ChannelHead{},
+	"RefProp":                  v1.RefProp{},
+	"MessageRemoval":           v1.MessageRemoval{},
+	"MessageAction":            v1.MessageAction{},
+	"Message":                  v1.Message{},
+	"MessageActionResponse":    v1.MessageActionResponse{},
+	"MessagePage":              v1.MessagePage{},
+	"EphemeralMessage":         v1.EphemeralMessage{},
+	"EphemeralAccepted":        v1.EphemeralAccepted{},
+	"PostMessageRequest":       v1.PostMessageRequest{},
+	"EditMessageRequest":       v1.EditMessageRequest{},
+	"RemoveMessageRequest":     v1.RemoveMessageRequest{},
+	"CreateChannelRequest":     v1.CreateChannelRequest{},
+	"ChannelSchema":            v1.ChannelSchema{},
+	"ChannelTypeSchema":        v1.ChannelTypeSchema{},
+	"ChannelLifecycleSchema":   v1.ChannelLifecycleSchema{},
+	"ChannelMessageTypeSchema": v1.ChannelMessageTypeSchema{},
+	"ChannelPropertySchema":    v1.ChannelPropertySchema{},
+	"ChannelActionSchema":      v1.ChannelActionSchema{},
+}
+
+// jsonFields lists the JSON names of v's struct fields, sorted. An
+// embedded struct without a JSON name contributes its own fields, as
+// encoding/json flattens it.
+func jsonFields(v any) []string {
+	out := structFields(reflect.TypeOf(v))
+	slices.Sort(out)
+	return out
+}
+
+func structFields(rt reflect.Type) []string {
+	var out []string
+	for f := range rt.Fields() {
+		name, _, _ := strings.Cut(f.Tag.Get("json"), ",")
+		if name == "-" {
+			continue
+		}
+		ft := f.Type
+		if ft.Kind() == reflect.Pointer {
+			ft = ft.Elem()
+		}
+		if f.Anonymous && name == "" && ft.Kind() == reflect.Struct {
+			out = append(out, structFields(ft)...)
+			continue
+		}
+		if !f.IsExported() {
+			continue
+		}
+		if name == "" {
+			name = f.Name
+		}
+		out = append(out, name)
+	}
+	return out
+}
+
+// updatingGoldens reports whether the test binary runs with -update, the
+// flag the golden parity corpus declares in this binary.
+func updatingGoldens() bool {
+	f := flag.Lookup("update")
+	return f != nil && f.Value.String() == "true"
+}
+
+// compareOrWrite compares got, as indented JSON, with the file at path, or
+// rewrites the file under -update.
+func compareOrWrite(t *testing.T, path string, got any) {
+	t.Helper()
+	b, err := json.MarshalIndent(got, "", "  ")
+	require.NoError(t, err)
+	b = append(b, '\n')
+	if updatingGoldens() {
+		require.NoError(t, os.WriteFile(path, b, 0o644))
+		return
+	}
+	want, err := os.ReadFile(path)
+	require.NoError(t, err, "run with -update to write %s", path)
+	require.JSONEq(t, string(want), string(b), "%s is stale; run with -update", path)
+}
+
+// normalizeWire replaces the time values in a decoded answer, so the
+// samples do not change from run to run.
+func normalizeWire(v any) any {
+	switch x := v.(type) {
+	case map[string]any:
+		if _, signal := x["expires_at"]; signal && x["id"] != nil {
+			x["id"] = "signal-id" // minted at random
+		}
+		for k, val := range x {
+			if s, ok := val.(string); ok && s != "" && isWireTimeKey(k) {
+				x[k] = "2026-01-02T03:04:05Z"
+				continue
+			}
+			x[k] = normalizeWire(val)
+		}
+	case []any:
+		for i := range x {
+			x[i] = normalizeWire(x[i])
+		}
+	}
+	return v
+}
+
+// isWireTimeKey reports whether k names a time value on the channel wire.
+func isWireTimeKey(k string) bool {
+	return k == "at" || strings.HasSuffix(k, "_at") || k == "edit_until" || k == "release_after"
+}
+
+// TestJSONFields_FlattensEmbedded pins that an embedded struct contributes
+// its fields, not its type name.
+func TestJSONFields_FlattensEmbedded(t *testing.T) {
+	type inner struct {
+		A string `json:"a"`
+	}
+	type outer struct {
+		inner
+		*v1.RefProp
+		B string `json:"b"`
+		c string
+	}
+	require.Equal(t, []string{"a", "b", "id", "restricted", "title", "type"}, jsonFields(outer{c: ""}))
+}
+
+func TestChannelWireGolden(t *testing.T) {
+	fields := map[string][]string{}
+	for name, v := range channelWireTypes {
+		fields[name] = jsonFields(v)
+	}
+	compareOrWrite(t, channelWireFieldsFile, fields)
+	compareOrWrite(t, channelMessageOpsFile, realtime.MessageOpNames())
+
+	env := newChannelEnv(t)
+	// The samples cover every message shape the SPA reads: alice's own
+	// message with edit and its window, a ref she cannot read, an action
+	// done, a pending one she may release later, a removed message and an
+	// ephemeral signal.
+	env.postText(t, "alice", roomPath, "hello")
+	resp, b := env.do(t, "dave", http.MethodPost, roomPath+"/messages",
+		`{"type":"text","props":{"body":"see","about":"FEAT-1"}}`, nil)
+	require.Equal(t, http.StatusCreated, resp.StatusCode, "%s", b)
+	done := env.postText(t, "alice", roomPath, "acked")
+	resp, b = env.do(t, "alice", http.MethodPost, fmt.Sprintf("%s/messages/%d/_action/ack", roomPath, done.Seq), "", nil)
+	require.Equal(t, http.StatusOK, resp.StatusCode, "%s", b)
+	pending := env.postText(t, "alice", roomPath, "pending")
+	env.pend(t, pending.Seq, time.Now())
+	gone := env.postText(t, "alice", roomPath, "gone")
+	resp, b = env.do(t, "alice", http.MethodDelete, fmt.Sprintf("%s/messages/%d", roomPath, gone.Seq), "", nil)
+	require.Equal(t, http.StatusOK, resp.StatusCode, "%s", b)
+	resp, b = env.do(t, "alice", http.MethodPost, roomPath+"/messages", `{"type":"typing"}`, nil)
+	require.Equal(t, http.StatusAccepted, resp.StatusCode, "%s", b)
+	samples := map[string]any{}
+	for name, path := range map[string]string{
+		"list":     "/api/v1/tickets/TKT-1/_channels",
+		"head":     roomPath,
+		"messages": roomPath + "/messages",
+		"schema":   channelSchemaPath,
+	} {
+		code, b := env.get(t, "alice", path)
+		require.Equal(t, http.StatusOK, code, "%s: %s", path, b)
+		var v any
+		require.NoError(t, json.Unmarshal(b, &v))
+		samples[name] = normalizeWire(v)
+	}
+	compareOrWrite(t, channelWireFile, samples)
+}

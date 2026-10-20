@@ -176,6 +176,9 @@ var editable = map[File][]string{
 		"forms.*.fields.[].**",
 		"forms.*.relations.[].**",
 		"forms.*.steps.[].**",
+		// Channel message fields only order and label what realtime.yaml
+		// declares; the load check refuses form-only keys.
+		"channels.*.messages.*.fields.[].**",
 
 		"lists.*.columns.[].direction",
 		"lists.*.columns.[].label",

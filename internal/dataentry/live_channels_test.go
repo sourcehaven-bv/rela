@@ -13,6 +13,7 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/channels"
+	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/realtime"
 )
@@ -269,6 +270,10 @@ func TestLive_RealtimeReloadRevokes(t *testing.T) {
 		t.Fatal("the room's read rule was not replaced")
 	}
 	next := env.ch.parse(t, restricted)
+	// The reload re-reads data-entry.yaml; give it one to read.
+	if err := env.app.fs.WriteFile(env.app.paths.Root+"/"+ConfigFile, []byte(testReloadConfigYAML), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	if err := SetRealtime(env.app, reloaderFunc(func() { env.ch.cfg.Store(next) })); err != nil {
 		t.Fatal(err)
 	}
@@ -297,6 +302,8 @@ func (f reloaderFunc) Reload(context.Context) error {
 	f()
 	return nil
 }
+
+func (reloaderFunc) ChannelSchema() dataentryconfig.ChannelSchema { return nil }
 
 // A topic round replays a presence subscription on a changed face and a
 // channel subscription on a changed topic, or every channel subscription

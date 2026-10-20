@@ -88,7 +88,8 @@ func (h configureHost) current() *generation { return h.s.cur.Load() }
 func (h configureHost) Record(rec audit.Record) { h.current().svc.Audit().Record(rec) }
 
 // Validate checks a schema and data-entry pair the way `rela validate` does,
-// and the loaded acl.yaml and realtime.yaml against the new schema. Building the candidate
+// the loaded acl.yaml and realtime.yaml against the new schema, and
+// data-entry.yaml's `channels:` section against realtime.yaml. Building the candidate
 // server in Prepare is the complete check; this one runs on every preview.
 func (h configureHost) Validate(schema, dataEntry []byte) (*metamodel.Metamodel, error) {
 	meta, err := metamodel.Parse(schema)
@@ -99,26 +100,33 @@ func (h configureHost) Validate(schema, dataEntry []byte) (*metamodel.Metamodel,
 	for _, p := range appbuild.CheckSchemaCompiles(meta, h.current().svc.Store()) {
 		problems = append(problems, "schema.yaml: "+p)
 	}
-	if err := projectsetup.CheckDataEntry(dataEntry, meta); err != nil {
+	if deErr := projectsetup.CheckDataEntry(dataEntry, meta); deErr != nil {
 		var cve *dataentry.ConfigValidationError
-		if errors.As(err, &cve) {
+		if errors.As(deErr, &cve) {
 			for _, e := range cve.Errors {
 				problems = append(problems, "data-entry.yaml: "+e)
 			}
 		} else {
-			problems = append(problems, "data-entry.yaml: "+err.Error())
+			problems = append(problems, "data-entry.yaml: "+deErr.Error())
 		}
 	}
 	svc := h.current().svc
 	if policy := svc.ACLPolicy(); policy != nil {
-		if err := appbuild.ValidateACLPolicy(policy, meta); err != nil {
-			problems = append(problems, "acl.yaml: "+err.Error())
+		if aclErr := appbuild.ValidateACLPolicy(policy, meta); aclErr != nil {
+			problems = append(problems, "acl.yaml: "+aclErr.Error())
 		}
 	}
 	// realtime.yaml names schema types, properties and enums, so a schema
 	// change can break it. Its own error text starts with the file name.
-	if _, err := appbuild.LoadRealtime(context.Background(), svc.Config(), meta, svc.ACLPolicy()); err != nil {
+	rt, err := appbuild.LoadRealtime(context.Background(), svc.Config(), meta, svc.ACLPolicy())
+	if err != nil {
 		problems = append(problems, err.Error())
+	} else {
+		// The channels: section names realtime.yaml's types and properties.
+		errs, _ := projectsetup.CheckChannels(dataEntry, appbuild.RealtimeChannelSchema(rt))
+		for _, e := range errs {
+			problems = append(problems, "data-entry.yaml: "+e)
+		}
 	}
 	if len(problems) > 0 {
 		return nil, &configedit.ValidationError{Problems: problems}

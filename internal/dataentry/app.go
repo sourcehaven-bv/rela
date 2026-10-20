@@ -462,9 +462,10 @@ type App struct {
 	// snapshot is published in NewApp.
 	schema schemaProvider
 
-	// reloadMu serializes reloadConfig. schema.Reload publishes by
-	// load-then-store, so two overlapping reloads could publish the older
-	// file last. Readers never take it; they go through a.State().
+	// reloadMu serializes reloadConfig and reloadRealtime. schema.Reload
+	// publishes by load-then-store, so two overlapping reloads could publish
+	// the older file last, and each path checks one file against the other's
+	// state. Readers never take it; they go through a.State().
 	reloadMu sync.Mutex
 
 	// gitOps provides git operations when git is enabled. Set once in

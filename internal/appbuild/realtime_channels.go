@@ -1,0 +1,73 @@
+package appbuild
+
+import (
+	"sort"
+
+	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
+	"github.com/Sourcehaven-BV/rela/internal/realtimecfg"
+)
+
+// ChannelSchema returns the realtime configuration in force as the
+// data-entry `channels:` check sees it. It returns nil when realtime is
+// off, which [dataentryconfig.ValidateChannels] reports as a warning.
+//
+// Nil: r is accepted and returns nil, as for every method.
+func (r *RealtimeConfig) ChannelSchema() dataentryconfig.ChannelSchema {
+	return RealtimeChannelSchema(r.Load().Config)
+}
+
+// RealtimeChannelSchema adapts a compiled realtime.yaml to
+// [dataentryconfig.ChannelSchema], the way [ValidateACLPolicy] adapts the
+// metamodel for acl.yaml.
+//
+// Nil: c is accepted and means realtime off; the result is then a nil
+// interface, not a typed nil.
+func RealtimeChannelSchema(c *realtimecfg.Compiled) dataentryconfig.ChannelSchema {
+	if c == nil {
+		return nil
+	}
+	return realtimeChannelSchema{c: c}
+}
+
+type realtimeChannelSchema struct {
+	c *realtimecfg.Compiled
+}
+
+func (s realtimeChannelSchema) ChannelTypeNames() []string {
+	cts := s.c.ChannelTypes()
+	out := make([]string, 0, len(cts))
+	for _, ct := range cts {
+		out = append(out, ct.Name)
+	}
+	return out
+}
+
+func (s realtimeChannelSchema) MessageTypeNames(channelType string) []string {
+	ct, ok := s.c.ChannelType(channelType)
+	if !ok {
+		return nil
+	}
+	out := make([]string, 0, len(ct.MessageTypes))
+	for name := range ct.MessageTypes {
+		out = append(out, name)
+	}
+	sort.Strings(out)
+	return out
+}
+
+func (s realtimeChannelSchema) MessageProperties(channelType, messageType string) []dataentryconfig.ChannelProperty {
+	ct, ok := s.c.ChannelType(channelType)
+	if !ok {
+		return nil
+	}
+	mt := ct.MessageTypes[messageType]
+	if mt == nil {
+		return nil
+	}
+	out := make([]dataentryconfig.ChannelProperty, 0, len(mt.Properties))
+	for _, p := range mt.Properties {
+		out = append(out, dataentryconfig.ChannelProperty{Name: p.Name, Type: string(p.Type), Required: p.Required})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	return out
+}

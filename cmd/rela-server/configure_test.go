@@ -550,3 +550,22 @@ func TestConfigure_RealtimeAgainstCandidateSchema(t *testing.T) {
 	require.Contains(t, verr.Problems[0], "realtime.yaml")
 	require.Same(t, first, srv.cur.Load())
 }
+
+// TestConfigure_ChannelsAgainstRealtime pins that the Configure preview
+// checks data-entry.yaml's channels: section against realtime.yaml.
+func TestConfigure_ChannelsAgainstRealtime(t *testing.T) {
+	srv, dir := configServer(t)
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "realtime.yaml"), []byte(cfgRealtime), 0o644))
+	host := configureHost{s: srv}
+
+	ok := cfgDataEntry + "channels:\n  room:\n    messages:\n      note:\n        fields: [{ property: state }]\n"
+	_, err := host.Validate([]byte(cfgSchema), []byte(ok))
+	require.NoError(t, err)
+
+	bad := cfgDataEntry + "channels:\n  room:\n    messages:\n      note:\n        fields: [{ property: nope }]\n"
+	_, err = host.Validate([]byte(cfgSchema), []byte(bad))
+	var verr *configedit.ValidationError
+	require.ErrorAs(t, err, &verr)
+	require.Len(t, verr.Problems, 1)
+	require.Contains(t, verr.Problems[0], `data-entry.yaml: channels.room.messages.note.fields[0]: message type note declares no property "nope"`)
+}

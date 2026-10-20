@@ -77,6 +77,7 @@ func wireMessage(m realtime.MessageView) v1.Message {
 		Seq: m.Seq, Rev: m.Rev, Type: m.Type, Author: wireChannelAuthor(m.Author), At: channelTime(m.At),
 		Props: wireProps(m.Props), ReplyTo: m.ReplyTo, ReplyCount: m.ReplyCount, EditedAt: channelTime(m.EditedAt),
 		TriggeredBy: m.TriggeredBy, Actions: m.Actions,
+		EditUntil: channelTime(m.EditUntil), ReleaseAfter: channelTime(m.ReleaseAfter),
 	}
 	if m.Removed != nil {
 		out.Removed = &v1.MessageRemoval{

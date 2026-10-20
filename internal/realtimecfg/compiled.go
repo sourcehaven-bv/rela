@@ -319,6 +319,26 @@ const (
 	LifecycleDelete  = "delete"
 )
 
+// Message operation names. A message's `_actions` lists them next to the
+// names of its actions, so no action may take one (see [MessageOpNames]).
+const (
+	// MessageOpEdit edits the reader's own message (edit_own).
+	MessageOpEdit = "edit"
+	// MessageOpDelete deletes the reader's own message without a reason
+	// (delete_own).
+	MessageOpDelete = "delete"
+	// MessageOpRemove removes any message with a reason (remove).
+	MessageOpRemove = "remove"
+	// MessageOpRelease releases a message's pending action.
+	MessageOpRelease = "release"
+)
+
+// MessageOpNames returns every message operation name, sorted. They are
+// reserved: an action may not take one.
+func MessageOpNames() []string {
+	return []string{MessageOpDelete, MessageOpEdit, MessageOpRelease, MessageOpRemove}
+}
+
 // LifecycleOpNames returns every lifecycle operation name, in the order a
 // listing of operations uses.
 func LifecycleOpNames() []string {

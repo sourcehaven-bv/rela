@@ -55,6 +55,8 @@ type call struct {
 	promoteChecks map[string]error
 	// actionGates caches the gate answer per message type and action.
 	actionGates map[string]bool
+	// ops caches the message operation gates; see [opGates].
+	ops opGates
 }
 
 // begin captures the per-operation state: one config snapshot, one Access
@@ -403,18 +405,30 @@ func roleLabel(r realtimecfg.Role) string {
 // channel type: they may remove any message, and see who removed one and
 // why. Every renderer and the delete path decide it here.
 func (c *call) moderator() bool {
-	ops := c.ct.MessageOps
-	return ops.Remove != nil && c.requireCaller() == nil && c.gate(ops.Remove.Gate)
+	return memo(&c.ops.moderator, func() bool {
+		ops := c.ct.MessageOps
+		return ops.Remove != nil && c.requireCaller() == nil && c.gate(ops.Remove.Gate)
+	})
 }
 
-// mayPost reports whether the caller holds a post role of mt.
+// mayPost reports whether the caller holds a post role of mt, asked once
+// per message type and call.
 func (c *call) mayPost(mt *realtimecfg.MessageType) bool {
+	if ok, seen := c.ops.post[mt.Name]; seen {
+		return ok
+	}
+	ok := false
 	for _, name := range mt.Post {
-		if r, ok := c.ct.Roles[name]; ok && c.can(r, realtimecfg.CapabilityUpdate) {
-			return true
+		if r, found := c.ct.Roles[name]; found && c.can(r, realtimecfg.CapabilityUpdate) {
+			ok = true
+			break
 		}
 	}
-	return false
+	if c.ops.post == nil {
+		c.ops.post = map[string]bool{}
+	}
+	c.ops.post[mt.Name] = ok
+	return ok
 }
 
 func postDenied(ct realtimecfg.ChannelType, mt *realtimecfg.MessageType) *DenialError {

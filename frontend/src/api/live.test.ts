@@ -1,7 +1,14 @@
 import { describe, it, expect, beforeEach } from 'vitest'
 import { registerEntityPlurals } from './entities'
 import { api } from './client'
-import { liveEntityPath, liveListPath, livePresencePath, liveViewPath } from './live'
+import {
+  liveChannelPath,
+  liveChannelsPath,
+  liveEntityPath,
+  liveListPath,
+  livePresencePath,
+  liveViewPath,
+} from './live'
 
 // A subscription must name the request the page actually made, so each
 // helper is checked against what the API client itself would send.
@@ -43,5 +50,21 @@ describe('live subscription paths', () => {
     expect(livePresencePath('ticket', 'TKT-1@draft', 'pub')).toBe(
       '/api/v1/tickets/TKT-1@draft/_presence?world=pub'
     )
+  })
+
+  it('builds channel list and channel paths', () => {
+    const anchor = { type: 'ticket', address: 'TKT-1@draft', world: 'main' }
+    expect(liveChannelsPath({ type: 'ticket', address: 'TKT-1' })).toBe(
+      '/api/v1/tickets/TKT-1/_channels'
+    )
+    expect(liveChannelsPath(anchor, 'open')).toBe(
+      '/api/v1/tickets/TKT-1@draft/_channels?state=open&world=main'
+    )
+    expect(liveChannelPath({ ...anchor, channelType: 'room' })).toBe(
+      '/api/v1/tickets/TKT-1@draft/_channels/room?world=main'
+    )
+    expect(
+      liveChannelPath({ type: 'ticket', address: 'TKT-1', channelType: 'threads', name: 'x1' })
+    ).toBe('/api/v1/tickets/TKT-1/_channels/threads/x1')
   })
 })

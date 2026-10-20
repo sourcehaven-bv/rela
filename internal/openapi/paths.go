@@ -32,6 +32,7 @@ func (g *Generator) addSystemPaths(spec *Spec) {
 	}
 
 	g.addLeaseRoutes(spec)
+	addChannelSchemaPath(spec)
 
 	// The SSE stream and the git routes are left out: they are browser
 	// surfaces outside the non-browser CSRF exemption, so a generic client

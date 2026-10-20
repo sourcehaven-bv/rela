@@ -97,6 +97,7 @@ type rawLifecycle struct {
 }
 
 type rawLifecycleOp struct {
+	Label      string   `yaml:"label"`
 	Roles      []string `yaml:"roles"`
 	Permission string   `yaml:"permission"`
 	Condition  string   `yaml:"condition"`

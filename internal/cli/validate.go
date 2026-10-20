@@ -4,12 +4,16 @@ import (
 	"context"
 	stderrors "errors"
 	"fmt"
+	"io/fs"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 
+	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/analysis"
 	"github.com/Sourcehaven-BV/rela/internal/appbuild"
+	"github.com/Sourcehaven-BV/rela/internal/config"
 	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
 	"github.com/Sourcehaven-BV/rela/internal/errors"
 	"github.com/Sourcehaven-BV/rela/internal/lua"
@@ -17,6 +21,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/projectsetup"
 	"github.com/Sourcehaven-BV/rela/internal/schema"
 	"github.com/Sourcehaven-BV/rela/internal/script"
+	"github.com/Sourcehaven-BV/rela/internal/storage"
 )
 
 // metamodelAccessor is the narrow consumer-side interface validate
@@ -82,6 +87,7 @@ func (c *ValidateCmd) Run(ctx context.Context) error {
 		fmt.Println("  ✓ schema is valid")
 	}
 	hasErrors = reportDataEntryValidation(result, hasErrors)
+	hasErrors = reportChannelsValidation(ctx, result, hasErrors)
 	for _, item := range []struct {
 		name string
 		err  error
@@ -559,6 +565,49 @@ func parseValidationFilter(filterStr string, meta metamodelAccessor) (analysis.V
 		return analysis.ValidationFilter{}, fmt.Errorf("unknown validation rule: %s", filterStr)
 	}
 	return analysis.ValidationFilter{RuleName: filterStr}, nil
+}
+
+// reportChannelsValidation checks data-entry.yaml's `channels:` section
+// against realtime.yaml. It loads only realtime.yaml, compiled against the
+// schema the earlier check loaded and acl.yaml, as Configure's write check
+// does; it builds no store or index. A realtime.yaml or acl.yaml that does
+// not load is a ✗ line, so the checks after this one still run. It runs
+// only after every earlier check passed, and skips a file without the
+// section. It returns hasErrors, set when the check failed.
+func reportChannelsValidation(ctx context.Context, result *projectsetup.ValidateResult, hasErrors bool) bool {
+	if !result.DataEntryValid || hasErrors || result.Metamodel == nil {
+		return hasErrors
+	}
+	root := result.ProjectRoot
+	// #nosec G703 -- path is <discovered project root>/data-entry.yaml, which
+	// the data-entry check above has already read.
+	data, err := os.ReadFile(filepath.Join(root, dataentryconfig.ConfigFile))
+	// An unreadable file was already reported by the data-entry check.
+	if err != nil || !projectsetup.HasChannels(data) {
+		return hasErrors
+	}
+	policy, err := acl.LoadPolicy(filepath.Join(root, "acl.yaml"))
+	if err != nil && !stderrors.Is(err, fs.ErrNotExist) {
+		fmt.Printf("  ✗ channels presentation: acl.yaml: %v\n", err)
+		return true
+	}
+	loader := config.NewFSLoader(storage.NewSafeFS(storage.NewOsFS()), root)
+	rt, err := appbuild.LoadRealtime(ctx, loader, result.Metamodel, policy)
+	if err != nil {
+		fmt.Printf("  ✗ channels presentation: %v\n", err)
+		return true
+	}
+	errs, warnings := projectsetup.CheckChannels(data, appbuild.RealtimeChannelSchema(rt))
+	for _, w := range warnings {
+		fmt.Printf("  ⚠ %s\n", w)
+	}
+	for _, e := range errs {
+		fmt.Printf("  ✗ %s: %s\n", dataentryconfig.ConfigFile, e)
+	}
+	if len(errs) == 0 && !quiet {
+		fmt.Println("  ✓ channels presentation matches realtime.yaml")
+	}
+	return len(errs) > 0
 }
 
 func reportDataEntryValidation(result *projectsetup.ValidateResult, hasErrors bool) bool {

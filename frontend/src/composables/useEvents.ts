@@ -28,12 +28,29 @@ export interface EntityEventData {
 }
 
 /**
- * Payload of a `config-error` SSE event: a data-entry.yaml reload was rejected
- * and the server keeps serving the previous config (TKT-IMBOK).
+ * Payload of a `config-error` SSE event: a reload of `file` was rejected and
+ * the server keeps serving its previous version (TKT-IMBOK). `applied` names
+ * a file the same reload did put in force: realtime.yaml was applied, and
+ * data-entry.yaml then did not load against it.
  */
 export interface ConfigErrorData {
   file: string
   error: string
+  applied?: string
+}
+
+/** The toast text for a config-error frame. */
+export function configErrorMessage(data: Partial<ConfigErrorData>): string {
+  const error = typeof data.error === 'string' ? data.error : ''
+  const file = typeof data.file === 'string' ? data.file : ''
+  const detail = error ? ` ${file ? `${file}: ${error}` : error}` : ''
+  if (typeof data.applied === 'string' && data.applied) {
+    return (
+      `${data.applied} was applied, but ${file || 'the configuration'} does not load against it; ` +
+      `the previous ${file || 'version'} is still in use.${detail}`
+    )
+  }
+  return `Configuration not reloaded; the previous version is still in use.${detail}`
 }
 
 export interface SSEConnectionState {
@@ -76,8 +93,9 @@ const eventHandlers: Map<SSEEventType, Set<EventHandler>> = new Map()
  *
  * Events:
  * - refresh: Files changed, full reload needed
- * - config-error: A config reload was rejected (data: {file, error}); the
- *   previous config is still in use, so the page state stays valid.
+ * - config-error: A config reload was rejected (data: {file, error,
+ *   applied?}); the previous version of file is still in use, so the page
+ *   state stays valid. applied names a file the same reload put in force.
  * - git / git:status: Git status changed
  * - entity:changed: Entities of a type changed (data: {type}); create, update,
  *   and delete all collapse to this — the client invalidates by type and
@@ -189,18 +207,13 @@ export function useEvents() {
       // A rejected config reload. Nothing to invalidate: the server kept the
       // previous config, so tell the user why their edit did not apply.
       eventSource.addEventListener('config-error', (event: MessageEvent) => {
-        let detail = ''
+        let data: Partial<ConfigErrorData> = {}
         try {
-          const data = JSON.parse(event.data) as Partial<ConfigErrorData>
-          if (typeof data.error === 'string') {
-            detail = typeof data.file === 'string' ? `${data.file}: ${data.error}` : data.error
-          }
+          data = JSON.parse(event.data) as Partial<ConfigErrorData>
         } catch {
           console.warn('Failed to parse config-error event data')
         }
-        uiStore.error(
-          `Configuration not reloaded; the previous version is still in use.${detail ? ` ${detail}` : ''}`
-        )
+        uiStore.error(configErrorMessage(data))
       })
 
       // A Configure save switched the configuration (TKT-F5NGMG). The server

@@ -73,9 +73,16 @@ type MessageView struct {
 	// TriggeredBy names the trigger that posted the message, as
 	// "trigger:<name>"; empty for a message a person or agent posted.
 	TriggeredBy string `json:"triggered_by,omitempty"`
-	// Actions lists the actions the reader may run on the message now,
-	// sorted. Nil when there are none.
+	// Actions lists what the reader may do with the message now, sorted:
+	// the message's actions and the operations [OpEdit], [OpDelete],
+	// [OpRemove] and [OpRelease]. Nil when there is nothing.
 	Actions []string `json:"_actions,omitempty"`
+	// EditUntil and ReleaseAfter are when Actions changes by itself: edit
+	// is offered until EditUntil, and release is offered from ReleaseAfter.
+	// Each is set only when that change is the next one for this reader
+	// (see [call.messageDeadlines]); zero otherwise.
+	EditUntil    time.Time `json:"edit_until,omitzero"`
+	ReleaseAfter time.Time `json:"release_after,omitzero"`
 }
 
 // EphemeralView is one live signal.
@@ -232,7 +239,8 @@ func (r *renderer) message(m channels.Message) MessageView {
 		v.Action = av
 	}
 	if r.call != nil {
-		v.Actions = r.call.offeredActions(m)
+		v.Actions = r.call.messageActions(m)
+		v.EditUntil, v.ReleaseAfter = r.call.messageDeadlines(m, v.Actions)
 	}
 	return v
 }

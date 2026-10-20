@@ -236,6 +236,12 @@ forms:                     # Create/edit form definitions
     entity_type: task
     ...
 
+channels:                  # Optional: how channel messages are presented
+  channel_type:
+    messages:
+      message_type:
+        fields: [...]
+
 lists:                     # List view definitions
   list_name:
     entity_type: task
@@ -1175,6 +1181,90 @@ Notes:
 - Approving a `confirm` sends the triggering change and the clear in a **single**
   request, so the entity is never briefly left in a state the user did not
   approve.
+
+## Channels
+
+The `channels:` block says how the web app presents the messages of the
+channel types in `realtime.yaml`: the order of the fields in the composer
+and under a message, their labels, and their widgets. `realtime.yaml` stays
+the source of the structure, such as property types and which properties
+are required. This block only presents it, as `forms:` does for entities.
+
+The block is optional. Without it, the composer lists the required
+properties first and then the others by name, and labels each with the
+property's `label` from `realtime.yaml`.
+
+```yaml
+channels:
+  incident-room:                 # a channel type in realtime.yaml
+    messages:
+      status-update:             # a message type of that channel type
+        fields:
+          - property: summary
+            label: What changed
+            placeholder: One line
+          - property: severity
+            widget: select
+            span: 6
+      text:
+        fields:
+          - property: body
+            label: Message
+            widget: textarea
+```
+
+`fields` is a list, in the order the composer shows the fields. A property
+you do not list follows the listed ones, required first and then by name.
+Each entry takes these keys of a form field (see Field Options):
+
+| Key | Meaning |
+| --- | --- |
+| `property` | A property of the message type. Required. |
+| `label` | The label. Without it, the property's `label` in `realtime.yaml` is used. |
+| `placeholder` | Placeholder text for an empty input. |
+| `help` | Help text below the field. |
+| `widget` | `text`, `textarea`, `number`, `checkbox`, `date`, `datetime` or `select`. It must suit the property type: `text` for `string`, `textarea` for `string` or `markdown`, `number` for `integer`, `checkbox` for `boolean`, `date` for `date`, `datetime` for `datetime`, and `select` for an enum. A `ref` property takes no widget; it always gets an entity picker. |
+| `span` | Width on the 12-column grid, 1 to 12. Omit it for full width. |
+| `hidden` | Leaves the field out of the composer. When the author edits a message, the field keeps its stored value. |
+
+Labels are authored, never derived, as everywhere else in this file.
+
+An edit sends every property of the message, not only the ones the
+composer shows. A `hidden` field, or a value a trigger set, is sent back
+as stored, so editing a message never erases it. A `ref` the author can no
+longer read is left out of the edit, and the server keeps it as stored.
+
+The server refuses the file when the block:
+
+- names a channel type, message type or property that `realtime.yaml` does
+  not declare;
+- uses a form field key a composer has no behaviour for: `required`,
+  `required_when`, `visible_when`, `transitions`, `default`,
+  `keep_on_add_another` or `clear_when_hidden`. `required` comes from
+  `realtime.yaml`;
+- hides a required property, because the composer could then never send
+  it;
+- lists a property twice, or gives a widget that does not suit the
+  property type.
+
+Without `realtime.yaml`, realtime is off and the block has no effect. The
+server then logs a warning instead of refusing the file, so you can add the
+block before you turn realtime on.
+
+The two files are checked against each other whenever either changes. A
+`data-entry.yaml` reload that breaks the block is refused. After a
+`realtime.yaml` reload, the server reads `data-entry.yaml` from disk again
+and checks it against the new file. If that check fails, the new
+`realtime.yaml` is still applied, because realtime itself is valid, the
+previous `data-entry.yaml` keeps working, and open browsers get a
+`config-error` event that names `data-entry.yaml` and says `realtime.yaml`
+was applied. `rela validate` and the Configure space run the same check.
+
+The block is served in `GET /api/v1/_config` as `channels`, next to `forms`.
+The structure the composer needs, such as property types and labels, comes
+from `GET /api/v1/_schema/channels` (see the realtime guide). A page that
+shows channels reads both again on a `refresh` event, so a change to
+either file reaches it without a page reload.
 
 ## Lists
 

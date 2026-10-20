@@ -200,7 +200,7 @@ func budgetRef(i int) string {
 }
 
 // messagesCost is what a page of n messages costs alice under yaml. Every
-// message must offer want as its actions.
+// message must offer want as its actions, next to the message operations.
 func messagesCost(t *testing.T, n int, yaml string, want []string) channelCost {
 	t.Helper()
 	b := newChannelBudgetWith(t, n, yaml)
@@ -242,8 +242,12 @@ func messagesCost(t *testing.T, n int, yaml string, want []string) channelCost {
 		}
 	}
 	for _, m := range page.Messages {
-		if !slices.Equal(m.Actions, want) {
-			t.Fatalf("message %d: _actions = %v, want %v", m.Seq, m.Actions, want)
+		// alice wrote every message: she may delete and edit each, also
+		// one whose ref she cannot read (the edit keeps it).
+		rowWant := append(slices.Clone(want), realtime.OpDelete, realtime.OpEdit)
+		slices.Sort(rowWant)
+		if !slices.Equal(m.Actions, rowWant) {
+			t.Fatalf("message %d: _actions = %v, want %v", m.Seq, m.Actions, rowWant)
 		}
 	}
 	return got

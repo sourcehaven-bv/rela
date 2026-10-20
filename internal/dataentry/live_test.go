@@ -189,7 +189,7 @@ func changedKeys(t *testing.T, c *sseClient, n int) []string {
 	for len(keys) < n {
 		f := c.next(t)
 		switch f.event {
-		case "entity:changed":
+		case "entity:changed", "refresh":
 		case "live:changed":
 			keys = append(keys, frameData(t, f)["key"])
 		default:

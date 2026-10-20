@@ -302,3 +302,24 @@ entities:
 		}
 	})
 }
+
+// TestCheckChannels pins that only a non-empty channels: section is checked,
+// and that realtime off makes it a warning.
+func TestCheckChannels(t *testing.T) {
+	for _, data := range []string{"", "version: \"1.0\"\n", "channels: {}\n", "channels: [broken"} {
+		if projectsetup.HasChannels([]byte(data)) {
+			t.Errorf("HasChannels(%q) = true", data)
+		}
+		if errs, warnings := projectsetup.CheckChannels([]byte(data), nil); errs != nil || warnings != nil {
+			t.Errorf("CheckChannels(%q) = %v, %v", data, errs, warnings)
+		}
+	}
+	data := []byte("channels:\n  room: {}\n")
+	if !projectsetup.HasChannels(data) {
+		t.Fatal("HasChannels missed the section")
+	}
+	errs, warnings := projectsetup.CheckChannels(data, nil)
+	if len(errs) != 0 || len(warnings) != 1 {
+		t.Fatalf("realtime off: errs %v, warnings %v", errs, warnings)
+	}
+}

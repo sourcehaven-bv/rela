@@ -15,6 +15,12 @@ export interface Config {
   styles?: Record<string, Record<string, string>>
   palette?: ResolvedPalette
   forms: Record<string, FormConfig>
+  /**
+   * How the channel composer and messages present the message types of
+   * realtime.yaml, keyed by channel type (TKT-91BK6F). Absent without a
+   * `channels:` section.
+   */
+  channels?: Record<string, ChannelPresentation>
   lists: Record<string, ListConfig>
   views: Record<string, ViewConfig>
   /**
@@ -182,6 +188,21 @@ export interface FormField {
    * span, so an author learns the model once.
    */
   span?: number
+}
+
+/**
+ * A channel message field: the [FormField] keys a composer has behaviour
+ * for. The server refuses every other key at load.
+ */
+export type ChannelField = Pick<
+  FormField,
+  'property' | 'label' | 'placeholder' | 'help' | 'widget' | 'span' | 'hidden'
+>
+
+/** One `channels.<channel type>` entry of data-entry.yaml. */
+export interface ChannelPresentation {
+  /** Keyed by message type. */
+  messages?: Record<string, { fields?: ChannelField[] }>
 }
 
 export interface RelationProperty {
