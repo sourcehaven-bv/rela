@@ -13,6 +13,7 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/channels"
+	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/realtime"
 )
@@ -297,6 +298,8 @@ func (f reloaderFunc) Reload(context.Context) error {
 	f()
 	return nil
 }
+
+func (reloaderFunc) ChannelSchema() dataentryconfig.ChannelSchema { return nil }
 
 // A topic round replays a presence subscription on a changed face and a
 // channel subscription on a changed topic, or every channel subscription

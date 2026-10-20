@@ -1,0 +1,158 @@
+{
+  "Channel": [
+    "anchor",
+    "archived_at",
+    "closed_at",
+    "created_at",
+    "created_by",
+    "last_seq",
+    "name",
+    "rev",
+    "state",
+    "title",
+    "type"
+  ],
+  "ChannelActionSchema": [
+    "label",
+    "name",
+    "promote_to"
+  ],
+  "ChannelActions": [
+    "delete_own",
+    "edit_own",
+    "lifecycle",
+    "post",
+    "remove"
+  ],
+  "ChannelAuthor": [
+    "principal_type",
+    "system",
+    "tool",
+    "user"
+  ],
+  "ChannelHead": [
+    "_actions",
+    "channel",
+    "ephemeral",
+    "last"
+  ],
+  "ChannelLifecycleSchema": [
+    "label",
+    "name"
+  ],
+  "ChannelList": [
+    "anchor",
+    "types"
+  ],
+  "ChannelMessageTypeSchema": [
+    "actions",
+    "label",
+    "name",
+    "persist",
+    "properties",
+    "reply",
+    "ttl_seconds"
+  ],
+  "ChannelPropertySchema": [
+    "enum",
+    "label",
+    "max",
+    "name",
+    "required",
+    "to",
+    "type",
+    "values"
+  ],
+  "ChannelSchema": [
+    "channel_types"
+  ],
+  "ChannelTypeList": [
+    "cardinality",
+    "channels",
+    "create",
+    "label",
+    "type"
+  ],
+  "ChannelTypeSchema": [
+    "anchor",
+    "attach_to",
+    "cardinality",
+    "create_label",
+    "label",
+    "lifecycle",
+    "message_types",
+    "name",
+    "remove_reason_required"
+  ],
+  "CreateChannelRequest": [
+    "title"
+  ],
+  "EditMessageRequest": [
+    "props"
+  ],
+  "EphemeralAccepted": [
+    "expires_at",
+    "id"
+  ],
+  "EphemeralMessage": [
+    "at",
+    "author",
+    "expires_at",
+    "id",
+    "props",
+    "type"
+  ],
+  "Message": [
+    "_actions",
+    "action",
+    "at",
+    "author",
+    "edited_at",
+    "props",
+    "removed",
+    "reply_count",
+    "reply_to",
+    "rev",
+    "seq",
+    "triggered_by",
+    "type"
+  ],
+  "MessageAction": [
+    "at",
+    "name",
+    "promoted",
+    "status"
+  ],
+  "MessageActionResponse": [
+    "message",
+    "warnings"
+  ],
+  "MessagePage": [
+    "channel",
+    "has_more",
+    "messages",
+    "next_after",
+    "next_after_rev",
+    "next_before"
+  ],
+  "MessageRemoval": [
+    "at",
+    "by",
+    "kind",
+    "reason"
+  ],
+  "PostMessageRequest": [
+    "props",
+    "reply_to",
+    "type"
+  ],
+  "RefProp": [
+    "id",
+    "restricted",
+    "title",
+    "type"
+  ],
+  "RemoveMessageRequest": [
+    "reason"
+  ]
+}

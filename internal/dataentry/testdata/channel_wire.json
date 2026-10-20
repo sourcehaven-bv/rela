@@ -1,0 +1,297 @@
+{
+  "head": {
+    "_actions": {
+      "delete_own": true,
+      "edit_own": true,
+      "lifecycle": [
+        "close"
+      ],
+      "post": [
+        "text",
+        "typing"
+      ],
+      "remove": false
+    },
+    "channel": {
+      "anchor": "TKT-1",
+      "created_at": "2026-01-02T03:04:05Z",
+      "created_by": {
+        "tool": "data-entry",
+        "user": "alice"
+      },
+      "last_seq": 1,
+      "rev": 1,
+      "state": "open",
+      "type": "room"
+    },
+    "ephemeral": [],
+    "last": {
+      "_actions": [
+        "ack",
+        "delete",
+        "edit"
+      ],
+      "at": "2026-01-02T03:04:05Z",
+      "author": {
+        "tool": "data-entry",
+        "user": "alice"
+      },
+      "props": {
+        "body": "hello"
+      },
+      "rev": 1,
+      "seq": 1,
+      "type": "text"
+    }
+  },
+  "list": {
+    "anchor": "TKT-1",
+    "types": [
+      {
+        "cardinality": "one",
+        "channels": [
+          {
+            "anchor": "TKT-1",
+            "created_at": "2026-01-02T03:04:05Z",
+            "created_by": {
+              "tool": "data-entry",
+              "user": "alice"
+            },
+            "last_seq": 1,
+            "rev": 1,
+            "state": "open",
+            "type": "room"
+          }
+        ],
+        "create": false,
+        "label": "Room",
+        "type": "room"
+      },
+      {
+        "cardinality": "many",
+        "channels": [],
+        "create": true,
+        "label": "threads",
+        "type": "threads"
+      },
+      {
+        "cardinality": "many",
+        "channels": [],
+        "create": false,
+        "label": "topics",
+        "type": "topics"
+      }
+    ]
+  },
+  "messages": {
+    "channel": {
+      "anchor": "TKT-1",
+      "created_at": "2026-01-02T03:04:05Z",
+      "created_by": {
+        "tool": "data-entry",
+        "user": "alice"
+      },
+      "last_seq": 1,
+      "rev": 1,
+      "state": "open",
+      "type": "room"
+    },
+    "has_more": false,
+    "messages": [
+      {
+        "_actions": [
+          "ack",
+          "delete",
+          "edit"
+        ],
+        "at": "2026-01-02T03:04:05Z",
+        "author": {
+          "tool": "data-entry",
+          "user": "alice"
+        },
+        "props": {
+          "body": "hello"
+        },
+        "rev": 1,
+        "seq": 1,
+        "type": "text"
+      }
+    ],
+    "next_after_rev": 1,
+    "next_before": 1
+  },
+  "schema": {
+    "channel_types": [
+      {
+        "anchor": "family",
+        "attach_to": [
+          "ticket",
+          "feature"
+        ],
+        "cardinality": "one",
+        "label": "Room",
+        "lifecycle": [
+          {
+            "label": "close",
+            "name": "close"
+          },
+          {
+            "label": "reopen",
+            "name": "reopen"
+          },
+          {
+            "label": "delete",
+            "name": "delete"
+          }
+        ],
+        "message_types": [
+          {
+            "actions": [],
+            "label": "announce",
+            "name": "announce",
+            "persist": "log",
+            "properties": [
+              {
+                "label": "body",
+                "name": "body",
+                "type": "string"
+              }
+            ],
+            "reply": true
+          },
+          {
+            "actions": [
+              {
+                "label": "accept",
+                "name": "accept",
+                "promote_to": "ticket"
+              },
+              {
+                "label": "ack",
+                "name": "ack"
+              }
+            ],
+            "label": "text",
+            "name": "text",
+            "persist": "log",
+            "properties": [
+              {
+                "label": "body",
+                "name": "body",
+                "required": true,
+                "type": "string"
+              },
+              {
+                "label": "about",
+                "name": "about",
+                "to": [
+                  "ticket",
+                  "feature"
+                ],
+                "type": "ref"
+              }
+            ],
+            "reply": true
+          },
+          {
+            "actions": [],
+            "label": "typing",
+            "name": "typing",
+            "persist": "ephemeral",
+            "properties": [],
+            "reply": false,
+            "ttl_seconds": 5
+          }
+        ],
+        "name": "room",
+        "remove_reason_required": false
+      },
+      {
+        "anchor": "family",
+        "attach_to": [
+          "ticket"
+        ],
+        "cardinality": "one",
+        "label": "secret",
+        "lifecycle": [],
+        "message_types": [
+          {
+            "actions": [],
+            "label": "text",
+            "name": "text",
+            "persist": "log",
+            "properties": [
+              {
+                "label": "body",
+                "name": "body",
+                "type": "string"
+              }
+            ],
+            "reply": true
+          }
+        ],
+        "name": "secret",
+        "remove_reason_required": false
+      },
+      {
+        "anchor": "family",
+        "attach_to": [
+          "ticket"
+        ],
+        "cardinality": "many",
+        "label": "threads",
+        "lifecycle": [
+          {
+            "label": "delete",
+            "name": "delete"
+          }
+        ],
+        "message_types": [
+          {
+            "actions": [],
+            "label": "text",
+            "name": "text",
+            "persist": "log",
+            "properties": [
+              {
+                "label": "body",
+                "name": "body",
+                "type": "string"
+              }
+            ],
+            "reply": true
+          }
+        ],
+        "name": "threads",
+        "remove_reason_required": false
+      },
+      {
+        "anchor": "family",
+        "attach_to": [
+          "ticket"
+        ],
+        "cardinality": "many",
+        "label": "topics",
+        "lifecycle": [],
+        "message_types": [
+          {
+            "actions": [],
+            "label": "text",
+            "name": "text",
+            "persist": "log",
+            "properties": [
+              {
+                "label": "body",
+                "name": "body",
+                "type": "string"
+              }
+            ],
+            "reply": true
+          }
+        ],
+        "name": "topics",
+        "remove_reason_required": false
+      }
+    ]
+  }
+}

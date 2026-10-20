@@ -331,6 +331,9 @@ func (a *App) reloadConfig() error {
 		return reject(&configError{public: configReadFailedMessage, err: err})
 	}
 	cfg, err := loadConfig(cfgData, meta, a.paths.Root, a.cfgLoader)
+	if err == nil {
+		err = checkChannelsPresentation(cfg, a.realtime)
+	}
 	if err != nil {
 		return reject(&configError{public: publicConfigErrorMessage(err, a.paths.Root), err: err})
 	}

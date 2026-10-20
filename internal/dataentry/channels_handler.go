@@ -100,6 +100,8 @@ type channelsHandler struct {
 	on realtimeSwitch
 	// changes subscribes the live worker to channel changes.
 	changes func() channelChanges
+	// describe serves `GET /api/v1/_schema/channels`.
+	describe channelDescriber
 }
 
 // SetChannels installs the channel service and describes its routes in the
@@ -114,13 +116,23 @@ func SetChannels(a *App, svc *realtime.Service) error {
 	}
 	a.channels = &channelsHandler{
 		read: svc, messageOps: svc, actions: svc, channels: svc,
-		on:      svc,
-		changes: func() channelChanges { return svc.Subscribe() },
+		on:       svc,
+		changes:  func() channelChanges { return svc.Subscribe() },
+		describe: svc,
 	}
 	if st := a.State(); st != nil && st.OpenAPIGen != nil {
 		st.OpenAPIGen.SetRealtime(svc.Config)
 	}
 	return nil
+}
+
+// describer returns what describes the channel types, or nil when
+// channels are not wired.
+func (h *channelsHandler) describer() channelDescriber {
+	if h == nil {
+		return nil
+	}
+	return h.describe
 }
 
 // wakeSource returns the channel change subscription the live worker

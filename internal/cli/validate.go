@@ -5,6 +5,7 @@ import (
 	stderrors "errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 
@@ -82,6 +83,9 @@ func (c *ValidateCmd) Run(ctx context.Context) error {
 		fmt.Println("  ✓ schema is valid")
 	}
 	hasErrors = reportDataEntryValidation(result, hasErrors)
+	if hasErrors, err = reportChannelsValidation(ctx, result, hasErrors); err != nil {
+		return err
+	}
 	for _, item := range []struct {
 		name string
 		err  error
@@ -559,6 +563,43 @@ func parseValidationFilter(filterStr string, meta metamodelAccessor) (analysis.V
 		return analysis.ValidationFilter{}, fmt.Errorf("unknown validation rule: %s", filterStr)
 	}
 	return analysis.ValidationFilter{RuleName: filterStr}, nil
+}
+
+// reportChannelsValidation checks data-entry.yaml's `channels:` section
+// against realtime.yaml, which needs the project's realtime configuration
+// built. It runs only after every earlier check passed, and skips a file
+// without the section. It returns hasErrors, set when the check failed.
+func reportChannelsValidation(
+	_ context.Context, result *projectsetup.ValidateResult, hasErrors bool,
+) (bool, error) {
+	if !result.DataEntryValid || hasErrors {
+		return hasErrors, nil
+	}
+	root := result.ProjectRoot
+	// #nosec G703 -- path is <discovered project root>/data-entry.yaml, which
+	// the data-entry check above has already read.
+	data, err := os.ReadFile(filepath.Join(root, dataentryconfig.ConfigFile))
+	// An unreadable file was already reported by the data-entry check.
+	if err != nil || !projectsetup.HasChannels(data) {
+		return hasErrors, nil
+	}
+	//nolint:contextcheck // appbuild.Discover does not take ctx; matches the entity-check path
+	svc, err := appbuild.Discover(root, script.NewEngine())
+	if err != nil {
+		return hasErrors, fmt.Errorf("validate data-entry.yaml channels: %w", err)
+	}
+	defer svc.Close()
+	errs, warnings := projectsetup.CheckChannels(data, appbuild.Realtime(svc).ChannelSchema())
+	for _, w := range warnings {
+		fmt.Printf("  ⚠ %s\n", w)
+	}
+	for _, e := range errs {
+		fmt.Printf("  ✗ %s: %s\n", dataentryconfig.ConfigFile, e)
+	}
+	if len(errs) == 0 && !quiet {
+		fmt.Println("  ✓ channels presentation matches realtime.yaml")
+	}
+	return len(errs) > 0, nil
 }
 
 func reportDataEntryValidation(result *projectsetup.ValidateResult, hasErrors bool) bool {

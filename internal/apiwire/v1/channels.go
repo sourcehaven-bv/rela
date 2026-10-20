@@ -109,9 +109,14 @@ type MessageAction struct {
 
 // Message is one stored message. A removed message keeps only seq, rev,
 // reply_to, reply_count and removed. Props holds the properties the
-// message type declares; a ref property is a [RefProp]. Actions lists the
-// actions the reader may run on the message now; the POST to
-// `messages/{seq}/_action/{name}` answers the same.
+// message type declares; a ref property is a [RefProp]. Actions lists,
+// sorted, what the reader may do with the message now: the message
+// type's actions (`POST messages/{seq}/_action/{name}`) and the
+// operations edit (`PATCH messages/{seq}`), delete (the author's
+// `DELETE messages/{seq}`), remove (a moderator's DELETE with a reason)
+// and release (`DELETE messages/{seq}/_action`). Edit is left out while a
+// ref property renders as restricted. Every operation is authorized
+// again.
 type Message struct {
 	Seq         int64           `json:"seq"`
 	Rev         int64           `json:"rev"`
@@ -195,4 +200,74 @@ type RemoveMessageRequest struct {
 // for a channel type with cardinality many. The server mints the name.
 type CreateChannelRequest struct {
 	Title string `json:"title,omitempty"`
+}
+
+// ChannelSchema is the `GET /api/v1/_schema/channels` answer: every channel
+// type realtime.yaml declares, sorted by name, with the message types and
+// labels a client needs to render and compose messages. It is the same for
+// every principal, because the configuration is not a secret; what a caller
+// may do is in each channel's `_actions`. With realtime off ChannelTypes
+// is empty.
+type ChannelSchema struct {
+	ChannelTypes []ChannelTypeSchema `json:"channel_types"`
+}
+
+// ChannelTypeSchema describes one channel type. Anchor is "family" or
+// "face"; CreateLabel is the label of create, set only for a cardinality
+// many type that names one. Lifecycle lists the declared operations in
+// the order close, reopen, archive, delete.
+type ChannelTypeSchema struct {
+	Name                 string                     `json:"name"`
+	Label                string                     `json:"label"`
+	AttachTo             []string                   `json:"attach_to"`
+	Anchor               string                     `json:"anchor"`
+	Cardinality          string                     `json:"cardinality"`
+	CreateLabel          string                     `json:"create_label,omitempty"`
+	RemoveReasonRequired bool                       `json:"remove_reason_required"`
+	Lifecycle            []ChannelLifecycleSchema   `json:"lifecycle"`
+	MessageTypes         []ChannelMessageTypeSchema `json:"message_types"`
+}
+
+// ChannelLifecycleSchema is a declared lifecycle operation and its label.
+type ChannelLifecycleSchema struct {
+	Name  string `json:"name"`
+	Label string `json:"label"`
+}
+
+// ChannelMessageTypeSchema describes one message type. Persist is "log"
+// or "ephemeral"; TTLSeconds is set for an ephemeral type; Reply reports
+// whether a message of the type may reply to another. Properties come
+// required first, then by name.
+type ChannelMessageTypeSchema struct {
+	Name       string                  `json:"name"`
+	Label      string                  `json:"label"`
+	Persist    string                  `json:"persist"`
+	TTLSeconds int                     `json:"ttl_seconds,omitempty"`
+	Reply      bool                    `json:"reply"`
+	Properties []ChannelPropertySchema `json:"properties"`
+	Actions    []ChannelActionSchema   `json:"actions"`
+}
+
+// ChannelPropertySchema describes one message property. Type is string,
+// markdown, integer, boolean, date, datetime, ref or enum. Max is the most
+// characters (Unicode code points) a string or markdown value may hold.
+// Enum names the schema.yaml enum type and Values its values; To lists the
+// entity types a ref may name.
+type ChannelPropertySchema struct {
+	Name     string   `json:"name"`
+	Label    string   `json:"label"`
+	Type     string   `json:"type"`
+	Required bool     `json:"required,omitempty"`
+	Max      int      `json:"max,omitempty"`
+	Enum     string   `json:"enum,omitempty"`
+	Values   []string `json:"values,omitempty"`
+	To       []string `json:"to,omitempty"`
+}
+
+// ChannelActionSchema describes one message action. PromoteTo is the
+// entity type a promoting action creates.
+type ChannelActionSchema struct {
+	Name      string `json:"name"`
+	Label     string `json:"label"`
+	PromoteTo string `json:"promote_to,omitempty"`
 }

@@ -106,6 +106,7 @@ var routerWalkProbes = []routerWalkProbe{
 	{http.MethodGet, "/api/v1/_schema/types", "/api/v1/_schema/types", http.StatusOK, ""},
 	{http.MethodGet, "/api/v1/_schema/types/{type}", "/api/v1/_schema/types/ticket", http.StatusOK, ""},
 	{http.MethodGet, "/api/v1/_schema/relations", "/api/v1/_schema/relations", http.StatusOK, ""},
+	{http.MethodGet, "/api/v1/_schema/channels", "/api/v1/_schema/channels", http.StatusOK, ""},
 	{http.MethodGet, "/api/v1/_config", "/api/v1/_config", http.StatusOK, ""},
 	{http.MethodGet, "/api/v1/_me", "/api/v1/_me", http.StatusOK, ""},
 	{http.MethodGet, "/api/v1/_configure", "/api/v1/_configure", http.StatusNotFound, ""},

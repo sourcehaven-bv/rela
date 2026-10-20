@@ -266,3 +266,29 @@ func fileExists(path string, fs storage.FS) (bool, error) {
 	}
 	return false, err
 }
+
+// CheckChannels checks data-entry.yaml's `channels:` section against the
+// realtime configuration schema describes (nil: realtime off). A file
+// that does not parse is left to [CheckDataEntry].
+func CheckChannels(data []byte, schema dataentryconfig.ChannelSchema) (errs, warnings []string) {
+	cfg, ok := channelsSection(data)
+	if !ok {
+		return nil, nil
+	}
+	return dataentryconfig.ValidateChannels(cfg, schema)
+}
+
+// HasChannels reports whether data-entry.yaml content has a non-empty
+// `channels:` section.
+func HasChannels(data []byte) bool {
+	_, ok := channelsSection(data)
+	return ok
+}
+
+func channelsSection(data []byte) (*dataentryconfig.Config, bool) {
+	var cfg dataentryconfig.Config
+	if err := yaml.Unmarshal(data, &cfg); err != nil || len(cfg.Channels) == 0 {
+		return nil, false
+	}
+	return &cfg, true
+}

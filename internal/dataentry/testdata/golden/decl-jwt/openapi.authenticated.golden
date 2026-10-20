@@ -317,6 +317,38 @@ body:
         }
       }
     },
+    "/api/v1/_schema/channels": {
+      "get": {
+        "operationId": "getChannelSchema",
+        "summary": "Describe the channel types",
+        "description": "Every channel type realtime.yaml declares, with its message types, properties, actions and labels. The answer is the same for every caller; what you may do in a channel is in its `_actions`. With realtime off the list is empty.",
+        "tags": [
+          "System"
+        ],
+        "responses": {
+          "200": {
+            "description": "The channel types",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChannelSchema"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid credential",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/persons": {
       "summary": "Collection of Person entities",
       "get": {
@@ -6937,6 +6969,199 @@ body:
           "size",
           "contentType",
           "href"
+        ]
+      },
+      "ChannelSchema": {
+        "type": "object",
+        "properties": {
+          "channel_types": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "anchor": {
+                  "type": "string",
+                  "enum": [
+                    "family",
+                    "face"
+                  ]
+                },
+                "attach_to": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "cardinality": {
+                  "type": "string",
+                  "enum": [
+                    "one",
+                    "many"
+                  ]
+                },
+                "create_label": {
+                  "type": "string"
+                },
+                "label": {
+                  "type": "string"
+                },
+                "lifecycle": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "label": {
+                        "type": "string"
+                      },
+                      "name": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "name",
+                      "label"
+                    ]
+                  },
+                  "description": "The declared lifecycle operations, in the order close, reopen, archive, delete"
+                },
+                "message_types": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "actions": {
+                        "type": "array",
+                        "items": {
+                          "type": "object",
+                          "properties": {
+                            "label": {
+                              "type": "string"
+                            },
+                            "name": {
+                              "type": "string"
+                            },
+                            "promote_to": {
+                              "type": "string",
+                              "description": "The entity type a promoting action creates"
+                            }
+                          },
+                          "required": [
+                            "name",
+                            "label"
+                          ]
+                        }
+                      },
+                      "label": {
+                        "type": "string"
+                      },
+                      "name": {
+                        "type": "string"
+                      },
+                      "persist": {
+                        "type": "string",
+                        "enum": [
+                          "log",
+                          "ephemeral"
+                        ]
+                      },
+                      "properties": {
+                        "type": "array",
+                        "items": {
+                          "type": "object",
+                          "properties": {
+                            "enum": {
+                              "type": "string",
+                              "description": "The schema.yaml enum type of an enum property"
+                            },
+                            "label": {
+                              "type": "string"
+                            },
+                            "max": {
+                              "type": "integer",
+                              "description": "Most characters (Unicode code points) of a string or markdown value"
+                            },
+                            "name": {
+                              "type": "string"
+                            },
+                            "required": {
+                              "type": "boolean"
+                            },
+                            "to": {
+                              "type": "array",
+                              "items": {
+                                "type": "string"
+                              },
+                              "description": "Entity types a ref property may name"
+                            },
+                            "type": {
+                              "type": "string",
+                              "enum": [
+                                "string",
+                                "markdown",
+                                "integer",
+                                "boolean",
+                                "date",
+                                "datetime",
+                                "ref",
+                                "enum"
+                              ]
+                            },
+                            "values": {
+                              "type": "array",
+                              "items": {
+                                "type": "string"
+                              }
+                            }
+                          },
+                          "required": [
+                            "name",
+                            "label",
+                            "type"
+                          ]
+                        },
+                        "description": "Required first, then by name"
+                      },
+                      "reply": {
+                        "type": "boolean",
+                        "description": "Whether a message of the type may reply to another"
+                      },
+                      "ttl_seconds": {
+                        "type": "integer",
+                        "description": "How long an ephemeral message lives"
+                      }
+                    },
+                    "required": [
+                      "name",
+                      "label",
+                      "persist",
+                      "reply",
+                      "properties",
+                      "actions"
+                    ]
+                  }
+                },
+                "name": {
+                  "type": "string"
+                },
+                "remove_reason_required": {
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "name",
+                "label",
+                "attach_to",
+                "anchor",
+                "cardinality",
+                "remove_reason_required",
+                "lifecycle",
+                "message_types"
+              ]
+            }
+          }
+        },
+        "required": [
+          "channel_types"
         ]
       },
       "Config": {

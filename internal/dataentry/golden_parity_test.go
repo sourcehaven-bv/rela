@@ -261,6 +261,7 @@ var goldenReads = []goldenEndpoint{
 	{slug: "schema-type", method: http.MethodGet, path: "/api/v1/_schema/types/ticket", principalFree: true},
 	{slug: "schema-types", method: http.MethodGet, path: "/api/v1/_schema/types", principalFree: true},
 	{slug: "schema-relations", method: http.MethodGet, path: "/api/v1/_schema/relations", principalFree: true},
+	{slug: "schema-channels", method: http.MethodGet, path: "/api/v1/_schema/channels", principalFree: true},
 	{slug: "config", method: http.MethodGet, path: "/api/v1/_config", principalFree: true},
 	{slug: "configure", method: http.MethodGet, path: "/api/v1/_configure", principalFree: true},
 	{slug: "configure-key", method: http.MethodGet, path: "/api/v1/_configure/acl", principalFree: true},

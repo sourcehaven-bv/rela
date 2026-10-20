@@ -1724,6 +1724,9 @@ func (a *App) handleV1SchemaRoutes(w http.ResponseWriter, r *http.Request) {
 	case path == "relations":
 		writeV1JSON(w, http.StatusOK, s.Meta.Relations)
 
+	case path == "channels":
+		serveChannelSchema(w, r, a.channels.describer())
+
 	default:
 		writeV1Error(w, r, http.StatusNotFound, "not_found", "Resource not found", "")
 	}
@@ -1964,6 +1967,7 @@ func (a *App) handleV1Config(w http.ResponseWriter, r *http.Request) {
 		AboutDescription: aboutDescription(s),
 		Styles:           s.StyleMap,
 		Forms:            forms,
+		Channels:         s.Cfg.Channels,
 		Lists:            resolveListDirections(s, s.Cfg.Lists),
 		Views:            s.Cfg.Views,
 		EntityViews:      s.Cfg.EntityViews,

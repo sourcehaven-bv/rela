@@ -25,7 +25,77 @@ const (
 	ephemeralAccSchema = "EphemeralAccepted"
 	channelAuthorRef   = "ChannelAuthor"
 	actionAnswerSchema = "MessageActionResponse"
+	descriptorSchema   = "ChannelSchema"
 )
+
+// addChannelSchemaPath adds `GET /api/v1/_schema/channels`. The route
+// exists whether realtime is on or not, so it is always documented; with
+// realtime off it lists no channel type.
+func addChannelSchemaPath(spec *Spec) {
+	spec.Paths["/api/v1/_schema/channels"] = PathItem{
+		Get: &Operation{
+			OperationID: "getChannelSchema",
+			Summary:     "Describe the channel types",
+			Description: "Every channel type realtime.yaml declares, with its message types, properties, " +
+				"actions and labels. The answer is the same for every caller; what you may do in a channel " +
+				"is in its `_actions`. With realtime off the list is empty.",
+			Tags: []string{"System"},
+			Responses: map[string]Response{
+				"200": {
+					Description: "The channel types",
+					Content:     map[string]MediaType{"application/json": {Schema: Ref(descriptorSchema)}},
+				},
+			},
+		},
+	}
+	addChannelDescriptorSchema(spec)
+}
+
+// addChannelDescriptorSchema adds the ChannelSchema component.
+func addChannelDescriptorSchema(spec *Spec) {
+	str, b := StringSchema, BooleanSchema
+	labeled := func(extra map[string]*Schema) *Schema {
+		props := map[string]*Schema{"name": str(), "label": str()}
+		maps.Copy(props, extra)
+		return ObjectSchema(props, []string{"name", "label"})
+	}
+	property := labeled(map[string]*Schema{
+		"type": {Type: "string", Enum: []string{
+			"string", "markdown", "integer", "boolean", "date", "datetime", "ref", "enum",
+		}},
+		"required": b(),
+		"max":      {Type: "integer", Description: "Most characters (Unicode code points) of a string or markdown value"},
+		"enum":     {Type: "string", Description: "The schema.yaml enum type of an enum property"},
+		"values":   ArraySchema(str()),
+		"to":       {Type: "array", Items: str(), Description: "Entity types a ref property may name"},
+	})
+	property.Required = append(property.Required, "type")
+	messageType := labeled(map[string]*Schema{
+		"persist":     {Type: "string", Enum: []string{"log", "ephemeral"}},
+		"ttl_seconds": {Type: "integer", Description: "How long an ephemeral message lives"},
+		"reply":       {Type: "boolean", Description: "Whether a message of the type may reply to another"},
+		"properties":  {Type: "array", Items: property, Description: "Required first, then by name"},
+		"actions": ArraySchema(labeled(map[string]*Schema{
+			"promote_to": {Type: "string", Description: "The entity type a promoting action creates"},
+		})),
+	})
+	messageType.Required = append(messageType.Required, "persist", "reply", "properties", "actions")
+	channelType := labeled(map[string]*Schema{
+		"attach_to":              ArraySchema(str()),
+		"anchor":                 {Type: "string", Enum: []string{"family", "face"}},
+		"cardinality":            {Type: "string", Enum: []string{"one", "many"}},
+		"create_label":           str(),
+		"remove_reason_required": b(),
+		"lifecycle": {Type: "array", Items: labeled(nil),
+			Description: "The declared lifecycle operations, in the order close, reopen, archive, delete"},
+		"message_types": ArraySchema(messageType),
+	})
+	channelType.Required = append(channelType.Required,
+		"attach_to", "anchor", "cardinality", "remove_reason_required", "lifecycle", "message_types")
+	spec.Components.Schemas[descriptorSchema] = ObjectSchema(map[string]*Schema{
+		"channel_types": ArraySchema(channelType),
+	}, []string{"channel_types"})
+}
 
 // addChannelPaths adds the channel routes of every entity type in
 // entityTypes that some channel type of rt attaches to, and the shared
@@ -441,7 +511,9 @@ func addChannelSchemas(spec *Spec) {
 				"at": dateTimeSchema(), "promoted": Ref(refPropSchema),
 			}, []string{"name", "status", "at"}),
 			"_actions": {Type: "array", Items: str(),
-				Description: "The actions you may run on the message now"},
+				Description: "What you may do with the message now, sorted: its actions, and the operations " +
+					"edit (PATCH), delete (your own, DELETE), remove (a moderator's DELETE with a reason) and " +
+					"release (DELETE …/_action). Edit is left out while a ref property is restricted to you."},
 		},
 		Required: []string{"seq", "rev"},
 	}

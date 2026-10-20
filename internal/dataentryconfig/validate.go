@@ -48,6 +48,7 @@ var validTopLevelKeys = map[string]bool{
 	"next_actions":      true,
 	"account":           true,
 	"piles":             true,
+	"channels":          true,
 }
 
 // Known typos with suggestions
@@ -525,6 +526,7 @@ func ValidateConfig(data []byte, cfg *Config, meta *metamodel.Metamodel) error {
 	errs = append(errs, validateNavEntities(cfg, meta)...)
 	errs = append(errs, validateAccount(data, cfg, meta)...)
 	errs = append(errs, validatePiles(data, cfg, meta)...)
+	errs = append(errs, validateChannelsShape(data, cfg)...)
 	errs = append(errs, validateCrossReferences(cfg)...)
 
 	if len(errs) > 0 {
