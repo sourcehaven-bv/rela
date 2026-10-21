@@ -64,14 +64,7 @@ type Config struct {
 	EntitiesKey    string
 	RelationsKey   string
 	AttachmentsKey string
-	CacheKey       string // for fsstore-index.json
-	// IgnoreIndexCache scans the entity and relation directories on open
-	// instead of trusting fsstore-index.json. The cache is trusted when the
-	// directory mtimes match, which a copied or hand-edited tree can satisfy
-	// while its files differ; a caller that must see exactly what is on disk
-	// (`rela db import-fs`) sets this. The cache is then neither read nor
-	// written; CacheKey still locates the pending-deletes list.
-	IgnoreIndexCache bool
+	CacheKey       string // for pending-deletes.json and mentions-index.json
 	// Schemas maps every entity type the metamodel declares to its
 	// storage-relevant configuration (plural directory name + property
 	// order). fsstore relies on this map being complete: directories
@@ -227,9 +220,8 @@ type FSStore struct {
 	codec mdCodec
 
 	// Keys (root-relative forward-slash) for the non-layout subtrees.
-	attachKey        string
-	cacheKey         string
-	ignoreIndexCache bool
+	attachKey string
+	cacheKey  string
 
 	// txMu serializes an open Tx against ordinary writers: Tx holds it
 	// for the whole callback, every exported write method takes it
@@ -332,7 +324,6 @@ func New(cfg Config) (*FSStore, error) {
 		codec:              mdCodec{rooted: cfg.Rooted, layout: layout},
 		attachKey:          cfg.AttachmentsKey,
 		cacheKey:           cfg.CacheKey,
-		ignoreIndexCache:   cfg.IgnoreIndexCache,
 		observers:          cfg.Observers,
 		entities:           make(map[string]entityMeta),
 		relations:          make(map[string]relationMeta),
@@ -559,9 +550,9 @@ func (s *FSStore) cleanupTempFiles() {
 // uses (storeutil.SortedInsertFunc / SortedRemoveFunc with
 // storeutil.CompareStateKeys).
 //
-// The index CONSTRUCTION paths must use the same comparator as the
-// mutation paths or the slice is sorted one way and binary-searched
-// another: SortedRemoveFunc then misses a key that is present and
+// The index construction path (scanEntityDirs) must use the same
+// comparator as the mutation paths or the slice is sorted one way and
+// binary-searched another: SortedRemoveFunc then misses a key that is present and
 // panics, on the ordinary default-world delete path after any process
 // restart. Plain sortStrings is wrong here because '@' (0x40) sorts
 // after the digits (0x30-0x39), so PAGE-10's family lands inside

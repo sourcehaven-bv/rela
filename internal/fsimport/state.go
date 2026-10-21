@@ -42,7 +42,7 @@ var relaSkipped = map[string]string{
 	"piles.json":              "personal piles; not project data",
 	"documents/":              "rendered-document cache; rebuilt on demand",
 	"search/":                 "search index; rebuilt on first open",
-	"fsstore-index.json":      "filesystem index cache",
+	"fsstore-index.json":      "index cache left by older versions",
 	"pending-deletes.json":    "undoable deletes are not imported",
 	"migration.lock":          "lock file",
 	"scheduler-run-children/": "progress of scheduler runs in flight; not resumed",

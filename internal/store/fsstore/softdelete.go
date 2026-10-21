@@ -414,22 +414,12 @@ func revealedRelations(ctx context.Context, s *FSStore, match func(*entity.Relat
 	return out
 }
 
-// markedEntityMetas and markedRelationMetas list what the marked families
-// hold, so the persisted index keeps describing every file on disk.
+// markedEntityMetas lists the entities the marked families hold. Their
+// files are still on disk.
 func markedEntityMetas(s *FSStore) []entityMeta {
 	var out []entityMeta
 	for _, fam := range s.marked {
 		out = append(out, fam.entities...)
-	}
-	return out
-}
-
-func markedRelationMetas(s *FSStore) []relationMeta {
-	var out []relationMeta
-	for _, fam := range s.marked {
-		for _, rm := range fam.relations {
-			out = append(out, rm)
-		}
 	}
 	return out
 }

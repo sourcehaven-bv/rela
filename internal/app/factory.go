@@ -7,7 +7,6 @@ package app
 import (
 	"errors"
 	"fmt"
-	"io/fs"
 
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/project"
@@ -33,9 +32,9 @@ type FSFactory struct {
 	FS    storage.FS
 	Paths *project.Context
 
-	// ReadOnly opens the store over a [storage.ReadOnlyFS] and ignores the
-	// persisted index cache, so opening, reading and closing leave the
-	// project directory byte-identical. Every write through the store fails.
+	// ReadOnly opens the store over a [storage.ReadOnlyFS], so opening,
+	// reading and closing leave the project directory byte-identical. Every
+	// write through the store fails.
 	ReadOnly bool
 
 	observers []store.EntityObserver
@@ -78,37 +77,20 @@ func (f *FSFactory) OpenStore(meta *metamodel.Metamodel) (store.Store, error) {
 		return nil, fmt.Errorf("app: rooted fs for fsstore: %w", err)
 	}
 	return fsstore.New(fsstore.Config{
-		FS:               fsys,
-		Rooted:           rooted,
-		EntitiesKey:      "entities",
-		RelationsKey:     "relations",
-		AttachmentsKey:   "attachments",
-		CacheKey:         storeCacheKey,
-		IgnoreIndexCache: f.ReadOnly,
-		Schemas:          buildSchemas(meta),
-		Observers:        f.observers,
+		FS:             fsys,
+		Rooted:         rooted,
+		EntitiesKey:    "entities",
+		RelationsKey:   "relations",
+		AttachmentsKey: "attachments",
+		CacheKey:       storeCacheKey,
+		Schemas:        buildSchemas(meta),
+		Observers:      f.observers,
 	})
 }
 
 // storeCacheKey is the directory, relative to the project root, that holds
-// the store's persisted index.
+// the store's pending deletes and mention index.
 const storeCacheKey = ".rela"
-
-// DropStoreIndex removes the store's persisted index, so the next store
-// opened over the project scans the files. A store persists its index when
-// it closes, stamped with the folder times at that moment, so a store that
-// closes after another store wrote files it never saw leaves an index that
-// looks fresh and omits them.
-func (f *FSFactory) DropStoreIndex() error {
-	rooted, err := storage.NewRootedFS(f.FS, f.Paths.Root)
-	if err != nil {
-		return err
-	}
-	if err := rooted.Remove(fsstore.IndexKey(storeCacheKey)); err != nil && !errors.Is(err, fs.ErrNotExist) {
-		return err
-	}
-	return nil
-}
 
 // buildSchemas translates metamodel entity-type definitions into the
 // store-facing EntityTypeSchema map used by fsstore. Plural is always

@@ -47,9 +47,9 @@ func (s *FSStore) emit(ev store.Event) {
 	}
 }
 
-// Close shuts down the store, persists the index, closes all subscriber
-// channels, and uninstalls the self-echo recorder from the FS so a
-// store that outlives this one on the same FS is the only one fed.
+// Close shuts down the store, closes all subscriber channels, and
+// uninstalls the self-echo recorder from the FS so a store that outlives
+// this one on the same FS is the only one fed.
 func (s *FSStore) Close() error {
 	s.StopWatching()
 	if s.unwireEchoes != nil {
@@ -58,8 +58,6 @@ func (s *FSStore) Close() error {
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
-
-	_ = s.savePersistedIndex()
 
 	for id, ch := range s.subscribers {
 		close(ch)

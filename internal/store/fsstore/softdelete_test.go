@@ -48,15 +48,15 @@ func assertStillMarked(t *testing.T, s *fsstore.FSStore) {
 	assert.Equal(t, "alice", marked[0].DeletedBy)
 }
 
-// A mark must survive a restart, whether the next open restores the cached
-// index (clean Close) or rescans the directories (no Close, as after a crash).
+// A mark must survive a restart, after a clean Close or after none (as after
+// a crash).
 func TestSoftDelete_SurvivesReopen(t *testing.T) {
 	for _, tc := range []struct {
 		name  string
 		close bool
 	}{
-		{name: "cached index", close: true},
-		{name: "rescan", close: false},
+		{name: "clean close", close: true},
+		{name: "no close", close: false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			ctx := context.Background()
@@ -127,15 +127,15 @@ func TestSoftDelete_StaleEntryIsDropped(t *testing.T) {
 }
 
 // A hidden edge dropped by a hard delete of its other end stays dropped after
-// a restart: its file is gone, so neither the cached index nor a rescan can
-// bring it back.
+// a restart: its file is gone, so the scan on the next open cannot bring it
+// back.
 func TestSoftDelete_DroppedEdgeStaysDroppedAfterReopen(t *testing.T) {
 	for _, tc := range []struct {
 		name  string
 		close bool
 	}{
-		{name: "cached index", close: true},
-		{name: "rescan", close: false},
+		{name: "clean close", close: true},
+		{name: "no close", close: false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			ctx := context.Background()
