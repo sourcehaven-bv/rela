@@ -13,6 +13,30 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/store/memstore"
 )
 
+// copyVisibilityMeta and copyVisibilityPolicy hide person.salary from bob.
+// They are local because the field-redaction fixtures are excluded from the
+// database and memory builds, and this test runs in every build.
+const copyVisibilityMeta = `version: "1.0"
+entities:
+  person:
+    label: Person
+    id_prefix: "PERS-"
+    properties:
+      name: {type: string}
+      salary: {type: string}
+relations: {}
+`
+
+const copyVisibilityPolicy = `roles:
+  viewer:
+    read: ["*"]
+    visible:
+      person:
+        - field: name
+assignments:
+  bob: viewer
+`
+
 // TestCopyVisibility_NamesHiddenFieldsWithoutValues pins what the task-item
 // converter relies on in the wired copy reader: a hidden field is named in
 // Redacted whether or not the row stores a value for it. The converter
@@ -22,11 +46,11 @@ import (
 // tests use a fake reader, so only this test sees the production one.
 func TestCopyVisibility_NamesHiddenFieldsWithoutValues(t *testing.T) {
 	t.Parallel()
-	meta, err := metamodel.Parse([]byte(redactionMetamodel))
+	meta, err := metamodel.Parse([]byte(copyVisibilityMeta))
 	if err != nil {
 		t.Fatalf("metamodel.Parse: %v", err)
 	}
-	policy, err := acl.ParsePolicy([]byte(redactionPolicy), "acl.yaml")
+	policy, err := acl.ParsePolicy([]byte(copyVisibilityPolicy), "acl.yaml")
 	if err != nil {
 		t.Fatalf("ParsePolicy: %v", err)
 	}
