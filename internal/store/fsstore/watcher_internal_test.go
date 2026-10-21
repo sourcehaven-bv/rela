@@ -207,6 +207,25 @@ func TestNonMarkdownPathIgnored(t *testing.T) {
 	assert.Empty(t, drainEvents(ch))
 }
 
+// A SafeFS temp file holds complete entity markdown just before its
+// rename; the watcher must not read it as an entity.
+func TestTempFileEventIgnored(t *testing.T) {
+	s, fs := newTestStore(t)
+
+	ch, cancel := s.Subscribe(16)
+	defer cancel()
+
+	tmp := storage.TempPath("/entities/tickets/T-1.md")
+	require.NoError(t, fs.MkdirAll("/entities/tickets", 0o755))
+	require.NoError(t, fs.WriteFileExternal(tmp, []byte("---\nid: T-1\ntype: ticket\n---\n"), 0o644))
+
+	s.handleExternalEvents([]storage.ChangeEvent{{Path: tmp, Op: storage.OpCreate}})
+
+	assert.Empty(t, drainEvents(ch))
+	_, err := s.GetEntity(context.Background(), entity.Ref{ID: "T-1"})
+	assert.ErrorIs(t, err, store.ErrNotFound)
+}
+
 func TestOutsideWatchedDirsIgnored(t *testing.T) {
 	s, fs := newTestStore(t)
 

@@ -2,14 +2,13 @@ package fsstore
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"io"
 	"maps"
 	"os"
 	"path"
 
+	"github.com/Sourcehaven-BV/rela/internal/storage"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/store/storeutil"
 )
@@ -24,12 +23,6 @@ import (
 // If an attachment already exists at this (entityID, property) under a
 // different filename, the old file is removed first (1:1 ownership per
 // property).
-// attachTempPrefix marks an in-progress attachment temp file. A real
-// stored attachment name can never start with a dot (store.NormalizeFileName
-// trims leading dots), so this prefix is collision-proof; the index loader
-// skips files carrying it.
-const attachTempPrefix = ".rela-attach-tmp-"
-
 // attachmentKey is the per-file index key: (entityID, property, fileName).
 func attachmentKey(entityID, property, fileName string) string {
 	return entityID + "/" + property + "/" + fileName
@@ -69,15 +62,12 @@ func (s *FSStore) attachFile(_ context.Context, entityID, property, fileName str
 	// file — the old bytes and index entry stay intact until the new bytes
 	// are fully written.
 	//
-	// The temp name carries a leading-dot prefix (attachTempPrefix). A stored
-	// attachment name can never start with a dot — store.NormalizeFileName
-	// trims leading dots — so this marker can never collide with a real
-	// upload, and the index loader skips it by that prefix. (A plain ".new"
-	// suffix would clash with a legitimate upload literally named "x.new".)
-	// The rest is a fixed-length digest of the name, not the name itself, so
-	// a name at the 255-byte limit still has a temp name that fits.
-	sum := sha256.Sum256([]byte(fileName))
-	tmpKey := path.Join(dirKey, attachTempPrefix+hex.EncodeToString(sum[:8]))
+	// The temp name comes from storage.AttachTempName: a leading-dot prefix
+	// no real upload can carry, so the index loader can skip it (a plain
+	// ".new" suffix would clash with an upload literally named "x.new"),
+	// and a random part, so two processes uploading the same name never
+	// share a temp file.
+	tmpKey := path.Join(dirKey, storage.AttachTempName())
 	// Backstop size guard: cap reads at MaxAttachmentBytes so no caller can
 	// write an unbounded attachment (the API layer also caps at ingress).
 	n, err := s.writeAttachment(tmpKey, storeutil.LimitAttachmentReader(r))

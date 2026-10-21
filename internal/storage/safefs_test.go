@@ -81,11 +81,7 @@ func TestSafeFS_WriteFileNoTempLeftBehind(t *testing.T) {
 		t.Fatalf("WriteFile() error = %v", err)
 	}
 
-	// Check that .tmp file is cleaned up
-	tmpPath := path + ".tmp"
-	if _, err := os.Stat(tmpPath); err == nil {
-		t.Error("temp file should not exist after successful write")
-	}
+	assertNoTempFiles(t, dir)
 }
 
 func TestSafeFS_WriteFilePermissions(t *testing.T) {

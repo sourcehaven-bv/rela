@@ -24,7 +24,6 @@ import (
 	"os"
 	"path"
 	"slices"
-	"strings"
 	"sync"
 	"time"
 
@@ -412,21 +411,28 @@ func (s *FSStore) loadAttachmentsIndex() {
 
 // loadPropertyAttachments indexes every attachment file under one
 // entity/property directory. A property may hold multiple files; each is
-// keyed by (entityID, property, fileName). Leftover temp files from an
-// interrupted write (attachTempPrefix) are skipped — that marker can't
-// collide with a real attachment name (which never starts with a dot).
+// keyed by (entityID, property, fileName). Uploads in progress
+// ([storage.IsAttachTempName]) are never indexed; a stale one is the
+// leftover of a crash and is removed, by the same rule as
+// cleanupTempFiles. A fresh one may be another process's upload, so it
+// is left alone.
 // Must be called with s.mu held.
 func (s *FSStore) loadPropertyAttachments(entityID, prop string) {
-	fileEntries, err := s.rooted.ReadDir(path.Join(s.attachKey, entityID, prop))
+	dirKey := path.Join(s.attachKey, entityID, prop)
+	fileEntries, err := s.rooted.ReadDir(dirKey)
 	if err != nil {
 		return
 	}
+	now := time.Now()
 	for _, fileEntry := range fileEntries {
 		if fileEntry.IsDir() {
 			continue
 		}
 		name := fileEntry.Name()
-		if strings.HasPrefix(name, attachTempPrefix) {
+		if storage.IsAttachTempName(name) {
+			if info, infoErr := fileEntry.Info(); infoErr == nil && storage.IsStaleTemp(info.ModTime(), now) {
+				_ = s.rooted.Remove(path.Join(dirKey, name))
+			}
 			continue
 		}
 		info, err := fileEntry.Info()
@@ -515,11 +521,12 @@ func (s *FSStore) notifyRenamed(oldID string, renamed *entity.Entity) {
 }
 
 // cleanupTempFiles removes orphaned temp files left by interrupted
-// writes. Two suffixes are swept: ".new" (legacy direct fsstore
-// atomic-write) and ".tmp" (SafeFS atomic-write). Both are produced by
-// writeFile → rename paths and are never expected to survive a normal
-// process shutdown.
+// writes: names [storage.IsTempName] recognizes whose mtime is stale
+// ([storage.IsStaleTemp]). A fresh temp file may belong to another
+// process that shares the project and is between its write and its
+// rename, so it is left alone; a later open removes it once it is old.
 func (s *FSStore) cleanupTempFiles() {
+	now := time.Now()
 	for _, dirKey := range []string{s.layout.entitiesKey, s.layout.relationsKey} {
 		// coverage-ignore-start: unreachable: cleanupTempFiles runs only from New, which rejects empty
 		// EntitiesKey/RelationsKey before this loop
@@ -532,7 +539,10 @@ func (s *FSStore) cleanupTempFiles() {
 			if err != nil || d.IsDir() {
 				return nil //nolint:nilerr // walker continuation on error is intentional
 			}
-			if strings.HasSuffix(p, ".new") || strings.HasSuffix(p, ".tmp") {
+			if !storage.IsTempName(p) {
+				return nil
+			}
+			if info, infoErr := d.Info(); infoErr == nil && storage.IsStaleTemp(info.ModTime(), now) {
 				toRemove = append(toRemove, p)
 			}
 			return nil
