@@ -93,10 +93,15 @@ func openConcFSStore(t *testing.T) store.Store {
 		FS: fs, Rooted: rooted,
 		EntitiesKey: "entities", RelationsKey: "relations",
 		AttachmentsKey: "attachments", CacheKey: ".rela",
+		// Every type the tests over concBackends write: fsstore refuses
+		// an undeclared one.
 		Schemas: map[string]store.EntityTypeSchema{
-			"note":   {Plural: "notes"},
-			"person": {Plural: "persons"},
-			"policy": {Plural: "policies"},
+			"checklist": {Plural: "checklists"},
+			"control":   {Plural: "controls"},
+			"note":      {Plural: "notes"},
+			"person":    {Plural: "persons"},
+			"policy":    {Plural: "policies"},
+			"risk":      {Plural: "risks"},
 		},
 	})
 	require.NoError(t, err)

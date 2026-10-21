@@ -17,6 +17,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/store/fsstore"
 	"github.com/Sourcehaven-BV/rela/internal/store/memstore"
+	"github.com/Sourcehaven-BV/rela/internal/store/storetest"
 )
 
 func newStores() (store.Store, store.Store) {
@@ -33,15 +34,24 @@ func newStores() (store.Store, store.Store) {
 		RelationsKey:   "relations",
 		AttachmentsKey: "attachments",
 		CacheKey:       ".rela",
-		Schemas: map[string]store.EntityTypeSchema{
-			"a": {Plural: "as", PropertyOrder: []string{"x"}},
-			"b": {Plural: "bs", PropertyOrder: []string{"x"}},
-		},
+		Schemas:        differentialSchemas(),
 	})
 	if err != nil {
 		panic(err)
 	}
 	return mem, fss
+}
+
+// differentialSchemas declares the harness types, which include every type
+// this test writes. fsstore refuses a write of an undeclared type and
+// memstore accepts any type, so an undeclared one would show up as a
+// difference between the two stores.
+func differentialSchemas() map[string]store.EntityTypeSchema {
+	out := make(map[string]store.EntityTypeSchema)
+	for _, typ := range storetest.EntityTypes() {
+		out[typ] = store.EntityTypeSchema{Plural: typ + "s"}
+	}
+	return out
 }
 
 // collectEntities drains an entity iterator into a sorted slice.

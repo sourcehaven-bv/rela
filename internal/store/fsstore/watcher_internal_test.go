@@ -2,6 +2,8 @@ package fsstore
 
 import (
 	"context"
+	"path"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -26,6 +28,7 @@ func newTestStore(t *testing.T) (*FSStore, *storage.MemFS) {
 		Schemas: map[string]store.EntityTypeSchema{
 			"requirement": {Plural: "requirements", PropertyOrder: []string{"title", "status"}},
 			"solution":    {Plural: "solutions", PropertyOrder: []string{"title"}},
+			"ticket":      {Plural: "tickets"},
 		},
 	})
 	require.NoError(t, err)
@@ -71,6 +74,124 @@ func TestExternalCreateEmitsCreated(t *testing.T) {
 	e, err := s.GetEntity(context.Background(), entity.Ref{ID: "T-1"})
 	require.NoError(t, err)
 	assert.Equal(t, "ticket", e.Type)
+}
+
+// TestExternalFileOutsideItsTypeDirectoryIgnored pins that the watcher
+// indexes a file only when its directory belongs to a declared type and
+// that type matches the file's frontmatter (TKT-C2YVX1). Otherwise the
+// entity would be indexed under a type whose directory is elsewhere, and
+// reads and deletes would look for the file in the wrong place.
+func TestExternalFileOutsideItsTypeDirectoryIgnored(t *testing.T) {
+	tests := []struct {
+		name string
+		path string
+		body string
+	}{
+		{"undeclared directory", "/entities/riskregister/RSK-1.md", "---\nid: RSK-1\ntype: risk\n---\n"},
+		{"undeclared type in a declared directory", "/entities/requirements/RSK-2.md", "---\nid: RSK-2\ntype: risk\n---\n"},
+		{"declared type in another type's directory", "/entities/requirements/SOL-1.md", "---\nid: SOL-1\ntype: solution\n---\n"},
+		{"id that differs from the file name", "/entities/requirements/REQ-9.md", "---\nid: REQ-1\ntype: requirement\n---\n"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			s, fs := newTestStore(t)
+			ch, cancel := s.Subscribe(16)
+			defer cancel()
+			require.NoError(t, fs.MkdirAll(path.Dir(tc.path), 0o755))
+			require.NoError(t, fs.WriteFileExternal(tc.path, []byte(tc.body), 0o644))
+
+			s.handleExternalEvents([]storage.ChangeEvent{{Path: tc.path, Op: storage.OpCreate}})
+
+			assert.Empty(t, drainEvents(ch))
+			id := strings.TrimSuffix(path.Base(tc.path), ".md")
+			_, err := s.GetEntity(context.Background(), entity.Ref{ID: id})
+			require.ErrorIs(t, err, store.ErrNotFound)
+		})
+	}
+}
+
+// TestExternalStrayCopyLeavesIndexedEntity pins that a same-id file in
+// another declared type's directory changes nothing, neither when it
+// appears nor when it goes (TKT-C2YVX1). For a live id the index entry and
+// the mention index keep the real file's data. For a soft-deleted id the
+// family keeps the real file, so an unmark brings that one back.
+func TestExternalStrayCopyLeavesIndexedEntity(t *testing.T) {
+	const stray = "/entities/tickets/REQ-1.md"
+	addStray := func(t *testing.T, s *FSStore, fs *storage.MemFS) {
+		t.Helper()
+		require.NoError(t, fs.MkdirAll("/entities/tickets", 0o755))
+		require.NoError(t, fs.WriteFileExternal(stray,
+			[]byte("---\nid: REQ-1\ntype: ticket\n---\nSee `T-9`.\n"), 0o644))
+		s.handleExternalEvents([]storage.ChangeEvent{{Path: stray, Op: storage.OpCreate}})
+	}
+	removeStray := func(t *testing.T, s *FSStore, fs *storage.MemFS) {
+		t.Helper()
+		require.NoError(t, fs.Remove(stray))
+		s.handleExternalEvents([]storage.ChangeEvent{{Path: stray, Op: storage.OpDelete}})
+	}
+	newReq := func(t *testing.T, s *FSStore) {
+		t.Helper()
+		req := entity.New("REQ-1", "requirement")
+		req.Content = "See `SOL-1`.\n"
+		require.NoError(t, s.CreateEntity(context.Background(), req))
+	}
+	sources := func(t *testing.T, s *FSStore, target string) []entity.Ref {
+		t.Helper()
+		refs, err := s.MentionSources(context.Background(), target, entity.Ref{}, 10)
+		require.NoError(t, err)
+		return refs
+	}
+
+	t.Run("live", func(t *testing.T) {
+		s, fs := newTestStore(t)
+		ctx := context.Background()
+		newReq(t, s)
+		require.Equal(t, []entity.Ref{{ID: "REQ-1"}}, sources(t, s, "SOL-1"))
+		ch, cancel := s.Subscribe(16)
+		defer cancel()
+
+		addStray(t, s, fs)
+		assert.Equal(t, []entity.Ref{{ID: "REQ-1"}}, sources(t, s, "SOL-1"), "backlinks keep the real body")
+		assert.Empty(t, sources(t, s, "T-9"), "the stray's links are not indexed")
+		removeStray(t, s, fs)
+
+		assert.Empty(t, drainEvents(ch))
+		assert.Equal(t, []entity.Ref{{ID: "REQ-1"}}, sources(t, s, "SOL-1"))
+		got, err := s.GetEntity(ctx, entity.Ref{ID: "REQ-1"})
+		require.NoError(t, err, "the indexed entity survives its stray copy")
+		assert.Equal(t, "requirement", got.Type)
+	})
+	t.Run("soft-deleted", func(t *testing.T) {
+		s, fs := newTestStore(t)
+		ctx := context.Background()
+		newReq(t, s)
+		_, err := s.SoftDelete().MarkDeleted(ctx, "REQ-1", "tester")
+		require.NoError(t, err)
+
+		addStray(t, s, fs)
+		removeStray(t, s, fs)
+		_, err = s.SoftDelete().Unmark(ctx, "REQ-1")
+		require.NoError(t, err)
+		got, err := s.GetEntity(ctx, entity.Ref{ID: "REQ-1"})
+		require.NoError(t, err, "unmark brings back the real file")
+		assert.Equal(t, "requirement", got.Type)
+		assert.Equal(t, "See `SOL-1`.", got.Content)
+		assert.Equal(t, []entity.Ref{{ID: "REQ-1"}}, sources(t, s, "SOL-1"))
+	})
+	t.Run("soft-deleted, stray stays", func(t *testing.T) {
+		s, fs := newTestStore(t)
+		ctx := context.Background()
+		newReq(t, s)
+		_, err := s.SoftDelete().MarkDeleted(ctx, "REQ-1", "tester")
+		require.NoError(t, err)
+
+		addStray(t, s, fs)
+		_, err = s.SoftDelete().Unmark(ctx, "REQ-1")
+		require.NoError(t, err)
+		got, err := s.GetEntity(ctx, entity.Ref{ID: "REQ-1"})
+		require.NoError(t, err)
+		assert.Equal(t, "requirement", got.Type, "the stray did not replace the family's file")
+	})
 }
 
 func TestExternalUpdateEmitsUpdated(t *testing.T) {

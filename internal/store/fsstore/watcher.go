@@ -3,6 +3,7 @@ package fsstore
 import (
 	"errors"
 	"fmt"
+	"log/slog"
 	"path/filepath"
 	"strings"
 	"time"
@@ -215,17 +216,35 @@ func (s *FSStore) reconcileEntityPath(path string) {
 	if err != nil {
 		return
 	}
+	// The file must sit where reads look for it: in the directory of a
+	// declared type that matches its frontmatter, under a name whose id
+	// matches its frontmatter id. Otherwise the entity would be indexed
+	// with content from one file while reads and deletes use another, or
+	// none at all. The open scan does not index such files either.
+	stemID, ptr, dirType, ok := s.entityIdentityFromPath(path)
+	if !ok || dirType != e.Type || stemID != e.ID {
+		slog.Warn("fsstore: skipping entity file that is not at its own path",
+			"path", path, "type", e.Type, "id", e.ID, "directory_type", dirType, "file_id", stemID)
+		return
+	}
 	// The filename stem is authoritative for the face (TKT-DOFYR1):
 	// a state file's frontmatter carries only the bare id.
-	if _, ptr, _, ok := s.entityIdentityFromPath(path); ok {
-		e.Face = ptr
+	e.Face = ptr
+
+	meta := entityMeta{ID: e.ID, Type: e.Type, Face: e.Face}
+	// Before any side effect: a same-id file under another type must not
+	// reach the mention index, the soft-deleted family or the index.
+	if other, conflict := idOwnedElsewhere(s, path, meta); conflict {
+		slog.Warn("fsstore: skipping entity file whose id belongs to another type",
+			"path", path, "id", stateKey(e.ID, e.Face), "type", e.Type, "owner_type", other)
+		return
 	}
 
 	s.echoes.Recorded(path, rawData)
 	// Before the marked check: a soft-deleted family's edit must be indexed
 	// too, or an unmark would bring back the targets of the old body.
 	noteMentions(s, e)
-	if watchMarkedEntity(s, entityMeta{ID: e.ID, Type: e.Type, Face: e.Face}, false) {
+	if watchMarkedEntity(s, meta, false) {
 		return // soft-deleted: the edit stays hidden with its family
 	}
 
@@ -253,12 +272,22 @@ func (s *FSStore) handleEntityRemoval(path string) {
 	if !ok {
 		return
 	}
-	// The stem IS the state key ("id" or "id@face").
+	// The stem IS the state key ("id" or "id@face"). Only the removal
+	// of the entry's own file counts: a stray copy of the same name in
+	// another directory going away leaves the real file, and the entry.
 	meta, known := s.entities[stem]
 	if !known {
-		if id, face, err := entity.ParseStateRef(stem); err == nil {
-			watchMarkedEntity(s, entityMeta{ID: id, Face: face}, true)
+		id, face, dirType, ok := s.entityIdentityFromPath(path)
+		if !ok {
+			return
 		}
+		removed := entityMeta{ID: id, Type: dirType, Face: face}
+		if _, conflict := idOwnedElsewhere(s, path, removed); !conflict {
+			watchMarkedEntity(s, removed, true)
+		}
+		return
+	}
+	if !s.ownPath(path, meta) {
 		return
 	}
 
@@ -273,6 +302,30 @@ func (s *FSStore) handleEntityRemoval(path string) {
 		s.notifyLastFaceDelete(meta.ID)
 	}
 	s.emit(store.Event{Op: store.EventEntityDeleted, EntityType: meta.Type, EntityID: meta.ID, Face: meta.Face})
+}
+
+// idOwnedElsewhere reports whether meta's id belongs to an entity of
+// another type: a live entry stored at another path, or a soft-deleted
+// family holding another type. It returns that type. A file at path is
+// then a stray copy and must change nothing. Caller holds mu.
+func idOwnedElsewhere(s *FSStore, path string, meta entityMeta) (string, bool) {
+	if live, ok := s.entities[stateKey(meta.ID, meta.Face)]; ok && !s.ownPath(path, live) {
+		return live.Type, true
+	}
+	if fam, ok := markedFamilyOf(s, meta.ID); ok {
+		for _, m := range fam.entities {
+			if m.Type != meta.Type {
+				return m.Type, true
+			}
+		}
+	}
+	return "", false
+}
+
+// ownPath reports whether path is the file meta's entity is stored in.
+func (s *FSStore) ownPath(path string, meta entityMeta) bool {
+	own := s.layout.absPath(s.layout.entityFileKey(meta.Type, stateKey(meta.ID, meta.Face)))
+	return own != "" && filepath.Clean(own) == filepath.Clean(path)
 }
 
 // entityStemFromPath extracts the filename stem — the STATE KEY, "id"

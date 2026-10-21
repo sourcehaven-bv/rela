@@ -61,8 +61,38 @@ var _ store.Factory = (*FSFactory)(nil)
 // meta must be non-nil and declare at least one entity type — fsstore
 // rejects an empty Schemas map.
 func (f *FSFactory) OpenStore(meta *metamodel.Metamodel) (store.Store, error) {
+	st, err := f.open(meta)
+	if err != nil {
+		return nil, err
+	}
+	return st, nil
+}
+
+// OpenStoreWithSchemaRefresh is [FSFactory.OpenStore] that also returns a
+// function which applies a reloaded metamodel's entity types to the open
+// store. A host that rebuilds its services against the same store on a
+// schema change calls it, so the store writes the types the new schema
+// declares (see [fsstore.FSStore.SetSchemas]).
+func (f *FSFactory) OpenStoreWithSchemaRefresh(
+	meta *metamodel.Metamodel,
+) (store.Store, func(*metamodel.Metamodel) error, error) {
+	st, err := f.open(meta)
+	if err != nil {
+		return nil, nil, err
+	}
+	refresh := func(m *metamodel.Metamodel) error {
+		if m == nil {
+			return errors.New("app: schema refresh requires a non-nil metamodel")
+		}
+		return st.SetSchemas(buildSchemas(m))
+	}
+	return st, refresh, nil
+}
+
+// open constructs the fsstore both OpenStore variants return.
+func (f *FSFactory) open(meta *metamodel.Metamodel) (*fsstore.FSStore, error) {
 	if meta == nil {
-		return nil, errors.New("app: FSFactory.OpenStore requires a non-nil metamodel")
+		return nil, errors.New("app: FSFactory requires a non-nil metamodel")
 	}
 	fsys := f.FS
 	if f.ReadOnly {

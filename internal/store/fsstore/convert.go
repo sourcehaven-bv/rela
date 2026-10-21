@@ -34,7 +34,7 @@ func replaceEntityFamily(_ context.Context, s *FSStore, id string, replacements 
 	}
 	newRows := make([]*entity.Entity, 0, len(replacements))
 	for _, r := range replacements {
-		if _, ok := s.layout.schemas[r.Entity.Type]; !ok {
+		if !s.layout.declared(r.Entity.Type) {
 			return fmt.Errorf("%w: type %q is not declared", store.ErrInvalidFamilyReplacement, r.Entity.Type)
 		}
 		newRows = append(newRows, r.Entity.Clone())
