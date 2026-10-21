@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 
+	"github.com/Sourcehaven-BV/rela/internal/access"
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
 )
@@ -287,10 +288,28 @@ func (h *appearanceHandler) handleAPIGetSettings(w http.ResponseWriter, r *http.
 	writeJSON(w, data)
 }
 
+// maySaveSettings reports whether the request's principal may save the
+// create-form defaults. One set serves every principal, so under a policy
+// saving it needs [acl.PermSettingsEdit]; a read-only instance never saves.
+//
+//archplan:guard=authz reason="checks the settings:edit permission; read-only refuses"
+func (h *appearanceHandler) maySaveSettings(r *http.Request) bool {
+	ctx := r.Context()
+	return access.ModeOf(h.acl()).PermitsProjectWrite(ctx, readGateFromContext(ctx), acl.PermSettingsEdit)
+}
+
 // handleAPISaveSettings saves the user defaults from JSON input. The
 // settingsService persists and republishes atomically so concurrent readers
-// see a coherent snapshot.
+// see a coherent snapshot. A caller without [acl.PermSettingsEdit] gets a 403
+// that names the permission, before the body is read.
+//
+//archplan:auth=authz
 func (h *appearanceHandler) handleAPISaveSettings(w http.ResponseWriter, r *http.Request) {
+	if !h.maySaveSettings(r) {
+		writeV1Error(w, r, http.StatusForbidden, "forbidden", "Forbidden",
+			"Saving the default values needs the "+acl.PermSettingsEdit+" permission.")
+		return
+	}
 	var input APIUserDefaults
 	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
 		writeJSONError(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
@@ -344,6 +363,8 @@ func (h *appearanceHandler) handleAPIGetPalette(w http.ResponseWriter, _ *http.R
 }
 
 // handleAPISavePalette validates and saves the user palette.
+//
+//archplan:auth=required
 func (h *appearanceHandler) handleAPISavePalette(w http.ResponseWriter, r *http.Request) {
 	var input dataentryconfig.PaletteConfig
 	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {

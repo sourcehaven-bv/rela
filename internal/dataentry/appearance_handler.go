@@ -1,6 +1,7 @@
 package dataentry
 
 import (
+	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/visibility"
 )
 
@@ -35,6 +36,10 @@ type appearanceHandler struct {
 	// through, so an unreadable target is dropped and a hidden display
 	// property never leaks into a picker title (BUG-R9EHKV).
 	viewReader visibility.Reader
+	// acl reads the App's ACL per call, as affordanceService does, because
+	// tests swap it after construction. Saving the shared defaults is
+	// decided by its mode.
+	acl func() acl.ACL
 }
 
 // newAppearanceHandler wires the handler over the App's current
@@ -49,5 +54,6 @@ func newAppearanceHandler(app *App) *appearanceHandler {
 		palette:    app.palette,
 		settings:   app.settings,
 		viewReader: app.viewReader,
+		acl:        func() acl.ACL { return app.acl },
 	}
 }

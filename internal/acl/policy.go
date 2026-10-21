@@ -98,6 +98,17 @@ const (
 	// named permission, and a client ceiling never passes it on (see
 	// [permissionCeiling.permits]).
 	PermConfigEdit = "config:edit"
+
+	// PermGitSync permits committing the project's pending changes and
+	// pushing them to the git remote from the data-entry app. A sync commits
+	// every change in the working tree, not only the caller's own, so it is a
+	// project-wide capability rather than an entity verb.
+	PermGitSync = "git:sync"
+
+	// PermSettingsEdit permits saving the create-form defaults on the
+	// data-entry settings page. One set of defaults serves every principal,
+	// so changing it changes what everyone's new entities start with.
+	PermSettingsEdit = "settings:edit"
 )
 
 // mutatingCommentPerms are the comment permissions that require a covering
@@ -127,7 +138,7 @@ func BuiltinPermissions() []string {
 		PermCommentRead, PermCommentAdd,
 		PermCommentUpdateOwn, PermCommentUpdateAny,
 		PermCommentDeleteOwn, PermCommentDeleteAny,
-		PermConfigEdit,
+		PermConfigEdit, PermGitSync, PermSettingsEdit,
 	}
 }
 

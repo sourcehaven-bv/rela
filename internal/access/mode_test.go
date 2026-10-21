@@ -72,13 +72,15 @@ func TestMode_Decisions(t *testing.T) {
 		// gated UI and elevated read when the holder holds perm / does not
 		uiHeld, uiNotHeld, elevatedHeld, elevatedNotHeld bool
 		reveal, configured, refusesWrites                bool
+		// project write when the holder holds perm / does not
+		projectHeld, projectNotHeld bool
 	}{
-		{modeUnknown, false, false, false, false, true, false, false},
-		{modeUnwired, false, false, false, false, false, false, false},
-		{modeNoPolicy, true, true, false, false, false, false, false},
-		{modeReadOnly, true, true, false, false, false, false, true},
-		{modePolicy, true, false, true, false, true, true, false},
-		{modeBrokenPolicy, false, false, false, false, true, true, false},
+		{modeUnknown, false, false, false, false, true, false, false, false, false},
+		{modeUnwired, false, false, false, false, false, false, false, false, false},
+		{modeNoPolicy, true, true, false, false, false, false, false, true, true},
+		{modeReadOnly, true, true, false, false, false, false, true, false, false},
+		{modePolicy, true, false, true, false, true, true, false, true, false},
+		{modeBrokenPolicy, false, false, false, false, true, true, false, false, false},
 	}
 	for _, tc := range tests {
 		t.Run(tc.mode.String(), func(t *testing.T) {
@@ -101,12 +103,15 @@ func TestMode_Decisions(t *testing.T) {
 			check("RevealIsPrivileged", tc.mode.RevealIsPrivileged(), tc.reveal)
 			check("PolicyConfigured", tc.mode.PolicyConfigured(), tc.configured)
 			check("RefusesWrites", tc.mode.RefusesWrites(), tc.refusesWrites)
+			check("PermitsProjectWrite(held)", tc.mode.PermitsProjectWrite(ctx, held, perm), tc.projectHeld)
+			check("PermitsProjectWrite(not held)",
+				tc.mode.PermitsProjectWrite(ctx, notHeld, perm), tc.projectNotHeld)
 
 			// Only a configured policy may consult the holder: under the other
 			// modes the fallback read gate grants every permission.
 			wantCalls := 0
 			if tc.mode == modePolicy {
-				wantCalls = 4
+				wantCalls = 6
 			}
 			if calls != wantCalls {
 				t.Errorf("holder consulted %d times, want %d", calls, wantCalls)
