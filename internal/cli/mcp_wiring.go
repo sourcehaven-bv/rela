@@ -32,10 +32,16 @@ import (
 // the MCP wiring is not a second composition root. Only the watcher
 // adapter is MCP-specific (appbuild deliberately has no watcher story).
 type mcpServices struct {
-	// mu serializes reloads against each other and against Close. Reads of
-	// svc go through [mcpServices.current], which takes it briefly — the
-	// swap itself is a pointer assignment, and the MCP server publishes its
-	// own snapshot atomically, so request handling never blocks on this.
+	// reloadMu serializes schema reloads from start to finish, including
+	// the store schema refresh after publish. Without it, an older reload
+	// could refresh the store after a newer one and leave the store on a
+	// schema that is no longer in force. Readers and Close never take it.
+	// Lock order: reloadMu, then mu.
+	reloadMu sync.Mutex
+	// mu guards svc and closed. Reads of svc go through
+	// [mcpServices.current], which takes it briefly — the swap itself is a
+	// pointer assignment, and the MCP server publishes its own snapshot
+	// atomically, so request handling never blocks on this.
 	mu  sync.Mutex
 	svc *appbuild.Services
 	// origin is the FIRST assembled Services — the one that opened the store
@@ -127,6 +133,9 @@ func newMCPServices(startDir string) (*mcpServices, error) {
 // leaves the old assembly both current and serving; the successor is
 // retired instead. Nil: publish is accepted and skipped.
 func (s *mcpServices) reload(publish func(relamcp.Deps) error) error {
+	s.reloadMu.Lock()
+	defer s.reloadMu.Unlock()
+
 	// Read the current assembly under the lock, then build the successor
 	// OUTSIDE it. Assembly re-reads the schema, compiles transitions and
 	// computed properties and starts a job queue; holding mu across all of
@@ -159,10 +168,11 @@ func (s *mcpServices) reload(publish func(relamcp.Deps) error) error {
 	}
 
 	s.mu.Lock()
-	// Re-check: Close may have run, or another reload may have landed, while
-	// this one was assembling. Either way the successor is already obsolete
-	// and must be retired rather than published — otherwise its job queue and
-	// mail worker outlive the process's teardown.
+	// Re-check: Close may have run while this one was assembling (reloadMu
+	// rules out another reload, but the svc check stays as a guard). Either
+	// way the successor is already obsolete and must be retired rather than
+	// published — otherwise its job queue and mail worker outlive the
+	// process's teardown.
 	//
 	// When Close won, the successor's version sweep has been running since
 	// Assemble returned, against a store Close may already have torn down.
@@ -182,6 +192,21 @@ func (s *mcpServices) reload(publish func(relamcp.Deps) error) error {
 	}
 	s.svc = next
 	s.mu.Unlock()
+
+	// The markdown store lays files out per type and refuses a type it does
+	// not know, so it learns the new schema now. Only after publish: a
+	// rejected reload never touches the store, so there is nothing to undo.
+	// Outside mu: the refresh waits for an open Tx, which may run a long
+	// automation cascade, and readers and Close must not stall behind it.
+	// reloadMu keeps a later reload from refreshing first.
+	//
+	// A failure is logged, not returned: the new services are already in
+	// force. The usual failure is a plural change for a type that has
+	// entities; the store applies everything else, keeps that type in its
+	// old directory, and the error says which directory to rename.
+	if err := appbuild.RefreshStoreSchema(next); err != nil {
+		slog.Warn("mcp: schema reloaded, but the store did not apply all of it", "error", err)
+	}
 
 	// Retire the superseded assembly's background workers (job queue, mail,
 	// GC sweep, version sweep) WITHOUT closing the store or searcher the new

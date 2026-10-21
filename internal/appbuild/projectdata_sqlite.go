@@ -6,8 +6,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
+	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -212,6 +215,9 @@ func ExportMarkdownData(
 		return DataSummary{}, err
 	}
 	defer func() { _ = src.Close() }()
+	if checkErr := checkDeclaredTypes(ctx, src, meta); checkErr != nil {
+		return DataSummary{}, checkErr
+	}
 
 	if mkErr := fsys.MkdirAll(toDir, 0o755); mkErr != nil {
 		return DataSummary{}, mkErr
@@ -228,6 +234,32 @@ func ExportMarkdownData(
 			err, strings.Join(markdownDataDirs, ", "), toDir)
 	}
 	return sum, nil
+}
+
+// checkDeclaredTypes refuses an export whose source holds entities of a
+// type meta does not declare. The markdown store refuses to write such an
+// entity, because a type the schema does not declare has no directory the
+// next open scans. Checking every row first means the export fails before
+// it writes anything, rather than part way.
+func checkDeclaredTypes(ctx context.Context, src store.Store, meta *metamodel.Metamodel) error {
+	undeclared := map[string]bool{}
+	for e, err := range src.ListEntities(ctx, store.EntityQuery{Faces: store.AllFaces()}) {
+		if err != nil {
+			return fmt.Errorf("read entities: %w", err)
+		}
+		if _, ok := meta.Entities[e.Type]; !ok {
+			undeclared[e.Type] = true
+		}
+	}
+	if len(undeclared) == 0 {
+		return nil
+	}
+	names := slices.Sorted(maps.Keys(undeclared))
+	for i, name := range names {
+		names[i] = strconv.Quote(name)
+	}
+	return fmt.Errorf("the database holds entities of types the schema does not declare: %s; "+
+		"declare them in the schema or remove those entities before exporting", strings.Join(names, ", "))
 }
 
 // dataMetamodel loads the schema the data is laid out by: the files in dir

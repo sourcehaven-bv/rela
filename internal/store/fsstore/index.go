@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/storage"
 )
 
 // syncIndex builds the entity and relation index from the directory
@@ -57,27 +58,9 @@ func (s *FSStore) scanEntityDirs() error {
 				// orphan directory as invisible until cleaned up.
 				return
 			}
-			files, readErr := s.rooted.ReadDir(path.Join(s.layout.entitiesKey, dirName))
+			entries, readErr := scanTypeDir(s.rooted, s.layout.entitiesKey, dirName, entityType)
 			if readErr != nil {
 				return
-			}
-			var entries []entityMeta
-			for _, f := range files {
-				if f.IsDir() || !strings.HasSuffix(f.Name(), ".md") {
-					continue
-				}
-				stem := strings.TrimSuffix(f.Name(), ".md")
-				// The stem is the state key: bare id, or "id@face"
-				// (TKT-DOFYR1). A stem the codec rejects is skipped
-				// with a warning, never a hard error — the load path
-				// tolerates hand-edited layouts; analyze surfaces them.
-				id, ptr, refErr := entity.ParseStateRef(stem)
-				if refErr != nil {
-					slog.Warn("fsstore: skipping entity file with invalid name",
-						"file", f.Name(), "dir", dirName, "error", refErr)
-					continue
-				}
-				entries = append(entries, entityMeta{ID: id, Type: entityType, Face: ptr})
 			}
 			results[idx] = result{entries: entries}
 		}(i, typeDir.Name())
@@ -95,6 +78,35 @@ func (s *FSStore) scanEntityDirs() error {
 
 	sortStateKeys(s.entityOrder)
 	return nil
+}
+
+// scanTypeDir lists one entity type directory and returns an index entry
+// per entity file in it. It reads no file bodies. Callers decide what a
+// read error means: the open scan skips the directory.
+func scanTypeDir(rooted *storage.RootedFS, entitiesKey, dirName, entityType string) ([]entityMeta, error) {
+	files, err := rooted.ReadDir(path.Join(entitiesKey, dirName))
+	if err != nil {
+		return nil, err
+	}
+	var entries []entityMeta
+	for _, f := range files {
+		if f.IsDir() || !strings.HasSuffix(f.Name(), ".md") {
+			continue
+		}
+		stem := strings.TrimSuffix(f.Name(), ".md")
+		// The stem is the state key: bare id, or "id@face"
+		// (TKT-DOFYR1). A stem the codec rejects is skipped
+		// with a warning, never a hard error — the load path
+		// tolerates hand-edited layouts; analyze surfaces them.
+		id, ptr, refErr := entity.ParseStateRef(stem)
+		if refErr != nil {
+			slog.Warn("fsstore: skipping entity file with invalid name",
+				"file", f.Name(), "dir", dirName, "error", refErr)
+			continue
+		}
+		entries = append(entries, entityMeta{ID: id, Type: entityType, Face: ptr})
+	}
+	return entries, nil
 }
 
 // scanRelationDir lists the relations directory and parses relation keys

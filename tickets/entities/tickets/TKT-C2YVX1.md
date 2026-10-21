@@ -4,8 +4,10 @@ type: ticket
 title: fsstore accepts writes of undeclared types that vanish on reopen
 kind: chore
 priority: medium
-effort: s
-status: backlog
+effort: m
+started: "2026-10-21"
+completed: "2026-10-21"
+status: done
 description: entityFileKey falls back to type+s for an undeclared type, so the write succeeds, but the scan skips that directory and the entity is gone on reopen.
 ---
 

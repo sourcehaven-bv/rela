@@ -11,7 +11,9 @@
 //
 // All state is protected by a single [sync.RWMutex]. Write methods acquire
 // mu.Lock; read methods acquire mu.RLock. File I/O happens under the lock
-// to ensure index consistency with the filesystem.
+// to ensure index consistency with the filesystem. The entity-type
+// schemas are the one exception: they are published through an atomic
+// pointer, and [FSStore.SetSchemas] replaces them under the write locks.
 //
 // Event emission is called under mu.Lock. Subscribers receive events on
 // buffered channels via non-blocking sends.
@@ -25,6 +27,7 @@ import (
 	"path"
 	"slices"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
@@ -70,7 +73,12 @@ type Config struct {
 	// whose plural does not resolve to a known type are skipped at scan
 	// time, and inaccessible-entity shells use the schema's
 	// PropertyOrder to enumerate fields. Empty maps are rejected by
-	// [New].
+	// [New]. An empty Plural means "<type>s". Every plural must be one
+	// plain directory name, unique across types.
+	//
+	// Writes of a type the map does not declare are refused, because
+	// the scan on the next open would not find the file.
+	// [FSStore.SetSchemas] replaces the map on a schema reload.
 	//
 	// In production this is built by app.buildSchemas from the loaded
 	// metamodel.
@@ -192,8 +200,11 @@ type attachMeta struct {
 // store.FamilyReplacer so a type change can replace all rows of one entity
 // family under the same store transaction.
 //
+// SetSchemas (TKT-C2YVX1) is a needed exported method: a schema reload
+// changes the layout and the index under the store's write locks.
+//
 //plimsoll:max-methods=92
-//plimsoll:max-exported-methods=36
+//plimsoll:max-exported-methods=37
 type FSStore struct {
 	// rooted is the validated-key I/O surface. Every read, write,
 	// directory op, and remove that operates on files under the
@@ -211,7 +222,8 @@ type FSStore struct {
 	streamingSupported bool
 
 	// layout resolves file keys, plural directory names, and property
-	// order from the immutable path/key/schema configuration.
+	// order from the path/key/schema configuration. Its schemas change
+	// only through SetSchemas.
 	layout fileLayout
 
 	// codec reads and writes entity/relation markdown files (including
@@ -299,21 +311,18 @@ func New(cfg Config) (*FSStore, error) {
 	if cfg.RelationsKey == "" {
 		return nil, errors.New("fsstore: Config.RelationsKey must not be empty")
 	}
-	// Schemas must be populated from the loaded metamodel. Without it,
-	// fsstore cannot map plural directory names back to entity types
-	// reliably, and inaccessible-entity shells (for git-crypt encrypted
-	// files) cannot enumerate their schema-declared properties. An
-	// empty map always indicates a bootstrap-ordering bug.
-	if len(cfg.Schemas) == 0 {
-		return nil, errors.New("fsstore: Config.Schemas must be populated from the metamodel; an empty map indicates a bootstrap-ordering bug")
+	schemas, err := normalizeSchemas(cfg.Schemas)
+	if err != nil {
+		return nil, err
 	}
 
 	layout := fileLayout{
 		entitiesKey:  cfg.EntitiesKey,
 		relationsKey: cfg.RelationsKey,
-		schemas:      cfg.Schemas,
+		schemas:      new(atomic.Pointer[schemaSet]),
 		rooted:       cfg.Rooted,
 	}
+	layout.schemas.Store(&schemaSet{declared: schemas})
 
 	s := &FSStore{
 		rooted:             cfg.Rooted,

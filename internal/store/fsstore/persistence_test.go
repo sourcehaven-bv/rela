@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"io"
+	"maps"
 	"strings"
 	"testing"
 
@@ -14,13 +15,20 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/storage"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/store/fsstore"
+	"github.com/Sourcehaven-BV/rela/internal/store/storetest"
 )
 
 // defaultTestSchemas covers the entity types used across fsstore_test
-// files. fsstore.New rejects an empty Schemas map, so every test that
-// constructs a store needs something here. Adding a new type? Add it
-// here once.
-var defaultTestSchemas = map[string]store.EntityTypeSchema{
+// files. fsstore.New rejects an empty Schemas map and refuses writes of
+// undeclared types, so every test that constructs a store needs its types
+// here. The conformance harness's types come from storetest.EntityTypes,
+// so a new harness test cannot drift from this map; a type only fsstore's
+// own tests use goes in fsstoreTestSchemas.
+var defaultTestSchemas = buildTestSchemas()
+
+// fsstoreTestSchemas are the types fsstore's own tests use, with the
+// property order those tests check.
+var fsstoreTestSchemas = map[string]store.EntityTypeSchema{
 	"requirement": {Plural: "requirements", PropertyOrder: []string{"title", "status", "description"}},
 	"solution":    {Plural: "solutions", PropertyOrder: []string{"title", "status"}},
 	"artifact":    {Plural: "artifacts", PropertyOrder: []string{"title", "status"}},
@@ -29,6 +37,15 @@ var defaultTestSchemas = map[string]store.EntityTypeSchema{
 	"ticket":      {Plural: "tickets", PropertyOrder: []string{"title", "status"}},
 	"decision":    {Plural: "decisions", PropertyOrder: []string{"title", "status"}},
 	"feature":     {Plural: "features", PropertyOrder: []string{"title"}},
+}
+
+func buildTestSchemas() map[string]store.EntityTypeSchema {
+	out := make(map[string]store.EntityTypeSchema)
+	for _, typ := range storetest.EntityTypes() {
+		out[typ] = store.EntityTypeSchema{Plural: typ + "s"}
+	}
+	maps.Copy(out, fsstoreTestSchemas)
+	return out
 }
 
 // newConfig builds an fsstore Config for the given in-memory FS

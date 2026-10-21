@@ -198,6 +198,11 @@ type Services struct {
 	// leaseShared is the backend and hub under leases, which a re-assembly
 	// shares. The backend is closed by Close, not by CloseAssembly.
 	leaseShared leaseShared
+	// storeSchema applies a reloaded metamodel to store (see
+	// [RefreshStoreSchema]). A re-assembly reuses it.
+	//
+	// Nil: accepted — a store that keeps any type needs none.
+	storeSchema storeSchemaRefresher
 	// channels is the realtime channel store (see [Channels]). Stateless
 	// over its backend, so every assembly builds its own.
 	channels channels.Store
@@ -2014,6 +2019,10 @@ type SharedBase struct {
 	// buckets, ephemeral signals, live subscribers), reused so a schema
 	// reload resets none of them. Nil for a first assembly.
 	realtimeLocal *realtime.Local
+	// storeSchema is the predecessor's store schema refresher, reused
+	// because a re-assembly runs against the same store. Nil for a first
+	// assembly, and for a store that needs none.
+	storeSchema storeSchemaRefresher
 }
 
 // attachmentLocker is the predecessor's attachment lock on a re-assembly,
@@ -2047,6 +2056,9 @@ func (b *SharedBase) IsReassembly() bool { return b.reassembly }
 // It reuses the piles and lease backends for the same reason: the KV
 // backends serialize writers with an in-process mutex. The piles and lease
 // SERVICES are rebuilt, so their access checks follow the reloaded ACL.
+// It carries prev's store schema refresher too: the caller applies the new
+// schema to the store with [RefreshStoreSchema] once the successor is in
+// force.
 //
 // Nil: rejected by use — prev is dereferenced.
 func (b *SharedBase) ForReassembly(prev *Services) *SharedBase {
@@ -2056,6 +2068,7 @@ func (b *SharedBase) ForReassembly(prev *Services) *SharedBase {
 	next.pileStore = prev.pileStore
 	next.leaseShared = prev.leaseShared
 	next.realtimeLocal = prev.realtimeLocal
+	next.storeSchema = prev.storeSchema
 	return &next
 }
 
@@ -2544,6 +2557,21 @@ type backendOverrides struct {
 	// kvstate over the state store, which is right for every tier whose
 	// queue is in-process.
 	schedulerState schedulerstate.Store
+
+	// storeSchema applies a reloaded metamodel to the store the recipe
+	// opened. Supplied by the fs recipe, whose store refuses writes of
+	// undeclared types; nil for the database recipes, whose stores keep
+	// any type.
+	storeSchema storeSchemaRefresher
+}
+
+// storeSchemaFor returns the refresher an assembly carries: the
+// recipe's on a first assembly, the predecessor's on a re-assembly.
+func (o backendOverrides) storeSchemaFor(base *SharedBase) storeSchemaRefresher {
+	if o.storeSchema != nil {
+		return o.storeSchema
+	}
+	return base.storeSchema
 }
 
 // tracerAndTemplater builds the tracer over st, titling nodes in world, and
@@ -2708,7 +2736,7 @@ func assemble(
 	assembled := newServices(
 		base, st, background, searcher, visible, searchCloser, mgr, tr, val,
 		templater, cfgLoader, stateKV, migState, jobQueue, aliases, refs.comments, versions,
-		resolvedACL, aclDeclarative, fieldPol.redactor, schedState,
+		resolvedACL, aclDeclarative, fieldPol.redactor, schedState, overrides.storeSchemaFor(base),
 	)
 	assembled.tokens = buildTokens(context.Background(), base, st, backendKV, readDeps.Host, attachLocker)
 	return finishAssembly(assembled, attachLocker, autoJobs, autoEngine, refs, sweep)
@@ -2835,7 +2863,7 @@ func newServices(
 	templater templating.Templater, cfgLoader config.Loader, stateKV state.KV,
 	migState datamigration.StateStore, jobQueue jobs.Queue, aliases *caldavalias.Service, commentSvc *comments.Service,
 	versions store.VersionService, resolvedACL acl.ACL, aclDeclarative *acl.Declarative,
-	fieldReads fieldReadPolicy, schedState schedulerstate.Store,
+	fieldReads fieldReadPolicy, schedState schedulerstate.Store, storeSchema storeSchemaRefresher,
 ) *Services {
 	cfg := base.cfg
 	return &Services{
@@ -2874,6 +2902,7 @@ func newServices(
 		realtime:           base.realtime,
 		audit:              cfg.Audit,
 		fieldReads:         fieldReads,
+		storeSchema:        storeSchema,
 	}
 }
 

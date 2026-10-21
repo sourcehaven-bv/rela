@@ -381,6 +381,11 @@ func validateEntitySemantics(m *Metamodel) []string {
 					"so a type name carrying one makes those grants ambiguous", name))
 		}
 
+		// The plural names the type's directory under entities/ (and its URL
+		// segment), so it must be one plain directory name. Checked here so a
+		// schema or Configure save fails validation before a store sees it.
+		errs = append(errs, validatePluralSegment(name, def)...)
+
 		if def.Label == "" {
 			errs = append(errs, fmt.Sprintf("entity %q: missing 'label'", name))
 		}
@@ -404,6 +409,46 @@ func validateEntitySemantics(m *Metamodel) []string {
 		errs = append(errs, validateDisplayProperty(name, def)...)
 	}
 
+	return append(errs, validateUniquePlurals(m)...)
+}
+
+// validatePluralSegment rejects a plural that cannot serve as one
+// directory name under entities/, such as "../relations". The message
+// says whether the author wrote the plural or it came from the type name,
+// because in the second case there is no plural: line to fix.
+func validatePluralSegment(name string, def EntityDef) []string {
+	plural := def.GetPlural(name)
+	err := storage.ValidateDirSegment(plural)
+	if err == nil {
+		return nil
+	}
+	if def.Plural != "" {
+		return []string{fmt.Sprintf("entity %q: plural %q is not a usable directory name: %v", name, plural, err)}
+	}
+	return []string{fmt.Sprintf(
+		"entity %q: the plural %q derived from the type name is not a usable directory name: %v; set plural: explicitly",
+		name, plural, err)}
+}
+
+// validateUniquePlurals rejects two entity types with the same plural,
+// compared without case. Both would store their files in one directory
+// (the default macOS and Windows filesystems ignore case), and a markdown
+// project would read every file in it back as one of the two types.
+func validateUniquePlurals(m *Metamodel) []string {
+	var errs []string
+	owner := map[string]string{}
+	for _, name := range sortedKeys(m.Entities) {
+		def := m.Entities[name]
+		plural := def.GetPlural(name)
+		folded := strings.ToLower(plural)
+		if other, ok := owner[folded]; ok {
+			errs = append(errs, fmt.Sprintf(
+				"entity %q: plural %q is also the plural of entity %q (case is ignored); each type needs its own",
+				name, plural, other))
+			continue
+		}
+		owner[folded] = name
+	}
 	return errs
 }
 

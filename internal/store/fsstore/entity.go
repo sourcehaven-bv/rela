@@ -286,6 +286,11 @@ func (s *FSStore) createEntity(_ context.Context, e *entity.Entity) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	// Under mu, so SetSchemas cannot change the answer before the write.
+	if !s.layout.declared(e.Type) {
+		return errUnknownType(e.Type)
+	}
+
 	key := stateKey(e.ID, e.Face)
 	// A soft-deleted id stays held until it is purged, for every face.
 	if markedTaken(s, e.ID, "") {
@@ -357,6 +362,12 @@ func (s *FSStore) updateEntityIf(
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
+	// Before any file is written or removed: an update that changes the
+	// type to an undeclared one must leave the old file in place.
+	if !s.layout.declared(e.Type) {
+		return "", errUnknownType(e.Type)
+	}
 
 	key := stateKey(e.ID, e.Face)
 	meta, exists := s.entities[key]

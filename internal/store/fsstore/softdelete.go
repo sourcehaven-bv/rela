@@ -125,7 +125,7 @@ func (d softDeleter) Unmark(_ context.Context, id string) (*store.DeleteResult, 
 	fam, ok := s.marked[id]
 	// A family whose files were all removed outside the store has nothing
 	// to bring back; the purge clears what is left of it.
-	if !ok || len(fam.entities) == 0 {
+	if !ok || len(fam.entities) == 0 || !familyDeclared(s, fam) {
 		return nil, store.ErrNotFound
 	}
 	next := copyMarked(s.marked)
@@ -185,6 +185,9 @@ func (d softDeleter) ListMarked(_ context.Context) ([]store.MarkedEntity, error)
 
 	out := make([]store.MarkedEntity, 0, len(s.marked))
 	for id, fam := range s.marked {
+		if !familyDeclared(s, fam) {
+			continue
+		}
 		me := store.MarkedEntity{ID: id, DeletedAt: fam.at, DeletedBy: fam.by}
 		for _, meta := range fam.entities {
 			e, err := s.loadEntityMeta(meta)
@@ -211,7 +214,7 @@ func (d softDeleter) PurgeMarked(_ context.Context, id string) (*store.DeleteRes
 	defer s.mu.Unlock()
 
 	fam, ok := s.marked[id]
-	if !ok {
+	if !ok || !familyDeclared(s, fam) {
 		return nil, store.ErrNotFound
 	}
 	next := copyMarked(s.marked)
@@ -412,6 +415,20 @@ func revealedRelations(ctx context.Context, s *FSStore, match func(*entity.Relat
 		}
 	}
 	return out
+}
+
+// familyDeclared reports whether the current schemas declare the type of
+// every entity in fam. A family of a type a schema reload removed stays
+// marked, so declaring the type again keeps it hidden, but its files
+// cannot be located while the type is undeclared. Unmark, purge and the
+// list skip it until then. Caller holds mu.
+func familyDeclared(s *FSStore, fam *fsMarked) bool {
+	for _, meta := range fam.entities {
+		if !s.layout.declared(meta.Type) {
+			return false
+		}
+	}
+	return true
 }
 
 // markedEntityMetas lists the entities the marked families hold. Their
