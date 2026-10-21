@@ -34,6 +34,7 @@ roles:
       - comment:update-any
       - comment:delete-any
       - close-ticket
+      - settings:edit
   editor:
     read: [ticket, person, "policy@published", "world:published"]
     create: [ticket]

@@ -22,13 +22,13 @@ import (
 //
 // The decisions per mode:
 //
-//	mode           gated UI    elevated read  reveal audited  policy configured  refuses writes
-//	unknown        hide        deny           yes             no                 no
-//	unwired (nil)  hide        deny           no              no                 no
-//	no policy      show        deny           no              no                 no
-//	read-only      show        deny           no              no                 yes
-//	policy         permission  permission     yes             yes                no
-//	broken policy  hide        deny           yes             yes                no
+//	mode           gated UI    elevated read  reveal audited  policy configured  refuses writes  project write
+//	unknown        hide        deny           yes             no                 no              deny
+//	unwired (nil)  hide        deny           no              no                 no              deny
+//	no policy      show        deny           no              no                 no              allow
+//	read-only      show        deny           no              no                 yes             deny
+//	policy         permission  permission     yes             yes                no              permission
+//	broken policy  hide        deny           yes             yes                no              deny
 //
 // The zero value is the unknown mode. An unknown implementation is reachable
 // only from tests (the App constructor accepts the four production shapes).
@@ -174,4 +174,25 @@ func (m Mode) PolicyConfigured() bool {
 // check this before any per-request permission.
 func (m Mode) RefusesWrites() bool {
 	return m == modeReadOnly
+}
+
+// PermitsProjectWrite reports whether the request may run a write that acts
+// on state shared by every principal rather than on one entity: a git sync,
+// which commits and pushes every pending change, or a save of the shared
+// settings, such as the create-form defaults or the palette.
+//
+// No policy allows it: every principal may already write every entity, and
+// the operation adds nothing they could not do. Read-only refuses it before
+// asking holder, because the fallback read gate grants every permission
+// there. A configured policy asks holder for permission. Every other mode
+// refuses, so a wiring bug fails closed.
+func (m Mode) PermitsProjectWrite(ctx context.Context, holder PermissionHolder, permission string) bool {
+	switch m {
+	case modeNoPolicy:
+		return true
+	case modePolicy:
+		return permission != "" && holder.HoldsPermission(ctx, permission)
+	default:
+		return false
+	}
 }

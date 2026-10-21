@@ -1,11 +1,15 @@
 request: PUT /api/v1/_palette
 identity: header outsider@example.test
-status: 200
+status: 403
 reads: GraphQueryHeaders=1 ListRelations=1
 breadth: ListRelations=0/1
 bodies: GraphQuery=0/1
 versions: 
 body:
 {
-  "ok": true
+  "type": "https://rela.dev/errors/forbidden",
+  "title": "Forbidden",
+  "status": 403,
+  "detail": "Saving the palette needs the settings:edit permission.",
+  "instance": "/api/v1/_palette"
 }

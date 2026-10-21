@@ -2257,6 +2257,76 @@ mentions. Settings that control access stay locked: a transition `guard`, and
 `permission:` on navigation entries, spaces and dashboard cards. Change those
 in the files directly.
 
+## Git sync (`git:sync`)
+
+`git:sync` is a built-in global permission. It lets a principal use the sync
+button of the data-entry app (`POST /api/v1/_git/sync`). A sync commits every
+pending change in `entities/` and `relations/`, not only the caller's own,
+merges the remote and pushes.
+
+Grant it to a role by name:
+
+```yaml
+# acl.yaml
+roles:
+  maintainer:
+    permissions: [git:sync]
+```
+
+Without the permission the sync gets 403, and the response names `git:sync`.
+
+- **Without an `acl.yaml`** every principal may sync, as every principal may
+  already write every entity.
+- **With `--read-only`** nobody may sync, whatever `acl.yaml` grants.
+
+A client ceiling passes `git:sync` on to a client acting for a user unless
+the ceiling narrows permissions. Only `config:edit` is never delegated.
+
+`GET /api/v1/_git/status` stays open to every signed-in principal. Its
+`can_sync` field says whether a sync would be accepted. It lists the paths of
+conflicting files only to a principal who may sync; everyone else sees only
+that a conflict exists. This is not a secrecy guarantee:
+
+- A holder of `git:sync` sees the paths of conflicting entities they may not
+  read.
+- `GET /api/v1/_conflicts` still lists the paths, with entity ids, to every
+  principal (BUG-T6HNKS).
+
+**Upgrading.** With an `acl.yaml`, nobody may sync after the upgrade until
+you grant `git:sync` to the roles that used the sync button.
+
+## Saving the settings page (`settings:edit`)
+
+`settings:edit` is a built-in global permission. It lets a principal save
+what the data-entry settings page saves. Each of these is one value shared by
+every principal:
+
+- the default values that everyone's create forms start with
+  (`PUT` or `POST /api/v1/_settings`);
+- the color palette (`PUT` or `POST /api/v1/_palette`);
+- the logo (`PUT`, `POST` or `DELETE /api/v1/_theme/logo`);
+- a theme import, which saves the logo it carries
+  (`POST /api/v1/_theme/import`).
+
+Grant it to a role by name:
+
+```yaml
+# acl.yaml
+roles:
+  admin:
+    permissions: [settings:edit]
+```
+
+- **With an `acl.yaml`,** only a holder may save. Anyone else gets 403, and
+  the response names `settings:edit`. Reading the settings, the palette and
+  the logo, and exporting a theme, stay open to every signed-in principal.
+- **Without an `acl.yaml`,** every principal may save, as before the
+  permission existed.
+- **A read-only instance** (`--read-only`) refuses every save.
+
+**Upgrading.** With an `acl.yaml`, nobody may save the settings page after
+the upgrade until you grant `settings:edit` to the roles that used it.
+
 ## Where to read next
 
 - [GUIDE-acl-overview] — operator's overview of the resolver.
