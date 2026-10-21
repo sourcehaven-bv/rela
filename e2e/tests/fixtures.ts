@@ -1208,6 +1208,25 @@ relations:
     to: [task]
     inverse: grouped_in
 
+# Task-item conversions (TKT-3IBLIP), on bug only so the checkbox specs on
+# features see no convert button. Two recipes, so the editor offers a choice.
+task_item_conversions:
+  bug-fix:
+    from: bug
+    to: task
+    label: Convert to fix task
+    item: remove
+    relation: {type: fixes, as: from}
+    fields:
+      title: "{{item.text}}"
+  bug-fix-link:
+    from: bug
+    to: task
+    label: Convert to linked task
+    relation: {type: fixes, as: from}
+    fields:
+      title: "{{item.text}}"
+
 # Commenting (TKT-FIO205). Enabled for every type so the comment specs can use
 # whichever seed entity is convenient; the ACL is untouched, so the default
 # no-policy deployment applies and every principal may comment.

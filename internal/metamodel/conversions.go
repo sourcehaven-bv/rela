@@ -82,25 +82,38 @@ func validateConversionFields(d ConversionDef, from, to EntityDef, fromOK bool, 
 			bad("target property %q is a required external reference and cannot be authored by conversion", key)
 		}
 	}
-	fields := make([]string, 0, len(d.Fields))
-	for key := range d.Fields {
-		fields = append(fields, key)
+	keys := validateMappedTargetProperties(d.To, to, d.Fields, bad)
+	if fromOK {
+		for _, key := range keys {
+			validateSourceReferences(d.Fields[key], "fields."+key, d, from, bad)
+		}
 	}
-	sort.Strings(fields)
-	for _, key := range fields {
+}
+
+// validateMappedTargetProperties checks the target side of a field mapping
+// shared by conversions and task-item conversions: every key names a declared
+// property that is neither computed nor an external reference. It returns the
+// keys sorted.
+func validateMappedTargetProperties(
+	toName string, to EntityDef, fields map[string]string, bad conversionProblem,
+) []string {
+	keys := make([]string, 0, len(fields))
+	for key := range fields {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
 		property, exists := to.Properties[key]
 		switch {
 		case !exists:
-			bad("fields: target type %q has no property %q", d.To, key)
+			bad("fields: target type %q has no property %q", toName, key)
 		case property.Computed != "":
 			bad("fields: target property %q is computed and cannot be mapped", key)
 		case property.Type == PropertyTypeExternalRef:
 			bad("fields: target property %q is an external reference and cannot be mapped", key)
 		}
-		if fromOK {
-			validateSourceReferences(d.Fields[key], "fields."+key, d, from, bad)
-		}
 	}
+	return keys
 }
 
 func validateConversionContent(d ConversionDef, from EntityDef, bad conversionProblem) {

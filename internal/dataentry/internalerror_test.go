@@ -33,8 +33,8 @@ import (
 // callers pass the error as a separate argument.
 func TestNoInternalErrorDetail(t *testing.T) {
 	exemptFuncs := map[string]bool{
-		"writeInternalErrorDetail": true, // the one place a 500 detail is a parameter
-		"writeInternalJSONError":   true, // appends internalErrorDetail to a caller literal
+		"writeInternalProblem":   true, // the one place a 500 detail is a parameter
+		"writeInternalJSONError": true, // appends internalErrorDetail to a caller literal
 	}
 	files, err := filepath.Glob("*.go")
 	if err != nil {

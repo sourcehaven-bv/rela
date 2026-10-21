@@ -74,6 +74,11 @@ type Metamodel struct {
 	// invoke a conversion by name and cannot supply their own mapping.
 	Conversions map[string]ConversionDef `yaml:"conversions,omitempty"`
 
+	// TaskItemConversions declares the recipes that turn a markdown task item
+	// in an entity body into a new, linked entity. See [TaskItemConversionDef];
+	// a request invokes one by name and cannot supply its own mapping.
+	TaskItemConversions map[string]TaskItemConversionDef `yaml:"task_item_conversions,omitempty"`
+
 	// Computed lookups (not from YAML)
 	aliasMap      map[string]string // alias -> canonical name
 	inverseOwners map[string]string // inverse name -> owning canonical relation name

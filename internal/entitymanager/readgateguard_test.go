@@ -22,6 +22,14 @@ var readGates = map[string]bool{
 	"endpointVisible":    true,
 }
 
+// gateWrappers are functions that count as a read gate because they call one
+// of readGates themselves. The scan checks that they still do, so a wrapper
+// that lost its gate fails here instead of passing every caller.
+var gateWrappers = map[string]string{
+	"readTaskItemSource": "TaskItemConverter's source read: requireReadableRow on the family, " +
+		"then the face gate on the named row",
+}
+
 // gateFamilyArg is the argument index of each gate's row family. A gate
 // called with a nil or empty literal there gates nothing: requireReadableRow
 // passes an empty family, and visibleEndpoint finds the zero family
@@ -66,6 +74,8 @@ var callerGates = map[string]string{
 	"txEdges":           "faceDeleteGuard.txEdges: the face delete gated the face before the transaction",
 	"prepareRelationFrom": "prepareRelationCreate runs lookupSource before it; CreateLinked passes the " +
 		"source it is creating",
+	"authorizeTaskItem": "plan gates the source through readTaskItemSource before it, and " +
+		"TaskItemConverter.Offers probes an entity the request already read",
 }
 
 // noReadGateNeeded lists the functions that ask the ACL with no read gate
@@ -75,8 +85,9 @@ var callerGates = map[string]string{
 var noReadGateNeeded = map[string]string{
 	"prepareCreate": "CreateEntity's checks: creates a row; no stored row exists for a 403 to confirm",
 	"CheckCreate":   "probes CreateEntity's type-level create question; it names no stored row",
-	"CreateLinked": "creates a row and an edge from it: the edge's source is the row being created, so " +
-		"no stored row exists for a 403 to confirm; prepareRelationFrom gates the edge's target",
+	"prepareLinkedRelation": "CreateLinked's edge checks: one end of the edge is the row being created, so " +
+		"no stored row exists for a 403 to confirm; the existing end is gated by lookupSource, or by " +
+		"prepareRelationFrom for a target",
 	"recreateEntity": "authorizes a create of a face that is not stored, as CreateEntity does",
 	"RestoreEntity": "documented to leave the read gate to its caller (the data-entry restore " +
 		"handler); a marked row is hidden from every read, so the store cannot gate it here",
@@ -84,8 +95,9 @@ var noReadGateNeeded = map[string]string{
 		"target (PermitsReadFace) before authorizeCopy; both go through the face gate the scan does not follow",
 	"edgeTypeAllowed": "an affordance probe for the copy's own edges: withAffordanceProbe drops the " +
 		"audit row and the copy skips the edge instead of answering 403",
-	"Offers": "an affordance probe on a served entity: data-entry calls it from computeConversionOffers " +
-		"for an entity the request already read, and withAffordanceProbe keeps a denial out of the audit log",
+	"Offers": "an affordance probe on a served entity: data-entry calls Converter.Offers from " +
+		"computeConversionOffers and TaskItemConverter.Offers from computeTaskItemOffers, both for an " +
+		"entity the request already read, and withAffordanceProbe keeps a denial out of the audit log",
 	"authorizeRemovals": "conversionRun.apply calls it after Converter.plan, which runs requireReadableRow " +
 		"on the source family; the removed edges are that family's, judged by edgeVisibility",
 }
@@ -125,6 +137,11 @@ func TestAuthorizeAndAuditFollowsReadGate(t *testing.T) {
 	}
 	for _, e := range res.emptyGates {
 		t.Errorf("%s: read gate called with an empty family, which gates no row", e)
+	}
+	for fn := range gateWrappers {
+		if !res.gated[fn] {
+			t.Errorf("%s is listed in gateWrappers but no longer calls a read gate", fn)
+		}
 	}
 	for _, list := range []map[string]string{callerGates, noReadGateNeeded} {
 		for fn := range list {
@@ -225,6 +242,7 @@ type readGateScan struct {
 	bad        []string        // ungated calls in functions not on the allowlist
 	emptyGates []string        // gate calls with an empty family literal
 	ungated    map[string]bool // functions that make an ungated call
+	gated      map[string]bool // functions that call one of readGates
 }
 
 // gateFacts is what the scan records about one top-level function.
@@ -247,7 +265,7 @@ type namedCall struct {
 func scanReadGates(
 	fset *token.FileSet, files []*ast.File, callers, terminal map[string]string,
 ) readGateScan {
-	res := readGateScan{ungated: map[string]bool{}}
+	res := readGateScan{ungated: map[string]bool{}, gated: map[string]bool{}}
 	var funcs []gateFacts
 	for _, f := range files {
 		for _, decl := range f.Decls {
@@ -262,7 +280,7 @@ func scanReadGates(
 					return true
 				}
 				name := calleeName(call)
-				if readGates[name] {
+				if readGates[name] || gateWrappers[name] != "" {
 					if emptyFamily(call, name) {
 						res.emptyGates = append(res.emptyGates,
 							fset.Position(call.Pos()).String()+" ("+fn.Name.Name+")")
@@ -274,6 +292,9 @@ func scanReadGates(
 				facts.calls = append(facts.calls, namedCall{name, call.Pos()})
 				return true
 			})
+			if facts.firstGate.IsValid() {
+				res.gated[fn.Name.Name] = true
+			}
 			funcs = append(funcs, facts)
 		}
 	}

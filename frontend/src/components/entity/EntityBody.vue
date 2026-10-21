@@ -12,16 +12,26 @@
  * Leaving (clicking away, Escape) only returns to the read view, after
  * flushing the editor's own 200ms debounce so the last keystrokes are not
  * lost; `done` then tells the caller to write anything still pending.
+ *
+ * With `taskItemConversions` offered, each task item gets a convert button
+ * while the body is open (TKT-3IBLIP).
  */
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
 import RlInlineEdit from 'rela-components/components/common/RlInlineEdit.vue'
 import MarkdownEditor from '@/components/forms/milkdown/MilkdownEditor.vue'
+import TaskItemConversions, {
+  taskItemConvertLabel,
+} from '@/components/forms/TaskItemConversions.vue'
 import type { EntityRefResolver } from '@/utils/markdown'
+import type { TaskItemConversionOffer } from '@/types'
 
 const props = defineProps<{
   content: string
   editable: boolean
   refResolver?: EntityRefResolver
+  /** The entity whose body this is; required for task-item conversions. */
+  source?: { id: string; face?: string }
+  taskItemConversions?: TaskItemConversionOffer[]
 }>()
 
 const emit = defineEmits<{
@@ -30,6 +40,16 @@ const emit = defineEmits<{
 }>()
 
 const editorRef = ref<InstanceType<typeof MarkdownEditor> | null>(null)
+const conversionsRef = ref<InstanceType<typeof TaskItemConversions> | null>(null)
+
+const convertLabel = computed(() =>
+  props.source ? taskItemConvertLabel(props.taskItemConversions) : ''
+)
+
+/** The conversion dialog is part of the edit: pressing it must not end it. */
+function conversionDialogs(): Element[] {
+  return conversionsRef.value?.panels() ?? []
+}
 
 // The editor owns the document while it is open. Feeding each save back in
 // as `modelValue` would reset it under the cursor, so it opens on a snapshot.
@@ -57,6 +77,7 @@ function onEditorKeydown(event: KeyboardEvent) {
     block
     trigger="explicit"
     label="Body"
+    :keep-open-within="conversionDialogs"
     @edit="draft = props.content"
     @commit="onLeave"
     @cancel="onLeave"
@@ -70,12 +91,21 @@ function onEditorKeydown(event: KeyboardEvent) {
           ref="editorRef"
           :model-value="draft"
           :ref-resolver="refResolver"
+          :task-item-convert-label="convertLabel"
           @update:model-value="(v: string) => emit('input', v)"
+          @task-item-convert="(target) => conversionsRef?.start(target)"
         />
       </div>
     </template>
   </RlInlineEdit>
   <slot v-else name="read" />
+  <TaskItemConversions
+    v-if="editable && convertLabel && source"
+    ref="conversionsRef"
+    :offers="taskItemConversions"
+    :source="source"
+    :editor="() => editorRef"
+  />
 </template>
 
 <style scoped>

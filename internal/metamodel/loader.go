@@ -15,21 +15,22 @@ import (
 
 // validTopLevelKeys are the recognized top-level keys in a metamodel YAML file.
 var validTopLevelKeys = map[string]bool{
-	"version":     true,
-	"namespace":   true,
-	"description": true,
-	"types":       true,
-	"entities":    true,
-	"relations":   true,
-	"validations": true,
-	"automations": true,
-	"includes":    true,
-	"attachments": true,
-	"transforms":  true,
-	"worlds":      true,
-	"copies":      true,
-	"conversions": true,
-	"comments":    true,
+	"version":               true,
+	"namespace":             true,
+	"description":           true,
+	"types":                 true,
+	"entities":              true,
+	"relations":             true,
+	"validations":           true,
+	"automations":           true,
+	"includes":              true,
+	"attachments":           true,
+	"transforms":            true,
+	"worlds":                true,
+	"copies":                true,
+	"conversions":           true,
+	"task_item_conversions": true,
+	"comments":              true,
 	// default_world names the world a request uses when it names none
 	// (TKT-7IZHP0).
 	"default_world": true,
@@ -285,6 +286,7 @@ func validate(m *Metamodel) error {
 	validationErrors = append(validationErrors, validateAttachments(m)...)
 	validationErrors = append(validationErrors, validateCopies(m)...)
 	validationErrors = append(validationErrors, validateConversions(m)...)
+	validationErrors = append(validationErrors, validateTaskItemConversions(m)...)
 	validationErrors = append(validationErrors, validateWorlds(m)...)
 	validationErrors = append(validationErrors, validateDefaultWorld(m)...)
 	validationErrors = append(validationErrors, validateDeclOrder(m)...)

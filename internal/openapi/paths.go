@@ -13,6 +13,7 @@ import (
 // addSystemPaths adds the static system endpoint paths.
 func (g *Generator) addSystemPaths(spec *Spec) {
 	g.addConversionPaths(spec)
+	g.addTaskItemConversionPaths(spec)
 	// GET /api/v1/_openapi.json
 	spec.Paths["/api/v1/_openapi.json"] = PathItem{
 		Get: &Operation{
@@ -97,6 +98,60 @@ func (g *Generator) addConversionPaths(spec *Spec) {
 			OperationID: "preflight" + capitalize(name), Summary: "Preview " + name,
 			Tags: []string{"Entity conversions"}, RequestBody: body,
 			Responses: withOK("Required fields and relationship consequences", preview),
+		}}
+	}
+}
+
+func (g *Generator) addTaskItemConversionPaths(spec *Spec) {
+	body := &RequestBody{
+		Required:    true,
+		Description: "Source entity, the task item's text, and values for required target fields",
+		Content: jsonContent(&Schema{Type: "object", Required: []string{"source_id", "text"}, Properties: map[string]*Schema{
+			"source_id":   StringSchema(),
+			"source_face": StringSchema(),
+			"text":        StringSchema(),
+			"properties":  {Type: "object", AdditionalProperties: &Schema{}},
+		}}),
+	}
+	result := &Schema{Type: "object", Properties: map[string]*Schema{
+		"definition":  StringSchema(),
+		"entity_id":   StringSchema(),
+		"entity_type": StringSchema(),
+		"face":        StringSchema(),
+		"title":       StringSchema(),
+		"item":        {Type: "string", Enum: []string{metamodel.TaskItemLink, metamodel.TaskItemRemove}},
+	}}
+	preview := &Schema{Type: "object", Properties: map[string]*Schema{
+		"target_type": StringSchema(),
+		"required":    {Type: "array", Items: StringSchema()},
+	}}
+	refusals := map[string]Response{
+		"403": {Description: "Conversion is not permitted", Content: problemContent()},
+		"404": {Description: "Source entity not found", Content: problemContent()},
+		"409": {Description: "Definition changed, or the source changed during the conversion", Content: problemContent()},
+		"422": {Description: "Item text or target validation failed", Content: problemContent()},
+	}
+	convertRefusals := maps.Clone(refusals)
+	convertRefusals["500"] = Response{
+		Description: "The entity was created but its relation was not (conversion_incomplete names it in entity_id)",
+		Content:     problemContent(),
+	}
+	withOK := func(desc string, s *Schema, refusals map[string]Response) map[string]Response {
+		out := map[string]Response{"200": {Description: desc, Content: jsonContent(s)}}
+		maps.Copy(out, refusals)
+		return out
+	}
+	for name := range g.meta.TaskItemConversions {
+		path := "/api/v1/_task_item_conversions/" + name
+		spec.Paths[path] = PathItem{Post: &Operation{
+			OperationID: "convertTaskItem" + capitalize(name), Summary: "Convert a task item using " + name,
+			Tags: []string{"Task item conversions"}, RequestBody: body,
+			Responses: withOK("Created entity identity", result, convertRefusals),
+		}}
+		spec.Paths[path+"/preflight"] = PathItem{Post: &Operation{
+			OperationID: "preflightTaskItem" + capitalize(name), Summary: "Preview " + name,
+			Tags: []string{"Task item conversions"}, RequestBody: body,
+			Responses: withOK("Required fields the recipe leaves empty", preview, refusals),
 		}}
 	}
 }

@@ -64,6 +64,10 @@ func CheckOwningEdgeLeaving(
 		{key.To, store.DirectionOutgoing, gone},      // To owns something
 	}
 	for _, c := range checks {
+		// A blank end is an entity not written yet, which has no edges.
+		if c.id == "" {
+			continue
+		}
 		n, err := countOwningEdges(ctx, meta, st, c.id, c.dir, c.skip)
 		if err != nil {
 			return err

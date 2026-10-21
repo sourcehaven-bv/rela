@@ -108,6 +108,9 @@ export interface Entity {
   // only `[]` means the question was asked.
   _copies?: CopyOffer[]
   _conversions?: ConversionOffer[]
+  // Recipes that turn a task item in this entity's body into a new linked
+  // entity. Present on per-entity responses; `allowed` is advisory.
+  _task_item_conversions?: TaskItemConversionOffer[]
   // Other content states this entity has. See Face.
   _faces?: Face[]
   inaccessible?: InaccessibleField[]
@@ -321,6 +324,17 @@ export interface ConversionOffer {
   mapped_fields?: string[]
   content_mapped?: boolean
   face_choices?: Record<string, string[]>
+}
+
+export interface TaskItemConversionOffer {
+  name: string
+  label: string
+  to: string
+  // What the editor does with the item afterwards: replace its text with a
+  // reference to the new entity, or delete it.
+  item: 'link' | 'remove'
+  allowed: boolean
+  reason?: string
 }
 
 export interface CopyOnSuccess {

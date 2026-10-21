@@ -457,6 +457,11 @@ type CopyReader interface {
 	// Get returns the entity's stored face as the ctx principal may see it:
 	// row-gated, FACE-gated (a `type@face` grant that excludes face is a
 	// miss), and field-redacted. Denied and absent are indistinguishable.
+	//
+	// Redaction must name every hidden field in [entity.Entity.Redacted],
+	// whether or not it holds a value: a task-item conversion refuses on
+	// that list, and answering only for stored values would tell the caller
+	// which hidden fields are empty. visibility.Redact does this.
 	Get(ctx context.Context, entityType, id string, face entity.Face) (*entity.Entity, bool, error)
 }
 
@@ -877,7 +882,7 @@ func (m *Manager) CreateEntity(
 	if e == nil {
 		return nil, errors.New("entitymanager: CreateEntity: entity is nil")
 	}
-	if err := prepareCreate(ctx, m, e, opts); err != nil {
+	if err := prepareCreate(ctx, m, e, opts, e.Properties); err != nil {
 		return nil, err
 	}
 	created, warnings, err := createCore(ctx, m.deps, e.Type, createCoreArgs(e, opts))
@@ -909,9 +914,12 @@ func createCoreArgs(e *entity.Entity, opts entity.CreateOptions) createCoreOpts 
 
 // prepareCreate runs every check [Manager.CreateEntity] makes before it
 // writes: the face, the create ACL, the field gate, the file and external
-// ref refusals and the custom id. A plain function: Manager is at its
-// method cap.
-func prepareCreate(ctx context.Context, m *Manager, e *entity.Entity, opts entity.CreateOptions) error {
+// ref refusals and the custom id. gated names the properties the caller
+// authored; only those pass the field gate. A plain function: Manager is at
+// its method cap.
+func prepareCreate(
+	ctx context.Context, m *Manager, e *entity.Entity, opts entity.CreateOptions, gated map[string]any,
+) error {
 	// The face is taken from opts, NOT from e — the same value createCore
 	// writes below. Reading it off the caller's carrier entity is what made
 	// the authorized face and the written face two different things
@@ -932,7 +940,7 @@ func prepareCreate(ctx context.Context, m *Manager, e *entity.Entity, opts entit
 	// caller may not write could be set at create time (BUG-Q60V).
 	if fieldGated(m) {
 		candidate := &entity.Entity{ID: opts.ID, Type: e.Type, Face: opts.Face, Properties: e.Properties}
-		if err := checkCreateFieldWrite(ctx, m, candidate, e.Properties); err != nil {
+		if err := checkCreateFieldWrite(ctx, m, candidate, gated); err != nil {
 			return err
 		}
 	}
@@ -3063,16 +3071,18 @@ func prepareRelationCreate(
 	// A source the caller cannot see is looked up as a missing one, so the
 	// face check and the ACL below answer as they do for a missing source.
 	source, srcErr := lookupSource(ctx, m, key.From, key.FromFace)
-	return prepareRelationFrom(ctx, m, key, opts, source, srcErr)
+	return prepareRelationFrom(ctx, m, key, opts, source, srcErr, nil)
 }
 
 // prepareRelationFrom is [prepareRelationCreate] for a source the caller
 // already looked up: source and srcErr are what lookupSource returned. A
-// create of an entity with an edge from it passes the entity it just wrote,
-// which a lookup outside its transaction could not see.
+// create of an entity with an edge from it passes the entity it is about to
+// write, which a lookup could not see. A create of an entity with an edge
+// to it passes that entity as created; otherwise created is nil and the
+// target is looked up.
 func prepareRelationFrom(
 	ctx context.Context, m *Manager, key entity.RelationKey, opts entity.RelationOptions,
-	source entityFamily, srcErr error,
+	source entityFamily, srcErr error, created *entityFamily,
 ) (*entity.Relation, error) {
 	from, relType, to := key.From, key.Type, key.To
 	// Authorize BEFORE the peer-existence lookups (BUG-K6FEVB). A missing
@@ -3107,9 +3117,14 @@ func prepareRelationFrom(
 		return nil, missingEndpoint("source", from, srcErr)
 	}
 	// A head the caller cannot see is reported like a missing one.
-	target, err := requireVisibleTarget(ctx, m, to)
-	if err != nil {
-		return nil, missingEndpoint("target", to, err)
+	var target entityFamily
+	if created != nil {
+		target = *created
+	} else {
+		var err error
+		if target, err = requireVisibleTarget(ctx, m, to); err != nil {
+			return nil, missingEndpoint("target", to, err)
+		}
 	}
 	if vErr := metamodel.NewValidator(m.deps.Meta).ValidateRelation(relType, source.typ, target.typ); vErr != nil {
 		// A type-allowlist mismatch is the one tolerable failure: the caller

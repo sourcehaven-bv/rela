@@ -466,6 +466,21 @@ export class EntityPage extends BasePage {
     return this.page.locator('.entity-body-editor .ProseMirror');
   }
 
+  /** The convert buttons on task items in the body editor (TKT-3IBLIP). */
+  get bodyTaskItemConvertButtons(): Locator {
+    return this.bodyEditor.locator('button.task-item-convert');
+  }
+
+  /** The task-item conversion dialog. */
+  get taskItemDialog(): Locator {
+    return this.page.locator('.task-item-dialog');
+  }
+
+  /** Presses a recipe in the task-item conversion dialog. */
+  async chooseTaskItemConversion(label: string) {
+    await this.taskItemDialog.getByRole('button', { name: label, exact: true }).click();
+  }
+
   /** The body's read view, which the edit swaps out synchronously. */
   get bodyReadView(): Locator {
     return this.page.locator('.rl-inline-edit__read').filter({ has: this.contentBody });

@@ -625,6 +625,13 @@ body:
                       "format": "uri-reference",
                       "description": "Self link"
                     },
+                    "_task_item_conversions": {
+                      "type": "array",
+                      "items": {
+                        "type": "object"
+                      },
+                      "description": "Recipes that turn a task item in this entity's body into a linked entity"
+                    },
                     "_title": {
                       "type": "string",
                       "description": "Display title, resolved from the type's display property"
@@ -882,6 +889,13 @@ body:
                       "type": "string",
                       "format": "uri-reference",
                       "description": "Self link"
+                    },
+                    "_task_item_conversions": {
+                      "type": "array",
+                      "items": {
+                        "type": "object"
+                      },
+                      "description": "Recipes that turn a task item in this entity's body into a linked entity"
                     },
                     "_title": {
                       "type": "string",
@@ -1191,6 +1205,13 @@ body:
                       "type": "string",
                       "format": "uri-reference",
                       "description": "Self link"
+                    },
+                    "_task_item_conversions": {
+                      "type": "array",
+                      "items": {
+                        "type": "object"
+                      },
+                      "description": "Recipes that turn a task item in this entity's body into a linked entity"
                     },
                     "_title": {
                       "type": "string",
@@ -1512,6 +1533,13 @@ body:
                       "type": "string",
                       "format": "uri-reference",
                       "description": "Self link"
+                    },
+                    "_task_item_conversions": {
+                      "type": "array",
+                      "items": {
+                        "type": "object"
+                      },
+                      "description": "Recipes that turn a task item in this entity's body into a linked entity"
                     },
                     "_title": {
                       "type": "string",
@@ -2575,6 +2603,13 @@ body:
                       "format": "uri-reference",
                       "description": "Self link"
                     },
+                    "_task_item_conversions": {
+                      "type": "array",
+                      "items": {
+                        "type": "object"
+                      },
+                      "description": "Recipes that turn a task item in this entity's body into a linked entity"
+                    },
                     "_title": {
                       "type": "string",
                       "description": "Display title, resolved from the type's display property"
@@ -2835,6 +2870,13 @@ body:
                       "type": "string",
                       "format": "uri-reference",
                       "description": "Self link"
+                    },
+                    "_task_item_conversions": {
+                      "type": "array",
+                      "items": {
+                        "type": "object"
+                      },
+                      "description": "Recipes that turn a task item in this entity's body into a linked entity"
                     },
                     "_title": {
                       "type": "string",
@@ -3150,6 +3192,13 @@ body:
                       "type": "string",
                       "format": "uri-reference",
                       "description": "Self link"
+                    },
+                    "_task_item_conversions": {
+                      "type": "array",
+                      "items": {
+                        "type": "object"
+                      },
+                      "description": "Recipes that turn a task item in this entity's body into a linked entity"
                     },
                     "_title": {
                       "type": "string",
@@ -3474,6 +3523,13 @@ body:
                       "type": "string",
                       "format": "uri-reference",
                       "description": "Self link"
+                    },
+                    "_task_item_conversions": {
+                      "type": "array",
+                      "items": {
+                        "type": "object"
+                      },
+                      "description": "Recipes that turn a task item in this entity's body into a linked entity"
                     },
                     "_title": {
                       "type": "string",
@@ -4390,6 +4446,13 @@ body:
                       "format": "uri-reference",
                       "description": "Self link"
                     },
+                    "_task_item_conversions": {
+                      "type": "array",
+                      "items": {
+                        "type": "object"
+                      },
+                      "description": "Recipes that turn a task item in this entity's body into a linked entity"
+                    },
                     "_title": {
                       "type": "string",
                       "description": "Display title, resolved from the type's display property"
@@ -4676,6 +4739,13 @@ body:
                       "type": "string",
                       "format": "uri-reference",
                       "description": "Self link"
+                    },
+                    "_task_item_conversions": {
+                      "type": "array",
+                      "items": {
+                        "type": "object"
+                      },
+                      "description": "Recipes that turn a task item in this entity's body into a linked entity"
                     },
                     "_title": {
                       "type": "string",
@@ -5044,6 +5114,13 @@ body:
                       "format": "uri-reference",
                       "description": "Self link"
                     },
+                    "_task_item_conversions": {
+                      "type": "array",
+                      "items": {
+                        "type": "object"
+                      },
+                      "description": "Recipes that turn a task item in this entity's body into a linked entity"
+                    },
                     "_title": {
                       "type": "string",
                       "description": "Display title, resolved from the type's display property"
@@ -5394,6 +5471,13 @@ body:
                       "format": "uri-reference",
                       "description": "Self link"
                     },
+                    "_task_item_conversions": {
+                      "type": "array",
+                      "items": {
+                        "type": "object"
+                      },
+                      "description": "Recipes that turn a task item in this entity's body into a linked entity"
+                    },
                     "_title": {
                       "type": "string",
                       "description": "Display title, resolved from the type's display property"
@@ -5716,6 +5800,13 @@ body:
                       "type": "string",
                       "format": "uri-reference",
                       "description": "Self link"
+                    },
+                    "_task_item_conversions": {
+                      "type": "array",
+                      "items": {
+                        "type": "object"
+                      },
+                      "description": "Recipes that turn a task item in this entity's body into a linked entity"
                     },
                     "_title": {
                       "type": "string",
@@ -7355,6 +7446,10 @@ body:
           "detail": {
             "type": "string",
             "description": "Detailed explanation"
+          },
+          "entity_id": {
+            "type": "string",
+            "description": "On a 500 conversion_incomplete: the entity the conversion created before a later step failed"
           },
           "errors": {
             "type": "array",

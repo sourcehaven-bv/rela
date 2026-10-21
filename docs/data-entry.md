@@ -8050,6 +8050,60 @@ pair per face, saying where its comments and history go.
 | Target id already taken | `409` |
 | A face or a mapped field is unreadable, a required value is missing, a `unique:` value is taken, or the plan is otherwise invalid | `422` |
 
+### Converting a task item
+
+The entity response carries `_task_item_conversions`: one offer per
+[task-item recipe](metamodel.md#declaring-task-item-conversions) declared for
+the entity's type, with `name`, `label`, the target type `to`, the `item` mode
+(`link` or `remove`), and whether the caller may run it (`allowed`, with a
+`reason` when not). The field is absent when the type has no recipes. The body
+editor shows a convert button on each task item when at least one offer is
+allowed. Create forms do not show it.
+
+The button posts the item's text to the recipe's `/preflight` endpoint, which
+lists the required target properties the recipe leaves empty. If there are
+any, the editor asks for them. Unlike a form create, the conversion refuses a
+required property left empty instead of saving it with a warning, because the
+preflight has already asked for it. The editor then posts to the recipe:
+
+```bash
+curl -s -X POST http://localhost:8080/api/v1/_task_item_conversions/subtask/preflight \
+  -H 'Content-Type: application/json' \
+  -d '{"source_id":"TKT-1","text":"Write the migration"}'
+
+curl -s -X POST http://localhost:8080/api/v1/_task_item_conversions/subtask \
+  -H 'Content-Type: application/json' \
+  -d '{"source_id":"TKT-1","text":"Write the migration","properties":{"owner":"bob"}}'
+```
+
+The request body takes `source_id`, `source_face` (required for a faced
+source), `text` (the item's line) and `properties` (values for the required
+fields only). The response names the new entity: `entity_id`, `entity_type`,
+`face` for a faced target, `title`, the `item` mode, and any `warnings`.
+`title` comes from the
+same per-principal lookup as reference titles, so it is empty when the caller
+may not read the new entity's title. The editor then links or removes the item,
+and the body saves as an ordinary edit.
+
+`warnings` holds the create's soft validation findings, as on any create. It
+also holds `follow_up_failed` when the entity and relation were saved but a
+step after the save, such as an automation, failed. The entity exists in both
+cases, so the editor still updates the item.
+
+| Situation | Response |
+| --- | --- |
+| No `create` on the target type, no relation create, or no `update` on the source | `403` |
+| A relation `when:` rule refuses the edge | `403` |
+| A `{{source.<property>}}` the caller may not read, or a field the caller may not write | `403` |
+| Unknown recipe, or a source that is missing or unreadable | `404` |
+| The schema reloaded and the recipe changed | `409 schema_changed` |
+| A copied source value changed during the request | `409` |
+| Empty, too long or malformed item text, a missing required value, a value for a mapped field, or a missing `source_face` | `422 conversion_failed` |
+| A field fails validation or a `unique:` value is taken | `422 validation_failed` |
+| A state the target may not start in, or an ownership rule the edge breaks | `422 conversion_failed` |
+| The relation is at its `max_outgoing` or `max_incoming` limit | `422 cardinality_exceeded` |
+| The entity was saved but the relation was not, on a backend that cannot roll back | `500 conversion_incomplete`, naming the new entity's ID in `entity_id`. The editor links the item to it, so a second press does not make a duplicate. |
+
 ### Responses and errors
 
 | Situation | Response |

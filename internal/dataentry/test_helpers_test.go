@@ -195,22 +195,19 @@ func rebindApp(app *App, fs storage.FS, paths *project.Context, svc *appbuild.Se
 				}
 			})
 	}
-	// The copy surface is wired through the SAME helper production uses, so
-	// `_copies` rides test-app entity responses exactly as it does in NewApp.
-	// The construction only errors on a nil service, which a real manager
-	// cannot produce — same clean-boot swallow as the logo/palette stores.
-	copyOffers, copiesHandler, _ := wireCopies(svc.EntityManager(), copyEdgeGate{
-		affordances: func() affordanceService { return app.affordances },
-		visible:     app.visibleReader,
-	})
-	// Conversions are wired as NewApp wires them, on the field-gated handle.
-	var offers func(context.Context, string, string) []entitymanager.ConversionOffer
+	// The copy and conversion surfaces are wired through the SAME helper
+	// production uses, so their offers ride test-app entity responses exactly
+	// as they do in NewApp. Without a manager there is nothing to wire; the
+	// helper only errors on a nil collaborator, which a real manager cannot
+	// produce — same clean-boot swallow as the logo/palette stores.
+	var ts typeChanges
 	if em := svc.EntityManager(); em != nil {
-		conv, _ := entitymanager.NewConverter(entitymanager.FieldGated(em))
-		app.conversions, _ = newConversionHandler(conv, app.State)
-		offers = conv.Offers
+		ts, _ = wireTypeChanges(em, copyEdgeGate{
+			affordances: func() affordanceService { return app.affordances },
+			visible:     app.visibleReader,
+		}, app.State, viewMention(app))
 	}
-	app.copies = copiesHandler
+	app.copies, app.conversions, app.taskItems = ts.copies, ts.conversions, ts.taskItems
 	app.affordances = affordanceService{
 		acl:          func() acl.ACL { return app.acl },
 		resolver:     func() FieldVerdictResolver { return app.fieldResolver },
@@ -225,8 +222,9 @@ func rebindApp(app *App, fs storage.FS, paths *project.Context, svc *appbuild.Se
 			reader:  app.reader,
 			visible: app.visibleReader,
 		}.plan,
-		copies:           copyOffers,
-		conversions:      offers,
+		copies:           ts.copyOffers,
+		conversions:      ts.conversionOffers,
+		taskItems:        ts.taskItemOffers,
 		schema:           app.State,
 		actionConditions: func() ViewConditionFunc { return app.viewConditions },
 	}

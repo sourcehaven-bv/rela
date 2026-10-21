@@ -343,6 +343,16 @@ A caller with the grant who can read no face of the entity gets the same
 not-found response as for an entity that does not exist. Without the grant the
 answer is a `403` that names the type, whatever faces exist.
 
+**Converting a task item.** A
+[task-item conversion](metamodel.md#declaring-task-item-conversions) has no
+grant of its own. It creates an entity and a relation, so it needs exactly what
+doing both by hand needs: `create` on the target type, the relation's `create`,
+and any relation `when:` rule. It also needs `update` on the source, because it
+is offered as an edit of the source body. That last check keeps the button off
+read-only pages; it adds no protection, since the other rights reach the same
+result by hand. The recipe's `{{source.<property>}}` values must be readable by
+the caller, and a field filled from the item text passes the field write gate.
+
 **Identity-scoped relations.** An identity-scoped relation from a faced entity
 belongs to the whole entity. Writing one needs the verb on every face the type
 **declares**, whether or not this entity stores it. A `relation_grants:`

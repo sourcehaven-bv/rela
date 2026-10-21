@@ -35,6 +35,7 @@ import type {
   AttachmentInfo,
   TransitionOption,
   Mention,
+  TaskItemConversionOffer,
 } from '@/types'
 import { getTemplates, createRelation, dryRunCreateEntity, ApiError, getErrorMessage } from '@/api'
 import { uploadAttachment, attachmentErrorReason } from '@/api/attachments'
@@ -57,6 +58,10 @@ import { adoptLockedFieldValues } from './stagedEntity'
 import AutoSaveIndicator from './AutoSaveIndicator.vue'
 import FormFieldList from './FormFieldList.vue'
 import MarkdownEditor from './milkdown/MilkdownEditor.vue'
+import TaskItemConversions, {
+  taskItemConvertLabel,
+  type TaskItemEditor,
+} from './TaskItemConversions.vue'
 import { makeRefResolver } from '@/utils/entityRefResolver'
 import SidePanel from './SidePanel.vue'
 import HelpModal from '@/components/ui/HelpModal.vue'
@@ -637,6 +642,7 @@ async function loadEntity(force = false) {
     notEditable.value = !actionAllowed(entity, 'update')
     notEditableFace.value = refFace(entityRef(entity))
     notEditableTitle.value = entityDisplayTitle(entity)
+    taskItemOffers.value = entity._task_item_conversions
     // Retained hidden values belong to the form state we are about to replace.
     // Carrying them across a reload — or across an entity switch, since this
     // component is not re-keyed per entity — would restore one entity's value
@@ -1711,7 +1717,22 @@ function focusFirstError() {
  * previous body. Inserting an entity reference and immediately submitting is
  * the case that exposed it.
  */
-const markdownEditorRef = ref<{ flush?: () => void } | null>(null)
+const markdownEditorRef = ref<({ flush?: () => void } & Partial<TaskItemEditor>) | null>(null)
+
+// Task-item recipes for the body (TKT-3IBLIP). Edit mode only: the action
+// writes a relation to the source, which a create form does not have yet.
+const taskItemOffers = ref<TaskItemConversionOffer[] | undefined>()
+const taskItemConversionsRef = ref<InstanceType<typeof TaskItemConversions> | null>(null)
+const taskItemLabel = computed(() =>
+  isEdit.value ? taskItemConvertLabel(taskItemOffers.value) : ''
+)
+
+function taskItemEditor(): TaskItemEditor | null {
+  const editor = markdownEditorRef.value
+  return editor?.applyTaskItemResult && editor.markTaskItemBusy && editor.clearTaskItemBusy
+    ? (editor as TaskItemEditor)
+    : null
+}
 
 /** Pushes any pending editor change into `content` before it is read. */
 function flushEditor() {
@@ -2899,7 +2920,16 @@ defineExpose({
             :model-value="content"
             :ref-resolver="refResolver"
             :mention-self="mentionSelf"
+            :task-item-convert-label="taskItemLabel"
             @update:model-value="updateContent"
+            @task-item-convert="(target) => taskItemConversionsRef?.start(target)"
+          />
+          <TaskItemConversions
+            v-if="taskItemLabel && mentionSelf"
+            ref="taskItemConversionsRef"
+            :offers="taskItemOffers"
+            :source="mentionSelf"
+            :editor="taskItemEditor"
           />
         </div>
 

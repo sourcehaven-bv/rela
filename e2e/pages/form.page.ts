@@ -844,6 +844,19 @@ export class FormPage extends BasePage {
     return this.proseMirror.locator("li[data-item-type='task']");
   }
 
+  /** The convert buttons on task items (TKT-3IBLIP), in document order. */
+  get editorTaskItemConvertButtons(): Locator {
+    return this.proseMirror.locator("button.task-item-convert");
+  }
+
+  /** Presses a recipe in the task-item conversion dialog. */
+  async chooseTaskItemConversion(label: string) {
+    await this.page
+      .locator(".task-item-dialog")
+      .getByRole("button", { name: label, exact: true })
+      .click();
+  }
+
   /** The checkboxes inside those items.
    *
    *  Deliberately `input[type=checkbox]` rather than the `data-checked`

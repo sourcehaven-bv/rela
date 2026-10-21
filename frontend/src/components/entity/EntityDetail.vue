@@ -1201,6 +1201,10 @@ async function requestDelete() {
 // distinction is collapsed HERE, once, rather than carried into every reader.
 const copyOffers = computed<CopyOffer[]>(() => entry.value?._copies ?? [])
 const conversionOffers = computed<ConversionOffer[]>(() => entry.value?._conversions?.filter((o) => o.allowed) ?? [])
+// The body editor's task-item recipes, and the entity they convert from.
+const taskItemSource = computed(() =>
+  entry.value ? { id: entry.value.id, face: entry.value._world?.face ?? '' } : undefined
+)
 const conversionOffer = ref<ConversionOffer | null>(null)
 
 function conversionDone(id: string, face: string) {
@@ -2578,6 +2582,8 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
             :content="entryContentSection.content || ''"
             :editable="canEditBody"
             :ref-resolver="refResolver"
+            :source="taskItemSource"
+            :task-item-conversions="entry?._task_item_conversions"
             @input="onBodyInput"
             @done="onBodyDone"
           >
