@@ -10,6 +10,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/access"
 	"github.com/Sourcehaven-BV/rela/internal/acl"
@@ -574,6 +575,10 @@ type AssertedIdentity struct {
 	// Principal so lazy provisioning (TKT-ANUJDS) can stamp it on a stub user
 	// entity; nothing in the ACL evaluates it.
 	Email string
+
+	// ExpiresAt is when the verifier stops accepting the assertion; see
+	// withCredentialExpiry. Zero means no expiry is known.
+	ExpiresAt time.Time
 }
 
 // assertionVerifier verifies a signed assertion and projects the org/role
@@ -592,6 +597,8 @@ type assertionVerifier interface {
 // failure so a chain falls through to the next source — under a header chain
 // that is an auth downgrade, which is why cmd/rela-server no longer wires it.
 // Retained for callers embedding dataentry with their own chain semantics.
+// Event streams opened through it do not end when the token expires, because
+// only the gate records the expiry (TKT-5I6REX).
 //
 // JWTPrincipalResolver reads a signed identity assertion from headerName,
 // verifies it (ES256 against the proxy's JWKS, via v), and stamps the verified

@@ -418,6 +418,13 @@ func (a *App) handleSSE(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Connection", "keep-alive")
 	w.Header().Set("X-Accel-Buffering", "no")
 
+	// A token that expired between verification and this point ends the
+	// stream here, before any subscription or live registration.
+	expiry, hasExpiry := credentialExpiry(r.Context())
+	if hasExpiry && !time.Now().Before(expiry) {
+		return
+	}
+
 	ch := a.broker.subscribe()
 	defer a.broker.unsubscribe(ch)
 
@@ -432,7 +439,7 @@ func (a *App) handleSSE(w http.ResponseWriter, r *http.Request) {
 	defer sub.Close()
 
 	rc := http.NewResponseController(w)
-	conn := &sseConn{w: w, flusher: flusher, setDeadline: rc.SetWriteDeadline, timing: a.sseTiming}
+	conn := &sseConn{w: w, flusher: flusher, setDeadline: rc.SetWriteDeadline, timing: a.sseTiming, expiry: expiry}
 	ready := map[string]string{}
 	var live liveFrames // nil: no live views on this stream
 	if r.URL.Path == "/api/v1/_events" {
@@ -490,6 +497,12 @@ type sseConn struct {
 	flusher     http.Flusher
 	setDeadline func(time.Time) error // nil when the writer has none (tests)
 	timing      sseTimings
+
+	// expiry is when the stream's credential stops being valid; zero when
+	// it has none (TKT-5I6REX). runSSELoop ends the stream at this moment.
+	// A write deadline never reaches past it, so a blocked write cannot
+	// keep an expired stream open.
+	expiry time.Time
 }
 
 // sseMissedPings is how many ping intervals a frame write may block before
@@ -504,7 +517,11 @@ var errStreamEnded = errors.New("sse: stream ended")
 // means the connection is unusable and the stream must end.
 func (c *sseConn) frame(name, id, data string) error {
 	if c.setDeadline != nil {
-		err := c.setDeadline(time.Now().Add(sseMissedPings * c.timing.ping))
+		deadline := time.Now().Add(sseMissedPings * c.timing.ping)
+		if !c.expiry.IsZero() && c.expiry.Before(deadline) {
+			deadline = c.expiry
+		}
+		err := c.setDeadline(deadline)
 		if err != nil && !errors.Is(err, http.ErrNotSupported) {
 			return err
 		}
@@ -568,9 +585,11 @@ type changeSource interface {
 // (docs/acl-security.md).
 //
 // Non-entity events (refresh, git) pass through ungated and immediately.
-// The stream ends on a closed broker channel, the request context, or
-// right after a config-changed frame, so that frame is the last one
-// written even when a flush or ping is due at the same moment.
+// The stream ends on a closed broker channel, the request context, the
+// credential expiry on conn, or right after a config-changed frame, so
+// that frame is the last one written even when a flush or ping is due at
+// the same moment. At expiry no final frame is written: the client
+// reconnects with a fresh assertion, as after a reload.
 func (a *App) runSSELoop(
 	conn *sseConn, r *http.Request, ch <-chan sseEvent, feed changeSource, start uint64, live liveFrames,
 ) {
@@ -600,6 +619,12 @@ func (a *App) runSSELoop(
 	if live != nil {
 		liveWake = live.wake()
 	}
+	var expired <-chan time.Time // nil: the credential does not expire
+	if !conn.expiry.IsZero() {
+		expire := time.NewTimer(time.Until(conn.expiry))
+		defer expire.Stop()
+		expired = expire.C
+	}
 
 	ctx := r.Context()
 	for {
@@ -623,6 +648,8 @@ func (a *App) runSSELoop(
 		case <-ping.C:
 			err = conn.frame("ping", feed.Token(st.flushed), "{}")
 		case <-ctx.Done():
+			return
+		case <-expired:
 			return
 		}
 		if err != nil {

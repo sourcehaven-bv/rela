@@ -5,7 +5,9 @@ title: End SSE streams when the verified token expires
 kind: enhancement
 priority: medium
 effort: s
-status: backlog
+started: "2026-10-20"
+completed: "2026-10-20"
+status: done
 ---
 
 ## Description

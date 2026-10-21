@@ -57,9 +57,10 @@ type Config struct {
 
 // Verifier checks assertions against a cached, auto-refreshing JWKS.
 type Verifier struct {
-	cfg  Config
-	kf   keyfunc.Keyfunc
-	opts []jwt.ParserOption
+	cfg    Config
+	kf     keyfunc.Keyfunc
+	opts   []jwt.ParserOption
+	leeway time.Duration // the leeway opts was built with
 }
 
 // New constructs a Verifier, validating the mandatory pins and fetching the JWKS
@@ -93,15 +94,26 @@ func New(ctx context.Context, cfg Config) (*Verifier, error) {
 	if err != nil {
 		return nil, fmt.Errorf("jwtauth: load jwks %q: %w", cfg.JWKSURL, err)
 	}
-	// Parser options: ES256 only (reject alg:none / RS-vs-ES confusion), pinned
-	// issuer, strict audience, and a required expiry.
-	opts := []jwt.ParserOption{
+	return &Verifier{cfg: cfg, kf: kf, leeway: assertionLeeway,
+		opts: assertionParserOptions(cfg, assertionLeeway)}, nil
+}
+
+// assertionLeeway is how long after "exp" the verifier still accepts an
+// assertion. It is the single source for both the parser and
+// [AssertionClaims.ExpiresAt], so the two cannot drift apart.
+const assertionLeeway = 0 * time.Second
+
+// assertionParserOptions pins ES256 only (reject alg:none / RS-vs-ES
+// confusion), the issuer, a strict audience, a required expiry, and the
+// expiry leeway.
+func assertionParserOptions(cfg Config, leeway time.Duration) []jwt.ParserOption {
+	return []jwt.ParserOption{
 		jwt.WithValidMethods([]string{"ES256"}),
 		jwt.WithIssuer(cfg.Issuer),
 		jwt.WithAudience(cfg.Audience),
 		jwt.WithExpirationRequired(),
+		jwt.WithLeeway(leeway),
 	}
-	return &Verifier{cfg: cfg, kf: kf, opts: opts}, nil
 }
 
 // refreshErrorHandler reports a failed background JWKS refresh. keyfunc calls it
@@ -180,6 +192,11 @@ type AssertionClaims struct {
 	// does not go through stringSliceClaim). Each scope may re-open capability
 	// the baseline closed, always bounded by what the acting user holds.
 	Scopes []string
+
+	// ExpiresAt is the moment the verifier stops accepting this token: the
+	// "exp" claim plus the parser's leeway. Zero when the claim is absent,
+	// which the required-expiry parser option prevents.
+	ExpiresAt time.Time
 }
 
 // Claim-projection bounds. A verified signature proves the IdP asserted these
@@ -222,6 +239,10 @@ func (v *Verifier) VerifyAssertion(ctx context.Context, raw string) (AssertionCl
 		// empty: definitively a client-side fault, never a key problem.
 		return AssertionClaims{}, ErrInvalid
 	}
+	var expiresAt time.Time
+	if exp, err := claims.GetExpirationTime(); err == nil && exp != nil {
+		expiresAt = exp.Add(v.leeway)
+	}
 	return AssertionClaims{
 		Subject:       sub,
 		Email:         stringClaim(claims, "email"),
@@ -231,6 +252,7 @@ func (v *Verifier) VerifyAssertion(ctx context.Context, raw string) (AssertionCl
 		Roles:         stringSliceClaim(claims, "roles"),
 		PrincipalType: stringClaim(claims, "principal_type"),
 		Scopes:        scopeClaim(claims, "scope"),
+		ExpiresAt:     expiresAt,
 	}, nil
 }
 

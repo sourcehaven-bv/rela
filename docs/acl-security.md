@@ -667,7 +667,9 @@ Pratique that window is **up to 9 minutes** (`AssertionTTL`). rela has
 no revocation channel — there is nothing to "push" a revocation to. If
 your incident response depends on cutting access faster than the token
 lifetime, you must restart or otherwise intervene at the proxy; do not
-assume revoking in the IdP takes effect immediately downstream.
+assume revoking in the IdP takes effect immediately downstream. Event
+streams follow the same bound: the server ends a stream when the assertion
+that opened it expires.
 
 ### `org_id` is recorded, not enforced
 
@@ -912,10 +914,13 @@ fails `TestLive_ReplayMatchesGet`.
 The replay starts from the principal as the transport stamped it, before
 `principal_property` resolution, and is resolved again on every replay, so
 membership and access changes apply at once. The verified claims (roles,
-scopes, organization) are those from when the stream opened. A stream
-therefore keeps receiving frames computed for those claims until it closes,
-even after the token that opened it expires. TKT-5I6REX tracks ending a
-stream at token expiry. Subscriptions are bound to the identity that opened
+scopes, organization) are those from when the stream opened. Behind the JWT
+gate, the server ends the stream when the assertion that opened it expires
+(TKT-5I6REX), so those claims are used no longer than the token is valid. The
+client reconnects, the proxy supplies a fresh assertion, and the stream resumes
+from its last event id; the SPA subscribes its live views again. Without the
+JWT gate (trusted header, desktop) there is no expiry, and a stream lasts until
+it closes. Subscriptions are bound to the identity that opened
 the stream: another identity, or the same one with different claims, cannot
 change them.
 
