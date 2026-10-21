@@ -1,7 +1,6 @@
 package fsstore
 
 import (
-	"encoding/json"
 	"log/slog"
 	"os"
 	"path"
@@ -12,136 +11,13 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 )
 
-const indexFile = "fsstore-index.json"
-
-// IndexKey is where a store whose Config.CacheKey is cacheKey persists its
-// index. Removing that file only costs the next store a full scan.
-func IndexKey(cacheKey string) string { return path.Join(cacheKey, indexFile) }
-
-// persistedIndex is the on-disk format for the cached store state.
-type persistedIndex struct {
-	// EntitiesDirMtime is the latest mtime across all entity type subdirectories.
-	EntitiesDirMtime time.Time `json:"entities_dir_mtime"`
-	// RelationsDirMtime is the mtime of the relations directory.
-	RelationsDirMtime time.Time `json:"relations_dir_mtime"`
-
-	Entities  map[string]indexedEntity   `json:"entities"`  // id → meta
-	Relations map[string]indexedRelation `json:"relations"` // key → meta
-
-}
-
-type indexedEntity struct {
-	ID   string      `json:"id"`
-	Type string      `json:"type"`
-	Face entity.Face `json:"face,omitempty"`
-}
-
-type indexedRelation struct {
-	From     string      `json:"from"`
-	Type     string      `json:"type"`
-	To       string      `json:"to"`
-	FromFace entity.Face `json:"from_face,omitempty"`
-}
-
-// loadPersistedIndex reads the index from disk. Returns nil if missing or corrupt.
-func (s *FSStore) loadPersistedIndex() *persistedIndex {
-	if s.cacheKey == "" || s.ignoreIndexCache {
-		return nil
-	}
-	data, err := s.codec.readDataFile(IndexKey(s.cacheKey))
-	if err != nil {
-		return nil
-	}
-	var idx persistedIndex
-	if json.Unmarshal(data, &idx) != nil {
-		return nil
-	}
-	return &idx
-}
-
-// savePersistedIndex writes the current index state to disk.
-func (s *FSStore) savePersistedIndex() error {
-	if s.cacheKey == "" || s.ignoreIndexCache {
-		return nil
-	}
-
-	idx := persistedIndex{
-		EntitiesDirMtime:  s.entitiesDirMtime(),
-		RelationsDirMtime: s.relationsDirMtime(),
-		Entities:          make(map[string]indexedEntity, len(s.entities)),
-		Relations:         make(map[string]indexedRelation, len(s.relations)),
-	}
-
-	for key, meta := range s.entities {
-		idx.Entities[key] = indexedEntity(meta)
-	}
-	for key, meta := range s.relations {
-		idx.Relations[key] = indexedRelation(meta)
-	}
-	// Marked families are still on disk, so the index keeps them; the next
-	// open hides them again from pending-deletes.json.
-	for _, meta := range markedEntityMetas(s) {
-		idx.Entities[stateKey(meta.ID, meta.Face)] = indexedEntity(meta)
-	}
-	for _, meta := range markedRelationMetas(s) {
-		idx.Relations[meta.key()] = indexedRelation(meta)
-	}
-
-	data, err := json.Marshal(idx)
-	// coverage-ignore-start: defensive: persistedIndex holds only time.Time and map[string]... of strings/ints;
-	// json.Marshal of it cannot fail
-	if err != nil {
-		return err
-	}
-	// coverage-ignore-end
-	return s.rooted.WriteFile(IndexKey(s.cacheKey), data, 0o644)
-}
-
-// syncIndex reconciles all in-memory state with the filesystem:
-//  1. Entity index: dir mtime check → restore from cache or rescan dirs
-//  2. Relation index: dir mtime check → restore from cache or rescan dirs
+// syncIndex builds the entity and relation index from the directory
+// listings. Every open scans, so the index cannot go stale. The scan lists
+// directories and reads no file bodies.
 func (s *FSStore) syncIndex() error {
-	cached := s.loadPersistedIndex()
-
-	if err := s.syncEntities(cached); err != nil {
+	if err := s.scanEntityDirs(); err != nil {
 		return err
 	}
-	return s.syncRelations(cached)
-}
-
-// syncEntities builds the entity index from directory structure.
-// If the cached index is fresh (dir mtime unchanged), restores from cache.
-// Otherwise walks entity type dirs: dir name → type, filename → ID.
-func (s *FSStore) syncEntities(cached *persistedIndex) error {
-	currentMtime := s.entitiesDirMtime()
-
-	if cached != nil && cached.Entities != nil && currentMtime.Equal(cached.EntitiesDirMtime) {
-		for key, ie := range cached.Entities {
-			s.entities[key] = entityMeta(ie)
-			s.entityOrder = append(s.entityOrder, key)
-		}
-		sortStateKeys(s.entityOrder)
-		return nil
-	}
-
-	return s.scanEntityDirs()
-}
-
-// syncRelations builds the relation index from filenames.
-// If the cached index is fresh (dir mtime unchanged), restores from cache.
-// Otherwise lists the relations dir and parses FROM--TYPE--TO from filenames.
-func (s *FSStore) syncRelations(cached *persistedIndex) error {
-	currentMtime := s.relationsDirMtime()
-
-	if cached != nil && cached.Relations != nil && currentMtime.Equal(cached.RelationsDirMtime) {
-		for key, ir := range cached.Relations {
-			s.relations[key] = relationMeta(ir)
-			s.relationOrder = append(s.relationOrder, key)
-		}
-		sortStrings(s.relationOrder)
-		return nil
-	}
-
 	return s.scanRelationDir()
 }
 

@@ -461,21 +461,20 @@ func TestRecovery_SearchIndexRebuilt(t *testing.T) {
 	assert.Equal(t, "REQ-2", results[0].ID)
 }
 
-// --- Index rebuilt after crash (stale index) ---
+// --- File changed on disk between runs ---
 
-func TestRecovery_IndexAfterCrashMidUpdate(t *testing.T) {
+func TestRecovery_ExternalEditBetweenRunsIsRead(t *testing.T) {
 	fs := storage.NewMemFS()
 	ctx := context.Background()
 
-	// Create entity and close (flushes cache).
+	// Create entity and close.
 	s1 := openStore(t, fs)
 	e := entity.New("T-1", "ticket")
 	e.Properties["status"] = "open"
 	require.NoError(t, s1.CreateEntity(ctx, e))
 	require.NoError(t, s1.Close())
 
-	// Simulate: entity was updated on disk (e.g., by the store writing the file)
-	// but the property cache was not flushed before crash.
+	// Simulate: the file changed on disk while no store was open.
 	require.NoError(t, fs.WriteFile("/entities/tickets/T-1.md", []byte(`---
 id: T-1
 type: ticket
@@ -483,7 +482,7 @@ status: closed
 ---
 `), 0644))
 
-	// Reopen — cache is stale (mtime newer than cache), should rebuild.
+	// Reopen: the new content must be read.
 	s2 := openStore(t, fs)
 	defer s2.Close()
 

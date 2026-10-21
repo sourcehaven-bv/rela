@@ -4,8 +4,7 @@
 // # Contract
 //
 // The source project is never modified: it is read through a read-only
-// filesystem, fsstore ignores its index cache, and no database is opened in
-// it. Everything is built in a staging directory beside the target and
+// filesystem and no database is opened in it. Everything is built in a staging directory beside the target and
 // renamed into place only after the data has been written. Any failure removes
 // the staging directory, so a run either produces a complete target or
 // nothing.

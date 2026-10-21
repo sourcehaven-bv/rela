@@ -352,8 +352,4 @@ func (s *server) retire(old, next *generation) {
 	if err := old.svc.Close(); err != nil && !errors.Is(err, context.Canceled) {
 		slog.Warn("closing the replaced configuration", "error", err)
 	}
-	// The old store saved its index on close, missing what next wrote.
-	if err := appbuild.DropStoreIndex(old.svc); err != nil {
-		slog.Warn("removing the replaced configuration's store index", "error", err)
-	}
 }
