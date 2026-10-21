@@ -2252,6 +2252,56 @@ mentions. Settings that control access stay locked: a transition `guard`, and
 `permission:` on navigation entries, spaces and dashboard cards. Change those
 in the files directly.
 
+## Git sync (`git:sync`)
+
+`git:sync` is a built-in global permission. It lets a principal use the sync
+button of the data-entry app (`POST /api/v1/_git/sync`). A sync commits every
+pending change in `entities/` and `relations/`, not only the caller's own,
+merges the remote and pushes.
+
+Grant it to a role by name:
+
+```yaml
+# acl.yaml
+roles:
+  maintainer:
+    permissions: [git:sync]
+```
+
+Without the permission the sync gets 403, and the response names `git:sync`.
+
+- **Without an `acl.yaml`** every principal may sync, as every principal may
+  already write every entity.
+- **With `--read-only`** nobody may sync, whatever `acl.yaml` grants.
+
+`GET /api/v1/_git/status` stays open to every signed-in principal. Its
+`can_sync` field says whether a sync would be accepted. The paths of
+conflicting files name entities, so the status lists them only for a
+principal who may sync; everyone else sees only that a conflict exists.
+
+## Saving the default values (`settings:edit`)
+
+`settings:edit` is a built-in global permission. It lets a principal save the
+default values on the data-entry settings page (`PUT /api/v1/_settings`). One
+set of defaults serves every principal: a save changes the values that
+everyone's create forms start with.
+
+Grant it to a role by name:
+
+```yaml
+# acl.yaml
+roles:
+  admin:
+    permissions: [settings:edit]
+```
+
+- **With an `acl.yaml`,** only a holder may save. Anyone else gets 403, and
+  the response names `settings:edit`. Reading the settings stays open to every
+  signed-in principal.
+- **Without an `acl.yaml`,** every principal may save, as before the
+  permission existed.
+- **A read-only instance** (`--read-only`) refuses every save.
+
 ## Where to read next
 
 - [GUIDE-acl-overview] — operator's overview of the resolver.
