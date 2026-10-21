@@ -11,7 +11,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   test:
@@ -81,6 +81,10 @@ jobs:
     name: Release
     runs-on: ubuntu-latest
     needs: [test, security]
+    permissions:
+      contents: write
+    outputs:
+      tag: ${{ steps.meta.outputs.tag }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -156,10 +160,83 @@ jobs:
           check 'rela_*_linux_amd64.tar.gz'          rela-docs
           check 'rela-postgres_*_linux_amd64.tar.gz' rela-server-postgres
 
+      # The tag GoReleaser released. Not github.ref_name: a workflow_dispatch
+      # from a branch has the branch name there.
+      - name: Record released tag
+        id: meta
+        run: echo "tag=$(jq -r .tag dist/metadata.json)" >> "$GITHUB_OUTPUT"
+
+  # One CycloneDX JSON SBOM per GoReleaser archive, attached to the release as
+  # <archive>.cdx.json. A consumer derives the URL from the tag:
+  #   https://github.com/sourcehaven-bv/rela/releases/download/v<ver>/<archive>.cdx.json
+  # e.g. .../v26.10.14/rela-postgres_26.10.14_linux_amd64.tar.gz.cdx.json
+  # It scans the published assets, checked against checksums.txt. syft unpacks
+  # each archive and reads the build info embedded in each Go binary, so the
+  # SBOM lists the module versions and Go stdlib (pkg:golang/stdlib) that ship.
+  # A separate job, so an SBOM failure does not stop the desktop builds.
+  sbom:
+    name: SBOM
+    runs-on: ubuntu-latest
+    needs: release
+    permissions:
+      contents: write
+    env:
+      # Pinned SBOM generator. Bump both together; the sha256 is the
+      # syft_<ver>_linux_amd64.tar.gz line of syft_<ver>_checksums.txt.
+      SYFT_VERSION: "1.54.1"
+      SYFT_SHA256: "c069905b391cc4c20a5ba65ad5c10be2a7ba074f8ea6ad203e24d14e303dad47"
+      SYFT_CHECK_FOR_APP_UPDATE: "false"
+    steps:
+      - name: Install syft
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP"
+          tarball="syft_${SYFT_VERSION}_linux_amd64.tar.gz"
+          gh release download "v$SYFT_VERSION" -R anchore/syft -p "$tarball"
+          echo "$SYFT_SHA256  $tarball" | sha256sum -c -
+          tar xzf "$tarball" syft
+          ./syft version
+
+      - name: Generate and attach SBOMs
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.release.outputs.tag }}
+        run: |
+          set -euo pipefail
+          mkdir assets
+          cd assets
+          gh release download "$TAG" -R "$GITHUB_REPOSITORY" -p checksums.txt
+          grep -E '  [^ ]+\.(tar\.gz|zip)$' checksums.txt > archives.sha256
+          if [ ! -s archives.sha256 ]; then
+            echo "FAIL: no archives in checksums.txt of $TAG" >&2
+            exit 1
+          fi
+          mapfile -t archives < <(awk '{print $2}' archives.sha256)
+          for archive in "${archives[@]}"; do
+            gh release download "$TAG" -R "$GITHUB_REPOSITORY" -p "$archive"
+          done
+          sha256sum -c archives.sha256
+          sboms=()
+          for archive in "${archives[@]}"; do
+            sbom="$archive.cdx.json"
+            "$RUNNER_TEMP/syft" scan "file:$archive" -o "cyclonedx-json=$sbom"
+            # An SBOM without the Go stdlib means syft did not read the
+            # binaries' build info; OSV lookups would then miss everything.
+            jq -e '[.components[] | select((.purl // "") | startswith("pkg:golang/stdlib@"))] | length > 0' \
+              "$sbom" > /dev/null \
+              || { echo "FAIL: $sbom has no Go stdlib component" >&2; exit 1; }
+            sboms+=("$sbom")
+          done
+          gh release upload "$TAG" -R "$GITHUB_REPOSITORY" "${sboms[@]}" --clobber
+
   desktop:
     name: Desktop (${{ matrix.os_name }}-${{ matrix.arch }})
     runs-on: ${{ matrix.runner }}
     needs: release
+    permissions:
+      contents: write
     strategy:
       fail-fast: false
       matrix:
