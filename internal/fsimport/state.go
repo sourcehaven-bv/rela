@@ -8,6 +8,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/Sourcehaven-BV/rela/internal/storage"
 )
 
 // relaClass is what the import does with one entry of the source's .rela/.
@@ -18,6 +20,7 @@ const (
 	relaConfig            // copied as a file (copyRelaConfig)
 	relaState             // copied into the target's state KV
 	relaSkip              // not copied, for the reason given
+	relaTemp              // a temp file of an interrupted write; not copied
 )
 
 // relaState entries are runtime state that the file tier keeps in .rela/ and
@@ -54,7 +57,14 @@ var relaSkipped = map[string]string{
 
 // classifyRela returns what the import does with the .rela-relative path p,
 // a file. reason is set for relaSkip.
+//
+// A temp file is never state, even under a state prefix such as theme/:
+// it is a partial write, and copying it would make a key of a half-written
+// value or of a name no reader asks for.
 func classifyRela(p string) (class relaClass, reason string) {
+	if storage.IsTempName(p) {
+		return relaTemp, ""
+	}
 	first, _, _ := strings.Cut(p, "/")
 	if _, ok := relaConfigFiles[p]; ok || first == relaAuditDir {
 		return relaConfig, ""
@@ -110,6 +120,9 @@ func (c *copier) copyState(ctx context.Context) error {
 			return nil
 		case relaUnknown:
 			c.rep.skip(full, "not a file rela keeps in .rela/; not copied")
+			return nil
+		case relaTemp:
+			c.rep.skip(full, "temp file left by an interrupted write; not copied")
 			return nil
 		case relaState:
 			// Copied below.

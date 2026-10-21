@@ -5,7 +5,9 @@ title: fsstore temp-file cleanup can delete another process's in-flight write
 kind: chore
 priority: medium
 effort: s
-status: backlog
+started: "2026-10-21"
+completed: "2026-10-21"
+status: done
 description: cleanupTempFiles in fsstore.New deletes *.tmp files that another running process is about to rename, so that process's write fails.
 ---
 

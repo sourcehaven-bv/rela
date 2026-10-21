@@ -81,7 +81,7 @@ func (f *FSFactory) OpenStore(meta *metamodel.Metamodel) (store.Store, error) {
 		Rooted:         rooted,
 		EntitiesKey:    "entities",
 		RelationsKey:   "relations",
-		AttachmentsKey: "attachments",
+		AttachmentsKey: project.AttachmentsDir,
 		CacheKey:       storeCacheKey,
 		Schemas:        buildSchemas(meta),
 		Observers:      f.observers,

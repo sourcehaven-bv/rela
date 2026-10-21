@@ -24,6 +24,9 @@ const (
 	TemplatesDir         = "templates"
 	EntityTemplatesDir   = "entities"
 	RelationTemplatesDir = "relations"
+	// AttachmentsDir holds the file tier's attachment bytes. Not modeled
+	// into Context: only the fsstore wiring and `rela gc` need it.
+	AttachmentsDir = "attachments"
 	// AppsDir holds custom data-entry apps (apps/<id>/index.html). Like
 	// templates/, it lives on the filesystem in every storage backend and is
 	// not modeled into Context (loaded traversal-resistant where needed).

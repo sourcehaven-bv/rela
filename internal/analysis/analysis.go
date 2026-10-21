@@ -15,6 +15,7 @@ import (
 	"slices"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/lua"
@@ -579,22 +580,32 @@ func (s *Service) AnalyzeAll(ctx context.Context, opts Options) (*Summary, error
 
 // --- Orphan temp files ---
 
-// FindOrphanedTempFiles returns paths of leftover .new temp files in
-// the entities/ and relations/ directories. Returns (nil, nil) when
-// the service was constructed without FS + Paths.
+// FindOrphanedTempFiles returns paths of stale temp files left by
+// interrupted writes of the file tier's data: atomic-write temp files
+// ([storage.IsTempName]) under entities/ and relations/, and unfinished
+// uploads ([storage.IsAttachTempName]) under attachments/. Only stale
+// files count ([storage.IsStaleTemp]); a fresh one may be another
+// process's write in flight. Temp files elsewhere, such as under .rela/,
+// are not scanned. Returns (nil, nil) when the service was constructed
+// without FS + Paths.
 func (s *Service) FindOrphanedTempFiles() ([]string, error) {
 	if s.deps.FS == nil || s.deps.Paths == nil {
 		return nil, nil
 	}
-	orphaned := make([]string, 0) //nolint:prealloc // capacity unknown
-	orphaned = append(orphaned, findTempFilesInDir(s.deps.FS, s.deps.Paths.EntitiesDir)...)
-	orphaned = append(orphaned, findTempFilesInDir(s.deps.FS, s.deps.Paths.RelationsDir)...)
+	now := time.Now()
+	orphaned := make([]string, 0)
+	orphaned = append(orphaned, findTempFilesInDir(s.deps.FS, s.deps.Paths.EntitiesDir, storage.IsTempName, now)...)
+	orphaned = append(orphaned, findTempFilesInDir(s.deps.FS, s.deps.Paths.RelationsDir, storage.IsTempName, now)...)
+	if root := s.deps.Paths.Root; root != "" {
+		attachDir := root + "/" + project.AttachmentsDir
+		orphaned = append(orphaned, findTempFilesInDir(s.deps.FS, attachDir, storage.IsAttachTempName, now)...)
+	}
 	return orphaned, nil
 }
 
-// CleanupOrphanedTempFiles removes every orphaned .new temp file.
+// CleanupOrphanedTempFiles removes every orphaned temp file.
 // Returns the number of files cleaned up. Returns (0, nil) when the
-// service was constructed without FS + Paths — same gate as
+// service was constructed without FS + Paths, the same gate as
 // [Service.FindOrphanedTempFiles].
 func (s *Service) CleanupOrphanedTempFiles() (int, error) {
 	orphaned, err := s.FindOrphanedTempFiles()
@@ -609,8 +620,9 @@ func (s *Service) CleanupOrphanedTempFiles() (int, error) {
 	return len(orphaned), nil
 }
 
-// findTempFilesInDir walks a directory (recursively) for .new temp files.
-func findTempFilesInDir(fs storage.FS, dir string) []string {
+// findTempFilesInDir walks a directory (recursively) for stale files
+// whose name isTemp matches.
+func findTempFilesInDir(fs storage.FS, dir string, isTemp func(string) bool, now time.Time) []string {
 	var result []string
 	entries, err := fs.ReadDir(dir)
 	if err != nil {
@@ -620,8 +632,13 @@ func findTempFilesInDir(fs storage.FS, dir string) []string {
 		name := entry.Name()
 		path := dir + "/" + name
 		if entry.IsDir() {
-			result = append(result, findTempFilesInDir(fs, path)...)
-		} else if strings.HasSuffix(name, ".new") {
+			result = append(result, findTempFilesInDir(fs, path, isTemp, now)...)
+			continue
+		}
+		if !isTemp(name) {
+			continue
+		}
+		if info, infoErr := entry.Info(); infoErr == nil && storage.IsStaleTemp(info.ModTime(), now) {
 			result = append(result, path)
 		}
 	}
