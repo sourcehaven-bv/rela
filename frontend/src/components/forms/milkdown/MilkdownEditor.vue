@@ -43,6 +43,8 @@ import { RELA_COMMONMARK, RELA_OUTPUT_NODES, configureRelaSerializer } from './e
 import { entityRefNode } from './entityRefNode'
 import { insertEntityRefAtCursor } from './insertEntityRef'
 import { taskList } from './taskListItem'
+import type { TaskItemTarget } from './taskItemConvert'
+import { useTaskItemConvert } from './useTaskItemConvert'
 import {
   entityRefResolutionPlugin,
   buildResolutionTransaction,
@@ -96,11 +98,25 @@ const props = defineProps<{
    * starts from its related entities and never offers it to itself.
    */
   mentionSelf?: MentionSelf
+  /**
+   * Label of the convert button on each task item, or absent for none. The
+   * host sets it when the entity offers task-item conversions and handles
+   * `taskItemConvert`.
+   */
+  taskItemConvertLabel?: string
 }>()
 
 const emit = defineEmits<{
   'update:modelValue': [value: string]
+  taskItemConvert: [target: TaskItemTarget, anchor: HTMLElement]
 }>()
+
+const taskItems = useTaskItemConvert({
+  label: () => props.taskItemConvertLabel,
+  onConvert: (target, anchor) => emit('taskItemConvert', target, anchor),
+  currentView,
+  flush: flushNow,
+})
 
 const editorRoot = ref<HTMLElement | null>(null)
 const menuRoot = ref<HTMLElement | null>(null)
@@ -538,6 +554,7 @@ onMounted(async () => {
     .use(RELA_OUTPUT_NODES)
     // After `gfm`: it contributes the `checked` attribute this renders.
     .use(taskList)
+    .use(taskItems.plugin)
     .use(entityRefResolutionPlugin(resolverHandle))
     // After the presets, so its `handlePaste` is offered the event before
     // theirs. It declines everything that is not a bare URL over a selection,
@@ -668,6 +685,20 @@ function serialize(): string {
   }
 }
 
+/** See `flush` below. */
+function flushNow(): void {
+  const markdown = serialize()
+  const decision = decideEmit(markdown, originalValue, settledValue, dirty, lastEmitted)
+  if (decision.action === 'report-drift') {
+    reportDrift()
+    return
+  }
+  if (decision.action === 'emit') {
+    lastEmitted = decision.value
+    emit('update:modelValue', decision.value)
+  }
+}
+
 defineExpose({
   /**
    * Pushes any pending change to the parent immediately.
@@ -681,18 +712,7 @@ defineExpose({
    * Runs the same decision as the listener, so a flush cannot bypass the
    * write-back guard.
    */
-  flush: () => {
-    const markdown = serialize()
-    const decision = decideEmit(markdown, originalValue, settledValue, dirty, lastEmitted)
-    if (decision.action === 'report-drift') {
-      reportDrift()
-      return
-    }
-    if (decision.action === 'emit') {
-      lastEmitted = decision.value
-      emit('update:modelValue', decision.value)
-    }
-  },
+  flush: () => flushNow(),
   /**
    * The markdown to save, with round-trip churn suppressed.
    *
@@ -701,6 +721,8 @@ defineExpose({
    * a verdict-level assertion is what pins the churn/drift distinction.
    */
   guardedValue: () => guardWriteBack(originalValue, serialize(), dirty),
+  // Task-item conversions; see useTaskItemConvert.
+  ...taskItems.exposed,
   /**
    * The live ProseMirror view, for tests only.
    *

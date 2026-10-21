@@ -175,6 +175,9 @@ func (a *App) registerAPIV1Routes(mux *http.ServeMux) {
 	if a.conversions != nil {
 		mux.HandleFunc("/api/v1/_conversions/", a.conversions.handleV1Conversions)
 	}
+	if a.taskItems != nil {
+		mux.HandleFunc("/api/v1/_task_item_conversions/", a.taskItems.handleV1TaskItemConversions)
+	}
 	mux.HandleFunc("/api/v1/_gantts/", a.gantt.handleV1Gantt)
 	mux.HandleFunc("/api/v1/_action/", a.write.handleV1Action)
 	mux.HandleFunc("/api/v1/_apps/", a.handleV1App)
@@ -1277,10 +1280,22 @@ func writeInternalError(w http.ResponseWriter, r *http.Request, code, title stri
 // writeInternalErrorDetail is [writeInternalError] with a detail the caller
 // built from the request alone, never from err.
 func writeInternalErrorDetail(w http.ResponseWriter, r *http.Request, code, title, detail string, err error) {
+	writeInternalProblem(w, r, code, v1.Error{Title: title, Detail: detail}, err)
+}
+
+// writeInternalProblem is [writeInternalErrorDetail] for a problem with
+// extension fields. Like the detail, they are built from the request and
+// what it wrote, never from err. It sets the type, status and instance.
+func writeInternalProblem(w http.ResponseWriter, r *http.Request, code string, problem v1.Error, err error) {
 	if !logInternalError(r, code, err) {
 		return
 	}
-	writeV1Error(w, r, http.StatusInternalServerError, code, title, detail)
+	problem.Type = "https://rela.dev/errors/" + code
+	problem.Status = http.StatusInternalServerError
+	problem.Instance = r.URL.Path
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(problem.Status)
+	_ = json.NewEncoder(w).Encode(problem)
 }
 
 // writeInternalJSONError is [writeInternalError] for the settings and theme

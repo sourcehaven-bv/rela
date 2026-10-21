@@ -31,6 +31,9 @@ export interface ProblemDetail {
   // used the refused property, and its name.
   use?: 'filter' | 'sort'
   property?: string
+  // Set on a 500 conversion_incomplete (TKT-3IBLIP): the entity that was
+  // created before a later step failed.
+  entity_id?: string
 }
 
 export interface ValidationError {

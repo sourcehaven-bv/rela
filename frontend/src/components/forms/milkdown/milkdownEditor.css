@@ -343,6 +343,50 @@
   margin: 0;
 }
 
+/* The convert button at the end of a task item's line (TKT-3IBLIP). Quiet
+   until the item is hovered or the button has focus, so a checklist does not
+   read as a column of buttons. */
+.milkdown-editor-shell .ProseMirror .task-item-convert {
+  margin-inline-start: var(--space-xs);
+  padding: 0 var(--space-xs);
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--rl-color-text-muted);
+  font-size: var(--font-size-sm);
+  line-height: 1.4;
+  cursor: pointer;
+  opacity: 0;
+}
+
+.milkdown-editor-shell .ProseMirror li[data-item-type='task']:hover > div > p > .task-item-convert,
+.milkdown-editor-shell .ProseMirror .task-item-convert:focus-visible {
+  opacity: 1;
+}
+
+.milkdown-editor-shell .ProseMirror .task-item-convert:hover {
+  border-color: var(--rl-color-border);
+  color: var(--rl-color-text);
+}
+
+.milkdown-editor-shell .ProseMirror .task-item-convert:focus-visible {
+  outline: none;
+  box-shadow:
+    0 0 0 2px var(--rl-color-bg),
+    0 0 0 4px var(--rl-color-focus);
+}
+
+.milkdown-editor-shell .ProseMirror .task-item-convert[aria-disabled='true'] {
+  opacity: 0.5;
+  cursor: progress;
+}
+
+@media (hover: none) {
+  .milkdown-editor-shell .ProseMirror .task-item-convert {
+    opacity: 1;
+  }
+}
+
 /* ── Floating menus ──────────────────────────────────────────────────────── */
 
 /* The element SlashProvider positions. Floating UI writes `left`/`top` here,

@@ -626,6 +626,7 @@ func (r fieldHidingReader) Get(ctx context.Context, _, id string, face entity.Fa
 	}
 	seen := e.Clone()
 	delete(seen.Properties, r.field)
+	seen.Redacted = []string{r.field}
 	return seen, true, nil
 }
 

@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"log/slog"
 	"net/http"
 	"reflect"
 	"strings"
@@ -12,6 +11,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/affordances"
 	v1 "github.com/Sourcehaven-BV/rela/internal/apiwire/v1"
+	entityPkg "github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 )
@@ -30,19 +30,23 @@ type conversionHandler struct {
 	schema func() *Schema
 }
 
-// typeChanges are the two surfaces that make an entity of another type:
-// copy and conversion. Each has an affordance and a handler.
+// typeChanges are the surfaces that make an entity of another type: copy,
+// conversion and task-item conversion. Each has an affordance and a handler.
 type typeChanges struct {
 	copyOffers       copyOffersFunc
 	copies           *copiesHandler
 	conversionOffers func(ctx context.Context, entityType, id string) []entitymanager.ConversionOffer
 	conversions      *conversionHandler
+	// taskItemOffers and taskItems serve the task-item recipes, which make
+	// an entity of another type from a line of this one's body.
+	taskItemOffers func(ctx context.Context, source *entityPkg.Entity) []entitymanager.TaskItemOffer
+	taskItems      *taskItemConversionHandler
 }
 
-// wireTypeChanges builds the copy surface and the field-gated converter
+// wireTypeChanges builds the copy surface and the field-gated converters
 // over em, each with the handler that serves it.
 func wireTypeChanges(
-	em *entitymanager.Manager, edges entitymanager.CopyEdgeGate, schema func() *Schema,
+	em *entitymanager.Manager, edges entitymanager.CopyEdgeGate, schema func() *Schema, mention mentionFunc,
 ) (typeChanges, error) {
 	copyOffers, copies, err := wireCopies(em, edges)
 	if err != nil {
@@ -56,7 +60,18 @@ func wireTypeChanges(
 	if err != nil {
 		return typeChanges{}, err
 	}
-	return typeChanges{copyOffers: copyOffers, copies: copies, conversionOffers: conv.Offers, conversions: h}, nil
+	taskItems, err := entitymanager.NewTaskItemConverter(entitymanager.FieldGated(em), edges)
+	if err != nil {
+		return typeChanges{}, err
+	}
+	th, err := newTaskItemConversionHandler(taskItems, schema, mention)
+	if err != nil {
+		return typeChanges{}, err
+	}
+	return typeChanges{
+		copyOffers: copyOffers, copies: copies, conversionOffers: conv.Offers, conversions: h,
+		taskItemOffers: taskItems.Offers, taskItems: th,
+	}, nil
 }
 
 // newConversionHandler returns the handler of /api/v1/_conversions/.
@@ -162,39 +177,75 @@ func (h *conversionHandler) handleV1Conversions(w http.ResponseWriter, r *http.R
 }
 
 func writeConversionError(w http.ResponseWriter, r *http.Request, err error) {
+	writeEntityMakingError(w, r, err, entityMakingErrors{
+		label:         "Conversion",
+		sourceChanged: entitymanager.ErrConversionSourceChanged,
+		input:         isConversionInputError,
+	})
+}
+
+// entityMakingErrors names what differs between the endpoints that make an
+// entity from another one: conversions and task-item conversions.
+type entityMakingErrors struct {
+	label         string
+	sourceChanged error
+	input         func(error) bool
+}
+
+// writeEntityMakingError maps an entity-making error onto a response. The
+// order is load-bearing: an input error may wrap a denial, which must still
+// answer 403.
+func writeEntityMakingError(w http.ResponseWriter, r *http.Request, err error, kind entityMakingErrors) {
 	var forbidden *acl.ForbiddenError
-	if errors.As(err, &forbidden) {
-		writeV1Error(w, r, http.StatusForbidden, "forbidden", "Not permitted", forbidden.Decision.Reason)
-		return
-	}
 	var fieldDenied *affordances.FieldWriteError
-	if errors.As(err, &fieldDenied) {
-		writeV1Error(w, r, http.StatusForbidden, "forbidden", "Not permitted", fieldDenied.Error())
-		return
-	}
-	if errors.Is(err, entitymanager.ErrEntityNotFound) {
-		writeV1Error(w, r, http.StatusNotFound, "not_found", entityNotFoundTitle, "")
-		return
-	}
-	if errors.Is(err, entitymanager.ErrConversionSourceChanged) {
-		writeV1Error(w, r, http.StatusConflict, "conflict", "Entity changed during conversion; try again", "")
-		return
-	}
-	if errors.Is(err, entitymanager.ErrEntityAlreadyExists) {
-		writeV1Error(w, r, http.StatusConflict, "conflict", "Conversion target is already taken", "")
-		return
-	}
-	if isConversionInputError(err) {
-		writeV1Error(w, r, http.StatusUnprocessableEntity, "conversion_failed", "Conversion could not be applied", err.Error())
-		return
-	}
 	var verr *entitymanager.ValidationError
-	if errors.As(err, &verr) || entitymanager.IsUniqueViolation(err) {
-		writeV1Error(w, r, http.StatusUnprocessableEntity, "validation_failed", "Conversion target fails validation", err.Error())
-		return
+	var kept *entitymanager.KeptEntityError
+	switch {
+	case errors.As(err, &kept):
+		// The caller wrote the entity, so naming it discloses nothing; what
+		// failed after it may be a store error, which stays in the log.
+		// EntityID names it again in a field a client can read.
+		writeInternalProblem(w, r, "conversion_incomplete", v1.Error{
+			Title:    kind.label + " was not completed",
+			Detail:   kept.Entity.ID + " was created without its relation",
+			EntityID: kept.Entity.ID,
+		}, err)
+	case errors.As(err, &forbidden):
+		writeV1Error(w, r, http.StatusForbidden, "forbidden", "Not permitted", forbidden.Decision.Reason)
+	case errors.As(err, &fieldDenied):
+		writeV1Error(w, r, http.StatusForbidden, "forbidden", "Not permitted", fieldDenied.Error())
+	case errors.Is(err, entitymanager.ErrEntityNotFound):
+		writeV1Error(w, r, http.StatusNotFound, "not_found", entityNotFoundTitle, "")
+	case errors.Is(err, kind.sourceChanged):
+		writeV1Error(w, r, http.StatusConflict, "conflict", "Entity changed during conversion; try again", "")
+	case errors.Is(err, entitymanager.ErrEntityAlreadyExists):
+		writeV1Error(w, r, http.StatusConflict, "conflict", kind.label+" target is already taken", "")
+	case kind.input(err):
+		writeV1Error(w, r, http.StatusUnprocessableEntity, "conversion_failed", kind.label+" could not be applied", err.Error())
+	case errors.Is(err, entitymanager.ErrCardinalityExceeded):
+		writeV1Error(w, r, http.StatusUnprocessableEntity, "cardinality_exceeded", kind.label+" target has no room for the relation", err.Error())
+	case errors.As(err, &verr) || entitymanager.IsUniqueViolation(err):
+		writeV1Error(w, r, http.StatusUnprocessableEntity, "validation_failed", kind.label+" target fails validation", err.Error())
+	default:
+		writeEntityMakingCreateError(w, r, err, kind)
 	}
-	slog.Error("dataentry: conversion failed", "err", err)
-	writeV1Error(w, r, http.StatusInternalServerError, "conversion_failed", "Conversion could not be applied", "check server logs")
+}
+
+// writeEntityMakingCreateError maps the create refusals the cases of
+// [writeEntityMakingError] do not name, such as an illegal state-machine
+// entry or a broken ownership rule, through the classifier the create route
+// uses. An error it does not classify is a server error.
+func writeEntityMakingCreateError(w http.ResponseWriter, r *http.Request, err error, kind entityMakingErrors) {
+	switch entitymanager.ClassifyCreateError(err) {
+	case entitymanager.CreateErrForbidden:
+		writeV1Error(w, r, http.StatusForbidden, "forbidden", "Not permitted", "")
+	case entitymanager.CreateErrConflict:
+		writeV1Error(w, r, http.StatusConflict, "conflict", kind.label+" conflicts with an existing entity or relation", "")
+	case entitymanager.CreateErrFace, entitymanager.CreateErrInvalid:
+		writeV1Error(w, r, http.StatusUnprocessableEntity, "conversion_failed", kind.label+" could not be applied", err.Error())
+	case entitymanager.CreateErrUnknown:
+		writeInternalError(w, r, "conversion_failed", kind.label+" could not be applied", err)
+	}
 }
 
 func isConversionInputError(err error) bool {

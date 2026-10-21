@@ -20,12 +20,13 @@ type partialMetamodel struct {
 	Includes    []string               `yaml:"includes"`
 
 	// Fields that are not allowed in included files
-	Version      string              `yaml:"version"`
-	Namespace    string              `yaml:"namespace"`
-	Description  string              `yaml:"description"`
-	Worlds       map[string]WorldDef `yaml:"worlds"`
-	Copies       map[string]CopyDef  `yaml:"copies"`
-	DefaultWorld string              `yaml:"default_world"`
+	Version             string                           `yaml:"version"`
+	Namespace           string                           `yaml:"namespace"`
+	Description         string                           `yaml:"description"`
+	Worlds              map[string]WorldDef              `yaml:"worlds"`
+	Copies              map[string]CopyDef               `yaml:"copies"`
+	TaskItemConversions map[string]TaskItemConversionDef `yaml:"task_item_conversions"`
+	DefaultWorld        string                           `yaml:"default_world"`
 }
 
 // includeState tracks file processing state during recursive include resolution.
@@ -161,6 +162,10 @@ func resolveIncludes(
 	// appears, for a definition the operator can see in their file.
 	if len(partial.Copies) > 0 {
 		return nil, &IncludeHasRootFieldError{Path: includePath, Field: "copies"}
+	}
+	// `task_item_conversions:` for the same reason as `copies:`.
+	if len(partial.TaskItemConversions) > 0 {
+		return nil, &IncludeHasRootFieldError{Path: includePath, Field: "task_item_conversions"}
 	}
 	// `default_world:` names a world, and worlds are root-only.
 	if partial.DefaultWorld != "" {

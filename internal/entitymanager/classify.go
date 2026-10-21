@@ -56,7 +56,7 @@ func ClassifyCreateError(err error) CreateErrorClass {
 		return CreateErrFace
 	case errors.As(err, &invalid), errors.As(err, &invalidRel), errors.As(err, &fileWrite),
 		errors.Is(err, statemachine.ErrIllegalEntry), errors.Is(err, statemachine.ErrPreconditionFailed),
-		errors.Is(err, ErrCustomIDNotAllowed), errors.Is(err, ErrCardinalityExceeded),
+		errors.Is(err, ErrCustomIDNotAllowed), errors.Is(err, ErrCardinalityExceeded), errors.Is(err, ErrOwningRule),
 		errors.Is(err, ErrEntityNotFound):
 		return CreateErrInvalid
 	}

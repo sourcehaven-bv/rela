@@ -117,6 +117,9 @@ func TestCreateLinked_InTxErrorRollsBack(t *testing.T) {
 				require.NoError(t, relErr)
 				require.Equal(t, []string{audit.OpCreateEntity, audit.OpCreateRelation}, linkedAuditOps(sink, id),
 					"a kept entity and edge are audited")
+				kept, ok := errors.AsType[*entitymanager.KeptEntityError](err)
+				require.True(t, ok, "a kept entity is reported: %v", err)
+				require.Equal(t, id, kept.Entity.ID)
 			}
 		})
 	}
@@ -141,6 +144,94 @@ func TestCreateLinked_RelationCheckedBeforeWrite(t *testing.T) {
 	})
 	require.ErrorIs(t, err, entitymanager.ErrEntityNotFound)
 	require.Equal(t, before, cs.creates.Load(), "no entity is written")
+}
+
+// TestCreateLinked_BeforeWriteErrorWritesNothing pins that a BeforeWrite
+// failure leaves nothing behind, on every store, and runs on the
+// transaction's view.
+func TestCreateLinked_BeforeWriteErrorWritesNothing(t *testing.T) {
+	boom := errors.New("source changed")
+	for _, backend := range concBackends {
+		t.Run(backend.name, func(t *testing.T) {
+			_, mgr, sink := openLinkedBackend(t, backend)
+			target := mustCreateNote(t, mgr, "target")
+			before := len(sink.Records())
+			e := entity.New("", "note")
+			e.SetString("title", "new")
+			var sawTarget bool
+			_, err := entitymanager.CreateLinked(context.Background(), mgr, entitymanager.LinkedCreate{
+				Entity: e, RelateType: "links", RelateTo: target.ID,
+				BeforeWrite: func(ctx context.Context, view store.Store) error {
+					_, gErr := view.GetEntity(ctx, target.Ref())
+					sawTarget = gErr == nil
+					return boom
+				},
+			})
+			require.ErrorIs(t, err, boom)
+			require.True(t, entitymanager.WroteNothing(err))
+			require.True(t, sawTarget, "BeforeWrite reads the transaction's view")
+			require.Len(t, sink.Records(), before, "nothing is written or audited")
+		})
+	}
+}
+
+// TestCreateLinked_FullBoundWritesNothing pins that a full cardinality bound
+// on the edge's existing end refuses the create before the entity write, in
+// both edge directions, on stores that cannot roll back.
+func TestCreateLinked_FullBoundWritesNothing(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name string
+		lc   func(e *entity.Entity) entitymanager.LinkedCreate
+	}{
+		{"edge to the new entity", func(e *entity.Entity) entitymanager.LinkedCreate {
+			// has-subtask allows two outgoing edges per ticket.
+			return entitymanager.LinkedCreate{Entity: e, RelateType: "has-subtask", RelateFrom: "TKT-1"}
+		}},
+		{"edge from the new entity", func(e *entity.Entity) entitymanager.LinkedCreate {
+			// reviews allows one incoming edge per ticket.
+			return entitymanager.LinkedCreate{Entity: e, RelateType: "reviews", RelateTo: "TKT-1"}
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			f := newTaskItemFixture(t, taskItemOptions{st: openTaskItemFSStore(t)})
+			var made int
+			for {
+				e := entity.New("", "task")
+				e.SetString("title", "t")
+				e.SetString("owner", "o")
+				res, err := entitymanager.CreateLinked(context.Background(), f.mgr, tc.lc(e))
+				if err != nil {
+					require.ErrorIs(t, err, entitymanager.ErrCardinalityExceeded)
+					require.True(t, entitymanager.WroteNothing(err), "%v", err)
+					break
+				}
+				require.NotNil(t, res.Relation)
+				made++
+				require.Less(t, made, 3, "the bound never refused")
+			}
+			if n := f.taskCount(t); n != made {
+				t.Fatalf("tasks = %d, want %d: the refused create left an entity", n, made)
+			}
+		})
+	}
+}
+
+// TestCreateLinked_RefusesTwoEnds pins that an edge must name exactly one
+// existing end.
+func TestCreateLinked_RefusesTwoEnds(t *testing.T) {
+	t.Parallel()
+	f := newTaskItemFixture(t, taskItemOptions{})
+	e := entity.New("", "task")
+	e.SetString("title", "t")
+	e.SetString("owner", "o")
+	_, err := entitymanager.CreateLinked(context.Background(), f.mgr, entitymanager.LinkedCreate{
+		Entity: e, RelateType: "has-subtask", RelateFrom: "TKT-1", RelateTo: "TKT-1",
+	})
+	require.Error(t, err)
+	require.True(t, entitymanager.WroteNothing(err))
+	require.Equal(t, 0, f.taskCount(t))
 }
 
 // failingRelStore refuses every relation create, also on its Tx views.

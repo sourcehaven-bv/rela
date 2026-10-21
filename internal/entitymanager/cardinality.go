@@ -64,6 +64,9 @@ func relTypeHasMax(meta *metamodel.Metamodel, relType string) bool {
 // the same rows. Edges in leaving are not counted: a replace deletes them in
 // the same Tx. Edges in pending are counted although not stored yet: a
 // replace creates them in the same Tx, before key.
+//
+// A blank end is an entity not written yet, which has no edges, so its
+// bound is not counted: [CreateLinked] checks before the entity write.
 func checkRelationCapacity(
 	ctx context.Context, st store.Store, meta *metamodel.Metamodel, key entity.RelationKey,
 	leaving map[entity.RelationKey]bool, pending []entity.RelationKey,
@@ -76,7 +79,7 @@ func checkRelationCapacity(
 	sameTail := func(from string, face entity.Face) bool {
 		return from == key.From && (!def.Scope.IsContent() || face == key.FromFace)
 	}
-	if def.MaxOutgoing != nil {
+	if def.MaxOutgoing != nil && key.From != "" {
 		n, err := countEdges(ctx, st, store.RelationQuery{From: key.From, Type: key.Type},
 			func(r *entity.Relation) bool { return sameTail(r.From, r.FromFace) && staying(r) })
 		if err != nil {
@@ -92,7 +95,7 @@ func checkRelationCapacity(
 				Limit: *def.MaxOutgoing, Entity: entity.FormatStateRef(key.From, key.FromFace), Key: key}
 		}
 	}
-	if def.MaxIncoming != nil {
+	if def.MaxIncoming != nil && key.To != "" {
 		n, err := countEdges(ctx, st, store.RelationQuery{To: key.To, Type: key.Type}, staying)
 		if err != nil {
 			return err

@@ -226,6 +226,11 @@ type EditState struct {
 	// single-entity GET and PATCH responses and on a view's entry, nil
 	// elsewhere.
 	Versions *FieldVersions `json:"_versions,omitempty"`
+	// TaskItemConversions lists the recipes that turn a task item in this
+	// entity's body into a new linked entity. Allowed is advisory; the
+	// endpoint checks again. Present on per-entity responses when the
+	// capability is wired, nil on list rows.
+	TaskItemConversions *[]TaskItemConversionOffer `json:"_task_item_conversions,omitempty"`
 }
 
 // FieldVersions holds one version token per field of an entity. A token is
@@ -886,6 +891,10 @@ type Error struct {
 	// list.
 	Use      string `json:"use,omitempty"`
 	Property string `json:"property,omitempty"`
+	// EntityID is set on a 500 conversion_incomplete: it names the entity a
+	// conversion created before a later step failed, so a client can point
+	// at it instead of converting again into a duplicate.
+	EntityID string `json:"entity_id,omitempty"`
 }
 
 // FieldError represents a validation error on a specific field.
@@ -1916,3 +1925,35 @@ type GanttBreach struct {
 
 // IsZero lets omitzero keep an empty breach off the wire.
 func (b GanttBreach) IsZero() bool { return !b.Before && !b.After }
+
+// TaskItemConversionOffer is one task-item recipe offered from an entity.
+// Item is what the editor does with the item afterwards: `link` or `remove`.
+type TaskItemConversionOffer struct {
+	Name    string `json:"name"`
+	Label   string `json:"label"`
+	To      string `json:"to"`
+	Item    string `json:"item"`
+	Allowed bool   `json:"allowed"`
+	Reason  string `json:"reason,omitempty"`
+}
+
+// TaskItemConversionPreview names the required target fields a task-item
+// recipe leaves empty.
+type TaskItemConversionPreview struct {
+	TargetType string   `json:"target_type"`
+	Required   []string `json:"required"`
+}
+
+// TaskItemConversionResult identifies the entity a task-item conversion
+// created, so the editor can link or remove the item.
+type TaskItemConversionResult struct {
+	Definition string `json:"definition"`
+	EntityID   string `json:"entity_id"`
+	EntityType string `json:"entity_type"`
+	Face       string `json:"face,omitempty"`
+	Title      string `json:"title"`
+	Item       string `json:"item"`
+	// Warnings are the create's soft conditions, and a failure of a step
+	// after the commit. The entity exists either way.
+	Warnings []Warning `json:"warnings,omitempty"`
+}

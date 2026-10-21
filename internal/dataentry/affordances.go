@@ -166,6 +166,7 @@ type affordanceService struct {
 	// Wired by wireCopies, in production and in the test rebind alike.
 	copies      copyOffersFunc
 	conversions func(ctx context.Context, entityType, id string) []entitymanager.ConversionOffer
+	taskItems   func(ctx context.Context, source *entityPkg.Entity) []entitymanager.TaskItemOffer
 	// planEdges is edgeReader.plan: the edge writes one relation wrapper
 	// asks for, which this service authorizes one by one.
 	planEdges edgePlanner
@@ -1520,6 +1521,9 @@ func (svc affordanceService) attachEntityAffordances(ctx context.Context, e *ent
 	if offers := computeConversionOffers(ctx, svc, e); offers != nil {
 		result.Conversions = &offers
 	}
+	if offers := computeTaskItemOffers(ctx, svc, e); offers != nil {
+		result.TaskItemConversions = &offers
+	}
 	if detail := svc.computeDetailActions(ctx, e); detail != nil {
 		if result.Actions == nil {
 			result.Actions = make(map[string]bool, len(detail))
@@ -1765,6 +1769,27 @@ func computeConversionOffers(ctx context.Context, svc affordanceService, e *enti
 			MappedFields:  o.MappedFields,
 			ContentMapped: o.ContentMapped,
 			FaceChoices:   o.FaceChoices,
+		})
+	}
+	return out
+}
+
+// computeTaskItemOffers lists the task-item recipes whose source is e's type.
+// Nil when the capability is not wired or no recipe starts from e's type.
+func computeTaskItemOffers(
+	ctx context.Context, svc affordanceService, e *entityPkg.Entity,
+) []v1.TaskItemConversionOffer {
+	if svc.taskItems == nil || e == nil {
+		return nil
+	}
+	offers := svc.taskItems(ctx, e)
+	if len(offers) == 0 {
+		return nil
+	}
+	out := make([]v1.TaskItemConversionOffer, 0, len(offers))
+	for _, o := range offers {
+		out = append(out, v1.TaskItemConversionOffer{
+			Name: o.Name, Label: o.Label, To: o.To, Item: o.Item, Allowed: o.Allowed, Reason: o.Reason,
 		})
 	}
 	return out

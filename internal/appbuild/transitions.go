@@ -231,11 +231,7 @@ func (v copyVisibility) Get(
 	if err != nil {
 		return nil, false, nil //nolint:nilerr // a miss is not-found
 	}
-	if hidden := v.redact.HiddenProperties(ctx, e); len(hidden) > 0 {
-		e = e.Clone()
-		for name := range hidden {
-			delete(e.Properties, name)
-		}
-	}
-	return e, true, nil
+	// Redact also names the hidden fields in Redacted, which the task-item
+	// converter refuses on whether or not a value is stored.
+	return visibility.Redact(ctx, v.redact, e), true, nil
 }

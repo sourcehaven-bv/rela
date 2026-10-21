@@ -1958,6 +1958,102 @@ A conversion has these limits and effects:
   back. If a later step fails after the rename, the rename, its audit record
   and the aliases are still recorded, so the log matches what was stored.
 
+### Declaring task-item conversions
+
+`task_item_conversions:` declares recipes that turn a task item in an entity's
+body into a new, linked entity. A task item is a line such as
+`- [ ] Write the migration`. In the body editor, each task item gets a button
+that runs the recipe, like "Convert to issue" on GitHub. A type can have no
+recipes, one, or several; with several, the user picks one.
+
+```yaml
+task_item_conversions:
+  subtask:
+    from: ticket
+    to: task
+    label: Convert to task
+    item: remove
+    relation: {type: has-subtask, as: to}
+    fields:
+      title: "{{item.text}}"
+      project: "{{source.project}}"
+```
+
+| Key | Meaning |
+| --- | --- |
+| `from` | The type whose body holds the task item. |
+| `to` | The type of the new entity. |
+| `label` | The button and menu text. Required. |
+| `relation.type` | The relation that links the two entities. |
+| `relation.as` | The end the new entity takes: `to` makes the source the relation's `from`; `from` makes the new entity the `from`. |
+| `face` | The face to create the new entity at. Required when `to` declares faces, and refused when it does not. |
+| `item` | What the editor does with the item afterwards. `link` (the default) replaces the item's plain text with a reference to the new entity; links, references and images on the line stay after it. `remove` deletes the item and moves its nested items up one level. |
+| `fields` | The new entity's properties. At least one is required. |
+
+A field value is literal text with two kinds of placeholder:
+
+- `{{item.text}}` is the text of the item's own line, without the checkbox and
+  without nested items. References in the line become their IDs, and runs of
+  whitespace become one space.
+- `{{source.<property>}}` is a property of the source entity.
+
+Any other `{{...}}` is a load error. The item text fills its placeholders after
+the source values and is never read for placeholders itself, so
+`{{source.secret}}` typed into a task item stays literal text.
+
+A required property of `to` that the recipe does not map is asked for in a
+dialog before the entity is created. The request may not set a property the
+recipe maps.
+
+`item: remove` keeps the item when removing it would lose something the new
+entity does not hold: a second paragraph or a code block in the item, or a
+link, image or other inline content on its line. The editor then links the
+item instead. References on the line do not count, because they become IDs in
+the item text.
+
+A recipe is refused when the schema loads if the conversion could never
+create its entity:
+
+- `to` uses `id_type: manual`. The conversion has no ID to give it.
+- `to` has a required `file` or `external_ref` property. Neither can come from
+  a template or the required-fields dialog. A `file` property cannot be mapped
+  either.
+- A field's value cannot have the property's type. A lone
+  `{{source.<property>}}` copies the stored value as it is. Any other template
+  makes text, which fits a string or `rrule` property, or an enum when it is
+  plain text naming one of the enum's values. Text never fills a list, a
+  number, a boolean or a date.
+- No field uses `{{item.text}}`, so the item's text would be lost.
+
+A task-item conversion has these checks and effects:
+
+- **Permissions.** The caller needs every right that creating the entity and
+  the relation by hand needs: `create` on `to`, the relation's `create`, and any
+  relation `when:` rule. The caller also needs `update` on the source, because
+  the conversion is offered as an edit of its body. A source the caller cannot
+  read answers as not found.
+- **Read access.** Every `{{source.<property>}}` must be readable by the caller.
+  A property the caller may not read refuses the conversion, whether or not it
+  holds a value, rather than copying a value the caller cannot see. Fields filled from the item text pass the field write
+  gate like any typed value.
+- **Item text.** The text must be non-empty, at most 1000 characters and valid
+  UTF-8, with no line breaks, control characters or text-direction controls.
+- **Validation first.** Field validation, `unique:` properties and relation
+  cardinality are checked before the first write. On every backend, a failed
+  check leaves nothing behind.
+- **Automations run.** Unlike a type conversion, this is an ordinary create,
+  so the target type's `on: create` automations run.
+- **The body is the editor's job.** The server creates the entity and the
+  relation in one request and does not change the source body. The editor
+  rewrites the item, and the body saves like any other edit. If the item
+  changed while the request ran, the editor leaves it as it is and reports the
+  new entity's ID.
+- **Create forms.** The button appears only when the entity already exists,
+  because the relation needs a source.
+
+Checking a task item's box does not change the new entity's status, and the
+box does not follow the entity.
+
 ### Checking stored states
 
 `rela analyze states` reports state rows the schema does not account for. Three
