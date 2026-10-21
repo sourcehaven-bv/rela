@@ -2268,17 +2268,34 @@ Without the permission the sync gets 403, and the response names `git:sync`.
   already write every entity.
 - **With `--read-only`** nobody may sync, whatever `acl.yaml` grants.
 
+A client ceiling passes `git:sync` on to a client acting for a user unless
+the ceiling narrows permissions. Only `config:edit` is never delegated.
+
 `GET /api/v1/_git/status` stays open to every signed-in principal. Its
-`can_sync` field says whether a sync would be accepted. The paths of
-conflicting files name entities, so the status lists them only for a
-principal who may sync; everyone else sees only that a conflict exists.
+`can_sync` field says whether a sync would be accepted. It lists the paths of
+conflicting files only to a principal who may sync; everyone else sees only
+that a conflict exists. This is not a secrecy guarantee:
 
-## Saving the default values (`settings:edit`)
+- A holder of `git:sync` sees the paths of conflicting entities they may not
+  read.
+- `GET /api/v1/_conflicts` still lists the paths, with entity ids, to every
+  principal (BUG-T6HNKS).
 
-`settings:edit` is a built-in global permission. It lets a principal save the
-default values on the data-entry settings page (`PUT /api/v1/_settings`). One
-set of defaults serves every principal: a save changes the values that
-everyone's create forms start with.
+**Upgrading.** With an `acl.yaml`, nobody may sync after the upgrade until
+you grant `git:sync` to the roles that used the sync button.
+
+## Saving the settings page (`settings:edit`)
+
+`settings:edit` is a built-in global permission. It lets a principal save
+what the data-entry settings page saves. Each of these is one value shared by
+every principal:
+
+- the default values that everyone's create forms start with
+  (`PUT` or `POST /api/v1/_settings`);
+- the color palette (`PUT` or `POST /api/v1/_palette`);
+- the logo (`PUT`, `POST` or `DELETE /api/v1/_theme/logo`);
+- a theme import, which saves the logo it carries
+  (`POST /api/v1/_theme/import`).
 
 Grant it to a role by name:
 
@@ -2290,11 +2307,14 @@ roles:
 ```
 
 - **With an `acl.yaml`,** only a holder may save. Anyone else gets 403, and
-  the response names `settings:edit`. Reading the settings stays open to every
-  signed-in principal.
+  the response names `settings:edit`. Reading the settings, the palette and
+  the logo, and exporting a theme, stay open to every signed-in principal.
 - **Without an `acl.yaml`,** every principal may save, as before the
   permission existed.
 - **A read-only instance** (`--read-only`) refuses every save.
+
+**Upgrading.** With an `acl.yaml`, nobody may save the settings page after
+the upgrade until you grant `settings:edit` to the roles that used it.
 
 ## Where to read next
 

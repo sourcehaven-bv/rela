@@ -110,32 +110,52 @@ func TestHandleGitSync_Gate(t *testing.T) {
 	}
 }
 
-// TestHandleGitStatus_CanSyncAndConflictFiles pins that the status reports
-// whether a sync would be accepted, under the same gate as the sync itself.
-func TestHandleGitStatus_CanSyncAndConflictFiles(t *testing.T) {
-	for _, holds := range []bool{false, true} {
-		app := newTestAppV1(t)
-		d, err := acl.NewDeclarative(&acl.Policy{}, aclstore.MustNewGraph(app.store), app.store)
-		require.NoError(t, err)
-		setTestACL(t, app, d)
-		app.gitOps = git.NewOps(gitSyncRepo(t), git.Config{Enabled: true, Branch: "master"})
+// TestHandleGitStatus_CanSync pins that the status reports whether a sync
+// would be accepted, under the same gate as the sync itself, and that the
+// status stays readable for everyone.
+func TestHandleGitStatus_CanSync(t *testing.T) {
+	cases := []struct {
+		name  string
+		acl   string // "nop", "read-only" or "policy"
+		holds bool
+		want  bool
+	}{
+		{name: "no policy", acl: "nop", want: true},
+		{name: "read-only", acl: "read-only", holds: true, want: false},
+		{name: "policy without git:sync", acl: "policy", want: false},
+		{name: "policy with git:sync", acl: "policy", holds: true, want: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			app := newTestAppV1(t)
+			switch tc.acl {
+			case "nop":
+				setTestACL(t, app, acl.NopACL{})
+			case "read-only":
+				setTestACL(t, app, acl.ReadOnlyACL{})
+			case "policy":
+				d, err := acl.NewDeclarative(&acl.Policy{}, aclstore.MustNewGraph(app.store), app.store)
+				require.NoError(t, err)
+				setTestACL(t, app, d)
+			}
+			app.gitOps = git.NewOps(gitSyncRepo(t), git.Config{Enabled: true, Branch: "master"})
 
-		ctx := withReadGate(context.Background(), fakeGate{holdsPermission: holds})
-		req := httptest.NewRequest(http.MethodGet, "/api/v1/_git/status", http.NoBody).WithContext(ctx)
-		rec := httptest.NewRecorder()
-		app.handleGitStatus(rec, req)
+			ctx := withReadGate(context.Background(), fakeGate{holdsPermission: tc.holds})
+			req := httptest.NewRequest(http.MethodGet, "/api/v1/_git/status", http.NoBody).WithContext(ctx)
+			rec := httptest.NewRecorder()
+			app.handleGitStatus(rec, req)
 
-		require.Equal(t, http.StatusOK, rec.Code)
-		var resp GitStatusResponse
-		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
-		require.True(t, resp.Available)
-		require.Equal(t, holds, resp.CanSync)
+			require.Equal(t, http.StatusOK, rec.Code)
+			var resp GitStatusResponse
+			require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
+			require.True(t, resp.Available)
+			require.Equal(t, tc.want, resp.CanSync)
+		})
 	}
 }
 
-// TestGitStatusResponse_ConflictFiles: conflicting paths name entities, so
-// only a principal who may sync sees them; everyone sees that a conflict
-// exists.
+// TestGitStatusResponse_ConflictFiles: only a principal who may sync gets the
+// conflicting paths; everyone sees that a conflict exists.
 func TestGitStatusResponse_ConflictFiles(t *testing.T) {
 	status := &git.Status{Available: true, Conflict: true, ConflictFiles: []string{"entities/ticket/TKT-9.md"}}
 

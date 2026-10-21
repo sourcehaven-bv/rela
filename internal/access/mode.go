@@ -177,8 +177,9 @@ func (m Mode) RefusesWrites() bool {
 }
 
 // PermitsProjectWrite reports whether the request may run a write that acts
-// on the whole project rather than on one entity, such as a git sync, which
-// commits and pushes every pending change.
+// on state shared by every principal rather than on one entity: a git sync,
+// which commits and pushes every pending change, or a save of the shared
+// settings, such as the create-form defaults or the palette.
 //
 // No policy allows it: every principal may already write every entity, and
 // the operation adds nothing they could not do. Read-only refuses it before

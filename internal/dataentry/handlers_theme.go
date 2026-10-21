@@ -18,14 +18,22 @@ import (
 // the worst-case memory pressure of a single request.
 const maxLogoUploadBytes = MaxUserLogoBytes + 16*1024
 
-// handleAPIThemeLogo routes /api/v1/_theme/logo by HTTP method.
+// handleAPIThemeLogo routes /api/v1/_theme/logo by HTTP method. The logo is
+// shared by every principal, so changing or removing it needs
+// the settings:edit permission (see [appearanceHandler.refuseSettingsEdit]).
 func (h *appearanceHandler) handleAPIThemeLogo(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
 		h.handleAPIGetThemeLogo(w, r)
 	case http.MethodPut, http.MethodPost:
+		if h.refuseSettingsEdit(w, r, "Changing the logo") {
+			return
+		}
 		h.handleAPIPutThemeLogo(w, r)
 	case http.MethodDelete:
+		if h.refuseSettingsEdit(w, r, "Removing the logo") {
+			return
+		}
 		h.handleAPIDeleteThemeLogo(w, r)
 	default:
 		writeJSONError(w, http.StatusMethodNotAllowed, "method not allowed")

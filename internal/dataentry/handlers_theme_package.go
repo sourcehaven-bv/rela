@@ -57,10 +57,14 @@ func (h *appearanceHandler) handleAPIThemeExport(w http.ResponseWriter, r *http.
 // logo if one was bundled, and returns the parsed palette JSON for the
 // frontend to stage in the existing palette editor. The palette is NOT
 // auto-saved; matches the existing palette UX where colors persist
-// only on explicit Save.
+// only on explicit Save. Because the import saves the logo, it needs the
+// settings:edit permission (see [appearanceHandler.refuseSettingsEdit]).
 func (h *appearanceHandler) handleAPIThemeImport(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		writeJSONError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	if h.refuseSettingsEdit(w, r, "Importing a theme") {
 		return
 	}
 

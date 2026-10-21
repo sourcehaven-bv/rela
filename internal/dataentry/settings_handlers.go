@@ -288,26 +288,33 @@ func (h *appearanceHandler) handleAPIGetSettings(w http.ResponseWriter, r *http.
 	writeJSON(w, data)
 }
 
-// maySaveSettings reports whether the request's principal may save the
-// create-form defaults. One set serves every principal, so under a policy
-// saving it needs [acl.PermSettingsEdit]; a read-only instance never saves.
+// refuseSettingsEdit answers 403 and returns true when the request's
+// principal may not save the settings page. Everything that page saves (the
+// create-form defaults, the palette, the logo, an imported theme) is one
+// value shared by every principal, so under a policy a save needs
+// [acl.PermSettingsEdit], and a read-only instance never saves. The 403 names
+// the permission, and action says what was refused, for example "Saving the
+// palette". Call it before the body is read.
 //
 //archplan:guard=authz reason="checks the settings:edit permission; read-only refuses"
-func (h *appearanceHandler) maySaveSettings(r *http.Request) bool {
+func (h *appearanceHandler) refuseSettingsEdit(w http.ResponseWriter, r *http.Request, action string) bool {
 	ctx := r.Context()
-	return access.ModeOf(h.acl()).PermitsProjectWrite(ctx, readGateFromContext(ctx), acl.PermSettingsEdit)
+	if access.ModeOf(h.acl()).PermitsProjectWrite(ctx, readGateFromContext(ctx), acl.PermSettingsEdit) {
+		return false
+	}
+	writeV1Error(w, r, http.StatusForbidden, "forbidden", "Forbidden",
+		action+" needs the "+acl.PermSettingsEdit+" permission.")
+	return true
 }
 
 // handleAPISaveSettings saves the user defaults from JSON input. The
 // settingsService persists and republishes atomically so concurrent readers
 // see a coherent snapshot. A caller without [acl.PermSettingsEdit] gets a 403
-// that names the permission, before the body is read.
+// (see [appearanceHandler.refuseSettingsEdit]).
 //
 //archplan:auth=authz
 func (h *appearanceHandler) handleAPISaveSettings(w http.ResponseWriter, r *http.Request) {
-	if !h.maySaveSettings(r) {
-		writeV1Error(w, r, http.StatusForbidden, "forbidden", "Forbidden",
-			"Saving the default values needs the "+acl.PermSettingsEdit+" permission.")
+	if h.refuseSettingsEdit(w, r, "Saving the default values") {
 		return
 	}
 	var input APIUserDefaults
@@ -362,10 +369,14 @@ func (h *appearanceHandler) handleAPIGetPalette(w http.ResponseWriter, _ *http.R
 	writeJSON(w, p)
 }
 
-// handleAPISavePalette validates and saves the user palette.
+// handleAPISavePalette validates and saves the user palette. A caller
+// without [acl.PermSettingsEdit] gets a 403.
 //
-//archplan:auth=required
+//archplan:auth=authz
 func (h *appearanceHandler) handleAPISavePalette(w http.ResponseWriter, r *http.Request) {
+	if h.refuseSettingsEdit(w, r, "Saving the palette") {
+		return
+	}
 	var input dataentryconfig.PaletteConfig
 	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
 		writeJSONError(w, http.StatusBadRequest, "invalid JSON: "+err.Error())

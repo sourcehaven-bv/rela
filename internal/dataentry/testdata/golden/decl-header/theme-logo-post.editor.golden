@@ -1,12 +1,15 @@
 request: POST /api/v1/_theme/logo
 identity: header editor@example.test
-status: 200
+status: 403
 reads: GraphQueryHeaders=1 ListRelations=1
 breadth: ListRelations=0/1
 bodies: GraphQuery=0/1
 versions: 
 body:
 {
-  "logoUrl": "/api/v1/_theme/logo?v=ffc9f5e4fdee",
-  "ok": true
+  "type": "https://rela.dev/errors/forbidden",
+  "title": "Forbidden",
+  "status": 403,
+  "detail": "Changing the logo needs the settings:edit permission.",
+  "instance": "/api/v1/_theme/logo"
 }

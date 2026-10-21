@@ -41,10 +41,13 @@ func mayGitSync(a *App, r *http.Request) bool {
 	return access.ModeOf(a.acl).PermitsProjectWrite(ctx, readGateFromContext(ctx), acl.PermGitSync)
 }
 
-// gitStatusResponse builds the status answer. The conflicting file paths
-// name entities, and whether an entity exists is secret, so only a principal
-// who may sync (and so resolve the conflict) sees them. Everyone else sees
-// that a conflict exists.
+// gitStatusResponse builds the status answer. Only a principal who may sync,
+// and so resolve a conflict, gets the conflicting file paths; everyone else
+// sees that a conflict exists. This keeps entity paths out of a response
+// every principal polls, but it is not a secrecy guarantee: a holder of
+// git:sync sees the paths of entities they may not read, and
+// GET /api/v1/_conflicts still lists the paths to every principal
+// (BUG-T6HNKS).
 func gitStatusResponse(status *git.Status, canSync bool) GitStatusResponse {
 	resp := GitStatusResponse{
 		Available:    status.Available,
