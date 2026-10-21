@@ -145,3 +145,9 @@ gh release view v26.7.0 --json assets --jq '[.assets[].name]'
 Expected to include `rela_<ver>_<os>_<arch>.tar.gz` **and**
 `rela-postgres_<ver>_<os>_<arch>.tar.gz` (`.zip` on Windows), plus the
 desktop installers and `checksums.txt`.
+
+Each GoReleaser archive also has a CycloneDX JSON SBOM next to it, named
+`<archive>.cdx.json` (for example
+`rela-postgres_<ver>_linux_amd64.tar.gz.cdx.json`). The `sbom` job in
+`release.yml` makes them with syft, at the version pinned there. The desktop
+installers have no SBOM.
