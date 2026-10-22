@@ -67,6 +67,17 @@ channel_types:
       text:
         properties: { body: { type: string } }
         post: [member]
+  incident:
+    attach_to: [item]
+    roles:
+      member: { from: attached }
+    message_types:
+      contained: { properties: { note: { type: string } }, post: [member] }
+    session:
+      initial: detected
+      states:
+        detected:  { label: Detected, on: { contained: { to: contained } } }
+        contained: { label: Contained, final: true }
 `
 
 // channelCLIACL lets alice read and write items, and the job identity
@@ -387,4 +398,29 @@ func setBackendEnv(t *testing.T) {
 	for k, v := range backendtest.Env(t) {
 		t.Setenv(k, v)
 	}
+}
+
+// TestChannelCLI_PostSession pins that a post in a session channel prints
+// the session after the message, in table and JSON output.
+func TestChannelCLI_PostSession(t *testing.T) {
+	p := newChannelProject(t)
+	got, err := runChannel(t, p.svc, "alice", "", "channel", "post", p.item, "incident", "contained")
+	require.NoError(t, err)
+	assert.Equal(t, "#1 posted\nsession: contained (Contained), generation 1, final\n", got)
+
+	got, err = runChannel(t, p.svc, "alice", "", "channel", "read", p.item, "incident")
+	require.NoError(t, err)
+	assert.Contains(t, got, "session: contained (Contained), generation 1, final\n")
+	assert.Contains(t, got, "  moved from detected to contained\n")
+
+	got, err = runChannel(t, p.svc, "alice", "", "-o", "json", "channel", "post", p.item, "incident", "contained")
+	require.NoError(t, err)
+	var posted messageJSON
+	channelJSONOf(t, got, &posted)
+	require.NotNil(t, posted.Session)
+	assert.Equal(t, "contained", posted.Session.State)
+
+	got, err = runChannel(t, p.svc, "alice", "", "channel", "post", p.item, "room", "text", "-P", "body=x")
+	require.NoError(t, err)
+	assert.Equal(t, "#1 posted\n", got, "a type without a session prints no session")
 }

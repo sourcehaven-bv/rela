@@ -132,3 +132,44 @@ func TestChannelRender_List(t *testing.T) {
 	assert.Regexp(t, `(?m)^threads\s+a\x{FFFD}b\s+closed\s+x\s+4$`, got)
 	assert.Contains(t, got, "You may create: threads\n")
 }
+
+// TestRenderRead_Session pins the session line in the channel header and
+// the one-line form of a notice.
+func TestRenderRead_Session(t *testing.T) {
+	at := time.Date(2026, 10, 21, 9, 12, 3, 0, time.UTC)
+	view := realtime.ReadView{
+		Channel: realtime.ChannelView{
+			Anchor: "DL-1", Type: "breach-response", State: realtime.StateOpen, LastSeq: 2, Rev: 2,
+			Session: &realtime.SessionView{State: "contained", Label: "Contained", Generation: 1, EnteredAt: at},
+		},
+		Messages: []realtime.MessageView{
+			{Seq: 1, Type: "contained", At: at, Author: &realtime.AuthorView{User: "alice"}},
+			{
+				Seq: 2, Type: "session", At: at, TriggeredBy: "session:breach-response",
+				Author: &realtime.AuthorView{User: "system:realtime", System: true},
+				Props:  map[string]any{"from": "detected", "to": "contained", "generation": int64(1), "cause": int64(1)},
+			},
+		},
+	}
+	var buf bytes.Buffer
+	require.NoError(t, renderRead(&buf, view))
+	got := buf.String()
+	assert.Contains(t, got, "DL-1 breach-response (open, last #2, rev 2)\nsession: contained (Contained), generation 1\n")
+	assert.Contains(t, got, "  session\n  moved from detected to contained\n")
+	assert.NotContains(t, got, propIndent+"cause")
+
+	for _, tc := range []struct {
+		name string
+		s    realtime.SessionView
+		want string
+	}{
+		{"final", realtime.SessionView{State: "notified", Label: "AP notified", Generation: 3, Final: true},
+			"session: notified (AP notified), generation 3, final"},
+		{"stranded", realtime.SessionView{State: "old", Label: "old", Generation: 2, Stranded: true},
+			"session: old, generation 2, stranded"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.want, sessionText(&tc.s))
+		})
+	}
+}

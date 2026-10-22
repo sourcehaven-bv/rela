@@ -82,7 +82,7 @@ func TestCompiled_AccessorsReturnCopies(t *testing.T) {
 	room.MessageOps.DeleteOwn.Roles[0] = "x"
 	room.MessageOps.Remove.Roles[0] = "x"
 	delete(room.MessageTypes, "text")
-	c.ChannelTypes()[1].Create.Roles[0] = "x"
+	c.ChannelTypes()[2].Create.Roles[0] = "x"
 	tr := c.Triggers()[0]
 	tr.Props["summary"] = "x"
 	tr.When.Fields[0] = "x"
@@ -104,7 +104,7 @@ func TestCompiled_AccessorsReturnCopies(t *testing.T) {
 		"delete_own":      again.MessageOps.DeleteOwn.Roles[0] == "lead",
 		"remove":          again.MessageOps.Remove.Roles[0] == "lead",
 		"message types":   again.MessageTypes["text"] != nil,
-		"create":          c.ChannelTypes()[1].Create.Roles[0] == "editor",
+		"create":          c.ChannelTypes()[2].Create.Roles[0] == "editor",
 		"trigger props":   c.Triggers()[0].Props["summary"] == "Severity raised to high",
 		"trigger fields":  c.Triggers()[0].When.Fields[0] == "due",
 		"permissions":     c.UsedPermissions()[0] == "incident.decide",
@@ -116,6 +116,32 @@ func TestCompiled_AccessorsReturnCopies(t *testing.T) {
 	}
 	if _, ok := c.ChannelType("nope"); ok {
 		t.Error("unknown channel type found")
+	}
+}
+
+// TestCompiled_SessionIsReadOnly pins AC 7: copies of a channel type share
+// one *Session, and nothing returned from it writes through.
+func TestCompiled_SessionIsReadOnly(t *testing.T) {
+	c, err := Parse([]byte(golden(t)), testMeta(t), testPolicy(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	a, _ := c.ChannelType("breach-response")
+	b, _ := c.ChannelType("breach-response")
+	if a.Session() == nil || a.Session() != b.Session() {
+		t.Fatal("two ChannelType calls do not share one *Session")
+	}
+	s := a.Session()
+	s.States()[0].Name = "x"
+	st, _ := s.State("detected")
+	st.Transitions()[0].Roles[0] = "x"
+	tr, _ := s.Transition("detected", "contained")
+	tr.Roles[0] = "x"
+	if s.States()[0].Name != "detected" {
+		t.Error("States returned the shared slice")
+	}
+	if tr, _ := s.Transition("detected", "contained"); tr.Roles[0] != "lead" {
+		t.Error("a returned transition shares its roles")
 	}
 }
 

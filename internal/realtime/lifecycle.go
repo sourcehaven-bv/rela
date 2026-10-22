@@ -83,7 +83,7 @@ func (s *Service) Lifecycle(ctx context.Context, addr RawAddress, op string) (Ch
 	if err != nil {
 		return ChannelView{}, storeError(err)
 	}
-	return channelView(ch.Key, &ch), nil
+	return channelView(c.ct, ch.Key, &ch, c.now), nil
 }
 
 // lifecycleOps lists the lifecycle operations the caller may run on c's

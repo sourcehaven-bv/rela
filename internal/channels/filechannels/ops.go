@@ -17,9 +17,14 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 )
 
-// Append implements [channels.Store].
+// Append implements [channels.Store]. With a session step that moves the
+// session, the notice follows the message in the log, and the session
+// audit record is written last (see the package doc).
 func (s *Store) Append(ctx context.Context, k channels.Key, nm channels.NewMessage) (channels.Message, error) {
 	if err := k.Validate(); err != nil {
+		return channels.Message{}, err
+	}
+	if err := channels.PrepareSessionStep(nm.Session); err != nil {
 		return channels.Message{}, err
 	}
 	nm, _, err := channels.PrepareMessage(nm)
@@ -44,20 +49,36 @@ func (s *Store) Append(ctx context.Context, k channels.Key, nm channels.NewMessa
 	if err != nil {
 		return channels.Message{}, err
 	}
+	committed := m.channel(k)
+	committed.LastSeq = last
+	move, moved, err := channels.DecideSession(nm.Session, committed)
+	if err != nil {
+		return channels.Message{}, err
+	}
 
 	seq := last + 1
 	idx := s.idx(seq)
 	msg := channels.Message{
 		Seq: seq, Rev: m.bump(idx), Type: nm.Type, Author: nm.Author, At: nm.At, Props: nm.Props,
-		ReplyTo: nm.ReplyTo, SchemaHash: nm.SchemaHash, TriggeredBy: nm.TriggeredBy,
+		ReplyTo: nm.ReplyTo, SchemaHash: nm.SchemaHash, TriggeredBy: nm.TriggeredBy, MovedSession: moved,
 	}
-	var patch []byte
+	recs := []segRecord{{idx: idx, rec: encodeLine(line{K: "m", Message: msg})}}
 	if nm.ReplyTo > 0 {
 		count := parent.ReplyCount + 1
-		patch = encodeLine(line{K: "p", Message: channels.Message{Seq: parent.Seq, Rev: m.bump(s.idx(parent.Seq))},
-			ReplyCount: &count})
+		recs = append(recs, segRecord{idx: s.idx(parent.Seq), seg: parentSeg, rec: encodeLine(line{K: "p",
+			Message: channels.Message{Seq: parent.Seq, Rev: m.bump(s.idx(parent.Seq))}, ReplyCount: &count})})
 	}
 	m.LastSeq = seq
+	var after channels.Channel
+	if moved {
+		var notice channels.Message
+		after, notice, err = moveSession(m, k, nm, msg, move, s.idx(seq+1))
+		if err != nil {
+			return channels.Message{}, err
+		}
+		recs = append(recs, segRecord{idx: s.idx(notice.Seq), rec: encodeLine(line{K: "m", Message: notice})})
+		m.LastSeq = notice.Seq
+	}
 	if created {
 		// The create record goes before meta.yaml: a crash in between
 		// leaves a create record for a channel the next append creates
@@ -73,22 +94,67 @@ func (s *Store) Append(ctx context.Context, k channels.Key, nm channels.NewMessa
 	if err != nil {
 		return channels.Message{}, err
 	}
-	cur, err := s.segment(k, idx)
-	if err != nil {
+	if err := s.appendRecords(k, recs); err != nil {
 		return channels.Message{}, err
 	}
-	rec := encodeLine(line{K: "m", Message: msg})
-	if patch != nil && s.idx(parent.Seq) == idx {
-		rec, patch = append(rec, patch...), nil
+	if moved {
+		rec := channels.SessionAudit(k, nm.Session, msg, move, after.Session.Generation)
+		if err := s.appendAudit(k.ID, rec); err != nil {
+			return channels.Message{}, err
+		}
 	}
-	err = s.appendLog(k, idx, cur, rec)
-	if err == nil && patch != nil {
-		err = s.appendLog(k, s.idx(parent.Seq), parentSeg, patch)
-	}
-	if err != nil {
-		return channels.Message{}, err
-	}
+	channels.FillSessionOutcome(nm.Session, m.channel(k), move, moved)
 	return msg, nil
+}
+
+// segRecord is a log record of an append and the segment it goes to. seg,
+// when set, is the segment as the caller already read it.
+type segRecord struct {
+	idx int64
+	seg []byte
+	rec []byte
+}
+
+// appendRecords appends recs to their segments, in order. Records for one
+// segment go in one appendLog call, so the segment is read once.
+func (d *disk) appendRecords(k channels.Key, recs []segRecord) error {
+	groups := map[int64][]byte{}
+	seen := map[int64][]byte{}
+	var order []int64
+	for _, r := range recs {
+		if _, ok := groups[r.idx]; !ok {
+			order = append(order, r.idx)
+		}
+		groups[r.idx] = append(groups[r.idx], r.rec...)
+		if r.seg != nil {
+			seen[r.idx] = r.seg
+		}
+	}
+	for _, idx := range order {
+		cur, ok := seen[idx]
+		if !ok {
+			var err error
+			if cur, err = d.segment(k, idx); err != nil {
+				return err
+			}
+		}
+		if err := d.appendLog(k, idx, cur, groups[idx]); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// moveSession applies move, caused by cause, to m and returns the channel
+// after it and the notice at idx.
+func moveSession(
+	m *meta, k channels.Key, nm channels.NewMessage, cause channels.Message, move channels.SessionMove, idx int64,
+) (channels.Channel, channels.Message, error) {
+	after := m.channel(k)
+	channels.ApplySession(&after, move, nm.At)
+	m.setSession(after.Session)
+	notice, _, err := channels.SessionNotice(nm.Session, cause, move, after.Session.Generation, m.bump(idx))
+	return after, notice, err
 }
 
 // appendTarget returns the head of the channel an append goes to, or a new

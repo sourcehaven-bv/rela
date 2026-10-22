@@ -139,15 +139,10 @@ func (c channelCost) equal(o channelCost) bool {
 	return maps.Equal(c.entity, o.entity) && maps.Equal(c.channel, o.channel)
 }
 
-// newChannelBudget seeds TKT-1 and n more tickets and n features, and wires
-// a channel service over a counting entity store and a counting channel
-// store. alice reads and updates tickets, and cannot read features.
-func newChannelBudget(t *testing.T, n int) *channelBudget {
-	t.Helper()
-	return newChannelBudgetWith(t, n, channelTestRealtime)
-}
-
-// newChannelBudgetWith is newChannelBudget with yaml as realtime.yaml.
+// newChannelBudgetWith seeds TKT-1 and n more tickets and n features, and
+// wires a channel service, with yaml as realtime.yaml, over a counting
+// entity store and a counting channel store. alice reads and updates
+// tickets, and cannot read features.
 func newChannelBudgetWith(t *testing.T, n int, yaml string) *channelBudget {
 	t.Helper()
 	app := newTestAppV1(t)
@@ -281,9 +276,28 @@ func TestChannelsBudget_ActionsReadNothing(t *testing.T) {
 	}
 }
 
+// sessionThreads is channelTestRealtime with a session on threads.
+var sessionThreads = strings.Replace(channelTestRealtime, `    message_types:
+      text:
+        properties: { body: { type: string } }
+        post: [member]
+  topics:`, `    message_types:
+      text:
+        properties: { body: { type: string } }
+        post: [member]
+    session:
+      initial: asked
+      states:
+        asked:    { on: { text: { to: answered } } }
+        answered: { final: true }
+  topics:`, 1)
+
 func TestChannelsBudget_List10vs50(t *testing.T) {
-	cost := func(n int) channelCost {
-		b := newChannelBudget(t, 0)
+	if sessionThreads == channelTestRealtime {
+		t.Fatal("sessionThreads did not add a session")
+	}
+	listCost := func(n int, yaml string) channelCost {
+		b := newChannelBudgetWith(t, 0, yaml)
 		anchor := channels.Anchor{ID: "TKT-1"}
 		for i := range n {
 			if _, err := b.ch.store.CreateMany(context.Background(), anchor, channels.NewChannel{
@@ -300,11 +314,16 @@ func TestChannelsBudget_List10vs50(t *testing.T) {
 		}
 		return got
 	}
+	cost := func(n int) channelCost { return listCost(n, channelTestRealtime) }
 	c10, c50 := cost(10), cost(50)
 	if c10.entity["ListEntityHeaders"] == 0 || len(c10.channel) == 0 {
 		t.Fatalf("a counter is not on the read path: %s", c10)
 	}
 	if !c10.equal(c50) {
 		t.Errorf("a channel list grows with rows:\n10: %s\n50: %s", c10, c50)
+	}
+	// A session is read from the channel row: it costs no store call.
+	if s10, s50 := listCost(10, sessionThreads), listCost(50, sessionThreads); !s10.equal(c10) || !s50.equal(c10) {
+		t.Errorf("sessions change the list cost:\nwithout: %s\nwith 10: %s\nwith 50: %s", c10, s10, s50)
 	}
 }

@@ -111,6 +111,16 @@ func RunAll(t *testing.T, newHarness func(t *testing.T) Harness) {
 		{"PurgeFace", testPurgeFace},
 		{"PurgeAfterUntombstone", testPurgeAfterUntombstone},
 		{"DropTypeRecord", testDropTypeRecord},
+		{"SessionStep", testSessionStep},
+		{"SessionNoMove", testSessionNoMove},
+		{"SessionDeciderSeesCurrent", testSessionDeciderSeesCurrent},
+		{"SessionImplicitCreate", testSessionImplicitCreate},
+		{"SessionInvalidMove", testSessionInvalidMove},
+		{"SessionSurvivesMoves", testSessionSurvivesMoves},
+		{"SessionConcurrent", testSessionConcurrent},
+		{"SessionNoticeMarker", testSessionNoticeMarker},
+		{"SessionStateNames", testSessionStateNames},
+		{"SessionReply", testSessionReply},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -229,6 +239,10 @@ func testNamedMustExist(t *testing.T, h Harness) {
 	k.Name = "abc"
 	_, err := h.Store.Append(context.Background(), k, text("x"))
 	require.ErrorIs(t, err, channels.ErrNotFound)
+	stepped := text("x")
+	stepped.Session = sessionStep(moveFrom("detected", "contained"))
+	_, err = h.Store.Append(context.Background(), k, stepped)
+	require.ErrorIs(t, err, channels.ErrNotFound, "a step does not create a named channel")
 }
 
 // testGapless is the concurrency contract: 50 concurrent appends to one

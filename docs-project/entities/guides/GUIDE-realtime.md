@@ -5,7 +5,7 @@ title: Realtime Channels (realtime.yaml)
 status: published
 order: 28
 audience: advanced
-summary: "Declare channel types, message types, roles, lifecycle and triggers in realtime.yaml, and how rela checks the file"
+summary: "Declare channel types, message types, roles, lifecycle, sessions and triggers in realtime.yaml, and how rela checks the file"
 ---
 
 `realtime.yaml` declares the realtime channels of a project. A channel is a
@@ -356,6 +356,140 @@ again, empty, at the next post.
 Periods are a count from 1 to 100000 and a unit: `s`, `m`, `h` and `d` have a fixed length;
 `mo` and `y` are calendar months and years.
 
+## Sessions
+
+A session tracks where a conversation is, such as the steps of a breach
+response. It is a set of states declared on a channel type. Typed messages
+move the channel from one state to the next. The lifecycle (`open`,
+`closed`, `archived`) says whether people can post; the session says what
+the conversation is doing.
+
+```yaml
+channel_types:
+  breach-response:
+    label: Breach response
+    attach_to: [datalek]
+    roles:
+      lead:   { from: entity.owner }
+      member: { from: attached }
+      dpo:    { permission: privacy.officer }
+    message_types:
+      text:      { properties: { body: { type: markdown, required: true } }, post: [member] }
+      contained: { properties: { note: { type: markdown } }, post: [lead, member] }
+      assessed:  { properties: { risk: { type: risk-level, required: true } }, post: [lead, dpo] }
+      notified:  { properties: { reference: { type: string, required: true } }, post: [dpo] }
+      dismiss:   { properties: { reason: { type: string, required: true } }, post: [lead] }
+      escalated: { properties: { note: { type: string } }, post: [lead] }
+    session:
+      label: GDPR breach response
+      initial: detected
+      states:
+        detected:
+          label: Detected
+          on:
+            contained: { to: contained, roles: [lead] }
+            dismiss:   { to: dismissed }
+            escalated: { to: contained, by: trigger }
+        contained:
+          label: Contained
+          on:
+            assessed: { to: assessed, when: "message.risk ~= 'none'" }
+        assessed:
+          label: Risk assessed
+          on:
+            notified: { to: notified }
+        notified:  { label: AP notified, final: true }
+        dismissed: { label: Dismissed, final: true }
+```
+
+| Key | Meaning |
+| --- | --- |
+| `session.label` | The session's name. Defaults to the channel type's label. |
+| `session.initial` | The state a new session starts in. It cannot be final. |
+| `session.states` | The states, in the order a client shows them. At most 64. |
+| `states.<name>.label` | The state's name for people. Defaults to the state name. |
+| `states.<name>.final` | `true` for a state the session ends in. A final state has no `on:`. |
+| `states.<name>.on` | The transitions out of the state, keyed by message type. A state that is not final needs at least one. |
+| `on.<type>.to` | The state the message moves the session to. It may be the same state: a re-entry. |
+| `on.<type>.roles` | Only a poster holding one of these roles moves the session. Each role must be in the message type's `post`. |
+| `on.<type>.by` | `trigger`: only a trigger's message moves the session. |
+| `on.<type>.when` | A condition the message must meet to move the session. |
+
+**How a message moves a session.** A posted message moves the session when,
+at the moment it is stored, the channel is open, the current state has an
+`on:` entry for the message's type, the poster passes the entry's rule, and
+its `when` holds. Otherwise the message is posted and the session stays
+where it is: a transition is part of what a message means, not a separate
+permission. The store decides under its lock, so of two messages that
+arrive together, the one stored first moves the session, and the second is
+judged against the new state. A reply moves the session like any other
+message. A signal (`persist: ephemeral`) is never stored and cannot be a
+transition.
+
+**Who can move a session.** Only a principal who may post the message type.
+The entry narrows that further:
+
+- With `roles`, a person or agent holding one of the roles moves it. A
+  trigger never holds a role.
+- With `by: trigger`, only a trigger's message moves it. Use this for every
+  transition that stands for "the entity changed": without it, anyone who
+  may post the message type could fake that event. A trigger posts only
+  into `cardinality: one` channel types, so rela refuses `by: trigger`
+  in a `many` type.
+- With neither, every principal who may post the message type moves it,
+  and so does a trigger.
+
+`roles` and `by: trigger` cannot be combined.
+
+**Guards.** `when` reads `message.<property>` (the posted properties, typed
+as for the message type's own `when`), `session.state`,
+`session.generation`, `session.entered_at` and the standard functions such
+as `today()`. A comparison on an optional property the message leaves out
+does not hold, and neither does a `when` that fails to evaluate. rela
+logs such a failure as a warning, once per guard until the next reload,
+with the channel type, the state and the message type. A `when`
+cannot read the entity yet; rela refuses one that does, with "transition
+guards cannot read the entity yet; use a trigger that posts a message".
+Write "not equal" as `~=`.
+
+**Triggers.** A trigger's message moves a session through an entry with
+`by: trigger` or with no poster rule. A trigger with `when_closed: post`
+still posts into a closed channel, but a closed or archived channel never
+moves.
+
+**Notices.** Each move appends a notice to the channel, right after the
+message that caused it. A notice has the type `session`, the author
+`system:realtime` (`author.system: true`), `triggered_by:
+session:<channel type>`, and the props `from`, `to`, `generation` and
+`cause`, the sequence number of the message that moved the session. Nobody
+can edit or remove a notice, not even a moderator: the answer is 409
+`session_notice`. The move is also written to the channel's audit trail,
+with the poster as author and, for a trigger, `triggered_by:
+trigger:<name>`. So a channel type with a session cannot declare a message
+type named `session`. Deleting the channel, or retention, removes the
+notices with it.
+
+**The message that moved the session.** Its author can no longer edit or
+delete it, and the web app no longer offers either: the answer is 409
+`session_message`. The guard judged the message as it was posted, and the
+notice and the audit record name it as the cause. A moderator may still
+remove it; the notice and the audit record keep the move.
+
+**State, generation and entered_at.** The session is stored on the channel.
+`generation` counts the moves; 0 means the session never moved. A session
+that never moved reads as `initial`, entered when the channel was created.
+That includes channels that existed before their type gained a session.
+After a move, `entered_at` is the time of the message that caused it.
+Closing and reopening a channel leaves its session as it is. Removing the
+message that caused a move does not undo the move.
+
+**Stranded states.** A channel whose stored state the file no longer
+declares is stranded. It reads with `stranded: true`, its stored state name
+as label, and no transitions. Posts are accepted and move nothing; the
+lifecycle still works. To unstick such channels, declare the state again
+with an `on:` that leads to a current state. A state no transition leads to
+is allowed for this reason.
+
 ## Triggers
 
 A trigger posts a message into an entity's own channel when the entity
@@ -450,7 +584,16 @@ unknown entity type "nope"`. It checks:
   required message property, maps each property to one of a matching type,
   sets no computed property, and names a face when the type declares faces;
 - that no channel type combines `on_entity_delete: delete` with
-  `lifecycle.delete.retention`.
+  `lifecycle.delete.retention`;
+- that each `session` has between 1 and 64 states with valid names, an
+  `initial` state that exists and is not final, `on:` only on states that
+  are not final and on every such state, transitions keyed by a `log`
+  message type of the channel type, a `to` that exists, `roles` that may
+  post the message type, `by` only as `trigger`, never with `roles` and
+  never in a `cardinality: many` type, and a `when` that compiles and does
+  not read the entity. A `session` at the top of the file is refused; it
+  belongs under a channel type;
+- that the file has no merge key (`<<`) anywhere: write the entries out.
 
 Three more rules stop a message from revealing what `acl.yaml` hides:
 
@@ -615,6 +758,29 @@ A `ref` property is served with the target's id, type and display title. A
 target the caller cannot read, or that no longer exists, is served as
 `{"restricted": true}`, without its id.
 
+A channel of a type with a session carries a `session` block in the head,
+the message page and the list. The `POST` of a message still answers with
+the message; read the head, or follow the live frame of the notice, to see
+the session move.
+
+```json
+"session": {
+  "state": "contained", "label": "Contained", "generation": 1,
+  "entered_at": "2026-10-21T09:12:03Z",
+  "transitions": [ { "message_type": "assessed", "to": "assessed" } ]
+}
+```
+
+`transitions` lists the `on:` entries of the current state, with `by:
+"trigger"` when only a trigger fires one. It is the same for every reader.
+`final` and `stranded` are set when they apply. A notice looks like this:
+
+```json
+{ "seq": 8, "type": "session", "author": { "user": "system:realtime", "system": true },
+  "triggered_by": "session:breach-response",
+  "props": { "from": "detected", "to": "contained", "generation": 1, "cause": 7 } }
+```
+
 ### Errors
 
 Every error is a problem body (`application/problem+json`) with a `type`.
@@ -629,7 +795,7 @@ Every error is a problem body (`application/problem+json`) with a `type`.
 | 413 `too_large` | The message is over `message_bytes`. |
 | 422 | A `ref` names an entity that does not exist or that the caller cannot read. Both get the same body. |
 | 422 `promote_invalid` | The promoted entity or its relation fails validation, for example a `unique` property that another entity already has, or a mapped `ref` names an entity the caller cannot read. The body names properties, never entity ids. |
-| 409 | The channel is not open, the channel is not in a state the lifecycle operation starts from (`lifecycle_wrong_state`), `retention` keeps the channel (`retention_active`), a concurrent change won (`conflict`), the message was removed, `channels_per_entity` is reached, the POST tried to open a channel of a `one` type, or the configuration changed during the request. For actions: the message already carries an action (`action_taken`), its action is pending (`action_pending`, also for an edit, a removal, a release within the release window, or an action that lost a race to a promote that started first), a release finds no pending action (`action_not_pending`), or the promoted entity already exists (`promote_conflict`). |
+| 409 | The channel is not open, the channel is not in a state the lifecycle operation starts from (`lifecycle_wrong_state`), `retention` keeps the channel (`retention_active`), a concurrent change won (`conflict`), the message was removed, `channels_per_entity` is reached, the POST tried to open a channel of a `one` type, or the configuration changed during the request. An edit or removal targets a session notice (`session_notice`), or an author's edit or delete targets a message that moved the session (`session_message`). For actions: the message already carries an action (`action_taken`), its action is pending (`action_pending`, also for an edit, a removal, a release within the release window, or an action that lost a race to a promote that started first), a release finds no pending action (`action_not_pending`), or the promoted entity already exists (`promote_conflict`). |
 | 429 | A rate limit. `Retry-After` gives the seconds to wait, rounded up. |
 
 The OpenAPI document at `/api/v1/_openapi.json` lists these paths for every
@@ -696,6 +862,12 @@ access is open.
 
 `rela channel` applies `acl.yaml` the same way.
 
+**Sessions.** `read_channel` and `list_channels` show a channel's session,
+and `post_message` answers with the session after the post. `rela channel
+read` prints a line such as `session: contained (Contained), generation 1`
+under the channel header and shows a notice as `moved from detected to
+contained`; `rela channel post` prints the session line after the message.
+
 **Identity.** The channel tools and `rela channel` act as `$USER`, or as the
 job identity in `RELA_RUN_AS` (`--run-as`), such as `integration:triage-bot`.
 Give an agent its own job identity and an `acl.yaml` assignment, so it holds
@@ -738,6 +910,11 @@ it out of roles that post on channels other agents act on.
   refused, on reload and when the server starts, because the stored
   channels are keyed by the old anchor. Migrating channels to another
   anchor is not supported yet.
+- A reload may change a session freely: add or remove states, rename
+  `initial`, or drop the `session:` block. A session that never moved
+  follows the new `initial`. A channel in a state the new file drops is
+  stranded (see Sessions). Without the `session:` block the session is
+  hidden from reads; the stored state stays and returns with the block.
 - Saving `schema.yaml` in the Configure space checks `realtime.yaml` against
   the new schema and refuses the save if it breaks. The Configure space
   cannot edit `realtime.yaml` itself.

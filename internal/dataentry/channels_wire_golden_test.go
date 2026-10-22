@@ -36,6 +36,8 @@ const (
 var channelWireTypes = map[string]any{
 	"ChannelAuthor":            v1.ChannelAuthor{},
 	"Channel":                  v1.Channel{},
+	"ChannelSession":           v1.ChannelSession{},
+	"ChannelSessionTransition": v1.ChannelSessionTransition{},
 	"ChannelTypeList":          v1.ChannelTypeList{},
 	"ChannelList":              v1.ChannelList{},
 	"ChannelActions":           v1.ChannelActions{},
@@ -188,12 +190,18 @@ func TestChannelWireGolden(t *testing.T) {
 	require.Equal(t, http.StatusOK, resp.StatusCode, "%s", b)
 	resp, b = env.do(t, "alice", http.MethodPost, roomPath+"/messages", `{"type":"typing"}`, nil)
 	require.Equal(t, http.StatusAccepted, resp.StatusCode, "%s", b)
+	// A session channel whose session moved: the head carries the session
+	// and the page a notice.
+	resp, b = env.do(t, "alice", http.MethodPost, incidentPath+"/messages", `{"type":"contained"}`, nil)
+	require.Equal(t, http.StatusCreated, resp.StatusCode, "%s", b)
 	samples := map[string]any{}
 	for name, path := range map[string]string{
-		"list":     "/api/v1/tickets/TKT-1/_channels",
-		"head":     roomPath,
-		"messages": roomPath + "/messages",
-		"schema":   channelSchemaPath,
+		"list":             "/api/v1/tickets/TKT-1/_channels",
+		"head":             roomPath,
+		"messages":         roomPath + "/messages",
+		"schema":           channelSchemaPath,
+		"session_head":     incidentPath,
+		"session_messages": incidentPath + "/messages",
 	} {
 		code, b := env.get(t, "alice", path)
 		require.Equal(t, http.StatusOK, code, "%s: %s", path, b)

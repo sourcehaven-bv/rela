@@ -15,8 +15,8 @@ var refusedKeys = []struct {
 	pattern string
 	reason  string
 }{
-	{"session", "sessions are not supported yet"},
-	{"channel_types.*.session", "sessions are not supported yet"},
+	{"session", "a session belongs under a channel type: channel_types.<name>.session"},
+	{"channel_types.*.session.final", "mark each final state with final: true"},
 	{"agents", "agents are ordinary principals; restrict them with client_baselines in acl.yaml " +
 		"and match them with a principal_type role"},
 	{"channel_types.*.message_types.*.actions.*.by", "agents are ordinary principals, so an action " +
@@ -73,6 +73,10 @@ func (k *keyChecker) walk(n *yaml.Node, t reflect.Type, path string) {
 	if n.Kind == yaml.ScalarNode && n.Tag == "!!null" {
 		return
 	}
+	if hasMergeKey(n) {
+		add(path, mergeReason)
+		return
+	}
 	switch t.Kind() {
 	case reflect.Struct:
 		if n.Kind != yaml.MappingNode {
@@ -111,6 +115,23 @@ func (k *keyChecker) walk(n *yaml.Node, t reflect.Type, path string) {
 			add(path, "must be a single value")
 		}
 	}
+}
+
+// mergeReason refuses a YAML merge key. The file is checked key by key
+// against its schema, and a merged entry would bypass that check.
+const mergeReason = "merge keys (<<) are not supported in realtime.yaml; write the entries out"
+
+// hasMergeKey reports whether n is a mapping with a YAML merge key.
+func hasMergeKey(n *yaml.Node) bool {
+	if n.Kind != yaml.MappingNode {
+		return false
+	}
+	for i := 0; i+1 < len(n.Content); i += 2 {
+		if k := n.Content[i]; k.Tag == "!!merge" || k.Value == "<<" {
+			return true
+		}
+	}
+	return false
 }
 
 // yamlFields maps each YAML key of struct type t to its field type.

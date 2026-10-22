@@ -180,7 +180,9 @@ func (s *Service) Head(ctx context.Context, addr RawAddress) (HeadView, error) {
 	if err != nil {
 		return HeadView{}, err
 	}
-	out := HeadView{Channel: channelView(c.key, c.head), Ephemeral: []EphemeralView{}, Actions: c.affordances()}
+	out := HeadView{
+		Channel: channelView(c.ct, c.key, c.head, c.now), Ephemeral: []EphemeralView{}, Actions: c.affordances(),
+	}
 	if len(msgs) > 0 {
 		v := r.message(msgs[0])
 		out.Last = &v
@@ -279,6 +281,9 @@ type PostResult struct {
 	ID        string
 	ExpiresAt time.Time
 	Message   *MessageView
+	// Session is the channel's session after a log message, for a type
+	// with a session: moved when the message fired a transition.
+	Session *SessionView
 }
 
 // Post posts a message. The checks run in this order: read access, a post
@@ -327,15 +332,17 @@ func (s *Service) Post(ctx context.Context, addr RawAddress, in PostInput) (Post
 	if err != nil {
 		return PostResult{}, err
 	}
+	sp := newSessionPost(c.ctx, c.ct, mt, vp.props, c.now, poster{roles: c.transitionRoles(mt)}, "")
 	m, err := s.store.Append(c.ctx, c.key, channels.NewMessage{
-		Type: mt.Name, Author: authorOf(c.p), At: c.now, Props: vp.props, ReplyTo: in.ReplyTo,
+		Type: mt.Name, Author: authorOf(c.p), At: c.now, Props: vp.props, ReplyTo: in.ReplyTo, Session: sp.step,
 	})
+	sp.logGuardFailure(c.ctx)
 	if err != nil {
 		return PostResult{}, storeError(err)
 	}
 	s.local.mark(c.key)
 	v := s.rendererWith(c, refs).message(m)
-	return PostResult{Message: &v}, nil
+	return PostResult{Message: &v, Session: postedSession(c, sp.step)}, nil
 }
 
 // rendererWith is a renderer over refs already resolved for the caller.
@@ -540,7 +547,7 @@ func (s *Service) Create(
 		return ChannelView{}, storeError(err)
 	}
 	s.local.mark(ch.Key)
-	return channelView(ch.Key, &ch), nil
+	return channelView(c.ct, ch.Key, &ch, c.now), nil
 }
 
 // TypeChannels are the channels of one type on an anchor that the caller
@@ -642,7 +649,7 @@ func (c *call) listType(
 				continue
 			}
 		}
-		tc.Channels = append(tc.Channels, channelView(ch.Key, &ch))
+		tc.Channels = append(tc.Channels, channelView(ct, ch.Key, &ch, c.now))
 	}
 	c.head = nil
 	tc.Create = ct.Cardinality == realtimecfg.CardinalityMany && ct.Create != nil &&

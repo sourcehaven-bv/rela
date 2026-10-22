@@ -3,11 +3,14 @@ package openapi
 import (
 	"bytes"
 	"encoding/json"
+	"reflect"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	v1 "github.com/Sourcehaven-BV/rela/internal/apiwire/v1"
 	"github.com/Sourcehaven-BV/rela/internal/realtimecfg"
 	"github.com/Sourcehaven-BV/rela/internal/realtimelimits"
 )
@@ -243,4 +246,49 @@ func TestChannelPaths_FollowReload(t *testing.T) {
 	if err != nil || !strings.Contains(string(data), "_channels") {
 		t.Fatalf("JSON spec lacks the channel paths (err %v)", err)
 	}
+}
+
+// TestOpenAPI_ChannelSession pins that the Channel schema has a session
+// property referencing ChannelSession, whose properties are those of
+// v1.ChannelSession, and its transitions those of
+// v1.ChannelSessionTransition.
+func TestOpenAPI_ChannelSession(t *testing.T) {
+	rt := channelTestConfig(t)
+	g := New(attachmentTestMeta(), Config{Title: "T", Version: "1"})
+	g.SetRealtime(func() *realtimecfg.Compiled { return rt })
+	sc := g.Generate().Components.Schemas
+	session := sc[channelSchema].Properties["session"]
+	if session == nil || session.Ref != "#/components/schemas/"+channelSessionRef {
+		t.Fatalf("Channel.session = %+v, want a ref to %s", session, channelSessionRef)
+	}
+	cs := sc[channelSessionRef]
+	if cs == nil {
+		t.Fatal("no ChannelSession schema")
+	}
+	if got, want := schemaKeys(cs), jsonNames(reflect.TypeFor[v1.ChannelSession]()); !slices.Equal(got, want) {
+		t.Errorf("ChannelSession properties = %v, want %v", got, want)
+	}
+	tr := cs.Properties["transitions"].Items
+	if got, want := schemaKeys(tr), jsonNames(reflect.TypeFor[v1.ChannelSessionTransition]()); !slices.Equal(got, want) {
+		t.Errorf("transition properties = %v, want %v", got, want)
+	}
+}
+
+func schemaKeys(s *Schema) []string {
+	var out []string
+	for k := range s.Properties {
+		out = append(out, k)
+	}
+	slices.Sort(out)
+	return out
+}
+
+func jsonNames(typ reflect.Type) []string {
+	var out []string
+	for f := range typ.Fields() {
+		name, _, _ := strings.Cut(f.Tag.Get("json"), ",")
+		out = append(out, name)
+	}
+	slices.Sort(out)
+	return out
 }

@@ -513,3 +513,67 @@ func TestGolden_ChannelToolsList(t *testing.T) {
 			"UPDATE_GOLDEN=1.\n--- got ---\n%s", got)
 	}
 }
+
+// incidentArgs addresses the session channel of REQ-001.
+var incidentArgs = map[string]any{"id": "REQ-001", "channel_type": "incident"}
+
+func TestReadChannel_IncludesSession(t *testing.T) {
+	t.Parallel()
+	f := newChannelFixture(t)
+	cs := f.client(t, "alice")
+	var read struct{ realtime.ReadView }
+	mustCall(t, cs, toolReadChannel, incidentArgs, &read)
+	s := read.Channel.Session
+	if s == nil || s.State != "detected" || s.Generation != 0 || len(s.Transitions) != 1 {
+		t.Fatalf("session = %+v", s)
+	}
+	var room struct{ realtime.ReadView }
+	mustCall(t, cs, toolReadChannel, map[string]any{"id": "REQ-001", "channel_type": "room"}, &room)
+	if room.Channel.Session != nil {
+		t.Errorf("a room has no session, got %+v", room.Channel.Session)
+	}
+}
+
+func TestListChannels_IncludesSession(t *testing.T) {
+	t.Parallel()
+	f := newChannelFixture(t)
+	cs := f.client(t, "alice")
+	mustCall(t, cs, "post_message", with(incidentArgs, map[string]any{"message_type": "contained"}), nil)
+	var list struct{ realtime.AnchorChannels }
+	mustCall(t, cs, "list_channels", map[string]any{"id": "REQ-001"}, &list)
+	for _, tc := range list.Types {
+		if tc.Type != "incident" {
+			continue
+		}
+		if len(tc.Channels) != 1 || tc.Channels[0].Session == nil || tc.Channels[0].Session.State != "contained" {
+			t.Fatalf("incident channels = %+v", tc.Channels)
+		}
+		return
+	}
+	t.Fatalf("list_channels has no incident type: %+v", list)
+}
+
+func TestPostMessage_ReturnsSession(t *testing.T) {
+	t.Parallel()
+	f := newChannelFixture(t)
+	cs := f.client(t, "alice")
+	var res struct {
+		Session *realtime.SessionView `json:"session"`
+	}
+	mustCall(t, cs, "post_message", with(incidentArgs, map[string]any{
+		"message_type": "text", "props": map[string]any{"body": "looking"},
+	}), &res)
+	if res.Session == nil || res.Session.State != "detected" || res.Session.Generation != 0 {
+		t.Fatalf("after a post that moved nothing, session = %+v", res.Session)
+	}
+	mustCall(t, cs, "post_message", with(incidentArgs, map[string]any{"message_type": "contained"}), &res)
+	if res.Session == nil || res.Session.State != "contained" || res.Session.Generation != 1 || !res.Session.Final {
+		t.Fatalf("after a post that moved it, session = %+v", res.Session)
+	}
+	text := mustCall(t, cs, "post_message", map[string]any{
+		"id": "REQ-001", "channel_type": "room", "message_type": "text", "props": map[string]any{"body": "x"},
+	}, nil)
+	if strings.Contains(text, `"session"`) {
+		t.Errorf("a room post carries a session: %s", text)
+	}
+}

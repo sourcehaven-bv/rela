@@ -105,6 +105,33 @@ describe('real channel answers use only mirrored keys', () => {
     }
   })
 
+  function channelKeys(c: Json) {
+    keysOf('Channel', c)
+    if (!c.session) return
+    const session = c.session as Json
+    keysOf('ChannelSession', session)
+    for (const t of (session.transitions ?? []) as Json[]) keysOf('ChannelSessionTransition', t)
+  }
+
+  it('session', () => {
+    const head = samples.session_head!
+    keysOf('ChannelHead', head)
+    channelKeys(head.channel as Json)
+    expect((head.channel as Json).session).toBeDefined()
+    const page = samples.session_messages!
+    keysOf('MessagePage', page)
+    channelKeys(page.channel as Json)
+    const messages = page.messages as Json[]
+    for (const m of messages) messageKeys(m)
+    // A session notice: type session, posted by the server.
+    expect(messages.some((m) => m.type === 'session' && (m.author as Json).system === true)).toBe(
+      true
+    )
+    for (const t of samples.list!.types as Json[]) {
+      for (const c of t.channels as Json[]) channelKeys(c)
+    }
+  })
+
   it('schema', () => {
     const schema = samples.schema!
     keysOf('ChannelSchema', schema)

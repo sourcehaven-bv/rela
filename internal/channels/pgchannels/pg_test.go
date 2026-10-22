@@ -99,6 +99,24 @@ func TestSchemaIsolation(t *testing.T) {
 	require.Empty(t, keys)
 }
 
+// TestLegacyRowHasNoSession pins that a channel row written without the
+// session columns of migration 31 reads as an unset session.
+func TestLegacyRowHasNoSession(t *testing.T) {
+	ctx := context.Background()
+	pool, _ := newScopedPool(t)
+	s, err := pgchannels.New(pool)
+	require.NoError(t, err)
+	_, err = pool.Exec(ctx, `INSERT INTO channels
+		(anchor_id, anchor_face, type, name, tomb, incarnation, state, title, created_by, created_at,
+		 closed_at, archived_at, last_seq, rev)
+		VALUES ('TKT-1', '', 'room', '', '', '', 'open', '', '{"user":"alice"}', 1, 0, 0, 0, 0)`)
+	require.NoError(t, err)
+	c, err := s.Head(ctx, channels.Key{Anchor: channels.Anchor{ID: "TKT-1"}, Type: "room"})
+	require.NoError(t, err)
+	require.True(t, c.Session.IsZero(), "a legacy row has session %+v", c.Session)
+	require.True(t, c.Session.EnteredAt.IsZero())
+}
+
 // newScopedPool returns a pool pinned to a fresh, migrated schema, and a
 // DSN pinned to the same schema.
 func newScopedPool(t *testing.T) (pool *pgxpool.Pool, scopedDSN string) {

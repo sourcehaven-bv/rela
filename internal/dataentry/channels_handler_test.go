@@ -17,6 +17,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/require"
+
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	v1 "github.com/Sourcehaven-BV/rela/internal/apiwire/v1"
 	"github.com/Sourcehaven-BV/rela/internal/channels"
@@ -25,6 +27,9 @@ import (
 )
 
 const roomPath = "/api/v1/tickets/TKT-1/_channels/room"
+
+// incidentPath is the channel of the session type incident on TKT-1.
+const incidentPath = "/api/v1/tickets/TKT-1/_channels/incident"
 
 // decodeAs decodes b into a T and fails the test on an error.
 func decodeAs[T any](t *testing.T, b []byte) T {
@@ -156,7 +161,7 @@ func TestChannels_Routes(t *testing.T) {
 	for _, tl := range list.Types {
 		types[tl.Type] = tl
 	}
-	if code != http.StatusOK || list.Anchor != "TKT-1" || len(types) != 3 || types["topics"].Create ||
+	if code != http.StatusOK || list.Anchor != "TKT-1" || len(types) != 4 || types["topics"].Create ||
 		len(types["threads"].Channels) != 1 || !types["threads"].Create {
 
 		t.Fatalf("list = %d %s", code, b)
@@ -617,4 +622,56 @@ func TestParseChannelRoute(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestChannelsHandler_SessionInReads pins that the head, the message page
+// and the list carry the session of a session type, and leave it out for a
+// type without one.
+func TestChannelsHandler_SessionInReads(t *testing.T) {
+	env := newChannelEnv(t)
+	head := func(path string) v1.ChannelHead {
+		t.Helper()
+		code, b := env.get(t, "alice", path)
+		require.Equal(t, http.StatusOK, code, "%s", b)
+		var h v1.ChannelHead
+		require.NoError(t, json.Unmarshal(b, &h))
+		return h
+	}
+	before := head(incidentPath).Channel.Session
+	require.NotNil(t, before)
+	require.Equal(t, "detected", before.State)
+	require.Zero(t, before.Generation)
+	require.NotEmpty(t, before.EnteredAt)
+	require.Equal(t, []v1.ChannelSessionTransition{{MessageType: "contained", To: "contained"}}, before.Transitions)
+
+	resp, b := env.do(t, "alice", http.MethodPost, incidentPath+"/messages", `{"type":"contained"}`, nil)
+	require.Equal(t, http.StatusCreated, resp.StatusCode, "%s", b)
+	after := head(incidentPath).Channel.Session
+	require.Equal(t, "contained", after.State)
+	require.Equal(t, int64(1), after.Generation)
+	require.True(t, after.Final)
+
+	code, b := env.get(t, "alice", incidentPath+"/messages")
+	require.Equal(t, http.StatusOK, code, "%s", b)
+	var page v1.MessagePage
+	require.NoError(t, json.Unmarshal(b, &page))
+	require.Equal(t, "contained", page.Channel.Session.State)
+	require.Len(t, page.Messages, 2)
+	require.Equal(t, "session", page.Messages[1].Type)
+
+	code, b = env.get(t, "alice", "/api/v1/tickets/TKT-1/_channels")
+	require.Equal(t, http.StatusOK, code, "%s", b)
+	var list v1.ChannelList
+	require.NoError(t, json.Unmarshal(b, &list))
+	seen := map[string]bool{}
+	for _, tl := range list.Types {
+		for _, c := range tl.Channels {
+			seen[c.Type] = c.Session != nil
+		}
+	}
+	require.True(t, seen["incident"])
+
+	env.postText(t, "alice", roomPath, "hello")
+	require.Nil(t, head(roomPath).Channel.Session)
+	require.NotContains(t, string(b), `"session":null`)
 }

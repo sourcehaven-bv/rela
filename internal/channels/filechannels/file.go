@@ -47,6 +47,18 @@
 // record carries is always reserved first: a crash in between leaves a gap
 // in the revs, never a rev used twice. Head reads meta.yaml under the lock,
 // so a poller never sees a rev whose records are not yet written.
+//
+// An append that moves the session (see [channels.SessionStep]) writes
+// meta.yaml with the new session, then the message and the notice, and
+// the session audit record last. A crash after meta.yaml can leave the
+// session moved with no message, no notice and no audit record; a crash
+// after the log records can leave the audit record missing. When the
+// message ends a segment, the notice opens the next one in a separate
+// write, so a crash between the two leaves the session moved and the
+// message stored, with its [channels.Message.MovedSession] mark, but no
+// notice and no audit record; the next append takes the notice's seq
+// (TestSessionCrashBetweenSegments). The trail can miss a session record,
+// but never names a wrong cause.
 package filechannels
 
 import (
@@ -303,6 +315,15 @@ type meta struct {
 	Rev         int64                `yaml:"rev"`
 	SegRev      []int64              `yaml:"seg_rev,omitempty"`
 	Pending     map[int64]pendingRef `yaml:"pending,omitempty"`
+	// The session snapshot (see [channels.Session]). A meta.yaml from
+	// before sessions has none and reads as unset.
+	SessionState     string    `yaml:"session_state,omitempty"`
+	SessionGen       int64     `yaml:"session_gen,omitempty"`
+	SessionEnteredAt time.Time `yaml:"session_entered_at,omitempty"`
+}
+
+func (m *meta) setSession(s channels.Session) {
+	m.SessionState, m.SessionGen, m.SessionEnteredAt = s.State, s.Generation, s.EnteredAt
 }
 
 func (m *meta) channel(k channels.Key) channels.Channel {
@@ -311,6 +332,7 @@ func (m *meta) channel(k channels.Key) channels.Channel {
 		CreatedAt: m.CreatedAt.UTC(), ClosedAt: utc(m.ClosedAt), ArchivedAt: utc(m.ArchivedAt),
 		ReopenedAt: utc(m.ReopenedAt),
 		LastSeq:    m.LastSeq, Rev: m.Rev,
+		Session: channels.Session{State: m.SessionState, Generation: m.SessionGen, EnteredAt: utc(m.SessionEnteredAt)},
 	}
 }
 

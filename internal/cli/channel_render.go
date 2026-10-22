@@ -102,6 +102,26 @@ func writeChannelHeader(b *strings.Builder, c realtime.ChannelView) {
 	if c.Title != "" {
 		fmt.Fprintf(b, "Title: %s\n", printable(c.Title))
 	}
+	if c.Session != nil {
+		fmt.Fprintf(b, "%s\n", sessionText(c.Session))
+	}
+}
+
+// sessionText is the one-line form of a session: its state, label and
+// generation, and whether the state is final or stranded.
+func sessionText(s *realtime.SessionView) string {
+	text := "session: " + printable(s.State)
+	if s.Label != "" && s.Label != s.State {
+		text += " (" + printable(s.Label) + ")"
+	}
+	text += fmt.Sprintf(", generation %d", s.Generation)
+	if s.Final {
+		text += ", final"
+	}
+	if s.Stranded {
+		text += ", stranded"
+	}
+	return text
 }
 
 // writeMessageType prints a message type and its properties.
@@ -155,6 +175,11 @@ func writeMessageLines(b *strings.Builder, m realtime.MessageView) {
 		fmt.Fprintf(b, "  %d replies", m.ReplyCount)
 	}
 	b.WriteString("\n")
+	if m.IsSessionNotice() {
+		fmt.Fprintf(b, "  moved from %s to %s\n",
+			printable(propText(m.Props["from"])), printable(propText(m.Props["to"])))
+		return
+	}
 	names := make([]string, 0, len(m.Props))
 	for name := range m.Props {
 		names = append(names, name)

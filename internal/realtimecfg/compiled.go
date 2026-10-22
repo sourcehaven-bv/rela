@@ -185,6 +185,9 @@ type ChannelType struct {
 	// default is [realtimelimits.DetachedRetention]. A channel under
 	// lifecycle.delete.retention is kept until that ends too.
 	DetachedRetention Period
+	// session is the compiled `session:`, or nil. Copies of the type share
+	// it; it is immutable (see [ChannelType.Session]).
+	session *Session
 }
 
 // DefaultDetachedRetention is the [ChannelType.DetachedRetention] of a type

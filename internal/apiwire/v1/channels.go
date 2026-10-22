@@ -28,6 +28,33 @@ type Channel struct {
 	ArchivedAt string         `json:"archived_at,omitempty"`
 	LastSeq    int64          `json:"last_seq"`
 	Rev        int64          `json:"rev"`
+	// Session is the channel's session; absent for a channel type without
+	// one.
+	Session *ChannelSession `json:"session,omitempty"`
+}
+
+// ChannelSession is a channel's session: the state it is in, how often it
+// moved (0 means never), when it entered the state, and the transitions out
+// of that state. Final marks a state the session ends in. Stranded marks a
+// stored state the configuration no longer declares; Label is then the
+// stored name and Transitions is empty.
+type ChannelSession struct {
+	State       string                     `json:"state"`
+	Label       string                     `json:"label,omitempty"`
+	Generation  int64                      `json:"generation"`
+	EnteredAt   string                     `json:"entered_at"`
+	Final       bool                       `json:"final,omitempty"`
+	Stranded    bool                       `json:"stranded,omitempty"`
+	Transitions []ChannelSessionTransition `json:"transitions,omitempty"`
+}
+
+// ChannelSessionTransition is one transition out of the session's current
+// state: a message of MessageType moves the session to To. By is
+// "trigger" when only a trigger's message fires it.
+type ChannelSessionTransition struct {
+	MessageType string `json:"message_type"`
+	To          string `json:"to"`
+	By          string `json:"by,omitempty"`
 }
 
 // ChannelTypeList is one channel type on an anchor and the channels of it

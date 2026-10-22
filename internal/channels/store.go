@@ -30,6 +30,16 @@ type Store interface {
 	// is [ErrNotFound]. An existing channel recorded with another
 	// incarnation is [ErrStaleAnchor]. A reply names an existing, unremoved
 	// top-level message, whose reply count rises in the same step.
+	//
+	// With msg.Session set, the append may move the channel's session in
+	// the same step: the store calls the step's decider with the channel
+	// as committed and, on a move, stores a notice right after the message,
+	// sets the session and writes the session audit record (see
+	// [SessionStep]). A move with an invalid state name is
+	// [ErrInvalidMessage] and stores nothing. A step does not imply
+	// RequireOpen: the decider sees the lifecycle state and decides. Any
+	// other append whose TriggeredBy starts with [SessionMarker] is
+	// [ErrInvalidMessage]. The returned message is the causing one.
 	Append(ctx context.Context, key Key, msg NewMessage) (Message, error)
 
 	// Edit replaces a message's properties and sets its edit time. The old

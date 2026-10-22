@@ -103,7 +103,7 @@ go build -o rela ./cmd/rela
 | [Comments: Annotating Entities, Fields and Text](docs/comments.md) | Enable commenting, control who may comment, and understand how anchors survive edits |
 | [Rela Desktop: Documents, Menus and Notifications](docs/desktop.md) | Open projects and single-file .rela documents in the desktop app, and send notifications with desktop.yaml |
 | [Driving rela-server from the command line with restish](docs/restish.md) | Call a remote rela-server from the command line, including file uploads, through its OpenAPI spec |
-| [Realtime Channels (realtime.yaml)](docs/realtime.md) | Declare channel types, message types, roles, lifecycle and triggers in realtime.yaml, and how rela checks the file |
+| [Realtime Channels (realtime.yaml)](docs/realtime.md) | Declare channel types, message types, roles, lifecycle, sessions and triggers in realtime.yaml, and how rela checks the file |
 
 ### Tutorials
 

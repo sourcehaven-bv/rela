@@ -1071,3 +1071,80 @@ func TestTriggers_CooldownKeepsQueuePlace(t *testing.T) {
 	}
 	require.Equal(t, 1, waiting, "one later change still waits")
 }
+
+// sessionTriggers is the incident session type with two triggers: one
+// posting escalated (by: trigger) and one posting contained (roles: lead).
+func sessionTriggers(whenClosed string) string {
+	return sessionRealtime("detected", sessionStates) + `
+triggers:
+  escalate:
+    entity_type: ticket
+    on: enter
+    when: "entity.status == 'escalated'"
+    channel: incident` + whenClosed + `
+    post: { type: escalated, props: { note: "Escalated" } }
+  contain:
+    entity_type: ticket
+    on: enter
+    when: "entity.status == 'contained'"
+    channel: incident
+    post: { type: contained, props: { note: "Contained" } }
+`
+}
+
+func (th *triggerHarness) incidentSession(t *testing.T) channels.Session {
+	t.Helper()
+	c, err := th.store.Store.Head(context.Background(), incidentKey())
+	require.NoError(t, err)
+	return c.Session
+}
+
+func TestSessionTriggerPost(t *testing.T) {
+	t.Run("by trigger moves", func(t *testing.T) {
+		th := newTriggerHarness(t, sessionTriggers(""))
+		th.src.set("ticket", "TKT-1", "", map[string]any{"status": "new"})
+		th.reconcile(t)
+		th.ticket(1, map[string]any{"status": "escalated"})
+		require.Equal(t, 1, th.round(t).Posted)
+		require.Equal(t, "contained", th.incidentSession(t).State)
+		audit := th.sessionAudit(t)
+		require.Len(t, audit, 1)
+		require.Equal(t, systemAuthor(), audit[0].By)
+		require.Equal(t, "trigger:escalate", audit[0].TriggeredBy)
+		msgs, err := th.store.Store.Messages(context.Background(), incidentKey(), channels.Page{})
+		require.NoError(t, err)
+		require.Len(t, msgs, 2)
+		require.Equal(t, "session:incident", msgs[1].TriggeredBy)
+	})
+	t.Run("roles never admit a trigger", func(t *testing.T) {
+		th := newTriggerHarness(t, sessionTriggers(""))
+		th.src.set("ticket", "TKT-1", "", map[string]any{"status": "new"})
+		th.reconcile(t)
+		th.ticket(1, map[string]any{"status": "contained"})
+		require.Equal(t, 1, th.round(t).Posted)
+		require.True(t, th.incidentSession(t).IsZero())
+		require.Empty(t, th.sessionAudit(t))
+	})
+}
+
+func TestSessionTriggerWhenClosed(t *testing.T) {
+	th := newTriggerHarness(t, sessionTriggers("\n    when_closed: post"))
+	ctx := context.Background()
+	_, err := th.store.Store.Append(ctx, incidentKey(), channels.NewMessage{
+		Type: "text", Author: systemAuthor(), At: th.clock.Now(), Props: map[string]any{"body": "first"},
+	})
+	require.NoError(t, err)
+	_, err = th.store.SetLifecycle(ctx, incidentKey(), channels.StateOpen, channels.Transition{
+		To: channels.StateClosed, By: systemAuthor(), At: th.clock.Now(),
+	})
+	require.NoError(t, err)
+	th.src.set("ticket", "TKT-1", "", map[string]any{"status": "new"})
+	th.reconcile(t)
+	th.ticket(1, map[string]any{"status": "escalated"})
+	require.Equal(t, 1, th.round(t).Posted)
+	msgs, err := th.store.Store.Messages(ctx, incidentKey(), channels.Page{})
+	require.NoError(t, err)
+	require.Len(t, msgs, 2, "the post lands; no notice follows")
+	require.Equal(t, "escalated", msgs[1].Type)
+	require.True(t, th.incidentSession(t).IsZero())
+}

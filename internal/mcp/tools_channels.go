@@ -228,7 +228,9 @@ func toolReadChannelDef() *mcpgo.Tool {
 		withDescription("Read a channel on an entity: its state, what you may post, the message types with "+
 			"a JSON Schema for each type's props, live signals, and a page of messages, newest page first. "+
 			"Page with before, or follow with after_rev (pass next_after_rev back). Watchable: watch it with "+
-			"after_rev to wait for new, edited or removed messages. "+realtime.UntrustedNotice),
+			"after_rev to wait for new, edited or removed messages. A channel type with a session shows it on "+
+			"the channel: its state, generation and the message types that move it from here; a move appends "+
+			"a notice of type session. "+realtime.UntrustedNotice),
 		withNumber(chanAfterRevArg, description("Messages changed after this rev, ordered by rev; 0 is valid")),
 		withNumber("after", description("Messages after this seq, oldest first")),
 		withNumber("before", description("Messages before this seq")),
@@ -241,7 +243,8 @@ func toolReadChannelDef() *mcpgo.Tool {
 
 func toolPostMessage(refuseSignals bool) *mcpgo.Tool {
 	desc := "Post a message. props must match the message type's props_schema from read_channel. " +
-		"You need a post role for the type; author and time are set by the server. "
+		"You need a post role for the type; author and time are set by the server. " +
+		"In a channel with a session, the answer shows the session after the post. "
 	if !refuseSignals {
 		desc += "A signal type (persist ephemeral) is kept in memory until its ttl and answers " +
 			"{ephemeral,id,expires_at}. "
@@ -292,6 +295,9 @@ type (
 	messageResult struct {
 		Notice  string               `json:"notice"`
 		Message realtime.MessageView `json:"message"`
+		// Session is the channel's session after a post, for a channel
+		// type with a session.
+		Session *realtime.SessionView `json:"session,omitempty"`
 	}
 	signalResult struct {
 		Ephemeral bool   `json:"ephemeral"`
@@ -441,7 +447,7 @@ func (h channelHandler) handlePost(ctx context.Context, args toolRequest) *mcpgo
 			Ephemeral: true, ID: got.ID, ExpiresAt: got.ExpiresAt.UTC().Format(time.RFC3339Nano),
 		})
 	}
-	return channelJSON(messageResult{Notice: realtime.UntrustedNotice, Message: *got.Message})
+	return channelJSON(messageResult{Notice: realtime.UntrustedNotice, Message: *got.Message, Session: got.Session})
 }
 
 func (h channelHandler) handleEdit(ctx context.Context, args toolRequest) *mcpgo.CallToolResult {

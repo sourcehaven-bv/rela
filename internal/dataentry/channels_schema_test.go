@@ -26,9 +26,9 @@ func TestChannelSchema_Lists(t *testing.T) {
 	for _, ct := range got.ChannelTypes {
 		names = append(names, ct.Name)
 	}
-	require.Equal(t, []string{"room", "secret", "threads", "topics"}, names)
+	require.Equal(t, []string{"incident", "room", "secret", "threads", "topics"}, names)
 
-	room := got.ChannelTypes[0]
+	room := got.ChannelTypes[1]
 	require.Equal(t, "Room", room.Label)
 	require.Equal(t, []string{"ticket", "feature"}, room.AttachTo)
 	require.Equal(t, "one", room.Cardinality)

@@ -2,6 +2,8 @@ version: "1.0"
 types:
   severity:
     values: [low, medium, high]
+  risk-level:
+    values: [none, low, high]
 entities:
   datalek:
     label: Data breach

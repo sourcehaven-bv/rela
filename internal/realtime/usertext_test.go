@@ -65,6 +65,8 @@ func denialConstructors() map[string]*DenialError {
 		"invalidRef":         invalidRef(),
 		"typeConflict":       typeConflict("room"),
 		"signalsNotKept":     signalsNotKept("typing"),
+		"sessionNotice":      sessionNotice(),
+		"sessionMessage":     sessionMessage(),
 		"configChanged":      configChanged(),
 		"noPrincipal":        noPrincipal(),
 		"notPromoting":       notPromoting(),

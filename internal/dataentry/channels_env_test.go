@@ -83,6 +83,18 @@ channel_types:
       text:
         properties: { body: { type: string } }
         post: [member]
+  incident:
+    attach_to: [ticket]
+    read: { from: attached }
+    roles:
+      member: { from: attached }
+    message_types:
+      contained: { properties: { note: { type: string } }, post: [member] }
+    session:
+      initial: detected
+      states:
+        detected:  { label: Detected, on: { contained: { to: contained } } }
+        contained: { label: Contained, final: true }
   secret:
     attach_to: [ticket]
     read: { permission: chat.read }

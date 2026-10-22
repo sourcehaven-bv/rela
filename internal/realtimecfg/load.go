@@ -86,7 +86,7 @@ func Parse(data []byte, meta *metamodel.Metamodel, policy *acl.Policy) (*Compile
 	if err := dec.Decode(&raw); err != nil && !errors.Is(err, io.EOF) {
 		return nil, &Error{Problems: []Problem{{Reason: err.Error()}}}
 	}
-	v := &validator{meta: meta, policy: policy}
+	v := &validator{meta: meta, policy: policy, root: &root}
 	c := v.compile(&raw)
 	if len(v.problems) > 0 {
 		sort.SliceStable(v.problems, func(i, j int) bool { return v.problems[i].Key < v.problems[j].Key })

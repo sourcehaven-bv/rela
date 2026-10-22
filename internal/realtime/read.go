@@ -113,7 +113,7 @@ func (s *Service) Read(ctx context.Context, addr RawAddress, req ReadRequest) (R
 	if err != nil {
 		return ReadView{}, err
 	}
-	out := ReadView{Channel: channelView(c.key, c.head), Messages: []MessageView{}}
+	out := ReadView{Channel: channelView(c.ct, c.key, c.head, c.now), Messages: []MessageView{}}
 	if req.Actions || req.Schemas {
 		post := c.postable()
 		if req.LogOnly {

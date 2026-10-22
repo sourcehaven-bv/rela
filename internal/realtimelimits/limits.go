@@ -19,6 +19,8 @@ const (
 	MaxMessageBytes = 16 << 10
 	// MaxMessageProperties caps the properties one message type declares.
 	MaxMessageProperties = 32
+	// MaxSessionStates caps the states one channel type's session declares.
+	MaxSessionStates = 64
 	// MaxChannelsPerAnchor caps the channels of one type on one entity.
 	MaxChannelsPerAnchor = 200
 	// MaxPageLimit caps the messages one page returns.

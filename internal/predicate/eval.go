@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"maps"
 	"math"
+	"slices"
 	"time"
 )
 
@@ -96,6 +97,9 @@ func (s *evalState) evalArithmetic(ctx context.Context, n *arithmeticNode) (Valu
 	rhs, err := s.eval(ctx, n.rhs)
 	if err != nil {
 		return nil, err
+	}
+	if isNilValue(lhs) || isNilValue(rhs) {
+		return nil, nilOperand("arithmetic operand is nil")
 	}
 	if a, ok := lhs.(Int); ok {
 		b, ok := rhs.(Int)
@@ -192,6 +196,9 @@ func (s *evalState) evalConcat(ctx context.Context, n *concatNode) (Value, error
 	if err != nil {
 		return nil, err
 	}
+	if isNilValue(lhs) || isNilValue(rhs) {
+		return nil, nilOperand("string concatenation operand is nil or off-type")
+	}
 	a, aok := lhs.(String)
 	b, bok := rhs.(String)
 	if !aok || !bok {
@@ -274,7 +281,13 @@ func (s *evalState) evalCall(ctx context.Context, n *callNode) (Value, error) {
 
 	out, err := fn.Call(ctx, args)
 	if err != nil {
-		return nil, &EvalError{Reason: fmt.Sprintf("host function %q: %v", n.name, err)}
+		reason := fmt.Sprintf("host function %q: %v", n.name, err)
+		if slices.ContainsFunc(args, isNilValue) {
+			// The function failed with a nil argument: read it as a nil
+			// operand, not as a failure of the function.
+			return nil, nilOperand(reason)
+		}
+		return nil, &EvalError{Reason: reason}
 	}
 	if out == nil {
 		return nil, &EvalError{Reason: fmt.Sprintf("host function %q returned nil; use NewNil() to return the predicate nil value", n.name)}
@@ -348,6 +361,9 @@ func valuesEqual(a, b Value) bool {
 }
 
 func evalOrdered(op string, a, b Value) (Value, error) {
+	if isNilValue(a) || isNilValue(b) {
+		return nil, nilOperand(fmt.Sprintf("ordered comparison %q on unsupported type nil", op))
+	}
 	// Both sides were already type-checked at compile to be the same
 	// scalar type (number or string). The defensive ", ok" guards
 	// here protect against an IR/type-checker drift bug rather than
@@ -464,6 +480,9 @@ func (s *evalState) evalLogical(ctx context.Context, n *logicalNode) (Value, err
 		return nil, err
 	}
 	lb, ok := lhs.(Bool)
+	if isNilValue(lhs) {
+		return nil, nilOperand(fmt.Sprintf("'%s' lhs: expected bool, got nil", n.op))
+	}
 	if !ok {
 		return nil, &EvalError{Reason: fmt.Sprintf("'%s' lhs: expected bool, got %s", n.op, lhs.Type().typeName())}
 	}
@@ -483,6 +502,9 @@ func (s *evalState) evalLogical(ctx context.Context, n *logicalNode) (Value, err
 		return nil, err
 	}
 	rb, ok := rhs.(Bool)
+	if isNilValue(rhs) {
+		return nil, nilOperand(fmt.Sprintf("'%s' rhs: expected bool, got nil", n.op))
+	}
 	if !ok {
 		return nil, &EvalError{Reason: fmt.Sprintf("'%s' rhs: expected bool, got %s", n.op, rhs.Type().typeName())}
 	}
@@ -499,6 +521,9 @@ func (s *evalState) evalSelect(ctx context.Context, n *logicalNode) (Value, erro
 	}
 	if n.op == "and" {
 		cond, ok := lhs.(Bool)
+		if isNilValue(lhs) {
+			return nil, nilOperand("'and' lhs: expected bool, got nil")
+		}
 		if !ok {
 			return nil, &EvalError{Reason: "'and' lhs: expected bool, got " + lhs.Type().typeName()}
 		}
@@ -519,6 +544,9 @@ func (s *evalState) evalNot(ctx context.Context, n *notNode) (Value, error) {
 		return nil, err
 	}
 	b, ok := v.(Bool)
+	if isNilValue(v) {
+		return nil, nilOperand("'not': expected bool, got nil")
+	}
 	if !ok {
 		return nil, &EvalError{Reason: "'not': expected bool, got " + v.Type().typeName()}
 	}

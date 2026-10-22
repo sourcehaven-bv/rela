@@ -28,6 +28,8 @@ version: "1.0"
 types:
   severity:
     values: [low, high]
+  risk-level:
+    values: [none, low, high]
 entities:
   ticket:
     label: Ticket
