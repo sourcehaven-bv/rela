@@ -4,6 +4,7 @@ import RlChannelMessage from './RlChannelMessage.vue'
 import { messagePendingKey } from './channelFields'
 import type { ChannelMessageView } from './types'
 import {
+  breachNotice,
   channelEnumOptions,
   channelMessages,
   channelMessageTypes,
@@ -200,5 +201,39 @@ export const MarkupInReason: Story = {
   },
   play: async ({ canvasElement }) => {
     await expect(canvasElement.querySelector('img')).toBeNull()
+  },
+}
+
+/**
+ * A session notice: one line with the move and the time, and no controls,
+ * not even reply.
+ */
+export const SessionNotice: Story = {
+  args: {
+    message: breachNotice(3, 'Detected', 'Contained'),
+    messageType: undefined,
+    canReply: true,
+  },
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement)
+    await expect(canvas.getByText('Session moved from Detected to Contained')).toBeVisible()
+    await expect(canvasElement.querySelector('time')).toHaveTextContent('09:12')
+    await expect(canvas.queryAllByRole('button')).toEqual([])
+  },
+}
+
+/** A move into the state the session was already in. */
+export const SessionNoticeReentry: Story = {
+  args: { message: breachNotice(3, 'Contained', 'Contained'), messageType: undefined },
+  play: async ({ canvasElement }) => {
+    await expect(within(canvasElement).getByText('Session entered Contained again')).toBeVisible()
+  },
+}
+
+/** A state the configuration dropped shows by its stored name. */
+export const SessionNoticeRemovedState: Story = {
+  args: { message: breachNotice(3, 'triage', 'Contained'), messageType: undefined },
+  play: async ({ canvasElement }) => {
+    await expect(within(canvasElement).getByText('Session moved from triage to Contained')).toBeVisible()
   },
 }

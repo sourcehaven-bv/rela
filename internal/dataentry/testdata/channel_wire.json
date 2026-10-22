@@ -1,4 +1,64 @@
 {
+  "guarded_head": {
+    "_actions": {
+      "delete_own": false,
+      "edit_own": false,
+      "lifecycle": [],
+      "post": [
+        "contained",
+        "text"
+      ],
+      "remove": false,
+      "transitions": [],
+      "typing": false
+    },
+    "channel": {
+      "anchor": "TKT-1",
+      "created_at": "2026-01-02T03:04:05Z",
+      "created_by": {
+        "tool": "data-entry",
+        "user": "alice"
+      },
+      "last_seq": 2,
+      "rev": 2,
+      "session": {
+        "entered_at": "2026-01-02T03:04:05Z",
+        "generation": 1,
+        "label": "Contained",
+        "state": "contained",
+        "transitions": [
+          {
+            "guarded": true,
+            "message_type": "assessed",
+            "to": "assessed"
+          }
+        ]
+      },
+      "state": "open",
+      "type": "breach-response"
+    },
+    "ephemeral": [],
+    "last": {
+      "at": "2026-01-02T03:04:05Z",
+      "author": {
+        "principal_type": "system",
+        "system": true,
+        "tool": "realtime",
+        "user": "system:realtime"
+      },
+      "props": {
+        "cause": 1,
+        "from": "detected",
+        "generation": 1,
+        "to": "contained"
+      },
+      "rev": 2,
+      "seq": 2,
+      "triggered_by": "session:breach-response",
+      "type": "session"
+    },
+    "typing_now": []
+  },
   "head": {
     "_actions": {
       "delete_own": true,
@@ -11,6 +71,7 @@
         "typing"
       ],
       "remove": false,
+      "transitions": [],
       "typing": false
     },
     "channel": {
@@ -348,6 +409,21 @@
         ],
         "name": "incident",
         "remove_reason_required": false,
+        "session": {
+          "initial": "detected",
+          "label": "incident",
+          "states": [
+            {
+              "label": "Detected",
+              "name": "detected"
+            },
+            {
+              "final": true,
+              "label": "Contained",
+              "name": "contained"
+            }
+          ]
+        },
         "typing": false
       },
       {
@@ -535,6 +611,7 @@
         "contained"
       ],
       "remove": false,
+      "transitions": [],
       "typing": false
     },
     "channel": {
@@ -633,6 +710,168 @@
     "next_after_rev": 2,
     "next_before": 1
   },
+  "session_schema": {
+    "channel_types": [
+      {
+        "anchor": "family",
+        "attach_to": [
+          "ticket"
+        ],
+        "cardinality": "one",
+        "label": "Breach response",
+        "lifecycle": [],
+        "message_types": [
+          {
+            "actions": [],
+            "label": "assessed",
+            "name": "assessed",
+            "persist": "log",
+            "properties": [
+              {
+                "label": "risk",
+                "name": "risk",
+                "required": true,
+                "type": "string"
+              }
+            ],
+            "reply": true
+          },
+          {
+            "actions": [],
+            "label": "contained",
+            "name": "contained",
+            "persist": "log",
+            "properties": [
+              {
+                "label": "note",
+                "name": "note",
+                "type": "string"
+              }
+            ],
+            "reply": true
+          },
+          {
+            "actions": [],
+            "label": "dismiss",
+            "name": "dismiss",
+            "persist": "log",
+            "properties": [
+              {
+                "label": "reason",
+                "name": "reason",
+                "required": true,
+                "type": "string"
+              }
+            ],
+            "reply": true
+          },
+          {
+            "actions": [],
+            "label": "escalated",
+            "name": "escalated",
+            "persist": "log",
+            "properties": [
+              {
+                "label": "note",
+                "name": "note",
+                "type": "string"
+              }
+            ],
+            "reply": true
+          },
+          {
+            "actions": [],
+            "label": "notified",
+            "name": "notified",
+            "persist": "log",
+            "properties": [
+              {
+                "label": "reference",
+                "name": "reference",
+                "required": true,
+                "type": "string"
+              }
+            ],
+            "reply": true
+          },
+          {
+            "actions": [],
+            "label": "text",
+            "name": "text",
+            "persist": "log",
+            "properties": [
+              {
+                "label": "body",
+                "name": "body",
+                "required": true,
+                "type": "string"
+              }
+            ],
+            "reply": true
+          }
+        ],
+        "name": "breach-response",
+        "remove_reason_required": false,
+        "session": {
+          "initial": "detected",
+          "label": "GDPR breach response",
+          "states": [
+            {
+              "label": "Detected",
+              "name": "detected"
+            },
+            {
+              "label": "Contained",
+              "name": "contained"
+            },
+            {
+              "label": "Risk assessed",
+              "name": "assessed"
+            },
+            {
+              "final": true,
+              "label": "AP notified",
+              "name": "notified"
+            },
+            {
+              "final": true,
+              "label": "Dismissed",
+              "name": "dismissed"
+            }
+          ]
+        },
+        "typing": false
+      },
+      {
+        "anchor": "family",
+        "attach_to": [
+          "ticket"
+        ],
+        "cardinality": "one",
+        "label": "plain",
+        "lifecycle": [],
+        "message_types": [
+          {
+            "actions": [],
+            "label": "text",
+            "name": "text",
+            "persist": "log",
+            "properties": [
+              {
+                "label": "body",
+                "name": "body",
+                "type": "string"
+              }
+            ],
+            "reply": true
+          }
+        ],
+        "name": "plain",
+        "remove_reason_required": false,
+        "typing": false
+      }
+    ]
+  },
   "typing_accepted": {
     "ttl_seconds": 6
   },
@@ -646,6 +885,7 @@
         "text"
       ],
       "remove": false,
+      "transitions": [],
       "typing": true
     },
     "channel": {

@@ -24,6 +24,7 @@
     "lifecycle",
     "post",
     "remove",
+    "transitions",
     "typing"
   ],
   "ChannelAuthor": [
@@ -78,8 +79,19 @@
     "stranded",
     "transitions"
   ],
+  "ChannelSessionSchema": [
+    "initial",
+    "label",
+    "states"
+  ],
+  "ChannelSessionStateSchema": [
+    "final",
+    "label",
+    "name"
+  ],
   "ChannelSessionTransition": [
     "by",
+    "guarded",
     "message_type",
     "to"
   ],
@@ -100,6 +112,7 @@
     "message_types",
     "name",
     "remove_reason_required",
+    "session",
     "typing"
   ],
   "CreateChannelRequest": [

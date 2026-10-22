@@ -10,6 +10,8 @@ import type {
   ChannelReadableRef,
 } from './types'
 import {
+  breachMessageTypes,
+  breachTransitions,
   channelEnumOptions,
   channelMessageTypes,
   channelPresentation,
@@ -605,5 +607,155 @@ export const TypingIsNotAMessageType: Story = {
     const options = within(group).getAllByRole('radio').map((r) => r.textContent?.trim())
     await expect(options).toEqual(['Message', 'Decision', 'Finding', 'Status'])
     await expect(options).not.toContain('Typing')
+  },
+}
+
+/* Session transitions ---------------------------------------------------- */
+
+const breachArgs = {
+  messageTypes: breachMessageTypes,
+  postable: ['text', 'contained', 'dismiss'],
+  presentation: undefined,
+  transitions: breachTransitions,
+}
+
+function typeOptions(canvasElement: HTMLElement): HTMLElement[] {
+  return within(within(canvasElement).getByRole('radiogroup', { name: 'Message type' })).getAllByRole('radio')
+}
+
+function submitButton(canvasElement: HTMLElement): HTMLElement {
+  return within(canvasElement).getByRole('button', { name: /Send/ })
+}
+
+/** The hint the send button refers to, or null. */
+function describedHint(canvasElement: HTMLElement): string | null {
+  const id = submitButton(canvasElement).getAttribute('aria-describedby')
+  return id ? (canvasElement.querySelector(`[id="${id}"]`)?.textContent?.trim() ?? null) : null
+}
+
+/**
+ * Types that move the session come first, marked with an icon and hidden
+ * text; a plain message is still the default.
+ */
+export const TransitionTypesFirst: Story = {
+  args: breachArgs,
+  play: async ({ canvasElement }) => {
+    const options = typeOptions(canvasElement)
+    await expect(options.map((o) => o.querySelector('span')!.textContent)).toEqual(['Contained', 'Dismiss', 'Text'])
+    for (const o of options.slice(0, 2)) {
+      await expect(o).toHaveTextContent('(moves the session)')
+      await expect(o.querySelector('svg')).not.toBeNull()
+    }
+    await expect(options[2]).not.toHaveTextContent('moves the session')
+    await expect(options[2]).toHaveAttribute('aria-checked', 'true')
+  },
+}
+
+/** Selecting a transition type says where the session goes; the button refers to it. */
+export const TransitionHint: Story = {
+  args: breachArgs,
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement)
+    await expect(describedHint(canvasElement)).toBeNull()
+    await userEvent.click(typeOptions(canvasElement)[0]!)
+    await expect(canvas.getByText('Sending this moves the session to Contained.')).toBeVisible()
+    await expect(describedHint(canvasElement)).toBe('Sending this moves the session to Contained.')
+    await userEvent.click(typeOptions(canvasElement)[2]!)
+    await expect(canvas.queryByText(/moves the session to/)).toBeNull()
+    await expect(submitButton(canvasElement)).not.toHaveAttribute('aria-describedby')
+  },
+}
+
+/** A guarded transition only moves the session if its condition holds. */
+export const GuardedTransitionHint: Story = {
+  args: {
+    ...breachArgs,
+    postable: ['text', 'assessed'],
+    transitions: [{ messageType: 'assessed', toLabel: 'Risk assessed', guarded: true }],
+  },
+  play: async ({ canvasElement }) => {
+    await userEvent.click(typeOptions(canvasElement)[0]!)
+    await expect(describedHint(canvasElement)).toBe(
+      'Sending this moves the session to Risk assessed if its condition holds.',
+    )
+  },
+}
+
+/** When every offered type moves the session, the first is selected. */
+export const OnlyTransitionTypes: Story = {
+  args: { ...breachArgs, postable: ['contained', 'dismiss'] },
+  play: async ({ canvasElement }) => {
+    await expect(typeOptions(canvasElement)[0]).toHaveAttribute('aria-checked', 'true')
+    await expect(describedHint(canvasElement)).toBe('Sending this moves the session to Contained.')
+  },
+}
+
+/** One offered type that moves the session: no picker, so the hint is the only mark. */
+export const OneTransitionType: Story = {
+  args: { ...breachArgs, postable: ['contained'] },
+  play: async ({ canvasElement }) => {
+    await expect(within(canvasElement).queryByRole('radiogroup')).toBeNull()
+    await expect(describedHint(canvasElement)).toBe('Sending this moves the session to Contained.')
+  },
+}
+
+/**
+ * Someone else moves the session and the transitions change: the options
+ * reorder, but the selection and focus stay on the same type.
+ */
+export const ReorderKeepsFocus: Story = {
+  args: breachArgs,
+  render: (args) => ({
+    components: { RlChannelComposer },
+    setup() {
+      const transitions = ref(args.transitions)
+      const change = () => {
+        transitions.value = [{ messageType: 'text', toLabel: 'Contained' }]
+      }
+      return { args, transitions, change }
+    },
+    template: `
+      <div style="max-width:640px">
+        <RlChannelComposer v-bind="args" :transitions="transitions" />
+        <span data-testid="change" @click="change" />
+      </div>`,
+  }),
+  play: async ({ canvasElement }) => {
+    const text = typeOptions(canvasElement)[2]!
+    text.focus()
+    await expect(document.activeElement).toBe(text)
+    ;(canvasElement.querySelector('[data-testid="change"]') as HTMLElement).click()
+    await nextTick()
+    await waitFor(() =>
+      expect(typeOptions(canvasElement).map((o) => o.querySelector('span')!.textContent)).toEqual([
+        'Text',
+        'Contained',
+        'Dismiss',
+      ]),
+    )
+    const after = typeOptions(canvasElement)[0]!
+    await expect(after).toHaveAttribute('aria-checked', 'true')
+    await expect(document.activeElement).toBe(after)
+  },
+}
+
+/** An edit never moves a session, so it shows no hint. */
+export const EditHasNoHint: Story = {
+  args: { ...breachArgs, editing: { seq: 2, type: 'contained', values: { note: 'Revoked.' } } },
+  play: async ({ canvasElement }) => {
+    await expect(within(canvasElement).queryByText(/moves the session/)).toBeNull()
+    await expect(within(canvasElement).getByRole('button', { name: 'Save' })).not.toHaveAttribute('aria-describedby')
+  },
+}
+
+/** A reply of a transition type moves the session, so the hint shows. */
+export const ReplyShowsHint: Story = {
+  args: {
+    ...breachArgs,
+    postable: ['contained'],
+    replyTo: { seq: 1, author: 'Marieke de Vries', excerpt: 'Revoking access now.' },
+  },
+  play: async ({ canvasElement }) => {
+    await expect(describedHint(canvasElement)).toBe('Sending this moves the session to Contained.')
   },
 }

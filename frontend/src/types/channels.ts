@@ -59,6 +59,8 @@ export interface ChannelSessionTransition {
   to: string
   /** 'trigger' when only a trigger's message fires the transition. */
   by?: 'trigger'
+  /** The transition has a guard, so a message moves the session only when it holds. */
+  guarded?: boolean
 }
 
 export interface ChannelTypeList {
@@ -85,6 +87,12 @@ export interface ChannelActions {
   lifecycle: string[]
   /** Whether the caller may POST …/_typing now. */
   typing: boolean
+  /**
+   * The message types whose post by the caller would move the session now,
+   * by name: a subset of post, empty without a session. A guarded
+   * transition is listed because its guard is judged on the message.
+   */
+  transitions: string[]
 }
 
 export interface ChannelHead {
@@ -273,6 +281,25 @@ export interface ChannelTypeSchema {
   typing: boolean
   lifecycle: ChannelLifecycleSchema[]
   message_types: ChannelMessageTypeSchema[]
+  /** The type's session; absent when it has none. */
+  session?: ChannelSessionSchema
+}
+
+/**
+ * A channel type's session: its states in declaration order. The
+ * transitions out of a channel's current state come with the channel.
+ */
+export interface ChannelSessionSchema {
+  label: string
+  initial: string
+  states: ChannelSessionStateSchema[]
+}
+
+export interface ChannelSessionStateSchema {
+  name: string
+  label: string
+  /** A state the session ends in. */
+  final?: boolean
 }
 
 export interface ChannelLifecycleSchema {
@@ -361,7 +388,12 @@ export const CHANNEL_WIRE_FIELDS: Record<string, readonly string[]> = {
     'stranded',
     'transitions',
   ]),
-  ChannelSessionTransition: wireKeys<ChannelSessionTransition>()(['message_type', 'to', 'by']),
+  ChannelSessionTransition: wireKeys<ChannelSessionTransition>()([
+    'message_type',
+    'to',
+    'by',
+    'guarded',
+  ]),
   ChannelTypeList: wireKeys<ChannelTypeList>()([
     'type',
     'label',
@@ -377,6 +409,7 @@ export const CHANNEL_WIRE_FIELDS: Record<string, readonly string[]> = {
     'remove',
     'lifecycle',
     'typing',
+    'transitions',
   ]),
   ChannelHead: wireKeys<ChannelHead>()(['channel', 'last', 'ephemeral', 'typing_now', '_actions']),
   TypingEntry: wireKeys<TypingEntry>()(['author', 'since']),
@@ -435,7 +468,10 @@ export const CHANNEL_WIRE_FIELDS: Record<string, readonly string[]> = {
     'typing',
     'lifecycle',
     'message_types',
+    'session',
   ]),
+  ChannelSessionSchema: wireKeys<ChannelSessionSchema>()(['label', 'initial', 'states']),
+  ChannelSessionStateSchema: wireKeys<ChannelSessionStateSchema>()(['name', 'label', 'final']),
   ChannelLifecycleSchema: wireKeys<ChannelLifecycleSchema>()(['name', 'label']),
   ChannelMessageTypeSchema: wireKeys<ChannelMessageTypeSchema>()([
     'name',
@@ -457,4 +493,16 @@ export const CHANNEL_WIRE_FIELDS: Record<string, readonly string[]> = {
     'to',
   ]),
   ChannelActionSchema: wireKeys<ChannelActionSchema>()(['name', 'label', 'promote_to']),
+}
+
+/** The prefix of triggered_by on a session notice; only the server writes it. */
+export const SESSION_NOTICE_MARKER = 'session:'
+
+/**
+ * Whether m is a session notice: the system message the server appends
+ * when a message moves the session. It mirrors the server's check, so a
+ * message type named `session` on a type without a session is not one.
+ */
+export function isSessionNotice(m: Pick<Message, 'type' | 'triggered_by'>): boolean {
+  return m.type === 'session' && (m.triggered_by ?? '').startsWith(SESSION_NOTICE_MARKER)
 }

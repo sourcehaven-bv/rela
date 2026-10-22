@@ -971,6 +971,8 @@ off an entity. `RlChannel` holds the header, the lifecycle controls, the log and
 the ephemeral signals, and takes the composer in its `composer` slot.
 `RlChannelMessage` draws one message, `RlChannelComposer` writes or edits one,
 and `RlEntityChannels` lists the channels on an entity by type.
+`RlChannelSession` shows a channel's session as a stepper; the app mounts it in
+`RlChannel`'s `session` slot, between the header and the log.
 
 They are presentational like everything else here, with three consequences
 worth knowing.
@@ -997,6 +999,16 @@ worth knowing.
   placeholder with a Replace button, count as filled, and stay out of the event's
   `values` and `rendered` unless replaced, so the app sends them as unrendered
   and the server keeps them.
+- **The server decides what moves a session.** The composer's `transitions`
+  lists the message types whose post would move the session, as the app read
+  them from the caller's `_actions.transitions`. The composer lists those types
+  first and names the target state. It selects a type that moves nothing by
+  default, so a plain message does not move the session by accident; only when
+  every offered type is a transition does it select the first, and the hint
+  says the session will move. The stepper has no
+  buttons, and it marks no earlier state as done: the server keeps only the
+  current state. A session notice (`notice` on a message) renders as one line
+  without controls.
 
 Field order, labels, help, placeholders, widgets and spans come from the
 `presentation` (data-entry.yaml `channels:`), resolved by
@@ -1006,8 +1018,13 @@ id, type, title or link; `ChannelRestrictedRef` has no `id` field to read.
 
 The fixed captions (Send, Cancel, Load older messages and so on) come through
 the message seam as `channelText`, one lookup by key, so a localised app
-translates them in one table; `channelTooLong` and `channelNewMessages` compose
-around a value. `RlChannel` and `RlEntityChannels` take a `headingLevel` to fit
+translates them in one table. Text built around a value is one function per
+sentence, so a locale controls its word order and punctuation: `channelTooLong`,
+`channelNewMessages`, and for sessions `channelNewNotices`, `channelSessionSummary`,
+`channelSessionStep`, `channelSessionHint` and `channelSessionOptionHint`.
+`channelNewMessages` never counts session notices; when notices arrive,
+`channelNewNotices` is announced and receives its text for the other messages.
+`RlChannel` and `RlEntityChannels` take a `headingLevel` to fit
 the host page's outline.
 
 The comment components are not reused for messages. `RlCommentThread` rows

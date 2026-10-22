@@ -9,9 +9,11 @@ import type {
   ChannelGroupView,
   ChannelLifecycleDef,
   ChannelMessageTypeDef,
+  ChannelComposerTransition,
   ChannelMessageView,
   ChannelPresentation,
   ChannelReadableRef,
+  ChannelSessionView,
 } from '../components/channel/types'
 
 /**
@@ -265,3 +267,168 @@ export function manyChannelMessages(count: number, first = 1): ChannelMessageVie
     }
   })
 }
+
+/*
+ * The breach room: a channel with a session, ported from the realtime
+ * mockup. The session runs Detected, Contained, Risk assessed, AP notified,
+ * with Dismissed as a second end state to show a branch.
+ */
+
+export const breachMessageTypes: ChannelMessageTypeDef[] = [
+  {
+    name: 'contained',
+    label: 'Contained',
+    persist: 'log',
+    reply: true,
+    properties: [{ name: 'note', label: 'Note', type: 'markdown' }],
+    actions: [],
+  },
+  {
+    name: 'assessed',
+    label: 'Risk assessed',
+    persist: 'log',
+    reply: false,
+    properties: [{ name: 'risk', label: 'Risk', type: 'string', required: true }],
+    actions: [],
+  },
+  {
+    name: 'notified',
+    label: 'AP notified',
+    persist: 'log',
+    reply: false,
+    properties: [{ name: 'reference', label: 'Reference', type: 'string', required: true }],
+    actions: [],
+  },
+  {
+    name: 'dismiss',
+    label: 'Dismiss',
+    persist: 'log',
+    reply: false,
+    properties: [{ name: 'reason', label: 'Reason', type: 'string', required: true }],
+    actions: [],
+  },
+  {
+    name: 'text',
+    label: 'Text',
+    persist: 'log',
+    reply: true,
+    properties: [{ name: 'body', label: 'Message', type: 'markdown', required: true, max: 4000 }],
+    actions: [],
+  },
+  {
+    name: 'session',
+    label: 'Session',
+    persist: 'log',
+    reply: false,
+    properties: [],
+    actions: [],
+  },
+]
+
+const breachStates = [
+  { name: 'detected', label: 'Detected' },
+  { name: 'contained', label: 'Contained' },
+  { name: 'assessed', label: 'Risk assessed' },
+  { name: 'notified', label: 'AP notified', final: true },
+  { name: 'dismissed', label: 'Dismissed', final: true },
+]
+
+/** The breach session in Detected, where it may move to Contained or Dismissed. */
+export const breachSessionDetected: ChannelSessionView = {
+  label: 'GDPR breach response',
+  states: breachStates,
+  current: 'detected',
+  currentLabel: 'Detected',
+  next: ['contained', 'dismissed'],
+}
+
+/** The breach session in Risk assessed. */
+export const breachSessionAssessed: ChannelSessionView = {
+  ...breachSessionDetected,
+  current: 'assessed',
+  currentLabel: 'Risk assessed',
+  next: ['notified'],
+}
+
+/** The breach session after the AP was notified: it has ended. */
+export const breachSessionFinal: ChannelSessionView = {
+  ...breachSessionDetected,
+  current: 'notified',
+  currentLabel: 'AP notified',
+  next: [],
+  final: true,
+}
+
+/** The breach session in a state the configuration no longer declares. */
+export const breachSessionStranded: ChannelSessionView = {
+  ...breachSessionDetected,
+  current: undefined,
+  currentLabel: 'triage',
+  next: [],
+  stranded: true,
+}
+
+/** A session whose current state the held states do not include yet. */
+export const breachSessionLoading: ChannelSessionView = {
+  ...breachSessionDetected,
+  current: undefined,
+  currentLabel: 'triaged',
+  next: [],
+  loading: true,
+}
+
+/** The transitions the lead may fire in Detected. */
+export const breachTransitions: ChannelComposerTransition[] = [
+  { messageType: 'contained', toLabel: 'Contained' },
+  { messageType: 'dismiss', toLabel: 'Dismissed' },
+]
+
+const ann = { name: 'Ann' }
+
+/** A session notice as the app maps it. */
+export function breachNotice(seq: number, fromLabel: string, toLabel: string, at = '09:12'): ChannelMessageView {
+  return {
+    seq,
+    rev: seq,
+    type: 'session',
+    author: system,
+    at,
+    datetime: `2026-10-11T${at}:00Z`,
+    props: {},
+    notice: { fromLabel, toLabel, reentry: fromLabel === toLabel },
+  }
+}
+
+export const breachMessages: ChannelMessageView[] = [
+  {
+    seq: 1,
+    rev: 1,
+    type: 'text',
+    author: marieke,
+    at: '09:02',
+    datetime: '2026-10-11T09:02:00Z',
+    props: { body: 'The export bucket is publicly readable. Revoking access now.' },
+    html: { body: storyHtml('The export bucket is publicly readable. Revoking access now.') },
+  },
+  {
+    seq: 2,
+    rev: 2,
+    type: 'contained',
+    author: ann,
+    at: '09:11',
+    datetime: '2026-10-11T09:11:00Z',
+    props: { note: 'Public access revoked.' },
+    html: { note: storyHtml('Public access revoked.') },
+  },
+  breachNotice(3, 'Detected', 'Contained', '09:11'),
+  {
+    seq: 4,
+    rev: 4,
+    type: 'assessed',
+    author: joost,
+    at: '09:30',
+    datetime: '2026-10-11T09:30:00Z',
+    props: { risk: 'high' },
+  },
+  breachNotice(5, 'Contained', 'Risk assessed', '09:30'),
+]

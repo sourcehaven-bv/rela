@@ -210,15 +210,24 @@ type fakeAccess struct {
 	q       predicatefns.QueryIdentity
 	perms   map[string]bool
 	ceiling bool
+	// deniedPerms are permissions the client ceiling's permission axis
+	// denies (deny_permissions): held, but not for this request.
+	deniedPerms map[string]bool
 	// permCalls counts HoldsPermissionFor calls.
 	permCalls atomic.Int64
+	// identityCalls counts QueryIdentity calls: one per entity-property
+	// role check.
+	identityCalls atomic.Int64
 }
 
-func (a *fakeAccess) Principal() principal.Principal            { return a.p }
-func (a *fakeAccess) QueryIdentity() predicatefns.QueryIdentity { return a.q }
+func (a *fakeAccess) Principal() principal.Principal { return a.p }
+func (a *fakeAccess) QueryIdentity() predicatefns.QueryIdentity {
+	a.identityCalls.Add(1)
+	return a.q
+}
 func (a *fakeAccess) HoldsPermissionFor(_ context.Context, _, perm string) bool {
 	a.permCalls.Add(1)
-	return a.perms[perm]
+	return a.perms[perm] && !a.deniedPerms[perm]
 }
 func (a *fakeAccess) CeilingAdmitsUpdate(string) bool { return a.ceiling }
 

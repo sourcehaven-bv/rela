@@ -222,6 +222,69 @@ export interface ChannelMessageView {
    * actions. A control for anything not listed is not shown.
    */
   actions?: string[]
+  /**
+   * Set on a session notice: the system message the server appends when a
+   * message moves the channel's session. The row then shows one line and no
+   * controls instead of a card.
+   */
+  notice?: ChannelNoticeView
+}
+
+/** What a session notice says, with the state labels the app looked up. */
+export interface ChannelNoticeView {
+  fromLabel: string
+  toLabel: string
+  /** The session entered the state it was already in. */
+  reentry: boolean
+}
+
+/** One state of a channel's session. */
+export interface ChannelSessionStateView {
+  name: string
+  label: string
+  /** A state the session ends in. */
+  final?: boolean
+}
+
+/**
+ * A channel's session, for the stepper: the states in declaration order and
+ * where the session is now. The app builds it from the channel type's
+ * descriptor and the channel's head.
+ */
+export interface ChannelSessionView {
+  /** The session's label. */
+  label: string
+  /** Declaration order; the stepper adds no other order. */
+  states: ChannelSessionStateView[]
+  /** The current state's name; absent when stranded or loading. */
+  current?: string
+  /** The current state's label, or the stored name when stranded or loading. */
+  currentLabel: string
+  /** The states a transition out of the current state leads to. */
+  next: string[]
+  /** The current state is one the session ends in. */
+  final?: boolean
+  /** The stored state is one the configuration no longer declares. */
+  stranded?: boolean
+  /**
+   * The states shown do not include the current one yet: the app holds an
+   * older description of the session and is loading the new one.
+   */
+  loading?: boolean
+  /** The channel is not open, so the session does not move. */
+  paused?: 'closed' | 'archived'
+}
+
+/**
+ * A message type whose post would move the session, as the composer marks
+ * it. The app builds the list from the caller's affordances and the head.
+ */
+export interface ChannelComposerTransition {
+  messageType: string
+  /** The label of the state the session moves to. */
+  toLabel: string
+  /** The transition has a condition, so the move depends on the message. */
+  guarded?: boolean
 }
 
 /** An ephemeral signal, shown as one compact line while it lasts. */

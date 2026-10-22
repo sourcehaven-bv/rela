@@ -78,14 +78,99 @@ func TestChannelSchema_Typing(t *testing.T) {
 }
 
 // TestChannelSchema_SameForEveryPrincipal pins that the descriptor does not
-// depend on who asks: the configuration is not a secret.
+// depend on who asks: the configuration is not a secret. The breach
+// configuration adds a session with roles on its transitions.
 func TestChannelSchema_SameForEveryPrincipal(t *testing.T) {
+	for _, yaml := range []string{channelTestRealtime, breachRealtime} {
+		env := newChannelEnv(t)
+		env.ch.cfg.Store(env.ch.parse(t, yaml))
+		_, want := env.get(t, "alice", channelSchemaPath)
+		require.Contains(t, string(want), `"session":`)
+		for _, user := range []string{"bob", "carol", "dave", "nobody"} {
+			code, b := env.get(t, user, channelSchemaPath)
+			require.Equal(t, http.StatusOK, code, user)
+			require.JSONEq(t, string(want), string(b), user)
+		}
+	}
+}
+
+// breachRealtime is the breach-response example of docs/realtime.md on
+// tickets, and plain, a type without a session.
+const breachRealtime = `
+version: 1
+channel_types:
+  breach-response:
+    label: Breach response
+    attach_to: [ticket]
+    read: { from: attached }
+    roles:
+      lead:   { from: entity.status }
+      member: { from: attached }
+      dpo:    { permission: privacy.officer }
+    message_types:
+      text:      { properties: { body: { type: string, required: true } }, post: [member] }
+      contained: { properties: { note: { type: string } }, post: [lead, member] }
+      assessed:  { properties: { risk: { type: string, required: true } }, post: [lead, dpo] }
+      notified:  { properties: { reference: { type: string, required: true } }, post: [dpo] }
+      dismiss:   { properties: { reason: { type: string, required: true } }, post: [lead] }
+      escalated: { properties: { note: { type: string } }, post: [lead] }
+    session:
+      label: GDPR breach response
+      initial: detected
+      states:
+        detected:
+          label: Detected
+          on:
+            contained: { to: contained, roles: [lead] }
+            dismiss:   { to: dismissed }
+            escalated: { to: contained, by: trigger }
+        contained:
+          label: Contained
+          on:
+            assessed: { to: assessed, when: "message.risk ~= 'none'" }
+        assessed:
+          label: Risk assessed
+          on:
+            notified: { to: notified }
+        notified:  { label: AP notified, final: true }
+        dismissed: { label: Dismissed, final: true }
+  plain:
+    attach_to: [ticket]
+    read: { from: attached }
+    roles:
+      member: { from: attached }
+    message_types:
+      text: { properties: { body: { type: string } }, post: [member] }
+`
+
+// TestChannelSchema_Session pins AC 2: a session type carries its label,
+// initial state and ordered states, and no role, permission, guard or
+// transition; a type without a session has no session key.
+func TestChannelSchema_Session(t *testing.T) {
 	env := newChannelEnv(t)
-	_, want := env.get(t, "alice", channelSchemaPath)
-	for _, user := range []string{"carol", "dave", "nobody"} {
-		code, b := env.get(t, user, channelSchemaPath)
-		require.Equal(t, http.StatusOK, code, user)
-		require.JSONEq(t, string(want), string(b), user)
+	env.ch.cfg.Store(env.ch.parse(t, breachRealtime))
+	code, b := env.get(t, "alice", channelSchemaPath)
+	require.Equal(t, http.StatusOK, code, string(b))
+	var raw struct {
+		ChannelTypes []map[string]json.RawMessage `json:"channel_types"`
+	}
+	require.NoError(t, json.Unmarshal(b, &raw))
+	require.Len(t, raw.ChannelTypes, 2)
+	require.JSONEq(t, `{
+		"label": "GDPR breach response",
+		"initial": "detected",
+		"states": [
+			{ "name": "detected", "label": "Detected" },
+			{ "name": "contained", "label": "Contained" },
+			{ "name": "assessed", "label": "Risk assessed" },
+			{ "name": "notified", "label": "AP notified", "final": true },
+			{ "name": "dismissed", "label": "Dismissed", "final": true }
+		]
+	}`, string(raw.ChannelTypes[0]["session"]))
+	_, has := raw.ChannelTypes[1]["session"]
+	require.False(t, has, "a type without a session has no session key")
+	for _, leak := range []string{"lead", "dpo", "privacy.officer", "risk", "transitions", "escalated\":{"} {
+		require.NotContains(t, string(raw.ChannelTypes[0]["session"]), leak)
 	}
 }
 

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"log/slog"
 	"maps"
+	"slices"
 	"sort"
 	"strings"
 	"testing"
@@ -16,6 +17,7 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/principal"
 	"github.com/Sourcehaven-BV/rela/internal/realtime"
+	"github.com/Sourcehaven-BV/rela/internal/realtimecfg"
 )
 
 // TestChannelTools_RegisteredOnlyWhenEnabled pins AC 1: the channel tools
@@ -613,5 +615,53 @@ func TestReadChannel_Typing(t *testing.T) {
 		map[string]any{"id": "REQ-001", "channel_type": "room"}, &room)
 	if room.Actions == nil || room.Actions.Typing {
 		t.Errorf("room actions = %+v, want no typing", room.Actions)
+	}
+}
+
+// breachYAML is the detected state of the breach-response example on
+// requirements. bob holds chat.read, so he is the lead.
+const breachYAML = `
+version: 1
+channel_types:
+  breach:
+    attach_to: [requirement]
+    read: { from: attached }
+    roles:
+      lead:   { permission: chat.read }
+      member: { from: attached }
+    message_types:
+      text:      { properties: { body: { type: string } }, post: [member] }
+      contained: { properties: { note: { type: string } }, post: [lead, member] }
+      dismiss:   { properties: { reason: { type: string } }, post: [lead] }
+      escalated: { properties: { note: { type: string } }, post: [lead] }
+    session:
+      initial: detected
+      states:
+        detected:
+          on:
+            contained: { to: contained, roles: [lead] }
+            dismiss:   { to: dismissed }
+            escalated: { to: contained, by: trigger }
+        contained: { final: true }
+        dismissed: { final: true }
+`
+
+// TestReadChannel_IncludesTransitions pins AC 7: read_channel's actions
+// list the transitions the caller would fire.
+func TestReadChannel_IncludesTransitions(t *testing.T) {
+	t.Parallel()
+	f := newChannelFixture(t)
+	compiled, err := realtimecfg.Parse([]byte(breachYAML), f.meta, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.cfg.Store(compiled)
+	args := map[string]any{"id": "REQ-001", "channel_type": "breach"}
+	for user, want := range map[string][]string{"bob": {"contained", "dismiss"}, "alice": {}} {
+		var read struct{ realtime.ReadView }
+		mustCall(t, f.client(t, user), toolReadChannel, args, &read)
+		if read.Actions == nil || !slices.Equal(read.Actions.Transitions, want) {
+			t.Errorf("%s: actions = %+v, want transitions %v", user, read.Actions, want)
+		}
 	}
 }

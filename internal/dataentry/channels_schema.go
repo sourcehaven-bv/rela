@@ -47,6 +47,20 @@ func wireChannelTypeSchema(ct realtime.ChannelTypeView) v1.ChannelTypeSchema {
 	for _, mt := range ct.MessageTypes {
 		out.MessageTypes = append(out.MessageTypes, wireMessageTypeSchema(mt))
 	}
+	out.Session = wireSessionSchema(ct.Session)
+	return out
+}
+
+func wireSessionSchema(s *realtime.SessionDescription) *v1.ChannelSessionSchema {
+	if s == nil {
+		return nil
+	}
+	out := &v1.ChannelSessionSchema{
+		Label: s.Label, Initial: s.Initial, States: make([]v1.ChannelSessionStateSchema, 0, len(s.States)),
+	}
+	for _, st := range s.States {
+		out.States = append(out.States, v1.ChannelSessionStateSchema{Name: st.Name, Label: st.Label, Final: st.Final})
+	}
 	return out
 }
 

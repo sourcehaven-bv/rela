@@ -295,11 +295,17 @@ export function useChannel(
       brought ||= page.messages.length > 0
       if (!page.has_more) {
         const stateMoved = head.value?.channel.state !== page.channel.state
+        // A session move changes which posts would move it next, which only
+        // the head's _actions.transitions says.
+        const held = head.value?.channel.session
+        const sessionMoved =
+          held?.generation !== page.channel.session?.generation ||
+          held?.state !== page.channel.session?.state
         const ephemeral = toValue(options.ephemeral) ?? false
         setChannel(page.channel)
         // A frame that brought no message moved the head itself: a
         // signal, a lifecycle change or the caller's affordances.
-        if (!brought || stateMoved || ephemeral || unstored) {
+        if (!brought || stateMoved || sessionMoved || ephemeral || unstored) {
           const before = head.value?._actions
           await refetchHead(s)
           if (!current(s)) return

@@ -10,6 +10,8 @@
  * useExpiryClock and the picker plumbing useRefPicker. useTyping sends the
  * composer's typing events; the head's typing_now is shown as it is, with
  * no clock, since the server expires entries and frames the head then.
+ * A channel type with a session gets the stepper in RlChannel's session
+ * slot, and the composer marks the types whose post would move it.
  *
  * It emits `gone` when the channel can no longer be shown: a refused read
  * (the reader lost access, or the channel was deleted) or a refusal that
@@ -28,9 +30,11 @@ import { browserTimeZone } from '@/utils/format'
 import { toEditProps, toProps } from '@/utils/channelValues'
 import { LIFECYCLE_DELETE, type ChannelTypeSchema, type Message } from '@/types/channels'
 import type {
+  ChannelComposerTransition,
   ChannelEditEvent,
   ChannelEditing,
   ChannelPostEvent,
+  ChannelSessionView,
 } from 'rela-components/components/channel/types'
 import {
   lifecyclePendingKey,
@@ -40,6 +44,7 @@ import RlButton from 'rela-components/components/common/RlButton.vue'
 import RlBanner from 'rela-components/components/feedback/RlBanner.vue'
 import RlChannel from 'rela-components/components/channel/RlChannel.vue'
 import RlChannelComposer from 'rela-components/components/channel/RlChannelComposer.vue'
+import RlChannelSession from 'rela-components/components/channel/RlChannelSession.vue'
 import EntityPickerModal from '@/components/forms/EntityPickerModal.vue'
 import ChannelTextDialog from './ChannelTextDialog.vue'
 import { classifyChannelError } from './channelErrors'
@@ -48,6 +53,7 @@ import { useExpiryClock } from './useExpiryClock'
 import { usePendingKeys } from './usePendingKeys'
 import { useRefPicker } from './useRefPicker'
 import {
+  composerTransitions,
   editingFor,
   enumOptionsFor,
   ephemeralViews,
@@ -55,6 +61,7 @@ import {
   messageViews,
   presentationView,
   replyQuote,
+  sessionView,
   typingViews,
   type MarkdownMemo,
 } from './channelView'
@@ -114,7 +121,7 @@ const presentation = computed(() =>
 const enumOptions = computed(() =>
   enumOptionsFor(props.channelType, schema.customTypes, schema.styles)
 )
-const ctx = computed(() => ({ tz, world: props.world }))
+const ctx = computed(() => ({ tz, world: props.world, session: props.channelType.session }))
 const views = computed(() => messageViews(ch.messages.value, messageType, ctx.value, memo))
 
 // Ephemeral signals show until their expires_at; the head brings new ones.
@@ -132,6 +139,42 @@ const ephemeral = computed(() =>
 
 const typing = useTyping(target, () => ch.head.value?._actions.typing ?? false)
 const typingNow = computed(() => typingViews(ch.head.value?.typing_now))
+// The head is replaced on every frame. The stepper and the composer's
+// transitions are rebuilt only when what they read changes: the descriptor,
+// the session's generation and state, the channel state and the actions.
+// Returning the previous entry keeps the same value, so nothing downstream
+// re-renders or re-runs its watchers.
+type Keyed<T> = { ct: ChannelTypeSchema; key: string; value: T }
+const session = computed<Keyed<ChannelSessionView | undefined>>((prev) => {
+  const h = ch.head.value
+  const cs = h?.channel.session
+  const answered = cs ? channelSchema.stateAnswered(props.channelType.name, cs.state) : false
+  const key = JSON.stringify([
+    !!h,
+    cs?.generation,
+    cs?.state,
+    cs?.stranded,
+    h?.channel.state,
+    answered,
+  ])
+  if (prev && prev.ct === props.channelType && prev.key === key) return prev
+  const value = h ? sessionView(props.channelType, h.channel, () => answered) : undefined
+  return { ct: props.channelType, key, value }
+})
+const transitions = computed<Keyed<ChannelComposerTransition[]>>((prev) => {
+  const h = ch.head.value
+  const cs = h?.channel.session
+  const key = JSON.stringify([
+    cs?.generation,
+    cs?.state,
+    cs?.stranded,
+    h?._actions.post,
+    h?._actions.transitions,
+  ])
+  if (prev && prev.ct === props.channelType && prev.key === key) return prev
+  const value = h ? composerTransitions(props.channelType, h) : []
+  return { ct: props.channelType, key, value }
+})
 
 const title = computed(() => ch.head.value?.channel.title || props.name || props.channelType.label)
 
@@ -429,11 +472,15 @@ const pickerTypes = picker.types
       @load-newest="onLoadNewest"
       @jump="onJump"
     >
+      <template v-if="session.value" #session>
+        <RlChannelSession :session="session.value" />
+      </template>
       <template #composer>
         <RlChannelComposer
           ref="composer"
           :message-types="channelType.message_types"
           :postable="ch.head.value._actions.post"
+          :transitions="transitions.value"
           :presentation="presentation"
           :enum-options="enumOptions"
           :pick-ref="picker.pickRef"

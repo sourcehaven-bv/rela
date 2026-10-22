@@ -145,6 +145,15 @@ func (c channelCost) equal(o channelCost) bool {
 // tickets, and cannot read features.
 func newChannelBudgetWith(t *testing.T, n int, yaml string) *channelBudget {
 	t.Helper()
+	return newChannelBudgetACL(t, n, yaml, false)
+}
+
+// newChannelBudgetACL is newChannelBudgetWith. With countACL, the ACL reads
+// its role relations through the counting store and the policy declares
+// one, so every permission check the channel service makes shows as a
+// GetRelation in the entity-store counts.
+func newChannelBudgetACL(t *testing.T, n int, yaml string, countACL bool) *channelBudget {
+	t.Helper()
 	app := newTestAppV1(t)
 	seedEntity(app, ticket1("one"))
 	for i := range n {
@@ -153,17 +162,23 @@ func newChannelBudgetWith(t *testing.T, n int, yaml string) *channelBudget {
 		})
 		seedEntity(app, feature(fmt.Sprintf("FEAT-%d", 100+i), fmt.Sprintf("f%d", i)))
 	}
-	d := mustNewACL(t, &acl.Policy{
+	counting := storetest.NewCounting(app.store)
+	policy := &acl.Policy{
 		Roles:       map[string]acl.RoleDef{"editor": {Read: []string{"ticket"}, Update: []string{"ticket"}}},
 		Assignments: map[string]string{"alice": "editor"},
-	}, app.store)
+	}
+	aclStore := app.store
+	if countACL {
+		policy.RoleRelations = map[string]acl.RoleRelationDef{"officer-of": {Confers: "editor"}}
+		aclStore = counting
+	}
+	d := mustNewACL(t, policy, aclStore)
 	setTestACL(t, app, d)
 	cs, err := filechannels.New(storage.NewMemFS(), "/channels", filelock.ProcessPrivate{})
 	if err != nil {
 		t.Fatal(err)
 	}
 	chans := newCountingChannels(cs)
-	counting := storetest.NewCounting(app.store)
 	ch := newChannelServiceOver(t, app.Meta(), counting, d, yaml, chans)
 	if err := SetChannels(app, ch.svc); err != nil {
 		t.Fatal(err)
@@ -276,21 +291,95 @@ func TestChannelsBudget_ActionsReadNothing(t *testing.T) {
 	}
 }
 
-// sessionThreads is channelTestRealtime with a session on threads.
-var sessionThreads = strings.Replace(channelTestRealtime, `    message_types:
+// sessionThreadsWith is channelTestRealtime with a session on threads
+// whose current state, s0, has n transitions, each by its own message type
+// m<i>, that share one permission role (officer) and one entity-property
+// role (owner). States s1..sn each have a transition by text with roles of
+// their own (officer-i, owner-i), the last to the final state done. Every
+// post role list starts with member, which alice holds, so a post check
+// asks no other role.
+func sessionThreadsWith(n int) string {
+	var roles, types, fan, rest strings.Builder
+	textPost := []string{"member"}
+	for i := range n {
+		fmt.Fprintf(&types, "      m%d:\n        properties: { body: { type: string } }\n"+
+			"        post: [member, officer, owner]\n", i)
+		fmt.Fprintf(&fan, "            m%d: { to: s1, roles: [officer, owner] }\n", i)
+	}
+	for i := 1; i <= n; i++ {
+		fmt.Fprintf(&roles, "      officer-%d: { permission: chat.p%d }\n      owner-%d: { from: entity.status }\n", i, i, i)
+		textPost = append(textPost, fmt.Sprintf("officer-%d", i), fmt.Sprintf("owner-%d", i))
+		next := fmt.Sprintf("s%d", i+1)
+		if i == n {
+			next = "done"
+		}
+		fmt.Fprintf(&rest, "        s%d: { on: { text: { to: %s, roles: [officer-%d, owner-%d] } } }\n", i, next, i, i)
+	}
+	return strings.Replace(channelTestRealtime, `    roles:
+      member: { from: attached }
+    lifecycle:
+      delete: { roles: [member] }
+    message_types:
       text:
         properties: { body: { type: string } }
         post: [member]
-  topics:`, `    message_types:
+  topics:`, `    roles:
+      member:  { from: attached }
+      officer: { permission: chat.p0 }
+      owner:   { from: entity.status }
+`+roles.String()+`    lifecycle:
+      delete: { roles: [member] }
+    message_types:
       text:
         properties: { body: { type: string } }
-        post: [member]
-    session:
-      initial: asked
+        post: [`+strings.Join(textPost, ", ")+`]
+`+types.String()+`    session:
+      initial: s0
       states:
-        asked:    { on: { text: { to: answered } } }
-        answered: { final: true }
+        s0:
+          on:
+`+fan.String()+rest.String()+`        done: { final: true }
   topics:`, 1)
+}
+
+// sessionThreads is channelTestRealtime with a small session on threads.
+var sessionThreads = sessionThreadsWith(1)
+
+// TestChannelsBudget_HeadSession pins that a head's cost does not grow
+// with the transitions out of the current state or with the session: the
+// same entity-store and channel-store calls for one transition out of s0
+// and a session of 3 states as for 10 transitions out of s0 and 12 states.
+// Every permission check reads a role relation through the counted store,
+// so asking a role per transition, or a role of another state, shows.
+// That the entity-property role is asked once is pinned in
+// internal/realtime (TestAffordances_RolesAskedOnce).
+func TestChannelsBudget_HeadSession(t *testing.T) {
+	headCost := func(n int) channelCost {
+		b := newChannelBudgetACL(t, 0, sessionThreadsWith(n), true)
+		ch, err := b.ch.store.CreateMany(context.Background(), channels.Anchor{ID: "TKT-1"}, channels.NewChannel{
+			Type: "threads", Title: "thread", By: channels.Author{User: "alice"}, At: time.Now(),
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		got, body := b.get(t, "/api/v1/tickets/TKT-1/_channels/threads/"+ch.Key.Name)
+		head := decodeAs[v1.ChannelHead](t, body)
+		if head.Channel.Session == nil || len(head.Channel.Session.Transitions) != n {
+			t.Fatalf("head session = %+v, want %d transitions", head.Channel.Session, n)
+		}
+		if head.Actions.Transitions == nil {
+			t.Fatal("_actions.transitions is null")
+		}
+		return got
+	}
+	small, large := headCost(1), headCost(10)
+	if len(small.channel) == 0 || small.entity["GetRelation"] == 0 {
+		t.Fatalf("a counter is not on the read path: %s", small)
+	}
+	if !small.equal(large) {
+		t.Errorf("a head grows with the session:\n1 transition: %s\n10 transitions: %s", small, large)
+	}
+}
 
 func TestChannelsBudget_List10vs50(t *testing.T) {
 	if sessionThreads == channelTestRealtime {

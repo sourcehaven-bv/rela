@@ -30,6 +30,16 @@ export const ROOM = {
   messageLabel: "Message",
 } as const;
 
+/** The session on ROOM when RoomOptions.session is set. */
+export const SESSION = {
+  label: "Incident response",
+  from: "Detected",
+  to: "Contained",
+  /** The message type that moves the session; only the lead may post it. */
+  messageLabel: "Contained",
+  noteLabel: "Note",
+} as const;
+
 /** The face-anchored channel type on the faced project's `policy`. */
 export const POLICY_ROOM = {
   type: "policy-room",
@@ -42,11 +52,36 @@ export interface RoomOptions {
    * can read the entity receives it.
    */
   leadReadsOnly?: boolean;
+  /**
+   * Gives the room a session, Detected to Contained. Members and the lead
+   * may post a Contained message; only the lead's moves the session.
+   */
+  session?: boolean;
 }
 
 /** realtime.yaml for the feature project. */
 export function roomRealtimeYaml(opts: RoomOptions = {}): string {
   const read = opts.leadReadsOnly ? "{ permission: channel-lead }" : "{ from: attached }";
+  const contained = opts.session
+    ? `
+      contained:
+        label: ${SESSION.messageLabel}
+        properties:
+          note: { type: string, required: true, label: ${SESSION.noteLabel} }
+        post: [member, lead]`
+    : "";
+  const session = opts.session
+    ? `    session:
+      label: ${SESSION.label}
+      initial: detected
+      states:
+        detected:
+          label: ${SESSION.from}
+          on:
+            contained: { to: contained, roles: [lead] }
+        contained: { label: ${SESSION.to}, final: true }
+`
+    : "";
   return `version: 1
 channel_types:
   ${ROOM.type}:
@@ -63,14 +98,14 @@ channel_types:
         label: Text
         properties:
           body: { type: markdown, required: true, max: 2000, label: ${ROOM.messageLabel} }
-        post: [member, lead]
+        post: [member, lead]${contained}
     lifecycle:
       close:  { roles: [lead], label: Close }
       reopen: { roles: [lead], label: Reopen }
     message_ops:
       edit_own:   { roles: [member, lead] }
       delete_own: { roles: [member, lead] }
-`;
+${session}`;
 }
 
 /** acl.yaml for the feature project: everyone reads, two may post. */

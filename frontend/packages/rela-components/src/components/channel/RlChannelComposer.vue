@@ -35,10 +35,21 @@
  * sends the picked id as its new value. It never emits during an edit or
  * for an `ephemeral` type, which announces no message to come. The app
  * decides whether and how often to tell the server.
+ *
+ * `transitions` names the message types whose post would move the channel's
+ * session. They come first, in the order given, marked with an icon and
+ * hidden text; the other types follow in their usual order. The type
+ * selected by default is still the first that moves nothing, so a plain
+ * message never moves the session by accident. While a transition type is
+ * selected the foot says where the session goes, and the send button
+ * refers to that text. An edit never moves a session, so it shows no hint.
+ * When the list changes under the user (someone else moved the session),
+ * the selection, and focus in the type picker, stay on the same type.
  */
-import { computed, nextTick, reactive, ref, useTemplateRef, watch } from 'vue'
+import { computed, nextTick, reactive, ref, useId, useTemplateRef, watch } from 'vue'
 import RlButton from '../common/RlButton.vue'
 import RlButtonGroup from '../common/RlButtonGroup.vue'
+import RlIcon from '../common/RlIcon.vue'
 import RlIconButton from '../common/RlIconButton.vue'
 import RlBanner from '../feedback/RlBanner.vue'
 import RlKbd from '../data/RlKbd.vue'
@@ -46,6 +57,7 @@ import RlSegmentedControl from '../data/RlSegmentedControl.vue'
 import RlChannelField from './RlChannelField.vue'
 import { codePointLength, resolveChannelFields, type ResolvedChannelField } from './channelFields'
 import type {
+  ChannelComposerTransition,
   ChannelEditEvent,
   ChannelEditing,
   ChannelEnumOption,
@@ -84,6 +96,8 @@ const props = withDefaults(
     /** Named under a datetime field, so the zone is never implied. */
     timeZoneLabel?: string
     submitShortcut?: string
+    /** The message types whose post would move the session, in order. */
+    transitions?: ChannelComposerTransition[]
   }>(),
   {
     presentation: undefined,
@@ -96,6 +110,7 @@ const props = withDefaults(
     error: undefined,
     timeZoneLabel: undefined,
     submitShortcut: 'Ctrl+Enter',
+    transitions: () => [],
   },
 )
 
@@ -110,6 +125,9 @@ const emit = defineEmits<{
 const messages = useMessages()
 const t = (key: ChannelTextKey) => messages.channelText({ key })
 const form = useTemplateRef<HTMLFormElement>('form')
+const hintId = useId()
+
+const transitionByType = computed(() => new Map(props.transitions.map((tr) => [tr.messageType, tr])))
 
 const offered = computed(() => {
   if (props.editing) {
@@ -117,8 +135,24 @@ const offered = computed(() => {
     return type ? [type] : []
   }
   const allowed = new Set(props.postable)
-  return props.messageTypes.filter((m) => allowed.has(m.name) && (!props.replyTo || m.reply))
+  const list = props.messageTypes.filter((m) => allowed.has(m.name) && (!props.replyTo || m.reply))
+  const order = props.transitions.map((tr) => tr.messageType)
+  const first = order.flatMap((name) => list.filter((m) => m.name === name))
+  return [...first, ...list.filter((m) => !transitionByType.value.has(m.name))]
 })
+
+/** The type selected by default: the first that moves nothing, else the first. */
+function defaultType(list: ChannelMessageTypeDef[]): string {
+  return (list.find((m) => !transitionByType.value.has(m.name)) ?? list[0])?.name ?? ''
+}
+
+const typeOptions = computed(() =>
+  offered.value.map((m) =>
+    transitionByType.value.has(m.name)
+      ? { value: m.name, label: m.label, icon: 'workflow' as const, srHint: messages.channelSessionOptionHint() }
+      : { value: m.name, label: m.label },
+  ),
+)
 
 /** An edit of a message whose type the descriptor no longer has. */
 const typeGone = computed(() => !!props.editing && offered.value.length === 0)
@@ -133,10 +167,44 @@ watch(
   (list) => {
     // An edit sets and restores the selection itself; see the editing watcher.
     if (props.editing) return
-    if (!list.some((m) => m.name === selected.value)) selected.value = list[0]?.name ?? ''
+    if (!list.some((m) => m.name === selected.value)) selected.value = defaultType(list)
   },
   { immediate: true },
 )
+
+/*
+ * A reorder may move the focused option in the DOM, which can drop focus.
+ * Note whether focus was in the type picker before the update, and put it
+ * back on the selected option after.
+ */
+let pickerFocused = false
+watch(
+  offered,
+  () => {
+    const picker = form.value?.querySelector('.rl-channel-composer__types')
+    pickerFocused = !!picker && picker.contains(document.activeElement)
+  },
+  { flush: 'pre' },
+)
+watch(
+  offered,
+  () => {
+    if (!pickerFocused) return
+    pickerFocused = false
+    const option = form.value?.querySelector<HTMLElement>(
+      `.rl-channel-composer__types [data-value="${CSS.escape(selected.value)}"]`,
+    )
+    if (option && document.activeElement !== option) option.focus()
+  },
+  { flush: 'post' },
+)
+
+/** Where the session goes if this message is sent; empty when it moves nothing. */
+const sessionHint = computed(() => {
+  if (props.editing || !current.value) return ''
+  const tr = transitionByType.value.get(current.value.name)
+  return tr ? messages.channelSessionHint({ to: tr.toLabel, guarded: tr.guarded }) : ''
+})
 
 const fields = computed<ResolvedChannelField[]>(() =>
   current.value
@@ -323,7 +391,7 @@ defineExpose({
       class="rl-channel-composer__types"
       :label="t('messageType')"
       size="sm"
-      :options="offered.map((m) => ({ value: m.name, label: m.label }))"
+      :options="typeOptions"
     />
 
     <div v-if="replyTo && !editing" class="rl-channel-composer__reply">
@@ -359,6 +427,10 @@ defineExpose({
     </div>
 
     <div class="rl-channel-composer__foot">
+      <p v-if="sessionHint" :id="hintId" class="rl-channel-composer__session">
+        <RlIcon name="workflow" :size="14" />
+        {{ sessionHint }}
+      </p>
       <span class="rl-channel-composer__hint">
         <RlKbd :keys="submitShortcut" size="sm" /> {{ t(editing ? 'toSave' : 'toSend') }}
       </span>
@@ -370,6 +442,7 @@ defineExpose({
           variant="primary"
           size="sm"
           icon="send"
+          :aria-describedby="sessionHint ? hintId : undefined"
           :loading="submitting"
           :pending-label="t(editing ? 'saving' : 'sending')"
           @click="submit"
@@ -441,8 +514,19 @@ defineExpose({
 
 .rl-channel-composer__foot {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: var(--rl-space-2);
+}
+
+.rl-channel-composer__session {
+  display: flex;
+  flex-basis: 100%;
+  align-items: center;
+  gap: var(--rl-space-1);
+  margin: 0;
+  color: var(--rl-color-text-muted);
+  font-size: var(--rl-font-size-xs);
 }
 
 .rl-channel-composer__hint {

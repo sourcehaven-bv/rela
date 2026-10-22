@@ -127,6 +127,7 @@ export { default as RlBlockCommentOverlay } from './components/comment/RlBlockCo
 export { default as RlChannel } from './components/channel/RlChannel.vue'
 export { default as RlChannelMessage } from './components/channel/RlChannelMessage.vue'
 export { default as RlChannelComposer } from './components/channel/RlChannelComposer.vue'
+export { default as RlChannelSession } from './components/channel/RlChannelSession.vue'
 export { default as RlChannelAuthor } from './components/channel/RlChannelAuthor.vue'
 export { default as RlEntityChannels } from './components/channel/RlEntityChannels.vue'
 export { default as RlRefChip } from './components/channel/RlRefChip.vue'

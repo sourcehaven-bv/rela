@@ -126,6 +126,15 @@ export type ChannelTextKey =
   | 'agent'
   | 'restrictedRef'
   | 'restrictedRefTitle'
+  // Session stepper and composer marks
+  | 'session'
+  | 'sessionEnded'
+  | 'sessionStranded'
+  | 'sessionLoading'
+  | 'sessionPausedClosed'
+  | 'sessionPausedArchived'
+  | 'sessionShowAll'
+  | 'sessionHideAll'
 
 const CHANNEL_TEXT: Record<ChannelTextKey, string> = {
   newMessage: 'New message',
@@ -176,6 +185,14 @@ const CHANNEL_TEXT: Record<ChannelTextKey, string> = {
   agent: 'agent',
   restrictedRef: 'Restricted reference',
   restrictedRefTitle: 'You do not have access to this entity',
+  session: 'Session',
+  sessionEnded: 'Ended',
+  sessionStranded: 'Stranded',
+  sessionLoading: 'Loading the states of this session…',
+  sessionPausedClosed: 'Paused while the channel is closed',
+  sessionPausedArchived: 'Paused while the channel is archived',
+  sessionShowAll: 'Show all states',
+  sessionHideAll: 'Hide the states',
 }
 
 /**
@@ -281,9 +298,43 @@ export interface Messages {
   channelTooLong: (args: { max: number }) => string
   /**
    * Announced when messages arrive at the end of the log. `type` and `author`
-   * are set when exactly one arrived.
+   * are set when exactly one arrived. Session notices are not counted; see
+   * `channelNewNotices`.
    */
   channelNewMessages: (args: { count: number; type?: string; author?: string }) => string
+  /**
+   * Announced when session notices arrive at the end of the log. `notices`
+   * holds the text of each, from `channelSessionMoved` or
+   * `channelSessionReentered`. `messages` is the `channelNewMessages` text
+   * for the other messages that arrived with them, if any.
+   */
+  channelNewNotices: (args: { notices: string[]; messages?: string }) => string
+  /** A session notice: `Session moved from Detected to Contained`. */
+  channelSessionMoved: (args: { from: string; to: string }) => string
+  /** A session notice for a move into the same state: `Session entered Contained again`. */
+  channelSessionReentered: (args: { state: string }) => string
+  /** Why a stranded session does not move, naming its stored state. */
+  channelSessionStrandedText: (args: { state: string }) => string
+  /** The composer's note while a message type that moves the session is selected. */
+  channelSessionHint: (args: { to: string; guarded?: boolean }) => string
+  /**
+   * Screen-reader text read after the label of a composer message type
+   * that moves the session: ` (moves the session)`.
+   */
+  channelSessionOptionHint: () => string
+  /**
+   * The one-line summary of a narrow session stepper. `label` is the
+   * current state's label, or its stored name when stranded or loading.
+   */
+  channelSessionSummary: (args: {
+    status: 'normal' | 'final' | 'paused' | 'stranded' | 'loading'
+    label: string
+  }) => string
+  /**
+   * The screen-reader text of a stepper state that is a next state, an
+   * end state, or both: `Contained, next`.
+   */
+  channelSessionStep: (args: { label: string; next: boolean; final: boolean }) => string
   /**
    * Who else is typing in a channel: `Ann is typing…`, `Ann and Bo are
    * typing…`, `Ann, Bo and 1 other are typing…`. `names` holds at most two
@@ -373,6 +424,30 @@ export const DEFAULT_MESSAGES: Messages = {
   channelTooLong: ({ max }) => `At most ${max} characters.`,
   channelNewMessages: ({ count, type, author }) =>
     count === 1 && type ? `${type}${author ? ` from ${author}` : ''}` : `${count} new messages`,
+  channelNewNotices: ({ notices, messages }) => `${[...(messages ? [messages] : []), ...notices].join('. ')}.`,
+  channelSessionMoved: ({ from, to }) => `Session moved from ${from} to ${to}`,
+  channelSessionReentered: ({ state }) => `Session entered ${state} again`,
+  channelSessionStrandedText: ({ state }) =>
+    `${state} is no longer a state of this session. Messages do not move it.`,
+  channelSessionHint: ({ to, guarded }) =>
+    `Sending this moves the session to ${to}${guarded ? ' if its condition holds' : ''}.`,
+  channelSessionOptionHint: () => ' (moves the session)',
+  channelSessionSummary: ({ status, label }) => {
+    switch (status) {
+      case 'stranded':
+        return `Stranded · ${label}`
+      case 'final':
+        return `Ended · ${label}`
+      case 'paused':
+        return `${label} · Paused`
+      case 'loading':
+        return `Session · ${label} · Loading`
+      default:
+        return `Session · ${label}`
+    }
+  },
+  channelSessionStep: ({ label, next, final }) =>
+    [label, ...(next ? ['next'] : []), ...(final ? ['end state'] : [])].join(', '),
   channelTyping: ({ names, others }) => {
     if (others > 0) {
       return `${names.join(', ')} and ${others} ${others === 1 ? 'other' : 'others'} are typing…`

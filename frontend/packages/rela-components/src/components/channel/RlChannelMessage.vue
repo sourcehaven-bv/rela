@@ -12,6 +12,11 @@
  * advertise that. Delete (own message, no reason) and Remove (moderator) are
  * separate controls because they are separate rights.
  *
+ * A session notice (`message.notice`) renders as one system line: the move,
+ * and the time. It has no controls, not even reply: the server sends no
+ * actions on a notice, and the message that caused it is the row above,
+ * written in the same append.
+ *
  * Text is text. Titles, names, reasons and string properties render through
  * interpolation. The one exception is `message.html`: markdown the app has
  * already rendered and sanitized. It is inserted as it is; this component
@@ -106,6 +111,14 @@ const hasControls = computed(
     ['edit', 'delete', 'remove', 'release'].some((op) => allowed.value.has(op)),
 )
 
+const noticeText = computed(() => {
+  const n = props.message.notice
+  if (!n) return ''
+  return n.reentry
+    ? messages.channelSessionReentered({ state: n.toLabel })
+    : messages.channelSessionMoved({ from: n.fromLabel, to: n.toLabel })
+})
+
 function isPending(op: string): boolean {
   return props.pending?.has(messagePendingKey(props.message.seq, op)) ?? false
 }
@@ -137,6 +150,12 @@ function hrefFor(v: ChannelRef): string | undefined {
       <RlIcon name="erase" :size="14" />
       <span>{{ messages.channelMessageRemoved(message.removed) }}</span>
       <span v-if="message.removed.at" class="rl-channel-message__time">{{ message.removed.at }}</span>
+    </p>
+
+    <p v-else-if="message.notice" class="rl-channel-message__notice">
+      <RlIcon name="workflow" :size="14" />
+      <span>{{ noticeText }}</span>
+      <time v-if="message.at" class="rl-channel-message__time" :datetime="message.datetime">{{ message.at }}</time>
     </p>
 
     <template v-else>
@@ -313,6 +332,15 @@ function hrefFor(v: ChannelRef): string | undefined {
   margin: 0;
   color: var(--rl-color-text-muted);
   font-style: italic;
+}
+
+.rl-channel-message__notice {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--rl-space-2);
+  margin: 0;
+  color: var(--rl-color-text-muted);
 }
 
 .rl-channel-message__quote {

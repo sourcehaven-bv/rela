@@ -50,11 +50,14 @@ type ChannelSession struct {
 
 // ChannelSessionTransition is one transition out of the session's current
 // state: a message of MessageType moves the session to To. By is
-// "trigger" when only a trigger's message fires it.
+// "trigger" when only a trigger's message fires it. Guarded is set when
+// the transition has a guard (`when:`), so a message moves the session
+// only if the guard holds for it.
 type ChannelSessionTransition struct {
 	MessageType string `json:"message_type"`
 	To          string `json:"to"`
 	By          string `json:"by,omitempty"`
+	Guarded     bool   `json:"guarded,omitempty"`
 }
 
 // ChannelTypeList is one channel type on an anchor and the channels of it
@@ -96,6 +99,10 @@ type ChannelActions struct {
 	// message type and the channel is open. The rate limit is not part of
 	// it.
 	Typing bool `json:"typing"`
+	// Transitions lists the message types whose post by the caller would
+	// move the session out of its current state, if the transition's guard
+	// holds, sorted. It is a subset of Post; empty, never null.
+	Transitions []string `json:"transitions"`
 }
 
 // ChannelHead is the `GET` answer for one channel: its metadata, the last
@@ -298,6 +305,26 @@ type ChannelTypeSchema struct {
 	Typing               bool                       `json:"typing"`
 	Lifecycle            []ChannelLifecycleSchema   `json:"lifecycle"`
 	MessageTypes         []ChannelMessageTypeSchema `json:"message_types"`
+	// Session describes the type's session; absent when it has none.
+	Session *ChannelSessionSchema `json:"session,omitempty"`
+}
+
+// ChannelSessionSchema describes a channel type's session: its label, its
+// initial state and its states in declaration order. It holds no
+// transitions: those out of a channel's current state come with the
+// channel ([ChannelSession]).
+type ChannelSessionSchema struct {
+	Label   string                      `json:"label"`
+	Initial string                      `json:"initial"`
+	States  []ChannelSessionStateSchema `json:"states"`
+}
+
+// ChannelSessionStateSchema is one state of a session. Final marks a state
+// the session ends in.
+type ChannelSessionStateSchema struct {
+	Name  string `json:"name"`
+	Label string `json:"label"`
+	Final bool   `json:"final,omitempty"`
 }
 
 // ChannelLifecycleSchema is a declared lifecycle operation and its label.

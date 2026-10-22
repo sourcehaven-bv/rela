@@ -229,7 +229,8 @@ func toolReadChannelDef() *mcpgo.Tool {
 			"a JSON Schema for each type's props, live signals, and a page of messages, newest page first. "+
 			"Page with before, or follow with after_rev (pass next_after_rev back). Watchable: watch it with "+
 			"after_rev to wait for new, edited or removed messages. A channel type with a session shows it on "+
-			"the channel: its state, generation and the message types that move it from here; a move appends "+
+			"the channel: its state, generation and the message types that move it from here, and "+
+			"actions.transitions lists those your post would fire if the guard holds; a move appends "+
 			"a notice of type session. A channel type with typing shows, with signals, who else is typing "+
 			"in typing_now, and actions.typing says whether you may type there; there is no tool to type, "+
 			"and typing_now is empty over stdio, because typing entries live in the server process. "+

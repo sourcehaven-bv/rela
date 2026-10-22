@@ -54,6 +54,7 @@ function head(post: string[]): ChannelHead {
       remove: false,
       lifecycle: [],
       typing: false,
+      transitions: [],
     },
   }
 }
@@ -173,5 +174,129 @@ describe('channel schema store', () => {
     store.checkNames('room', null, [{ ...known, _actions: ['promote'] }])
     await flushPromises()
     expect(getSchema).toHaveBeenCalledTimes(3)
+  })
+
+  describe('sessions', () => {
+    const breach: ChannelTypeSchema = {
+      ...room,
+      name: 'breach',
+      session: {
+        label: 'Breach response',
+        initial: 'detected',
+        states: [
+          { name: 'detected', label: 'Detected' },
+          { name: 'contained', label: 'Contained', final: true },
+        ],
+      },
+    }
+    function sessionHead(session: NonNullable<ChannelHead['channel']['session']>): ChannelHead {
+      const h = head(['text'])
+      return { ...h, channel: { ...h.channel, type: 'breach', session } }
+    }
+    const at = '2026-10-11T09:00:00Z'
+
+    beforeEach(() => {
+      getSchema.mockResolvedValue({ channel_types: [room, breach] })
+    })
+
+    it('does not reload for a page holding session notices', async () => {
+      const store = useChannelSchemaStore()
+      await store.ensureLoaded()
+      const notice: Message = {
+        seq: 2,
+        rev: 2,
+        type: 'session',
+        triggered_by: 'session:breach',
+        props: { from: 'detected', to: 'contained' },
+      }
+      store.checkNames(
+        'breach',
+        sessionHead({ state: 'contained', generation: 1, entered_at: at }),
+        [notice]
+      )
+      await flushPromises()
+      expect(getSchema).toHaveBeenCalledTimes(1)
+    })
+
+    it('still checks a message named session on a type without a session', async () => {
+      const store = useChannelSchemaStore()
+      await store.ensureLoaded()
+      store.checkNames('room', null, [{ seq: 2, rev: 2, type: 'session' }])
+      await flushPromises()
+      expect(getSchema).toHaveBeenCalledTimes(2)
+    })
+
+    it('reloads once for a head state or transition target the descriptor lacks', async () => {
+      const store = useChannelSchemaStore()
+      await store.ensureLoaded()
+      store.checkNames(
+        'breach',
+        sessionHead({ state: 'assessed', generation: 2, entered_at: at }),
+        []
+      )
+      await flushPromises()
+      expect(getSchema).toHaveBeenCalledTimes(2)
+      store.checkNames(
+        'breach',
+        sessionHead({ state: 'assessed', generation: 2, entered_at: at }),
+        []
+      )
+      await flushPromises()
+      expect(getSchema).toHaveBeenCalledTimes(2)
+
+      const toNew = sessionHead({
+        state: 'detected',
+        generation: 0,
+        entered_at: at,
+        transitions: [{ message_type: 'text', to: 'escalated' }],
+      })
+      store.checkNames('breach', toNew, [])
+      await flushPromises()
+      expect(getSchema).toHaveBeenCalledTimes(3)
+    })
+
+    it('answers a head state only once a reload asked for it has landed', async () => {
+      const store = useChannelSchemaStore()
+      await store.ensureLoaded()
+      expect(store.stateAnswered('breach', 'assessed')).toBe(false)
+
+      let land!: (s: ChannelSchema) => void
+      getSchema.mockReturnValueOnce(new Promise((r) => (land = r)))
+      store.checkNames(
+        'breach',
+        sessionHead({ state: 'assessed', generation: 2, entered_at: at }),
+        []
+      )
+      expect(store.stateAnswered('breach', 'assessed')).toBe(false)
+      land({ channel_types: [room, breach] })
+      await flushPromises()
+      expect(store.stateAnswered('breach', 'assessed')).toBe(true)
+      expect(store.stateAnswered('room', 'assessed')).toBe(false)
+    })
+
+    it('does not answer a head state when the reload fails', async () => {
+      const store = useChannelSchemaStore()
+      await store.ensureLoaded()
+      getSchema.mockRejectedValueOnce(new Error('502'))
+      store.checkNames(
+        'breach',
+        sessionHead({ state: 'assessed', generation: 2, entered_at: at }),
+        []
+      )
+      await flushPromises()
+      expect(store.stateAnswered('breach', 'assessed')).toBe(false)
+    })
+
+    it('does not reload for a stranded state', async () => {
+      const store = useChannelSchemaStore()
+      await store.ensureLoaded()
+      store.checkNames(
+        'breach',
+        sessionHead({ state: 'triage', generation: 3, entered_at: at, stranded: true }),
+        []
+      )
+      await flushPromises()
+      expect(getSchema).toHaveBeenCalledTimes(1)
+    })
   })
 })

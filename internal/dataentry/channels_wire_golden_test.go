@@ -34,34 +34,36 @@ const (
 
 // channelWireTypes are the wire types the SPA mirrors, by TypeScript name.
 var channelWireTypes = map[string]any{
-	"ChannelAuthor":            v1.ChannelAuthor{},
-	"Channel":                  v1.Channel{},
-	"ChannelSession":           v1.ChannelSession{},
-	"ChannelSessionTransition": v1.ChannelSessionTransition{},
-	"ChannelTypeList":          v1.ChannelTypeList{},
-	"ChannelList":              v1.ChannelList{},
-	"ChannelActions":           v1.ChannelActions{},
-	"ChannelHead":              v1.ChannelHead{},
-	"TypingEntry":              v1.TypingEntry{},
-	"TypingAccepted":           v1.TypingAccepted{},
-	"RefProp":                  v1.RefProp{},
-	"MessageRemoval":           v1.MessageRemoval{},
-	"MessageAction":            v1.MessageAction{},
-	"Message":                  v1.Message{},
-	"MessageActionResponse":    v1.MessageActionResponse{},
-	"MessagePage":              v1.MessagePage{},
-	"EphemeralMessage":         v1.EphemeralMessage{},
-	"EphemeralAccepted":        v1.EphemeralAccepted{},
-	"PostMessageRequest":       v1.PostMessageRequest{},
-	"EditMessageRequest":       v1.EditMessageRequest{},
-	"RemoveMessageRequest":     v1.RemoveMessageRequest{},
-	"CreateChannelRequest":     v1.CreateChannelRequest{},
-	"ChannelSchema":            v1.ChannelSchema{},
-	"ChannelTypeSchema":        v1.ChannelTypeSchema{},
-	"ChannelLifecycleSchema":   v1.ChannelLifecycleSchema{},
-	"ChannelMessageTypeSchema": v1.ChannelMessageTypeSchema{},
-	"ChannelPropertySchema":    v1.ChannelPropertySchema{},
-	"ChannelActionSchema":      v1.ChannelActionSchema{},
+	"ChannelAuthor":             v1.ChannelAuthor{},
+	"Channel":                   v1.Channel{},
+	"ChannelSession":            v1.ChannelSession{},
+	"ChannelSessionTransition":  v1.ChannelSessionTransition{},
+	"ChannelTypeList":           v1.ChannelTypeList{},
+	"ChannelList":               v1.ChannelList{},
+	"ChannelActions":            v1.ChannelActions{},
+	"ChannelHead":               v1.ChannelHead{},
+	"TypingEntry":               v1.TypingEntry{},
+	"TypingAccepted":            v1.TypingAccepted{},
+	"RefProp":                   v1.RefProp{},
+	"MessageRemoval":            v1.MessageRemoval{},
+	"MessageAction":             v1.MessageAction{},
+	"Message":                   v1.Message{},
+	"MessageActionResponse":     v1.MessageActionResponse{},
+	"MessagePage":               v1.MessagePage{},
+	"EphemeralMessage":          v1.EphemeralMessage{},
+	"EphemeralAccepted":         v1.EphemeralAccepted{},
+	"PostMessageRequest":        v1.PostMessageRequest{},
+	"EditMessageRequest":        v1.EditMessageRequest{},
+	"RemoveMessageRequest":      v1.RemoveMessageRequest{},
+	"CreateChannelRequest":      v1.CreateChannelRequest{},
+	"ChannelSchema":             v1.ChannelSchema{},
+	"ChannelTypeSchema":         v1.ChannelTypeSchema{},
+	"ChannelLifecycleSchema":    v1.ChannelLifecycleSchema{},
+	"ChannelMessageTypeSchema":  v1.ChannelMessageTypeSchema{},
+	"ChannelPropertySchema":     v1.ChannelPropertySchema{},
+	"ChannelActionSchema":       v1.ChannelActionSchema{},
+	"ChannelSessionSchema":      v1.ChannelSessionSchema{},
+	"ChannelSessionStateSchema": v1.ChannelSessionStateSchema{},
 }
 
 // jsonFields lists the JSON names of v's struct fields, sorted. An
@@ -211,6 +213,24 @@ func TestChannelWireGolden(t *testing.T) {
 		"session_messages": incidentPath + "/messages",
 		"typing_head":      chatPath,
 	} {
+		code, b := env.get(t, "alice", path)
+		require.Equal(t, http.StatusOK, code, "%s: %s", path, b)
+		var v any
+		require.NoError(t, json.Unmarshal(b, &v))
+		samples[name] = normalizeWire(v)
+	}
+
+	// The breach-response example: its descriptor entry, and a head in
+	// contained, whose transition is guarded. The lead role is swapped for
+	// member so alice can move the session; the descriptor names no role,
+	// so it is the example's.
+	breach := strings.Replace(breachRealtime, "contained: { to: contained, roles: [lead] }",
+		"contained: { to: contained, roles: [member] }", 1)
+	env.ch.cfg.Store(env.ch.parse(t, breach))
+	const breachPath = "/api/v1/tickets/TKT-1/_channels/breach-response"
+	resp, posted := env.do(t, "alice", http.MethodPost, breachPath+"/messages", `{"type":"contained"}`, nil)
+	require.Equal(t, http.StatusCreated, resp.StatusCode, "%s", posted)
+	for name, path := range map[string]string{"session_schema": channelSchemaPath, "guarded_head": breachPath} {
 		code, b := env.get(t, "alice", path)
 		require.Equal(t, http.StatusOK, code, "%s: %s", path, b)
 		var v any
