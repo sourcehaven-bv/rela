@@ -4,7 +4,9 @@ type: ticket
 title: 'Per-face fields: policy'
 kind: enhancement
 priority: medium
-status: backlog
+started: "2026-10-22"
+completed: "2026-10-22"
+status: done
 description: 'fields: is keyed on type only, so a field restriction applies to every face at once. Allow ''type@face'' keys or entity.face in when: (GitHub #1760 part 2).'
 ---
 

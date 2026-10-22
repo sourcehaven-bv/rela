@@ -1835,6 +1835,7 @@ copies:
 | `on_success.message` | The confirmation the web app shows after the copy. Placeholders as for world messages; `{face}` is the face written. Falls back to the label. |
 | `on_success.landing` | Where the web app goes afterwards: `written` (the face written, the default), `stay` (reload in place), `{world: <name>}` or `{face: <name>}`. |
 | `fields` | `all` to copy every declared property, or a map from target property to source expression using the `{{...}}` interpolation grammar. A copy between different types requires an explicit map. |
+| `keep` | With `fields: all`, a list of target properties the copy never writes: each keeps the target face's value, or stays unset on a new face. |
 | `relations` | A map from relation type to `merge` (add the edges the target lacks) or `replace` (swap the target face's edges of that type). Only `scope: content` relation types can be listed. An omitted type is not copied. |
 | `guard.permission` | The ACL permission a caller must hold on the source entity. **Required** whenever `to` names a face. |
 
@@ -1849,6 +1850,8 @@ The loader refuses a copy definition that:
   definition would open the face to anyone who can name the copy;
 - names a face or type that the schema does not declare;
 - copies no fields, or declares both `fields: all` and a field map;
+- declares `keep:` without `fields: all`, or keeps a property the target
+  type does not declare;
 - uses `fields: all` on a copy into a different entity. That copy reads
   through the caller's visibility, so copying every field would write a
   redacted entity;

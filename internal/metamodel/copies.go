@@ -175,6 +175,7 @@ func validateCopy(m *Metamodel, name string, def CopyDef) []string {
 	}
 
 	errs = append(errs, validateCopyFields(m, name, def, to)...)
+	errs = append(errs, validateCopyKeep(m, name, def, to)...)
 	errs = append(errs, validateCopyRelations(m, name, def, to)...)
 	errs = append(errs, validateCopyLanding(m, name, def, to)...)
 	return errs
@@ -260,6 +261,37 @@ func validateCopyFields(m *Metamodel, name string, def CopyDef, to CopyTarget) [
 			errs = append(errs, fmt.Sprintf(
 				"copy %q: fields: entity type %q declares no property %q",
 				name, to.Type, f))
+		}
+	}
+	return errs
+}
+
+// validateCopyKeep checks `keep:`: it needs `fields: all`, since a field
+// mapping already leaves every unmapped property alone, and each name must be
+// a property the target type declares.
+func validateCopyKeep(m *Metamodel, name string, def CopyDef, to CopyTarget) []string {
+	if len(def.Keep) == 0 {
+		return nil
+	}
+	if !def.AllFields {
+		return []string{fmt.Sprintf("copy %q: `keep` needs `fields: all`; "+
+			"a field mapping already leaves every property it does not map as the target holds it", name)}
+	}
+	targetDef, ok := m.GetEntityDef(to.Type)
+	if !ok {
+		return nil // already reported by validateCopyEndpoint
+	}
+	var errs []string
+	seen := make(map[string]bool, len(def.Keep))
+	for _, f := range def.Keep {
+		if seen[f] {
+			errs = append(errs, fmt.Sprintf("copy %q: keep: %q is listed twice", name, f))
+			continue
+		}
+		seen[f] = true
+		if _, declared := targetDef.Properties[f]; !declared {
+			errs = append(errs, fmt.Sprintf(
+				"copy %q: keep: entity type %q declares no property %q", name, to.Type, f))
 		}
 	}
 	return errs

@@ -70,8 +70,8 @@ type PolicyResolver struct {
 	// across grants of that type.
 	envs map[string]*predicate.Env
 
-	// grants is indexed by (role, entityType) → compiled grant blocks.
-	grants map[grantKey]*compiledGrants
+	// grants is indexed by (role, entityType, face) → compiled grant blocks.
+	grants grantIndex
 
 	// typesWithVisible records entity types for which ANY role declares a
 	// `visible:` block. Under the historical marker ([WithHistoricalSubject])
@@ -88,9 +88,39 @@ type PolicyResolver struct {
 	traversalProgs map[string][]*predicate.Program
 }
 
+// grantKey names the compiled grants of one block key of one role. face is
+// empty for a key that names the type alone, which applies on every face of
+// the type. A `type@face` key (accepted in `fields:` and `options:` only)
+// sets face, and its grants apply on rows of that face only.
 type grantKey struct {
 	role       string
 	entityType string
+	face       entity.Face
+}
+
+// grantIndex holds the compiled blocks of every role, by block key.
+type grantIndex map[grantKey]*compiledGrants
+
+// typeGrants returns the grants role declares under the bare entityType key,
+// or nil.
+func (g grantIndex) typeGrants(role, entityType string) *compiledGrants {
+	return g[grantKey{role: role, entityType: entityType}]
+}
+
+// rowGrants returns the grants of role that apply to a row of e's type and
+// face: the bare type key, then the key naming e's face. Within one role the
+// two are a union, as roles are across the row (BUG-Y5UF3K).
+func (g grantIndex) rowGrants(role string, e *entity.Entity) []*compiledGrants {
+	out := make([]*compiledGrants, 0, 2)
+	if cg := g.typeGrants(role, e.Type); cg != nil {
+		out = append(out, cg)
+	}
+	if e.Face != "" {
+		if cg := g[grantKey{role: role, entityType: e.Type, face: e.Face}]; cg != nil {
+			out = append(out, cg)
+		}
+	}
+	return out
 }
 
 // compiledGrants is the per-(role, type) bundle of compiled grants. A
@@ -151,7 +181,7 @@ func New(
 		lookup:           lookup,
 		declarative:      declarative,
 		envs:             map[string]*predicate.Env{},
-		grants:           map[grantKey]*compiledGrants{},
+		grants:           grantIndex{},
 		typesWithVisible: map[string]bool{},
 		traversalProgs:   map[string][]*predicate.Program{},
 	}
@@ -240,8 +270,7 @@ func (r *PolicyResolver) env(entityType string) (*predicate.Env, error) {
 // grants. Returns the collected compile errors (path-prefixed).
 func (r *PolicyResolver) compileRole(roleName string, role acl.RoleDef) []error {
 	var errs []error
-	get := func(entityType string) *compiledGrants {
-		k := grantKey{roleName, entityType}
+	get := func(k grantKey) *compiledGrants {
 		g := r.grants[k]
 		if g == nil {
 			g = &compiledGrants{}
@@ -250,27 +279,47 @@ func (r *PolicyResolver) compileRole(roleName string, role acl.RoleDef) []error 
 		return g
 	}
 
-	for et, grants := range role.Fields {
-		g := get(et)
+	for key, grants := range role.Fields {
+		bk, err := r.parseBlockKey(roleName, "fields", key, true)
+		if err != nil {
+			errs = append(errs, err)
+			continue
+		}
+		g := get(bk.grantKey(roleName))
 		g.declaredFields = true
-		errs = append(errs, r.compileFieldBlock(roleName, et, "fields", grants, &g.fields)...)
+		errs = append(errs, r.compileFieldBlock(roleName, bk, "fields", grants, &g.fields)...)
 	}
-	for et, grants := range role.Visible {
-		g := get(et)
+	for key, grants := range role.Visible {
+		bk, err := r.parseBlockKey(roleName, blockVisible, key, false)
+		if err != nil {
+			errs = append(errs, err)
+			continue
+		}
+		g := get(bk.grantKey(roleName))
 		g.declaredVisible = true
-		r.typesWithVisible[et] = true
-		errs = append(errs, r.compileFieldBlock(roleName, et, blockVisible, grants, &g.visible)...)
+		r.typesWithVisible[bk.entityType] = true
+		errs = append(errs, r.compileFieldBlock(roleName, bk, blockVisible, grants, &g.visible)...)
 	}
-	for et, grants := range role.Options {
-		g := get(et)
+	for key, grants := range role.Options {
+		bk, err := r.parseBlockKey(roleName, "options", key, true)
+		if err != nil {
+			errs = append(errs, err)
+			continue
+		}
+		g := get(bk.grantKey(roleName))
 		g.declaredOptions = true
-		errs = append(errs, r.compileOptionBlock(roleName, et, grants, &g.options)...)
+		errs = append(errs, r.compileOptionBlock(roleName, bk, grants, &g.options)...)
 	}
-	for et, grants := range role.Relations {
-		g := get(et)
+	for key, grants := range role.Relations {
+		bk, err := r.parseBlockKey(roleName, "relations", key, false)
+		if err != nil {
+			errs = append(errs, err)
+			continue
+		}
+		g := get(bk.grantKey(roleName))
 		g.declaredRelations = true
 		for i, rg := range grants {
-			errs = append(errs, r.compileRelationGrant(g, roleName, et, i, rg)...)
+			errs = append(errs, r.compileRelationGrant(g, roleName, bk.entityType, i, rg)...)
 		}
 	}
 	return errs
@@ -280,15 +329,16 @@ func (r *PolicyResolver) compileRole(roleName string, role acl.RoleDef) []error 
 // appending compiled grants to out. block is the YAML key for error
 // paths ("fields" or "visible").
 func (r *PolicyResolver) compileFieldBlock(
-	roleName, entityType, block string, grants []acl.FieldGrant, out *[]compiledFieldGrant,
+	roleName string, bk blockKey, block string, grants []acl.FieldGrant, out *[]compiledFieldGrant,
 ) []error {
 	var errs []error
+	entityType := bk.entityType
 	for i, fg := range grants {
-		if verr := r.validateField(roleName, entityType, block, i, fg.Field); verr != nil {
+		if verr := r.validateField(roleName, bk, block, i, fg.Field); verr != nil {
 			errs = append(errs, verr)
 			continue
 		}
-		prog, err := r.compile(roleName, entityType, block, i, fg.When)
+		prog, err := r.compile(roleName, bk.key, entityType, block, i, fg.When)
 		if err != nil {
 			errs = append(errs, err)
 			continue
@@ -305,15 +355,15 @@ func (r *PolicyResolver) compileFieldBlock(
 }
 
 func (r *PolicyResolver) compileOptionBlock(
-	roleName, entityType string, grants []acl.OptionGrant, out *[]compiledOptionGrant,
+	roleName string, bk blockKey, grants []acl.OptionGrant, out *[]compiledOptionGrant,
 ) []error {
 	var errs []error
 	for i, og := range grants {
-		if verr := r.validateOption(roleName, entityType, i, og.Field, og.Option); verr != nil {
+		if verr := r.validateOption(roleName, bk, i, og.Field, og.Option); verr != nil {
 			errs = append(errs, verr)
 			continue
 		}
-		prog, err := r.compile(roleName, entityType, "options", i, og.When)
+		prog, err := r.compile(roleName, bk.key, bk.entityType, "options", i, og.When)
 		if err != nil {
 			errs = append(errs, err)
 			continue
@@ -332,7 +382,7 @@ func (r *PolicyResolver) compileRelationGrant(
 		// none of its dimensions can meaningfully gate anything.
 		return append(errs, verr)
 	}
-	prog, err := r.compile(roleName, entityType, "relations", i, rg.When)
+	prog, err := r.compile(roleName, entityType, entityType, "relations", i, rg.When)
 	if err != nil {
 		errs = append(errs, err)
 	}
@@ -344,7 +394,7 @@ func (r *PolicyResolver) compileRelationGrant(
 	}
 	metaFailed := false
 	for j, fg := range rg.Fields {
-		fprog, ferr := r.compile(roleName, entityType,
+		fprog, ferr := r.compile(roleName, entityType, entityType,
 			fmt.Sprintf("relations[%d].fields", i), j, fg.When)
 		if ferr != nil {
 			errs = append(errs, ferr)
@@ -354,7 +404,7 @@ func (r *PolicyResolver) compileRelationGrant(
 		cr.fields = append(cr.fields, compiledFieldGrant{field: fg.Field, program: fprog})
 	}
 	for j, fg := range rg.Visible {
-		fprog, ferr := r.compile(roleName, entityType,
+		fprog, ferr := r.compile(roleName, entityType, entityType,
 			fmt.Sprintf("relations[%d].visible", i), j, fg.When)
 		if ferr != nil {
 			errs = append(errs, ferr)
@@ -375,13 +425,16 @@ func (r *PolicyResolver) compileRelationGrant(
 	return errs
 }
 
-// compile compiles one grant predicate. An empty `when` yields a nil
+// compile compiles one grant predicate against entityType's env. key is the
+// block key as written, for error paths. An empty `when` yields a nil
 // program, which the evaluator (passes) treats as an unconditional
 // grant — nil is the intended sentinel here, not an error-absent
 // invalid value.
 //
 //nolint:nilnil // nil program is the documented "unconditional" sentinel
-func (r *PolicyResolver) compile(roleName, entityType, block string, idx int, when string) (*predicate.Program, error) {
+func (r *PolicyResolver) compile(
+	roleName, key, entityType, block string, idx int, when string,
+) (*predicate.Program, error) {
 	if when == "" {
 		return nil, nil
 	}
@@ -389,7 +442,7 @@ func (r *PolicyResolver) compile(roleName, entityType, block string, idx int, wh
 	if err != nil {
 		// coverage-ignore: defensive: r.env only errors when buildEnv errors, which cannot happen (constant env
 		// declarations); unreachable
-		return nil, fmt.Errorf("roles.%s.%s.%s[%d]: %w", roleName, block, entityType, idx, err)
+		return nil, fmt.Errorf("roles.%s.%s.%s[%d]: %w", roleName, block, key, idx, err)
 	}
 	prog, err := predicate.Compile(env, when)
 	if err == nil && len(prog.Traversals()) > 0 {
@@ -403,11 +456,11 @@ func (r *PolicyResolver) compile(roleName, entityType, block string, idx int, wh
 		if err == nil {
 			r.traversalProgs[entityType] = append(r.traversalProgs[entityType], prog)
 			warnConditionallyVisible(r.meta, r.policy, entityType,
-				fmt.Sprintf("acl.yaml roles.%s.%s.%s[%d]", roleName, block, entityType, idx), prog)
+				fmt.Sprintf("acl.yaml roles.%s.%s.%s[%d]", roleName, block, key, idx), prog)
 		}
 	}
 	if err != nil {
-		return nil, fmt.Errorf("roles.%s.%s.%s[%d].when: %w", roleName, block, entityType, idx, err)
+		return nil, fmt.Errorf("roles.%s.%s.%s[%d].when: %w", roleName, block, key, idx, err)
 	}
 	return prog, nil
 }
@@ -548,27 +601,31 @@ type declaredBlocks struct {
 	fields, visible, options bool
 }
 
-// applyRoleBlocks folds the blocks role declares for the row's type into the
-// dimensions and reports which it declared. A role with a block contributes
-// what the block grants on the row; what a role without one contributes is
-// decided after every role is folded (see fieldVerdicts).
+// applyRoleBlocks folds the blocks role declares for the row's type and face
+// into the dimensions and reports which it declared. A role with a block
+// contributes what the block grants on the row; what a role without one
+// contributes is decided after every role is folded (see fieldVerdicts). A
+// `type@face` block counts on rows of its face only, beside the bare type
+// block (see grantIndex.rowGrants).
 func (r *PolicyResolver) applyRoleBlocks(
 	ctx context.Context, bc *bindingContext, role string, writable, visible *dimension, options *optionDimension,
 ) declaredBlocks {
-	g := r.grants[grantKey{role, bc.entity.Type}]
-	if g == nil {
-		return declaredBlocks{}
+	var declared declaredBlocks
+	for _, g := range r.grants.rowGrants(role, bc.entity) {
+		if g.declaredFields {
+			r.applyFieldGrants(ctx, bc, role, "read-only", g.fields, writable)
+			declared.fields = true
+		}
+		if g.declaredVisible {
+			r.applyFieldGrants(ctx, bc, role, kindHidden, g.visible, visible)
+			declared.visible = true
+		}
+		if g.declaredOptions {
+			r.applyOptionGrants(ctx, bc, role, g.options, options)
+			declared.options = true
+		}
 	}
-	if g.declaredFields {
-		r.applyFieldGrants(ctx, bc, role, "read-only", g.fields, writable)
-	}
-	if g.declaredVisible {
-		r.applyFieldGrants(ctx, bc, role, kindHidden, g.visible, visible)
-	}
-	if g.declaredOptions {
-		r.applyOptionGrants(ctx, bc, role, g.options, options)
-	}
-	return declaredBlocks{fields: g.declaredFields, visible: g.declaredVisible, options: g.declaredOptions}
+	return declared
 }
 
 // declaredFields returns the metamodel-declared property names for an
@@ -644,7 +701,7 @@ func (r *PolicyResolver) relationVerdicts(ctx context.Context, e *entity.Entity,
 
 	acc := newRelationAccumulator()
 	for _, role := range roles {
-		g := r.grants[grantKey{role, e.Type}]
+		g := r.grants.typeGrants(role, e.Type)
 		if g == nil || !g.declaredRelations {
 			continue
 		}
@@ -735,7 +792,7 @@ func (r *PolicyResolver) RelationFieldVerdicts(
 func (r *PolicyResolver) applyRelationVisible(
 	ctx context.Context, bc *bindingContext, role, relType string, visible *dimension,
 ) bool {
-	g := r.grants[grantKey{role, bc.entity.Type}]
+	g := r.grants.typeGrants(role, bc.entity.Type)
 	if g == nil || !g.declaredRelations {
 		return false
 	}

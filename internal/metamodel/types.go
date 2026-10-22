@@ -962,6 +962,14 @@ type CopyDef struct {
 	// is the read-modify-write failure the codebase forbids everywhere.
 	AllFields bool `yaml:"-"`
 
+	// Keep names target properties a `fields: all` copy leaves as the target
+	// face holds them (TKT-2Z2IA6): the copy never writes them, so a value
+	// only the target has survives, and a target without one stays without
+	// one. A kept file property keeps the target's own references, so its
+	// bytes stay referenced. Refused at load without `fields: all`, because a
+	// field mapping already leaves every unmapped property alone.
+	Keep []string `yaml:"keep,omitempty"`
+
 	// Relations maps a relation type to `merge` (add missing) or `replace`
 	// (swap the target face's edges of that type). An omitted type is not
 	// copied — the safe default, since copying a role-conferring edge grants
@@ -1108,6 +1116,7 @@ func (c *CopyDef) UnmarshalYAML(unmarshal func(any) error) error {
 		To        string            `yaml:"to"`
 		Label     string            `yaml:"label,omitempty"`
 		Fields    any               `yaml:"fields,omitempty"`
+		Keep      []string          `yaml:"keep,omitempty"`
 		Relations map[string]string `yaml:"relations,omitempty"`
 		Guard     CopyGuard         `yaml:"guard,omitempty"`
 		OnSuccess CopyOnSuccess     `yaml:"on_success,omitempty"`
@@ -1117,7 +1126,7 @@ func (c *CopyDef) UnmarshalYAML(unmarshal func(any) error) error {
 		return err
 	}
 	c.From, c.To, c.Label, c.Relations, c.Guard = r.From, r.To, r.Label, r.Relations, r.Guard
-	c.OnSuccess = r.OnSuccess
+	c.OnSuccess, c.Keep = r.OnSuccess, r.Keep
 	switch f := r.Fields.(type) {
 	case nil:
 	case string:

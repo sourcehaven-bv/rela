@@ -54,6 +54,13 @@ copies:
     fields: all
     guard:
       permission: stage
+  stage-review-keep:
+    from: page@live
+    to: page@review
+    fields: all
+    keep: [spec]
+    guard:
+      permission: stage
   retitle-review:
     from: page@live
     to: page@review
@@ -362,6 +369,55 @@ func TestFaced_PartialCopyKeepsTargetUpload(t *testing.T) {
 	}
 	if got := f.specNames(t, "PAGE-1", "review"); !slices.Equal(got, []string{"own.txt"}) {
 		t.Errorf("review spec = %v, want its own upload [own.txt]", got)
+	}
+}
+
+// A `fields: all` copy with `keep: [spec]` (TKT-2Z2IA6) leaves the target
+// face's own upload and its bytes in place, and does not carry the source
+// face's file. On a new target face the kept property stays unset.
+func TestFaced_CopyKeepLeavesTargetUpload(t *testing.T) {
+	f := newFacedFixture(t)
+	ctx := context.Background()
+	f.seedLive(t, "PAGE-1")
+	if err := f.st.CreateEntity(ctx, &entity.Entity{
+		ID: "PAGE-1", Type: "page", Face: "review", Properties: map[string]any{"title": "review"},
+	}); err != nil {
+		t.Fatalf("seed review: %v", err)
+	}
+	f.attachTo(t, entity.Ref{ID: "PAGE-1", Face: "review"}, "signed.txt")
+
+	for range 2 { // adopting again keeps it too
+		if _, err := f.mgr.CopyState(ctx, entitymanager.CopyRequest{
+			Definition: "stage-review-keep", SourceID: "PAGE-1",
+		}); err != nil {
+			t.Fatalf("copy: %v", err)
+		}
+	}
+	if got := f.specNames(t, "PAGE-1", "review"); !slices.Equal(got, []string{"signed.txt"}) {
+		t.Errorf("review spec = %v, want its own upload [signed.txt]", got)
+	}
+	if got, err := f.readSpec(t, "review", "signed.txt"); err != nil || got != "signed.txt bytes" {
+		t.Errorf("review download = %q, %v; want the kept bytes", got, err)
+	}
+	if got, err := f.readSpec(t, "live", "spec.txt"); err != nil || got != "spec bytes" {
+		t.Errorf("live download = %q, %v; want the source face's bytes", got, err)
+	}
+	review, err := f.st.GetEntity(ctx, entity.Ref{ID: "PAGE-1", Face: "review"})
+	if err != nil {
+		t.Fatalf("read review: %v", err)
+	}
+	if got := review.GetString("title"); got != "live" {
+		t.Errorf("review title = %q, want the source's %q", got, "live")
+	}
+
+	f.seedLive(t, "PAGE-2")
+	if _, err := f.mgr.CopyState(ctx, entitymanager.CopyRequest{
+		Definition: "stage-review-keep", SourceID: "PAGE-2",
+	}); err != nil {
+		t.Fatalf("copy to a new face: %v", err)
+	}
+	if got := f.specNames(t, "PAGE-2", "review"); len(got) != 0 {
+		t.Errorf("new review face spec = %v, want none", got)
 	}
 }
 

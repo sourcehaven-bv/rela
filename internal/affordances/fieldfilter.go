@@ -65,7 +65,7 @@ func (r *PolicyResolver) FieldVisibleOnEveryRow(ctx context.Context, entityType,
 		return true // no role declares a block, so no role hides a field
 	}
 	for _, role := range globals {
-		if r.grants[grantKey{role, entityType}].showsUnconditionally(property) {
+		if r.grants.typeGrants(role, entityType).showsUnconditionally(property) {
 			return true
 		}
 	}
@@ -76,7 +76,7 @@ func (r *PolicyResolver) FieldVisibleOnEveryRow(ctx context.Context, entityType,
 		})
 	}
 	blockless := func(role string) bool {
-		g := r.grants[grantKey{role, entityType}]
+		g := r.grants.typeGrants(role, entityType)
 		return g == nil || !g.declaredVisible
 	}
 	if slices.ContainsFunc(globals, readsType) {
@@ -92,7 +92,8 @@ func (r *PolicyResolver) FieldVisibleOnEveryRow(ctx context.Context, entityType,
 	}
 	for _, rel := range r.policy.RoleRelations {
 		role := rel.Confers
-		if readsType(role) && !blockless(role) && !r.grants[grantKey{role, entityType}].showsUnconditionally(property) {
+		grants := r.grants.typeGrants(role, entityType)
+		if readsType(role) && !blockless(role) && !grants.showsUnconditionally(property) {
 			return false
 		}
 	}

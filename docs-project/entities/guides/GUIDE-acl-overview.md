@@ -205,6 +205,31 @@ Face-qualified grants count only on their face: a role with
 published policy and nothing of a draft. A client ceiling is applied after
 the union and can only remove.
 
+### A field block for one face
+
+A `fields:` or `options:` block may be keyed `type@face` instead of `type`.
+Such a block applies only on rows of that face. This lets a role write one
+field of a published face while the rest of that face stays read-only:
+
+```yaml
+roles:
+  signer:
+    read: [ticket]
+    update: [ticket@draft, ticket@published]
+    fields:
+      ticket@published: [signed_copy]   # on the published face, only this field
+```
+
+A `signer` may change every field of a draft, and on the published face may
+only attach or remove `signed_copy`. When a role has both a `ticket` block and
+a `ticket@published` block, a published row gets the union of the two. On a
+face that no block of the role names, the role has no block, so the rules
+above apply.
+
+The key must name a declared face of a type that declares `faces:`, or the
+policy fails to load. `visible:` and `relations:` blocks accept only a bare
+type key.
+
 The `everyone` role takes part like any other role. If it holds `read` on a
 face of a type and has no `visible:` block for that type, every other role's
 `visible:` block restricts nobody on that face. The same holds for `update`
