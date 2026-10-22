@@ -683,6 +683,7 @@ func (ce *copyEngine) buildCopyTarget(
 			delete(target.Properties, field)
 		}
 	}
+	keepTargetValues(plan, target, plan.def.Keep)
 	if err := ce.confineFileValues(plan, src, target); err != nil {
 		return err
 	}
@@ -709,7 +710,14 @@ func (ce *copyEngine) buildCopyTarget(
 // the (system, id) unique check or, across faces, give a second face a
 // mapping only a sync connector may write.
 func keepTargetExternalRefs(meta *metamodel.Metamodel, plan *copyPlan, target *entity.Entity) {
-	for _, prop := range metamodel.ExternalRefPropertyNames(meta, target.Type) {
+	keepTargetValues(plan, target, metamodel.ExternalRefPropertyNames(meta, target.Type))
+}
+
+// keepTargetValues gives each of props the value the existing target holds,
+// or removes it when the target holds none or does not exist yet. A copy
+// therefore never writes these properties.
+func keepTargetValues(plan *copyPlan, target *entity.Entity, props []string) {
+	for _, prop := range props {
 		delete(target.Properties, prop)
 		if plan.existing != nil {
 			if v, ok := plan.existing.Properties[prop]; ok {
@@ -734,8 +742,17 @@ func keepTargetExternalRefs(meta *metamodel.Metamodel, plan *copyPlan, target *e
 //   - Cross entity: bytes are keyed per entity, so a copied name would point
 //     at the target's bytes, not the source's. File properties keep the
 //     target's own value.
+//
+// A property under `keep:` is skipped: it already holds the target's own
+// value (keepTargetValues), so its references stay the target face's and the
+// bytes they name stay referenced. The skip is required, not an
+// optimization: the check below would refuse the target's own references
+// because the source face does not hold them.
 func (ce *copyEngine) confineFileValues(plan *copyPlan, src, target *entity.Entity) error {
 	for _, prop := range metamodel.FileProperties(ce.m.deps.Meta, target.Type) {
+		if slices.Contains(plan.def.Keep, prop) {
+			continue
+		}
 		if _, mapped := plan.def.Fields[prop]; plan.def.IsSameEntity() && !plan.def.AllFields && !mapped {
 			continue
 		}

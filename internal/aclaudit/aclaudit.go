@@ -316,8 +316,9 @@ func hasWildcardWrite(r acl.RoleDef) bool {
 }
 
 // affordanceTypeKeys returns the entity-type keys across all affordance maps
-// of a role (fields/visible/options/relations). These keys are entity types
-// with no wildcard, so they can be checked against the schema directly
+// of a role (fields/visible/options/relations). A key is an entity type or,
+// in fields: and options:, `type@face`; it has no wildcard, so it can be
+// checked against the schema directly once the face is stripped
 // (RR-TZ2S3G).
 func affordanceTypeKeys(r acl.RoleDef) []string {
 	seen := map[string]bool{}

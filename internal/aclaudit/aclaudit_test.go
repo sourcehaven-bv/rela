@@ -270,6 +270,36 @@ func TestAudit_A14_EveryoneOpensFieldBlock(t *testing.T) {
 			everyone: acl.RoleDef{Read: []string{"*"}},
 			watcher:  acl.RoleDef{Read: []string{"ticket"}, Update: []string{"ticket"}, Fields: block},
 		},
+		{
+			name:     "a face block is opened on its face",
+			everyone: acl.RoleDef{Read: []string{"policy"}, Update: []string{"policy@published"}},
+			watcher: acl.RoleDef{Read: []string{"policy"}, Update: []string{"policy@published"},
+				Fields: map[string][]acl.FieldGrant{"policy@published": {{Field: "title"}}}},
+			subjects: []string{"watcher.fields.policy@published (update)"},
+		},
+		{
+			name:     "a face block is not opened by a grant on another face",
+			everyone: acl.RoleDef{Read: []string{"policy"}, Update: []string{"policy@draft"}},
+			watcher: acl.RoleDef{Read: []string{"policy"}, Update: []string{"policy@published"},
+				Fields: map[string][]acl.FieldGrant{"policy@published": {{Field: "title"}}}},
+		},
+		{
+			name: "everyone's face block covers that face only",
+			everyone: acl.RoleDef{Read: []string{"policy"}, Update: []string{"policy@draft", "policy@published"},
+				Fields: map[string][]acl.FieldGrant{"policy@draft": {{Field: "title"}}}},
+			watcher:  acl.RoleDef{Read: []string{"policy"}, Update: []string{"policy@draft"}, Fields: policyBlock},
+			subjects: []string{"watcher.fields.policy (update)"},
+		},
+		{
+			name:     "a type block and a face block opened on the face are reported once",
+			everyone: acl.RoleDef{Read: []string{"policy"}, Update: []string{"policy@published"}},
+			watcher: acl.RoleDef{Read: []string{"policy"}, Update: []string{"policy@published"},
+				Fields: map[string][]acl.FieldGrant{
+					"policy":           {{Field: "status"}},
+					"policy@published": {{Field: "title"}},
+				}},
+			subjects: []string{"watcher.fields.policy@published (update)"},
+		},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -596,6 +626,74 @@ func TestAudit_B4_UndeclaredField(t *testing.T) {
 	}}
 	if got := Audit(p, meta, allPerms{}); !hasRule(got, "B4-undeclared-field") {
 		t.Fatalf("expected B4, got %+v", got)
+	}
+}
+
+// TestAudit_B4B5_FaceKeys: a type@face block key is checked against its
+// type, for fields and for options (TKT-RSVJKS).
+func TestAudit_B4B5_FaceKeys(t *testing.T) {
+	t.Parallel()
+	meta := fakeMetamodel{
+		types:  map[string]bool{"policy": true},
+		faces:  map[string][]string{"policy": {"draft", "published"}},
+		fields: map[string]map[string][]string{"policy": {"status": {"open", "done"}, "title": nil}},
+	}
+	tests := []struct {
+		name string
+		role acl.RoleDef
+		rule string
+	}{
+		{
+			name: "undeclared field",
+			role: acl.RoleDef{Fields: map[string][]acl.FieldGrant{"policy@draft": {{Field: "stutus"}}}},
+			rule: "B4-undeclared-field",
+		},
+		{
+			name: "undeclared option",
+			role: acl.RoleDef{Options: map[string][]acl.OptionGrant{
+				"policy@draft": {{Field: "status", Option: "closed"}},
+			}},
+			rule: "B5-undeclared-option",
+		},
+		{
+			name: "declared field and option",
+			role: acl.RoleDef{
+				Fields:  map[string][]acl.FieldGrant{"policy@draft": {{Field: "title"}}},
+				Options: map[string][]acl.OptionGrant{"policy@draft": {{Field: "status", Option: "open"}}},
+			},
+		},
+		{
+			name: "fields key names an undeclared face",
+			role: acl.RoleDef{Fields: map[string][]acl.FieldGrant{"policy@drfat": {{Field: "title"}}}},
+			rule: "B11-undeclared-face",
+		},
+		{
+			name: "options key names an undeclared face",
+			role: acl.RoleDef{Options: map[string][]acl.OptionGrant{
+				"policy@drfat": {{Field: "status", Option: "open"}},
+			}},
+			rule: "B11-undeclared-face",
+		},
+		{
+			name: "visible block refuses a face key",
+			role: acl.RoleDef{Visible: map[string][]acl.FieldGrant{"policy@draft": {{Field: "title"}}}},
+			rule: "B11-undeclared-face",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			tc.role.Read = []string{"policy"}
+			p := &acl.Policy{Roles: map[string]acl.RoleDef{"clerk": tc.role}}
+			got := Audit(p, meta, allPerms{})
+			for _, rule := range []string{
+				"B1-undeclared-type", "B4-undeclared-field", "B5-undeclared-option", "B11-undeclared-face",
+			} {
+				if want := rule == tc.rule; hasRule(got, rule) != want {
+					t.Errorf("%s reported = %v, want %v (findings %+v)", rule, !want, want, got)
+				}
+			}
+		})
 	}
 }
 

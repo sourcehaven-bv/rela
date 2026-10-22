@@ -137,7 +137,7 @@ func (r *PolicyResolver) SearchFieldScope(ctx context.Context, entityType string
 type fieldScopeCompiler struct {
 	meta       *metamodel.Metamodel
 	policy     *acl.Policy
-	grants     map[grantKey]*compiledGrants
+	grants     grantIndex
 	req        *acl.Request
 	entityType string
 	identity   string          // the principal's user id, "" when unknown
@@ -183,7 +183,7 @@ func (c *fieldScopeCompiler) globalFieldGrants(roles []string) []search.FieldGra
 	var out []search.FieldGrant
 	var unconditional []string
 	for _, role := range roles {
-		for _, fg := range c.grants[grantKey{role, c.entityType}].visible {
+		for _, fg := range c.grants[grantKey{role: role, entityType: c.entityType}].visible {
 			if fg.program == nil {
 				unconditional = append(unconditional, fg.field)
 				continue
@@ -208,7 +208,7 @@ func (c *fieldScopeCompiler) localFieldGrants(locals []localRole) []search.Field
 	for _, lr := range locals {
 		held := store.DirectedRelation{Incoming: true, Pred: lr.held}
 		var unconditional []string
-		for _, fg := range c.grants[grantKey{lr.name, c.entityType}].visible {
+		for _, fg := range c.grants[grantKey{role: lr.name, entityType: c.entityType}].visible {
 			if fg.program == nil {
 				unconditional = append(unconditional, fg.field)
 				continue
@@ -244,7 +244,7 @@ func (c *fieldScopeCompiler) blocklessFieldGrants(
 	entityType := c.entityType
 	faces := declaredFaces(c.meta.Entities[entityType].Faces)
 	for _, role := range sortedRoleNames(c.policy) {
-		if g := c.grants[grantKey{role, entityType}]; g != nil && g.declaredVisible {
+		if g := c.grants[grantKey{role: role, entityType: entityType}]; g != nil && g.declaredVisible {
 			continue
 		}
 		read := slices.DeleteFunc(slices.Clone(faces), func(f entity.Face) bool {

@@ -4,7 +4,9 @@ type: ticket
 title: Copy option to keep named fields on the target face
 kind: enhancement
 priority: medium
-status: backlog
+started: "2026-10-22"
+completed: "2026-10-22"
+status: done
 description: 'A copy with fields: all replaces the target face and drops fields that only the target holds. A file added to an adopted face is lost on the next adoption. Add a copy option that keeps named target fields (GitHub #1760 part 4).'
 ---
 
