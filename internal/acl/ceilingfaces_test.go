@@ -24,6 +24,12 @@ func TestRestriction_RefusesFaceShapedEntriesAndWorldWildcards(t *testing.T) {
 		{"read with a face", Restriction{Read: []string{"page@published"}}, "names a face"},
 		{"worlds wildcard", Restriction{Worlds: []string{"*"}}, "no wildcard"},
 		{"deny_worlds wildcard", Restriction{DenyWorlds: []string{"*"}}, "no wildcard"},
+		// BUG-KJ5D18: the field ceiling is looked up by bare type, so these
+		// keys would load and hide nothing.
+		{"redact wildcard type", Restriction{Redact: map[string][]string{"*": {"title"}}}, "bare entity type"},
+		{"redact faced type", Restriction{Redact: map[string][]string{"page@pub": {"title"}}}, "bare entity type"},
+		{"visible wildcard type", Restriction{Visible: map[string][]string{"*": {"title"}}}, "bare entity type"},
+		{"visible faced type", Restriction{Visible: map[string][]string{"page@pub": {"title"}}}, "bare entity type"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -36,7 +42,10 @@ func TestRestriction_RefusesFaceShapedEntriesAndWorldWildcards(t *testing.T) {
 	}
 
 	// Positive control: the bare-type and named-world spellings still load.
-	ok := Restriction{DenyUpdate: []string{"page"}, Worlds: []string{"published"}}
+	ok := Restriction{
+		DenyUpdate: []string{"page"}, Worlds: []string{"published"},
+		Redact: map[string][]string{"page": {"title"}},
+	}
 	if err := ok.validate("client_baselines.app"); err != nil {
 		t.Errorf("a type-level clamp with a named world must validate; got %v", err)
 	}

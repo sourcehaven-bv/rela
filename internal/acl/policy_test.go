@@ -265,6 +265,36 @@ roles:
 	}
 }
 
+// A client field ceiling is applied only by the policy-backed resolver, so it
+// counts as an affordance grant even when no role declares a field block
+// (BUG-KJ5D18). A ceiling on another axis, or a scope grant alone, does not.
+func TestPolicy_HasAffordanceGrants_ClientFieldCeiling(t *testing.T) {
+	t.Parallel()
+	const roles = "roles:\n  viewer:\n    read: [\"*\"]\n"
+	for _, tc := range []struct {
+		name string
+		yaml string
+		want bool
+	}{
+		{"baseline redact", "client_baselines:\n  apps:\n    applies_to: [app]\n    redact:\n      ticket: [title]\n", true},
+		{"baseline visible", "client_baselines:\n  apps:\n    applies_to: [app]\n    visible:\n      ticket: [title]\n", true},
+		{"baseline visible empty list", "client_baselines:\n  apps:\n    applies_to: [app]\n    visible:\n      ticket: []\n", true},
+		{"baseline row axis only", "client_baselines:\n  apps:\n    applies_to: [app]\n    deny_read: [ticket]\n", false},
+		{"scope grant only", "scope_grants:\n  tickets:read:\n    visible:\n      ticket: [title]\n", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			p, err := acl.LoadPolicy(writeTempPolicy(t, roles+tc.yaml))
+			if err != nil {
+				t.Fatalf("LoadPolicy: %v", err)
+			}
+			if got := p.HasAffordanceGrants(); got != tc.want {
+				t.Errorf("HasAffordanceGrants() = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
 // The per-type affordance block's opt-in signal is the PRESENCE of
 // the type key in the map, regardless of whether its value is an
 // explicit empty list or a null. yaml.v3 decodes both `ticket: []`

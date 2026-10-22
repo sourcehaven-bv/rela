@@ -413,6 +413,7 @@ func writeWebhookCheckText(c *aclmap.WebhookCheck) {
 		return
 	}
 	out.WriteMessage("  webhook mapping needs:")
+	creates := false
 	for _, n := range c.Needs {
 		target := n.Type
 		if n.Face != "" {
@@ -423,7 +424,17 @@ func writeWebhookCheckText(c *aclmap.WebhookCheck) {
 			state = "NOT HELD: deliveries that need it fail"
 		}
 		out.WriteMessage("      %s %s: %s", n.Verb, target, state)
+		creates = creates || n.Verb == string(acl.VerbCreate)
 	}
+	if len(c.HiddenMatchFields) == 0 {
+		return
+	}
+	effect := "no delivery ever matches"
+	if creates {
+		effect = "every delivery creates a new entity"
+	}
+	out.WriteMessage("      match fields hidden by the client ceiling: %s (the find cannot compare them, so %s)",
+		strings.Join(c.HiddenMatchFields, ", "), effect)
 }
 
 // writeTypeAccess renders a slice of per-type access (baseline verbs +

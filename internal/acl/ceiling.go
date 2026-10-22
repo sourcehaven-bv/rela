@@ -3,6 +3,7 @@ package acl
 import (
 	"errors"
 	"fmt"
+	"maps"
 	"slices"
 	"sort"
 	"strings"
@@ -241,6 +242,21 @@ func (r Restriction) validateTypeOnlyEntries(label string) error {
 				return fmt.Errorf("%s.%s[%d]: %q names a face, but a client ceiling clamps by "+
 					"entity TYPE only — write the bare type (face-scoped clamps are not supported)",
 					label, c.field, i, v)
+			}
+		}
+	}
+	// The field ceiling is looked up by the bare entity type
+	// (Request.FieldCeilingFor), so a `*` or `type@face` key matches no type
+	// and the ceiling would load inert: fail-open for `redact:` and for a
+	// closed-world `visible:` alike (BUG-KJ5D18).
+	for _, m := range []struct {
+		field string
+		vals  map[string][]string
+	}{{"visible", r.Visible}, {"redact", r.Redact}} {
+		for _, t := range slices.Sorted(maps.Keys(m.vals)) {
+			if strings.TrimSpace(t) == "*" || strings.Contains(t, "@") {
+				return fmt.Errorf("%s.%s: key %q must be a bare entity type — a field ceiling "+
+					"has no wildcard and no face; list each type", label, m.field, t)
 			}
 		}
 	}

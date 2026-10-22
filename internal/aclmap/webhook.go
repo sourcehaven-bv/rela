@@ -42,12 +42,22 @@ type WebhookCheck struct {
 	// Needs lists each verb the mapping uses, in the order the delivery uses
 	// them: read for the find, create, then update.
 	Needs []WebhookNeed `json:"needs"`
+	// HiddenMatchFields lists the find's match properties that the client
+	// ceiling hides from the hook (BUG-KJ5D18). The read path redacts them,
+	// so the find cannot compare them and never matches. Reported only when
+	// the hook holds read on the find type; otherwise that need already
+	// explains the failure.
+	HiddenMatchFields []string `json:"hidden_match_fields,omitempty"`
 }
 
-// OK reports whether the mapping can run: every need is held.
+// OK reports whether the mapping can run: every need is held and the find
+// can see every match property.
 func (c *WebhookCheck) OK() bool {
 	if c == nil {
 		return true
+	}
+	if len(c.HiddenMatchFields) > 0 {
+		return false
 	}
 	for _, n := range c.Needs {
 		if !n.Held {
@@ -144,8 +154,28 @@ func (e *Engine) checkWebhook(ctx context.Context, req *acl.Request, m WebhookMa
 		check.Needs = append(check.Needs, WebhookNeed{
 			Verb: string(n.verb), Type: n.typ, Face: n.face, Held: held,
 		})
+		if n.verb == acl.VerbRead && held {
+			check.HiddenMatchFields = hiddenMatchFields(req, m)
+		}
 	}
 	return check, nil
+}
+
+// hiddenMatchFields returns the match properties of the find that the client
+// ceiling hides from the hook. Only the ceiling is checked. A role's `visible:`
+// grant may depend on the entity, which a type-wide check cannot decide.
+func hiddenMatchFields(req *acl.Request, m WebhookMapping) []string {
+	ceiling := req.FieldCeilingFor(m.FindType)
+	if !ceiling.Constrains() {
+		return nil
+	}
+	var out []string
+	for _, field := range dedupeSorted(m.Match) {
+		if ceiling.Hides(field) {
+			out = append(out, field)
+		}
+	}
+	return out
 }
 
 // holdsNeed decides one need. A need on a named face is decided on that face

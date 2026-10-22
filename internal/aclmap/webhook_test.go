@@ -189,6 +189,8 @@ func TestMapWebhook_CheckMapping(t *testing.T) {
 		policy   string
 		mapping  *aclmap.WebhookMapping
 		wantHeld map[string]bool
+		// wantHidden are the match fields the ceiling hides (BUG-KJ5D18).
+		wantHidden []string
 	}{
 		{
 			name: "capped hook holds what it needs", policy: hookPolicy + hookCeiling, mapping: alert,
@@ -199,6 +201,30 @@ func TestMapWebhook_CheckMapping(t *testing.T) {
 			mapping:  &aclmap.WebhookMapping{FindType: "ticket", Updates: true},
 			wantHeld: map[string]bool{"read ticket": false, "update ticket": false},
 		},
+		{
+			name: "match field the ceiling redacts", mapping: alert,
+			policy:     hookPolicy + hookCeiling + "    redact:\n      incident: [host]\n",
+			wantHeld:   map[string]bool{"read incident": true, "create incident": true, "update incident": true},
+			wantHidden: []string{"host"},
+		},
+		{
+			name: "match field outside the ceiling allowlist", mapping: alert,
+			policy:     hookPolicy + hookCeiling + "    visible:\n      incident: [title]\n",
+			wantHeld:   map[string]bool{"read incident": true, "create incident": true, "update incident": true},
+			wantHidden: []string{"host"},
+		},
+		{
+			name: "match field the ceiling leaves visible", mapping: alert,
+			policy:   hookPolicy + hookCeiling + "    redact:\n      incident: [title]\n",
+			wantHeld: map[string]bool{"read incident": true, "create incident": true, "update incident": true},
+		},
+		{
+			// The unheld read already explains the failure.
+			name:     "hidden match field on an unreadable find type",
+			policy:   hookPolicy + hookCeiling + "    redact:\n      ticket: [host]\n",
+			mapping:  &aclmap.WebhookMapping{FindType: "ticket", Match: []string{"host"}},
+			wantHeld: map[string]bool{"read ticket": false},
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -206,6 +232,9 @@ func TestMapWebhook_CheckMapping(t *testing.T) {
 			c := res.WebhookCheck
 			if c == nil {
 				t.Fatal("WebhookCheck missing")
+			}
+			if !slices.Equal(c.HiddenMatchFields, tc.wantHidden) {
+				t.Errorf("HiddenMatchFields = %v, want %v", c.HiddenMatchFields, tc.wantHidden)
 			}
 			got := map[string]bool{}
 			for _, n := range c.Needs {
@@ -219,7 +248,7 @@ func TestMapWebhook_CheckMapping(t *testing.T) {
 					t.Errorf("need %q held = %v (present %v), want %v", k, held, ok, want)
 				}
 			}
-			wantOK := true
+			wantOK := len(tc.wantHidden) == 0
 			for _, h := range tc.wantHeld {
 				wantOK = wantOK && h
 			}

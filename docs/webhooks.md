@@ -436,7 +436,11 @@ The ceiling does not cover:
 do not name the principal type. The report lists each type and verb, the named
 permissions held and the relation types the hook may write. It also checks
 that the hook's mapping is possible: read on the find type, create on the
-create type and update where the hook sets properties.
+create type and update where the hook sets properties. It also reports a match
+property that the client ceiling hides (`redact:`, or left out of `visible:`).
+The find cannot compare a hidden field, so it never matches: a hook with
+`create_if_missing` creates a new entity on every delivery, and a hook without
+it never updates anything.
 
 `--expect <file>` compares the access with a file and prints the differences:
 
