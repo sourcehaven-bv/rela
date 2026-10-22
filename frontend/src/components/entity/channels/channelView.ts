@@ -25,6 +25,7 @@ import type {
   Message,
   MessagePropValue,
   ReadableRef,
+  TypingEntry,
 } from '@/types/channels'
 import { LIFECYCLE_DELETE } from '@/types/channels'
 import type {
@@ -38,6 +39,7 @@ import type {
   ChannelPresentation,
   ChannelReadableRef,
   ChannelReplyQuote,
+  ChannelTypingView,
 } from 'rela-components/components/channel/types'
 import { resolveChannelFields } from 'rela-components/components/channel/channelFields'
 
@@ -297,6 +299,26 @@ export function ephemeralViews(
       props: e.props,
       text: ephemeralText(e, messageType(e.type), presentation, enumOptions, tz),
     }))
+}
+
+/**
+ * Who else is typing, as the library draws it: exactly the head's
+ * `typing_now`, in its order. There is no expiry here; the server expires
+ * an entry and sends a new head.
+ *
+ * The server holds one entry per user and organization, and the wire does
+ * not carry the organization. So the key is the user and `since`, with a
+ * count appended when two entries still share it (one user typing from two
+ * organizations in the same instant), so keys never repeat.
+ */
+export function typingViews(entries: readonly TypingEntry[] | undefined): ChannelTypingView[] {
+  const seen = new Map<string, number>()
+  return (entries ?? []).map((e) => {
+    const base = `${e.author.user}\u0000${e.since}`
+    const n = seen.get(base) ?? 0
+    seen.set(base, n + 1)
+    return { key: n === 0 ? base : `${base}\u0000${n}`, author: authorView(e.author) }
+  })
 }
 
 /** The soonest `expires_at` after `now`, or undefined when none is left. */

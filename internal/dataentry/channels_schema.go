@@ -34,9 +34,9 @@ func wireChannelTypeSchema(ct realtime.ChannelTypeView) v1.ChannelTypeSchema {
 	out := v1.ChannelTypeSchema{
 		Name: ct.Name, Label: ct.Label, AttachTo: ct.AttachTo, Anchor: ct.Anchor,
 		Cardinality: ct.Cardinality, CreateLabel: ct.CreateLabel,
-		RemoveReasonRequired: ct.RemoveReasonRequired,
-		Lifecycle:            make([]v1.ChannelLifecycleSchema, 0, len(ct.Lifecycle)),
-		MessageTypes:         make([]v1.ChannelMessageTypeSchema, 0, len(ct.MessageTypes)),
+		RemoveReasonRequired: ct.RemoveReasonRequired, Typing: ct.Typing,
+		Lifecycle:    make([]v1.ChannelLifecycleSchema, 0, len(ct.Lifecycle)),
+		MessageTypes: make([]v1.ChannelMessageTypeSchema, 0, len(ct.MessageTypes)),
 	}
 	if out.AttachTo == nil {
 		out.AttachTo = []string{}

@@ -285,3 +285,82 @@ export const OpensAtBottomWhenShown: Story = {
     await waitFor(() => expect(isAtBottom(log)).toBe(true))
   },
 }
+
+const typists = ['Ann', 'Bo', 'Cy', 'Dee', 'Eve'].map((name) => ({ key: name, author: { name } }))
+
+/**
+ * Who else is typing: one line in its own polite, atomic live region. It
+ * names at most two typists and counts the rest. A new head with the same
+ * typists leaves the line as it was, so it is not read out again.
+ */
+export const Typing: Story = {
+  args: { ephemeral: [] },
+  render: (args) => ({
+    components: { RlChannel },
+    setup: () => {
+      const typing = ref(typists.slice(0, 1))
+      const show = (n: number) => (typing.value = typists.slice(0, n).map((t) => ({ ...t })))
+      return { args, typing, show }
+    },
+    template: `
+      <div style="height:100vh">
+        <button v-for="n in [0, 1, 2, 3, 5]" :key="n" :data-typists="n" @click="show(n)">{{ n }}</button>
+        <RlChannel v-bind="args" :typing="typing" typing-offered>
+          <template #composer><div>composer</div></template>
+        </RlChannel>
+      </div>
+    `,
+  }),
+  play: async ({ canvasElement }) => {
+    const line = canvasElement.querySelector('.rl-channel__typing') as HTMLElement
+    await expect(line).toHaveAttribute('aria-live', 'polite')
+    await expect(line).toHaveAttribute('aria-atomic', 'true')
+    const show = (n: number) =>
+      userEvent.click(canvasElement.querySelector(`[data-typists="${n}"]`) as HTMLElement)
+    for (const [n, text] of [
+      [1, 'Ann is typing…'],
+      [2, 'Ann and Bo are typing…'],
+      [3, 'Ann, Bo and 1 other are typing…'],
+      [5, 'Ann, Bo and 3 others are typing…'],
+    ] as const) {
+      await show(n)
+      await waitFor(() => expect(line).toHaveTextContent(text))
+    }
+    const node = line.firstChild
+    await show(5)
+    await expect(line.firstChild).toBe(node)
+    await expect(line).toHaveTextContent('Ann, Bo and 3 others are typing…')
+    await show(0)
+    await waitFor(() => expect(line).toHaveTextContent(/^$/))
+  },
+}
+
+/**
+ * No typing line where the type does not offer typing, or where there is
+ * no composer: no blank row and no extra live region.
+ */
+export const TypingLineOnlyWhereOffered: Story = {
+  args: { ephemeral: [] },
+  render: (args) => ({
+    components: { RlChannel },
+    setup: () => ({ args, typing: typists.slice(0, 2) }),
+    template: `
+      <div>
+        <div data-case="not offered">
+          <RlChannel v-bind="args" :typing="typing">
+            <template #composer><div>composer</div></template>
+          </RlChannel>
+        </div>
+        <div data-case="no composer">
+          <RlChannel v-bind="args" :typing="typing" typing-offered />
+        </div>
+      </div>
+    `,
+  }),
+  play: async ({ canvasElement }) => {
+    for (const c of ['not offered', 'no composer']) {
+      const root = canvasElement.querySelector(`[data-case="${c}"]`) as HTMLElement
+      await expect(root.querySelector('.rl-channel__typing')).toBeNull()
+    }
+  },
+}

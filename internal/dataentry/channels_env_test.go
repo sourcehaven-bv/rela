@@ -27,7 +27,9 @@ import (
 // so a hidden feature is a hidden anchor. Nobody holds chat.read or
 // chat.moderate, so nobody reads secret, posts an announce or creates a
 // topic. A room text offers ack, and accept, which promotes; the
-// collaborator wiring has no promoter, so accept is never offered.
+// collaborator wiring has no promoter, so accept is never offered. chat
+// and briefing offer the built-in typing indicator; nobody may post to
+// briefing, so nobody may type there.
 const channelTestRealtime = `
 version: 1
 channel_types:
@@ -95,6 +97,27 @@ channel_types:
       states:
         detected:  { label: Detected, on: { contained: { to: contained } } }
         contained: { label: Contained, final: true }
+  chat:
+    attach_to: [ticket, feature]
+    typing: true
+    read: { from: attached }
+    roles:
+      member: { from: attached }
+      mod:    { permission: chat.moderate }
+    message_types:
+      text:   { properties: { body: { type: string, required: true } }, post: [member] }
+      status: { persist: ephemeral, ttl: 30s, post: [member] }
+      notice: { properties: { body: { type: string } }, post: [mod] }
+    lifecycle:
+      close: { roles: [member] }
+  briefing:
+    attach_to: [ticket]
+    typing: true
+    read: { from: attached }
+    roles:
+      mod: { permission: chat.moderate }
+    message_types:
+      note: { properties: { body: { type: string } }, post: [mod] }
   secret:
     attach_to: [ticket]
     read: { permission: chat.read }
@@ -151,10 +174,20 @@ func newChannelServiceOver(
 	t *testing.T, meta *metamodel.Metamodel, st store.Store, d *acl.Declarative, yaml string, cs channels.Store,
 ) *channelService {
 	t.Helper()
+	return newChannelServiceLocal(t, meta, st, d, yaml, cs, nil)
+}
+
+// newChannelServiceLocal is newChannelServiceOver over the process-local
+// state local. Nil: a new one on the real clock.
+func newChannelServiceLocal(
+	t *testing.T, meta *metamodel.Metamodel, st store.Store, d *acl.Declarative, yaml string, cs channels.Store,
+	local *realtime.Local,
+) *channelService {
+	t.Helper()
 	out := &channelService{store: cs, cfg: &atomic.Pointer[realtimecfg.Compiled]{}, meta: meta}
 	out.cfg.Store(out.parse(t, yaml))
 	bundle := appbuildtest.New(meta, appbuildtest.WithStore(st), appbuildtest.WithDeclarative(d),
-		appbuildtest.WithChannels(cs, testRealtimeConfig{p: out.cfg}))
+		appbuildtest.WithChannelsLocal(cs, testRealtimeConfig{p: out.cfg}, local))
 	t.Cleanup(func() { _ = bundle.Close() })
 	if out.svc = appbuild.ChannelService(bundle); out.svc == nil {
 		t.Fatal("appbuildtest built no channel service")
@@ -197,6 +230,16 @@ func newChannelEnvWith(
 	t *testing.T, policy func(*testing.T, *App) *acl.Declarative, wired func(*App),
 ) *channelEnv {
 	t.Helper()
+	return newChannelEnvLocal(t, policy, wired, nil)
+}
+
+// newChannelEnvLocal is newChannelEnvWith over the process-local channel
+// state local, such as one on a test clock. Nil: a new one on the real
+// clock.
+func newChannelEnvLocal(
+	t *testing.T, policy func(*testing.T, *App) *acl.Declarative, wired func(*App), local *realtime.Local,
+) *channelEnv {
+	t.Helper()
 	env := &channelEnv{}
 	env.liveEnv = newLiveEnv(t, func(app *App) {
 		seedEntity(app, ticket1("one"))
@@ -209,7 +252,11 @@ func newChannelEnvWith(
 		seedRelation(app, entity.NewRelation("bob", "member-of", "editors"))
 		d := policy(t, app)
 		setTestACL(t, app, d)
-		env.ch = newChannelService(t, app.Meta(), app.store, d, channelTestRealtime)
+		cs, err := filechannels.New(storage.NewMemFS(), "/channels", filelock.ProcessPrivate{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		env.ch = newChannelServiceLocal(t, app.Meta(), app.store, d, channelTestRealtime, cs, local)
 		if err := SetChannels(app, env.ch.svc); err != nil {
 			t.Fatal(err)
 		}

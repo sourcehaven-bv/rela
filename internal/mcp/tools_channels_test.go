@@ -577,3 +577,41 @@ func TestPostMessage_ReturnsSession(t *testing.T) {
 		t.Errorf("a room post carries a session: %s", text)
 	}
 }
+
+// TestReadChannel_Typing pins AC 20: read_channel shows actions.typing and,
+// with signals, typing_now without the caller's own entry; signals hold no
+// typing entry.
+func TestReadChannel_Typing(t *testing.T) {
+	t.Parallel()
+	f := newChannelFixture(t)
+	f.typeAsBob(t, "REQ-001")
+	if _, err := f.svc.Post(f.asBob(t), realtime.RawAddress{Anchor: "REQ-001", Type: "chat"},
+		realtime.PostInput{Type: "status"}); err != nil {
+		t.Fatal(err)
+	}
+	args := map[string]any{"id": "REQ-001", "channel_type": "chat", "signals": true}
+	var alice struct{ realtime.ReadView }
+	mustCall(t, f.client(t, "alice"), toolReadChannel, args, &alice)
+	if alice.Actions == nil || !alice.Actions.Typing {
+		t.Errorf("alice's actions = %+v, want typing", alice.Actions)
+	}
+	if len(alice.TypingNow) != 1 || alice.TypingNow[0].Author.User != "bob" {
+		t.Errorf("alice's typing_now = %+v, want bob", alice.TypingNow)
+	}
+	if len(alice.Signals) != 1 || alice.Signals[0].Type != "status" {
+		t.Errorf("alice's signals = %+v, want only the status signal", alice.Signals)
+	}
+
+	var bob struct{ realtime.ReadView }
+	mustCall(t, f.client(t, "bob"), toolReadChannel, args, &bob)
+	if len(bob.TypingNow) != 0 {
+		t.Errorf("bob's typing_now = %+v, want his own entry left out", bob.TypingNow)
+	}
+
+	var room struct{ realtime.ReadView }
+	mustCall(t, f.client(t, "alice"), toolReadChannel,
+		map[string]any{"id": "REQ-001", "channel_type": "room"}, &room)
+	if room.Actions == nil || room.Actions.Typing {
+		t.Errorf("room actions = %+v, want no typing", room.Actions)
+	}
+}

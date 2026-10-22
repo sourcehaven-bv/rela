@@ -148,14 +148,20 @@ type Affordances struct {
 	// channel now, in the order close, reopen, archive, delete. Empty for a
 	// cardinality-one channel that holds no message yet.
 	Lifecycle []string `json:"lifecycle"`
+	// Typing reports whether the caller may send typing here now: the type
+	// offers it, the caller may post a log message type and the channel is
+	// open. The rate limit is not part of it.
+	Typing bool `json:"typing"`
 }
 
 // HeadView is a channel's head: its metadata, the last message, the live
-// signals and the caller's affordances.
+// signals, who else is typing and the caller's affordances. TypingNow is
+// never nil.
 type HeadView struct {
 	Channel   ChannelView     `json:"channel"`
 	Last      *MessageView    `json:"last,omitempty"`
 	Ephemeral []EphemeralView `json:"ephemeral"`
+	TypingNow []TypingView    `json:"typing_now"`
 	Actions   Affordances     `json:"actions"`
 }
 
@@ -175,13 +181,14 @@ func (s *Service) Head(ctx context.Context, addr RawAddress) (HeadView, error) {
 			msgs = append(msgs, m)
 		}
 	}
-	sigs := s.local.liveSignals(c.key)
+	sigs, typingNow := s.liveSignals(c)
 	r, err := s.renderer(c, msgs, sigs)
 	if err != nil {
 		return HeadView{}, err
 	}
 	out := HeadView{
-		Channel: channelView(c.ct, c.key, c.head, c.now), Ephemeral: []EphemeralView{}, Actions: c.affordances(),
+		Channel: channelView(c.ct, c.key, c.head, c.now), Ephemeral: []EphemeralView{}, TypingNow: typingNow,
+		Actions: c.affordances(),
 	}
 	if len(msgs) > 0 {
 		v := r.message(msgs[0])
@@ -217,6 +224,7 @@ func (c *call) affordancesWith(post map[string]bool) Affordances {
 		a.EditOwn = c.editGate()
 	}
 	a.DeleteOwn = c.deleteOwnGate()
+	a.Typing = c.typingAllowed()
 	return a
 }
 
@@ -340,6 +348,9 @@ func (s *Service) Post(ctx context.Context, addr RawAddress, in PostInput) (Post
 	if err != nil {
 		return PostResult{}, storeError(err)
 	}
+	// A log post ends the poster's typing entry; the mark below wakes the
+	// readers for both.
+	s.local.typing.clear(c.key, bucketIdentity(c.p))
 	s.local.mark(c.key)
 	v := s.rendererWith(c, refs).message(m)
 	return PostResult{Message: &v, Session: postedSession(c, sp.step)}, nil

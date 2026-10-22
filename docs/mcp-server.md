@@ -487,6 +487,13 @@ give it. `props` is an object that must match the message type's
 `props_schema` from `read_channel`. `signals` and `schemas` default to true
 for a read without a cursor and to false for a read with one.
 
+**Typing.** On a channel type with `typing: true`, `read_channel` shows
+`actions.typing`, which says whether you may type there, and, with signals,
+`typing_now`: who else is typing in the web app. There is no tool to send
+typing. Over stdio `typing_now` is always empty, because typing entries live
+in the rela-server process. A watch with signals wakes when someone starts or
+stops typing, not while they keep typing.
+
 **Untrusted content.** Messages, signal properties, channel titles, removal
 reasons and ref titles are written by other people and agents. Every answer
 that carries such content is one JSON object whose first key is `notice`,

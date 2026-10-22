@@ -1101,6 +1101,9 @@ type Collaborators struct {
 type ChannelCollaborators struct {
 	Store  channels.Store
 	Config realtime.ConfigSource
+	// Local is the process-local channel state. Nil: a new one on the
+	// real clock.
+	Local *realtime.Local
 }
 
 // collaboratorVisibleSearcher returns c.VisibleSearcher, or one derived
@@ -1274,7 +1277,7 @@ func collaboratorRefHolders(
 		}
 		refs.channels = ch.Store
 		refs.channelService, refs.realtimeLocal, err = newRealtimeService(realtimeInputs{
-			meta: c.Meta, worlds: w, config: ch.Config, store: c.Store, channels: ch.Store,
+			meta: c.Meta, worlds: w, config: ch.Config, store: c.Store, channels: ch.Store, local: ch.Local,
 			declarative: c.Declarative, redactor: redactor, writes: c.ACL,
 			// Collaborators carry no entity manager, so nothing promotes.
 			promoter: realtime.NoPromoter{},

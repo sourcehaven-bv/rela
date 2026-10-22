@@ -5,7 +5,9 @@ title: Built-in typing indicator per channel type
 kind: enhancement
 priority: high
 effort: m
-status: backlog
+started: "2026-10-22"
+completed: "2026-10-22"
+status: done
 ---
 
 ## Description

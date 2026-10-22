@@ -230,7 +230,10 @@ func toolReadChannelDef() *mcpgo.Tool {
 			"Page with before, or follow with after_rev (pass next_after_rev back). Watchable: watch it with "+
 			"after_rev to wait for new, edited or removed messages. A channel type with a session shows it on "+
 			"the channel: its state, generation and the message types that move it from here; a move appends "+
-			"a notice of type session. "+realtime.UntrustedNotice),
+			"a notice of type session. A channel type with typing shows, with signals, who else is typing "+
+			"in typing_now, and actions.typing says whether you may type there; there is no tool to type, "+
+			"and typing_now is empty over stdio, because typing entries live in the server process. "+
+			realtime.UntrustedNotice),
 		withNumber(chanAfterRevArg, description("Messages changed after this rev, ordered by rev; 0 is valid")),
 		withNumber("after", description("Messages after this seq, oldest first")),
 		withNumber("before", description("Messages before this seq")),

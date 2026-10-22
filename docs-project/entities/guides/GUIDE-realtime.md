@@ -28,6 +28,7 @@ channel_types:
     label: Incident room
     attach_to: [datalek, incident]
     cardinality: one
+    typing: true
     read: { from: attached }
     roles:
       lead:   { from: entity.owner, label: the incident lead }
@@ -52,7 +53,6 @@ channel_types:
             label: Accept
             permission: incident.decide
             promote_to: { type: decision, map: { title: summary } }
-      typing: { persist: ephemeral, ttl: 5s, rate: 1/s, post: [lead, dpo, member, agent] }
     lifecycle:
       close:   { roles: [lead], auto: { when: "entity.status == 'closed'" } }
       reopen:  { roles: [lead, dpo] }
@@ -83,10 +83,43 @@ triggers:
 | `read` | Who receives the channel. Default: `{ from: attached }`, everyone who can read the entity. Whatever the source, a reader must also be able to read the entity. |
 | `roles` | Named groups of principals, used by every other key. |
 | `message_types` | The kinds of message, at least one. |
+| `typing` | `true` turns on the built-in typing indicator. Default `false`. See Typing indicator. |
 | `lifecycle` | `close`, `reopen`, `archive` and `delete`. An operation you leave out is not offered. Each may have a `label` for its button; without one, the label is the operation's name. |
 | `message_ops` | `edit_own`, `delete_own` and `remove`. |
 | `on_entity_delete` | `detach` (default) keeps the channels, `delete` removes them, `block` refuses to delete an entity that has channels. |
 | `detached_retention` | How long a detached channel is kept before it is erased. A period of at least `1h`; default `30d`. |
+
+### Typing indicator
+
+With `typing: true`, a reader sees who else is typing a message in the
+channel, such as "Ann is typing…". It needs no message type and no other
+setup.
+
+- **Who may send it.** Anyone who may post at least one `log` message type
+  of the channel, while the channel is open. The head's `_actions.typing`
+  says whether the caller may send it now.
+- **Who sees it.** Every reader of the channel, except the typist. Readers
+  see the author and since when they type, in `typing_now`. A closed or
+  archived channel shows nobody.
+- **How long it lasts.** An entry lives for 6 seconds. A client refreshes it
+  at half of that while the user types. A `log` post by the typist ends the
+  entry at once; otherwise the server ends it when the 6 seconds pass.
+- **When readers hear of it.** Readers get a live frame when someone starts
+  typing, when a post ends the entry, and when the server ends it. A refresh
+  sends no frame.
+- **Limits.** One typing call per second per person and channel. Typing
+  calls also count toward the 300 channel writes per minute that one person
+  may make across all channels, posts included. At most 32 people type in
+  one channel and 4096 channels hold typing entries in one process. Past a
+  cap the call gets a 429; no entry is pushed out, and no rate is charged.
+  `signal_rate` does not apply.
+- **What it does not do.** An entry is never stored and never audited, and
+  typing creates no channel. Entries live in the memory of one process,
+  apart from `ephemeral` signals, so the two never take each other's place.
+
+A channel type with `typing: true` cannot also declare a message type
+named `typing`. Without the key, a message type named `typing` works as
+before.
 
 ### When an entity is deleted
 
@@ -192,7 +225,7 @@ client_baselines:
 | Key | Meaning |
 | --- | --- |
 | `label` | The name the web app shows for the type. Without it, the type's name. |
-| `persist` | `log` (default) stores messages. `ephemeral` keeps signals such as typing in memory for `ttl`, at most 60s. |
+| `persist` | `log` (default) stores messages. `ephemeral` keeps signals, such as a status line, in memory for `ttl`, at most 60s. For a typing indicator, use `typing: true` on the channel type. |
 | `properties` | At most 32. Types: `string`, `markdown`, `integer`, `boolean`, `date`, `datetime`, `ref` (with `to:`), or an enum type from `schema.yaml`. `max` limits a string or markdown property in characters (Unicode code points). A property may have a `label`; without one, the label is its name. |
 | `when` | A condition on the `message` record that a post must meet. |
 | `post` | The roles that may post. Receiving needs only `read`. |
@@ -593,6 +626,9 @@ unknown entity type "nope"`. It checks:
   never in a `cardinality: many` type, and a `when` that compiles and does
   not read the entity. A `session` at the top of the file is refused; it
   belongs under a channel type;
+- that a channel type with `typing: true` has at least one `log` message
+  type, and no message type named `typing`. `typing` must be `true` or
+  `false`;
 - that the file has no merge key (`<<`) anywhere: write the entries out.
 
 Three more rules stop a message from revealing what `acl.yaml` hides:
@@ -634,6 +670,12 @@ averages less than `30/m` but allows 1000 posts at once, so it is refused.
 | `channels_per_entity` | 200 per channel type |
 | `page_limit` | 200 |
 
+The typing indicator has fixed limits that the `limits:` block does not
+change: entries live 6 seconds, one call per second per person and channel,
+32 typists per channel and 4096 channels with typing entries per process.
+Typing calls count toward the fixed budget of 300 channel writes per minute
+per person, which posts share.
+
 ## In the web app
 
 The entity page shows a **Channels** section below the comments. It
@@ -666,6 +708,13 @@ A button appears only when you may use it. It is left out, not disabled.
 
 A closed channel shows "This channel is closed." and an archived one "This
 channel is archived."; neither has a composer.
+
+On a channel type with `typing: true`, the app tells the server you are
+typing while you write a `log` message. It does not while you edit a
+message or fill an `ephemeral` type. Other readers see a line under the
+messages, such as "Ann is typing…", "Ann and Bo are typing…" or "Ann, Bo
+and 2 others are typing…". The line disappears when you send, or a few
+seconds after you stop typing.
 
 A `ref` property gets an entity picker that offers only the types in its
 `to:` list. A message that holds a ref you cannot read shows **Restricted
@@ -704,14 +753,16 @@ The data-entry API serves channels under the entity they are attached to.
 | `POST .../{channel}/messages/{seq}/_action/{name}` | Runs an action. The body is empty or `{}`. The answer is `{"message": ..., "warnings": [...]}`. |
 | `DELETE .../{channel}/messages/{seq}/_action` | Releases a pending action. The body is empty or `{}`. The answer is the message. |
 | `POST .../{channel}/_lifecycle/{op}` | Runs `close`, `reopen`, `archive` or `delete`. The body is empty or `{}`. A `delete` gets a 204; the other operations get the channel. |
+| `POST .../{channel}/_typing` | Starts or refreshes the caller's typing entry, on a type with `typing: true`. The body is empty or `{}`. The answer is a 202 with `{"ttl_seconds": 6}`. |
 
 `{channel}` is `_channels/{type}` or `_channels/{type}/{name}`.
 
 `GET /api/v1/_schema/channels` describes the channel types in force, so a
 client can build a composer and label buttons. For each channel type it
 gives the label, the entity types it attaches to, the anchor, the
-cardinality, the `create` label, whether a removal needs a reason, and
-the lifecycle operations with their labels. For each message type it gives
+cardinality, the `create` label, whether a removal needs a reason,
+whether the type offers typing (`typing`), and the lifecycle operations
+with their labels. For each message type it gives
 the label, `persist`, the signal lifetime in seconds for an `ephemeral`
 type, whether a message may reply to another, the actions with their
 labels and the entity type a promote creates, and the properties. Each
@@ -727,6 +778,20 @@ the answer is `{"channel_types": []}`.
 The head's `_actions.lifecycle` lists the lifecycle operations the caller
 may run now. It runs the same checks as the `POST`, except the rate limit.
 A `one` channel that holds no message has no lifecycle operations.
+
+The head's `typing_now` lists who else is typing, oldest first, as
+`[{"author": {...}, "since": "..."}]`. It never lists the caller, and it is
+empty unless the channel is open and its type has `typing: true`. A client
+shows it as it is: the server ends an entry and sends a live frame then, so
+the client needs no clock. `_actions.typing` says whether the caller may
+send typing now.
+
+A typing call checks, in order: that the caller may read the channel (else
+the same 404 as a hidden entity), that the type has `typing: true` (403
+`typing_not_offered`), that the caller may post a `log` message type (403
+`channel_post_denied`, naming `channel_types.<type>.typing`), that the
+channel is open (409), that the typing caps have room (429), and the rate
+limits (429). A call refused before the rate limits is not charged.
 
 A message page takes one cursor:
 
@@ -862,6 +927,12 @@ access is open.
 
 `rela channel` applies `acl.yaml` the same way.
 
+**Typing.** `read_channel` shows `actions.typing` and, with signals,
+`typing_now`. There is no tool to send typing: an agent writes a message in
+one step, so the indicator would show only for an instant. Over stdio
+`typing_now` is always empty, because typing entries live in the server
+process.
+
 **Sessions.** `read_channel` and `list_channels` show a channel's session,
 and `post_message` answers with the session after the post. `rela channel
 read` prints a line such as `session: contained (Contained), generation 1`
@@ -910,6 +981,8 @@ it out of roles that post on channels other agents act on.
   refused, on reload and when the server starts, because the stored
   channels are keyed by the old anchor. Migrating channels to another
   anchor is not supported yet.
+- A reload may turn `typing` on or off. Turning it off hides the live
+  entries at once and refuses new typing calls with `typing_not_offered`.
 - A reload may change a session freely: add or remove states, rename
   `initial`, or drop the `session:` block. A session that never moved
   follows the new `initial`. A channel in a state the new file drops is

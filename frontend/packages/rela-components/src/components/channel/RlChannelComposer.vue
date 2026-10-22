@@ -29,6 +29,12 @@
  * app decides whether to warn that the message changed. The new-message
  * draft and the selected type are put aside for the edit and come back when
  * `editing` is cleared, whether the edit was saved or cancelled.
+ *
+ * It emits `typing` when the user changes a field to a non-empty value while
+ * writing a new message of a `log` type. Picking a ref counts: the field
+ * sends the picked id as its new value. It never emits during an edit or
+ * for an `ephemeral` type, which announces no message to come. The app
+ * decides whether and how often to tell the server.
  */
 import { computed, nextTick, reactive, ref, useTemplateRef, watch } from 'vue'
 import RlButton from '../common/RlButton.vue'
@@ -98,6 +104,7 @@ const emit = defineEmits<{
   save: [event: ChannelEditEvent]
   cancelReply: []
   cancelEdit: []
+  typing: []
 }>()
 
 const messages = useMessages()
@@ -206,6 +213,7 @@ function setValue(name: string, v: ChannelFieldValue) {
   const type = current.value
   if (!type) return
   ;(drafts[type.name] ??= seeded(type))[name] = v
+  if (!props.editing && type.persist === 'log' && !isEmpty(v)) emit('typing')
   if (localErrors.value[name]) {
     const { [name]: _, ...rest } = localErrors.value
     localErrors.value = rest

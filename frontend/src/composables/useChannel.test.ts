@@ -49,7 +49,15 @@ function headOf(over: Partial<Channel> = {}): ChannelHead {
   return {
     channel: channel(over),
     ephemeral: [],
-    _actions: { post: ['text'], edit_own: true, delete_own: true, remove: false, lifecycle: [] },
+    typing_now: [],
+    _actions: {
+      post: ['text'],
+      edit_own: true,
+      delete_own: true,
+      remove: false,
+      lifecycle: [],
+      typing: false,
+    },
   }
 }
 

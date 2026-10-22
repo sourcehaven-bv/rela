@@ -12,10 +12,12 @@ import (
 	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
+	v1 "github.com/Sourcehaven-BV/rela/internal/apiwire/v1"
 	"github.com/Sourcehaven-BV/rela/internal/channels"
 	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/realtime"
+	"github.com/Sourcehaven-BV/rela/internal/realtimelimits"
 )
 
 // Live channel delivery (TKT-ZU7P13). The channel head and the channel
@@ -359,5 +361,91 @@ func TestChannelKeyTopics(t *testing.T) {
 	}
 	if got[0] != topicChannel+k.String() {
 		t.Fatalf("head topic %q does not follow channels.Key.String %q", got[0], k.String())
+	}
+}
+
+// AC 18: typing frames a reader's head once when it starts and once when
+// it expires; refreshes within the TTL frame nothing. The channel state
+// runs on a test clock, so the test moves time instead of sleeping. The
+// expiry is seen by the next Take, which any wake starts; here bob starting
+// to type on TKT-2, then alice, are those wakes. The expiry timer is pinned in
+// internal/realtime (TestTyping_TimerWakes).
+func TestLive_TypingFrames(t *testing.T) {
+	clock := newFakeClock()
+	local, err := realtime.NewLocal(clock.Now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	env := newChannelEnvLocal(t, channelPolicy, nil, local)
+	alice, conn := env.open(t, "alice")
+	env.subscribe(t, "alice", conn, liveSubEntry{"head", chatPath})
+	liveDrain(alice)
+
+	typeAt := func(user, path string) {
+		t.Helper()
+		if resp, b := env.do(t, user, http.MethodPost, path+"/_typing", "", nil); resp.StatusCode != http.StatusAccepted {
+			t.Fatalf("typing = %d %s", resp.StatusCode, b)
+		}
+	}
+	typeAt("bob", chatPath)
+	requireChanged(t, alice, "head")
+	for range 2 {
+		clock.advance(realtimelimits.TypingRate.Per)
+		typeAt("bob", chatPath)
+		liveQuiet(t, alice)
+	}
+
+	clock.advance(realtimelimits.TypingTTL - time.Millisecond)
+	typeAt("bob", "/api/v1/tickets/TKT-2/_channels/chat")
+	liveQuiet(t, alice)
+	if code, b := env.get(t, "alice", chatPath); code != http.StatusOK ||
+		len(decodeAs[v1.ChannelHead](t, b).TypingNow) != 1 {
+
+		t.Fatalf("head before the deadline = %d %s, want bob typing", code, b)
+	}
+
+	clock.advance(time.Millisecond)
+	typeAt("alice", "/api/v1/tickets/TKT-2/_channels/chat")
+	requireChanged(t, alice, "head")
+	liveQuiet(t, alice)
+	if code, b := env.get(t, "alice", chatPath); code != http.StatusOK ||
+		len(decodeAs[v1.ChannelHead](t, b).TypingNow) != 0 {
+
+		t.Fatalf("head after expiry = %d %s, want no typing_now", code, b)
+	}
+}
+
+// AC 18: a realtime.yaml reload that turns typing off runs the full round,
+// and the reader's next head lists nobody typing.
+func TestLive_TypingReloadRound(t *testing.T) {
+	env := newChannelEnv(t)
+	alice, conn := env.open(t, "alice")
+	env.subscribe(t, "alice", conn, liveSubEntry{"head", chatPath})
+	liveDrain(alice)
+	if resp, b := env.do(t, "bob", http.MethodPost, chatPath+"/_typing", "", nil); resp.StatusCode != http.StatusAccepted {
+		t.Fatalf("typing = %d %s", resp.StatusCode, b)
+	}
+	requireChanged(t, alice, "head")
+
+	off := strings.Replace(channelTestRealtime,
+		"    attach_to: [ticket, feature]\n    typing: true\n", "    attach_to: [ticket, feature]\n", 1)
+	if off == channelTestRealtime {
+		t.Fatal("chat's typing: was not removed")
+	}
+	next := env.ch.parse(t, off)
+	if err := env.app.fs.WriteFile(env.app.paths.Root+"/"+ConfigFile, []byte(testReloadConfigYAML), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := SetRealtime(env.app, reloaderFunc(func() { env.ch.cfg.Store(next) })); err != nil {
+		t.Fatal(err)
+	}
+	if err := reloadRealtime(env.app); err != nil {
+		t.Fatal(err)
+	}
+	requireChanged(t, alice, "head")
+	code, b := env.get(t, "alice", chatPath)
+	head := decodeAs[v1.ChannelHead](t, b)
+	if code != http.StatusOK || len(head.TypingNow) != 0 || head.Actions.Typing {
+		t.Fatalf("head after the reload = %d %s, want no typing_now and no typing action", code, b)
 	}
 }

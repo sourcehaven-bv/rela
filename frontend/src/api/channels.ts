@@ -12,6 +12,7 @@ import type {
   MessageActionResponse,
   MessagePage,
   MessagePropInput,
+  TypingAccepted,
 } from '@/types/channels'
 
 /**
@@ -165,6 +166,14 @@ export async function runLifecycle(t: ChannelTarget, op: string): Promise<Channe
     .getAxios()
     .post<Channel | ''>(`${channelPath(t)}/_lifecycle/${encodeURIComponent(op)}`, {})
   return res.status === 204 || !res.data ? null : res.data
+}
+
+/**
+ * POST that the caller is typing in the channel: starts or refreshes their
+ * typing entry. It never creates a channel.
+ */
+export async function sendTyping(t: ChannelTarget): Promise<TypingAccepted> {
+  return api.post<TypingAccepted>(`${channelPath(t)}/_typing`, {})
 }
 
 /** POST a new channel of a cardinality `many` channel type. */

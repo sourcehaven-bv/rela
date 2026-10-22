@@ -118,9 +118,10 @@ func wireHead(h realtime.HeadView) v1.ChannelHead {
 	out := v1.ChannelHead{
 		Channel:   wireChannel(h.Channel),
 		Ephemeral: make([]v1.EphemeralMessage, 0, len(h.Ephemeral)),
+		TypingNow: make([]v1.TypingEntry, 0, len(h.TypingNow)),
 		Actions: v1.ChannelActions{
 			Post: h.Actions.Post, EditOwn: h.Actions.EditOwn, DeleteOwn: h.Actions.DeleteOwn,
-			Remove: h.Actions.Remove, Lifecycle: h.Actions.Lifecycle,
+			Remove: h.Actions.Remove, Lifecycle: h.Actions.Lifecycle, Typing: h.Actions.Typing,
 		},
 	}
 	if out.Actions.Post == nil {
@@ -138,6 +139,12 @@ func wireHead(h realtime.HeadView) v1.ChannelHead {
 			ID: e.ID, Type: e.Type,
 			Author: v1.ChannelAuthor{User: e.Author.User, Tool: e.Author.Tool, PrincipalType: e.Author.PrincipalType},
 			At:     channelTime(e.At), ExpiresAt: channelTime(e.ExpiresAt), Props: wireProps(e.Props),
+		})
+	}
+	for _, e := range h.TypingNow {
+		out.TypingNow = append(out.TypingNow, v1.TypingEntry{
+			Author: v1.ChannelAuthor{User: e.Author.User, Tool: e.Author.Tool, PrincipalType: e.Author.PrincipalType},
+			Since:  channelTime(e.Since),
 		})
 	}
 	return out

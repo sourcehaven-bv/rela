@@ -14,16 +14,17 @@ import (
 )
 
 // Local is the process-local state of the channel service: the ephemeral
-// signals, the rate-limit buckets, the change sets of live subscribers and
+// signals, the typing entries, the rate-limit buckets, the change sets of live subscribers and
 // the channel types already recorded in the store. Services rebuilt over
 // one store share it, so a schema reload neither resets anyone's rate limit
 // nor drops live signals or subscribers.
 //
 // It is also an alias subscriber: a deleted or renamed entity takes its
-// signals and rate buckets with it.
+// signals, typing entries and rate buckets with it.
 type Local struct {
 	clock     Clock
 	ephemeral *ephemeralStore
+	typing    *typingStore
 	limiter   *limiter
 
 	subMu sync.Mutex
@@ -70,6 +71,7 @@ func newLocal(clock Clock, lim ephemeralLimits, caps limitCaps) (*Local, error) 
 	return &Local{
 		clock:     clock,
 		ephemeral: newEphemeralStore(lim),
+		typing:    defaultTypingStore(),
 		limiter:   newLimiter(caps),
 		subs:      map[*Subscription]struct{}{},
 		recorded:  map[string]channels.TypeRecord{},
@@ -173,15 +175,21 @@ func (l *Local) mark(keys ...channels.Key) {
 	}
 }
 
-// expire drops expired signals and marks their channels changed.
+// expire drops expired signals and typing entries and marks their
+// channels changed.
 func (l *Local) expire() {
-	l.mark(l.ephemeral.sweep(l.clock())...)
+	now := l.clock()
+	l.mark(l.ephemeral.sweep(now)...)
+	l.mark(l.typing.sweep(now)...)
 }
 
-// scheduleExpiry arms the timer for the earliest signal expiry, so a
-// subscriber hears about an expiry without polling.
+// scheduleExpiry arms the timer for the earliest signal expiry or typing
+// deadline, so a subscriber hears about an expiry without polling.
 func (l *Local) scheduleExpiry() {
 	next, ok := l.ephemeral.nextExpiry()
+	if deadline, held := l.typing.nextDeadline(); held && (!ok || deadline.Before(next)) {
+		next, ok = deadline, true
+	}
 	if !ok {
 		return
 	}
@@ -218,19 +226,22 @@ func (l *Local) Stop() {
 	}
 }
 
-// dropAnchor forgets the signals and rate buckets of the channels of id, or
-// only those anchored to face when face is non-empty.
+// dropAnchor forgets the signals, typing entries and rate buckets of the
+// channels of id, or only those anchored to face when face is non-empty.
 func (l *Local) dropAnchor(id string, face entity.Face) {
 	l.limiter.dropAnchor(id, face)
 	l.mark(l.ephemeral.dropAnchor(id, face)...)
+	l.mark(l.typing.dropAnchor(id, face)...)
 }
 
 // EntityRenamed moves the rate buckets of the channels of oldID to newID,
 // where the stored channels move, so a rename does not refill anyone's
-// per-channel tokens. The live signals of oldID are dropped.
+// per-channel tokens. The live signals and typing entries of oldID are
+// dropped.
 func (l *Local) EntityRenamed(_ context.Context, oldID, newID string) error {
 	l.limiter.rekey(oldID, newID)
 	l.mark(l.ephemeral.dropAnchor(oldID, "")...)
+	l.mark(l.typing.dropAnchor(oldID, "")...)
 	return nil
 }
 

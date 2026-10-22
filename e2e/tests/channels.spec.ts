@@ -70,6 +70,25 @@ test.describe("channels", () => {
     await alice.expectMessage("Works for me");
   });
 
+  test("a reader sees who is typing until they send", async ({ as }) => {
+    const alice = await as(CHANNEL_USERS.lead);
+    const bob = await as(CHANNEL_USERS.member);
+    for (const p of [alice, bob]) {
+      await p.openEntity("feature", FEATURE);
+      await p.expectChannel(ROOM.label);
+    }
+    await alice.expectNoTyping();
+
+    await bob.draft("Almost done");
+    await alice.expectTyping(`${CHANNEL_USERS.member} is typing…`);
+    // The typist does not see themselves.
+    await bob.expectNoTyping();
+
+    await bob.post("Almost done");
+    await alice.expectMessage("Almost done");
+    await alice.expectNoTyping();
+  });
+
   test("a closed channel takes no posts", async ({ as }) => {
     const alice = await as(CHANNEL_USERS.lead);
     const bob = await as(CHANNEL_USERS.member);

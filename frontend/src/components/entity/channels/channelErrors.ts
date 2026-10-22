@@ -68,6 +68,8 @@ export const CHANNEL_ERROR_RULES: Readonly<Record<string, ChannelErrorRule>> = {
   lifecycle_not_offered: REFETCH,
   lifecycle_denied: REFETCH,
   action_not_offered: REFETCH,
+  // useTyping never shows a typing refusal; the rule keeps the map complete.
+  typing_not_offered: REFETCH,
   action_denied: REFETCH,
   promote_denied: REFETCH,
   // The channel or message is not in the state the request needs.

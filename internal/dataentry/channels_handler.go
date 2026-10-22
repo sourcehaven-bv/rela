@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"slices"
 	"strconv"
+	"time"
 
 	v1 "github.com/Sourcehaven-BV/rela/internal/apiwire/v1"
 	"github.com/Sourcehaven-BV/rela/internal/channels"
@@ -23,6 +24,7 @@ const (
 	messagesSegment  = "messages"
 	lifecycleSegment = "_lifecycle"
 	actionSegment    = "_action"
+	typingSegment    = "_typing"
 	// messageRouteDepth is the most segments a message route has:
 	// messages/{seq}/_action/{name}.
 	messageRouteDepth = 4
@@ -32,9 +34,9 @@ const (
 	channelBodyLimit = realtimelimits.MaxMessageBytes + 1<<10
 )
 
-// The channel routes use the channel service through four narrow
+// The channel routes use the channel service through five narrow
 // capabilities, one per kind of route. The wiring site passes the
-// project's *realtime.Service for all four; it authorizes every
+// project's *realtime.Service for all five; it authorizes every
 // operation itself.
 
 // channelReader serves the read routes: the list, the head and the pages.
@@ -65,6 +67,11 @@ type channelWriter interface {
 	Lifecycle(ctx context.Context, addr realtime.RawAddress, op string) (realtime.ChannelView, error)
 }
 
+// channelTypist serves the typing route.
+type channelTypist interface {
+	Typing(ctx context.Context, addr realtime.RawAddress) (realtime.TypingResult, error)
+}
+
 // realtimeSwitch reports whether realtime is on now. *realtime.Service
 // satisfies it.
 type realtimeSwitch interface {
@@ -84,9 +91,10 @@ type realtimeSwitch interface {
 //	POST   …/messages/{seq}/_action/{name}                      run an action
 //	DELETE …/messages/{seq}/_action                             release a pending action
 //	POST   …/_channels/{type}[/{name}]/_lifecycle/{op}         close, reopen, archive, delete
+//	POST   …/_channels/{type}[/{name}]/_typing                 typing (202)
 //
-// Parsing is structural: after the type, `messages` and `_lifecycle` are
-// subresources wherever they stand, and can never be a channel name,
+// Parsing is structural: after the type, `messages`, `_lifecycle` and
+// `_typing` are subresources wherever they stand, and can never be a channel name,
 // because names are minted as 13 base36 digits. The service decides by cardinality whether a name belongs.
 //
 // A nil *channelsHandler is "channels not wired": every route answers the
@@ -96,6 +104,7 @@ type channelsHandler struct {
 	messageOps messageWriter
 	actions    messageActor
 	channels   channelWriter
+	typist     channelTypist
 	// on answers whether realtime is on; see [channelsHandler.serve].
 	on realtimeSwitch
 	// changes subscribes the live worker to channel changes.
@@ -115,7 +124,7 @@ func SetChannels(a *App, svc *realtime.Service) error {
 		return errors.New("dataentry: SetChannels requires a channel service")
 	}
 	a.channels = &channelsHandler{
-		read: svc, messageOps: svc, actions: svc, channels: svc,
+		read: svc, messageOps: svc, actions: svc, channels: svc, typist: svc,
 		on:       svc,
 		changes:  func() channelChanges { return svc.Subscribe() },
 		describe: svc,
@@ -156,6 +165,8 @@ type channelRoute struct {
 	// set for …/messages/{seq}/_action.
 	action  string
 	release bool
+	// typing is set for …/_typing.
+	typing bool
 }
 
 // serve answers every route under /api/v1/{plural}/{ref}/_channels. rest
@@ -179,6 +190,10 @@ func (h *channelsHandler) serve(w http.ResponseWriter, r *http.Request, typeName
 		return
 	}
 	switch {
+	case rt.typing:
+		if allowMethod(w, r, http.MethodPost) {
+			h.typing(w, r, rt)
+		}
 	case rt.lifecycle != "":
 		if allowMethod(w, r, http.MethodPost) {
 			h.runLifecycle(w, r, rt)
@@ -230,20 +245,23 @@ func methodNotAllowed(w http.ResponseWriter, r *http.Request, allow string) {
 	writeV1Error(w, r, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed", "")
 }
 
-// parseChannelRoute parses {type}[/{name}][/messages[/{seq}[/_action[/{name}]]]]
-// and {type}[/{name}]/_lifecycle/{op}. It reports false for any other shape,
-// including an op that is no lifecycle operation.
+// parseChannelRoute parses {type}[/{name}][/messages[/{seq}[/_action[/{name}]]]],
+// {type}[/{name}]/_lifecycle/{op} and {type}[/{name}]/_typing. It reports
+// false for any other shape, including an op that is no lifecycle
+// operation.
 func parseChannelRoute(typeName, ref string, rest []string) (channelRoute, bool) {
 	if slices.Contains(rest, "") {
 		return channelRoute{}, false
 	}
 	rt := channelRoute{addr: realtime.RawAddress{EntityType: typeName, Anchor: ref, Type: rest[0]}}
 	tail := rest[1:]
-	if len(tail) > 0 && tail[0] != messagesSegment && tail[0] != lifecycleSegment {
+	if len(tail) > 0 && tail[0] != messagesSegment && tail[0] != lifecycleSegment && tail[0] != typingSegment {
 		rt.addr.Name, tail = tail[0], tail[1:]
 	}
 	switch {
 	case len(tail) == 0:
+	case len(tail) == 1 && tail[0] == typingSegment:
+		rt.typing = true
 	case len(tail) == 2 && tail[0] == lifecycleSegment:
 		if !realtime.IsLifecycleOp(tail[1]) {
 			return channelRoute{}, false
@@ -440,6 +458,21 @@ func (h *channelsHandler) runLifecycle(w http.ResponseWriter, r *http.Request, r
 		return
 	}
 	writeV1JSON(w, http.StatusOK, wireChannel(got))
+}
+
+// typing serves POST …/_typing. The body is empty or `{}`. It answers 202
+// with how long the entry stays live without another call.
+func (h *channelsHandler) typing(w http.ResponseWriter, r *http.Request, rt channelRoute) {
+	var req struct{}
+	if !decodeChannelBody(w, r, &req, true) {
+		return
+	}
+	got, err := h.typist.Typing(r.Context(), rt.addr)
+	if err != nil {
+		writeChannelError(w, r, err)
+		return
+	}
+	writeV1JSON(w, http.StatusAccepted, v1.TypingAccepted{TTLSeconds: int(got.TTL / time.Second)})
 }
 
 // runAction serves POST …/messages/{seq}/_action/{name}. The body is empty

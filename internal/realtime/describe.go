@@ -28,6 +28,8 @@ type ChannelTypeView struct {
 	// when unset.
 	CreateLabel          string
 	RemoveReasonRequired bool
+	// Typing reports whether the type offers the built-in typing indicator.
+	Typing bool
 	// Lifecycle lists the declared lifecycle operations in the order of
 	// [realtimecfg.LifecycleOpNames].
 	Lifecycle    []LabeledName
@@ -94,7 +96,8 @@ func (s *Service) Describe() []ChannelTypeView {
 func describeChannelType(ct realtimecfg.ChannelType) ChannelTypeView {
 	v := ChannelTypeView{
 		Name: ct.Name, Label: ct.Label, AttachTo: slices.Clone(ct.AttachTo), Anchor: string(ct.Anchor),
-		Cardinality: string(ct.Cardinality), Lifecycle: []LabeledName{}, MessageTypes: []MessageTypeDescription{},
+		Cardinality: string(ct.Cardinality), Typing: ct.Typing, Lifecycle: []LabeledName{},
+		MessageTypes: []MessageTypeDescription{},
 	}
 	if ct.Create != nil {
 		v.CreateLabel = ct.Create.Label

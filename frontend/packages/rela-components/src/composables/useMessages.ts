@@ -284,6 +284,12 @@ export interface Messages {
    * are set when exactly one arrived.
    */
   channelNewMessages: (args: { count: number; type?: string; author?: string }) => string
+  /**
+   * Who else is typing in a channel: `Ann is typing…`, `Ann and Bo are
+   * typing…`, `Ann, Bo and 1 other are typing…`. `names` holds at most two
+   * names; `others` counts the typists beyond them.
+   */
+  channelTyping: (args: { names: string[]; others: number }) => string
   /** The channel components' fixed captions; see `ChannelTextKey`. */
   channelText: (args: { key: ChannelTextKey }) => string
 }
@@ -367,6 +373,13 @@ export const DEFAULT_MESSAGES: Messages = {
   channelTooLong: ({ max }) => `At most ${max} characters.`,
   channelNewMessages: ({ count, type, author }) =>
     count === 1 && type ? `${type}${author ? ` from ${author}` : ''}` : `${count} new messages`,
+  channelTyping: ({ names, others }) => {
+    if (others > 0) {
+      return `${names.join(', ')} and ${others} ${others === 1 ? 'other' : 'others'} are typing…`
+    }
+    if (names.length === 1) return `${names[0]} is typing…`
+    return `${names.join(' and ')} are typing…`
+  },
   channelText: ({ key }) => CHANNEL_TEXT[key],
 }
 

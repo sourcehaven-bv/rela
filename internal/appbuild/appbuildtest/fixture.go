@@ -156,7 +156,16 @@ func WithComments(svc *comments.Service) Option {
 // ref reads go through the gated reader the bundle's ACL builds, so a test
 // sees what a deployment with the same ACL sees.
 func WithChannels(cs channels.Store, cfg realtime.ConfigSource) Option {
-	return func(c *testConfig) { c.channels = &appbuild.ChannelCollaborators{Store: cs, Config: cfg} }
+	return WithChannelsLocal(cs, cfg, nil)
+}
+
+// WithChannelsLocal is [WithChannels] over the process-local state local,
+// such as one on a test clock. Nil: a new one on the
+// real clock.
+func WithChannelsLocal(cs channels.Store, cfg realtime.ConfigSource, local *realtime.Local) Option {
+	return func(c *testConfig) {
+		c.channels = &appbuild.ChannelCollaborators{Store: cs, Config: cfg, Local: local}
+	}
 }
 
 // WithDeclarative wires the concrete *acl.Declarative as both the ACL

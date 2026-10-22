@@ -53,3 +53,13 @@ func TestRate_AtMostAndString(t *testing.T) {
 		}
 	}
 }
+
+// TestTypingLimits pins that the typing numbers stay inside the signal caps.
+func TestTypingLimits(t *testing.T) {
+	if TypingTTL > MaxEphemeralTTL {
+		t.Errorf("TypingTTL %v exceeds MaxEphemeralTTL %v", TypingTTL, MaxEphemeralTTL)
+	}
+	if !TypingRate.AtMost(DefaultEphemeralRate) {
+		t.Errorf("TypingRate %v exceeds DefaultEphemeralRate %v", TypingRate, DefaultEphemeralRate)
+	}
+}

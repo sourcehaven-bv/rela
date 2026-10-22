@@ -10,7 +10,8 @@
         "text",
         "typing"
       ],
-      "remove": false
+      "remove": false,
+      "typing": false
     },
     "channel": {
       "anchor": "TKT-1",
@@ -43,11 +44,26 @@
       },
       "rev": 8,
       "seq": 5
-    }
+    },
+    "typing_now": []
   },
   "list": {
     "anchor": "TKT-1",
     "types": [
+      {
+        "cardinality": "one",
+        "channels": [],
+        "create": false,
+        "label": "briefing",
+        "type": "briefing"
+      },
+      {
+        "cardinality": "one",
+        "channels": [],
+        "create": false,
+        "label": "chat",
+        "type": "chat"
+      },
       {
         "cardinality": "one",
         "channels": [
@@ -226,6 +242,92 @@
           "ticket"
         ],
         "cardinality": "one",
+        "label": "briefing",
+        "lifecycle": [],
+        "message_types": [
+          {
+            "actions": [],
+            "label": "note",
+            "name": "note",
+            "persist": "log",
+            "properties": [
+              {
+                "label": "body",
+                "name": "body",
+                "type": "string"
+              }
+            ],
+            "reply": true
+          }
+        ],
+        "name": "briefing",
+        "remove_reason_required": false,
+        "typing": true
+      },
+      {
+        "anchor": "family",
+        "attach_to": [
+          "ticket",
+          "feature"
+        ],
+        "cardinality": "one",
+        "label": "chat",
+        "lifecycle": [
+          {
+            "label": "close",
+            "name": "close"
+          }
+        ],
+        "message_types": [
+          {
+            "actions": [],
+            "label": "notice",
+            "name": "notice",
+            "persist": "log",
+            "properties": [
+              {
+                "label": "body",
+                "name": "body",
+                "type": "string"
+              }
+            ],
+            "reply": true
+          },
+          {
+            "actions": [],
+            "label": "status",
+            "name": "status",
+            "persist": "ephemeral",
+            "properties": [],
+            "reply": false,
+            "ttl_seconds": 30
+          },
+          {
+            "actions": [],
+            "label": "text",
+            "name": "text",
+            "persist": "log",
+            "properties": [
+              {
+                "label": "body",
+                "name": "body",
+                "required": true,
+                "type": "string"
+              }
+            ],
+            "reply": true
+          }
+        ],
+        "name": "chat",
+        "remove_reason_required": false,
+        "typing": true
+      },
+      {
+        "anchor": "family",
+        "attach_to": [
+          "ticket"
+        ],
+        "cardinality": "one",
         "label": "incident",
         "lifecycle": [],
         "message_types": [
@@ -245,7 +347,8 @@
           }
         ],
         "name": "incident",
-        "remove_reason_required": false
+        "remove_reason_required": false,
+        "typing": false
       },
       {
         "anchor": "family",
@@ -329,7 +432,8 @@
           }
         ],
         "name": "room",
-        "remove_reason_required": false
+        "remove_reason_required": false,
+        "typing": false
       },
       {
         "anchor": "family",
@@ -356,7 +460,8 @@
           }
         ],
         "name": "secret",
-        "remove_reason_required": false
+        "remove_reason_required": false,
+        "typing": false
       },
       {
         "anchor": "family",
@@ -388,7 +493,8 @@
           }
         ],
         "name": "threads",
-        "remove_reason_required": false
+        "remove_reason_required": false,
+        "typing": false
       },
       {
         "anchor": "family",
@@ -415,7 +521,8 @@
           }
         ],
         "name": "topics",
-        "remove_reason_required": false
+        "remove_reason_required": false,
+        "typing": false
       }
     ]
   },
@@ -427,7 +534,8 @@
       "post": [
         "contained"
       ],
-      "remove": false
+      "remove": false,
+      "typing": false
     },
     "channel": {
       "anchor": "TKT-1",
@@ -467,7 +575,8 @@
       "seq": 2,
       "triggered_by": "session:incident",
       "type": "session"
-    }
+    },
+    "typing_now": []
   },
   "session_messages": {
     "channel": {
@@ -523,5 +632,38 @@
     ],
     "next_after_rev": 2,
     "next_before": 1
+  },
+  "typing_accepted": {
+    "ttl_seconds": 6
+  },
+  "typing_head": {
+    "_actions": {
+      "delete_own": false,
+      "edit_own": false,
+      "lifecycle": [],
+      "post": [
+        "status",
+        "text"
+      ],
+      "remove": false,
+      "typing": true
+    },
+    "channel": {
+      "anchor": "TKT-1",
+      "last_seq": 0,
+      "rev": 0,
+      "state": "open",
+      "type": "chat"
+    },
+    "ephemeral": [],
+    "typing_now": [
+      {
+        "author": {
+          "tool": "data-entry",
+          "user": "bob"
+        },
+        "since": "2026-01-02T03:04:05Z"
+      }
+    ]
   }
 }

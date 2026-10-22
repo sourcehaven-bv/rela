@@ -24,6 +24,8 @@ const (
 	refPropSchema      = "RefProp"
 	ephemeralSchema    = "EphemeralMessage"
 	ephemeralAccSchema = "EphemeralAccepted"
+	typingAccSchema    = "TypingAccepted"
+	typingEntrySchema  = "TypingEntry"
 	channelAuthorRef   = "ChannelAuthor"
 	actionAnswerSchema = "MessageActionResponse"
 	descriptorSchema   = "ChannelSchema"
@@ -91,12 +93,14 @@ func addChannelDescriptorSchema(spec *Spec) {
 		"create_label": {Type: "string",
 			Description: "create.label of a cardinality many type; absent when not set"},
 		"remove_reason_required": b(),
+		"typing": {Type: "boolean",
+			Description: "Whether the type offers the built-in typing indicator (POST …/_typing)"},
 		"lifecycle": {Type: "array", Items: labeled(nil),
 			Description: "The declared lifecycle operations, in the order close, reopen, archive, delete"},
 		"message_types": ArraySchema(messageType),
 	})
 	channelType.Required = append(channelType.Required,
-		"attach_to", "anchor", "cardinality", "remove_reason_required", "lifecycle", "message_types")
+		"attach_to", "anchor", "cardinality", "remove_reason_required", "typing", "lifecycle", "message_types")
 	spec.Components.Schemas[descriptorSchema] = ObjectSchema(map[string]*Schema{
 		"channel_types": ArraySchema(channelType),
 	}, []string{"channel_types"})
@@ -247,6 +251,7 @@ func addChannelTypePaths(spec *Spec, basePath, typeName, tag string, ct realtime
 		},
 	}
 	addLifecyclePaths(spec, headPath, opID, tag, params, ct.Lifecycle)
+	addTypingPath(spec, headPath, opID, tag, params, ct)
 	addActionPaths(spec, headPath+"/messages/{seq}", opID, tag, seqParams, ct)
 }
 
@@ -310,6 +315,33 @@ func addActionPaths(spec *Spec, msgPath, opID, tag string, params []Parameter, c
 			RequestBody: &RequestBody{Content: jsonContent(body)},
 			Responses: channelResponses("200", "The message without its action", Ref(messageSchema),
 				"400", "403", "404", "409", "413", "429"),
+		},
+	}
+}
+
+// addTypingPath adds `POST …/_typing` when ct has typing: true. The body
+// is empty or `{}`.
+func addTypingPath(spec *Spec, headPath, opID, tag string, params []Parameter, ct realtimecfg.ChannelType) {
+	if !ct.Typing {
+		return
+	}
+	// The server decodes the body strictly into an empty object.
+	body := ObjectSchema(map[string]*Schema{}, nil)
+	body.AdditionalProperties = &Schema{Not: &Schema{}}
+	spec.Paths[headPath+"/_typing"] = PathItem{
+		Parameters: params,
+		Post: &Operation{
+			OperationID: "typing" + opID,
+			Summary:     "Say that you are typing",
+			Description: "Starts or refreshes your typing entry, which other readers see in the head's " +
+				"`typing_now`. It lives for ttl_seconds; refresh it at half of that while you type. A log post " +
+				"ends it. It is never stored and creates no channel. Needs a post role of a log message type " +
+				"and an open channel; offered in the head's `_actions.typing`. Rate limited to " +
+				realtimelimits.TypingRate.String() + " per channel.",
+			Tags:        []string{tag},
+			RequestBody: &RequestBody{Content: jsonContent(body)},
+			Responses: withResponse(channelErrors("400", "403", "404", "409", "413", "429"),
+				"202", Response{Description: "The typing entry is live", Content: jsonContent(Ref(typingAccSchema))}),
 		},
 	}
 }
@@ -552,15 +584,33 @@ func addChannelSchemas(spec *Spec) {
 	sc[ephemeralAccSchema] = ObjectSchema(map[string]*Schema{
 		"id": str(), "expires_at": dateTimeSchema(),
 	}, []string{"id", "expires_at"})
+	addHeadSchemas(sc)
+}
+
+// addHeadSchemas adds the ChannelHead schema and the typing schemas it and
+// the typing route use.
+func addHeadSchemas(sc map[string]*Schema) {
+	str, b := StringSchema, BooleanSchema
+	sc[typingAccSchema] = ObjectSchema(map[string]*Schema{
+		"ttl_seconds": {Type: "integer", Description: "How long the entry lives without another call"},
+	}, []string{"ttl_seconds"})
+	sc[typingEntrySchema] = ObjectSchema(map[string]*Schema{
+		"author": Ref(channelAuthorRef),
+		"since":  {Type: "string", Format: "date-time", Description: "When they started; a refresh keeps it"},
+	}, []string{"author", "since"})
 	sc[channelHeadSchema] = ObjectSchema(map[string]*Schema{
 		"channel":   Ref(channelSchema),
 		"last":      Ref(messageSchema),
 		"ephemeral": ArraySchema(Ref(ephemeralSchema)),
+		"typing_now": {Type: "array", Items: Ref(typingEntrySchema),
+			Description: "Who else is typing, by since. Empty unless the channel is open and its type offers " +
+				"typing; never lists you. The server expires entries and frames the head then."},
 		"_actions": ObjectSchema(map[string]*Schema{
 			"post": ArraySchema(str()), "edit_own": b(), "delete_own": b(), "remove": b(),
 			"lifecycle": ArraySchema(str()),
-		}, []string{"post", "edit_own", "delete_own", "remove", "lifecycle"}),
-	}, []string{"channel", "ephemeral", "_actions"})
+			"typing":    {Type: "boolean", Description: "Whether you may POST …/_typing now"},
+		}, []string{"post", "edit_own", "delete_own", "remove", "lifecycle", "typing"}),
+	}, []string{"channel", "ephemeral", "typing_now", "_actions"})
 }
 
 // channelSessionSchema is the ChannelSession schema.
