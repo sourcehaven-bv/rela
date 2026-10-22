@@ -11,6 +11,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
+	"github.com/Sourcehaven-BV/rela/internal/principal"
 	"github.com/Sourcehaven-BV/rela/internal/statemachine"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/store/memstore"
@@ -75,6 +76,11 @@ relations:
     from: [task]
     to: [status]
     max_outgoing: 2
+  ordered_status:
+    from: [task]
+    to: [status]
+    max_outgoing: 1
+    orderable: outgoing
   cites:
     scope: content
     from: [doc]
@@ -485,5 +491,87 @@ func TestReplaceRelations_ContentScopeCountsPerFace(t *testing.T) {
 	slices.Sort(got)
 	if !slices.Equal(got, []string{"draft>S-3", "published>S-2"}) {
 		t.Errorf("edges = %v, want [draft>S-3 published>S-2]", got)
+	}
+}
+
+// TestReplaceRelations_TolerateTypeMismatch pins GitHub #1806 for the bounded
+// path: a create with TolerateTypeMismatch is written in the replace, gets its
+// managed order, is audited with its principal, and still counts against the
+// bound. Without the flag the replace fails and changes nothing.
+func TestReplaceRelations_TolerateTypeMismatch(t *testing.T) {
+	const rel = "ordered_status"
+	who := principal.Principal{User: "alice", Tool: principal.ToolDataEntry}
+	tests := []struct {
+		name     string
+		tolerate bool
+		removes  []entity.RelationKey
+		wantErr  func(error) bool // nil: the replace succeeds
+		want     []string         // ordered_status edges of T-1 afterwards
+	}{
+		{
+			name: "tolerated mismatch re-points", tolerate: true,
+			removes: []entity.RelationKey{key("T-1", rel, "S-1")}, want: []string{"T-2"},
+		},
+		{
+			name: "tolerated mismatch still counts against the bound", tolerate: true,
+			wantErr: func(err error) bool { return errors.Is(err, entitymanager.ErrCardinalityExceeded) },
+			want:    []string{"S-1"},
+		},
+		{
+			name: "mismatch without flag fails", removes: []entity.RelationKey{key("T-1", rel, "S-1")},
+			wantErr: func(err error) bool {
+				_, ok := errors.AsType[*entitymanager.InvalidRelationError](err)
+				return ok
+			},
+			want: []string{"S-1"},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			mem := audit.NewMemory()
+			mgr, st := cardinalityManagerWith(t, mem, nil)
+			ctx := context.Background()
+			if _, err := mgr.CreateRelation(ctx, key("T-1", rel, "S-1"), entity.RelationOptions{}); err != nil {
+				t.Fatalf("seed edge: %v", err)
+			}
+			start := len(mem.Records())
+
+			// ordered_status allows task -> status; T-2 is a task.
+			created, err := mgr.ReplaceRelations(principal.With(ctx, who), []entitymanager.RelationCreate{{
+				Key:  key("T-1", rel, "T-2"),
+				Opts: entity.RelationOptions{TolerateTypeMismatch: tc.tolerate},
+			}}, tc.removes)
+
+			if got := edgesFrom(t, st, "T-1", rel); !slices.Equal(got, tc.want) {
+				t.Errorf("edges = %v, want %v", got, tc.want)
+			}
+			records := mem.Records()[start:]
+			if tc.wantErr != nil {
+				if !tc.wantErr(err) {
+					t.Fatalf("err = %v, want the expected refusal", err)
+				}
+				if len(records) != 0 {
+					t.Errorf("refused replace audited %+v, want nothing", records)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("ReplaceRelations: %v", err)
+			}
+			if len(created) != 1 || created[0].Properties[metamodel.OrderPropertyOut] == nil {
+				t.Errorf("created = %+v, want one edge with a managed order", created)
+			}
+			if len(records) != 2 || records[0].Op != audit.OpDeleteRelation || records[1].Op != audit.OpCreateRelation {
+				t.Fatalf("audit = %+v, want delete then create", records)
+			}
+			got := records[1]
+			want := audit.Subject{Kind: "relation", RelationType: rel, FromID: "T-1", ToID: "T-2"}
+			if got.Subject == nil || *got.Subject != want {
+				t.Errorf("audit subject = %+v, want %+v", got.Subject, want)
+			}
+			if got.Principal.User != who.User || got.Principal.Tool != who.Tool {
+				t.Errorf("audit principal = %+v, want %+v", got.Principal, who)
+			}
+		})
 	}
 }

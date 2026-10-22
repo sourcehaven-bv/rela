@@ -304,7 +304,7 @@ func checkLinkedRelation(ctx context.Context, view store.Store, m *Manager, key 
 	if err := checkRelationCapacity(ctx, view, m.deps.Meta, key, nil, nil); err != nil {
 		return err
 	}
-	return CheckOwningEdgeLeaving(ctx, m.deps.Meta, view, key, nil)
+	return checkOwningEdgeLeaving(ctx, m.deps.Meta, view, key, nil)
 }
 
 // CheckCreate answers the create ACL question [Manager.CreateEntity] asks
