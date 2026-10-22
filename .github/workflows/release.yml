@@ -292,16 +292,18 @@ jobs:
       # YY <= 99 and M <= 12 are well inside the 255/255/65535 field maxima —
       # so it is used verbatim everywhere, installers included.
       - name: Extract version
-        id: version
         shell: bash
-        run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+        # VERSION in the environment keeps the tag-derived value out of
+        # the scripts below: ${{ }} would splice it in as shell text.
+        run: echo "VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"
 
       - name: Build
         env:
           CGO_ENABLED: "1"
           GOARCH: ${{ matrix.goarch }}
           CGO_LDFLAGS: ${{ matrix.cgo_ldflags }}
-        run: go build -tags ${{ matrix.build_tags }} -trimpath -ldflags "-s -w -X main.Version=${{ steps.version.outputs.version }}" -o rela-desktop${{ matrix.ext }} ./cmd/rela-desktop
+        shell: bash
+        run: go build -tags ${{ matrix.build_tags }} -trimpath -ldflags "-s -w -X main.Version=${VERSION}" -o rela-desktop${{ matrix.ext }} ./cmd/rela-desktop
 
       # --- macOS: Create .app bundle and DMG ---
 
@@ -312,7 +314,7 @@ jobs:
           mkdir -p "$APP_DIR/MacOS" "$APP_DIR/Resources"
           cp rela-desktop "$APP_DIR/MacOS/"
           cp build/package/macos/rela-desktop.icns "$APP_DIR/Resources/"
-          sed "s/VERSION_PLACEHOLDER/${{ steps.version.outputs.version }}/g" \
+          sed "s/VERSION_PLACEHOLDER/${VERSION}/g" \
             build/package/macos/Info.plist > "$APP_DIR/Info.plist"
 
       - name: Ad-hoc sign macOS app
@@ -331,7 +333,7 @@ jobs:
             -volname "Rela Desktop" \
             -srcfolder dmg_staging \
             -ov -format UDZO \
-            "rela-desktop_${{ steps.version.outputs.version }}_darwin_${{ matrix.arch }}.dmg"
+            "rela-desktop_${VERSION}_darwin_${{ matrix.arch }}.dmg"
 
       # --- Windows: Create MSI installer ---
 
@@ -349,10 +351,10 @@ jobs:
         shell: pwsh
         run: |
           wix build build/package/windows/rela-desktop.wxs `
-            -d "Version=${{ steps.version.outputs.version }}" `
+            -d "Version=${env:VERSION}" `
             -d "SourceDir=." `
             -arch x64 `
-            -o "rela-desktop_${{ steps.version.outputs.version }}_windows_${{ matrix.arch }}.msi"
+            -o "rela-desktop_${env:VERSION}_windows_${{ matrix.arch }}.msi"
 
       # --- Linux: Create .deb and .rpm packages ---
 
@@ -363,7 +365,6 @@ jobs:
       - name: Create .deb package
         if: matrix.os_name == 'linux'
         env:
-          VERSION: ${{ steps.version.outputs.version }}
           ARCH: ${{ matrix.arch }}
         run: |
           nfpm package -p deb -f build/package/linux/nfpm.yaml \
@@ -372,7 +373,6 @@ jobs:
       - name: Create .rpm package
         if: matrix.os_name == 'linux'
         env:
-          VERSION: ${{ steps.version.outputs.version }}
           ARCH: ${{ matrix.arch }}
         run: |
           nfpm package -p rpm -f build/package/linux/nfpm.yaml \
@@ -383,7 +383,7 @@ jobs:
       - name: Package archive (Unix)
         if: matrix.os_name != 'windows'
         run: |
-          tar czf "rela-desktop_${{ steps.version.outputs.version }}_${{ matrix.os_name }}_${{ matrix.arch }}.tar.gz" \
+          tar czf "rela-desktop_${VERSION}_${{ matrix.os_name }}_${{ matrix.arch }}.tar.gz" \
             rela-desktop${{ matrix.ext }}
 
       - name: Package archive (Windows)
@@ -391,7 +391,7 @@ jobs:
         shell: pwsh
         run: |
           Compress-Archive -Path rela-desktop.exe `
-            -DestinationPath "rela-desktop_${{ steps.version.outputs.version }}_windows_amd64.zip"
+            -DestinationPath "rela-desktop_${env:VERSION}_windows_amd64.zip"
 
       # --- Upload all artifacts to release ---
 
@@ -400,8 +400,8 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         shell: bash
         run: |
-          gh release upload ${{ github.ref_name }} \
-            rela-desktop_${{ steps.version.outputs.version }}_${{ matrix.os_name }}_${{ matrix.arch }}.* \
+          gh release upload "$GITHUB_REF_NAME" \
+            "rela-desktop_${VERSION}_${{ matrix.os_name }}_${{ matrix.arch }}".* \
             --clobber
 
   # Update Homebrew cask after all desktop builds complete.
@@ -417,20 +417,20 @@ jobs:
       - uses: actions/checkout@v7
 
       - name: Extract version
-        id: version
-        run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+        # VERSION in the environment keeps the tag-derived value out of
+        # the scripts below: ${{ }} would splice it in as shell text.
+        run: echo "VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"
 
       - name: Download DMGs
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh release download ${{ github.ref_name }} \
+          gh release download "$GITHUB_REF_NAME" \
             --pattern 'rela-desktop_*_darwin_*.dmg' \
             --dir .
 
       - name: Generate cask formula
         run: |
-          VERSION="${{ steps.version.outputs.version }}"
           ARM_SHA=$(shasum -a 256 "rela-desktop_${VERSION}_darwin_arm64.dmg" | cut -d' ' -f1)
           AMD_SHA=$(shasum -a 256 "rela-desktop_${VERSION}_darwin_amd64.dmg" | cut -d' ' -f1)
 
@@ -453,5 +453,5 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add Casks/rela-desktop.rb
-          git diff --cached --quiet || git commit -m "Update rela-desktop cask to ${{ steps.version.outputs.version }}"
+          git diff --cached --quiet || git commit -m "Update rela-desktop cask to ${VERSION}"
           git push
