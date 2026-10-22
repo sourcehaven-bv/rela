@@ -693,15 +693,6 @@ func isMissingPeerCondition(err error) bool {
 		strings.Contains(msg, "source entity not found")
 }
 
-// isSoftCondition reports whether the EntityManager error is a DEC-HWZHA
-// "soft" condition, written anyway with a warning: the type allowlist refused
-// the relation while both endpoints exist, which a hand-editor could produce.
-// A missing peer is NOT a soft condition (see isMissingPeerCondition).
-func isSoftCondition(err error) bool {
-	_, ok := errors.AsType[*entitymanager.InvalidRelationError](err)
-	return ok
-}
-
 // owningRuleError builds the 422 for an edge that would break ownership
 // (TKT-QO14GB): the edge was not stored.
 func owningRuleError(relType string, err error) *structuralError {
@@ -919,6 +910,10 @@ type boundedPlan struct {
 //
 // Only the plan's removals are passed on: the plan holds the edges the caller
 // may see, so an edge to an unreadable peer stays.
+//
+// Every create tolerates a type-allowlist mismatch, as in writeCreateRelation:
+// validateRelationsModern already reported it as a warning (DEC-HWZHA), and the
+// manager writes and audits the edge in the same replace (GitHub #1806).
 func (w *wrapperWrite) writeBoundedOps(
 	ctx context.Context, ops []edgeOp,
 ) ([]edgeOp, []Warning, error) {
@@ -937,7 +932,9 @@ func (w *wrapperWrite) writeBoundedOps(
 			warnings = append(warnings, requiredMetaWarnings(w.relType, &w.relDef, op.ref, finalProps,
 				w.path+upsertKey(w.upd), directionLabel(w.incoming))...)
 			p.creates = append(p.creates, entitymanager.RelationCreate{
-				Key: k, Opts: entity.RelationOptions{Properties: finalProps, Content: op.ref.Content},
+				Key: k, Opts: entity.RelationOptions{
+					Properties: finalProps, Content: op.ref.Content, TolerateTypeMismatch: true,
+				},
 			})
 			p.refs[k] = op.ref
 		default:
@@ -948,9 +945,6 @@ func (w *wrapperWrite) writeBoundedOps(
 		return rest, warnings, nil
 	}
 	_, err := w.h.manager.ReplaceRelations(ctx, p.creates, p.removes)
-	if isSoftCondition(err) {
-		err = w.writeBoundedFallback(ctx, p)
-	}
 	if err != nil {
 		return nil, warnings, boundedError(w, p, err)
 	}
@@ -982,89 +976,4 @@ func boundedError(w *wrapperWrite, p boundedPlan, err error) error {
 		return err
 	}
 	return &relationError{RelType: w.relType, Target: target, Op: "replace", Reason: "replace_failed", Err: err}
-}
-
-// writeBoundedFallback is the soft-condition fallback of writeBoundedOps. A
-// create the type allowlist refuses (DEC-HWZHA) is written anyway, with the
-// warning validateRelationsModern already reported, as writeCreateRelation
-// does for a single edge.
-//
-// ReplaceRelations returned the soft condition only after it authorized every
-// create and every remove, so writing the refused creates around the manager
-// skips no ACL decision. They go straight to the store first, in one Tx that
-// checks each against the bounds, counting the other creates and not the
-// removed edges. Like writeCreateRelation's fallback, they get no template,
-// managed order or write audit. The other creates and the removes then go
-// through ReplaceRelations as usual.
-//
-// So the fallback is not atomic: when the second step fails, the refused
-// creates stay, as an extra edge that `analyze` reports, never a missing one.
-func (w *wrapperWrite) writeBoundedFallback(ctx context.Context, p boundedPlan) error {
-	soft, rest, err := w.splitDisallowed(ctx, p.creates)
-	if err != nil {
-		return err
-	}
-	leaving := make(map[entity.RelationKey]bool, len(p.removes))
-	for _, k := range p.removes {
-		leaving[k] = true
-	}
-	pending := make([]entity.RelationKey, len(rest))
-	for i, c := range rest {
-		pending[i] = c.Key
-	}
-	meta := w.h.schema().Meta
-	sErr := w.h.store.Tx(ctx, func(view store.Store) error {
-		txCtx := store.ContextInTx(ctx)
-		for _, c := range soft {
-			capErr := entitymanager.CheckRelationCapacity(txCtx, view, meta, c.Key, leaving, pending)
-			if capErr != nil {
-				return &entitymanager.RelationCreateError{Key: c.Key, Err: capErr}
-			}
-			if oErr := entitymanager.CheckOwningEdgeLeaving(txCtx, meta, view, c.Key, leaving); oErr != nil {
-				return &entitymanager.RelationCreateError{Key: c.Key, Err: oErr}
-			}
-			content := ""
-			if c.Opts.Content != nil {
-				content = *c.Opts.Content
-			}
-			if _, cErr := view.CreateRelation(txCtx, c.Key,
-				&store.RelationData{Properties: c.Opts.Properties, Content: content}); cErr != nil {
-				return cErr
-			}
-		}
-		return nil
-	})
-	if errors.Is(sErr, store.ErrConflict) {
-		return fmt.Errorf("%w: %w", entitymanager.ErrRelationAlreadyExists, sErr)
-	}
-	if sErr != nil {
-		return sErr
-	}
-	_, err = w.h.manager.ReplaceRelations(ctx, rest, p.removes)
-	return err
-}
-
-// splitDisallowed splits creates into those the metamodel's type allowlist
-// refuses and the rest. The endpoints' types are read through the read gate:
-// planning already required every peer to be readable.
-func (w *wrapperWrite) splitDisallowed(
-	ctx context.Context, creates []entitymanager.RelationCreate,
-) (soft, rest []entitymanager.RelationCreate, err error) {
-	ids := make([]string, 0, 2*len(creates))
-	for _, c := range creates {
-		ids = append(ids, c.Key.From, c.Key.To)
-	}
-	types, err := w.h.visible.readableTypes(ctx, ids)
-	if err != nil {
-		return nil, nil, &gateFaultError{err: err}
-	}
-	validator := metamodel.NewValidator(w.h.schema().Meta)
-	for _, c := range creates {
-		if validator.ValidateRelation(c.Key.Type, types[c.Key.From], types[c.Key.To]) != nil {
-			soft = append(soft, c)
-		} else {
-			rest = append(rest, c)
-		}
-	}
-	return soft, rest, nil
 }

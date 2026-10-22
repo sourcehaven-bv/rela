@@ -3169,7 +3169,7 @@ func writeRelationCreate(
 	if err := checkRelationCapacity(ctx, st, meta, key, leaving, nil); err != nil {
 		return err
 	}
-	if err := CheckOwningEdgeLeaving(ctx, meta, st, key, leaving); err != nil {
+	if err := checkOwningEdgeLeaving(ctx, meta, st, key, leaving); err != nil {
 		return err
 	}
 	if err := assignManagedOrder(ctx, st, meta, rel, key.Type); err != nil {

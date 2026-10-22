@@ -33,16 +33,6 @@ func (e *CardinalityError) Error() string {
 
 func (e *CardinalityError) Unwrap() error { return ErrCardinalityExceeded }
 
-// CheckRelationCapacity is checkRelationCapacity for a write that bypasses
-// the manager, such as the dataentry soft-condition fallback. Edges in
-// leaving are not counted; edges in pending are counted as if stored.
-func CheckRelationCapacity(
-	ctx context.Context, st store.Store, meta *metamodel.Metamodel, key entity.RelationKey,
-	leaving map[entity.RelationKey]bool, pending []entity.RelationKey,
-) error {
-	return checkRelationCapacity(ctx, st, meta, key, leaving, pending)
-}
-
 // relTypeHasMax reports whether relType bounds its edges on either side, so
 // creating one counts the existing edges.
 func relTypeHasMax(meta *metamodel.Metamodel, relType string) bool {
@@ -128,10 +118,10 @@ func countEdges(
 	return n, nil
 }
 
-// InvalidRelationError is a relation create the metamodel's type allowlist
-// refuses, while both endpoints exist. The dataentry reconciler treats it as a
-// soft condition (DEC-HWZHA) and writes the edge anyway, with a warning. Its
-// text stays "invalid relation: ...".
+// InvalidRelationError is a relation create the metamodel refuses: an unknown
+// relation type, or a type-allowlist mismatch the caller did not tolerate with
+// [entity.RelationOptions.TolerateTypeMismatch]. Its text stays
+// "invalid relation: ...".
 type InvalidRelationError struct {
 	Key entity.RelationKey
 	err error
@@ -183,9 +173,12 @@ type RelationCreate struct {
 // and every remove authorized as [Manager.DeleteRelation] does, before the Tx.
 // A refused create is a [*RelationCreateError] naming the edge. A create whose
 // edge already exists fails with [ErrRelationAlreadyExists]; a remove whose
-// edge is already gone is skipped. When a create fails only the type
-// allowlist ([*InvalidRelationError]), every other create and every remove
-// has still been authorized when the error is returned.
+// edge is already gone is skipped. A create the type allowlist refuses fails
+// with [*InvalidRelationError] unless its options set
+// [entity.RelationOptions.TolerateTypeMismatch]; then it is written and
+// audited like any other create (GitHub #1806). Every other create and every
+// remove is still authorized before that error is returned, so a denied write
+// is reported as a denial.
 //
 // A refused replace changes no edge on any store and records no version and
 // no write audit; a denied one records the denial, as every denied write
@@ -262,9 +255,8 @@ func uniqueRemoves(removes []entity.RelationKey) ([]entity.RelationKey, map[enti
 // and sets the relations to write.
 //
 // A create the type allowlist refuses does not stop the others from being
-// authorized: a caller that writes such an edge anyway (the dataentry
-// soft-condition fallback) relies on every create and remove having passed
-// the ACL when that error is returned.
+// authorized, so a denied create or remove is reported, and audited, as a
+// denial rather than hidden behind the allowlist error.
 func (rp *relationReplace) prepare(ctx context.Context) error {
 	m := rp.m
 	rp.rels = make([]*entity.Relation, len(rp.creates))

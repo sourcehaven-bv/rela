@@ -14,6 +14,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
+	"github.com/Sourcehaven-BV/rela/internal/principal"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
@@ -207,7 +208,19 @@ relations:
 
 func patchEntity(t *testing.T, app *App, typ, plural, id, body string) *httptest.ResponseRecorder {
 	t.Helper()
+	return patchEntityBy(t, app, principal.Principal{}, typ, plural, id, body)
+}
+
+// patchEntityBy is patchEntity with who on the request ctx; a who with no user
+// sets no principal.
+func patchEntityBy(
+	t *testing.T, app *App, who principal.Principal, typ, plural, id, body string,
+) *httptest.ResponseRecorder {
+	t.Helper()
 	req := httptest.NewRequest(http.MethodPatch, "/api/v1/"+plural+"/"+id, strings.NewReader(body))
+	if who.User != "" {
+		req = req.WithContext(principal.With(req.Context(), who))
+	}
 	rec := httptest.NewRecorder()
 	app.write.handleV1UpdateEntity(rec, req, typ, plural, id)
 	return rec
@@ -287,8 +300,8 @@ func (denyRelationDeleteACL) AuthorizeWrite(_ context.Context, req acl.WriteRequ
 	return acl.Decision{Allow: true}
 }
 
-// A re-point to a disallowed type whose remove is denied writes nothing: the
-// soft-condition fallback runs only after every remove is authorized.
+// A re-point to a disallowed type whose remove is denied writes nothing:
+// ReplaceRelations authorizes every remove before it writes any create.
 func TestPatchRelations_DisallowedTypeWithDeniedRemoveWritesNothing(t *testing.T) {
 	app := newCardinalityApp(t, appbuildtest.WithACL(denyRelationDeleteACL{}))
 	seedRelation(app, entity.NewRelation("TKT-1", "single", "C-1"))
@@ -302,26 +315,90 @@ func TestPatchRelations_DisallowedTypeWithDeniedRemoveWritesNothing(t *testing.T
 	}
 }
 
-// The fallback writes only the disallowed create around the manager; the
-// allowed one in the same wrapper still goes through it.
-func TestPatchRelations_DisallowedTypeFallbackKeepsAllowedCreateOnManager(t *testing.T) {
-	aud := &audit.Memory{}
+// TestPatchRelations_DisallowedTypeOnBoundedRelationAudited pins GitHub #1806
+// (ISMS CONTROL-8-15) for a bounded relation: a create the type allowlist
+// refuses keeps DEC-HWZHA's write-with-warning answer, and is written through
+// the manager, so every create and remove is audited with the principal. The
+// old fallback wrote the refused create straight to the store, unaudited.
+func TestPatchRelations_DisallowedTypeOnBoundedRelationAudited(t *testing.T) {
+	who := principal.Principal{User: "alice", Tool: principal.ToolDataEntry}
+	tests := []struct {
+		name      string
+		seed      []string // existing targets of TKT-1's edge
+		relType   string
+		body      string
+		wantEdges []string
+		wantAudit []string // op>to, in order
+	}{
+		{
+			name: "full linkage with a disallowed and an allowed create", relType: "pair",
+			body:      `{"relations":{"pair":{"data":[{"type":"tag","id":"G-1"},{"type":"category","id":"C-1"}]}}}`,
+			wantEdges: []string{"TKT-1>C-1", "TKT-1>G-1"},
+			wantAudit: []string{"create-relation>G-1", "create-relation>C-1"},
+		},
+		{
+			name: "re-point a single-valued edge to a disallowed type", relType: "single", seed: []string{"C-1"},
+			body:      `{"relations":{"single":{"data":[{"type":"tag","id":"G-1"}]}}}`,
+			wantEdges: []string{"TKT-1>G-1"},
+			wantAudit: []string{"delete-relation>C-1", "create-relation>G-1"},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			aud := audit.NewMemory()
+			app := newCardinalityApp(t, appbuildtest.WithAudit(aud))
+			for _, to := range tc.seed {
+				seedRelation(app, entity.NewRelation("TKT-1", tc.relType, to))
+			}
+			rec := patchEntityBy(t, app, who, "ticket", "tickets", "TKT-1", tc.body)
+			if rec.Code != http.StatusOK {
+				t.Fatalf("PATCH = %d %s, want 200 with a warning", rec.Code, rec.Body)
+			}
+			if !strings.Contains(rec.Body.String(), "target_type_not_allowed") {
+				t.Errorf("body has no type warning: %s", rec.Body)
+			}
+			if got := edgesOf(t, app, store.RelationQuery{From: "TKT-1", Type: tc.relType}); !slices.Equal(got, tc.wantEdges) {
+				t.Errorf("edges = %v, want %v", got, tc.wantEdges)
+			}
+			var got []string
+			for _, r := range aud.Records() {
+				if r.Op != audit.OpCreateRelation && r.Op != audit.OpDeleteRelation {
+					continue
+				}
+				if r.Subject == nil || r.Subject.RelationType != tc.relType || r.Subject.FromID != "TKT-1" {
+					t.Errorf("audit subject = %+v, want a %s edge from TKT-1", r.Subject, tc.relType)
+					continue
+				}
+				if r.Principal.User != who.User || r.Principal.Tool != who.Tool {
+					t.Errorf("audit principal = %+v, want %+v", r.Principal, who)
+				}
+				got = append(got, r.Op+">"+r.Subject.ToID)
+			}
+			if !slices.Equal(got, tc.wantAudit) {
+				t.Errorf("audited relation writes = %v, want %v", got, tc.wantAudit)
+			}
+		})
+	}
+}
+
+// A disallowed create still counts against the bound: adding it next to the
+// one edge `single` allows is refused, and nothing is written or audited. The
+// old fallback checked the bound too; this guards that the manager path does.
+func TestPatchRelations_DisallowedTypeOverBoundIs422(t *testing.T) {
+	aud := audit.NewMemory()
 	app := newCardinalityApp(t, appbuildtest.WithAudit(aud))
+	seedRelation(app, entity.NewRelation("TKT-1", "single", "C-1"))
 	rec := patchEntity(t, app, "ticket", "tickets", "TKT-1",
-		`{"relations":{"pair":{"data":[{"type":"tag","id":"G-1"},{"type":"category","id":"C-1"}]}}}`)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("PATCH = %d %s", rec.Code, rec.Body)
+		`{"relations":{"single":{"add":[{"type":"tag","id":"G-1"}]}}}`)
+	if rec.Code != http.StatusUnprocessableEntity || !strings.Contains(rec.Body.String(), "cardinality_exceeded") {
+		t.Fatalf("PATCH = %d %s, want 422 cardinality_exceeded", rec.Code, rec.Body)
 	}
-	if got := edgesOf(t, app, store.RelationQuery{From: "TKT-1", Type: "pair"}); !slices.Equal(got, []string{"TKT-1>C-1", "TKT-1>G-1"}) {
-		t.Errorf("edges = %v, want [TKT-1>C-1 TKT-1>G-1]", got)
+	if got := edgesOf(t, app, store.RelationQuery{From: "TKT-1", Type: "single"}); !slices.Equal(got, []string{"TKT-1>C-1"}) {
+		t.Errorf("edges = %v, want [TKT-1>C-1] unchanged", got)
 	}
-	var created []string
 	for _, r := range aud.Records() {
-		if r.Op == audit.OpCreateRelation && r.Subject != nil {
-			created = append(created, r.Subject.ToID)
+		if r.Op == audit.OpCreateRelation || r.Op == audit.OpDeleteRelation {
+			t.Errorf("refused write audited: %+v", r)
 		}
-	}
-	if !slices.Equal(created, []string{"C-1"}) {
-		t.Errorf("audited creates = %v, want [C-1]: only the allowed edge goes through the manager", created)
 	}
 }

@@ -34,13 +34,13 @@ var ErrOwningRule = errors.New("owning rule")
 // Importer, data migrations and hand-edited files are operator-trusted and do
 // not pass here, so readers must still tolerate irregular ownership.
 func CheckOwningEdge(ctx context.Context, meta *metamodel.Metamodel, st store.Store, key entity.RelationKey) error {
-	return CheckOwningEdgeLeaving(ctx, meta, st, key, nil)
+	return checkOwningEdgeLeaving(ctx, meta, st, key, nil)
 }
 
-// CheckOwningEdgeLeaving is [CheckOwningEdge] for a create that replaces the
+// checkOwningEdgeLeaving is [CheckOwningEdge] for a create that replaces the
 // edges in leaving, which are not counted (TKT-65LVAK): re-pointing an owned
 // entity to another owner does not give it a second one.
-func CheckOwningEdgeLeaving(
+func checkOwningEdgeLeaving(
 	ctx context.Context, meta *metamodel.Metamodel, st store.Store, key entity.RelationKey,
 	leaving map[entity.RelationKey]bool,
 ) error {
