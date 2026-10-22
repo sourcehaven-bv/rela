@@ -158,3 +158,68 @@ func TestCeilingE2E_RESTSurfacesInheritTheCeiling(t *testing.T) {
 		})
 	}
 }
+
+// TestCeilingE2E_FieldCeilingWithoutRoleFieldGrants pins BUG-KJ5D18 (GitHub
+// #1884). No role declares a field block, so the client ceiling is the only
+// field restriction in the policy. ResolverFromProfile used to pick the Nop
+// resolver for such a policy, and the app client then read the redacted field.
+func TestCeilingE2E_FieldCeilingWithoutRoleFieldGrants(t *testing.T) {
+	app := newTestAppV1(t)
+	seedEntity(app, &entity.Entity{
+		ID: "TKT-001", Type: "ticket", Properties: map[string]any{"title": "T1", "status": "secret-status"},
+	})
+	policy, err := acl.LoadPolicyBytes([]byte(`
+roles:
+  editor:
+    read: [ticket]
+    update: [ticket]
+assignments:
+  usr_alice: editor
+client_baselines:
+  apps:
+    applies_to: [app]
+    redact:
+      ticket: [status]
+`))
+	if err != nil {
+		t.Fatalf("LoadPolicyBytes: %v", err)
+	}
+	d := mustNewACL(t, policy, app.store)
+	setTestACL(t, app, d)
+	res, err := ResolverFromProfile("", app.Meta(), app.store, d)
+	if err != nil {
+		t.Fatalf("ResolverFromProfile: %v", err)
+	}
+	if _, nop := res.(NopFieldVerdictResolver); nop {
+		t.Fatal("ResolverFromProfile chose the Nop resolver for a policy with a client field ceiling")
+	}
+	setTestResolver(t, app, res)
+	app.SetPrincipalResolver(ChainResolvers(JWTPrincipalResolver(stubVerifier{
+		validToken: "good", subject: "usr_alice", principalType: "app",
+	}, assertionHeader)))
+
+	for _, path := range []string{"/api/v1/tickets/TKT-001", "/api/v1/tickets", "/api/v1/_search?q=secret"} {
+		rec := ceilingRequest(t, app, path)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("GET %s = %d, want 200\n%s", path, rec.Code, rec.Body)
+		}
+		if strings.Contains(rec.Body.String(), "secret-status") {
+			t.Errorf("GET %s leaked the ceiling-redacted status:\n%s", path, rec.Body)
+		}
+	}
+	if rec := ceilingRequest(t, app, "/api/v1/tickets/TKT-001"); !strings.Contains(rec.Body.String(), "T1") {
+		t.Errorf("GET lost the visible title:\n%s", rec.Body)
+	}
+	if rec := ceilingRequest(t, app, "/api/v1/_search?q=secret"); strings.Contains(rec.Body.String(), "TKT-001") {
+		t.Errorf("search matched on the ceiling-redacted status:\n%s", rec.Body)
+	}
+
+	// The same user through a client the baseline does not cover still reads
+	// the field, so the redaction above comes from the ceiling.
+	app.SetPrincipalResolver(ChainResolvers(JWTPrincipalResolver(stubVerifier{
+		validToken: "good", subject: "usr_alice", principalType: "browser",
+	}, assertionHeader)))
+	if rec := ceilingRequest(t, app, "/api/v1/tickets/TKT-001"); !strings.Contains(rec.Body.String(), "secret-status") {
+		t.Errorf("an unattenuated client lost the status field (%d):\n%s", rec.Code, rec.Body)
+	}
+}

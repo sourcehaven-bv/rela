@@ -855,16 +855,28 @@ func (p *Policy) relationPermissionFor(relType string, op Op) (string, bool) {
 	return g.permissionFor(op)
 }
 
-// HasAffordanceGrants reports whether any role in the policy declares
-// at least one of the affordance grant blocks (fields / visible /
-// options / relations). The resolver-selection logic in the entry
-// points uses this to decide between the policy-backed resolver and
-// the permissive default: a policy that only carries write/read
-// grants has no affordances to compute, so it falls through to the
-// Nop resolver and the wire stays byte-identical to no-policy.
+// HasAffordanceGrants reports whether the policy has any field-level
+// affordance to compute: a role that declares at least one of the
+// affordance grant blocks (fields / visible / options / relations), or a
+// client baseline that declares a field ceiling (visible / redact).
+//
+// The resolver-selection logic in the entry points uses this to decide
+// between the policy-backed resolver and the permissive default: a policy
+// that only carries write/read grants has no affordances to compute, so it
+// falls through to the Nop resolver and the wire stays byte-identical to
+// no-policy. A field ceiling counts because only the policy-backed resolver
+// applies it; leaving it out made a ceiling-only policy redact nothing
+// (BUG-KJ5D18). A type key with an empty list counts too, because the key
+// alone closes the type under `visible:`. A scope grant does not count: it
+// only re-opens what a baseline closed.
 func (p *Policy) HasAffordanceGrants() bool {
 	for _, role := range p.Roles {
 		if roleHasAffordanceGrants(role) {
+			return true
+		}
+	}
+	for _, b := range p.ClientBaselines {
+		if len(b.Visible) > 0 || len(b.Redact) > 0 {
 			return true
 		}
 	}

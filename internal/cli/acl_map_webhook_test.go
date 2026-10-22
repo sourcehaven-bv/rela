@@ -345,6 +345,48 @@ func TestACLMapWebhook_FailingCheckExitsOneWithoutExpect(t *testing.T) {
 	}
 }
 
+// A ceiling that redacts the find's match property breaks the find without
+// denying any verb (BUG-KJ5D18). The check names the field and exits 1.
+func TestACLMapWebhook_HiddenMatchFieldExitsOne(t *testing.T) {
+	const findOnly = `
+webhooks:
+  icinga-alert:
+    find:
+      type: incident
+      match: [host]
+    then:
+      - set:
+          host: "{{host}}"
+`
+	for _, tc := range []struct {
+		name, dataEntry, effect string
+	}{
+		{"find or create", hookDataEntry, "every delivery creates a new entity"},
+		{"find only", findOnly, "no delivery ever matches"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			svc := aclTestServices(t, hookMeta(), hookBaselinePolicy+"    redact:\n      incident: [host]\n")
+			svc.Config = loaderWith(t, tc.dataEntry)
+			buf := withOutput(t, output.FormatTable)
+
+			if code := exitCode((&ACLMapCmd{Webhook: "icinga-alert"}).Run(context.Background(), svc)); code != 1 {
+				t.Fatalf("exit = %d, want 1", code)
+			}
+			got := buf.String()
+			for _, want := range []string{
+				"read incident: held",
+				"match fields hidden by the client ceiling: host",
+				tc.effect,
+				"mapping check failed",
+			} {
+				if !strings.Contains(got, want) {
+					t.Errorf("output missing %q:\n%s", want, got)
+				}
+			}
+		})
+	}
+}
+
 func TestACLMapExpect_Principal(t *testing.T) {
 	svc := hookServices(t, hookBaselinePolicy)
 	withOutput(t, output.FormatTable)
