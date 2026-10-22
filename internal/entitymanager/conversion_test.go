@@ -581,6 +581,79 @@ func TestConvert_HiddenRemapCapacityIsGeneric(t *testing.T) {
 	}
 }
 
+// TestConvert_RemovedRelationNeedsTheWriteGrant pins that a conversion asks
+// the relation write ACL for every edge it removes, including an incoming
+// edge from another type (GitHub #1900). A refusal writes only its
+// denied-write record and leaves the graph as it was.
+func TestConvert_RemovedRelationNeedsTheWriteGrant(t *testing.T) {
+	t.Parallel()
+	schema := strings.Replace(conversionSchema, "conversions:\n",
+		"  cites:\n    label: Cites\n    from: [peer]\n    to: [note, task]\nconversions:\n", 1)
+	schema = strings.Replace(schema, "      stored-in: drop\n", "      stored-in: drop\n      cites: drop\n", 1)
+	peerReadOnly := strings.NewReplacer(
+		"update: [note, task, peer]", "update: [note, task]",
+		"delete: [note, task, peer]", "delete: [note, task]",
+	).Replace(conversionPolicy)
+	if !strings.Contains(schema, "cites: drop") || peerReadOnly == conversionPolicy {
+		t.Fatal("conversionSchema or conversionPolicy no longer matches the edits this test makes")
+	}
+	for _, tc := range []struct {
+		name, policy string
+		allowed      bool
+	}{
+		{"peer writable", conversionPolicy, true},
+		{"peer read-only", peerReadOnly, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			f := newConversionFixture(t, conversionOptions{schema: schema, policy: tc.policy})
+			f.seed(t, "NOTE-1", "note", map[string]any{"title": "Quick note"})
+			f.seed(t, "PEER-1", "peer", nil)
+			f.link(t, "PEER-1", "cites", "NOTE-1")
+
+			result, err := f.conv.Convert(f.asAlice(t, ""), entitymanager.ConversionRequest{
+				Definition: "note-to-task", SourceID: "NOTE-1", DropRelations: []string{"cites"},
+			})
+			if tc.allowed {
+				if err != nil {
+					t.Fatalf("Convert: %v", err)
+				}
+				if result.Entity.Type != "task" || f.hasRelation("PEER-1", "cites", result.Entity.ID) {
+					t.Errorf("converted to %s, cites still stored = %v",
+						result.Entity.Type, f.hasRelation("PEER-1", "cites", result.Entity.ID))
+				}
+				if deleted := f.auditOps(audit.OpDeleteRelation); len(deleted) != 1 ||
+					deleted[0].Subject.RelationType != "cites" {
+
+					t.Errorf("delete-relation audit = %+v", deleted)
+				}
+				return
+			}
+			if !errors.Is(err, acl.ErrForbidden) {
+				t.Fatalf("Convert = %v, want acl.ErrForbidden", err)
+			}
+			if !f.hasRelation("PEER-1", "cites", "NOTE-1") {
+				t.Error("refused conversion removed cites")
+			}
+			source, getErr := f.st.GetEntity(context.Background(), entity.Ref{ID: "NOTE-1"})
+			if getErr != nil || source.Type != "note" {
+				t.Errorf("refused conversion changed the source: %+v, %v", source, getErr)
+			}
+			// The record names the check: a delete of cites edges from peer.
+			records := f.audit.Records()
+			if len(records) != 1 {
+				t.Fatalf("audit = %+v, want one denied-write record", records)
+			}
+			rec := records[0]
+			if rec.Op != audit.OpDeniedWrite || rec.Subject == nil || rec.Subject.Kind != "relation" ||
+				rec.Subject.RelationType != "cites" || !strings.Contains(rec.Summary, `from type "peer"`) {
+
+				t.Errorf("audit record = %+v, subject %+v", rec, rec.Subject)
+			}
+		})
+	}
+}
+
 func TestConvert_ClientCeilingBoundsTheDestination(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
