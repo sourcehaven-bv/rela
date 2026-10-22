@@ -211,6 +211,62 @@ func TestProgram_Eval_StepBudget(t *testing.T) {
 	}
 }
 
+// TestEval_NilOperand pins that an operator given nil where it needs a
+// value fails with ErrNilOperand as its cause, and that other failures do
+// not carry it. The condition profile refuses arithmetic and
+// concatenation, so only comparisons and boolean operators are reached.
+func TestEval_NilOperand(t *testing.T) {
+	env := predicate.NewEnv()
+	if err := env.DeclareVar("v", predicate.RecordType{
+		"n": predicate.IntType, "s": predicate.StringType, "b": predicate.BoolType,
+	}); err != nil {
+		t.Fatalf("declare: %v", err)
+	}
+	if err := env.DeclareFunc("strict", predicate.FuncSig{
+		Params: []predicate.Type{predicate.StringType}, Return: predicate.BoolType,
+	}); err != nil {
+		t.Fatalf("declare: %v", err)
+	}
+	strict := map[string]predicate.Func{"strict": predicate.FuncFunc(
+		func(context.Context, []predicate.Value) (predicate.Value, error) {
+			return nil, errors.New("strict fails on every argument")
+		})}
+	absent := map[string]predicate.Value{"v": predicate.NewRecord(map[string]predicate.Value{
+		"n": predicate.NewNil(), "s": predicate.NewNil(), "b": predicate.NewNil(),
+	})}
+	for _, src := range []string{
+		"v.n > 2", "2 < v.n", "v.s >= 'a'", "v.b and true", "true and v.b", "not v.b", "strict(v.s)",
+	} {
+		t.Run(src, func(t *testing.T) {
+			_, err := compile(t, env, src).Eval(context.Background(), stubBindings(t, absent, strict))
+			if !errors.Is(err, predicate.ErrNilOperand) {
+				t.Fatalf("err = %v; want ErrNilOperand", err)
+			}
+		})
+	}
+	_, err := compile(t, env, "v.n > 2").Eval(context.Background(), predicate.NewBindings())
+	if err == nil || errors.Is(err, predicate.ErrNilOperand) {
+		t.Fatalf("missing binding: err = %v; want a failure without ErrNilOperand", err)
+	}
+	present := map[string]predicate.Value{"v": predicate.NewRecord(map[string]predicate.Value{
+		"n": predicate.NewInt(1), "s": predicate.NewString("a"), "b": predicate.NewBool(true),
+	})}
+	_, err = compile(t, env, "strict(v.s)").Eval(context.Background(), stubBindings(t, present, strict))
+	if err == nil || errors.Is(err, predicate.ErrNilOperand) {
+		t.Fatalf("host failure on a value: err = %v; want a failure without ErrNilOperand", err)
+	}
+}
+
+// compile compiles src in env or fails the test.
+func compile(t *testing.T, env *predicate.Env, src string) *predicate.Program {
+	t.Helper()
+	prog, err := predicate.Compile(env, src)
+	if err != nil {
+		t.Fatalf("compile %q: %v", src, err)
+	}
+	return prog
+}
+
 func TestEval_EqualitySemantics(t *testing.T) {
 	env := predicate.NewEnv()
 	if err := env.DeclareVar("v", predicate.RecordType{

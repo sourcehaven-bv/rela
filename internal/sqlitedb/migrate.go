@@ -12,7 +12,7 @@ import (
 // schemaVersion is the shape of the tables this binary expects. Bump it
 // whenever schemaSQL changes shape, and append the step that carries an
 // existing database forward to [migrations].
-const schemaVersion = 23
+const schemaVersion = 24
 
 // SchemaVersion reports the table shape this binary expects, so the CLI can
 // show a real number rather than prose.
@@ -262,6 +262,11 @@ var migrations = []migration{
 		to:    23,
 		apply: addChannelRetention,
 	},
+	{
+		// v23 → v24: the session snapshot of each channel (TKT-Y6NJ6U).
+		to:    24,
+		apply: addChannelSessionColumns,
+	},
 }
 
 // addChannelRetention is the v22 to v23 rung: channelRetentionDDL, and
@@ -282,6 +287,36 @@ func addChannelRetention(ctx context.Context, conn *sql.Conn) error {
 		}
 	}
 	return sqlSteps(channelRetentionDDL)(ctx, conn)
+}
+
+// channelSessionColumns are the session columns of channels, with the
+// definition each is added with.
+var channelSessionColumns = []struct{ name, def string }{
+	{"session_state", "TEXT NOT NULL DEFAULT ''"},
+	{"session_gen", "INTEGER NOT NULL DEFAULT 0"},
+	{"session_entered_at", "INTEGER NOT NULL DEFAULT 0"},
+}
+
+// addChannelSessionColumns is the v23 to v24 rung. It probes each column
+// like [addChannelRetention] and adds the missing ones, so running it again
+// is harmless.
+func addChannelSessionColumns(ctx context.Context, conn *sql.Conn) error {
+	for _, col := range channelSessionColumns {
+		var n int
+		if err := conn.QueryRowContext(ctx,
+			`SELECT count(*) FROM pragma_table_info('channels') WHERE name = ?`, col.name,
+		).Scan(&n); err != nil {
+			return fmt.Errorf("probe channels.%s: %w", col.name, err)
+		}
+		if n > 0 {
+			continue
+		}
+		if _, err := conn.ExecContext(ctx,
+			"ALTER TABLE channels ADD COLUMN "+col.name+" "+col.def); err != nil {
+			return fmt.Errorf("add channels.%s: %w", col.name, err)
+		}
+	}
+	return nil
 }
 
 // addChannelTypeCardinality adds channel_types.cardinality when it is

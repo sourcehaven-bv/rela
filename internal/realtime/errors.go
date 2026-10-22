@@ -97,6 +97,12 @@ const (
 	// TypeSignalsNotKept is a 422 for a signal posted through a transport
 	// in another process than the server (see [PostInput.LogOnly]).
 	TypeSignalsNotKept = "signals_not_kept"
+	// TypeSessionNotice is a 409 for an edit or removal of a session
+	// notice: it records a transition, which stays recorded.
+	TypeSessionNotice = "session_notice"
+	// TypeSessionMessage is a 409 for an author's edit or delete of a
+	// message that moved the session. A moderator may still remove it.
+	TypeSessionMessage = "session_message"
 )
 
 // DenialError is a refused operation: an HTTP status, a stable type, a title for

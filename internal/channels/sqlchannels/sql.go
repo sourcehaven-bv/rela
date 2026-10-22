@@ -146,21 +146,23 @@ func fromMicros(v int64) time.Time {
 
 // doc is the JSON column of a message: everything but the columns.
 type doc struct {
-	Type        string            `json:"type,omitempty"`
-	Author      channels.Author   `json:"author,omitzero"`
-	At          time.Time         `json:"at,omitzero"`
-	Props       map[string]any    `json:"props,omitempty"`
-	EditedAt    time.Time         `json:"edited_at,omitzero"`
-	Removed     *channels.Removal `json:"removed,omitempty"`
-	Action      *channels.Action  `json:"action,omitempty"`
-	SchemaHash  string            `json:"schema_hash,omitempty"`
-	TriggeredBy string            `json:"triggered_by,omitempty"`
+	Type         string            `json:"type,omitempty"`
+	Author       channels.Author   `json:"author,omitzero"`
+	At           time.Time         `json:"at,omitzero"`
+	Props        map[string]any    `json:"props,omitempty"`
+	EditedAt     time.Time         `json:"edited_at,omitzero"`
+	Removed      *channels.Removal `json:"removed,omitempty"`
+	Action       *channels.Action  `json:"action,omitempty"`
+	SchemaHash   string            `json:"schema_hash,omitempty"`
+	TriggeredBy  string            `json:"triggered_by,omitempty"`
+	MovedSession bool              `json:"moved_session,omitempty"`
 }
 
 func docOf(m channels.Message) string {
 	return mustJSON(doc{
 		Type: m.Type, Author: m.Author, At: m.At, Props: m.Props, EditedAt: m.EditedAt,
 		Removed: m.Removed, Action: m.Action, SchemaHash: m.SchemaHash, TriggeredBy: m.TriggeredBy,
+		MovedSession: m.MovedSession,
 	})
 }
 
@@ -185,6 +187,7 @@ func scanMessage(r interface{ Scan(...any) error }) (channels.Message, error) {
 		return m, fmt.Errorf("message %d has a damaged doc: %w", m.Seq, err)
 	}
 	m.Type, m.Author, m.Props, m.SchemaHash, m.TriggeredBy = d.Type, d.Author, d.Props, d.SchemaHash, d.TriggeredBy
+	m.MovedSession = d.MovedSession
 	m.At, m.EditedAt = utc(d.At), utc(d.EditedAt)
 	m.Removed, m.Action = d.Removed, d.Action
 	if m.Removed != nil {
@@ -204,7 +207,7 @@ func utc(t time.Time) time.Time {
 }
 
 const chanCols = `id, anchor_id, anchor_face, type, name, incarnation, state, title, created_by,
-	created_at, closed_at, archived_at, reopened_at, last_seq, rev`
+	created_at, closed_at, archived_at, reopened_at, last_seq, rev, session_state, session_gen, session_entered_at`
 
 // openSinceSQL is when an open channel entered its state, as
 // [channels.Channel.StateSince] reads it.
@@ -219,12 +222,14 @@ type row struct {
 func scanChannel(r interface{ Scan(...any) error }) (row, error) {
 	var out row
 	var face, by string
-	var created, closed, archived, reopened int64
+	var created, closed, archived, reopened, entered int64
 	c := &out.c
 	if err := r.Scan(&out.id, &c.Key.ID, &face, &c.Key.Type, &c.Key.Name, &c.Incarnation, &c.State, &c.Title, &by,
-		&created, &closed, &archived, &reopened, &c.LastSeq, &c.Rev); err != nil {
+		&created, &closed, &archived, &reopened, &c.LastSeq, &c.Rev,
+		&c.Session.State, &c.Session.Generation, &entered); err != nil {
 		return out, err
 	}
+	c.Session.EnteredAt = fromMicros(entered)
 	c.Key.Face = entity.Face(face)
 	if err := json.Unmarshal([]byte(by), &c.CreatedBy); err != nil {
 		return out, fmt.Errorf("channel %s has a damaged created_by: %w", c.Key, err)
@@ -315,6 +320,9 @@ func (s *Store) Append(ctx context.Context, k channels.Key, nm channels.NewMessa
 	if err != nil {
 		return channels.Message{}, err
 	}
+	if err := channels.PrepareSessionStep(nm.Session); err != nil {
+		return channels.Message{}, err
+	}
 	var out channels.Message
 	werr := s.write(ctx, []string{k.ID}, func(q Querier) error {
 		r, created, err := s.appendTarget(ctx, q, k, nm)
@@ -325,34 +333,88 @@ func (s *Store) Append(ctx context.Context, k channels.Key, nm channels.NewMessa
 		if err != nil {
 			return err
 		}
+		move, moved, err := channels.DecideSession(nm.Session, r.c)
+		if err != nil {
+			return err
+		}
 		rev := r.c.Rev + 1
 		out = channels.Message{
 			Seq: r.c.LastSeq + 1, Rev: rev, Type: nm.Type, Author: nm.Author, At: nm.At, Props: nm.Props,
-			ReplyTo: nm.ReplyTo, SchemaHash: nm.SchemaHash, TriggeredBy: nm.TriggeredBy,
+			ReplyTo: nm.ReplyTo, SchemaHash: nm.SchemaHash, TriggeredBy: nm.TriggeredBy, MovedSession: moved,
 		}
-		if _, err := q.Exec(ctx, `INSERT INTO channel_messages
-			(channel_id, seq, rev, reply_to, reply_count, pending_at, doc) VALUES (?, ?, ?, ?, 0, 0, ?)`,
-			r.id, out.Seq, out.Rev, out.ReplyTo, docOf(out)); err != nil {
+		rev, err = insertMessage(ctx, q, r.id, out)
+		if err != nil {
 			return err
 		}
-		if nm.ReplyTo > 0 {
-			rev++
-			if _, err := q.Exec(ctx, `UPDATE channel_messages SET reply_count = reply_count + 1, rev = ?
-				WHERE channel_id = ? AND seq = ?`, rev, r.id, nm.ReplyTo); err != nil {
+		lastSeq := out.Seq
+		if moved {
+			channels.ApplySession(&r.c, move, nm.At)
+			notice, err := insertNotice(ctx, q, r.id, nm.Session, out, move, r.c.Session.Generation, rev+1)
+			if err != nil {
 				return err
 			}
+			lastSeq, rev = notice.Seq, notice.Rev
 		}
-		if err := s.bumpChannel(ctx, q, r.id, out.Seq, rev); err != nil {
+		if err := bumpSession(ctx, q, r.id, lastSeq, rev, r.c.Session); err != nil {
 			return err
 		}
 		if created {
 			rec := channels.KeyAudit(k, channels.AuditCreate, nm.At)
 			rec.By = nm.Author
-			return s.audit(ctx, q, k.ID, rec)
+			if err := s.audit(ctx, q, k.ID, rec); err != nil {
+				return err
+			}
 		}
+		if moved {
+			rec := channels.SessionAudit(k, nm.Session, out, move, r.c.Session.Generation)
+			if err := s.audit(ctx, q, k.ID, rec); err != nil {
+				return err
+			}
+		}
+		channels.FillSessionOutcome(nm.Session, r.c, move, moved)
 		return nil
 	})
 	return out, s.wrap(werr, "append to %s", k)
+}
+
+// insertMessage inserts out and, for a reply, raises the parent's reply
+// count at the next rev. It returns the last rev the append used.
+func insertMessage(ctx context.Context, q Querier, chanID int64, out channels.Message) (int64, error) {
+	if _, err := q.Exec(ctx, `INSERT INTO channel_messages
+		(channel_id, seq, rev, reply_to, reply_count, pending_at, doc) VALUES (?, ?, ?, ?, 0, 0, ?)`,
+		chanID, out.Seq, out.Rev, out.ReplyTo, docOf(out)); err != nil {
+		return 0, err
+	}
+	if out.ReplyTo == 0 {
+		return out.Rev, nil
+	}
+	rev := out.Rev + 1
+	_, err := q.Exec(ctx, `UPDATE channel_messages SET reply_count = reply_count + 1, rev = ?
+		WHERE channel_id = ? AND seq = ?`, rev, chanID, out.ReplyTo)
+	return rev, err
+}
+
+// insertNotice inserts the notice of a session move caused by cause, at
+// the seq after it and with rev.
+func insertNotice(
+	ctx context.Context, q Querier, chanID int64, step *channels.SessionStep,
+	cause channels.Message, move channels.SessionMove, gen, rev int64,
+) (channels.Message, error) {
+	notice, _, err := channels.SessionNotice(step, cause, move, gen, rev)
+	if err != nil {
+		return notice, err
+	}
+	_, err = q.Exec(ctx, `INSERT INTO channel_messages
+		(channel_id, seq, rev, reply_to, reply_count, pending_at, doc) VALUES (?, ?, ?, 0, 0, 0, ?)`,
+		chanID, notice.Seq, notice.Rev, docOf(notice))
+	return notice, err
+}
+
+// bumpSession sets a channel's head and its session after an append.
+func bumpSession(ctx context.Context, q Querier, id, lastSeq, rev int64, sess channels.Session) error {
+	_, err := q.Exec(ctx, `UPDATE channels SET last_seq = ?, rev = ?, session_state = ?, session_gen = ?,
+		session_entered_at = ? WHERE id = ?`, lastSeq, rev, sess.State, sess.Generation, micros(sess.EnteredAt), id)
+	return err
 }
 
 // appendTarget returns the channel an append goes to, creating an implicit

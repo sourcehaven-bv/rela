@@ -3,6 +3,40 @@ limits:
   post_rate: 20/m
   page_limit: 100
 channel_types:
+  breach-response:
+    label: Breach response
+    attach_to: [datalek]
+    roles:
+      lead:   { from: entity.owner }
+      member: { from: attached }
+      dpo:    { permission: privacy.officer }
+    message_types:
+      text:      { properties: { body: { type: markdown, required: true } }, post: [member] }
+      contained: { properties: { note: { type: markdown } }, post: [lead, member] }
+      assessed:  { properties: { risk: { type: risk-level, required: true } }, post: [lead, dpo] }
+      notified:  { properties: { reference: { type: string, required: true } }, post: [dpo] }
+      dismiss:   { properties: { reason: { type: string, required: true } }, post: [lead] }
+      escalated: { properties: { note: { type: string } }, post: [lead] }
+    session:
+      label: GDPR breach response
+      initial: detected
+      states:
+        detected:
+          label: Detected
+          on:
+            contained: { to: contained, roles: [lead] }
+            dismiss:   { to: dismissed }
+            escalated: { to: contained, by: trigger }
+        contained:
+          label: Contained
+          on:
+            assessed: { to: assessed, when: "message.risk ~= 'none'" }
+        assessed:
+          label: Risk assessed
+          on:
+            notified: { to: notified }
+        notified:  { label: AP notified, final: true }
+        dismissed: { label: Dismissed, final: true }
   incident-room:
     label: Incident room
     attach_to: [datalek, incident]

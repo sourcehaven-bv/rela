@@ -76,7 +76,7 @@ func (c *call) deleteOwnGate() bool {
 // [call.releaseCheck]); the rate limit and the validation of new properties
 // are left to the operation.
 func (c *call) messageActions(m channels.Message) []string {
-	if m.Removed != nil {
+	if m.Removed != nil || isNotice(m.Type, m.TriggeredBy) {
 		return nil
 	}
 	out := c.offeredActions(m)
@@ -150,6 +150,9 @@ func (c *call) editCheck(m channels.Message) error {
 	}
 	if !sameAuthor(m.Author, c.p) {
 		return forbidden(TypeEditDenied, "only the author may edit a message", rule)
+	}
+	if m.MovedSession {
+		return sessionMessage()
 	}
 	if !c.editGate() {
 		return gateDenied(TypeEditDenied, "editing a message", rule, op.Gate, c.ct.Roles)

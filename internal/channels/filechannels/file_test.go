@@ -462,3 +462,151 @@ func TestTornAuditIsRepaired(t *testing.T) {
 	require.NoError(t, err)
 	require.NotContains(t, string(data), `"op":"rem`)
 }
+
+// TestMetaWithoutSessionReadsUnset pins that a meta.yaml written before
+// sessions, with no session keys, reads as an unset session.
+func TestMetaWithoutSessionReadsUnset(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	mfs := storage.NewMemFS()
+	s, err := newStore(mfs, "/channels", filelock.ProcessPrivate{}, SegmentSize)
+	require.NoError(t, err)
+	_, err = s.Append(ctx, key, msg("one"))
+	require.NoError(t, err)
+	path := "/channels/" + enc("TKT-1") + "/" + none + "/room/" + none + "/" + metaFile
+	data, err := mfs.ReadFile(path)
+	require.NoError(t, err)
+	require.NotContains(t, string(data), "session", "an append without a step writes no session keys")
+	require.NoError(t, mfs.WriteFile(path, []byte("state: open\ncreated_by: {user: alice}\n"+
+		"created_at: 2026-10-12T09:30:00Z\nlast_seq: 1\nrev: 1\n"), 0o600))
+	head, err := s.Head(ctx, key)
+	require.NoError(t, err)
+	require.True(t, head.Session.IsZero(), "session = %+v", head.Session)
+}
+
+// TestSessionStepAcrossSegments pins that a notice whose message is the
+// last of a segment goes first in the next one, and that both read back,
+// also through a rev cursor.
+func TestSessionStepAcrossSegments(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	mfs := storage.NewMemFS()
+	s, err := newStore(mfs, "/channels", filelock.ProcessPrivate{}, 2)
+	require.NoError(t, err)
+	_, err = s.Append(ctx, key, msg("one"))
+	require.NoError(t, err)
+	m := msg("two")
+	m.Session = &channels.SessionStep{
+		Decide: func(channels.Channel) (channels.SessionMove, bool) {
+			return channels.SessionMove{From: "detected", To: "contained"}, true
+		},
+		NoticeType: "session", NoticeBy: channels.Author{User: "system:realtime"}, TriggeredBy: "session:room",
+	}
+	cause, err := s.Append(ctx, key, m)
+	require.NoError(t, err)
+	require.Equal(t, int64(2), cause.Seq)
+
+	dir := "/channels/" + enc("TKT-1") + "/" + none + "/room/" + none + "/"
+	first, err := mfs.ReadFile(dir + "log-0000.jsonl")
+	require.NoError(t, err)
+	require.NotContains(t, string(first), "\"type\":\"session\"")
+	second, err := mfs.ReadFile(dir + "log-0001.jsonl")
+	require.NoError(t, err)
+	require.True(t, bytes.HasPrefix(second, []byte("{\"k\":\"m\",\"seq\":3,")), "%s", second)
+
+	got, err := s.Messages(ctx, key, channels.Page{})
+	require.NoError(t, err)
+	require.Len(t, got, 3)
+	require.Equal(t, "session", got[2].Type)
+	byRev, err := s.Messages(ctx, key, channels.Page{AfterRev: 1})
+	require.NoError(t, err)
+	require.Len(t, byRev, 2)
+	require.Equal(t, []int64{2, 3}, []int64{byRev[0].Seq, byRev[1].Seq})
+}
+
+// moveStep is a session step that moves detected to contained.
+func moveStep() *channels.SessionStep {
+	return &channels.SessionStep{
+		Decide: func(channels.Channel) (channels.SessionMove, bool) {
+			return channels.SessionMove{From: "detected", To: "contained"}, true
+		},
+		NoticeType: "session", NoticeBy: channels.Author{User: "system:realtime"}, TriggeredBy: "session:room",
+	}
+}
+
+// TestSessionReplyAcrossSegments pins a reply that moves the session in
+// segment 1 to a parent in segment 0: the message, the parent's patch and
+// the notice take three revs in that order, and an AfterRev page returns
+// all three.
+func TestSessionReplyAcrossSegments(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	s, err := newStore(storage.NewMemFS(), "/channels", filelock.ProcessPrivate{}, 2)
+	require.NoError(t, err)
+	parent, err := s.Append(ctx, key, msg("parent"))
+	require.NoError(t, err)
+	_, err = s.Append(ctx, key, msg("other"))
+	require.NoError(t, err)
+	m := msg("reply")
+	m.ReplyTo, m.Session = parent.Seq, moveStep()
+	reply, err := s.Append(ctx, key, m)
+	require.NoError(t, err)
+	require.Equal(t, int64(3), reply.Seq)
+
+	page, err := s.Messages(ctx, key, channels.Page{AfterRev: reply.Rev - 1})
+	require.NoError(t, err)
+	var seqs, revs []int64
+	for _, got := range page {
+		seqs, revs = append(seqs, got.Seq), append(revs, got.Rev)
+	}
+	require.Equal(t, []int64{3, 1, 4}, seqs, "message, then parent, then notice")
+	require.Equal(t, []int64{reply.Rev, reply.Rev + 1, reply.Rev + 2}, revs)
+	require.Equal(t, 1, page[1].ReplyCount)
+}
+
+// TestSessionCrashBetweenSegments pins the crash window the package doc
+// names for a move whose notice opens a new segment: meta.yaml and the
+// message are written, the notice and the audit record are not. The test
+// builds that state by removing what the crash would not have written,
+// because the store has no hook to stop between its writes. The session
+// stays moved, the message keeps its mark, the next append takes the lost
+// seq, and no notice names a wrong cause.
+func TestSessionCrashBetweenSegments(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	mfs := storage.NewMemFS()
+	s, err := newStore(mfs, "/channels", filelock.ProcessPrivate{}, 2)
+	require.NoError(t, err)
+	_, err = s.Append(ctx, key, msg("one"))
+	require.NoError(t, err)
+	auditPath := "/channels/" + auditKey("TKT-1")
+	before, err := mfs.ReadFile(auditPath)
+	require.NoError(t, err)
+	m := msg("two")
+	m.Session = moveStep()
+	_, err = s.Append(ctx, key, m)
+	require.NoError(t, err)
+
+	dir := "/channels/" + enc("TKT-1") + "/" + none + "/room/" + none + "/"
+	require.NoError(t, mfs.Remove(dir+"log-0001.jsonl"))
+	require.NoError(t, mfs.WriteFile(auditPath, before, 0o600))
+
+	head, err := s.Head(ctx, key)
+	require.NoError(t, err)
+	require.Equal(t, "contained", head.Session.State, "meta.yaml was written first")
+	next, err := s.Append(ctx, key, msg("three"))
+	require.NoError(t, err)
+	require.Equal(t, int64(3), next.Seq, "the lost notice's seq is taken again")
+	all, err := s.Messages(ctx, key, channels.Page{})
+	require.NoError(t, err)
+	require.Len(t, all, 3)
+	require.True(t, all[1].MovedSession)
+	for _, got := range all {
+		require.NotEqual(t, "session", got.Type, "no notice survives to name a cause")
+	}
+	recs, err := s.Audit(ctx, "TKT-1")
+	require.NoError(t, err)
+	for _, r := range recs {
+		require.NotEqual(t, channels.AuditSession, r.Op)
+	}
+}

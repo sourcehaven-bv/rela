@@ -11,6 +11,8 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"gopkg.in/yaml.v3"
+
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/predicate"
@@ -32,8 +34,10 @@ const nameRule = "must match ^[a-z][a-z0-9-]{0,62}$"
 // validator collects every problem in one pass, so the operator sees them
 // all at once rather than one per edit.
 type validator struct {
-	meta     *metamodel.Metamodel
-	policy   *acl.Policy
+	meta   *metamodel.Metamodel
+	policy *acl.Policy
+	// root is the parsed file, read for the key order a map loses.
+	root     *yaml.Node
 	problems []Problem
 	warnings []Problem
 	perms    map[string]bool
@@ -186,6 +190,13 @@ func (v *validator) channelType(name string, raw *rawChannelType, limits Limits)
 			"lifecycle.delete.retention must keep; use detach or block, or drop the retention")
 	}
 	ct.MessageOps = v.messageOps(key+".message_ops", raw.MessageOps, ct)
+	if raw.Session != nil {
+		order, _, err := mappingKeys(v.root, "channel_types", name, "session", "states")
+		if err != nil {
+			v.add(key+".session.states", err.Error())
+		}
+		ct.session = v.session(key+".session", raw.Session, order, ct)
+	}
 	return ct
 }
 

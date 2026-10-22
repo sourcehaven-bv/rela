@@ -33,6 +33,32 @@ export interface Channel {
   archived_at?: string
   last_seq: number
   rev: number
+  /** The channel's session; absent for a channel type without one. */
+  session?: ChannelSession
+}
+
+/**
+ * A channel's session: the state it is in and the transitions out of it.
+ * generation counts the transitions (0: never moved). stranded marks a
+ * stored state realtime.yaml no longer declares; label is then the stored
+ * name and transitions is empty.
+ */
+export interface ChannelSession {
+  state: string
+  label?: string
+  generation: number
+  entered_at: string
+  final?: boolean
+  stranded?: boolean
+  transitions?: ChannelSessionTransition[]
+}
+
+/** A message of message_type moves the session to to. */
+export interface ChannelSessionTransition {
+  message_type: string
+  to: string
+  /** 'trigger' when only a trigger's message fires the transition. */
+  by?: 'trigger'
 }
 
 export interface ChannelTypeList {
@@ -302,7 +328,18 @@ export const CHANNEL_WIRE_FIELDS: Record<string, readonly string[]> = {
     'archived_at',
     'last_seq',
     'rev',
+    'session',
   ]),
+  ChannelSession: wireKeys<ChannelSession>()([
+    'state',
+    'label',
+    'generation',
+    'entered_at',
+    'final',
+    'stranded',
+    'transitions',
+  ]),
+  ChannelSessionTransition: wireKeys<ChannelSessionTransition>()(['message_type', 'to', 'by']),
   ChannelTypeList: wireKeys<ChannelTypeList>()([
     'type',
     'label',

@@ -64,6 +64,9 @@ func (s *Service) Edit(ctx context.Context, addr RawAddress, seq int64, props ma
 	if err != nil {
 		return MessageView{}, err
 	}
+	if isNotice(m.Type, m.TriggeredBy) {
+		return MessageView{}, sessionNotice()
+	}
 	if checkErr := c.editCheck(m); checkErr != nil {
 		return MessageView{}, checkErr
 	}
@@ -157,6 +160,9 @@ func (s *Service) Delete(ctx context.Context, addr RawAddress, seq int64, reason
 	if err != nil {
 		return MessageView{}, err
 	}
+	if isNotice(m.Type, m.TriggeredBy) {
+		return MessageView{}, sessionNotice()
+	}
 	if pendErr := requireNotPending(m); pendErr != nil {
 		return MessageView{}, pendErr
 	}
@@ -175,7 +181,7 @@ func (s *Service) Delete(ctx context.Context, addr RawAddress, seq int64, reason
 				"removing a message needs a reason")
 		}
 		removal.Kind, removal.Reason = channels.RemovalModerator, reason
-	case ownRefusal.Type == TypeDeleteDenied && ownRefusal.Rule != "":
+	case ownRefusal.Type == TypeSessionMessage || ownRefusal.Type == TypeDeleteDenied && ownRefusal.Rule != "":
 		return MessageView{}, ownRefusal
 	default:
 		return MessageView{}, forbidden(TypeDeleteDenied, c.deleteTitle(),
@@ -202,6 +208,9 @@ func (c *call) deleteOwn(m channels.Message) *DenialError {
 	op := c.ct.MessageOps.DeleteOwn
 	if op == nil || !sameAuthor(m.Author, c.p) || !c.deleteOwnGate() {
 		return &DenialError{Type: TypeDeleteDenied}
+	}
+	if m.MovedSession {
+		return sessionMessage()
 	}
 	if op.From != "" && string(c.state()) != string(op.From) {
 		return forbidden(TypeDeleteDenied,

@@ -35,6 +35,28 @@ type rawChannelType struct {
 	MessageOps        *rawMessageOps            `yaml:"message_ops"`
 	OnEntityDelete    string                    `yaml:"on_entity_delete"`
 	DetachedRetention string                    `yaml:"detached_retention"`
+	Session           *rawSession               `yaml:"session"`
+}
+
+// rawSession is `channel_types.<name>.session`. A Go map loses the order
+// of states, so [Parse] reads it from the YAML node (see mappingKeys).
+type rawSession struct {
+	Label   string                     `yaml:"label"`
+	Initial string                     `yaml:"initial"`
+	States  map[string]rawSessionState `yaml:"states"`
+}
+
+type rawSessionState struct {
+	Label string                   `yaml:"label"`
+	Final bool                     `yaml:"final"`
+	On    map[string]rawTransition `yaml:"on"`
+}
+
+type rawTransition struct {
+	To    string   `yaml:"to"`
+	Roles []string `yaml:"roles"`
+	By    string   `yaml:"by"`
+	When  string   `yaml:"when"`
 }
 
 type rawCreate struct {

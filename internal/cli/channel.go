@@ -371,6 +371,9 @@ type readJSON struct {
 type messageJSON struct {
 	Notice  string               `json:"notice"`
 	Message realtime.MessageView `json:"message"`
+	// Session is the channel's session after a post, for a channel type
+	// with a session.
+	Session *realtime.SessionView `json:"session,omitempty"`
 }
 
 // ChannelPostCmd posts a message.
@@ -405,7 +408,7 @@ func (c *ChannelPostCmd) Run(ctx context.Context, cs *channelServices) error {
 	if got.Message == nil { // coverage-ignore: defensive: a log-only post always answers its message
 		return errors.New(channelFailedText)
 	}
-	return writeMessage(*got.Message, "posted")
+	return writeMessage(*got.Message, "posted", got.Session)
 }
 
 // ChannelEditCmd edits a message.
@@ -439,7 +442,7 @@ func (c *ChannelEditCmd) Run(ctx context.Context, cs *channelServices) error {
 	if err != nil {
 		return channelFailed(ctx, "edit", addr.Anchor, err)
 	}
-	return writeMessage(got, "edited")
+	return writeMessage(got, "edited", nil)
 }
 
 // messageType returns the type of message seq in view, so edit can coerce
@@ -475,7 +478,7 @@ func (c *ChannelRemoveCmd) Run(ctx context.Context, cs *channelServices) error {
 	if err != nil {
 		return channelFailed(ctx, "remove", addr.Anchor, err)
 	}
-	return writeMessage(got, "removed")
+	return writeMessage(got, "removed", nil)
 }
 
 // ChannelCreateCmd creates a named channel.
@@ -506,11 +509,17 @@ func (c *ChannelCreateCmd) Run(ctx context.Context, cs *channelServices) error {
 }
 
 // writeMessage prints the result of post, edit or remove.
-func writeMessage(m realtime.MessageView, verb string) error {
+func writeMessage(m realtime.MessageView, verb string, session *realtime.SessionView) error {
 	if out.Format == output.FormatJSON {
-		return writeChannelJSON(messageJSON{Notice: realtime.UntrustedNotice, Message: m})
+		return writeChannelJSON(messageJSON{Notice: realtime.UntrustedNotice, Message: m, Session: session})
 	}
-	_, err := fmt.Fprintf(out.Out, "#%d %s\n", m.Seq, verb)
+	if _, err := fmt.Fprintf(out.Out, "#%d %s\n", m.Seq, verb); err != nil {
+		return err
+	}
+	if session == nil {
+		return nil
+	}
+	_, err := fmt.Fprintln(out.Out, sessionText(session))
 	return err
 }
 

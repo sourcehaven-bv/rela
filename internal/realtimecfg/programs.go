@@ -43,6 +43,18 @@ func entityEnv(meta *metamodel.Metamodel, entityType string) (*predicate.Env, er
 // messageEnv declares `message` as the record of a message type's
 // properties and the standard library.
 func messageEnv(props map[string]Property) (*predicate.Env, error) {
+	env := predicate.NewEnv()
+	if err := env.DeclareVar("message", messageRecordType(props)); err != nil {
+		return nil, err
+	}
+	if err := predicatefns.Declare(env); err != nil {
+		return nil, err
+	}
+	return env, nil
+}
+
+// messageRecordType is the record type of a message type's properties.
+func messageRecordType(props map[string]Property) predicate.RecordType {
 	rec := predicate.RecordType{}
 	for name, p := range props {
 		switch p.Type {
@@ -58,14 +70,7 @@ func messageEnv(props map[string]Property) (*predicate.Env, error) {
 			rec[name] = predicate.StringType
 		}
 	}
-	env := predicate.NewEnv()
-	if err := env.DeclareVar("message", rec); err != nil {
-		return nil, err
-	}
-	if err := predicatefns.Declare(env); err != nil {
-		return nil, err
-	}
-	return env, nil
+	return rec
 }
 
 // compileRule compiles a trigger `when:`, an `auto.when:` or a lifecycle

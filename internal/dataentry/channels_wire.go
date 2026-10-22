@@ -30,8 +30,24 @@ func wireChannel(c realtime.ChannelView) v1.Channel {
 		Anchor: c.Anchor, Type: c.Type, Name: c.Name, State: string(c.State), Title: c.Title,
 		CreatedBy: wireChannelAuthor(c.CreatedBy), CreatedAt: channelTime(c.CreatedAt),
 		ClosedAt: channelTime(c.ClosedAt), ArchivedAt: channelTime(c.ArchivedAt),
-		LastSeq: c.LastSeq, Rev: c.Rev,
+		LastSeq: c.LastSeq, Rev: c.Rev, Session: wireChannelSession(c.Session),
 	}
+}
+
+func wireChannelSession(s *realtime.SessionView) *v1.ChannelSession {
+	if s == nil {
+		return nil
+	}
+	out := &v1.ChannelSession{
+		State: s.State, Label: s.Label, Generation: s.Generation, EnteredAt: channelTime(s.EnteredAt),
+		Final: s.Final, Stranded: s.Stranded,
+	}
+	for _, t := range s.Transitions {
+		out.Transitions = append(out.Transitions, v1.ChannelSessionTransition{
+			MessageType: t.MessageType, To: t.To, By: t.By,
+		})
+	}
+	return out
 }
 
 func wireChannelList(l realtime.AnchorChannels) v1.ChannelList {

@@ -481,8 +481,8 @@ later leaves them in place, and they answer that realtime is off.
 | Tool | Description | Parameters |
 |------|-------------|------------|
 | `list_channels` | List the channels on an entity that you may read, per channel type | `id`, `state?` (`open`, `closed` or `archived`) |
-| `read_channel` | Read a channel: its state, what you may post, the message types with a JSON Schema per type, live signals and a page of messages | `id`, `channel_type`, `name?`, one of `after_rev?`, `after?`, `before?`, `limit?` (default 20, max 50), `signals?`, `schemas?` |
-| `post_message` | Post a message | `id`, `channel_type`, `name?`, `message_type`, `props?`, `reply_to?` |
+| `read_channel` | Read a channel: its state and session, what you may post, the message types with a JSON Schema per type, live signals and a page of messages | `id`, `channel_type`, `name?`, one of `after_rev?`, `after?`, `before?`, `limit?` (default 20, max 50), `signals?`, `schemas?` |
+| `post_message` | Post a message. In a channel with a session, the answer also holds the session after the post | `id`, `channel_type`, `name?`, `message_type`, `props?`, `reply_to?` |
 | `edit_message` | Replace the props of your own message | `id`, `channel_type`, `name?`, `seq`, `props` |
 | `remove_message` | Withdraw your own message, or remove another as a moderator | `id`, `channel_type`, `name?`, `seq`, `reason?` |
 | `create_channel` | Create a named channel of a type with many channels per entity | `id`, `channel_type`, `title?` |

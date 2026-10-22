@@ -66,7 +66,7 @@ func TestParse_Golden(t *testing.T) {
 	for _, ct := range c.ChannelTypes() {
 		names = append(names, ct.Name)
 	}
-	if !slices.Equal(names, []string{"incident-room", "page-threads"}) {
+	if !slices.Equal(names, []string{"breach-response", "incident-room", "page-threads"}) {
 		t.Fatalf("channel types = %v", names)
 	}
 
@@ -226,7 +226,15 @@ func TestParse_Invalid(t *testing.T) {
 		{"version", []replace{{"version: 1", "version: 2"}}, "version", "must be 1"},
 		{"unknown key", []replace{{"on_entity_delete: block", "on_entity_delete: block\n    color: red"}},
 			"channel_types.incident-room.color", "unknown key"},
-		{"session", []replace{{"version: 1\n", "version: 1\nsession: {}\n"}}, "session", "sessions are not supported yet"},
+		{"merge key in a map", []replace{{"      agent:  { principal_type: agent }\n",
+			"      agent:  { principal_type: agent }\n      <<: { auditor: { permission: privacy.officer } }\n"}},
+			"channel_types.incident-room.roles", "merge keys (<<) are not supported in realtime.yaml"},
+		{"merge key in a struct", []replace{{"    cardinality: one\n    read:", "    cardinality: one\n    <<: { label: X }\n    read:"}},
+			"channel_types.incident-room", "merge keys (<<) are not supported in realtime.yaml"},
+		{"merge key at the top", []replace{{"channel_types:\n", "channel_types:\n  <<: { other: { attach_to: [datalek] } }\n"}},
+			"channel_types", "merge keys (<<) are not supported in realtime.yaml"},
+		{"session", []replace{{"version: 1\n", "version: 1\nsession: {}\n"}}, "session",
+			"a session belongs under a channel type: channel_types.<name>.session"},
 		{"agents", []replace{{"version: 1\n", "version: 1\nagents: {principal_types: [agent]}\n"}},
 			"agents", "client_baselines"},
 		{"action by", []replace{{"permission: incident.decide,", "permission: incident.decide, by: human,"}},
@@ -259,13 +267,13 @@ func TestParse_Invalid(t *testing.T) {
 			"channel_types.incident-room.roles.lead", "exactly one"},
 		{"role no source", []replace{{"agent:  { principal_type: agent }", "agent:  { label: x }"}},
 			"channel_types.incident-room.roles.agent", "exactly one"},
-		{"role name", []replace{{"member: { from: attached }", "Member: { from: attached }"}},
+		{"role name", []replace{{"member: { from: attached }\n      agent:", "Member: { from: attached }\n      agent:"}},
 			"channel_types.incident-room.roles.Member", "must match"},
-		{"from syntax", []replace{{"from: entity.owner", "from: owner"}},
+		{"from syntax", []replace{{"from: entity.owner,", "from: owner,"}},
 			"channel_types.incident-room.roles.lead.from", "attached or entity.<property>"},
-		{"from missing property", []replace{{"from: entity.owner", "from: entity.nope"}},
+		{"from missing property", []replace{{"from: entity.owner,", "from: entity.nope,"}},
 			"channel_types.incident-room.roles.lead.from", "has no property"},
-		{"from non-string property", []replace{{"from: entity.owner", "from: entity.severity"}},
+		{"from non-string property", []replace{{"from: entity.owner,", "from: entity.severity,"}},
 			"channel_types.incident-room.roles.lead.from", "only a string property"},
 		{"from restricted property", []replace{
 			{"attach_to: [page]\n    anchor: face", "attach_to: [risico]"},
@@ -275,7 +283,7 @@ func TestParse_Invalid(t *testing.T) {
 			"channel_types.incident-room.roles.agent.creator", "cardinality many"},
 		{"permission nobody holds", []replace{{"permission: privacy.officer, label", "permission: privacy.ofice, label"}},
 			"channel_types.incident-room.roles.dpo.permission", "no role in acl.yaml grants"},
-		{"post unknown role", []replace{{"post: [lead]", "post: [chief]"}},
+		{"post unknown role", []replace{{"post: [lead]\n", "post: [chief]\n"}},
 			"channel_types.incident-room.message_types.status-update.post[0]", "unknown role"},
 		{"message type name", []replace{{"typing: { persist", "Typing: { persist"}},
 			"channel_types.incident-room.message_types.Typing", "must match"},
@@ -301,7 +309,7 @@ func TestParse_Invalid(t *testing.T) {
 			"channel_types.incident-room.message_types.status-update.properties.summary.type", "unknown type"},
 		{"property without type", []replace{{"body: { type: string, required: true }", "body: { required: true }"}},
 			"channel_types.page-threads.message_types.text.properties.body.type", "name a type"},
-		{"property name", []replace{{"body: { type: markdown", "Body: { type: markdown"}},
+		{"property name", []replace{{"body: { type: markdown, required: true, max", "Body: { type: markdown, required: true, max"}},
 			"channel_types.incident-room.message_types.text.properties.Body", "must match"},
 		{"max on integer", []replace{{"affects:  { type: ref, to: [maatregel, risico] }", "affects:  { type: integer, max: 3 }"}},
 			"channel_types.incident-room.message_types.status-update.properties.affects.max", "only a string or markdown"},

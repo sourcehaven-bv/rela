@@ -336,6 +336,10 @@ type Message struct {
 	Action      *Action        `json:"action,omitempty"`
 	SchemaHash  string         `json:"schema_hash,omitempty"`
 	TriggeredBy string         `json:"triggered_by,omitempty"`
+	// MovedSession is set by the store on a message whose append moved the
+	// channel's session (see [SessionStep]). Nothing else sets it, and a
+	// removal clears it with the rest of the message.
+	MovedSession bool `json:"moved_session,omitempty"`
 }
 
 // ActionStatus returns the status of the message's action, or [ActionNone].
@@ -357,6 +361,9 @@ func (m Message) ActionStatus() ActionStatus {
 // [CheckAppendState]). A request checks the state itself before it
 // appends; the trigger engine, which acts without one, lets the store
 // decide.
+//
+// Session, when set, lets the append move the channel's session in the
+// same step (see [SessionStep]).
 type NewMessage struct {
 	Incarnation string
 	Type        string
@@ -367,6 +374,7 @@ type NewMessage struct {
 	SchemaHash  string
 	TriggeredBy string
 	RequireOpen bool
+	Session     *SessionStep
 }
 
 // CheckAppendState refuses an append that requires an open channel to one
@@ -413,6 +421,8 @@ type Channel struct {
 	ReopenedAt time.Time `json:"reopened_at,omitzero"`
 	LastSeq    int64     `json:"last_seq"`
 	Rev        int64     `json:"rev"`
+	// Session is the channel's session snapshot; zero when it never moved.
+	Session Session `json:"session,omitzero"`
 }
 
 // CheckIncarnation reports a channel whose incarnation is not live, the
@@ -581,6 +591,10 @@ const (
 	// erased. It is appended to the batch's own filed trail, never to the
 	// live trail of the id, which may belong to a new entity by then.
 	AuditPurge AuditOp = "purge"
+	// AuditSession records a session transition. From and To are the
+	// states, Seq is the message that caused it and Generation the
+	// session's generation after it.
+	AuditSession AuditOp = "session"
 )
 
 // AuditReleased is the [AuditRecord.Status] of an action record that
@@ -618,6 +632,8 @@ type AuditRecord struct {
 	// Tomb is the stamp of the batch a purge record is about. A purge
 	// record of a channel also carries the channel's last seq in Seq.
 	Tomb string `json:"tomb,omitempty"`
+	// Generation is set on a session record.
+	Generation int64 `json:"generation,omitempty"`
 }
 
 // KeyAudit returns the start of an audit record about the channel k.
@@ -651,6 +667,9 @@ func PrepareMessage(m NewMessage) (NewMessage, []byte, error) {
 	}
 	if m.ReplyTo < 0 {
 		return m, nil, fmt.Errorf("%w: negative reply_to", ErrInvalidReply)
+	}
+	if strings.HasPrefix(m.TriggeredBy, SessionMarker) {
+		return m, nil, fmt.Errorf("%w: triggered_by %q is reserved for session notices", ErrInvalidMessage, m.TriggeredBy)
 	}
 	if len(m.SchemaHash) > MaxTextBytes || len(m.TriggeredBy) > MaxTextBytes || len(m.Incarnation) > MaxTextBytes {
 		return m, nil, fmt.Errorf("%w: schema hash, triggered_by or incarnation over %d bytes",

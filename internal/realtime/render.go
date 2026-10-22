@@ -58,6 +58,8 @@ type ActionView struct {
 //
 // Props holds only the properties the message's type declares now. A
 // message whose type the configuration no longer declares shows none.
+// A session notice is the exception: its type is never declared, and it
+// shows its props from, to, generation and cause.
 type MessageView struct {
 	Seq        int64          `json:"seq"`
 	Rev        int64          `json:"rev"`
@@ -85,6 +87,9 @@ type MessageView struct {
 	ReleaseAfter time.Time `json:"release_after,omitzero"`
 }
 
+// IsSessionNotice reports whether m is a session notice.
+func (m MessageView) IsSessionNotice() bool { return isNotice(m.Type, m.TriggeredBy) }
+
 // EphemeralView is one live signal.
 type EphemeralView struct {
 	ID        string         `json:"id"`
@@ -108,13 +113,17 @@ type ChannelView struct {
 	ArchivedAt time.Time      `json:"archived_at,omitzero"`
 	LastSeq    int64          `json:"last_seq"`
 	Rev        int64          `json:"rev"`
+	// Session is the channel's session; nil for a type without one.
+	Session *SessionView `json:"session,omitempty"`
 }
 
-// channelView renders h, or the empty open channel at key when h is nil.
-func channelView(key channels.Key, h *channels.Channel) ChannelView {
+// channelView renders h of type ct, or the empty open channel at key when
+// h is nil. now is the operation's clock time: an unset session of a
+// channel not stored yet reads as entered then.
+func channelView(ct realtimecfg.ChannelType, key channels.Key, h *channels.Channel, now time.Time) ChannelView {
 	v := ChannelView{
 		Anchor: entity.FormatStateRef(key.ID, key.Face), Type: key.Type, Name: key.Name,
-		State: channels.StateOpen,
+		State: channels.StateOpen, Session: sessionView(ct, h, now),
 	}
 	if h == nil {
 		return v
@@ -231,6 +240,11 @@ func (r *renderer) message(m channels.Message) MessageView {
 	a.System = m.TriggeredBy != ""
 	v.Type, v.Author, v.At, v.EditedAt, v.TriggeredBy = m.Type, &a, m.At, m.EditedAt, m.TriggeredBy
 	v.Props = r.props(m.Type, m.Props)
+	if isNotice(m.Type, m.TriggeredBy) {
+		// A notice's type is not declared, but its props are the record of
+		// the transition: from, to, generation and cause.
+		v.Props = m.Props
+	}
 	if m.Action != nil {
 		av := &ActionView{Name: m.Action.Name, Status: m.Action.Status, At: m.Action.At}
 		if m.Action.Promoted != nil {

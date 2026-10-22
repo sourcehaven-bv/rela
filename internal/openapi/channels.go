@@ -17,6 +17,7 @@ import (
 const (
 	channelHeadSchema  = "ChannelHead"
 	channelSchema      = "Channel"
+	channelSessionRef  = "ChannelSession"
 	channelListSchema  = "ChannelList"
 	messageSchema      = "Message"
 	messagePageSchema  = "MessagePage"
@@ -482,7 +483,9 @@ func addChannelSchemas(spec *Spec) {
 		"created_by": Ref(channelAuthorRef),
 		"created_at": dateTimeSchema(), "closed_at": dateTimeSchema(), "archived_at": dateTimeSchema(),
 		"last_seq": i64(), "rev": i64(),
+		"session": Ref(channelSessionRef),
 	}, []string{"anchor", "type", "state", "last_seq", "rev"})
+	sc[channelSessionRef] = channelSessionSchema()
 	sc[channelListSchema] = ObjectSchema(map[string]*Schema{
 		"anchor": str(),
 		"types": ArraySchema(ObjectSchema(map[string]*Schema{
@@ -495,7 +498,12 @@ func addChannelSchemas(spec *Spec) {
 	sc[messageSchema] = &Schema{
 		Type: "object",
 		Description: "A message. A removed message keeps only seq, rev, reply_to, reply_count and removed. " +
-			"A ref property renders as a RefProp.",
+			"A ref property renders as a RefProp. A session notice records a transition: its type is " +
+			"session, its author is system:realtime with system set, triggered_by is session:<channel type>, " +
+			"and its props are from, to, generation and cause (the seq of the message that moved the " +
+			"session). A notice cannot be edited or removed (409 session_notice). The author of the message " +
+			"that moved the session can no longer edit or delete it (409 session_message); a moderator may " +
+			"still remove it.",
 		Properties: map[string]*Schema{
 			"seq": i64(), "rev": i64(), "type": str(), "author": Ref(channelAuthorRef), "at": dateTimeSchema(),
 			"props":    {Type: "object", AdditionalProperties: &Schema{}},
@@ -553,4 +561,25 @@ func addChannelSchemas(spec *Spec) {
 			"lifecycle": ArraySchema(str()),
 		}, []string{"post", "edit_own", "delete_own", "remove", "lifecycle"}),
 	}, []string{"channel", "ephemeral", "_actions"})
+}
+
+// channelSessionSchema is the ChannelSession schema.
+func channelSessionSchema() *Schema {
+	str, i64, b := StringSchema, IntegerSchema, BooleanSchema
+	return &Schema{
+		Type: "object",
+		Description: "The channel's session; absent for a channel type without one. generation counts the " +
+			"transitions (0: never moved). stranded marks a stored state realtime.yaml no longer declares; " +
+			"label is then the stored name and transitions is empty.",
+		Properties: map[string]*Schema{
+			"state": str(), "label": str(), "generation": i64(), "entered_at": dateTimeSchema(),
+			"final": b(), "stranded": b(),
+			"transitions": ArraySchema(ObjectSchema(map[string]*Schema{
+				"message_type": str(), "to": str(),
+				"by": {Type: "string", Enum: []string{"trigger"},
+					Description: "Set when only a trigger's message fires the transition"},
+			}, []string{"message_type", "to"})),
+		},
+		Required: []string{"state", "generation", "entered_at"},
+	}
 }
