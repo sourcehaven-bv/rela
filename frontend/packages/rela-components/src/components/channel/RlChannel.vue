@@ -23,6 +23,13 @@
  * The log itself is not a live region, so loading a page of older messages
  * or reloading the whole log is not read out. Messages that arrive at the
  * end are announced through a separate, visually hidden polite region.
+ *
+ * `typing` shows who else is typing as one line, in its own polite, atomic
+ * live region apart from the signals, so it is read out only when the line
+ * changes. It names at most two typists and counts the rest. The line is
+ * there only when `typingOffered` is set and the channel is open with a
+ * composer; it stays mounted while empty, so the live region exists before
+ * its first text.
  */
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, useId, useTemplateRef, watch } from 'vue'
 import RlButton from '../common/RlButton.vue'
@@ -42,6 +49,7 @@ import type {
   ChannelPresentation,
   ChannelReadableRef,
   ChannelStateView,
+  ChannelTypingView,
 } from './types'
 import { useMessages, type ChannelTextKey } from '../../composables/useMessages'
 
@@ -60,6 +68,10 @@ const props = withDefaults(
     /** The lifecycle operations the user may run now. */
     allowedLifecycle?: string[]
     ephemeral?: ChannelEphemeralView[]
+    /** Who else is typing, in the order to name them. */
+    typing?: ChannelTypingView[]
+    /** The channel type offers typing, so the typing line is shown. */
+    typingOffered?: boolean
     presentation?: ChannelPresentation
     enumOptions?: Record<string, ChannelEnumOption[]>
     /**
@@ -82,6 +94,8 @@ const props = withDefaults(
     lifecycle: () => [],
     allowedLifecycle: () => [],
     ephemeral: () => [],
+    typing: () => [],
+    typingOffered: false,
     presentation: undefined,
     enumOptions: undefined,
     entityHref: undefined,
@@ -116,6 +130,13 @@ const log = useTemplateRef<HTMLElement>('log')
 const list = useTemplateRef<HTMLElement>('list')
 
 const typeByName = computed(() => new Map(props.messageTypes.map((t) => [t.name, t])))
+
+/** The typing line, or empty when nobody else is typing. */
+const typingText = computed(() => {
+  if (props.typing.length === 0) return ''
+  const names = props.typing.slice(0, 2).map((e) => e.author.name)
+  return strings.channelTyping({ names, others: props.typing.length - names.length })
+})
 
 const lifecycleButtons = computed(() => {
   const allowed = new Set(props.allowedLifecycle)
@@ -327,6 +348,14 @@ function jumpTo(seq: number) {
           <span>{{ ephemeralText(e) }}</span>
         </span>
       </div>
+      <p
+        v-if="typingOffered && $slots.composer"
+        class="rl-channel__typing"
+        aria-live="polite"
+        aria-atomic="true"
+      >
+        {{ typingText }}
+      </p>
       <div v-if="$slots.composer" class="rl-channel__composer">
         <slot name="composer" :can-reply="canReply" />
       </div>
@@ -404,6 +433,15 @@ function jumpTo(seq: number) {
   padding: var(--rl-space-1) var(--rl-space-5);
   color: var(--rl-color-text-muted);
   font-size: var(--rl-font-size-xs);
+}
+
+.rl-channel__typing {
+  min-height: 1lh;
+  margin: 0;
+  padding: 0 var(--rl-space-5);
+  color: var(--rl-color-text-muted);
+  font-size: var(--rl-font-size-xs);
+  font-style: italic;
 }
 
 .rl-channel__signal {

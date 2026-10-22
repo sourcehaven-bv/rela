@@ -28,6 +28,9 @@ import (
 
 const roomPath = "/api/v1/tickets/TKT-1/_channels/room"
 
+// chatPath is the channel of the typing type chat on TKT-1.
+const chatPath = "/api/v1/tickets/TKT-1/_channels/chat"
+
 // incidentPath is the channel of the session type incident on TKT-1.
 const incidentPath = "/api/v1/tickets/TKT-1/_channels/incident"
 
@@ -161,7 +164,7 @@ func TestChannels_Routes(t *testing.T) {
 	for _, tl := range list.Types {
 		types[tl.Type] = tl
 	}
-	if code != http.StatusOK || list.Anchor != "TKT-1" || len(types) != 4 || types["topics"].Create ||
+	if code != http.StatusOK || list.Anchor != "TKT-1" || len(types) != 6 || types["topics"].Create ||
 		len(types["threads"].Channels) != 1 || !types["threads"].Create {
 
 		t.Fatalf("list = %d %s", code, b)
@@ -188,6 +191,7 @@ func TestChannels_HiddenAnchorUniform404(t *testing.T) {
 		{http.MethodPost, "/_channels/room/messages", `{"type":"text","props":{"body":"x"}}`},
 		{http.MethodPatch, "/_channels/room/messages/1", `{"props":{"body":"x"}}`},
 		{http.MethodDelete, "/_channels/room/messages/1", ""},
+		{http.MethodPost, "/_channels/chat/_typing", ""},
 	}
 	for _, tc := range []struct {
 		name, user, entity string
@@ -246,6 +250,8 @@ func TestChannels_OffIsUniform404(t *testing.T) {
 			{http.MethodGet, "/api/v1/tickets/TKT-1/_channels?state=x", ""},
 			{http.MethodPut, roomPath, ""},
 			{http.MethodGet, roomPath + "/messages/1/more", ""},
+			{http.MethodPost, chatPath + "/_typing", ""},
+			{http.MethodGet, chatPath + "/_typing", ""},
 		} {
 			t.Run(tc.name+" "+rq.method+" "+rq.path, func(t *testing.T) {
 				resp, b := tc.env.do(t, "alice", rq.method, rq.path, rq.body, nil)
@@ -519,6 +525,9 @@ func (s stubChannels) RunAction(context.Context, realtime.RawAddress, int64, str
 func (s stubChannels) ReleaseAction(context.Context, realtime.RawAddress, int64) (realtime.MessageView, error) {
 	return realtime.MessageView{}, s.err
 }
+func (s stubChannels) Typing(context.Context, realtime.RawAddress) (realtime.TypingResult, error) {
+	return realtime.TypingResult{}, s.err
+}
 
 // The error mapping every channel route shares, for every entry of the
 // table plus the sentinels and an internal failure.
@@ -547,7 +556,9 @@ func TestChannels_ErrorMapping(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			app := newTestAppV1(t)
 			stub := stubChannels{err: tc.err}
-			app.channels = &channelsHandler{read: stub, messageOps: stub, actions: stub, channels: stub, on: stub}
+			app.channels = &channelsHandler{
+				read: stub, messageOps: stub, actions: stub, channels: stub, typist: stub, on: stub,
+			}
 			router := app.NewRouter()
 			for _, rq := range []struct{ method, path, body string }{
 				{http.MethodGet, "/api/v1/tickets/TKT-1/_channels", ""},
@@ -560,6 +571,7 @@ func TestChannels_ErrorMapping(t *testing.T) {
 				{http.MethodPost, roomPath + "/_lifecycle/close", ""},
 				{http.MethodPost, roomPath + "/messages/1/_action/ack", ""},
 				{http.MethodDelete, roomPath + "/messages/1/_action", ""},
+				{http.MethodPost, chatPath + "/_typing", ""},
 			} {
 				rec := httptest.NewRecorder()
 				router.ServeHTTP(rec, httptest.NewRequest(rq.method, rq.path, strings.NewReader(rq.body)).
@@ -614,6 +626,10 @@ func TestParseChannelRoute(t *testing.T) {
 		{[]string{"room", "messages", "1", "_actions", "ack"}, channelRoute{}, false},
 		{[]string{"room", "messages", "1", "_action", "ack", "x"}, channelRoute{}, false},
 		{[]string{"room", "messages", "_action", "ack"}, channelRoute{}, false},
+		{[]string{"room", "_typing"}, channelRoute{addr: room, typing: true}, true},
+		{[]string{"threads", "0000000000001", "_typing"}, channelRoute{addr: thread, typing: true}, true},
+		{[]string{"room", "_typing", "x"}, channelRoute{}, false},
+		{[]string{"room", "messages", "_typing"}, channelRoute{}, false},
 	} {
 		t.Run(strings.Join(tc.rest, "/"), func(t *testing.T) {
 			got, ok := parseChannelRoute("", "", tc.rest)
@@ -674,4 +690,74 @@ func TestChannelsHandler_SessionInReads(t *testing.T) {
 	env.postText(t, "alice", roomPath, "hello")
 	require.Nil(t, head(roomPath).Channel.Session)
 	require.NotContains(t, string(b), `"session":null`)
+}
+
+// TestChannelTyping_Accepted pins AC 17: POST …/_typing answers 202 with
+// the TTL, takes an empty body or {}, and another reader's head lists the
+// typist.
+func TestChannelTyping_Accepted(t *testing.T) {
+	env := newChannelEnv(t)
+	for _, body := range []string{"", "{}"} {
+		resp, b := env.do(t, "bob", http.MethodPost, chatPath+"/_typing", body, nil)
+		require.Equal(t, http.StatusAccepted, resp.StatusCode, "%s", b)
+		require.Equal(t, v1.TypingAccepted{TTLSeconds: int(realtimelimits.TypingTTL / time.Second)},
+			decodeAs[v1.TypingAccepted](t, b))
+		time.Sleep(realtimelimits.TypingRate.Per)
+	}
+	code, b := env.get(t, "alice", chatPath)
+	require.Equal(t, http.StatusOK, code, "%s", b)
+	head := decodeAs[v1.ChannelHead](t, b)
+	require.Len(t, head.TypingNow, 1)
+	require.Equal(t, "bob", head.TypingNow[0].Author.User)
+	code, b = env.get(t, "bob", chatPath)
+	require.Equal(t, http.StatusOK, code, "%s", b)
+	require.Empty(t, decodeAs[v1.ChannelHead](t, b).TypingNow, "the typist does not see themselves")
+}
+
+// TestChannelTyping_RequestChecks pins AC 17: the method, the body and the
+// refusals of the typing route.
+func TestChannelTyping_RequestChecks(t *testing.T) {
+	env := newChannelEnv(t)
+	huge := `{"x":"` + strings.Repeat("x", channelBodyLimit) + `"}`
+	for _, tc := range []struct {
+		name, user, method, path, body string
+		code                           int
+		ptype                          string
+	}{
+		{"GET", "alice", http.MethodGet, chatPath + "/_typing", "", http.StatusMethodNotAllowed, "method_not_allowed"},
+		{"body", "alice", http.MethodPost, chatPath + "/_typing", `{"x":1}`, http.StatusBadRequest, "invalid_request"},
+		{"too large", "alice", http.MethodPost, chatPath + "/_typing", huge,
+			http.StatusRequestEntityTooLarge, realtime.TypeTooLarge},
+		{"typing off", "alice", http.MethodPost, roomPath + "/_typing", "", http.StatusForbidden,
+			realtime.TypeTypingNotOffered},
+		{"no read", "alice", http.MethodPost, "/api/v1/tickets/TKT-1/_channels/secret/_typing", "",
+			http.StatusForbidden, realtime.TypeReadDenied},
+		{"no log post role", "alice", http.MethodPost, "/api/v1/tickets/TKT-1/_channels/briefing/_typing", "",
+			http.StatusForbidden, realtime.TypePostDenied},
+		{"unknown name", "alice", http.MethodPost, "/api/v1/tickets/TKT-1/_channels/threads/0000000000001/_typing", "",
+			http.StatusNotFound, realtime.TypeChannelNotFound},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			resp, b := env.do(t, tc.user, tc.method, tc.path, tc.body, nil)
+			if resp.StatusCode != tc.code || problemType(t, b) != tc.ptype {
+				t.Fatalf("%s %s = %d %s, want %d %s", tc.method, tc.path, resp.StatusCode, b, tc.code, tc.ptype)
+			}
+			if tc.code == http.StatusMethodNotAllowed {
+				require.Equal(t, http.MethodPost, resp.Header.Get("Allow"))
+			}
+		})
+	}
+}
+
+// TestChannelTyping_HiddenAnchorKeepsNothing pins AC 17: typing on an
+// anchor the caller cannot read is the uniform 404 and keeps no entry.
+func TestChannelTyping_HiddenAnchorKeepsNothing(t *testing.T) {
+	env := newChannelEnv(t)
+	featureChat := "/api/v1/features/FEAT-1/_channels/chat"
+	code, want := env.get(t, "alice", "/api/v1/features/FEAT-1")
+	resp, b := env.do(t, "alice", http.MethodPost, featureChat+"/_typing", "", nil)
+	requireUniform404(t, resp.StatusCode, b, code, want)
+	code, b = env.get(t, "dave", featureChat)
+	require.Equal(t, http.StatusOK, code, "%s", b)
+	require.Empty(t, decodeAs[v1.ChannelHead](t, b).TypingNow)
 }

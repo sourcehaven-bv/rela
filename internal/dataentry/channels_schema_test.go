@@ -26,9 +26,10 @@ func TestChannelSchema_Lists(t *testing.T) {
 	for _, ct := range got.ChannelTypes {
 		names = append(names, ct.Name)
 	}
-	require.Equal(t, []string{"incident", "room", "secret", "threads", "topics"}, names)
+	require.Equal(t, []string{"briefing", "chat", "incident", "room", "secret", "threads", "topics"}, names)
 
-	room := got.ChannelTypes[1]
+	room := got.ChannelTypes[3]
+	require.False(t, room.Typing)
 	require.Equal(t, "Room", room.Label)
 	require.Equal(t, []string{"ticket", "feature"}, room.AttachTo)
 	require.Equal(t, "one", room.Cardinality)
@@ -50,6 +51,30 @@ func TestChannelSchema_Lists(t *testing.T) {
 	require.Equal(t, "ephemeral", typing.Persist)
 	require.Equal(t, 5, typing.TTLSeconds)
 	require.NotNil(t, typing.Properties)
+}
+
+// TestChannelSchema_Typing pins AC 5: a type with typing: true says so,
+// and typing is not one of its message types, so the composer never lists
+// it.
+func TestChannelSchema_Typing(t *testing.T) {
+	env := newChannelEnv(t)
+	code, b := env.get(t, "alice", channelSchemaPath)
+	require.Equal(t, http.StatusOK, code, string(b))
+	got := decodeAs[v1.ChannelSchema](t, b)
+	chat := got.ChannelTypes[1]
+	require.Equal(t, "chat", chat.Name)
+	require.True(t, chat.Typing)
+	var names []string
+	for _, mt := range chat.MessageTypes {
+		names = append(names, mt.Name)
+	}
+	require.Equal(t, []string{"notice", "status", "text"}, names)
+
+	code, b = env.get(t, "alice", chatPath)
+	require.Equal(t, http.StatusOK, code, string(b))
+	head := decodeAs[v1.ChannelHead](t, b)
+	require.Equal(t, []string{"status", "text"}, head.Actions.Post)
+	require.True(t, head.Actions.Typing)
 }
 
 // TestChannelSchema_SameForEveryPrincipal pins that the descriptor does not

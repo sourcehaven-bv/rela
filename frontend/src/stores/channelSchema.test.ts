@@ -28,6 +28,7 @@ const room: ChannelTypeSchema = {
   anchor: 'family',
   cardinality: 'one',
   remove_reason_required: false,
+  typing: false,
   lifecycle: [],
   message_types: [
     {
@@ -45,7 +46,15 @@ function head(post: string[]): ChannelHead {
   return {
     channel: { anchor: 'TKT-1', type: 'room', state: 'open', last_seq: 0, rev: 0 },
     ephemeral: [],
-    _actions: { post, edit_own: false, delete_own: false, remove: false, lifecycle: [] },
+    typing_now: [],
+    _actions: {
+      post,
+      edit_own: false,
+      delete_own: false,
+      remove: false,
+      lifecycle: [],
+      typing: false,
+    },
   }
 }
 

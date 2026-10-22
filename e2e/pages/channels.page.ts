@@ -38,6 +38,21 @@ export class ChannelsPage extends BasePage {
     await this.composer.getByRole('button', { name: 'Send' }).click();
   }
 
+  /** Types into the composer without sending. */
+  async draft(text: string, field = 'Message') {
+    await this.composer.getByRole('textbox', { name: field }).fill(text);
+  }
+
+  /** The typing line under the log reads `text`. */
+  async expectTyping(text: string, timeout = 15_000) {
+    await expect(this.channel.locator('.rl-channel__typing')).toHaveText(text, { timeout });
+  }
+
+  /** Nobody else is typing. */
+  async expectNoTyping(timeout = 15_000) {
+    await expect(this.channel.locator('.rl-channel__typing')).toHaveText('', { timeout });
+  }
+
   async expectComposerCleared(field = 'Message') {
     await expect(this.composer.getByRole('textbox', { name: field })).toHaveValue('');
   }

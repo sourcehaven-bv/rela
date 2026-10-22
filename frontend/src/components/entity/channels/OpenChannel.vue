@@ -7,7 +7,9 @@
  * channelErrors.ts; this component holds the session state between them:
  * which message is being replied to or edited, which operations are in
  * flight, the remove dialog and the ref picker. The ephemeral clock is
- * useExpiryClock and the picker plumbing useRefPicker.
+ * useExpiryClock and the picker plumbing useRefPicker. useTyping sends the
+ * composer's typing events; the head's typing_now is shown as it is, with
+ * no clock, since the server expires entries and frames the head then.
  *
  * It emits `gone` when the channel can no longer be shown: a refused read
  * (the reader lost access, or the channel was deleted) or a refusal that
@@ -17,6 +19,7 @@
  */
 import { computed, ref, useTemplateRef, watch } from 'vue'
 import { useChannel } from '@/composables/useChannel'
+import { useTyping } from '@/composables/useTyping'
 import { useConfirm } from '@/composables/useConfirm'
 import { useChannelSchemaStore } from '@/stores/channelSchema'
 import { useSchemaStore, useUIStore } from '@/stores'
@@ -52,6 +55,7 @@ import {
   messageViews,
   presentationView,
   replyQuote,
+  typingViews,
   type MarkdownMemo,
 } from './channelView'
 
@@ -92,8 +96,10 @@ const hasEphemeral = computed(() =>
   props.channelType.message_types.some((mt) => mt.persist === 'ephemeral')
 )
 
+// typing_now lives in the head only, as signals do, so a typing type
+// refetches the head on every frame too.
 const ch = useChannel(target, {
-  ephemeral: hasEphemeral,
+  ephemeral: () => hasEphemeral.value || props.channelType.typing,
   onSeen: (head, messages) => channelSchema.checkNames(props.channelType.name, head, messages),
 })
 
@@ -123,6 +129,9 @@ const ephemeral = computed(() =>
     tz
   )
 )
+
+const typing = useTyping(target, () => ch.head.value?._actions.typing ?? false)
+const typingNow = computed(() => typingViews(ch.head.value?.typing_now))
 
 const title = computed(() => ch.head.value?.channel.title || props.name || props.channelType.label)
 
@@ -209,12 +218,16 @@ async function onPost(event: ChannelPostEvent) {
   clearErrors()
   submitting.value = true
   try {
+    // A log post ends the typing entry on the server; a typing call still
+    // in flight must land first, or it would bring the entry back.
+    await typing.settle()
     await ch.post(event.type, converted.props, event.replyTo)
     composer.value?.reset(event)
     replyTo.value = null
   } catch (err) {
     formError.value = handle(err, true)
   } finally {
+    typing.reset()
     submitting.value = false
   }
 }
@@ -395,6 +408,8 @@ const pickerTypes = picker.types
       :lifecycle="lifecycleDefs(channelType)"
       :allowed-lifecycle="ch.head.value._actions.lifecycle"
       :ephemeral="ephemeral"
+      :typing="typingNow"
+      :typing-offered="channelType.typing"
       :presentation="presentation"
       :enum-options="enumOptions"
       :entity-href="entityHref"
@@ -432,6 +447,7 @@ const pickerTypes = picker.types
           @save="onSave"
           @cancel-reply="replyTo = null"
           @cancel-edit="onCancelEdit"
+          @typing="typing.onInput"
         />
       </template>
     </RlChannel>

@@ -159,6 +159,9 @@ func TestParse_Golden(t *testing.T) {
 	}
 
 	threads, _ := c.ChannelType("page-threads")
+	if !threads.Typing || room.Typing {
+		t.Errorf("typing: page-threads = %v, incident-room = %v; want true, false", threads.Typing, room.Typing)
+	}
 	if threads.Anchor != AnchorFace || threads.Create == nil || threads.Roles["starter"].Source.Kind != SourceCreator {
 		t.Errorf("page-threads = %+v", threads)
 	}
@@ -798,5 +801,146 @@ func TestFacesRestricted(t *testing.T) {
 				t.Fatalf("facesRestricted(page) = %v; want %v", got, tc.want)
 			}
 		})
+	}
+}
+
+const typingBase = `version: 1
+channel_types:
+  room:
+    attach_to: [datalek]
+    roles: { m: { from: attached } }
+    message_types:
+      text: { post: [m], properties: { body: { type: string } } }
+`
+
+// TestParse_Typing pins that typing: loads into ChannelType.Typing and that
+// yaml.v3's boolean words are accepted as for every other boolean key.
+func TestParse_Typing(t *testing.T) {
+	cases := []struct {
+		name string
+		line string
+		want bool
+	}{
+		{"on", "    typing: true\n", true},
+		{"absent", "", false},
+		{"off", "    typing: false\n", false},
+		{"yaml word", "    typing: yes\n", true},
+	}
+	meta := testMeta(t)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			src := strings.Replace(typingBase, "    message_types:\n", tc.line+"    message_types:\n", 1)
+			c, err := Parse([]byte(src), meta, nil)
+			if err != nil {
+				t.Fatalf("Parse: %v", err)
+			}
+			ct, _ := c.ChannelType("room")
+			if ct.Typing != tc.want {
+				t.Errorf("Typing = %v; want %v", ct.Typing, tc.want)
+			}
+		})
+	}
+}
+
+// TestParse_TypingInvalid pins every load rule of typing: with its key path.
+func TestParse_TypingInvalid(t *testing.T) {
+	cases := []struct {
+		name   string
+		edits  []replace
+		key    string
+		reason string
+	}{
+		{"number", []replace{{"    message_types:\n", "    typing: 1\n    message_types:\n"}},
+			"channel_types.room.typing", "must be true or false"},
+		{"word", []replace{{"    message_types:\n", "    typing: maybe\n    message_types:\n"}},
+			"channel_types.room.typing", "must be true or false"},
+		{"mapping", []replace{{"    message_types:\n", "    typing: { on: true }\n    message_types:\n"}},
+			"channel_types.room.typing", "must be a single value"},
+		{"no log type", []replace{
+			{"    message_types:\n", "    typing: true\n    message_types:\n"},
+			{"text: { post: [m],", "text: { persist: ephemeral, ttl: 5s, post: [m],"},
+		}, "channel_types.room.typing",
+			"typing announces a message to come; declare a log message type or drop typing"},
+		{"reserved name", []replace{
+			{"    message_types:\n", "    typing: true\n    message_types:\n"},
+			{"      text:", "      typing: { persist: ephemeral, ttl: 5s, post: [m] }\n      text:"},
+		}, "channel_types.room.message_types.typing",
+			`"typing" is reserved in a channel type with typing: true: the built-in indicator replaces it; ` +
+				"remove this message type"},
+		{"top level", []replace{{"version: 1\n", "version: 1\ntyping: true\n"}}, "typing", "unknown key"},
+	}
+	meta := testMeta(t)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			src := typingBase
+			for _, e := range tc.edits {
+				if strings.Count(src, e.old) != 1 {
+					t.Fatalf("edit %q matches %d times; want exactly one", e.old, strings.Count(src, e.old))
+				}
+				src = strings.Replace(src, e.old, e.new, 1)
+			}
+			_, err := Parse([]byte(src), meta, nil)
+			assertProblem(t, err, tc.key, tc.reason)
+		})
+	}
+}
+
+// TestParse_BoolKeysUnchanged pins that the boolean check accepts exactly
+// what yaml.v3 decodes: the YAML 1.1 words still load, and a value the
+// decoder refuses is now refused with its key path.
+func TestParse_BoolKeysUnchanged(t *testing.T) {
+	meta := testMeta(t)
+	src := golden(t)
+	for _, e := range []replace{
+		{"dismissed: { label: Dismissed, final: true }", "dismissed: { label: Dismissed, final: yes }"},
+		{"body: { type: markdown, required: true, max: 8000 }", "body: { type: markdown, required: on, max: 8000 }"},
+		{"reason_required: true", "reason_required: off"},
+	} {
+		if strings.Count(src, e.old) != 1 {
+			t.Fatalf("edit %q matches %d times; want exactly one", e.old, strings.Count(src, e.old))
+		}
+		src = strings.Replace(src, e.old, e.new, 1)
+	}
+	c, err := Parse([]byte(src), meta, nil)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	br, _ := c.ChannelType("breach-response")
+	if st, ok := br.Session().State("dismissed"); !ok || !st.Final {
+		t.Errorf("final: yes did not load as true: %+v", st)
+	}
+	room, _ := c.ChannelType("incident-room")
+	if !room.MessageTypes["text"].Properties["body"].Required {
+		t.Error("required: on did not load as true")
+	}
+	if room.MessageOps.Remove.ReasonRequired {
+		t.Error("reason_required: off did not load as false")
+	}
+
+	bad := strings.Replace(golden(t), "starter: { creator: true }", "starter: { creator: 1 }", 1)
+	_, err = Parse([]byte(bad), meta, nil)
+	assertProblem(t, err, "channel_types.page-threads.roles.starter.creator", "must be true or false")
+}
+
+// TestCheckReload_TypingToggleAllowed pins that typing does not decide how
+// channels are keyed, so turning it on or off passes a reload.
+func TestCheckReload_TypingToggleAllowed(t *testing.T) {
+	meta := testMeta(t)
+	on, err := Parse([]byte(golden(t)), meta, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	off, err := Parse([]byte(strings.Replace(golden(t), "    typing: true\n", "", 1)), meta, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ct, _ := off.ChannelType("page-threads"); ct.Typing {
+		t.Fatal("typing still on after removing the key")
+	}
+	if err := CheckReload(on, off); err != nil {
+		t.Errorf("turning typing off refused: %v", err)
+	}
+	if err := CheckReload(off, on); err != nil {
+		t.Errorf("turning typing on refused: %v", err)
 	}
 }

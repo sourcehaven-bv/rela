@@ -37,7 +37,7 @@ import (
 //   - bob reads and updates requirements and decisions, and holds chat.read.
 //
 // So a decision is a hidden anchor for alice and carol, and only bob reads
-// a secret channel. Nobody holds chat.moderate, so nobody posts an announce
+// a secret channel. chat offers the built-in typing indicator. Nobody holds chat.moderate, so nobody posts an announce
 // or a cursor.
 const channelTestYAML = `
 version: 1
@@ -91,6 +91,15 @@ channel_types:
       states:
         detected:  { label: Detected, on: { contained: { to: contained } } }
         contained: { label: Contained, final: true }
+  chat:
+    attach_to: [requirement]
+    typing: true
+    read: { from: attached }
+    roles:
+      member: { from: attached }
+    message_types:
+      text: { properties: { body: { type: string } }, post: [member] }
+      status: { persist: ephemeral, ttl: 30s, post: [member] }
   secret:
     attach_to: [requirement]
     read: { permission: chat.read }
@@ -287,4 +296,12 @@ func noticeFirst(text string) bool {
 func jsonString(s string) string {
 	b, _ := json.Marshal(s)
 	return string(b)
+}
+
+// typeAsBob starts or refreshes bob's typing entry in the chat of anchor.
+func (f *channelFixture) typeAsBob(t *testing.T, anchor string) {
+	t.Helper()
+	if _, err := f.svc.Typing(f.asBob(t), realtime.RawAddress{Anchor: anchor, Type: "chat"}); err != nil {
+		t.Fatalf("typing in the chat of %s as bob: %v", anchor, err)
+	}
 }

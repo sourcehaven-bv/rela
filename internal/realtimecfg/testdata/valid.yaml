@@ -82,6 +82,7 @@ channel_types:
     anchor: face
     cardinality: many
     create: { label: New thread, roles: [editor] }
+    typing: true
     roles:
       editor:  { permission: privacy.officer }
       starter: { creator: true }

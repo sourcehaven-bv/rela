@@ -42,6 +42,8 @@ var channelWireTypes = map[string]any{
 	"ChannelList":              v1.ChannelList{},
 	"ChannelActions":           v1.ChannelActions{},
 	"ChannelHead":              v1.ChannelHead{},
+	"TypingEntry":              v1.TypingEntry{},
+	"TypingAccepted":           v1.TypingAccepted{},
 	"RefProp":                  v1.RefProp{},
 	"MessageRemoval":           v1.MessageRemoval{},
 	"MessageAction":            v1.MessageAction{},
@@ -145,7 +147,7 @@ func normalizeWire(v any) any {
 
 // isWireTimeKey reports whether k names a time value on the channel wire.
 func isWireTimeKey(k string) bool {
-	return k == "at" || strings.HasSuffix(k, "_at") || k == "edit_until" || k == "release_after"
+	return k == "at" || strings.HasSuffix(k, "_at") || k == "edit_until" || k == "release_after" || k == "since"
 }
 
 // TestJSONFields_FlattensEmbedded pins that an embedded struct contributes
@@ -194,7 +196,12 @@ func TestChannelWireGolden(t *testing.T) {
 	// and the page a notice.
 	resp, b = env.do(t, "alice", http.MethodPost, incidentPath+"/messages", `{"type":"contained"}`, nil)
 	require.Equal(t, http.StatusCreated, resp.StatusCode, "%s", b)
-	samples := map[string]any{}
+	// bob types in the chat: alice's head lists him in typing_now.
+	resp, b = env.do(t, "bob", http.MethodPost, chatPath+"/_typing", "", nil)
+	require.Equal(t, http.StatusAccepted, resp.StatusCode, "%s", b)
+	var accepted any
+	require.NoError(t, json.Unmarshal(b, &accepted))
+	samples := map[string]any{"typing_accepted": accepted}
 	for name, path := range map[string]string{
 		"list":             "/api/v1/tickets/TKT-1/_channels",
 		"head":             roomPath,
@@ -202,6 +209,7 @@ func TestChannelWireGolden(t *testing.T) {
 		"schema":           channelSchemaPath,
 		"session_head":     incidentPath,
 		"session_messages": incidentPath + "/messages",
+		"typing_head":      chatPath,
 	} {
 		code, b := env.get(t, "alice", path)
 		require.Equal(t, http.StatusOK, code, "%s: %s", path, b)

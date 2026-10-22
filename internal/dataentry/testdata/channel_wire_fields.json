@@ -23,7 +23,8 @@
     "edit_own",
     "lifecycle",
     "post",
-    "remove"
+    "remove",
+    "typing"
   ],
   "ChannelAuthor": [
     "principal_type",
@@ -35,7 +36,8 @@
     "_actions",
     "channel",
     "ephemeral",
-    "last"
+    "last",
+    "typing_now"
   ],
   "ChannelLifecycleSchema": [
     "label",
@@ -97,7 +99,8 @@
     "lifecycle",
     "message_types",
     "name",
-    "remove_reason_required"
+    "remove_reason_required",
+    "typing"
   ],
   "CreateChannelRequest": [
     "title"
@@ -171,5 +174,12 @@
   ],
   "RemoveMessageRequest": [
     "reason"
+  ],
+  "TypingAccepted": [
+    "ttl_seconds"
+  ],
+  "TypingEntry": [
+    "author",
+    "since"
   ]
 }

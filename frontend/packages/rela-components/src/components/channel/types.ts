@@ -239,6 +239,17 @@ export interface ChannelEphemeralView {
 }
 
 /**
+ * Someone else typing in the channel, from the head's `typing_now`. The app
+ * passes exactly what the last head says; the server expires an entry and
+ * sends a new head then, so the library runs no timer.
+ */
+export interface ChannelTypingView {
+  /** Unique within the list, such as the author's user. */
+  key: string
+  author: ChannelAuthorView
+}
+
+/**
  * The state of a channel. Named apart from the app's wire type of the same
  * shape, so a consumer can import both.
  */

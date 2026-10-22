@@ -6772,6 +6772,10 @@ body:
                 },
                 "remove_reason_required": {
                   "type": "boolean"
+                },
+                "typing": {
+                  "type": "boolean",
+                  "description": "Whether the type offers the built-in typing indicator (POST …/_typing)"
                 }
               },
               "required": [
@@ -6781,6 +6785,7 @@ body:
                 "anchor",
                 "cardinality",
                 "remove_reason_required",
+                "typing",
                 "lifecycle",
                 "message_types"
               ]

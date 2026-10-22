@@ -36,6 +36,7 @@ type rawChannelType struct {
 	OnEntityDelete    string                    `yaml:"on_entity_delete"`
 	DetachedRetention string                    `yaml:"detached_retention"`
 	Session           *rawSession               `yaml:"session"`
+	Typing            bool                      `yaml:"typing"`
 }
 
 // rawSession is `channel_types.<name>.session`. A Go map loses the order

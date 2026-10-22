@@ -74,6 +74,20 @@ const (
 	MaxSubscriberChanges = 1024
 )
 
+// Typing indicator. The server owns these numbers: `limits:` in
+// realtime.yaml does not name them and cannot change them.
+const (
+	// TypingTTL is how long a typing entry stays live after its last
+	// refresh. The expiry timer drops it then and wakes readers.
+	TypingTTL = 6 * time.Second
+	// MaxTypingPerChannel caps the typing entries of one channel. A new
+	// typist over the cap is refused; no entry is evicted.
+	MaxTypingPerChannel = 32
+	// MaxTypingChannels caps the channels that hold typing entries in one
+	// process. A typist in another channel is refused while the cap holds.
+	MaxTypingChannels = 4096
+)
+
 // Retention defaults and waits of the background sweep.
 const (
 	// DetachedRetention is how long a channel detached from its entity is
@@ -150,6 +164,9 @@ var (
 	// OpRate applies to the channel operations that are not a post: create,
 	// edit, remove and the lifecycle operations.
 	OpRate = Rate{Count: 30, Per: time.Minute}
+	// TypingRate applies to typing per identity and channel. The server
+	// owns it; `limits.signal_rate` does not apply to typing.
+	TypingRate = Rate{Count: 1, Per: time.Second}
 )
 
 // PerSecond returns the rate as events per second.

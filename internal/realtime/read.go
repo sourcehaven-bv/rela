@@ -96,8 +96,12 @@ type ReadView struct {
 	Actions      *Affordances      `json:"actions,omitempty"`
 	MessageTypes []MessageTypeView `json:"message_types,omitempty"`
 	Signals      []EphemeralView   `json:"signals,omitempty"`
-	Messages     []MessageView     `json:"messages"`
-	HasMore      bool              `json:"has_more"`
+	// TypingNow lists who else is typing, with Signals; see
+	// [Service.Typing]. It holds no operator signal, and Signals holds no
+	// typing entry.
+	TypingNow []TypingView  `json:"typing_now,omitempty"`
+	Messages  []MessageView `json:"messages"`
+	HasMore   bool          `json:"has_more"`
 	Cursors
 }
 
@@ -138,7 +142,7 @@ func (s *Service) Read(ctx context.Context, addr RawAddress, req ReadRequest) (R
 	}
 	var sigs []signal
 	if req.Signals {
-		sigs = s.local.liveSignals(c.key)
+		sigs, out.TypingNow = s.liveSignals(c)
 	}
 	r, err := s.renderer(c, msgs, sigs)
 	if err != nil {

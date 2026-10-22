@@ -148,6 +148,47 @@ channel_types:
         post: [member]
 `
 
+// typingRealtime has channel types with the built-in typing indicator:
+// chat (one), rooms (many), and plain without typing. Readers need
+// chat.read; log posts need chat.post (text) or chat.lead (note); any
+// attached reader may post the operator signal status.
+const typingRealtime = `
+version: 1
+channel_types:
+  chat:
+    attach_to: [ticket]
+    typing: true
+    read: { permission: chat.read }
+    roles:
+      member: { from: attached }
+      poster: { permission: chat.post }
+      lead:   { permission: chat.lead }
+    message_types:
+      text:   { properties: { body: { type: string } }, post: [poster] }
+      note:   { properties: { body: { type: string } }, post: [lead] }
+      status: { persist: ephemeral, ttl: 30s, post: [member] }
+    lifecycle:
+      close:   { roles: [lead] }
+      archive: { roles: [lead], from: closed }
+  rooms:
+    attach_to: [ticket]
+    cardinality: many
+    typing: true
+    read: { permission: chat.read }
+    create: { roles: [poster] }
+    roles:
+      poster: { permission: chat.post }
+    message_types:
+      text: { properties: { body: { type: string } }, post: [poster] }
+  plain:
+    attach_to: [ticket]
+    read: { permission: chat.read }
+    roles:
+      poster: { permission: chat.post }
+    message_types:
+      text: { properties: { body: { type: string } }, post: [poster] }
+`
+
 func testMeta(t *testing.T) *metamodel.Metamodel {
 	t.Helper()
 	meta, err := metamodel.Parse([]byte(testSchema))

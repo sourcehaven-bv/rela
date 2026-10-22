@@ -70,6 +70,7 @@ const room: ChannelTypeSchema = {
   anchor: 'family',
   cardinality: 'one',
   remove_reason_required: true,
+  typing: false,
   lifecycle: [
     { name: 'close', label: 'Close' },
     { name: 'delete', label: 'Delete' },
@@ -106,12 +107,14 @@ function head(over: Partial<ChannelHead> = {}, ch: Partial<Channel> = {}): Chann
   return {
     channel: channel(ch),
     ephemeral: [],
+    typing_now: [],
     _actions: {
       post: ['card', 'typing'],
       edit_own: true,
       delete_own: true,
       remove: true,
       lifecycle: ['close', 'delete'],
+      typing: false,
     },
     ...over,
   }
@@ -414,7 +417,14 @@ describe('ChannelsPanel', () => {
   it('shows no composer to a user without a post role', async () => {
     api.getChannelHead.mockResolvedValue(
       head({
-        _actions: { post: [], edit_own: false, delete_own: false, remove: false, lifecycle: [] },
+        _actions: {
+          post: [],
+          edit_own: false,
+          delete_own: false,
+          remove: false,
+          lifecycle: [],
+          typing: false,
+        },
       })
     )
     await mountPanel()
@@ -591,7 +601,14 @@ describe('ChannelsPanel', () => {
     api.getChannelHead.mockResolvedValue(
       head(
         {
-          _actions: { post: [], edit_own: false, delete_own: false, remove: false, lifecycle: [] },
+          _actions: {
+            post: [],
+            edit_own: false,
+            delete_own: false,
+            remove: false,
+            lifecycle: [],
+            typing: false,
+          },
         },
         { state: 'closed' }
       )

@@ -91,17 +91,41 @@ type ChannelActions struct {
 	// the order close, reopen, archive, delete. Each is a
 	// `POST …/_lifecycle/{op}`.
 	Lifecycle []string `json:"lifecycle"`
+	// Typing reports whether the caller may send typing here now, with
+	// `POST …/_typing`: the type offers it, the caller may post a log
+	// message type and the channel is open. The rate limit is not part of
+	// it.
+	Typing bool `json:"typing"`
 }
 
 // ChannelHead is the `GET` answer for one channel: its metadata, the last
-// message, the live ephemeral messages and the caller's actions. It is the
-// shape a live subscription follows; after a frame, fetch
-// `messages?after_rev=` with the rev you hold.
+// message, the live ephemeral messages, who else is typing and the
+// caller's actions. It is the shape a live subscription follows; after a
+// frame, fetch `messages?after_rev=` with the rev you hold.
+//
+// TypingNow is never null. It leaves out the caller's own entry, and is
+// empty unless the channel is open and its type offers typing. A client
+// shows it as it is: the server expires entries and sends a frame then.
 type ChannelHead struct {
 	Channel   Channel            `json:"channel"`
 	Last      *Message           `json:"last,omitempty"`
 	Ephemeral []EphemeralMessage `json:"ephemeral"`
+	TypingNow []TypingEntry      `json:"typing_now"`
 	Actions   ChannelActions     `json:"_actions"`
+}
+
+// TypingEntry is one person typing in a channel, and since when. Since
+// does not move while they keep typing.
+type TypingEntry struct {
+	Author ChannelAuthor `json:"author"`
+	Since  string        `json:"since"`
+}
+
+// TypingAccepted is the 202 answer to `POST …/_typing`. TTLSeconds is how
+// long the entry stays live without another call; a client refreshes at
+// half of it.
+type TypingAccepted struct {
+	TTLSeconds int `json:"ttl_seconds"`
 }
 
 // RefProp renders a ref property. A readable entity shows its id, type and
@@ -260,7 +284,8 @@ type ChannelSchema struct {
 
 // ChannelTypeSchema describes one channel type. Anchor is "family" or
 // "face"; CreateLabel is the label of create, set only for a cardinality
-// many type that names one. Lifecycle lists the declared operations in
+// many type that names one. Typing reports whether the type offers the
+// built-in typing indicator. Lifecycle lists the declared operations in
 // the order close, reopen, archive, delete.
 type ChannelTypeSchema struct {
 	Name                 string                     `json:"name"`
@@ -270,6 +295,7 @@ type ChannelTypeSchema struct {
 	Cardinality          string                     `json:"cardinality"`
 	CreateLabel          string                     `json:"create_label,omitempty"`
 	RemoveReasonRequired bool                       `json:"remove_reason_required"`
+	Typing               bool                       `json:"typing"`
 	Lifecycle            []ChannelLifecycleSchema   `json:"lifecycle"`
 	MessageTypes         []ChannelMessageTypeSchema `json:"message_types"`
 }

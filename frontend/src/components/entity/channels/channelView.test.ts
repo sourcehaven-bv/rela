@@ -18,6 +18,7 @@ import {
   editingFor,
   enumOptionsFor,
   ephemeralViews,
+  typingViews,
   excerptOf,
   lifecycleDefs,
   messageViews,
@@ -69,6 +70,7 @@ const room: ChannelTypeSchema = {
   anchor: 'family',
   cardinality: 'one',
   remove_reason_required: false,
+  typing: false,
   lifecycle: [
     { name: 'close', label: 'Close' },
     { name: 'delete', label: 'Delete' },
@@ -285,6 +287,31 @@ describe('ephemeral signals', () => {
     expect(nextExpiry(signals, at('2026-03-01T10:00:00Z'))).toBe(at('2026-03-01T10:00:05Z'))
     expect(nextExpiry(signals, at('2026-03-01T10:00:06Z'))).toBe(at('2026-03-01T10:00:10Z'))
     expect(nextExpiry(signals, at('2026-03-01T10:00:10Z'))).toBeUndefined()
+  })
+})
+
+describe('typingViews', () => {
+  it('maps typing_now as it is, in its order, with no expiry', () => {
+    const got = typingViews([
+      { author: { user: 'bo', tool: 'data-entry' }, since: '2020-01-01T00:00:00Z' },
+      { author: { user: 'ann', tool: 'mcp' }, since: '2020-01-01T00:00:01Z' },
+    ])
+    expect(got.map((v) => v.author)).toEqual([
+      { name: 'bo', kind: 'person' },
+      { name: 'ann', kind: 'agent' },
+    ])
+    expect(new Set(got.map((v) => v.key)).size).toBe(2)
+  })
+
+  it('gives one user in two organizations distinct keys', () => {
+    const entry = { author: { user: 'ann' }, since: '2020-01-01T00:00:00Z' }
+    const got = typingViews([entry, { ...entry }, { ...entry, since: '2020-01-01T00:00:01Z' }])
+    expect(new Set(got.map((v) => v.key)).size).toBe(3)
+  })
+
+  it('is empty without typing_now', () => {
+    expect(typingViews(undefined)).toEqual([])
+    expect(typingViews([])).toEqual([])
   })
 })
 

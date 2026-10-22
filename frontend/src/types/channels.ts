@@ -83,13 +83,33 @@ export interface ChannelActions {
   remove: boolean
   /** The lifecycle operations the caller may run now. */
   lifecycle: string[]
+  /** Whether the caller may POST …/_typing now. */
+  typing: boolean
 }
 
 export interface ChannelHead {
   channel: Channel
   last?: Message
   ephemeral: EphemeralMessage[]
+  /**
+   * Who else is typing, by `since`. Never the caller. Show it as it is: the
+   * server expires an entry and frames the head then, so the client runs no
+   * clock on it.
+   */
+  typing_now: TypingEntry[]
   _actions: ChannelActions
+}
+
+/** One live typing entry. A refresh keeps `since`. */
+export interface TypingEntry {
+  author: ChannelAuthor
+  since: string
+}
+
+/** The answer to POST …/_typing (202). */
+export interface TypingAccepted {
+  /** How long the entry lives without another call. */
+  ttl_seconds: number
 }
 
 /** A ref the caller may read: the server resolved it. */
@@ -249,6 +269,8 @@ export interface ChannelTypeSchema {
   cardinality: 'one' | 'many'
   create_label?: string
   remove_reason_required: boolean
+  /** Whether the type offers the built-in typing indicator. */
+  typing: boolean
   lifecycle: ChannelLifecycleSchema[]
   message_types: ChannelMessageTypeSchema[]
 }
@@ -354,8 +376,11 @@ export const CHANNEL_WIRE_FIELDS: Record<string, readonly string[]> = {
     'delete_own',
     'remove',
     'lifecycle',
+    'typing',
   ]),
-  ChannelHead: wireKeys<ChannelHead>()(['channel', 'last', 'ephemeral', '_actions']),
+  ChannelHead: wireKeys<ChannelHead>()(['channel', 'last', 'ephemeral', 'typing_now', '_actions']),
+  TypingEntry: wireKeys<TypingEntry>()(['author', 'since']),
+  TypingAccepted: wireKeys<TypingAccepted>()(['ttl_seconds']),
   RefProp: wireKeys<RefProp>()(['id', 'type', 'title', 'restricted']),
   MessageRemoval: wireKeys<MessageRemoval>()(['at', 'kind', 'by', 'reason']),
   MessageAction: wireKeys<MessageAction>()(['name', 'status', 'at', 'promoted']),
@@ -407,6 +432,7 @@ export const CHANNEL_WIRE_FIELDS: Record<string, readonly string[]> = {
     'cardinality',
     'create_label',
     'remove_reason_required',
+    'typing',
     'lifecycle',
     'message_types',
   ]),

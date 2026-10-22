@@ -111,8 +111,24 @@ func (k *keyChecker) walk(n *yaml.Node, t reflect.Type, path string) {
 			k.walk(c, t.Elem(), fmt.Sprintf("%s[%d]", path, i))
 		}
 	default:
-		if n.Kind != yaml.ScalarNode {
-			add(path, "must be a single value")
+		k.scalar(n, t, path)
+	}
+}
+
+// scalar checks a value whose Go type is neither a struct, a map nor a
+// slice: it must be a single value, and a bool must decode as one.
+func (k *keyChecker) scalar(n *yaml.Node, t reflect.Type, path string) {
+	if n.Kind != yaml.ScalarNode {
+		k.add(path, "must be a single value")
+		return
+	}
+	// yaml.v3 itself decides what a boolean is, so the accepted set (true,
+	// yes, on and the rest) is exactly what the decoder takes. The check
+	// only names the key of a value it would refuse.
+	if t.Kind() == reflect.Bool {
+		var b bool
+		if n.Decode(&b) != nil {
+			k.add(path, "must be true or false")
 		}
 	}
 }

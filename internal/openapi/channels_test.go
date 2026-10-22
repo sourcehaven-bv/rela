@@ -292,3 +292,84 @@ func jsonNames(typ reflect.Type) []string {
 	slices.Sort(out)
 	return out
 }
+
+// TestChannelPaths_Typing pins AC 17: POST …/_typing is documented only
+// for a channel type with typing: true, and the head and descriptor
+// schemas carry the typing fields of the wire types.
+func TestChannelPaths_Typing(t *testing.T) {
+	const cfg = `
+version: 1
+channel_types:
+  chat:
+    attach_to: [task]
+    typing: true
+    read: { from: attached }
+    roles:
+      member: { from: attached }
+    message_types:
+      text: { properties: { body: { type: string } }, post: [member] }
+  topics:
+    attach_to: [task]
+    cardinality: many
+    typing: true
+    read: { from: attached }
+    create: { roles: [member] }
+    roles:
+      member: { from: attached }
+    message_types:
+      text: { properties: { body: { type: string } }, post: [member] }
+`
+	rt, err := realtimecfg.Parse([]byte(cfg), attachmentTestMeta(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	g := New(attachmentTestMeta(), Config{Title: "T", Version: "1"})
+	g.SetRealtime(func() *realtimecfg.Compiled { return rt })
+	spec := g.Generate()
+	for _, p := range []string{"/api/v1/tasks/{id}/_channels/chat/_typing",
+		"/api/v1/tasks/{id}/_channels/topics/{name}/_typing"} {
+		item, ok := spec.Paths[p]
+		if !ok || item.Post == nil {
+			t.Fatalf("spec has no POST %s", p)
+		}
+		requireResponses(t, p, item.Post, "202", "400", "403", "404", "409", "413", "429")
+		if _, ok := item.Post.Responses["429"].Headers["Retry-After"]; !ok {
+			t.Error("429 does not describe Retry-After")
+		}
+		body := item.Post.RequestBody.Content["application/json"].Schema
+		if ap := body.AdditionalProperties; ap == nil || ap.Not == nil {
+			t.Errorf("typing body admits fields the server rejects: %+v", body)
+		}
+	}
+
+	off := New(attachmentTestMeta(), Config{Title: "T", Version: "1"})
+	plain := channelTestConfig(t)
+	off.SetRealtime(func() *realtimecfg.Compiled { return plain })
+	for p := range off.Generate().Paths {
+		if strings.HasSuffix(p, "/_typing") {
+			t.Errorf("spec has %s, but no channel type offers typing", p)
+		}
+	}
+
+	sc := spec.Components.Schemas
+	for name, typ := range map[string]reflect.Type{
+		typingAccSchema:   reflect.TypeFor[v1.TypingAccepted](),
+		typingEntrySchema: reflect.TypeFor[v1.TypingEntry](),
+	} {
+		if got, want := schemaKeys(sc[name]), jsonNames(typ); !slices.Equal(got, want) {
+			t.Errorf("%s properties = %v, want %v", name, got, want)
+		}
+	}
+	head := sc[channelHeadSchema]
+	if got, want := schemaKeys(head), jsonNames(reflect.TypeFor[v1.ChannelHead]()); !slices.Equal(got, want) {
+		t.Errorf("ChannelHead properties = %v, want %v", got, want)
+	}
+	actions := head.Properties["_actions"]
+	if got, want := schemaKeys(actions), jsonNames(reflect.TypeFor[v1.ChannelActions]()); !slices.Equal(got, want) {
+		t.Errorf("ChannelHead _actions properties = %v, want %v", got, want)
+	}
+	desc := sc[descriptorSchema].Properties["channel_types"].Items
+	if _, ok := desc.Properties["typing"]; !ok || !slices.Contains(desc.Required, "typing") {
+		t.Error("the channel type descriptor does not require typing")
+	}
+}

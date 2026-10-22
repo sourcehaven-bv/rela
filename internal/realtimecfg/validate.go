@@ -172,6 +172,10 @@ func (v *validator) channelType(name string, raw *rawChannelType, limits Limits)
 			ct.MessageTypes[mn] = mt
 		}
 	}
+	if raw.Typing {
+		ct.Typing = true
+		v.typing(key, raw, ct)
+	}
 	ct.Lifecycle = v.lifecycle(key+".lifecycle", raw.Lifecycle, ct)
 	ct.DetachedRetention = DefaultDetachedRetention()
 	if raw.DetachedRetention != "" {

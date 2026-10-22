@@ -41,6 +41,7 @@ var channelErrorStatus = map[string]int{
 	realtime.TypeChannelTypeConflict: http.StatusConflict,
 	realtime.TypeConfigChanged:       http.StatusConflict,
 	realtime.TypeLifecycleNotOffered: http.StatusForbidden,
+	realtime.TypeTypingNotOffered:    http.StatusForbidden,
 	realtime.TypeLifecycleDenied:     http.StatusForbidden,
 	realtime.TypeLifecycleWrongState: http.StatusConflict,
 	realtime.TypeRetentionActive:     http.StatusConflict,

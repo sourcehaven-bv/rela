@@ -50,6 +50,9 @@ const (
 	// TypeLifecycleNotOffered is a 403 for a lifecycle operation the
 	// channel type does not declare.
 	TypeLifecycleNotOffered = "lifecycle_not_offered"
+	// TypeTypingNotOffered is a 403 for typing in a channel whose type
+	// does not set typing: true.
+	TypeTypingNotOffered = "typing_not_offered"
 	// TypeLifecycleDenied is a 403 for a declared lifecycle operation whose
 	// gate or condition refuses the caller.
 	TypeLifecycleDenied = "lifecycle_denied"

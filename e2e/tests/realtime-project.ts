@@ -53,6 +53,7 @@ channel_types:
     label: ${ROOM.label}
     attach_to: [feature]
     cardinality: one
+    typing: true
     read: ${read}
     roles:
       member: { permission: channel-post }

@@ -13,6 +13,7 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/principal"
 	"github.com/Sourcehaven-BV/rela/internal/realtime"
+	"github.com/Sourcehaven-BV/rela/internal/realtimelimits"
 )
 
 // channelWatchClient connects alice to a server whose channel poll runs
@@ -339,5 +340,33 @@ func TestWatchChannel_TargetAndWakeFilter(t *testing.T) {
 	}
 	if !(&watchChannel{anchor: "REQ-001", typ: "threads"}).matches("REQ-001", "threads", "x") {
 		t.Error("a target without a name misses a named channel's wake")
+	}
+}
+
+// TestReadChannel_TypingRefreshDoesNotWakeWatch pins AC 20: a watch on
+// read_channel with signals returns when bob starts typing, and not while
+// he refreshes the entry.
+func TestReadChannel_TypingRefreshDoesNotWakeWatch(t *testing.T) {
+	t.Parallel()
+	f := newChannelFixture(t)
+	cs := channelWatchClient(t, f, "alice", 100*time.Millisecond)
+	target := readChannelTarget(map[string]any{"id": "REQ-001", "channel_type": "chat", "signals": true})
+	base := mustWatch(t, cs, watchArgs("", 0, target))
+
+	done := waitChanged(cs, watchArgs(base.Cursor, 20, target))
+	time.Sleep(200 * time.Millisecond)
+	f.typeAsBob(t, "REQ-001")
+	got := <-done
+	if len(got.Changed) != 1 {
+		t.Fatalf("watch at start = %+v, want the target changed", got)
+	}
+
+	done = waitChanged(cs, watchArgs(got.Cursor, 3, target))
+	for range 2 {
+		time.Sleep(realtimelimits.TypingRate.Per + 100*time.Millisecond)
+		f.typeAsBob(t, "REQ-001")
+	}
+	if quiet := <-done; !quiet.TimedOut || len(quiet.Changed) != 0 {
+		t.Errorf("watch during refreshes = %+v, want a timeout", quiet)
 	}
 }

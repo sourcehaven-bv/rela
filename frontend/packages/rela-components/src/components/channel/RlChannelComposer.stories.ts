@@ -546,3 +546,64 @@ export const EditTypeGone: Story = {
     await expect(args.onCancelEdit).toHaveBeenCalled()
   },
 }
+
+const freshTyping = fn()
+const editTyping = fn()
+
+/**
+ * The composer emits `typing` while the user writes a new message of a log
+ * type, picking a ref included. It does not for an ephemeral type such as Status, and not while
+ * editing a message.
+ */
+export const EmitsTyping: Story = {
+  render: (args) => ({
+    components: { RlChannelComposer },
+    setup: () => ({
+      args,
+      freshTyping,
+      editTyping,
+      editing: { seq: 5, type: 'text', values: { body: 'Old text.' } } satisfies ChannelEditing,
+    }),
+    template: `
+      <div style="max-width:640px; display:grid; gap:16px">
+        <RlChannelComposer v-bind="args" @typing="freshTyping" />
+        <RlChannelComposer v-bind="args" :editing="editing" @typing="editTyping" />
+      </div>
+    `,
+  }),
+  play: async ({ canvasElement }) => {
+    freshTyping.mockClear()
+    editTyping.mockClear()
+    const [fresh, edit] = canvasElement.querySelectorAll('form')
+    const canvas = within(fresh as HTMLElement)
+    await userEvent.type(canvas.getByRole('textbox', { name: /Message/ }), 'Lo')
+    await expect(freshTyping).toHaveBeenCalled()
+
+    await userEvent.click(canvas.getByRole('radio', { name: 'Decision' }))
+    freshTyping.mockClear()
+    await userEvent.click(canvas.getByRole('button', { name: 'Choose a person…' }))
+    await waitFor(() => expect(canvas.getByText('PER-7')).toBeVisible())
+    await expect(freshTyping).toHaveBeenCalled()
+
+    freshTyping.mockClear()
+    await userEvent.click(canvas.getByRole('radio', { name: 'Status' }))
+    await userEvent.type(canvas.getByRole('textbox', { name: /Status/ }), 'Away')
+    await expect(freshTyping).not.toHaveBeenCalled()
+
+    await userEvent.type(within(edit as HTMLElement).getByRole('textbox', { name: /Message/ }), ' More.')
+    await expect(editTyping).not.toHaveBeenCalled()
+  },
+}
+
+/**
+ * The built-in typing indicator is not a message type: with typing on, the
+ * schema lists no `typing` type, so the composer offers none.
+ */
+export const TypingIsNotAMessageType: Story = {
+  play: async ({ canvasElement }) => {
+    const group = within(canvasElement).getByRole('radiogroup', { name: 'Message type' })
+    const options = within(group).getAllByRole('radio').map((r) => r.textContent?.trim())
+    await expect(options).toEqual(['Message', 'Decision', 'Finding', 'Status'])
+    await expect(options).not.toContain('Typing')
+  },
+}
