@@ -113,6 +113,8 @@ func (s *Store) lock(ctx context.Context) (func(), error) {
 		s.mu.Unlock()
 		return nil, fmt.Errorf("kvpiles: lock %s: %w", StateKey, err)
 	}
+	// Returning with s.mu held is the point of lock: the closure unlocks it.
+	// nosemgrep: trailofbits.go.missing-unlock-before-return.missing-unlock-before-return
 	return func() {
 		unlock()
 		s.mu.Unlock()

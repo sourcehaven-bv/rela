@@ -212,6 +212,7 @@ func (l *listener) run(ctx context.Context, conn *pgx.Conn) {
 // listen issues LISTEN on the shared feed channel. The name is a compile-time
 // constant; it is quoted only because LISTEN does not accept bound parameters.
 func (l *listener) listen(ctx context.Context, conn *pgx.Conn) error {
+	// nosemgrep: go.lang.security.audit.sqli.pgx-sqli.pgx-sqli
 	_, err := conn.Exec(ctx, "LISTEN "+pgQuoteIdentifier(feedChannel))
 	return err
 }

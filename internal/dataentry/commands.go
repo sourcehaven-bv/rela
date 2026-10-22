@@ -737,7 +737,9 @@ func (h *commandHandler) handleCommandExec(w http.ResponseWriter, r *http.Reques
 	// RELA_* env vars, never as shell text. A shell is intentional here —
 	// `script:` is documented as a shell snippet, and executing it is the
 	// feature. The trust boundary is the config file (operator/repo write
-	// access), enforced upstream by authorizeCommand.
+	// access), enforced upstream by authorizeCommand. The same reason
+	// covers the semgrep suppression below.
+	// nosemgrep: go.lang.security.audit.dangerous-exec-command.dangerous-exec-command
 	proc := exec.CommandContext(r.Context(), "sh", "-c", cmd.Script)
 	proc.Cancel = func() error { return proc.Process.Signal(syscall.SIGINT) }
 	proc.WaitDelay = cancelGrace

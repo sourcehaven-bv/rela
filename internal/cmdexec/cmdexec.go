@@ -270,8 +270,11 @@ func (r *Runner) Run(
 // waits for it — killing the whole process group if the deadline passes. Returns
 // the captured stdout buffer.
 func (r *Runner) execute(ctx context.Context, args []string, stdin io.Reader) (*bytes.Buffer, error) {
-	// args[0] is caller-configured (project config), not request input; the array
-	// form guarantees no shell interpretation of attacker-controlled bytes.
+	// Every element of args is the sandbox wrapper, the caller-configured
+	// command (project config), or a runner-owned temp path for {in}/{out};
+	// request data arrives only on stdin or in the {in} file. The array form
+	// means no shell interprets any of it.
+	// nosemgrep: go.lang.security.audit.dangerous-exec-command.dangerous-exec-command
 	ec := exec.CommandContext(ctx, args[0], args[1:]...)
 	ec.Env = Environ()
 	ec.Stdin = stdin
