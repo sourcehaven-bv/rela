@@ -87,4 +87,42 @@ export class ChannelsPage extends BasePage {
   async expectClosedNotice(timeout = 15_000) {
     await expect(this.channel).toContainText('This channel is closed.', { timeout });
   }
+
+  /** The session stepper of the open channel. */
+  get session(): Locator {
+    return this.channel.locator('.rl-channel-session');
+  }
+
+  /** The stepper marks `label` as the current state. */
+  async expectSessionAt(label: string, timeout = 15_000) {
+    await expect(this.session.locator('[aria-current="step"]')).toContainText(label, { timeout });
+  }
+
+  /** Selects the message type `label` in the composer's type picker. */
+  async selectMessageType(label: string) {
+    await this.composer.getByRole('radio', { name: new RegExp(`^${label}\\b`) }).click();
+  }
+
+  /** The composer offers the message type `label`, or does not. */
+  async expectMessageType(label: string, offered: boolean) {
+    await expect(this.composer.getByRole('radio', { name: new RegExp(`^${label}\\b`) })).toHaveCount(offered ? 1 : 0);
+  }
+
+  /** The composer marks the message type `label` as one that moves the session, or does not. */
+  async expectTransitionMark(label: string, marked: boolean, timeout = 15_000) {
+    const name = new RegExp(`^${label}\\b.*moves the session`);
+    await expect(this.composer.getByRole('radio', { name })).toHaveCount(marked ? 1 : 0, { timeout });
+  }
+
+  /** The composer's note on where sending moves the session; null: no note. */
+  async expectSessionHint(text: string | null) {
+    if (text === null) await expect(this.composer).not.toContainText('moves the session to');
+    else await expect(this.composer).toContainText(text);
+  }
+
+  /** The message holding `text` offers the control `label`, or does not. */
+  async expectMessageControl(text: string, label: string, offered: boolean) {
+    const row = this.messages.filter({ hasText: text });
+    await expect(row.getByRole('button', { name: label, exact: true })).toHaveCount(offered ? 1 : 0);
+  }
 }

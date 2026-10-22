@@ -15,6 +15,8 @@ import type {
   MessagePage,
 } from '@/types/channels'
 import ChannelsPanel from './ChannelsPanel.vue'
+import RlChannelSession from 'rela-components/components/channel/RlChannelSession.vue'
+import RlChannelComposer from 'rela-components/components/channel/RlChannelComposer.vue'
 
 // The channel panel on an entity page (TKT-91BK6F). These tests mount the
 // real panel, composables and library components over a mocked channel
@@ -115,6 +117,7 @@ function head(over: Partial<ChannelHead> = {}, ch: Partial<Channel> = {}): Chann
       remove: true,
       lifecycle: ['close', 'delete'],
       typing: false,
+      transitions: [],
     },
     ...over,
   }
@@ -424,6 +427,7 @@ describe('ChannelsPanel', () => {
           remove: false,
           lifecycle: [],
           typing: false,
+          transitions: [],
         },
       })
     )
@@ -608,6 +612,7 @@ describe('ChannelsPanel', () => {
             remove: false,
             lifecycle: [],
             typing: false,
+            transitions: [],
           },
         },
         { state: 'closed' }
@@ -758,5 +763,161 @@ describe('ChannelsPanel', () => {
     expect(chip.exists()).toBe(true)
     await chip.trigger('click', { button: 0 })
     expect(push).toHaveBeenCalledWith({ path: '/entity/person/P-1', query: {} })
+  })
+
+  describe('sessions', () => {
+    const sessionRoom: ChannelTypeSchema = {
+      ...room,
+      message_types: [
+        ...room.message_types,
+        {
+          name: 'contained',
+          label: 'Contained',
+          persist: 'log',
+          reply: false,
+          actions: [],
+          properties: [],
+        },
+      ],
+      session: {
+        label: 'Breach response',
+        initial: 'detected',
+        states: [
+          { name: 'detected', label: 'Detected' },
+          { name: 'contained', label: 'Contained', final: true },
+        ],
+      },
+    }
+    const detected = {
+      state: 'detected',
+      generation: 1,
+      entered_at: '2026-03-01T10:00:00Z',
+      transitions: [{ message_type: 'contained', to: 'contained' }],
+    }
+
+    function sessionHead(): ChannelHead {
+      const h = head({}, { session: detected })
+      return {
+        ...h,
+        _actions: { ...h._actions, post: ['card', 'contained'], transitions: ['contained'] },
+      }
+    }
+
+    it('shows the session stepper, notices and transition types first on a session channel', async () => {
+      api.getChannelSchema.mockResolvedValue({ channel_types: [sessionRoom] })
+      api.getChannelHead.mockResolvedValue(sessionHead())
+      api.getMessages.mockResolvedValue(
+        page([
+          msg(1),
+          msg(2, {
+            type: 'session',
+            author: { user: 'system', system: true },
+            triggered_by: 'session:room',
+            props: { from: 'detected', to: 'detected' },
+            _actions: [],
+          }),
+        ])
+      )
+      await mountPanel()
+
+      const stepper = w().find('.rl-channel-session')
+      expect(stepper.exists()).toBe(true)
+      expect(stepper.find('[aria-current="step"]').text()).toContain('Detected')
+      expect(messageEl(2).text()).toContain('Session entered Detected again')
+      expect(messageEl(2).findAll('button')).toHaveLength(0)
+      const options = composerForm().findAll('[role="radio"]')
+      expect(options.map((o) => o.find('span').text())).toEqual(['Contained', 'Card'])
+      expect(options[1]!.attributes('aria-checked')).toBe('true')
+    })
+
+    it('keeps the stepper and transition views when a refetch brings the same session', async () => {
+      api.getChannelSchema.mockResolvedValue({ channel_types: [sessionRoom] })
+      api.getChannelHead.mockImplementation(() => Promise.resolve(sessionHead()))
+      api.getMessages.mockResolvedValue({
+        ...page([msg(1)]),
+        channel: channel({ session: detected }),
+      })
+      await mountPanel()
+      const stepper = () => w().findComponent(RlChannelSession)
+      const composer = () => w().findComponent(RlChannelComposer)
+      const before = {
+        session: stepper().props('session'),
+        transitions: composer().props('transitions'),
+      }
+      const heads = api.getChannelHead.mock.calls.length
+
+      api.postMessage.mockRejectedValue(problem(409, 'channel_not_open', 'closed'))
+      await typeBody('hi')
+      await submitComposer()
+      expect(api.getChannelHead.mock.calls.length).toBeGreaterThan(heads)
+      expect(stepper().props('session')).toBe(before.session)
+      expect(composer().props('transitions')).toBe(before.transitions)
+
+      api.getMessages.mockResolvedValue({
+        ...page([msg(1)]),
+        channel: channel({ session: { ...detected, generation: 2 } }),
+      })
+      api.getChannelHead.mockImplementation(() => {
+        const h = sessionHead()
+        return Promise.resolve({
+          ...h,
+          channel: { ...h.channel, session: { ...detected, generation: 2 } },
+        })
+      })
+      await submitComposer()
+      expect(stepper().props('session')).not.toBe(before.session)
+    })
+
+    it('shows a loading stepper and no transition marks for a state the descriptor lacks', async () => {
+      api.getChannelSchema
+        .mockResolvedValueOnce({ channel_types: [sessionRoom] })
+        .mockReturnValue(new Promise(() => {}))
+      const h = sessionHead()
+      api.getChannelHead.mockResolvedValue({
+        ...h,
+        channel: { ...h.channel, session: { ...detected, state: 'escalated' } },
+      })
+      await mountPanel()
+      expect(stepper().props('session')).toMatchObject({ loading: true })
+      expect(w().find('.rl-channel-session').text()).not.toContain('Stranded')
+      expect(composerForm().text()).not.toContain('moves the session')
+      function stepper() {
+        return w().findComponent(RlChannelSession)
+      }
+    })
+
+    it('shows the state as stranded once the reloaded descriptor still lacks it', async () => {
+      api.getChannelSchema.mockResolvedValue({ channel_types: [sessionRoom] })
+      const h = sessionHead()
+      api.getChannelHead.mockResolvedValue({
+        ...h,
+        channel: { ...h.channel, session: { ...detected, state: 'escalated' } },
+      })
+      await mountPanel()
+      await flushPromises()
+      expect(api.getChannelSchema.mock.calls.length).toBeGreaterThan(1)
+      expect(w().findComponent(RlChannelSession).props('session')).toMatchObject({
+        stranded: true,
+      })
+    })
+
+    it('shows no stepper on a channel type without a session', async () => {
+      await mountPanel()
+      expect(w().find('.rl-channel').exists()).toBe(true)
+      expect(w().find('.rl-channel-session').exists()).toBe(false)
+    })
+
+    it('offers no edit or delete on the causing message', async () => {
+      api.getChannelSchema.mockResolvedValue({ channel_types: [sessionRoom] })
+      api.getChannelHead.mockResolvedValue(sessionHead())
+      api.getMessages.mockResolvedValue(page([msg(1, { _actions: ['remove'] })]))
+      await mountPanel()
+      const labels = messageEl(1)
+        .findAll('button')
+        .map((b) => b.text())
+      expect(labels.some((l) => l.includes('Edit'))).toBe(false)
+      expect(labels.some((l) => l.includes('Delete'))).toBe(false)
+      expect(labels.some((l) => l.includes('Remove'))).toBe(true)
+    })
   })
 })

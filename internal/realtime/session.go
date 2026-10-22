@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"slices"
 	"strings"
 	"time"
 
@@ -43,6 +44,10 @@ type SessionTransitionView struct {
 	MessageType string `json:"message_type"`
 	To          string `json:"to"`
 	By          string `json:"by,omitempty"`
+	// Guarded is set when the transition has a `when:`, so a post of the
+	// message type moves the session only if the guard holds for it. It is
+	// config, the same for every reader.
+	Guarded bool `json:"guarded,omitempty"`
 }
 
 // current is a channel's session read against the configuration.
@@ -86,7 +91,7 @@ func sessionView(ct realtimecfg.ChannelType, h *channels.Channel, now time.Time)
 	v.Label, v.Final = st.Label, st.Final
 	for _, tr := range st.Transitions() {
 		v.Transitions = append(v.Transitions, SessionTransitionView{
-			MessageType: tr.MessageType, To: tr.To, By: string(tr.By),
+			MessageType: tr.MessageType, To: tr.To, By: string(tr.By), Guarded: tr.When != nil,
 		})
 	}
 	return v
@@ -125,29 +130,93 @@ func (p poster) admits(t realtimecfg.Transition) bool {
 	}
 }
 
-// transitionRoles asks, once per role, which roles named by a transition
-// that mt fires the caller holds for update, as [call.mayPost] asks, so the
-// client ceiling applies. A message type that fires no transition with
-// roles asks nothing.
+// transitionRoles reports which roles named by a transition that mt fires
+// the caller holds, through [call.heldRoles], so the client ceiling
+// applies. A message type that fires no transition with roles asks
+// nothing.
 func (c *call) transitionRoles(mt *realtimecfg.MessageType) map[string]bool {
-	out := map[string]bool{}
 	s := c.ct.Session()
 	if s == nil {
+		return map[string]bool{}
+	}
+	var names []string
+	for _, st := range s.States() {
+		if t, ok := s.Transition(st.Name, mt.Name); ok {
+			names = append(names, t.Roles...)
+		}
+	}
+	return c.heldRoles(names)
+}
+
+// heldRoles reports [call.heldRole] for each name.
+func (c *call) heldRoles(names []string) map[string]bool {
+	out := make(map[string]bool, len(names))
+	for _, name := range names {
+		out[name] = c.heldRole(name)
+	}
+	return out
+}
+
+// heldRole reports whether the caller holds the role name for update on
+// the anchor, as [call.mayPost] asks, so the client ceiling applies. Each
+// distinct role is asked once per call; the post path and [call.fireable]
+// share the answers, so they cannot drift. An undeclared name is not held.
+//
+// A creator role read while the call holds no stored channel is answered
+// but not kept: the creator is a fact of the stored channel, so an answer
+// from before it exists must not outlive it within the call.
+func (c *call) heldRole(name string) bool {
+	if held, asked := c.ops.roles[name]; asked {
+		return held
+	}
+	r, found := c.ct.Roles[name]
+	held := found && c.can(r, realtimecfg.CapabilityUpdate)
+	if found && r.Source.Kind == realtimecfg.SourceCreator && c.head == nil {
+		return held
+	}
+	if c.ops.roles == nil {
+		c.ops.roles = map[string]bool{}
+	}
+	c.ops.roles[name] = held
+	return held
+}
+
+// fireable lists, sorted, the message types in post whose post by the
+// caller would move the session out of its current state if the
+// transition's guard holds: the channel is open, the current state is
+// declared and not final, and the caller passes the transition's poster
+// rule ([poster.admits]), so a by: trigger entry is never listed. The
+// guard is not evaluated: it reads the message, which does not exist yet.
+// It reads the session as [sessionView] does. Never nil.
+func (c *call) fireable(post map[string]bool) []string {
+	out := []string{}
+	s := c.ct.Session()
+	if s == nil || c.state() != channels.StateOpen {
 		return out
 	}
-	for _, st := range s.States() {
-		t, ok := s.Transition(st.Name, mt.Name)
-		if !ok {
-			continue
-		}
-		for _, name := range t.Roles {
-			if _, asked := out[name]; asked {
-				continue
-			}
-			r, found := c.ct.Roles[name]
-			out[name] = found && c.can(r, realtimecfg.CapabilityUpdate)
+	ch := channels.Channel{CreatedAt: c.now}
+	if c.head != nil {
+		ch = *c.head
+	}
+	cur := currentSession(s, ch)
+	st, ok := s.State(cur.State)
+	if !ok || st.Final {
+		return out
+	}
+	trs := st.Transitions()
+	var names []string
+	for _, t := range trs {
+		if post[t.MessageType] {
+			names = append(names, t.Roles...)
 		}
 	}
+	p := poster{roles: c.heldRoles(names)}
+	for _, t := range trs {
+		if post[t.MessageType] && p.admits(t) {
+			out = append(out, t.MessageType)
+		}
+	}
+	slices.Sort(out)
 	return out
 }
 

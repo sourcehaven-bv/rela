@@ -1,5 +1,6 @@
 import type { Meta, StoryObj } from '@storybook/vue3-vite'
 import { ref } from 'vue'
+import { expect, within } from 'storybook/test'
 import RlSegmentedControl from './RlSegmentedControl.vue'
 
 const meta: Meta<typeof RlSegmentedControl> = {
@@ -61,3 +62,27 @@ export const IconOnly: Story = {
 }
 
 export const Small: Story = { args: { size: 'sm' } }
+
+/** An srHint is read after the label, and is part of the aria-label of an icon-only option. */
+export const ScreenReaderHint: Story = {
+  args: {
+    label: 'Layout',
+    modelValue: 'board',
+    options: [
+      { value: 'board', label: 'Board', icon: 'kanban', srHint: ' (default)' },
+      { value: 'table', label: 'Table', icon: 'table' },
+    ],
+  },
+  play: async ({ canvasElement }) => {
+    await expect(within(canvasElement).getByRole('radio', { name: 'Board (default)' })).toBeVisible()
+  },
+}
+
+export const ScreenReaderHintIconOnly: Story = {
+  args: { ...ScreenReaderHint.args, iconOnly: true },
+  play: async ({ canvasElement }) => {
+    const board = within(canvasElement).getByRole('radio', { name: 'Board (default)' })
+    await expect(board).toHaveAttribute('aria-label', 'Board (default)')
+    await expect(board.querySelector('.rl-visually-hidden')).toBeNull()
+  },
+}

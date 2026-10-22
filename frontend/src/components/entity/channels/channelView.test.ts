@@ -5,6 +5,8 @@
 // everything through.
 import { describe, it, expect, vi } from 'vitest'
 import type {
+  Channel,
+  ChannelHead,
   ChannelMessageTypeSchema,
   ChannelTypeSchema,
   EphemeralMessage,
@@ -15,6 +17,7 @@ import {
   authorView,
   channelGroups,
   channelKey,
+  composerTransitions,
   editingFor,
   enumOptionsFor,
   ephemeralViews,
@@ -23,8 +26,10 @@ import {
   lifecycleDefs,
   messageViews,
   nextExpiry,
+  noticeView,
   parseChannelKey,
   presentationView,
+  sessionView,
 } from './channelView'
 
 const renderSpy = vi.hoisted(() => vi.fn())
@@ -381,5 +386,222 @@ describe('presentationView', () => {
         messages: { card: { fields: [{ property: 'body', label: 'Text' }, { label: 'x' }] } },
       })
     ).toEqual({ messages: { card: { fields: [{ property: 'body', label: 'Text' }] } } })
+  })
+})
+
+describe('sessions', () => {
+  const breach: ChannelTypeSchema = {
+    ...room,
+    name: 'breach',
+    message_types: [
+      ...['contained', 'dismiss', 'assessed', 'text'].map((name) => ({
+        name,
+        label: name,
+        persist: 'log' as const,
+        reply: false,
+        actions: [],
+        properties: [],
+      })),
+    ],
+    session: {
+      label: 'GDPR breach response',
+      initial: 'detected',
+      states: [
+        { name: 'detected', label: 'Detected' },
+        { name: 'contained', label: 'Contained' },
+        { name: 'assessed', label: 'Risk assessed' },
+        { name: 'notified', label: 'AP notified', final: true },
+        { name: 'dismissed', label: 'Dismissed', final: true },
+      ],
+    },
+  }
+  const at = '2026-10-11T09:00:00Z'
+  const inDetected: NonNullable<Channel['session']> = {
+    state: 'detected',
+    generation: 0,
+    entered_at: at,
+    transitions: [
+      { message_type: 'contained', to: 'contained' },
+      { message_type: 'dismiss', to: 'dismissed' },
+      { message_type: 'escalated', to: 'contained', by: 'trigger' },
+    ],
+  }
+  function channelWith(session: Channel['session'], state: Channel['state'] = 'open'): Channel {
+    return { anchor: 'TKT-1', type: 'breach', state, last_seq: 1, rev: 1, session }
+  }
+  function headWith(
+    session: Channel['session'],
+    transitions: string[],
+    post = ['contained', 'dismiss', 'assessed', 'text']
+  ): Pick<ChannelHead, 'channel' | '_actions'> {
+    return {
+      channel: channelWith(session),
+      _actions: {
+        post,
+        edit_own: true,
+        delete_own: true,
+        remove: false,
+        lifecycle: [],
+        typing: false,
+        transitions,
+      },
+    }
+  }
+
+  describe('sessionView', () => {
+    it('marks the current state and the distinct next states', () => {
+      expect(sessionView(breach, channelWith(inDetected))).toEqual({
+        label: 'GDPR breach response',
+        states: breach.session!.states,
+        current: 'detected',
+        currentLabel: 'Detected',
+        next: ['contained', 'dismissed'],
+      })
+    })
+
+    it.each([
+      [
+        'stranded wins over paused',
+        { state: 'triage', generation: 2, entered_at: at, stranded: true },
+        'closed' as const,
+        { stranded: true, currentLabel: 'triage', paused: 'closed' },
+      ],
+      [
+        'final on a closed channel',
+        { state: 'notified', generation: 3, entered_at: at, final: true },
+        'closed' as const,
+        { final: true, current: 'notified', currentLabel: 'AP notified', paused: 'closed' },
+      ],
+      [
+        'paused on an archived channel',
+        { state: 'contained', generation: 1, entered_at: at },
+        'archived' as const,
+        { current: 'contained', paused: 'archived', next: [] },
+      ],
+    ])('%s', (_name, session, state, want) => {
+      const got = sessionView(breach, channelWith(session, state))!
+      expect(got).toMatchObject(want)
+      if (got.stranded) expect(got.current).toBeUndefined()
+      if (got.stranded) expect(got.final).toBeUndefined()
+    })
+
+    describe('a state the held descriptor lacks', () => {
+      const added = {
+        state: 'escalated',
+        generation: 4,
+        entered_at: at,
+        final: true,
+        transitions: [{ message_type: 'assessed', to: 'assessed' }],
+      }
+
+      it('is loading, not stranded, until a fresh descriptor answers', () => {
+        const got = sessionView(breach, channelWith(added))!
+        expect(got).toMatchObject({ loading: true, currentLabel: 'escalated', next: [] })
+        expect(got.stranded).toBeUndefined()
+        expect(got.current).toBeUndefined()
+        expect(got.final).toBeUndefined()
+      })
+
+      it('is stranded when a fresh descriptor still lacks it', () => {
+        const got = sessionView(breach, channelWith(added), (s) => s === 'escalated')!
+        expect(got).toMatchObject({ stranded: true, currentLabel: 'escalated', next: [] })
+        expect(got.loading).toBeUndefined()
+      })
+
+      it('is a known state again once the descriptor has it', () => {
+        const got = sessionView(breach, channelWith(inDetected), () => true)!
+        expect(got).toMatchObject({ current: 'detected' })
+        expect(got.loading).toBeUndefined()
+        expect(got.stranded).toBeUndefined()
+      })
+
+      it('marks no composer transition', () => {
+        expect(composerTransitions(breach, headWith(added, ['assessed'], ['assessed']))).toEqual([])
+      })
+    })
+
+    it('is undefined without a session on the type or the channel', () => {
+      expect(sessionView(room, channelWith(inDetected))).toBeUndefined()
+      expect(sessionView(breach, channelWith(undefined))).toBeUndefined()
+    })
+  })
+
+  describe('noticeView', () => {
+    const notice: Message = {
+      seq: 3,
+      rev: 3,
+      type: 'session',
+      author: { user: 'system', system: true },
+      at,
+      triggered_by: 'session:breach',
+      props: { from: 'detected', to: 'contained', generation: 1, cause: 2 },
+    }
+
+    it('maps a session notice to its labels', () => {
+      expect(noticeView(notice, breach.session)).toEqual({
+        fromLabel: 'Detected',
+        toLabel: 'Contained',
+        reentry: false,
+      })
+    })
+
+    it('marks a re-entry and falls back to the name of a removed state', () => {
+      expect(
+        noticeView({ ...notice, props: { from: 'triage', to: 'triage' } }, breach.session)
+      ).toEqual({
+        fromLabel: 'triage',
+        toLabel: 'triage',
+        reentry: true,
+      })
+    })
+
+    it('does not take a message named session without the marker for a notice', () => {
+      expect(noticeView({ ...notice, triggered_by: undefined }, breach.session)).toBeUndefined()
+      expect(noticeView({ ...notice, triggered_by: 'trigger:x' }, breach.session)).toBeUndefined()
+    })
+
+    it('sets the notice on the message view and no card fields', () => {
+      const [view] = messageViews([notice], () => undefined, { tz: 'UTC', session: breach.session })
+      expect(view!.notice).toEqual({ fromLabel: 'Detected', toLabel: 'Contained', reentry: false })
+      expect(view!.html).toBeUndefined()
+    })
+  })
+
+  describe('composerTransitions', () => {
+    it('keeps the fireable, postable transitions out of the current state', () => {
+      const guarded = {
+        ...inDetected,
+        transitions: [
+          ...inDetected.transitions!,
+          { message_type: 'assessed', to: 'assessed', guarded: true },
+        ],
+      }
+      expect(
+        composerTransitions(
+          breach,
+          headWith(guarded, ['assessed', 'contained', 'dismiss'], ['contained', 'assessed'])
+        )
+      ).toEqual([
+        { messageType: 'assessed', toLabel: 'Risk assessed', guarded: true },
+        { messageType: 'contained', toLabel: 'Contained' },
+      ])
+    })
+
+    it('drops types the session already left before the head refetch', () => {
+      const moved = {
+        state: 'contained',
+        generation: 1,
+        entered_at: at,
+        transitions: [{ message_type: 'assessed', to: 'assessed' }],
+      }
+      expect(composerTransitions(breach, headWith(moved, ['contained', 'dismiss']))).toEqual([])
+    })
+
+    it('is empty for a stranded session or a type without one', () => {
+      expect(
+        composerTransitions(breach, headWith({ ...inDetected, stranded: true }, ['contained']))
+      ).toEqual([])
+      expect(composerTransitions(room, headWith(inDetected, ['contained']))).toEqual([])
+    })
   })
 })

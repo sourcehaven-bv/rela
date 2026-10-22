@@ -8,6 +8,7 @@ import {
   CHANNEL_USERS,
   POLICY_ROOM,
   ROOM,
+  SESSION,
   writePolicyRealtime,
   writeRoomProject,
   writeRoomRealtime,
@@ -129,6 +130,57 @@ test.describe("channels", () => {
 
     await alice.post("After the change");
     await alice.expectMessage("After the change");
+  });
+});
+
+// A room with a session: the lead's message moves it for every reader.
+const sessionTest = base.extend<ChannelFixtures>({
+  serverUrl: async ({ testProject, serverBinary }, use, testInfo) => {
+    writeRoomProject(testProject, { session: true });
+    await serveWithPrincipalHeader(serverBinary, testProject, testInfo, use, CHANNEL_USERS.lead);
+  },
+  as: asFixture,
+});
+
+sessionTest.describe("channels with a session", () => {
+  sessionTest.describe.configure({ timeout: 120_000 });
+
+  sessionTest("the lead's message moves the session live for every reader", async ({ as }) => {
+    const alice = await as(CHANNEL_USERS.lead);
+    const bob = await as(CHANNEL_USERS.member);
+    for (const p of [alice, bob]) {
+      await p.openEntity("feature", FEATURE);
+      await p.expectChannel(ROOM.label);
+      await p.expectSessionAt(SESSION.from);
+    }
+    // Both may post Contained, but only the lead's moves the session, so
+    // only the lead sees it marked and the note.
+    await alice.expectTransitionMark(SESSION.messageLabel, true);
+    await bob.expectComposer();
+    await bob.expectMessageType(SESSION.messageLabel, true);
+    await bob.expectTransitionMark(SESSION.messageLabel, false);
+    await bob.selectMessageType(SESSION.messageLabel);
+    await bob.expectSessionHint(null);
+
+    // An ordinary message can be edited by its author.
+    await alice.post("Looking into it");
+    await alice.expectMessage("Looking into it");
+    await alice.expectMessageControl("Looking into it", "Edit", true);
+
+    await alice.selectMessageType(SESSION.messageLabel);
+    await alice.expectSessionHint(`Sending this moves the session to ${SESSION.to}.`);
+    await alice.post("Access revoked", SESSION.noteLabel);
+
+    const notice = `Session moved from ${SESSION.from} to ${SESSION.to}`;
+    for (const p of [alice, bob]) {
+      await p.expectSessionAt(SESSION.to);
+      await p.expectMessage(notice);
+    }
+    // A message that moved the session cannot be edited.
+    await alice.expectMessage("Access revoked");
+    await alice.expectMessageControl("Access revoked", "Edit", false);
+    // The session ended, so nothing moves it any more.
+    await alice.expectTransitionMark(SESSION.messageLabel, false);
   });
 });
 

@@ -5,7 +5,9 @@ title: 'Sessions 4/2: session UI'
 kind: enhancement
 priority: high
 effort: m
-status: backlog
+started: "2026-10-22"
+completed: "2026-10-22"
+status: done
 ---
 
 ## Description

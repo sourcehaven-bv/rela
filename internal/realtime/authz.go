@@ -417,13 +417,7 @@ func (c *call) mayPost(mt *realtimecfg.MessageType) bool {
 	if ok, seen := c.ops.post[mt.Name]; seen {
 		return ok
 	}
-	ok := false
-	for _, name := range mt.Post {
-		if r, found := c.ct.Roles[name]; found && c.can(r, realtimecfg.CapabilityUpdate) {
-			ok = true
-			break
-		}
-	}
+	ok := slices.ContainsFunc(mt.Post, c.heldRole)
 	if c.ops.post == nil {
 		c.ops.post = map[string]bool{}
 	}

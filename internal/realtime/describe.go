@@ -34,6 +34,27 @@ type ChannelTypeView struct {
 	// [realtimecfg.LifecycleOpNames].
 	Lifecycle    []LabeledName
 	MessageTypes []MessageTypeDescription
+	// Session describes the type's session; nil when it has none.
+	Session *SessionDescription
+}
+
+// SessionDescription describes a channel type's session: its label, its
+// initial state and its states in declaration order. It holds no
+// transitions: the transitions out of a channel's current state come with
+// the channel ([SessionView]), so a stale descriptor cannot disagree with
+// the channel about where the session can go.
+type SessionDescription struct {
+	Label   string
+	Initial string
+	States  []SessionStateDescription
+}
+
+// SessionStateDescription describes one state of a session. Final is set
+// for a state no transition leaves.
+type SessionStateDescription struct {
+	Name  string
+	Label string
+	Final bool
 }
 
 // LabeledName is a name of realtime.yaml and its label.
@@ -113,7 +134,22 @@ func describeChannelType(ct realtimecfg.ChannelType) ChannelTypeView {
 	for _, name := range sortedKeys(ct.MessageTypes) {
 		v.MessageTypes = append(v.MessageTypes, describeMessageType(ct.MessageTypes[name]))
 	}
+	v.Session = describeSession(ct.Session())
 	return v
+}
+
+func describeSession(s *realtimecfg.Session) *SessionDescription {
+	if s == nil {
+		return nil
+	}
+	states := s.States()
+	d := &SessionDescription{
+		Label: s.Label(), Initial: s.Initial(), States: make([]SessionStateDescription, 0, len(states)),
+	}
+	for _, st := range states {
+		d.States = append(d.States, SessionStateDescription{Name: st.Name, Label: st.Label, Final: st.Final})
+	}
+	return d
 }
 
 func describeMessageType(mt *realtimecfg.MessageType) MessageTypeDescription {

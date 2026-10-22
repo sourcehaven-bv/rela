@@ -517,6 +517,11 @@ lifecycle still works. To unstick such channels, declare the state again
 with an `on:` that leads to a current state. A state no transition leads to
 is allowed for this reason.
 
+**In the web app.** The channel shows the session as a row of states above
+the messages, and the composer marks the message types that move it. See
+[In the web app](#in-the-web-app). The row shows where the session is now,
+not how it got there: the notices in the log are its history.
+
 ## Triggers
 
 A trigger posts a message into an entity's own channel when the entity
@@ -699,9 +704,53 @@ A button appears only when you may use it. It is left out, not disabled.
 | An action button, such as **Accept** | The action's `roles` or `permission` admit you. **Release** gives up an action that is pending. |
 | A lifecycle button, such as **Close** | The operation's `roles` admit you and the channel is in a period it starts from. The button shows the operation's `label`. **Delete** asks you to confirm. |
 | **New channel** | The type is `many` and its `create` admits you. |
+| Session header | The channel type has a `session`. It shows on a closed or archived channel too. |
+| A message type marked as moving the session | Your post of that type would move the session now: see `_actions.transitions` below. |
 
 A closed channel shows "This channel is closed." and an archived one "This
 channel is archived."; neither has a composer.
+
+On a channel type with a session, a header between the title and the
+messages shows the session's label and its states, in the order the file
+declares them. The current state is highlighted. The states a transition
+out of it leads to are marked with a dotted outline; the header marks no
+earlier state as done, because rela keeps only the current state and a
+session may branch. No state is a button: only a message moves a session.
+Exactly one status applies, in this order:
+
+1. **Stranded.** The stored state is no longer declared. No state is
+   highlighted, and a warning says "‹state› is no longer a state of this
+   session. Messages do not move it."
+2. **Loading.** The page holds an older copy of `realtime.yaml` that lacks
+   the current state, and is loading the new one. No state is highlighted,
+   and the header says "Loading the states of this session…". No message
+   type is marked as moving the session until the new copy arrives.
+3. **Ended.** The current state is final. It shows a check mark and
+   "Ended".
+4. **Paused.** The channel is closed or archived. The current state stays
+   highlighted, with "Paused while the channel is closed" (or archived).
+5. **Normal.** The current state and the next states.
+
+On a narrow panel the header folds into one line, such as "Session ·
+Contained", "Ended · AP notified", "Contained · Paused" or "Stranded ·
+triage", with a **Show all states** button that unfolds the list.
+
+The composer lists the message types that would move the session first,
+each marked with an icon. It selects a type that moves nothing by
+default, so a plain message does not move the session by accident. Only
+when every type you may post moves the session does it select the first of
+them, and the note below says the session will move. While a
+marked type is selected, the composer says "Sending this moves the session
+to ‹state›.", or "… to ‹state› if its condition holds." for a transition
+with a `when`. A reply shows the same note. An edit does not, because an
+edit never moves a session.
+
+A notice shows as one line, such as "Session moved from Detected to
+Contained" or "Session entered Contained again", with the time and no
+buttons. A screen reader hears it after the message that caused it, for
+example "Contained from Ann. Session moved from Detected to Contained."
+When someone else moves the session, the header and the marked types
+follow without a reload.
 
 On a channel type with `typing: true`, the app tells the server you are
 typing while you write a `log` message. It does not while you edit a
@@ -755,8 +804,9 @@ The data-entry API serves channels under the entity they are attached to.
 client can build a composer and label buttons. For each channel type it
 gives the label, the entity types it attaches to, the anchor, the
 cardinality, the `create` label, whether a removal needs a reason,
-whether the type offers typing (`typing`), and the lifecycle operations
-with their labels. For each message type it gives
+whether the type offers typing (`typing`), the lifecycle operations
+with their labels, and for a type with a session the `session` object
+described below. For each message type it gives
 the label, `persist`, the signal lifetime in seconds for an `ephemeral`
 type, whether a message may reply to another, the actions with their
 labels and the entity type a promote creates, and the properties. Each
@@ -769,9 +819,38 @@ every caller: the configuration is not a secret. What a caller may do
 comes from the `_actions` of each channel and message. With realtime off
 the answer is `{"channel_types": []}`.
 
+The `session` object of a channel type holds its `label`, its `initial`
+state and its `states` in the order the file declares them, each with a
+`name`, a `label` and `final` when set. It holds no transitions, roles or
+conditions: the transitions out of a channel's current state come with the
+channel.
+
+```json
+"session": {
+  "label": "GDPR breach response", "initial": "detected",
+  "states": [
+    { "name": "detected", "label": "Detected" },
+    { "name": "contained", "label": "Contained" },
+    { "name": "assessed", "label": "Risk assessed" },
+    { "name": "notified", "label": "AP notified", "final": true },
+    { "name": "dismissed", "label": "Dismissed", "final": true }
+  ]
+}
+```
+
 The head's `_actions.lifecycle` lists the lifecycle operations the caller
 may run now. It runs the same checks as the `POST`, except the rate limit.
 A `one` channel that holds no message has no lifecycle operations.
+
+The head's `_actions.transitions` lists the message types whose post by the
+caller would move the session now, sorted by name. It is a subset of
+`_actions.post`, and it is empty when the type has no session, the channel
+is not open, or the session is final or stranded. It leaves out a
+transition with `by: trigger`, and one whose `roles` the caller does not
+hold. A transition with a `when` is listed, because the condition is judged
+on the message: the post moves the session only if it holds. In the example
+above, the lead of a channel in `detected` gets `["contained", "dismiss"]`
+and a member gets `[]`.
 
 The head's `typing_now` lists who else is typing, oldest first, as
 `[{"author": {...}, "since": "..."}]`. It never lists the caller, and it is
@@ -826,12 +905,14 @@ the session move.
 "session": {
   "state": "contained", "label": "Contained", "generation": 1,
   "entered_at": "2026-10-21T09:12:03Z",
-  "transitions": [ { "message_type": "assessed", "to": "assessed" } ]
+  "transitions": [ { "message_type": "assessed", "to": "assessed", "guarded": true } ]
 }
 ```
 
 `transitions` lists the `on:` entries of the current state, with `by:
-"trigger"` when only a trigger fires one. It is the same for every reader.
+"trigger"` when only a trigger fires one and `guarded: true` when the entry
+has a `when`. It is the same for every reader; `_actions.transitions` says
+which of them the caller fires.
 `final` and `stranded` are set when they apply. A notice looks like this:
 
 ```json

@@ -8,7 +8,9 @@
  * message carries its own `actions`. A control the user may not use is not
  * shown. The composer is the caller's to mount in the `composer` slot, which
  * renders only while the channel is open; a closed or archived channel says
- * so instead.
+ * so instead. The `session` slot sits between the header and the log in
+ * every channel state, since a closed channel still shows where its session
+ * stopped; the app mounts `RlChannelSession` there.
  *
  * The log opens at the newest message and follows new ones, and messages
  * that grow, only while the reader is at the bottom, so reading back is never
@@ -23,6 +25,9 @@
  * The log itself is not a live region, so loading a page of older messages
  * or reloading the whole log is not read out. Messages that arrive at the
  * end are announced through a separate, visually hidden polite region.
+ * Session notices among them are read after the other messages, by their
+ * own text, so a move is announced once and the stepper need not be a live
+ * region.
  *
  * `typing` shows who else is typing as one line, in its own polite, atomic
  * live region apart from the signals, so it is read out only when the line
@@ -208,12 +213,26 @@ function announce(next: ChannelMessageView[], prev: ChannelMessageView[]) {
   const last = prev[prev.length - 1]!.seq
   const added = next.filter((m) => m.seq > last && !m.removed)
   if (added.length === 0) return
-  const only = added.length === 1 ? added[0]! : undefined
-  announcement.value = strings.channelNewMessages({
-    count: added.length,
-    type: only?.type ? (typeByName.value.get(only.type)?.label ?? only.type) : undefined,
-    author: only?.author?.name,
-  })
+  const others = added.filter((m) => !m.notice)
+  const notices = added.flatMap((m) =>
+    m.notice
+      ? [
+          m.notice.reentry
+            ? strings.channelSessionReentered({ state: m.notice.toLabel })
+            : strings.channelSessionMoved({ from: m.notice.fromLabel, to: m.notice.toLabel }),
+        ]
+      : [],
+  )
+  const only = others.length === 1 ? others[0]! : undefined
+  const messages =
+    others.length > 0
+      ? strings.channelNewMessages({
+          count: others.length,
+          type: only?.type ? (typeByName.value.get(only.type)?.label ?? only.type) : undefined,
+          author: only?.author?.name,
+        })
+      : undefined
+  announcement.value = notices.length ? strings.channelNewNotices({ notices, messages }) : messages!
 }
 
 watch(
@@ -298,6 +317,8 @@ function jumpTo(seq: number) {
         </RlButton>
       </RlButtonGroup>
     </header>
+
+    <slot name="session" />
 
     <div
       ref="log"

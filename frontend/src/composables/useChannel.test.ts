@@ -57,6 +57,7 @@ function headOf(over: Partial<Channel> = {}): ChannelHead {
       remove: false,
       lifecycle: [],
       typing: false,
+      transitions: [],
     },
   }
 }
@@ -566,5 +567,77 @@ describe('useChannel', () => {
     host(() => room, { onSeen })
     await flushPromises()
     expect(onSeen).toHaveBeenCalledWith(expect.objectContaining({ channel: channel() }), [msg(1)])
+  })
+})
+
+describe('useChannel session moves', () => {
+  const detected = {
+    state: 'detected',
+    generation: 0,
+    entered_at: '2026-10-11T09:00:00Z',
+    transitions: [{ message_type: 'contained', to: 'contained' }],
+  }
+  const contained = { state: 'contained', generation: 1, entered_at: '2026-10-11T09:11:00Z' }
+
+  beforeEach(() => {
+    registerEntityPlurals(new Map([['ticket', 'tickets']]))
+    getHead.mockReset()
+    getPage.mockReset()
+    subs.length = 0
+  })
+
+  it('refetches the head once when a frame brings a notice and a moved session', async () => {
+    const start = headOf({ last_seq: 1, rev: 1, session: detected })
+    start._actions.transitions = ['contained']
+    getHead.mockResolvedValue(start)
+    getPage.mockResolvedValueOnce(
+      page([msg(1)], { channel: channel({ session: detected }), next_after_rev: 1 })
+    )
+    const ch = host(() => room)
+    await flushPromises()
+    getHead.mockClear()
+
+    const moved = headOf({ last_seq: 3, rev: 3, session: contained })
+    getHead.mockResolvedValue(moved)
+    const notice: Message = {
+      seq: 3,
+      rev: 3,
+      type: 'session',
+      triggered_by: 'session:breach',
+      props: { from: 'detected', to: 'contained' },
+    }
+    getPage.mockResolvedValueOnce(
+      page([{ ...msg(2), type: 'contained' }, notice], {
+        channel: channel({ last_seq: 3, rev: 3, session: contained }),
+        next_after_rev: 3,
+      })
+    )
+    frame()
+    await flushPromises()
+
+    expect(getHead).toHaveBeenCalledTimes(1)
+    expect(ch.head.value?.channel.session?.state).toBe('contained')
+    expect(ch.head.value?._actions.transitions).toEqual([])
+  })
+
+  it('does not refetch the head for a plain message with the session unchanged', async () => {
+    getHead.mockResolvedValue(headOf({ last_seq: 1, rev: 1, session: detected }))
+    getPage.mockResolvedValueOnce(
+      page([msg(1)], { channel: channel({ session: detected }), next_after_rev: 1 })
+    )
+    host(() => room)
+    await flushPromises()
+    getHead.mockClear()
+
+    getPage.mockResolvedValueOnce(
+      page([msg(2)], {
+        channel: channel({ last_seq: 2, rev: 2, session: detected }),
+        next_after_rev: 2,
+      })
+    )
+    frame()
+    await flushPromises()
+
+    expect(getHead).not.toHaveBeenCalled()
   })
 })

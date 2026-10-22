@@ -44,7 +44,7 @@ func wireChannelSession(s *realtime.SessionView) *v1.ChannelSession {
 	}
 	for _, t := range s.Transitions {
 		out.Transitions = append(out.Transitions, v1.ChannelSessionTransition{
-			MessageType: t.MessageType, To: t.To, By: t.By,
+			MessageType: t.MessageType, To: t.To, By: t.By, Guarded: t.Guarded,
 		})
 	}
 	return out
@@ -122,7 +122,11 @@ func wireHead(h realtime.HeadView) v1.ChannelHead {
 		Actions: v1.ChannelActions{
 			Post: h.Actions.Post, EditOwn: h.Actions.EditOwn, DeleteOwn: h.Actions.DeleteOwn,
 			Remove: h.Actions.Remove, Lifecycle: h.Actions.Lifecycle, Typing: h.Actions.Typing,
+			Transitions: h.Actions.Transitions,
 		},
+	}
+	if out.Actions.Transitions == nil {
+		out.Actions.Transitions = []string{}
 	}
 	if out.Actions.Post == nil {
 		out.Actions.Post = []string{}

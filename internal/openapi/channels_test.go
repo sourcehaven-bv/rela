@@ -274,6 +274,40 @@ func TestOpenAPI_ChannelSession(t *testing.T) {
 	}
 }
 
+// TestOpenAPI_ChannelSessionDescriptor pins AC 9: the descriptor's
+// channel_types[].session has the properties of v1.ChannelSessionSchema
+// and its state items those of v1.ChannelSessionStateSchema, a session
+// transition has guarded, and the head's _actions.transitions is a
+// required array of string.
+func TestOpenAPI_ChannelSessionDescriptor(t *testing.T) {
+	rt := channelTestConfig(t)
+	g := New(attachmentTestMeta(), Config{Title: "T", Version: "1"})
+	g.SetRealtime(func() *realtimecfg.Compiled { return rt })
+	sc := g.Generate().Components.Schemas
+	session := sc[descriptorSchema].Properties["channel_types"].Items.Properties["session"]
+	if session == nil {
+		t.Fatal("no channel_types[].session in the descriptor")
+	}
+	if got, want := schemaKeys(session), jsonNames(reflect.TypeFor[v1.ChannelSessionSchema]()); !slices.Equal(got, want) {
+		t.Errorf("session properties = %v, want %v", got, want)
+	}
+	states := session.Properties["states"].Items
+	if got, want := schemaKeys(states), jsonNames(reflect.TypeFor[v1.ChannelSessionStateSchema]()); !slices.Equal(got, want) {
+		t.Errorf("state properties = %v, want %v", got, want)
+	}
+	if g := sc[channelSessionRef].Properties["transitions"].Items.Properties["guarded"]; g == nil || g.Type != "boolean" {
+		t.Errorf("transition guarded = %+v, want a boolean", g)
+	}
+	actions := sc[channelHeadSchema].Properties["_actions"]
+	tr := actions.Properties["transitions"]
+	if tr == nil || tr.Type != "array" || tr.Items == nil || tr.Items.Type != "string" {
+		t.Fatalf("_actions.transitions = %+v, want an array of string", tr)
+	}
+	if !slices.Contains(actions.Required, "transitions") {
+		t.Errorf("_actions.transitions is not required: %v", actions.Required)
+	}
+}
+
 func schemaKeys(s *Schema) []string {
 	var out []string
 	for k := range s.Properties {

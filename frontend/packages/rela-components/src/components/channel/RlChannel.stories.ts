@@ -3,9 +3,16 @@ import { ref } from 'vue'
 import { expect, fn, userEvent, waitFor, within } from 'storybook/test'
 import RlChannel from './RlChannel.vue'
 import RlChannelComposer from './RlChannelComposer.vue'
+import RlChannelSession from './RlChannelSession.vue'
 import { lifecyclePendingKey } from './channelFields'
+import { provideMessages } from '../../composables/useMessages'
 import type { ChannelMessageView } from './types'
 import {
+  breachMessages,
+  breachMessageTypes,
+  breachNotice,
+  breachSessionDetected,
+  breachTransitions,
   channelEnumOptions,
   channelEphemeral,
   channelLifecycle,
@@ -362,5 +369,160 @@ export const TypingLineOnlyWhereOffered: Story = {
       const root = canvasElement.querySelector(`[data-case="${c}"]`) as HTMLElement
       await expect(root.querySelector('.rl-channel__typing')).toBeNull()
     }
+  },
+}
+
+/* Sessions --------------------------------------------------------------- */
+
+/**
+ * The breach room: the session stepper between the header and the log,
+ * notices in the log, and the composer with the transition types first.
+ */
+export const SessionRoom: Story = {
+  args: {
+    title: 'Breach response',
+    messages: breachMessages,
+    messageTypes: breachMessageTypes,
+    postable: ['text', 'contained', 'dismiss'],
+    ephemeral: [],
+    presentation: undefined,
+  },
+  render: (args) => ({
+    components: { RlChannel, RlChannelComposer, RlChannelSession },
+    setup: () => ({ args, session: breachSessionDetected, transitions: breachTransitions }),
+    template: `
+      <div style="height:100vh">
+        <RlChannel v-bind="args">
+          <template #session>
+            <RlChannelSession :session="session" />
+          </template>
+          <template #composer>
+            <RlChannelComposer
+              :message-types="args.messageTypes"
+              :postable="args.postable"
+              :transitions="transitions"
+            />
+          </template>
+        </RlChannel>
+      </div>
+    `,
+  }),
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement)
+    const header = canvasElement.querySelector('header')!
+    const stepper = canvasElement.querySelector('.rl-channel-session')!
+    const log = canvas.getByRole('log')
+    await expect(header.compareDocumentPosition(stepper) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    await expect(stepper.compareDocumentPosition(log) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    await expect(within(log).getByText('Session moved from Detected to Contained')).toBeVisible()
+    const group = canvas.getByRole('radiogroup', { name: 'Message type' })
+    await expect(within(group).getAllByRole('radio')[0]).toHaveTextContent('Contained')
+  },
+}
+
+/** The session slot renders on a closed channel too. */
+export const SessionRoomClosed: Story = {
+  ...SessionRoom,
+  args: { ...SessionRoom.args, state: 'closed' },
+  play: async ({ canvasElement }) => {
+    await expect(canvasElement.querySelector('.rl-channel-session')).not.toBeNull()
+  },
+}
+
+const noticeRender: Story['render'] = (args) => ({
+  components: { RlChannel },
+  setup() {
+    const messages = ref<ChannelMessageView[]>(breachMessages.slice(0, 1))
+    const notice = () => {
+      messages.value = [...messages.value, breachNotice(2, 'Detected', 'Contained')]
+    }
+    const both = () => {
+      messages.value = [
+        ...messages.value,
+        { ...breachMessages[1]!, seq: 2, rev: 2 },
+        breachNotice(3, 'Detected', 'Contained'),
+      ]
+    }
+    return { args, messages, notice, both }
+  },
+  template: `
+    <div>
+      <button type="button" data-testid="notice" @click="notice">Notice</button>
+      <button type="button" data-testid="both" @click="both">Both</button>
+      <div style="height:400px">
+        <RlChannel v-bind="args" :messages="messages" />
+      </div>
+    </div>`,
+})
+
+function announced(canvasElement: HTMLElement): Element {
+  return canvasElement.querySelector('[aria-live="polite"][aria-atomic="true"]')!
+}
+
+/** A notice that arrives alone is announced by its text. */
+export const AnnouncesNotice: Story = {
+  args: { messageTypes: breachMessageTypes, ephemeral: [], presentation: undefined },
+  render: noticeRender,
+  play: async ({ canvasElement }) => {
+    await userEvent.click(within(canvasElement).getByTestId('notice'))
+    await waitFor(() =>
+      expect(announced(canvasElement)).toHaveTextContent(/^Session moved from Detected to Contained\.$/),
+    )
+  },
+}
+
+/** A message and its notice in one update: the message, then the move. */
+export const AnnouncesMessageAndNotice: Story = {
+  args: { messageTypes: breachMessageTypes, ephemeral: [], presentation: undefined },
+  render: noticeRender,
+  play: async ({ canvasElement }) => {
+    await userEvent.click(within(canvasElement).getByTestId('both'))
+    await waitFor(() =>
+      expect(announced(canvasElement)).toHaveTextContent(
+        /^Contained from Ann\. Session moved from Detected to Contained\.$/,
+      ),
+    )
+  },
+}
+
+const overrideRender: Story['render'] = (args, ctx) => {
+  const inner = noticeRender(args, ctx) as { setup: () => unknown }
+  return {
+    ...inner,
+    setup() {
+      provideMessages({
+        channelNewMessages: ({ count }) => `${count} nieuw`,
+        channelNewNotices: ({ notices, messages }) => [messages, ...notices].filter(Boolean).join(' / '),
+      })
+      return inner.setup()
+    },
+  }
+}
+
+/**
+ * An app that overrides channelNewMessages under its contract (a count of
+ * at least 1, no notices) is not asked about a lone notice:
+ * channelNewNotices announces it.
+ */
+export const AnnouncesNoticeWithOverride: Story = {
+  args: { messageTypes: breachMessageTypes, ephemeral: [], presentation: undefined },
+  render: overrideRender,
+  play: async ({ canvasElement }) => {
+    await userEvent.click(within(canvasElement).getByTestId('notice'))
+    await waitFor(() =>
+      expect(announced(canvasElement)).toHaveTextContent(/^Session moved from Detected to Contained$/),
+    )
+  },
+}
+
+/** channelNewNotices receives the channelNewMessages text of the other messages. */
+export const AnnouncesMessageAndNoticeWithOverride: Story = {
+  args: { messageTypes: breachMessageTypes, ephemeral: [], presentation: undefined },
+  render: overrideRender,
+  play: async ({ canvasElement }) => {
+    await userEvent.click(within(canvasElement).getByTestId('both'))
+    await waitFor(() =>
+      expect(announced(canvasElement)).toHaveTextContent(/^1 nieuw \/ Session moved from Detected to Contained$/),
+    )
   },
 }

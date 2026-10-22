@@ -6773,6 +6773,47 @@ body:
                 "remove_reason_required": {
                   "type": "boolean"
                 },
+                "session": {
+                  "type": "object",
+                  "properties": {
+                    "initial": {
+                      "type": "string",
+                      "description": "The state a session that never moved is in"
+                    },
+                    "label": {
+                      "type": "string"
+                    },
+                    "states": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "final": {
+                            "type": "boolean",
+                            "description": "Set for a state the session ends in"
+                          },
+                          "label": {
+                            "type": "string",
+                            "description": "The label from realtime.yaml, or the name when none is set; never empty"
+                          },
+                          "name": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "name",
+                          "label"
+                        ]
+                      }
+                    }
+                  },
+                  "required": [
+                    "label",
+                    "initial",
+                    "states"
+                  ],
+                  "description": "The type's session; absent when it has none. The states come in declaration order. The transitions out of a channel's current state are on the channel's session."
+                },
                 "typing": {
                   "type": "boolean",
                   "description": "Whether the type offers the built-in typing indicator (POST …/_typing)"

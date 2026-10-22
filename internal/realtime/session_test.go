@@ -162,7 +162,7 @@ func TestSessionPost_Transitions(t *testing.T) {
 	s := h.requireSession(t, "contained", 1)
 	require.Equal(t, "Contained", s.Label)
 	require.True(t, s.EnteredAt.Equal(posted), "entered_at %v", s.EnteredAt)
-	require.Equal(t, []SessionTransitionView{{MessageType: "assessed", To: "assessed"}}, s.Transitions)
+	require.Equal(t, []SessionTransitionView{{MessageType: "assessed", To: "assessed", Guarded: true}}, s.Transitions)
 
 	msgs := h.readAll(t, user("bob"), incident).Messages
 	require.Len(t, msgs, 2)

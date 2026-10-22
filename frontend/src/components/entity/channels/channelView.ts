@@ -16,9 +16,12 @@ import { tagColor } from '@/configure/names'
 import type { ChannelPresentation as AppChannelPresentation, CustomType } from '@/types'
 import type {
   Channel,
+  ChannelActions,
   ChannelAuthor,
+  ChannelHead,
   ChannelMessageTypeSchema,
   ChannelPropertySchema,
+  ChannelSessionSchema,
   ChannelTypeList,
   ChannelTypeSchema,
   EphemeralMessage,
@@ -27,18 +30,21 @@ import type {
   ReadableRef,
   TypingEntry,
 } from '@/types/channels'
-import { LIFECYCLE_DELETE } from '@/types/channels'
+import { LIFECYCLE_DELETE, isSessionNotice } from '@/types/channels'
 import type {
   ChannelAuthorView,
+  ChannelComposerTransition,
   ChannelEditing,
   ChannelEnumOption,
   ChannelEphemeralView,
   ChannelGroupView,
   ChannelLifecycleDef,
   ChannelMessageView,
+  ChannelNoticeView,
   ChannelPresentation,
   ChannelReadableRef,
   ChannelReplyQuote,
+  ChannelSessionView,
   ChannelTypingView,
 } from 'rela-components/components/channel/types'
 import { resolveChannelFields } from 'rela-components/components/channel/channelFields'
@@ -70,6 +76,8 @@ export interface ChannelViewContext {
   tz: string
   /** The page world, carried on in-app entity links. */
   world?: string
+  /** The channel type's session, for the state labels in session notices. */
+  session?: ChannelSessionSchema
 }
 
 /**
@@ -197,6 +205,11 @@ export function messageView(
     return view
   }
   view.props = m.props
+  const notice = noticeView(m, ctx.session)
+  if (notice) {
+    view.notice = notice
+    return view
+  }
   if (m.action) {
     view.action = { name: m.action.name, status: m.action.status, promoted: m.action.promoted }
   }
@@ -214,6 +227,93 @@ export function messageView(
   if (Object.keys(html).length) view.html = html
   if (Object.keys(text).length) view.text = text
   return view
+}
+
+/** The label of a session state, or its name when the descriptor has no such state. */
+function stateLabel(session: ChannelSessionSchema | undefined, name: string): string {
+  return session?.states.find((st) => st.name === name)?.label ?? name
+}
+
+/**
+ * The notice view of a session notice, or undefined for any other message.
+ * A state the descriptor no longer has shows by its name.
+ */
+export function noticeView(
+  m: Message,
+  session: ChannelSessionSchema | undefined
+): ChannelNoticeView | undefined {
+  if (!isSessionNotice(m)) return undefined
+  const from = typeof m.props?.from === 'string' ? m.props.from : ''
+  const to = typeof m.props?.to === 'string' ? m.props.to : ''
+  return {
+    fromLabel: stateLabel(session, from),
+    toLabel: stateLabel(session, to),
+    reentry: from === to,
+  }
+}
+
+/**
+ * The stepper view of a channel's session, or undefined when the type or
+ * the channel has none. The next states come from the head's transitions.
+ *
+ * A head state the held descriptor does not know is usually one
+ * realtime.yaml has just added, and the reload that brings it is on its
+ * way: the view is loading, with no current state and no next states. It
+ * is stranded only when the server says so, or when `answered` says a
+ * fresh descriptor still lacks the state.
+ */
+export function sessionView(
+  ct: ChannelTypeSchema,
+  channel: Channel,
+  answered: (state: string) => boolean = () => false
+): ChannelSessionView | undefined {
+  const s = ct.session
+  const cs = channel.session
+  if (!s || !cs) return undefined
+  const known = s.states.some((st) => st.name === cs.state)
+  const stranded = !!cs.stranded || (!known && answered(cs.state))
+  const loading = !stranded && !known
+  const view: ChannelSessionView = {
+    label: s.label,
+    states: s.states.map((st) => ({ name: st.name, label: st.label, final: st.final })),
+    currentLabel: known && !stranded ? stateLabel(s, cs.state) : cs.state,
+    next: known && !stranded ? [...new Set((cs.transitions ?? []).map((tr) => tr.to))] : [],
+  }
+  if (stranded) view.stranded = true
+  else if (loading) view.loading = true
+  else view.current = cs.state
+  if (known && !stranded && cs.final) view.final = true
+  if (channel.state !== 'open') view.paused = channel.state
+  return view
+}
+
+/**
+ * The message types whose post would move the session, for the composer:
+ * those in the caller's `_actions.transitions` that are also transitions
+ * out of the head's current state and postable now. The head session
+ * follows every frame while the actions follow a head refetch, so a type
+ * the session has already left is dropped here. A head state the held
+ * descriptor does not know marks nothing: the stepper is loading then.
+ */
+export function composerTransitions(
+  ct: ChannelTypeSchema,
+  head: Pick<ChannelHead, 'channel'> & { _actions: Pick<ChannelActions, 'post' | 'transitions'> }
+): ChannelComposerTransition[] {
+  const cs = head.channel.session
+  if (!ct.session || !cs || cs.stranded) return []
+  if (!ct.session.states.some((st) => st.name === cs.state)) return []
+  const post = new Set(head._actions.post)
+  const out = new Map((cs.transitions ?? []).map((tr) => [tr.message_type, tr]))
+  return (head._actions.transitions ?? []).flatMap((name) => {
+    const tr = out.get(name)
+    if (!tr || !post.has(name)) return []
+    const view: ChannelComposerTransition = {
+      messageType: name,
+      toLabel: stateLabel(ct.session, tr.to),
+    }
+    if (tr.guarded) view.guarded = true
+    return [view]
+  })
 }
 
 /**

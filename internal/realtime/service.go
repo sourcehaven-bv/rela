@@ -152,6 +152,11 @@ type Affordances struct {
 	// offers it, the caller may post a log message type and the channel is
 	// open. The rate limit is not part of it.
 	Typing bool `json:"typing"`
+	// Transitions lists the message types whose post by the caller would
+	// move the session out of its current state, if the transition's guard
+	// holds, sorted. It is a subset of Post, and empty, never nil, for a
+	// channel type without a session; see [call.fireable].
+	Transitions []string `json:"transitions"`
 }
 
 // HeadView is a channel's head: its metadata, the last message, the live
@@ -209,7 +214,7 @@ func (c *call) affordances() Affordances {
 // [call.postable], so a caller that needs the set twice evaluates the post
 // gates once.
 func (c *call) affordancesWith(post map[string]bool) Affordances {
-	a := Affordances{Post: []string{}, Lifecycle: []string{}}
+	a := Affordances{Post: []string{}, Lifecycle: []string{}, Transitions: []string{}}
 	if c.requireCaller() != nil {
 		return a
 	}
@@ -225,6 +230,7 @@ func (c *call) affordancesWith(post map[string]bool) Affordances {
 	}
 	a.DeleteOwn = c.deleteOwnGate()
 	a.Typing = c.typingAllowed()
+	a.Transitions = c.fireable(post)
 	return a
 }
 

@@ -40,6 +40,9 @@ func MessageOpNames() []string { return realtimecfg.MessageOpNames() }
 type opGates struct {
 	edit, deleteOwn, moderator *bool
 	post                       map[string]bool
+	// roles caches whether the caller holds a role for update, by role
+	// name; see [call.heldRoles].
+	roles map[string]bool
 }
 
 // memo returns *slot, computing it with f on first use.

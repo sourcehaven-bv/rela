@@ -98,6 +98,19 @@ func addChannelDescriptorSchema(spec *Spec) {
 		"lifecycle": {Type: "array", Items: labeled(nil),
 			Description: "The declared lifecycle operations, in the order close, reopen, archive, delete"},
 		"message_types": ArraySchema(messageType),
+		"session": {
+			Type: "object",
+			Description: "The type's session; absent when it has none. The states come in declaration order. " +
+				"The transitions out of a channel's current state are on the channel's session.",
+			Properties: map[string]*Schema{
+				"label":   str(),
+				"initial": {Type: "string", Description: "The state a session that never moved is in"},
+				"states": ArraySchema(labeled(map[string]*Schema{
+					"final": {Type: "boolean", Description: "Set for a state the session ends in"},
+				})),
+			},
+			Required: []string{"label", "initial", "states"},
+		},
 	})
 	channelType.Required = append(channelType.Required,
 		"attach_to", "anchor", "cardinality", "remove_reason_required", "typing", "lifecycle", "message_types")
@@ -609,7 +622,10 @@ func addHeadSchemas(sc map[string]*Schema) {
 			"post": ArraySchema(str()), "edit_own": b(), "delete_own": b(), "remove": b(),
 			"lifecycle": ArraySchema(str()),
 			"typing":    {Type: "boolean", Description: "Whether you may POST …/_typing now"},
-		}, []string{"post", "edit_own", "delete_own", "remove", "lifecycle", "typing"}),
+			"transitions": {Type: "array", Items: str(),
+				Description: "The message types whose post by you would move the session out of its current " +
+					"state, if the transition's guard holds; a subset of post; empty, never null"},
+		}, []string{"post", "edit_own", "delete_own", "remove", "lifecycle", "typing", "transitions"}),
 	}, []string{"channel", "ephemeral", "typing_now", "_actions"})
 }
 
@@ -628,6 +644,9 @@ func channelSessionSchema() *Schema {
 				"message_type": str(), "to": str(),
 				"by": {Type: "string", Enum: []string{"trigger"},
 					Description: "Set when only a trigger's message fires the transition"},
+				"guarded": {Type: "boolean",
+					Description: "Set when the transition has a guard (when:), so a message moves the session " +
+						"only if the guard holds for it"},
 			}, []string{"message_type", "to"})),
 		},
 		Required: []string{"state", "generation", "entered_at"},

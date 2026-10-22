@@ -18,6 +18,11 @@ export interface SegmentOption {
   label: string
   icon?: IconName
   disabled?: boolean
+  /**
+   * Extra text for a screen reader only, read after the label. With
+   * iconOnly it is part of the button's aria-label.
+   */
+  srHint?: string
 }
 
 const props = withDefaults(
@@ -69,13 +74,14 @@ function move(direction: 1 | -1) {
       :class="{ 'rl-segmented__option--active': option.value === modelValue }"
       :data-value="option.value"
       :aria-checked="option.value === modelValue"
-      :aria-label="iconOnly ? option.label : undefined"
+      :aria-label="iconOnly ? `${option.label}${option.srHint ?? ''}` : undefined"
       :disabled="option.disabled"
       :tabindex="option.value === modelValue ? 0 : -1"
       @click="emit('update:modelValue', option.value)"
     >
       <RlIcon v-if="option.icon" :name="option.icon" :size="size === 'sm' ? 14 : 15" aria-hidden="true" />
       <span v-if="!iconOnly">{{ option.label }}</span>
+      <span v-if="option.srHint && !iconOnly" class="rl-visually-hidden">{{ option.srHint }}</span>
     </button>
   </div>
 </template>

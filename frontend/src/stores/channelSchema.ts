@@ -6,6 +6,7 @@ import { runWhenVisible } from '@/composables/visibleRefetch'
 import { useSchemaStore } from '@/stores/schema'
 import {
   MESSAGE_OPS,
+  isSessionNotice,
   type ChannelHead,
   type ChannelMessageTypeSchema,
   type ChannelTypeSchema,
@@ -43,6 +44,11 @@ export const useChannelSchemaStore = defineStore('channelSchema', () => {
   // Names a reload was already asked for, so a head that keeps naming an
   // unknown type does not reload on every frame.
   const reloadedFor = new Set<string>()
+  // Of those, the ones no load has answered yet.
+  const awaiting = new Set<string>()
+  // Names a load that started after they were asked for has answered: the
+  // descriptor held since is fresh for them.
+  const answered = shallowRef<ReadonlySet<string>>(new Set())
 
   async function fetchSchema(gen: number) {
     try {
@@ -51,6 +57,10 @@ export const useChannelSchemaStore = defineStore('channelSchema', () => {
       channelTypes.value = types
       loaded.value = true
       failures = 0
+      if (awaiting.size > 0) {
+        answered.value = new Set([...answered.value, ...awaiting])
+        awaiting.clear()
+      }
     } catch {
       if (gen !== generation) return
       // Keep what is held: hidden before the first load, unchanged after.
@@ -98,9 +108,12 @@ export const useChannelSchemaStore = defineStore('channelSchema', () => {
   }
 
   /**
-   * Reloads once when a head or page names a message type or action the
-   * held descriptor lacks: realtime.yaml changed, and the `refresh` that
-   * said so may not have arrived yet.
+   * Reloads once when a head or page names a message type, action or
+   * session state the held descriptor lacks: realtime.yaml changed, and the
+   * `refresh` that said so may not have arrived yet. A session notice is
+   * the server's own message, not a declared type, so it is skipped. A
+   * stranded state is one the configuration dropped, so a reload would not
+   * find it either.
    */
   function checkNames(channelTypeName: string, head: ChannelHead | null, messages: Message[]) {
     if (!loaded.value) return
@@ -109,8 +122,15 @@ export const useChannelSchemaStore = defineStore('channelSchema', () => {
     for (const mt of head?._actions.post ?? []) {
       if (!known(mt)) unknown.push(`type:${mt}`)
     }
+    const session = head?.channel.session
+    if (session && !session.stranded) {
+      const states = new Set(channelType(channelTypeName)?.session?.states.map((st) => st.name))
+      for (const name of [session.state, ...(session.transitions ?? []).map((tr) => tr.to)]) {
+        if (!states.has(name)) unknown.push(`state:${name}`)
+      }
+    }
     for (const m of messages) {
-      if (!m.type || m.removed) continue
+      if (!m.type || m.removed || isSessionNotice(m)) continue
       const mt = messageType(channelTypeName, m.type)
       if (!mt) {
         unknown.push(`type:${m.type}`)
@@ -124,8 +144,20 @@ export const useChannelSchemaStore = defineStore('channelSchema', () => {
     }
     const fresh = unknown.map((n) => `${channelTypeName}/${n}`).filter((n) => !reloadedFor.has(n))
     if (fresh.length === 0) return
-    for (const n of fresh) reloadedFor.add(n)
+    for (const n of fresh) {
+      reloadedFor.add(n)
+      awaiting.add(n)
+    }
     void reload()
+  }
+
+  /**
+   * Whether the held descriptor is fresh for a session state a head named:
+   * a reload checkNames asked for it has landed. Until then a state the
+   * descriptor lacks may be one realtime.yaml has just added.
+   */
+  function stateAnswered(channelTypeName: string, state: string): boolean {
+    return answered.value.has(`${channelTypeName}/state:${state}`)
   }
 
   return {
@@ -137,6 +169,7 @@ export const useChannelSchemaStore = defineStore('channelSchema', () => {
     channelType,
     messageType,
     checkNames,
+    stateAnswered,
   }
 })
 
