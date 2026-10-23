@@ -180,6 +180,51 @@ function handleKeydown(e: KeyboardEvent) {
   padding: 0;
 }
 
+@media (max-width: 767px) {
+  :global(.rl-modal.inline-create-panel) {
+    /* A create form is a working surface, not a short confirmation. Use the
+       available phone height instead of leaving the modal centered with a
+       large unused strip above it. */
+    width: 100vw;
+    height: 100dvh;
+    max-height: 100dvh;
+    border-radius: 0;
+    padding-top: calc(16px + env(safe-area-inset-top, 0px));
+  }
+
+  :global(.inline-create-panel .rl-modal__body) {
+    /* RlModal pulls the scroll body upward by its focus-ring allowance. That
+       lets the first scrolled editor line peek above the sticky toolbar. */
+    margin-top: 0;
+    padding-top: 0;
+  }
+
+  :global(.inline-create-panel .form-actions > .rl-button:first-child) {
+    /* The modal's close button already exits create mode. A second Cancel
+       control consumes space needed by the primary actions on narrow screens. */
+    display: none;
+  }
+
+  :global(.inline-create-panel .milkdown-editor-shell .editor-toolbar) {
+    /* Let the editor toolbar scroll with its own content in the create sheet.
+       A sticky toolbar inside the separately scrolling modal body can pin
+       over preceding form content and leave a clipped line above the buttons. */
+    position: relative;
+    top: auto;
+  }
+
+  :global(.inline-create-panel .milkdown-editor-shell) {
+    /* The editor is the main writing surface in this form. Let it use the
+       sheet's full inner width while leaving the controls' text gutters
+       intact. */
+    width: calc(100% + var(--space-lg) + var(--space-lg));
+    margin-left: calc(0px - var(--space-lg));
+    border-left: 0;
+    border-right: 0;
+    border-radius: 0;
+  }
+}
+
 .inline-create-header {
   display: flex;
   align-items: center;

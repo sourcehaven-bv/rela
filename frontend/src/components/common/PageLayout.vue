@@ -145,7 +145,7 @@ defineSlots<{
        horizontal padding (--page-padding-x), set by App.vue per
        breakpoint. */
     margin:
-      calc(-60px - env(safe-area-inset-top, 0px))
+      calc(0px - env(safe-area-inset-top, 0px))
       calc(0px - var(--page-padding-x, 16px))
       16px
       calc(0px - var(--page-padding-x, 16px));
