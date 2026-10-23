@@ -306,7 +306,7 @@ watch(
         the drawer covers.
       -->
       <RlIconButton
-        v-if="showHamburger"
+        v-if="showHamburger && !navOpen"
         class="mobile-menu-btn"
         icon="menu"
         label="Toggle navigation"
@@ -450,6 +450,10 @@ body {
   display: var(--rl-nav-toggle-display, none);
   align-items: center;
   justify-content: center;
+  align-self: flex-start;
+  flex: 0 0 44px;
+  width: 44px;
+  height: 44px;
   /* Sticky, not fixed: the button scrolls with its pane's padding box and
      stays put as the content moves under it. Fixed would pin it to the
      viewport, where it would sit over the drawer the shell slides in. */
@@ -479,6 +483,17 @@ body {
     /* Extra bottom padding so the last card's rounded corners aren't flush
        against the screen edge. */
     padding-bottom: 24px;
+  }
+
+  /* A sticky topbar has its own safe-area and top spacing. Keep the shell's
+     60px reservation only on pages without one; otherwise the sticky bar
+     starts a full header-slot below the viewport edge. */
+  .app-layout .rl-app-shell__main:has(.mobile-topbar, .page-layout__sticky) {
+    padding-top: 0;
+  }
+
+  .app-layout .rl-app-shell__main:has(.mobile-topbar, .page-layout__sticky) > .mobile-menu-btn {
+    margin-bottom: -44px;
   }
 
   /* Hide keyboard shortcut hints on mobile: a touch device has no keys to

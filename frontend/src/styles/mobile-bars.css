@@ -28,11 +28,10 @@
     top: 0;
     z-index: 102;
     background: var(--rl-color-bg);
-    /* Pull up under the main pane padding-top (60px) plus the safe
-       area, so the bar's background fills the status-bar area. Negative
-       horizontal margin matches the main pane's 16px padding so the bar
-       bleeds to the viewport edges. */
-    margin: calc(-60px - env(safe-area-inset-top, 0px)) -16px 16px -16px;
+    /* The shell removes its menu reservation on pages with a topbar. Pull
+       only under the safe area so the bar starts at the screen edge without
+       leaving an empty 60px band above it. */
+    margin: calc(0px - env(safe-area-inset-top, 0px)) -16px 16px -16px;
     padding: calc(10px + env(safe-area-inset-top, 0px)) 16px 10px;
     border-bottom: 1px solid var(--rl-color-border);
     /* iOS WebKit anchors sticky to the layout viewport. When the keyboard

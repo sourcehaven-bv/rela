@@ -347,6 +347,15 @@ watch(() => props.activeId, () => nextTick(revealActive))
      */
     height: 100%;
     max-height: 100dvh;
+    /* On a phone, let the whole drawer move as one document. Keeping only
+       the link list scrollable traps the workspace switcher and footer in
+       fixed bands and leaves too little room for long navigation trees. */
+    overflow-y: auto;
+  }
+
+  .rl-sidebar__nav {
+    flex: none;
+    overflow: visible;
   }
 
   .rl-sidebar__collapse { display: none; }
