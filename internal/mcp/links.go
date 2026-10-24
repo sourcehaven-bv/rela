@@ -30,11 +30,32 @@ func withBaseURL(ctx context.Context, base string) context.Context {
 // The path has no `/s/<space>` prefix. A type can be created from several
 // spaces, and the SPA serves the unprefixed route in the default space.
 func entityURL(ctx context.Context, typ string, ref entity.Ref) string {
-	base, _ := ctx.Value(baseURLKey{}).(string)
-	if base == "" || typ == "" || ref.IsZero() {
+	if ref.IsZero() {
 		return ""
 	}
-	return base + "/entity/" + url.PathEscape(typ) + "/" + url.PathEscape(ref.String())
+	return pageURL(ctx, typ, ref.String())
+}
+
+// familyURL returns the web page of entity id as a whole, for a result that
+// is entity level and holds no row: a trace node, or an orphan family whose
+// world serves no face. The address is the bare id, which the web app
+// resolves to a face the way it resolves an id a user types; no store read
+// takes it.
+func familyURL(ctx context.Context, typ, id string) string {
+	if id == "" {
+		return ""
+	}
+	return pageURL(ctx, typ, id)
+}
+
+// pageURL joins the ctx base, typ and the address addr into an entity page
+// URL, or returns "" without a base or a type.
+func pageURL(ctx context.Context, typ, addr string) string {
+	base, _ := ctx.Value(baseURLKey{}).(string)
+	if base == "" || typ == "" {
+		return ""
+	}
+	return base + "/entity/" + url.PathEscape(typ) + "/" + url.PathEscape(addr)
 }
 
 // hostUnsafe matches any character not allowed in a hostname[:port] or a

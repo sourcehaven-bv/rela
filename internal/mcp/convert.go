@@ -335,7 +335,7 @@ func convertTraceNode(ctx context.Context, tr *tracer.TraceResult, meta *metamod
 		ID:       tr.ID,
 		Type:     tr.Type,
 		Title:    titleOrEmpty(tr.ID, meta.DisplayTitle(tr.ID, tr.Type, tr.Properties)),
-		URL:      entityURL(ctx, tr.Type, entity.Ref{ID: tr.ID}),
+		URL:      familyURL(ctx, tr.Type, tr.ID),
 		Faces:    tr.Faces,
 		Relation: tr.Relation,
 		Incoming: tr.Incoming,
@@ -346,19 +346,18 @@ func convertTraceNode(ctx context.Context, tr *tracer.TraceResult, meta *metamod
 	return node
 }
 
-// convertPathSteps converts a tracer.PathStep slice to a JSON string. title
-// resolves a step's display title; a path carries no properties, so the
-// caller looks each step up through its gated reader.
-func convertPathSteps(
-	ctx context.Context, steps []tracer.PathStep, title func(tracer.PathStep) string,
-) (string, error) {
+// convertPathSteps converts a tracer.PathStep slice to a JSON string. view
+// returns a step's display title and url; a path carries no properties or
+// faces, so the caller looks each step up through its gated reader.
+func convertPathSteps(steps []tracer.PathStep, view func(tracer.PathStep) (title, url string)) (string, error) {
 	result := make([]pathStepJSON, len(steps))
 	for i, s := range steps {
+		title, url := view(s)
 		result[i] = pathStepJSON{
 			ID:       s.ID,
 			Type:     s.Type,
-			Title:    title(s),
-			URL:      entityURL(ctx, s.Type, entity.Ref{ID: s.ID}),
+			Title:    title,
+			URL:      url,
 			Faces:    s.Faces,
 			Relation: s.Relation,
 		}

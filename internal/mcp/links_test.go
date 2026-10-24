@@ -49,6 +49,20 @@ func TestEntityURL(t *testing.T) {
 	}
 }
 
+func TestFamilyURL(t *testing.T) {
+	t.Parallel()
+	ctx := withBaseURL(t.Context(), testBase)
+	if got, want := familyURL(ctx, "solution", "SOL-1"), testBase+"/entity/solution/SOL-1"; got != want {
+		t.Errorf("familyURL = %q, want %q", got, want)
+	}
+	if got := familyURL(ctx, "solution", ""); got != "" {
+		t.Errorf("familyURL without id = %q, want empty", got)
+	}
+	if got := familyURL(t.Context(), "solution", "SOL-1"); got != "" {
+		t.Errorf("familyURL without base = %q, want empty", got)
+	}
+}
+
 func TestRequestBaseURL(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
@@ -133,17 +147,6 @@ func TestEntityResultsCarryURL(t *testing.T) {
 			t.Errorf("trace url = %q, want %q", got, reqURL)
 		}
 	})
-	t.Run("path", func(t *testing.T) {
-		t.Parallel()
-		steps := []tracer.PathStep{{ID: "REQ-1", Type: "requirement"}}
-		text, err := convertPathSteps(ctx, steps, func(tracer.PathStep) string { return "" })
-		if err != nil {
-			t.Fatal(err)
-		}
-		if !strings.Contains(text, `"url":"`+reqURL+`"`) {
-			t.Errorf("path = %s, want url %q", text, reqURL)
-		}
-	})
 	t.Run("no base omits the field", func(t *testing.T) {
 		t.Parallel()
 		ej := buildEntityJSON(t.Context(), req, graphOf(st), meta, entityView{relations: true})
@@ -163,9 +166,44 @@ func TestHTTPHandlerEntityURL(t *testing.T) {
 	t.Parallel()
 	ts := httptest.NewServer(newDispatchServer(t).HTTPHandler())
 	t.Cleanup(ts.Close)
+	const origin = "https://atlas.example.internal"
+	reqURL := origin + "/entity/requirement/REQ-001"
+	decURL := origin + "/entity/decision/DEC-001"
 
+	t.Run("show_entity", func(t *testing.T) {
+		t.Parallel()
+		text := callToolHTTP(t, ts, "show_entity", `{"id":"REQ-001"}`)
+		var ej entityJSON
+		if err := json.Unmarshal([]byte(text), &ej); err != nil {
+			t.Fatalf("parse %s: %v", text, err)
+		}
+		if ej.URL != reqURL {
+			t.Errorf("url = %q, want %q", ej.URL, reqURL)
+		}
+		if got := ej.Relations.Incoming["addresses"]; len(got) != 1 || got[0].URL != decURL {
+			t.Errorf("incoming addresses = %+v, want url %q", got, decURL)
+		}
+	})
+	t.Run("find_path names the resolved row", func(t *testing.T) {
+		t.Parallel()
+		text := callToolHTTP(t, ts, "find_path", `{"from":"DEC-001","to":"REQ-001"}`)
+		var steps []pathStepJSON
+		if err := json.Unmarshal([]byte(text), &steps); err != nil {
+			t.Fatalf("parse %s: %v", text, err)
+		}
+		if len(steps) != 2 || steps[0].URL != decURL || steps[1].URL != reqURL {
+			t.Errorf("path = %+v, want urls %q, %q", steps, decURL, reqURL)
+		}
+	})
+}
+
+// callToolHTTP posts one tools/call of name with the JSON args to ts, as a
+// proxy forwarding the public Host over https would, and returns the text
+// result.
+func callToolHTTP(t *testing.T, ts *httptest.Server, name, args string) string {
+	t.Helper()
 	body := `{"jsonrpc":"2.0","id":1,"method":"tools/call",` +
-		`"params":{"name":"show_entity","arguments":{"id":"REQ-001"}}}`
+		`"params":{"name":"` + name + `","arguments":` + args + `}}`
 	req, err := http.NewRequestWithContext(t.Context(), http.MethodPost, ts.URL, strings.NewReader(body))
 	if err != nil {
 		t.Fatal(err)
@@ -187,20 +225,7 @@ func TestHTTPHandlerEntityURL(t *testing.T) {
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("status = %d, body = %s", resp.StatusCode, raw)
 	}
-
-	want := "https://atlas.example.internal/entity/requirement/REQ-001"
-	text := toolText(t, raw)
-	var ej entityJSON
-	if err := json.Unmarshal([]byte(text), &ej); err != nil {
-		t.Fatalf("parse %s: %v", text, err)
-	}
-	if ej.URL != want {
-		t.Errorf("url = %q, want %q", ej.URL, want)
-	}
-	decURL := "https://atlas.example.internal/entity/decision/DEC-001"
-	if got := ej.Relations.Incoming["addresses"]; len(got) != 1 || got[0].URL != decURL {
-		t.Errorf("incoming addresses = %+v, want a url", got)
-	}
+	return toolText(t, raw)
 }
 
 // toolText returns the first text content of a tools/call response, which

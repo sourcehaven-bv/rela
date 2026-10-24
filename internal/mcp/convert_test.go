@@ -331,7 +331,7 @@ func TestConvertPathSteps(t *testing.T) {
 		{ID: "CMP-001", Type: "component", Title: "End", Relation: "implements"},
 	}
 
-	result, err := convertPathSteps(t.Context(), steps, func(s tracer.PathStep) string { return s.Title })
+	result, err := convertPathSteps(steps, func(s tracer.PathStep) (title, url string) { return s.Title, "" })
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -357,7 +357,7 @@ func TestConvertPathSteps(t *testing.T) {
 
 func TestConvertPathSteps_Empty(t *testing.T) {
 	t.Parallel()
-	result, err := convertPathSteps(t.Context(), []tracer.PathStep{}, func(tracer.PathStep) string { return "" })
+	result, err := convertPathSteps([]tracer.PathStep{}, func(tracer.PathStep) (title, url string) { return "", "" })
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
