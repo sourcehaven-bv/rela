@@ -181,7 +181,8 @@ func (s *Service) Delete(ctx context.Context, addr RawAddress, seq int64, reason
 				"removing a message needs a reason")
 		}
 		removal.Kind, removal.Reason = channels.RemovalModerator, reason
-	case ownRefusal.Type == TypeSessionMessage || ownRefusal.Type == TypeDeleteDenied && ownRefusal.Rule != "":
+	case ownRefusal.Type == TypeSessionMessage, ownRefusal.Type == TypeReminderMessage,
+		ownRefusal.Type == TypeDeleteDenied && ownRefusal.Rule != "":
 		return MessageView{}, ownRefusal
 	default:
 		return MessageView{}, forbidden(TypeDeleteDenied, c.deleteTitle(),
@@ -205,6 +206,9 @@ func (s *Service) Delete(ctx context.Context, addr RawAddress, seq int64, reason
 // channel is not in the `from:` state); one without a Rule means
 // delete_own does not apply.
 func (c *call) deleteOwn(m channels.Message) *DenialError {
+	if isReminder(m) {
+		return reminderMessage()
+	}
 	op := c.ct.MessageOps.DeleteOwn
 	if op == nil || !sameAuthor(m.Author, c.p) || !c.deleteOwnGate() {
 		return &DenialError{Type: TypeDeleteDenied}

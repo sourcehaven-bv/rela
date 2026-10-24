@@ -151,6 +151,9 @@ func (c *call) editCheck(m channels.Message) error {
 	if err := requireNotPending(m); err != nil {
 		return err
 	}
+	if isReminder(m) {
+		return reminderMessage()
+	}
 	if !sameAuthor(m.Author, c.p) {
 		return forbidden(TypeEditDenied, "only the author may edit a message", rule)
 	}

@@ -17,6 +17,8 @@ channel_types:
       notified:  { properties: { reference: { type: string, required: true } }, post: [dpo] }
       dismiss:   { properties: { reason: { type: string, required: true } }, post: [lead] }
       escalated: { properties: { note: { type: string } }, post: [lead] }
+      reminder:         { properties: { body: { type: markdown, required: true } }, post: [lead] }
+      escalate-stalled: { properties: { note: { type: string } }, post: [dpo] }
     session:
       label: GDPR breach response
       initial: detected
@@ -32,7 +34,8 @@ channel_types:
         contained:
           label: Contained
           on:
-            assessed: { to: assessed, when: "message.risk ~= 'none'" }
+            assessed:         { to: assessed, when: "message.risk ~= 'none'" }
+            escalate-stalled: { to: overdue, when: "session.reminders['status-update'] >= 3" }
           after:
             notify-deadline: { period: 72h, since: session, to: overdue, label: 72 hours since detection }
         assessed:
@@ -47,6 +50,16 @@ channel_types:
             notified: { to: notified }
         notified:  { label: AP notified, final: true }
         dismissed: { label: Dismissed, final: true }
+      reminders:
+        status-update:
+          label: Status update
+          in: [detected, contained, assessed, overdue]
+          every: 30m
+          first: 10m
+          max: 48
+          post:
+            type: reminder
+            props: { body: "Post a status update: what changed since the last one?" }
   incident-room:
     label: Incident room
     attach_to: [datalek, incident]

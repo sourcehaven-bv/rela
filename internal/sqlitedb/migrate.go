@@ -12,7 +12,7 @@ import (
 // schemaVersion is the shape of the tables this binary expects. Bump it
 // whenever schemaSQL changes shape, and append the step that carries an
 // existing database forward to [migrations].
-const schemaVersion = 25
+const schemaVersion = 26
 
 // SchemaVersion reports the table shape this binary expects, so the CLI can
 // show a real number rather than prose.
@@ -276,6 +276,15 @@ var migrations = []migration{
 			return addChannelColumns(ctx, conn, channelTimerColumns)
 		},
 	},
+	{
+		// v25 → v26: the session reminder records of each channel
+		// (TKT-36Z6X3). Reminders share the due index, so nothing runs
+		// after the ladder.
+		to: 26,
+		apply: func(ctx context.Context, conn *sql.Conn) error {
+			return addChannelColumns(ctx, conn, channelReminderColumns)
+		},
+	},
 }
 
 // addChannelRetention is the v22 to v23 rung: channelRetentionDDL, and
@@ -310,6 +319,11 @@ var channelSessionColumns = []struct{ name, def string }{
 var channelTimerColumns = []struct{ name, def string }{
 	{"session_next_due_at", "INTEGER NOT NULL DEFAULT 0"},
 	{"session_restarts", "TEXT NOT NULL DEFAULT ''"},
+}
+
+// channelReminderColumns are the session reminder columns of channels.
+var channelReminderColumns = []struct{ name, def string }{
+	{"session_reminders", "TEXT NOT NULL DEFAULT ''"},
 }
 
 // addChannelSessionColumns is the v23 to v24 rung. It probes each column

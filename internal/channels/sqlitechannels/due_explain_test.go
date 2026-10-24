@@ -56,10 +56,18 @@ func TestListSessionsDue_UsesIndex(t *testing.T) {
 }
 
 // TestListSessionsDue_SkipsDamagedRow runs the damaged-row check with
-// invalid JSON in session_restarts and in created_by.
+// invalid JSON in session_restarts, session_reminders and created_by, and
+// with a reminder record that decodes but is invalid.
 func TestListSessionsDue_SkipsDamagedRow(t *testing.T) {
-	for _, col := range []string{"session_restarts", "created_by"} {
-		t.Run(col, func(t *testing.T) {
+	for _, tc := range []struct{ name, col, val string }{
+		{"session_restarts", "session_restarts", "{not json"},
+		{"session_reminders", "session_reminders", "{not json"},
+		{"created_by", "created_by", "{not json"},
+		{"negative reminder count", "session_reminders", `{"status-update":{"since":1,"count":-1}}`},
+		{"invalid reminder name", "session_reminders", `{"Bad Name":{"since":1,"count":0}}`},
+	} {
+		col := tc.col
+		t.Run(tc.name, func(t *testing.T) {
 			ctx := context.Background()
 			db, err := sqlitedb.Open(ctx, sqlitedb.Options{Path: filepath.Join(t.TempDir(), "rela.db")})
 			require.NoError(t, err)
@@ -68,7 +76,7 @@ func TestListSessionsDue_SkipsDamagedRow(t *testing.T) {
 			require.NoError(t, err)
 			channelstest.RunDamagedDueRow(t, s, func(t *testing.T, k channels.Key) {
 				t.Helper()
-				_, err := db.DB().ExecContext(ctx, `UPDATE channels SET `+col+` = '{not json' WHERE anchor_id = ?`, k.ID)
+				_, err := db.DB().ExecContext(ctx, `UPDATE channels SET `+col+` = ? WHERE anchor_id = ?`, tc.val, k.ID)
 				require.NoError(t, err)
 			})
 		})

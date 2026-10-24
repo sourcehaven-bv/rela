@@ -76,10 +76,19 @@
     "final",
     "generation",
     "label",
+    "reminders",
     "state",
     "stranded",
     "timers",
     "transitions"
+  ],
+  "ChannelSessionReminder": [
+    "count",
+    "due_at",
+    "every",
+    "label",
+    "max",
+    "name"
   ],
   "ChannelSessionSchema": [
     "initial",

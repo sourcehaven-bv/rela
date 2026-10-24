@@ -45,6 +45,18 @@ type rawSession struct {
 	Label   string                     `yaml:"label"`
 	Initial string                     `yaml:"initial"`
 	States  map[string]rawSessionState `yaml:"states"`
+	// Reminders is `session.reminders`; see [SessionReminder].
+	Reminders map[string]rawReminder `yaml:"reminders"`
+}
+
+// rawReminder is one `session.reminders.<name>` entry.
+type rawReminder struct {
+	Label string          `yaml:"label"`
+	In    []string        `yaml:"in"`
+	Every string          `yaml:"every"`
+	First string          `yaml:"first"`
+	Max   *int            `yaml:"max"`
+	Post  *rawTriggerPost `yaml:"post"`
 }
 
 type rawSessionState struct {

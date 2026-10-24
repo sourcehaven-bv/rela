@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
+	"gopkg.in/yaml.v3"
 
 	"github.com/Sourcehaven-BV/rela/internal/channels"
 	"github.com/Sourcehaven-BV/rela/internal/channels/channelstest"
@@ -126,8 +127,37 @@ func TestMetaWithoutScheduleReadsEmpty(t *testing.T) {
 	require.Nil(t, head.Session.Restarts)
 }
 
+// TestMetaWithoutRemindersReadsEmpty pins that a meta.yaml written before
+// reminders (TKT-36Z6X3), with a session and a schedule but no reminder
+// key, reads with no reminder records.
+func TestMetaWithoutRemindersReadsEmpty(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	mfs := storage.NewMemFS()
+	s, err := newStore(mfs, "/channels", filelock.ProcessPrivate{}, SegmentSize)
+	require.NoError(t, err)
+	m := msg("one")
+	m.Session = dueStep(time.Time{})
+	_, err = s.Append(ctx, key, m)
+	require.NoError(t, err)
+	path := "/channels/" + enc("TKT-1") + "/" + none + "/room/" + none + "/" + metaFile
+	data, err := mfs.ReadFile(path)
+	require.NoError(t, err)
+	require.NotContains(t, string(data), "reminders", "a session without reminders writes no reminder key")
+	require.NoError(t, mfs.WriteFile(path, []byte("state: open\ncreated_by: {user: alice}\n"+
+		"created_at: 2026-10-12T09:30:00Z\nlast_seq: 2\nrev: 2\nsession_state: contained\nsession_gen: 1\n"+
+		"session_entered_at: 2026-10-12T09:30:00Z\nsession_next_due_at: 2026-10-12T10:30:00Z\n"+
+		"session_restarts: {late: 2026-10-12T09:45:00Z}\n"), 0o600))
+	head, err := s.Head(ctx, key)
+	require.NoError(t, err)
+	require.Equal(t, "contained", head.Session.State)
+	require.Len(t, head.Session.Restarts, 1)
+	require.Nil(t, head.Session.Reminders)
+}
+
 // TestListSessionsDue_Budget pins the cost of the due listing (TKT-INM3AZ
-// AC 9): one call for two timer types makes one tree walk, reading the
+// AC 9, and TKT-36Z6X3 AC 9 with reminder records in half the listed
+// channels): one call for two timer types makes one tree walk, reading the
 // root once, each entity and face directory once, each listed type
 // directory once and one meta.yaml per channel of the listed types. It
 // reads no log segment, no audit file and no meta.yaml of another type,
@@ -149,6 +179,13 @@ func TestListSessionsDue_Budget(t *testing.T) {
 					m := msg("x")
 					if i%2 == 0 {
 						m.Session = dueStep(due)
+					}
+					if i%2 == 0 && typ == "breach" {
+						m.Session.Due = func(channels.Channel) channels.SessionSchedule {
+							return channels.SessionSchedule{NextDueAt: due, Reminders: map[string]channels.ReminderRecord{
+								"status-update": {Since: channelstest.T0, Last: channelstest.T0, Count: 1},
+							}}
+						}
 					}
 					_, err = s.Append(ctx, channels.Key{Anchor: a, Type: typ}, m)
 					require.NoError(t, err)
@@ -200,6 +237,32 @@ func TestListSessionsDue_DamagedMeta(t *testing.T) {
 		ids[i] = c.Key.ID
 	}
 	require.Equal(t, []string{"TKT-1", "TKT-3"}, ids)
+}
+
+// TestListSessionsDue_DamagedReminderRecord runs the damaged-row check
+// with a reminder record of negative count in meta.yaml: the walk skips it
+// with a warning, and a read of the channel reports it as damaged.
+func TestListSessionsDue_DamagedReminderRecord(t *testing.T) {
+	t.Parallel()
+	mfs := storage.NewMemFS()
+	s, err := newStore(mfs, "/channels", filelock.ProcessPrivate{}, SegmentSize)
+	require.NoError(t, err)
+	var bad channels.Key
+	channelstest.RunDamagedDueRow(t, s, func(t *testing.T, k channels.Key) {
+		t.Helper()
+		bad = k
+		path := "/channels/" + chanDir(k) + "/" + metaFile
+		data, rerr := mfs.ReadFile(path)
+		require.NoError(t, rerr)
+		var m meta
+		require.NoError(t, yaml.Unmarshal(data, &m))
+		m.SessionReminders = map[string]reminderMeta{"status-update": {Since: channelstest.T0, Count: -1}}
+		data, rerr = yaml.Marshal(&m)
+		require.NoError(t, rerr)
+		require.NoError(t, mfs.WriteFile(path, data, 0o600))
+	})
+	_, err = s.Head(context.Background(), bad)
+	require.ErrorContains(t, err, "damaged session reminders")
 }
 
 // restoreFailFS injects the failures a crash during a restore would

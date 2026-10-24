@@ -285,6 +285,21 @@ func TestOpenAPI_ChannelSession(t *testing.T) {
 	if !slices.Equal(got, want) {
 		t.Errorf("ChannelSessionTimer properties = %v, want %v", got, want)
 	}
+	reminders := cs.Properties["reminders"]
+	if reminders == nil || reminders.Type != "array" || reminders.Items == nil ||
+		reminders.Items.Ref != "#/components/schemas/"+channelReminderRef {
+
+		t.Fatalf("ChannelSession.reminders = %+v, want an array of %s", reminders, channelReminderRef)
+	}
+	got, want = schemaKeys(sc[channelReminderRef]), jsonNames(reflect.TypeFor[v1.ChannelSessionReminder]())
+	if !slices.Equal(got, want) {
+		t.Errorf("ChannelSessionReminder properties = %v, want %v", got, want)
+	}
+	if d := sc[messageSchema].Description; !strings.Contains(d, "reminder:<channel type>/<reminder name>") ||
+		!strings.Contains(d, "reminder_message") {
+
+		t.Errorf("the Message description does not explain reminders: %s", d)
+	}
 }
 
 // TestOpenAPI_ChannelSessionDescriptor pins AC 9: the descriptor's

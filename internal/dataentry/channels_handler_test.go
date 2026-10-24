@@ -762,6 +762,95 @@ func TestChannelsHandler_SessionTimersInReads(t *testing.T) {
 	require.Empty(t, final.Timers)
 }
 
+// runTimerRound runs one round of the leader's timer loop over env's
+// channel store at now.
+func runTimerRound(t *testing.T, env *channelEnv, now time.Time) realtime.TimerReport {
+	t.Helper()
+	tm, err := realtime.NewTimers(realtime.TimerDeps{
+		Store: env.ch.store, Config: testRealtimeConfig{p: env.ch.cfg, degraded: &env.ch.degraded},
+		Marker: noMarks{}, Clock: func() time.Time { return now },
+	})
+	require.NoError(t, err)
+	rep, err := tm.RunRound(context.Background())
+	require.NoError(t, err)
+	return rep
+}
+
+// noMarks is a realtime.ChangeMarker that drops every mark.
+type noMarks struct{}
+
+func (noMarks) Mark(...channels.Key) {}
+
+// TestChannelsHandler_SessionRemindersInReads pins TKT-36Z6X3 AC 17: the
+// head, the page and the list carry the reminders of the current state,
+// with count and with due_at equal to the next slot (not the stored hint);
+// a closed channel and a degraded configuration list them without due_at,
+// and a state outside the reminder's in: lists none.
+func TestChannelsHandler_SessionRemindersInReads(t *testing.T) {
+	env := newChannelEnv(t)
+	env.ch.cfg.Store(env.ch.parse(t, strings.Replace(channelTestRealtime,
+		"        contained: { label: Contained, final: true }",
+		`        contained: { label: Contained, final: true }
+      reminders:
+        nudge:
+          label: Nudge
+          in: [detected]
+          every: 30m
+          first: 10m
+          max: 5
+          post: { type: note, props: { body: "Any news?" } }`, 1)))
+	session := func(path string) *v1.ChannelSession {
+		t.Helper()
+		code, b := env.get(t, "alice", path)
+		require.Equal(t, http.StatusOK, code, "%s", b)
+		return decodeAs[v1.ChannelHead](t, b).Channel.Session
+	}
+	require.Empty(t, session(incidentPath).Reminders, "not stored yet")
+
+	resp, b := env.do(t, "alice", http.MethodPost, incidentPath+"/messages", `{"type":"note","props":{"body":"x"}}`, nil)
+	require.Equal(t, http.StatusCreated, resp.StatusCode, "%s", b)
+	entered, err := time.Parse(time.RFC3339Nano, session(incidentPath).EnteredAt)
+	require.NoError(t, err)
+	rep := runTimerRound(t, env, entered.Add(15*time.Minute))
+	require.Equal(t, 1, rep.Reminded)
+
+	open := session(incidentPath)
+	require.Equal(t, []v1.ChannelSessionReminder{{
+		Name: "nudge", Label: "Nudge", Every: "30m", Count: 1, Max: 5,
+		DueAt: entered.Add(40 * time.Minute).UTC().Format(time.RFC3339Nano),
+	}}, open.Reminders, "due_at is the slot, not the slot plus slack")
+	code, b := env.get(t, "alice", incidentPath+"/messages")
+	require.Equal(t, http.StatusOK, code, "%s", b)
+	page := decodeAs[v1.MessagePage](t, b)
+	require.Equal(t, open, page.Channel.Session)
+	last := page.Messages[len(page.Messages)-1]
+	require.Equal(t, "reminder:incident/nudge", last.TriggeredBy)
+	code, b = env.get(t, "alice", "/api/v1/tickets/TKT-1/_channels")
+	require.Equal(t, http.StatusOK, code, "%s", b)
+	var listed *v1.ChannelSession
+	for _, tl := range decodeAs[v1.ChannelList](t, b).Types {
+		for _, c := range tl.Channels {
+			if c.Type == "incident" {
+				listed = c.Session
+			}
+		}
+	}
+	require.Equal(t, open, listed)
+
+	frozen := []v1.ChannelSessionReminder{{Name: "nudge", Label: "Nudge", Every: "30m", Count: 1, Max: 5}}
+	env.ch.degraded.Store(true)
+	require.Equal(t, frozen, session(incidentPath).Reminders)
+	env.ch.degraded.Store(false)
+	resp, b = env.do(t, "alice", http.MethodPost, incidentPath+"/_lifecycle/close", "", nil)
+	require.Equal(t, http.StatusOK, resp.StatusCode, "%s", b)
+	require.Equal(t, frozen, session(incidentPath).Reminders)
+
+	other := "/api/v1/tickets/TKT-2/_channels/incident"
+	resp, b = env.do(t, "alice", http.MethodPost, other+"/messages", `{"type":"contained"}`, nil)
+	require.Equal(t, http.StatusCreated, resp.StatusCode, "%s", b)
+	require.Empty(t, session(other).Reminders, "contained is outside in:")
+}
+
 // TestChannelTyping_Accepted pins AC 17: POST …/_typing answers 202 with
 // the TTL, takes an empty body or {}, and another reader's head lists the
 // typist.

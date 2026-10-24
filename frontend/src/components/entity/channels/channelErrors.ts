@@ -83,6 +83,7 @@ export const CHANNEL_ERROR_RULES: Readonly<Record<string, ChannelErrorRule>> = {
   promote_conflict: REFETCH,
   session_notice: REFETCH,
   session_message: REFETCH,
+  reminder_message: REFETCH,
   // Limits and rules that reading again does not change.
   channel_not_creatable: TOAST,
   too_many_channels: TOAST,

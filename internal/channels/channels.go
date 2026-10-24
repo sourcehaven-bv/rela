@@ -679,6 +679,10 @@ func PrepareMessage(m NewMessage) (NewMessage, []byte, error) {
 	if strings.HasPrefix(m.TriggeredBy, SessionMarker) {
 		return m, nil, fmt.Errorf("%w: triggered_by %q is reserved for session notices", ErrInvalidMessage, m.TriggeredBy)
 	}
+	if strings.HasPrefix(m.TriggeredBy, ReminderMarker) {
+		return m, nil, fmt.Errorf("%w: triggered_by %q is reserved for reminder messages", ErrInvalidMessage,
+			m.TriggeredBy)
+	}
 	if len(m.SchemaHash) > MaxTextBytes || len(m.TriggeredBy) > MaxTextBytes || len(m.Incarnation) > MaxTextBytes {
 		return m, nil, fmt.Errorf("%w: schema hash, triggered_by or incarnation over %d bytes",
 			ErrTooLarge, MaxTextBytes)

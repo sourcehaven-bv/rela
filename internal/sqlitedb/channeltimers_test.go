@@ -76,6 +76,7 @@ func TestOpenV24Database(t *testing.T) {
 		`DROP INDEX channels_session_due_idx`,
 		`ALTER TABLE channels DROP COLUMN session_next_due_at`,
 		`ALTER TABLE channels DROP COLUMN session_restarts`,
+		`ALTER TABLE channels DROP COLUMN session_reminders`,
 		`PRAGMA user_version = 24`,
 	} {
 		_, err = raw.Exec(stmt)
@@ -103,6 +104,5 @@ func TestOpenV24Database(t *testing.T) {
 	require.Empty(t, restarts)
 	var version int
 	require.NoError(t, raw.QueryRow(`PRAGMA user_version`).Scan(&version))
-	require.Equal(t, 25, version)
 	require.Equal(t, sqlitedb.SchemaVersion(), version)
 }

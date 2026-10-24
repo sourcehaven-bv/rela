@@ -413,6 +413,8 @@ channel_types:
       notified:  { properties: { reference: { type: string, required: true } }, post: [dpo] }
       dismiss:   { properties: { reason: { type: string, required: true } }, post: [lead] }
       escalated: { properties: { note: { type: string } }, post: [lead] }
+      reminder:         { properties: { body: { type: markdown, required: true } }, post: [lead] }
+      escalate-stalled: { properties: { note: { type: string } }, post: [dpo] }
     session:
       label: GDPR breach response
       initial: detected
@@ -428,7 +430,8 @@ channel_types:
         contained:
           label: Contained
           on:
-            assessed: { to: assessed, when: "message.risk ~= 'none'" }
+            assessed:         { to: assessed, when: "message.risk ~= 'none'" }
+            escalate-stalled: { to: overdue, when: "session.reminders['status-update'] >= 3" }
           after:
             notify-deadline: { period: 72h, since: session, to: overdue, label: 72 hours since detection }
         assessed:
@@ -443,6 +446,16 @@ channel_types:
             notified: { to: notified }
         notified:  { label: AP notified, final: true }
         dismissed: { label: Dismissed, final: true }
+      reminders:
+        status-update:
+          label: Status update
+          in: [detected, contained, assessed, overdue]
+          every: 30m
+          first: 10m
+          max: 48
+          post:
+            type: reminder
+            props: { body: "Post a status update: what changed since the last one?" }
 ```
 
 | Key | Meaning |
@@ -454,6 +467,7 @@ channel_types:
 | `states.<name>.final` | `true` for a state the session ends in. A final state has no `on:` and no `after:`. |
 | `states.<name>.on` | The transitions out of the state, keyed by message type. A state that is not final needs at least one transition or one timer. |
 | `states.<name>.after` | The timers of the state, keyed by timer name. At most 8. See [Timers](#timers). |
+| `session.reminders` | Messages the session posts at a fixed interval, keyed by reminder name. At most 8. See [Reminders](#reminders). |
 | `on.<type>.to` | The state the message moves the session to. It may be the same state: a re-entry. |
 | `on.<type>.roles` | Only a poster holding one of these roles moves the session. Each role must be in the message type's `post`. |
 | `on.<type>.by` | `trigger`: only a trigger's message moves the session. |
@@ -487,8 +501,9 @@ The entry narrows that further:
 
 **Guards.** `when` reads `message.<property>` (the posted properties, typed
 as for the message type's own `when`), `session.state`,
-`session.generation`, `session.entered_at` and the standard functions such
-as `today()`. A comparison on an optional property the message leaves out
+`session.generation`, `session.entered_at`, `session.reminders`
+(see [Reminders](#reminders)) and the standard functions such as
+`today()`. A comparison on an optional property the message leaves out
 does not hold, and neither does a `when` that fails to evaluate. rela
 logs such a failure as a warning, once per guard until the next reload,
 with the channel type, the state and the message type. A `when`
@@ -603,6 +618,74 @@ old state.
 without anyone posting, so rela refuses one, including a timer to its own
 state. A loop that passes through a message transition is allowed.
 
+### Reminders
+
+A reminder posts a message at a fixed interval while the session is in
+certain states. It never moves the session. In the example, the breach lead
+gets a "status update" reminder 10 minutes after detection and every 30
+minutes after that, until the authority is notified.
+
+| Key | Meaning |
+| --- | --- |
+| `reminders.<name>.in` | The states the reminder runs in. Each must be declared and not final. Required. |
+| `reminders.<name>.every` | The interval, such as `30m` or `4h`. At least `1m`. Required. |
+| `reminders.<name>.first` | How long after the start of its span the first reminder comes. Defaults to `every`. At least `1m`. |
+| `reminders.<name>.max` | The most reminders in one span, from 1 to 1000. Without it there is no cap. |
+| `reminders.<name>.label` | The reminder's name for people. Defaults to the reminder name. |
+| `reminders.<name>.post.type` | The message type the reminder posts. It must be declared, kept (not `persist: ephemeral`) and not move the session. Required. |
+| `reminders.<name>.post.props` | The literal properties of the message, as for a trigger. |
+
+**Spans.** A span is the time the session spends inside the reminder's `in:`
+states. It starts when the session enters one of them, or when the channel
+is created in one. It goes on when the session moves from one `in:` state to
+another, or re-enters the same state. It ends when the session moves to a
+state outside `in:`. A later move back into `in:` starts a new span. In the
+example, a breach detected at 9:00 gets reminders at 9:10, 9:40 and 10:10.
+Contained at 9:25, it still gets the 9:40 reminder: the span goes on.
+
+**Slots.** The reminders of a span come at fixed times, its slots: the start
+of the span plus `first`, then every `every`. When no server ran the
+reminders for a while, the missed slots are skipped, not caught up: the
+breach above, with no server from 10:15 to 12:20, gets one reminder at
+12:20 and the next at 12:40.
+
+A reminder comes within 30 seconds of its slot. It comes later only while
+the server works through more due timers and reminders than it posts in
+one round (64). Reminders and timers share that round. A timer that comes
+due behind B due reminders fires at most B / 64 rounds late, rounded up,
+and the rounds run one second apart. Short intervals cost a write per
+reminder: 200 channels with `every: 1m` make 200 writes a minute.
+
+**The count.** Each span counts its reminders. A guard reads the count as
+`session.reminders['name']`. Write the bracket form for a name with a
+hyphen; `session.reminders.name` works for a name without one. Outside the
+reminder's `in:` states the count reads 0. In the example, the privacy
+officer moves a stalled breach from `contained` to `overdue` with
+`escalate-stalled`, but only after three reminders. With `max`, the
+reminders stop when the count reaches it.
+
+**The reminder message.** A reminder posts a message of its declared type
+with the literal props, from the author `system:realtime`
+(`author.system: true`), with `triggered_by:
+reminder:<channel type>/<reminder name>`, for example
+`reminder:breach-response/status-update`. The message type's actions are
+offered on it as on any message. Nobody can edit or delete a reminder: the
+answer is 409 `reminder_message`. A moderator may still remove one, with
+the reason and audit record of any removal. Removing it does not lower the
+count. A person's post of the same message type is an ordinary message: it
+can be edited and does not count. A reminder writes no audit record and
+sends no mail; the message is the record.
+
+**Closed channels.** A closed or archived channel gets no reminders: its
+reminders are frozen, and the count is kept. When the channel is reopened,
+a reminder whose slot passed while it was closed starts again: the next one
+comes `first` after the reopen. A reminder whose slot had not come keeps
+it. The same holds when an entity is deleted and its channels are later put
+back.
+
+**Final and stranded states.** A final state has no reminders, and a
+stranded session gets none.
+
 ## Triggers
 
 A trigger posts a message into an entity's own channel when the entity
@@ -711,6 +794,13 @@ unknown entity type "nope"`. It checks:
   `since` of `state` or `session`, and a `to` that exists. A state has at
   most 8 timers, and no loop is made only of timers. The key `from` is
   refused with "use since: state or since: session";
+- that a session has at most 8 reminders, each with a valid name, `in:`
+  states that exist, are not final and are listed once, an `every` and
+  `first` that are fixed and at least `1m`, a `max` from 1 to 1000, and a
+  `post.type` of the channel type that is kept and that no transition is
+  keyed by, with `props` checked as for a trigger. `session.timers` and
+  `reminders` under a state are refused with a pointer to
+  `session.reminders`; `to`, `period` and `since` on a reminder are refused;
 - that a channel type with `typing: true` has at least one `log` message
   type, and no message type named `typing`. `typing` must be `true` or
   `false`;
@@ -765,6 +855,10 @@ Timers have fixed limits too: at most 8 per state, and a fixed period of
 at least 1 minute. The server checks for due timers at least once a minute
 and makes at most 64 timer moves and due-time updates per check; the rest
 follow a second later.
+
+Reminders have fixed limits: at most 8 per session, an `every` and `first`
+of at least 1 minute, and a `max` of at most 1000. Reminder posts share the
+64 writes per check with timers.
 
 ## In the web app
 
@@ -1013,13 +1107,22 @@ the channel. `due_at` is left out while the channel is closed or archived,
 because its timers are frozen, and while the configuration is degraded,
 because timers do not fire then. A final or stranded state has no timers.
 
+`reminders` lists the reminders active in the current state, sorted by
+name, each with its `name`, `label`, `every`, `count`, `max` and `due_at`.
+A reminder's `due_at` is its next slot. It is left out while the channel is
+closed or archived, while the configuration is degraded, and once `count`
+reaches `max`. The session's own `due_at` stays the next move. A final or
+stranded state, or a state outside the reminder's `in:`, has no reminders.
+
 ```json
 "session": {
   "state": "detected", "label": "Detected", "generation": 0,
   "entered_at": "2026-10-21T09:12:03Z", "due_at": "2026-10-22T09:12:03Z",
   "transitions": [ { "message_type": "contained", "to": "contained" } ],
   "timers": [ { "name": "no-containment", "label": "Not contained within a day",
-                "to": "overdue", "since": "state", "due_at": "2026-10-22T09:12:03Z" } ]
+                "to": "overdue", "since": "state", "due_at": "2026-10-22T09:12:03Z" } ],
+  "reminders": [ { "name": "status-update", "label": "Status update", "every": "30m",
+                   "count": 2, "max": 48, "due_at": "2026-10-21T10:22:03Z" } ]
 }
 ```
 
@@ -1029,6 +1132,14 @@ A notice looks like this:
 { "seq": 8, "type": "session", "author": { "user": "system:realtime", "system": true },
   "triggered_by": "session:breach-response",
   "props": { "from": "detected", "to": "contained", "generation": 1, "cause": 7 } }
+```
+
+A reminder looks like this:
+
+```json
+{ "seq": 12, "type": "reminder", "author": { "user": "system:realtime", "system": true },
+  "triggered_by": "reminder:breach-response/status-update",
+  "props": { "body": "Post a status update: what changed since the last one?" } }
 ```
 
 ### Errors
@@ -1128,6 +1239,10 @@ prints the session line after the message. When the session has a due time,
 the line ends with the timer that comes due first, such as `next:
 no-containment to overdue at 2026-10-22T09:12:03Z`, and a timer's notice
 reads `moved from detected to overdue (timer no-containment)`.
+The session also lists `reminders`, and a reminder raises the rev, so a
+`watch` wakes on it too. The session line of `rela channel` ends with each
+reminder, such as `reminder status-update: 2 of 48, next at
+2026-10-21T10:22:03Z`, and a reminder message is marked `(reminder)`.
 
 **Identity.** The channel tools and `rela channel` act as `$USER`, or as the
 job identity in `RELA_RUN_AS` (`--run-as`), such as `integration:triage-bot`.
@@ -1184,8 +1299,19 @@ it out of roles that post on channels other agents act on.
   anchor, so adding or shortening one can fire it within a minute, for
   sessions old and new. Removing a timer, or the whole `after:`, clears the
   due time. Reads show the new due time at once.
-- Timers do not fire while the configuration is degraded. They fire on the
-  first check after a valid configuration is back.
+- A reload may add, remove or change reminders. A changed `every` or
+  `first` takes effect from the last reminder: the next one comes at the
+  first new slot after it, so at most one `every` later. Adding a reminder
+  to a state of an old session posts once at the next check, then follows
+  the slots. Removing a reminder stops it and drops its count at the
+  channel's next write. Removing the current state from a reminder's `in:`
+  stops it there, and its count reads 0.
+- A schema change can make a reminder's `props` fail the checks of a
+  post, for example when an enum loses the value it posts. rela then
+  logs this once and pauses the reminder for every channel until
+  `realtime.yaml` or the schema changes again. Timers keep firing.
+- Timers and reminders do not run while the configuration is degraded. They
+  run on the first check after a valid configuration is back.
 - Saving `schema.yaml` in the Configure space checks `realtime.yaml` against
   the new schema and refuses the save if it breaks. The Configure space
   cannot edit `realtime.yaml` itself.

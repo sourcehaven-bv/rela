@@ -64,7 +64,9 @@
 // the new session and due time, then the notice, then the audit record. A
 // crash after meta.yaml leaves the session moved with no notice and no
 // audit record, and the timer does not fire again: the new state's due
-// time is already stored.
+// time is already stored. A reminder post writes meta.yaml with the raised
+// count and last post time, then the reminder message; a crash in between
+// loses that reminder, and never posts it twice.
 package filechannels
 
 import (
@@ -335,11 +337,42 @@ type meta struct {
 	// no due time and no restart anchors.
 	SessionNextDueAt time.Time            `yaml:"session_next_due_at,omitempty"`
 	SessionRestarts  map[string]time.Time `yaml:"session_restarts,omitempty"`
+	// The session's reminder records. A meta.yaml from before reminders
+	// has none.
+	SessionReminders map[string]reminderMeta `yaml:"session_reminders,omitempty"`
+}
+
+// reminderMeta is one [channels.ReminderRecord] in meta.yaml, its times
+// normalized UTC values.
+type reminderMeta struct {
+	Since time.Time `yaml:"since"`
+	Last  time.Time `yaml:"last,omitempty"`
+	Count int64     `yaml:"count"`
 }
 
 func (m *meta) setSession(s channels.Session) {
 	m.SessionState, m.SessionGen, m.SessionEnteredAt = s.State, s.Generation, s.EnteredAt
 	m.SessionNextDueAt, m.SessionRestarts = s.NextDueAt, s.Restarts
+	m.SessionReminders = nil
+	if len(s.Reminders) > 0 {
+		m.SessionReminders = make(map[string]reminderMeta, len(s.Reminders))
+		for name, r := range s.Reminders {
+			r = channels.NormReminder(r)
+			m.SessionReminders[name] = reminderMeta{Since: r.Since, Last: r.Last, Count: r.Count}
+		}
+	}
+}
+
+// reminders returns the stored reminder records in UTC, or nil for none.
+func (m *meta) reminders() map[string]channels.ReminderRecord {
+	if len(m.SessionReminders) == 0 {
+		return nil
+	}
+	out := make(map[string]channels.ReminderRecord, len(m.SessionReminders))
+	for name, r := range m.SessionReminders {
+		out[name] = channels.ReminderRecord{Since: utc(r.Since), Last: utc(r.Last), Count: r.Count}
+	}
+	return out
 }
 
 // restarts returns the stored restart anchors in UTC, or nil for none.
@@ -385,7 +418,7 @@ func (m *meta) channel(k channels.Key) channels.Channel {
 		LastSeq:    m.LastSeq, Rev: m.Rev,
 		Session: channels.Session{
 			State: m.SessionState, Generation: m.SessionGen, EnteredAt: utc(m.SessionEnteredAt),
-			NextDueAt: utc(m.SessionNextDueAt), Restarts: m.restarts(),
+			NextDueAt: utc(m.SessionNextDueAt), Restarts: m.restarts(), Reminders: m.reminders(),
 		},
 	}
 }
@@ -422,6 +455,9 @@ func readMetaAt(d *disk, dir string, k channels.Key) (*meta, error) {
 	var m meta
 	if err := yaml.Unmarshal(data, &m); err != nil {
 		return nil, fmt.Errorf("filechannels: channel %s has a damaged meta.yaml: %w", k, err)
+	}
+	if err := channels.CheckReminders(m.reminders()); err != nil {
+		return nil, fmt.Errorf("filechannels: channel %s has damaged session reminders: %w", k, err)
 	}
 	return &m, nil
 }

@@ -194,6 +194,9 @@ func TestParse_SessionInvalid(t *testing.T) {
 			{"    attach_to: [datalek]\n", "    attach_to: [datalek]\n    cardinality: many\n    create: { roles: [member] }\n"},
 			{"contained: { to: done }", "contained: { to: done, by: trigger }"},
 		}, on + ".by", "a trigger posts only into cardinality one channel types, so by: trigger never fires here"},
+		{"guard on reminders of a session without any", []replace{
+			{"contained: { to: done }", `contained: { to: done, when: "session.reminders['x'] >= 1" }`},
+		}, on + ".when", `unknown attribute "x"`},
 		{"session-level final", []replace{{"      initial: open\n", "      initial: open\n      final: [done]\n"}},
 			k + ".final", "mark each final state with final: true"},
 		{"merge key", []replace{{"        done: { final: true }", "        <<: { done: { final: true } }"}},
@@ -241,6 +244,21 @@ func TestCheckReload_SessionChangesAllowed(t *testing.T) {
 			"label: Not contained within a day }\n", ""}},
 		"timer renamed":  {{"no-containment:", "not-contained:"}},
 		"period changed": {{"no-containment: { period: 24h", "no-containment: { period: 1h"}},
+		"reminder added": {{"what changed since the last one?\" }\n", "what changed since the last one?\" }\n" +
+			"        other:\n          in: [overdue]\n          every: 1h\n" +
+			"          post: { type: reminder, props: { body: x } }\n"}},
+		"reminder removed": {
+			{"escalate-stalled: { to: overdue, when: \"session.reminders['status-update'] >= 3\" }", "escalate-stalled: { to: overdue }"},
+			{golden(t)[strings.Index(golden(t), "      reminders:\n"):strings.Index(golden(t), "  incident-room:\n")], ""},
+		},
+		"reminder renamed": {
+			{"session.reminders['status-update']", "session.reminders['status']"},
+			{"        status-update:\n          label: Status update", "        status:\n          label: Status update"},
+		},
+		"reminder in changed":    {{"in: [detected, contained, assessed, overdue]", "in: [contained]"}},
+		"reminder every changed": {{"every: 30m", "every: 1h"}},
+		"reminder first changed": {{"first: 10m", "first: 1h"}},
+		"reminder max changed":   {{"max: 48", "max: 5"}},
 	}
 	for name, edits := range tests {
 		t.Run(name, func(t *testing.T) {

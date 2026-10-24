@@ -43,6 +43,26 @@ type SessionView struct {
 	// config, the same for every reader. They are empty when the state is
 	// final or stranded, or the channel is not stored yet.
 	Timers []SessionTimerView `json:"timers,omitempty"`
+	// Reminders are the reminders active in the current state, sorted by
+	// name. They are empty when the state is final or stranded, or the
+	// channel is not stored yet. DueAt above stays the next move; each
+	// reminder carries its own due time.
+	Reminders []SessionReminderView `json:"reminders,omitempty"`
+}
+
+// SessionReminderView is one reminder active in the current state. Count
+// is the number of reminders posted in the current span. DueAt is the next
+// slot, set on a stored, open channel under a configuration that is not
+// degraded, and not once Count reaches Max.
+type SessionReminderView struct {
+	Name  string `json:"name"`
+	Label string `json:"label,omitempty"`
+	// Every is the interval as configured, such as "30m".
+	Every string `json:"every"`
+	Count int64  `json:"count"`
+	// Max is the cap on Count; 0 means no cap.
+	Max   int64      `json:"max,omitempty"`
+	DueAt *time.Time `json:"due_at,omitempty"`
 }
 
 // SessionTimerView is one timer of the current state. DueAt is set on a
@@ -117,9 +137,27 @@ func sessionView(ct realtimecfg.ChannelType, h *channels.Channel, now time.Time,
 		})
 	}
 	if h != nil && !st.Final {
-		timerViews(v, cur, *h, st.Timers(), h.State == channels.StateOpen && !degraded)
+		showDue := h.State == channels.StateOpen && !degraded
+		timerViews(v, cur, *h, st.Timers(), showDue)
+		v.Reminders = reminderViews(s, cur, *h, showDue)
 	}
 	return v
+}
+
+// reminderViews are the views of the reminders active in ch's current
+// state cur, with showDue their next slots.
+func reminderViews(s *realtimecfg.Session, cur current, ch channels.Channel, showDue bool) []SessionReminderView {
+	active := s.RemindersIn(cur.State)
+	out := make([]SessionReminderView, 0, len(active))
+	for _, r := range active {
+		rec, _ := reminderRecord(r, cur, ch)
+		rv := SessionReminderView{Name: r.Name, Label: r.Label, Every: r.EveryText, Count: rec.Count, Max: r.Max}
+		if slot, ok := nextSlot(r, cur, ch); ok && showDue {
+			rv.DueAt = &slot
+		}
+		out = append(out, rv)
+	}
+	return out
 }
 
 // timerViews fills v's timers for ch, whose current session is cur, and
@@ -340,7 +378,7 @@ func sessionDecider(
 		if !ok || !p.admits(t) {
 			return channels.SessionMove{}, false
 		}
-		holds, err := guardHolds(ctx, t.When, fields, cur, now)
+		holds, err := guardHolds(ctx, t.When, fields, reminderCounters(s, cur, ch), cur, now)
 		if err != nil {
 			*failed = guardFailure{t: t, state: cur.State, err: err}
 		}
@@ -352,12 +390,14 @@ func sessionDecider(
 }
 
 // guardHolds reports whether prog, a transition's `when:`, holds for the
-// message fields and the session cur. No guard holds. An evaluation error,
+// message fields and the session cur, whose `session.reminders` record is
+// reminders (see [reminderCounters]). No guard holds. An evaluation error,
 // or a result that is not a boolean, does not hold: a guard fails closed.
 // err reports such a failure. A nil operand, from an absent optional
 // property, is no failure: the guard just does not hold.
 func guardHolds(
-	ctx context.Context, prog *predicate.Program, fields map[string]predicate.Value, cur current, now time.Time,
+	ctx context.Context, prog *predicate.Program, fields map[string]predicate.Value, reminders predicate.Value,
+	cur current, now time.Time,
 ) (bool, error) {
 	if prog == nil {
 		return true, nil
@@ -369,6 +409,7 @@ func guardHolds(
 			"state":      predicate.NewString(cur.State),
 			"generation": predicate.NewInt(cur.Generation),
 			"entered_at": predicate.NewDate(cur.EnteredAt),
+			"reminders":  reminders,
 		}))
 	}
 	if err == nil {
@@ -408,6 +449,19 @@ func postedSession(c *call, step *channels.SessionStep) *SessionView {
 // [channels.SessionMarker], so a poster cannot fool the check.
 func isNotice(msgType, triggeredBy string) bool {
 	return msgType == realtimecfg.SessionNoticeType && strings.HasPrefix(triggeredBy, channels.SessionMarker)
+}
+
+// isReminder reports whether m was posted by a session reminder. Only the
+// store can write the [channels.ReminderMarker], so a person's post of the
+// same type is not a reminder.
+func isReminder(m channels.Message) bool {
+	return strings.HasPrefix(m.TriggeredBy, channels.ReminderMarker)
+}
+
+// reminderMessage is the 409 for an edit or author delete of a reminder.
+func reminderMessage() *DenialError {
+	return deny(http.StatusConflict, TypeReminderMessage,
+		"a reminder is posted by the session and cannot be edited or deleted; a moderator may still remove it")
 }
 
 // sessionNotice is the 409 for an edit or removal of a session notice.

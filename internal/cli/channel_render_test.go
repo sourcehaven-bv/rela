@@ -170,6 +170,40 @@ func TestRenderRead_SessionTimer(t *testing.T) {
 	assert.Equal(t, "session: detected, generation 0", sessionText(&closed), "no due time, no next")
 }
 
+// TestRenderRead_SessionReminder pins TKT-36Z6X3 AC 21: the session line
+// lists each reminder with its count, max and next time, and a reminder
+// message carries the reminder note.
+func TestRenderRead_SessionReminder(t *testing.T) {
+	at := time.Date(2026, 10, 21, 9, 12, 3, 0, time.UTC)
+	due := at.Add(70 * time.Minute)
+	view := realtime.ReadView{
+		Channel: realtime.ChannelView{
+			Anchor: "DL-1", Type: "breach-response", State: realtime.StateOpen, LastSeq: 1, Rev: 1,
+			Session: &realtime.SessionView{
+				State: "detected", Generation: 0, EnteredAt: at,
+				Reminders: []realtime.SessionReminderView{
+					{Name: "status-update", Every: "30m", Count: 2, Max: 48, DueAt: &due},
+				},
+			},
+		},
+		Messages: []realtime.MessageView{{
+			Seq: 1, Type: "reminder", At: at.Add(40 * time.Minute),
+			TriggeredBy: "reminder:breach-response/status-update",
+			Author:      &realtime.AuthorView{User: "system:realtime", System: true},
+			Props:       map[string]any{"body": "Post a status update"},
+		}},
+	}
+	var buf bytes.Buffer
+	require.NoError(t, renderRead(&buf, view))
+	got := buf.String()
+	assert.Contains(t, got,
+		"session: detected, generation 0, reminder status-update: 2 of 48, next at 2026-10-21T10:22:03Z\n")
+	assert.Contains(t, got, "  2026-10-21T09:52:03Z  system:realtime  reminder  (reminder)\n")
+
+	done := realtime.SessionView{State: "detected", Reminders: []realtime.SessionReminderView{{Name: "n", Count: 3}}}
+	assert.Equal(t, "session: detected, generation 0, reminder n: 3", sessionText(&done))
+}
+
 func TestRenderRead_Session(t *testing.T) {
 	at := time.Date(2026, 10, 21, 9, 12, 3, 0, time.UTC)
 	view := realtime.ReadView{

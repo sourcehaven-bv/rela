@@ -44,6 +44,10 @@ type Channel struct {
 // them comes due. It is set only on an open channel under a configuration
 // that is not degraded: a closed channel's timers are frozen, and under a
 // degraded configuration no timer fires.
+//
+// Reminders are the reminders active in the current state, sorted by name;
+// they are empty for a final or stranded state, or outside a reminder's
+// `in:` states. DueAt stays the next move; each reminder has its own.
 type ChannelSession struct {
 	State       string                     `json:"state"`
 	Label       string                     `json:"label,omitempty"`
@@ -54,6 +58,21 @@ type ChannelSession struct {
 	Transitions []ChannelSessionTransition `json:"transitions,omitempty"`
 	DueAt       string                     `json:"due_at,omitempty"`
 	Timers      []ChannelSessionTimer      `json:"timers,omitempty"`
+	Reminders   []ChannelSessionReminder   `json:"reminders,omitempty"`
+}
+
+// ChannelSessionReminder is one reminder active in the session's current
+// state: it posts a message every Every (as configured, such as "30m").
+// Count is the number posted in the current span; Max caps it, 0 for no
+// cap. DueAt is the next reminder, set only on an open channel under a
+// configuration that is not degraded, and not once Count reaches Max.
+type ChannelSessionReminder struct {
+	Name  string `json:"name"`
+	Label string `json:"label,omitempty"`
+	Every string `json:"every"`
+	Count int64  `json:"count"`
+	Max   int64  `json:"max,omitempty"`
+	DueAt string `json:"due_at,omitempty"`
 }
 
 // ChannelSessionTimer is one timer of the session's current state: after

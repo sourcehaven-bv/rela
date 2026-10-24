@@ -1126,45 +1126,89 @@ func (s *Store) SetSession(
 	}
 	committed := m.channel(k)
 	committed.LastSeq = last
-	move, moved, err := channels.DecideTimer(&step, committed)
+	w, err := applySessionStep(m, s.idx, &step, committed, at)
 	if err != nil {
 		return channels.Channel{}, err
 	}
-	var notice channels.Message
-	if moved {
-		after := committed
-		channels.ApplySession(&after, move, at)
-		m.setSession(after.Session)
-		seq := last + 1
-		notice, _, err = channels.TimerNotice(&step, seq, at, move, after.Session.Generation, m.bump(s.idx(seq)))
-		if err != nil { // coverage-ignore: invariant: TimerNotice encodes four short values
-			return channels.Channel{}, err
-		}
-		m.LastSeq = seq
-	}
+	written, move, moved, reminded := w.written, w.move, w.moved, w.reminded
 	if err := m.schedule(k, step.Due); err != nil {
 		return channels.Channel{}, err
 	}
 	if err := s.writeMeta(k, m); err != nil {
 		return channels.Channel{}, err
 	}
-	if moved {
-		rec := []segRecord{{idx: s.idx(notice.Seq), rec: encodeLine(line{K: "m", Message: notice})}}
+	if moved || reminded {
+		rec := []segRecord{{idx: s.idx(written.Seq), rec: encodeLine(line{K: "m", Message: written})}}
 		if err := s.appendRecords(k, rec); err != nil {
 			return channels.Channel{}, err
 		}
-		audit := channels.TimerAudit(k, &step, notice, move, m.SessionGen)
+	}
+	if moved {
+		audit := channels.TimerAudit(k, &step, written, move, m.SessionGen)
 		if err := s.appendAudit(k.ID, audit); err != nil {
 			return channels.Channel{}, err
 		}
 	}
 	out := m.channel(k)
 	out.LastSeq = m.LastSeq
-	if !moved {
+	if !moved && !reminded {
 		out.LastSeq = last
 	}
-	channels.FillSessionOutcome(&step, out, move, moved)
+	if reminded {
+		channels.FillReminderOutcome(&step, out)
+	} else {
+		channels.FillSessionOutcome(&step, out, move, moved)
+	}
 	return out, nil
+}
+
+// sessionWrite is what [applySessionStep] decided and applied to m.
+type sessionWrite struct {
+	written  channels.Message
+	move     channels.SessionMove
+	moved    bool
+	reminded bool
+}
+
+// applySessionStep decides step against committed, whose LastSeq is set,
+// and applies the move or the reminder to m: the session, the rev and the
+// last sequence number. idx maps a sequence number to its segment. written
+// is the notice or reminder message to append. A timer move wins over a
+// reminder.
+func applySessionStep(
+	m *meta, idx func(int64) int64, step *channels.SessionStep, committed channels.Channel, at time.Time,
+) (sessionWrite, error) {
+	var w sessionWrite
+	var err error
+	w.move, w.moved, err = channels.DecideTimer(step, committed)
+	if err != nil {
+		return w, err
+	}
+	seq := committed.LastSeq + 1
+	after := committed
+	if w.moved {
+		channels.ApplySession(&after, w.move, at)
+		m.setSession(after.Session)
+		w.written, _, err = channels.TimerNotice(step, seq, at, w.move, after.Session.Generation, m.bump(idx(seq)))
+		if err != nil { // coverage-ignore: invariant: TimerNotice encodes four short values
+			return w, err
+		}
+		m.LastSeq = seq
+		return w, nil
+	}
+	post, reminded, err := channels.DecideReminder(step, committed, at)
+	if err != nil || !reminded {
+		return w, err
+	}
+	channels.ApplyReminder(&after, post)
+	if w.written, _, err = channels.ReminderMessage(step, post, seq, at, m.Rev+1); err != nil {
+		return w, err
+	}
+	w.reminded = true
+	m.setSession(after.Session)
+	m.bump(idx(seq))
+	m.LastSeq = seq
+	return w, nil
 }
 
 // StalePending implements [channels.Store].
