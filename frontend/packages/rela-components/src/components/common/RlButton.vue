@@ -250,6 +250,9 @@ function onKeydown(event: KeyboardEvent) {
   cursor: pointer;
   /* A link root brings an underline the button shape does not want. */
   text-decoration: none;
+  /* A label stays on one line. A wrapped label makes a tall button and a
+     ragged row; a row that is too narrow is the container's to solve. */
+  white-space: nowrap;
   transition: background-color var(--rl-duration-fast) var(--rl-ease), color var(--rl-duration-fast) var(--rl-ease), box-shadow var(--rl-duration-fast) var(--rl-ease);
 }
 

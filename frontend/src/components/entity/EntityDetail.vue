@@ -74,6 +74,8 @@ import type { ViewSectionCreate, ViewSectionCreateTarget } from '@/api/views'
 import { entityExportUrl, getTransforms, type TransformInfo } from '@/api/transforms'
 import CopyMenu from '@/components/entity/CopyMenu.vue'
 import ConversionModal from '@/components/entity/ConversionModal.vue'
+import ConversionMenu from '@/components/entity/ConversionMenu.vue'
+import { useActionsFit } from '@/composables/useActionsFit'
 import FaceMenu from '@/components/entity/FaceMenu.vue'
 import EntityActionsMenu from '@/components/entity/EntityActionsMenu.vue'
 import type { EntityAction } from '@/components/entity/entityActions'
@@ -1543,6 +1545,15 @@ const actions = computed<EntityAction[]>(() => {
     })
   }
   out.push(...pileActions.actions.value)
+  for (const offer of conversionOffers.value) {
+    out.push({
+      id: `convert:${offer.name}`,
+      label: offer.label || offer.name,
+      group: 'manage',
+      icon: 'refresh',
+      run: () => (conversionOffer.value = offer),
+    })
+  }
   if (canDuplicate.value) {
     out.push({ id: 'duplicate', label: 'Duplicate', group: 'manage', icon: 'copy', run: () => (showDuplicateModal.value = true) })
   }
@@ -1562,6 +1573,24 @@ const actions = computed<EntityAction[]>(() => {
 
 // On a phone, Edit and Delete keep their own buttons; the rest is overflow.
 const overflowActions = computed(() => actions.value.filter((a) => a.id !== 'edit' && a.id !== 'delete'))
+
+/*
+ * When the desktop row does not fit beside the title, it keeps the commands
+ * (the primary actions), the header create menu and Edit, and moves the rest
+ * into the same "⋯" menu the phone layout uses.
+ */
+const headerEl = ref<HTMLElement | null>(null)
+const headerInfoEl = ref<HTMLElement | null>(null)
+const headerActionsEl = ref<HTMLElement | null>(null)
+const { compact: compactActions } = useActionsFit(
+  headerEl,
+  headerInfoEl,
+  headerActionsEl,
+  () => actions.value.map((a) => a.id).join('|')
+)
+const compactOverflowActions = computed(() =>
+  actions.value.filter((a) => a.id !== 'edit' && !a.id.startsWith('command:'))
+)
 
 watch(actions, (list) => emit('actions', list), { immediate: true })
 
@@ -2278,8 +2307,8 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
         <span v-for="(note, i) in bannerNotes" :key="i" class="banner-note">{{ note }}</span>
       </WorldBanner>
 
-      <header class="detail-header">
-        <div class="header-info">
+      <header ref="headerEl" class="detail-header">
+        <div ref="headerInfoEl" class="header-info">
           <span class="entity-type-badge">{{ typeDef?.label || entityType }}</span>
           <RouterLink v-if="ownerHref" :to="ownerHref" class="owner-link">
             Part of {{ viewData?.entry?._owner?.title }}
@@ -2297,7 +2326,12 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
           </div>
         </div>
         <!-- Desktop actions -->
-        <div v-if="!props.hideActions" class="header-actions desktop-actions">
+        <div
+          v-if="!props.hideActions"
+          ref="headerActionsEl"
+          class="header-actions desktop-actions"
+          :class="{ 'desktop-actions--compact': compactActions }"
+        >
           <RlButton
             v-for="cmd in commands"
             :key="cmd.id"
@@ -2306,6 +2340,7 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
           >
             {{ cmd.label }}
           </RlButton>
+          <template v-if="!compactActions">
           <RlButton
             v-for="a in detailActions"
             :key="`action-${a.id}`"
@@ -2322,9 +2357,8 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
             a world, where copyOffers is empty; see its comment for why.
           -->
           <CopyMenu :offers="copyOffers" :busy="copyBusy" @invoke="runCopy" />
-          <RlButton v-for="offer in conversionOffers" :key="offer.name" variant="secondary" @click="conversionOffer = offer">
-            {{ offer.label }}
-          </RlButton>
+          <ConversionMenu :offers="conversionOffers" @choose="conversionOffer = $event" />
+          </template>
           <!--
             The page-header create menu: sections that opted into
             `create.in: [header]`. The server assembles and dedupes it, so this
@@ -2350,6 +2384,7 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
             not have. The mobile block below gates on the SAME flag; both sites
             must, which is the trap this header just walked into three times.
           -->
+          <template v-if="!compactActions">
           <RlButton v-if="showHistory && historyTarget" :as="RouterLink" :to="historyTarget" variant="secondary">
             History
           </RlButton>
@@ -2371,6 +2406,8 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
             Delete
             <template #trailing><RlKbd keys="Del" /></template>
           </RlButton>
+          </template>
+          <EntityActionsMenu v-else :actions="compactOverflowActions" class="desktop-overflow" />
         </div>
 
         <!-- Mobile actions: Edit primary, delete icon, overflow menu for commands -->
@@ -3278,6 +3315,9 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
 /* Header */
 .detail-header {
   display: flex;
+  /* The last resort when even the compact row does not fit: the actions
+     move below the title instead of squeezing it. */
+  flex-wrap: wrap;
   align-items: flex-start;
   justify-content: space-between;
   gap: var(--space-lg);
@@ -3290,7 +3330,9 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
   gap: var(--space-sm);
   /* Takes the row, so the title keeps its width when it swaps to a control. */
   flex: 1;
-  min-width: 0;
+  /* The title never gets narrower than this beside the actions.
+     useActionsFit reads this value to decide when the row collapses. */
+  min-width: min(16rem, 100%);
 }
 
 .entity-type-badge {
@@ -3324,6 +3366,13 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
 .header-actions {
   display: flex;
   gap: var(--space-sm);
+}
+
+/* The row keeps its natural width; useActionsFit collapses it instead. */
+.desktop-actions {
+  flex: none;
+  flex-wrap: nowrap;
+  white-space: nowrap;
 }
 
 /* Mobile-responsive header. .desktop-actions and .mobile-actions are

@@ -215,3 +215,28 @@ export const AsLink: Story = {
     `,
   }),
 }
+
+/*
+ * A long label in a row that is too narrow stays on one line. The row
+ * overflows instead, and the page decides what to collapse.
+ */
+export const LongLabelInNarrowRow: Story = {
+  render: () => ({
+    components: { RlButton },
+    template: `
+      <div style="display:flex; gap:8px; width:160px">
+        <RlButton variant="secondary">Omzetten naar verantwoordelijkheidsgebied</RlButton>
+        <RlButton variant="secondary">Edit</RlButton>
+      </div>
+    `,
+  }),
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement)
+    const long = canvas.getByRole('button', { name: /Omzetten/ })
+    const short = canvas.getByRole('button', { name: 'Edit' })
+    // The button's height is fixed, so compare the labels: a wrapped label
+    // is taller than its box.
+    const label = (b: HTMLElement) => b.querySelector('.rl-button__label')!.getBoundingClientRect().height
+    await expect(label(long)).toBe(label(short))
+  },
+}
