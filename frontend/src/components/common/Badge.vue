@@ -82,39 +82,42 @@ const displayText = computed(() => props.text ?? label.value ?? props.value)
   white-space: nowrap;
 }
 
+/* Badge text needs 4.5:1, which the status-dot tones (3:1, non-text) do not
+   promise. The tag pairs do: each -fg clears AA on its own -bg. Orange and
+   yellow share the amber pair. */
 .badge--blue {
-  background-color: color-mix(in srgb, var(--rl-color-status-blue) 18%, transparent);
-  color: var(--rl-color-status-blue);
+  background-color: var(--rl-tag-blue-bg);
+  color: var(--rl-tag-blue-fg);
 }
 
 .badge--purple {
-  background-color: color-mix(in srgb, var(--rl-color-accent) 18%, transparent);
-  color: var(--rl-color-accent);
+  background-color: var(--rl-tag-purple-bg);
+  color: var(--rl-tag-purple-fg);
 }
 
 .badge--green {
-  background-color: color-mix(in srgb, var(--rl-color-status-green) 18%, transparent);
-  color: var(--rl-color-status-green);
+  background-color: var(--rl-tag-green-bg);
+  color: var(--rl-tag-green-fg);
 }
 
 .badge--gray {
-  background-color: var(--rl-color-bg-hover);
-  color: var(--rl-color-text-muted);
+  background-color: var(--rl-tag-grey-bg);
+  color: var(--rl-tag-grey-fg);
 }
 
 .badge--red {
-  background-color: color-mix(in srgb, var(--rl-color-status-red) 18%, transparent);
-  color: var(--rl-color-status-red);
+  background-color: var(--rl-tag-red-bg);
+  color: var(--rl-tag-red-fg);
 }
 
 .badge--orange {
-  background-color: color-mix(in srgb, var(--rl-color-status-amber) 18%, transparent);
-  color: var(--rl-color-status-amber);
+  background-color: var(--rl-tag-amber-bg);
+  color: var(--rl-tag-amber-fg);
 }
 
 .badge--yellow {
-  background-color: color-mix(in srgb, var(--rl-color-status-amber) 18%, transparent);
-  color: var(--rl-color-status-amber);
+  background-color: var(--rl-tag-amber-bg);
+  color: var(--rl-tag-amber-fg);
 }
 </style>
 
