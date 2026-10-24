@@ -104,15 +104,19 @@ type Dialect struct {
 // Store is the SQL backend.
 //
 // 20 -> 21 (TKT-ZU7P13): Untombstone. 21 -> 25 (TKT-964SIS):
-// ConfirmTombstone, Tombstones, Purge and DropTypeRecord. The exported
+// ConfirmTombstone, Tombstones, Purge and DropTypeRecord. 27 -> 29
+// (TKT-INM3AZ): SetSession and ListSessionsDue. The exported
 // methods are the mandated [channels.Store] interface, so this is a
 // required-interface exception rather than a ratchet target. Helpers stay
 // free functions.
 //
-//plimsoll:max-exported-methods=27
+//plimsoll:max-exported-methods=29
 type Store struct {
 	db DB
 	d  Dialect
+	// damaged rate-limits the warning about a damaged row that
+	// [Store.ListSessionsDue] skips.
+	damaged *channels.DamageWarner
 }
 
 var _ channels.Store = (*Store)(nil)
@@ -125,7 +129,7 @@ func New(db DB, d Dialect) (*Store, error) {
 	if db == nil {
 		return nil, fmt.Errorf("%s: New requires a database handle", d.Name)
 	}
-	return &Store{db: db, d: d}, nil
+	return &Store{db: db, d: d, damaged: &channels.DamageWarner{}}, nil
 }
 
 // --- encoding ---
@@ -207,7 +211,8 @@ func utc(t time.Time) time.Time {
 }
 
 const chanCols = `id, anchor_id, anchor_face, type, name, incarnation, state, title, created_by,
-	created_at, closed_at, archived_at, reopened_at, last_seq, rev, session_state, session_gen, session_entered_at`
+	created_at, closed_at, archived_at, reopened_at, last_seq, rev, session_state, session_gen, session_entered_at,
+	session_next_due_at, session_restarts`
 
 // openSinceSQL is when an open channel entered its state, as
 // [channels.Channel.StateSince] reads it.
@@ -219,23 +224,71 @@ type row struct {
 	c  channels.Channel
 }
 
+// damagedRowError is a channel row whose columns scanned but whose JSON
+// does not decode. Key is still readable, so a listing can name and skip
+// the row.
+type damagedRowError struct {
+	key channels.Key
+	err error
+}
+
+func (e *damagedRowError) Error() string { return e.err.Error() }
+func (e *damagedRowError) Unwrap() error { return e.err }
+
 func scanChannel(r interface{ Scan(...any) error }) (row, error) {
 	var out row
 	var face, by string
-	var created, closed, archived, reopened, entered int64
+	var created, closed, archived, reopened, entered, due int64
+	var restarts string
 	c := &out.c
 	if err := r.Scan(&out.id, &c.Key.ID, &face, &c.Key.Type, &c.Key.Name, &c.Incarnation, &c.State, &c.Title, &by,
 		&created, &closed, &archived, &reopened, &c.LastSeq, &c.Rev,
-		&c.Session.State, &c.Session.Generation, &entered); err != nil {
+		&c.Session.State, &c.Session.Generation, &entered, &due, &restarts); err != nil {
 		return out, err
 	}
-	c.Session.EnteredAt = fromMicros(entered)
+	c.Session.EnteredAt, c.Session.NextDueAt = fromMicros(entered), fromMicros(due)
 	c.Key.Face = entity.Face(face)
 	if err := json.Unmarshal([]byte(by), &c.CreatedBy); err != nil {
-		return out, fmt.Errorf("channel %s has a damaged created_by: %w", c.Key, err)
+		return out, &damagedRowError{key: c.Key, err: fmt.Errorf("channel %s has a damaged created_by: %w", c.Key, err)}
 	}
 	c.CreatedAt, c.ClosedAt, c.ArchivedAt = fromMicros(created), fromMicros(closed), fromMicros(archived)
 	c.ReopenedAt = fromMicros(reopened)
+	rs, err := decodeRestarts(restarts)
+	if err != nil {
+		return out, &damagedRowError{key: c.Key, err: fmt.Errorf("channel %s has damaged session restarts: %w", c.Key, err)}
+	}
+	c.Session.Restarts = rs
+	return out, nil
+}
+
+// encodeRestarts is the session_restarts column: the restart anchors as a
+// JSON object of microseconds, or empty for none.
+func encodeRestarts(rs map[string]time.Time) string {
+	if len(rs) == 0 {
+		return ""
+	}
+	m := make(map[string]int64, len(rs))
+	for name, at := range rs {
+		m[name] = micros(at)
+	}
+	return mustJSON(m)
+}
+
+func decodeRestarts(raw string) (map[string]time.Time, error) {
+	if raw == "" {
+		return nil, nil //nolint:nilnil // no restart anchors
+	}
+	var m map[string]int64
+	if err := json.Unmarshal([]byte(raw), &m); err != nil {
+		return nil, err
+	}
+	if len(m) == 0 {
+		return nil, nil //nolint:nilnil // no restart anchors
+	}
+	out := make(map[string]time.Time, len(m))
+	for name, v := range m {
+		out[name] = fromMicros(v)
+	}
 	return out, nil
 }
 
@@ -290,7 +343,7 @@ func (s *Store) channelRow(ctx context.Context, q Querier, k channels.Key) (row,
 	return r, err
 }
 
-func (s *Store) message(ctx context.Context, q Querier, chanID, seq int64, k channels.Key) (channels.Message, error) {
+func readMessage(ctx context.Context, q Querier, chanID, seq int64, k channels.Key) (channels.Message, error) {
 	m, err := scanMessage(q.QueryRow(ctx,
 		`SELECT `+msgCols+` FROM channel_messages WHERE channel_id = ? AND seq = ?`, chanID, seq))
 	if errors.Is(err, ErrNoRows) {
@@ -320,7 +373,7 @@ func (s *Store) Append(ctx context.Context, k channels.Key, nm channels.NewMessa
 	if err != nil {
 		return channels.Message{}, err
 	}
-	if err := channels.PrepareSessionStep(nm.Session); err != nil {
+	if err := channels.PrepareAppendStep(nm.Session); err != nil {
 		return channels.Message{}, err
 	}
 	var out channels.Message
@@ -329,7 +382,7 @@ func (s *Store) Append(ctx context.Context, k channels.Key, nm channels.NewMessa
 		if err != nil {
 			return err
 		}
-		err = s.checkParent(ctx, q, r.id, k, nm.ReplyTo)
+		err = checkParent(ctx, q, r.id, k, nm.ReplyTo)
 		if err != nil {
 			return err
 		}
@@ -346,14 +399,9 @@ func (s *Store) Append(ctx context.Context, k channels.Key, nm channels.NewMessa
 		if err != nil {
 			return err
 		}
-		lastSeq := out.Seq
-		if moved {
-			channels.ApplySession(&r.c, move, nm.At)
-			notice, err := insertNotice(ctx, q, r.id, nm.Session, out, move, r.c.Session.Generation, rev+1)
-			if err != nil {
-				return err
-			}
-			lastSeq, rev = notice.Seq, notice.Rev
+		lastSeq, rev, err := appendSession(ctx, q, &r, nm, out, move, moved, rev)
+		if err != nil {
+			return err
 		}
 		if err := bumpSession(ctx, q, r.id, lastSeq, rev, r.c.Session); err != nil {
 			return err
@@ -413,8 +461,42 @@ func insertNotice(
 // bumpSession sets a channel's head and its session after an append.
 func bumpSession(ctx context.Context, q Querier, id, lastSeq, rev int64, sess channels.Session) error {
 	_, err := q.Exec(ctx, `UPDATE channels SET last_seq = ?, rev = ?, session_state = ?, session_gen = ?,
-		session_entered_at = ? WHERE id = ?`, lastSeq, rev, sess.State, sess.Generation, micros(sess.EnteredAt), id)
+		session_entered_at = ?, session_next_due_at = ?, session_restarts = ? WHERE id = ?`,
+		lastSeq, rev, sess.State, sess.Generation, micros(sess.EnteredAt), micros(sess.NextDueAt),
+		encodeRestarts(sess.Restarts), id)
 	return err
+}
+
+// setSchedule stores a channel's session schedule.
+func setSchedule(ctx context.Context, q Querier, id int64, sess channels.Session) error {
+	_, err := q.Exec(ctx, `UPDATE channels SET session_next_due_at = ?, session_restarts = ? WHERE id = ?`,
+		micros(sess.NextDueAt), encodeRestarts(sess.Restarts), id)
+	return err
+}
+
+// appendSession applies an append's session step to r.c: on a move it
+// inserts the notice after out, whose rev is rev, and then it stores the
+// step's schedule. It returns the channel's last seq and rev after both.
+func appendSession(
+	ctx context.Context, q Querier, r *row, nm channels.NewMessage, out channels.Message,
+	move channels.SessionMove, moved bool, rev int64,
+) (lastSeq, lastRev int64, err error) {
+	lastSeq, lastRev = out.Seq, rev
+	if moved {
+		channels.ApplySession(&r.c, move, nm.At)
+		notice, err := insertNotice(ctx, q, r.id, nm.Session, out, move, r.c.Session.Generation, rev+1)
+		if err != nil {
+			return 0, 0, err
+		}
+		lastSeq, lastRev = notice.Seq, notice.Rev
+	}
+	if nm.Session != nil {
+		r.c.LastSeq, r.c.Rev = lastSeq, lastRev
+		if err := channels.ApplySchedule(&r.c, nm.Session.Due); err != nil {
+			return 0, 0, err
+		}
+	}
+	return lastSeq, lastRev, nil
 }
 
 // appendTarget returns the channel an append goes to, creating an implicit
@@ -440,11 +522,11 @@ func (s *Store) appendTarget(
 
 // checkParent refuses a reply to a missing, removed or reply message. A
 // replyTo of zero is not a reply and passes.
-func (s *Store) checkParent(ctx context.Context, q Querier, channelID int64, k channels.Key, replyTo int64) error {
+func checkParent(ctx context.Context, q Querier, channelID int64, k channels.Key, replyTo int64) error {
 	if replyTo == 0 {
 		return nil
 	}
-	parent, err := s.message(ctx, q, channelID, replyTo, k)
+	parent, err := readMessage(ctx, q, channelID, replyTo, k)
 	if errors.Is(err, channels.ErrNotFound) {
 		return fmt.Errorf("%w: message %d does not exist", channels.ErrInvalidReply, replyTo)
 	}
@@ -476,7 +558,14 @@ func (s *Store) insertChannel(ctx context.Context, q Querier, k channels.Key, nc
 	if err != nil {
 		return row{}, err
 	}
-	return s.channelRow(ctx, q, k)
+	r, err := s.channelRow(ctx, q, k)
+	if err != nil || nc.SessionDue == nil {
+		return r, err
+	}
+	if err := channels.ApplySchedule(&r.c, nc.SessionDue); err != nil {
+		return row{}, err
+	}
+	return r, setSchedule(ctx, q, r.id, r.c.Session)
 }
 
 // update loads message seq of k in a write transaction and hands it to
@@ -492,7 +581,7 @@ func (s *Store) update(
 		if err != nil {
 			return err
 		}
-		m, err := s.message(ctx, q, r.id, seq, k)
+		m, err := readMessage(ctx, q, r.id, seq, k)
 		if err != nil {
 			return err
 		}
@@ -649,9 +738,13 @@ func (s *Store) SetLifecycle(
 		c := r.c
 		channels.ApplyTransition(&c, t)
 		c.Rev++
+		if err := channels.ApplySchedule(&c, t.SessionDue); err != nil {
+			return err
+		}
 		if _, err := q.Exec(ctx, `UPDATE channels SET state = ?, closed_at = ?, archived_at = ?, reopened_at = ?,
-			rev = ? WHERE id = ?`, string(c.State), micros(c.ClosedAt), micros(c.ArchivedAt), micros(c.ReopenedAt),
-			c.Rev, r.id); err != nil {
+			rev = ?, session_next_due_at = ?, session_restarts = ? WHERE id = ?`, string(c.State), micros(c.ClosedAt),
+			micros(c.ArchivedAt), micros(c.ReopenedAt), c.Rev, micros(c.Session.NextDueAt),
+			encodeRestarts(c.Session.Restarts), r.id); err != nil {
 			return err
 		}
 		out = c
@@ -822,7 +915,9 @@ func tombstoneEntity(
 
 // Untombstone implements [channels.Store]. A stamp is unique to one
 // Tombstone call, so the rows carrying it are exactly the batch.
-func (s *Store) Untombstone(ctx context.Context, h channels.TombstoneHandle, at time.Time) error {
+func (s *Store) Untombstone(
+	ctx context.Context, h channels.TombstoneHandle, at time.Time, resume channels.ScheduleFunc,
+) error {
 	if h.IsZero() {
 		return nil
 	}
@@ -861,6 +956,9 @@ func (s *Store) Untombstone(ctx context.Context, h channels.TombstoneHandle, at 
 		if live > 0 {
 			return &channels.OccupiedError{Anchor: a}
 		}
+		if err := resumeBatch(ctx, q, a.ID, h.Stamp(), resume); err != nil {
+			return err
+		}
 		if _, err := q.Exec(ctx, `UPDATE channels SET tomb = '' WHERE anchor_id = ? AND tomb = ?`,
 			a.ID, h.Stamp()); err != nil {
 			return err
@@ -877,6 +975,84 @@ func (s *Store) Untombstone(ctx context.Context, h channels.TombstoneHandle, at 
 		})
 	})
 	return s.wrap(err, "untombstone %s", entity.FormatStateRef(a.ID, a.Face))
+}
+
+// resumeBatch applies resume to every open channel of the batch stamp
+// of id, before the batch is put back. Nil resume changes nothing.
+func resumeBatch(ctx context.Context, q Querier, id, stamp string, resume channels.ScheduleFunc) error {
+	if resume == nil {
+		return nil
+	}
+	rows, err := collect(ctx, q, `SELECT `+chanCols+` FROM channels WHERE anchor_id = ? AND tomb = ? AND state = ?`,
+		[]any{id, stamp, string(channels.StateOpen)}, scanChannel)
+	if err != nil {
+		return err
+	}
+	for _, r := range rows {
+		if err := channels.ApplySchedule(&r.c, resume); err != nil {
+			return err
+		}
+		if err := setSchedule(ctx, q, r.id, r.c.Session); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// SetSession implements [channels.Store]. One transaction under the
+// entity lock reads the row, decides, inserts the notice on a move, runs
+// one UPDATE of the channel and inserts the audit record.
+func (s *Store) SetSession(
+	ctx context.Context, k channels.Key, at time.Time, step channels.SessionStep,
+) (channels.Channel, error) {
+	if err := k.Validate(); err != nil {
+		return channels.Channel{}, err
+	}
+	if err := channels.PrepareTimerStep(step); err != nil {
+		return channels.Channel{}, err
+	}
+	at = channels.NormTime(at)
+	var out channels.Channel
+	werr := s.write(ctx, []string{k.ID}, func(q Querier) error {
+		r, err := s.channelRow(ctx, q, k)
+		if err != nil {
+			return err
+		}
+		move, moved, err := channels.DecideTimer(&step, r.c)
+		if err != nil {
+			return err
+		}
+		var notice channels.Message
+		if moved {
+			channels.ApplySession(&r.c, move, at)
+			notice, _, err = channels.TimerNotice(&step, r.c.LastSeq+1, at, move, r.c.Session.Generation, r.c.Rev+1)
+			if err != nil { // coverage-ignore: invariant: TimerNotice encodes four short values
+				return err
+			}
+			if _, err := q.Exec(ctx, `INSERT INTO channel_messages
+				(channel_id, seq, rev, reply_to, reply_count, pending_at, doc) VALUES (?, ?, ?, 0, 0, 0, ?)`,
+				r.id, notice.Seq, notice.Rev, docOf(notice)); err != nil {
+				return err
+			}
+			r.c.LastSeq, r.c.Rev = notice.Seq, notice.Rev
+		}
+		if err := channels.ApplySchedule(&r.c, step.Due); err != nil {
+			return err
+		}
+		if err := bumpSession(ctx, q, r.id, r.c.LastSeq, r.c.Rev, r.c.Session); err != nil {
+			return err
+		}
+		if moved {
+			rec := channels.TimerAudit(k, &step, notice, move, r.c.Session.Generation)
+			if err := s.audit(ctx, q, k.ID, rec); err != nil {
+				return err
+			}
+		}
+		channels.FillSessionOutcome(&step, r.c, move, moved)
+		out = r.c
+		return nil
+	})
+	return out, s.wrap(werr, "set session of %s", k)
 }
 
 // --- reads ---
@@ -899,7 +1075,7 @@ func (s *Store) Get(ctx context.Context, k channels.Key, seq int64) (channels.Me
 	if err != nil {
 		return channels.Message{}, s.wrap(err, "read %s", k)
 	}
-	m, err := s.message(ctx, s.db, r.id, seq, k)
+	m, err := readMessage(ctx, s.db, r.id, seq, k)
 	return m, s.wrap(err, "read message %d in %s", seq, k)
 }
 
@@ -1026,6 +1202,58 @@ func (s *Store) ListByLifecycle(
 	out, err := s.channels(ctx, `AND type = ? AND state = ? AND `+col+` < ?`,
 		typ, string(state), micros(channels.NormTime(before)))
 	return out, s.wrap(err, "list %s %s channels", state, typ)
+}
+
+// ListSessionsDue implements [channels.Store]. channels_session_due_idx
+// serves it with one range per listed type: the query repeats the index's
+// partial predicate, so both planners can use it.
+func (s *Store) ListSessionsDue(
+	ctx context.Context, types []string, until time.Time, limit int,
+) ([]channels.Channel, error) {
+	if err := channels.CheckDueQuery(types, limit); err != nil {
+		return nil, err
+	}
+	args := make([]any, 0, len(types)+3)
+	for _, t := range types {
+		args = append(args, t)
+	}
+	args = append(args, string(channels.StateOpen), micros(channels.NormTime(until)), limit)
+	rows, err := collect(ctx, s.db, `SELECT `+chanCols+` FROM channels
+		WHERE session_next_due_at > 0 AND tomb = '' AND type IN (?`+strings.Repeat(", ?", len(types)-1)+`)
+		AND state = ? AND session_next_due_at <= ?
+		ORDER BY session_next_due_at, anchor_id, anchor_face, type, name LIMIT ?`, args, scanDue)
+	if err != nil {
+		return nil, s.wrap(err, "list due sessions")
+	}
+	out := make([]channels.Channel, 0, len(rows))
+	now := time.Now()
+	for _, r := range rows {
+		if r.damaged != nil {
+			s.damaged.Warn(r.damaged.key, now, s.d.Name+": skipping a due session whose row is damaged", r.damaged.err)
+			continue
+		}
+		out = append(out, r.c)
+	}
+	return out, nil
+}
+
+// dueRow is a row of [Store.ListSessionsDue]: a channel, or the damage
+// that keeps one from decoding.
+type dueRow struct {
+	row
+	damaged *damagedRowError
+}
+
+// scanDue is [scanChannel] for the due listing: a damaged row is returned
+// as such rather than failing the listing, so one bad row does not stop
+// the timers of every other channel, as filechannels skips a damaged
+// meta.yaml.
+func scanDue(r interface{ Scan(...any) error }) (dueRow, error) {
+	v, err := scanChannel(r)
+	if d, ok := errors.AsType[*damagedRowError](err); ok {
+		return dueRow{damaged: d}, nil
+	}
+	return dueRow{row: v}, err
 }
 
 // StalePending implements [channels.Store].

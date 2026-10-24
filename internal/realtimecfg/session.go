@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strings"
 	"sync/atomic"
 
 	"gopkg.in/yaml.v3"
@@ -74,13 +75,50 @@ func (s *Session) Drives(msgType string) bool {
 	return false
 }
 
+// HasTimers reports whether some state of the session declares a timer.
+func (s *Session) HasTimers() bool {
+	for _, st := range s.states {
+		if len(st.timers) > 0 {
+			return true
+		}
+	}
+	return false
+}
+
 // SessionState is one entry of `session.states`.
 type SessionState struct {
 	Name  string
 	Label string
-	// Final marks a state the session ends in. It has no transitions.
-	Final bool
-	on    map[string]Transition
+	// Final marks a state the session ends in. It has no transitions and
+	// no timers.
+	Final  bool
+	on     map[string]Transition
+	timers []SessionTimer
+}
+
+// Timers returns the state's timers, sorted by name. The slice is a copy.
+func (st SessionState) Timers() []SessionTimer { return slices.Clone(st.timers) }
+
+// TimerSince names what a timer counts from.
+type TimerSince string
+
+const (
+	// TimerSinceState counts from when the session entered the state. It
+	// is the default.
+	TimerSinceState TimerSince = "state"
+	// TimerSinceSession counts from when the channel was created.
+	TimerSinceSession TimerSince = "session"
+)
+
+// SessionTimer is one `after.<name>` entry of a session state: once
+// Period has passed since its anchor (see [TimerSince]) while the session
+// is still in the state and the channel is open, the session moves to To.
+type SessionTimer struct {
+	Name   string
+	Label  string
+	To     string
+	Period Period
+	Since  TimerSince
 }
 
 // Transitions returns the state's transitions, sorted by message type.
@@ -178,10 +216,14 @@ func (v *validator) session(key string, raw *rawSession, order []string, ct *Cha
 		case rs.Final && len(rs.On) > 0:
 			v.add(sk+".on", "a final state has no transitions; drop on or remove final: true")
 			continue
-		case !rs.Final && len(rs.On) == 0:
-			v.add(sk, "a state that is not final needs at least one transition under on; "+
+		case rs.Final && len(rs.After) > 0:
+			v.add(sk+".after", "a final state has no timers; drop after or remove final: true")
+			continue
+		case !rs.Final && len(rs.On) == 0 && len(rs.After) == 0:
+			v.add(sk, "a state that is not final needs a transition under on or a timer under after; "+
 				"mark it final: true if the session ends there")
 		}
+		st.timers = compileTimers(v.add, sk+".after", rs.After, s)
 		for _, mn := range sortedKeys(rs.On) {
 			rt := rs.On[mn]
 			if t, ok := v.transition(sk+".on."+mn, mn, &rt, s, ct); ok {
@@ -189,7 +231,112 @@ func (v *validator) session(key string, raw *rawSession, order []string, ct *Cha
 			}
 		}
 	}
+	timerLoops(v.add, statesKey, s)
 	return s
+}
+
+// problemSink records a problem at a key; the validator's add is one. The
+// timer checks take it rather than the validator, so they stay free
+// functions over the session they check.
+type problemSink func(key, reason string)
+
+// compileTimers compiles a state's `after:`, sorted by timer name. A timer
+// with a problem is left out.
+func compileTimers(add problemSink, key string, raw map[string]rawSessionTimer, s *Session) []SessionTimer {
+	if len(raw) > realtimelimits.MaxSessionTimers {
+		add(key, fmt.Sprintf("at most %d timers per state", realtimelimits.MaxSessionTimers))
+	}
+	var out []SessionTimer
+	for _, name := range sortedKeys(raw) {
+		if t, ok := compileTimer(add, key+"."+name, name, raw[name], s); ok {
+			out = append(out, t)
+		}
+	}
+	return out
+}
+
+// compileTimer compiles one `after.<name>` entry. ok is false when it has
+// a problem.
+func compileTimer(add problemSink, key, name string, raw rawSessionTimer, s *Session) (SessionTimer, bool) {
+	t := SessionTimer{Name: name, Label: orDefault(raw.Label, name), To: raw.To, Since: TimerSince(raw.Since)}
+	ok := true
+	bad := func(k, reason string) {
+		add(k, reason)
+		ok = false
+	}
+	if !namePattern.MatchString(name) {
+		bad(key, "timer name must match ^[a-z][a-z0-9-]{0,62}$")
+	}
+	switch p, err := ParsePeriod(raw.Period); {
+	case raw.Period == "":
+		bad(key+".period", "name how long the timer waits, such as 72h")
+	case err != nil:
+		bad(key+".period", err.Error())
+	default:
+		if d, fixed := p.Fixed(); fixed && d < realtimelimits.MinSessionTimer {
+			bad(key+".period", "a timer waits at least 1m")
+		}
+		t.Period = p
+	}
+	switch t.Since {
+	case "":
+		t.Since = TimerSinceState
+	case TimerSinceState, TimerSinceSession:
+	default:
+		bad(key+".since", "since must be state or session")
+	}
+	if raw.To == "" {
+		bad(key+".to", "name the state this timer moves to")
+	} else if _, declared := s.index[raw.To]; !declared {
+		bad(key+".to", unknownState(raw.To))
+	}
+	return t, ok
+}
+
+// timerLoops refuses every cycle made only of timer edges, self-loops
+// included, at the timer that closes it: such a loop would move the session
+// forever without a message. One depth-first search over the states.
+func timerLoops(add problemSink, statesKey string, s *Session) {
+	const (
+		unseen = iota
+		onPath
+		done
+	)
+	mark := make([]int, len(s.states))
+	var path []int
+	var visit func(i int)
+	visit = func(i int) {
+		mark[i] = onPath
+		path = append(path, i)
+		st := s.states[i]
+		for _, t := range st.timers {
+			j, ok := s.index[t.To]
+			if !ok {
+				continue
+			}
+			switch mark[j] {
+			case onPath:
+				start := slices.Index(path, j)
+				names := make([]string, 0, len(path)-start+1)
+				for _, k := range path[start:] {
+					names = append(names, s.states[k].Name)
+				}
+				names = append(names, s.states[j].Name)
+				add(statesKey+"."+st.Name+".after."+t.Name, fmt.Sprintf("timers form a loop (%s) that "+
+					"would move the session forever without a message; break it with a transition under on",
+					strings.Join(names, " -> ")))
+			case unseen:
+				visit(j)
+			}
+		}
+		path = path[:len(path)-1]
+		mark[i] = done
+	}
+	for i := range s.states {
+		if mark[i] == unseen {
+			visit(i)
+		}
+	}
 }
 
 // messageTypesKey is the key path of ct's message types.

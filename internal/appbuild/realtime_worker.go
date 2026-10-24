@@ -25,7 +25,9 @@ import (
 // automatic close and archive and a poll for due purges every minute, full
 // retention every hour, a purge poll as soon as an entity delete commits in
 // this process, and the triggers (a round every [realtime.TriggerTick]
-// while entities changed, a reconcile every [realtime.TriggerReconcile]).
+// while entities changed, a reconcile every [realtime.TriggerReconcile]),
+// and the session timers (a round at the due times it learns, at least
+// once a minute; see [realtime.TimerSchedule]).
 //
 // With several rela-server processes on one database, one leads: it holds
 // the worker lock for as long as it runs, and does all of this work. The
@@ -225,13 +227,15 @@ func realtimeLeaderLock(fs storage.FS, cacheDir string, st store.Store) (leaderL
 	return func(context.Context) (heldLock, bool, error) { return heldFor(l.TryLock()) }, nil
 }
 
-// realtimeWorker runs the [realtime.Sweeper] and the [realtime.Triggers]
-// while this process holds the worker lock. A host starts it with
+// realtimeWorker runs the [realtime.Sweeper], the [realtime.Triggers] and
+// the [realtime.Timers] while this process holds the worker lock. A host starts it with
 // [RunRealtimeWorker] and stops it by canceling the context it passed;
 // [Services.Close] stops it too.
 type realtimeWorker struct {
 	sweeper  *realtime.Sweeper
 	triggers *realtime.Triggers
+	timers   *realtime.Timers
+	dueWake  *realtime.DueWake
 	changes  store.Watcher
 	lock     leaderLock
 	wake     <-chan struct{}
@@ -250,6 +254,10 @@ type realtimeWorker struct {
 type realtimeWorkerParts struct {
 	sweeper  *realtime.Sweeper
 	triggers *realtime.Triggers
+	timers   *realtime.Timers
+	// dueWake reports the due times writes store, so a timer round can run
+	// before its planned time.
+	dueWake *realtime.DueWake
 	// changes reports the entity changes the triggers look at.
 	changes store.Watcher
 	lock    leaderLock
@@ -260,11 +268,14 @@ type realtimeWorkerParts struct {
 //
 // Nil: every field of p is rejected.
 func newRealtimeWorker(p realtimeWorkerParts) (*realtimeWorker, error) {
-	if p.sweeper == nil || p.triggers == nil || p.changes == nil || p.lock == nil || p.wake == nil {
-		return nil, errors.New("realtime worker: sweeper, triggers, changes, lock and wake are required")
+	if p.sweeper == nil || p.triggers == nil || p.timers == nil || p.dueWake == nil || p.changes == nil ||
+		p.lock == nil || p.wake == nil {
+
+		return nil, errors.New("realtime worker: sweeper, triggers, timers, dueWake, changes, lock and wake are required")
 	}
 	return &realtimeWorker{
-		sweeper: p.sweeper, triggers: p.triggers, changes: p.changes, lock: p.lock, wake: p.wake,
+		sweeper: p.sweeper, triggers: p.triggers, timers: p.timers, dueWake: p.dueWake, changes: p.changes,
+		lock: p.lock, wake: p.wake,
 		takeover: realtimeTakeoverInterval, closed: make(chan struct{}),
 	}, nil
 }
@@ -284,7 +295,7 @@ func buildRealtimeWorker(
 	cfg := realtimeConfigSource{h: base.realtime}
 	sweeper, err := realtime.NewSweeper(realtime.SweepDeps{
 		Store: refs.channels, Config: cfg,
-		Anchors: anchorExistence{st: st}, Marker: refs.realtimeLocal, Clock: time.Now,
+		Anchors: anchorExistence{st: st}, Marker: refs.realtimeLocal, Clock: time.Now, DueWake: refs.dueWake,
 	})
 	if err != nil {
 		return nil, err
@@ -295,7 +306,13 @@ func buildRealtimeWorker(
 	}
 	triggers, err := realtime.NewTriggers(realtime.TriggerDeps{
 		Store: refs.channels, Config: cfg, Local: refs.realtimeLocal, Meta: base.meta,
-		Rows: rows, Seen: kv,
+		Rows: rows, Seen: kv, DueWake: refs.dueWake,
+	})
+	if err != nil {
+		return nil, err
+	}
+	timers, err := realtime.NewTimers(realtime.TimerDeps{
+		Store: refs.channels, Config: cfg, Marker: refs.realtimeLocal, Clock: time.Now,
 	})
 	if err != nil {
 		return nil, err
@@ -309,7 +326,8 @@ func buildRealtimeWorker(
 		return nil, err
 	}
 	return newRealtimeWorker(realtimeWorkerParts{
-		sweeper: sweeper, triggers: triggers, changes: st, lock: l, wake: refs.channelTombs.wake,
+		sweeper: sweeper, triggers: triggers, timers: timers, dueWake: refs.dueWake, changes: st, lock: l,
+		wake: refs.channelTombs.wake,
 	})
 }
 
@@ -423,21 +441,28 @@ func (w *realtimeWorker) drain(ctx context.Context, events <-chan store.Event) {
 // which it calls every takeover interval: everything once
 // at start, then the lifecycle sweep and the purge poll every minute, full
 // retention every hour, the purge poll on every wake, a trigger round on
-// every tick that has work, and a trigger reconcile on its timer. The
-// trigger engine starts and ends with nothing in memory, so it never acts
-// on what it held while another process led.
+// every tick that has work, a trigger reconcile on its timer, and a timer
+// round when the [realtime.TimerSchedule] says. The trigger engine and the timer loop
+// start and end with nothing in memory, so they never act on what they
+// held while another process led.
 func (w *realtimeWorker) lead(ctx context.Context, check func(context.Context) error) {
 	ctx = principal.With(ctx, principal.Principal{User: principal.UserRealtime, Tool: principal.ToolRealtime})
 	w.leading.Store(true)
 	w.triggers.Reset()
+	w.timers.Reset()
 	defer func() {
 		w.leading.Store(false)
 		w.triggers.Reset()
+		w.timers.Reset()
 	}()
 	slog.Info("realtime worker: this process leads")
 	w.retention(ctx)
 	w.lifecycle(ctx)
 	w.reconcile(ctx)
+	w.dueWake.Take() // the first round below covers what was noted before
+	sched := w.timerRound(ctx)
+	timer := time.NewTimer(sched.Delay(time.Now()))
+	defer timer.Stop()
 	minute := time.NewTicker(realtimeLifecycleInterval)
 	defer minute.Stop()
 	hour := time.NewTicker(realtimeRetentionInterval)
@@ -477,8 +502,28 @@ func (w *realtimeWorker) lead(ctx context.Context, check func(context.Context) e
 			w.retention(ctx)
 		case <-w.wake:
 			w.purge(ctx)
+		case <-timer.C:
+			sched = w.timerRound(ctx)
+			timer.Reset(sched.Delay(time.Now()))
+		case <-w.dueWake.C():
+			if sched.Wake(w.dueWake.Take()) {
+				timer.Reset(sched.Delay(time.Now()))
+			}
 		}
 	}
+}
+
+// timerRound runs one timer round and returns the schedule of the next.
+func (w *realtimeWorker) timerRound(ctx context.Context) realtime.TimerSchedule {
+	rep, err := w.timers.RunRound(ctx)
+	if err != nil && ctx.Err() == nil {
+		slog.Warn("realtime: session timer round failed", "error", err)
+	}
+	if rep.Fired+rep.Rescheduled+rep.Failed > 0 {
+		slog.Info("realtime: session timer round", "fired", rep.Fired, "rescheduled", rep.Rescheduled,
+			"failed", rep.Failed, "stranded", rep.Stranded, "more", rep.More)
+	}
+	return realtime.NextTimerRound(rep, time.Now())
 }
 
 // reconcileDelay is [realtime.TriggerReconcile] with up to a tenth

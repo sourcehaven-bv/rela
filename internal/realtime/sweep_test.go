@@ -138,7 +138,7 @@ func newSweepHarness(t *testing.T) *sweepHarness {
 		marker:  &recordingMarker{},
 		clock:   &testClock{now: sweepT0},
 	}
-	h.sweeper, err = NewSweeper(SweepDeps{
+	h.sweeper, err = NewSweeper(SweepDeps{DueWake: NewDueWake(),
 		Store: st, Config: h.cfg, Anchors: h.anchors, Marker: h.marker, Clock: h.clock.Now,
 	})
 	require.NoError(t, err)
@@ -168,7 +168,9 @@ func sweepKey(id, typ string) channels.Key {
 
 func TestNewSweeper_RejectsNil(t *testing.T) {
 	h := newSweepHarness(t)
-	full := SweepDeps{Store: h.store, Config: h.cfg, Anchors: h.anchors, Marker: h.marker, Clock: h.clock.Now}
+	full := SweepDeps{
+		Store: h.store, Config: h.cfg, Anchors: h.anchors, Marker: h.marker, Clock: h.clock.Now, DueWake: NewDueWake(),
+	}
 	cases := []struct {
 		name string
 		edit func(*SweepDeps)
@@ -178,6 +180,7 @@ func TestNewSweeper_RejectsNil(t *testing.T) {
 		{"Anchors", func(d *SweepDeps) { d.Anchors = nil }},
 		{"Marker", func(d *SweepDeps) { d.Marker = nil }},
 		{"Clock", func(d *SweepDeps) { d.Clock = nil }},
+		{"DueWake", func(d *SweepDeps) { d.DueWake = nil }},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

@@ -146,6 +146,34 @@ const (
 	MaxSeenShards = 256
 )
 
+// Session timers (`after:` on a session state). The server owns these
+// numbers: `limits:` in realtime.yaml does not name them.
+const (
+	// MaxSessionTimers caps the timers of one session state.
+	MaxSessionTimers = 8
+	// MinSessionTimer is the shortest fixed period a timer may wait. A
+	// calendar period (months, years) is always longer.
+	MinSessionTimer = time.Minute
+	// TimerFloor is the least time between two timer rounds.
+	TimerFloor = time.Second
+	// TimerCeiling is the most time between two timer rounds. A move made
+	// in another process reaches the leader within it.
+	TimerCeiling = time.Minute
+	// TimerRecompute is how often the leader checks the stored due time of
+	// every open session against the configuration.
+	TimerRecompute = 10 * time.Minute
+	// MaxTimerWritesPerRound caps the fires and reschedules of one round.
+	// The rest wait for the next round, one floor later.
+	MaxTimerWritesPerRound = 64
+	// MaxTimerListPerRound caps the due sessions one round lists.
+	MaxTimerListPerRound = 256
+	// TimerBackoff is how long a round skips a channel whose write failed.
+	TimerBackoff = 5 * time.Minute
+	// MaxTimerBackoffKeys caps the channels held in backoff; the oldest is
+	// dropped past it.
+	MaxTimerBackoffKeys = 128
+)
+
 // Rate is a token-bucket rate: Count events per Per.
 type Rate struct {
 	Count int

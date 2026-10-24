@@ -78,12 +78,16 @@ func (s *Service) Lifecycle(ctx context.Context, addr RawAddress, op string) (Ch
 		return ChannelView{}, nil
 	}
 	//nolint:contextcheck // c.ctx is ctx with the acl.Request attached; see .golangci.yml on realtime.
-	ch, err := applyTransition(c.ctx, s.store, s.local, c.key, c.head.State,
-		channels.Transition{To: target, By: authorOf(c.p), At: c.now})
+	ch, err := applyTransition(c.ctx, s.store, s.local, c.key, c.head.State, channels.Transition{
+		To: target, By: authorOf(c.p), At: c.now, SessionDue: transitionSchedule(c.ct, target, c.now),
+	})
 	if err != nil {
 		return ChannelView{}, storeError(err)
 	}
-	return channelView(c.ct, ch.Key, &ch, c.now), nil
+	if target == channels.StateOpen {
+		s.dueWake.Note(ch.Session.NextDueAt)
+	}
+	return channelView(c.ct, ch.Key, &ch, c.now, c.snap.Degraded), nil
 }
 
 // lifecycleOps lists the lifecycle operations the caller may run on c's

@@ -38,6 +38,8 @@ type SweepDeps struct {
 	Anchors AnchorExistence
 	Marker  ChangeMarker
 	Clock   Clock
+	// DueWake receives the due times a restore resumes.
+	DueWake *DueWake
 }
 
 // Sweeper is the background work on channels that no request drives: the
@@ -53,6 +55,7 @@ type Sweeper struct {
 	anchors AnchorExistence
 	marker  ChangeMarker
 	clock   Clock
+	dueWake *DueWake
 
 	mu      sync.Mutex
 	missing map[string]time.Time
@@ -73,9 +76,11 @@ func NewSweeper(d SweepDeps) (*Sweeper, error) {
 		return nil, errNil("Marker")
 	case d.Clock == nil:
 		return nil, errNil("Clock")
+	case d.DueWake == nil:
+		return nil, errNil("DueWake")
 	}
 	return &Sweeper{
-		store: d.Store, cfg: d.Config, anchors: d.Anchors, marker: d.Marker, clock: d.Clock,
+		store: d.Store, cfg: d.Config, anchors: d.Anchors, marker: d.Marker, clock: d.Clock, dueWake: d.DueWake,
 		missing: map[string]time.Time{},
 	}, nil
 }

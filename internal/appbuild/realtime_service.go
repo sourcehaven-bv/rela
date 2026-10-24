@@ -85,7 +85,7 @@ func policyChannelService(s *Services) (*realtime.Service, *acl.Declarative, err
 	}
 	svc, _, err := newRealtimeService(realtimeInputs{
 		meta: s.base.meta, worlds: s.base.worlds, config: realtimeConfigSource{h: s.base.realtime},
-		store: s.Store(), channels: s.channels, local: s.realtimeLocal,
+		store: s.Store(), channels: s.channels, local: s.realtimeLocal, dueWake: s.dueWake,
 		declarative: c.declarative, redactor: c.fields.redactor, writes: c.acl, promoter: promoter,
 	})
 	if err != nil {
@@ -129,7 +129,8 @@ func buildRealtimeService(
 	}
 	svc, _, err := newRealtimeService(realtimeInputs{
 		meta: base.meta, worlds: base.worlds, config: realtimeConfigSource{h: base.realtime},
-		store: st, channels: refs.channels, local: refs.realtimeLocal, declarative: d, redactor: redactor,
+		store: st, channels: refs.channels, local: refs.realtimeLocal, dueWake: refs.dueWake,
+		declarative: d, redactor: redactor,
 		writes: writes, promoter: promoter,
 	})
 	return svc, err
@@ -138,12 +139,15 @@ func buildRealtimeService(
 // realtimeInputs are what [newRealtimeService] builds a channel service
 // from. Assembly and [NewFromCollaborators] both fill it.
 type realtimeInputs struct {
-	meta        *metamodel.Metamodel
-	worlds      worlds.Compiled
-	config      realtime.ConfigSource
-	store       store.Store
-	channels    channels.Store
-	local       *realtime.Local
+	meta     *metamodel.Metamodel
+	worlds   worlds.Compiled
+	config   realtime.ConfigSource
+	store    store.Store
+	channels channels.Store
+	local    *realtime.Local
+	// dueWake is shared with the realtime worker; nil makes a fresh one,
+	// for a build without a worker.
+	dueWake     *realtime.DueWake
 	declarative *acl.Declarative
 	redactor    visibility.FieldRedactor
 	writes      acl.ACL
@@ -166,6 +170,10 @@ func newRealtimeService(in realtimeInputs) (*realtime.Service, *realtime.Local, 
 			return nil, nil, err
 		}
 	}
+	dueWake := in.dueWake
+	if dueWake == nil {
+		dueWake = realtime.NewDueWake()
+	}
 	rows, _ := scriptReads(in.store, in.declarative, in.redactor, in.worlds)
 	svc, err := realtime.New(realtime.Deps{
 		Store:    in.channels,
@@ -175,6 +183,7 @@ func newRealtimeService(in realtimeInputs) (*realtime.Service, *realtime.Local, 
 		Refs:     refResolver{rows: rows, meta: in.meta},
 		Local:    local,
 		Promoter: in.promoter,
+		DueWake:  dueWake,
 	})
 	if err != nil {
 		return nil, nil, err

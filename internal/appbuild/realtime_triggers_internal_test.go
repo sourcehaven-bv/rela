@@ -103,6 +103,7 @@ func (f triggerFixture) engine(t *testing.T) *realtime.Triggers {
 	t.Cleanup(local.Stop)
 	trg, err := realtime.NewTriggers(realtime.TriggerDeps{
 		Store: f.cs, Config: f.cfg, Local: local, Meta: f.meta, Rows: f.src, Seen: f.kv,
+		DueWake: realtime.NewDueWake(),
 	})
 	require.NoError(t, err)
 	return trg
@@ -177,17 +178,19 @@ func (f triggerFixture) worker(t *testing.T, lock leaderLock) testWorker {
 	local, err := realtime.NewLocal(time.Now)
 	require.NoError(t, err)
 	t.Cleanup(local.Stop)
-	sweeper, err := realtime.NewSweeper(realtime.SweepDeps{
+	sweeper, err := realtime.NewSweeper(realtime.SweepDeps{DueWake: realtime.NewDueWake(),
 		Store: f.cs, Config: f.cfg, Anchors: anchorExistence{st: f.st}, Marker: local, Clock: time.Now,
 	})
 	require.NoError(t, err)
 	src := &countingSource{inner: f.src}
 	trg, err := realtime.NewTriggers(realtime.TriggerDeps{
 		Store: f.cs, Config: f.cfg, Local: local, Meta: f.meta, Rows: src, Seen: f.kv,
+		DueWake: realtime.NewDueWake(),
 	})
 	require.NoError(t, err)
 	w, err := newRealtimeWorker(realtimeWorkerParts{
-		sweeper: sweeper, triggers: trg, changes: f.st, lock: lock, wake: tombs.wake,
+		sweeper: sweeper, triggers: trg, timers: testTimers(t, f.cs, f.cfg, local), dueWake: realtime.NewDueWake(),
+		changes: f.st, lock: lock, wake: tombs.wake,
 	})
 	require.NoError(t, err)
 	w.takeover = 20 * time.Millisecond
@@ -280,6 +283,7 @@ func TestTriggers_RoundReadsOnlyChangedIDs(t *testing.T) {
 	t.Cleanup(local.Stop)
 	trg, err := realtime.NewTriggers(realtime.TriggerDeps{
 		Store: f.cs, Config: f.cfg, Local: local, Meta: f.meta, Rows: cnt, Seen: f.kv,
+		DueWake: realtime.NewDueWake(),
 	})
 	require.NoError(t, err)
 	_, err = trg.RunReconcile(ctx)

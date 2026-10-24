@@ -18,6 +18,7 @@ const (
 	channelHeadSchema  = "ChannelHead"
 	channelSchema      = "Channel"
 	channelSessionRef  = "ChannelSession"
+	channelTimerRef    = "ChannelSessionTimer"
 	channelListSchema  = "ChannelList"
 	messageSchema      = "Message"
 	messagePageSchema  = "MessagePage"
@@ -531,6 +532,7 @@ func addChannelSchemas(spec *Spec) {
 		"session": Ref(channelSessionRef),
 	}, []string{"anchor", "type", "state", "last_seq", "rev"})
 	sc[channelSessionRef] = channelSessionSchema()
+	sc[channelTimerRef] = channelTimerSchema()
 	sc[channelListSchema] = ObjectSchema(map[string]*Schema{
 		"anchor": str(),
 		"types": ArraySchema(ObjectSchema(map[string]*Schema{
@@ -546,7 +548,7 @@ func addChannelSchemas(spec *Spec) {
 			"A ref property renders as a RefProp. A session notice records a transition: its type is " +
 			"session, its author is system:realtime with system set, triggered_by is session:<channel type>, " +
 			"and its props are from, to, generation and cause (the seq of the message that moved the " +
-			"session). A notice cannot be edited or removed (409 session_notice). The author of the message " +
+			"session); a notice of a timer's move has timer (the timer's name) in place of cause. A notice cannot be edited or removed (409 session_notice). The author of the message " +
 			"that moved the session can no longer edit or delete it (409 session_message); a moderator may " +
 			"still remove it.",
 		Properties: map[string]*Schema{
@@ -636,7 +638,10 @@ func channelSessionSchema() *Schema {
 		Type: "object",
 		Description: "The channel's session; absent for a channel type without one. generation counts the " +
 			"transitions (0: never moved). stranded marks a stored state realtime.yaml no longer declares; " +
-			"label is then the stored name and transitions is empty.",
+			"label is then the stored name and transitions is empty. timers are the after: entries of the " +
+			"current state, sorted by name, and empty for a final or stranded state. due_at is when the " +
+			"first of them comes due; it is set only on an open channel under a configuration that is not " +
+			"degraded.",
 		Properties: map[string]*Schema{
 			"state": str(), "label": str(), "generation": i64(), "entered_at": dateTimeSchema(),
 			"final": b(), "stranded": b(),
@@ -648,7 +653,23 @@ func channelSessionSchema() *Schema {
 					Description: "Set when the transition has a guard (when:), so a message moves the session " +
 						"only if the guard holds for it"},
 			}, []string{"message_type", "to"})),
+			"due_at": dateTimeSchema(),
+			"timers": ArraySchema(Ref(channelTimerRef)),
 		},
 		Required: []string{"state", "generation", "entered_at"},
 	}
+}
+
+// channelTimerSchema is the ChannelSessionTimer schema.
+func channelTimerSchema() *Schema {
+	str := StringSchema
+	s := ObjectSchema(map[string]*Schema{
+		"name": str(), "label": str(), "to": str(),
+		"since": {Type: "string", Enum: []string{"state", "session"},
+			Description: "What the period counts from: entering the state, or the channel's creation"},
+		"due_at": dateTimeSchema(),
+	}, []string{"name", "to", "since"})
+	s.Description = "One timer of the session's current state: after its period the session moves to to. " +
+		"due_at is set only on an open channel under a configuration that is not degraded."
+	return s
 }

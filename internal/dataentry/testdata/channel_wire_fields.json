@@ -71,12 +71,14 @@
     "channel_types"
   ],
   "ChannelSession": [
+    "due_at",
     "entered_at",
     "final",
     "generation",
     "label",
     "state",
     "stranded",
+    "timers",
     "transitions"
   ],
   "ChannelSessionSchema": [
@@ -88,6 +90,13 @@
     "final",
     "label",
     "name"
+  ],
+  "ChannelSessionTimer": [
+    "due_at",
+    "label",
+    "name",
+    "since",
+    "to"
   ],
   "ChannelSessionTransition": [
     "by",

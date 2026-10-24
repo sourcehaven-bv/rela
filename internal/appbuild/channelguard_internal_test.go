@@ -251,10 +251,10 @@ func TestChannelGuard_BeforeRename(t *testing.T) {
 	require.Nil(t, noAliases)
 	_, err = channelAliasesFor(f.cs, f.st, nil, nil)
 	require.Error(t, err, "the alias hooks over a store need a confirmer")
-	nopGuard, err := newChannelGuard(nil, nil, nil)
+	nopGuard, err := newChannelGuard(nil, nil, nil, nil)
 	require.NoError(t, err)
 	_, nop := nopGuard.(entitymanager.NopAnchorGuard)
-	_, err = newChannelGuard(f.cs, nil, nil)
+	_, err = newChannelGuard(f.cs, nil, nil, nil)
 	require.Error(t, err, "a guard over a store needs a confirmer")
 	assert.True(t, nop)
 	assert.True(t, f.guard.Active())
@@ -418,7 +418,7 @@ func TestChannelAliases_CreateMakesOldBatchesFinal(t *testing.T) {
 	got := batchesOf(t, f.cs, "inc-a")
 	require.Len(t, got, 1)
 	assert.False(t, got[0].Filing.Pending)
-	require.ErrorIs(t, f.cs.Untombstone(ctx, h, time.Now()), channels.ErrConflict)
+	require.ErrorIs(t, f.cs.Untombstone(ctx, h, time.Now(), nil), channels.ErrConflict)
 	assert.Empty(t, entityKeys(t, f.cs, "inc-a"))
 }
 

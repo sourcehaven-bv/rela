@@ -14,9 +14,10 @@ import (
 // systemWriter makes the channel writes no request asks for. It is kept
 // apart from [Service] so that no HTTP or MCP path can reach it.
 type systemWriter struct {
-	store channels.Store
-	local *Local
-	cfg   ConfigSource
+	store   channels.Store
+	local   *Local
+	cfg     ConfigSource
+	dueWake *DueWake
 }
 
 // post appends a message of mt with props to key as [systemAuthor], naming
@@ -62,6 +63,7 @@ func (w systemWriter) post(
 	if err != nil {
 		return err
 	}
+	noteDue(w.dueWake, sp.step)
 	w.local.mark(key)
 	return nil
 }
@@ -103,12 +105,16 @@ func (w systemWriter) transition(
 			return res, nil
 		}
 		res.tried++
-		_, err := applyTransition(ctx, w.store, w.local, c.Key, c.State, channels.Transition{
+		moved, err := applyTransition(ctx, w.store, w.local, c.Key, c.State, channels.Transition{
 			To: a.to, By: systemAuthor(), At: now, TriggeredBy: triggeredBy,
+			SessionDue: transitionSchedule(ct, a.to, now),
 		})
 		switch {
 		case err == nil:
 			res.moved++
+			if a.to == channels.StateOpen {
+				w.dueWake.Note(moved.Session.NextDueAt)
+			}
 		case errors.Is(err, channels.ErrConflict), errors.Is(err, channels.ErrNotFound):
 		case isPermanent(err):
 			return res, permanentError{err}

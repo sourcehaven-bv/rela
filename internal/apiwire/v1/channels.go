@@ -38,6 +38,12 @@ type Channel struct {
 // of that state. Final marks a state the session ends in. Stranded marks a
 // stored state the configuration no longer declares; Label is then the
 // stored name and Transitions is empty.
+//
+// Timers are the `after:` entries of the current state, sorted by name;
+// they are empty for a final or stranded state. DueAt is when the first of
+// them comes due. It is set only on an open channel under a configuration
+// that is not degraded: a closed channel's timers are frozen, and under a
+// degraded configuration no timer fires.
 type ChannelSession struct {
 	State       string                     `json:"state"`
 	Label       string                     `json:"label,omitempty"`
@@ -46,6 +52,19 @@ type ChannelSession struct {
 	Final       bool                       `json:"final,omitempty"`
 	Stranded    bool                       `json:"stranded,omitempty"`
 	Transitions []ChannelSessionTransition `json:"transitions,omitempty"`
+	DueAt       string                     `json:"due_at,omitempty"`
+	Timers      []ChannelSessionTimer      `json:"timers,omitempty"`
+}
+
+// ChannelSessionTimer is one timer of the session's current state: after
+// its period, counted from Since ("state" or "session"), the session moves
+// to To. DueAt follows the rule of [ChannelSession.DueAt].
+type ChannelSessionTimer struct {
+	Name  string `json:"name"`
+	Label string `json:"label,omitempty"`
+	To    string `json:"to"`
+	Since string `json:"since"`
+	DueAt string `json:"due_at,omitempty"`
 }
 
 // ChannelSessionTransition is one transition out of the session's current

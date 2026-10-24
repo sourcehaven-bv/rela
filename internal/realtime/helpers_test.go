@@ -404,6 +404,38 @@ type countingStore struct {
 	onDelete func()
 	// onSetAction runs before SetAction.
 	onSetAction func()
+	// dueLists, lifecycleLists and setSessions count the calls the timer
+	// loop makes.
+	dueLists, lifecycleLists, setSessions atomic.Int64
+	// onSetSession runs before SetSession; an error it returns fails the
+	// call.
+	onSetSession func(channels.Key) error
+}
+
+func (s *countingStore) ListSessionsDue(
+	ctx context.Context, types []string, until time.Time, limit int,
+) ([]channels.Channel, error) {
+	s.dueLists.Add(1)
+	return s.Store.ListSessionsDue(ctx, types, until, limit)
+}
+
+func (s *countingStore) ListByLifecycle(
+	ctx context.Context, typ string, state channels.State, before time.Time,
+) ([]channels.Channel, error) {
+	s.lifecycleLists.Add(1)
+	return s.Store.ListByLifecycle(ctx, typ, state, before)
+}
+
+func (s *countingStore) SetSession(
+	ctx context.Context, k channels.Key, at time.Time, step channels.SessionStep,
+) (channels.Channel, error) {
+	s.setSessions.Add(1)
+	if s.onSetSession != nil {
+		if err := s.onSetSession(k); err != nil {
+			return channels.Channel{}, err
+		}
+	}
+	return s.Store.SetSession(ctx, k, at, step)
 }
 
 func (s *countingStore) SetAction(
@@ -461,6 +493,8 @@ type harness struct {
 	cfg     *fakeConfig
 	clock   *testClock
 	local   *Local
+	// wake is the DueWake the service notes due times on.
+	wake *DueWake
 }
 
 type harnessOpt func(*harnessOpts)
@@ -494,7 +528,7 @@ func newHarness(t *testing.T, opts ...harnessOpt) *harness {
 	require.NoError(t, err)
 	t.Cleanup(local.Stop)
 	h := &harness{
-		store: st, clock: clock, local: local,
+		store: st, clock: clock, local: local, wake: NewDueWake(),
 		anchors: &fakeAnchors{meta: testMeta(t), views: map[string]AnchorView{
 			"TKT-1": {ID: "TKT-1", Type: "ticket", Props: map[string]any{
 				"owner": "alice", "watchers": []any{"carol", "dave"},
@@ -513,7 +547,7 @@ func newHarness(t *testing.T, opts ...harnessOpt) *harness {
 	}
 	h.svc, err = New(Deps{
 		Store: st, Config: h.cfg, Access: fakeAccessSource{}, Anchors: h.anchors, Refs: h.refs, Local: local,
-		Promoter: o.promoter,
+		Promoter: o.promoter, DueWake: h.wake,
 	})
 	require.NoError(t, err)
 	return h
