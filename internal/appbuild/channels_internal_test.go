@@ -152,7 +152,7 @@ func (failingChannels) Tombstone(
 
 func (failingChannels) Rekey(context.Context, string, string, time.Time) error { return errDiskFull }
 
-func (failingChannels) Untombstone(context.Context, channels.TombstoneHandle, time.Time) error {
+func (failingChannels) Untombstone(context.Context, channels.TombstoneHandle, time.Time, channels.ScheduleFunc) error {
 	return errDiskFull
 }
 

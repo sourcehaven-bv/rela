@@ -40,6 +40,9 @@ type TriggerDeps struct {
 	Meta  *metamodel.Metamodel
 	Rows  EntitySource
 	Seen  KV
+	// DueWake is told the session due times the engine's posts store, as
+	// [Deps.DueWake] is.
+	DueWake *DueWake
 }
 
 // Triggers is the trigger engine. It posts a trigger's message when an
@@ -181,9 +184,11 @@ func NewTriggers(d TriggerDeps) (*Triggers, error) {
 		return nil, errNil("Rows")
 	case d.Seen == nil:
 		return nil, errNil("Seen")
+	case d.DueWake == nil:
+		return nil, errNil("DueWake")
 	}
 	return &Triggers{
-		w:   systemWriter{store: d.Store, local: d.Local, cfg: d.Config},
+		w:   systemWriter{store: d.Store, local: d.Local, cfg: d.Config, dueWake: d.DueWake},
 		cfg: d.Config, meta: d.Meta, rows: d.Rows, seen: seenStore{kv: d.Seen}, clock: d.Local.clock,
 		pending: map[string]map[string]time.Time{}, full: map[string]bool{}, lead: newLeaderState(),
 	}, nil

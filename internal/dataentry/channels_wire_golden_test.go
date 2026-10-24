@@ -38,6 +38,7 @@ var channelWireTypes = map[string]any{
 	"Channel":                   v1.Channel{},
 	"ChannelSession":            v1.ChannelSession{},
 	"ChannelSessionTransition":  v1.ChannelSessionTransition{},
+	"ChannelSessionTimer":       v1.ChannelSessionTimer{},
 	"ChannelTypeList":           v1.ChannelTypeList{},
 	"ChannelList":               v1.ChannelList{},
 	"ChannelActions":            v1.ChannelActions{},

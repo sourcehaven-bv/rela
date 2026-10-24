@@ -59,18 +59,22 @@ type channelGuard struct {
 	tombs  *tombstoneConfirmer
 	config func() *realtimecfg.Compiled
 	now    func() time.Time
+	// dueWake receives the due times a restore resumes; nil notes none.
+	dueWake *realtime.DueWake
 }
 
 var _ entitymanager.AnchorGuard = (*channelGuard)(nil)
 
 // newChannelGuard returns the guard over cs, reading the realtime config from
-// rt and handing pending batches to tombs. A nil cs guards nothing.
+// rt and handing pending batches to tombs. A restore notes the due times
+// it resumes on dueWake. A nil cs guards nothing.
 //
 // Nil: cs is accepted (no channel store); rt is accepted (realtime off);
 // tombs is rejected when cs is set, since a pending batch nobody confirms
-// waits for the sweep.
+// waits for the sweep; dueWake is accepted, and a restored timer then
+// waits for the next scheduled round.
 func newChannelGuard(
-	cs channels.Store, rt *RealtimeConfig, tombs *tombstoneConfirmer,
+	cs channels.Store, rt *RealtimeConfig, tombs *tombstoneConfirmer, dueWake *realtime.DueWake,
 ) (entitymanager.AnchorGuard, error) {
 	if cs == nil {
 		return entitymanager.NopAnchorGuard{}, nil
@@ -79,10 +83,11 @@ func newChannelGuard(
 		return nil, errors.New("channels: the guard needs a tombstone confirmer")
 	}
 	return &channelGuard{
-		store:  cs,
-		tombs:  tombs,
-		config: func() *realtimecfg.Compiled { return rt.Load().Config },
-		now:    time.Now,
+		store:   cs,
+		tombs:   tombs,
+		config:  func() *realtimecfg.Compiled { return rt.Load().Config },
+		now:     time.Now,
+		dueWake: dueWake,
 	}, nil
 }
 
@@ -90,12 +95,12 @@ func newChannelGuard(
 // store has recorded (see checkChannelTypeRecords) and returns the guard
 // over cs. A mismatch fails the assembly, so the server does not start.
 func channelGuardFor(
-	base *SharedBase, cs channels.Store, tombs *tombstoneConfirmer,
+	base *SharedBase, cs channels.Store, tombs *tombstoneConfirmer, dueWake *realtime.DueWake,
 ) (entitymanager.AnchorGuard, error) {
 	if err := checkChannelTypeRecords(context.Background(), cs, base.realtime.Load().Config); err != nil {
 		return nil, err
 	}
-	return newChannelGuard(cs, base.realtime, tombs)
+	return newChannelGuard(cs, base.realtime, tombs, dueWake)
 }
 
 // Active implements [entitymanager.AnchorGuard]: a guard over a channel
@@ -166,7 +171,7 @@ func (s *channelScope) BeforeDelete(
 		return nil, nil //nolint:nilnil // nothing was tombstoned: nothing to undo
 	}
 	g.tombs.add(h)
-	return tombstoneUndo{store: g.store, h: h, now: g.now, tombs: g.tombs}, nil
+	return g.undo(h), nil
 }
 
 // deleteFiler files the batch of d pending, under the delete policy. It
@@ -203,11 +208,16 @@ func (g *channelGuard) tombstone(
 	}
 	uctx, cancel := undoContext(ctx)
 	defer cancel()
-	if uErr := g.store.Untombstone(uctx, h, g.now()); uErr != nil {
+	if uErr := g.undo(h).restore(uctx); uErr != nil {
 		slog.Error("channels: cannot restore a detach that failed part way",
 			"tombstone", h.String(), "error", uErr)
 	}
 	return channels.TombstoneHandle{}, err
+}
+
+// undo is the [tombstoneUndo] of the batch h.
+func (g *channelGuard) undo(h channels.TombstoneHandle) tombstoneUndo {
+	return tombstoneUndo{store: g.store, h: h, now: g.now, config: g.config, tombs: g.tombs, dueWake: g.dueWake}
 }
 
 // BeforeRename implements [entitymanager.AnchorGuard]. Channels on newID
@@ -244,7 +254,7 @@ func (g *channelGuard) BeforeRename(
 		return nil, nil //nolint:nilnil // nothing was tombstoned: nothing to undo
 	}
 	g.tombs.add(h)
-	return tombstoneUndo{store: g.store, h: h, now: g.now, tombs: g.tombs}, nil
+	return g.undo(h), nil
 }
 
 // tombstoneUndo is the [entitymanager.AnchorUndo] of one pending tombstone
@@ -253,7 +263,11 @@ type tombstoneUndo struct {
 	store channels.Store
 	h     channels.TombstoneHandle
 	now   func() time.Time
-	tombs *tombstoneConfirmer
+	// config is the realtime configuration the restored sessions resume
+	// under (see [realtime.ResumeSchedule]).
+	config  func() *realtimecfg.Compiled
+	tombs   *tombstoneConfirmer
+	dueWake *realtime.DueWake
 }
 
 // Restore implements [entitymanager.AnchorUndo]. The confirmer forgets the
@@ -261,7 +275,20 @@ type tombstoneUndo struct {
 // hook will confirm it, and a batch left pending is put back by the sweep.
 func (u tombstoneUndo) Restore(ctx context.Context) error {
 	u.tombs.drop(u.h)
-	return u.store.Untombstone(ctx, u.h, u.now())
+	return u.restore(ctx)
+}
+
+// restore puts the batch back, resuming its open sessions (see
+// [realtime.ResumeSchedule]), and notes the earliest resumed due time on
+// the wake, so a timer that is due soon fires then.
+func (u tombstoneUndo) restore(ctx context.Context) error {
+	at := u.now()
+	resume := realtime.NewResumption(u.config(), at)
+	if err := u.store.Untombstone(ctx, u.h, at, resume.Schedule); err != nil {
+		return err
+	}
+	resume.Note(u.dueWake)
+	return nil
 }
 
 // String implements [entitymanager.AnchorUndo]: the handle's text form,

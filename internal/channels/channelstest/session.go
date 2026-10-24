@@ -19,9 +19,12 @@ var noticeAuthor = channels.Author{User: "system:realtime", Tool: "realtime", Pr
 func sessionStep(decide func(channels.Channel) (channels.SessionMove, bool)) *channels.SessionStep {
 	return &channels.SessionStep{
 		Decide: decide, NoticeType: "session", NoticeBy: noticeAuthor, TriggeredBy: "session:room",
-		Outcome: &channels.SessionOutcome{},
+		Outcome: &channels.SessionOutcome{}, Due: noDue,
 	}
 }
+
+// noDue is the schedule of a session without timers.
+func noDue(channels.Channel) channels.SessionSchedule { return channels.SessionSchedule{} }
 
 // moveFrom returns a decider that always moves from to to.
 func moveFrom(from, to string) func(channels.Channel) (channels.SessionMove, bool) {
@@ -47,10 +50,10 @@ func stepped(body string, at time.Time, step *channels.SessionStep) channels.New
 	return m
 }
 
-// sessionRecords returns the session records of id's audit trail.
-func sessionRecords(t *testing.T, s channels.Store, id string) []channels.AuditRecord {
+// sessionRecords returns the session records of TKT-1's audit trail.
+func sessionRecords(t *testing.T, s channels.Store) []channels.AuditRecord {
 	t.Helper()
-	trail, err := s.Audit(context.Background(), id)
+	trail, err := s.Audit(context.Background(), "TKT-1")
 	require.NoError(t, err)
 	var out []channels.AuditRecord
 	for _, r := range trail {
@@ -99,7 +102,7 @@ func testSessionStep(t *testing.T, h Harness) {
 		"from": "detected", "to": "contained", "generation": float64(1), "cause": float64(2),
 	}, notice.Props)
 
-	recs := sessionRecords(t, h.Store, "TKT-1")
+	recs := sessionRecords(t, h.Store)
 	require.Len(t, recs, 1)
 	rec := recs[0]
 	require.Equal(t, "detected", rec.From)
@@ -269,7 +272,7 @@ func testSessionSurvivesMoves(t *testing.T, h Harness) {
 	require.Equal(t, want, got[0].Session)
 
 	th := tombstone(t, h.Store, "NEW-1", "", T0.Add(4*time.Minute))
-	require.NoError(t, h.Store.Untombstone(ctx, th, T0.Add(5*time.Minute)))
+	require.NoError(t, h.Store.Untombstone(ctx, th, T0.Add(5*time.Minute), nil))
 	got, err = h.Store.ListEntity(ctx, "NEW-1")
 	require.NoError(t, err)
 	require.Len(t, got, 1)

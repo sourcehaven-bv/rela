@@ -202,7 +202,7 @@ func TestAuto_CASConflictSkipped(t *testing.T) {
 
 	trg, err := NewTriggers(TriggerDeps{
 		Store: &staleList{Store: th.store, stale: stale}, Config: th.cfg, Local: th.local, Meta: testMeta(t),
-		Rows: th.src, Seen: th.kv,
+		Rows: th.src, Seen: th.kv, DueWake: NewDueWake(),
 	})
 	require.NoError(t, err)
 	th.trg = trg
@@ -274,7 +274,7 @@ func (s *failOnce) SetLifecycle(
 func (th *triggerHarness) useStore(t *testing.T, st channels.Store) {
 	t.Helper()
 	trg, err := NewTriggers(TriggerDeps{
-		Store: st, Config: th.cfg, Local: th.local, Meta: testMeta(t), Rows: th.src, Seen: th.kv,
+		Store: st, Config: th.cfg, Local: th.local, Meta: testMeta(t), Rows: th.src, Seen: th.kv, DueWake: NewDueWake(),
 	})
 	require.NoError(t, err)
 	th.trg = trg

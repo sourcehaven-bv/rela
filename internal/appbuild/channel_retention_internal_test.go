@@ -266,7 +266,7 @@ func TestTombstoneConfirmer(t *testing.T) {
 	}
 
 	// A batch already gone is not an error.
-	require.NoError(t, cs.Untombstone(ctx, draft, time.Now()))
+	require.NoError(t, cs.Untombstone(ctx, draft, time.Now(), nil))
 	c.add(draft)
 	require.NoError(t, c.confirm(ctx, "A-1", "", true))
 }
@@ -380,7 +380,7 @@ func newWorkerFixture(t *testing.T) workerFixture {
 	require.NoError(t, err)
 	local, err := realtime.NewLocal(time.Now)
 	require.NoError(t, err)
-	sweeper, err := realtime.NewSweeper(realtime.SweepDeps{
+	sweeper, err := realtime.NewSweeper(realtime.SweepDeps{DueWake: realtime.NewDueWake(),
 		Store: cs, Config: realtimeConfigSource{}, Anchors: anchorExistence{st: st},
 		Marker: local, Clock: time.Now,
 	})
@@ -391,12 +391,13 @@ func newWorkerFixture(t *testing.T) workerFixture {
 	require.NoError(t, err)
 	triggers, err := realtime.NewTriggers(realtime.TriggerDeps{
 		Store: cs, Config: realtimeConfigSource{}, Local: local, Meta: meta,
-		Rows: rows, Seen: &mapKV{m: map[string][]byte{}},
+		Rows: rows, Seen: &mapKV{m: map[string][]byte{}}, DueWake: realtime.NewDueWake(),
 	})
 	require.NoError(t, err)
 	l := &switchLock{}
 	w, err := newRealtimeWorker(realtimeWorkerParts{
-		sweeper: sweeper, triggers: triggers, changes: st, lock: l.take, wake: tombs.wake,
+		sweeper: sweeper, triggers: triggers, timers: testTimers(t, cs, realtimeConfigSource{}, local),
+		dueWake: realtime.NewDueWake(), changes: st, lock: l.take, wake: tombs.wake,
 	})
 	require.NoError(t, err)
 	return workerFixture{cs: cs, tombs: tombs, w: w, lock: l}

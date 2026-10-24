@@ -35,6 +35,27 @@ type SessionView struct {
 	// session until the state is declared again.
 	Stranded    bool                    `json:"stranded,omitempty"`
 	Transitions []SessionTransitionView `json:"transitions,omitempty"`
+	// DueAt is when the first of Timers comes due. It is derived from the
+	// configuration and the channel, and set only on a stored, open channel
+	// under a configuration that is not degraded (see [SessionTimerView]).
+	DueAt *time.Time `json:"due_at,omitempty"`
+	// Timers are the `after:` entries of the current state, sorted by name:
+	// config, the same for every reader. They are empty when the state is
+	// final or stranded, or the channel is not stored yet.
+	Timers []SessionTimerView `json:"timers,omitempty"`
+}
+
+// SessionTimerView is one timer of the current state. DueAt is set on a
+// stored, open channel under a configuration that is not degraded. A
+// closed channel's timers are frozen, and under a degraded configuration
+// the leader fires none, so neither shows a due time.
+type SessionTimerView struct {
+	Name  string `json:"name"`
+	Label string `json:"label,omitempty"`
+	To    string `json:"to"`
+	// Since is what the timer counts from: state or session.
+	Since string     `json:"since"`
+	DueAt *time.Time `json:"due_at,omitempty"`
 }
 
 // SessionTransitionView is one transition out of the current state: the
@@ -69,8 +90,9 @@ func currentSession(s *realtimecfg.Session, ch channels.Channel) current {
 }
 
 // sessionView renders the session of h under ct, or of the empty channel
-// created at now when h is nil. Nil when ct has no session.
-func sessionView(ct realtimecfg.ChannelType, h *channels.Channel, now time.Time) *SessionView {
+// created at now when h is nil. Nil when ct has no session. degraded is the
+// snapshot's flag: due times are left out under a degraded configuration.
+func sessionView(ct realtimecfg.ChannelType, h *channels.Channel, now time.Time, degraded bool) *SessionView {
 	s := ct.Session()
 	if s == nil {
 		return nil
@@ -94,7 +116,26 @@ func sessionView(ct realtimecfg.ChannelType, h *channels.Channel, now time.Time)
 			MessageType: tr.MessageType, To: tr.To, By: string(tr.By), Guarded: tr.When != nil,
 		})
 	}
+	if h != nil && !st.Final {
+		timerViews(v, cur, *h, st.Timers(), h.State == channels.StateOpen && !degraded)
+	}
 	return v
+}
+
+// timerViews fills v's timers for ch, whose current session is cur, and
+// with showDue their due times and the session's.
+func timerViews(v *SessionView, cur current, ch channels.Channel, timers []realtimecfg.SessionTimer, showDue bool) {
+	for _, t := range timers {
+		tv := SessionTimerView{Name: t.Name, Label: t.Label, To: t.To, Since: string(t.Since)}
+		if showDue {
+			due := timerDue(t, cur, ch)
+			tv.DueAt = &due
+			if v.DueAt == nil || due.Before(*v.DueAt) {
+				v.DueAt = &due
+			}
+		}
+		v.Timers = append(v.Timers, tv)
+	}
 }
 
 // poster is who posts a message that may move a session, as a decider
@@ -257,6 +298,7 @@ func newSessionPost(
 		TriggeredBy: channels.SessionMarker + ct.Name, AuditTriggeredBy: triggeredBy,
 		Outcome: &channels.SessionOutcome{},
 	}
+	withSessionDue(sp.step, s)
 	return sp
 }
 
@@ -358,7 +400,7 @@ func postedSession(c *call, step *channels.SessionStep) *SessionView {
 		return nil
 	}
 	ch := channels.Channel{State: channels.StateOpen, CreatedAt: step.Outcome.CreatedAt, Session: step.Outcome.Session}
-	return sessionView(c.ct, &ch, c.now)
+	return sessionView(c.ct, &ch, c.now, c.snap.Degraded)
 }
 
 // isNotice reports whether a message of msgType triggered by triggeredBy

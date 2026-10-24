@@ -135,6 +135,41 @@ func TestChannelRender_List(t *testing.T) {
 
 // TestRenderRead_Session pins the session line in the channel header and
 // the one-line form of a notice.
+// TestRenderRead_SessionTimer pins TKT-INM3AZ AC 19: the session line
+// names the timer that comes due next, and a timer's notice names it.
+func TestRenderRead_SessionTimer(t *testing.T) {
+	at := time.Date(2026, 10, 21, 9, 12, 3, 0, time.UTC)
+	due := at.Add(24 * time.Hour)
+	view := realtime.ReadView{
+		Channel: realtime.ChannelView{
+			Anchor: "DL-1", Type: "breach-response", State: realtime.StateOpen, LastSeq: 1, Rev: 1,
+			Session: &realtime.SessionView{
+				State: "detected", Generation: 0, EnteredAt: at, DueAt: &due,
+				Timers: []realtime.SessionTimerView{
+					{Name: "later", To: "x", Since: "state", DueAt: new(due.Add(time.Hour))},
+					{Name: "no-containment", To: "overdue", Since: "state", DueAt: &due},
+				},
+			},
+		},
+		Messages: []realtime.MessageView{{
+			Seq: 1, Type: "session", At: due, TriggeredBy: "session:breach-response",
+			Author: &realtime.AuthorView{User: "system:realtime", System: true},
+			Props: map[string]any{
+				"from": "detected", "to": "overdue", "generation": int64(1), "timer": "no-containment",
+			},
+		}},
+	}
+	var buf bytes.Buffer
+	require.NoError(t, renderRead(&buf, view))
+	got := buf.String()
+	assert.Contains(t, got, "session: detected, generation 0, next: no-containment to overdue at 2026-10-22T09:12:03Z\n")
+	assert.Contains(t, got, "  moved from detected to overdue (timer no-containment)\n")
+	assert.NotContains(t, got, propIndent+"timer")
+
+	closed := realtime.SessionView{State: "detected", Timers: []realtime.SessionTimerView{{Name: "no-containment"}}}
+	assert.Equal(t, "session: detected, generation 0", sessionText(&closed), "no due time, no next")
+}
+
 func TestRenderRead_Session(t *testing.T) {
 	at := time.Date(2026, 10, 21, 9, 12, 3, 0, time.UTC)
 	view := realtime.ReadView{

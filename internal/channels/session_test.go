@@ -13,6 +13,7 @@ func testStep(decide func(Channel) (SessionMove, bool)) *SessionStep {
 	return &SessionStep{
 		Decide: decide, NoticeType: "session", NoticeBy: Author{User: "system:realtime"},
 		TriggeredBy: SessionMarker + "room", Outcome: &SessionOutcome{},
+		Due: func(Channel) SessionSchedule { return SessionSchedule{} },
 	}
 }
 

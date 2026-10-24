@@ -214,6 +214,9 @@ type Services struct {
 	// realtimeLocal is the process-local state under channelService, which a
 	// re-assembly shares.
 	realtimeLocal *realtime.Local
+	// dueWake is the session due-time wake under channelService and the
+	// realtime worker, which a re-assembly shares.
+	dueWake *realtime.DueWake
 	// realtimeRecordsStop stops the realtime holder from checking reloads
 	// against this assembly's channel store. Per-assembled.
 	realtimeRecordsStop func()
@@ -1234,6 +1237,7 @@ func NewFromCollaborators(c Collaborators) (*Services, error) {
 		channels:       refs.channels,
 		channelService: refs.channelService,
 		realtimeLocal:  refs.realtimeLocal,
+		dueWake:        refs.dueWake,
 	}, nil
 }
 
@@ -1246,6 +1250,7 @@ type collaboratorRefs struct {
 	channels       channels.Store
 	channelService *realtime.Service
 	realtimeLocal  *realtime.Local
+	dueWake        *realtime.DueWake
 }
 
 // collaboratorRefHolders builds the piles service, the CalDAV alias table,
@@ -1276,8 +1281,10 @@ func collaboratorRefHolders(
 			return refs, errors.New("channels: Store and Config are required")
 		}
 		refs.channels = ch.Store
+		refs.dueWake = realtime.NewDueWake()
 		refs.channelService, refs.realtimeLocal, err = newRealtimeService(realtimeInputs{
 			meta: c.Meta, worlds: w, config: ch.Config, store: c.Store, channels: ch.Store, local: ch.Local,
+			dueWake:     refs.dueWake,
 			declarative: c.Declarative, redactor: redactor, writes: c.ACL,
 			// Collaborators carry no entity manager, so nothing promotes.
 			promoter: realtime.NoPromoter{},
@@ -2022,6 +2029,9 @@ type SharedBase struct {
 	// buckets, ephemeral signals, live subscribers), reused so a schema
 	// reload resets none of them. Nil for a first assembly.
 	realtimeLocal *realtime.Local
+	// dueWake is the predecessor's session due-time wake, reused with
+	// realtimeLocal. Nil for a first assembly.
+	dueWake *realtime.DueWake
 	// storeSchema is the predecessor's store schema refresher, reused
 	// because a re-assembly runs against the same store. Nil for a first
 	// assembly, and for a store that needs none.
@@ -2071,6 +2081,7 @@ func (b *SharedBase) ForReassembly(prev *Services) *SharedBase {
 	next.pileStore = prev.pileStore
 	next.leaseShared = prev.leaseShared
 	next.realtimeLocal = prev.realtimeLocal
+	next.dueWake = prev.dueWake
 	next.storeSchema = prev.storeSchema
 	return &next
 }
@@ -2310,10 +2321,10 @@ func buildEntityManager(
 	autoEngine *automation.Engine, cascadeRunner *autocascade.Runner,
 	readDeps lua.ReadDeps, pileWriter lua.PileWriter, versions store.VersionService, tw TransitionWiring,
 	computedSet *computed.Set, attachLocker lock.Locker, fieldGate entitymanager.FieldWriteGate,
-	channelStore channels.Store, tombs *tombstoneConfirmer,
+	channelStore channels.Store, tombs *tombstoneConfirmer, dueWake *realtime.DueWake,
 ) (*entitymanager.Manager, error) {
 	// Boot refuses a realtime.yaml that would strand stored channels.
-	anchorGuard, err := channelGuardFor(base, channelStore, tombs)
+	anchorGuard, err := channelGuardFor(base, channelStore, tombs, dueWake)
 	if err != nil {
 		return nil, err
 	}
@@ -2695,7 +2706,7 @@ func assemble(
 		refs.channelAliases, refs.realtimeLocal)
 	mgr, err := buildEntityManager(base, st, fanout, templater,
 		resolvedACL, autoEngine, cascadeRunner, readDeps, pileWriterFor(refs.piles), versions, tw, computedSet,
-		attachLocker, fieldPol.gate, refs.channels, refs.channelTombs)
+		attachLocker, fieldPol.gate, refs.channels, refs.channelTombs, refs.dueWake)
 	// coverage-ignore-start: defensive: buildStateKV only errors when NewRootedFS fails on a non-empty CacheDir, which
 	// requires filepath.Abs to
 	// fail — unreachable with valid inputs (see the scupper in buildStateKV)
@@ -2805,7 +2816,7 @@ func finishAssembly(
 	if err != nil {
 		return nil, err
 	}
-	s.channelService, s.realtimeLocal = svc, refs.realtimeLocal
+	s.channelService, s.realtimeLocal, s.dueWake = svc, refs.realtimeLocal, refs.dueWake
 	tags, err := buildVersionTags(s)
 	if err != nil {
 		return nil, err

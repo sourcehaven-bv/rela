@@ -423,12 +423,22 @@ channel_types:
             contained: { to: contained, roles: [lead] }
             dismiss:   { to: dismissed }
             escalated: { to: contained, by: trigger }
+          after:
+            no-containment: { period: 24h, to: overdue, label: Not contained within a day }
         contained:
           label: Contained
           on:
             assessed: { to: assessed, when: "message.risk ~= 'none'" }
+          after:
+            notify-deadline: { period: 72h, since: session, to: overdue, label: 72 hours since detection }
         assessed:
           label: Risk assessed
+          on:
+            notified: { to: notified }
+          after:
+            notify-deadline: { period: 72h, since: session, to: overdue, label: 72 hours since detection }
+        overdue:
+          label: Notification overdue
           on:
             notified: { to: notified }
         notified:  { label: AP notified, final: true }
@@ -441,8 +451,9 @@ channel_types:
 | `session.initial` | The state a new session starts in. It cannot be final. |
 | `session.states` | The states, in the order a client shows them. At most 64. |
 | `states.<name>.label` | The state's name for people. Defaults to the state name. |
-| `states.<name>.final` | `true` for a state the session ends in. A final state has no `on:`. |
-| `states.<name>.on` | The transitions out of the state, keyed by message type. A state that is not final needs at least one. |
+| `states.<name>.final` | `true` for a state the session ends in. A final state has no `on:` and no `after:`. |
+| `states.<name>.on` | The transitions out of the state, keyed by message type. A state that is not final needs at least one transition or one timer. |
+| `states.<name>.after` | The timers of the state, keyed by timer name. At most 8. See [Timers](#timers). |
 | `on.<type>.to` | The state the message moves the session to. It may be the same state: a re-entry. |
 | `on.<type>.roles` | Only a poster holding one of these roles moves the session. Each role must be in the message type's `post`. |
 | `on.<type>.by` | `trigger`: only a trigger's message moves the session. |
@@ -513,8 +524,9 @@ remove it; the notice and the audit record keep the move.
 that never moved reads as `initial`, entered when the channel was created.
 That includes channels that existed before their type gained a session.
 After a move, `entered_at` is the time of the message that caused it.
-Closing and reopening a channel leaves its session as it is. Removing the
-message that caused a move does not undo the move.
+Closing and reopening a channel leaves its state as it is; see
+[Timers](#timers) for what happens to its deadlines. Removing the message
+that caused a move does not undo the move.
 
 **Stranded states.** A channel whose stored state the file no longer
 declares is stranded. It reads with `stranded: true`, its stored state name
@@ -527,6 +539,69 @@ is allowed for this reason.
 the messages, and the composer marks the message types that move it. See
 [In the web app](#in-the-web-app). The row shows where the session is now,
 not how it got there: the notices in the log are its history.
+
+### Timers
+
+A timer moves a session when a state has lasted too long, with no message.
+In the example, a breach that is not contained within a day moves to
+`overdue`, and so does one that is not notified 72 hours after it was
+detected.
+
+| Key | Meaning |
+| --- | --- |
+| `after.<name>.period` | How long the timer waits, such as `30m`, `24h`, `7d` or `1mo`. A fixed period is at least `1m`. Required. |
+| `after.<name>.since` | What the period counts from. `state` (the default): from when the session entered the state, or from the channel's creation for a session that never moved. `session`: from the channel's creation. |
+| `after.<name>.to` | The state the timer moves the session to. Required. |
+| `after.<name>.label` | The timer's name for people. Defaults to the timer name. |
+
+Use `since: session` for a deadline that runs across states, such as the 72
+hours to notify the authority: it keeps counting from the detection while the
+breach moves from `contained` to `assessed`.
+
+**When a timer fires.** When the first timer of the current state comes due,
+the session moves to its `to` state. A message that moves the session first
+wins: the timer then belongs to a state the session left and never fires. Of
+two timers due at the same time, the one whose name sorts first fires. Each
+move happens once. Two server processes that both run timers for a moment
+still move the session once.
+
+A timer fires within a second of its due time when the session's last change
+was made in the server process that runs the timers, and within a minute
+otherwise, for example after a post through `rela channel` or stdio
+`rela mcp`. The move's time is when it fired, which is also the new state's
+`entered_at`.
+
+**Notices and audit.** A timer's move appends a notice like a message's
+move, with the prop `timer` (the timer's name) instead of `cause`. The
+channel's audit trail records it with the author `system:realtime` and
+`triggered_by: timer:<channel type>/<state>/<timer>`, for example
+`timer:breach-response/detected/no-containment`. A timer writes nothing to
+the graph yet.
+
+**Closed channels.** A closed or archived channel does not fire timers: its
+timers are frozen. When the channel is reopened, each timer that came due
+while it was closed starts again from the reopen, so it fires one full
+period later. A timer that had not come due keeps its deadline. rela stores
+the restart per timer, so closing and reopening the channel several times
+never stretches a deadline that had not come due. For example, a 72-hour
+`since: session` timer on a channel created at hour 0, closed at hour 10 and
+reopened at hour 100, fires at hour 172. Closed again at hour 110 and
+reopened at hour 120, it still fires at hour 172. The restart also stays
+when the session moves to a state that declares a `since: session` timer of
+the same name: posted `assessed` at hour 130, the breach above still fires
+`notify-deadline` at hour 172. A `since: state` timer starts again from the
+move.
+
+The same holds when an entity is deleted and its channels are later put
+back: an open channel is treated as reopened when it is restored.
+
+**Final and stranded states.** A final state has no timers. A stranded
+session (see above) never fires a timer, whatever the file declared for its
+old state.
+
+**Loops.** A loop made only of timers would move the session forever
+without anyone posting, so rela refuses one, including a timer to its own
+state. A loop that passes through a message transition is allowed.
 
 ## Triggers
 
@@ -631,6 +706,11 @@ unknown entity type "nope"`. It checks:
   never in a `cardinality: many` type, and a `when` that compiles and does
   not read the entity. A `session` at the top of the file is refused; it
   belongs under a channel type;
+- that each timer under `after:` is on a state that is not final, has a
+  valid name, a `period` that parses and is at least `1m` when fixed, a
+  `since` of `state` or `session`, and a `to` that exists. A state has at
+  most 8 timers, and no loop is made only of timers. The key `from` is
+  refused with "use since: state or since: session";
 - that a channel type with `typing: true` has at least one `log` message
   type, and no message type named `typing`. `typing` must be `true` or
   `false`;
@@ -680,6 +760,11 @@ change: entries live 6 seconds, one call per second per person and channel,
 32 typists per channel and 4096 channels with typing entries per process.
 Typing calls count toward the fixed budget of 300 channel writes per minute
 per person, which posts share.
+
+Timers have fixed limits too: at most 8 per state, and a fixed period of
+at least 1 minute. The server checks for due timers at least once a minute
+and makes at most 64 timer moves and due-time updates per check; the rest
+follow a second later.
 
 ## In the web app
 
@@ -919,7 +1004,26 @@ the session move.
 "trigger"` when only a trigger fires one and `guarded: true` when the entry
 has a `when`. It is the same for every reader; `_actions.transitions` says
 which of them the caller fires.
-`final` and `stranded` are set when they apply. A notice looks like this:
+`final` and `stranded` are set when they apply.
+
+`timers` lists the timers of the current state, sorted by name, each with
+its `name`, `label`, `to`, `since` and `due_at`. `due_at` on the session is
+when the first of them comes due. Both are derived from `realtime.yaml` and
+the channel. `due_at` is left out while the channel is closed or archived,
+because its timers are frozen, and while the configuration is degraded,
+because timers do not fire then. A final or stranded state has no timers.
+
+```json
+"session": {
+  "state": "detected", "label": "Detected", "generation": 0,
+  "entered_at": "2026-10-21T09:12:03Z", "due_at": "2026-10-22T09:12:03Z",
+  "transitions": [ { "message_type": "contained", "to": "contained" } ],
+  "timers": [ { "name": "no-containment", "label": "Not contained within a day",
+                "to": "overdue", "since": "state", "due_at": "2026-10-22T09:12:03Z" } ]
+}
+```
+
+A notice looks like this:
 
 ```json
 { "seq": 8, "type": "session", "author": { "user": "system:realtime", "system": true },
@@ -1015,10 +1119,15 @@ one step, so the indicator would show only for an instant. Over stdio
 process.
 
 **Sessions.** `read_channel` and `list_channels` show a channel's session,
-and `post_message` answers with the session after the post. `rela channel
-read` prints a line such as `session: contained (Contained), generation 1`
-under the channel header and shows a notice as `moved from detected to
-contained`; `rela channel post` prints the session line after the message.
+including `timers` and `due_at`, and `post_message` answers with the session
+after the post. A timer's move raises the channel's rev, so a `watch` on
+`read_channel` wakes on it. `rela channel read` prints a line such as
+`session: contained (Contained), generation 1` under the channel header and
+shows a notice as `moved from detected to contained`; `rela channel post`
+prints the session line after the message. When the session has a due time,
+the line ends with the timer that comes due first, such as `next:
+no-containment to overdue at 2026-10-22T09:12:03Z`, and a timer's notice
+reads `moved from detected to overdue (timer no-containment)`.
 
 **Identity.** The channel tools and `rela channel` act as `$USER`, or as the
 job identity in `RELA_RUN_AS` (`--run-as`), such as `integration:triage-bot`.
@@ -1069,6 +1178,14 @@ it out of roles that post on channels other agents act on.
   follows the new `initial`. A channel in a state the new file drops is
   stranded (see Sessions). Without the `session:` block the session is
   hidden from reads; the stored state stays and returns with the block.
+  rela-server logs one warning per channel type and stranded state after
+  each reload, with the number of sessions in it.
+- A reload may add, remove or change timers. A timer counts from its
+  anchor, so adding or shortening one can fire it within a minute, for
+  sessions old and new. Removing a timer, or the whole `after:`, clears the
+  due time. Reads show the new due time at once.
+- Timers do not fire while the configuration is degraded. They fire on the
+  first check after a valid configuration is back.
 - Saving `schema.yaml` in the Configure space checks `realtime.yaml` against
   the new schema and refuses the save if it breaks. The Configure space
   cannot edit `realtime.yaml` itself.

@@ -36,7 +36,7 @@ func TestParse_Session(t *testing.T) {
 			final = append(final, st.Name)
 		}
 	}
-	if want := []string{"detected", "contained", "assessed", "notified", "dismissed"}; !slices.Equal(names, want) {
+	if want := []string{"detected", "contained", "assessed", "overdue", "notified", "dismissed"}; !slices.Equal(names, want) {
 		t.Errorf("states = %v; want declaration order %v", names, want)
 	}
 	if !slices.Equal(final, []string{"notified", "dismissed"}) {
@@ -160,7 +160,7 @@ func TestParse_SessionInvalid(t *testing.T) {
 		{"final with on", []replace{{"done: { final: true }", "done: { final: true, on: { text: { to: open } } }"}},
 			k + ".states.done.on", "a final state has no transitions; drop on or remove final: true"},
 		{"non-final without on", []replace{{"done: { final: true }", "done: { label: Done }"}},
-			k + ".states.done", "a state that is not final needs at least one transition under on"},
+			k + ".states.done", "a state that is not final needs a transition under on or a timer under after"},
 		{"on key not a message type", []replace{{"contained: { to: done }", "nope: { to: done }"}},
 			k + ".states.open.on.nope", `unknown message type "nope"; a transition is keyed by a message type`},
 		{"ephemeral message type", []replace{{"contained: { to: done }", "typing: { to: done }"}},
@@ -234,6 +234,13 @@ func TestCheckReload_SessionChangesAllowed(t *testing.T) {
 		},
 		"initial renamed": {{"initial: detected", "initial: contained"}},
 		"session removed": {{block, ""}},
+		"timer added": {{"            notified: { to: notified }\n        notified:",
+			"            notified: { to: notified }\n          after:\n" +
+				"            late: { period: 1h, to: notified }\n        notified:"}},
+		"timer removed": {{"          after:\n            no-containment: { period: 24h, to: overdue, " +
+			"label: Not contained within a day }\n", ""}},
+		"timer renamed":  {{"no-containment:", "not-contained:"}},
+		"period changed": {{"no-containment: { period: 24h", "no-containment: { period: 1h"}},
 	}
 	for name, edits := range tests {
 		t.Run(name, func(t *testing.T) {

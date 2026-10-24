@@ -143,6 +143,10 @@ func TestCompiled_SessionIsReadOnly(t *testing.T) {
 	if tr, _ := s.Transition("detected", "contained"); tr.Roles[0] != "lead" {
 		t.Error("a returned transition shares its roles")
 	}
+	st.Timers()[0].Name = "x"
+	if st, _ := s.State("detected"); st.Timers()[0].Name != "no-containment" {
+		t.Error("Timers returned the shared slice")
+	}
 }
 
 func TestShapeMismatches(t *testing.T) {

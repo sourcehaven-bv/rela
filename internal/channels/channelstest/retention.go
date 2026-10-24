@@ -173,7 +173,7 @@ func testTombstonesList(t *testing.T, h Harness) {
 	require.Equal(t, later, got[2].Handle)
 	require.Equal(t, channels.PolicyOrphan, got[2].Filing.Policy)
 
-	require.NoError(t, h.Store.Untombstone(ctx, face, T0.Add(3*time.Hour)))
+	require.NoError(t, h.Store.Untombstone(ctx, face, T0.Add(3*time.Hour), nil))
 	got, err = h.Store.Tombstones(ctx, T0.Add(2*time.Hour))
 	require.NoError(t, err)
 	require.Len(t, got, 2, "a restored batch is not listed")
@@ -236,7 +236,7 @@ func testConfirmTombstone(t *testing.T, h Harness) {
 	require.False(t, got[0].Filing.Pending)
 	require.Equal(t, channels.PolicyDelete, got[0].Filing.Policy, "confirming keeps the rest of the filing")
 	require.NoError(t, h.Store.ConfirmTombstone(ctx, b), "a confirmed batch stays confirmed")
-	require.ErrorIs(t, h.Store.Untombstone(ctx, b, T0.Add(time.Minute)), channels.ErrConflict,
+	require.ErrorIs(t, h.Store.Untombstone(ctx, b, T0.Add(time.Minute), nil), channels.ErrConflict,
 		"a confirmed delete batch is final")
 
 	mustAppend(t, h.Store, key("TKT-2", "room"), text("y"))
@@ -245,11 +245,11 @@ func testConfirmTombstone(t *testing.T, h Harness) {
 	got, err = h.Store.Tombstones(ctx, T0.Add(time.Hour))
 	require.NoError(t, err)
 	require.Equal(t, channels.PolicyDetach, listed(got, o).Filing.Policy, "a confirmed orphan is a detach")
-	require.ErrorIs(t, h.Store.Untombstone(ctx, o, T0.Add(time.Minute)), channels.ErrConflict)
+	require.ErrorIs(t, h.Store.Untombstone(ctx, o, T0.Add(time.Minute), nil), channels.ErrConflict)
 
 	mustAppend(t, h.Store, key("TKT-3", "room"), text("z"))
 	n := fileBatch(t, h.Store, "TKT-3", "", T0, channels.Filing{})
-	require.NoError(t, h.Store.Untombstone(ctx, n, T0.Add(time.Minute)), "a batch without a policy may come back")
+	require.NoError(t, h.Store.Untombstone(ctx, n, T0.Add(time.Minute), nil), "a batch without a policy may come back")
 	require.ErrorIs(t, h.Store.ConfirmTombstone(ctx, n), channels.ErrNotFound)
 	require.ErrorIs(t, h.Store.ConfirmTombstone(ctx, channels.TombstoneHandle{}), channels.ErrInvalidKey)
 }
@@ -283,7 +283,7 @@ func testConfirmTombstones(t *testing.T, h Harness) {
 	require.NoError(t, err)
 	require.Equal(t, channels.PolicyDetach, listed(got, hf).Filing.Policy, "the whole id covers every face")
 	require.Equal(t, channels.PolicyOrphan, listed(got, other).Filing.Policy, "another id is not touched")
-	require.ErrorIs(t, h.Store.Untombstone(ctx, hf, T0.Add(time.Minute)), channels.ErrConflict)
+	require.ErrorIs(t, h.Store.Untombstone(ctx, hf, T0.Add(time.Minute), nil), channels.ErrConflict)
 
 	require.NoError(t, h.Store.ConfirmTombstones(ctx, channels.Anchor{ID: "TKT-9"}), "no batches is not an error")
 	require.ErrorIs(t, h.Store.ConfirmTombstones(ctx, channels.Anchor{}), channels.ErrInvalidKey)
@@ -328,7 +328,7 @@ func testPurge(t *testing.T, h Harness) {
 	require.Empty(t, got)
 	require.ErrorIs(t, h.Store.Purge(ctx, b, nil, Bob, T0.Add(time.Hour)), channels.ErrNotFound,
 		"a batch is purged once")
-	require.ErrorIs(t, h.Store.Untombstone(ctx, b, T0.Add(time.Hour)), channels.ErrNotFound,
+	require.ErrorIs(t, h.Store.Untombstone(ctx, b, T0.Add(time.Hour), nil), channels.ErrNotFound,
 		"a purged batch cannot come back")
 	require.NoError(t, h.Store.Purge(ctx, channels.TombstoneHandle{}, nil, Bob, T0), "the zero handle is a no-op")
 }
@@ -394,7 +394,7 @@ func testPurgeFace(t *testing.T, h Harness) {
 	for _, r := range trail {
 		require.NotEqual(t, channels.AuditPurge, r.Op, "the purge record is not in the live trail")
 	}
-	require.ErrorIs(t, h.Store.Untombstone(ctx, b, T0), channels.ErrNotFound)
+	require.ErrorIs(t, h.Store.Untombstone(ctx, b, T0, nil), channels.ErrNotFound)
 }
 
 func testPurgeAfterUntombstone(t *testing.T, h Harness) {
@@ -403,7 +403,7 @@ func testPurgeAfterUntombstone(t *testing.T, h Harness) {
 	room := key("TKT-1", "room")
 	mustAppend(t, h.Store, room, text("kept"))
 	b := fileBatch(t, h.Store, "TKT-1", "", T0, channels.Filing{})
-	require.NoError(t, h.Store.Untombstone(ctx, b, T0.Add(time.Minute)))
+	require.NoError(t, h.Store.Untombstone(ctx, b, T0.Add(time.Minute), nil))
 	require.ErrorIs(t, h.Store.Purge(ctx, b, nil, Bob, T0.Add(time.Hour)), channels.ErrNotFound)
 	msgs, err := h.Store.Messages(ctx, room, channels.Page{})
 	require.NoError(t, err)

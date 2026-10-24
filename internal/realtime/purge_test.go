@@ -172,7 +172,7 @@ func TestSweep_Budget(t *testing.T) {
 		h.post(t, sweepKey(id, "room"), sweepT0)
 	}
 	cs := &walkCountingStore{Store: h.store, calls: map[string]int{}}
-	sw, err := NewSweeper(SweepDeps{
+	sw, err := NewSweeper(SweepDeps{DueWake: NewDueWake(),
 		Store: cs, Config: h.cfg, Anchors: h.anchors, Marker: h.marker, Clock: h.clock.Now,
 	})
 	require.NoError(t, err)

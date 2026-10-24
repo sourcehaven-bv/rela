@@ -12,7 +12,7 @@ import (
 // schemaVersion is the shape of the tables this binary expects. Bump it
 // whenever schemaSQL changes shape, and append the step that carries an
 // existing database forward to [migrations].
-const schemaVersion = 24
+const schemaVersion = 25
 
 // SchemaVersion reports the table shape this binary expects, so the CLI can
 // show a real number rather than prose.
@@ -267,6 +267,15 @@ var migrations = []migration{
 		to:    24,
 		apply: addChannelSessionColumns,
 	},
+	{
+		// v24 → v25: the session timer schedule of each channel
+		// (TKT-INM3AZ). The due index is created after the ladder (see
+		// channelTimersDDL).
+		to: 25,
+		apply: func(ctx context.Context, conn *sql.Conn) error {
+			return addChannelColumns(ctx, conn, channelTimerColumns)
+		},
+	},
 }
 
 // addChannelRetention is the v22 to v23 rung: channelRetentionDDL, and
@@ -297,11 +306,22 @@ var channelSessionColumns = []struct{ name, def string }{
 	{"session_entered_at", "INTEGER NOT NULL DEFAULT 0"},
 }
 
+// channelTimerColumns are the session timer columns of channels.
+var channelTimerColumns = []struct{ name, def string }{
+	{"session_next_due_at", "INTEGER NOT NULL DEFAULT 0"},
+	{"session_restarts", "TEXT NOT NULL DEFAULT ''"},
+}
+
 // addChannelSessionColumns is the v23 to v24 rung. It probes each column
 // like [addChannelRetention] and adds the missing ones, so running it again
 // is harmless.
 func addChannelSessionColumns(ctx context.Context, conn *sql.Conn) error {
-	for _, col := range channelSessionColumns {
+	return addChannelColumns(ctx, conn, channelSessionColumns)
+}
+
+// addChannelColumns adds each of cols that channels lacks.
+func addChannelColumns(ctx context.Context, conn *sql.Conn, cols []struct{ name, def string }) error {
+	for _, col := range cols {
 		var n int
 		if err := conn.QueryRowContext(ctx,
 			`SELECT count(*) FROM pragma_table_info('channels') WHERE name = ?`, col.name,

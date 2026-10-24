@@ -501,6 +501,7 @@ func TestSessionStepAcrossSegments(t *testing.T) {
 			return channels.SessionMove{From: "detected", To: "contained"}, true
 		},
 		NoticeType: "session", NoticeBy: channels.Author{User: "system:realtime"}, TriggeredBy: "session:room",
+		Due: func(channels.Channel) channels.SessionSchedule { return channels.SessionSchedule{} },
 	}
 	cause, err := s.Append(ctx, key, m)
 	require.NoError(t, err)
@@ -531,6 +532,7 @@ func moveStep() *channels.SessionStep {
 			return channels.SessionMove{From: "detected", To: "contained"}, true
 		},
 		NoticeType: "session", NoticeBy: channels.Author{User: "system:realtime"}, TriggeredBy: "session:room",
+		Due: func(channels.Channel) channels.SessionSchedule { return channels.SessionSchedule{} },
 	}
 }
 

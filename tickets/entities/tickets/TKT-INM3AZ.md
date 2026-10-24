@@ -5,7 +5,9 @@ title: 'Sessions 4/3: interrupting timers'
 kind: enhancement
 priority: medium
 effort: m
-status: backlog
+started: "2026-10-22"
+completed: "2026-10-24"
+status: done
 ---
 
 ## Description

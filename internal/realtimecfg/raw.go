@@ -48,9 +48,18 @@ type rawSession struct {
 }
 
 type rawSessionState struct {
-	Label string                   `yaml:"label"`
-	Final bool                     `yaml:"final"`
-	On    map[string]rawTransition `yaml:"on"`
+	Label string                     `yaml:"label"`
+	Final bool                       `yaml:"final"`
+	On    map[string]rawTransition   `yaml:"on"`
+	After map[string]rawSessionTimer `yaml:"after"`
+}
+
+// rawSessionTimer is one `after.<name>` entry of a session state.
+type rawSessionTimer struct {
+	Period string `yaml:"period"`
+	Since  string `yaml:"since"`
+	To     string `yaml:"to"`
+	Label  string `yaml:"label"`
 }
 
 type rawTransition struct {

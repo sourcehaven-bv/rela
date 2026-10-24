@@ -36,6 +36,10 @@ type refHolders struct {
 	// which finishAssembly builds once the entity manager exists; see
 	// buildRealtimeService.
 	realtimeLocal *realtime.Local
+	// dueWake carries the session due times the channel services and the
+	// trigger engine store to the realtime worker's timer loop. Like
+	// realtimeLocal it is made once and shared by re-assemblies.
+	dueWake *realtime.DueWake
 	// channelTombs connects the channel guard's pending tombstones to the
 	// post-commit delete hooks and the realtime worker.
 	channelTombs *tombstoneConfirmer
@@ -88,6 +92,9 @@ func buildRefHolders(
 		if h.realtimeLocal, err = realtime.NewLocal(time.Now); err != nil {
 			return refHolders{}, err
 		}
+	}
+	if h.dueWake = base.dueWake; h.dueWake == nil {
+		h.dueWake = realtime.NewDueWake()
 	}
 	return h, nil
 }

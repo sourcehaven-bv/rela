@@ -196,7 +196,7 @@ func newTriggerHarness(t *testing.T, yaml string) *triggerHarness {
 func (th *triggerHarness) engine(t *testing.T, kv KV) *Triggers {
 	t.Helper()
 	trg, err := NewTriggers(TriggerDeps{
-		Store: th.store, Config: th.cfg, Local: th.local, Meta: testMeta(t), Rows: th.src, Seen: kv,
+		Store: th.store, Config: th.cfg, Local: th.local, Meta: testMeta(t), Rows: th.src, Seen: kv, DueWake: th.wake,
 	})
 	require.NoError(t, err)
 	return trg
@@ -247,8 +247,9 @@ func TestNewTriggers_RejectsNil(t *testing.T) {
 	th := newTriggerHarness(t, triggerRealtime)
 	full := TriggerDeps{
 		Store: th.store, Config: th.cfg, Local: th.local, Meta: testMeta(t), Rows: th.src, Seen: th.kv,
+		DueWake: NewDueWake(),
 	}
-	for _, f := range []string{"Store", "Config", "Local", "Meta", "Rows", "Seen"} {
+	for _, f := range []string{"Store", "Config", "Local", "Meta", "Rows", "Seen", "DueWake"} {
 		t.Run(f, func(t *testing.T) {
 			d := full
 			switch f {
@@ -264,6 +265,8 @@ func TestNewTriggers_RejectsNil(t *testing.T) {
 				d.Rows = nil
 			case "Seen":
 				d.Seen = nil
+			case "DueWake":
+				d.DueWake = nil
 			}
 			_, err := NewTriggers(d)
 			require.ErrorContains(t, err, f)
@@ -585,7 +588,7 @@ func (s *failingAppend) Append(context.Context, channels.Key, channels.NewMessag
 func (th *triggerHarness) withStore(t *testing.T, st channels.Store) {
 	t.Helper()
 	trg, err := NewTriggers(TriggerDeps{
-		Store: st, Config: th.cfg, Local: th.local, Meta: testMeta(t), Rows: th.src, Seen: th.kv,
+		Store: st, Config: th.cfg, Local: th.local, Meta: testMeta(t), Rows: th.src, Seen: th.kv, DueWake: NewDueWake(),
 	})
 	require.NoError(t, err)
 	th.trg = trg
@@ -1147,4 +1150,26 @@ func TestSessionTriggerWhenClosed(t *testing.T) {
 	require.Len(t, msgs, 2, "the post lands; no notice follows")
 	require.Equal(t, "escalated", msgs[1].Type)
 	require.True(t, th.incidentSession(t).IsZero())
+}
+
+// TestSessionTriggerPost_SetsDue pins that a trigger post on a timer type
+// stores the session's due time and notes it on the DueWake.
+func TestSessionTriggerPost_SetsDue(t *testing.T) {
+	th := newTriggerHarness(t, timerRealtime+`
+triggers:
+  open:
+    entity_type: ticket
+    on: enter
+    when: "entity.status == 'breached'"
+    channel: breach-response
+    post: { type: text, props: { body: "Breach reported" } }
+`)
+	th.src.set("ticket", "TKT-1", "", map[string]any{"status": "new"})
+	th.reconcile(t)
+	th.ticket(1, map[string]any{"status": "breached"})
+	require.Equal(t, 1, th.round(t).Posted)
+	c, err := th.store.Store.Head(context.Background(), breachKey("TKT-1"))
+	require.NoError(t, err)
+	require.Equal(t, t0.Add(24*time.Hour), c.Session.NextDueAt)
+	require.Equal(t, t0.Add(24*time.Hour), th.wake.Take())
 }
