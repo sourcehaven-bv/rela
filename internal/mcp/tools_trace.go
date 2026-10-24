@@ -72,7 +72,7 @@ func (h traceHandler) handleTrace(
 		return textResult(emptyMsg), nil
 	}
 
-	text, err := convertTraceResult(result, h.meta)
+	text, err := convertTraceResult(ctx, result, h.meta)
 	if err != nil {
 		return errorResult(err.Error()), nil
 	}
@@ -116,7 +116,7 @@ func (h traceHandler) handleFindPath(
 	// A path is a handful of steps, so one gated read per step is cheap. It
 	// also keeps the title honest: a step read through h.store carries only
 	// the properties the caller may see.
-	text, err := convertPathSteps(path, func(step tracer.PathStep) string {
+	text, err := convertPathSteps(ctx, path, func(step tracer.PathStep) string {
 		e, getErr := st.Resolve(ctx, step.ID)
 		if getErr != nil {
 			return ""

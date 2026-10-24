@@ -7,5 +7,5 @@ bodies: GraphQuery=2/2
 versions: 
 body:
 event: message
-data: {"jsonrpc":"2.0","id":1,"result":{"content":[{"type":"text","text":"{\"total\":3,\"has_more\":false,\"entities\":[{\"id\":\"TKT-1\",\"type\":\"ticket\",\"title\":\"Alpha\",\"status\":\"open\"},{\"id\":\"TKT-2\",\"type\":\"ticket\",\"title\":\"Bravo\",\"status\":\"closed\"},{\"id\":\"TKT-3\",\"type\":\"ticket\",\"title\":\"Charlie\",\"status\":\"open\"}]}"}]}}
+data: {"jsonrpc":"2.0","id":1,"result":{"content":[{"type":"text","text":"{\"total\":3,\"has_more\":false,\"entities\":[{\"id\":\"TKT-1\",\"type\":\"ticket\",\"title\":\"Alpha\",\"status\":\"open\",\"url\":\"http://127.0.0.1:8080/entity/ticket/TKT-1\"},{\"id\":\"TKT-2\",\"type\":\"ticket\",\"title\":\"Bravo\",\"status\":\"closed\",\"url\":\"http://127.0.0.1:8080/entity/ticket/TKT-2\"},{\"id\":\"TKT-3\",\"type\":\"ticket\",\"title\":\"Charlie\",\"status\":\"open\",\"url\":\"http://127.0.0.1:8080/entity/ticket/TKT-3\"}]}"}]}}
 

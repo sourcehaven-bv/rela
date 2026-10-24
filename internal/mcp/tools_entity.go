@@ -81,7 +81,7 @@ func (s *Server) handleListEntities(
 	entities = applyPagination(entities, offset, limit)
 	summaries := make([]entitySummary, len(entities))
 	for i, e := range entities {
-		summaries[i] = convertStoreEntitySummary(d.Meta, e)
+		summaries[i] = convertStoreEntitySummary(ctx, d.Meta, e)
 	}
 	text, err := marshalJSON(struct {
 		Total    int             `json:"total"`
@@ -198,7 +198,7 @@ func addMentionedBy(ctx context.Context, st GraphReader, meta *metamodel.Metamod
 	}
 	for _, h := range page.Items {
 		src := &entity.Entity{ID: h.ID, Type: h.Type, Face: h.Face, Properties: h.Properties}
-		ej.MentionedBy = append(ej.MentionedBy, convertStoreEntitySummary(meta, src))
+		ej.MentionedBy = append(ej.MentionedBy, convertStoreEntitySummary(ctx, meta, src))
 	}
 	ej.MentionedByTruncated = page.Next != "" || page.Truncated
 	return nil
@@ -279,7 +279,7 @@ func hydrateHits(
 		if !ok {
 			continue
 		}
-		summaries = append(summaries, convertStoreEntitySummary(meta, e))
+		summaries = append(summaries, convertStoreEntitySummary(ctx, meta, e))
 	}
 	return summaries, nil
 }

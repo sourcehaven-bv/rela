@@ -7,5 +7,5 @@ bodies: GetEntity=0/1 GraphQuery=0/1 ListEntities=0/2 ListEntityHeaders=0/4
 versions: 
 body:
 event: message
-data: {"jsonrpc":"2.0","id":1,"result":{"content":[{"type":"text","text":"Updated TKT-3\n\n{\"id\":\"TKT-3\",\"type\":\"ticket\",\"properties\":{\"budget\":\"charlie-budget\",\"due\":\"2025-02-14\",\"note\":\"edited\",\"secret\":\"charlie-secret\",\"start\":\"2025-02-03\",\"status\":\"open\",\"title\":\"Charlie\"}}"}]}}
+data: {"jsonrpc":"2.0","id":1,"result":{"content":[{"type":"text","text":"Updated TKT-3\n\n{\"id\":\"TKT-3\",\"type\":\"ticket\",\"url\":\"http://127.0.0.1:8080/entity/ticket/TKT-3\",\"properties\":{\"budget\":\"charlie-budget\",\"due\":\"2025-02-14\",\"note\":\"edited\",\"secret\":\"charlie-secret\",\"start\":\"2025-02-03\",\"status\":\"open\",\"title\":\"Charlie\"}}"}]}}
 

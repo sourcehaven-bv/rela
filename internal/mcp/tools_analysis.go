@@ -124,7 +124,7 @@ func orphanSummaries(
 
 	out := make([]orphanSummary, 0, len(found))
 	for _, o := range found {
-		sum := orphanSummary{ID: o.ID, Type: o.Type, Faces: o.Faces}
+		sum := orphanSummary{ID: o.ID, Type: o.Type, URL: entityURL(ctx, o.Type, entity.Ref{ID: o.ID}), Faces: o.Faces}
 		// A faced family has no title until its world serves a face
 		// (TKT-7IZHP0); it is reported by id and faces.
 		if h, ok := served[entity.Ref{ID: o.ID}]; ok && h.Served() {
@@ -149,6 +149,7 @@ type orphanSummary struct {
 	Type   string        `json:"type"`
 	Title  string        `json:"title,omitempty"`
 	Status string        `json:"status,omitempty"`
+	URL    string        `json:"url,omitempty"`
 	Faces  []entity.Face `json:"faces,omitempty"`
 }
 

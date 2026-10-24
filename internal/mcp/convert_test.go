@@ -182,7 +182,7 @@ func TestConvertStoreEntitySummary(t *testing.T) {
 	meta := testMeta()
 	e := buildEntity(testutil.EntityFor(meta, "requirement").ID("REQ-001").With("title", "My Title").With("status", "accepted"))
 
-	result := convertStoreEntitySummary(meta, e)
+	result := convertStoreEntitySummary(t.Context(), meta, e)
 
 	want := entitySummary{ID: e.ID, Type: e.Type, Title: "My Title", Status: "accepted"}
 	if result != want {
@@ -195,7 +195,7 @@ func TestConvertStoreEntitySummary_NoTitleNoStatus(t *testing.T) {
 	meta := testMeta()
 	e := buildEntity(testutil.EntityFor(meta, "requirement").ID("REQ-002").Without("title").Without("status"))
 
-	text, err := marshalJSON(convertStoreEntitySummary(meta, e))
+	text, err := marshalJSON(convertStoreEntitySummary(t.Context(), meta, e))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -284,7 +284,7 @@ func TestConvertTraceResult(t *testing.T) {
 		},
 	}
 
-	result, err := convertTraceResult(tr, testMeta())
+	result, err := convertTraceResult(t.Context(), tr, testMeta())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -317,7 +317,7 @@ func TestConvertTraceResult(t *testing.T) {
 
 func TestConvertTraceResult_Nil(t *testing.T) {
 	t.Parallel()
-	node := convertTraceNode(nil, testMeta())
+	node := convertTraceNode(t.Context(), nil, testMeta())
 	if node != nil {
 		t.Error("expected nil result for nil input")
 	}
@@ -331,7 +331,7 @@ func TestConvertPathSteps(t *testing.T) {
 		{ID: "CMP-001", Type: "component", Title: "End", Relation: "implements"},
 	}
 
-	result, err := convertPathSteps(steps, func(s tracer.PathStep) string { return s.Title })
+	result, err := convertPathSteps(t.Context(), steps, func(s tracer.PathStep) string { return s.Title })
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -357,7 +357,7 @@ func TestConvertPathSteps(t *testing.T) {
 
 func TestConvertPathSteps_Empty(t *testing.T) {
 	t.Parallel()
-	result, err := convertPathSteps([]tracer.PathStep{}, func(tracer.PathStep) string { return "" })
+	result, err := convertPathSteps(t.Context(), []tracer.PathStep{}, func(tracer.PathStep) string { return "" })
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -630,7 +630,7 @@ func TestConvertTraceResult_DeepNesting(t *testing.T) {
 		},
 	}
 
-	result, err := convertTraceResult(tr, testMeta())
+	result, err := convertTraceResult(t.Context(), tr, testMeta())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
