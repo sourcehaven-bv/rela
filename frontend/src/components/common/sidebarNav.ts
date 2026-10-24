@@ -36,6 +36,7 @@ import { pileIcon } from '@/components/piles/pileIcon'
  */
 export function navId(item: SidebarItem): string {
   if (item.action) return `action:${item.action}`
+  if (item.pile) return pileNameNavId(item.pile)
   if (item.href) return `href:${item.href}`
   return 'item:unnamed'
 }
@@ -57,7 +58,7 @@ export function navId(item: SidebarItem): string {
  * relying on a `v-else-if` to imply it.
  */
 export function isNavigable(item: SidebarItem): boolean {
-  return Boolean(item.action) || Boolean(item.href)
+  return Boolean(item.action) || Boolean(item.pile) || Boolean(item.href)
 }
 
 /**
@@ -126,7 +127,10 @@ function toNavItem(
     // its own allowlist; rela's registry does the same. Either way the string
     // selects a glyph, never a component.
     icon: item.icon,
-    ...(item.action ? { as: 'button' as const } : { as: routerLink, attrs: { to: item.href } }),
+    ...(item.action || item.pile
+      ? { as: 'button' as const }
+      : { as: routerLink, attrs: { to: item.href } }),
+    ...(item.pile ? { opensFlyout: true } : {}),
     // Still a link to the list's page, so a modified click opens it in a new
     // tab; only the plain click is taken over.
     ...(item.flyout && onFlyoutClick
@@ -211,7 +215,10 @@ export function expandGeneratedItems(
  * whether nothing matched or the rows have not loaded: a heading over nothing
  * reads as a fault.
  */
-export function expandEntityEntries(groups: SidebarGroup[], lookup: NavEntitiesLookup): SidebarGroup[] {
+export function expandEntityEntries(
+  groups: SidebarGroup[],
+  lookup: NavEntitiesLookup
+): SidebarGroup[] {
   const out: SidebarGroup[] = []
   for (const group of groups) {
     if (!group.items.some((item) => item.entities)) {
@@ -261,6 +268,30 @@ export const PILES_GROUP_ID = 'group:piles'
 /** The id prefix of a pile's sidebar row; the rest is the pile id. */
 export const PILE_NAV_PREFIX = 'pile:'
 
+/** The id prefix of a `pile:` entry's row; the rest is the pile's name. */
+export const PILE_NAME_NAV_PREFIX = 'pile-name:'
+
+/**
+ * The row id of a `pile:` entry. Keyed on the name, since the pile may not
+ * exist yet and a name is all the config holds.
+ */
+export function pileNameNavId(name: string): string {
+  return `${PILE_NAME_NAV_PREFIX}${name}`
+}
+
+/** The pile a `pile:` entry names, if the user has it. Names ignore case. */
+export function pileNamed(piles: readonly PileSummary[], name: string): PileSummary | undefined {
+  const wanted = name.toLowerCase()
+  return piles.find((p) => p.name.toLowerCase() === wanted)
+}
+
+/** The count marker a pile row shows; none for an empty pile. */
+export function pileStatus(count: number): NavItemStatus | undefined {
+  return count > 0
+    ? { tone: 'info', label: `${count} item${count === 1 ? '' : 's'}`, count }
+    : undefined
+}
+
 /** The sidebar row id of a pile, shared by the sidebar and the flyout. */
 export function pileNavId(id: string): string {
   return `${PILE_NAV_PREFIX}${id}`
@@ -285,9 +316,7 @@ export function pilesNavGroup(piles: readonly PileSummary[]): NavGroup {
       icon: pileIcon(p.icon),
       as: 'button' as const,
       opensFlyout: true,
-      ...(p.count > 0
-        ? { status: { tone: 'info' as const, label: `${p.count} item${p.count === 1 ? '' : 's'}`, count: p.count } }
-        : {}),
+      ...(p.count > 0 ? { status: pileStatus(p.count) } : {}),
     })),
   }
 }

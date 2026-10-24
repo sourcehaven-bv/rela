@@ -250,8 +250,8 @@ function onCaretClick() {
   text-decoration: none;
 }
 
-.rl-nav-item:hover { background: var(--rl-color-bg-hover); }
-.rl-nav-item--active { background: var(--rl-color-bg-active); }
+.rl-nav-item:hover { background: var(--rl-color-sidebar-hover); }
+.rl-nav-item--active { background: var(--rl-color-sidebar-active); }
 
 /*
  * The row whose panel is open, so the panel beside it has a visible origin.

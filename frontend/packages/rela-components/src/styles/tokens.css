@@ -17,6 +17,14 @@
   --rl-color-bg-sunken: #fbfbfa;
   --rl-color-bg-hover: #f4f4f3;
   --rl-color-bg-active: #ececeb;
+  /*
+   * The sidebar, from the Atlas UI kit greys: grey/100 behind, grey/300 on
+   * hover and grey/400 for the current row. Text on all three stays above
+   * 12:1.
+   */
+  --rl-color-sidebar-bg: #f3f4f6;
+  --rl-color-sidebar-hover: #ecedf0;
+  --rl-color-sidebar-active: #e2e4e9;
   --rl-color-border: #e8e8e6;
   --rl-color-border-strong: #d8d8d5;
 

@@ -38,6 +38,9 @@
     --rl-color-bg-sunken: #000000;
     --rl-color-bg-hover: #1c1c20;
     --rl-color-bg-active: #26262c;
+    --rl-color-sidebar-bg: #000000;
+    --rl-color-sidebar-hover: #1c1c20;
+    --rl-color-sidebar-active: #26262c;
     /*
      * Barely lifted off the page, because near black a fill difference cannot
      * do this job and an edge can. At 0.65 over #0d0d0f the page behind a
@@ -177,6 +180,9 @@
   --rl-color-bg-sunken: #000000;
   --rl-color-bg-hover: #1c1c20;
   --rl-color-bg-active: #26262c;
+  --rl-color-sidebar-bg: #000000;
+  --rl-color-sidebar-hover: #1c1c20;
+  --rl-color-sidebar-active: #26262c;
   /*
    * Barely lifted off the page, because near black a fill difference cannot
    * do this job and an edge can. At 0.65 over #0d0d0f the page behind a
