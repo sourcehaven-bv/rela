@@ -25,8 +25,23 @@ type Step struct {
 	Repeat  int      `json:"repeat,omitempty"`
 	// Elided marks a loop whose iterations differed only in values; the
 	// renderers then show "…" in place of the values.
-	Elided   bool   `json:"elided,omitempty"`
+	Elided bool `json:"elided,omitempty"`
+	// Outcome marks a call that refused, in archplan's vocabulary (see
+	// outcome and refusedStatus). It holds the kind of the result, never its
+	// value, so it is set even when values are off.
+	Outcome string `json:"outcome,omitempty"`
+	// Route and Span are set on the HTTP hop of a stitched browser request
+	// (see the browser package): the route shape the SPA called and the span
+	// id that joined the two traces. Comparisons ignore both.
+	Route    *Route `json:"route,omitempty"`
+	Span     string `json:"span,omitempty"`
 	Children []Step `json:"children,omitempty"`
+}
+
+// Route is an HTTP method and path shape, such as GET /api/v1/tasks/{id}.
+type Route struct {
+	Method string `json:"method"`
+	Path   string `json:"path"`
 }
 
 // IsLoop reports whether s is a loop rather than a call.
@@ -41,6 +56,9 @@ func Build(root *Call, opt Options) *Diagram {
 		fn = opt.RootLabel
 	}
 	top := b.step("Caller", rootPart, fn, root)
+	if code := refusedStatus(root); code != "" {
+		top.Outcome = "status:" + code
+	}
 	top.Children = b.children(root, rootPart, 1)
 	return &Diagram{Participants: b.partOrder, Root: top}
 }
@@ -105,7 +123,7 @@ func (b *builder) part(pkg string) string {
 // step makes the call step for c. A trailing nil result after other
 // results is dropped: it is almost always the error.
 func (b *builder) step(from, to, fn string, c *Call) Step {
-	s := Step{From: from, To: to, Fn: fn, Via: c.Via}
+	s := Step{From: from, To: to, Fn: fn, Via: c.Via, Outcome: outcome(c.Results)}
 	if !b.opt.Values {
 		return s
 	}
@@ -116,6 +134,46 @@ func (b *builder) step(from, to, fn string, c *Call) Step {
 	}
 	s.Results = rv
 	return s
+}
+
+// outcome returns "error" when the last result is a non-nil error and
+// "false" when the only result is false, with or without a nil error after
+// it: the two ways a guard or a sink in rela refuses. Any other return has
+// no outcome.
+func outcome(results []string) string {
+	switch {
+	case len(results) == 0:
+		return ""
+	case strings.HasPrefix(results[len(results)-1], "err: "):
+		return "error"
+	case results[0] == "false" && (len(results) == 1 || len(results) == 2 && results[1] == "nil"):
+		return "false"
+	}
+	return ""
+}
+
+// refusedStatus returns the first status code written for the request
+// under root when it is a 4xx, else "". The data-entry middleware wraps the
+// response writer, so its WriteHeader is a traced call with a code argument.
+func refusedStatus(root *Call) string {
+	var code string
+	var walk func(c *Call) bool
+	walk = func(c *Call) bool {
+		if strings.HasSuffix(c.Fn, ".WriteHeader") {
+			for _, a := range c.Args {
+				if v, ok := strings.CutPrefix(a, "code="); ok {
+					code = v
+					return true
+				}
+			}
+		}
+		return slices.ContainsFunc(c.Children, walk)
+	}
+	walk(root)
+	if len(code) == 3 && code[0] == '4' {
+		return code
+	}
+	return ""
 }
 
 // children builds the steps under c as seen from participant from. Each
@@ -198,7 +256,8 @@ func equalSteps(a, b []Step) bool {
 	for i := range a {
 		x, y := &a[i], &b[i]
 		if x.From != y.From || x.To != y.To || x.Fn != y.Fn || x.Via != y.Via || x.Repeat != y.Repeat ||
-			x.Elided != y.Elided || !slices.Equal(x.Args, y.Args) || !slices.Equal(x.Results, y.Results) ||
+			x.Elided != y.Elided || x.Outcome != y.Outcome ||
+			!slices.Equal(x.Args, y.Args) || !slices.Equal(x.Results, y.Results) ||
 			!equalSteps(x.Children, y.Children) {
 
 			return false
@@ -214,7 +273,7 @@ func (b *builder) call(c *Call, from string, depth int) []Step {
 	if b.opt.Collapse == nil || !b.opt.Collapse.MatchString(c.Pkg) {
 		to = b.part(c.Pkg)
 	}
-	if to == from && c.Via == "" {
+	if to == from && c.Via == "" && (b.opt.Keep == nil || !b.opt.Keep.MatchString(c.Fn)) {
 		return b.children(c, from, depth)
 	}
 	if b.opt.MaxDepth > 0 && depth >= b.opt.MaxDepth {
@@ -223,6 +282,11 @@ func (b *builder) call(c *Call, from string, depth int) []Step {
 	s := b.step(from, to, c.Fn, c)
 	s.Children = b.children(c, to, depth+1)
 	return []Step{s}
+}
+
+// SameShape reports whether a and b draw the same calls, ignoring values.
+func SameShape(a, b *Diagram) bool {
+	return sameShape([]Step{a.Root}, []Step{b.Root})
 }
 
 // sameShape compares step lists ignoring values, though not whether a
@@ -234,6 +298,7 @@ func sameShape(a, b []Step) bool {
 	for i := range a {
 		x, y := &a[i], &b[i]
 		if x.From != y.From || x.To != y.To || x.Fn != y.Fn || x.Via != y.Via || x.Repeat != y.Repeat ||
+			x.Outcome != y.Outcome ||
 			(len(x.Args) > 0) != (len(y.Args) > 0) || (len(x.Results) > 0) != (len(y.Results) > 0) ||
 			!sameShape(x.Children, y.Children) {
 

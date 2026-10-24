@@ -81,6 +81,8 @@ type TransitionHelp struct {
 //
 // What would change the answer: if /api/v1/_schema were ever read-gated, this
 // argument loses its second leg and should be re-decided rather than inherited.
+//
+//archplan:auth=required reason="schema help text"
 func (a *App) handleEntityHelp(w http.ResponseWriter, r *http.Request) {
 	entityType := strings.TrimPrefix(r.URL.Path, "/api/help/")
 	if entityType == "" {

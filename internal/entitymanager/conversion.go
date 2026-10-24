@@ -206,6 +206,8 @@ func (c *Converter) Preview(ctx context.Context, req ConversionRequest) (*Conver
 
 // Convert applies the named conversion. See [Converter] for its atomicity
 // and read-access rules.
+//
+//archplan:guard=authz reason="authorizes the source read and the target create"
 func (c *Converter) Convert(ctx context.Context, req ConversionRequest) (*ConversionResult, error) {
 	m := c.m
 	ctx = withStoreAttribution(ctx)

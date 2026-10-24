@@ -29,6 +29,8 @@ var listExportCap = 5000
 // visibility gate the on-screen list applies — so a hidden neighbor never leaks
 // into the export (RR-T3PDHN). The set is capped at [listExportCap]; past the
 // cap the table is truncated with a visible notice.
+//
+//archplan:auth=required
 func (h *exportHandler) handleV1ExportList(w http.ResponseWriter, r *http.Request, typeName string) {
 	if r.Method != http.MethodGet {
 		writeV1Error(w, r, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed", "")

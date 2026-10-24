@@ -95,6 +95,7 @@ type conversionRequest struct {
 	Faces         map[string]string `json:"faces,omitempty"`
 }
 
+//archplan:auth=authz
 func (h *conversionHandler) handleV1Conversions(w http.ResponseWriter, r *http.Request) {
 	snapshot := h.schema()
 	if r.Method != http.MethodPost {

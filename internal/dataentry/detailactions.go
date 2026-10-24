@@ -83,6 +83,8 @@ func (f fixedRedactor) HiddenProperties(context.Context, *entityPkg.Entity) map[
 //
 // Fails closed: a `when` with no compiler wired, one that does not compile or
 // errors on evaluation, or one that reads a hidden property, does not hold.
+//
+//archplan:guard=authz reason="detail action gate: permission and when: on the redacted entity"
 func (c *detailActionCheck) Allows(ctx context.Context, id string, action dataentryconfig.Action) bool {
 	scope := action.AvailableOn
 	if scope == nil {
@@ -178,6 +180,8 @@ func (c *detailActionCheck) matcher(id string) ViewConditionMatcher {
 // An intent gate, answered by the request read gate like a document's
 // permission: under NopACL and ReadOnlyACL that gate holds every permission.
 // The script's writes stay bounded by the caller's own ACL either way.
+//
+//archplan:guard=authz reason="checks the action's config-declared permission"
 func holdsActionPermission(ctx context.Context, action dataentryconfig.Action) bool {
 	if action.Permission == "" {
 		return true

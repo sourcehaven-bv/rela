@@ -103,6 +103,7 @@ func (a *App) handleV1NextAction(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+//archplan:auth=required reason="ACL-scoped list"
 func (a *App) handleV1NextActionGet(w http.ResponseWriter, r *http.Request) {
 	// The request's world is the DISPLAY world: it decides which sources may
 	// surface here (visible_worlds), never which world a source queries. See
@@ -185,6 +186,7 @@ func pickOptionsWire(in map[int][]nextaction.PickOption) map[string][]pickOption
 	return out
 }
 
+//archplan:auth=authz
 func (a *App) handleV1NextActionPost(w http.ResponseWriter, r *http.Request) {
 	state := a.userState
 	if state == nil {

@@ -98,6 +98,8 @@ func appBaseURL(r *http.Request, id string) (string, bool) {
 // keeps it confined to its own files + the bridge. The app inherits the
 // logged-in user's permissions — it talks to the API only through the host
 // MessageChannel bridge, so it can do nothing the user couldn't already do.
+//
+//archplan:auth=required reason="serves app files; the app's API calls run as the user"
 func (a *App) handleV1App(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		w.Header().Set("Allow", "GET")

@@ -44,6 +44,8 @@ func (e *AmbiguousAddressError) Error() string {
 //
 // ok=false is the uniform miss: no such entity, the wrong type, no readable
 // face, or a denied world.
+//
+//archplan:guard=authz reason="row-gates the one face a bare-id write may target"
 func (r *Resolver) WriteTarget(
 	ctx context.Context, w World, entityType string, addr entity.Address,
 ) (ref entity.Ref, ok bool, err error) {
@@ -104,6 +106,8 @@ func pickWriteFace(addr entity.Address, fam Family) (entity.Ref, bool, error) {
 // The row is gated and redacted like every resolver read. It is the
 // caller's view of the target, never a write-prep base: the write itself
 // goes through entitymanager, which reads the raw stored row.
+//
+//archplan:guard=authz reason="row-gates and loads the face a write edits"
 func (r *Resolver) WriteRow(
 	ctx context.Context, w World, entityType string, addr entity.Address,
 ) (Resolved, bool, error) {

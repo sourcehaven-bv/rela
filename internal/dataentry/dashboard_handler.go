@@ -26,6 +26,8 @@ import (
 // Filtering is a UX affordance and enforces nothing — see permitsGatedUIElement.
 // A hidden card's query is still runnable through `/api/v1/_search`, where it
 // returns exactly the ACL-scoped rows it always did.
+//
+//archplan:auth=required
 func (h *viewsHandler) handleV1Dashboard(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		writeV1Error(w, r, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed", "")

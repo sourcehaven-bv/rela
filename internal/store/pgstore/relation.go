@@ -125,6 +125,8 @@ func (s *Store) CountRelations(ctx context.Context, q store.RelationQuery) (int,
 
 // CreateRelation inserts a new relation at k. Returns store.ErrConflict if
 // the key, tail included, already exists.
+//
+//archplan:sink=write
 func (s *Store) CreateRelation(
 	ctx context.Context, k entity.RelationKey, data *store.RelationData,
 ) (*entity.Relation, error) {
@@ -181,6 +183,8 @@ func (s *Store) CreateRelation(
 // UpdateRelation overwrites the data of the edge at k, tail included
 // (BUG-64MU2Q). Returns store.ErrNotFound if it does not exist. Nil
 // data.Properties clears the property set.
+//
+//archplan:sink=write
 func (s *Store) UpdateRelation(
 	ctx context.Context, k entity.RelationKey, data store.RelationData,
 ) (*entity.Relation, error) {
@@ -224,6 +228,8 @@ func (s *Store) UpdateRelation(
 
 // DeleteRelation removes the edge at k, tail included (TKT-C1XUA8).
 // Returns store.ErrNotFound if absent.
+//
+//archplan:sink=write
 func (s *Store) DeleteRelation(ctx context.Context, k entity.RelationKey) error {
 	tx, err := s.db.Begin(ctx)
 	if err != nil {

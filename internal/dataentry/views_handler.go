@@ -110,6 +110,8 @@ func (h *viewsHandler) sidePanelEntry(
 }
 
 // handleV1SidePanel handles GET /api/v1/_sidepanel/{formId}/{entityId}.
+//
+//archplan:auth=required
 func (h *viewsHandler) handleV1SidePanel(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		writeV1Error(w, r, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed", "")
@@ -229,6 +231,8 @@ func (h *viewsHandler) handleV1SidePanel(w http.ResponseWriter, r *http.Request)
 // With `spaces:` configured, `?space=<id>` picks the space whose navigation
 // and Create menu are served (resolveSpace). Without it the response is the
 // top-level navigation and carries no space fields.
+//
+//archplan:auth=required
 func (h *viewsHandler) handleV1Sidebar(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		writeV1Error(w, r, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed", "")
@@ -799,6 +803,8 @@ func navEntryToSidebarItem(entry dataentryconfig.NavigationEntry, meta *metamode
 // is registered for entityType, a default is synthesized from the
 // metamodel (see buildDefaultViewConfig) and executed through the same
 // pipeline so the response shape is identical.
+//
+//archplan:auth=required
 func (h *viewsHandler) handleV1Views(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		writeV1Error(w, r, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed", "")

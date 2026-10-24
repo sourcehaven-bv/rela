@@ -32,6 +32,8 @@ type APIThemeImportResponse struct {
 // handleAPIThemeExport returns the user's current palette + logo
 // bundled as a `.relatheme` zip download. Always emits a manifest;
 // includes the logo file when one is set.
+//
+//archplan:auth=required
 func (h *appearanceHandler) handleAPIThemeExport(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		writeJSONError(w, http.StatusMethodNotAllowed, "method not allowed")
@@ -59,6 +61,8 @@ func (h *appearanceHandler) handleAPIThemeExport(w http.ResponseWriter, r *http.
 // auto-saved; matches the existing palette UX where colors persist
 // only on explicit Save. Because the import saves the logo, it needs the
 // settings:edit permission (see [appearanceHandler.refuseSettingsEdit]).
+//
+//archplan:auth=authz
 func (h *appearanceHandler) handleAPIThemeImport(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		writeJSONError(w, http.StatusMethodNotAllowed, "method not allowed")

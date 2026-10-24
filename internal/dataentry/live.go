@@ -247,6 +247,8 @@ type liveSubscriptionRequest struct {
 }
 
 // handlePut replaces a stream's subscription set.
+//
+//archplan:auth=required reason="events are gated per subscriber"
 func (h *liveHub) handlePut(w http.ResponseWriter, r *http.Request) {
 	rest, _ := strings.CutPrefix(r.URL.Path, "/api/v1/_events/")
 	connID, tail, _ := strings.Cut(rest, "/")

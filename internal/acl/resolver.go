@@ -240,6 +240,8 @@ func (r *Request) ancestors(ctx context.Context, entityID string) []string {
 // the write-side delegate-X gate — e.g. the data-entry history read path
 // gating deleted-entity history on [PermHistoryRead]. Permissions are
 // global-only by design (see [holdsPermission]).
+//
+//archplan:guard=authz reason="checks a config-declared permission"
 func (r *Request) HoldsPermission(_ context.Context, perm string) bool {
 	return r.holdsPermission(perm)
 }
@@ -256,6 +258,8 @@ func (r *Request) HoldsPermission(_ context.Context, perm string) bool {
 // the guard permission is a coarse capability noun (e.g. "establish"), and the
 // per-subject scope comes from whether a role-relation confers the granting
 // role for this entity — resolved here, not baked into the permission.
+//
+//archplan:guard=authz reason="checks a config-declared permission"
 func (r *Request) HoldsPermissionForEntity(ctx context.Context, entityID, perm string) bool {
 	return r.grantsPermission(r.computeForEntity(ctx, entityID), perm)
 }

@@ -430,7 +430,7 @@ func (h *writeHandler) writeCreateRelations(
 	return warnings, true
 }
 
-//archplan:auth=required
+//archplan:auth=authz
 func (h *writeHandler) handleV1CreateEntity(w http.ResponseWriter, r *http.Request, typeName, plural string) {
 	r = h.withProvision(r)
 
@@ -591,6 +591,8 @@ func (h *writeHandler) handleV1CreateEntity(w http.ResponseWriter, r *http.Reque
 // Scope: fields + options + relations + soft warnings. Relation edges
 // are not staged (a candidate has no real ID); relation affordances
 // reflect the per-type verdict only.
+//
+//archplan:auth=authz
 func (h *writeHandler) handleV1DryRunCreate(w http.ResponseWriter, r *http.Request, typeName, plural string) {
 	s := h.schema()
 
@@ -896,7 +898,7 @@ func writeFieldConflict(
 }
 
 //nolint:gocognit,funlen // update handler threads the validation-policy classes (400/422/200-with-warnings) through each field; the branches are the documented write-policy cases, not extractable shared logic.
-//archplan:auth=required
+//archplan:auth=authz
 func (h *writeHandler) handleV1UpdateEntity(w http.ResponseWriter, r *http.Request, typeName, plural, entityID string) {
 	r = h.withProvision(r)
 
@@ -1155,7 +1157,7 @@ func (h *writeHandler) handleV1UpdateEntity(w http.ResponseWriter, r *http.Reque
 	writeV1JSON(w, http.StatusOK, result)
 }
 
-//archplan:auth=required
+//archplan:auth=authz
 func (h *writeHandler) handleV1DeleteEntity(w http.ResponseWriter, r *http.Request, typeName, _, entityID string) {
 	r = h.withProvision(r)
 
@@ -1385,6 +1387,7 @@ func (h *writeHandler) writeRelationsApplyError(w http.ResponseWriter, r *http.R
 		detail+internalErrorDetail, err)
 }
 
+//archplan:auth=authz
 func (h *writeHandler) handleV1CreateRelation(
 	w http.ResponseWriter, r *http.Request, typeName, addr, relType string,
 ) {
@@ -1499,6 +1502,7 @@ func writeCardinalityIfExceeded(w http.ResponseWriter, r *http.Request, err erro
 	return true
 }
 
+//archplan:auth=authz
 func (h *writeHandler) handleV1UpdateRelation(
 	w http.ResponseWriter, r *http.Request, typeName, addr, relType, targetID string,
 ) {
@@ -1603,6 +1607,7 @@ func (h *writeHandler) handleV1UpdateRelation(
 	writeV1JSON(w, http.StatusOK, result)
 }
 
+//archplan:auth=authz
 func (h *writeHandler) handleV1DeleteRelation(
 	w http.ResponseWriter, r *http.Request, typeName, addr, relType, targetID string,
 ) {
@@ -1659,6 +1664,7 @@ func (h *writeHandler) handleV1DeleteRelation(
 	w.WriteHeader(http.StatusNoContent)
 }
 
+//archplan:auth=authz
 func (h *writeHandler) handleV1CloneEntity(
 	w http.ResponseWriter, r *http.Request, typeName, addr string,
 ) {
@@ -1719,6 +1725,8 @@ func (h *writeHandler) handleV1CloneEntity(
 }
 
 // handleV1ConflictResolve applies a conflict resolution.
+//
+//archplan:auth=authz
 func (h *writeHandler) handleV1ConflictResolve(w http.ResponseWriter, r *http.Request) {
 	var req v1.ConflictResolveRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -1814,6 +1822,8 @@ func (h *writeHandler) handleV1ConflictResolve(w http.ResponseWriter, r *http.Re
 // fallback the manager uses). A deny records a `denied-write` audit
 // row and writes the standard 403 body; returns true when the write
 // may proceed.
+//
+//archplan:guard=authz reason="conflict resolution bypasses entitymanager, so it re-authorizes the write here"
 func (h *writeHandler) authorizeConflictResolve(
 	ctx context.Context, w http.ResponseWriter, e *entityPkg.Entity, rel *entityPkg.Relation,
 ) bool {
