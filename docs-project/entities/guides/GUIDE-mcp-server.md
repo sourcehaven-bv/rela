@@ -403,6 +403,36 @@ message and a correlation id that matches the server log.
 The action set follows `data-entry.yaml` reloads; the tools exist even when no
 action is defined.
 
+### Conversion Tools
+
+These tools run the conversions declared under `conversions:` in `schema.yaml`
+(see [data-entry.md](data-entry.md#converting-an-entity)). Both servers offer
+them.
+
+| Tool | Description | Parameters |
+|------|-------------|------------|
+| `list_conversions` | List the conversions offered on an entity | `id` |
+| `convert_entity` | Convert an entity to another type | `id`, `conversion`, `properties?`, `content?`, `target_id?`, `faces?`, `dry_run?`, `confirm?` |
+
+`list_conversions` gives each conversion's name, label and target type, whether
+you may run it (and the reason if not), the fields the mapping fills, and the
+target faces each source face may become.
+
+`convert_entity` runs the same checks as `POST /api/v1/_conversions/{name}`:
+the `convert:` grant, read access to the whole entity and the field grants.
+`properties` gives values for required target fields the mapping does not
+fill. `faces` maps a source face to a target face where there is more than one
+choice. Pass `ID@face` as `id` to apply `properties` and `content` to that
+face's row.
+
+With `dry_run: true` the tool returns the preview: `required`,
+`required_faces`, `relations_to_drop`, `invalid_relations` and `face_moves`.
+Without it, a conversion that still needs values or face choices returns the
+same preview as an error, with `blocked: true`. A conversion that drops
+relations runs only with `confirm: true`; without it the tool returns the
+preview with `needs_confirm: true`, so you can ask the user first. The result
+is `{definition, old_id, id, face, relations_dropped}`.
+
 ### Lease Tools
 
 A lease is an advisory claim on an entity: "this user or agent is working on

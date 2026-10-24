@@ -730,6 +730,9 @@ deps:
   mcp:
     mayDependOn:
       - rootfs
+      # affordances: convert_entity names a field-gate refusal
+      # (FieldWriteError) the way the conversion endpoint does.
+      - affordances
       # acl + attachment: the attachment tools (TKT-R6U15C) authorize an
       # `update` before any bytes are stored, and drive attachment.Service,
       # the write policy the CLI and web upload paths share.
@@ -1281,6 +1284,9 @@ deps:
     mayDependOn:
       - appbuild
       - dataentry
+      # entitymanager: builds the Converter the remote MCP conversion
+      # tools run over the field-gated manager.
+      - entitymanager
       # The remote MCP server mounted on the data-entry router.
       - mcp
       - mcpwire

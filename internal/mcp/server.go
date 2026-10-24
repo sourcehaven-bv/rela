@@ -83,11 +83,8 @@ type Deps struct {
 	Attachments AttachmentDeps
 	// Comments backs the comment tools (TKT-QIQO1W); see [CommentDeps].
 	Comments CommentDeps
-	// Actions backs list_actions and run_action (TKT-NW9QSN).
-	//
-	// Nil: accepted. The tools are then not registered, as under stdio
-	// `rela mcp`, which has no signed-in caller to run an action as.
-	Actions ActionRunner
+	// Commands backs the action and conversion tools; see [CommandDeps].
+	Commands CommandDeps
 	// World is the world the list and count surfaces (list_entities, the
 	// schema resource's counts, the overview prompt, search) read in when a
 	// call names none. It is required; wiring passes
@@ -138,6 +135,20 @@ type Deps struct {
 	// Channels backs the channel tools and the read_channel wake of watch;
 	// see [ChannelDeps].
 	Channels ChannelDeps
+}
+
+// CommandDeps groups the tools that run a schema-declared command on an
+// entity: data-entry actions and type conversions.
+type CommandDeps struct {
+	// Actions backs list_actions and run_action (TKT-NW9QSN).
+	//
+	// Nil: accepted. The tools are then not registered, as under stdio
+	// `rela mcp`, which has no signed-in caller to run an action as.
+	Actions ActionRunner
+	// Conversions backs list_conversions and convert_entity.
+	//
+	// Nil: accepted. The tools are then not registered.
+	Conversions Converter
 }
 
 // LuaDeps backs the lua_* tools, which exist only when the server is built
@@ -508,6 +519,7 @@ type handlerSet struct {
 	attach    attachmentHandler
 	comments  commentHandler
 	actions   actionHandler
+	convs     conversionHandler
 	leases    leaseHandler
 	channels  channelHandler
 }
@@ -525,7 +537,8 @@ func (d Deps) handlers() handlerSet {
 		prompts:   promptHandler{store: d.Store, meta: d.Meta, tracer: d.Tracer, types: types, world: d.World},
 		attach:    attachmentHandler{store: d.Store, deps: d.Attachments},
 		comments:  commentHandler{reader: d.Comments.Reader, writer: d.Comments.Writer},
-		actions:   actionHandler{runner: d.Actions},
+		actions:   actionHandler{runner: d.Commands.Actions},
+		convs:     conversionHandler{conv: d.Commands.Conversions, store: d.Store, watcher: d.Watcher},
 		leases:    leaseHandler{svc: d.Leases},
 		channels: channelHandler{
 			reader: d.Channels.Reader, writer: d.Channels.Writer, creator: d.Channels.Creator,

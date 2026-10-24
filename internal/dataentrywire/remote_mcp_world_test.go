@@ -380,7 +380,7 @@ func TestRemoteMCPDeps_PassesTheHostActions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if deps.Actions != nil {
+	if deps.Commands.Actions != nil {
 		t.Error("a host without action operations must leave Actions nil, or the tools register over nothing")
 	}
 
@@ -389,7 +389,7 @@ func TestRemoteMCPDeps_PassesTheHostActions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if deps.Actions == nil {
+	if deps.Commands.Actions == nil {
 		t.Error("the remote server must get the action tools")
 	}
 }
