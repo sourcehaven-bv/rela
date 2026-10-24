@@ -1014,6 +1014,11 @@ type SidebarItem struct {
 	// filter.
 	Entities *SidebarEntities `json:"entities,omitempty"`
 
+	// Pile is set on a `pile:` entry: the name of the principal's pile the
+	// row opens. Href stays empty. The SPA matches the name against the
+	// principal's piles, so this payload carries no per-principal data.
+	Pile string `json:"pile,omitempty"`
+
 	// Flyout is set when the entry opens its view in a panel that slides out
 	// of the sidebar instead of navigating. Href still names the full page,
 	// for a modified click and for the panel's expand control.

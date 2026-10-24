@@ -67,6 +67,7 @@ func navEntryDestinations(nav NavigationEntry) []string {
 		{"action", nav.Action != ""},
 		{"document", nav.Document != ""},
 		{"page", nav.Page != ""},
+		{"pile", nav.Pile != ""},
 		{"group", nav.IsGroup()},
 	} {
 		if k.set {

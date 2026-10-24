@@ -25,8 +25,11 @@ import {
   activeNavId,
   expandEntityEntries,
   expandGeneratedItems,
+  PILE_NAME_NAV_PREFIX,
   PILE_NAV_PREFIX,
   PILES_GROUP_ID,
+  pileNamed,
+  pileStatus,
   pilesNavGroup,
   toNavGroups,
 } from './sidebarNav'
@@ -38,6 +41,7 @@ import { useNavEntities } from '@/composables/useNavEntities'
 import { useFlyout } from '@/composables/useFlyout'
 import { shouldDeferToBrowser } from '@/utils/openIntent'
 import { apiUrl } from '@/api/base'
+import { createPile } from '@/api/piles'
 
 const schemaStore = useSchemaStore()
 const uiStore = useUIStore()
@@ -122,7 +126,10 @@ function inSpace(groups: SidebarGroup[]): SidebarGroup[] {
 
 const shownGroups = computed(() =>
   inSpace([
-    ...expandGeneratedItems(expandEntityEntries(sidebarGroups.value, navEntities.rowsFor), navItems.itemsFor),
+    ...expandGeneratedItems(
+      expandEntityEntries(sidebarGroups.value, navEntities.rowsFor),
+      navItems.itemsFor
+    ),
     ...appGroups.value,
   ])
 )
@@ -136,9 +143,40 @@ const configNavGroups = computed(() =>
 const piles = usePiles()
 const creatingPile = ref(false)
 
-const navGroups = computed(() =>
-  piles.available.value ? [pilesNavGroup(piles.piles.value), ...configNavGroups.value] : configNavGroups.value
+/*
+ * A `pile:` entry shows its pile's count like the Piles group does, and that
+ * pile leaves the group, so it is not listed twice.
+ */
+const pinnedPileNames = computed(
+  () => new Set(allItems.value.flatMap((item) => (item.pile ? [item.pile.toLowerCase()] : [])))
 )
+
+const configNavGroupsWithPiles = computed(() =>
+  configNavGroups.value.map((group) => ({
+    ...group,
+    items: group.items.map((item) => {
+      if (!item.id.startsWith(PILE_NAME_NAV_PREFIX)) return item
+      const pile = pileNamed(piles.piles.value, item.id.slice(PILE_NAME_NAV_PREFIX.length))
+      const status = pile ? pileStatus(pile.count) : undefined
+      return status ? { ...item, status } : item
+    }),
+  }))
+)
+
+/*
+ * The Piles group goes first among the labelled groups. Unlabelled entries at
+ * the top of the config, such as My tasks, stay above it: they read as the
+ * space's own pinned rows.
+ */
+const navGroups = computed(() => {
+  const groups = configNavGroupsWithPiles.value
+  if (!piles.available.value) return groups
+  const pilesGroup = pilesNavGroup(
+    piles.piles.value.filter((p) => !pinnedPileNames.value.has(p.name.toLowerCase()))
+  )
+  const lead = groups[0] && !groups[0].label ? 1 : 0
+  return [...groups.slice(0, lead), pilesGroup, ...groups.slice(lead)]
+})
 
 /*
  * The "+" on a generated group's heading: the create dialog for the group's
@@ -309,6 +347,10 @@ onUnmounted(() => {
  * is matched back by the id the mapping minted.
  */
 function onSelect(navItem: NavItem) {
+  if (navItem.id.startsWith(PILE_NAME_NAV_PREFIX)) {
+    void openNamedPile(navItem)
+    return
+  }
   if (navItem.id.startsWith(PILE_NAV_PREFIX)) {
     const pileId = navItem.id.slice(PILE_NAV_PREFIX.length)
     flyout.togglePile({ navId: navItem.id, title: navItem.label, pileId })
@@ -318,6 +360,27 @@ function onSelect(navItem: NavItem) {
   if (!action) return
   const item = allItems.value.find((candidate) => candidate.action === action)
   if (item) handleAction(item)
+}
+
+/*
+ * Opens the pile a `pile:` entry names, making it first if the user has none
+ * by that name yet. A failed create leaves the panel shut; the next click
+ * tries again.
+ */
+async function openNamedPile(navItem: NavItem) {
+  const name = navItem.id.slice(PILE_NAME_NAV_PREFIX.length)
+  let pileId = pileNamed(piles.piles.value, name)?.id
+  if (!pileId) {
+    try {
+      pileId = (await createPile({ name })).id
+    } catch (err) {
+      reportError(err, null)
+      return
+    } finally {
+      await piles.refresh()
+    }
+  }
+  flyout.togglePile({ navId: navItem.id, title: navItem.label, pileId })
 }
 
 const allItems = computed<SidebarItem[]>(() =>

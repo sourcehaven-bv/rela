@@ -3937,11 +3937,31 @@ navigation:
 | `search`    | bool   | Link to the search page                                        |
 | `settings`  | bool   | Link to the settings page                                      |
 | `action`    | string | Action ID to trigger when clicked (renders as a sidebar button)|
+| `pile`      | string | Name of the user's own pile to open in the flyout (see [A pile in the sidebar](#a-pile-in-the-sidebar)) |
 | `entities`  | string | Entity type whose entities are listed as links; only inside a group (see [Entity lists in a group](#entity-lists-in-a-group)) |
 | `icon`      | string | Icon name; overrides the icon derived from the entry type (see below) |
 | `permission`| string | Hide this entry from users who lack the named ACL permission (see below) |
 | `open`      | string | `page` (default) navigates; `flyout` slides the list out of the sidebar (see below) |
 | `status`    | list   | Up to three rules that mark the entry with a count (see below) |
+
+#### A pile in the sidebar
+
+`pile:` puts one of the user's own [piles](#piles) in the navigation, for
+example a Notifications pile that automations fill:
+
+```yaml
+navigation:
+  - label: 'Notifications'
+    icon: bell
+    pile: Notifications
+```
+
+- The row opens the pile in the flyout and shows its item count.
+- Each user gets their own pile of that name. It is created the first time the
+  user opens the row, if no automation has made it already. Names ignore case.
+- The pile is no longer listed in the Piles group, so it does not appear twice.
+- Without `label`, the row shows the pile name. Without `icon`, it shows the
+  `layers` glyph.
 
 #### Opening a list as a flyout
 

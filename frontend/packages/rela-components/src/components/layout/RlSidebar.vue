@@ -295,7 +295,7 @@ watch(() => props.activeId, () => nextTick(revealActive))
   flex: none;
   height: 100%;
   border-right: 1px solid var(--rl-color-border);
-  background: var(--rl-color-bg-sunken);
+  background: var(--rl-color-sidebar-bg);
 }
 
 .rl-sidebar__header {
@@ -306,6 +306,9 @@ watch(() => props.activeId, () => nextTick(revealActive))
 }
 
 .rl-sidebar__filter { padding: 0 var(--rl-space-3) var(--rl-space-2); }
+
+/* Right edge of the header, however much the switcher slot fills. */
+.rl-sidebar__collapse { margin-left: auto; }
 
 .rl-sidebar__nav {
   flex: 1;
@@ -373,7 +376,18 @@ watch(() => props.activeId, () => nextTick(revealActive))
   .rl-sidebar__header,
   .rl-sidebar__footer { padding-inline: var(--rl-space-2); }
 
-  .rl-sidebar__header { justify-content: center; }
+  /*
+   * The logo and the collapse control stack, since side by side they are
+   * wider than the rail. The filter goes: a search box cannot fit, and the
+   * labels it would match are hidden anyway.
+   */
+  .rl-sidebar__header {
+    flex-direction: column;
+    justify-content: center;
+  }
+
+  .rl-sidebar__collapse { margin-left: 0; }
+  .rl-sidebar__filter { display: none; }
 }
 
 /*
