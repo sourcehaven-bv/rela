@@ -120,6 +120,7 @@ func newGatedAuthorizer(d *acl.Declarative) (gatedAuthorizer, error) {
 	return gatedAuthorizer{d: d}, nil
 }
 
+//archplan:guard=authz reason="checks the command's config-declared permission; fails closed"
 func (gatedAuthorizer) Authorize(ctx context.Context, cmd CommandConfig) bool {
 	// View commands have no fine-grained control yet: `permission:` is not
 	// honored for them, so a granted permission must NOT open the gate.
@@ -667,7 +668,7 @@ func (h *commandHandler) buildCommandInput(
 // browser tab, bypassing same-origin policy entirely.
 //
 //nolint:funlen // dispatches over every command context and argument shape inline; each branch is one command variant, and extracting them would fragment the request lifecycle.
-//archplan:auth=required
+//archplan:auth=authz
 func (h *commandHandler) handleCommandExec(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -821,6 +822,8 @@ func (h *commandHandler) handleCommandExec(w http.ResponseWriter, r *http.Reques
 }
 
 // handleCommandCancel handles POST /api/command-cancel/{execID}.
+//
+//archplan:auth=required reason="owner check on the run, not an ACL decision"
 func (h *commandHandler) handleCommandCancel(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -946,6 +949,8 @@ func (h *commandHandler) mintFileToken(
 // handler's convention that hidden and nonexistent are indistinguishable. A 403
 // here would confirm that a token is real and names a file, to a caller who may
 // not have it.
+//
+//archplan:auth=authz
 func (h *commandHandler) handleCommandFile(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)

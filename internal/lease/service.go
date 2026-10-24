@@ -207,6 +207,8 @@ type Claimed struct {
 // *[AmbiguousError] from the gate; *acl.ForbiddenError without update
 // access; *[HeldError] when the entity has a live lease; [ErrLimit] or
 // [ErrFull] past a cap.
+//
+//archplan:guard=authz reason="reads the family through the gate, then asks for update access"
 func (s *Service) Claim(ctx context.Context, req ClaimRequest) (Claimed, error) {
 	p, err := caller(ctx)
 	if err != nil {

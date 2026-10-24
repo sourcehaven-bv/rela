@@ -2,8 +2,13 @@
 server.json
 server.log
 .hook-seen.json
+activity.json
+hotspots.json
+suggest-state.json
 *.tmp
 .*.lock
 # The as-is model is generated: `just archplan-export`.
 model.archmodel.json
 vocab-cache.json
+# Per-command parts of the export list, merged into model.archmodel.json.
+parts/

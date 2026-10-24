@@ -189,6 +189,7 @@ const relationColumns = "from_id, from_face, rel_type, to_id, properties, conten
 
 // --- RelationWriter -------------------------------------------------------
 
+//archplan:sink=write
 func (s *Store) CreateRelation(
 	ctx context.Context, k entity.RelationKey, data *store.RelationData,
 ) (*entity.Relation, error) {
@@ -261,6 +262,8 @@ func (s *Store) CreateRelation(
 //
 // The tail is part of a relation's identity, so addressing the wrong one
 // writes the caller's properties onto a DIFFERENT edge rather than failing.
+//
+//archplan:sink=write
 func (s *Store) UpdateRelation(
 	ctx context.Context, k entity.RelationKey, data store.RelationData,
 ) (*entity.Relation, error) {
@@ -295,6 +298,8 @@ func (s *Store) UpdateRelation(
 //
 // The tail is part of a relation's identity, so addressing the wrong one
 // deletes a DIFFERENT edge rather than failing.
+//
+//archplan:sink=write
 func (s *Store) DeleteRelation(ctx context.Context, k entity.RelationKey) error {
 	res, err := s.write(ctx,
 		`DELETE FROM relations WHERE from_id = ? AND from_face = ? AND rel_type = ? AND to_id = ?`,

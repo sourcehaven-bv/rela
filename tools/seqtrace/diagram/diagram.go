@@ -129,6 +129,10 @@ type Options struct {
 	// part of the caller's package. Use it for value packages (entity, ...)
 	// that add arrows without adding understanding.
 	Collapse *regexp.Regexp
+	// Keep matches function names drawn even when the call stays inside one
+	// participant, such as an access check in the handler's own package.
+	// Without it archplan cannot see that a request passed that check.
+	Keep *regexp.Regexp
 	// MaxDepth limits nesting of drawn arrows; zero means no limit.
 	MaxDepth int
 	// RootLabel replaces the root call's name on the first arrow.

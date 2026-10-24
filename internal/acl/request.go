@@ -151,6 +151,8 @@ func (r *Request) AuthorizeWrite(ctx context.Context, req WriteRequest) Decision
 // dataentry handler consumes this and either runs an unfiltered list
 // (AllowAll), returns empty (DenyAll), or runs the composed
 // store.GraphQuery.
+//
+//archplan:guard=authz reason="compiles the row gate for a list read into a store predicate"
 func (r *Request) ReadQuery(_ context.Context, entityType string) ReadQueryResult {
 	return r.readQuery(entityType)
 }
@@ -166,6 +168,8 @@ var errReadQueryZero = errors.New("acl: read gate: readQuery returned zero ReadQ
 // A global grant answers true without verifying existence; callers that need
 // existence read the row afterwards. A backing error is returned verbatim so
 // the caller can map it to the right HTTP status.
+//
+//archplan:guard=authz reason="row gate: whether the principal may read this entity"
 func (r *Request) PermitsRead(ctx context.Context, entityType, entityID string) (bool, error) {
 	vs, err := r.ReadableFacesMany(ctx, entityType, []string{entityID})
 	if err != nil {
@@ -178,6 +182,8 @@ func (r *Request) PermitsRead(ctx context.Context, entityType, entityID string) 
 // at face: the verdict on that row AND the face allowlist a `type@face` grant
 // compiles to ([ReadQueryResult.Faces]). It is [Request.ReadableFacesMany]
 // asked about one face, so the two cannot disagree.
+//
+//archplan:guard=authz reason="row gate: whether the principal may read this entity"
 func (r *Request) PermitsReadFace(
 	ctx context.Context, entityType, entityID string, face entity.Face,
 ) (bool, error) {

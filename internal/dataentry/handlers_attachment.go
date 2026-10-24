@@ -85,6 +85,8 @@ func (h *attachmentHandler) handleV1AttachmentFileRoute(
 // upload. The fileName from the URL is a display name: it is resolved to a
 // storage key through the face's own value ([attachment.StorageKey]), never
 // used as a key or a filesystem path itself.
+//
+//archplan:auth=authz
 func (h *attachmentHandler) handleV1GetAttachment(
 	w http.ResponseWriter, r *http.Request, typeName, addr, property, fileName string,
 ) {
@@ -142,6 +144,8 @@ func (h *attachmentHandler) handleV1GetAttachment(
 // inherits the entity's `update` permission. The write is authorized
 // up front (before any bytes are written) to avoid orphaning a file on a
 // late deny — see attachment.Service.Attach's orphan note.
+//
+//archplan:auth=authz
 func (h *attachmentHandler) handleV1PutAttachment(
 	w http.ResponseWriter, r *http.Request, typeName, plural, entityID, property string,
 ) {
@@ -610,6 +614,8 @@ func filePropertyDef(s *Schema, typeName, property string) metamodel.PropertyDef
 // removed from the face's value, and the bytes go when no other face
 // references them. Idempotent: deleting a name the face does not reference
 // changes nothing and returns 204.
+//
+//archplan:auth=authz
 func (h *attachmentHandler) handleV1DeleteAttachment(
 	w http.ResponseWriter, r *http.Request, typeName, entityID, property, fileName string,
 ) {

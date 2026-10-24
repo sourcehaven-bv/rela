@@ -92,6 +92,8 @@ func buildHighestIDSQL(prefix string) (sqlText string, args []any) {
 // that no longer exists. Running inside a transaction — and emitting the
 // rename event only after it commits — is what makes the operation safe to
 // interrupt.
+//
+//archplan:sink=write
 func (s *Store) RenameFamily(ctx context.Context, oldID, newID string) (*store.RenameResult, error) {
 	if err := storeutil.ValidateID(newID); err != nil {
 		return nil, fmt.Errorf("sqlitestore: rename to %q: %w", newID, err)

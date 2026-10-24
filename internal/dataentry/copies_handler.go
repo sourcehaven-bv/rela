@@ -157,6 +157,8 @@ func (g copyEdgeGate) relationOpAllowed(
 // rather than requiring it to construct a separate lookup key. An earlier
 // revision shipped a `GET /_copies`; it was removed because a second endpoint
 // for one affordance is the odd shape, not the norm.
+//
+//archplan:auth=authz
 func (h *copiesHandler) handleV1Copies(w http.ResponseWriter, r *http.Request) {
 	rest := strings.Trim(strings.TrimPrefix(r.URL.Path, "/api/v1/_copies"), "/")
 	switch {

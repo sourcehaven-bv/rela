@@ -23,6 +23,8 @@ var actionIDRegex = regexp.MustCompile(`^[a-z0-9_-]{1,64}$`)
 //
 // The gates and the run itself are [actionOps.run], shared with the remote
 // MCP tools (TKT-NW9QSN).
+//
+//archplan:auth=authz
 func (h *writeHandler) handleV1Action(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		w.Header().Set("Allow", "POST")

@@ -3,6 +3,7 @@ package seqtrace
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"reflect"
 	"regexp"
 	"strconv"
@@ -92,12 +93,35 @@ func summarize(v any) (s string) {
 			return "nil"
 		}
 		return truncate("err: " + oneLine(x.Error()))
+	case *http.Request:
+		return summarizeRequest(x)
 	case string:
 		return strconv.Quote(truncate(x))
 	case []byte:
 		return fmt.Sprintf("[]byte len=%d", len(x))
 	}
 	return truncate(summarizeValue(reflect.ValueOf(v)))
+}
+
+// SpanHeader carries the id a browser recorder gave a request, so the
+// request's server trace can be put under the browser call that sent it
+// (see the stitch command).
+const SpanHeader = "X-Seqtrace-Span"
+
+// spanID is the shape of a span id. Anything else is dropped: the header
+// comes from the client and goes into a trace file.
+var spanID = regexp.MustCompile(`^[A-Za-z0-9-]{1,40}$`)
+
+// summarizeRequest shows a request as its type, with its span id when it
+// has a valid one.
+func summarizeRequest(r *http.Request) string {
+	if r == nil {
+		return "nil"
+	}
+	if span := r.Header.Get(SpanHeader); spanID.MatchString(span) {
+		return "*http.Request{Span:" + span + "}"
+	}
+	return "*http.Request"
 }
 
 func summarizeValue(rv reflect.Value) string {

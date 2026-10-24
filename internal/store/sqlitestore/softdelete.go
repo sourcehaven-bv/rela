@@ -52,6 +52,7 @@ func (d softDeleter) inTx(ctx context.Context, fn func(*Store) error) error {
 	})
 }
 
+//archplan:sink=write
 func (d softDeleter) MarkDeleted(ctx context.Context, id, by string) (*store.DeleteResult, error) {
 	var result *store.DeleteResult
 	err := d.inTx(ctx, func(v *Store) error {

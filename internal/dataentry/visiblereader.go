@@ -309,6 +309,8 @@ func rowOf(res visibility.Resolved, ok bool, err error) (*entitypkg.Entity, bool
 // miss, or the gate error. Every addressed route owes this read before it
 // acts on a row, reads and writes alike. A face the principal may not read
 // is then the same 404 as an absent one, never a 403 that confirms it exists.
+//
+//archplan:guard=authz reason="row gate for an addressed route: a row the caller may not read is the uniform 404"
 func readAddressedOr404(
 	w http.ResponseWriter, r *http.Request, vr visibleReader, entityType, addr string,
 ) (*entitypkg.Entity, bool) {
@@ -332,6 +334,8 @@ func readAddressedOr404(
 // The row is the caller's gated, redacted view. It serves the response, the
 // affordance checks and the If-Match compare; it never feeds the write,
 // whose merge base is the raw stored row entitymanager reads itself.
+//
+//archplan:guard=authz reason="resolves and row-gates the face a write edits"
 func writeTargetOr404(
 	w http.ResponseWriter, r *http.Request, vr visibleReader, entityType, addr string,
 ) (*entitypkg.Entity, bool) {
@@ -404,6 +408,8 @@ func writeFaceRequired(w http.ResponseWriter, r *http.Request, amb *visibility.A
 // for a relation endpoint named by bare id (a body target, a head): such an
 // id names an entity, never one face of it. The type comes from the stored
 // row, so the gate runs on the real type.
+//
+//archplan:guard=authz reason="row gate on a relation peer: some face of it must be readable"
 func familyReadableOr404(w http.ResponseWriter, r *http.Request, vr visibleReader, id string) bool {
 	typ, err := vr.readableType(r.Context(), id)
 	if err != nil {
