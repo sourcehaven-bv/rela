@@ -41,7 +41,26 @@ export async function previewConversion(
   name: string,
   request: ConvertRequest
 ): Promise<ConversionPreview> {
-  return api.post<ConversionPreview>(`/_conversions/${encodeURIComponent(name)}/preflight`, request)
+  const preview = await api.post<ConversionPreview>(
+    `/_conversions/${encodeURIComponent(name)}/preflight`,
+    request
+  )
+  return normalizePreview(preview)
+}
+
+// normalizePreview turns absent or null list fields into empty arrays. Older
+// servers sent null for an empty list, and the dialog reads .length on them.
+export function normalizePreview(preview: ConversionPreview): ConversionPreview {
+  return {
+    ...preview,
+    required: preview.required ?? [],
+    required_faces: preview.required_faces ?? [],
+    relations_to_drop: preview.relations_to_drop ?? [],
+    invalid_relations: preview.invalid_relations ?? [],
+    target_faces: preview.target_faces ?? [],
+    invalid_faces: preview.invalid_faces ?? [],
+    moves: preview.moves ?? [],
+  }
 }
 
 export async function convertEntity(

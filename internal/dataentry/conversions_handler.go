@@ -152,12 +152,12 @@ func (h *conversionHandler) handleV1Conversions(w http.ResponseWriter, r *http.R
 		}
 		writeV1JSON(w, http.StatusOK, v1.ConversionPreview{
 			TargetType:       preview.TargetType,
-			Required:         preview.Required,
+			Required:         emptyIfNil(preview.Required),
 			RequiredFaces:    preview.RequiredFaces,
-			RelationsToDrop:  preview.RelationsToDrop,
-			InvalidRelations: preview.InvalidRelations,
+			RelationsToDrop:  emptyIfNil(preview.RelationsToDrop),
+			InvalidRelations: emptyIfNil(preview.InvalidRelations),
 			InvalidFaces:     preview.InvalidFaces,
-			TargetFaces:      preview.TargetFaces,
+			TargetFaces:      emptyIfNil(preview.TargetFaces),
 			Moves:            moves,
 		})
 		return
@@ -174,6 +174,16 @@ func (h *conversionHandler) handleV1Conversions(w http.ResponseWriter, r *http.R
 		Face:             res.Entity.Face.String(),
 		RelationsDropped: res.RelationsDropped,
 	})
+}
+
+// emptyIfNil keeps a list field that the wire type always sends as a JSON
+// array from being sent as null (BUG: the conversion dialog read .length on
+// it and failed to render).
+func emptyIfNil(list []string) []string {
+	if list == nil {
+		return []string{}
+	}
+	return list
 }
 
 func writeConversionError(w http.ResponseWriter, r *http.Request, err error) {

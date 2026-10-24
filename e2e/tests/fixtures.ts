@@ -1227,6 +1227,18 @@ task_item_conversions:
     fields:
       title: "{{item.text}}"
 
+# A schema conversion on module only, so other entity pages show no convert
+# button (conversion-review.spec.ts).
+conversions:
+  module-to-feature:
+    from: module
+    to: feature
+    label: Convert to feature
+    fields:
+      title: "{{source.name}}"
+    relations:
+      groups: drop
+
 # Commenting (TKT-FIO205). Enabled for every type so the comment specs can use
 # whichever seed entity is convenient; the ACL is untouched, so the default
 # no-policy deployment applies and every principal may comment.
