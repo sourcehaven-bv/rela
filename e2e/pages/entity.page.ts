@@ -64,6 +64,22 @@ export class EntityPage extends BasePage {
     await expect(this.documentBody).toContainText(text);
   }
 
+  /** The schema-conversion dialog, once a conversion is opened. */
+  get conversionDialog(): Locator {
+    return this.page.getByRole('dialog');
+  }
+
+  /** Open a schema conversion from the header by its label. */
+  async openConversion(label: string) {
+    await this.page.getByRole('button', { name: label }).first().click();
+    await expect(this.conversionDialog).toBeVisible();
+  }
+
+  /** Press the dialog's primary action (Review, then Convert). */
+  async pressConversionAction(name: 'Review' | 'Convert') {
+    await this.conversionDialog.getByRole('button', { name, exact: true }).click();
+  }
+
   async navigateToEntity(entityType: string, id: string) {
     await this.navigateTo(`/entity/${entityType}/${id}`);
     await this.waitForSpinnerToDisappear();
