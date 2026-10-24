@@ -699,6 +699,8 @@ func serverInstructions(meta *metamodel.Metamodel, channels bool) string {
 	}
 	b.WriteString("Call schema (optionally with a type) before creating entities or filtering. " +
 		"Entity summaries carry a title resolved from the type's display property. " +
+		"Entities carry a `url` to their page in the web app when the server knows its address; " +
+		"use it when you link an entity for the user. " +
 		"Write results start with `WARNINGS (n):` when soft validation failed; the write still succeeded. " +
 		"In update_entity, a null property value removes the property; an empty string is ignored. " +
 		"To wait for changes instead of polling, use watch.")
@@ -732,6 +734,9 @@ func serverInstructions(meta *metamodel.Metamodel, channels bool) string {
 // handlers, and Server.principalMiddleware preserves a principal already
 // stamped there in preference to the construction-time one.
 //
+// Each request's origin rides on its ctx, so entity results carry a `url`
+// into the web app on this transport (see [entityURL]).
+//
 // The request body limit is raised from the go-sdk's 4 MiB default to fit an
 // attach_file call at [MaxUploadBytes]; see maxRequestBodyBytes.
 //
@@ -751,7 +756,7 @@ func (s *Server) HTTPHandler() http.Handler {
 			MaxRequestBodyBytes:        maxRequestBodyBytes,
 		},
 	)
-	return newLargeRequestGate(largeRequestSlots).wrap(h)
+	return newLargeRequestGate(largeRequestSlots).wrap(withRequestBaseURL(h))
 }
 
 // Serve starts the MCP server on stdio and blocks until the peer

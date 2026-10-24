@@ -7,5 +7,5 @@ bodies: GraphQuery=0/1 ListEntities=1/1 ListEntityHeaders=0/4 MentionSources=0/1
 versions: 
 body:
 event: message
-data: {"jsonrpc":"2.0","id":1,"result":{"content":[{"type":"text","text":"{\"id\":\"TKT-4\",\"type\":\"ticket\",\"properties\":{\"budget\":\"delta-budget\",\"due\":\"2025-03-28\",\"note\":\"delta-note\",\"secret\":\"delta-secret\",\"start\":\"2025-01-20\",\"status\":\"open\",\"title\":\"Delta\"},\"content\":\"Hidden child.\",\"relations\":{\"incoming\":{\"contains\":[{\"id\":\"TKT-1\",\"title\":\"Alpha\"}],\"watches\":[{\"id\":\"PERS-editor\",\"title\":\"Eddie Editor\"}]}}}"}]}}
+data: {"jsonrpc":"2.0","id":1,"result":{"content":[{"type":"text","text":"{\"id\":\"TKT-4\",\"type\":\"ticket\",\"url\":\"http://127.0.0.1:8080/entity/ticket/TKT-4\",\"properties\":{\"budget\":\"delta-budget\",\"due\":\"2025-03-28\",\"note\":\"delta-note\",\"secret\":\"delta-secret\",\"start\":\"2025-01-20\",\"status\":\"open\",\"title\":\"Delta\"},\"content\":\"Hidden child.\",\"relations\":{\"incoming\":{\"contains\":[{\"id\":\"TKT-1\",\"title\":\"Alpha\",\"url\":\"http://127.0.0.1:8080/entity/ticket/TKT-1\"}],\"watches\":[{\"id\":\"PERS-editor\",\"title\":\"Eddie Editor\",\"url\":\"http://127.0.0.1:8080/entity/person/PERS-editor\"}]}}}"}]}}
 
