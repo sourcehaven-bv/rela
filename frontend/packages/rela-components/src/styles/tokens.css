@@ -9,16 +9,24 @@
    * iframes its custom apps run in. A copy goes stale silently here and
    * fails a test there, so a change to a colour value, and not only a new
    * token, is a change those consumers have to regenerate.
+   *
+   * The colours come from the Atlas UI kit (grey, red, blue, green, yellow,
+   * teal, orange; ramps 50-900). Where a kit shade fails WCAG AA for its use,
+   * the next darker kit shade is used instead: the accent is blue/800, not the
+   * kit's blue/500 button, which carries white text at only 2.9:1. Warning
+   * text has no passing kit shade and is kit orange darkened to #a33a00. The
+   * kit has no purple, so the purple tag keeps its own values.
+   * `frontend/src/utils/tokenContrast.test.ts` pins the AA pairs.
    */
   color-scheme: light;
 
   /* Neutrals */
   --rl-color-bg: #ffffff;
-  --rl-color-bg-sunken: #fbfbfa;
-  --rl-color-bg-hover: #f4f4f3;
-  --rl-color-bg-active: #ececeb;
-  --rl-color-border: #e8e8e6;
-  --rl-color-border-strong: #d8d8d5;
+  --rl-color-bg-sunken: #fbfbfc;
+  --rl-color-bg-hover: #f3f4f6;
+  --rl-color-bg-active: #ecedf0;
+  --rl-color-border: #e2e4e9;
+  --rl-color-border-strong: #d3d8dd;
 
   /*
    * Anything floating above the page: a modal, a drawer, a menu panel, a
@@ -32,7 +40,7 @@
    * transparent here because the design has no outline on those.
    */
   --rl-color-bg-raised: #ffffff;
-  --rl-color-border-raised: #e8e8e6;
+  --rl-color-border-raised: #e2e4e9;
   --rl-color-border-scrimmed: transparent;
 
   /*
@@ -63,58 +71,58 @@
   --rl-color-chip-raised: #ffffff;
 
   /* Text */
-  --rl-color-text: #23241f;
-  --rl-color-text-muted: #6b6f76;
+  --rl-color-text: #25272d;
+  --rl-color-text-muted: #4a4d59;
   /*
    * Tertiary text. AA on the hover background forces this to the same
    * lightness as text-muted, so the two are deliberately equal: the
    * hierarchy is carried by size and weight, not by colour alone.
    * Kept as its own token so it can diverge on a lighter surface.
    */
-  --rl-color-text-subtle: #696d74;
+  --rl-color-text-subtle: #4a4d59;
   --rl-color-text-inverse: #ffffff;
 
   /* Accent */
-  --rl-color-accent: #2563eb;
-  --rl-color-accent-hover: #1d4ed8;
+  --rl-color-accent: #5564bf;
+  --rl-color-accent-hover: #4656b9;
   /*
    * Fill for the row or card whose detail is open. Tinted towards the accent
    * so selection reads as "this one is showing", distinct from the neutral
    * hover fill, while staying light enough to keep body text at AA.
    */
-  --rl-color-bg-selected: #eff4fe;
+  --rl-color-bg-selected: #e6f2fe;
 
   /*
    * Danger. Used by destructive controls. The base tone clears 4.5:1 as text
-   * on every surface in this file, and carries white text at 6.5:1 when it is
+   * on every surface in this file, and carries white text at 6.3:1 when it is
    * the fill, so one token serves both the solid and the text-only variant.
    */
-  --rl-color-danger: #b91c1c;
-  --rl-color-danger-hover: #991b1b;
-  --rl-color-danger-bg: #fde4e4;
-  --rl-color-danger-bg-hover: #fbd0d0;
+  --rl-color-danger: #c10616;
+  --rl-color-danger-hover: #cf1d24;
+  --rl-color-danger-bg: #ffebee;
+  --rl-color-danger-bg-hover: #ffcdd2;
 
   /*
    * Message surfaces. Each `-fg` clears 4.5:1 on its own `-bg`, so banners
    * and callouts carry body text rather than just a coloured edge.
    */
-  --rl-color-info-bg: #e8f0fe;     --rl-color-info-fg: #1c4bb0;
-  --rl-color-success-bg: #dcf5e4;  --rl-color-success-fg: #146c32;
-  --rl-color-warning-bg: #fdeed3;  --rl-color-warning-fg: #8a4708;
+  --rl-color-info-bg: #e6f2fe;     --rl-color-info-fg: #4656b9;
+  --rl-color-success-bg: #e4f7eb;  --rl-color-success-fg: #007a34;
+  --rl-color-warning-bg: #fff3e0;  --rl-color-warning-fg: #a33a00;
 
   /* Status dots */
-  --rl-color-status-green: #16a34a;
-  --rl-color-status-amber: #b45309;
-  --rl-color-status-red: #ef4444;
-  --rl-color-status-grey: #6b7280;
-  --rl-color-status-blue: #2563eb;
+  --rl-color-status-green: #009942;
+  --rl-color-status-amber: #e65200;
+  --rl-color-status-red: #ee3131;
+  --rl-color-status-grey: #74798b;
+  --rl-color-status-blue: #6287e6;
 
   /* Tag palette: soft bg + readable fg */
-  --rl-tag-grey-bg: #f0f0ef;    --rl-tag-grey-fg: #5c6066;
-  --rl-tag-blue-bg: #e3edfd;    --rl-tag-blue-fg: #1d4ed8;
-  --rl-tag-green-bg: #dcf5e4;   --rl-tag-green-fg: #146c32;
-  --rl-tag-amber-bg: #fdeed3;   --rl-tag-amber-fg: #94480a;
-  --rl-tag-red-bg: #fde4e4;     --rl-tag-red-fg: #b91c1c;
+  --rl-tag-grey-bg: #f3f4f6;    --rl-tag-grey-fg: #4a4d59;
+  --rl-tag-blue-bg: #e6f2fe;    --rl-tag-blue-fg: #4656b9;
+  --rl-tag-green-bg: #e4f7eb;   --rl-tag-green-fg: #007a34;
+  --rl-tag-amber-bg: #fff3e0;   --rl-tag-amber-fg: #a33a00;
+  --rl-tag-red-bg: #ffebee;     --rl-tag-red-fg: #c10616;
   --rl-tag-purple-bg: #ece6fb;  --rl-tag-purple-fg: #6d28d9;
 
   /* Spacing: 4px base */
@@ -155,7 +163,7 @@
 
   /* Accents used by single components */
   --rl-color-starred: #a67908;
-  --rl-color-focus: #1d4ed8;
+  --rl-color-focus: #4656b9;
   /*
    * Focus ring. Two shadows: an opaque gap in the page background, then the
    * ring itself. Drawn with box-shadow rather than outline so it follows a
@@ -164,7 +172,7 @@
    */
   --rl-focus-ring-width: 2px;
   --rl-focus-ring-gap: 2px;
-  --rl-color-error-ring: #b91c1c;
+  --rl-color-error-ring: #c10616;
 
   /* Attachment type colours, all >= 4.5:1 against white glyphs */
   --rl-color-file-pdf: #c81e24;

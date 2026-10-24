@@ -1,6 +1,7 @@
 package dataentryconfig
 
 import (
+	"cmp"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -318,10 +319,11 @@ func ResolvePalette(project, user *PaletteConfig) *ResolvedPalette {
 	// Determine dark mode. The user palette wins if it specifies
 	// anything; otherwise the project palette; otherwise dark mode
 	// uses the built-in default dark palette.
-	darkMode := DarkMode{Explicit: &DarkPalette{
+	defaultDark := &DarkPalette{
 		PaletteColors: defaultDarkColors,
 		Badges:        copyBadges(defaultDarkBadges),
-	}}
+	}
+	darkMode := DarkMode{Explicit: defaultDark}
 	if project != nil && (project.Dark.Disabled || project.Dark.Explicit != nil) {
 		darkMode = project.Dark
 	}
@@ -332,6 +334,8 @@ func ResolvePalette(project, user *PaletteConfig) *ResolvedPalette {
 	result := &ResolvedPalette{
 		Light: deriveTheme(light, badges),
 	}
+	lightRL := rlTokens(operatorAccent(project, user), operatorBadges(project, user), -rlAccentHoverDelta)
+	maps.Copy(result.Light, lightRL)
 
 	if darkMode.IsDisabled() {
 		result.DarkDisabled = true
@@ -360,7 +364,109 @@ func ResolvePalette(project, user *PaletteConfig) *ResolvedPalette {
 	mergeBadges(darkBadges, darkMode.Explicit.Badges)
 	result.Dark = deriveTheme(darkColors, darkBadges)
 
+	// A light-only override must not carry into dark mode, so every --rl-*
+	// key the light map sets is restated here with the library's dark value,
+	// unless the operator's own dark palette sets it.
+	for name := range lightRL {
+		result.Dark[name] = rlDefaultDarkTokens[name]
+	}
+	if darkMode.Explicit != defaultDark {
+		maps.Copy(result.Dark, rlTokens(darkMode.Explicit.Accent, darkMode.Explicit.Badges, rlAccentHoverDelta))
+	}
+
 	return result
+}
+
+// rlAccentHoverDelta is how far the hover accent moves in lightness from the
+// accent: darker on the light theme, lighter on the dark one, as the
+// library's own pairs do.
+const rlAccentHoverDelta = 0.08
+
+// rlDefaultDarkTokens are rela-components' dark values for the tokens
+// [rlTokens] can set. TestRLDefaultDarkTokensMatchLibrary pins them to
+// apps_tokens.css.
+var rlDefaultDarkTokens = map[string]string{
+	"--rl-color-accent":       "#82b5fa",
+	"--rl-color-accent-hover": "#a2cafd",
+	"--rl-color-status-blue":  "#82b5fa",
+	"--rl-color-status-green": "#28c772",
+	"--rl-color-status-red":   "#f74f4d",
+	"--rl-color-status-grey":  "#8f929c",
+	"--rl-color-status-amber": "#ffa826",
+	"--rl-tag-blue-fg":        "#a2cafd",
+	"--rl-tag-green-fg":       "#5fd28c",
+	"--rl-tag-red-fg":         "#ed7172",
+	"--rl-tag-grey-fg":        "#b8bcc3",
+	"--rl-tag-amber-fg":       "#ffb84d",
+	"--rl-tag-purple-fg":      "#c4a9f7",
+}
+
+// rlBadgeTokens maps a badge color to the rela-components tokens it paints:
+// the tag text color, which badges use, and the status color, which kanban
+// column dots use. The library has one amber for both orange and yellow
+// (see [rlTokens]), and paints a purple dot with the accent.
+var rlBadgeTokens = map[string][]string{
+	"blue":   {"--rl-tag-blue-fg", "--rl-color-status-blue"},
+	"green":  {"--rl-tag-green-fg", "--rl-color-status-green"},
+	"red":    {"--rl-tag-red-fg", "--rl-color-status-red"},
+	"gray":   {"--rl-tag-grey-fg", "--rl-color-status-grey"},
+	"purple": {"--rl-tag-purple-fg"},
+	"amber":  {"--rl-tag-amber-fg", "--rl-color-status-amber"},
+}
+
+// rlTokens maps the colors an operator configured onto rela-components'
+// --rl-* tokens, which are what the SPA paints with. Only configured values
+// are mapped: the built-in palette defaults predate the library and would
+// repaint every project that has no palette at all.
+//
+// This is a partial port of the retired token names (TKT-ME8LEI): accent and
+// badges, the roles with a one-to-one library token. The other roles need
+// fg/bg pairs that keep text at AA and are not mapped yet.
+func rlTokens(accent string, badges map[string]string, hoverDelta float64) map[string]string {
+	m := map[string]string{}
+	if accent != "" {
+		m["--rl-color-accent"] = accent
+		m["--rl-color-accent-hover"] = adjustLightness(accent, hoverDelta)
+	}
+	for name, tokens := range rlBadgeTokens {
+		c := badges[name]
+		if name == "amber" {
+			c = cmp.Or(badges["orange"], badges["yellow"])
+		}
+		if c == "" {
+			continue
+		}
+		for _, token := range tokens {
+			m[token] = c
+		}
+	}
+	return m
+}
+
+// operatorAccent is the accent the project or user palette sets, the user
+// winning; empty when neither does.
+func operatorAccent(project, user *PaletteConfig) string {
+	var accent string
+	if project != nil {
+		accent = project.Accent
+	}
+	if user != nil && user.Accent != "" {
+		accent = user.Accent
+	}
+	return accent
+}
+
+// operatorBadges are the badges the project and user palettes set, the user
+// winning per color.
+func operatorBadges(project, user *PaletteConfig) map[string]string {
+	badges := map[string]string{}
+	if project != nil {
+		mergeBadges(badges, project.Badges)
+	}
+	if user != nil {
+		mergeBadges(badges, user.Badges)
+	}
+	return badges
 }
 
 // applyOver returns base with non-empty fields from over applied.
