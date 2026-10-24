@@ -5,7 +5,7 @@ title: Align default colors with the Atlas UI kit
 kind: enhancement
 priority: medium
 effort: m
-status: done
+status: ready
 ---
 
 ## Description
