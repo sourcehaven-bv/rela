@@ -88,6 +88,10 @@ type Deps struct {
 	// Nil: accepted. The tools are then not registered, as under stdio
 	// `rela mcp`, which has no signed-in caller to run an action as.
 	Actions ActionRunner
+	// Conversions backs list_conversions and convert_entity.
+	//
+	// Nil: accepted. The tools are then not registered.
+	Conversions Converter
 	// World is the world the list and count surfaces (list_entities, the
 	// schema resource's counts, the overview prompt, search) read in when a
 	// call names none. It is required; wiring passes
@@ -508,6 +512,7 @@ type handlerSet struct {
 	attach    attachmentHandler
 	comments  commentHandler
 	actions   actionHandler
+	convs     conversionHandler
 	leases    leaseHandler
 	channels  channelHandler
 }
@@ -526,6 +531,7 @@ func (d Deps) handlers() handlerSet {
 		attach:    attachmentHandler{store: d.Store, deps: d.Attachments},
 		comments:  commentHandler{reader: d.Comments.Reader, writer: d.Comments.Writer},
 		actions:   actionHandler{runner: d.Actions},
+		convs:     conversionHandler{conv: d.Conversions, store: d.Store, watcher: d.Watcher},
 		leases:    leaseHandler{svc: d.Leases},
 		channels: channelHandler{
 			reader: d.Channels.Reader, writer: d.Channels.Writer, creator: d.Channels.Creator,

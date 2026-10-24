@@ -58,6 +58,9 @@ func (s *Server) registerTools() {
 	// Action tools: only when the wiring supplies a runner.
 	registerActionTools(s)
 
+	// Conversion tools: only when the wiring supplies a converter.
+	registerConversionTools(s)
+
 	// Lease tools: only when the wiring supplies a lease service.
 	registerLeaseTools(s)
 
