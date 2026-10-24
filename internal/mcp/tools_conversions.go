@@ -34,7 +34,7 @@ type conversionHandler struct {
 func selConversions(h handlerSet) conversionHandler { return h.convs }
 
 // registerConversionTools registers list_conversions and convert_entity
-// when [Deps.Conversions] is set.
+// when [CommandDeps.Conversions] is set.
 func registerConversionTools(s *Server) {
 	if s.deps().Commands.Conversions == nil {
 		return
