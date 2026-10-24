@@ -34,11 +34,11 @@ type actionHandler struct {
 func selActions(h handlerSet) actionHandler { return h.actions }
 
 // registerActionTools registers list_actions and run_action when
-// [Deps.Actions] is set. Only the remote server sets it: an action runs as
+// [CommandDeps.Actions] is set. Only the remote server sets it: an action runs as
 // the signed-in caller, and stdio `rela mcp` has none. A free function, like
 // [addTool], to keep Server under its plimsoll load line.
 func registerActionTools(s *Server) {
-	if s.deps().Actions == nil {
+	if s.deps().Commands.Actions == nil {
 		return
 	}
 	addTool(s, toolListActions(), actionTool(s, actionHandler.handleListActions))

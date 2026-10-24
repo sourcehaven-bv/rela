@@ -109,7 +109,7 @@ func conversionServer(t *testing.T) (h conversionHandler, st store.Store, as fun
 	}
 	deps := newTestDeps(t, meta, mem)
 	deps.Store = svc.GatedReads().Reader
-	deps.Conversions = conv
+	deps.Commands.Conversions = conv
 	srv := &Server{logger: slog.New(slog.DiscardHandler)}
 	setDeps(srv, deps)
 	return group(srv, selConversions), mem, func(user string) context.Context {
@@ -141,7 +141,7 @@ func TestConversionTools_Registration(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewConverter: %v", err)
 	}
-	deps.Conversions = conv
+	deps.Commands.Conversions = conv
 	srv, err = NewServer(deps, "test", WithPrincipal(principal.Principal{User: "tester", Tool: principal.ToolMCP}))
 	if err != nil {
 		t.Fatalf("NewServer: %v", err)

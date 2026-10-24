@@ -414,7 +414,7 @@ func (s *mcpServices) deps(svc *appbuild.Services) relamcp.Deps {
 	deps.Channels = channelDeps(svc)
 	// NewConverter only refuses a nil manager.
 	if conv, err := entitymanager.NewConverter(svc.EntityManager()); err == nil {
-		deps.Conversions = conv
+		deps.Commands.Conversions = conv
 	}
 	return deps
 }

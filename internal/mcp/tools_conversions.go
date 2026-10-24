@@ -36,7 +36,7 @@ func selConversions(h handlerSet) conversionHandler { return h.convs }
 // registerConversionTools registers list_conversions and convert_entity
 // when [Deps.Conversions] is set.
 func registerConversionTools(s *Server) {
-	if s.deps().Conversions == nil {
+	if s.deps().Commands.Conversions == nil {
 		return
 	}
 	addTool(s, toolListConversions(), conversionTool(s, conversionHandler.handleListConversions))

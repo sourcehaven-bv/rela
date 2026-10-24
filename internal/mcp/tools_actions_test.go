@@ -53,7 +53,7 @@ func newActionServer(t *testing.T, fake *fakeActions) *Server {
 	meta, st := makeTestFixture(t)
 	deps := newTestDeps(t, meta, st)
 	if fake != nil {
-		deps.Actions = fake
+		deps.Commands.Actions = fake
 	}
 	srv, err := NewServer(deps, "test", WithPrincipal(principal.Principal{User: "tester", Tool: principal.ToolMCP}))
 	if err != nil {
@@ -241,7 +241,7 @@ func TestActionTools_AfterAReloadDropsActions(t *testing.T) {
 	fake := &fakeActions{}
 	srv := newActionServer(t, fake)
 	reloaded := srv.deps()
-	reloaded.Actions = nil
+	reloaded.Commands.Actions = nil
 	if err := srv.ReloadDeps(reloaded); err != nil {
 		t.Fatalf("ReloadDeps: %v", err)
 	}
