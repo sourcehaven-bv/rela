@@ -129,7 +129,7 @@ jobs:
       # rela-postgres_<version>_linux_amd64.tar.gz — the exact shape
       # roles/atlas expects.
       - name: Run GoReleaser (snapshot; publishes nothing)
-        uses: goreleaser/goreleaser-action@v7.2.3
+        uses: goreleaser/goreleaser-action@v7.3.0
         with:
           distribution: goreleaser
           version: "~> v2"
