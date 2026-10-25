@@ -1606,6 +1606,11 @@ jobs:
       - name: Test the tagged-build guard
         run: ./scripts/check-tagged-tests-test.sh
 
+      # security.yml runs only on a schedule, so the script that picks its
+      # `go get` targets is tested here.
+      - name: Test the govulncheck fix picker
+        run: ./scripts/govulncheck-fixable-test.sh
+
       # Build-tag-gated files are compiled by nothing else: `go build ./...`
       # skips _test.go entirely, and neither it nor `go test ./...` builds
       # files whose constraints the default tag set does not satisfy. So they

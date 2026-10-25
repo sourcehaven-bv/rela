@@ -2,7 +2,7 @@ module github.com/Sourcehaven-BV/rela
 
 go 1.26.0
 
-toolchain go1.26.9
+toolchain go1.26.10
 
 require (
 	github.com/JohannesKaufmann/html-to-markdown/v2 v2.5.2

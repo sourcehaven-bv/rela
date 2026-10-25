@@ -81,9 +81,21 @@ jobs:
           set -euo pipefail
 
           # Extract fixable (called) vulns: <module> <fixed-version>.
-          govulncheck -format json ./... > /tmp/vulncheck.json 2>&1 || true
-          if ! ./scripts/govulncheck-fixable.sh < /tmp/vulncheck.json > /tmp/fixable.txt; then
-            echo "No fixable, called vulnerabilities — falling through to issue-filing."
+          # stderr stays out of the JSON, or a warning would break the parse.
+          govulncheck -format json ./... > /tmp/vulncheck.json 2> /tmp/vulncheck-json.err || true
+          if [[ -s /tmp/vulncheck-json.err ]]; then
+            echo "govulncheck stderr:"
+            cat /tmp/vulncheck-json.err
+          fi
+          # Exit 1 means nothing fixable; any other failure is the picker's.
+          rc=0
+          ./scripts/govulncheck-fixable.sh < /tmp/vulncheck.json > /tmp/fixable.txt || rc=$?
+          if [[ "$rc" -ne 0 ]]; then
+            if [[ "$rc" -eq 1 ]]; then
+              echo "No fixable, called vulnerabilities — falling through to issue-filing."
+            else
+              echo "Fix picker failed (rc=$rc) — falling through to issue-filing."
+            fi
             echo "fixed=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
@@ -91,16 +103,10 @@ jobs:
           echo "Fixable vulnerabilities:"
           cat /tmp/fixable.txt
 
-          # Apply `go get <mod>@<ver>` for each unique module — last fixed version wins
-          # when multiple OSVs affect the same module.
-          declare -A latest
+          # One line per module, already at the highest fixed version for the
+          # version in use (see the script header).
           while read -r mod ver; do
             [[ -z "$mod" ]] && continue
-            latest["$mod"]="$ver"
-          done < /tmp/fixable.txt
-
-          for mod in "${!latest[@]}"; do
-            ver="${latest[$mod]}"
             # A standard-library fix needs a newer Go, not a module upgrade.
             # Workflows read the version from go.mod, so this is the only pin.
             if [[ "$mod" == "stdlib" ]]; then
@@ -109,10 +115,10 @@ jobs:
               target="$mod@v$ver"
             fi
             echo "go get $target"
-            go get "$target" || {
+            go get "$target" < /dev/null || {
               echo "go get failed for $target; may be transitive-only; continuing."
             }
-          done
+          done < /tmp/fixable.txt
           go mod tidy
 
           # Re-run govulncheck to confirm no called vulns remain.
@@ -171,7 +177,12 @@ jobs:
       - name: File issue (no auto-fix available)
         if: steps.vulncheck.outputs.status != '0' && steps.autoupdate.outputs.fixed != 'true'
         env:
-          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          # GITHUB_TOKEN, not the app token. Issues the app created carried no
+          # labels (their timelines show no `labeled` event), so a
+          # label-filtered dedup never found them and each run opened a new
+          # one (BUG-NVNPD8). Issues filed with GITHUB_TOKEN keep their labels.
+          # An issue needs no app token: nothing has to trigger on it.
+          GH_TOKEN: ${{ github.token }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           set -euo pipefail
@@ -208,14 +219,23 @@ jobs:
           BODY=${BODY//__RUN_URL__/$RUN_URL}
           BODY=${BODY//__LOG__/$LOG}
 
+          # Match the exact title, and only issues this workflow filed: anyone
+          # can open an issue with this title, and matching it would let them
+          # capture or bury the scan reports. github-actions files them now;
+          # rela-coverage-bot (the app) filed them before BUG-NVNPD8. Labels
+          # are not checked because the app's issues carry none. TITLE goes
+          # to jq as --arg, never spliced into the program.
           EXISTING=$(gh issue list \
             --repo "$GITHUB_REPOSITORY" \
             --state open \
-            --label security,automated \
             --search "\"$TITLE\" in:title" \
-            --json number,title \
-            --jq ".[] | select(.title == \"$TITLE\") | .number" \
-            | head -n 1)
+            --json number,title,author \
+            | jq -r --arg title "$TITLE" '
+                [ .[]
+                  | select(.title == $title)
+                  | select(.author.login == "app/github-actions"
+                           or .author.login == "app/rela-coverage-bot")
+                ][0].number // empty')
 
           if [[ -n "$EXISTING" ]]; then
             echo "Updating existing issue #$EXISTING"
