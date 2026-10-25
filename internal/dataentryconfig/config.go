@@ -1538,7 +1538,7 @@ func (f KanbanCardField) DisplayLabel() string {
 // [Config]: each exported field is one key of a navigation entry in
 // data-entry.yaml, so a new entry kind raises the pin by one.
 //
-//plimsoll:max-fields=22
+//plimsoll:max-fields=23
 type NavigationEntry struct {
 	// Direct item fields
 	Label     string       `yaml:"label,omitempty" json:"label,omitempty"`
@@ -1558,6 +1558,11 @@ type NavigationEntry struct {
 	// Page names a page under pages:. The entry opens the page on the first
 	// tab the principal may see.
 	Page string `yaml:"page,omitempty" json:"page,omitempty"`
+	// Pile names one of the principal's own piles. The entry opens that pile
+	// in the flyout, and the pile is created on first use, so every user gets
+	// it without making it. A pile is per user and outside the config, so
+	// the name is all the config can say.
+	Pile string `yaml:"pile,omitempty" json:"pile,omitempty"`
 
 	// Entities names an entity type whose members the sidebar lists, one link
 	// per entity (TKT-PEKL8L). Only valid inside a group, and without a

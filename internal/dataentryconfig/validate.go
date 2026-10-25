@@ -636,6 +636,11 @@ func validateNavEntry(nav NavigationEntry, cfg *Config) []string {
 
 	errs = append(errs, validateNavOpen(nav, label)...)
 	errs = append(errs, validateNavStatus(nav, label, cfg)...)
+	if nav.Pile != "" && strings.TrimSpace(nav.Pile) != nav.Pile {
+		errs = append(errs, fmt.Sprintf(
+			"navigation: pile %q has leading or trailing spaces (pile names are trimmed, so it would never match)",
+			nav.Pile))
+	}
 
 	if nav.IsGroup() {
 		// A group is a container, not a destination — there is nothing for a

@@ -754,6 +754,13 @@ func navEntryToSidebarItem(entry dataentryconfig.NavigationEntry, meta *metamode
 			Sort:       dataentryconfig.SortParam(dataentryconfig.EffectiveNavSort(entry, meta)),
 		}
 		item.Icon = derived.Entity
+	case entry.Pile != "":
+		// Href stays empty — the SPA opens the pile in the flyout.
+		item.Pile = entry.Pile
+		item.Icon = derived.Pile
+		if item.Label == "" {
+			item.Label = entry.Pile
+		}
 	case entry.Action != "":
 		item.Action = entry.Action
 		// Href stays empty — frontend renders this as a button.
