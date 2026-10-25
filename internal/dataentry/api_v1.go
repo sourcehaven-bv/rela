@@ -1045,7 +1045,7 @@ func (a *App) gateReadOrNotFound(w http.ResponseWriter, r *http.Request, typeNam
 	return true
 }
 
-//archplan:auth=required
+//archplan:auth=authz
 func (a *App) handleV1GetEntity(w http.ResponseWriter, r *http.Request, typeName, plural, entityID string) {
 	ctx := r.Context()
 
@@ -1320,6 +1320,7 @@ func logInternalError(r *http.Request, code string, err error) bool {
 
 // --- Relation Handlers ---
 
+//archplan:auth=authz
 func (a *App) handleV1EntityRelations(w http.ResponseWriter, r *http.Request, typeName, entityID string) {
 	// The path segment is an ADDRESS — `ID` or `ID@face` (BUG-VFHUWO); the
 	// face selects which tail's edges are served.
@@ -1541,6 +1542,7 @@ func resolveRelationEndpoints(entityID, peerID, direction string) (from, to stri
 	return entityID, peerID
 }
 
+//archplan:auth=authz
 func (a *App) handleV1GetRelationType(w http.ResponseWriter, r *http.Request, typeName, entityID, relType string) {
 	// An ADDRESS, gated as in handleV1EntityRelations (BUG-VFHUWO).
 	entity, found := readAddressedOr404(w, r, a.visibleReader, typeName, entityID)
@@ -1636,6 +1638,7 @@ func (a *App) handleV1RelationTarget(
 
 // --- Action Handlers ---
 
+//archplan:auth=authz
 func (a *App) handleV1EntityAction(w http.ResponseWriter, r *http.Request, typeName, entityID, action string) {
 	if r.Method != http.MethodPost {
 		writeV1Error(w, r, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed", "")
@@ -1652,6 +1655,7 @@ func (a *App) handleV1EntityAction(w http.ResponseWriter, r *http.Request, typeN
 
 // --- System Handlers ---
 
+//archplan:auth=required reason="metamodel; config is not a secret"
 func (a *App) handleV1Schema(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		writeV1Error(w, r, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed", "")
@@ -1712,6 +1716,7 @@ func (a *App) handleV1Schema(w http.ResponseWriter, r *http.Request) {
 	writeV1JSON(w, http.StatusOK, schema)
 }
 
+//archplan:auth=required reason="metamodel; config is not a secret"
 func (a *App) handleV1SchemaRoutes(w http.ResponseWriter, r *http.Request) {
 	s := a.State()
 	path := strings.TrimPrefix(r.URL.Path, "/api/v1/_schema/")
@@ -1944,6 +1949,7 @@ func aboutDescription(s *Schema) string {
 	return ""
 }
 
+//archplan:auth=required reason="navigation config, served verbatim"
 func (a *App) handleV1Config(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		writeV1Error(w, r, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed", "")
@@ -2133,6 +2139,7 @@ func (a *App) handleV1Search(w http.ResponseWriter, r *http.Request) {
 	writeV1JSON(w, http.StatusOK, resp)
 }
 
+//archplan:auth=required
 func (a *App) handleV1Analyze(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		writeV1Error(w, r, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed", "")
@@ -2795,6 +2802,8 @@ func writeV1Error(w http.ResponseWriter, r *http.Request, status int, errType, t
 // --- Conflicts API ---
 
 // handleV1Conflicts returns the list of conflicted files as JSON.
+//
+//archplan:auth=authz reason="should row-gate each file and does not yet (BUG-T6HNKS)"
 func (a *App) handleV1Conflicts(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		writeV1Error(w, r, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed", "")
@@ -2925,6 +2934,8 @@ func conflictAuditSubject(e *entityPkg.Entity, rel *entityPkg.Relation) *audit.S
 // entity-anchored document, the one-segment form a standalone one. Each shape
 // REJECTS the other kind rather than inventing or ignoring an entry id — see
 // handleV1StandaloneDocument.
+//
+//archplan:auth=authz
 func (a *App) handleV1Documents(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		writeV1Error(w, r, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed", "")
@@ -3082,6 +3093,8 @@ func extractEntityIDs(entities []*entityPkg.Entity) []string {
 //   - page_type: "entity", "list", "view", or "dashboard"
 //   - qualifier: specific list ID or view ID (optional)
 //   - entity_type: the entity type shown on the page (optional)
+//
+//archplan:auth=required reason="command list; exec is gated per command"
 func (a *App) handleV1Commands(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		writeV1Error(w, r, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed", "")
@@ -3105,6 +3118,8 @@ func (a *App) handleV1Commands(w http.ResponseWriter, r *http.Request) {
 
 // handleV1Templates returns templates for an entity type.
 // GET /api/v1/_templates/{entityType}
+//
+//archplan:auth=required
 func (a *App) handleV1Templates(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		writeV1Error(w, r, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed", "")
@@ -3150,6 +3165,8 @@ func (a *App) handleV1Templates(w http.ResponseWriter, r *http.Request) {
 // --- OpenAPI Spec ---
 
 // handleV1OpenAPI serves the OpenAPI 3.1 specification.
+//
+//archplan:auth=required reason="API description"
 func (a *App) handleV1OpenAPI(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		writeV1Error(w, r, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed", "")

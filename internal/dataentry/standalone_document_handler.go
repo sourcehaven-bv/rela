@@ -39,6 +39,8 @@ import (
 // A plain function rather than an *App method: it needs only the request's
 // read gate and the document's own config, and App sits on its plimsoll load
 // line (see the directive on the type).
+//
+//archplan:guard=authz reason="checks the document's config-declared permission"
 func gateDocumentPermission(
 	w http.ResponseWriter, r *http.Request, docName string, docCfg dataentryconfig.DocumentConfig,
 ) bool {
@@ -71,6 +73,8 @@ func gateDocumentPermission(
 // the ACL implementation, not the read gate, and denies under NopACL as well:
 // unlike commands, an elevated document has no pre-ACL behavior to preserve,
 // so granting would leave the boundary inert while it looks configured.
+//
+//archplan:guard=authz reason="boundary for an elevated document, keyed on the ACL implementation"
 func authorizeElevatedDocument(
 	ctx context.Context, aclImpl acl.ACL, docCfg dataentryconfig.DocumentConfig,
 ) bool {

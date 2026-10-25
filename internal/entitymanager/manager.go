@@ -1301,6 +1301,8 @@ func patchEntity(
 //
 // Nil: rejected — row names the subject; there is no question to ask without
 // it.
+//
+//archplan:guard=authz reason="read gate, then the manager's write authorization, without writing"
 func (m *Manager) AuthorizeUpdate(ctx context.Context, row *entity.Entity) (UpdateGrant, error) {
 	if row == nil {
 		return UpdateGrant{}, errors.New("entitymanager: AuthorizeUpdate: nil row")

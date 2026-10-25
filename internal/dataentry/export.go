@@ -184,6 +184,8 @@ func (h *exportHandler) probeTransforms() {
 // handleV1Transforms serves GET /api/v1/_transforms — the list of registered
 // export formats. It is public metadata (which formats exist), carries no
 // entity data, and drives the SPA "Export as" menu.
+//
+//archplan:auth=required reason="transform names"
 func (h *exportHandler) handleV1Transforms(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		writeV1Error(w, r, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed", "")
@@ -207,6 +209,8 @@ func (h *exportHandler) handleV1Transforms(w http.ResponseWriter, r *http.Reques
 // download (nosniff + sandbox CSP + no-store + sanitized filename) because a
 // transform emits attacker-influenceable bytes (a PDF/DOCX built from user
 // content).
+//
+//archplan:auth=authz
 func (h *exportHandler) handleV1ExportEntity(w http.ResponseWriter, r *http.Request, typeName, entityID string) {
 	if r.Method != http.MethodGet {
 		writeV1Error(w, r, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed", "")

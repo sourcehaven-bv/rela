@@ -21,6 +21,8 @@ const maxLogoUploadBytes = MaxUserLogoBytes + 16*1024
 // handleAPIThemeLogo routes /api/v1/_theme/logo by HTTP method. The logo is
 // shared by every principal, so changing or removing it needs
 // the settings:edit permission (see [appearanceHandler.refuseSettingsEdit]).
+//
+//archplan:auth=authz
 func (h *appearanceHandler) handleAPIThemeLogo(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:

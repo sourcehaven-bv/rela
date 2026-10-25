@@ -1,0 +1,1546 @@
+{
+  "kind": "sqlite",
+  "tables": {
+    "attachments": {
+      "columns": [
+        {
+          "name": "entity_id",
+          "type": "text",
+          "null": false
+        },
+        {
+          "name": "property",
+          "type": "text",
+          "null": false
+        },
+        {
+          "name": "file_name",
+          "type": "text",
+          "null": false
+        },
+        {
+          "name": "data",
+          "type": "blob",
+          "null": false
+        },
+        {
+          "name": "size",
+          "type": "integer",
+          "null": false
+        },
+        {
+          "name": "updated_at",
+          "type": "text",
+          "null": false
+        }
+      ],
+      "pk": [
+        "entity_id",
+        "property",
+        "file_name"
+      ],
+      "fks": [],
+      "indexes": [
+        {
+          "columns": [
+            "entity_id"
+          ],
+          "unique": false
+        }
+      ],
+      "checks": []
+    },
+    "channel_audit": {
+      "columns": [
+        {
+          "name": "id",
+          "type": "integer",
+          "null": false
+        },
+        {
+          "name": "anchor_id",
+          "type": "text",
+          "null": false
+        },
+        {
+          "name": "tomb",
+          "type": "text",
+          "null": false,
+          "default": "''"
+        },
+        {
+          "name": "record",
+          "type": "text",
+          "null": false
+        }
+      ],
+      "pk": [
+        "id"
+      ],
+      "fks": [],
+      "indexes": [
+        {
+          "columns": [
+            "anchor_id",
+            "tomb",
+            "id"
+          ],
+          "unique": false
+        }
+      ],
+      "checks": []
+    },
+    "channel_messages": {
+      "columns": [
+        {
+          "name": "channel_id",
+          "type": "integer",
+          "null": false
+        },
+        {
+          "name": "seq",
+          "type": "integer",
+          "null": false
+        },
+        {
+          "name": "rev",
+          "type": "integer",
+          "null": false
+        },
+        {
+          "name": "reply_to",
+          "type": "integer",
+          "null": false,
+          "default": "0"
+        },
+        {
+          "name": "reply_count",
+          "type": "integer",
+          "null": false,
+          "default": "0"
+        },
+        {
+          "name": "pending_at",
+          "type": "integer",
+          "null": false,
+          "default": "0"
+        },
+        {
+          "name": "doc",
+          "type": "text",
+          "null": false
+        }
+      ],
+      "pk": [
+        "channel_id",
+        "seq"
+      ],
+      "fks": [
+        {
+          "columns": [
+            "channel_id"
+          ],
+          "to": "channels",
+          "to_columns": [
+            "id"
+          ],
+          "on_delete": "CASCADE"
+        }
+      ],
+      "indexes": [
+        {
+          "columns": [
+            "pending_at"
+          ],
+          "unique": false
+        },
+        {
+          "columns": [
+            "channel_id",
+            "rev"
+          ],
+          "unique": false
+        }
+      ],
+      "checks": []
+    },
+    "channel_tombstones": {
+      "columns": [
+        {
+          "name": "anchor_id",
+          "type": "text",
+          "null": false
+        },
+        {
+          "name": "tomb",
+          "type": "text",
+          "null": false
+        },
+        {
+          "name": "anchor_face",
+          "type": "text",
+          "null": false,
+          "default": "''"
+        },
+        {
+          "name": "policy",
+          "type": "text",
+          "null": false,
+          "default": "''"
+        },
+        {
+          "name": "purge_after",
+          "type": "integer",
+          "null": false,
+          "default": "0"
+        },
+        {
+          "name": "type_after",
+          "type": "text",
+          "null": false,
+          "default": "''"
+        },
+        {
+          "name": "due_at",
+          "type": "integer",
+          "null": false,
+          "default": "0"
+        },
+        {
+          "name": "pending",
+          "type": "integer",
+          "null": false,
+          "default": "0"
+        }
+      ],
+      "pk": [
+        "anchor_id",
+        "tomb"
+      ],
+      "fks": [],
+      "indexes": [
+        {
+          "columns": [
+            "pending",
+            "due_at"
+          ],
+          "unique": false
+        }
+      ],
+      "checks": []
+    },
+    "channel_type_refs": {
+      "columns": [
+        {
+          "name": "type",
+          "type": "text",
+          "null": false
+        },
+        {
+          "name": "ref",
+          "type": "text",
+          "null": false
+        }
+      ],
+      "pk": [
+        "type",
+        "ref"
+      ],
+      "fks": [],
+      "indexes": [],
+      "checks": []
+    },
+    "channel_types": {
+      "columns": [
+        {
+          "name": "type",
+          "type": "text",
+          "null": false
+        },
+        {
+          "name": "anchor_mode",
+          "type": "text",
+          "null": false
+        },
+        {
+          "name": "cardinality",
+          "type": "text",
+          "null": false,
+          "default": "''"
+        }
+      ],
+      "pk": [
+        "type"
+      ],
+      "fks": [],
+      "indexes": [],
+      "checks": []
+    },
+    "channels": {
+      "columns": [
+        {
+          "name": "id",
+          "type": "integer",
+          "null": false
+        },
+        {
+          "name": "anchor_id",
+          "type": "text",
+          "null": false
+        },
+        {
+          "name": "anchor_face",
+          "type": "text",
+          "null": false,
+          "default": "''"
+        },
+        {
+          "name": "type",
+          "type": "text",
+          "null": false
+        },
+        {
+          "name": "name",
+          "type": "text",
+          "null": false,
+          "default": "''"
+        },
+        {
+          "name": "tomb",
+          "type": "text",
+          "null": false,
+          "default": "''"
+        },
+        {
+          "name": "incarnation",
+          "type": "text",
+          "null": false,
+          "default": "''"
+        },
+        {
+          "name": "state",
+          "type": "text",
+          "null": false
+        },
+        {
+          "name": "title",
+          "type": "text",
+          "null": false,
+          "default": "''"
+        },
+        {
+          "name": "created_by",
+          "type": "text",
+          "null": false
+        },
+        {
+          "name": "created_at",
+          "type": "integer",
+          "null": false
+        },
+        {
+          "name": "closed_at",
+          "type": "integer",
+          "null": false,
+          "default": "0"
+        },
+        {
+          "name": "archived_at",
+          "type": "integer",
+          "null": false,
+          "default": "0"
+        },
+        {
+          "name": "reopened_at",
+          "type": "integer",
+          "null": false,
+          "default": "0"
+        },
+        {
+          "name": "last_seq",
+          "type": "integer",
+          "null": false,
+          "default": "0"
+        },
+        {
+          "name": "rev",
+          "type": "integer",
+          "null": false,
+          "default": "0"
+        }
+      ],
+      "pk": [
+        "id"
+      ],
+      "fks": [],
+      "indexes": [
+        {
+          "columns": [
+            "type",
+            "state",
+            "tomb"
+          ],
+          "unique": false
+        },
+        {
+          "columns": [
+            "tomb",
+            "state"
+          ],
+          "unique": false
+        },
+        {
+          "columns": [
+            "anchor_id",
+            "anchor_face",
+            "type",
+            "name",
+            "tomb"
+          ],
+          "unique": true
+        }
+      ],
+      "checks": []
+    },
+    "comments": {
+      "columns": [
+        {
+          "name": "id",
+          "type": "text",
+          "null": false
+        },
+        {
+          "name": "target_key",
+          "type": "text",
+          "null": false
+        },
+        {
+          "name": "target_type",
+          "type": "text",
+          "null": false
+        },
+        {
+          "name": "author",
+          "type": "text",
+          "null": false
+        },
+        {
+          "name": "created_at",
+          "type": "text",
+          "null": false
+        },
+        {
+          "name": "updated_at",
+          "type": "text",
+          "null": true
+        },
+        {
+          "name": "anchor",
+          "type": "text",
+          "null": false
+        },
+        {
+          "name": "body",
+          "type": "text",
+          "null": false
+        },
+        {
+          "name": "resolved",
+          "type": "integer",
+          "null": false,
+          "default": "0"
+        }
+      ],
+      "pk": [
+        "target_key",
+        "id"
+      ],
+      "fks": [],
+      "indexes": [
+        {
+          "columns": [
+            "target_key",
+            "created_at",
+            "id"
+          ],
+          "unique": false
+        }
+      ],
+      "checks": []
+    },
+    "entities": {
+      "columns": [
+        {
+          "name": "id",
+          "type": "text",
+          "null": false
+        },
+        {
+          "name": "face",
+          "type": "text",
+          "null": false,
+          "default": "''"
+        },
+        {
+          "name": "type",
+          "type": "text",
+          "null": false
+        },
+        {
+          "name": "properties",
+          "type": "text",
+          "null": false,
+          "default": "'{}'"
+        },
+        {
+          "name": "content",
+          "type": "text",
+          "null": false,
+          "default": "''"
+        },
+        {
+          "name": "updated_at",
+          "type": "text",
+          "null": false
+        },
+        {
+          "name": "last_edited_by_user",
+          "type": "text",
+          "null": true
+        },
+        {
+          "name": "last_edited_by_tool",
+          "type": "text",
+          "null": true
+        },
+        {
+          "name": "origin_kind",
+          "type": "text",
+          "null": true
+        },
+        {
+          "name": "origin_source",
+          "type": "text",
+          "null": true
+        },
+        {
+          "name": "origin_source_face",
+          "type": "text",
+          "null": true
+        },
+        {
+          "name": "origin_source_type",
+          "type": "text",
+          "null": true
+        },
+        {
+          "name": "origin_definition",
+          "type": "text",
+          "null": true
+        },
+        {
+          "name": "content_hash",
+          "type": "text",
+          "null": true
+        },
+        {
+          "name": "mention_targets",
+          "type": "text",
+          "null": true
+        },
+        {
+          "name": "search_text",
+          "type": "text",
+          "null": true
+        }
+      ],
+      "pk": [
+        "id",
+        "face"
+      ],
+      "fks": [],
+      "indexes": [
+        {
+          "columns": [
+            "type",
+            "face",
+            "id"
+          ],
+          "unique": false
+        },
+        {
+          "columns": [
+            "id",
+            "face"
+          ],
+          "unique": false
+        },
+        {
+          "columns": [
+            "updated_at"
+          ],
+          "unique": false
+        },
+        {
+          "columns": [
+            "face"
+          ],
+          "unique": true
+        },
+        {
+          "columns": [
+            "type",
+            "id",
+            "face"
+          ],
+          "unique": false
+        }
+      ],
+      "checks": []
+    },
+    "entity_mention_targets": {
+      "columns": [
+        {
+          "name": "target",
+          "type": "text",
+          "null": false
+        },
+        {
+          "name": "source_id",
+          "type": "text",
+          "null": false
+        },
+        {
+          "name": "source_face",
+          "type": "text",
+          "null": false
+        }
+      ],
+      "pk": [
+        "target",
+        "source_id",
+        "source_face"
+      ],
+      "fks": [],
+      "indexes": [
+        {
+          "columns": [
+            "source_id",
+            "source_face"
+          ],
+          "unique": false
+        }
+      ],
+      "checks": []
+    },
+    "entity_search": {
+      "columns": [
+        {
+          "name": "body",
+          "type": "unknown",
+          "null": true
+        }
+      ],
+      "pk": [],
+      "fks": [],
+      "indexes": [],
+      "checks": []
+    },
+    "entity_search_config": {
+      "columns": [
+        {
+          "name": "k",
+          "type": "unknown",
+          "null": false
+        },
+        {
+          "name": "v",
+          "type": "unknown",
+          "null": true
+        }
+      ],
+      "pk": [
+        "k"
+      ],
+      "fks": [],
+      "indexes": [],
+      "checks": []
+    },
+    "entity_search_content": {
+      "columns": [
+        {
+          "name": "id",
+          "type": "integer",
+          "null": false
+        },
+        {
+          "name": "c0",
+          "type": "unknown",
+          "null": true
+        }
+      ],
+      "pk": [
+        "id"
+      ],
+      "fks": [],
+      "indexes": [],
+      "checks": []
+    },
+    "entity_search_data": {
+      "columns": [
+        {
+          "name": "id",
+          "type": "integer",
+          "null": false
+        },
+        {
+          "name": "block",
+          "type": "blob",
+          "null": true
+        }
+      ],
+      "pk": [
+        "id"
+      ],
+      "fks": [],
+      "indexes": [],
+      "checks": []
+    },
+    "entity_search_docsize": {
+      "columns": [
+        {
+          "name": "id",
+          "type": "integer",
+          "null": false
+        },
+        {
+          "name": "sz",
+          "type": "blob",
+          "null": true
+        }
+      ],
+      "pk": [
+        "id"
+      ],
+      "fks": [],
+      "indexes": [],
+      "checks": []
+    },
+    "entity_search_idx": {
+      "columns": [
+        {
+          "name": "segid",
+          "type": "unknown",
+          "null": false
+        },
+        {
+          "name": "term",
+          "type": "unknown",
+          "null": false
+        },
+        {
+          "name": "pgno",
+          "type": "unknown",
+          "null": true
+        }
+      ],
+      "pk": [
+        "segid",
+        "term"
+      ],
+      "fks": [],
+      "indexes": [],
+      "checks": []
+    },
+    "entity_search_key": {
+      "columns": [
+        {
+          "name": "key",
+          "type": "integer",
+          "null": false
+        },
+        {
+          "name": "id",
+          "type": "text",
+          "null": false
+        },
+        {
+          "name": "face",
+          "type": "text",
+          "null": false
+        }
+      ],
+      "pk": [
+        "key"
+      ],
+      "fks": [],
+      "indexes": [
+        {
+          "columns": [
+            "id",
+            "face"
+          ],
+          "unique": true
+        }
+      ],
+      "checks": []
+    },
+    "entity_versions": {
+      "columns": [
+        {
+          "name": "vseq",
+          "type": "integer",
+          "null": false
+        },
+        {
+          "name": "entity_id",
+          "type": "text",
+          "null": false
+        },
+        {
+          "name": "face",
+          "type": "text",
+          "null": false,
+          "default": "''"
+        },
+        {
+          "name": "op",
+          "type": "text",
+          "null": false
+        },
+        {
+          "name": "prev_id",
+          "type": "text",
+          "null": true
+        },
+        {
+          "name": "prev_face",
+          "type": "text",
+          "null": true
+        },
+        {
+          "name": "type",
+          "type": "text",
+          "null": false
+        },
+        {
+          "name": "content",
+          "type": "text",
+          "null": false,
+          "default": "''"
+        },
+        {
+          "name": "properties",
+          "type": "text",
+          "null": false,
+          "default": "'{}'"
+        },
+        {
+          "name": "content_hash",
+          "type": "text",
+          "null": false
+        },
+        {
+          "name": "schema_hash",
+          "type": "text",
+          "null": false
+        },
+        {
+          "name": "principal_user",
+          "type": "text",
+          "null": false,
+          "default": "''"
+        },
+        {
+          "name": "principal_tool",
+          "type": "text",
+          "null": false,
+          "default": "''"
+        },
+        {
+          "name": "triggered_by",
+          "type": "text",
+          "null": false,
+          "default": "''"
+        },
+        {
+          "name": "origin_kind",
+          "type": "text",
+          "null": true
+        },
+        {
+          "name": "origin_source",
+          "type": "text",
+          "null": true
+        },
+        {
+          "name": "origin_source_face",
+          "type": "text",
+          "null": true
+        },
+        {
+          "name": "origin_source_type",
+          "type": "text",
+          "null": true
+        },
+        {
+          "name": "origin_definition",
+          "type": "text",
+          "null": true
+        },
+        {
+          "name": "created_at",
+          "type": "text",
+          "null": false
+        }
+      ],
+      "pk": [
+        "vseq"
+      ],
+      "fks": [
+        {
+          "columns": [
+            "schema_hash"
+          ],
+          "to": "schema_versions",
+          "to_columns": [
+            "hash"
+          ]
+        }
+      ],
+      "indexes": [
+        {
+          "columns": [
+            "prev_id"
+          ],
+          "unique": false
+        },
+        {
+          "columns": [
+            "entity_id",
+            "face",
+            "vseq"
+          ],
+          "unique": false
+        }
+      ],
+      "checks": []
+    },
+    "marked_entities": {
+      "columns": [
+        {
+          "name": "id",
+          "type": "text",
+          "null": false
+        },
+        {
+          "name": "face",
+          "type": "text",
+          "null": false,
+          "default": "''"
+        },
+        {
+          "name": "type",
+          "type": "text",
+          "null": false
+        },
+        {
+          "name": "properties",
+          "type": "text",
+          "null": false,
+          "default": "'{}'"
+        },
+        {
+          "name": "content",
+          "type": "text",
+          "null": false,
+          "default": "''"
+        },
+        {
+          "name": "updated_at",
+          "type": "text",
+          "null": false
+        },
+        {
+          "name": "last_edited_by_user",
+          "type": "text",
+          "null": true
+        },
+        {
+          "name": "last_edited_by_tool",
+          "type": "text",
+          "null": true
+        },
+        {
+          "name": "origin_kind",
+          "type": "text",
+          "null": true
+        },
+        {
+          "name": "origin_source",
+          "type": "text",
+          "null": true
+        },
+        {
+          "name": "origin_source_face",
+          "type": "text",
+          "null": true
+        },
+        {
+          "name": "origin_source_type",
+          "type": "text",
+          "null": true
+        },
+        {
+          "name": "origin_definition",
+          "type": "text",
+          "null": true
+        },
+        {
+          "name": "content_hash",
+          "type": "text",
+          "null": true
+        },
+        {
+          "name": "mention_targets",
+          "type": "text",
+          "null": true
+        },
+        {
+          "name": "search_text",
+          "type": "text",
+          "null": true
+        },
+        {
+          "name": "deleted_at",
+          "type": "text",
+          "null": false
+        },
+        {
+          "name": "deleted_by",
+          "type": "text",
+          "null": false,
+          "default": "''"
+        }
+      ],
+      "pk": [
+        "id",
+        "face"
+      ],
+      "fks": [],
+      "indexes": [],
+      "checks": []
+    },
+    "marked_relations": {
+      "columns": [
+        {
+          "name": "owner_id",
+          "type": "text",
+          "null": false
+        },
+        {
+          "name": "from_id",
+          "type": "text",
+          "null": false
+        },
+        {
+          "name": "from_face",
+          "type": "text",
+          "null": false,
+          "default": "''"
+        },
+        {
+          "name": "rel_type",
+          "type": "text",
+          "null": false
+        },
+        {
+          "name": "to_id",
+          "type": "text",
+          "null": false
+        },
+        {
+          "name": "properties",
+          "type": "text",
+          "null": false,
+          "default": "'{}'"
+        },
+        {
+          "name": "content",
+          "type": "text",
+          "null": false,
+          "default": "''"
+        },
+        {
+          "name": "updated_at",
+          "type": "text",
+          "null": false
+        },
+        {
+          "name": "rel_record_id",
+          "type": "integer",
+          "null": false,
+          "default": "0"
+        },
+        {
+          "name": "last_edited_by_user",
+          "type": "text",
+          "null": true
+        },
+        {
+          "name": "last_edited_by_tool",
+          "type": "text",
+          "null": true
+        },
+        {
+          "name": "content_hash",
+          "type": "text",
+          "null": true
+        }
+      ],
+      "pk": [
+        "from_id",
+        "from_face",
+        "rel_type",
+        "to_id"
+      ],
+      "fks": [],
+      "indexes": [
+        {
+          "columns": [
+            "owner_id"
+          ],
+          "unique": false
+        }
+      ],
+      "checks": []
+    },
+    "migration_state": {
+      "columns": [
+        {
+          "name": "id",
+          "type": "integer",
+          "null": false
+        },
+        {
+          "name": "state",
+          "type": "text",
+          "null": false
+        }
+      ],
+      "pk": [
+        "id"
+      ],
+      "fks": [],
+      "indexes": [],
+      "checks": [
+        "id = 1"
+      ]
+    },
+    "project_files": {
+      "columns": [
+        {
+          "name": "path",
+          "type": "text",
+          "null": false
+        },
+        {
+          "name": "content",
+          "type": "blob",
+          "null": false
+        },
+        {
+          "name": "updated_at",
+          "type": "text",
+          "null": false
+        }
+      ],
+      "pk": [
+        "path"
+      ],
+      "fks": [],
+      "indexes": [],
+      "checks": []
+    },
+    "rel_record_seq": {
+      "columns": [
+        {
+          "name": "id",
+          "type": "integer",
+          "null": false
+        },
+        {
+          "name": "next",
+          "type": "integer",
+          "null": false
+        }
+      ],
+      "pk": [
+        "id"
+      ],
+      "fks": [],
+      "indexes": [],
+      "checks": [
+        "id = 1"
+      ]
+    },
+    "relation_versions": {
+      "columns": [
+        {
+          "name": "vseq",
+          "type": "integer",
+          "null": false
+        },
+        {
+          "name": "rel_record_id",
+          "type": "integer",
+          "null": false
+        },
+        {
+          "name": "op",
+          "type": "text",
+          "null": false
+        },
+        {
+          "name": "from_id",
+          "type": "text",
+          "null": false
+        },
+        {
+          "name": "from_face",
+          "type": "text",
+          "null": false,
+          "default": "''"
+        },
+        {
+          "name": "rel_type",
+          "type": "text",
+          "null": false
+        },
+        {
+          "name": "to_id",
+          "type": "text",
+          "null": false
+        },
+        {
+          "name": "prev_from",
+          "type": "text",
+          "null": true
+        },
+        {
+          "name": "prev_to",
+          "type": "text",
+          "null": true
+        },
+        {
+          "name": "content",
+          "type": "text",
+          "null": false,
+          "default": "''"
+        },
+        {
+          "name": "properties",
+          "type": "text",
+          "null": false,
+          "default": "'{}'"
+        },
+        {
+          "name": "content_hash",
+          "type": "text",
+          "null": false
+        },
+        {
+          "name": "schema_hash",
+          "type": "text",
+          "null": false
+        },
+        {
+          "name": "principal_user",
+          "type": "text",
+          "null": false,
+          "default": "''"
+        },
+        {
+          "name": "principal_tool",
+          "type": "text",
+          "null": false,
+          "default": "''"
+        },
+        {
+          "name": "triggered_by",
+          "type": "text",
+          "null": false,
+          "default": "''"
+        },
+        {
+          "name": "origin_kind",
+          "type": "text",
+          "null": true
+        },
+        {
+          "name": "origin_source",
+          "type": "text",
+          "null": true
+        },
+        {
+          "name": "origin_source_face",
+          "type": "text",
+          "null": true
+        },
+        {
+          "name": "origin_source_type",
+          "type": "text",
+          "null": true
+        },
+        {
+          "name": "origin_definition",
+          "type": "text",
+          "null": true
+        },
+        {
+          "name": "created_at",
+          "type": "text",
+          "null": false
+        }
+      ],
+      "pk": [
+        "vseq"
+      ],
+      "fks": [
+        {
+          "columns": [
+            "schema_hash"
+          ],
+          "to": "schema_versions",
+          "to_columns": [
+            "hash"
+          ]
+        }
+      ],
+      "indexes": [
+        {
+          "columns": [
+            "from_id",
+            "from_face",
+            "rel_type",
+            "to_id",
+            "vseq"
+          ],
+          "unique": false
+        },
+        {
+          "columns": [
+            "rel_record_id",
+            "vseq"
+          ],
+          "unique": false
+        }
+      ],
+      "checks": []
+    },
+    "relations": {
+      "columns": [
+        {
+          "name": "from_id",
+          "type": "text",
+          "null": false
+        },
+        {
+          "name": "from_face",
+          "type": "text",
+          "null": false,
+          "default": "''"
+        },
+        {
+          "name": "rel_type",
+          "type": "text",
+          "null": false
+        },
+        {
+          "name": "to_id",
+          "type": "text",
+          "null": false
+        },
+        {
+          "name": "properties",
+          "type": "text",
+          "null": false,
+          "default": "'{}'"
+        },
+        {
+          "name": "content",
+          "type": "text",
+          "null": false,
+          "default": "''"
+        },
+        {
+          "name": "updated_at",
+          "type": "text",
+          "null": false
+        },
+        {
+          "name": "rel_record_id",
+          "type": "integer",
+          "null": false,
+          "default": "0"
+        },
+        {
+          "name": "last_edited_by_user",
+          "type": "text",
+          "null": true
+        },
+        {
+          "name": "last_edited_by_tool",
+          "type": "text",
+          "null": true
+        },
+        {
+          "name": "content_hash",
+          "type": "text",
+          "null": true
+        }
+      ],
+      "pk": [
+        "from_id",
+        "from_face",
+        "rel_type",
+        "to_id"
+      ],
+      "fks": [],
+      "indexes": [
+        {
+          "columns": [
+            "updated_at"
+          ],
+          "unique": false
+        },
+        {
+          "columns": [
+            "rel_record_id"
+          ],
+          "unique": false
+        },
+        {
+          "columns": [
+            "to_id"
+          ],
+          "unique": false
+        },
+        {
+          "columns": [
+            "from_id"
+          ],
+          "unique": false
+        }
+      ],
+      "checks": []
+    },
+    "schema_versions": {
+      "columns": [
+        {
+          "name": "hash",
+          "type": "text",
+          "null": false
+        },
+        {
+          "name": "projection",
+          "type": "text",
+          "null": false
+        },
+        {
+          "name": "captured_at",
+          "type": "text",
+          "null": false
+        }
+      ],
+      "pk": [
+        "hash"
+      ],
+      "fks": [],
+      "indexes": [],
+      "checks": []
+    },
+    "state_kv": {
+      "columns": [
+        {
+          "name": "key",
+          "type": "text",
+          "null": false
+        },
+        {
+          "name": "value",
+          "type": "blob",
+          "null": false
+        },
+        {
+          "name": "updated_at",
+          "type": "text",
+          "null": false
+        }
+      ],
+      "pk": [
+        "key"
+      ],
+      "fks": [],
+      "indexes": [],
+      "checks": []
+    },
+    "version_tags": {
+      "columns": [
+        {
+          "name": "vseq",
+          "type": "integer",
+          "null": false
+        },
+        {
+          "name": "face",
+          "type": "text",
+          "null": false,
+          "default": "''"
+        },
+        {
+          "name": "name",
+          "type": "text",
+          "null": false
+        },
+        {
+          "name": "tagged_by_user",
+          "type": "text",
+          "null": false,
+          "default": "''"
+        },
+        {
+          "name": "tagged_by_tool",
+          "type": "text",
+          "null": false,
+          "default": "''"
+        },
+        {
+          "name": "tagged_at",
+          "type": "text",
+          "null": false
+        }
+      ],
+      "pk": [
+        "vseq",
+        "name"
+      ],
+      "fks": [
+        {
+          "columns": [
+            "vseq"
+          ],
+          "to": "entity_versions",
+          "to_columns": [
+            "vseq"
+          ],
+          "on_delete": "RESTRICT"
+        }
+      ],
+      "indexes": [],
+      "checks": []
+    }
+  },
+  "enums": {},
+  "path": ".ignored/schema/project/.rela/rela.db"
+}

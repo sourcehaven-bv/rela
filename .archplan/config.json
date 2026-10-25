@@ -1,6 +1,242 @@
 {
   "name": "rela",
   "model": ".archplan/model.archmodel.json",
-  "export": "just archplan-export",
-  "port": 8765
+  "export": [
+    "just archplan-export {out}",
+    {
+      "cmd": "just archplan export-ts -C frontend -o {out}",
+      "prefix": "web"
+    }
+  ],
+  "port": 8765,
+  "layers": [
+    {
+      "name": "Entry points",
+      "components": [
+        "cmdCli",
+        "cmdDesktop",
+        "cmdDocs",
+        "cmdGenIcons",
+        "cmdServer"
+      ]
+    },
+    {
+      "name": "CLI layer",
+      "components": [
+        "cli",
+        "docscli"
+      ]
+    },
+    {
+      "name": "Web / UI layer",
+      "components": [
+        "dataentry",
+        "dataentrywire",
+        "desktop",
+        "desktopnotify",
+        "docs",
+        "docscapture",
+        "mcpwire"
+      ]
+    },
+    {
+      "name": "Server protocols",
+      "components": [
+        "mcp",
+        "openapi"
+      ]
+    },
+    {
+      "name": "Application services",
+      "components": [
+        "app",
+        "appbuild",
+        "appbuildtest",
+        "backendtest",
+        "fsimport",
+        "perfseed",
+        "projectsetup",
+        "scheduler",
+        "tenant"
+      ]
+    },
+    {
+      "name": "Domain services",
+      "components": [
+        "access",
+        "affordances",
+        "analysis",
+        "apiwire",
+        "attachment",
+        "autocascade",
+        "automation",
+        "caldavalias",
+        "calfeed",
+        "changefeed",
+        "classification",
+        "cmdexec",
+        "computed",
+        "conditionlint",
+        "configedit",
+        "conflict",
+        "dataentryconfig",
+        "datamigration",
+        "entitymanager",
+        "feed",
+        "filemigstate",
+        "htmlmd",
+        "imgproc",
+        "importer",
+        "ingest",
+        "ingestspec",
+        "lua",
+        "mail",
+        "mailrender",
+        "mailtemplate",
+        "memmigstate",
+        "mermaid",
+        "migstatetest",
+        "nextaction",
+        "output",
+        "pgmigstate",
+        "predicate",
+        "predicatefns",
+        "queryplan",
+        "queryscopes",
+        "realtime",
+        "realtimecfg",
+        "realtimelimits",
+        "relresolve",
+        "renametype",
+        "safexml",
+        "schema",
+        "script",
+        "sqlitemigstate",
+        "statemachine",
+        "subscription",
+        "syncmerge",
+        "templating",
+        "tracer",
+        "transform",
+        "validation",
+        "validationgraph",
+        "validator",
+        "visibility",
+        "worldreader"
+      ]
+    },
+    {
+      "name": "Core domain",
+      "components": [
+        "acl",
+        "aclaudit",
+        "aclmap",
+        "aclstore",
+        "bgloop",
+        "bleveindex",
+        "canonical",
+        "channels",
+        "comments",
+        "entity",
+        "filechannels",
+        "filecomments",
+        "filelock",
+        "filter",
+        "frontmatter",
+        "fsstore",
+        "graphquerynaive",
+        "jobs",
+        "kvlease",
+        "kvpiles",
+        "kvschedstate",
+        "kvuserstate",
+        "lease",
+        "markdown",
+        "memcomments",
+        "memstore",
+        "memuserstate",
+        "mentions",
+        "metamodel",
+        "migration",
+        "pattern",
+        "pgchannels",
+        "pgcomments",
+        "pglease",
+        "pgpiles",
+        "pgschedstate",
+        "pgstore",
+        "piles",
+        "presence",
+        "propmatch",
+        "schedulerstate",
+        "search",
+        "searchparser",
+        "sqlchannels",
+        "sqlitechannels",
+        "sqlitecomments",
+        "sqlitedb",
+        "sqlitestore",
+        "store",
+        "storeutil",
+        "userstate",
+        "worlds"
+      ]
+    },
+    {
+      "name": "Infrastructure",
+      "components": [
+        "ai",
+        "audit",
+        "cache",
+        "config",
+        "configsql",
+        "git",
+        "hostconfig",
+        "jwtauth",
+        "lock",
+        "principal",
+        "project",
+        "rootfs",
+        "secrets",
+        "state",
+        "statesql",
+        "storage",
+        "tokenstore"
+      ]
+    },
+    {
+      "name": "Shared utilities",
+      "components": [
+        "errors",
+        "htmlutil",
+        "icondefs",
+        "natsort"
+      ]
+    },
+    {
+      "name": "Not in .go-arch-lint.yml",
+      "components": [
+        "internal/archguard"
+      ]
+    }
+  ],
+  "schema": {
+    "owners": {
+      "entities": "sqlitestore",
+      "entity_versions": "sqlitestore",
+      "entity_mention_targets": "sqlitestore",
+      "entity_search*": "sqlitestore",
+      "relation*": "sqlitestore",
+      "rel_record_seq": "sqlitestore",
+      "attachments": "sqlitestore",
+      "marked_*": "sqlitestore",
+      "schema_versions": "sqlitestore",
+      "version_tags": "sqlitestore",
+      "comments": "sqlitecomments",
+      "channel*": "sqlchannels",
+      "migration_state": "sqlitemigstate",
+      "project_files": "configsql",
+      "state_kv": "statesql"
+    }
+  }
 }

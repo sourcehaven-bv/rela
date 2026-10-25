@@ -11,9 +11,14 @@ import * as path from "path";
 import * as fs from "fs";
 import * as os from "os";
 import * as net from "net";
+import { installSeqtraceRecorder, saveSeqtraceRecords, seqtraceServerEnv } from "./seqtrace";
 
 const PROJECT_ROOT = path.resolve(__dirname, "../..");
-const SERVER_BINARY = path.join(PROJECT_ROOT, "bin", "rela-server");
+// RELA_E2E_SERVER_BINARY runs the suite against another build, such as the
+// call-traced server of `just seqtrace-e2e`.
+const SERVER_BINARY = process.env.RELA_E2E_SERVER_BINARY
+  ? path.resolve(process.env.RELA_E2E_SERVER_BINARY)
+  : path.join(PROJECT_ROOT, "bin", "rela-server");
 // The PostgreSQL-backed server (go build -tags postgres ./cmd/rela-server). Used
 // only by the opt-in `postgresTest` fixture for specs that exercise pgstore-only
 // features (relation/entity content history). Built to a distinct path so it
@@ -473,7 +478,7 @@ export async function spawnServer(
     // clean exit (the server's SIGTERM handler drains and exits gracefully).
     // Give each spawned server its own GOCOVERDIR subdir so parallel workers
     // never share a partial write; `go tool covdata` merges them afterwards.
-    const spawnEnv: NodeJS.ProcessEnv = { ...process.env, ...extraEnv };
+    const spawnEnv: NodeJS.ProcessEnv = { ...process.env, ...seqtraceServerEnv(cwd), ...extraEnv };
     for (const [k, v] of Object.entries(extraEnv)) {
       if (v === undefined) delete spawnEnv[k];
     }
@@ -634,6 +639,7 @@ export const test = base.extend<TestFixtures, WorkerFixtures>({
     // ERR_INVALID_ARGUMENT when one is forced. Writes through page.request set
     // Origin per call instead.
     const context = await browser.newContext();
+    const seqtraceRecords = await installSeqtraceRecorder(context);
     const page = await context.newPage();
 
     // Self-contained-binary guard (TKT-ZDRS): rela-server embeds the SPA via
@@ -676,6 +682,7 @@ export const test = base.extend<TestFixtures, WorkerFixtures>({
 
     await page.goto(`${serverUrl}/`);
     await use(page);
+    saveSeqtraceRecords(seqtraceRecords, testInfo);
     await context.close();
 
     if (vueErrors.length > 0) {

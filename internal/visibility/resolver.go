@@ -192,6 +192,8 @@ func NewAllowAllResolver(load Loader, opts ...ResolverOption) (*Resolver, error)
 // Address resolves a wire address. A named face (`ID@face`) is read with
 // [Resolver.Ref]; a bare id is resolved in w with [Resolver.InWorld]. An
 // address that does not parse is a miss.
+//
+//archplan:guard=authz reason="row gate and field redaction for a wire address"
 func (r *Resolver) Address(ctx context.Context, w World, entityType, addr string) (Resolved, bool, error) {
 	ref, err := entity.ParseRef(addr)
 	if err != nil {
