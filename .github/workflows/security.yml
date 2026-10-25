@@ -219,14 +219,23 @@ jobs:
           BODY=${BODY//__RUN_URL__/$RUN_URL}
           BODY=${BODY//__LOG__/$LOG}
 
-          # Match on the exact title only. Issues filed before BUG-NVNPD8 have
-          # no labels, so a label filter would miss them.
+          # Match the exact title, and only issues this workflow filed: anyone
+          # can open an issue with this title, and matching it would let them
+          # capture or bury the scan reports. github-actions files them now;
+          # rela-coverage-bot (the app) filed them before BUG-NVNPD8. Labels
+          # are not checked because the app's issues carry none. TITLE goes
+          # to jq as --arg, never spliced into the program.
           EXISTING=$(gh issue list \
             --repo "$GITHUB_REPOSITORY" \
             --state open \
             --search "\"$TITLE\" in:title" \
-            --json number,title \
-            --jq '[.[] | select(.title == "'"$TITLE"'")][0].number // empty')
+            --json number,title,author \
+            | jq -r --arg title "$TITLE" '
+                [ .[]
+                  | select(.title == $title)
+                  | select(.author.login == "app/github-actions"
+                           or .author.login == "app/rela-coverage-bot")
+                ][0].number // empty')
 
           if [[ -n "$EXISTING" ]]; then
             echo "Updating existing issue #$EXISTING"

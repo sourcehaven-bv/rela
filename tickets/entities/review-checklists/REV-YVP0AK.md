@@ -24,8 +24,8 @@ status: done
 - [x] Self-reviewed the diff for unrelated changes
 
 **Review Responses:** RR-69EQUL, RR-9Y2DYS, RR-RTFGRI, RR-10J4QZ (minor);
-RR-YB6LGA, RR-EHCC6U, RR-79L4RF, RR-HOFBBH (nit). All addressed. No critical or
-significant findings.
+RR-YB6LGA, RR-EHCC6U, RR-79L4RF, RR-HOFBBH (nit); RR-Y9KYO5 (significant,
+security review). All addressed.
 
 ## Acceptance Verification
 
