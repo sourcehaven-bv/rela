@@ -390,7 +390,12 @@
         ],
         "cardinality": "one",
         "label": "incident",
-        "lifecycle": [],
+        "lifecycle": [
+          {
+            "label": "close",
+            "name": "close"
+          }
+        ],
         "message_types": [
           {
             "actions": [],
@@ -401,6 +406,20 @@
               {
                 "label": "note",
                 "name": "note",
+                "type": "string"
+              }
+            ],
+            "reply": true
+          },
+          {
+            "actions": [],
+            "label": "note",
+            "name": "note",
+            "persist": "log",
+            "properties": [
+              {
+                "label": "body",
+                "name": "body",
                 "type": "string"
               }
             ],
@@ -606,9 +625,12 @@
     "_actions": {
       "delete_own": false,
       "edit_own": false,
-      "lifecycle": [],
+      "lifecycle": [
+        "close"
+      ],
       "post": [
-        "contained"
+        "contained",
+        "note"
       ],
       "remove": false,
       "transitions": [],

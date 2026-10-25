@@ -171,3 +171,45 @@ func adminConn(t *testing.T) *pgxpool.Pool {
 func quoteIdent(name string) string {
 	return `"` + strings.ReplaceAll(name, `"`, `""`) + `"`
 }
+
+// TestLegacyRowHasNoSchedule pins that a channel row written without the
+// timer columns of migration 32 reads with no due time and no restart
+// anchors.
+func TestLegacyRowHasNoSchedule(t *testing.T) {
+	ctx := context.Background()
+	pool, _ := newScopedPool(t)
+	s, err := pgchannels.New(pool)
+	require.NoError(t, err)
+	_, err = pool.Exec(ctx, `INSERT INTO channels
+		(anchor_id, anchor_face, type, name, tomb, incarnation, state, title, created_by, created_at,
+		 closed_at, archived_at, last_seq, rev, session_state, session_gen, session_entered_at)
+		VALUES ('TKT-1', '', 'room', '', '', '', 'open', '', '{"user":"alice"}', 1, 0, 0, 0, 0, 'detected', 1, 1)`)
+	require.NoError(t, err)
+	k := channels.Key{Anchor: channels.Anchor{ID: "TKT-1"}, Type: "room"}
+	c, err := s.Head(ctx, k)
+	require.NoError(t, err)
+	require.Equal(t, "detected", c.Session.State)
+	require.True(t, c.Session.NextDueAt.IsZero())
+	require.Nil(t, c.Session.Restarts)
+	due, err := s.ListSessionsDue(ctx, []string{"room"}, channelstest.T0, 10)
+	require.NoError(t, err)
+	require.Empty(t, due, "a legacy row has no due time")
+}
+
+// TestListSessionsDue_SkipsDamagedRow runs the damaged-row check with
+// invalid JSON in session_restarts and in created_by.
+func TestListSessionsDue_SkipsDamagedRow(t *testing.T) {
+	for _, col := range []string{"session_restarts", "created_by"} {
+		t.Run(col, func(t *testing.T) {
+			ctx := context.Background()
+			pool, _ := newScopedPool(t)
+			s, err := pgchannels.New(pool)
+			require.NoError(t, err)
+			channelstest.RunDamagedDueRow(t, s, func(t *testing.T, k channels.Key) {
+				t.Helper()
+				_, err := pool.Exec(ctx, `UPDATE channels SET `+col+` = '{not json' WHERE anchor_id = $1`, k.ID)
+				require.NoError(t, err)
+			})
+		})
+	}
+}

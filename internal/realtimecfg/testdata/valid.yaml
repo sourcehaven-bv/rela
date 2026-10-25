@@ -27,12 +27,22 @@ channel_types:
             contained: { to: contained, roles: [lead] }
             dismiss:   { to: dismissed }
             escalated: { to: contained, by: trigger }
+          after:
+            no-containment: { period: 24h, to: overdue, label: Not contained within a day }
         contained:
           label: Contained
           on:
             assessed: { to: assessed, when: "message.risk ~= 'none'" }
+          after:
+            notify-deadline: { period: 72h, since: session, to: overdue, label: 72 hours since detection }
         assessed:
           label: Risk assessed
+          on:
+            notified: { to: notified }
+          after:
+            notify-deadline: { period: 72h, since: session, to: overdue, label: 72 hours since detection }
+        overdue:
+          label: Notification overdue
           on:
             notified: { to: notified }
         notified:  { label: AP notified, final: true }

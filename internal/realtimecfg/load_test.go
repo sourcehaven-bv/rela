@@ -70,6 +70,10 @@ func TestParse_Golden(t *testing.T) {
 		t.Fatalf("channel types = %v", names)
 	}
 
+	if br, _ := c.ChannelType("breach-response"); br.Session() == nil || !br.Session().HasTimers() {
+		t.Error("breach-response lost its session timers")
+	}
+
 	room, ok := c.ChannelType("incident-room")
 	if !ok {
 		t.Fatal("incident-room missing")

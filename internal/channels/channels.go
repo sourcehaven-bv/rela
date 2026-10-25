@@ -457,6 +457,9 @@ type NewChannel struct {
 	// this one. Zero, or a value over [MaxChannelsPerType], means
 	// [MaxChannelsPerType].
 	Max int
+	// SessionDue, when set, computes the new channel's session schedule
+	// in the create step (see [ScheduleFunc]).
+	SessionDue ScheduleFunc
 }
 
 // Cap is the most named channels of the type the anchor may hold: Max,
@@ -489,11 +492,16 @@ func (c Channel) StateSince() time.Time {
 // when. TriggeredBy names the rule that made the change when no person
 // asked for it, such as an `auto` step; it is empty for a request. The
 // store copies it to the audit record.
+//
+// SessionDue, when set, computes the session schedule of the channel as it
+// is after the change, in the same step (see [ScheduleFunc]). A reopen of
+// a channel with session timers sets it.
 type Transition struct {
 	To          State
 	By          Author
 	At          time.Time
 	TriggeredBy string
+	SessionDue  ScheduleFunc
 }
 
 // ApplyTransition sets c's state and timestamps for t. Reopening clears

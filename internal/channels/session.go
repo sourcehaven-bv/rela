@@ -2,6 +2,7 @@ package channels
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 )
@@ -10,14 +11,72 @@ import (
 // moved, and when it entered the state. The zero value is unset: the
 // session never moved, and the caller reads it as its configured initial
 // state. Only an append with a [SessionStep] writes it.
+//
+// NextDueAt and Restarts are the session's timer schedule (see
+// [ScheduleFunc]). The store keeps them, but never derives them.
 type Session struct {
 	State      string    `json:"state,omitempty"`
 	Generation int64     `json:"generation,omitempty"`
 	EnteredAt  time.Time `json:"entered_at,omitzero"`
+	// NextDueAt is the index hint for [Store.ListSessionsDue]: the earliest
+	// due time of the current state's timers. Zero: no due time.
+	NextDueAt time.Time `json:"next_due_at,omitzero"`
+	// Restarts holds, per timer name, the restart anchor of a timer that
+	// came due while the channel was closed or tombstoned. A move clears
+	// it.
+	Restarts map[string]time.Time `json:"restarts,omitempty"`
 }
 
 // IsZero reports an unset session.
 func (s Session) IsZero() bool { return s.Generation == 0 && s.State == "" }
+
+// SessionSchedule is what a [ScheduleFunc] returns: the next due time and,
+// when non-nil, the restart anchors to store. A nil Restarts keeps the
+// stored anchors.
+type SessionSchedule struct {
+	NextDueAt time.Time
+	Restarts  map[string]time.Time
+}
+
+// ScheduleFunc computes a channel's session schedule. The store calls it
+// under its lock or inside its transaction, with the channel as it will be
+// committed. Like [SessionStep.Decide] it must be pure and fast: no I/O
+// and no locks. A backend may call it more than once if it retries.
+type ScheduleFunc func(next Channel) SessionSchedule
+
+// MaxSessionRestarts caps the restart anchors one session stores: one per
+// timer of the state, of which realtime.yaml allows at most this many.
+const MaxSessionRestarts = 8
+
+// ApplySchedule stores what f returns for c, the channel as it will be
+// committed. With f nil it does nothing. Restart anchors over
+// [MaxSessionRestarts] or with an invalid timer name are
+// [ErrInvalidMessage], and c is left as it was.
+func ApplySchedule(c *Channel, f ScheduleFunc) error {
+	if f == nil {
+		return nil
+	}
+	sch := f(*c)
+	if sch.Restarts != nil {
+		if len(sch.Restarts) > MaxSessionRestarts {
+			return fmt.Errorf("%w: %d restart anchors, at most %d", ErrInvalidMessage,
+				len(sch.Restarts), MaxSessionRestarts)
+		}
+		rs := make(map[string]time.Time, len(sch.Restarts))
+		for name, at := range sch.Restarts {
+			if !ValidStateName(name) {
+				return fmt.Errorf("%w: restart anchor of timer %q", ErrInvalidMessage, name)
+			}
+			rs[name] = NormTime(at)
+		}
+		if len(rs) == 0 {
+			rs = nil
+		}
+		c.Session.Restarts = rs
+	}
+	c.Session.NextDueAt = NormTime(sch.NextDueAt)
+	return nil
+}
 
 // SessionMove is one session transition: the state the session leaves and
 // the state it enters. From equals To for a re-entry.
@@ -56,6 +115,13 @@ type SessionStep struct {
 	AuditTriggeredBy string
 	// Outcome, when set, is filled by the store after a successful append.
 	Outcome *SessionOutcome
+	// Due computes the session's schedule after the step, moved or not.
+	// It is required: a move without it would leave no due time, and the
+	// next timer would never fire.
+	Due ScheduleFunc
+	// Timer names the timer behind a [Store.SetSession] move. [Store.Append]
+	// refuses a step that sets it, so a post cannot pose as a timer fire.
+	Timer string
 }
 
 // SessionOutcome is what an append with a [SessionStep] did to the session:
@@ -82,6 +148,12 @@ func PrepareSessionStep(step *SessionStep) error {
 	}
 	if step.Decide == nil {
 		return fmt.Errorf("%w: session step has no decider", ErrInvalidMessage)
+	}
+	if step.Due == nil {
+		return fmt.Errorf("%w: session step has no schedule", ErrInvalidMessage)
+	}
+	if step.Timer != "" && !ValidStateName(step.Timer) {
+		return fmt.Errorf("%w: timer %q", ErrInvalidMessage, step.Timer)
 	}
 	if !ValidName(step.NoticeType) {
 		return fmt.Errorf("%w: notice type %q", ErrInvalidMessage, step.NoticeType)
@@ -125,9 +197,64 @@ func DecideSession(step *SessionStep, cur Channel) (move SessionMove, moved bool
 }
 
 // ApplySession moves c's session to move.To at at: the generation rises by
-// one and the session enters the state at at.
+// one and the session enters the state at at. It clears the due time and
+// the restart anchors; the step's [SessionStep.Due] sets the new ones and
+// decides which anchors carry over.
 func ApplySession(c *Channel, move SessionMove, at time.Time) {
 	c.Session = Session{State: move.To, Generation: c.Session.Generation + 1, EnteredAt: NormTime(at)}
+}
+
+// PrepareAppendStep is [PrepareSessionStep] for [Store.Append], which also
+// refuses a step that names a timer. Nil: accepted, as for
+// [PrepareSessionStep].
+func PrepareAppendStep(step *SessionStep) error {
+	if step != nil && step.Timer != "" {
+		return fmt.Errorf("%w: an append cannot name a timer", ErrInvalidMessage)
+	}
+	return PrepareSessionStep(step)
+}
+
+// PrepareTimerStep validates the step of a [Store.SetSession] call.
+func PrepareTimerStep(step SessionStep) error {
+	return PrepareSessionStep(&step)
+}
+
+// DecideTimer runs the step's decider against cur for [Store.SetSession]
+// and checks the move: a move needs a timer name and valid state names.
+func DecideTimer(step *SessionStep, cur Channel) (move SessionMove, moved bool, err error) {
+	move, moved, err = DecideSession(step, cur)
+	if err == nil && moved && step.Timer == "" {
+		return SessionMove{}, false, fmt.Errorf("%w: a timer move must name its timer", ErrInvalidMessage)
+	}
+	return move, moved, err
+}
+
+// TimerNotice returns the notice of a move made by step's timer, which the
+// store appends at seq with rev at at. Its props are from, to, generation
+// (the generation after the move) and timer.
+func TimerNotice(
+	step *SessionStep, seq int64, at time.Time, move SessionMove, gen, rev int64,
+) (m Message, raw []byte, err error) {
+	props, raw, err := PrepareProps(map[string]any{
+		"from": move.From, "to": move.To, "generation": gen, "timer": step.Timer,
+	})
+	if err != nil { // coverage-ignore: invariant: four short values always encode under the caps
+		return Message{}, nil, err
+	}
+	return Message{
+		Seq: seq, Rev: rev, Type: step.NoticeType, Author: step.NoticeBy, At: NormTime(at),
+		Props: props, TriggeredBy: step.TriggeredBy,
+	}, raw, nil
+}
+
+// TimerAudit returns the audit record of a move made by step's timer: By
+// is the notice's author, Seq the notice's seq, Generation the generation
+// after the move.
+func TimerAudit(k Key, step *SessionStep, notice Message, move SessionMove, gen int64) AuditRecord {
+	r := KeyAudit(k, AuditSession, notice.At)
+	r.Seq, r.By, r.From, r.To, r.Generation = notice.Seq, notice.Author, move.From, move.To, gen
+	r.TriggeredBy = step.AuditTriggeredBy
+	return r
 }
 
 // SessionNotice returns the notice of a move caused by the stored message
@@ -168,4 +295,33 @@ func FillSessionOutcome(step *SessionStep, c Channel, move SessionMove, moved bo
 		return
 	}
 	*step.Outcome = SessionOutcome{Session: c.Session, CreatedAt: c.CreatedAt, Moved: moved, Move: move}
+}
+
+// CheckDueQuery validates the arguments of [Store.ListSessionsDue]: at
+// least one type, every type valid ([ErrInvalidKey] otherwise), and a
+// positive limit ([ErrInvalidMessage] otherwise).
+func CheckDueQuery(types []string, limit int) error {
+	if len(types) == 0 {
+		return fmt.Errorf("%w: no channel type to list due sessions of", ErrInvalidKey)
+	}
+	for _, t := range types {
+		if !ValidName(t) {
+			return fmt.Errorf("%w: channel type %q", ErrInvalidKey, t)
+		}
+	}
+	if limit <= 0 {
+		return fmt.Errorf("%w: limit %d", ErrInvalidMessage, limit)
+	}
+	return nil
+}
+
+// SortDue orders cs as [Store.ListSessionsDue] returns them: by
+// Session.NextDueAt and then by key.
+func SortDue(cs []Channel) {
+	sort.SliceStable(cs, func(i, j int) bool {
+		if c := cs[i].Session.NextDueAt.Compare(cs[j].Session.NextDueAt); c != 0 {
+			return c < 0
+		}
+		return KeyLess(cs[i].Key, cs[j].Key)
+	})
 }

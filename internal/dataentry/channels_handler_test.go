@@ -692,6 +692,76 @@ func TestChannelsHandler_SessionInReads(t *testing.T) {
 	require.NotContains(t, string(b), `"session":null`)
 }
 
+// TestChannelsHandler_SessionTimersInReads pins TKT-INM3AZ AC 15: an open
+// channel's head, page and list carry due_at and the timers with their due
+// times. A channel not stored yet, and a final state, carry neither. Under
+// a degraded configuration, and on a closed channel, the timers are listed
+// without due times.
+func TestChannelsHandler_SessionTimersInReads(t *testing.T) {
+	env := newChannelEnv(t)
+	session := func(path string) *v1.ChannelSession {
+		t.Helper()
+		code, b := env.get(t, "alice", path)
+		require.Equal(t, http.StatusOK, code, "%s", b)
+		return decodeAs[v1.ChannelHead](t, b).Channel.Session
+	}
+	before := session(incidentPath)
+	require.Empty(t, before.DueAt, "not stored yet")
+	require.Empty(t, before.Timers)
+
+	resp, b := env.do(t, "alice", http.MethodPost, incidentPath+"/messages", `{"type":"note","props":{"body":"x"}}`, nil)
+	require.Equal(t, http.StatusCreated, resp.StatusCode, "%s", b)
+	open := session(incidentPath)
+	require.NotEmpty(t, open.DueAt)
+	entered, err := time.Parse(time.RFC3339Nano, open.EnteredAt)
+	require.NoError(t, err)
+	due, err := time.Parse(time.RFC3339Nano, open.DueAt)
+	require.NoError(t, err)
+	require.Equal(t, entered.Add(24*time.Hour), due)
+	require.Equal(t, []v1.ChannelSessionTimer{{
+		Name: "no-containment", Label: "Not contained within a day", To: "contained", Since: "state",
+		DueAt: open.DueAt,
+	}}, open.Timers)
+
+	code, b := env.get(t, "alice", incidentPath+"/messages")
+	require.Equal(t, http.StatusOK, code, "%s", b)
+	require.Equal(t, open, decodeAs[v1.MessagePage](t, b).Channel.Session)
+	code, b = env.get(t, "alice", "/api/v1/tickets/TKT-1/_channels")
+	require.Equal(t, http.StatusOK, code, "%s", b)
+	var listed *v1.ChannelSession
+	for _, tl := range decodeAs[v1.ChannelList](t, b).Types {
+		for _, c := range tl.Channels {
+			if c.Type == "incident" {
+				listed = c.Session
+			}
+		}
+	}
+	require.Equal(t, open, listed)
+
+	frozen := []v1.ChannelSessionTimer{{
+		Name: "no-containment", Label: "Not contained within a day", To: "contained", Since: "state",
+	}}
+	env.ch.degraded.Store(true)
+	degraded := session(incidentPath)
+	require.Empty(t, degraded.DueAt)
+	require.Equal(t, frozen, degraded.Timers)
+	env.ch.degraded.Store(false)
+
+	resp, b = env.do(t, "alice", http.MethodPost, incidentPath+"/_lifecycle/close", "", nil)
+	require.Equal(t, http.StatusOK, resp.StatusCode, "%s", b)
+	closed := session(incidentPath)
+	require.Empty(t, closed.DueAt)
+	require.Equal(t, frozen, closed.Timers)
+
+	other := "/api/v1/tickets/TKT-2/_channels/incident"
+	resp, b = env.do(t, "alice", http.MethodPost, other+"/messages", `{"type":"contained"}`, nil)
+	require.Equal(t, http.StatusCreated, resp.StatusCode, "%s", b)
+	final := session(other)
+	require.True(t, final.Final)
+	require.Empty(t, final.DueAt)
+	require.Empty(t, final.Timers)
+}
+
 // TestChannelTyping_Accepted pins AC 17: POST …/_typing answers 202 with
 // the TTL, takes an empty body or {}, and another reader's head lists the
 // typist.

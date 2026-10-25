@@ -17,6 +17,7 @@ var refusedKeys = []struct {
 }{
 	{"session", "a session belongs under a channel type: channel_types.<name>.session"},
 	{"channel_types.*.session.final", "mark each final state with final: true"},
+	{"channel_types.*.session.states.*.after.*.from", "use since: state or since: session"},
 	{"agents", "agents are ordinary principals; restrict them with client_baselines in acl.yaml " +
 		"and match them with a principal_type role"},
 	{"channel_types.*.message_types.*.actions.*.by", "agents are ordinary principals, so an action " +

@@ -92,10 +92,16 @@ channel_types:
       member: { from: attached }
     message_types:
       contained: { properties: { note: { type: string } }, post: [member] }
+      note:      { properties: { body: { type: string } }, post: [member] }
+    lifecycle:
+      close: { roles: [member] }
     session:
       initial: detected
       states:
-        detected:  { label: Detected, on: { contained: { to: contained } } }
+        detected:
+          label: Detected
+          on: { contained: { to: contained } }
+          after: { no-containment: { period: 24h, to: contained, label: Not contained within a day } }
         contained: { label: Contained, final: true }
   chat:
     attach_to: [ticket, feature]
@@ -130,12 +136,16 @@ channel_types:
 `
 
 // testRealtimeConfig is a realtime.ConfigSource over a pointer a test can
-// swap; nil is realtime off.
+// swap; nil is realtime off. degraded, when set, marks the snapshot
+// degraded while it holds true.
 type testRealtimeConfig struct {
-	p *atomic.Pointer[realtimecfg.Compiled]
+	p        *atomic.Pointer[realtimecfg.Compiled]
+	degraded *atomic.Bool
 }
 
-func (c testRealtimeConfig) Load() realtime.Snapshot { return realtime.Snapshot{Config: c.p.Load()} }
+func (c testRealtimeConfig) Load() realtime.Snapshot {
+	return realtime.Snapshot{Config: c.p.Load(), Degraded: c.degraded != nil && c.degraded.Load()}
+}
 
 // channelService is a running channel service and the handles a test
 // turns.
@@ -144,6 +154,8 @@ type channelService struct {
 	store channels.Store
 	cfg   *atomic.Pointer[realtimecfg.Compiled]
 	meta  *metamodel.Metamodel
+	// degraded marks the configuration degraded while it holds true.
+	degraded atomic.Bool
 }
 
 // parse compiles yaml as realtime.yaml against the service's schema.
@@ -187,7 +199,7 @@ func newChannelServiceLocal(
 	out := &channelService{store: cs, cfg: &atomic.Pointer[realtimecfg.Compiled]{}, meta: meta}
 	out.cfg.Store(out.parse(t, yaml))
 	bundle := appbuildtest.New(meta, appbuildtest.WithStore(st), appbuildtest.WithDeclarative(d),
-		appbuildtest.WithChannelsLocal(cs, testRealtimeConfig{p: out.cfg}, local))
+		appbuildtest.WithChannelsLocal(cs, testRealtimeConfig{p: out.cfg, degraded: &out.degraded}, local))
 	t.Cleanup(func() { _ = bundle.Close() })
 	if out.svc = appbuild.ChannelService(bundle); out.svc == nil {
 		t.Fatal("appbuildtest built no channel service")
