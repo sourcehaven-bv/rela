@@ -385,6 +385,10 @@ govulncheck:
     @echo "Running govulncheck..."
     scripts/govulncheck-filtered.sh
 
+# Test the script that picks the security scan's `go get` targets
+govulncheck-fixable-test:
+    scripts/govulncheck-fixable-test.sh
+
 # Check architecture boundaries
 arch-lint:
     @echo "Checking architecture boundaries..."
