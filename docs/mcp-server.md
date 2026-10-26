@@ -88,6 +88,13 @@ Results are compact JSON. Entity summaries carry a `title` resolved from the
 type's `display_property`, so an agent can tell entities apart without
 fetching each one. A summary of a faced entity also carries its `face`.
 
+Over the HTTP transport, every entity in a result also carries a `url`: its
+page in the web app, `<origin>/entity/<type>/<id>`, with `<id>@<face>` for a
+faced entity. The origin is the one the request reached: the scheme follows
+TLS or `X-Forwarded-Proto`, the host follows `Host`. An agent can hand the
+`url` to the user as a link. The stdio transport has no request origin, so its
+results leave `url` out.
+
 ### Entity Tools
 
 | Tool | Description | Parameters |

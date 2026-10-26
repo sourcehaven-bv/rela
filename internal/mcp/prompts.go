@@ -101,12 +101,12 @@ func (h promptHandler) handleAnalyzeTraceabilityPrompt(
 
 	var traceFromText, traceToText string
 	if traceFrom != nil {
-		traceFromText, _ = convertTraceResult(traceFrom, h.meta)
+		traceFromText, _ = convertTraceResult(ctx, traceFrom, h.meta)
 	} else {
 		traceFromText = "No downstream dependencies"
 	}
 	if traceTo != nil {
-		traceToText, _ = convertTraceResult(traceTo, h.meta)
+		traceToText, _ = convertTraceResult(ctx, traceTo, h.meta)
 	} else {
 		traceToText = "No upstream dependencies"
 	}

@@ -7,5 +7,5 @@ bodies: GraphQuery=0/1 ListEntities=1/1 ListEntityHeaders=0/4 MentionSources=0/1
 versions: 
 body:
 event: message
-data: {"jsonrpc":"2.0","id":1,"result":{"content":[{"type":"text","text":"{\"id\":\"TKT-2\",\"type\":\"ticket\",\"properties\":{\"budget\":\"bravo-budget\",\"closed_on\":\"2025-01-10T17:00:00Z\",\"due\":\"2025-01-10\",\"note\":\"bravo-note\",\"secret\":\"bravo-secret\",\"start\":\"2025-01-08\",\"status\":\"closed\",\"title\":\"Bravo\"},\"content\":\"Follows `TKT-1`.\",\"relations\":{\"incoming\":{\"contains\":[{\"id\":\"TKT-1\",\"title\":\"Alpha\"}],\"watches\":[{\"id\":\"PERS-viewer\",\"title\":\"Vera Viewer\"}]}}}"}]}}
+data: {"jsonrpc":"2.0","id":1,"result":{"content":[{"type":"text","text":"{\"id\":\"TKT-2\",\"type\":\"ticket\",\"url\":\"http://127.0.0.1:8080/entity/ticket/TKT-2\",\"properties\":{\"budget\":\"bravo-budget\",\"closed_on\":\"2025-01-10T17:00:00Z\",\"due\":\"2025-01-10\",\"note\":\"bravo-note\",\"secret\":\"bravo-secret\",\"start\":\"2025-01-08\",\"status\":\"closed\",\"title\":\"Bravo\"},\"content\":\"Follows `TKT-1`.\",\"relations\":{\"incoming\":{\"contains\":[{\"id\":\"TKT-1\",\"title\":\"Alpha\",\"url\":\"http://127.0.0.1:8080/entity/ticket/TKT-1\"}],\"watches\":[{\"id\":\"PERS-viewer\",\"title\":\"Vera Viewer\",\"url\":\"http://127.0.0.1:8080/entity/person/PERS-viewer\"}]}}}"}]}}
 
