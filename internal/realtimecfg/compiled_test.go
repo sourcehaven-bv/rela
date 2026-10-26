@@ -147,6 +147,16 @@ func TestCompiled_SessionIsReadOnly(t *testing.T) {
 	if st, _ := s.State("detected"); st.Timers()[0].Name != "no-containment" {
 		t.Error("Timers returned the shared slice")
 	}
+	s.Reminders()[0].Name = "x"
+	r, _ := s.Reminder("status-update")
+	r.In()[0] = "x"
+	r.Props()["body"] = "x"
+	s.RemindersIn("detected")[0].Label = "x"
+	if r, ok := s.Reminder("status-update"); !ok || r.In()[0] != "detected" || r.Label != "Status update" ||
+		r.Props()["body"] != "Post a status update: what changed since the last one?" {
+
+		t.Error("a reminder accessor returned shared state")
+	}
 }
 
 func TestShapeMismatches(t *testing.T) {

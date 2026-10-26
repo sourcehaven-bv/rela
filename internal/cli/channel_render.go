@@ -122,7 +122,24 @@ func sessionText(s *realtime.SessionView) string {
 	if s.Stranded {
 		text += ", stranded"
 	}
-	return text + nextTimerText(s)
+	return text + nextTimerText(s) + remindersText(s)
+}
+
+// remindersText is the reminders part of [sessionText]: per reminder of
+// the current state ", reminder <name>: <count>[ of <max>]", and ", next at
+// <time>" while one is due.
+func remindersText(s *realtime.SessionView) string {
+	var b strings.Builder
+	for _, r := range s.Reminders {
+		fmt.Fprintf(&b, ", reminder %s: %d", printable(r.Name), r.Count)
+		if r.Max > 0 {
+			fmt.Fprintf(&b, " of %d", r.Max)
+		}
+		if r.DueAt != nil {
+			fmt.Fprintf(&b, ", next at %s", r.DueAt.UTC().Format(time.RFC3339))
+		}
+	}
+	return b.String()
 }
 
 // nextTimerText is the ", next: ..." part of [sessionText]: the timer that
@@ -183,6 +200,9 @@ func writeMessageLines(b *strings.Builder, m realtime.MessageView) {
 	fmt.Fprintf(b, "  %s  %s  %s", m.At.UTC().Format(time.RFC3339), authorText(m.Author), printable(m.Type))
 	if !m.EditedAt.IsZero() {
 		b.WriteString("  (edited)")
+	}
+	if m.IsReminder() {
+		b.WriteString("  (reminder)")
 	}
 	switch {
 	case m.ReplyCount == 1:

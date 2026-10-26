@@ -233,7 +233,10 @@ func toolReadChannelDef() *mcpgo.Tool {
 			"actions.transitions lists those your post would fire if the guard holds; a move appends "+
 			"a notice of type session. A state with timers lists them in timers, and due_at is when the "+
 			"first moves the session on its own (only on an open channel); a timer's move appends a "+
-			"session notice with a timer prop. A channel type with typing shows, with signals, who else is typing "+
+			"session notice with a timer prop. A state with reminders lists them in reminders, each with its "+
+			"count and due_at; a reminder posts a message of its type from system:realtime with triggered_by "+
+			"reminder:<type>/<name>, never moves the session, and cannot be edited or deleted. "+
+			"A channel type with typing shows, with signals, who else is typing "+
 			"in typing_now, and actions.typing says whether you may type there; there is no tool to type, "+
 			"and typing_now is empty over stdio, because typing entries live in the server process. "+
 			realtime.UntrustedNotice),

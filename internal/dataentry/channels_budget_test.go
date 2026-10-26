@@ -296,7 +296,8 @@ func TestChannelsBudget_ActionsReadNothing(t *testing.T) {
 // m<i>, that share one permission role (officer) and one entity-property
 // role (owner). States s1..sn each have a transition by text with roles of
 // their own (officer-i, owner-i), the last to the final state done. s0
-// also has a timer (TKT-INM3AZ), so a due time is on the read path. Every
+// also has a timer (TKT-INM3AZ) and a reminder (TKT-36Z6X3), so due times
+// and a reminder count are on the read path. Every
 // post role list starts with member, which alice holds, so a post check
 // asks no other role.
 func sessionThreadsWith(n int) string {
@@ -334,6 +335,7 @@ func sessionThreadsWith(n int) string {
       text:
         properties: { body: { type: string } }
         post: [`+strings.Join(textPost, ", ")+`]
+      nudge: { properties: { body: { type: string } }, post: [member] }
 `+types.String()+`    session:
       initial: s0
       states:
@@ -341,6 +343,8 @@ func sessionThreadsWith(n int) string {
           on:
 `+fan.String()+`          after: { stale: { period: 1h, to: done } }
 `+rest.String()+`        done: { final: true }
+      reminders:
+        nudge: { in: [s0], every: 30m, first: 10m, post: { type: nudge, props: { body: "Any news?" } } }
   topics:`, 1)
 }
 
@@ -403,7 +407,9 @@ func TestChannelsBudget_List10vs50(t *testing.T) {
 				t.Fatalf("list holds %d threads, want %d", len(tl.Channels), n)
 			}
 			if tl.Type == "threads" && yaml == sessionThreads {
-				if s := tl.Channels[0].Session; s == nil || s.DueAt == "" || len(s.Timers) != 1 {
+				if s := tl.Channels[0].Session; s == nil || s.DueAt == "" || len(s.Timers) != 1 ||
+					len(s.Reminders) != 1 || s.Reminders[0].DueAt == "" {
+
 					t.Fatalf("a listed session carries no due time: %+v", s)
 				}
 			}

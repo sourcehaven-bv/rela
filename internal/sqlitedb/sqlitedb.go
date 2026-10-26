@@ -696,6 +696,7 @@ CREATE TABLE IF NOT EXISTS channels (
 	session_entered_at INTEGER NOT NULL DEFAULT 0,
 	session_next_due_at INTEGER NOT NULL DEFAULT 0,
 	session_restarts    TEXT NOT NULL DEFAULT '',
+	session_reminders   TEXT NOT NULL DEFAULT '',
 	UNIQUE (anchor_id, anchor_face, type, name, tomb)
 ) STRICT;
 CREATE INDEX IF NOT EXISTS channels_state_idx ON channels(tomb, state);

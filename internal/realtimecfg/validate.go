@@ -199,7 +199,7 @@ func (v *validator) channelType(name string, raw *rawChannelType, limits Limits)
 		if err != nil {
 			v.add(key+".session.states", err.Error())
 		}
-		ct.session = v.session(key+".session", raw.Session, order, ct)
+		ct.session = v.session(key+".session", raw.Session, order, ct, raw, limits)
 	}
 	return ct
 }
@@ -789,9 +789,9 @@ func (v *validator) trigger(name string, raw *rawTrigger, file *rawFile, c *Comp
 			"because a signal would reach only the readers connected to the process that runs triggers", raw.Post.Type))
 		return t
 	}
-	v.triggerProps(key+".post.props", raw.Post.Props, &mt, t)
+	v.literalProps(key+".post.props", raw.Post.Props, &mt, t.Props)
 	if cmt := compiledMessageType(c, raw.Channel, raw.Post.Type); cmt != nil {
-		v.triggerMessage(key+".post.props", cmt, t, c.limits)
+		v.literalMessage(key+".post.props", cmt, t.Props, c.limits)
 	}
 	if v.facesUnsafe(raw.EntityType, c, raw.Channel) {
 		v.warn(key, fmt.Sprintf("left out: %s declares faces and acl.yaml lets some readers see a face other "+
@@ -812,14 +812,15 @@ func compiledMessageType(c *Compiled, channel, name string) *MessageType {
 	return ct.MessageTypes[name]
 }
 
-// triggerMessage checks the message a trigger posts as the service will
-// when it posts it: each literal within its property's max, the whole
-// within message_bytes, and the message type's `when:` holding. A trigger
-// whose message the service would refuse could never post.
-func (v *validator) triggerMessage(key string, mt *MessageType, t *Trigger, limits Limits) {
-	props := make(map[string]any, len(t.Props))
-	for _, pn := range sortedKeys(t.Props) {
-		val := t.Props[pn]
+// literalMessage checks the message a trigger or reminder posts as the
+// service will when it posts it: each literal within its property's max,
+// the whole within message_bytes, and the message type's `when:` holding. A
+// trigger or reminder whose message the service would refuse could never
+// post.
+func (v *validator) literalMessage(key string, mt *MessageType, lit map[string]string, limits Limits) {
+	props := make(map[string]any, len(lit))
+	for _, pn := range sortedKeys(lit) {
+		val := lit[pn]
 		props[pn] = val
 		if p, ok := mt.Properties[pn]; ok && p.Max > 0 && utf8.RuneCountInString(val) > p.Max {
 			v.add(key+"."+pn, fmt.Sprintf("is longer than the property's max of %d characters", p.Max))
@@ -835,13 +836,13 @@ func (v *validator) triggerMessage(key string, mt *MessageType, t *Trigger, limi
 	// the next, so it is refused rather than evaluated at an arbitrary date.
 	if slices.Contains(mt.When.Functions(), predicatefns.FuncToday) {
 		v.add(key, "the when: condition of message type "+mt.Name+" calls today(), so whether this "+
-			"trigger's message meets it would depend on the date")
+			"trigger's or reminder's message meets it would depend on the date")
 		return
 	}
 	fields := make(map[string]predicate.Value, len(mt.Properties))
 	for name := range mt.Properties {
 		fields[name] = predicate.NewNil()
-		if val, ok := t.Props[name]; ok {
+		if val, ok := lit[name]; ok {
 			fields[name] = predicate.NewString(val)
 		}
 	}
@@ -866,10 +867,11 @@ func (v *validator) facedAndRestricted(entityType string) bool {
 	return ok && len(def.Faces) > 0 && facesRestricted(v.policy, entityType)
 }
 
-// triggerProps checks a trigger's literal property values against the
-// message type. A value is operator text: there is no substitution, so a
-// message never carries a value read from the entity.
-func (v *validator) triggerProps(key string, props map[string]string, mt *rawMessageType, t *Trigger) {
+// literalProps checks the literal property values of a trigger or reminder
+// post against the message type and copies them into out. A value is
+// operator text: there is no substitution, so a message never carries a
+// value read from the entity.
+func (v *validator) literalProps(key string, props map[string]string, mt *rawMessageType, out map[string]string) {
 	for _, pn := range sortedKeys(props) {
 		val := props[pn]
 		pk := key + "." + pn
@@ -878,16 +880,16 @@ func (v *validator) triggerProps(key string, props map[string]string, mt *rawMes
 		case !ok:
 			v.add(pk, fmt.Sprintf("the message type has no property %q", pn))
 		case strings.Contains(val, "{{"):
-			v.add(pk, "a trigger posts literal text; {{...}} substitution is not supported")
+			v.add(pk, "a trigger or reminder posts literal text; {{...}} substitution is not supported")
 		case rp.Type == string(PropertyString) || rp.Type == string(PropertyMarkdown):
 		default:
 			if ct, isEnum := v.meta.Types[rp.Type]; isEnum && slices.Contains(ct.Values, val) {
 				break
 			}
-			v.add(pk, fmt.Sprintf("a trigger can set only string, markdown or enum properties to a literal "+
+			v.add(pk, fmt.Sprintf("a trigger or reminder can set only string, markdown or enum properties to a literal "+
 				"value; %q is not valid for type %s", val, rp.Type))
 		}
-		t.Props[pn] = val
+		out[pn] = val
 	}
 	for _, pn := range sortedKeys(mt.Properties) {
 		if _, set := props[pn]; mt.Properties[pn].Required && !set {

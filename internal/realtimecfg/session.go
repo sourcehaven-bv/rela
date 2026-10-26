@@ -25,10 +25,16 @@ const SessionNoticeType = "session"
 // its fields are unexported and every accessor returns a value or a copy,
 // so one *Session is shared by every copy of its channel type.
 type Session struct {
-	label   string
-	initial string
-	states  []SessionState
-	index   map[string]int
+	label     string
+	initial   string
+	states    []SessionState
+	index     map[string]int
+	reminders []SessionReminder
+	// guardReminders names every reminder whose name matches the grammar,
+	// valid or not; the guards declare a counter for each.
+	guardReminders []string
+	// paused names the reminders paused in this copy (see [Session.Pausing]).
+	paused map[string]bool
 }
 
 // Label is the session's display name.
@@ -175,7 +181,9 @@ const stateRule = "state name must match ^[a-z][a-z0-9-]{0,62}$"
 
 // session compiles `channel_types.<name>.session`. order is the key order
 // of `session.states` in the file, or nil when it could not be read.
-func (v *validator) session(key string, raw *rawSession, order []string, ct *ChannelType) *Session {
+func (v *validator) session(
+	key string, raw *rawSession, order []string, ct *ChannelType, rawCT *rawChannelType, limits Limits,
+) *Session {
 	s := &Session{label: orDefault(raw.Label, ct.Label), initial: raw.Initial, index: map[string]int{}}
 	statesKey := key + ".states"
 	switch {
@@ -207,6 +215,10 @@ func (v *validator) session(key string, raw *rawSession, order []string, ct *Cha
 		v.add(key+".initial", "the initial state cannot be final: an unset session reads as the "+
 			"initial state, so no channel could ever move")
 	}
+	// Reminders come before the transitions: the guards declare their
+	// counters.
+	reminderCompiler{v: v, rawTypes: rawCT.MessageTypes, states: raw.States, limits: limits, s: s, ct: ct}.
+		compile(key+".reminders", raw.Reminders)
 	for i := range s.states {
 		st := &s.states[i]
 		rs := raw.States[st.Name]
@@ -384,7 +396,7 @@ func (v *validator) transition(
 		v.add(key+".by", "a trigger posts only into cardinality one channel types, so by: trigger never fires here")
 	}
 	if raw.When != "" && ok {
-		t.When = v.guard(key+".when", raw.When, mt, ct)
+		t.When = v.guard(key+".when", raw.When, mt, ct, s.guardReminders)
 		t.warned = &atomic.Bool{}
 	}
 	return t, ok
@@ -393,8 +405,8 @@ func (v *validator) transition(
 // guard compiles a transition's `when:` in [sessionGuardEnv]. A guard that
 // reads the entity is refused with its own reason: this slice gives guards
 // no entity, and the operator's way out is a trigger.
-func (v *validator) guard(key, src string, mt *MessageType, ct *ChannelType) *predicate.Program {
-	env, err := sessionGuardEnv(mt.Properties, nil)
+func (v *validator) guard(key, src string, mt *MessageType, ct *ChannelType, reminders []string) *predicate.Program {
+	env, err := sessionGuardEnv(mt.Properties, reminders, nil)
 	if err != nil {
 		v.add(key, err.Error())
 		return nil
@@ -403,7 +415,7 @@ func (v *validator) guard(key, src string, mt *MessageType, ct *ChannelType) *pr
 	if err == nil {
 		return prog
 	}
-	if v.readsEntity(src, mt, ct) {
+	if v.readsEntity(src, mt, ct, reminders) {
 		v.add(key, "transition guards cannot read the entity yet; use a trigger that posts a message")
 		return nil
 	}
@@ -414,13 +426,13 @@ func (v *validator) guard(key, src string, mt *MessageType, ct *ChannelType) *pr
 // readsEntity reports whether src names `entity`: it compiles once `entity`
 // is declared as the record of one of ct's attach_to types, or it fails on
 // `entity` as an unknown identifier.
-func (v *validator) readsEntity(src string, mt *MessageType, ct *ChannelType) bool {
+func (v *validator) readsEntity(src string, mt *MessageType, ct *ChannelType, reminders []string) bool {
 	for _, t := range ct.AttachTo {
 		def, ok := v.meta.GetEntityDef(t)
 		if !ok {
 			continue
 		}
-		env, err := sessionGuardEnv(mt.Properties, predicatefns.EntityRecordType(v.meta, def))
+		env, err := sessionGuardEnv(mt.Properties, reminders, predicatefns.EntityRecordType(v.meta, def))
 		if err != nil {
 			continue
 		}
@@ -428,7 +440,7 @@ func (v *validator) readsEntity(src string, mt *MessageType, ct *ChannelType) bo
 			return true
 		}
 	}
-	env, err := sessionGuardEnv(mt.Properties, nil)
+	env, err := sessionGuardEnv(mt.Properties, reminders, nil)
 	if err != nil {
 		return false
 	}
@@ -439,18 +451,24 @@ func (v *validator) readsEntity(src string, mt *MessageType, ct *ChannelType) bo
 
 // sessionGuardEnv declares what a transition guard reads: `message`, typed
 // as for the message type's own `when:`, the `session` record (state,
-// generation, entered_at) and the standard library. A non-nil entity is
-// declared as `entity`; only the load check's probe for a guard that reads
-// the entity passes one.
-func sessionGuardEnv(props map[string]Property, entity predicate.Type) (*predicate.Env, error) {
+// generation, entered_at, and `reminders` with one counter per name in
+// reminders) and the standard library. A non-nil entity is declared as
+// `entity`; only the load check's probe for a guard that reads the entity
+// passes one.
+func sessionGuardEnv(props map[string]Property, reminders []string, entity predicate.Type) (*predicate.Env, error) {
 	env := predicate.NewEnv()
 	if err := env.DeclareVar("message", messageRecordType(props)); err != nil {
 		return nil, err
+	}
+	counters := make(predicate.RecordType, len(reminders))
+	for _, name := range reminders {
+		counters[name] = predicate.IntType
 	}
 	if err := env.DeclareVar("session", predicate.RecordType{
 		"state":      predicate.StringType,
 		"generation": predicate.IntType,
 		"entered_at": predicate.DateTypeWithLayout(metamodel.DefaultDatetimeFormat),
+		"reminders":  counters,
 	}); err != nil {
 		return nil, err
 	}

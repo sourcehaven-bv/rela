@@ -54,15 +54,13 @@ func timerStep(
 // stay is a decider that never moves.
 func stay(channels.Channel) (channels.SessionMove, bool) { return channels.SessionMove{}, false }
 
-// fromState returns a decider that moves from (state, gen) to to, and
-// returns no move otherwise.
-func fromState(state string, gen int64, to string) func(channels.Channel) (channels.SessionMove, bool) {
-	return func(c channels.Channel) (channels.SessionMove, bool) {
-		if c.Session.State != state || c.Session.Generation != gen {
-			return channels.SessionMove{}, false
-		}
-		return channels.SessionMove{From: state, To: to}, true
+// containedToOverdue is a decider that moves from contained at generation 1
+// to overdue, and returns no move otherwise.
+func containedToOverdue(c channels.Channel) (channels.SessionMove, bool) {
+	if c.Session.State != "contained" || c.Session.Generation != 1 {
+		return channels.SessionMove{}, false
 	}
+	return channels.SessionMove{From: "contained", To: "overdue"}, true
 }
 
 // contained appends a message whose step moves k's unset session to
@@ -253,7 +251,7 @@ func testSetSessionFire(t *testing.T, h Harness) {
 
 	at := T0.Add(74 * time.Hour)
 	next := at.Add(time.Hour)
-	step := timerStep(fromState("contained", 1, "overdue"), "notify-deadline", dueAt(next))
+	step := timerStep(containedToOverdue, "notify-deadline", dueAt(next))
 	got, err := h.Store.SetSession(ctx, k, at, step)
 	require.NoError(t, err)
 
@@ -345,7 +343,7 @@ func testSetSessionCAS(t *testing.T, h Harness) {
 	moved := make(chan bool, n)
 	for i := range n {
 		wg.Go(func() {
-			step := timerStep(fromState("contained", 1, "overdue"), "notify-deadline", dueAt(time.Time{}))
+			step := timerStep(containedToOverdue, "notify-deadline", dueAt(time.Time{}))
 			_, err := stores[i%len(stores)].SetSession(ctx, k, T0.Add(2*time.Hour), step)
 			errs <- err
 			moved <- err == nil && step.Outcome.Moved
@@ -379,7 +377,7 @@ func testSetSessionRefusals(t *testing.T, h Harness) {
 	ctx := context.Background()
 	missing := key("TKT-9", "room")
 	_, err := h.Store.SetSession(ctx, missing, T0,
-		timerStep(fromState("contained", 1, "overdue"), "late", dueAt(T0)))
+		timerStep(containedToOverdue, "late", dueAt(T0)))
 	require.ErrorIs(t, err, channels.ErrNotFound)
 	_, err = h.Store.Head(ctx, missing)
 	require.ErrorIs(t, err, channels.ErrNotFound, "a refused SetSession created the channel")
@@ -484,8 +482,9 @@ func testListSessionsDue(t *testing.T, h Harness) {
 	require.ErrorIs(t, err, channels.ErrInvalidMessage)
 }
 
-// testSessionScheduleSurvivesMoves pins that the due time and the restart
-// anchors are kept across a close, a rekey and a tombstone.
+// testSessionScheduleSurvivesMoves pins that the due time, the restart
+// anchors and the reminder records are kept across a close, a rekey and a
+// tombstone.
 func testSessionScheduleSurvivesMoves(t *testing.T, h Harness) {
 	t.Helper()
 	ctx := context.Background()
@@ -496,13 +495,21 @@ func testSessionScheduleSurvivesMoves(t *testing.T, h Harness) {
 	require.NoError(t, err)
 	_, err = h.Store.SetLifecycle(ctx, k, channels.StateClosed, channels.Transition{
 		To: channels.StateOpen, By: Bob, At: T0.Add(2 * time.Minute),
-		SessionDue: withRestarts(T0.Add(48*time.Hour), map[string]time.Time{"late": T0.Add(2 * time.Minute)}),
+		SessionDue: func(channels.Channel) channels.SessionSchedule {
+			return channels.SessionSchedule{
+				NextDueAt: T0.Add(48 * time.Hour), Restarts: map[string]time.Time{"late": T0.Add(2 * time.Minute)},
+				Reminders: map[string]channels.ReminderRecord{
+					"status-update": {Since: T0, Last: T0.Add(time.Minute), Count: 3},
+				},
+			}
+		},
 	})
 	require.NoError(t, err)
 	head, err := h.Store.Head(ctx, k)
 	require.NoError(t, err)
 	want := head.Session
 	require.Len(t, want.Restarts, 1)
+	require.Len(t, want.Reminders, 1)
 
 	c, err := h.Store.SetLifecycle(ctx, k, channels.StateOpen,
 		channels.Transition{To: channels.StateClosed, By: Bob, At: T0.Add(3 * time.Minute)})

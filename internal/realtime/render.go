@@ -2,6 +2,7 @@ package realtime
 
 import (
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/channels"
@@ -89,6 +90,11 @@ type MessageView struct {
 
 // IsSessionNotice reports whether m is a session notice.
 func (m MessageView) IsSessionNotice() bool { return isNotice(m.Type, m.TriggeredBy) }
+
+// IsReminder reports whether m was posted by a session reminder.
+func (m MessageView) IsReminder() bool {
+	return strings.HasPrefix(m.TriggeredBy, channels.ReminderMarker)
+}
 
 // EphemeralView is one live signal.
 type EphemeralView struct {

@@ -174,6 +174,18 @@ const (
 	MaxTimerBackoffKeys = 128
 )
 
+// Session reminders (`session.reminders`). Their every and first reuse
+// [MinSessionTimer], and their posts share [MaxTimerWritesPerRound].
+const (
+	// MaxSessionReminders caps the reminders of one session.
+	MaxSessionReminders = 8
+	// MaxReminderCount is the largest `max` a reminder may declare.
+	MaxReminderCount = 1000
+	// ReminderSlack is added to a reminder's next slot in the stored due
+	// time, so one leader round serves several nearby slots.
+	ReminderSlack = 30 * time.Second
+)
+
 // Rate is a token-bucket rate: Count events per Per.
 type Rate struct {
 	Count int

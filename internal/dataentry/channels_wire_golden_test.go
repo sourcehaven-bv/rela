@@ -39,6 +39,7 @@ var channelWireTypes = map[string]any{
 	"ChannelSession":            v1.ChannelSession{},
 	"ChannelSessionTransition":  v1.ChannelSessionTransition{},
 	"ChannelSessionTimer":       v1.ChannelSessionTimer{},
+	"ChannelSessionReminder":    v1.ChannelSessionReminder{},
 	"ChannelTypeList":           v1.ChannelTypeList{},
 	"ChannelList":               v1.ChannelList{},
 	"ChannelActions":            v1.ChannelActions{},
@@ -231,7 +232,11 @@ func TestChannelWireGolden(t *testing.T) {
 	const breachPath = "/api/v1/tickets/TKT-1/_channels/breach-response"
 	resp, posted := env.do(t, "alice", http.MethodPost, breachPath+"/messages", `{"type":"contained"}`, nil)
 	require.Equal(t, http.StatusCreated, resp.StatusCode, "%s", posted)
-	for name, path := range map[string]string{"session_schema": channelSchemaPath, "guarded_head": breachPath} {
+	// The leader's timer round, an hour on, posts the first reminder.
+	runTimerRound(t, env, time.Now().Add(time.Hour))
+	for name, path := range map[string]string{
+		"session_schema": channelSchemaPath, "guarded_head": breachPath, "reminder_messages": breachPath + "/messages",
+	} {
 		code, b := env.get(t, "alice", path)
 		require.Equal(t, http.StatusOK, code, "%s: %s", path, b)
 		var v any

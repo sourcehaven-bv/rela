@@ -57,6 +57,13 @@ func wireChannelSession(s *realtime.SessionView) *v1.ChannelSession {
 		}
 		out.Timers = append(out.Timers, w)
 	}
+	for _, r := range s.Reminders {
+		w := v1.ChannelSessionReminder{Name: r.Name, Label: r.Label, Every: r.Every, Count: r.Count, Max: r.Max}
+		if r.DueAt != nil {
+			w.DueAt = channelTime(*r.DueAt)
+		}
+		out.Reminders = append(out.Reminders, w)
+	}
 	return out
 }
 

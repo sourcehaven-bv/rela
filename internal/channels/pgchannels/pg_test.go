@@ -196,18 +196,52 @@ func TestLegacyRowHasNoSchedule(t *testing.T) {
 	require.Empty(t, due, "a legacy row has no due time")
 }
 
+// TestLegacyRowHasNoReminders pins that a channel row written without the
+// reminder column of migration 33 reads with no reminder records, and
+// that its schedule still lists.
+func TestLegacyRowHasNoReminders(t *testing.T) {
+	ctx := context.Background()
+	pool, _ := newScopedPool(t)
+	s, err := pgchannels.New(pool)
+	require.NoError(t, err)
+	_, err = pool.Exec(ctx, `INSERT INTO channels
+		(anchor_id, anchor_face, type, name, tomb, incarnation, state, title, created_by, created_at,
+		 closed_at, archived_at, last_seq, rev, session_state, session_gen, session_entered_at,
+		 session_next_due_at, session_restarts)
+		VALUES ('TKT-1', '', 'room', '', '', '', 'open', '', '{"user":"alice"}', 1, 0, 0, 0, 0, 'detected', 1, 1,
+		        1, '')`)
+	require.NoError(t, err)
+	k := channels.Key{Anchor: channels.Anchor{ID: "TKT-1"}, Type: "room"}
+	c, err := s.Head(ctx, k)
+	require.NoError(t, err)
+	require.Equal(t, "detected", c.Session.State)
+	require.Nil(t, c.Session.Reminders)
+	due, err := s.ListSessionsDue(ctx, []string{"room"}, channelstest.T0, 10)
+	require.NoError(t, err)
+	require.Len(t, due, 1)
+	require.Nil(t, due[0].Session.Reminders)
+}
+
 // TestListSessionsDue_SkipsDamagedRow runs the damaged-row check with
-// invalid JSON in session_restarts and in created_by.
+// invalid JSON in session_restarts, session_reminders and created_by, and
+// with a reminder record that decodes but is invalid.
 func TestListSessionsDue_SkipsDamagedRow(t *testing.T) {
-	for _, col := range []string{"session_restarts", "created_by"} {
-		t.Run(col, func(t *testing.T) {
+	for _, tc := range []struct{ name, col, val string }{
+		{"session_restarts", "session_restarts", "{not json"},
+		{"session_reminders", "session_reminders", "{not json"},
+		{"created_by", "created_by", "{not json"},
+		{"negative reminder count", "session_reminders", `{"status-update":{"since":1,"count":-1}}`},
+		{"invalid reminder name", "session_reminders", `{"Bad Name":{"since":1,"count":0}}`},
+	} {
+		col := tc.col
+		t.Run(tc.name, func(t *testing.T) {
 			ctx := context.Background()
 			pool, _ := newScopedPool(t)
 			s, err := pgchannels.New(pool)
 			require.NoError(t, err)
 			channelstest.RunDamagedDueRow(t, s, func(t *testing.T, k channels.Key) {
 				t.Helper()
-				_, err := pool.Exec(ctx, `UPDATE channels SET `+col+` = '{not json' WHERE anchor_id = $1`, k.ID)
+				_, err := pool.Exec(ctx, `UPDATE channels SET `+col+` = $1 WHERE anchor_id = $2`, tc.val, k.ID)
 				require.NoError(t, err)
 			})
 		})

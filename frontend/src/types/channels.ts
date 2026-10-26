@@ -55,6 +55,22 @@ export interface ChannelSession {
   transitions?: ChannelSessionTransition[]
   due_at?: string
   timers?: ChannelSessionTimer[]
+  reminders?: ChannelSessionReminder[]
+}
+
+/**
+ * A reminder active in the session's current state: it posts a message
+ * every `every`. count is the number posted in the current span; max caps
+ * it. due_at is the next reminder, set only on an open channel under a
+ * configuration that is not degraded, and not once count reaches max.
+ */
+export interface ChannelSessionReminder {
+  name: string
+  label?: string
+  every: string
+  count: number
+  max?: number
+  due_at?: string
 }
 
 /**
@@ -405,6 +421,15 @@ export const CHANNEL_WIRE_FIELDS: Record<string, readonly string[]> = {
     'transitions',
     'due_at',
     'timers',
+    'reminders',
+  ]),
+  ChannelSessionReminder: wireKeys<ChannelSessionReminder>()([
+    'name',
+    'label',
+    'every',
+    'count',
+    'max',
+    'due_at',
   ]),
   ChannelSessionTimer: wireKeys<ChannelSessionTimer>()(['name', 'label', 'to', 'since', 'due_at']),
   ChannelSessionTransition: wireKeys<ChannelSessionTransition>()([

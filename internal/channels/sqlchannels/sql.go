@@ -212,7 +212,7 @@ func utc(t time.Time) time.Time {
 
 const chanCols = `id, anchor_id, anchor_face, type, name, incarnation, state, title, created_by,
 	created_at, closed_at, archived_at, reopened_at, last_seq, rev, session_state, session_gen, session_entered_at,
-	session_next_due_at, session_restarts`
+	session_next_due_at, session_restarts, session_reminders`
 
 // openSinceSQL is when an open channel entered its state, as
 // [channels.Channel.StateSince] reads it.
@@ -239,11 +239,11 @@ func scanChannel(r interface{ Scan(...any) error }) (row, error) {
 	var out row
 	var face, by string
 	var created, closed, archived, reopened, entered, due int64
-	var restarts string
+	var restarts, reminders string
 	c := &out.c
 	if err := r.Scan(&out.id, &c.Key.ID, &face, &c.Key.Type, &c.Key.Name, &c.Incarnation, &c.State, &c.Title, &by,
 		&created, &closed, &archived, &reopened, &c.LastSeq, &c.Rev,
-		&c.Session.State, &c.Session.Generation, &entered, &due, &restarts); err != nil {
+		&c.Session.State, &c.Session.Generation, &entered, &due, &restarts, &reminders); err != nil {
 		return out, err
 	}
 	c.Session.EnteredAt, c.Session.NextDueAt = fromMicros(entered), fromMicros(due)
@@ -258,6 +258,53 @@ func scanChannel(r interface{ Scan(...any) error }) (row, error) {
 		return out, &damagedRowError{key: c.Key, err: fmt.Errorf("channel %s has damaged session restarts: %w", c.Key, err)}
 	}
 	c.Session.Restarts = rs
+	rems, err := decodeReminders(reminders)
+	if err != nil {
+		return out, &damagedRowError{key: c.Key, err: fmt.Errorf("channel %s has damaged session reminders: %w", c.Key, err)}
+	}
+	c.Session.Reminders = rems
+	return out, nil
+}
+
+// reminderCol is one reminder record in the session_reminders column, its
+// times in microseconds (0 for none), as session_restarts stores them.
+type reminderCol struct {
+	Since int64 `json:"since"`
+	Last  int64 `json:"last,omitempty"`
+	Count int64 `json:"count"`
+}
+
+// encodeReminders is the session_reminders column: the reminder records as
+// a JSON object, or empty for none.
+func encodeReminders(rs map[string]channels.ReminderRecord) string {
+	if len(rs) == 0 {
+		return ""
+	}
+	m := make(map[string]reminderCol, len(rs))
+	for name, r := range rs {
+		m[name] = reminderCol{Since: micros(r.Since), Last: micros(r.Last), Count: r.Count}
+	}
+	return mustJSON(m)
+}
+
+func decodeReminders(raw string) (map[string]channels.ReminderRecord, error) {
+	if raw == "" {
+		return nil, nil //nolint:nilnil // no reminder records
+	}
+	var m map[string]reminderCol
+	if err := json.Unmarshal([]byte(raw), &m); err != nil {
+		return nil, err
+	}
+	if len(m) == 0 {
+		return nil, nil //nolint:nilnil // no reminder records
+	}
+	out := make(map[string]channels.ReminderRecord, len(m))
+	for name, r := range m {
+		out[name] = channels.ReminderRecord{Since: fromMicros(r.Since), Last: fromMicros(r.Last), Count: r.Count}
+	}
+	if err := channels.CheckReminders(out); err != nil {
+		return nil, err
+	}
 	return out, nil
 }
 
@@ -461,16 +508,16 @@ func insertNotice(
 // bumpSession sets a channel's head and its session after an append.
 func bumpSession(ctx context.Context, q Querier, id, lastSeq, rev int64, sess channels.Session) error {
 	_, err := q.Exec(ctx, `UPDATE channels SET last_seq = ?, rev = ?, session_state = ?, session_gen = ?,
-		session_entered_at = ?, session_next_due_at = ?, session_restarts = ? WHERE id = ?`,
+		session_entered_at = ?, session_next_due_at = ?, session_restarts = ?, session_reminders = ? WHERE id = ?`,
 		lastSeq, rev, sess.State, sess.Generation, micros(sess.EnteredAt), micros(sess.NextDueAt),
-		encodeRestarts(sess.Restarts), id)
+		encodeRestarts(sess.Restarts), encodeReminders(sess.Reminders), id)
 	return err
 }
 
 // setSchedule stores a channel's session schedule.
 func setSchedule(ctx context.Context, q Querier, id int64, sess channels.Session) error {
-	_, err := q.Exec(ctx, `UPDATE channels SET session_next_due_at = ?, session_restarts = ? WHERE id = ?`,
-		micros(sess.NextDueAt), encodeRestarts(sess.Restarts), id)
+	_, err := q.Exec(ctx, `UPDATE channels SET session_next_due_at = ?, session_restarts = ?, session_reminders = ?
+		WHERE id = ?`, micros(sess.NextDueAt), encodeRestarts(sess.Restarts), encodeReminders(sess.Reminders), id)
 	return err
 }
 
@@ -742,9 +789,10 @@ func (s *Store) SetLifecycle(
 			return err
 		}
 		if _, err := q.Exec(ctx, `UPDATE channels SET state = ?, closed_at = ?, archived_at = ?, reopened_at = ?,
-			rev = ?, session_next_due_at = ?, session_restarts = ? WHERE id = ?`, string(c.State), micros(c.ClosedAt),
-			micros(c.ArchivedAt), micros(c.ReopenedAt), c.Rev, micros(c.Session.NextDueAt),
-			encodeRestarts(c.Session.Restarts), r.id); err != nil {
+			rev = ?, session_next_due_at = ?, session_restarts = ?, session_reminders = ? WHERE id = ?`,
+			string(c.State), micros(c.ClosedAt), micros(c.ArchivedAt), micros(c.ReopenedAt), c.Rev,
+			micros(c.Session.NextDueAt), encodeRestarts(c.Session.Restarts), encodeReminders(c.Session.Reminders),
+			r.id); err != nil {
 			return err
 		}
 		out = c
@@ -1000,8 +1048,9 @@ func resumeBatch(ctx context.Context, q Querier, id, stamp string, resume channe
 }
 
 // SetSession implements [channels.Store]. One transaction under the
-// entity lock reads the row, decides, inserts the notice on a move, runs
-// one UPDATE of the channel and inserts the audit record.
+// entity lock reads the row, decides, inserts the notice on a move or the
+// reminder message on a reminder post, runs one UPDATE of the channel and,
+// on a move, inserts the audit record.
 func (s *Store) SetSession(
 	ctx context.Context, k channels.Key, at time.Time, step channels.SessionStep,
 ) (channels.Channel, error) {
@@ -1018,17 +1067,12 @@ func (s *Store) SetSession(
 		if err != nil {
 			return err
 		}
-		move, moved, err := channels.DecideTimer(&step, r.c)
+		w, err := applySessionStep(&step, &r.c, at)
 		if err != nil {
 			return err
 		}
-		var notice channels.Message
-		if moved {
-			channels.ApplySession(&r.c, move, at)
-			notice, _, err = channels.TimerNotice(&step, r.c.LastSeq+1, at, move, r.c.Session.Generation, r.c.Rev+1)
-			if err != nil { // coverage-ignore: invariant: TimerNotice encodes four short values
-				return err
-			}
+		notice, move, moved, reminded := w.written, w.move, w.moved, w.reminded
+		if moved || reminded {
 			if _, err := q.Exec(ctx, `INSERT INTO channel_messages
 				(channel_id, seq, rev, reply_to, reply_count, pending_at, doc) VALUES (?, ?, ?, 0, 0, 0, ?)`,
 				r.id, notice.Seq, notice.Rev, docOf(notice)); err != nil {
@@ -1048,11 +1092,51 @@ func (s *Store) SetSession(
 				return err
 			}
 		}
-		channels.FillSessionOutcome(&step, r.c, move, moved)
+		if reminded {
+			channels.FillReminderOutcome(&step, r.c)
+		} else {
+			channels.FillSessionOutcome(&step, r.c, move, moved)
+		}
 		out = r.c
 		return nil
 	})
 	return out, s.wrap(werr, "set session of %s", k)
+}
+
+// sessionWrite is what [applySessionStep] decided and applied to a channel.
+type sessionWrite struct {
+	written  channels.Message
+	move     channels.SessionMove
+	moved    bool
+	reminded bool
+}
+
+// applySessionStep decides step against c and applies the move or the
+// reminder to c's session. written is the notice or reminder message to
+// insert; the caller sets c's LastSeq and Rev from it. A timer move wins
+// over a reminder.
+func applySessionStep(step *channels.SessionStep, c *channels.Channel, at time.Time) (sessionWrite, error) {
+	var w sessionWrite
+	var err error
+	w.move, w.moved, err = channels.DecideTimer(step, *c)
+	if err != nil {
+		return w, err
+	}
+	if w.moved {
+		channels.ApplySession(c, w.move, at)
+		w.written, _, err = channels.TimerNotice(step, c.LastSeq+1, at, w.move, c.Session.Generation, c.Rev+1)
+		return w, err
+	}
+	post, reminded, err := channels.DecideReminder(step, *c, at)
+	if err != nil || !reminded {
+		return w, err
+	}
+	if w.written, _, err = channels.ReminderMessage(step, post, c.LastSeq+1, at, c.Rev+1); err != nil {
+		return w, err
+	}
+	channels.ApplyReminder(c, post)
+	w.reminded = true
+	return w, nil
 }
 
 // --- reads ---

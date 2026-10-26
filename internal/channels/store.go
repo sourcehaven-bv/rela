@@ -45,12 +45,17 @@ type Store interface {
 	Append(ctx context.Context, key Key, msg NewMessage) (Message, error)
 
 	// SetSession runs step against the channel's session without a
-	// message: a timer fire when the decider returns a move, a reschedule
+	// message: a timer fire when the decider returns a move, a reminder
+	// post when it does not and step.Remind returns a post, a reschedule
 	// otherwise. On a move it appends a notice at last_seq+1 (see
 	// [TimerNotice]), applies the move at at, and writes the session audit
 	// record (see [TimerAudit]). A move without step.Timer, or with an
-	// invalid state name, is [ErrInvalidMessage]. In every case it then
-	// applies step.Due. A move raises rev; a reschedule does not. Readers
+	// invalid state name, is [ErrInvalidMessage]. On a reminder post it
+	// stores the post's record (see [ApplyReminder]) and appends the
+	// reminder message at last_seq+1 (see [ReminderMessage]), with no audit
+	// record; an invalid post is [ErrInvalidMessage] or [ErrTooLarge]. In
+	// every case it then applies step.Due. A move or a reminder post raises
+	// rev; a reschedule does not. Readers
 	// do see a due time, but the wire derives it from the configuration
 	// and the session's state, entry time and restart anchors, never from
 	// the stored Session.NextDueAt, which is only an index hint for

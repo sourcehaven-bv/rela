@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
 	"math/rand/v2"
 	"sort"
 	"sync"
@@ -19,7 +20,8 @@ import (
 //
 // The due time of a session is derived from the configuration and the
 // channel row: the current state's timers, each counting from its anchor
-// (see [timerDue]). The row's Session.NextDueAt is only an index hint for
+// (see [timerDue]), and its reminders' next slots (see [nextSlot]). The
+// row's Session.NextDueAt (see [nextDue]) is only an index hint for
 // [channels.Store.ListSessionsDue]: every write that changes the session
 // stores it, the leader's recompute repairs a stale one, and the wire and
 // the timer round always derive the due time again.
@@ -59,12 +61,11 @@ func nextTimer(s *realtimecfg.Session, ch channels.Channel) (t realtimecfg.Sessi
 }
 
 // sessionDue is the schedule of a create of a type with session s: the
-// due time [nextTimer] derives, or zero, and the stored restart anchors
-// kept.
+// due time [nextDue] derives, or zero, and the stored restart anchors and
+// reminder records kept.
 func sessionDue(s *realtimecfg.Session) channels.ScheduleFunc {
 	return func(next channels.Channel) channels.SessionSchedule {
-		_, due, _ := nextTimer(s, next)
-		return channels.SessionSchedule{NextDueAt: due}
+		return channels.SessionSchedule{NextDueAt: nextDue(s, next)}
 	}
 }
 
@@ -86,19 +87,24 @@ func withSessionDue(step *channels.SessionStep, s *realtimecfg.Session) {
 
 // stepSchedule is the schedule of a session step from channel from to
 // next. Without a move it is [sessionDue]. A move clears the restart
-// anchors (see [channels.ApplySession]); the anchor of a since: session
-// timer is put back when the target state has a since: session timer of
-// the same name, because that timer keeps counting across the move. A
-// since: state timer starts again from the move.
+// anchors and reminder records (see [channels.ApplySession]); the anchor of
+// a since: session timer is put back when the target state has a since:
+// session timer of the same name, because that timer keeps counting across
+// the move. A since: state timer starts again from the move. The records of
+// reminders active in both states are put back (see [carriedReminders]).
+// Without a move, stored records are kept, pruned (see [pruneReminders]).
 func stepSchedule(s *realtimecfg.Session, from, next channels.Channel) channels.SessionSchedule {
 	if next.Session.Generation == from.Session.Generation {
-		_, due, _ := nextTimer(s, next)
-		return channels.SessionSchedule{NextDueAt: due}
+		sch := channels.SessionSchedule{NextDueAt: nextDue(s, next)}
+		if next.Session.Reminders != nil {
+			sch.Reminders = pruneReminders(s, next.Session.Reminders)
+		}
+		return sch
 	}
 	carried := carriedRestarts(s, from, next.Session.State)
-	next.Session.Restarts = carried
-	_, due, _ := nextTimer(s, next)
-	return channels.SessionSchedule{NextDueAt: due, Restarts: carried}
+	reminders := carriedReminders(s, from, next.Session.State)
+	next.Session.Restarts, next.Session.Reminders = carried, reminders
+	return channels.SessionSchedule{NextDueAt: nextDue(s, next), Restarts: carried, Reminders: reminders}
 }
 
 // carriedRestarts are the restart anchors of from that a move to state to
@@ -133,7 +139,8 @@ func carriedRestarts(s *realtimecfg.Session, from channels.Channel, to string) m
 // the current state that came due at or before at restarts from at (its
 // restart anchor becomes at); a timer not yet due keeps its deadline. The
 // anchors are kept per timer, so repeated close and reopen cycles never
-// stretch a deadline that had not come due.
+// stretch a deadline that had not come due. Reminders resume the same way
+// (see [resumeReminders]).
 //
 // A channel of a type cfg does not declare, or without a session, keeps
 // its schedule. Nil cfg: accepted, and every channel keeps its schedule.
@@ -203,23 +210,18 @@ func resumeSession(s *realtimecfg.Session, ch channels.Channel, at time.Time) ch
 	}
 	timers := st.Timers()
 	restarts := make(map[string]time.Time, len(timers))
-	var next time.Time
 	for _, t := range timers {
 		if r, ok := ch.Session.Restarts[t.Name]; ok {
 			restarts[t.Name] = r
 		}
-		due := timerDue(t, cur, ch)
-		if !due.After(at) {
+		if due := timerDue(t, cur, ch); !due.After(at) {
 			restarts[t.Name] = at
 		}
-		withAnchor := ch
-		withAnchor.Session.Restarts = restarts
-		due = timerDue(t, cur, withAnchor)
-		if next.IsZero() || due.Before(next) {
-			next = due
-		}
 	}
-	return channels.SessionSchedule{NextDueAt: next, Restarts: restarts}
+	reminders := resumeReminders(s, cur, ch, at)
+	resumed := ch
+	resumed.Session.Restarts, resumed.Session.Reminders = restarts, reminders
+	return channels.SessionSchedule{NextDueAt: nextDue(s, resumed), Restarts: restarts, Reminders: reminders}
 }
 
 // transitionSchedule is the schedule a lifecycle move of a channel of
@@ -256,9 +258,9 @@ type TimerDeps struct {
 
 // TimerReport is what one [Timers.RunRound] did.
 type TimerReport struct {
-	// Fired counts the sessions a timer moved; Rescheduled the due times
-	// rewritten without a move.
-	Fired, Rescheduled int
+	// Fired counts the sessions a timer moved; Reminded the reminder
+	// messages posted; Rescheduled the due times rewritten without either.
+	Fired, Reminded, Rescheduled int
 	// Stranded counts the sessions seen in a state the configuration no
 	// longer declares.
 	Stranded int
@@ -272,13 +274,28 @@ type TimerReport struct {
 	Next time.Time
 }
 
-// Timers fires session timers: the leader runs [Timers.RunRound] at the
-// due times it learns and at least every [realtimelimits.TimerCeiling].
+// Timers fires session timers and posts session reminders: the leader runs
+// [Timers.RunRound] at the due times it learns and at least every
+// [realtimelimits.TimerCeiling].
 //
 // A fire is a compare-and-set on the session's (state, generation): the
 // move happens once per (state, generation), and the attempt at least
 // once. Two leaders overlapping, or a message that lands first, make the
-// later attempt move nothing.
+// later attempt move nothing. A reminder post is a compare-and-set on the
+// reminder's record (see [reminderStep]): a slot posts at most once.
+//
+// Timer fires, reminder posts and reschedules share one cap of
+// [realtimelimits.MaxTimerWritesPerRound] writes per round, and the
+// listing orders channels by their stored due time. When B due reminders
+// sort ahead of a due timer, the timer fires at most ceil(B/64) rounds
+// late, each [realtimelimits.TimerFloor] apart.
+//
+// A reminder's props come from the configuration alone, so the loop checks
+// them once per reminder and configuration (see Timers.session). A
+// reminder whose props fail is paused for every channel until the next
+// configuration: the failure is logged once, and the channel's timers
+// still fire and its due time skips the reminder. It is no channel's
+// failure, so no channel goes into backoff for it.
 //
 // It holds the pending recompute, the channels in backoff and the
 // stranded states already logged; [Timers.Reset] drops them all.
@@ -289,6 +306,12 @@ type Timers struct {
 	clock  Clock
 	// jitter spreads the periodic recompute; tests replace it.
 	jitter func(time.Duration) time.Duration
+	// props checks a reminder's props ([reminderProps]); tests replace it
+	// to break the check.
+	props func(
+		ctx context.Context, cfg *realtimecfg.Compiled, ct realtimecfg.ChannelType, r realtimecfg.SessionReminder,
+		now time.Time,
+	) (map[string]any, error)
 
 	mu sync.Mutex
 	// config is the configuration of the last round; a new pointer starts
@@ -306,6 +329,15 @@ type Timers struct {
 	order   []channels.Key
 	// warned holds the stranded (type, state) pairs logged under config.
 	warned map[[2]string]bool
+	// checked holds the outcome of props for each (type, reminder) under
+	// config.
+	checked map[[2]string]checkedProps
+}
+
+// checkedProps is the outcome of Timers.props for one reminder.
+type checkedProps struct {
+	props map[string]any
+	err   error
 }
 
 // NewTimers returns the timer loop over d.
@@ -322,7 +354,9 @@ func NewTimers(d TimerDeps) (*Timers, error) {
 	case d.Clock == nil:
 		return nil, errNil("Clock")
 	}
-	t := &Timers{store: d.Store, cfg: d.Config, marker: d.Marker, clock: d.Clock, jitter: tenthJitter}
+	t := &Timers{store: d.Store, cfg: d.Config, marker: d.Marker, clock: d.Clock, jitter: tenthJitter,
+		props: reminderProps,
+	}
 	t.Reset()
 	return t, nil
 }
@@ -341,6 +375,7 @@ func (t *Timers) Reset() {
 	defer t.mu.Unlock()
 	t.config, t.second, t.recomputeAt, t.queue = nil, time.Time{}, time.Time{}, nil
 	t.backoff, t.order, t.warned = map[channels.Key]time.Time{}, nil, map[[2]string]bool{}
+	t.checked = map[[2]string]checkedProps{}
 }
 
 // timerRound is the state of one [Timers.RunRound].
@@ -400,6 +435,7 @@ func (t *Timers) recomputeDue(r *timerRound) bool {
 			t.second = r.now.Add(realtimelimits.TimerCeiling)
 		}
 		t.config, t.queue, t.warned = r.cfg, nil, map[[2]string]bool{}
+		t.checked = map[[2]string]checkedProps{}
 		start = true
 	}
 	if !t.second.IsZero() && !r.now.Before(t.second) {
@@ -415,18 +451,18 @@ func (t *Timers) recomputeDue(r *timerRound) bool {
 	return start
 }
 
-// recompute lists the open channels of every session type with timers
-// once and queues those whose stored due time differs from the derived
-// one. It logs, once per configuration, the states sessions are stranded
-// in. A type without timers is skipped, as fireDue skips it: a
+// recompute lists the open channels of every session type with timers or
+// reminders once and queues those whose stored due time differs from the
+// derived one. It logs, once per configuration, the states sessions are
+// stranded in. A type without either is skipped, as fireDue skips it: a
 // stale due time on it is never listed, and the wire derives its own.
 func (t *Timers) recompute(ctx context.Context, r *timerRound) {
 	t.queue = nil
 	for _, ct := range r.cfg.ChannelTypes() {
-		s := ct.Session()
-		if s == nil || !s.HasTimers() {
+		if s := ct.Session(); s == nil || !s.HasSchedule() {
 			continue
 		}
+		s := t.session(ctx, r, ct)
 		list, err := t.store.ListByLifecycle(ctx, ct.Name, channels.StateOpen, r.now.Add(time.Microsecond))
 		if err != nil {
 			r.errs = append(r.errs, err)
@@ -438,8 +474,7 @@ func (t *Timers) recompute(ctx context.Context, r *timerRound) {
 				stranded[cur.State]++
 				r.strand(c.Key)
 			}
-			_, due, _ := nextTimer(s, c)
-			if !due.Equal(channels.NormTime(c.Session.NextDueAt)) {
+			if !nextDue(s, c).Equal(channels.NormTime(c.Session.NextDueAt)) {
 				t.queue = append(t.queue, c.Key)
 			}
 		}
@@ -481,17 +516,27 @@ func (t *Timers) drain(ctx context.Context, r *timerRound) {
 		if !ok || ct.Session() == nil {
 			continue
 		}
-		t.write(ctx, r, k, timerStep(ct, ct.Session(), nil, "", 0, r.now))
+		s := t.session(ctx, r, ct)
+		t.write(ctx, r, k, s, timerStep(ct, s, nil, "", 0, r.now))
 	}
 }
 
 // fireDue lists the sessions due within one ceiling, in one call for
-// every type with timers, and fires or reschedules each one.
+// every type with timers or reminders, and for each one fires its timer,
+// posts its reminder or reschedules it. A timer due at or before now wins
+// over a reminder: the reminder is judged against the new state in the
+// next round. One step per channel per round: a second due reminder of the
+// same channel posts in the next round, which More brings at the floor. A
+// reminder fires by its slot, not by the stored hint (slot plus
+// [realtimelimits.ReminderSlack]), so a round run for another channel posts
+// every reminder whose slot has passed.
 func (t *Timers) fireDue(ctx context.Context, r *timerRound) {
 	var types []string
+	sessions := map[string]*realtimecfg.Session{}
 	for _, ct := range r.cfg.ChannelTypes() {
-		if s := ct.Session(); s != nil && s.HasTimers() {
+		if s := ct.Session(); s != nil && s.HasSchedule() {
 			types = append(types, ct.Name)
+			sessions[ct.Name] = t.session(ctx, r, ct)
 		}
 	}
 	if len(types) == 0 {
@@ -508,14 +553,17 @@ func (t *Timers) fireDue(ctx context.Context, r *timerRound) {
 			continue
 		}
 		ct, _ := r.cfg.ChannelType(c.Key.Type) // listed only for the types above
-		s := ct.Session()
+		s := sessions[ct.Name]
 		tm, due, ok := nextTimer(s, c)
 		var fire *realtimecfg.SessionTimer
 		if ok && !due.After(r.now) {
 			fire = &tm
 		}
-		if fire == nil && due.Equal(channels.NormTime(c.Session.NextDueAt)) {
-			r.fold(due)
+		rm, slot, remind := nextReminder(s, c)
+		remind = remind && fire == nil && !slot.After(r.now)
+		hint := nextDue(s, c)
+		if fire == nil && !remind && hint.Equal(channels.NormTime(c.Session.NextDueAt)) {
+			r.fold(hint)
 			continue
 		}
 		if r.writes >= realtimelimits.MaxTimerWritesPerRound {
@@ -526,7 +574,11 @@ func (t *Timers) fireDue(ctx context.Context, r *timerRound) {
 		if cur.stranded {
 			r.strand(c.Key)
 		}
-		t.write(ctx, r, c.Key, timerStep(ct, s, fire, cur.State, cur.Generation, r.now))
+		if remind {
+			t.remind(ctx, r, c, ct, s, rm, cur)
+			continue
+		}
+		t.write(ctx, r, c.Key, s, timerStep(ct, s, fire, cur.State, cur.Generation, r.now))
 	}
 	if n := len(list); n == limit && !list[n-1].Session.NextDueAt.After(r.now) {
 		r.rep.More = true
@@ -581,8 +633,52 @@ func timerStep(
 	return step
 }
 
-// write runs step on k and records the outcome in r.
-func (t *Timers) write(ctx context.Context, r *timerRound, k channels.Key, step channels.SessionStep) {
+// session is ct's session for this round: a copy in which every reminder
+// whose props fail the checks of a post (see [reminderProps]) is paused.
+// The check runs once per reminder and configuration; a failure is logged
+// once, through the round's errors, and counted in Failed once.
+func (t *Timers) session(ctx context.Context, r *timerRound, ct realtimecfg.ChannelType) *realtimecfg.Session {
+	s := ct.Session()
+	var paused []string
+	for _, rm := range s.Reminders() {
+		k := [2]string{ct.Name, rm.Name}
+		c, ok := t.checked[k]
+		if !ok {
+			c.props, c.err = t.props(ctx, r.cfg, ct, rm, r.now)
+			t.checked[k] = c
+			if c.err != nil {
+				r.rep.Failed++
+				r.errs = append(r.errs, fmt.Errorf("reminder %s/%s is paused until realtime.yaml or the "+
+					"schema changes: %w", ct.Name, rm.Name, c.err))
+			}
+		}
+		if c.err != nil {
+			paused = append(paused, rm.Name)
+		}
+	}
+	if len(paused) == 0 {
+		return s
+	}
+	return s.Pausing(paused)
+}
+
+// remind posts rm's reminder for c, of type ct with session s and current
+// session cur. s comes from Timers.session, so rm is not paused and its
+// props passed the checks.
+func (t *Timers) remind(
+	ctx context.Context, r *timerRound, c channels.Channel, ct realtimecfg.ChannelType, s *realtimecfg.Session,
+	rm realtimecfg.SessionReminder, cur current,
+) {
+	props := maps.Clone(t.checked[[2]string{ct.Name, rm.Name}].props)
+	listed, _ := reminderRecord(rm, cur, c)
+	t.write(ctx, r, c.Key, s, reminderStep(ct, s, rm, listed, props, r.now))
+}
+
+// write runs step on k, of a type with session s, and records the outcome
+// in r.
+func (t *Timers) write(
+	ctx context.Context, r *timerRound, k channels.Key, s *realtimecfg.Session, step channels.SessionStep,
+) {
 	r.writes++
 	_, err := t.store.SetSession(ctx, k, r.now, step)
 	switch {
@@ -598,14 +694,26 @@ func (t *Timers) write(ctx context.Context, r *timerRound, k channels.Key, step 
 		return
 	}
 	t.marker.Mark(k)
-	if step.Outcome.Moved {
+	switch {
+	case step.Outcome.Moved:
 		r.rep.Fired++
-	} else {
+	case step.Outcome.Reminded:
+		r.rep.Reminded++
+	default:
 		r.rep.Rescheduled++
 	}
-	if next := step.Outcome.Session.NextDueAt; !next.IsZero() && !next.After(r.now) {
+	// The hint of a reminder is its slot plus the slack, so a reminder
+	// whose slot has passed is due work even while its hint is ahead.
+	after := channels.Channel{
+		State: channels.StateOpen, CreatedAt: step.Outcome.CreatedAt, Session: step.Outcome.Session,
+	}
+	_, due, timerOK := nextTimer(s, after)
+	_, slot, remindOK := nextReminder(s, after)
+	next := step.Outcome.Session.NextDueAt
+	switch {
+	case timerOK && !due.After(r.now), remindOK && !slot.After(r.now), !next.IsZero() && !next.After(r.now):
 		r.rep.More = true
-	} else {
+	default:
 		r.fold(next)
 	}
 }
