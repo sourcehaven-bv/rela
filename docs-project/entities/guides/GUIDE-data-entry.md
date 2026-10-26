@@ -2764,7 +2764,15 @@ per-viewer and may be lower than the raw graph.
 
 When the schema declares a conversion for the entity's type and the caller has
 the source type's `convert:` ACL grant, the detail page offers the configured
-conversion. The conversion form shows mapped destination fields and any
+conversion. One allowed conversion is a button with its label. Several are one
+**Convert** menu that lists each conversion.
+
+When the header actions do not fit beside the title, the page keeps the
+commands, the header create menu and **Edit** in the row. Every other action,
+including History, Export, Duplicate, Delete and the conversions, moves into the
+"⋯" menu. The title keeps a minimum width, and button labels do not wrap.
+
+The conversion form shows mapped destination fields and any
 required fields that still need values. Its preview lists relations that will
 be remapped or dropped; the user confirms before saving. The client selects a
 configured conversion by name and cannot supply its own field or relation map.
