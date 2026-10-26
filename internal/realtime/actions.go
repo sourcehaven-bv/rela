@@ -164,6 +164,9 @@ func (c *call) releaseCheck(m channels.Message) error {
 // releaseGateCheck is every check of [call.releaseCheck] that does not
 // depend on the time.
 func (c *call) releaseGateCheck(m channels.Message) error {
+	if isOutputs(m.Action) {
+		return outputsPending("a session notice's outputs mark cannot be released; it records the move's graph writes")
+	}
 	ops := c.ct.MessageOps
 	if ops.Remove != nil && !c.moderator() {
 		return gateDenied(TypeActionDenied, "releasing an action",

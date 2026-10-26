@@ -79,7 +79,13 @@ func policyChannelService(s *Services) (*realtime.Service, *acl.Declarative, err
 	}
 	// A promote writes the graph through s's own manager, as s's entity
 	// tools do; acl.yaml decides only whether the action may run.
-	promoter, err := newManagerPromoter(s.entityManager, txChannelsFor(s.Store(), s.channels))
+	join := txChannelsFor(s.Store(), s.channels)
+	promoter, err := newManagerPromoter(s.entityManager, join)
+	if err != nil {
+		return nil, nil, err
+	}
+	// Outputs, like a promote, write through s's manager under s's policy.
+	outputs, err := newManagerOutputs(s.entityManager, s.Store(), s.base.meta, join, s.ACLDeclarative())
 	if err != nil {
 		return nil, nil, err
 	}
@@ -87,6 +93,7 @@ func policyChannelService(s *Services) (*realtime.Service, *acl.Declarative, err
 		meta: s.base.meta, worlds: s.base.worlds, config: realtimeConfigSource{h: s.base.realtime},
 		store: s.Store(), channels: s.channels, local: s.realtimeLocal, dueWake: s.dueWake,
 		declarative: c.declarative, redactor: c.fields.redactor, writes: c.acl, promoter: promoter,
+		outputs: outputs,
 	})
 	if err != nil {
 		return nil, nil, err
@@ -118,12 +125,18 @@ func ACLAssignsNoRole(s *Services, user string) bool {
 // buildRealtimeService builds the channel service over refs.channels for one
 // assembly. The service is per assembly, so its access checks follow the
 // current ACL; refs.realtimeLocal is the process-local state successive
-// assemblies share (see [SharedBase.ForReassembly]). Promotes go through mgr.
+// assemblies share (see [SharedBase.ForReassembly]). Promotes and session
+// outputs go through mgr.
 func buildRealtimeService(
 	base *SharedBase, st store.Store, refs refHolders, mgr *entitymanager.Manager,
 	d *acl.Declarative, redactor visibility.FieldRedactor, writes acl.ACL,
 ) (*realtime.Service, error) {
-	promoter, err := newManagerPromoter(mgr, txChannelsFor(st, refs.channels))
+	join := txChannelsFor(st, refs.channels)
+	promoter, err := newManagerPromoter(mgr, join)
+	if err != nil {
+		return nil, err
+	}
+	outputs, err := newManagerOutputs(mgr, st, base.meta, join, d)
 	if err != nil {
 		return nil, err
 	}
@@ -131,7 +144,7 @@ func buildRealtimeService(
 		meta: base.meta, worlds: base.worlds, config: realtimeConfigSource{h: base.realtime},
 		store: st, channels: refs.channels, local: refs.realtimeLocal, dueWake: refs.dueWake,
 		declarative: d, redactor: redactor,
-		writes: writes, promoter: promoter,
+		writes: writes, promoter: promoter, outputs: outputs,
 	})
 	return svc, err
 }
@@ -154,6 +167,9 @@ type realtimeInputs struct {
 	// promoter creates the entities of promoting actions;
 	// [realtime.NoPromoter] where nothing may write the graph.
 	promoter realtime.Promoter
+	// outputs writes session outputs; [realtime.NoOutputs] where nothing
+	// may write the graph.
+	outputs realtime.OutputWriter
 }
 
 // newRealtimeService builds the channel service from in, and makes the
@@ -184,6 +200,7 @@ func newRealtimeService(in realtimeInputs) (*realtime.Service, *realtime.Local, 
 		Local:    local,
 		Promoter: in.promoter,
 		DueWake:  dueWake,
+		Outputs:  in.outputs,
 	})
 	if err != nil {
 		return nil, nil, err

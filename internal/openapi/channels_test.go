@@ -11,6 +11,7 @@ import (
 	"time"
 
 	v1 "github.com/Sourcehaven-BV/rela/internal/apiwire/v1"
+	"github.com/Sourcehaven-BV/rela/internal/realtime"
 	"github.com/Sourcehaven-BV/rela/internal/realtimecfg"
 	"github.com/Sourcehaven-BV/rela/internal/realtimelimits"
 )
@@ -299,6 +300,28 @@ func TestOpenAPI_ChannelSession(t *testing.T) {
 		!strings.Contains(d, "reminder_message") {
 
 		t.Errorf("the Message description does not explain reminders: %s", d)
+	}
+	// Session outputs: the message's outputs refers to ChannelMessageOutputs,
+	// whose properties and results mirror the wire types, and the two
+	// problem types are documented.
+	if o := sc[messageSchema].Properties["outputs"]; o == nil || o.Ref != "#/components/schemas/"+outputsSchema {
+		t.Fatalf("Message.outputs = %+v, want a ref to %s", o, outputsSchema)
+	}
+	for name, typ := range map[string]reflect.Type{
+		outputsSchema:      reflect.TypeFor[v1.ChannelMessageOutputs](),
+		outputResultSchema: reflect.TypeFor[v1.ChannelMessageOutputResult](),
+	} {
+		if got, want := schemaKeys(sc[name]), jsonNames(typ); !slices.Equal(got, want) {
+			t.Errorf("%s properties = %v, want %v", name, got, want)
+		}
+	}
+	if o := tr.Properties["outputs"]; o == nil || o.Type != "integer" {
+		t.Errorf("transition outputs = %+v, want an integer", o)
+	}
+	for _, problem := range []string{realtime.TypeSessionOutputDenied, realtime.TypeOutputsPending} {
+		if !strings.Contains(channelErrorText["403"]+channelErrorText["409"], problem) {
+			t.Errorf("the error responses do not document %s", problem)
+		}
 	}
 }
 

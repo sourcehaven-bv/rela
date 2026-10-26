@@ -237,8 +237,8 @@ func TestCheckReload_SessionChangesAllowed(t *testing.T) {
 		},
 		"initial renamed": {{"initial: detected", "initial: contained"}},
 		"session removed": {{block, ""}},
-		"timer added": {{"            notified: { to: notified }\n        notified:",
-			"            notified: { to: notified }\n          after:\n" +
+		"timer added": {{"{{message.reference}}\" } }\n        notified:",
+			"{{message.reference}}\" } }\n          after:\n" +
 				"            late: { period: 1h, to: notified }\n        notified:"}},
 		"timer removed": {{"          after:\n            no-containment: { period: 24h, to: overdue, " +
 			"label: Not contained within a day }\n", ""}},
@@ -259,6 +259,11 @@ func TestCheckReload_SessionChangesAllowed(t *testing.T) {
 		"reminder every changed": {{"every: 30m", "every: 1h"}},
 		"reminder first changed": {{"first: 10m", "first: 1h"}},
 		"reminder max changed":   {{"max: 48", "max: 5"}},
+		"outputs added": {{"escalate-stalled: { to: overdue, when:",
+			"escalate-stalled: { to: overdue, roles: [dpo], outputs: [ { set: { properties: { status: late } } } ], when:"}},
+		"outputs removed":  {{"              outputs:\n                - set: { properties: { risk: \"{{message.risk}}\" } }\n", ""}},
+		"outputs changed":  {{"risk: \"{{message.risk}}\"", "notes: \"{{message.risk}}\""}},
+		"on_final removed": {{"      on_final: close\n", ""}},
 	}
 	for name, edits := range tests {
 		t.Run(name, func(t *testing.T) {

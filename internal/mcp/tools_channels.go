@@ -253,7 +253,10 @@ func toolReadChannelDef() *mcpgo.Tool {
 func toolPostMessage(refuseSignals bool) *mcpgo.Tool {
 	desc := "Post a message. props must match the message type's props_schema from read_channel. " +
 		"You need a post role for the type; author and time are set by the server. " +
-		"In a channel with a session, the answer shows the session after the post, with its due_at. "
+		"In a channel with a session, the answer shows the session after the post, with its due_at. " +
+		"A post that moves the session along a transition with outputs answers outputs: the graph " +
+		"writes the move made as you, each done or failed with a code. A failed write does not undo the " +
+		"move; you are refused before posting when you may not write one. "
 	if !refuseSignals {
 		desc += "A signal type (persist ephemeral) is kept in memory until its ttl and answers " +
 			"{ephemeral,id,expires_at}. "
@@ -307,6 +310,8 @@ type (
 		// Session is the channel's session after a post, for a channel
 		// type with a session.
 		Session *realtime.SessionView `json:"session,omitempty"`
+		// Outputs is the outputs mark of the notice a post's move wrote.
+		Outputs *realtime.OutputsView `json:"outputs,omitempty"`
 	}
 	signalResult struct {
 		Ephemeral bool   `json:"ephemeral"`
@@ -456,7 +461,9 @@ func (h channelHandler) handlePost(ctx context.Context, args toolRequest) *mcpgo
 			Ephemeral: true, ID: got.ID, ExpiresAt: got.ExpiresAt.UTC().Format(time.RFC3339Nano),
 		})
 	}
-	return channelJSON(messageResult{Notice: realtime.UntrustedNotice, Message: *got.Message, Session: got.Session})
+	return channelJSON(messageResult{Notice: realtime.UntrustedNotice, Message: *got.Message, Session: got.Session,
+		Outputs: got.Outputs,
+	})
 }
 
 func (h channelHandler) handleEdit(ctx context.Context, args toolRequest) *mcpgo.CallToolResult {

@@ -429,3 +429,98 @@ func TestChannelsBudget_List10vs50(t *testing.T) {
 		t.Errorf("sessions change the list cost:\nwithout: %s\nwith 10: %s\nwith 50: %s", c10, s10, s50)
 	}
 }
+
+// noticesCost is what a page costs alice when it holds n session notices
+// whose outputs marks each created an entity: the created ids join the
+// page's one batch resolve, as message refs do.
+func noticesCost(t *testing.T, n int) channelCost {
+	t.Helper()
+	b := newChannelBudgetWith(t, n, channelTestRealtime)
+	ctx := gateCtxFor(aliceCtx(), t, b.d)
+	addr := realtime.RawAddress{EntityType: "ticket", Anchor: "TKT-1", Type: "incident"}
+	if _, err := b.ch.svc.Post(ctx, addr, realtime.PostInput{
+		Type: "note", Props: map[string]any{"body": "x"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	key := channels.Key{Anchor: channels.Anchor{ID: "TKT-1"}, Type: "incident"}
+	alice := channels.Author{User: "alice", Tool: "data-entry"}
+	at := time.Now()
+	for i := range n {
+		from, to := "detected", "contained"
+		if i%2 == 1 {
+			from, to = to, from
+		}
+		outcome := &channels.SessionOutcome{}
+		if _, err := b.ch.store.Append(context.Background(), key, channels.NewMessage{
+			Type: "note", Author: alice, At: at, Props: map[string]any{"body": "x"},
+			Session: &channels.SessionStep{
+				Decide: func(channels.Channel) (channels.SessionMove, bool) {
+					return channels.SessionMove{From: from, To: to}, true
+				},
+				NoticeType: "session", NoticeBy: channels.Author{User: "system:realtime"},
+				TriggeredBy: "session:incident", Outcome: outcome,
+				Due: func(channels.Channel) channels.SessionSchedule { return channels.SessionSchedule{} },
+				Mark: func(channels.SessionMove) *channels.Action {
+					return &channels.Action{PendingAt: at.Add(time.Hour), Outputs: &channels.OutputMark{
+						Writer: alice, Attempt: 1, Claim: "a", ClaimedAt: at,
+					}}
+				},
+			},
+		}); err != nil {
+			t.Fatal(err)
+		}
+		notice, err := b.ch.store.Get(context.Background(), key, outcome.Notice)
+		if err != nil {
+			t.Fatal(err)
+		}
+		done := *notice.Action
+		done.Status = channels.ActionDone
+		done.Outputs = notice.Action.Outputs.Clone()
+		typ := "ticket"
+		if i%2 == 1 {
+			typ = "feature"
+		}
+		done.Outputs.Results = []channels.OutputResult{{
+			Kind: channels.OutputKindCreate, Status: channels.OutputDone,
+			Entity: &channels.Promoted{ID: budgetRef(i), Type: typ},
+		}}
+		if _, err := b.ch.store.SetAction(context.Background(), key, notice.Seq, channels.OutputsAction,
+			channels.ActionPending, done); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got, body := b.get(t, fmt.Sprintf("/api/v1/tickets/TKT-1/_channels/incident/messages?limit=%d", 2*n+1))
+	page := decodeAs[v1.MessagePage](t, body)
+	seen := 0
+	for _, m := range page.Messages {
+		if m.Outputs == nil {
+			continue
+		}
+		ref := m.Outputs.Results[0].Entity
+		if seen%2 == 0 {
+			if ref.ID != budgetRef(seen) || ref.Title == "" {
+				t.Fatalf("notice %d: readable entity = %+v, want %s with a title", m.Seq, ref, budgetRef(seen))
+			}
+		} else if ref.ID != "" || !ref.Restricted {
+			t.Fatalf("notice %d: hidden entity = %+v, want only restricted", m.Seq, ref)
+		}
+		seen++
+	}
+	if seen != n {
+		t.Fatalf("page holds %d notices with outputs, want %d", seen, n)
+	}
+	return got
+}
+
+// TestChannelsBudget_NoticeOutputs10vs50 pins that a page of notices
+// naming created entities costs the same at 10 notices as at 50.
+func TestChannelsBudget_NoticeOutputs10vs50(t *testing.T) {
+	c10, c50 := noticesCost(t, 10), noticesCost(t, 50)
+	if c10.entity["ListEntityHeaders"] == 0 {
+		t.Fatalf("the created refs are not resolved in a batch: %s", c10)
+	}
+	if !c10.equal(c50) {
+		t.Errorf("a notice page grows with rows:\n10: %s\n50: %s", c10, c50)
+	}
+}

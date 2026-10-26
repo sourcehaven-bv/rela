@@ -85,7 +85,7 @@ func renderRead(w io.Writer, v realtime.ReadView) error {
 		b.WriteString("No messages.\n")
 	}
 	for _, m := range v.Messages {
-		writeMessageLines(b, m)
+		writeMessageLines(b, m, v.Channel.Anchor)
 	}
 	writeCursors(b, v)
 	_, err := io.WriteString(w, b.String())
@@ -188,7 +188,7 @@ func writeMessageType(b *strings.Builder, mt realtime.MessageTypeView) {
 
 // writeMessageLines prints one message: a header line, then its props, each
 // line prefixed with propIndent.
-func writeMessageLines(b *strings.Builder, m realtime.MessageView) {
+func writeMessageLines(b *strings.Builder, m realtime.MessageView, anchor string) {
 	fmt.Fprintf(b, "#%d", m.Seq)
 	if m.ReplyTo > 0 {
 		fmt.Fprintf(b, " (reply to #%d)", m.ReplyTo)
@@ -217,6 +217,9 @@ func writeMessageLines(b *strings.Builder, m realtime.MessageView) {
 		if timer, ok := m.Props["timer"]; ok {
 			fmt.Fprintf(b, " (timer %s)", printable(propText(timer)))
 		}
+		if m.Outputs != nil {
+			b.WriteString("; " + outputsText(m.Outputs, anchor))
+		}
 		b.WriteString("\n")
 		return
 	}
@@ -235,6 +238,52 @@ func writeMessageLines(b *strings.Builder, m realtime.MessageView) {
 		}
 		b.WriteString("\n")
 	}
+}
+
+// outputsText renders a notice's outputs mark on one line, such as
+// "outputs done: set DL-1, created TL-1". anchor is the channel's anchor,
+// the entity a set writes. A result that did not succeed carries its
+// status or failure code in parentheses.
+func outputsText(o *realtime.OutputsView, anchor string) string {
+	parts := make([]string, 0, len(o.Results))
+	for _, r := range o.Results {
+		var what string
+		switch r.Kind {
+		case realtime.OutputKindSet:
+			target := anchor
+			if r.Face != "" {
+				id, _, _ := strings.Cut(anchor, "@")
+				target = id + "@" + r.Face
+			}
+			what = "set " + printable(target)
+		case realtime.OutputKindCreate:
+			what = "create"
+			if r.Entity != nil {
+				what = "created " + refText(r.Entity)
+			}
+		case realtime.OutputKindClose:
+			what = "closed the channel"
+			if r.Status != realtime.OutputResultDone {
+				what = "close"
+			}
+		default:
+			what = printable(r.Kind)
+		}
+		switch {
+		case r.Code != "" && len(r.Props) > 0 && r.Status == realtime.OutputResultFailed:
+			what += fmt.Sprintf(" (%s: %s)", printable(r.Code), printable(strings.Join(r.Props, ", ")))
+		case r.Code != "":
+			what += " (" + printable(r.Code) + ")"
+		case r.Status != realtime.OutputResultDone:
+			what += " (" + printable(r.Status) + ")"
+		}
+		parts = append(parts, what)
+	}
+	text := "outputs " + printable(o.Status)
+	if len(parts) > 0 {
+		text += ": " + strings.Join(parts, ", ")
+	}
+	return text
 }
 
 // writeRemoved prints the placeholder of a removed message. Who removed it

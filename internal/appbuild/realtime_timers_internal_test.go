@@ -20,12 +20,23 @@ func testTimers(t *testing.T, cs channels.Store, cfg realtime.ConfigSource, m re
 	return timers
 }
 
+// testOutputs returns a session outputs runner over cs for a worker
+// fixture; its writer refuses every output.
+func testOutputs(t *testing.T, cs channels.Store, cfg realtime.ConfigSource, local *realtime.Local) *realtime.Outputs {
+	t.Helper()
+	o, err := realtime.NewOutputs(realtime.OutputsDeps{
+		Store: cs, Config: cfg, Writer: realtime.NoOutputs{}, Local: local, Clock: time.Now,
+	})
+	require.NoError(t, err)
+	return o
+}
+
 // TestRealtimeWorker_RequiresTimers pins that the worker refuses parts
 // without the timer loop or the wake.
 func TestRealtimeWorker_RequiresTimers(t *testing.T) {
 	f := newWorkerFixture(t)
 	p := realtimeWorkerParts{
-		sweeper: f.w.sweeper, triggers: f.w.triggers, timers: f.w.timers, dueWake: f.w.dueWake,
+		sweeper: f.w.sweeper, triggers: f.w.triggers, timers: f.w.timers, outputs: f.w.outputs, dueWake: f.w.dueWake,
 		changes: f.w.changes, lock: f.w.lock, wake: f.w.wake,
 	}
 	_, err := newRealtimeWorker(p)
@@ -37,6 +48,10 @@ func TestRealtimeWorker_RequiresTimers(t *testing.T) {
 	noWake := p
 	noWake.dueWake = nil
 	_, err = newRealtimeWorker(noWake)
+	require.Error(t, err)
+	noOutputs := p
+	noOutputs.outputs = nil
+	_, err = newRealtimeWorker(noOutputs)
 	require.Error(t, err)
 }
 

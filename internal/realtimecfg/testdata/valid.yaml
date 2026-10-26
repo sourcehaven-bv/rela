@@ -22,11 +22,21 @@ channel_types:
     session:
       label: GDPR breach response
       initial: detected
+      on_final: close
       states:
         detected:
           label: Detected
           on:
-            contained: { to: contained, roles: [lead] }
+            contained:
+              to: contained
+              roles: [lead]
+              outputs:
+                - create:
+                    type: timeline-entry
+                    properties:
+                      title: "Contained by {{message.author}}: {{message.note}}"
+                      at: "{{now}}"
+                    relate: { type: about }
             dismiss:   { to: dismissed }
             escalated: { to: contained, by: trigger }
           after:
@@ -34,20 +44,33 @@ channel_types:
         contained:
           label: Contained
           on:
-            assessed:         { to: assessed, when: "message.risk ~= 'none'" }
+            assessed:
+              to: assessed
+              roles: [lead]
+              when: "message.risk ~= 'none'"
+              outputs:
+                - set: { properties: { risk: "{{message.risk}}" } }
             escalate-stalled: { to: overdue, when: "session.reminders['status-update'] >= 3" }
           after:
             notify-deadline: { period: 72h, since: session, to: overdue, label: 72 hours since detection }
         assessed:
           label: Risk assessed
           on:
-            notified: { to: notified }
+            notified:
+              to: notified
+              roles: [dpo]
+              outputs:
+                - set: { properties: { status: notified, reference: "{{message.reference}}" } }
           after:
             notify-deadline: { period: 72h, since: session, to: overdue, label: 72 hours since detection }
         overdue:
           label: Notification overdue
           on:
-            notified: { to: notified }
+            notified:
+              to: notified
+              roles: [dpo]
+              outputs:
+                - set: { properties: { status: notified, reference: "{{message.reference}}" } }
         notified:  { label: AP notified, final: true }
         dismissed: { label: Dismissed, final: true }
       reminders:

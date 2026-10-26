@@ -221,3 +221,27 @@ func TestUnmatchedPrincipal_AnonymousDoesNotReject(t *testing.T) {
 		})
 	}
 }
+
+// TestRetoolRequest_KeepsUnmatchedVerified pins that a Request retooled for
+// a writer acting for the caller keeps the unmatched-verified mark, so
+// `unmatched_principal: reject` still denies its writes.
+func TestRetoolRequest_KeepsUnmatchedVerified(t *testing.T) {
+	t.Parallel()
+	d := rejectWorld(t, acl.UnmatchedReject)
+	ctx := acltest.BindVerified(
+		principal.With(t.Context(),
+			principal.Verified("usr_nobody", principal.ToolDataEntry, "", "", nil)), t, d)
+
+	req := acl.RetoolRequest(mustRequest(ctx, t, d), principal.ToolRealtime)
+	if !req.UnmatchedVerified() {
+		t.Fatal("the retooled Request lost the unmatched-verified mark")
+	}
+	p := req.Principal()
+	if p.Tool != principal.ToolRealtime || p.User != "usr_nobody" {
+		t.Fatalf("principal = %s/%s, want usr_nobody/realtime", p.User, p.Tool)
+	}
+	ctx = acl.WithRequest(principal.With(ctx, p), req)
+	if dec := d.AuthorizeWrite(ctx, writeReq()); dec.Allow || dec.RuleKind != "unmatched-principal" {
+		t.Fatalf("decision = %+v, want the unmatched gate to deny", dec)
+	}
+}

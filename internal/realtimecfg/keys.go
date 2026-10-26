@@ -26,6 +26,17 @@ var refusedKeys = []struct {
 	{"channel_types.*.session.reminders.*.period", "use every"},
 	{"channel_types.*.session.reminders.*.since", "a reminder counts from when the session entered one of " +
 		"its in: states"},
+	{"channel_types.*.session.states.*.outputs", "outputs belong to a transition: put them under on.<type>.outputs"},
+	{"channel_types.*.session.reminders.*.outputs", "a reminder posts a message only; let a guard on its count " +
+		"fire a transition with outputs"},
+	{"channel_types.*.session.states.*.on.*.run_as", "outputs write as the poster; a run_as identity will be " +
+		"declared once, as session.run_as, in a later release (" + runAsFollowUp + ")"},
+	{"channel_types.*.session.states.*.on_final", "on_final belongs to the session: session.on_final: close " +
+		"closes the channel on a move into any final state"},
+	{"channel_types.*.session.states.*.after.*.outputs", "outputs on a timer need " + runAsLater +
+		"; until then put the outputs on a transition a person fires"},
+	{"channel_types.*.session.run_as", "outputs write as the poster in this release; session.run_as " +
+		"arrives in a later release (" + runAsFollowUp + ")"},
 	{"agents", "agents are ordinary principals; restrict them with client_baselines in acl.yaml " +
 		"and match them with a principal_type role"},
 	{"channel_types.*.message_types.*.actions.*.by", "agents are ordinary principals, so an action " +

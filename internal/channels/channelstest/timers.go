@@ -266,7 +266,7 @@ func testSetSessionFire(t *testing.T, h Harness) {
 	require.Equal(t, head, got, "the returned channel and Head agree")
 	require.Equal(t, channels.SessionOutcome{
 		Session: want, CreatedAt: head.CreatedAt, Moved: true,
-		Move: channels.SessionMove{From: "contained", To: "overdue"},
+		Move: channels.SessionMove{From: "contained", To: "overdue"}, Notice: got.LastSeq,
 	}, *step.Outcome)
 
 	page, err := h.Store.Messages(ctx, k, channels.Page{AfterSeq: before.LastSeq})

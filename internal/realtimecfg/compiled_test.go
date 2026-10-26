@@ -157,6 +157,12 @@ func TestCompiled_SessionIsReadOnly(t *testing.T) {
 
 		t.Error("a reminder accessor returned shared state")
 	}
+	out, _ := s.Transition("detected", "contained")
+	out.Outputs()[0].Type = "x"
+	delete(out.Outputs()[0].Properties(), "title")
+	if o := out.Outputs()[0]; o.Type != "timeline-entry" || len(o.Properties()) != 2 {
+		t.Error("an output accessor returned shared state")
+	}
 }
 
 func TestShapeMismatches(t *testing.T) {

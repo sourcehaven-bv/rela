@@ -119,7 +119,7 @@ func RunAll(t *testing.T, newHarness func(t *testing.T) Harness) {
 		{"SessionStateNames", testSessionStateNames},
 		{"SessionReply", testSessionReply},
 	}
-	for _, list := range [][]conformanceTest{tests, timerTests, reminderTests} {
+	for _, list := range [][]conformanceTest{tests, timerTests, reminderTests, outputsTests} {
 		for _, tc := range list {
 			t.Run(tc.name, func(t *testing.T) {
 				tc.fn(t, newHarness(t))

@@ -71,9 +71,9 @@ func TestParse_Golden(t *testing.T) {
 	}
 
 	if br, _ := c.ChannelType("breach-response"); br.Session() == nil || !br.Session().HasTimers() ||
-		len(br.Session().Reminders()) != 1 {
+		len(br.Session().Reminders()) != 1 || br.Session().OnFinal() != OnFinalClose {
 
-		t.Error("breach-response lost its session timers or reminders")
+		t.Error("breach-response lost its session timers, reminders or on_final")
 	}
 
 	room, ok := c.ChannelType("incident-room")
@@ -242,6 +242,15 @@ func TestParse_Invalid(t *testing.T) {
 			"channel_types.incident-room", "merge keys (<<) are not supported in realtime.yaml"},
 		{"merge key at the top", []replace{{"channel_types:\n", "channel_types:\n  <<: { other: { attach_to: [datalek] } }\n"}},
 			"channel_types", "merge keys (<<) are not supported in realtime.yaml"},
+		{"state outputs", []replace{{"          label: Detected\n", "          label: Detected\n          outputs: []\n"}},
+			"channel_types.breach-response.session.states.detected.outputs", "outputs belong to a transition"},
+		{"reminder outputs", []replace{{"          label: Status update\n", "          label: Status update\n          outputs: []\n"}},
+			"channel_types.breach-response.session.reminders.status-update.outputs", "a reminder posts a message only"},
+		{"transition run_as", []replace{{"              roles: [dpo]\n              outputs:\n                - set: { properties: { status: notified, reference: \"{{message.reference}}\" } }\n          after:",
+			"              roles: [dpo]\n              run_as: system:bot\n              outputs:\n                - set: { properties: { status: notified, reference: \"{{message.reference}}\" } }\n          after:"}},
+			"channel_types.breach-response.session.states.assessed.on.notified.run_as", "outputs write as the poster"},
+		{"state on_final", []replace{{"          label: Detected\n", "          label: Detected\n          on_final: close\n"}},
+			"channel_types.breach-response.session.states.detected.on_final", "on_final belongs to the session"},
 		{"session", []replace{{"version: 1\n", "version: 1\nsession: {}\n"}}, "session",
 			"a session belongs under a channel type: channel_types.<name>.session"},
 		{"session timers", []replace{{"      initial: detected\n", "      initial: detected\n      timers: {}\n"}},
@@ -357,7 +366,7 @@ func TestParse_Invalid(t *testing.T) {
 			"channel_types.incident-room.message_types.status-update.actions.log.promote_to.map.headline", "has no property"},
 		{"promote message property", []replace{{"map: { title: summary }", "map: { title: nope }"}},
 			"channel_types.incident-room.message_types.status-update.actions.log.promote_to.map.title", "has no property"},
-		{"relate unknown", []replace{{"relate: { type: about }", "relate: { type: nope }"}},
+		{"relate unknown", []replace{{"title: summary }, relate: { type: about }", "title: summary }, relate: { type: nope }"}},
 			"channel_types.incident-room.message_types.status-update.actions.log.promote_to.relate.type", "cannot link"},
 		{"relate wrong endpoint", []replace{{"promote_to: { type: timeline-entry, map", "promote_to: { type: decision, map"}},
 			"channel_types.incident-room.message_types.status-update.actions.log.promote_to.relate.type", "cannot link decision"},

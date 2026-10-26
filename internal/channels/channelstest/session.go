@@ -86,6 +86,7 @@ func testSessionStep(t *testing.T, h Harness) {
 	require.Equal(t, msg.Rev+1, head.Rev, "the notice takes the next rev")
 	require.Equal(t, channels.SessionOutcome{
 		Session: want, CreatedAt: head.CreatedAt, Moved: true, Move: channels.SessionMove{From: "detected", To: "contained"},
+		Notice: 3,
 	}, *step.Outcome)
 
 	page, err := h.Store.Messages(ctx, k, channels.Page{})
@@ -101,6 +102,10 @@ func testSessionStep(t *testing.T, h Harness) {
 	require.Equal(t, map[string]any{
 		"from": "detected", "to": "contained", "generation": float64(1), "cause": float64(2),
 	}, notice.Props)
+	require.Nil(t, notice.Action, "a notice without a mark reads with no outputs, as a slice-4 notice does")
+	stale, err := h.Store.StalePending(ctx, at.Add(time.Hour))
+	require.NoError(t, err)
+	require.Empty(t, stale, "a notice without a mark is not pending")
 
 	recs := sessionRecords(t, h.Store)
 	require.Len(t, recs, 1)

@@ -189,7 +189,8 @@ func (f triggerFixture) worker(t *testing.T, lock leaderLock) testWorker {
 	})
 	require.NoError(t, err)
 	w, err := newRealtimeWorker(realtimeWorkerParts{
-		sweeper: sweeper, triggers: trg, timers: testTimers(t, f.cs, f.cfg, local), dueWake: realtime.NewDueWake(),
+		sweeper: sweeper, triggers: trg, timers: testTimers(t, f.cs, f.cfg, local),
+		outputs: testOutputs(t, f.cs, f.cfg, local), dueWake: realtime.NewDueWake(),
 		changes: f.st, lock: lock, wake: tombs.wake,
 	})
 	require.NoError(t, err)

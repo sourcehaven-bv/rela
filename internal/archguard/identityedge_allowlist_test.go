@@ -20,6 +20,10 @@ var identityEdgeAllowlist = map[string]allowed{
 		"own edge; it binds through identityBinderFor"},
 	"internal/appbuild/realtime_service.go": {1, "PolicyChannelService: the binder for stdio's channel " +
 		"service, which evaluates acl.yaml while the rest of stdio MCP stays open; the channel tools run it per call"},
+	"internal/appbuild/realtime_outputs.go": {3, "managerOutputs: a session output writes as the poster " +
+		"with tool realtime, and a retry rebuilds the poster from the mark with no request. A matched poster " +
+		"binds through identityBinderFor; an unmatched one resolves through IdentityResolver and ForIdentity " +
+		"with the verified assertion, so unmatched_principal judges the retry as it judged the post"},
 	"internal/appbuild/identity.go": {2, "IdentityBinder: the one binder every graph-identity " +
 		"transport (CLI, rela-docs, scheduler, stdio MCP) takes at wiring; identityBinderFor is its body"},
 	"internal/cli/classification_acl.go": {1, "acl audit: opens a Request for a synthetic " +

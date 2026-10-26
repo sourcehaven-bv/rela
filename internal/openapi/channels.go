@@ -31,6 +31,8 @@ const (
 	channelAuthorRef   = "ChannelAuthor"
 	actionAnswerSchema = "MessageActionResponse"
 	descriptorSchema   = "ChannelSchema"
+	outputsSchema      = "ChannelMessageOutputs"
+	outputResultSchema = "ChannelMessageOutputResult"
 )
 
 // addChannelSchemaPath adds `GET /api/v1/_schema/channels`. The route
@@ -225,8 +227,7 @@ func addChannelTypePaths(spec *Spec, basePath, typeName, tag string, ct realtime
 		Post: &Operation{
 			OperationID: "postMessage" + opID,
 			Summary:     "Post a message to a " + ct.Name + " channel",
-			Description: "A log message is stored and answered 201. An ephemeral message is kept in memory " +
-				"for its TTL and answered 202, without a seq.",
+			Description: postMessageText,
 			Tags:        []string{tag},
 			RequestBody: &RequestBody{Required: true, Content: jsonContent(postBodySchema(ct))},
 			Responses: withResponse(
@@ -431,13 +432,21 @@ func refParam() Parameter {
 	return Parameter{Name: "id", In: "path", Required: true, Description: "Entity ID, or ID@face", Schema: StringSchema()}
 }
 
+// postMessageText describes the post route of a channel type.
+const postMessageText = "A log message is stored and answered 201. An ephemeral message is kept in memory " +
+	"for its TTL and answered 202, without a seq. A message that moves a session along a " +
+	"transition with outputs is refused 403 session_output_denied, before anything is stored, " +
+	"when you may not write one of them; the outputs' result is on the session notice."
+
 // channelErrorText describes each error status a channel route answers.
 var channelErrorText = map[string]string{
 	"400": "Invalid JSON, an unknown field, or an invalid message or query",
-	"403": "A role or gate refused; the problem names the rule",
+	"403": "A role or gate refused; the problem names the rule. session_output_denied: you may not write " +
+		"an output of the transition the message would fire",
 	"404": "Entity not found (the same body as the entity GET), or no such channel type, channel or message",
 	"409": "The channel is not open or not in the state the operation starts from, the message was removed, " +
-		"a limit, the retention or a concurrent change refused",
+		"a limit, the retention or a concurrent change refused. outputs_pending: the outputs of the session " +
+		"move the message caused are still running",
 	"413": "Request body or a value too large",
 	"422": "A ref to an entity that cannot be referenced, or a bare id for a face-anchored type",
 	"429": "Rate limited; see Retry-After",
@@ -555,7 +564,11 @@ func addChannelSchemas(spec *Spec) {
 			"still remove it. A reminder is posted by a session reminder: its type is the one the reminder " +
 			"declares, its author is system:realtime with system set, and triggered_by is " +
 			"reminder:<channel type>/<reminder name>. Nobody can edit or delete a reminder (409 " +
-			"reminder_message); a moderator may still remove it, which does not lower the reminder's count.",
+			"reminder_message); a moderator may still remove it, which does not lower the reminder's count. " +
+			"A notice of a transition with outputs, or of a move into a final state with on_final: close, " +
+			"carries outputs (a ChannelMessageOutputs) in place of action: the graph writes the move made, " +
+			"as the person who posted the cause. While they run, the cause cannot be deleted (409 " +
+			"outputs_pending).",
 		Properties: map[string]*Schema{
 			"seq": i64(), "rev": i64(), "type": str(), "author": Ref(channelAuthorRef), "at": dateTimeSchema(),
 			"props":    {Type: "object", AdditionalProperties: &Schema{}},
@@ -575,6 +588,7 @@ func addChannelSchemas(spec *Spec) {
 					Description: "pending while a promote runs, or after one failed until it is released"},
 				"at": dateTimeSchema(), "promoted": Ref(refPropSchema),
 			}, []string{"name", "status", "at"}),
+			"outputs": Ref(outputsSchema),
 			"_actions": {Type: "array", Items: str(),
 				Description: "What you may do with the message now, sorted: its actions, and the operations " +
 					"edit (PATCH), delete (your own, DELETE), remove (a moderator's DELETE with a reason) and " +
@@ -586,6 +600,7 @@ func addChannelSchemas(spec *Spec) {
 		},
 		Required: []string{"seq", "rev"},
 	}
+	addOutputsSchemas(sc)
 	sc[actionAnswerSchema] = ObjectSchema(map[string]*Schema{
 		"message":  Ref(messageSchema),
 		"warnings": ArraySchema(Ref("Warning")),
@@ -606,6 +621,46 @@ func addChannelSchemas(spec *Spec) {
 		"id": str(), "expires_at": dateTimeSchema(),
 	}, []string{"id", "expires_at"})
 	addHeadSchemas(sc)
+}
+
+// addOutputsSchemas adds the schemas of a session notice's outputs mark.
+func addOutputsSchemas(sc map[string]*Schema) {
+	str := StringSchema
+	sc[outputsSchema] = &Schema{
+		Type: "object",
+		Description: "The graph writes of a session move. writer is the person whose message moved the " +
+			"session, with the tool they posted with; the audit log records the writes as them with tool " +
+			"realtime. Writes that fail do not undo the move.",
+		Properties: map[string]*Schema{
+			"status": {Type: "string", Enum: []string{"pending", "done", "failed"},
+				Description: "pending while the outputs run, failed when one failed, done otherwise"},
+			"writer":  Ref(channelAuthorRef),
+			"results": ArraySchema(Ref(outputResultSchema)),
+		},
+		Required: []string{"status", "writer"},
+	}
+	sc[outputResultSchema] = &Schema{
+		Type:        "object",
+		Description: "What one output, or the on_final close, did.",
+		Properties: map[string]*Schema{
+			"kind": {Type: "string", Enum: []string{"set", "create", "close", "transition"},
+				Description: "transition is the one result of a mark whose transition the config no longer declares"},
+			"status": {Type: "string", Enum: []string{"done", "failed", "skipped", "superseded", "started"},
+				Description: "started while a create runs; skipped after an earlier output failed, or for a close of a " +
+					"channel that is not open; " +
+					"superseded when a later move of the session already set every property of a retried set"},
+			"code": {Type: "string", Enum: []string{
+				"forbidden", "field_denied", "invalid", "conflict", "not_found", "unconfirmed", "expired",
+				"transition_removed", "error",
+			}, Description: "Why the output failed; never an error text or an id"},
+			"props": {Type: "array", Items: str(),
+				Description: "For a set, the properties written; for an invalid output, the ones validation named"},
+			"face":     {Type: "string", Description: "The face a set writes, when the output names one"},
+			"entity":   Ref(refPropSchema),
+			"warnings": ArraySchema(str()),
+		},
+		Required: []string{"kind", "status"},
+	}
 }
 
 // addHeadSchemas adds the ChannelHead schema and the typing schemas it and
@@ -659,6 +714,8 @@ func channelSessionSchema() *Schema {
 				"guarded": {Type: "boolean",
 					Description: "Set when the transition has a guard (when:), so a message moves the session " +
 						"only if the guard holds for it"},
+				"outputs": {Type: "integer",
+					Description: "The number of graph writes the transition makes; absent when it makes none"},
 			}, []string{"message_type", "to"})),
 			"due_at":    dateTimeSchema(),
 			"timers":    ArraySchema(Ref(channelTimerRef)),

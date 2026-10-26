@@ -76,7 +76,14 @@ channel_types:
     session:
       initial: detected
       states:
-        detected:  { label: Detected, on: { contained: { to: contained } } }
+        detected:
+          label: Detected
+          on:
+            contained:
+              to: contained
+              outputs:
+                - set: { properties: { title: contained } }
+                - create: { type: item, properties: { title: Follow-up } }
         contained: { label: Contained, final: true }
 `
 
@@ -401,17 +408,20 @@ func setBackendEnv(t *testing.T) {
 }
 
 // TestChannelCLI_PostSession pins that a post in a session channel prints
-// the session after the message, in table and JSON output.
+// the session after the message, and the outputs of its move, in table and
+// JSON output.
 func TestChannelCLI_PostSession(t *testing.T) {
 	p := newChannelProject(t)
 	got, err := runChannel(t, p.svc, "alice", "", "channel", "post", p.item, "incident", "contained")
 	require.NoError(t, err)
-	assert.Equal(t, "#1 posted\nsession: contained (Contained), generation 1, final\n", got)
+	assert.Equal(t, "#1 posted\nsession: contained (Contained), generation 1, final\n"+
+		"outputs done: set "+p.item+", created ITEM-002\n", got)
 
 	got, err = runChannel(t, p.svc, "alice", "", "channel", "read", p.item, "incident")
 	require.NoError(t, err)
 	assert.Contains(t, got, "session: contained (Contained), generation 1, final\n")
-	assert.Contains(t, got, "  moved from detected to contained\n")
+	assert.Contains(t, got, "  moved from detected to contained; outputs done: set "+p.item+
+		", created ITEM-002\n")
 
 	got, err = runChannel(t, p.svc, "alice", "", "-o", "json", "channel", "post", p.item, "incident", "contained")
 	require.NoError(t, err)
@@ -419,6 +429,7 @@ func TestChannelCLI_PostSession(t *testing.T) {
 	channelJSONOf(t, got, &posted)
 	require.NotNil(t, posted.Session)
 	assert.Equal(t, "contained", posted.Session.State)
+	assert.Nil(t, posted.Outputs, "a post in a final state moves nothing")
 
 	got, err = runChannel(t, p.svc, "alice", "", "channel", "post", p.item, "room", "text", "-P", "body=x")
 	require.NoError(t, err)

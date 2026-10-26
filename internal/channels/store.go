@@ -41,7 +41,10 @@ type Store interface {
 	// other append whose TriggeredBy starts with [SessionMarker] is
 	// [ErrInvalidMessage]. The returned message is the causing one. The
 	// step's Due is required, and its result is stored after the move or
-	// non-move; a step that names a Timer is [ErrInvalidMessage].
+	// non-move; a step that names a Timer is [ErrInvalidMessage]. When the
+	// step's Mark gives an action for the move, the notice carries it as
+	// its pending [OutputsAction] mark, written in the same step; the
+	// backends that index pending actions index it at its PendingAt.
 	Append(ctx context.Context, key Key, msg NewMessage) (Message, error)
 
 	// SetSession runs step against the channel's session without a
@@ -97,6 +100,13 @@ type Store interface {
 	// [AuditReleased] is written. Taking an action (a step from
 	// [ActionNone]) in a channel that is not open is [ErrNotOpen] (see
 	// [CheckActionState]).
+	//
+	// A step from pending to pending is allowed only for the
+	// [OutputsAction] mark of a session notice, which only the session step
+	// of an append creates: a claim, or a progress or done write by the
+	// claim's holder, under the rules of [CheckOutputStep]. The mark's
+	// writer and move never change, it cannot be released, and its writes
+	// are allowed on a closed channel.
 	SetAction(ctx context.Context, key Key, seq int64, name string, expect ActionStatus, next Action) (Message, error)
 
 	// CreateMany creates a named channel on anchor, with a minted name, and
@@ -238,8 +248,12 @@ type Store interface {
 	// close and archive sweeps. typ is required.
 	ListByLifecycle(ctx context.Context, typ string, state State, before time.Time) ([]Channel, error)
 
-	// StalePending returns the actions left pending since before the given
-	// time, for the sweep that settles them.
+	// StalePending returns the actions whose PendingAt is before the given
+	// time, oldest PendingAt first, then by key and seq (see
+	// [SortPending]). For an ordinary action that is the time it went
+	// pending, listed for the sweep that reports it; for an
+	// [OutputsAction] mark it is the time the mark became eligible for a
+	// retry, listed for the outputs runner.
 	StalePending(ctx context.Context, before time.Time) ([]PendingAction, error)
 
 	// Audit returns the live audit trail of entity id, oldest first.

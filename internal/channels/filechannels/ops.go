@@ -50,6 +50,7 @@ func (s *Store) Append(ctx context.Context, k channels.Key, nm channels.NewMessa
 	if err != nil {
 		return channels.Message{}, err
 	}
+	dropDangling(m, last)
 	committed := m.channel(k)
 	committed.LastSeq = last
 	move, moved, err := channels.DecideSession(nm.Session, committed)
@@ -78,7 +79,6 @@ func (s *Store) Append(ctx context.Context, k channels.Key, nm channels.NewMessa
 			return channels.Message{}, err
 		}
 		recs = append(recs, segRecord{idx: s.idx(notice.Seq), rec: encodeLine(line{K: "m", Message: notice})})
-		m.LastSeq = notice.Seq
 	}
 	if schedErr := m.scheduleStep(k, nm.Session); schedErr != nil {
 		return channels.Message{}, schedErr
@@ -150,7 +150,8 @@ func (d *disk) appendRecords(k channels.Key, recs []segRecord) error {
 }
 
 // moveSession applies move, caused by cause, to m and returns the channel
-// after it and the notice at idx.
+// after it and the notice at idx. It records the notice in m: the log's
+// last seq, and the notice's pending action.
 func moveSession(
 	m *meta, k channels.Key, nm channels.NewMessage, cause channels.Message, move channels.SessionMove, idx int64,
 ) (channels.Channel, channels.Message, error) {
@@ -158,7 +159,14 @@ func moveSession(
 	channels.ApplySession(&after, move, nm.At)
 	m.setSession(after.Session)
 	notice, _, err := channels.SessionNotice(nm.Session, cause, move, after.Session.Generation, m.bump(idx))
-	return after, notice, err
+	if err != nil {
+		return after, notice, err
+	}
+	m.LastSeq = notice.Seq
+	if notice.Action != nil {
+		setPending(m, notice.Seq, *notice.Action)
+	}
+	return after, notice, nil
 }
 
 // appendTarget returns the head of the channel an append goes to, or a new
@@ -335,6 +343,9 @@ func (s *Store) SetAction(
 	if err != nil {
 		return channels.Message{}, err
 	}
+	if outErr := channels.CheckOutputStep(msg.Action, name, expect, next); outErr != nil {
+		return channels.Message{}, outErr
+	}
 	if stateErr := channels.CheckActionState(m.State, expect, next); stateErr != nil {
 		return channels.Message{}, stateErr
 	}
@@ -348,10 +359,7 @@ func (s *Store) SetAction(
 		a := next
 		msg.Action, l.Action = &a, &a
 		if next.Status == channels.ActionPending {
-			if m.Pending == nil {
-				m.Pending = map[int64]pendingRef{}
-			}
-			m.Pending[seq] = pendingRef{Name: name, At: next.PendingAt}
+			setPending(m, seq, next)
 		} else {
 			delete(m.Pending, seq)
 		}
@@ -1124,6 +1132,7 @@ func (s *Store) SetSession(
 	if err != nil {
 		return channels.Channel{}, err
 	}
+	dropDangling(m, last)
 	committed := m.channel(k)
 	committed.LastSeq = last
 	w, err := applySessionStep(m, s.idx, &step, committed, at)
@@ -1216,19 +1225,14 @@ func (s *Store) StalePending(_ context.Context, before time.Time) ([]channels.Pe
 	before = channels.NormTime(before)
 	out := []channels.PendingAction{}
 	err := s.visitAll("", func(k channels.Key, m *meta) error {
-		seqs := make([]int64, 0, len(m.Pending))
-		for seq := range m.Pending {
-			seqs = append(seqs, seq)
-		}
-		slices.Sort(seqs)
-		for _, seq := range seqs {
-			p := m.Pending[seq]
+		for seq, p := range m.Pending {
 			if p.At.Before(before) {
 				out = append(out, channels.PendingAction{Key: k, Seq: seq, Name: p.Name, PendingAt: p.At.UTC()})
 			}
 		}
 		return nil
 	})
+	channels.SortPending(out)
 	return out, err
 }
 

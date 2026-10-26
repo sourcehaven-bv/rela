@@ -1,4 +1,108 @@
 {
+  "failed_outputs_messages": {
+    "channel": {
+      "anchor": "TKT-1",
+      "created_at": "2026-01-02T03:04:05Z",
+      "created_by": {
+        "tool": "data-entry",
+        "user": "alice"
+      },
+      "last_seq": 4,
+      "rev": 5,
+      "session": {
+        "entered_at": "2026-01-02T03:04:05Z",
+        "final": true,
+        "generation": 2,
+        "label": "Reviewed",
+        "state": "reviewed"
+      },
+      "state": "open",
+      "type": "incident"
+    },
+    "has_more": false,
+    "messages": [
+      {
+        "at": "2026-01-02T03:04:05Z",
+        "author": {
+          "tool": "data-entry",
+          "user": "alice"
+        },
+        "rev": 1,
+        "seq": 1,
+        "type": "contained"
+      },
+      {
+        "at": "2026-01-02T03:04:05Z",
+        "author": {
+          "principal_type": "system",
+          "system": true,
+          "tool": "realtime",
+          "user": "system:realtime"
+        },
+        "props": {
+          "cause": 1,
+          "from": "detected",
+          "generation": 1,
+          "to": "contained"
+        },
+        "rev": 2,
+        "seq": 2,
+        "triggered_by": "session:incident",
+        "type": "session"
+      },
+      {
+        "at": "2026-01-02T03:04:05Z",
+        "author": {
+          "tool": "data-entry",
+          "user": "alice"
+        },
+        "props": {
+          "body": "done"
+        },
+        "rev": 3,
+        "seq": 3,
+        "type": "note"
+      },
+      {
+        "at": "2026-01-02T03:04:05Z",
+        "author": {
+          "principal_type": "system",
+          "system": true,
+          "tool": "realtime",
+          "user": "system:realtime"
+        },
+        "outputs": {
+          "results": [
+            {
+              "code": "invalid",
+              "kind": "set",
+              "props": [
+                "status"
+              ],
+              "status": "failed"
+            }
+          ],
+          "status": "failed",
+          "writer": {
+            "tool": "data-entry",
+            "user": "alice"
+          }
+        },
+        "props": {
+          "cause": 3,
+          "from": "contained",
+          "generation": 2,
+          "to": "reviewed"
+        },
+        "rev": 5,
+        "seq": 4,
+        "triggered_by": "session:incident",
+        "type": "session"
+      }
+    ],
+    "next_after_rev": 5,
+    "next_before": 1
+  },
   "guarded_head": {
     "_actions": {
       "delete_own": false,
@@ -300,6 +404,154 @@
       }
     ],
     "next_after_rev": 8,
+    "next_before": 1
+  },
+  "outputs_head": {
+    "_actions": {
+      "delete_own": false,
+      "edit_own": false,
+      "lifecycle": [
+        "close"
+      ],
+      "post": [
+        "contained",
+        "note"
+      ],
+      "remove": false,
+      "transitions": [
+        "note"
+      ],
+      "typing": false
+    },
+    "channel": {
+      "anchor": "TKT-1",
+      "created_at": "2026-01-02T03:04:05Z",
+      "created_by": {
+        "tool": "data-entry",
+        "user": "alice"
+      },
+      "last_seq": 2,
+      "rev": 2,
+      "session": {
+        "entered_at": "2026-01-02T03:04:05Z",
+        "generation": 1,
+        "label": "Contained",
+        "state": "contained",
+        "transitions": [
+          {
+            "message_type": "note",
+            "outputs": 1,
+            "to": "reviewed"
+          }
+        ]
+      },
+      "state": "open",
+      "type": "incident"
+    },
+    "ephemeral": [],
+    "last": {
+      "at": "2026-01-02T03:04:05Z",
+      "author": {
+        "principal_type": "system",
+        "system": true,
+        "tool": "realtime",
+        "user": "system:realtime"
+      },
+      "props": {
+        "cause": 1,
+        "from": "detected",
+        "generation": 1,
+        "to": "contained"
+      },
+      "rev": 2,
+      "seq": 2,
+      "triggered_by": "session:incident",
+      "type": "session"
+    },
+    "typing_now": []
+  },
+  "outputs_messages": {
+    "channel": {
+      "anchor": "TKT-2",
+      "created_at": "2026-01-02T03:04:05Z",
+      "created_by": {
+        "tool": "data-entry",
+        "user": "alice"
+      },
+      "last_seq": 2,
+      "rev": 6,
+      "session": {
+        "entered_at": "2026-01-02T03:04:05Z",
+        "generation": 1,
+        "label": "Contained",
+        "state": "contained",
+        "transitions": [
+          {
+            "message_type": "note",
+            "outputs": 1,
+            "to": "reviewed"
+          }
+        ]
+      },
+      "state": "open",
+      "type": "incident"
+    },
+    "has_more": false,
+    "messages": [
+      {
+        "at": "2026-01-02T03:04:05Z",
+        "author": {
+          "tool": "data-entry",
+          "user": "alice"
+        },
+        "rev": 1,
+        "seq": 1,
+        "type": "contained"
+      },
+      {
+        "at": "2026-01-02T03:04:05Z",
+        "author": {
+          "principal_type": "system",
+          "system": true,
+          "tool": "realtime",
+          "user": "system:realtime"
+        },
+        "outputs": {
+          "results": [
+            {
+              "kind": "set",
+              "props": [
+                "status"
+              ],
+              "status": "done"
+            },
+            {
+              "entity": {
+                "restricted": true
+              },
+              "kind": "create",
+              "status": "done"
+            }
+          ],
+          "status": "done",
+          "writer": {
+            "tool": "data-entry",
+            "user": "alice"
+          }
+        },
+        "props": {
+          "cause": 1,
+          "from": "detected",
+          "generation": 1,
+          "to": "contained"
+        },
+        "rev": 6,
+        "seq": 2,
+        "triggered_by": "session:incident",
+        "type": "session"
+      }
+    ],
+    "next_after_rev": 6,
     "next_before": 1
   },
   "reminder_messages": {

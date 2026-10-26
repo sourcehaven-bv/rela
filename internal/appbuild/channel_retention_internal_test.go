@@ -397,6 +397,7 @@ func newWorkerFixture(t *testing.T) workerFixture {
 	l := &switchLock{}
 	w, err := newRealtimeWorker(realtimeWorkerParts{
 		sweeper: sweeper, triggers: triggers, timers: testTimers(t, cs, realtimeConfigSource{}, local),
+		outputs: testOutputs(t, cs, realtimeConfigSource{}, local),
 		dueWake: realtime.NewDueWake(), changes: st, lock: l.take, wake: tombs.wake,
 	})
 	require.NoError(t, err)

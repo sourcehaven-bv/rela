@@ -58,6 +58,7 @@ type testConfig struct {
 	declarative *acl.Declarative
 	comments    *comments.Service
 	channels    *appbuild.ChannelCollaborators
+	outputs     realtime.OutputWriter
 }
 
 // auditOrNop is the configured audit sink, or [audit.Nop] when none was set.
@@ -166,6 +167,23 @@ func WithChannelsLocal(cs channels.Store, cfg realtime.ConfigSource, local *real
 	return func(c *testConfig) {
 		c.channels = &appbuild.ChannelCollaborators{Store: cs, Config: cfg, Local: local}
 	}
+}
+
+// WithChannelOutputs makes the channel service of [WithChannels] write
+// session outputs through w. Without it, no output is written.
+func WithChannelOutputs(w realtime.OutputWriter) Option {
+	return func(c *testConfig) { c.outputs = w }
+}
+
+// channelsWithOutputs is ch with the output writer of [WithChannelOutputs],
+// or ch itself when either is nil.
+func channelsWithOutputs(ch *appbuild.ChannelCollaborators, w realtime.OutputWriter) *appbuild.ChannelCollaborators {
+	if ch == nil || w == nil {
+		return ch
+	}
+	out := *ch
+	out.Outputs = w
+	return &out
 }
 
 // WithDeclarative wires the concrete *acl.Declarative as both the ACL
@@ -302,6 +320,7 @@ func New(meta *metamodel.Metamodel, opts ...Option) *appbuild.Services {
 		panic(fmt.Sprintf("appbuildtest.New: build validator: %v", err))
 	}
 
+	cfg.channels = channelsWithOutputs(cfg.channels, cfg.outputs)
 	svc, err := appbuild.NewFromCollaborators(appbuild.Collaborators{
 		FS:            cfg.fs,
 		Paths:         cfg.paths,

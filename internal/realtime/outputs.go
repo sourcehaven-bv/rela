@@ -1,0 +1,843 @@
+package realtime
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"log/slog"
+	"net/http"
+	"strconv"
+	"sync"
+	"time"
+
+	"github.com/Sourcehaven-BV/rela/internal/channels"
+	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/principal"
+	"github.com/Sourcehaven-BV/rela/internal/realtimecfg"
+	"github.com/Sourcehaven-BV/rela/internal/realtimelimits"
+)
+
+// OutputWriter writes session outputs to the graph (TKT-98TR9A). The
+// wiring site implements it over the field-gated entity manager, so the
+// ACL, the field grants, validation, automations and the graph audit apply
+// as they do to any write.
+type OutputWriter interface {
+	// Poster reports the identity facts of the caller on ctx that a retry
+	// needs to judge the writer as the post did.
+	Poster(ctx context.Context) (OutputPoster, error)
+	// Check asks, before the post is stored, whether the caller on ctx may
+	// write the output t. A refusal is a *[DenialError]. It is a yes or no
+	// only: the write authorizes again on the row as it then stands.
+	Check(ctx context.Context, t OutputTarget) error
+	// Write writes one output. A refusal or a classified failure is an
+	// *[OutputError]; any other error may be retried.
+	Write(ctx context.Context, r OutputRequest) (OutputWritten, error)
+}
+
+// OutputPoster are the identity facts of a poster, recorded in the mark.
+type OutputPoster struct {
+	// Unmatched is set for a verified poster that matched no user entity.
+	Unmatched bool
+	// UserEntity is set when the poster names an existing user entity.
+	UserEntity bool
+}
+
+// OutputTarget is what one output writes.
+type OutputTarget struct {
+	Kind realtimecfg.OutputKind
+	// AnchorID is the channel's anchor: the entity a set writes, and the
+	// one a create relates to. AnchorType is its entity type.
+	AnchorID   string
+	AnchorType string
+	// Face is, for a set, the face to write: the channel's own face, or the
+	// configured face of a family-anchored type. The writer drops it for an
+	// anchor whose type declares no faces. For a create it is the face of
+	// the new entity.
+	Face entity.Face
+	// Type and Relate are a create's entity type and relation to the
+	// anchor.
+	Type   string
+	Relate string
+}
+
+// OutputRequest is one output write.
+type OutputRequest struct {
+	Target OutputTarget
+	// Props are the evaluated properties. Authored holds those whose value
+	// came from the message or the session. A set field-gates every
+	// property; a create field-gates only Authored, as a promote does.
+	Props    map[string]any
+	Authored map[string]any
+	// Origin is the triggered_by of the graph audit records:
+	// `session:<channel key>/<from>-><to>#<generation>/<index>`.
+	Origin string
+	// Retry, when set, is the writer to act as: a retry has no request, so
+	// the writer rebuilds the poster from the mark.
+	Retry *OutputIdentity
+	// Started, set for a create, is called by a writer that cannot commit
+	// the create with Progress, right before the create. A failure writes
+	// nothing.
+	Started func(ctx context.Context) error
+	// Progress is the mark write a writer that can join the channel store
+	// commits in the create's transaction.
+	Progress OutputProgress
+}
+
+// OutputIdentity is who a retry writes as: the cause message's author, the
+// role claims verified at the post, and the poster's identity facts.
+type OutputIdentity struct {
+	Writer channels.Author
+	Roles  []string
+	OutputPoster
+}
+
+// OutputProgress is the progress write that records a create as done.
+type OutputProgress struct {
+	key  channels.Key
+	seq  int64
+	next channels.Action
+}
+
+// Apply records the created entity id and type in the last result and
+// writes the progress on st.
+func (p OutputProgress) Apply(ctx context.Context, st channels.Store, id, typ string) (channels.Message, error) {
+	if p.next.Outputs == nil || len(p.next.Outputs.Results) == 0 {
+		return channels.Message{}, errors.New("realtime: outputs progress was not made by the service")
+	}
+	next := p.next
+	next.Outputs = p.next.Outputs.Clone()
+	next.Outputs.Results[len(next.Outputs.Results)-1].Entity = &channels.Promoted{ID: id, Type: typ}
+	return st.SetAction(ctx, p.key, p.seq, channels.OutputsAction, channels.ActionPending, next)
+}
+
+// OutputWritten is a written output.
+type OutputWritten struct {
+	// Entity is the entity a create made.
+	Entity *channels.Promoted
+	// Warnings are the warning codes of the write.
+	Warnings []string
+	// Marked is set when the writer applied Progress in the create's
+	// transaction; Message is then the marked notice.
+	Marked  bool
+	Message channels.Message
+}
+
+// Output failure codes (see [channels.OutputResult.Code]).
+const (
+	OutputCodeForbidden         = "forbidden"
+	OutputCodeFieldDenied       = "field_denied"
+	OutputCodeInvalid           = "invalid"
+	OutputCodeConflict          = "conflict"
+	OutputCodeNotFound          = "not_found"
+	OutputCodeUnconfirmed       = "unconfirmed"
+	OutputCodeExpired           = "expired"
+	OutputCodeTransitionRemoved = "transition_removed"
+	OutputCodeError             = "error"
+)
+
+// OutputError is a classified output failure. Code never quotes an
+// error text or an entity id.
+type OutputError struct {
+	Code string
+	// Props are the properties a validation refusal named.
+	Props []string
+	// Retryable marks a failure a later attempt may not repeat, such as a
+	// lost version race.
+	Retryable bool
+	// WroteNothing is set when the writer is sure nothing was written.
+	WroteNothing bool
+}
+
+func (f *OutputError) Error() string { return "realtime: output failed: " + f.Code }
+
+// NoOutputs is the [OutputWriter] of a process that cannot write the
+// graph. A post that would fire outputs is refused there.
+type NoOutputs struct{}
+
+// Poster reports no facts.
+func (NoOutputs) Poster(context.Context) (OutputPoster, error) { return OutputPoster{}, nil }
+
+// Check refuses every output.
+func (NoOutputs) Check(context.Context, OutputTarget) error {
+	return deny(http.StatusForbidden, TypeSessionOutputDenied, "outputs are not available in this process")
+}
+
+// Write refuses every output.
+func (NoOutputs) Write(context.Context, OutputRequest) (OutputWritten, error) {
+	return OutputWritten{}, &OutputError{Code: OutputCodeForbidden, WroteNothing: true}
+}
+
+// OutputsView is a notice's outputs mark as a reader sees it. Status is
+// pending while the mark runs, failed when any output failed, and done
+// otherwise. The writer's role claims are never shown.
+type OutputsView struct {
+	Status  string             `json:"status"`
+	Writer  AuthorView         `json:"writer"`
+	Results []OutputResultView `json:"results,omitempty"`
+}
+
+// OutputResultView is one output's result. Entity is a [RefValue], so a
+// created entity the reader cannot read is restricted.
+type OutputResultView struct {
+	Kind     string    `json:"kind"`
+	Status   string    `json:"status"`
+	Code     string    `json:"code,omitempty"`
+	Props    []string  `json:"props,omitempty"`
+	Face     string    `json:"face,omitempty"`
+	Entity   *RefValue `json:"entity,omitempty"`
+	Warnings []string  `json:"warnings,omitempty"`
+}
+
+// The kinds and statuses of an [OutputResultView], for a reader outside
+// the channel store (see [channels.OutputResult]).
+const (
+	OutputKindSet    = channels.OutputKindSet
+	OutputKindCreate = channels.OutputKindCreate
+	OutputKindClose  = channels.OutputKindClose
+	// OutputKindTransition is the one result of a mark whose transition
+	// the config no longer declares.
+	OutputKindTransition = channels.OutputKindTransition
+	OutputResultDone     = channels.OutputDone
+	OutputResultFailed   = channels.OutputFailed
+)
+
+// Output view statuses.
+const (
+	OutputsPending = "pending"
+	OutputsDone    = "done"
+	OutputsFailed  = "failed"
+)
+
+// outputsView renders a, an outputs action.
+func (r *renderer) outputsView(a *channels.Action) *OutputsView {
+	v := &OutputsView{Status: OutputsDone, Writer: authorView(a.Outputs.Writer)}
+	for _, res := range a.Outputs.Results {
+		rv := OutputResultView{
+			Kind: res.Kind, Status: res.Status, Code: res.Code, Props: res.Props, Face: res.Face,
+			Warnings: res.Warnings,
+		}
+		if res.Entity != nil {
+			rv.Entity = r.ref(res.Entity.ID)
+		}
+		if res.Status == channels.OutputFailed {
+			v.Status = OutputsFailed
+		}
+		v.Results = append(v.Results, rv)
+	}
+	if a.Status == channels.ActionPending {
+		v.Status = OutputsPending
+	}
+	return v
+}
+
+// isOutputs reports whether a is a session notice's outputs mark.
+func isOutputs(a *channels.Action) bool {
+	return a != nil && a.Name == channels.OutputsAction && a.Outputs != nil
+}
+
+// outputsPending is the 409 for a release or a cause removal while a
+// mark is pending.
+func outputsPending(title string) *DenialError {
+	return deny(http.StatusConflict, TypeOutputsPending, title)
+}
+
+// outputKey is the config key of output i of the transition from on mt.
+func outputKey(ct, from, mt string, i int) string {
+	return fmt.Sprintf("channel_types.%s.session.states.%s.on.%s.outputs[%d]", ct, from, mt, i)
+}
+
+// outputGate is the decider's backstop: once the pre-check ran, a
+// transition with outputs moves only out of the state whose outputs were
+// checked.
+type outputGate struct {
+	active bool
+	from   string
+}
+
+func (g *outputGate) admits(t realtimecfg.Transition, from string) bool {
+	return g == nil || !g.active || len(t.Outputs()) == 0 || g.from == from
+}
+
+// outputPlan is what the pre-check of a post found: the poster's identity
+// facts, and the mark's claim. marked says the last Mark call marked.
+type outputPlan struct {
+	poster     OutputPoster
+	anchorType string
+	claim      string
+	marked     bool
+}
+
+// precheckOutputs runs the transition mt fires in the state the call read
+// against the decider, and asks the writer about each of its outputs. The
+// post is refused when any is refused, when the snapshot is degraded or
+// when the process cannot write outputs. A post that fires no outputs
+// asks nothing.
+func (s *Service) precheckOutputs(c *call, mt *realtimecfg.MessageType, sp sessionPost) (*outputPlan, error) {
+	plan := &outputPlan{claim: channels.NewName(), anchorType: c.anchor.Type}
+	if sp.step == nil {
+		return plan, nil
+	}
+	ch := channels.Channel{State: channels.StateOpen, CreatedAt: c.now}
+	if c.head != nil {
+		ch = *c.head
+	}
+	move, moves := sp.step.Decide(ch)
+	sp.gate.active = true
+	if !moves {
+		return plan, nil
+	}
+	t, _ := c.ct.Session().Transition(move.From, mt.Name)
+	outs := t.Outputs()
+	if len(outs) == 0 {
+		return plan, nil
+	}
+	if c.snap.Degraded {
+		return nil, deny(http.StatusForbidden, TypeSessionOutputDenied,
+			"outputs are suspended while realtime.yaml is degraded")
+	}
+	poster, err := s.outputs.writer.Poster(c.ctx)
+	if err != nil {
+		return nil, fmt.Errorf("realtime: read the poster's identity: %w", err)
+	}
+	plan.poster = poster
+	for i, o := range outs {
+		if err := s.outputs.writer.Check(c.ctx, outputTarget(c.key, plan.anchorType, o)); err != nil {
+			if d, ok := errors.AsType[*DenialError](err); ok {
+				return nil, &DenialError{
+					Status: http.StatusForbidden, Type: TypeSessionOutputDenied,
+					Title: "the poster may not write " + outputKey(c.ct.Name, move.From, mt.Name, i) + ": " + d.Title,
+					Rule:  d.Rule,
+				}
+			}
+			return nil, fmt.Errorf("realtime: check output: %w", err)
+		}
+	}
+	sp.gate.from = move.From
+	return plan, nil
+}
+
+// closesOn reports whether a move into to closes the channel.
+func closesOn(sess *realtimecfg.Session, to string) bool {
+	st, ok := sess.State(to)
+	return ok && st.Final && sess.OnFinal() == realtimecfg.OnFinalClose
+}
+
+// personMark is the Mark callback of a person's post: a mark claimed by
+// the request, for a move whose transition has outputs or that closes the
+// channel.
+func personMark(
+	sess *realtimecfg.Session, mt string, writer channels.Author, roles []string, now time.Time, plan *outputPlan,
+) func(channels.SessionMove) *channels.Action {
+	return func(move channels.SessionMove) *channels.Action {
+		t, _ := sess.Transition(move.From, mt)
+		closes := closesOn(sess, move.To)
+		// Assigned, not set: a backend may run the decider more than once.
+		plan.marked = len(t.Outputs()) > 0 || closes
+		if !plan.marked {
+			return nil
+		}
+		return &channels.Action{
+			PendingAt: now.Add(realtimelimits.OutputClaimTTL),
+			Outputs: &channels.OutputMark{
+				Writer: writer, Roles: roles, Unmatched: plan.poster.Unmatched, UserEntity: plan.poster.UserEntity,
+				AnchorType: plan.anchorType, Attempt: 1, Claim: plan.claim, ClaimedAt: now, Close: closes,
+			},
+		}
+	}
+}
+
+// triggerMark is the Mark callback of a trigger's post. A trigger never
+// fires outputs (realtimecfg refuses them), so the mark only closes the
+// channel. Nobody claims it: the runner does on its next round.
+func triggerMark(sess *realtimecfg.Session, now time.Time) func(channels.SessionMove) *channels.Action {
+	return func(move channels.SessionMove) *channels.Action {
+		if !closesOn(sess, move.To) {
+			return nil
+		}
+		return &channels.Action{PendingAt: now, Outputs: &channels.OutputMark{Writer: systemAuthor(), Close: true}}
+	}
+}
+
+// outputTarget is what output o of a channel at key, anchored to an
+// entity of anchorType, writes.
+func outputTarget(key channels.Key, anchorType string, o realtimecfg.Output) OutputTarget {
+	t := OutputTarget{Kind: o.Kind, AnchorID: key.ID, AnchorType: anchorType, Face: entity.Face(o.Face)}
+	switch o.Kind {
+	case realtimecfg.OutputSet:
+		if t.Face == "" {
+			t.Face = key.Face
+		}
+	case realtimecfg.OutputCreate:
+		t.Type, t.Relate = o.Type, o.Relate
+	}
+	return t
+}
+
+// outputOrigin is the triggered_by of output i of mark.
+func outputOrigin(key channels.Key, mark *channels.OutputMark, i int) string {
+	return channels.SessionMarker + key.String() + "/" + mark.From + "->" + mark.To + "#" +
+		strconv.FormatInt(mark.Gen, 10) + "/" + strconv.Itoa(i)
+}
+
+// onFinalOrigin is the triggered_by of the on_final close of type typ.
+func onFinalOrigin(typ string) string { return channels.SessionMarker + typ + "/on_final" }
+
+// outputEngine runs outputs marks: inline after a post, and in the runner.
+type outputEngine struct {
+	store  channels.Store
+	cfg    ConfigSource
+	writer OutputWriter
+	local  *Local
+	clock  Clock
+}
+
+// markRun is one run of a held mark.
+type markRun struct {
+	key    channels.Key
+	notice channels.Message
+	cause  channels.Message
+	// superseded holds the properties a later move's mark recorded as set,
+	// read up to readTo. done is set once that read reached the log's end.
+	superseded map[string]bool
+	readTo     int64
+	done       bool
+	retry      bool
+	title      string
+}
+
+// supersedePage is the page size of the supersede read.
+const supersedePage = 64
+
+// load reads the cause, the notice at seq and a first page of the messages
+// after it. ok is false when seq does not hold a notice with an outputs
+// mark caused by the message before it. The caller holds the channel's
+// outputs lock, so a later move's run in this process has either finished
+// or not started.
+func (e *outputEngine) load(ctx context.Context, key channels.Key, seq int64) (markRun, bool, error) {
+	r := markRun{key: key, superseded: map[string]bool{}, readTo: seq}
+	page, err := e.store.Messages(ctx, key, channels.Page{AfterSeq: max(seq-2, 0), Limit: supersedePage + 2})
+	if err != nil {
+		return r, false, err
+	}
+	var later []channels.Message
+	for _, m := range page {
+		switch {
+		case m.Seq == seq-1:
+			r.cause = m
+		case m.Seq == seq:
+			r.notice = m
+		case m.Seq > seq:
+			later = append(later, m)
+		}
+	}
+	r.note(later, len(page) < supersedePage+2)
+	ok := r.notice.Seq == seq && isNotice(r.notice.Type, r.notice.TriggeredBy) && isOutputs(r.notice.Action) &&
+		r.notice.Action.Outputs.Cause == seq-1 && r.cause.Seq == seq-1
+	return r, ok, nil
+}
+
+// note adds the sets the later messages' marks recorded. end says the
+// messages reach the log's end.
+func (r *markRun) note(later []channels.Message, end bool) {
+	for p := range supersededProps(later) {
+		r.superseded[p] = true
+	}
+	if n := len(later); n > 0 {
+		r.readTo = later[n-1].Seq
+	}
+	r.done = end
+}
+
+// supersededBy returns the properties a later move's mark recorded as set.
+// It reads the rest of the log after the notice the first time a set needs
+// it, so a retry long after the move still sees every later set.
+func (e *outputEngine) supersededBy(ctx context.Context, r *markRun) (map[string]bool, error) {
+	for !r.done {
+		page, err := e.store.Messages(ctx, r.key, channels.Page{AfterSeq: r.readTo, Limit: supersedePage})
+		if err != nil {
+			return nil, err
+		}
+		r.note(page, len(page) < supersedePage)
+	}
+	return r.superseded, nil
+}
+
+// outputLocks serializes the outputs runs of each channel in this process.
+// An entry lives while a run holds or waits for it, so a slow run blocks
+// only its own channel.
+type outputLocks struct {
+	mu    sync.Mutex
+	locks map[string]*outputLock
+}
+
+type outputLock struct {
+	mu   sync.Mutex
+	refs int
+}
+
+// lockOutputs takes the in-process lock of key's outputs and returns its
+// unlock.
+func (l *Local) lockOutputs(key channels.Key) func() {
+	ol := &l.outputLocks
+	k := key.String()
+	ol.mu.Lock()
+	if ol.locks == nil {
+		ol.locks = map[string]*outputLock{}
+	}
+	lk := ol.locks[k]
+	if lk == nil {
+		lk = &outputLock{}
+		ol.locks[k] = lk
+	}
+	lk.refs++
+	ol.mu.Unlock()
+	lk.mu.Lock()
+	return func() {
+		lk.mu.Unlock()
+		ol.mu.Lock()
+		lk.refs--
+		if lk.refs == 0 {
+			delete(ol.locks, k)
+		}
+		ol.mu.Unlock()
+	}
+}
+
+// holdInline reports whether the post's own claim still holds r's mark.
+// A run that waited behind another run of the channel may find its claim
+// near the end of its TTL: it renews it first, so a runner elsewhere does
+// not take the mark while it runs. A claim already taken is left to its
+// new holder.
+func (e *outputEngine) holdInline(ctx context.Context, r *markRun, claim string) bool {
+	a := r.notice.Action
+	if a.Status != channels.ActionPending || a.Outputs.Claim != claim {
+		return false
+	}
+	if e.clock().Before(a.Outputs.ClaimedAt.Add(realtimelimits.OutputClaimTTL / 2)) {
+		return true
+	}
+	if err := e.write(ctx, r, a.Outputs, channels.ActionPending); err != nil {
+		slog.WarnContext(ctx, "realtime: renewing the outputs claim failed; the runner runs the mark",
+			"channel", r.key.String(), "seq", r.notice.Seq, "error", err)
+		return false
+	}
+	return true
+}
+
+// outputsFor returns the outputs the current config declares for the
+// mark's move, recomputed on every run. removed reports that the config no
+// longer declares the transition. A trigger's mark runs no outputs.
+func (e *outputEngine) outputsFor(r *markRun, mark *channels.OutputMark) (outs []realtimecfg.Output, removed bool) {
+	if mark.Writer.User == principal.UserRealtime {
+		return nil, false
+	}
+	snap := e.cfg.Load()
+	if snap.Config == nil {
+		return nil, true
+	}
+	ct, ok := snap.Config.ChannelType(r.key.Type)
+	if !ok || ct.Session() == nil {
+		return nil, true
+	}
+	t, ok := ct.Session().Transition(mark.From, r.cause.Type)
+	if !ok || t.To != mark.To {
+		return nil, true
+	}
+	return t.Outputs(), false
+}
+
+// run runs the held mark of r: the outputs not run yet, then the close,
+// then the done write. The caller holds the channel's outputs lock (see
+// [outputEngine.load]). A mark left pending is retried by the runner once
+// its PendingAt passes.
+func (e *outputEngine) run(ctx context.Context, r *markRun) {
+	mark := r.notice.Action.Outputs.Clone()
+	outs, removed := e.outputsFor(r, mark)
+	if removed {
+		if n := len(mark.Results); n == 0 || mark.Results[n-1].Kind != channels.OutputKindClose {
+			mark.Results = append(mark.Results, channels.OutputResult{
+				Kind: channels.OutputKindTransition, Status: channels.OutputFailed, Code: OutputCodeTransitionRemoved,
+			})
+		}
+	} else if !e.runOutputs(ctx, r, mark, outs) {
+		return
+	}
+	if mark.Close {
+		mark.Results = append(mark.Results, e.close(ctx, r))
+		mark.Close = false
+	}
+	if err := e.write(ctx, r, mark, channels.ActionDone); err != nil {
+		slog.ErrorContext(ctx, "realtime: writing the outputs mark done failed; the runner retries it",
+			"channel", r.key.String(), "seq", r.notice.Seq, "error", err)
+	}
+}
+
+// runOutputs runs the outputs of mark from the first without a result. It
+// reports false when the mark stays pending.
+func (e *outputEngine) runOutputs(
+	ctx context.Context, r *markRun, mark *channels.OutputMark, outs []realtimecfg.Output,
+) bool {
+	i := len(mark.Results)
+	if i > 0 && mark.Results[i-1].Status == channels.OutputStarted {
+		// A create that cannot commit with its progress was started and
+		// never recorded: it may have written, so it is not repeated.
+		mark.Results[i-1] = channels.OutputResult{
+			Kind: channels.OutputKindCreate, Status: channels.OutputFailed, Code: OutputCodeUnconfirmed,
+		}
+		skipRest(mark, outs, i)
+		return true
+	}
+	if i < len(outs) && r.retry {
+		switch {
+		case e.clock().After(r.notice.At.Add(realtimelimits.OutputRetryWindow)):
+			failRest(mark, outs, i, OutputCodeExpired)
+			return true
+		case mark.Attempt > realtimelimits.MaxOutputAttempts:
+			failRest(mark, outs, i, OutputCodeError)
+			return true
+		}
+	}
+	for ; i < len(outs); i++ {
+		res, how := e.runOne(ctx, r, mark, i, outs[i])
+		if how == outputLeftPending {
+			return false
+		}
+		mark.Results = append(mark.Results, res)
+		if res.Status == channels.OutputFailed {
+			skipRest(mark, outs, i+1)
+			return true
+		}
+		if how == outputMarked {
+			continue
+		}
+		if err := e.write(ctx, r, mark, channels.ActionPending); err != nil {
+			slog.WarnContext(ctx, "realtime: outputs progress write failed; the runner retries the mark",
+				"channel", r.key.String(), "seq", r.notice.Seq, "error", err)
+			return false
+		}
+	}
+	return true
+}
+
+// skipRest records the outputs from i on as skipped.
+func skipRest(mark *channels.OutputMark, outs []realtimecfg.Output, i int) {
+	for _, o := range outs[min(i, len(outs)):] {
+		mark.Results = append(mark.Results, channels.OutputResult{Kind: string(o.Kind), Status: channels.OutputSkipped})
+	}
+}
+
+// failRest records the outputs from i on as failed with code.
+func failRest(mark *channels.OutputMark, outs []realtimecfg.Output, i int, code string) {
+	for _, o := range outs[min(i, len(outs)):] {
+		mark.Results = append(mark.Results, channels.OutputResult{
+			Kind: string(o.Kind), Status: channels.OutputFailed, Code: code,
+		})
+	}
+}
+
+// outputOutcome is how one output ended.
+type outputOutcome int
+
+const (
+	// outputRan: the result is to be recorded by a progress write.
+	outputRan outputOutcome = iota
+	// outputMarked: the writer recorded it in the create's transaction.
+	outputMarked
+	// outputLeftPending: retry the output later.
+	outputLeftPending
+)
+
+// runOne runs output i of mark.
+func (e *outputEngine) runOne(
+	ctx context.Context, r *markRun, mark *channels.OutputMark, i int, o realtimecfg.Output,
+) (channels.OutputResult, outputOutcome) {
+	res := channels.OutputResult{Kind: string(o.Kind)}
+	props, authored := evalOutput(o, r.vars(mark))
+	if o.Kind == realtimecfg.OutputSet {
+		res.Face = o.Face
+		later, err := e.supersededBy(ctx, r)
+		if err != nil {
+			slog.WarnContext(ctx, "realtime: reading the later moves of an outputs mark failed; it is retried",
+				"channel", r.key.String(), "seq", r.notice.Seq, "error", err)
+			return res, outputLeftPending
+		}
+		for name := range props {
+			if later[name] {
+				delete(props, name)
+				delete(authored, name)
+			}
+		}
+		if len(props) == 0 {
+			res.Status = channels.OutputSuperseded
+			return res, outputRan
+		}
+		res.Props = sortedKeys(props)
+	}
+	req := OutputRequest{
+		Target: outputTarget(r.key, mark.AnchorType, o), Props: props, Authored: authored,
+		Origin: outputOrigin(r.key, mark, i),
+	}
+	if r.retry {
+		req.Retry = &OutputIdentity{
+			Writer: mark.Writer, Roles: mark.Roles,
+			OutputPoster: OutputPoster{Unmatched: mark.Unmatched, UserEntity: mark.UserEntity},
+		}
+	}
+	started := false
+	if o.Kind == realtimecfg.OutputCreate {
+		req.Started = func(ctx context.Context) error {
+			m := mark.Clone()
+			m.Results = append(m.Results, channels.OutputResult{Kind: res.Kind, Status: channels.OutputStarted})
+			if err := e.write(ctx, r, m, channels.ActionPending); err != nil {
+				return err
+			}
+			started = true
+			return nil
+		}
+		m := mark.Clone()
+		m.Results = append(m.Results, channels.OutputResult{Kind: res.Kind, Status: channels.OutputDone})
+		req.Progress = OutputProgress{key: r.key, seq: r.notice.Seq, next: e.next(r, m, channels.ActionPending)}
+	}
+	wctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), promoteTimeout)
+	got, err := e.writer.Write(wctx, req)
+	cancel()
+	if err == nil {
+		res.Status, res.Entity, res.Warnings = channels.OutputDone, got.Entity, got.Warnings
+		if got.Marked {
+			r.notice = got.Message
+			e.local.mark(r.key)
+			return res, outputMarked
+		}
+		return res, outputRan
+	}
+	f, classified := errors.AsType[*OutputError](err)
+	wroteNothing := classified && f.WroteNothing
+	switch {
+	case started && !wroteNothing:
+		res.Status, res.Code = channels.OutputFailed, OutputCodeUnconfirmed
+	case classified && !f.Retryable:
+		res.Status, res.Code, res.Props = channels.OutputFailed, f.Code, f.Props
+	case mark.Attempt >= realtimelimits.MaxOutputAttempts:
+		res.Status, res.Code = channels.OutputFailed, OutputCodeError
+	default:
+		slog.WarnContext(ctx, "realtime: a session output failed; it is retried",
+			"channel", r.key.String(), "seq", r.notice.Seq, "output", i, "attempt", mark.Attempt, "error", err)
+		if started {
+			// The writer wrote nothing: drop the started record so the
+			// retry may create.
+			if werr := e.write(ctx, r, mark, channels.ActionPending); werr != nil {
+				res.Status, res.Code = channels.OutputFailed, OutputCodeUnconfirmed
+				return res, outputRan
+			}
+		}
+		return res, outputLeftPending
+	}
+	// A started record, if any, is replaced by the result's progress write.
+	return res, outputRan
+}
+
+// vars are the template values of r's mark.
+func (r *markRun) vars(mark *channels.OutputMark) realtimecfg.OutputVars {
+	return realtimecfg.OutputVars{
+		Message: r.cause.Props, Author: r.cause.Author.User,
+		From: mark.From, To: mark.To, Generation: mark.Gen,
+		ChannelKey: r.key.String(), ChannelType: r.key.Type, ChannelTitle: r.title,
+		At: r.notice.At,
+	}
+}
+
+// evalOutput evaluates o's templates. A whole-value reference to an absent
+// message property is left out.
+func evalOutput(o realtimecfg.Output, vars realtimecfg.OutputVars) (props, authored map[string]any) {
+	props, authored = map[string]any{}, map[string]any{}
+	for name, t := range o.Properties() {
+		v, ok := t.Eval(vars)
+		if !ok {
+			continue
+		}
+		props[name] = v
+		if !t.Literal() {
+			authored[name] = v
+		}
+	}
+	return props, authored
+}
+
+// readsTitle reports whether any of outs reads the channel title.
+func readsTitle(outs []realtimecfg.Output) bool {
+	for _, o := range outs {
+		for _, t := range o.Properties() {
+			if t.ReadsTitle() {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// supersededProps are the properties a later notice's mark recorded as
+// set.
+func supersededProps(later []channels.Message) map[string]bool {
+	out := map[string]bool{}
+	for _, m := range later {
+		if !isNotice(m.Type, m.TriggeredBy) || !isOutputs(m.Action) {
+			continue
+		}
+		for _, res := range m.Action.Outputs.Results {
+			if res.Kind == channels.OutputKindSet && res.Status == channels.OutputDone {
+				for _, p := range res.Props {
+					out[p] = true
+				}
+			}
+		}
+	}
+	return out
+}
+
+// close runs the on_final close of r's channel. A channel that is not
+// open is left as it is. Like every output write it runs detached from the
+// client, so a disconnect does not fail it.
+func (e *outputEngine) close(ctx context.Context, r *markRun) channels.OutputResult {
+	res := channels.OutputResult{Kind: channels.OutputKindClose, Status: channels.OutputDone}
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), markTimeout)
+	defer cancel()
+	_, err := applyTransition(ctx, e.store, e.local, r.key, channels.StateOpen, channels.Transition{
+		To: channels.StateClosed, By: systemAuthor(), At: e.clock(), TriggeredBy: onFinalOrigin(r.key.Type),
+	})
+	switch {
+	case err == nil:
+	case errors.Is(err, channels.ErrConflict), errors.Is(err, channels.ErrNotFound):
+		res.Status = channels.OutputSkipped
+	default:
+		slog.ErrorContext(ctx, "realtime: the on_final close failed", "channel", r.key.String(), "error", err)
+		res.Status, res.Code = channels.OutputFailed, OutputCodeError
+	}
+	return res
+}
+
+// next is the holder's next write of mark, with status.
+func (e *outputEngine) next(r *markRun, mark *channels.OutputMark, status channels.ActionStatus) channels.Action {
+	now := e.clock()
+	next := *r.notice.Action
+	next.Status, next.At, next.PendingAt = status, now, now.Add(realtimelimits.OutputClaimTTL)
+	next.Outputs = mark.Clone()
+	next.Outputs.ClaimedAt = now
+	return next
+}
+
+// write stores the holder's next write of mark and keeps the stored
+// notice in r.
+func (e *outputEngine) write(
+	ctx context.Context, r *markRun, mark *channels.OutputMark, status channels.ActionStatus,
+) error {
+	wctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), markTimeout)
+	defer cancel()
+	got, err := e.store.SetAction(wctx, r.key, r.notice.Seq, channels.OutputsAction, channels.ActionPending,
+		e.next(r, mark, status))
+	if err != nil {
+		return err
+	}
+	r.notice = got
+	e.local.mark(r.key)
+	return nil
+}

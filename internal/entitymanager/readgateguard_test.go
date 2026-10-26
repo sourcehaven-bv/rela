@@ -85,6 +85,7 @@ var callerGates = map[string]string{
 var noReadGateNeeded = map[string]string{
 	"prepareCreate": "CreateEntity's checks: creates a row; no stored row exists for a 403 to confirm",
 	"CheckCreate":   "probes CreateEntity's type-level create question; it names no stored row",
+	"CheckRelate":   "probes CreateLinked's edge question for a new entity; it names no stored row",
 	"prepareLinkedRelation": "CreateLinked's edge checks: one end of the edge is the row being created, so " +
 		"no stored row exists for a 403 to confirm; the existing end is gated by lookupSource, or by " +
 		"prepareRelationFrom for a target",

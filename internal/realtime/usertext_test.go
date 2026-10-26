@@ -72,6 +72,7 @@ func denialConstructors() map[string]*DenialError {
 		"configChanged":      configChanged(),
 		"noPrincipal":        noPrincipal(),
 		"notPromoting":       notPromoting(),
+		"outputsPending":     outputsPending("the mark is pending"),
 		"readDenied":         readDenied(ct),
 		"postDenied":         postDenied(ct, mt),
 		"gateDenied":         gateDenied(TypeCreateDenied, "creating", "r", realtimecfg.Gate{}, nil),

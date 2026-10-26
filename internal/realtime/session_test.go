@@ -209,7 +209,7 @@ func TestSessionPost_GuardAbsentProperty(t *testing.T) {
 	ct, _ := h.cfg.Load().Config.ChannelType("incident")
 	failed := guardFailure{}
 	decide := sessionDecider(context.Background(), ct.Session(), ct.MessageTypes["checked"], props(), time.Now(),
-		poster{roles: map[string]bool{}}, &failed)
+		poster{roles: map[string]bool{}}, &failed, nil)
 	_, moved := decide(channels.Channel{State: channels.StateOpen})
 	require.False(t, moved)
 	require.NoError(t, failed.err, "an absent property is not logged")
@@ -449,7 +449,7 @@ func TestSessionLifecycleAndEdits(t *testing.T) {
 	ct, _ := h.cfg.Load().Config.ChannelType("incident")
 	mt := ct.MessageTypes["assessed"]
 	decide := sessionDecider(context.Background(), ct.Session(), mt, props("risk", "high"), h.clock.Now(),
-		poster{roles: map[string]bool{}}, &guardFailure{})
+		poster{roles: map[string]bool{}}, &guardFailure{}, nil)
 	_, moved := decide(channels.Channel{
 		State: channels.StateClosed, Session: channels.Session{State: "contained", Generation: 1},
 	})
@@ -474,7 +474,7 @@ func TestSessionGuardFailure(t *testing.T) {
 	mt := ct.MessageTypes["probe"]
 	var failed guardFailure
 	decide := sessionDecider(context.Background(), ct.Session(), mt, props("text", "a", "pattern", "("), time.Now(),
-		poster{roles: map[string]bool{}}, &failed)
+		poster{roles: map[string]bool{}}, &failed, nil)
 	_, moved := decide(channels.Channel{State: channels.StateOpen})
 	require.False(t, moved)
 	require.Error(t, failed.err)

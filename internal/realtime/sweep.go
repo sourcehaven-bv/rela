@@ -235,7 +235,8 @@ func (s *Sweeper) stalePending(
 	}
 	var out []channels.PendingAction
 	for _, p := range all {
-		if withActions[p.Key.Type] {
+		// An outputs mark is the runner's, not a moderator's to release.
+		if withActions[p.Key.Type] && p.Name != channels.OutputsAction {
 			out = append(out, p)
 		}
 	}

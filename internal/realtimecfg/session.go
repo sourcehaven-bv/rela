@@ -35,6 +35,8 @@ type Session struct {
 	guardReminders []string
 	// paused names the reminders paused in this copy (see [Session.Pausing]).
 	paused map[string]bool
+	// onFinal is `on_final`: [OnFinalClose] or empty.
+	onFinal string
 }
 
 // Label is the session's display name.
@@ -162,6 +164,8 @@ type Transition struct {
 	// When is the compiled guard over `message`, `session` and the
 	// standard library, or nil.
 	When *predicate.Program
+	// outputs are the compiled `outputs:`, in file order.
+	outputs []Output
 	// warned is shared by every copy of the transition, so a guard failure
 	// is reported once per loaded configuration.
 	warned *atomic.Bool
@@ -198,6 +202,18 @@ func (v *validator) session(
 	if _, ok := ct.MessageTypes[SessionNoticeType]; ok {
 		v.add(ct.messageTypesKey()+"."+SessionNoticeType, fmt.Sprintf("%q is reserved in a channel type with "+
 			"a session: transitions post notices of that type; choose another message type name", SessionNoticeType))
+	}
+	for _, mn := range sortedKeys(ct.MessageTypes) {
+		if _, ok := ct.MessageTypes[mn].Actions[OutputsActionName]; ok {
+			v.add(ct.messageTypesKey()+"."+mn+".actions."+OutputsActionName, fmt.Sprintf("%q is reserved for "+
+				"the session's output marks; choose another action name", OutputsActionName))
+		}
+	}
+	switch raw.OnFinal {
+	case "", OnFinalClose:
+		s.onFinal = raw.OnFinal
+	default:
+		v.add(key+".on_final", "on_final may only be close")
 	}
 	for _, name := range order {
 		if !namePattern.MatchString(name) {
@@ -399,6 +415,18 @@ func (v *validator) transition(
 		t.When = v.guard(key+".when", raw.When, mt, ct, s.guardReminders)
 		t.warned = &atomic.Bool{}
 	}
+	if len(raw.Outputs) > 0 && len(raw.Roles) == 0 && t.By == TransitionByAny {
+		if tr := triggerReachable(v.file, ct.Name, msgType); tr != "" {
+			v.add(key+".outputs", fmt.Sprintf("trigger %s posts %s into this channel type, so it can fire this "+
+				"transition; outputs on a transition a trigger can fire need %s; add roles: so only people "+
+				"fire it, or remove the outputs", tr, msgType, runAsLater))
+		}
+	}
+	var cause *MessageType
+	if ok {
+		cause = mt
+	}
+	t.outputs = writeChecker{v}.outputs(key+".outputs", raw.Outputs, t, cause, ct)
 	return t, ok
 }
 
