@@ -517,8 +517,12 @@ func TestOutputs_TriggerMoveWritesAsRunAs(t *testing.T) {
 		got, err := env.svc.Store().GetEntity(context.Background(), entity.Ref{ID: "DOC-001"})
 		return err == nil && got.Properties["status"] == "escalated"
 	}, 20*time.Second, 50*time.Millisecond)
-	recs := env.sessionRecords()
-	require.Len(t, recs, 1)
+	// The audit record lands after the store write, so wait for it too.
+	var recs []audit.Record
+	require.Eventually(t, func() bool {
+		recs = env.sessionRecords()
+		return len(recs) == 1
+	}, 20*time.Second, 50*time.Millisecond)
 	require.Equal(t, "system:breach-bot", recs[0].Principal.User)
 	require.Equal(t, principal.ToolRealtime, recs[0].Principal.Tool)
 	require.Equal(t, "session:DOC-001/watch/waiting->escalated#1/0", recs[0].TriggeredBy)
