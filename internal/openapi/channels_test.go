@@ -272,6 +272,34 @@ func TestOpenAPI_ChannelSession(t *testing.T) {
 	if got, want := schemaKeys(tr), jsonNames(reflect.TypeFor[v1.ChannelSessionTransition]()); !slices.Equal(got, want) {
 		t.Errorf("transition properties = %v, want %v", got, want)
 	}
+	timers := cs.Properties["timers"]
+	if timers == nil || timers.Type != "array" || timers.Items == nil ||
+		timers.Items.Ref != "#/components/schemas/"+channelTimerRef {
+
+		t.Fatalf("ChannelSession.timers = %+v, want an array of %s", timers, channelTimerRef)
+	}
+	if d := cs.Properties["due_at"]; d == nil || d.Format != "date-time" {
+		t.Errorf("ChannelSession.due_at = %+v, want a date-time", d)
+	}
+	got, want := schemaKeys(sc[channelTimerRef]), jsonNames(reflect.TypeFor[v1.ChannelSessionTimer]())
+	if !slices.Equal(got, want) {
+		t.Errorf("ChannelSessionTimer properties = %v, want %v", got, want)
+	}
+	reminders := cs.Properties["reminders"]
+	if reminders == nil || reminders.Type != "array" || reminders.Items == nil ||
+		reminders.Items.Ref != "#/components/schemas/"+channelReminderRef {
+
+		t.Fatalf("ChannelSession.reminders = %+v, want an array of %s", reminders, channelReminderRef)
+	}
+	got, want = schemaKeys(sc[channelReminderRef]), jsonNames(reflect.TypeFor[v1.ChannelSessionReminder]())
+	if !slices.Equal(got, want) {
+		t.Errorf("ChannelSessionReminder properties = %v, want %v", got, want)
+	}
+	if d := sc[messageSchema].Description; !strings.Contains(d, "reminder:<channel type>/<reminder name>") ||
+		!strings.Contains(d, "reminder_message") {
+
+		t.Errorf("the Message description does not explain reminders: %s", d)
+	}
 }
 
 // TestOpenAPI_ChannelSessionDescriptor pins AC 9: the descriptor's

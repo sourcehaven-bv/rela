@@ -48,6 +48,15 @@ seqtrace-diagram *args:
 seqtrace-demo:
     tools/seqtrace/demo/run.sh
 
+# Run e2e specs against a call-traced server and draw each SPA request from component to store (tools/seqtrace/README.md)
+seqtrace-e2e *specs: install-frontend
+    cd frontend && RELA_SEQTRACE=1 npm run build:e2e
+    go run ./tools/seqtrace/cmd/seqtrace overlay -out .ignored/seqtrace-e2e/overlay
+    go build -overlay .ignored/seqtrace-e2e/overlay/overlay.json -o .ignored/seqtrace-e2e/rela-server ./cmd/rela-server
+    rm -rf .ignored/seqtrace-e2e/raw
+    -cd e2e && RELA_E2E_SERVER_BINARY=../.ignored/seqtrace-e2e/rela-server RELA_E2E_SEQTRACE=../.ignored/seqtrace-e2e/raw npx playwright test {{specs}}
+    go run ./tools/seqtrace/cmd/seqtrace stitch -in .ignored/seqtrace-e2e/raw -out .ignored/seqtrace-e2e/diagrams -keep "$(tools/seqtrace/guards.sh)"
+
 # Compare the demo's request flows between REF and the working tree (tools/seqtrace/README.md)
 seqtrace-compare ref="origin/develop":
     SEQTRACE_REF={{quote(ref)}} SEQTRACE_LABEL=base SEQTRACE_OPEN=0 tools/seqtrace/demo/run.sh
@@ -56,7 +65,8 @@ seqtrace-compare ref="origin/develop":
 
 # archplan (https://github.com/vloothuis/archplan): edit the target architecture
 # in a browser and plan the change with an agent. State lives in .archplan/.
-archplan_version := "v0.1.2"
+archplan_version := "v26.10.21"
+archplan_go_version := "v0.2610.21"
 
 # Run archplan (default: open the editor). Uses `archplan` from PATH, else uvx.
 archplan *args="up --open":
@@ -65,15 +75,30 @@ archplan *args="up --open":
     if command -v archplan >/dev/null; then exec archplan {{args}}; fi
     exec uvx --from "git+https://github.com/vloothuis/archplan@{{archplan_version}}" archplan {{args}}
 
-# Export the as-is architecture model for archplan, with seqtrace call flows when a demo trace exists
-archplan-export:
+# The Go half of the export list in .archplan/config.json (export-ts is the SPA half). Run `just archplan export`, which merges both and adds the //archplan: declarations.
+archplan-export out=".archplan/model.archmodel.json":
     #!/usr/bin/env bash
     set -euo pipefail
-    args=(-o .archplan/model.archmodel.json)
+    args=(-o {{quote(out)}})
     for f in .ignored/seqtrace-demo/head/diagrams/steps.json .ignored/seqtrace-demo/diagrams/steps.json; do
         if [ -f "$f" ]; then args+=(-steps "$f"); break; fi
     done
-    go run "github.com/vloothuis/archplan/exporters/archplan-go@{{archplan_version}}" "${args[@]}"
+    # SPA requests stitched to their server traces by `just seqtrace-e2e`.
+    if [ -f .ignored/seqtrace-e2e/diagrams/steps.json ]; then args+=(-steps .ignored/seqtrace-e2e/diagrams/steps.json); fi
+    go run "github.com/vloothuis/archplan/exporters/archplan-go@{{archplan_go_version}}" "${args[@]}"
+
+# Trace every route family, export with declarations and git history, and list the archplan findings
+archplan-security:
+    SEQTRACE_SUITE=routes SEQTRACE_OPEN=0 just seqtrace-demo
+    @# archplan ci exports as archplan export does. ARCHPLAN_CI_TRUST approves the export commands for this run only.
+    @# Exit 1 means new findings, not a failed export.
+    ARCHPLAN_CI_TRUST=1 just archplan ci --json > /dev/null || [ $? -eq 1 ]
+    just archplan hotspots
+    -just archplan check --all
+
+# Entry points, guards and sinks a change touches (default: against origin/develop)
+archplan-blast ref="origin/develop":
+    just archplan blast --diff {{ref}}
 
 # Build the desktop app
 build-desktop: build-frontend
@@ -384,6 +409,10 @@ lint:
 govulncheck:
     @echo "Running govulncheck..."
     scripts/govulncheck-filtered.sh
+
+# Test the script that picks the security scan's `go get` targets
+govulncheck-fixable-test:
+    scripts/govulncheck-fixable-test.sh
 
 # Check architecture boundaries
 arch-lint:

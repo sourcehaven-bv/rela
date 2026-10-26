@@ -32,6 +32,8 @@ const getEntitySQL = `SELECT id, type, face, properties, content, updated_at
 
 // GetEntity returns the face row ref addresses, or store.ErrNotFound. A
 // missing face is ErrNotFound even when sibling faces exist.
+//
+//archplan:sink=read
 func (s *Store) GetEntity(ctx context.Context, ref entity.Ref) (*entity.Entity, error) {
 	if !storeutil.Addressable(ref) {
 		return nil, store.ErrNotFound
@@ -266,6 +268,8 @@ func originValues(ctx context.Context) originCols {
 // CreateEntity inserts a new entity. Returns store.ErrConflict if the ID
 // exists. The created entity (with server-assigned updated_at) is delivered
 // to observers and an EventEntityCreated is emitted after commit.
+//
+//archplan:sink=write
 func (s *Store) CreateEntity(ctx context.Context, e *entity.Entity) error {
 	if err := validateID(e.ID); err != nil {
 		return err
@@ -385,6 +389,8 @@ func (s *Store) CreateEntity(ctx context.Context, e *entity.Entity) error {
 
 // UpdateEntity overwrites an existing entity. Returns store.ErrNotFound if the
 // entity does not exist.
+//
+//archplan:sink=write
 func (s *Store) UpdateEntity(ctx context.Context, e *entity.Entity) error {
 	_, err := s.updateEntityIf(ctx, e, store.UpdateCondition{})
 	return err
@@ -524,6 +530,8 @@ func (s *Store) updateEntityIf(
 // Contrast the pre-CAS behavior, which is what `writeMu` could never fix: two
 // rela-server processes against one database (docs/postgres-backend.md) each
 // read, each compute, and the later write silently discards the earlier one.
+//
+//archplan:sink=write
 func (s *Store) UpdateEntityIf(
 	ctx context.Context, e *entity.Entity, cond store.UpdateCondition,
 ) (store.EntityVersion, error) {
@@ -534,6 +542,8 @@ func (s *Store) UpdateEntityIf(
 // store.ErrHasRelations if any relation references it. With cascade, deletes
 // referencing relations and the entity's attachments in one transaction,
 // returning the removed rows.
+//
+//archplan:sink=write
 func (s *Store) DeleteFamily(ctx context.Context, id string, cascade bool) (*store.DeleteResult, error) {
 	tx, err := s.db.Begin(ctx)
 	if err != nil {
@@ -641,6 +651,8 @@ func (s *Store) DeleteFamily(ctx context.Context, id string, cascade bool) (*sto
 // outgoing edges on the matching tail. The last face is the exception: with
 // no entity left, every incident edge goes too (RR-2466U1, see
 // store.EntityWriter.DeleteFace).
+//
+//archplan:sink=write
 func (s *Store) DeleteFace(ctx context.Context, ref entity.Ref) (*store.DeleteResult, error) {
 	if !storeutil.Addressable(ref) {
 		return nil, store.ErrNotFound
@@ -824,6 +836,8 @@ func renameTargetFree(ctx context.Context, tx pgx.Tx, newID, oldID string) error
 // RenameFamily changes an entity's ID, rewriting every relation endpoint and
 // re-keying attachments atomically. Returns store.ErrNotFound if oldID is
 // absent, store.ErrConflict if newID exists.
+//
+//archplan:sink=write
 func (s *Store) RenameFamily(ctx context.Context, oldID, newID string) (*store.RenameResult, error) {
 	if err := validateID(newID); err != nil {
 		return nil, err

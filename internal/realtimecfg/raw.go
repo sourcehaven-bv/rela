@@ -45,12 +45,33 @@ type rawSession struct {
 	Label   string                     `yaml:"label"`
 	Initial string                     `yaml:"initial"`
 	States  map[string]rawSessionState `yaml:"states"`
+	// Reminders is `session.reminders`; see [SessionReminder].
+	Reminders map[string]rawReminder `yaml:"reminders"`
+}
+
+// rawReminder is one `session.reminders.<name>` entry.
+type rawReminder struct {
+	Label string          `yaml:"label"`
+	In    []string        `yaml:"in"`
+	Every string          `yaml:"every"`
+	First string          `yaml:"first"`
+	Max   *int            `yaml:"max"`
+	Post  *rawTriggerPost `yaml:"post"`
 }
 
 type rawSessionState struct {
-	Label string                   `yaml:"label"`
-	Final bool                     `yaml:"final"`
-	On    map[string]rawTransition `yaml:"on"`
+	Label string                     `yaml:"label"`
+	Final bool                       `yaml:"final"`
+	On    map[string]rawTransition   `yaml:"on"`
+	After map[string]rawSessionTimer `yaml:"after"`
+}
+
+// rawSessionTimer is one `after.<name>` entry of a session state.
+type rawSessionTimer struct {
+	Period string `yaml:"period"`
+	Since  string `yaml:"since"`
+	To     string `yaml:"to"`
+	Label  string `yaml:"label"`
 }
 
 type rawTransition struct {

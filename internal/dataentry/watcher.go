@@ -401,6 +401,8 @@ func publishConfig(a *App, cfg *Config) {
 // its EventSource by hand, so it cannot rely on the browser resending the
 // header) and receives one entity:changed frame per readable type that
 // changed since (TKT-3A1200).
+//
+//archplan:auth=required
 func (a *App) handleSSE(w http.ResponseWriter, r *http.Request) {
 	flusher, ok := w.(http.Flusher)
 	if !ok {

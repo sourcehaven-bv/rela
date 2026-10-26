@@ -147,6 +147,8 @@ func registerDeclarativeWebhookRoutes(mux *http.ServeMux, hooks *webhookRouter) 
 }
 
 // handleDeclarativeWebhook runs one delivery through the configured pipeline.
+//
+//archplan:auth=none reason="declarative webhook; the proxy in front authenticates the producer (docs/webhooks.md) and writes are bounded by the hook principal grants in acl.yaml"
 func (h *webhookRouter) handle(w http.ResponseWriter, r *http.Request, hookID string) {
 	// Re-read config per request so a reload that changes a hook's BEHAVIOR
 	// takes effect without a restart (only the mounted route set is fixed).

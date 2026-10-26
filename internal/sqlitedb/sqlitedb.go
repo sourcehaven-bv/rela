@@ -165,6 +165,12 @@ func (c *DB) init(ctx context.Context) error {
 	if _, err := c.db.ExecContext(ctx, searchDDL); err != nil {
 		return fmt.Errorf("sqlitedb: create search index: %w", err)
 	}
+	// After the ladder for the same reason: channelTimersDDL indexes
+	// channels.session_next_due_at, which a pre-v25 table gains in the v25
+	// rung.
+	if _, err := c.db.ExecContext(ctx, channelTimersDDL); err != nil {
+		return fmt.Errorf("sqlitedb: create session due index: %w", err)
+	}
 	return nil
 }
 
@@ -688,6 +694,9 @@ CREATE TABLE IF NOT EXISTS channels (
 	session_state      TEXT NOT NULL DEFAULT '',
 	session_gen        INTEGER NOT NULL DEFAULT 0,
 	session_entered_at INTEGER NOT NULL DEFAULT 0,
+	session_next_due_at INTEGER NOT NULL DEFAULT 0,
+	session_restarts    TEXT NOT NULL DEFAULT '',
+	session_reminders   TEXT NOT NULL DEFAULT '',
 	UNIQUE (anchor_id, anchor_face, type, name, tomb)
 ) STRICT;
 CREATE INDEX IF NOT EXISTS channels_state_idx ON channels(tomb, state);
@@ -730,6 +739,16 @@ CREATE TABLE IF NOT EXISTS channel_type_refs (
 	ref  TEXT NOT NULL,
 	PRIMARY KEY (type, ref)
 ) STRICT;`
+
+// channelTimersDDL is the index the realtime timer loop lists due sessions
+// through (channels.Store.ListSessionsDue): one range per channel type, with
+// the lifecycle state in the key so closed channels are skipped by the scan.
+// It is partial, so the index holds only sessions with a due time. pgstore
+// migration 0032 has the same shape. It runs after the ladder, as
+// mentionsDDL does, because it names a column the v25 rung adds.
+const channelTimersDDL = `
+CREATE INDEX IF NOT EXISTS channels_session_due_idx ON channels(type, state, session_next_due_at)
+	WHERE session_next_due_at > 0 AND tomb = '';`
 
 // searchKeyDDL is the key table of the search index; see searchDDL. It is in
 // schemaSQL because it depends on no column a rung adds.

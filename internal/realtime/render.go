@@ -2,6 +2,7 @@ package realtime
 
 import (
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/channels"
@@ -90,6 +91,11 @@ type MessageView struct {
 // IsSessionNotice reports whether m is a session notice.
 func (m MessageView) IsSessionNotice() bool { return isNotice(m.Type, m.TriggeredBy) }
 
+// IsReminder reports whether m was posted by a session reminder.
+func (m MessageView) IsReminder() bool {
+	return strings.HasPrefix(m.TriggeredBy, channels.ReminderMarker)
+}
+
 // EphemeralView is one live signal.
 type EphemeralView struct {
 	ID        string         `json:"id"`
@@ -119,11 +125,14 @@ type ChannelView struct {
 
 // channelView renders h of type ct, or the empty open channel at key when
 // h is nil. now is the operation's clock time: an unset session of a
-// channel not stored yet reads as entered then.
-func channelView(ct realtimecfg.ChannelType, key channels.Key, h *channels.Channel, now time.Time) ChannelView {
+// channel not stored yet reads as entered then. degraded is the snapshot's
+// flag (see [sessionView]).
+func channelView(
+	ct realtimecfg.ChannelType, key channels.Key, h *channels.Channel, now time.Time, degraded bool,
+) ChannelView {
 	v := ChannelView{
 		Anchor: entity.FormatStateRef(key.ID, key.Face), Type: key.Type, Name: key.Name,
-		State: channels.StateOpen, Session: sessionView(ct, h, now),
+		State: channels.StateOpen, Session: sessionView(ct, h, now, degraded),
 	}
 	if h == nil {
 		return v

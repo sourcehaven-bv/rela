@@ -371,12 +371,15 @@ func batchDue(snap Snapshot, b channels.TombstoneBatch) (time.Time, bool) {
 // has live channels again, or that a new entity reusing the id made final,
 // stays tombstoned; the caller confirms it, and it is erased when due.
 func (s *Sweeper) restore(ctx context.Context, b channels.TombstoneBatch, rep *RetentionReport) (bool, error) {
-	err := s.store.Untombstone(ctx, b.Handle, s.clock())
+	at := s.clock()
+	resume := NewResumption(s.cfg.Load().Config, at)
+	err := s.store.Untombstone(ctx, b.Handle, at, resume.Schedule)
 	var occupied *channels.OccupiedError
 	switch {
 	case err == nil:
 		rep.Restored++
 		s.marker.Mark(batchKeys(b.Channels)...)
+		resume.Note(s.dueWake)
 		return true, nil
 	case errors.As(err, &occupied), errors.Is(err, channels.ErrConflict):
 		return false, nil

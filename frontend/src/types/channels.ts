@@ -41,7 +41,9 @@ export interface Channel {
  * A channel's session: the state it is in and the transitions out of it.
  * generation counts the transitions (0: never moved). stranded marks a
  * stored state realtime.yaml no longer declares; label is then the stored
- * name and transitions is empty.
+ * name and transitions is empty. timers are the after: entries of the
+ * current state; due_at is when the first comes due, set only on an open
+ * channel under a configuration that is not degraded.
  */
 export interface ChannelSession {
   state: string
@@ -51,6 +53,36 @@ export interface ChannelSession {
   final?: boolean
   stranded?: boolean
   transitions?: ChannelSessionTransition[]
+  due_at?: string
+  timers?: ChannelSessionTimer[]
+  reminders?: ChannelSessionReminder[]
+}
+
+/**
+ * A reminder active in the session's current state: it posts a message
+ * every `every`. count is the number posted in the current span; max caps
+ * it. due_at is the next reminder, set only on an open channel under a
+ * configuration that is not degraded, and not once count reaches max.
+ */
+export interface ChannelSessionReminder {
+  name: string
+  label?: string
+  every: string
+  count: number
+  max?: number
+  due_at?: string
+}
+
+/**
+ * A timer of the session's current state: after its period, counted from
+ * since, the session moves to to. due_at follows ChannelSession.due_at.
+ */
+export interface ChannelSessionTimer {
+  name: string
+  label?: string
+  to: string
+  since: 'state' | 'session'
+  due_at?: string
 }
 
 /** A message of message_type moves the session to to. */
@@ -387,7 +419,19 @@ export const CHANNEL_WIRE_FIELDS: Record<string, readonly string[]> = {
     'final',
     'stranded',
     'transitions',
+    'due_at',
+    'timers',
+    'reminders',
   ]),
+  ChannelSessionReminder: wireKeys<ChannelSessionReminder>()([
+    'name',
+    'label',
+    'every',
+    'count',
+    'max',
+    'due_at',
+  ]),
+  ChannelSessionTimer: wireKeys<ChannelSessionTimer>()(['name', 'label', 'to', 'since', 'due_at']),
   ChannelSessionTransition: wireKeys<ChannelSessionTransition>()([
     'message_type',
     'to',

@@ -39,8 +39,43 @@ type Store interface {
 	// [ErrInvalidMessage] and stores nothing. A step does not imply
 	// RequireOpen: the decider sees the lifecycle state and decides. Any
 	// other append whose TriggeredBy starts with [SessionMarker] is
-	// [ErrInvalidMessage]. The returned message is the causing one.
+	// [ErrInvalidMessage]. The returned message is the causing one. The
+	// step's Due is required, and its result is stored after the move or
+	// non-move; a step that names a Timer is [ErrInvalidMessage].
 	Append(ctx context.Context, key Key, msg NewMessage) (Message, error)
+
+	// SetSession runs step against the channel's session without a
+	// message: a timer fire when the decider returns a move, a reminder
+	// post when it does not and step.Remind returns a post, a reschedule
+	// otherwise. On a move it appends a notice at last_seq+1 (see
+	// [TimerNotice]), applies the move at at, and writes the session audit
+	// record (see [TimerAudit]). A move without step.Timer, or with an
+	// invalid state name, is [ErrInvalidMessage]. On a reminder post it
+	// stores the post's record (see [ApplyReminder]) and appends the
+	// reminder message at last_seq+1 (see [ReminderMessage]), with no audit
+	// record; an invalid post is [ErrInvalidMessage] or [ErrTooLarge]. In
+	// every case it then applies step.Due. A move or a reminder post raises
+	// rev; a reschedule does not. Readers
+	// do see a due time, but the wire derives it from the configuration
+	// and the session's state, entry time and restart anchors, never from
+	// the stored Session.NextDueAt, which is only an index hint for
+	// [Store.ListSessionsDue]. A reschedule changes only that hint, so
+	// nothing a reader sees changes. A missing channel is [ErrNotFound]; it
+	// never creates one.
+	SetSession(ctx context.Context, key Key, at time.Time, step SessionStep) (Channel, error)
+
+	// ListSessionsDue returns the live, open channels of the given types
+	// whose Session.NextDueAt is set and at or before until, ordered by
+	// NextDueAt and then by key (anchor id, face, type, name), at most
+	// limit. types must hold at least one type, all valid, else
+	// [ErrInvalidKey]; a limit of 0 or less is [ErrInvalidMessage].
+	//
+	// The database backends read an index. The file backend walks the tree
+	// once per call: one directory read of the root, of each entity
+	// directory and of each face directory, and one meta.yaml read per
+	// channel of the given types. It skips a damaged meta.yaml with a
+	// warning.
+	ListSessionsDue(ctx context.Context, types []string, until time.Time, limit int) ([]Channel, error)
 
 	// Edit replaces a message's properties and sets its edit time. The old
 	// properties are not kept. A removed message is [ErrRemoved], and a
@@ -68,11 +103,14 @@ type Store interface {
 	// returns it. The anchor may hold at most [NewChannel.Cap] named
 	// channels of the type, counting channels of every incarnation; the
 	// check and the create are one step, so concurrent creates never
-	// exceed it. Writes an audit record.
+	// exceed it. Writes an audit record. With nc.SessionDue set, its
+	// result is stored in the same step.
 	CreateMany(ctx context.Context, anchor Anchor, nc NewChannel) (Channel, error)
 
 	// SetLifecycle moves the channel from state expect to t.To as one
 	// compare-and-set; a lost race is [ErrConflict]. Writes an audit record.
+	// With t.SessionDue set, its result is stored in the same step; without
+	// it the session schedule is kept as it was.
 	SetLifecycle(ctx context.Context, key Key, expect State, t Transition) (Channel, error)
 
 	// Delete removes the channel and every message in it, and writes a
@@ -169,7 +207,12 @@ type Store interface {
 	// filing is final (see [Filing.Restorable]) is [ErrConflict] and
 	// nothing changes. A batch already restored or purged, or never filed,
 	// is [ErrNotFound]. The zero handle is a no-op.
-	Untombstone(ctx context.Context, h TombstoneHandle, at time.Time) error
+	//
+	// resume is called, in the same step, once for each restored channel
+	// that is open, and its result stored (see [ScheduleFunc]). The
+	// restore of an open channel resumes its session timers. Nil:
+	// accepted; the schedules are kept as they were.
+	Untombstone(ctx context.Context, h TombstoneHandle, at time.Time, resume ScheduleFunc) error
 
 	// Head returns the channel's metadata, including the last seq and rev a
 	// poller compares. It is cheap on every backend, and it reflects only

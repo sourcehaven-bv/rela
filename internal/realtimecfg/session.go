@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strings"
 	"sync/atomic"
 
 	"gopkg.in/yaml.v3"
@@ -24,10 +25,16 @@ const SessionNoticeType = "session"
 // its fields are unexported and every accessor returns a value or a copy,
 // so one *Session is shared by every copy of its channel type.
 type Session struct {
-	label   string
-	initial string
-	states  []SessionState
-	index   map[string]int
+	label     string
+	initial   string
+	states    []SessionState
+	index     map[string]int
+	reminders []SessionReminder
+	// guardReminders names every reminder whose name matches the grammar,
+	// valid or not; the guards declare a counter for each.
+	guardReminders []string
+	// paused names the reminders paused in this copy (see [Session.Pausing]).
+	paused map[string]bool
 }
 
 // Label is the session's display name.
@@ -74,13 +81,50 @@ func (s *Session) Drives(msgType string) bool {
 	return false
 }
 
+// HasTimers reports whether some state of the session declares a timer.
+func (s *Session) HasTimers() bool {
+	for _, st := range s.states {
+		if len(st.timers) > 0 {
+			return true
+		}
+	}
+	return false
+}
+
 // SessionState is one entry of `session.states`.
 type SessionState struct {
 	Name  string
 	Label string
-	// Final marks a state the session ends in. It has no transitions.
-	Final bool
-	on    map[string]Transition
+	// Final marks a state the session ends in. It has no transitions and
+	// no timers.
+	Final  bool
+	on     map[string]Transition
+	timers []SessionTimer
+}
+
+// Timers returns the state's timers, sorted by name. The slice is a copy.
+func (st SessionState) Timers() []SessionTimer { return slices.Clone(st.timers) }
+
+// TimerSince names what a timer counts from.
+type TimerSince string
+
+const (
+	// TimerSinceState counts from when the session entered the state. It
+	// is the default.
+	TimerSinceState TimerSince = "state"
+	// TimerSinceSession counts from when the channel was created.
+	TimerSinceSession TimerSince = "session"
+)
+
+// SessionTimer is one `after.<name>` entry of a session state: once
+// Period has passed since its anchor (see [TimerSince]) while the session
+// is still in the state and the channel is open, the session moves to To.
+type SessionTimer struct {
+	Name   string
+	Label  string
+	To     string
+	Period Period
+	Since  TimerSince
 }
 
 // Transitions returns the state's transitions, sorted by message type.
@@ -137,7 +181,9 @@ const stateRule = "state name must match ^[a-z][a-z0-9-]{0,62}$"
 
 // session compiles `channel_types.<name>.session`. order is the key order
 // of `session.states` in the file, or nil when it could not be read.
-func (v *validator) session(key string, raw *rawSession, order []string, ct *ChannelType) *Session {
+func (v *validator) session(
+	key string, raw *rawSession, order []string, ct *ChannelType, rawCT *rawChannelType, limits Limits,
+) *Session {
 	s := &Session{label: orDefault(raw.Label, ct.Label), initial: raw.Initial, index: map[string]int{}}
 	statesKey := key + ".states"
 	switch {
@@ -169,6 +215,10 @@ func (v *validator) session(key string, raw *rawSession, order []string, ct *Cha
 		v.add(key+".initial", "the initial state cannot be final: an unset session reads as the "+
 			"initial state, so no channel could ever move")
 	}
+	// Reminders come before the transitions: the guards declare their
+	// counters.
+	reminderCompiler{v: v, rawTypes: rawCT.MessageTypes, states: raw.States, limits: limits, s: s, ct: ct}.
+		compile(key+".reminders", raw.Reminders)
 	for i := range s.states {
 		st := &s.states[i]
 		rs := raw.States[st.Name]
@@ -178,10 +228,14 @@ func (v *validator) session(key string, raw *rawSession, order []string, ct *Cha
 		case rs.Final && len(rs.On) > 0:
 			v.add(sk+".on", "a final state has no transitions; drop on or remove final: true")
 			continue
-		case !rs.Final && len(rs.On) == 0:
-			v.add(sk, "a state that is not final needs at least one transition under on; "+
+		case rs.Final && len(rs.After) > 0:
+			v.add(sk+".after", "a final state has no timers; drop after or remove final: true")
+			continue
+		case !rs.Final && len(rs.On) == 0 && len(rs.After) == 0:
+			v.add(sk, "a state that is not final needs a transition under on or a timer under after; "+
 				"mark it final: true if the session ends there")
 		}
+		st.timers = compileTimers(v.add, sk+".after", rs.After, s)
 		for _, mn := range sortedKeys(rs.On) {
 			rt := rs.On[mn]
 			if t, ok := v.transition(sk+".on."+mn, mn, &rt, s, ct); ok {
@@ -189,7 +243,112 @@ func (v *validator) session(key string, raw *rawSession, order []string, ct *Cha
 			}
 		}
 	}
+	timerLoops(v.add, statesKey, s)
 	return s
+}
+
+// problemSink records a problem at a key; the validator's add is one. The
+// timer checks take it rather than the validator, so they stay free
+// functions over the session they check.
+type problemSink func(key, reason string)
+
+// compileTimers compiles a state's `after:`, sorted by timer name. A timer
+// with a problem is left out.
+func compileTimers(add problemSink, key string, raw map[string]rawSessionTimer, s *Session) []SessionTimer {
+	if len(raw) > realtimelimits.MaxSessionTimers {
+		add(key, fmt.Sprintf("at most %d timers per state", realtimelimits.MaxSessionTimers))
+	}
+	var out []SessionTimer
+	for _, name := range sortedKeys(raw) {
+		if t, ok := compileTimer(add, key+"."+name, name, raw[name], s); ok {
+			out = append(out, t)
+		}
+	}
+	return out
+}
+
+// compileTimer compiles one `after.<name>` entry. ok is false when it has
+// a problem.
+func compileTimer(add problemSink, key, name string, raw rawSessionTimer, s *Session) (SessionTimer, bool) {
+	t := SessionTimer{Name: name, Label: orDefault(raw.Label, name), To: raw.To, Since: TimerSince(raw.Since)}
+	ok := true
+	bad := func(k, reason string) {
+		add(k, reason)
+		ok = false
+	}
+	if !namePattern.MatchString(name) {
+		bad(key, "timer name must match ^[a-z][a-z0-9-]{0,62}$")
+	}
+	switch p, err := ParsePeriod(raw.Period); {
+	case raw.Period == "":
+		bad(key+".period", "name how long the timer waits, such as 72h")
+	case err != nil:
+		bad(key+".period", err.Error())
+	default:
+		if d, fixed := p.Fixed(); fixed && d < realtimelimits.MinSessionTimer {
+			bad(key+".period", "a timer waits at least 1m")
+		}
+		t.Period = p
+	}
+	switch t.Since {
+	case "":
+		t.Since = TimerSinceState
+	case TimerSinceState, TimerSinceSession:
+	default:
+		bad(key+".since", "since must be state or session")
+	}
+	if raw.To == "" {
+		bad(key+".to", "name the state this timer moves to")
+	} else if _, declared := s.index[raw.To]; !declared {
+		bad(key+".to", unknownState(raw.To))
+	}
+	return t, ok
+}
+
+// timerLoops refuses every cycle made only of timer edges, self-loops
+// included, at the timer that closes it: such a loop would move the session
+// forever without a message. One depth-first search over the states.
+func timerLoops(add problemSink, statesKey string, s *Session) {
+	const (
+		unseen = iota
+		onPath
+		done
+	)
+	mark := make([]int, len(s.states))
+	var path []int
+	var visit func(i int)
+	visit = func(i int) {
+		mark[i] = onPath
+		path = append(path, i)
+		st := s.states[i]
+		for _, t := range st.timers {
+			j, ok := s.index[t.To]
+			if !ok {
+				continue
+			}
+			switch mark[j] {
+			case onPath:
+				start := slices.Index(path, j)
+				names := make([]string, 0, len(path)-start+1)
+				for _, k := range path[start:] {
+					names = append(names, s.states[k].Name)
+				}
+				names = append(names, s.states[j].Name)
+				add(statesKey+"."+st.Name+".after."+t.Name, fmt.Sprintf("timers form a loop (%s) that "+
+					"would move the session forever without a message; break it with a transition under on",
+					strings.Join(names, " -> ")))
+			case unseen:
+				visit(j)
+			}
+		}
+		path = path[:len(path)-1]
+		mark[i] = done
+	}
+	for i := range s.states {
+		if mark[i] == unseen {
+			visit(i)
+		}
+	}
 }
 
 // messageTypesKey is the key path of ct's message types.
@@ -237,7 +396,7 @@ func (v *validator) transition(
 		v.add(key+".by", "a trigger posts only into cardinality one channel types, so by: trigger never fires here")
 	}
 	if raw.When != "" && ok {
-		t.When = v.guard(key+".when", raw.When, mt, ct)
+		t.When = v.guard(key+".when", raw.When, mt, ct, s.guardReminders)
 		t.warned = &atomic.Bool{}
 	}
 	return t, ok
@@ -246,8 +405,8 @@ func (v *validator) transition(
 // guard compiles a transition's `when:` in [sessionGuardEnv]. A guard that
 // reads the entity is refused with its own reason: this slice gives guards
 // no entity, and the operator's way out is a trigger.
-func (v *validator) guard(key, src string, mt *MessageType, ct *ChannelType) *predicate.Program {
-	env, err := sessionGuardEnv(mt.Properties, nil)
+func (v *validator) guard(key, src string, mt *MessageType, ct *ChannelType, reminders []string) *predicate.Program {
+	env, err := sessionGuardEnv(mt.Properties, reminders, nil)
 	if err != nil {
 		v.add(key, err.Error())
 		return nil
@@ -256,7 +415,7 @@ func (v *validator) guard(key, src string, mt *MessageType, ct *ChannelType) *pr
 	if err == nil {
 		return prog
 	}
-	if v.readsEntity(src, mt, ct) {
+	if v.readsEntity(src, mt, ct, reminders) {
 		v.add(key, "transition guards cannot read the entity yet; use a trigger that posts a message")
 		return nil
 	}
@@ -267,13 +426,13 @@ func (v *validator) guard(key, src string, mt *MessageType, ct *ChannelType) *pr
 // readsEntity reports whether src names `entity`: it compiles once `entity`
 // is declared as the record of one of ct's attach_to types, or it fails on
 // `entity` as an unknown identifier.
-func (v *validator) readsEntity(src string, mt *MessageType, ct *ChannelType) bool {
+func (v *validator) readsEntity(src string, mt *MessageType, ct *ChannelType, reminders []string) bool {
 	for _, t := range ct.AttachTo {
 		def, ok := v.meta.GetEntityDef(t)
 		if !ok {
 			continue
 		}
-		env, err := sessionGuardEnv(mt.Properties, predicatefns.EntityRecordType(v.meta, def))
+		env, err := sessionGuardEnv(mt.Properties, reminders, predicatefns.EntityRecordType(v.meta, def))
 		if err != nil {
 			continue
 		}
@@ -281,7 +440,7 @@ func (v *validator) readsEntity(src string, mt *MessageType, ct *ChannelType) bo
 			return true
 		}
 	}
-	env, err := sessionGuardEnv(mt.Properties, nil)
+	env, err := sessionGuardEnv(mt.Properties, reminders, nil)
 	if err != nil {
 		return false
 	}
@@ -292,18 +451,24 @@ func (v *validator) readsEntity(src string, mt *MessageType, ct *ChannelType) bo
 
 // sessionGuardEnv declares what a transition guard reads: `message`, typed
 // as for the message type's own `when:`, the `session` record (state,
-// generation, entered_at) and the standard library. A non-nil entity is
-// declared as `entity`; only the load check's probe for a guard that reads
-// the entity passes one.
-func sessionGuardEnv(props map[string]Property, entity predicate.Type) (*predicate.Env, error) {
+// generation, entered_at, and `reminders` with one counter per name in
+// reminders) and the standard library. A non-nil entity is declared as
+// `entity`; only the load check's probe for a guard that reads the entity
+// passes one.
+func sessionGuardEnv(props map[string]Property, reminders []string, entity predicate.Type) (*predicate.Env, error) {
 	env := predicate.NewEnv()
 	if err := env.DeclareVar("message", messageRecordType(props)); err != nil {
 		return nil, err
+	}
+	counters := make(predicate.RecordType, len(reminders))
+	for _, name := range reminders {
+		counters[name] = predicate.IntType
 	}
 	if err := env.DeclareVar("session", predicate.RecordType{
 		"state":      predicate.StringType,
 		"generation": predicate.IntType,
 		"entered_at": predicate.DateTypeWithLayout(metamodel.DefaultDatetimeFormat),
+		"reminders":  counters,
 	}); err != nil {
 		return nil, err
 	}

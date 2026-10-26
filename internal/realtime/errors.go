@@ -106,6 +106,9 @@ const (
 	// TypeSessionMessage is a 409 for an author's edit or delete of a
 	// message that moved the session. A moderator may still remove it.
 	TypeSessionMessage = "session_message"
+	// TypeReminderMessage is a 409 for an edit or author delete of a
+	// message a session reminder posted. A moderator may still remove it.
+	TypeReminderMessage = "reminder_message"
 )
 
 // DenialError is a refused operation: an HTTP status, a stable type, a title for

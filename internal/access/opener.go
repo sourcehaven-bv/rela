@@ -65,6 +65,8 @@ func NewOpener(policy *acl.Declarative, verifiedIdentity bool) (*Opener, error) 
 // raw value in RawUser. A failure returns [ErrUnresolvedPrincipal] wrapping
 // the cause, rather than a ctx without a request, which would make every
 // later read fail open (RR-875A).
+//
+//archplan:guard=authn reason="request edge: binds the principal stamped from the proxy header or the verified JWT to an ACL request; fails closed without one"
 func (o *Opener) Open(ctx context.Context, log *slog.Logger) (context.Context, *acl.Request, error) {
 	if log == nil {
 		log = slog.Default()

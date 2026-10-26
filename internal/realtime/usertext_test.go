@@ -68,6 +68,7 @@ func denialConstructors() map[string]*DenialError {
 		"signalsNotKept":     signalsNotKept("typing"),
 		"sessionNotice":      sessionNotice(),
 		"sessionMessage":     sessionMessage(),
+		"reminderMessage":    reminderMessage(),
 		"configChanged":      configChanged(),
 		"noPrincipal":        noPrincipal(),
 		"notPromoting":       notPromoting(),

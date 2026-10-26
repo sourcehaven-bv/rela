@@ -70,6 +70,12 @@ func TestParse_Golden(t *testing.T) {
 		t.Fatalf("channel types = %v", names)
 	}
 
+	if br, _ := c.ChannelType("breach-response"); br.Session() == nil || !br.Session().HasTimers() ||
+		len(br.Session().Reminders()) != 1 {
+
+		t.Error("breach-response lost its session timers or reminders")
+	}
+
 	room, ok := c.ChannelType("incident-room")
 	if !ok {
 		t.Fatal("incident-room missing")
@@ -238,6 +244,19 @@ func TestParse_Invalid(t *testing.T) {
 			"channel_types", "merge keys (<<) are not supported in realtime.yaml"},
 		{"session", []replace{{"version: 1\n", "version: 1\nsession: {}\n"}}, "session",
 			"a session belongs under a channel type: channel_types.<name>.session"},
+		{"session timers", []replace{{"      initial: detected\n", "      initial: detected\n      timers: {}\n"}},
+			"channel_types.breach-response.session.timers", "reminders are declared under session.reminders"},
+		{"state reminders", []replace{{"          label: Detected\n", "          label: Detected\n          reminders: {}\n"}},
+			"channel_types.breach-response.session.states.detected.reminders",
+			"reminders are declared once, under session.reminders, with in:"},
+		{"reminder to", []replace{{"          max: 48\n", "          max: 48\n          to: overdue\n"}},
+			"channel_types.breach-response.session.reminders.status-update.to",
+			"a reminder posts a message and does not move the session"},
+		{"reminder period", []replace{{"          max: 48\n", "          max: 48\n          period: 1h\n"}},
+			"channel_types.breach-response.session.reminders.status-update.period", "use every"},
+		{"reminder since", []replace{{"          max: 48\n", "          max: 48\n          since: session\n"}},
+			"channel_types.breach-response.session.reminders.status-update.since",
+			"a reminder counts from when the session entered one of its in: states"},
 		{"agents", []replace{{"version: 1\n", "version: 1\nagents: {principal_types: [agent]}\n"}},
 			"agents", "client_baselines"},
 		{"action by", []replace{{"permission: incident.decide,", "permission: incident.decide, by: human,"}},

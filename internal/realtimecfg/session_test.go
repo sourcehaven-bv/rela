@@ -36,7 +36,7 @@ func TestParse_Session(t *testing.T) {
 			final = append(final, st.Name)
 		}
 	}
-	if want := []string{"detected", "contained", "assessed", "notified", "dismissed"}; !slices.Equal(names, want) {
+	if want := []string{"detected", "contained", "assessed", "overdue", "notified", "dismissed"}; !slices.Equal(names, want) {
 		t.Errorf("states = %v; want declaration order %v", names, want)
 	}
 	if !slices.Equal(final, []string{"notified", "dismissed"}) {
@@ -160,7 +160,7 @@ func TestParse_SessionInvalid(t *testing.T) {
 		{"final with on", []replace{{"done: { final: true }", "done: { final: true, on: { text: { to: open } } }"}},
 			k + ".states.done.on", "a final state has no transitions; drop on or remove final: true"},
 		{"non-final without on", []replace{{"done: { final: true }", "done: { label: Done }"}},
-			k + ".states.done", "a state that is not final needs at least one transition under on"},
+			k + ".states.done", "a state that is not final needs a transition under on or a timer under after"},
 		{"on key not a message type", []replace{{"contained: { to: done }", "nope: { to: done }"}},
 			k + ".states.open.on.nope", `unknown message type "nope"; a transition is keyed by a message type`},
 		{"ephemeral message type", []replace{{"contained: { to: done }", "typing: { to: done }"}},
@@ -194,6 +194,9 @@ func TestParse_SessionInvalid(t *testing.T) {
 			{"    attach_to: [datalek]\n", "    attach_to: [datalek]\n    cardinality: many\n    create: { roles: [member] }\n"},
 			{"contained: { to: done }", "contained: { to: done, by: trigger }"},
 		}, on + ".by", "a trigger posts only into cardinality one channel types, so by: trigger never fires here"},
+		{"guard on reminders of a session without any", []replace{
+			{"contained: { to: done }", `contained: { to: done, when: "session.reminders['x'] >= 1" }`},
+		}, on + ".when", `unknown attribute "x"`},
 		{"session-level final", []replace{{"      initial: open\n", "      initial: open\n      final: [done]\n"}},
 			k + ".final", "mark each final state with final: true"},
 		{"merge key", []replace{{"        done: { final: true }", "        <<: { done: { final: true } }"}},
@@ -234,6 +237,28 @@ func TestCheckReload_SessionChangesAllowed(t *testing.T) {
 		},
 		"initial renamed": {{"initial: detected", "initial: contained"}},
 		"session removed": {{block, ""}},
+		"timer added": {{"            notified: { to: notified }\n        notified:",
+			"            notified: { to: notified }\n          after:\n" +
+				"            late: { period: 1h, to: notified }\n        notified:"}},
+		"timer removed": {{"          after:\n            no-containment: { period: 24h, to: overdue, " +
+			"label: Not contained within a day }\n", ""}},
+		"timer renamed":  {{"no-containment:", "not-contained:"}},
+		"period changed": {{"no-containment: { period: 24h", "no-containment: { period: 1h"}},
+		"reminder added": {{"what changed since the last one?\" }\n", "what changed since the last one?\" }\n" +
+			"        other:\n          in: [overdue]\n          every: 1h\n" +
+			"          post: { type: reminder, props: { body: x } }\n"}},
+		"reminder removed": {
+			{"escalate-stalled: { to: overdue, when: \"session.reminders['status-update'] >= 3\" }", "escalate-stalled: { to: overdue }"},
+			{golden(t)[strings.Index(golden(t), "      reminders:\n"):strings.Index(golden(t), "  incident-room:\n")], ""},
+		},
+		"reminder renamed": {
+			{"session.reminders['status-update']", "session.reminders['status']"},
+			{"        status-update:\n          label: Status update", "        status:\n          label: Status update"},
+		},
+		"reminder in changed":    {{"in: [detected, contained, assessed, overdue]", "in: [contained]"}},
+		"reminder every changed": {{"every: 30m", "every: 1h"}},
+		"reminder first changed": {{"first: 10m", "first: 1h"}},
+		"reminder max changed":   {{"max: 48", "max: 5"}},
 	}
 	for name, edits := range tests {
 		t.Run(name, func(t *testing.T) {

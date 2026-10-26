@@ -18,6 +18,8 @@ const (
 	channelHeadSchema  = "ChannelHead"
 	channelSchema      = "Channel"
 	channelSessionRef  = "ChannelSession"
+	channelTimerRef    = "ChannelSessionTimer"
+	channelReminderRef = "ChannelSessionReminder"
 	channelListSchema  = "ChannelList"
 	messageSchema      = "Message"
 	messagePageSchema  = "MessagePage"
@@ -531,6 +533,8 @@ func addChannelSchemas(spec *Spec) {
 		"session": Ref(channelSessionRef),
 	}, []string{"anchor", "type", "state", "last_seq", "rev"})
 	sc[channelSessionRef] = channelSessionSchema()
+	sc[channelTimerRef] = channelTimerSchema()
+	sc[channelReminderRef] = channelReminderSchema()
 	sc[channelListSchema] = ObjectSchema(map[string]*Schema{
 		"anchor": str(),
 		"types": ArraySchema(ObjectSchema(map[string]*Schema{
@@ -546,15 +550,19 @@ func addChannelSchemas(spec *Spec) {
 			"A ref property renders as a RefProp. A session notice records a transition: its type is " +
 			"session, its author is system:realtime with system set, triggered_by is session:<channel type>, " +
 			"and its props are from, to, generation and cause (the seq of the message that moved the " +
-			"session). A notice cannot be edited or removed (409 session_notice). The author of the message " +
+			"session); a notice of a timer's move has timer (the timer's name) in place of cause. A notice cannot be edited or removed (409 session_notice). The author of the message " +
 			"that moved the session can no longer edit or delete it (409 session_message); a moderator may " +
-			"still remove it.",
+			"still remove it. A reminder is posted by a session reminder: its type is the one the reminder " +
+			"declares, its author is system:realtime with system set, and triggered_by is " +
+			"reminder:<channel type>/<reminder name>. Nobody can edit or delete a reminder (409 " +
+			"reminder_message); a moderator may still remove it, which does not lower the reminder's count.",
 		Properties: map[string]*Schema{
 			"seq": i64(), "rev": i64(), "type": str(), "author": Ref(channelAuthorRef), "at": dateTimeSchema(),
 			"props":    {Type: "object", AdditionalProperties: &Schema{}},
 			"reply_to": i64(), "reply_count": i64(), "edited_at": dateTimeSchema(),
 			"triggered_by": {Type: "string",
-				Description: "trigger:<name> of the trigger that posted the message; absent for a person's"},
+				Description: "trigger:<name> of the trigger that posted the message, session:<channel type> " +
+					"for a session notice, reminder:<channel type>/<name> for a reminder; absent for a person's"},
 			"removed": ObjectSchema(map[string]*Schema{
 				"at":     dateTimeSchema(),
 				"kind":   {Type: "string", Enum: []string{"author", "moderator"}},
@@ -636,7 +644,11 @@ func channelSessionSchema() *Schema {
 		Type: "object",
 		Description: "The channel's session; absent for a channel type without one. generation counts the " +
 			"transitions (0: never moved). stranded marks a stored state realtime.yaml no longer declares; " +
-			"label is then the stored name and transitions is empty.",
+			"label is then the stored name and transitions is empty. timers are the after: entries of the " +
+			"current state, sorted by name, and empty for a final or stranded state. due_at is when the " +
+			"first of them comes due; it is set only on an open channel under a configuration that is not " +
+			"degraded. reminders are the reminders active in the current state, sorted by name; each " +
+			"carries its own due_at, and due_at above stays the next move.",
 		Properties: map[string]*Schema{
 			"state": str(), "label": str(), "generation": i64(), "entered_at": dateTimeSchema(),
 			"final": b(), "stranded": b(),
@@ -648,7 +660,41 @@ func channelSessionSchema() *Schema {
 					Description: "Set when the transition has a guard (when:), so a message moves the session " +
 						"only if the guard holds for it"},
 			}, []string{"message_type", "to"})),
+			"due_at":    dateTimeSchema(),
+			"timers":    ArraySchema(Ref(channelTimerRef)),
+			"reminders": ArraySchema(Ref(channelReminderRef)),
 		},
 		Required: []string{"state", "generation", "entered_at"},
 	}
+}
+
+// channelReminderSchema is the ChannelSessionReminder schema.
+func channelReminderSchema() *Schema {
+	str, i64 := StringSchema, IntegerSchema
+	s := ObjectSchema(map[string]*Schema{
+		"name": str(), "label": str(),
+		"every": {Type: "string", Description: "The interval as configured, such as 30m"},
+		"count": {Type: "integer",
+			Description: "The reminders posted since the session entered the reminder's states"},
+		"max":    i64(),
+		"due_at": dateTimeSchema(),
+	}, []string{"name", "every", "count"})
+	s.Description = "One reminder active in the session's current state: it posts a message every every " +
+		"without moving the session. max caps count; absent for no cap. due_at is the next reminder, set " +
+		"only on an open channel under a configuration that is not degraded, and not once count reaches max."
+	return s
+}
+
+// channelTimerSchema is the ChannelSessionTimer schema.
+func channelTimerSchema() *Schema {
+	str := StringSchema
+	s := ObjectSchema(map[string]*Schema{
+		"name": str(), "label": str(), "to": str(),
+		"since": {Type: "string", Enum: []string{"state", "session"},
+			Description: "What the period counts from: entering the state, or the channel's creation"},
+		"due_at": dateTimeSchema(),
+	}, []string{"name", "to", "since"})
+	s.Description = "One timer of the session's current state: after its period the session moves to to. " +
+		"due_at is set only on an open channel under a configuration that is not degraded."
+	return s
 }

@@ -25,6 +25,8 @@ const feedPathPrefix = "/api/v1/_feeds/"
 // --principal-header chain resolved (default on a bare loopback request), and
 // entities are ACL-scoped to that principal. Networked/token auth is a later
 // addition on the same principal-resolution seam.
+//
+//archplan:auth=required
 func (a *App) handleV1Feed(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		writeV1Error(w, r, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed", "")

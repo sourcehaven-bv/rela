@@ -142,8 +142,8 @@ const sections = computed(() => {
   box-sizing: border-box;
   min-height: var(--rl-sidebar-subheading-offset);
   z-index: var(--rl-z-sticky-raised);
-  background: var(--rl-color-bg-sunken);
-  box-shadow: 0 0 0 var(--rl-space-3) var(--rl-color-bg-sunken);
+  background: var(--rl-color-sidebar-bg);
+  box-shadow: 0 0 0 var(--rl-space-3) var(--rl-color-sidebar-bg);
   clip-path: inset(calc(-1 * var(--rl-space-3)) calc(-1 * var(--rl-space-3)) 0);
 }
 
@@ -167,8 +167,8 @@ const sections = computed(() => {
    * The spread is clipped at the bottom for the reason the header gives.
    */
   padding: var(--rl-space-2) var(--rl-space-2) var(--rl-space-1);
-  background: var(--rl-color-bg-sunken);
-  box-shadow: 0 0 0 var(--rl-space-3) var(--rl-color-bg-sunken);
+  background: var(--rl-color-sidebar-bg);
+  box-shadow: 0 0 0 var(--rl-space-3) var(--rl-color-sidebar-bg);
   clip-path: inset(calc(-1 * var(--rl-space-3)) calc(-1 * var(--rl-space-3)) 0);
   font-size: var(--rl-font-size-xs);
   font-weight: var(--rl-font-weight-medium);

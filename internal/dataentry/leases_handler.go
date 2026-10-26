@@ -101,6 +101,8 @@ func (h *leasesHandler) wakeSource() leaseWaker {
 // path's 422 face_required. A caller who may read but not update gets a 403
 // that names no holder: the service asks about update access before it
 // looks at the lease.
+//
+//archplan:auth=authz
 func (h *leasesHandler) handleClaim(w http.ResponseWriter, r *http.Request, typeName, addr string) {
 	if !allowMethod(w, r, http.MethodPost) {
 		return
@@ -130,6 +132,8 @@ func (h *leasesHandler) handleClaim(w http.ResponseWriter, r *http.Request, type
 }
 
 // handleV1Leases serves every route under /api/v1/_leases.
+//
+//archplan:auth=required
 func (h *leasesHandler) handleV1Leases(w http.ResponseWriter, r *http.Request) {
 	if h == nil {
 		writeV1Error(w, r, http.StatusNotFound, "not_found", "Not found", "")

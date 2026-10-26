@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 )
@@ -22,6 +24,14 @@ func (sev) String() string { panic("String called") }
 type mineError struct{}
 
 func (*mineError) Error() string { return "mine" }
+
+func request(span string) *http.Request {
+	r := httptest.NewRequest(http.MethodGet, "/api/v1/tasks", http.NoBody)
+	if span != "" {
+		r.Header.Set(SpanHeader, span)
+	}
+	return r
+}
 
 func TestSummarize(t *testing.T) {
 	var nilErr *mineError
@@ -47,6 +57,9 @@ func TestSummarize(t *testing.T) {
 		{"float", 1.5, "1.5"},
 		{"uint", uint8(7), "7"},
 		{"bool", true, "true"},
+		{"request", request(""), "*http.Request"},
+		{"request with span", request("p1-7"), "*http.Request{Span:p1-7}"},
+		{"request with bad span", request("x\n=1"), "*http.Request"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

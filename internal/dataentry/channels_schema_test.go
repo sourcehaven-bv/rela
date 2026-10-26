@@ -114,6 +114,7 @@ channel_types:
       notified:  { properties: { reference: { type: string, required: true } }, post: [dpo] }
       dismiss:   { properties: { reason: { type: string, required: true } }, post: [lead] }
       escalated: { properties: { note: { type: string } }, post: [lead] }
+      reminder:  { properties: { body: { type: string, required: true } }, post: [lead] }
     session:
       label: GDPR breach response
       initial: detected
@@ -134,6 +135,14 @@ channel_types:
             notified: { to: notified }
         notified:  { label: AP notified, final: true }
         dismissed: { label: Dismissed, final: true }
+      reminders:
+        status-update:
+          label: Status update
+          in: [detected, contained, assessed]
+          every: 30m
+          first: 10m
+          max: 48
+          post: { type: reminder, props: { body: "Post a status update" } }
   plain:
     attach_to: [ticket]
     read: { from: attached }

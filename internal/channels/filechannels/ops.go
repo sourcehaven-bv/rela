@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"maps"
 	"slices"
+	"strings"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -24,7 +25,7 @@ func (s *Store) Append(ctx context.Context, k channels.Key, nm channels.NewMessa
 	if err := k.Validate(); err != nil {
 		return channels.Message{}, err
 	}
-	if err := channels.PrepareSessionStep(nm.Session); err != nil {
+	if err := channels.PrepareAppendStep(nm.Session); err != nil {
 		return channels.Message{}, err
 	}
 	nm, _, err := channels.PrepareMessage(nm)
@@ -78,6 +79,9 @@ func (s *Store) Append(ctx context.Context, k channels.Key, nm channels.NewMessa
 		}
 		recs = append(recs, segRecord{idx: s.idx(notice.Seq), rec: encodeLine(line{K: "m", Message: notice})})
 		m.LastSeq = notice.Seq
+	}
+	if schedErr := m.scheduleStep(k, nm.Session); schedErr != nil {
+		return channels.Message{}, schedErr
 	}
 	if created {
 		// The create record goes before meta.yaml: a crash in between
@@ -406,6 +410,9 @@ func (s *Store) CreateMany(
 	m := &meta{
 		Incarnation: nc.Incarnation, State: channels.StateOpen, Title: nc.Title, CreatedBy: nc.By, CreatedAt: nc.At,
 	}
+	if err := m.schedule(k, nc.SessionDue); err != nil {
+		return channels.Channel{}, err
+	}
 	// The create record goes first, for the reason Append writes it first.
 	rec := channels.KeyAudit(k, channels.AuditCreate, nc.At)
 	rec.By = nc.By
@@ -445,6 +452,9 @@ func (s *Store) SetLifecycle(
 	channels.ApplyTransition(&c, t)
 	m.State, m.ClosedAt, m.ArchivedAt, m.ReopenedAt = c.State, c.ClosedAt, c.ArchivedAt, c.ReopenedAt
 	m.Rev++
+	if err := m.schedule(k, t.SessionDue); err != nil {
+		return channels.Channel{}, err
+	}
 	if err := s.writeMeta(k, m); err != nil {
 		return channels.Channel{}, err
 	}
@@ -589,7 +599,7 @@ func (s *Store) Tombstone(
 		if existsErr != nil || !ok {
 			return channels.TombstoneHandle{}, existsErr
 		}
-		f, err = s.fileBatch(id, face, file)
+		f, err = fileBatch(&s.disk, id, face, file)
 		if err != nil {
 			return channels.TombstoneHandle{}, err
 		}
@@ -608,7 +618,7 @@ func (s *Store) Tombstone(
 		return channels.TombstoneHandle{}, err
 	}
 	if moved {
-		f, err = s.fileBatch(id, "", file)
+		f, err = fileBatch(&s.disk, id, "", file)
 		if err != nil {
 			return channels.TombstoneHandle{}, err
 		}
@@ -640,12 +650,12 @@ func (s *Store) Tombstone(
 
 // fileBatch reads the channels a tombstone of id@face moves and runs file
 // over them. The caller holds the store lock, so the list is the batch.
-func (s *Store) fileBatch(id string, face entity.Face, file channels.Filer) (channels.Filing, error) {
+func fileBatch(d *disk, id string, face entity.Face, file channels.Filer) (channels.Filing, error) {
 	if file == nil {
 		return channels.Filing{}, nil
 	}
 	var moved []channels.Channel
-	err := s.visitEntity(id, "", func(k channels.Key, m *meta) error {
+	err := d.visitEntity(id, "", func(k channels.Key, m *meta) error {
 		if face == "" || k.Face == face {
 			moved = append(moved, m.channel(k))
 		}
@@ -672,7 +682,19 @@ func detachedAuditKey(h channels.TombstoneHandle) string {
 }
 
 // Untombstone implements [channels.Store].
-func (s *Store) Untombstone(ctx context.Context, h channels.TombstoneHandle, at time.Time) error {
+//
+// resume runs under the same lock before the batch goes back in place:
+// each open channel's meta.yaml is rewritten with its result while it is
+// still under ~detached, and the move then restores the channel with its
+// resumed schedule in one rename. A crash before the move leaves the batch
+// tombstoned with the restart anchors of this attempt, which a later
+// restore applies its own resume over; a crash after it leaves the
+// channel restored and resumed. No crash restores a channel without its
+// restart anchors, which would fire a timer that came due while it was
+// tombstoned at once.
+func (s *Store) Untombstone(
+	ctx context.Context, h channels.TombstoneHandle, at time.Time, resume channels.ScheduleFunc,
+) error {
 	if h.IsZero() {
 		return nil
 	}
@@ -705,7 +727,7 @@ func (s *Store) Untombstone(ctx context.Context, h channels.TombstoneHandle, at 
 	if hasFiling && !f.Restorable() {
 		return fmt.Errorf("%w: tombstone %s is final", channels.ErrConflict, h)
 	}
-	occupied, err := s.occupied(a)
+	occupied, err := occupied(&s.disk, a)
 	if err != nil {
 		return err
 	}
@@ -713,6 +735,9 @@ func (s *Store) Untombstone(ctx context.Context, h channels.TombstoneHandle, at 
 		return &channels.OccupiedError{Anchor: a}
 	}
 	if hasDir {
+		if err := resumeDetached(&s.disk, h, resume); err != nil {
+			return err
+		}
 		live := enc(a.ID)
 		if a.Face != "" {
 			live = faceDir(a)
@@ -732,9 +757,39 @@ func (s *Store) Untombstone(ctx context.Context, h channels.TombstoneHandle, at 
 	return s.restoreAudit(h, tombAudit, at)
 }
 
+// resumeDetached applies resume to every open channel of the batch h
+// while it is still filed under ~detached, so the move that restores it
+// carries the resumed schedule. Nil resume changes nothing.
+func resumeDetached(d *disk, h channels.TombstoneHandle, resume channels.ScheduleFunc) error {
+	if resume == nil {
+		return nil
+	}
+	a, dir := h.Anchor(), detachedKey(h)
+	// live is the prefix of a channel's live directory that dir stands in
+	// for: the entity directory for a whole-entity batch, the face
+	// directory for a face batch.
+	live := enc(a.ID)
+	if a.Face != "" {
+		live = faceDir(a)
+	}
+	visit := func(k channels.Key, m *meta) error {
+		if m.State != channels.StateOpen {
+			return nil
+		}
+		if err := m.schedule(k, resume); err != nil {
+			return err
+		}
+		return writeMetaAt(d, dir+strings.TrimPrefix(chanDir(k), live), k, m)
+	}
+	if a.Face == "" {
+		return visitEntityAt(d, dir, a.ID, "", visit)
+	}
+	return visitFaceAt(d, dir, a, "", visit)
+}
+
 // occupied reports whether a live channel sits on a: any channel of the id
 // for an empty face, any channel of the face otherwise.
-func (s *Store) occupied(a channels.Anchor) (bool, error) {
+func occupied(d *disk, a channels.Anchor) (bool, error) {
 	found := false
 	visit := func(channels.Key, *meta) error {
 		found = true
@@ -742,9 +797,9 @@ func (s *Store) occupied(a channels.Anchor) (bool, error) {
 	}
 	var err error
 	if a.Face == "" {
-		err = s.visitEntity(a.ID, "", visit)
+		err = d.visitEntity(a.ID, "", visit)
 	} else {
-		err = s.visitFace(a, "", visit)
+		err = d.visitFace(a, "", visit)
 	}
 	return found, err
 }
@@ -1005,6 +1060,155 @@ func (s *Store) ListByLifecycle(
 	})
 	channels.SortChannels(out)
 	return out, err
+}
+
+// ListSessionsDue implements [channels.Store]. It walks the tree once for
+// all of types (see visitTypes) and takes no lock: a meta.yaml is replaced
+// whole, so a read sees one version or the other, and the caller re-derives
+// every answer under the lock before it acts on it.
+func (s *Store) ListSessionsDue(
+	_ context.Context, types []string, until time.Time, limit int,
+) ([]channels.Channel, error) {
+	if err := channels.CheckDueQuery(types, limit); err != nil {
+		return nil, err
+	}
+	set := make(map[string]bool, len(types))
+	for _, t := range types {
+		set[t] = true
+	}
+	until = channels.NormTime(until)
+	out := []channels.Channel{}
+	err := s.visitTypes(set, true, func(k channels.Key, m *meta) error {
+		if m.State != channels.StateOpen || m.SessionNextDueAt.IsZero() {
+			return nil
+		}
+		c := m.channel(k)
+		if !c.Session.NextDueAt.After(until) {
+			out = append(out, c)
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	channels.SortDue(out)
+	if len(out) > limit {
+		out = out[:limit]
+	}
+	return out, nil
+}
+
+// SetSession implements [channels.Store]. It follows Append's order under
+// the lock: meta.yaml, then the notice, then the audit record (see the
+// package doc).
+func (s *Store) SetSession(
+	ctx context.Context, k channels.Key, at time.Time, step channels.SessionStep,
+) (channels.Channel, error) {
+	if err := k.Validate(); err != nil {
+		return channels.Channel{}, err
+	}
+	if err := channels.PrepareTimerStep(step); err != nil {
+		return channels.Channel{}, err
+	}
+	at = channels.NormTime(at)
+	unlock, err := s.lock(ctx)
+	if err != nil {
+		return channels.Channel{}, err
+	}
+	defer unlock()
+	m, err := s.readMeta(k)
+	if err != nil {
+		return channels.Channel{}, err
+	}
+	last, err := s.lastSeq(k)
+	if err != nil {
+		return channels.Channel{}, err
+	}
+	committed := m.channel(k)
+	committed.LastSeq = last
+	w, err := applySessionStep(m, s.idx, &step, committed, at)
+	if err != nil {
+		return channels.Channel{}, err
+	}
+	written, move, moved, reminded := w.written, w.move, w.moved, w.reminded
+	if err := m.schedule(k, step.Due); err != nil {
+		return channels.Channel{}, err
+	}
+	if err := s.writeMeta(k, m); err != nil {
+		return channels.Channel{}, err
+	}
+	if moved || reminded {
+		rec := []segRecord{{idx: s.idx(written.Seq), rec: encodeLine(line{K: "m", Message: written})}}
+		if err := s.appendRecords(k, rec); err != nil {
+			return channels.Channel{}, err
+		}
+	}
+	if moved {
+		audit := channels.TimerAudit(k, &step, written, move, m.SessionGen)
+		if err := s.appendAudit(k.ID, audit); err != nil {
+			return channels.Channel{}, err
+		}
+	}
+	out := m.channel(k)
+	out.LastSeq = m.LastSeq
+	if !moved && !reminded {
+		out.LastSeq = last
+	}
+	if reminded {
+		channels.FillReminderOutcome(&step, out)
+	} else {
+		channels.FillSessionOutcome(&step, out, move, moved)
+	}
+	return out, nil
+}
+
+// sessionWrite is what [applySessionStep] decided and applied to m.
+type sessionWrite struct {
+	written  channels.Message
+	move     channels.SessionMove
+	moved    bool
+	reminded bool
+}
+
+// applySessionStep decides step against committed, whose LastSeq is set,
+// and applies the move or the reminder to m: the session, the rev and the
+// last sequence number. idx maps a sequence number to its segment. written
+// is the notice or reminder message to append. A timer move wins over a
+// reminder.
+func applySessionStep(
+	m *meta, idx func(int64) int64, step *channels.SessionStep, committed channels.Channel, at time.Time,
+) (sessionWrite, error) {
+	var w sessionWrite
+	var err error
+	w.move, w.moved, err = channels.DecideTimer(step, committed)
+	if err != nil {
+		return w, err
+	}
+	seq := committed.LastSeq + 1
+	after := committed
+	if w.moved {
+		channels.ApplySession(&after, w.move, at)
+		m.setSession(after.Session)
+		w.written, _, err = channels.TimerNotice(step, seq, at, w.move, after.Session.Generation, m.bump(idx(seq)))
+		if err != nil { // coverage-ignore: invariant: TimerNotice encodes four short values
+			return w, err
+		}
+		m.LastSeq = seq
+		return w, nil
+	}
+	post, reminded, err := channels.DecideReminder(step, committed, at)
+	if err != nil || !reminded {
+		return w, err
+	}
+	channels.ApplyReminder(&after, post)
+	if w.written, _, err = channels.ReminderMessage(step, post, seq, at, m.Rev+1); err != nil {
+		return w, err
+	}
+	w.reminded = true
+	m.setSession(after.Session)
+	m.bump(idx(seq))
+	m.LastSeq = seq
+	return w, nil
 }
 
 // StalePending implements [channels.Store].

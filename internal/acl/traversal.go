@@ -181,6 +181,8 @@ func lowerTraversal(
 // which are the rows of their world. Evaluated under an AllFaces or AtFaces
 // query instead, the hop would match when ANY face of the endpoint passes the
 // gate, and so could grant through a face the request's world never serves.
+//
+//archplan:guard=authz reason="gates each hop of a relation traversal"
 func (r *Request) GateTraversal(
 	ctx context.Context, candidateType string, world store.WorldScope, hop TraversalHop,
 ) (*store.RelationPredicate, error) {

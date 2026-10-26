@@ -158,7 +158,7 @@ func TestRead_OneCaptureFlatCost(t *testing.T) {
 			acc := &countingAccess{AccessSource: fakeAccessSource{}}
 			cfg := &countingConfig{ConfigSource: h.cfg}
 			svc, err := New(Deps{
-				Store: h.store, Config: cfg, Access: acc, Anchors: h.anchors, Refs: h.refs, Local: h.local, Promoter: NoPromoter{},
+				Store: h.store, Config: cfg, Access: acc, Anchors: h.anchors, Refs: h.refs, Local: h.local, Promoter: NoPromoter{}, DueWake: NewDueWake(),
 			})
 			require.NoError(t, err)
 			h.store.heads.Store(0)

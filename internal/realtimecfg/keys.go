@@ -17,6 +17,15 @@ var refusedKeys = []struct {
 }{
 	{"session", "a session belongs under a channel type: channel_types.<name>.session"},
 	{"channel_types.*.session.final", "mark each final state with final: true"},
+	{"channel_types.*.session.states.*.after.*.from", "use since: state or since: session"},
+	{"channel_types.*.session.timers", "reminders are declared under session.reminders; a timer that " +
+		"moves the session goes under after: on its state"},
+	{"channel_types.*.session.states.*.reminders", "reminders are declared once, under session.reminders, with in:"},
+	{"channel_types.*.session.reminders.*.to", "a reminder posts a message and does not move the session; " +
+		"for a timer that moves it, use after: on the state"},
+	{"channel_types.*.session.reminders.*.period", "use every"},
+	{"channel_types.*.session.reminders.*.since", "a reminder counts from when the session entered one of " +
+		"its in: states"},
 	{"agents", "agents are ordinary principals; restrict them with client_baselines in acl.yaml " +
 		"and match them with a principal_type role"},
 	{"channel_types.*.message_types.*.actions.*.by", "agents are ordinary principals, so an action " +

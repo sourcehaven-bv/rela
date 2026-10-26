@@ -4,6 +4,7 @@
 //	seqtrace overlay -out DIR [-tags T] [-exclude RE] PATTERN...
 //	seqtrace diagram -in TRACE -out DIR [-root RE] [-collapse RE] [-depth N] [-min N] [-values=false]
 //	seqtrace diff [-values] BASE_DIR HEAD_DIR
+//	seqtrace stitch -in DIR -out DIR [-static DIR] [-collapse RE] [-keep RE] [-values=false]
 package main
 
 import (
@@ -42,6 +43,8 @@ func main() {
 		err = diagrams(os.Args[2:])
 	case "diff":
 		err = diffDirs(os.Args[2:])
+	case "stitch":
+		err = stitch(os.Args[2:])
 	default:
 		usage()
 	}
@@ -52,7 +55,7 @@ func main() {
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, "usage: seqtrace overlay|diagram|diff [flags] ...")
+	fmt.Fprintln(os.Stderr, "usage: seqtrace overlay|diagram|diff|stitch [flags] ...")
 	os.Exit(2)
 }
 
@@ -197,6 +200,7 @@ func parseDiagramFlags(args []string) (diagramFlags, error) {
 		"file with one scenario name per root, in order; a line \"-\" skips that root")
 	root := fs.String("root", "", "regexp on pkg.Func selecting which root calls to draw")
 	collapse := fs.String("collapse", defaultCollapse, "regexp of packages drawn as part of their caller; empty to draw all")
+	keep := fs.String("keep", "", "regexp of function names drawn even inside one package, such as access checks")
 	fs.IntVar(&f.opt.MaxDepth, "depth", 0, "maximum arrow nesting; 0 for no limit")
 	fs.IntVar(&f.minArrows, "min", 2, "skip diagrams with fewer arrows than this")
 	title := fs.String("title", `\.handle`, "regexp on Fn; the deepest matching call names each diagram")
@@ -217,6 +221,11 @@ func parseDiagramFlags(args []string) (diagramFlags, error) {
 			return f, err
 		}
 	}
+	if *keep != "" {
+		if f.opt.Keep, err = regexp.Compile(*keep); err != nil {
+			return f, err
+		}
+	}
 	return f, nil
 }
 
@@ -224,6 +233,7 @@ func parseDiagramFlags(args []string) (diagramFlags, error) {
 type page struct {
 	title, scenario, handler string
 	base                     string // file name without extension
+	guards                   string // see diagram.Scenario.Guards
 	arrows                   int
 	mermaid, text            string
 	diagram                  *diagram.Diagram
@@ -235,7 +245,9 @@ const stepsFile = "steps.json"
 func writeSteps(dir string, pages []page) error {
 	ss := make([]diagram.Scenario, len(pages))
 	for i, p := range pages {
-		ss[i] = diagram.Scenario{Name: p.scenario, Handler: p.handler, Base: p.base, Diagram: p.diagram}
+		ss[i] = diagram.Scenario{
+			Name: p.scenario, Handler: p.handler, Base: p.base, Guards: p.guards, Diagram: p.diagram,
+		}
 	}
 	b, err := json.Marshal(ss)
 	if err != nil {

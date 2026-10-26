@@ -223,6 +223,8 @@ func (d ScopeDescriptor) toQuery() url.Values {
 //
 //	GET /api/v1/_position?id=<entityID>&scope=<urlencoded-json>
 //	→ 200 {prev,next,current,total} | 400 bad scope | 404 id not in scope
+//
+//archplan:auth=authz
 func (a *App) handleV1EntityPosition(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		w.Header().Set("Allow", "GET")

@@ -43,6 +43,12 @@ export default defineConfig(({ mode }) => {
   // bundle. See issue #890.
   const e2eTestHooks = mode === 'development'
 
+  // RELA_SEQTRACE=1 builds the SPA for `just seqtrace-e2e`: unminified, with
+  // source maps, so `seqtrace stitch` can map the stack of each API request
+  // back to the src/ module that sent it. 'hidden' writes the maps without
+  // a sourceMappingURL comment; stitch reads them from disk.
+  const seqtrace = process.env.RELA_SEQTRACE === '1'
+
   return {
     plugins: [
       vue({
@@ -66,6 +72,8 @@ export default defineConfig(({ mode }) => {
     build: {
       outDir: '../internal/dataentry/static/v2',
       emptyOutDir: true,
+      sourcemap: seqtrace ? 'hidden' : false,
+      minify: !seqtrace,
     },
     resolve: {
       alias: {

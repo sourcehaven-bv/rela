@@ -71,13 +71,24 @@
     "channel_types"
   ],
   "ChannelSession": [
+    "due_at",
     "entered_at",
     "final",
     "generation",
     "label",
+    "reminders",
     "state",
     "stranded",
+    "timers",
     "transitions"
+  ],
+  "ChannelSessionReminder": [
+    "count",
+    "due_at",
+    "every",
+    "label",
+    "max",
+    "name"
   ],
   "ChannelSessionSchema": [
     "initial",
@@ -88,6 +99,13 @@
     "final",
     "label",
     "name"
+  ],
+  "ChannelSessionTimer": [
+    "due_at",
+    "label",
+    "name",
+    "since",
+    "to"
   ],
   "ChannelSessionTransition": [
     "by",

@@ -108,7 +108,8 @@ func writeChannelHeader(b *strings.Builder, c realtime.ChannelView) {
 }
 
 // sessionText is the one-line form of a session: its state, label and
-// generation, and whether the state is final or stranded.
+// generation, whether the state is final or stranded, and the timer that
+// comes due next, when the session has a due time.
 func sessionText(s *realtime.SessionView) string {
 	text := "session: " + printable(s.State)
 	if s.Label != "" && s.Label != s.State {
@@ -121,7 +122,39 @@ func sessionText(s *realtime.SessionView) string {
 	if s.Stranded {
 		text += ", stranded"
 	}
-	return text
+	return text + nextTimerText(s) + remindersText(s)
+}
+
+// remindersText is the reminders part of [sessionText]: per reminder of
+// the current state ", reminder <name>: <count>[ of <max>]", and ", next at
+// <time>" while one is due.
+func remindersText(s *realtime.SessionView) string {
+	var b strings.Builder
+	for _, r := range s.Reminders {
+		fmt.Fprintf(&b, ", reminder %s: %d", printable(r.Name), r.Count)
+		if r.Max > 0 {
+			fmt.Fprintf(&b, " of %d", r.Max)
+		}
+		if r.DueAt != nil {
+			fmt.Fprintf(&b, ", next at %s", r.DueAt.UTC().Format(time.RFC3339))
+		}
+	}
+	return b.String()
+}
+
+// nextTimerText is the ", next: ..." part of [sessionText]: the timer that
+// comes due at the session's due time, or "" when there is none.
+func nextTimerText(s *realtime.SessionView) string {
+	if s.DueAt == nil {
+		return ""
+	}
+	for _, t := range s.Timers {
+		if t.DueAt != nil && t.DueAt.Equal(*s.DueAt) {
+			return fmt.Sprintf(", next: %s to %s at %s", printable(t.Name), printable(t.To),
+				s.DueAt.UTC().Format(time.RFC3339))
+		}
+	}
+	return ""
 }
 
 // writeMessageType prints a message type and its properties.
@@ -168,6 +201,9 @@ func writeMessageLines(b *strings.Builder, m realtime.MessageView) {
 	if !m.EditedAt.IsZero() {
 		b.WriteString("  (edited)")
 	}
+	if m.IsReminder() {
+		b.WriteString("  (reminder)")
+	}
 	switch {
 	case m.ReplyCount == 1:
 		b.WriteString("  1 reply")
@@ -176,8 +212,12 @@ func writeMessageLines(b *strings.Builder, m realtime.MessageView) {
 	}
 	b.WriteString("\n")
 	if m.IsSessionNotice() {
-		fmt.Fprintf(b, "  moved from %s to %s\n",
+		fmt.Fprintf(b, "  moved from %s to %s",
 			printable(propText(m.Props["from"])), printable(propText(m.Props["to"])))
+		if timer, ok := m.Props["timer"]; ok {
+			fmt.Fprintf(b, " (timer %s)", printable(propText(timer)))
+		}
+		b.WriteString("\n")
 		return
 	}
 	names := make([]string, 0, len(m.Props))

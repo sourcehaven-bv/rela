@@ -41,11 +41,17 @@ func TestMigrateChannelSessions(t *testing.T) {
 
 	path := filepath.Join(t.TempDir(), "v23.db")
 	raw := openChannelDB(t, path)
-	for _, col := range []string{"session_state", "session_gen", "session_entered_at"} {
-		_, err := raw.Exec(`ALTER TABLE channels DROP COLUMN ` + col)
+	// A v23 table has neither the session nor the v25 timer columns.
+	_, err := raw.Exec(`DROP INDEX channels_session_due_idx`)
+	require.NoError(t, err)
+	for _, col := range []string{
+		"session_state", "session_gen", "session_entered_at", "session_next_due_at", "session_restarts",
+		"session_reminders",
+	} {
+		_, err = raw.Exec(`ALTER TABLE channels DROP COLUMN ` + col)
 		require.NoError(t, err)
 	}
-	_, err := raw.Exec(`INSERT INTO channels (anchor_id, type, state, created_by, created_at)
+	_, err = raw.Exec(`INSERT INTO channels (anchor_id, type, state, created_by, created_at)
 		VALUES ('TKT-1', 'room', 'open', '{"user":"alice"}', 1)`)
 	require.NoError(t, err)
 
@@ -67,6 +73,5 @@ func TestMigrateChannelSessions(t *testing.T) {
 	require.Zero(t, entered)
 	var version int
 	require.NoError(t, raw.QueryRow(`PRAGMA user_version`).Scan(&version))
-	require.Equal(t, 24, version)
 	require.Equal(t, sqlitedb.SchemaVersion(), version)
 }

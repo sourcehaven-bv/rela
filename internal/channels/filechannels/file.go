@@ -59,6 +59,14 @@
 // notice and no audit record; the next append takes the notice's seq
 // (TestSessionCrashBetweenSegments). The trail can miss a session record,
 // but never names a wrong cause.
+//
+// A timer fire ([Store.SetSession]) follows the same order: meta.yaml with
+// the new session and due time, then the notice, then the audit record. A
+// crash after meta.yaml leaves the session moved with no notice and no
+// audit record, and the timer does not fire again: the new state's due
+// time is already stored. A reminder post writes meta.yaml with the raised
+// count and last post time, then the reminder message; a crash in between
+// loses that reminder, and never posts it twice.
 package filechannels
 
 import (
@@ -113,12 +121,13 @@ type Locker interface {
 // operations to the file layout that disk reads and writes.
 //
 // 20 -> 21 (TKT-ZU7P13): Untombstone. 21 -> 25 (TKT-964SIS):
-// ConfirmTombstone, Tombstones, Purge and DropTypeRecord. The exported
+// ConfirmTombstone, Tombstones, Purge and DropTypeRecord. 27 -> 29
+// (TKT-INM3AZ): SetSession and ListSessionsDue. The exported
 // methods are the mandated [channels.Store] interface, so this is a
 // required-interface exception rather than a ratchet target. Helpers stay
 // free functions.
 //
-//plimsoll:max-exported-methods=27
+//plimsoll:max-exported-methods=29
 type Store struct {
 	disk
 	locker Locker
@@ -130,6 +139,9 @@ type Store struct {
 type disk struct {
 	rfs     *storage.RootedFS
 	segSize int64
+	// damaged rate-limits the warning about a damaged meta.yaml that a
+	// due listing skips.
+	damaged *channels.DamageWarner
 }
 
 var _ channels.Store = (*Store)(nil)
@@ -171,7 +183,8 @@ func newStore(fsys storage.FS, dir string, locker Locker, segSize int64) (*Store
 	}
 	v, _ := sems.LoadOrStore(filepath.Clean(abs), make(chan struct{}, 1))
 	sem, _ := v.(chan struct{}) // sems holds only these
-	return &Store{disk: disk{rfs: rfs, segSize: segSize}, locker: locker, sem: sem}, nil
+	d := disk{rfs: rfs, segSize: segSize, damaged: &channels.DamageWarner{}}
+	return &Store{disk: d, locker: locker, sem: sem}, nil
 }
 
 // lock takes the shared semaphore and then the locker, and returns the
@@ -320,10 +333,81 @@ type meta struct {
 	SessionState     string    `yaml:"session_state,omitempty"`
 	SessionGen       int64     `yaml:"session_gen,omitempty"`
 	SessionEnteredAt time.Time `yaml:"session_entered_at,omitempty"`
+	// The session timer schedule. A meta.yaml from before timers has none:
+	// no due time and no restart anchors.
+	SessionNextDueAt time.Time            `yaml:"session_next_due_at,omitempty"`
+	SessionRestarts  map[string]time.Time `yaml:"session_restarts,omitempty"`
+	// The session's reminder records. A meta.yaml from before reminders
+	// has none.
+	SessionReminders map[string]reminderMeta `yaml:"session_reminders,omitempty"`
+}
+
+// reminderMeta is one [channels.ReminderRecord] in meta.yaml, its times
+// normalized UTC values.
+type reminderMeta struct {
+	Since time.Time `yaml:"since"`
+	Last  time.Time `yaml:"last,omitempty"`
+	Count int64     `yaml:"count"`
 }
 
 func (m *meta) setSession(s channels.Session) {
 	m.SessionState, m.SessionGen, m.SessionEnteredAt = s.State, s.Generation, s.EnteredAt
+	m.SessionNextDueAt, m.SessionRestarts = s.NextDueAt, s.Restarts
+	m.SessionReminders = nil
+	if len(s.Reminders) > 0 {
+		m.SessionReminders = make(map[string]reminderMeta, len(s.Reminders))
+		for name, r := range s.Reminders {
+			r = channels.NormReminder(r)
+			m.SessionReminders[name] = reminderMeta{Since: r.Since, Last: r.Last, Count: r.Count}
+		}
+	}
+}
+
+// reminders returns the stored reminder records in UTC, or nil for none.
+func (m *meta) reminders() map[string]channels.ReminderRecord {
+	if len(m.SessionReminders) == 0 {
+		return nil
+	}
+	out := make(map[string]channels.ReminderRecord, len(m.SessionReminders))
+	for name, r := range m.SessionReminders {
+		out[name] = channels.ReminderRecord{Since: utc(r.Since), Last: utc(r.Last), Count: r.Count}
+	}
+	return out
+}
+
+// restarts returns the stored restart anchors in UTC, or nil for none.
+func (m *meta) restarts() map[string]time.Time {
+	if len(m.SessionRestarts) == 0 {
+		return nil
+	}
+	out := make(map[string]time.Time, len(m.SessionRestarts))
+	for name, at := range m.SessionRestarts {
+		out[name] = utc(at)
+	}
+	return out
+}
+
+// schedule applies f to the channel m describes and stores the result.
+// Nil f changes nothing.
+func (m *meta) schedule(k channels.Key, f channels.ScheduleFunc) error {
+	if f == nil {
+		return nil
+	}
+	c := m.channel(k)
+	if err := channels.ApplySchedule(&c, f); err != nil {
+		return err
+	}
+	m.setSession(c.Session)
+	return nil
+}
+
+// scheduleStep is [meta.schedule] for the Due of an append's session
+// step. Nil step: accepted, an append to a type without a session.
+func (m *meta) scheduleStep(k channels.Key, step *channels.SessionStep) error {
+	if step == nil {
+		return nil
+	}
+	return m.schedule(k, step.Due)
 }
 
 func (m *meta) channel(k channels.Key) channels.Channel {
@@ -332,7 +416,10 @@ func (m *meta) channel(k channels.Key) channels.Channel {
 		CreatedAt: m.CreatedAt.UTC(), ClosedAt: utc(m.ClosedAt), ArchivedAt: utc(m.ArchivedAt),
 		ReopenedAt: utc(m.ReopenedAt),
 		LastSeq:    m.LastSeq, Rev: m.Rev,
-		Session: channels.Session{State: m.SessionState, Generation: m.SessionGen, EnteredAt: utc(m.SessionEnteredAt)},
+		Session: channels.Session{
+			State: m.SessionState, Generation: m.SessionGen, EnteredAt: utc(m.SessionEnteredAt),
+			NextDueAt: utc(m.SessionNextDueAt), Restarts: m.restarts(), Reminders: m.reminders(),
+		},
 	}
 }
 
@@ -369,15 +456,22 @@ func readMetaAt(d *disk, dir string, k channels.Key) (*meta, error) {
 	if err := yaml.Unmarshal(data, &m); err != nil {
 		return nil, fmt.Errorf("filechannels: channel %s has a damaged meta.yaml: %w", k, err)
 	}
+	if err := channels.CheckReminders(m.reminders()); err != nil {
+		return nil, fmt.Errorf("filechannels: channel %s has damaged session reminders: %w", k, err)
+	}
 	return &m, nil
 }
 
-func (d *disk) writeMeta(k channels.Key, m *meta) error {
+func (d *disk) writeMeta(k channels.Key, m *meta) error { return writeMetaAt(d, chanDir(k), k, m) }
+
+// writeMetaAt writes the meta.yaml of channel k into the channel directory
+// dir, which is chanDir(k) for a live channel.
+func writeMetaAt(d *disk, dir string, k channels.Key, m *meta) error {
 	data, err := yaml.Marshal(m)
 	if err != nil { // coverage-ignore: invariant: meta is plain data
 		return fmt.Errorf("filechannels: encode %s: %w", k, err)
 	}
-	if err := d.rfs.WriteFile(chanDir(k)+"/"+metaFile, data, filePerm); err != nil {
+	if err := d.rfs.WriteFile(dir+"/"+metaFile, data, filePerm); err != nil {
 		return fmt.Errorf("filechannels: write %s: %w", k, err)
 	}
 	return nil
@@ -793,6 +887,91 @@ func visitEntityAt(d *disk, dir, id, typ string, fn func(channels.Key, *meta) er
 	for _, a := range anchors {
 		if err := visitFaceAt(d, dir+"/"+faceSeg(a.Face), a, typ, fn); err != nil {
 			return err
+		}
+	}
+	return nil
+}
+
+// visitTypes calls fn for every live channel whose type is in types, in
+// one walk of the tree: one directory read of the root, of each entity
+// directory and of each face directory, and one meta.yaml read per channel
+// of the given types. It descends only into type directories in the set.
+// With skipDamaged, a damaged meta.yaml is logged and skipped rather than
+// failing the walk.
+func (d *disk) visitTypes(types map[string]bool, skipDamaged bool, fn func(channels.Key, *meta) error) error {
+	ids, err := d.rootDirs()
+	if err != nil {
+		return fmt.Errorf("filechannels: list: %w", err)
+	}
+	for _, name := range ids {
+		if strings.HasPrefix(name, "_") || strings.HasPrefix(name, "~") {
+			continue
+		}
+		id, ok := dec(name)
+		if !ok || entity.ValidateID(id) != nil {
+			continue
+		}
+		faces, err := d.readDir(name)
+		if err != nil {
+			return fmt.Errorf("filechannels: list %s: %w", id, err)
+		}
+		for _, f := range faces {
+			a := channels.Anchor{ID: id}
+			if f != none {
+				face, ok := dec(f)
+				if !ok {
+					continue
+				}
+				a.Face = entity.Face(face)
+			}
+			if a.Validate() != nil {
+				continue
+			}
+			if err := d.visitTypesAt(name+"/"+f, a, types, skipDamaged, fn); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+// visitTypesAt is visitTypes for one face directory dir of anchor a.
+func (d *disk) visitTypesAt(
+	dir string, a channels.Anchor, types map[string]bool, skipDamaged bool, fn func(channels.Key, *meta) error,
+) error {
+	typeDirs, err := d.readDir(dir)
+	if err != nil {
+		return fmt.Errorf("filechannels: list %s: %w", a.ID, err)
+	}
+	for _, t := range typeDirs {
+		if !types[t] {
+			continue
+		}
+		names, err := d.readDir(dir + "/" + t)
+		if err != nil {
+			return fmt.Errorf("filechannels: list %s: %w", a.ID, err)
+		}
+		for _, n := range names {
+			k := channels.Key{Anchor: a, Type: t}
+			if n != none {
+				k.Name = n
+			}
+			if k.Validate() != nil {
+				continue
+			}
+			m, err := readMetaAt(d, dir+"/"+t+"/"+n, k)
+			switch {
+			case errors.Is(err, channels.ErrNotFound):
+				continue
+			case err != nil && skipDamaged:
+				d.damaged.Warn(k, time.Now(), "filechannels: skipping a channel whose meta.yaml cannot be read", err)
+				continue
+			case err != nil:
+				return err
+			}
+			if err := fn(k, m); err != nil {
+				return err
+			}
 		}
 	}
 	return nil

@@ -231,7 +231,12 @@ func toolReadChannelDef() *mcpgo.Tool {
 			"after_rev to wait for new, edited or removed messages. A channel type with a session shows it on "+
 			"the channel: its state, generation and the message types that move it from here, and "+
 			"actions.transitions lists those your post would fire if the guard holds; a move appends "+
-			"a notice of type session. A channel type with typing shows, with signals, who else is typing "+
+			"a notice of type session. A state with timers lists them in timers, and due_at is when the "+
+			"first moves the session on its own (only on an open channel); a timer's move appends a "+
+			"session notice with a timer prop. A state with reminders lists them in reminders, each with its "+
+			"count and due_at; a reminder posts a message of its type from system:realtime with triggered_by "+
+			"reminder:<type>/<name>, never moves the session, and cannot be edited or deleted. "+
+			"A channel type with typing shows, with signals, who else is typing "+
 			"in typing_now, and actions.typing says whether you may type there; there is no tool to type, "+
 			"and typing_now is empty over stdio, because typing entries live in the server process. "+
 			realtime.UntrustedNotice),
@@ -248,7 +253,7 @@ func toolReadChannelDef() *mcpgo.Tool {
 func toolPostMessage(refuseSignals bool) *mcpgo.Tool {
 	desc := "Post a message. props must match the message type's props_schema from read_channel. " +
 		"You need a post role for the type; author and time are set by the server. " +
-		"In a channel with a session, the answer shows the session after the post. "
+		"In a channel with a session, the answer shows the session after the post, with its due_at. "
 	if !refuseSignals {
 		desc += "A signal type (persist ephemeral) is kept in memory until its ttl and answers " +
 			"{ephemeral,id,expires_at}. "

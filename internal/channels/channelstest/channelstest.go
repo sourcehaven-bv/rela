@@ -52,10 +52,7 @@ var (
 // RunAll runs every conformance test against stores from newHarness.
 func RunAll(t *testing.T, newHarness func(t *testing.T) Harness) {
 	t.Helper()
-	tests := []struct {
-		name string
-		fn   func(t *testing.T, h Harness)
-	}{
+	tests := []conformanceTest{
 		{"ImplicitChannelOnFirstAppend", testImplicitCreate},
 		{"AppendRequireOpen", testAppendRequireOpen},
 		{"NamedChannelMustExist", testNamedMustExist},
@@ -122,11 +119,19 @@ func RunAll(t *testing.T, newHarness func(t *testing.T) Harness) {
 		{"SessionStateNames", testSessionStateNames},
 		{"SessionReply", testSessionReply},
 	}
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			tc.fn(t, newHarness(t))
-		})
+	for _, list := range [][]conformanceTest{tests, timerTests, reminderTests} {
+		for _, tc := range list {
+			t.Run(tc.name, func(t *testing.T) {
+				tc.fn(t, newHarness(t))
+			})
+		}
 	}
+}
+
+// conformanceTest is one named test of [RunAll].
+type conformanceTest = struct {
+	name string
+	fn   func(t *testing.T, h Harness)
 }
 
 // testAppendRequireOpen pins [channels.NewMessage.RequireOpen]: an append
@@ -1737,7 +1742,7 @@ func testUntombstoneBatch(t *testing.T, h Harness) {
 	require.NotEqual(t, h1, h2)
 
 	// The first batch comes back alone.
-	require.NoError(t, h.Store.Untombstone(ctx, h1, T0.Add(3*time.Minute)))
+	require.NoError(t, h.Store.Untombstone(ctx, h1, T0.Add(3*time.Minute), nil))
 	got, err := h.Store.ListEntity(ctx, "TKT-1")
 	require.NoError(t, err)
 	require.Len(t, got, 2)
@@ -1760,9 +1765,9 @@ func testUntombstoneBatch(t *testing.T, h Harness) {
 	}, ops, "the trail filed with the batch comes back, and the restore is recorded")
 
 	// A batch is restored once.
-	require.ErrorIs(t, h.Store.Untombstone(ctx, h1, T0), channels.ErrNotFound)
+	require.ErrorIs(t, h.Store.Untombstone(ctx, h1, T0, nil), channels.ErrNotFound)
 	// The zero handle is a no-op.
-	require.NoError(t, h.Store.Untombstone(ctx, channels.TombstoneHandle{}, T0))
+	require.NoError(t, h.Store.Untombstone(ctx, channels.TombstoneHandle{}, T0, nil))
 	empty := tombstone(t, h.Store, "NONE-1", "", T0)
 	require.True(t, empty.IsZero(), "an id without channels files no batch")
 }
@@ -1781,7 +1786,7 @@ func testUntombstoneFace(t *testing.T, h Harness) {
 	none := tombstone(t, h.Store, "TKT-1", "live", T0)
 	require.True(t, none.IsZero(), "a face without channels files no batch")
 
-	require.NoError(t, h.Store.Untombstone(ctx, hd, T0.Add(2*time.Minute)))
+	require.NoError(t, h.Store.Untombstone(ctx, hd, T0.Add(2*time.Minute), nil))
 	got, err := h.Store.ListEntity(ctx, "TKT-1")
 	require.NoError(t, err)
 	require.Len(t, got, 2)
@@ -1809,7 +1814,7 @@ func testUntombstoneOccupied(t *testing.T, h Harness) {
 	hf := tombstone(t, h.Store, "TKT-1", "", T0)
 	mustAppend(t, h.Store, key("TKT-1", "other"), text("new occupant"))
 
-	err := h.Store.Untombstone(ctx, hf, T0)
+	err := h.Store.Untombstone(ctx, hf, T0, nil)
 	var occ *channels.OccupiedError
 	require.ErrorAs(t, err, &occ)
 	require.Equal(t, channels.Anchor{ID: "TKT-1"}, occ.Anchor)
@@ -1821,7 +1826,7 @@ func testUntombstoneOccupied(t *testing.T, h Harness) {
 	mustAppend(t, h.Store, draft, text("draft old"))
 	hd := tombstone(t, h.Store, "TKT-1", "draft", T0)
 	mustAppend(t, h.Store, draft, text("draft new"))
-	err = h.Store.Untombstone(ctx, hd, T0)
+	err = h.Store.Untombstone(ctx, hd, T0, nil)
 	require.ErrorAs(t, err, &occ)
 	require.Equal(t, entity.Face("draft"), occ.Anchor.Face)
 	msgs, err := h.Store.Messages(ctx, draft, channels.Page{})
@@ -1831,7 +1836,7 @@ func testUntombstoneOccupied(t *testing.T, h Harness) {
 
 	// Once the occupant is gone, the same handle restores.
 	tombstone(t, h.Store, "TKT-1", "", T0)
-	require.NoError(t, h.Store.Untombstone(ctx, hf, T0))
+	require.NoError(t, h.Store.Untombstone(ctx, hf, T0, nil))
 	head, err := h.Store.Head(ctx, fam)
 	require.NoError(t, err)
 	require.Equal(t, int64(1), head.LastSeq)
@@ -1849,7 +1854,7 @@ func testHandleRoundTrip(t *testing.T, h Harness) {
 	parsed, err := channels.ParseTombstoneHandle(orig.String())
 	require.NoError(t, err)
 	require.Equal(t, orig, parsed)
-	require.NoError(t, h.Store.Untombstone(ctx, parsed, T0))
+	require.NoError(t, h.Store.Untombstone(ctx, parsed, T0, nil))
 	_, err = h.Store.Head(ctx, face)
 	require.NoError(t, err)
 

@@ -969,6 +969,8 @@ func copyFaceLabel(id string, t metamodel.CopyTarget) string {
 // relation type as creatable by the affordance gate, which this package
 // cannot see. A surface acting for a principal invokes copies through
 // [CopyAffordances] instead, which carries the full [CopyEdgeGate].
+//
+//archplan:guard=authz reason="gates the source read, the copy guard and the target create"
 func (m *Manager) CopyState(ctx context.Context, req CopyRequest) (*CopyResult, error) {
 	return (&copyEngine{m: m, edges: ungatedCopyEdges{}}).copyState(ctx, req)
 }

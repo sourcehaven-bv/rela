@@ -273,6 +273,7 @@ var editable = map[File][]string{
 		"nav.list",
 		"nav.open",
 		"nav.page",
+		"nav.pile",
 		"nav.query_scope",
 		"nav.search",
 		"nav.settings",

@@ -11,6 +11,7 @@ import (
 	"sort"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/google/jsonschema-go/jsonschema"
 	mcpgo "github.com/modelcontextprotocol/go-sdk/mcp"
@@ -645,6 +646,140 @@ channel_types:
         contained: { final: true }
         dismissed: { final: true }
 `
+
+// timerYAML is breachYAML with a timer on the detected state.
+var timerYAML = strings.Replace(breachYAML, `            escalated: { to: contained, by: trigger }
+`, `            escalated: { to: contained, by: trigger }
+          after:
+            no-containment: { period: 24h, to: contained, label: Not contained within a day }
+`, 1)
+
+// useTimers loads timerYAML into f.
+func useTimers(t *testing.T, f *channelFixture) {
+	t.Helper()
+	if timerYAML == breachYAML {
+		t.Fatal("timerYAML added no timer")
+	}
+	compiled, err := realtimecfg.Parse([]byte(timerYAML), f.meta, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.cfg.Store(compiled)
+}
+
+// TestReadChannel_IncludesSessionTimers pins TKT-INM3AZ AC 18: read_channel
+// shows the current state's timers and the session's due_at.
+func TestReadChannel_IncludesSessionTimers(t *testing.T) {
+	t.Parallel()
+	f := newChannelFixture(t)
+	useTimers(t, f)
+	cs := f.client(t, "alice")
+	args := map[string]any{"id": "REQ-001", "channel_type": "breach"}
+	mustCall(t, cs, "post_message", with(args, map[string]any{
+		"message_type": "text", "props": map[string]any{"body": "found it"},
+	}), nil)
+	var read struct{ realtime.ReadView }
+	mustCall(t, cs, toolReadChannel, args, &read)
+	s := read.Channel.Session
+	if s == nil || s.DueAt == nil || len(s.Timers) != 1 {
+		t.Fatalf("session = %+v, want a due time and one timer", s)
+	}
+	tm := s.Timers[0]
+	if tm.Name != "no-containment" || tm.To != "contained" || tm.Since != "state" || tm.DueAt == nil ||
+		!tm.DueAt.Equal(*s.DueAt) || !s.DueAt.Equal(s.EnteredAt.Add(24*time.Hour)) {
+
+		t.Errorf("timer = %+v, session due %v entered %v", tm, s.DueAt, s.EnteredAt)
+	}
+}
+
+// TestPostMessage_ReturnsSessionDue pins TKT-INM3AZ AC 18: post_message's
+// session carries the due time after the post.
+func TestPostMessage_ReturnsSessionDue(t *testing.T) {
+	t.Parallel()
+	f := newChannelFixture(t)
+	useTimers(t, f)
+	var res struct {
+		Session *realtime.SessionView `json:"session"`
+	}
+	mustCall(t, f.client(t, "alice"), "post_message", map[string]any{
+		"id": "REQ-001", "channel_type": "breach", "message_type": "text", "props": map[string]any{"body": "x"},
+	}, &res)
+	if res.Session == nil || res.Session.DueAt == nil || len(res.Session.Timers) != 1 {
+		t.Fatalf("session = %+v, want a due time", res.Session)
+	}
+}
+
+// reminderYAML is breachYAML with a reminder in the detected state.
+var reminderYAML = strings.Replace(strings.Replace(breachYAML, `      escalated: { properties: { note: { type: string } }, post: [lead] }
+`, `      escalated: { properties: { note: { type: string } }, post: [lead] }
+      reminder:  { properties: { body: { type: string } }, post: [lead] }
+`, 1), `        dismissed: { final: true }
+`, `        dismissed: { final: true }
+      reminders:
+        status-update:
+          label: Status update
+          in: [detected]
+          every: 30m
+          first: 10m
+          max: 48
+          post: { type: reminder, props: { body: "Post a status update" } }
+`, 1)
+
+// useReminders loads reminderYAML into f.
+func useReminders(t *testing.T, f *channelFixture) {
+	t.Helper()
+	compiled, err := realtimecfg.Parse([]byte(reminderYAML), f.meta, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.cfg.Store(compiled)
+}
+
+// wantReminder fails unless s lists the status-update reminder with count
+// 0 and its first slot, ten minutes after the session entered detected.
+func wantReminder(t *testing.T, s *realtime.SessionView) {
+	t.Helper()
+	if s == nil || len(s.Reminders) != 1 {
+		t.Fatalf("session = %+v, want one reminder", s)
+	}
+	r := s.Reminders[0]
+	if r.Name != "status-update" || r.Label != "Status update" || r.Every != "30m" || r.Count != 0 ||
+		r.Max != 48 || r.DueAt == nil || !r.DueAt.Equal(s.EnteredAt.Add(10*time.Minute)) {
+
+		t.Errorf("reminder = %+v, entered %v", r, s.EnteredAt)
+	}
+}
+
+// TestReadChannel_IncludesSessionReminders pins TKT-36Z6X3 AC 20:
+// read_channel shows the reminders of the current state.
+func TestReadChannel_IncludesSessionReminders(t *testing.T) {
+	t.Parallel()
+	f := newChannelFixture(t)
+	useReminders(t, f)
+	cs := f.client(t, "alice")
+	args := map[string]any{"id": "REQ-001", "channel_type": "breach"}
+	mustCall(t, cs, "post_message", with(args, map[string]any{
+		"message_type": "text", "props": map[string]any{"body": "found it"},
+	}), nil)
+	var read struct{ realtime.ReadView }
+	mustCall(t, cs, toolReadChannel, args, &read)
+	wantReminder(t, read.Channel.Session)
+}
+
+// TestPostMessage_ReturnsSessionReminders pins TKT-36Z6X3 AC 20:
+// post_message's session carries the reminders after the post.
+func TestPostMessage_ReturnsSessionReminders(t *testing.T) {
+	t.Parallel()
+	f := newChannelFixture(t)
+	useReminders(t, f)
+	var res struct {
+		Session *realtime.SessionView `json:"session"`
+	}
+	mustCall(t, f.client(t, "alice"), "post_message", map[string]any{
+		"id": "REQ-001", "channel_type": "breach", "message_type": "text", "props": map[string]any{"body": "x"},
+	}, &res)
+	wantReminder(t, res.Session)
+}
 
 // TestReadChannel_IncludesTransitions pins AC 7: read_channel's actions
 // list the transitions the caller would fire.

@@ -19,12 +19,22 @@
         "tool": "data-entry",
         "user": "alice"
       },
-      "last_seq": 2,
-      "rev": 2,
+      "last_seq": 3,
+      "rev": 3,
       "session": {
         "entered_at": "2026-01-02T03:04:05Z",
         "generation": 1,
         "label": "Contained",
+        "reminders": [
+          {
+            "count": 1,
+            "due_at": "2026-01-02T03:04:05Z",
+            "every": "30m",
+            "label": "Status update",
+            "max": 48,
+            "name": "status-update"
+          }
+        ],
         "state": "contained",
         "transitions": [
           {
@@ -47,15 +57,12 @@
         "user": "system:realtime"
       },
       "props": {
-        "cause": 1,
-        "from": "detected",
-        "generation": 1,
-        "to": "contained"
+        "body": "Post a status update"
       },
-      "rev": 2,
-      "seq": 2,
-      "triggered_by": "session:breach-response",
-      "type": "session"
+      "rev": 3,
+      "seq": 3,
+      "triggered_by": "reminder:breach-response/status-update",
+      "type": "reminder"
     },
     "typing_now": []
   },
@@ -295,6 +302,93 @@
     "next_after_rev": 8,
     "next_before": 1
   },
+  "reminder_messages": {
+    "channel": {
+      "anchor": "TKT-1",
+      "created_at": "2026-01-02T03:04:05Z",
+      "created_by": {
+        "tool": "data-entry",
+        "user": "alice"
+      },
+      "last_seq": 3,
+      "rev": 3,
+      "session": {
+        "entered_at": "2026-01-02T03:04:05Z",
+        "generation": 1,
+        "label": "Contained",
+        "reminders": [
+          {
+            "count": 1,
+            "due_at": "2026-01-02T03:04:05Z",
+            "every": "30m",
+            "label": "Status update",
+            "max": 48,
+            "name": "status-update"
+          }
+        ],
+        "state": "contained",
+        "transitions": [
+          {
+            "guarded": true,
+            "message_type": "assessed",
+            "to": "assessed"
+          }
+        ]
+      },
+      "state": "open",
+      "type": "breach-response"
+    },
+    "has_more": false,
+    "messages": [
+      {
+        "at": "2026-01-02T03:04:05Z",
+        "author": {
+          "tool": "data-entry",
+          "user": "alice"
+        },
+        "rev": 1,
+        "seq": 1,
+        "type": "contained"
+      },
+      {
+        "at": "2026-01-02T03:04:05Z",
+        "author": {
+          "principal_type": "system",
+          "system": true,
+          "tool": "realtime",
+          "user": "system:realtime"
+        },
+        "props": {
+          "cause": 1,
+          "from": "detected",
+          "generation": 1,
+          "to": "contained"
+        },
+        "rev": 2,
+        "seq": 2,
+        "triggered_by": "session:breach-response",
+        "type": "session"
+      },
+      {
+        "at": "2026-01-02T03:04:05Z",
+        "author": {
+          "principal_type": "system",
+          "system": true,
+          "tool": "realtime",
+          "user": "system:realtime"
+        },
+        "props": {
+          "body": "Post a status update"
+        },
+        "rev": 3,
+        "seq": 3,
+        "triggered_by": "reminder:breach-response/status-update",
+        "type": "reminder"
+      }
+    ],
+    "next_after_rev": 3,
+    "next_before": 1
+  },
   "schema": {
     "channel_types": [
       {
@@ -390,7 +484,12 @@
         ],
         "cardinality": "one",
         "label": "incident",
-        "lifecycle": [],
+        "lifecycle": [
+          {
+            "label": "close",
+            "name": "close"
+          }
+        ],
         "message_types": [
           {
             "actions": [],
@@ -401,6 +500,20 @@
               {
                 "label": "note",
                 "name": "note",
+                "type": "string"
+              }
+            ],
+            "reply": true
+          },
+          {
+            "actions": [],
+            "label": "note",
+            "name": "note",
+            "persist": "log",
+            "properties": [
+              {
+                "label": "body",
+                "name": "body",
                 "type": "string"
               }
             ],
@@ -606,9 +719,12 @@
     "_actions": {
       "delete_own": false,
       "edit_own": false,
-      "lifecycle": [],
+      "lifecycle": [
+        "close"
+      ],
       "post": [
-        "contained"
+        "contained",
+        "note"
       ],
       "remove": false,
       "transitions": [],
@@ -788,6 +904,21 @@
               {
                 "label": "reference",
                 "name": "reference",
+                "required": true,
+                "type": "string"
+              }
+            ],
+            "reply": true
+          },
+          {
+            "actions": [],
+            "label": "reminder",
+            "name": "reminder",
+            "persist": "log",
+            "properties": [
+              {
+                "label": "body",
+                "name": "body",
                 "required": true,
                 "type": "string"
               }

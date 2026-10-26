@@ -47,6 +47,9 @@ type Deps struct {
 	// Promoter creates the entities of promoting actions. A process that
 	// cannot write the graph passes [NoPromoter].
 	Promoter Promoter
+	// DueWake is told the session due times the service stores, so the
+	// timer loop can run early. Shared like Local.
+	DueWake *DueWake
 }
 
 // Service is the channel service.
@@ -59,6 +62,7 @@ type Service struct {
 	local    *Local
 	clock    Clock
 	promoter Promoter
+	dueWake  *DueWake
 }
 
 // New returns the service over d.
@@ -80,6 +84,8 @@ func New(d Deps) (*Service, error) {
 		return nil, errNil("Local")
 	case d.Promoter == nil:
 		return nil, errNil("Promoter")
+	case d.DueWake == nil:
+		return nil, errNil("DueWake")
 	}
 	if isNoPromoter(d.Promoter) && declaresPromote(d.Config.Load().Config) {
 		slog.Warn("realtime: realtime.yaml declares promoting actions, but this process cannot promote; " +
@@ -87,7 +93,7 @@ func New(d Deps) (*Service, error) {
 	}
 	return &Service{
 		store: d.Store, cfg: d.Config, access: d.Access, anchors: d.Anchors, refs: d.Refs,
-		local: d.Local, clock: d.Local.clock, promoter: d.Promoter,
+		local: d.Local, clock: d.Local.clock, promoter: d.Promoter, dueWake: d.DueWake,
 	}, nil
 }
 
@@ -192,8 +198,8 @@ func (s *Service) Head(ctx context.Context, addr RawAddress) (HeadView, error) {
 		return HeadView{}, err
 	}
 	out := HeadView{
-		Channel: channelView(c.ct, c.key, c.head, c.now), Ephemeral: []EphemeralView{}, TypingNow: typingNow,
-		Actions: c.affordances(),
+		Channel:   channelView(c.ct, c.key, c.head, c.now, c.snap.Degraded),
+		Ephemeral: []EphemeralView{}, TypingNow: typingNow, Actions: c.affordances(),
 	}
 	if len(msgs) > 0 {
 		v := r.message(msgs[0])
@@ -354,6 +360,7 @@ func (s *Service) Post(ctx context.Context, addr RawAddress, in PostInput) (Post
 	if err != nil {
 		return PostResult{}, storeError(err)
 	}
+	noteDue(s.dueWake, sp.step)
 	// A log post ends the poster's typing entry; the mark below wakes the
 	// readers for both.
 	s.local.typing.clear(c.key, bucketIdentity(c.p))
@@ -556,15 +563,20 @@ func (s *Service) Create(
 	}
 	// The store counts the channels of this type on the anchor and creates
 	// in one step, so concurrent creates cannot pass channels_per_entity.
-	ch, err := s.store.CreateMany(c.ctx, c.key.Anchor, channels.NewChannel{
+	nc := channels.NewChannel{
 		Type: typ, Title: in.Title, By: authorOf(c.p), At: c.now,
 		Max: c.snap.Config.Limits().ChannelsPerEntity,
-	})
+	}
+	if sess := c.ct.Session(); sess != nil {
+		nc.SessionDue = sessionDue(sess)
+	}
+	ch, err := s.store.CreateMany(c.ctx, c.key.Anchor, nc)
 	if err != nil {
 		return ChannelView{}, storeError(err)
 	}
+	s.dueWake.Note(ch.Session.NextDueAt)
 	s.local.mark(ch.Key)
-	return channelView(c.ct, ch.Key, &ch, c.now), nil
+	return channelView(c.ct, ch.Key, &ch, c.now, c.snap.Degraded), nil
 }
 
 // TypeChannels are the channels of one type on an anchor that the caller
@@ -666,7 +678,7 @@ func (c *call) listType(
 				continue
 			}
 		}
-		tc.Channels = append(tc.Channels, channelView(ct, ch.Key, &ch, c.now))
+		tc.Channels = append(tc.Channels, channelView(ct, ch.Key, &ch, c.now, c.snap.Degraded))
 	}
 	c.head = nil
 	tc.Create = ct.Cardinality == realtimecfg.CardinalityMany && ct.Create != nil &&

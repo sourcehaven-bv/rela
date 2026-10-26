@@ -934,6 +934,9 @@ export interface SidebarItem {
    * neither icon nor label is invisible but still clickable. */
   derivedIcon?: string
   action?: string
+  /** Set on a `pile:` entry: the name of the user's own pile the row opens
+   * in the flyout. `href` is empty. */
+  pile?: string
   /** Set on an `entities:` entry (TKT-PEKL8L): the list query whose rows
    * become one link each. `label` and `href` are empty on such an item; the
    * rows supply both. */
