@@ -298,10 +298,11 @@ type SessionStep struct {
 	// last_seq+1 (see [ReminderMessage]) and then applies Due. Pure and
 	// fast, like Decide. [Store.Append] refuses a step that sets it.
 	Remind func(cur Channel) (ReminderPost, bool)
-	// Mark, when set, is called by [Store.Append] for a move the decider
-	// returned. When it returns an action, the notice carries it as its
-	// pending [OutputsAction] mark: the store sets the name, the pending
-	// status, the time, and the mark's Gen, From, To and Cause, and keeps
+	// Mark, when set, is called by [Store.Append] or [Store.SetSession] for
+	// a move the decider returned. When it returns an action, the notice
+	// carries it as its pending [OutputsAction] mark: the store sets the
+	// name, the pending status, the time, and the mark's Gen, From, To and
+	// Cause (on a timer move: Timer and Job instead of Cause), and keeps
 	// the returned PendingAt as the time the mark becomes eligible for a
 	// retry. Pure and fast, like Decide. Nil: no mark.
 	Mark func(move SessionMove) *Action
@@ -408,9 +409,6 @@ func PrepareAppendStep(step *SessionStep) error {
 
 // PrepareTimerStep validates the step of a [Store.SetSession] call.
 func PrepareTimerStep(step SessionStep) error {
-	if step.Mark != nil {
-		return fmt.Errorf("%w: a timer move carries no outputs mark", ErrInvalidMessage)
-	}
 	return PrepareSessionStep(&step)
 }
 
@@ -426,7 +424,9 @@ func DecideTimer(step *SessionStep, cur Channel) (move SessionMove, moved bool, 
 
 // TimerNotice returns the notice of a move made by step's timer, which the
 // store appends at seq with rev at at. Its props are from, to, generation
-// (the generation after the move) and timer.
+// (the generation after the move) and timer. The notice carries the step's
+// outputs mark, when its Mark gives one (see [SessionStep.Mark]), as a job
+// mark naming the timer; an invalid mark is an error and nothing is stored.
 func TimerNotice(
 	step *SessionStep, seq int64, at time.Time, move SessionMove, gen, rev int64,
 ) (m Message, raw []byte, err error) {
@@ -436,9 +436,14 @@ func TimerNotice(
 	if err != nil { // coverage-ignore: invariant: four short values always encode under the caps
 		return Message{}, nil, err
 	}
+	at = NormTime(at)
+	mark, err := timerMark(step, at, move, gen)
+	if err != nil {
+		return Message{}, nil, err
+	}
 	return Message{
-		Seq: seq, Rev: rev, Type: step.NoticeType, Author: step.NoticeBy, At: NormTime(at),
-		Props: props, TriggeredBy: step.TriggeredBy,
+		Seq: seq, Rev: rev, Type: step.NoticeType, Author: step.NoticeBy, At: at,
+		Props: props, TriggeredBy: step.TriggeredBy, Action: mark,
 	}, raw, nil
 }
 

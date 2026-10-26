@@ -83,6 +83,8 @@ export interface ChannelSessionTimer {
   to: string
   since: 'state' | 'session'
   due_at?: string
+  /** The number of graph writes the timer's move makes, as the session's run_as; absent when none. */
+  outputs?: number
 }
 
 /** A message of message_type moves the session to to. */
@@ -203,7 +205,11 @@ export interface ChannelMessageOutputResult {
   /** transition: the one result of a mark whose transition the config no longer declares. */
   kind: 'set' | 'create' | 'close' | 'transition'
   status: 'done' | 'failed' | 'skipped' | 'superseded' | 'started'
-  /** Why the output failed; never an error text or an id. */
+  /**
+   * Why the output failed; never an error text or an id: forbidden,
+   * field_denied, invalid, conflict, not_found, unconfirmed, expired,
+   * transition_removed, run_as_changed or error.
+   */
   code?: string
   /** For a set, the properties written; for an invalid output, those validation named. */
   props?: string[]
@@ -461,7 +467,14 @@ export const CHANNEL_WIRE_FIELDS: Record<string, readonly string[]> = {
     'max',
     'due_at',
   ]),
-  ChannelSessionTimer: wireKeys<ChannelSessionTimer>()(['name', 'label', 'to', 'since', 'due_at']),
+  ChannelSessionTimer: wireKeys<ChannelSessionTimer>()([
+    'name',
+    'label',
+    'to',
+    'since',
+    'due_at',
+    'outputs',
+  ]),
   ChannelSessionTransition: wireKeys<ChannelSessionTransition>()([
     'message_type',
     'to',

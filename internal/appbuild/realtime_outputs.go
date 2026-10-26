@@ -21,7 +21,8 @@ import (
 )
 
 // managerOutputs is the [realtime.OutputWriter] over the entity manager
-// (TKT-98TR9A). It writes as the poster, with tool `realtime`, so the ACL,
+// (TKT-98TR9A). It writes as the poster, or for a timer or trigger move as
+// the session's run_as (TKT-RAN1YA), with tool `realtime`, so the ACL,
 // the field grants, validation, automations and the graph audit apply as
 // they do to any write, and the audit tells a session output apart from
 // the person's own write.
@@ -87,6 +88,37 @@ func (o managerOutputs) as(ctx context.Context, retry *realtime.OutputIdentity) 
 	default:
 		return ctx, err
 	}
+}
+
+// writer stamps ctx with r's writer: the run_as job identity for a job
+// output, else the poster (see [managerOutputs.as]). It fails closed: a
+// job output without a run_as, or a writer that is one of rela's own
+// identities, is refused, so no output ever writes as the process.
+func (o managerOutputs) writer(ctx context.Context, r realtime.OutputRequest) (context.Context, error) {
+	if r.Job || r.RunAs != "" {
+		if r.RunAs == "" || principal.IsRelaIdentity(r.RunAs) {
+			return ctx, errOutputsNoPoster
+		}
+		return o.asRunAs(ctx, r.RunAs)
+	}
+	ctx, err := o.as(ctx, r.Retry)
+	if err == nil && principal.IsRelaIdentity(principal.From(ctx).User) {
+		return ctx, errOutputsNoPoster
+	}
+	return ctx, err
+}
+
+// asRunAs stamps ctx with the job identity runAs, tool realtime, and binds
+// it as the automation jobs bind theirs: no claims and no user entity, so
+// acl.yaml grants it what its assignment and `everyone` grant. The name
+// confers nothing by itself, and this path never takes the allow-all
+// reader. It replaces the leader's system:realtime on ctx.
+func (o managerOutputs) asRunAs(ctx context.Context, runAs string) (context.Context, error) {
+	ctx = principal.With(ctx, principal.Principal{User: runAs, Tool: principal.ToolRealtime})
+	if o.policy == nil {
+		return ctx, nil
+	}
+	return o.bind(ctx)
 }
 
 // asRetry rebuilds the poster from the mark, with the role claims verified
@@ -208,7 +240,7 @@ func (o managerOutputs) Check(ctx context.Context, t realtime.OutputTarget) erro
 
 // Write writes one output as the poster.
 func (o managerOutputs) Write(ctx context.Context, r realtime.OutputRequest) (realtime.OutputWritten, error) {
-	ctx, err := o.as(ctx, r.Retry)
+	ctx, err := o.writer(ctx, r)
 	if err != nil {
 		if errors.Is(err, errOutputsNoPoster) || errors.Is(err, acl.ErrUnstampedPrincipal) {
 			return realtime.OutputWritten{}, &realtime.OutputError{
@@ -228,7 +260,15 @@ func (o managerOutputs) Write(ctx context.Context, r realtime.OutputRequest) (re
 // anchor type's declaration: a faceless type is read without one, and a
 // faced type only at the target's face, never as a bare id. The row is
 // write-prep: AuthorizeUpdate and PatchEntity gate it.
+//
+// A job move's target may name no anchor type (a channel type with several
+// attach_to types; see [realtime.OutputTarget]). The row is then read at
+// the target's face, or without one when the target names none, and its
+// own type decides: a faced type read without a face is not found.
 func (o managerOutputs) setRow(ctx context.Context, t realtime.OutputTarget) (*entity.Entity, error) {
+	if t.AnchorType == "" {
+		return o.untypedRow(ctx, t)
+	}
 	addr := t.AnchorID
 	if len(metamodel.FaceOrderOf(o.meta, t.AnchorType)) > 0 {
 		if t.Face == "" {
@@ -245,6 +285,41 @@ func (o managerOutputs) setRow(ctx context.Context, t realtime.OutputTarget) (*e
 		return nil, entitymanager.ErrEntityNotFound
 	}
 	return row, err
+}
+
+// untypedRow is [managerOutputs.setRow] for a target without an anchor
+// type. With a face it reads the row at that face first, accepted when its
+// type declares faces. Without one, or when no row is at the face, it
+// reads the row without a face, accepted when its type declares none: a
+// family-anchored set names a face that an unfaced attach_to type drops.
+func (o managerOutputs) untypedRow(ctx context.Context, t realtime.OutputTarget) (*entity.Entity, error) {
+	if t.Face != "" {
+		row, err := o.rowAt(ctx, t.AnchorID+"@"+string(t.Face), true, t.AttachTo)
+		if !errors.Is(err, entitymanager.ErrEntityNotFound) {
+			return row, err
+		}
+	}
+	return o.rowAt(ctx, t.AnchorID, false, t.AttachTo)
+}
+
+// rowAt reads the raw row at addr, accepted when its type is one of
+// attachTo and whether that type declares faces matches faced.
+func (o managerOutputs) rowAt(ctx context.Context, addr string, faced bool, attachTo []string) (*entity.Entity, error) {
+	ref, err := entity.ParseRef(addr)
+	if err != nil {
+		return nil, entitymanager.ErrEntityNotFound
+	}
+	row, err := o.st.GetEntity(ctx, ref)
+	if errors.Is(err, store.ErrNotFound) {
+		return nil, entitymanager.ErrEntityNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	if !slices.Contains(attachTo, row.Type) || (len(metamodel.FaceOrderOf(o.meta, row.Type)) > 0) != faced {
+		return nil, entitymanager.ErrEntityNotFound
+	}
+	return row, nil
 }
 
 // set patches the anchor with r's properties through the field-gated

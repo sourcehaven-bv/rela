@@ -51,7 +51,7 @@ func wireChannelSession(s *realtime.SessionView) *v1.ChannelSession {
 		out.DueAt = channelTime(*s.DueAt)
 	}
 	for _, t := range s.Timers {
-		w := v1.ChannelSessionTimer{Name: t.Name, Label: t.Label, To: t.To, Since: t.Since}
+		w := v1.ChannelSessionTimer{Name: t.Name, Label: t.Label, To: t.To, Since: t.Since, Outputs: t.Outputs}
 		if t.DueAt != nil {
 			w.DueAt = channelTime(*t.DueAt)
 		}

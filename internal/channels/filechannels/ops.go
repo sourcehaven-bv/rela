@@ -42,7 +42,7 @@ func (s *Store) Append(ctx context.Context, k channels.Key, nm channels.NewMessa
 	if err != nil {
 		return channels.Message{}, err
 	}
-	last, err := s.lastSeq(k)
+	last, err := s.logEnd(k, m)
 	if err != nil {
 		return channels.Message{}, err
 	}
@@ -74,7 +74,7 @@ func (s *Store) Append(ctx context.Context, k channels.Key, nm channels.NewMessa
 	var after channels.Channel
 	if moved {
 		var notice channels.Message
-		after, notice, err = moveSession(m, k, nm, msg, move, s.idx(seq+1))
+		after, notice, err = moveSession(m, k, nm, msg, move, s.idx(seq), s.idx(seq+1))
 		if err != nil {
 			return channels.Message{}, err
 		}
@@ -149,11 +149,13 @@ func (d *disk) appendRecords(k channels.Key, recs []segRecord) error {
 	return nil
 }
 
-// moveSession applies move, caused by cause, to m and returns the channel
-// after it and the notice at idx. It records the notice in m: the log's
-// last seq, and the notice's pending action.
+// moveSession applies move, caused by cause at causeIdx, to m and returns
+// the channel after it and the notice at idx. It records the notice in m:
+// the log's last seq, the notice's pending action and, for a job move, the
+// log records of the cause and the notice (see stashJob).
 func moveSession(
-	m *meta, k channels.Key, nm channels.NewMessage, cause channels.Message, move channels.SessionMove, idx int64,
+	m *meta, k channels.Key, nm channels.NewMessage, cause channels.Message, move channels.SessionMove,
+	causeIdx, idx int64,
 ) (channels.Channel, channels.Message, error) {
 	after := m.channel(k)
 	channels.ApplySession(&after, move, nm.At)
@@ -165,6 +167,13 @@ func moveSession(
 	m.LastSeq = notice.Seq
 	if notice.Action != nil {
 		setPending(m, notice.Seq, *notice.Action)
+	}
+	// A trigger is never a reply, so a job move has no parent record.
+	if nm.ReplyTo == 0 && isJobNotice(notice) {
+		stashJob(m, notice, []segRecord{
+			{idx: causeIdx, rec: encodeLine(line{K: "m", Message: cause})},
+			{idx: idx, rec: encodeLine(line{K: "m", Message: notice})},
+		}, []int64{cause.Seq, notice.Seq})
 	}
 	return after, notice, nil
 }
@@ -1128,7 +1137,7 @@ func (s *Store) SetSession(
 	if err != nil {
 		return channels.Channel{}, err
 	}
-	last, err := s.lastSeq(k)
+	last, err := s.logEnd(k, m)
 	if err != nil {
 		return channels.Channel{}, err
 	}
@@ -1140,6 +1149,13 @@ func (s *Store) SetSession(
 		return channels.Channel{}, err
 	}
 	written, move, moved, reminded := w.written, w.move, w.moved, w.reminded
+	var rec []segRecord
+	if moved || reminded {
+		rec = []segRecord{{idx: s.idx(written.Seq), rec: encodeLine(line{K: "m", Message: written})}}
+	}
+	if moved {
+		stashJob(m, written, rec, []int64{written.Seq})
+	}
 	if err := m.schedule(k, step.Due); err != nil {
 		return channels.Channel{}, err
 	}
@@ -1147,7 +1163,6 @@ func (s *Store) SetSession(
 		return channels.Channel{}, err
 	}
 	if moved || reminded {
-		rec := []segRecord{{idx: s.idx(written.Seq), rec: encodeLine(line{K: "m", Message: written})}}
 		if err := s.appendRecords(k, rec); err != nil {
 			return channels.Channel{}, err
 		}
@@ -1169,6 +1184,34 @@ func (s *Store) SetSession(
 		channels.FillSessionOutcome(&step, out, move, moved)
 	}
 	return out, nil
+}
+
+// repairJob replays the stashed records of k's last job move that the log
+// lacks, drops the pending refs the log does not hold, and clears the stash
+// in meta.yaml. It returns the meta.yaml it wrote. It is a function, not a
+// method, to keep Store under its method load line.
+func repairJob(ctx context.Context, s *Store, k channels.Key) (*meta, error) {
+	unlock, err := s.lock(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer unlock()
+	m, err := s.readMeta(k)
+	if err != nil {
+		return nil, err
+	}
+	if len(m.JobRecords) == 0 {
+		return m, nil
+	}
+	last, err := s.logEnd(k, m)
+	if err != nil {
+		return nil, err
+	}
+	dropDangling(m, last)
+	if err := s.writeMeta(k, m); err != nil {
+		return nil, err
+	}
+	return m, nil
 }
 
 // sessionWrite is what [applySessionStep] decided and applied to m.
@@ -1199,8 +1242,11 @@ func applySessionStep(
 		channels.ApplySession(&after, w.move, at)
 		m.setSession(after.Session)
 		w.written, _, err = channels.TimerNotice(step, seq, at, w.move, after.Session.Generation, m.bump(idx(seq)))
-		if err != nil { // coverage-ignore: invariant: TimerNotice encodes four short values
+		if err != nil {
 			return w, err
+		}
+		if w.written.Action != nil {
+			setPending(m, seq, *w.written.Action)
 		}
 		m.LastSeq = seq
 		return w, nil
@@ -1220,11 +1266,19 @@ func applySessionStep(
 	return w, nil
 }
 
-// StalePending implements [channels.Store].
-func (s *Store) StalePending(_ context.Context, before time.Time) ([]channels.PendingAction, error) {
+// StalePending implements [channels.Store]. A channel whose meta.yaml
+// still holds the records of a job move is repaired first (see repairJob),
+// so a job mark a crash kept out of the log is listed.
+func (s *Store) StalePending(ctx context.Context, before time.Time) ([]channels.PendingAction, error) {
 	before = channels.NormTime(before)
 	out := []channels.PendingAction{}
 	err := s.visitAll("", func(k channels.Key, m *meta) error {
+		if len(m.JobRecords) > 0 {
+			var err error
+			if m, err = repairJob(ctx, s, k); err != nil {
+				return err
+			}
+		}
 		for seq, p := range m.Pending {
 			if p.At.Before(before) {
 				out = append(out, channels.PendingAction{Key: k, Seq: seq, Name: p.Name, PendingAt: p.At.UTC()})

@@ -651,8 +651,9 @@ func addOutputsSchemas(sc map[string]*Schema) {
 					"superseded when a later move of the session already set every property of a retried set"},
 			"code": {Type: "string", Enum: []string{
 				"forbidden", "field_denied", "invalid", "conflict", "not_found", "unconfirmed", "expired",
-				"transition_removed", "error",
-			}, Description: "Why the output failed; never an error text or an id"},
+				"transition_removed", "run_as_changed", "error",
+			}, Description: "Why the output failed; never an error text or an id. run_as_changed: a timer or " +
+				"trigger move's outputs, whose writer is no longer the session's run_as"},
 			"props": {Type: "array", Items: str(),
 				Description: "For a set, the properties written; for an invalid output, the ones validation named"},
 			"face":     {Type: "string", Description: "The face a set writes, when the output names one"},
@@ -750,6 +751,9 @@ func channelTimerSchema() *Schema {
 		"since": {Type: "string", Enum: []string{"state", "session"},
 			Description: "What the period counts from: entering the state, or the channel's creation"},
 		"due_at": dateTimeSchema(),
+		"outputs": {Type: "integer",
+			Description: "The number of graph writes the timer's move makes, as the session's run_as; " +
+				"absent when it makes none"},
 	}, []string{"name", "to", "since"})
 	s.Description = "One timer of the session's current state: after its period the session moves to to. " +
 		"due_at is set only on an open channel under a configuration that is not degraded."

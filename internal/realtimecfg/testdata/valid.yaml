@@ -23,6 +23,7 @@ channel_types:
       label: GDPR breach response
       initial: detected
       on_final: close
+      run_as: system:breach-bot
       states:
         detected:
           label: Detected
@@ -52,7 +53,13 @@ channel_types:
                 - set: { properties: { risk: "{{message.risk}}" } }
             escalate-stalled: { to: overdue, when: "session.reminders['status-update'] >= 3" }
           after:
-            notify-deadline: { period: 72h, since: session, to: overdue, label: 72 hours since detection }
+            notify-deadline:
+              period: 72h
+              since: session
+              to: overdue
+              label: 72 hours since detection
+              outputs:
+                - set: { properties: { escalated: true } }
         assessed:
           label: Risk assessed
           on:
@@ -62,7 +69,13 @@ channel_types:
               outputs:
                 - set: { properties: { status: notified, reference: "{{message.reference}}" } }
           after:
-            notify-deadline: { period: 72h, since: session, to: overdue, label: 72 hours since detection }
+            notify-deadline:
+              period: 72h
+              since: session
+              to: overdue
+              label: 72 hours since detection
+              outputs:
+                - set: { properties: { escalated: true } }
         overdue:
           label: Notification overdue
           on:

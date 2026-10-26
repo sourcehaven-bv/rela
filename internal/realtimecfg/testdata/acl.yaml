@@ -3,10 +3,15 @@ roles:
   officer:
     read: ["*"]
     permissions: [privacy.officer, incident.decide, records.delete]
+  breach-bot:
+    read: [datalek]
+    update: [datalek]
   auditor:
     read: ["*"]
     visible:
       risico: [{field: title}]
+assignments:
+  system:breach-bot: breach-bot
 client_baselines:
   apps:
     applies_to: [app]

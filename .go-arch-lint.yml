@@ -1445,6 +1445,8 @@ deps:
       - metamodel
       - predicate
       - predicatefns
+      # principal.ValidJobIdentity: session.run_as follows the --run-as rules.
+      - principal
       - realtimelimits
   syncmerge:
     mayDependOn:

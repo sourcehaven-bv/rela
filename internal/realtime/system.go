@@ -21,7 +21,9 @@ type systemWriter struct {
 }
 
 // post appends a message of mt with props to key as [systemAuthor], naming
-// triggeredBy. A post that can never succeed returns a permanentError.
+// triggeredBy. marked reports that the post moved the session and the move
+// wrote an outputs mark (see [triggerMark]). A post that can never succeed
+// returns a permanentError.
 // It charges no rate bucket: the trigger engine caps its own
 // posts per round. With requireOpen the store refuses a channel that is
 // not open with [channels.ErrNotOpen], in the same step as the append. A
@@ -33,27 +35,29 @@ type systemWriter struct {
 func (w systemWriter) post(
 	ctx context.Context, snap Snapshot, now time.Time, key channels.Key, ct realtimecfg.ChannelType,
 	mt *realtimecfg.MessageType, props map[string]any, triggeredBy string, requireOpen bool,
-) error {
+) (marked bool, err error) {
 	vp, err := validateProps(mt, props, snap.Config.Limits().MessageBytes)
 	if err != nil {
-		return permanentError{err}
+		return false, permanentError{err}
 	}
 	if !whenHolds(ctx, mt, vp.props, now) {
-		return permanentError{fmt.Errorf("realtime: the message does not meet the when: condition of %s", mt.Name)}
+		return false, permanentError{
+			fmt.Errorf("realtime: the message does not meet the when: condition of %s", mt.Name),
+		}
 	}
 	if recErr := recordType(ctx, w.store, w.local, w.cfg, snap, ct); recErr != nil {
 		var denial *DenialError
 		if errors.As(recErr, &denial) && denial.Type == TypeChannelTypeConflict {
-			return permanentError{recErr}
+			return false, permanentError{recErr}
 		}
-		return recErr
+		return false, recErr
 	}
 	// A trigger's post fires a transition with by: trigger or with no
 	// poster rule. With requireOpen off it may land in a closed channel,
 	// which the decider never moves.
 	sp := newSessionPost(ctx, ct, mt, vp.props, now, poster{trigger: true}, triggeredBy)
 	if sp.step != nil {
-		sp.step.Mark = triggerMark(ct.Session(), now)
+		sp.step.Mark = triggerMark(ct, mt.Name, now, &marked)
 	}
 	_, err = w.store.Append(ctx, key, channels.NewMessage{
 		Type: mt.Name, Author: systemAuthor(), At: now, Props: vp.props, TriggeredBy: triggeredBy,
@@ -61,14 +65,15 @@ func (w systemWriter) post(
 	})
 	sp.logGuardFailure(ctx)
 	if isPermanent(err) {
-		return permanentError{err}
+		return false, permanentError{err}
 	}
 	if err != nil {
-		return err
+		return false, err
 	}
 	noteDue(w.dueWake, sp.step)
 	w.local.mark(key)
-	return nil
+	moved := sp.step != nil && sp.step.Outcome != nil && sp.step.Outcome.Moved
+	return marked && moved, nil
 }
 
 // moves is what one systemWriter.transition did.

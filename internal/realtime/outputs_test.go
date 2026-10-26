@@ -203,7 +203,9 @@ func TestOutputs_MessageSet(t *testing.T) {
 	reqs := w.requests()
 	require.Len(t, reqs, 3)
 	set := reqs[2]
-	require.Equal(t, OutputTarget{Kind: realtimecfg.OutputSet, AnchorID: "TKT-1", AnchorType: "ticket"}, set.Target)
+	require.Equal(t, OutputTarget{
+		Kind: realtimecfg.OutputSet, AnchorID: "TKT-1", AnchorType: "ticket", AttachTo: []string{"ticket"},
+	}, set.Target)
 	require.Equal(t, map[string]any{"status": "notified", "title": "AP-1"}, set.Props)
 	require.Equal(t, "session:TKT-1/breach/assessed->notified#3/0", set.Origin)
 	require.Nil(t, set.Retry, "the inline write runs as the request")
@@ -250,6 +252,7 @@ func TestOutputs_MessageCreate(t *testing.T) {
 	require.Len(t, reqs, 1)
 	require.Equal(t, OutputTarget{
 		Kind: realtimecfg.OutputCreate, AnchorID: "TKT-1", AnchorType: "ticket", Type: "doc", Relate: "about",
+		AttachTo: []string{"ticket"},
 	},
 		reqs[0].Target)
 	require.Equal(t, map[string]any{"title": "Contained by alice: door locked"}, reqs[0].Props)

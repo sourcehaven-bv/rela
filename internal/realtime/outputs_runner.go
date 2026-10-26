@@ -24,7 +24,7 @@ type OutputsDeps struct {
 
 // Outputs retries the outputs marks no live holder runs: marks whose
 // inline run stopped, failed for a reason a retry may not repeat, or was
-// never started (a trigger's close). The leader runs it on its minute
+// never started (a timer's or a trigger's move, a job mark). The leader runs it on its minute
 // tick, in a round of its own, so a slow output never holds up the
 // timers, the triggers or the leader lock check.
 type Outputs struct {
@@ -133,8 +133,8 @@ func (o *Outputs) runOne(ctx context.Context, p channels.PendingAction) (bool, e
 		return false, fmt.Errorf("realtime: claim outputs mark %s#%d: %w", p.Key, p.Seq, err)
 	}
 	r.notice, r.retry = got, true
-	outs, _ := o.e.outputsFor(&r, got.Action.Outputs)
-	if readsTitle(outs) {
+	r.plan = resolveMark(o.e.cfg.Load(), p.Key, r.cause, got.Action.Outputs)
+	if readsTitle(r.plan.outs) {
 		if h, herr := o.e.store.Head(ctx, p.Key); herr == nil {
 			r.title = h.Title
 		}

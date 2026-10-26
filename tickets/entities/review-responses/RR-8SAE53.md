@@ -1,0 +1,9 @@
+---
+id: RR-8SAE53
+type: review-response
+title: PrincipalFieldWrite as specified contradicts the union rule; the planned edge-case test pins the wrong answer
+finding: 'Plan Approach 4 (plan:309-314) says the field check is closed-world once any of the principal''s roles declares a fields: block, and the edge case at plan:549-550 asserts that `everyone` granting update with no block, plus a run_as role whose block omits the property, is refused. Real evaluation is a union (BUG-Y5UF3K, internal/affordances/dimension.go:20-31, resolver.go:470-476): a role with no block that holds update on the row''s type and face adds every declared field, so that write is allowed. The load check would then refuse a config that the write path accepts. Also missing: create outputs field-gate their Authored props through CreateFieldVerdicts (create verb, resolver.go:480-489), and timer/trigger templates such as {{session.to}} are Authored, but the plan checks no field grant for a create. options: grants (enum values) are ignored entirely. Plan change: specify the fold as allowed = union over roles of (block grants, or every field when the role has no block and holds update [create for a create] on type and face). Flip the edge-case expectation to allowed and add a row where only the blocked role applies. Add the create-field check, and either check options: or document it as part of the floor. Put the agreement test against affordances.PolicyResolver.FieldVerdicts/CreateFieldVerdicts (appbuild or realtimecfg test), not only against acl.Request, which has no field fold.'
+severity: significant
+resolution: FieldWrite/Option follow the union rule (create verb for creates); create fields and literal enum options checked; agreement test vs FieldVerdicts/CreateFieldVerdicts (AC 7); edge case flipped to allowed.
+status: addressed
+---

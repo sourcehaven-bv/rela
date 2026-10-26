@@ -724,6 +724,28 @@ func ValidateRunAs(runAs string, allowSystem func(string) bool) error {
 	return nil
 }
 
+// ValidJobIdentity checks that name is a job identity an operator may grant
+// and run work as: a `system:` name in the [ValidSystemName] grammar that is
+// not one of rela's own ([IsRelaIdentity]), or an `integration:` name in the
+// [ValidIntegrationName] grammar. A person's name and [Unknown] are refused,
+// so a job cannot write as a human. The local CLI's `--run-as` and a
+// realtime session's `run_as` both call it, so the two accept the same
+// names.
+//
+// The grammar check comes before the registry lookup, so the lookup compares
+// plain ASCII and a look-alike of a rela name cannot slip past it.
+func ValidJobIdentity(name string) error {
+	if !strings.HasPrefix(name, ReservedPrefix) && !strings.HasPrefix(name, IntegrationPrefix) {
+		return fmt.Errorf("%q is not a job identity; name a %q or %q identity", name, ReservedPrefix,
+			IntegrationPrefix)
+	}
+	if rest, ok := strings.CutPrefix(name, ReservedPrefix); ok && !ValidSystemName(rest) {
+		return fmt.Errorf("%q: a system: name is segments of lowercase letters, digits, '_' or '-', "+
+			"separated by ':'", name)
+	}
+	return ValidateRunAs(name, func(n string) bool { return !IsRelaIdentity(n) })
+}
+
 // trimReservedNoise strips the leading characters that carry no identity but
 // could hide a reserved prefix: ASCII whitespace and C0/DEL control codes.
 //

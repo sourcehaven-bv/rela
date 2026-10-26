@@ -64,7 +64,15 @@
 // the new session and due time, then the notice, then the audit record. A
 // crash after meta.yaml leaves the session moved with no notice and no
 // audit record, and the timer does not fire again: the new state's due
-// time is already stored. A reminder post writes meta.yaml with the raised
+// time is already stored.
+//
+// A move whose notice carries a job outputs mark (a timer's, or a
+// trigger's post) also writes its log records into meta.yaml
+// (meta.JobRecords). The next append, timer fire or pending scan
+// ([Store.StalePending]) appends the records the log lacks, so the mark,
+// its run_as writes and its on_final close survive the crash; only the
+// audit record can still be missing. A person's mark has no such stash:
+// the crash drops it with its notice. A reminder post writes meta.yaml with the raised
 // count and last post time, then the reminder message; a crash in between
 // loses that reminder, and never posts it twice.
 package filechannels
@@ -321,6 +329,48 @@ func setPending(m *meta, seq int64, a channels.Action) {
 	m.Pending[seq] = pendingRef{Name: a.Name, At: a.PendingAt}
 }
 
+// isJobNotice reports whether notice carries a job outputs mark.
+func isJobNotice(notice channels.Message) bool {
+	return notice.Action != nil && notice.Action.Outputs != nil && notice.Action.Outputs.Job
+}
+
+// logEnd returns the log's last seq for k, after appending the records of a
+// job move that meta.yaml holds and the log lacks (see replayJobRecords).
+func (d *disk) logEnd(k channels.Key, m *meta) (int64, error) {
+	last, err := d.lastSeq(k)
+	if err != nil {
+		return 0, err
+	}
+	return d.replayJobRecords(k, m, last)
+}
+
+// replayJobRecords appends the stashed records of a job move that the log
+// lacks, when they continue the log at last, and returns the log's new last
+// seq. It clears the stash; the caller writes meta.yaml.
+func (d *disk) replayJobRecords(k channels.Key, m *meta, last int64) (int64, error) {
+	recs := m.JobRecords
+	m.JobRecords = nil
+	var missing []segRecord
+	next := last + 1
+	for _, r := range recs {
+		if r.Seq <= last {
+			continue
+		}
+		if r.Seq != next {
+			return last, nil
+		}
+		missing = append(missing, segRecord{idx: r.Idx, rec: []byte(r.Line)})
+		next++
+	}
+	if len(missing) == 0 || next-1 != m.LastSeq {
+		return last, nil
+	}
+	if err := d.appendRecords(k, missing); err != nil {
+		return last, err
+	}
+	return next - 1, nil
+}
+
 // dropDangling drops the pending refs above last, the log's last seq. An
 // append writes meta.yaml before its log line, so a crash in between
 // leaves a ref at a seq the log does not hold, and the next append would
@@ -360,6 +410,31 @@ type meta struct {
 	// The session's reminder records. A meta.yaml from before reminders
 	// has none.
 	SessionReminders map[string]reminderMeta `yaml:"session_reminders,omitempty"`
+	// JobRecords are the log records of the last move whose notice carries
+	// a job outputs mark, written with the move in this meta.yaml. A crash
+	// before they reach the log is repaired by replayJobRecords.
+	JobRecords []jobRecord `yaml:"job_records,omitempty"`
+}
+
+// jobRecord is one log record of a job move: its seq, its segment and the
+// encoded line.
+type jobRecord struct {
+	Seq  int64  `yaml:"seq"`
+	Idx  int64  `yaml:"idx"`
+	Line string `yaml:"line"`
+}
+
+// stashJob records recs in m when notice carries a job outputs mark, so a
+// crash between meta.yaml and the log cannot lose the mark; otherwise it
+// clears any earlier stash. seqs are the seqs of recs, in order.
+func stashJob(m *meta, notice channels.Message, recs []segRecord, seqs []int64) {
+	m.JobRecords = nil
+	if !isJobNotice(notice) {
+		return
+	}
+	for i, r := range recs {
+		m.JobRecords = append(m.JobRecords, jobRecord{Seq: seqs[i], Idx: r.idx, Line: string(r.rec)})
+	}
 }
 
 // reminderMeta is one [channels.ReminderRecord] in meta.yaml, its times

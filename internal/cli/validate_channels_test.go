@@ -21,7 +21,7 @@ func TestValidate_ChannelsAgainstRealtime(t *testing.T) {
 		require.NoError(t, err)
 		require.NotNil(t, result.Metamodel)
 		result.DataEntryValid = true
-		return reportChannelsValidation(context.Background(), result, false)
+		return reportRealtimeValidation(context.Background(), result, false)
 	}
 	// No channels: section: nothing to check.
 	writeProjectFile(t, root, "data-entry.yaml", "version: \"1.0\"\n")
@@ -41,7 +41,52 @@ func TestValidate_ChannelsAgainstRealtime(t *testing.T) {
 	writeProjectFile(t, root, "realtime.yaml", "version: 1\nchannel_types: {room: {bogus: 1}}\n")
 	require.True(t, check(), "a broken realtime.yaml is a failed check")
 
-	require.True(t, reportChannelsValidation(context.Background(), &projectsetup.ValidateResult{
+	require.True(t, reportRealtimeValidation(context.Background(), &projectsetup.ValidateResult{
 		ProjectRoot: root, DataEntryValid: true,
 	}, true), "an earlier failure skips the check and stays reported")
+}
+
+// TestValidate_RealtimeRunAsGrant pins that `rela validate` loads
+// realtime.yaml, and runs its session run_as grant check, when
+// data-entry.yaml has no channels: section: an ungranted run_as fails the
+// command, and granting it passes.
+func TestValidate_RealtimeRunAsGrant(t *testing.T) {
+	root := seedProject(t)
+	prev := projectPath
+	projectPath = root
+	t.Cleanup(func() { projectPath = prev })
+	writeProjectFile(t, root, "realtime.yaml", `version: 1
+channel_types:
+  watch:
+    attach_to: [item]
+    roles:
+      member: { from: attached }
+    message_types:
+      text: { properties: { body: { type: string } }, post: [member] }
+    session:
+      initial: waiting
+      run_as: system:bot
+      states:
+        waiting:
+          after:
+            soon:
+              period: 1m
+              to: done
+              outputs:
+                - set: { properties: { title: late } }
+        done: { final: true }
+`)
+	run := func() (string, error) {
+		return captureStdout(t, func() error { return (&ValidateCmd{}).Run(context.Background()) })
+	}
+	writeProjectFile(t, root, "acl.yaml", "roles:\n  bot: { read: [item] }\nassignments: { system:bot: bot }\n")
+	out, err := run()
+	require.Error(t, err)
+	require.Contains(t, out, "system:bot cannot update item")
+
+	writeProjectFile(t, root, "acl.yaml", "roles:\n  bot: { read: [item], update: [item] }\n"+
+		"assignments: { system:bot: bot }\n")
+	out, err = run()
+	require.NoError(t, err, out)
+	require.Contains(t, out, "✓ realtime.yaml is valid")
 }

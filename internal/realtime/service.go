@@ -408,6 +408,7 @@ func (s *Service) runInline(c *call, notice int64, plan *outputPlan) *OutputsVie
 	if c.head != nil {
 		r.title = c.head.Title
 	}
+	r.plan = resolveMark(c.snap, c.key, r.cause, r.notice.Action.Outputs)
 	if s.outputs.holdInline(c.ctx, &r, plan.claim) {
 		s.outputs.run(c.ctx, &r)
 	}

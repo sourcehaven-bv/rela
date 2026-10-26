@@ -84,6 +84,9 @@ type ChannelSessionTimer struct {
 	To    string `json:"to"`
 	Since string `json:"since"`
 	DueAt string `json:"due_at,omitempty"`
+	// Outputs is the number of graph writes the timer's move makes (its
+	// `outputs:`), written as the session's run_as.
+	Outputs int `json:"outputs,omitempty"`
 }
 
 // ChannelSessionTransition is one transition out of the session's current
@@ -222,11 +225,12 @@ type ChannelMessageOutputs struct {
 // did. Kind is set, create or close, or transition for the one result of
 // a mark whose transition the config no longer declares; Status is done,
 // failed, skipped, superseded, or started while a create runs. Code says
-// why an output failed and never quotes an error. Props are, for a set,
-// the properties written, and for an invalid output, the properties the
-// validation named. Face is the face a set writes when the output names
-// one. Entity is the entity a create made, restricted when the reader
-// cannot read it.
+// why an output failed and never quotes an error; run_as_changed fails the
+// outputs of a timer or trigger move whose writer is no longer the
+// session's run_as. Props are, for a set, the properties written, and for
+// an invalid output, the properties the validation named. Face is the face
+// a set writes when the output names one. Entity is the entity a create
+// made, restricted when the reader cannot read it.
 type ChannelMessageOutputResult struct {
 	Kind     string   `json:"kind"`
 	Status   string   `json:"status"`

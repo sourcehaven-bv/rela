@@ -29,14 +29,6 @@ const OutputsActionName = "outputs"
 // state closes the channel.
 const OnFinalClose = "close"
 
-// runAsFollowUp names the follow-up that lets outputs write as an identity
-// other than the poster.
-const runAsFollowUp = "TKT-RAN1YA"
-
-// runAsLater ends the reason given for every output this release cannot
-// run, because it needs a writer other than the poster.
-const runAsLater = "a run_as identity, which arrives in a later release (" + runAsFollowUp + ")"
-
 // Output is one entry of a transition's `outputs:` list. It is immutable:
 // its properties are unexported and [Output.Properties] returns a copy.
 type Output struct {
@@ -53,6 +45,9 @@ type Output struct {
 	// anchor with, or empty.
 	Relate string
 	props  map[string]Template
+	// key is the output's key path in realtime.yaml, for the grant check's
+	// problems.
+	key string
 }
 
 // Properties returns the output's property templates by entity property
@@ -66,6 +61,18 @@ func (o Output) PropertyNames() []string { return sortedKeys(o.props) }
 // copy.
 func (t Transition) Outputs() []Output { return slices.Clone(t.outputs) }
 
+// Job reports whether a trigger can fire t, so its outputs write as the
+// session's run_as when a trigger's post fires it.
+func (t Transition) Job() bool { return t.job }
+
+// Outputs returns the timer's outputs in file order. The slice is a copy.
+// They write as [Session.RunAs].
+func (t SessionTimer) Outputs() []Output { return slices.Clone(t.outputs) }
+
+// RunAs is `session.run_as`: the job identity that writes the outputs of
+// timer moves and of moves a trigger fires, or empty.
+func (s *Session) RunAs() string { return s.runAs }
+
 // OnFinal is `session.on_final`: [OnFinalClose], or empty.
 func (s *Session) OnFinal() string { return s.onFinal }
 
@@ -75,19 +82,17 @@ func (s *Session) OnFinal() string { return s.onFinal }
 // validator, which is at its method budget.
 type writeChecker struct{ *validator }
 
-// outputs compiles a transition's `outputs:`. mt is the cause message
-// type, or nil when it is unusable.
-func (v writeChecker) outputs(key string, raw []rawOutput, t Transition, mt *MessageType, ct *ChannelType) []Output {
+// outputs compiles the `outputs:` of a transition or a timer. c is the
+// cause of the move; a message cause with an unusable message type
+// compiles nothing.
+func (v writeChecker) outputs(key string, raw []rawOutput, c outputCause, ct *ChannelType) []Output {
 	if len(raw) == 0 {
 		return nil
 	}
 	if len(raw) > realtimelimits.MaxTransitionOutputs {
-		v.add(key, fmt.Sprintf("at most %d outputs per transition", realtimelimits.MaxTransitionOutputs))
+		v.add(key, fmt.Sprintf("at most %d outputs per transition or timer", realtimelimits.MaxTransitionOutputs))
 	}
-	if t.By == TransitionByTrigger {
-		v.add(key, "outputs on a by: trigger transition need "+runAsLater+"; remove the outputs")
-	}
-	if mt == nil {
+	if c.kind != causeTimer && c.mt == nil {
 		return nil
 	}
 	var out []Output
@@ -104,9 +109,9 @@ func (v writeChecker) outputs(key string, raw []rawOutput, t Transition, mt *Mes
 				v.add(ok, "at most one set per transition; put every property in one set")
 				continue
 			}
-			out = append(out, v.setOutput(ok+".set", r.Set, mt, ct))
+			out = append(out, v.setOutput(ok+".set", r.Set, c, ct))
 		case r.Create != nil:
-			out = append(out, v.createOutput(ok+".create", r.Create, mt, ct))
+			out = append(out, v.createOutput(ok+".create", r.Create, c, ct))
 		default:
 			v.add(ok, "an output names set or create")
 		}
@@ -118,8 +123,8 @@ func (v writeChecker) outputs(key string, raw []rawOutput, t Transition, mt *Mes
 // Its templates are compiled against the first attach_to type, so a
 // property must have one type across all of them: a value is shaped for
 // its property type.
-func (v writeChecker) setOutput(key string, raw *rawSetOutput, mt *MessageType, ct *ChannelType) Output {
-	o := Output{Kind: OutputSet, Face: raw.Face}
+func (v writeChecker) setOutput(key string, raw *rawSetOutput, c outputCause, ct *ChannelType) Output {
+	o := Output{Kind: OutputSet, Face: raw.Face, key: key}
 	v.setFace(key+".face", raw.Face, ct)
 	first := map[string]string{}
 	for _, typ := range ct.AttachTo {
@@ -127,7 +132,7 @@ func (v writeChecker) setOutput(key string, raw *rawSetOutput, mt *MessageType, 
 		if !ok {
 			continue
 		}
-		props := v.outputProps(key+".properties", raw.Properties, typ, def, mt)
+		props := v.outputProps(key+".properties", raw.Properties, typ, def, c)
 		if o.props == nil {
 			o.props = props
 		}
@@ -180,8 +185,8 @@ func (v writeChecker) setFace(key, face string, ct *ChannelType) {
 
 // createOutput compiles a `create:` output. Its type, face, required
 // property and relate checks are the promote_to checks.
-func (v writeChecker) createOutput(key string, raw *rawCreateOutput, mt *MessageType, ct *ChannelType) Output {
-	o := Output{Kind: OutputCreate, Type: raw.Type, Face: raw.Face}
+func (v writeChecker) createOutput(key string, raw *rawCreateOutput, c outputCause, ct *ChannelType) Output {
+	o := Output{Kind: OutputCreate, Type: raw.Type, Face: raw.Face, key: key}
 	if raw.Relate != nil {
 		o.Relate = raw.Relate.Type
 	}
@@ -192,7 +197,7 @@ func (v writeChecker) createOutput(key string, raw *rawCreateOutput, mt *Message
 	if def == nil {
 		return o
 	}
-	o.props = v.outputProps(key+".properties", raw.Properties, raw.Type, def, mt)
+	o.props = v.outputProps(key+".properties", raw.Properties, raw.Type, def, c)
 	for _, ep := range requiredProps(def) {
 		rv, set := raw.Properties[ep]
 		if !set {
@@ -200,8 +205,8 @@ func (v writeChecker) createOutput(key string, raw *rawCreateOutput, mt *Message
 			continue
 		}
 		s, _ := rv.(string)
-		if parts, _ := splitTemplate(s); len(parts) == 1 && parts[0].ref != "" {
-			if p, ok := mt.Properties[strings.TrimPrefix(parts[0].ref, msgPrefix)]; ok && !p.Required {
+		if parts, _ := splitTemplate(s); len(parts) == 1 && parts[0].ref != "" && c.mt != nil {
+			if p, ok := c.mt.Properties[strings.TrimPrefix(parts[0].ref, msgPrefix)]; ok && !p.Required {
 				v.add(key+".properties."+ep, fmt.Sprintf("%s requires property %q, but message property %s is "+
 					"optional; mark it required", raw.Type, ep, p.Name))
 			}
@@ -213,7 +218,7 @@ func (v writeChecker) createOutput(key string, raw *rawCreateOutput, mt *Message
 // outputProps compiles the property templates of an output against
 // entity type typ. A property with a problem is left out.
 func (v writeChecker) outputProps(
-	key string, raw map[string]any, typ string, def *metamodel.EntityDef, mt *MessageType,
+	key string, raw map[string]any, typ string, def *metamodel.EntityDef, c outputCause,
 ) map[string]Template {
 	out := make(map[string]Template, len(raw))
 	for _, name := range sortedKeys(raw) {
@@ -233,7 +238,7 @@ func (v writeChecker) outputProps(
 			v.add(pk, fmt.Sprintf("%s.%s is an external_ref property; only an integration writes it", typ, name))
 			continue
 		}
-		t, reason := v.compileTemplate(raw[name], templateTarget{entityType: typ, name: name, def: pd}, mt)
+		t, reason := v.compileTemplate(raw[name], templateTarget{entityType: typ, name: name, def: pd}, c)
 		if reason != "" {
 			v.add(pk, reason)
 			continue
@@ -241,6 +246,17 @@ func (v writeChecker) outputProps(
 		out[name] = t
 	}
 	return out
+}
+
+// transitionCause classifies a transition: a job message when only a
+// trigger fires it (by: trigger) or a trigger can (no roles, and a trigger
+// posts its message type into ct), else a person.
+func transitionCause(file *rawFile, ct string, t Transition, mt *MessageType) outputCause {
+	c := outputCause{kind: causePerson, mt: mt}
+	if t.By == TransitionByTrigger || (len(t.Roles) == 0 && triggerReachable(file, ct, t.MessageType) != "") {
+		c.kind = causeJobMessage
+	}
+	return c
 }
 
 // triggerReachable reports the trigger that posts message type msgType

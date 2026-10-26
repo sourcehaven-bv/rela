@@ -118,6 +118,7 @@
     "due_at",
     "label",
     "name",
+    "outputs",
     "since",
     "to"
   ],

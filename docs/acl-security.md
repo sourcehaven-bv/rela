@@ -1803,6 +1803,39 @@ the realtime guide.
   client fetches the messages through the same gated `GET` as any other
   read.
 
+## Session `run_as` identities
+
+A session in `realtime.yaml` may name a job identity in `session.run_as`,
+such as `system:breach-bot`. The outputs of its timer and trigger moves
+write as that identity, with tool `realtime`. The realtime guide describes
+the key; this section covers what it means for `acl.yaml`.
+
+- **It gets only what `acl.yaml` names.** The identity's roles are its
+  `assignments` entry and the `everyone` role. A role conferred by a
+  relation (`role_relations`) or by an asserted claim
+  (`asserted_role_assignments`) never applies to it: no request carries it.
+- **It cannot pass for rela.** The name follows the `--run-as` rules, and
+  rela's own identities (`system:realtime`, `system:scheduler`,
+  `system:provisioner` and the others in `principal.IsRelaIdentity`) are
+  refused. A trigger post therefore never writes with `system:realtime`.
+- **Grants are checked when the file loads.** rela refuses a
+  `realtime.yaml` whose `run_as` lacks a grant its outputs need: update,
+  create, field, option or relation grants. The check runs everywhere the
+  file loads, so a reload or an `acl.yaml` change cannot slip an ungranted
+  identity in; a hot reload keeps the previous configuration instead.
+- **Grants are checked again at the write.** The write path authorizes the
+  identity against `acl.yaml` as it is then, with field grants and their
+  `when:`. A grant removed after the load makes the output fail.
+- **A changed `run_as` writes nothing.** A pending write records the
+  identity in force at the move. If the file names another identity when
+  the write runs, the outputs fail `run_as_changed`.
+- **Templates cannot launder untrusted text.** The outputs of these moves
+  cannot read `channel.title` or `message.author`, and a timer's cannot
+  read `message.*`. The values they write are literals from the file, a
+  trigger's literal props, or session and time values.
+- **The audit log names it.** Each write is recorded with `run_as` as the
+  user and the session's `triggered_by`.
+
 ## What still leaks (deferred)
 
 - **`/api/v1/_position` per-id semantics** — `_position` is gated on
