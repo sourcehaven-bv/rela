@@ -183,6 +183,9 @@ async function submit() {
         <li v-for="face in preview.invalid_faces" :key="face">{{ face }}</li>
       </ul>
     </section>
+    <p v-if="reviewed" class="convert-ready" aria-live="polite">
+      Review done. Choose Convert to turn {{ source.id }} into a new {{ targetLabel }}.
+    </p>
     <section v-if="reviewed && preview?.moves?.length" class="convert-warning" aria-live="polite">
       <strong>Comments move to the new {{ targetLabel }}</strong>
       <ul>

@@ -2768,7 +2768,10 @@ including History, Export, Duplicate, Delete and the conversions, moves into the
 
 The conversion form shows mapped destination fields and any
 required fields that still need values. Its preview lists relations that will
-be remapped or dropped; the user confirms before saving. The client selects a
+be remapped or dropped; the user confirms before saving. The form has two
+steps: **Review** runs the preview, and when it passes the button changes to
+**Convert**, which saves. A refused preview or conversion shows its error in the
+form, which stays open. The client selects a
 configured conversion by name and cannot supply its own field or relation map.
 
 The conversion changes the entity type and id, while preserving comments,

@@ -258,3 +258,17 @@ func TestConversionHandler_UniqueConflictIs422(t *testing.T) {
 	_, err := f.st.GetEntity(t.Context(), entity.Ref{ID: "NOTE-1", Face: "draft"})
 	require.NoError(t, err)
 }
+
+// The preview's list fields are always JSON arrays, never null: the
+// conversion dialog reads .length on them.
+func TestConversionHandler_PreviewListsAreArrays(t *testing.T) {
+	t.Parallel()
+	f := newConversionHandlerFixture(t)
+	rec := f.send(t, "converter", "/preflight", conversionHandlerBody)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	var raw map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &raw))
+	for _, key := range []string{"required", "relations_to_drop", "invalid_relations", "target_faces", "moves"} {
+		require.NotEqual(t, "null", string(raw[key]), key)
+	}
+}
