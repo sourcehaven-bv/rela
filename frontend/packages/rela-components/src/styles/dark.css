@@ -89,59 +89,59 @@
     --rl-color-text-inverse: #0d0d0f;
 
     /*
-     * Accent. Lightened from the light theme's #2563eb, which reaches only
-     * 2.6:1 on this background. Hover moves further up rather than down,
+     * Accent. Lightened from the light theme's #5564bf, which reaches only
+     * 3.7:1 on this background. Hover moves further up rather than down,
      * because on a dark surface brighter is what reads as raised.
      */
-    --rl-color-accent: #7ba7f8;
-    --rl-color-accent-hover: #a2c2fb;
+    --rl-color-accent: #82b5fa;
+    --rl-color-accent-hover: #a2cafd;
     /* Selection fill: the accent hue, deep enough to keep body text at AA. */
     --rl-color-bg-selected: #16233c;
 
     /*
      * Danger. The light theme uses one token for both the solid fill and the
      * text-only variant, and that survives the flip: this tone reads as text on
-     * every dark surface at 6.6:1 or better, and carries the now-dark inverse
-     * text at 8.5:1 when it is itself the fill.
+     * every dark surface at 5.1:1 or better, and carries the now-dark inverse
+     * text at 6.6:1 when it is itself the fill.
      */
-    --rl-color-danger: #f98d8d;
-    --rl-color-danger-hover: #fcb4b4;
+    --rl-color-danger: #ed7172;
+    --rl-color-danger-hover: #f59999;
     --rl-color-danger-bg: #3a1618;
     --rl-color-danger-bg-hover: #4d1d20;
 
     /* Message surfaces: deep tinted fills with a light foreground at 4.5:1. */
     --rl-color-info-bg: #14233d;
-    --rl-color-info-fg: #9dc0fb;
+    --rl-color-info-fg: #a2cafd;
     --rl-color-success-bg: #102a1a;
-    --rl-color-success-fg: #7cd79a;
+    --rl-color-success-fg: #5fd28c;
     --rl-color-warning-bg: #2e1f0a;
-    --rl-color-warning-fg: #f0b871;
+    --rl-color-warning-fg: #ffb84d;
 
     /* Status dots. Non-text, so these need 3:1 rather than 4.5:1. */
-    --rl-color-status-green: #4ade80;
-    --rl-color-status-amber: #fbbf24;
-    --rl-color-status-red: #f87171;
-    --rl-color-status-grey: #9ca3af;
-    --rl-color-status-blue: #7ba7f8;
+    --rl-color-status-green: #28c772;
+    --rl-color-status-amber: #ffa826;
+    --rl-color-status-red: #f74f4d;
+    --rl-color-status-grey: #8f929c;
+    --rl-color-status-blue: #82b5fa;
 
     /* Tag palette: the light theme's soft fill inverted into a deep one. */
     --rl-tag-grey-bg: #26262c;
     --rl-tag-grey-fg: #b8bcc3;
     --rl-tag-blue-bg: #16253f;
-    --rl-tag-blue-fg: #9dc0fb;
+    --rl-tag-blue-fg: #a2cafd;
     --rl-tag-green-bg: #102a1a;
-    --rl-tag-green-fg: #7cd79a;
+    --rl-tag-green-fg: #5fd28c;
     --rl-tag-amber-bg: #2e1f0a;
-    --rl-tag-amber-fg: #f0b871;
+    --rl-tag-amber-fg: #ffb84d;
     --rl-tag-red-bg: #3a1618;
-    --rl-tag-red-fg: #f98d8d;
+    --rl-tag-red-fg: #ed7172;
     --rl-tag-purple-bg: #251a3d;
     --rl-tag-purple-fg: #c4a9f7;
 
     /* Accents used by single components */
     --rl-color-starred: #e2b13c;
-    --rl-color-focus: #7ba7f8;
-    --rl-color-error-ring: #f98d8d;
+    --rl-color-focus: #82b5fa;
+    --rl-color-error-ring: #ed7172;
 
     /*
      * Attachment type colours. The glyph on top is `--rl-color-text-inverse`,
@@ -225,59 +225,59 @@
   --rl-color-text-inverse: #0d0d0f;
 
   /*
-   * Accent. Lightened from the light theme's #2563eb, which reaches only
-   * 2.6:1 on this background. Hover moves further up rather than down,
+   * Accent. Lightened from the light theme's #5564bf, which reaches only
+   * 3.7:1 on this background. Hover moves further up rather than down,
    * because on a dark surface brighter is what reads as raised.
    */
-  --rl-color-accent: #7ba7f8;
-  --rl-color-accent-hover: #a2c2fb;
+  --rl-color-accent: #82b5fa;
+  --rl-color-accent-hover: #a2cafd;
   /* Selection fill: the accent hue, deep enough to keep body text at AA. */
   --rl-color-bg-selected: #16233c;
 
   /*
    * Danger. The light theme uses one token for both the solid fill and the
    * text-only variant, and that survives the flip: this tone reads as text on
-   * every dark surface at 6.6:1 or better, and carries the now-dark inverse
-   * text at 8.5:1 when it is itself the fill.
+   * every dark surface at 5.1:1 or better, and carries the now-dark inverse
+   * text at 6.6:1 when it is itself the fill.
    */
-  --rl-color-danger: #f98d8d;
-  --rl-color-danger-hover: #fcb4b4;
+  --rl-color-danger: #ed7172;
+  --rl-color-danger-hover: #f59999;
   --rl-color-danger-bg: #3a1618;
   --rl-color-danger-bg-hover: #4d1d20;
 
   /* Message surfaces: deep tinted fills with a light foreground at 4.5:1. */
   --rl-color-info-bg: #14233d;
-  --rl-color-info-fg: #9dc0fb;
+  --rl-color-info-fg: #a2cafd;
   --rl-color-success-bg: #102a1a;
-  --rl-color-success-fg: #7cd79a;
+  --rl-color-success-fg: #5fd28c;
   --rl-color-warning-bg: #2e1f0a;
-  --rl-color-warning-fg: #f0b871;
+  --rl-color-warning-fg: #ffb84d;
 
   /* Status dots. Non-text, so these need 3:1 rather than 4.5:1. */
-  --rl-color-status-green: #4ade80;
-  --rl-color-status-amber: #fbbf24;
-  --rl-color-status-red: #f87171;
-  --rl-color-status-grey: #9ca3af;
-  --rl-color-status-blue: #7ba7f8;
+  --rl-color-status-green: #28c772;
+  --rl-color-status-amber: #ffa826;
+  --rl-color-status-red: #f74f4d;
+  --rl-color-status-grey: #8f929c;
+  --rl-color-status-blue: #82b5fa;
 
   /* Tag palette: the light theme's soft fill inverted into a deep one. */
   --rl-tag-grey-bg: #26262c;
   --rl-tag-grey-fg: #b8bcc3;
   --rl-tag-blue-bg: #16253f;
-  --rl-tag-blue-fg: #9dc0fb;
+  --rl-tag-blue-fg: #a2cafd;
   --rl-tag-green-bg: #102a1a;
-  --rl-tag-green-fg: #7cd79a;
+  --rl-tag-green-fg: #5fd28c;
   --rl-tag-amber-bg: #2e1f0a;
-  --rl-tag-amber-fg: #f0b871;
+  --rl-tag-amber-fg: #ffb84d;
   --rl-tag-red-bg: #3a1618;
-  --rl-tag-red-fg: #f98d8d;
+  --rl-tag-red-fg: #ed7172;
   --rl-tag-purple-bg: #251a3d;
   --rl-tag-purple-fg: #c4a9f7;
 
   /* Accents used by single components */
   --rl-color-starred: #e2b13c;
-  --rl-color-focus: #7ba7f8;
-  --rl-color-error-ring: #f98d8d;
+  --rl-color-focus: #82b5fa;
+  --rl-color-error-ring: #ed7172;
 
   /*
    * Attachment type colours. The glyph on top is `--rl-color-text-inverse`,

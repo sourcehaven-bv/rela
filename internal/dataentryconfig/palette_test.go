@@ -450,3 +450,69 @@ palette:
 	assert.Equal(t, "#1e40af", cfg.Palette.Badges["blue"])
 	assert.True(t, cfg.Palette.Dark.IsDisabled())
 }
+
+func TestResolvePaletteRLTokens(t *testing.T) {
+	t.Run("no palette sets no library tokens", func(t *testing.T) {
+		r := ResolvePalette(nil, nil)
+		for name := range r.Light {
+			assert.NotContains(t, name, "--rl-", "built-in defaults must not repaint the library")
+		}
+		for name := range r.Dark {
+			assert.NotContains(t, name, "--rl-")
+		}
+	})
+
+	t.Run("configured accent and badges map onto library tokens", func(t *testing.T) {
+		project := &PaletteConfig{
+			PaletteColors: PaletteColors{Accent: "#6696f5"},
+			Badges:        map[string]string{"green": "#007a34", "yellow": "#f57f17"},
+		}
+		r := ResolvePalette(project, nil)
+		assert.Equal(t, "#6696f5", r.Light["--rl-color-accent"])
+		assert.Equal(t, adjustLightness("#6696f5", -rlAccentHoverDelta), r.Light["--rl-color-accent-hover"])
+		assert.Equal(t, "#007a34", r.Light["--rl-color-status-green"])
+		assert.Equal(t, "#007a34", r.Light["--rl-tag-green-fg"], "badges read the tag text color")
+		assert.Equal(t, "#f57f17", r.Light["--rl-tag-amber-fg"])
+		assert.Equal(t, "#f57f17", r.Light["--rl-color-status-amber"], "yellow paints amber when orange is unset")
+		assert.NotContains(t, r.Light, "--rl-color-status-red")
+	})
+
+	t.Run("orange wins amber over yellow", func(t *testing.T) {
+		project := &PaletteConfig{Badges: map[string]string{"orange": "#e65200", "yellow": "#f57f17"}}
+		assert.Equal(t, "#e65200", ResolvePalette(project, nil).Light["--rl-color-status-amber"])
+	})
+
+	t.Run("user overrides project", func(t *testing.T) {
+		project := &PaletteConfig{PaletteColors: PaletteColors{Accent: "#6696f5"}}
+		user := &PaletteConfig{PaletteColors: PaletteColors{Accent: "#0ea5e9"}}
+		assert.Equal(t, "#0ea5e9", ResolvePalette(project, user).Light["--rl-color-accent"])
+	})
+
+	t.Run("light-only override restates the library dark value", func(t *testing.T) {
+		project := &PaletteConfig{PaletteColors: PaletteColors{Accent: "#6696f5"}}
+		r := ResolvePalette(project, nil)
+		assert.Equal(t, rlDefaultDarkTokens["--rl-color-accent"], r.Dark["--rl-color-accent"])
+		assert.Equal(t, rlDefaultDarkTokens["--rl-color-accent-hover"], r.Dark["--rl-color-accent-hover"])
+	})
+
+	t.Run("explicit dark palette sets dark library tokens", func(t *testing.T) {
+		project := &PaletteConfig{
+			PaletteColors: PaletteColors{Accent: "#6696f5"},
+			Dark: DarkMode{Explicit: &DarkPalette{
+				PaletteColors: PaletteColors{Accent: "#82b5fa"},
+				Badges:        map[string]string{"red": "#f74f4d"},
+			}},
+		}
+		r := ResolvePalette(project, nil)
+		assert.Equal(t, "#82b5fa", r.Dark["--rl-color-accent"])
+		assert.Equal(t, adjustLightness("#82b5fa", rlAccentHoverDelta), r.Dark["--rl-color-accent-hover"])
+		assert.Equal(t, "#f74f4d", r.Dark["--rl-color-status-red"])
+	})
+
+	t.Run("dark disabled emits no dark map", func(t *testing.T) {
+		project := &PaletteConfig{PaletteColors: PaletteColors{Accent: "#6696f5"}, Dark: DarkMode{Disabled: true}}
+		r := ResolvePalette(project, nil)
+		assert.Equal(t, "#6696f5", r.Light["--rl-color-accent"])
+		assert.Empty(t, r.Dark)
+	})
+}

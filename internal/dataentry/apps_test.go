@@ -862,3 +862,42 @@ func TestPaletteCarriesEveryDefaultToken(t *testing.T) {
 			"renders nothing for every palette-configured project.", len(missing), missing)
 	}
 }
+
+// TestRLDefaultDarkTokensMatchLibrary pins the dark values ResolvePalette
+// restates for a light-only override to rela-components' own dark palette. If
+// they drift, a project that recolours the light theme gets stale dark tokens.
+func TestRLDefaultDarkTokensMatchLibrary(t *testing.T) {
+	_, dark, ok := strings.Cut(appTokensCSS, "\n.dark {")
+	if !ok {
+		t.Fatal("apps_tokens.css has no .dark block — the parser, not the code, is wrong")
+	}
+	dark, _, _ = strings.Cut(dark, "}")
+	library := map[string]string{}
+	for line := range strings.SplitSeq(dark, "\n") {
+		name, value, ok := strings.Cut(strings.TrimSpace(line), ":")
+		if ok {
+			library[name] = strings.TrimSuffix(strings.TrimSpace(value), ";")
+		}
+	}
+
+	resolved := ResolvePalette(&PaletteConfig{
+		PaletteColors: PaletteColors{Accent: "#6696f5"},
+		Badges: map[string]string{
+			"blue": "#6696f5", "green": "#00bc58", "red": "#fc3b31", "gray": "#8f929c", "orange": "#ff9800",
+			"purple": "#8b5cf6",
+		},
+	}, nil)
+	var checked int
+	for name, value := range resolved.Dark {
+		if !strings.HasPrefix(name, "--rl-") {
+			continue
+		}
+		checked++
+		if library[name] != value {
+			t.Errorf("%s: palette restates %q, library dark is %q", name, value, library[name])
+		}
+	}
+	if checked != 13 {
+		t.Errorf("restated %d library tokens for dark mode, want 13", checked)
+	}
+}

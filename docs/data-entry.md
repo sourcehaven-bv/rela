@@ -425,6 +425,26 @@ and form select options.
 
 **Available colors:** `red`, `orange`, `yellow`, `green`, `blue`, `purple`, `gray`.
 
+The built-in colors follow the Atlas UI kit, using the shades that meet WCAG
+AA. To change what those colors look like, set a `palette:` block. `accent` colors
+buttons, links and selection. Each entry under `badges` colors the badges and
+kanban column dots of that style color:
+
+```yaml
+palette:
+  accent: '#0f6e5c'
+  badges:
+    green: '#1a7f37'
+    orange: '#9a4400'
+```
+
+Only the values you set change; everything else keeps the built-in look.
+`orange` and `yellow` share one color, and `orange` wins when both are set.
+`purple` is drawn with the accent. These values apply to the light theme. For
+dark mode, set them under `dark:`; without that, dark mode keeps its built-in
+colors. Text drawn in these colors must stay readable, so check each one against
+WCAG AA (4.5:1 for text on a white background).
+
 For customisation beyond palette and theme — arbitrary CSS, JavaScript and
 assets against rela's own UI, from a `custom/` directory in your project — see
 [Operator customisation hooks](customisation.md). That is an explicitly
