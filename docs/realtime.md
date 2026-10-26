@@ -1309,7 +1309,10 @@ the reader cannot read shows as `{"restricted": true}`:
 "outputs": {
   "status": "failed", "writer": { "user": "dana", "tool": "data-entry" },
   "results": [
-    { "kind": "create", "status": "done", "entity": { "id": "TL-4", "type": "timeline-entry", "title": "Contained by dana" } },
+    {
+      "kind": "create", "status": "done",
+      "entity": { "id": "TL-4", "type": "timeline-entry", "title": "Contained by dana" }
+    },
     { "kind": "set", "status": "failed", "code": "invalid", "props": ["risk"] }
   ]
 }
