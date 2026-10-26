@@ -413,6 +413,7 @@ channel_types:
       label: GDPR breach response
       initial: detected
       on_final: close
+      run_as: system:breach-bot
       states:
         detected:
           label: Detected
@@ -442,7 +443,13 @@ channel_types:
                 - set: { properties: { risk: "{{message.risk}}" } }
             escalate-stalled: { to: overdue, when: "session.reminders['status-update'] >= 3" }
           after:
-            notify-deadline: { period: 72h, since: session, to: overdue, label: 72 hours since detection }
+            notify-deadline:
+              period: 72h
+              since: session
+              to: overdue
+              label: 72 hours since detection
+              outputs:
+                - set: { properties: { escalated: true } }
         assessed:
           label: Risk assessed
           on:
@@ -452,7 +459,13 @@ channel_types:
               outputs:
                 - set: { properties: { status: notified, reference: "{{message.reference}}" } }
           after:
-            notify-deadline: { period: 72h, since: session, to: overdue, label: 72 hours since detection }
+            notify-deadline:
+              period: 72h
+              since: session
+              to: overdue
+              label: 72 hours since detection
+              outputs:
+                - set: { properties: { escalated: true } }
         overdue:
           label: Notification overdue
           on:
@@ -486,11 +499,12 @@ channel_types:
 | `states.<name>.after` | The timers of the state, keyed by timer name. At most 8. See [Timers](#timers). |
 | `session.reminders` | Messages the session posts at a fixed interval, keyed by reminder name. At most 8. See [Reminders](#reminders). |
 | `session.on_final` | `close`: a move into any final state closes the channel. See [Outputs](#outputs). |
+| `session.run_as` | The job identity that writes the outputs of timer and trigger moves. See [Outputs](#outputs). |
 | `on.<type>.to` | The state the message moves the session to. It may be the same state: a re-entry. |
 | `on.<type>.roles` | Only a poster holding one of these roles moves the session. Each role must be in the message type's `post`. |
 | `on.<type>.by` | `trigger`: only a trigger's message moves the session. |
 | `on.<type>.when` | A condition the message must meet to move the session. |
-| `on.<type>.outputs` | Graph writes the move makes, as the poster. At most 4. See [Outputs](#outputs). |
+| `on.<type>.outputs` | Graph writes the move makes, as the poster, or as `run_as` for a trigger's move. At most 4. See [Outputs](#outputs). |
 
 **How a message moves a session.** A posted message moves the session when,
 at the moment it is stored, the channel is open, the current state has an
@@ -587,6 +601,7 @@ detected.
 | `after.<name>.since` | What the period counts from. `state` (the default): from when the session entered the state, or from the channel's creation for a session that never moved. `session`: from the channel's creation. |
 | `after.<name>.to` | The state the timer moves the session to. Required. |
 | `after.<name>.label` | The timer's name for people. Defaults to the timer name. |
+| `after.<name>.outputs` | Graph writes the timer's move makes, as `session.run_as`. At most 4. See [Outputs](#outputs). |
 
 Use `since: session` for a deadline that runs across states, such as the 72
 hours to notify the authority: it keeps counting from the detection while the
@@ -609,8 +624,8 @@ otherwise, for example after a post through `rela channel` or stdio
 move, with the prop `timer` (the timer's name) instead of `cause`. The
 channel's audit trail records it with the author `system:realtime` and
 `triggered_by: timer:<channel type>/<state>/<timer>`, for example
-`timer:breach-response/detected/no-containment`. A timer writes nothing to
-the graph yet.
+`timer:breach-response/detected/no-containment`. A timer with `outputs`
+writes them as `session.run_as`; see [Outputs](#outputs).
 
 **Closed channels.** A closed or archived channel does not fire timers: its
 timers are frozen. When the channel is reopened, each timer that came due
@@ -635,7 +650,12 @@ old state.
 
 **Loops.** A loop made only of timers would move the session forever
 without anyone posting, so rela refuses one, including a timer to its own
-state. A loop that passes through a message transition is allowed.
+state. A loop that passes through a transition only people can fire (one
+with `roles:`) is allowed. A loop of timers and transitions a trigger can
+fire is refused too when it has outputs on it: a timer's output can change
+what the trigger watches, and the trigger's post moves the session back,
+so the loop would write to the graph forever without a person. Without
+outputs on the loop, nothing in it changes the entity, so it is allowed.
 
 ### Reminders
 
@@ -711,7 +731,9 @@ A transition can write to the graph: set properties on the entity the
 channel is attached to, or create an entity. These writes are its
 `outputs`. In the example, a lead's `contained` message creates a timeline
 entry about the breach, `assessed` copies the risk onto the breach, and the
-privacy officer's `notified` records the status and the reference.
+privacy officer's `notified` records the status and the reference. When the
+72-hour deadline passes, the `notify-deadline` timer marks the breach
+`escalated`, as `system:breach-bot`.
 
 ```yaml
 contained:
@@ -740,8 +762,10 @@ checked against the property's type when the file loads. A template is
 with references in it, which gives a string. The references are
 `message.<property>`, `message.author`, `session.from`, `session.to`,
 `session.generation`, `channel.key`, `channel.type`, `channel.title`, `now`
-and `today`. A whole-value reference to an optional message property the
-message leaves out sets nothing; in text it becomes the empty string. A
+and `today`. The outputs of a timer or trigger move read fewer of them;
+see [Timers and triggers](#timers-and-triggers). A whole-value reference
+to an optional message property the message leaves out sets nothing; in
+text it becomes the empty string. A
 value taken from a message is never read as a template again, so a message
 cannot inject a reference. `now` and `today` are the notice time in UTC,
 not the time the write runs, so a retry writes the same values.
@@ -759,12 +783,6 @@ A poster who matched none is judged by `unmatched_principal` on a retry as
 on the post, so with `reject` neither writes. A retry for a poster whose
 user entity was removed since the post fails `forbidden`.
 
-**Timers and triggers.** Outputs on a timer, and on a transition only a
-trigger fires, are refused for now. Such writes need an identity of their
-own (`run_as`), which arrives in a later release. A transition without
-`roles:` whose message type a trigger posts into the channel type is
-refused for the same reason; add `roles:` to keep triggers out.
-
 **Checked before the post.** Before rela stores a message that would fire
 a transition with outputs, it asks whether the poster may write each
 output: update the anchor at the target face, create the type at its face,
@@ -773,6 +791,9 @@ and create the relation. If not, the post is refused with 403
 the session therefore cannot leave a failed write behind. What this check
 cannot see fails after the move instead: a property the poster may not
 write, a validation error, a unique conflict or an illegal state move.
+This check covers a person's or agent's post. A timer's or trigger's move
+is checked when the file loads instead; see
+[Timers and triggers](#timers-and-triggers).
 
 **Field grants.** Every property a `set` writes is checked against the
 poster's field grants, a literal from the file as much as a value from
@@ -785,8 +806,8 @@ from the message.
 The move stays when an output fails. A failed output stops the rest, which
 are marked `skipped`, and the notice shows the failure with a code:
 `forbidden`, `field_denied`, `invalid` (with the property names),
-`conflict`, `not_found`, `unconfirmed`, `expired`, `transition_removed` or
-`error`. A notice whose transition the file no longer declares has one
+`conflict`, `not_found`, `unconfirmed`, `expired`, `transition_removed`,
+`run_as_changed` or `error`. A notice whose transition the file no longer declares has one
 result of kind `transition`, which fails `transition_removed`. A code never quotes an error message or an id.
 
 **Retries.** A write that failed for a passing reason, or a server that
@@ -817,14 +838,15 @@ output with the property names. Warnings complete it with the warning
 codes. An output that changes the anchor can fire an entity trigger that
 posts into the same session. The trigger cooldown (one post per rule and
 entity per minute) bounds such a loop, but check your triggers before you
-add outputs that change what they watch.
+add outputs that change what they watch. A loop that also needs a timer
+is refused when the file loads; see Loops under [Timers](#timers).
 
 **on_final: close.** With `session.on_final: close`, a move into any final
 state closes the channel as the last step of the outputs. A failed output
 does not stop the close. A reopened channel in a final state is not closed
 again. The close needs no lifecycle `close` operation; reopening still
-needs `reopen`. A timer's move into a final state does not close the
-channel yet.
+needs `reopen`. A timer's or trigger's move into a final state closes the
+channel too, also when it has no outputs.
 
 **On the notice.** The notice of a move with outputs carries an `outputs`
 block in place of `action`: the status (`pending`, `done` or `failed`),
@@ -834,6 +856,102 @@ and the entity a create made (`restricted` for a
 reader who cannot read it). While the outputs run, a moderator cannot
 remove the message that caused the move, and nobody can release the mark:
 both answer 409 `outputs_pending`.
+
+### Timers and triggers
+
+A timer's move has no poster, and a trigger's message comes from
+`system:realtime`, which has no grants. Their outputs write as the
+session's `run_as`: a job identity that `acl.yaml` grants what the outputs
+need.
+
+```yaml
+session:
+  initial: detected
+  run_as: system:breach-bot
+  states:
+    contained:
+      after:
+        notify-deadline:
+          period: 72h
+          since: session
+          to: overdue
+          outputs:
+            - set: { properties: { escalated: true } }
+```
+
+```yaml
+# acl.yaml
+roles:
+  breach-bot:
+    read: [datalek]
+    update: [datalek]
+    fields:
+      datalek: [{ field: escalated }]
+assignments:
+  system:breach-bot: breach-bot
+```
+
+**Which moves write as `run_as`.** A timer's move, a move through a
+`by: trigger` transition, and a trigger's move through a transition with no
+`roles:` (a person's or agent's move through that transition still writes
+as the poster). A session that has any of these with outputs needs
+`run_as`; without it, rela refuses the file at the first such output. A
+`run_as` that no such move uses loads with a warning.
+
+**The identity.** `run_as` takes a `system:` or `integration:` name, as
+`--run-as` does: lowercase ASCII letters, digits, `-`, `_` and, for
+`system:`, `:`. rela's own identities, such as `system:realtime` or
+`system:scheduler`, are refused. The name gets only what its
+`acl.yaml` assignment and the `everyone` role grant. A role from a
+relation or an asserted claim never applies to it. `run_as` is set once per
+session; `run_as` on a transition or a timer is refused.
+
+**Checked when the file loads.** With an `acl.yaml`, rela checks that
+`run_as` holds every grant its outputs need, and refuses the file
+otherwise, with one problem per missing grant, such as
+`system:breach-bot cannot update datalek: no role assigned to it or to
+everyone grants it`. It checks update on the anchor type (on every face a
+face-anchored channel may have), create on a created type, the field
+grant of every property, the option grant of every literal enum value and
+of each value a trigger posts into it, and the relation of a `create`. A
+field grant with a `when:` counts as granted here; the write checks the
+condition. The same check runs at boot, in `rela validate`, on a reload,
+when the Configure space saves `schema.yaml`, and when the MCP server
+reloads the schema.
+
+**Checked again at the write.** The write asks `acl.yaml` as it is then.
+An output whose grant was removed since the file loaded fails `forbidden`,
+and a field whose `when:` does not hold fails `field_denied`.
+
+**What the templates read.** A timer's move has no message, so its outputs
+cannot read `message.*`. The outputs of a trigger's move read the
+trigger's message properties, which are literals from the file. Neither
+may read `message.author` or `channel.title`: the author is always
+`system:realtime`, and the title is free text from whoever created the
+channel, which must not reach a write made with `run_as`'s grants.
+
+**When they run.** The move stores a pending mark on its notice, and the
+leader process runs it right after the round that made the move. A failure
+is retried like any other (see Retries under [Outputs](#outputs)). The
+audit log records each write with `run_as` as the user, tool `realtime`
+and the same `triggered_by` as a person's output. With the file store, a
+crash right after the move cannot lose the mark: the move keeps its notice
+in the channel's `meta.yaml` until the log has it, and the next scan for
+pending marks writes it back, so its outputs and its `on_final` close
+still run. The channel audit record of such a move can be missing.
+
+**What never writes.** No output writes as rela's own `system:realtime`.
+A write that would, or a timer's or trigger's write with no `run_as`,
+fails `forbidden`. An older mark that names `system:realtime` as its
+writer runs no outputs; its close still runs. A trigger's mark whose transition a reload gave `roles:` fails
+`transition_removed`: its outputs now follow the rules for a person's
+post. A set on a channel type with several `attach_to` types writes the
+anchor only when its row is one of those types.
+
+**Changing `run_as`.** A mark records the `run_as` in force at the move.
+When the file names another `run_as` by the time the mark runs, its
+outputs fail `run_as_changed` and write nothing; an `on_final` close still
+runs. This keeps a write from running with grants nobody checked for it.
 
 ## Triggers
 
@@ -941,7 +1059,8 @@ unknown entity type "nope"`. It checks:
 - that each timer under `after:` is on a state that is not final, has a
   valid name, a `period` that parses and is at least `1m` when fixed, a
   `since` of `state` or `session`, and a `to` that exists. A state has at
-  most 8 timers, and no loop is made only of timers. The key `from` is
+  most 8 timers, no loop is made only of timers, and no loop of timers
+  and transitions a trigger can fire has outputs on it. The key `from` is
   refused with "use since: state or since: session";
 - that a session has at most 8 reminders, each with a valid name, `in:`
   states that exist, are not final and are listed once, an `every` and
@@ -964,9 +1083,11 @@ unknown entity type "nope"`. It checks:
   has the same type on every `attach_to` type; that faces follow the rules
   under [Outputs](#outputs); that `on_final` is `close`; and that no
   message type of a session type declares an action named `outputs`.
-  Outputs on a timer, on a `by: trigger` transition, or on a transition a
-  trigger can fire are refused, and so are `run_as`, `outputs` on a state
-  or a reminder, and `on_final` on a state;
+  `outputs` on a state or a reminder, `on_final` on a state, and `run_as`
+  anywhere but `session.run_as` are refused;
+- that `session.run_as` is a job identity, that a session whose timer or
+  trigger moves have outputs sets it, and that `acl.yaml` grants it what
+  those outputs write (see [Timers and triggers](#timers-and-triggers));
 - that the file has no merge key (`<<`) anywhere: write the entries out.
 
 Three more rules stop a message from revealing what `acl.yaml` hides:
@@ -989,10 +1110,11 @@ An action named `edit`, `delete`, `remove` or `release` is refused too.
 Older versions accepted such a name; a file that has one no longer loads,
 so rename the action before you upgrade.
 
-`rela validate` loads `realtime.yaml` the same way when `data-entry.yaml`
-has a `channels:` block, and checks that block against it. It prints a
-`✗` line for each problem, and one for a `realtime.yaml` that does not
-load.
+`rela validate` loads `realtime.yaml` the same way, with `acl.yaml`, so it
+also runs the `run_as` grant check. It prints a `✗` line for a
+`realtime.yaml` that does not load, and a `⚠` line for each warning. When
+`data-entry.yaml` has a `channels:` block, it checks that block against
+the file too, with a `✗` line for each problem.
 
 ## Limits
 
@@ -1269,7 +1391,8 @@ the caller fires.
 `final` and `stranded` are set when they apply.
 
 `timers` lists the timers of the current state, sorted by name, each with
-its `name`, `label`, `to`, `since` and `due_at`. `due_at` on the session is
+its `name`, `label`, `to`, `since`, `due_at` and, when the timer has any,
+`outputs` (the number of outputs). `due_at` on the session is
 when the first of them comes due. Both are derived from `realtime.yaml` and
 the channel. `due_at` is left out while the channel is closed or archived,
 because its timers are frozen, and while the configuration is degraded,
@@ -1507,8 +1630,9 @@ it out of roles that post on channels other agents act on.
 - A reload may add, remove or change outputs and `on_final`. The check
   before a post uses the file in force then. A retry reads the outputs
   from the current file: changed outputs run as now declared, and a
-  transition the file no longer declares fails `transition_removed`.
-  While the configuration is degraded, a post that would fire outputs is
+  transition the file no longer declares fails `transition_removed`. A
+  timer's or trigger's mark whose `run_as` the file changed fails
+  `run_as_changed`. While the configuration is degraded, a post that would fire outputs is
   refused with 403 `session_output_denied`, and retries wait until a valid
   configuration is back.
 - Timers and reminders do not run while the configuration is degraded. They

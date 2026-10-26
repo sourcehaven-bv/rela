@@ -267,6 +267,9 @@ type TimerReport struct {
 	// Failed counts the writes that failed; their channels wait out
 	// [realtimelimits.TimerBackoff].
 	Failed int
+	// Marks counts the timer moves that wrote an outputs mark, for the
+	// outputs runner to run.
+	Marks int
 	// More is set when writes were left for the next round, or a write
 	// left a due time that has already passed.
 	More bool
@@ -599,7 +602,9 @@ func (r *timerRound) fold(due time.Time) {
 // s. With fire set it moves the session out of (state, gen) through fire,
 // if the channel is still open, still in that state and generation, and
 // fire is still the timer that comes due first at or before now. Without
-// it, or when that check fails, it only rewrites the due time.
+// it, or when that check fails, it only rewrites the due time. A move
+// whose timer has outputs, or that closes the channel, carries an
+// unclaimed job mark (see [jobMark]).
 func timerStep(
 	ct realtimecfg.ChannelType, s *realtimecfg.Session, fire *realtimecfg.SessionTimer, state string, gen int64,
 	now time.Time,
@@ -628,6 +633,13 @@ func timerStep(
 			return channels.SessionMove{}, false
 		}
 		return channels.SessionMove{From: cur.State, To: tm.To}, true
+	}
+	if a := jobMark(ct, len(tm.Outputs()) > 0, tm.To, now); a != nil {
+		step.Mark = func(channels.SessionMove) *channels.Action {
+			c := *a
+			c.Outputs = a.Outputs.Clone()
+			return &c
+		}
 	}
 	withSessionDue(&step, s)
 	return step
@@ -697,6 +709,9 @@ func (t *Timers) write(
 	switch {
 	case step.Outcome.Moved:
 		r.rep.Fired++
+		if step.Mark != nil {
+			r.rep.Marks++
+		}
 	case step.Outcome.Reminded:
 		r.rep.Reminded++
 	default:

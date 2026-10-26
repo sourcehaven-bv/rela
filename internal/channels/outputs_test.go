@@ -51,6 +51,16 @@ func TestPrepareAction_OutputMark(t *testing.T) {
 	badMove.Gen = 0
 	badEntity := testMark()
 	badEntity.Results[0].Entity = &Promoted{ID: "", Type: "doc"}
+	both := testMark()
+	both.Timer, both.Job = "late", true
+	neither := testMark()
+	neither.Cause = 0
+	timerNotJob := testMark()
+	timerNotJob.Cause, timerNotJob.Timer = 0, "late"
+	timer := testMark()
+	timer.Cause, timer.Timer, timer.Job = 0, "late", true
+	_, err = PrepareAction(OutputsAction, pending(timer))
+	require.NoError(t, err, "a timer's job mark names no cause")
 
 	tests := []struct {
 		name   string
@@ -65,6 +75,9 @@ func TestPrepareAction_OutputMark(t *testing.T) {
 		{"no generation", OutputsAction, pending(badMove), ErrInvalidMessage},
 		{"invalid created entity", OutputsAction, pending(badEntity), ErrInvalidMessage},
 		{"too large", OutputsAction, pending(huge), ErrTooLarge},
+		{"cause and timer", OutputsAction, pending(both), ErrInvalidMessage},
+		{"neither cause nor timer", OutputsAction, pending(neither), ErrInvalidMessage},
+		{"timer without job", OutputsAction, pending(timerNotJob), ErrInvalidMessage},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

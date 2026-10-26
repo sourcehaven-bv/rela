@@ -20,6 +20,16 @@ func TestParse_SessionOutputs(t *testing.T) {
 	if s.OnFinal() != OnFinalClose {
 		t.Errorf("OnFinal = %q", s.OnFinal())
 	}
+	if s.RunAs() != "system:breach-bot" {
+		t.Errorf("RunAs = %q", s.RunAs())
+	}
+	for _, state := range []string{"contained", "assessed"} {
+		st, _ := s.State(state)
+		timers := st.Timers()
+		if len(timers) != 1 || len(timers[0].Outputs()) != 1 || timers[0].Outputs()[0].Kind != OutputSet {
+			t.Errorf("%s timers = %+v", state, timers)
+		}
+	}
 	tr, _ := s.Transition("detected", "contained")
 	outs := tr.Outputs()
 	if len(outs) != 1 {
@@ -110,6 +120,11 @@ channel_types:
         done: { final: true }
 `
 
+// triggerT1 is a trigger that posts contained into br, appended after the
+// session of outputsBase.
+const triggerT1 = "triggers:\n  t1:\n    entity_type: datalek\n    on: enter\n    when: \"entity.status == 'x'\"\n" +
+	"    channel: br\n    post: { type: contained }\n"
+
 // TestParse_SessionOutputsInvalid pins AC 2 and 3: each invalid output
 // reports its key path and reason.
 func TestParse_SessionOutputsInvalid(t *testing.T) {
@@ -193,18 +208,18 @@ func TestParse_SessionOutputsInvalid(t *testing.T) {
 		{"action named outputs", []replace{{"text:      { properties: { body: { type: string } }, post: [member] }",
 			"text:      { properties: { body: { type: string } }, post: [member], actions: { outputs: { roles: [member] } } }"}},
 			"channel_types.br.message_types.text.actions.outputs", "reserved for the session's output marks"},
-		{"by trigger", []replace{{"              roles: [lead]\n", "              by: trigger\n"}}, o,
-			"outputs on a by: trigger transition need a run_as identity, which arrives in a later release"},
-		{"trigger reachable", []replace{
+		// AC 2: a job-move output without session.run_as is refused at the
+		// first such output.
+		{"by trigger without run_as", []replace{{"              roles: [lead]\n", "              by: trigger\n"}},
+			o + "[0].set", "write as session.run_as"},
+		{"trigger reachable without run_as", []replace{
 			{"              roles: [lead]\n", ""},
-			{"        done: { final: true }\n", "        done: { final: true }\ntriggers:\n  t1:\n    entity_type: datalek\n" +
-				"    on: enter\n    when: \"entity.status == 'x'\"\n    channel: br\n    post: { type: contained }\n"},
-		}, o, "trigger t1 posts contained into this channel type"},
-		{"timer outputs", []replace{{"        done: { final: true }\n",
-			"          after:\n            late: { period: 1h, to: done, outputs: [] }\n        done: { final: true }\n"}},
-			k + ".states.open.after.late.outputs", "outputs on a timer need a run_as identity"},
-		{"session run_as", []replace{{"      on_final: close\n", "      on_final: close\n      run_as: system:bot\n"}},
-			k + ".run_as", "session.run_as arrives in a later release"},
+			{"        done: { final: true }\n", "        done: { final: true }\n" + triggerT1},
+		}, o + "[0].set", "write as session.run_as"},
+		{"timer outputs without run_as", []replace{{"        done: { final: true }\n",
+			"          after:\n            late: { period: 1h, to: done, outputs: [ { set: { properties: " +
+				"{ status: done } } } ] }\n        done: { final: true }\n"}},
+			k + ".states.open.after.late.outputs[0].set", "write as session.run_as"},
 	}
 	meta, policy := testMeta(t), testPolicy(t)
 	if _, err := Parse([]byte(outputsBase), meta, policy); err != nil {

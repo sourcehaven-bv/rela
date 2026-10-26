@@ -207,6 +207,9 @@ type TriggerReport struct {
 	// Baselined counts the rules that recorded their matches for the first
 	// time.
 	Baselined int
+	// Marks counts the posts whose session move wrote an outputs mark, for
+	// the outputs runner to run.
+	Marks int
 }
 
 // Note records that an entity changed. It never blocks and never fails: a
@@ -1267,11 +1270,15 @@ func (r *round) postOne(ru *rule, q *effectQueue, ref string, it queued, budget 
 // move, at most budget. more reports that channels are left to move.
 func (r *round) act(ru *rule, ref string, budget int) (cost int, more bool, err error) {
 	if ru.auto == nil {
-		err = r.t.w.post(r.ctx, r.snap, r.now, ru.key(ref), ru.ct, ru.mt, ru.props,
+		marked, perr := r.t.w.post(r.ctx, r.snap, r.now, ru.key(ref), ru.ct, ru.mt, ru.props,
 			ru.triggeredBy(), ru.trigger.WhenClosed != realtimecfg.WhenClosedPost)
-		if err == nil {
+		if perr == nil {
 			r.rep.Posted++
 		}
+		if marked {
+			r.rep.Marks++
+		}
+		err = perr
 		return 1, false, err
 	}
 	res, err := r.t.w.transition(r.ctx, r.now, ru.anchor(ref), ru.ct, ru.auto, ru.triggeredBy(), budget)

@@ -75,6 +75,25 @@ func (t Template) ReadsTitle() bool {
 	return false
 }
 
+// messageRef returns the message property a whole-value template reads,
+// or "" when it reads none.
+func (t Template) messageRef() string {
+	name, ok := strings.CutPrefix(t.ref, msgPrefix)
+	if !ok || name == refAuthorName {
+		return ""
+	}
+	return name
+}
+
+// literal returns the literal value, in the form the entity property
+// stores, and whether the template is a literal.
+func (t Template) literal() (any, bool) {
+	if !t.isLit {
+		return nil, false
+	}
+	return literalValue(t.lit, t.target), true
+}
+
 // Eval returns the value the template writes into its property. ok is
 // false when a whole-value reference names an absent message property; the
 // property is then left out of the write. A mixed template substitutes the
@@ -202,9 +221,37 @@ type templateTarget struct {
 
 func (tt templateTarget) String() string { return tt.entityType + "." + tt.name }
 
-// compileTemplate compiles raw into a template for target, with mt the
-// cause message type. It returns the first problem as a reason.
-func (v writeChecker) compileTemplate(raw any, tt templateTarget, mt *MessageType) (tpl Template, reason string) {
+// causeKind is what fires the move an output belongs to. It decides which
+// references the output's templates may read.
+type causeKind int
+
+const (
+	// causePerson is a transition only people fire: it names roles. Its
+	// outputs write as the poster.
+	causePerson causeKind = iota
+	// causeJobMessage is a transition a trigger can fire: by: trigger, or
+	// no roles on a message type a trigger posts. Its outputs may write as
+	// session.run_as.
+	causeJobMessage
+	// causeTimer is an `after:` timer. Its outputs write as session.run_as.
+	causeTimer
+)
+
+// outputCause is the cause of the move an output belongs to: its kind and,
+// for a message, the message type.
+type outputCause struct {
+	kind causeKind
+	// mt is the cause message type; nil for a timer, or when the message
+	// type is unusable.
+	mt *MessageType
+}
+
+// job reports whether the move may write as session.run_as.
+func (c outputCause) job() bool { return c.kind != causePerson }
+
+// compileTemplate compiles raw into a template for target, with c the
+// cause of the move. It returns the first problem as a reason.
+func (v writeChecker) compileTemplate(raw any, tt templateTarget, c outputCause) (tpl Template, reason string) {
 	s, isStr := raw.(string)
 	if !isStr {
 		switch raw.(type) {
@@ -235,7 +282,7 @@ func (v writeChecker) compileTemplate(raw any, tt templateTarget, mt *MessageTyp
 		t.lit, t.isLit = s, true
 		return t, ""
 	case len(parts) == 1:
-		if reason := v.wholeRef(parts[0].ref, tt, mt); reason != "" {
+		if reason := v.wholeRef(parts[0].ref, tt, c); reason != "" {
 			return Template{}, reason
 		}
 		t.ref = parts[0].ref
@@ -249,7 +296,7 @@ func (v writeChecker) compileTemplate(raw any, tt templateTarget, mt *MessageTyp
 		if p.ref == "" {
 			continue
 		}
-		if reason := textRef(p.ref, mt); reason != "" {
+		if reason := textRef(p.ref, c); reason != "" {
 			return Template{}, reason
 		}
 	}
@@ -286,12 +333,29 @@ func splitTemplate(s string) (parts []templatePart, reason string) {
 	return parts, ""
 }
 
-// refKind checks that ref is a known reference and returns, for a message
-// property, its declaration.
-func refKind(ref string, mt *MessageType) (prop Property, isProp bool, reason string) {
+// refKind checks that ref is a known reference the cause c may read and
+// returns, for a message property, its declaration.
+//
+// The refusals for a job cause are security rules: a job move writes with
+// session.run_as authority, so a value a participant can steer must not
+// reach it. Allowing one of these references later is a security change.
+// `{{message.author}}` on a job move is always system:realtime.
+// `{{channel.title}}` is free text from whoever created the channel.
+func refKind(ref string, c outputCause) (prop Property, isProp bool, reason string) {
 	if strings.HasPrefix(ref, "entity.") || ref == "entity" {
 		return Property{}, false, "outputs cannot read the entity; a value from the entity would be written " +
 			"with the writer's authority and could copy a hidden field"
+	}
+	_, isMsg := strings.CutPrefix(ref, msgPrefix)
+	switch {
+	case c.kind == causeTimer && isMsg:
+		return Property{}, false, fmt.Sprintf("a timer move has no message, so %s has no value", ref)
+	case c.job() && ref == refAuthor:
+		return Property{}, false, "a timer or trigger move writes as session.run_as and its message author is " +
+			"always system:realtime; outputs a trigger can fire cannot read message.author"
+	case c.job() && ref == refChannelTitle:
+		return Property{}, false, "a timer or trigger move writes as session.run_as, and channel.title is free " +
+			"text from the channel's creator; outputs a timer or trigger can fire cannot read it"
 	}
 	switch ref {
 	case refAuthor, refFrom, refTo, refGeneration, refChannelKey, refChannelType, refChannelTitle, refNow, refToday:
@@ -301,6 +365,7 @@ func refKind(ref string, mt *MessageType) (prop Property, isProp bool, reason st
 	if !isMsg {
 		return Property{}, false, fmt.Sprintf("unknown reference %s; %s", ref, knownRefs)
 	}
+	mt := c.mt
 	p, ok := mt.Properties[name]
 	if !ok {
 		return Property{}, false, fmt.Sprintf("message type %s has no property %q", mt.Name, name)
@@ -309,8 +374,8 @@ func refKind(ref string, mt *MessageType) (prop Property, isProp bool, reason st
 }
 
 // wholeRef checks that a whole-value reference can fill tt.
-func (v writeChecker) wholeRef(ref string, tt templateTarget, mt *MessageType) string {
-	p, isProp, reason := refKind(ref, mt)
+func (v writeChecker) wholeRef(ref string, tt templateTarget, c outputCause) string {
+	p, isProp, reason := refKind(ref, c)
 	if reason != "" {
 		return reason
 	}
@@ -336,8 +401,8 @@ func (v writeChecker) wholeRef(ref string, tt templateTarget, mt *MessageType) s
 }
 
 // textRef checks that a reference inside text reads as text.
-func textRef(ref string, mt *MessageType) string {
-	p, isProp, reason := refKind(ref, mt)
+func textRef(ref string, c outputCause) string {
+	p, isProp, reason := refKind(ref, c)
 	if reason != "" || !isProp {
 		return reason
 	}

@@ -490,9 +490,9 @@ func (w *realtimeWorker) lead(ctx context.Context, check func(context.Context) e
 	slog.Info("realtime worker: this process leads")
 	w.retention(ctx)
 	w.lifecycle(ctx)
-	w.reconcile(ctx)
+	w.reconcile(ctx, &rounds)
 	w.dueWake.Take() // the first round below covers what was noted before
-	sched := w.timerRound(ctx)
+	sched := w.timerRound(ctx, &rounds)
 	timer := time.NewTimer(sched.Delay(time.Now()))
 	defer timer.Stop()
 	minute := time.NewTicker(realtimeLifecycleInterval)
@@ -523,9 +523,10 @@ func (w *realtimeWorker) lead(ctx context.Context, check func(context.Context) e
 			if w.triggers.Pending() {
 				rep, err := w.triggers.RunRound(ctx)
 				w.triggerReport(ctx, "round", rep, err)
+				w.marksWake(ctx, &rounds, rep.Marks)
 			}
 		case <-reconcile.C:
-			w.reconcile(ctx)
+			w.reconcile(ctx, &rounds)
 			reconcile.Reset(reconcileDelay())
 		case <-minute.C:
 			w.lifecycle(ctx)
@@ -536,7 +537,7 @@ func (w *realtimeWorker) lead(ctx context.Context, check func(context.Context) e
 		case <-w.wake:
 			w.purge(ctx)
 		case <-timer.C:
-			sched = w.timerRound(ctx)
+			sched = w.timerRound(ctx, &rounds)
 			timer.Reset(sched.Delay(time.Now()))
 		case <-w.dueWake.C():
 			if sched.Wake(w.dueWake.Take()) {
@@ -547,16 +548,26 @@ func (w *realtimeWorker) lead(ctx context.Context, check func(context.Context) e
 }
 
 // timerRound runs one timer round and returns the schedule of the next.
-func (w *realtimeWorker) timerRound(ctx context.Context) realtime.TimerSchedule {
+func (w *realtimeWorker) timerRound(ctx context.Context, rounds *sync.WaitGroup) realtime.TimerSchedule {
 	rep, err := w.timers.RunRound(ctx)
 	if err != nil && ctx.Err() == nil {
 		slog.Warn("realtime: session timer round failed", "error", err)
 	}
 	if rep.Fired+rep.Rescheduled+rep.Failed > 0 {
 		slog.Info("realtime: session timer round", "fired", rep.Fired, "rescheduled", rep.Rescheduled,
-			"failed", rep.Failed, "stranded", rep.Stranded, "more", rep.More)
+			"failed", rep.Failed, "stranded", rep.Stranded, "marks", rep.Marks, "more", rep.More)
 	}
+	w.marksWake(ctx, rounds, rep.Marks)
 	return realtime.NextTimerRound(rep, time.Now())
+}
+
+// marksWake starts an outputs round when a timer or trigger round wrote
+// marks, so their outputs run now rather than at the next minute tick. A
+// round that is still running picks them up or leaves them for the tick.
+func (w *realtimeWorker) marksWake(ctx context.Context, rounds *sync.WaitGroup, marks int) {
+	if marks > 0 {
+		w.startOutputs(ctx, rounds)
+	}
 }
 
 // reconcileDelay is [realtime.TriggerReconcile] with up to a tenth
@@ -567,9 +578,10 @@ func reconcileDelay() time.Duration {
 	return realtime.TriggerReconcile - tenth + rand.N(2*tenth) //nolint:gosec // jitter, not a secret
 }
 
-func (w *realtimeWorker) reconcile(ctx context.Context) {
+func (w *realtimeWorker) reconcile(ctx context.Context, rounds *sync.WaitGroup) {
 	rep, err := w.triggers.RunReconcile(ctx)
 	w.triggerReport(ctx, "reconcile", rep, err)
+	w.marksWake(ctx, rounds, rep.Marks)
 }
 
 func (w *realtimeWorker) triggerReport(ctx context.Context, what string, rep realtime.TriggerReport, err error) {
@@ -578,7 +590,7 @@ func (w *realtimeWorker) triggerReport(ctx context.Context, what string, rep rea
 	}
 	if rep != (realtime.TriggerReport{}) {
 		slog.Info("realtime: trigger "+what, "posted", rep.Posted, "skipped", rep.Skipped, "failed", rep.Failed,
-			"baselined", rep.Baselined)
+			"baselined", rep.Baselined, "marks", rep.Marks)
 	}
 }
 

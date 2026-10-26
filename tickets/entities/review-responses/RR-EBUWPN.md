@@ -1,0 +1,9 @@
+---
+id: RR-EBUWPN
+type: review-response
+title: Per-type suspension has no production consumer that runs job marks and lets a refused realtime.yaml edit in
+finding: 'The only caller that passes the suspend option is the WithRealtimeFallback successor in internal/cli/mcp_wiring.go:156-157 (plan:349-352). That host never runs the realtime worker: RunRealtimeWorker runs only in cmd/rela-server/serve.go:289 and cmd/rela-desktop/main.go:1456, and buildRealtimeWorker needs WithBackgroundAutomationJobs (rela-server main.go:222, desktop hostconfig.go:407). rela-server never reassembles on an acl.yaml change. Its Configure Validate (cmd/rela-server/configure.go:113-122) checks against the loaded policy, so a dropped grant shows up only at the next boot, which is strict. So AC 14''s claims that timers and triggers still move and that job marks fail forbidden describe a path no worker host takes. The runner-side forbidden check is redundant anyway: the plan concedes that the write path denies (plan:513). The successor also re-reads realtime.yaml from disk. A realtime.yaml edit that RealtimeConfig.Reload refused for an ungranted run_as (AC 15) is accepted with suspension at the next schema save, together with every other change in that edit, so the option does leak into a strict outcome. Plan change: drop suspension, keeping strict everywhere with the 5a degraded fallback on MCP, and document that a restart after removing a run_as grant fails boot and names the key. Or, if it is kept, limit it to the parse demotion for types whose run_as and outputs equal the previous snapshot''s, drop the runner forbidden branch and its once-per-type log, and rewrite AC 14 against the MCP successor.'
+severity: significant
+resolution: Suspension dropped. Strict loading on every path; a running server keeps its config until reload; writes re-authorize so a dropped grant fails forbidden (AC 15, AC 16); docs cover the boot failure.
+status: addressed
+---

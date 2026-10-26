@@ -284,6 +284,12 @@ func TestRenderRead_NoticeOutputs(t *testing.T) {
 					{Kind: realtime.OutputKindTransition, Status: realtime.OutputResultFailed, Code: "transition_removed"},
 				},
 			}),
+			notice(10, "assessed", "overdue", &realtime.OutputsView{
+				Status: realtime.OutputsFailed, Writer: realtime.AuthorView{User: "system:breach-bot"},
+				Results: []realtime.OutputResultView{
+					{Kind: realtime.OutputKindSet, Status: realtime.OutputResultFailed, Code: "run_as_changed"},
+				},
+			}),
 		},
 	}
 	var buf bytes.Buffer
@@ -298,5 +304,6 @@ func TestRenderRead_NoticeOutputs(t *testing.T) {
 	assert.Contains(t, got,
 		"  moved from open to assessed; outputs failed: set DL-1@legal, transition (transition_removed)\n",
 		"a set names the face it writes")
+	assert.Contains(t, got, "  moved from assessed to overdue; outputs failed: set DL-1 (run_as_changed)\n")
 	assert.NotContains(t, got, "alice", "the writer is not on the notice line")
 }

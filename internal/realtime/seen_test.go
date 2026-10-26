@@ -58,10 +58,10 @@ func TestSystemWriter_ChecksProps(t *testing.T) {
 	snap := th.cfg.Load()
 	ct, ok := snap.Config.ChannelType("room")
 	require.True(t, ok)
-	err := th.trg.w.post(context.Background(), snap, th.clock.Now(), roomKey(), ct, ct.MessageTypes["note"],
+	_, err := th.trg.w.post(context.Background(), snap, th.clock.Now(), roomKey(), ct, ct.MessageTypes["note"],
 		map[string]any{"level": 0}, "trigger:x", true)
 	require.ErrorContains(t, err, "when: condition")
-	err = th.trg.w.post(context.Background(), snap, th.clock.Now(), roomKey(), ct, ct.MessageTypes["text"],
+	_, err = th.trg.w.post(context.Background(), snap, th.clock.Now(), roomKey(), ct, ct.MessageTypes["text"],
 		map[string]any{}, "trigger:x", true)
 	require.Error(t, err)
 	require.Zero(t, th.store.appends.Load())

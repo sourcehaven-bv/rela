@@ -1083,9 +1083,13 @@ func (s *Store) SetSession(
 		}
 		notice, move, moved, reminded := w.written, w.move, w.moved, w.reminded
 		if moved || reminded {
+			pending := int64(0)
+			if notice.Action != nil {
+				pending = micros(notice.Action.PendingAt)
+			}
 			if _, err := q.Exec(ctx, `INSERT INTO channel_messages
-				(channel_id, seq, rev, reply_to, reply_count, pending_at, doc) VALUES (?, ?, ?, 0, 0, 0, ?)`,
-				r.id, notice.Seq, notice.Rev, docOf(notice)); err != nil {
+				(channel_id, seq, rev, reply_to, reply_count, pending_at, doc) VALUES (?, ?, ?, 0, 0, ?, ?)`,
+				r.id, notice.Seq, notice.Rev, pending, docOf(notice)); err != nil {
 				return err
 			}
 			r.c.LastSeq, r.c.Rev = notice.Seq, notice.Rev

@@ -21,6 +21,7 @@ entities:
       reference: {type: string}
       evidence: {type: file}
       ticket: {type: external_ref, system: jira}
+      escalated: {type: boolean}
   incident:
     label: Incident
     id_prefix: INC

@@ -19,6 +19,7 @@ var timerTests = []conformanceTest{
 	{"SessionResumeOnReopen", testSessionResumeOnReopen},
 	{"SessionResumeOnUntombstone", testSessionResumeOnUntombstone},
 	{"SetSessionFire", testSetSessionFire},
+	{"SetSessionWithMark", testSetSessionWithMark},
 	{"SetSessionReschedule", testSetSessionReschedule},
 	{"SetSessionCAS", testSetSessionCAS},
 	{"SetSessionRefusals", testSetSessionRefusals},
@@ -293,6 +294,62 @@ func testSetSessionFire(t *testing.T, h Harness) {
 	require.Equal(t, noticeAuthor, rec.By)
 	require.Equal(t, "timer:room/contained/notify-deadline", rec.TriggeredBy)
 	require.Equal(t, "room", rec.Type)
+}
+
+// testSetSessionWithMark pins a timer move whose step marks it: the notice
+// carries an unclaimed job mark naming the timer, the mark is pending, a
+// claim is accepted, and Job and Timer never change.
+func testSetSessionWithMark(t *testing.T, h Harness) {
+	t.Helper()
+	ctx := context.Background()
+	k := key("TKT-1", "room")
+	contained(t, h.Store, k, dueAt(T0.Add(72*time.Hour)))
+	at := T0.Add(72 * time.Hour)
+	bot := channels.Author{User: "system:bot", Tool: "realtime"}
+	step := timerStep(containedToOverdue, "notify-deadline", dueAt(time.Time{}))
+	step.Mark = func(channels.SessionMove) *channels.Action {
+		return &channels.Action{PendingAt: at, Outputs: &channels.OutputMark{Writer: bot, AnchorType: "ticket"}}
+	}
+	got, err := h.Store.SetSession(ctx, k, at, step)
+	require.NoError(t, err)
+	n, err := h.Store.Get(ctx, k, got.LastSeq)
+	require.NoError(t, err)
+	require.NotNil(t, n.Action)
+	require.Equal(t, channels.OutputsAction, n.Action.Name)
+	require.Equal(t, channels.ActionPending, n.Action.Status)
+	require.Equal(t, bot, n.Action.By)
+	require.Equal(t, channels.NormTime(at), n.Action.PendingAt)
+	require.Equal(t, &channels.OutputMark{
+		Writer: bot, AnchorType: "ticket", Gen: 2, From: "contained", To: "overdue", Job: true,
+		Timer: "notify-deadline",
+	}, n.Action.Outputs)
+
+	stale, err := h.Store.StalePending(ctx, at.Add(time.Second))
+	require.NoError(t, err)
+	require.Equal(t, []channels.PendingAction{{
+		Key: k, Seq: n.Seq, Name: channels.OutputsAction, PendingAt: channels.NormTime(at),
+	}}, stale)
+
+	claimAt := at.Add(time.Second)
+	for name, change := range map[string]func(m *channels.OutputMark){
+		"job":   func(m *channels.OutputMark) { m.Job = false },
+		"timer": func(m *channels.OutputMark) { m.Timer = "other" },
+	} {
+		bad := next(n, claimAt, func(a *channels.Action) {
+			a.Outputs.Attempt, a.Outputs.Claim, a.Outputs.ClaimedAt = 1, "a", claimAt
+			change(a.Outputs)
+		})
+		_, err = h.Store.SetAction(ctx, k, n.Seq, channels.OutputsAction, channels.ActionPending, bad)
+		require.ErrorIs(t, err, channels.ErrInvalidMessage, name)
+	}
+	claim := next(n, claimAt, func(a *channels.Action) {
+		a.Outputs.Attempt, a.Outputs.Claim, a.Outputs.ClaimedAt = 1, "a", claimAt
+		a.PendingAt = claimAt.Add(claimTTL)
+	})
+	claimed, err := h.Store.SetAction(ctx, k, n.Seq, channels.OutputsAction, channels.ActionPending, claim)
+	require.NoError(t, err)
+	require.Equal(t, 1, claimed.Action.Outputs.Attempt)
+	require.True(t, claimed.Action.Outputs.Job)
 }
 
 // testSetSessionReschedule pins a SetSession whose decider returns no

@@ -100,32 +100,14 @@ func isInvisible(r rune) bool {
 // runAsFlag names the flag and its environment variable in error texts.
 const runAsFlag = "--run-as (RELA_RUN_AS)"
 
-// validateRunAs accepts a job identity: a `system:` name in the
-// [principal.ValidSystemName] grammar that is not one of rela's own
-// ([principal.IsRelaIdentity]), or an `integration:` name. A person's name
-// is refused, so `--run-as` cannot impersonate a human, and so is
-// `unknown`.
+// validateRunAs accepts a job identity ([principal.ValidJobIdentity]). A
+// person's name is refused, so `--run-as` cannot impersonate a human, and
+// so is `unknown`.
 func validateRunAs(runAs string) error {
-	if !strings.HasPrefix(runAs, principal.ReservedPrefix) && !strings.HasPrefix(runAs, principal.IntegrationPrefix) {
-		return fmt.Errorf("%s: %q is not a job identity; name a %q or %q identity",
-			runAsFlag, runAs, principal.ReservedPrefix, principal.IntegrationPrefix)
-	}
-	if rest, ok := strings.CutPrefix(runAs, principal.ReservedPrefix); ok && !principal.ValidSystemName(rest) {
-		return fmt.Errorf("%s: %q: a system: name is segments of lowercase letters, digits, '_' or '-', "+
-			"separated by ':'", runAsFlag, printable(runAs))
-	}
-	if err := principal.ValidateRunAs(runAs, ownJobIdentity); err != nil {
+	if err := principal.ValidJobIdentity(runAs); err != nil {
 		return fmt.Errorf("%s: %w", runAsFlag, err)
 	}
 	return nil
-}
-
-// ownJobIdentity reports whether a `system:` name is free for `--run-as`.
-// The charset check comes first, so the registry lookup compares plain
-// ASCII and a look-alike of a rela name cannot slip past it.
-func ownJobIdentity(name string) bool {
-	rest, _ := strings.CutPrefix(name, principal.ReservedPrefix)
-	return principal.ValidSystemName(rest) && !principal.IsRelaIdentity(name)
 }
 
 // lookupOSUser returns the account name of the process's uid. A variable

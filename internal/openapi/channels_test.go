@@ -458,3 +458,26 @@ channel_types:
 		t.Error("the channel type descriptor does not require typing")
 	}
 }
+
+// TestOpenAPI_OutputResultCodes pins the code enum of an output result to
+// every code the runner writes, run_as_changed included, and the timer's
+// output count.
+func TestOpenAPI_OutputResultCodes(t *testing.T) {
+	rt := channelTestConfig(t)
+	g := New(attachmentTestMeta(), Config{Title: "T", Version: "1"})
+	g.SetRealtime(func() *realtimecfg.Compiled { return rt })
+	sc := g.Generate().Components.Schemas
+	got := sc[outputResultSchema].Properties["code"].Enum
+	want := []string{
+		realtime.OutputCodeForbidden, realtime.OutputCodeFieldDenied, realtime.OutputCodeInvalid,
+		realtime.OutputCodeConflict, realtime.OutputCodeNotFound, realtime.OutputCodeUnconfirmed,
+		realtime.OutputCodeExpired, realtime.OutputCodeTransitionRemoved, realtime.OutputCodeRunAsChanged,
+		realtime.OutputCodeError,
+	}
+	if !slices.Equal(got, want) {
+		t.Errorf("code enum = %v, want %v", got, want)
+	}
+	if o := sc[channelTimerRef].Properties["outputs"]; o == nil || o.Type != "integer" {
+		t.Errorf("timer outputs = %+v, want an integer", o)
+	}
+}

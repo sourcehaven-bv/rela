@@ -78,6 +78,7 @@ func (v *validator) compile(raw *rawFile) *Compiled {
 			c.triggers[name] = t
 		}
 	}
+	grantChecker{v: v, c: c}.check()
 	c.warnings = v.warnings
 	for p := range v.perms {
 		c.permissions = append(c.permissions, p)

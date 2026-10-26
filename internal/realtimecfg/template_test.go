@@ -53,7 +53,8 @@ func TestTemplate_Eval(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			tpl, reason := writeChecker{v}.compileTemplate(tc.raw, templateTarget{entityType: "datalek", name: "p", def: tc.def}, mt)
+			tpl, reason := writeChecker{v}.compileTemplate(tc.raw, templateTarget{entityType: "datalek", name: "p", def: tc.def},
+				outputCause{mt: mt})
 			if reason != "" {
 				t.Fatalf("compile: %s", reason)
 			}

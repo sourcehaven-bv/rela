@@ -76,6 +76,9 @@ type SessionTimerView struct {
 	// Since is what the timer counts from: state or session.
 	Since string     `json:"since"`
 	DueAt *time.Time `json:"due_at,omitempty"`
+	// Outputs is the number of graph outputs the timer's move writes, as
+	// the session's run_as. It is config, the same for every reader.
+	Outputs int `json:"outputs,omitempty"`
 }
 
 // SessionTransitionView is one transition out of the current state: the
@@ -168,7 +171,9 @@ func reminderViews(s *realtimecfg.Session, cur current, ch channels.Channel, sho
 // with showDue their due times and the session's.
 func timerViews(v *SessionView, cur current, ch channels.Channel, timers []realtimecfg.SessionTimer, showDue bool) {
 	for _, t := range timers {
-		tv := SessionTimerView{Name: t.Name, Label: t.Label, To: t.To, Since: string(t.Since)}
+		tv := SessionTimerView{
+			Name: t.Name, Label: t.Label, To: t.To, Since: string(t.Since), Outputs: len(t.Outputs()),
+		}
 		if showDue {
 			due := timerDue(t, cur, ch)
 			tv.DueAt = &due

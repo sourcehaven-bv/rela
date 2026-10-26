@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -58,6 +59,9 @@ type OutputTarget struct {
 	// anchor.
 	Type   string
 	Relate string
+	// AttachTo are the channel type's attach_to types. A set with no
+	// AnchorType writes the anchor only when its row is one of them.
+	AttachTo []string
 }
 
 // OutputRequest is one output write.
@@ -71,6 +75,14 @@ type OutputRequest struct {
 	// Origin is the triggered_by of the graph audit records:
 	// `session:<channel key>/<from>-><to>#<generation>/<index>`.
 	Origin string
+	// RunAs, when set, is the job identity to write as: the session's
+	// run_as, for a job mark (see [channels.OutputMark.Job]). It wins over
+	// Retry. The writer binds it as a plain principal: no claims, no user
+	// entity, and only the grants acl.yaml assigns to it.
+	RunAs string
+	// Job marks a job mark's output. Its writer is RunAs and nothing else:
+	// a job output with no RunAs is refused, never written as the process.
+	Job bool
 	// Retry, when set, is the writer to act as: a retry has no request, so
 	// the writer rebuilds the poster from the mark.
 	Retry *OutputIdentity
@@ -132,7 +144,11 @@ const (
 	OutputCodeUnconfirmed       = "unconfirmed"
 	OutputCodeExpired           = "expired"
 	OutputCodeTransitionRemoved = "transition_removed"
-	OutputCodeError             = "error"
+	// OutputCodeRunAsChanged fails the outputs of a job mark whose writer
+	// is no longer the session's run_as, so an old mark never writes as
+	// an identity the operator replaced.
+	OutputCodeRunAsChanged = "run_as_changed"
+	OutputCodeError        = "error"
 )
 
 // OutputError is a classified output failure. Code never quotes an
@@ -301,7 +317,7 @@ func (s *Service) precheckOutputs(c *call, mt *realtimecfg.MessageType, sp sessi
 	}
 	plan.poster = poster
 	for i, o := range outs {
-		if err := s.outputs.writer.Check(c.ctx, outputTarget(c.key, plan.anchorType, o)); err != nil {
+		if err := s.outputs.writer.Check(c.ctx, outputTarget(c.key, plan.anchorType, c.ct.AttachTo, o)); err != nil {
 			if d, ok := errors.AsType[*DenialError](err); ok {
 				return nil, &DenialError{
 					Status: http.StatusForbidden, Type: TypeSessionOutputDenied,
@@ -346,22 +362,73 @@ func personMark(
 	}
 }
 
-// triggerMark is the Mark callback of a trigger's post. A trigger never
-// fires outputs (realtimecfg refuses them), so the mark only closes the
-// channel. Nobody claims it: the runner does on its next round.
-func triggerMark(sess *realtimecfg.Session, now time.Time) func(channels.SessionMove) *channels.Action {
+// triggerMark is the Mark callback of a trigger's post, for the
+// transition of message type mt: a job mark for a move whose transition
+// has outputs or that closes the channel. Nobody claims it: the runner
+// does on its next round. marked, when set, records whether the last call
+// marked.
+func triggerMark(
+	ct realtimecfg.ChannelType, mt string, now time.Time, marked *bool,
+) func(channels.SessionMove) *channels.Action {
+	sess := ct.Session()
 	return func(move channels.SessionMove) *channels.Action {
-		if !closesOn(sess, move.To) {
-			return nil
+		t, _ := sess.Transition(move.From, mt)
+		a := jobMark(ct, len(t.Outputs()) > 0, move.To, now)
+		if marked != nil {
+			// Assigned, not set: a backend may run the decider more than once.
+			*marked = a != nil
 		}
-		return &channels.Action{PendingAt: now, Outputs: &channels.OutputMark{Writer: systemAuthor(), Close: true}}
+		return a
 	}
+}
+
+// jobMark is the unclaimed mark of a job move into to: a timer's, or one a
+// trigger's post fired. It is nil when the move has no outputs and does
+// not close the channel. With outputs the writer is the session's run_as;
+// a close-only mark names [systemAuthor]. Both are job marks, so a mark
+// whose outputs appear later runs them only as the run_as it names (see
+// [OutputCodeRunAsChanged]).
+func jobMark(ct realtimecfg.ChannelType, outputs bool, to string, now time.Time) *channels.Action {
+	sess := ct.Session()
+	closes := closesOn(sess, to)
+	if !outputs && !closes {
+		return nil
+	}
+	writer := systemAuthor()
+	if outputs {
+		runAs := sess.RunAs()
+		writer = channels.Author{User: runAs, Tool: principal.ToolRealtime, PrincipalType: runAsType(runAs)}
+	}
+	return &channels.Action{PendingAt: now, Outputs: &channels.OutputMark{
+		Writer: writer, AnchorType: anchorTypeOf(ct), Job: true, Close: closes,
+	}}
+}
+
+// runAsType is the principal type a run_as writer shows: integration for
+// an `integration:` name, system for a `system:` one.
+func runAsType(runAs string) string {
+	if strings.HasPrefix(runAs, principal.IntegrationPrefix) {
+		return "integration"
+	}
+	return "system"
+}
+
+// anchorTypeOf is the anchor's entity type when ct attaches to one type,
+// or empty: a job move does not read the anchor, so with several
+// attach_to types the writer reads the row's type at the write.
+func anchorTypeOf(ct realtimecfg.ChannelType) string {
+	if len(ct.AttachTo) == 1 {
+		return ct.AttachTo[0]
+	}
+	return ""
 }
 
 // outputTarget is what output o of a channel at key, anchored to an
 // entity of anchorType, writes.
-func outputTarget(key channels.Key, anchorType string, o realtimecfg.Output) OutputTarget {
-	t := OutputTarget{Kind: o.Kind, AnchorID: key.ID, AnchorType: anchorType, Face: entity.Face(o.Face)}
+func outputTarget(key channels.Key, anchorType string, attachTo []string, o realtimecfg.Output) OutputTarget {
+	t := OutputTarget{
+		Kind: o.Kind, AnchorID: key.ID, AnchorType: anchorType, Face: entity.Face(o.Face), AttachTo: attachTo,
+	}
 	switch o.Kind {
 	case realtimecfg.OutputSet:
 		if t.Face == "" {
@@ -395,7 +462,10 @@ type outputEngine struct {
 type markRun struct {
 	key    channels.Key
 	notice channels.Message
-	cause  channels.Message
+	// cause is the message that caused the move; zero for a timer move.
+	cause channels.Message
+	// plan is what the run's one config snapshot declares for the mark.
+	plan markPlan
 	// superseded holds the properties a later move's mark recorded as set,
 	// read up to readTo. done is set once that read reached the log's end.
 	superseded map[string]bool
@@ -405,12 +475,65 @@ type markRun struct {
 	title      string
 }
 
+// markPlan is what one config snapshot declares for a mark's move. A run
+// resolves it once, so it never mixes the outputs of one snapshot with the
+// run_as of another.
+type markPlan struct {
+	// outs are the move's outputs; removed says the config no longer
+	// declares the move.
+	outs    []realtimecfg.Output
+	removed bool
+	// runAs is the session's run_as.
+	runAs string
+	// attachTo are the channel type's attach_to types.
+	attachTo []string
+}
+
+// resolveMark finds the transition or timer of mark's move on key in snap:
+// by (mark.From, cause.Type) or (mark.From, mark.Timer), with the same
+// target state. A trigger's job mark whose transition no longer is one a
+// trigger can fire is removed: its outputs were compiled for a poster. A
+// mark that is not a job mark but names one of rela's own identities as
+// its writer (a close-only trigger mark from before job marks) runs no
+// outputs, so nothing writes as rela itself; its close still runs.
+func resolveMark(snap Snapshot, key channels.Key, cause channels.Message, mark *channels.OutputMark) markPlan {
+	removed := markPlan{removed: true}
+	if snap.Config == nil {
+		return removed
+	}
+	ct, ok := snap.Config.ChannelType(key.Type)
+	if !ok || ct.Session() == nil {
+		return removed
+	}
+	sess := ct.Session()
+	p := markPlan{runAs: sess.RunAs(), attachTo: ct.AttachTo}
+	if mark.Timer == "" {
+		t, ok := sess.Transition(mark.From, cause.Type)
+		if !ok || t.To != mark.To || (mark.Job && !t.Job()) {
+			return removed
+		}
+		if !mark.Job && principal.IsRelaIdentity(mark.Writer.User) {
+			return p
+		}
+		p.outs = t.Outputs()
+		return p
+	}
+	st, _ := sess.State(mark.From)
+	for _, tm := range st.Timers() {
+		if tm.Name == mark.Timer && tm.To == mark.To {
+			p.outs = tm.Outputs()
+			return p
+		}
+	}
+	return removed
+}
+
 // supersedePage is the page size of the supersede read.
 const supersedePage = 64
 
 // load reads the cause, the notice at seq and a first page of the messages
 // after it. ok is false when seq does not hold a notice with an outputs
-// mark caused by the message before it. The caller holds the channel's
+// mark caused by the message before it, or made by a timer. The caller holds the channel's
 // outputs lock, so a later move's run in this process has either finished
 // or not started.
 func (e *outputEngine) load(ctx context.Context, key channels.Key, seq int64) (markRun, bool, error) {
@@ -431,8 +554,12 @@ func (e *outputEngine) load(ctx context.Context, key channels.Key, seq int64) (m
 		}
 	}
 	r.note(later, len(page) < supersedePage+2)
-	ok := r.notice.Seq == seq && isNotice(r.notice.Type, r.notice.TriggeredBy) && isOutputs(r.notice.Action) &&
-		r.notice.Action.Outputs.Cause == seq-1 && r.cause.Seq == seq-1
+	ok := r.notice.Seq == seq && isNotice(r.notice.Type, r.notice.TriggeredBy) && isOutputs(r.notice.Action)
+	if ok && r.notice.Action.Outputs.Timer != "" {
+		r.cause = channels.Message{}
+		return r, true, nil
+	}
+	ok = ok && r.notice.Action.Outputs.Cause == seq-1 && r.cause.Seq == seq-1
 	return r, ok, nil
 }
 
@@ -524,43 +651,30 @@ func (e *outputEngine) holdInline(ctx context.Context, r *markRun, claim string)
 	return true
 }
 
-// outputsFor returns the outputs the current config declares for the
-// mark's move, recomputed on every run. removed reports that the config no
-// longer declares the transition. A trigger's mark runs no outputs.
-func (e *outputEngine) outputsFor(r *markRun, mark *channels.OutputMark) (outs []realtimecfg.Output, removed bool) {
-	if mark.Writer.User == principal.UserRealtime {
-		return nil, false
-	}
-	snap := e.cfg.Load()
-	if snap.Config == nil {
-		return nil, true
-	}
-	ct, ok := snap.Config.ChannelType(r.key.Type)
-	if !ok || ct.Session() == nil {
-		return nil, true
-	}
-	t, ok := ct.Session().Transition(mark.From, r.cause.Type)
-	if !ok || t.To != mark.To {
-		return nil, true
-	}
-	return t.Outputs(), false
-}
-
 // run runs the held mark of r: the outputs not run yet, then the close,
 // then the done write. The caller holds the channel's outputs lock (see
 // [outputEngine.load]). A mark left pending is retried by the runner once
 // its PendingAt passes.
+//
+// r.plan must be resolved (see [resolveMark]). A job mark whose writer is
+// not the plan's run_as fails every output with [OutputCodeRunAsChanged];
+// the close still runs.
 func (e *outputEngine) run(ctx context.Context, r *markRun) {
 	mark := r.notice.Action.Outputs.Clone()
-	outs, removed := e.outputsFor(r, mark)
-	if removed {
+	outs, removed := r.plan.outs, r.plan.removed
+	switch {
+	case removed:
 		if n := len(mark.Results); n == 0 || mark.Results[n-1].Kind != channels.OutputKindClose {
 			mark.Results = append(mark.Results, channels.OutputResult{
 				Kind: channels.OutputKindTransition, Status: channels.OutputFailed, Code: OutputCodeTransitionRemoved,
 			})
 		}
-	} else if !e.runOutputs(ctx, r, mark, outs) {
-		return
+	case mark.Job && len(outs) > 0 && (r.plan.runAs == "" || r.plan.runAs != mark.Writer.User):
+		failRest(mark, outs, len(mark.Results), OutputCodeRunAsChanged)
+	default:
+		if !e.runOutputs(ctx, r, mark, outs) {
+			return
+		}
 	}
 	if mark.Close {
 		mark.Results = append(mark.Results, e.close(ctx, r))
@@ -674,15 +788,10 @@ func (e *outputEngine) runOne(
 		res.Props = sortedKeys(props)
 	}
 	req := OutputRequest{
-		Target: outputTarget(r.key, mark.AnchorType, o), Props: props, Authored: authored,
+		Target: outputTarget(r.key, mark.AnchorType, r.plan.attachTo, o), Props: props, Authored: authored,
 		Origin: outputOrigin(r.key, mark, i),
 	}
-	if r.retry {
-		req.Retry = &OutputIdentity{
-			Writer: mark.Writer, Roles: mark.Roles,
-			OutputPoster: OutputPoster{Unmatched: mark.Unmatched, UserEntity: mark.UserEntity},
-		}
-	}
+	r.identify(&req, mark)
 	started := false
 	if o.Kind == realtimecfg.OutputCreate {
 		req.Started = func(ctx context.Context) error {
@@ -734,6 +843,21 @@ func (e *outputEngine) runOne(
 	}
 	// A started record, if any, is replaced by the result's progress write.
 	return res, outputRan
+}
+
+// identify sets who req writes as: a job mark writes as the run_as of the
+// plan, a retry rebuilds the poster from the mark, and a post's own run
+// writes as the request's principal.
+func (r *markRun) identify(req *OutputRequest, mark *channels.OutputMark) {
+	switch {
+	case mark.Job:
+		req.Job, req.RunAs = true, r.plan.runAs
+	case r.retry:
+		req.Retry = &OutputIdentity{
+			Writer: mark.Writer, Roles: mark.Roles,
+			OutputPoster: OutputPoster{Unmatched: mark.Unmatched, UserEntity: mark.UserEntity},
+		}
+	}
 }
 
 // vars are the template values of r's mark.

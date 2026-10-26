@@ -37,6 +37,8 @@ type Session struct {
 	paused map[string]bool
 	// onFinal is `on_final`: [OnFinalClose] or empty.
 	onFinal string
+	// runAs is `run_as`: a job identity, or empty.
+	runAs string
 }
 
 // Label is the session's display name.
@@ -127,6 +129,8 @@ type SessionTimer struct {
 	To     string
 	Period Period
 	Since  TimerSince
+	// outputs are the compiled `outputs:`, in file order.
+	outputs []Output
 }
 
 // Transitions returns the state's transitions, sorted by message type.
@@ -166,6 +170,9 @@ type Transition struct {
 	When *predicate.Program
 	// outputs are the compiled `outputs:`, in file order.
 	outputs []Output
+	// job marks a transition a trigger can fire, whose outputs may write
+	// as [Session.RunAs]; see [transitionCause].
+	job bool
 	// warned is shared by every copy of the transition, so a guard failure
 	// is reported once per loaded configuration.
 	warned *atomic.Bool
@@ -252,6 +259,11 @@ func (v *validator) session(
 				"mark it final: true if the session ends there")
 		}
 		st.timers = compileTimers(v.add, sk+".after", rs.After, s)
+		for j := range st.timers {
+			tk := sk + ".after." + st.timers[j].Name + ".outputs"
+			st.timers[j].outputs = writeChecker{v}.outputs(tk, rs.After[st.timers[j].Name].Outputs,
+				outputCause{kind: causeTimer}, ct)
+		}
 		for _, mn := range sortedKeys(rs.On) {
 			rt := rs.On[mn]
 			if t, ok := v.transition(sk+".on."+mn, mn, &rt, s, ct); ok {
@@ -260,6 +272,8 @@ func (v *validator) session(
 		}
 	}
 	timerLoops(v.add, statesKey, s)
+	jobLoops(v.add, statesKey, s)
+	s.runAs = writeChecker{v}.runAs(key+".run_as", raw.RunAs, s)
 	return s
 }
 
@@ -367,6 +381,129 @@ func timerLoops(add problemSink, statesKey string, s *Session) {
 	}
 }
 
+// jobEdge is a move no person makes: a timer, or a transition a trigger
+// can fire. key is where a loop through it is reported.
+type jobEdge struct {
+	from, to int
+	timer    bool
+	outputs  bool
+	key      string
+}
+
+// jobLoops refuses a loop of timers and trigger-fireable transitions that
+// has a timer and graph outputs on it. A timer's outputs can change what a
+// trigger watches, and the trigger's post moves the session back, so such
+// a loop writes to the graph forever with no person involved. Without
+// outputs on the loop nothing in it changes the entity, so a trigger fires
+// only when something outside changes it. A loop of timers alone is
+// [timerLoops]'s. It reports each such loop once, at its first timer.
+func jobLoops(add problemSink, statesKey string, s *Session) {
+	edges := jobEdges(statesKey, s)
+	for _, c := range loopComponents(s, edges) {
+		if c.timer == nil || !c.outputs || !c.jobTr {
+			continue
+		}
+		add(c.timer.key, fmt.Sprintf("timers and trigger-fired transitions form a loop through %s with "+
+			"outputs on it, which could write to the graph forever without a person; break it with a "+
+			"transition that names roles, or drop the outputs", strings.Join(c.states, ", ")))
+	}
+}
+
+// jobEdges returns the moves of s that no person makes: every timer and
+// every transition a trigger can fire.
+func jobEdges(statesKey string, s *Session) []jobEdge {
+	var edges []jobEdge
+	for i, st := range s.states {
+		for _, t := range st.timers {
+			if j, ok := s.index[t.To]; ok {
+				edges = append(edges, jobEdge{from: i, to: j, timer: true, outputs: len(t.outputs) > 0,
+					key: statesKey + "." + st.Name + ".after." + t.Name})
+			}
+		}
+		for _, mn := range sortedKeys(st.on) {
+			t := st.on[mn]
+			if j, ok := s.index[t.To]; ok && t.job {
+				edges = append(edges, jobEdge{from: i, to: j, outputs: len(t.outputs) > 0,
+					key: statesKey + "." + st.Name + ".on." + mn})
+			}
+		}
+	}
+	return edges
+}
+
+// loopComponent sums the loop edges of one strongly connected component:
+// its first timer edge, whether any edge has outputs, whether any is a
+// trigger-fired transition, and its states.
+type loopComponent struct {
+	timer          *jobEdge
+	outputs, jobTr bool
+	states         []string
+}
+
+// loopComponents groups the edges that lie on a loop by their strongly
+// connected component, in the order of their first edge. Any two edges of
+// one component lie on one closed walk.
+func loopComponents(s *Session, edges []jobEdge) []*loopComponent {
+	reach := jobReach(len(s.states), edges)
+	comps := map[int]*loopComponent{}
+	var order []*loopComponent
+	for i := range edges {
+		e := &edges[i]
+		if !reach[e.to][e.from] {
+			continue
+		}
+		// The component is named by its lowest state index.
+		root := e.from
+		for k := range s.states {
+			if reach[k][e.from] && reach[e.from][k] {
+				root = k
+				break
+			}
+		}
+		c, ok := comps[root]
+		if !ok {
+			c = &loopComponent{}
+			for k := range s.states {
+				if reach[k][root] && reach[root][k] {
+					c.states = append(c.states, s.states[k].Name)
+				}
+			}
+			comps[root] = c
+			order = append(order, c)
+		}
+		if e.timer && c.timer == nil {
+			c.timer = e
+		}
+		c.outputs = c.outputs || e.outputs
+		c.jobTr = c.jobTr || !e.timer
+	}
+	return order
+}
+
+// jobReach returns, for n states and edges, whether state j is reachable
+// from state i by one or more edges.
+func jobReach(n int, edges []jobEdge) [][]bool {
+	next := make([][]int, n)
+	for _, e := range edges {
+		next[e.from] = append(next[e.from], e.to)
+	}
+	reach := make([][]bool, n)
+	for i := range n {
+		reach[i] = make([]bool, n)
+		stack := slices.Clone(next[i])
+		for len(stack) > 0 {
+			j := stack[len(stack)-1]
+			stack = stack[:len(stack)-1]
+			if reach[i][j] {
+				continue
+			}
+			reach[i][j] = true
+			stack = append(stack, next[j]...)
+		}
+	}
+	return reach
+}
+
 // messageTypesKey is the key path of ct's message types.
 func (ct *ChannelType) messageTypesKey() string { return "channel_types." + ct.Name + ".message_types" }
 
@@ -415,18 +552,13 @@ func (v *validator) transition(
 		t.When = v.guard(key+".when", raw.When, mt, ct, s.guardReminders)
 		t.warned = &atomic.Bool{}
 	}
-	if len(raw.Outputs) > 0 && len(raw.Roles) == 0 && t.By == TransitionByAny {
-		if tr := triggerReachable(v.file, ct.Name, msgType); tr != "" {
-			v.add(key+".outputs", fmt.Sprintf("trigger %s posts %s into this channel type, so it can fire this "+
-				"transition; outputs on a transition a trigger can fire need %s; add roles: so only people "+
-				"fire it, or remove the outputs", tr, msgType, runAsLater))
-		}
-	}
 	var cause *MessageType
 	if ok {
 		cause = mt
 	}
-	t.outputs = writeChecker{v}.outputs(key+".outputs", raw.Outputs, t, cause, ct)
+	c := transitionCause(v.file, ct.Name, t, cause)
+	t.job = c.job()
+	t.outputs = writeChecker{v}.outputs(key+".outputs", raw.Outputs, c, ct)
 	return t, ok
 }
 

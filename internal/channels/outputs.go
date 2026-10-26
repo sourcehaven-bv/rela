@@ -38,15 +38,18 @@ const MaxOutputResults = 5
 // outbox row the move writes in the same store step, and the progress of
 // the writes that follow it.
 //
-// Writer, Roles, Unmatched, UserEntity, AnchorType, Gen, From, To and
-// Cause are set by the step that creates the mark and never change. Attempt, Claim and ClaimedAt are the claim:
+// Writer, Roles, Unmatched, UserEntity, AnchorType, Gen, From, To, Cause,
+// Job and Timer are set by the step that creates the mark and never
+// change. Attempt, Claim and ClaimedAt are the claim:
 // one runner at a time holds the mark, and the owning action's PendingAt
 // is ClaimedAt plus the claim TTL. A claim takes the next attempt with a
 // new token once PendingAt has passed; the holder then writes progress
 // (same attempt and token) after each output and finally the done write.
 // See [CheckOutputStep].
 type OutputMark struct {
-	// Writer is the cause message's author, with its original tool.
+	// Writer is the cause message's author, with its original tool. On a
+	// job mark it is the run_as the move wrote under, or the leader for a
+	// mark that only closes.
 	Writer Author `json:"writer"`
 	// Roles are the writer's verified role claims at the post. A retry
 	// rebuilds the writer with them. They are never on the wire.
@@ -65,8 +68,17 @@ type OutputMark struct {
 	// From and To are the states of the move.
 	From string `json:"from"`
 	To   string `json:"to"`
-	// Cause is the seq of the message that caused the move.
+	// Cause is the seq of the message that caused the move; zero for a
+	// timer move.
 	Cause int64 `json:"cause"`
+	// Job marks the outputs of a job move: a timer move, or a move a
+	// trigger's post fired. They write as the session's current run_as,
+	// never as Writer, which then only records who the move named. Set when
+	// the mark is created and never changed, so a retry cannot switch a
+	// person's write to run_as or the reverse.
+	Job bool `json:"job,omitempty"`
+	// Timer is the timer behind a timer move; empty for a message move.
+	Timer string `json:"timer,omitempty"`
 	// Attempt counts the claims; zero for a mark nobody claimed yet.
 	Attempt int `json:"attempt"`
 	// Claim is the random token of the current claim.
@@ -87,8 +99,8 @@ type OutputResult struct {
 	// [OutputSuperseded] or, while a create runs, [OutputStarted].
 	Status string `json:"status"`
 	// Code says why an output failed: forbidden, field_denied, invalid,
-	// conflict, not_found, unconfirmed, expired, transition_removed or
-	// error. It never quotes an error text or an id.
+	// conflict, not_found, unconfirmed, expired, transition_removed,
+	// run_as_changed or error. It never quotes an error text or an id.
 	Code string `json:"code,omitempty"`
 	// Props are, for a set, the properties written; for an invalid
 	// output, the properties the validation named.
@@ -145,8 +157,16 @@ func prepareOutputMark(name string, next *Action) error {
 	if len(m.Results) > MaxOutputResults {
 		return fmt.Errorf("%w: %d output results, at most %d", ErrTooLarge, len(m.Results), MaxOutputResults)
 	}
-	if !ValidStateName(m.From) || !ValidStateName(m.To) || m.Gen <= 0 || m.Cause <= 0 || m.Attempt < 0 {
+	if !ValidStateName(m.From) || !ValidStateName(m.To) || m.Gen <= 0 || m.Attempt < 0 {
 		return fmt.Errorf("%w: outputs mark of move %q to %q", ErrInvalidMessage, m.From, m.To)
+	}
+	switch {
+	case (m.Cause > 0) == (m.Timer != "") || m.Cause < 0:
+		return fmt.Errorf("%w: an outputs mark names either its cause or its timer", ErrInvalidMessage)
+	case m.Timer != "" && !m.Job:
+		return fmt.Errorf("%w: a timer's outputs mark is a job mark", ErrInvalidMessage)
+	case m.Timer != "" && !ValidStateName(m.Timer):
+		return fmt.Errorf("%w: outputs mark of timer %q", ErrInvalidMessage, m.Timer)
 	}
 	if m.AnchorType != "" {
 		if err := checkPromotedType(m.AnchorType); err != nil {
@@ -206,7 +226,7 @@ func CheckOutputStep(cur *Action, name string, expect ActionStatus, next Action)
 	c, n := cur.Outputs, next.Outputs
 	if c.Writer != n.Writer || !slices.Equal(c.Roles, n.Roles) || c.Unmatched != n.Unmatched ||
 		c.UserEntity != n.UserEntity || c.AnchorType != n.AnchorType || c.Gen != n.Gen || c.From != n.From ||
-		c.To != n.To || c.Cause != n.Cause {
+		c.To != n.To || c.Cause != n.Cause || c.Job != n.Job || c.Timer != n.Timer {
 
 		return fmt.Errorf("%w: the writer and move of an outputs mark never change", ErrInvalidMessage)
 	}
@@ -226,6 +246,34 @@ func CheckOutputStep(cur *Action, name string, expect ActionStatus, next Action)
 		return fmt.Errorf("%w: the outputs mark is held by another claim", ErrConflict)
 	}
 	return nil
+}
+
+// timerMark returns the pending outputs action the step's Mark gives for a
+// move made by the step's timer, with the move's facts filled in by the
+// store, or nil when the step marks nothing. It is [sessionMark] for a
+// timer: the mark names the timer instead of a cause, is a job mark, and
+// takes the notice time.
+func timerMark(step *SessionStep, at time.Time, move SessionMove, gen int64) (*Action, error) {
+	if step.Mark == nil {
+		return nil, nil //nolint:nilnil // no Mark: the step marks nothing
+	}
+	a := step.Mark(move)
+	if a == nil {
+		return nil, nil //nolint:nilnil // Mark gave no action: the move marks nothing
+	}
+	next := *a
+	next.Status, next.At = ActionPending, at
+	if next.Outputs != nil {
+		m := next.Outputs.Clone()
+		m.Gen, m.From, m.To, m.Cause, m.Timer, m.Job = gen, move.From, move.To, 0, step.Timer, true
+		next.Outputs = m
+		next.By = m.Writer
+	}
+	prepared, err := PrepareAction(OutputsAction, next)
+	if err != nil {
+		return nil, err
+	}
+	return &prepared, nil
 }
 
 // sessionMark returns the pending outputs action the step's Mark gives for

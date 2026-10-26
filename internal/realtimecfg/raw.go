@@ -49,6 +49,8 @@ type rawSession struct {
 	Reminders map[string]rawReminder `yaml:"reminders"`
 	// OnFinal is `session.on_final`; see [Session.OnFinal].
 	OnFinal string `yaml:"on_final"`
+	// RunAs is `session.run_as`; see [Session.RunAs].
+	RunAs *string `yaml:"run_as"`
 }
 
 // rawReminder is one `session.reminders.<name>` entry.
@@ -70,10 +72,11 @@ type rawSessionState struct {
 
 // rawSessionTimer is one `after.<name>` entry of a session state.
 type rawSessionTimer struct {
-	Period string `yaml:"period"`
-	Since  string `yaml:"since"`
-	To     string `yaml:"to"`
-	Label  string `yaml:"label"`
+	Period  string      `yaml:"period"`
+	Since   string      `yaml:"since"`
+	To      string      `yaml:"to"`
+	Label   string      `yaml:"label"`
+	Outputs []rawOutput `yaml:"outputs"`
 }
 
 type rawTransition struct {
