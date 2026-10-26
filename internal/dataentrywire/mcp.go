@@ -7,6 +7,7 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/appbuild"
 	"github.com/Sourcehaven-BV/rela/internal/dataentry"
+	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
 	relamcp "github.com/Sourcehaven-BV/rela/internal/mcp"
 	"github.com/Sourcehaven-BV/rela/internal/mcpwire"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
@@ -127,7 +128,15 @@ func RemoteMCPDeps(svc *appbuild.Services, host dataentry.MCPHost) (relamcp.Deps
 		deps.Leases = leases
 	}
 	if host.Actions != nil {
-		deps.Actions = host.Actions
+		deps.Commands.Actions = host.Actions
+	}
+	// The field-gated converter the data-entry conversion endpoint uses.
+	if em := appbuild.FieldGatedEntityManager(svc); em != nil {
+		conv, err := entitymanager.NewConverter(em)
+		if err != nil {
+			return relamcp.Deps{}, err
+		}
+		deps.Commands.Conversions = conv
 	}
 	// The channel tools share the HTTP routes' service, so a post through
 	// either wakes the other's watchers, and signals are kept. The service
