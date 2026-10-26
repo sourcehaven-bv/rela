@@ -44,7 +44,7 @@ func wireChannelSession(s *realtime.SessionView) *v1.ChannelSession {
 	}
 	for _, t := range s.Transitions {
 		out.Transitions = append(out.Transitions, v1.ChannelSessionTransition{
-			MessageType: t.MessageType, To: t.To, By: t.By, Guarded: t.Guarded,
+			MessageType: t.MessageType, To: t.To, By: t.By, Guarded: t.Guarded, Outputs: t.Outputs,
 		})
 	}
 	if s.DueAt != nil {
@@ -123,6 +123,22 @@ func wireMessage(m realtime.MessageView) v1.Message {
 			Name: m.Action.Name, Status: string(m.Action.Status), At: channelTime(m.Action.At),
 			Promoted: wireRef(m.Action.Promoted),
 		}
+	}
+	out.Outputs = wireOutputs(m.Outputs)
+	return out
+}
+
+// wireOutputs renders a notice's outputs mark.
+func wireOutputs(o *realtime.OutputsView) *v1.ChannelMessageOutputs {
+	if o == nil {
+		return nil
+	}
+	out := &v1.ChannelMessageOutputs{Status: o.Status, Writer: *wireChannelAuthor(&o.Writer)}
+	for _, r := range o.Results {
+		out.Results = append(out.Results, v1.ChannelMessageOutputResult{
+			Kind: r.Kind, Status: r.Status, Code: r.Code, Props: r.Props, Face: r.Face, Entity: wireRef(r.Entity),
+			Warnings: r.Warnings,
+		})
 	}
 	return out
 }

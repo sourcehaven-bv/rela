@@ -89,6 +89,9 @@ type SessionTransitionView struct {
 	// message type moves the session only if the guard holds for it. It is
 	// config, the same for every reader.
 	Guarded bool `json:"guarded,omitempty"`
+	// Outputs is the number of graph outputs the transition writes. It is
+	// config, the same for every reader.
+	Outputs int `json:"outputs,omitempty"`
 }
 
 // current is a channel's session read against the configuration.
@@ -134,6 +137,7 @@ func sessionView(ct realtimecfg.ChannelType, h *channels.Channel, now time.Time,
 	for _, tr := range st.Transitions() {
 		v.Transitions = append(v.Transitions, SessionTransitionView{
 			MessageType: tr.MessageType, To: tr.To, By: string(tr.By), Guarded: tr.When != nil,
+			Outputs: len(tr.Outputs()),
 		})
 	}
 	if h != nil && !st.Final {
@@ -306,6 +310,8 @@ type sessionPost struct {
 	ct     string
 	mt     string
 	failed *guardFailure
+	// gate is the decider's outputs backstop; see [outputGate].
+	gate *outputGate
 }
 
 // guardFailure is a guard that failed to evaluate when the decider last
@@ -326,12 +332,12 @@ func newSessionPost(
 	now time.Time, p poster, triggeredBy string,
 ) sessionPost {
 	s := ct.Session()
-	sp := sessionPost{ct: ct.Name, mt: mt.Name, failed: &guardFailure{}}
+	sp := sessionPost{ct: ct.Name, mt: mt.Name, failed: &guardFailure{}, gate: &outputGate{}}
 	if s == nil {
 		return sp
 	}
 	sp.step = &channels.SessionStep{
-		Decide:     sessionDecider(ctx, s, mt, props, now, p, sp.failed),
+		Decide:     sessionDecider(ctx, s, mt, props, now, p, sp.failed, sp.gate),
 		NoticeType: realtimecfg.SessionNoticeType, NoticeBy: systemAuthor(),
 		TriggeredBy: channels.SessionMarker + ct.Name, AuditTriggeredBy: triggeredBy,
 		Outcome: &channels.SessionOutcome{},
@@ -355,14 +361,15 @@ func (sp sessionPost) logGuardFailure(ctx context.Context) {
 
 // sessionDecider returns the decider for a post of mt with props. It moves
 // nothing when the channel is not open, the state has no transition for
-// mt, the poster fails its rule, or its `when:` does not hold. A final
+// mt, the poster fails its rule, the transition has outputs the pre-check
+// did not allow (see [outputGate]), or its `when:` does not hold. A final
 // state has no transitions and a stranded state is not declared, so for
 // both Transition finds none. It reads only its arguments and the channel,
 // so it is safe to run under the store's lock; a guard that fails to
 // evaluate is recorded in failed for the caller to log.
 func sessionDecider(
 	ctx context.Context, s *realtimecfg.Session, mt *realtimecfg.MessageType, props map[string]any,
-	now time.Time, p poster, failed *guardFailure,
+	now time.Time, p poster, failed *guardFailure, gate *outputGate,
 ) func(channels.Channel) (channels.SessionMove, bool) {
 	fields := make(map[string]predicate.Value, len(mt.Properties))
 	for name, prop := range mt.Properties {
@@ -375,7 +382,7 @@ func sessionDecider(
 		}
 		cur := currentSession(s, ch)
 		t, ok := s.Transition(cur.State, mt.Name)
-		if !ok || !p.admits(t) {
+		if !ok || !p.admits(t) || !gate.admits(t, cur.State) {
 			return channels.SessionMove{}, false
 		}
 		holds, err := guardHolds(ctx, t.When, fields, reminderCounters(s, cur, ch), cur, now)

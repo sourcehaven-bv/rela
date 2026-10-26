@@ -202,6 +202,30 @@ func (r *Request) PermitsReadFace(
 // still authorizing against.
 func (r *Request) Principal() principal.Principal { return r.principal.Clone() }
 
+// RetoolRequest returns a Request for r's principal acting through tool. It
+// keeps everything r was opened with: the membership closure, the verified
+// claims and the client ceiling compiled from them, and the
+// unmatched-verified mark that `unmatched_principal` keys on. A writer that
+// acts for the caller under its own tool (a realtime session output) uses
+// it instead of resolving the identity again, which would lose that mark.
+// Attach it with [WithRequest] next to the retooled principal.
+//
+// A function rather than a method: [Request] is at its plimsoll method load
+// line.
+//
+// Nil: rejected; r must be a Request from [Declarative.ForIdentity].
+func RetoolRequest(r *Request, tool string) *Request {
+	p := r.principal.Clone()
+	p.Tool = tool
+	return &Request{
+		d:                 r.d,
+		principal:         p,
+		globals:           r.d.globalRoles(p, r.globals.Members),
+		ceiling:           r.d.policy.ceilingFor(p.PrincipalType(), p.Scopes()),
+		unmatchedVerified: r.unmatchedVerified,
+	}
+}
+
 // CeilingPermitsVerb reports whether r's client ceiling
 // (client_baselines and scope_grants) admits op on entityType. It consults
 // the ceiling only, never a role or a row: it answers "may this client write

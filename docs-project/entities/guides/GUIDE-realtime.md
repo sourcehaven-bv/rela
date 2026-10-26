@@ -418,11 +418,21 @@ channel_types:
     session:
       label: GDPR breach response
       initial: detected
+      on_final: close
       states:
         detected:
           label: Detected
           on:
-            contained: { to: contained, roles: [lead] }
+            contained:
+              to: contained
+              roles: [lead]
+              outputs:
+                - create:
+                    type: timeline-entry
+                    properties:
+                      title: "Contained by {{message.author}}: {{message.note}}"
+                      at: "{{now}}"
+                    relate: { type: about }
             dismiss:   { to: dismissed }
             escalated: { to: contained, by: trigger }
           after:
@@ -430,20 +440,33 @@ channel_types:
         contained:
           label: Contained
           on:
-            assessed:         { to: assessed, when: "message.risk ~= 'none'" }
+            assessed:
+              to: assessed
+              roles: [lead]
+              when: "message.risk ~= 'none'"
+              outputs:
+                - set: { properties: { risk: "{{message.risk}}" } }
             escalate-stalled: { to: overdue, when: "session.reminders['status-update'] >= 3" }
           after:
             notify-deadline: { period: 72h, since: session, to: overdue, label: 72 hours since detection }
         assessed:
           label: Risk assessed
           on:
-            notified: { to: notified }
+            notified:
+              to: notified
+              roles: [dpo]
+              outputs:
+                - set: { properties: { status: notified, reference: "{{message.reference}}" } }
           after:
             notify-deadline: { period: 72h, since: session, to: overdue, label: 72 hours since detection }
         overdue:
           label: Notification overdue
           on:
-            notified: { to: notified }
+            notified:
+              to: notified
+              roles: [dpo]
+              outputs:
+                - set: { properties: { status: notified, reference: "{{message.reference}}" } }
         notified:  { label: AP notified, final: true }
         dismissed: { label: Dismissed, final: true }
       reminders:
@@ -468,10 +491,12 @@ channel_types:
 | `states.<name>.on` | The transitions out of the state, keyed by message type. A state that is not final needs at least one transition or one timer. |
 | `states.<name>.after` | The timers of the state, keyed by timer name. At most 8. See [Timers](#timers). |
 | `session.reminders` | Messages the session posts at a fixed interval, keyed by reminder name. At most 8. See [Reminders](#reminders). |
+| `session.on_final` | `close`: a move into any final state closes the channel. See [Outputs](#outputs). |
 | `on.<type>.to` | The state the message moves the session to. It may be the same state: a re-entry. |
 | `on.<type>.roles` | Only a poster holding one of these roles moves the session. Each role must be in the message type's `post`. |
 | `on.<type>.by` | `trigger`: only a trigger's message moves the session. |
 | `on.<type>.when` | A condition the message must meet to move the session. |
+| `on.<type>.outputs` | Graph writes the move makes, as the poster. At most 4. See [Outputs](#outputs). |
 
 **How a message moves a session.** A posted message moves the session when,
 at the moment it is stored, the channel is open, the current state has an
@@ -686,6 +711,136 @@ back.
 **Final and stranded states.** A final state has no reminders, and a
 stranded session gets none.
 
+### Outputs
+
+A transition can write to the graph: set properties on the entity the
+channel is attached to, or create an entity. These writes are its
+`outputs`. In the example, a lead's `contained` message creates a timeline
+entry about the breach, `assessed` copies the risk onto the breach, and the
+privacy officer's `notified` records the status and the reference.
+
+```yaml
+contained:
+  label: Contained
+  on:
+    assessed:
+      to: assessed
+      roles: [lead]
+      when: "message.risk ~= 'none'"
+      outputs:
+        - set: { properties: { risk: "{{message.risk}}" } }
+```
+
+| Key | Meaning |
+| --- | --- |
+| `outputs[].set.properties` | Properties to write on the anchor. At most one `set` per transition. |
+| `outputs[].set.face` | The face to write, for a family-anchored channel whose type declares faces. A face-anchored channel writes its own face and takes no `face`. |
+| `outputs[].create.type` | The type of the new entity. It needs generated ids. |
+| `outputs[].create.properties` | The new entity's properties. Every required property must be set. |
+| `outputs[].create.face` | The new entity's face, as for `promote_to`. |
+| `outputs[].create.relate.type` | A relation from the new entity to the anchor. |
+
+**Values.** A property value is a literal or a template. A literal is
+checked against the property's type when the file loads. A template is
+`{{reference}}` alone, which keeps the referenced value's type, or text
+with references in it, which gives a string. The references are
+`message.<property>`, `message.author`, `session.from`, `session.to`,
+`session.generation`, `channel.key`, `channel.type`, `channel.title`, `now`
+and `today`. A whole-value reference to an optional message property the
+message leaves out sets nothing; in text it becomes the empty string. A
+value taken from a message is never read as a template again, so a message
+cannot inject a reference. `now` and `today` are the notice time in UTC,
+not the time the write runs, so a retry writes the same values.
+Automations format `now` in the server's time zone; outputs do not. A
+template can read the entity only through `channel.title`.
+
+**Who the outputs write as.** The person or agent whose message moved the
+session. The graph write runs with their roles and tool `realtime`, and
+their client baseline still applies. The graph audit log records each
+write with `triggered_by:
+session:<channel key>/<from>-><to>#<generation>/<index>`. A retry, which
+has no request, rebuilds the poster from the role claims stored on the
+notice. The notice also records whether the poster matched a user entity.
+A poster who matched none is judged by `unmatched_principal` on a retry as
+on the post, so with `reject` neither writes. A retry for a poster whose
+user entity was removed since the post fails `forbidden`.
+
+**Timers and triggers.** Outputs on a timer, and on a transition only a
+trigger fires, are refused for now. Such writes need an identity of their
+own (`run_as`), which arrives in a later release. A transition without
+`roles:` whose message type a trigger posts into the channel type is
+refused for the same reason; add `roles:` to keep triggers out.
+
+**Checked before the post.** Before rela stores a message that would fire
+a transition with outputs, it asks whether the poster may write each
+output: update the anchor at the target face, create the type at its face,
+and create the relation. If not, the post is refused with 403
+`session_output_denied`, and nothing is stored. A poster who cannot move
+the session therefore cannot leave a failed write behind. What this check
+cannot see fails after the move instead: a property the poster may not
+write, a validation error, a unique conflict or an illegal state move.
+
+**Field grants.** Every property a `set` writes is checked against the
+poster's field grants, a literal from the file as much as a value from
+the message. The write asks the update grant again on the anchor as it
+stands then, so a grant the poster lost after the check is not used. A
+`create` checks the field grants of the properties whose value comes
+from the message.
+
+**Order and failures.** The outputs run in order after the move is stored.
+The move stays when an output fails. A failed output stops the rest, which
+are marked `skipped`, and the notice shows the failure with a code:
+`forbidden`, `field_denied`, `invalid` (with the property names),
+`conflict`, `not_found`, `unconfirmed`, `expired`, `transition_removed` or
+`error`. A notice whose transition the file no longer declares has one
+result of kind `transition`, which fails `transition_removed`. A code never quotes an error message or an id.
+
+**Retries.** A write that failed for a passing reason, or a server that
+stopped mid-way, leaves the outputs pending. The leader process retries
+them once a minute, in a round of its own beside its timers and triggers,
+at most 16 per round, at most 5 attempts per move, and
+for at most 30 minutes after the notice; then they fail `expired`. A
+holder keeps its claim for 90 seconds after its last write. A retry reads
+the outputs from the current file: changed outputs run as now declared,
+and a transition the file no longer declares fails `transition_removed`.
+When a later move already set a property, a retried `set` leaves it out;
+when it leaves out every property, the output is `superseded`. The outputs
+of one channel run one at a time, so a retry reads the later moves after
+their outputs ran, however many messages came between.
+
+**Exactly once and at least once.** A `set` runs at least once: a retry
+may write the same values again, and update automations see it. A `create`
+runs exactly once when the channel store and the entity store share a
+database (sqlite, or postgres with both on the same database): the entity,
+its relation and the progress commit together. With the file store, or
+stores on different databases, a create that may have written is never
+retried. It fails `unconfirmed`, so it is neither doubled nor silently
+dropped.
+
+**Automations and validation.** Outputs go through the same write path as
+a form, so automations and validation run. A validation error fails the
+output with the property names. Warnings complete it with the warning
+codes. An output that changes the anchor can fire an entity trigger that
+posts into the same session. The trigger cooldown (one post per rule and
+entity per minute) bounds such a loop, but check your triggers before you
+add outputs that change what they watch.
+
+**on_final: close.** With `session.on_final: close`, a move into any final
+state closes the channel as the last step of the outputs. A failed output
+does not stop the close. A reopened channel in a final state is not closed
+again. The close needs no lifecycle `close` operation; reopening still
+needs `reopen`. A timer's move into a final state does not close the
+channel yet.
+
+**On the notice.** The notice of a move with outputs carries an `outputs`
+block in place of `action`: the status (`pending`, `done` or `failed`),
+the writer, and a result per output with its kind, status, code, the
+properties a set wrote, the face a set wrote when the output names one,
+and the entity a create made (`restricted` for a
+reader who cannot read it). While the outputs run, a moderator cannot
+remove the message that caused the move, and nobody can release the mark:
+both answer 409 `outputs_pending`.
+
 ## Triggers
 
 A trigger posts a message into an entity's own channel when the entity
@@ -804,6 +959,20 @@ unknown entity type "nope"`. It checks:
 - that a channel type with `typing: true` has at least one `log` message
   type, and no message type named `typing`. `typing` must be `true` or
   `false`;
+- that each transition has at most 4 outputs and at most one `set`; that
+  each output is either `set` or `create`, names at least one property, and
+  sets only declared properties that are not computed, file or
+  `external_ref` properties; that literals fit their property, templates
+  are at most 1024 bytes and name known references of a fitting type, and
+  `{{entity.*}}` is not used; that a `create` names a type with generated
+  ids, sets every required property, and relates with a relation that can
+  link the type to every `attach_to` type; that a property a `set` writes
+  has the same type on every `attach_to` type; that faces follow the rules
+  under [Outputs](#outputs); that `on_final` is `close`; and that no
+  message type of a session type declares an action named `outputs`.
+  Outputs on a timer, on a `by: trigger` transition, or on a transition a
+  trigger can fire are refused, and so are `run_as`, `outputs` on a state
+  or a reminder, and `on_final` on a state;
 - that the file has no merge key (`<<`) anywhere: write the entries out.
 
 Three more rules stop a message from revealing what `acl.yaml` hides:
@@ -859,6 +1028,10 @@ follow a second later.
 Reminders have fixed limits: at most 8 per session, an `every` and `first`
 of at least 1 minute, and a `max` of at most 1000. Reminder posts share the
 64 writes per check with timers.
+
+Outputs have fixed limits: at most 4 per transition and 1024 bytes per
+template. Retries run once a minute, at most 16 per round and 5 attempts
+per move, for 30 minutes after the notice; a claim holds for 90 seconds.
 
 ## In the web app
 
@@ -1096,8 +1269,9 @@ the session move.
 
 `transitions` lists the `on:` entries of the current state, with `by:
 "trigger"` when only a trigger fires one and `guarded: true` when the entry
-has a `when`. It is the same for every reader; `_actions.transitions` says
-which of them the caller fires.
+has a `when`, and `outputs` (the number of outputs) when the entry has any.
+It is the same for every reader; `_actions.transitions` says which of them
+the caller fires.
 `final` and `stranded` are set when they apply.
 
 `timers` lists the timers of the current state, sorted by name, each with
@@ -1134,6 +1308,19 @@ A notice looks like this:
   "props": { "from": "detected", "to": "contained", "generation": 1, "cause": 7 } }
 ```
 
+A notice of a move with outputs also carries `outputs`. A created entity
+the reader cannot read shows as `{"restricted": true}`:
+
+```json
+"outputs": {
+  "status": "failed", "writer": { "user": "dana", "tool": "data-entry" },
+  "results": [
+    { "kind": "create", "status": "done", "entity": { "id": "TL-4", "type": "timeline-entry", "title": "Contained by dana" } },
+    { "kind": "set", "status": "failed", "code": "invalid", "props": ["risk"] }
+  ]
+}
+```
+
 A reminder looks like this:
 
 ```json
@@ -1150,13 +1337,13 @@ Every error is a problem body (`application/problem+json`) with a `type`.
 | --- | --- |
 | 404 `not_found` | Realtime is off, or the entity is hidden, does not exist, or is not of the collection's type. The body is the same as for the entity `GET`. |
 | 404 | The channel type is not attached to the entity type, or the channel or the message does not exist. |
-| 403 | The caller may not perform the operation, the edit window has passed, the lifecycle operation is not declared (`lifecycle_not_offered`), or its `condition` does not hold (`lifecycle_denied`). For actions: the message type does not declare the action, or this process cannot promote (`action_not_offered`), the action's gate refuses (`action_denied`), or the create ACL or a `fields:` grant refuses the promote (`promote_denied`). `title` says what the operation needs and `detail` names the rule in `realtime.yaml`, such as `channel_types.room.message_types.text.post`. |
+| 403 | The caller may not perform the operation, the edit window has passed, the lifecycle operation is not declared (`lifecycle_not_offered`), or its `condition` does not hold (`lifecycle_denied`). For actions: the message type does not declare the action, or this process cannot promote (`action_not_offered`), the action's gate refuses (`action_denied`), or the create ACL or a `fields:` grant refuses the promote (`promote_denied`). For a post: the poster may not write an output of the transition the message would fire (`session_output_denied`); nothing is stored. `title` says what the operation needs and `detail` names the rule in `realtime.yaml`, such as `channel_types.room.message_types.text.post`. |
 | 400 | The message does not match its type (`invalid_message`), has too many properties, or a removal lacks a required reason. |
 | 400 | The body is not valid JSON, has unknown fields, or a query parameter is not a positive number. |
 | 413 `too_large` | The message is over `message_bytes`. |
 | 422 | A `ref` names an entity that does not exist or that the caller cannot read. Both get the same body. |
 | 422 `promote_invalid` | The promoted entity or its relation fails validation, for example a `unique` property that another entity already has, or a mapped `ref` names an entity the caller cannot read. The body names properties, never entity ids. |
-| 409 | The channel is not open, the channel is not in a state the lifecycle operation starts from (`lifecycle_wrong_state`), `retention` keeps the channel (`retention_active`), a concurrent change won (`conflict`), the message was removed, `channels_per_entity` is reached, the POST tried to open a channel of a `one` type, or the configuration changed during the request. An edit or removal targets a session notice (`session_notice`), or an author's edit or delete targets a message that moved the session (`session_message`). For actions: the message already carries an action (`action_taken`), its action is pending (`action_pending`, also for an edit, a removal, a release within the release window, or an action that lost a race to a promote that started first), a release finds no pending action (`action_not_pending`), or the promoted entity already exists (`promote_conflict`). |
+| 409 | The channel is not open, the channel is not in a state the lifecycle operation starts from (`lifecycle_wrong_state`), `retention` keeps the channel (`retention_active`), a concurrent change won (`conflict`), the message was removed, `channels_per_entity` is reached, the POST tried to open a channel of a `one` type, or the configuration changed during the request. An edit or removal targets a session notice (`session_notice`), or an author's edit or delete targets a message that moved the session (`session_message`). For actions: the message already carries an action (`action_taken`), its action is pending (`action_pending`, also for an edit, a removal, a release within the release window, or an action that lost a race to a promote that started first), a release finds no pending action (`action_not_pending`), or the promoted entity already exists (`promote_conflict`). A removal of the message that moved the session, or a release of a notice's outputs mark, while the outputs still run (`outputs_pending`). |
 | 429 | A rate limit. `Retry-After` gives the seconds to wait, rounded up. |
 
 The OpenAPI document at `/api/v1/_openapi.json` lists these paths for every
@@ -1244,6 +1431,16 @@ The session also lists `reminders`, and a reminder raises the rev, so a
 reminder, such as `reminder status-update: 2 of 48, next at
 2026-10-21T10:22:03Z`, and a reminder message is marked `(reminder)`.
 
+**Outputs.** `post_message` answers `outputs` for a post whose move wrote
+to the graph, and notices in `read_channel` carry the same block (see
+[Outputs](#outputs)). A post the agent may not complete is refused with
+`session_output_denied` before it is stored. Each step of the outputs
+raises the channel's rev, so a `watch` wakes on it. `rela channel read`
+adds the outputs to the notice line, such as `moved from assessed to
+notified; outputs done: set DL-1` or `outputs failed: set DL-1 (invalid:
+reference)`, and `rela channel post` prints the same outputs line after the
+session line.
+
 **Identity.** The channel tools and `rela channel` act as `$USER`, or as the
 job identity in `RELA_RUN_AS` (`--run-as`), such as `integration:triage-bot`.
 Give an agent its own job identity and an `acl.yaml` assignment, so it holds
@@ -1310,6 +1507,13 @@ it out of roles that post on channels other agents act on.
   post, for example when an enum loses the value it posts. rela then
   logs this once and pauses the reminder for every channel until
   `realtime.yaml` or the schema changes again. Timers keep firing.
+- A reload may add, remove or change outputs and `on_final`. The check
+  before a post uses the file in force then. A retry reads the outputs
+  from the current file: changed outputs run as now declared, and a
+  transition the file no longer declares fails `transition_removed`.
+  While the configuration is degraded, a post that would fire outputs is
+  refused with 403 `session_output_denied`, and retries wait until a valid
+  configuration is back.
 - Timers and reminders do not run while the configuration is degraded. They
   run on the first check after a valid configuration is back.
 - Saving `schema.yaml` in the Configure space checks `realtime.yaml` against

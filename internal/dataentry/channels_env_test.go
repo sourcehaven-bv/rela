@@ -1,6 +1,8 @@
 package dataentry
 
 import (
+	"context"
+	"strings"
 	"sync/atomic"
 	"testing"
 
@@ -156,7 +158,60 @@ type channelService struct {
 	meta  *metamodel.Metamodel
 	// degraded marks the configuration degraded while it holds true.
 	degraded atomic.Bool
+	// outputs writes session outputs; no test configuration declares any
+	// unless it swaps in outputsRealtime.
+	outputs *fakeOutputs
 }
+
+// fakeOutputs is an OutputWriter that allows every output and writes
+// nothing. A create answers with FEAT-1, which only dave reads. A set on
+// TKT-1 fails as invalid on status.
+type fakeOutputs struct{}
+
+func (fakeOutputs) Poster(context.Context) (realtime.OutputPoster, error) {
+	return realtime.OutputPoster{}, nil
+}
+
+func (fakeOutputs) Check(context.Context, realtime.OutputTarget) error { return nil }
+
+func (fakeOutputs) Write(ctx context.Context, r realtime.OutputRequest) (realtime.OutputWritten, error) {
+	if r.Target.Kind == realtimecfg.OutputSet && r.Target.AnchorID == "TKT-1" {
+		return realtime.OutputWritten{}, &realtime.OutputError{
+			Code: realtime.OutputCodeInvalid, Props: []string{"status"}, WroteNothing: true,
+		}
+	}
+	if r.Target.Kind != realtimecfg.OutputCreate {
+		return realtime.OutputWritten{}, nil
+	}
+	if r.Started != nil {
+		if err := r.Started(ctx); err != nil {
+			return realtime.OutputWritten{}, err
+		}
+	}
+	return realtime.OutputWritten{Entity: &channels.Promoted{ID: "FEAT-1", Type: "feature"}}, nil
+}
+
+// outputsRealtime is channelTestRealtime with outputs on the incident
+// session: contained sets the status and creates a feature, and
+// contained is no longer final, as a note then moves it to reviewed.
+var outputsRealtime = strings.Replace(channelTestRealtime,
+	`          on: { contained: { to: contained } }
+          after: { no-containment: { period: 24h, to: contained, label: Not contained within a day } }
+        contained: { label: Contained, final: true }`,
+	`          on:
+            contained:
+              to: contained
+              outputs:
+                - set: { properties: { status: contained } }
+                - create: { type: feature, properties: { title: Follow-up } }
+        contained:
+          label: Contained
+          on:
+            note:
+              to: reviewed
+              outputs:
+                - set: { properties: { status: reviewed } }
+        reviewed: { label: Reviewed, final: true }`, 1)
 
 // parse compiles yaml as realtime.yaml against the service's schema.
 func (c *channelService) parse(t *testing.T, yaml string) *realtimecfg.Compiled {
@@ -196,10 +251,11 @@ func newChannelServiceLocal(
 	local *realtime.Local,
 ) *channelService {
 	t.Helper()
-	out := &channelService{store: cs, cfg: &atomic.Pointer[realtimecfg.Compiled]{}, meta: meta}
+	out := &channelService{store: cs, cfg: &atomic.Pointer[realtimecfg.Compiled]{}, meta: meta, outputs: &fakeOutputs{}}
 	out.cfg.Store(out.parse(t, yaml))
 	bundle := appbuildtest.New(meta, appbuildtest.WithStore(st), appbuildtest.WithDeclarative(d),
-		appbuildtest.WithChannelsLocal(cs, testRealtimeConfig{p: out.cfg, degraded: &out.degraded}, local))
+		appbuildtest.WithChannelsLocal(cs, testRealtimeConfig{p: out.cfg, degraded: &out.degraded}, local),
+		appbuildtest.WithChannelOutputs(out.outputs))
 	t.Cleanup(func() { _ = bundle.Close() })
 	if out.svc = appbuild.ChannelService(bundle); out.svc == nil {
 		t.Fatal("appbuildtest built no channel service")

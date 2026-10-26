@@ -242,3 +242,61 @@ func TestRenderRead_Session(t *testing.T) {
 		})
 	}
 }
+
+// TestRenderRead_NoticeOutputs pins the outputs on a notice's line: done
+// with the anchor set and the entity created, and failed with its code and
+// the properties validation named.
+func TestRenderRead_NoticeOutputs(t *testing.T) {
+	at := time.Date(2026, 10, 21, 9, 12, 3, 0, time.UTC)
+	notice := func(seq int64, from, to string, o *realtime.OutputsView) realtime.MessageView {
+		return realtime.MessageView{
+			Seq: seq, Type: "session", At: at, TriggeredBy: "session:breach-response",
+			Author:  &realtime.AuthorView{User: "system:realtime", System: true},
+			Props:   map[string]any{"from": from, "to": to, "generation": int64(1), "cause": seq - 1},
+			Outputs: o,
+		}
+	}
+	view := realtime.ReadView{
+		Channel: realtime.ChannelView{Anchor: "DL-1", Type: "breach-response", State: realtime.StateOpen},
+		Messages: []realtime.MessageView{
+			notice(2, "assessed", "notified", &realtime.OutputsView{
+				Status: realtime.OutputsDone, Writer: realtime.AuthorView{User: "alice"},
+				Results: []realtime.OutputResultView{
+					{Kind: realtime.OutputKindSet, Status: realtime.OutputResultDone, Props: []string{"status"}},
+					{Kind: realtime.OutputKindCreate, Status: realtime.OutputResultDone, Entity: &realtime.RefValue{ID: "TL-1"}},
+					{Kind: realtime.OutputKindCreate, Status: realtime.OutputResultDone,
+						Entity: &realtime.RefValue{Restricted: true}},
+				},
+			}),
+			notice(4, "notified", "closed", &realtime.OutputsView{
+				Status: realtime.OutputsFailed, Writer: realtime.AuthorView{User: "alice"},
+				Results: []realtime.OutputResultView{
+					{Kind: realtime.OutputKindSet, Status: realtime.OutputResultFailed, Code: "invalid", Props: []string{"status"}},
+					{Kind: realtime.OutputKindCreate, Status: "skipped"},
+					{Kind: realtime.OutputKindClose, Status: realtime.OutputResultFailed, Code: "forbidden"},
+				},
+			}),
+			notice(6, "closed", "open", &realtime.OutputsView{Status: realtime.OutputsPending}),
+			notice(8, "open", "assessed", &realtime.OutputsView{
+				Status: realtime.OutputsFailed, Writer: realtime.AuthorView{User: "alice"},
+				Results: []realtime.OutputResultView{
+					{Kind: realtime.OutputKindSet, Status: realtime.OutputResultDone, Face: "legal", Props: []string{"risk"}},
+					{Kind: realtime.OutputKindTransition, Status: realtime.OutputResultFailed, Code: "transition_removed"},
+				},
+			}),
+		},
+	}
+	var buf bytes.Buffer
+	require.NoError(t, renderRead(&buf, view))
+	got := buf.String()
+	assert.Contains(t, got,
+		"  moved from assessed to notified; outputs done: set DL-1, created TL-1, created (restricted)\n")
+	assert.Contains(t, got,
+		"  moved from notified to closed; outputs failed: set DL-1 (invalid: status), create (skipped), "+
+			"close (forbidden)\n")
+	assert.Contains(t, got, "  moved from closed to open; outputs pending\n")
+	assert.Contains(t, got,
+		"  moved from open to assessed; outputs failed: set DL-1@legal, transition (transition_removed)\n",
+		"a set names the face it writes")
+	assert.NotContains(t, got, "alice", "the writer is not on the notice line")
+}

@@ -306,6 +306,11 @@ type Promoted struct {
 
 // Action is the one action taken on a message. Pending marks an action whose
 // side effect is under way; Done marks one that completed.
+//
+// PendingAt is when the action went pending. On the [OutputsAction] mark
+// of a session notice it means "eligible for a retry at" instead: the
+// holder's last write plus the claim TTL (see [OutputMark]), so
+// [Store.StalePending] lists only marks a runner may claim.
 type Action struct {
 	Name      string       `json:"name"`
 	Status    ActionStatus `json:"status"`
@@ -313,6 +318,8 @@ type Action struct {
 	At        time.Time    `json:"at"`
 	PendingAt time.Time    `json:"pending_at,omitzero"`
 	Promoted  *Promoted    `json:"promoted,omitempty"`
+	// Outputs is set only on the [OutputsAction] mark of a session notice.
+	Outputs *OutputMark `json:"outputs,omitempty"`
 	// Revert marks a step from [ActionPending] to [ActionNone] that undoes
 	// a promote which wrote nothing, as opposed to a person releasing the
 	// action. It only chooses the audit status ([AuditReverted]) and is
@@ -582,6 +589,20 @@ type PendingAction struct {
 	PendingAt time.Time `json:"pending_at"`
 }
 
+// SortPending orders ps as [Store.StalePending] returns them: oldest
+// PendingAt first, then by key and seq.
+func SortPending(ps []PendingAction) {
+	sort.SliceStable(ps, func(i, j int) bool {
+		if c := ps[i].PendingAt.Compare(ps[j].PendingAt); c != 0 {
+			return c < 0
+		}
+		if ps[i].Key != ps[j].Key {
+			return KeyLess(ps[i].Key, ps[j].Key)
+		}
+		return ps[i].Seq < ps[j].Seq
+	})
+}
+
 // AuditOp names what an audit record records.
 type AuditOp string
 
@@ -760,12 +781,12 @@ func PrepareAction(name string, next Action) (Action, error) {
 		return next, fmt.Errorf("%w: action has no time", ErrInvalidMessage)
 	}
 	if next.Promoted != nil {
-		if err := entity.ValidateID(next.Promoted.ID); err != nil {
-			return next, fmt.Errorf("%w: promoted id: %w", ErrInvalidMessage, err)
-		}
-		if err := checkPromotedType(next.Promoted.Type); err != nil {
+		if err := checkPromoted(next.Promoted); err != nil {
 			return next, err
 		}
+	}
+	if err := prepareOutputMark(name, &next); err != nil {
+		return next, err
 	}
 	next.Name = name
 	next.At = NormTime(next.At)
@@ -850,6 +871,14 @@ func ActionAudit(k Key, seq int64, name string, expect ActionStatus, next Action
 		rec.Status = AuditReleased
 	}
 	return rec, true
+}
+
+// checkPromoted refuses a promoted record with an invalid id or type.
+func checkPromoted(p *Promoted) error {
+	if err := entity.ValidateID(p.ID); err != nil {
+		return fmt.Errorf("%w: promoted id: %w", ErrInvalidMessage, err)
+	}
+	return checkPromotedType(p.Type)
 }
 
 // checkPromotedType refuses an empty, oversized or unprintable entity type

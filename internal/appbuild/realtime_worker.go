@@ -44,7 +44,10 @@ import (
 // trigger may post twice: posts are at least once.
 const (
 	realtimeLifecycleInterval = time.Minute
-	realtimeRetentionInterval = time.Hour
+	// realtimeOutputsRoundTimeout bounds one round of the outputs runner,
+	// which runs beside the leader loop; marks left over wait for the next.
+	realtimeOutputsRoundTimeout = realtimeLifecycleInterval
+	realtimeRetentionInterval   = time.Hour
 	// realtimeTakeoverInterval is how often a process that does not lead
 	// tries to take the worker lock.
 	realtimeTakeoverInterval = 10 * time.Second
@@ -235,6 +238,7 @@ type realtimeWorker struct {
 	sweeper  *realtime.Sweeper
 	triggers *realtime.Triggers
 	timers   *realtime.Timers
+	outputs  outputsRound
 	dueWake  *realtime.DueWake
 	changes  store.Watcher
 	lock     leaderLock
@@ -243,6 +247,8 @@ type realtimeWorker struct {
 	// leading is set while this process leads; the event drain notes
 	// changes only then.
 	leading atomic.Bool
+	// outputsBusy is set while a round of the outputs runner runs.
+	outputsBusy atomic.Bool
 
 	mu      sync.Mutex
 	running chan struct{}
@@ -250,11 +256,18 @@ type realtimeWorker struct {
 	once    sync.Once
 }
 
+// outputsRound is the part of [realtime.Outputs] the worker runs.
+type outputsRound interface {
+	Run(ctx context.Context) (realtime.OutputsReport, error)
+}
+
 // realtimeWorkerParts are the collaborators of a [realtimeWorker].
 type realtimeWorkerParts struct {
 	sweeper  *realtime.Sweeper
 	triggers *realtime.Triggers
 	timers   *realtime.Timers
+	// outputs retries the session outputs marks no request runs.
+	outputs outputsRound
 	// dueWake reports the due times writes store, so a timer round can run
 	// before its planned time.
 	dueWake *realtime.DueWake
@@ -268,14 +281,16 @@ type realtimeWorkerParts struct {
 //
 // Nil: every field of p is rejected.
 func newRealtimeWorker(p realtimeWorkerParts) (*realtimeWorker, error) {
-	if p.sweeper == nil || p.triggers == nil || p.timers == nil || p.dueWake == nil || p.changes == nil ||
-		p.lock == nil || p.wake == nil {
+	if p.sweeper == nil || p.triggers == nil || p.timers == nil || p.outputs == nil || p.dueWake == nil ||
+		p.changes == nil || p.lock == nil || p.wake == nil {
 
-		return nil, errors.New("realtime worker: sweeper, triggers, timers, dueWake, changes, lock and wake are required")
+		return nil, errors.New(
+			"realtime worker: sweeper, triggers, timers, outputs, dueWake, changes, lock and wake are required")
 	}
 	return &realtimeWorker{
-		sweeper: p.sweeper, triggers: p.triggers, timers: p.timers, dueWake: p.dueWake, changes: p.changes,
-		lock: p.lock, wake: p.wake,
+		sweeper: p.sweeper, triggers: p.triggers, timers: p.timers, outputs: p.outputs, dueWake: p.dueWake,
+		changes: p.changes,
+		lock:    p.lock, wake: p.wake,
 		takeover: realtimeTakeoverInterval, closed: make(chan struct{}),
 	}, nil
 }
@@ -283,9 +298,12 @@ func newRealtimeWorker(p realtimeWorkerParts) (*realtimeWorker, error) {
 // buildRealtimeWorker builds the worker of an assembled Services, or
 // returns nil when the process is not long-running or has no channels.
 //
+// writer is the session outputs writer the runner retries marks with.
+//
 // Nil: refs.channels and refs.channelTombs are accepted (no worker).
+// writer is rejected when a worker is built.
 func buildRealtimeWorker(
-	base *SharedBase, st store.Store, kv state.KV, refs refHolders,
+	base *SharedBase, st store.Store, kv state.KV, refs refHolders, writer realtime.OutputWriter,
 ) (*realtimeWorker, error) {
 	if !base.opts.backgroundAutomationJobs || refs.channels == nil || refs.channelTombs == nil ||
 		refs.realtimeLocal == nil {
@@ -317,6 +335,12 @@ func buildRealtimeWorker(
 	if err != nil {
 		return nil, err
 	}
+	outputs, err := realtime.NewOutputs(realtime.OutputsDeps{
+		Store: refs.channels, Config: cfg, Writer: writer, Local: refs.realtimeLocal, Clock: time.Now,
+	})
+	if err != nil {
+		return nil, err
+	}
 	cacheDir := ""
 	if base.cfg.Paths != nil {
 		cacheDir = base.cfg.Paths.CacheDir
@@ -326,8 +350,8 @@ func buildRealtimeWorker(
 		return nil, err
 	}
 	return newRealtimeWorker(realtimeWorkerParts{
-		sweeper: sweeper, triggers: triggers, timers: timers, dueWake: refs.dueWake, changes: st, lock: l,
-		wake: refs.channelTombs.wake,
+		sweeper: sweeper, triggers: triggers, timers: timers, outputs: outputs, dueWake: refs.dueWake,
+		changes: st, lock: l, wake: refs.channelTombs.wake,
 	})
 }
 
@@ -439,7 +463,8 @@ func (w *realtimeWorker) drain(ctx context.Context, events <-chan store.Event) {
 
 // lead runs the sweeps and the triggers until ctx ends or check fails,
 // which it calls every takeover interval: everything once
-// at start, then the lifecycle sweep and the purge poll every minute, full
+// at start, then the lifecycle sweep, the purge poll and the session
+// outputs runner every minute, full
 // retention every hour, the purge poll on every wake, a trigger round on
 // every tick that has work, a trigger reconcile on its timer, and a timer
 // round when the [realtime.TimerSchedule] says. The trigger engine and the timer loop
@@ -454,6 +479,13 @@ func (w *realtimeWorker) lead(ctx context.Context, check func(context.Context) e
 		w.leading.Store(false)
 		w.triggers.Reset()
 		w.timers.Reset()
+	}()
+	// An outputs round runs beside this loop; it ends with the lead.
+	ctx, cancel := context.WithCancel(ctx)
+	var rounds sync.WaitGroup
+	defer func() {
+		cancel()
+		rounds.Wait()
 	}()
 	slog.Info("realtime worker: this process leads")
 	w.retention(ctx)
@@ -498,6 +530,7 @@ func (w *realtimeWorker) lead(ctx context.Context, check func(context.Context) e
 		case <-minute.C:
 			w.lifecycle(ctx)
 			w.purge(ctx)
+			w.startOutputs(ctx, &rounds)
 		case <-hour.C:
 			w.retention(ctx)
 		case <-w.wake:
@@ -560,6 +593,35 @@ func (w *realtimeWorker) lifecycle(ctx context.Context) {
 	for _, p := range rep.StalePending {
 		slog.Warn("realtime: action pending past the release time; a moderator can release it",
 			"channel", p.Key.String(), "seq", p.Seq, "action", p.Name, "pending_at", p.PendingAt)
+	}
+}
+
+// startOutputs starts a round of the session outputs runner in its own
+// goroutine, unless the last one still runs. A round writes the graph and
+// may take minutes, so it never runs in the leader loop, where it would
+// hold up the timers, the triggers and the leader lock check. It ends at
+// [realtimeOutputsRoundTimeout] or with ctx.
+func (w *realtimeWorker) startOutputs(ctx context.Context, rounds *sync.WaitGroup) bool {
+	if !w.outputsBusy.CompareAndSwap(false, true) {
+		return false
+	}
+	rounds.Go(func() {
+		defer w.outputsBusy.Store(false)
+		rctx, cancel := context.WithTimeout(ctx, realtimeOutputsRoundTimeout)
+		defer cancel()
+		w.runOutputs(rctx)
+	})
+	return true
+}
+
+// runOutputs runs one round of the session outputs runner.
+func (w *realtimeWorker) runOutputs(ctx context.Context) {
+	rep, err := w.outputs.Run(ctx)
+	if err != nil && ctx.Err() == nil {
+		slog.Warn("realtime: session outputs round failed", "error", err)
+	}
+	if rep.Ran > 0 {
+		slog.Info("realtime: session outputs round", "ran", rep.Ran, "more", rep.More)
 	}
 }
 

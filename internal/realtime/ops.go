@@ -166,6 +166,9 @@ func (s *Service) Delete(ctx context.Context, addr RawAddress, seq int64, reason
 	if pendErr := requireNotPending(m); pendErr != nil {
 		return MessageView{}, pendErr
 	}
+	if pendErr := s.requireOutputsSettled(c, m); pendErr != nil {
+		return MessageView{}, pendErr
+	}
 	removal := channels.Removal{By: authorOf(c.p), At: c.now}
 	ops := c.ct.MessageOps
 	moderator := c.moderator()
@@ -241,4 +244,24 @@ func (c *call) deleteTitle() string {
 		return fmt.Sprintf("channel type %s does not offer deleting messages", c.ct.Name)
 	}
 	return "deleting this message needs " + title
+}
+
+// requireOutputsSettled refuses the removal of m, a message that moved the
+// session, while the outputs mark on its notice is pending: a retry reads
+// the cause's properties. It reads the notice only for such a message.
+func (s *Service) requireOutputsSettled(c *call, m channels.Message) error {
+	if !m.MovedSession {
+		return nil
+	}
+	n, err := s.store.Get(c.ctx, c.key, m.Seq+1)
+	if errors.Is(err, channels.ErrNotFound) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("realtime: read the notice: %w", err)
+	}
+	if isNotice(n.Type, n.TriggeredBy) && isOutputs(n.Action) && n.Action.Status == channels.ActionPending {
+		return outputsPending("the session move this message caused is still writing its outputs; try again later")
+	}
+	return nil
 }

@@ -49,11 +49,11 @@ Every record is one line of JSON:
 | `subject`     | The thing acted on (see "Subject shape" below)                       |
 | `before` / `after` | For rename and conversion — the identity diff                  |
 | `principal.user` | The OS user (from `$USER`) that initiated the operation           |
-| `principal.tool` | `cli`, `mcp`, `data-entry`, `scheduler`, or `desktop`             |
+| `principal.tool` | `cli`, `mcp`, `data-entry`, `scheduler`, `desktop`, or `realtime` |
 | `principal.raw_user` | Optional. The pre-resolution identifier, when `principal_property` substituted a graph entity ID into `user` |
 | `principal.org_id` / `principal.org_slug` | Optional. The tenant from a verified identity assertion. **Attribution only — see the warning below** |
 | `principal.roles` | Optional. The `roles` claim from a verified identity assertion |
-| `triggered_by` | Optional. Engine-initiated writes carry `automation:<name>`, `schedule:<task-name>`, or `cascade:delete-entity:<id>` |
+| `triggered_by` | Optional. Engine-initiated writes carry `automation:<name>`, `schedule:<task-name>`, `session:<channel>/<from>-><to>#<generation>/<index>`, or `cascade:delete-entity:<id>` |
 | `summary`     | One-line human-readable summary; for updates names *which* properties changed but never their values (secret-leak defense) |
 
 ### Operations
@@ -129,6 +129,7 @@ startup and stamps it on every audit record. If `$USER` is unset,
 | `data-entry`  | A request to the data-entry HTTP server                  |
 | `scheduler`   | The background scheduler running a Lua task              |
 | `desktop`     | The rela-desktop Wails app                               |
+| `realtime`    | A session output: a graph write a channel session makes as the person whose message moved it |
 
 ### `data-entry` user attribution
 
@@ -207,6 +208,13 @@ When a write is caused by an automation cascade or scheduler task,
   means "the schema did not say which rule this was" — not that
   something went wrong.
 - `schedule:<task-name>` — a scheduler-driven Lua task.
+- `session:<channel>/<from>-><to>#<generation>/<index>` — output
+  `<index>` (from 0) of a channel session's move from `<from>` to `<to>`,
+  such as `session:DL-1/breach-response/assessed->notified#3/0`.
+  `<channel>` is the channel key: the anchor, the channel type and, for a
+  named channel, its name. The record's `principal.user` is the person
+  whose message moved the session, with `principal.tool` `realtime` (see
+  the realtime guide).
 - `cascade:delete-entity:<id>` — a relation deleted as a side effect
   of `delete-entity` with `cascade=true`.
 - `restore-entity:<id>` — a relation brought back by `restore-entity`.

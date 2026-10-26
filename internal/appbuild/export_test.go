@@ -20,3 +20,14 @@ func PromoterFor(s *Services) (p interface {
 	mp, err := newManagerPromoter(s.entityManager, txChannelsFor(s.store, s.channels))
 	return mp, mp.join != nil, err
 }
+
+// OutputsFor returns the session outputs writer assembly wires into s's
+// channel service. join false drops the channel store's join, as a wiring
+// whose stores do not share a database has. Test-only.
+func OutputsFor(s *Services, join bool) (realtime.OutputWriter, error) {
+	j := txChannelsFor(s.store, s.channels)
+	if !join {
+		j = nil
+	}
+	return newManagerOutputs(s.entityManager, s.store, s.meta, j, s.aclDeclarative)
+}

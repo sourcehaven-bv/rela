@@ -109,6 +109,14 @@ const (
 	// TypeReminderMessage is a 409 for an edit or author delete of a
 	// message a session reminder posted. A moderator may still remove it.
 	TypeReminderMessage = "reminder_message"
+	// TypeSessionOutputDenied is a 403 for a post that would fire a
+	// transition whose outputs the poster may not write, or whose outputs
+	// cannot run now. The title names the output's config key.
+	TypeSessionOutputDenied = "session_output_denied"
+	// TypeOutputsPending is a 409 for a release of a session notice's
+	// outputs mark, or a removal of the message that caused a move whose
+	// outputs are still pending.
+	TypeOutputsPending = "outputs_pending"
 )
 
 // DenialError is a refused operation: an HTTP status, a stable type, a title for

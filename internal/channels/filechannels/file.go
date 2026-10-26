@@ -313,6 +313,26 @@ type pendingRef struct {
 	At   time.Time `yaml:"at"`
 }
 
+// setPending records that the action a on message seq is pending.
+func setPending(m *meta, seq int64, a channels.Action) {
+	if m.Pending == nil {
+		m.Pending = map[int64]pendingRef{}
+	}
+	m.Pending[seq] = pendingRef{Name: a.Name, At: a.PendingAt}
+}
+
+// dropDangling drops the pending refs above last, the log's last seq. An
+// append writes meta.yaml before its log line, so a crash in between
+// leaves a ref at a seq the log does not hold, and the next append would
+// reuse that seq for a message without the action.
+func dropDangling(m *meta, last int64) {
+	for seq := range m.Pending {
+		if seq > last {
+			delete(m.Pending, seq)
+		}
+	}
+}
+
 // meta is meta.yaml. SegRev holds the highest rev written to each segment,
 // so a rev-cursor read skips segments with nothing newer.
 type meta struct {
@@ -563,6 +583,9 @@ func normalizeAction(a *channels.Action) {
 	if a != nil {
 		a.At = utc(a.At)
 		a.PendingAt = utc(a.PendingAt)
+		if a.Outputs != nil {
+			a.Outputs.ClaimedAt = utc(a.Outputs.ClaimedAt)
+		}
 	}
 }
 

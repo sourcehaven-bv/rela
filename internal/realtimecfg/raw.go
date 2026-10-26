@@ -47,6 +47,8 @@ type rawSession struct {
 	States  map[string]rawSessionState `yaml:"states"`
 	// Reminders is `session.reminders`; see [SessionReminder].
 	Reminders map[string]rawReminder `yaml:"reminders"`
+	// OnFinal is `session.on_final`; see [Session.OnFinal].
+	OnFinal string `yaml:"on_final"`
 }
 
 // rawReminder is one `session.reminders.<name>` entry.
@@ -75,10 +77,29 @@ type rawSessionTimer struct {
 }
 
 type rawTransition struct {
-	To    string   `yaml:"to"`
-	Roles []string `yaml:"roles"`
-	By    string   `yaml:"by"`
-	When  string   `yaml:"when"`
+	To      string      `yaml:"to"`
+	Roles   []string    `yaml:"roles"`
+	By      string      `yaml:"by"`
+	When    string      `yaml:"when"`
+	Outputs []rawOutput `yaml:"outputs"`
+}
+
+// rawOutput is one entry of a transition's `outputs:`.
+type rawOutput struct {
+	Set    *rawSetOutput    `yaml:"set"`
+	Create *rawCreateOutput `yaml:"create"`
+}
+
+type rawSetOutput struct {
+	Face       string         `yaml:"face"`
+	Properties map[string]any `yaml:"properties"`
+}
+
+type rawCreateOutput struct {
+	Type       string         `yaml:"type"`
+	Face       string         `yaml:"face"`
+	Properties map[string]any `yaml:"properties"`
+	Relate     *rawRelate     `yaml:"relate"`
 }
 
 type rawCreate struct {

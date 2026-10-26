@@ -581,6 +581,65 @@ func TestPostMessage_ReturnsSession(t *testing.T) {
 	}
 }
 
+// TestPostMessage_ReturnsOutputs pins that post_message answers the
+// outputs of the move it caused: done on REQ-001, with the created
+// decision restricted for alice, and failed with its code on REQ-002.
+func TestPostMessage_ReturnsOutputs(t *testing.T) {
+	t.Parallel()
+	f := newChannelFixture(t)
+	f.useOutputs(t)
+	cs := f.client(t, "alice")
+	var res struct {
+		Outputs *realtime.OutputsView `json:"outputs"`
+	}
+	mustCall(t, cs, "post_message", with(incidentArgs, map[string]any{"message_type": "contained"}), &res)
+	o := res.Outputs
+	if o == nil || o.Status != realtime.OutputsDone || len(o.Results) != 2 || o.Writer.User != "alice" {
+		t.Fatalf("outputs = %+v", o)
+	}
+	if e := o.Results[1].Entity; e == nil || !e.Restricted || e.ID != "" {
+		t.Errorf("created entity = %+v, want restricted without an id", e)
+	}
+	res.Outputs = nil
+	mustCall(t, cs, "post_message", map[string]any{
+		"id": "REQ-002", "channel_type": "incident", "message_type": "contained",
+	}, &res)
+	o = res.Outputs
+	if o == nil || o.Status != realtime.OutputsFailed || o.Results[0].Code != realtime.OutputCodeInvalid {
+		t.Fatalf("outputs = %+v", o)
+	}
+	text := mustCall(t, cs, "post_message", with(incidentArgs, map[string]any{
+		"message_type": "text", "props": map[string]any{"body": "x"},
+	}), nil)
+	if strings.Contains(text, `"outputs"`) {
+		t.Errorf("a post that moved nothing carries outputs: %s", text)
+	}
+}
+
+// TestReadChannel_NoticeOutputs pins that read_channel shows a notice's
+// outputs mark, with no role claims.
+func TestReadChannel_NoticeOutputs(t *testing.T) {
+	t.Parallel()
+	f := newChannelFixture(t)
+	f.useOutputs(t)
+	cs := f.client(t, "alice")
+	mustCall(t, cs, "post_message", with(incidentArgs, map[string]any{"message_type": "contained"}), nil)
+	var read struct{ realtime.ReadView }
+	text := mustCall(t, cs, toolReadChannel, incidentArgs, &read)
+	var notice *realtime.MessageView
+	for i, m := range read.Messages {
+		if m.Outputs != nil {
+			notice = &read.Messages[i]
+		}
+	}
+	if notice == nil || notice.Type != "session" || notice.Outputs.Status != realtime.OutputsDone {
+		t.Fatalf("no notice with outputs done: %s", text)
+	}
+	if strings.Contains(text, `"roles"`) {
+		t.Errorf("read_channel shows role claims: %s", text)
+	}
+}
+
 // TestReadChannel_Typing pins AC 20: read_channel shows actions.typing and,
 // with signals, typing_now without the caller's own entry; signals hold no
 // typing entry.

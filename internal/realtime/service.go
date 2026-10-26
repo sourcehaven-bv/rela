@@ -50,6 +50,9 @@ type Deps struct {
 	// DueWake is told the session due times the service stores, so the
 	// timer loop can run early. Shared like Local.
 	DueWake *DueWake
+	// Outputs writes session outputs to the graph. A process that cannot
+	// write the graph passes [NoOutputs].
+	Outputs OutputWriter
 }
 
 // Service is the channel service.
@@ -63,6 +66,7 @@ type Service struct {
 	clock    Clock
 	promoter Promoter
 	dueWake  *DueWake
+	outputs  outputEngine
 }
 
 // New returns the service over d.
@@ -86,6 +90,8 @@ func New(d Deps) (*Service, error) {
 		return nil, errNil("Promoter")
 	case d.DueWake == nil:
 		return nil, errNil("DueWake")
+	case d.Outputs == nil:
+		return nil, errNil("Outputs")
 	}
 	if isNoPromoter(d.Promoter) && declaresPromote(d.Config.Load().Config) {
 		slog.Warn("realtime: realtime.yaml declares promoting actions, but this process cannot promote; " +
@@ -94,6 +100,7 @@ func New(d Deps) (*Service, error) {
 	return &Service{
 		store: d.Store, cfg: d.Config, access: d.Access, anchors: d.Anchors, refs: d.Refs,
 		local: d.Local, clock: d.Local.clock, promoter: d.Promoter, dueWake: d.DueWake,
+		outputs: outputEngine{store: d.Store, cfg: d.Config, writer: d.Outputs, local: d.Local, clock: d.Local.clock},
 	}, nil
 }
 
@@ -304,6 +311,9 @@ type PostResult struct {
 	// Session is the channel's session after a log message, for a type
 	// with a session: moved when the message fired a transition.
 	Session *SessionView
+	// Outputs is the outputs mark of the move the message caused, after
+	// its inline run; nil when the move wrote no mark.
+	Outputs *OutputsView
 }
 
 // Post posts a message. The checks run in this order: read access, a post
@@ -353,6 +363,13 @@ func (s *Service) Post(ctx context.Context, addr RawAddress, in PostInput) (Post
 		return PostResult{}, err
 	}
 	sp := newSessionPost(c.ctx, c.ct, mt, vp.props, c.now, poster{roles: c.transitionRoles(mt)}, "")
+	plan, err := s.precheckOutputs(c, mt, sp)
+	if err != nil {
+		return PostResult{}, err
+	}
+	if sp.step != nil {
+		sp.step.Mark = personMark(c.ct.Session(), mt.Name, authorOf(c.p), c.p.Roles(), c.now, plan)
+	}
 	m, err := s.store.Append(c.ctx, c.key, channels.NewMessage{
 		Type: mt.Name, Author: authorOf(c.p), At: c.now, Props: vp.props, ReplyTo: in.ReplyTo, Session: sp.step,
 	})
@@ -366,7 +383,50 @@ func (s *Service) Post(ctx context.Context, addr RawAddress, in PostInput) (Post
 	s.local.typing.clear(c.key, bucketIdentity(c.p))
 	s.local.mark(c.key)
 	v := s.rendererWith(c, refs).message(m)
-	return PostResult{Message: &v, Session: postedSession(c, sp.step)}, nil
+	out := PostResult{Message: &v, Session: postedSession(c, sp.step)}
+	if plan.marked && sp.step.Outcome.Moved {
+		out.Outputs = s.runInline(c, sp.step.Outcome.Notice, plan)
+		if out.Outputs != nil && out.Outputs.Status != OutputsPending {
+			// The on_final close may have closed the channel.
+			out.Session = s.sessionAfterOutputs(c, out.Session)
+		}
+	}
+	return out, nil
+}
+
+// runInline runs the mark the post's move wrote, as the poster, and
+// renders it. A failure to read the mark leaves it to the runner.
+func (s *Service) runInline(c *call, notice int64, plan *outputPlan) *OutputsView {
+	unlock := s.outputs.local.lockOutputs(c.key)
+	defer unlock()
+	r, ok, err := s.outputs.load(c.ctx, c.key, notice)
+	if err != nil || !ok {
+		slog.WarnContext(c.ctx, "realtime: reading the outputs mark after a post failed; the runner runs it",
+			"channel", c.key.String(), "seq", notice, "error", err)
+		return nil
+	}
+	if c.head != nil {
+		r.title = c.head.Title
+	}
+	if s.outputs.holdInline(c.ctx, &r, plan.claim) {
+		s.outputs.run(c.ctx, &r)
+	}
+	rr, err := s.renderer(c, []channels.Message{r.notice}, nil)
+	if err != nil {
+		slog.WarnContext(c.ctx, "realtime: rendering the outputs mark failed", "error", err)
+		return nil
+	}
+	return rr.outputsView(r.notice.Action)
+}
+
+// sessionAfterOutputs is the session view after an inline run, which may
+// have closed the channel: the head is read again only then.
+func (s *Service) sessionAfterOutputs(c *call, before *SessionView) *SessionView {
+	h, err := s.store.Head(c.ctx, c.key)
+	if err != nil {
+		return before
+	}
+	return sessionView(c.ct, &h, c.now, c.snap.Degraded)
 }
 
 // rendererWith is a renderer over refs already resolved for the caller.

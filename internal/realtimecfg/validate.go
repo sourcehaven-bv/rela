@@ -37,7 +37,10 @@ type validator struct {
 	meta   *metamodel.Metamodel
 	policy *acl.Policy
 	// root is the parsed file, read for the key order a map loses.
-	root     *yaml.Node
+	root *yaml.Node
+	// file is the decoded file, read for the triggers a session's
+	// transitions check against.
+	file     *rawFile
 	problems []Problem
 	warnings []Problem
 	perms    map[string]bool
@@ -54,6 +57,7 @@ func (v *validator) warn(key, reason string) {
 
 func (v *validator) compile(raw *rawFile) *Compiled {
 	v.perms = map[string]bool{}
+	v.file = raw
 	if raw.Version != 1 {
 		v.add("version", fmt.Sprintf("must be 1, got %d", raw.Version))
 	}
@@ -506,29 +510,19 @@ func (v *validator) promote(key string, raw *rawPromote, mt *MessageType, ct *Ch
 		return nil
 	}
 	p := &Promote{Type: raw.Type, Face: raw.Face, Map: map[string]string{}}
-	def, ok := v.meta.GetEntityDef(raw.Type)
-	if !ok {
-		v.add(key+".type", fmt.Sprintf("unknown entity type %q", raw.Type))
+	if raw.Relate != nil {
+		p.Relate = raw.Relate.Type
+	}
+	def := writeChecker{v}.entityTarget(key, raw.Type, raw.Face, raw.Relate, ct, "a promote")
+	if def == nil {
 		return p
 	}
-	if canon := v.meta.ResolveAlias(raw.Type); canon != raw.Type {
-		v.add(key+".type", fmt.Sprintf("%q is an alias of %q; name the type itself", raw.Type, canon))
-	}
-	if def.IsManualID() {
-		v.add(key+".type", fmt.Sprintf("%s uses id_type: manual, so each entity needs a typed id; "+
-			"a promote has no id to give it", raw.Type))
-	}
-	v.promoteFace(key+".face", raw)
 	for _, ep := range sortedKeys(raw.Map) {
 		mp := raw.Map[ep]
 		p.Map[ep] = mp
 		v.promoteMapping(key+".map."+ep, raw.Type, ep, mp, def, mt)
 	}
-	for _, ep := range sortedKeys(def.Properties) {
-		pd := def.Properties[ep]
-		if !pd.Required || pd.Default != "" || pd.Computed != "" {
-			continue
-		}
+	for _, ep := range requiredProps(def) {
 		mp, mapped := raw.Map[ep]
 		if !mapped {
 			v.add(key+".map", fmt.Sprintf("%s requires property %q; map a required message property to it", raw.Type, ep))
@@ -539,15 +533,50 @@ func (v *validator) promote(key string, raw *rawPromote, mt *MessageType, ct *Ch
 				"mark it required", raw.Type, ep, mp))
 		}
 	}
-	if raw.Relate != nil {
-		p.Relate = raw.Relate.Type
+	return p
+}
+
+// entityTarget checks what promote_to and a create output share: the
+// entity type (known, not an alias, not id_type: manual), its face, and the
+// relation linking the new entity to every attach_to type. It returns the
+// type's definition, or nil when the type is unknown. what names the
+// creator in a reason.
+func (v writeChecker) entityTarget(
+	key, typ, face string, relate *rawRelate, ct *ChannelType, what string,
+) *metamodel.EntityDef {
+	def, ok := v.meta.GetEntityDef(typ)
+	if !ok {
+		v.add(key+".type", fmt.Sprintf("unknown entity type %q", typ))
+		return nil
+	}
+	if canon := v.meta.ResolveAlias(typ); canon != typ {
+		v.add(key+".type", fmt.Sprintf("%q is an alias of %q; name the type itself", typ, canon))
+	}
+	if def.IsManualID() {
+		v.add(key+".type", fmt.Sprintf("%s uses id_type: manual, so each entity needs a typed id; "+
+			"%s has no id to give it", typ, what))
+	}
+	v.promoteFace(key+".face", typ, face)
+	if relate != nil {
 		for _, t := range ct.AttachTo {
-			if err := metamodel.NewValidator(v.meta).ValidateRelation(raw.Relate.Type, raw.Type, t); err != nil {
-				v.add(key+".relate.type", fmt.Sprintf("cannot link %s to %s: %v", raw.Type, t, err))
+			if err := metamodel.NewValidator(v.meta).ValidateRelation(relate.Type, typ, t); err != nil {
+				v.add(key+".relate.type", fmt.Sprintf("cannot link %s to %s: %v", typ, t, err))
 			}
 		}
 	}
-	return p
+	return def
+}
+
+// requiredProps returns the required properties of def that have no
+// default and are not computed, sorted: those a create must fill.
+func requiredProps(def *metamodel.EntityDef) []string {
+	var out []string
+	for _, ep := range sortedKeys(def.Properties) {
+		if pd := def.Properties[ep]; pd.Required && pd.Default == "" && pd.Computed == "" {
+			out = append(out, ep)
+		}
+	}
+	return out
 }
 
 // promoteMapping checks that message property mp exists and can fill entity
@@ -577,15 +606,15 @@ func (v *validator) promoteMapping(key, entityType, ep, mp string, def *metamode
 // declares faces. A create of a faced type needs one, and taking the first
 // declared face would let a presentation order stand in for the operator's
 // intent.
-func (v *validator) promoteFace(key string, raw *rawPromote) {
-	faces := metamodel.FaceOrderOf(v.meta, raw.Type)
+func (v *validator) promoteFace(key, typ, face string) {
+	faces := metamodel.FaceOrderOf(v.meta, typ)
 	switch {
-	case len(faces) == 0 && raw.Face != "":
-		v.add(key, raw.Type+" declares no faces")
-	case len(faces) > 0 && raw.Face == "":
-		v.add(key, fmt.Sprintf("%s declares faces; name the face to create (%s)", raw.Type, strings.Join(faces, ", ")))
-	case len(faces) > 0 && !slices.Contains(faces, raw.Face):
-		v.add(key, fmt.Sprintf("%s has no face %q; use one of %s", raw.Type, raw.Face, strings.Join(faces, ", ")))
+	case len(faces) == 0 && face != "":
+		v.add(key, typ+" declares no faces")
+	case len(faces) > 0 && face == "":
+		v.add(key, fmt.Sprintf("%s declares faces; name the face to create (%s)", typ, strings.Join(faces, ", ")))
+	case len(faces) > 0 && !slices.Contains(faces, face):
+		v.add(key, fmt.Sprintf("%s has no face %q; use one of %s", typ, face, strings.Join(faces, ", ")))
 	}
 }
 

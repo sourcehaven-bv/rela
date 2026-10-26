@@ -199,6 +199,9 @@ func scanMessage(r interface{ Scan(...any) error }) (channels.Message, error) {
 	}
 	if m.Action != nil {
 		m.Action.At, m.Action.PendingAt = utc(m.Action.At), utc(m.Action.PendingAt)
+		if m.Action.Outputs != nil {
+			m.Action.Outputs.ClaimedAt = utc(m.Action.Outputs.ClaimedAt)
+		}
 	}
 	return m, nil
 }
@@ -499,9 +502,13 @@ func insertNotice(
 	if err != nil {
 		return notice, err
 	}
+	pending := int64(0)
+	if notice.Action != nil {
+		pending = micros(notice.Action.PendingAt)
+	}
 	_, err = q.Exec(ctx, `INSERT INTO channel_messages
-		(channel_id, seq, rev, reply_to, reply_count, pending_at, doc) VALUES (?, ?, ?, 0, 0, 0, ?)`,
-		chanID, notice.Seq, notice.Rev, docOf(notice))
+		(channel_id, seq, rev, reply_to, reply_count, pending_at, doc) VALUES (?, ?, ?, 0, 0, ?, ?)`,
+		chanID, notice.Seq, notice.Rev, pending, docOf(notice))
 	return notice, err
 }
 
@@ -710,6 +717,9 @@ func (s *Store) SetAction(
 	}
 	return s.update(ctx, k, seq, "act on", func(q Querier, r row, m *channels.Message) error {
 		if err := channels.CheckActionCAS(m.Action, name, expect); err != nil {
+			return err
+		}
+		if err := channels.CheckOutputStep(m.Action, name, expect, next); err != nil {
 			return err
 		}
 		if err := channels.CheckActionState(r.c.State, expect, next); err != nil {
@@ -1345,7 +1355,7 @@ func (s *Store) StalePending(ctx context.Context, before time.Time) ([]channels.
 	out, err := collect(ctx, s.db, `SELECT c.anchor_id, c.anchor_face, c.type, c.name, m.seq, m.doc
 		FROM channel_messages m JOIN channels c ON c.id = m.channel_id
 		WHERE c.tomb = '' AND m.pending_at > 0 AND m.pending_at < ?
-		ORDER BY c.anchor_id, c.anchor_face, c.type, c.name, m.seq`,
+		ORDER BY m.pending_at, c.anchor_id, c.anchor_face, c.type, c.name, m.seq`,
 		[]any{micros(channels.NormTime(before))},
 		func(r interface{ Scan(...any) error }) (channels.PendingAction, error) {
 			var p channels.PendingAction

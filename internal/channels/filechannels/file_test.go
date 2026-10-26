@@ -612,3 +612,41 @@ func TestSessionCrashBetweenSegments(t *testing.T) {
 		require.NotEqual(t, channels.AuditSession, r.Op)
 	}
 }
+
+// TestAppend_DropsDanglingPending pins that a crash between meta.yaml and
+// the log line of a marked notice leaves no pending ref behind: the next
+// append drops the ref above the log's last seq, so the reused seq is not
+// listed as a pending outputs mark.
+func TestAppend_DropsDanglingPending(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	mfs := storage.NewMemFS()
+	s, err := newStore(mfs, "/channels", filelock.ProcessPrivate{}, 2)
+	require.NoError(t, err)
+	_, err = s.Append(ctx, key, msg("one"))
+	require.NoError(t, err)
+	m := msg("two")
+	m.Session = moveStep()
+	m.Session.Mark = func(channels.SessionMove) *channels.Action {
+		return &channels.Action{PendingAt: m.At, Outputs: &channels.OutputMark{
+			Writer: channels.Author{User: "alice", Tool: "data-entry"}, Attempt: 1, Claim: "a", ClaimedAt: m.At,
+		}}
+	}
+	_, err = s.Append(ctx, key, m)
+	require.NoError(t, err)
+	stale, err := s.StalePending(ctx, m.At.Add(time.Hour))
+	require.NoError(t, err)
+	require.Len(t, stale, 1)
+	require.Equal(t, int64(3), stale[0].Seq)
+
+	dir := "/channels/" + enc("TKT-1") + "/" + none + "/room/" + none + "/"
+	require.NoError(t, mfs.Remove(dir+"log-0001.jsonl"))
+	_, err = s.Append(ctx, key, msg("three"))
+	require.NoError(t, err)
+	stale, err = s.StalePending(ctx, m.At.Add(time.Hour))
+	require.NoError(t, err)
+	require.Empty(t, stale, "the lost notice's pending ref is dropped")
+	got, err := s.Get(ctx, key, 3)
+	require.NoError(t, err)
+	require.Nil(t, got.Action)
+}

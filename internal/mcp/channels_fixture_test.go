@@ -111,6 +111,47 @@ channel_types:
         post: [member]
 `
 
+// outputsYAML is channelTestYAML with outputs on the incident's contained
+// transition: it sets the status and creates a decision.
+var outputsYAML = strings.Replace(channelTestYAML,
+	"detected:  { label: Detected, on: { contained: { to: contained } } }",
+	`detected:
+          label: Detected
+          on:
+            contained:
+              to: contained
+              outputs:
+                - set: { properties: { status: contained } }
+                - create: { type: decision, properties: { title: Contain, status: proposed }, relate: { type: addresses } }`, 1)
+
+// fakeOutputs is an OutputWriter that allows every output and writes
+// nothing. A create answers with DEC-001, which only bob reads; a set on
+// REQ-002 fails as invalid on status.
+type fakeOutputs struct{}
+
+func (fakeOutputs) Poster(context.Context) (realtime.OutputPoster, error) {
+	return realtime.OutputPoster{}, nil
+}
+
+func (fakeOutputs) Check(context.Context, realtime.OutputTarget) error { return nil }
+
+func (fakeOutputs) Write(ctx context.Context, r realtime.OutputRequest) (realtime.OutputWritten, error) {
+	if r.Target.Kind == realtimecfg.OutputSet && r.Target.AnchorID == "REQ-002" {
+		return realtime.OutputWritten{}, &realtime.OutputError{
+			Code: realtime.OutputCodeInvalid, Props: []string{"status"}, WroteNothing: true,
+		}
+	}
+	if r.Target.Kind != realtimecfg.OutputCreate {
+		return realtime.OutputWritten{}, nil
+	}
+	if r.Started != nil {
+		if err := r.Started(ctx); err != nil {
+			return realtime.OutputWritten{}, err
+		}
+	}
+	return realtime.OutputWritten{Entity: &channels.Promoted{ID: "DEC-001", Type: "decision"}}, nil
+}
+
 // testChannelConfig is a realtime.ConfigSource over a pointer a test can
 // swap; nil is realtime off.
 type testChannelConfig struct {
@@ -168,7 +209,7 @@ func newChannelFixture(t *testing.T) *channelFixture {
 func (f *channelFixture) instance(t *testing.T) (*appbuild.Services, *realtime.Service) {
 	t.Helper()
 	b := appbuildtest.New(f.meta, appbuildtest.WithStore(f.st), appbuildtest.WithDeclarative(f.d),
-		appbuildtest.WithChannels(f.cs, testChannelConfig{p: f.cfg}))
+		appbuildtest.WithChannels(f.cs, testChannelConfig{p: f.cfg}), appbuildtest.WithChannelOutputs(fakeOutputs{}))
 	t.Cleanup(func() { _ = b.Close() })
 	svc := appbuild.ChannelService(b)
 	if svc == nil {
@@ -304,4 +345,14 @@ func (f *channelFixture) typeAsBob(t *testing.T, anchor string) {
 	if _, err := f.svc.Typing(f.asBob(t), realtime.RawAddress{Anchor: anchor, Type: "chat"}); err != nil {
 		t.Fatalf("typing in the chat of %s as bob: %v", anchor, err)
 	}
+}
+
+// useOutputs swaps in outputsYAML.
+func (f *channelFixture) useOutputs(t *testing.T) {
+	t.Helper()
+	compiled, err := realtimecfg.Parse([]byte(outputsYAML), f.meta, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.cfg.Store(compiled)
 }

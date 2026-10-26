@@ -49,6 +49,11 @@ type Local struct {
 	storedMu  sync.Mutex
 	storedFor *realtimecfg.Compiled
 	stored    map[string][]string
+
+	// outputLocks serialize the outputs runs of a channel in this process,
+	// so the supersede read and the writes of one run see every run before
+	// it.
+	outputLocks outputLocks
 }
 
 // typeRecordReader is the part of a channel store Local.storedRefs reads.

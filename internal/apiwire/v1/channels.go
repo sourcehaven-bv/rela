@@ -91,11 +91,15 @@ type ChannelSessionTimer struct {
 // "trigger" when only a trigger's message fires it. Guarded is set when
 // the transition has a guard (`when:`), so a message moves the session
 // only if the guard holds for it.
+//
+// Outputs is the number of graph writes the transition makes (its
+// `outputs:`), so a client can say that the message updates the anchor.
 type ChannelSessionTransition struct {
 	MessageType string `json:"message_type"`
 	To          string `json:"to"`
 	By          string `json:"by,omitempty"`
 	Guarded     bool   `json:"guarded,omitempty"`
+	Outputs     int    `json:"outputs,omitempty"`
 }
 
 // ChannelTypeList is one channel type on an anchor and the channels of it
@@ -203,6 +207,36 @@ type MessageAction struct {
 	Promoted *RefProp `json:"promoted,omitempty"`
 }
 
+// ChannelMessageOutputs is the outputs mark of a session notice: the
+// graph writes the move made. Status is pending while they run, failed
+// when one failed, and done otherwise. Writer is the poster whose move it
+// was, with the tool they posted with; the graph audit records the writes
+// with tool `realtime`.
+type ChannelMessageOutputs struct {
+	Status  string                       `json:"status"`
+	Writer  ChannelAuthor                `json:"writer"`
+	Results []ChannelMessageOutputResult `json:"results,omitempty"`
+}
+
+// ChannelMessageOutputResult is what one output, or the on_final close,
+// did. Kind is set, create or close, or transition for the one result of
+// a mark whose transition the config no longer declares; Status is done,
+// failed, skipped, superseded, or started while a create runs. Code says
+// why an output failed and never quotes an error. Props are, for a set,
+// the properties written, and for an invalid output, the properties the
+// validation named. Face is the face a set writes when the output names
+// one. Entity is the entity a create made, restricted when the reader
+// cannot read it.
+type ChannelMessageOutputResult struct {
+	Kind     string   `json:"kind"`
+	Status   string   `json:"status"`
+	Code     string   `json:"code,omitempty"`
+	Props    []string `json:"props,omitempty"`
+	Face     string   `json:"face,omitempty"`
+	Entity   *RefProp `json:"entity,omitempty"`
+	Warnings []string `json:"warnings,omitempty"`
+}
+
 // Message is one stored message. A removed message keeps only seq, rev,
 // reply_to, reply_count and removed. Props holds the properties the
 // message type declares; a ref property is a [RefProp]. Actions lists,
@@ -235,8 +269,10 @@ type Message struct {
 	TriggeredBy string          `json:"triggered_by,omitempty"`
 	Removed     *MessageRemoval `json:"removed,omitempty"`
 	Action      *MessageAction  `json:"action,omitempty"`
-	Actions     []string        `json:"_actions,omitempty"`
-	EditUntil   string          `json:"edit_until,omitempty"`
+	// Outputs is a session notice's outputs mark, in place of Action.
+	Outputs   *ChannelMessageOutputs `json:"outputs,omitempty"`
+	Actions   []string               `json:"_actions,omitempty"`
+	EditUntil string                 `json:"edit_until,omitempty"`
 	// ReleaseAfter: see Message.
 	ReleaseAfter string `json:"release_after,omitempty"`
 }

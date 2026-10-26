@@ -17,6 +17,10 @@ entities:
       notes: {type: string}
       due: {type: date}
       count: {type: integer}
+      risk: {type: risk-level}
+      reference: {type: string}
+      evidence: {type: file}
+      ticket: {type: external_ref, system: jira}
   incident:
     label: Incident
     id_prefix: INC
@@ -25,6 +29,7 @@ entities:
       owner: {type: string}
       status: {type: string}
       severity: {type: severity}
+      due: {type: datetime}
   risico:
     label: Risk
     id_prefix: RISK
@@ -41,6 +46,7 @@ entities:
     id_prefix: TL
     properties:
       title: {type: string}
+      at: {type: datetime}
   decision:
     label: Decision
     id_prefix: DEC

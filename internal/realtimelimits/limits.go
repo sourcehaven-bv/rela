@@ -186,6 +186,28 @@ const (
 	ReminderSlack = 30 * time.Second
 )
 
+// Session outputs (`session.states.<s>.on.<type>.outputs`) and the runner
+// that retries them.
+const (
+	// MaxTransitionOutputs caps the outputs of one transition.
+	MaxTransitionOutputs = 4
+	// MaxOutputTemplateBytes caps one output property template.
+	MaxOutputTemplateBytes = 1024
+	// OutputClaimTTL is how long a claim on an outputs mark holds after
+	// its holder's last write. It is more than twice one output step (the
+	// promote timeout plus a progress write), so a live holder is never
+	// taken over.
+	OutputClaimTTL = 90 * time.Second
+	// MaxOutputAttempts caps the attempts at one outputs mark.
+	MaxOutputAttempts = 5
+	// MaxOutputRunsPerRound caps the marks one runner round retries.
+	MaxOutputRunsPerRound = 16
+	// OutputRetryWindow is how long after its notice a mark may still be
+	// retried. The retry rebuilds the poster from stored role claims, and
+	// the window bounds how long those claims count.
+	OutputRetryWindow = 30 * time.Minute
+)
+
 // Rate is a token-bucket rate: Count events per Per.
 type Rate struct {
 	Count int

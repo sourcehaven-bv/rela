@@ -72,6 +72,7 @@ export const CHANNEL_ERROR_RULES: Readonly<Record<string, ChannelErrorRule>> = {
   typing_not_offered: REFETCH,
   action_denied: REFETCH,
   promote_denied: REFETCH,
+  session_output_denied: REFETCH,
   // The channel or message is not in the state the request needs.
   channel_not_open: REFETCH,
   removed: REFETCH,
@@ -84,6 +85,7 @@ export const CHANNEL_ERROR_RULES: Readonly<Record<string, ChannelErrorRule>> = {
   session_notice: REFETCH,
   session_message: REFETCH,
   reminder_message: REFETCH,
+  outputs_pending: REFETCH,
   // Limits and rules that reading again does not change.
   channel_not_creatable: TOAST,
   too_many_channels: TOAST,

@@ -59,6 +59,15 @@ describe('real channel answers use only mirrored keys', () => {
       keysOf('MessageAction', action)
       if (action.promoted) keysOf('RefProp', action.promoted)
     }
+    if (m.outputs) {
+      const outputs = m.outputs as Json
+      keysOf('ChannelMessageOutputs', outputs)
+      keysOf('ChannelAuthor', outputs.writer)
+      for (const r of (outputs.results ?? []) as Json[]) {
+        keysOf('ChannelMessageOutputResult', r)
+        if (r.entity) keysOf('RefProp', r.entity)
+      }
+    }
     for (const v of Object.values((m.props ?? {}) as Json)) {
       if (v !== null && typeof v === 'object') keysOf('RefProp', v)
     }
@@ -130,6 +139,24 @@ describe('real channel answers use only mirrored keys', () => {
     for (const t of samples.list!.types as Json[]) {
       for (const c of t.channels as Json[]) channelKeys(c)
     }
+  })
+
+  it('session outputs', () => {
+    const head = samples.outputs_head!
+    keysOf('ChannelHead', head)
+    channelKeys(head.channel as Json)
+    const transitions = ((head.channel as Json).session as Json).transitions as Json[]
+    expect(transitions.some((t) => typeof t.outputs === 'number')).toBe(true)
+    const statuses: unknown[] = []
+    for (const name of ['outputs_messages', 'failed_outputs_messages']) {
+      const page = samples[name]!
+      keysOf('MessagePage', page)
+      for (const m of page.messages as Json[]) {
+        messageKeys(m)
+        if (m.outputs) statuses.push((m.outputs as Json).status)
+      }
+    }
+    expect(statuses.sort()).toEqual(['done', 'failed'])
   })
 
   it('schema', () => {

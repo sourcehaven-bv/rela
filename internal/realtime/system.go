@@ -52,6 +52,9 @@ func (w systemWriter) post(
 	// poster rule. With requireOpen off it may land in a closed channel,
 	// which the decider never moves.
 	sp := newSessionPost(ctx, ct, mt, vp.props, now, poster{trigger: true}, triggeredBy)
+	if sp.step != nil {
+		sp.step.Mark = triggerMark(ct.Session(), now)
+	}
 	_, err = w.store.Append(ctx, key, channels.NewMessage{
 		Type: mt.Name, Author: systemAuthor(), At: now, Props: vp.props, TriggeredBy: triggeredBy,
 		RequireOpen: requireOpen, Session: sp.step,

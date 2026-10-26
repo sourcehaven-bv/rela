@@ -1107,6 +1107,9 @@ type ChannelCollaborators struct {
 	// Local is the process-local channel state. Nil: a new one on the
 	// real clock.
 	Local *realtime.Local
+	// Outputs writes session outputs. Nil: accepted — collaborators carry
+	// no entity manager, so no session output is written.
+	Outputs realtime.OutputWriter
 }
 
 // collaboratorVisibleSearcher returns c.VisibleSearcher, or one derived
@@ -1282,12 +1285,16 @@ func collaboratorRefHolders(
 		}
 		refs.channels = ch.Store
 		refs.dueWake = realtime.NewDueWake()
+		var outputs realtime.OutputWriter = realtime.NoOutputs{}
+		if ch.Outputs != nil {
+			outputs = ch.Outputs
+		}
 		refs.channelService, refs.realtimeLocal, err = newRealtimeService(realtimeInputs{
 			meta: c.Meta, worlds: w, config: ch.Config, store: c.Store, channels: ch.Store, local: ch.Local,
 			dueWake:     refs.dueWake,
 			declarative: c.Declarative, redactor: redactor, writes: c.ACL,
 			// Collaborators carry no entity manager, so nothing promotes.
-			promoter: realtime.NoPromoter{},
+			promoter: realtime.NoPromoter{}, outputs: outputs,
 		})
 		if err != nil {
 			return refs, fmt.Errorf("channels: %w", err)
@@ -2825,8 +2832,14 @@ func finishAssembly(
 	if bindErr := autoJobs.bind(servicesJobRunner{s}, engine); bindErr != nil {
 		return nil, bindErr
 	}
-	// Built, not started: the host starts it (see RunRealtimeWorker).
-	if s.realtimeWorker, err = buildRealtimeWorker(s.base, s.store, s.stateKV, refs); err != nil {
+	// Built, not started: the host starts it (see RunRealtimeWorker). Its
+	// outputs runner writes through the manager the channel service uses.
+	outputs, err := newManagerOutputs(
+		s.entityManager, s.store, s.meta, txChannelsFor(s.store, refs.channels), s.aclDeclarative)
+	if err != nil {
+		return nil, err
+	}
+	if s.realtimeWorker, err = buildRealtimeWorker(s.base, s.store, s.stateKV, refs, outputs); err != nil {
 		return nil, err
 	}
 	// Last, so a failed assembly never leaves a sweep goroutine running.

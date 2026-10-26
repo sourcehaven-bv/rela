@@ -920,3 +920,41 @@ func TestChannelTyping_HiddenAnchorKeepsNothing(t *testing.T) {
 	require.Equal(t, http.StatusOK, code, "%s", b)
 	require.Empty(t, decodeAs[v1.ChannelHead](t, b).TypingNow)
 }
+
+// TestChannelsHandler_NoticeOutputs pins a session notice's outputs on
+// the page: alice, who cannot read the created feature, sees it
+// restricted, dave sees it, and the notice offers no actions.
+func TestChannelsHandler_NoticeOutputs(t *testing.T) {
+	env := newChannelEnv(t)
+	env.ch.cfg.Store(env.ch.parse(t, outputsRealtime))
+	const room = "/api/v1/tickets/TKT-2/_channels/incident"
+	resp, b := env.do(t, "alice", http.MethodPost, room+"/messages", `{"type":"contained"}`, nil)
+	require.Equal(t, http.StatusCreated, resp.StatusCode, "%s", b)
+
+	notice := func(user string) v1.Message {
+		t.Helper()
+		code, b := env.get(t, user, room+"/messages")
+		require.Equal(t, http.StatusOK, code, "%s", b)
+		var page v1.MessagePage
+		require.NoError(t, json.Unmarshal(b, &page))
+		for _, m := range page.Messages {
+			if m.Outputs != nil {
+				return m
+			}
+		}
+		t.Fatalf("no notice with outputs in %s", b)
+		return v1.Message{}
+	}
+	got := notice("alice")
+	require.Empty(t, got.Actions)
+	require.Nil(t, got.Action)
+	require.Equal(t, "done", got.Outputs.Status)
+	require.Equal(t, "alice", got.Outputs.Writer.User)
+	require.Len(t, got.Outputs.Results, 2)
+	require.True(t, got.Outputs.Results[1].Entity.Restricted)
+	require.Empty(t, got.Outputs.Results[1].Entity.ID)
+
+	seen := notice("dave").Outputs.Results[1].Entity
+	require.False(t, seen.Restricted)
+	require.Equal(t, "FEAT-1", seen.ID)
+}

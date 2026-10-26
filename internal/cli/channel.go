@@ -374,6 +374,8 @@ type messageJSON struct {
 	// Session is the channel's session after a post, for a channel type
 	// with a session.
 	Session *realtime.SessionView `json:"session,omitempty"`
+	// Outputs is the outputs mark of the move a post caused.
+	Outputs *realtime.OutputsView `json:"outputs,omitempty"`
 }
 
 // ChannelPostCmd posts a message.
@@ -408,7 +410,7 @@ func (c *ChannelPostCmd) Run(ctx context.Context, cs *channelServices) error {
 	if got.Message == nil { // coverage-ignore: defensive: a log-only post always answers its message
 		return errors.New(channelFailedText)
 	}
-	return writeMessage(*got.Message, "posted", got.Session)
+	return writeMessage(*got.Message, "posted", got.Session, outputsLine{got.Outputs, addr.Anchor})
 }
 
 // ChannelEditCmd edits a message.
@@ -442,7 +444,7 @@ func (c *ChannelEditCmd) Run(ctx context.Context, cs *channelServices) error {
 	if err != nil {
 		return channelFailed(ctx, "edit", addr.Anchor, err)
 	}
-	return writeMessage(got, "edited", nil)
+	return writeMessage(got, "edited", nil, outputsLine{})
 }
 
 // messageType returns the type of message seq in view, so edit can coerce
@@ -478,7 +480,7 @@ func (c *ChannelRemoveCmd) Run(ctx context.Context, cs *channelServices) error {
 	if err != nil {
 		return channelFailed(ctx, "remove", addr.Anchor, err)
 	}
-	return writeMessage(got, "removed", nil)
+	return writeMessage(got, "removed", nil, outputsLine{})
 }
 
 // ChannelCreateCmd creates a named channel.
@@ -508,18 +510,32 @@ func (c *ChannelCreateCmd) Run(ctx context.Context, cs *channelServices) error {
 	return renderCreated(out.Out, got)
 }
 
+// outputsLine is the outputs mark of a post's move, and the anchor its
+// sets wrote.
+type outputsLine struct {
+	view   *realtime.OutputsView
+	anchor string
+}
+
 // writeMessage prints the result of post, edit or remove.
-func writeMessage(m realtime.MessageView, verb string, session *realtime.SessionView) error {
+func writeMessage(m realtime.MessageView, verb string, session *realtime.SessionView, outputs outputsLine) error {
 	if out.Format == output.FormatJSON {
-		return writeChannelJSON(messageJSON{Notice: realtime.UntrustedNotice, Message: m, Session: session})
+		return writeChannelJSON(messageJSON{
+			Notice: realtime.UntrustedNotice, Message: m, Session: session, Outputs: outputs.view,
+		})
 	}
 	if _, err := fmt.Fprintf(out.Out, "#%d %s\n", m.Seq, verb); err != nil {
 		return err
 	}
-	if session == nil {
+	if session != nil {
+		if _, err := fmt.Fprintln(out.Out, sessionText(session)); err != nil {
+			return err
+		}
+	}
+	if outputs.view == nil {
 		return nil
 	}
-	_, err := fmt.Fprintln(out.Out, sessionText(session))
+	_, err := fmt.Fprintln(out.Out, outputsText(outputs.view, outputs.anchor))
 	return err
 }
 

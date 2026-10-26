@@ -324,6 +324,17 @@ func CheckCreate(ctx context.Context, m *Manager, typ string, face entity.Face) 
 	})
 }
 
+// CheckRelate answers the relation-create ACL question [CreateLinked]
+// asks for a relType edge from a new entity of fromType at fromFace, as
+// the caller on ctx, without writing or auditing: an affordance probe
+// like [CheckCreate]. It reads no store, so it names no stored row and
+// needs no read gate; a refusal is the *[acl.ForbiddenError] the write
+// would return.
+func CheckRelate(ctx context.Context, m *Manager, relType, fromType string, fromFace entity.Face) error {
+	return m.authorizeAndAudit(withAffordanceProbe(ctx),
+		RelationCreateRequest(m.deps.Meta, relType, fromType, "", relationTail(m, relType, fromFace)))
+}
+
 // beforeWriteError is a [CreateLinked] failure after which nothing was
 // written: a refused check before the transaction, or a refused entity
 // write inside it; see [WroteNothing].

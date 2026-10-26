@@ -73,6 +73,8 @@ type MessageView struct {
 	EditedAt   time.Time      `json:"edited_at,omitzero"`
 	Removed    *RemovedView   `json:"removed,omitempty"`
 	Action     *ActionView    `json:"action,omitempty"`
+	// Outputs is a session notice's outputs mark, in place of Action.
+	Outputs *OutputsView `json:"outputs,omitempty"`
 	// TriggeredBy names the trigger that posted the message, as
 	// "trigger:<name>"; empty for a message a person or agent posted.
 	TriggeredBy string `json:"triggered_by,omitempty"`
@@ -158,8 +160,8 @@ type renderer struct {
 	call *call
 }
 
-// refIDs returns the entity ids msgs and sigs name in ref properties and
-// promoted actions, deduplicated and sorted.
+// refIDs returns the entity ids msgs and sigs name in ref properties,
+// promoted actions and outputs results, deduplicated and sorted.
 func (r *renderer) refIDs(msgs []channels.Message, sigs []signal) []string {
 	var ids []string
 	collect := func(typ string, props map[string]any) {
@@ -183,6 +185,13 @@ func (r *renderer) refIDs(msgs []channels.Message, sigs []signal) []string {
 		collect(m.Type, m.Props)
 		if m.Action != nil && m.Action.Promoted != nil {
 			ids = append(ids, m.Action.Promoted.ID)
+		}
+		if isOutputs(m.Action) {
+			for _, res := range m.Action.Outputs.Results {
+				if res.Entity != nil {
+					ids = append(ids, res.Entity.ID)
+				}
+			}
 		}
 	}
 	for _, s := range sigs {
@@ -254,7 +263,9 @@ func (r *renderer) message(m channels.Message) MessageView {
 		// the transition: from, to, generation and cause.
 		v.Props = m.Props
 	}
-	if m.Action != nil {
+	if isOutputs(m.Action) {
+		v.Outputs = r.outputsView(m.Action)
+	} else if m.Action != nil {
 		av := &ActionView{Name: m.Action.Name, Status: m.Action.Status, At: m.Action.At}
 		if m.Action.Promoted != nil {
 			av.Promoted = r.ref(m.Action.Promoted.ID)

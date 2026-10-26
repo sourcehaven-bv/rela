@@ -310,3 +310,17 @@ func TestCheckCreate(t *testing.T) {
 	allowed, _ := newManagerWithACL(t, acl.NopACL{}, sink)
 	require.NoError(t, entitymanager.CheckCreate(context.Background(), allowed, "decision", ""))
 }
+
+// TestCheckRelate pins that the probe answers the edge's ACL question
+// and leaves no audit record, allowed or not.
+func TestCheckRelate(t *testing.T) {
+	t.Parallel()
+	sink := audit.NewMemory()
+	denied, _ := newManagerWithACL(t, acl.ReadOnlyACL{}, sink)
+	var forbidden *acl.ForbiddenError
+	require.ErrorAs(t, entitymanager.CheckRelate(context.Background(), denied, "addresses", "decision", ""), &forbidden)
+	require.Empty(t, sink.Records(), "a probe is not an attempted write")
+	allowed, _ := newManagerWithACL(t, acl.NopACL{}, sink)
+	require.NoError(t, entitymanager.CheckRelate(context.Background(), allowed, "addresses", "decision", ""))
+	require.Empty(t, sink.Records())
+}

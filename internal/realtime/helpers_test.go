@@ -398,18 +398,29 @@ type countingStore struct {
 	messages atomic.Int64
 	typeRecs atomic.Int64
 	onHead   func()
+	// beforeAppend runs once, before the next Append reaches the store.
+	beforeAppend func()
 	// onRecord runs before RecordTypes.
 	onRecord func()
 	// onDelete runs before Delete.
 	onDelete func()
 	// onSetAction runs before SetAction.
 	onSetAction func()
+	// failSetAction fails the next SetAction, once.
+	failSetAction atomic.Bool
 	// dueLists, lifecycleLists and setSessions count the calls the timer
 	// loop makes.
 	dueLists, lifecycleLists, setSessions atomic.Int64
 	// onSetSession runs before SetSession; an error it returns fails the
 	// call.
 	onSetSession func(channels.Key) error
+	// setActions and staleLists count SetAction and StalePending calls.
+	setActions, staleLists atomic.Int64
+}
+
+func (s *countingStore) StalePending(ctx context.Context, now time.Time) ([]channels.PendingAction, error) {
+	s.staleLists.Add(1)
+	return s.Store.StalePending(ctx, now)
 }
 
 func (s *countingStore) ListSessionsDue(
@@ -441,8 +452,12 @@ func (s *countingStore) SetSession(
 func (s *countingStore) SetAction(
 	ctx context.Context, k channels.Key, seq int64, name string, expect channels.ActionStatus, next channels.Action,
 ) (channels.Message, error) {
+	s.setActions.Add(1)
 	if s.onSetAction != nil {
 		s.onSetAction()
+	}
+	if s.failSetAction.CompareAndSwap(true, false) {
+		return channels.Message{}, errors.New("set action failed")
 	}
 	return s.Store.SetAction(ctx, k, seq, name, expect, next)
 }
@@ -474,6 +489,10 @@ func (s *countingStore) TypeRecords(ctx context.Context) (map[string]channels.Ty
 
 func (s *countingStore) Append(ctx context.Context, k channels.Key, m channels.NewMessage) (channels.Message, error) {
 	s.appends.Add(1)
+	if f := s.beforeAppend; f != nil {
+		s.beforeAppend = nil
+		f()
+	}
 	return s.Store.Append(ctx, k, m)
 }
 
@@ -504,6 +523,7 @@ type harnessOpts struct {
 	lim      ephemeralLimits
 	caps     limitCaps
 	promoter Promoter
+	outputs  OutputWriter
 }
 
 func withEphemeral(l ephemeralLimits) harnessOpt { return func(o *harnessOpts) { o.lim = l } }
@@ -511,11 +531,13 @@ func withBuckets(n int) harnessOpt               { return func(o *harnessOpts) {
 func withLifecycleYAML() harnessOpt              { return func(o *harnessOpts) { o.yaml = lifecycleRealtime } }
 func withYAML(y string) harnessOpt               { return func(o *harnessOpts) { o.yaml = y } }
 func withPromoter(p Promoter) harnessOpt         { return func(o *harnessOpts) { o.promoter = p } }
+func withOutputs(w OutputWriter) harnessOpt      { return func(o *harnessOpts) { o.outputs = w } }
 
 func newHarness(t *testing.T, opts ...harnessOpt) *harness {
 	t.Helper()
 	o := harnessOpts{
 		yaml: testRealtime, lim: defaultEphemeralLimits(), caps: defaultLimitCaps(), promoter: NoPromoter{},
+		outputs: NoOutputs{},
 	}
 	for _, f := range opts {
 		f(&o)
@@ -547,7 +569,7 @@ func newHarness(t *testing.T, opts ...harnessOpt) *harness {
 	}
 	h.svc, err = New(Deps{
 		Store: st, Config: h.cfg, Access: fakeAccessSource{}, Anchors: h.anchors, Refs: h.refs, Local: local,
-		Promoter: o.promoter, DueWake: h.wake,
+		Promoter: o.promoter, DueWake: h.wake, Outputs: o.outputs,
 	})
 	require.NoError(t, err)
 	return h

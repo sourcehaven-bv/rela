@@ -93,6 +93,8 @@ export interface ChannelSessionTransition {
   by?: 'trigger'
   /** The transition has a guard, so a message moves the session only when it holds. */
   guarded?: boolean
+  /** The number of graph writes the transition makes; absent when none. */
+  outputs?: number
 }
 
 export interface ChannelTypeList {
@@ -187,6 +189,32 @@ export interface MessageAction {
 }
 
 /**
+ * The outputs mark of a session notice: the graph writes the move made, as
+ * writer, the person whose message moved the session.
+ */
+export interface ChannelMessageOutputs {
+  status: 'pending' | 'done' | 'failed'
+  writer: ChannelAuthor
+  results?: ChannelMessageOutputResult[]
+}
+
+/** What one output, or the on_final close, did. */
+export interface ChannelMessageOutputResult {
+  /** transition: the one result of a mark whose transition the config no longer declares. */
+  kind: 'set' | 'create' | 'close' | 'transition'
+  status: 'done' | 'failed' | 'skipped' | 'superseded' | 'started'
+  /** Why the output failed; never an error text or an id. */
+  code?: string
+  /** For a set, the properties written; for an invalid output, those validation named. */
+  props?: string[]
+  /** The face a set writes, when the output names one. */
+  face?: string
+  /** The entity a create made. */
+  entity?: RefProp
+  warnings?: string[]
+}
+
+/**
  * The message operations a message's `_actions` names next to its action
  * names. The server reserves these names, so no action takes one.
  * wireFields.test.ts compares them with realtimecfg.MessageOpNames.
@@ -225,6 +253,8 @@ export interface Message {
   triggered_by?: string
   removed?: MessageRemoval
   action?: MessageAction
+  /** A session notice's outputs mark, in place of action. */
+  outputs?: ChannelMessageOutputs
   /** Action names and MessageOp names the caller may use now. */
   _actions?: string[]
   /**
@@ -437,6 +467,7 @@ export const CHANNEL_WIRE_FIELDS: Record<string, readonly string[]> = {
     'to',
     'by',
     'guarded',
+    'outputs',
   ]),
   ChannelTypeList: wireKeys<ChannelTypeList>()([
     'type',
@@ -461,6 +492,16 @@ export const CHANNEL_WIRE_FIELDS: Record<string, readonly string[]> = {
   RefProp: wireKeys<RefProp>()(['id', 'type', 'title', 'restricted']),
   MessageRemoval: wireKeys<MessageRemoval>()(['at', 'kind', 'by', 'reason']),
   MessageAction: wireKeys<MessageAction>()(['name', 'status', 'at', 'promoted']),
+  ChannelMessageOutputs: wireKeys<ChannelMessageOutputs>()(['status', 'writer', 'results']),
+  ChannelMessageOutputResult: wireKeys<ChannelMessageOutputResult>()([
+    'kind',
+    'status',
+    'code',
+    'props',
+    'face',
+    'entity',
+    'warnings',
+  ]),
   Message: wireKeys<Message>()([
     'seq',
     'rev',
@@ -474,6 +515,7 @@ export const CHANNEL_WIRE_FIELDS: Record<string, readonly string[]> = {
     'triggered_by',
     'removed',
     'action',
+    'outputs',
     '_actions',
     'edit_until',
     'release_after',

@@ -1,11 +1,13 @@
 ---
 id: TKT-98TR9A
 type: ticket
-title: 'Sessions 4/5: graph outputs'
+title: 'Sessions 4/5a: message-driven graph outputs'
 kind: enhancement
 priority: medium
 effort: l
-status: backlog
+started: "2026-10-25"
+completed: "2026-10-26"
+status: done
 ---
 
 ## Description

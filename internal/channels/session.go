@@ -298,6 +298,13 @@ type SessionStep struct {
 	// last_seq+1 (see [ReminderMessage]) and then applies Due. Pure and
 	// fast, like Decide. [Store.Append] refuses a step that sets it.
 	Remind func(cur Channel) (ReminderPost, bool)
+	// Mark, when set, is called by [Store.Append] for a move the decider
+	// returned. When it returns an action, the notice carries it as its
+	// pending [OutputsAction] mark: the store sets the name, the pending
+	// status, the time, and the mark's Gen, From, To and Cause, and keeps
+	// the returned PendingAt as the time the mark becomes eligible for a
+	// retry. Pure and fast, like Decide. Nil: no mark.
+	Mark func(move SessionMove) *Action
 }
 
 // SessionOutcome is what an append with a [SessionStep] did to the session:
@@ -312,6 +319,9 @@ type SessionOutcome struct {
 	// Reminded is true when a [Store.SetSession] step appended a reminder
 	// message.
 	Reminded bool
+	// Notice is the seq of the notice a move appended; zero without a
+	// move.
+	Notice int64
 }
 
 // ValidStateName reports whether s is a valid session state name: the
@@ -398,6 +408,9 @@ func PrepareAppendStep(step *SessionStep) error {
 
 // PrepareTimerStep validates the step of a [Store.SetSession] call.
 func PrepareTimerStep(step SessionStep) error {
+	if step.Mark != nil {
+		return fmt.Errorf("%w: a timer move carries no outputs mark", ErrInvalidMessage)
+	}
 	return PrepareSessionStep(&step)
 }
 
@@ -444,7 +457,9 @@ func TimerAudit(k Key, step *SessionStep, notice Message, move SessionMove, gen 
 // every other change of the append (a reply also raises its parent). Its
 // props are from, to, generation (the generation after the move) and
 // cause (the causing seq), in the shapes a read returns. raw is their JSON
-// encoding.
+// encoding. The notice carries the step's outputs mark, when its Mark
+// gives one (see [SessionStep.Mark]); an invalid mark is an error and
+// nothing is stored.
 func SessionNotice(
 	step *SessionStep, cause Message, move SessionMove, gen, rev int64,
 ) (m Message, raw []byte, err error) {
@@ -454,9 +469,13 @@ func SessionNotice(
 	if err != nil { // coverage-ignore: invariant: four short values always encode under the caps
 		return Message{}, nil, err
 	}
+	mark, err := sessionMark(step, cause, move, gen)
+	if err != nil {
+		return Message{}, nil, err
+	}
 	return Message{
 		Seq: cause.Seq + 1, Rev: rev, Type: step.NoticeType, Author: step.NoticeBy, At: cause.At,
-		Props: props, TriggeredBy: step.TriggeredBy,
+		Props: props, TriggeredBy: step.TriggeredBy, Action: mark,
 	}, raw, nil
 }
 
@@ -477,6 +496,9 @@ func FillSessionOutcome(step *SessionStep, c Channel, move SessionMove, moved bo
 		return
 	}
 	*step.Outcome = SessionOutcome{Session: c.Session, CreatedAt: c.CreatedAt, Moved: moved, Move: move}
+	if moved {
+		step.Outcome.Notice = c.LastSeq
+	}
 }
 
 // FillReminderOutcome is [FillSessionOutcome] for a [Store.SetSession] step

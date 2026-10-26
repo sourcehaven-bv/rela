@@ -34,38 +34,40 @@ const (
 
 // channelWireTypes are the wire types the SPA mirrors, by TypeScript name.
 var channelWireTypes = map[string]any{
-	"ChannelAuthor":             v1.ChannelAuthor{},
-	"Channel":                   v1.Channel{},
-	"ChannelSession":            v1.ChannelSession{},
-	"ChannelSessionTransition":  v1.ChannelSessionTransition{},
-	"ChannelSessionTimer":       v1.ChannelSessionTimer{},
-	"ChannelSessionReminder":    v1.ChannelSessionReminder{},
-	"ChannelTypeList":           v1.ChannelTypeList{},
-	"ChannelList":               v1.ChannelList{},
-	"ChannelActions":            v1.ChannelActions{},
-	"ChannelHead":               v1.ChannelHead{},
-	"TypingEntry":               v1.TypingEntry{},
-	"TypingAccepted":            v1.TypingAccepted{},
-	"RefProp":                   v1.RefProp{},
-	"MessageRemoval":            v1.MessageRemoval{},
-	"MessageAction":             v1.MessageAction{},
-	"Message":                   v1.Message{},
-	"MessageActionResponse":     v1.MessageActionResponse{},
-	"MessagePage":               v1.MessagePage{},
-	"EphemeralMessage":          v1.EphemeralMessage{},
-	"EphemeralAccepted":         v1.EphemeralAccepted{},
-	"PostMessageRequest":        v1.PostMessageRequest{},
-	"EditMessageRequest":        v1.EditMessageRequest{},
-	"RemoveMessageRequest":      v1.RemoveMessageRequest{},
-	"CreateChannelRequest":      v1.CreateChannelRequest{},
-	"ChannelSchema":             v1.ChannelSchema{},
-	"ChannelTypeSchema":         v1.ChannelTypeSchema{},
-	"ChannelLifecycleSchema":    v1.ChannelLifecycleSchema{},
-	"ChannelMessageTypeSchema":  v1.ChannelMessageTypeSchema{},
-	"ChannelPropertySchema":     v1.ChannelPropertySchema{},
-	"ChannelActionSchema":       v1.ChannelActionSchema{},
-	"ChannelSessionSchema":      v1.ChannelSessionSchema{},
-	"ChannelSessionStateSchema": v1.ChannelSessionStateSchema{},
+	"ChannelAuthor":              v1.ChannelAuthor{},
+	"Channel":                    v1.Channel{},
+	"ChannelSession":             v1.ChannelSession{},
+	"ChannelSessionTransition":   v1.ChannelSessionTransition{},
+	"ChannelSessionTimer":        v1.ChannelSessionTimer{},
+	"ChannelSessionReminder":     v1.ChannelSessionReminder{},
+	"ChannelTypeList":            v1.ChannelTypeList{},
+	"ChannelList":                v1.ChannelList{},
+	"ChannelActions":             v1.ChannelActions{},
+	"ChannelHead":                v1.ChannelHead{},
+	"TypingEntry":                v1.TypingEntry{},
+	"TypingAccepted":             v1.TypingAccepted{},
+	"RefProp":                    v1.RefProp{},
+	"MessageRemoval":             v1.MessageRemoval{},
+	"MessageAction":              v1.MessageAction{},
+	"Message":                    v1.Message{},
+	"ChannelMessageOutputs":      v1.ChannelMessageOutputs{},
+	"ChannelMessageOutputResult": v1.ChannelMessageOutputResult{},
+	"MessageActionResponse":      v1.MessageActionResponse{},
+	"MessagePage":                v1.MessagePage{},
+	"EphemeralMessage":           v1.EphemeralMessage{},
+	"EphemeralAccepted":          v1.EphemeralAccepted{},
+	"PostMessageRequest":         v1.PostMessageRequest{},
+	"EditMessageRequest":         v1.EditMessageRequest{},
+	"RemoveMessageRequest":       v1.RemoveMessageRequest{},
+	"CreateChannelRequest":       v1.CreateChannelRequest{},
+	"ChannelSchema":              v1.ChannelSchema{},
+	"ChannelTypeSchema":          v1.ChannelTypeSchema{},
+	"ChannelLifecycleSchema":     v1.ChannelLifecycleSchema{},
+	"ChannelMessageTypeSchema":   v1.ChannelMessageTypeSchema{},
+	"ChannelPropertySchema":      v1.ChannelPropertySchema{},
+	"ChannelActionSchema":        v1.ChannelActionSchema{},
+	"ChannelSessionSchema":       v1.ChannelSessionSchema{},
+	"ChannelSessionStateSchema":  v1.ChannelSessionStateSchema{},
 }
 
 // jsonFields lists the JSON names of v's struct fields, sorted. An
@@ -236,6 +238,32 @@ func TestChannelWireGolden(t *testing.T) {
 	runTimerRound(t, env, time.Now().Add(time.Hour))
 	for name, path := range map[string]string{
 		"session_schema": channelSchemaPath, "guarded_head": breachPath, "reminder_messages": breachPath + "/messages",
+	} {
+		code, b := env.get(t, "alice", path)
+		require.Equal(t, http.StatusOK, code, "%s: %s", path, b)
+		var v any
+		require.NoError(t, json.Unmarshal(b, &v))
+		samples[name] = normalizeWire(v)
+	}
+
+	// Session outputs: TKT-1's incident, in contained, offers a note
+	// transition with one output; TKT-2's contained notice records its
+	// outputs done, with a created entity alice cannot read, and TKT-1's
+	// note notice records a failed set.
+	env.ch.cfg.Store(env.ch.parse(t, outputsRealtime))
+	const otherIncident = "/api/v1/tickets/TKT-2/_channels/incident"
+	code, head := env.get(t, "alice", incidentPath)
+	require.Equal(t, http.StatusOK, code, "%s", head)
+	var v any
+	require.NoError(t, json.Unmarshal(head, &v))
+	samples["outputs_head"] = normalizeWire(v)
+	resp, posted = env.do(t, "alice", http.MethodPost, otherIncident+"/messages", `{"type":"contained"}`, nil)
+	require.Equal(t, http.StatusCreated, resp.StatusCode, "%s", posted)
+	resp, posted = env.do(t, "alice", http.MethodPost, incidentPath+"/messages",
+		`{"type":"note","props":{"body":"done"}}`, nil)
+	require.Equal(t, http.StatusCreated, resp.StatusCode, "%s", posted)
+	for name, path := range map[string]string{
+		"outputs_messages": otherIncident + "/messages", "failed_outputs_messages": incidentPath + "/messages",
 	} {
 		code, b := env.get(t, "alice", path)
 		require.Equal(t, http.StatusOK, code, "%s: %s", path, b)
