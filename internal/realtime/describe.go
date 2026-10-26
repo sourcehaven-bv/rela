@@ -50,11 +50,15 @@ type SessionDescription struct {
 }
 
 // SessionStateDescription describes one state of a session. Final is set
-// for a state no transition leaves.
+// for a state no transition leaves. Status is the state's
+// [realtimecfg.SessionStatus] and WaitingFor names its waiting roles; both
+// are config, the same for every reader.
 type SessionStateDescription struct {
-	Name  string
-	Label string
-	Final bool
+	Name       string
+	Label      string
+	Final      bool
+	Status     string
+	WaitingFor []string
 }
 
 // LabeledName is a name of realtime.yaml and its label.
@@ -147,7 +151,9 @@ func describeSession(s *realtimecfg.Session) *SessionDescription {
 		Label: s.Label(), Initial: s.Initial(), States: make([]SessionStateDescription, 0, len(states)),
 	}
 	for _, st := range states {
-		d.States = append(d.States, SessionStateDescription{Name: st.Name, Label: st.Label, Final: st.Final})
+		d.States = append(d.States, SessionStateDescription{
+			Name: st.Name, Label: st.Label, Final: st.Final, Status: string(st.Status), WaitingFor: st.WaitingFor(),
+		})
 	}
 	return d
 }

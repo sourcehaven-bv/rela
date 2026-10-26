@@ -206,8 +206,10 @@ func (o managerOutputs) Poster(ctx context.Context) (realtime.OutputPoster, erro
 }
 
 // Check asks t's write questions as the poster, without writing. A set
-// runs [entitymanager.Manager.AuthorizeUpdate], read gate first; the write
-// authorizes again. A create probes the create and the relation questions
+// runs [entitymanager.Manager.AuthorizeUpdate], read gate first, then the
+// field-write gate on t.Fields with [entitymanager.CheckUpdateFields], so a
+// poster who may update the row but not a property the set writes is
+// refused before the post. The write authorizes again. A create probes the create and the relation questions
 // without an audit row.
 func (o managerOutputs) Check(ctx context.Context, t realtime.OutputTarget) error {
 	ctx, err := o.as(ctx, nil)
@@ -223,6 +225,9 @@ func (o managerOutputs) Check(ctx context.Context, t realtime.OutputTarget) erro
 			return outputCheckError(err)
 		}
 		if _, err := o.gated.AuthorizeUpdate(ctx, row); err != nil {
+			return outputCheckError(err)
+		}
+		if err := entitymanager.CheckUpdateFields(ctx, o.gated, row, t.Fields); err != nil {
 			return outputCheckError(err)
 		}
 		return nil

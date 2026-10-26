@@ -143,7 +143,7 @@ func RemoteMCPDeps(svc *appbuild.Services, host dataentry.MCPHost) (relamcp.Deps
 	// reads the realtime config holder on every call, so a realtime.yaml
 	// reload applies to the next tool call.
 	if cs := appbuild.ChannelService(svc); cs != nil {
-		deps.Channels = relamcp.ChannelDeps{Reader: cs, Writer: cs, Creator: cs, Waker: cs}
+		deps.Channels = relamcp.ChannelDeps{Reader: cs, Sessions: cs, Writer: cs, Creator: cs, Waker: cs}
 	}
 	return deps, nil
 }

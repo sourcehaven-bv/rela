@@ -46,6 +46,28 @@ func JobIdentityGrants(p *Policy, user string) JobGrants {
 	return g
 }
 
+// AnyRoleGrants reports whether some role of p (everyone included) grants
+// op on typ@face and, for a non-empty field, field write by the union rule
+// of [JobGrants.FieldWrite]. It is a policy-wide floor for load warnings,
+// not an authorization answer: it ignores assignments, asserted roles,
+// local roles and client ceilings. Only [OpCreate] and [OpUpdate] are
+// answered.
+//
+// Nil: p is accepted and grants nothing.
+func AnyRoleGrants(p *Policy, op Op, typ string, face entity.Face, field string) bool {
+	if p == nil {
+		return false
+	}
+	g := JobGrants{policy: p}
+	for _, r := range p.Roles {
+		g.roles = append(g.roles, r)
+	}
+	if !g.Verb(op, typ, face) {
+		return false
+	}
+	return field == "" || g.FieldWrite(op, typ, face, field)
+}
+
 // Verb reports whether a role grants op on the face of typ. Only
 // [OpCreate] and [OpUpdate] are answered; any other op grants nothing. The
 // zero face is the default state, which an unfaced type addresses.

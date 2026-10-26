@@ -92,9 +92,12 @@
     "label",
     "reminders",
     "state",
+    "status",
     "stranded",
     "timers",
-    "transitions"
+    "transitions",
+    "waiting_for",
+    "waiting_on_me"
   ],
   "ChannelSessionReminder": [
     "count",
@@ -112,7 +115,9 @@
   "ChannelSessionStateSchema": [
     "final",
     "label",
-    "name"
+    "name",
+    "status",
+    "waiting_for"
   ],
   "ChannelSessionTimer": [
     "due_at",
@@ -128,6 +133,11 @@
     "message_type",
     "outputs",
     "to"
+  ],
+  "ChannelSessionWaiting": [
+    "holders",
+    "label",
+    "role"
   ],
   "ChannelTypeList": [
     "cardinality",

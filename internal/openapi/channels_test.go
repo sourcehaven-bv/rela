@@ -269,6 +269,19 @@ func TestOpenAPI_ChannelSession(t *testing.T) {
 	if got, want := schemaKeys(cs), jsonNames(reflect.TypeFor[v1.ChannelSession]()); !slices.Equal(got, want) {
 		t.Errorf("ChannelSession properties = %v, want %v", got, want)
 	}
+	if st := cs.Properties["status"]; st == nil || len(st.Enum) != 5 || !slices.Contains(cs.Required, "status") {
+		t.Errorf("ChannelSession.status = %+v, want a required enum of five", st)
+	}
+	if slices.Contains(cs.Required, "entered_at") {
+		t.Errorf("ChannelSession.entered_at is required; an unstored channel has none")
+	}
+	waiting := cs.Properties["waiting_for"].Items
+	if got, want := schemaKeys(waiting), jsonNames(reflect.TypeFor[v1.ChannelSessionWaiting]()); !slices.Equal(got, want) {
+		t.Errorf("waiting_for properties = %v, want %v", got, want)
+	}
+	if d := waiting.Properties["holders"].Description; !strings.Contains(d, "never follow") {
+		t.Errorf("holders description = %q, want it to say holders are data", d)
+	}
 	tr := cs.Properties["transitions"].Items
 	if got, want := schemaKeys(tr), jsonNames(reflect.TypeFor[v1.ChannelSessionTransition]()); !slices.Equal(got, want) {
 		t.Errorf("transition properties = %v, want %v", got, want)
@@ -345,6 +358,9 @@ func TestOpenAPI_ChannelSessionDescriptor(t *testing.T) {
 	states := session.Properties["states"].Items
 	if got, want := schemaKeys(states), jsonNames(reflect.TypeFor[v1.ChannelSessionStateSchema]()); !slices.Equal(got, want) {
 		t.Errorf("state properties = %v, want %v", got, want)
+	}
+	if st := states.Properties["status"]; st == nil || len(st.Enum) != 5 || !slices.Contains(states.Required, "status") {
+		t.Errorf("state status = %+v, want a required enum of five", st)
 	}
 	if g := sc[channelSessionRef].Properties["transitions"].Items.Properties["guarded"]; g == nil || g.Type != "boolean" {
 		t.Errorf("transition guarded = %+v, want a boolean", g)

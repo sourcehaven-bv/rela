@@ -657,7 +657,8 @@ func TestChannelsHandler_SessionInReads(t *testing.T) {
 	require.NotNil(t, before)
 	require.Equal(t, "detected", before.State)
 	require.Zero(t, before.Generation)
-	require.NotEmpty(t, before.EnteredAt)
+	require.Empty(t, before.EnteredAt, "a channel that is not stored has no entered_at")
+	require.Equal(t, "working", before.Status)
 	require.Equal(t, []v1.ChannelSessionTransition{{MessageType: "contained", To: "contained"}}, before.Transitions)
 
 	resp, b := env.do(t, "alice", http.MethodPost, incidentPath+"/messages", `{"type":"contained"}`, nil)
@@ -666,6 +667,8 @@ func TestChannelsHandler_SessionInReads(t *testing.T) {
 	require.Equal(t, "contained", after.State)
 	require.Equal(t, int64(1), after.Generation)
 	require.True(t, after.Final)
+	require.Equal(t, "completed", after.Status)
+	require.NotEmpty(t, after.EnteredAt)
 
 	code, b := env.get(t, "alice", incidentPath+"/messages")
 	require.Equal(t, http.StatusOK, code, "%s", b)

@@ -169,11 +169,11 @@ func TestChannelSchema_Session(t *testing.T) {
 		"label": "GDPR breach response",
 		"initial": "detected",
 		"states": [
-			{ "name": "detected", "label": "Detected" },
-			{ "name": "contained", "label": "Contained" },
-			{ "name": "assessed", "label": "Risk assessed" },
-			{ "name": "notified", "label": "AP notified", "final": true },
-			{ "name": "dismissed", "label": "Dismissed", "final": true }
+			{ "name": "detected", "label": "Detected", "status": "working" },
+			{ "name": "contained", "label": "Contained", "status": "working" },
+			{ "name": "assessed", "label": "Risk assessed", "status": "working" },
+			{ "name": "notified", "label": "AP notified", "final": true, "status": "completed" },
+			{ "name": "dismissed", "label": "Dismissed", "final": true, "status": "completed" }
 		]
 	}`, string(raw.ChannelTypes[0]["session"]))
 	_, has := raw.ChannelTypes[1]["session"]

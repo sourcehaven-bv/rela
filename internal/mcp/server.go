@@ -541,7 +541,8 @@ func (d Deps) handlers() handlerSet {
 		convs:     conversionHandler{conv: d.Commands.Conversions, store: d.Store, watcher: d.Watcher},
 		leases:    leaseHandler{svc: d.Leases},
 		channels: channelHandler{
-			reader: d.Channels.Reader, writer: d.Channels.Writer, creator: d.Channels.Creator,
+			reader: d.Channels.Reader, sessions: d.Channels.Sessions, writer: d.Channels.Writer,
+			creator:       d.Channels.Creator,
 			refuseSignals: d.Channels.RefuseSignals, localIdentity: d.Channels.LocalIdentity,
 			bindIdentity: d.Channels.BindIdentity,
 		},

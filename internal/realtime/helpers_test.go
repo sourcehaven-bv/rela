@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -284,12 +285,23 @@ type fakeAnchors struct {
 	calls   atomic.Int64
 	onRead  func()
 	lastReq []string
+	// hide names, per caller, the properties the caller's redacted view
+	// leaves out.
+	hide map[string][]string
+	// fail, when set, is asked with the call's number (from 1); a non-nil
+	// answer fails the read.
+	fail func(n int64) error
 }
 
-func (f *fakeAnchors) Anchor(_ context.Context, addr entity.Address, props []string) (AnchorView, error) {
-	f.calls.Add(1)
+func (f *fakeAnchors) Anchor(ctx context.Context, addr entity.Address, props []string) (AnchorView, error) {
+	n := f.calls.Add(1)
 	if f.onRead != nil {
 		f.onRead()
+	}
+	if f.fail != nil {
+		if err := f.fail(n); err != nil {
+			return AnchorView{}, err
+		}
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -298,10 +310,14 @@ func (f *fakeAnchors) Anchor(_ context.Context, addr entity.Address, props []str
 	if !ok {
 		return AnchorView{}, ErrAnchorNotFound
 	}
+	var hidden []string
+	if a, ok := ctx.Value(accessKey{}).(*fakeAccess); ok {
+		hidden = f.hide[a.p.User]
+	}
 	out := v
 	out.Props = map[string]any{}
 	for _, p := range props {
-		if val, ok := v.Props[p]; ok {
+		if val, ok := v.Props[p]; ok && !slices.Contains(hidden, p) {
 			out.Props[p] = val
 		}
 	}
@@ -312,8 +328,11 @@ func (f *fakeAnchors) Anchor(_ context.Context, addr entity.Address, props []str
 }
 
 // setStatus sets the status of TKT-1; nil removes it.
-func (f *fakeAnchors) setStatus(v any) {
-	const addr, prop = "TKT-1", "status"
+func (f *fakeAnchors) setStatus(v any) { f.setProp("status", v) }
+
+// setProp sets property prop of TKT-1; nil removes it.
+func (f *fakeAnchors) setProp(prop string, v any) {
+	const addr = "TKT-1"
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	view := f.views[addr]
@@ -416,6 +435,13 @@ type countingStore struct {
 	onSetSession func(channels.Key) error
 	// setActions and staleLists count SetAction and StalePending calls.
 	setActions, staleLists atomic.Int64
+	// entityLists counts ListEntity calls.
+	entityLists atomic.Int64
+}
+
+func (s *countingStore) ListEntity(ctx context.Context, id string) ([]channels.Channel, error) {
+	s.entityLists.Add(1)
+	return s.Store.ListEntity(ctx, id)
 }
 
 func (s *countingStore) StalePending(ctx context.Context, now time.Time) ([]channels.PendingAction, error) {

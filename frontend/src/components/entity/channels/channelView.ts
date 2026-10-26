@@ -236,7 +236,9 @@ function stateLabel(session: ChannelSessionSchema | undefined, name: string): st
 
 /**
  * The notice view of a session notice, or undefined for any other message.
- * A state the descriptor no longer has shows by its name.
+ * A state the descriptor no longer has shows by its name. A notice names
+ * no waiting roles: it is history, and the current configuration cannot
+ * say whom the session waited for then. The stepper shows the current wait.
  */
 export function noticeView(
   m: Message,
@@ -260,7 +262,8 @@ export function noticeView(
  * realtime.yaml has just added, and the reload that brings it is on its
  * way: the view is loading, with no current state and no next states. It
  * is stranded only when the server says so, or when `answered` says a
- * fresh descriptor still lacks the state.
+ * fresh descriptor still lacks the state. Status, waiting roles and
+ * waiting_on_me come from the head as they are.
  */
 export function sessionView(
   ct: ChannelTypeSchema,
@@ -284,6 +287,10 @@ export function sessionView(
   else view.current = cs.state
   if (known && !stranded && cs.final) view.final = true
   if (channel.state !== 'open') view.paused = channel.state
+  if (cs.status) view.status = cs.status
+  if (cs.waiting_for?.length)
+    view.waitingFor = cs.waiting_for.map((w) => ({ label: w.label || w.role }))
+  if (cs.waiting_on_me) view.waitingOnMe = true
   return view
 }
 

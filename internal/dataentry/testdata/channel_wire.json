@@ -14,7 +14,8 @@
         "final": true,
         "generation": 2,
         "label": "Reviewed",
-        "state": "reviewed"
+        "state": "reviewed",
+        "status": "completed"
       },
       "state": "open",
       "type": "incident"
@@ -140,6 +141,7 @@
           }
         ],
         "state": "contained",
+        "status": "working",
         "transitions": [
           {
             "guarded": true,
@@ -253,7 +255,8 @@
               "final": true,
               "generation": 1,
               "label": "Contained",
-              "state": "contained"
+              "state": "contained",
+              "status": "completed"
             },
             "state": "open",
             "type": "incident"
@@ -437,6 +440,7 @@
         "generation": 1,
         "label": "Contained",
         "state": "contained",
+        "status": "working",
         "transitions": [
           {
             "message_type": "note",
@@ -485,6 +489,7 @@
         "generation": 1,
         "label": "Contained",
         "state": "contained",
+        "status": "working",
         "transitions": [
           {
             "message_type": "note",
@@ -579,6 +584,7 @@
           }
         ],
         "state": "contained",
+        "status": "working",
         "transitions": [
           {
             "guarded": true,
@@ -780,12 +786,14 @@
           "states": [
             {
               "label": "Detected",
-              "name": "detected"
+              "name": "detected",
+              "status": "working"
             },
             {
               "final": true,
               "label": "Contained",
-              "name": "contained"
+              "name": "contained",
+              "status": "completed"
             }
           ]
         },
@@ -996,7 +1004,8 @@
         "final": true,
         "generation": 1,
         "label": "Contained",
-        "state": "contained"
+        "state": "contained",
+        "status": "completed"
       },
       "state": "open",
       "type": "incident"
@@ -1038,7 +1047,8 @@
         "final": true,
         "generation": 1,
         "label": "Contained",
-        "state": "contained"
+        "state": "contained",
+        "status": "completed"
       },
       "state": "open",
       "type": "incident"
@@ -1201,25 +1211,30 @@
           "states": [
             {
               "label": "Detected",
-              "name": "detected"
+              "name": "detected",
+              "status": "working"
             },
             {
               "label": "Contained",
-              "name": "contained"
+              "name": "contained",
+              "status": "working"
             },
             {
               "label": "Risk assessed",
-              "name": "assessed"
+              "name": "assessed",
+              "status": "working"
             },
             {
               "final": true,
               "label": "AP notified",
-              "name": "notified"
+              "name": "notified",
+              "status": "completed"
             },
             {
               "final": true,
               "label": "Dismissed",
-              "name": "dismissed"
+              "name": "dismissed",
+              "status": "completed"
             }
           ]
         },

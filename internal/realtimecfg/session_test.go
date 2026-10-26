@@ -36,7 +36,9 @@ func TestParse_Session(t *testing.T) {
 			final = append(final, st.Name)
 		}
 	}
-	if want := []string{"detected", "contained", "assessed", "overdue", "notified", "dismissed"}; !slices.Equal(names, want) {
+	if want := []string{
+		"detected", "contained", "handed-over", "assessed", "overdue", "notified", "dismissed",
+	}; !slices.Equal(names, want) {
 		t.Errorf("states = %v; want declaration order %v", names, want)
 	}
 	if !slices.Equal(final, []string{"notified", "dismissed"}) {
@@ -199,6 +201,17 @@ func TestParse_SessionInvalid(t *testing.T) {
 		}, on + ".when", `unknown attribute "x"`},
 		{"session-level final", []replace{{"      initial: open\n", "      initial: open\n      final: [done]\n"}},
 			k + ".final", "mark each final state with final: true"},
+		{"awaits", []replace{{"        open:\n", "        open:\n          awaits: [lead]\n"}},
+			k + ".states.open.awaits", "use waiting_for"},
+		{"session-level status", []replace{{"      initial: open\n", "      initial: open\n      status: working\n"}},
+			k + ".status", "status is set per state"},
+		{"session-level waiting_for", []replace{{"      initial: open\n", "      initial: open\n      waiting_for: [lead]\n"}},
+			k + ".waiting_for", "waiting_for is set per state"},
+		{"transition waiting_for", []replace{{"contained: { to: done }", "contained: { to: done, waiting_for: [lead] }"}},
+			on + ".waiting_for", "waiting_for belongs to the state the session enters"},
+		{"timer waiting_for", []replace{{"contained: { to: done }\n",
+			"contained: { to: done }\n          after:\n            late: { period: 1h, to: done, waiting_for: [lead] }\n"}},
+			k + ".states.open.after.late.waiting_for", "waiting_for belongs to the state the session enters"},
 		{"merge key", []replace{{"        done: { final: true }", "        <<: { done: { final: true } }"}},
 			k + ".states", "merge keys (<<) are not supported in realtime.yaml"},
 	}
@@ -233,7 +246,7 @@ func TestCheckReload_SessionChangesAllowed(t *testing.T) {
 	tests := map[string][]replace{
 		"state removed": {
 			{"            dismiss:   { to: dismissed }\n", ""},
-			{"        dismissed: { label: Dismissed, final: true }\n", ""},
+			{"        dismissed: { label: Dismissed, final: true, status: cancelled }\n", ""},
 		},
 		"initial renamed": {{"initial: detected", "initial: contained"}},
 		"session removed": {{block, ""}},
@@ -255,7 +268,7 @@ func TestCheckReload_SessionChangesAllowed(t *testing.T) {
 			{"session.reminders['status-update']", "session.reminders['status']"},
 			{"        status-update:\n          label: Status update", "        status:\n          label: Status update"},
 		},
-		"reminder in changed":    {{"in: [detected, contained, assessed, overdue]", "in: [contained]"}},
+		"reminder in changed":    {{"in: [detected, contained, handed-over, assessed, overdue]", "in: [contained, handed-over]"}},
 		"reminder every changed": {{"every: 30m", "every: 1h"}},
 		"reminder first changed": {{"first: 10m", "first: 1h"}},
 		"reminder max changed":   {{"max: 48", "max: 5"}},

@@ -120,6 +120,7 @@ describe('real channel answers use only mirrored keys', () => {
     const session = c.session as Json
     keysOf('ChannelSession', session)
     for (const t of (session.transitions ?? []) as Json[]) keysOf('ChannelSessionTransition', t)
+    for (const w of (session.waiting_for ?? []) as Json[]) keysOf('ChannelSessionWaiting', w)
   }
 
   it('session', () => {

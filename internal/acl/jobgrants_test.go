@@ -129,3 +129,47 @@ assignments:
 		t.Error("the block grants status on create too")
 	}
 }
+
+// TestAnyRoleGrants pins the policy-wide floor of the realtime answer
+// grant warning: any role, everyone included, whatever it is assigned to,
+// grants the verb, and a field block closes a field no role opens.
+func TestAnyRoleGrants(t *testing.T) {
+	p := mustPolicy(t, `
+roles:
+  writer:
+    read: [ticket]
+    update: [ticket]
+    fields:
+      ticket:
+        - field: status
+  reader:
+    read: [ticket]
+  everyone:
+    read: [note]
+    update: [note]
+`)
+	cases := []struct {
+		name  string
+		p     *Policy
+		op    Op
+		typ   string
+		field string
+		want  bool
+	}{
+		{"unassigned role grants update", p, OpUpdate, "ticket", "", true},
+		{"field in the block", p, OpUpdate, "ticket", "status", true},
+		{"field the block closes", p, OpUpdate, "ticket", "owner", false},
+		{"no role grants create", p, OpCreate, "ticket", "", false},
+		{"everyone grants update", p, OpUpdate, "note", "body", true},
+		{"unknown type", p, OpUpdate, "page", "", false},
+		{"delete is not answered", p, OpDelete, "ticket", "", false},
+		{"nil policy", nil, OpUpdate, "ticket", "", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := AnyRoleGrants(tc.p, tc.op, tc.typ, "", tc.field); got != tc.want {
+				t.Errorf("AnyRoleGrants = %v; want %v", got, tc.want)
+			}
+		})
+	}
+}

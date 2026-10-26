@@ -7,9 +7,9 @@ channel_types:
     label: Breach response
     attach_to: [datalek]
     roles:
-      lead:   { from: entity.owner }
+      lead:   { label: the incident lead, from: entity.owner }
       member: { from: attached }
-      dpo:    { permission: privacy.officer }
+      dpo:    { label: the privacy officer, permission: privacy.officer }
     message_types:
       text:      { properties: { body: { type: markdown, required: true } }, post: [member] }
       contained: { properties: { note: { type: markdown } }, post: [lead, member] }
@@ -19,6 +19,9 @@ channel_types:
       escalated: { properties: { note: { type: string } }, post: [lead] }
       reminder:         { properties: { body: { type: markdown, required: true } }, post: [lead] }
       escalate-stalled: { properties: { note: { type: string } }, post: [dpo] }
+      handoff:          { properties: { to: { type: ref, to: [risico], required: true } }, post: [lead] }
+      accept-handoff:   { properties: { note: { type: string } }, post: [lead] }
+      claim:            { properties: { note: { type: string } }, post: [member] }
     session:
       label: GDPR breach response
       initial: detected
@@ -44,6 +47,7 @@ channel_types:
             no-containment: { period: 24h, to: overdue, label: Not contained within a day }
         contained:
           label: Contained
+          waiting_for: [lead]
           on:
             assessed:
               to: assessed
@@ -52,6 +56,29 @@ channel_types:
               outputs:
                 - set: { properties: { risk: "{{message.risk}}" } }
             escalate-stalled: { to: overdue, when: "session.reminders['status-update'] >= 3" }
+            handoff:
+              to: handed-over
+              roles: [lead]
+              outputs:
+                - set: { properties: { owner: "{{message.to}}" } }
+          after:
+            notify-deadline:
+              period: 72h
+              since: session
+              to: overdue
+              label: 72 hours since detection
+              outputs:
+                - set: { properties: { escalated: true } }
+        handed-over:
+          label: Handed over
+          waiting_for: [lead]
+          on:
+            accept-handoff: { to: contained, roles: [lead] }
+            claim:
+              to: contained
+              roles: [member]
+              outputs:
+                - set: { properties: { owner: "{{message.author}}" } }
           after:
             notify-deadline:
               period: 72h
@@ -85,11 +112,11 @@ channel_types:
               outputs:
                 - set: { properties: { status: notified, reference: "{{message.reference}}" } }
         notified:  { label: AP notified, final: true }
-        dismissed: { label: Dismissed, final: true }
+        dismissed: { label: Dismissed, final: true, status: cancelled }
       reminders:
         status-update:
           label: Status update
-          in: [detected, contained, assessed, overdue]
+          in: [detected, contained, handed-over, assessed, overdue]
           every: 30m
           first: 10m
           max: 48

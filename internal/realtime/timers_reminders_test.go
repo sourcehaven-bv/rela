@@ -68,7 +68,7 @@ func (th *timerHarness) view(t *testing.T, k channels.Key) *SessionView {
 	ct, ok := snap.Config.ChannelType(k.Type)
 	require.True(t, ok)
 	h := th.head(t, k)
-	return sessionView(ct, &h, th.clock.Now(), snap.Degraded)
+	return sessionView(ct, &h, snap.Degraded, waitingFacts{})
 }
 
 func TestTimers_RemindPosts(t *testing.T) {

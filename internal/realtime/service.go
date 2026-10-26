@@ -205,7 +205,7 @@ func (s *Service) Head(ctx context.Context, addr RawAddress) (HeadView, error) {
 		return HeadView{}, err
 	}
 	out := HeadView{
-		Channel:   channelView(c.ct, c.key, c.head, c.now, c.snap.Degraded),
+		Channel:   c.channelView(c.key, c.head),
 		Ephemeral: []EphemeralView{}, TypingNow: typingNow, Actions: c.affordances(),
 	}
 	if len(msgs) > 0 {
@@ -387,8 +387,9 @@ func (s *Service) Post(ctx context.Context, addr RawAddress, in PostInput) (Post
 	if plan.marked && sp.step.Outcome.Moved {
 		out.Outputs = s.runInline(c, sp.step.Outcome.Notice, plan)
 		if out.Outputs != nil && out.Outputs.Status != OutputsPending {
-			// The on_final close may have closed the channel.
-			out.Session = s.sessionAfterOutputs(c, out.Session)
+			// The on_final close may have closed the channel, and a set
+			// may have handed a role to someone else.
+			out.Session = s.sessionAfterOutputs(c, out.Session, wroteRoleProperty(c.ct, out.Outputs))
 		}
 	}
 	return out, nil
@@ -421,13 +422,18 @@ func (s *Service) runInline(c *call, notice int64, plan *outputPlan) *OutputsVie
 }
 
 // sessionAfterOutputs is the session view after an inline run, which may
-// have closed the channel: the head is read again only then.
-func (s *Service) sessionAfterOutputs(c *call, before *SessionView) *SessionView {
+// have closed the channel: the head is read again only then. When handoff
+// is set, a set changed a named role's property, so the anchor is read
+// again too and the session shows the new holders.
+func (s *Service) sessionAfterOutputs(c *call, before *SessionView, handoff bool) *SessionView {
 	h, err := s.store.Head(c.ctx, c.key)
 	if err != nil {
 		return before
 	}
-	return sessionView(c.ct, &h, c.now, c.snap.Degraded)
+	if handoff {
+		s.rereadAnchor(c)
+	}
+	return readerSession(c, &h)
 }
 
 // rendererWith is a renderer over refs already resolved for the caller.
@@ -637,7 +643,7 @@ func (s *Service) Create(
 	}
 	s.dueWake.Note(ch.Session.NextDueAt)
 	s.local.mark(ch.Key)
-	return channelView(c.ct, ch.Key, &ch, c.now, c.snap.Degraded), nil
+	return c.channelView(ch.Key, &ch), nil
 }
 
 // TypeChannels are the channels of one type on an anchor that the caller
@@ -720,7 +726,9 @@ func (s *Service) ListAnchor(
 func (c *call) listType(
 	ct realtimecfg.ChannelType, stored []channels.Channel, state channels.State,
 ) (TypeChannels, bool) {
-	c.ct, c.head = ct, nil
+	// Role answers are per channel type: two types may declare one role
+	// name with different sources.
+	c.ct, c.head, c.ops = ct, nil, opGates{}
 	anchor := anchorFor(ct, c.anchor)
 	c.key = channels.Key{Anchor: anchor, Type: ct.Name}
 	creator := ct.Read.Source.Kind == realtimecfg.SourceCreator
@@ -739,7 +747,7 @@ func (c *call) listType(
 				continue
 			}
 		}
-		tc.Channels = append(tc.Channels, channelView(ct, ch.Key, &ch, c.now, c.snap.Degraded))
+		tc.Channels = append(tc.Channels, c.channelView(ch.Key, &ch))
 	}
 	c.head = nil
 	tc.Create = ct.Cardinality == realtimecfg.CardinalityMany && ct.Create != nil &&

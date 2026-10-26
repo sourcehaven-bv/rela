@@ -783,13 +783,14 @@ describe('ChannelsPanel', () => {
         label: 'Breach response',
         initial: 'detected',
         states: [
-          { name: 'detected', label: 'Detected' },
-          { name: 'contained', label: 'Contained', final: true },
+          { name: 'detected', label: 'Detected', status: 'working' },
+          { name: 'contained', label: 'Contained', final: true, status: 'completed' },
         ],
       },
     }
     const detected = {
       state: 'detected',
+      status: 'working' as const,
       generation: 1,
       entered_at: '2026-03-01T10:00:00Z',
       transitions: [{ message_type: 'contained', to: 'contained' }],

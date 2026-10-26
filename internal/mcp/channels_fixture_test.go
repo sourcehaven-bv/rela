@@ -239,7 +239,8 @@ func (f *channelFixture) deps(t *testing.T, refuseSignals bool) Deps {
 		Families:      store.TrivialScope(),
 		BindIdentity:  reads.Rebind,
 		Channels: ChannelDeps{
-			Reader: f.svc, Writer: f.svc, Creator: f.svc, Waker: f.svc, RefuseSignals: refuseSignals,
+			Reader: f.svc, Sessions: f.svc, Writer: f.svc, Creator: f.svc, Waker: f.svc,
+			RefuseSignals: refuseSignals,
 		},
 	}
 }
@@ -325,7 +326,7 @@ func toolNames(t *testing.T, cs *mcpgo.ClientSession) map[string]*mcpgo.Tool {
 
 // channelToolNames are the tools registered with realtime on.
 var channelToolNames = []string{
-	"list_channels", toolReadChannel, "post_message", "edit_message", "remove_message", "create_channel",
+	"list_channels", toolReadChannel, toolReadSession, "post_message", "edit_message", "remove_message", "create_channel",
 }
 
 // noticeFirst reports whether a result text is a JSON object whose first

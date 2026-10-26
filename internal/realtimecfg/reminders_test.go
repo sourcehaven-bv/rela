@@ -28,7 +28,7 @@ func TestParse_SessionReminders(t *testing.T) {
 
 		t.Errorf("status-update = %+v", r)
 	}
-	if want := []string{"detected", "contained", "assessed", "overdue"}; !slices.Equal(r.In(), want) {
+	if want := []string{"detected", "contained", "handed-over", "assessed", "overdue"}; !slices.Equal(r.In(), want) {
 		t.Errorf("in = %v; want %v", r.In(), want)
 	}
 	if !r.Active("contained") || r.Active("notified") {

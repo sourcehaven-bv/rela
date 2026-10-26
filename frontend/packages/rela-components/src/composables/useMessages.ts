@@ -129,6 +129,11 @@ export type ChannelTextKey =
   // Session stepper and composer marks
   | 'session'
   | 'sessionEnded'
+  | 'sessionCompleted'
+  | 'sessionCancelled'
+  | 'sessionFailed'
+  | 'sessionInputRequired'
+  | 'sessionWaitingForYou'
   | 'sessionStranded'
   | 'sessionLoading'
   | 'sessionPausedClosed'
@@ -187,6 +192,11 @@ const CHANNEL_TEXT: Record<ChannelTextKey, string> = {
   restrictedRefTitle: 'You do not have access to this entity',
   session: 'Session',
   sessionEnded: 'Ended',
+  sessionCompleted: 'Completed',
+  sessionCancelled: 'Cancelled',
+  sessionFailed: 'Failed',
+  sessionInputRequired: 'Input required',
+  sessionWaitingForYou: 'Waiting for you',
   sessionStranded: 'Stranded',
   sessionLoading: 'Loading the states of this session…',
   sessionPausedClosed: 'Paused while the channel is closed',
@@ -313,6 +323,8 @@ export interface Messages {
   channelSessionMoved: (args: { from: string; to: string }) => string
   /** A session notice for a move into the same state: `Session entered Contained again`. */
   channelSessionReentered: (args: { state: string }) => string
+  /** Whom a session waits for: `Waiting for the incident lead`. */
+  channelSessionWaiting: (args: { labels: string[] }) => string
   /** Why a stranded session does not move, naming its stored state. */
   channelSessionStrandedText: (args: { state: string }) => string
   /** The composer's note while a message type that moves the session is selected. */
@@ -329,6 +341,8 @@ export interface Messages {
   channelSessionSummary: (args: {
     status: 'normal' | 'final' | 'paused' | 'stranded' | 'loading'
     label: string
+    /** For a final state: `Completed`, `Cancelled`, `Failed` or `Ended`. */
+    outcome?: string
   }) => string
   /**
    * The screen-reader text of a stepper state that is a next state, an
@@ -343,6 +357,12 @@ export interface Messages {
   channelTyping: (args: { names: string[]; others: number }) => string
   /** The channel components' fixed captions; see `ChannelTextKey`. */
   channelText: (args: { key: ChannelTextKey }) => string
+}
+
+/** `a`, `a or b`, `a, b or c`. */
+function orList(items: string[]): string {
+  if (items.length <= 1) return items.join('')
+  return `${items.slice(0, -1).join(', ')} or ${items[items.length - 1]}`
 }
 
 /**
@@ -427,17 +447,18 @@ export const DEFAULT_MESSAGES: Messages = {
   channelNewNotices: ({ notices, messages }) => `${[...(messages ? [messages] : []), ...notices].join('. ')}.`,
   channelSessionMoved: ({ from, to }) => `Session moved from ${from} to ${to}`,
   channelSessionReentered: ({ state }) => `Session entered ${state} again`,
+  channelSessionWaiting: ({ labels }) => `Waiting for ${orList(labels)}`,
   channelSessionStrandedText: ({ state }) =>
     `${state} is no longer a state of this session. Messages do not move it.`,
   channelSessionHint: ({ to, guarded }) =>
     `Sending this moves the session to ${to}${guarded ? ' if its condition holds' : ''}.`,
   channelSessionOptionHint: () => ' (moves the session)',
-  channelSessionSummary: ({ status, label }) => {
+  channelSessionSummary: ({ status, label, outcome }) => {
     switch (status) {
       case 'stranded':
         return `Stranded · ${label}`
       case 'final':
-        return `Ended · ${label}`
+        return `${outcome ?? 'Ended'} · ${label}`
       case 'paused':
         return `${label} · Paused`
       case 'loading':

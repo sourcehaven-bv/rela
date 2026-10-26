@@ -238,6 +238,12 @@ export interface ChannelNoticeView {
   reentry: boolean
 }
 
+/**
+ * A session state's status: `working`, `input_required` (it waits for a
+ * named role), or the outcome of a final state.
+ */
+export type ChannelSessionStatus = 'working' | 'input_required' | 'completed' | 'cancelled' | 'failed'
+
 /** One state of a channel's session. */
 export interface ChannelSessionStateView {
   name: string
@@ -273,6 +279,12 @@ export interface ChannelSessionView {
   loading?: boolean
   /** The channel is not open, so the session does not move. */
   paused?: 'closed' | 'archived'
+  /** The current state's status; absent reads as working, or completed when final. */
+  status?: ChannelSessionStatus
+  /** Whom an input_required state waits for, by label. */
+  waitingFor?: { label: string }[]
+  /** The session waits for the reader. */
+  waitingOnMe?: boolean
 }
 
 /**

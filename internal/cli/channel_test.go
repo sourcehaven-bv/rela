@@ -414,12 +414,12 @@ func TestChannelCLI_PostSession(t *testing.T) {
 	p := newChannelProject(t)
 	got, err := runChannel(t, p.svc, "alice", "", "channel", "post", p.item, "incident", "contained")
 	require.NoError(t, err)
-	assert.Equal(t, "#1 posted\nsession: contained (Contained), generation 1, final\n"+
+	assert.Equal(t, "#1 posted\nsession: contained (Contained), generation 1, final, completed\n"+
 		"outputs done: set "+p.item+", created ITEM-002\n", got)
 
 	got, err = runChannel(t, p.svc, "alice", "", "channel", "read", p.item, "incident")
 	require.NoError(t, err)
-	assert.Contains(t, got, "session: contained (Contained), generation 1, final\n")
+	assert.Contains(t, got, "session: contained (Contained), generation 1, final, completed\n")
 	assert.Contains(t, got, "  moved from detected to contained; outputs done: set "+p.item+
 		", created ITEM-002\n")
 

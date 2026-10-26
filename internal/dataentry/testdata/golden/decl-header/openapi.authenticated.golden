@@ -6798,11 +6798,30 @@ body:
                           },
                           "name": {
                             "type": "string"
+                          },
+                          "status": {
+                            "type": "string",
+                            "enum": [
+                              "working",
+                              "input_required",
+                              "completed",
+                              "cancelled",
+                              "failed"
+                            ],
+                            "description": "working, input_required (waits for a named role), or a terminal status of a final state"
+                          },
+                          "waiting_for": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            },
+                            "description": "The roles an input_required state waits for; absent otherwise"
                           }
                         },
                         "required": [
                           "name",
-                          "label"
+                          "label",
+                          "status"
                         ]
                       }
                     }

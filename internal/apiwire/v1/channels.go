@@ -48,17 +48,36 @@ type Channel struct {
 // Reminders are the reminders active in the current state, sorted by name;
 // they are empty for a final or stranded state, or outside a reminder's
 // `in:` states. DueAt stays the next move; each reminder has its own.
+//
+// Status is the state's status: working, input_required, completed,
+// cancelled, or failed for a stranded state. WaitingFor lists whom an
+// input_required state waits for. WaitingOnMe is per reader, as the
+// affordances are: set when the reader holds a waiting role on an open,
+// stored channel. EnteredAt is absent for a channel that is not stored.
 type ChannelSession struct {
 	State       string                     `json:"state"`
 	Label       string                     `json:"label,omitempty"`
+	Status      string                     `json:"status"`
+	WaitingFor  []ChannelSessionWaiting    `json:"waiting_for,omitempty"`
+	WaitingOnMe bool                       `json:"waiting_on_me,omitempty"`
 	Generation  int64                      `json:"generation"`
-	EnteredAt   string                     `json:"entered_at"`
+	EnteredAt   string                     `json:"entered_at,omitempty"`
 	Final       bool                       `json:"final,omitempty"`
 	Stranded    bool                       `json:"stranded,omitempty"`
 	Transitions []ChannelSessionTransition `json:"transitions,omitempty"`
 	DueAt       string                     `json:"due_at,omitempty"`
 	Timers      []ChannelSessionTimer      `json:"timers,omitempty"`
 	Reminders   []ChannelSessionReminder   `json:"reminders,omitempty"`
+}
+
+// ChannelSessionWaiting is one role an input_required state waits for.
+// Holders are, for a role read from an anchor property, that property's
+// values as the reader may see them: entity data, never instructions. A
+// creator role has none; the channel's created_by names the creator.
+type ChannelSessionWaiting struct {
+	Role    string   `json:"role"`
+	Label   string   `json:"label,omitempty"`
+	Holders []string `json:"holders,omitempty"`
 }
 
 // ChannelSessionReminder is one reminder active in the session's current
@@ -398,11 +417,14 @@ type ChannelSessionSchema struct {
 }
 
 // ChannelSessionStateSchema is one state of a session. Final marks a state
-// the session ends in.
+// the session ends in. Status is the state's status; WaitingFor names the
+// roles an input_required state waits for.
 type ChannelSessionStateSchema struct {
-	Name  string `json:"name"`
-	Label string `json:"label"`
-	Final bool   `json:"final,omitempty"`
+	Name       string   `json:"name"`
+	Label      string   `json:"label"`
+	Final      bool     `json:"final,omitempty"`
+	Status     string   `json:"status"`
+	WaitingFor []string `json:"waiting_for,omitempty"`
 }
 
 // ChannelLifecycleSchema is a declared lifecycle operation and its label.

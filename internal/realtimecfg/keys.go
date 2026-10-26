@@ -34,6 +34,13 @@ var refusedKeys = []struct {
 	{"channel_types.*.session.states.*.on_final", "on_final belongs to the session: session.on_final: close " +
 		"closes the channel on a move into any final state"},
 	{"channel_types.*.session.states.*.after.*.run_as", "run_as is set once per session type, at session.run_as"},
+	{"channel_types.*.session.states.*.awaits", "use waiting_for: the roles whose answer the state waits for"},
+	{"channel_types.*.session.status", "status is set per state: session.states.<name>.status"},
+	{"channel_types.*.session.waiting_for", "waiting_for is set per state: session.states.<name>.waiting_for"},
+	{"channel_types.*.session.states.*.on.*.waiting_for", "waiting_for belongs to the state the session " +
+		"enters: set it on that state"},
+	{"channel_types.*.session.states.*.after.*.waiting_for", "waiting_for belongs to the state the session " +
+		"enters: set it on that state"},
 	{"agents", "agents are ordinary principals; restrict them with client_baselines in acl.yaml " +
 		"and match them with a principal_type role"},
 	{"channel_types.*.message_types.*.actions.*.by", "agents are ordinary principals, so an action " +

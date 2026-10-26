@@ -161,11 +161,11 @@ func TestDescribe_Session(t *testing.T) {
 		{name: "breach", want: &SessionDescription{
 			Label: "GDPR breach response", Initial: "detected",
 			States: []SessionStateDescription{
-				{Name: "detected", Label: "Detected"},
-				{Name: "contained", Label: "Contained"},
-				{Name: "assessed", Label: "Risk assessed"},
-				{Name: "notified", Label: "AP notified", Final: true},
-				{Name: "dismissed", Label: "Dismissed", Final: true},
+				{Name: "detected", Label: "Detected", Status: "working"},
+				{Name: "contained", Label: "Contained", Status: "working"},
+				{Name: "assessed", Label: "Risk assessed", Status: "working"},
+				{Name: "notified", Label: "AP notified", Final: true, Status: "completed"},
+				{Name: "dismissed", Label: "Dismissed", Final: true, Status: "completed"},
 			},
 		}},
 		{name: "chat"},
@@ -187,7 +187,8 @@ func TestDescribe_Session(t *testing.T) {
 			require.Equal(t, &SessionDescription{
 				Label: "cases", Initial: "open-case",
 				States: []SessionStateDescription{
-					{Name: "open-case", Label: "open-case"}, {Name: "finished", Label: "finished", Final: true},
+					{Name: "open-case", Label: "open-case", Status: "working"},
+					{Name: "finished", Label: "finished", Final: true, Status: "completed"},
 				},
 			}, ct.Session)
 		}
