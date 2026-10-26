@@ -5,7 +5,7 @@ title: 'Sessions 4/5b: timer and trigger outputs (run_as)'
 kind: enhancement
 priority: medium
 effort: m
-status: ready
+status: backlog
 ---
 
 ## Description
