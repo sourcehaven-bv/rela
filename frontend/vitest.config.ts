@@ -19,6 +19,11 @@ export default defineConfig({
   // tests — test hooks are an E2E concern (issue #890).
   define: {
     __E2E_TEST_HOOKS__: 'false',
+    // vue-i18n build flags: composition API only, so the legacy API is
+    // tree-shaken; install the global $t and directives; no devtools in production.
+    __VUE_I18N_FULL_INSTALL__: 'true',
+    __VUE_I18N_LEGACY_API__: 'false',
+    __INTLIFY_PROD_DEVTOOLS__: 'false',
   },
   test: {
     globals: true,

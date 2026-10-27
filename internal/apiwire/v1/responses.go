@@ -835,6 +835,10 @@ type App struct {
 type AppConfig struct {
 	Name        string `json:"name"`
 	Description string `json:"description"`
+	// Language is the project's default interface language (app.language),
+	// a BCP 47 tag, or empty to follow the browser. The SPA uses it when
+	// the user has chosen no language of their own.
+	Language string `json:"language,omitempty"`
 	// PlantUMLServerURL is the configured PlantUML server base URL, or empty
 	// when PlantUML rendering is disabled. The SPA treats a non-empty value as
 	// the on switch for ```plantuml diagram rendering.

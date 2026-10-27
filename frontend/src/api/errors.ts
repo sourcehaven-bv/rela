@@ -16,6 +16,11 @@ import axios, { type AxiosError } from 'axios'
 import type { ScriptError } from '@/types/scriptError'
 import type { FieldConflicts, FieldVersions } from '@/types/entity'
 import { isScriptError } from '@/types/scriptError'
+import { t, resolvedLanguage } from '@/i18n'
+import { apiErrorKey, problemCode } from '@/i18n/apiErrors'
+
+/** The language the server writes its error messages in. */
+const SERVER_MESSAGE_LANGUAGE = 'en'
 
 export interface ProblemDetail {
   type: string
@@ -80,6 +85,11 @@ export class ApiError extends Error {
     this.scriptError = opts.scriptError
     this.correlationId = opts.correlationId
     this.original = opts.original
+  }
+
+  /** The error code from the problem `type` (`not_found`), when there is one. */
+  get code(): string | undefined {
+    return problemCode(this.problem?.type)
   }
 }
 
@@ -173,12 +183,32 @@ export function toApiError(error: unknown): unknown {
   return error
 }
 
-/** The one way to turn a caught error into a user-facing message. */
-export function getErrorMessage(err: unknown, fallback = 'Something went wrong'): string {
-  if (err instanceof ApiError) return err.message
+/**
+ * An ApiError's message in the interface language. The server and the
+ * normalizer write English; see `i18n/apiErrors.ts` for when a translation
+ * replaces it. A script error's message is the script author's own text and
+ * is never replaced.
+ */
+function localizedApiMessage(err: ApiError): string {
+  if (resolvedLanguage.value.language === SERVER_MESSAGE_LANGUAGE) return err.message
+  if (err.kind === 'network') return t('errors.network')
+  if (err.kind === 'cancelled') return t('errors.cancelled')
+  if (err.kind === 'http') {
+    const key = apiErrorKey(err.code)
+    if (key) return t(key)
+  }
+  return err.message
+}
+
+/**
+ * The one way to turn a caught error into a user-facing message. Without a
+ * `fallback` the last resort is a generic line in the interface language.
+ */
+export function getErrorMessage(err: unknown, fallback?: string): string {
+  if (err instanceof ApiError) return localizedApiMessage(err)
   if (err instanceof Error && err.message) return err.message
   if (typeof err === 'string' && err) return err
-  return fallback
+  return fallback ?? t('errors.generic')
 }
 
 /**

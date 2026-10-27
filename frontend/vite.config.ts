@@ -68,6 +68,11 @@ export default defineConfig(({ mode }) => {
     base: '/',
     define: {
       __E2E_TEST_HOOKS__: JSON.stringify(e2eTestHooks),
+      // vue-i18n build flags: composition API only, so the legacy API is
+      // tree-shaken; install the global $t and directives; no devtools in production.
+      __VUE_I18N_FULL_INSTALL__: 'true',
+      __VUE_I18N_LEGACY_API__: 'false',
+      __INTLIFY_PROD_DEVTOOLS__: 'false',
     },
     build: {
       outDir: '../internal/dataentry/static/v2',

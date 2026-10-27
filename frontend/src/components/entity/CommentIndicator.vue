@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { intlLocale } from '@/i18n/locale'
 import { ref, computed, watch, onBeforeUnmount, nextTick, useTemplateRef } from 'vue'
 import { useUIStore } from '@/stores'
 import { useConfirm } from '@/composables/useConfirm'
@@ -178,7 +179,7 @@ onBeforeUnmount(() => {
 
 function formatDate(iso: string): string {
   const d = new Date(iso)
-  return Number.isNaN(d.getTime()) ? iso : d.toLocaleString()
+  return Number.isNaN(d.getTime()) ? iso : d.toLocaleString(intlLocale())
 }
 </script>
 

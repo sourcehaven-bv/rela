@@ -3,6 +3,7 @@ import { ref, computed } from 'vue'
 import { getGitStatus, syncGit, type GitStatus, type GitSyncResponse } from '@/api'
 import { getErrorMessage } from '@/api/errors'
 import { isCancelledFetch } from '@/composables/usePageData'
+import { t } from '@/i18n'
 
 export const useGitStore = defineStore('git', () => {
   // State
@@ -21,11 +22,11 @@ export const useGitStore = defineStore('git', () => {
 
   const statusText = computed(() => {
     if (!isAvailable.value) return ''
-    if (syncing.value) return 'Syncing...'
-    if (hasConflicts.value) return 'Conflicts'
-    if (localChanges.value > 0) return `${localChanges.value} change${localChanges.value !== 1 ? 's' : ''}`
-    if (remoteAhead.value > 0) return `${remoteAhead.value} behind`
-    return 'Synced'
+    if (syncing.value) return t('git.syncing')
+    if (hasConflicts.value) return t('git.conflicts')
+    if (localChanges.value > 0) return t('git.changes', { n: localChanges.value }, localChanges.value)
+    if (remoteAhead.value > 0) return t('git.behind', { n: remoteAhead.value })
+    return t('git.synced')
   })
 
   const statusClass = computed(() => {
@@ -46,7 +47,7 @@ export const useGitStore = defineStore('git', () => {
       // (see BUG-6C3V and src/composables/usePageData.ts).
       if (isCancelledFetch(err)) return
       console.error('Failed to fetch git status:', err)
-      lastError.value = getErrorMessage(err, 'Failed to fetch status')
+      lastError.value = getErrorMessage(err, t('git.fetchFailed'))
     } finally {
       loading.value = false
     }
@@ -62,7 +63,7 @@ export const useGitStore = defineStore('git', () => {
       return result
     } catch (err) {
       console.error('Failed to sync:', err)
-      lastError.value = getErrorMessage(err, 'Failed to sync')
+      lastError.value = getErrorMessage(err, t('git.syncFailed'))
       throw err
     } finally {
       syncing.value = false

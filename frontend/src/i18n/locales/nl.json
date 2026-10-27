@@ -1,0 +1,62 @@
+{
+  "language": {
+    "en": "English",
+    "nl": "Nederlands"
+  },
+  "nav": {
+    "search": "Zoeken",
+    "analysis": "Analyse",
+    "apps": "Apps",
+    "showAll": "Alles tonen",
+    "piles": "Stapels",
+    "newPile": "Nieuwe stapel",
+    "newItem": "Nieuw: {label}"
+  },
+  "footer": {
+    "settings": "Instellingen",
+    "about": "Over",
+    "shortcuts": "Sneltoetsen",
+    "keyboardShortcuts": "Sneltoetsen",
+    "clickToSync": "Klik om te synchroniseren",
+    "resolveConflicts": "Conflicten oplossen",
+    "suggestedNextAction": "Voorgestelde volgende stap",
+    "suggestion": "Suggestie"
+  },
+  "git": {
+    "syncing": "Synchroniseren…",
+    "conflicts": "Conflicten",
+    "changes": "{n} wijziging | {n} wijzigingen",
+    "behind": "{n} achter",
+    "synced": "Gesynchroniseerd",
+    "fetchFailed": "Status ophalen mislukt",
+    "syncFailed": "Synchroniseren mislukt"
+  },
+  "account": {
+    "profile": "Profiel",
+    "account": "Account",
+    "switchOrg": "Andere organisatie",
+    "admin": "Beheer",
+    "signOut": "Afmelden"
+  },
+  "settings": {
+    "language": {
+      "title": "Taal",
+      "description": "De taal van menu's, knoppen en meldingen, alleen in deze browser. Namen en labels uit de projectconfiguratie worden niet vertaald.",
+      "label": "Taal van de interface",
+      "automatic": "Automatisch ({language})"
+    }
+  },
+  "errors": {
+    "generic": "Er ging iets mis",
+    "network": "Netwerkfout: de server is niet bereikbaar",
+    "cancelled": "Verzoek geannuleerd",
+    "notFound": "Niet gevonden",
+    "unauthenticated": "Meld je opnieuw aan",
+    "preconditionFailed": "Dit is ergens anders gewijzigd. Laad opnieuw en probeer het nog eens.",
+    "bodyTooLarge": "De upload is te groot",
+    "schemaChanged": "De configuratie is gewijzigd. Laad opnieuw en probeer het nog eens.",
+    "stateChanged": "Dit is gewijzigd terwijl je bezig was. Probeer het opnieuw.",
+    "encryptedInaccessible": "Dit item is versleuteld en kan hier niet worden bewerkt",
+    "historyUnsupported": "Deze installatie bewaart geen versiegeschiedenis"
+  }
+}

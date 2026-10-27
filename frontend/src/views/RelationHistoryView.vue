@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { intlLocale } from '@/i18n/locale'
 import { ref, computed, onMounted } from 'vue'
 import { RouterLink, useRoute } from 'vue-router'
 import RlButton from 'rela-components/components/common/RlButton.vue'
@@ -194,7 +195,7 @@ function principalLabel(m: RelationVersionMeta): string {
 
 function formatWhen(iso: string): string {
   const d = new Date(iso)
-  return isNaN(d.getTime()) ? iso : d.toLocaleString()
+  return isNaN(d.getTime()) ? iso : d.toLocaleString(intlLocale())
 }
 
 // Pure navigation, so it renders as a real link and supports cmd/middle-click.

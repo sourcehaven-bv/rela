@@ -11,6 +11,7 @@ import (
 	"sort"
 	"strings"
 
+	"golang.org/x/text/language"
 	"gopkg.in/yaml.v3"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
@@ -2899,7 +2900,43 @@ func validateCommandScope(cmdID string, scope CommandScope, cfg *Config, meta *m
 // operator can use TLS.
 func validateApp(cfg *Config, meta *metamodel.Metamodel) []string {
 	errs := validateDefaultWorldAlias(cfg.App.DefaultWorld, meta)
+	errs = append(errs, validateAppLanguage(cfg.App.Language)...)
 	return append(errs, validatePlantUMLURL(cfg.App.PlantUMLServerURL)...)
+}
+
+// SupportedUILanguages lists the base languages the web app has a message
+// file for, one per frontend/src/i18n/locales/<lang>.json.
+// TestSupportedUILanguagesMatchLocaleFiles keeps the two in step.
+var SupportedUILanguages = []string{"en", "nl"}
+
+// validateAppLanguage checks app.language: a well-formed BCP 47 tag whose
+// base language has a message file. A typo would otherwise fall through to
+// the browser language and look like the setting does nothing.
+//
+// The tag must already be in canonical form apart from case, and carry no
+// extension or private-use part. language.Parse is lenient where the SPA is
+// not: it reads `nl_NL` as nl-NL, while the browser's Intl.getCanonicalLocales
+// rejects it, so the SPA would drop the setting. An extension such as
+// `-u-ca-buddhist` would change the calendar used to format every date.
+func validateAppLanguage(tag string) []string {
+	if tag == "" {
+		return nil
+	}
+	parsed, err := language.Parse(tag)
+	if err != nil || !strings.EqualFold(parsed.String(), tag) {
+		return []string{fmt.Sprintf("app.language: %q is not a valid BCP 47 language tag", tag)}
+	}
+	lower := strings.ToLower(tag)
+	if len(parsed.Extensions()) > 0 || strings.HasPrefix(lower, "x-") || strings.Contains(lower, "-x-") {
+		return []string{fmt.Sprintf("app.language: %q has an extension or private-use part; "+
+			"use a language with an optional script and region, such as nl or nl-BE", tag)}
+	}
+	base, _ := parsed.Base()
+	if !slices.Contains(SupportedUILanguages, base.String()) {
+		return []string{fmt.Sprintf("app.language: %q has no interface translation; supported languages: %s",
+			tag, strings.Join(SupportedUILanguages, ", "))}
+	}
+	return nil
 }
 
 // validateDefaultWorldAlias checks app.default_world, the deprecated alias of

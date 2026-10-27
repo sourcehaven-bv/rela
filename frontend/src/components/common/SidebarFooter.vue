@@ -18,6 +18,7 @@
  */
 import { computed, onMounted, ref, watch } from 'vue'
 import { RouterLink, useRoute, useRouter } from 'vue-router'
+import { useI18n } from 'vue-i18n'
 import { useGitStore, useSchemaStore } from '@/stores'
 import { shortcutsModalOpen } from '@/composables/useKeyboardShortcuts'
 import { useNextAction } from '@/composables/useNextAction'
@@ -54,6 +55,7 @@ const {
   loadOnce: naLoadOnce,
 } = useNextAction()
 
+const { t } = useI18n()
 const appName = computed(() => schemaStore.app?.name || 'rela')
 const appDescription = computed(() => schemaStore.aboutDescription?.trim() || '')
 // The description is authored as markdown (in data-entry.yaml or the metamodel);
@@ -113,7 +115,7 @@ async function handleSync() {
       <button
         type="button"
         class="footer-row git-row status-item"
-        :title="gitStore.syncing ? 'Syncing...' : 'Click to sync'"
+        :title="gitStore.syncing ? t('git.syncing') : t('footer.clickToSync')"
         @click="handleSync"
       >
         <span class="git-dot" />
@@ -124,9 +126,9 @@ async function handleSync() {
         v-if="gitStore.hasConflicts"
         to="/conflicts"
         class="footer-row status-warning status-item"
-        title="Resolve conflicts"
+        :title="t('footer.resolveConflicts')"
       >
-        Resolve Conflicts
+        {{ t('footer.resolveConflicts') }}
       </RouterLink>
     </div>
 
@@ -144,7 +146,7 @@ async function handleSync() {
     <RlPopover
       v-if="naInStatusBar && naSuggestion"
       ref="naPopover"
-      title="Suggested next action"
+      :title="t('footer.suggestedNextAction')"
       align="start"
       placement="top"
       @close="naExpanded = false"
@@ -161,7 +163,7 @@ async function handleSync() {
           @click="naExpanded = !naExpanded"
         >
           <RlStatusDot color="blue" />
-          <span class="na-chip__text">{{ naBandLabel || 'Suggestion' }}</span>
+          <span class="na-chip__text">{{ naBandLabel || t('footer.suggestion') }}</span>
         </button>
       </template>
 
@@ -186,15 +188,15 @@ async function handleSync() {
     </RlPopover>
 
     <RlSidebarFooterLink
-      label="Settings"
+      :label="t('footer.settings')"
       icon="settings"
       :class="{ active: stripSpace(route.path) === '/settings' }"
       @click="router.push('/settings')"
     />
-    <RlSidebarFooterLink v-if="appDescription" label="About" icon="help" @click="aboutOpen = true" />
-    <button type="button" class="footer-row shortcuts-btn status-item" title="Keyboard shortcuts" @click="shortcutsModalOpen = true">
+    <RlSidebarFooterLink v-if="appDescription" :label="t('footer.about')" icon="help" @click="aboutOpen = true" />
+    <button type="button" class="footer-row shortcuts-btn status-item" :title="t('footer.keyboardShortcuts')" @click="shortcutsModalOpen = true">
       <RlKbd keys="?" />
-      <span class="shortcuts-text">Shortcuts</span>
+      <span class="shortcuts-text">{{ t('footer.shortcuts') }}</span>
     </button>
 
     <!-- About: the deployment description. RlModal owns the scrim, the focus

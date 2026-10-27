@@ -4,6 +4,13 @@ import pluginVue from 'eslint-plugin-vue'
 import vueParser from 'vue-eslint-parser'
 import prettier from 'eslint-config-prettier'
 import globals from 'globals'
+import { readFileSync } from 'node:fs'
+
+// The bare-string guard's options and its ratchet allowlist (TKT-ZL1QAO).
+// src/i18n/guards.test.ts reads the same file and checks the counts.
+const bareStrings = JSON.parse(
+  readFileSync(new URL('./src/i18n/bare-strings.json', import.meta.url), 'utf8')
+)
 
 export default tseslint.config(
   // Base JS rules
@@ -125,6 +132,19 @@ export default tseslint.config(
     },
   },
 
+  // Interface text goes through vue-i18n (`t('area.key')`), never as a bare
+  // string in a template. The files listed in src/i18n/bare-strings.json
+  // predate the rule; guards.test.ts holds each to its recorded count, so
+  // the list can only shrink. The rule does not see a literal inside a
+  // binding (`:title="x ? 'A' : 'B'"`); reviewers watch for those.
+  {
+    files: ['src/**/*.vue'],
+    ignores: Object.keys(bareStrings.allowlist),
+    rules: {
+      'vue/no-bare-strings-in-template': ['error', bareStrings.ruleOptions],
+    },
+  },
+
   // Large file warnings (catches god components)
   {
     files: ['**/*.vue'],
@@ -156,6 +176,29 @@ export default tseslint.config(
             "MemberExpression[computed=true][property.value='title'] > MemberExpression[property.name='properties']",
           message:
             "Do not read `.properties['title']` for display — use entityDisplayTitle() from @/utils/entityDisplay (BUG-1P88YM).",
+        },
+        // Dates and numbers follow the interface language, not the browser's
+        // (TKT-ZL1QAO). Without a locale argument Intl uses the browser's.
+        {
+          selector:
+            'CallExpression[callee.property.name=/^toLocale(Date|Time)?String$/][arguments.length=0]',
+          message:
+            'Pass a locale: toLocaleString(intlLocale()) from @/i18n/locale, so formatting follows the interface language.',
+        },
+        {
+          selector:
+            "CallExpression[callee.property.name=/^toLocale(Date|Time)?String$/] > Identifier.arguments:first-child[name='undefined']",
+          message:
+            'Pass intlLocale() from @/i18n/locale instead of undefined, so formatting follows the interface language.',
+        },
+        {
+          selector: "NewExpression[callee.object.name='Intl'][arguments.length=0]",
+          message: 'Pass a locale: new Intl.X(intlLocale()) from @/i18n/locale, so formatting follows the interface language.',
+        },
+        {
+          selector:
+            "NewExpression[callee.object.name='Intl'] > Identifier.arguments:first-child[name='undefined']",
+          message: 'Pass intlLocale() from @/i18n/locale instead of undefined, so formatting follows the interface language.',
         },
       ],
     },

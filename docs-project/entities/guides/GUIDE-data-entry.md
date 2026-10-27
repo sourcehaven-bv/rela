@@ -323,6 +323,36 @@ app:
 | `description` | Subtitle shown below the title   |
 | `default_world` | Deprecated alias for the schema's `default_world:`; must name the same world. See [Worlds in the web app and API](#worlds-in-the-web-app-and-api) |
 
+### Interface language
+
+The web app's menus, buttons and messages are available in English and Dutch.
+Set `language` to choose the default for everyone who opens the app:
+
+```yaml
+app:
+  name: "Support Tickets"
+  language: nl
+```
+
+| Field      | Description                                                                  |
+| ---------- | ---------------------------------------------------------------------------- |
+| `language` | A BCP 47 language tag such as `nl` or `nl-BE`. Supported languages: `en`, `nl`. |
+
+The app picks the language in this order:
+
+1. the user's own choice under **Settings > Language**, kept in that browser;
+2. `app.language`;
+3. the browser's preferred languages, first supported one wins;
+4. English.
+
+The language also decides how dates and numbers are written. A region in the
+tag (`nl-BE`) is used for that formatting. A tag that is not valid BCP 47, or
+names a language without a translation, fails the config check.
+
+Text you write in the configuration, such as entity type labels, list and form
+titles and navigation groups, is shown as you wrote it. It is not translated.
+Some screens are not translated yet and stay in English.
+
 ### PlantUML diagrams
 
 Set `plantuml_server_url` to render ` ```plantuml ` fenced code blocks as

@@ -138,6 +138,46 @@ ESLint flat config with:
 - `max-lines: 500` warning for Vue files (catches god components)
 - Relaxed rules for test files (`no-explicit-any`, `no-non-null-assertion` allowed)
 
+## Interface text and languages (vue-i18n)
+
+The SPA's own text is translated; operator text from the configuration
+(type labels, list titles, navigation groups) is not, because the operator
+already wrote it in their language (TKT-ZL1QAO). Rules for new code:
+
+- **Write interface text as `t('area.key')`**, with the key in both
+  `src/i18n/locales/en.json` and `nl.json`. In a component use
+  `const { t } = useI18n()`; outside setup (stores, label helpers) import `t`
+  from `@/i18n`. Call it at render or inside a computed, never at module load,
+  or the text will not follow a language switch. Text stored as a string
+  (a toast, a store's `lastError`) keeps the language it was made in; that is
+  accepted, because it is short-lived.
+- **The language can change once after the first paint.** `app.language`
+  arrives with the schema, so until it loads the shell follows the browser.
+  This is accepted rather than holding the whole UI back on the config
+  request.
+- **Write keys literally.** `guards.test.ts` finds unused keys by their text, so
+  `` t(`language.${code}`) `` reads as unused. Map values to keys with a literal
+  record (see `LanguageSetting.vue`).
+- **Bare template strings are ratcheted.** ESLint's
+  `vue/no-bare-strings-in-template` fails in any file not listed in
+  `src/i18n/bare-strings.json`. A listed file is held to its recorded count in
+  both directions: when you convert strings, lower the count, and delete the
+  entry at zero. Never raise a count to get a change through.
+- **The rule cannot see a literal inside a binding**
+  (`:title="busy ? 'Saving' : 'Save'"`, `{{ label || 'Other' }}`). Convert those
+  by hand and look for them in review.
+- **Dates and numbers follow the interface language.** Pass `intlLocale()` from
+  `@/i18n/locale` to every `toLocale*String` and `new Intl.*Format`; a call without
+  a locale argument fails lint. `utils/format.ts` already does this.
+- **API errors:** `getErrorMessage` maps a problem `type` code to a translated
+  message only when the interface is not English; in English the server's more
+  specific message stays. Map only a code whose meaning is fixed: `conflict`
+  and `forbidden` are left out because their server text carries the reason.
+- **rela-components stays free of vue-i18n.** Library text goes through
+  `useMessages`; the library ships its own Dutch set (`messages.nl.ts`, typed as
+  the full `Messages`, so a missing key fails to compile). `App.vue` provides
+  `localeMessages(...)`, which reads the language on every call.
+
 ## Pending and loading indicators
 
 Three indicators, one per class, with no overlap (TKT-TFSNBY). The class is

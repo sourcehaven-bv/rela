@@ -1982,6 +1982,7 @@ func (a *App) handleV1Config(w http.ResponseWriter, r *http.Request) {
 		App: v1.AppConfig{
 			Name:              s.Cfg.App.Name,
 			Description:       s.Cfg.App.Description,
+			Language:          s.Cfg.App.Language,
 			PlantUMLServerURL: s.Cfg.App.PlantUMLServerURL,
 			DefaultWorld:      declaredDefaultWorld(s.Meta),
 			// The same nil check the history handler gates on, so the

@@ -43,6 +43,7 @@
     "rrule": "^2.8.1",
     "slim-select": "^4.2.3",
     "vue": "^3.5.44",
+    "vue-i18n": "^11.4.16",
     "vue-router": "^4.3.0"
   },
   "devDependencies": {

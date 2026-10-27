@@ -4,6 +4,7 @@ import { createPinia, setActivePinia } from 'pinia'
 import { PiniaColada } from '@pinia/colada'
 import AccountMenu from './AccountMenu.vue'
 import type { MeResponse } from '@/api'
+import { resetLanguageState } from '@/i18n/locale'
 
 const getMeMock = vi.fn<() => Promise<MeResponse>>()
 vi.mock('@/api', async (orig) => ({
@@ -78,6 +79,22 @@ describe('AccountMenu', () => {
       { label: 'Switch org', href: '/pratique/auth/select-tenant' },
       { label: 'Admin', href: '/pratique/admin/' },
       { label: 'Sign out', href: '/pratique/auth/logout' },
+    ])
+  })
+
+  it('labels its rows in the interface language', async () => {
+    resetLanguageState({ user: 'nl' })
+    await open({
+      user: 'PERS-1',
+      person: { type: 'person', id: 'PERS-1', title: 'Ada' },
+      links: { account: '/a', switch_org: '/s', admin: '/ad', sign_out: '/out' },
+    })
+    expect(rows().map((r) => r.label)).toEqual([
+      'Profiel',
+      'Account',
+      'Andere organisatie',
+      'Beheer',
+      'Afmelden',
     ])
   })
 

@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { intlLocale } from '@/i18n/locale'
 /**
  * Month/week calendar over date-bearing entities.
  *
@@ -421,14 +422,14 @@ const footerHtml = computed(() => renderMarkdown(viewFooterMarkdown(config.value
 const periodLabel = computed(() => {
   const a = anchor.value
   if (view.value === 'month') {
-    return new Date(a.year, a.month - 1, 1).toLocaleDateString(undefined, {
+    return new Date(a.year, a.month - 1, 1).toLocaleDateString(intlLocale(), {
       month: 'long',
       year: 'numeric',
     })
   }
   const week = days.value
   const fmt = (d: CalendarDay) =>
-    new Date(d.year, d.month - 1, d.day).toLocaleDateString(undefined, {
+    new Date(d.year, d.month - 1, d.day).toLocaleDateString(intlLocale(), {
       month: 'short',
       day: 'numeric',
     })
@@ -439,7 +440,7 @@ const weekdayLabels = computed(() =>
   days.value
     .slice(0, 7)
     .map((d) =>
-      new Date(d.year, d.month - 1, d.day).toLocaleDateString(undefined, { weekday: 'short' })
+      new Date(d.year, d.month - 1, d.day).toLocaleDateString(intlLocale(), { weekday: 'short' })
     )
 )
 
