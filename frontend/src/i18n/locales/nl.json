@@ -58,5 +58,19 @@
     "stateChanged": "Dit is gewijzigd terwijl je bezig was. Probeer het opnieuw.",
     "encryptedInaccessible": "Dit item is versleuteld en kan hier niet worden bewerkt",
     "historyUnsupported": "Deze installatie bewaart geen versiegeschiedenis"
+  },
+  "dashboard": {
+    "openList": "Open de lijst",
+    "viewInSearch": "Bekijk in zoeken",
+    "cardFailed": "Deze kaart kon niet worden geladen.",
+    "partial": "Sommige waarden zijn voor jou verborgen en worden niet getoond.",
+    "hidden": "Verborgen",
+    "hiddenTitle": "Voor jou verborgen",
+    "unknown": "Onbekend",
+    "matrixUnplaced": "{count} zonder {row} of {column}",
+    "matrixTruncated": "Niet elke waarde wordt getoond.",
+    "previewOf": "{display} van {source}",
+    "previewList": "lijst {name}",
+    "noData": "Geen gegevens"
   }
 }

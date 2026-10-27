@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
 import RlSortableList from 'rela-components/components/data/RlSortableList.vue'
 import RlTextField from 'rela-components/components/form/RlTextField.vue'
@@ -32,6 +33,7 @@ const draft = useConfigDraftStore()
 const route = useRoute()
 const router = useRouter()
 
+const { t } = useI18n()
 const all = computed(() => dashboards(draft.currentDataEntry))
 const wanted = computed(() => (typeof route.query.name === 'string' ? route.query.name : ''))
 const name = computed(() => (all.value.some((d) => d.name === wanted.value) ? wanted.value : ''))
@@ -209,10 +211,14 @@ function removeCard(index: number) {
             <div v-for="c in dash.cards" :key="c.index" class="preview-card">
               <RlText size="sm" weight="medium" as="div">{{ c.title || 'Untitled card' }}</RlText>
               <RlText v-if="c.display === 'count'" size="lg" weight="semibold">12</RlText>
-              <RlText v-else size="sm" tone="muted"
-                >{{ displayLabel(c.display) }} of
-                {{ c.list ? `list ${c.list}` : c.query || 'all records' }}</RlText
-              >
+              <RlText v-else size="sm" tone="muted">{{
+                t('dashboard.previewOf', {
+                  display: displayLabel(c.display),
+                  source: c.list
+                    ? t('dashboard.previewList', { name: c.list })
+                    : c.query || 'all records',
+                })
+              }}</RlText>
             </div>
           </div>
         </ConfigPreview>

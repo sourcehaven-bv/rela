@@ -113,7 +113,7 @@
     "src/views/configure/RulesView.vue": 3,
     "src/views/configure/RuleView.vue": 13,
     "src/views/ConflictsView.vue": 30,
-    "src/views/DashboardView.vue": 12,
+    "src/views/DashboardView.vue": 11,
     "src/views/DocumentView.vue": 9,
     "src/views/GanttView.vue": 24,
     "src/views/HistoryView.vue": 24,

@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
+import { useI18n } from 'vue-i18n'
 import type { DashboardCell, DashboardMatrix } from '@/types'
 import { styleFill } from '@/utils/styleColors'
 
@@ -19,6 +20,8 @@ const props = defineProps<{
   /** The world the card was counted in, if not the default. */
   world?: string
 }>()
+
+const { t } = useI18n()
 
 const cellsByKey = computed(() => {
   const out = new Map<string, DashboardCell>()
@@ -84,9 +87,15 @@ function cellLink(row: string, column: string) {
       </tbody>
     </table>
     <p v-if="matrix.unplaced" class="matrix-note">
-      {{ matrix.unplaced }} without a {{ matrix.row_property }} or {{ matrix.column_property }}
+      {{
+        t('dashboard.matrixUnplaced', {
+          count: matrix.unplaced,
+          row: matrix.row_property,
+          column: matrix.column_property,
+        })
+      }}
     </p>
-    <p v-if="matrix.truncated" class="matrix-note">Not every value is shown.</p>
+    <p v-if="matrix.truncated" class="matrix-note">{{ t('dashboard.matrixTruncated') }}</p>
   </div>
 </template>
 

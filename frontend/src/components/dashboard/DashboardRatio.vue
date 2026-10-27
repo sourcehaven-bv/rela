@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { useI18n } from 'vue-i18n'
 import type { DashboardGroup } from '@/types'
 
 /**
@@ -10,6 +11,8 @@ defineProps<{
   total: number
   groups?: DashboardGroup[]
 }>()
+
+const { t } = useI18n()
 
 function pct(matched: number, total: number): string {
   return total > 0 ? `${Math.round((matched / total) * 100)}%` : '–'
@@ -24,7 +27,7 @@ function pct(matched: number, total: number): string {
     </p>
     <ul v-if="groups?.length" class="ratio-groups">
       <li v-for="g in groups" :key="g.value" data-testid="ratio-group">
-        <span class="ratio-label">{{ g.label || 'Unknown' }}</span>
+        <span class="ratio-label">{{ g.label || t('dashboard.unknown') }}</span>
         <span class="ratio-bar-track" aria-hidden="true">
           <span
             class="ratio-bar-fill"

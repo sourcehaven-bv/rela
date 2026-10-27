@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { useI18n } from 'vue-i18n'
 import { ref, computed, onMounted, watch } from 'vue'
 import { useSchemaStore } from '@/stores'
 import NextActionCard from '@/components/NextActionCard.vue'
@@ -25,6 +26,7 @@ import RlEmptyState from 'rela-components/components/feedback/RlEmptyState.vue'
  * dashboard, which the schema store prefetches.
  */
 const props = defineProps<{ name?: string }>()
+const { t } = useI18n()
 
 const schemaStore = useSchemaStore()
 const { worldParam } = useWorld()
@@ -205,7 +207,7 @@ function buildBreakdown(card: DashboardCardEntry, entities: Entity[]): Breakdown
 function valueBreakdown(value: DashboardCardValue): Breakdown {
   return (value.groups ?? []).map((g) => ({
     key: g.value,
-    value: g.label || 'Unknown',
+    value: g.label || t('dashboard.unknown'),
     count: g.count,
     percentage: value.total > 0 ? (g.count / value.total) * 100 : 0,
   }))
@@ -379,18 +381,18 @@ watch([() => props.name, worldParam], () => void loadData())
             <router-link
               :to="view.link"
               class="card-link"
-              :title="view.card.list ? 'Open the list' : 'View in search'"
+              :title="view.card.list ? t('dashboard.openList') : t('dashboard.viewInSearch')"
             >
               &#8599;
             </router-link>
           </div>
 
           <p v-if="view.failed" class="no-data" data-testid="card-failed">
-            This card could not be loaded.
+            {{ t('dashboard.cardFailed') }}
           </p>
 
           <p v-else-if="view.value?.partial" class="card-partial" data-testid="card-partial">
-            Some values are hidden from you and are not shown.
+            {{ t('dashboard.partial') }}
           </p>
 
           <!-- Count display -->
@@ -437,8 +439,8 @@ watch([() => props.name, worldParam], () => void loadData())
                     <span
                       v-else-if="col.property && isPropertyRedacted(col.property, entity._redacted)"
                       class="cell-hidden"
-                      title="Hidden from you"
-                      >Hidden</span
+                      :title="t('dashboard.hiddenTitle')"
+                      >{{ t('dashboard.hidden') }}</span
                     >
                     <span v-else>{{ getCellValue(entity, col) }}</span>
                   </td>
@@ -458,7 +460,7 @@ watch([() => props.name, worldParam], () => void loadData())
               :toned="!!view.card.tone_by"
               :world="worldParam"
             />
-            <div v-else class="no-data">No data</div>
+            <div v-else class="no-data">{{ t('dashboard.noData') }}</div>
           </template>
 
           <!-- Ratio display (list cards only) -->
@@ -469,7 +471,7 @@ watch([() => props.name, worldParam], () => void loadData())
               :total="view.value.total"
               :groups="view.value.groups"
             />
-            <div v-else class="no-data">No data</div>
+            <div v-else class="no-data">{{ t('dashboard.noData') }}</div>
           </template>
         </section>
       </div>
