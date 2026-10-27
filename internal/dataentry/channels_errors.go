@@ -68,6 +68,11 @@ var channelErrorStatus = map[string]int{
 	// cannot probe which ids exist.
 	realtime.TypeInvalidRef:  http.StatusUnprocessableEntity,
 	realtime.TypeRateLimited: http.StatusTooManyRequests,
+	// The inbox's two refusals: a cursor no inbox answer produced, and a
+	// candidate set over the row ceiling, which is answered with nothing
+	// rather than a partial inbox that would read as complete.
+	realtime.TypeInvalidCursor: http.StatusBadRequest,
+	realtime.TypeInboxTooLarge: http.StatusServiceUnavailable,
 }
 
 // writeChannelError answers a failed channel operation.

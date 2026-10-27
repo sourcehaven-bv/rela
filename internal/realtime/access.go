@@ -29,6 +29,11 @@ type Access interface {
 	// CeilingAdmitsUpdate reports whether the client ceiling alone, not the
 	// row ACL, admits an update of entityType.
 	CeilingAdmitsUpdate(entityType string) bool
+	// Prime returns ctx with the roles relations confer on each of
+	// anchorIDs read in one batch, so the HoldsPermissionFor calls that
+	// follow on the returned ctx cost no store read each. An operation
+	// over many anchors calls it once, before any role check.
+	Prime(ctx context.Context, anchorIDs []string) context.Context
 }
 
 // AccessSource opens the [Access] of one operation. The returned context
@@ -53,6 +58,41 @@ type AnchorReader interface {
 	// channel type's roles and lifecycle conditions read; the view carries
 	// no other property.
 	Anchor(ctx context.Context, addr entity.Address, props []string) (AnchorView, error)
+	// Anchors reads every address in addrs in one batch, by the rule
+	// Anchor applies to one. An address the caller may not read, or that
+	// does not exist, is absent from the result; only a read failure is an
+	// error.
+	Anchors(ctx context.Context, addrs []entity.Address, props []string) (map[entity.Address]AnchorView, error)
+}
+
+// HolderFinder finds the anchors whose role property names the caller,
+// through the gated read path. A ref the caller may not read is never
+// returned, so a cap on the result is taken after the gate.
+type HolderFinder interface {
+	// Holding returns at most q.Limit anchors in (id, face) order; more
+	// reports that at least one more matched.
+	Holding(ctx context.Context, q HolderQuery) (refs []AnchorRef, more bool, err error)
+}
+
+// HolderQuery asks for the entities of EntityType whose Property names
+// Identity, by the is_current_user rule: the string, or an element of a
+// list.
+type HolderQuery struct {
+	EntityType string
+	Property   string
+	Identity   string
+	// Face is set for a face-anchored channel type: every readable face is
+	// a holder on its own. Unset, an id is a holder when the face the
+	// world serves the caller names Identity.
+	Face  bool
+	Limit int
+}
+
+// AnchorRef is an anchor a [HolderFinder] found. Face is "" for a
+// family-anchored query, matching the channel's stored anchor.
+type AnchorRef struct {
+	ID   string
+	Face entity.Face
 }
 
 // AnchorView is what the service learns about an anchor entity.
@@ -63,6 +103,9 @@ type AnchorView struct {
 	Face entity.Face
 	// Type is the stored entity type.
 	Type string
+	// Title is the served face's display title, built from its redacted
+	// properties; a title from a hidden property falls back to the id.
+	Title string
 	// Props holds the requested properties of the served face, redacted for
 	// the caller. The service compares them, and renders only named-role
 	// holders (see [SessionWaitingView]).

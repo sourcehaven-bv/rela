@@ -60,7 +60,7 @@ func buildLeases(
 		}
 		shared = leaseShared{store: backend, hub: lease.NewHub()}
 	}
-	rows, _ := scriptReads(st, d, redactor, w)
+	rows, _, _ := scriptReads(st, d, redactor, w)
 	svc, err := lease.NewService(lease.Deps{
 		Store:      shared.store,
 		Gate:       leaseGate{rows: rows},

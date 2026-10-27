@@ -25,6 +25,8 @@ type Compiled struct {
 	triggers     map[string]*Trigger
 	permissions  []string
 	warnings     []Problem
+	// waiting is the inbox index; see [Compiled.Waiting].
+	waiting WaitingIndex
 }
 
 // Limits are the effective caps: the built-in ones from [realtimelimits],

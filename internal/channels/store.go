@@ -80,6 +80,22 @@ type Store interface {
 	// warning.
 	ListSessionsDue(ctx context.Context, types []string, until time.Time, limit int) ([]Channel, error)
 
+	// ListWaiting returns the channels q selects (see [WaitingQuery]):
+	// live, open, of a type in q.States and in a listed stored session
+	// state, and either on one of q.Anchors (exact id and face) or of a
+	// type in q.CreatorTypes created by q.CreatedBy (exact [Author.User]).
+	// Each channel appears once, even when both branches match it, ordered
+	// by key (anchor id, face, type, name). An invalid query is
+	// [ErrInvalidKey] (see [CheckWaitingQuery]); more than
+	// [WaitingQuery.RowCeiling] distinct matches is [ErrTooManyRows].
+	//
+	// The database backends read the creator branch through an index on
+	// the creator's user. The file backend reads the channels of each
+	// listed anchor, and for the creator branch walks the tree once, as
+	// [Store.ListSessionsDue] does, reading the meta.yaml of every channel
+	// of the creator types. Both skip a damaged channel with a warning.
+	ListWaiting(ctx context.Context, q WaitingQuery) ([]Channel, error)
+
 	// Edit replaces a message's properties and sets its edit time. The old
 	// properties are not kept. A removed message is [ErrRemoved], and a
 	// message with a pending action is [ErrActionPending].

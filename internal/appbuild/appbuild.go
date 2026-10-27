@@ -573,7 +573,7 @@ func (s *Services) luaReadDepsFor(redactor visibility.FieldRedactor) lua.ReadDep
 func scriptEntityReader(
 	st store.Store, d *acl.Declarative, redactor visibility.FieldRedactor, w worlds.Compiled,
 ) lua.EntityReader {
-	reader, _ := scriptReads(st, d, redactor, w)
+	reader, _, _ := scriptReads(st, d, redactor, w)
 	return reader
 }
 
@@ -599,38 +599,50 @@ type scriptEntityReaderFamily interface {
 // [relresolve.Ungated], policy reads get the ctx principal's gate, and a
 // refused reader gets a gate that refuses too. Deriving both in one place is
 // what keeps a validation rule's traversal from seeing more than its reads.
+// The holder lookup realtime's inbox uses comes from the same place, on the
+// same tier, for the same reason.
 // w supplies the face order ([familiesOption]), so a Family lists faces in
 // declaration order on every tier, and the default world bare ids resolve in.
 func scriptReads(
 	st store.Store, d *acl.Declarative, redactor visibility.FieldRedactor, w worlds.Compiled,
-) (scriptReader scriptEntityReaderFamily, traversalGate relresolve.Gate) {
+) (scriptReader scriptEntityReaderFamily, traversalGate relresolve.Gate, holders *visibility.HolderLookup) {
 	if d == nil {
 		// Named, not bare: this is the NopACL path and the single largest
 		// ungated read surface in the tree, so it must show up in
 		// `grep -rn visibility.Unrestricted` like every other one
 		// (TKT-1WV50C).
-		return unrestrictedReader(st, w), relresolve.Ungated
+		unrestricted, err := visibility.NewUnrestrictedHolderLookup(st)
+		if err != nil {
+			slog.Error("appbuild: holder lookup unavailable; holder reads REFUSED", "err", err)
+			unrestricted = visibility.NewRefusingHolderLookup()
+		}
+		return unrestrictedReader(st, w), relresolve.Ungated, unrestricted
 	}
 	if redactor == nil {
 		redactor = visibility.NopRedactor{}
 	}
+	refused := visibility.NewRefusingHolderLookup()
 	gate, err := visibility.NewDeclarativeGate(d, w.DefaultWorld())
 	if err != nil {
 		slog.Error("appbuild: ACL gate unavailable; script reads REFUSED", "err", err)
-		return visibility.DenyReader{}, refuseTraversal
+		return visibility.DenyReader{}, refuseTraversal, refused
 	}
 	reader, err := visibility.NewPolicyReader(gate, redactor, st, familiesOption(w))
 	if err != nil {
 		slog.Error("appbuild: policy reader unavailable; script reads REFUSED", "err", err)
-		return visibility.DenyReader{}, refuseTraversal
+		return visibility.DenyReader{}, refuseTraversal, refused
 	}
 	sr, err := visibility.NewScriptReader(reader, st, gate)
 	if err != nil {
 		slog.Error("appbuild: script reader unavailable; script reads REFUSED", "err", err)
-		return visibility.DenyReader{}, refuseTraversal
+		return visibility.DenyReader{}, refuseTraversal, refused
 	}
-	return sr.WithWorld(visibility.WorldOf(w.DefaultWorld())).WithHistory(versionServiceFor(st)).
-		WithVersionTags(versionTagReaderFor(st)), gate.GateTraversal
+	sr = sr.WithWorld(visibility.WorldOf(w.DefaultWorld()))
+	holders, err = visibility.NewHolderLookup(sr)
+	if err != nil { // coverage-ignore: invariant: sr was built just above
+		holders = refused
+	}
+	return sr.WithHistory(versionServiceFor(st)).WithVersionTags(versionTagReaderFor(st)), gate.GateTraversal, holders
 }
 
 // refuseTraversal pairs with [visibility.DenyReader]: reads are refused, so
@@ -779,7 +791,7 @@ func (s *Services) ScheduledLuaWriteDeps() lua.WriteDeps {
 // visibility.PolicyReader implements only FilterRelations, so a surviving edge
 // still carries all of its meta.
 func (s *Services) GatedReads() GatedReadBundle {
-	reader, gate := scriptReads(s.store, s.aclDeclarative, s.fieldReads, s.worlds)
+	reader, gate, _ := scriptReads(s.store, s.aclDeclarative, s.fieldReads, s.worlds)
 	tr := scriptTracer(s.tracer, s.store, s.aclDeclarative, s.fieldReads, s.worlds)
 
 	deps := s.LuaReadDeps()

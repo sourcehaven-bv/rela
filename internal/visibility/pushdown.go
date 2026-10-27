@@ -34,6 +34,17 @@ type rowRedactor interface {
 	RedactRow(ctx context.Context, e *entity.Entity) *entity.Entity
 }
 
+// headerRedactor is [rowRedactor] for a content-free row.
+type headerRedactor interface {
+	RedactHeaderRow(ctx context.Context, h store.EntityHeader) store.EntityHeader
+}
+
+// RedactHeaderRow implements [headerRedactor]: [RedactHeader] with the
+// reader's field redactor, and no row gate. Like RedactRow it only narrows.
+func (r *PolicyReader) RedactHeaderRow(ctx context.Context, h store.EntityHeader) store.EntityHeader {
+	return RedactHeader(ctx, r.redact, h)
+}
+
 // RedactRow implements [rowRedactor]: field redaction with no row gate.
 // Safe to expose because it NARROWS what a caller sees; it can never widen.
 func (r *PolicyReader) RedactRow(ctx context.Context, e *entity.Entity) *entity.Entity {

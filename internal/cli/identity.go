@@ -229,7 +229,7 @@ var identityWrites = map[string]bool{
 	"acl who-can": false, "acl can": false, "acl can-relation": false, "acl map": false,
 	"history": false, "relation-history": false, "token status": false, "attachments": false,
 	"secrets credential-name": false, "lease list": false, "channel list": false, "channel read": false,
-	"channel watch": false,
+	"channel watch": false, "channel inbox": false,
 }
 
 // writesAsIdentity reports whether cmd may write as its principal.

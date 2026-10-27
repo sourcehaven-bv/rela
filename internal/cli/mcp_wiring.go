@@ -444,7 +444,7 @@ func channelDeps(svc *appbuild.Services) relamcp.ChannelDeps {
 		return relamcp.ChannelDeps{}
 	}
 	return relamcp.ChannelDeps{
-		Reader: cs, Sessions: cs, Writer: cs, Creator: cs, Waker: cs,
+		Reader: cs, Sessions: cs, Writer: cs, Creator: cs, Waker: cs, Inbox: cs,
 		RefuseSignals: true, LocalIdentity: true, BindIdentity: bind,
 	}
 }

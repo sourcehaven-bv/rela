@@ -247,3 +247,43 @@ func TestListSessionsDue_SkipsDamagedRow(t *testing.T) {
 		})
 	}
 }
+
+// creatorQuery is the creator-branch statement of sqlchannels' ListWaiting
+// for two types, in PostgreSQL placeholders. It is a copy: keep it in step
+// with that query.
+const creatorQuery = `SELECT id FROM channels
+	WHERE tomb = '' AND state = $1 AND ((type = $2 AND session_state IN ($3, $4)) OR (type = $5 AND session_state IN ($6)))
+	AND created_by_user <> '' AND created_by_user = $7 AND type IN ($8, $9) LIMIT $10`
+
+// TestListWaiting_CreatorUsesIndex pins that the generic plan of the
+// creator branch can use the partial channels_creator_idx. pgx caches its
+// statements, and a cached statement may run as a generic plan, which
+// proves the index predicate only from a literal. Sequential scans are
+// off, so the plan picks an index whenever it can.
+func TestListWaiting_CreatorUsesIndex(t *testing.T) {
+	pool, _ := newScopedPool(t)
+	ctx := context.Background()
+	conn, err := pool.Acquire(ctx)
+	require.NoError(t, err)
+	defer conn.Release()
+	for _, stmt := range []string{
+		`SET enable_seqscan = off`,
+		`SET plan_cache_mode = force_generic_plan`,
+		`PREPARE creator(text, text, text, text, text, text, text, text, text, int) AS ` + creatorQuery,
+	} {
+		_, err = conn.Exec(ctx, stmt)
+		require.NoError(t, err, stmt)
+	}
+	rows, err := conn.Query(ctx,
+		`EXPLAIN EXECUTE creator('open', 'case', '', 'asked', 'topic', 'asked', 'alice', 'case', 'topic', 20001)`)
+	require.NoError(t, err)
+	var plan strings.Builder
+	for rows.Next() {
+		var line string
+		require.NoError(t, rows.Scan(&line))
+		plan.WriteString(line + "\n")
+	}
+	require.NoError(t, rows.Err())
+	t.Logf("plan:\n%s", plan.String())
+	require.Contains(t, plan.String(), "channels_creator_idx")
+}

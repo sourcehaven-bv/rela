@@ -167,6 +167,9 @@ func (a *App) registerAPIV1Routes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/v1/_comments/", a.comments.handleV1Comments)
 	mux.HandleFunc("/api/v1/_piles", a.piles.handleV1Piles)
 	mux.HandleFunc("/api/v1/_piles/", a.piles.handleV1Piles)
+	mux.HandleFunc(inboxPath, func(w http.ResponseWriter, r *http.Request) {
+		a.channels.serveInbox(w, r, a.State().Meta)
+	})
 	mux.HandleFunc(leasesPath, a.leases.handleV1Leases)
 	mux.HandleFunc(leasesPath+"/", a.leases.handleV1Leases)
 	mux.HandleFunc("/api/v1/_templates/", a.handleV1Templates)

@@ -38,8 +38,35 @@ func TestListSessionsDue_UsesIndex(t *testing.T) {
 		require.NoError(t, err)
 	}
 
-	rows, err := db.DB().QueryContext(ctx, "EXPLAIN QUERY PLAN "+dueQuery,
-		"room", "topic", string(channels.StateOpen), int64(1), 256)
+	plan := explain(t, db, dueQuery, "room", "topic", string(channels.StateOpen), int64(1), 256)
+	require.Contains(t, plan, "channels_session_due_idx")
+	require.NotContains(t, plan, "SCAN channels\n", "the due query must not scan the table")
+}
+
+// creatorQuery is the creator-branch statement of sqlchannels' ListWaiting
+// for two types. It is a copy: keep it in step with that query.
+const creatorQuery = `SELECT id FROM channels
+	WHERE tomb = '' AND state = ? AND ((type = ? AND session_state IN (?, ?)) OR (type = ? AND session_state IN (?)))
+	AND created_by_user <> '' AND created_by_user = ? AND type IN (?, ?) LIMIT ?`
+
+// TestListWaiting_CreatorUsesIndex pins that the creator branch searches
+// channels_creator_idx, with channels_state_idx present, rather than
+// reading every open channel.
+func TestListWaiting_CreatorUsesIndex(t *testing.T) {
+	ctx := context.Background()
+	db, err := sqlitedb.Open(ctx, sqlitedb.Options{Path: filepath.Join(t.TempDir(), "rela.db")})
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = db.Close() })
+	plan := explain(t, db, creatorQuery,
+		string(channels.StateOpen), "case", "", "asked", "topic", "asked", "alice", "case", "topic", 20001)
+	require.Contains(t, plan, "USING INDEX channels_creator_idx")
+	require.NotContains(t, plan, "SCAN channels\n", "the creator branch must not scan the table")
+}
+
+// explain returns the EXPLAIN QUERY PLAN details of query, one per line.
+func explain(t *testing.T, db *sqlitedb.DB, query string, args ...any) string {
+	t.Helper()
+	rows, err := db.DB().QueryContext(context.Background(), "EXPLAIN QUERY PLAN "+query, args...)
 	require.NoError(t, err)
 	defer func() { _ = rows.Close() }()
 	var plan strings.Builder
@@ -51,8 +78,7 @@ func TestListSessionsDue_UsesIndex(t *testing.T) {
 	}
 	require.NoError(t, rows.Err())
 	t.Logf("plan:\n%s", plan.String())
-	require.Contains(t, plan.String(), "channels_session_due_idx")
-	require.NotContains(t, plan.String(), "SCAN channels\n", "the due query must not scan the table")
+	return plan.String()
 }
 
 // TestListSessionsDue_SkipsDamagedRow runs the damaged-row check with
@@ -81,4 +107,34 @@ func TestListSessionsDue_SkipsDamagedRow(t *testing.T) {
 			})
 		})
 	}
+}
+
+// TestListWaiting_DamagedRowsStillFillTheLimit pins that a statement that
+// returns its LIMIT is over the ceiling even when some of its rows are
+// damaged: rows past the LIMIT were never read, so an answer would be
+// partial.
+func TestListWaiting_DamagedRowsStillFillTheLimit(t *testing.T) {
+	ctx := context.Background()
+	db, err := sqlitedb.Open(ctx, sqlitedb.Options{Path: filepath.Join(t.TempDir(), "rela.db")})
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = db.Close() })
+	s, err := sqlitechannels.New(db.DB())
+	require.NoError(t, err)
+	anchors := make([]channels.Anchor, 0, 4)
+	for i := range 4 {
+		a := channels.Anchor{ID: fmt.Sprintf("TKT-%d", i)}
+		anchors = append(anchors, a)
+		_, err = s.Append(ctx, channels.Key{Anchor: a, Type: "room"},
+			channels.NewMessage{Type: "text", Author: channelstest.Alice, At: channelstest.T0})
+		require.NoError(t, err)
+	}
+	_, err = db.DB().ExecContext(ctx, `UPDATE channels SET created_by = '{not json' WHERE anchor_id = 'TKT-0'`)
+	require.NoError(t, err)
+	q := channels.WaitingQuery{States: map[string][]string{"room": {""}}, Anchors: anchors, MaxRows: 4}
+	got, err := s.ListWaiting(ctx, q)
+	require.NoError(t, err, "four rows stay under a LIMIT of five")
+	require.Len(t, got, 3, "the damaged row is skipped")
+	q.MaxRows = 3
+	_, err = s.ListWaiting(ctx, q)
+	require.ErrorIs(t, err, channels.ErrTooManyRows, "three good rows fit the ceiling, but the LIMIT of four was filled")
 }

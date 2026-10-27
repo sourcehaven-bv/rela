@@ -612,7 +612,7 @@ func (s *Store) DropTypeRecord(ctx context.Context, typ string) error {
 		return err
 	}
 	defer unlock()
-	cur, err := s.readTypes()
+	cur, err := readTypes(&s.disk)
 	if err != nil {
 		return err
 	}

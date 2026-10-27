@@ -53,6 +53,9 @@ type Deps struct {
 	// Outputs writes session outputs to the graph. A process that cannot
 	// write the graph passes [NoOutputs].
 	Outputs OutputWriter
+	// Holders finds the anchors whose role property names the caller, for
+	// the inbox.
+	Holders HolderFinder
 }
 
 // Service is the channel service.
@@ -67,6 +70,9 @@ type Service struct {
 	promoter Promoter
 	dueWake  *DueWake
 	outputs  outputEngine
+	holders  HolderFinder
+	// bounds are the inbox ceilings; a test lowers them on its own service.
+	bounds inboxBounds
 }
 
 // New returns the service over d.
@@ -92,6 +98,8 @@ func New(d Deps) (*Service, error) {
 		return nil, errNil("DueWake")
 	case d.Outputs == nil:
 		return nil, errNil("Outputs")
+	case d.Holders == nil:
+		return nil, errNil("Holders")
 	}
 	if isNoPromoter(d.Promoter) && declaresPromote(d.Config.Load().Config) {
 		slog.Warn("realtime: realtime.yaml declares promoting actions, but this process cannot promote; " +
@@ -99,7 +107,8 @@ func New(d Deps) (*Service, error) {
 	}
 	return &Service{
 		store: d.Store, cfg: d.Config, access: d.Access, anchors: d.Anchors, refs: d.Refs,
-		local: d.Local, clock: d.Local.clock, promoter: d.Promoter, dueWake: d.DueWake,
+		local: d.Local, clock: d.Local.clock, promoter: d.Promoter, dueWake: d.DueWake, holders: d.Holders,
+		bounds:  defaultInboxBounds(),
 		outputs: outputEngine{store: d.Store, cfg: d.Config, writer: d.Outputs, local: d.Local, clock: d.Local.clock},
 	}, nil
 }
@@ -382,7 +391,7 @@ func (s *Service) Post(ctx context.Context, addr RawAddress, in PostInput) (Post
 	// readers for both.
 	s.local.typing.clear(c.key, bucketIdentity(c.p))
 	s.local.mark(c.key)
-	v := s.rendererWith(c, refs).message(m)
+	v := rendererWith(c, refs).message(m)
 	out := PostResult{Message: &v, Session: postedSession(c, sp.step)}
 	if plan.marked && sp.step.Outcome.Moved {
 		out.Outputs = s.runInline(c, sp.step.Outcome.Notice, plan)
@@ -440,7 +449,7 @@ func (s *Service) sessionAfterOutputs(c *call, before *SessionView, handoff bool
 // It needs no stored refs: it renders only the caller's own write, after a successful
 // Service.record, which refuses a config that declares a recorded ref as
 // another type, or after a removal, which keeps no properties.
-func (s *Service) rendererWith(c *call, refs map[string]RefView) *renderer {
+func rendererWith(c *call, refs map[string]RefView) *renderer {
 	return &renderer{ct: c.ct, refs: refs, moderator: c.moderator(), call: c}
 }
 

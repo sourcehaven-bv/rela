@@ -177,6 +177,44 @@
     "props",
     "type"
   ],
+  "Inbox": [
+    "count",
+    "degraded",
+    "entries",
+    "next_cursor",
+    "notice",
+    "truncated"
+  ],
+  "InboxChannel": [
+    "anchor",
+    "anchor_title",
+    "entity_type",
+    "name",
+    "state",
+    "title",
+    "type"
+  ],
+  "InboxEntry": [
+    "channel",
+    "kind",
+    "links",
+    "roles",
+    "session",
+    "since",
+    "transitions"
+  ],
+  "InboxLinks": [
+    "channel",
+    "entity"
+  ],
+  "InboxSession": [
+    "entered_at",
+    "generation",
+    "label",
+    "state",
+    "status",
+    "waiting_for"
+  ],
   "Message": [
     "_actions",
     "action",

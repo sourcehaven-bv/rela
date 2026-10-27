@@ -43,7 +43,7 @@ CREATE TABLE channels (
 // version-25 database file, whose channels table is the v25 fixture, opens
 // through Open and gains session_reminders with the shape of a fresh
 // database; an existing row reads with no reminder records; opening a
-// second time is harmless; and user_version is 26.
+// second time is harmless; and user_version is the current version.
 func TestOpenV25Database(t *testing.T) {
 	fresh := openChannelDB(t, filepath.Join(t.TempDir(), "fresh.db"))
 	wantShape := channelsShape(t, fresh)
@@ -58,7 +58,9 @@ func TestOpenV25Database(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "v25.db")
 	raw := openChannelDB(t, path)
 	for _, stmt := range []string{
+		`DROP INDEX channels_creator_idx`,
 		`ALTER TABLE channels DROP COLUMN session_reminders`,
+		`ALTER TABLE channels DROP COLUMN created_by_user`,
 		`PRAGMA user_version = 25`,
 	} {
 		_, err = raw.Exec(stmt)
@@ -84,6 +86,5 @@ func TestOpenV25Database(t *testing.T) {
 	require.EqualValues(t, 5, due)
 	var version int
 	require.NoError(t, raw.QueryRow(`PRAGMA user_version`).Scan(&version))
-	require.Equal(t, 26, version)
 	require.Equal(t, sqlitedb.SchemaVersion(), version)
 }

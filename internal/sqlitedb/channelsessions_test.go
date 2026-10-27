@@ -41,12 +41,16 @@ func TestMigrateChannelSessions(t *testing.T) {
 
 	path := filepath.Join(t.TempDir(), "v23.db")
 	raw := openChannelDB(t, path)
-	// A v23 table has neither the session nor the v25 timer columns.
-	_, err := raw.Exec(`DROP INDEX channels_session_due_idx`)
-	require.NoError(t, err)
+	// A v23 table has neither the session, the v25 timer nor the v27
+	// creator columns.
+	for _, idx := range []string{"channels_session_due_idx", "channels_creator_idx"} {
+		_, err := raw.Exec(`DROP INDEX ` + idx)
+		require.NoError(t, err)
+	}
+	var err error
 	for _, col := range []string{
 		"session_state", "session_gen", "session_entered_at", "session_next_due_at", "session_restarts",
-		"session_reminders",
+		"session_reminders", "created_by_user",
 	} {
 		_, err = raw.Exec(`ALTER TABLE channels DROP COLUMN ` + col)
 		require.NoError(t, err)

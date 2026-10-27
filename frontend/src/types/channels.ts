@@ -80,6 +80,58 @@ export interface ChannelSessionWaiting {
 }
 
 /**
+ * GET /api/v1/_inbox: the sessions that wait on the caller, oldest wait
+ * first. count is the whole window, not this page; truncated counts only
+ * rows the caller may read; next_cursor is absent on the last page.
+ */
+export interface Inbox {
+  notice: string
+  entries: InboxEntry[]
+  count: number
+  truncated: boolean
+  degraded: boolean
+  next_cursor?: string
+}
+
+/** One session that waits on the caller. kind is "waiting". */
+export interface InboxEntry {
+  kind: string
+  channel: InboxChannel
+  session: InboxSession
+  roles: string[]
+  since: string
+  transitions: string[]
+  links: InboxLinks
+}
+
+/** The channel of an inbox entry; anchor_title is redacted for the caller. */
+export interface InboxChannel {
+  anchor: string
+  entity_type: string
+  anchor_title: string
+  type: string
+  name?: string
+  title?: string
+  state: string
+}
+
+/** The part of a session that says what it waits for. */
+export interface InboxSession {
+  state: string
+  label?: string
+  status: string
+  waiting_for?: ChannelSessionWaiting[]
+  generation: number
+  entered_at?: string
+}
+
+/** The API paths of an inbox entry's anchor entity and channel. */
+export interface InboxLinks {
+  entity: string
+  channel: string
+}
+
+/**
  * A reminder active in the session's current state: it posts a message
  * every `every`. count is the number posted in the current span; max caps
  * it. due_at is the next reminder, set only on an open channel under a
@@ -606,6 +658,34 @@ export const CHANNEL_WIRE_FIELDS: Record<string, readonly string[]> = {
     'waiting_for',
   ]),
   ChannelLifecycleSchema: wireKeys<ChannelLifecycleSchema>()(['name', 'label']),
+  Inbox: wireKeys<Inbox>()(['notice', 'entries', 'count', 'truncated', 'degraded', 'next_cursor']),
+  InboxEntry: wireKeys<InboxEntry>()([
+    'kind',
+    'channel',
+    'session',
+    'roles',
+    'since',
+    'transitions',
+    'links',
+  ]),
+  InboxChannel: wireKeys<InboxChannel>()([
+    'anchor',
+    'entity_type',
+    'anchor_title',
+    'type',
+    'name',
+    'title',
+    'state',
+  ]),
+  InboxSession: wireKeys<InboxSession>()([
+    'state',
+    'label',
+    'status',
+    'waiting_for',
+    'generation',
+    'entered_at',
+  ]),
+  InboxLinks: wireKeys<InboxLinks>()(['entity', 'channel']),
   ChannelMessageTypeSchema: wireKeys<ChannelMessageTypeSchema>()([
     'name',
     'label',

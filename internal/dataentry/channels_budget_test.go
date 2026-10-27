@@ -35,6 +35,10 @@ type countingChannels struct {
 	channels.Store
 	mu    sync.Mutex
 	calls map[string]int
+	// maxRows, when set, is the row ceiling ListWaiting passes on.
+	maxRows int
+	// anchors are the anchors of the last ListWaiting query.
+	anchors []channels.Anchor
 }
 
 func newCountingChannels(s channels.Store) *countingChannels {

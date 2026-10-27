@@ -130,12 +130,12 @@ type Locker interface {
 //
 // 20 -> 21 (TKT-ZU7P13): Untombstone. 21 -> 25 (TKT-964SIS):
 // ConfirmTombstone, Tombstones, Purge and DropTypeRecord. 27 -> 29
-// (TKT-INM3AZ): SetSession and ListSessionsDue. The exported
-// methods are the mandated [channels.Store] interface, so this is a
-// required-interface exception rather than a ratchet target. Helpers stay
-// free functions.
+// (TKT-INM3AZ): SetSession and ListSessionsDue. 29 -> 30 (TKT-ZZ4PNX):
+// ListWaiting. The exported methods are the mandated [channels.Store]
+// interface, so this is a required-interface exception rather than a
+// ratchet target. Helpers stay free functions.
 //
-//plimsoll:max-exported-methods=29
+//plimsoll:max-exported-methods=30
 type Store struct {
 	disk
 	locker Locker

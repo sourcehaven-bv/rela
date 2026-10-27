@@ -143,7 +143,7 @@ func (s *Service) ReleaseAction(ctx context.Context, addr RawAddress, seq int64)
 		return MessageView{}, messageStoreError(err)
 	}
 	s.local.mark(c.key)
-	return s.rendererWith(c, nil).message(got), nil
+	return rendererWith(c, nil).message(got), nil
 }
 
 // releaseCheck decides whether the caller may release the pending action

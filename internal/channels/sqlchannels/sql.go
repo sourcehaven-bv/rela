@@ -105,12 +105,12 @@ type Dialect struct {
 //
 // 20 -> 21 (TKT-ZU7P13): Untombstone. 21 -> 25 (TKT-964SIS):
 // ConfirmTombstone, Tombstones, Purge and DropTypeRecord. 27 -> 29
-// (TKT-INM3AZ): SetSession and ListSessionsDue. The exported
-// methods are the mandated [channels.Store] interface, so this is a
-// required-interface exception rather than a ratchet target. Helpers stay
-// free functions.
+// (TKT-INM3AZ): SetSession and ListSessionsDue. 29 -> 30 (TKT-ZZ4PNX):
+// ListWaiting. The exported methods are the mandated [channels.Store]
+// interface, so this is a required-interface exception rather than a
+// ratchet target. Helpers stay free functions.
 //
-//plimsoll:max-exported-methods=29
+//plimsoll:max-exported-methods=30
 type Store struct {
 	db DB
 	d  Dialect
@@ -594,9 +594,10 @@ func checkParent(ctx context.Context, q Querier, channelID int64, k channels.Key
 }
 
 // insertChannel inserts the channel k. Only the title, incarnation, author
-// and time of nc are read; k carries the type. It takes the type's lock
-// (see typeLock) after the caller's entity lock, so a create and a
-// DropTypeRecord of the type serialize.
+// and time of nc are read; k carries the type. created_by_user holds the
+// author's user for [Store.ListWaiting]; no later write changes it. It
+// takes the type's lock (see typeLock) after the caller's entity lock, so a
+// create and a DropTypeRecord of the type serialize.
 func (s *Store) insertChannel(ctx context.Context, q Querier, k channels.Key, nc channels.NewChannel) (row, error) {
 	if s.d.LockEntity != "" {
 		if _, err := q.Exec(ctx, s.d.LockEntity, typeLock(k.Type)); err != nil {
@@ -604,11 +605,11 @@ func (s *Store) insertChannel(ctx context.Context, q Querier, k channels.Key, nc
 		}
 	}
 	_, err := q.Exec(ctx, `INSERT INTO channels
-		(anchor_id, anchor_face, type, name, tomb, incarnation, state, title, created_by, created_at, closed_at,
-		 archived_at, last_seq, rev)
-		VALUES (?, ?, ?, ?, '', ?, ?, ?, ?, ?, 0, 0, 0, 0)`,
+		(anchor_id, anchor_face, type, name, tomb, incarnation, state, title, created_by, created_by_user,
+		 created_at, closed_at, archived_at, last_seq, rev)
+		VALUES (?, ?, ?, ?, '', ?, ?, ?, ?, ?, ?, 0, 0, 0, 0)`,
 		k.ID, string(k.Face), k.Type, k.Name, nc.Incarnation, string(channels.StateOpen), nc.Title,
-		mustJSON(nc.By), micros(nc.At))
+		mustJSON(nc.By), nc.By.User, micros(nc.At))
 	if err != nil {
 		return row{}, err
 	}
@@ -1519,7 +1520,7 @@ func Raw(ctx context.Context, s *Store) ([]byte, error) {
 	var b strings.Builder
 	for _, q := range []string{
 		`SELECT anchor_id || ' ' || anchor_face || ' ' || type || ' ' || name || ' ' || tomb || ' ' || title ||
-			' ' || created_by FROM channels`,
+			' ' || created_by || ' ' || created_by_user FROM channels`,
 		`SELECT doc FROM channel_messages`,
 		`SELECT record FROM channel_audit`,
 	} {

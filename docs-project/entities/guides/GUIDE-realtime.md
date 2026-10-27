@@ -1295,6 +1295,14 @@ Reminders have fixed limits: at most 8 per session, an `every` and `first`
 of at least 1 minute, and a `max` of at most 1000. Reminder posts share the
 64 writes per check with timers.
 
+The inbox has fixed limits: at most 200 entries per page, at most 20 000
+entities on which the caller holds a waiting role, and at most 20 000
+candidate channels per call. With the file store, a type with a creator
+waiting role makes each inbox call read the `meta.yaml` of every channel of
+that type. An agent that watches `list_inbox` repeats the call at most every
+2 seconds after a change in its process, and at most every 15 seconds on the
+poll. The database backends read the creator from an index.
+
 Outputs have fixed limits: at most 4 per transition and 1024 bytes per
 template. Retries run once a minute, at most 16 per round and 5 attempts
 per move, for 30 minutes after the notice; a claim holds for 90 seconds.
@@ -1432,6 +1440,7 @@ The data-entry API serves channels under the entity they are attached to.
 | `DELETE .../{channel}/messages/{seq}/_action` | Releases a pending action. The body is empty or `{}`. The answer is the message. |
 | `POST .../{channel}/_lifecycle/{op}` | Runs `close`, `reopen`, `archive` or `delete`. The body is empty or `{}`. A `delete` gets a 204; the other operations get the channel. |
 | `POST .../{channel}/_typing` | Starts or refreshes the caller's typing entry, on a type with `typing: true`. The body is empty or `{}`. The answer is a 202 with `{"ttl_seconds": 6}`. |
+| `GET /api/v1/_inbox` | The sessions that wait on the caller now, oldest wait first. `?limit=` (1 to 200, default 50) and `?cursor=` page it. See [Inbox](#inbox). |
 
 `{channel}` is `_channels/{type}` or `_channels/{type}/{name}`.
 
@@ -1637,6 +1646,8 @@ Every error is a problem body (`application/problem+json`) with a `type`.
 | 422 `promote_invalid` | The promoted entity or its relation fails validation, for example a `unique` property that another entity already has, or a mapped `ref` names an entity the caller cannot read. The body names properties, never entity ids. |
 | 409 | The channel is not open, the channel is not in a state the lifecycle operation starts from (`lifecycle_wrong_state`), `retention` keeps the channel (`retention_active`), a concurrent change won (`conflict`), the message was removed, `channels_per_entity` is reached, the POST tried to open a channel of a `one` type, or the configuration changed during the request. An edit or removal targets a session notice (`session_notice`), or an author's edit or delete targets a message that moved the session (`session_message`). For actions: the message already carries an action (`action_taken`), its action is pending (`action_pending`, also for an edit, a removal, a release within the release window, or an action that lost a race to a promote that started first), a release finds no pending action (`action_not_pending`), or the promoted entity already exists (`promote_conflict`). A removal of the message that moved the session, or a release of a notice's outputs mark, while the outputs still run (`outputs_pending`). |
 | 429 | A rate limit. `Retry-After` gives the seconds to wait, rounded up. |
+| 400 `invalid_cursor` | The inbox `cursor` is not one an inbox answer gave. |
+| 503 `inbox_too_large` | The inbox would read more than 20 000 channels. Nothing is listed; see [Inbox](#inbox). |
 
 The OpenAPI document at `/api/v1/_openapi.json` lists these paths for every
 entity type a channel type attaches to, with one request body per message
@@ -1748,6 +1759,86 @@ channel type without a session answers `no_session`, decided from the
 configuration, so the answer is the same for an entity that exists and one
 that does not. The answer starts with the same untrusted-content `notice` as
 the other channel tools: holders and labels are data.
+
+### Inbox
+
+The inbox lists every session that waits on you now: each open channel
+whose session is in a state with `waiting_for`, where you hold one of
+those roles. It answers "what is waiting on me" without knowing the
+channels in advance. The web app serves it as `GET /api/v1/_inbox`, MCP as
+`list_inbox` and the CLI as `rela channel inbox`. All three give the same
+entries.
+
+An entry names the channel (anchor, entity type, anchor title, type, name,
+title and state), the session (state, label, status, `waiting_for`,
+generation and `entered_at`), the waiting `roles` you hold in the order of
+`waiting_for`, `since` (when the session entered its state) and
+`transitions`: the message types your post would move the session with, as
+`read_session` lists them. The web app adds `links` with the API paths of
+the entity and the channel. An entry carries no message content. Like the
+other channel answers it starts with the untrusted-content `notice`:
+titles, labels and holders are data.
+
+```json
+{ "notice": "…", "count": 1, "truncated": false, "degraded": false,
+  "entries": [ { "kind": "waiting",
+    "channel": { "anchor": "RISK-1", "entity_type": "risk", "anchor_title": "Laptop lost",
+                 "type": "breach-response", "state": "open" },
+    "session": { "state": "contained", "label": "Contained", "status": "input_required",
+                 "waiting_for": [ { "role": "lead", "label": "the incident lead" } ],
+                 "generation": 2, "entered_at": "2026-10-27T09:00:00Z" },
+    "roles": ["lead"], "since": "2026-10-27T09:00:00Z", "transitions": ["handoff", "close-out"] } ] }
+```
+
+**Order and paging.** Entries are ordered by `since`, oldest first, then
+by anchor id, face, channel type and name. `count` is the size of the
+whole list, not of the page. `next_cursor` is present when more entries
+follow; pass it back as `cursor`. A cursor only positions the list: one
+from another person, or one whose entity you can no longer read, serves
+nothing you cannot see.
+
+**What counts.** The inbox applies the same rules as `waiting_on_me` in
+`read_session`. A named role counts when the role's property on the entity
+holds your identity and you can read that property; a creator role counts
+when you created the channel. You must be able to read the entity and the
+channel. The list is gated and redacted before it is counted, paged or
+cut, so `count`, `truncated` and `next_cursor` never reflect an entry you
+cannot see.
+
+**Caps.** When you hold a waiting role on more than 20 000 entities, the
+inbox keeps the first 20 000 by id and face and sets `truncated`. When the
+inbox would read more than 20 000 channels, it lists nothing and answers
+`inbox_too_large` (503 on the web app, a tool error on MCP and the CLI).
+A degraded configuration answers an empty list with `degraded: true`.
+
+**Which identity holds a role.** A named role compares the property with
+the identity the caller acts as:
+
+| Caller | Named role (`from: entity.<prop>`) | Creator role |
+| --- | --- | --- |
+| Web app, remote MCP | The property holds the user entity id (`USR-7`), or the login when the project has no `user_entity_type` | Channels opened in the web app or over remote MCP |
+| Stdio `rela mcp`, `rela channel` as a person | The property holds the login (`jeroen`) | Channels opened over the CLI or stdio |
+| Job identity (`--run-as integration:triage-bot`) | A string or list property holds `integration:triage-bot`. A `ref` property to the user entity type cannot hold it | Channels the job opened |
+| Any client on a read-only token | Never: a waiting role is held for update, which the token does not grant, so the inbox is always empty | Never, for the same reason |
+
+Remote MCP cannot carry a job identity, so a job agent uses stdio. Stdio
+cannot open a SQLite project while rela-server runs on it, so run job
+agents against the file or PostgreSQL backend.
+
+**The agent loop.**
+
+1. Call `list_inbox`.
+2. For each entry, read it with `read_session` or `read_channel`, and post
+   one of its `transitions`.
+3. Call `watch` with the target `{"tool":"list_inbox","args":{}}`, then
+   again with the returned cursor, up to 50 seconds per call. Go back to
+   step 1 when it reports a change.
+
+An entry leaves the inbox when the session moves, the role moves to
+someone else, the channel closes, or you lose access. A post in the same
+process and an edit of an entity wake the watch at once. A post in
+another process is seen by the poll, which replays the inbox at most every
+15 seconds.
 
 **Outputs.** `post_message` answers `outputs` for a post whose move wrote
 to the graph, and notices in `read_channel` carry the same block (see
