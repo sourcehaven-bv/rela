@@ -220,11 +220,10 @@ func compileFunc(
 	case metamodel.RollupMin, metamodel.RollupMax:
 		if rp, ok := related(string(fn), prop); ok {
 			switch {
-			case !slices.Contains([]string{
-				metamodel.PropertyTypeInteger, metamodel.PropertyTypeDate, metamodel.PropertyTypeDatetime,
-			}, rp.Type):
+			case rp.Type != metamodel.PropertyTypeInteger && !isoDate(rp):
 				*problems = append(*problems, fmt.Sprintf(
-					"%s: %s %q has type %q; min and max need integer, date or datetime", at, fn, prop, rp.Type))
+					"%s: %s %q has type %q; min and max need integer or date in the default format",
+					at, fn, prop, rp.Type))
 			case rp.Type != pd.Type:
 				*problems = append(*problems, fmt.Sprintf(
 					"%s: %s %q has type %q, but the roll-up is declared %q", at, fn, prop, rp.Type, pd.Type))
@@ -243,11 +242,9 @@ func compileFunc(
 		col.Reads = append(col.Reads, prop)
 	case metamodel.RollupLatest:
 		by := strings.TrimSpace(r.LatestBy)
-		if rp, ok := related("latest_by", by); ok &&
-			rp.Type != metamodel.PropertyTypeDate && rp.Type != metamodel.PropertyTypeDatetime {
-
+		if rp, ok := related("latest_by", by); ok && !isoDate(rp) {
 			*problems = append(*problems, fmt.Sprintf(
-				"%s: latest_by %q has type %q; it needs date or datetime", at, by, rp.Type))
+				"%s: latest_by %q has type %q; it needs date in the default format", at, by, rp.Type))
 		}
 		if rp, ok := related("pick", prop); ok {
 			if problem := sameType(pd, rp); problem != "" {
@@ -257,6 +254,14 @@ func compileFunc(
 		col.Value, col.By = prop, by
 		col.Reads = append(col.Reads, by)
 	}
+}
+
+// isoDate reports whether pd is a date in the default YYYY-MM-DD format,
+// the one type whose text order is its time order on every backend. A
+// datetime is not: a stored value may carry an offset or a fraction, so two
+// instants can sort out of order as text.
+func isoDate(pd metamodel.PropertyDef) bool {
+	return pd.Type == metamodel.PropertyTypeDate && pd.GetDateFormat() == metamodel.DefaultDateFormat
 }
 
 // wherePredicate is the store equality for one where entry, or why the
@@ -271,9 +276,11 @@ func wherePredicate(
 			return pred, fmt.Sprintf("%q is not true or false", value)
 		}
 	case rp.Type == metamodel.PropertyTypeInteger:
-		if _, err := strconv.ParseInt(value, 10, 64); err != nil {
+		n, err := strconv.ParseInt(value, 10, 64)
+		if err != nil {
 			return pred, fmt.Sprintf("%q is not an integer", value)
 		}
+		pred.Value = strconv.FormatInt(n, 10) // "+05" names the stored 5
 	case metamodel.StringShaped(meta, rp):
 		if values := enumValues(meta, rp); values != nil && !slices.Contains(values, value) {
 			return pred, fmt.Sprintf("%q is not one of %s", value, strings.Join(values, ", "))

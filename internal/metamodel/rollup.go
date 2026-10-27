@@ -57,9 +57,11 @@ type RollupDef struct {
 	LatestBy string `yaml:"latest_by,omitempty"`
 }
 
-// RollupNames returns the roll-up properties of entityType, sorted. A read
-// surface drops these names from a stored row before it adds the computed
-// values, so a value stored under a roll-up name is never served.
+// RollupNames returns the roll-up properties of entityType, sorted. The
+// entity read surfaces (data-entry, MCP show_entity, CLI show and list) drop
+// these names from a stored row before they add the computed values, so they
+// never serve a value stored under a roll-up name. Other readers (Lua,
+// search hits) see the stored row as it is.
 func (m *Metamodel) RollupNames(entityType string) []string {
 	def, ok := m.GetEntityDef(entityType)
 	if !ok {
@@ -122,10 +124,11 @@ func validateRollupShape(schemaName, propName string, pd PropertyDef, allowRollu
 	if !ok {
 		errs = append(errs, at+" must declare exactly one of count, exists, min, max, sum or latest_by")
 	}
-	if r.LatestBy != "" && r.Pick == "" {
+	latestBy, pick := strings.TrimSpace(r.LatestBy) != "", strings.TrimSpace(r.Pick) != ""
+	if latestBy && !pick {
 		errs = append(errs, at+": latest_by needs pick: the property to read from the latest entity")
 	}
-	if r.Pick != "" && r.LatestBy == "" {
+	if pick && !latestBy {
 		errs = append(errs, at+": pick is only valid with latest_by")
 	}
 	for _, name := range slices.Sorted(maps.Keys(r.Where)) {

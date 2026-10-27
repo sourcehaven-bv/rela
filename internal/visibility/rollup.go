@@ -96,8 +96,10 @@ func (r *Rollups) Values(
 		return out
 	}
 	ids := make([]string, 0, len(rows))
+	seen := make(map[string]struct{}, len(rows))
 	for _, ref := range rows {
-		if !slices.Contains(ids, ref.ID) {
+		if _, dup := seen[ref.ID]; !dup {
+			seen[ref.ID] = struct{}{}
 			ids = append(ids, ref.ID)
 		}
 	}

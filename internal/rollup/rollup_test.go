@@ -140,6 +140,16 @@ func TestCompile_Rejects(t *testing.T) {
 			replace: [2]string{"datum: {type: date}", "datum: {type: string}"},
 			want:    `latest_by "datum" has type "string"`,
 		},
+		{
+			name:    "latest_by a datetime",
+			replace: [2]string{"datum: {type: date}", "datum: {type: datetime}"},
+			want:    `latest_by "datum" has type "datetime"; it needs date in the default format`,
+		},
+		{
+			name:    "latest_by a date in a custom format",
+			replace: [2]string{"datum: {type: date}", "datum: {type: date, format: \"02-01-2006\"}"},
+			want:    `latest_by "datum" has type "date"; it needs date in the default format`,
+		},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

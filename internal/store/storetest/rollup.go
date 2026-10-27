@@ -286,6 +286,113 @@ func RunRollupTests(t *testing.T, f Factory) {
 		})
 	})
 
+	// Faces and the condition shapes a visible: grant compiles to: a role
+	// held through a relation (HasInbound) and a face set (FaceIn), on the
+	// related query and on Require/PickRequire.
+	t.Run("faces_and_grant_conditions", func(t *testing.T) {
+		s := f(t)
+		face, err := entity.ParseFace("draft")
+		require.NoError(t, err)
+		seedGraphQueryEntities(t, s, "risk", "RSK-1")
+		seedGraphQueryEntities(t, s, "person", "PERS-1")
+		// EV-1 has a prime and a draft face; EV-2 only a prime one.
+		seedEntityWithProps(t, s, "evidence", "EV-1",
+			map[string]any{"score": 3, "datum": "2024-01-01", "status": "geldig"})
+		draft := entity.New("EV-1", "evidence")
+		draft.Face = face
+		draft.Properties = map[string]any{"score": 10, "datum": "2024-09-01", "status": "geldig"}
+		require.NoError(t, s.CreateEntity(ctx(), draft))
+		seedEntityWithProps(t, s, "evidence", "EV-2",
+			map[string]any{"score": 7, "datum": "2024-03-01", "status": "geldig"})
+		mustRel(t, s, "RSK-1", "evidenced-by", "EV-1")
+		mustRel(t, s, "RSK-1", "evidenced-by", "EV-2")
+		mustRel(t, s, "PERS-1", "shared-with", "EV-2")
+
+		draftFirst := store.InWorld(store.NewWorldScope(map[string]store.TypeResolution{
+			"evidence": {Chain: []entity.Face{face, ""}, Fallback: store.FallbackExclude},
+		}))
+		related := store.GraphQuery{EntityType: "evidence", Faces: draftFirst}
+		primeOnly := store.GraphQuery{FaceIn: []entity.Face{""}}
+		sharedWith := store.GraphQuery{HasInbound: &store.RelationPredicate{
+			Endpoints: []string{"PERS-1"}, OfTypes: []string{"shared-with"},
+		}}
+		maxScore := func(q store.RollupQuery) store.RollupQuery {
+			q.Relation, q.Sources = "evidenced-by", []string{"RSK-1"}
+			q.Func, q.Value, q.Numeric = store.RollupMax, "score", true
+			return q
+		}
+		readsPrimeOnly := related
+		readsPrimeOnly.FaceIn = []entity.Face{""}
+
+		for name, tc := range map[string]struct {
+			q    store.RollupQuery
+			want store.RollupResult
+		}{
+			"world_takes_the_draft": {
+				q: maxScore(store.RollupQuery{Related: related}), want: store.RollupResult{Count: 2, Value: int64(10)},
+			},
+			"related_face_in_keeps_the_prime": {
+				q:    maxScore(store.RollupQuery{Related: readsPrimeOnly}),
+				want: store.RollupResult{Count: 2, Value: int64(7)},
+			},
+			"require_face_in_drops_the_draft_row": {
+				q: maxScore(store.RollupQuery{
+					Related: related, Require: []store.RowCondition{{Any: []*store.GraphQuery{&primeOnly}}},
+				}),
+				want: store.RollupResult{Count: 1, Value: int64(7)},
+			},
+			"require_has_inbound_keeps_the_shared_row": {
+				q: maxScore(store.RollupQuery{
+					Related: related, Require: []store.RowCondition{{Any: []*store.GraphQuery{&sharedWith}}},
+				}),
+				want: store.RollupResult{Count: 1, Value: int64(7)},
+			},
+			"pick_require_face_in_on_the_draft_winner_has_no_value": {
+				q: store.RollupQuery{
+					Related: related, Relation: "evidenced-by", Sources: []string{"RSK-1"},
+					Func: store.RollupLatest, Value: "status", By: "datum",
+					PickRequire: []store.RowCondition{{Any: []*store.GraphQuery{&primeOnly}}},
+				},
+				want: store.RollupResult{Count: 2},
+			},
+			"pick_require_has_inbound_on_the_shared_winner": {
+				q: store.RollupQuery{
+					Related: readsPrimeOnly, Relation: "evidenced-by", Sources: []string{"RSK-1"},
+					Func: store.RollupLatest, Value: "status", By: "datum",
+					PickRequire: []store.RowCondition{{Any: []*store.GraphQuery{&sharedWith}}},
+				},
+				want: store.RollupResult{Count: 2, Value: "geldig"},
+			},
+		} {
+			t.Run(name, func(t *testing.T) {
+				requireRollup(t, s, tc.q, map[string]store.RollupResult{"RSK-1": tc.want})
+			})
+		}
+	})
+
+	t.Run("where_on_integer_and_boolean", func(t *testing.T) {
+		s := f(t)
+		seedGraphQueryEntities(t, s, "risk", "RSK-1")
+		for id, p := range map[string]map[string]any{
+			"EV-1": {"score": 5, "open": true},
+			"EV-2": {"score": 5, "open": false},
+			"EV-3": {"score": 6, "open": true},
+		} {
+			seedEntityWithProps(t, s, "evidence", id, p)
+			mustRel(t, s, "RSK-1", "evidenced-by", id)
+		}
+		// The roll-up compiler hands these over as non-scalar text.
+		for pred, want := range map[store.PropPredicate]int{
+			{Property: "score", Op: store.PropEqual, Value: "5"}:    2,
+			{Property: "open", Op: store.PropEqual, Value: "true"}:  2,
+			{Property: "open", Op: store.PropEqual, Value: "false"}: 1,
+		} {
+			requireRollup(t, s, store.RollupQuery{
+				Related: evidence(pred), Relation: "evidenced-by", Sources: []string{"RSK-1"},
+			}, map[string]store.RollupResult{"RSK-1": {Count: want}})
+		}
+	})
+
 	t.Run("sum_outside_int64_has_no_value", func(t *testing.T) {
 		s := f(t)
 		seedGraphQueryEntities(t, s, "risk", "RSK-1", "RSK-2")

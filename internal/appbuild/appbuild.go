@@ -840,6 +840,20 @@ func gatedRollups(s *Services) *visibility.Rollups {
 	return r
 }
 
+// compileDerived compiles the computed properties of meta and checks its
+// roll-ups. Read surfaces compile their own roll-up set from the same
+// metamodel; this is the load-time check, so a bad roll-up fails the boot.
+func compileDerived(meta *metamodel.Metamodel) (*computed.Set, error) {
+	set, err := computed.Compile(meta)
+	if err != nil {
+		return nil, fmt.Errorf("compile computed properties: %w", err)
+	}
+	if _, rErr := rollup.Compile(meta); rErr != nil {
+		return nil, fmt.Errorf("compile roll-up properties: %w", rErr)
+	}
+	return set, nil
+}
+
 // rebindFor returns the [GatedReadBundle.Rebind] for policy d: without a
 // policy it returns ctx unchanged, with one it replaces any attached
 // [acl.Request] by a fresh one for the ctx principal.
@@ -2681,14 +2695,9 @@ func assemble(
 	if err != nil {
 		return nil, fmt.Errorf("compile transitions: %w", err)
 	}
-	computedSet, err := computed.Compile(base.meta)
+	computedSet, err := compileDerived(base.meta)
 	if err != nil {
-		return nil, fmt.Errorf("compile computed properties: %w", err)
-	}
-	// Read surfaces compile their own roll-up set from the same metamodel;
-	// this is the load-time check, so a bad roll-up fails the boot.
-	if _, rErr := rollup.Compile(base.meta); rErr != nil {
-		return nil, fmt.Errorf("compile roll-up properties: %w", rErr)
+		return nil, err
 	}
 
 	versions, sweep, err := versioningFor(st, base.meta)

@@ -2,6 +2,7 @@ package dataentry
 
 import (
 	"context"
+	"log/slog"
 	"maps"
 	"strconv"
 
@@ -70,7 +71,11 @@ func (s rollupSource) add(
 			return readGateFromContext(ctx).ReadQuery(ctx, t), nil
 		})
 		r, err := visibility.NewRollups(sch.rollups, s.st, gate, s.fields())
-		if err == nil {
+		if err != nil {
+			// The rows are still served, without values: the names are
+			// stripped below either way.
+			slog.WarnContext(ctx, "roll-ups not computed", "type", entityType, "error", err)
+		} else {
 			refs := make([]entityPkg.Ref, len(rows))
 			for i, row := range rows {
 				refs[i] = row.ref

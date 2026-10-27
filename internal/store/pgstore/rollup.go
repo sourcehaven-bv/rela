@@ -183,8 +183,10 @@ func rollupAggregateSQL(b *sqlBuilder, q store.RollupQuery) string {
 func integralSQL(b *sqlBuilder, prop string) string {
 	p := b.arg(prop)
 	n := fmt.Sprintf("(x.properties ->> %s)::numeric", p)
+	// trunc() drops the scale, so 5.0 reads back as "5" and parses as the
+	// generic fold's 5.
 	return fmt.Sprintf("(CASE WHEN jsonb_typeof(x.properties -> %s) = 'number' THEN "+
-		"CASE WHEN %s = trunc(%s) AND %s BETWEEN -9223372036854775808 AND 9223372036854775807 THEN %s END END)",
+		"CASE WHEN %s = trunc(%s) AND %s BETWEEN -9223372036854775808 AND 9223372036854775807 THEN trunc(%s) END END)",
 		p, n, n, n, n)
 }
 

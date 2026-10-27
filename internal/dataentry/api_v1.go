@@ -1157,8 +1157,12 @@ func (a *App) handleV1GetEntity(w http.ResponseWriter, r *http.Request, typeName
 	// Check If-None-Match. When leases are wired the GET never answers 304:
 	// the ETag does not cover `_lease`, so a copy cached before a claim or a
 	// release would carry the wrong lease. The ETag is still sent, unchanged
-	// by the lease, so If-Match keeps working.
-	if a.leases == nil && r.Header.Get("If-None-Match") == etag {
+	// by the lease, so If-Match keeps working. A type with roll-ups never
+	// answers 304 either, for the same reason: they change with OTHER
+	// entities, which the ETag does not cover.
+	if a.leases == nil && len(a.Meta().RollupNames(entity.Type)) == 0 &&
+		r.Header.Get("If-None-Match") == etag {
+
 		w.WriteHeader(http.StatusNotModified)
 		return
 	}

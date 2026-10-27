@@ -109,6 +109,7 @@ func rollupWireConfig() *Config {
 //   - PERS-B reads maatregel and test, cannot see test.resultaat, and reads
 //     only the bewijs rows shared with it (BEW-4 is not).
 //   - PERS-C reads everything but cannot see bewijs.status.
+//   - PERS-D reads everything but cannot see maatregel.bewijs_aantal.
 func rollupWirePolicy() *acl.Policy {
 	return &acl.Policy{
 		Roles: map[string]acl.RoleDef{
@@ -124,8 +125,16 @@ func rollupWirePolicy() *acl.Policy {
 				Read:    []string{"*"},
 				Visible: map[string][]acl.FieldGrant{"bewijs": {{Field: "title"}}},
 			},
+			"countblind": {
+				Read: []string{"*"},
+				Visible: map[string][]acl.FieldGrant{
+					"maatregel": {{Field: "title"}, {Field: "laatste_testresultaat"}},
+				},
+			},
 		},
-		Assignments:   map[string]string{"PERS-A": "all", "PERS-B": "base", "PERS-C": "statusblind"},
+		Assignments: map[string]string{
+			"PERS-A": "all", "PERS-B": "base", "PERS-C": "statusblind", "PERS-D": "countblind",
+		},
 		RoleRelations: map[string]acl.RoleRelationDef{"shared-with": {Confers: "bewijslezer"}},
 	}
 }
@@ -152,7 +161,7 @@ func seedRollupWire(t *testing.T, st store.Store, n int) {
 		_, err := st.CreateRelation(ctx, entity.RelationKey{From: from, Type: typ, To: to}, nil)
 		must(err)
 	}
-	for _, p := range []string{"PERS-A", "PERS-B", "PERS-C"} {
+	for _, p := range []string{"PERS-A", "PERS-B", "PERS-C", "PERS-D"} {
 		mk(p, "person", map[string]any{"title": p})
 	}
 	for i := 1; i <= n; i++ {
@@ -214,11 +223,13 @@ var rollupWants = map[string]rollupWant{
 	"PERS-B": {count: float64(2), latest: nil},
 	// status is hidden, so no bewijs row can be judged geldig.
 	"PERS-C": {count: float64(0), latest: "gefaald"},
+	// The roll-up property itself is hidden, so it is never served.
+	"PERS-D": {count: nil, latest: "gefaald"},
 }
 
 func assertRollups(t *testing.T, where string, props map[string]any, want rollupWant) {
 	t.Helper()
-	if got := props["bewijs_aantal"]; got != want.count {
+	if got, has := props["bewijs_aantal"]; got != want.count || (want.count == nil && has) {
 		t.Errorf("%s: bewijs_aantal = %v, want %v", where, got, want.count)
 	}
 	got, has := props["laatste_testresultaat"]
@@ -316,6 +327,12 @@ func TestRollups_ReadSurfacesPerPrincipal(t *testing.T) {
 				t.Fatalf("view bewijs = %d %s", rec.Code, rec.Body)
 			}
 			got, ok := sectionCell(t, rec.Body.Bytes(), "MAAT-1", 1)
+			if want.count == nil {
+				if ok {
+					t.Errorf("view section bewijs_aantal = %q, want no value", got)
+				}
+				return
+			}
 			if !ok {
 				t.Fatalf("view section has no MAAT-1 row: %s", rec.Body)
 			}

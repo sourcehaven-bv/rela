@@ -873,15 +873,17 @@ entities:
 | `where`     | Keep only related entities whose properties equal these values (enum, string, boolean, integer) |
 | `count`     | The number of related entities. The property must be `integer`                               |
 | `exists`    | Whether there is at least one. The property must be `boolean`                                 |
-| `min`/`max` | The lowest or highest value of an `integer`, `date` or `datetime` property; same type         |
+| `min`/`max` | The lowest or highest value of an `integer` or `date` property; same type                      |
 | `sum`       | The total of an `integer` property. The property must be `integer`                            |
-| `latest_by` | With `pick`: the `pick` value of the entity with the latest `date` or `datetime` here         |
+| `latest_by` | With `pick`: the `pick` value of the entity with the latest `date` here                       |
 
 Declare exactly one function. `pick` must have the roll-up's declared type.
 A roll-up follows one relation, and cannot read another roll-up. It cannot be
 `required`, `list`, `unique`, `computed`, have a `default`, or be a file. The
 schema fails to load when a roll-up names an unknown relation or property, or
-when a type does not match.
+when a type does not match. `min`, `max` and `latest_by` take a `date` only in
+the default `YYYY-MM-DD` format, and no `datetime`: rela orders these values as
+text, and only that date format sorts as text in time order.
 
 **How a roll-up differs from a computed property.**
 
@@ -910,10 +912,14 @@ answers `400 invalid_filter`, and a `data-entry.yaml` that tries fails to load.
 
 **Writes.** Setting or unsetting a roll-up through the CLI, MCP, Lua or the
 data-entry API is refused. A whole-entity update that sends back the value it
-read is accepted; the value is not stored.
+read is accepted; the value is not stored. A value already in the markdown
+file under a roll-up name (written by hand) is replaced by the computed value
+on the surfaces above; Lua scripts and search still see the stored value.
 
 **Caching.** The entity's `ETag` covers its stored content, not its roll-ups. A
-change to a related entity changes the roll-up without changing the `ETag`.
+change to a related entity changes the roll-up without changing the `ETag`, so
+a `GET` on a type with roll-ups never answers `304 Not Modified`. `If-Match`
+keeps working.
 
 ### File attachments and `max`
 

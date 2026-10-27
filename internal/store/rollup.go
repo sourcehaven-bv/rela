@@ -20,8 +20,9 @@ const (
 	RollupCount RollupFunc = iota
 	// RollupMin and RollupMax take the smallest and largest value of
 	// [RollupQuery.Value]: numerically under [RollupQuery.Numeric], else
-	// byte-wise on non-empty strings (the [GraphQuery.OrderBy] order, which is
-	// date order for ISO dates).
+	// byte-wise on non-empty strings (the [GraphQuery.OrderBy] order). That
+	// is time order only for YYYY-MM-DD dates, so the roll-up compiler
+	// refuses datetimes and other date formats.
 	RollupMin
 	RollupMax
 	// RollupSum adds the integral numbers of [RollupQuery.Value].
