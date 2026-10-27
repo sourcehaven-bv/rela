@@ -35,26 +35,40 @@ export function builtinTypeLabel(type: string): string | undefined {
   return BUILTIN_TYPES.find((t) => t.value === type)?.label
 }
 
-/** The colours an option can have, as data-entry styles name them. */
-export const OPTION_COLORS = ['gray', 'blue', 'green', 'yellow', 'orange', 'red', 'purple'] as const
+/**
+ * The colours the picker offers, as data-entry styles name them. A kit shade
+ * (`red/700`) or an operator colour is written in data-entry.yaml; the picker
+ * keeps such a value and previews it by its hue.
+ */
+export const OPTION_COLORS = [
+  'gray',
+  'blue',
+  'teal',
+  'green',
+  'yellow',
+  'orange',
+  'red',
+  'purple',
+] as const
 
-export type TagColor = 'grey' | 'blue' | 'green' | 'amber' | 'red' | 'purple'
+export type TagColor = 'grey' | 'blue' | 'green' | 'amber' | 'yellow' | 'teal' | 'red' | 'purple'
 
-/** A style colour as the library's tag draws it. Unknown colours draw grey. */
+/**
+ * A style colour as the library's tag draws it. A shade draws as its hue's
+ * tag; an operator colour and an unknown name draw grey.
+ */
 export function tagColor(style: string | undefined): TagColor {
-  switch (style) {
+  const hue = style?.split('/')[0]
+  switch (hue) {
     case 'blue':
-    case 'cyan':
-      return 'blue'
     case 'green':
-      return 'green'
     case 'yellow':
+    case 'teal':
+    case 'red':
+    case 'purple':
+      return hue
     case 'orange':
       return 'amber'
-    case 'red':
-      return 'red'
-    case 'purple':
-      return 'purple'
     default:
       return 'grey'
   }

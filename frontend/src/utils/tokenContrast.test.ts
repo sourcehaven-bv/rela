@@ -26,6 +26,9 @@ function block(selector: string): Record<string, string> {
 const light = block(':root')
 const dark = { ...light, ...block('.dark') }
 
+const KIT_HUES = ['grey', 'red', 'orange', 'yellow', 'green', 'teal', 'blue'] as const
+const KIT_SHADES = ['50', '100', '200', '300', '400', '500', '600', '700', '800', '900'] as const
+
 const TEXT = 4.5
 const NON_TEXT = 3
 
@@ -47,11 +50,20 @@ const pairs: [string, string, number][] = [
   ['--rl-color-info-fg', '--rl-color-info-bg', TEXT],
   ['--rl-color-success-fg', '--rl-color-success-bg', TEXT],
   ['--rl-color-warning-fg', '--rl-color-warning-bg', TEXT],
-  ...(['grey', 'blue', 'green', 'amber', 'red', 'purple'] as const).map(
+  ...(['grey', 'blue', 'green', 'amber', 'red', 'purple', 'yellow', 'teal'] as const).map(
     (c): [string, string, number] => [`--rl-tag-${c}-fg`, `--rl-tag-${c}-bg`, TEXT],
   ),
-  ...(['green', 'amber', 'red', 'grey', 'blue'] as const).map(
+  ...(['green', 'amber', 'red', 'grey', 'blue', 'yellow', 'teal'] as const).map(
     (c): [string, string, number] => [`--rl-color-status-${c}`, '--rl-color-bg', NON_TEXT],
+  ),
+  // Every kit shade carries its own text colour at AA, in both themes: the
+  // style colour `red/700` is painted as a fill with that text on it.
+  ...KIT_HUES.flatMap((hue) =>
+    KIT_SHADES.map((shade): [string, string, number] => [
+      `--rl-kit-${hue}-${shade}-fg`,
+      `--rl-kit-${hue}-${shade}`,
+      TEXT,
+    ]),
   ),
   ['--rl-color-focus', '--rl-color-bg', NON_TEXT],
 ]

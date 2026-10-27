@@ -21,7 +21,7 @@
  */
 import { computed, onScopeDispose, ref, watch } from 'vue'
 import { useRelationColumns, OTHER_COLUMN } from '@/composables/useRelationColumns'
-import type { StatusColor } from 'rela-components/types'
+import type { DotColor } from 'rela-components/types'
 import { useUIStore } from '@/stores'
 import { formatCellValue } from '@/utils/format'
 import { BUCKET_ORDER, DEFAULT_BUCKET_LABELS, bucketDate, bucketOf } from '@/utils/dateBuckets'
@@ -30,7 +30,7 @@ import type { DateBucket, Entity, EntityType, ListGroupBy, ListResponse, PageSco
 export interface ListSection {
   id: string
   title: string
-  color?: StatusColor
+  color?: DotColor
   /** True when the reader closed this section; see `useListGrouping`. */
   collapsed?: boolean
   /**

@@ -520,6 +520,7 @@ func ValidateConfig(data []byte, cfg *Config, meta *metamodel.Metamodel) error {
 	errs = append(errs, validateDocuments(cfg)...)
 	errs = append(errs, validateFeeds(cfg, meta)...)
 	errs = append(errs, validateCalDAV(cfg, meta)...)
+	errs = append(errs, validatePaletteConfig(cfg)...)
 	errs = append(errs, validateStyles(cfg, meta)...)
 	errs = append(errs, validateNextActions(cfg, meta)...)
 	errs = append(errs, validateQueryScopes(cfg, meta)...)
@@ -3103,6 +3104,14 @@ func validateDocuments(cfg *Config) []string {
 // validateStyles validates style definitions reference valid metamodel types.
 func validateStyles(cfg *Config, meta *metamodel.Metamodel) []string {
 	var errs []string
+
+	for _, typeName := range sortedMapKeys(cfg.Styles) {
+		for _, val := range sortedMapKeys(cfg.Styles[typeName]) {
+			if _, err := ParseColor(cfg.Styles[typeName][val], cfg.OperatorColors()); err != nil {
+				errs = append(errs, fmt.Sprintf("styles.%s.%s: %v", typeName, val, err))
+			}
+		}
+	}
 
 	for typeName := range cfg.Styles {
 		// Check if it's a custom type in metamodel

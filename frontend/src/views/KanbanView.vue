@@ -55,7 +55,7 @@ import type { DenseRoutingHint } from '@/widgets/viewRouting'
 import RlButton from 'rela-components/components/common/RlButton.vue'
 import RlBoard from 'rela-components/components/board/RlBoard.vue'
 import RlSwimlaneBoard from 'rela-components/components/board/RlSwimlaneBoard.vue'
-import type { Section, StatusColor, Swimlane } from 'rela-components/types'
+import type { DotColor, Section, Swimlane } from 'rela-components/types'
 import type { BoardDropPosition } from 'rela-components/composables/useBoardDnd'
 import RlStatusRegion from 'rela-components/components/feedback/RlStatusRegion.vue'
 
@@ -488,7 +488,7 @@ function iconFor(name?: string) {
 
 // A relation-backed column's colour, from its target's `style_from` value.
 const relationColumnColors = computed(() => {
-  const colors = new Map<string, StatusColor>()
+  const colors = new Map<string, DotColor>()
   for (const c of relationColumns.columns.value) if (c.color) colors.set(c.value, c.color)
   return colors
 })
@@ -501,7 +501,7 @@ const enumColumnStyles = computed(() => {
   return schemaStore.stylesForProperty(config.column_property, config.entity)
 })
 
-function columnColor(value: string): StatusColor | undefined {
+function columnColor(value: string): DotColor | undefined {
   if (columnsFrom.value) return relationColumnColors.value.get(value)
   return styleStatusColor(enumColumnStyles.value, value)
 }

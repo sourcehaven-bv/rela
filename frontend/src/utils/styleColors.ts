@@ -1,21 +1,54 @@
-import type { StatusColor } from 'rela-components/types'
+import type { DotColor, StatusColor } from 'rela-components/types'
 
 /**
- * The one table of app style classes (`styles:` in data-entry.yaml, served as
- * `badge-<colour>`). Badge.vue reads `badgeClass`; a relation-backed board
- * column or list section reads `status`, so a column and a badge for the same
- * value show the same colour.
- *
- * Orange and yellow share the amber status token, as their badges already do.
+ * The bare-hue style classes (`styles:` in data-entry.yaml, served as
+ * `badge-<colour>`). Badge.vue reads `badgeClass`; a board column or list
+ * section reads `status`, so a column and a badge for the same value show the
+ * same colour. Orange and yellow are distinct: orange keeps the library's
+ * amber, yellow and teal have their own tokens.
  */
-export const STYLE_PALETTE: Record<string, { badgeClass: string; status: StatusColor }> = {
+export const STYLE_PALETTE: Record<string, { badgeClass: string; status: DotColor }> = {
   'badge-blue': { badgeClass: 'badge--blue', status: 'blue' },
   'badge-purple': { badgeClass: 'badge--purple', status: 'purple' },
   'badge-green': { badgeClass: 'badge--green', status: 'green' },
   'badge-gray': { badgeClass: 'badge--gray', status: 'grey' },
   'badge-red': { badgeClass: 'badge--red', status: 'red' },
   'badge-orange': { badgeClass: 'badge--orange', status: 'amber' },
-  'badge-yellow': { badgeClass: 'badge--yellow', status: 'amber' },
+  'badge-yellow': { badgeClass: 'badge--yellow', status: '--rl-color-status-yellow' },
+  'badge-teal': { badgeClass: 'badge--teal', status: '--rl-color-status-teal' },
+}
+
+/**
+ * How one style class paints: a badge class for a bare hue, or for a kit shade
+ * (`kit-red-700`) and an operator colour (`custom-<name>`) an inline fill with
+ * its text colour, both palette custom properties. The server builds the class
+ * (`Color.StyleClass` in internal/dataentryconfig/colors.go).
+ */
+export interface StyleSwatch {
+  badgeClass?: string
+  badgeStyle?: Record<string, string>
+  status: DotColor
+}
+
+// The classes the server emits for a shade and an operator colour. The name
+// part is already restricted by config validation; the patterns re-check it so
+// a hand-crafted response cannot put anything else into a CSS property name.
+const FILLED_CLASS =
+  /^(kit-(?:grey|red|orange|yellow|green|teal|blue)-(?:50|[1-9]00)|custom-[a-z][a-z0-9-]*)$/
+
+/** The swatch for a style class, if it is one the server can emit. */
+export function styleSwatch(cls: string | undefined): StyleSwatch | undefined {
+  if (!cls) return undefined
+  const named = Object.prototype.hasOwnProperty.call(STYLE_PALETTE, cls)
+    ? STYLE_PALETTE[cls]
+    : undefined
+  if (named) return { badgeClass: named.badgeClass, status: named.status }
+  if (!FILLED_CLASS.test(cls)) return undefined
+  const token = `--rl-${cls}` as const
+  return {
+    badgeStyle: { background: `var(${token})`, color: `var(${token}-fg)` },
+    status: token,
+  }
 }
 
 /** The key a value is styled under, normalized the way Badge.vue always has. */
@@ -26,17 +59,18 @@ export function styleKey(value: unknown): string {
 /** The style class for `value` in a property's style map, if any. */
 export function styleClassFor(
   styles: Record<string, string> | undefined,
-  value: unknown,
+  value: unknown
 ): string | undefined {
   if (!styles || value === undefined || value === null || value === '') return undefined
   return styles[styleKey(value)]
 }
 
-/** The status colour `value` maps to through a property's style map, if any. */
+/** The dot colour `value` maps to through a property's style map, if any. */
 export function styleStatusColor(
   styles: Record<string, string> | undefined,
-  value: unknown,
-): StatusColor | undefined {
-  const cls = styleClassFor(styles, value)
-  return cls ? STYLE_PALETTE[cls]?.status : undefined
+  value: unknown
+): DotColor | undefined {
+  return styleSwatch(styleClassFor(styles, value))?.status
 }
+
+export type { DotColor, StatusColor }

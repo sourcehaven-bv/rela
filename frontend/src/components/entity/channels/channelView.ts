@@ -472,7 +472,11 @@ export function enumOptionsFor(
       out[p.enum] = (p.values ?? []).map((value) => ({
         value,
         label: labels[value] ?? value,
-        color: style[value] ? tagColor(style[value].replace(/^badge-/, '')) : undefined,
+        // A style class is `badge-<hue>`, `kit-<hue>-<shade>` or
+        // `custom-<name>`; a chip draws the hue's tag.
+        color: style[value]
+          ? tagColor(style[value].replace(/^badge-/, '').replace(/^kit-([a-z]+)-\d+$/, '$1'))
+          : undefined,
       }))
     }
   }

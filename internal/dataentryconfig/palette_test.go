@@ -39,7 +39,7 @@ func TestValidatePalette(t *testing.T) {
 	})
 
 	t.Run("unknown badge name", func(t *testing.T) {
-		p := &PaletteConfig{Badges: map[string]string{"teal": "#00ffff"}}
+		p := &PaletteConfig{Badges: map[string]string{"pink": "#ff00ff"}}
 		err := ValidatePalette(p)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "unknown badge color")
@@ -472,14 +472,22 @@ func TestResolvePaletteRLTokens(t *testing.T) {
 		assert.Equal(t, adjustLightness("#6696f5", -rlAccentHoverDelta), r.Light["--rl-color-accent-hover"])
 		assert.Equal(t, "#007a34", r.Light["--rl-color-status-green"])
 		assert.Equal(t, "#007a34", r.Light["--rl-tag-green-fg"], "badges read the tag text color")
-		assert.Equal(t, "#f57f17", r.Light["--rl-tag-amber-fg"])
-		assert.Equal(t, "#f57f17", r.Light["--rl-color-status-amber"], "yellow paints amber when orange is unset")
+		assert.Equal(t, "#f57f17", r.Light["--rl-tag-yellow-fg"])
+		assert.Equal(t, "#f57f17", r.Light["--rl-color-status-yellow"])
+		assert.NotContains(t, r.Light, "--rl-color-status-amber", "yellow no longer paints orange's amber")
 		assert.NotContains(t, r.Light, "--rl-color-status-red")
 	})
 
-	t.Run("orange wins amber over yellow", func(t *testing.T) {
+	t.Run("orange and yellow paint separate tokens", func(t *testing.T) {
 		project := &PaletteConfig{Badges: map[string]string{"orange": "#e65200", "yellow": "#f57f17"}}
-		assert.Equal(t, "#e65200", ResolvePalette(project, nil).Light["--rl-color-status-amber"])
+		r := ResolvePalette(project, nil)
+		assert.Equal(t, "#e65200", r.Light["--rl-color-status-amber"])
+		assert.Equal(t, "#f57f17", r.Light["--rl-color-status-yellow"])
+	})
+
+	t.Run("grey badge is an alias of gray", func(t *testing.T) {
+		project := &PaletteConfig{Badges: map[string]string{"grey": "#74798b"}}
+		assert.Equal(t, "#74798b", ResolvePalette(project, nil).Light["--rl-tag-grey-fg"])
 	})
 
 	t.Run("user overrides project", func(t *testing.T) {

@@ -1,7 +1,6 @@
 package dataentryconfig
 
 import (
-	"cmp"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -16,16 +15,20 @@ import (
 // hexColorRe validates hex color formats: #rgb, #rrggbb, #rrggbbaa.
 var hexColorRe = regexp.MustCompile(`^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$`)
 
-// ValidBadgeNames is the set of allowed badge color names.
+// ValidBadgeNames is the set of allowed badge color names. `grey` is an alias
+// of `gray`; see mergeBadges.
 var ValidBadgeNames = map[string]bool{
-	"blue": true, "purple": true, "green": true, "gray": true,
-	"red": true, "orange": true, "yellow": true,
+	"blue": true, "purple": true, "green": true, "gray": true, "grey": true,
+	"red": true, "orange": true, "yellow": true, "teal": true,
 }
 
 // PaletteConfig is the top-level palette configuration in data-entry.yaml.
 type PaletteConfig struct {
 	PaletteColors `yaml:",inline"`
 	Badges        map[string]string `yaml:"badges,omitempty" json:"badges,omitempty"`
+	// Colors are the operator's own named colors, usable wherever a style
+	// color is (TKT-ZKNWSK). See [OperatorColor].
+	Colors map[string]OperatorColor `yaml:"colors,omitempty" json:"colors,omitempty"`
 	// Dark is a struct, so json `omitempty` would not omit it (it has no
 	// effect on struct fields); `omitzero` omits a zero-value DarkMode,
 	// which is the intended "no dark config" behavior. Its MarshalJSON
@@ -52,6 +55,9 @@ type PaletteColors struct {
 type DarkPalette struct {
 	PaletteColors `yaml:",inline"`
 	Badges        map[string]string `yaml:"badges,omitempty" json:"badges,omitempty"`
+	// Colors overrides the dark value of a kit shade, keyed by its name
+	// (`red/700`). Without one, a shade shows its mirror (`red/200`).
+	Colors map[string]string `yaml:"colors,omitempty" json:"colors,omitempty"`
 }
 
 // DarkMode represents the dark mode setting: either disabled (`false`)
@@ -221,6 +227,9 @@ func ValidatePalette(p *PaletteConfig) error {
 	if err := validateColors(&p.PaletteColors); err != nil {
 		return fmt.Errorf("palette: %w", err)
 	}
+	if err := validateBadgeAliases("palette.badges", p.Badges); err != nil {
+		return err
+	}
 	for name, color := range p.Badges {
 		if !ValidBadgeNames[name] {
 			return fmt.Errorf("palette.badges: unknown badge color %q", name)
@@ -229,9 +238,18 @@ func ValidatePalette(p *PaletteConfig) error {
 			return fmt.Errorf("palette.badges.%s: %w", name, err)
 		}
 	}
+	if err := validateOperatorColors(p.Colors); err != nil {
+		return fmt.Errorf("palette.%w", err)
+	}
 	if p.Dark.IsExplicit() {
 		if err := validateColors(&p.Dark.Explicit.PaletteColors); err != nil {
 			return fmt.Errorf("palette.dark: %w", err)
+		}
+		if err := validateDarkKitOverrides(p.Dark.Explicit.Colors); err != nil {
+			return fmt.Errorf("palette.dark.%w", err)
+		}
+		if err := validateBadgeAliases("palette.dark.badges", p.Dark.Explicit.Badges); err != nil {
+			return err
 		}
 		for name, color := range p.Dark.Explicit.Badges {
 			if !ValidBadgeNames[name] {
@@ -241,6 +259,17 @@ func ValidatePalette(p *PaletteConfig) error {
 				return fmt.Errorf("palette.dark.badges.%s: %w", name, err)
 			}
 		}
+	}
+	return nil
+}
+
+// validateBadgeAliases refuses `gray` and `grey` side by side: both name one
+// badge, so which value won would depend on map order.
+func validateBadgeAliases(field string, badges map[string]string) error {
+	_, gray := badges["gray"]
+	_, grey := badges["grey"]
+	if gray && grey {
+		return fmt.Errorf("%s: set gray or grey, not both", field)
 	}
 	return nil
 }
@@ -337,6 +366,9 @@ func ResolvePalette(project, user *PaletteConfig) *ResolvedPalette {
 	lightRL := rlTokens(operatorAccent(project, user), operatorBadges(project, user), -rlAccentHoverDelta)
 	maps.Copy(result.Light, lightRL)
 
+	operator := operatorColors(project, user)
+	maps.Copy(result.Light, operatorColorTokens(operator, false))
+
 	if darkMode.IsDisabled() {
 		result.DarkDisabled = true
 		return result
@@ -371,10 +403,76 @@ func ResolvePalette(project, user *PaletteConfig) *ResolvedPalette {
 		result.Dark[name] = rlDefaultDarkTokens[name]
 	}
 	if darkMode.Explicit != defaultDark {
-		maps.Copy(result.Dark, rlTokens(darkMode.Explicit.Accent, darkMode.Explicit.Badges, rlAccentHoverDelta))
+		darkRL := rlTokens(darkMode.Explicit.Accent, foldBadgeAliases(darkMode.Explicit.Badges), rlAccentHoverDelta)
+		maps.Copy(result.Dark, darkRL)
+		// And the reverse: a dark-only override must not stay inline after
+		// switching back to light, so the light map restates the library's
+		// light value for every key only the dark map sets.
+		for name := range darkRL {
+			if _, ok := result.Light[name]; !ok {
+				result.Light[name] = rlDefaultLightTokens[name]
+			}
+		}
 	}
 
+	maps.Copy(result.Dark, operatorColorTokens(operator, true))
+	overLight, overDark := kitOverrideTokens(darkMode.Explicit.Colors)
+	maps.Copy(result.Light, overLight)
+	maps.Copy(result.Dark, overDark)
+
 	return result
+}
+
+// operatorColors are the `palette.colors` of the project and user palettes,
+// the user winning per name.
+func operatorColors(project, user *PaletteConfig) map[string]OperatorColor {
+	colors := map[string]OperatorColor{}
+	if project != nil {
+		maps.Copy(colors, project.Colors)
+	}
+	if user != nil {
+		maps.Copy(colors, user.Colors)
+	}
+	return colors
+}
+
+// operatorColorTokens paints each operator color and its text color for one
+// theme. The dark theme falls back to the light value. Both themes set the
+// same keys, so switching theme never leaves the other theme's value inline.
+func operatorColorTokens(colors map[string]OperatorColor, dark bool) map[string]string {
+	m := make(map[string]string, 2*len(colors))
+	for name, c := range colors {
+		hex := c.Light
+		if dark && c.Dark != "" {
+			hex = c.Dark
+		}
+		hex = normalizeHex(hex)
+		m[operatorToken(name)] = hex
+		m[operatorToken(name)+"-fg"] = ForegroundFor(hex)
+	}
+	return m
+}
+
+// kitOverrideTokens paints the dark overrides of kit shades. The light map
+// restates each overridden shade's kit value: the SPA applies a theme's map as
+// inline properties and never removes them, so a key set only in dark would
+// stay after switching back to light.
+func kitOverrideTokens(overrides map[string]string) (light, dark map[string]string) {
+	light = make(map[string]string, 2*len(overrides))
+	dark = make(map[string]string, 2*len(overrides))
+	for name, hex := range overrides {
+		c, err := ParseColor(name, nil)
+		if err != nil || c.Kind != ColorShade {
+			continue // ValidatePalette rejects these before a palette is resolved
+		}
+		tok := kitToken(c)
+		light[tok] = kitHex(c)
+		light[tok+"-fg"] = ForegroundFor(kitHex(c))
+		hex = normalizeHex(hex)
+		dark[tok] = hex
+		dark[tok+"-fg"] = ForegroundFor(hex)
+	}
+	return light, dark
 }
 
 // rlAccentHoverDelta is how far the hover accent moves in lightness from the
@@ -386,32 +484,61 @@ const rlAccentHoverDelta = 0.08
 // [rlTokens] can set. TestRLDefaultDarkTokensMatchLibrary pins them to
 // apps_tokens.css.
 var rlDefaultDarkTokens = map[string]string{
-	"--rl-color-accent":       "#82b5fa",
-	"--rl-color-accent-hover": "#a2cafd",
-	"--rl-color-status-blue":  "#82b5fa",
-	"--rl-color-status-green": "#28c772",
-	"--rl-color-status-red":   "#f74f4d",
-	"--rl-color-status-grey":  "#8f929c",
-	"--rl-color-status-amber": "#ffa826",
-	"--rl-tag-blue-fg":        "#a2cafd",
-	"--rl-tag-green-fg":       "#5fd28c",
-	"--rl-tag-red-fg":         "#ed7172",
-	"--rl-tag-grey-fg":        "#b8bcc3",
-	"--rl-tag-amber-fg":       "#ffb84d",
-	"--rl-tag-purple-fg":      "#c4a9f7",
+	"--rl-color-accent":        "#82b5fa",
+	"--rl-color-accent-hover":  "#a2cafd",
+	"--rl-color-status-blue":   "#82b5fa",
+	"--rl-color-status-green":  "#28c772",
+	"--rl-color-status-red":    "#f74f4d",
+	"--rl-color-status-grey":   "#8f929c",
+	"--rl-color-status-amber":  "#ffa826",
+	"--rl-tag-blue-fg":         "#a2cafd",
+	"--rl-tag-green-fg":        "#5fd28c",
+	"--rl-tag-red-fg":          "#ed7172",
+	"--rl-tag-grey-fg":         "#b8bcc3",
+	"--rl-tag-amber-fg":        "#ffb84d",
+	"--rl-tag-purple-fg":       "#c4a9f7",
+	"--rl-color-status-yellow": "#fdd835",
+	"--rl-color-status-teal":   "#26a69a",
+	"--rl-tag-yellow-fg":       "#fff176",
+	"--rl-tag-teal-fg":         "#4db6ac",
+}
+
+// rlDefaultLightTokens are rela-components' light values for the same
+// tokens, for restating a key only the dark palette sets. Pinned to
+// tokens.css by TestRLDefaultTokensMatchTokensCSS.
+var rlDefaultLightTokens = map[string]string{
+	"--rl-color-accent":        "#5564bf",
+	"--rl-color-accent-hover":  "#4656b9",
+	"--rl-color-status-blue":   "#6287e6",
+	"--rl-color-status-green":  "#009942",
+	"--rl-color-status-red":    "#ee3131",
+	"--rl-color-status-grey":   "#74798b",
+	"--rl-color-status-amber":  "#e65200",
+	"--rl-tag-blue-fg":         "#4656b9",
+	"--rl-tag-green-fg":        "#007a34",
+	"--rl-tag-red-fg":          "#c10616",
+	"--rl-tag-grey-fg":         "#4a4d59",
+	"--rl-tag-amber-fg":        "#a33a00",
+	"--rl-tag-purple-fg":       "#6d28d9",
+	"--rl-color-status-yellow": "#d18306",
+	"--rl-color-status-teal":   "#008f80",
+	"--rl-tag-yellow-fg":       "#9d6204",
+	"--rl-tag-teal-fg":         "#00695c",
 }
 
 // rlBadgeTokens maps a badge color to the rela-components tokens it paints:
 // the tag text color, which badges use, and the status color, which kanban
-// column dots use. The library has one amber for both orange and yellow
-// (see [rlTokens]), and paints a purple dot with the accent.
+// column dots use. Orange paints the library's amber; the library paints a
+// purple dot with the accent.
 var rlBadgeTokens = map[string][]string{
 	"blue":   {"--rl-tag-blue-fg", "--rl-color-status-blue"},
 	"green":  {"--rl-tag-green-fg", "--rl-color-status-green"},
 	"red":    {"--rl-tag-red-fg", "--rl-color-status-red"},
 	"gray":   {"--rl-tag-grey-fg", "--rl-color-status-grey"},
 	"purple": {"--rl-tag-purple-fg"},
-	"amber":  {"--rl-tag-amber-fg", "--rl-color-status-amber"},
+	"orange": {"--rl-tag-amber-fg", "--rl-color-status-amber"},
+	"yellow": {"--rl-tag-yellow-fg", "--rl-color-status-yellow"},
+	"teal":   {"--rl-tag-teal-fg", "--rl-color-status-teal"},
 }
 
 // rlTokens maps the colors an operator configured onto rela-components'
@@ -430,9 +557,6 @@ func rlTokens(accent string, badges map[string]string, hoverDelta float64) map[s
 	}
 	for name, tokens := range rlBadgeTokens {
 		c := badges[name]
-		if name == "amber" {
-			c = cmp.Or(badges["orange"], badges["yellow"])
-		}
 		if c == "" {
 			continue
 		}
@@ -504,8 +628,22 @@ func copyBadges(src map[string]string) map[string]string {
 	return dst
 }
 
+// mergeBadges copies src over dst, folding the `grey` alias onto `gray`, the
+// key the badge tokens use.
+// foldBadgeAliases returns badges with `grey` written as `gray`.
+func foldBadgeAliases(badges map[string]string) map[string]string {
+	folded := make(map[string]string, len(badges))
+	mergeBadges(folded, badges)
+	return folded
+}
+
 func mergeBadges(dst, src map[string]string) {
-	maps.Copy(dst, src)
+	for name, color := range src {
+		if name == "grey" {
+			name = "gray"
+		}
+		dst[name] = color
+	}
 }
 
 // deriveTheme produces the full CSS variable map from 8 base colors + 7 badges.

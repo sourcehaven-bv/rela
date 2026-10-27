@@ -124,6 +124,12 @@ func (s *paletteService) load() (*PaletteConfig, error) {
 	if err := yaml.Unmarshal(data, &p); err != nil {
 		return nil, fmt.Errorf("parse %s: %w (legacy `dark: auto` is no longer supported — remove the `dark` line or set it to `false` or an explicit object)", userPaletteFile, err)
 	}
+	// The stored palette reaches _rela.css as raw custom-property names and
+	// values, so it is validated here as well as on save: the file or KV row
+	// can be edited outside the API.
+	if err := dataentryconfig.ValidatePalette(&p); err != nil {
+		return nil, fmt.Errorf("invalid %s: %w", userPaletteFile, err)
+	}
 	return &p, nil
 }
 

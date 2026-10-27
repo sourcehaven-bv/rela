@@ -1706,19 +1706,12 @@ func (a *App) ProjectRoot() string {
 	return a.paths.Root
 }
 
-// colorToCSSClass maps a color name from config to a CSS class.
-var colorToCSSClass = map[string]string{
-	"blue":   "badge-blue",
-	"purple": "badge-purple",
-	"green":  "badge-green",
-	"gray":   "badge-gray",
-	"red":    "badge-red",
-	"orange": "badge-orange",
-	"yellow": "badge-yellow",
+// autoColors assigns colors to enum values that have no explicit style, as
+// bare-hue style classes. The order is fixed: changing it would recolor every
+// project that relies on it.
+var autoColors = []string{
+	"badge-blue", "badge-purple", "badge-green", "badge-orange", "badge-yellow", "badge-red", "badge-gray",
 }
-
-// autoColors assigns colors to enum values that have no explicit style.
-var autoColors = []string{"blue", "purple", "green", "orange", "yellow", "red", "gray"}
 
 func buildStyleMap(
 	cfg *Config, meta *metamodel.Metamodel,
@@ -1731,11 +1724,14 @@ func buildStyleMap(
 		sm[typeName] = make(map[string]string)
 		st[typeName] = true
 		for val, color := range valueColors {
-			if cls, ok := colorToCSSClass[color]; ok {
-				sm[typeName][val] = cls
-			} else {
+			// Config validation rejects an unknown color, so the grey
+			// fallback only covers a config that skipped validation.
+			c, err := dataentryconfig.ParseColor(color, cfg.OperatorColors())
+			if err != nil {
 				sm[typeName][val] = "badge-gray"
+				continue
 			}
+			sm[typeName][val] = c.StyleClass()
 		}
 	}
 
@@ -1747,7 +1743,7 @@ func buildStyleMap(
 		sm[typeName] = make(map[string]string)
 		st[typeName] = true
 		for i, val := range ct.Values {
-			sm[typeName][val] = colorToCSSClass[autoColors[i%len(autoColors)]]
+			sm[typeName][val] = autoColors[i%len(autoColors)]
 		}
 	}
 
