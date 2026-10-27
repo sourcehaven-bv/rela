@@ -21,6 +21,11 @@
 //     channel type, and channel_type_refs its ref properties. An empty
 //     cardinality is a row from before the column existed
 //     ([channels.CardinalityUnknown]).
+//   - channel_reads: one read marker per channel and reader (user and
+//     organization), the highest seq read and when it moved. A message's
+//     counts column holds [channels.Counts], so an unread count is an
+//     index range over channel_messages_counts_idx; channels.last_at is
+//     [channels.LastActivity], and orders the read window.
 //
 // # Erasure
 //
@@ -106,11 +111,14 @@ type Dialect struct {
 // 20 -> 21 (TKT-ZU7P13): Untombstone. 21 -> 25 (TKT-964SIS):
 // ConfirmTombstone, Tombstones, Purge and DropTypeRecord. 27 -> 29
 // (TKT-INM3AZ): SetSession and ListSessionsDue. 29 -> 30 (TKT-ZZ4PNX):
-// ListWaiting. The exported methods are the mandated [channels.Store]
-// interface, so this is a required-interface exception rather than a
-// ratchet target. Helpers stay free functions.
+// ListWaiting. 30 -> 33 (TKT-2B2AIA): SetRead, Reads and ListReads. The
+// exported methods are the mandated [channels.Store] interface, so this is
+// a required-interface exception rather than a ratchet target. Helpers
+// stay free functions. The total crossed 40 with the three read marker
+// methods; it is the same exception.
 //
-//plimsoll:max-exported-methods=30
+//plimsoll:max-exported-methods=33
+//plimsoll:max-methods=43
 type Store struct {
 	db DB
 	d  Dialect
@@ -238,15 +246,24 @@ type damagedRowError struct {
 func (e *damagedRowError) Error() string { return e.err.Error() }
 func (e *damagedRowError) Unwrap() error { return e.err }
 
-func scanChannel(r interface{ Scan(...any) error }) (row, error) {
+func scanChannel(r interface{ Scan(...any) error }) (row, error) { return scanChannelWith(r) }
+
+// chanColCount is the number of chanCols scanChannelWith scans.
+const chanColCount = 21
+
+// scanChannelWith scans the chanCols of a row, and then extra, the columns
+// a query selects after them.
+func scanChannelWith(r interface{ Scan(...any) error }, extra ...any) (row, error) {
 	var out row
 	var face, by string
 	var created, closed, archived, reopened, entered, due int64
 	var restarts, reminders string
 	c := &out.c
-	if err := r.Scan(&out.id, &c.Key.ID, &face, &c.Key.Type, &c.Key.Name, &c.Incarnation, &c.State, &c.Title, &by,
+	dest := make([]any, 0, chanColCount+len(extra))
+	dest = append(dest, &out.id, &c.Key.ID, &face, &c.Key.Type, &c.Key.Name, &c.Incarnation, &c.State, &c.Title, &by,
 		&created, &closed, &archived, &reopened, &c.LastSeq, &c.Rev,
-		&c.Session.State, &c.Session.Generation, &entered, &due, &restarts, &reminders); err != nil {
+		&c.Session.State, &c.Session.Generation, &entered, &due, &restarts, &reminders)
+	if err := r.Scan(append(dest, extra...)...); err != nil {
 		return out, err
 	}
 	c.Session.EnteredAt, c.Session.NextDueAt = fromMicros(entered), fromMicros(due)
@@ -453,8 +470,13 @@ func (s *Store) Append(ctx context.Context, k channels.Key, nm channels.NewMessa
 		if err != nil {
 			return err
 		}
-		if err := bumpSession(ctx, q, r.id, lastSeq, rev, r.c.Session); err != nil {
+		if err := bumpSession(ctx, q, r.id, lastSeq, rev, r.c.Session, out.At); err != nil {
 			return err
+		}
+		if nm.MarkRead {
+			if _, err := upsertRead(ctx, q, r.id, channels.ReaderOf(nm.Author), lastSeq, nm.At); err != nil {
+				return err
+			}
 		}
 		if created {
 			rec := channels.KeyAudit(k, channels.AuditCreate, nm.At)
@@ -479,8 +501,8 @@ func (s *Store) Append(ctx context.Context, k channels.Key, nm channels.NewMessa
 // count at the next rev. It returns the last rev the append used.
 func insertMessage(ctx context.Context, q Querier, chanID int64, out channels.Message) (int64, error) {
 	if _, err := q.Exec(ctx, `INSERT INTO channel_messages
-		(channel_id, seq, rev, reply_to, reply_count, pending_at, doc) VALUES (?, ?, ?, ?, 0, 0, ?)`,
-		chanID, out.Seq, out.Rev, out.ReplyTo, docOf(out)); err != nil {
+		(channel_id, seq, rev, reply_to, reply_count, pending_at, counts, doc) VALUES (?, ?, ?, ?, 0, 0, ?, ?)`,
+		chanID, out.Seq, out.Rev, out.ReplyTo, countsOf(out), docOf(out)); err != nil {
 		return 0, err
 	}
 	if out.ReplyTo == 0 {
@@ -507,18 +529,33 @@ func insertNotice(
 		pending = micros(notice.Action.PendingAt)
 	}
 	_, err = q.Exec(ctx, `INSERT INTO channel_messages
-		(channel_id, seq, rev, reply_to, reply_count, pending_at, doc) VALUES (?, ?, ?, 0, 0, ?, ?)`,
-		chanID, notice.Seq, notice.Rev, pending, docOf(notice))
+		(channel_id, seq, rev, reply_to, reply_count, pending_at, counts, doc) VALUES (?, ?, ?, 0, 0, ?, ?, ?)`,
+		chanID, notice.Seq, notice.Rev, pending, countsOf(notice), docOf(notice))
 	return notice, err
 }
 
 // bumpSession sets a channel's head and its session after an append.
-func bumpSession(ctx context.Context, q Querier, id, lastSeq, rev int64, sess channels.Session) error {
+// lastAt, when set, is the time of a message the write stored: last_at
+// takes it when it is later. A zero lastAt keeps last_at.
+func bumpSession(
+	ctx context.Context, q Querier, id, lastSeq, rev int64, sess channels.Session, lastAt time.Time,
+) error {
+	at := micros(lastAt)
 	_, err := q.Exec(ctx, `UPDATE channels SET last_seq = ?, rev = ?, session_state = ?, session_gen = ?,
-		session_entered_at = ?, session_next_due_at = ?, session_restarts = ?, session_reminders = ? WHERE id = ?`,
+		session_entered_at = ?, session_next_due_at = ?, session_restarts = ?, session_reminders = ?,
+		last_at = CASE WHEN ? > last_at THEN ? ELSE last_at END WHERE id = ?`,
 		lastSeq, rev, sess.State, sess.Generation, micros(sess.EnteredAt), micros(sess.NextDueAt),
-		encodeRestarts(sess.Restarts), encodeReminders(sess.Reminders), id)
+		encodeRestarts(sess.Restarts), encodeReminders(sess.Reminders), at, at, id)
 	return err
+}
+
+// countsOf is the counts column of m: 1 when it counts toward a reader's
+// unread (see [channels.Counts]), else 0.
+func countsOf(m channels.Message) int {
+	if channels.Counts(m) {
+		return 1
+	}
+	return 0
 }
 
 // setSchedule stores a channel's session schedule.
@@ -606,10 +643,10 @@ func (s *Store) insertChannel(ctx context.Context, q Querier, k channels.Key, nc
 	}
 	_, err := q.Exec(ctx, `INSERT INTO channels
 		(anchor_id, anchor_face, type, name, tomb, incarnation, state, title, created_by, created_by_user,
-		 created_at, closed_at, archived_at, last_seq, rev)
-		VALUES (?, ?, ?, ?, '', ?, ?, ?, ?, ?, ?, 0, 0, 0, 0)`,
+		 created_at, closed_at, archived_at, last_seq, rev, last_at)
+		VALUES (?, ?, ?, ?, '', ?, ?, ?, ?, ?, ?, 0, 0, 0, 0, ?)`,
 		k.ID, string(k.Face), k.Type, k.Name, nc.Incarnation, string(channels.StateOpen), nc.Title,
-		mustJSON(nc.By), nc.By.User, micros(nc.At))
+		mustJSON(nc.By), nc.By.User, micros(nc.At), micros(nc.At))
 	if err != nil {
 		return row{}, err
 	}
@@ -651,8 +688,8 @@ func (s *Store) update(
 		if m.Action != nil && m.Action.Status == channels.ActionPending {
 			pending = micros(m.Action.PendingAt)
 		}
-		if _, err := q.Exec(ctx, `UPDATE channel_messages SET rev = ?, pending_at = ?, doc = ?
-			WHERE channel_id = ? AND seq = ?`, m.Rev, pending, docOf(m), r.id, seq); err != nil {
+		if _, err := q.Exec(ctx, `UPDATE channel_messages SET rev = ?, pending_at = ?, counts = ?, doc = ?
+			WHERE channel_id = ? AND seq = ?`, m.Rev, pending, countsOf(m), docOf(m), r.id, seq); err != nil {
 			return err
 		}
 		out = m
@@ -765,6 +802,11 @@ func (s *Store) CreateMany(
 		if err != nil {
 			return err
 		}
+		if nc.MarkRead {
+			if _, err := upsertRead(ctx, q, r.id, channels.ReaderOf(nc.By), 0, nc.At); err != nil {
+				return err
+			}
+		}
 		out = r.c
 		rec := channels.KeyAudit(k, channels.AuditCreate, nc.At)
 		rec.By = nc.By
@@ -799,11 +841,14 @@ func (s *Store) SetLifecycle(
 		if err := channels.ApplySchedule(&c, t.SessionDue); err != nil {
 			return err
 		}
+		// last_at takes the transition time too (channels.LastActivity).
+		lifeAt := micros(channels.LifecycleAt(c))
 		if _, err := q.Exec(ctx, `UPDATE channels SET state = ?, closed_at = ?, archived_at = ?, reopened_at = ?,
-			rev = ?, session_next_due_at = ?, session_restarts = ?, session_reminders = ? WHERE id = ?`,
+			rev = ?, session_next_due_at = ?, session_restarts = ?, session_reminders = ?,
+			last_at = CASE WHEN ? > last_at THEN ? ELSE last_at END WHERE id = ?`,
 			string(c.State), micros(c.ClosedAt), micros(c.ArchivedAt), micros(c.ReopenedAt), c.Rev,
 			micros(c.Session.NextDueAt), encodeRestarts(c.Session.Restarts), encodeReminders(c.Session.Reminders),
-			r.id); err != nil {
+			lifeAt, lifeAt, r.id); err != nil {
 			return err
 		}
 		out = c
@@ -831,13 +876,7 @@ func (s *Store) Delete(ctx context.Context, k channels.Key, d channels.Deletion)
 		if err := channels.CheckDeletion(k, r.c.State, r.c.Rev, d); err != nil {
 			return err
 		}
-		// Messages first: the foreign key cascades too, but SQLite only
-		// enforces it with the foreign_keys pragma, and the erasure must not
-		// depend on a connection setting.
-		if _, err := q.Exec(ctx, `DELETE FROM channel_messages WHERE channel_id = ?`, r.id); err != nil {
-			return err
-		}
-		if _, err := q.Exec(ctx, `DELETE FROM channels WHERE id = ?`, r.id); err != nil {
+		if err := eraseRows(ctx, q, []row{r}); err != nil {
 			return err
 		}
 		rec := channels.KeyAudit(k, channels.AuditDelete, d.At)
@@ -1089,8 +1128,8 @@ func (s *Store) SetSession(
 				pending = micros(notice.Action.PendingAt)
 			}
 			if _, err := q.Exec(ctx, `INSERT INTO channel_messages
-				(channel_id, seq, rev, reply_to, reply_count, pending_at, doc) VALUES (?, ?, ?, 0, 0, ?, ?)`,
-				r.id, notice.Seq, notice.Rev, pending, docOf(notice)); err != nil {
+				(channel_id, seq, rev, reply_to, reply_count, pending_at, counts, doc) VALUES (?, ?, ?, 0, 0, ?, ?, ?)`,
+				r.id, notice.Seq, notice.Rev, pending, countsOf(notice), docOf(notice)); err != nil {
 				return err
 			}
 			r.c.LastSeq, r.c.Rev = notice.Seq, notice.Rev
@@ -1098,7 +1137,11 @@ func (s *Store) SetSession(
 		if err := channels.ApplySchedule(&r.c, step.Due); err != nil {
 			return err
 		}
-		if err := bumpSession(ctx, q, r.id, r.c.LastSeq, r.c.Rev, r.c.Session); err != nil {
+		var lastAt time.Time
+		if moved || reminded {
+			lastAt = notice.At
+		}
+		if err := bumpSession(ctx, q, r.id, r.c.LastSeq, r.c.Rev, r.c.Session, lastAt); err != nil {
 			return err
 		}
 		if moved {
@@ -1523,6 +1566,7 @@ func Raw(ctx context.Context, s *Store) ([]byte, error) {
 			' ' || created_by || ' ' || created_by_user FROM channels`,
 		`SELECT doc FROM channel_messages`,
 		`SELECT record FROM channel_audit`,
+		`SELECT 'read ' || reader_user || ' ' || reader_org FROM channel_reads`,
 	} {
 		lines, err := collect(ctx, s.db, q, nil, func(r interface{ Scan(...any) error }) (string, error) {
 			var v string

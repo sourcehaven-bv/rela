@@ -193,7 +193,8 @@ func (f *fakeChanges) Wake() <-chan struct{} { return f.wake }
 func (f *fakeChanges) Take() ([]channels.Key, bool) {
 	return nil, f.resync.Swap(false)
 }
-func (f *fakeChanges) Close() {}
+func (f *fakeChanges) TakeReads() map[channels.Reader][]channels.Key { return nil }
+func (f *fakeChanges) Close()                                        {}
 
 // resync makes the worker's next tick a channel resync round.
 func (f *fakeChanges) fire() {

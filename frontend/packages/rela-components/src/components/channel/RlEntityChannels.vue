@@ -3,7 +3,8 @@
  * The channels on one entity, grouped by channel type.
  *
  * It lists only what the app passes, which is what the server let this user
- * read: there are no locked rows and no unread counts. A channel type with
+ * read: there are no locked rows. A row with unread messages shows their
+ * count in the sidebar's status style, `99+` above 99. A channel type with
  * `cardinality: many` gets a create button when the user may create one; a
  * `one` type has its single channel or nothing.
  *
@@ -16,6 +17,8 @@ import RlHeading from '../common/RlHeading.vue'
 import RlIcon from '../common/RlIcon.vue'
 import RlTag from '../common/RlTag.vue'
 import RlSegmentedControl from '../data/RlSegmentedControl.vue'
+import RlNavStatus from '../layout/RlNavStatus.vue'
+import type { NavItemStatus } from '../../types'
 import type { ChannelGroupView } from './types'
 import { useMessages } from '../../composables/useMessages'
 
@@ -48,6 +51,10 @@ const filterOptions = computed(() => [
 
 function stateLabel(state: 'closed' | 'archived'): string {
   return messages.channelText({ key: state })
+}
+
+function unreadStatus(count: number): NavItemStatus {
+  return { tone: 'new', label: messages.channelUnreadCount({ count }), count }
 }
 </script>
 
@@ -100,6 +107,7 @@ function stateLabel(state: 'closed' | 'archived'): string {
               <span class="rl-entity-channels__title">{{ c.title }}</span>
               <span v-if="c.summary" class="rl-entity-channels__summary">{{ c.summary }}</span>
             </span>
+            <RlNavStatus v-if="c.unread && c.unread > 0" :status="unreadStatus(c.unread)" />
             <RlTag v-if="c.state !== 'open'" :label="stateLabel(c.state)" color="grey" />
           </button>
         </li>

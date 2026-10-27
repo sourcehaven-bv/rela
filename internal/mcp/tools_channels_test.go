@@ -401,13 +401,18 @@ func TestChannelTools_RateLimitedText(t *testing.T) {
 	}
 }
 
-// TestChannelToolDescriptions_Notice pins that every channel tool and the
-// server instructions carry the untrusted-content notice.
+// TestChannelToolDescriptions_Notice pins that every channel tool that
+// answers channel content, and the server instructions, carry the
+// untrusted-content notice. mark_read answers three numbers and no
+// content, so it carries none.
 func TestChannelToolDescriptions_Notice(t *testing.T) {
 	t.Parallel()
 	f := newChannelFixture(t)
 	tools := toolNames(t, f.client(t, "alice"))
 	for _, name := range channelToolNames {
+		if name == toolMarkRead {
+			continue
+		}
 		if !strings.Contains(tools[name].Description, realtime.UntrustedNotice) {
 			t.Errorf("%s description lacks the notice", name)
 		}
@@ -469,6 +474,7 @@ func TestUnavailableChannels(t *testing.T) {
 		"edit_message":   {"id": "REQ-001", chanTypeArg: "room", chanSeqArg: 1, chanPropsArg: map[string]any{}},
 		"remove_message": {"id": "REQ-001", chanTypeArg: "room", chanSeqArg: 1},
 		"create_channel": {"id": "REQ-001", chanTypeArg: "threads"},
+		toolMarkRead:     addr,
 	} {
 		text, isErr := call(t, cs, tool, args)
 		if !isErr || text != "acl.yaml cannot be loaded: broken" {

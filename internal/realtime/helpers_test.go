@@ -222,9 +222,8 @@ type fakeAccess struct {
 	// identityCalls counts QueryIdentity calls: one per entity-property
 	// role check.
 	identityCalls atomic.Int64
-	// primeCalls counts Prime calls; primed holds the ids of the last.
+	// primeCalls counts Prime calls.
 	primeCalls atomic.Int64
-	primed     []string
 }
 
 func (a *fakeAccess) Principal() principal.Principal { return a.p }
@@ -237,9 +236,8 @@ func (a *fakeAccess) HoldsPermissionFor(_ context.Context, _, perm string) bool 
 	return a.perms[perm] && !a.deniedPerms[perm]
 }
 func (a *fakeAccess) CeilingAdmitsUpdate(string) bool { return a.ceiling }
-func (a *fakeAccess) Prime(ctx context.Context, ids []string) context.Context {
+func (a *fakeAccess) Prime(ctx context.Context, _ []string) context.Context {
 	a.primeCalls.Add(1)
-	a.primed = append(a.primed[:0], ids...)
 	return ctx
 }
 
@@ -551,6 +549,33 @@ type countingStore struct {
 	entityLists atomic.Int64
 	// waitingLists counts ListWaiting calls.
 	waitingLists atomic.Int64
+	// reads, listReads and setReads count the read marker calls.
+	reads, listReads, setReads atomic.Int64
+	// beforeReads runs once, before the next Reads reaches the store.
+	beforeReads func()
+}
+
+func (s *countingStore) Reads(
+	ctx context.Context, r channels.Reader, keys []channels.Key,
+) (map[channels.Key]channels.ReadState, error) {
+	s.reads.Add(1)
+	if f := s.beforeReads; f != nil {
+		s.beforeReads = nil
+		f()
+	}
+	return s.Store.Reads(ctx, r, keys)
+}
+
+func (s *countingStore) ListReads(ctx context.Context, r channels.Reader, limit int) ([]channels.ReadMarker, error) {
+	s.listReads.Add(1)
+	return s.Store.ListReads(ctx, r, limit)
+}
+
+func (s *countingStore) SetRead(
+	ctx context.Context, k channels.Key, r channels.Reader, seq int64, at time.Time,
+) (channels.ReadState, bool, error) {
+	s.setReads.Add(1)
+	return s.Store.SetRead(ctx, k, r, seq, at)
 }
 
 func (s *countingStore) ListWaiting(ctx context.Context, q channels.WaitingQuery) ([]channels.Channel, error) {

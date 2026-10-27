@@ -28,27 +28,65 @@ const (
 
 // inboxBounds are the ceilings of one inbox read: the most anchors the
 // holder queries merge, and the most candidate channels one listing may
-// return.
+// return. readKeys is the most keys one marker read names.
 type inboxBounds struct {
-	anchors, rows int
+	anchors, rows, readKeys int
 }
 
 func defaultInboxBounds() inboxBounds {
-	return inboxBounds{anchors: channels.MaxWaitingAnchors, rows: channels.MaxWaitingRows}
+	return inboxBounds{
+		anchors: channels.MaxWaitingAnchors, rows: channels.MaxWaitingRows, readKeys: channels.MaxReadKeys,
+	}
 }
 
-// InboxKindWaiting is the kind of an entry whose session waits on the
-// caller. It is the only kind today.
-const InboxKindWaiting = "waiting"
+// The inbox kinds a request may ask for.
+const (
+	// InboxKindWaiting is the kind of an entry whose session waits on the
+	// caller.
+	InboxKindWaiting = "waiting"
+	// InboxKindUnread asks for the channels with messages above the
+	// caller's read marker.
+	InboxKindUnread = "unread"
+)
+
+// MaxInboxUnread is the most unread channels one inbox answer lists.
+const MaxInboxUnread = 50
 
 // InboxRequest asks for one page of the caller's inbox. Limit 0 is
 // [DefaultInboxLimit], for a caller that names no limit; a surface that
 // reads a limit the user typed checks it with [CheckInboxLimit] first, so
 // a typed 0 is refused rather than read as the default. Cursor "" is the
-// first page.
+// first page. Kinds is a subset of [InboxKindWaiting] and
+// [InboxKindUnread]; empty asks for both (see [CheckInboxKinds]).
 type InboxRequest struct {
 	Limit  int
 	Cursor string
+	Kinds  []string
+}
+
+// CheckInboxKinds checks kinds a caller named: each is [InboxKindWaiting]
+// or [InboxKindUnread], else [TypeInvalid]. An empty list is both.
+func CheckInboxKinds(kinds []string) error {
+	_, _, err := inboxKinds(kinds)
+	return err
+}
+
+// inboxKinds reports which halves of the inbox kinds asks for.
+func inboxKinds(kinds []string) (waiting, unread bool, err error) {
+	if len(kinds) == 0 {
+		return true, true, nil
+	}
+	for _, k := range kinds {
+		switch k {
+		case InboxKindWaiting:
+			waiting = true
+		case InboxKindUnread:
+			unread = true
+		default:
+			return false, false, invalid("kinds must be %s or %s", InboxKindWaiting, InboxKindUnread)
+		}
+	}
+	return waiting, unread, nil
 }
 
 // InboxView is one page of the caller's inbox: the sessions that wait on
@@ -60,18 +98,68 @@ type InboxRequest struct {
 // configuration, under which no entity-property role grants anyone, so
 // the inbox is empty.
 //
+// UnreadChannels are the channels of the caller's read window with
+// messages above the marker, newest activity first, at most
+// [MaxInboxUnread]; UnreadCount is how many there are in the window. Both
+// are set on the first page when the request asks for unread, so a real 0
+// is sent; they are nil otherwise. A request without the waiting kind
+// leaves Entries, Count, Truncated and NextCursor out of the JSON rather
+// than answering "0 waiting".
+//
 // WaitingTypes are the channel types that have a waiting state in the
-// configuration the answer used, sorted. They are not part of the answer
-// on any wire; a watcher uses them to skip channel changes that cannot
-// change an inbox.
+// configuration the answer used, sorted. WakeKeys are the keys of every
+// channel in the caller's gated read window. Neither is part of the
+// answer on any wire; a watcher uses them to skip channel changes that
+// cannot change an inbox.
 type InboxView struct {
-	Notice       string       `json:"notice"`
-	Entries      []InboxEntry `json:"entries"`
-	Count        int          `json:"count"`
-	Truncated    bool         `json:"truncated"`
-	Degraded     bool         `json:"degraded"`
-	NextCursor   string       `json:"next_cursor,omitempty"`
-	WaitingTypes []string     `json:"-"`
+	Notice         string         `json:"notice"`
+	Entries        []InboxEntry   `json:"entries"`
+	Count          int            `json:"count"`
+	Truncated      bool           `json:"truncated"`
+	Degraded       bool           `json:"degraded"`
+	NextCursor     string         `json:"next_cursor,omitempty"`
+	UnreadChannels []InboxUnread  `json:"unread_channels,omitzero"`
+	UnreadCount    *int           `json:"unread_count,omitempty"`
+	WaitingTypes   []string       `json:"-"`
+	WakeKeys       []channels.Key `json:"-"`
+	// noWaiting is set when the request left the waiting kind out.
+	noWaiting bool
+}
+
+// HasWaiting reports whether the answer carries the waiting entries: the
+// request asked for the waiting kind.
+func (v InboxView) HasWaiting() bool { return !v.noWaiting }
+
+// waitingJSON are the JSON keys of the [InboxView] fields that belong to
+// the waiting kind. MarshalJSON drops only these from an answer without
+// it, so a field added later shows up in every answer by default.
+var waitingJSON = []string{"entries", "count", "truncated", "next_cursor"}
+
+// MarshalJSON leaves the waiting fields out of an answer without them.
+func (v InboxView) MarshalJSON() ([]byte, error) {
+	type plain InboxView
+	b, err := json.Marshal(plain(v))
+	if err != nil || !v.noWaiting {
+		return b, err
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(b, &fields); err != nil {
+		return nil, err
+	}
+	for _, k := range waitingJSON {
+		delete(fields, k)
+	}
+	return json.Marshal(fields)
+}
+
+// InboxUnread is a channel with messages above the caller's read marker:
+// the marker, the channel's last seq and the counting messages between,
+// at most [channels.UnreadCap].
+type InboxUnread struct {
+	Channel InboxChannel `json:"channel"`
+	Seq     int64        `json:"seq"`
+	LastSeq int64        `json:"last_seq"`
+	Unread  int          `json:"unread"`
 }
 
 // InboxEntry is one session that waits on the caller.
@@ -140,7 +228,8 @@ func invalidCursor() *DenialError {
 
 func inboxTooLarge() *DenialError {
 	return deny(http.StatusServiceUnavailable, TypeInboxTooLarge,
-		"the inbox matches too many channels to answer; narrow the waiting roles or close old sessions")
+		"the inbox matches too many channels to answer; narrow the waiting roles or close old sessions, "+
+			"or ask for kinds=unread only")
 }
 
 func encodeCursor(e InboxEntry, key channels.Key) string {
@@ -192,13 +281,17 @@ func (c *inboxCursor) after(it inboxItem) bool {
 
 // Inbox lists the sessions that wait on the caller now: open, stored
 // channels in an input_required state whose waiting role the caller holds
-// for update, exactly where [Service.Session] answers waiting_on_me.
+// for update, exactly where [Service.Session] answers waiting_on_me. On
+// the first page it also lists the channels of the caller's read window
+// with unread messages (see [InboxView]).
 //
 // It costs one holder query per waiting pair of the configuration, one
-// channel listing, one batch anchor read and one role prime, whatever the
+// channel listing, one read window listing, one batch anchor read and one
+// role prime shared by both halves, and one marker read, whatever the
 // number of entries. Every anchor passed the row gate and redaction
-// before it is counted, so Truncated and the ceiling are taken after the
-// gate. Nothing is cached: every call answers for its own principal.
+// before it is counted, so Truncated, the ceiling and the unread fields
+// are taken after the gate. Nothing is cached: every call answers for its
+// own principal.
 func (s *Service) Inbox(ctx context.Context, req InboxRequest) (InboxView, error) {
 	limit := req.Limit
 	if limit == 0 {
@@ -207,9 +300,17 @@ func (s *Service) Inbox(ctx context.Context, req InboxRequest) (InboxView, error
 	if err := CheckInboxLimit(limit); err != nil {
 		return InboxView{}, err
 	}
+	waiting, unread, err := inboxKinds(req.Kinds)
+	if err != nil {
+		return InboxView{}, err
+	}
 	cur, err := decodeCursor(req.Cursor)
 	if err != nil {
 		return InboxView{}, err
+	}
+	if cur != nil && !waiting {
+		// A cursor positions waiting entries only.
+		return InboxView{}, invalidCursor()
 	}
 	c, err := s.begin(ctx)
 	if err != nil {
@@ -222,7 +323,10 @@ func (s *Service) Inbox(ctx context.Context, req InboxRequest) (InboxView, error
 	if !identity.Valid() {
 		return InboxView{}, noPrincipal()
 	}
-	view := InboxView{Notice: UntrustedNotice, Entries: []InboxEntry{}}
+	view := InboxView{Notice: UntrustedNotice, noWaiting: !waiting}
+	if waiting {
+		view.Entries = []InboxEntry{}
+	}
 	if c.snap.Degraded {
 		view.Degraded = true
 		return view, nil
@@ -230,15 +334,46 @@ func (s *Service) Inbox(ctx context.Context, req InboxRequest) (InboxView, error
 	run := inboxRun{s: s, c: c}
 	w := c.snap.Config.Waiting()
 	view.WaitingTypes = slices.Sorted(maps.Keys(w.States))
-	anchors, truncated, err := run.holderAnchors(w, identity.ID())
+	var stored []channels.Channel
+	if waiting {
+		var anchors []channels.Anchor
+		if anchors, view.Truncated, err = run.holderAnchors(w, identity.ID()); err != nil {
+			return InboxView{}, err
+		}
+		if stored, err = run.listWaiting(w, anchors); err != nil {
+			return InboxView{}, err
+		}
+	}
+	var marks []channels.ReadMarker
+	if unread && cur == nil {
+		if marks, err = run.readWindow(); err != nil {
+			return InboxView{}, err
+		}
+	}
+	views, err := run.prime(stored, marks)
 	if err != nil {
 		return InboxView{}, err
 	}
-	view.Truncated = truncated
-	items, err := run.waitingItems(w, anchors)
-	if err != nil {
-		return InboxView{}, err
+	if waiting {
+		run.page(&view, run.waitingItems(stored, views), cur, limit)
 	}
+	if unread && cur == nil {
+		if err := run.unread(&view, marks, views); err != nil {
+			return InboxView{}, err
+		}
+	}
+	return view, nil
+}
+
+// inboxRun is the state of one [Service.Inbox] call: the service and the
+// call it began. It keeps the inbox steps off Service and call.
+type inboxRun struct {
+	s *Service
+	c *call
+}
+
+// page sorts items, counts them and fills view with the page after cur.
+func (r inboxRun) page(view *InboxView, items []inboxItem, cur *inboxCursor, limit int) {
 	slices.SortFunc(items, compareItems)
 	view.Count = len(items)
 	if cur != nil {
@@ -251,14 +386,6 @@ func (s *Service) Inbox(ctx context.Context, req InboxRequest) (InboxView, error
 	for _, it := range items {
 		view.Entries = append(view.Entries, it.entry)
 	}
-	return view, nil
-}
-
-// inboxRun is the state of one [Service.Inbox] call: the service and the
-// call it began. It keeps the inbox steps off Service and call.
-type inboxRun struct {
-	s *Service
-	c *call
 }
 
 // holderAnchors runs one holder query per waiting pair and merges the
@@ -296,9 +423,8 @@ func (r inboxRun) holderAnchors(w realtimecfg.WaitingIndex, identity string) ([]
 	return out, truncated, nil
 }
 
-// waitingItems lists the candidate channels and keeps those that wait on
-// the caller, judged per channel as [Service.Session] judges one.
-func (r inboxRun) waitingItems(w realtimecfg.WaitingIndex, anchors []channels.Anchor) ([]inboxItem, error) {
+// listWaiting lists the candidate channels that may wait on the caller.
+func (r inboxRun) listWaiting(w realtimecfg.WaitingIndex, anchors []channels.Anchor) ([]channels.Channel, error) {
 	s, c := r.s, r.c
 	if len(w.States) == 0 || (len(anchors) == 0 && len(w.Creator) == 0) {
 		return nil, nil
@@ -319,7 +445,39 @@ func (r inboxRun) waitingItems(w realtimecfg.WaitingIndex, anchors []channels.An
 	if err != nil {
 		return nil, fmt.Errorf("realtime: list waiting channels: %w", err)
 	}
-	views, err := r.anchors(stored)
+	return stored, nil
+}
+
+// readWindow lists the caller's read window: their markers on live
+// channels of a type the configuration still declares.
+func (r inboxRun) readWindow() ([]channels.ReadMarker, error) {
+	c := r.c
+	reader, _ := callReader(c)
+	marks, err := r.s.store.ListReads(c.ctx, reader, channels.MaxReadWindow)
+	if err != nil {
+		return nil, fmt.Errorf("realtime: list read markers: %w", err)
+	}
+	return slices.DeleteFunc(marks, func(m channels.ReadMarker) bool {
+		_, ok := c.snap.Config.ChannelType(m.Channel.Key.Type)
+		return !ok
+	}), nil
+}
+
+// prime reads the anchors of the waiting candidates and the read window
+// in one batch, and primes the role answers for them once.
+func (r inboxRun) prime(stored []channels.Channel, marks []channels.ReadMarker) (map[entity.Address]AnchorView, error) {
+	all := stored
+	if len(marks) > 0 {
+		all = make([]channels.Channel, 0, len(stored)+len(marks))
+		all = append(all, stored...)
+		for _, m := range marks {
+			all = append(all, m.Channel)
+		}
+	}
+	if len(all) == 0 {
+		return map[entity.Address]AnchorView{}, nil
+	}
+	views, err := r.anchors(all)
 	if err != nil {
 		return nil, err
 	}
@@ -328,23 +486,108 @@ func (r inboxRun) waitingItems(w realtimecfg.WaitingIndex, anchors []channels.An
 		ids = append(ids, v.ID)
 	}
 	slices.Sort(ids)
-	c.ctx = c.acc.Prime(c.ctx, slices.Compact(ids))
+	r.c.ctx = r.c.acc.Prime(r.c.ctx, slices.Compact(ids))
+	return views, nil
+}
+
+// waitingItems keeps the candidate channels that wait on the caller,
+// judged per channel as [Service.Session] judges one.
+func (r inboxRun) waitingItems(stored []channels.Channel, views map[entity.Address]AnchorView) []inboxItem {
 	var out []inboxItem
 	for i := range stored {
 		ch := stored[i]
-		ct, ok := c.snap.Config.ChannelType(ch.Key.Type)
+		ct, view, ok := r.anchorOf(ch.Key, views)
 		if !ok {
-			continue
-		}
-		view, ok := views[channelAddress(ch.Key)]
-		if !ok || !slices.Contains(ct.AttachTo, view.Type) {
 			continue
 		}
 		if it, ok := r.item(ct, view, &ch); ok {
 			out = append(out, it)
 		}
 	}
-	return out, nil
+	return out
+}
+
+// anchorOf returns the channel type of k and the anchor read for it, when
+// the type is declared, the anchor was readable and is of a type the
+// channel type attaches to.
+func (r inboxRun) anchorOf(
+	k channels.Key, views map[entity.Address]AnchorView,
+) (realtimecfg.ChannelType, AnchorView, bool) {
+	ct, ok := r.c.snap.Config.ChannelType(k.Type)
+	if !ok {
+		return ct, AnchorView{}, false
+	}
+	view, ok := views[channelAddress(k)]
+	if !ok || !slices.Contains(ct.AttachTo, view.Type) {
+		return ct, AnchorView{}, false
+	}
+	return ct, view, true
+}
+
+// unread fills view's unread fields from the read window marks: it gates
+// each channel as the waiting entries are gated, counts the gated channels
+// with messages above the marker in one marker read, and keeps those with
+// unread messages in window order.
+func (r inboxRun) unread(view *InboxView, marks []channels.ReadMarker, views map[entity.Address]AnchorView) error {
+	c := r.c
+	type gated struct {
+		mark channels.ReadMarker
+		view AnchorView
+	}
+	var kept []gated
+	var keys, behind []channels.Key
+	for i := range marks {
+		ch := marks[i].Channel
+		ct, av, ok := r.anchorOf(ch.Key, views)
+		if !ok {
+			continue
+		}
+		c.ct, c.anchor, c.key, c.head, c.ops = ct, av, ch.Key, &ch, opGates{}
+		if !roleAdmits(c, &ch, ct.Read, realtimecfg.CapabilityRead) {
+			continue
+		}
+		kept = append(kept, gated{mark: marks[i], view: av})
+		keys = append(keys, ch.Key)
+		if ch.LastSeq > marks[i].Seq {
+			behind = append(behind, ch.Key)
+		}
+	}
+	c.head = nil
+	view.WakeKeys = keys
+	var states map[channels.Key]channels.ReadState
+	if len(behind) > 0 {
+		var err error
+		reader, _ := callReader(c)
+		if states, err = r.s.store.Reads(c.ctx, reader, behind); err != nil {
+			return fmt.Errorf("realtime: read markers: %w", err)
+		}
+	}
+	view.UnreadChannels = []InboxUnread{}
+	n := 0
+	for _, g := range kept {
+		st, ok := states[g.mark.Channel.Key]
+		if !ok || st.Unread == 0 {
+			continue
+		}
+		n++
+		if len(view.UnreadChannels) == MaxInboxUnread {
+			continue
+		}
+		ch := g.mark.Channel
+		view.UnreadChannels = append(view.UnreadChannels, InboxUnread{
+			Channel: inboxChannel(ch, g.view), Seq: st.Seq, LastSeq: st.LastSeq, Unread: st.Unread,
+		})
+	}
+	view.UnreadCount = &n
+	return nil
+}
+
+// inboxChannel names ch, anchored to view, in an inbox answer.
+func inboxChannel(ch channels.Channel, view AnchorView) InboxChannel {
+	return InboxChannel{
+		Anchor: entity.FormatStateRef(ch.Key.ID, ch.Key.Face), EntityType: view.Type,
+		AnchorTitle: view.Title, Type: ch.Key.Type, Name: ch.Key.Name, Title: ch.Title, State: ch.State,
+	}
 }
 
 // anchors reads the anchors of stored in one batch, with the properties
@@ -414,11 +657,8 @@ func (r inboxRun) item(ct realtimecfg.ChannelType, view AnchorView, ch *channels
 	return inboxItem{
 		key: ch.Key,
 		entry: InboxEntry{
-			Kind: InboxKindWaiting,
-			Channel: InboxChannel{
-				Anchor: entity.FormatStateRef(ch.Key.ID, ch.Key.Face), EntityType: view.Type,
-				AnchorTitle: view.Title, Type: ch.Key.Type, Name: ch.Key.Name, Title: ch.Title, State: ch.State,
-			},
+			Kind:    InboxKindWaiting,
+			Channel: inboxChannel(*ch, view),
 			Session: InboxSession{
 				State: sv.State, Label: sv.Label, Status: sv.Status, WaitingFor: sv.WaitingFor,
 				Generation: sv.Generation, EnteredAt: sv.EnteredAt,

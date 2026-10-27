@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"net/http"
+	"reflect"
 	"slices"
 	"strconv"
 	"strings"
@@ -696,4 +698,42 @@ func TestInbox_Budget(t *testing.T) {
 			require.Equal(t, int64(1), alice.primeCalls.Load())
 		})
 	}
+}
+
+// TestInboxView_MarshalJSON pins that an answer without the waiting kind
+// drops exactly the waiting fields: every other JSON field of InboxView,
+// set to a non-zero value, is in it, so a field added later cannot vanish.
+func TestInboxView_MarshalJSON(t *testing.T) {
+	t.Parallel()
+	n := 1
+	v := InboxView{
+		Notice: "n", Entries: []InboxEntry{{Kind: "k"}}, Count: 1, Truncated: true, Degraded: true,
+		NextCursor: "c", UnreadChannels: []InboxUnread{{Seq: 1}}, UnreadCount: &n,
+	}
+	var all []string
+	rt := reflect.TypeFor[InboxView]()
+	for i := range rt.NumField() {
+		f := rt.Field(i)
+		name, _, _ := strings.Cut(f.Tag.Get("json"), ",")
+		if !f.IsExported() || name == "-" {
+			continue
+		}
+		require.False(t, reflect.ValueOf(v).Field(i).IsZero(), "set %s in this test", f.Name)
+		all = append(all, name)
+	}
+	for _, k := range waitingJSON {
+		require.Contains(t, all, k, "waitingJSON names a field")
+	}
+	keys := func(v InboxView) []string {
+		b, err := json.Marshal(v)
+		require.NoError(t, err)
+		var m map[string]any
+		require.NoError(t, json.Unmarshal(b, &m))
+		return slices.Sorted(maps.Keys(m))
+	}
+	slices.Sort(all)
+	require.Equal(t, all, keys(v))
+	v.noWaiting = true
+	want := slices.DeleteFunc(slices.Clone(all), func(k string) bool { return slices.Contains(waitingJSON, k) })
+	require.Equal(t, want, keys(v))
 }

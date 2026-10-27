@@ -2,6 +2,7 @@ package mcp
 
 import (
 	"context"
+	"errors"
 	"strconv"
 	"time"
 
@@ -41,7 +42,39 @@ func toolListInboxDef() *mcpgo.Tool {
 		withNumber("limit", description("Page size, 1 to "+strconv.Itoa(realtime.MaxInboxLimit)+
 			" (default "+strconv.Itoa(realtime.DefaultInboxLimit)+")")),
 		withString("cursor", description("next_cursor from the previous page")),
+		withArray(inboxKindsArg, description("What to list: waiting, unread, or both (the default). "+
+			"unread_channels lists the channels you marked or posted in that have messages you have not "+
+			"read, newest activity first, at most "+strconv.Itoa(realtime.MaxInboxUnread)+", on the first "+
+			"page only; unread_count counts them. With [\"waiting\"] a watch ignores chat; with "+
+			"[\"unread\"] the waiting fields are absent and a cursor is refused.")),
 	)
+}
+
+// inboxKindsArg is list_inbox's kinds argument.
+const inboxKindsArg = "kinds"
+
+// inboxKinds reads the kinds argument: absent is nil, both kinds.
+func inboxKinds(args toolRequest) ([]string, error) {
+	raw, ok := args.GetArguments()[inboxKindsArg]
+	if !ok || raw == nil {
+		return nil, nil
+	}
+	list, ok := raw.([]any)
+	if !ok {
+		return nil, errors.New("kinds: an array of waiting and unread")
+	}
+	out := make([]string, 0, len(list))
+	for _, v := range list {
+		s, ok := v.(string)
+		if !ok {
+			return nil, errors.New("kinds: an array of waiting and unread")
+		}
+		out = append(out, s)
+	}
+	if err := realtime.CheckInboxKinds(out); err != nil {
+		return nil, errors.New("kinds: an array of waiting and unread")
+	}
+	return out, nil
 }
 
 func (h channelHandler) handleInbox(ctx context.Context, args toolRequest) *mcpgo.CallToolResult {
@@ -53,7 +86,11 @@ func (h channelHandler) handleInbox(ctx context.Context, args toolRequest) *mcpg
 	if err != nil {
 		return errorResult(err.Error())
 	}
-	var req realtime.InboxRequest
+	kinds, err := inboxKinds(args)
+	if err != nil {
+		return errorResult(err.Error())
+	}
+	req := realtime.InboxRequest{Kinds: kinds}
 	if limit != nil {
 		req.Limit = int(min(*limit, int64(realtime.MaxInboxLimit)+1))
 	}

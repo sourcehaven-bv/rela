@@ -5,11 +5,13 @@ import type {
   Channel,
   ChannelHead,
   ChannelList,
+  ChannelMarkRead,
   ChannelSchema,
   ChannelState,
   EphemeralAccepted,
   Message,
   MessageActionResponse,
+  MarkReadRequest,
   MessagePage,
   MessagePropInput,
   TypingAccepted,
@@ -174,6 +176,16 @@ export async function runLifecycle(t: ChannelTarget, op: string): Promise<Channe
  */
 export async function sendTyping(t: ChannelTarget): Promise<TypingAccepted> {
   return api.post<TypingAccepted>(`${channelPath(t)}/_typing`, {})
+}
+
+/**
+ * PUT the caller's read marker: up to seq, or up to the channel's head
+ * without one. The marker never moves back, and the server clamps seq to
+ * the head, so the answer may name a higher or lower seq than was sent.
+ */
+export async function markChannelRead(t: ChannelTarget, seq?: number): Promise<ChannelMarkRead> {
+  const body: MarkReadRequest = seq === undefined ? {} : { seq }
+  return api.put<ChannelMarkRead>(`${channelPath(t)}/_read`, body)
 }
 
 /** POST a new channel of a cardinality `many` channel type. */

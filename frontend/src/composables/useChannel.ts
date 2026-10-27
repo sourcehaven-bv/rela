@@ -17,6 +17,7 @@ import { useLiveSubscription } from '@/composables/useLiveSubscription'
 import type {
   Channel,
   ChannelHead,
+  ChannelRead,
   Message,
   MessageActionResponse,
   MessagePage,
@@ -50,6 +51,22 @@ export interface UseChannelOptions {
    * or action it does not know.
    */
   onSeen?: (head: ChannelHead | null, messages: Message[]) => void
+}
+
+/**
+ * Whether two heads hold the same channel rev, last seq and last message,
+ * affordances included. Signals, typing and `read` are not compared: they
+ * never change what the held messages offer.
+ */
+function sameHead(a: ChannelHead | null, b: ChannelHead | null): boolean {
+  if (!a || !b) return false
+  if (a.channel.rev !== b.channel.rev || a.channel.last_seq !== b.channel.last_seq) return false
+  if (!a.last || !b.last) return !a.last && !b.last
+  return (
+    a.last.seq === b.last.seq &&
+    a.last.rev === b.last.rev &&
+    JSON.stringify(a.last._actions) === JSON.stringify(b.last._actions)
+  )
 }
 
 /**
@@ -107,6 +124,12 @@ interface Session {
  *   a signal), the newest page is read again too. Older pages the user
  *   loaded keep their affordances until they are read again; the server
  *   still refuses an operation the caller may no longer run.
+ * - Read markers. A frame whose head moved only in `read` (a mark by the
+ *   same reader, in this tab or another) costs the after_rev page and the
+ *   head, and reads no page again. The frame carries no data, so the head
+ *   is where `read` comes from. The held marker never moves back: a
+ *   message page carries no `read` and keeps the held one, and a head or
+ *   mark answer below it is older and is not taken.
  *
  * `head.last` follows the newest held message, so it never lags behind
  * the list.
@@ -208,8 +231,42 @@ export function useChannel(
     s.heldRev = s.heldRev === null ? page.next_after_rev : Math.max(s.heldRev, page.next_after_rev)
   }
 
+  /**
+   * Replaces the held channel. A message page or lifecycle answer carries
+   * no `read`, so the held marker stays when the new channel has none.
+   */
   function setChannel(channel: Channel) {
-    if (head.value) head.value = { ...head.value, channel }
+    const h = head.value
+    if (!h) return
+    const read = channel.read ?? h.channel.read
+    head.value = { ...h, channel: read ? { ...channel, read } : channel }
+  }
+
+  /**
+   * Takes a fetched head. The marker never moves back on the server, so a
+   * held marker above the fetched one is newer: the head was read before a
+   * mark landed. It is kept.
+   */
+  function takeHead(got: ChannelHead) {
+    const held = head.value?.channel.read
+    const read = got.channel.read
+    head.value =
+      held && read && held.seq > read.seq
+        ? { ...got, channel: { ...got.channel, read: held } }
+        : got
+  }
+
+  /**
+   * Takes the answer to a mark as the held marker, unless the held one is
+   * already higher.
+   */
+  function takeRead(read: ChannelRead) {
+    const h = head.value
+    if (!h) return
+    const held = h.channel.read
+    if (held && held.seq > read.seq) return
+    if (held && held.seq === read.seq && held.unread === read.unread) return
+    head.value = { ...h, channel: { ...h.channel, read: { seq: read.seq, unread: read.unread } } }
   }
 
   /**
@@ -261,7 +318,7 @@ export function useChannel(
   async function refetchHead(s: Session) {
     const mine = ++s.headSeq
     const got = await getChannelHead(s.target)
-    if (current(s) && mine === s.headSeq) head.value = got
+    if (current(s) && mine === s.headSeq) takeHead(got)
   }
 
   /** Reads the head and the newest page, replacing what is held. */
@@ -270,7 +327,7 @@ export function useChannel(
     const mine = ++s.headSeq
     const [h, page] = await Promise.all([getChannelHead(s.target), getMessages(s.target)])
     if (!current(s)) return
-    if (mine === s.headSeq) head.value = h
+    if (mine === s.headSeq) takeHead(h)
     messages.value = []
     hasOlder.value = false
     hasNewer.value = false
@@ -306,12 +363,24 @@ export function useChannel(
         // A frame that brought no message moved the head itself: a
         // signal, a lifecycle change or the caller's affordances.
         if (!brought || stateMoved || sessionMoved || ephemeral || unstored) {
-          const before = head.value?._actions
+          const before = head.value
           await refetchHead(s)
           if (!current(s)) return
-          const actionsMoved = JSON.stringify(before) !== JSON.stringify(head.value?._actions)
+          const actionsMoved =
+            JSON.stringify(before?._actions) !== JSON.stringify(head.value?._actions)
+          // A mark by this reader, in this tab or another, moves only the
+          // head's `read`. The messages are as held, so they are not read
+          // again.
+          const onlyRead =
+            !brought &&
+            !stateMoved &&
+            !sessionMoved &&
+            !actionsMoved &&
+            sameHead(before, head.value)
           // A policy change moves message affordances without a new rev.
-          if (!brought && (stateMoved || actionsMoved || !ephemeral)) await readNewest(s)
+          if (!brought && !onlyRead && (stateMoved || actionsMoved || !ephemeral)) {
+            await readNewest(s)
+          }
         }
         return
       }
@@ -537,5 +606,6 @@ export function useChannel(
     runAction,
     release,
     lifecycle,
+    takeRead,
   }
 }

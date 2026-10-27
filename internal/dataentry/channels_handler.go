@@ -25,6 +25,7 @@ const (
 	lifecycleSegment = "_lifecycle"
 	actionSegment    = "_action"
 	typingSegment    = "_typing"
+	readSegment      = "_read"
 	// messageRouteDepth is the most segments a message route has:
 	// messages/{seq}/_action/{name}.
 	messageRouteDepth = 4
@@ -72,6 +73,11 @@ type channelTypist interface {
 	Typing(ctx context.Context, addr realtime.RawAddress) (realtime.TypingResult, error)
 }
 
+// channelMarker serves the read marker route.
+type channelMarker interface {
+	MarkRead(ctx context.Context, addr realtime.RawAddress, seq *int64) (realtime.MarkReadResult, error)
+}
+
 // realtimeSwitch reports whether realtime is on now. *realtime.Service
 // satisfies it.
 type realtimeSwitch interface {
@@ -92,9 +98,10 @@ type realtimeSwitch interface {
 //	DELETE …/messages/{seq}/_action                             release a pending action
 //	POST   …/_channels/{type}[/{name}]/_lifecycle/{op}         close, reopen, archive, delete
 //	POST   …/_channels/{type}[/{name}]/_typing                 typing (202)
+//	PUT    …/_channels/{type}[/{name}]/_read                   move the caller's read marker
 //
-// Parsing is structural: after the type, `messages`, `_lifecycle` and
-// `_typing` are subresources wherever they stand, and can never be a channel name,
+// Parsing is structural: after the type, `messages`, `_lifecycle`,
+// `_typing` and `_read` are subresources wherever they stand, and can never be a channel name,
 // because names are minted as 13 base36 digits. The service decides by cardinality whether a name belongs.
 //
 // A nil *channelsHandler is "channels not wired": every route answers the
@@ -105,6 +112,7 @@ type channelsHandler struct {
 	actions    messageActor
 	channels   channelWriter
 	typist     channelTypist
+	marker     channelMarker
 	// on answers whether realtime is on; see [channelsHandler.serve].
 	on realtimeSwitch
 	// changes subscribes the live worker to channel changes.
@@ -126,9 +134,9 @@ func SetChannels(a *App, svc *realtime.Service) error {
 		return errors.New("dataentry: SetChannels requires a channel service")
 	}
 	a.channels = &channelsHandler{
-		read: svc, messageOps: svc, actions: svc, channels: svc, typist: svc,
+		read: svc, messageOps: svc, actions: svc, channels: svc, typist: svc, marker: svc,
 		on:       svc,
-		changes:  func() channelChanges { return svc.Subscribe() },
+		changes:  func() channelChanges { return svc.SubscribeReads() },
 		describe: svc,
 		inbox:    svc,
 	}
@@ -170,6 +178,8 @@ type channelRoute struct {
 	release bool
 	// typing is set for …/_typing.
 	typing bool
+	// read is set for …/_read.
+	read bool
 }
 
 // serve answers every route under /api/v1/{plural}/{ref}/_channels. rest
@@ -193,6 +203,10 @@ func (h *channelsHandler) serve(w http.ResponseWriter, r *http.Request, typeName
 		return
 	}
 	switch {
+	case rt.read:
+		if allowMethod(w, r, http.MethodPut) {
+			h.markRead(w, r, rt)
+		}
 	case rt.typing:
 		if allowMethod(w, r, http.MethodPost) {
 			h.typing(w, r, rt)
@@ -249,7 +263,8 @@ func methodNotAllowed(w http.ResponseWriter, r *http.Request, allow string) {
 }
 
 // parseChannelRoute parses {type}[/{name}][/messages[/{seq}[/_action[/{name}]]]],
-// {type}[/{name}]/_lifecycle/{op} and {type}[/{name}]/_typing. It reports
+// {type}[/{name}]/_lifecycle/{op}, {type}[/{name}]/_typing and
+// {type}[/{name}]/_read. It reports
 // false for any other shape, including an op that is no lifecycle
 // operation.
 func parseChannelRoute(typeName, ref string, rest []string) (channelRoute, bool) {
@@ -258,13 +273,15 @@ func parseChannelRoute(typeName, ref string, rest []string) (channelRoute, bool)
 	}
 	rt := channelRoute{addr: realtime.RawAddress{EntityType: typeName, Anchor: ref, Type: rest[0]}}
 	tail := rest[1:]
-	if len(tail) > 0 && tail[0] != messagesSegment && tail[0] != lifecycleSegment && tail[0] != typingSegment {
+	if len(tail) > 0 && !channelSegment(tail[0]) {
 		rt.addr.Name, tail = tail[0], tail[1:]
 	}
 	switch {
 	case len(tail) == 0:
 	case len(tail) == 1 && tail[0] == typingSegment:
 		rt.typing = true
+	case len(tail) == 1 && tail[0] == readSegment:
+		rt.read = true
 	case len(tail) == 2 && tail[0] == lifecycleSegment:
 		if !realtime.IsLifecycleOp(tail[1]) {
 			return channelRoute{}, false
@@ -306,7 +323,7 @@ func (h *channelsHandler) list(w http.ResponseWriter, r *http.Request, typeName,
 		return
 	}
 	if addr, perr := entity.ParseAddress(got.Anchor); perr == nil {
-		recordTopic(r.Context(), anchorTopic(addr.ID()))
+		recordTopic(r.Context(), anchorTopic(addr.ID()), got.Reader)
 	}
 	writeV1JSON(w, http.StatusOK, wireChannelList(got))
 }
@@ -317,7 +334,7 @@ func (h *channelsHandler) head(w http.ResponseWriter, r *http.Request, rt channe
 		writeChannelError(w, r, err)
 		return
 	}
-	recordTopic(r.Context(), channelTopic(got.Channel.Anchor, got.Channel.Type, got.Channel.Name))
+	recordTopic(r.Context(), channelTopic(got.Channel.Anchor, got.Channel.Type, got.Channel.Name), got.Reader)
 	writeV1JSON(w, http.StatusOK, wireHead(got))
 }
 
@@ -478,6 +495,21 @@ func (h *channelsHandler) typing(w http.ResponseWriter, r *http.Request, rt chan
 	writeV1JSON(w, http.StatusAccepted, v1.TypingAccepted{TTLSeconds: int(got.TTL / time.Second)})
 }
 
+// markRead serves PUT …/_read. The body is empty, `{}` or `{"seq": n}`.
+// It answers the stored marker, which may be above n.
+func (h *channelsHandler) markRead(w http.ResponseWriter, r *http.Request, rt channelRoute) {
+	var req v1.MarkReadRequest
+	if !decodeChannelBody(w, r, &req, true) {
+		return
+	}
+	got, err := h.marker.MarkRead(r.Context(), rt.addr, req.Seq)
+	if err != nil {
+		writeChannelError(w, r, err)
+		return
+	}
+	writeV1JSON(w, http.StatusOK, v1.ChannelMarkRead{Seq: got.Seq, Unread: got.Unread, LastSeq: got.LastSeq})
+}
+
 // runAction serves POST …/messages/{seq}/_action/{name}. The body is empty
 // or `{}`. It answers the message after the action, with the warnings of a
 // promote.
@@ -552,4 +584,14 @@ func splitChannelRoute(parts []string) (rest []string, ok bool) {
 		return nil, false
 	}
 	return parts[3:], true
+}
+
+// channelSegment reports whether seg is a fixed segment after the channel
+// type rather than a channel name.
+func channelSegment(seg string) bool {
+	switch seg {
+	case messagesSegment, lifecycleSegment, typingSegment, readSegment:
+		return true
+	}
+	return false
 }

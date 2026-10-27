@@ -252,6 +252,8 @@ func TestChannels_OffIsUniform404(t *testing.T) {
 			{http.MethodGet, roomPath + "/messages/1/more", ""},
 			{http.MethodPost, chatPath + "/_typing", ""},
 			{http.MethodGet, chatPath + "/_typing", ""},
+			{http.MethodPut, roomPath + "/_read", `{"seq":-1}`},
+			{http.MethodGet, roomPath + "/_read", ""},
 		} {
 			t.Run(tc.name+" "+rq.method+" "+rq.path, func(t *testing.T) {
 				resp, b := tc.env.do(t, "alice", rq.method, rq.path, rq.body, nil)
@@ -525,6 +527,10 @@ func (s stubChannels) RunAction(context.Context, realtime.RawAddress, int64, str
 func (s stubChannels) ReleaseAction(context.Context, realtime.RawAddress, int64) (realtime.MessageView, error) {
 	return realtime.MessageView{}, s.err
 }
+func (s stubChannels) MarkRead(context.Context, realtime.RawAddress, *int64) (realtime.MarkReadResult, error) {
+	return realtime.MarkReadResult{}, s.err
+}
+
 func (s stubChannels) Typing(context.Context, realtime.RawAddress) (realtime.TypingResult, error) {
 	return realtime.TypingResult{}, s.err
 }
@@ -557,7 +563,7 @@ func TestChannels_ErrorMapping(t *testing.T) {
 			app := newTestAppV1(t)
 			stub := stubChannels{err: tc.err}
 			app.channels = &channelsHandler{
-				read: stub, messageOps: stub, actions: stub, channels: stub, typist: stub, on: stub,
+				read: stub, messageOps: stub, actions: stub, channels: stub, typist: stub, marker: stub, on: stub,
 			}
 			router := app.NewRouter()
 			for _, rq := range []struct{ method, path, body string }{
@@ -572,6 +578,7 @@ func TestChannels_ErrorMapping(t *testing.T) {
 				{http.MethodPost, roomPath + "/messages/1/_action/ack", ""},
 				{http.MethodDelete, roomPath + "/messages/1/_action", ""},
 				{http.MethodPost, chatPath + "/_typing", ""},
+				{http.MethodPut, roomPath + "/_read", ""},
 			} {
 				rec := httptest.NewRecorder()
 				router.ServeHTTP(rec, httptest.NewRequest(rq.method, rq.path, strings.NewReader(rq.body)).
@@ -630,6 +637,10 @@ func TestParseChannelRoute(t *testing.T) {
 		{[]string{"threads", "0000000000001", "_typing"}, channelRoute{addr: thread, typing: true}, true},
 		{[]string{"room", "_typing", "x"}, channelRoute{}, false},
 		{[]string{"room", "messages", "_typing"}, channelRoute{}, false},
+		{[]string{"room", "_read"}, channelRoute{addr: room, read: true}, true},
+		{[]string{"threads", "0000000000001", "_read"}, channelRoute{addr: thread, read: true}, true},
+		{[]string{"room", "_read", "x"}, channelRoute{}, false},
+		{[]string{"room", "messages", "_read"}, channelRoute{}, false},
 	} {
 		t.Run(strings.Join(tc.rest, "/"), func(t *testing.T) {
 			got, ok := parseChannelRoute("", "", tc.rest)

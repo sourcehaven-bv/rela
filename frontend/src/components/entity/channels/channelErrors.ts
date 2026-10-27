@@ -113,7 +113,7 @@ export function problemType(err: unknown): string {
 }
 
 /** The whole seconds a 429 asks to wait, from its Retry-After header. */
-function retryAfterSeconds(err: ApiError): number | undefined {
+export function retryAfterSeconds(err: ApiError): number | undefined {
   const original = err.original as { response?: { headers?: Record<string, unknown> } } | null
   const raw = original?.response?.headers?.['retry-after']
   const n = typeof raw === 'string' || typeof raw === 'number' ? Number(raw) : NaN

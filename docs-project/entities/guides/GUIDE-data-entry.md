@@ -1316,6 +1316,19 @@ from `GET /api/v1/_schema/channels` (see the realtime guide). A page that
 shows channels reads both again on a `refresh` event, so a change to
 either file reaches it without a page reload.
 
+### Unread messages
+
+The channel list on an entity page shows a badge on each channel with
+unread messages. The badge gives their number, or "99+" above 99. A screen
+reader reads it as, for example, "3 unread". A channel you never opened or
+posted in has no badge.
+
+Opening a channel marks it read up to its newest message, while the
+browser tab is visible. Newer messages that arrive while the channel is
+open are marked read too. A hidden tab marks nothing until you return to
+it. A failed mark is not shown to you. The realtime guide describes read
+markers and which messages count as unread.
+
 ## Lists
 
 Lists display entities in a sortable, filterable table with optional create/edit actions.

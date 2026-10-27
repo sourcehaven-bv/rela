@@ -31,7 +31,15 @@ func wireChannel(c realtime.ChannelView) v1.Channel {
 		CreatedBy: wireChannelAuthor(c.CreatedBy), CreatedAt: channelTime(c.CreatedAt),
 		ClosedAt: channelTime(c.ClosedAt), ArchivedAt: channelTime(c.ArchivedAt),
 		LastSeq: c.LastSeq, Rev: c.Rev, Session: wireChannelSession(c.Session),
+		Read: wireChannelRead(c.Read),
 	}
+}
+
+func wireChannelRead(r *realtime.ChannelRead) *v1.ChannelRead {
+	if r == nil {
+		return nil
+	}
+	return &v1.ChannelRead{Seq: r.Seq, Unread: r.Unread}
 }
 
 func wireChannelSession(s *realtime.SessionView) *v1.ChannelSession {

@@ -59,6 +59,12 @@ type Deps struct {
 }
 
 // Service is the channel service.
+//
+// 40 -> 42 (TKT-2B2AIA): MarkRead and SubscribeReads, the read marker
+// entry points the transports call. Their helpers are free functions.
+// Ratchet target: TKT-N0IKN9.
+//
+//plimsoll:max-methods=42
 type Service struct {
 	store    channels.Store
 	cfg      ConfigSource
@@ -143,6 +149,10 @@ func declaresPromote(c *realtimecfg.Compiled) bool {
 // Subscribe registers a live consumer of channel changes.
 func (s *Service) Subscribe() *Subscription { return s.local.Subscribe() }
 
+// SubscribeReads registers a live consumer that serves many readers: it
+// takes channel changes, and from TakeReads every reader's moved markers.
+func (s *Service) SubscribeReads() *Subscription { return s.local.SubscribeReads() }
+
 // Config returns the realtime configuration in force now, or nil when
 // realtime is off. It is for describing the API (the OpenAPI document);
 // an operation loads its own snapshot.
@@ -190,6 +200,10 @@ type HeadView struct {
 	Ephemeral []EphemeralView `json:"ephemeral"`
 	TypingNow []TypingView    `json:"typing_now"`
 	Actions   Affordances     `json:"actions"`
+	// Reader is whose marker Channel.Read shows; the zero reader when the
+	// caller has no identity. A live consumer replays the head when that
+	// reader's marker moves.
+	Reader channels.Reader `json:"-"`
 }
 
 // Head returns the channel's head.
@@ -216,6 +230,19 @@ func (s *Service) Head(ctx context.Context, addr RawAddress) (HeadView, error) {
 	out := HeadView{
 		Channel:   c.channelView(c.key, c.head),
 		Ephemeral: []EphemeralView{}, TypingNow: typingNow, Actions: c.affordances(),
+	}
+	out.Reader, _ = callReader(c)
+	if c.head != nil {
+		marks, rerr := readsOf(s.store, s.bounds.readKeys, c, []channels.Key{c.key})
+		if rerr != nil {
+			return HeadView{}, rerr
+		}
+		if st, ok := marks[c.key]; ok {
+			// An own post between Head and Reads moved both; the higher
+			// last seq keeps read.seq at or below last_seq.
+			out.Channel.LastSeq = max(out.Channel.LastSeq, st.LastSeq)
+			out.Channel.Read = readView(st)
+		}
 	}
 	if len(msgs) > 0 {
 		v := r.message(msgs[0])
@@ -381,6 +408,7 @@ func (s *Service) Post(ctx context.Context, addr RawAddress, in PostInput) (Post
 	}
 	m, err := s.store.Append(c.ctx, c.key, channels.NewMessage{
 		Type: mt.Name, Author: authorOf(c.p), At: c.now, Props: vp.props, ReplyTo: in.ReplyTo, Session: sp.step,
+		MarkRead: true,
 	})
 	sp.logGuardFailure(c.ctx)
 	if err != nil {
@@ -641,7 +669,7 @@ func (s *Service) Create(
 	// in one step, so concurrent creates cannot pass channels_per_entity.
 	nc := channels.NewChannel{
 		Type: typ, Title: in.Title, By: authorOf(c.p), At: c.now,
-		Max: c.snap.Config.Limits().ChannelsPerEntity,
+		Max: c.snap.Config.Limits().ChannelsPerEntity, MarkRead: true,
 	}
 	if sess := c.ct.Session(); sess != nil {
 		nc.SessionDue = sessionDue(sess)
@@ -671,6 +699,8 @@ type TypeChannels struct {
 type AnchorChannels struct {
 	Anchor string         `json:"anchor"`
 	Types  []TypeChannels `json:"types"`
+	// Reader is as on [HeadView].
+	Reader channels.Reader `json:"-"`
 }
 
 // ListAnchor lists the channels on the anchor that the caller may read,
@@ -718,23 +748,39 @@ func (s *Service) ListAnchor(
 		return AnchorChannels{}, fmt.Errorf("realtime: list channels: %w", err)
 	}
 	out := AnchorChannels{Anchor: addr.String(), Types: []TypeChannels{}}
+	out.Reader, _ = callReader(c)
+	var keys []channels.Key
 	for _, ct := range types {
 		if !slices.Contains(ct.AttachTo, view.Type) {
 			continue
 		}
-		if tc, ok := c.listType(ct, stored, state); ok {
+		if tc, tk, ok := c.listType(ct, stored, state); ok {
 			out.Types = append(out.Types, tc)
+			keys = append(keys, tk...)
+		}
+	}
+	marks, err := readsOf(s.store, s.bounds.readKeys, c, keys)
+	if err != nil {
+		return AnchorChannels{}, err
+	}
+	i := 0
+	for t := range out.Types {
+		for j := range out.Types[t].Channels {
+			if st, ok := marks[keys[i]]; ok {
+				out.Types[t].Channels[j].Read = readView(st)
+			}
+			i++
 		}
 	}
 	return out, nil
 }
 
-// listType collects the readable channels of ct from stored. A type whose
-// read role the caller fails is left out; for a creator read role, each
-// channel is checked on its own.
+// listType collects the readable channels of ct from stored, and their
+// keys in the same order. A type whose read role the caller fails is left
+// out; for a creator read role, each channel is checked on its own.
 func (c *call) listType(
 	ct realtimecfg.ChannelType, stored []channels.Channel, state channels.State,
-) (TypeChannels, bool) {
+) (TypeChannels, []channels.Key, bool) {
 	// Role answers are per channel type: two types may declare one role
 	// name with different sources.
 	c.ct, c.head, c.ops = ct, nil, opGates{}
@@ -742,9 +788,10 @@ func (c *call) listType(
 	c.key = channels.Key{Anchor: anchor, Type: ct.Name}
 	creator := ct.Read.Source.Kind == realtimecfg.SourceCreator
 	if !creator && !c.can(ct.Read, realtimecfg.CapabilityRead) {
-		return TypeChannels{}, false
+		return TypeChannels{}, nil, false
 	}
 	tc := TypeChannels{Type: ct.Name, Label: ct.Label, Cardinality: ct.Cardinality, Channels: []ChannelView{}}
+	var keys []channels.Key
 	for i := range stored {
 		ch := stored[i]
 		if ch.Key.Type != ct.Name || ch.Key.Anchor != anchor || (state != "" && ch.State != state) {
@@ -757,9 +804,10 @@ func (c *call) listType(
 			}
 		}
 		tc.Channels = append(tc.Channels, c.channelView(ch.Key, &ch))
+		keys = append(keys, ch.Key)
 	}
 	c.head = nil
 	tc.Create = ct.Cardinality == realtimecfg.CardinalityMany && ct.Create != nil &&
 		c.requireCaller() == nil && c.gate(*ct.Create)
-	return tc, true
+	return tc, keys, true
 }

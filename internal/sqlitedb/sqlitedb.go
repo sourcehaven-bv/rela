@@ -177,6 +177,11 @@ func (c *DB) init(ctx context.Context) error {
 	if _, err := c.db.ExecContext(ctx, channelCreatorDDL); err != nil {
 		return fmt.Errorf("sqlitedb: create channel creator index: %w", err)
 	}
+	// After the ladder for the same reason: channelReadsIndexDDL indexes
+	// channel_messages.counts, which a pre-v28 table gains in the v28 rung.
+	if _, err := c.db.ExecContext(ctx, channelReadsIndexDDL); err != nil {
+		return fmt.Errorf("sqlitedb: create channel read indexes: %w", err)
+	}
 	return nil
 }
 
@@ -704,6 +709,7 @@ CREATE TABLE IF NOT EXISTS channels (
 	session_restarts    TEXT NOT NULL DEFAULT '',
 	session_reminders   TEXT NOT NULL DEFAULT '',
 	created_by_user     TEXT NOT NULL DEFAULT '',
+	last_at             INTEGER NOT NULL DEFAULT 0,
 	UNIQUE (anchor_id, anchor_face, type, name, tomb)
 ) STRICT;
 CREATE INDEX IF NOT EXISTS channels_state_idx ON channels(tomb, state);
@@ -716,6 +722,7 @@ CREATE TABLE IF NOT EXISTS channel_messages (
 	reply_count INTEGER NOT NULL DEFAULT 0,
 	pending_at  INTEGER NOT NULL DEFAULT 0,
 	doc         TEXT NOT NULL,
+	counts      INTEGER NOT NULL DEFAULT 1,
 	PRIMARY KEY (channel_id, seq)
 ) STRICT;
 CREATE INDEX IF NOT EXISTS channel_messages_rev_idx ON channel_messages(channel_id, rev);
@@ -735,7 +742,7 @@ CREATE TABLE IF NOT EXISTS channel_types (
 	type        TEXT PRIMARY KEY,
 	anchor_mode TEXT NOT NULL,
 	cardinality TEXT NOT NULL DEFAULT ''
-) STRICT;` + channelTypeRefsDDL + channelRetentionDDL
+) STRICT;` + channelTypeRefsDDL + channelRetentionDDL + channelReadsDDL
 
 // channelTypeRefsDDL holds the ref properties recorded for each channel
 // type (see channels.TypeRecord). Shared between channelsDDL and the v19 to
@@ -767,6 +774,30 @@ CREATE INDEX IF NOT EXISTS channels_session_due_idx ON channels(type, state, ses
 const channelCreatorDDL = `
 CREATE INDEX IF NOT EXISTS channels_creator_idx ON channels(created_by_user, type, state)
 	WHERE tomb = '' AND created_by_user <> '';`
+
+// channelReadsDDL holds the read markers of channels.Store.SetRead: one
+// row per channel and reader (user and organization), the highest seq read
+// and when it moved, in microseconds. pgstore migration 0035 has the same
+// shape. Shared between channelsDDL and the v27 to v28 rung.
+const channelReadsDDL = `
+CREATE TABLE IF NOT EXISTS channel_reads (
+	channel_id  INTEGER NOT NULL REFERENCES channels(id) ON DELETE CASCADE,
+	reader_user TEXT NOT NULL,
+	reader_org  TEXT NOT NULL DEFAULT '',
+	seq         INTEGER NOT NULL DEFAULT 0,
+	at          INTEGER NOT NULL DEFAULT 0,
+	PRIMARY KEY (channel_id, reader_user, reader_org)
+) STRICT;`
+
+// channelReadsIndexDDL holds the indexes of read markers:
+// channel_messages_counts_idx makes an unread count a range of at most
+// channels.UnreadCap entries, and channel_reads_reader_idx finds one
+// reader's markers for channels.Store.ListReads. pgstore migration 0035
+// has the same shape. It runs after the ladder, as channelCreatorDDL does,
+// because it names columns the v28 rung adds.
+const channelReadsIndexDDL = `
+CREATE INDEX IF NOT EXISTS channel_messages_counts_idx ON channel_messages(channel_id, seq) WHERE counts = 1;
+CREATE INDEX IF NOT EXISTS channel_reads_reader_idx ON channel_reads(reader_user, reader_org);`
 
 // searchKeyDDL is the key table of the search index; see searchDDL. It is in
 // schemaSQL because it depends on no column a rung adds.

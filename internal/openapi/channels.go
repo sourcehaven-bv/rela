@@ -15,25 +15,27 @@ import (
 // attaches to; the server answers every other channel route 404.
 
 const (
-	channelHeadSchema  = "ChannelHead"
-	channelSchema      = "Channel"
-	channelSessionRef  = "ChannelSession"
-	channelTimerRef    = "ChannelSessionTimer"
-	channelReminderRef = "ChannelSessionReminder"
-	channelListSchema  = "ChannelList"
-	messageSchema      = "Message"
-	messagePageSchema  = "MessagePage"
-	refPropSchema      = "RefProp"
-	ephemeralSchema    = "EphemeralMessage"
-	ephemeralAccSchema = "EphemeralAccepted"
-	typingAccSchema    = "TypingAccepted"
-	typingEntrySchema  = "TypingEntry"
-	channelAuthorRef   = "ChannelAuthor"
-	actionAnswerSchema = "MessageActionResponse"
-	descriptorSchema   = "ChannelSchema"
-	outputsSchema      = "ChannelMessageOutputs"
-	outputResultSchema = "ChannelMessageOutputResult"
-	inboxSchema        = "Inbox"
+	channelHeadSchema     = "ChannelHead"
+	channelSchema         = "Channel"
+	channelSessionRef     = "ChannelSession"
+	channelTimerRef       = "ChannelSessionTimer"
+	channelReminderRef    = "ChannelSessionReminder"
+	channelListSchema     = "ChannelList"
+	messageSchema         = "Message"
+	messagePageSchema     = "MessagePage"
+	refPropSchema         = "RefProp"
+	ephemeralSchema       = "EphemeralMessage"
+	ephemeralAccSchema    = "EphemeralAccepted"
+	typingAccSchema       = "TypingAccepted"
+	typingEntrySchema     = "TypingEntry"
+	channelAuthorRef      = "ChannelAuthor"
+	actionAnswerSchema    = "MessageActionResponse"
+	descriptorSchema      = "ChannelSchema"
+	outputsSchema         = "ChannelMessageOutputs"
+	outputResultSchema    = "ChannelMessageOutputResult"
+	inboxSchema           = "Inbox"
+	channelReadSchema     = "ChannelRead"
+	channelMarkReadSchema = "ChannelMarkRead"
 )
 
 // addChannelSchemaPath adds `GET /api/v1/_schema/channels`. The route
@@ -171,6 +173,7 @@ func (g *Generator) addChannelPaths(spec *Spec, rt *realtimecfg.Compiled, entity
 	}
 	if added {
 		addChannelSchemas(spec)
+		addReadSchemas(spec.Components.Schemas)
 	}
 }
 
@@ -273,6 +276,7 @@ func addChannelTypePaths(spec *Spec, basePath, typeName, tag string, ct realtime
 	}
 	addLifecyclePaths(spec, headPath, opID, tag, params, ct.Lifecycle)
 	addTypingPath(spec, headPath, opID, tag, params, ct)
+	addReadPath(spec, headPath, opID, tag, params)
 	addActionPaths(spec, headPath+"/messages/{seq}", opID, tag, seqParams, ct)
 }
 
@@ -363,6 +367,34 @@ func addTypingPath(spec *Spec, headPath, opID, tag string, params []Parameter, c
 			RequestBody: &RequestBody{Content: jsonContent(body)},
 			Responses: withResponse(channelErrors("400", "403", "404", "409", "413", "429"),
 				"202", Response{Description: "The typing entry is live", Content: jsonContent(Ref(typingAccSchema))}),
+		},
+	}
+}
+
+// addReadPath adds `PUT …/_read`, which moves the caller's read marker.
+// The body is empty, `{}` or `{"seq": n}`.
+func addReadPath(spec *Spec, headPath, opID, tag string, params []Parameter) {
+	body := ObjectSchema(map[string]*Schema{
+		"seq": {Type: "integer", Minimum: new(float64),
+			Description: "Mark read up to this seq; a seq above the last one is clamped. Absent: up to the last"},
+	}, nil)
+	body.AdditionalProperties = &Schema{Not: &Schema{}}
+	errs := channelErrors("400", "403", "404", "413", "429")
+	errs["405"] = Response{Description: "Only PUT is allowed", Content: problemContent()}
+	spec.Paths[headPath+"/_read"] = PathItem{
+		Parameters: params,
+		Put: &Operation{
+			OperationID: "markRead" + opID,
+			Summary:     "Mark the channel read",
+			Description: "Moves your read marker up to seq, or to the last message. The marker never moves " +
+				"back, and only you see it. Reading messages never moves it; a post of yours does. A " +
+				"cardinality-one channel that does not exist yet answers zeros and stores nothing. Needs read " +
+				"access only. Rate limited " +
+				"to " + realtimelimits.ReadRate.String() + " per channel, apart from posts.",
+			Tags:        []string{tag},
+			RequestBody: &RequestBody{Content: jsonContent(body)},
+			Responses: withResponse(errs, "200",
+				Response{Description: "The stored marker", Content: jsonContent(Ref(channelMarkReadSchema))}),
 		},
 	}
 }
@@ -522,6 +554,23 @@ func propsSchema(ps realtimecfg.PropsSchema) *Schema {
 		}
 	}
 	return &Schema{Type: ps.Type, Properties: props, Required: ps.Required, Closed: !ps.AdditionalProperties}
+}
+
+// addReadSchemas adds the read marker schemas, the read object of a
+// channel and the answer of a mark, and the read property of the channel
+// schema, which addChannelSchemas adds first.
+func addReadSchemas(sc map[string]*Schema) {
+	sc[channelSchema].Properties["read"] = &Schema{Ref: Ref(channelReadSchema).Ref,
+		Description: "Your own read marker; absent when you have none. Only the list and the head carry it"}
+	sc[channelReadSchema] = ObjectSchema(map[string]*Schema{
+		"seq": {Type: "integer", Description: "The highest seq you marked read"},
+		"unread": {Type: "integer", Description: "Messages above seq, at most 100. Removed messages and " +
+			"session notices do not count"},
+	}, []string{"seq", "unread"})
+	sc[channelMarkReadSchema] = ObjectSchema(map[string]*Schema{
+		"seq":    {Type: "integer", Description: "The stored marker; may be above the seq you sent"},
+		"unread": IntegerSchema(), "last_seq": IntegerSchema(),
+	}, []string{"seq", "unread", "last_seq"})
 }
 
 // addChannelSchemas adds the schemas the channel routes share.
@@ -797,8 +846,9 @@ func addInboxPath(spec *Spec) {
 	str, i64, b := StringSchema, IntegerSchema, BooleanSchema
 	errs := channelErrors("403")
 	errs["400"] = Response{
-		Description: "invalid: limit is not a whole number from 1 to 200. invalid_cursor: the cursor is not one " +
-			"an inbox answer gave",
+		Description: "invalid: limit is not a whole number from 1 to 200, or kinds names something other than " +
+			"waiting and unread. invalid_cursor: the cursor is not one an inbox answer gave, or kinds is unread " +
+			"only",
 		Content: problemContent(),
 	}
 	errs["404"] = Response{Description: "Realtime is not enabled", Content: problemContent()}
@@ -819,6 +869,8 @@ func addInboxPath(spec *Spec) {
 				{Name: "limit", In: "query", Description: "Entries per page, 1 to 200; default 50",
 					Schema: IntegerSchema()},
 				{Name: "cursor", In: "query", Description: "next_cursor of the previous page", Schema: str()},
+				{Name: "kinds", In: "query", Description: "Comma list of waiting and unread; default both. " +
+					"With unread only, the waiting fields are absent and a cursor is refused", Schema: str()},
 			},
 			Responses: withResponse(errs, "200",
 				Response{Description: "One page of the inbox", Content: jsonContent(Ref(inboxSchema))}),
@@ -848,6 +900,13 @@ func addInboxPath(spec *Spec) {
 			Description: "The message types whose post by you would move the session; empty, never null"},
 		"links": ObjectSchema(map[string]*Schema{"entity": str(), "channel": str()}, []string{"entity", "channel"}),
 	}, []string{"kind", "channel", "session", "roles", "since", "transitions", "links"})
+	unread := ObjectSchema(map[string]*Schema{
+		"channel":  entry.Properties["channel"],
+		"seq":      {Type: "integer", Description: "Your read marker"},
+		"last_seq": i64(),
+		"unread":   {Type: "integer", Description: "Messages above your marker, at most 100"},
+		"links":    entry.Properties["links"],
+	}, []string{"channel", "seq", "last_seq", "unread", "links"})
 	spec.Components.Schemas[inboxSchema] = ObjectSchema(map[string]*Schema{
 		"notice":  {Type: "string", Description: "Channel titles and holders are untrusted text"},
 		"entries": ArraySchema(entry),
@@ -856,5 +915,10 @@ func addInboxPath(spec *Spec) {
 			Description: "More anchors named you than one inbox reads; counts only rows you may read"},
 		"degraded":    b(),
 		"next_cursor": {Type: "string", Description: "The cursor of the next page; absent on the last"},
-	}, []string{"notice", "entries", "count", "truncated", "degraded"})
+		"unread_channels": {Type: "array", Items: unread,
+			Description: "The channels you marked whose messages you have not read, newest activity first, at " +
+				"most 50; on the first page only, when kinds includes unread"},
+		"unread_count": {Type: "integer",
+			Description: "How many channels have unread messages; on the first page only, when kinds includes unread"},
+	}, []string{"notice", "degraded"})
 }

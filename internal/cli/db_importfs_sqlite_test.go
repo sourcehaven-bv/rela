@@ -192,6 +192,7 @@ func TestDBImportFS_SQLiteTablesAreAccounted(t *testing.T) {
 		"channel_messages":   "not copied yet: fs channels live in .rela/channels (TKT-DD8B6I)",
 		"channel_audit":      "not copied yet: fs channels live in .rela/channels (TKT-DD8B6I)",
 		"channel_tombstones": "not copied yet: fs channels live in .rela/channels (TKT-DD8B6I)",
+		"channel_reads":      "not copied yet: fs channels live in .rela/channels (TKT-DD8B6I)",
 		"channel_types":      "not copied yet: recorded again when the server first starts on the database",
 		"channel_type_refs":  "not copied yet: recorded again when the server first starts on the database",
 	}

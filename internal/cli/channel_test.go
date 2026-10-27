@@ -287,6 +287,7 @@ func TestChannelCLI_HiddenAnchorTextEqualsShow(t *testing.T) {
 			{"channel", "remove", id, "room", "1"},
 			{"channel", "create", id, "threads"},
 			{"channel", "watch", id, "room", "--timeout", "1s"},
+			{"channel", "mark-read", id, "room"},
 		} {
 			_, err := runChannel(t, p.svc, "alice", "", args...)
 			require.Error(t, err, args)

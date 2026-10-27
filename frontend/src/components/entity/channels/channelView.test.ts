@@ -369,6 +369,32 @@ describe('channelGroups', () => {
   })
 })
 
+describe('channelGroups unread', () => {
+  it('carries the unread count of a channel with a marker, and none at 0', () => {
+    const c = { anchor: 'F-1', type: 'thread', state: 'open' as const, last_seq: 42, rev: 57 }
+    const groups = channelGroups(
+      [
+        {
+          type: 'thread',
+          cardinality: 'many',
+          create: false,
+          channels: [
+            { ...c, name: 'a', read: { seq: 39, unread: 2 } },
+            { ...c, name: 'b', read: { seq: 42, unread: 0 } },
+            { ...c, name: 'c' },
+          ],
+        },
+      ],
+      () => undefined
+    )
+    expect(groups[0].channels).toEqual([
+      { key: 'thread/a', title: 'a', state: 'open', unread: 2 },
+      { key: 'thread/b', title: 'b', state: 'open' },
+      { key: 'thread/c', title: 'c', state: 'open' },
+    ])
+  })
+})
+
 describe('parseChannelKey', () => {
   it('round-trips channelKey', () => {
     expect(parseChannelKey(channelKey('room'))).toEqual({ channelType: 'room' })

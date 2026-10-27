@@ -114,6 +114,25 @@ func (c *countingChannels) Keys(ctx context.Context) ([]channels.Key, error) {
 	return c.Store.Keys(ctx)
 }
 
+func (c *countingChannels) Reads(
+	ctx context.Context, r channels.Reader, keys []channels.Key,
+) (map[channels.Key]channels.ReadState, error) {
+	c.hit("Reads")
+	return c.Store.Reads(ctx, r, keys)
+}
+
+func (c *countingChannels) ListReads(ctx context.Context, r channels.Reader, limit int) ([]channels.ReadMarker, error) {
+	c.hit("ListReads")
+	return c.Store.ListReads(ctx, r, limit)
+}
+
+func (c *countingChannels) SetRead(
+	ctx context.Context, k channels.Key, r channels.Reader, seq int64, at time.Time,
+) (channels.ReadState, bool, error) {
+	c.hit("SetRead")
+	return c.Store.SetRead(ctx, k, r, seq, at)
+}
+
 func (c *countingChannels) TypeRecords(ctx context.Context) (map[string]channels.TypeRecord, error) {
 	c.hit("TypeRecords")
 	return c.Store.TypeRecords(ctx)
@@ -398,9 +417,20 @@ func TestChannelsBudget_List10vs50(t *testing.T) {
 	listCost := func(n int, yaml string) channelCost {
 		b := newChannelBudgetWith(t, 0, yaml)
 		anchor := channels.Anchor{ID: "TKT-1"}
+		// Every thread has alice's marker and a newer message, so each
+		// listed thread carries a read with unread messages.
 		for i := range n {
-			if _, err := b.ch.store.CreateMany(context.Background(), anchor, channels.NewChannel{
+			ch, err := b.ch.store.CreateMany(context.Background(), anchor, channels.NewChannel{
 				Type: "threads", Title: fmt.Sprintf("thread %d", i), By: channels.Author{User: "alice"}, At: time.Now(),
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, _, err := b.ch.store.SetRead(context.Background(), ch.Key, readerAlice, 0, time.Now()); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := b.ch.store.Append(context.Background(), ch.Key, channels.NewMessage{
+				Type: "text", Author: channels.Author{User: "bob"}, At: time.Now(), Props: map[string]any{"body": "x"},
 			}); err != nil {
 				t.Fatal(err)
 			}
@@ -409,6 +439,11 @@ func TestChannelsBudget_List10vs50(t *testing.T) {
 		for _, tl := range decodeAs[v1.ChannelList](t, body).Types {
 			if tl.Type == "threads" && len(tl.Channels) != n {
 				t.Fatalf("list holds %d threads, want %d", len(tl.Channels), n)
+			}
+			for _, c := range tl.Channels {
+				if tl.Type == "threads" && (c.Read == nil || c.Read.Unread != 1) {
+					t.Fatalf("thread %s read = %+v, want one unread", c.Name, c.Read)
+				}
 			}
 			if tl.Type == "threads" && yaml == sessionThreads {
 				if s := tl.Channels[0].Session; s == nil || s.DueAt == "" || len(s.Timers) != 1 ||
@@ -424,6 +459,9 @@ func TestChannelsBudget_List10vs50(t *testing.T) {
 	c10, c50 := cost(10), cost(50)
 	if c10.entity["ListEntityHeaders"] == 0 || len(c10.channel) == 0 {
 		t.Fatalf("a counter is not on the read path: %s", c10)
+	}
+	if c10.channel["Reads"] != 1 {
+		t.Fatalf("a channel list reads the markers in %d calls, want 1: %s", c10.channel["Reads"], c10)
 	}
 	if !c10.equal(c50) {
 		t.Errorf("a channel list grows with rows:\n10: %s\n50: %s", c10, c50)

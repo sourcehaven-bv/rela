@@ -70,7 +70,7 @@ func (s *Store) Append(ctx context.Context, k channels.Key, nm channels.NewMessa
 		recs = append(recs, segRecord{idx: s.idx(parent.Seq), seg: parentSeg, rec: encodeLine(line{K: "p",
 			Message: channels.Message{Seq: parent.Seq, Rev: m.bump(s.idx(parent.Seq))}, ReplyCount: &count})})
 	}
-	m.LastSeq = seq
+	m.advance(seq, msg.At)
 	var after channels.Channel
 	if moved {
 		var notice channels.Message
@@ -87,9 +87,7 @@ func (s *Store) Append(ctx context.Context, k channels.Key, nm channels.NewMessa
 		// The create record goes before meta.yaml: a crash in between
 		// leaves a create record for a channel the next append creates
 		// again, so the trail may repeat a create but never misses one.
-		audit := channels.KeyAudit(k, channels.AuditCreate, nm.At)
-		audit.By = nm.Author
-		err = s.appendAudit(k.ID, audit)
+		err = appendCreateAudit(&s.disk, k, nm.Author, nm.At)
 		if err != nil {
 			return channels.Message{}, err
 		}
@@ -108,7 +106,17 @@ func (s *Store) Append(ctx context.Context, k channels.Key, nm channels.NewMessa
 		}
 	}
 	channels.FillSessionOutcome(nm.Session, m.channel(k), move, moved)
+	if nm.MarkRead {
+		markAfterWrite(&s.disk, k, channels.ReaderOf(nm.Author), m.LastSeq, nm.At)
+	}
 	return msg, nil
+}
+
+// appendCreateAudit appends the create record of channel k, by by at at.
+func appendCreateAudit(d *disk, k channels.Key, by channels.Author, at time.Time) error {
+	rec := channels.KeyAudit(k, channels.AuditCreate, at)
+	rec.By = by
+	return d.appendAudit(k.ID, rec)
 }
 
 // segRecord is a log record of an append and the segment it goes to. seg,
@@ -164,7 +172,7 @@ func moveSession(
 	if err != nil {
 		return after, notice, err
 	}
-	m.LastSeq = notice.Seq
+	m.advance(notice.Seq, notice.At)
 	if notice.Action != nil {
 		setPending(m, notice.Seq, *notice.Action)
 	}
@@ -431,13 +439,14 @@ func (s *Store) CreateMany(
 		return channels.Channel{}, err
 	}
 	// The create record goes first, for the reason Append writes it first.
-	rec := channels.KeyAudit(k, channels.AuditCreate, nc.At)
-	rec.By = nc.By
-	if err := s.appendAudit(k.ID, rec); err != nil {
+	if err := appendCreateAudit(&s.disk, k, nc.By, nc.At); err != nil {
 		return channels.Channel{}, err
 	}
 	if err := s.writeMeta(k, m); err != nil {
 		return channels.Channel{}, err
+	}
+	if nc.MarkRead {
+		markAfterWrite(&s.disk, k, channels.ReaderOf(nc.By), 0, nc.At)
 	}
 	return m.channel(k), nil
 }
@@ -1299,7 +1308,7 @@ func applySessionStep(
 		if w.written.Action != nil {
 			setPending(m, seq, *w.written.Action)
 		}
-		m.LastSeq = seq
+		m.advance(seq, at)
 		return w, nil
 	}
 	post, reminded, err := channels.DecideReminder(step, committed, at)
@@ -1313,7 +1322,7 @@ func applySessionStep(
 	w.reminded = true
 	m.setSession(after.Session)
 	m.bump(idx(seq))
-	m.LastSeq = seq
+	m.advance(seq, at)
 	return w, nil
 }
 

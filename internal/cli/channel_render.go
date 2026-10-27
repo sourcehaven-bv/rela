@@ -28,8 +28,8 @@ func renderChannelList(w io.Writer, got realtime.AnchorChannels) error {
 	rows := 0
 	for _, t := range got.Types {
 		for _, c := range t.Channels {
-			_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%d\n",
-				cell(t.Type), cell(c.Name), cell(string(c.State)), cell(c.Title), c.LastSeq)
+			_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%d%s\n",
+				cell(t.Type), cell(c.Name), cell(string(c.State)), cell(c.Title), c.LastSeq, unreadNote(c.Read))
 			rows++
 		}
 		if len(t.Channels) == 0 {
@@ -55,6 +55,18 @@ func renderChannelList(w io.Writer, got realtime.AnchorChannels) error {
 		return err
 	}
 	return nil
+}
+
+// unreadNote is " (N unread)" for a channel whose marker has messages
+// above it, with "+" at the cap, and empty otherwise.
+func unreadNote(r *realtime.ChannelRead) string {
+	if r == nil || r.Unread == 0 {
+		return ""
+	}
+	if r.Unread >= realtime.UnreadCap {
+		return fmt.Sprintf(" (%d+ unread)", realtime.UnreadCap)
+	}
+	return fmt.Sprintf(" (%d unread)", r.Unread)
 }
 
 // cell is one table cell: printable, tabs included, and "-" when empty.

@@ -94,12 +94,45 @@
           "description": "next_cursor from the previous page",
           "type": "string"
         },
+        "kinds": {
+          "description": "What to list: waiting, unread, or both (the default). unread_channels lists the channels you marked or posted in that have messages you have not read, newest activity first, at most 50, on the first page only; unread_count counts them. With [\"waiting\"] a watch ignores chat; with [\"unread\"] the waiting fields are absent and a cursor is refused.",
+          "type": "array"
+        },
         "limit": {
           "description": "Page size, 1 to 200 (default 50)",
           "type": "number"
         }
       },
       "required": [],
+      "type": "object"
+    }
+  },
+  {
+    "name": "mark_read",
+    "description": "Mark a channel read up to seq, or up to its last message without seq. Your read marker is yours alone: it never moves back, a seq above the last one is clamped, and read_channel never moves it; a post of yours does. The answer is the stored marker (which may be above seq), the unread count above it and the channel's last seq. Marks have their own rate limit, apart from posts. An agent that posts as a user also moves that user's marker; run as a job identity (--run-as) to keep them apart.",
+    "inputSchema": {
+      "properties": {
+        "channel_type": {
+          "description": "Channel type, from list_channels",
+          "type": "string"
+        },
+        "id": {
+          "description": "Entity ID, or ID@face for a channel type that anchors to a face",
+          "type": "string"
+        },
+        "name": {
+          "description": "Channel name; only for a type with many channels",
+          "type": "string"
+        },
+        "seq": {
+          "description": "Mark read up to this seq; 0 or more",
+          "type": "number"
+        }
+      },
+      "required": [
+        "id",
+        "channel_type"
+      ],
       "type": "object"
     }
   },

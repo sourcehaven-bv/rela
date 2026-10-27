@@ -382,6 +382,11 @@ type NewMessage struct {
 	TriggeredBy string
 	RequireOpen bool
 	Session     *SessionStep
+	// MarkRead moves the author's read marker to the last seq the append
+	// wrote (the message, or the session notice after it), in the same
+	// store step, creating the marker. A person's post sets it; timers,
+	// reminders and the trigger engine do not.
+	MarkRead bool
 }
 
 // CheckAppendState refuses an append that requires an open channel to one
@@ -467,6 +472,9 @@ type NewChannel struct {
 	// SessionDue, when set, computes the new channel's session schedule
 	// in the create step (see [ScheduleFunc]).
 	SessionDue ScheduleFunc
+	// MarkRead records the creator's read marker at 0: creating a channel
+	// opens it.
+	MarkRead bool
 }
 
 // Cap is the most named channels of the type the anchor may hold: Max,
@@ -694,6 +702,11 @@ func PrepareMessage(m NewMessage) (NewMessage, []byte, error) {
 	if m.At.IsZero() {
 		return m, nil, fmt.Errorf("%w: missing time", ErrInvalidMessage)
 	}
+	if m.MarkRead {
+		if err := ReaderOf(m.Author).Validate(); err != nil {
+			return m, nil, err
+		}
+	}
 	if m.ReplyTo < 0 {
 		return m, nil, fmt.Errorf("%w: negative reply_to", ErrInvalidReply)
 	}
@@ -910,6 +923,11 @@ func PrepareChannel(anchor Anchor, nc NewChannel) (NewChannel, error) {
 	}
 	if err := checkAuthor(nc.By); err != nil {
 		return nc, err
+	}
+	if nc.MarkRead {
+		if err := ReaderOf(nc.By).Validate(); err != nil {
+			return nc, err
+		}
 	}
 	if nc.At.IsZero() {
 		return nc, fmt.Errorf("%w: missing time", ErrInvalidMessage)

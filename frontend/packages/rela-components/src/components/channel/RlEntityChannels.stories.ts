@@ -58,3 +58,39 @@ export const MarkupInTitle: Story = {
     await expect(within(canvasElement).queryByRole('button', { name: /New/ })).toBeNull()
   },
 }
+
+/**
+ * Rows with unread messages show the count beside the title. The server
+ * stops counting at 100, so 100 shows as `99+`; the row's name still says
+ * the number.
+ */
+export const Unread: Story = {
+  args: {
+    activeKey: undefined,
+    groups: [
+      {
+        type: 'topic',
+        label: 'Topics',
+        cardinality: 'many',
+        canCreate: false,
+        channels: [
+          { key: 'topic/a', title: 'Containment', state: 'open', unread: 2 },
+          { key: 'topic/b', title: 'Forensics', state: 'open', unread: 100 },
+          { key: 'topic/c', title: 'Press', state: 'open', unread: 0 },
+          { key: 'topic/d', title: 'Lessons', state: 'closed' },
+        ],
+      },
+    ],
+  },
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement)
+    const two = canvas.getByRole('button', { name: /Containment/ })
+    await expect(two).toHaveAccessibleName(/2 unread/)
+    await expect(within(two).getByText('2')).toBeVisible()
+    const many = canvas.getByRole('button', { name: /Forensics/ })
+    await expect(many).toHaveAccessibleName(/100 unread/)
+    await expect(within(many).getByText('99+')).toBeVisible()
+    await expect(canvas.getByRole('button', { name: /Press/ })).not.toHaveAccessibleName(/unread/)
+    await expect(canvas.getByRole('button', { name: /Lessons/ })).not.toHaveAccessibleName(/unread/)
+  },
+}

@@ -125,6 +125,10 @@
         "user": "alice"
       },
       "last_seq": 3,
+      "read": {
+        "seq": 2,
+        "unread": 1
+      },
       "rev": 3,
       "session": {
         "entered_at": "2026-01-02T03:04:05Z",
@@ -195,6 +199,10 @@
         "user": "alice"
       },
       "last_seq": 5,
+      "read": {
+        "seq": 5,
+        "unread": 0
+      },
       "rev": 8,
       "state": "open",
       "type": "room"
@@ -249,6 +257,10 @@
               "user": "alice"
             },
             "last_seq": 2,
+            "read": {
+              "seq": 2,
+              "unread": 0
+            },
             "rev": 2,
             "session": {
               "entered_at": "2026-01-02T03:04:05Z",
@@ -277,6 +289,10 @@
               "user": "alice"
             },
             "last_seq": 5,
+            "read": {
+              "seq": 5,
+              "unread": 0
+            },
             "rev": 8,
             "state": "open",
             "type": "room"
@@ -434,6 +450,10 @@
         "user": "alice"
       },
       "last_seq": 2,
+      "read": {
+        "seq": 2,
+        "unread": 0
+      },
       "rev": 2,
       "session": {
         "entered_at": "2026-01-02T03:04:05Z",
@@ -998,6 +1018,10 @@
         "user": "alice"
       },
       "last_seq": 2,
+      "read": {
+        "seq": 2,
+        "unread": 0
+      },
       "rev": 2,
       "session": {
         "entered_at": "2026-01-02T03:04:05Z",

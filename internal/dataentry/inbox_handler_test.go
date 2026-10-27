@@ -226,18 +226,26 @@ func seedInbox(t *testing.T, n int) (env *inboxEnv, entries int) {
 // entity-store and channel-store calls at 10 entries as at 50. The
 // entries sit on distinct anchors over two waiting pairs plus the creator
 // branch; as many anchors are hidden as shown, and the read role is a
-// permission a relation confers per entity.
+// permission a relation confers per entity. alice also holds a marker with
+// unread messages on every waiting channel, half of them hidden
+// (TKT-2B2AIA AC 10).
 func TestInboxBudget_10vs50(t *testing.T) {
 	cost := func(n int) channelCost {
 		e, want := seedInbox(t, n)
+		at := time.Date(2026, 10, 27, 10, 0, 0, 0, time.UTC)
+		for i := range n {
+			e.markAndChat(t, fmt.Sprintf("TKT-%d", 100+i), at)
+			e.markAndChat(t, fmt.Sprintf("FEAT-%d", 100+i), at)
+		}
 		rec, c := e.get(t, http.MethodGet, "?limit=200")
 		require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 		got := decodeAs[v1.Inbox](t, rec.Body.Bytes())
 		require.Len(t, got.Entries, want)
-		require.Equal(t, want, got.Count)
+		require.Equal(t, want, *got.Count)
 		for _, en := range got.Entries {
 			require.True(t, strings.HasPrefix(en.Channel.Anchor, "TKT-1"), en.Channel.Anchor)
 		}
+		require.Equal(t, n, *got.UnreadCount)
 		return c
 	}
 	small, large := cost(10), cost(50)
@@ -247,6 +255,8 @@ func TestInboxBudget_10vs50(t *testing.T) {
 	require.Zero(t, small.channel["Head"], small.String())
 	require.Zero(t, small.channel["List"], small.String())
 	require.LessOrEqual(t, small.entity["ResolveHeaders"], 1, small.String())
+	require.Equal(t, 1, small.channel["ListReads"], small.String())
+	require.Equal(t, 1, small.channel["Reads"], small.String())
 }
 
 // TestInbox_HiddenRowsChangeNothingRealACL pins AC 8 through the deployed
@@ -292,7 +302,7 @@ func TestInbox_HiddenRowsChangeNothingRealACL(t *testing.T) {
 	// ticket with a hidden owner reaches the channel listing as an anchor.
 	rec, _ := mixed.get(t, http.MethodGet, "?limit=200")
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
-	require.Equal(t, 7, decodeAs[v1.Inbox](t, rec.Body.Bytes()).Count)
+	require.Equal(t, 7, *decodeAs[v1.Inbox](t, rec.Body.Bytes()).Count)
 	mixed.chans.mu.Lock()
 	require.Len(t, mixed.chans.anchors, 7, "anchors %v", mixed.chans.anchors)
 	mixed.chans.mu.Unlock()
@@ -308,8 +318,8 @@ func TestInbox_HiddenRowsChangeNothingRealACL(t *testing.T) {
 		require.Equal(t, http.StatusOK, base.Code, base.Body.String())
 		require.JSONEq(t, base.Body.String(), withHidden.Body.String(), "page %d", page)
 		got := decodeAs[v1.Inbox](t, base.Body.Bytes())
-		require.Equal(t, 7, got.Count)
-		require.False(t, got.Truncated)
+		require.Equal(t, 7, *got.Count)
+		require.False(t, *got.Truncated)
 		if got.NextCursor == "" {
 			break
 		}
@@ -325,11 +335,13 @@ func TestInboxHandler_Shape(t *testing.T) {
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 	var raw map[string]any
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &raw))
-	require.ElementsMatch(t, []string{"notice", "entries", "count", "truncated", "degraded", "next_cursor"},
+	require.ElementsMatch(t, []string{
+		"notice", "entries", "count", "truncated", "degraded", "next_cursor", "unread_channels", "unread_count",
+	},
 		jsonKeys(raw))
 	got := decodeAs[v1.Inbox](t, rec.Body.Bytes())
 	require.Equal(t, realtime.UntrustedNotice, got.Notice)
-	require.Equal(t, 4, got.Count)
+	require.Equal(t, 4, *got.Count)
 	require.NotEmpty(t, got.NextCursor)
 	require.Len(t, got.Entries, 1)
 	en := got.Entries[0]

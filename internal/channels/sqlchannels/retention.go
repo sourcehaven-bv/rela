@@ -333,10 +333,15 @@ func purgeBatch(
 	return updateTypeAfter(ctx, q, h, f.filing)
 }
 
-// eraseRows deletes the channels rs and their messages.
+// eraseRows deletes the channels rs, their read markers and their
+// messages. The rows that reference a channel go first: the foreign keys
+// cascade too, but SQLite only enforces them with the foreign_keys
+// pragma, and the erasure must not depend on a connection setting.
 func eraseRows(ctx context.Context, q Querier, rs []row) error {
 	for _, r := range rs {
-		// Messages first, for the reason Delete gives.
+		if _, err := q.Exec(ctx, `DELETE FROM channel_reads WHERE channel_id = ?`, r.id); err != nil {
+			return err
+		}
 		if _, err := q.Exec(ctx, `DELETE FROM channel_messages WHERE channel_id = ?`, r.id); err != nil {
 			return err
 		}

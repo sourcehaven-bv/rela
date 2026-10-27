@@ -338,6 +338,11 @@ export interface ChannelRowView {
   state: ChannelStateView
   /** A preformatted line under the title, such as the last activity. */
   summary?: string
+  /**
+   * How many messages the user has not read. The server stops counting at
+   * 100; above 99 the badge shows `99+`. Absent or 0 shows no badge.
+   */
+  unread?: number
 }
 
 /** The channels of one channel type on an entity. */

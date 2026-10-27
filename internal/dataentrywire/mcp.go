@@ -147,7 +147,7 @@ func RemoteMCPDeps(svc *appbuild.Services, host dataentry.MCPHost) (relamcp.Deps
 	// reload applies to the next tool call.
 	if cs := appbuild.ChannelService(svc); cs != nil {
 		deps.Channels = relamcp.ChannelDeps{
-			Reader: cs, Sessions: cs, Writer: cs, Creator: cs, Waker: cs, Inbox: cs,
+			Reader: cs, Sessions: cs, Writer: cs, Creator: cs, Waker: cs, Inbox: cs, Marker: cs,
 		}
 	}
 	return deps, nil

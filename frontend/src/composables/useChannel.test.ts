@@ -4,7 +4,7 @@ import { defineComponent, h, ref } from 'vue'
 import { ApiError } from '@/api/errors'
 import { registerEntityPlurals } from '@/api/entities'
 import type { ChannelTarget, MessagePageQuery, PostResult } from '@/api/channels'
-import type { Channel, ChannelHead, Message, MessagePage } from '@/types/channels'
+import type { Channel, ChannelHead, ChannelMarkRead, Message, MessagePage } from '@/types/channels'
 import {
   useChannel,
   MAX_FOLLOW_PAGES,
@@ -12,6 +12,7 @@ import {
   DEADLINE_SLACK_MS,
   type UseChannelOptions,
 } from './useChannel'
+import { useMarkRead } from './useMarkRead'
 
 // useChannel follows a channel by rev (TKT-91BK6F): the newest page first,
 // then `after_rev` pages on each live frame, merged by seq and rev. These
@@ -22,6 +23,7 @@ const getHead = vi.fn<(t: ChannelTarget) => Promise<ChannelHead>>()
 const getPage = vi.fn<(t: ChannelTarget, q?: MessagePageQuery) => Promise<MessagePage>>()
 const post = vi.fn<() => Promise<PostResult>>()
 const edit = vi.fn<() => Promise<Message>>()
+const markRead = vi.fn<(t: ChannelTarget, seq?: number) => Promise<ChannelMarkRead>>()
 vi.mock('@/api/channels', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/api/channels')>()),
   getChannelHead: (t: ChannelTarget) => getHead(t),
@@ -32,6 +34,7 @@ vi.mock('@/api/channels', async (importOriginal) => ({
   runMessageAction: vi.fn(),
   releaseMessageAction: vi.fn(),
   runLifecycle: vi.fn(),
+  markChannelRead: (t: ChannelTarget, seq?: number) => markRead(t, seq),
 }))
 
 const subs: { label: string; path: () => string | null; onChange: () => void }[] = []
@@ -645,5 +648,134 @@ describe('useChannel session moves', () => {
     await flushPromises()
 
     expect(getHead).not.toHaveBeenCalled()
+  })
+})
+
+describe('useChannel read markers', () => {
+  const read = { seq: 2, unread: 1 }
+
+  beforeEach(() => {
+    registerEntityPlurals(new Map([['ticket', 'tickets']]))
+    getHead.mockReset()
+    getPage.mockReset()
+    markRead.mockReset()
+    subs.length = 0
+  })
+
+  it('keeps read when a frame brings messages', async () => {
+    getHead.mockResolvedValue(headOf({ last_seq: 3, rev: 3, read }))
+    getPage.mockResolvedValueOnce(page([msg(1), msg(2), msg(3)], { next_after_rev: 3 }))
+    const ch = host(() => room)
+    await flushPromises()
+    expect(ch.head.value?.channel.read).toEqual(read)
+
+    // A message page's channel has no read.
+    getPage.mockResolvedValueOnce(
+      page([msg(4)], { channel: channel({ last_seq: 4, rev: 4 }), next_after_rev: 4 })
+    )
+    frame()
+    await flushPromises()
+    expect(ch.head.value?.channel.last_seq).toBe(4)
+    expect(ch.head.value?.channel.read).toEqual(read)
+  })
+
+  it('takes a frame that moved only read from the head and reads no page again', async () => {
+    getHead.mockResolvedValue(headOf({ last_seq: 3, rev: 3, read }))
+    getPage.mockResolvedValueOnce(
+      page([msg(1), msg(2), msg(3)], {
+        channel: channel({ last_seq: 3, rev: 3 }),
+        next_after_rev: 3,
+      })
+    )
+    const ch = host(() => room)
+    await flushPromises()
+    getHead.mockClear()
+    getPage.mockClear()
+
+    // Another tab of the same reader marked the channel read.
+    getHead.mockResolvedValue({
+      ...headOf({ last_seq: 3, rev: 3, read: { seq: 3, unread: 0 } }),
+      last: msg(3),
+    })
+    getPage.mockResolvedValueOnce(
+      page([], { channel: channel({ last_seq: 3, rev: 3 }), next_after_rev: 3 })
+    )
+    frame()
+    await flushPromises()
+    // The frame carries no data: the after_rev page and the head, nothing more.
+    expect(getPage).toHaveBeenCalledTimes(1)
+    expect(getPage).toHaveBeenCalledWith(room, { afterRev: 3 })
+    expect(getHead).toHaveBeenCalledTimes(1)
+    expect(ch.head.value?.channel.read).toEqual({ seq: 3, unread: 0 })
+  })
+
+  it('does not take a head whose marker is below the held one', async () => {
+    getHead.mockResolvedValue(headOf({ last_seq: 3, rev: 3, read }))
+    getPage.mockResolvedValueOnce(page([msg(3)], { next_after_rev: 3 }))
+    const ch = host(() => room)
+    await flushPromises()
+    ch.takeRead({ seq: 3, unread: 0 })
+    getPage.mockResolvedValueOnce(
+      page([], { channel: channel({ last_seq: 3, rev: 3 }), next_after_rev: 3 })
+    )
+    frame()
+    await flushPromises()
+    expect(ch.head.value?.channel.read).toEqual({ seq: 3, unread: 0 })
+  })
+
+  it('sends at most one mark for one incoming message', async () => {
+    vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible')
+    getHead.mockResolvedValue({
+      ...headOf({ last_seq: 3, rev: 3, read: { seq: 3, unread: 0 } }),
+      last: msg(3),
+    })
+    getPage.mockResolvedValueOnce(
+      page([msg(1), msg(2), msg(3)], {
+        channel: channel({ last_seq: 3, rev: 3 }),
+        next_after_rev: 3,
+      })
+    )
+    let ch!: ReturnType<typeof useChannel>
+    mount(
+      defineComponent({
+        setup() {
+          ch = useChannel(() => room)
+          useMarkRead({
+            target: () => room,
+            head: ch.head,
+            messages: ch.messages,
+            hasNewer: ch.hasNewer,
+            takeRead: ch.takeRead,
+          })
+          return () => h('div')
+        },
+      })
+    )
+    await flushPromises()
+    expect(markRead).not.toHaveBeenCalled()
+
+    // A colleague posts seq 4: the frame brings it, and the tab marks it.
+    markRead.mockResolvedValue({ seq: 4, unread: 0, last_seq: 4 })
+    getPage.mockResolvedValueOnce(
+      page([msg(4)], { channel: channel({ last_seq: 4, rev: 4 }), next_after_rev: 4 })
+    )
+    frame()
+    await flushPromises()
+    expect(markRead).toHaveBeenCalledTimes(1)
+    expect(markRead).toHaveBeenCalledWith(room, 4)
+
+    // The mark frames this tab's head: read moved, nothing else.
+    getHead.mockResolvedValue({
+      ...headOf({ last_seq: 4, rev: 4, read: { seq: 4, unread: 0 } }),
+      last: msg(4),
+    })
+    getPage.mockResolvedValueOnce(
+      page([], { channel: channel({ last_seq: 4, rev: 4 }), next_after_rev: 4 })
+    )
+    frame()
+    await flushPromises()
+    expect(markRead).toHaveBeenCalledTimes(1)
+    expect(ch.head.value?.channel.read).toEqual({ seq: 4, unread: 0 })
+    vi.restoreAllMocks()
   })
 })

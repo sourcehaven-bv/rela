@@ -44,6 +44,7 @@ import type {
   ChannelPresentation,
   ChannelReadableRef,
   ChannelReplyQuote,
+  ChannelRowView,
   ChannelSessionView,
   ChannelTypingView,
 } from 'rela-components/components/channel/types'
@@ -500,10 +501,11 @@ export function channelGroups(
   return types.map((t) => {
     const ct = schemaType(t.type)
     const label = t.label || ct?.label || t.type
-    const rows = t.channels.map((c) => ({
+    const rows: ChannelRowView[] = t.channels.map((c) => ({
       key: channelKey(t.type, c.name),
       title: channelTitle(c, label),
       state: c.state,
+      ...(c.read?.unread ? { unread: c.read.unread } : {}),
     }))
     if (t.cardinality === 'one' && rows.length === 0) {
       rows.push({ key: channelKey(t.type), title: label, state: 'open' as const })
