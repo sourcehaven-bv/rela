@@ -5,7 +5,9 @@ title: 'Sessions 4/6: input_required and handoff'
 kind: enhancement
 priority: medium
 effort: m
-status: backlog
+started: "2026-10-26"
+completed: "2026-10-27"
+status: done
 ---
 
 ## Description

@@ -44,6 +44,9 @@ type call struct {
 	// none. The anchor must be of that type.
 	entityType string
 	anchor     AnchorView
+	// anchorAddr is the address the anchor was read at; a re-read after a
+	// handoff uses it.
+	anchorAddr entity.Address
 	key        channels.Key
 	// head is the stored channel, nil for a cardinality-one channel that
 	// holds no message yet.
@@ -140,7 +143,7 @@ func (s *Service) resolveAnchor(c *call, raw string) error {
 		return deny(http.StatusNotFound, TypeUnknownChannelType,
 			fmt.Sprintf("channel type %s does not attach to %s entities", c.ct.Name, view.Type))
 	}
-	c.anchor = view
+	c.anchor, c.anchorAddr = view, addr
 	c.key = channels.Key{Anchor: anchorFor(c.ct, view), Type: c.ct.Name}
 	return nil
 }
@@ -182,28 +185,35 @@ func (s *Service) open(ctx context.Context, addr RawAddress) (*call, error) {
 	if err := c.channelType(addr.EntityType, addr.Type); err != nil {
 		return nil, err
 	}
-	if err := s.resolveAnchor(c, addr.Anchor); err != nil {
+	if err := s.openChannel(c, addr); err != nil {
 		return nil, err
+	}
+	return c, nil
+}
+
+// openChannel is the part of open after the channel type: the
+// anchor, the read role, then the channel itself.
+func (s *Service) openChannel(c *call, addr RawAddress) error {
+	if err := s.resolveAnchor(c, addr.Anchor); err != nil {
+		return err
 	}
 	if c.ct.Read.Source.Kind == realtimecfg.SourceCreator {
 		// The creator source needs the channel; a miss reads as a denial,
 		// so the read check still comes before the name is confirmed.
 		if err := s.loadHead(c, addr.Name); err != nil {
 			if d, ok := errors.AsType[*DenialError](err); ok && d.Type == TypeChannelNotFound {
-				return nil, readDenied(c.ct)
+				return readDenied(c.ct)
 			}
-			return nil, err
+			return err
 		}
 	}
 	if !c.can(c.ct.Read, realtimecfg.CapabilityRead) {
-		return nil, readDenied(c.ct)
+		return readDenied(c.ct)
 	}
 	if c.head == nil {
-		if err := s.loadHead(c, addr.Name); err != nil {
-			return nil, err
-		}
+		return s.loadHead(c, addr.Name)
 	}
-	return c, nil
+	return nil
 }
 
 func readDenied(ct realtimecfg.ChannelType) *DenialError {
@@ -253,6 +263,13 @@ func (c *call) state() channels.State {
 // The anchor was read through the gated reader, so every role already
 // carries the read check its RequireAnchorRead asks for.
 func (c *call) can(role realtimecfg.Role, capability realtimecfg.Capability) bool {
+	return roleAdmits(c, c.head, role, capability)
+}
+
+// roleAdmits is [call.can] with h as the stored channel a creator role
+// reads, so a list that renders many channels in one call answers each
+// creator the way the post path does.
+func roleAdmits(c *call, h *channels.Channel, role realtimecfg.Role, capability realtimecfg.Capability) bool {
 	src := role.Source
 	ok := false
 	switch src.Kind {
@@ -265,7 +282,7 @@ func (c *call) can(role realtimecfg.Role, capability realtimecfg.Capability) boo
 	case realtimecfg.SourcePrincipalType:
 		ok = src.PrincipalType != "" && c.p.PrincipalType() == src.PrincipalType
 	case realtimecfg.SourceCreator:
-		ok = c.head != nil && sameAuthor(c.head.CreatedBy, c.p)
+		ok = h != nil && sameAuthor(h.CreatedBy, c.p)
 	}
 	if ok && src.NeedsCeilingCheck(capability) {
 		ok = capability == realtimecfg.CapabilityRead || c.acc.CeilingAdmitsUpdate(c.anchor.Type)

@@ -87,7 +87,7 @@ func (s *Service) Lifecycle(ctx context.Context, addr RawAddress, op string) (Ch
 	if target == channels.StateOpen {
 		s.dueWake.Note(ch.Session.NextDueAt)
 	}
-	return channelView(c.ct, ch.Key, &ch, c.now, c.snap.Degraded), nil
+	return c.channelView(ch.Key, &ch), nil
 }
 
 // lifecycleOps lists the lifecycle operations the caller may run on c's

@@ -69,7 +69,7 @@ const (
 
 // watchOrder lists the read tools a watch target may name, in the order the
 // watch tool describes them. Only those registered on the server count.
-var watchOrder = []string{"show_entity", "list_entities", "list_relations", toolReadChannel}
+var watchOrder = []string{"show_entity", "list_entities", "list_relations", toolReadChannel, toolReadSession}
 
 // watchNames returns the tools of watchOrder that reads holds.
 func watchNames(reads map[string]mcpgo.ToolHandler) []string {
@@ -149,12 +149,12 @@ type watchTarget struct {
 	args    json.RawMessage
 	key     string
 	handler mcpgo.ToolHandler
-	// channel is set for a read_channel target.
+	// channel is set for a read_channel or read_session target.
 	channel *watchChannel
 }
 
-// watchChannel is the channel a read_channel target reads, as its
-// arguments name it. A wake for another channel skips the target.
+// watchChannel is the channel a read_channel or read_session target
+// reads, as its arguments name it. A read_session target never follows. A wake for another channel skips the target.
 type watchChannel struct {
 	anchor string // entity id, without a face
 	typ    string
@@ -342,7 +342,7 @@ func (r *watchRun) wait(
 
 // channelWake holds the channel wake sources of one watch call: the
 // in-process channel subscription and the channel poll. Both stay nil, and
-// never fire, without a read_channel target.
+// never fire, without a channel target.
 type channelWake struct {
 	sub     *realtime.Subscription
 	ticker  *time.Ticker
@@ -657,7 +657,7 @@ func (w *watchHandler) parseTargets(raw any) ([]watchTarget, error) {
 			return nil, fmt.Errorf("targets[%d]: %w", i, err)
 		}
 		var channel *watchChannel
-		if tool == toolReadChannel {
+		if tool == toolReadChannel || tool == toolReadSession {
 			channel, args = channelTarget(args)
 		}
 		rawArgs, err := json.Marshal(args)
@@ -673,9 +673,9 @@ func (w *watchHandler) parseTargets(raw any) ([]watchTarget, error) {
 	return out, nil
 }
 
-// channelTarget returns the channel a read_channel target names, and the
-// arguments its replay passes: the target's own, with the page limit of a
-// follower capped at watchChannelLimit. A page target keeps its own limit,
+// channelTarget returns the channel a read_channel or read_session target
+// names, and the arguments its replay passes: the target's own, with the
+// page limit of a follower capped at watchChannelLimit. A page target keeps its own limit,
 // which the tool bounds, so a change to any message on its page is seen.
 // Arguments of the wrong type are kept as given, so the replay answers the
 // same error the tool does.

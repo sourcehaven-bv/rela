@@ -4,10 +4,14 @@ import RlChannelSession from './RlChannelSession.vue'
 import { provideMessages } from '../../composables/useMessages'
 import {
   breachSessionAssessed,
+  breachSessionCancelled,
   breachSessionDetected,
+  breachSessionFailed,
   breachSessionFinal,
+  breachSessionInputRequired,
   breachSessionLoading,
   breachSessionStranded,
+  breachSessionWaitingOnMe,
 } from '../../fixtures/channels'
 
 const meta: Meta<typeof RlChannelSession> = {
@@ -90,6 +94,77 @@ export const Final: Story = {
     await expect(cur).toHaveTextContent(', end state')
     await expect(cur).toHaveTextContent('Ended')
     await expect(nextLabels(canvasElement)).toEqual([])
+  },
+}
+
+/** A final state whose status is completed reads "Completed" with the check. */
+export const Completed: Story = {
+  args: { session: { ...breachSessionFinal, status: 'completed' } },
+  play: async ({ canvasElement }) => {
+    const cur = current(canvasElement)[0]!
+    await expect(cur.querySelector('svg')).not.toBeNull()
+    await expect(cur).toHaveTextContent('Completed')
+    await expect(cur).not.toHaveTextContent('Ended')
+  },
+}
+
+/** A cancelled session reads "Cancelled", with no check. */
+export const Cancelled: Story = {
+  args: { session: breachSessionCancelled },
+  play: async ({ canvasElement }) => {
+    const cur = current(canvasElement)[0]!
+    await expect(cur).toHaveTextContent('Dismissed')
+    await expect(cur).toHaveTextContent('Cancelled')
+    await expect(cur.querySelector('svg')).toBeNull()
+    await expect(within(canvasElement).queryByText('Ended')).toBeNull()
+  },
+}
+
+/** A failed session shows a red "Failed" tag, with no check. */
+export const Failed: Story = {
+  args: { session: breachSessionFailed },
+  play: async ({ canvasElement }) => {
+    const cur = current(canvasElement)[0]!
+    const tag = cur.querySelector('.rl-tag')
+    await expect(tag).toHaveTextContent('Failed')
+    await expect(tag).toHaveClass('rl-tag--red')
+    await expect(cur.querySelector('svg')).toBeNull()
+  },
+}
+
+/** An input_required state: an amber tag on the current item, and whom it waits for. */
+export const InputRequired: Story = {
+  args: { session: breachSessionInputRequired },
+  play: async ({ canvasElement }) => {
+    const cur = current(canvasElement)[0]!
+    const tag = cur.querySelector('.rl-tag')
+    await expect(tag).toHaveTextContent('Input required')
+    await expect(tag).toHaveClass('rl-tag--amber')
+    await expect(within(canvasElement).getByText('Waiting for the incident lead')).toBeVisible()
+    await expect(within(canvasElement).getByRole('status')).toHaveTextContent('Waiting for the incident lead')
+    await expect(canvasElement).not.toHaveTextContent('Waiting for you')
+  },
+}
+
+/** A session that waits for the reader says so with a tag. */
+export const WaitingOnMe: Story = {
+  args: { session: breachSessionWaitingOnMe },
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement)
+    await expect(canvas.getByText('Waiting for you')).toBeVisible()
+    await expect(canvas.getByRole('status')).toHaveTextContent('Waiting for you')
+    await expect(canvas.queryByText('Waiting for the incident lead')).toBeNull()
+    await expect(current(canvasElement)[0]).toHaveTextContent('Input required')
+  },
+}
+
+/** A paused session does not say it waits: nothing can answer on a closed channel. */
+export const InputRequiredClosed: Story = {
+  args: { session: { ...breachSessionWaitingOnMe, paused: 'closed' } },
+  play: async ({ canvasElement }) => {
+    await expect(canvasElement).not.toHaveTextContent('Input required')
+    await expect(canvasElement).not.toHaveTextContent('Waiting for')
+    await expect(within(canvasElement).getByRole('status')).toBeEmptyDOMElement()
   },
 }
 

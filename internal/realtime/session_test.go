@@ -413,8 +413,9 @@ func TestSessionEnteredAt(t *testing.T) {
 		h := newSessionHarness(t)
 		now := h.clock.Now()
 		s := h.requireSession(t, "detected", 0)
-		require.True(t, s.EnteredAt.Equal(now))
-		// The guard compares session.entered_at with the posted time.
+		require.True(t, s.EnteredAt.IsZero(), "an unstored channel has no entered_at: %v", s.EnteredAt)
+		// The guard still reads the unstored session as entered now: it
+		// compares session.entered_at with the posted time.
 		h.postTo(t, user("bob"), incident, "stamp", props("at", now.Format(time.RFC3339)))
 		h.requireSession(t, "contained", 1)
 	})

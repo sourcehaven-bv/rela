@@ -39,8 +39,12 @@ func wireChannelSession(s *realtime.SessionView) *v1.ChannelSession {
 		return nil
 	}
 	out := &v1.ChannelSession{
-		State: s.State, Label: s.Label, Generation: s.Generation, EnteredAt: channelTime(s.EnteredAt),
-		Final: s.Final, Stranded: s.Stranded,
+		State: s.State, Label: s.Label, Status: s.Status, WaitingOnMe: s.WaitingOnMe, Generation: s.Generation,
+		EnteredAt: channelTime(s.EnteredAt), Final: s.Final, Stranded: s.Stranded,
+	}
+	for _, w := range s.WaitingFor {
+		out.WaitingFor = append(out.WaitingFor,
+			v1.ChannelSessionWaiting{Role: w.Role, Label: w.Label, Holders: w.Holders})
 	}
 	for _, t := range s.Transitions {
 		out.Transitions = append(out.Transitions, v1.ChannelSessionTransition{

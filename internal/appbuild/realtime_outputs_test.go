@@ -216,10 +216,6 @@ func TestOutputWriter_FailedCodes(t *testing.T) {
 		props   map[string]any
 		code    string
 	}{
-		{"field gate", `                - set: { properties: { owner: "{{message.owner}}" } }`,
-			map[string]any{"owner": "mallory"}, realtime.OutputCodeFieldDenied},
-		{"field gate on a literal", `                - set: { properties: { owner: mallory } }`,
-			nil, realtime.OutputCodeFieldDenied},
 		{"unique", `                - set: { properties: { code: "{{message.code}}" } }`,
 			map[string]any{"code": "B2"}, realtime.OutputCodeConflict},
 		{"illegal transition", `                - set: { properties: { phase: "{{message.phase}}" } }`,
@@ -253,6 +249,53 @@ func TestOutputWriter_PreCheckDenied(t *testing.T) {
 	page, err := appbuild.ChannelService(svc).Read(promoteAs(t, svc, "bob"), incidentRoom, realtime.ReadRequest{})
 	require.NoError(t, err)
 	require.Empty(t, page.Messages, "nothing was stored")
+}
+
+// TestOutputWriter_PreCheckFieldDenied pins that the pre-check covers the
+// field gate of a set: output, templated or literal: the poster is refused
+// before anything is stored and the property keeps its value.
+func TestOutputWriter_PreCheckFieldDenied(t *testing.T) {
+	cases := []struct {
+		name, outputs string
+		props         map[string]any
+	}{
+		{"templated", `                - set: { properties: { owner: "{{message.owner}}" } }`,
+			map[string]any{"owner": "mallory"}},
+		{"literal", `                - set: { properties: { owner: mallory } }`, nil},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			svc, _ := outputsServices(t, tc.outputs)
+			before := incident(t, svc).Properties["owner"]
+			props := map[string]any{"risk": "low"}
+			maps.Copy(props, tc.props)
+			_, err := postAssess(t, svc, "alice", props)
+			d, ok := errors.AsType[*realtime.DenialError](err)
+			require.Truef(t, ok, "want a *DenialError, got %v", err)
+			require.Equal(t, http.StatusForbidden, d.Status)
+			require.Equal(t, realtime.TypeSessionOutputDenied, d.Type)
+			page, err := appbuild.ChannelService(svc).Read(promoteAs(t, svc, "alice"), incidentRoom,
+				realtime.ReadRequest{})
+			require.NoError(t, err)
+			require.Empty(t, page.Messages, "nothing was stored")
+			require.Equal(t, before, incident(t, svc).Properties["owner"])
+		})
+	}
+}
+
+// TestOutputWriter_WriteFieldDenied pins the field_denied code of a write
+// the pre-check did not cover, such as a retry after acl.yaml changed.
+func TestOutputWriter_WriteFieldDenied(t *testing.T) {
+	svc, _ := outputsServices(t, `                - set: { properties: { owner: mallory } }`)
+	w, err := appbuild.OutputsFor(svc, true)
+	require.NoError(t, err)
+	_, err = w.Write(promoteAs(t, svc, "alice"), realtime.OutputRequest{
+		Target: realtime.OutputTarget{Kind: realtimecfg.OutputSet, AnchorID: "INC-001", AnchorType: "incident"},
+		Props:  map[string]any{"owner": "mallory"}, Origin: "session:direct",
+	})
+	oe, ok := errors.AsType[*realtime.OutputError](err)
+	require.Truef(t, ok, "want an *OutputError, got %v", err)
+	require.Equal(t, realtime.OutputCodeFieldDenied, oe.Code)
 }
 
 // TestOutputWriter_RetryAsPoster pins that a retry, which has no request,

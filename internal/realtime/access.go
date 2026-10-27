@@ -64,7 +64,8 @@ type AnchorView struct {
 	// Type is the stored entity type.
 	Type string
 	// Props holds the requested properties of the served face, redacted for
-	// the caller. The service compares them and never renders them.
+	// the caller. The service compares them, and renders only named-role
+	// holders (see [SessionWaitingView]).
 	Props map[string]any
 	// Record is the served face as the `entity` record a lifecycle
 	// `condition:` reads, bound from the same redacted properties as Props:

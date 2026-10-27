@@ -68,6 +68,11 @@ type rawSessionState struct {
 	Final bool                       `yaml:"final"`
 	On    map[string]rawTransition   `yaml:"on"`
 	After map[string]rawSessionTimer `yaml:"after"`
+	// Status is `status`; nil when absent, so `status: ""` is refused
+	// rather than read as the default. See [SessionStatus].
+	Status *string `yaml:"status"`
+	// WaitingFor is `waiting_for`; see [SessionState.WaitingFor].
+	WaitingFor []string `yaml:"waiting_for"`
 }
 
 // rawSessionTimer is one `after.<name>` entry of a session state.

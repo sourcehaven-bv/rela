@@ -43,19 +43,40 @@ export interface Channel {
  * stored state realtime.yaml no longer declares; label is then the stored
  * name and transitions is empty. timers are the after: entries of the
  * current state; due_at is when the first comes due, set only on an open
- * channel under a configuration that is not degraded.
+ * channel under a configuration that is not degraded. status is the
+ * state's status (a stranded state reads failed); waiting_for lists whom an
+ * input_required state waits for; waiting_on_me is per reader. entered_at
+ * is absent for a channel that is not stored yet.
  */
 export interface ChannelSession {
   state: string
   label?: string
+  status: SessionStatus
+  waiting_for?: ChannelSessionWaiting[]
+  waiting_on_me?: boolean
   generation: number
-  entered_at: string
+  entered_at?: string
   final?: boolean
   stranded?: boolean
   transitions?: ChannelSessionTransition[]
   due_at?: string
   timers?: ChannelSessionTimer[]
   reminders?: ChannelSessionReminder[]
+}
+
+/** A session state's status, after the MCP tasks statuses. */
+export type SessionStatus = 'working' | 'input_required' | 'completed' | 'cancelled' | 'failed'
+
+/**
+ * One role an input_required state waits for. holders are, for a role read
+ * from an anchor property, that property's values as the reader may see
+ * them: entity data, shown as text and never followed. A creator role has
+ * none; the channel's created_by names the creator.
+ */
+export interface ChannelSessionWaiting {
+  role: string
+  label?: string
+  holders?: string[]
 }
 
 /**
@@ -368,6 +389,9 @@ export interface ChannelSessionStateSchema {
   label: string
   /** A state the session ends in. */
   final?: boolean
+  status: SessionStatus
+  /** The roles an input_required state waits for. */
+  waiting_for?: string[]
 }
 
 export interface ChannelLifecycleSchema {
@@ -450,6 +474,9 @@ export const CHANNEL_WIRE_FIELDS: Record<string, readonly string[]> = {
   ChannelSession: wireKeys<ChannelSession>()([
     'state',
     'label',
+    'status',
+    'waiting_for',
+    'waiting_on_me',
     'generation',
     'entered_at',
     'final',
@@ -459,6 +486,7 @@ export const CHANNEL_WIRE_FIELDS: Record<string, readonly string[]> = {
     'timers',
     'reminders',
   ]),
+  ChannelSessionWaiting: wireKeys<ChannelSessionWaiting>()(['role', 'label', 'holders']),
   ChannelSessionReminder: wireKeys<ChannelSessionReminder>()([
     'name',
     'label',
@@ -570,7 +598,13 @@ export const CHANNEL_WIRE_FIELDS: Record<string, readonly string[]> = {
     'session',
   ]),
   ChannelSessionSchema: wireKeys<ChannelSessionSchema>()(['label', 'initial', 'states']),
-  ChannelSessionStateSchema: wireKeys<ChannelSessionStateSchema>()(['name', 'label', 'final']),
+  ChannelSessionStateSchema: wireKeys<ChannelSessionStateSchema>()([
+    'name',
+    'label',
+    'final',
+    'status',
+    'waiting_for',
+  ]),
   ChannelLifecycleSchema: wireKeys<ChannelLifecycleSchema>()(['name', 'label']),
   ChannelMessageTypeSchema: wireKeys<ChannelMessageTypeSchema>()([
     'name',

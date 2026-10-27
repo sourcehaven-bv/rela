@@ -324,6 +324,22 @@ func CheckCreate(ctx context.Context, m *Manager, typ string, face entity.Face) 
 	})
 }
 
+// CheckUpdateFields asks the field-write question [Manager.PatchEntity]
+// asks for set on the stored row, as the caller on ctx, without writing. A
+// nil value skips the enum-option check, for a value the caller learns only
+// later; the write checks it again. Like [Manager.AuthorizeUpdate], it
+// records a refusal as a denied write. Through a manager that is not field
+// gated (see [FieldGated]) it allows every property, as the write does.
+func CheckUpdateFields(ctx context.Context, m *Manager, row *entity.Entity, set map[string]any) error {
+	if row == nil {
+		return errors.New("entitymanager: CheckUpdateFields: nil row")
+	}
+	if !fieldGated(m) {
+		return nil
+	}
+	return checkFieldWrite(ctx, m, row, set, nil)
+}
+
 // CheckRelate answers the relation-create ACL question [CreateLinked]
 // asks for a relType edge from a new entity of fromType at fromFace, as
 // the caller on ctx, without writing or auditing: an affordance probe

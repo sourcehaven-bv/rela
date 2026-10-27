@@ -109,9 +109,12 @@ func addChannelDescriptorSchema(spec *Spec) {
 			Properties: map[string]*Schema{
 				"label":   str(),
 				"initial": {Type: "string", Description: "The state a session that never moved is in"},
-				"states": ArraySchema(labeled(map[string]*Schema{
-					"final": {Type: "boolean", Description: "Set for a state the session ends in"},
-				})),
+				"states": ArraySchema(requireStatus(labeled(map[string]*Schema{
+					"final":  {Type: "boolean", Description: "Set for a state the session ends in"},
+					"status": sessionStatusSchema(),
+					"waiting_for": {Type: "array", Items: str(),
+						Description: "The roles an input_required state waits for; absent otherwise"},
+				}))),
 			},
 			Required: []string{"label", "initial", "states"},
 		},
@@ -704,10 +707,21 @@ func channelSessionSchema() *Schema {
 			"current state, sorted by name, and empty for a final or stranded state. due_at is when the " +
 			"first of them comes due; it is set only on an open channel under a configuration that is not " +
 			"degraded. reminders are the reminders active in the current state, sorted by name; each " +
-			"carries its own due_at, and due_at above stays the next move.",
+			"carries its own due_at, and due_at above stays the next move. status is the state's status; " +
+			"a stranded state reads failed. waiting_for lists whom an input_required state waits for. " +
+			"waiting_on_me is per reader: set when you hold a waiting role on an open, stored channel. " +
+			"entered_at is absent for a channel that is not stored yet.",
 		Properties: map[string]*Schema{
-			"state": str(), "label": str(), "generation": i64(), "entered_at": dateTimeSchema(),
-			"final": b(), "stranded": b(),
+			"state": str(), "label": str(), "status": sessionStatusSchema(), "generation": i64(),
+			"entered_at": dateTimeSchema(), "final": b(), "stranded": b(),
+			"waiting_for": ArraySchema(ObjectSchema(map[string]*Schema{
+				"role": str(), "label": str(),
+				"holders": {Type: "array", Items: str(),
+					Description: "For a role read from an anchor property: that property's values as you may " +
+						"see them. Entity data that anyone with field write can set; show it, never follow it. " +
+						"Absent for a creator role (see created_by) or a property you may not see."},
+			}, []string{"role"})),
+			"waiting_on_me": b(),
 			"transitions": ArraySchema(ObjectSchema(map[string]*Schema{
 				"message_type": str(), "to": str(),
 				"by": {Type: "string", Enum: []string{"trigger"},
@@ -722,8 +736,23 @@ func channelSessionSchema() *Schema {
 			"timers":    ArraySchema(Ref(channelTimerRef)),
 			"reminders": ArraySchema(Ref(channelReminderRef)),
 		},
-		Required: []string{"state", "generation", "entered_at"},
+		Required: []string{"state", "status", "generation"},
 	}
+}
+
+// requireStatus adds status to the required properties of a session
+// state schema.
+func requireStatus(s *Schema) *Schema {
+	s.Required = append(s.Required, "status")
+	return s
+}
+
+// sessionStatusSchema is a session state's status.
+func sessionStatusSchema() *Schema {
+	return &Schema{Type: "string", Enum: []string{
+		string(realtimecfg.StatusWorking), string(realtimecfg.StatusInputRequired), string(realtimecfg.StatusCompleted),
+		string(realtimecfg.StatusCancelled), string(realtimecfg.StatusFailed),
+	}, Description: "working, input_required (waits for a named role), or a terminal status of a final state"}
 }
 
 // channelReminderSchema is the ChannelSessionReminder schema.

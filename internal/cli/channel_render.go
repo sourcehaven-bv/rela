@@ -120,9 +120,40 @@ func sessionText(s *realtime.SessionView) string {
 		text += ", final"
 	}
 	if s.Stranded {
-		text += ", stranded"
+		text += ", failed (stranded)"
+	} else if s.Status != "" {
+		text += ", " + printable(s.Status)
 	}
-	return text + nextTimerText(s) + remindersText(s)
+	return text + waitingText(s) + nextTimerText(s) + remindersText(s)
+}
+
+// waitingText is the waiting part of [sessionText]: ", waiting for <label>
+// (<holders>)" per waiting role, by its label or else its name, and ",
+// waiting on you" when the session waits for the reader.
+func waitingText(s *realtime.SessionView) string {
+	if len(s.WaitingFor) == 0 {
+		return ""
+	}
+	parts := make([]string, 0, len(s.WaitingFor))
+	for _, w := range s.WaitingFor {
+		part := printable(w.Role)
+		if w.Label != "" {
+			part = printable(w.Label)
+		}
+		if len(w.Holders) > 0 {
+			holders := make([]string, len(w.Holders))
+			for i, h := range w.Holders {
+				holders[i] = printable(h)
+			}
+			part += " (" + strings.Join(holders, ", ") + ")"
+		}
+		parts = append(parts, part)
+	}
+	text := ", waiting for " + strings.Join(parts, " or ")
+	if s.WaitingOnMe {
+		text += ", waiting on you"
+	}
+	return text
 }
 
 // remindersText is the reminders part of [sessionText]: per reminder of

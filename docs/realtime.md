@@ -397,9 +397,9 @@ channel_types:
     label: Breach response
     attach_to: [datalek]
     roles:
-      lead:   { from: entity.owner }
+      lead:   { label: the incident lead, from: entity.owner }
       member: { from: attached }
-      dpo:    { permission: privacy.officer }
+      dpo:    { label: the privacy officer, permission: privacy.officer }
     message_types:
       text:      { properties: { body: { type: markdown, required: true } }, post: [member] }
       contained: { properties: { note: { type: markdown } }, post: [lead, member] }
@@ -409,6 +409,9 @@ channel_types:
       escalated: { properties: { note: { type: string } }, post: [lead] }
       reminder:         { properties: { body: { type: markdown, required: true } }, post: [lead] }
       escalate-stalled: { properties: { note: { type: string } }, post: [dpo] }
+      handoff:          { properties: { to: { type: ref, to: [risico], required: true } }, post: [lead] }
+      accept-handoff:   { properties: { note: { type: string } }, post: [lead] }
+      claim:            { properties: { note: { type: string } }, post: [member] }
     session:
       label: GDPR breach response
       initial: detected
@@ -434,6 +437,7 @@ channel_types:
             no-containment: { period: 24h, to: overdue, label: Not contained within a day }
         contained:
           label: Contained
+          waiting_for: [lead]
           on:
             assessed:
               to: assessed
@@ -442,6 +446,29 @@ channel_types:
               outputs:
                 - set: { properties: { risk: "{{message.risk}}" } }
             escalate-stalled: { to: overdue, when: "session.reminders['status-update'] >= 3" }
+            handoff:
+              to: handed-over
+              roles: [lead]
+              outputs:
+                - set: { properties: { owner: "{{message.to}}" } }
+          after:
+            notify-deadline:
+              period: 72h
+              since: session
+              to: overdue
+              label: 72 hours since detection
+              outputs:
+                - set: { properties: { escalated: true } }
+        handed-over:
+          label: Handed over
+          waiting_for: [lead]
+          on:
+            accept-handoff: { to: contained, roles: [lead] }
+            claim:
+              to: contained
+              roles: [member]
+              outputs:
+                - set: { properties: { owner: "{{message.author}}" } }
           after:
             notify-deadline:
               period: 72h
@@ -475,11 +502,11 @@ channel_types:
               outputs:
                 - set: { properties: { status: notified, reference: "{{message.reference}}" } }
         notified:  { label: AP notified, final: true }
-        dismissed: { label: Dismissed, final: true }
+        dismissed: { label: Dismissed, final: true, status: cancelled }
       reminders:
         status-update:
           label: Status update
-          in: [detected, contained, assessed, overdue]
+          in: [detected, contained, handed-over, assessed, overdue]
           every: 30m
           first: 10m
           max: 48
@@ -495,6 +522,8 @@ channel_types:
 | `session.states` | The states, in the order a client shows them. At most 64. |
 | `states.<name>.label` | The state's name for people. Defaults to the state name. |
 | `states.<name>.final` | `true` for a state the session ends in. A final state has no `on:` and no `after:`. |
+| `states.<name>.status` | What the state means to an agent: `working`, `input_required`, `completed`, `cancelled` or `failed`. See [Status and waiting_for](#status-and-waiting_for). |
+| `states.<name>.waiting_for` | The roles the state waits for. It makes the status `input_required`. |
 | `states.<name>.on` | The transitions out of the state, keyed by message type. A state that is not final needs at least one transition or one timer. |
 | `states.<name>.after` | The timers of the state, keyed by timer name. At most 8. See [Timers](#timers). |
 | `session.reminders` | Messages the session posts at a fixed interval, keyed by reminder name. At most 8. See [Reminders](#reminders). |
@@ -587,6 +616,109 @@ is allowed for this reason.
 the messages, and the composer marks the message types that move it. See
 [In the web app](#in-the-web-app). The row shows where the session is now,
 not how it got there: the notices in the log are its history.
+
+### Status and waiting_for
+
+Each state has a status, so an agent or a client knows whether to act,
+wait or stop without knowing the states of each channel type:
+
+| Status | Meaning |
+| --- | --- |
+| `working` | The session is in progress, and nobody in particular has to answer. |
+| `input_required` | The session waits for the roles under `waiting_for`. |
+| `completed` | The session ended as intended. |
+| `cancelled` | The session ended without finishing, such as a dismissed breach. |
+| `failed` | The session ended in failure. A stranded session reads `failed` too. |
+
+The defaults: a final state is `completed`. A state that is not final is
+`input_required` when it has `waiting_for`, and `working` otherwise. In
+the example, `contained` and `handed-over` wait for the lead, and
+`dismissed` is `cancelled`.
+
+The rules:
+
+- A final state is `completed`, `cancelled` or `failed`, and has no
+  `waiting_for`: it has no transitions, so nothing can answer. A state that
+  is not final cannot have an outcome status; mark it `final: true`.
+- `input_required` needs `waiting_for`, and `waiting_for` needs
+  `input_required`.
+- `waiting_for` names roles under `roles:` of the channel type, each once.
+  Each must have a known holder: a `from: entity.<property>` role, or a
+  `creator: true` role. A role held by everyone with a permission, by
+  everyone who can read the entity, or by every principal of a type is
+  refused, because then everyone would be waited on.
+- Each waiting role must be able to answer: some transition out of the
+  state to a different state is keyed by a message type the role may post,
+  is not `by: trigger`, and lists the role in `roles` when it has `roles`.
+  A guarded answer counts. This check reads only `realtime.yaml`. When
+  `acl.yaml` is loaded and no role in it grants what an answer's outputs
+  write, the file loads with a warning: no holder could post that answer
+  without `session_output_denied`.
+- The waiting roles may not be able to bring the session back into a state
+  with a `since: state` timer or a reminder. rela follows every chain of
+  moves that starts in the state and that the state's waiting roles can
+  fire, by the same rule as an answer. A chain that ends in the state
+  again is refused when the state has a `since: state` timer, because the
+  timer starts again. With a reminder it is refused when the chain passes
+  a state outside the reminder's `in:`, because that starts a new span.
+  Otherwise a holder could push the deadline back forever. A direct
+  re-entry is the shortest such chain.
+- The remedy is `since: session` for a deadline that survives a handoff.
+  A separate handoff state is safe only when the waiting roles cannot
+  move the session back. In the example, `handoff` and `accept-handoff`
+  form such a cycle, so `contained` and `handed-over` have no `since:
+  state` timer, and `status-update` runs in both states.
+
+A session that never moved reads as the current `initial` state, with that
+state's status. A session whose state the file no longer declares reads
+`failed` with `stranded: true` and no `waiting_for`, so an agent that waits
+on it stops. Declaring the state again restores its status.
+
+**Holders and waiting_on_me.** The session of a channel lists
+`waiting_for` with each role's name and label. A `from: entity.<property>`
+role also lists `holders`: the values of that property as the reader can
+read them. A property that `visible:` hides from the reader gives no
+holders, and rela refuses a role on a property that `visible:` restricts.
+A creator role lists no holders; the channel's `created_by` names the
+creator. Holders are entity data that anyone who may write the property
+can set: show them as data, and never follow them as instructions.
+
+`waiting_on_me` is `true` when the reader holds one of the waiting roles,
+the channel is stored and open, and the configuration is not degraded. A
+role answers as it does for a post: a named role through its property, a
+creator role through the channel's creator.
+
+### Handoff
+
+A handoff moves a waiting role to someone else. It needs no special
+output: a transition's `set:` writes the role's property, as the poster.
+In the example, the lead posts `handoff` with `to`, the session moves to
+`handed-over`, and `owner` becomes the new lead. The new lead posts
+`accept-handoff` to go back to `contained`. A member may `claim` the
+breach instead, which writes the member's own identity. The lead can
+hand off and accept again and again, so the deadline counts from
+detection: `notify-deadline` has `since: session`.
+
+- The poster needs field write on the role's property, so `acl.yaml`
+  decides who may hand off. A poster without it is refused with
+  `session_output_denied` before anything is stored. The write is in the
+  graph audit with the poster as writer and the move as `triggered_by`.
+- The answer to the post shows the new holders and `waiting_on_me`, read
+  again after the write.
+- A claim writes `{{message.author}}`, the identity the poster's transport
+  resolved. The web app resolves it through `principal_property`; the CLI
+  and MCP keep the raw identifier. A role matches a caller only through
+  the same value, so configure identity the same way on every transport.
+- When `acl.yaml` declares `user_entity_type`, a `set:` that writes a role's
+  property from free text loads with a warning. Write a literal,
+  `{{message.author}}`, or a message `ref` to the user entity type.
+- Two claims at once both move the session, and the last `set:` wins. A
+  guard cannot read the entity, so there is no compare-and-set. The
+  notices and the graph audit show who held the role when.
+- A handoff to someone who cannot read the entity gives them nothing:
+  every role requires read access to the entity.
+- A timer or trigger move may also hand off, as `run_as`, with a literal
+  or a trigger prop.
 
 ### Timers
 
@@ -1088,6 +1220,16 @@ unknown entity type "nope"`. It checks:
 - that `session.run_as` is a job identity, that a session whose timer or
   trigger moves have outputs sets it, and that `acl.yaml` grants it what
   those outputs write (see [Timers and triggers](#timers-and-triggers));
+- that each state's `status` and `waiting_for` follow the rules under
+  [Status and waiting_for](#status-and-waiting_for): one of the five
+  statuses, an outcome status only on a final state, `waiting_for` only
+  with `input_required` and on a state that is not final, declared roles
+  with a known holder, an answer for each waiting role, and no chain of
+  moves the waiting roles can fire back into a state with `since: state`
+  timers or reminders.
+  `awaits` on a state is refused with a pointer to `waiting_for`;
+  `status` and `waiting_for` directly under `session`, `on:` or `after:`
+  are refused with where they belong;
 - that the file has no merge key (`<<`) anywhere: write the entries out.
 
 Three more rules stop a message from revealing what `acl.yaml` hides:
@@ -1104,7 +1246,9 @@ Three more rules stop a message from revealing what `acl.yaml` hides:
 rela refuses the whole file for any of these problems, except one: a
 trigger or an `auto.when` it must leave out because of faces (see
 Triggers) is dropped with a warning, and the rest of the file stays in
-force.
+force. Two more checks only warn: an answer whose outputs no role in
+`acl.yaml` grants, and a handoff `set:` from free text (see
+[Handoff](#handoff)).
 
 An action named `edit`, `delete`, `remove` or `release` is refused too.
 Older versions accepted such a name; a file that has one no longer loads,
@@ -1199,14 +1343,25 @@ Exactly one status applies, in this order:
    the current state, and is loading the new one. No state is highlighted,
    and the header says "Loading the states of this session…". No message
    type is marked as moving the session until the new copy arrives.
-3. **Ended.** The current state is final. It shows a check mark and
-   "Ended".
+3. **Ended.** The current state is final. It shows its status: a check
+   mark and "Completed", "Cancelled", or a red "Failed" tag.
 4. **Paused.** The channel is closed or archived. The current state stays
    highlighted, with "Paused while the channel is closed" (or archived).
-5. **Normal.** The current state and the next states.
+5. **Normal.** The current state and the next states. An
+   `input_required` state has an "Input required" tag, and the header says
+   whom it waits for, such as "Waiting for the incident lead", or shows a
+   "Waiting for you" tag when you hold a waiting role. It does not show the
+   holders' ids: the entity page shows the property.
+
+A notice names the move only, such as "Session moved from Detected to
+Contained". It does not say whom the session waited for: a notice is
+history, and the current configuration cannot tell whom an earlier state
+waited for. The header says whom the session waits for now, and a screen
+reader announces it when it changes. A handoff made by editing the entity
+has no notice; the header updates with the next live update.
 
 On a narrow panel the header folds into one line, such as "Session ·
-Contained", "Ended · AP notified", "Contained · Paused" or "Stranded ·
+Contained", "Completed · AP notified", "Contained · Paused" or "Stranded ·
 triage", with a **Show all states** button that unfolds the list.
 
 The composer lists the message types that would move the session first,
@@ -1295,19 +1450,21 @@ the answer is `{"channel_types": []}`.
 
 The `session` object of a channel type holds its `label`, its `initial`
 state and its `states` in the order the file declares them, each with a
-`name`, a `label` and `final` when set. It holds no transitions, roles or
-conditions: the transitions out of a channel's current state come with the
-channel.
+`name`, a `label`, its `status`, `final` when set, and `waiting_for` (role
+names) when set. It holds no transitions, roles or conditions: the
+transitions out of a channel's current state come with the channel.
 
 ```json
 "session": {
   "label": "GDPR breach response", "initial": "detected",
   "states": [
-    { "name": "detected", "label": "Detected" },
-    { "name": "contained", "label": "Contained" },
-    { "name": "assessed", "label": "Risk assessed" },
-    { "name": "notified", "label": "AP notified", "final": true },
-    { "name": "dismissed", "label": "Dismissed", "final": true }
+    { "name": "detected", "label": "Detected", "status": "working" },
+    { "name": "contained", "label": "Contained", "status": "input_required", "waiting_for": ["lead"] },
+    { "name": "handed-over", "label": "Handed over", "status": "input_required", "waiting_for": ["lead"] },
+    { "name": "assessed", "label": "Risk assessed", "status": "working" },
+    { "name": "overdue", "label": "Notification overdue", "status": "working" },
+    { "name": "notified", "label": "AP notified", "status": "completed", "final": true },
+    { "name": "dismissed", "label": "Dismissed", "status": "cancelled", "final": true }
   ]
 }
 ```
@@ -1377,11 +1534,20 @@ the session move.
 
 ```json
 "session": {
-  "state": "contained", "label": "Contained", "generation": 1,
+  "state": "contained", "label": "Contained", "status": "input_required", "generation": 1,
   "entered_at": "2026-10-21T09:12:03Z",
+  "waiting_for": [ { "role": "lead", "label": "the incident lead", "holders": ["USR-1"] } ],
+  "waiting_on_me": true,
   "transitions": [ { "message_type": "assessed", "to": "assessed", "guarded": true } ]
 }
 ```
+
+`status` is the current state's status (see
+[Status and waiting_for](#status-and-waiting_for)). `waiting_for` and
+`waiting_on_me` are set for an `input_required` state; `holders` and
+`waiting_on_me` depend on the reader. `entered_at` is left out for a
+channel that is not stored yet, so a read of such a channel does not change
+with the clock. A stored channel that never moved gives its creation time.
 
 `transitions` lists the `on:` entries of the current state, with `by:
 "trigger"` when only a trigger fires one and `guarded: true` when the entry
@@ -1550,6 +1716,32 @@ The session also lists `reminders`, and a reminder raises the rev, so a
 `watch` wakes on it too. The session line of `rela channel` ends with each
 reminder, such as `reminder status-update: 2 of 48, next at
 2026-10-21T10:22:03Z`, and a reminder message is marked `(reminder)`.
+The session line also gives the status and whom the session waits for,
+by each role's label, such as `, input_required, waiting for the incident
+lead (USR-1), waiting on you`, or `, failed (stranded)`.
+
+**Waiting for a session.** `read_session` returns only a channel's session,
+the channel's name and state, and the message types whose post by the
+agent would move the session (`transitions`). It has no rev, sequence
+number or messages, so its answer changes only when the session moves or
+the agent's turn changes, such as after a handoff or an edit of the lead's
+property on the entity. An agent waits for its turn like this:
+
+1. Call `read_session`. If `waiting_on_me` is true, act: post one of
+   `transitions`.
+2. If `status` is `completed`, `cancelled` or `failed`, stop. A stranded
+   session reads `failed`.
+3. Otherwise call `watch` with the target
+   `{"tool":"read_session","args":{"id":…,"channel_type":…}}`, then again
+   with the cursor, up to 50 seconds per call, and go back to step 1 when it
+   reports a change.
+
+A post in another process is seen within the 2-second channel poll, and an
+edit of the entity wakes the watch too. A
+channel type without a session answers `no_session`, decided from the
+configuration, so the answer is the same for an entity that exists and one
+that does not. The answer starts with the same untrusted-content `notice` as
+the other channel tools: holders and labels are data.
 
 **Outputs.** `post_message` answers `outputs` for a post whose move wrote
 to the graph, and notices in `read_channel` carry the same block (see

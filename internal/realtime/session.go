@@ -23,12 +23,27 @@ import (
 type SessionView struct {
 	State string `json:"state"`
 	Label string `json:"label,omitempty"`
+	// Status is what the state means to an agent, one of the
+	// [realtimecfg.SessionStatus] values, read from the current
+	// configuration. A stranded state reads [realtimecfg.StatusFailed], so
+	// an agent stops waiting; Stranded says why.
+	Status string `json:"status"`
+	// WaitingFor are the state's waiting roles, in config order, while the
+	// status is input_required. A named role carries the holders the
+	// reader's redacted anchor view shows.
+	WaitingFor []SessionWaitingView `json:"waiting_for,omitempty"`
+	// WaitingOnMe is set when the reader holds a waiting role for update
+	// on the anchor, the channel is stored and open, the status is
+	// input_required and the configuration is not degraded. It is per
+	// reader, like the affordances.
+	WaitingOnMe bool `json:"waiting_on_me,omitempty"`
 	// Generation counts the transitions; 0 means the session never moved.
 	Generation int64 `json:"generation"`
 	// EnteredAt is when the session entered its state: the time of the
 	// causing message, or for a session that never moved, the channel's
-	// created_at.
-	EnteredAt time.Time `json:"entered_at"`
+	// created_at. It is zero, and left out, for a channel that is not
+	// stored yet, so two reads of it render the same.
+	EnteredAt time.Time `json:"entered_at,omitzero"`
 	Final     bool      `json:"final,omitempty"`
 	// Stranded is set when the stored state is one the configuration no
 	// longer declares. Label is then the stored name, and nothing moves the
@@ -105,8 +120,9 @@ type current struct {
 
 // currentSession reads ch's session under s. An unset session reads as the
 // configured initial state, entered when the channel was created. For a
-// channel that is not stored yet, the caller passes a channel whose
-// CreatedAt is the operation's clock time, the time the append will store.
+// channel that is not stored yet, a decider passes a channel whose
+// CreatedAt is the operation's clock time, the time the append will store;
+// [sessionView] passes the zero time, so the view leaves entered_at out.
 func currentSession(s *realtimecfg.Session, ch channels.Channel) current {
 	if ch.Session.IsZero() {
 		return current{Session: channels.Session{State: s.Initial(), EnteredAt: ch.CreatedAt}}
@@ -115,28 +131,30 @@ func currentSession(s *realtimecfg.Session, ch channels.Channel) current {
 	return current{Session: ch.Session, stranded: !declared}
 }
 
-// sessionView renders the session of h under ct, or of the empty channel
-// created at now when h is nil. Nil when ct has no session. degraded is the
+// sessionView renders the session of h under ct, or of the channel not
+// stored yet when h is nil. Nil when ct has no session. degraded is the
 // snapshot's flag: due times are left out under a degraded configuration.
-func sessionView(ct realtimecfg.ChannelType, h *channels.Channel, now time.Time, degraded bool) *SessionView {
+// wf are the reader's facts for the waiting view (see [waitingView]).
+func sessionView(ct realtimecfg.ChannelType, h *channels.Channel, degraded bool, wf waitingFacts) *SessionView {
 	s := ct.Session()
 	if s == nil {
 		return nil
 	}
-	ch := channels.Channel{CreatedAt: now}
+	var ch channels.Channel
 	if h != nil {
 		ch = *h
 	}
 	cur := currentSession(s, ch)
 	v := &SessionView{
 		State: cur.State, Label: cur.State, Generation: cur.Generation, EnteredAt: cur.EnteredAt,
-		Stranded: cur.stranded,
+		Stranded: cur.stranded, Status: string(realtimecfg.StatusFailed),
 	}
 	st, ok := s.State(cur.State)
 	if !ok {
 		return v
 	}
-	v.Label, v.Final = st.Label, st.Final
+	v.Label, v.Final, v.Status = st.Label, st.Final, string(st.Status)
+	v.WaitingFor, v.WaitingOnMe = waitingView(st, ct.Roles, wf)
 	for _, tr := range st.Transitions() {
 		v.Transitions = append(v.Transitions, SessionTransitionView{
 			MessageType: tr.MessageType, To: tr.To, By: string(tr.By), Guarded: tr.When != nil,
@@ -453,7 +471,10 @@ func postedSession(c *call, step *channels.SessionStep) *SessionView {
 		return nil
 	}
 	ch := channels.Channel{State: channels.StateOpen, CreatedAt: step.Outcome.CreatedAt, Session: step.Outcome.Session}
-	return sessionView(c.ct, &ch, c.now, c.snap.Degraded)
+	if c.head != nil {
+		ch.CreatedBy = c.head.CreatedBy
+	}
+	return readerSession(c, &ch)
 }
 
 // isNotice reports whether a message of msgType triggered by triggeredBy

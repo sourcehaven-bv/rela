@@ -62,6 +62,10 @@ type OutputTarget struct {
 	// AttachTo are the channel type's attach_to types. A set with no
 	// AnchorType writes the anchor only when its row is one of them.
 	AttachTo []string
+	// Fields are, for a set, the properties it writes: a literal's value,
+	// or nil for a template, whose value is known only after the post. The
+	// pre-check field-gates them; a write takes OutputRequest.Props.
+	Fields map[string]any
 }
 
 // OutputRequest is one output write.
@@ -433,6 +437,13 @@ func outputTarget(key channels.Key, anchorType string, attachTo []string, o real
 	case realtimecfg.OutputSet:
 		if t.Face == "" {
 			t.Face = key.Face
+		}
+		t.Fields = make(map[string]any, len(o.PropertyNames()))
+		for name, tpl := range o.Properties() {
+			t.Fields[name] = nil
+			if tpl.Literal() {
+				t.Fields[name], _ = tpl.Eval(realtimecfg.OutputVars{})
+			}
 		}
 	case realtimecfg.OutputCreate:
 		t.Type, t.Relate = o.Type, o.Relate

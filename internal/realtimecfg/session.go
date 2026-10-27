@@ -101,9 +101,15 @@ type SessionState struct {
 	Label string
 	// Final marks a state the session ends in. It has no transitions and
 	// no timers.
-	Final  bool
-	on     map[string]Transition
-	timers []SessionTimer
+	Final bool
+	// Status is what the state means to an agent: `status:`, or its
+	// default (see [SessionStatus]).
+	Status SessionStatus
+	// waitingFor is `waiting_for:`, in file order; see
+	// [SessionState.WaitingFor].
+	waitingFor []string
+	on         map[string]Transition
+	timers     []SessionTimer
 }
 
 // Timers returns the state's timers, sorted by name. The slice is a copy.
@@ -273,6 +279,7 @@ func (v *validator) session(
 	}
 	timerLoops(v.add, statesKey, s)
 	jobLoops(v.add, statesKey, s)
+	waitChecker{v}.check(statesKey, raw.States, s, ct)
 	s.runAs = writeChecker{v}.runAs(key+".run_as", raw.RunAs, s)
 	return s
 }

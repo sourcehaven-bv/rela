@@ -59,7 +59,9 @@ func wireSessionSchema(s *realtime.SessionDescription) *v1.ChannelSessionSchema 
 		Label: s.Label, Initial: s.Initial, States: make([]v1.ChannelSessionStateSchema, 0, len(s.States)),
 	}
 	for _, st := range s.States {
-		out.States = append(out.States, v1.ChannelSessionStateSchema{Name: st.Name, Label: st.Label, Final: st.Final})
+		out.States = append(out.States, v1.ChannelSessionStateSchema{
+			Name: st.Name, Label: st.Label, Final: st.Final, Status: st.Status, WaitingFor: st.WaitingFor,
+		})
 	}
 	return out
 }

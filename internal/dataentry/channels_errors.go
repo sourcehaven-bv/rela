@@ -24,6 +24,7 @@ var channelErrorStatus = map[string]int{
 	realtime.TypeUnknownChannelType:  http.StatusNotFound,
 	realtime.TypeChannelNotFound:     http.StatusNotFound,
 	realtime.TypeMessageNotFound:     http.StatusNotFound,
+	realtime.TypeNoSession:           http.StatusNotFound,
 	realtime.TypeFaceRequired:        http.StatusUnprocessableEntity,
 	realtime.TypeNoPrincipal:         http.StatusForbidden,
 	realtime.TypeReadDenied:          http.StatusForbidden,

@@ -234,8 +234,23 @@ func TestRenderRead_Session(t *testing.T) {
 	}{
 		{"final", realtime.SessionView{State: "notified", Label: "AP notified", Generation: 3, Final: true},
 			"session: notified (AP notified), generation 3, final"},
-		{"stranded", realtime.SessionView{State: "old", Label: "old", Generation: 2, Stranded: true},
-			"session: old, generation 2, stranded"},
+		{"stranded", realtime.SessionView{State: "old", Label: "old", Generation: 2, Stranded: true, Status: "failed"},
+			"session: old, generation 2, failed (stranded)"},
+		{"working", realtime.SessionView{State: "detected", Status: "working"},
+			"session: detected, generation 0, working"},
+		{"cancelled", realtime.SessionView{State: "dismissed", Final: true, Status: "cancelled"},
+			"session: dismissed, generation 0, final, cancelled"},
+		{"input required", realtime.SessionView{State: "contained", Status: "input_required",
+			WaitingFor: []realtime.SessionWaitingView{
+				{Role: "lead", Label: "the incident lead", Holders: []string{"USR-1"}},
+			}},
+			"session: contained, generation 0, input_required, waiting for the incident lead (USR-1)"},
+		{"waiting on me", realtime.SessionView{State: "contained", Status: "input_required", WaitingOnMe: true,
+			WaitingFor: []realtime.SessionWaitingView{
+				{Role: "lead", Holders: []string{"USR-1", "bad\x1b[2Jname"}}, {Role: "starter"},
+			}},
+			"session: contained, generation 0, input_required, " +
+				"waiting for lead (USR-1, bad\ufffd[2Jname) or starter, waiting on you"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			assert.Equal(t, tc.want, sessionText(&tc.s))

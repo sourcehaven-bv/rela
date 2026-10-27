@@ -573,11 +573,17 @@ describe('useChannel', () => {
 describe('useChannel session moves', () => {
   const detected = {
     state: 'detected',
+    status: 'working' as const,
     generation: 0,
     entered_at: '2026-10-11T09:00:00Z',
     transitions: [{ message_type: 'contained', to: 'contained' }],
   }
-  const contained = { state: 'contained', generation: 1, entered_at: '2026-10-11T09:11:00Z' }
+  const contained = {
+    state: 'contained',
+    status: 'working' as const,
+    generation: 1,
+    entered_at: '2026-10-11T09:11:00Z',
+  }
 
   beforeEach(() => {
     registerEntityPlurals(new Map([['ticket', 'tickets']]))

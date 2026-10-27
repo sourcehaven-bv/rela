@@ -407,17 +407,23 @@ describe('sessions', () => {
       label: 'GDPR breach response',
       initial: 'detected',
       states: [
-        { name: 'detected', label: 'Detected' },
-        { name: 'contained', label: 'Contained' },
-        { name: 'assessed', label: 'Risk assessed' },
-        { name: 'notified', label: 'AP notified', final: true },
-        { name: 'dismissed', label: 'Dismissed', final: true },
+        { name: 'detected', label: 'Detected', status: 'working' },
+        {
+          name: 'contained',
+          label: 'Contained',
+          status: 'input_required',
+          waiting_for: ['lead'],
+        },
+        { name: 'assessed', label: 'Risk assessed', status: 'working' },
+        { name: 'notified', label: 'AP notified', final: true, status: 'completed' },
+        { name: 'dismissed', label: 'Dismissed', final: true, status: 'cancelled' },
       ],
     },
   }
   const at = '2026-10-11T09:00:00Z'
   const inDetected: NonNullable<Channel['session']> = {
     state: 'detected',
+    status: 'working',
     generation: 0,
     entered_at: at,
     transitions: [
@@ -452,29 +458,100 @@ describe('sessions', () => {
     it('marks the current state and the distinct next states', () => {
       expect(sessionView(breach, channelWith(inDetected))).toEqual({
         label: 'GDPR breach response',
-        states: breach.session!.states,
+        states: breach.session!.states.map(({ name, label, final }) => ({ name, label, final })),
         current: 'detected',
         currentLabel: 'Detected',
         next: ['contained', 'dismissed'],
+        status: 'working',
       })
     })
 
     it.each([
       [
+        'input required, waiting for a labelled role and an unlabelled one',
+        {
+          state: 'contained',
+          status: 'input_required' as const,
+          generation: 1,
+          entered_at: at,
+          waiting_for: [
+            { role: 'lead', label: 'the incident lead', holders: ['USR-1'] },
+            { role: 'starter' },
+          ],
+        },
+        {
+          status: 'input_required',
+          waitingFor: [{ label: 'the incident lead' }, { label: 'starter' }],
+        },
+      ],
+      [
+        'waiting on me',
+        {
+          state: 'contained',
+          status: 'input_required' as const,
+          generation: 1,
+          waiting_for: [{ role: 'lead' }],
+          waiting_on_me: true,
+        },
+        { status: 'input_required', waitingOnMe: true },
+      ],
+      [
+        'cancelled',
+        {
+          state: 'dismissed',
+          status: 'cancelled' as const,
+          generation: 1,
+          entered_at: at,
+          final: true,
+        },
+        { status: 'cancelled', final: true },
+      ],
+      [
+        'failed when stranded',
+        {
+          state: 'triage',
+          status: 'failed' as const,
+          generation: 2,
+          entered_at: at,
+          stranded: true,
+        },
+        { status: 'failed', stranded: true },
+      ],
+    ])('maps the status: %s', (_name, session: NonNullable<Channel['session']>, want) => {
+      const got = sessionView(breach, channelWith(session))!
+      expect(got).toMatchObject(want)
+      if (!session.waiting_on_me) expect(got.waitingOnMe).toBeUndefined()
+      expect(JSON.stringify(got)).not.toContain('USR-1')
+    })
+
+    it.each([
+      [
         'stranded wins over paused',
-        { state: 'triage', generation: 2, entered_at: at, stranded: true },
+        {
+          state: 'triage',
+          status: 'failed' as const,
+          generation: 2,
+          entered_at: at,
+          stranded: true,
+        },
         'closed' as const,
         { stranded: true, currentLabel: 'triage', paused: 'closed' },
       ],
       [
         'final on a closed channel',
-        { state: 'notified', generation: 3, entered_at: at, final: true },
+        {
+          state: 'notified',
+          status: 'completed' as const,
+          generation: 3,
+          entered_at: at,
+          final: true,
+        },
         'closed' as const,
         { final: true, current: 'notified', currentLabel: 'AP notified', paused: 'closed' },
       ],
       [
         'paused on an archived channel',
-        { state: 'contained', generation: 1, entered_at: at },
+        { state: 'contained', status: 'working' as const, generation: 1, entered_at: at },
         'archived' as const,
         { current: 'contained', paused: 'archived', next: [] },
       ],
@@ -488,6 +565,7 @@ describe('sessions', () => {
     describe('a state the held descriptor lacks', () => {
       const added = {
         state: 'escalated',
+        status: 'completed' as const,
         generation: 4,
         entered_at: at,
         final: true,
@@ -537,12 +615,15 @@ describe('sessions', () => {
       props: { from: 'detected', to: 'contained', generation: 1, cause: 2 },
     }
 
-    it('maps a session notice to its labels', () => {
+    it('maps a session notice to its labels and names no waiting roles', () => {
       expect(noticeView(notice, breach.session)).toEqual({
         fromLabel: 'Detected',
         toLabel: 'Contained',
         reentry: false,
       })
+      expect(
+        noticeView({ ...notice, props: { from: 'contained', to: 'assessed' } }, breach.session)
+      ).toEqual({ fromLabel: 'Contained', toLabel: 'Risk assessed', reentry: false })
     })
 
     it('marks a re-entry and falls back to the name of a removed state', () => {
@@ -590,6 +671,7 @@ describe('sessions', () => {
     it('drops types the session already left before the head refetch', () => {
       const moved = {
         state: 'contained',
+        status: 'working' as const,
         generation: 1,
         entered_at: at,
         transitions: [{ message_type: 'assessed', to: 'assessed' }],

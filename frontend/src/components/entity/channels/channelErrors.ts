@@ -53,6 +53,8 @@ export const CHANNEL_ERROR_RULES: Readonly<Record<string, ChannelErrorRule>> = {
   message_not_found: REFETCH,
   channel_not_found: LIST,
   unknown_channel_type: LIST,
+  // Only the MCP read_session tool returns it; the SPA reads sessions on the channel.
+  no_session: LIST,
   // The configuration moved under the request.
   message_type_gone: SCHEMA,
   channel_type_conflict: SCHEMA,

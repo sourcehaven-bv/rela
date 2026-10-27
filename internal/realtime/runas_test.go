@@ -336,7 +336,7 @@ func TestSessionView_TimerOutputs(t *testing.T) {
 	h := th.head(t, watchKey)
 	ct, ok := th.cfg.Load().Config.ChannelType("watch")
 	require.True(t, ok)
-	v := sessionView(ct, &h, th.clock.Now(), false)
+	v := sessionView(ct, &h, false, waitingFacts{})
 	require.Len(t, v.Timers, 1)
 	require.Equal(t, "no-containment", v.Timers[0].Name)
 	require.Equal(t, 1, v.Timers[0].Outputs)

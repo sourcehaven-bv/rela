@@ -377,6 +377,36 @@ export const breachSessionLoading: ChannelSessionView = {
   loading: true,
 }
 
+/** The breach session in Contained, waiting for the incident lead. */
+export const breachSessionInputRequired: ChannelSessionView = {
+  ...breachSessionDetected,
+  current: 'contained',
+  currentLabel: 'Contained',
+  next: ['assessed'],
+  status: 'input_required',
+  waitingFor: [{ label: 'the incident lead' }],
+}
+
+/** The breach session in Contained, waiting for the reader. */
+export const breachSessionWaitingOnMe: ChannelSessionView = {
+  ...breachSessionInputRequired,
+  waitingOnMe: true,
+}
+
+/** The breach session dismissed: it ended as cancelled. */
+export const breachSessionCancelled: ChannelSessionView = {
+  ...breachSessionFinal,
+  current: 'dismissed',
+  currentLabel: 'Dismissed',
+  status: 'cancelled',
+}
+
+/** The breach session in a final state whose status is failed. */
+export const breachSessionFailed: ChannelSessionView = {
+  ...breachSessionFinal,
+  status: 'failed',
+}
+
 /** The transitions the lead may fire in Detected. */
 export const breachTransitions: ChannelComposerTransition[] = [
   { messageType: 'contained', toLabel: 'Contained' },

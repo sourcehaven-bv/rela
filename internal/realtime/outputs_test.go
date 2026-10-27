@@ -205,7 +205,8 @@ func TestOutputs_MessageSet(t *testing.T) {
 	set := reqs[2]
 	require.Equal(t, OutputTarget{
 		Kind: realtimecfg.OutputSet, AnchorID: "TKT-1", AnchorType: "ticket", AttachTo: []string{"ticket"},
-	}, set.Target)
+		Fields: map[string]any{"status": "notified", "title": nil},
+	}, set.Target, "a templated value is nil in Fields")
 	require.Equal(t, map[string]any{"status": "notified", "title": "AP-1"}, set.Props)
 	require.Equal(t, "session:TKT-1/breach/assessed->notified#3/0", set.Origin)
 	require.Nil(t, set.Retry, "the inline write runs as the request")

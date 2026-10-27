@@ -184,8 +184,8 @@ describe('channel schema store', () => {
         label: 'Breach response',
         initial: 'detected',
         states: [
-          { name: 'detected', label: 'Detected' },
-          { name: 'contained', label: 'Contained', final: true },
+          { name: 'detected', label: 'Detected', status: 'working' },
+          { name: 'contained', label: 'Contained', final: true, status: 'completed' },
         ],
       },
     }
@@ -211,7 +211,12 @@ describe('channel schema store', () => {
       }
       store.checkNames(
         'breach',
-        sessionHead({ state: 'contained', generation: 1, entered_at: at }),
+        sessionHead({
+          state: 'contained',
+          status: 'working' as const,
+          generation: 1,
+          entered_at: at,
+        }),
         [notice]
       )
       await flushPromises()
@@ -231,14 +236,24 @@ describe('channel schema store', () => {
       await store.ensureLoaded()
       store.checkNames(
         'breach',
-        sessionHead({ state: 'assessed', generation: 2, entered_at: at }),
+        sessionHead({
+          state: 'assessed',
+          status: 'working' as const,
+          generation: 2,
+          entered_at: at,
+        }),
         []
       )
       await flushPromises()
       expect(getSchema).toHaveBeenCalledTimes(2)
       store.checkNames(
         'breach',
-        sessionHead({ state: 'assessed', generation: 2, entered_at: at }),
+        sessionHead({
+          state: 'assessed',
+          status: 'working' as const,
+          generation: 2,
+          entered_at: at,
+        }),
         []
       )
       await flushPromises()
@@ -246,6 +261,7 @@ describe('channel schema store', () => {
 
       const toNew = sessionHead({
         state: 'detected',
+        status: 'working' as const,
         generation: 0,
         entered_at: at,
         transitions: [{ message_type: 'text', to: 'escalated' }],
@@ -264,7 +280,12 @@ describe('channel schema store', () => {
       getSchema.mockReturnValueOnce(new Promise((r) => (land = r)))
       store.checkNames(
         'breach',
-        sessionHead({ state: 'assessed', generation: 2, entered_at: at }),
+        sessionHead({
+          state: 'assessed',
+          status: 'working' as const,
+          generation: 2,
+          entered_at: at,
+        }),
         []
       )
       expect(store.stateAnswered('breach', 'assessed')).toBe(false)
@@ -280,7 +301,12 @@ describe('channel schema store', () => {
       getSchema.mockRejectedValueOnce(new Error('502'))
       store.checkNames(
         'breach',
-        sessionHead({ state: 'assessed', generation: 2, entered_at: at }),
+        sessionHead({
+          state: 'assessed',
+          status: 'working' as const,
+          generation: 2,
+          entered_at: at,
+        }),
         []
       )
       await flushPromises()
@@ -292,7 +318,13 @@ describe('channel schema store', () => {
       await store.ensureLoaded()
       store.checkNames(
         'breach',
-        sessionHead({ state: 'triage', generation: 3, entered_at: at, stranded: true }),
+        sessionHead({
+          state: 'triage',
+          status: 'working' as const,
+          generation: 3,
+          entered_at: at,
+          stranded: true,
+        }),
         []
       )
       await flushPromises()

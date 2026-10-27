@@ -921,7 +921,7 @@ func TestParse_BoolKeysUnchanged(t *testing.T) {
 	meta := testMeta(t)
 	src := golden(t)
 	for _, e := range []replace{
-		{"dismissed: { label: Dismissed, final: true }", "dismissed: { label: Dismissed, final: yes }"},
+		{"dismissed: { label: Dismissed, final: true,", "dismissed: { label: Dismissed, final: yes,"},
 		{"body: { type: markdown, required: true, max: 8000 }", "body: { type: markdown, required: on, max: 8000 }"},
 		{"reason_required: true", "reason_required: off"},
 	} {
