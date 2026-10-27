@@ -42,6 +42,10 @@ func FromFilter(meta *metamodel.Metamodel, def *metamodel.EntityDef, f *filter.F
 	if !ok {
 		return "", fmt.Errorf("predicatefns: unknown property %q on entity type", f.Property)
 	}
+	if prop.Rollup != nil {
+		return "", fmt.Errorf("predicatefns: property %q is a roll-up, computed on read and never stored; "+
+			"a condition cannot read it", f.Property)
+	}
 	if _, modeled := ScalarTypeForProp(meta, &prop); !modeled {
 		return "", fmt.Errorf("predicatefns: property %q has a type (%s) that predicate cannot model", f.Property, prop.Type)
 	}

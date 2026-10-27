@@ -1273,6 +1273,8 @@ func validateLists(cfg *Config, meta *metamodel.Metamodel) []string {
 		}
 
 		errs = append(errs, validateSortSpecs(fmt.Sprintf("list %q", listID), entDef, list.Sort)...)
+		errs = append(errs, rollupMisuse(fmt.Sprintf("list %q", listID), entDef, list.Columns, list.Sort,
+			list.Filters, list.FilterControls, list.GroupBy)...)
 
 		// Validate filters
 		for i, f := range list.Filters {
@@ -2479,6 +2481,17 @@ func validateKanbans(cfg *Config, meta *metamodel.Metamodel) []string {
 				"kanban %q: condition is not supported on a kanban yet "+
 					"(the board filters client-side); use it on a list, or filters: here",
 				kanbanID))
+		}
+
+		errs = append(errs, rollupMisuse(fmt.Sprintf("kanban %q", kanbanID), entDef, nil, nil,
+			kanban.Filters, kanban.FilterControls, nil)...)
+		for _, kp := range [][2]string{
+			{"column_property", kanban.ColumnProperty}, {"swimlane_property", kanban.SwimlaneProperty},
+		} {
+			if isRollup(entDef, kp[1]) {
+				errs = append(errs, fmt.Sprintf("kanban %q: %s %q is a roll-up; a board cannot "+
+					"group on a value computed when a card is read", kanbanID, kp[0], kp[1]))
+			}
 		}
 
 		// Validate filter properties

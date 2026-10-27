@@ -32,9 +32,9 @@ func newTestDeps(t *testing.T, meta *metamodel.Metamodel, st store.Store) Deps {
 	svc := appbuildtest.New(meta, appbuildtest.WithStore(st))
 	t.Cleanup(func() { _ = svc.Close() })
 
-	return Deps{
+	deps := Deps{
 		Store:         svc.GatedReads().Reader,
-		Traversals:    svc.GatedReads().Traversals,
+		Related:       RelatedReads{Traversals: svc.GatedReads().Traversals},
 		Meta:          meta,
 		Tracer:        svc.Tracer(),
 		Searcher:      svc.Searcher(),
@@ -57,6 +57,11 @@ func newTestDeps(t *testing.T, meta *metamodel.Metamodel, st store.Store) Deps {
 		Comments: CommentDeps{Reader: &fakeComments{}},
 		Leases:   newTestLeases(t, svc.GatedReads().Reader, svc.ACL(), lease.SystemClock{}),
 	}
+	// As the wiring does: a nil reader stays a nil interface.
+	if r := svc.GatedReads().Rollups; r != nil {
+		deps.Related.Rollups = r
+	}
+	return deps
 }
 
 // testAttachmentDeps wires the attachment tools over svc the way `rela mcp`

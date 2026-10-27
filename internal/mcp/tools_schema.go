@@ -49,11 +49,14 @@ type relationTypeSummary struct {
 }
 
 type propertySchema struct {
-	Type        string   `json:"type"`
-	Required    bool     `json:"required,omitempty"`
-	List        bool     `json:"list,omitempty"`
-	Unique      bool     `json:"unique,omitempty"`
-	Computed    bool     `json:"computed,omitempty"`
+	Type     string `json:"type"`
+	Required bool   `json:"required,omitempty"`
+	List     bool   `json:"list,omitempty"`
+	Unique   bool   `json:"unique,omitempty"`
+	Computed bool   `json:"computed,omitempty"`
+	// Rollup marks a read-only aggregate over related entities, computed
+	// on read with the caller's access (TKT-6I2OPG).
+	Rollup      bool     `json:"rollup,omitempty"`
 	Values      []string `json:"values,omitempty"`
 	Default     string   `json:"default,omitempty"`
 	Description string   `json:"description,omitempty"`
@@ -276,6 +279,7 @@ func (h schemaResourceHandler) propertySchemas(defs map[string]metamodel.Propert
 			List:        pd.List,
 			Unique:      pd.Unique,
 			Computed:    pd.Computed != "",
+			Rollup:      pd.Rollup != nil,
 			Values:      values,
 			Default:     pd.Default,
 			Description: pd.Description,

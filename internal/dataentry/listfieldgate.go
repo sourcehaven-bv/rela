@@ -123,6 +123,9 @@ func gateAppListQuery(
 	ctx context.Context, a *App, state *Schema, typeName string, query map[string][]string,
 ) (gatedListQuery, error) {
 	isRelationKey := relationFilterClassifier(state.Meta, state.Cfg, typeName)
+	if err := refuseRollupQuery(state.Meta.RollupNames(typeName), isRelationKey, typeName, query); err != nil {
+		return gatedListQuery{}, err
+	}
 	return gateListQuery(ctx, a.fieldResolver, isRelationKey, typeName, query)
 }
 
@@ -349,4 +352,22 @@ func baselinesHidingField(policy *acl.Policy, entityType, property string) []str
 	}
 	slices.Sort(names)
 	return names
+}
+
+// refuseRollupQuery refuses a filter or sort on a roll-up property
+// (TKT-6I2OPG) with an [errBadFilter]: a roll-up is computed per reader when
+// a row is served, so no store query and no row filter can see it.
+func refuseRollupQuery(
+	rollups []string, isRelationKey func(string) bool, typeName string, query map[string][]string,
+) error {
+	if len(rollups) == 0 {
+		return nil
+	}
+	for _, ref := range listQueryProperties(query, isRelationKey) {
+		if slices.Contains(rollups, ref.property) {
+			return fmt.Errorf("%w: cannot %s on %q of %q: it is a roll-up, computed when the row is read",
+				errBadFilter, ref.use, ref.property, typeName)
+		}
+	}
+	return nil
 }

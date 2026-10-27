@@ -52,7 +52,7 @@ func (c *ShowCmd) Run(ctx context.Context, svc *readServices) error {
 	if err != nil {
 		return err
 	}
-	return out.WriteEntity(e, incoming, outgoing, mentionedBy)
+	return out.WriteEntity(withRollups(ctx, svc, []*entity.Entity{e})[0], incoming, outgoing, mentionedBy)
 }
 
 // showMentionLimit caps the backlinks `rela show` prints. The output says

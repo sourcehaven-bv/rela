@@ -23,6 +23,17 @@ entities:
         type: status
 `
 
+// rollupBase adds a roll-up (TKT-6I2OPG) to checkBase: a task counts the
+// tasks below it.
+var rollupBase = strings.Replace(checkBase, "      state:\n        type: status\n",
+	"      state:\n        type: status\n      subtasks:\n        type: integer\n"+
+		"        rollup: {via: parentOf, count: true}\n", 1) + `relations:
+  child-of:
+    from: [task]
+    to: [task]
+    inverse: parentOf
+`
+
 // TestCheckSchemaCompiles pins that a malformed expression in each place an
 // operator writes one is reported, and that a valid one is not.
 func TestCheckSchemaCompiles(t *testing.T) {
@@ -59,6 +70,20 @@ validations:
 		{"query scope", strings.Replace(checkBase, "      state:\n        type: status\n",
 			"      state:\n        type: status\n    query_scopes:\n      open: \"entity.state ==\"\n", 1),
 			"query scopes"},
+		// Roll-ups are read surfaces only (TKT-6I2OPG): a write-time
+		// expression that names one fails the load.
+		{"automation reads a roll-up", rollupBase + `automations:
+  - name: a
+    on: {entity: task, condition: "entity.subtasks > 0"}
+    do: [{set: state, value: done}]
+`, "automations"},
+		{"validation reads a roll-up", rollupBase + `validations:
+  - name: v
+    entity_type: task
+    then_condition: "entity.subtasks == 0"
+`, `validation "v": condition`},
+		{"roll-up over an unknown relation", strings.Replace(rollupBase, "via: parentOf", "via: nope", 1),
+			"roll-up properties"},
 		{"unscoped validation", checkBase + `validations:
   - name: v
     then_condition: "("

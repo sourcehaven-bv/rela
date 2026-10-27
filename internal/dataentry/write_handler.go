@@ -124,7 +124,10 @@ func (grantedManager) PatchGranted(
 // the attachment service. A process-wide mutex could not provide it anyway
 // once several rela-server processes share one database.
 type writeHandler struct {
-	schema  func() *Schema
+	schema func() *Schema
+	// rollups adds the roll-up properties (TKT-6I2OPG) to a written row's
+	// response, as the GET serves them.
+	rollups rollupSource
 	store   store.Store
 	manager entityMutator
 	// softDeletes backs the Undo toast; nil when the store cannot
@@ -552,6 +555,8 @@ func (h *writeHandler) handleV1CreateEntity(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	result := h.serializer.forWireScoped(r.Context(), created, rels, visibleNeighbors, s.Meta, plural)
+	h.rollups.add(r.Context(), created.Type, []rollupRow{{ref: created.Ref(), props: result.Properties}},
+		worldScopeFrom(r.Context()), nil)
 	if len(relWarnings) > 0 {
 		result.Warnings = append(result.Warnings, relWarnings...)
 	}
@@ -1141,6 +1146,8 @@ func (h *writeHandler) handleV1UpdateEntity(w http.ResponseWriter, r *http.Reque
 	if versioned {
 		result.Versions = fieldVersionsOf(&result, s.Meta)
 	}
+	h.rollups.add(r.Context(), served.Type, []rollupRow{{ref: served.Ref(), props: result.Properties}},
+		worldScopeFrom(r.Context()), nil)
 	// The validator hashes the edges the body carries, read once above. A
 	// second read here would rebuild the edge set and its gate pass, and
 	// could describe a different edge set than the body it validates.

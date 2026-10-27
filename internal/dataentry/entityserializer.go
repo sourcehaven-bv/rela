@@ -57,6 +57,12 @@ func (s entitySerializer) toV1(
 	}
 
 	maps.Copy(out.Properties, e.Properties)
+	// A roll-up is computed per reader, never stored: a value stored under
+	// its name (a hand edit, an import) is not served. The live read paths
+	// add the computed value afterwards (addRollups).
+	for _, name := range meta.RollupNames(e.Type) {
+		delete(out.Properties, name)
+	}
 
 	if e.IsLocked() {
 		out.Inaccessible = make([]v1.InaccessibleField, 0, len(e.Inaccessible))

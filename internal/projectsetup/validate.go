@@ -16,6 +16,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/mailtemplate"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/project"
+	"github.com/Sourcehaven-BV/rela/internal/rollup"
 	"github.com/Sourcehaven-BV/rela/internal/scheduler"
 	"github.com/Sourcehaven-BV/rela/internal/storage"
 	"github.com/Sourcehaven-BV/rela/internal/subscription"
@@ -88,6 +89,8 @@ func ValidateWithFS(ctx context.Context, startDir string, fs storage.FS) (*Valid
 		if _, compileErr := worlds.Compile(mm); compileErr != nil {
 			result.MetamodelError = compileErr
 		} else if _, compileErr := computed.Compile(mm); compileErr != nil {
+			result.MetamodelError = compileErr
+		} else if _, compileErr := rollup.Compile(mm); compileErr != nil {
 			result.MetamodelError = compileErr
 		} else {
 			result.MetamodelValid = true

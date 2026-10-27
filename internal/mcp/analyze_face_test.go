@@ -72,7 +72,7 @@ func facedGatedServer(t *testing.T, read []string, extra ...*entity.Entity) (*Se
 	srv := &Server{logger: slog.New(slog.DiscardHandler)}
 	setDeps(srv, Deps{
 		Store:         reads.Reader,
-		Traversals:    reads.Traversals,
+		Related:       RelatedReads{Traversals: reads.Traversals},
 		Meta:          meta,
 		Tracer:        reads.Tracer,
 		Searcher:      reads.Searcher,

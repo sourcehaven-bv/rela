@@ -69,8 +69,9 @@ type Deps struct {
 	// visibility-wrapped reader that resolves the ctx principal per call.
 	// Either way the handlers are identical; gating is entirely a wiring
 	// decision (DEC-ZBI39P).
-	Store         GraphReader
-	Traversals    TraversalBinder
+	Store GraphReader
+	// Related computes over an entity's related rows; see [RelatedReads].
+	Related       RelatedReads
 	Meta          *metamodel.Metamodel
 	Tracer        tracer.Tracer
 	Searcher      search.Searcher
@@ -165,6 +166,21 @@ type LuaDeps struct {
 	WriteDeps   lua.WriteDeps
 	Cache       *lua.Cache
 	ProjectRoot string
+}
+
+// RelatedReads computes over an entity's related rows under the caller's
+// gate. Both come from the same gated read bundle as [Deps.Store].
+type RelatedReads struct {
+	// Traversals answers related(...) in a list_entities filter.
+	//
+	// Nil: accepted. A filter that traverses a relation is then refused.
+	Traversals TraversalBinder
+	// Rollups computes the roll-up properties (TKT-6I2OPG) show_entity
+	// serves.
+	//
+	// Nil: accepted. show_entity then serves no roll-up values; a value
+	// stored under a roll-up name is still dropped.
+	Rollups RollupReader
 }
 
 // WatchDeps is what the watch tool needs beyond the read surface.

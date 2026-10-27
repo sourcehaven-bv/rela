@@ -237,6 +237,16 @@ func (h *viewsHandler) executeViewBodies(
 	}
 	h.loadViewBodies(ctx, result, w, bodies)
 
+	// Roll-ups after the gate, on the served rows only, one batch per type
+	// across the entry and every collection (TKT-6I2OPG).
+	served := []*entity.Entity{result.Entry}
+	groups := [][]*entity.Entity{served}
+	for _, entities := range result.Collections {
+		groups = append(groups, entities)
+	}
+	h.rollups.addToEntities(ctx, w.scope, groups...)
+	result.Entry = served[0]
+
 	return result, nil
 }
 

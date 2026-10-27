@@ -1091,6 +1091,11 @@ func (a *App) handleV1GetEntity(w http.ResponseWriter, r *http.Request, typeName
 	}
 	result := a.serializer.forWireScoped(ctx, entity, outgoing, visibleNeighbors, a.Meta(), plural)
 	result.Versions = fieldVersionsOf(&result, a.Meta())
+	// Roll-ups after the field version tokens and outside the ETag: they are
+	// computed from OTHER entities under the caller's grants, which neither
+	// covers, and the response is no-store.
+	newRollupSource(a).add(ctx, entity.Type, []rollupRow{{ref: entity.Ref(), props: result.Properties}},
+		worldScopeFrom(ctx), nil)
 
 	// Face provenance (TKT-WRLDAPI item 2). Attached HERE rather than inside
 	// forWire, even though forWire is the shared per-entity serializer,

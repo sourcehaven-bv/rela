@@ -1529,6 +1529,7 @@ func NewApp(
 	// so both paths stay behaviorally identical.
 	app.write = &writeHandler{
 		schema:      app.State,
+		rollups:     newRollupSource(app),
 		store:       st,
 		manager:     grantedManager{em}, // writeHandler narrows to entityMutator
 		softDeletes: softDeletesFor(em),
@@ -1784,6 +1785,10 @@ func newViewsHandler(app *App, st store.Store, logo *logoStore) *viewsHandler {
 		aclImpl:        func() acl.ACL { return app.acl },
 		viewConditions: func() ViewConditionFunc { return app.viewConditions },
 		faceEdges:      app.faceEdges,
+		rollups: rollupSource{
+			schema: app.State, st: st,
+			fields: func() visibility.FieldScoper { return app.fieldResolver },
+		},
 	}
 }
 
