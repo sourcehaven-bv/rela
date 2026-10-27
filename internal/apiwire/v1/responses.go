@@ -313,12 +313,14 @@ type Transition struct {
 // per-file download/delete URL. Href is the download URL for the bytes (an
 // ACL-gated endpoint that inherits the owning entity's read permission).
 // ContentType is inferred from the filename — the store does not persist
-// it on every backend.
+// it on every backend. SHA256 is the lowercase hex SHA-256 of the stored
+// bytes; it is omitted only when the backend could not read them.
 type Attachment struct {
 	ID          string `json:"id"`
 	FileName    string `json:"filename"`
 	Size        int64  `json:"size"`
 	ContentType string `json:"contentType"`
+	SHA256      string `json:"sha256,omitempty"`
 	Href        string `json:"href"`
 }
 

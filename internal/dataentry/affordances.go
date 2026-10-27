@@ -1589,6 +1589,7 @@ func (svc affordanceService) computeAttachments(
 			FileName:    info.FileName,
 			Size:        info.Size,
 			ContentType: contentTypeForFilename(info.FileName),
+			SHA256:      info.SHA256,
 			Href:        selfHref + "/_attachments/" + info.Property + "/" + url.PathEscape(info.FileName),
 		})
 	}

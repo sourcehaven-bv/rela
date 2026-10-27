@@ -62,6 +62,7 @@ body:
           "filename": "shot.txt",
           "size": 10,
           "contentType": "text/plain; charset=utf-8",
+          "sha256": "b745ae43a3ef94b45f2fc8685c1024af54753c0bdc1bdc3f6f5b2eaa46c19ba8",
           "href": "/api/v1/tickets/TKT-1/_attachments/screenshot/shot.txt"
         }
       ]

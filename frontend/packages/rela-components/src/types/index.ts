@@ -216,6 +216,11 @@ export interface Attachment {
   href?: string
   /** An image shown in place of the kind icon, such as a thumbnail. */
   preview?: string
+  /**
+   * The SHA-256 of the stored file, as lowercase hex. The card shows the
+   * first 12 characters and the full value as a tooltip.
+   */
+  checksum?: string
 }
 
 export interface Comment {

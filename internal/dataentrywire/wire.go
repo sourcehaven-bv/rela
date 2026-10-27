@@ -74,6 +74,16 @@ func Services(app *dataentry.App, svc *appbuild.Services) error {
 	dataentry.SetVersionTags(app, appbuild.ScriptVersionTags(svc), appbuild.VersionTagReader(svc))
 	dataentry.SetOAuthTokens(app, appbuild.ScriptOAuth(svc))
 
+	// rela.attach_render for schedules and background automations
+	// (TKT-1TS55R); action scripts get it from the app itself.
+	renderer, err := dataentry.AttachRenderer(app)
+	if err != nil {
+		return fmt.Errorf("wire attach_render: %w", err)
+	}
+	if err := appbuild.SetAttachRenderer(svc, renderer); err != nil {
+		return fmt.Errorf("wire attach_render: %w", err)
+	}
+
 	if err := app.SetUserState(svc.UserState()); err != nil {
 		return fmt.Errorf("wire next-action state: %w", err)
 	}

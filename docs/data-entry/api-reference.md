@@ -1438,6 +1438,7 @@ clone), absent on list rows.
     "screenshot": [
       { "id": "shot.png", "filename": "shot.png", "size": 20480,
         "contentType": "image/png",
+        "sha256": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
         "href": "/api/v1/tickets/TKT-001/_attachments/screenshot/shot.png" }
     ],
     "docs": [
@@ -1455,7 +1456,9 @@ clone), absent on list rows.
 `id` is the file's identifier within the property (its normalized file
 name) — used to build the per-file download/delete URL. `contentType` is
 inferred from the filename extension (the store does not persist it on
-every backend). `size` is in bytes. The `properties` value is a scalar
+every backend). `size` is in bytes. `sha256` is the lowercase hex SHA-256
+hash of the stored bytes; it is left out only when the server could not read
+the file to hash it. The `properties` value is a scalar
 path for a single-cap property and a list of paths for a multi-cap one;
 treat both as opaque and use `_attachments` instead.
 
