@@ -2,7 +2,15 @@ import type { Component } from 'vue'
 
 export type StatusColor = 'green' | 'amber' | 'red' | 'grey' | 'blue' | 'purple'
 
-export type TagColor = 'grey' | 'blue' | 'green' | 'amber' | 'red' | 'purple'
+/**
+ * The colour of a status dot: a named status colour, or the name of a palette
+ * custom property (`--rl-kit-red-700`) for a colour the named set lacks. Only
+ * a dot takes the property form, so a tag or a pill never has to paint an
+ * arbitrary colour behind text.
+ */
+export type DotColor = StatusColor | `--rl-${string}`
+
+export type TagColor = 'grey' | 'blue' | 'green' | 'amber' | 'yellow' | 'teal' | 'red' | 'purple'
 
 export interface Tag {
   id: string
@@ -40,7 +48,7 @@ export interface CollectionItem {
 export interface Section<T extends CollectionItem = CollectionItem> {
   id: string
   title: string
-  color?: StatusColor
+  color?: DotColor
   count?: number
   collapsed?: boolean
   /**
@@ -77,7 +85,7 @@ export interface Section<T extends CollectionItem = CollectionItem> {
 export interface Swimlane<T extends CollectionItem = CollectionItem> {
   id: string
   title: string
-  color?: StatusColor
+  color?: DotColor
   /** Total across the lane's sections. Absent means count the items. */
   count?: number
   collapsed?: boolean

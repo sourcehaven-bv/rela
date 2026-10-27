@@ -8,7 +8,7 @@ styles:
   ticket_status:
     backlog: gray
     ready: blue
-    planning: cyan
+    planning: teal
     in-progress: purple
     review: orange
     done: green
@@ -18,7 +18,7 @@ styles:
   bug_status:
     backlog: gray
     ready: blue
-    analyzing: cyan
+    analyzing: teal
     in-progress: purple
     review: orange
     done: green
@@ -84,8 +84,8 @@ styles:
   idea_category:
     feature: blue
     ux: purple
-    integration: cyan
-    ai: pink
+    integration: teal
+    ai: red/300
     visualization: orange
     performance: yellow
     dx: green

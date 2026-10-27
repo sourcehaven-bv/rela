@@ -271,6 +271,30 @@ func TestBuildStyleMap(t *testing.T) {
 		}
 	})
 
+	t.Run("kit shades, new hues and operator colors", func(t *testing.T) {
+		cfg := &Config{
+			Palette: &PaletteConfig{Colors: map[string]dataentryconfig.OperatorColor{
+				"risk-critical": {Light: "#7a0010"},
+			}},
+			Styles: map[string]map[string]string{
+				"risk": {
+					"a": "red/700", "b": "gray/50", "c": "teal", "d": "grey",
+					"e": "risk-critical", "f": "yellow", "g": "red/750", "h": "unknown-op",
+				},
+			},
+		}
+		sm, _ := buildStyleMap(cfg, &metamodel.Metamodel{Types: map[string]metamodel.CustomType{}})
+		want := map[string]string{
+			"a": "kit-red-700", "b": "kit-grey-50", "c": "badge-teal", "d": "badge-gray",
+			"e": "custom-risk-critical", "f": "badge-yellow", "g": "badge-gray", "h": "badge-gray",
+		}
+		for value, class := range want {
+			if sm["risk"][value] != class {
+				t.Errorf("%s: got %q, want %q", value, sm["risk"][value], class)
+			}
+		}
+	})
+
 	t.Run("auto-assigned for custom types", func(t *testing.T) {
 		cfg := &Config{}
 		meta := &metamodel.Metamodel{

@@ -2,7 +2,7 @@
 import { computed } from 'vue'
 import { useSchemaStore } from '@/stores/schema'
 import type { EntityType } from '@/types'
-import { STYLE_PALETTE, styleClassFor } from '@/utils/styleColors'
+import { styleClassFor, styleSwatch } from '@/utils/styleColors'
 
 const props = defineProps<{
   value: string
@@ -28,13 +28,19 @@ const schemaStore = useSchemaStore()
 // multiple properties. Audited consumers all pass an explicit :property=.
 // A missing property -> the default gray; that's the correct "no styling
 // configured" answer.
-const badgeClass = computed(() => {
-  if (!props.property) return 'badge--gray'
+//
+// A kit shade (`red/700`) or an operator colour paints a fill with its own
+// text colour, both palette tokens, instead of a tag class (TKT-ZKNWSK).
+const swatch = computed(() => {
+  if (!props.property) return undefined
   // Value keys are normalized (lowercase, spaces to underscores) in styleKey.
   const propStyles = schemaStore.stylesForProperty(props.property, props.entityType)
-  const cls = styleClassFor(propStyles, props.value)
-  return (cls && STYLE_PALETTE[cls]?.badgeClass) || 'badge--gray'
+  return styleSwatch(styleClassFor(propStyles, props.value))
 })
+const badgeClass = computed(() =>
+  swatch.value?.badgeStyle ? undefined : (swatch.value?.badgeClass ?? 'badge--gray'),
+)
+const badgeStyle = computed(() => swatch.value?.badgeStyle)
 
 // The metamodel-authored display label for this enum value, if any. Color
 // styling above still keys on the raw `value` (the wire identity); only the
@@ -50,7 +56,11 @@ const displayText = computed(() => props.text ?? label.value ?? props.value)
   <!-- When the metamodel supplies a label the author already chose the display
        form, so we suppress CSS capitalize; label text is interpolated (escaped),
        never v-html. -->
-  <span class="badge" :class="[badgeClass, { 'badge--labeled': label !== undefined || text !== undefined }]">
+  <span
+    class="badge"
+    :class="[badgeClass, { 'badge--labeled': label !== undefined || text !== undefined }]"
+    :style="badgeStyle"
+  >
     {{ displayText }}
     <!-- Optional trailing adornment (e.g. a dropdown caret when the badge is an
          interactive control). Empty for the common read-only badge. -->
@@ -83,8 +93,8 @@ const displayText = computed(() => props.text ?? label.value ?? props.value)
 }
 
 /* Badge text needs 4.5:1, which the status-dot tones (3:1, non-text) do not
-   promise. The tag pairs do: each -fg clears AA on its own -bg. Orange and
-   yellow share the amber pair. */
+   promise. The tag pairs do: each -fg clears AA on its own -bg. Orange takes
+   the library's amber pair; yellow and teal have their own. */
 .badge--blue {
   background-color: var(--rl-tag-blue-bg);
   color: var(--rl-tag-blue-fg);
@@ -116,8 +126,13 @@ const displayText = computed(() => props.text ?? label.value ?? props.value)
 }
 
 .badge--yellow {
-  background-color: var(--rl-tag-amber-bg);
-  color: var(--rl-tag-amber-fg);
+  background-color: var(--rl-tag-yellow-bg);
+  color: var(--rl-tag-yellow-fg);
+}
+
+.badge--teal {
+  background-color: var(--rl-tag-teal-bg);
+  color: var(--rl-tag-teal-fg);
 }
 </style>
 

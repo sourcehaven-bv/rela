@@ -367,3 +367,41 @@ describe('Badge', () => {
     })
   })
 })
+
+describe('Badge: kit shades and operator colours (TKT-ZKNWSK)', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+  })
+
+  function mountWith(cls: string) {
+    useSchemaStore().styles = { risk: { high: cls } }
+    return mount(Badge, { props: { value: 'high', property: 'risk' } }).find('.badge')
+  }
+
+  it('paints a kit shade as a fill with its own text colour', () => {
+    const badge = mountWith('kit-red-700')
+    expect(badge.attributes('style')).toContain('background: var(--rl-kit-red-700)')
+    expect(badge.attributes('style')).toContain('color: var(--rl-kit-red-700-fg)')
+    expect(badge.classes()).not.toContain('badge--gray')
+  })
+
+  it('paints an operator colour from its palette tokens', () => {
+    const badge = mountWith('custom-risico-kritiek')
+    expect(badge.attributes('style')).toContain('background: var(--rl-custom-risico-kritiek)')
+    expect(badge.attributes('style')).toContain('color: var(--rl-custom-risico-kritiek-fg)')
+  })
+
+  it('keeps yellow and orange apart, and knows teal', () => {
+    expect(mountWith('badge-yellow').classes()).toContain('badge--yellow')
+    expect(mountWith('badge-orange').classes()).toContain('badge--orange')
+    expect(mountWith('badge-teal').classes()).toContain('badge--teal')
+  })
+
+  it('falls back to grey for a class the server cannot emit', () => {
+    for (const cls of ['kit-purple-500', 'kit-red-750', 'custom-X', 'custom-a;b', 'badge-pink']) {
+      const badge = mountWith(cls)
+      expect(badge.classes()).toContain('badge--gray')
+      expect(badge.attributes('style')).toBeUndefined()
+    }
+  })
+})

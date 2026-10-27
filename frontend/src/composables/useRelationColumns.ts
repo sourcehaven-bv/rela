@@ -6,7 +6,7 @@ import { usePageStore } from '@/stores/pages'
 import { entityDisplayTitle } from '@/utils/entityDisplay'
 import { ORDER_PROPERTY_OUT } from '@/types/schema'
 import type { Entity, PageScope } from '@/types'
-import type { StatusColor } from 'rela-components/types'
+import type { DotColor } from 'rela-components/types'
 import { styleStatusColor } from '@/utils/styleColors'
 
 /** Where columns or sections come from: a kanban's `columns_from`, or a relation `group_by`. */
@@ -27,7 +27,7 @@ export interface RelationColumn {
   /** The target entity; absent for the Other column. */
   entity?: Entity
   /** From the target's `style_from` value; absent without one or without a style. */
-  color?: StatusColor
+  color?: DotColor
 }
 
 function orderValue(v: unknown): number {

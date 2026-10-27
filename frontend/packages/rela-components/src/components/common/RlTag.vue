@@ -43,6 +43,8 @@ withDefaults(defineProps<{ label: string; color?: TagColor }>(), { color: 'grey'
 .rl-tag--blue   { background: var(--rl-tag-blue-bg);   color: var(--rl-tag-blue-fg); }
 .rl-tag--green  { background: var(--rl-tag-green-bg);  color: var(--rl-tag-green-fg); }
 .rl-tag--amber  { background: var(--rl-tag-amber-bg);  color: var(--rl-tag-amber-fg); }
+.rl-tag--yellow { background: var(--rl-tag-yellow-bg); color: var(--rl-tag-yellow-fg); }
+.rl-tag--teal   { background: var(--rl-tag-teal-bg);   color: var(--rl-tag-teal-fg); }
 .rl-tag--red    { background: var(--rl-tag-red-bg);    color: var(--rl-tag-red-fg); }
 .rl-tag--purple { background: var(--rl-tag-purple-bg); color: var(--rl-tag-purple-fg); }
 </style>

@@ -459,10 +459,72 @@ The key is the custom type name (as defined in `schema.yaml` under `types:`). Ea
 to a color name. These colors are applied everywhere that enum value appears: list cells, badges,
 and form select options.
 
-**Available colors:** `red`, `orange`, `yellow`, `green`, `blue`, `purple`, `gray`.
+### Color names
+
+A color name takes one of three forms:
+
+| Form | Example | Meaning |
+| ---- | ------- | ------- |
+| Hue | `red` | The hue's badge color, a light tint with readable text. |
+| Hue and shade | `red/700` | One exact shade from the Atlas UI kit. |
+| Your own name | `risk-critical` | A color you define under `palette.colors`. |
+
+The hues are `grey` (also written `gray`), `red`, `orange`, `yellow`, `green`,
+`teal`, `blue` and `purple`. `orange` and `yellow` are two different colors.
+
+Every hue except `purple` has the shades `50`, `100`, `200`, `300`, `400`,
+`500`, `600`, `700`, `800` and `900`. `50` is the lightest and `900` the
+darkest. A shaded badge fills with that shade, and rela picks black, white or
+dark grey text so that the text meets WCAG AA (4.5:1) on it. A kanban column
+or list group heading uses the shade for its dot.
+
+In dark mode the shades mirror: `red/900` shows what `red/50` shows in light
+mode, `red/800` what `red/100` shows, and so on. So a value that stands out in
+light mode stands out in dark mode too. To pick a different dark color for one
+shade, set it under `palette.dark.colors`:
+
+```yaml
+palette:
+  dark:
+    colors:
+      red/700: '#ff8a80'
+```
+
+A user's own palette with a `dark:` block replaces the project's `dark:`
+block as a whole, including these overrides.
+
+Your own colors go under `palette.colors`. Give each a `light` color and,
+optionally, a `dark` one; without `dark`, dark mode uses the light color.
+rela picks the text color automatically, in each theme:
+
+```yaml
+palette:
+  colors:
+    risk-critical: {light: '#7a0010', dark: '#ff6b6b'}
+    brand: {light: '#0f6e5c'}
+
+styles:
+  risk_level:
+    critical: risk-critical
+    high: red/700
+    medium: orange
+    low: teal/300
+```
+
+A name under `palette.colors` uses lower-case letters, digits and hyphens, and
+starts with a letter. It cannot be a hue, `gray`, or one of the tones
+`success`, `warning`, `error`, `info` and `new`. Colors are written as `#rgb`
+or `#rrggbb`; transparency is not allowed, because rela could not then promise
+readable text.
+
+The app refuses to load a configuration that uses an unknown color name, an
+unknown shade (such as `red/750` or `purple/500`), or an invalid hex color.
+The error names the style entry, so you can find it.
+
+### Palette
 
 The built-in colors follow the Atlas UI kit, using the shades that meet WCAG
-AA. To change what those colors look like, set a `palette:` block. `accent` colors
+AA. To change what the hue colors look like, set a `palette:` block. `accent` colors
 buttons, links and selection. Each entry under `badges` colors the badges and
 kanban column dots of that style color:
 
@@ -475,8 +537,8 @@ palette:
 ```
 
 Only the values you set change; everything else keeps the built-in look.
-`orange` and `yellow` share one color, and `orange` wins when both are set.
-`purple` is drawn with the accent. These values apply to the light theme. For
+`purple` is drawn with the accent. `badges` changes the hue colors only;
+a shade such as `red/700` keeps its kit value. These values apply to the light theme. For
 dark mode, set them under `dark:`; without that, dark mode keeps its built-in
 colors. Text drawn in these colors must stay readable, so check each one against
 WCAG AA (4.5:1 for text on a white background).

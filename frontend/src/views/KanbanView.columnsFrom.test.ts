@@ -204,7 +204,7 @@ describe('styleStatusColor', () => {
   })
 
   it('gives every badge class a status colour', () => {
-    for (const cls of ['blue', 'purple', 'green', 'gray', 'red', 'orange', 'yellow']) {
+    for (const cls of ['blue', 'purple', 'green', 'gray', 'red', 'orange', 'yellow', 'teal']) {
       expect(STYLE_PALETTE[`badge-${cls}`]?.status).toBeDefined()
     }
   })
