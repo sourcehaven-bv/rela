@@ -427,6 +427,14 @@ func worldCapablePath(path string) bool {
 	if isWorldCapablePilesPath(trimmed) {
 		return true
 	}
+	// The SEVENTH, named exactly: one dashboard card's value (TKT-2SGPJZ).
+	// A `list:` card is the list's rows, read through the list pipeline,
+	// which takes the world from ctx like the list endpoint itself. Refusing
+	// the world would count a card in the default world while its click-
+	// through list opens in the page's world.
+	if trimmed == "_dashboard/card" {
+		return true
+	}
 	if strings.HasPrefix(trimmed, "_") {
 		return false
 	}

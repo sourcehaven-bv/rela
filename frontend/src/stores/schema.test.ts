@@ -102,11 +102,17 @@ describe('Schema Store', () => {
       async function loadWithApp(app: Record<string, unknown>) {
         const { getSchema, getConfig } = await import('@/api/schema')
         vi.mocked(getSchema).mockResolvedValue({
-          entities: {}, relations: {}, types: {},
+          entities: {},
+          relations: {},
+          types: {},
         } as never)
         vi.mocked(getConfig).mockResolvedValue({
           app: { name: 'Test App', ...app },
-          forms: {}, lists: {}, views: {}, kanbans: {}, navigation: [],
+          forms: {},
+          lists: {},
+          views: {},
+          kanbans: {},
+          navigation: [],
         } as never)
         const store = useSchemaStore()
         await store.load()
@@ -146,10 +152,14 @@ describe('Schema Store', () => {
         app: { name: 'Test App', description: 'A test app' },
         styles: { status: { open: 'badge-blue' } },
         forms: { 'task-create': { entity: 'task' } },
-        channels: { room: { messages: { text: { fields: [{ property: 'body', label: 'Message' }] } } } },
+        channels: {
+          room: { messages: { text: { fields: [{ property: 'body', label: 'Message' }] } } },
+        },
         lists: { tasks: { entity: 'task', columns: [] } },
         views: { 'task-view': { entity: 'task', sections: [] } },
-        kanbans: { 'task-board': { entity: 'task', column_property: 'status', card: { title: 'title' } } },
+        kanbans: {
+          'task-board': { entity: 'task', column_property: 'status', card: { title: 'title' } },
+        },
         documents: { report: { command: 'echo test' } },
         // The UNFILTERED config block, deliberately different from what
         // /_dashboard returns below, so the assertion can tell which source
@@ -161,7 +171,7 @@ describe('Schema Store', () => {
       const { getDashboard } = await import('@/api/dashboard')
       vi.mocked(getDashboard).mockResolvedValue({
         title: 'Overview',
-        cards: [{ title: 'Filtered', query: 'q', display: 'count' }],
+        cards: [{ title: 'Filtered', query: 'q', display: 'count', index: 0 }],
       })
 
       const store = useSchemaStore()
@@ -173,7 +183,11 @@ describe('Schema Store', () => {
 
       // Check schema
       expect(store.entityTypes.size).toBe(2)
-      expect(store.entityTypes.get('task')).toEqual({ label: 'Task', description: 'A task', properties: {} })
+      expect(store.entityTypes.get('task')).toEqual({
+        label: 'Task',
+        description: 'A task',
+        properties: {},
+      })
       expect(store.relationTypes.size).toBe(1)
       expect(store.customTypes.size).toBe(1)
 
@@ -181,7 +195,9 @@ describe('Schema Store', () => {
       expect(store.app).toEqual({ name: 'Test App', description: 'A test app' })
       expect(store.styles).toEqual({ status: { open: 'badge-blue' } })
       expect(store.forms.size).toBe(1)
-      expect(store.channelPresentations.get('room')?.messages?.text?.fields?.[0]?.label).toBe('Message')
+      expect(store.channelPresentations.get('room')?.messages?.text?.fields?.[0]?.label).toBe(
+        'Message'
+      )
       expect(store.lists.size).toBe(1)
       expect(store.views.size).toBe(1)
       expect(store.kanbans.size).toBe(1)
@@ -190,7 +206,7 @@ describe('Schema Store', () => {
       // show every principal the unfiltered card list.
       expect(store.dashboard).toEqual({
         title: 'Overview',
-        cards: [{ title: 'Filtered', query: 'q', display: 'count' }],
+        cards: [{ title: 'Filtered', query: 'q', display: 'count', index: 0 }],
       })
       expect(store.navigation).toEqual([{ label: 'Tasks', list: 'tasks' }])
     })
@@ -199,7 +215,14 @@ describe('Schema Store', () => {
       const { getSchema, getConfig } = await import('@/api/schema')
 
       vi.mocked(getSchema).mockResolvedValue({ entities: {}, relations: {}, types: {} })
-      vi.mocked(getConfig).mockResolvedValue({ app: { name: 'test' }, forms: {}, lists: {}, views: {}, kanbans: {}, navigation: [] })
+      vi.mocked(getConfig).mockResolvedValue({
+        app: { name: 'test' },
+        forms: {},
+        lists: {},
+        views: {},
+        kanbans: {},
+        navigation: [],
+      })
 
       const store = useSchemaStore()
       await store.load()
@@ -218,7 +241,14 @@ describe('Schema Store', () => {
           resolveSchema = () => resolve({ entities: {}, relations: {}, types: {} })
         })
       )
-      vi.mocked(getConfig).mockResolvedValue({ app: { name: 'test' }, forms: {}, lists: {}, views: {}, kanbans: {}, navigation: [] })
+      vi.mocked(getConfig).mockResolvedValue({
+        app: { name: 'test' },
+        forms: {},
+        lists: {},
+        views: {},
+        kanbans: {},
+        navigation: [],
+      })
 
       const store = useSchemaStore()
 
@@ -241,7 +271,14 @@ describe('Schema Store', () => {
       const { getSchema, getConfig } = await import('@/api/schema')
 
       vi.mocked(getSchema).mockRejectedValue(new Error('Network error'))
-      vi.mocked(getConfig).mockResolvedValue({ app: { name: 'test' }, forms: {}, lists: {}, views: {}, kanbans: {}, navigation: [] })
+      vi.mocked(getConfig).mockResolvedValue({
+        app: { name: 'test' },
+        forms: {},
+        lists: {},
+        views: {},
+        kanbans: {},
+        navigation: [],
+      })
 
       const store = useSchemaStore()
 
@@ -288,7 +325,14 @@ describe('Schema Store', () => {
       const { getSchema, getConfig } = await import('@/api/schema')
 
       vi.mocked(getSchema).mockRejectedValue('string error')
-      vi.mocked(getConfig).mockResolvedValue({ app: { name: 'test' }, forms: {}, lists: {}, views: {}, kanbans: {}, navigation: [] })
+      vi.mocked(getConfig).mockResolvedValue({
+        app: { name: 'test' },
+        forms: {},
+        lists: {},
+        views: {},
+        kanbans: {},
+        navigation: [],
+      })
 
       const store = useSchemaStore()
 
@@ -303,7 +347,14 @@ describe('Schema Store', () => {
       const { getSchema, getConfig } = await import('@/api/schema')
 
       vi.mocked(getSchema).mockResolvedValue({ entities: {}, relations: {}, types: {} })
-      vi.mocked(getConfig).mockResolvedValue({ app: { name: 'rela' }, forms: {}, lists: {}, views: {}, kanbans: {}, navigation: [] })
+      vi.mocked(getConfig).mockResolvedValue({
+        app: { name: 'rela' },
+        forms: {},
+        lists: {},
+        views: {},
+        kanbans: {},
+        navigation: [],
+      })
 
       const store = useSchemaStore()
       await store.load()
@@ -502,7 +553,14 @@ describe('Schema Store', () => {
         relations: {},
         types: {},
       })
-      vi.mocked(getConfig).mockResolvedValue({ app: { name: 'test' }, forms: {}, lists: {}, views: {}, kanbans: {}, navigation: [] })
+      vi.mocked(getConfig).mockResolvedValue({
+        app: { name: 'test' },
+        forms: {},
+        lists: {},
+        views: {},
+        kanbans: {},
+        navigation: [],
+      })
 
       const store = useSchemaStore()
       await store.load()
@@ -535,7 +593,9 @@ describe('Schema Store', () => {
         forms: { 'task-form': { entity: 'task' } },
         lists: { tasks: { entity: 'task', columns: [] } },
         views: { 'task-view': { entity: 'task', sections: [] } },
-        kanbans: { 'task-board': { entity: 'task', column_property: 'status', card: { title: 'title' } } },
+        kanbans: {
+          'task-board': { entity: 'task', column_property: 'status', card: { title: 'title' } },
+        },
         navigation: [],
       })
     })
@@ -544,7 +604,11 @@ describe('Schema Store', () => {
       const store = useSchemaStore()
       await store.load()
 
-      expect(store.getEntityType('task')).toEqual({ label: 'Task', description: 'A task', properties: {} })
+      expect(store.getEntityType('task')).toEqual({
+        label: 'Task',
+        description: 'A task',
+        properties: {},
+      })
       expect(store.getEntityType('nonexistent')).toBeUndefined()
     })
 
@@ -552,7 +616,11 @@ describe('Schema Store', () => {
       const store = useSchemaStore()
       await store.load()
 
-      expect(store.getRelationType('blocks')).toEqual({ label: 'blocks', from: ['task'], to: ['task'] })
+      expect(store.getRelationType('blocks')).toEqual({
+        label: 'blocks',
+        from: ['task'],
+        to: ['task'],
+      })
       expect(store.getRelationType('nonexistent')).toBeUndefined()
     })
 
@@ -628,7 +696,11 @@ describe('Schema Store', () => {
           {
             label: 'Ticket',
             properties: {
-              status: { type: 'enum', values: ['in_progress'], labels: { in_progress: 'In Progress' } },
+              status: {
+                type: 'enum',
+                values: ['in_progress'],
+                labels: { in_progress: 'In Progress' },
+              },
             },
           },
         ],
@@ -665,11 +737,17 @@ describe('Schema Store', () => {
       store.entityTypes = new Map([
         [
           'bug',
-          { label: 'Bug', properties: { status: { type: 'enum', values: ['x'], labels: { x: 'Bug X' } } } },
+          {
+            label: 'Bug',
+            properties: { status: { type: 'enum', values: ['x'], labels: { x: 'Bug X' } } },
+          },
         ],
         [
           'ticket',
-          { label: 'Ticket', properties: { status: { type: 'enum', values: ['x'], labels: { x: 'Ticket X' } } } },
+          {
+            label: 'Ticket',
+            properties: { status: { type: 'enum', values: ['x'], labels: { x: 'Ticket X' } } },
+          },
         ],
       ]) as never
       expect(store.getEnumLabel('x', 'status', 'ticket')).toBe('Ticket X')
@@ -682,7 +760,10 @@ describe('Schema Store', () => {
       store.entityTypes = new Map([
         [
           'bug',
-          { label: 'Bug', properties: { status: { type: 'enum', values: ['x'], labels: { x: 'Bug X' } } } },
+          {
+            label: 'Bug',
+            properties: { status: { type: 'enum', values: ['x'], labels: { x: 'Bug X' } } },
+          },
         ],
         ['ticket', { label: 'Ticket', properties: { status: { type: 'string' } } }],
       ]) as never
@@ -696,11 +777,17 @@ describe('Schema Store', () => {
       store.entityTypes = new Map([
         [
           'bug',
-          { label: 'Bug', properties: { status: { type: 'enum', values: ['x'], labels: { x: 'Bug X' } } } },
+          {
+            label: 'Bug',
+            properties: { status: { type: 'enum', values: ['x'], labels: { x: 'Bug X' } } },
+          },
         ],
         [
           'ticket',
-          { label: 'Ticket', properties: { status: { type: 'enum', values: ['x'], labels: { x: 'Ticket X' } } } },
+          {
+            label: 'Ticket',
+            properties: { status: { type: 'enum', values: ['x'], labels: { x: 'Ticket X' } } },
+          },
         ],
       ]) as never
       expect(store.getEnumLabel('x', 'status')).toBe('Bug X')

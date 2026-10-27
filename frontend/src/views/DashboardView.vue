@@ -2,9 +2,20 @@
 import { ref, computed, onMounted, watch } from 'vue'
 import { useSchemaStore } from '@/stores'
 import NextActionCard from '@/components/NextActionCard.vue'
-import { searchEntities, analyze, getDashboard, ApiError } from '@/api'
+import { searchEntities, analyze, getDashboard, getDashboardCard, ApiError } from '@/api'
+import { useWorld } from '@/composables/useWorld'
+import { isPropertyRedacted } from '@/utils/affordances'
+import type { RouteLocationRaw } from 'vue-router'
+import DashboardMatrix from '@/components/dashboard/DashboardMatrix.vue'
+import DashboardRatio from '@/components/dashboard/DashboardRatio.vue'
 
-import type { Entity, DashboardCard, AnalyzeResult, DashboardResponse } from '@/types'
+import type {
+  Entity,
+  AnalyzeResult,
+  DashboardCardEntry,
+  DashboardCardValue,
+  DashboardResponse,
+} from '@/types'
 import RlStatusRegion from 'rela-components/components/feedback/RlStatusRegion.vue'
 import RlEmptyState from 'rela-components/components/feedback/RlEmptyState.vue'
 
@@ -16,6 +27,7 @@ import RlEmptyState from 'rela-components/components/feedback/RlEmptyState.vue'
 const props = defineProps<{ name?: string }>()
 
 const schemaStore = useSchemaStore()
+const { worldParam } = useWorld()
 
 // The named dashboard's per-principal payload, fetched on entry since only
 // the default one is prefetched. `notFound` is the server's 404 for a name
@@ -40,6 +52,11 @@ const pageState = computed<'pending' | 'loaded' | 'error'>(() => {
 // another's tile — e.g. dropping the first of two cards leaves the survivor
 // rendering the dropped card's count.
 const cardData = ref<Map<string, { entities: Entity[]; count: number }>>(new Map())
+// Server-computed values of `list:` cards (TKT-2SGPJZ), keyed like cardData.
+const cardValues = ref<Map<string, DashboardCardValue>>(new Map())
+// List cards whose value could not be loaded. One failing card (say, a list
+// filter on a property this reader cannot see) fails only its own tile.
+const cardErrors = ref<Set<string>>(new Set())
 const analysisResult = ref<AnalyzeResult | null>(null)
 
 /**
@@ -53,8 +70,20 @@ const analysisResult = ref<AnalyzeResult | null>(null)
  * together: `{title:'a b', query:'c'}` and `{title:'a', query:'b c'}` must not
  * collide into one key.
  */
-function cardKey(card: DashboardCard): string {
+function cardKey(card: DashboardCardEntry): string {
+  // A list card is addressed by its config index, so the index is part of
+  // its identity; a query card keeps the key it always had.
+  if (card.list) return JSON.stringify(['list', card.index, card.title, card.display, card.list])
   return JSON.stringify([card.title, card.query, card.display])
+}
+
+/**
+ * Whether a computed value belongs to the card it was asked for. A config
+ * reload between `/_dashboard` and `/_dashboard/card` can move the indexes;
+ * a value for another card is dropped rather than shown on this tile.
+ */
+function valueMatches(card: DashboardCardEntry, value: DashboardCardValue): boolean {
+  return value.title === card.title && value.display === card.display && value.list === card.list
 }
 
 // Computed
@@ -75,6 +104,8 @@ async function loadData() {
   loadError.value = false
   notFound.value = false
   cardData.value = new Map()
+  cardValues.value = new Map()
+  cardErrors.value = new Set()
 
   try {
     if (props.name) {
@@ -94,10 +125,23 @@ async function loadData() {
     }
     // Load card data in parallel
     const cardPromises = cards.value.map(async (card) => {
-      // Cards count in the default world. Counting a card in another world
-      // is a separate decision, like next-action's per-source
+      if (card.list) {
+        // A list card counts in the page's world, as its list would.
+        try {
+          const value = await getDashboardCard(props.name, card.index, worldParam.value)
+          if (stale()) return
+          if (valueMatches(card, value)) cardValues.value.set(cardKey(card), value)
+        } catch (err) {
+          if (stale()) return
+          console.error('Dashboard card load error:', err)
+          cardErrors.value.add(cardKey(card))
+        }
+        return
+      }
+      // Query cards count in the default world. Counting one in another
+      // world is a separate decision, like next-action's per-source
       // `source_world:`.
-      const response = await searchEntities(card.query)
+      const response = await searchEntities(card.query ?? '')
       if (stale()) return
       cardData.value.set(cardKey(card), {
         entities: response.data,
@@ -118,18 +162,24 @@ async function loadData() {
   }
 }
 
-type Breakdown = Array<{ value: string; count: number; percentage: number }>
+type Breakdown = Array<{ key?: string; value: string; count: number; percentage: number }>
 
 /** One rendered tile: the card plus everything the template needs derived. */
 interface CardView {
-  card: DashboardCard
+  card: DashboardCardEntry
   key: string
   count: number
   breakdown: Breakdown
   rows: Entity[]
+  /** The server-computed value of a list card; absent for a query card. */
+  value?: DashboardCardValue
+  /** Where the card's link goes: its list, or the search for its query. */
+  link: RouteLocationRaw
+  /** True when a list card's value failed to load. */
+  failed: boolean
 }
 
-function buildBreakdown(card: DashboardCard, entities: Entity[]): Breakdown {
+function buildBreakdown(card: DashboardCardEntry, entities: Entity[]): Breakdown {
   if (!card.group_by) return []
 
   const groupBy = card.group_by
@@ -151,7 +201,39 @@ function buildBreakdown(card: DashboardCard, entities: Entity[]): Breakdown {
     .sort((a, b) => b.count - a.count)
 }
 
-function buildRows(card: DashboardCard, entities: Entity[]): Entity[] {
+/** A list card's breakdown, from the groups the server counted. */
+function valueBreakdown(value: DashboardCardValue): Breakdown {
+  return (value.groups ?? []).map((g) => ({
+    key: g.value,
+    value: g.label || 'Unknown',
+    count: g.count,
+    percentage: value.total > 0 ? (g.count / value.total) * 100 : 0,
+  }))
+}
+
+/** A list card's table rows, shaped like the entities the template renders. */
+function valueRows(value: DashboardCardValue): Entity[] {
+  return (value.rows ?? []).map((r) => ({
+    id: r.id,
+    type: r.type,
+    _title: r._title,
+    properties: r.properties,
+    _redacted: r._redacted,
+  }))
+}
+
+function cardLink(card: DashboardCardEntry): RouteLocationRaw {
+  if (card.list) {
+    // The list opens in the world the card was counted in.
+    return {
+      path: `/list/${encodeURIComponent(card.list)}`,
+      query: worldParam.value ? { world: worldParam.value } : {},
+    }
+  }
+  return `/search?q=${encodeURIComponent(card.query ?? '')}`
+}
+
+function buildRows(card: DashboardCardEntry, entities: Entity[]): Entity[] {
   const sorted = [...entities]
 
   if (card.sort?.length) {
@@ -192,8 +274,24 @@ function buildRows(card: DashboardCard, entities: Entity[]): Entity[] {
 const cardViews = computed<CardView[]>(() =>
   cards.value.map((card) => {
     const key = cardKey(card)
+    const link = cardLink(card)
+    if (card.list) {
+      const value = cardValues.value.get(key)
+      return {
+        card,
+        key,
+        link,
+        value,
+        count: value?.total ?? 0,
+        breakdown: value && card.display === 'breakdown' ? valueBreakdown(value) : [],
+        rows: value && card.display === 'table' ? valueRows(value) : [],
+        failed: cardErrors.value.has(key),
+      }
+    }
     const entities = cardData.value.get(key)?.entities ?? []
     return {
+      link,
+      failed: false,
       card,
       key,
       count: cardData.value.get(key)?.count || 0,
@@ -233,11 +331,9 @@ onMounted(async () => {
   await loadData()
 })
 
-// The router reuses this view between two named dashboards.
-watch(
-  () => props.name,
-  () => void loadData()
-)
+// The router reuses this view between two named dashboards, and a world
+// change recounts the list cards.
+watch([() => props.name, worldParam], () => void loadData())
 </script>
 
 <template>
@@ -269,9 +365,7 @@ watch(
         by `permission:` (TKT-53KICM). Distinguishing them would tell a user
         about cards they cannot use, which is the opposite of the point.
       -->
-      <p v-if="cards.length === 0" class="no-data dashboard-empty">
-        No dashboard cards to show.
-      </p>
+      <p v-if="cards.length === 0" class="no-data dashboard-empty">No dashboard cards to show.</p>
 
       <div v-else class="dashboard-grid">
         <section
@@ -283,43 +377,46 @@ watch(
           <div class="card-header">
             <h3 :id="`dashboard-card-${view.key}-title`">{{ view.card.title }}</h3>
             <router-link
-              :to="`/search?q=${encodeURIComponent(view.card.query)}`"
+              :to="view.link"
               class="card-link"
-              title="View in search"
+              :title="view.card.list ? 'Open the list' : 'View in search'"
             >
               &#8599;
             </router-link>
           </div>
 
+          <p v-if="view.failed" class="no-data" data-testid="card-failed">
+            This card could not be loaded.
+          </p>
+
+          <p v-else-if="view.value?.partial" class="card-partial" data-testid="card-partial">
+            Some values are hidden from you and are not shown.
+          </p>
+
           <!-- Count display -->
-          <div v-if="view.card.display === 'count'" class="card-count">
+          <template v-if="view.failed" />
+          <div v-else-if="view.card.display === 'count'" class="card-count">
             <span class="count-number">{{ view.count }}</span>
           </div>
 
           <!-- Breakdown display -->
           <div v-else-if="view.card.display === 'breakdown'" class="card-breakdown">
-            <div
-              v-for="item in view.breakdown"
-              :key="item.value"
-              class="breakdown-row"
-            >
+            <div v-for="item in view.breakdown" :key="item.key ?? item.value" class="breakdown-row">
               <span class="breakdown-label">{{ item.value }}</span>
               <div class="breakdown-bar-track">
-                <div
-                  class="breakdown-bar-fill"
-                  :style="{ width: `${item.percentage}%` }"
-                />
+                <div class="breakdown-bar-fill" :style="{ width: `${item.percentage}%` }" />
               </div>
               <span class="breakdown-count">{{ item.count }}</span>
             </div>
-            <div v-if="view.breakdown.length === 0" class="no-data">
-              No data
-            </div>
+            <div v-if="view.breakdown.length === 0" class="no-data">No data</div>
           </div>
 
           <!-- Table display -->
           <div v-else-if="view.card.display === 'table'" class="card-table">
-            <table v-if="view.rows.length > 0" :aria-labelledby="`dashboard-card-${view.key}-title`">
+            <table
+              v-if="view.rows.length > 0"
+              :aria-labelledby="`dashboard-card-${view.key}-title`"
+            >
               <thead>
                 <tr>
                   <th v-for="col in view.card.columns" :key="col.property" scope="col">
@@ -337,6 +434,12 @@ watch(
                     >
                       {{ getCellValue(entity, col) }}
                     </router-link>
+                    <span
+                      v-else-if="col.property && isPropertyRedacted(col.property, entity._redacted)"
+                      class="cell-hidden"
+                      title="Hidden from you"
+                      >Hidden</span
+                    >
                     <span v-else>{{ getCellValue(entity, col) }}</span>
                   </td>
                 </tr>
@@ -344,6 +447,30 @@ watch(
             </table>
             <div v-else class="no-data">No results</div>
           </div>
+
+          <!-- Matrix display (list cards only) -->
+          <template v-else-if="view.card.display === 'matrix'">
+            <DashboardMatrix
+              v-if="view.value?.matrix"
+              :matrix="view.value.matrix"
+              :list="view.card.list ?? ''"
+              :title="view.card.title"
+              :toned="!!view.card.tone_by"
+              :world="worldParam"
+            />
+            <div v-else class="no-data">No data</div>
+          </template>
+
+          <!-- Ratio display (list cards only) -->
+          <template v-else-if="view.card.display === 'ratio'">
+            <DashboardRatio
+              v-if="view.value"
+              :matched="view.value.matched ?? 0"
+              :total="view.value.total"
+              :groups="view.value.groups"
+            />
+            <div v-else class="no-data">No data</div>
+          </template>
         </section>
       </div>
 
@@ -368,11 +495,10 @@ watch(
                 {{ analysisResult.errors }} {{ analysisResult.errors === 1 ? 'error' : 'errors' }}
               </span>
               <span v-if="analysisResult.warnings > 0" class="badge badge-warning">
-                {{ analysisResult.warnings }} {{ analysisResult.warnings === 1 ? 'warning' : 'warnings' }}
+                {{ analysisResult.warnings }}
+                {{ analysisResult.warnings === 1 ? 'warning' : 'warnings' }}
               </span>
-              <router-link to="/analyze" class="view-details">
-                View details &rarr;
-              </router-link>
+              <router-link to="/analyze" class="view-details"> View details &rarr; </router-link>
             </template>
           </template>
         </div>
@@ -399,7 +525,6 @@ watch(
   margin: 0;
 }
 
-
 .dashboard-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
@@ -412,6 +537,17 @@ watch(
   border: 1px solid var(--rl-color-border);
   border-radius: var(--radius-lg);
   padding: 16px;
+}
+
+.cell-hidden {
+  color: var(--rl-color-text-muted);
+  font-style: italic;
+}
+
+.card-partial {
+  margin: 0 0 var(--space-xs);
+  font-size: var(--font-size-sm);
+  color: var(--rl-color-text-muted);
 }
 
 .card-header {

@@ -1,10 +1,18 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { mount, flushPromises } from '@vue/test-utils'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { mount, flushPromises, enableAutoUnmount } from '@vue/test-utils'
+import { ref } from 'vue'
 import { createPinia, setActivePinia } from 'pinia'
 
 import DashboardView from './DashboardView.vue'
 import { useSchemaStore } from '@/stores/schema'
-import type { DashboardCard, DashboardResponse, AnalyzeResult, ListResponse, Entity } from '@/types'
+import type {
+  DashboardCardEntry,
+  DashboardCardValue,
+  DashboardResponse,
+  AnalyzeResult,
+  ListResponse,
+  Entity,
+} from '@/types'
 import { ApiError } from '@/api/errors'
 
 vi.mock('vue-router', () => ({
@@ -13,28 +21,43 @@ vi.mock('vue-router', () => ({
   RouterLink: { template: '<a><slot/></a>' },
 }))
 
+// Renders a link's target so a test can read where it goes.
+const RouterLinkStub = {
+  props: ['to'],
+  template: '<a :data-to="typeof to === \'string\' ? to : JSON.stringify(to)"><slot/></a>',
+}
+
+const world = ref<string | undefined>(undefined)
+vi.mock('@/composables/useWorld', () => ({
+  useWorld: () => ({ worldParam: world }),
+}))
+
 const searchEntitiesMock = vi.fn<(query: string) => Promise<ListResponse<Entity>>>()
 const analyzeMock = vi.fn<() => Promise<AnalyzeResult>>()
 const getDashboardMock = vi.fn<(name?: string) => Promise<DashboardResponse>>()
+const getDashboardCardMock =
+  vi.fn<(name: string | undefined, index: number, world?: string) => Promise<DashboardCardValue>>()
 vi.mock('@/api', async () => {
   const { ApiError } = await import('@/api/errors')
   return {
     searchEntities: (query: string) => searchEntitiesMock(query),
     analyze: () => analyzeMock(),
     getDashboard: (name?: string) => getDashboardMock(name),
+    getDashboardCard: (name: string | undefined, index: number, world?: string) =>
+      getDashboardCardMock(name, index, world),
     ApiError,
   }
 })
 
-function card(overrides: Partial<DashboardCard> = {}): DashboardCard {
-  return { title: 'Open', query: 'type:ticket', display: 'count', ...overrides }
+function card(overrides: Partial<DashboardCardEntry> = {}): DashboardCardEntry {
+  return { title: 'Open', query: 'type:ticket', display: 'count', index: 0, ...overrides }
 }
 
 /**
  * Seeds the store as already-loaded with the given cards, standing in for the
  * `/_dashboard` fetch the store performs on load.
  */
-function seedDashboard(cards: DashboardCard[]) {
+function seedDashboard(cards: DashboardCardEntry[]) {
   const store = useSchemaStore()
   store.dashboard = { title: 'Overview', cards }
   store.loaded = true
@@ -42,10 +65,14 @@ function seedDashboard(cards: DashboardCard[]) {
 }
 
 async function mountView() {
-  const wrapper = mount(DashboardView)
+  const wrapper = mount(DashboardView, {
+    global: { stubs: { RouterLink: RouterLinkStub, 'router-link': RouterLinkStub } },
+  })
   await flushPromises()
   return wrapper
 }
+
+enableAutoUnmount(afterEach)
 
 describe('DashboardView', () => {
   beforeEach(() => {
@@ -56,6 +83,7 @@ describe('DashboardView', () => {
       meta: { total: 0, page: 1, per_page: 50, has_more: false },
     })
     analyzeMock.mockResolvedValue({ errors: 0, warnings: 0, issues: [], byCheck: {} })
+    world.value = undefined
   })
 
   // The wiring assertion this file exists for (TKT-53KICM): the view must
@@ -132,12 +160,20 @@ describe('DashboardView', () => {
   // rendering the dropped card's number — a wrong figure presented as fact.
   // The per-principal card list makes a mid-life shape change plausible.
   it('never binds one card’s data to another card’s tile', async () => {
-    const store = seedDashboard([card({ title: 'A', query: 'q-a' }), card({ title: 'B', query: 'q-b' })])
+    const store = seedDashboard([
+      card({ title: 'A', query: 'q-a' }),
+      card({ title: 'B', query: 'q-b' }),
+    ])
     searchEntitiesMock.mockImplementation(() =>
       Promise.resolve({
         data: [],
-        meta: { total: searchEntitiesMock.mock.calls.length === 1 ? 100 : 200, page: 1, per_page: 50, has_more: false },
-      }),
+        meta: {
+          total: searchEntitiesMock.mock.calls.length === 1 ? 100 : 200,
+          page: 1,
+          per_page: 50,
+          has_more: false,
+        },
+      })
     )
 
     const wrapper = await mountView()
@@ -388,6 +424,159 @@ describe('DashboardView', () => {
       finishCrm({ title: 'Pipeline', cards: [] })
       await flushPromises()
       expect(wrapper.find('h1').text()).toBe('Ops')
+    })
+  })
+
+  describe('list cards (TKT-2SGPJZ)', () => {
+    function value(overrides: Partial<DashboardCardValue> = {}): DashboardCardValue {
+      return { title: 'Open', display: 'count', list: 'open', total: 7, ...overrides }
+    }
+
+    it('reads the value from the server instead of searching', async () => {
+      seedDashboard([card({ title: 'Open', query: undefined, list: 'open', index: 2 })])
+      getDashboardCardMock.mockResolvedValue(value())
+
+      const wrapper = await mountView()
+      expect(getDashboardCardMock).toHaveBeenCalledWith(undefined, 2, undefined)
+      expect(searchEntitiesMock).not.toHaveBeenCalled()
+      expect(wrapper.find('.count-number').text()).toBe('7')
+    })
+
+    it('drops a value computed for another card', async () => {
+      seedDashboard([card({ title: 'Open', query: undefined, list: 'open' })])
+      getDashboardCardMock.mockResolvedValue(value({ title: 'Closed', total: 99 }))
+
+      const wrapper = await mountView()
+      expect(wrapper.find('.count-number').text()).toBe('0')
+    })
+
+    it('renders a server breakdown and says when it is partial', async () => {
+      seedDashboard([
+        card({ title: 'By status', query: undefined, list: 'all', display: 'breakdown' }),
+      ])
+      getDashboardCardMock.mockResolvedValue(
+        value({
+          title: 'By status',
+          display: 'breakdown',
+          list: 'all',
+          total: 3,
+          partial: true,
+          groups: [
+            { value: 'open', label: 'Open', count: 2, matched: 0 },
+            { value: '', label: '', count: 1, matched: 0 },
+          ],
+        })
+      )
+
+      const wrapper = await mountView()
+      const labels = wrapper.findAll('.breakdown-label').map((l) => l.text())
+      expect(labels).toEqual(['Open', 'Unknown'])
+      expect(wrapper.find('[data-testid="card-partial"]').exists()).toBe(true)
+    })
+
+    it('renders a ratio', async () => {
+      seedDashboard([card({ title: 'Share', query: undefined, list: 'all', display: 'ratio' })])
+      getDashboardCardMock.mockResolvedValue(
+        value({ title: 'Share', display: 'ratio', list: 'all', total: 4, matched: 1 })
+      )
+
+      const wrapper = await mountView()
+      expect(wrapper.find('[data-testid="ratio-total"]').text()).toBe('1 / 4 (25%)')
+    })
+
+    it('renders a matrix', async () => {
+      seedDashboard([card({ title: 'Heat', query: undefined, list: 'all', display: 'matrix' })])
+      getDashboardCardMock.mockResolvedValue(
+        value({
+          title: 'Heat',
+          display: 'matrix',
+          list: 'all',
+          total: 2,
+          matrix: {
+            row_property: 'impact',
+            column_property: 'likelihood',
+            rows: [{ value: 'low', label: 'Low' }],
+            columns: [
+              { value: '1', label: '1' },
+              { value: '2', label: '2' },
+            ],
+            cells: [{ row: 'low', column: '2', count: 2, color: 'badge-red' }],
+          },
+        })
+      )
+
+      const wrapper = await mountView()
+      const cells = wrapper.findAll('[data-testid="matrix-cell"]')
+      expect(cells).toHaveLength(1)
+      expect(cells[0].attributes('aria-label')).toBe('Low, 2: 2')
+    })
+
+    it('counts in the page world, links into it and recounts when it changes', async () => {
+      world.value = 'draft'
+      seedDashboard([card({ title: 'Open', query: undefined, list: 'open', index: 1 })])
+      getDashboardCardMock.mockResolvedValue(value())
+
+      const wrapper = await mountView()
+      expect(getDashboardCardMock).toHaveBeenLastCalledWith(undefined, 1, 'draft')
+      expect(JSON.parse(wrapper.find('.card-link').attributes('data-to') ?? '')).toEqual({
+        path: '/list/open',
+        query: { world: 'draft' },
+      })
+
+      world.value = undefined
+      await flushPromises()
+      expect(getDashboardCardMock).toHaveBeenLastCalledWith(undefined, 1, undefined)
+    })
+
+    it('fails one card without blanking the dashboard', async () => {
+      seedDashboard([
+        card({ title: 'Open', query: undefined, list: 'open', index: 0 }),
+        card({ title: 'Restricted', query: undefined, list: 'secret', index: 1 }),
+      ])
+      getDashboardCardMock.mockImplementation(async (_name, index) => {
+        if (index === 1) {
+          throw new ApiError('property not visible', { kind: 'http', status: 400, original: null })
+        }
+        return value()
+      })
+      vi.spyOn(console, 'error').mockImplementation(() => {})
+
+      const wrapper = await mountView()
+      expect(wrapper.findAll('[data-testid="card-failed"]')).toHaveLength(1)
+      expect(wrapper.find('.count-number').text()).toBe('7')
+    })
+
+    it('marks a hidden table cell rather than leaving it blank', async () => {
+      seedDashboard([
+        card({
+          title: 'Rows',
+          query: undefined,
+          list: 'all',
+          display: 'table',
+          columns: [{ property: 'title' }, { property: 'owner' }],
+        }),
+      ])
+      getDashboardCardMock.mockResolvedValue(
+        value({
+          title: 'Rows',
+          display: 'table',
+          list: 'all',
+          total: 1,
+          partial: true,
+          rows: [
+            {
+              id: 'T-1',
+              type: 'ticket',
+              _title: 'One',
+              properties: { title: 'One' },
+              _redacted: ['owner'],
+            },
+          ],
+        })
+      )
+
+      const wrapper = await mountView()
+      expect(wrapper.find('.cell-hidden').text()).toBe('Hidden')
     })
   })
 })

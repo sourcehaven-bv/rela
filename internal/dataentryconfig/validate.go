@@ -469,6 +469,8 @@ var validDashboardDisplayModes = map[string]bool{
 	"count":     true,
 	"table":     true,
 	"breakdown": true,
+	"matrix":    true,
+	"ratio":     true,
 }
 
 var validCommandContexts = map[string]bool{
@@ -2561,7 +2563,7 @@ func validateKanbans(cfg *Config, meta *metamodel.Metamodel) []string {
 // validateDashboard validates the default dashboard and every named one.
 // An error names the dashboard: `dashboard:` for the default one,
 // `dashboards[<name>]:` for a named one.
-func validateDashboard(cfg *Config, _ *metamodel.Metamodel) []string {
+func validateDashboard(cfg *Config, meta *metamodel.Metamodel) []string {
 	var errs []string
 
 	for _, name := range slices.Sorted(maps.Keys(cfg.Dashboards)) {
@@ -2583,6 +2585,9 @@ func validateDashboard(cfg *Config, _ *metamodel.Metamodel) []string {
 			prefix = fmt.Sprintf("dashboards[%s]", d.Name)
 		}
 		errs = append(errs, validateDashboardCards(prefix, d.Config.Cards)...)
+		for i, card := range d.Config.Cards {
+			errs = append(errs, validateDashboardCardSource(cfg, meta, prefix, i, card)...)
+		}
 	}
 
 	return errs

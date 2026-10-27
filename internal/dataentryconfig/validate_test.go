@@ -56,6 +56,7 @@ func testMetamodel() *metamodel.Metamodel {
 					"status":   {Type: "status"},
 					"priority": {Type: "priority"},
 					"assignee": {Type: "string"},
+					"tags":     {Type: "string", List: true},
 				},
 			},
 			"category": {

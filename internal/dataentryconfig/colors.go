@@ -70,11 +70,35 @@ var bareHues = map[string]bool{
 // hueAliases maps an accepted spelling to its hue.
 var hueAliases = map[string]string{"gray": "grey"}
 
-// SemanticTones are the tone names a dashboard matrix accepts besides color
-// names. An operator color may not take one of these names, so a matrix
-// `colors:` value is never ambiguous.
-var SemanticTones = map[string]bool{
-	"success": true, "warning": true, "error": true, "info": true, "new": true,
+// toneHues are the tone names a dashboard matrix accepts besides color names,
+// each with the kit hue it paints. An operator color may not take one of these
+// names, so a matrix `colors:` value is never ambiguous.
+var toneHues = map[string]string{
+	"success": "green",
+	"warning": "orange",
+	"error":   "red",
+	"info":    "blue",
+	"new":     "purple",
+}
+
+// SemanticTones is the set of tone names, derived from toneHues so the names
+// validation accepts and the names ToneColor paints cannot drift apart.
+var SemanticTones = func() map[string]bool {
+	out := make(map[string]bool, len(toneHues))
+	for tone := range toneHues {
+		out[tone] = true
+	}
+	return out
+}()
+
+// ToneColor is the color a tone paints; false for a name that is not a tone.
+func ToneColor(name string) (Color, bool) {
+	hue, ok := toneHues[name]
+	if !ok {
+		return Color{}, false
+	}
+	c, err := ParseColor(hue, nil)
+	return c, err == nil
 }
 
 // operatorColorNameRe is the grammar of a `palette.colors` name. The name

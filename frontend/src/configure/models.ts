@@ -785,6 +785,11 @@ export interface CardModel {
   limit?: number
   /** Only some people see it: shown, never edited here. */
   restricted: boolean
+  /**
+   * The list a `list:` card counts (TKT-2SGPJZ); empty for a query card.
+   * List cards are written in the project's files and only shown here.
+   */
+  list: string
 }
 
 /**
@@ -824,6 +829,7 @@ export function dashboardModel(dataEntry: TreeValue | undefined, name?: string) 
                   groupBy: str(get(c, 'group_by')) ?? '',
                   limit: num(get(c, 'limit')),
                   restricted: get(c, 'permission') !== undefined,
+                  list: str(get(c, 'list')) ?? '',
                 },
               ]
             : []

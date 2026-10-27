@@ -1195,9 +1195,94 @@ type NavItem struct {
 // one with an empty `cards:`, and one where every card was filtered all
 // serialize as `[]`, so the SPA has a single "render what you got" path.
 type DashboardResponse struct {
-	Title       string                          `json:"title,omitempty"`
-	Description string                          `json:"description,omitempty"`
-	Cards       []dataentryconfig.DashboardCard `json:"cards"`
+	Title       string               `json:"title,omitempty"`
+	Description string               `json:"description,omitempty"`
+	Cards       []DashboardCardEntry `json:"cards"`
+}
+
+// DashboardCardEntry is one card of a DashboardResponse: its config plus its
+// position in the dashboard's `cards:`, which addresses it on
+// /api/v1/_dashboard/card. The index is the config position, so it skips the
+// cards this principal is not shown.
+type DashboardCardEntry struct {
+	dataentryconfig.DashboardCard
+	Index int `json:"index"`
+}
+
+// DashboardCardValue is the server-computed value of one `list:` dashboard
+// card (TKT-2SGPJZ), from GET /api/v1/_dashboard/card.
+//
+// Title, Display and List echo the card the value was computed for. The
+// SPA compares them with the card it asked for and drops a mismatch, which
+// a config reload between the two requests can cause.
+type DashboardCardValue struct {
+	Title   string `json:"title"`
+	Display string `json:"display"`
+	List    string `json:"list"`
+	// Total counts the list's rows this principal sees.
+	Total int `json:"total"`
+	// Matched counts the rows a ratio card's `match:` scope admits.
+	Matched int `json:"matched,omitempty"`
+	// Groups is a breakdown, or a ratio's per-group counts, in display
+	// order: declared order for an enum, else most rows first.
+	Groups []DashboardGroup `json:"groups,omitempty"`
+	// Rows is a table card's first rows.
+	Rows []DashboardRow `json:"rows,omitempty"`
+	// Matrix is a matrix card's cells.
+	Matrix *DashboardMatrix `json:"matrix,omitempty"`
+	// Partial is true when a value the card groups, colors or shows was
+	// hidden from this principal on at least one row. That row still counts
+	// in Total.
+	Partial bool `json:"partial,omitempty"`
+}
+
+// DashboardGroup is one value of a breakdown or ratio group_by. An empty
+// Value collects the rows without one.
+type DashboardGroup struct {
+	Value   string `json:"value"`
+	Label   string `json:"label"`
+	Count   int    `json:"count"`
+	Matched int    `json:"matched"`
+}
+
+// DashboardRow is one row of a table card: the card's column properties as
+// this principal may read them.
+type DashboardRow struct {
+	ID         string         `json:"id"`
+	Type       string         `json:"type"`
+	Title      string         `json:"_title"`
+	Properties map[string]any `json:"properties"`
+	// Redacted names the column properties hidden from this principal.
+	Redacted []string `json:"_redacted,omitempty"`
+}
+
+// DashboardMatrix is a matrix card: its axes in display order and its
+// non-empty cells.
+type DashboardMatrix struct {
+	RowProperty    string               `json:"row_property"`
+	ColumnProperty string               `json:"column_property"`
+	Rows           []DashboardAxisValue `json:"rows"`
+	Columns        []DashboardAxisValue `json:"columns"`
+	Cells          []DashboardCell      `json:"cells"`
+	// Unplaced counts rows without a value on either axis.
+	Unplaced int `json:"unplaced,omitempty"`
+	// Truncated is true when an integer axis had more values than are shown.
+	Truncated bool `json:"truncated,omitempty"`
+}
+
+// DashboardAxisValue is one row or column of a matrix.
+type DashboardAxisValue struct {
+	Value string `json:"value"`
+	Label string `json:"label"`
+}
+
+// DashboardCell is one non-empty matrix cell. Color is a style class (as in
+// the `/_config` style map), or empty for a neutral cell.
+type DashboardCell struct {
+	Row    string `json:"row"`
+	Column string `json:"column"`
+	Count  int    `json:"count"`
+	Color  string `json:"color,omitempty"`
 }
 
 // SidebarResponse contains the sidebar data with app info and navigation.
