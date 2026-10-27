@@ -118,7 +118,7 @@ func gatedServerAs(t *testing.T) (srv *Server, as func(user string) context.Cont
 	reads := svc.GatedReads()
 	deps := Deps{
 		Store:         reads.Reader,
-		Traversals:    reads.Traversals,
+		Related:       RelatedReads{Traversals: reads.Traversals},
 		Meta:          meta,
 		Tracer:        reads.Tracer,
 		Searcher:      reads.Searcher,

@@ -109,6 +109,8 @@ func validateMappedTargetProperties(
 			bad("fields: target type %q has no property %q", toName, key)
 		case property.Computed != "":
 			bad("fields: target property %q is computed and cannot be mapped", key)
+		case property.Rollup != nil:
+			bad("fields: target property %q is a roll-up and cannot be mapped", key)
 		case property.Type == PropertyTypeExternalRef:
 			bad("fields: target property %q is an external reference and cannot be mapped", key)
 		}

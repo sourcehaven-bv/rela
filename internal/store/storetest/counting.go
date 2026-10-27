@@ -28,7 +28,7 @@ import (
 // optional capabilities above, plus Unwrap for store.Decorator, so the count
 // moves with store.Store rather than with this type.
 //
-//plimsoll:max-exported-methods=23
+//plimsoll:max-exported-methods=24
 type Counting struct {
 	store.Store
 
@@ -188,6 +188,17 @@ func (c *Counting) GraphQueryHeaders(ctx context.Context, q store.GraphQuery) it
 func (c *Counting) CountMatched(ctx context.Context, q store.GraphQuery) (int, error) {
 	c.hit("CountMatched")
 	return store.CountMatched(ctx, c.Store, q)
+}
+
+// Rollup forwards to the wrapped store's native roll-up, counted as one
+// read. A store without one runs the generic fallback through this
+// decorator, so each of the fallback's own reads is counted.
+func (c *Counting) Rollup(ctx context.Context, q store.RollupQuery) (map[string]store.RollupResult, error) {
+	if r, ok := c.Store.(store.Rollupper); ok {
+		c.hit("Rollup")
+		return r.Rollup(ctx, q)
+	}
+	return store.RollupGeneric(ctx, c, q)
 }
 
 // ListEntityHeaders forwards to the wrapped store's header reader, or to

@@ -38,6 +38,9 @@ func serveListRowExtras(
 		a.comments.serveCommentCounts(r.Context(), rows, data)
 	}
 	a.leases.serveRowLeases(r.Context(), rows, data)
+	if want := listRollups(query, a.Cfg()); want != nil {
+		serveRowRollups(r.Context(), newRollupSource(a), rows, data, want)
+	}
 	return true
 }
 

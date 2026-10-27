@@ -142,8 +142,11 @@ func parseTime(s string) (time.Time, error) { return time.Parse(time.RFC3339Nano
 // store.FamilyReplacer so a type change can replace all rows of one entity
 // family under the same store transaction.
 //
-//plimsoll:max-methods=55
-//plimsoll:max-exported-methods=37
+// +1 exported / +1 method (TKT-6I2OPG): Rollup, the optional store.Rollupper
+// capability. Its SQL builder is free functions in rollup.go.
+//
+//plimsoll:max-methods=56
+//plimsoll:max-exported-methods=38
 type Store struct {
 	db *sql.DB
 

@@ -53,7 +53,7 @@ func (s *Server) handleListEntities(
 		if q.Type == "" {
 			return errorResult("filter requires type"), nil
 		}
-		compiled, err := compileListFilter(d.Meta, q.Type, filterExpr, d.Traversals != nil)
+		compiled, err := compileListFilter(d.Meta, q.Type, filterExpr, d.Related.Traversals != nil)
 		if err != nil {
 			return errorResult(err.Error()), nil
 		}
@@ -122,12 +122,12 @@ func filterEntities(
 	ctx context.Context, d Deps, prog *predicate.Program, entityType string, entities []*entity.Entity,
 ) ([]*entity.Entity, error) {
 	traversalFor := func(string) predicate.TraversalFunc { return nil }
-	if d.Traversals != nil {
+	if d.Related.Traversals != nil {
 		ids := make([]string, len(entities))
 		for i, e := range entities {
 			ids[i] = e.ID
 		}
-		bound, err := d.Traversals.Bind(ctx, entityType, ids, prog)
+		bound, err := d.Related.Traversals.Bind(ctx, entityType, ids, prog)
 		if err != nil {
 			return nil, err
 		}
@@ -160,7 +160,7 @@ func (s *Server) handleShowEntity(
 	id = trimID(id)
 
 	d := snap.deps
-	ctx, _, refused := selectWorld(ctx, d, args)
+	ctx, world, refused := selectWorld(ctx, d, args)
 	if refused != nil {
 		return refused, nil
 	}
@@ -171,6 +171,7 @@ func (s *Server) handleShowEntity(
 
 	view := entityView{relations: true, content: args.GetBool("content", true)}
 	ej := buildEntityJSON(ctx, e, d.Store, d.Meta, view)
+	ej.Properties = withRollups(ctx, d, e, world)
 	ej.OtherFaces = otherFaces(ctx, d.Store, d.Meta, e)
 	if mErr := addMentionedBy(ctx, d.Store, d.Meta, &ej); mErr != nil {
 		return errorResult(fmt.Sprintf("read backlinks of %s: %v", e.ID, mErr)), nil

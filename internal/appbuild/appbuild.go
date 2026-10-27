@@ -58,6 +58,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/project"
 	"github.com/Sourcehaven-BV/rela/internal/realtime"
 	"github.com/Sourcehaven-BV/rela/internal/relresolve"
+	"github.com/Sourcehaven-BV/rela/internal/rollup"
 	"github.com/Sourcehaven-BV/rela/internal/rootfs"
 	"github.com/Sourcehaven-BV/rela/internal/schedulerstate"
 	"github.com/Sourcehaven-BV/rela/internal/schedulerstate/kvstate"
@@ -815,7 +816,54 @@ func (s *Services) GatedReads() GatedReadBundle {
 		Traversals: b,
 		LuaReads:   deps,
 		Rebind:     rebindFor(s.aclDeclarative),
+		Rollups:    gatedRollups(s),
 	}
+}
+
+// gatedRollups returns the roll-up reader of [Services.GatedReads]: related
+// rows under the ctx principal's read query, fields under the same
+// `visible:` scope the reader redacts with. Without a policy every row and
+// field counts. A construction failure computes no roll-ups rather than
+// ungated ones.
+func gatedRollups(s *Services) *visibility.Rollups {
+	set, err := rollup.Compile(s.meta)
+	if err != nil { // coverage-ignore: assembly already compiled the same metamodel
+		slog.Error("appbuild: roll-ups unavailable", "err", err)
+		return nil
+	}
+	var rows visibility.ReadQueryProvider = visibility.AllowAllReadQueries{}
+	if s.aclDeclarative != nil {
+		gate, gErr := visibility.NewDeclarativeGate(s.aclDeclarative, s.worlds.DefaultWorld())
+		if gErr != nil {
+			slog.Error("appbuild: ACL gate unavailable; roll-ups REFUSED", "err", gErr)
+			return nil
+		}
+		rows = gate
+	}
+	var fields visibility.FieldScoper = visibility.NopRedactor{}
+	if s.fieldReads != nil {
+		fields = s.fieldReads
+	}
+	r, err := visibility.NewRollups(set, s.store, rows, fields)
+	if err != nil { // coverage-ignore: invariant: every argument is non-nil here
+		slog.Error("appbuild: roll-ups unavailable", "err", err)
+		return nil
+	}
+	return r
+}
+
+// compileDerived compiles the computed properties of meta and checks its
+// roll-ups. Read surfaces compile their own roll-up set from the same
+// metamodel; this is the load-time check, so a bad roll-up fails the boot.
+func compileDerived(meta *metamodel.Metamodel) (*computed.Set, error) {
+	set, err := computed.Compile(meta)
+	if err != nil {
+		return nil, fmt.Errorf("compile computed properties: %w", err)
+	}
+	if _, rErr := rollup.Compile(meta); rErr != nil {
+		return nil, fmt.Errorf("compile roll-up properties: %w", rErr)
+	}
+	return set, nil
 }
 
 // rebindFor returns the [GatedReadBundle.Rebind] for policy d: without a
@@ -853,6 +901,10 @@ type GatedReadBundle struct {
 	// its lifetime, so a consumer that reads repeatedly over one long call
 	// (the MCP watch tool) calls Rebind before each round of reads.
 	Rebind func(context.Context) (context.Context, error)
+
+	// Rollups computes roll-up properties under the same gate as Reader
+	// (TKT-6I2OPG). Nil: accepted; a nil reader computes none.
+	Rollups *visibility.Rollups
 }
 
 // gatedSearcher returns the search handle for an identity-bearing consumer.
@@ -2655,9 +2707,9 @@ func assemble(
 	if err != nil {
 		return nil, fmt.Errorf("compile transitions: %w", err)
 	}
-	computedSet, err := computed.Compile(base.meta)
+	computedSet, err := compileDerived(base.meta)
 	if err != nil {
-		return nil, fmt.Errorf("compile computed properties: %w", err)
+		return nil, err
 	}
 
 	versions, sweep, err := versioningFor(st, base.meta)

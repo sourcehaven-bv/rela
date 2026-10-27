@@ -402,7 +402,10 @@ func (s *mcpServices) deps(svc *appbuild.Services) relamcp.Deps {
 		BindIdentity: reads.Rebind,
 	}
 	if reads.Traversals != nil {
-		deps.Traversals = reads.Traversals
+		deps.Related.Traversals = reads.Traversals
+	}
+	if reads.Rollups != nil {
+		deps.Related.Rollups = reads.Rollups
 	}
 	// Read only: stdio has no signed-in user to author a comment (TKT-QIQO1W).
 	deps.Comments.Reader = newStdioComments(svc.Comments(), reads.Reader, svc.Meta())

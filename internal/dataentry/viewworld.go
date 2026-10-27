@@ -478,6 +478,7 @@ func (h *viewsHandler) writeWorldAbsentView(
 		// for the panel; only the operator's entity_views switch hides it.
 		HideMentionedByPanel: hideMentionedByPanel(sch.Cfg, ViewConfig{Entry: ViewEntry{Type: e.Type}}),
 	}
+	h.rollups.add(ctx, e.Type, []rollupRow{{ref: e.Ref(), props: resp.Entry.Properties}}, worldScopeFrom(ctx), nil)
 	writeV1JSON(w, http.StatusOK, resp)
 }
 

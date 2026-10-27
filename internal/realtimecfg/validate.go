@@ -593,6 +593,10 @@ func (v *validator) promoteMapping(key, entityType, ep, mp string, def *metamode
 		v.add(key, fmt.Sprintf("%s.%s is computed; it cannot be set", entityType, ep))
 		return
 	}
+	if pd.Rollup != nil {
+		v.add(key, fmt.Sprintf("%s.%s is a roll-up; it cannot be set", entityType, ep))
+		return
+	}
 	msgProp, ok := mt.Properties[mp]
 	if !ok {
 		v.add(key, fmt.Sprintf("message type %s has no property %q", mt.Name, mp))

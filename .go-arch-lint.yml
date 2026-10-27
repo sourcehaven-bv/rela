@@ -142,6 +142,7 @@ components:
   # I/O, reads the metamodel only to type the synced fields.
   syncmerge:        { in: internal/syncmerge }
   relresolve:       { in: internal/relresolve }
+  rollup:           { in: internal/rollup }
   statemachine:     { in: internal/statemachine }
   tracer:           { in: internal/tracer }
   validation:       { in: internal/validation }
@@ -540,6 +541,7 @@ deps:
       # `rela channel` (TKT-76G6M7) speaks the channel service's views and
       # errors; the access checks stay in realtime.Service.
       - realtime
+      - rollup
       - renametype
       - scheduler
       - schema
@@ -586,6 +588,7 @@ deps:
   dataentry:
     mayDependOn:
       - mentions
+      - rollup
       - rootfs
       # The next-action engine and its per-user state. dataentry supplies the
       # ACL-gated CandidateFunc; it does NOT choose a userstate backend —
@@ -800,6 +803,7 @@ deps:
     mayDependOn:
       # aclstore: the store adapters handed to acl.NewDeclarative.
       - aclstore
+      - rollup
       - rootfs
       # Loads realtime.yaml at boot and holds the compiled config.
       - realtimecfg
@@ -1014,6 +1018,7 @@ deps:
       - metamodel
       - migration
       - project
+      - rollup
       - scheduler
       - storage
       - subscription
@@ -1213,6 +1218,8 @@ deps:
       - affordances
       - entity
       - principal
+      # visibility.Rollups computes roll-up columns under the reader's gate.
+      - rollup
       # visibility.Searcher gates search hits for identity-bearing consumers
       # (remote MCP, Lua), the pattern search.VisibleSearcher started.
       - search
@@ -1456,6 +1463,14 @@ deps:
   relresolve:
     mayDependOn:
       - acl
+      - metamodel
+      - predicate
+      - predicatefns
+      - store
+  # Compiles schema `rollup:` properties (TKT-6I2OPG). The gated computation
+  # is visibility's; the aggregate is the store's.
+  rollup:
+    mayDependOn:
       - metamodel
       - predicate
       - predicatefns

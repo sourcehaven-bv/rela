@@ -1094,6 +1094,11 @@ func (a *App) handleV1GetEntity(w http.ResponseWriter, r *http.Request, typeName
 	}
 	result := a.serializer.forWireScoped(ctx, entity, outgoing, visibleNeighbors, a.Meta(), plural)
 	result.Versions = fieldVersionsOf(&result, a.Meta())
+	// Roll-ups after the field version tokens and outside the ETag: they are
+	// computed from OTHER entities under the caller's grants, which neither
+	// covers, and the response is no-store.
+	newRollupSource(a).add(ctx, entity.Type, []rollupRow{{ref: entity.Ref(), props: result.Properties}},
+		worldScopeFrom(ctx), nil)
 
 	// Face provenance (TKT-WRLDAPI item 2). Attached HERE rather than inside
 	// forWire, even though forWire is the shared per-entity serializer,
@@ -1155,8 +1160,12 @@ func (a *App) handleV1GetEntity(w http.ResponseWriter, r *http.Request, typeName
 	// Check If-None-Match. When leases are wired the GET never answers 304:
 	// the ETag does not cover `_lease`, so a copy cached before a claim or a
 	// release would carry the wrong lease. The ETag is still sent, unchanged
-	// by the lease, so If-Match keeps working.
-	if a.leases == nil && r.Header.Get("If-None-Match") == etag {
+	// by the lease, so If-Match keeps working. A type with roll-ups never
+	// answers 304 either, for the same reason: they change with OTHER
+	// entities, which the ETag does not cover.
+	if a.leases == nil && len(a.Meta().RollupNames(entity.Type)) == 0 &&
+		r.Header.Get("If-None-Match") == etag {
+
 		w.WriteHeader(http.StatusNotModified)
 		return
 	}

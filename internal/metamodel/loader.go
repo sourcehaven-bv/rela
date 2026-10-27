@@ -1255,6 +1255,7 @@ func validatePropertyDef(
 			schemaName, propName, propDef.Type))
 	}
 	errs = append(errs, validateComputedProperty(schemaName, propName, propDef, allowComputed)...)
+	errs = append(errs, validateRollupShape(schemaName, propName, propDef, allowComputed)...)
 	errs = append(errs, validateFilePropertyOptions(schemaName, propName, propDef)...)
 	errs = append(errs, validateExternalRefOptions(schemaName, propName, propDef, allowComputed)...)
 	errs = append(errs, validatePropertyDisplay(schemaName, propName, propDef)...)

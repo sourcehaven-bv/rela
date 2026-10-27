@@ -108,6 +108,9 @@ func fieldFor(m *metamodel.Metamodel, name string, pd *metamodel.PropertyDef) (F
 	if pd.Computed != "" {
 		return f, fmt.Errorf("%w: field %q is computed", ErrField, name)
 	}
+	if pd.Rollup != nil {
+		return f, fmt.Errorf("%w: field %q is a roll-up", ErrField, name)
+	}
 	switch pd.Type {
 	case metamodel.PropertyTypeString, metamodel.PropertyTypeRrule, "":
 		f.Kind = KindString

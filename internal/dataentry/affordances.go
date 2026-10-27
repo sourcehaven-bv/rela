@@ -412,7 +412,7 @@ func createFieldVerdicts(
 }
 
 // withSchemaReadOnly marks the fields of e's type that no principal may author
-// read-only on top of v: computed properties and external refs.
+// read-only on top of v: computed properties, roll-ups and external refs.
 //
 // Nil: e accepted (v returned unchanged).
 func withSchemaReadOnly(meta *metamodel.Metamodel, e *entityPkg.Entity, v FieldVerdicts) FieldVerdicts {
@@ -430,7 +430,7 @@ func withSchemaReadOnly(meta *metamodel.Metamodel, e *entityPkg.Entity, v FieldV
 	for name, pd := range def.Properties {
 		// An external ref is written only by scripts, migrations and
 		// imports (TKT-SM20FG); the write path refuses it from here.
-		if pd.Computed != "" || pd.Type == metamodel.PropertyTypeExternalRef {
+		if pd.Computed != "" || pd.Rollup != nil || pd.Type == metamodel.PropertyTypeExternalRef {
 			v.Writable[name] = false
 		}
 	}

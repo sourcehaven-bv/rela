@@ -656,6 +656,7 @@ entities:
 | `display`        | How the value is shown for reading, such as `{currency: EUR}` (see [Display formats](#display-formats)) |
 | `list: true`     | Allow multiple values (multi-select for enum types)                                   |
 | `computed`       | Pure entity-local expression materialized on every write; the property is read-only   |
+| `rollup`         | Summary of related entities, computed on read per reader; see [Roll-up properties](#roll-up-properties) |
 | `unique: true`   | Natural key: no two entities of the type may share a non-empty value (write-time 422; find pre-existing dups with `rela analyze unique`). On a type declaring `faces:` the constraint holds **per face**: two entities may not share a value within one face, while two faces of the same entity never collide with each other. Only for string-valued properties (`string`, `date`, `datetime`, `enum`, custom types) — not `list`, and not `integer`/`boolean`/`file`. On the PostgreSQL backend this is additionally enforced by an automatically-maintained database index, so it holds even under concurrent writers ([details](postgres-backend.md#derived-schema-unique-constraints)). |
 | `max`            | For `file` properties: max attachments (default 1)                                    |
 | `accept`         | For `file` properties: narrow the MIME allowlist (e.g. `[application/pdf]`)           |
@@ -836,6 +837,89 @@ Computed expressions run against the raw write candidate, including properties
 that may be hidden from a reader by field ACL. Treat the computed property's own
 visibility as a disclosure decision: a broadly visible derived value can reveal
 information about a more restricted source field.
+
+### Roll-up properties
+
+A roll-up property summarizes the entities related to an entity, such as how
+many valid pieces of evidence a control has, or the result of its latest test.
+rela computes the value each time the entity is read, with the reader's access.
+The value is never stored.
+
+```yaml
+types:
+  testresultaat:
+    values: [geslaagd, gefaald]
+
+entities:
+  maatregel:
+    properties:
+      bewijs_aantal:
+        type: integer
+        rollup: { via: evidencedBy, count: true, where: { status: geldig } }
+      laatste_testresultaat:
+        type: testresultaat
+        rollup: { via: testedBy, pick: resultaat, latest_by: datum }
+  risico:
+    properties:
+      open_behandelplannen:
+        type: integer
+        rollup: { via: treatedBy, count: true, where: { afgerond: "false" } }
+```
+
+| Key         | Meaning                                                                                       |
+| ----------- | --------------------------------------------------------------------------------------------- |
+| `via`       | One relation. Its name walks from → to; its `inverse` walks to → from, as in `related()`      |
+| `type`      | The related type, when the relation's far side names several                                  |
+| `where`     | Keep only related entities whose properties equal these values (enum, string, boolean, integer) |
+| `count`     | The number of related entities. The property must be `integer`                               |
+| `exists`    | Whether there is at least one. The property must be `boolean`                                 |
+| `min`/`max` | The lowest or highest value of an `integer` or `date` property; same type                      |
+| `sum`       | The total of an `integer` property. The property must be `integer`                            |
+| `latest_by` | With `pick`: the `pick` value of the entity with the latest `date` here                       |
+
+Declare exactly one function. `pick` must have the roll-up's declared type.
+A roll-up follows one relation, and cannot read another roll-up. It cannot be
+`required`, `list`, `unique`, `computed`, have a `default`, or be a file. The
+schema fails to load when a roll-up names an unknown relation or property, or
+when a type does not match. `min`, `max` and `latest_by` take a `date` only in
+the default `YYYY-MM-DD` format, and no `datetime`: rela orders these values as
+text, and only that date format sorts as text in time order.
+
+**How a roll-up differs from a computed property.**
+
+| | Computed | Roll-up |
+| --- | --- | --- |
+| Reads | The entity's own properties | Properties of related entities |
+| When | On every write, then stored | On every read, never stored |
+| Access | One value for every reader | Per reader: it counts only what the reader may read |
+| Filter, sort, group | Yes, like any stored property | No |
+| Conditions and automations | Yes | No: a condition that names one fails to load |
+
+**Access.** A related entity the reader cannot read is never counted. A related
+entity whose `where`, `latest_by`, `min`, `max` or `sum` property is hidden from
+the reader by a `visible:` grant is left out, as if it did not match. When the
+`pick` property of the latest entity is hidden, the roll-up has no value; rela
+does not fall back to an older entity. Two readers can therefore see different
+values for the same entity.
+
+**Where the value appears.** The entity API (`GET /api/v1/{type}/{id}`, and the
+responses of create and update), the entity detail page, view sections, and the
+MCP `show_entity` tool. A list row carries roll-ups only when asked, because
+each roll-up costs one store query per page: send `rollups=1` for every roll-up,
+or `list_id` naming a configured list, which then carries the roll-ups shown as
+its columns. A list cannot filter, sort or group on a roll-up; the request
+answers `400 invalid_filter`, and a `data-entry.yaml` that tries fails to load.
+
+**Writes.** Setting or unsetting a roll-up through the CLI, MCP, Lua or the
+data-entry API is refused. A whole-entity update that sends back the value it
+read is accepted; the value is not stored. A value already in the markdown
+file under a roll-up name (written by hand) is replaced by the computed value
+on the surfaces above; Lua scripts and search still see the stored value.
+
+**Caching.** The entity's `ETag` covers its stored content, not its roll-ups. A
+change to a related entity changes the roll-up without changing the `ETag`, so
+a `GET` on a type with roll-ups never answers `304 Not Modified`. `If-Match`
+keeps working.
 
 ### File attachments and `max`
 

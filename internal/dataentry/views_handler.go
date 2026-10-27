@@ -74,6 +74,9 @@ type viewsHandler struct {
 	// leases fills the entry's `_lease`. Nil until [SetLeases] installs it,
 	// and nil means leases are not wired.
 	leases *leasesHandler
+	// rollups adds the roll-up properties (TKT-6I2OPG) of the entry and of
+	// every section row.
+	rollups rollupSource
 }
 
 // currentACL resolves the active ACL, or nil when the handler was constructed
@@ -944,6 +947,9 @@ func (h *viewsHandler) handleV1Views(w http.ResponseWriter, r *http.Request) {
 		Create:   sectionCreateMenuToV1(headerCreateMenu(sections)),
 	}
 	resp.Entry.Owner = owner[result.Entry.ID]
+	// The serializer strips every roll-up name; the entry's computed values
+	// ride on result.Entry (executeViewBodies).
+	copyRollups(h.schema().Meta, result.Entry, resp.Entry.Properties)
 	// The entity page autosaves the entry's body and properties, so the
 	// entry carries their version tokens (TKT-2VDVHF). It has no relations
 	// token: the entry is serialized without the face-scoped neighbor filter

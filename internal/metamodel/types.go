@@ -788,6 +788,10 @@ type PropertyDef struct {
 	// materialized but never caller-authored. Entity-local dependencies are
 	// inferred from the compiled expression.
 	Computed string `yaml:"computed,omitempty" json:"Computed,omitempty"`
+	// Rollup makes the property a read-only aggregate over related entities
+	// (TKT-6I2OPG). Its value is computed when the entity is read, with the
+	// reader's access, and is never stored. Nil means an ordinary property.
+	Rollup *RollupDef `yaml:"rollup,omitempty" json:"Rollup,omitempty"`
 	// Unique constrains the property to a natural key: no two entities of
 	// the same type may carry the same non-empty value. Enforced at write
 	// time by the entitymanager (a colliding create/update is rejected as

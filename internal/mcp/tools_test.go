@@ -241,7 +241,7 @@ func TestHandleListEntities_RelatedRefusedWithoutBinder(t *testing.T) {
 	t.Parallel()
 	meta, st := makeTestFixture(t)
 	deps := newTestDeps(t, meta, st)
-	deps.Traversals = nil
+	deps.Related.Traversals = nil
 	s := &Server{logger: slog.New(slog.DiscardHandler)}
 	setDeps(s, deps)
 

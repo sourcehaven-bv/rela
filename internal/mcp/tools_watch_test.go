@@ -706,7 +706,7 @@ func watchPolicyServer(t *testing.T) (*mcpgo.ClientSession, store.Store) {
 	reads := svc.GatedReads()
 	deps := Deps{
 		Store:         reads.Reader,
-		Traversals:    reads.Traversals,
+		Related:       RelatedReads{Traversals: reads.Traversals},
 		Meta:          meta,
 		Tracer:        reads.Tracer,
 		Searcher:      reads.Searcher,

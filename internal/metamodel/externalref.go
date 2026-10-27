@@ -288,6 +288,7 @@ func validateExternalRefOptions(schemaName, propName string, pd PropertyDef, ent
 		{"unique", pd.Unique},
 		{"default", pd.Default != ""},
 		{"computed", pd.Computed != ""},
+		{"rollup", pd.Rollup != nil},
 		{"values", len(pd.Values) > 0},
 		{"format", pd.Format != ""},
 		{"required", pd.Required},

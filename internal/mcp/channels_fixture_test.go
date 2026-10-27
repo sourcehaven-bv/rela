@@ -224,7 +224,7 @@ func (f *channelFixture) deps(t *testing.T, refuseSignals bool) Deps {
 	reads := f.bndl.GatedReads()
 	return Deps{
 		Store:         reads.Reader,
-		Traversals:    reads.Traversals,
+		Related:       RelatedReads{Traversals: reads.Traversals},
 		Meta:          f.meta,
 		Tracer:        reads.Tracer,
 		Searcher:      reads.Searcher,

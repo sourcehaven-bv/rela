@@ -231,6 +231,9 @@ func (v writeChecker) outputProps(
 		case pd.Computed != "":
 			v.add(pk, fmt.Sprintf("%s.%s is computed; it cannot be set", typ, name))
 			continue
+		case pd.Rollup != nil:
+			v.add(pk, fmt.Sprintf("%s.%s is a roll-up; it cannot be set", typ, name))
+			continue
 		case pd.Type == metamodel.PropertyTypeFile:
 			v.add(pk, fmt.Sprintf("%s.%s is a file property; an output cannot attach a file", typ, name))
 			continue

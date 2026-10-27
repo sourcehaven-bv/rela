@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"sort"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
@@ -124,6 +125,11 @@ func buildEntityJSON(
 		Title:      derivedTitle(meta, e),
 		URL:        entityURL(ctx, e.Type, e.Ref()),
 		Properties: e.Properties,
+	}
+	if names := meta.RollupNames(e.Type); len(names) > 0 {
+		// Never a stored value under a roll-up name; show_entity adds the
+		// computed ones.
+		ej.Properties = visibility.MergeRollups(maps.Clone(e.Properties), names, nil)
 	}
 	if view.content {
 		ej.Content = e.Content

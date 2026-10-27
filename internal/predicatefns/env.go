@@ -59,7 +59,16 @@ func ScalarType(meta *metamodel.Metamodel, typeName string) (predicate.Type, boo
 // DateTypeWithLayout(prop.GetDateFormat()) so string date literals in a
 // predicate parse against the field's real format at compile time. For
 // every non-date type it defers to ScalarType.
+//
+// A roll-up property is not modeled (TKT-6I2OPG): its value exists only in
+// a read response, computed with the reader's access, and is never stored.
+// Leaving it out of every record type makes each predicate surface (ACL
+// `when:`, automations, validations, transitions, actions, computed
+// properties) refuse it at load rather than compare against nothing.
 func ScalarTypeForProp(meta *metamodel.Metamodel, prop *metamodel.PropertyDef) (predicate.Type, bool) {
+	if prop.Rollup != nil {
+		return nil, false
+	}
 	switch prop.Type {
 	case metamodel.PropertyTypeDate, metamodel.PropertyTypeDatetime:
 		return predicate.DateTypeWithLayout(prop.GetDateFormat()), true

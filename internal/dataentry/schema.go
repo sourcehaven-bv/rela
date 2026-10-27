@@ -1,10 +1,12 @@
 package dataentry
 
 import (
+	"log/slog"
 	"sync/atomic"
 
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/openapi"
+	"github.com/Sourcehaven-BV/rela/internal/rollup"
 )
 
 // Schema is the co-derived reload core of the data-entry app: the config and
@@ -23,6 +25,25 @@ type Schema struct {
 	StyleMap    map[string]map[string]string
 	StyledTypes map[string]bool
 	OpenAPIGen  *openapi.Generator
+
+	// rollups is Meta's compiled roll-up set (TKT-6I2OPG), derived on
+	// publish so it moves with Meta.
+	rollups *rollup.Set
+}
+
+// compileRollups compiles meta's roll-ups. The loaders refuse a schema whose
+// roll-ups do not compile, so a failure here serves no roll-up values rather
+// than failing the reload.
+func compileRollups(meta *metamodel.Metamodel) *rollup.Set {
+	if meta == nil {
+		return nil
+	}
+	set, err := rollup.Compile(meta)
+	if err != nil {
+		slog.Error("dataentry: roll-ups unavailable", "err", err)
+		return nil
+	}
+	return set
 }
 
 // schemaProvider publishes the current [Schema] via an atomic.Pointer: readers
@@ -38,7 +59,10 @@ type schemaProvider struct {
 func (p *schemaProvider) Current() *Schema { return p.ptr.Load() }
 
 // Publish installs the initial snapshot. Called once during App construction.
-func (p *schemaProvider) Publish(s *Schema) { p.ptr.Store(s) }
+func (p *schemaProvider) Publish(s *Schema) {
+	s.rollups = compileRollups(s.Meta)
+	p.ptr.Store(s)
+}
 
 // Reload derives a fresh Schema from the (possibly changed) config and
 // metamodel and publishes it atomically. The style map and OpenAPI generator
@@ -57,6 +81,10 @@ func (p *schemaProvider) Reload(newCfg *Config, newMeta *metamodel.Metamodel, de
 		StyleMap:    current.StyleMap,
 		StyledTypes: current.StyledTypes,
 		OpenAPIGen:  current.OpenAPIGen,
+		rollups:     current.rollups,
+	}
+	if newMeta != current.Meta {
+		next.rollups = compileRollups(newMeta)
 	}
 	if derive {
 		next.StyleMap, next.StyledTypes = buildStyleMap(newCfg, newMeta)
