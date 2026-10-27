@@ -441,6 +441,7 @@ rela.get_relations(e.id)               -- NOT a filter: a bare id is not a
 | `rela.version_token(addr)` | A token for the entity's current state | string or nil |
 | `rela.tag_version(addr, name, opts?)` | Tag a version | number, or nil and `"conflict"` |
 | `rela.untag_version(addr, name)` | Delete a tag | boolean |
+| `rela.tagged_entities(name, opts?)` | The entities with a version tagged `name`, deleted ones included | table (array) |
 
 Version history exists on the SQLite and PostgreSQL backends. On any other
 backend both functions raise `version history is not supported on this storage
@@ -515,6 +516,62 @@ scheduled scripts, background automation actions and MCP scripts. They are
 absent in a synchronous automation, and a tag write inside a store
 transaction is refused (`ErrTagInTx`). Tag from a background action or a
 scheduled script.
+
+#### Baseline and compare
+
+`rela.tagged_entities(name, opts)` lists every entity with a version tagged
+`name`. Use it to freeze a set of entities under one tag, such as a baseline
+for an audit, and later compare the set with the current state.
+`opts.type = "<type>"` keeps one entity type. Each row has:
+
+- `id`, `face` and `addr` (`ID` or `ID@face`): where the entity lives now. A
+  renamed entity is listed under its new id.
+- `type`: the type now, or the type of the tagged version for a deleted entity.
+- `version`: the number of the tagged version, as `rela.version_by_tag` and
+  `rela.history` number it. It is `0` in one rare case: the entity was deleted
+  and a later entity took its id and was renamed away, so the tagged version
+  is no longer in the history listed under that id.
+- `deleted`: true when the entity was deleted after it was tagged.
+
+```lua
+-- Freeze: tag the current state of every maatregel.
+for _, m in ipairs(rela.list_entities("maatregel")) do
+  rela.tag_version(m.id, "baseline/audit-2026")
+end
+
+-- Compare: what changed since the baseline?
+for _, r in ipairs(rela.tagged_entities("baseline/audit-2026", {type = "maatregel"})) do
+  if r.deleted then
+    rela.output(r.id .. ": deleted")
+  else
+    local base = rela.version_by_tag(r.addr, "baseline/audit-2026")
+    local now = rela.get_entity(r.addr)
+    if base and base.properties.status ~= now.properties.status then
+      rela.output(r.id .. ": " .. tostring(base.properties.status) .. " -> " .. tostring(now.properties.status))
+    end
+  end
+end
+```
+
+An entity created after the baseline has no tag, so compare the tagged list
+with `rela.list_entities` to find new entities.
+
+The list follows the history read rules. A live entity is listed when the
+script may read it now. A deleted entity is listed only when the principal
+holds the `history:read` permission and no face restriction in the
+principal's grants for that type hides the face of the row. A deleted entity
+has no current properties, so the conditions of a read grant cannot be checked
+against it; the permission stands in for them. This is the rule the history
+endpoint of the data-entry API applies. When other faces of the id are
+still live, they must be of the same type and the principal must be able to
+read one of them. Every other row is left out, so a hidden entity looks like one
+that was never tagged. `rela.version_by_tag` reads live entities only, so a
+deleted row gives the id and type but not the content.
+
+The list costs one store query for the tags and one read check per entity
+type, whatever the number of rows. The list is not paged: it holds one row
+per tagged entity face, so keep tag names specific to one baseline. On a backend without version history it
+raises `version history is not supported on this storage backend`.
 
 ### Mutation Functions
 

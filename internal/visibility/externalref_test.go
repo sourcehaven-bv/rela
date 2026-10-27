@@ -44,6 +44,10 @@ func (noTags) VersionByTag(context.Context, entity.Ref, store.VersionTagName) (*
 	return nil, store.ErrNotFound
 }
 
+func (noTags) TaggedEntities(context.Context, store.VersionTagName, string) ([]store.TaggedEntity, error) {
+	return nil, nil
+}
+
 var refHolders = []visibility.ExternalRefHolder{
 	{Type: "ticket", Property: "bc"},
 	{Type: "vault", Property: "v"},
@@ -142,8 +146,8 @@ func TestFindByExternalRef_SyncNeedsHistory(t *testing.T) {
 	}
 
 	h := cannedHistory{}
-	script = script.WithHistory(h).WithVersionTags(noTags{})
-	unrestricted = unrestricted.WithHistory(h).WithVersionTags(noTags{})
+	script = script.WithHistory(h, noTags{})
+	unrestricted = unrestricted.WithHistory(h, noTags{})
 	if !script.SyncReady() || !unrestricted.SyncReady() {
 		t.Error("SyncReady with history and tags")
 	}

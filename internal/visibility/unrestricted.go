@@ -35,7 +35,7 @@ type UnrestrictedReader struct {
 	// history: see [UnrestrictedReader.WithHistory].
 	history store.HistoryReader
 
-	// tags: see [UnrestrictedReader.WithVersionTags].
+	// tags: see [UnrestrictedReader.WithHistory].
 	tags VersionTagReader
 }
 

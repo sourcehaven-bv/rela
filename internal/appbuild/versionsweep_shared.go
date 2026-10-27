@@ -121,16 +121,16 @@ func versionTaggerFor(st store.Store, meta *metamodel.Metamodel) (store.VersionT
 	return nonNilCapability(tg), nil
 }
 
-// versionTagReaderFor returns the tag lookup the script read surfaces resolve
-// rela.version_by_tag through: the store's version service, which answers
-// lookups without a projection. Nil, as a genuinely nil interface, when st
-// keeps no history or no tags.
+// versionTagReaderFor returns the tag reads the script read surfaces serve
+// rela.version_by_tag and rela.tagged_entities from: the store's version
+// service, which answers both without a projection. Nil, as a genuinely nil
+// interface, when st keeps no history or no tags.
 func versionTagReaderFor(st store.Store) visibility.VersionTagReader {
-	l, ok := versionServiceFor(st).(store.VersionTagLookup)
+	l, ok := versionServiceFor(st).(visibility.VersionTagReader)
 	if !ok {
 		return nil
 	}
-	return nonNilCapability[visibility.VersionTagReader](l)
+	return nonNilCapability(l)
 }
 
 // sweepConfigFromEnv reads optional sweep-cadence overrides from the environment.

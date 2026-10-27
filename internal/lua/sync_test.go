@@ -100,6 +100,10 @@ func (emptyHistory) VersionByTag(context.Context, entity.Ref, store.VersionTagNa
 	return nil, store.ErrNotFound
 }
 
+func (emptyHistory) TaggedEntities(context.Context, store.VersionTagName, string) ([]store.TaggedEntity, error) {
+	return nil, nil
+}
+
 // AC8/AC9 through the binding: the result table's shape, EMPTY in write and
 // push, canonical values, and base nil reporting every difference as a
 // conflict.
@@ -111,7 +115,7 @@ func TestSyncMerge_ResultTable(t *testing.T) {
 		t.Fatal(err)
 	}
 	rd := visibility.Unrestricted(memstore.New()).WithWorld(visibility.WorldOf(store.TrivialScope())).
-		WithHistory(emptyHistory{}).WithVersionTags(emptyHistory{})
+		WithHistory(emptyHistory{}, emptyHistory{})
 	var out bytes.Buffer
 	rt := lua.NewReader(lua.ReadDeps{Meta: meta, World: store.TrivialScope(), VisibleReader: rd}, &out)
 	t.Cleanup(rt.Close)

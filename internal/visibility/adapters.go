@@ -146,3 +146,25 @@ func (NopRedactor) HiddenProperties(context.Context, *entity.Entity) map[string]
 func (NopRedactor) SearchFieldScope(context.Context, string) (*search.FieldScope, error) {
 	return nil, nil //nolint:nilnil // nil scope is the documented "nothing hidden"
 }
+
+// PermissionHolder is the optional part of a [RowGate] that answers global
+// named permissions for the ctx principal. [DeclarativeGate] and [NopGate]
+// implement it. A gate without it holds no permission, so every read that
+// needs one fails closed.
+type PermissionHolder interface {
+	HoldsPermission(ctx context.Context, permission string) bool
+}
+
+// HoldsPermission implements [PermissionHolder]. A ctx without a usable
+// request holds nothing.
+func (g DeclarativeGate) HoldsPermission(ctx context.Context, permission string) bool {
+	r, err := g.request(ctx)
+	if err != nil {
+		return false
+	}
+	return r.HoldsPermission(ctx, permission)
+}
+
+// HoldsPermission implements [PermissionHolder]: without a policy every
+// permission is held, as every row is readable.
+func (NopGate) HoldsPermission(context.Context, string) bool { return true }
