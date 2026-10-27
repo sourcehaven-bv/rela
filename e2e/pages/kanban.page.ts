@@ -207,9 +207,14 @@ export class KanbanPage extends BasePage {
     await this.collapsedRail(name).click();
   }
 
-  /** A collapsed column's rail, which is its expand button. */
+  /**
+   * A collapsed column's rail, which is its expand button. Its label follows
+   * the interface language, so a spec that pins a Dutch browser locale gets
+   * the Dutch label (TKT-ZL1QAO).
+   */
   collapsedRail(name: string): Locator {
-    return this.page.getByRole('button', { name: `Expand ${name}`, exact: true });
+    const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    return this.page.getByRole('button', { name: new RegExp(`^(Expand ${escaped}|${escaped} uitklappen)$`) });
   }
 
   /** Drag a card onto a collapsed column's rail with the real pointer. */
