@@ -917,7 +917,7 @@ func gatedScriptReader(
 		// Named so the NopACL path is greppable alongside every other
 		// ungated read site (TKT-1WV50C).
 		return visibility.Unrestricted(store, order).WithWorld(visibility.WorldOf(world)).
-			WithHistory(history.reader()).WithVersionTags(history.tags)
+			WithHistory(history.reader(), history.tags)
 	}
 	gate, err := visibility.NewDeclarativeGate(d, world)
 	if err != nil {
@@ -934,7 +934,7 @@ func gatedScriptReader(
 		slog.Error("dataentry: script reader unavailable; script reads REFUSED", "err", err)
 		return visibility.DenyReader{}
 	}
-	return sr.WithWorld(visibility.WorldOf(world)).WithHistory(history.reader()).WithVersionTags(history.tags)
+	return sr.WithWorld(visibility.WorldOf(world)).WithHistory(history.reader(), history.tags)
 }
 
 // scriptHistory is what a script reader serves history from: the version

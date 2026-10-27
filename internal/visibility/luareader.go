@@ -53,7 +53,7 @@ type ScriptReader struct {
 	history store.HistoryReader
 
 	// tags serves VersionByTag; nil means none (see
-	// [ScriptReader.WithVersionTags]).
+	// [ScriptReader.WithHistory]).
 	tags VersionTagReader
 }
 

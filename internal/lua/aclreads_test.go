@@ -117,7 +117,7 @@ func newACLWorldOn(t *testing.T, st store.Store) (store.Store, lua.WriteDeps, *a
 	}
 	scriptReader = scriptReader.WithWorld(visibility.WorldOf(store.TrivialScope()))
 	if h, ok := st.(store.HistoryReader); ok {
-		scriptReader = scriptReader.WithHistory(h)
+		scriptReader = scriptReader.WithHistory(h, nil)
 	}
 	visRes, err := visibility.NewResolver(gate, redactor, st)
 	if err != nil {

@@ -97,7 +97,7 @@ func TestHistory_WithoutHistoryIsUnsupported(t *testing.T) {
 
 func TestHistory_ScriptReaderGatesAndRedacts(t *testing.T) {
 	script, _, h := historyFixture(t)
-	r := script.WithHistory(h)
+	r := script.WithHistory(h, nil)
 	ctx := context.Background()
 
 	metas, err := r.EntityVersions(ctx, "TKT-1")
@@ -131,7 +131,7 @@ func TestHistory_ScriptReaderGatesAndRedacts(t *testing.T) {
 
 func TestHistory_UnrestrictedServesWholeSnapshot(t *testing.T) {
 	_, unrestricted, h := historyFixture(t)
-	r := unrestricted.WithHistory(h)
+	r := unrestricted.WithHistory(h, nil)
 	ctx := context.Background()
 	if metas, err := r.EntityVersions(ctx, "TKT-1"); err != nil || len(metas) != 4 {
 		t.Fatalf("EntityVersions = %d, %v", len(metas), err)
@@ -171,6 +171,10 @@ func (c *cannedTags) VersionByTag(
 	return c.hist.GetVersion(ctx, ref, n)
 }
 
+func (c *cannedTags) TaggedEntities(context.Context, store.VersionTagName, string) ([]store.TaggedEntity, error) {
+	return nil, nil
+}
+
 func tagName(t *testing.T, s string) store.VersionTagName {
 	t.Helper()
 	n, err := store.ParseVersionTagName(s)
@@ -185,12 +189,15 @@ func TestVersionByTag_WithoutTagsIsUnsupported(t *testing.T) {
 	ctx := context.Background()
 	name := tagName(t, "reviewed")
 	for label, read := range map[string]func() error{
-		"script, no tags": func() error { _, _, err := script.WithHistory(h).VersionByTag(ctx, "TKT-1", name); return err },
+		"script, no tags": func() error { _, _, err := script.WithHistory(h, nil).VersionByTag(ctx, "TKT-1", name); return err },
 		"script, no history": func() error {
-			_, _, err := script.WithVersionTags(&cannedTags{}).VersionByTag(ctx, "TKT-1", name)
+			_, _, err := script.WithHistory(nil, &cannedTags{}).VersionByTag(ctx, "TKT-1", name)
 			return err
 		},
-		"unrestricted, no tags": func() error { _, _, err := unrestricted.WithHistory(h).VersionByTag(ctx, "TKT-1", name); return err },
+		"unrestricted, no tags": func() error {
+			_, _, err := unrestricted.WithHistory(h, nil).VersionByTag(ctx, "TKT-1", name)
+			return err
+		},
 	} {
 		if err := read(); !errors.Is(err, store.ErrHistoryUnsupported) {
 			t.Errorf("%s: err = %v, want ErrHistoryUnsupported", label, err)
@@ -209,7 +216,7 @@ func TestVersionByTag_ScriptReaderGatesAndRedacts(t *testing.T) {
 		"TKT-1|purged":   4,
 		"TKT-2|reviewed": 1,
 	}, hist: h}
-	r := script.WithHistory(h).WithVersionTags(tags)
+	r := script.WithHistory(h, tags)
 	ctx := context.Background()
 
 	e, meta, err := r.VersionByTag(ctx, "TKT-1", tagName(t, "reviewed"))
@@ -256,7 +263,7 @@ func TestVersionByTag_UnrestrictedAndDeny(t *testing.T) {
 	_, unrestricted, h := historyFixture(t)
 	tags := &cannedTags{tags: map[string]int{"TKT-1|reviewed": 1}, hist: h}
 	ctx := context.Background()
-	e, _, err := unrestricted.WithHistory(h).WithVersionTags(tags).VersionByTag(ctx, "TKT-1", tagName(t, "reviewed"))
+	e, _, err := unrestricted.WithHistory(h, tags).VersionByTag(ctx, "TKT-1", tagName(t, "reviewed"))
 	if err != nil || e.GetString("salary") != "1" {
 		t.Fatalf("unrestricted VersionByTag = %+v, %v; want salary kept", e, err)
 	}

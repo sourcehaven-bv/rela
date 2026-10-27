@@ -4,7 +4,6 @@ package appbuild_test
 
 import (
 	"context"
-	"strconv"
 	"strings"
 	"testing"
 
@@ -12,7 +11,6 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/appbuild"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
-	"github.com/Sourcehaven-BV/rela/internal/lua"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
@@ -66,29 +64,6 @@ assignments:
   bob: editor
   carol: partial
 `
-
-// outputLines splits script output into its lines, so an assertion matches a
-// whole line rather than a prefix of a longer one ("v=1" in "v=12").
-// rela.output writes each value as a quoted string.
-func outputLines(got string) []string {
-	var out []string
-	for l := range strings.SplitSeq(strings.TrimRight(got, "\n"), "\n") {
-		if u, err := strconv.Unquote(l); err == nil {
-			l = u
-		}
-		out = append(out, l)
-	}
-	return out
-}
-
-func runLua(ctx context.Context, t *testing.T, svc *appbuild.Services, src string) (string, error) {
-	t.Helper()
-	var out strings.Builder
-	rt := lua.NewWriter(svc.ScheduledLuaWriteDeps(), &out, lua.WithContext(ctx), lua.WithPrincipal(principal.From(ctx)))
-	defer rt.Close()
-	err := rt.RunString(src) //nolint:contextcheck // the runtime carries ctx via lua.WithContext
-	return out.String(), err
-}
 
 // TestSQLiteLuaVersionTags is TKT-VO6VG9 end to end on the sqlite build:
 // a scheduled script tags, reads by tag, untags, and is refused where the

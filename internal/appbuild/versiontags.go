@@ -56,8 +56,9 @@ func buildVersionTags(s *Services) (*entitymanager.VersionTags, error) {
 // plimsoll exported-method line, like [FieldGatedEntityManager].
 func VersionTags(s *Services) *entitymanager.VersionTags { return s.versionTags }
 
-// VersionTagReader returns the tag lookup a script read surface resolves
-// rela.version_by_tag through, or nil when the store keeps no history.
+// VersionTagReader returns the tag reads a script read surface serves
+// rela.version_by_tag and rela.tagged_entities from, or nil when the store
+// keeps no history.
 // For hosts that build their own script readers (the data-entry server).
 func VersionTagReader(s *Services) visibility.VersionTagReader {
 	return versionTagReaderFor(s.store)

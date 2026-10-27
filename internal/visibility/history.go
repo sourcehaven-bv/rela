@@ -10,22 +10,27 @@ import (
 )
 
 // WithHistory returns a copy of s that serves version history from h, the
-// store's history capability. Nil, or never called, leaves s without history:
-// both history reads answer [store.ErrHistoryUnsupported].
+// store's history capability, and resolves version tags through tags. A nil
+// h, or never calling it, leaves s without history: every history and tag
+// read answers [store.ErrHistoryUnsupported]. A nil tags leaves s without
+// tags only. The two are set together because a backend that keeps history
+// keeps its tags in the same version store.
 //
 // History is a separate handle, not a type assertion on the raw store,
 // because a backend exposes it beside the store (its VersionStore), not as a
 // method set of the store itself.
-func (s *ScriptReader) WithHistory(h store.HistoryReader) *ScriptReader {
+func (s *ScriptReader) WithHistory(h store.HistoryReader, tags VersionTagReader) *ScriptReader {
 	c := *s
 	c.history = h
+	c.tags = tags
 	return &c
 }
 
 // WithHistory is [ScriptReader.WithHistory] for the ungated reader.
-func (r *UnrestrictedReader) WithHistory(h store.HistoryReader) *UnrestrictedReader {
+func (r *UnrestrictedReader) WithHistory(h store.HistoryReader, tags VersionTagReader) *UnrestrictedReader {
 	c := *r
 	c.history = h
+	c.tags = tags
 	return &c
 }
 
@@ -155,26 +160,12 @@ func snapshotEntity(cur *entity.Entity, snap *store.VersionSnapshot) (*entity.En
 }
 
 // VersionTagReader resolves a version tag to the tagged version's snapshot
-// (TKT-VO6VG9), in one consistent read. [store.VersionTagger] satisfies it;
-// absent tags are [store.ErrNotFound].
+// (TKT-VO6VG9), in one consistent read, and lists the entities a tag names
+// (TKT-7LRUPB). The database backends' version stores satisfy it ([store.VersionTagLookup]
+// and [store.VersionTagIndex]); absent tags are [store.ErrNotFound].
 type VersionTagReader interface {
 	VersionByTag(ctx context.Context, ref entity.Ref, name store.VersionTagName) (*store.VersionSnapshot, error)
-}
-
-// WithVersionTags returns a copy of s that resolves version tags through t.
-// Nil, or never called, leaves s without tags: [ScriptReader.VersionByTag]
-// answers [store.ErrHistoryUnsupported].
-func (s *ScriptReader) WithVersionTags(t VersionTagReader) *ScriptReader {
-	c := *s
-	c.tags = t
-	return &c
-}
-
-// WithVersionTags is [ScriptReader.WithVersionTags] for the ungated reader.
-func (r *UnrestrictedReader) WithVersionTags(t VersionTagReader) *UnrestrictedReader {
-	c := *r
-	c.tags = t
-	return &c
+	TaggedEntities(ctx context.Context, name store.VersionTagName, entityType string) ([]store.TaggedEntity, error)
 }
 
 // VersionByTag returns the entity face addr names as it was at the version

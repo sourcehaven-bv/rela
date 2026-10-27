@@ -214,7 +214,7 @@ func TestHistory_UnrestrictedReaderDoesNotRedact(t *testing.T) {
 	if err := st.CreateEntity(context.Background(), &entity.Entity{ID: "P-1", Type: "person"}); err != nil {
 		t.Fatal(err)
 	}
-	deps.VisibleReader = visibility.Unrestricted(st).WithWorld(visibility.WorldOf(store.TrivialScope())).WithHistory(st)
+	deps.VisibleReader = visibility.Unrestricted(st).WithWorld(visibility.WorldOf(store.TrivialScope())).WithHistory(st, nil)
 	out := runAsAlice(t, decl, deps, `rela.output("salary=" .. tostring(rela.get_version("P-1", 1).properties.salary))`)
 	if !strings.Contains(out, "salary=90000") {
 		t.Errorf("output %q", out)

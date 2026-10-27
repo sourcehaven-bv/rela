@@ -1718,6 +1718,40 @@ type VersionTagLookup interface {
 	VersionByTag(ctx context.Context, ref entity.Ref, name VersionTagName) (*VersionSnapshot, error)
 }
 
+// TaggedEntity is one entity face that has a version tagged with a given name
+// (TKT-7LRUPB). See [VersionTagIndex].
+type TaggedEntity struct {
+	// Ref is the face the tagged version belongs to now: the head of its
+	// lineage after every later rename. For a deleted entity it is the id and
+	// face it had when it was deleted.
+	Ref entity.Ref
+	// Type is the live row's type. For a deleted entity, which has no live
+	// row, it is the type of the tagged version.
+	Type string
+	// Version is the 1-based ordinal of the tagged version in the
+	// [HistoryReader.ListVersions] order of Ref. For a live entity it equals
+	// [VersionTagLookup.VersionByTag]'s ordinal for the same tag. It is 0 in
+	// one corner: Ref is a deleted id that a later entity took and renamed
+	// away, so Ref's listed history no longer holds the tagged version.
+	Version int
+	// Deleted reports that the lifecycle the tag belongs to has ended: a
+	// delete followed the tagged version, or the face has no live row (a soft
+	// delete). The id may since have been reused by a new entity.
+	Deleted bool
+}
+
+// VersionTagIndex lists the entities that carry a version tag, across
+// lifecycles. A [VersionService] that can tag implements it, next to
+// [VersionTagLookup]; type-assert the VersionService to it.
+type VersionTagIndex interface {
+	// TaggedEntities returns one row per version row tagged name, ordered by
+	// id and face. entityType, when not empty, keeps the rows of that type.
+	// Unlike [VersionTagLookup.VersionByTag], a tag whose lifecycle ended is
+	// listed, as a Deleted row. The store does no access control; callers
+	// gate rows as for history. One statement, whatever the row count.
+	TaggedEntities(ctx context.Context, name VersionTagName, entityType string) ([]TaggedEntity, error)
+}
+
 // VersionTaggerProvider is a [VersionService] that can build a
 // [VersionTagger] over its own connection. Type-assert a VersionService to it
 // at the wiring site.

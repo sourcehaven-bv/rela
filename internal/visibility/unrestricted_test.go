@@ -126,7 +126,7 @@ func TestUnrestricted_ExposesOnlyTheReadSurface(t *testing.T) {
 	// read the history of the entity GetAddress reads; WithHistory returns a
 	// copy that serves it. None of the three writes. VersionByTag
 	// (TKT-VO6VG9) reads one of those versions by tag name, and
-	// WithVersionTags returns a copy that serves it; tagging itself is a
+	// WithHistory returns a copy that serves it; tagging itself is a
 	// write and lives on entitymanager.VersionTags, not here. CountEntities
 	// and CountRelations (TKT-QZTROQ) are the lengths of ListEntities and
 	// ListRelations, so they reveal no more than those lists do.
@@ -137,15 +137,17 @@ func TestUnrestricted_ExposesOnlyTheReadSurface(t *testing.T) {
 	// served. Neither writes.
 	// MentionedBy (TKT-Q6AKUN) reads headers of entities ListEntityHeaders
 	// already returns, filtered by their bodies.
+	// TaggedEntities (TKT-7LRUPB) lists the version rows a tag names, a read
+	// of the same history VersionByTag serves.
 	want := map[string]bool{
 		"GetAddress": true, "ListEntities": true, "ListRelations": true,
 		"ListEntityHeaders": true, "Family": true, "WithWorld": true,
 		"ResolveHeaders": true, "ResolveHeadersErr": true, "ListRelationsStrict": true, "WriteTarget": true,
 		"EntityVersions": true, "EntityVersion": true, "WithHistory": true,
 		"CountEntities": true, "CountRelations": true,
-		"VersionByTag": true, "WithVersionTags": true,
+		"VersionByTag":      true,
 		"FindByExternalRef": true, "SyncReady": true,
-		"MentionedBy": true,
+		"MentionedBy": true, "TaggedEntities": true,
 	}
 
 	typ := reflect.TypeOf(visibility.Unrestricted(seedStore(t)).WithWorld(visibility.WorldOf(store.TrivialScope())))

@@ -2010,6 +2010,11 @@ is read-gated on the same principles as everything else:
   alone does not. When other faces of the entity still exist, the caller must
   also be able to read one of them, as for any read of a live entity. A
   deleted face with no recorded history is the same 404.
+- **Listing by version tag** (`rela.tagged_entities` in Lua) applies the same
+  two rules per row: a live entity is listed when the script may read it, and
+  a deleted one only under `history:read` with the face rule above. A row
+  that fails is left out, so the list does not reveal that a hidden entity
+  was tagged.
 
 ### Historical field redaction fails closed (`history:read-redacted`)
 

@@ -642,7 +642,7 @@ func scriptReads(
 	if err != nil { // coverage-ignore: invariant: sr was built just above
 		holders = refused
 	}
-	return sr.WithHistory(versionServiceFor(st)).WithVersionTags(versionTagReaderFor(st)), gate.GateTraversal, holders
+	return sr.WithHistory(versionServiceFor(st), versionTagReaderFor(st)), gate.GateTraversal, holders
 }
 
 // refuseTraversal pairs with [visibility.DenyReader]: reads are refused, so
