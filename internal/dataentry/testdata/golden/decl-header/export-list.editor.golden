@@ -1,8 +1,8 @@
 request: GET /api/v1/tickets/_export?transform=copy
 identity: header editor@example.test
 status: 200
-reads: GetRelation=2 GraphQueryHeaders=1 ListEntityHeaders=3 ListRelations=14 MatchingFaces=1
-breadth: ListEntityHeaders=7/3 ListRelations=6/14 MatchingFaces=6/1
+reads: GetRelation=2 GraphQueryHeaders=1 ListEntityHeaders=3 ListRelations=3 MatchingFaces=1
+breadth: ListEntityHeaders=7/3 ListRelations=12/3 MatchingFaces=6/1
 bodies: GraphQuery=0/1 ListEntityHeaders=0/3
 versions: 
 body:

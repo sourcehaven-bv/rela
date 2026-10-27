@@ -10,6 +10,7 @@ import (
 	entityPkg "github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/lua"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
+	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/transform"
 	"github.com/Sourcehaven-BV/rela/internal/visibility"
 )
@@ -307,7 +308,10 @@ func (h *exportHandler) listTableRenderer(
 ) transform.Renderer {
 	return transform.RendererFunc(func(ctx context.Context) ([]byte, error) {
 		meta := h.meta()
-		rels := h.resolveListRelations(ctx, meta, entities, columns)
+		rels, err := h.resolveListRelations(ctx, meta, entities, columns)
+		if err != nil {
+			return nil, err
+		}
 
 		var b strings.Builder
 
@@ -361,12 +365,13 @@ type cellPeers struct {
 }
 
 // resolveListRelations resolves every relation column's neighbor titles for the
-// whole set of exported rows in one pass: it loads each row's edges once, gathers
-// ALL neighbor IDs across every row, runs a SINGLE batched visibility gate, loads
-// each visible neighbor once, then assembles per-row/per-column visible titles.
+// whole set of exported rows in one pass: it loads every row's edges in one
+// query, gathers ALL neighbor IDs across every row, runs a SINGLE batched
+// visibility gate, loads each visible neighbor once, then assembles
+// per-row/per-column visible titles.
 func (h *exportHandler) resolveListRelations(
 	ctx context.Context, meta *metamodel.Metamodel, entities []*entityPkg.Entity, columns []dataentryconfig.ListColumn,
-) listRelationTitles {
+) (listRelationTitles, error) {
 	out := listRelationTitles{}
 
 	relCols := make([]dataentryconfig.ListColumn, 0, len(columns))
@@ -376,12 +381,15 @@ func (h *exportHandler) resolveListRelations(
 		}
 	}
 	if len(relCols) == 0 {
-		return out
+		return out, nil
 	}
 
-	perCell, allPeerIDs := h.gatherListPeers(ctx, entities, relCols)
+	perCell, allPeerIDs, err := h.gatherListPeers(ctx, entities, relCols)
+	if err != nil {
+		return nil, err
+	}
 	if len(perCell) == 0 {
-		return out
+		return out, nil
 	}
 
 	// ONE batched visibility gate for the whole export, and ONE row load for
@@ -404,17 +412,23 @@ func (h *exportHandler) resolveListRelations(
 		}
 		out[pc.rowID][pc.colKey] = titles
 	}
-	return out
+	return out, nil
 }
 
-// gatherListPeers loads each row's edges ONCE and returns, per (row, relation
-// column), the ordered peer IDs, plus the flat list of every peer ID (for the
-// single batched visibility gate). Only the directions some column actually
-// uses are fetched — an all-outgoing column set skips the incoming lookup for
-// every row.
+// gatherListPeers returns, per (row, relation column), the ordered peer IDs,
+// plus the flat list of every peer ID (for the single batched visibility
+// gate).
+//
+// The edges of every row come from ONE store query, not one per row
+// (TKT-VEIMO3), and only in the directions some column uses. A cell lists
+// its neighbors in the store's relation order: every backend sorts relations
+// by key whatever the filter, so batching does not reorder a cell.
+//
+// A store error fails the export rather than rendering a table that looks
+// complete but lacks edges (the RR-4TFZNL reasoning of the entity export).
 func (h *exportHandler) gatherListPeers(
 	ctx context.Context, entities []*entityPkg.Entity, relCols []dataentryconfig.ListColumn,
-) (perCell []cellPeers, allPeerIDs []string) {
+) (perCell []cellPeers, allPeerIDs []string, err error) {
 	needIn, needOut := false, false
 	for _, c := range relCols {
 		if c.Direction == dataentryconfig.DirectionIncoming {
@@ -423,15 +437,26 @@ func (h *exportHandler) gatherListPeers(
 			needOut = true
 		}
 	}
+	dir := store.DirectionBoth
+	switch {
+	case !needIn:
+		dir = store.DirectionOutgoing
+	case !needOut:
+		dir = store.DirectionIncoming
+	}
+	outByRow, inByRow, err := h.reader.pageRelationsDir(ctx, entities, dir)
+	if err != nil {
+		return nil, nil, fmt.Errorf("list export: reading relation columns: %w", err)
+	}
 	meta := h.meta()
-	for _, e := range entities {
-		var outgoing, incoming []*entityPkg.Relation
+	for i, e := range entities {
 		// Only the edges this row's face owns (BUG-ISJHML).
+		var outgoing, incoming []*entityPkg.Relation
 		if needOut {
-			outgoing = edgesOwnedBy(meta, h.reader.outgoingRelations(ctx, e.ID), e.Face)
+			outgoing = edgesOwnedBy(meta, outByRow[i], e.Face)
 		}
 		if needIn {
-			incoming = incomingOwnedAtZero(meta, h.reader.incomingRelations(ctx, e.ID), e)
+			incoming = incomingOwnedAtZero(meta, inByRow[i], e)
 		}
 		for _, c := range relCols {
 			inbound := c.Direction == dataentryconfig.DirectionIncoming
@@ -447,7 +472,7 @@ func (h *exportHandler) gatherListPeers(
 			allPeerIDs = append(allPeerIDs, peers...)
 		}
 	}
-	return perCell, allPeerIDs
+	return perCell, allPeerIDs, nil
 }
 
 // relationPeers extracts the peer IDs of edges of relType from rels in the given
