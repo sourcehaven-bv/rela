@@ -585,7 +585,7 @@ func TestWatchRun_BudgetRotates(t *testing.T) {
 	ctx := principal.With(context.Background(), p)
 	far := time.Now().Add(time.Minute)
 	for range 3 {
-		if _, incomplete, err := run.pass(ctx, far, false); err != nil || !incomplete {
+		if _, incomplete, err := run.pass(ctx, far, passAll); err != nil || !incomplete {
 			t.Fatalf("pass: incomplete=%v err=%v; want an incomplete pass", incomplete, err)
 		}
 	}

@@ -1,0 +1,9 @@
+---
+id: RR-4I0F9D
+type: review-response
+title: 'inbox_too_large ceiling counts pre-gate rows: calibratable count oracle and victim-inbox DoS; docs overstate the guarantee'
+finding: 'internal/channels/sqlchannels/waiting.go:854 (and filechannels/ops.go:569) count candidate channels toward MaxWaitingRows before the channel read: rule, sameAuthor org check and (creator branch) the anchor gate, which run later in internal/realtime/inbox.go:593-616. docs/acl-security.md (The inbox, row-ceiling bullet) calls this one bit that never reveals whether a given entity exists. That holds only for an attacker who cannot control the other candidates. An attacker who can create and close waiting channels of their own (creator branch matches created_by_user only) can pad the candidate set to MaxWaitingRows-1 and binary-search the bit, which yields the number of hidden candidates and flips when one hidden channel (for example a creator-branch channel on an anchor that has since become hidden or deleted) leaves its waiting state. The same pre-gate count lets anyone who may create channels in an input_required state on an anchor where the victim holds a waiting role push the victim''s inbox to a permanent 503 with channels the victim cannot read. Precondition is about 20000 channel creates, so not critical. Fix: correct the doc bullet to say the bit is calibratable by a caller who controls many candidates and that it is an availability lever for co-workers; optionally bound the anchor branch per anchor (cap channels per anchor counted) or count the ceiling separately per branch so one party''s channels cannot exhaust another''s budget.'
+severity: minor
+resolution: docs/acl-security.md now states the count is calibratable with about 20000 creates and that co-workers can force a lasting 503; no per-anchor cap since it would silently drop channels
+status: addressed
+---

@@ -190,7 +190,7 @@ func newRealtimeService(in realtimeInputs) (*realtime.Service, *realtime.Local, 
 	if dueWake == nil {
 		dueWake = realtime.NewDueWake()
 	}
-	rows, _ := scriptReads(in.store, in.declarative, in.redactor, in.worlds)
+	rows, _, holders := scriptReads(in.store, in.declarative, in.redactor, in.worlds)
 	svc, err := realtime.New(realtime.Deps{
 		Store:    in.channels,
 		Config:   in.config,
@@ -201,11 +201,48 @@ func newRealtimeService(in realtimeInputs) (*realtime.Service, *realtime.Local, 
 		Promoter: in.promoter,
 		DueWake:  dueWake,
 		Outputs:  in.outputs,
+		Holders:  holderFinder{lookup: holders, world: in.worlds.DefaultWorld()},
 	})
 	if err != nil {
 		return nil, nil, err
 	}
 	return svc, local, nil
+}
+
+// holderMatcher is the gated holder query of [visibility.HolderLookup].
+type holderMatcher interface {
+	Matching(ctx context.Context, q visibility.HolderQuery) ([]entity.Ref, bool, error)
+}
+
+// holderFinder adapts the holder lookup [scriptReads] builds to
+// [realtime.HolderFinder]. A face-anchored pair reads every face, each a
+// holder on its own; a family-anchored pair reads the face the default
+// world serves, as an anchor read of a bare id does, and reports the
+// family, matching the channel's stored anchor.
+type holderFinder struct {
+	lookup holderMatcher
+	world  store.WorldScope
+}
+
+func (f holderFinder) Holding(ctx context.Context, q realtime.HolderQuery) ([]realtime.AnchorRef, bool, error) {
+	faces := store.InWorld(f.world)
+	if q.Face {
+		faces = store.AllFaces()
+	}
+	refs, more, err := f.lookup.Matching(ctx, visibility.HolderQuery{
+		EntityType: q.EntityType, Property: q.Property, Identity: q.Identity, Faces: faces, Limit: q.Limit,
+	})
+	if err != nil {
+		return nil, false, err
+	}
+	out := make([]realtime.AnchorRef, len(refs))
+	for i, r := range refs {
+		out[i] = realtime.AnchorRef{ID: r.ID}
+		if q.Face {
+			out[i].Face = r.Face
+		}
+	}
+	return out, more, nil
 }
 
 // headerReader is the batch header read of the gated reader.
@@ -266,6 +303,10 @@ func (a requestAccess) CeilingAdmitsUpdate(entityType string) bool {
 	return acl.CeilingPermitsVerb(a.req, acl.OpUpdate, entityType)
 }
 
+func (a requestAccess) Prime(ctx context.Context, anchorIDs []string) context.Context {
+	return acl.PrimeLocalRoles(ctx, anchorIDs)
+}
+
 // openAccess answers without a policy: every permission is held and there
 // is no client ceiling. writable is false under ReadOnlyACL, which refuses
 // every write.
@@ -279,6 +320,7 @@ func (a openAccess) Principal() principal.Principal                          { r
 func (a openAccess) QueryIdentity() predicatefns.QueryIdentity               { return a.q }
 func (a openAccess) HoldsPermissionFor(context.Context, string, string) bool { return true }
 func (a openAccess) CeilingAdmitsUpdate(string) bool                         { return a.writable }
+func (a openAccess) Prime(ctx context.Context, _ []string) context.Context   { return ctx }
 
 // anchorReader reads a channel anchor through one batch header read: the
 // row gate, the readable faces and field redaction all apply, and a bare id
@@ -294,28 +336,68 @@ type anchorReader struct {
 }
 
 func (r anchorReader) Anchor(ctx context.Context, addr entity.Address, props []string) (realtime.AnchorView, error) {
-	ref, named := addr.Named()
-	if !named {
-		// A bare id parses to the implicit face, the form ResolveHeaders
-		// reads as the whole family.
-		var err error
-		if ref, err = entity.ParseRef(addr.ID()); err != nil {
-			return realtime.AnchorView{}, realtime.ErrAnchorNotFound
-		}
-	}
-	got, err := r.rows.ResolveHeadersErr(ctx, []entity.Ref{ref})
+	got, err := r.Anchors(ctx, []entity.Address{addr}, props)
 	if err != nil {
 		return realtime.AnchorView{}, err
 	}
-	h, ok := got[ref]
-	if !ok || !h.Served() {
+	view, ok := got[addr]
+	if !ok {
 		return realtime.AnchorView{}, realtime.ErrAnchorNotFound
 	}
-	view := realtime.AnchorView{ID: h.Header.ID, Face: h.Header.Face, Type: h.Header.Type}
+	return view, nil
+}
+
+// Anchors reads addrs in one batch header read, by the rule Anchor applies
+// to one. A miss is absent from the result.
+func (r anchorReader) Anchors(
+	ctx context.Context, addrs []entity.Address, props []string,
+) (map[entity.Address]realtime.AnchorView, error) {
+	refs := make([]entity.Ref, 0, len(addrs))
+	byRef := make(map[entity.Ref][]entity.Address, len(addrs))
+	for _, addr := range addrs {
+		ref, named := addr.Named()
+		if !named {
+			// A bare id parses to the implicit face, the form ResolveHeaders
+			// reads as the whole family.
+			var err error
+			if ref, err = entity.ParseRef(addr.ID()); err != nil {
+				continue
+			}
+		}
+		if _, dup := byRef[ref]; !dup {
+			refs = append(refs, ref)
+		}
+		byRef[ref] = append(byRef[ref], addr)
+	}
+	out := make(map[entity.Address]realtime.AnchorView, len(addrs))
+	if len(refs) == 0 {
+		return out, nil
+	}
+	got, err := r.rows.ResolveHeadersErr(ctx, refs)
+	if err != nil {
+		return nil, err
+	}
+	for ref, h := range got {
+		if !h.Served() {
+			continue
+		}
+		view := r.view(h.Header, props)
+		for _, addr := range byRef[ref] {
+			out[addr] = view
+		}
+	}
+	return out, nil
+}
+
+// view is the anchor view of one served, redacted header.
+func (r anchorReader) view(h store.EntityHeader, props []string) realtime.AnchorView {
+	view := realtime.AnchorView{
+		ID: h.ID, Face: h.Face, Type: h.Type, Title: r.meta.DisplayTitle(h.ID, h.Type, h.Properties),
+	}
 	if len(props) > 0 {
 		view.Props = make(map[string]any, len(props))
 		for _, p := range props {
-			if v, ok := h.Header.Properties[p]; ok {
+			if v, ok := h.Properties[p]; ok {
 				view.Props[p] = v
 			}
 		}
@@ -323,7 +405,7 @@ func (r anchorReader) Anchor(ctx context.Context, addr entity.Address, props []s
 	if def, ok := r.meta.GetEntityDef(view.Type); ok {
 		view.Record = predicatefns.EntityRecord(r.meta, def, view.ID, view.Type, view.Props)
 	}
-	return view, nil
+	return view
 }
 
 // refResolver resolves ref properties through one batch header read. The

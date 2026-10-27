@@ -79,6 +79,7 @@ func (v *validator) compile(raw *rawFile) *Compiled {
 		}
 	}
 	grantChecker{v: v, c: c}.check()
+	c.waiting = buildWaiting(c.channelTypes)
 	c.warnings = v.warnings
 	for p := range v.perms {
 		c.permissions = append(c.permissions, p)

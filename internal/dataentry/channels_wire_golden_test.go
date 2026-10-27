@@ -69,6 +69,11 @@ var channelWireTypes = map[string]any{
 	"ChannelActionSchema":        v1.ChannelActionSchema{},
 	"ChannelSessionSchema":       v1.ChannelSessionSchema{},
 	"ChannelSessionStateSchema":  v1.ChannelSessionStateSchema{},
+	"Inbox":                      v1.Inbox{},
+	"InboxEntry":                 v1.InboxEntry{},
+	"InboxChannel":               v1.InboxChannel{},
+	"InboxSession":               v1.InboxSession{},
+	"InboxLinks":                 v1.InboxLinks{},
 }
 
 // jsonFields lists the JSON names of v's struct fields, sorted. An

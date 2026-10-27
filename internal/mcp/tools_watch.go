@@ -69,7 +69,9 @@ const (
 
 // watchOrder lists the read tools a watch target may name, in the order the
 // watch tool describes them. Only those registered on the server count.
-var watchOrder = []string{"show_entity", "list_entities", "list_relations", toolReadChannel, toolReadSession}
+var watchOrder = []string{
+	"show_entity", "list_entities", "list_relations", toolReadChannel, toolReadSession, toolListInbox,
+}
 
 // watchNames returns the tools of watchOrder that reads holds.
 func watchNames(reads map[string]mcpgo.ToolHandler) []string {
@@ -98,8 +100,9 @@ func toolWatch(names []string) *mcpgo.Tool {
 	return newTool("watch",
 		withDescription("Wait until the result of read-tool calls changes. Call it first without cursor, "+
 			"then read, then call it again with the returned cursor; it returns when a target's result "+
-			"changes for you, or at the timeout. Result: {cursor,changed,timed_out}, changed being "+
-			"indices into targets. Re-read the changed targets yourself."),
+			"changes for you, or at the timeout. Result: {cursor,changed,timed_out,incomplete}, changed being "+
+			"indices into targets. incomplete lists the targets whose latest read did not finish in time, "+
+			"so their result is unknown rather than unchanged. Re-read the changed targets yourself."),
 		withArray(watchTargetsArgument, required(), description(
 			"Up to 16 read calls: [{tool, args}], tool one of "+strings.Join(names, ", ")+"; "+
 				"args is the object that tool takes"),
@@ -127,11 +130,13 @@ type watchHandler struct {
 	// process reports every target changed once, which is safe.
 	key   []byte
 	slots chan struct{}
-	// tick, budget and replayTimeout are the constants above; tests
-	// shorten them.
+	// tick, budget, replayTimeout, inboxEvery and inboxGap are the
+	// constants above; tests shorten them.
 	tick          time.Duration
 	budget        time.Duration
 	replayTimeout time.Duration
+	inboxEvery    time.Duration
+	inboxGap      time.Duration
 
 	mu     sync.Mutex
 	active []*watchEntry
@@ -149,13 +154,22 @@ type watchTarget struct {
 	args    json.RawMessage
 	key     string
 	handler mcpgo.ToolHandler
-	// channel is set for a read_channel or read_session target.
+	// channel is set for a read_channel, read_session or list_inbox
+	// target.
 	channel *watchChannel
 }
 
 // watchChannel is the channel a read_channel or read_session target
-// reads, as its arguments name it. A read_session target never follows. A wake for another channel skips the target.
+// reads, as its arguments name it. A read_session target never follows. A
+// wake for another channel skips the target.
 type watchChannel struct {
+	// inbox is set for a list_inbox target: a change to a channel of a
+	// type in types may change it. Until a replay has reported the types,
+	// every channel may.
+	inbox bool
+	types map[string]bool
+	known bool
+
 	anchor string // entity id, without a face
 	typ    string
 	name   string
@@ -168,13 +182,26 @@ type watchChannel struct {
 // change the target's result. A target without a name matches every name,
 // so a wake is never missed; an extra wake costs one replay.
 func (c *watchChannel) matches(id, typ, name string) bool {
+	if c.inbox {
+		return !c.known || c.types[typ]
+	}
 	return c.anchor == id && c.typ == typ && (c.name == "" || c.name == name)
+}
+
+// learnTypes records the waiting types a list_inbox replay reported.
+func (c *watchChannel) learnTypes(types []string) {
+	c.types, c.known = make(map[string]bool, len(types)), true
+	for _, t := range types {
+		c.types[t] = true
+	}
 }
 
 type watchResult struct {
 	Cursor   string `json:"cursor"`
 	Changed  []int  `json:"changed"`
 	TimedOut bool   `json:"timed_out"`
+	// Incomplete are the targets whose latest replay did not finish.
+	Incomplete []int `json:"incomplete,omitempty"`
 }
 
 type watchCursor struct {
@@ -189,7 +216,8 @@ func newWatchHandler(s *Server, reads map[string]mcpgo.ToolHandler) *watchHandle
 		s: s, reads: reads, names: watchNames(reads), key: key,
 		slots:  make(chan struct{}, watchParallel),
 		tick:   watchTick,
-		budget: watchPassBudget, replayTimeout: watchReplayTimeout,
+		budget: watchPassBudget, replayTimeout: watchReplayTimeout, inboxEvery: inboxPollEvery,
+		inboxGap: inboxWakeGap,
 	}
 }
 
@@ -235,7 +263,8 @@ func (w *watchHandler) handle(ctx context.Context, req *mcpgo.CallToolRequest) (
 	defer chans.close()
 
 	run := &watchRun{w: w, d: d, entry: entry, targets: targets, shareKey: p.ShareKey(),
-		digests: make(map[string]string, len(targets))}
+		digests:    make(map[string]string, len(targets)),
+		inboxEvery: w.inboxEvery, inboxGap: w.inboxGap}
 	for _, t := range targets {
 		if dg, ok := prev[t.key]; ok {
 			run.digests[t.key] = dg
@@ -249,7 +278,7 @@ func (w *watchHandler) handle(ctx context.Context, req *mcpgo.CallToolRequest) (
 	if !waits {
 		deadline = time.Now().Add(w.budget)
 	}
-	changed, incomplete, err := run.pass(ctx, deadline, false)
+	changed, incomplete, err := run.pass(ctx, deadline, passAll)
 	switch {
 	case err != nil:
 		return errorResult(watchNoAccess), nil
@@ -276,7 +305,38 @@ type watchRun struct {
 	// next is the target the next pass starts at, after a pass ran out of
 	// budget.
 	next int
+	// failed holds the targets whose latest replay did not finish; nil is
+	// none.
+	failed map[string]bool
+	// The list_inbox pacing, see [watchRun.inboxDue]. inboxEvery and
+	// inboxNext pace the poll; a replay that does not finish doubles
+	// inboxEvery and holds the target back on every path until inboxNext
+	// (inboxHeld). inboxGap and inboxLast pace a wake or a store event,
+	// and inboxPending records one that the gap held back.
+	inboxEvery   time.Duration
+	inboxNext    time.Time
+	inboxHeld    bool
+	inboxGap     time.Duration
+	inboxLast    time.Time
+	inboxPending bool
 }
+
+// passKind says what made a pass run.
+type passKind int
+
+const (
+	// passAll replays every target: the first pass, or after a store or
+	// lease event.
+	passAll passKind = iota
+	// passWake replays the channel targets after an in-process channel
+	// wake.
+	passWake
+	// passPoll replays the channel targets on the channel poll.
+	passPoll
+	// passInbox replays only the list_inbox target, once the gap that held
+	// back a wake for it has passed.
+	passInbox
+)
 
 // watchWakes are the wake sources of one watch call. A nil channel never
 // fires.
@@ -297,8 +357,8 @@ func (r *watchRun) wait(
 	defer ticker.Stop()
 	// A pass that skipped or did not finish a target runs again at the next
 	// tick: the event that woke it may have been about that target. chanDirty
-	// replays only the channel targets.
-	chanDirty := false
+	// replays only the channel targets; polled says only the poll set it.
+	chanDirty, polled := false, false
 	for {
 		select {
 		case <-ctx.Done():
@@ -313,14 +373,28 @@ func (r *watchRun) wait(
 		case <-wakes.lease:
 			dirty = true
 		case <-wakes.chans.wake:
-			chanDirty = chanDirty || wakes.chans.take()
+			if wakes.chans.take() {
+				chanDirty, polled = true, false
+			}
 		case <-wakes.chans.poll:
+			polled = polled || !chanDirty
 			chanDirty = true
 		case <-ticker.C:
-			if !dirty && !chanDirty {
+			inboxReady := r.inboxPending && r.inboxDue(passInbox)
+			if !dirty && !chanDirty && !inboxReady {
 				continue
 			}
-			changed, incomplete, err := r.pass(ctx, deadline, !dirty)
+			kind := passAll
+			switch {
+			case dirty:
+			case chanDirty && polled:
+				kind = passPoll
+			case chanDirty:
+				kind = passWake
+			default:
+				kind = passInbox
+			}
+			changed, incomplete, err := r.pass(ctx, deadline, kind)
 			switch {
 			case err != nil:
 				return errorResult(watchNoAccess), nil
@@ -331,10 +405,15 @@ func (r *watchRun) wait(
 			case !time.Now().Before(deadline):
 				return r.result(nil, true)
 			}
-			if dirty {
+			switch {
+			case kind == passInbox:
+			case dirty:
 				dirty, chanDirty = incomplete, false
-			} else {
+			default:
 				chanDirty = incomplete
+			}
+			if kind != passInbox {
+				polled = false
 			}
 		}
 	}
@@ -408,8 +487,14 @@ func (c *channelWake) close() {
 // reported; a replay that does not finish keeps the target's previous
 // digest, and makes the pass incomplete, as does running out of budget.
 // A pass ends at its budget or at deadline, whichever is first. An error
-// means read access could not be resolved for the caller. channelOnly
-// replays only the read_channel targets.
+// means read access could not be resolved for the caller. passWake and
+// passPoll replay only the channel targets, passInbox only the list_inbox
+// target.
+//
+// A list_inbox target is paced by [watchRun.inboxDue]. A replay of it that
+// does not finish does not make the pass incomplete, so the next tick does
+// not rerun it; its pacing retries it, and the result lists it as
+// incomplete until a replay finishes.
 //
 // A read_channel target that follows by after_rev or after and is missing
 // from the cursor is reported when its page is not empty. An agent that
@@ -417,7 +502,7 @@ func (c *channelWake) close() {
 // between its read and that baseline would otherwise be part of the
 // baseline, and be lost.
 func (r *watchRun) pass(
-	ctx context.Context, deadline time.Time, channelOnly bool,
+	ctx context.Context, deadline time.Time, kind passKind,
 ) (changed []int, incomplete bool, err error) {
 	rctx, err := r.d.Watch.Rebind(ctx)
 	if err != nil {
@@ -439,7 +524,8 @@ func (r *watchRun) pass(
 	for i := range n {
 		idx := (first + i) % n
 		t := r.targets[idx]
-		if done[t.key] || (channelOnly && t.channel == nil) {
+		inbox := t.channel != nil && t.channel.inbox
+		if done[t.key] || r.skips(t, kind) {
 			continue
 		}
 		// The clock, not only rctx: the deadline timer that cancels rctx can
@@ -449,9 +535,9 @@ func (r *watchRun) pass(
 			return r.moved(moved), true, nil
 		}
 		done[t.key] = true
-		dg, pending, ok := r.w.replay(rctx, r.entry, r.shareKey, t)
+		dg, pending, ok := r.replay(rctx, t)
 		if !ok {
-			incomplete = true
+			incomplete = incomplete || !inbox
 			continue
 		}
 		if old, had := r.digests[t.key]; (had && old != dg) || (!had && pending) {
@@ -460,6 +546,67 @@ func (r *watchRun) pass(
 		r.digests[t.key] = dg
 	}
 	return r.moved(moved), incomplete, nil
+}
+
+// skips reports whether a pass of kind leaves t out. A list_inbox wake
+// the gap holds back is recorded, and runs once the gap has passed; the
+// poll and a held target keep their own schedule.
+func (r *watchRun) skips(t watchTarget, kind passKind) bool {
+	inbox := t.channel != nil && t.channel.inbox
+	switch {
+	case kind != passAll && t.channel == nil, kind == passInbox && !inbox:
+		return true
+	case inbox && !r.inboxDue(kind):
+		r.inboxPending = r.inboxPending || (kind != passPoll && !r.inboxHeld)
+		return true
+	}
+	return false
+}
+
+// replay replays t and records whether it finished, pacing a list_inbox
+// target.
+func (r *watchRun) replay(ctx context.Context, t watchTarget) (digest string, pending, ok bool) {
+	inbox := t.channel != nil && t.channel.inbox
+	if inbox {
+		r.inboxLast, r.inboxPending = time.Now(), false
+	}
+	digest, pending, ok = r.w.replay(ctx, r.entry, r.shareKey, t)
+	if inbox {
+		r.paceInbox(ok)
+	}
+	if ok {
+		delete(r.failed, t.key)
+		return digest, pending, true
+	}
+	if r.failed == nil {
+		r.failed = map[string]bool{}
+	}
+	r.failed[t.key] = true
+	return "", false, false
+}
+
+// inboxDue reports whether a pass of kind replays the list_inbox target
+// now. The poll, and every path while a replay of it did not finish,
+// replays it no sooner than inboxNext. A wake or a store event replays it
+// no sooner than inboxGap after the last replay began, so a busy server
+// costs each inbox watcher at most one replay per gap.
+func (r *watchRun) inboxDue(kind passKind) bool {
+	now := time.Now()
+	if kind == passPoll || r.inboxHeld {
+		return !now.Before(r.inboxNext)
+	}
+	return r.inboxLast.IsZero() || now.Sub(r.inboxLast) >= r.inboxGap
+}
+
+// paceInbox sets when the poll may replay the list_inbox target next. A
+// replay that did not finish doubles the interval, for the rest of the
+// call.
+func (r *watchRun) paceInbox(finished bool) {
+	r.inboxHeld = !finished
+	if !finished {
+		r.inboxEvery *= 2
+	}
+	r.inboxNext = time.Now().Add(r.inboxEvery)
 }
 
 // moved returns the indices of the targets whose key is in keys.
@@ -492,10 +639,17 @@ func (r *watchRun) result(changed []int, timedOut bool) (*mcpgo.CallToolResult, 
 	if changed == nil {
 		changed = []int{}
 	}
+	var incomplete []int
+	for i, t := range r.targets {
+		if r.failed[t.key] {
+			incomplete = append(incomplete, i)
+		}
+	}
 	text, err := marshalJSON(watchResult{
-		Cursor:   base64.RawURLEncoding.EncodeToString(raw),
-		Changed:  changed,
-		TimedOut: timedOut,
+		Cursor:     base64.RawURLEncoding.EncodeToString(raw),
+		Changed:    changed,
+		TimedOut:   timedOut,
+		Incomplete: incomplete,
 	})
 	if err != nil { // coverage-ignore: a struct of strings and ints always marshals
 		return errorResult(err.Error()), nil
@@ -532,7 +686,7 @@ func (w *watchHandler) replay(
 		}
 	}()
 	var probe *readProbe
-	if t.channel != nil && t.channel.follows {
+	if t.channel != nil && (t.channel.follows || t.channel.inbox) {
 		rctx, probe = withReadProbe(rctx)
 	}
 	res, err := t.handler(rctx, &mcpgo.CallToolRequest{
@@ -541,12 +695,19 @@ func (w *watchHandler) replay(
 	if err != nil || res == nil || rctx.Err() != nil {
 		return "", false, false
 	}
+	if probe != nil && probe.inboxTypes != nil {
+		t.channel.learnTypes(*probe.inboxTypes)
+	}
 	return w.digest(shareKey, t.key, res), probe != nil && probe.messages > 0, true
 }
 
 // readProbe receives what a read_channel replay read, so the watch learns
 // whether the page held messages without parsing the tool's text.
-type readProbe struct{ messages int }
+// A list_inbox replay reports the waiting types on it instead.
+type readProbe struct {
+	messages   int
+	inboxTypes *[]string
+}
 
 type readProbeKey struct{}
 
@@ -560,6 +721,15 @@ func withReadProbe(ctx context.Context) (context.Context, *readProbe) {
 func noteRead(ctx context.Context, v realtime.ReadView) {
 	if p, ok := ctx.Value(readProbeKey{}).(*readProbe); ok {
 		p.messages = len(v.Messages)
+	}
+}
+
+// noteInbox records the waiting types of a list_inbox answer on the probe
+// in ctx, if any.
+func noteInbox(ctx context.Context, v realtime.InboxView) {
+	if p, ok := ctx.Value(readProbeKey{}).(*readProbe); ok {
+		types := slices.Clone(v.WaitingTypes)
+		p.inboxTypes = &types
 	}
 }
 
@@ -630,6 +800,7 @@ func (w *watchHandler) parseTargets(raw any) ([]watchTarget, error) {
 		return nil, fmt.Errorf("targets: at most %d", watchMaxTargets)
 	}
 	out := make([]watchTarget, 0, len(list))
+	inboxes := 0
 	for i, item := range list {
 		obj, ok := item.(map[string]any)
 		if !ok {
@@ -657,8 +828,15 @@ func (w *watchHandler) parseTargets(raw any) ([]watchTarget, error) {
 			return nil, fmt.Errorf("targets[%d]: %w", i, err)
 		}
 		var channel *watchChannel
-		if tool == toolReadChannel || tool == toolReadSession {
+		switch tool {
+		case toolReadChannel, toolReadSession:
 			channel, args = channelTarget(args)
+		case toolListInbox:
+			inboxes++
+			if inboxes > 1 {
+				return nil, fmt.Errorf("targets[%d]: at most one %s target per watch", i, toolListInbox)
+			}
+			channel = &watchChannel{inbox: true}
 		}
 		rawArgs, err := json.Marshal(args)
 		if err != nil { // coverage-ignore: decoded JSON always re-marshals

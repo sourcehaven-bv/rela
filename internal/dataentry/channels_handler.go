@@ -111,6 +111,8 @@ type channelsHandler struct {
 	changes func() channelChanges
 	// describe serves `GET /api/v1/_schema/channels`.
 	describe channelDescriber
+	// inbox serves `GET /api/v1/_inbox`.
+	inbox inboxReader
 }
 
 // SetChannels installs the channel service and describes its routes in the
@@ -128,6 +130,7 @@ func SetChannels(a *App, svc *realtime.Service) error {
 		on:       svc,
 		changes:  func() channelChanges { return svc.Subscribe() },
 		describe: svc,
+		inbox:    svc,
 	}
 	if st := a.State(); st != nil && st.OpenAPIGen != nil {
 		st.OpenAPIGen.SetRealtime(svc.Config)

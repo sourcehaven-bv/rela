@@ -1115,6 +1115,57 @@ func (s *Store) ListSessionsDue(
 	return out, nil
 }
 
+// ListWaiting implements [channels.Store]. It reads the channels of each
+// listed anchor's face directory, and for the creator branch walks the
+// tree once for the creator types (see visitTypes). Like ListSessionsDue
+// it takes no lock and skips a damaged meta.yaml with a warning.
+func (s *Store) ListWaiting(_ context.Context, q channels.WaitingQuery) ([]channels.Channel, error) {
+	if err := channels.CheckWaitingQuery(q); err != nil {
+		return nil, err
+	}
+	types := make(map[string]bool, len(q.States))
+	for t := range q.States {
+		types[t] = true
+	}
+	anchors := make(map[channels.Anchor]bool, len(q.Anchors))
+	for _, a := range q.Anchors {
+		anchors[a] = true
+	}
+	found := map[channels.Key]channels.Channel{}
+	ceiling := q.RowCeiling()
+	keep := func(k channels.Key, m *meta) error {
+		c := m.channel(k)
+		if !q.Matches(c, anchors) {
+			return nil
+		}
+		if _, dup := found[k]; !dup && len(found) >= ceiling {
+			return channels.TooManyWaiting(q)
+		}
+		found[k] = c
+		return nil
+	}
+	for a := range anchors {
+		if err := s.visitTypesAt(faceDir(a), a, types, true, keep); err != nil {
+			return nil, err
+		}
+	}
+	if q.CreatorBranch() {
+		creator := map[string]bool{}
+		for _, t := range q.CreatorTypes {
+			creator[t] = types[t]
+		}
+		if err := s.visitTypes(creator, true, keep); err != nil {
+			return nil, err
+		}
+	}
+	out := make([]channels.Channel, 0, len(found))
+	for _, c := range found {
+		out = append(out, c)
+	}
+	channels.SortChannels(out)
+	return out, nil
+}
+
 // SetSession implements [channels.Store]. It follows Append's order under
 // the lock: meta.yaml, then the notice, then the audit record (see the
 // package doc).
@@ -1332,7 +1383,7 @@ func (s *Store) TypeRecords(ctx context.Context) (map[string]channels.TypeRecord
 		return nil, err
 	}
 	defer unlock()
-	return s.readTypes()
+	return readTypes(&s.disk)
 }
 
 // RecordTypes implements [channels.Store].
@@ -1346,7 +1397,7 @@ func (s *Store) RecordTypes(ctx context.Context, records map[string]channels.Typ
 		return err
 	}
 	defer unlock()
-	cur, err := s.readTypes()
+	cur, err := readTypes(&s.disk)
 	if err != nil {
 		return err
 	}
@@ -1389,9 +1440,9 @@ func (s *Store) RecordTypes(ctx context.Context, records map[string]channels.Typ
 // [channels.CardinalityUnknown]. RecordTypes writes every record it read to
 // typesFile, so after that write typesFile holds each legacy type too and
 // takes precedence over the legacy file.
-func (s *Store) readTypes() (map[string]channels.TypeRecord, error) {
+func readTypes(d *disk) (map[string]channels.TypeRecord, error) {
 	legacy := map[string]channels.AnchorMode{}
-	data, err := s.readFile(legacyTypesFile)
+	data, err := d.readFile(legacyTypesFile)
 	if err != nil {
 		return nil, fmt.Errorf("filechannels: read legacy anchor modes: %w", err)
 	}
@@ -1399,7 +1450,7 @@ func (s *Store) readTypes() (map[string]channels.TypeRecord, error) {
 		return nil, fmt.Errorf("filechannels: read legacy anchor modes: %w", err)
 	}
 	cur := map[string]channels.TypeRecord{}
-	data, err = s.readFile(typesFile)
+	data, err = d.readFile(typesFile)
 	if err != nil {
 		return nil, fmt.Errorf("filechannels: read type records: %w", err)
 	}

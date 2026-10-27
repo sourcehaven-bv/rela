@@ -2165,6 +2165,7 @@ rela channel edit ID TYPE SEQ [--name N] [-P key=value ...] [--props-json JSON|@
 rela channel remove ID TYPE SEQ [--name N] [--reason R]
 rela channel create ID TYPE [--title T]
 rela channel watch ID TYPE [--name N] [--after-rev R] [--timeout 30s] [--follow] [--poll 2s] [--limit N]
+rela channel inbox [--limit N] [--cursor C]
 ```
 
 `ID` is an entity id, or `ID@face` for a channel type that anchors to a face.
@@ -2201,6 +2202,20 @@ interrupt it, and then exits 0. Interrupting a watch without `--follow` exits
 130. Another process's change is seen within `--poll` (1 to 60 seconds). With
 `-o json` each change is one line of JSON (JSON Lines). An error exits 1 at
 once.
+
+`inbox` lists the sessions that wait on you now, oldest wait first, one
+line per entry:
+
+```text
+RISK-1 breach-response Contained, input_required since 2026-10-27T09:00:00Z, waiting for the incident lead (you)
+```
+
+The line names the entity, the channel type and name, the session state
+and status, when the session entered its state, and the waiting roles you
+hold. `--limit` is 1 to 200 (default 50). When more entries follow, the
+last line gives the `--cursor` for the next page. `-o json` prints the
+whole answer, as `list_inbox` does over MCP. The realtime guide describes
+which identity holds a role; with `--run-as` it is the job identity.
 
 The CLI opens the project itself; it does not talk to a running
 `rela-server`. Each call applies `acl.yaml` for the CLI's identity, as

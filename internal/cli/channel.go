@@ -31,6 +31,7 @@ type ChannelCmd struct {
 	Remove ChannelRemoveCmd `cmd:"" help:"Withdraw your own message, or remove another as a moderator."`
 	Create ChannelCreateCmd `cmd:"" help:"Create a named channel of a type with many channels per entity."`
 	Watch  ChannelWatchCmd  `cmd:"" help:"Wait for new, edited or removed messages in a channel."`
+	Inbox  ChannelInboxCmd  `cmd:"" help:"List the sessions that wait on you now, oldest wait first."`
 }
 
 // channelReader reads channels. The wiring site passes the project's
@@ -39,6 +40,7 @@ type channelReader interface {
 	Enabled() bool
 	ListAnchor(ctx context.Context, entityType, anchor string, state realtime.State) (realtime.AnchorChannels, error)
 	Read(ctx context.Context, addr realtime.RawAddress, req realtime.ReadRequest) (realtime.ReadView, error)
+	Inbox(ctx context.Context, req realtime.InboxRequest) (realtime.InboxView, error)
 }
 
 // channelWriter writes messages.

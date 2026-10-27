@@ -74,9 +74,11 @@ func TestOpenV24Database(t *testing.T) {
 	raw := openChannelDB(t, path)
 	for _, stmt := range []string{
 		`DROP INDEX channels_session_due_idx`,
+		`DROP INDEX channels_creator_idx`,
 		`ALTER TABLE channels DROP COLUMN session_next_due_at`,
 		`ALTER TABLE channels DROP COLUMN session_restarts`,
 		`ALTER TABLE channels DROP COLUMN session_reminders`,
+		`ALTER TABLE channels DROP COLUMN created_by_user`,
 		`PRAGMA user_version = 24`,
 	} {
 		_, err = raw.Exec(stmt)

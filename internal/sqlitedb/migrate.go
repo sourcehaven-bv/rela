@@ -12,7 +12,7 @@ import (
 // schemaVersion is the shape of the tables this binary expects. Bump it
 // whenever schemaSQL changes shape, and append the step that carries an
 // existing database forward to [migrations].
-const schemaVersion = 26
+const schemaVersion = 27
 
 // SchemaVersion reports the table shape this binary expects, so the CLI can
 // show a real number rather than prose.
@@ -285,6 +285,32 @@ var migrations = []migration{
 			return addChannelColumns(ctx, conn, channelReminderColumns)
 		},
 	},
+	{
+		// v26 → v27: the creator's user of each channel, for the inbox
+		// (TKT-ZZ4PNX). The creator index is created after the ladder (see
+		// channelCreatorDDL).
+		to:    27,
+		apply: addChannelCreator,
+	},
+}
+
+// channelCreatorColumns are the creator column of channels.
+var channelCreatorColumns = []struct{ name, def string }{
+	{"created_by_user", "TEXT NOT NULL DEFAULT ''"},
+}
+
+// addChannelCreator is the v26 to v27 rung: it adds created_by_user and
+// fills it from the user of the created_by JSON. A row whose created_by
+// is not valid JSON, or holds a NUL escape, keeps the empty string: its creator gets no
+// creator entry, and nobody else does either. Only rows still empty are
+// written, so running it again changes nothing.
+func addChannelCreator(ctx context.Context, conn *sql.Conn) error {
+	if err := addChannelColumns(ctx, conn, channelCreatorColumns); err != nil {
+		return err
+	}
+	return sqlSteps(`UPDATE channels SET created_by_user = COALESCE(json_extract(created_by, '$.user'), '')
+		WHERE created_by_user = '' AND json_valid(created_by) AND instr(created_by, '\u0000') = 0
+		AND json_type(created_by, '$.user') = 'text'`)(ctx, conn)
 }
 
 // addChannelRetention is the v22 to v23 rung: channelRetentionDDL, and

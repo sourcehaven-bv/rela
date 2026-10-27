@@ -92,7 +92,7 @@ func (s *Service) Edit(ctx context.Context, addr RawAddress, seq int64, props ma
 		return MessageView{}, messageStoreError(err)
 	}
 	s.local.mark(c.key)
-	return s.rendererWith(c, refs).message(got), nil
+	return rendererWith(c, refs).message(got), nil
 }
 
 // keepUnreadableRefs returns props with every ref property of m added back
@@ -200,7 +200,7 @@ func (s *Service) Delete(ctx context.Context, addr RawAddress, seq int64, reason
 		return MessageView{}, messageStoreError(err)
 	}
 	s.local.mark(c.key)
-	return s.rendererWith(c, nil).message(got), nil
+	return rendererWith(c, nil).message(got), nil
 }
 
 // deleteOwn reports why the caller may not delete m as its author, or nil

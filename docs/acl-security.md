@@ -1803,6 +1803,52 @@ the realtime guide.
   client fetches the messages through the same gated `GET` as any other
   read.
 
+## The inbox
+
+The inbox (`GET /api/v1/_inbox`, MCP `list_inbox`, `rela channel inbox`,
+TKT-ZZ4PNX) lists the sessions that wait on the caller. It is an aggregate
+over many entities, so it follows the rule that gates before it folds.
+
+- **Gate and redact before counting.** The holder query reads only rows
+  the caller may read, at the faces and in the world the caller may read,
+  and redacts each row before it tests the role property. A property that
+  `visible:` hides from the caller therefore matches nobody, as in
+  `read_session`. The anchors are read again through the gated, redacted
+  header batch, and each channel's `read:` rule is checked before an entry
+  is kept.
+- **Every derived value is post-gate.** `count`, `truncated` and
+  `next_cursor` are computed on the gated list. `truncated` is set only
+  when the caller holds a waiting role on more than 20 000 entities they
+  can read, so hidden rows never set it.
+- **A cursor only positions.** It names a position, never an entry to
+  serve, so a cursor from another principal or naming a hidden entity
+  serves nothing hidden.
+- **The row ceiling counts channels the caller may not see.** When more
+  than 20 000 candidate channels match, the inbox answers
+  `inbox_too_large` instead of a partial list. The count is taken before
+  the channel `read:` rule and the creator's org are checked, and, for a
+  creator role, before the anchor's row gate. So it can include channels
+  the caller cannot see. What that discloses depends on who controls the
+  other candidates:
+  - A caller who creates about 20 000 waiting channels of their own can
+    bring the count to just under the ceiling. The answer then shows how
+    many hidden candidates there are, and it changes when a hidden channel
+    enters or leaves a waiting state. It never shows which entity or
+    channel that is, and never a property value.
+  - A user who may create channels in a waiting state on entities where a
+    co-worker holds a waiting role can push the co-worker's inbox to a
+    lasting `inbox_too_large` with channels the co-worker cannot read. That
+    is an availability risk, not a disclosure. Closing those channels ends
+    it.
+
+  Both need about 20 000 channel creations, so rela accepts them. A cap per
+  entity would not fix this: it would drop channels from an inbox without
+  saying so. The same signal can end an MCP `watch` on `list_inbox` after a
+  hidden write. A distinct code keeps the fault diagnosable; a generic 500
+  would hide nothing, because the failure itself is the signal.
+- **No cache across principals.** Each call computes the inbox for its
+  caller, and a `watch` digest is keyed to the caller.
+
 ## Session `run_as` identities
 
 A session in `realtime.yaml` may name a job identity in `session.run_as`,

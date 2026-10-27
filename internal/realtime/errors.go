@@ -120,6 +120,12 @@ const (
 	// outputs mark, or a removal of the message that caused a move whose
 	// outputs are still pending.
 	TypeOutputsPending = "outputs_pending"
+	// TypeInvalidCursor: an inbox cursor no inbox answer produced.
+	TypeInvalidCursor = "invalid_cursor"
+	// TypeInboxTooLarge: the channels an inbox would have to judge exceed
+	// [channels.MaxWaitingRows]. Nothing is answered, because a partial
+	// inbox would read as a complete one.
+	TypeInboxTooLarge = "inbox_too_large"
 )
 
 // DenialError is a refused operation: an HTTP status, a stable type, a title for

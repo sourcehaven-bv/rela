@@ -470,3 +470,63 @@ type ChannelActionSchema struct {
 	Label     string `json:"label"`
 	PromoteTo string `json:"promote_to,omitempty"`
 }
+
+// Inbox is GET /api/v1/_inbox: the sessions that wait on the caller now,
+// oldest wait first. Count is the size of the whole window, not of this
+// page. Truncated reports that more anchors named the caller than one
+// inbox reads; it counts only rows the caller may read. Degraded reports a
+// degraded realtime.yaml, under which no entity-property role grants
+// anyone, so the inbox is empty. NextCursor pages the window; it is
+// absent on the last page.
+type Inbox struct {
+	Notice     string       `json:"notice"`
+	Entries    []InboxEntry `json:"entries"`
+	Count      int          `json:"count"`
+	Truncated  bool         `json:"truncated"`
+	Degraded   bool         `json:"degraded"`
+	NextCursor string       `json:"next_cursor,omitempty"`
+}
+
+// InboxEntry is one session that waits on the caller. Kind is "waiting".
+// Roles are the waiting roles the caller holds. Since is when the session
+// entered its state. Transitions are the message types whose post by the
+// caller would move the session.
+type InboxEntry struct {
+	Kind        string       `json:"kind"`
+	Channel     InboxChannel `json:"channel"`
+	Session     InboxSession `json:"session"`
+	Roles       []string     `json:"roles"`
+	Since       string       `json:"since"`
+	Transitions []string     `json:"transitions"`
+	Links       InboxLinks   `json:"links"`
+}
+
+// InboxChannel names the channel of an inbox entry. AnchorTitle is the
+// anchor's display title as the caller may see it.
+type InboxChannel struct {
+	Anchor      string `json:"anchor"`
+	EntityType  string `json:"entity_type"`
+	AnchorTitle string `json:"anchor_title"`
+	Type        string `json:"type"`
+	Name        string `json:"name,omitempty"`
+	Title       string `json:"title,omitempty"`
+	State       string `json:"state"`
+}
+
+// InboxSession is the session of an inbox entry: the part of
+// [ChannelSession] that says what it waits for.
+type InboxSession struct {
+	State      string                  `json:"state"`
+	Label      string                  `json:"label,omitempty"`
+	Status     string                  `json:"status"`
+	WaitingFor []ChannelSessionWaiting `json:"waiting_for,omitempty"`
+	Generation int64                   `json:"generation"`
+	EnteredAt  string                  `json:"entered_at,omitempty"`
+}
+
+// InboxLinks are the API paths of an inbox entry's anchor entity and
+// channel.
+type InboxLinks struct {
+	Entity  string `json:"entity"`
+	Channel string `json:"channel"`
+}

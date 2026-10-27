@@ -272,7 +272,7 @@ func TestWatch_PollReplaysOnlyChannelTargets(t *testing.T) {
 			{tool: toolReadChannel, key: "b", handler: counting(&channelReplays), channel: &watchChannel{}},
 		}}
 	ctx := principal.With(context.Background(), p)
-	if _, _, err := run.pass(ctx, time.Now().Add(time.Minute), true); err != nil {
+	if _, _, err := run.pass(ctx, time.Now().Add(time.Minute), passWake); err != nil {
 		t.Fatal(err)
 	}
 	if entityReplays.Load() != 0 || channelReplays.Load() != 1 {

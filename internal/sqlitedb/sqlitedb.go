@@ -171,6 +171,12 @@ func (c *DB) init(ctx context.Context) error {
 	if _, err := c.db.ExecContext(ctx, channelTimersDDL); err != nil {
 		return fmt.Errorf("sqlitedb: create session due index: %w", err)
 	}
+	// After the ladder for the same reason: channelCreatorDDL indexes
+	// channels.created_by_user, which a pre-v27 table gains in the v27
+	// rung.
+	if _, err := c.db.ExecContext(ctx, channelCreatorDDL); err != nil {
+		return fmt.Errorf("sqlitedb: create channel creator index: %w", err)
+	}
 	return nil
 }
 
@@ -697,6 +703,7 @@ CREATE TABLE IF NOT EXISTS channels (
 	session_next_due_at INTEGER NOT NULL DEFAULT 0,
 	session_restarts    TEXT NOT NULL DEFAULT '',
 	session_reminders   TEXT NOT NULL DEFAULT '',
+	created_by_user     TEXT NOT NULL DEFAULT '',
 	UNIQUE (anchor_id, anchor_face, type, name, tomb)
 ) STRICT;
 CREATE INDEX IF NOT EXISTS channels_state_idx ON channels(tomb, state);
@@ -749,6 +756,17 @@ CREATE TABLE IF NOT EXISTS channel_type_refs (
 const channelTimersDDL = `
 CREATE INDEX IF NOT EXISTS channels_session_due_idx ON channels(type, state, session_next_due_at)
 	WHERE session_next_due_at > 0 AND tomb = '';`
+
+// channelCreatorDDL is the index the inbox lists the channels a user
+// created through (channels.Store.ListWaiting): one range per user,
+// channel type and channel state. It is partial, so rows without a creator
+// user are left out. The state column makes it the best match for the
+// creator statement, whose type and state filter channels_type_state_idx
+// would serve as well. pgstore migration 0034 has the same shape. It runs after the ladder, as
+// channelTimersDDL does, because it names a column the v27 rung adds.
+const channelCreatorDDL = `
+CREATE INDEX IF NOT EXISTS channels_creator_idx ON channels(created_by_user, type, state)
+	WHERE tomb = '' AND created_by_user <> '';`
 
 // searchKeyDDL is the key table of the search index; see searchDDL. It is in
 // schemaSQL because it depends on no column a rung adds.

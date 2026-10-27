@@ -1,11 +1,13 @@
 package realtime
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
 	"maps"
 	"slices"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -51,6 +53,7 @@ entities:
     id_prefix: PAGE
     properties:
       title: {type: string}
+      owner: {type: string}
     faces:
       draft: {}
       published: {}
@@ -219,6 +222,9 @@ type fakeAccess struct {
 	// identityCalls counts QueryIdentity calls: one per entity-property
 	// role check.
 	identityCalls atomic.Int64
+	// primeCalls counts Prime calls; primed holds the ids of the last.
+	primeCalls atomic.Int64
+	primed     []string
 }
 
 func (a *fakeAccess) Principal() principal.Principal { return a.p }
@@ -231,6 +237,11 @@ func (a *fakeAccess) HoldsPermissionFor(_ context.Context, _, perm string) bool 
 	return a.perms[perm] && !a.deniedPerms[perm]
 }
 func (a *fakeAccess) CeilingAdmitsUpdate(string) bool { return a.ceiling }
+func (a *fakeAccess) Prime(ctx context.Context, ids []string) context.Context {
+	a.primeCalls.Add(1)
+	a.primed = append(a.primed[:0], ids...)
+	return ctx
+}
 
 // accessKey carries the fakeAccess of a test call on the context.
 type accessKey struct{}
@@ -291,10 +302,84 @@ type fakeAnchors struct {
 	// fail, when set, is asked with the call's number (from 1); a non-nil
 	// answer fails the read.
 	fail func(n int64) error
+	// anchorsCalls counts Anchors calls.
+	anchorsCalls atomic.Int64
+	// hideAt names, per view key, the properties every caller's view
+	// leaves out, as a `visible:` rule on one entity does.
+	hideAt map[string][]string
+}
+
+// namesOf is the identities a role property value names: the string, or
+// the strings of a list.
+func namesOf(v any) []string {
+	switch v := v.(type) {
+	case string:
+		return []string{v}
+	case []string:
+		return v
+	case []any:
+		var out []string
+		for _, e := range v {
+			if s, ok := e.(string); ok {
+				out = append(out, s)
+			}
+		}
+		return out
+	}
+	return nil
+}
+
+// fakeHolders is a HolderFinder over the views of a fakeAnchors: a bare id
+// view is a family holder, an `ID@face` view a face holder. A property
+// the caller's view hides names nobody, as the gated query answers.
+type fakeHolders struct {
+	anchors *fakeAnchors
+	calls   atomic.Int64
+	// more, when set, is reported for every query.
+	more bool
+	// err, when set, fails every query.
+	err error
+}
+
+func (f *fakeHolders) Holding(ctx context.Context, q HolderQuery) ([]AnchorRef, bool, error) {
+	f.calls.Add(1)
+	if f.err != nil {
+		return nil, false, f.err
+	}
+	f.anchors.mu.Lock()
+	defer f.anchors.mu.Unlock()
+	var out []AnchorRef
+	for key, v := range f.anchors.views {
+		faced := strings.Contains(key, "@")
+		if faced != q.Face || v.Type != q.EntityType || slices.Contains(f.anchors.hidden(ctx, key), q.Property) {
+			continue
+		}
+		if !slices.Contains(namesOf(v.Props[q.Property]), q.Identity) {
+			continue
+		}
+		ref := AnchorRef{ID: v.ID}
+		if q.Face {
+			ref.Face = v.Face
+		}
+		out = append(out, ref)
+	}
+	slices.SortFunc(out, func(a, b AnchorRef) int {
+		return cmp.Or(cmp.Compare(a.ID, b.ID), cmp.Compare(a.Face, b.Face))
+	})
+	more := f.more
+	if len(out) > q.Limit {
+		out, more = out[:q.Limit], true
+	}
+	return out, more, nil
 }
 
 func (f *fakeAnchors) Anchor(ctx context.Context, addr entity.Address, props []string) (AnchorView, error) {
-	n := f.calls.Add(1)
+	f.calls.Add(1)
+	return f.read(ctx, addr, props)
+}
+
+func (f *fakeAnchors) read(ctx context.Context, addr entity.Address, props []string) (AnchorView, error) {
+	n := f.calls.Load() + f.anchorsCalls.Load()
 	if f.onRead != nil {
 		f.onRead()
 	}
@@ -310,10 +395,7 @@ func (f *fakeAnchors) Anchor(ctx context.Context, addr entity.Address, props []s
 	if !ok {
 		return AnchorView{}, ErrAnchorNotFound
 	}
-	var hidden []string
-	if a, ok := ctx.Value(accessKey{}).(*fakeAccess); ok {
-		hidden = f.hide[a.p.User]
-	}
+	hidden := f.hidden(ctx, addr.String())
 	out := v
 	out.Props = map[string]any{}
 	for _, p := range props {
@@ -323,6 +405,26 @@ func (f *fakeAnchors) Anchor(ctx context.Context, addr entity.Address, props []s
 	}
 	if def, ok := f.entityDef(v.Type); ok {
 		out.Record = predicatefns.EntityRecord(f.meta, def, v.ID, v.Type, out.Props)
+	}
+	return out, nil
+}
+
+// Anchors reads each address as Anchor does, as one call: anchorsCalls
+// counts it and calls does not.
+func (f *fakeAnchors) Anchors(
+	ctx context.Context, addrs []entity.Address, props []string,
+) (map[entity.Address]AnchorView, error) {
+	f.anchorsCalls.Add(1)
+	out := map[entity.Address]AnchorView{}
+	for _, a := range addrs {
+		v, err := f.read(ctx, a, props)
+		if errors.Is(err, ErrAnchorNotFound) {
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		out[a] = v
 	}
 	return out, nil
 }
@@ -345,6 +447,16 @@ func (f *fakeAnchors) setProp(prop string, v any) {
 	}
 	view.Props = props
 	f.views[addr] = view
+}
+
+// hidden names the properties the caller's view of the view at key leaves
+// out: those hide names for the caller and those hideAt names for key.
+func (f *fakeAnchors) hidden(ctx context.Context, key string) []string {
+	var out []string
+	if a, ok := ctx.Value(accessKey{}).(*fakeAccess); ok {
+		out = append(out, f.hide[a.p.User]...)
+	}
+	return append(out, f.hideAt[key]...)
 }
 
 func (f *fakeAnchors) entityDef(typ string) (*metamodel.EntityDef, bool) {
@@ -437,6 +549,13 @@ type countingStore struct {
 	setActions, staleLists atomic.Int64
 	// entityLists counts ListEntity calls.
 	entityLists atomic.Int64
+	// waitingLists counts ListWaiting calls.
+	waitingLists atomic.Int64
+}
+
+func (s *countingStore) ListWaiting(ctx context.Context, q channels.WaitingQuery) ([]channels.Channel, error) {
+	s.waitingLists.Add(1)
+	return s.Store.ListWaiting(ctx, q)
 }
 
 func (s *countingStore) ListEntity(ctx context.Context, id string) ([]channels.Channel, error) {
@@ -540,6 +659,8 @@ type harness struct {
 	local   *Local
 	// wake is the DueWake the service notes due times on.
 	wake *DueWake
+	// holders answers the inbox's holder queries from anchors.
+	holders *fakeHolders
 }
 
 type harnessOpt func(*harnessOpts)
@@ -593,9 +714,10 @@ func newHarness(t *testing.T, opts ...harnessOpt) *harness {
 		}},
 		cfg: &fakeConfig{snap: Snapshot{Config: testCompiled(t, o.yaml)}},
 	}
+	h.holders = &fakeHolders{anchors: h.anchors}
 	h.svc, err = New(Deps{
 		Store: st, Config: h.cfg, Access: fakeAccessSource{}, Anchors: h.anchors, Refs: h.refs, Local: local,
-		Promoter: o.promoter, DueWake: h.wake, Outputs: o.outputs,
+		Promoter: o.promoter, DueWake: h.wake, Outputs: o.outputs, Holders: h.holders,
 	})
 	require.NoError(t, err)
 	return h
