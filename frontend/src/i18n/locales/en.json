@@ -1,0 +1,62 @@
+{
+  "language": {
+    "en": "English",
+    "nl": "Nederlands"
+  },
+  "nav": {
+    "search": "Search",
+    "analysis": "Analysis",
+    "apps": "Apps",
+    "showAll": "Show all",
+    "piles": "Piles",
+    "newPile": "New pile",
+    "newItem": "New {label}"
+  },
+  "footer": {
+    "settings": "Settings",
+    "about": "About",
+    "shortcuts": "Shortcuts",
+    "keyboardShortcuts": "Keyboard shortcuts",
+    "clickToSync": "Click to sync",
+    "resolveConflicts": "Resolve conflicts",
+    "suggestedNextAction": "Suggested next action",
+    "suggestion": "Suggestion"
+  },
+  "git": {
+    "syncing": "Syncing…",
+    "conflicts": "Conflicts",
+    "changes": "{n} change | {n} changes",
+    "behind": "{n} behind",
+    "synced": "Synced",
+    "fetchFailed": "Failed to fetch status",
+    "syncFailed": "Failed to sync"
+  },
+  "account": {
+    "profile": "Profile",
+    "account": "Account",
+    "switchOrg": "Switch org",
+    "admin": "Admin",
+    "signOut": "Sign out"
+  },
+  "settings": {
+    "language": {
+      "title": "Language",
+      "description": "The language of menus, buttons and messages, for this browser only. Names and labels from the project configuration are not translated.",
+      "label": "Interface language",
+      "automatic": "Automatic ({language})"
+    }
+  },
+  "errors": {
+    "generic": "Something went wrong",
+    "network": "Network error: the server cannot be reached",
+    "cancelled": "Request cancelled",
+    "notFound": "Not found",
+    "unauthenticated": "Please sign in again",
+    "preconditionFailed": "This was changed elsewhere. Reload and try again.",
+    "bodyTooLarge": "The upload is too large",
+    "schemaChanged": "The configuration changed. Reload and try again.",
+    "stateChanged": "This changed while you were working. Try again.",
+    "encryptedInaccessible": "This item is encrypted and cannot be edited here",
+    "historyUnsupported": "This installation does not keep version history"
+  }
+}

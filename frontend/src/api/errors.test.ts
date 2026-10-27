@@ -10,6 +10,7 @@ import {
   type ProblemDetail,
 } from './errors'
 import type { ScriptError } from '@/types/scriptError'
+import { resetLanguageState } from '@/i18n/locale'
 
 function axiosErrorWith(data: unknown, status = 422, code?: string): AxiosError {
   const config: InternalAxiosRequestConfig = { headers: new AxiosHeaders() }
@@ -211,5 +212,78 @@ describe('shouldDropHeldContent', () => {
   // refuse mid-script is classified by the refusal, not the envelope.
   it('is true for a script failure carrying a denial status', () => {
     expect(shouldDropHeldContent(normalizeApiError(axiosErrorWith(scriptEnvelope, 403)))).toBe(true)
+  })
+})
+
+describe('getErrorMessage in the interface language (TKT-ZL1QAO)', () => {
+  const notFound = () =>
+    normalizeApiError(
+      axiosErrorWith(
+        { type: 'https://rela.dev/errors/not_found', title: 'Entity TKT-1 not found', status: 404 },
+        404
+      )
+    )
+  const unknownCode = () =>
+    normalizeApiError(
+      axiosErrorWith(
+        {
+          type: 'https://rela.dev/errors/cardinality_exceeded',
+          title: 'Too many targets',
+          status: 422,
+        },
+        422
+      )
+    )
+
+  it('reads the code from the problem type', () => {
+    expect(notFound().code).toBe('not_found')
+    expect(
+      normalizeApiError(axiosErrorWith({ type: 'about:blank', title: 'x', status: 400 }, 400)).code
+    ).toBeUndefined()
+  })
+
+  it('keeps the server message under English, where it is more specific', () => {
+    resetLanguageState({ user: 'en' })
+    expect(getErrorMessage(notFound())).toBe('Entity TKT-1 not found')
+  })
+
+  it('translates a known code under Dutch', () => {
+    resetLanguageState({ user: 'nl' })
+    expect(getErrorMessage(notFound())).toBe('Niet gevonden')
+  })
+
+  it('falls back to the server message for an unknown code', () => {
+    resetLanguageState({ user: 'nl' })
+    expect(getErrorMessage(unknownCode())).toBe('Too many targets')
+  })
+
+  it('translates network failures and the generic fallback', () => {
+    resetLanguageState({ user: 'nl' })
+    expect(getErrorMessage(normalizeApiError(axiosErrorWith(undefined)))).toBe(
+      'Netwerkfout: de server is niet bereikbaar'
+    )
+    expect(getErrorMessage(null)).toBe('Er ging iets mis')
+    expect(getErrorMessage(null, 'Eigen tekst')).toBe('Eigen tekst')
+  })
+
+  it("never replaces a script author's message", () => {
+    resetLanguageState({ user: 'nl' })
+    expect(getErrorMessage(normalizeApiError(axiosErrorWith(scriptEnvelope, 403)))).toBe(
+      normalizeApiError(axiosErrorWith(scriptEnvelope, 403)).message
+    )
+  })
+})
+
+describe('getErrorMessage keeps server text where a code has no fixed meaning', () => {
+  const withCode = (code: string, title: string, status: number) =>
+    normalizeApiError(axiosErrorWith({ type: `https://rela.dev/errors/${code}`, title, status }, status))
+
+  it.each([
+    ['forbidden', 'Missing permission: export', 403],
+    ['conflict', 'the target id is already taken', 409],
+    ['constructor', 'Odd code', 400],
+  ])('%s keeps the server message under Dutch', (code, title, status) => {
+    resetLanguageState({ user: 'nl' })
+    expect(getErrorMessage(withCode(code as string, title as string, status as number))).toBe(title)
   })
 })

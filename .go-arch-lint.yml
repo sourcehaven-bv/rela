@@ -359,6 +359,8 @@ vendors:
   singleflight: { in: golang.org/x/sync/singleflight }
   semaphore:   { in: golang.org/x/sync/semaphore }
   ximage:      { in: [golang.org/x/image, golang.org/x/image/**] }
+  # BCP 47 parsing for `app.language` in data-entry.yaml (TKT-ZL1QAO).
+  xlanguage:   { in: golang.org/x/text/language }
   http2:
     in:
       - golang.org/x/net/http2
@@ -698,6 +700,7 @@ deps:
       - metamodel
     canUse:
       - rrulego
+      - xlanguage
   # conditionlint reuses the predicate parser to sanity-check wizard-form
   # condition expressions at author time. It sits above dataentryconfig so the
   # config package stays free of the predicate dependency.

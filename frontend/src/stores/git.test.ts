@@ -195,7 +195,7 @@ describe('Git Store', () => {
       expect(store.conflictFiles).toEqual(['file1.md', 'file2.md'])
     })
 
-    it('shows "Syncing..." when syncing', async () => {
+    it('shows "Syncing…" when syncing', async () => {
       vi.mocked(api.getGitStatus).mockResolvedValue({
         available: true,
         branch: 'main',
@@ -210,7 +210,7 @@ describe('Git Store', () => {
       // Manually set syncing state
       store.syncing = true
 
-      expect(store.statusText).toBe('Syncing...')
+      expect(store.statusText).toBe('Syncing…')
     })
   })
 

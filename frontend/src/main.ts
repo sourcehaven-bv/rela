@@ -4,6 +4,7 @@ import { PiniaColada, useQueryCache } from '@pinia/colada'
 import App from './App.vue'
 import router from './router'
 import { installVisibleRefetch } from './composables/visibleRefetch'
+import { i18n } from './i18n'
 // rela-components tokens and shared classes FIRST: it declares the --rl-*
 // palette that everything below resolves against, tokens.css included — that
 // file is now a set of aliases onto it, not a palette of its own.
@@ -118,5 +119,6 @@ app.use(createPinia())
 app.use(PiniaColada, { queryOptions: { refetchOnWindowFocus: false, refetchOnReconnect: false } })
 app.runWithContext(() => installVisibleRefetch(useQueryCache()))
 app.use(router)
+app.use(i18n)
 
 app.mount('#app')

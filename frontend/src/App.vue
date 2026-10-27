@@ -3,6 +3,9 @@ import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { navigationPending } from '@/router'
 import { useSchemaStore, useUIStore } from '@/stores'
+import { provideMessages } from 'rela-components/composables/useMessages'
+import { localeMessages } from 'rela-components/composables/localeMessages'
+import { resolvedLanguage, setProjectLanguage } from '@/i18n'
 import { getErrorMessage } from '@/api'
 import {
   useKeyboardShortcuts,
@@ -75,6 +78,15 @@ const showHamburger = computed(
 )
 
 const schemaStore = useSchemaStore()
+
+// The library's own strings follow the interface language (TKT-ZL1QAO),
+// and the project default from app.language feeds the resolution.
+provideMessages(localeMessages(() => resolvedLanguage.value.language))
+watch(
+  () => schemaStore.app?.language,
+  (language) => setProjectLanguage(language),
+  { immediate: true }
+)
 const uiStore = useUIStore()
 // The Configure space has its own sidebar and no space create menu.
 const configuring = computed(() => isConfigurePath(route.path))

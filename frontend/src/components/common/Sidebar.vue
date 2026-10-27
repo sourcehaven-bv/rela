@@ -40,9 +40,11 @@ import { useNavItems } from '@/composables/useNavItems'
 import { useNavEntities } from '@/composables/useNavEntities'
 import { useFlyout } from '@/composables/useFlyout'
 import { shouldDeferToBrowser } from '@/utils/openIntent'
+import { useI18n } from 'vue-i18n'
 import { apiUrl } from '@/api/base'
 import { createPile } from '@/api/piles'
 
+const { t } = useI18n()
 const schemaStore = useSchemaStore()
 const uiStore = useUIStore()
 const { reportResult, reportError } = useActionFeedback()
@@ -80,7 +82,7 @@ const appGroups = computed<SidebarGroup[]>(() => {
     href: `/app/${id}`,
     icon: 'apps',
   }))
-  return apps.length ? [{ group: 'Apps', items: apps }] : []
+  return apps.length ? [{ group: t('nav.apps'), items: apps }] : []
 })
 
 const flyout = useFlyout()
@@ -206,8 +208,8 @@ const pinnedGroups = computed(() =>
     inSpace([
       {
         items: [
-          { label: 'Search', href: '/search', icon: 'search' },
-          { label: 'Analysis', href: '/analyze', icon: 'warning' },
+          { label: t('nav.search'), href: '/search', icon: 'search' },
+          { label: t('nav.analysis'), href: '/analyze', icon: 'warning' },
         ],
       },
     ]),

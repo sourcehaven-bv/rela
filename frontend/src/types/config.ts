@@ -102,6 +102,11 @@ export interface AppConfig {
    * client-side casing transform.
    */
   plantuml_server_url?: string
+  /**
+   * The project's default interface language (`app.language`), a BCP 47
+   * tag, or absent to follow the browser. A user's own choice wins over it.
+   */
+  language?: string
   // The world a request lands in when the URL names none. '' / absent means
   // the raw default faces. Presentation only — the read grant is re-checked
   // per request, so this changes which face a bare URL resolves to, not who

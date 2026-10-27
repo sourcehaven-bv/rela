@@ -141,6 +141,38 @@ export type ChannelTextKey =
   | 'sessionShowAll'
   | 'sessionHideAll'
 
+/**
+ * The fixed captions of the app chrome: the sidebar's own controls and the
+ * theme picker. Same reasoning as `ChannelTextKey`: each could be a prop, but
+ * an app would then pass the same translated word into every instance.
+ */
+export type ChromeTextKey =
+  | 'sidebar'
+  | 'mainNavigation'
+  | 'collapseSidebar'
+  | 'closeNavigation'
+  | 'filterNavigation'
+  | 'filter'
+  | 'otherGroup'
+  | 'colourTheme'
+  | 'themeSystem'
+  | 'themeLight'
+  | 'themeDark'
+
+const CHROME_TEXT: Record<ChromeTextKey, string> = {
+  sidebar: 'Sidebar',
+  mainNavigation: 'Main',
+  collapseSidebar: 'Collapse sidebar',
+  closeNavigation: 'Close navigation',
+  filterNavigation: 'Filter navigation',
+  filter: 'Filter',
+  otherGroup: 'Other',
+  colourTheme: 'Colour theme',
+  themeSystem: 'System',
+  themeLight: 'Light',
+  themeDark: 'Dark',
+}
+
 const CHANNEL_TEXT: Record<ChannelTextKey, string> = {
   newMessage: 'New message',
   editMessage: 'Edit message',
@@ -357,6 +389,8 @@ export interface Messages {
   channelTyping: (args: { names: string[]; others: number }) => string
   /** The channel components' fixed captions; see `ChannelTextKey`. */
   channelText: (args: { key: ChannelTextKey }) => string
+  /** The sidebar's and theme picker's fixed captions; see `ChromeTextKey`. */
+  chromeText: (args: { key: ChromeTextKey }) => string
 }
 
 /** `a`, `a or b`, `a, b or c`. */
@@ -477,6 +511,7 @@ export const DEFAULT_MESSAGES: Messages = {
     return `${names.join(' and ')} are typing…`
   },
   channelText: ({ key }) => CHANNEL_TEXT[key],
+  chromeText: ({ key }) => CHROME_TEXT[key],
 }
 
 const MessagesKey: InjectionKey<Messages> = Symbol('rl-messages')

@@ -16,6 +16,7 @@
  */
 import { TZDate } from '@date-fns/tz'
 import { NAIVE_DATETIME_RE } from '@/utils/format'
+import { intlLocale } from '@/i18n/locale'
 import type { DateBucket } from '@/types'
 
 /**
@@ -151,6 +152,7 @@ export function bucketMeta(
   locale?: string,
   dateOnly = false
 ): string | undefined {
+  locale ??= intlLocale()
   const value = asDateValue(raw, dateOnly)
   const day = calendarDayOf(value, tz)
   if (!day || bucket === 'no_date') return undefined

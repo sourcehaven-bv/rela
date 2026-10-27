@@ -165,6 +165,7 @@ var editable = map[File][]string{
 		"forms.*.side_panel.**", "calendars.**", "gantts.**",
 		"app.name",
 		"app.description",
+		"app.language",
 
 		"styles.*.*",
 

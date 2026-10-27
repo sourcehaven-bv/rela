@@ -418,6 +418,17 @@ type ActionRequest struct {
 type AppConfig struct {
 	Name        string `yaml:"name"`
 	Description string `yaml:"description"`
+	// Language is the project's default interface language for the web app,
+	// as a BCP 47 tag ("nl", "nl-BE"). It applies when the user has chosen
+	// no language on the Settings page, and it wins over the browser's
+	// language. Empty means "follow the browser".
+	//
+	// It covers the app's own text (menus, buttons, errors), not the
+	// operator's labels, which are already written in one language.
+	// Validated at load: the tag must parse, and its base language must be
+	// one of [SupportedUILanguages]. A region (nl-BE) is kept for date and
+	// number formatting.
+	Language string `yaml:"language,omitempty"`
 	// DefaultWorld names the world a request lands in when the URL carries no
 	// `?world=`. Empty (the default) means the default world — the raw stored
 	// faces, which is right for an authoring tool and wrong for a reader.

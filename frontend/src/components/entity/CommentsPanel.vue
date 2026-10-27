@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { intlLocale } from '@/i18n/locale'
 import { ref, computed, watch } from 'vue'
 import { useSchemaStore, useUIStore } from '@/stores'
 import {
@@ -118,7 +119,7 @@ function anchorLabel(anchor: CommentAnchor): string {
 
 function formatDate(iso: string): string {
   const d = new Date(iso)
-  return Number.isNaN(d.getTime()) ? iso : d.toLocaleString()
+  return Number.isNaN(d.getTime()) ? iso : d.toLocaleString(intlLocale())
 }
 
 async function submit() {

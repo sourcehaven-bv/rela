@@ -78,7 +78,7 @@ const props = withDefaults(
     footerLabel: 'Help docs',
     filterThreshold: 25,
     groupThreshold: 20,
-    fallbackLabel: 'Other',
+    fallbackLabel: undefined,
     themeToggle: true,
     theme: undefined,
   },
@@ -179,7 +179,7 @@ watch(() => props.activeId, () => nextTick(revealActive))
 </script>
 
 <template>
-  <aside class="rl-sidebar" aria-label="Sidebar">
+  <aside class="rl-sidebar" :aria-label="messages.chromeText({ key: 'sidebar' })">
     <header class="rl-sidebar__header">
       <!--
         The switcher position, not the switcher itself. A consumer whose
@@ -200,13 +200,13 @@ watch(() => props.activeId, () => nextTick(revealActive))
       <RlIconButton
         class="rl-sidebar__collapse"
         icon="panel-left"
-        label="Collapse sidebar"
+        :label="messages.chromeText({ key: 'collapseSidebar' })"
         @click="emit('toggleCollapse')"
       />
       <RlIconButton
         class="rl-sidebar__close"
         icon="x"
-        label="Close navigation"
+        :label="messages.chromeText({ key: 'closeNavigation' })"
         @click="emit('close')"
       />
     </header>
@@ -219,8 +219,8 @@ watch(() => props.activeId, () => nextTick(revealActive))
       <RlSearchBox
         v-model="query"
         size="sm"
-        label="Filter navigation"
-        placeholder="Filter"
+        :label="messages.chromeText({ key: 'filterNavigation' })"
+        :placeholder="messages.chromeText({ key: 'filter' })"
         :result-text="query ? messages.resultCount({ shown: matchCount, total }) : undefined"
       />
     </div>
@@ -236,7 +236,11 @@ watch(() => props.activeId, () => nextTick(revealActive))
       <slot name="pinned" />
     </div>
 
-    <nav ref="nav" class="rl-sidebar__nav" aria-label="Main">
+    <nav
+      ref="nav"
+      class="rl-sidebar__nav"
+      :aria-label="messages.chromeText({ key: 'mainNavigation' })"
+    >
       <!--
         Each group decides for itself whether it is long enough to need
         subheadings, so the sidebar hands it the data and stays out of it.

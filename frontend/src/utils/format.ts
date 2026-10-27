@@ -7,6 +7,7 @@ import { TZDate } from '@date-fns/tz'
 import type { PropertyDef, EntityType } from '@/types'
 import { parseExternalRef } from '@/widgets/externalRef'
 import { fileRefNames } from './fileRefs'
+import { intlLocale } from '@/i18n/locale'
 
 export const DATE_FORMAT_OPTIONS: Intl.DateTimeFormatOptions = {
   year: 'numeric',
@@ -39,7 +40,7 @@ export function parseDate(value: string): Date {
 export function formatDate(value: string, locale?: string): string | null {
   const date = parseDate(value)
   if (isNaN(date.getTime())) return null
-  return date.toLocaleDateString(locale, DATE_FORMAT_OPTIONS)
+  return date.toLocaleDateString(locale ?? intlLocale(), DATE_FORMAT_OPTIONS)
 }
 
 /**
@@ -47,18 +48,25 @@ export function formatDate(value: string, locale?: string): string | null {
  * code such as EUR) is given: 3500 with EUR reads "€ 3.500" in nl-NL. A
  * whole number shows no decimals; any other shows two.
  *
- * `locale` defaults to the browser's, as formatDate's does. Tests pass one.
+ * `locale` defaults to the interface locale (`intlLocale`), as every
+ * formatter here does. Tests pass one.
  */
 export function formatAmount(value: number, currency?: string, locale?: string): string {
-  return amountFormatter(Number.isInteger(value) ? 0 : 2, currency, locale).format(value)
+  return amountFormatter(Number.isInteger(value) ? 0 : 2, currency, locale ?? intlLocale()).format(
+    value
+  )
 }
 
 // Building an Intl.NumberFormat is the expensive part, and a board formats an
 // amount per card on every render, so formatters are kept per shape.
 const amountFormatters = new Map<string, Intl.NumberFormat>()
 
-function amountFormatter(digits: number, currency?: string, locale?: string): Intl.NumberFormat {
-  const key = `${locale ?? ''}|${currency ?? ''}|${digits}`
+function amountFormatter(
+  digits: number,
+  currency: string | undefined,
+  locale: string
+): Intl.NumberFormat {
+  const key = `${locale}|${currency ?? ''}|${digits}`
   let f = amountFormatters.get(key)
   if (!f) {
     f = new Intl.NumberFormat(locale, {
@@ -186,7 +194,7 @@ export function formatDatetime(value: string, tz: string, locale?: string): stri
   const date = NAIVE_DATETIME_RE.test(value) ? new TZDate(value, tz) : new Date(value)
   if (isNaN(date.getTime())) return null
   try {
-    return date.toLocaleString(locale, { ...DATETIME_FORMAT_OPTIONS, timeZone: tz })
+    return date.toLocaleString(locale ?? intlLocale(), { ...DATETIME_FORMAT_OPTIONS, timeZone: tz })
   } catch {
     // Defensive: toLocaleString throws RangeError on an invalid tz. The tz
     // is validated upstream today, but degrade gracefully like formatDate.

@@ -22,6 +22,7 @@ import { entityDetailHref } from '@/utils/entityRoute'
 import type { NavEntitiesLookup } from '@/composables/useNavEntities'
 import type { PileSummary } from '@/api/piles'
 import { pileIcon } from '@/components/piles/pileIcon'
+import { t } from '@/i18n'
 
 /**
  * The stable identifier for a nav row.
@@ -82,7 +83,9 @@ export function toNavGroups(
     // thing always present to key an unlabelled group on.
     id: group.group ? `group:${group.group}` : `group:${index}`,
     label: group.group,
-    ...(group.items_create ? { addLabel: `New ${group.items_create.label}` } : {}),
+    ...(group.items_create
+      ? { addLabel: t('nav.newItem', { label: group.items_create.label }) }
+      : {}),
     // A malformed entry is dropped rather than rendered inert: a row that
     // looks like a link and goes nowhere is worse than an absent one.
     items: group.items
@@ -200,7 +203,7 @@ export function expandGeneratedItems(
       ...(entry.initial ? { initial: entry.initial } : {}),
     }))
     if (list.truncated && group.items_list) {
-      items.push({ label: 'Show all', href: `/list/${group.items_list}`, icon: 'list' })
+      items.push({ label: t('nav.showAll'), href: `/list/${group.items_list}`, icon: 'list' })
     }
     out.push({ ...group, items })
   }
@@ -308,8 +311,8 @@ export function pileNavId(id: string): string {
 export function pilesNavGroup(piles: readonly PileSummary[]): NavGroup {
   return {
     id: PILES_GROUP_ID,
-    label: 'Piles',
-    addLabel: 'New pile',
+    label: t('nav.piles'),
+    addLabel: t('nav.newPile'),
     items: piles.map((p) => ({
       id: pileNavId(p.id),
       label: p.name,

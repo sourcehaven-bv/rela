@@ -25,6 +25,7 @@
  */
 import { computed, onMounted, ref, watch } from 'vue'
 import RlSegmentedControl, { type SegmentOption } from '../data/RlSegmentedControl.vue'
+import { useMessages } from '../../composables/useMessages'
 
 export type ThemeChoice = 'system' | 'light' | 'dark'
 
@@ -35,7 +36,10 @@ const props = withDefaults(
      * for the whole page rather than beyond it.
      */
     modelValue?: ThemeChoice
-    /** Accessible name for the group. Shown only when `iconOnly` is off. */
+    /**
+     * Accessible name for the group. Shown only when `iconOnly` is off.
+     * Defaults to the `colourTheme` chrome text.
+     */
     label?: string
     /** Shows only the icons, for a collapsed rail or a tight footer. */
     iconOnly?: boolean
@@ -46,7 +50,7 @@ const props = withDefaults(
      */
     target?: HTMLElement | null
   }>(),
-  { modelValue: undefined, label: 'Colour theme', iconOnly: false, size: 'sm', target: null },
+  { modelValue: undefined, label: undefined, iconOnly: false, size: 'sm', target: null },
 )
 
 const emit = defineEmits<{ 'update:modelValue': [value: ThemeChoice] }>()
@@ -60,11 +64,13 @@ const emit = defineEmits<{ 'update:modelValue': [value: ThemeChoice] }>()
 const inner = ref<ThemeChoice>(props.modelValue ?? 'system')
 const current = computed<ThemeChoice>(() => props.modelValue ?? inner.value)
 
-const options: SegmentOption[] = [
-  { value: 'system', label: 'System', icon: 'monitor' },
-  { value: 'light', label: 'Light', icon: 'sun' },
-  { value: 'dark', label: 'Dark', icon: 'moon' },
-]
+const messages = useMessages()
+
+const options = computed<SegmentOption[]>(() => [
+  { value: 'system', label: messages.chromeText({ key: 'themeSystem' }), icon: 'monitor' },
+  { value: 'light', label: messages.chromeText({ key: 'themeLight' }), icon: 'sun' },
+  { value: 'dark', label: messages.chromeText({ key: 'themeDark' }), icon: 'moon' },
+])
 
 /*
  * `system` is the absence of both classes rather than a third one: the
@@ -93,7 +99,7 @@ function select(value: string) {
     class="rl-theme-toggle"
     :model-value="current"
     :options="options"
-    :label="label"
+    :label="label ?? messages.chromeText({ key: 'colourTheme' })"
     :size="size"
     :icon-only="iconOnly"
     @update:model-value="select"

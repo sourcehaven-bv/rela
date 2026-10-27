@@ -229,7 +229,10 @@ export {
   FOCUSABLE_SELECTOR,
 } from './composables/useOverlayStack'
 export { provideMessages, useMessages, DEFAULT_MESSAGES } from './composables/useMessages'
-export type { Messages, CountArgs, ChannelTextKey } from './composables/useMessages'
+export type { Messages, CountArgs, ChannelTextKey, ChromeTextKey } from './composables/useMessages'
+export { NL_MESSAGES } from './composables/messages.nl'
+export { LOCALE_MESSAGES, localeMessages } from './composables/localeMessages'
+export type { MessagesLanguage } from './composables/localeMessages'
 export {
   useDelayedPending,
   PENDING_DELAY_MS,
