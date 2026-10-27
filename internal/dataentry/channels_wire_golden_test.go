@@ -36,6 +36,9 @@ const (
 var channelWireTypes = map[string]any{
 	"ChannelAuthor":              v1.ChannelAuthor{},
 	"Channel":                    v1.Channel{},
+	"ChannelRead":                v1.ChannelRead{},
+	"ChannelMarkRead":            v1.ChannelMarkRead{},
+	"MarkReadRequest":            v1.MarkReadRequest{},
 	"ChannelSession":             v1.ChannelSession{},
 	"ChannelSessionTransition":   v1.ChannelSessionTransition{},
 	"ChannelSessionTimer":        v1.ChannelSessionTimer{},
@@ -74,6 +77,7 @@ var channelWireTypes = map[string]any{
 	"InboxChannel":               v1.InboxChannel{},
 	"InboxSession":               v1.InboxSession{},
 	"InboxLinks":                 v1.InboxLinks{},
+	"InboxUnread":                v1.InboxUnread{},
 }
 
 // jsonFields lists the JSON names of v's struct fields, sorted. An

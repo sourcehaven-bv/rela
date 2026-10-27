@@ -24,14 +24,15 @@ import (
 // acl.yaml for the CLI's principal as `rela lease` does. A signal lives only
 // in the process that receives it, so the CLI posts log messages only.
 type ChannelCmd struct {
-	List   ChannelListCmd   `cmd:"" help:"List the channels on an entity that you may read."`
-	Read   ChannelReadCmd   `cmd:"" help:"Read a channel: its state, what you may post, and a page of messages."`
-	Post   ChannelPostCmd   `cmd:"" help:"Post a message to a channel."`
-	Edit   ChannelEditCmd   `cmd:"" help:"Replace the props of your own message."`
-	Remove ChannelRemoveCmd `cmd:"" help:"Withdraw your own message, or remove another as a moderator."`
-	Create ChannelCreateCmd `cmd:"" help:"Create a named channel of a type with many channels per entity."`
-	Watch  ChannelWatchCmd  `cmd:"" help:"Wait for new, edited or removed messages in a channel."`
-	Inbox  ChannelInboxCmd  `cmd:"" help:"List the sessions that wait on you now, oldest wait first."`
+	List     ChannelListCmd     `cmd:"" help:"List the channels on an entity that you may read."`
+	Read     ChannelReadCmd     `cmd:"" help:"Read a channel: its state, what you may post, and a page of messages."`
+	Post     ChannelPostCmd     `cmd:"" help:"Post a message to a channel."`
+	Edit     ChannelEditCmd     `cmd:"" help:"Replace the props of your own message."`
+	Remove   ChannelRemoveCmd   `cmd:"" help:"Withdraw your own message, or remove another as a moderator."`
+	Create   ChannelCreateCmd   `cmd:"" help:"Create a named channel of a type with many channels per entity."`
+	Watch    ChannelWatchCmd    `cmd:"" help:"Wait for new, edited or removed messages in a channel."`
+	Inbox    ChannelInboxCmd    `cmd:"" help:"List the sessions that wait on you, and the channels you have not read."`
+	MarkRead ChannelMarkReadCmd `cmd:"" name:"mark-read" help:"Mark a channel read up to a seq, or up to its last message."`
 }
 
 // channelReader reads channels. The wiring site passes the project's
@@ -48,6 +49,7 @@ type channelWriter interface {
 	Post(ctx context.Context, addr realtime.RawAddress, in realtime.PostInput) (realtime.PostResult, error)
 	Edit(ctx context.Context, addr realtime.RawAddress, seq int64, props map[string]any) (realtime.MessageView, error)
 	Delete(ctx context.Context, addr realtime.RawAddress, seq int64, reason string) (realtime.MessageView, error)
+	MarkRead(ctx context.Context, addr realtime.RawAddress, seq *int64) (realtime.MarkReadResult, error)
 }
 
 // channelCreator creates named channels.

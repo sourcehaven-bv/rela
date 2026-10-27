@@ -209,4 +209,5 @@ export const NL_MESSAGES: Messages = {
   },
   channelText: ({ key }) => CHANNEL_TEXT_NL[key],
   chromeText: ({ key }) => CHROME_TEXT_NL[key],
+  channelUnreadCount: ({ count }) => `${count} ongelezen`,
 }

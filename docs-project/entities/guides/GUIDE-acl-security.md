@@ -1855,6 +1855,50 @@ over many entities, so it follows the rule that gates before it folds.
 - **No cache across principals.** Each call computes the inbox for its
   caller, and a `watch` digest is keyed to the caller.
 
+## Read markers
+
+A read marker records how far one reader has read one channel (TKT-2B2AIA).
+Unread counts are derived from it. The realtime guide describes both.
+
+- **Markers are private.** The store reads and writes markers only for the
+  reader the request is bound to. The reader comes from the principal,
+  never from the request. No route, tool or count shows another reader's
+  marker or the time it moved.
+- **Gate before count.** The channel list and the head fill `read` only
+  for channels the caller passed the read gates for. The inbox gates every
+  channel it considers for unread messages first: the anchor's row gate,
+  redaction, face and world, and the channel's `read:` rule. Only then does
+  it count. A hidden channel has no `read`, is not in `unread_channels`,
+  and does not change `unread_count`. The answer is the same as for a
+  project without those channels and markers. The counts are computed per
+  caller and never cached across principals.
+- **A mark on a hidden channel writes nothing.** `PUT .../_read` and
+  `mark_read` answer what the head `GET` answers, and store nothing.
+  A mark needs read access only.
+- **A mark wakes only its own reader.** A moved marker sends a live frame
+  only to the same reader's subscriptions. Other principals get no frame
+  and no replay, so a mark does not tell them when someone read a channel.
+- **The window is cut before the gate.** The inbox looks at no more than
+  500 of a caller's markers, chosen before the read gates run. A hidden
+  channel on which the caller still holds a marker can take one of those
+  slots. With more than 500 markers, a caller could then notice that a
+  visible channel drops out, and infer that a channel they once read still
+  exists or is active. This needs the caller to have read that channel
+  before. It shows no content, no property value and no entity id, so rela
+  accepts it. A detached channel never takes a slot.
+- **Markers are personal data.** A marker records when a named user read a
+  channel. The operator holds it, and it stays until the channel is deleted
+  or purged, also after the user entity is deleted. rela has no command
+  yet to erase one reader's markers.
+- **A reused user id takes over the markers.** A marker belongs to a user
+  id and organization. A new principal with the id or login of a deleted
+  user sees that user's markers on the channels it can read: which
+  channels the previous user read, and how far. Content stays gated. Do
+  not reuse ids or logins without erasing the markers first; erasure on
+  user deletion is planned in TKT-6V8K8I.
+- **Marks are rate limited apart from posts.** A client cannot flood the
+  store with marks, and marks cannot use up the same user's posts.
+
 ## Session `run_as` identities
 
 A session in `realtime.yaml` may name a job identity in `session.run_as`,

@@ -5,7 +5,9 @@ title: 'Inbox 2: read markers and unread counts'
 kind: enhancement
 priority: medium
 effort: l
-status: backlog
+started: "2026-10-27"
+completed: "2026-10-27"
+status: done
 ---
 
 ## Description

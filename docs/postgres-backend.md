@@ -78,6 +78,13 @@ schema, so every rela-server process on that schema sees the same piles and
 another tenant sees none of them. They are not graph content: they are not
 audited, versioned or searched.
 
+Migration 35 adds read markers for channels. It reads every stored
+channel message once and builds an index on that table, while it holds a
+lock that blocks reads and writes of channel messages until the migration
+commits. The pause grows with the number of channel messages. Plan a
+maintenance window, or run `rela db migrate` as a deploy step, when that
+table is large.
+
 ### Applying migrations explicitly
 
 If you would rather apply the schema as a separate, controlled step

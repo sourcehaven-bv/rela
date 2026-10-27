@@ -21,6 +21,7 @@
  */
 import { computed, ref, useTemplateRef, watch } from 'vue'
 import { useChannel } from '@/composables/useChannel'
+import { useMarkRead } from '@/composables/useMarkRead'
 import { useTyping } from '@/composables/useTyping'
 import { useConfirm } from '@/composables/useConfirm'
 import { useChannelSchemaStore } from '@/stores/channelSchema'
@@ -108,6 +109,16 @@ const hasEphemeral = computed(() =>
 const ch = useChannel(target, {
   ephemeral: () => hasEphemeral.value || props.channelType.typing,
   onSeen: (head, messages) => channelSchema.checkNames(props.channelType.name, head, messages),
+})
+
+// The open channel marks itself read while the tab is visible. Nothing of
+// it is shown.
+useMarkRead({
+  target,
+  head: ch.head,
+  messages: ch.messages,
+  hasNewer: ch.hasNewer,
+  takeRead: ch.takeRead,
 })
 
 const messageType = (name: string) => channelSchema.messageType(props.channelType.name, name)

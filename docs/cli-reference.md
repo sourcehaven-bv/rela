@@ -2165,7 +2165,8 @@ rela channel edit ID TYPE SEQ [--name N] [-P key=value ...] [--props-json JSON|@
 rela channel remove ID TYPE SEQ [--name N] [--reason R]
 rela channel create ID TYPE [--title T]
 rela channel watch ID TYPE [--name N] [--after-rev R] [--timeout 30s] [--follow] [--poll 2s] [--limit N]
-rela channel inbox [--limit N] [--cursor C]
+rela channel mark-read ID TYPE [--name N] [--seq S]
+rela channel inbox [--limit N] [--cursor C] [--kinds waiting,unread]
 ```
 
 `ID` is an entity id, or `ID@face` for a channel type that anchors to a face.
@@ -2180,9 +2181,28 @@ channel of a type with many channels.
 | `--before`, `--after`, `--after-rev` | Page cursors; name at most one. `read` prints the flag that continues from the page |
 | `--schemas`    | Show each message type's properties                                                            |
 | `--reason`     | Why a message was removed; shown to moderators                                                 |
+| `--seq`        | For `mark-read`: mark read up to this sequence number, 0 or more. Without it, up to the last message |
+| `--kinds`      | For `inbox`: what to list, `waiting`, `unread` or both (the default). Comma separated          |
 
 `edit` replaces all properties of your message, so name every property you
 keep.
+
+`list` prints one row per channel with the columns `TYPE`, `NAME`, `STATE`,
+`TITLE` and `LAST_SEQ`. When you have unread messages in a channel, the row
+ends with their number after `LAST_SEQ`, such as `42 (2 unread)`, or
+`(100+ unread)` at the cap. `-o json` prints `read` on each channel where
+you have a read marker.
+
+`mark-read` moves your read marker on a channel and prints the result:
+
+```text
+marked read up to 42 (0 unread)
+```
+
+The marker never moves back, so the printed number can be above `--seq`.
+`-o json` prints `{"seq", "unread", "last_seq"}`. Reading a channel with
+`read` or `watch` never moves the marker; a post of yours does. The realtime
+guide describes read markers and which messages count as unread.
 
 The table output prints each message as a header line, `#seq  time  user (tool)  type`,
 followed by its properties. Every line of message content starts with two spaces and a `|`,
@@ -2216,6 +2236,21 @@ hold. `--limit` is 1 to 200 (default 50). When more entries follow, the
 last line gives the `--cursor` for the next page. `-o json` prints the
 whole answer, as `list_inbox` does over MCP. The realtime guide describes
 which identity holds a role; with `--run-as` it is the job identity.
+
+After the sessions, `inbox` prints the channels with messages you have not
+read:
+
+```text
+Unread channels:
+RISK-2 breach-response/7m2c: 3 unread (read up to 11 of 14)
+```
+
+Each line names the entity, the channel type and name, the unread count,
+your read marker and the channel's last sequence number. When more than 50
+channels have unread messages, a last line says how many are shown. When
+no channel has unread messages, the section is `No unread channels.` A
+`--cursor` page has no unread section, because it does not compute it.
+With `--kinds unread` the sessions are left out and `--cursor` is refused.
 
 The CLI opens the project itself; it does not talk to a running
 `rela-server`. Each call applies `acl.yaml` for the CLI's identity, as

@@ -20,6 +20,7 @@ const (
 	opAction    = "action"
 	opTyping    = "typing"
 	opPostPfx   = "post:"
+	opRead      = "read"
 )
 
 // sweepEvery is how many takes pass between two sweeps of full buckets.
@@ -109,7 +110,9 @@ func defaultLimitCaps() limitCaps {
 
 // limiter keeps the token buckets of one process. Every write charges two
 // buckets at once: one per identity, channel and operation, and one per
-// identity across everything (realtimelimits.IdentityRate).
+// identity across everything at the limiter's aggregate rate
+// (realtimelimits.IdentityRate for writes, realtimelimits.ReadIdentityRate
+// for read marks, which have a limiter of their own).
 //
 // A missing bucket counts as full, so a take computes the outcome before it
 // inserts anything and inserts only when the take succeeds: a refused take
@@ -132,10 +135,18 @@ type limiter struct {
 	perOp int // per-channel buckets across ids
 	calls int
 	caps  limitCaps
+	// agg is the rate of each identity's aggregate bucket.
+	agg realtimelimits.Rate
 }
 
+// newLimiter returns the limiter of channel writes.
 func newLimiter(caps limitCaps) *limiter {
-	return &limiter{ids: map[string]*identityBuckets{}, caps: caps}
+	return newLimiterAt(caps, realtimelimits.IdentityRate)
+}
+
+// newLimiterAt returns a limiter whose aggregate buckets fill at agg.
+func newLimiterAt(caps limitCaps, agg realtimelimits.Rate) *limiter {
+	return &limiter{ids: map[string]*identityBuckets{}, caps: caps, agg: agg}
 }
 
 // bucketIdentity is the identity rate limits key on: the user and the
@@ -162,9 +173,9 @@ func (l *limiter) take(now time.Time, identity string, key channels.Key, op stri
 	if ib != nil {
 		agg, per = ib.aggregate, ib.perOp[co]
 	}
-	aggTokens := agg.tokensAt(now, realtimelimits.IdentityRate)
+	aggTokens := agg.tokensAt(now, l.agg)
 	perTokens := per.tokensAt(now, rate)
-	if wait := max(waitFor(aggTokens, realtimelimits.IdentityRate), waitFor(perTokens, rate)); wait > 0 {
+	if wait := max(waitFor(aggTokens, l.agg), waitFor(perTokens, rate)); wait > 0 {
 		return rateLimited(wait)
 	}
 	if err := l.roomLocked(now, identity, agg == nil, per == nil); err != nil {
@@ -174,7 +185,7 @@ func (l *limiter) take(now time.Time, identity string, key channels.Key, op stri
 		ib = &identityBuckets{perOp: map[channelOp]*bucket{}}
 		l.ids[identity] = ib
 	}
-	ib.aggregate = &bucket{tokens: aggTokens - 1, last: now, rate: realtimelimits.IdentityRate}
+	ib.aggregate = &bucket{tokens: aggTokens - 1, last: now, rate: l.agg}
 	if per == nil {
 		l.perOp++
 	}

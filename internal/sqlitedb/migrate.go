@@ -12,7 +12,7 @@ import (
 // schemaVersion is the shape of the tables this binary expects. Bump it
 // whenever schemaSQL changes shape, and append the step that carries an
 // existing database forward to [migrations].
-const schemaVersion = 27
+const schemaVersion = 28
 
 // SchemaVersion reports the table shape this binary expects, so the CLI can
 // show a real number rather than prose.
@@ -292,6 +292,51 @@ var migrations = []migration{
 		to:    27,
 		apply: addChannelCreator,
 	},
+	{
+		// v27 → v28: read markers, the counts column of each message and
+		// the last activity of each channel (TKT-2B2AIA). The indexes are
+		// created after the ladder (see channelReadsIndexDDL).
+		to:    28,
+		apply: addChannelReads,
+	},
+}
+
+// channelLastAtColumns are the last-activity column of channels.
+var channelLastAtColumns = []struct{ name, def string }{
+	{"last_at", "INTEGER NOT NULL DEFAULT 0"},
+}
+
+// messageCountsColumns are the counts column of channel_messages.
+var messageCountsColumns = []struct{ name, def string }{
+	{"counts", "INTEGER NOT NULL DEFAULT 1"},
+}
+
+// addChannelReads is the v27 to v28 rung. It creates channel_reads, adds
+// channel_messages.counts and sets it to 0 on removed messages and session
+// notices (channels.Counts), and adds channels.last_at, set to the latest
+// lifecycle time of each channel until its next message or lifecycle move. A doc that is not
+// valid JSON, or holds a NUL escape, keeps 1: it counts, which shows one
+// extra unread at worst and never hides a message. The 'session:' literal
+// is channels.SessionMarker (TestChannelReadsMigrations_SessionMarker).
+// Only rows still at their default are written, so running it again
+// changes nothing.
+func addChannelReads(ctx context.Context, conn *sql.Conn) error {
+	if err := sqlSteps(channelReadsDDL)(ctx, conn); err != nil {
+		return err
+	}
+	if err := addTableColumns(ctx, conn, "channel_messages", messageCountsColumns); err != nil {
+		return err
+	}
+	if err := addChannelColumns(ctx, conn, channelLastAtColumns); err != nil {
+		return err
+	}
+	return sqlSteps(
+		`UPDATE channel_messages SET counts = 0
+		WHERE counts = 1 AND json_valid(doc) AND instr(doc, '\u0000') = 0
+		AND (json_type(doc, '$.removed') IS NOT NULL
+			OR substr(json_extract(doc, '$.triggered_by'), 1, 8) = 'session:')`,
+		`UPDATE channels SET last_at = max(created_at, closed_at, archived_at, reopened_at) WHERE last_at = 0`,
+	)(ctx, conn)
 }
 
 // channelCreatorColumns are the creator column of channels.
@@ -361,19 +406,25 @@ func addChannelSessionColumns(ctx context.Context, conn *sql.Conn) error {
 
 // addChannelColumns adds each of cols that channels lacks.
 func addChannelColumns(ctx context.Context, conn *sql.Conn, cols []struct{ name, def string }) error {
+	return addTableColumns(ctx, conn, "channels", cols)
+}
+
+// addTableColumns adds each of cols that table lacks. table and the
+// column definitions come from this file, never from input.
+func addTableColumns(ctx context.Context, conn *sql.Conn, table string, cols []struct{ name, def string }) error {
 	for _, col := range cols {
 		var n int
 		if err := conn.QueryRowContext(ctx,
-			`SELECT count(*) FROM pragma_table_info('channels') WHERE name = ?`, col.name,
+			`SELECT count(*) FROM pragma_table_info(?) WHERE name = ?`, table, col.name,
 		).Scan(&n); err != nil {
-			return fmt.Errorf("probe channels.%s: %w", col.name, err)
+			return fmt.Errorf("probe %s.%s: %w", table, col.name, err)
 		}
 		if n > 0 {
 			continue
 		}
 		if _, err := conn.ExecContext(ctx,
-			"ALTER TABLE channels ADD COLUMN "+col.name+" "+col.def); err != nil {
-			return fmt.Errorf("add channels.%s: %w", col.name, err)
+			"ALTER TABLE "+table+" ADD COLUMN "+col.name+" "+col.def); err != nil {
+			return fmt.Errorf("add %s.%s: %w", table, col.name, err)
 		}
 	}
 	return nil

@@ -7,6 +7,7 @@
     "created_by",
     "last_seq",
     "name",
+    "read",
     "rev",
     "session",
     "state",
@@ -48,6 +49,11 @@
     "anchor",
     "types"
   ],
+  "ChannelMarkRead": [
+    "last_seq",
+    "seq",
+    "unread"
+  ],
   "ChannelMessageOutputResult": [
     "code",
     "entity",
@@ -80,6 +86,10 @@
     "to",
     "type",
     "values"
+  ],
+  "ChannelRead": [
+    "seq",
+    "unread"
   ],
   "ChannelSchema": [
     "channel_types"
@@ -183,7 +193,9 @@
     "entries",
     "next_cursor",
     "notice",
-    "truncated"
+    "truncated",
+    "unread_channels",
+    "unread_count"
   ],
   "InboxChannel": [
     "anchor",
@@ -214,6 +226,16 @@
     "state",
     "status",
     "waiting_for"
+  ],
+  "InboxUnread": [
+    "channel",
+    "last_seq",
+    "links",
+    "seq",
+    "unread"
+  ],
+  "MarkReadRequest": [
+    "seq"
   ],
   "Message": [
     "_actions",

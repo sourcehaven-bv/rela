@@ -286,6 +286,43 @@ type Store interface {
 	// [TypeRecordChanges].
 	TypeRecords(ctx context.Context) (map[string]TypeRecord, error)
 
+	// SetRead moves the reader's marker on channel key to seq, clamped to
+	// the channel's last seq, and never back: it stores max(old, min(seq,
+	// LastSeq)), creating a missing marker, even at 0. moved reports that
+	// the stored seq rose or the marker was created; the marker's time is
+	// set to at only then. The answer is the stored state, with Unread
+	// counted in the same step. It neither raises the channel's rev nor
+	// writes an audit record: a marker is the reader's own state. A
+	// missing or tombstoned channel is [ErrNotFound]; a negative seq or an
+	// invalid reader is [ErrInvalidMessage] (see [CheckSetRead]).
+	//
+	// The file backend answers a seq that is not above the marker from a
+	// read without the lock, and takes the lock only to move it.
+	SetRead(ctx context.Context, key Key, r Reader, seq int64, at time.Time) (ReadState, bool, error)
+
+	// Reads returns, for each of keys that names a live channel on which
+	// the reader has a marker, the marker and its [ReadState.Unread]. Keys
+	// without a marker, unknown keys and tombstoned channels are absent.
+	// An empty key list returns an empty map. See [CheckReads] for the
+	// refusals.
+	//
+	// The database backends run one statement per chunk of keys, each
+	// count an index range of at most [UnreadCap] entries. The file
+	// backend reads the log tail of each key, and scans back from the end
+	// only as far as the unread messages.
+	Reads(ctx context.Context, r Reader, keys []Key) (map[Key]ReadState, error)
+
+	// ListReads returns the reader's markers on live channels, each with
+	// its full channel and [ReadMarker.LastAt], in window order (see
+	// [SortReadWindow]), at most limit (1 to [MaxReadWindow], else
+	// [ErrInvalidMessage]). A damaged channel is skipped with a warning.
+	//
+	// The database backends read an index on the reader. The file backend
+	// walks the tree once, reading the reads.json of every channel
+	// directory and the meta.yaml and log tail of each channel the reader
+	// holds a marker on.
+	ListReads(ctx context.Context, r Reader, limit int) ([]ReadMarker, error)
+
 	// RecordTypes records each given type that the store holds no record
 	// for, and adds the given refs to the record of a type it does hold.
 	// It never replaces an anchor mode or cardinality: a record that

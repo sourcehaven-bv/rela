@@ -1303,6 +1303,16 @@ that type. An agent that watches `list_inbox` repeats the call at most every
 2 seconds after a change in its process, and at most every 15 seconds on the
 poll. The database backends read the creator from an index.
 
+Read markers have fixed limits. An unread count stops at 100. Marking read
+is limited to 2 marks per 2 seconds per person and channel, and 300 marks
+per minute per person. These limits are apart from the post limits, so
+marking read never uses up a person's posts. The inbox looks at most 500 of
+your markers and lists at most 50 unread channels. With the file store,
+each inbox call that asks for unread channels reads the directory of every
+channel in the project, and a mark that moves a marker takes the store's
+project-wide write lock. A mark that does not move the marker takes no
+lock. The database backends use indexes for both.
+
 Outputs have fixed limits: at most 4 per transition and 1024 bytes per
 template. Retries run once a minute, at most 16 per round and 5 attempts
 per move, for 30 minutes after the notice; a claim holds for 90 seconds.
@@ -1374,6 +1384,13 @@ waited for. The header says whom the session waits for now, and a screen
 reader announces it when it changes. A handoff made by editing the entity
 has no notice; the header updates with the next live update.
 
+A channel row in the list shows a badge with its number of unread
+messages, or "99+" above 99. A screen reader reads it as, for example, "3
+unread". A row without unread messages, or one you never opened, shows no
+badge. An open channel marks itself read up to its newest message while
+the browser tab is visible. See
+[Read markers and unread counts](#read-markers-and-unread-counts).
+
 On a narrow panel the header folds into one line, such as "Session ·
 Contained", "Completed · AP notified", "Contained · Paused" or "Stranded ·
 triage", with a **Show all states** button that unfolds the list.
@@ -1440,7 +1457,8 @@ The data-entry API serves channels under the entity they are attached to.
 | `DELETE .../{channel}/messages/{seq}/_action` | Releases a pending action. The body is empty or `{}`. The answer is the message. |
 | `POST .../{channel}/_lifecycle/{op}` | Runs `close`, `reopen`, `archive` or `delete`. The body is empty or `{}`. A `delete` gets a 204; the other operations get the channel. |
 | `POST .../{channel}/_typing` | Starts or refreshes the caller's typing entry, on a type with `typing: true`. The body is empty or `{}`. The answer is a 202 with `{"ttl_seconds": 6}`. |
-| `GET /api/v1/_inbox` | The sessions that wait on the caller now, oldest wait first. `?limit=` (1 to 200, default 50) and `?cursor=` page it. See [Inbox](#inbox). |
+| `PUT .../{channel}/_read` | Marks the channel read for the caller. The body is empty, `{}` or `{"seq": n}`. The answer is `{"seq", "unread", "last_seq"}`. See [Read markers and unread counts](#read-markers-and-unread-counts). |
+| `GET /api/v1/_inbox` | The sessions that wait on the caller now, oldest wait first, and the channels with unread messages. `?limit=` (1 to 200, default 50) and `?cursor=` page the sessions. `?kinds=` chooses `waiting`, `unread` or both. See [Inbox](#inbox). |
 
 `{channel}` is `_channels/{type}` or `_channels/{type}/{name}`.
 
@@ -1511,6 +1529,13 @@ the same 404 as a hidden entity), that the type has `typing: true` (403
 `channel_post_denied`, naming `channel_types.<type>.typing`), that the
 channel is open (409), that the typing caps have room (429), and the rate
 limits (429). A call refused before the rate limits is not charged.
+
+Each channel in the channel list, and the head, carries `read` when the
+caller has a read marker on it, such as `"read": {"seq": 39, "unread": 2}`.
+`seq` is the marker and `unread` the number of unread messages above it,
+at most 100. A channel without a marker has no `read`. A message page, a
+lifecycle answer and a create answer carry no `read`. See
+[Read markers and unread counts](#read-markers-and-unread-counts).
 
 A message page takes one cursor:
 
@@ -1640,14 +1665,16 @@ Every error is a problem body (`application/problem+json`) with a `type`.
 | 404 | The channel type is not attached to the entity type, or the channel or the message does not exist. |
 | 403 | The caller may not perform the operation, the edit window has passed, the lifecycle operation is not declared (`lifecycle_not_offered`), or its `condition` does not hold (`lifecycle_denied`). For actions: the message type does not declare the action, or this process cannot promote (`action_not_offered`), the action's gate refuses (`action_denied`), or the create ACL or a `fields:` grant refuses the promote (`promote_denied`). For a post: the poster may not write an output of the transition the message would fire (`session_output_denied`); nothing is stored. `title` says what the operation needs and `detail` names the rule in `realtime.yaml`, such as `channel_types.room.message_types.text.post`. |
 | 400 | The message does not match its type (`invalid_message`), has too many properties, or a removal lacks a required reason. |
-| 400 | The body is not valid JSON, has unknown fields, or a query parameter is not a positive number. |
+| 400 | The body is not valid JSON, has unknown fields, or a query parameter is not a positive number. A mark read names a `seq` below 0 or one that is not a whole number. The inbox `kinds` names something other than `waiting` or `unread` (`invalid_request`). |
+| 403 `no_principal` | The request carries no identity. A mark read and the inbox need one, because they act for a person. |
+| 405 | A method other than `PUT` on `.../_read`. `Allow` names `PUT`. |
 | 413 `too_large` | The message is over `message_bytes`. |
 | 422 | A `ref` names an entity that does not exist or that the caller cannot read. Both get the same body. |
 | 422 `promote_invalid` | The promoted entity or its relation fails validation, for example a `unique` property that another entity already has, or a mapped `ref` names an entity the caller cannot read. The body names properties, never entity ids. |
 | 409 | The channel is not open, the channel is not in a state the lifecycle operation starts from (`lifecycle_wrong_state`), `retention` keeps the channel (`retention_active`), a concurrent change won (`conflict`), the message was removed, `channels_per_entity` is reached, the POST tried to open a channel of a `one` type, or the configuration changed during the request. An edit or removal targets a session notice (`session_notice`), or an author's edit or delete targets a message that moved the session (`session_message`). For actions: the message already carries an action (`action_taken`), its action is pending (`action_pending`, also for an edit, a removal, a release within the release window, or an action that lost a race to a promote that started first), a release finds no pending action (`action_not_pending`), or the promoted entity already exists (`promote_conflict`). A removal of the message that moved the session, or a release of a notice's outputs mark, while the outputs still run (`outputs_pending`). |
 | 429 | A rate limit. `Retry-After` gives the seconds to wait, rounded up. |
-| 400 `invalid_cursor` | The inbox `cursor` is not one an inbox answer gave. |
-| 503 `inbox_too_large` | The inbox would read more than 20 000 channels. Nothing is listed; see [Inbox](#inbox). |
+| 400 `invalid_cursor` | The inbox `cursor` is not one an inbox answer gave, or comes with `kinds=unread`. |
+| 503 `inbox_too_large` | The inbox would read more than 20 000 channels. Nothing is listed; see [Inbox](#inbox). The `detail` suggests `kinds=unread`, which still answers. |
 
 The OpenAPI document at `/api/v1/_openapi.json` lists these paths for every
 entity type a channel type attaches to, with one request body per message
@@ -1673,6 +1700,12 @@ head answers 404 when the entity is no longer readable, or 403
 no longer admits the reader. A reload of `realtime.yaml` re-checks every
 subscription at once, so a reader it revokes gets that frame at the reload,
 not at the channel's next message.
+
+A mark read sends no frame to other readers. When it moves your marker, only
+your own subscriptions get a frame: those on the channel's head and on the
+entity's channel list, for example in another tab. The frame lets that tab
+show the new `read`; the channel's revision stays the same, so there are no
+messages to fetch. A mark that does not move the marker sends no frame.
 
 A single server process delivers frames for the messages posted through it;
 it does not yet poll for messages posted by another process.
@@ -1760,14 +1793,131 @@ configuration, so the answer is the same for an entity that exists and one
 that does not. The answer starts with the same untrusted-content `notice` as
 the other channel tools: holders and labels are data.
 
+### Read markers and unread counts
+
+A read marker records how far you have read a channel. It is a sequence
+number: every message up to it counts as read. Each reader has their own
+marker per channel. The unread count is the number of messages above your
+marker that count as unread, at most 100.
+
+You have a marker on a channel once you open it in the web app, mark it
+read, post in it, or create it. Only then does the channel have an unread
+count for you. A channel you never touched has no `read` and is not listed
+as unread in the inbox.
+
+**Which messages count.** A message counts as unread when it is above your
+marker and is one of these:
+
+| Message | Counts as unread |
+| --- | --- |
+| A post or reply by someone else | Yes |
+| A reminder | Yes |
+| A trigger post | Yes |
+| Your own post | No: your post moves your marker past it. On the file store that move comes after the post is stored, and a failure is only logged; the post then counts until your next mark |
+| A session notice | No |
+| A removed message | No. It stops counting as soon as it is removed |
+| A signal (`persist: ephemeral`) | No. A signal is never stored |
+
+An edit does not make a message unread again.
+
+**When a marker moves.** These move your marker:
+
+- You mark the channel read: the web app does this for an open channel,
+  `PUT .../_read`, MCP `mark_read` and `rela channel mark-read` do it on
+  request.
+- You post a message. The marker moves to the last message the post wrote:
+  the message itself, or the session notice that follows it.
+- You create a named channel. The marker starts at 0.
+
+Reading never moves a marker. A message page, `read_channel`,
+`rela channel read` and a `watch` leave it where it is. The live feed and a
+`watch` read the channel on your behalf, so a read that moved the marker
+would mark messages read that you never saw. Timers, reminders and
+triggers move no marker either.
+
+A marker never moves back. A `seq` above the channel's last message is
+treated as the last message. A mark does not raise the channel's revision
+and writes no audit record.
+
+**Marking read over HTTP.** `PUT .../{channel}/_read` takes an empty body,
+`{}` or `{"seq": n}`, where `n` is 0 or more. Without `seq` it marks the
+channel read up to its last message.
+
+```json
+PUT /api/v1/risks/RISK-1/_channels/breach-response/0k3x…/_read
+{ "seq": 42 }
+→ 200 { "seq": 42, "unread": 0, "last_seq": 42 }
+```
+
+The answer is the stored marker (`seq`), the unread count above it, and
+the channel's last sequence number (`last_seq`). The stored marker can be
+above the `seq` you sent, because a marker never moves back. A `one`
+channel that holds no message yet answers zeros and stores nothing. A mark
+needs read access only, so a read-only token may mark read. A channel you
+cannot read gets the same answer as its head `GET`, and nothing is stored.
+
+**Which identity is the reader.** The reader is the user and organization
+that a post of yours would name as its author. The tool is not part of
+it.
+
+| Caller | Reader | Notes |
+| --- | --- | --- |
+| Web app, remote MCP | The user entity id (`USR-7`), or the login when the project has no `user_entity_type`, with the organization | The browser and a remote agent of one user share markers |
+| Stdio `rela mcp`, `rela channel` | The login (`jeroen`), with no organization | A different reader from the same person in the web app |
+| Job identity (`--run-as integration:triage-bot`) | `integration:triage-bot` | Gets markers by posting or by marking read |
+| `system:realtime` | None | Its timer, reminder and trigger writes move no marker |
+
+An agent that posts as a user moves that user's marker. Over remote MCP,
+an agent's post therefore marks the channel read for the user too,
+including messages from colleagues that the user never saw. Run an agent
+that must not change the user's read state as a job identity
+(`--run-as`), so it has its own markers.
+
+**What rela keeps about a reader.** For each channel on which you have a
+marker, rela stores your user, your organization, the marker and when it
+last moved. No one else can see them: no route, tool or count shows
+another reader's marker or its time. The file store keeps them in
+`reads.json` in each channel's directory; the database backends keep them
+in the `channel_reads` table. Read markers are per-user data, like piles,
+leases and user defaults.
+
+Markers are kept as long as their channel:
+
+| Event | Markers |
+| --- | --- |
+| The anchor entity is renamed | Kept, under the new id |
+| The channel is detached (see [When an entity is deleted](#when-an-entity-is-deleted)) | Kept, but out of reach |
+| A detached channel comes back to its entity | Back with the channel |
+| The channel is deleted or purged, or `retention` erases it | Erased |
+| A deleted `one` channel is created again by a post | The new channel has no markers |
+| The user entity is deleted | Kept. The reader is a string, not a reference. A new user that gets the same id takes over the read positions (see below) |
+| The user entity is renamed | Not followed: the renamed user starts without markers, as a message author is not followed either |
+
+rela has no command yet to erase the markers of one reader. To remove them,
+delete or purge the channels.
+
+**Reusing a user id passes on read positions.** Markers belong to the user
+id and organization, not to a person. If you give a deleted user's id, or
+their login, to someone else without erasing the old markers, the new
+holder sees the old markers: on which channels they can read the previous
+user had a marker, and how far that user read. They see no content they
+could not already read. Avoid reusing ids and logins. Erasing a reader's
+markers when the user is deleted is planned in TKT-6V8K8I.
+
 ### Inbox
 
 The inbox lists every session that waits on you now: each open channel
 whose session is in a state with `waiting_for`, where you hold one of
 those roles. It answers "what is waiting on me" without knowing the
-channels in advance. The web app serves it as `GET /api/v1/_inbox`, MCP as
-`list_inbox` and the CLI as `rela channel inbox`. All three give the same
-entries.
+channels in advance. It also lists the channels with messages you have not
+read. The web app serves it as `GET /api/v1/_inbox`, MCP as `list_inbox`
+and the CLI as `rela channel inbox`. All three give the same entries.
+
+**Kinds.** `kinds` chooses what the inbox lists: `waiting` (the sessions
+that wait on you), `unread` (the channels with unread messages), or both.
+Both is the default. The web app takes `?kinds=waiting,unread`, MCP an
+array such as `["unread"]`, and the CLI `--kinds unread`. Any other kind
+is refused with `invalid_request`.
 
 An entry names the channel (anchor, entity type, anchor title, type, name,
 title and state), the session (state, label, status, `waiting_for`,
@@ -1797,19 +1947,58 @@ follow; pass it back as `cursor`. A cursor only positions the list: one
 from another person, or one whose entity you can no longer read, serves
 nothing you cannot see.
 
+**Unread channels.** The first page adds `unread_channels` and
+`unread_count` when `kinds` includes `unread`:
+
+```json
+"unread_channels": [
+  { "channel": { "anchor": "RISK-2", "entity_type": "risk", "anchor_title": "Server room",
+                 "type": "breach-response", "name": "7m2c…", "title": "Breach 13", "state": "open" },
+    "seq": 10, "last_seq": 14, "unread": 3,
+    "links": { "entity": "/api/v1/risks/RISK-2",
+               "channel": "/api/v1/risks/RISK-2/_channels/breach-response/7m2c…" } }
+],
+"unread_count": 1
+```
+
+Each entry names the channel, your marker (`seq`), the channel's last
+sequence number (`last_seq`) and the unread count, at most 100. Only the
+web app adds `links`. An entry carries no message content.
+
+- Only channels on which you have a marker are listed, and only those with
+  an unread count above 0.
+- The channel with the newest activity comes first, then by channel.
+  Activity is the last time the channel got a message.
+- At most 50 channels are listed. `limit` does not change that.
+  `unread_count` is the number of all such channels, also when it is above
+  50.
+- The inbox looks at no more than 500 of your markers. It takes the
+  channels with messages above your marker first, then the others, and in
+  each group the newest activity first.
+- Later pages (with `cursor`) carry no unread fields, because a cursor
+  pages the waiting sessions only.
+
+With `kinds` set to `unread` only, the answer has no `entries`, `count`,
+`truncated` or `next_cursor`, so an absent list is not read as "nothing
+waits on you". A `cursor` is then refused with `invalid_cursor`. When the
+waiting half answers `inbox_too_large`, ask for `unread` only to still get
+the unread channels.
+
 **What counts.** The inbox applies the same rules as `waiting_on_me` in
 `read_session`. A named role counts when the role's property on the entity
 holds your identity and you can read that property; a creator role counts
 when you created the channel. You must be able to read the entity and the
 channel. The list is gated and redacted before it is counted, paged or
 cut, so `count`, `truncated` and `next_cursor` never reflect an entry you
-cannot see.
+cannot see. The same holds for unread channels: a channel you can no
+longer read is not listed and does not change `unread_count`.
 
 **Caps.** When you hold a waiting role on more than 20 000 entities, the
 inbox keeps the first 20 000 by id and face and sets `truncated`. When the
 inbox would read more than 20 000 channels, it lists nothing and answers
 `inbox_too_large` (503 on the web app, a tool error on MCP and the CLI).
-A degraded configuration answers an empty list with `degraded: true`.
+A degraded configuration answers an empty list with `degraded: true`, and
+no unread channels.
 
 **Which identity holds a role.** A named role compares the property with
 the identity the caller acts as:
@@ -1830,15 +2019,24 @@ agents against the file or PostgreSQL backend.
 1. Call `list_inbox`.
 2. For each entry, read it with `read_session` or `read_channel`, and post
    one of its `transitions`.
-3. Call `watch` with the target `{"tool":"list_inbox","args":{}}`, then
+3. For each unread channel, read the new messages with `read_channel`
+   (`after` its `seq`), and call `mark_read` when it has handled them.
+4. Call `watch` with the target `{"tool":"list_inbox","args":{}}`, then
    again with the returned cursor, up to 50 seconds per call. Go back to
    step 1 when it reports a change.
 
 An entry leaves the inbox when the session moves, the role moves to
-someone else, the channel closes, or you lose access. A post in the same
-process and an edit of an entity wake the watch at once. A post in
-another process is seen by the poll, which replays the inbox at most every
-15 seconds.
+someone else, the channel closes, or you lose access. An unread channel
+leaves it when you mark it read or post in it. A post in the same process
+and an edit of an entity wake the watch at once. A post in another process
+is seen by the poll, which replays the inbox at most every 15 seconds.
+
+A plain message wakes the watch only when its channel is among the
+channels the inbox looked at for unread messages (see Unread channels). A
+message in any other channel does not wake it, even one of the same
+channel type. A channel you mark read for the first time after the last
+replay is picked up at the next replay or poll. With `"kinds":
+["waiting"]` in the target's args, no plain message wakes the watch.
 
 **Outputs.** `post_message` answers `outputs` for a post whose move wrote
 to the graph, and notices in `read_channel` carry the same block (see
@@ -1858,7 +2056,9 @@ author. The OS user who asserted the identity is recorded only in graph
 audit records, as `asserted_by`. Channel posts, edits, removals and channel
 creation write no graph audit record, so for them nothing records the OS
 user: the channel and its audit trail name the job identity only. The name is
-self-asserted: it is attribution, not authentication.
+self-asserted: it is attribution, not authentication. A job identity also
+has its own read markers, so its posts do not mark channels read for a
+person.
 
 When `acl.yaml` exists and its `assignments` give that identity no role, and no user entity or membership
 gives it one, the channel tools can answer `entity not found` for an entity that

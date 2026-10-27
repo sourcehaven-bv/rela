@@ -14,7 +14,8 @@ import (
 )
 
 // Local is the process-local state of the channel service: the ephemeral
-// signals, the typing entries, the rate-limit buckets, the change sets of live subscribers and
+// signals, the typing entries, the rate-limit buckets of writes and of
+// read marks, the change sets of live subscribers and
 // the channel types already recorded in the store. Services rebuilt over
 // one store share it, so a schema reload neither resets anyone's rate limit
 // nor drops live signals or subscribers.
@@ -26,6 +27,9 @@ type Local struct {
 	ephemeral *ephemeralStore
 	typing    *typingStore
 	limiter   *limiter
+	// readLimiter limits read marks, apart from the writes of limiter, so
+	// marks never use up a caller's post budget or its buckets.
+	readLimiter *limiter
 
 	subMu sync.Mutex
 	subs  map[*Subscription]struct{}
@@ -74,12 +78,13 @@ func newLocal(clock Clock, lim ephemeralLimits, caps limitCaps) (*Local, error) 
 		return nil, errNil("clock")
 	}
 	return &Local{
-		clock:     clock,
-		ephemeral: newEphemeralStore(lim),
-		typing:    defaultTypingStore(),
-		limiter:   newLimiter(caps),
-		subs:      map[*Subscription]struct{}{},
-		recorded:  map[string]channels.TypeRecord{},
+		clock:       clock,
+		ephemeral:   newEphemeralStore(lim),
+		typing:      defaultTypingStore(),
+		limiter:     newLimiter(caps),
+		readLimiter: newLimiterAt(caps, realtimelimits.ReadIdentityRate),
+		subs:        map[*Subscription]struct{}{},
+		recorded:    map[string]channels.TypeRecord{},
 	}, nil
 }
 
@@ -90,12 +95,19 @@ func newLocal(clock Clock, lim ephemeralLimits, caps limitCaps) (*Local, error) 
 // subscriber that falls further behind gets a resync flag from Take instead
 // of the keys, and rechecks every channel it follows.
 type Subscription struct {
-	local   *Local
-	wake    chan struct{}
-	mu      sync.Mutex
-	changed map[channels.Key]struct{}
-	resync  bool
-	max     int
+	local *Local
+	// allReaders is set by [Local.SubscribeReads]: the subscriber takes
+	// every reader's marks, tagged by reader, through TakeReads.
+	allReaders bool
+	wake       chan struct{}
+	mu         sync.Mutex
+	changed    map[channels.Key]struct{}
+	// reads holds the marks of an allReaders subscriber, by reader. It
+	// shares max with changed: past it, the subscriber resyncs.
+	reads  map[channels.Reader]map[channels.Key]struct{}
+	nReads int
+	resync bool
+	max    int
 }
 
 // Subscribe registers a consumer. Close it when done.
@@ -108,6 +120,43 @@ func (l *Local) Subscribe() *Subscription {
 	l.subs[s] = struct{}{}
 	l.subMu.Unlock()
 	return s
+}
+
+// SubscribeReads registers a consumer that serves many readers, such as
+// the live hub: it takes channel changes as [Local.Subscribe] does, and
+// every reader's moved markers, tagged by reader, from TakeReads. Close it
+// when done.
+func (l *Local) SubscribeReads() *Subscription {
+	s := l.Subscribe()
+	s.mu.Lock()
+	s.allReaders = true
+	s.reads = map[channels.Reader]map[channels.Key]struct{}{}
+	s.mu.Unlock()
+	return s
+}
+
+// TakeReads returns the channels on which each reader's marker moved since
+// the previous TakeReads, and empties the set. It returns nil for a
+// subscription not made by [Local.SubscribeReads], and nil when the set
+// overflowed: Take then reports resync.
+func (s *Subscription) TakeReads() map[channels.Reader][]channels.Key {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if len(s.reads) == 0 {
+		return nil
+	}
+	out := make(map[channels.Reader][]channels.Key, len(s.reads))
+	for r, set := range s.reads {
+		keys := make([]channels.Key, 0, len(set))
+		for k := range set {
+			keys = append(keys, k)
+		}
+		channels.SortKeys(keys)
+		out[r] = keys
+	}
+	clear(s.reads)
+	s.nReads = 0
+	return out
 }
 
 // Wake receives a value after a channel changed since the last Take. A
@@ -126,6 +175,8 @@ func (s *Subscription) Take() (keys []channels.Key, resync bool) {
 	if s.resync {
 		s.resync = false
 		clear(s.changed)
+		clear(s.reads)
+		s.nReads = 0
 		return []channels.Key{}, true
 	}
 	out := make([]channels.Key, 0, len(s.changed))
@@ -151,13 +202,72 @@ func (l *Local) Mark(keys ...channels.Key) { l.mark(keys...) }
 
 // mark adds keys to every subscriber's change set and wakes each one.
 func (l *Local) mark(keys ...channels.Key) {
+	l.markWhere(func(*Subscription) bool { return true }, keys)
+}
+
+// markFor adds keys to the reads of every [Local.SubscribeReads]
+// subscriber, tagged with reader, and to no change set: a moved read
+// marker changes nothing another principal sees, and the live hub scopes
+// the replay to reader's own connections.
+func (l *Local) markFor(reader channels.Reader, keys ...channels.Key) {
+	if reader.User == "" || len(keys) == 0 {
+		return
+	}
+	l.subMu.Lock()
+	subs := make([]*Subscription, 0, len(l.subs))
+	for s := range l.subs {
+		if s.allReaders {
+			subs = append(subs, s)
+		}
+	}
+	l.subMu.Unlock()
+	for _, s := range subs {
+		s.addReads(reader, keys)
+	}
+}
+
+// addReads records reader's moved markers on keys in s and wakes it.
+func (s *Subscription) addReads(reader channels.Reader, keys []channels.Key) {
+	s.mu.Lock()
+	for _, k := range keys {
+		if s.resync {
+			break
+		}
+		set := s.reads[reader]
+		if set == nil {
+			set = map[channels.Key]struct{}{}
+			s.reads[reader] = set
+		}
+		if _, ok := set[k]; !ok {
+			set[k] = struct{}{}
+			s.nReads++
+		}
+		if s.nReads > s.max {
+			s.resync = true
+			clear(s.changed)
+			clear(s.reads)
+			s.nReads = 0
+		}
+	}
+	s.mu.Unlock()
+	select {
+	case s.wake <- struct{}{}:
+	default:
+	}
+}
+
+// markWhere adds keys to the change set of each subscriber that pick
+// admits, and wakes it.
+func (l *Local) markWhere(pick func(*Subscription) bool, keys []channels.Key) {
 	if len(keys) == 0 {
 		return
 	}
 	l.subMu.Lock()
 	subs := make([]*Subscription, 0, len(l.subs))
 	for s := range l.subs {
-		subs = append(subs, s)
+		if pick(s) {
+			subs = append(subs, s)
+		}
 	}
 	l.subMu.Unlock()
 	for _, s := range subs {
@@ -235,6 +345,7 @@ func (l *Local) Stop() {
 // channels of id, or only those anchored to face when face is non-empty.
 func (l *Local) dropAnchor(id string, face entity.Face) {
 	l.limiter.dropAnchor(id, face)
+	l.readLimiter.dropAnchor(id, face)
 	l.mark(l.ephemeral.dropAnchor(id, face)...)
 	l.mark(l.typing.dropAnchor(id, face)...)
 }
@@ -245,6 +356,7 @@ func (l *Local) dropAnchor(id string, face entity.Face) {
 // dropped.
 func (l *Local) EntityRenamed(_ context.Context, oldID, newID string) error {
 	l.limiter.rekey(oldID, newID)
+	l.readLimiter.rekey(oldID, newID)
 	l.mark(l.ephemeral.dropAnchor(oldID, "")...)
 	l.mark(l.typing.dropAnchor(oldID, "")...)
 	return nil

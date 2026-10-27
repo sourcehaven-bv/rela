@@ -159,12 +159,15 @@ type liveSub struct {
 	presenceID string // livePath.presenceID
 	channel    bool   // livePath.channel
 	topic      string
-	hash       string
-	syncing    bool
-	watching   string
-	joined     string
-	left       string
-	recheck    bool
+	// reader is whose read marker the topic's last 200 showed; a moved
+	// marker of that reader replays it (see live_topics.go).
+	reader   channels.Reader
+	hash     string
+	syncing  bool
+	watching string
+	joined   string
+	left     string
+	recheck  bool
 }
 
 // liveTarget is a subscription a PUT asks for.
@@ -608,18 +611,22 @@ func (h *liveHub) run(ctx context.Context, feed liveFeed, leaseWake <-chan struc
 			// when a viewer drops out never depends on when a replay ran.
 			faces := h.presence.TakeChanged(h.now())
 			var keys []channels.Key
+			var reads map[channels.Reader][]channels.Key
 			resync := false
 			if channelsDirty {
 				channelsDirty = false
 				keys, resync = chans.Take()
+				reads = chans.TakeReads()
 			}
 			switch {
 			case dirty:
 				dirty = false
 				feed.Take() // any change re-reads every subscription
 				h.round(ctx, true)
-			case len(faces) > 0 || len(keys) > 0 || resync || h.hasPending():
-				h.replayRound(ctx, true, newRoundFilter(faces, keys, resync))
+			case len(faces) > 0 || len(keys) > 0 || len(reads) > 0 || resync || h.hasPending():
+				f := newRoundFilter(faces, keys, resync)
+				f.addReads(reads)
+				h.replayRound(ctx, true, f)
 			}
 			h.ticks.Add(1)
 		}
@@ -852,7 +859,8 @@ type replayResult struct {
 	status int
 	ok     bool
 	probe  presenceProbe
-	topic  string // the topic a channel route recorded, see live_topics.go
+	topic  string          // the topic a channel route recorded, see live_topics.go
+	reader channels.Reader // the reader that route recorded with the topic
 }
 
 // presenceJoin returns the face to join and who joins it, for a presence
@@ -901,6 +909,7 @@ func replayHash(
 	}
 	return replayResult{
 		hash: fmt.Sprintf("%d:%x", status, hw.h.Sum(nil)), status: status, ok: true, probe: *probe, topic: topic.topic,
+		reader: topic.reader,
 	}
 }
 

@@ -229,6 +229,13 @@ var (
 	// TypingRate applies to typing per identity and channel. The server
 	// owns it; `limits.signal_rate` does not apply to typing.
 	TypingRate = Rate{Count: 1, Per: time.Second}
+	// ReadRate applies to marking a channel read, per reader and channel:
+	// one a second on average, with a burst of two.
+	ReadRate = Rate{Count: 2, Per: 2 * time.Second}
+	// ReadIdentityRate caps every mark of one reader together. Marks have
+	// their own limiter, so they never use up the post budget of
+	// IdentityRate.
+	ReadIdentityRate = Rate{Count: 300, Per: time.Minute}
 )
 
 // PerSecond returns the rate as events per second.

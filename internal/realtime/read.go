@@ -15,6 +15,11 @@ import (
 // here so a transport can name a state without importing the store.
 type State = channels.State
 
+// Key names one channel. It is the store's type, exported here so a
+// transport can match the keys a [Subscription] takes without importing
+// the store.
+type Key = channels.Key
+
 // Channel lifecycle states.
 const (
 	StateOpen     = channels.StateOpen

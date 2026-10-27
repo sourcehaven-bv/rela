@@ -131,11 +131,14 @@ type Locker interface {
 // 20 -> 21 (TKT-ZU7P13): Untombstone. 21 -> 25 (TKT-964SIS):
 // ConfirmTombstone, Tombstones, Purge and DropTypeRecord. 27 -> 29
 // (TKT-INM3AZ): SetSession and ListSessionsDue. 29 -> 30 (TKT-ZZ4PNX):
-// ListWaiting. The exported methods are the mandated [channels.Store]
-// interface, so this is a required-interface exception rather than a
-// ratchet target. Helpers stay free functions.
+// ListWaiting. 30 -> 33 (TKT-2B2AIA): SetRead, Reads and ListReads. The
+// exported methods are the mandated [channels.Store] interface, so this is
+// a required-interface exception rather than a ratchet target. Helpers
+// stay free functions. The total crossed 40 with the three read marker
+// methods; it is the same exception.
 //
-//plimsoll:max-exported-methods=30
+//plimsoll:max-exported-methods=33
+//plimsoll:max-methods=43
 type Store struct {
 	disk
 	locker Locker
@@ -386,18 +389,22 @@ func dropDangling(m *meta, last int64) {
 // meta is meta.yaml. SegRev holds the highest rev written to each segment,
 // so a rev-cursor read skips segments with nothing newer.
 type meta struct {
-	Incarnation string               `yaml:"incarnation,omitempty"`
-	State       channels.State       `yaml:"state"`
-	Title       string               `yaml:"title,omitempty"`
-	CreatedBy   channels.Author      `yaml:"created_by"`
-	CreatedAt   time.Time            `yaml:"created_at"`
-	ClosedAt    time.Time            `yaml:"closed_at,omitempty"`
-	ArchivedAt  time.Time            `yaml:"archived_at,omitempty"`
-	ReopenedAt  time.Time            `yaml:"reopened_at,omitempty"`
-	LastSeq     int64                `yaml:"last_seq"`
-	Rev         int64                `yaml:"rev"`
-	SegRev      []int64              `yaml:"seg_rev,omitempty"`
-	Pending     map[int64]pendingRef `yaml:"pending,omitempty"`
+	Incarnation string          `yaml:"incarnation,omitempty"`
+	State       channels.State  `yaml:"state"`
+	Title       string          `yaml:"title,omitempty"`
+	CreatedBy   channels.Author `yaml:"created_by"`
+	CreatedAt   time.Time       `yaml:"created_at"`
+	ClosedAt    time.Time       `yaml:"closed_at,omitempty"`
+	ArchivedAt  time.Time       `yaml:"archived_at,omitempty"`
+	ReopenedAt  time.Time       `yaml:"reopened_at,omitempty"`
+	LastSeq     int64           `yaml:"last_seq"`
+	// LastAt is the time of the newest message the channel stored, kept
+	// when that message is removed. A meta.yaml from before read markers
+	// has none; the read window then takes the time from the log.
+	LastAt  time.Time            `yaml:"last_at,omitempty"`
+	Rev     int64                `yaml:"rev"`
+	SegRev  []int64              `yaml:"seg_rev,omitempty"`
+	Pending map[int64]pendingRef `yaml:"pending,omitempty"`
 	// The session snapshot (see [channels.Session]). A meta.yaml from
 	// before sessions has none and reads as unset.
 	SessionState     string    `yaml:"session_state,omitempty"`
@@ -503,6 +510,15 @@ func (m *meta) scheduleStep(k channels.Key, step *channels.SessionStep) error {
 		return nil
 	}
 	return m.schedule(k, step.Due)
+}
+
+// advance records seq as the last seq and at, the time of the message
+// stored at seq, as the newest message time when it is later.
+func (m *meta) advance(seq int64, at time.Time) {
+	m.LastSeq = seq
+	if at.After(m.LastAt) {
+		m.LastAt = channels.NormTime(at)
+	}
 }
 
 func (m *meta) channel(k channels.Key) channels.Channel {

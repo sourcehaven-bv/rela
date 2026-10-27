@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
+	"strings"
 
 	v1 "github.com/Sourcehaven-BV/rela/internal/apiwire/v1"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
@@ -24,8 +25,9 @@ type inboxReader interface {
 	Inbox(ctx context.Context, req realtime.InboxRequest) (realtime.InboxView, error)
 }
 
-// serveInbox answers GET /api/v1/_inbox?limit=&cursor=: the sessions that
-// wait on the caller now. The service gates and redacts every row before
+// serveInbox answers GET /api/v1/_inbox?limit=&cursor=&kinds=: the
+// sessions that wait on the caller now, and the channels with unread
+// messages. kinds is a comma list of waiting and unread; both by default. The service gates and redacts every row before
 // it counts, pages or truncates, so this only parses and reshapes.
 //
 // Realtime off, or channels not wired, is a 404. A nil *channelsHandler is
@@ -55,6 +57,13 @@ func (h *channelsHandler) serveInbox(w http.ResponseWriter, r *http.Request, met
 		}
 		req.Limit = n
 	}
+	if q.Has("kinds") {
+		req.Kinds = strings.Split(q.Get("kinds"), ",")
+		if err := realtime.CheckInboxKinds(req.Kinds); err != nil {
+			writeChannelError(w, r, err)
+			return
+		}
+	}
 	got, err := h.inbox.Inbox(r.Context(), req)
 	if errors.Is(err, realtime.ErrRealtimeOff) {
 		writeV1Error(w, r, http.StatusNotFound, "not_found", realtimeOffTitle, "")
@@ -68,14 +77,45 @@ func (h *channelsHandler) serveInbox(w http.ResponseWriter, r *http.Request, met
 }
 
 func wireInbox(v realtime.InboxView, meta *metamodel.Metamodel) v1.Inbox {
-	out := v1.Inbox{
-		Notice: v.Notice, Entries: make([]v1.InboxEntry, 0, len(v.Entries)), Count: v.Count,
-		Truncated: v.Truncated, Degraded: v.Degraded, NextCursor: v.NextCursor,
+	out := v1.Inbox{Notice: v.Notice, Degraded: v.Degraded, UnreadCount: v.UnreadCount}
+	if v.HasWaiting() {
+		count, truncated := v.Count, v.Truncated
+		out.Entries, out.Count, out.Truncated = make([]v1.InboxEntry, 0, len(v.Entries)), &count, &truncated
+		out.NextCursor = v.NextCursor
+		for _, e := range v.Entries {
+			out.Entries = append(out.Entries, wireInboxEntry(e, meta))
+		}
 	}
-	for _, e := range v.Entries {
-		out.Entries = append(out.Entries, wireInboxEntry(e, meta))
+	if v.UnreadChannels != nil {
+		out.UnreadChannels = make([]v1.InboxUnread, 0, len(v.UnreadChannels))
+		for _, u := range v.UnreadChannels {
+			ch, links := wireInboxChannel(u.Channel, meta)
+			out.UnreadChannels = append(out.UnreadChannels, v1.InboxUnread{
+				Channel: ch, Seq: u.Seq, LastSeq: u.LastSeq, Unread: u.Unread, Links: links,
+			})
+		}
 	}
 	return out
+}
+
+// wireInboxChannel renders an inbox channel and the API paths of its
+// anchor and channel.
+func wireInboxChannel(c realtime.InboxChannel, meta *metamodel.Metamodel) (v1.InboxChannel, v1.InboxLinks) {
+	plural := c.EntityType
+	if meta != nil {
+		if def, ok := meta.Entities[c.EntityType]; ok {
+			plural = def.GetPlural(c.EntityType)
+		}
+	}
+	entityLink := "/api/v1/" + url.PathEscape(plural) + "/" + url.PathEscape(c.Anchor)
+	channelLink := entityLink + "/" + channelsSegment + "/" + url.PathEscape(c.Type)
+	if c.Name != "" {
+		channelLink += "/" + url.PathEscape(c.Name)
+	}
+	return v1.InboxChannel{
+		Anchor: c.Anchor, EntityType: c.EntityType, AnchorTitle: c.AnchorTitle, Type: c.Type, Name: c.Name,
+		Title: c.Title, State: string(c.State),
+	}, v1.InboxLinks{Entity: entityLink, Channel: channelLink}
 }
 
 func wireInboxEntry(e realtime.InboxEntry, meta *metamodel.Metamodel) v1.InboxEntry {
@@ -89,28 +129,15 @@ func wireInboxEntry(e realtime.InboxEntry, meta *metamodel.Metamodel) v1.InboxEn
 		ws.WaitingFor = append(ws.WaitingFor,
 			v1.ChannelSessionWaiting{Role: w.Role, Label: w.Label, Holders: w.Holders})
 	}
-	plural := c.EntityType
-	if meta != nil {
-		if def, ok := meta.Entities[c.EntityType]; ok {
-			plural = def.GetPlural(c.EntityType)
-		}
-	}
-	entityLink := "/api/v1/" + url.PathEscape(plural) + "/" + url.PathEscape(c.Anchor)
-	channelLink := entityLink + "/" + channelsSegment + "/" + url.PathEscape(c.Type)
-	if c.Name != "" {
-		channelLink += "/" + url.PathEscape(c.Name)
-	}
+	ch, links := wireInboxChannel(c, meta)
 	return v1.InboxEntry{
-		Kind: e.Kind,
-		Channel: v1.InboxChannel{
-			Anchor: c.Anchor, EntityType: c.EntityType, AnchorTitle: c.AnchorTitle, Type: c.Type, Name: c.Name,
-			Title: c.Title, State: string(c.State),
-		},
+		Kind:        e.Kind,
+		Channel:     ch,
 		Session:     ws,
 		Roles:       nonNil(e.Roles),
 		Since:       channelTime(e.Since),
 		Transitions: nonNil(e.Transitions),
-		Links:       v1.InboxLinks{Entity: entityLink, Channel: channelLink},
+		Links:       links,
 	}
 }
 

@@ -13,6 +13,7 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/appbuild"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
+	relamcp "github.com/Sourcehaven-BV/rela/internal/mcp"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
 	"github.com/Sourcehaven-BV/rela/internal/realtime"
 )
@@ -100,13 +101,14 @@ func newInboxProject(t *testing.T) (svc *appbuild.Services, items []string) {
 }
 
 // TestChannelInbox_Text pins AC 15 for table output: one line per entry,
-// the empty answer, and paging.
+// the empty answer, and paging. The first page says when nothing is
+// unread; a cursor page computes no unread and says nothing about it.
 func TestChannelInbox_Text(t *testing.T) {
 	svc, items := newInboxProject(t)
 
 	got, err := runChannel(t, svc, "alice", "", "channel", "inbox")
 	require.NoError(t, err)
-	assert.Equal(t, "No session waits on you.\n", got)
+	assert.Equal(t, "No session waits on you.\n\nNo unread channels.\n", got)
 
 	for _, id := range items {
 		_, err = runChannel(t, svc, "alice", "", "channel", "post", id, "case", "chat", "-P", "body=hi")
@@ -114,7 +116,10 @@ func TestChannelInbox_Text(t *testing.T) {
 	}
 	got, err = runChannel(t, svc, "alice", "", "channel", "inbox")
 	require.NoError(t, err)
-	lines := strings.Split(strings.TrimSuffix(got, "\n"), "\n")
+	waiting, unread, ok := strings.Cut(got, "\n\n")
+	require.True(t, ok, got)
+	assert.Equal(t, "No unread channels.\n", unread)
+	lines := strings.Split(waiting, "\n")
 	require.Len(t, lines, 1, got)
 	prefix, rest, ok := strings.Cut(lines[0], " since ")
 	require.True(t, ok, got)
@@ -129,12 +134,14 @@ func TestChannelInbox_Text(t *testing.T) {
 	got, err = runChannel(t, svc, "alice", "", "channel", "inbox", "--limit", "1")
 	require.NoError(t, err)
 	assert.Contains(t, got, "1 of 2 shown; next page: --cursor ")
-	cursor := got[strings.LastIndex(got, " ")+1 : len(got)-1]
+	_, cursor, _ := strings.Cut(got, "--cursor ")
+	cursor, _, _ = strings.Cut(cursor, "\n")
 	next, err := runChannel(t, svc, "alice", "", "channel", "inbox", "--limit", "1", "--cursor", cursor)
 	require.NoError(t, err)
 	assert.Contains(t, next, " threads/")
 	assert.Contains(t, next, "waiting for the starter (you)")
 	assert.NotContains(t, next, "next page")
+	assert.NotContains(t, next, "unread")
 
 	_, err = runChannel(t, svc, "alice", "", "channel", "inbox", "--cursor", "forged")
 	require.Error(t, err)
@@ -207,4 +214,88 @@ func inboxKeys(v realtime.InboxView) []string {
 		out = append(out, e.Channel.Anchor+"/"+e.Channel.Type)
 	}
 	return out
+}
+
+// TestChannelInbox_Unread pins TKT-2B2AIA AC 16 for the inbox: an
+// "Unread channels" section after the waiting sessions, --kinds, and the
+// refusal of an unknown kind.
+func TestChannelInbox_Unread(t *testing.T) {
+	svc, items := newInboxProject(t)
+	const bot = "integration:triage-bot"
+	_, err := runChannel(t, svc, "alice", "", "channel", "post", items[0], "case", "chat", "-P", "body=hi")
+	require.NoError(t, err)
+	_, err = runChannel(t, svc, bot, "", "channel", "post", items[0], "case", "chat", "-P", "body=one")
+	require.NoError(t, err)
+	_, err = runChannel(t, svc, bot, "", "channel", "post", items[0], "case", "chat", "-P", "body=two")
+	require.NoError(t, err)
+
+	got, err := runChannel(t, svc, "alice", "", "channel", "inbox")
+	require.NoError(t, err)
+	waiting, unread, ok := strings.Cut(got, "\n\n")
+	require.True(t, ok, got)
+	assert.Contains(t, waiting, items[0]+" case Asked")
+	assert.Equal(t, "Unread channels:\n"+items[0]+" case: 2 unread (read up to 1 of 3)\n", unread)
+
+	got, err = runChannel(t, svc, "alice", "", "channel", "inbox", "--kinds", "unread")
+	require.NoError(t, err)
+	assert.Equal(t, unread, got)
+	got, err = runChannel(t, svc, "alice", "", "channel", "inbox", "--kinds", "waiting")
+	require.NoError(t, err)
+	assert.Equal(t, waiting+"\n", got)
+
+	_, err = runChannel(t, svc, "alice", "", "channel", "mark-read", items[0], "case")
+	require.NoError(t, err)
+	got, err = runChannel(t, svc, "alice", "", "channel", "inbox", "--kinds", "unread")
+	require.NoError(t, err)
+	assert.Equal(t, "No unread channels.\n", got)
+
+	_, err = runChannel(t, svc, "alice", "", "channel", "inbox", "--kinds", "mention")
+	require.ErrorContains(t, err, "kinds must be waiting or unread")
+}
+
+// TestInbox_JobIdentityUnread pins TKT-2B2AIA AC 17: a job identity that
+// posts gets a marker; a later post by another principal shows in its
+// list_inbox unread_channels through the stdio MCP wiring; mark_read
+// clears it.
+func TestInbox_JobIdentityUnread(t *testing.T) {
+	svc, items := newInboxProject(t)
+	const bot = "integration:triage-bot"
+	_, err := runChannel(t, svc, bot, "", "channel", "post", items[1], "case", "chat", "-P", "body=mine")
+	require.NoError(t, err)
+	_, err = runChannel(t, svc, "alice", "", "channel", "post", items[1], "case", "chat", "-P", "body=news")
+	require.NoError(t, err)
+
+	deps := channelDeps(svc)
+	require.NotNil(t, deps.Inbox)
+	require.NotNil(t, deps.Marker)
+	ctx := stdioCtx(t, deps, bot)
+	unreadOnly := realtime.InboxRequest{Kinds: []string{realtime.InboxKindUnread}}
+	view, err := deps.Inbox.Inbox(ctx, unreadOnly)
+	require.NoError(t, err)
+	require.Len(t, view.UnreadChannels, 1)
+	u := view.UnreadChannels[0]
+	assert.Equal(t, items[1], u.Channel.Anchor)
+	assert.Equal(t, realtime.InboxUnread{Channel: u.Channel, Seq: 1, LastSeq: 2, Unread: 1}, u)
+
+	got, err := deps.Marker.MarkRead(ctx, realtime.RawAddress{Anchor: items[1], Type: "case"}, nil)
+	require.NoError(t, err)
+	assert.Equal(t, realtime.MarkReadResult{Seq: 2, LastSeq: 2}, got)
+	view, err = deps.Inbox.Inbox(ctx, unreadOnly)
+	require.NoError(t, err)
+	assert.Empty(t, view.UnreadChannels)
+	require.NotNil(t, view.UnreadCount)
+	assert.Zero(t, *view.UnreadCount)
+
+	view, err = deps.Inbox.Inbox(stdioCtx(t, deps, "alice"), unreadOnly)
+	require.NoError(t, err)
+	assert.Empty(t, view.UnreadChannels, "alice's marker is her own")
+}
+
+// stdioCtx is user's MCP context, bound as the stdio wiring binds it.
+func stdioCtx(t *testing.T, deps relamcp.ChannelDeps, user string) context.Context {
+	t.Helper()
+	ctx, err := deps.BindIdentity(principal.With(context.Background(),
+		principal.Principal{User: user, Tool: principal.ToolMCP}))
+	require.NoError(t, err)
+	return ctx
 }

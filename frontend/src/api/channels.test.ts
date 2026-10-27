@@ -7,6 +7,7 @@ import {
   getChannelSchema,
   getMessages,
   listChannels,
+  markChannelRead,
   postMessage,
   releaseMessageAction,
   removeMessage,
@@ -22,6 +23,7 @@ vi.mock('./client', () => ({
     get: vi.fn().mockResolvedValue({}),
     post: vi.fn().mockResolvedValue({}),
     patch: vi.fn().mockResolvedValue({}),
+    put: vi.fn().mockResolvedValue({}),
     getAxios: () => ({ post: axiosPost, delete: axiosDelete }),
   },
 }))
@@ -112,5 +114,12 @@ describe('channel requests', () => {
     axiosPost.mockResolvedValueOnce({ status: 200, data: { state: 'closed' } })
     expect(await runLifecycle(target, 'close')).toEqual({ state: 'closed' })
     expect(axiosPost).toHaveBeenLastCalledWith(`${base}/_lifecycle/close`, {})
+  })
+
+  it('marks read up to a seq, or up to the head with an empty body', async () => {
+    await markChannelRead({ ...target, name: 'x1' }, 7)
+    expect(api.put).toHaveBeenLastCalledWith(`${base}/x1/_read`, { seq: 7 })
+    await markChannelRead(target)
+    expect(api.put).toHaveBeenLastCalledWith(`${base}/_read`, {})
   })
 })

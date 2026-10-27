@@ -391,6 +391,8 @@ export interface Messages {
   channelText: (args: { key: ChannelTextKey }) => string
   /** The sidebar's and theme picker's fixed captions; see `ChromeTextKey`. */
   chromeText: (args: { key: ChromeTextKey }) => string
+  /** The name of a channel row's unread badge: `3 unread`. */
+  channelUnreadCount: (args: { count: number }) => string
 }
 
 /** `a`, `a or b`, `a, b or c`. */
@@ -512,6 +514,7 @@ export const DEFAULT_MESSAGES: Messages = {
   },
   channelText: ({ key }) => CHANNEL_TEXT[key],
   chromeText: ({ key }) => CHROME_TEXT[key],
+  channelUnreadCount: ({ count }) => `${count} unread`,
 }
 
 const MessagesKey: InjectionKey<Messages> = Symbol('rl-messages')

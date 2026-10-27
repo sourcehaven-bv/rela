@@ -123,6 +123,9 @@ type ChannelView struct {
 	Rev        int64          `json:"rev"`
 	// Session is the channel's session; nil for a type without one.
 	Session *SessionView `json:"session,omitempty"`
+	// Read is the caller's read marker; nil when they hold none. Only the
+	// channel list and the head fill it.
+	Read *ChannelRead `json:"read,omitempty"`
 }
 
 // channelView renders h of c's channel type, or the empty open channel at

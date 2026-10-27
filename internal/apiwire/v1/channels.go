@@ -31,6 +31,31 @@ type Channel struct {
 	// Session is the channel's session; absent for a channel type without
 	// one.
 	Session *ChannelSession `json:"session,omitempty"`
+	// Read is the caller's own read marker; absent when the caller has
+	// none. The channel list and the head carry it, other answers do not.
+	Read *ChannelRead `json:"read,omitempty"`
+}
+
+// ChannelRead is the caller's read marker on a channel: the highest seq
+// they marked read, and how many messages above it count as unread, at
+// most 100. Removed messages and session notices do not count.
+type ChannelRead struct {
+	Seq    int64 `json:"seq"`
+	Unread int   `json:"unread"`
+}
+
+// ChannelMarkRead answers PUT …/_read: the stored marker, which may be
+// above the seq asked for, and the channel's last seq.
+type ChannelMarkRead struct {
+	Seq     int64 `json:"seq"`
+	Unread  int   `json:"unread"`
+	LastSeq int64 `json:"last_seq"`
+}
+
+// MarkReadRequest is the body of PUT …/_read. Without Seq the channel is
+// marked read up to its last message.
+type MarkReadRequest struct {
+	Seq *int64 `json:"seq,omitempty"`
 }
 
 // ChannelSession is a channel's session: the state it is in, how often it
@@ -478,13 +503,31 @@ type ChannelActionSchema struct {
 // degraded realtime.yaml, under which no entity-property role grants
 // anyone, so the inbox is empty. NextCursor pages the window; it is
 // absent on the last page.
+//
+// With kinds=unread the waiting fields (Entries, Count, Truncated,
+// NextCursor) are absent. UnreadChannels and UnreadCount come on the first
+// page only, when the request asks for unread: the channels with messages
+// above the caller's marker, newest activity first, at most 50, and how
+// many there are.
 type Inbox struct {
-	Notice     string       `json:"notice"`
-	Entries    []InboxEntry `json:"entries"`
-	Count      int          `json:"count"`
-	Truncated  bool         `json:"truncated"`
-	Degraded   bool         `json:"degraded"`
-	NextCursor string       `json:"next_cursor,omitempty"`
+	Notice         string        `json:"notice"`
+	Entries        []InboxEntry  `json:"entries,omitzero"`
+	Count          *int          `json:"count,omitempty"`
+	Truncated      *bool         `json:"truncated,omitempty"`
+	Degraded       bool          `json:"degraded"`
+	NextCursor     string        `json:"next_cursor,omitempty"`
+	UnreadChannels []InboxUnread `json:"unread_channels,omitzero"`
+	UnreadCount    *int          `json:"unread_count,omitempty"`
+}
+
+// InboxUnread is a channel with messages above the caller's read marker.
+// Unread counts at most 100.
+type InboxUnread struct {
+	Channel InboxChannel `json:"channel"`
+	Seq     int64        `json:"seq"`
+	LastSeq int64        `json:"last_seq"`
+	Unread  int          `json:"unread"`
+	Links   InboxLinks   `json:"links"`
 }
 
 // InboxEntry is one session that waits on the caller. Kind is "waiting".

@@ -37,6 +37,8 @@ const api = vi.hoisted(() => ({
   releaseMessageAction: vi.fn<(...a: unknown[]) => Promise<Message>>(),
   runLifecycle: vi.fn<(...a: unknown[]) => Promise<Channel | null>>(),
   createChannel: vi.fn<(...a: unknown[]) => Promise<Channel>>(),
+  // The open channel marks itself read; these tests do not look at it.
+  markChannelRead: vi.fn<(...a: unknown[]) => Promise<never>>(),
 }))
 vi.mock('@/api/channels', async (orig) => ({
   ...(await orig<typeof import('@/api/channels')>()),
@@ -227,6 +229,7 @@ beforeEach(() => {
   )
   subs.length = 0
   for (const fn of Object.values(api)) fn.mockReset()
+  api.markChannelRead.mockReturnValue(new Promise<never>(() => {}))
   confirm.mockReset()
   push.mockReset()
   api.getChannelSchema.mockResolvedValue({ channel_types: [room] })

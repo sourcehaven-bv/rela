@@ -164,10 +164,11 @@ type watchTarget struct {
 // wake for another channel skips the target.
 type watchChannel struct {
 	// inbox is set for a list_inbox target: a change to a channel of a
-	// type in types may change it. Until a replay has reported the types,
-	// every channel may.
+	// type in types, or to a channel in keys (the unread window), may
+	// change it. Until a replay has reported them, every channel may.
 	inbox bool
 	types map[string]bool
+	keys  map[realtime.Key]bool
 	known bool
 
 	anchor string // entity id, without a face
@@ -188,11 +189,23 @@ func (c *watchChannel) matches(id, typ, name string) bool {
 	return c.anchor == id && c.typ == typ && (c.name == "" || c.name == name)
 }
 
-// learnTypes records the waiting types a list_inbox replay reported.
-func (c *watchChannel) learnTypes(types []string) {
-	c.types, c.known = make(map[string]bool, len(types)), true
-	for _, t := range types {
+// matchesKey reports whether a change to the channel k may change the
+// unread half of a list_inbox target: k is in the window its last replay
+// reported.
+func (c *watchChannel) matchesKey(k realtime.Key) bool {
+	return c.inbox && c.keys[k]
+}
+
+// learnInbox records the waiting types and the window keys a list_inbox
+// replay reported.
+func (c *watchChannel) learnInbox(n inboxNote) {
+	c.types, c.known = make(map[string]bool, len(n.types)), true
+	for _, t := range n.types {
 		c.types[t] = true
+	}
+	c.keys = make(map[realtime.Key]bool, len(n.keys))
+	for _, k := range n.keys {
+		c.keys[k] = true
 	}
 }
 
@@ -464,7 +477,7 @@ func (c *channelWake) take() bool {
 	}
 	for _, k := range keys {
 		for _, t := range c.targets {
-			if t.matches(k.ID, k.Type, k.Name) {
+			if t.matches(k.ID, k.Type, k.Name) || t.matchesKey(k) {
 				return true
 			}
 		}
@@ -695,18 +708,25 @@ func (w *watchHandler) replay(
 	if err != nil || res == nil || rctx.Err() != nil {
 		return "", false, false
 	}
-	if probe != nil && probe.inboxTypes != nil {
-		t.channel.learnTypes(*probe.inboxTypes)
+	if probe != nil && probe.inbox != nil {
+		t.channel.learnInbox(*probe.inbox)
 	}
 	return w.digest(shareKey, t.key, res), probe != nil && probe.messages > 0, true
 }
 
 // readProbe receives what a read_channel replay read, so the watch learns
 // whether the page held messages without parsing the tool's text.
-// A list_inbox replay reports the waiting types on it instead.
+// A list_inbox replay reports the waiting types and the window keys on it
+// instead.
 type readProbe struct {
-	messages   int
-	inboxTypes *[]string
+	messages int
+	inbox    *inboxNote
+}
+
+// inboxNote is what a list_inbox replay reports to its watch.
+type inboxNote struct {
+	types []string
+	keys  []realtime.Key
 }
 
 type readProbeKey struct{}
@@ -724,12 +744,11 @@ func noteRead(ctx context.Context, v realtime.ReadView) {
 	}
 }
 
-// noteInbox records the waiting types of a list_inbox answer on the probe
-// in ctx, if any.
+// noteInbox records the waiting types and the window keys of a list_inbox
+// answer on the probe in ctx, if any.
 func noteInbox(ctx context.Context, v realtime.InboxView) {
 	if p, ok := ctx.Value(readProbeKey{}).(*readProbe); ok {
-		types := slices.Clone(v.WaitingTypes)
-		p.inboxTypes = &types
+		p.inbox = &inboxNote{types: slices.Clone(v.WaitingTypes), keys: slices.Clone(v.WakeKeys)}
 	}
 }
 

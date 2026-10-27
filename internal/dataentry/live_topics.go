@@ -58,10 +58,13 @@ func channelKeyTopics(k channels.Key) []string {
 
 // channelChanges is the channel change subscription the live worker reads.
 // *realtime.Subscription satisfies it: Take returns the channels that
-// changed since the last call, or resync when it lost count.
+// changed since the last call, or resync when it lost count. TakeReads
+// returns the channels on which each reader's marker moved: such a change
+// replays only the subscriptions that show that reader's marker.
 type channelChanges interface {
 	Wake() <-chan struct{}
 	Take() (keys []channels.Key, resync bool)
+	TakeReads() map[channels.Reader][]channels.Key
 	Close()
 }
 
@@ -76,6 +79,29 @@ type roundFilter struct {
 	// it to refetch when the round overflows, would frame it at the time of
 	// a message it cannot read.
 	allChannels bool
+	// readTopics selects, per reader, the channel subscriptions of that
+	// reader on the topics of the channels where its marker moved.
+	readTopics map[channels.Reader]map[string]bool
+}
+
+// addReads adds the topics of the channels where each reader's marker
+// moved, for that reader's subscriptions only.
+func (f *roundFilter) addReads(reads map[channels.Reader][]channels.Key) {
+	for r, keys := range reads {
+		if f.readTopics == nil {
+			f.readTopics = map[channels.Reader]map[string]bool{}
+		}
+		set := f.readTopics[r]
+		if set == nil {
+			set = map[string]bool{}
+			f.readTopics[r] = set
+		}
+		for _, k := range keys {
+			for _, t := range channelKeyTopics(k) {
+				set[t] = true
+			}
+		}
+	}
 }
 
 // newRoundFilter is the filter of a round over the presence faces, the
@@ -101,12 +127,18 @@ func (f *roundFilter) selects(s *liveSub) bool {
 			return true
 		}
 	}
-	return s.channel && s.topic != "" && (f.allChannels || f.topics[s.topic])
+	if !s.channel || s.topic == "" {
+		return false
+	}
+	return f.allChannels || f.topics[s.topic] || s.reader.User != "" && f.readTopics[s.reader][s.topic]
 }
 
 // topicProbe is where a replay of a channel route reports the topic it
 // resolved. [replayHash] allocates one per call.
-type topicProbe struct{ topic string }
+type topicProbe struct {
+	topic  string
+	reader channels.Reader
+}
 
 type topicProbeKey struct{}
 
@@ -117,10 +149,10 @@ func withTopicProbe(ctx context.Context) (context.Context, *topicProbe) {
 
 // recordTopic fills the request's probe, when it has one. The channel
 // handler calls it only on a successful read, with the key the service
-// resolved.
-func recordTopic(ctx context.Context, topic string) {
+// resolved, and the reader whose marker the answer shows.
+func recordTopic(ctx context.Context, topic string, reader channels.Reader) {
 	if p, _ := ctx.Value(topicProbeKey{}).(*topicProbe); p != nil {
-		p.topic = topic
+		p.topic, p.reader = topic, reader
 	}
 }
 
@@ -133,8 +165,8 @@ func applyTopic(s *liveSub, res replayResult) {
 		return
 	}
 	if res.status == http.StatusOK {
-		s.topic = res.topic
+		s.topic, s.reader = res.topic, res.reader
 		return
 	}
-	s.topic = ""
+	s.topic, s.reader = "", channels.Reader{}
 }

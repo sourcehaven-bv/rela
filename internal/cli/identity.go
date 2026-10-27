@@ -214,7 +214,7 @@ var identityWrites = map[string]bool{
 	"token set": true, "token delete": true, "history-tag": true, "history-purge": true,
 	"relation-history-purge": true, "attach": true, "detach": true, "gc": true, "script": true,
 	"scheduler": true, "renumber": true, "lease claim": true, "lease renew": true, "lease release": true,
-	"channel post": true, "channel edit": true, "channel remove": true, "channel create": true,
+	"channel post": true, "channel edit": true, "channel remove": true, "channel create": true, "channel mark-read": true,
 	"migrate data": true, "migrate gc": true, "migrate adopt-face": true, "migrate baseline": true,
 	"db load": true, "db import-fs": true,
 

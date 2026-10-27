@@ -35,6 +35,36 @@ export interface Channel {
   rev: number
   /** The channel's session; absent for a channel type without one. */
   session?: ChannelSession
+  /**
+   * The caller's read marker. Only the channel list and the head carry it,
+   * and only for a stored channel the caller has opened or posted in.
+   */
+  read?: ChannelRead
+}
+
+/**
+ * Where the caller stopped reading a channel. seq is the highest message
+ * seq read (0: opened, nothing read). unread counts the messages above it,
+ * leaving out removed messages and session notices, and stops at 100.
+ */
+export interface ChannelRead {
+  seq: number
+  unread: number
+}
+
+/**
+ * The answer to PUT …/_read: the stored marker, which may be higher than
+ * the seq sent, and the channel's last seq.
+ */
+export interface ChannelMarkRead {
+  seq: number
+  unread: number
+  last_seq: number
+}
+
+/** The body of PUT …/_read. Without seq the channel is read up to its head. */
+export interface MarkReadRequest {
+  seq?: number
 }
 
 /**
@@ -82,15 +112,28 @@ export interface ChannelSessionWaiting {
 /**
  * GET /api/v1/_inbox: the sessions that wait on the caller, oldest wait
  * first. count is the whole window, not this page; truncated counts only
- * rows the caller may read; next_cursor is absent on the last page.
+ * rows the caller may read; next_cursor is absent on the last page. With
+ * kinds=unread the waiting fields are absent. unread_channels and
+ * unread_count come only on the first page when unread is asked for.
  */
 export interface Inbox {
   notice: string
-  entries: InboxEntry[]
-  count: number
-  truncated: boolean
+  entries?: InboxEntry[]
+  count?: number
+  truncated?: boolean
   degraded: boolean
   next_cursor?: string
+  unread_channels?: InboxUnread[]
+  unread_count?: number
+}
+
+/** A channel with messages the caller has not read. */
+export interface InboxUnread {
+  channel: InboxChannel
+  seq: number
+  last_seq: number
+  unread: number
+  links: InboxLinks
 }
 
 /** One session that waits on the caller. kind is "waiting". */
@@ -522,7 +565,11 @@ export const CHANNEL_WIRE_FIELDS: Record<string, readonly string[]> = {
     'last_seq',
     'rev',
     'session',
+    'read',
   ]),
+  ChannelRead: wireKeys<ChannelRead>()(['seq', 'unread']),
+  ChannelMarkRead: wireKeys<ChannelMarkRead>()(['seq', 'unread', 'last_seq']),
+  MarkReadRequest: wireKeys<MarkReadRequest>()(['seq']),
   ChannelSession: wireKeys<ChannelSession>()([
     'state',
     'label',
@@ -658,7 +705,17 @@ export const CHANNEL_WIRE_FIELDS: Record<string, readonly string[]> = {
     'waiting_for',
   ]),
   ChannelLifecycleSchema: wireKeys<ChannelLifecycleSchema>()(['name', 'label']),
-  Inbox: wireKeys<Inbox>()(['notice', 'entries', 'count', 'truncated', 'degraded', 'next_cursor']),
+  Inbox: wireKeys<Inbox>()([
+    'notice',
+    'entries',
+    'count',
+    'truncated',
+    'degraded',
+    'next_cursor',
+    'unread_channels',
+    'unread_count',
+  ]),
+  InboxUnread: wireKeys<InboxUnread>()(['channel', 'seq', 'last_seq', 'unread', 'links']),
   InboxEntry: wireKeys<InboxEntry>()([
     'kind',
     'channel',

@@ -40,6 +40,8 @@ func TestMigrate_v26ToV27ChannelCreator(t *testing.T) {
 	for _, stmt := range []string{
 		`DROP INDEX channels_creator_idx`,
 		`ALTER TABLE channels DROP COLUMN created_by_user`,
+		// last_at comes after created_by_user; the v28 rung adds it back.
+		`ALTER TABLE channels DROP COLUMN last_at`,
 		`PRAGMA user_version = 26`,
 	} {
 		_, err := raw.Exec(stmt)
@@ -74,6 +76,5 @@ func TestMigrate_v26ToV27ChannelCreator(t *testing.T) {
 	}
 	var version int
 	require.NoError(t, raw.QueryRow(`PRAGMA user_version`).Scan(&version))
-	require.Equal(t, 27, version)
 	require.Equal(t, sqlitedb.SchemaVersion(), version)
 }

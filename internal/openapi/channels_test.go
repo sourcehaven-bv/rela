@@ -497,3 +497,47 @@ func TestOpenAPI_OutputResultCodes(t *testing.T) {
 		t.Errorf("timer outputs = %+v, want an integer", o)
 	}
 }
+
+// TestChannelPaths_Read pins TKT-2B2AIA: PUT …/_read on every channel
+// path, and the read marker and inbox schemas carry the fields of the wire
+// types.
+func TestChannelPaths_Read(t *testing.T) {
+	rt := channelTestConfig(t)
+	g := New(attachmentTestMeta(), Config{Title: "T", Version: "1"})
+	g.SetRealtime(func() *realtimecfg.Compiled { return rt })
+	spec := g.Generate()
+	for _, p := range []string{"/api/v1/tasks/{id}/_channels/room/_read",
+		"/api/v1/tasks/{id}/_channels/threads/{name}/_read"} {
+		item, ok := spec.Paths[p]
+		if !ok || item.Put == nil {
+			t.Fatalf("spec has no PUT %s", p)
+		}
+		requireResponses(t, p, item.Put, "200", "400", "403", "404", "405", "413", "429")
+		body := item.Put.RequestBody.Content["application/json"].Schema
+		if ap := body.AdditionalProperties; ap == nil || ap.Not == nil {
+			t.Errorf("read body admits fields the server rejects: %+v", body)
+		}
+	}
+	sc := spec.Components.Schemas
+	for name, typ := range map[string]reflect.Type{
+		channelSchema:         reflect.TypeFor[v1.Channel](),
+		channelReadSchema:     reflect.TypeFor[v1.ChannelRead](),
+		channelMarkReadSchema: reflect.TypeFor[v1.ChannelMarkRead](),
+		inboxSchema:           reflect.TypeFor[v1.Inbox](),
+	} {
+		if got, want := schemaKeys(sc[name]), jsonNames(typ); !slices.Equal(got, want) {
+			t.Errorf("%s properties = %v, want %v", name, got, want)
+		}
+	}
+	unread := sc[inboxSchema].Properties["unread_channels"].Items
+	if got, want := schemaKeys(unread), jsonNames(reflect.TypeFor[v1.InboxUnread]()); !slices.Equal(got, want) {
+		t.Errorf("InboxUnread properties = %v, want %v", got, want)
+	}
+	var kinds bool
+	for _, p := range spec.Paths["/api/v1/_inbox"].Get.Parameters {
+		kinds = kinds || p.Name == "kinds"
+	}
+	if !kinds {
+		t.Error("the inbox does not document kinds")
+	}
+}
