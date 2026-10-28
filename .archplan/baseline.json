@@ -1,0 +1,2506 @@
+{
+  "version": 1,
+  "findings": {
+    "structure.tangle-b1bf2e78506f": {
+      "state": "accepted",
+      "reason": "Debt: SPA folders form one cycle around composables.",
+      "at": "2026-10-28T13:29:06Z",
+      "title": "composables and 12 other components form one dependency tangle.",
+      "size": 13
+    },
+    "types.synonyms-0134fda09361": {
+      "state": "accepted",
+      "reason": "Design: wire DTOs (apiwire, realtime, channels) mirror domain types on purpose, as the rule against leaking storage types asks.",
+      "at": "2026-10-28T13:29:06Z",
+      "title": "Trigger (automation) and AutomationTrigger (metamodel) share most of their fields."
+    },
+    "structure.repeated_orchestration-a907e203fd4a": {
+      "state": "accepted",
+      "reason": "Design: the repeated runs are the request preamble (query stats, access.Open, world lookup) and the affordance verdict sequence.",
+      "at": "2026-10-28T13:29:06Z",
+      "title": "4 entry points make the same 8 calls: acl.AuthorizeWrite → affordances.FieldVerdicts → affordances.RelationVerdicts → affordances.TransitionVerdicts → entitymanager.CopiesForSource → entitymanager.Offers → affordances.IsHistoricalSubject → pgstore.ListFamilyAttachments."
+    },
+    "structure.repeated_orchestration-c068a4f8be53": {
+      "state": "accepted",
+      "reason": "Design: the repeated runs are the request preamble (query stats, access.Open, world lookup) and the affordance verdict sequence.",
+      "at": "2026-10-28T13:29:06Z",
+      "title": "4 entry points make the same 8 calls: acl.NewEntitySubject → acl.AuthorizeWrite → affordances.FieldVerdicts → affordances.RelationVerdicts → affordances.TransitionVerdicts → entitymanager.CopiesForSource → entitymanager.Offers → affordances.IsHistoricalSubject."
+    },
+    "concepts.string_enum-0e5144a5dea2": {
+      "state": "accepted",
+      "reason": "Debt: repeated string values; type them when the code is touched.",
+      "at": "2026-10-28T13:29:06Z",
+      "title": "The same test, scheme in 'http', 'https', is written in 7 components (ai, dataentry, dataentryconfig, …)."
+    },
+    "types.synonyms-3a58cf92f188": {
+      "state": "accepted",
+      "reason": "Design: wire DTOs (apiwire, realtime, channels) mirror domain types on purpose, as the rule against leaking storage types asks.",
+      "at": "2026-10-28T13:29:06Z",
+      "title": "ConversionPreview (apiwire) and ConversionPreview (entitymanager) share most of their fields."
+    },
+    "structure.repeated_orchestration-106abe8e3f3e": {
+      "state": "accepted",
+      "reason": "Design: the repeated runs are the request preamble (query stats, access.Open, world lookup) and the affordance verdict sequence.",
+      "at": "2026-10-28T13:29:06Z",
+      "title": "3 entry points make the same 8 calls: affordances.FieldVerdicts → affordances.RelationVerdicts → affordances.TransitionVerdicts → entitymanager.CopiesForSource → entitymanager.Offers → affordances.IsHistoricalSubject → pgstore.ListFamilyAttachments → attachment.FaceAttachments."
+    },
+    "structure.repeated_orchestration-8ebd28baa4e7": {
+      "state": "accepted",
+      "reason": "Design: the repeated runs are the request preamble (query stats, access.Open, world lookup) and the affordance verdict sequence.",
+      "at": "2026-10-28T13:29:06Z",
+      "title": "6 entry points make the same 3 calls: acl.NewEntitySubject → acl.AuthorizeWrite → affordances.FieldVerdicts."
+    },
+    "types.synonyms-79dbd2166f5f": {
+      "state": "accepted",
+      "reason": "Design: wire DTOs (apiwire, realtime, channels) mirror domain types on purpose, as the rule against leaking storage types asks.",
+      "at": "2026-10-28T13:29:06Z",
+      "title": "Message (apiwire) and MessageView (realtime) share most of their fields."
+    },
+    "types.synonyms-d947add3263c": {
+      "state": "accepted",
+      "reason": "Design: wire DTOs (apiwire, realtime, channels) mirror domain types on purpose, as the rule against leaking storage types asks.",
+      "at": "2026-10-28T13:29:06Z",
+      "title": "ChannelSession (apiwire) and SessionView (realtime) share most of their fields."
+    },
+    "types.synonyms-1433e43acdab": {
+      "state": "accepted",
+      "reason": "Design: wire DTOs (apiwire, realtime, channels) mirror domain types on purpose, as the rule against leaking storage types asks.",
+      "at": "2026-10-28T13:29:06Z",
+      "title": "RelationType (apiwire) and RelationDef (metamodel) share most of their fields."
+    },
+    "types.synonyms-717dcd82b32b": {
+      "state": "accepted",
+      "reason": "Design: wire DTOs (apiwire, realtime, channels) mirror domain types on purpose, as the rule against leaking storage types asks.",
+      "at": "2026-10-28T13:29:06Z",
+      "title": "VersionRecord (entitymanager) and VersionInput (store) share most of their fields."
+    },
+    "types.synonyms-066bee4f671a": {
+      "state": "accepted",
+      "reason": "Design: wire DTOs (apiwire, realtime, channels) mirror domain types on purpose, as the rule against leaking storage types asks.",
+      "at": "2026-10-28T13:29:06Z",
+      "title": "Channel (apiwire) and ChannelView (realtime) share most of their fields."
+    },
+    "data.shared_table-0b9c96990a16": {
+      "state": "accepted",
+      "reason": "Design: pgstore and sqlitestore are alternative backends, and sqlitedb creates the schema.",
+      "at": "2026-10-28T13:29:06Z",
+      "title": "Table entities is written by 3 components: sqlitestore, pgstore, sqlitedb."
+    },
+    "data.shared_table-05a0d5aff9a8": {
+      "state": "accepted",
+      "reason": "Design: pgstore and sqlitestore are alternative backends, and sqlitedb creates the schema.",
+      "at": "2026-10-28T13:29:06Z",
+      "title": "Table relations is written by 3 components: sqlitestore, pgstore, sqlitedb."
+    },
+    "types.synonyms-7e49219b6f26": {
+      "state": "accepted",
+      "reason": "Design: wire DTOs (apiwire, realtime, channels) mirror domain types on purpose, as the rule against leaking storage types asks.",
+      "at": "2026-10-28T13:29:06Z",
+      "title": "ChannelSessionReminder (apiwire) and SessionReminderView (realtime) share most of their fields."
+    },
+    "types.synonyms-4eb8c9f796ab": {
+      "state": "accepted",
+      "reason": "Design: wire DTOs (apiwire, realtime, channels) mirror domain types on purpose, as the rule against leaking storage types asks.",
+      "at": "2026-10-28T13:29:06Z",
+      "title": "ChannelSessionTimer (apiwire) and SessionTimerView (realtime) share most of their fields."
+    },
+    "types.synonyms-d2c3ffbc0fb8": {
+      "state": "accepted",
+      "reason": "Design: wire DTOs (apiwire, realtime, channels) mirror domain types on purpose, as the rule against leaking storage types asks.",
+      "at": "2026-10-28T13:29:06Z",
+      "title": "InboxChannel (apiwire) and InboxChannel (realtime) share most of their fields."
+    },
+    "types.synonyms-5fb0c71be0a2": {
+      "state": "accepted",
+      "reason": "Design: wire DTOs (apiwire, realtime, channels) mirror domain types on purpose, as the rule against leaking storage types asks.",
+      "at": "2026-10-28T13:29:06Z",
+      "title": "InboxSession (apiwire) and InboxSession (realtime) share most of their fields."
+    },
+    "history.coupling-11b8e70d4171": {
+      "state": "accepted",
+      "reason": "Expected co-change: the SPA and its API change together, and so do the store backends.",
+      "at": "2026-10-28T13:29:06Z",
+      "title": "dataentry and types change together but do not depend on each other."
+    },
+    "concepts.data_clump-60786dfe159e": {
+      "state": "accepted",
+      "reason": "Design: config shapes mirror data-entry.yaml on purpose.",
+      "at": "2026-10-28T13:29:06Z",
+      "title": "The fields property, relation, render, span, style_from and widget appear together in 4 types across 4 components."
+    },
+    "data.shared_table-fef33e84ff89": {
+      "state": "accepted",
+      "reason": "Design: pgstore and sqlitestore are alternative backends, and sqlitedb creates the schema.",
+      "at": "2026-10-28T13:29:06Z",
+      "title": "Table attachments is written by 3 components: sqlitestore, pgstore, sqlitedb."
+    },
+    "history.large_active_file-c4d6ee7b6762": {
+      "state": "accepted",
+      "reason": "Expected co-change: central files that many features touch.",
+      "at": "2026-10-28T13:29:06Z",
+      "title": "dataentry/app.go (1856 lines, 39 commits) changes for 3 reasons: with dataentry/watcher.go, rela-desktop/main.go and 2 more; with dataentry/api_v1.go, dataentry/commands.go and 6 more; and 1 more."
+    },
+    "concepts.missing_operation-208186c4a307": {
+      "state": "accepted",
+      "reason": "Debt: small helper written twice; many pairs are the alternative store backends.",
+      "at": "2026-10-28T13:29:06Z",
+      "title": "2 components (dataentry, mcp) each write their own face_label for Metamodel, a type of metamodel."
+    },
+    "concepts.missing_operation-4bddd0d8de85": {
+      "state": "accepted",
+      "reason": "Debt: small helper written twice; many pairs are the alternative store backends.",
+      "at": "2026-10-28T13:29:06Z",
+      "title": "3 components (cli, entitymanager, realtimecfg) each write their own declared_faces for Metamodel, a type of metamodel."
+    },
+    "concepts.string_enum-d488a3537f79": {
+      "state": "accepted",
+      "reason": "Debt: repeated string values; type them when the code is touched.",
+      "at": "2026-10-28T13:29:06Z",
+      "title": "The same test, property in 'id', 'modified', is written in 3 components (dataentryconfig, filter, metamodel)."
+    },
+    "data.shared_table-f79025d42017": {
+      "state": "accepted",
+      "reason": "Design: pgstore and sqlitestore are alternative backends, and sqlitedb creates the schema.",
+      "at": "2026-10-28T13:29:06Z",
+      "title": "Table entity_versions is written by 3 components: pgstore, sqlitestore, sqlitedb."
+    },
+    "structure.repeated_orchestration-70d117fe8db8": {
+      "state": "accepted",
+      "reason": "Design: the repeated runs are the request preamble (query stats, access.Open, world lookup) and the affordance verdict sequence.",
+      "at": "2026-10-28T13:29:06Z",
+      "title": "12 entry points make the same 4 calls: store.WithQueryStats → access.Open → worlds.Lookup → store.Queries."
+    },
+    "history.large_active_file-4cbcda0b66b9": {
+      "state": "accepted",
+      "reason": "Expected co-change: central files that many features touch.",
+      "at": "2026-10-28T13:29:06Z",
+      "title": "dataentry/api_v1.go (3303 lines, 32 commits) changes for 2 reasons: with dataentry/app.go, dataentry/settings_handlers.go and 8 more; with dataentry/relations_modern.go, forms/DynamicForm.vue and 1 more."
+    },
+    "history.modularity_violation-a66c16a2b358": {
+      "state": "accepted",
+      "reason": "Expected co-change: the SPA and its API change together, and so do the store backends.",
+      "at": "2026-10-28T13:29:06Z",
+      "title": "types.go in 2 components and 3 other files change together, but do not refer to each other."
+    },
+    "concepts.missing_operation-a833f65bdb15": {
+      "state": "accepted",
+      "reason": "Debt: small helper written twice; many pairs are the alternative store backends.",
+      "at": "2026-10-28T13:29:06Z",
+      "title": "2 components (dataentry, visibility) each write their own gate for TraversalHop, a type of acl."
+    },
+    "structure.repeated_orchestration-8361134e120c": {
+      "state": "accepted",
+      "reason": "Design: the repeated runs are the request preamble (query stats, access.Open, world lookup) and the affordance verdict sequence.",
+      "at": "2026-10-28T13:29:06Z",
+      "title": "3 entry points make the same 3 calls: visibility.WorldOf → visibility.ResolveIDsErr → worldreader.Owns."
+    },
+    "concepts.data_clump-7379882ea04c": {
+      "state": "accepted",
+      "reason": "Design: config shapes mirror data-entry.yaml on purpose.",
+      "at": "2026-10-28T13:29:06Z",
+      "title": "The fields anchor, q, query_scope, scope_page, scope_tab and sort appear together in 3 types across 3 components."
+    },
+    "concepts.data_clump-2b71c66b3459": {
+      "state": "accepted",
+      "reason": "Design: config shapes mirror data-entry.yaml on purpose.",
+      "at": "2026-10-28T13:29:06Z",
+      "title": "The fields columns, create_form, description, edit_form, filter_controls, … and query_scope appear together in 3 types across 3 components."
+    },
+    "concepts.data_clump-ed4e902984e3": {
+      "state": "accepted",
+      "reason": "Design: config shapes mirror data-entry.yaml on purpose.",
+      "at": "2026-10-28T13:29:06Z",
+      "title": "The fields property, relation, span and widget appear together in 5 types across 5 components."
+    },
+    "concepts.data_clump-d40f97d9fc8e": {
+      "state": "accepted",
+      "reason": "Design: config shapes mirror data-entry.yaml on purpose.",
+      "at": "2026-10-28T13:29:06Z",
+      "title": "The fields description, id_prefix, id_type, plural and properties appear together in 4 types across 4 components."
+    },
+    "concepts.data_clump-10917886808f": {
+      "state": "accepted",
+      "reason": "Design: config shapes mirror data-entry.yaml on purpose.",
+      "at": "2026-10-28T13:29:06Z",
+      "title": "The fields entity_id, entity_type and face appear together in 8 types across 7 components."
+    },
+    "concepts.data_clump-aa093680751f": {
+      "state": "accepted",
+      "reason": "Design: config shapes mirror data-entry.yaml on purpose.",
+      "at": "2026-10-28T13:29:06Z",
+      "title": "The fields property, span and widget appear together in 8 types across 6 components."
+    },
+    "structure.repeated_orchestration-ffb008c980be": {
+      "state": "accepted",
+      "reason": "Design: the repeated runs are the request preamble (query stats, access.Open, world lookup) and the affordance verdict sequence.",
+      "at": "2026-10-28T13:29:06Z",
+      "title": "58 entry points make the same 3 calls: store.WithQueryStats → access.Open → worlds.Lookup."
+    },
+    "types.synonyms-fd44034e81cf": {
+      "state": "accepted",
+      "reason": "Design: wire DTOs (apiwire, realtime, channels) mirror domain types on purpose, as the rule against leaking storage types asks.",
+      "at": "2026-10-28T13:29:06Z",
+      "title": "ChannelPropertySchema (apiwire), PropertyDescription (realtime) and Property (realtimecfg) share most of their fields."
+    },
+    "types.synonyms-d3f321dc52b7": {
+      "state": "accepted",
+      "reason": "Design: wire DTOs (apiwire, realtime, channels) mirror domain types on purpose, as the rule against leaking storage types asks.",
+      "at": "2026-10-28T13:29:06Z",
+      "title": "GitStatusResponse (dataentry) and Status (git) share most of their fields."
+    },
+    "history.large_active_file-cfe7a959fc6c": {
+      "state": "accepted",
+      "reason": "Expected co-change: central files that many features touch.",
+      "at": "2026-10-28T13:29:06Z",
+      "title": "dataentry/router.go (1014 lines, 20 commits) changes for 3 reasons: with dataentry/app.go, dataentry/config.go; with dataentry/handlers.go; and 1 more."
+    },
+    "concepts.data_clump-6988d6ffeeef": {
+      "state": "accepted",
+      "reason": "Design: config shapes mirror data-entry.yaml on purpose.",
+      "at": "2026-10-28T13:29:06Z",
+      "title": "The fields border_color, color, description, id_prefix, id_type, … and properties appear together in 3 types across 3 components."
+    },
+    "concepts.data_clump-5724091f80fc": {
+      "state": "accepted",
+      "reason": "Design: config shapes mirror data-entry.yaml on purpose.",
+      "at": "2026-10-28T13:29:06Z",
+      "title": "The fields help, hidden, placeholder, property, span, … and widget appear together in 3 types across 3 components."
+    },
+    "concepts.untyped_bag-8bf79d5b56b9": {
+      "state": "accepted",
+      "reason": "Design: entity properties are schema-driven, so map[string]any is the model.",
+      "at": "2026-10-28T13:29:06Z",
+      "title": "7 types of store that other components use carry untyped data: EntityHeader.Properties (map[string]any), RelationData.Properties (map[string]any), RelationVersionInput.Properties (map[string]any), …."
+    },
+    "concepts.untyped_bag-e1c5fad17887": {
+      "state": "accepted",
+      "reason": "Design: entity properties are schema-driven, so map[string]any is the model.",
+      "at": "2026-10-28T13:29:06Z",
+      "title": "9 types of realtime that other components use carry untyped data: OutputRequest.Props (map[string]any), OutputRequest.Authored (map[string]any), OutputTarget.Fields (map[string]any), …."
+    },
+    "types.synonyms-8cdd755d37f1": {
+      "state": "accepted",
+      "reason": "Design: wire DTOs (apiwire, realtime, channels) mirror domain types on purpose, as the rule against leaking storage types asks.",
+      "at": "2026-10-28T13:29:06Z",
+      "title": "ChannelTypeList (apiwire) and TypeChannels (realtime) share most of their fields."
+    },
+    "types.synonyms-303f97fe9843": {
+      "state": "accepted",
+      "reason": "Design: wire DTOs (apiwire, realtime, channels) mirror domain types on purpose, as the rule against leaking storage types asks.",
+      "at": "2026-10-28T13:29:06Z",
+      "title": "EphemeralMessage (apiwire) and EphemeralView (realtime) share most of their fields."
+    },
+    "types.synonyms-b1ec2e815eed": {
+      "state": "accepted",
+      "reason": "Design: wire DTOs (apiwire, realtime, channels) mirror domain types on purpose, as the rule against leaking storage types asks.",
+      "at": "2026-10-28T13:29:06Z",
+      "title": "Transition (apiwire) and TransitionVerdict (statemachine) share most of their fields."
+    },
+    "concepts.data_clump-b87dc3e520e1": {
+      "state": "accepted",
+      "reason": "Design: config shapes mirror data-entry.yaml on purpose.",
+      "at": "2026-10-28T13:29:06Z",
+      "title": "The fields from, op, prev_from, prev_to, to and triggered_by appear together in 3 types across 3 components."
+    },
+    "concepts.missing_operation-920ea932a67e": {
+      "state": "accepted",
+      "reason": "Debt: small helper written twice; many pairs are the alternative store backends.",
+      "at": "2026-10-28T13:29:06Z",
+      "title": "2 components (datamigration, lua) each write their own table_to for Relation, a type of entity."
+    },
+    "concepts.missing_operation-251641a568d4": {
+      "state": "accepted",
+      "reason": "Debt: small helper written twice; many pairs are the alternative store backends.",
+      "at": "2026-10-28T13:29:06Z",
+      "title": "3 components (computed, rollup, statemachine) each write their own compile for Metamodel, a type of metamodel."
+    },
+    "concepts.string_enum-b4e82c12564c": {
+      "state": "accepted",
+      "reason": "Debt: repeated string values; type them when the code is touched.",
+      "at": "2026-10-28T13:29:06Z",
+      "title": "The same test, property in 'id', 'title', is written in 2 components (dataentry, dataentryconfig)."
+    },
+    "structure.repeated_orchestration-04181dca3b05": {
+      "state": "accepted",
+      "reason": "Design: the repeated runs are the request preamble (query stats, access.Open, world lookup) and the affordance verdict sequence.",
+      "at": "2026-10-28T13:29:06Z",
+      "title": "3 entry points make the same 5 calls: store.WithQueryStats → access.Open → worlds.Lookup → dataentry.permitsGitSync → store.Queries."
+    },
+    "structure.repeated_orchestration-0da990ade07f": {
+      "state": "accepted",
+      "reason": "Design: the repeated runs are the request preamble (query stats, access.Open, world lookup) and the affordance verdict sequence.",
+      "at": "2026-10-28T13:29:06Z",
+      "title": "4 entry points make the same 5 calls: store.WithQueryStats → access.Open → worlds.Lookup → dataentry.refuseSettingsEdit → store.Queries."
+    },
+    "types.synonyms-6c10017a8ede": {
+      "state": "accepted",
+      "reason": "Design: wire DTOs (apiwire, realtime, channels) mirror domain types on purpose, as the rule against leaking storage types asks.",
+      "at": "2026-10-28T13:29:06Z",
+      "title": "Action (automation) and AutomationAction (metamodel) share most of their fields."
+    },
+    "types.synonyms-8a7b1fe0285e": {
+      "state": "accepted",
+      "reason": "Design: wire DTOs (apiwire, realtime, channels) mirror domain types on purpose, as the rule against leaking storage types asks.",
+      "at": "2026-10-28T13:29:06Z",
+      "title": "AssertedIdentity (dataentry), AssertionClaims (jwtauth) and Claims (principal) share most of their fields."
+    },
+    "types.synonyms-91bd5e02362a": {
+      "state": "accepted",
+      "reason": "Debt: a real duplicate type; merge the two when the code is touched.",
+      "at": "2026-10-28T13:29:06Z",
+      "title": "PileFuncs (lua) and PileFuncs (mcp) share most of their fields."
+    },
+    "types.synonyms-9473199fe705": {
+      "state": "accepted",
+      "reason": "Design: wire DTOs (apiwire, realtime, channels) mirror domain types on purpose, as the rule against leaking storage types asks.",
+      "at": "2026-10-28T13:29:06Z",
+      "title": "ViewSectionCreate (apiwire) and SectionCreateInfo (dataentry) share most of their fields."
+    },
+    "history.coupling-85aa8e62ea9a": {
+      "state": "accepted",
+      "reason": "Expected co-change: the SPA and its API change together, and so do the store backends.",
+      "at": "2026-10-28T13:29:06Z",
+      "title": "dataentry and api change together but do not depend on each other."
+    },
+    "concepts.data_clump-9cd53c3146fa": {
+      "state": "accepted",
+      "reason": "Design: config shapes mirror data-entry.yaml on purpose.",
+      "at": "2026-10-28T13:29:06Z",
+      "title": "The fields content, op, principal_tool, principal_user, projection, … and triggered_by appear together in 4 types across 2 components."
+    },
+    "concepts.untyped_bag-bded4dfb5394": {
+      "state": "accepted",
+      "reason": "Design: entity properties are schema-driven, so map[string]any is the model.",
+      "at": "2026-10-28T13:29:06Z",
+      "title": "4 types of entity that other components use carry untyped data: Entity.Properties (map[string]any), Relation.Properties (map[string]any), Patch.Properties (map[string]any), …."
+    },
+    "concepts.untyped_bag-502b95822fd7": {
+      "state": "accepted",
+      "reason": "Design: entity properties are schema-driven, so map[string]any is the model.",
+      "at": "2026-10-28T13:29:06Z",
+      "title": "5 types of entitymanager that other components use carry untyped data: ConversionRequest.Properties (map[string]any), LinkedCreate.Authored (map[string]any), RelationVersionRecord.Properties (map[string]any), …."
+    },
+    "concepts.untyped_bag-5de1e6eb61d7": {
+      "state": "accepted",
+      "reason": "Design: entity properties are schema-driven, so map[string]any is the model.",
+      "at": "2026-10-28T13:29:06Z",
+      "title": "5 types of lua that other components use carry untyped data: BuildInput.Args (map[string]any), ScriptError.Args (map[string]any), Request.Body (map[string]any), …."
+    },
+    "concepts.untyped_bag-10312d15e2d5": {
+      "state": "accepted",
+      "reason": "Design: entity properties are schema-driven, so map[string]any is the model.",
+      "at": "2026-10-28T13:29:06Z",
+      "title": "9 types of types that other components use carry untyped data: CreateEntity.properties (Record<string, unknown>), Entity.properties (Record<string, unknown>), RelationEntry.meta (Record<string, unknown>), …."
+    },
+    "types.synonyms-0a4f4d50e44f": {
+      "state": "accepted",
+      "reason": "Design: wire DTOs (apiwire, realtime, channels) mirror domain types on purpose, as the rule against leaking storage types asks.",
+      "at": "2026-10-28T13:29:06Z",
+      "title": "MessageRemoval (apiwire), Removal (channels) and RemovedView (realtime) share most of their fields."
+    },
+    "history.coupling-9fbf7c8d8857": {
+      "state": "accepted",
+      "reason": "Expected co-change: the SPA and its API change together, and so do the store backends.",
+      "at": "2026-10-28T13:29:06Z",
+      "title": "apiwire and types change together but do not depend on each other."
+    },
+    "concepts.data_clump-dbc4bea63927": {
+      "state": "accepted",
+      "reason": "Design: config shapes mirror data-entry.yaml on purpose.",
+      "at": "2026-10-28T13:29:06Z",
+      "title": "The fields clear_when_hidden, default, help, hidden, keep_on_add_another, … and widget appear together in 3 types across 2 components."
+    },
+    "concepts.data_clump-6312e7d9a91e": {
+      "state": "accepted",
+      "reason": "Design: config shapes mirror data-entry.yaml on purpose.",
+      "at": "2026-10-28T13:29:06Z",
+      "title": "The fields columns, create_form, edit_form, filter_controls, filters, … and query_scope appear together in 3 types across 2 components."
+    },
+    "concepts.data_clump-5960006f9b89": {
+      "state": "accepted",
+      "reason": "Design: config shapes mirror data-entry.yaml on purpose.",
+      "at": "2026-10-28T13:29:06Z",
+      "title": "The fields face, has_prev_face, op, prev_face, prev_id, … and triggered_by appear together in 3 types across 2 components."
+    },
+    "concepts.untyped_bag-57c87d5bb4bd": {
+      "state": "accepted",
+      "reason": "Design: entity properties are schema-driven, so map[string]any is the model.",
+      "at": "2026-10-28T13:29:06Z",
+      "title": "6 types of composables that other components use carry untyped data: PanelContent.props (Record<string, unknown>), AutoSaveOptions.formData (Ref<Record<string, unknown>>), PendingEntry.value (unknown | typeof UNSET), …."
+    },
+    "types.synonyms-778d8009d3e6": {
+      "state": "accepted",
+      "reason": "Design: wire DTOs (apiwire, realtime, channels) mirror domain types on purpose, as the rule against leaking storage types asks.",
+      "at": "2026-10-28T13:29:06Z",
+      "title": "RelationKey (entity) and Relation (perfseed) share most of their fields."
+    },
+    "concepts.missing_operation-07a9bebb0fc8": {
+      "state": "accepted",
+      "reason": "Debt: small helper written twice; many pairs are the alternative store backends.",
+      "at": "2026-10-28T13:29:06Z",
+      "title": "2 components (conflict, fsstore) each write their own file_write for Relation, a type of entity."
+    },
+    "concepts.missing_operation-c4f1c0f4c97f": {
+      "state": "accepted",
+      "reason": "Debt: small helper written twice; many pairs are the alternative store backends.",
+      "at": "2026-10-28T13:29:06Z",
+      "title": "4 components (fsstore, memstore, pgstore, …) each write their own emit for Event, a type of store."
+    },
+    "concepts.untyped_bag-6a905f05f0c9": {
+      "state": "accepted",
+      "reason": "Design: entity properties are schema-driven, so map[string]any is the model.",
+      "at": "2026-10-28T13:29:06Z",
+      "title": "3 types of channels that other components use carry untyped data: Message.Props (map[string]any), NewMessage.Props (map[string]any), ReminderPost.Props (map[string]any)."
+    },
+    "concepts.untyped_bag-707a805941cb": {
+      "state": "accepted",
+      "reason": "Design: entity properties are schema-driven, so map[string]any is the model.",
+      "at": "2026-10-28T13:29:06Z",
+      "title": "5 types of api that other components use carry untyped data: ApiError.original (unknown), ViewEntity._props (Record<string, unknown>), ConvertRequest.properties (Record<string, unknown>), …."
+    },
+    "concepts.untyped_bag-4f0af16838b3": {
+      "state": "accepted",
+      "reason": "Design: entity properties are schema-driven, so map[string]any is the model.",
+      "at": "2026-10-28T13:29:06Z",
+      "title": "5 types of forms that other components use carry untyped data: InlineCreateFormModal.prefill ({ properties: Record<string, unknown> relations?: Record<string, { id: string; type: string }[]> }), DynamicForm.embeddedPrefill ({ properties: Record<string, unknown> content?: string relations?: Record<string, { id: string; type: string }[]> }), InlinePropertyValue.value (unknown), …."
+    },
+    "boundaries.stability-acbbd21b28b7": {
+      "state": "accepted",
+      "reason": "Debt: expected for core packages such as metamodel and acl.",
+      "at": "2026-10-28T13:29:06Z",
+      "title": "metamodel is in the zone of pain: 51 components depend on it, and it has few abstractions to change behind."
+    },
+    "boundaries.unrelated_parts-a82dfaaa3bd8": {
+      "state": "accepted",
+      "reason": "Debt: split candidate for later.",
+      "at": "2026-10-28T13:29:06Z",
+      "title": "utils holds 4 groups of files that neither refer to each other nor change together."
+    },
+    "concepts.data_clump-2c68bc5c3acd": {
+      "state": "accepted",
+      "reason": "Design: config shapes mirror data-entry.yaml on purpose.",
+      "at": "2026-10-28T13:29:06Z",
+      "title": "The fields border_color, color, default_sort, description, faces, … and properties appear together in 2 types across 2 components."
+    },
+    "concepts.data_clump-a1a92900b3e6": {
+      "state": "accepted",
+      "reason": "Design: config shapes mirror data-entry.yaml on purpose.",
+      "at": "2026-10-28T13:29:06Z",
+      "title": "The fields border_color, color, description, display_property, id_prefix, … and properties appear together in 2 types across 2 components."
+    },
+    "concepts.data_clump-6beabc95e300": {
+      "state": "accepted",
+      "reason": "Design: config shapes mirror data-entry.yaml on purpose.",
+      "at": "2026-10-28T13:29:06Z",
+      "title": "The fields from, op, prev_from, prev_to, principal_tool, … and triggered_by appear together in 2 types across 2 components."
+    },
+    "concepts.string_enum-08540dc4e820": {
+      "state": "accepted",
+      "reason": "Debt: repeated string values; type them when the code is touched.",
+      "at": "2026-10-28T13:29:06Z",
+      "title": "direction takes 8 string values in 16 components (lists, forms, api, …): 'incoming', 'desc', 'asc', 'outgoing', …."
+    },
+    "concepts.string_enum-3b9e27ec16af": {
+      "state": "accepted",
+      "reason": "Debt: repeated string values; type them when the code is touched.",
+      "at": "2026-10-28T13:29:06Z",
+      "title": "display takes 9 string values in 5 components (dataentry, dataentryconfig, views, …): 'table', 'properties', 'matrix', 'ratio', …."
+    },
+    "concepts.string_enum-3cf694c68d1e": {
+      "state": "accepted",
+      "reason": "Debt: repeated string values; type them when the code is touched.",
+      "at": "2026-10-28T13:29:06Z",
+      "title": "error takes 12 string values in 7 components (git, dataentry, dataentryconfig, …): 'forbidden', 'script_error', 'found', 'authorization_pending', …."
+    },
+    "concepts.string_enum-8d5d38cbb065": {
+      "state": "accepted",
+      "reason": "Debt: repeated string values; type them when the code is touched.",
+      "at": "2026-10-28T13:29:06Z",
+      "title": "from takes 5 string values in 7 components (dataentry, web/components/piles, composables, …): 'entry', 'pile', 'attached', 'search', …."
+    },
+    "concepts.string_enum-ed70ad414488": {
+      "state": "accepted",
+      "reason": "Debt: repeated string values; type them when the code is touched.",
+      "at": "2026-10-28T13:29:06Z",
+      "title": "op takes 15 string values in 10 components (utils, storage, predicate, …): 'open', 'and', 'or', 'stat', …."
+    },
+    "concepts.string_enum-893e830ff398": {
+      "state": "accepted",
+      "reason": "Debt: repeated string values; type them when the code is touched.",
+      "at": "2026-10-28T13:29:06Z",
+      "title": "property takes 3 string values in 5 components (dataentryconfig, dataentry, filter, …): 'title', 'modified', 'priority'."
+    },
+    "concepts.string_enum-d612b4c9274e": {
+      "state": "accepted",
+      "reason": "Debt: repeated string values; type them when the code is touched.",
+      "at": "2026-10-28T13:29:06Z",
+      "title": "scheme takes 4 string values in 11 components (subscription, dataentryconfig, dataentry, …): 'https', 'http', 'bearer', 'file'."
+    },
+    "concepts.string_enum-ab05693f733d": {
+      "state": "accepted",
+      "reason": "Debt: repeated string values; type them when the code is touched.",
+      "at": "2026-10-28T13:29:06Z",
+      "title": "to_lower takes 19 string values in 6 components (safexml, metamodel, dataentryconfig, …): 'yes', 'no', 'on', 'off', …."
+    },
+    "boundaries.balance-8bc4b90b61e4": {
+      "state": "accepted",
+      "reason": "Debt: low value.",
+      "at": "2026-10-28T13:29:06Z",
+      "title": "cmdServer is coupled to dataentry by functional coupling across a long distance, and dataentry changes often."
+    },
+    "security.untested_denial-a46683f17e49": {
+      "state": "accepted",
+      "reason": "Design: the routes suite records no refusal here. Most such reads filter rows or serve config to every signed-in user, so they never refuse; git status hides conflict paths instead. Where a refusal exists, archplan does not link its Go test.",
+      "at": "2026-10-28T13:29:06Z",
+      "title": "No test shows handleV1EntityRelations refusing a caller."
+    },
+    "history.large_active_file-d2403aacb67c": {
+      "state": "accepted",
+      "reason": "Expected co-change: central files that many features touch.",
+      "at": "2026-10-28T13:29:06Z",
+      "title": "metamodel/types.go (1791 lines, 28 commits) changes for 2 reasons: with metamodel/loader.go, cli/analyze.go and 5 more; with automation/engine.go, automation/types.go."
+    },
+    "concepts.data_clump-4a4461f4bbb5": {
+      "state": "accepted",
+      "reason": "Design: config shapes mirror data-entry.yaml on purpose.",
+      "at": "2026-10-28T13:29:06Z",
+      "title": "The fields add_info, display, empty_message, entities, fields, … and section_id appear together in 2 types across 2 components."
+    },
+    "concepts.data_clump-3aff6065873f": {
+      "state": "accepted",
+      "reason": "Design: config shapes mirror data-entry.yaml on purpose.",
+      "at": "2026-10-28T13:29:06Z",
+      "title": "The fields columns, condition, create_form, description, detail_view, … and sort appear together in 2 types across 2 components."
+    },
+    "concepts.missing_operation-36991fd68e21": {
+      "state": "accepted",
+      "reason": "Debt: small helper written twice; many pairs are the alternative store backends.",
+      "at": "2026-10-28T13:29:06Z",
+      "title": "3 components (dataentryconfig, predicatefns, rollup) each write their own enum_values for Metamodel and PropertyDef, a type of metamodel."
+    },
+    "concepts.string_enum-afbee703efb2": {
+      "state": "accepted",
+      "reason": "Debt: repeated string values; type them when the code is touched.",
+      "at": "2026-10-28T13:29:06Z",
+      "title": "The same test, direction in 'asc', 'desc', is written in 2 components (dataentryconfig, metamodel)."
+    },
+    "concepts.string_enum-8f8b12930122": {
+      "state": "accepted",
+      "reason": "Debt: repeated string values; type them when the code is touched.",
+      "at": "2026-10-28T13:29:06Z",
+      "title": "The same test, kind in 'cmd', 'image', is written in 2 components (attachment, metamodel)."
+    },
+    "concepts.untyped_bag-21426ab682fe": {
+      "state": "accepted",
+      "reason": "Design: entity properties are schema-driven, so map[string]any is the model.",
+      "at": "2026-10-28T13:29:06Z",
+      "title": "2 types of tracer that other components use carry untyped data: Node.Properties (map[string]any), TraceResult.Properties (map[string]any)."
+    },
+    "concepts.untyped_bag-961799a95e8e": {
+      "state": "accepted",
+      "reason": "Design: entity properties are schema-driven, so map[string]any is the model.",
+      "at": "2026-10-28T13:29:06Z",
+      "title": "3 types of common that other components use carry untyped data: RelatedCardValue.modelValue (unknown), ResolvedCardField.modelValue (unknown), PropertyItem.value (unknown)."
+    },
+    "vocabulary.leak-ca8c7117a1f7": {
+      "state": "accepted",
+      "reason": "Design: intended mentions, mostly in comments; a GraphQuery carries the compiled row gate, and packages name the gated reader they get at wiring.",
+      "at": "2026-10-28T13:29:06Z",
+      "title": "entitymanager uses the term \"Edge gate\", owned by tracer."
+    },
+    "types.synonyms-dc821678648f": {
+      "state": "accepted",
+      "reason": "Design: wire DTOs (apiwire, realtime, channels) mirror domain types on purpose, as the rule against leaking storage types asks.",
+      "at": "2026-10-28T13:29:06Z",
+      "title": "PropertyValidationResult (output) and PropertyError (schema) share most of their fields."
+    },
+    "types.synonyms-e85c9e0ab82f": {
+      "state": "accepted",
+      "reason": "Design: wire DTOs (apiwire, realtime, channels) mirror domain types on purpose, as the rule against leaking storage types asks.",
+      "at": "2026-10-28T13:29:06Z",
+      "title": "ViewSection (apiwire) and SectionData (dataentry) share most of their fields."
+    },
+    "history.large_active_file-182f7dc36522": {
+      "state": "accepted",
+      "reason": "Expected co-change: central files that many features touch.",
+      "at": "2026-10-28T13:29:06Z",
+      "title": "cli/analyze.go (1097 lines, 16 commits) changes for 2 reasons: with analysis/analysis.go, cli/validate.go and 1 more; with metamodel/types.go."
+    },
+    "concepts.string_enum-7c767b60b922": {
+      "state": "accepted",
+      "reason": "Debt: repeated string values; type them when the code is touched.",
+      "at": "2026-10-28T13:29:06Z",
+      "title": "reason takes 13 string values in 4 components (web/components/entity, dataentry, common, …): 'git-crypt', 'not-configured', 'redacted', 'file', …."
+    },
+    "concepts.string_enum-6cd82f6b73de": {
+      "state": "accepted",
+      "reason": "Debt: repeated string values; type them when the code is touched.",
+      "at": "2026-10-28T13:29:06Z",
+      "title": "source takes 5 string values in 4 components (dataentry, dataentryconfig, composables, …): 'entry', 'pile', 'search', 'list', …."
+    },
+    "types.synonyms-a08824ae40ef": {
+      "state": "accepted",
+      "reason": "Design: wire DTOs (apiwire, realtime, channels) mirror domain types on purpose, as the rule against leaking storage types asks.",
+      "at": "2026-10-28T13:29:06Z",
+      "title": "InboxEntry (apiwire) and InboxEntry (realtime) share most of their fields."
+    },
+    "types.synonyms-8ed02271b8af": {
+      "state": "accepted",
+      "reason": "Design: wire DTOs (apiwire, realtime, channels) mirror domain types on purpose, as the rule against leaking storage types asks.",
+      "at": "2026-10-28T13:29:06Z",
+      "title": "MessageAction (apiwire) and ActionView (realtime) share most of their fields."
+    },
+    "types.synonyms-47084fc7753f": {
+      "state": "accepted",
+      "reason": "Design: wire DTOs (apiwire, realtime, channels) mirror domain types on purpose, as the rule against leaking storage types asks.",
+      "at": "2026-10-28T13:29:06Z",
+      "title": "ScriptCapabilities (autocascade), Capabilities (lua) and Capabilities (metamodel) share most of their fields."
+    },
+    "history.large_active_file-925cc0b0d11f": {
+      "state": "accepted",
+      "reason": "Expected co-change: central files that many features touch.",
+      "at": "2026-10-28T13:29:06Z",
+      "title": "rela-desktop/main.go (1465 lines, 15 commits) changes for 2 reasons: with rela-server/main.go, dataentry/app.go; with rela-desktop/welcome.go, desktop/preferences.go."
+    },
+    "history.modularity_violation-dfdb6262fddb": {
+      "state": "accepted",
+      "reason": "Expected co-change: the SPA and its API change together, and so do the store backends.",
+      "at": "2026-10-28T13:29:06Z",
+      "title": "3 files in cli, metamodel change together, but do not refer to each other."
+    },
+    "concepts.string_enum-41c43f029b0c": {
+      "state": "accepted",
+      "reason": "Debt: repeated string values; type them when the code is touched.",
+      "at": "2026-10-28T13:29:06Z",
+      "title": "goos takes 3 string values in 5 components (cmdDesktop, cmdexec, secrets, …): 'darwin', 'windows', 'linux'."
+    },
+    "concepts.string_enum-574d910aeca1": {
+      "state": "accepted",
+      "reason": "Debt: repeated string values; type them when the code is touched.",
+      "at": "2026-10-28T13:29:06Z",
+      "title": "view takes 14 string values in 6 components (docs, docscapture, composables, …): 'list', 'kanban', 'calendar', 'dashboard', …."
+    },
+    "concepts.untyped_bag-10186a569ac7": {
+      "state": "accepted",
+      "reason": "Design: entity properties are schema-driven, so map[string]any is the model.",
+      "at": "2026-10-28T13:29:06Z",
+      "title": "1 type of metamodel that other components use carries untyped data: OrderKey.Value (any)."
+    },
+    "structure.repeated_orchestration-5ca0fee1366a": {
+      "state": "accepted",
+      "reason": "Design: the repeated runs are the request preamble (query stats, access.Open, world lookup) and the affordance verdict sequence.",
+      "at": "2026-10-28T13:29:06Z",
+      "title": "10 entry points make the same 5 calls: store.WithQueryStats → access.Open → worlds.Lookup → acl.RequestFrom → acl.UnmatchedVerified."
+    },
+    "structure.repeated_orchestration-4315d190574c": {
+      "state": "accepted",
+      "reason": "Design: the repeated runs are the request preamble (query stats, access.Open, world lookup) and the affordance verdict sequence.",
+      "at": "2026-10-28T13:29:06Z",
+      "title": "3 entry points make the same 4 calls: store.WithQueryStats → access.Open → worlds.Lookup → dataentry.readAddressedOr404."
+    },
+    "types.fields-7592013871b0": {
+      "state": "accepted",
+      "reason": "Debt: wide types capped by plimsoll; decomposition tracked in TKT-N0IKN9.",
+      "at": "2026-10-28T13:29:06Z",
+      "title": "internal/appbuild.Services has 54 fields."
+    },
+    "types.fields-31ca6711d0a0": {
+      "state": "accepted",
+      "reason": "Debt: wide types capped by plimsoll; decomposition tracked in TKT-N0IKN9.",
+      "at": "2026-10-28T13:29:06Z",
+      "title": "internal/dataentry.App has 74 fields."
+    },
+    "concepts.string_enum-1ced6edc6664": {
+      "state": "accepted",
+      "reason": "Debt: repeated string values; type them when the code is touched.",
+      "at": "2026-10-28T13:29:06Z",
+      "title": "action takes 15 string values in 4 components (schema, forms, icondefs, …): 'report-drift', 'emit', 'remove_entity_type', 'remove_relation_type', …."
+    },
+    "concepts.untyped_bag-7bc12146910b": {
+      "state": "accepted",
+      "reason": "Design: entity properties are schema-driven, so map[string]any is the model.",
+      "at": "2026-10-28T13:29:06Z",
+      "title": "1 type of filter that other components use carries untyped data: Record.Properties (map[string]any)."
+    },
+    "concepts.untyped_bag-1e23737eaea1": {
+      "state": "accepted",
+      "reason": "Design: entity properties are schema-driven, so map[string]any is the model.",
+      "at": "2026-10-28T13:29:06Z",
+      "title": "1 type of templating that other components use carries untyped data: Template.Properties (map[string]any)."
+    },
+    "boundaries.misplaced_file-3d4ebd654560": {
+      "state": "accepted",
+      "reason": "Debt: move candidate for later.",
+      "at": "2026-10-28T13:29:06Z",
+      "title": "3 files in views have most of their links to web/components/configure."
+    },
+    "boundaries.misplaced_file-7fb395623348": {
+      "state": "accepted",
+      "reason": "Debt: move candidate for later.",
+      "at": "2026-10-28T13:29:06Z",
+      "title": "output/output.go in output has most of its links to cli (weighted links: 9.9 to cli, 0.0 to output)."
+    },
+    "structure.repeated_orchestration-6736ffb57817": {
+      "state": "accepted",
+      "reason": "Design: the repeated runs are the request preamble (query stats, access.Open, world lookup) and the affordance verdict sequence.",
+      "at": "2026-10-28T13:29:06Z",
+      "title": "4 entry points make the same 6 calls: store.WithQueryStats → access.Open → worlds.Lookup → acl.RequestFrom → acl.UnmatchedVerified → dataentry.readAddressedOr404."
+    },
+    "concepts.string_enum-7b8c49c23885": {
+      "state": "accepted",
+      "reason": "Debt: repeated string values; type them when the code is touched.",
+      "at": "2026-10-28T13:29:06Z",
+      "title": "id_type takes 4 string values in 6 components (views, web/components/configure, web/components/entity, …): 'manual', 'short', 'IDs', 'sequential'."
+    },
+    "concepts.string_enum-4e680692eae0": {
+      "state": "accepted",
+      "reason": "Debt: repeated string values; type them when the code is touched.",
+      "at": "2026-10-28T13:29:06Z",
+      "title": "style takes 6 string values in 4 components (mailtemplate, lua, dataentryconfig, …): 'title-slug', 'table', 'list', 'detail', …."
+    },
+    "structure.repeated_orchestration-30bb21b5126b": {
+      "state": "accepted",
+      "reason": "Design: the repeated runs are the request preamble (query stats, access.Open, world lookup) and the affordance verdict sequence.",
+      "at": "2026-10-28T13:29:06Z",
+      "title": "3 entry points make the same 7 calls: store.WithQueryStats → access.Open → worlds.Lookup → acl.RequestFrom → acl.UnmatchedVerified → dataentry.readAddressedOr404 → dataentry.familyReadableOr404."
+    },
+    "types.synonyms-915ad805af3f": {
+      "state": "accepted",
+      "reason": "Design: wire DTOs (apiwire, realtime, channels) mirror domain types on purpose, as the rule against leaking storage types asks.",
+      "at": "2026-10-28T13:29:06Z",
+      "title": "ViewEntity (apiwire) and SectionEntityData (dataentry) share most of their fields."
+    },
+    "history.coupling-c187d783cedd": {
+      "state": "accepted",
+      "reason": "Expected co-change: the SPA and its API change together, and so do the store backends.",
+      "at": "2026-10-28T13:29:06Z",
+      "title": "dataentryconfig and types change together but do not depend on each other."
+    },
+    "history.modularity_violation-f5d8210f70f0": {
+      "state": "accepted",
+      "reason": "Expected co-change: the SPA and its API change together, and so do the store backends.",
+      "at": "2026-10-28T13:29:06Z",
+      "title": "api/entities.ts and dataentry/api_v1.go change together in 3 commits, but neither refers to the other."
+    },
+    "concepts.missing_operation-576b5a89dbc3": {
+      "state": "accepted",
+      "reason": "Debt: small helper written twice; many pairs are the alternative store backends.",
+      "at": "2026-10-28T13:29:06Z",
+      "title": "2 components (pgstore, sqlitestore) each write their own cond for PropPredicate, a type of store."
+    },
+    "concepts.string_enum-6460c8024363": {
+      "state": "accepted",
+      "reason": "Debt: repeated string values; type them when the code is touched.",
+      "at": "2026-10-28T13:29:06Z",
+      "title": "format takes 12 string values in 4 components (cli, openapi, imgproc, …): 'json', 'date-time', 'uri-reference', 'yaml', …."
+    },
+    "security.zone_dependency-b06142c4e490": {
+      "state": "accepted",
+      "reason": "Design: dataentry uses store directly; reads are gated by the visibility wrappers set up at wiring (DEC-ZBI39P).",
+      "at": "2026-10-28T13:29:06Z",
+      "title": "dataentry (internet) depends on store (restricted), past the internal zone."
+    },
+    "profile.rule-c49769d98190": {
+      "state": "accepted",
+      "reason": "Debt: two SPA utils import components.",
+      "at": "2026-10-28T13:29:06Z",
+      "title": "In src, 2 references break the rule: Utilities and services import no components, views or composables."
+    },
+    "types.synonyms-c9170e5a485d": {
+      "state": "accepted",
+      "reason": "Design: wire DTOs (apiwire, realtime, channels) mirror domain types on purpose, as the rule against leaking storage types asks.",
+      "at": "2026-10-28T13:29:06Z",
+      "title": "Entity (entity) and EntityHeader (store) share most of their fields."
+    },
+    "types.synonyms-0c4ca26b5d5c": {
+      "state": "accepted",
+      "reason": "Design: wire DTOs (apiwire, realtime, channels) mirror domain types on purpose, as the rule against leaking storage types asks.",
+      "at": "2026-10-28T13:29:06Z",
+      "title": "Source (acl) and Route (aclmap) share most of their fields."
+    },
+    "history.modularity_violation-32d4b136f064": {
+      "state": "accepted",
+      "reason": "Expected co-change: the SPA and its API change together, and so do the store backends.",
+      "at": "2026-10-28T13:29:06Z",
+      "title": "types/config.ts and dataentryconfig/config.go change together in 3 commits, but neither refers to the other."
+    },
+    "concepts.data_clump-9d399722310f": {
+      "state": "accepted",
+      "reason": "Design: config shapes mirror data-entry.yaml on purpose.",
+      "at": "2026-10-28T13:29:06Z",
+      "title": "The fields attachments, entities, entity_order, marked, mu, … and tx_mu appear together in 2 types across 2 components."
+    },
+    "concepts.missing_operation-2f966c0dc2db": {
+      "state": "accepted",
+      "reason": "Debt: small helper written twice; many pairs are the alternative store backends.",
+      "at": "2026-10-28T13:29:06Z",
+      "title": "2 components (cli, worlds) each write their own names_sorted_type for Metamodel, a type of metamodel."
+    },
+    "concepts.missing_operation-ff9bce923288": {
+      "state": "accepted",
+      "reason": "Debt: small helper written twice; many pairs are the alternative store backends.",
+      "at": "2026-10-28T13:29:06Z",
+      "title": "2 components (web/components/configure, views) each write their own setting for TreeValue, a type of web/configure."
+    },
+    "concepts.untyped_bag-ef486fabaf61": {
+      "state": "accepted",
+      "reason": "Design: entity properties are schema-driven, so map[string]any is the model.",
+      "at": "2026-10-28T13:29:06Z",
+      "title": "1 type of automation that other components use carries untyped data: EntityToCreate.Properties (map[string]any)."
+    },
+    "boundaries.balance-1fedf2dd95a3": {
+      "state": "accepted",
+      "reason": "Debt: low value.",
+      "at": "2026-10-28T13:29:06Z",
+      "title": "dataentry is coupled to migration by functional coupling across a long distance, and migration changes often."
+    },
+    "data.shared_table-4ddfeb85136b": {
+      "state": "accepted",
+      "reason": "Design: pgstore and sqlitestore are alternative backends, and sqlitedb creates the schema.",
+      "at": "2026-10-28T13:29:06Z",
+      "title": "Table relation_versions is written by 2 components: pgstore, sqlitestore."
+    },
+    "types.synonyms-aaefeff6ad5d": {
+      "state": "accepted",
+      "reason": "Design: wire DTOs (apiwire, realtime, channels) mirror domain types on purpose, as the rule against leaking storage types asks.",
+      "at": "2026-10-28T13:29:06Z",
+      "title": "World (apiwire) and WorldDef (metamodel) share most of their fields."
+    },
+    "history.modularity_violation-13c36e4bce4f": {
+      "state": "accepted",
+      "reason": "Expected co-change: the SPA and its API change together, and so do the store backends.",
+      "at": "2026-10-28T13:29:06Z",
+      "title": "watcher.go in 3 components change together, but do not refer to each other."
+    },
+    "concepts.missing_operation-ad40ca05c1a4": {
+      "state": "accepted",
+      "reason": "Debt: small helper written twice; many pairs are the alternative store backends.",
+      "at": "2026-10-28T13:29:06Z",
+      "title": "2 components (entitymanager, memstore) each write their own end_other for Relation, a type of entity."
+    },
+    "concepts.missing_operation-bb423cd3c53e": {
+      "state": "accepted",
+      "reason": "Debt: small helper written twice; many pairs are the alternative store backends.",
+      "at": "2026-10-28T13:29:06Z",
+      "title": "2 components (queryscopes, worlds) each write their own compile for Metamodel, a type of metamodel."
+    },
+    "concepts.string_enum-189dc84b3be6": {
+      "state": "accepted",
+      "reason": "Debt: repeated string values; type them when the code is touched.",
+      "at": "2026-10-28T13:29:06Z",
+      "title": "tag takes 8 string values in 3 components (forms, utils, web/components/piles): 'path', 'rect', 'circle', 'text', …."
+    },
+    "concepts.untyped_bag-276e6fb5ff5d": {
+      "state": "accepted",
+      "reason": "Design: entity properties are schema-driven, so map[string]any is the model.",
+      "at": "2026-10-28T13:29:06Z",
+      "title": "1 type of script that other components use carries untyped data: ActionRunInput.Body (map[string]any)."
+    },
+    "boundaries.misplaced_file-0991f2cef181": {
+      "state": "accepted",
+      "reason": "Debt: move candidate for later.",
+      "at": "2026-10-28T13:29:06Z",
+      "title": "dataentrywire/wire.go in dataentrywire has most of its links to appbuild (weighted links: 9.4 to appbuild, 0.0 to dataentrywire)."
+    },
+    "types.synonyms-bf2500ae1e0f": {
+      "state": "accepted",
+      "reason": "Design: wire DTOs (apiwire, realtime, channels) mirror domain types on purpose, as the rule against leaking storage types asks.",
+      "at": "2026-10-28T13:29:06Z",
+      "title": "InboxMention (apiwire), Addressed (channels) and InboxMention (realtime) share most of their fields."
+    },
+    "types.synonyms-45cb8dc0e264": {
+      "state": "accepted",
+      "reason": "Design: wire DTOs (apiwire, realtime, channels) mirror domain types on purpose, as the rule against leaking storage types asks.",
+      "at": "2026-10-28T13:29:06Z",
+      "title": "PropertyDiff (apiwire) and PropertyDiff (conflict) share most of their fields."
+    },
+    "concepts.missing_operation-1ebcb30c25e0": {
+      "state": "accepted",
+      "reason": "Debt: small helper written twice; many pairs are the alternative store backends.",
+      "at": "2026-10-28T13:29:06Z",
+      "title": "2 components (aclaudit, affordances) each write their own names_role_sorted for Policy, a type of acl."
+    },
+    "concepts.missing_operation-0840aa33b974": {
+      "state": "accepted",
+      "reason": "Debt: small helper written twice; many pairs are the alternative store backends.",
+      "at": "2026-10-28T13:29:06Z",
+      "title": "2 components (pgstore, sqlitestore) each write their own id_live_record for RelationKey, a type of entity."
+    },
+    "concepts.missing_operation-2e239b779b84": {
+      "state": "accepted",
+      "reason": "Debt: small helper written twice; many pairs are the alternative store backends.",
+      "at": "2026-10-28T13:29:06Z",
+      "title": "2 components (pgstore, sqlitestore) each write their own id_record for RelationKey, a type of entity."
+    },
+    "concepts.missing_operation-ebe3e351d9c3": {
+      "state": "accepted",
+      "reason": "Debt: small helper written twice; many pairs are the alternative store backends.",
+      "at": "2026-10-28T13:29:06Z",
+      "title": "2 components (pgstore, sqlitestore) each write their own purge_tombstone_write for RelationKey, a type of entity."
+    },
+    "concepts.missing_operation-ccf1a64253b0": {
+      "state": "accepted",
+      "reason": "Debt: small helper written twice; many pairs are the alternative store backends.",
+      "at": "2026-10-28T13:29:06Z",
+      "title": "2 components (pgstore, sqlitestore) each write their own revealed for RelationKey, a type of entity."
+    },
+    "concepts.string_enum-0035950d2e99": {
+      "state": "accepted",
+      "reason": "Debt: repeated string values; type them when the code is touched.",
+      "at": "2026-10-28T13:29:06Z",
+      "title": "The same test, protocol in 'http:', 'https:', is written in 2 components (utils, widgets)."
+    },
+    "concepts.string_enum-5d6ad6a4570e": {
+      "state": "accepted",
+      "reason": "Debt: repeated string values; type them when the code is touched.",
+      "at": "2026-10-28T13:29:06Z",
+      "title": "link_as takes 3 string values in 3 components (dataentry, dataentryconfig, utils): 'from', 'to', 'link_as'."
+    },
+    "concepts.string_enum-d974dddf1feb": {
+      "state": "accepted",
+      "reason": "Debt: repeated string values; type them when the code is touched.",
+      "at": "2026-10-28T13:29:06Z",
+      "title": "operator takes 10 string values in 2 components (dataentry, predicate): 'eq', 'ne', 'in', 'lt', …."
+    },
+    "concepts.string_enum-551bc4549e42": {
+      "state": "accepted",
+      "reason": "Debt: repeated string values; type them when the code is touched.",
+      "at": "2026-10-28T13:29:06Z",
+      "title": "scope takes 3 string values in 3 components (dataentry, forms, views): 'content', 'root', 'relation'."
+    },
+    "concepts.string_enum-52225b99e018": {
+      "state": "accepted",
+      "reason": "Debt: repeated string values; type them when the code is touched.",
+      "at": "2026-10-28T13:29:06Z",
+      "title": "t takes 15 string values in 3 components (ai, configedit, acl): 'unknown', 'invalid_request_error', 'authentication_error', 'permission_error', …."
+    },
+    "concepts.untyped_bag-cd79cf9256a1": {
+      "state": "accepted",
+      "reason": "Design: entity properties are schema-driven, so map[string]any is the model.",
+      "at": "2026-10-28T13:29:06Z",
+      "title": "1 type of markdown that other components use carries untyped data: Document.Frontmatter (map[string]any)."
+    },
+    "concepts.untyped_bag-16a6f965d293": {
+      "state": "accepted",
+      "reason": "Design: entity properties are schema-driven, so map[string]any is the model.",
+      "at": "2026-10-28T13:29:06Z",
+      "title": "9 types of apiwire that other components use carry untyped data: DashboardRow.Properties (map[string]any), EditMessageRequest.Props (map[string]any), Entity.Properties (map[string]any), …."
+    },
+    "boundaries.misplaced_file-7b487d59e631": {
+      "state": "accepted",
+      "reason": "Debt: move candidate for later.",
+      "at": "2026-10-28T13:29:06Z",
+      "title": "realtimelimits/limits.go in realtimelimits has most of its links to realtime (weighted links: 4.8 to realtime, 0.0 to realtimelimits)."
+    },
+    "boundaries.stability-49b46f8d1401": {
+      "state": "accepted",
+      "reason": "Debt: expected for core packages such as metamodel and acl.",
+      "at": "2026-10-28T13:29:06Z",
+      "title": "acl is in the zone of pain: 19 components depend on it, and it has few abstractions to change behind."
+    },
+    "types.fields-5dc630688feb": {
+      "state": "accepted",
+      "reason": "Debt: wide types capped by plimsoll; decomposition tracked in TKT-N0IKN9.",
+      "at": "2026-10-28T13:29:06Z",
+      "title": "internal/dataentryconfig.Config has 28 fields."
+    },
+    "types.synonyms-4d41ae60bcfb": {
+      "state": "accepted",
+      "reason": "Design: wire DTOs (apiwire, realtime, channels) mirror domain types on purpose, as the rule against leaking storage types asks.",
+      "at": "2026-10-28T13:29:06Z",
+      "title": "Inbox (apiwire) and InboxView (realtime) share most of their fields."
+    },
+    "concepts.string_enum-ae2576a6f53a": {
+      "state": "accepted",
+      "reason": "Debt: repeated string values; type them when the code is touched.",
+      "at": "2026-10-28T13:29:06Z",
+      "title": "class takes 6 string values in 3 components (docs, forms, composables): 'unchosen', 'chosen', 'dropped', 'world', …."
+    },
+    "concepts.string_enum-438c69008ec8": {
+      "state": "accepted",
+      "reason": "Debt: repeated string values; type them when the code is touched.",
+      "at": "2026-10-28T13:29:06Z",
+      "title": "context takes 4 string values in 2 components (dataentry, dataentryconfig): 'view', 'entity', 'list', 'global'."
+    },
+    "concepts.string_enum-56b8cc93da2d": {
+      "state": "accepted",
+      "reason": "Debt: repeated string values; type them when the code is touched.",
+      "at": "2026-10-28T13:29:06Z",
+      "title": "widget takes 4 string values in 3 components (lists, forms, migration): 'text', 'cards', 'relation', 'select'."
+    },
+    "concepts.untyped_bag-c15c26ac0625": {
+      "state": "accepted",
+      "reason": "Design: entity properties are schema-driven, so map[string]any is the model.",
+      "at": "2026-10-28T13:29:06Z",
+      "title": "4 types of syncmerge that other components use carry untyped data: Conflict.Base (any), Conflict.Ours (any), Conflict.Theirs (any), …."
+    },
+    "boundaries.misplaced_file-d05ceb388c1a": {
+      "state": "accepted",
+      "reason": "Debt: move candidate for later.",
+      "at": "2026-10-28T13:29:06Z",
+      "title": "cli/render.go in cli has most of its links to transform (weighted links: 3.4 to transform, 0.5 to cli)."
+    },
+    "data.shared_table-401335d491f0": {
+      "state": "accepted",
+      "reason": "Design: pgstore and sqlitestore are alternative backends, and sqlitedb creates the schema.",
+      "at": "2026-10-28T13:29:06Z",
+      "title": "Table channel_messages is written by 2 components: sqlchannels, sqlitedb."
+    },
+    "data.shared_table-5f528e79a5f5": {
+      "state": "accepted",
+      "reason": "Design: pgstore and sqlitestore are alternative backends, and sqlitedb creates the schema.",
+      "at": "2026-10-28T13:29:06Z",
+      "title": "Table channels is written by 2 components: sqlchannels, sqlitedb."
+    },
+    "data.shared_table-0c8eb0775327": {
+      "state": "accepted",
+      "reason": "Design: pgstore and sqlitestore are alternative backends, and sqlitedb creates the schema.",
+      "at": "2026-10-28T13:29:06Z",
+      "title": "Table marked_entities is written by 2 components: pgstore, sqlitestore."
+    },
+    "data.shared_table-4a550f31cd07": {
+      "state": "accepted",
+      "reason": "Design: pgstore and sqlitestore are alternative backends, and sqlitedb creates the schema.",
+      "at": "2026-10-28T13:29:06Z",
+      "title": "Table marked_relations is written by 2 components: pgstore, sqlitestore."
+    },
+    "data.shared_table-5e28c681b52f": {
+      "state": "accepted",
+      "reason": "Design: pgstore and sqlitestore are alternative backends, and sqlitedb creates the schema.",
+      "at": "2026-10-28T13:29:06Z",
+      "title": "Table schema_versions is written by 2 components: pgstore, sqlitestore."
+    },
+    "data.shared_table-35129db32aa5": {
+      "state": "accepted",
+      "reason": "Design: pgstore and sqlitestore are alternative backends, and sqlitedb creates the schema.",
+      "at": "2026-10-28T13:29:06Z",
+      "title": "Table state_kv is written by 2 components: pgstore, statesql."
+    },
+    "data.shared_table-6bde4a06d772": {
+      "state": "accepted",
+      "reason": "Design: pgstore and sqlitestore are alternative backends, and sqlitedb creates the schema.",
+      "at": "2026-10-28T13:29:06Z",
+      "title": "Table version_tags is written by 2 components: pgstore, sqlitestore."
+    },
+    "security.untested_denial-69fedf0ab007": {
+      "state": "accepted",
+      "reason": "Design: the routes suite records no refusal here. Most such reads filter rows or serve config to every signed-in user, so they never refuse; git status hides conflict paths instead. Where a refusal exists, archplan does not link its Go test.",
+      "at": "2026-10-28T13:29:06Z",
+      "title": "No test shows handleAPIThemeExport refusing a caller."
+    },
+    "security.untested_denial-04f433aab7c3": {
+      "state": "accepted",
+      "reason": "Design: the routes suite records no refusal here. Most such reads filter rows or serve config to every signed-in user, so they never refuse; git status hides conflict paths instead. Where a refusal exists, archplan does not link its Go test.",
+      "at": "2026-10-28T13:29:06Z",
+      "title": "No test shows handleGitStatus refusing a caller."
+    },
+    "security.untested_denial-d40d5ae61e0c": {
+      "state": "accepted",
+      "reason": "Detector gap: the refusal is tested in internal/dataentry/sse_acl_test.go.",
+      "at": "2026-10-28T13:29:06Z",
+      "title": "No test shows handleSSE refusing a caller."
+    },
+    "security.untested_denial-fc2f95290b9f": {
+      "state": "accepted",
+      "reason": "Design: the routes suite records no refusal here. Most such reads filter rows or serve config to every signed-in user, so they never refuse; git status hides conflict paths instead. Where a refusal exists, archplan does not link its Go test.",
+      "at": "2026-10-28T13:29:06Z",
+      "title": "No test shows handleV1Analyze refusing a caller."
+    },
+    "security.untested_denial-9d629eadfdc8": {
+      "state": "accepted",
+      "reason": "Design: the routes suite records no refusal here. Most such reads filter rows or serve config to every signed-in user, so they never refuse; git status hides conflict paths instead. Where a refusal exists, archplan does not link its Go test.",
+      "at": "2026-10-28T13:29:06Z",
+      "title": "No test shows handleV1Commands refusing a caller."
+    },
+    "security.untested_denial-269b294ad712": {
+      "state": "accepted",
+      "reason": "Design: the routes suite records no refusal here. Most such reads filter rows or serve config to every signed-in user, so they never refuse; git status hides conflict paths instead. Where a refusal exists, archplan does not link its Go test.",
+      "at": "2026-10-28T13:29:06Z",
+      "title": "No test shows handleV1Config refusing a caller."
+    },
+    "security.untested_denial-b087c050ab7a": {
+      "state": "accepted",
+      "reason": "Design: the routes suite records no refusal here. Most such reads filter rows or serve config to every signed-in user, so they never refuse; git status hides conflict paths instead. Where a refusal exists, archplan does not link its Go test.",
+      "at": "2026-10-28T13:29:06Z",
+      "title": "No test shows handleV1Dashboard refusing a caller."
+    },
+    "security.untested_denial-332ec26f0289": {
+      "state": "accepted",
+      "reason": "Design: the routes suite records no refusal here. Most such reads filter rows or serve config to every signed-in user, so they never refuse; git status hides conflict paths instead. Where a refusal exists, archplan does not link its Go test.",
+      "at": "2026-10-28T13:29:06Z",
+      "title": "No test shows handleV1ExportList refusing a caller."
+    },
+    "security.untested_denial-f9aa1f9d95a1": {
+      "state": "accepted",
+      "reason": "Design: the routes suite records no refusal here. Most such reads filter rows or serve config to every signed-in user, so they never refuse; git status hides conflict paths instead. Where a refusal exists, archplan does not link its Go test.",
+      "at": "2026-10-28T13:29:06Z",
+      "title": "No test shows handleV1Gantt refusing a caller."
+    },
+    "security.untested_denial-e242045da084": {
+      "state": "accepted",
+      "reason": "Detector gap: the refusal is tested (TestLeaseRenew_LostCases, TestLease_CrossOriginRefused).",
+      "at": "2026-10-28T13:29:06Z",
+      "title": "No test shows handleV1Leases refusing a caller."
+    },
+    "security.untested_denial-0496e349cb7f": {
+      "state": "accepted",
+      "reason": "Design: the routes suite records no refusal here. Most such reads filter rows or serve config to every signed-in user, so they never refuse; git status hides conflict paths instead. Where a refusal exists, archplan does not link its Go test.",
+      "at": "2026-10-28T13:29:06Z",
+      "title": "No test shows handleV1ListEntities refusing a caller."
+    },
+    "security.untested_denial-bf8163431098": {
+      "state": "accepted",
+      "reason": "Design: the routes suite records no refusal here. Most such reads filter rows or serve config to every signed-in user, so they never refuse; git status hides conflict paths instead. Where a refusal exists, archplan does not link its Go test.",
+      "at": "2026-10-28T13:29:07Z",
+      "title": "No test shows handleV1NextActionGet refusing a caller."
+    },
+    "security.untested_denial-47ecab38c73b": {
+      "state": "accepted",
+      "reason": "Design: the routes suite records no refusal here. Most such reads filter rows or serve config to every signed-in user, so they never refuse; git status hides conflict paths instead. Where a refusal exists, archplan does not link its Go test.",
+      "at": "2026-10-28T13:29:07Z",
+      "title": "No test shows handleV1OpenAPI refusing a caller."
+    },
+    "security.untested_denial-9a9f846235de": {
+      "state": "accepted",
+      "reason": "Detector gap: the refusal is tested (TestPiles_OwnerIsolation).",
+      "at": "2026-10-28T13:29:07Z",
+      "title": "No test shows handleV1Piles refusing a caller."
+    },
+    "security.untested_denial-a8944e270dc7": {
+      "state": "accepted",
+      "reason": "Design: the routes suite records no refusal here. Most such reads filter rows or serve config to every signed-in user, so they never refuse; git status hides conflict paths instead. Where a refusal exists, archplan does not link its Go test.",
+      "at": "2026-10-28T13:29:07Z",
+      "title": "No test shows handleV1Schema refusing a caller."
+    },
+    "security.untested_denial-ec2115fa21d1": {
+      "state": "accepted",
+      "reason": "Design: the routes suite records no refusal here. Most such reads filter rows or serve config to every signed-in user, so they never refuse; git status hides conflict paths instead. Where a refusal exists, archplan does not link its Go test.",
+      "at": "2026-10-28T13:29:07Z",
+      "title": "No test shows handleV1Search refusing a caller."
+    },
+    "security.untested_denial-65b3e4af4146": {
+      "state": "accepted",
+      "reason": "Design: the routes suite records no refusal here. Most such reads filter rows or serve config to every signed-in user, so they never refuse; git status hides conflict paths instead. Where a refusal exists, archplan does not link its Go test.",
+      "at": "2026-10-28T13:29:07Z",
+      "title": "No test shows handleV1Sidebar refusing a caller."
+    },
+    "security.untested_denial-1d16d80b532e": {
+      "state": "accepted",
+      "reason": "Design: the routes suite records no refusal here. Most such reads filter rows or serve config to every signed-in user, so they never refuse; git status hides conflict paths instead. Where a refusal exists, archplan does not link its Go test.",
+      "at": "2026-10-28T13:29:07Z",
+      "title": "No test shows handleV1Transforms refusing a caller."
+    },
+    "types.fields-cf0e3031dfa0": {
+      "state": "accepted",
+      "reason": "Debt: wide types capped by plimsoll; decomposition tracked in TKT-N0IKN9.",
+      "at": "2026-10-28T13:29:07Z",
+      "title": "types/entity.Entity has 27 fields."
+    },
+    "types.synonyms-634eaf1617ee": {
+      "state": "accepted",
+      "reason": "Design: wire DTOs (apiwire, realtime, channels) mirror domain types on purpose, as the rule against leaking storage types asks.",
+      "at": "2026-10-28T13:29:07Z",
+      "title": "SectionField (apiwire) and SectionFieldData (dataentry) share most of their fields."
+    },
+    "types.synonyms-43a23b46f50c": {
+      "state": "accepted",
+      "reason": "Debt: a real duplicate type; merge the two when the code is touched.",
+      "at": "2026-10-28T13:29:07Z",
+      "title": "Violation (validation) and Violation (validator) share most of their fields."
+    },
+    "history.coupling-9a6e2801db4a": {
+      "state": "accepted",
+      "reason": "Expected co-change: the SPA and its API change together, and so do the store backends.",
+      "at": "2026-10-28T13:29:07Z",
+      "title": "cli and migration change together but do not depend on each other."
+    },
+    "history.modularity_violation-a5fa17a549d2": {
+      "state": "accepted",
+      "reason": "Expected co-change: the SPA and its API change together, and so do the store backends.",
+      "at": "2026-10-28T13:29:07Z",
+      "title": "cli/flow.go and mcp/tools_lua.go change together in 3 commits, but neither refers to the other."
+    },
+    "concepts.bool_params-c16dc7d505ce": {
+      "state": "accepted",
+      "reason": "Debt: low value per finding.",
+      "at": "2026-10-28T13:29:07Z",
+      "title": "3 functions in dataentry take boolean flags; 1 take 2 or more."
+    },
+    "concepts.missing_operation-85345dcdce9c": {
+      "state": "accepted",
+      "reason": "Debt: small helper written twice; many pairs are the alternative store backends.",
+      "at": "2026-10-28T13:29:07Z",
+      "title": "2 components (kvpiles, pgpiles) each write their own first_unique for Ref, a type of entity."
+    },
+    "concepts.string_enum-f33449041eb7": {
+      "state": "accepted",
+      "reason": "Debt: repeated string values; type them when the code is touched.",
+      "at": "2026-10-28T13:29:07Z",
+      "title": "The string 'items' is compared in 3 components (dataentry, configedit, web/configure)."
+    },
+    "concepts.string_enum-ec54a577d30b": {
+      "state": "accepted",
+      "reason": "Debt: repeated string values; type them when the code is touched.",
+      "at": "2026-10-28T13:29:07Z",
+      "title": "page_type takes 4 string values in 2 components (dataentry, web/components/entity): 'view', 'entity', 'list', 'dashboard'."
+    },
+    "concepts.string_enum-1bb791f71cb1": {
+      "state": "accepted",
+      "reason": "Debt: repeated string values; type them when the code is touched.",
+      "at": "2026-10-28T13:29:07Z",
+      "title": "protocol takes 3 string values in 3 components (utils, widgets, forms): 'http:', 'https:', 'mailto:'."
+    },
+    "concepts.untyped_bag-9c2261aa6efb": {
+      "state": "accepted",
+      "reason": "Design: entity properties are schema-driven, so map[string]any is the model.",
+      "at": "2026-10-28T13:29:07Z",
+      "title": "1 type of jobs that other components use carries untyped data: Job.Payload (map[string]any)."
+    },
+    "boundaries.unused_public-8962dfeddcb9": {
+      "state": "accepted",
+      "reason": "Debt: low value.",
+      "at": "2026-10-28T13:29:07Z",
+      "title": "web/components/entity has 33 of 39 files with public types that only it uses, though 7 components depend on it."
+    },
+    "security.unguarded_path-2b6b6da363e1": {
+      "state": "accepted",
+      "reason": "Design: changefeed returns entity type names only, no entity content.",
+      "at": "2026-10-28T13:29:07Z",
+      "title": "changefeed reaches store with no component on the way that can check access."
+    },
+    "security.unguarded_path-5e4e35e62139": {
+      "state": "accepted",
+      "reason": "Design: schema is a library over a reader its caller supplies. Server callers pass the gated reader (dataentry svc.reads, mcp.Deps.Store); the CLI passes schema.Ungated under operator trust.",
+      "at": "2026-10-28T13:29:07Z",
+      "title": "schema reaches store with no component on the way that can check access."
+    },
+    "types.fields-9f30b4c803a3": {
+      "state": "accepted",
+      "reason": "Debt: wide types capped by plimsoll; decomposition tracked in TKT-N0IKN9.",
+      "at": "2026-10-28T13:29:07Z",
+      "title": "internal/cli.CLI has 53 fields."
+    },
+    "types.fields-4e5be8c65652": {
+      "state": "accepted",
+      "reason": "Debt: wide types capped by plimsoll; decomposition tracked in TKT-N0IKN9.",
+      "at": "2026-10-28T13:29:07Z",
+      "title": "internal/lua.Runtime has 25 fields."
+    },
+    "history.coupling-839610e49d42": {
+      "state": "accepted",
+      "reason": "Expected co-change: the SPA and its API change together, and so do the store backends.",
+      "at": "2026-10-28T13:29:07Z",
+      "title": "common and styles change together but do not depend on each other."
+    },
+    "concepts.string_enum-27682f153f61": {
+      "state": "accepted",
+      "reason": "Debt: repeated string values; type them when the code is touched.",
+      "at": "2026-10-28T13:29:07Z",
+      "title": "placement takes 3 string values in 3 components (utils, forms, web/components/piles): 'before', 'bottom-start', 'bottom'."
+    },
+    "concepts.string_enum-aed1c8b8819a": {
+      "state": "accepted",
+      "reason": "Debt: repeated string values; type them when the code is touched.",
+      "at": "2026-10-28T13:29:07Z",
+      "title": "ref takes 3 string values in 3 components (subscription, dataentry, realtimecfg): 'now', 'today', 'entity'."
+    },
+    "concepts.string_enum-475a5a81f9ba": {
+      "state": "accepted",
+      "reason": "Debt: repeated string values; type them when the code is touched.",
+      "at": "2026-10-28T13:29:07Z",
+      "title": "state takes 5 string values in 3 components (cli, cmdDesktop, web/components/entity): 'unreadable', 'missing', 'needs_consent', 'Connected', …."
+    },
+    "concepts.untyped_bag-c9fc238d305b": {
+      "state": "accepted",
+      "reason": "Design: entity properties are schema-driven, so map[string]any is the model.",
+      "at": "2026-10-28T13:29:07Z",
+      "title": "2 types of utils that other components use carry untyped data: PropertyChange.before (unknown), PropertyChange.after (unknown), SummarizedEntity.properties (Record<string, unknown>)."
+    },
+    "boundaries.stability-16f8d7f9798f": {
+      "state": "accepted",
+      "reason": "Debt: expected for core packages such as metamodel and acl.",
+      "at": "2026-10-28T13:29:07Z",
+      "title": "audit is in the zone of pain: 13 components depend on it, and it has few abstractions to change behind."
+    },
+    "data.shared_table-537923173333": {
+      "state": "accepted",
+      "reason": "Design: pgstore and sqlitestore are alternative backends, and sqlitedb creates the schema.",
+      "at": "2026-10-28T13:29:07Z",
+      "title": "Table rel_record_seq is written by 2 components: sqlitedb, sqlitestore."
+    },
+    "vocabulary.leak-edef7b6b6ea0": {
+      "state": "accepted",
+      "reason": "Design: intended mentions, mostly in comments; a GraphQuery carries the compiled row gate, and packages name the gated reader they get at wiring.",
+      "at": "2026-10-28T13:29:07Z",
+      "title": "validator uses the term \"Gated reader\", owned by visibility."
+    },
+    "types.fields-3e2110e092b7": {
+      "state": "accepted",
+      "reason": "Debt: wide types capped by plimsoll; decomposition tracked in TKT-N0IKN9.",
+      "at": "2026-10-28T13:29:07Z",
+      "title": "internal/dataentry.SectionData has 6 boolean flags."
+    },
+    "types.synonyms-cf7b12def494": {
+      "state": "accepted",
+      "reason": "Design: wire DTOs (apiwire, realtime, channels) mirror domain types on purpose, as the rule against leaking storage types asks.",
+      "at": "2026-10-28T13:29:07Z",
+      "title": "ChannelHead (apiwire) and HeadView (realtime) share most of their fields."
+    },
+    "types.synonyms-34f0ff5d8c87": {
+      "state": "accepted",
+      "reason": "Design: wire DTOs (apiwire, realtime, channels) mirror domain types on purpose, as the rule against leaking storage types asks.",
+      "at": "2026-10-28T13:29:07Z",
+      "title": "ConversionOffer (apiwire) and ConversionOffer (entitymanager) share most of their fields."
+    },
+    "types.synonyms-6540965a5256": {
+      "state": "accepted",
+      "reason": "Design: wire DTOs (apiwire, realtime, channels) mirror domain types on purpose, as the rule against leaking storage types asks.",
+      "at": "2026-10-28T13:29:07Z",
+      "title": "ViewCell (apiwire) and SectionColumnData (dataentry) share most of their fields."
+    },
+    "types.synonyms-0cf2857812f3": {
+      "state": "accepted",
+      "reason": "Design: wire DTOs (apiwire, realtime, channels) mirror domain types on purpose, as the rule against leaking storage types asks.",
+      "at": "2026-10-28T13:29:07Z",
+      "title": "ViewRow (apiwire) and SectionRowData (dataentry) share most of their fields."
+    },
+    "history.coupling-f69207e17ceb": {
+      "state": "accepted",
+      "reason": "Expected co-change: the SPA and its API change together, and so do the store backends.",
+      "at": "2026-10-28T13:29:07Z",
+      "title": "cli and validation change together but do not depend on each other."
+    },
+    "concepts.bool_params-584cef77b425": {
+      "state": "accepted",
+      "reason": "Debt: low value per finding.",
+      "at": "2026-10-28T13:29:07Z",
+      "title": "11 functions in composables take boolean flags."
+    },
+    "concepts.bool_params-d0b322a6f4b6": {
+      "state": "accepted",
+      "reason": "Debt: low value per finding.",
+      "at": "2026-10-28T13:29:07Z",
+      "title": "6 functions in storeutil take boolean flags; 1 take 2 or more."
+    },
+    "concepts.raw_ids-98cd81b75c18": {
+      "state": "accepted",
+      "reason": "Debt: low value per finding.",
+      "at": "2026-10-28T13:29:07Z",
+      "title": "store holds raw ids whose concept is unclear: RecordID."
+    },
+    "concepts.string_enum-fce4745e7ac8": {
+      "state": "accepted",
+      "reason": "Debt: repeated string values; type them when the code is touched.",
+      "at": "2026-10-28T13:29:07Z",
+      "title": "path takes 15 string values in 2 components (router, dataentry): 'relations', 'types', 'channels', 'resolve', …."
+    },
+    "boundaries.misplaced_file-d24dea3d9362": {
+      "state": "accepted",
+      "reason": "Debt: move candidate for later.",
+      "at": "2026-10-28T13:29:07Z",
+      "title": "views/AnalyzeView.vue in views has most of its links to common (weighted links: 3.7 to common, 0.0 to views)."
+    },
+    "boundaries.unrelated_parts-a7e3cdb23769": {
+      "state": "accepted",
+      "reason": "Debt: split candidate for later.",
+      "at": "2026-10-28T13:29:07Z",
+      "title": "composables holds 7 groups of files that neither refer to each other nor change together."
+    },
+    "types.synonyms-5d499203e396": {
+      "state": "accepted",
+      "reason": "Design: wire DTOs (apiwire, realtime, channels) mirror domain types on purpose, as the rule against leaking storage types asks.",
+      "at": "2026-10-28T13:29:07Z",
+      "title": "ChannelMessageOutputResult (apiwire), OutputResult (channels) and OutputResultView (realtime) share most of their fields."
+    },
+    "types.synonyms-2a2a7bb4b5bb": {
+      "state": "accepted",
+      "reason": "Design: wire DTOs (apiwire, realtime, channels) mirror domain types on purpose, as the rule against leaking storage types asks.",
+      "at": "2026-10-28T13:29:07Z",
+      "title": "CopyOffer (apiwire) and CopyOffer (entitymanager) share most of their fields."
+    },
+    "types.synonyms-588afd607a4a": {
+      "state": "accepted",
+      "reason": "Design: wire DTOs (apiwire, realtime, channels) mirror domain types on purpose, as the rule against leaking storage types asks.",
+      "at": "2026-10-28T13:29:07Z",
+      "title": "TaskItemConversionOffer (apiwire) and TaskItemOffer (entitymanager) share most of their fields."
+    },
+    "history.modularity_violation-bf10e05817b6": {
+      "state": "accepted",
+      "reason": "Expected co-change: the SPA and its API change together, and so do the store backends.",
+      "at": "2026-10-28T13:29:07Z",
+      "title": "fsstore/entity.go and memstore/memstore.go change together in 3 commits, but neither refers to the other."
+    },
+    "concepts.string_enum-41efb358e469": {
+      "state": "accepted",
+      "reason": "Debt: repeated string values; type them when the code is touched.",
+      "at": "2026-10-28T13:29:07Z",
+      "title": "The same test, name in 'entity-page', 'page', is written in 2 components (composables, utils)."
+    },
+    "concepts.string_enum-ec8b6b68a21a": {
+      "state": "accepted",
+      "reason": "Debt: repeated string values; type them when the code is touched.",
+      "at": "2026-10-28T13:29:07Z",
+      "title": "The same test, ref in 'now', 'today', is written in 2 components (dataentry, subscription)."
+    },
+    "concepts.string_enum-edd74f048c98": {
+      "state": "accepted",
+      "reason": "Debt: repeated string values; type them when the code is touched.",
+      "at": "2026-10-28T13:29:07Z",
+      "title": "hue takes 8 string values in 2 components (web/configure, dataentryconfig): 'grey', 'blue', 'green', 'yellow', …."
+    },
+    "boundaries.unused_public-549e1faa08a4": {
+      "state": "accepted",
+      "reason": "Debt: low value.",
+      "at": "2026-10-28T13:29:07Z",
+      "title": "forms has 39 of 60 files with public types that only it uses, though 8 components depend on it."
+    },
+    "types.synonyms-0e70e7c1c6f2": {
+      "state": "accepted",
+      "reason": "Design: wire DTOs (apiwire, realtime, channels) mirror domain types on purpose, as the rule against leaking storage types asks.",
+      "at": "2026-10-28T13:29:07Z",
+      "title": "ImportCmd (cli) and Options (importer) share most of their fields."
+    },
+    "concepts.string_enum-a5c1f22b6dcd": {
+      "state": "accepted",
+      "reason": "Debt: repeated string values; type them when the code is touched.",
+      "at": "2026-10-28T13:29:07Z",
+      "title": "bucket takes 5 string values in 2 components (utils, composables): 'today', 'tomorrow', 'overdue', 'no_date', …."
+    },
+    "concepts.untyped_bag-69d6e0f089b8": {
+      "state": "accepted",
+      "reason": "Design: entity properties are schema-driven, so map[string]any is the model.",
+      "at": "2026-10-28T13:29:07Z",
+      "title": "1 type of conflict that other components use carries untyped data: PropertyDiff.OursValue (any), PropertyDiff.TheirsValue (any)."
+    },
+    "boundaries.misplaced_file-3007f2e05739": {
+      "state": "accepted",
+      "reason": "Debt: move candidate for later.",
+      "at": "2026-10-28T13:29:07Z",
+      "title": "cli/migrate_data.go in cli has most of its links to datamigration (weighted links: 6.7 to datamigration, 0.4 to cli)."
+    },
+    "data.shared_table-47503dd0a745": {
+      "state": "accepted",
+      "reason": "Design: pgstore and sqlitestore are alternative backends, and sqlitedb creates the schema.",
+      "at": "2026-10-28T13:29:07Z",
+      "title": "Table comments is written by 2 components: pgcomments, sqlitecomments."
+    },
+    "security.risk_hotspot-636dc47e6aff": {
+      "state": "accepted",
+      "reason": "Design: informational. This component changes often; nothing to fix.",
+      "at": "2026-10-28T13:29:07Z",
+      "title": "dataentry changes often and lies on the path to sensitive data."
+    },
+    "structure.repeated_orchestration-08d601987d13": {
+      "state": "accepted",
+      "reason": "Design: the repeated runs are the request preamble (query stats, access.Open, world lookup) and the affordance verdict sequence.",
+      "at": "2026-10-28T13:29:07Z",
+      "title": "3 entry points make the same 4 calls: store.WithQueryStats → access.Open → worlds.Lookup → transform.RegistryFromMetamodel."
+    },
+    "history.coupling-f5c161853207": {
+      "state": "accepted",
+      "reason": "Expected co-change: the SPA and its API change together, and so do the store backends.",
+      "at": "2026-10-28T13:29:07Z",
+      "title": "frontend and styles change together but do not depend on each other."
+    },
+    "concepts.bool_params-267ab220655a": {
+      "state": "accepted",
+      "reason": "Debt: low value per finding.",
+      "at": "2026-10-28T13:29:07Z",
+      "title": "4 functions in validation take boolean flags; 1 take 2 or more."
+    },
+    "concepts.bool_params-cef999d1c211": {
+      "state": "accepted",
+      "reason": "Debt: low value per finding.",
+      "at": "2026-10-28T13:29:07Z",
+      "title": "5 functions in utils take boolean flags."
+    },
+    "concepts.raw_ids-8ddfb6d45683": {
+      "state": "accepted",
+      "reason": "Debt: low value per finding.",
+      "at": "2026-10-28T13:29:07Z",
+      "title": "entitymanager holds raw ids whose concept is unclear: RecordID, TargetID."
+    },
+    "concepts.state_flags-c026cf7a8397": {
+      "state": "accepted",
+      "reason": "Debt: low value per finding.",
+      "at": "2026-10-28T13:29:07Z",
+      "title": "2 types in composables keep their state in boolean flags; FormWizard has 3 (isMultiStep, isFirstStep, isLastStep)."
+    },
+    "concepts.string_enum-de9bd244d50c": {
+      "state": "accepted",
+      "reason": "Debt: repeated string values; type them when the code is touched.",
+      "at": "2026-10-28T13:29:07Z",
+      "title": "then takes 4 string values in 2 components (web/components/entity, web/configure): 'schema', 'refetch', 'list', 'Then'."
+    },
+    "concepts.units_in_names-71556a205235": {
+      "state": "accepted",
+      "reason": "Debt: low value per finding.",
+      "at": "2026-10-28T13:29:07Z",
+      "title": "s is named in s in dataentry, mail, web/components/entity; without a unit in utils."
+    },
+    "boundaries.misplaced_file-f427e1f97957": {
+      "state": "accepted",
+      "reason": "Debt: move candidate for later.",
+      "at": "2026-10-28T13:29:07Z",
+      "title": "app-editor/relaEditor.ts in app-editor has most of its links to forms (weighted links: 8.2 to forms, 2.0 to app-editor)."
+    },
+    "boundaries.misplaced_file-78db9624ccbe": {
+      "state": "accepted",
+      "reason": "Debt: move candidate for later.",
+      "at": "2026-10-28T13:29:07Z",
+      "title": "forms/InlinePropertyValue.vue in forms has most of its links to widgets (weighted links: 7.0 to widgets, 1.2 to forms)."
+    },
+    "boundaries.misplaced_file-58e7f32a405a": {
+      "state": "accepted",
+      "reason": "Debt: move candidate for later.",
+      "at": "2026-10-28T13:29:07Z",
+      "title": "metamodel/shapeprojection.go in metamodel has most of its links to datamigration (weighted links: 4.3 to datamigration, 1.9 to metamodel)."
+    },
+    "data.shared_table-f5ddddc44bc8": {
+      "state": "accepted",
+      "reason": "Design: pgstore and sqlitestore are alternative backends, and sqlitedb creates the schema.",
+      "at": "2026-10-28T13:29:07Z",
+      "title": "Table migration_state is written by 2 components: pgmigstate, sqlitemigstate."
+    },
+    "types.synonyms-96d68550509c": {
+      "state": "accepted",
+      "reason": "Design: wire DTOs (apiwire, realtime, channels) mirror domain types on purpose, as the rule against leaking storage types asks.",
+      "at": "2026-10-28T13:29:07Z",
+      "title": "ChannelTypeSchema (apiwire) and ChannelTypeView (realtime) share most of their fields."
+    },
+    "types.synonyms-be388f74ea66": {
+      "state": "accepted",
+      "reason": "Design: wire DTOs (apiwire, realtime, channels) mirror domain types on purpose, as the rule against leaking storage types asks.",
+      "at": "2026-10-28T13:29:07Z",
+      "title": "MeLinks (apiwire) and AccountConfig (dataentryconfig) share most of their fields."
+    },
+    "concepts.string_enum-1282c891fcb6": {
+      "state": "accepted",
+      "reason": "Debt: repeated string values; type them when the code is touched.",
+      "at": "2026-10-28T13:29:07Z",
+      "title": "channel takes 3 string values in 2 components (composables, web/components/entity): 'property', 'content', 'relations'."
+    },
+    "concepts.string_enum-3ca8c7355ffd": {
+      "state": "accepted",
+      "reason": "Debt: repeated string values; type them when the code is touched.",
+      "at": "2026-10-28T13:29:07Z",
+      "title": "local takes 3 string values in 2 components (dataentry, safexml): 'prop', 'xmlns', 'getctag'."
+    },
+    "concepts.units_in_names-66ebda549c93": {
+      "state": "accepted",
+      "reason": "Debt: low value per finding.",
+      "at": "2026-10-28T13:29:07Z",
+      "title": "delta is named in days in utils; without a unit in dataentryconfig, forms, ui, …."
+    },
+    "concepts.units_in_names-6aab158beda4": {
+      "state": "accepted",
+      "reason": "Debt: low value per finding.",
+      "at": "2026-10-28T13:29:07Z",
+      "title": "timeout is named in s in ai, mail; without a unit in dataentryconfig, stores, types."
+    },
+    "boundaries.unrelated_parts-0b8f438ce62d": {
+      "state": "accepted",
+      "reason": "Debt: split candidate for later.",
+      "at": "2026-10-28T13:29:07Z",
+      "title": "types holds 2 groups of files that neither refer to each other nor change together."
+    },
+    "vocabulary.leak-69aff14f2c82": {
+      "state": "accepted",
+      "reason": "Design: intended mentions, mostly in comments; a GraphQuery carries the compiled row gate, and packages name the gated reader they get at wiring.",
+      "at": "2026-10-28T13:29:07Z",
+      "title": "scheduler uses the term \"Gated reader\", owned by visibility."
+    },
+    "history.coupling-d3eab9a38870": {
+      "state": "accepted",
+      "reason": "Expected co-change: the SPA and its API change together, and so do the store backends.",
+      "at": "2026-10-28T13:29:07Z",
+      "title": "frontend and src change together but do not depend on each other."
+    },
+    "history.modularity_violation-31ef4a95a916": {
+      "state": "accepted",
+      "reason": "Expected co-change: the SPA and its API change together, and so do the store backends.",
+      "at": "2026-10-28T13:29:07Z",
+      "title": "dataentry/helpers.go and migration/migration.go change together in 3 commits, but neither refers to the other."
+    },
+    "history.modularity_violation-3e2e8a5562cc": {
+      "state": "accepted",
+      "reason": "Expected co-change: the SPA and its API change together, and so do the store backends.",
+      "at": "2026-10-28T13:29:07Z",
+      "title": "metamodel/loader.go and migration/migration.go change together in 3 commits, but neither refers to the other."
+    },
+    "concepts.missing_operation-8c4bb5e38acd": {
+      "state": "accepted",
+      "reason": "Debt: small helper written twice; many pairs are the alternative store backends.",
+      "at": "2026-10-28T13:29:07Z",
+      "title": "2 components (filechannels, sqlchannels) each write their own apply for SessionStep, a type of channels."
+    },
+    "boundaries.misplaced_file-58f40e366aeb": {
+      "state": "accepted",
+      "reason": "Debt: move candidate for later.",
+      "at": "2026-10-28T13:29:07Z",
+      "title": "dataentry/channels_wire.go in dataentry has most of its links to realtime (weighted links: 4.1 to realtime, 0.2 to dataentry)."
+    },
+    "boundaries.unrelated_parts-b0a09cd11a52": {
+      "state": "accepted",
+      "reason": "Debt: split candidate for later.",
+      "at": "2026-10-28T13:29:07Z",
+      "title": "stores holds 2 groups of files that neither refer to each other nor change together."
+    },
+    "data.repeated_columns-cb3cebd5804f": {
+      "state": "accepted",
+      "reason": "Design: version tables mirror the live tables.",
+      "at": "2026-10-28T13:29:07Z",
+      "title": "6 tables repeat the columns content, content_hash, properties."
+    },
+    "vocabulary.leak-44bb994137d0": {
+      "state": "accepted",
+      "reason": "Design: intended mentions, mostly in comments; a GraphQuery carries the compiled row gate, and packages name the gated reader they get at wiring.",
+      "at": "2026-10-28T13:29:07Z",
+      "title": "analysis uses the term \"Gated reader\", owned by visibility."
+    },
+    "types.synonyms-0f143f892325": {
+      "state": "accepted",
+      "reason": "Design: wire DTOs (apiwire, realtime, channels) mirror domain types on purpose, as the rule against leaking storage types asks.",
+      "at": "2026-10-28T13:29:07Z",
+      "title": "Automation (automation) and AutomationDef (metamodel) share most of their fields."
+    },
+    "types.synonyms-f6e3360939d8": {
+      "state": "accepted",
+      "reason": "Design: wire DTOs (apiwire, realtime, channels) mirror domain types on purpose, as the rule against leaking storage types asks.",
+      "at": "2026-10-28T13:29:07Z",
+      "title": "ChannelActions (apiwire) and Affordances (realtime) share most of their fields."
+    },
+    "types.synonyms-e6e7643c1bfd": {
+      "state": "accepted",
+      "reason": "Design: wire DTOs (apiwire, realtime, channels) mirror domain types on purpose, as the rule against leaking storage types asks.",
+      "at": "2026-10-28T13:29:07Z",
+      "title": "ChannelMessageTypeSchema (apiwire) and MessageTypeDescription (realtime) share most of their fields."
+    },
+    "types.synonyms-91d787449af9": {
+      "state": "accepted",
+      "reason": "Design: wire DTOs (apiwire, realtime, channels) mirror domain types on purpose, as the rule against leaking storage types asks.",
+      "at": "2026-10-28T13:29:07Z",
+      "title": "CreateEntityAction (automation) and CreateEntityAction (metamodel) share most of their fields."
+    },
+    "types.synonyms-7752d0477673": {
+      "state": "accepted",
+      "reason": "Design: wire DTOs (apiwire, realtime, channels) mirror domain types on purpose, as the rule against leaking storage types asks.",
+      "at": "2026-10-28T13:29:07Z",
+      "title": "Info (attachment) and AttachmentInfo (store) share most of their fields."
+    },
+    "concepts.untyped_bag-bb17cecabda3": {
+      "state": "accepted",
+      "reason": "Design: entity properties are schema-driven, so map[string]any is the model.",
+      "at": "2026-10-28T13:29:07Z",
+      "title": "1 type of autocascade that other components use carries untyped data: CreateEntityOptions.Properties (map[string]any)."
+    },
+    "boundaries.misplaced_file-8b43789704ca": {
+      "state": "accepted",
+      "reason": "Debt: move candidate for later.",
+      "at": "2026-10-28T13:29:07Z",
+      "title": "appbuild/mail.go in appbuild has most of its links to mail (weighted links: 3.1 to mail, 0.2 to appbuild)."
+    },
+    "boundaries.unrelated_parts-7eab48fdc4b5": {
+      "state": "accepted",
+      "reason": "Debt: split candidate for later.",
+      "at": "2026-10-28T13:29:07Z",
+      "title": "storage holds 2 groups of files that neither refer to each other nor change together."
+    },
+    "data.repeated_columns-2c1408c75572": {
+      "state": "accepted",
+      "reason": "Design: version tables mirror the live tables.",
+      "at": "2026-10-28T13:29:07Z",
+      "title": "4 tables repeat the columns content, content_hash, origin_definition, origin_kind, origin_source, …."
+    },
+    "types.synonyms-3cdd75dd8848": {
+      "state": "accepted",
+      "reason": "Design: wire DTOs (apiwire, realtime, channels) mirror domain types on purpose, as the rule against leaking storage types asks.",
+      "at": "2026-10-28T13:29:07Z",
+      "title": "SidebarPage (apiwire) and Page (dataentryconfig) share most of their fields."
+    },
+    "types.synonyms-f8b6b992d92e": {
+      "state": "accepted",
+      "reason": "Design: wire DTOs (apiwire, realtime, channels) mirror domain types on purpose, as the rule against leaking storage types asks.",
+      "at": "2026-10-28T13:29:07Z",
+      "title": "ViewGroup (apiwire) and GroupData (dataentry) share most of their fields."
+    },
+    "concepts.state_flags-2866b6ab1fbd": {
+      "state": "accepted",
+      "reason": "Debt: low value per finding.",
+      "at": "2026-10-28T13:29:07Z",
+      "title": "SectionData in dataentry keeps its state in 3 boolean flags (IsGrouped, IsEmpty, HasContent)."
+    },
+    "concepts.state_flags-cfd0b0a04535": {
+      "state": "accepted",
+      "reason": "Debt: low value per finding.",
+      "at": "2026-10-28T13:29:07Z",
+      "title": "ViewSection in api keeps its state in 3 boolean flags (isEmpty, isGrouped, hasContent)."
+    },
+    "boundaries.unused_public-a110d0d8a2ab": {
+      "state": "accepted",
+      "reason": "Debt: low value.",
+      "at": "2026-10-28T13:29:07Z",
+      "title": "cli has 53 of 54 files with public types that only it uses, though 1 component depends on it."
+    },
+    "security.untraced-1590e3707807": {
+      "state": "accepted",
+      "reason": "Debt: the seqtrace routes suite does not reach this yet. Some routes need seed data or config the perf project lacks (comments, documents, conversions); some are new.",
+      "at": "2026-10-28T13:29:07Z",
+      "title": "The entry point handle is never called in the traces."
+    },
+    "security.untraced-78126bec32ca": {
+      "state": "accepted",
+      "reason": "Debt: the seqtrace routes suite does not reach this yet. Some routes need seed data or config the perf project lacks (comments, documents, conversions); some are new.",
+      "at": "2026-10-28T13:29:07Z",
+      "title": "The entry point handle is never called in the traces."
+    },
+    "security.untraced-97e58fdcf287": {
+      "state": "accepted",
+      "reason": "Debt: the seqtrace routes suite does not reach this yet. Some routes need seed data or config the perf project lacks (comments, documents, conversions); some are new.",
+      "at": "2026-10-28T13:29:07Z",
+      "title": "The entry point handleEntityHelp is never called in the traces."
+    },
+    "security.untraced-bde218879c6b": {
+      "state": "accepted",
+      "reason": "Debt: the seqtrace routes suite does not reach this yet. Some routes need seed data or config the perf project lacks (comments, documents, conversions); some are new.",
+      "at": "2026-10-28T13:29:07Z",
+      "title": "The entry point handlePut is never called in the traces."
+    },
+    "security.untraced-4e3173d817fe": {
+      "state": "accepted",
+      "reason": "Debt: the seqtrace routes suite does not reach this yet. Some routes need seed data or config the perf project lacks (comments, documents, conversions); some are new.",
+      "at": "2026-10-28T13:29:07Z",
+      "title": "The entry point handleV1ConflictRoutes is never called in the traces."
+    },
+    "security.untraced-9bb042f594b0": {
+      "state": "accepted",
+      "reason": "Debt: the seqtrace routes suite does not reach this yet. Some routes need seed data or config the perf project lacks (comments, documents, conversions); some are new.",
+      "at": "2026-10-28T13:29:07Z",
+      "title": "The entry point handleV1Conversions is never called in the traces."
+    },
+    "security.untraced-cb8d441ec3c1": {
+      "state": "accepted",
+      "reason": "Debt: the seqtrace routes suite does not reach this yet. Some routes need seed data or config the perf project lacks (comments, documents, conversions); some are new.",
+      "at": "2026-10-28T13:29:07Z",
+      "title": "The entry point handleV1DashboardCard is never called in the traces."
+    },
+    "security.untraced-f77680657806": {
+      "state": "accepted",
+      "reason": "Debt: the seqtrace routes suite does not reach this yet. Some routes need seed data or config the perf project lacks (comments, documents, conversions); some are new.",
+      "at": "2026-10-28T13:29:07Z",
+      "title": "The entry point handleV1DryRunCreate is never called in the traces."
+    },
+    "security.untraced-33f5a9aac621": {
+      "state": "accepted",
+      "reason": "Debt: the seqtrace routes suite does not reach this yet. Some routes need seed data or config the perf project lacks (comments, documents, conversions); some are new.",
+      "at": "2026-10-28T13:29:07Z",
+      "title": "The entry point handleV1EntityPosition is never called in the traces."
+    },
+    "security.untraced-0fd215bb4bd6": {
+      "state": "accepted",
+      "reason": "Debt: the seqtrace routes suite does not reach this yet. Some routes need seed data or config the perf project lacks (comments, documents, conversions); some are new.",
+      "at": "2026-10-28T13:29:07Z",
+      "title": "The entry point handleV1GetRelationType is never called in the traces."
+    },
+    "security.untraced-4c335b7c65c2": {
+      "state": "accepted",
+      "reason": "Debt: the seqtrace routes suite does not reach this yet. Some routes need seed data or config the perf project lacks (comments, documents, conversions); some are new.",
+      "at": "2026-10-28T13:29:07Z",
+      "title": "The entry point handleV1NextActionPost is never called in the traces."
+    },
+    "security.untraced-c50f568923d0": {
+      "state": "accepted",
+      "reason": "Debt: the seqtrace routes suite does not reach this yet. Some routes need seed data or config the perf project lacks (comments, documents, conversions); some are new.",
+      "at": "2026-10-28T13:29:07Z",
+      "title": "The entry point handleV1SchemaRoutes is never called in the traces."
+    },
+    "security.untraced-a46552bc1e78": {
+      "state": "accepted",
+      "reason": "Debt: the seqtrace routes suite does not reach this yet. Some routes need seed data or config the perf project lacks (comments, documents, conversions); some are new.",
+      "at": "2026-10-28T13:29:07Z",
+      "title": "The entry point handleV1SidePanel is never called in the traces."
+    },
+    "security.untraced-a31744fb1780": {
+      "state": "accepted",
+      "reason": "Debt: the seqtrace routes suite does not reach this yet. Some routes need seed data or config the perf project lacks (comments, documents, conversions); some are new.",
+      "at": "2026-10-28T13:29:07Z",
+      "title": "The entry point serveAsset is never called in the traces."
+    },
+    "security.untraced-f3d6c41be13b": {
+      "state": "accepted",
+      "reason": "Debt: the seqtrace routes suite does not reach this yet. Some routes need seed data or config the perf project lacks (comments, documents, conversions); some are new.",
+      "at": "2026-10-28T13:29:07Z",
+      "title": "The entry point serveInbox is never called in the traces."
+    },
+    "security.untraced-00dc006fb5f1": {
+      "state": "accepted",
+      "reason": "Debt: the seqtrace routes suite does not reach this yet. Some routes need seed data or config the perf project lacks (comments, documents, conversions); some are new.",
+      "at": "2026-10-28T13:29:07Z",
+      "title": "The guard Allows is never called in the traces."
+    },
+    "security.untraced-6487ad8d51a2": {
+      "state": "accepted",
+      "reason": "Debt: the seqtrace routes suite does not reach this yet. Some routes need seed data or config the perf project lacks (comments, documents, conversions); some are new.",
+      "at": "2026-10-28T13:29:07Z",
+      "title": "The guard GateTraversal is never called in the traces."
+    },
+    "security.untraced-da7e8c21b437": {
+      "state": "accepted",
+      "reason": "Debt: the seqtrace routes suite does not reach this yet. Some routes need seed data or config the perf project lacks (comments, documents, conversions); some are new.",
+      "at": "2026-10-28T13:29:07Z",
+      "title": "The guard HoldsPermissionForEntity is never called in the traces."
+    },
+    "security.untraced-f1744d460c1d": {
+      "state": "accepted",
+      "reason": "Debt: the seqtrace routes suite does not reach this yet. Some routes need seed data or config the perf project lacks (comments, documents, conversions); some are new.",
+      "at": "2026-10-28T13:29:07Z",
+      "title": "The guard addTargetGate is never called in the traces."
+    },
+    "security.untraced-a8bfffdaa914": {
+      "state": "accepted",
+      "reason": "Debt: the seqtrace routes suite does not reach this yet. Some routes need seed data or config the perf project lacks (comments, documents, conversions); some are new.",
+      "at": "2026-10-28T13:29:07Z",
+      "title": "The guard authorizeConflictResolve is never called in the traces."
+    },
+    "security.untraced-a0d30519d16d": {
+      "state": "accepted",
+      "reason": "Debt: the seqtrace routes suite does not reach this yet. Some routes need seed data or config the perf project lacks (comments, documents, conversions); some are new.",
+      "at": "2026-10-28T13:29:07Z",
+      "title": "The guard authorizeElevatedDocument is never called in the traces."
+    },
+    "security.untraced-79d12856849d": {
+      "state": "accepted",
+      "reason": "Debt: the seqtrace routes suite does not reach this yet. Some routes need seed data or config the perf project lacks (comments, documents, conversions); some are new.",
+      "at": "2026-10-28T13:29:07Z",
+      "title": "The guard gateDocumentPermission is never called in the traces."
+    },
+    "security.untraced-c3c6ff77faf1": {
+      "state": "accepted",
+      "reason": "Debt: the seqtrace routes suite does not reach this yet. Some routes need seed data or config the perf project lacks (comments, documents, conversions); some are new.",
+      "at": "2026-10-28T13:29:07Z",
+      "title": "The guard listGate is never called in the traces."
+    },
+    "security.untraced-70593211a451": {
+      "state": "accepted",
+      "reason": "Debt: the seqtrace routes suite does not reach this yet. Some routes need seed data or config the perf project lacks (comments, documents, conversions); some are new.",
+      "at": "2026-10-28T13:29:07Z",
+      "title": "The guard mutationGate is never called in the traces."
+    },
+    "security.untraced-01d3759246a9": {
+      "state": "accepted",
+      "reason": "Debt: the seqtrace routes suite does not reach this yet. Some routes need seed data or config the perf project lacks (comments, documents, conversions); some are new.",
+      "at": "2026-10-28T13:29:07Z",
+      "title": "The guard readTarget is never called in the traces."
+    },
+    "security.untraced-3271a3170427": {
+      "state": "accepted",
+      "reason": "Debt: the seqtrace routes suite does not reach this yet. Some routes need seed data or config the perf project lacks (comments, documents, conversions); some are new.",
+      "at": "2026-10-28T13:29:07Z",
+      "title": "The guard writeTarget is never called in the traces."
+    },
+    "history.coupling-6e3e71680cdb": {
+      "state": "accepted",
+      "reason": "Expected co-change: the SPA and its API change together, and so do the store backends.",
+      "at": "2026-10-28T13:29:07Z",
+      "title": "src and styles change together but do not depend on each other."
+    },
+    "concepts.string_enum-934a2183d0b4": {
+      "state": "accepted",
+      "reason": "Debt: repeated string values; type them when the code is touched.",
+      "at": "2026-10-28T13:29:07Z",
+      "title": "a takes 12 string values in 2 components (web/configure, web/components/configure): 'incoming', 'forms', 'lists', 'kanbans', …."
+    },
+    "boundaries.unrelated_parts-4ccb9fdec4eb": {
+      "state": "accepted",
+      "reason": "Debt: split candidate for later.",
+      "at": "2026-10-28T13:29:07Z",
+      "title": "cmdServer holds 2 groups of files that neither refer to each other nor change together."
+    },
+    "security.risk_hotspot-ac83d7552b5e": {
+      "state": "accepted",
+      "reason": "Design: informational. This component changes often; nothing to fix.",
+      "at": "2026-10-28T13:29:07Z",
+      "title": "appbuild changes often and lies on the path to sensitive data."
+    },
+    "security.untraced-33f0043c8a98": {
+      "state": "accepted",
+      "reason": "Debt: the seqtrace routes suite does not reach this yet. Some routes need seed data or config the perf project lacks (comments, documents, conversions); some are new.",
+      "at": "2026-10-28T13:29:07Z",
+      "title": "The guard Convert is never called in the traces."
+    },
+    "security.untraced-a15affd66a41": {
+      "state": "accepted",
+      "reason": "Debt: the seqtrace routes suite does not reach this yet. Some routes need seed data or config the perf project lacks (comments, documents, conversions); some are new.",
+      "at": "2026-10-28T13:29:07Z",
+      "title": "The guard CopyState is never called in the traces."
+    },
+    "concepts.string_enum-6e8a9ecc8eda": {
+      "state": "accepted",
+      "reason": "Debt: repeated string values; type them when the code is touched.",
+      "at": "2026-10-28T13:29:07Z",
+      "title": "principal_type takes 2 string values in 2 components (realtime, web/components/entity): 'system', 'agent'."
+    },
+    "boundaries.misplaced_file-02a9c7829846": {
+      "state": "accepted",
+      "reason": "Debt: move candidate for later.",
+      "at": "2026-10-28T13:29:07Z",
+      "title": "configure/ConfigurePage.vue in web/components/configure has most of its links to views (weighted links: 4.8 to views, 0.0 to web/components/configure)."
+    },
+    "data.polymorphic-d4edad9160e3": {
+      "state": "accepted",
+      "reason": "Design: comments and versions point at several entity types.",
+      "at": "2026-10-28T13:29:07Z",
+      "title": "Table entity_versions points at other tables through type + entity_id."
+    },
+    "data.repeated_columns-db28d8ce08a7": {
+      "state": "accepted",
+      "reason": "Design: version tables mirror the live tables.",
+      "at": "2026-10-28T13:29:07Z",
+      "title": "4 tables repeat the columns content, content_hash, last_edited_by_tool, last_edited_by_user, properties."
+    },
+    "security.risk_hotspot-0d9bfb708549": {
+      "state": "accepted",
+      "reason": "Design: informational. This component changes often; nothing to fix.",
+      "at": "2026-10-28T13:29:07Z",
+      "title": "acl changes often and lies on the path to sensitive data."
+    },
+    "security.risk_hotspot-87037ee1e413": {
+      "state": "accepted",
+      "reason": "Design: informational. This component changes often; nothing to fix.",
+      "at": "2026-10-28T13:29:07Z",
+      "title": "store changes often and lies on the path to sensitive data."
+    },
+    "types.synonyms-5093d8d3dbbf": {
+      "state": "accepted",
+      "reason": "Design: wire DTOs (apiwire, realtime, channels) mirror domain types on purpose, as the rule against leaking storage types asks.",
+      "at": "2026-10-28T13:29:07Z",
+      "title": "InboxUnread (apiwire) and InboxUnread (realtime) share most of their fields."
+    },
+    "types.synonyms-634a73639888": {
+      "state": "accepted",
+      "reason": "Debt: a real duplicate type; merge the two when the code is touched.",
+      "at": "2026-10-28T13:29:07Z",
+      "title": "PilePush (lua), PilePush (mcp) and PushRequest (piles) share most of their fields."
+    },
+    "types.synonyms-e62dabe85d64": {
+      "state": "accepted",
+      "reason": "Design: wire DTOs (apiwire, realtime, channels) mirror domain types on purpose, as the rule against leaking storage types asks.",
+      "at": "2026-10-28T13:29:07Z",
+      "title": "Template (apiwire) and Template (templating) share most of their fields."
+    },
+    "concepts.untyped_bag-1103b81fd79f": {
+      "state": "accepted",
+      "reason": "Design: entity properties are schema-driven, so map[string]any is the model.",
+      "at": "2026-10-28T13:29:07Z",
+      "title": "2 types of importer that other components use carry untyped data: EntityData.Properties (map[string]any), RelationData.Properties (map[string]any)."
+    },
+    "data.repeated_columns-5f649d573c58": {
+      "state": "accepted",
+      "reason": "Design: version tables mirror the live tables.",
+      "at": "2026-10-28T13:29:07Z",
+      "title": "3 tables repeat the columns content, content_hash, face, origin_definition, origin_kind, …."
+    },
+    "security.risk_hotspot-58d2fdccd432": {
+      "state": "accepted",
+      "reason": "Design: informational. This component changes often; nothing to fix.",
+      "at": "2026-10-28T13:29:07Z",
+      "title": "entitymanager changes often and lies on the path to sensitive data."
+    },
+    "vocabulary.leak-26046691cee8": {
+      "state": "accepted",
+      "reason": "Design: intended mentions, mostly in comments; a GraphQuery carries the compiled row gate, and packages name the gated reader they get at wiring.",
+      "at": "2026-10-28T13:29:07Z",
+      "title": "realtime uses the term \"Client ceiling\", owned by acl."
+    },
+    "concepts.untyped_bag-8730a456c239": {
+      "state": "accepted",
+      "reason": "Design: entity properties are schema-driven, so map[string]any is the model.",
+      "at": "2026-10-28T13:29:07Z",
+      "title": "2 types of bridge that other components use carry untyped data: BridgeRequest.params (unknown), BridgeResponse.result (unknown)."
+    },
+    "boundaries.misplaced_file-c04114a10d45": {
+      "state": "accepted",
+      "reason": "Debt: move candidate for later.",
+      "at": "2026-10-28T13:29:07Z",
+      "title": "configure/routes.ts in web/configure has most of its links to views (weighted links: 4.8 to views, 1.0 to web/configure)."
+    },
+    "boundaries.unrelated_parts-407bfa01bde5": {
+      "state": "accepted",
+      "reason": "Debt: split candidate for later.",
+      "at": "2026-10-28T13:29:07Z",
+      "title": "common holds 3 groups of files that neither refer to each other nor change together."
+    },
+    "data.repeated_columns-c36c98f12629": {
+      "state": "accepted",
+      "reason": "Design: version tables mirror the live tables.",
+      "at": "2026-10-28T13:29:07Z",
+      "title": "3 tables repeat the columns content, content_hash, from_face, from_id, properties, …."
+    },
+    "evolution.ownership-26898cb13e81": {
+      "state": "accepted",
+      "reason": "Accepted: small team; two authors touch most components.",
+      "at": "2026-10-28T13:29:07Z",
+      "title": "2 authors each changed 38 or more components in the last 365 days."
+    },
+    "concepts.raw_ids-6f3a4af75b90": {
+      "state": "accepted",
+      "reason": "Debt: low value per finding.",
+      "at": "2026-10-28T13:29:07Z",
+      "title": "api holds raw ids whose concept is unclear: target_id."
+    },
+    "concepts.raw_ids-005b121503fc": {
+      "state": "accepted",
+      "reason": "Debt: low value per finding.",
+      "at": "2026-10-28T13:29:07Z",
+      "title": "composables holds raw ids whose concept is unclear: pileId."
+    },
+    "concepts.string_enum-d439e599fef7": {
+      "state": "accepted",
+      "reason": "Debt: repeated string values; type them when the code is touched.",
+      "at": "2026-10-28T13:29:07Z",
+      "title": "The same test, kind in 'enum', 'enum-list', is written in 2 components (flyout, lists)."
+    },
+    "concepts.untyped_bag-24d969547848": {
+      "state": "accepted",
+      "reason": "Design: entity properties are schema-driven, so map[string]any is the model.",
+      "at": "2026-10-28T13:29:07Z",
+      "title": "1 type of configedit that other components use carries untyped data: Snapshot.Schema (any), Snapshot.DataEntry (any)."
+    },
+    "concepts.untyped_bag-bad73c716581": {
+      "state": "accepted",
+      "reason": "Design: entity properties are schema-driven, so map[string]any is the model.",
+      "at": "2026-10-28T13:29:07Z",
+      "title": "1 type of validation that other components use carries untyped data: Related.Properties (map[string]any)."
+    },
+    "concepts.untyped_bag-0ab57d179d42": {
+      "state": "accepted",
+      "reason": "Design: entity properties are schema-driven, so map[string]any is the model.",
+      "at": "2026-10-28T13:29:07Z",
+      "title": "2 types of realtimecfg that other components use carry untyped data: OutputVars.Message (map[string]any), Template.lit (any)."
+    },
+    "data.polymorphic-09e6d5b7c0aa": {
+      "state": "accepted",
+      "reason": "Design: comments and versions point at several entity types.",
+      "at": "2026-10-28T13:29:07Z",
+      "title": "Table comments points at other tables through target_type + target_key."
+    },
+    "security.risk_hotspot-0a279014214d": {
+      "state": "accepted",
+      "reason": "Design: informational. This component changes often; nothing to fix.",
+      "at": "2026-10-28T13:29:07Z",
+      "title": "search changes often and lies on the path to sensitive data."
+    },
+    "types.synonyms-bc2afe81e9af": {
+      "state": "accepted",
+      "reason": "Design: wire DTOs (apiwire, realtime, channels) mirror domain types on purpose, as the rule against leaking storage types asks.",
+      "at": "2026-10-28T13:29:07Z",
+      "title": "ChannelSessionStateSchema (apiwire) and SessionStateDescription (realtime) share most of their fields."
+    },
+    "types.synonyms-fc10cdefc381": {
+      "state": "accepted",
+      "reason": "Design: wire DTOs (apiwire, realtime, channels) mirror domain types on purpose, as the rule against leaking storage types asks.",
+      "at": "2026-10-28T13:29:07Z",
+      "title": "ChannelSessionTransition (apiwire) and SessionTransitionView (realtime) share most of their fields."
+    },
+    "concepts.untyped_bag-717fe8cf126e": {
+      "state": "accepted",
+      "reason": "Design: entity properties are schema-driven, so map[string]any is the model.",
+      "at": "2026-10-28T13:29:07Z",
+      "title": "1 type of classification that other components use carries untyped data: Label.Meta (map[string]any)."
+    },
+    "concepts.untyped_bag-c3e462b65504": {
+      "state": "accepted",
+      "reason": "Design: entity properties are schema-driven, so map[string]any is the model.",
+      "at": "2026-10-28T13:29:07Z",
+      "title": "1 type of docs that other components use carries untyped data: SeedOp.Properties (map[string]any)."
+    },
+    "concepts.untyped_bag-b627585b9489": {
+      "state": "accepted",
+      "reason": "Design: entity properties are schema-driven, so map[string]any is the model.",
+      "at": "2026-10-28T13:29:07Z",
+      "title": "1 type of output that other components use carries untyped data: AnalysisResult.Details (any)."
+    },
+    "boundaries.stability-72ef1d58aa15": {
+      "state": "accepted",
+      "reason": "Debt: expected for core packages such as metamodel and acl.",
+      "at": "2026-10-28T13:29:07Z",
+      "title": "channels is in the zone of pain: 6 components depend on it, and it has few abstractions to change behind."
+    },
+    "boundaries.unrelated_parts-95f8c8030d0b": {
+      "state": "accepted",
+      "reason": "Debt: split candidate for later.",
+      "at": "2026-10-28T13:29:07Z",
+      "title": "views holds 2 groups of files that neither refer to each other nor change together."
+    },
+    "types.synonyms-0547bbddfd3c": {
+      "state": "accepted",
+      "reason": "Debt: a real duplicate type; merge the two when the code is touched.",
+      "at": "2026-10-28T13:29:07Z",
+      "title": "FieldVerdicts (affordances) and FieldVerdicts (dataentry) share most of their fields."
+    },
+    "types.synonyms-f94d8df92522": {
+      "state": "accepted",
+      "reason": "Debt: a real duplicate type; merge the two when the code is touched.",
+      "at": "2026-10-28T13:29:07Z",
+      "title": "FieldWriteError (affordances) and AffordanceDenialError (dataentry) share most of their fields."
+    },
+    "types.synonyms-044d7430a6d6": {
+      "state": "accepted",
+      "reason": "Debt: a real duplicate type; merge the two when the code is touched.",
+      "at": "2026-10-28T13:29:07Z",
+      "title": "RelationVerdict (affordances) and RelationVerdict (dataentry) share most of their fields."
+    },
+    "types.synonyms-0ec115dd7916": {
+      "state": "accepted",
+      "reason": "Design: wire DTOs (apiwire, realtime, channels) mirror domain types on purpose, as the rule against leaking storage types asks.",
+      "at": "2026-10-28T13:29:07Z",
+      "title": "ViewAddInfo (apiwire) and SectionAddInfo (dataentry) share most of their fields."
+    },
+    "types.synonyms-05df9abc563b": {
+      "state": "accepted",
+      "reason": "Design: wire DTOs (apiwire, realtime, channels) mirror domain types on purpose, as the rule against leaking storage types asks.",
+      "at": "2026-10-28T13:29:07Z",
+      "title": "ViewLinkInfo (apiwire) and SectionLinkInfo (dataentry) share most of their fields."
+    },
+    "types.synonyms-ec5da2507a26": {
+      "state": "accepted",
+      "reason": "Design: wire DTOs (apiwire, realtime, channels) mirror domain types on purpose, as the rule against leaking storage types asks.",
+      "at": "2026-10-28T13:29:07Z",
+      "title": "ViewSectionCreateTarget (apiwire) and SectionCreateTarget (dataentry) share most of their fields."
+    },
+    "concepts.raw_ids-abe26fef8e20": {
+      "state": "accepted",
+      "reason": "Debt: low value per finding.",
+      "at": "2026-10-28T13:29:07Z",
+      "title": "apiwire holds raw ids whose concept is unclear: LeaseID."
+    },
+    "concepts.raw_ids-06cec07d9aa8": {
+      "state": "accepted",
+      "reason": "Debt: low value per finding.",
+      "at": "2026-10-28T13:29:07Z",
+      "title": "cli holds raw ids whose concept is unclear: LeaseID."
+    },
+    "boundaries.misplaced_file-71674ca71865": {
+      "state": "accepted",
+      "reason": "Debt: move candidate for later.",
+      "at": "2026-10-28T13:29:07Z",
+      "title": "configure/ReviewDrawer.vue in web/components/configure has most of its links to web/configure (weighted links: 3.0 to web/configure, 0.0 to web/components/configure)."
+    },
+    "vocabulary.leak-e8056b7d404d": {
+      "state": "accepted",
+      "reason": "Design: intended mentions, mostly in comments; a GraphQuery carries the compiled row gate, and packages name the gated reader they get at wiring.",
+      "at": "2026-10-28T13:29:07Z",
+      "title": "ingest uses the term \"Gated reader\", owned by visibility."
+    },
+    "concepts.string_enum-fbc6e245f08c": {
+      "state": "accepted",
+      "reason": "Debt: repeated string values; type them when the code is touched.",
+      "at": "2026-10-28T13:29:07Z",
+      "title": "rel takes 2 string values in 2 components (feed, app-editor): 'alternate', 'stylesheet'."
+    },
+    "vocabulary.leak-91ab7cd38595": {
+      "state": "accepted",
+      "reason": "Design: intended mentions, mostly in comments; a GraphQuery carries the compiled row gate, and packages name the gated reader they get at wiring.",
+      "at": "2026-10-28T13:29:07Z",
+      "title": "store uses the term \"Local role\", owned by acl."
+    },
+    "types.synonyms-f1c0be9ebb5c": {
+      "state": "accepted",
+      "reason": "Design: wire DTOs (apiwire, realtime, channels) mirror domain types on purpose, as the rule against leaking storage types asks.",
+      "at": "2026-10-28T13:29:07Z",
+      "title": "Rename (classification) and Rename (datamigration) share most of their fields."
+    },
+    "concepts.string_enum-cb2b08443beb": {
+      "state": "accepted",
+      "reason": "Debt: repeated string values; type them when the code is touched.",
+      "at": "2026-10-28T13:29:07Z",
+      "title": "space takes 2 string values in 2 components (safexml, feed): 'xmlns', 'rdf'."
+    },
+    "concepts.state_flags-002c40a9036f": {
+      "state": "accepted",
+      "reason": "Debt: low value per finding.",
+      "at": "2026-10-28T13:29:07Z",
+      "title": "ViewSection in apiwire keeps its state in 3 boolean flags (IsEmpty, IsGrouped, HasContent)."
+    },
+    "security.risk_hotspot-2252e45b0e2a": {
+      "state": "accepted",
+      "reason": "Design: informational. This component changes often; nothing to fix.",
+      "at": "2026-10-28T13:29:07Z",
+      "title": "pgstore changes often and lies on the path to sensitive data."
+    },
+    "types.synonyms-36f5ee483e02": {
+      "state": "accepted",
+      "reason": "Design: wire DTOs (apiwire, realtime, channels) mirror domain types on purpose, as the rule against leaking storage types asks.",
+      "at": "2026-10-28T13:29:07Z",
+      "title": "ChannelAuthor (apiwire) and AuthorView (realtime) share most of their fields."
+    },
+    "concepts.units_in_names-d535803df222": {
+      "state": "accepted",
+      "reason": "Debt: low value per finding.",
+      "at": "2026-10-28T13:29:07Z",
+      "title": "message is named in bytes in realtimecfg; without a unit in ai."
+    },
+    "vocabulary.leak-6957b9ab911d": {
+      "state": "accepted",
+      "reason": "Design: intended mentions, mostly in comments; a GraphQuery carries the compiled row gate, and packages name the gated reader they get at wiring.",
+      "at": "2026-10-28T13:29:07Z",
+      "title": "aclstore uses the term \"Local role\", owned by acl."
+    },
+    "vocabulary.leak-1e42a7a29cb1": {
+      "state": "accepted",
+      "reason": "Design: intended mentions, mostly in comments; a GraphQuery carries the compiled row gate, and packages name the gated reader they get at wiring.",
+      "at": "2026-10-28T13:29:07Z",
+      "title": "filter uses the term \"Graph query\", owned by store."
+    },
+    "vocabulary.leak-a93b234e9d8e": {
+      "state": "accepted",
+      "reason": "Design: intended mentions, mostly in comments; a GraphQuery carries the compiled row gate, and packages name the gated reader they get at wiring.",
+      "at": "2026-10-28T13:29:07Z",
+      "title": "predicatefns uses the term \"ACL policy\", owned by acl."
+    },
+    "vocabulary.leak-c480030a3343": {
+      "state": "accepted",
+      "reason": "Design: intended mentions, mostly in comments; a GraphQuery carries the compiled row gate, and packages name the gated reader they get at wiring.",
+      "at": "2026-10-28T13:29:07Z",
+      "title": "principal uses the term \"ACL policy\", owned by acl."
+    },
+    "vocabulary.leak-92989fdc2dab": {
+      "state": "accepted",
+      "reason": "Design: intended mentions, mostly in comments; a GraphQuery carries the compiled row gate, and packages name the gated reader they get at wiring.",
+      "at": "2026-10-28T13:29:07Z",
+      "title": "principal uses the term \"Client ceiling\", owned by acl."
+    },
+    "concepts.raw_ids-3eb1f64e3114": {
+      "state": "accepted",
+      "reason": "Debt: low value per finding.",
+      "at": "2026-10-28T13:29:07Z",
+      "title": "web/components/piles holds raw ids whose concept is unclear: pileId."
+    },
+    "boundaries.unrelated_parts-df5ebc488a77": {
+      "state": "accepted",
+      "reason": "Debt: split candidate for later.",
+      "at": "2026-10-28T13:29:07Z",
+      "title": "web/components/configure holds 3 groups of files that neither refer to each other nor change together."
+    },
+    "vocabulary.leak-5316aa869ed5": {
+      "state": "accepted",
+      "reason": "Design: intended mentions, mostly in comments; a GraphQuery carries the compiled row gate, and packages name the gated reader they get at wiring.",
+      "at": "2026-10-28T13:29:07Z",
+      "title": "entitymanager uses the term \"Gated reader\", owned by visibility."
+    },
+    "types.synonyms-c774bc2e370a": {
+      "state": "accepted",
+      "reason": "Design: wire DTOs (apiwire, realtime, channels) mirror domain types on purpose, as the rule against leaking storage types asks.",
+      "at": "2026-10-28T13:29:07Z",
+      "title": "ExportRelation (cli) and RelationData (importer) share most of their fields."
+    },
+    "concepts.raw_ids-6c611cd88644": {
+      "state": "accepted",
+      "reason": "Debt: low value per finding.",
+      "at": "2026-10-28T13:29:07Z",
+      "title": "realtime holds raw ids whose concept is unclear: AnchorID."
+    },
+    "vocabulary.leak-19525a3cdf96": {
+      "state": "accepted",
+      "reason": "Design: intended mentions, mostly in comments; a GraphQuery carries the compiled row gate, and packages name the gated reader they get at wiring.",
+      "at": "2026-10-28T13:29:07Z",
+      "title": "realtime uses the term \"Gated reader\", owned by visibility."
+    },
+    "vocabulary.leak-b4e97d5ba6d4": {
+      "state": "accepted",
+      "reason": "Design: intended mentions, mostly in comments; a GraphQuery carries the compiled row gate, and packages name the gated reader they get at wiring.",
+      "at": "2026-10-28T13:29:07Z",
+      "title": "schema uses the term \"Gated reader\", owned by visibility."
+    },
+    "boundaries.stability-4fbb2e4787f2": {
+      "state": "accepted",
+      "reason": "Debt: expected for core packages such as metamodel and acl.",
+      "at": "2026-10-28T13:29:07Z",
+      "title": "app-editor is in the zone of uselessness: mostly abstractions, and few components depend on it (0)."
+    },
+    "vocabulary.leak-59b29d144b17": {
+      "state": "accepted",
+      "reason": "Design: intended mentions, mostly in comments; a GraphQuery carries the compiled row gate, and packages name the gated reader they get at wiring.",
+      "at": "2026-10-28T13:29:07Z",
+      "title": "store uses the term \"ACL policy\", owned by acl."
+    },
+    "vocabulary.leak-8445dc525d93": {
+      "state": "accepted",
+      "reason": "Design: intended mentions, mostly in comments; a GraphQuery carries the compiled row gate, and packages name the gated reader they get at wiring.",
+      "at": "2026-10-28T13:29:07Z",
+      "title": "metamodel uses the term \"Gated reader\", owned by visibility."
+    },
+    "vocabulary.leak-7f5a8c260288": {
+      "state": "accepted",
+      "reason": "Design: intended mentions, mostly in comments; a GraphQuery carries the compiled row gate, and packages name the gated reader they get at wiring.",
+      "at": "2026-10-28T13:29:07Z",
+      "title": "metamodel uses the term \"Local role\", owned by acl."
+    },
+    "vocabulary.leak-1d79ab64dd41": {
+      "state": "accepted",
+      "reason": "Design: intended mentions, mostly in comments; a GraphQuery carries the compiled row gate, and packages name the gated reader they get at wiring.",
+      "at": "2026-10-28T13:29:07Z",
+      "title": "metamodel uses the term \"Unrestricted reader\", owned by visibility."
+    },
+    "vocabulary.leak-9d6db7c83469": {
+      "state": "accepted",
+      "reason": "Design: intended mentions, mostly in comments; a GraphQuery carries the compiled row gate, and packages name the gated reader they get at wiring.",
+      "at": "2026-10-28T13:29:07Z",
+      "title": "aclstore uses the term \"ACL policy\", owned by acl."
+    },
+    "vocabulary.leak-b68d3550e4d6": {
+      "state": "accepted",
+      "reason": "Design: intended mentions, mostly in comments; a GraphQuery carries the compiled row gate, and packages name the gated reader they get at wiring.",
+      "at": "2026-10-28T13:29:07Z",
+      "title": "classification uses the term \"ACL policy\", owned by acl."
+    },
+    "vocabulary.leak-1de21eca7e38": {
+      "state": "accepted",
+      "reason": "Design: intended mentions, mostly in comments; a GraphQuery carries the compiled row gate, and packages name the gated reader they get at wiring.",
+      "at": "2026-10-28T13:29:07Z",
+      "title": "dataentryconfig uses the term \"Gated reader\", owned by visibility."
+    },
+    "vocabulary.leak-7b028de3571d": {
+      "state": "accepted",
+      "reason": "Design: intended mentions, mostly in comments; a GraphQuery carries the compiled row gate, and packages name the gated reader they get at wiring.",
+      "at": "2026-10-28T13:29:07Z",
+      "title": "ingest uses the term \"Client ceiling\", owned by acl."
+    },
+    "vocabulary.leak-23eadcfe5302": {
+      "state": "accepted",
+      "reason": "Design: intended mentions, mostly in comments; a GraphQuery carries the compiled row gate, and packages name the gated reader they get at wiring.",
+      "at": "2026-10-28T13:29:07Z",
+      "title": "migration uses the term \"Local role\", owned by acl."
+    },
+    "vocabulary.leak-c5eb54d5cfbc": {
+      "state": "accepted",
+      "reason": "Design: intended mentions, mostly in comments; a GraphQuery carries the compiled row gate, and packages name the gated reader they get at wiring.",
+      "at": "2026-10-28T13:29:07Z",
+      "title": "realtime uses the term \"Entity header\", owned by store."
+    },
+    "vocabulary.leak-7c4e7f519522": {
+      "state": "accepted",
+      "reason": "Design: intended mentions, mostly in comments; a GraphQuery carries the compiled row gate, and packages name the gated reader they get at wiring.",
+      "at": "2026-10-28T13:29:07Z",
+      "title": "realtime uses the term \"Local role\", owned by acl."
+    },
+    "vocabulary.leak-ba6b22169bf3": {
+      "state": "accepted",
+      "reason": "Design: intended mentions, mostly in comments; a GraphQuery carries the compiled row gate, and packages name the gated reader they get at wiring.",
+      "at": "2026-10-28T13:29:07Z",
+      "title": "script uses the term \"Client ceiling\", owned by acl."
+    },
+    "vocabulary.leak-4ee8a1326e12": {
+      "state": "accepted",
+      "reason": "Design: intended mentions, mostly in comments; a GraphQuery carries the compiled row gate, and packages name the gated reader they get at wiring.",
+      "at": "2026-10-28T13:29:07Z",
+      "title": "search uses the term \"ACL policy\", owned by acl."
+    },
+    "vocabulary.leak-d889782d647d": {
+      "state": "accepted",
+      "reason": "Design: intended mentions, mostly in comments; a GraphQuery carries the compiled row gate, and packages name the gated reader they get at wiring.",
+      "at": "2026-10-28T13:29:07Z",
+      "title": "sqlitedb uses the term \"Face selection\", owned by store."
+    },
+    "vocabulary.leak-354a82c99d5f": {
+      "state": "accepted",
+      "reason": "Design: intended mentions, mostly in comments; a GraphQuery carries the compiled row gate, and packages name the gated reader they get at wiring.",
+      "at": "2026-10-28T13:29:07Z",
+      "title": "statemachine uses the term \"ACL policy\", owned by acl."
+    },
+    "vocabulary.leak-7d7347d8df1f": {
+      "state": "accepted",
+      "reason": "Design: intended mentions, mostly in comments; a GraphQuery carries the compiled row gate, and packages name the gated reader they get at wiring.",
+      "at": "2026-10-28T13:29:07Z",
+      "title": "statemachine uses the term \"Graph query\", owned by store."
+    },
+    "vocabulary.leak-697bcc35de3f": {
+      "state": "accepted",
+      "reason": "Design: intended mentions, mostly in comments; a GraphQuery carries the compiled row gate, and packages name the gated reader they get at wiring.",
+      "at": "2026-10-28T13:29:07Z",
+      "title": "statemachine uses the term \"Local role\", owned by acl."
+    },
+    "vocabulary.leak-ace19766e40a": {
+      "state": "accepted",
+      "reason": "Design: intended mentions, mostly in comments; a GraphQuery carries the compiled row gate, and packages name the gated reader they get at wiring.",
+      "at": "2026-10-28T13:29:07Z",
+      "title": "tenant uses the term \"ACL policy\", owned by acl."
+    },
+    "vocabulary.leak-135ffe93a367": {
+      "state": "accepted",
+      "reason": "Design: intended mentions, mostly in comments; a GraphQuery carries the compiled row gate, and packages name the gated reader they get at wiring.",
+      "at": "2026-10-28T13:29:07Z",
+      "title": "entitymanager uses the term \"Unrestricted reader\", owned by visibility."
+    },
+    "vocabulary.leak-c7ac307a0451": {
+      "state": "accepted",
+      "reason": "Design: intended mentions, mostly in comments; a GraphQuery carries the compiled row gate, and packages name the gated reader they get at wiring.",
+      "at": "2026-10-28T13:29:07Z",
+      "title": "entity uses the term \"Gated reader\", owned by visibility."
+    },
+    "vocabulary.leak-d1d9fa195a27": {
+      "state": "accepted",
+      "reason": "Design: intended mentions, mostly in comments; a GraphQuery carries the compiled row gate, and packages name the gated reader they get at wiring.",
+      "at": "2026-10-28T13:29:07Z",
+      "title": "script uses the term \"Gated reader\", owned by visibility."
+    },
+    "vocabulary.leak-f92da48b883f": {
+      "state": "accepted",
+      "reason": "Design: intended mentions, mostly in comments; a GraphQuery carries the compiled row gate, and packages name the gated reader they get at wiring.",
+      "at": "2026-10-28T13:29:07Z",
+      "title": "validation uses the term \"Gated reader\", owned by visibility."
+    },
+    "vocabulary.leak-779f6807351b": {
+      "state": "accepted",
+      "reason": "Design: intended mentions, mostly in comments; a GraphQuery carries the compiled row gate, and packages name the gated reader they get at wiring.",
+      "at": "2026-10-28T13:29:07Z",
+      "title": "access uses the term \"Gated reader\", owned by visibility."
+    },
+    "vocabulary.leak-c25ef080b589": {
+      "state": "accepted",
+      "reason": "Design: intended mentions, mostly in comments; a GraphQuery carries the compiled row gate, and packages name the gated reader they get at wiring.",
+      "at": "2026-10-28T13:29:07Z",
+      "title": "lease uses the term \"Gated reader\", owned by visibility."
+    },
+    "vocabulary.leak-e912af7bf50c": {
+      "state": "accepted",
+      "reason": "Design: intended mentions, mostly in comments; a GraphQuery carries the compiled row gate, and packages name the gated reader they get at wiring.",
+      "at": "2026-10-28T13:29:07Z",
+      "title": "schema uses the term \"Unrestricted reader\", owned by visibility."
+    },
+    "vocabulary.leak-3354b54bf553": {
+      "state": "accepted",
+      "reason": "Design: intended mentions, mostly in comments; a GraphQuery carries the compiled row gate, and packages name the gated reader they get at wiring.",
+      "at": "2026-10-28T13:29:07Z",
+      "title": "validationgraph uses the term \"Gated reader\", owned by visibility."
+    }
+  },
+  "labels": {},
+  "ratchet": {
+    "metrics": {
+      "weight.profile": 52,
+      "weight.structure": 936,
+      "weight.layers": 0,
+      "weight.vocabulary": 908,
+      "weight.types": 3780,
+      "weight.concepts": 7186,
+      "weight.boundaries": 1512,
+      "weight.data": 1297,
+      "weight.security": 2300,
+      "largest_tangle": 13,
+      "cycle_edges": 68,
+      "upward_edges": 0,
+      "propagation_cost": 10.0
+    },
+    "min_weight": 0,
+    "at": "2026-10-28T13:29:24Z",
+    "log": [
+      {
+        "at": "2026-10-28T13:29:24Z",
+        "change": "start",
+        "reason": null,
+        "metrics": {}
+      }
+    ]
+  }
+}
