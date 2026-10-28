@@ -63,7 +63,7 @@ const CHROME_TEXT_NL: Record<ChromeTextKey, string> = {
   unassigned: 'Niet toegewezen',
   assignedTo: 'Toegewezen aan',
   noMatchingPeople: 'Geen personen gevonden',
-  due: 'Uiterlijk',
+  due: 'Uiterlijk op',
   today: 'Vandaag',
   keyThen: 'dan',
   keyOr: 'of',
