@@ -84,8 +84,9 @@ type MessageTypeView struct {
 	// TTLSeconds is how long a signal lives; 0 for a log type.
 	TTLSeconds int `json:"ttl_seconds,omitempty"`
 	// CanPost reports whether the caller may post the type here now: they
-	// hold a post role, the channel is open and the transport can carry
-	// it. The type's `when:` depends on the message and is not evaluated.
+	// hold a post role, the channel is open, the session's state is in
+	// the type's `in:`, and the transport can carry it. The type's `when:`
+	// depends on the message and is not evaluated.
 	CanPost bool `json:"can_post"`
 	// Reply reports whether a message of the type may reply to another.
 	// Only log messages can.

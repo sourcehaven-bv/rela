@@ -5,7 +5,9 @@ title: 'Session composer: offer only message types that apply in the current sta
 kind: enhancement
 priority: medium
 effort: m
-status: backlog
+started: "2026-10-28"
+completed: "2026-10-28"
+status: done
 ---
 
 ## Description

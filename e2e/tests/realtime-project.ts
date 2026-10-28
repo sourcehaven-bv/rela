@@ -38,6 +38,8 @@ export const SESSION = {
   /** The message type that moves the session; only the lead may post it. */
   messageLabel: "Contained",
   noteLabel: "Note",
+  /** A message type with in: [contained]; offered only once the session is contained. */
+  wrapUpLabel: "Wrap-up",
 } as const;
 
 /** The face-anchored channel type on the faced project's `policy`. */
@@ -54,7 +56,8 @@ export interface RoomOptions {
   leadReadsOnly?: boolean;
   /**
    * Gives the room a session, Detected to Contained. Members and the lead
-   * may post a Contained message; only the lead's moves the session.
+   * may post a Contained message; only the lead's moves the session. A
+   * Wrap-up message may be posted only in Contained.
    */
   session?: boolean;
 }
@@ -68,7 +71,13 @@ export function roomRealtimeYaml(opts: RoomOptions = {}): string {
         label: ${SESSION.messageLabel}
         properties:
           note: { type: string, required: true, label: ${SESSION.noteLabel} }
-        post: [member, lead]`
+        post: [member, lead]
+      wrap-up:
+        label: ${SESSION.wrapUpLabel}
+        properties:
+          note: { type: string, label: ${SESSION.noteLabel} }
+        post: [member, lead]
+        in: [contained]`
     : "";
   const session = opts.session
     ? `    session:

@@ -73,6 +73,7 @@ channel_types:
       member: { from: attached }
     message_types:
       contained: { properties: { note: { type: string } }, post: [member] }
+      closing:   { properties: { note: { type: string } }, post: [member], in: [contained] }
     session:
       initial: detected
       states:
@@ -406,6 +407,29 @@ func setBackendEnv(t *testing.T) {
 	for k, v := range backendtest.Env(t) {
 		t.Setenv(k, v)
 	}
+}
+
+// TestChannelCLI_SessionWrongState pins TKT-QYFLRH AC 4 for the CLI: a
+// type limited by in: is not in "You may post" outside its states, and
+// `rela channel post` prints the refusal with the allowed states and fails.
+func TestChannelCLI_SessionWrongState(t *testing.T) {
+	p := newChannelProject(t)
+	got, err := runChannel(t, p.svc, "alice", "", "channel", "read", p.item, "incident")
+	require.NoError(t, err)
+	assert.Contains(t, got, "You may post: contained\n")
+
+	_, err = runChannel(t, p.svc, "alice", "", "channel", "post", p.item, "incident", "closing")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "session_wrong_state: closing may be posted only while the session is in "+
+		"contained; it is in detected (rule: channel_types.incident.message_types.closing.in)")
+
+	_, err = runChannel(t, p.svc, "alice", "", "channel", "post", p.item, "incident", "contained")
+	require.NoError(t, err)
+	got, err = runChannel(t, p.svc, "alice", "", "channel", "read", p.item, "incident")
+	require.NoError(t, err)
+	assert.Contains(t, got, "You may post: closing, contained\n")
+	_, err = runChannel(t, p.svc, "alice", "", "channel", "post", p.item, "incident", "closing")
+	require.NoError(t, err)
 }
 
 // TestChannelCLI_PostSession pins that a post in a session channel prints

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"log/slog"
 	"maps"
 	"slices"
 	"strings"
@@ -17,7 +18,9 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/channels"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/realtimecfg"
 	"github.com/Sourcehaven-BV/rela/internal/realtimelimits"
+	"github.com/Sourcehaven-BV/rela/internal/testutil/logtest"
 )
 
 // triggerRealtime is testRealtime with triggers on tickets and pages.
@@ -1172,4 +1175,72 @@ triggers:
 	require.NoError(t, err)
 	require.Equal(t, t0.Add(24*time.Hour), c.Session.NextDueAt)
 	require.Equal(t, t0.Add(24*time.Hour), th.wake.Take())
+}
+
+// pocTriggers is the PoC's ready trigger, which posts go (in: [new]).
+func pocTriggers(whenClosed string) string {
+	return pocRealtime(`
+triggers:
+  ready:
+    entity_type: ticket
+    on: enter
+    when: "entity.status == 'ready'"
+    channel: run` + whenClosed + `
+    post: { type: go, props: { note: "Moved to Ready on the board." } }
+`)
+}
+
+// TestSessionTriggerPost_MessageIn pins AC 6: a trigger whose message type
+// has in: is skipped while the session is elsewhere: nothing is stored and
+// Skipped counts it. In the type's state it posts and moves the session.
+func TestSessionTriggerPost_MessageIn(t *testing.T) {
+	t.Run("posts in its state", func(t *testing.T) {
+		th := newTriggerHarness(t, pocTriggers(""))
+		th.src.set("ticket", "TKT-1", "", map[string]any{"status": "new"})
+		th.reconcile(t)
+		th.ticket(1, map[string]any{"status": "ready"})
+		rep := th.round(t)
+		require.Equal(t, 1, rep.Posted)
+		head, err := th.store.Store.Head(context.Background(), pocKey())
+		require.NoError(t, err)
+		require.Equal(t, "queued", head.Session.State)
+	})
+	t.Run("skipped elsewhere", func(t *testing.T) {
+		th := newTriggerHarness(t, pocTriggers(""))
+		th.pocDriveTo(t, "working")
+		before, err := th.store.Store.Head(context.Background(), pocKey())
+		require.NoError(t, err)
+		th.src.set("ticket", "TKT-1", "", map[string]any{"status": "new"})
+		th.reconcile(t)
+		th.ticket(1, map[string]any{"status": "ready"})
+		// The test is not parallel, so no other test logs meanwhile.
+		logs := logtest.Capture(t, slog.LevelWarn)
+		rep := th.round(t)
+		require.Equal(t, 0, rep.Posted)
+		require.Equal(t, 1, rep.Skipped)
+		require.Zero(t, rep.Failed)
+		require.Contains(t, logs(), "level=WARN")
+		require.Contains(t, logs(), "in=channel_types.run.message_types.go.in")
+		after, err := th.store.Store.Head(context.Background(), pocKey())
+		require.NoError(t, err)
+		require.Equal(t, before.LastSeq, after.LastSeq, "a skipped trigger stored a message")
+		require.Equal(t, "working", after.Session.State)
+	})
+	t.Run("when_closed post into a final state outside in", func(t *testing.T) {
+		th := newTriggerHarness(t, pocTriggers("\n    when_closed: post"))
+		th.pocDriveTo(t, "done")
+		_, err := th.svc.Lifecycle(as(pocOwner()), pocRun, realtimecfg.LifecycleClose)
+		require.NoError(t, err)
+		before, err := th.store.Store.Head(context.Background(), pocKey())
+		require.NoError(t, err)
+		th.src.set("ticket", "TKT-1", "", map[string]any{"status": "new"})
+		th.reconcile(t)
+		th.ticket(1, map[string]any{"status": "ready"})
+		rep := th.round(t)
+		require.Equal(t, 1, rep.Skipped)
+		require.Zero(t, rep.Posted)
+		after, err := th.store.Store.Head(context.Background(), pocKey())
+		require.NoError(t, err)
+		require.Equal(t, before.LastSeq, after.LastSeq)
+	})
 }

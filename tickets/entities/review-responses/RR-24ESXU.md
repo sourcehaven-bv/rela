@@ -1,0 +1,9 @@
+---
+id: RR-24ESXU
+type: review-response
+title: Store gate duplicates the session reading in the channels package
+finding: 'The plan adds channels.SessionGate{Initial, States} and teaches CheckAppendState (internal/channels/channels.go:408) to read an unset session as Initial. That copies the rule that lives in realtime.currentSession (internal/realtime/session.go:125), and the copy already differs: currentSession tests ch.Session.IsZero(), which is Generation==0 && State=="" (internal/channels/session.go:96), while the plan tests State=="" only. The store would then hold a second copy of session semantics that can drift from the decider. The existing seam for this already exists: every post in a session channel carries a SessionStep (newSessionPost, session.go:362), and DecideSession (channels/session.go:375) runs its pure callback under the store lock on all backends (sql.go:463, filechannels the same). Add a pure Admit func(cur Channel) error (or let Decide return a refusal) to SessionStep, evaluate it in DecideSession before Decide, and have PrepareSessionStep refuse it on SetSession. The realtime side builds it from currentSession plus mt.PostableIn, so stranded handling, initial handling and the decider share one implementation. This removes the CheckAppendState signature change, the separate create-branch handling in both backends, and the store''s knowledge of the initial state. system.go:62 gets the same check for free because it already passes sp.step.'
+severity: significant
+resolution: The store check is now a pure `SessionStep.Admit` callback that `channels.DecideSession` runs before `Decide`; realtime builds it from `currentSession` plus `mt.PostableIn`, `SetSession` refuses a step that sets it, and `CheckAppendState`, `NewMessage` and the create branches stay unchanged.
+status: addressed
+---

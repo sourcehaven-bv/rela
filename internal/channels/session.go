@@ -273,6 +273,16 @@ type SessionStep struct {
 	// Decide must be pure and fast: no I/O and no locks. A backend may call
 	// it more than once if it retries a transaction.
 	Decide func(cur Channel) (SessionMove, bool)
+	// Admit, when set, is called by [Store.Append] under the lock, before
+	// Decide, with the same channel. It returns nil or an error that
+	// wraps [ErrSessionState], normally a [*SessionStateError]; such an
+	// error refuses the append, which then stores nothing, and every
+	// backend returns it unchanged. Another error is a programming error:
+	// it refuses the append too, but a backend may wrap it. Pure and fast,
+	// like Decide. Nil: every append is
+	// admitted. [Store.SetSession] refuses a step that sets it: a session
+	// move posts no message to admit.
+	Admit func(cur Channel) error
 	// NoticeType is the message type of the notice.
 	NoticeType string
 	// NoticeBy is the author of the notice.
@@ -369,12 +379,18 @@ func CheckSessionMove(move SessionMove) error {
 	return nil
 }
 
-// DecideSession runs the step's decider against cur and checks the move.
-// moved is false for an append without a step, or a decider that returns
-// no move.
+// DecideSession runs the step's Admit, when it is set, and then its
+// decider against cur, and checks the move. An error from Admit is
+// returned unchanged. moved is false for an append without a step, or a
+// decider that returns no move.
 func DecideSession(step *SessionStep, cur Channel) (move SessionMove, moved bool, err error) {
 	if step == nil {
 		return SessionMove{}, false, nil
+	}
+	if step.Admit != nil {
+		if err := step.Admit(cur); err != nil {
+			return SessionMove{}, false, err
+		}
 	}
 	move, moved = step.Decide(cur)
 	if !moved {
@@ -407,8 +423,12 @@ func PrepareAppendStep(step *SessionStep) error {
 	return PrepareSessionStep(step)
 }
 
-// PrepareTimerStep validates the step of a [Store.SetSession] call.
+// PrepareTimerStep validates the step of a [Store.SetSession] call, which
+// also refuses a step that sets Admit.
 func PrepareTimerStep(step SessionStep) error {
+	if step.Admit != nil {
+		return fmt.Errorf("%w: a session move cannot admit a post", ErrInvalidMessage)
+	}
 	return PrepareSessionStep(&step)
 }
 

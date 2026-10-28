@@ -457,3 +457,242 @@ func TestSession_FirstPostByCreatorMoves(t *testing.T) {
 		require.True(t, c.ops.roles["opener"])
 	})
 }
+
+// pocRealtime is the agent-runner session of the PoC on tickets, with
+// in: on every transition-keyed type, each listing exactly the states whose
+// on: keys it, progress limited to planning and working, and text free.
+// alice owns TKT-1, so she holds owner; robot holds runner through
+// agent.runner. done is limited to the final state done, for the final
+// state cases. triggers is appended as is.
+func pocRealtime(triggers string) string {
+	return `
+version: 1
+channel_types:
+  run:
+    attach_to: [ticket]
+    read: { from: attached }
+    roles:
+      owner:  { from: entity.owner }
+      runner: { permission: agent.runner }
+    message_types:
+      text:       { properties: { body: { type: string, required: true } }, post: [owner, runner] }
+      go:         { properties: { note: { type: string } }, post: [owner], in: [new] }
+      claim:      { properties: { note: { type: string } }, post: [runner], in: [queued] }
+      resume:     { properties: { note: { type: string } }, post: [runner], in: [queued] }
+      progress:   { properties: { note: { type: string } }, post: [runner], in: [planning, working] }
+      plan:       { properties: { note: { type: string } }, post: [runner], in: [planning] }
+      approve:    { properties: { note: { type: string } }, post: [owner], in: [plan-review] }
+      revise:     { properties: { note: { type: string } }, post: [owner], in: [plan-review] }
+      ask:        { properties: { note: { type: string } }, post: [runner], in: [planning, working] }
+      answer:     { properties: { note: { type: string } }, post: [owner], in: [plan-asking, asking] }
+      permission: { properties: { note: { type: string } }, post: [runner], in: [working] }
+      allow:      { properties: { note: { type: string } }, post: [owner], in: [approving] }
+      deny:       { properties: { note: { type: string } }, post: [owner], in: [approving] }
+      finished:   { properties: { note: { type: string } }, post: [runner], in: [working] }
+      fail:       { properties: { note: { type: string } }, post: [runner], in: [planning, working] }
+      accept:     { properties: { note: { type: string } }, post: [owner], in: [review] }
+      rework:     { properties: { note: { type: string } }, post: [owner], in: [review] }
+      retry:      { properties: { note: { type: string } }, post: [owner], in: [blocked] }
+      abandon:    { properties: { note: { type: string } }, post: [owner], in: [blocked] }
+      thanks:     { properties: { note: { type: string } }, post: [owner], in: [done] }
+    lifecycle:
+      close:  { roles: [owner] }
+      reopen: { roles: [owner] }
+    session:
+      initial: new
+      states:
+        new:         { waiting_for: [owner], on: { go: { to: queued } } }
+        queued:
+          on:
+            claim:  { to: planning, roles: [runner] }
+            resume: { to: working, roles: [runner] }
+        planning:
+          on:
+            plan: { to: plan-review, roles: [runner] }
+            ask:  { to: plan-asking, roles: [runner] }
+            fail: { to: blocked, roles: [runner] }
+        plan-asking: { waiting_for: [owner], on: { answer: { to: planning, roles: [owner] } } }
+        plan-review:
+          waiting_for: [owner]
+          on:
+            approve: { to: working, roles: [owner] }
+            revise:  { to: planning, roles: [owner] }
+        working:
+          on:
+            ask:        { to: asking, roles: [runner] }
+            permission: { to: approving, roles: [runner] }
+            finished:   { to: review, roles: [runner] }
+            fail:       { to: blocked, roles: [runner] }
+        asking: { waiting_for: [owner], on: { answer: { to: working, roles: [owner] } } }
+        approving:
+          waiting_for: [owner]
+          on:
+            allow: { to: working, roles: [owner] }
+            deny:  { to: working, roles: [owner] }
+        review:
+          waiting_for: [owner]
+          on:
+            accept: { to: done, roles: [owner] }
+            rework: { to: queued, roles: [owner] }
+        blocked:
+          waiting_for: [owner]
+          on:
+            retry:   { to: queued, roles: [owner] }
+            abandon: { to: abandoned, roles: [owner] }
+        done:      { final: true }
+        abandoned: { final: true }
+` + triggers
+}
+
+var pocRun = RawAddress{EntityType: "ticket", Anchor: "TKT-1", Type: "run"}
+
+func pocKey() channels.Key {
+	return channels.Key{Anchor: channels.Anchor{ID: "TKT-1"}, Type: "run"}
+}
+
+// pocOwner and pocRunner are the callers of the PoC fixture.
+func pocOwner() *fakeAccess  { return user("alice") }
+func pocRunner() *fakeAccess { return user("robot", "agent.runner") }
+
+func newPocHarness(t *testing.T) *harness {
+	t.Helper()
+	return newHarness(t, withYAML(pocRealtime("")))
+}
+
+// pocDriveTo moves the run channel of TKT-1 to state by posts of the owner
+// and the runner. "unstored" posts nothing.
+func (h *harness) pocDriveTo(t *testing.T, state string) {
+	t.Helper()
+	o, r := pocOwner(), pocRunner()
+	path := map[string][]any{
+		"unstored":    nil,
+		"new":         {o, "text"},
+		"queued":      {o, "go"},
+		"planning":    {o, "go", r, "claim"},
+		"plan-review": {o, "go", r, "claim", r, "plan"},
+		"working":     {o, "go", r, "claim", r, "plan", o, "approve"},
+		"review":      {o, "go", r, "claim", r, "plan", o, "approve", r, "finished"},
+		"done":        {o, "go", r, "claim", r, "plan", o, "approve", r, "finished", o, "accept"},
+	}
+	steps, ok := path[state]
+	require.True(t, ok, "no path to %s", state)
+	for i := 0; i < len(steps); i += 2 {
+		typ := steps[i+1].(string)
+		p := map[string]any{"note": "n"}
+		if typ == "text" {
+			p = map[string]any{"body": "hi"}
+		}
+		h.postTo(t, steps[i].(*fakeAccess), pocRun, typ, p)
+	}
+	if state != "unstored" {
+		v, err := h.svc.Head(as(o), pocRun)
+		require.NoError(t, err)
+		require.Equal(t, state, v.Channel.Session.State)
+	}
+}
+
+// TestAffordances_MessageIn pins AC 3 and AC 7: _actions.post and can_post
+// list a type with in: only while the session is in one of its states. The
+// transition and read_session columns are regression pins, not proof of a
+// filter: transitions are already limited to the current state's on:, and
+// the load check forces each such state into the type's in:.
+func TestAffordances_MessageIn(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name        string
+		who         *fakeAccess
+		state       string
+		setup       func(t *testing.T, h *harness)
+		post        []string
+		transitions []string
+	}{
+		{name: "owner in plan-review", who: pocOwner(), state: "plan-review",
+			post: []string{"approve", "revise", "text"}, transitions: []string{"approve", "revise"}},
+		{name: "owner in working", who: pocOwner(), state: "working", post: []string{"text"}, transitions: []string{}},
+		{name: "runner in working", who: pocRunner(), state: "working",
+			post:        []string{"ask", "fail", "finished", "permission", "progress", "text"},
+			transitions: []string{"ask", "fail", "finished", "permission"}},
+		{name: "runner in queued", who: pocRunner(), state: "queued",
+			post: []string{"claim", "resume", "text"}, transitions: []string{"claim", "resume"}},
+		{name: "unstored reads as initial", who: pocOwner(), state: "unstored",
+			post: []string{"go", "text"}, transitions: []string{"go"}},
+		{name: "final state admits the types that list it", who: pocOwner(), state: "done",
+			post: []string{"text", "thanks"}, transitions: []string{}},
+		{name: "stranded admits only types without in", who: pocRunner(), state: "working",
+			post: []string{"text"}, transitions: []string{},
+			setup: func(t *testing.T, h *harness) {
+				t.Helper()
+				// working is renamed: the channel is stranded in it.
+				y := strings.NewReplacer("        working:\n", "        busy:\n", "to: working", "to: busy",
+					"in: [planning, working]", "in: [planning, busy]", "in: [working]", "in: [busy]").
+					Replace(pocRealtime(""))
+				h.cfg.set(Snapshot{Config: testCompiled(t, y)})
+			}},
+		{name: "closed channel", who: pocOwner(), state: "plan-review", post: []string{}, transitions: []string{},
+			setup: func(t *testing.T, h *harness) {
+				t.Helper()
+				_, err := h.svc.Lifecycle(as(pocOwner()), pocRun, realtimecfg.LifecycleClose)
+				require.NoError(t, err)
+			}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			h := newPocHarness(t)
+			h.pocDriveTo(t, tc.state)
+			if tc.setup != nil {
+				tc.setup(t, h)
+			}
+			a := h.headActions(t, tc.who, pocRun)
+			post := a.Post
+			if post == nil {
+				post = []string{}
+			}
+			require.Equal(t, tc.post, post)
+			require.Equal(t, tc.transitions, a.Transitions)
+
+			read, err := h.svc.Read(as(tc.who), pocRun, ReadRequest{Schemas: true, Actions: true})
+			require.NoError(t, err)
+			var canPost []string
+			for _, mt := range read.MessageTypes {
+				if mt.CanPost {
+					canPost = append(canPost, mt.Name)
+				}
+			}
+			slices.Sort(canPost)
+			if canPost == nil {
+				canPost = []string{}
+			}
+			require.Equal(t, tc.post, canPost, "read_channel can_post")
+
+			sess, err := h.svc.Session(as(tc.who), pocRun)
+			require.NoError(t, err)
+			require.Equal(t, tc.transitions, sess.Transitions, "read_session transitions")
+		})
+	}
+}
+
+// TestAffordances_MessageInInbox is a regression pin for the inbox: the
+// waiting entry of a session in plan-review lists its transitions. in:
+// cannot narrow them (see [TestAffordances_MessageIn]); this checks that
+// the in: fixture leaves them as they were.
+func TestAffordances_MessageInInbox(t *testing.T) {
+	t.Parallel()
+	h := newPocHarness(t)
+	h.pocDriveTo(t, "plan-review")
+	view := h.inbox(t, pocOwner(), InboxRequest{Limit: MaxInboxLimit})
+	require.Len(t, view.Entries, 1)
+	require.Equal(t, []string{"approve", "revise"}, view.Entries[0].Transitions)
+}
+
+// TestAffordances_MessageInNoSession pins AC 8: a channel type without a
+// session offers every type the caller may post, in every state of the
+// channel as before.
+func TestAffordances_MessageInNoSession(t *testing.T) {
+	t.Parallel()
+	h := newExampleHarness(t)
+	h.postTo(t, user("bob"), plainCh, "text", map[string]any{"body": "hi"})
+	a := h.headActions(t, user("alice"), plainCh)
+	require.Equal(t, []string{"text"}, a.Post)
+	require.Equal(t, []string{}, a.Transitions)
+}

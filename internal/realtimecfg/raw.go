@@ -133,6 +133,10 @@ type rawMessageType struct {
 	Post       []string               `yaml:"post"`
 	PromoteTo  *rawPromote            `yaml:"promote_to"`
 	Actions    map[string]rawAction   `yaml:"actions"`
+	// In is decoded for the key check only: yaml.v3 leaves it nil both for
+	// an absent key and for a null value, so [messageInCheck.withSession]
+	// reads presence from the YAML node.
+	In []string `yaml:"in"`
 }
 
 type rawProperty struct {

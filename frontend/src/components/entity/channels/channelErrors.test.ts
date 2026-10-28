@@ -1,8 +1,9 @@
-import { describe, it, expect } from 'vitest'
+import { afterEach, describe, it, expect } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { ApiError } from '@/api/errors'
 import { CHANNEL_ERROR_RULES, classifyChannelError, problemType } from './channelErrors'
+import { resetLanguageState } from '@/i18n/locale'
 
 // The refusal types the channel service declares. Every one needs a rule,
 // so a type the server gains cannot fall through to "toast and do nothing"
@@ -179,6 +180,34 @@ describe('classifyChannelError', () => {
   it('says to wait without a Retry-After', () => {
     expect(classifyChannelError(problem(429, 'rate_limited')).message).toBe(
       'Too many messages. Try again shortly.'
+    )
+  })
+})
+
+describe('session_wrong_state', () => {
+  const err = () =>
+    problem(
+      409,
+      'session_wrong_state',
+      'approve may be posted only while the session is in plan-review; it is in working',
+      'channel_types.run.message_types.approve.in'
+    )
+
+  afterEach(() => resetLanguageState({ user: 'en' }))
+
+  it('refetches the channel with a translated toast', () => {
+    resetLanguageState({ user: 'en' })
+    expect(classifyChannelError(err())).toEqual({
+      place: 'toast',
+      then: 'refetch',
+      message: "This message type cannot be posted in the session's current state. Choose another.",
+    })
+  })
+
+  it('says so in Dutch', () => {
+    resetLanguageState({ user: 'nl' })
+    expect(classifyChannelError(err()).message).toBe(
+      'Dit berichttype kan in de huidige stand van de sessie niet worden geplaatst. Kies een ander.'
     )
   })
 })

@@ -41,6 +41,8 @@ var refusedKeys = []struct {
 		"enters: set it on that state"},
 	{"channel_types.*.session.states.*.after.*.waiting_for", "waiting_for belongs to the state the session " +
 		"enters: set it on that state"},
+	{"channel_types.*.message_types.*.states", "use in: the session states in which the type may be posted"},
+	{"channel_types.*.message_types.*.from", "use in: the session states in which the type may be posted"},
 	{"agents", "agents are ordinary principals; restrict them with client_baselines in acl.yaml " +
 		"and match them with a principal_type role"},
 	{"channel_types.*.message_types.*.actions.*.by", "agents are ordinary principals, so an action " +

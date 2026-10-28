@@ -163,6 +163,7 @@
     "requestFailed": "Het verzoek aan het kanaal is mislukt.",
     "rateLimitedIn": "Te veel berichten. Probeer het over {n} s opnieuw.",
     "rateLimited": "Te veel berichten. Probeer het zo opnieuw.",
+    "sessionWrongState": "Dit berichttype kan in de huidige stand van de sessie niet worden geplaatst. Kies een ander.",
     "restrictedRef": "Afgeschermde verwijzing",
     "system": "systeem",
     "value": {

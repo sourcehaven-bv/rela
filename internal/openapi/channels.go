@@ -475,7 +475,9 @@ func refParam() Parameter {
 const postMessageText = "A log message is stored and answered 201. An ephemeral message is kept in memory " +
 	"for its TTL and answered 202, without a seq. A message that moves a session along a " +
 	"transition with outputs is refused 403 session_output_denied, before anything is stored, " +
-	"when you may not write one of them; the outputs' result is on the session notice."
+	"when you may not write one of them; the outputs' result is on the session notice. A message type " +
+	"may be limited to some session states with in:; outside them it is not in _actions.post, and a post " +
+	"is refused 409 session_wrong_state, whose title names the allowed states."
 
 // channelErrorText describes each error status a channel route answers.
 var channelErrorText = map[string]string{
@@ -485,7 +487,8 @@ var channelErrorText = map[string]string{
 	"404": "Entity not found (the same body as the entity GET), or no such channel type, channel or message",
 	"409": "The channel is not open or not in the state the operation starts from, the message was removed, " +
 		"a limit, the retention or a concurrent change refused. outputs_pending: the outputs of the session " +
-		"move the message caused are still running",
+		"move the message caused are still running. session_wrong_state: the message type may not be " +
+		"posted in the session's current state",
 	"413": "Request body or a value too large",
 	"422": "A ref to an entity that cannot be referenced, or a bare id for a face-anchored type. " +
 		"too_many_mentions: a message may mention at most 10 people or agents",

@@ -460,6 +460,15 @@ type MessageType struct {
 	// Actions are the buttons on a message. Promoting a message to an
 	// entity is always an action, so its gate is explicit.
 	Actions map[string]*Action
+	// In is `in:`: the session states in which the type may be posted, in
+	// file order. Nil means every state; see [MessageType.PostableIn].
+	In []string
+}
+
+// PostableIn reports whether a message of type mt may be posted while the
+// session is in state: true when mt has no `in:` or lists state.
+func (mt *MessageType) PostableIn(state string) bool {
+	return mt.In == nil || slices.Contains(mt.In, state)
 }
 
 // Holds reports whether a message whose `message` record has fields meets

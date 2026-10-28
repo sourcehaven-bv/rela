@@ -300,11 +300,7 @@ func (c *call) fireable(post map[string]bool) []string {
 	if s == nil || c.state() != channels.StateOpen {
 		return out
 	}
-	ch := channels.Channel{CreatedAt: c.now}
-	if c.head != nil {
-		ch = *c.head
-	}
-	cur := currentSession(s, ch)
+	cur := currentSession(s, sessionChannel(c.head, c.now))
 	st, ok := s.State(cur.State)
 	if !ok || st.Final {
 		return out
@@ -324,6 +320,72 @@ func (c *call) fireable(post map[string]bool) []string {
 	}
 	slices.Sort(out)
 	return out
+}
+
+// sessionChannel is the channel a call reads the session of: its head, or
+// for a channel not stored yet (nil head) one created at now, as an append
+// would create it.
+func sessionChannel(head *channels.Channel, now time.Time) channels.Channel {
+	if head != nil {
+		return *head
+	}
+	return channels.Channel{CreatedAt: now}
+}
+
+// sessionRefusal is the `in:` decision for a post of mt under session s
+// on ch: a [*channels.SessionStateError] when the session is in a state
+// mt's `in:` does not list, or is stranded; nil when it admits the post,
+// there is no session, or mt has no `in:`. The pre-check in [Service.Post]
+// calls it on the channel the call read (see [sessionChannel]), and the
+// store calls it through [admitIn], so the two cannot drift. It reads only
+// its arguments, so it is safe under the store's lock.
+func sessionRefusal(
+	s *realtimecfg.Session, mt *realtimecfg.MessageType, ch channels.Channel,
+) *channels.SessionStateError {
+	if s == nil || mt.In == nil {
+		return nil
+	}
+	cur := currentSession(s, ch)
+	if cur.stranded || !mt.PostableIn(cur.State) {
+		return &channels.SessionStateError{State: cur.State, Stranded: cur.stranded}
+	}
+	return nil
+}
+
+// admitIn adapts [sessionRefusal] to a [channels.SessionStep.Admit]. Nil
+// when there is no session or mt has no `in:`, so the store skips the call.
+func admitIn(s *realtimecfg.Session, mt *realtimecfg.MessageType) func(channels.Channel) error {
+	if s == nil || mt.In == nil {
+		return nil
+	}
+	return func(ch channels.Channel) error {
+		// Not `return sessionRefusal(...)`: a nil *SessionStateError in an
+		// error is not a nil error.
+		e := sessionRefusal(s, mt, ch)
+		if e == nil {
+			return nil
+		}
+		return e
+	}
+}
+
+// sessionWrongState is the 409 for a post of mt that e refused: the
+// session is in a state mt's `in:` does not list. The title is built from
+// the state the refusal saw, so the pre-check and the store's refusal read
+// the same.
+func sessionWrongState(
+	ct realtimecfg.ChannelType, mt *realtimecfg.MessageType, e *channels.SessionStateError,
+) *DenialError {
+	where := "it is in " + e.State
+	if e.Stranded {
+		where = "the session is stranded in " + e.State
+	}
+	return &DenialError{
+		Status: http.StatusConflict, Type: TypeSessionWrongState,
+		Title: fmt.Sprintf("%s may be posted only while the session is in %s; %s",
+			mt.Name, strings.Join(mt.In, ", "), where),
+		Rule: "channel_types." + ct.Name + ".message_types." + mt.Name + ".in",
+	}
 }
 
 // sessionPost is the session part of one log post: the step the store
@@ -360,6 +422,7 @@ func newSessionPost(
 		return sp
 	}
 	sp.step = &channels.SessionStep{
+		Admit:      admitIn(s, mt),
 		Decide:     sessionDecider(ctx, s, mt, props, now, p, sp.failed, sp.gate),
 		NoticeType: realtimecfg.SessionNoticeType, NoticeBy: systemAuthor(),
 		TriggeredBy: channels.SessionMarker + ct.Name, AuditTriggeredBy: triggeredBy,

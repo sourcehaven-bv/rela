@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -144,4 +145,55 @@ func TestOps_ModeratorOwnDeleteKeepsReason(t *testing.T) {
 	got, err = h.svc.Delete(as(mod), room, m.Seq, "")
 	require.NoError(t, err)
 	require.Equal(t, channels.RemovalAuthor, got.Removed.Kind, "without a reason it is the author's delete")
+}
+
+// TestPost_MessageInConcurrent pins AC 5: approve and revise posted at
+// once from plan-review move the session once. The other post is refused
+// 409 session_wrong_state, by the pre-check or by the store, with a title
+// that names the state the winner moved to.
+func TestPost_MessageInConcurrent(t *testing.T) {
+	t.Parallel()
+	for i := range 8 {
+		t.Run(strconv.Itoa(i), func(t *testing.T) {
+			t.Parallel()
+			h := newPocHarness(t)
+			h.pocDriveTo(t, "plan-review")
+			to := map[string]string{"approve": "working", "revise": "planning"}
+			errs := map[string]error{}
+			var mu sync.Mutex
+			var wg sync.WaitGroup
+			for typ := range to {
+				wg.Go(func() {
+					_, err := h.svc.Post(as(pocOwner()), pocRun, PostInput{Type: typ, Props: map[string]any{"note": "n"}})
+					mu.Lock()
+					errs[typ] = err
+					mu.Unlock()
+				})
+			}
+			wg.Wait()
+			var winner, loser string
+			for typ, err := range errs {
+				if err == nil {
+					winner = typ
+				} else {
+					loser = typ
+				}
+			}
+			require.NotEmpty(t, winner, "neither post landed: %v", errs)
+			require.NotEmpty(t, loser, "both posts landed")
+			d := requireDenial(t, errs[loser], http.StatusConflict, TypeSessionWrongState)
+			require.Equal(t, fmt.Sprintf("%s may be posted only while the session is in plan-review; it is in %s",
+				loser, to[winner]), d.Title)
+			v, err := h.svc.Head(as(pocOwner()), pocRun)
+			require.NoError(t, err)
+			require.Equal(t, to[winner], v.Channel.Session.State)
+			moves := 0
+			for _, r := range h.sessionAudit(t) {
+				if r.From == "plan-review" {
+					moves++
+				}
+			}
+			require.Equal(t, 1, moves, "the session moved out of plan-review more than once")
+		})
+	}
 }

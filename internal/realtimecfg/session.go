@@ -281,6 +281,7 @@ func (v *validator) session(
 	jobLoops(v.add, statesKey, s)
 	waitChecker{v}.check(statesKey, raw.States, s, ct)
 	s.runAs = writeChecker{v}.runAs(key+".run_as", raw.RunAs, s)
+	messageInCheck{v: v, raw: rawCT, ct: ct}.withSession(s, raw.States)
 	return s
 }
 
@@ -679,6 +680,31 @@ func mappingKeys(root *yaml.Node, path ...string) (keys []string, found bool, er
 		keys = append(keys, k.Value)
 	}
 	return keys, true, nil
+}
+
+// keyPresence reports whether the mapping at path under root has the key
+// key, and whether its value is null (`key:` or `key: ~`). It follows
+// aliases like [mappingKeys]. A decoded struct cannot tell these apart:
+// yaml.v3 leaves the field at its zero value for an absent key and for a
+// null value alike.
+func keyPresence(root *yaml.Node, key string, path ...string) (present, null bool) {
+	n := resolveNode(root)
+	for _, seg := range append(slices.Clip(path), key) {
+		if n == nil || n.Kind != yaml.MappingNode {
+			return false, false
+		}
+		var next *yaml.Node
+		for i := 0; i+1 < len(n.Content); i += 2 {
+			if n.Content[i].Value == seg {
+				next = resolveNode(n.Content[i+1])
+			}
+		}
+		if next == nil {
+			return false, false
+		}
+		n = next
+	}
+	return true, n.Kind == yaml.ScalarNode && n.Tag == "!!null"
 }
 
 // resolveNode skips document nodes and follows aliases. A chain of aliases
