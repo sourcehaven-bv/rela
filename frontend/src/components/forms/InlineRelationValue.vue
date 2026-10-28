@@ -8,6 +8,7 @@
  * one PATCH; on a multi-valued one each pick adds or removes that edge.
  */
 import { computed, ref, watch } from 'vue'
+import { useI18n } from 'vue-i18n'
 import RlMenu from 'rela-components/components/overlay/RlMenu.vue'
 import RlMenuItem from 'rela-components/components/overlay/RlMenuItem.vue'
 import RlMenuSeparator from 'rela-components/components/overlay/RlMenuSeparator.vue'
@@ -35,6 +36,8 @@ const props = defineProps<{
   /** Enum property of the target whose styles colour each target. */
   styleFrom?: string
 }>()
+
+const { t } = useI18n()
 
 const emit = defineEmits<{
   /** The edge set changed on the server; the host reloads. */
@@ -139,6 +142,12 @@ function clear() {
   }
   void save([], { remove: shown.value.map((t) => ({ type: typeOf(t.id), id: t.id })) })
 }
+
+/** The trigger's accessible name: the field label and the current targets. */
+const triggerLabel = computed(
+  () =>
+    `${props.label}: ${shown.value.map((target) => target.title).join(', ') || t('form.relation.noneLower')}`
+)
 </script>
 
 <template>
@@ -167,7 +176,7 @@ function clear() {
           type="button"
           class="inline-relation-trigger"
           v-bind="attrs"
-          :aria-label="`${label}: ${shown.map((t) => t.title).join(', ') || 'none'}`"
+          :aria-label="triggerLabel"
           :disabled="saving"
           @click="
             () => {
@@ -191,7 +200,7 @@ function clear() {
         </button>
       </template>
 
-      <RlMenuItem v-if="loading || !candidates" disabled>Loading…</RlMenuItem>
+      <RlMenuItem v-if="loading || !candidates" disabled>{{ t('common.loading') }}</RlMenuItem>
       <template v-else>
         <RlMenuItem
           v-for="c in candidates"
@@ -210,7 +219,7 @@ function clear() {
         </RlMenuItem>
         <template v-if="shown.length > 0">
           <RlMenuSeparator />
-          <RlMenuItem @click="clear">Clear</RlMenuItem>
+          <RlMenuItem @click="clear">{{ t('common.clear') }}</RlMenuItem>
         </template>
       </template>
     </RlMenu>

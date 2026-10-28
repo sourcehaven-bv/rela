@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { intlLocale } from '@/i18n/locale'
+import { useI18n } from 'vue-i18n'
 import { ref, onMounted, onBeforeUnmount, useTemplateRef } from 'vue'
 import { useUIStore } from '@/stores'
 import { useConfirm } from '@/composables/useConfirm'
@@ -35,6 +36,7 @@ const props = defineProps<{
 // the body's pending writes, which must settle before the accept is sent.
 const emit = defineEmits<{ changed: []; close: []; accept: [comment: Comment] }>()
 
+const { t } = useI18n()
 const uiStore = useUIStore()
 const { confirm } = useConfirm()
 
@@ -117,9 +119,9 @@ async function remove(c: Comment) {
   deleting = true
   try {
     const ok = await confirm({
-      title: 'Delete comment',
-      message: 'Delete this comment? This cannot be undone.',
-      confirmLabel: 'Delete',
+      title: t('comments.deleteTitle'),
+      message: t('comments.deleteMessage'),
+      confirmLabel: t('common.delete'),
       danger: true,
     })
     if (!ok) return
@@ -169,8 +171,10 @@ function formatDate(iso: string): string {
     @click.stop
   >
     <header class="tcp-head">
-      <span class="tcp-title">Comment on selection</span>
-      <button type="button" class="tcp-x" aria-label="Close" @click="emit('close')">✕</button>
+      <span class="tcp-title">{{ t('comments.onSelection') }}</span>
+      <button type="button" class="tcp-x" :aria-label="t('common.close')" @click="emit('close')">
+        ✕
+      </button>
     </header>
 
     <ul class="tcp-list">
@@ -189,38 +193,55 @@ function formatDate(iso: string): string {
         <div class="tcp-meta">
           <b>{{ c.author }}</b>
           <span>{{ formatDate(c.created_at) }}</span>
-          <span v-if="c.anchor.uncertain" class="tcp-flag" title="The text may have moved">
-            may have moved
+          <span v-if="c.anchor.uncertain" class="tcp-flag" :title="t('comments.mayHaveMovedTitle')">
+            {{ t('comments.mayHaveMoved') }}
           </span>
           <span
             v-if="c.detached"
             class="tcp-flag tcp-flag--detached"
-            title="The quoted text is gone"
+            :title="t('comments.detachedQuoteTitle')"
           >
-            detached
+            {{ t('comments.detached') }}
           </span>
         </div>
 
         <template v-if="editingId === c.id">
           <textarea v-model="editBody" class="tcp-input" rows="3" />
           <div class="tcp-acts">
-            <RlButton variant="primary" size="sm" @click="saveEdit(c)">Save</RlButton>
-            <RlButton variant="secondary" size="sm" @click="editingId = null">Cancel</RlButton>
+            <RlButton variant="primary" size="sm" @click="saveEdit(c)">{{
+              t('common.save')
+            }}</RlButton>
+            <RlButton variant="secondary" size="sm" @click="editingId = null">{{
+              t('common.cancel')
+            }}</RlButton>
           </div>
         </template>
 
         <template v-else>
           <p class="tcp-body">{{ c.body }}</p>
           <div class="tcp-acts">
-            <RlButton v-if="c.acceptable && canAccept" variant="primary" size="sm" @click="emit('accept', c)">
-              Accept
+            <RlButton
+              v-if="c.acceptable && canAccept"
+              variant="primary"
+              size="sm"
+              @click="emit('accept', c)"
+            >
+              {{ t('comments.accept') }}
             </RlButton>
             <RlButton v-if="c.editable" variant="secondary" size="sm" @click="toggleResolved(c)">
-              {{ c.resolved ? 'Reopen' : 'Resolve' }}
+              {{ c.resolved ? t('comments.reopen') : t('comments.resolve') }}
             </RlButton>
-            <RlButton v-if="c.editable" variant="secondary" size="sm" @click="startEdit(c)">Edit</RlButton>
-            <RlButton v-if="c.deletable" variant="secondary" size="sm" tone="danger" @click="remove(c)">
-              Delete
+            <RlButton v-if="c.editable" variant="secondary" size="sm" @click="startEdit(c)">{{
+              t('common.edit')
+            }}</RlButton>
+            <RlButton
+              v-if="c.deletable"
+              variant="secondary"
+              size="sm"
+              tone="danger"
+              @click="remove(c)"
+            >
+              {{ t('common.delete') }}
             </RlButton>
           </div>
         </template>
@@ -234,20 +255,20 @@ function formatDate(iso: string): string {
         v-model="replyBody"
         class="tcp-input"
         rows="2"
-        placeholder="Reply…"
-        aria-label="Reply"
+        :placeholder="t('comments.replyPlaceholder')"
+        :aria-label="t('comments.reply')"
         @keydown.meta.enter="submitReply"
         @keydown.ctrl.enter="submitReply"
       />
       <div class="tcp-reply-row">
-        <span class="tcp-hint">⌘↵ to post</span>
+        <span class="tcp-hint">{{ t('comments.postHint') }}</span>
         <RlButton
           type="submit"
           variant="primary"
           size="sm"
           :disabled="replying || !replyBody.trim()"
         >
-          {{ replying ? 'Posting…' : 'Reply' }}
+          {{ replying ? t('comments.posting') : t('comments.reply') }}
         </RlButton>
       </div>
     </form>

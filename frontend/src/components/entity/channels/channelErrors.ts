@@ -1,4 +1,5 @@
 import { ApiError, getErrorMessage } from '@/api/errors'
+import { t } from '@/i18n'
 
 /**
  * How the channel panel answers a failed channel operation (TKT-91BK6F R12).
@@ -125,7 +126,7 @@ export function retryAfterSeconds(err: ApiError): number | undefined {
 function problemMessage(err: unknown): string {
   const problem = err instanceof ApiError ? err.problem : undefined
   const title = problem?.title?.trim()
-  if (!title) return getErrorMessage(err, 'The channel request failed.')
+  if (!title) return getErrorMessage(err, t('channels.requestFailed'))
   const detail = problem?.detail?.trim()
   return detail ? `${title} (${detail})` : title
 }
@@ -144,9 +145,7 @@ export function classifyChannelError(err: unknown): ChannelErrorOutcome {
     const secs = retryAfterSeconds(err)
     return {
       ...TOAST,
-      message: secs
-        ? `Too many messages. Try again in ${secs} s.`
-        : 'Too many messages. Try again shortly.',
+      message: secs ? t('channels.rateLimitedIn', { n: secs }) : t('channels.rateLimited'),
     }
   }
   const rule = CHANNEL_ERROR_RULES[type]

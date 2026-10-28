@@ -18,6 +18,7 @@
  * `writable` false renders the display widget with no affordance at all.
  */
 import { computed, ref, toRaw, type Component } from 'vue'
+import { useI18n } from 'vue-i18n'
 import type { AttachmentInfo, PropertyDef, TransitionOption } from '@/types'
 import RlInlineEdit from 'rela-components/components/common/RlInlineEdit.vue'
 import RlOptionSelect from 'rela-components/components/form/RlOptionSelect.vue'
@@ -48,6 +49,8 @@ const props = defineProps<{
   entityId: string
   error?: string
 }>()
+
+const { t } = useI18n()
 
 const emit = defineEmits<{
   update: [value: unknown]
@@ -180,13 +183,13 @@ function floatingPanels(): Element[] {
       :model-value="stringValue"
       :options="pickOptions"
       :label="label"
-      placeholder="None"
+      :placeholder="t('common.none')"
       :is-option-disabled="isOptionDisabled"
       @update:model-value="pick"
     >
       <template #option="{ value: option }">
         <Badge v-if="option" :value="option" :property="property" :entity-type="entityType" />
-        <span v-else class="inline-property-none">None</span>
+        <span v-else class="inline-property-none">{{ t('common.none') }}</span>
       </template>
     </RlOptionSelect>
 
@@ -196,7 +199,7 @@ function floatingPanels(): Element[] {
       :model-value="arrayValue"
       :options="multiOptions"
       :label="label"
-      placeholder="None"
+      :placeholder="t('common.none')"
       :is-option-disabled="isOptionDisabled"
       @update:model-value="pickMany"
     >

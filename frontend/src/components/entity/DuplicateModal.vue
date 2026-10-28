@@ -23,6 +23,8 @@
  *    in-flight dry-run rather than leaving it POSTing behind a closed dialog.
  */
 import { computed, onMounted, ref } from 'vue'
+import { I18nT, useI18n } from 'vue-i18n'
+import { intlLocale } from '@/i18n/locale'
 import DynamicForm from '../forms/DynamicForm.vue'
 import { useModalStack } from '@/composables/modalStack'
 import { provideInlineCreateDepth } from '@/composables/useInlineCreate'
@@ -70,6 +72,7 @@ const emit = defineEmits<{
 
 const schemaStore = useSchemaStore()
 const { confirm } = useConfirm()
+const { t } = useI18n()
 
 // Registered for the component's whole lifetime, which is exactly how long
 // the dialog is on screen.
@@ -90,7 +93,6 @@ const formRef = ref<{
   isSaving: () => boolean
   submit: () => void
 } | null>(null)
-
 
 // The address of the source row: its face, not the bare id, which a world
 // would re-resolve to a different face (BUG-FYEEVX).
@@ -126,17 +128,17 @@ const omittedNotices = computed(() =>
 function omittedReasonLabel(reason: string): string {
   switch (reason) {
     case 'redacted':
-      return 'not visible to you'
+      return t('entity.duplicate.omitted.redacted')
     case 'file':
-      return 'attached file'
+      return t('entity.duplicate.omitted.file')
     case 'external-ref':
-      return 'link to another system'
+      return t('entity.duplicate.omitted.externalRef')
     case 'state-machine':
-      return 'starts at its initial value'
+      return t('entity.duplicate.omitted.stateMachine')
     case 'self-loop':
-      return 'points at the original; re-link on the copy'
+      return t('entity.duplicate.omitted.selfLoop')
     case 'untyped-peer':
-      return 'peer type unavailable'
+      return t('entity.duplicate.omitted.untypedPeer')
     default:
       return reason
   }
@@ -206,9 +208,9 @@ async function requestClose() {
   if (formRef.value?.isSaving()) return
   if (phase.value === 'form' && formRef.value?.isDirty()) {
     const ok = await confirm({
-      title: 'Discard copy?',
-      message: 'This copy has not been created yet. Your input will be lost.',
-      confirmLabel: 'Discard',
+      title: t('entity.duplicate.discardTitle'),
+      message: t('entity.duplicate.discardMessage'),
+      confirmLabel: t('entity.duplicate.discard'),
       danger: true,
     })
     if (!ok) return
@@ -246,7 +248,7 @@ function handleKeydown(e: KeyboardEvent) {
   -->
   <RlModal
     :open="true"
-    :title="`Duplicate ${typeLabel}`"
+    :title="t('entity.duplicate.title', { type: typeLabel })"
     size="lg"
     :layer="900"
     panel-class="duplicate-modal"
@@ -254,26 +256,26 @@ function handleKeydown(e: KeyboardEvent) {
     @keydown="handleKeydown"
   >
     <template v-if="phase === 'loading'">
-      <RlText as="p" tone="muted">Loading relations…</RlText>
+      <RlText as="p" tone="muted">{{ t('entity.duplicate.loading') }}</RlText>
     </template>
 
     <template v-else-if="phase === 'failed'">
       <RlText as="p" tone="muted">
-        Could not load this entity's relations, so a copy would be missing them.
+        {{ t('entity.duplicate.loadFailed') }}
       </RlText>
       <RlText as="p" size="sm" tone="muted">{{ loadError }}</RlText>
     </template>
 
     <template v-else-if="phase === 'choosing'">
       <RlText v-if="choices.length === 0" as="p" tone="muted">
-        This {{ typeLabel.toLowerCase() }} has no relations to carry over.
+        {{ t('entity.duplicate.noRelations', { type: typeLabel.toLocaleLowerCase(intlLocale()) }) }}
       </RlText>
 
       <template v-else>
-        <RlText as="p" tone="muted">Choose which relations the copy should keep.</RlText>
+        <RlText as="p" tone="muted">{{ t('entity.duplicate.chooseRelations') }}</RlText>
 
         <fieldset v-if="outgoingChoices.length" class="duplicate-group">
-          <legend>Outgoing</legend>
+          <legend>{{ t('entity.duplicate.outgoing') }}</legend>
           <RlCheckbox
             v-for="c in outgoingChoices"
             :key="c.key"
@@ -284,7 +286,7 @@ function handleKeydown(e: KeyboardEvent) {
         </fieldset>
 
         <fieldset v-if="incomingChoices.length" class="duplicate-group">
-          <legend>Incoming</legend>
+          <legend>{{ t('entity.duplicate.incoming') }}</legend>
           <RlCheckbox
             v-for="c in incomingChoices"
             :key="c.key"
@@ -299,7 +301,12 @@ function handleKeydown(e: KeyboardEvent) {
     <template v-else>
       <ul v-if="omittedNotices.length" class="duplicate-omitted">
         <li v-for="o in omittedNotices" :key="o.property">
-          <strong>{{ o.property }}</strong> was not copied ({{ omittedReasonLabel(o.reason) }})
+          <I18nT keypath="entity.duplicate.notCopied" tag="span">
+            <template #property
+              ><strong>{{ o.property }}</strong></template
+            >
+            <template #reason>{{ omittedReasonLabel(o.reason) }}</template>
+          </I18nT>
         </li>
       </ul>
 
@@ -320,12 +327,12 @@ function handleKeydown(e: KeyboardEvent) {
     <!-- The form phase carries DynamicForm's own buttons. -->
     <template v-if="phase !== 'form'" #actions>
       <RlButtonGroup>
-        <RlButton variant="secondary" @click="requestClose">Cancel</RlButton>
+        <RlButton variant="secondary" @click="requestClose">{{ t('common.cancel') }}</RlButton>
         <RlButton v-if="phase === 'failed'" variant="primary" @click="loadRelations">
-          Try again
+          {{ t('common.retry') }}
         </RlButton>
         <RlButton v-else-if="phase === 'choosing'" variant="primary" @click="confirmChoices">
-          Continue
+          {{ t('entity.duplicate.continue') }}
         </RlButton>
       </RlButtonGroup>
     </template>

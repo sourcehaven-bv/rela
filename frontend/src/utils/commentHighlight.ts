@@ -39,6 +39,7 @@
  */
 
 import type { ByteSpan } from '@/api/comments'
+import { t } from '@/i18n'
 
 /** The tag used for a highlight. Must be allowlisted in the sanitiser config. */
 export const HIGHLIGHT_TAG = 'mark'
@@ -182,7 +183,7 @@ function openTag(r: HighlightRange): string {
 function chipFor(r: HighlightRange): string {
   return (
     `<button type="button" class="comment-chip" ${HIGHLIGHT_CHIP_ATTR}="true" ` +
-    `${HIGHLIGHT_ID_ATTR}="${escapeAttr(r.id)}" title="Show comment">💬</button>`
+    `${HIGHLIGHT_ID_ATTR}="${escapeAttr(r.id)}" title="${escapeAttr(t('comments.showComment'))}">💬</button>`
   )
 }
 

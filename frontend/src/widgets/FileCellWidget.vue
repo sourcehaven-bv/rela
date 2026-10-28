@@ -19,12 +19,14 @@
  * entity page's.
  */
 import { computed } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { Paperclip } from 'lucide-vue-next'
 import type { WidgetProps } from './types'
 import { attachmentFileUrl } from '@/api/attachments'
 import { fileRefNames } from '@/utils/fileRefs'
 
 const props = defineProps<WidgetProps>()
+const { t } = useI18n()
 
 interface CellFile {
   name: string
@@ -48,7 +50,9 @@ function hrefFor(name: string): string | undefined {
 
 // Links need every file's URL; without the owning entity there are none.
 const linked = computed(() => files.value.every((f) => f.href !== undefined))
-const summary = computed(() => `${files.value.length} files`)
+const summary = computed(() =>
+  t('widgets.fileCell.count', { n: files.value.length }, files.value.length)
+)
 const allNames = computed(() => files.value.map((f) => f.name).join('\n'))
 </script>
 

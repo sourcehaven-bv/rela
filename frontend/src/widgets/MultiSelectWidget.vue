@@ -1,11 +1,13 @@
 <script setup lang="ts">
 import { computed } from 'vue'
+import { useI18n } from 'vue-i18n'
 import TagSelect from '@/components/ui/TagSelect.vue'
 import Badge from '@/components/common/Badge.vue'
 import { useSchemaStore } from '@/stores/schema'
 import type { WidgetProps } from './types'
 
 const props = defineProps<WidgetProps>()
+const { t } = useI18n()
 
 const emit = defineEmits<{
   'update:modelValue': [value: unknown]
@@ -66,7 +68,7 @@ function onUpdate(value: string[]) {
     v-else
     :model-value="arrayValue"
     :options="options"
-    :placeholder="placeholder || 'Select...'"
+    :placeholder="placeholder || t('widgets.select.placeholder')"
     :disabled="disabled"
     :option-verdicts="optionVerdicts"
     :option-labels="optionLabels"

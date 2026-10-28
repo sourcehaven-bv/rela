@@ -1,3 +1,4 @@
+import { t } from '@/i18n'
 import type { ChannelPropertySchema, MessagePropInput, MessagePropValue } from '@/types/channels'
 
 /**
@@ -63,7 +64,7 @@ function utcRFC3339(d: Date): string {
 
 function localDatetimeToUTC(raw: string): Converted {
   const m = LOCAL_DATETIME.exec(raw)
-  if (!m) return { ok: false, error: 'must be a date and time' }
+  if (!m) return { ok: false, error: t('channels.value.dateTime') }
   const [y, mo, d, h, mi, s] = m.slice(1).map((x) => Number(x ?? 0)) as [
     number,
     number,
@@ -73,7 +74,7 @@ function localDatetimeToUTC(raw: string): Converted {
     number,
   ]
   if (!validDate(y, mo, d) || h > 23 || mi > 59 || s > 59) {
-    return { ok: false, error: 'must be a date and time' }
+    return { ok: false, error: t('channels.value.dateTime') }
   }
   // The Date constructor maps a year below 100 to 1900 + year; setFullYear
   // takes the year as given.
@@ -89,7 +90,7 @@ function localDatetimeToUTC(raw: string): Converted {
     local.getHours() !== h ||
     local.getMinutes() !== mi
   ) {
-    return { ok: false, error: 'does not exist in your time zone (the clocks change then)' }
+    return { ok: false, error: t('channels.value.timeGap') }
   }
   return { ok: true, value: utcRFC3339(local) }
 }
@@ -97,46 +98,50 @@ function localDatetimeToUTC(raw: string): Converted {
 /** Converts one composer value to the prop value a request sends. */
 export function toPropValue(prop: ChannelPropertySchema, raw: FieldValue): Converted {
   if (prop.type === 'boolean') {
-    if (raw === undefined)
-      return prop.required ? { ok: false, error: 'is required' } : { ok: true, value: undefined }
-    if (typeof raw !== 'boolean') return { ok: false, error: 'must be yes or no' }
+    if (raw === undefined) {
+      return prop.required
+        ? { ok: false, error: t('channels.value.required') }
+        : { ok: true, value: undefined }
+    }
+    if (typeof raw !== 'boolean') return { ok: false, error: t('channels.value.yesNo') }
     return { ok: true, value: raw }
   }
   if (isEmpty(raw)) {
-    return prop.required ? { ok: false, error: 'is required' } : { ok: true, value: undefined }
+    return prop.required
+      ? { ok: false, error: t('channels.value.required') }
+      : { ok: true, value: undefined }
   }
-  if (typeof raw !== 'string') return { ok: false, error: 'must be text' }
+  if (typeof raw !== 'string') return { ok: false, error: t('channels.value.text') }
   switch (prop.type) {
     case 'integer': {
-      const t = raw.trim()
-      if (!INTEGER.test(t)) return { ok: false, error: 'must be a whole number' }
-      const n = Number(t)
-      if (!Number.isSafeInteger(n)) return { ok: false, error: 'is too large' }
+      const trimmed = raw.trim()
+      if (!INTEGER.test(trimmed)) return { ok: false, error: t('channels.value.wholeNumber') }
+      const n = Number(trimmed)
+      if (!Number.isSafeInteger(n)) return { ok: false, error: t('channels.value.tooLarge') }
       return { ok: true, value: n }
     }
     case 'date': {
       const m = DATE.exec(raw.trim())
       if (!m || !validDate(Number(m[1]), Number(m[2]), Number(m[3]))) {
-        return { ok: false, error: 'must be a date like 2026-01-31' }
+        return { ok: false, error: t('channels.value.date') }
       }
       return { ok: true, value: raw.trim() }
     }
     case 'datetime':
       return localDatetimeToUTC(raw.trim())
     case 'enum':
-      if (!prop.values?.includes(raw))
-        return { ok: false, error: 'must be one of the listed values' }
+      if (!prop.values?.includes(raw)) return { ok: false, error: t('channels.value.listed') }
       return { ok: true, value: raw }
     case 'ref':
       return { ok: true, value: raw.trim() }
     case 'string':
     case 'markdown':
       if (prop.max && codePoints(raw) > prop.max) {
-        return { ok: false, error: `must be at most ${prop.max} characters` }
+        return { ok: false, error: t('channels.value.maxChars', { max: prop.max }) }
       }
       return { ok: true, value: raw }
   }
-  return { ok: false, error: 'has an unknown type' }
+  return { ok: false, error: t('channels.value.unknownType') }
 }
 
 export type ConvertedProps =

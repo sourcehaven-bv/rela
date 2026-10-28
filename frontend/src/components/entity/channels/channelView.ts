@@ -9,6 +9,7 @@
  * the ephemeral line is built as text. The functions are pure, so the
  * panel's tests and this module's tests pin the same mapping.
  */
+import { t } from '@/i18n'
 import { formatDate, formatDatetime } from '@/utils/format'
 import {
   renderMessageMarkdown,
@@ -90,7 +91,7 @@ export interface ChannelViewContext {
  * server verified as `agent`, or a post made through the MCP tools.
  */
 export function authorView(a: ChannelAuthor): ChannelAuthorView {
-  if (a.system) return { name: a.user || 'system', kind: 'system' }
+  if (a.system) return { name: a.user || t('channels.system'), kind: 'system' }
   if (a.principal_type === 'agent' || a.tool === 'mcp') return { name: a.user, kind: 'agent' }
   return { name: a.user, kind: 'person' }
 }
@@ -387,9 +388,9 @@ export function ephemeralText(
     const v = e.props?.[p.name]
     if (v === undefined) continue
     if (typeof v === 'object') {
-      parts.push(v.restricted ? 'Restricted reference' : (v.title ?? v.id))
+      parts.push(v.restricted ? t('channels.restrictedRef') : (v.title ?? v.id))
     } else if (typeof v === 'boolean') {
-      parts.push(v ? 'Yes' : 'No')
+      parts.push(v ? t('common.yes') : t('common.no'))
     } else {
       const opt = p.enum ? enumOptions[p.enum]?.find((o) => o.value === v) : undefined
       parts.push(opt?.label ?? formatted(p as ChannelPropertySchema, v, tz) ?? String(v))

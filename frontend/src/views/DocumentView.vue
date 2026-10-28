@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, watch, onMounted, onUnmounted, nextTick, useTemplateRef } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
 import { useSchemaStore, useUIStore } from '@/stores'
 import { useScriptErrorStore } from '@/stores/scriptError'
@@ -37,6 +38,7 @@ const router = useRouter()
 const { worldParam } = useWorld()
 const schemaStore = useSchemaStore()
 const uiStore = useUIStore()
+const { t } = useI18n()
 const scriptErrorStore = useScriptErrorStore()
 const { on, off } = useEvents()
 
@@ -177,7 +179,7 @@ async function loadDocument(refresh = false, cold = false) {
     if (scriptErr) {
       scriptErrorStore.show(scriptErr)
     } else {
-      uiStore.error(getErrorMessage(err, 'Failed to render document'))
+      uiStore.error(getErrorMessage(err, t('document.renderFailed')))
     }
     // Keep whatever is already rendered. The error is surfaced via the toast
     // or the script-error panel, so replacing a readable document with the
@@ -257,20 +259,20 @@ onUnmounted(() => {
         <RlButton
           variant="secondary"
           :loading="loading"
-          pending-label="Refreshing…"
+          :pending-label="t('document.refreshing')"
           @click="loadDocument(true)"
         >
-          Refresh
+          {{ t('document.refresh') }}
         </RlButton>
       </div>
     </header>
 
-    <RlStatusRegion v-if="showBlockLoader" pending-label="Rendering">
-      Rendering document...
+    <RlStatusRegion v-if="showBlockLoader" :pending-label="t('document.rendering')">
+      {{ t('document.renderingDocument') }}
     </RlStatusRegion>
 
     <div v-else-if="docContent" class="document-content">
-      <div v-if="isCached" class="cached-badge">cached</div>
+      <div v-if="isCached" class="cached-badge">{{ t('document.cached') }}</div>
       <div
         ref="docBody"
         class="document-body md-body"
@@ -280,14 +282,14 @@ onUnmounted(() => {
     </div>
 
     <div v-else class="empty-state">
-      <p>No document content available</p>
+      <p>{{ t('document.empty') }}</p>
       <!-- Standalone documents have no entity, so naming one would be a
            misleading hint about what went wrong. -->
       <p v-if="entityId" class="muted">
-        Document "{{ name }}" may not be configured or the entity "{{ entityId }}" may not exist.
+        {{ t('document.emptyEntityHint', { name, id: entityId }) }}
       </p>
       <p v-else class="muted">
-        Document "{{ name }}" may not be configured, or its renderer produced no output.
+        {{ t('document.emptyStandaloneHint', { name }) }}
       </p>
     </div>
   </div>

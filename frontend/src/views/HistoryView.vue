@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { intlLocale } from '@/i18n/locale'
+import { useI18n } from 'vue-i18n'
 import { ref, computed, onMounted } from 'vue'
 import { RouterLink, useRoute, type RouteLocationRaw } from 'vue-router'
 import RlButton from 'rela-components/components/common/RlButton.vue'
@@ -11,12 +12,19 @@ import { entityRef } from '@/utils/entityRef'
 import { getErrorMessage, ApiError } from '@/api/errors'
 import { listVersions, getVersion, restoreVersion, type VersionMeta } from '@/api/history'
 import { getEntity as fetchEntity } from '@/api/entities'
-import { lineDiff, propertyDiff, type DiffLine, type PropertyChange } from '@/utils/lineDiff'
+import {
+  lineDiff,
+  propertyDiff,
+  versionOpLabel as opLabel,
+  type DiffLine,
+  type PropertyChange,
+} from '@/utils/lineDiff'
 import { useVersionSelectionSync, type Side } from '@/composables/useVersionSelectionSync'
 import { isEnumPropertyDef } from '@/utils/format'
 import Badge from '@/components/common/Badge.vue'
 import type { Entity } from '@/types'
 
+const { t } = useI18n()
 const route = useRoute()
 const uiStore = useUIStore()
 const schemaStore = useSchemaStore()
@@ -90,7 +98,7 @@ const selectedVersion = computed<number | null>(() =>
 )
 
 function sideLabel(s: Side): string {
-  return s === 'current' ? 'current' : `v${s}`
+  return s === 'current' ? t('history.current') : `v${s}`
 }
 
 // Whether the current entity is writable (server-computed update affordance).
@@ -163,7 +171,7 @@ async function load(fromUrl = true) {
     if (err instanceof ApiError && err.status === 501) {
       unsupported.value = true
     } else {
-      error.value = getErrorMessage(err, 'Failed to load version history')
+      error.value = getErrorMessage(err, t('history.loadFailed'))
     }
   } finally {
     loading.value = false
@@ -212,7 +220,7 @@ async function recompute() {
     // matches the dropdowns.
     contentDiff.value = []
     propDiff.value = []
-    uiStore.showToast('error', getErrorMessage(err, 'Failed to compute diff'))
+    uiStore.showToast('error', getErrorMessage(err, t('history.diffFailed')))
   }
 }
 
@@ -237,17 +245,17 @@ async function restore(v: number) {
   restoring.value = true
   try {
     await restoreVersion(entityType.value, restoreAddress.value, v)
-    uiStore.showToast('success', `Restored to version ${v}`)
+    uiStore.showToast('success', t('history.restored', { v }))
     await load(false)
   } catch (err) {
-    uiStore.showToast('error', getErrorMessage(err, 'Restore failed'))
+    uiStore.showToast('error', getErrorMessage(err, t('history.restoreFailed')))
   } finally {
     restoring.value = false
   }
 }
 
 function principalLabel(m: VersionMeta): string {
-  const user = m.principal.user || 'unknown'
+  const user = m.principal.user || t('history.unknownUser')
   return m.principal.tool ? `${user} · ${m.principal.tool}` : user
 }
 
@@ -271,8 +279,8 @@ function principalLabel(m: VersionMeta): string {
 function originLabel(o: VersionMeta['origin']): string {
   if (!o?.kind) return ''
   let s = o.kind
-  if (o.source) s += ` from ${o.source}`
-  if (o.definition) s += ` (${o.definition})`
+  if (o.source) s = t('history.originFrom', { kind: s, source: o.source })
+  if (o.definition) s = t('history.originDefinition', { origin: s, definition: o.definition })
   return s
 }
 
@@ -313,7 +321,7 @@ onMounted(load)
   <div class="history-view" :data-testid="`page-state-${pageState}`">
     <div class="page-header">
       <div>
-        <h2>Version history</h2>
+        <h2>{{ t('history.title') }}</h2>
         <p>
           {{ entityType }} · {{ entityId }}
           <!--
@@ -325,25 +333,25 @@ onMounted(load)
         </p>
       </div>
       <RlButton :as="RouterLink" :to="backTarget" variant="secondary">
-        Back to entity
+        {{ t('history.backToEntity') }}
       </RlButton>
     </div>
 
-    <RlStatusRegion v-if="loading">Loading version history…</RlStatusRegion>
+    <RlStatusRegion v-if="loading">{{ t('history.loading') }}</RlStatusRegion>
     <!--
       `info`, not `error`: a build without the versioning capability is working
       as configured, and so is an entity that simply has no face in this world.
       Neither is a failure the user could retry.
     -->
     <RlStatusRegion v-else-if="unsupported" tone="info">
-      Version history is not available for this deployment.
+      {{ t('history.unsupported') }}
     </RlStatusRegion>
     <RlStatusRegion v-else-if="error" tone="error">{{ error }}</RlStatusRegion>
     <RlStatusRegion v-else-if="worldFaceAbsent" tone="info">
-      This entity has no {{ world }} face, so it has no history in that world.
+      {{ t('history.noFace', { world }) }}
     </RlStatusRegion>
     <!-- The read succeeded and the answer is that nothing has been recorded. -->
-    <RlEmptyState v-else-if="versions.length === 0" title="No versions recorded yet" icon="history" />
+    <RlEmptyState v-else-if="versions.length === 0" :title="t('history.empty')" icon="history" />
 
     <div v-else class="history-layout">
       <!-- Timeline -->
@@ -357,11 +365,15 @@ onMounted(load)
             :data-version="m.version"
           >
             <button type="button" class="timeline-select" @click="selectVersion(m.version)">
-              <span class="timeline-badge" :data-op="m.op">{{ m.op }}</span>
+              <span class="timeline-badge" :data-op="m.op">{{ opLabel(m.op) }}</span>
               <span class="timeline-ver">v{{ m.version }}</span>
               <span class="timeline-who">{{ principalLabel(m) }}</span>
               <span class="timeline-when">{{ formatWhen(m.created_at) }}</span>
-              <span v-if="m.prev_id" class="timeline-note">renamed from {{ m.prev_id }}{{ m.prev_face ? `@${m.prev_face}` : '' }}</span>
+              <span v-if="m.prev_id" class="timeline-note">{{
+                t('history.renamedFrom', {
+                  id: m.prev_face ? `${m.prev_id}@${m.prev_face}` : m.prev_id,
+                })
+              }}</span>
               <span v-if="m.triggered_by" class="timeline-note">{{ m.triggered_by }}</span>
               <!--
                 Provenance sits BESIDE the op badge, never in place of it: a
@@ -385,10 +397,10 @@ onMounted(load)
               variant="secondary"
               size="sm"
               :loading="restoring"
-              pending-label="Restoring…"
+              :pending-label="t('history.restoring')"
               @click="restore(m.version)"
             >
-              Restore
+              {{ t('history.restore') }}
             </RlButton>
           </li>
         </ul>
@@ -397,27 +409,27 @@ onMounted(load)
       <!-- Diff between two chosen sides (any version or the live entity). -->
       <section class="card diff-card">
         <div class="compare-bar">
-          <span class="compare-label">Compare</span>
+          <span class="compare-label">{{ t('history.compare') }}</span>
           <select v-model="baseSel" class="compare-select" @change="onBaseChange">
-            <option value="current">current</option>
+            <option value="current">{{ t('history.current') }}</option>
             <option v-for="m in versionsNewestFirst" :key="m.version" :value="m.version">
-              v{{ m.version }} · {{ m.op }}
+              v{{ m.version }} · {{ opLabel(m.op) }}
             </option>
           </select>
           <RlButton
             variant="ghost"
             size="sm"
             class="compare-swap"
-            aria-label="Swap sides"
-            title="Swap sides"
+            :aria-label="t('history.swap')"
+            :title="t('history.swap')"
             @click="swapSides"
           >
             ⇄
           </RlButton>
           <select v-model="targetSel" class="compare-select" @change="onTargetChange">
-            <option value="current">current</option>
+            <option value="current">{{ t('history.current') }}</option>
             <option v-for="m in versionsNewestFirst" :key="m.version" :value="m.version">
-              v{{ m.version }} · {{ m.op }}
+              v{{ m.version }} · {{ opLabel(m.op) }}
             </option>
           </select>
         </div>
@@ -430,12 +442,12 @@ onMounted(load)
             <span class="prop-label">{{ propertyLabel(c.key) }}</span>
             <div class="prop-values">
               <template v-if="c.op === 'add'">
-                <span class="prop-tag prop-tag--add">added</span>
+                <span class="prop-tag prop-tag--add">{{ t('history.added') }}</span>
                 <Badge v-if="isEnum(c.key)" :value="displayValue(c.after)" :property="c.key" />
                 <span v-else class="prop-val">{{ displayValue(c.after) }}</span>
               </template>
               <template v-else-if="c.op === 'del'">
-                <span class="prop-tag prop-tag--del">removed</span>
+                <span class="prop-tag prop-tag--del">{{ t('history.removed') }}</span>
                 <Badge v-if="isEnum(c.key)" :value="displayValue(c.before)" :property="c.key" />
                 <span v-else class="prop-val prop-val--old">{{ displayValue(c.before) }}</span>
               </template>
@@ -456,7 +468,7 @@ onMounted(load)
         </div>
 
         <div v-if="hasContentChanges" class="content-diff-block">
-          <div class="content-diff-label">Content</div>
+          <div class="content-diff-label">{{ t('history.content') }}</div>
           <pre class="content-diff"><code
           ><span v-for="(l, i) in contentDiff" :key="i" class="diff-line" :data-op="l.op">{{
             l.op === 'add' ? '+ ' : l.op === 'del' ? '- ' : '  '
@@ -465,11 +477,7 @@ onMounted(load)
         </div>
 
         <RlStatusRegion v-if="!propDiff.length && !hasContentChanges" tone="info" size="sm">
-          {{
-            baseSel === targetSel
-              ? 'Select two different sides to compare.'
-              : 'These two are identical.'
-          }}
+          {{ baseSel === targetSel ? t('history.selectTwo') : t('history.identical') }}
         </RlStatusRegion>
       </section>
     </div>

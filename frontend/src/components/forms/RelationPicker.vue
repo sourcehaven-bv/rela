@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { useSchemaStore, useEntitiesStore } from '@/stores'
 import { isCancelledFetch } from '@/composables/usePageData'
 import { getEntityRelations } from '@/api'
@@ -66,6 +67,7 @@ const entitiesStore = useEntitiesStore()
 // labelling rows that the query chose without regard to worlds would put a
 // truthful-looking badge on a row picked by the wrong rule.
 const { world, worldParam } = useWorld()
+const { t } = useI18n()
 
 // State
 const loading = ref(false)
@@ -641,8 +643,8 @@ onBeforeUnmount(() => {
             <span
               v-if="!chip.editable"
               class="lock"
-              title="You cannot change this face's relations"
-              aria-label="read-only"
+              :title="t('form.relation.faceLocked')"
+              :aria-label="t('form.relation.readOnly')"
               >🔒</span
             >
             <button
@@ -688,7 +690,7 @@ onBeforeUnmount(() => {
         :aria-expanded="showDropdown"
         aria-haspopup="listbox"
         aria-autocomplete="list"
-        :placeholder="`Search ${targetTypes.join(', ')}...`"
+        :placeholder="t('form.relation.searchPlaceholder', { types: targetTypes.join(', ') })"
         @focus="showDropdown = true"
         @input="showDropdown = true"
       />
@@ -696,7 +698,7 @@ onBeforeUnmount(() => {
       <!-- Dropdown -->
       <div v-if="showDropdown && !loading" class="dropdown" role="listbox">
         <div v-if="filteredCandidates.length === 0" class="dropdown-empty">
-          No matching entities found
+          {{ t('form.relation.noMatches') }}
         </div>
         <div
           v-for="entity in filteredCandidates.slice(0, 10)"
@@ -716,7 +718,7 @@ onBeforeUnmount(() => {
           <span v-if="offWorldFace(entity)" class="face-hint">{{ offWorldFace(entity) }}</span>
         </div>
         <div v-if="filteredCandidates.length > 10" class="dropdown-more">
-          +{{ filteredCandidates.length - 10 }} more...
+          {{ t('form.relation.more', { n: filteredCandidates.length - 10 }) }}
         </div>
         <!-- Add new buttons -->
         <div v-if="inlineCreateTargets.length > 0" class="dropdown-actions">
@@ -727,12 +729,12 @@ onBeforeUnmount(() => {
             class="add-new-btn"
             @click.stop="openCreateModal(target)"
           >
-            + New {{ target.label }}
+            {{ t('form.relation.newButton', { type: target.label }) }}
           </button>
         </div>
       </div>
 
-      <div v-if="loading" class="loading-indicator">Loading...</div>
+      <div v-if="loading" class="loading-indicator">{{ t('form.loadingDots') }}</div>
     </div>
 
     <p v-if="help" class="field-help">{{ help }}</p>

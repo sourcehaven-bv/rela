@@ -30,6 +30,7 @@ import { getEntity, type EntityPatch } from '@/api/entities'
 import { ApiError, getErrorMessage } from '@/api/errors'
 import { useEntitiesStore } from '@/stores/entities'
 import { mergeProperty, mergeRelations, mergeText } from './autoSaveMerge'
+import { t } from '@/i18n'
 
 // Sentinel for "unset this property" pending entries. Distinct from
 // undefined so we can tell apart "delete the key" from "set to
@@ -48,15 +49,11 @@ const MIN_SAVING_VISIBLE_MS = 600
 // fails like any other error and the next edit tries again.
 const MAX_CONFLICT_ATTEMPTS = 3
 
-export const CONFLICT_MESSAGE =
-  'Someone else changed this field while you were editing. Your change was not saved. ' +
-  'Edit it again to overwrite their value.'
-export const CONTENT_CONFLICT_MESSAGE =
-  'Someone else changed the same lines of the body. Your change was not saved. ' +
-  'Edit it again to overwrite their version.'
-export const RELATIONS_CONFLICT_MESSAGE =
-  'Someone else changed these relations and the changes could not be combined. ' +
-  'Your relation change was not saved.'
+// Functions rather than constants, so a message is built in the language
+// shown when the conflict happens.
+export const conflictMessage = (): string => t('form.autosave.fieldConflict')
+export const contentConflictMessage = (): string => t('form.autosave.contentConflict')
+export const relationsConflictMessage = (): string => t('form.autosave.relationsConflict')
 
 // A merge base: the server value the local state derives from, and the
 // version token the server issued for it. `token` is undefined when the
@@ -513,7 +510,7 @@ export function useAutoSave(opts: AutoSaveOptions) {
         if (nextErrors) fieldErrors.value = nextErrors
         if (!reportConflicts(result, 'property')) setStatus('saved')
       } catch (err: unknown) {
-        const message = getErrorMessage(err, 'Save failed')
+        const message = getErrorMessage(err, t('form.saveFailed'))
         // Attribute to every property in the batch whose intent is still the
         // latest — a field re-edited while this request was in flight has a
         // newer intent and must not be marked for this failure.
@@ -590,7 +587,7 @@ export function useAutoSave(opts: AutoSaveOptions) {
         contentError.value = null
         if (!reportConflicts(result, 'content')) setStatus('saved')
       } catch (err: unknown) {
-        const message = getErrorMessage(err, 'Save failed')
+        const message = getErrorMessage(err, t('form.saveFailed'))
         if (pendingContent === null) {
           contentError.value = message
           setStatus('error', message)
@@ -649,7 +646,7 @@ export function useAutoSave(opts: AutoSaveOptions) {
         lastCommitAt['__relations__'] = Date.now()
         if (!reportConflicts(result, 'relations')) setStatus('saved')
       } catch (err: unknown) {
-        const message = getErrorMessage(err, 'Save failed')
+        const message = getErrorMessage(err, t('form.saveFailed'))
         setStatus('error', message)
         opts.onError(message, { status: getErrorStatus(err), channel: 'relations' })
       } finally {
@@ -867,15 +864,15 @@ export function useAutoSave(opts: AutoSaveOptions) {
     if (!props.length && !content && !relations) return false
     if (props.length) {
       const next = { ...fieldErrors.value }
-      for (const k of props) next[k] = CONFLICT_MESSAGE
+      for (const k of props) next[k] = conflictMessage()
       fieldErrors.value = next
     }
-    if (content) contentError.value = CONTENT_CONFLICT_MESSAGE
+    if (content) contentError.value = contentConflictMessage()
     const message = content
-      ? CONTENT_CONFLICT_MESSAGE
+      ? contentConflictMessage()
       : props.length
-        ? CONFLICT_MESSAGE
-        : RELATIONS_CONFLICT_MESSAGE
+        ? conflictMessage()
+        : relationsConflictMessage()
     setStatus('error', message)
     opts.onError(message, {
       status: 412,
@@ -1149,7 +1146,7 @@ export function useAutoSave(opts: AutoSaveOptions) {
       queueTail
         .then(() => resolve({ settled: true }))
         .catch((err: unknown) => {
-          resolve({ settled: true, error: getErrorMessage(err, 'Save failed') })
+          resolve({ settled: true, error: getErrorMessage(err, t('form.saveFailed')) })
         })
         .finally(() => clearTimeout(timer))
     })

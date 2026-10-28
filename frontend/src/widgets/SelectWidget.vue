@@ -1,11 +1,13 @@
 <script setup lang="ts">
 import { computed } from 'vue'
+import { useI18n } from 'vue-i18n'
 import type { WidgetProps } from './types'
 import { useStringValue } from './useStringValue'
 import { useSchemaStore } from '@/stores/schema'
 import Badge from '@/components/common/Badge.vue'
 
 const props = defineProps<WidgetProps>()
+const { t } = useI18n()
 
 const schemaStore = useSchemaStore()
 
@@ -99,7 +101,7 @@ function onChange(event: Event) {
       :disabled="disabled"
       @change="onChange"
     >
-      <option value="">Select...</option>
+      <option value="">{{ t('widgets.select.placeholder') }}</option>
       <option
         v-for="opt in options"
         :key="opt"
@@ -107,12 +109,12 @@ function onChange(event: Event) {
         :disabled="isOptionDisabled(opt)"
         :class="{ 'disabled-transition': isOptionDisabled(opt) }"
       >
-        {{ optionLabel(opt) }}{{ isOptionDisabled(opt) ? ' (not allowed)' : '' }}
+        {{ isOptionDisabled(opt) ? t('widgets.select.notAllowed', { label: optionLabel(opt) }) : optionLabel(opt) }}
       </option>
     </select>
 
     <div v-if="hasTransitions" class="transitions-info">
-      <p class="transitions-title">Allowed transitions</p>
+      <p class="transitions-title">{{ t('widgets.select.allowedTransitions') }}</p>
       <div v-for="[from, tos] in transitionEntries" :key="from" class="transitions-row">
         <span class="transitions-from">{{ from }}</span>
         <span class="transitions-arrow">&rarr;</span>

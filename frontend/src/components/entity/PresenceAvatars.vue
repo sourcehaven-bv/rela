@@ -13,6 +13,7 @@
  * Nothing renders when nobody else is viewing.
  */
 import { computed } from 'vue'
+import { useI18n } from 'vue-i18n'
 import RlAvatar from 'rela-components/components/data/RlAvatar.vue'
 import RlIcon from 'rela-components/components/common/RlIcon.vue'
 import type { PresenceViewer } from '@/types'
@@ -29,6 +30,7 @@ const props = withDefaults(
 )
 
 const shown = computed(() => props.viewers.slice(0, props.max))
+const { t } = useI18n()
 const overflow = computed(() => Math.max(0, props.viewers.length - props.max) + props.more)
 
 function viewerTitle(v: PresenceViewer): string {
@@ -41,10 +43,10 @@ function viewerTitle(v: PresenceViewer): string {
 // a listener can tell apart.
 const description = computed(() => {
   const names = props.viewers.map(viewerTitle).join(', ')
-  if (!props.more) return `Also viewing: ${names}`
+  if (!props.more) return t('entity.presence.viewing', { names })
   return names
-    ? `Also viewing: ${names} and ${props.more} more`
-    : `Also viewing: ${props.more} people`
+    ? t('entity.presence.viewingAndMore', { names, n: props.more })
+    : t('entity.presence.viewingCount', { n: props.more })
 })
 </script>
 

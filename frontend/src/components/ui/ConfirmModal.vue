@@ -33,6 +33,7 @@
  * for it.
  */
 import { computed } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { useModalStack } from '@/composables/modalStack'
 import RlConfirmDialog from 'rela-components/components/common/RlConfirmDialog.vue'
 
@@ -48,8 +49,8 @@ const props = withDefaults(
   }>(),
   {
     message: '',
-    confirmLabel: 'Confirm',
-    cancelLabel: 'Cancel',
+    confirmLabel: undefined,
+    cancelLabel: undefined,
     busy: false,
     danger: false,
   }
@@ -59,6 +60,8 @@ const emit = defineEmits<{
   confirm: []
   cancel: []
 }>()
+
+const { t } = useI18n()
 
 // rela's stack is a separate registry from the library's: `isAnyModalOpen()`
 // suppresses global keyboard shortcuts, and a dialog registered only with the
@@ -75,8 +78,8 @@ const tone = computed(() => (props.danger ? 'danger' : 'default'))
     :open="open"
     :title="title"
     :description="message"
-    :confirm-label="confirmLabel"
-    :cancel-label="cancelLabel"
+    :confirm-label="confirmLabel || t('common.confirm')"
+    :cancel-label="cancelLabel || t('common.cancel')"
     :tone="tone"
     :confirming="busy"
     @confirm="emit('confirm')"

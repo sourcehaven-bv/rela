@@ -27,6 +27,7 @@
  */
 
 import { onBeforeUnmount, reactive, readonly, type DeepReadonly } from 'vue'
+import { t } from '@/i18n'
 
 export interface ConfirmOptions {
   title: string
@@ -56,8 +57,8 @@ const DEFAULT_STATE: ConfirmState = {
   open: false,
   title: '',
   message: '',
-  confirmLabel: 'Confirm',
-  cancelLabel: 'Cancel',
+  confirmLabel: '',
+  cancelLabel: '',
   danger: false,
   busy: false,
 }
@@ -124,8 +125,8 @@ function confirm(options: ConfirmOptions): Promise<boolean> {
   pendingOnConfirm = options.onConfirm ?? null
   state.title = options.title
   state.message = options.message ?? ''
-  state.confirmLabel = options.confirmLabel ?? DEFAULT_STATE.confirmLabel
-  state.cancelLabel = options.cancelLabel ?? DEFAULT_STATE.cancelLabel
+  state.confirmLabel = options.confirmLabel ?? t('common.confirm')
+  state.cancelLabel = options.cancelLabel ?? t('common.cancel')
   state.danger = options.danger ?? false
   state.busy = false
   state.open = true

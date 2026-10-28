@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue'
+import { I18nT, useI18n } from 'vue-i18n'
 import { RouterLink, useRoute, useRouter, type RouteLocationRaw } from 'vue-router'
 import RlButton from 'rela-components/components/common/RlButton.vue'
 import RlIconButton from 'rela-components/components/common/RlIconButton.vue'
@@ -153,6 +154,7 @@ const router = useRouter()
 const route = useRoute()
 const schemaStore = useSchemaStore()
 const uiStore = useUIStore()
+const { t } = useI18n()
 const { confirm } = useConfirm()
 // The world is read from the URL, the same source EntityList reads, so a
 // detail page reached from a world-bound list stays in that world and a
@@ -393,7 +395,7 @@ const showDuplicateModal = ref(false)
 
 function handleDuplicated(created: { id: string; type: string; _self?: string }) {
   showDuplicateModal.value = false
-  uiStore.showToast('success', `Created ${created.id}`)
+  uiStore.showToast('success', t('entity.created', { id: created.id }))
   // The face written, so a duplicated draft lands on the draft.
   void router.push(`/entity/${created.type}/${entityRef(created)}`)
 }
@@ -645,7 +647,7 @@ async function acceptSuggestion(c: Comment) {
     // overwrite it with the pre-accept body, so an unsettled flush aborts.
     const flushed = await contentAutoSave.commitImmediately()
     if (!flushed.settled || flushed.error) {
-      uiStore.error('Could not save pending changes; the suggestion was not applied')
+      uiStore.error(t('entity.suggestion.flushFailed'))
       return
     }
     const address = servedRef.value
@@ -660,12 +662,16 @@ async function acceptSuggestion(c: Comment) {
     }
     if (res.warnings && res.warnings.length > 0) {
       const codes = [...new Set(res.warnings.map((w) => w.code))].join(', ')
-      uiStore.warning(`Suggestion applied with ${res.warnings.length} warning(s): ${codes}`)
+      uiStore.warning(t('entity.suggestion.appliedWithWarnings', { n: res.warnings.length, codes }, res.warnings.length))
     }
     closeTextComment()
     await loadView()
   } catch (err) {
-    uiStore.error(`Failed to accept suggestion: ${getErrorMessage(err, 'unknown error')}`)
+    uiStore.error(
+      t('entity.suggestion.acceptFailed', {
+        detail: getErrorMessage(err, t('entity.unknownError')),
+      })
+    )
     await loadComments()
   } finally {
     accepting.value = false
@@ -828,11 +834,11 @@ function handleCheckboxToggle(index: number) {
   // address). Checkboxes render inside markdown and cannot be hidden by a
   // `v-if` the way a button can, so the affordance gate lives at the handler.
   if (!canUpdate.value) {
-    uiStore.warning('Update not permitted for this entity')
+    uiStore.warning(t('entity.updateNotPermitted'))
     return
   }
   if (accepting.value) {
-    uiStore.warning('Applying a suggestion; try again in a moment')
+    uiStore.warning(t('entity.suggestion.applyingBusy'))
     return
   }
   let newContent: string
@@ -843,8 +849,8 @@ function handleCheckboxToggle(index: number) {
     // checkboxToggle.ts — `*`, `+`, ordered-list checkboxes parse as
     // task items in marked but are rejected here). Surface the thrown
     // detail so users know which line of the source the click missed.
-    const detail = getErrorMessage(err, 'unknown error')
-    uiStore.error(`Failed to toggle checkbox: ${detail}`)
+    const detail = getErrorMessage(err, t('entity.unknownError'))
+    uiStore.error(t('entity.checkboxToggleFailed', { detail }))
     console.error(err)
     return
   }
@@ -869,7 +875,7 @@ function handleKeydown(e: KeyboardEvent) {
   if (e.key === 'e' || e.key === 'E') {
     e.preventDefault()
     if (!canUpdate.value) {
-      uiStore.warning('Edit not permitted for this entity')
+      uiStore.warning(t('entity.editNotPermitted'))
       return
     }
     editEntity()
@@ -877,7 +883,7 @@ function handleKeydown(e: KeyboardEvent) {
   if ((e.key === 'Delete' || e.key === 'Backspace') && entry.value) {
     e.preventDefault()
     if (!canDelete.value) {
-      uiStore.warning('Delete not permitted for this entity')
+      uiStore.warning(t('entity.deleteNotPermitted'))
       return
     }
     void requestDelete()
@@ -950,11 +956,11 @@ async function runDetailAction(action: DetailAction, ev?: Event) {
   const triggerEl = ev?.currentTarget instanceof HTMLElement ? ev.currentTarget : null
   if (config.confirm) {
     const ok = await confirm({
-      title: `${label}?`,
+      title: t('entity.action.confirmTitle', { label }),
       message:
         typeof config.confirm === 'string'
           ? config.confirm
-          : `Run ${label} on this entity?`,
+          : t('entity.action.confirmRun', { label }),
       confirmLabel: label,
     })
     if (!ok) return
@@ -966,7 +972,7 @@ async function runDetailAction(action: DetailAction, ev?: Event) {
   detailActionBusy.value = true
   try {
     const res = await runAction(id, address)
-    reportResult(res, `${label}: done`)
+    reportResult(res, t('entity.action.done', { label }))
     if (res?.redirect) {
       router.push(res.redirect)
       return
@@ -1047,7 +1053,7 @@ async function refreshView() {
   } catch (err) {
     if (current() && shouldDropHeldContent(err)) {
       viewData.value = null
-      error.value = getErrorMessage(err, 'Failed to load entity')
+      error.value = getErrorMessage(err, t('entity.loadFailed'))
     }
   }
 }
@@ -1108,7 +1114,7 @@ async function loadView() {
     await Promise.all([loadCommands(), loadScopeNav(), loadComments()])
   } catch (err) {
     if (isCancelledFetch(err)) return
-    error.value = getErrorMessage(err, 'Failed to load entity')
+    error.value = getErrorMessage(err, t('entity.loadFailed'))
     console.error('Failed to load entity view:', err)
   } finally {
     loading.value = false
@@ -1129,7 +1135,7 @@ function editEntity() {
   // entities; bail out client-side so the Edit shortcut is also a no-op.
   if (isInaccessible.value) return
   if (!editFormId.value) {
-    uiStore.error('No edit form configured for this entity type')
+    uiStore.error(t('entity.noEditForm'))
     return
   }
   const address = servedRef.value
@@ -1160,14 +1166,13 @@ async function requestDelete() {
   // reverse.
   const face = servedFace.value
   const ok = await confirm({
-    title: face ? 'Delete Face?' : 'Delete Entity?',
+    title: face ? t('entity.delete.faceTitle') : t('entity.delete.title'),
     message: face
-      ? `Are you sure you want to delete the ${faceLabel(face)} face of '${bareEntityId.value}'? ` +
-        'Its other faces are kept. This action cannot be undone.'
-      : `Are you sure you want to delete '${bareEntityId.value}'? ` +
-        (ownsEntities.value ? 'The entities it owns are deleted with it. ' : '') +
-        'This action cannot be undone.',
-    confirmLabel: 'Delete',
+      ? t('entity.delete.faceMessage', { face: faceLabel(face), id: bareEntityId.value })
+      : ownsEntities.value
+        ? t('entity.delete.messageOwning', { id: bareEntityId.value })
+        : t('entity.delete.message', { id: bareEntityId.value }),
+    confirmLabel: t('common.delete'),
     danger: true,
     onConfirm: withConfirmError(
       async () => {
@@ -1177,12 +1182,12 @@ async function requestDelete() {
         const entitiesStore = useEntitiesStore()
         await entitiesStore.remove(props.entityType, address)
       },
-      'Failed to delete entity',
+      t('entity.delete.failed'),
       uiStore
     ),
   })
   if (!ok) return
-  uiStore.success('Entity deleted successfully')
+  uiStore.success(t('entity.delete.done'))
   router.push(backTargetAfterDelete())
 }
 
@@ -1213,7 +1218,7 @@ function conversionDone(id: string, face: string) {
   const offer = conversionOffer.value
   conversionOffer.value = null
   if (offer) {
-    uiStore.success(`Converted to ${offer.to}`)
+    uiStore.success(t('entity.convertedTo', { type: offer.to }))
     router.push({ path: `/entity/${offer.to}/${id}${face ? `@${face}` : ''}`, query: { ...route.query } })
   }
 }
@@ -1287,7 +1292,7 @@ async function runCopy(offer: CopyOffer) {
     // (a permission revoked between render and click). Report it plainly, and
     // name the subject if the user has since navigated away — an unqualified
     // "Copy failed" beside an unrelated entity reads as that entity failing.
-    const detail = getErrorMessage(err, 'Copy failed')
+    const detail = getErrorMessage(err, t('entity.copyFailed'))
     uiStore.error(bareEntityId.value === subject ? detail : `${subject}: ${detail}`)
   } finally {
     copyBusy.value = false
@@ -1517,12 +1522,12 @@ const actions = computed<EntityAction[]>(() => {
   }
   if (editTarget.value) {
     const to = editTarget.value
-    out.push({ id: 'edit', label: 'Edit', group: 'edit', icon: 'edit', shortcut: 'E', run: () => void router.push(to) })
+    out.push({ id: 'edit', label: t('common.edit'), group: 'edit', icon: 'edit', shortcut: 'E', run: () => void router.push(to) })
   }
   for (const f of faceOptions.value ?? []) {
     out.push({
       id: `face:${f.face}`,
-      label: `View ${f.label || f.face || 'default'}`,
+      label: t('entity.viewFace', { face: f.label || f.face || t('entity.defaultFace') }),
       group: 'view',
       icon: 'layers',
       run: () => goToFace(f),
@@ -1530,18 +1535,18 @@ const actions = computed<EntityAction[]>(() => {
   }
   if (showHistory.value && historyTarget.value) {
     const to = historyTarget.value
-    out.push({ id: 'history', label: 'History', group: 'view', icon: 'history', run: () => void router.push(to) })
+    out.push({ id: 'history', label: t('entity.history'), group: 'view', icon: 'history', run: () => void router.push(to) })
   }
   const exportAddress = servedRef.value
-  for (const t of exportFormats.value) {
+  for (const format of exportFormats.value) {
     if (exportAddress === null) break
     out.push({
-      id: `export:${t.name}`,
-      label: `Export as ${t.name}`,
+      id: `export:${format.name}`,
+      label: t('entity.exportAs', { format: format.name }),
       group: 'export',
       icon: 'download',
       // What is on screen (BUG-PLZDPR): the served face, in the page's world.
-      href: entityExportUrl(props.entityType, exportAddress, t.name, worldParam.value),
+      href: entityExportUrl(props.entityType, exportAddress, format.name, worldParam.value),
     })
   }
   out.push(...pileActions.actions.value)
@@ -1555,12 +1560,12 @@ const actions = computed<EntityAction[]>(() => {
     })
   }
   if (canDuplicate.value) {
-    out.push({ id: 'duplicate', label: 'Duplicate', group: 'manage', icon: 'copy', run: () => (showDuplicateModal.value = true) })
+    out.push({ id: 'duplicate', label: t('entity.duplicateAction'), group: 'manage', icon: 'copy', run: () => (showDuplicateModal.value = true) })
   }
   if (canDelete.value) {
     out.push({
       id: 'delete',
-      label: 'Delete',
+      label: t('common.delete'),
       group: 'danger',
       icon: 'delete',
       tone: 'danger',
@@ -1829,7 +1834,7 @@ function handleSectionEditError(msg: string, info?: AutoSaveErrorInfo) {
 }
 
 function handleVerdictFlip(_prop: string, label: string) {
-  uiStore.warning(`Permission changed — your unsaved edit to '${label}' was discarded`)
+  uiStore.warning(t('entity.permissionChangedDiscarded', { label }))
 }
 
 // ─── Per-row inline edit on cards/list sections (TKT-IHC7C) ──────────────
@@ -2163,7 +2168,7 @@ async function onCreated(created: Entity) {
   // only `entities` reported "missing" for every table and nested section and
   // fired the toast even when the row was plainly on screen.
   if (!viewData.value?.sections.some((sec) => sectionContainsEntity(sec, created.id))) {
-    uiStore.success(`Created ${created.id}.`)
+    uiStore.success(t('entity.createdNotShown', { id: created.id }))
   }
 }
 
@@ -2188,13 +2193,13 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
     <!-- Deliberately empty while loading below the threshold: no spinner,
          no reserved block, no layout spring. The ActivityBar carries the
          navigation case; this only paints for a slow cold load. -->
-    <RlStatusRegion v-if="showBlockLoader">Loading…</RlStatusRegion>
+    <RlStatusRegion v-if="showBlockLoader">{{ t('common.loading') }}</RlStatusRegion>
     <div v-else-if="loading && !entry" class="entity-detail-placeholder" />
 
     <RlStatusRegion v-else-if="error" tone="error">
       {{ error }}
       <template #actions>
-        <RlButton variant="primary" @click="loadView">Retry</RlButton>
+        <RlButton variant="primary" @click="loadView">{{ t('entity.retry') }}</RlButton>
       </template>
     </RlStatusRegion>
 
@@ -2222,9 +2227,9 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
             size="sm"
             icon="arrow-left"
           >
-            Prev <RlKbd keys="P" />
+            {{ t('entity.prev') }} <RlKbd keys="P" />
           </RlButton>
-          <RlButton v-else variant="secondary" size="sm" icon="arrow-left" disabled>Prev</RlButton>
+          <RlButton v-else variant="secondary" size="sm" icon="arrow-left" disabled>{{ t('entity.prev') }}</RlButton>
           <span class="scope-nav-progress">[{{ scopeNav.current }}/{{ scopeNav.total }}]</span>
           <span class="scope-nav-label">{{ scopeNav.label }}</span>
           <RlButton
@@ -2234,9 +2239,9 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
             variant="secondary"
             size="sm"
           >
-            Next <RlKbd keys="N" />
+            {{ t('common.next') }} <RlKbd keys="N" />
           </RlButton>
-          <RlButton v-else variant="secondary" size="sm" disabled>Next</RlButton>
+          <RlButton v-else variant="secondary" size="sm" disabled>{{ t('common.next') }}</RlButton>
           <RlButton
             v-if="pileActions.scopePileId.value"
             variant="secondary"
@@ -2245,7 +2250,7 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
             data-testid="remove-from-pile"
             @click="pileActions.removeFromScopePile()"
           >
-            Remove from pile
+            {{ t('entity.removeFromPile') }}
           </RlButton>
         </template>
       </div>
@@ -2311,7 +2316,7 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
         <div ref="headerInfoEl" class="header-info">
           <span class="entity-type-badge">{{ typeDef?.label || entityType }}</span>
           <RouterLink v-if="ownerHref" :to="ownerHref" class="owner-link">
-            Part of {{ viewData?.entry?._owner?.title }}
+            {{ t('entity.partOf', { title: viewData?.entry?._owner?.title }) }}
           </RouterLink>
           <EntityTitle
             :title="entryTitle"
@@ -2369,11 +2374,11 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
             v-for="hc in viewData?.create ?? []"
             :key="hc.relation"
             :create="hc"
-            :menu-label="hc.heading || 'New'"
+            :menu-label="hc.heading || t('common.new')"
             @select="startCreate"
           />
           <RlButton v-if="editTarget" :as="RouterLink" :to="editTarget" variant="secondary">
-            Edit
+            {{ t('common.edit') }}
             <template #trailing><RlKbd keys="E" /></template>
           </RlButton>
           <!--
@@ -2386,24 +2391,24 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
           -->
           <template v-if="!compactActions">
           <RlButton v-if="showHistory && historyTarget" :as="RouterLink" :to="historyTarget" variant="secondary">
-            History
+            {{ t('entity.history') }}
           </RlButton>
           <!--
             Exports what is on screen (BUG-PLZDPR): the served face's address,
             and the page's world, in which the export resolves the entry's links.
           -->
           <ExportMenu :url-for="exportUrlFor(entityRef(entry))" />
-          <AddToPileMenu :addresses="() => (entry ? [entityRef(entry)] : [])" size="md" new-label="Add to new pile…" />
+          <AddToPileMenu :addresses="() => (entry ? [entityRef(entry)] : [])" size="md" :new-label="t('entity.addToNewPile')" />
           <!--
             Duplicate. Gated on `inline_create` rather than `_actions` (there is
             no `create` key on an entity response); the action list gates on the
             SAME computed.
           -->
           <RlButton v-if="canDuplicate" variant="secondary" @click="showDuplicateModal = true">
-            Duplicate
+            {{ t('entity.duplicateAction') }}
           </RlButton>
           <RlButton v-if="canDelete" variant="secondary" tone="danger" @click="requestDelete">
-            Delete
+            {{ t('common.delete') }}
             <template #trailing><RlKbd keys="Del" /></template>
           </RlButton>
           </template>
@@ -2413,13 +2418,13 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
         <!-- Mobile actions: Edit primary, delete icon, overflow menu for commands -->
         <div v-if="!props.hideActions" class="header-actions mobile-actions">
           <RlButton v-if="editTarget" :as="RouterLink" :to="editTarget" variant="secondary">
-            Edit
+            {{ t('common.edit') }}
           </RlButton>
           <RlIconButton
             v-if="canDelete"
             class="mobile-delete-btn"
             icon="delete"
-            label="Delete"
+            :label="t('common.delete')"
             tone="danger"
             @click="requestDelete"
           />
@@ -2468,16 +2473,17 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
       <aside v-if="isInaccessible" class="inaccessible-banner">
         <span class="inaccessible-banner-icon" aria-hidden="true">🔒</span>
         <div>
-          <strong>This entity is git-crypt encrypted.</strong>
+          <strong>{{ t('entity.gitCrypt.title') }}</strong>
           <p>
-            The file is stored as ciphertext and cannot be read with the current configuration. Run
-            <code>git-crypt unlock</code>
-            in the project root to decrypt it, then reload this page.
+            <I18nT keypath="entity.gitCrypt.body" tag="span">
+              <template #command><code>git-crypt unlock</code></template>
+            </I18nT>
+            {{ ' ' }}
             <a
               href="https://github.com/AGWA/git-crypt#readme"
               target="_blank"
               rel="noopener noreferrer"
-              >Learn more about git-crypt.</a
+              >{{ t('entity.gitCrypt.learnMore') }}</a
             >
           </p>
         </div>
@@ -2536,13 +2542,13 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
             </h2>
             <SectionCreateButton
               :create="section.create"
-              :menu-label="'New'"
+              :menu-label="t('common.new')"
               @select="startCreate"
             />
           </div>
 
           <div v-if="section.isEmpty" class="section-empty">
-            {{ section.emptyMessage || 'No items' }}
+            {{ section.emptyMessage || t('entity.noItems') }}
           </div>
 
           <!--
@@ -2761,7 +2767,7 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
                 <button
                   v-if="ent.editFormId"
                   class="edit-btn"
-                  title="Edit"
+                  :title="t('common.edit')"
                   @click.stop="navigateToEdit(ent.editFormId, ent)"
                 >
                   &times;
@@ -2936,7 +2942,7 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
                         <button
                           v-if="row.editFormId"
                           class="icon-btn"
-                          title="Edit"
+                          :title="t('common.edit')"
                           @click="
                             navigateToEdit(row.editFormId, { id: row.entityId, _self: row._self })
                           "
@@ -2953,7 +2959,7 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
             <table v-else class="data-table">
               <thead>
                 <tr>
-                  <th v-if="sectionReorder.movable(section)" class="order-col"><span class="rl-visually-hidden">Order</span></th>
+                  <th v-if="sectionReorder.movable(section)" class="order-col"><span class="rl-visually-hidden">{{ t('entity.order') }}</span></th>
                   <th v-for="col in section.columns" :key="col.property || col.relation">
                     {{ col.label || col.property || col.relation }}
                   </th>
@@ -3008,7 +3014,7 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
                     <button
                       v-if="row.editFormId"
                       class="icon-btn"
-                      title="Edit"
+                      :title="t('common.edit')"
                       @click="
                         navigateToEdit(row.editFormId, { id: row.entityId, _self: row._self })
                       "
@@ -3031,7 +3037,7 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
                reads as complete, which is the whole reason the flag exists. -->
           <div v-else-if="section.display === 'nested'" class="nested-tree-wrap">
             <p v-if="section.truncated" class="nested-truncated">
-              Some rows were not shown because this section hit its size limit.
+              {{ t('entity.nestedTruncated') }}
             </p>
             <div class="nested-tree">
               <!-- Open by default: a collapsed tree hides the thing the section
@@ -3105,12 +3111,12 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
                     </span>
                   </div>
                 </div>
-                <div v-else class="nested-children nested-empty">No items</div>
+                <div v-else class="nested-children nested-empty">{{ t('entity.noItems') }}</div>
 
                 <!-- The server withheld children; say so rather than letting the
                      list read as complete. -->
                 <div v-if="node.hasMoreChildren" class="nested-children nested-more">
-                  Showing {{ node.children?.length ?? 0 }} of {{ node.childCount }}
+                  {{ t('entity.showingChildren', { shown: node.children?.length ?? 0, total: node.childCount }) }}
                 </div>
               </details>
             </div>
@@ -3119,7 +3125,7 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
           <!-- A backlinks collection the server could not fill completely
                (TKT-HF0D5W). Without the note the list reads as complete. -->
           <p v-if="section.incomplete" class="section-incomplete">
-            Only part of the matching entities are listed here.
+            {{ t('entity.sectionIncomplete') }}
           </p>
         </section>
 
@@ -3188,10 +3194,10 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
     </template>
 
     <RlStatusRegion v-else tone="error">
-      {{ entityType }} "{{ entityId }}" could not be found.
+      {{ t('entity.notFound', { type: entityType, id: entityId }) }}
       <template #actions>
         <RlButton :as="RouterLink" :to="backTargetAfterDelete()" variant="secondary">
-          Back to list
+          {{ t('entity.backToList') }}
         </RlButton>
       </template>
     </RlStatusRegion>

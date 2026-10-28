@@ -18,6 +18,7 @@
  * entity links only.
  */
 import { computed, ref, watch } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { createChannel, type ChannelAnchor } from '@/api/channels'
 import { useEntityChannels } from '@/composables/useEntityChannels'
 import { useChannelSchemaStore } from '@/stores/channelSchema'
@@ -37,6 +38,7 @@ const props = defineProps<{
   world?: string
 }>()
 
+const { t } = useI18n()
 const channelSchema = useChannelSchemaStore()
 const schema = useSchemaStore()
 const ui = useUIStore()
@@ -117,7 +119,8 @@ const createError = ref<string>()
 
 const createLabel = computed(() => {
   const g = groups.value.find((x) => x.type === creating.value)
-  return g?.createLabel || `New ${g?.label ?? 'channel'}`
+  if (g?.createLabel) return g.createLabel
+  return g?.label ? t('channels.newNamed', { label: g.label }) : t('channels.newChannel')
 })
 
 function onCreate(type: string) {
@@ -156,7 +159,7 @@ async function submitCreate(title: string) {
 <template>
   <section v-if="visible" class="channels-panel" aria-labelledby="channels-panel-title">
     <header class="channels-panel__header">
-      <h2 id="channels-panel-title">Channels</h2>
+      <h2 id="channels-panel-title">{{ t('channels.title') }}</h2>
     </header>
     <div class="channels-panel__body">
       <RlEntityChannels
@@ -183,9 +186,9 @@ async function submitCreate(title: string) {
     <ChannelTextDialog
       v-if="creating !== null"
       :title="createLabel"
-      label="Title"
-      confirm-label="Create"
-      pending-label="Creating…"
+      :label="t('channels.titleLabel')"
+      :confirm-label="t('common.create')"
+      :pending-label="t('common.creating')"
       :busy="createBusy"
       :error="createError"
       @close="creating = null"

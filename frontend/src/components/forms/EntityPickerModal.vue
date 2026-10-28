@@ -16,6 +16,7 @@
  * (RR-WMG2).
  */
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { searchEntities } from '@/api'
 import { entityDisplayTitle } from '@/utils/entityDisplay'
 import { useSchemaStore } from '@/stores'
@@ -97,6 +98,7 @@ watch(query, (q) => {
 })
 
 const { worldParam } = useWorld()
+const { t } = useI18n()
 
 async function runSearch(q: string): Promise<void> {
   abort = new AbortController()
@@ -120,7 +122,7 @@ async function runSearch(q: string): Promise<void> {
     scrollHighlightedIntoView()
   } catch (err: unknown) {
     if (isCancelledFetch(err)) return
-    errorMsg.value = 'Search failed'
+    errorMsg.value = t('editor.mention.searchFailed')
   } finally {
     loading.value = false
   }
@@ -161,7 +163,7 @@ function entityLabel(entity: Entity): string {
 }
 
 function entityTypeLabel(type: string): string {
-  if (!type) return 'Unknown'
+  if (!type) return t('form.picker.unknownType')
   return schemaStore.entityTypes.get(type)?.label || type
 }
 
@@ -245,7 +247,7 @@ const showNoMatches = computed(
       class="entity-picker-overlay"
       role="dialog"
       aria-modal="true"
-      :aria-label="label ?? 'Insert entity reference'"
+      :aria-label="label ?? t('editor.toolbar.insertEntityRef')"
       @click="handleOverlayClick"
       @keydown="handleKeydown"
     >
@@ -256,7 +258,7 @@ const showNoMatches = computed(
             v-model="query"
             type="text"
             class="entity-picker-input"
-            placeholder="Type to search entities…"
+            :placeholder="t('form.picker.placeholder')"
             autocomplete="off"
             spellcheck="false"
             role="combobox"
@@ -273,9 +275,11 @@ const showNoMatches = computed(
           <RlSpinner v-if="loading" class="entity-picker-spinner" :size="16" aria-hidden="true" />
         </div>
 
-        <div v-if="showEmptyHint" class="entity-picker-hint">Type to search entities</div>
+        <div v-if="showEmptyHint" class="entity-picker-hint">{{ t('form.picker.hint') }}</div>
         <div v-else-if="errorMsg" class="entity-picker-hint entity-picker-error">{{ errorMsg }}</div>
-        <div v-else-if="showNoMatches" class="entity-picker-hint">No matches</div>
+        <div v-else-if="showNoMatches" class="entity-picker-hint">
+          {{ t('editor.mention.noMatches') }}
+        </div>
 
         <ul
           v-if="results.length > 0"

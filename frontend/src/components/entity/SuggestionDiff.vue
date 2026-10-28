@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { useI18n } from 'vue-i18n'
+
 /**
  * A suggested replacement shown as removed and added text (TKT-S5C0K3).
  *
@@ -12,15 +14,17 @@ defineProps<{
   /** The proposed text; empty suggests deleting the quote. */
   replacement: string
 }>()
+
+const { t } = useI18n()
 </script>
 
 <template>
   <div class="sgd" data-testid="suggestion-diff">
-    <del class="sgd-old" aria-label="Current text">{{ quote }}</del>
-    <ins v-if="replacement !== ''" class="sgd-new" aria-label="Suggested text">{{
+    <del class="sgd-old" :aria-label="t('comments.diff.current')">{{ quote }}</del>
+    <ins v-if="replacement !== ''" class="sgd-new" :aria-label="t('comments.diff.suggested')">{{
       replacement
     }}</ins>
-    <span v-else class="sgd-delete">Suggests deleting this text</span>
+    <span v-else class="sgd-delete">{{ t('comments.diff.deletes') }}</span>
   </div>
 </template>
 

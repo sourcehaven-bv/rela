@@ -6,6 +6,7 @@
  * denied conversion is absent, as in CopyMenu.
  */
 import { computed } from 'vue'
+import { useI18n } from 'vue-i18n'
 import type { ConversionOffer } from '@/types'
 import RlButton from 'rela-components/components/common/RlButton.vue'
 import RlIcon from 'rela-components/components/common/RlIcon.vue'
@@ -14,6 +15,7 @@ import RlMenuItem from 'rela-components/components/overlay/RlMenuItem.vue'
 
 const props = defineProps<{ offers?: ConversionOffer[] }>()
 const emit = defineEmits<{ choose: [offer: ConversionOffer] }>()
+const { t } = useI18n()
 
 const allowed = computed(() => (props.offers ?? []).filter((o) => o.allowed))
 const single = computed(() => (allowed.value.length === 1 ? allowed.value[0] : null))
@@ -35,7 +37,7 @@ function labelOf(o: ConversionOffer): string {
   <RlMenu v-else-if="allowed.length > 1" class="conversion-menu">
     <template #trigger="{ toggle, attrs }">
       <RlButton variant="secondary" v-bind="attrs" @click="toggle">
-        Convert
+        {{ t('entity.convertMenu') }}
         <template #trailing>
           <RlIcon name="chevron-down" :size="14" aria-hidden="true" />
         </template>

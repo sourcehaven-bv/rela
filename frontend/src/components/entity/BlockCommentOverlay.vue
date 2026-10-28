@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, watch, onBeforeUnmount, nextTick } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { useUIStore } from '@/stores'
 import { addComment, type Comment } from '@/api/comments'
 import { getErrorMessage } from '@/api/errors'
@@ -29,7 +30,17 @@ const props = defineProps<{
 
 const emit = defineEmits<{ added: [] }>()
 
+const { t } = useI18n()
 const uiStore = useUIStore()
+
+/** The button title for a block, by its kind and how many comments it has. */
+function blockTitle(b: Placed): string {
+  const n = b.existing.length
+  if (b.kind === 'image') {
+    return n > 0 ? t('comments.block.countOnImage', { n }, n) : t('comments.block.commentOnImage')
+  }
+  return n > 0 ? t('comments.block.countOnDiagram', { n }, n) : t('comments.block.commentOnDiagram')
+}
 
 interface Placed extends CommentableBlock {
   top: number
@@ -167,11 +178,7 @@ async function submit(b: Placed) {
         type="button"
         class="bco-btn"
         :class="{ 'bco-btn--has': b.existing.length > 0 }"
-        :title="
-          b.existing.length > 0
-            ? `${b.existing.length} comment(s) on this ${b.kind}`
-            : `Comment on this ${b.kind}`
-        "
+        :title="blockTitle(b)"
         @click.stop="startComposing(b)"
       >
         <svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
@@ -186,7 +193,9 @@ async function submit(b: Placed) {
         @submit.prevent="submit(b)"
         @click.stop
       >
-        <p class="bco-target">On this {{ b.kind }}</p>
+        <p class="bco-target">
+          {{ b.kind === 'image' ? t('comments.block.onImage') : t('comments.block.onDiagram') }}
+        </p>
 
         <!-- Existing remarks, so the composer is a thread rather than a
              write-only box — the block has no highlight to click. -->
@@ -201,16 +210,23 @@ async function submit(b: Placed) {
           v-model="body"
           class="bco-input"
           rows="3"
-          placeholder="Add a comment…"
-          aria-label="Comment body"
+          :placeholder="t('comments.addPlaceholder')"
+          :aria-label="t('comments.bodyLabel')"
           @keydown.meta.enter="submit(b)"
           @keydown.ctrl.enter="submit(b)"
         />
         <div class="bco-actions">
-          <span class="bco-hint">⌘↵ to post</span>
-          <RlButton type="button" variant="secondary" size="sm" @click="cancel">Cancel</RlButton>
-          <RlButton type="submit" variant="primary" size="sm" :disabled="submitting || !body.trim()">
-            {{ submitting ? 'Adding…' : 'Comment' }}
+          <span class="bco-hint">{{ t('comments.postHint') }}</span>
+          <RlButton type="button" variant="secondary" size="sm" @click="cancel">{{
+            t('common.cancel')
+          }}</RlButton>
+          <RlButton
+            type="submit"
+            variant="primary"
+            size="sm"
+            :disabled="submitting || !body.trim()"
+          >
+            {{ submitting ? t('comments.adding') : t('comments.comment') }}
           </RlButton>
         </div>
       </form>

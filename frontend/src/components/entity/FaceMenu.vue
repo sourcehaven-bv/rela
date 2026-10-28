@@ -31,6 +31,7 @@
  * under a world would make the English post a dead end.
  */
 import { computed } from 'vue'
+import { useI18n } from 'vue-i18n'
 import type { Face } from '@/types'
 import RlButton from 'rela-components/components/common/RlButton.vue'
 import RlIcon from 'rela-components/components/common/RlIcon.vue'
@@ -42,6 +43,7 @@ const props = defineProps<{
 }>()
 
 const emit = defineEmits<{ select: [face: Face] }>()
+const { t } = useI18n()
 
 
 // The server computes `_faces` on the record it SERVED — under
@@ -56,7 +58,7 @@ const single = computed(() => (others.value.length === 1 ? others.value[0] : nul
 function labelOf(f: Face): string {
   // The declared face name is operator-authored (`published`, `nl`), so it
   // is the honest display string. An empty face is the default face.
-  return f.label || f.face || 'default'
+  return f.label || f.face || t('entity.defaultFace')
 }
 
 
@@ -68,7 +70,7 @@ function choose(f: Face) {
 
 <template>
   <RlButton v-if="single" variant="secondary" class="face-single" @click="choose(single)">
-    View {{ labelOf(single) }}
+    {{ t('entity.viewFace', { face: labelOf(single) }) }}
   </RlButton>
 
   <!--
@@ -79,7 +81,7 @@ function choose(f: Face) {
   <RlMenu v-else-if="others.length > 1" class="face-menu">
     <template #trigger="{ toggle, attrs }">
       <RlButton variant="secondary" v-bind="attrs" @click="toggle">
-        View
+        {{ t('entity.view') }}
         <template #trailing>
           <RlIcon name="chevron-down" :size="14" aria-hidden="true" />
         </template>
