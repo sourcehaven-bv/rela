@@ -76,7 +76,7 @@
     "hidden": "Hidden",
     "hiddenTitle": "Hidden from you",
     "unknown": "Unknown",
-    "matrixUnplaced": "{count} without a {row} or {column}",
+    "matrixUnplaced": "{count} not on the grid: no {row} or {column}, or a value the grid has no place for",
     "matrixTruncated": "Not every value is shown.",
     "previewOf": "{display} of {source}",
     "previewList": "list {name}",

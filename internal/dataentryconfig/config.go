@@ -1956,6 +1956,15 @@ type DashboardCard struct {
 	// Colors maps a ToneBy value to a tone (success, warning, error, info,
 	// new) or a palette color name.
 	Colors map[string]string `yaml:"colors,omitempty" json:"colors,omitempty"`
+	// RowsLabel and ColumnsLabel title a matrix card's axes. Empty means the
+	// property's schema label, or its name when it has none (TKT-BRAM1A).
+	RowsLabel    string `yaml:"rows_label,omitempty" json:"rows_label,omitempty"`
+	ColumnsLabel string `yaml:"columns_label,omitempty" json:"columns_label,omitempty"`
+	// RowsOrder and ColumnsOrder are `asc` (the default) or `desc`. Desc
+	// reverses an axis, so the highest value of an integer, or the last
+	// declared value of an enum, comes first.
+	RowsOrder    string `yaml:"rows_order,omitempty" json:"rows_order,omitempty"`
+	ColumnsOrder string `yaml:"columns_order,omitempty" json:"columns_order,omitempty"`
 	// Match names a query scope on the list's type. A ratio card shows how
 	// many of the list's rows it matches.
 	Match string `yaml:"match,omitempty" json:"match,omitempty"`

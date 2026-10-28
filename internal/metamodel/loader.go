@@ -1257,6 +1257,7 @@ func validatePropertyDef(
 	errs = append(errs, validateComputedProperty(schemaName, propName, propDef, allowComputed)...)
 	errs = append(errs, validateRollupShape(schemaName, propName, propDef, allowComputed)...)
 	errs = append(errs, validateFilePropertyOptions(schemaName, propName, propDef)...)
+	errs = append(errs, validateRangeOptions(schemaName, propName, propDef)...)
 	errs = append(errs, validateExternalRefOptions(schemaName, propName, propDef, allowComputed)...)
 	errs = append(errs, validatePropertyDisplay(schemaName, propName, propDef)...)
 	return errs
@@ -1340,22 +1341,21 @@ func isStringValuedType(typeName string) bool {
 }
 
 // validateFilePropertyOptions checks the attachment-only property options
-// (`max`, `accept`, `scan`, `scan_cmd`, `transform`): `max` must be >= 1, and
-// none of these may appear on a non-`file` property.
+// (`max` as a count, `accept`, `scan`, `scan_cmd`, `transform`). A negative
+// `max` is refused; 0 and unset both mean one file ([PropertyDef.FileMax]).
+// None of these may appear on a non-`file` property. `max` on an integer is a
+// value bound instead; validateRangeOptions checks it.
 func validateFilePropertyOptions(schemaName, propName string, propDef PropertyDef) []string {
 	var errs []string
-	if propDef.Max < 0 {
-		errs = append(errs, fmt.Sprintf(
-			"%s: property %q has max %d; must be >= 1", schemaName, propName, propDef.Max))
-	}
 	if propDef.Type == PropertyTypeFile {
+		if propDef.Max != nil && *propDef.Max < 0 {
+			errs = append(errs, fmt.Sprintf(
+				"%s: property %q has max %d; must be >= 1", schemaName, propName, *propDef.Max))
+		}
 		errs = append(errs, validateTransformSteps(schemaName, propName, propDef.Transform)...)
 		return errs
 	}
 	// Below here the property is NOT a file: none of the attachment options apply.
-	if propDef.Max != 0 {
-		errs = append(errs, fileOnlyOptionErr(schemaName, propName, "max", propDef.Type))
-	}
 	if len(propDef.Accept) > 0 {
 		errs = append(errs, fileOnlyOptionErr(schemaName, propName, "accept", propDef.Type))
 	}
@@ -1366,6 +1366,36 @@ func validateFilePropertyOptions(schemaName, propName string, propDef PropertyDe
 		errs = append(errs, fileOnlyOptionErr(schemaName, propName, "scan_cmd/transform", propDef.Type))
 	}
 	return errs
+}
+
+// validateRangeOptions checks `min` and `max` as value bounds (TKT-BRAM1A).
+// They apply to a single-valued integer property only, and min may not
+// exceed max. `max` on a file is the attachment cap and is checked by
+// validateFilePropertyOptions.
+func validateRangeOptions(schemaName, propName string, propDef PropertyDef) []string {
+	if propDef.Min == nil && propDef.Max == nil {
+		return nil
+	}
+	if propDef.Type == PropertyTypeFile {
+		if propDef.Min != nil {
+			return []string{fmt.Sprintf("%s: property %q sets \"min\" but is type \"file\"; "+
+				"min applies to type \"integer\" only", schemaName, propName)}
+		}
+		return nil
+	}
+	if propDef.Type != PropertyTypeInteger {
+		return []string{fmt.Sprintf("%s: property %q sets min or max but is type %q; "+
+			"min and max apply to type \"integer\" (and max to \"file\")", schemaName, propName, propDef.Type)}
+	}
+	if propDef.List {
+		return []string{fmt.Sprintf("%s: property %q: min and max are not supported on a list property",
+			schemaName, propName)}
+	}
+	if propDef.Min != nil && propDef.Max != nil && *propDef.Min > *propDef.Max {
+		return []string{fmt.Sprintf("%s: property %q has min %d above max %d",
+			schemaName, propName, *propDef.Min, *propDef.Max)}
+	}
+	return nil
 }
 
 // validImageReencodeTargets is the allowlist of native re-encode output

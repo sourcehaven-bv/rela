@@ -351,7 +351,7 @@ func TestService_MultiAppendAndCap(t *testing.T) {
 	if err := f.st.CreateEntity(ctx, e); err != nil {
 		t.Fatalf("create entity: %v", err)
 	}
-	def := metamodel.PropertyDef{Type: metamodel.PropertyTypeFile, Max: 3}
+	def := metamodel.PropertyDef{Type: metamodel.PropertyTypeFile, Max: new(3)}
 
 	for _, n := range []string{"a.pdf", "b.pdf", "c.pdf"} {
 		if _, err := f.svc.WriteAttachment(ctx, e, def, "gallery", n, strings.NewReader(n)); err != nil {
@@ -371,7 +371,7 @@ func TestService_DetachFile(t *testing.T) {
 	if err := f.st.CreateEntity(ctx, e); err != nil {
 		t.Fatalf("create entity: %v", err)
 	}
-	gallery := metamodel.PropertyDef{Type: metamodel.PropertyTypeFile, Max: 3}
+	gallery := metamodel.PropertyDef{Type: metamodel.PropertyTypeFile, Max: new(3)}
 
 	// Unnamed on an empty property: nothing to pick.
 	if _, err := f.svc.DetachFile(ctx, e, gallery, "gallery", ""); err == nil {
@@ -477,7 +477,7 @@ func TestService_DeleteAbsentFileDoesNotWrite(t *testing.T) {
 	}
 	for _, def := range []metamodel.PropertyDef{
 		{Type: metamodel.PropertyTypeFile},
-		{Type: metamodel.PropertyTypeFile, Max: 3},
+		{Type: metamodel.PropertyTypeFile, Max: new(3)},
 	} {
 		if _, err := svc.DetachFile(ctx, e, def, "gallery", "gone.pdf"); err != nil {
 			t.Fatalf("detach absent file: %v", err)

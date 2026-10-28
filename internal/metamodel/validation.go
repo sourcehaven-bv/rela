@@ -371,36 +371,7 @@ func (v Validator) validatePropertyValue(propName string, propDef *PropertyDef, 
 		}
 
 	case PropertyTypeInteger:
-		switch v := val.(type) {
-		case int, int64:
-			// OK
-		case float64:
-			// YAML parses bare integers (count: 3) as int, but a value
-			// with a fractional part (count: 3.5) arrives as float64.
-			// Accept only when it is integral — silently truncating 3.5
-			// to 3 would corrupt the value on a hand-edit typo.
-			if v != math.Trunc(v) {
-				return &ValidationError{
-					Type:     ValidationErrorInvalidValue,
-					Property: propName,
-					Message:  fmt.Sprintf("Invalid integer %v (must not have a fractional part)", v),
-				}
-			}
-		case string:
-			if _, err := strconv.Atoi(v); err != nil {
-				return &ValidationError{
-					Type:     ValidationErrorInvalidValue,
-					Property: propName,
-					Message:  fmt.Sprintf("Invalid integer %q", v),
-				}
-			}
-		default:
-			return &ValidationError{
-				Type:     ValidationErrorInvalidType,
-				Property: propName,
-				Message:  "Must be an integer",
-			}
-		}
+		return validateIntegerValue(propName, propDef, val)
 
 	case PropertyTypeBoolean:
 		switch v := val.(type) {
@@ -539,6 +510,81 @@ func validateFileValue(propName string, propDef *PropertyDef, val any) *Validati
 		}
 	}
 	return nil
+}
+
+// validateIntegerValue checks an `integer` value: an int, an integral
+// float64 or a numeric string, within the declared min and max.
+func validateIntegerValue(propName string, propDef *PropertyDef, val any) *ValidationError {
+	var n int64
+	switch v := val.(type) {
+	case int:
+		n = int64(v)
+	case int64:
+		n = v
+	case float64:
+		// YAML parses bare integers (count: 3) as int, but a value
+		// with a fractional part (count: 3.5) arrives as float64.
+		// Accept only when it is integral — silently truncating 3.5
+		// to 3 would corrupt the value on a hand-edit typo.
+		if math.IsInf(v, 0) {
+			return &ValidationError{
+				Type:     ValidationErrorInvalidValue,
+				Property: propName,
+				Message:  fmt.Sprintf("Invalid integer %v", v),
+			}
+		}
+		if v != math.Trunc(v) {
+			return &ValidationError{
+				Type:     ValidationErrorInvalidValue,
+				Property: propName,
+				Message:  fmt.Sprintf("Invalid integer %v (must not have a fractional part)", v),
+			}
+		}
+		n = saturateInt64(v)
+	case string:
+		i, err := strconv.ParseInt(v, 10, 64)
+		if err != nil {
+			return &ValidationError{
+				Type:     ValidationErrorInvalidValue,
+				Property: propName,
+				Message:  fmt.Sprintf("Invalid integer %q", v),
+			}
+		}
+		n = i
+	default:
+		return &ValidationError{
+			Type:     ValidationErrorInvalidType,
+			Property: propName,
+			Message:  "Must be an integer",
+		}
+	}
+	if propDef.InRange(n) {
+		return nil
+	}
+	// Out of range is an invalid value, which is soft: a write warns and
+	// analyze reports it (TKT-BRAM1A).
+	var msg string
+	switch {
+	case propDef.Min != nil && propDef.Max != nil:
+		msg = fmt.Sprintf("%d is out of range (must be from %d to %d)", n, *propDef.Min, *propDef.Max)
+	case propDef.Min != nil:
+		msg = fmt.Sprintf("%d is out of range (must be at least %d)", n, *propDef.Min)
+	default:
+		msg = fmt.Sprintf("%d is out of range (must be at most %d)", n, *propDef.Max)
+	}
+	return &ValidationError{Type: ValidationErrorInvalidValue, Property: propName, Message: msg}
+}
+
+// saturateInt64 converts an integral float to int64, saturating at the
+// int64 limits so a huge hand-edited value still compares as out of range.
+func saturateInt64(f float64) int64 {
+	switch {
+	case f >= math.MaxInt64:
+		return math.MaxInt64
+	case f <= math.MinInt64:
+		return math.MinInt64
+	}
+	return int64(f)
 }
 
 func validateCustomTypeValue(propName string, customType CustomType, val any) *ValidationError {

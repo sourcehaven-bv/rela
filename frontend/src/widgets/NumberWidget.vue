@@ -33,6 +33,27 @@ const displayValue = computed(() => {
   return formatDisplayNumber(props.modelValue, def) ?? stringValue.value
 })
 
+// An integer's declared range (TKT-BRAM1A) bounds the input's stepper. Read
+// from the def, not the widget's `max` prop, which is a file's attachment
+// cap. An out-of-range value is a warning, not an error (DEC-HWZHA): the
+// server saves it and warns. Native min/max would instead make the browser
+// refuse to submit the form, so they are set only while the value is empty
+// or in range, where they cannot fail.
+const bounds = computed(() => {
+  const none = { min: undefined, max: undefined }
+  const def = props.propertyDef
+  if (def?.type !== 'integer') return none
+  const raw = props.modelValue
+  const n = typeof raw === 'number' ? raw : raw == null || raw === '' ? undefined : Number(raw)
+  if (
+    n !== undefined &&
+    (Number.isNaN(n) || (def.min != null && n < def.min) || (def.max != null && n > def.max))
+  ) {
+    return none
+  }
+  return { min: def.min, max: def.max }
+})
+
 function onInput(event: Event) {
   const raw = (event.target as HTMLInputElement).value
   const num = parseInt(raw, 10)
@@ -52,6 +73,8 @@ function onInput(event: Event) {
     :aria-describedby="describedBy"
     :aria-invalid="invalid || undefined"
     :value="stringValue"
+    :min="bounds.min"
+    :max="bounds.max"
     :placeholder="placeholder"
     :disabled="disabled"
     @input="onInput"

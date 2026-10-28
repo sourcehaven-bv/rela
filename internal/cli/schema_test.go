@@ -12,6 +12,27 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/output"
 )
 
+func TestPropertyRange(t *testing.T) {
+	tests := []struct {
+		name string
+		prop metamodel.PropertyDef
+		want string
+	}{
+		{"both", metamodel.PropertyDef{Type: metamodel.PropertyTypeInteger, Min: new(1), Max: new(5)}, "1 to 5"},
+		{"min", metamodel.PropertyDef{Type: metamodel.PropertyTypeInteger, Min: new(0)}, "at least 0"},
+		{"max", metamodel.PropertyDef{Type: metamodel.PropertyTypeInteger, Max: new(9)}, "at most 9"},
+		{"none", metamodel.PropertyDef{Type: metamodel.PropertyTypeInteger}, ""},
+		{"file cap is not a range", metamodel.PropertyDef{Type: metamodel.PropertyTypeFile, Max: new(3)}, ""},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := propertyRange(tc.prop); got != tc.want {
+				t.Errorf("propertyRange() = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
 // schemaTestFixture builds a *readServices around the given metamodel.
 func schemaTestFixture(t *testing.T, meta *metamodel.Metamodel) *readServices {
 	t.Helper()

@@ -12,6 +12,8 @@ const RouterLinkStub = {
 const matrix: Matrix = {
   row_property: 'impact',
   column_property: 'likelihood',
+  row_title: 'Impact',
+  column_title: 'Likelihood',
   rows: [
     { value: 'low', label: 'Low' },
     { value: 'high', label: 'High' },
@@ -42,7 +44,27 @@ describe('DashboardMatrix', () => {
       path: '/list/risks',
       query: { 'filter[impact]': 'high', 'filter[likelihood]': '2' },
     })
-    expect(cells[1].attributes('aria-label')).toBe('High, 2: 4')
+    expect(cells[1].attributes('aria-label')).toBe('Impact High, Likelihood 2: 4')
+  })
+
+  it('titles the column axis above its values and the row axis beside its values', () => {
+    const w = mountMatrix(true)
+    const columnTitle = w.get('[data-testid="matrix-column-title"]')
+    expect(columnTitle.text()).toBe('Likelihood')
+    expect(columnTitle.attributes('colspan')).toBe('2')
+    expect(columnTitle.attributes('scope')).toBe('colgroup')
+    const rowTitles = w.findAll('[data-testid="matrix-row-title"]')
+    expect(rowTitles).toHaveLength(1)
+    expect(rowTitles[0].text()).toBe('Impact')
+    expect(rowTitles[0].attributes('rowspan')).toBe('2')
+    expect(rowTitles[0].attributes('scope')).toBe('rowgroup')
+  })
+
+  it('shows the rows in the order the server sent them', () => {
+    const labels = mountMatrix(true)
+      .findAll('th[scope="row"]')
+      .map((th) => th.text())
+    expect(labels).toEqual(['Low', 'High'])
   })
 
   it('paints a toned cell from its style class and leaves an uncoloured one neutral', () => {
@@ -58,6 +80,8 @@ describe('DashboardMatrix', () => {
   })
 
   it('reports rows it could not place', () => {
-    expect(mountMatrix(true).text()).toContain('3 without a impact or likelihood')
+    expect(mountMatrix(true).text()).toContain(
+      '3 not on the grid: no Impact or Likelihood, or a value the grid has no place for'
+    )
   })
 })

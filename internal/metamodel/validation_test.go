@@ -560,7 +560,7 @@ func TestValidatePropertyValue_FileMax(t *testing.T) {
 	})
 
 	t.Run("max:3 accepts up to 3, rejects 4", func(t *testing.T) {
-		multi := &PropertyDef{Type: PropertyTypeFile, Max: 3}
+		multi := &PropertyDef{Type: PropertyTypeFile, Max: new(3)}
 		if multi.FileMax() != 3 {
 			t.Fatalf("FileMax = %d, want 3", multi.FileMax())
 		}

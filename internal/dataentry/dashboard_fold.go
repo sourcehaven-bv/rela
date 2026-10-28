@@ -2,6 +2,7 @@ package dataentry
 
 import (
 	"cmp"
+	"maps"
 	"slices"
 	"strconv"
 	"strings"
@@ -21,23 +22,18 @@ import (
 // cell or color that would need the value, and reports the card as partial.
 // The row still counts towards totals: the list itself already shows it.
 
-// maxMatrixAxisValues caps an integer axis, which takes its values from the
-// rows rather than from a declared enum.
-const maxMatrixAxisValues = 50
-
 // axisProperty describes one property a fold groups on.
 type axisProperty struct {
 	name   string
+	title  string            // the axis title: the property's label, or its name
 	values []string          // declared enum values, in order; nil for an integer
 	labels map[string]string // display labels by value
 	isEnum bool
-}
-
-// onAxis reports whether a present value has a place on a matrix axis. An
-// enum axis lists only declared values, so a hand-edited value outside the
-// enum has none.
-func (p axisProperty) onAxis(key string) bool {
-	return !p.isEnum || slices.Contains(p.values, key)
+	// min and max are an integer's declared range. Nil: accepted — that
+	// end of a matrix axis follows the rows.
+	min, max *int
+	// desc reverses a matrix axis.
+	desc bool
 }
 
 func newAxisProperty(meta *metamodel.Metamodel, def *metamodel.EntityDef, name string) axisProperty {
@@ -47,7 +43,47 @@ func newAxisProperty(meta *metamodel.Metamodel, def *metamodel.EntityDef, name s
 	if ct, ok := meta.Types[pd.Type]; ok && len(labels) == 0 {
 		labels = ct.Labels
 	}
-	return axisProperty{name: name, values: values, labels: labels, isEnum: len(values) > 0}
+	title := pd.Label
+	if title == "" {
+		title = name
+	}
+	p := axisProperty{name: name, title: title, values: values, labels: labels, isEnum: len(values) > 0}
+	if !p.isEnum {
+		p.min, p.max = pd.Min, pd.Max
+	}
+	return p
+}
+
+// newMatrixAxis is newAxisProperty with a matrix card's title override and
+// order for the axis.
+func newMatrixAxis(
+	meta *metamodel.Metamodel, def *metamodel.EntityDef, name, title, order string,
+) axisProperty {
+	p := newAxisProperty(meta, def, name)
+	if title != "" {
+		p.title = title
+	}
+	p.desc = order == dataentryconfig.MatrixOrderDesc
+	return p
+}
+
+// axisSlot reads where a present value goes on a matrix axis: its key on
+// the axis, or ok false when it has no place there. An enum axis lists only
+// declared values, so a hand-edited value outside the enum has none. An
+// integer axis takes whole numbers within the declared range; its key is
+// the number written plainly, so "03" and 3 are one row.
+func (p axisProperty) axisSlot(key string) (slot string, n int64, ok bool) {
+	if p.isEnum {
+		return key, 0, slices.Contains(p.values, key)
+	}
+	n, err := strconv.ParseInt(key, 10, 64)
+	if err != nil {
+		return "", 0, false
+	}
+	if (p.min != nil && n < int64(*p.min)) || (p.max != nil && n > int64(*p.max)) {
+		return "", 0, false
+	}
+	return strconv.FormatInt(n, 10), n, true
 }
 
 func (p axisProperty) label(value string) string {
@@ -161,52 +197,81 @@ type matrixInput struct {
 // A cell's color is that of the most severe tone_by value among its rows,
 // where severity is the declared enum order and the last value is the most
 // severe. A row whose tone_by value is hidden counts but does not color.
+//
+// A row without a value on an axis, or with one the axis has no place for
+// (see [axisProperty.axisSlot]), is not placed and counts in Unplaced.
 func foldMatrix(rows []*entityPkg.Entity, in matrixInput) (m v1.DashboardMatrix, partial bool) {
-	type cellKey struct{ row, col string }
-	counts := map[cellKey]int{}
-	worst := map[cellKey]int{}
+	counts := map[matrixCellKey]int{}
+	worst := map[matrixCellKey]int{}
 	toneRank := map[string]int{}
 	if in.toneBy != nil {
 		toneRank = enumRank(in.toneBy.values)
 	}
-	present := map[string]map[string]bool{in.rows.name: {}, in.columns.name: {}}
+	var rowSpan, colSpan observedSpan
 	for _, e := range rows {
 		r, rok, rhidden := in.rows.valueOf(e)
 		c, cok, chidden := in.columns.valueOf(e)
 		if rhidden || chidden {
+			// A hidden value never widens an axis either: the extent of an
+			// integer axis would otherwise disclose it.
 			partial = true
 			continue
 		}
-		if !rok || !cok || !in.rows.onAxis(r) || !in.columns.onAxis(c) {
+		if !rok || !cok {
 			m.Unplaced++
 			continue
 		}
-		k := cellKey{r, c}
+		r, rn, rplaced := in.rows.axisSlot(r)
+		c, cn, cplaced := in.columns.axisSlot(c)
+		if !rplaced || !cplaced {
+			m.Unplaced++
+			continue
+		}
+		rowSpan.add(rn)
+		colSpan.add(cn)
+		k := matrixCellKey{r, c}
 		counts[k]++
-		present[in.rows.name][r] = true
-		present[in.columns.name][c] = true
-		if in.toneBy == nil {
-			continue
-		}
-		t, tok, thidden := in.toneBy.valueOf(e)
-		if thidden {
-			partial = true
-			continue
-		}
-		if rank, known := toneRank[t]; tok && known {
-			if prev, seen := worst[k]; !seen || rank > prev {
-				worst[k] = rank
-			}
+		rank, toned, hidden := in.toneRankOf(e, toneRank)
+		partial = partial || hidden
+		if prev, seen := worst[k]; toned && (!seen || rank > prev) {
+			worst[k] = rank
 		}
 	}
 	var truncR, truncC bool
 	m.RowProperty, m.ColumnProperty = in.rows.name, in.columns.name
-	m.Rows, truncR = axisValues(in.rows, present[in.rows.name])
-	m.Columns, truncC = axisValues(in.columns, present[in.columns.name])
+	m.RowTitle, m.ColumnTitle = in.rows.title, in.columns.title
+	m.Rows, truncR = axisValues(in.rows, rowSpan)
+	m.Columns, truncC = axisValues(in.columns, colSpan)
 	m.Truncated = truncR || truncC
-	for _, rv := range m.Rows {
-		for _, cv := range m.Columns {
-			k := cellKey{rv.Value, cv.Value}
+	m.Cells = in.cells(m.Rows, m.Columns, counts, worst)
+	return m, partial
+}
+
+type matrixCellKey struct{ row, col string }
+
+// toneRankOf reads a row's tone_by severity: its rank, whether it has a known
+// one, and whether the value is hidden from this principal.
+func (in matrixInput) toneRankOf(e *entityPkg.Entity, toneRank map[string]int) (rank int, toned, hidden bool) {
+	if in.toneBy == nil {
+		return 0, false, false
+	}
+	t, ok, hidden := in.toneBy.valueOf(e)
+	if hidden || !ok {
+		return 0, false, hidden
+	}
+	rank, toned = toneRank[t]
+	return rank, toned, false
+}
+
+// cells lists the non-empty cells in display order, each colored by its
+// most severe tone.
+func (in matrixInput) cells(
+	rows, columns []v1.DashboardAxisValue, counts, worst map[matrixCellKey]int,
+) []v1.DashboardCell {
+	var out []v1.DashboardCell
+	for _, rv := range rows {
+		for _, cv := range columns {
+			k := matrixCellKey{rv.Value, cv.Value}
 			n := counts[k]
 			if n == 0 {
 				continue
@@ -215,47 +280,100 @@ func foldMatrix(rows []*entityPkg.Entity, in matrixInput) (m v1.DashboardMatrix,
 			if rank, ok := worst[k]; ok && in.colorFor != nil {
 				cell.Color = in.colorFor(in.toneBy.values[rank])
 			}
-			m.Cells = append(m.Cells, cell)
+			out = append(out, cell)
 		}
 	}
-	return m, partial
+	return out
 }
 
-// axisValues lists an axis: every declared value of an enum, or the present
-// values of an integer ascending, capped at maxMatrixAxisValues.
-func axisValues(p axisProperty, present map[string]bool) (out []v1.DashboardAxisValue, truncated bool) {
-	if p.isEnum {
+// observedSpan is the placed values of an integer axis: the lowest, the
+// highest, and each distinct value. It holds at most one entry per row of
+// the page the card folds.
+type observedSpan struct {
+	lo, hi   int64
+	any      bool
+	distinct map[int64]struct{}
+}
+
+func (s *observedSpan) add(n int64) {
+	if s.distinct == nil {
+		s.distinct = map[int64]struct{}{}
+	}
+	s.distinct[n] = struct{}{}
+	if !s.any {
+		s.lo, s.hi, s.any = n, n, true
+		return
+	}
+	s.lo, s.hi = min(s.lo, n), max(s.hi, n)
+}
+
+// axisValues lists an axis in display order. An enum axis is every declared
+// value. An integer axis is every whole number from its low end to its high
+// end, so a value nobody uses still has its row and the grid has no holes.
+// Each end is the declared bound, else the observed extreme; with neither
+// the axis is the one declared bound, or empty.
+//
+// Config load refuses a declared range wider than
+// [dataentryconfig.MaxMatrixAxisValues]. When an end follows the rows and
+// the span is wider than that, filling it would let one outlier push every
+// real value off the axis, so the axis lists only the values that occur.
+// Those are capped at the cap from the end shown first, and truncated says
+// so.
+func axisValues(p axisProperty, seen observedSpan) (out []v1.DashboardAxisValue, truncated bool) {
+	var keys []int64
+	switch lo, hi, ok := integerAxisEnds(p, seen); {
+	case p.isEnum:
 		for _, v := range p.values {
 			out = append(out, v1.DashboardAxisValue{Value: v, Label: p.label(v)})
 		}
-		return out, false
-	}
-	keys := make([]string, 0, len(present))
-	for k := range present {
-		keys = append(keys, k)
-	}
-	// Numbers ascending, then any hand-edited non-numeric value by text, so
-	// the order is total.
-	slices.SortFunc(keys, func(a, b string) int {
-		fa, errA := strconv.ParseFloat(a, 64)
-		fb, errB := strconv.ParseFloat(b, 64)
-		switch {
-		case errA == nil && errB == nil:
-			return cmp.Or(cmp.Compare(fa, fb), cmp.Compare(a, b))
-		case errA == nil:
-			return -1
-		case errB == nil:
-			return 1
+	case !ok:
+	case !dataentryconfig.MatrixAxisTooWide(lo, hi):
+		for n := lo; ; n++ {
+			keys = append(keys, n)
+			if n == hi {
+				break
+			}
 		}
-		return cmp.Compare(a, b)
-	})
-	if len(keys) > maxMatrixAxisValues {
-		keys, truncated = keys[:maxMatrixAxisValues], true
+	default:
+		keys = slices.Sorted(maps.Keys(seen.distinct))
 	}
-	for _, k := range keys {
-		out = append(out, v1.DashboardAxisValue{Value: k, Label: k})
+	if p.desc {
+		slices.Reverse(out)
+		slices.Reverse(keys)
+	}
+	if len(keys) > dataentryconfig.MaxMatrixAxisValues {
+		keys, truncated = keys[:dataentryconfig.MaxMatrixAxisValues], true
+	}
+	for _, n := range keys {
+		k := strconv.FormatInt(n, 10)
+		out = append(out, v1.DashboardAxisValue{Value: k, Label: p.label(k)})
 	}
 	return out, truncated
+}
+
+// integerAxisEnds picks an integer axis's low and high end: the declared
+// bound where there is one, else the observed extreme. Observed values all
+// lie within the declared bounds (axisSlot), so lo <= hi.
+func integerAxisEnds(p axisProperty, seen observedSpan) (lo, hi int64, ok bool) {
+	switch {
+	case p.min != nil:
+		lo = int64(*p.min)
+	case seen.any:
+		lo = seen.lo
+	case p.max != nil:
+		lo = int64(*p.max)
+	default:
+		return 0, 0, false
+	}
+	switch {
+	case p.max != nil:
+		hi = int64(*p.max)
+	case seen.any:
+		hi = seen.hi
+	default:
+		hi = lo
+	}
+	return lo, hi, true
 }
 
 // matrixColorFor resolves a tone_by value's color: the card's `colors:`

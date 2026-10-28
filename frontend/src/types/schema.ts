@@ -151,8 +151,11 @@ export interface PropertyDef {
   description?: string
   format?: string
   list?: boolean
-  // For `file` properties: maximum attachments (default 1). Above 1 the
-  // property holds several files and the widget switches to add-mode.
+  // For `integer` properties: the inclusive value bounds, if declared.
+  // For `file` properties: `max` is the maximum attachments (default 1).
+  // Above 1 the property holds several files and the widget switches to
+  // add-mode.
+  min?: number
   max?: number
   // For `external_ref` properties: the external system the ref points into.
   system?: string
