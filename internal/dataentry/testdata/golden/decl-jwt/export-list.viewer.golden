@@ -1,8 +1,8 @@
 request: GET /api/v1/tickets/_export?transform=copy
 identity: signed assertion for viewer@example.test
 status: 200
-reads: GetRelation=1 GraphQueryHeaders=2 ListEntityHeaders=2 ListRelations=8 MatchingFaces=2
-breadth: ListEntityHeaders=5/2 ListRelations=3/8 MatchingFaces=6/2
+reads: GetRelation=1 GraphQueryHeaders=2 ListEntityHeaders=2 ListRelations=3 MatchingFaces=2
+breadth: ListEntityHeaders=5/2 ListRelations=6/3 MatchingFaces=6/2
 bodies: GraphQuery=2/2 ListEntityHeaders=0/2
 versions: 
 body:
