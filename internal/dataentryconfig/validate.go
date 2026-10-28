@@ -2604,6 +2604,7 @@ func validateDashboardCards(prefix string, cards []DashboardCard) []string {
 				"%s: card[%d] %q has invalid display mode %q (valid: %s)",
 				prefix, i, card.Title, card.Display, joinMapKeys(validDashboardDisplayModes)))
 		}
+		errs = append(errs, validateDashboardCardWidth(prefix, i, card)...)
 
 		// Validate sort directions
 		for j, s := range card.Sort {

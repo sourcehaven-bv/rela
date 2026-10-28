@@ -1,4 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 import { mount, flushPromises, enableAutoUnmount } from '@vue/test-utils'
 import { ref } from 'vue'
 import { createPinia, setActivePinia } from 'pinia'
@@ -577,6 +579,40 @@ describe('DashboardView', () => {
 
       const wrapper = await mountView()
       expect(wrapper.find('.cell-hidden').text()).toBe('Hidden')
+    })
+  })
+
+  describe('card width (TKT-H21TYS)', () => {
+    it('gives each tile the class for its width, in config order', async () => {
+      seedDashboard([
+        card({ title: 'Plain' }),
+        card({ title: 'Normal', width: 'normal' }),
+        card({ title: 'Wide', width: 'wide' }),
+        card({ title: 'Full', width: 'full' }),
+        // Rejected by the server at load; the SPA renders it as normal.
+        card({ title: 'Odd', width: 'huge' as DashboardCardEntry['width'] }),
+      ])
+
+      const wrapper = await mountView()
+
+      const tiles = wrapper
+        .findAll('.dashboard-card')
+        .map((s) => [s.find('h3').text(), s.classes()])
+      expect(tiles).toEqual([
+        ['Plain', ['dashboard-card']],
+        ['Normal', ['dashboard-card']],
+        ['Wide', ['dashboard-card', 'dashboard-card--wide']],
+        ['Full', ['dashboard-card', 'dashboard-card--full']],
+        ['Odd', ['dashboard-card']],
+      ])
+    })
+
+    // Reading and Tab order follow the config only while the grid does not
+    // pack densely. jsdom applies no layout, so this is pinned on the source;
+    // the tile geometry is measured in e2e/tests/dashboard-card-width.spec.ts.
+    it('never packs the grid densely', () => {
+      const source = readFileSync(resolve(__dirname, 'DashboardView.vue'), 'utf8')
+      expect(source).not.toMatch(/(grid-auto-flow|grid):[^;]*\bdense\b[^;`]*;/)
     })
   })
 })

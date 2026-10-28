@@ -303,6 +303,16 @@ const cardViews = computed<CardView[]>(() =>
   })
 )
 
+/**
+ * The tile class for a card's `width:` (TKT-H21TYS). Any other value, which
+ * the server rejects at config load, gets no class and renders as normal.
+ */
+function widthClass(width: DashboardCardEntry['width']): string | undefined {
+  if (width === 'wide') return 'dashboard-card--wide'
+  if (width === 'full') return 'dashboard-card--full'
+  return undefined
+}
+
 function getColumnLabel(col: { property?: string; label?: string }): string {
   return col.label || col.property || ''
 }
@@ -374,6 +384,7 @@ watch([() => props.name, worldParam], () => void loadData())
           v-for="view in cardViews"
           :key="view.key"
           class="dashboard-card"
+          :class="widthClass(view.card.width)"
           :aria-labelledby="`dashboard-card-${view.key}-title`"
         >
           <div class="card-header">
@@ -532,6 +543,9 @@ watch([() => props.name, worldParam], () => void loadData())
   grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
   gap: 20px;
   margin-bottom: 20px;
+  /* The tiles query the grid's own width, not the viewport's: the sidebar
+     changes it. */
+  container: dashboard-grid / inline-size;
 }
 
 .dashboard-card {
@@ -539,6 +553,31 @@ watch([() => props.name, worldParam], () => void loadData())
   border: 1px solid var(--rl-color-border);
   border-radius: var(--radius-lg);
   padding: 16px;
+}
+
+/* Card width (TKT-H21TYS). The grid flows in config order, without
+   `grid-auto-flow: dense`: dense would fill a hole with a later tile, so the
+   visual order would no longer match the reading and Tab order. A `wide` tile
+   that does not fit at the end of a row leaves one cell empty instead.
+
+   A wide tile takes the whole row by default and spans two tracks only on a
+   grid of at least 580px, which always holds two or more tracks. Below 580px
+   the grid holds at most two tracks (280px tracks + 20px gap above; 200px +
+   12px gap at <= 768px; two fixed tracks on phones), so the whole row is "two
+   tracks or one", and the tile never creates an implicit column. A browser
+   without container queries gets the whole row, which never overflows.
+
+   The threshold assumes the stock track and gap sizes. A container condition
+   cannot read a custom property, so change 580px together with them. */
+.dashboard-card--wide,
+.dashboard-card--full {
+  grid-column: 1 / -1;
+}
+
+@container dashboard-grid (width >= 580px) {
+  .dashboard-card--wide {
+    grid-column: span 2;
+  }
 }
 
 .cell-hidden {

@@ -331,6 +331,9 @@ var locked = map[File][]string{
 		"dashboard.cards.[].colors.*", "dashboard.cards.[].match",
 		"dashboards.*.cards.[].list", "dashboards.*.cards.[].rows", "dashboards.*.cards.[].tone_by",
 		"dashboards.*.cards.[].colors.*", "dashboards.*.cards.[].match",
+		// Not in the Configure space yet: card width (TKT-H21TYS). Editing a
+		// card in Configure keeps the width it has.
+		"dashboard.cards.[].width", "dashboards.*.cards.[].width",
 		"lists.*.actions.**", "lists.*.toolbar_actions.**", "lists.*.export_render",
 		// The pile menu's actions and export transforms, like a list's.
 		"piles.actions.[]", "piles.export.[]",

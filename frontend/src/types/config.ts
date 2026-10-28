@@ -749,6 +749,11 @@ export interface DashboardCard {
   sort?: Array<{ property: string; direction: 'asc' | 'desc' }>
   limit?: number
   /**
+   * How much of the dashboard row the tile takes (TKT-H21TYS). Unset means
+   * `normal`, one cell. The server rejects any other value at config load.
+   */
+  width?: 'normal' | 'wide' | 'full'
+  /**
    * Optional ACL permission gating this card's visibility (TKT-53KICM).
    *
    * The SPA does not act on this: the server already omits cards the principal
