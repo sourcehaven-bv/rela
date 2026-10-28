@@ -356,8 +356,8 @@ func TestRemoteMCPDeps_PassesTheHostComments(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if deps.Comments.Reader != nil || deps.Comments.Writer != nil {
-		t.Error("a host without comment operations must leave both nil, or the tools register over nothing")
+	if deps.Comments.Reader != nil || deps.Comments.Adder != nil || deps.Comments.Writer != nil {
+		t.Error("a host without comment operations must leave all three nil, or the tools register over nothing")
 	}
 
 	host.Comments = &dataentry.MCPComments{}
@@ -365,7 +365,7 @@ func TestRemoteMCPDeps_PassesTheHostComments(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if deps.Comments.Reader == nil || deps.Comments.Writer == nil {
+	if deps.Comments.Reader == nil || deps.Comments.Adder == nil || deps.Comments.Writer == nil {
 		t.Error("the remote server must get the read and the write comment tools")
 	}
 }

@@ -86,14 +86,33 @@ func TestAdd_RefusesUnstampedPrincipal(t *testing.T) {
 	require.Empty(t, stored, "nothing is stored when the author cannot be resolved")
 }
 
-func TestAdd_RefusesReservedPrincipal(t *testing.T) {
-	svc, _ := newService(t)
-	ctx := principal.With(context.Background(),
-		principal.Principal{User: "system:version-sweep", Tool: "internal"})
+func TestAdd_ReservedPrincipal(t *testing.T) {
+	tests := []struct {
+		name    string
+		user    string
+		refused bool
+	}{
+		{name: "an operator's system job", user: "system:version-sweep", refused: true},
+		{name: "rela's own identity", user: principal.UserScheduler, refused: true},
+		{name: "a system look-alike", user: " system:x", refused: true},
+		{name: "an integration", user: "integration:runner"},
+		{name: "an integration outside the grammar", user: "integration:Runner", refused: true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			svc, _ := newService(t)
+			ctx := principal.With(context.Background(), principal.Principal{User: tc.user, Tool: "mcp"})
 
-	_, err := svc.Add(ctx, comments.Target{Type: "ticket", ID: "TKT-1"},
-		comments.AddRequest{Anchor: propAnchor(), Body: "x"})
-	require.ErrorIs(t, err, comments.ErrUnknownAuthor)
+			c, err := svc.Add(ctx, comments.Target{Type: "ticket", ID: "TKT-1"},
+				comments.AddRequest{Anchor: propAnchor(), Body: "x"})
+			if tc.refused {
+				require.ErrorIs(t, err, comments.ErrUnknownAuthor)
+				return
+			}
+			require.NoError(t, err)
+			require.Equal(t, tc.user, c.Author)
+		})
+	}
 }
 
 func TestAdd_ValidatesAnchor(t *testing.T) {

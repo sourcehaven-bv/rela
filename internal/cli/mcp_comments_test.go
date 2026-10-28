@@ -70,3 +70,130 @@ func TestStdioComments_ListOnly(t *testing.T) {
 	require.ErrorAs(t, err, &opErr)
 	require.Equal(t, "not_found", opErr.Code)
 }
+
+// seedAddCommentProject has a commentable plain type (item), a commentable
+// faced type (page) and a type without comments (note).
+func seedAddCommentProject(t *testing.T) string {
+	t.Helper()
+	root := t.TempDir()
+	for _, dir := range []string{"entities", "relations", ".rela"} {
+		require.NoError(t, os.MkdirAll(filepath.Join(root, dir), 0o755))
+	}
+	require.NoError(t, os.WriteFile(filepath.Join(root, "schema.yaml"), []byte(`
+entities:
+  item:
+    label: Item
+    id_type: sequential
+    id_prefix: ITEM-
+    properties:
+      title: {type: string}
+  page:
+    label: Page
+    id_type: sequential
+    id_prefix: PG-
+    faces:
+      published: {}
+      draft: {}
+    properties:
+      title: {type: string}
+  note:
+    label: Note
+    id_type: sequential
+    id_prefix: NOTE-
+    properties:
+      title: {type: string}
+relations: {}
+comments:
+  enabled: true
+  on: [item, page]
+`), 0o644))
+	return root
+}
+
+func TestStdioComments_AdderOnlyForAnAuthoringRunAs(t *testing.T) {
+	tests := []struct {
+		name  string
+		runAs string
+		wired bool
+	}{
+		{name: "plain local session", runAs: ""},
+		{name: "integration identity", runAs: "integration:runner", wired: true},
+		{name: "system identity", runAs: "system:mission-bot"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			svc, err := mcpServicesRunAs(t, seedCommentProject(t), tc.runAs)
+			require.NoError(t, err)
+			t.Cleanup(func() { _ = svc.Close() })
+
+			deps := svc.Deps()
+			require.Equal(t, tc.wired, deps.Comments.Adder != nil)
+			require.Nil(t, deps.Comments.Writer, "stdio never registers edit, delete or accept")
+		})
+	}
+}
+
+func TestStdioComments_AddComment(t *testing.T) {
+	svc, err := mcpServicesRunAs(t, seedAddCommentProject(t), "integration:runner")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = svc.Close() })
+	deps := svc.Deps()
+	require.NotNil(t, deps.Comments.Adder)
+
+	ctx := principal.With(t.Context(), principal.Principal{User: "integration:runner", Tool: principal.ToolMCP})
+	for _, e := range []*entity.Entity{
+		{ID: "ITEM-1", Type: "item", Properties: map[string]any{"title": "One"},
+			Content: "A body with a passage worth quoting.\n"},
+		{ID: "PG-1", Type: "page", Face: "draft", Properties: map[string]any{"title": "draft"}},
+		{ID: "PG-1", Type: "page", Face: "published", Properties: map[string]any{"title": "live"}},
+		{ID: "NOTE-1", Type: "note", Properties: map[string]any{"title": "n"}},
+	} {
+		require.NoError(t, svc.svc.Store().CreateEntity(ctx, e))
+	}
+
+	onTitle := comments.AddInput{Kind: comments.AnchorProperty, Ref: "title", Body: "Started on this."}
+	tests := []struct {
+		name    string
+		address string
+		in      comments.AddInput
+		code    string // OpError code; empty for success
+	}{
+		{name: "property anchor", address: "ITEM-1", in: onTitle},
+		{name: "text anchor", address: "ITEM-1", in: comments.AddInput{
+			Kind: comments.AnchorText, Quote: "passage worth quoting", Body: "Is this still true?",
+		}},
+		{name: "named face", address: "PG-1@draft", in: onTitle},
+		{name: "bare id on a faced type", address: "PG-1", in: onTitle, code: "face_required"},
+		{name: "type without comments", address: "NOTE-1", in: onTitle, code: "comments_not_enabled"},
+		{name: "missing entity", address: "ITEM-404", in: onTitle, code: "not_found"},
+		{name: "quote not in the body", address: "ITEM-1", in: comments.AddInput{
+			Kind: comments.AnchorText, Quote: "nowhere to be found", Body: "x",
+		}, code: "invalid_comment"},
+		{name: "empty body", address: "ITEM-1", in: comments.AddInput{
+			Kind: comments.AnchorProperty, Ref: "title",
+		}, code: "invalid_comment"},
+		{name: "unknown face", address: "PG-1@archived", in: onTitle, code: "not_found"},
+		{name: "face on a type without faces", address: "ITEM-1@draft", in: onTitle, code: "not_found"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			created, err := deps.Comments.Adder.AddComment(ctx, tc.address, tc.in)
+			if tc.code != "" {
+				var opErr *comments.OpError
+				require.ErrorAs(t, err, &opErr)
+				require.Equal(t, tc.code, opErr.Code)
+				return
+			}
+			require.NoError(t, err)
+			require.Equal(t, "integration:runner", created.Author)
+
+			list, err := deps.Comments.Reader.ListComments(ctx, tc.address)
+			require.NoError(t, err)
+			ids := make([]string, len(list))
+			for i, v := range list {
+				ids[i] = v.ID
+			}
+			require.Contains(t, ids, created.ID)
+		})
+	}
+}

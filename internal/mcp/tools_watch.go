@@ -71,6 +71,7 @@ const (
 // watch tool describes them. Only those registered on the server count.
 var watchOrder = []string{
 	"show_entity", "list_entities", "list_relations", toolReadChannel, toolReadSession, toolListInbox,
+	toolListCommentsName,
 }
 
 // watchNames returns the tools of watchOrder that reads holds.
@@ -157,7 +158,12 @@ type watchTarget struct {
 	// channel is set for a read_channel, read_session or list_inbox
 	// target.
 	channel *watchChannel
+	// comments is set for a list_comments target.
+	comments bool
 }
+
+// onPoll reports whether the channel poll replays t.
+func (t watchTarget) onPoll() bool { return t.channel != nil || t.comments }
 
 // watchChannel is the channel a read_channel or read_session target
 // reads, as its arguments name it. A read_session target never follows. A
@@ -369,6 +375,12 @@ type watchRun struct {
 	inboxGap     time.Duration
 	inboxLast    time.Time
 	inboxPending bool
+	// commentsDue is set when the list_comments targets must replay on the
+	// next pass of any kind but passInbox: the poll fired, or a replay of
+	// one did not finish. It is kept apart from the pass kind because a
+	// channel wake and the poll merge into one pass, and the comments must
+	// not be lost in that merge.
+	commentsDue bool
 }
 
 // passKind says what made a pass run.
@@ -428,7 +440,7 @@ func (r *watchRun) wait(
 			}
 		case <-wakes.chans.poll:
 			polled = polled || !chanDirty
-			chanDirty = true
+			chanDirty, r.commentsDue = true, true
 		case <-ticker.C:
 			inboxReady := r.inboxPending && r.inboxDue(passInbox)
 			if !dirty && !chanDirty && !inboxReady {
@@ -470,8 +482,9 @@ func (r *watchRun) wait(
 }
 
 // channelWake holds the channel wake sources of one watch call: the
-// in-process channel subscription and the channel poll. Both stay nil, and
-// never fire, without a channel target.
+// in-process channel subscription and the channel poll. The subscription
+// stays nil without a channel target, the poll without a channel or
+// list_comments target; a nil source never fires.
 type channelWake struct {
 	sub     *realtime.Subscription
 	ticker  *time.Ticker
@@ -482,15 +495,17 @@ type channelWake struct {
 
 func newChannelWake(d Deps, targets []watchTarget) *channelWake {
 	c := &channelWake{}
+	polled := false
 	for _, t := range targets {
 		if t.channel != nil {
 			c.targets = append(c.targets, t.channel)
 		}
+		polled = polled || t.onPoll()
 	}
-	if len(c.targets) == 0 {
+	if !polled {
 		return c
 	}
-	if d.Channels.Waker != nil {
+	if len(c.targets) > 0 && d.Channels.Waker != nil {
 		c.sub = d.Channels.Waker.SubscribeAddressed()
 		c.wake = c.sub.Wake()
 	}
@@ -546,7 +561,8 @@ func (c *channelWake) close() {
 // A pass ends at its budget or at deadline, whichever is first. An error
 // means read access could not be resolved for the caller. passWake and
 // passPoll replay only the channel targets, passInbox only the list_inbox
-// target.
+// target. The list_comments targets replay on passAll, and on passWake or
+// passPoll while [watchRun.commentsDue] is set.
 //
 // A list_inbox target is paced by [watchRun.inboxDue]. A replay of it that
 // does not finish does not make the pass incomplete, so the next tick does
@@ -573,6 +589,11 @@ func (r *watchRun) pass(
 	rctx, cancel := context.WithDeadline(rctx, end)
 	defer cancel()
 
+	// The comment targets this pass replays are no longer due once it
+	// finishes them all. A pass cut short by the budget leaves them as
+	// they were.
+	replaysComments := kind == passAll || (kind != passInbox && r.commentsDue)
+	commentsFailed := false
 	moved := map[string]bool{}
 	done := map[string]bool{}
 	n := len(r.targets)
@@ -595,12 +616,16 @@ func (r *watchRun) pass(
 		dg, pending, ok := r.replay(rctx, t)
 		if !ok {
 			incomplete = incomplete || !inbox
+			commentsFailed = commentsFailed || t.comments
 			continue
 		}
 		if old, had := r.digests[t.key]; (had && old != dg) || (!had && pending) {
 			moved[t.key] = true
 		}
 		r.digests[t.key] = dg
+	}
+	if replaysComments {
+		r.commentsDue = commentsFailed
 	}
 	return r.moved(moved), incomplete, nil
 }
@@ -611,6 +636,8 @@ func (r *watchRun) pass(
 func (r *watchRun) skips(t watchTarget, kind passKind) bool {
 	inbox := t.channel != nil && t.channel.inbox
 	switch {
+	case t.comments:
+		return kind != passAll && (kind == passInbox || !r.commentsDue)
 	case kind != passAll && t.channel == nil, kind == passInbox && !inbox:
 		return true
 	case inbox && !r.inboxDue(kind):
@@ -907,7 +934,7 @@ func (w *watchHandler) parseTargets(raw any) ([]watchTarget, error) {
 		}
 		sum := sha256.Sum256(canon)
 		out = append(out, watchTarget{
-			tool: tool, args: rawArgs, handler: h, channel: channel,
+			tool: tool, args: rawArgs, handler: h, channel: channel, comments: tool == toolListCommentsName,
 			key: hex.EncodeToString(sum[:watchDigestBytes]),
 		})
 	}

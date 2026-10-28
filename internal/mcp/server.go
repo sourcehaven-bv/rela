@@ -193,9 +193,10 @@ type WatchDeps struct {
 	// may be stale. Required; wiring passes
 	// [appbuild.GatedReadBundle.Rebind].
 	Rebind func(context.Context) (context.Context, error)
-	// ChannelPoll is how often a watch with a read_channel target replays
-	// those targets without a wake, to see posts made in another process:
-	// rela-server, the CLI, another node. Zero means 2 seconds.
+	// ChannelPoll is how often a watch with a read_channel or list_comments
+	// target replays those targets without a wake, to see posts and
+	// comments made in another process: rela-server, the CLI, another node.
+	// Zero means 2 seconds.
 	ChannelPoll time.Duration
 }
 
@@ -552,7 +553,7 @@ func (d Deps) handlers() handlerSet {
 		schemaRes: schemaResourceHandler{store: d.Store, meta: d.Meta, world: d.World},
 		prompts:   promptHandler{store: d.Store, meta: d.Meta, tracer: d.Tracer, types: types, world: d.World},
 		attach:    attachmentHandler{store: d.Store, deps: d.Attachments},
-		comments:  commentHandler{reader: d.Comments.Reader, writer: d.Comments.Writer},
+		comments:  commentHandler{reader: d.Comments.Reader, adder: d.Comments.Adder, writer: d.Comments.Writer},
 		actions:   actionHandler{runner: d.Commands.Actions},
 		convs:     conversionHandler{conv: d.Commands.Conversions, store: d.Store, watcher: d.Watcher},
 		leases:    leaseHandler{svc: d.Leases},

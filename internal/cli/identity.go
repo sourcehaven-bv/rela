@@ -65,6 +65,15 @@ func (l localIdentity) stamp(ctx context.Context) context.Context {
 	return ctx
 }
 
+// runAs returns the `--run-as` job identity, or "" when the identity is the
+// OS user.
+func (l localIdentity) runAs() string {
+	if l.AssertedBy == "" {
+		return ""
+	}
+	return l.Principal.User
+}
+
 // notice prints "acting as X (asserted by Y)" to w when the identity was
 // asserted with `--run-as`, so a person running a write command sees whom
 // it is attributed to.

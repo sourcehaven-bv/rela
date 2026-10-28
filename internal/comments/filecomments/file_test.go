@@ -4,13 +4,17 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strconv"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 
 	"github.com/Sourcehaven-BV/rela/internal/comments"
 	"github.com/Sourcehaven-BV/rela/internal/comments/commentstest"
 	"github.com/Sourcehaven-BV/rela/internal/comments/filecomments"
+	"github.com/Sourcehaven-BV/rela/internal/filelock"
 	"github.com/Sourcehaven-BV/rela/internal/storage"
 )
 
@@ -184,4 +188,43 @@ func TestThreadKeys(t *testing.T) {
 	keys, err = s.ThreadKeys(ctx)
 	require.NoError(t, err)
 	require.Equal(t, []string{"TKT-1", "TKT-1@draft", "TKT-2"}, keys)
+}
+
+// TestAdd_TwoStoresLoseNoComment stands in for two processes on one project
+// (rela-server and `rela mcp --run-as`, TKT-RQKKS9): two stores on the same
+// directory, each with its own locker on one lock file, add at once. The
+// lock file makes the read-modify-writes take turns.
+func TestAdd_TwoStoresLoseNoComment(t *testing.T) {
+	root := t.TempDir()
+	lockPath := filepath.Join(t.TempDir(), "comments.lock")
+	open := func() *filecomments.Store {
+		l, err := filelock.New(lockPath)
+		require.NoError(t, err)
+		s, err := filecomments.New(storage.NewOsFS(), root, filecomments.WithLocker(l))
+		require.NoError(t, err)
+		return s
+	}
+	stores := []*filecomments.Store{open(), open()}
+	target := comments.Target{Type: "ticket", ID: "TKT-1"}
+
+	const each = 20
+	var wg sync.WaitGroup
+	for i, s := range stores {
+		wg.Go(func() {
+			for n := range each {
+				c := comments.Comment{
+					ID: strconv.Itoa(i) + "-" + strconv.Itoa(n), Author: "alice", Body: "x",
+					CreatedAt: time.Now(), Anchor: comments.Anchor{Kind: comments.AnchorProperty, Ref: "title"},
+				}
+				if err := s.Add(context.Background(), target, c); err != nil {
+					t.Errorf("add: %v", err)
+				}
+			}
+		})
+	}
+	wg.Wait()
+
+	list, err := stores[0].List(context.Background(), target)
+	require.NoError(t, err)
+	require.Len(t, list, len(stores)*each)
 }

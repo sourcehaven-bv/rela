@@ -602,10 +602,9 @@ const IntegrationPrefix = "integration:"
 // IsReserved reports whether user names an internal identity under
 // [ReservedPrefix] or [IntegrationPrefix].
 //
-// The comments service also refuses a reserved author, so neither a
-// `system:` job nor an `integration:` connector can write a comment. A
-// connector that needs to tell people something writes a property, such
-// as the Basecamp example's `sync_conflict`.
+// The comments service refuses a `system:` author. It accepts an
+// `integration:` one ([comments.ValidAuthor]), which only stdio `rela mcp
+// --run-as` can stamp, since request paths refuse the namespace.
 //
 // **Request-path entry points MUST reject a reserved user.** These names are
 // grantable in acl.yaml — the DEC-O59WM4 migration binds [UserScheduler] to a

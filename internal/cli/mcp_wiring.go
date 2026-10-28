@@ -69,6 +69,9 @@ type mcpServices struct {
 	// attachUploads bounds this process's concurrent MCP uploads. It
 	// outlives reloads for the same reason.
 	attachUploads *attachment.Limiter
+	// runAs is the `--run-as` job identity; empty for a plain local
+	// session. It decides whether add_comment is wired. Never reassigned.
+	runAs string
 }
 
 // current returns the live services bundle.
@@ -94,7 +97,7 @@ func (s *mcpServices) current() *appbuild.Services {
 // The channel tools are the exception: they apply acl.yaml when the project
 // has one ([mcpServices.channelDeps]), so an agent identity stays inside
 // the channel roles the project gave it.
-func newMCPServices(startDir string) (*mcpServices, error) {
+func newMCPServices(startDir, runAs string) (*mcpServices, error) {
 	svc, err := appbuild.Discover(startDir, script.NewEngine(), appbuild.WithACL(acl.NopACL{}))
 	if err != nil {
 		return nil, err
@@ -104,6 +107,7 @@ func newMCPServices(startDir string) (*mcpServices, error) {
 		origin:        svc,
 		watcher:       &mcpWatcher{store: svc.Store()},
 		attachUploads: attachment.NewLimiter(attachment.DefaultMaxUploads),
+		runAs:         runAs,
 	}, nil
 }
 
@@ -407,8 +411,11 @@ func (s *mcpServices) deps(svc *appbuild.Services) relamcp.Deps {
 	if reads.Rollups != nil {
 		deps.Related.Rollups = reads.Rollups
 	}
-	// Read only: stdio has no signed-in user to author a comment (TKT-QIQO1W).
 	deps.Comments.Reader = newStdioComments(svc.Comments(), reads.Reader, svc.Meta())
+	// Assigned only when set, like Leases below.
+	if adder := newStdioCommentAdder(svc.Comments(), reads.Reader, svc.Meta(), s.runAs); adder != nil {
+		deps.Comments.Adder = adder
+	}
 	// Assigned only when set: a nil *lease.Service in the interface would
 	// register the lease tools over an absent service.
 	if leases := appbuild.Leases(svc); leases != nil {
@@ -422,9 +429,9 @@ func (s *mcpServices) deps(svc *appbuild.Services) relamcp.Deps {
 	return deps
 }
 
-// stdioChannelPoll is how often a stdio watch replays its read_channel
-// targets. A post made by rela-server or the CLI wakes nothing in this
-// process, so the poll is how a stdio watch sees it.
+// stdioChannelPoll is how often a stdio watch replays its read_channel and
+// list_comments targets. A post or comment made by rela-server or the CLI
+// wakes nothing in this process, so the poll is how a stdio watch sees it.
 const stdioChannelPoll = 2 * time.Second
 
 // channelDeps wires the channel tools over the channel service that applies

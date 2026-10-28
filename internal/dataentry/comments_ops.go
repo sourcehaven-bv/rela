@@ -198,24 +198,19 @@ func failPatch(err error) *opFailure {
 // class) and everything unrecognized is a 500 with no detail — a storage error
 // message can carry a path, and a path is not the caller's business.
 func failComment(err error) *opFailure {
-	switch {
-	case errors.Is(err, comments.ErrNotFound):
-		return failV1(http.StatusNotFound, "not_found", "Comment not found")
-	case errors.Is(err, comments.ErrEmptyBody),
-		errors.Is(err, comments.ErrBodyTooLong),
-		errors.Is(err, comments.ErrBodyControlChars),
-		errors.Is(err, comments.ErrInvalidAnchor),
-		errors.Is(err, comments.ErrInvalidReplacement):
-		return failV1(http.StatusBadRequest, "invalid_comment", err.Error())
-	case errors.Is(err, comments.ErrTooManyComments):
-		return failV1(http.StatusConflict, "too_many_comments", err.Error())
-	case errors.Is(err, comments.ErrUnknownAuthor):
-		// The caller is authenticated enough to reach here but has no
-		// resolvable identity to attribute the comment to.
-		return failForbidden("Comments require an identified author")
-	default:
+	refusal := comments.Refusal(err)
+	if refusal == nil {
 		return failInternal("Could not save the comment", err)
 	}
+	return failV1(commentRefusalStatus[refusal.Code], refusal.Code, refusal.Title)
+}
+
+// commentRefusalStatus is the HTTP status of each [comments.Refusal] code.
+var commentRefusalStatus = map[string]int{
+	comments.CodeNotFound:        http.StatusNotFound,
+	comments.CodeInvalidComment:  http.StatusBadRequest,
+	comments.CodeTooManyComments: http.StatusConflict,
+	comments.CodeForbidden:       http.StatusForbidden,
 }
 
 // commentEnabled refuses a target type the metamodel does not enable
@@ -388,13 +383,17 @@ func (h *commentsHandler) addTargetGate(
 func (h *commentsHandler) addOp(
 	ctx context.Context, target comments.Target, ent *entity.Entity, in comments.AddInput,
 ) (comments.Comment, *opFailure) {
-	anchor := comments.Anchor{Kind: in.Kind, Ref: in.Ref, Replacement: in.Replacement}
-	if anchor.Kind == comments.AnchorText {
-		text, err := buildTextAnchor(ent, in.Quote, in.QuotePrefix, in.QuoteSuffix)
-		if err != nil {
-			return comments.Comment{}, failV1(http.StatusBadRequest, "invalid_comment", err.Error())
-		}
-		anchor.Text = text
+	if ent == nil && in.Kind == comments.AnchorText {
+		return comments.Comment{}, failV1(http.StatusBadRequest, comments.CodeInvalidComment,
+			"could not read the entity body")
+	}
+	var content string
+	if ent != nil {
+		content = ent.Content
+	}
+	anchor, err := in.Anchor(content)
+	if err != nil {
+		return comments.Comment{}, failComment(err)
 	}
 	created, err := h.svc.Add(ctx, target, comments.AddRequest{Anchor: anchor, Body: in.Body})
 	if err != nil {
