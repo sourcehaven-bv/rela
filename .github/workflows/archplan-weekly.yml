@@ -1,0 +1,219 @@
+# The trace-based archplan security checks, weekly.
+#
+# The Archplan job in ci.yml checks every pull request on the static model.
+# The security detectors that read call traces (untraced, untested_denial,
+# unguarded_entry, unguarded_sink, risk_hotspot) need the seqtrace routes
+# suite, which takes too long for the PR path. A finding here is about code
+# that is already merged, so it must not block the PR in flight (the same
+# reasoning as security.yml). This workflow runs the suite on develop and
+# compares the result with .archplan/baseline.json.
+#
+# Where results go. The repo is public, so issues, logs and step summaries
+# are public too. Finding details (entry point, file, guard) go to code
+# scanning via SARIF, which only users with write access can see; archplan's
+# own summary goes to a file, not to the step summary. The tracking issue
+# carries counts per kind, finding ids and worse ratchet metrics. It is
+# updated by later runs instead of duplicated, and closed by the first clean
+# run.
+#
+# Triage: run `just archplan-security` locally. Fix the finding, or accept it
+# in the archplan editor (`just archplan`) with a reason and commit
+# .archplan/baseline.json.
+name: Archplan weekly
+
+on:
+  schedule:
+    - cron: "0 8 * * 1" # Mondays 08:00 UTC, after the security scan
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  scan:
+    name: Trace-based security checks
+    # 26.04 for the command sandbox, as in ci.yml: the routes suite runs a
+    # command, and cmdexec fails closed without a working bubblewrap.
+    runs-on: ubuntu-26.04
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # The history detectors read git; the baseline was recorded with
+          # full history.
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      # bubblewrap for the command sandbox; the Wails headers because the Go
+      # exporter type-checks cmd/rela-desktop.
+      - name: Install bubblewrap and Wails dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y bubblewrap libgtk-4-dev libwebkitgtk-6.0-dev
+
+      # Without a working sandbox the command route fails closed and the
+      # trace changes shape quietly; fail here instead.
+      - name: Verify the sandbox works on this runner
+        run: bwrap --unshare-all --ro-bind / / /bin/true
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: npm ci
+
+      - name: Set up just
+        uses: extractions/setup-just@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+
+      - name: Install archplan
+        run: |
+          set -euo pipefail
+          version=$(sed -n 's/^archplan_version := "v\([0-9.]*\)"$/\1/p' justfile)
+          commit=$(sed -n 's/^archplan_commit := "\([0-9a-f]\{40\}\)"$/\1/p' justfile)
+          [[ -n "$version" && -n "$commit" ]] || { echo "archplan_version or archplan_commit missing in the justfile"; exit 1; }
+          pip install "git+https://github.com/vloothuis/archplan@$commit"
+          [[ "$(archplan --version)" == "archplan $version" ]] || { echo "archplan_commit is not archplan_version"; exit 1; }
+
+      # Postgres runs in docker (run.sh picks docker when initdb is not on
+      # PATH). The export picks up .ignored/seqtrace-demo/diagrams/steps.json.
+      - name: Trace every route family
+        env:
+          SEQTRACE_SUITE: routes
+          SEQTRACE_OPEN: "0"
+        run: tools/seqtrace/demo/run.sh
+
+      - name: Run archplan ci on the traced model
+        env:
+          ARCHPLAN_CI_TRUST: "1"
+        run: |
+          set -euo pipefail
+          # Exit 1 means new findings or a worse ratchet metric; the report
+          # job files them. archplan also exits 1 on an unexpected crash, so
+          # the JSON must be there and well-formed before rc 1 is trusted.
+          rc=0
+          archplan ci --json --sarif archplan.sarif --summary "$RUNNER_TEMP/archplan-summary.md" \
+            > archplan.json || rc=$?
+          if [[ $rc -gt 1 ]] || ! jq -e '(.findings | type == "array") and (.ratchet.rows | type == "array")' \
+              archplan.json > /dev/null; then
+            echo "archplan ci failed (exit $rc)"
+            exit 1
+          fi
+          # Only what the issue needs leaves this job: kinds, ids, metric names.
+          jq '{findings: [.findings[] | select(.state == "new" and .group == "security") | {id, kind}],
+               worse: [.ratchet.rows[] | select(.status == "worse") | .metric]}' \
+            archplan.json > archplan-report.json
+          jq -r '"archplan weekly: \(.findings | length) new security finding(s), \(.worse | length) worse ratchet metric(s)"' \
+            archplan-report.json | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload SARIF
+        if: always() && hashFiles('archplan.sarif') != ''
+        uses: github/codeql-action/upload-sarif@v4
+        with:
+          sarif_file: archplan.sarif
+          category: archplan-weekly
+
+      - name: Upload the report for the issue job
+        uses: actions/upload-artifact@v7
+        with:
+          name: archplan-report
+          path: archplan-report.json
+          retention-days: 7
+
+  # A job of its own, so only this step holds issues: write.
+  report:
+    name: Open, update or close the tracking issue
+    needs: scan
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: archplan-report
+
+      - name: Open, update or close the tracking issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          title='archplan weekly: new security findings'
+          run_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+          alerts_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/security/code-scanning?query=tool%3Aarchplan"
+
+          count=$(jq '.findings | length' archplan-report.json)
+          worse=$(jq '.worse | length' archplan-report.json)
+          [[ "$count" =~ ^[0-9]+$ && "$worse" =~ ^[0-9]+$ ]] || { echo "unreadable report"; exit 1; }
+
+          # Match the exact title, and only issues this workflow filed, so an
+          # issue anyone opens with the same title cannot capture the reports.
+          # The title goes to jq as --arg, never spliced into the program.
+          existing=$(gh issue list --state open --search "\"$title\" in:title" \
+            --json number,title,author \
+            | jq -r --arg title "$title" '
+                [ .[] | select(.title == $title)
+                      | select(.author.login == "app/github-actions") ][0].number // empty')
+
+          if [[ "$count" -eq 0 && "$worse" -eq 0 ]]; then
+            if [[ -n "$existing" ]]; then
+              gh issue close "$existing" --comment "No new security findings and no worse ratchet metric in $run_url. Closing."
+            fi
+            exit 0
+          fi
+
+          gh label create security --color B60205 --description "Security-related issue" --force >/dev/null
+          gh label create automated --color EDEDED --description "Filed by an automated job" --force >/dev/null
+
+          kinds=$(jq -r '.findings | group_by(.kind) | map("| `\(.[0].kind)` | \(length) |") | .[]' archplan-report.json)
+          ids=$(jq -r '.findings | map("- `\(.id)`") | .[]' archplan-report.json)
+          metrics=$(jq -r '.worse | map("- `\(.)`") | .[]' archplan-report.json)
+          body="<!-- count:$count/$worse -->
+          The weekly archplan run found **$count** new security finding(s) that are not in \`.archplan/baseline.json\`, and **$worse** ratchet metric(s) that got worse.
+
+          - Run: $run_url
+          - Details (write access needed): $alerts_url
+
+          | Kind | Count |
+          | ---- | ----: |
+          ${kinds:-| (none) | 0 |}
+
+          <details><summary>Finding ids</summary>
+
+          ${ids:-(none)}
+
+          </details>
+
+          Worse ratchet metrics:
+
+          ${metrics:-(none)}
+
+          To triage, run \`just archplan-security\` locally. Fix each finding, or accept it in the archplan editor (\`just archplan\`) with a reason and commit \`.archplan/baseline.json\`. This issue is updated by later runs and closed by the first clean run."
+
+          if [[ -z "$existing" ]]; then
+            gh issue create --title "$title" --label security,automated --body "$body"
+            exit 0
+          fi
+          previous=$(gh issue view "$existing" --json body --jq '.body' | sed -n 's/^<!-- count:\([0-9/]*\) -->$/\1/p')
+          gh issue edit "$existing" --body "$body"
+          if [[ "$previous" != "$count/$worse" ]]; then
+            gh issue comment "$existing" --body "Findings/worse metrics changed from ${previous:-?} to $count/$worse in $run_url."
+          fi

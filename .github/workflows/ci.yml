@@ -1270,6 +1270,138 @@ jobs:
           echo "Building GOOS=$GOOS ${flags:-(default)}"
           go build $flags ./cmd/rela ./cmd/rela-server ./cmd/rela-docs
 
+  # archplan on the static model: package structure, declared guards, data
+  # ownership. It fails only on findings that are neither in
+  # .archplan/baseline.json nor already on the merge base, or when a ratchet
+  # metric got worse. The trace-based security checks need the seqtrace routes
+  # suite (about 20 minutes), so they run weekly in archplan-weekly.yml, not
+  # here; archplan skips a detector it has no input for. For the same reason
+  # this job reports some ratchet metrics as better than the baseline. Do not
+  # tighten from a static model: record the baseline after
+  # `just archplan-security`, or the weekly traced run reads as worse.
+  archplan:
+    name: Archplan
+    if: github.event_name != 'push'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # The merge base must be in the clone.
+          fetch-depth: 0
+          # The export runs the PR's code; keep the token out of .git/config.
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        id: setup-go
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      # Restore only, from the Lint job's key: that job type-checks the same
+      # packages and saves on push to develop, so its cache is readable from
+      # every PR. A cache saved here would be scoped to this PR's ref.
+      - name: Restore Go build cache
+        uses: actions/cache/restore@v6
+        with:
+          path: ~/.cache/go-build
+          key: go-lint-${{ runner.arch }}-ubuntu-latest-${{ steps.setup-go.outputs.go-version }}-${{ hashFiles('go.sum') }}
+          restore-keys: |
+            go-lint-${{ runner.arch }}-ubuntu-latest-${{ steps.setup-go.outputs.go-version }}-
+
+      # The Go exporter type-checks every package, and cmd/rela-desktop links
+      # Wails v3, whose Linux build needs the GTK4 and WebKitGTK headers.
+      - name: Install Wails Linux dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgtk-4-dev libwebkitgtk-6.0-dev
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: frontend/package-lock.json
+
+      # export-ts loads the SPA's own typescript package.
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: npm ci
+
+      - name: Set up just
+        uses: extractions/setup-just@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+
+      # The justfile pins the version and its commit, so local runs and CI
+      # record the same finding ids, and a moved tag changes nothing here.
+      - name: Install archplan
+        run: |
+          set -euo pipefail
+          version=$(sed -n 's/^archplan_version := "v\([0-9.]*\)"$/\1/p' justfile)
+          commit=$(sed -n 's/^archplan_commit := "\([0-9a-f]\{40\}\)"$/\1/p' justfile)
+          [[ -n "$version" && -n "$commit" ]] || { echo "archplan_version or archplan_commit missing in the justfile"; exit 1; }
+          pip install "git+https://github.com/vloothuis/archplan@$commit"
+          [[ "$(archplan --version)" == "archplan $version" ]] || { echo "archplan_commit is not archplan_version"; exit 1; }
+
+      # `archplan ci --base` exports the merge base in a fresh git worktree,
+      # which has no frontend/node_modules, so export-ts fails there. Export
+      # the base here instead, in a worktree with its own `npm ci`, and pass
+      # the model with --base-model. Like --base, it gets the head's .archplan
+      # settings, and the head's justfile, which pins the exporters, so only
+      # the code differs.
+      - name: Export the merge base
+        id: base
+        env:
+          # Approves the export commands in .archplan/config.json for this run.
+          ARCHPLAN_CI_TRUST: "1"
+          # The PR's base commit, or the queue's: the base this entry merges onto.
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+        run: |
+          set -euo pipefail
+          base_sha=$(git merge-base "$BASE_SHA" HEAD)
+          base_dir="$RUNNER_TEMP/archplan-base"
+          git worktree add --detach "$base_dir" "$base_sha"
+          rm -rf "$base_dir/.archplan"
+          rsync -a --exclude model.archmodel.json --exclude parts/ --exclude vocab-cache.json \
+            --exclude hotspots.json --exclude '*.tmp' --exclude '.*.lock' .archplan/ "$base_dir/.archplan/"
+          cp justfile "$base_dir/justfile"
+          (cd "$base_dir/frontend" && npm ci)
+          # Exit 1 means findings on the base; only the model is needed. The
+          # summary goes to a file: the base's findings are not this PR's.
+          rc=0
+          (cd "$base_dir" && archplan ci --summary "$RUNNER_TEMP/archplan-base.md" --json > /dev/null) || rc=$?
+          model="$base_dir/.archplan/model.archmodel.json"
+          if [[ $rc -gt 1 || ! -s "$model" ]]; then
+            echo "archplan could not export the merge base (exit $rc)"
+            exit 1
+          fi
+          echo "model=$model" >> "$GITHUB_OUTPUT"
+
+      - name: Run archplan ci
+        env:
+          ARCHPLAN_CI_TRUST: "1"
+          BASE_MODEL: ${{ steps.base.outputs.model }}
+        run: archplan ci --base-model "$BASE_MODEL" --format github --sarif archplan.sarif
+
+      # A fork PR's token cannot write security events.
+      - name: Upload SARIF
+        if: >-
+          always() && hashFiles('archplan.sarif') != '' &&
+          (github.event_name == 'merge_group' ||
+           github.event.pull_request.head.repo.full_name == github.repository)
+        uses: github/codeql-action/upload-sarif@v4
+        with:
+          sarif_file: archplan.sarif
+          category: archplan
+
   # There is deliberately no `build` job: it compiled a strict subset of
   # Cross-Compile (linux/default), but `needs: [build]` on demos/docs made that
   # redundant compile the hinge of a three-stage serial tail. If you

@@ -258,6 +258,8 @@ func (h *commentsHandler) readOnlyFailure() *opFailure {
 // gate admitted. Re-reading it by id would lose the face: the thread is keyed
 // by (id, face), and a bare-id read returns whichever face the world selects,
 // which is how a draft comment came to be anchored in the published body.
+//
+//archplan:guard=authz reason="row gate: an unreadable or absent target is the same 404"
 func (h *commentsHandler) readTarget(
 	ctx context.Context, addr commentAddress,
 ) (comments.Target, *entity.Entity, *opFailure) {
@@ -289,6 +291,8 @@ func (h *commentsHandler) readTarget(
 // [visibility.Resolver.WriteRow]: it names the implicit face of a faceless
 // type, and on a faced type it is a 422 `face_required` listing the readable
 // faces. Misses fail with the same uniform 404 as the read gate.
+//
+//archplan:guard=authz reason="row gate for a write: the target face must be named and readable"
 func (h *commentsHandler) writeTarget(
 	ctx context.Context, addr commentAddress,
 ) (comments.Target, *entity.Entity, *opFailure) {
@@ -306,19 +310,32 @@ type listedComment struct {
 	anchor anchorWire
 }
 
+// listGate authorizes reading a target's thread.
+//
+// Read floor first: a caller who cannot read the target, or a target that
+// does not exist, gets the same 404, so comments never confirm existence.
+//
+//archplan:guard=authz reason="checks comment:read on a target the caller may read"
+func (h *commentsHandler) listGate(
+	ctx context.Context, addr commentAddress,
+) (comments.Target, *entity.Entity, *opFailure) {
+	target, ent, fail := h.readTarget(ctx, addr)
+	if fail != nil {
+		return target, nil, fail
+	}
+	if !h.commentAuthorizer().CanRead(ctx, target) {
+		return target, nil, failForbidden("Reading comments requires the comment:read permission")
+	}
+	return target, ent, nil
+}
+
 // listOp reads a target's thread as the ctx principal sees it.
 func (h *commentsHandler) listOp(ctx context.Context, addr commentAddress) ([]listedComment, *opFailure) {
-	auth := h.commentAuthorizer()
-
-	// Read floor first: a caller who cannot read the target — or a target that
-	// does not exist — gets the same 404, so comments never confirm existence.
-	target, ent, fail := h.readTarget(ctx, addr)
+	target, ent, fail := h.listGate(ctx, addr)
 	if fail != nil {
 		return nil, fail
 	}
-	if !auth.CanRead(ctx, target) {
-		return nil, failForbidden("Reading comments requires the comment:read permission")
-	}
+	auth := h.commentAuthorizer()
 
 	list, err := h.svc.List(ctx, target)
 	if err != nil {
@@ -352,6 +369,8 @@ func (h *commentsHandler) addGate(
 
 // addTargetGate is [commentsHandler.addGate] without the read-only refusal,
 // for the resolve check, which writes nothing.
+//
+//archplan:guard=authz reason="checks comment:add on a target the caller may read"
 func (h *commentsHandler) addTargetGate(
 	ctx context.Context, addr commentAddress,
 ) (comments.Target, *entity.Entity, *opFailure) {
@@ -399,6 +418,8 @@ const (
 // property of the stored record: "may I edit this?" cannot be answered without
 // knowing who wrote it. A missing comment is a 404 rather than a 403, since by
 // this point the caller has proven it can read the target.
+//
+//archplan:guard=authz reason="checks comment:update or comment:delete against the stored author"
 func (h *commentsHandler) mutationGate(
 	ctx context.Context, addr commentAddress, commentID string, kind mutationKind,
 ) (comments.Target, comments.Comment, *opFailure) {

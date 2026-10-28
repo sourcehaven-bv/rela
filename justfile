@@ -65,8 +65,12 @@ seqtrace-compare ref="origin/develop":
 
 # archplan (https://github.com/vloothuis/archplan): edit the target architecture
 # in a browser and plan the change with an agent. State lives in .archplan/.
-archplan_version := "v26.10.21"
-archplan_go_version := "v0.2610.21"
+archplan_version := "v26.10.30"
+# The commit archplan_version points at. CI installs this commit, so a moved
+# tag cannot change what runs there. Finding ids differ between versions:
+# bump all three together and re-record .archplan/baseline.json.
+archplan_commit := "e4ed04693ba8b361d5b2274f60333781671dc5cf"
+archplan_go_version := "v0.2610.30"
 
 # Run archplan (default: open the editor). Uses `archplan` from PATH, else uvx.
 archplan *args="up --open":
