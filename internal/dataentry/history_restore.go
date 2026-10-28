@@ -159,7 +159,7 @@ func restoreRecreate(a *App,
 // write path's 422, as on every other entity write.
 func writeRestoreWriteError(w http.ResponseWriter, r *http.Request, err error) {
 	switch {
-	case writeForbiddenIfACLDenied(w, err):
+	case writeForbiddenIfACLDenied(w, r, err):
 	case errors.Is(err, entitymanager.ErrEntityAlreadyExists),
 		errors.Is(err, entitymanager.ErrEntityNotFound),
 		errors.Is(err, store.ErrNotFound):

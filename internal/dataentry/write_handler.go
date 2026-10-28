@@ -526,7 +526,7 @@ func (h *writeHandler) handleV1CreateEntity(w http.ResponseWriter, r *http.Reque
 		// so a new kind of refusal is classified once for both.
 		switch entitymanager.ClassifyCreateError(err) {
 		case entitymanager.CreateErrForbidden:
-			if writeForbiddenIfACLDenied(w, err) {
+			if writeForbiddenIfACLDenied(w, r, err) {
 				return
 			}
 		case entitymanager.CreateErrFace:
@@ -755,7 +755,7 @@ func (h *writeHandler) handleV1DryRunCreate(w http.ResponseWriter, r *http.Reque
 // breaks that chain — a retry loop silently becomes unreachable and every
 // loser gets a 500.
 func writePatchError(w http.ResponseWriter, r *http.Request, err error) {
-	if writeForbiddenIfACLDenied(w, err) {
+	if writeForbiddenIfACLDenied(w, r, err) {
 		return
 	}
 	var conflict *store.VersionConflictError
@@ -778,7 +778,7 @@ func writePatchError(w http.ResponseWriter, r *http.Request, err error) {
 // hidden row from a missing one. A denial is the write's 403. Anything else
 // is a failed gate query.
 func writeEarlyUpdateError(w http.ResponseWriter, r *http.Request, err error) {
-	if writeForbiddenIfACLDenied(w, err) {
+	if writeForbiddenIfACLDenied(w, r, err) {
 		return
 	}
 	if errors.Is(err, entitymanager.ErrEntityNotFound) {
@@ -1195,7 +1195,7 @@ func (h *writeHandler) handleV1DeleteEntity(w http.ResponseWriter, r *http.Reque
 		_, err = h.manager.DeleteEntityFace(r.Context(), ref.ID, ref.Face, true)
 	}
 	if err != nil {
-		if writeForbiddenIfACLDenied(w, err) {
+		if writeForbiddenIfACLDenied(w, r, err) {
 			return
 		}
 		// A channel type with `on_entity_delete: block` refused it. The type
@@ -1378,7 +1378,7 @@ func (h *writeHandler) writeRelationsValidationError(w http.ResponseWriter, r *h
 // under this one maps to 409; everything else is a 500 whose detail names
 // the relation, op and target, with the cause in the server log.
 func (h *writeHandler) writeRelationsApplyError(w http.ResponseWriter, r *http.Request, err error) {
-	if writeForbiddenIfACLDenied(w, err) {
+	if writeForbiddenIfACLDenied(w, r, err) {
 		return
 	}
 	detail := reconcileDetail(err)
@@ -1491,7 +1491,7 @@ func (h *writeHandler) handleV1CreateRelation(
 		entityPkg.RelationOptions{Properties: req.Meta},
 	)
 	if err != nil {
-		if writeForbiddenIfACLDenied(w, err) || writeCardinalityIfExceeded(w, r, err) {
+		if writeForbiddenIfACLDenied(w, r, err) || writeCardinalityIfExceeded(w, r, err) {
 			return
 		}
 		writeV1Error(w, r, http.StatusUnprocessableEntity, "relation_failed", "Failed to create relation", err.Error())
@@ -1600,7 +1600,7 @@ func (h *writeHandler) handleV1UpdateRelation(
 		entityPkg.RelationKey{From: from, FromFace: tail, Type: relType, To: to},
 		entityPkg.RelationOptions{Properties: req.Meta})
 	if err != nil {
-		if writeForbiddenIfACLDenied(w, err) {
+		if writeForbiddenIfACLDenied(w, r, err) {
 			return
 		}
 		writeV1Error(w, r, http.StatusNotFound, "relation_not_found", "Relation not found", err.Error())
@@ -1666,7 +1666,7 @@ func (h *writeHandler) handleV1DeleteRelation(
 
 	if err := h.manager.DeleteRelation(r.Context(),
 		entityPkg.RelationKey{From: from, FromFace: tail, Type: relType, To: to}); err != nil {
-		if writeForbiddenIfACLDenied(w, err) {
+		if writeForbiddenIfACLDenied(w, r, err) {
 			return
 		}
 		writeV1Error(w, r, http.StatusNotFound, "relation_not_found", "Relation not found", err.Error())
@@ -1713,7 +1713,7 @@ func (h *writeHandler) handleV1CloneEntity(
 		entityPkg.CreateOptions{Face: entity.Face},
 	)
 	if err != nil {
-		if writeForbiddenIfACLDenied(w, err) {
+		if writeForbiddenIfACLDenied(w, r, err) {
 			return
 		}
 		// The clone is a create, so it fails validation like one: a
@@ -1806,7 +1806,7 @@ func (h *writeHandler) handleV1ConflictResolve(w http.ResponseWriter, r *http.Re
 			"The conflict cannot be resolved automatically", "Resolve it by editing the file")
 		return
 	}
-	if !h.authorizeConflictResolve(r.Context(), w, resolvedEntity, resolvedRelation) {
+	if !h.authorizeConflictResolve(w, r, resolvedEntity, resolvedRelation) {
 		return
 	}
 	if err := conflict.ValidateResolved(resolvedEntity, st.Meta); err != nil {
@@ -1837,8 +1837,9 @@ func (h *writeHandler) handleV1ConflictResolve(w http.ResponseWriter, r *http.Re
 //
 //archplan:guard=authz reason="conflict resolution bypasses entitymanager, so it re-authorizes the write here"
 func (h *writeHandler) authorizeConflictResolve(
-	ctx context.Context, w http.ResponseWriter, e *entityPkg.Entity, rel *entityPkg.Relation,
+	w http.ResponseWriter, r *http.Request, e *entityPkg.Entity, rel *entityPkg.Relation,
 ) bool {
+	ctx := r.Context()
 	var aclReq acl.WriteRequest
 	if rel != nil {
 		// Write authorization needs the real type whether or not the caller
@@ -1865,7 +1866,7 @@ func (h *writeHandler) authorizeConflictResolve(
 		Summary: fmt.Sprintf("denied: %s (rule_kind=%s rule_id=%s op=conflict-resolve)",
 			decision.Reason, decision.RuleKind, decision.RuleID),
 	})
-	writeForbiddenIfACLDenied(w, &acl.ForbiddenError{Decision: decision})
+	writeForbiddenIfACLDenied(w, r, &acl.ForbiddenError{Decision: decision})
 	return false
 }
 

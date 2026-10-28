@@ -222,6 +222,9 @@ func writeEntityMakingError(w http.ResponseWriter, r *http.Request, err error, k
 			EntityID: kept.Entity.ID,
 		}, err)
 	case errors.As(err, &forbidden):
+		if writeIdentityFaultDeny(w, r, forbidden) {
+			return
+		}
 		writeV1Error(w, r, http.StatusForbidden, "forbidden", "Not permitted", forbidden.Decision.Reason)
 	case errors.As(err, &fieldDenied):
 		writeV1Error(w, r, http.StatusForbidden, "forbidden", "Not permitted", fieldDenied.Error())

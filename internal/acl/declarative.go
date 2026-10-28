@@ -191,6 +191,7 @@ func (d *Declarative) AuthorizeWrite(ctx context.Context, req WriteRequest) Deci
 			RuleKind: "role-grant",
 			RuleID:   "-",
 			Reason:   fmt.Sprintf("acl: no request scope: %v", err),
+			Cause:    err,
 		}
 	}
 	// unmatched_principal gate: a verified principal that resolved to no user

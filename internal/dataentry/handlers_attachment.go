@@ -368,7 +368,7 @@ func writeAttachmentWriteError(w http.ResponseWriter, r *http.Request, limit int
 			"Attachment rejected", attachment.RejectionReason(err))
 		return
 	}
-	if writeForbiddenIfACLDenied(w, err) {
+	if writeForbiddenIfACLDenied(w, r, err) {
 		return
 	}
 	slog.Warn("dataentry: attachment write failed", "err", err, "path", shapedPath(r))
@@ -633,7 +633,7 @@ func (h *attachmentHandler) handleV1DeleteAttachment(
 	}
 	propDef := filePropertyDef(s, typeName, property)
 	if err := svc.DeleteAttachment(ctx, entity, propDef, property, fileName); err != nil {
-		if writeAttachmentBusy(w, r, err) || writeForbiddenIfACLDenied(w, err) {
+		if writeAttachmentBusy(w, r, err) || writeForbiddenIfACLDenied(w, r, err) {
 			return
 		}
 		slog.Warn("dataentry: delete attachment failed", "err", err, "path", shapedPath(r))
@@ -666,7 +666,7 @@ func (h *attachmentHandler) attachmentWritePreflight(
 			"Cannot edit an inaccessible entity", "File is git-crypt encrypted; run `git-crypt unlock` first.")
 	case errors.As(err, &denial):
 		writeAffordanceDenialError(w, denial)
-	case writeForbiddenIfACLDenied(w, err):
+	case writeForbiddenIfACLDenied(w, r, err):
 	default:
 		writeWriteTargetError(w, r, err)
 	}

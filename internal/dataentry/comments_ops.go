@@ -87,8 +87,22 @@ func failForbidden(title string) *opFailure {
 	return failV1(http.StatusForbidden, "forbidden", title)
 }
 
+// failNoIdentity is the failure writeNoIdentity answers: the operation found
+// no bound identity. It reports false when err is not [acl.ErrNoIdentity].
+func failNoIdentity(err error) (*opFailure, bool) {
+	if !errors.Is(err, acl.ErrNoIdentity) {
+		return nil, false
+	}
+	f := failV1(http.StatusUnauthorized, "unauthenticated", "Authentication required")
+	f.write = func(w http.ResponseWriter, r *http.Request) { writeNoIdentity(w, r, err) }
+	return f, true
+}
+
 // failGate is the failure writeGateError answers.
 func failGate(err error) *opFailure {
+	if f, ok := failNoIdentity(err); ok {
+		return f
+	}
 	// Built in two steps, here and in failInternal: TestNoInternalErrorDetail
 	// requires every field of a literal naming a 500 to be a constant, and
 	// the detail, the only field a caller sees, is.
@@ -126,6 +140,9 @@ func failWriteTarget(err error) *opFailure {
 // failInternal is the `comments_failed` failure writeInternalError answers.
 func failInternal(title string, err error) *opFailure {
 	const code = "comments_failed"
+	if f, ok := failNoIdentity(err); ok {
+		return f
+	}
 	f := &opFailure{status: http.StatusInternalServerError, detail: internalErrorDetail}
 	f.code, f.title, f.cause = code, title, err
 	f.write = func(w http.ResponseWriter, r *http.Request) { writeInternalError(w, r, code, title, err) }
@@ -134,10 +151,21 @@ func failInternal(title string, err error) *opFailure {
 
 // failACLDenied is the failure writeForbiddenIfACLDenied answers.
 func failACLDenied(fe *acl.ForbiddenError) *opFailure {
+	// Judged on Decision.Cause, as writeIdentityFaultDeny does.
+	cause := fe.Decision.Cause
+	if f, ok := failNoIdentity(cause); ok {
+		return f
+	}
+	if errors.Is(cause, acl.ErrIdentityMismatch) || errors.Is(cause, acl.ErrForeignIdentity) {
+		f := failInternal("ACL request identity mismatch", fe)
+		f.code = "acl_identity_mismatch"
+		f.write = func(w http.ResponseWriter, r *http.Request) { writeForbiddenIfACLDenied(w, r, fe) }
+		return f
+	}
 	return &opFailure{
 		status: http.StatusForbidden, code: "forbidden", title: "Denied by the access policy",
 		detail: fmt.Sprintf("%s (rule_kind=%s rule_id=%s)", fe.Decision.Reason, fe.Decision.RuleKind, fe.Decision.RuleID),
-		write:  func(w http.ResponseWriter, _ *http.Request) { writeForbiddenIfACLDenied(w, fe) },
+		write:  func(w http.ResponseWriter, r *http.Request) { writeForbiddenIfACLDenied(w, r, fe) },
 	}
 }
 

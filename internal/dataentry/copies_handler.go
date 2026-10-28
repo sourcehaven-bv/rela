@@ -267,6 +267,9 @@ func (h *copiesHandler) invoke(w http.ResponseWriter, r *http.Request, name stri
 func writeCopyError(w http.ResponseWriter, r *http.Request, err error) {
 	var forbidden *acl.ForbiddenError
 	if errors.As(err, &forbidden) {
+		if writeIdentityFaultDeny(w, r, forbidden) {
+			return
+		}
 		writeV1Error(w, r, http.StatusForbidden, "forbidden",
 			"Not permitted", forbidden.Decision.Reason)
 		return

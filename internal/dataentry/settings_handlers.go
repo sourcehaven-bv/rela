@@ -94,10 +94,15 @@ func writeJSONError(w http.ResponseWriter, status int, message string) {
 // invoke this *before* falling back to the generic 500 path. The check is
 // cheap (an errors.As type assertion) and centralizing the 403 body shape
 // here keeps the wire contract identical across all handlers.
-func writeForbiddenIfACLDenied(w http.ResponseWriter, err error) bool {
+//
+// A deny that no rule decided is not a 403; see [writeIdentityFaultDeny].
+func writeForbiddenIfACLDenied(w http.ResponseWriter, r *http.Request, err error) bool {
 	var fe *acl.ForbiddenError
 	if !errors.As(err, &fe) {
 		return false
+	}
+	if writeIdentityFaultDeny(w, r, fe) {
+		return true
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusForbidden)
@@ -108,6 +113,30 @@ func writeForbiddenIfACLDenied(w http.ResponseWriter, err error) bool {
 		"reason":    fe.Decision.Reason,
 	})
 	return true
+}
+
+// writeIdentityFaultDeny answers a deny that no rule decided, and reports
+// whether it wrote a response. Every handler that maps an
+// [acl.ForbiddenError] calls it before writing its own 403;
+// TestForbiddenMappersHandleIdentityFaults enforces that.
+//
+// It judges [acl.Decision.Cause] only, never the rest of the error chain:
+//
+//   - [acl.ErrNoIdentity]: the write found no bound identity. The answer is
+//     the 401 from [writeNoIdentity].
+//   - [acl.ErrIdentityMismatch] or [acl.ErrForeignIdentity]: the server
+//     attached a Request for another principal or policy. That is a server
+//     fault, so the answer is a 500.
+func writeIdentityFaultDeny(w http.ResponseWriter, r *http.Request, fe *acl.ForbiddenError) bool {
+	cause := fe.Decision.Cause
+	switch {
+	case errors.Is(cause, acl.ErrNoIdentity):
+		return writeNoIdentity(w, r, cause)
+	case errors.Is(cause, acl.ErrIdentityMismatch), errors.Is(cause, acl.ErrForeignIdentity):
+		writeInternalError(w, r, "acl_identity_mismatch", "ACL request identity mismatch", fe)
+		return true
+	}
+	return false
 }
 
 // --- Settings API ---
