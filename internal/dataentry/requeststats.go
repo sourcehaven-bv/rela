@@ -270,7 +270,7 @@ var fixedRouteWords = map[string]bool{
 	"help": true, "git": true, "status": true, "sync": true, "types": true, "relations": true,
 	"file": true, "clone": true, "restore": true, "resolve": true, "export": true, "import": true,
 	"logo": true, "accept": true, "principal": true, "calendars": true, ".well-known": true,
-	"caldav": true,
+	"caldav": true, "card": true,
 	// SPA client routes.
 	"list": true, "kanban": true, "calendar": true, "gantt": true, "document": true, "form": true,
 	"p": true, "search": true, "settings": true, "dashboard": true,

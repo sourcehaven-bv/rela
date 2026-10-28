@@ -78,6 +78,35 @@ func (d *DashboardRef) UnmarshalYAML(value *yaml.Node) error {
 	return nil
 }
 
+// UnmarshalYAML reads `columns:` by its shape. A scalar names a matrix card's
+// column property (MatrixColumns); a sequence is a table card's column list
+// (Columns). Both keep the key the operator expects for the display.
+func (c *DashboardCard) UnmarshalYAML(value *yaml.Node) error {
+	type plain DashboardCard
+	node := value
+	var matrixColumns string
+	if value.Kind == yaml.MappingNode {
+		copied := *value
+		copied.Content = make([]*yaml.Node, 0, len(value.Content))
+		for i := 0; i+1 < len(value.Content); i += 2 {
+			key, val := value.Content[i], value.Content[i+1]
+			if key.Value == "columns" && val.Kind == yaml.ScalarNode {
+				matrixColumns = val.Value
+				continue
+			}
+			copied.Content = append(copied.Content, key, val)
+		}
+		node = &copied
+	}
+	var p plain
+	if err := node.Decode(&p); err != nil {
+		return err
+	}
+	*c = DashboardCard(p)
+	c.MatrixColumns = matrixColumns
+	return nil
+}
+
 // MarshalYAML writes the same shape UnmarshalYAML reads.
 func (d DashboardRef) MarshalYAML() (any, error) {
 	if d.IsDefault() {

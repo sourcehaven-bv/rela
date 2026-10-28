@@ -73,4 +73,30 @@ export function styleStatusColor(
   return styleSwatch(styleClassFor(styles, value))?.status
 }
 
+// The tag tokens each bare-hue class paints with, as Badge.vue's classes do.
+const NAMED_FILL: Record<string, string> = {
+  'badge-blue': 'blue',
+  'badge-purple': 'purple',
+  'badge-green': 'green',
+  'badge-gray': 'grey',
+  'badge-red': 'red',
+  'badge-orange': 'amber',
+  'badge-yellow': 'yellow',
+  'badge-teal': 'teal',
+}
+
+/**
+ * An inline fill and text colour for a style class, for surfaces that are not
+ * a Badge (a dashboard matrix cell). Undefined for a class the server cannot
+ * emit, so a cell without one stays neutral.
+ */
+export function styleFill(cls: string | undefined): Record<string, string> | undefined {
+  if (!cls) return undefined
+  if (Object.prototype.hasOwnProperty.call(NAMED_FILL, cls)) {
+    const tag = NAMED_FILL[cls]
+    return { background: `var(--rl-tag-${tag}-bg)`, color: `var(--rl-tag-${tag}-fg)` }
+  }
+  return styleSwatch(cls)?.badgeStyle
+}
+
 export type { DotColor, StatusColor }

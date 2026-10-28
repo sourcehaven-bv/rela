@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
 import RlSortableList from 'rela-components/components/data/RlSortableList.vue'
 import RlTextField from 'rela-components/components/form/RlTextField.vue'
@@ -21,8 +22,8 @@ import { listAt, newMap, positionAfterMove, type TreeValue } from '@/configure/t
 
 /**
  * The dashboard: cards in order, each a count, a table or a breakdown of
- * the records a query finds. A card shown only to some people is listed but
- * not edited here.
+ * the records a query finds. A card shown only to some people, or one that
+ * counts a list (`list:`), is listed but not edited here.
  *
  * `?name=` picks a named dashboard under `dashboards:` (TKT-5LQNLY); without
  * it, this edits the default one. A name the draft does not declare also
@@ -32,6 +33,7 @@ const draft = useConfigDraftStore()
 const route = useRoute()
 const router = useRouter()
 
+const { t } = useI18n()
 const all = computed(() => dashboards(draft.currentDataEntry))
 const wanted = computed(() => (typeof route.query.name === 'string' ? route.query.name : ''))
 const name = computed(() => (all.value.some((d) => d.name === wanted.value) ? wanted.value : ''))
@@ -56,7 +58,11 @@ const displays = [
   { value: 'table', label: 'Table' },
   { value: 'breakdown', label: 'Breakdown' },
 ]
-const displayLabel = (value: string) => displays.find((d) => d.value === value)?.label ?? value
+// Matrix and ratio cards are written in the project's files (TKT-2SGPJZ), so
+// they are labelled here but are not choices in the segmented control.
+const displayLabels: Record<string, string> = { matrix: 'Matrix', ratio: 'Ratio' }
+const displayLabel = (value: string) =>
+  displays.find((d) => d.value === value)?.label ?? displayLabels[value] ?? value
 
 function cardSetting(key: string, value: TreeValue | undefined) {
   if (editing.value === undefined) return
@@ -102,7 +108,13 @@ function removeCard(index: number) {
       <RlButton variant="secondary" icon="plus" @click="addCard">New card</RlButton>
     </template>
     <ConfigSplit>
-      <RlText v-if="unknownName" size="sm" tone="muted" as="p" data-testid="config-dashboard-unknown">
+      <RlText
+        v-if="unknownName"
+        size="sm"
+        tone="muted"
+        as="p"
+        data-testid="config-dashboard-unknown"
+      >
         No dashboard is named “{{ unknownName }}”. These are the default dashboard's cards.
       </RlText>
       <RlSegmentedControl
@@ -133,15 +145,16 @@ function removeCard(index: number) {
               <button
                 type="button"
                 class="card-row__open"
-                :disabled="item.restricted"
+                :disabled="item.restricted || !!item.list"
                 @click="editing = item.index"
               >
                 <RlText size="sm" weight="medium">{{ item.title }}</RlText>
                 <RlTag :label="displayLabel(item.display)" />
                 <RlTag v-if="item.restricted" label="Only some people" />
+                <RlTag v-if="item.list" label="From a list" />
               </button>
               <RlIconButton
-                v-if="!item.restricted"
+                v-if="!item.restricted && !item.list"
                 icon="delete"
                 :label="`Remove ${item.title}`"
                 @click="removeCard(item.index)"
@@ -198,9 +211,14 @@ function removeCard(index: number) {
             <div v-for="c in dash.cards" :key="c.index" class="preview-card">
               <RlText size="sm" weight="medium" as="div">{{ c.title || 'Untitled card' }}</RlText>
               <RlText v-if="c.display === 'count'" size="lg" weight="semibold">12</RlText>
-              <RlText v-else size="sm" tone="muted"
-                >{{ displayLabel(c.display) }} of {{ c.query || 'all records' }}</RlText
-              >
+              <RlText v-else size="sm" tone="muted">{{
+                t('dashboard.previewOf', {
+                  display: displayLabel(c.display),
+                  source: c.list
+                    ? t('dashboard.previewList', { name: c.list })
+                    : c.query || 'all records',
+                })
+              }}</RlText>
             </div>
           </div>
         </ConfigPreview>

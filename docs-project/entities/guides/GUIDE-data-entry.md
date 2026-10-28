@@ -2940,10 +2940,11 @@ conflict by hand and run `rela migrate` again.
 
 ## Dashboard
 
-The dashboard is an optional overview page that displays a grid of query-driven cards. Each card
-runs a search query against your entities and renders the results as a count, a property breakdown,
-or a mini-table. The query syntax is the same as the search page: `type:`, `prop:`, `status:`,
-and free text.
+The dashboard is an optional overview page that displays a grid of cards. A card takes its rows
+from a configured [list](#lists) (`list:`) or from a search query (`query:`), and renders them as a
+count, a property breakdown, a mini-table, a matrix or a ratio. Matrix and ratio cards need
+`list:`. The query syntax is the same as the search page: `type:`, `prop:`, `status:`, and free
+text.
 
 ### Basic Dashboard
 
@@ -2988,16 +2989,122 @@ dashboard:
 
 ### Card Options
 
-| Field     | Type   | Description                                                        |
-| --------- | ------ | ------------------------------------------------------------------ |
-| `title`   | string | Card heading                                                       |
-| `query`   | string | Search query (same syntax as the search page)                      |
-| `display` | string | Display mode: `"count"`, `"breakdown"`, or `"table"`               |
-| `group_by`| string | Property to group by (`breakdown` mode only)                       |
-| `columns` | list   | Column definitions (`table` mode only, same format as list columns) |
-| `sort`    | object | Sort order (`table` mode only)                                     |
-| `limit`   | int    | Maximum rows to display (`table` mode only)                        |
-| `permission` | string | Hide this card from principals who do not hold the named ACL permission |
+| Field        | Type   | Description                                                                 |
+| ------------ | ------ | --------------------------------------------------------------------------- |
+| `title`      | string | Card heading                                                                |
+| `list`       | string | A list under `lists:` that supplies the rows. Set `list` or `query`, not both |
+| `query`      | string | Search query (same syntax as the search page)                               |
+| `display`    | string | `count`, `breakdown`, `table`, `matrix` or `ratio`                          |
+| `group_by`   | string | Property to group by (`breakdown`, and optionally `ratio`)                  |
+| `columns`    | list or string | `table`: column definitions, same format as list columns. `matrix`: the property along the top |
+| `sort`       | object | Sort order (`table` mode only)                                              |
+| `limit`      | int    | Maximum rows to display (`table` mode only; at most 100 for a list card)    |
+| `rows`       | string | `matrix`: the property down the side                                        |
+| `tone_by`    | string | `matrix`: the enum property that colours a cell                             |
+| `colors`     | map    | `matrix`: a colour per `tone_by` value                                      |
+| `match`      | string | `ratio`: the query scope on the list's type that counts as matched          |
+| `permission` | string | Hide this card from principals who do not hold the named ACL permission     |
+
+### Cards from a list (`list:`)
+
+A card with `list:` counts the rows of that list, exactly as the list page
+shows them to the person viewing the dashboard. It inherits the list's entity
+type, `filters:`, `condition:`, `query_scope:` and world. The card's link
+opens the list, and a page opened in a [world](#worlds-in-the-web-app-and-api) counts in that world.
+
+```yaml
+lists:
+  open-risks:
+    entity_type: risk
+    filters:
+      - property: status
+        value: open
+
+dashboard:
+  cards:
+    - title: "Open risks"
+      list: open-risks
+      display: count
+    - title: "By priority"
+      list: open-risks
+      display: breakdown
+      group_by: priority
+```
+
+The server computes a list card. It reads only the rows the viewer may read,
+hides property values the viewer may not see, and only then counts. A row whose
+grouping value is hidden from the viewer is left out of that grouping, and the
+card says that some values are hidden. The value is computed for each request
+and is never shared between users. The SPA fetches it from
+`/api/v1/_dashboard/card?name=<dashboard>&card=<index>`, where `index` is the
+card's position in the dashboard's `cards:` list.
+
+`group_by:` must name a single-valued property. A table card's `columns:` and
+`sort:` must name properties of the list's type, and its `limit:` is at most
+100. If one card fails to load, for example because its list filters on a
+property hidden from the viewer, only that tile says so.
+
+A card with `query:` works as before: the browser runs the query on the search
+page's API and counts the results.
+
+### Matrix cards (`display: matrix`)
+
+A matrix counts the list's rows by two properties: `rows:` down the side and
+`columns:` along the top. Each property must be a single-valued enum or an
+integer. A risk heat map is the typical use:
+
+```yaml
+dashboard:
+  cards:
+    - title: "Risk heat map"
+      list: open-risks
+      display: matrix
+      rows: impact
+      columns: likelihood
+      tone_by: rating
+      colors:
+        low: success
+        medium: orange/500
+        high: error
+```
+
+- An enum axis shows every declared value, in declared order, even when no row
+  has it. An integer axis shows the values that occur, sorted, up to 50.
+- A row that has no value for an axis, or a value the enum does not declare,
+  is not placed in a cell. The card shows how many rows that is.
+- `tone_by` names an enum property. A cell takes the colour of the most severe
+  `tone_by` value among its rows. The last declared value is the most severe.
+- `colors` maps a `tone_by` value to a tone (`success`, `warning`, `error`,
+  `info`, `new`) or to a [palette colour](#color-names) such as `red/700`. A value
+  that `colors` does not name takes its colour from `styles:`. A value with
+  neither leaves the cell neutral.
+- Without `tone_by`, a cell is shaded by its count.
+- Empty cells stay neutral. Clicking a cell opens the list filtered on both
+  values.
+- A row whose `tone_by` value is hidden from the viewer still counts, but does
+  not colour its cell.
+
+### Ratio cards (`display: ratio`)
+
+A ratio shows how many of the list's rows a [query scope](metamodel.md#query-scopes)
+admits, as `matched / total (pct)`. `match:` names the scope on the list's
+entity type; `all` is refused, because it would always read 100%. Add
+`group_by:` to show the ratio for each value of a property.
+
+```yaml
+dashboard:
+  cards:
+    - title: "Controls with evidence"
+      list: controls
+      display: ratio
+      match: has-evidence
+      group_by: status
+```
+
+### Editing list cards in Configure
+
+The Configure space edits query cards only. Write `list:`, matrix and ratio
+cards in `data-entry.yaml`.
 
 ### Hiding cards a user cannot use (`permission`)
 
@@ -3020,7 +3127,7 @@ dashboard:
 ```
 
 **This is a UX filter, not an access control.** Card data already flows through
-the ACL-scoped search path, so a principal who cannot read the matching
+the ACL-scoped search and list paths, so a principal who cannot read the matching
 entities already sees a card reading `0` or an empty table — `permission:`
 just stops rendering that useless tile. Hiding a card grants and revokes
 nothing: its query typed into the search page returns exactly the rows it
@@ -3143,8 +3250,8 @@ Cards use the same search query syntax available on the search page:
 Multiple terms are combined with AND logic. For example,
 `type:ticket status:open prop:priority=critical` matches tickets that are both open and critical.
 
-Every card includes a link icon that opens the same query on the search page for further
-exploration.
+Every query card includes a link icon that opens the same query on the search page for further
+exploration. A list card's link opens its list.
 
 ## Next actions
 

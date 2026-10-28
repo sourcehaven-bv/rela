@@ -58,5 +58,19 @@
     "stateChanged": "This changed while you were working. Try again.",
     "encryptedInaccessible": "This item is encrypted and cannot be edited here",
     "historyUnsupported": "This installation does not keep version history"
+  },
+  "dashboard": {
+    "openList": "Open the list",
+    "viewInSearch": "View in search",
+    "cardFailed": "This card could not be loaded.",
+    "partial": "Some values are hidden from you and are not shown.",
+    "hidden": "Hidden",
+    "hiddenTitle": "Hidden from you",
+    "unknown": "Unknown",
+    "matrixUnplaced": "{count} without a {row} or {column}",
+    "matrixTruncated": "Not every value is shown.",
+    "previewOf": "{display} of {source}",
+    "previewList": "list {name}",
+    "noData": "No data"
   }
 }

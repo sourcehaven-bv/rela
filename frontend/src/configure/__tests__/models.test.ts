@@ -81,6 +81,24 @@ describe('screen models', () => {
     expect(dashboardModel(dataEntry).cards.map((c) => c.restricted)).toEqual([false, true])
   })
 
+  // A `list:` card (TKT-2SGPJZ) is shown but not edited in Configure.
+  it('marks a list card', () => {
+    const cards = dashboardModel(
+      toTree({
+        dashboard: {
+          cards: [
+            { title: 'Q', query: 'type:ticket' },
+            { title: 'L', list: 'open', display: 'matrix' },
+          ],
+        },
+      })
+    ).cards
+    expect(cards.map((c) => [c.list, c.display])).toEqual([
+      ['', 'count'],
+      ['open', 'matrix'],
+    ])
+  })
+
   // Named dashboards (TKT-5LQNLY) sit under `dashboards.<name>`.
   it('reads named dashboards beside the default one', () => {
     const withNamed = toTree({

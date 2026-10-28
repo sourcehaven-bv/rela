@@ -725,9 +725,26 @@ export interface DashboardConfig {
 
 export interface DashboardCard {
   title: string
-  query: string
-  display: 'count' | 'breakdown' | 'table'
+  /**
+   * A `lists:` entry (TKT-2SGPJZ). The card shows the list's rows, and the
+   * server computes its value at `/_dashboard/card`. Exactly one of `list`
+   * and `query` is set.
+   */
+  list?: string
+  /** A search query the SPA runs through `/_search`. */
+  query?: string
+  display: 'count' | 'breakdown' | 'table' | 'matrix' | 'ratio'
   group_by?: string
+  /** A matrix card's row property. */
+  rows?: string
+  /** A matrix card's column property (`columns: <property>` in YAML). */
+  matrix_columns?: string
+  /** A matrix card's colour property; its last declared value is the most severe. */
+  tone_by?: string
+  /** A matrix card's colour per tone_by value: a tone or a palette colour. */
+  colors?: Record<string, string>
+  /** A ratio card's query scope on the list's type. */
+  match?: string
   columns?: Array<{ property?: string; relation?: string; label?: string; link?: string }>
   sort?: Array<{ property: string; direction: 'asc' | 'desc' }>
   limit?: number
@@ -753,7 +770,72 @@ export interface DashboardCard {
 export interface DashboardResponse {
   title?: string
   description?: string
-  cards: DashboardCard[]
+  cards: DashboardCardEntry[]
+}
+
+/**
+ * A card as `/_dashboard` serves it: its config plus its position in the
+ * dashboard's `cards:`, which addresses it on `/_dashboard/card`.
+ */
+export interface DashboardCardEntry extends DashboardCard {
+  index: number
+}
+
+/** One group of a breakdown or ratio. An empty value collects unset rows. */
+export interface DashboardGroup {
+  value: string
+  label: string
+  count: number
+  matched: number
+}
+
+/** One row of a table card: its column properties as the reader may see them. */
+export interface DashboardRow {
+  id: string
+  type: string
+  _title: string
+  properties: Record<string, unknown>
+  _redacted?: string[]
+}
+
+export interface DashboardAxisValue {
+  value: string
+  label: string
+}
+
+/** One non-empty matrix cell. `color` is a style class, or absent for neutral. */
+export interface DashboardCell {
+  row: string
+  column: string
+  count: number
+  color?: string
+}
+
+export interface DashboardMatrix {
+  row_property: string
+  column_property: string
+  rows: DashboardAxisValue[]
+  columns: DashboardAxisValue[]
+  cells: DashboardCell[]
+  unplaced?: number
+  truncated?: boolean
+}
+
+/**
+ * The server-computed value of one `list:` card (`/_dashboard/card`).
+ * `title`, `display` and `list` echo the card it was computed for.
+ * `partial` says a value it groups, colours or shows was hidden on some row.
+ */
+export interface DashboardCardValue {
+  title: string
+  display: DashboardCard['display']
+  list: string
+  total: number
+  matched?: number
+  groups?: DashboardGroup[]
+  rows?: DashboardRow[]
+  matrix?: DashboardMatrix
+  partial?: boolean
 }
 
 /**

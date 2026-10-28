@@ -12,13 +12,15 @@ body:
     {
       "title": "Tickets",
       "query": "type:ticket",
-      "display": "count"
+      "display": "count",
+      "index": 0
     },
     {
       "title": "By status",
       "query": "type:ticket",
       "display": "breakdown",
-      "group_by": "status"
+      "group_by": "status",
+      "index": 1
     },
     {
       "title": "Open",
@@ -32,7 +34,8 @@ body:
         {
           "property": "secret"
         }
-      ]
+      ],
+      "index": 2
     }
   ]
 }

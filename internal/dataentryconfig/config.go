@@ -1928,15 +1928,37 @@ type DashboardConfig struct {
 	Cards       []DashboardCard `yaml:"cards" json:"cards"`
 }
 
-// DashboardCard defines a single card on the dashboard, driven by a search query.
+// DashboardCard defines a single card on the dashboard. Its rows come from a
+// configured list (`list:`) or from a search query (`query:`); exactly one is
+// set.
 type DashboardCard struct {
-	Title   string       `yaml:"title" json:"title"`
-	Query   string       `yaml:"query" json:"query"`
-	Display string       `yaml:"display" json:"display"` // "count", "table", "breakdown"
+	Title string `yaml:"title" json:"title"`
+	// List names a `lists:` entry. The card shows exactly the rows that list
+	// shows the same principal, and the server computes its value
+	// (/api/v1/_dashboard/card). Matrix and ratio cards require it.
+	List string `yaml:"list,omitempty" json:"list,omitempty"`
+	// Query is a search query the SPA runs through /api/v1/_search.
+	Query   string       `yaml:"query,omitempty" json:"query,omitempty"`
+	Display string       `yaml:"display" json:"display"` // count, table, breakdown, matrix, ratio
 	GroupBy string       `yaml:"group_by,omitempty" json:"group_by,omitempty"`
 	Columns []ListColumn `yaml:"columns,omitempty" json:"columns,omitempty"`
 	Sort    []SortSpec   `yaml:"sort,omitempty" json:"sort,omitempty"`
 	Limit   int          `yaml:"limit,omitempty" json:"limit,omitempty"`
+
+	// Rows and MatrixColumns name the properties a matrix card counts by. In
+	// YAML the column axis is `columns: <property>`; a sequence under the same
+	// key is a table card's column list (see UnmarshalYAML).
+	Rows          string `yaml:"rows,omitempty" json:"rows,omitempty"`
+	MatrixColumns string `yaml:"-" json:"matrix_columns,omitempty"`
+	// ToneBy names an enum property whose most severe value colors a matrix
+	// cell. Severity is the declared order: the last value is the most severe.
+	ToneBy string `yaml:"tone_by,omitempty" json:"tone_by,omitempty"`
+	// Colors maps a ToneBy value to a tone (success, warning, error, info,
+	// new) or a palette color name.
+	Colors map[string]string `yaml:"colors,omitempty" json:"colors,omitempty"`
+	// Match names a query scope on the list's type. A ratio card shows how
+	// many of the list's rows it matches.
+	Match string `yaml:"match,omitempty" json:"match,omitempty"`
 
 	// Permission optionally hides this card from the dashboard for principals
 	// who do not hold the named global ACL permission (TKT-53KICM). Empty —

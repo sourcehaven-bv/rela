@@ -325,6 +325,12 @@ var locked = map[File][]string{
 		// Access control and actions.
 		"nav.permission", "nav.action", "spaces.[].permission", "dashboard.cards.[].permission",
 		"dashboards.*.cards.[].permission",
+		// Not in the Configure space yet: list-sourced, matrix and ratio cards
+		// (TKT-2SGPJZ). The Configure dashboard page edits query cards only.
+		"dashboard.cards.[].list", "dashboard.cards.[].rows", "dashboard.cards.[].tone_by",
+		"dashboard.cards.[].colors.*", "dashboard.cards.[].match",
+		"dashboards.*.cards.[].list", "dashboards.*.cards.[].rows", "dashboards.*.cards.[].tone_by",
+		"dashboards.*.cards.[].colors.*", "dashboards.*.cards.[].match",
 		"lists.*.actions.**", "lists.*.toolbar_actions.**", "lists.*.export_render",
 		// The pile menu's actions and export transforms, like a list's.
 		"piles.actions.[]", "piles.export.[]",
