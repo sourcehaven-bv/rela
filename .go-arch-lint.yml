@@ -1888,6 +1888,9 @@ deps:
       - storage
       - store
       - storeutil
+    canUse:
+      # One read per file version when concurrent lists hash an attachment.
+      - singleflight
   memstore:
     mayDependOn:
       - mentions

@@ -693,6 +693,98 @@ local ok, e, warnings = pcall(rela.update_entity, "TKT-001", {title = ""})
 -- ok=true, e is the entity, warnings is the validation findings.
 ```
 
+### Attach a rendered document: `rela.attach_render`
+
+`rela.attach_render` renders a document or a list, converts it with a
+[transform](export.md), and stores the result on a `file` property. Use it
+to keep a dated PDF of a report on the entity it is about, such as an audit:
+
+```lua
+local att, err = rela.attach_render{
+  entity   = entity.id,       -- the entity that gets the file
+  property = "report",        -- a `file` property of that entity
+  document = "audit_report",  -- a configured document, or
+  -- list  = "open_findings", -- a configured list (give exactly one)
+  entry    = entity.id,       -- the entry of an entity-anchored document
+  format   = "pdf",           -- a registered transform, or "md"
+  filename = "audit-report",  -- the extension is added when missing
+}
+if not att then
+  return { message = "Report not attached: " .. err, message_type = "error" }
+end
+return { message = "Attached " .. att.name .. " (sha256 " .. att.sha256 .. ")" }
+```
+
+On success it returns a table `{name, size, sha256, mime}`. `sha256` is the
+SHA-256 hash of the stored bytes, the same value the attachment listing
+shows. On a refusal or a failure it returns `nil` and a message. A wrong
+argument, such as an unknown option, a missing `filename`, or both
+`document` and `list`, raises an error.
+
+The options:
+
+- `document` names a document from `data-entry.yaml`. An entity-anchored
+  document needs `entry`; a standalone document must not have one. Only
+  `script:` documents render. A `command:` document and an elevated document
+  (`allow_acl_bypass`) are refused.
+- `list` names a list from `data-entry.yaml`. It renders the table the list
+  export renders: the list's columns, filters, `condition:`, sort and query
+  scope.
+- `format` names a transform from `transforms:` in `schema.yaml`, or `md`
+  for the markdown itself. The conversion runs in the same confined runner
+  as an export.
+- `filename` gets the format's extension when it has none. An extension
+  that does not fit the format is refused, so `report.txt` with `format =
+  "pdf"` fails. A suffix that names no known type, as in `audit-v1.2`,
+  counts as part of the name. A format whose type has no known extension
+  gets `.bin`. Which extensions are known comes from the server's MIME
+  table, which can differ between hosts.
+
+The call acts as the script's principal and has no elevated mode:
+
+- The render reads what the principal can read. Rows the principal cannot
+  see are not in the file, exactly as in an export.
+- A document with `permission:` needs that permission.
+- The attachment is written like an upload of the same bytes. The principal
+  needs `update` on the entity and may change the property. The property's
+  `accept:`, `max:` and the attachment scanner apply. On a property with
+  `max: 1` the new file replaces the old one.
+- The audit log gets one `attach-render` record with the file name, size,
+  hash and the document or list it came from, next to the record of the
+  write itself.
+- `rela.bypass_acl` does not widen it.
+
+Which principal that is depends on where the script runs. In an action it
+is the user who ran the action. In a background automation it is the
+action's `run_as` identity, and in a schedule the task's identity. The
+user whose save triggered an automation is not the principal. The audit
+record names that user in `triggered_by`, as
+`automation-job:<name>;by=<user>`.
+
+The file can be downloaded by everyone who can read the target entity.
+That audience may be wider than the principal that rendered it. A broad
+`run_as` identity therefore renders rows the triggering user may not see
+and stores them where that user can read them. Give an automation that
+calls `rela.attach_render` a `run_as` whose reads match the entity's
+readers.
+
+The render and conversion run inside the script and count against the
+script's timeout. A render that is still running at the timeout is
+cancelled, and nothing is stored. Conversions share one bounded pool with
+exports, so a busy server can make the call wait.
+
+`rela.attach_render` exists in action scripts. In `rela-server` and the
+desktop app it also exists in scheduled scripts and background automation
+actions. In other runtimes, such as `rela scheduler`, `rela script` or MCP over stdio, it
+returns `nil` and `"attach_render is not available in this runtime"`. It
+is absent in a synchronous automation, in a document render and in a
+validation rule.
+
+An automation that attaches on update fires again for its own write,
+because attaching a file updates the entity. Guard it with a `when:` that
+the write does not keep true, such as a status change, or run it from an
+action or a schedule instead.
+
 ### Pile Functions
 
 A pile is a personal, named stack of entities. The `rela.piles` functions

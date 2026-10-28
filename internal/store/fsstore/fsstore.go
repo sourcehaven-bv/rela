@@ -30,6 +30,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"golang.org/x/sync/singleflight"
+
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/storage"
 	"github.com/Sourcehaven-BV/rela/internal/store"
@@ -130,11 +132,19 @@ func (rm relationMeta) key() string {
 }
 
 // attachMeta tracks attachment metadata in memory.
+//
+// sha256 describes the file as it was when size and modTime were read. A
+// file this store did not write (present at open, or changed on disk
+// since) gets its hash on the first list that finds the stat changed or
+// the hash missing; see [FSStore.ListFamilyAttachments]. Index load stays
+// stat-only so opening a store never reads attachment bytes.
 type attachMeta struct {
 	entityID string
 	property string
 	fileName string
 	size     int64
+	modTime  time.Time
+	sha256   string
 }
 
 // FSStore is a filesystem-backed store implementation.
@@ -247,6 +257,9 @@ type FSStore struct {
 	relations     map[string]relationMeta // key (from--type--to) → meta
 	relationOrder []string
 	attachments   map[string]attachMeta // "entityID/property" → meta
+	// hashFlight shares one read between lists that hash the same file
+	// version at once (see ListFamilyAttachments).
+	hashFlight singleflight.Group
 	// marked holds the soft-deleted families, out of the index above (see
 	// softdelete.go). Nil until the first mark.
 	marked map[string]*fsMarked
@@ -457,6 +470,7 @@ func (s *FSStore) loadPropertyAttachments(entityID, prop string) {
 			property: prop,
 			fileName: name,
 			size:     info.Size(),
+			modTime:  info.ModTime(),
 		}
 	}
 }

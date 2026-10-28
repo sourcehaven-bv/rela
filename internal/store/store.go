@@ -580,6 +580,10 @@ type AttachmentInfo struct {
 	FileName    string
 	ContentType string
 	Size        int64
+	// SHA256 is the lowercase hex SHA-256 of the stored bytes, computed by
+	// the backend from what it stored. Empty only when the backend could not
+	// read the bytes to hash them (fsstore, a file unreadable at list time).
+	SHA256 string
 }
 
 // AttachmentManager provides file attachment operations. Attachment bytes

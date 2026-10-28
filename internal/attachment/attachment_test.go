@@ -282,6 +282,29 @@ func (f *failingReader) Read(p []byte) (int, error) {
 // TestService_ReplaceFailureKeepsExisting pins RR-N96YV0: at max==1, if the
 // new AttachFile fails, the existing attachment must survive (attach-first,
 // then delete-old ordering — not delete-then-attach).
+// The Result reports the size and SHA-256 of the bytes handed to the store,
+// so a caller can record what was attached without reading it back.
+func TestService_WriteAttachment_ReportsSizeAndHash(t *testing.T) {
+	f := setupAttachmentService(t)
+	ctx := context.Background()
+	e := entity.New("T-1", "ticket")
+	if err := f.st.CreateEntity(ctx, e); err != nil {
+		t.Fatal(err)
+	}
+	payload := "pretend pdf bytes"
+	def := metamodel.PropertyDef{Type: metamodel.PropertyTypeFile}
+	res, err := f.svc.WriteAttachment(ctx, e, def, "spec", "ok.pdf", strings.NewReader(payload))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := store.HashAttachment([]byte(payload)); res.SHA256 != want {
+		t.Errorf("SHA256 = %q, want %q", res.SHA256, want)
+	}
+	if res.Size != int64(len(payload)) {
+		t.Errorf("Size = %d, want %d", res.Size, len(payload))
+	}
+}
+
 func TestService_ReplaceFailureKeepsExisting(t *testing.T) {
 	f := setupAttachmentService(t)
 	ctx := context.Background()

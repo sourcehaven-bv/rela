@@ -40,7 +40,13 @@ export const DownloadAndRemove: Story = {
     components: { RlAttachmentCard, RlAttachmentList },
     setup: () => ({
       items: [
-        { id: '1', name: 'Awesome.pdf', kind: 'pdf', href: '#' },
+        {
+          id: '1',
+          name: 'Awesome.pdf',
+          kind: 'pdf',
+          href: '#',
+          checksum: 'ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad',
+        },
         { id: '2', name: 'Awesome.docx', kind: 'doc', href: '#' },
         { id: '3', name: 'Notes.txt', kind: 'doc', action: 'Pending save' },
       ],

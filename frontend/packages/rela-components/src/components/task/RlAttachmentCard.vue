@@ -66,6 +66,13 @@ const action = computed(() => props.attachment.action ?? (props.attachment.href 
         <span class="rl-attachment-card__meta">
           {{ kindLabel[attachment.kind] }}<template v-if="action"> &middot; {{ action }}</template>
         </span>
+        <span
+          v-if="attachment.checksum"
+          class="rl-attachment-card__meta rl-attachment-card__checksum"
+          :title="`SHA-256 ${attachment.checksum}`"
+        >
+          SHA-256 {{ attachment.checksum.slice(0, 12) }}
+        </span>
       </span>
     </component>
     <RlIconButton
@@ -168,5 +175,9 @@ const action = computed(() => props.attachment.action ?? (props.attachment.href 
 .rl-attachment-card__meta {
   font-size: var(--rl-font-size-xs);
   color: var(--rl-color-text-subtle);
+}
+
+.rl-attachment-card__checksum {
+  font-family: var(--rl-font-family-mono);
 }
 </style>
