@@ -60,6 +60,11 @@ type propertySchema struct {
 	Values      []string `json:"values,omitempty"`
 	Default     string   `json:"default,omitempty"`
 	Description string   `json:"description,omitempty"`
+	// Min and Max are an integer property's declared bounds (TKT-BRAM1A).
+	// A value outside them is written with a warning. Nil: accepted — unset,
+	// and always nil on a non-integer property.
+	Min *int `json:"min,omitempty"`
+	Max *int `json:"max,omitempty"`
 }
 
 // relationEnd is one relation type as seen from an entity type: the relation
@@ -273,7 +278,7 @@ func (h schemaResourceHandler) propertySchemas(defs map[string]metamodel.Propert
 				values = ct.Values
 			}
 		}
-		out[name] = propertySchema{
+		ps := propertySchema{
 			Type:        pd.Type,
 			Required:    pd.Required,
 			List:        pd.List,
@@ -284,6 +289,10 @@ func (h schemaResourceHandler) propertySchemas(defs map[string]metamodel.Propert
 			Default:     pd.Default,
 			Description: pd.Description,
 		}
+		if pd.Type == metamodel.PropertyTypeInteger {
+			ps.Min, ps.Max = pd.Min, pd.Max
+		}
+		out[name] = ps
 	}
 	return out
 }

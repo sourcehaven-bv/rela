@@ -3,7 +3,9 @@ package dataentry
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"maps"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -70,10 +72,14 @@ func wireRealQueryScopes(t *testing.T, app *App, scopes map[string]string) {
 }
 
 func seedStatusTickets(app *App) {
+	points := []int{2, 2, 4, 0} // 0: unset
 	for i, status := range []string{"open", "open", "done", ""} {
 		props := map[string]any{"title": "T" + strconv.Itoa(i)}
 		if status != "" {
 			props["status"] = status
+		}
+		if points[i] != 0 {
+			props["points"] = points[i]
 		}
 		seedEntity(app, &entity.Entity{ID: "TKT-00" + strconv.Itoa(i+1), Type: "ticket", Properties: props})
 	}
@@ -93,7 +99,8 @@ func TestDashboardCard_Displays(t *testing.T) {
 		dataentryconfig.DashboardCard{Title: "Latest", List: "all", Display: "table", Limit: 2,
 			Columns: []dataentryconfig.ListColumn{{Property: "title"}},
 			Sort:    []dataentryconfig.SortSpec{{Property: "title", Direction: "desc"}}},
-		dataentryconfig.DashboardCard{Title: "Grid", List: "all", Display: "matrix", Rows: "status", MatrixColumns: "status"},
+		dataentryconfig.DashboardCard{Title: "Grid", List: "all", Display: "matrix", Rows: "points", MatrixColumns: "points",
+			RowsLabel: "Effort", RowsOrder: dataentryconfig.MatrixOrderDesc},
 		dataentryconfig.DashboardCard{Title: "Query", Query: "type:ticket", Display: "count"},
 	)
 	ctx := principalCtx("alice")
@@ -126,9 +133,22 @@ func TestDashboardCard_Displays(t *testing.T) {
 		require.NotNil(t, got.Matrix)
 		require.Equal(t, 1, got.Matrix.Unplaced)
 		require.Equal(t, []v1.DashboardCell{
-			{Row: "done", Column: "done", Count: 1},
-			{Row: "open", Column: "open", Count: 2},
+			{Row: "4", Column: "4", Count: 1},
+			{Row: "2", Column: "2", Count: 2},
 		}, got.Matrix.Cells)
+	})
+	t.Run("matrix shows the declared range, titled and ordered", func(t *testing.T) {
+		got, _ := dashboardCardValueAs(ctx, t, app, 3)
+		axis := func(values []v1.DashboardAxisValue) (out []string) {
+			for _, v := range values {
+				out = append(out, v.Value)
+			}
+			return out
+		}
+		require.Equal(t, []string{"5", "4", "3", "2", "1"}, axis(got.Matrix.Rows))
+		require.Equal(t, []string{"1", "2", "3", "4", "5"}, axis(got.Matrix.Columns))
+		require.Equal(t, "Effort", got.Matrix.RowTitle)
+		require.Equal(t, "points", got.Matrix.ColumnTitle)
 	})
 	t.Run("a query card is not computed", func(t *testing.T) {
 		rec := dashboardCardAs(ctx, t, app, "4")
@@ -310,27 +330,171 @@ func TestFoldMatrix_UndeclaredEnumValueIsUnplaced(t *testing.T) {
 	require.Equal(t, []v1.DashboardCell{{Row: "low", Column: "1", Count: 1}}, m.Cells)
 }
 
-// Numbers sort numerically, and a non-numeric value sorts after them.
-func TestAxisValues_IntegerOrderIsTotal(t *testing.T) {
-	p := axisProperty{name: "n"}
-	got, _ := axisValues(p, map[string]bool{"10": true, "2": true, "x": true, "1": true})
-	var keys []string
-	for _, v := range got {
-		keys = append(keys, v.Value)
+// Integer matrix axes (TKT-BRAM1A): a declared range is the whole axis, an
+// undeclared one fills from the lowest to the highest value, and a value the
+// axis has no place for is unplaced.
+func TestFoldMatrix_IntegerAxisRange(t *testing.T) {
+	meta := &metamodel.Metamodel{Types: map[string]metamodel.CustomType{
+		"level": {Values: []string{"low", "high"}},
+	}}
+	def := &metamodel.EntityDef{Properties: map[string]metamodel.PropertyDef{
+		"impact":  {Type: "integer", Label: "Impact", Min: new(1), Max: new(5)},
+		"floor":   {Type: "integer", Min: new(1)},
+		"ceiling": {Type: "integer", Max: new(0)},
+		"count":   {Type: "integer"},
+		"level":   {Type: "level"},
+	}}
+	tests := []struct {
+		name         string
+		prop         string
+		order        string
+		values       []any // one row per value, all in column "low"
+		wantRows     []string
+		wantUnplaced int
+	}{
+		{"declared range shows every value", "impact", "", []any{2, 4}, []string{"1", "2", "3", "4", "5"}, 0},
+		{"declared range with no rows", "impact", "", nil, []string{"1", "2", "3", "4", "5"}, 0},
+		{"out of range is unplaced", "impact", "", []any{3, 9, 0}, []string{"1", "2", "3", "4", "5"}, 2},
+		{"desc reverses", "impact", "desc", []any{3}, []string{"5", "4", "3", "2", "1"}, 0},
+		{"undeclared fills the gap", "count", "", []any{1, 4}, []string{"1", "2", "3", "4"}, 0},
+		{"undeclared with no rows is empty", "count", "", nil, nil, 0},
+		{"one value read three ways is one row", "count", "", []any{3, 3.0, "03"}, []string{"3"}, 0},
+		{"not a whole number is unplaced", "count", "", []any{2, 2.5, "x"}, []string{"2"}, 2},
+		{"min only extends to the highest", "floor", "", []any{0, 3}, []string{"1", "2", "3"}, 1},
+		{"min only with no rows is the bound", "floor", "", nil, []string{"1"}, 0},
+		{"max only starts at the lowest", "ceiling", "", []any{-2, 1}, []string{"-2", "-1", "0"}, 1},
+		{"enum desc reverses declared order", "level", "desc", []any{"low"}, []string{"high", "low"}, 0},
 	}
-	require.Equal(t, []string{"1", "2", "10", "x"}, keys)
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			var rows []*entity.Entity
+			for i, v := range tc.values {
+				rows = append(rows, &entity.Entity{
+					ID: "R" + strconv.Itoa(i), Properties: map[string]any{tc.prop: v, "level": "low"},
+				})
+			}
+			m, partial := foldMatrix(rows, matrixInput{
+				rows:    newMatrixAxis(meta, def, tc.prop, "", tc.order),
+				columns: newAxisProperty(meta, def, "level"),
+			})
+			require.False(t, partial)
+			var got []string
+			for _, r := range m.Rows {
+				got = append(got, r.Value)
+			}
+			require.Equal(t, tc.wantRows, got)
+			require.Equal(t, tc.wantUnplaced, m.Unplaced)
+			require.False(t, m.Truncated)
+		})
+	}
 }
 
-func TestAxisValues_IntegerAxisIsCapped(t *testing.T) {
-	present := map[string]bool{}
-	for i := range maxMatrixAxisValues + 5 {
-		present[strconv.Itoa(i)] = true
+// An observed spread wider than the cap is cut from the low end and
+// flagged. It never builds an axis as wide as the values are far apart.
+func TestFoldMatrix_IntegerAxisIsCapped(t *testing.T) {
+	def := &metamodel.EntityDef{Properties: map[string]metamodel.PropertyDef{
+		"n": {Type: "integer"}, "m": {Type: "integer"},
+	}}
+	meta := &metamodel.Metamodel{}
+	fold := func(t *testing.T, order string, ns ...int64) v1.DashboardMatrix {
+		t.Helper()
+		rows := make([]*entity.Entity, len(ns))
+		for i, n := range ns {
+			rows[i] = &entity.Entity{ID: fmt.Sprintf("R%d", i), Properties: map[string]any{"n": n, "m": 1}}
+		}
+		m, _ := foldMatrix(rows, matrixInput{
+			rows: newMatrixAxis(meta, def, "n", "", order), columns: newAxisProperty(meta, def, "m"),
+		})
+		return m
 	}
-	values, truncated := axisValues(axisProperty{name: "n"}, present)
-	require.True(t, truncated)
-	require.Len(t, values, maxMatrixAxisValues)
-	require.Equal(t, "0", values[0].Value)
-	require.Equal(t, "2", values[2].Value, "integers sort numerically")
+	values := func(m v1.DashboardMatrix) []string {
+		out := make([]string, len(m.Rows))
+		for i, r := range m.Rows {
+			out[i] = r.Value
+		}
+		return out
+	}
+
+	// One outlier must not push the real values off the axis: a span wider
+	// than the cap lists only the values that occur.
+	t.Run("outlier lists the values that occur", func(t *testing.T) {
+		m := fold(t, "", 1, 2, 3, 5, 100, math.MinInt64, math.MaxInt64)
+		require.False(t, m.Truncated)
+		require.Equal(t, []string{
+			strconv.FormatInt(math.MinInt64, 10), "1", "2", "3", "5", "100", strconv.FormatInt(math.MaxInt64, 10),
+		}, values(m))
+		require.Zero(t, m.Unplaced)
+	})
+
+	many := make([]int64, 0, 2*dataentryconfig.MaxMatrixAxisValues)
+	for i := range 2 * dataentryconfig.MaxMatrixAxisValues {
+		many = append(many, int64(i*10))
+	}
+	t.Run("more distinct values than the cap keeps the first shown", func(t *testing.T) {
+		m := fold(t, "", many...)
+		require.True(t, m.Truncated)
+		require.Len(t, m.Rows, dataentryconfig.MaxMatrixAxisValues)
+		require.Equal(t, "0", m.Rows[0].Value)
+	})
+	t.Run("desc keeps the highest", func(t *testing.T) {
+		m := fold(t, dataentryconfig.MatrixOrderDesc, many...)
+		require.True(t, m.Truncated)
+		require.Len(t, m.Rows, dataentryconfig.MaxMatrixAxisValues)
+		require.Equal(t, strconv.FormatInt(many[len(many)-1], 10), m.Rows[0].Value)
+	})
+}
+
+// A declared range is the whole axis even when every row's value is hidden;
+// the card is then partial and has no cells.
+func TestFoldMatrix_DeclaredRangeWithEveryValueHidden(t *testing.T) {
+	def := &metamodel.EntityDef{Properties: map[string]metamodel.PropertyDef{
+		"n": {Type: "integer", Min: new(1), Max: new(3)}, "m": {Type: "integer"},
+	}}
+	rows := []*entity.Entity{{ID: "R1", Properties: map[string]any{"m": 1}, Redacted: []string{"n"}}}
+	meta := &metamodel.Metamodel{}
+	m, partial := foldMatrix(rows, matrixInput{
+		rows: newAxisProperty(meta, def, "n"), columns: newAxisProperty(meta, def, "m"),
+	})
+	require.True(t, partial)
+	require.Len(t, m.Rows, 3)
+	require.Empty(t, m.Columns)
+	require.Empty(t, m.Cells)
+}
+
+// A hidden axis value marks the card partial and does not widen the axis,
+// whose extent would otherwise disclose it.
+func TestFoldMatrix_HiddenValueDoesNotWidenAxis(t *testing.T) {
+	def := &metamodel.EntityDef{Properties: map[string]metamodel.PropertyDef{
+		"n": {Type: "integer"}, "m": {Type: "integer"},
+	}}
+	hidden := &entity.Entity{ID: "R2", Properties: map[string]any{"m": 1}, Redacted: []string{"n"}}
+	rows := []*entity.Entity{{ID: "R1", Properties: map[string]any{"n": 2, "m": 1}}, hidden}
+	meta := &metamodel.Metamodel{}
+	m, partial := foldMatrix(rows, matrixInput{
+		rows: newAxisProperty(meta, def, "n"), columns: newAxisProperty(meta, def, "m"),
+	})
+	require.True(t, partial)
+	require.Equal(t, []v1.DashboardAxisValue{{Value: "2", Label: "2"}}, m.Rows)
+}
+
+// Axis titles default to the property label, then the name; the card's
+// rows_label and columns_label override them.
+func TestFoldMatrix_AxisTitles(t *testing.T) {
+	def := &metamodel.EntityDef{Properties: map[string]metamodel.PropertyDef{
+		"impact": {Type: "integer", Label: "Impact"}, "kans": {Type: "integer"},
+	}}
+	meta := &metamodel.Metamodel{}
+	m, _ := foldMatrix(nil, matrixInput{
+		rows: newMatrixAxis(meta, def, "impact", "", ""), columns: newMatrixAxis(meta, def, "kans", "", ""),
+	})
+	require.Equal(t, "Impact", m.RowTitle)
+	require.Equal(t, "kans", m.ColumnTitle)
+	m, _ = foldMatrix(nil, matrixInput{
+		rows:    newMatrixAxis(meta, def, "impact", "Gevolg", ""),
+		columns: newMatrixAxis(meta, def, "kans", "Kans", ""),
+	})
+	require.Equal(t, "Gevolg", m.RowTitle)
+	require.Equal(t, "Kans", m.ColumnTitle)
 }
 
 func TestMatrixColorFor(t *testing.T) {

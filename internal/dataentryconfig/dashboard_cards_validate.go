@@ -3,6 +3,7 @@ package dataentryconfig
 import (
 	"fmt"
 	"maps"
+	"math"
 	"slices"
 	"strconv"
 	"strings"
@@ -62,8 +63,9 @@ func validateDashboardCardSource(
 	case "table":
 		errs = append(errs, validateTableCard(at, card, prop)...)
 	}
-	if card.Display != "matrix" && (card.Rows != "" || card.MatrixColumns != "" || card.ToneBy != "" || len(card.Colors) > 0) {
-		errs = append(errs, at+": rows, columns (a property), tone_by and colors apply to matrix display only")
+	if card.Display != "matrix" && card.setsMatrixOption() {
+		errs = append(errs, at+": rows, columns (a property), tone_by, colors, rows_label, columns_label, "+
+			"rows_order and columns_order apply to matrix display only")
 	}
 	if card.Display != "ratio" && card.Match != "" {
 		errs = append(errs, at+": match applies to ratio display only")
@@ -114,12 +116,41 @@ func validateTableCard(
 // server computes the card, so the limit bounds its work per request.
 const maxListCardTableLimit = 100
 
+// The values of a matrix card's `rows_order:` and `columns_order:`.
+const (
+	MatrixOrderAsc  = "asc"
+	MatrixOrderDesc = "desc"
+)
+
+// MaxMatrixAxisValues caps an integer matrix axis. A declared range wider
+// than this is a config error; an observed spread wider than this is cut
+// off when the card is computed, and the card says so.
+const MaxMatrixAxisValues = 50
+
+// MatrixAxisTooWide reports whether the integers lo..hi are more than
+// MaxMatrixAxisValues. It never overflows, whatever the bounds.
+func MatrixAxisTooWide(lo, hi int64) bool {
+	const span = MaxMatrixAxisValues - 1
+	return lo <= math.MaxInt64-span && hi > lo+span
+}
+
+// setsMatrixOption reports whether the card sets a key that only a matrix
+// card reads.
+func (c DashboardCard) setsMatrixOption() bool {
+	return c.Rows != "" || c.MatrixColumns != "" || c.ToneBy != "" || len(c.Colors) > 0 ||
+		c.RowsLabel != "" || c.ColumnsLabel != "" || c.RowsOrder != "" || c.ColumnsOrder != ""
+}
+
 func validateMatrixCard(
 	cfg *Config, meta *metamodel.Metamodel, at string, card DashboardCard,
 	prop func(key, name string) (metamodel.PropertyDef, bool),
 ) []string {
 	var errs []string
-	axis := func(key, name string) {
+	axis := func(key, name, order string) {
+		if order != "" && order != MatrixOrderAsc && order != MatrixOrderDesc {
+			errs = append(errs, fmt.Sprintf("%s: %s_order %q must be %q or %q",
+				at, key, order, MatrixOrderAsc, MatrixOrderDesc))
+		}
 		if name == "" {
 			errs = append(errs, fmt.Sprintf("%s uses matrix display but has no %s:", at, key))
 			return
@@ -128,12 +159,20 @@ func validateMatrixCard(
 		if !ok {
 			return
 		}
-		if pd.List || (len(GetValidEnumValues(pd, meta)) == 0 && pd.Type != metamodel.PropertyTypeInteger) {
+		isEnum := len(GetValidEnumValues(pd, meta)) > 0
+		if pd.List || (!isEnum && pd.Type != metamodel.PropertyTypeInteger) {
 			errs = append(errs, fmt.Sprintf("%s: %s %q must be a single-valued enum or integer property", at, key, name))
+			return
+		}
+		// A declared range is the whole axis, so it must fit the cap. An
+		// undeclared range is capped when the card is computed.
+		if !isEnum && pd.Min != nil && pd.Max != nil && MatrixAxisTooWide(int64(*pd.Min), int64(*pd.Max)) {
+			errs = append(errs, fmt.Sprintf("%s: %s %q declares %d..%d, more than the %d values a matrix axis shows",
+				at, key, name, *pd.Min, *pd.Max, MaxMatrixAxisValues))
 		}
 	}
-	axis("rows", card.Rows)
-	axis("columns", card.MatrixColumns)
+	axis("rows", card.Rows, card.RowsOrder)
+	axis("columns", card.MatrixColumns, card.ColumnsOrder)
 	if card.ToneBy == "" {
 		if len(card.Colors) > 0 {
 			errs = append(errs, at+": colors needs tone_by")

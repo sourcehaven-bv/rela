@@ -704,10 +704,15 @@ type PropertyDef struct {
 	Labels      map[string]string `json:"labels,omitempty"` // Display labels keyed by value; value stays the wire identity
 	Description string            `json:"description,omitempty"`
 	List        bool              `json:"list,omitempty"`
-	// Max is the attachment cap for a `file` property (default 1). The SPA's
-	// file widget reads it to switch between replace-mode and multi-file
-	// add-mode. Omitted unless set above 1.
-	Max int `json:"max,omitempty"`
+	// Min and Max mirror the schema keys, whose meaning depends on Type.
+	// Nil: accepted — omitted when the schema does not set the key.
+	//
+	// On an `integer` property they are the inclusive value bounds
+	// (TKT-BRAM1A); the SPA puts them on the number input. On a `file`
+	// property Max is the attachment cap (default 1), which the file widget
+	// reads to switch between replace-mode and multi-file add-mode.
+	Min *int `json:"min,omitempty"`
+	Max *int `json:"max,omitempty"`
 	// System names the external system of an `external_ref` property
 	// (TKT-SM20FG). The value is read-only on every interactive surface.
 	System string `json:"system,omitempty"`
@@ -1261,12 +1266,18 @@ type DashboardRow struct {
 // DashboardMatrix is a matrix card: its axes in display order and its
 // non-empty cells.
 type DashboardMatrix struct {
-	RowProperty    string               `json:"row_property"`
-	ColumnProperty string               `json:"column_property"`
-	Rows           []DashboardAxisValue `json:"rows"`
-	Columns        []DashboardAxisValue `json:"columns"`
-	Cells          []DashboardCell      `json:"cells"`
-	// Unplaced counts rows without a value on either axis.
+	RowProperty    string `json:"row_property"`
+	ColumnProperty string `json:"column_property"`
+	// RowTitle and ColumnTitle name the axes: the card's `rows_label:` and
+	// `columns_label:`, else the property's label, else its name.
+	RowTitle    string               `json:"row_title"`
+	ColumnTitle string               `json:"column_title"`
+	Rows        []DashboardAxisValue `json:"rows"`
+	Columns     []DashboardAxisValue `json:"columns"`
+	Cells       []DashboardCell      `json:"cells"`
+	// Unplaced counts rows with no place on an axis: no value, a value
+	// outside an enum or outside an integer's declared range, or a value
+	// on an integer axis that is not a whole number.
 	Unplaced int `json:"unplaced,omitempty"`
 	// Truncated is true when an integer axis had more values than are shown.
 	Truncated bool `json:"truncated,omitempty"`

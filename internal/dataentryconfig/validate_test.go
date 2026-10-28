@@ -57,6 +57,10 @@ func testMetamodel() *metamodel.Metamodel {
 					"priority": {Type: "priority"},
 					"assignee": {Type: "string"},
 					"tags":     {Type: "string", List: true},
+					// Integer matrix axes (TKT-BRAM1A): one declared range
+					// that fits a matrix axis and one that does not.
+					"impact": {Type: "integer", Min: new(1), Max: new(5)},
+					"score":  {Type: "integer", Min: new(0), Max: new(100)},
 				},
 			},
 			"category": {

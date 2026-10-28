@@ -68,7 +68,7 @@
     "hidden": "Verborgen",
     "hiddenTitle": "Voor jou verborgen",
     "unknown": "Onbekend",
-    "matrixUnplaced": "{count} zonder {row} of {column}",
+    "matrixUnplaced": "{count} niet in het raster: geen {row} of {column}, of een waarde waarvoor het raster geen plek heeft",
     "matrixTruncated": "Niet elke waarde wordt getoond.",
     "previewOf": "{display} van {source}",
     "previewList": "lijst {name}",

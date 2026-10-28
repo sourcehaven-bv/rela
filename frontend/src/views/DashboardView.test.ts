@@ -497,6 +497,8 @@ describe('DashboardView', () => {
           matrix: {
             row_property: 'impact',
             column_property: 'likelihood',
+            row_title: 'Impact',
+            column_title: 'Likelihood',
             rows: [{ value: 'low', label: 'Low' }],
             columns: [
               { value: '1', label: '1' },
@@ -510,7 +512,7 @@ describe('DashboardView', () => {
       const wrapper = await mountView()
       const cells = wrapper.findAll('[data-testid="matrix-cell"]')
       expect(cells).toHaveLength(1)
-      expect(cells[0].attributes('aria-label')).toBe('Low, 2: 2')
+      expect(cells[0].attributes('aria-label')).toBe('Impact Low, Likelihood 2: 2')
     })
 
     it('counts in the page world, links into it and recounts when it changes', async () => {

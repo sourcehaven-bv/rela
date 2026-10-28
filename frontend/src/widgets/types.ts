@@ -64,8 +64,11 @@ export interface WidgetProps<T = unknown> {
   // when none. The file widget renders download links / previews from it.
   // Ignored by non-file widgets.
   attachments?: AttachmentInfo[]
-  // The property's attachment cap (metamodel `max`, default 1). Drives the
-  // file widget's mode: replace at 1, add-up-to-max above.
+  // The property's metamodel `max`. Only the file widget reads it, as the
+  // attachment cap (default 1): replace at 1, add-up-to-max above. On an
+  // integer `max` is the highest allowed value instead, which NumberWidget
+  // reads from `propertyDef` (TKT-BRAM1A); callers pass this prop for every
+  // type, so a non-file widget must not read it.
   max?: number
   // Owning entity type. Two consumers: the file widget builds the
   // upload/delete URL from it, and the enum widgets pass it as the

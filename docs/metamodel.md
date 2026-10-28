@@ -658,6 +658,7 @@ entities:
 | `computed`       | Pure entity-local expression materialized on every write; the property is read-only   |
 | `rollup`         | Summary of related entities, computed on read per reader; see [Roll-up properties](#roll-up-properties) |
 | `unique: true`   | Natural key: no two entities of the type may share a non-empty value (write-time 422; find pre-existing dups with `rela analyze unique`). On a type declaring `faces:` the constraint holds **per face**: two entities may not share a value within one face, while two faces of the same entity never collide with each other. Only for string-valued properties (`string`, `date`, `datetime`, `enum`, custom types) — not `list`, and not `integer`/`boolean`/`file`. On the PostgreSQL backend this is additionally enforced by an automatically-maintained database index, so it holds even under concurrent writers ([details](postgres-backend.md#derived-schema-unique-constraints)). |
+| `min` / `max`    | For `integer` properties: the lowest and highest allowed value, inclusive (see [Integer ranges](#integer-ranges-min-and-max)) |
 | `max`            | For `file` properties: max attachments (default 1)                                    |
 | `accept`         | For `file` properties: narrow the MIME allowlist (e.g. `[application/pdf]`)           |
 | `scan_cmd`       | For `file` properties: the scan command (array args); configuring it enables scanning |
@@ -920,6 +921,42 @@ on the surfaces above; Lua scripts and search still see the stored value.
 change to a related entity changes the roll-up without changing the `ETag`, so
 a `GET` on a type with roll-ups never answers `304 Not Modified`. `If-Match`
 keeps working.
+
+### Integer ranges (`min` and `max`)
+
+An `integer` property can declare the lowest and highest value it allows.
+Both bounds are inclusive, and you can set one without the other:
+
+```yaml
+impact:
+  type: integer
+  label: Impact
+  min: 1
+  max: 5
+```
+
+A value outside the range is an invalid value:
+
+- A write through the API, MCP or the CLI still succeeds, with a
+  `property_value_invalid` warning that names the range. A hand-edited file
+  can hold such a value too, so rela warns rather than refuses.
+- `rela analyze properties` and `rela validate` report every stored value
+  outside the range.
+- The data-entry form sets `min` and `max` on the number input, so its
+  stepper stays in range. It does not stop you saving a value outside it.
+- `/api/v1/_schema` and the MCP `schema` tool carry `min` and `max` on the
+  property.
+- A dashboard matrix card over the property shows the whole range as its axis
+  (see the data-entry guide).
+
+The schema fails to load when `min` is above `max`, when `min` or `max` is set
+on a type other than `integer`, or when it is set on a `list` property. On a
+`file` property `max` keeps its own meaning, the attachment cap below, and
+`min` is refused. rela has no decimal type, so there is no range for
+fractional numbers.
+
+A range is a validation rule, not part of the data shape: adding or changing
+one needs no data migration.
 
 ### File attachments and `max`
 

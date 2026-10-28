@@ -1,6 +1,7 @@
 package dataentryconfig
 
 import (
+	"math"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -27,6 +28,46 @@ dashboard:
 	assert.Empty(t, cards[0].Columns)
 	assert.Equal(t, "title", cards[1].Columns[0].Property)
 	assert.Empty(t, cards[1].MatrixColumns)
+}
+
+// TestDashboardCard_MatrixAxisOptions pins that the axis titles and orders
+// load on a matrix card over a declared integer range (TKT-BRAM1A).
+func TestDashboardCard_MatrixAxisOptions(t *testing.T) {
+	cfg, err := loadAndValidate(t, `
+version: "1.0"
+lists:
+  all: {entity_type: ticket}
+dashboard:
+  cards:
+    - {title: Risks, list: all, display: matrix, rows: impact, columns: priority,
+       rows_label: Impact, columns_label: Likelihood, rows_order: desc, columns_order: asc}
+`)
+	require.NoError(t, err)
+	card := cfg.Dashboard.Cards[0]
+	assert.Equal(t, "Impact", card.RowsLabel)
+	assert.Equal(t, "Likelihood", card.ColumnsLabel)
+	assert.Equal(t, MatrixOrderDesc, card.RowsOrder)
+	assert.Equal(t, MatrixOrderAsc, card.ColumnsOrder)
+}
+
+func TestMatrixAxisTooWide(t *testing.T) {
+	tests := []struct {
+		name   string
+		lo, hi int64
+		want   bool
+	}{
+		{"one value", 3, 3, false},
+		{"exactly the cap", 1, 50, false},
+		{"one past the cap", 1, 51, true},
+		{"negative range", -60, -11, false},
+		{"full int64 range", math.MinInt64, math.MaxInt64, true},
+		{"top of int64", math.MaxInt64 - 1, math.MaxInt64, false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.want, MatrixAxisTooWide(tc.lo, tc.hi))
+		})
+	}
 }
 
 func TestValidateDashboardCardSource(t *testing.T) {
@@ -56,6 +97,12 @@ func TestValidateDashboardCardSource(t *testing.T) {
 		{"ratio without match", `{title: X, list: all, display: ratio}`, "uses ratio display but has no match:"},
 		{"ratio with undeclared scope", `{title: X, list: all, display: ratio, match: mine}`, `query_scope "mine" is not declared`},
 		{"matrix keys on count", `{title: X, list: all, display: count, rows: status}`, "apply to matrix display only"},
+		{"axis label on count", `{title: X, list: all, display: count, rows_label: Impact}`, "apply to matrix display only"},
+		{"axis order on count", `{title: X, list: all, display: count, columns_order: desc}`, "apply to matrix display only"},
+		{"unknown rows order", `{title: X, list: all, display: matrix, rows: impact, columns: status, rows_order: down}`,
+			`rows_order "down" must be "asc" or "desc"`},
+		{"declared range too wide", `{title: X, list: all, display: matrix, rows: score, columns: status}`,
+			`rows "score" declares 0..100, more than the 50 values a matrix axis shows`},
 		{"match on count", `{title: X, list: all, display: count, match: all}`, "match applies to ratio display only"},
 		{"unknown group_by", `{title: X, list: all, display: breakdown, group_by: nope}`, `group_by "nope" is not a property`},
 		{"list-valued group_by", `{title: X, list: all, display: breakdown, group_by: tags}`,

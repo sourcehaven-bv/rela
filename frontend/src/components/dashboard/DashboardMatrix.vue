@@ -59,15 +59,37 @@ function cellLink(row: string, column: string) {
 
 <template>
   <div class="dashboard-matrix">
-    <table :aria-label="title">
+    <!-- The column title spans the column values above them; the row title
+         spans the row values beside them (TKT-BRAM1A). -->
+    <table :aria-label="title" :style="{ '--matrix-columns': matrix.columns.length }">
       <thead>
+        <tr v-if="matrix.columns.length">
+          <td colspan="2" />
+          <th
+            :colspan="matrix.columns.length"
+            scope="colgroup"
+            class="matrix-axis-title"
+            data-testid="matrix-column-title"
+          >
+            {{ matrix.column_title }}
+          </th>
+        </tr>
         <tr>
-          <td />
+          <td colspan="2" />
           <th v-for="col in matrix.columns" :key="col.value" scope="col">{{ col.label }}</th>
         </tr>
       </thead>
       <tbody>
-        <tr v-for="row in matrix.rows" :key="row.value">
+        <tr v-for="(row, i) in matrix.rows" :key="row.value">
+          <th
+            v-if="i === 0"
+            :rowspan="matrix.rows.length"
+            scope="rowgroup"
+            class="matrix-axis-title matrix-axis-title--row"
+            data-testid="matrix-row-title"
+          >
+            <span>{{ matrix.row_title }}</span>
+          </th>
           <th scope="row">{{ row.label }}</th>
           <td v-for="col in matrix.columns" :key="col.value">
             <router-link
@@ -76,7 +98,7 @@ function cellLink(row: string, column: string) {
               class="matrix-cell"
               :class="{ 'matrix-cell--shaded': !toned }"
               :style="cellStyle(cellAt(row.value, col.value)!)"
-              :aria-label="`${row.label}, ${col.label}: ${cellAt(row.value, col.value)!.count}`"
+              :aria-label="`${matrix.row_title} ${row.label}, ${matrix.column_title} ${col.label}: ${cellAt(row.value, col.value)!.count}`"
               data-testid="matrix-cell"
             >
               {{ cellAt(row.value, col.value)!.count }}
@@ -90,8 +112,8 @@ function cellLink(row: string, column: string) {
       {{
         t('dashboard.matrixUnplaced', {
           count: matrix.unplaced,
-          row: matrix.row_property,
-          column: matrix.column_property,
+          row: matrix.row_title,
+          column: matrix.column_title,
         })
       }}
     </p>
@@ -104,10 +126,20 @@ function cellLink(row: string, column: string) {
   overflow-x: auto;
 }
 
+/* The grid fills a wider card, up to 72px per value column; the two header
+   columns keep their content width (TKT-BRAM1A). */
 table {
   border-collapse: separate;
   border-spacing: 2px;
   font-size: var(--font-size-sm);
+  width: 100%;
+  max-width: calc(var(--matrix-columns, 1) * 72px + 8rem);
+}
+
+tbody th,
+thead td {
+  width: 1%;
+  white-space: nowrap;
 }
 
 th {
@@ -121,12 +153,26 @@ th[scope='row'] {
   text-align: right;
 }
 
+.matrix-axis-title {
+  color: var(--rl-color-text);
+  font-weight: 600;
+}
+
+/* The row title reads bottom to top beside the row values, as a chart's
+   y-axis label does. */
+.matrix-axis-title--row span {
+  writing-mode: vertical-rl;
+  transform: rotate(180deg);
+  white-space: nowrap;
+}
+
 .matrix-cell {
   display: flex;
   align-items: center;
   justify-content: center;
   min-width: 32px;
-  height: 28px;
+  min-height: 28px;
+  aspect-ratio: 3 / 2;
   border-radius: var(--radius-sm);
   color: var(--rl-color-text);
   font-weight: 600;

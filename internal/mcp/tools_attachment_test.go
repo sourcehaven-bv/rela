@@ -47,8 +47,8 @@ func attachmentMeta() *metamodel.Metamodel {
 	fileProps := map[string]metamodel.PropertyDef{
 		"title": {Type: "string"},
 		"file":  {Type: metamodel.PropertyTypeFile},
-		"files": {Type: metamodel.PropertyTypeFile, Max: 3},
-		"pair":  {Type: metamodel.PropertyTypeFile, Max: 2},
+		"files": {Type: metamodel.PropertyTypeFile, Max: new(3)},
+		"pair":  {Type: metamodel.PropertyTypeFile, Max: new(2)},
 		"cover": {Type: metamodel.PropertyTypeFile, Accept: []string{"image/png"}},
 	}
 	return &metamodel.Metamodel{

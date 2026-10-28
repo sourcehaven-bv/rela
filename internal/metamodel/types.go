@@ -772,7 +772,11 @@ type PropertySchema interface {
 	HasContent() bool
 }
 
-// PropertyDef defines a property on an entity or relation
+// PropertyDef defines a property on an entity or relation. Each exported
+// field is one key of a property in schema.yaml, so a new option raises the
+// pin by one; `min` (TKT-BRAM1A) is the most recent.
+//
+//plimsoll:max-fields=21
 type PropertyDef struct {
 	Label       string            `yaml:"label,omitempty"`
 	Type        string            `yaml:"type"`
@@ -811,12 +815,19 @@ type PropertyDef struct {
 	// `principal_property` gate, which requires the referenced property to
 	// be unique (and non-list).
 	Unique bool `yaml:"unique,omitempty"`
-	// Max caps how many attachments a `file`-type property may hold.
-	// Zero/unset means 1 (the default, single-attachment). When > 1 the
-	// property holds a list of attachment paths and the data-entry UI
-	// switches from replace-mode to multi-file add-mode. Only meaningful
-	// for `type: file`.
-	Max int `yaml:"max,omitempty"`
+	// Min and Max mean different things by type. Nil: accepted — unset.
+	//
+	// On an `integer` property they bound the value, inclusive. A value
+	// outside the range is an invalid value: a write warns and `analyze
+	// properties` reports it (TKT-BRAM1A). They are pointers so that a
+	// bound of 0 is expressible.
+	//
+	// On a `file` property Max caps how many attachments it may hold
+	// (read it through [PropertyDef.FileMax]): unset or 0 means 1, and above 1
+	// the property holds a list of paths and the data-entry UI switches
+	// to multi-file add-mode. Min does not apply to a file.
+	Min *int `yaml:"min,omitempty" json:"Min,omitempty"`
+	Max *int `yaml:"max,omitempty" json:"Max,omitempty"`
 
 	// Accept narrows the MIME allowlist for this `file` property to these
 	// sniffed MIME types (e.g. ["application/pdf"]). Empty means inherit the
@@ -1159,10 +1170,16 @@ type TransformDef struct {
 // Max when set (>0), otherwise 1. Callers should use this rather than
 // reading Max directly so the unset-means-one default lives in one place.
 func (p PropertyDef) FileMax() int {
-	if p.Max > 0 {
-		return p.Max
+	if p.Max != nil && *p.Max > 0 {
+		return *p.Max
 	}
 	return 1
+}
+
+// InRange reports whether n lies within the property's declared Min and
+// Max, inclusive. An unset bound does not constrain.
+func (p PropertyDef) InRange(n int64) bool {
+	return (p.Min == nil || n >= int64(*p.Min)) && (p.Max == nil || n <= int64(*p.Max))
 }
 
 // Built-in property types

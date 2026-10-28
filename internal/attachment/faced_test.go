@@ -522,7 +522,7 @@ func TestFaced_MultiFileSuffixIsPerFace(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		res, err := f.svc.WriteAttachment(ctx, e, metamodel.PropertyDef{Type: metamodel.PropertyTypeFile, Max: 3},
+		res, err := f.svc.WriteAttachment(ctx, e, metamodel.PropertyDef{Type: metamodel.PropertyTypeFile, Max: new(3)},
 			"gallery", "a.txt", strings.NewReader(string(face)))
 		if err != nil {
 			t.Fatalf("upload on %s: %v", face, err)

@@ -3017,6 +3017,8 @@ dashboard:
 | `rows`       | string | `matrix`: the property down the side                                        |
 | `tone_by`    | string | `matrix`: the enum property that colours a cell                             |
 | `colors`     | map    | `matrix`: a colour per `tone_by` value                                      |
+| `rows_label` / `columns_label` | string | `matrix`: the axis title; default the property's label, else its name |
+| `rows_order` / `columns_order` | string | `matrix`: `asc` (default) or `desc`                         |
 | `match`      | string | `ratio`: the query scope on the list's type that counts as matched          |
 | `width`      | string | `normal` (default), `wide` or `full`: how much of the row the card takes    |
 | `permission` | string | Hide this card from principals who do not hold the named ACL permission     |
@@ -3076,7 +3078,9 @@ dashboard:
       list: open-risks
       display: matrix
       rows: impact
+      rows_order: desc
       columns: likelihood
+      columns_label: Likelihood
       tone_by: rating
       colors:
         low: success
@@ -3085,9 +3089,32 @@ dashboard:
 ```
 
 - An enum axis shows every declared value, in declared order, even when no row
-  has it. An integer axis shows the values that occur, sorted, up to 50.
-- A row that has no value for an axis, or a value the enum does not declare,
-  is not placed in a cell. The card shows how many rows that is.
+  has it.
+- An integer axis with a [declared range](metamodel.md#integer-ranges-min-and-max)
+  (`min:` and `max:` in the schema) shows every value in that range, even when
+  no row has it. A range wider than 50 values is a configuration error.
+- An integer axis without a declared range shows every whole number from the
+  lowest to the highest value that occurs, so there are no gaps in the grid.
+  With only `min:` or only `max:` declared, that end is the bound and the other
+  end follows the rows.
+- If that span is wider than 50 values, for example because of one outlier,
+  the axis shows only the values that occur. It shows at most 50 of them,
+  starting from the end shown first, and the card says when values are left
+  out.
+- A row is not placed in a cell when it has no value for an axis, a value the
+  enum does not declare, a value outside the declared range, or a value on an
+  integer axis that is not a whole number. The card shows how many rows that
+  is.
+- The card shows a title for each axis: the column title above the column
+  values and the row title beside the row values. A title is the property's
+  `label:` in the schema, else its name. `rows_label:` and `columns_label:`
+  override it.
+- `rows_order: desc` and `columns_order: desc` reverse an axis. For an integer
+  the highest value comes first; for an enum the last declared value does. Use
+  `rows_order: desc` to put the highest impact at the top of a risk matrix.
+  The default is `asc`.
+- The grid grows with the card, up to about 72 pixels per column, so a wide
+  card shows larger cells.
 - `tone_by` names an enum property. A cell takes the colour of the most severe
   `tone_by` value among its rows. The last declared value is the most severe.
 - `colors` maps a `tone_by` value to a tone (`success`, `warning`, `error`,

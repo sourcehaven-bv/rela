@@ -79,6 +79,7 @@ var editable = map[File][]string{
 		"entities.*.properties.*.labels.*",
 		"entities.*.properties.*.list",
 		"entities.*.properties.*.max",
+		"entities.*.properties.*.min",
 		"entities.*.properties.*.required",
 		"entities.*.properties.*.type",
 		"entities.*.properties.*.unique",
@@ -106,6 +107,7 @@ var editable = map[File][]string{
 		"relations.*.properties.*.labels.*",
 		"relations.*.properties.*.list",
 		"relations.*.properties.*.max",
+		"relations.*.properties.*.min",
 		"relations.*.properties.*.required",
 		"relations.*.properties.*.type",
 		"relations.*.properties.*.unique",
@@ -329,8 +331,12 @@ var locked = map[File][]string{
 		// (TKT-2SGPJZ). The Configure dashboard page edits query cards only.
 		"dashboard.cards.[].list", "dashboard.cards.[].rows", "dashboard.cards.[].tone_by",
 		"dashboard.cards.[].colors.*", "dashboard.cards.[].match",
+		"dashboard.cards.[].rows_label", "dashboard.cards.[].columns_label",
+		"dashboard.cards.[].rows_order", "dashboard.cards.[].columns_order",
 		"dashboards.*.cards.[].list", "dashboards.*.cards.[].rows", "dashboards.*.cards.[].tone_by",
 		"dashboards.*.cards.[].colors.*", "dashboards.*.cards.[].match",
+		"dashboards.*.cards.[].rows_label", "dashboards.*.cards.[].columns_label",
+		"dashboards.*.cards.[].rows_order", "dashboards.*.cards.[].columns_order",
 		// Not in the Configure space yet: card width (TKT-H21TYS). Editing a
 		// card in Configure keeps the width it has.
 		"dashboard.cards.[].width", "dashboards.*.cards.[].width",

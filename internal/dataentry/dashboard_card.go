@@ -55,8 +55,8 @@ func dashboardCardValue(
 	case "matrix":
 		rows := redactRows(ctx, a, raw)
 		in := matrixInput{
-			rows:    newAxisProperty(s.Meta, def, card.Rows),
-			columns: newAxisProperty(s.Meta, def, card.MatrixColumns),
+			rows:    newMatrixAxis(s.Meta, def, card.Rows, card.RowsLabel, card.RowsOrder),
+			columns: newMatrixAxis(s.Meta, def, card.MatrixColumns, card.ColumnsLabel, card.ColumnsOrder),
 		}
 		if card.ToneBy != "" {
 			tone := newAxisProperty(s.Meta, def, card.ToneBy)

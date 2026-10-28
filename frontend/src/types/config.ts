@@ -743,6 +743,12 @@ export interface DashboardCard {
   tone_by?: string
   /** A matrix card's colour per tone_by value: a tone or a palette colour. */
   colors?: Record<string, string>
+  /** A matrix card's axis titles. The server resolves them into the card value. */
+  rows_label?: string
+  columns_label?: string
+  /** A matrix card's axis order. The server applies it to the card value. */
+  rows_order?: 'asc' | 'desc'
+  columns_order?: 'asc' | 'desc'
   /** A ratio card's query scope on the list's type. */
   match?: string
   columns?: Array<{ property?: string; relation?: string; label?: string; link?: string }>
@@ -819,6 +825,9 @@ export interface DashboardCell {
 export interface DashboardMatrix {
   row_property: string
   column_property: string
+  /** The axis titles: the card's rows_label/columns_label, else the property label or name. */
+  row_title: string
+  column_title: string
   rows: DashboardAxisValue[]
   columns: DashboardAxisValue[]
   cells: DashboardCell[]

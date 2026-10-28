@@ -54,11 +54,11 @@ func TestV1SchemaEndpoint(t *testing.T) {
 	}
 	// The `docs` file property has max:3 — the schema must surface it so the
 	// SPA's file widget knows to use multi-file (add) mode, not replace mode.
-	if got := ticket.Properties["docs"].Max; got != 3 {
-		t.Errorf("docs.max = %d, want 3 (multi-file widget depends on this)", got)
+	if got := ticket.Properties["docs"].Max; got == nil || *got != 3 {
+		t.Errorf("docs.max = %v, want 3 (multi-file widget depends on this)", got)
 	}
-	if got := ticket.Properties["screenshot"].Max; got != 0 {
-		t.Errorf("screenshot.max = %d, want 0 (single-file, omitted)", got)
+	if got := ticket.Properties["screenshot"].Max; got != nil {
+		t.Errorf("screenshot.max = %d, want unset (single-file, omitted)", *got)
 	}
 }
 
@@ -2234,11 +2234,11 @@ func TestV1SchemaTypesSpecific(t *testing.T) {
 	// This endpoint shares toV1PropertyDef with /_schema, so it must surface
 	// the same fields — in particular `max` for file properties (the multi-
 	// file widget depends on it) so the two schema endpoints can't drift.
-	if got := entityType.Properties["docs"].Max; got != 3 {
-		t.Errorf("docs.max = %d, want 3 (file widget multi-file mode)", got)
+	if got := entityType.Properties["docs"].Max; got == nil || *got != 3 {
+		t.Errorf("docs.max = %v, want 3 (file widget multi-file mode)", got)
 	}
-	if got := entityType.Properties["screenshot"].Max; got != 0 {
-		t.Errorf("screenshot.max = %d, want 0 (single-file, omitted)", got)
+	if got := entityType.Properties["screenshot"].Max; got != nil {
+		t.Errorf("screenshot.max = %d, want unset (single-file, omitted)", *got)
 	}
 }
 
@@ -2794,12 +2794,14 @@ func newTestAppV1(t *testing.T) *App {
 					// fixture file properties accept text/plain; a dedicated
 					// test exercises the default-safe allowlist rejection path.
 					"screenshot": {Type: "file", Accept: []string{"text/plain"}},
-					"docs":       {Type: "file", Max: 3, Accept: []string{"text/plain"}},
+					"docs":       {Type: "file", Max: new(3), Accept: []string{"text/plain"}},
+					// A bounded integer (TKT-BRAM1A).
+					"points": {Type: "integer", Min: new(1), Max: new(5)},
 				},
 				// PropertyOrder is populated at YAML-load time in
 				// production; set it explicitly here so tests exercise
 				// the same code paths the runtime hits.
-				PropertyOrder: []string{"title", "status", "screenshot", "docs"},
+				PropertyOrder: []string{"title", "status", "screenshot", "docs", "points"},
 			},
 			"feature": {
 				Label:    "Feature",

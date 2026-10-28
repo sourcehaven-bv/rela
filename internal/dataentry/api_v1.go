@@ -81,6 +81,7 @@ func toV1PropertyDef(meta *metamodel.Metamodel, propDef metamodel.PropertyDef) v
 		Default:     propDef.Default,
 		Description: propDef.Description,
 		List:        propDef.List,
+		Min:         propDef.Min,
 		Max:         propDef.Max,
 		System:      propDef.System,
 	}
