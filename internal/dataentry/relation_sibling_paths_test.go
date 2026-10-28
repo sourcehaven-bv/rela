@@ -118,6 +118,7 @@ func TestConflictResolve_RelationAsksTheManagersACLQuestion(t *testing.T) {
 				return mustNewACL(t, &acl.Policy{
 					Roles: map[string]acl.RoleDef{"r": {
 						Read: []string{"feature", "policy"}, Create: tc.write, Update: tc.write, Delete: tc.write,
+						Permissions: []string{acl.PermGitSync},
 					}},
 					Assignments: map[string]string{"alice": "r"},
 				}, st)

@@ -30,23 +30,33 @@ type GitSyncResponse struct {
 	ConflictFiles []string `json:"conflict_files,omitempty"`
 }
 
-// mayGitSync reports whether the request's principal may commit and push
-// the project. A sync commits every pending change in the working tree, so
-// under a policy it needs [acl.PermGitSync]; a read-only instance never
-// syncs.
+// permitsGitSync reports whether the request's principal may commit and
+// push the project. A sync commits every pending change in the working tree,
+// so under a policy it needs [acl.PermGitSync]; a read-only instance never
+// syncs. The conflict routes use the same check, because resolving a merge
+// conflict is part of a sync. It takes the ACL rather than *App so the write
+// handler asks the same question.
 //
 //archplan:guard=authz reason="checks the git:sync permission; read-only refuses"
-func mayGitSync(a *App, r *http.Request) bool {
+func permitsGitSync(impl acl.ACL, r *http.Request) bool {
 	ctx := r.Context()
-	return access.ModeOf(a.acl).PermitsProjectWrite(ctx, readGateFromContext(ctx), acl.PermGitSync)
+	return access.ModeOf(impl).PermitsProjectWrite(ctx, readGateFromContext(ctx), acl.PermGitSync)
+}
+
+// writeGitSyncForbidden writes the 403 for a caller without git:sync. It
+// names the permission: a sync is a capability of the deployment, not an
+// entity, so there is nothing to hide behind a 404. The problem type is
+// permission_required, so the SPA can tell it from a write-check 403.
+func writeGitSyncForbidden(w http.ResponseWriter, r *http.Request, action string) {
+	writeV1Error(w, r, http.StatusForbidden, "permission_required", "Forbidden",
+		action+" needs the "+acl.PermGitSync+" permission.")
 }
 
 // gitStatusResponse builds the status answer. Only a principal who may sync,
 // and so resolve a conflict, gets the conflicting file paths; everyone else
-// sees that a conflict exists. This keeps entity paths out of a response
-// every principal polls, but it is not a secrecy guarantee: a holder of
-// git:sync sees the paths of entities they may not read, and
-// GET /api/v1/_conflicts still lists the paths to every principal
+// sees that a conflict exists. This is not a secrecy guarantee: a holder of
+// git:sync sees the paths of entities they may not read. Conflicts arise only
+// on file storage, which runs locally, so the coarse gate is accepted
 // (BUG-T6HNKS).
 func gitStatusResponse(status *git.Status, canSync bool) GitStatusResponse {
 	resp := GitStatusResponse{
@@ -87,16 +97,14 @@ func (a *App) handleGitStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	resp = gitStatusResponse(status, mayGitSync(a, r))
+	resp = gitStatusResponse(status, permitsGitSync(a.acl, r))
 
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(resp)
 }
 
 // handleGitSync commits the pending changes and pushes them. A caller
-// without [acl.PermGitSync] gets a 403 that names the permission: a sync is
-// a capability of the deployment, not an entity, so there is nothing to
-// hide behind a 404.
+// without [acl.PermGitSync] gets the 403 of [writeGitSyncForbidden].
 //
 //archplan:auth=authz
 func (a *App) handleGitSync(w http.ResponseWriter, r *http.Request) {
@@ -104,9 +112,8 @@ func (a *App) handleGitSync(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	if !mayGitSync(a, r) {
-		writeV1Error(w, r, http.StatusForbidden, "forbidden", "Forbidden",
-			"Syncing with git needs the "+acl.PermGitSync+" permission.")
+	if !permitsGitSync(a.acl, r) {
+		writeGitSyncForbidden(w, r, "Syncing with git")
 		return
 	}
 

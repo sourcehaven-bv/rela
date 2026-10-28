@@ -29,7 +29,8 @@
     "behind": "{n} behind",
     "synced": "Synced",
     "fetchFailed": "Failed to fetch status",
-    "syncFailed": "Failed to sync"
+    "syncFailed": "Failed to sync",
+    "conflictsNeedSync": "Viewing and resolving merge conflicts needs the git:sync permission. Ask an administrator to grant it."
   },
   "account": {
     "profile": "Profile",

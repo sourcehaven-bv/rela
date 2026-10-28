@@ -1,14 +1,15 @@
 request: POST /api/v1/_conflicts/resolve
 identity: header viewer@example.test
 status: 403
-reads: GetRelation=1 GraphQueryHeaders=1 ListRelations=1
+reads: GraphQueryHeaders=1 ListRelations=1
 breadth: ListRelations=0/1
 bodies: GraphQuery=0/1
 versions: 
 body:
 {
-  "error": "forbidden",
-  "reason": "no role grants update on type \"ticket\"",
-  "rule_id": "-",
-  "rule_kind": "role-grant"
+  "type": "https://rela.dev/errors/permission_required",
+  "title": "Forbidden",
+  "status": 403,
+  "detail": "Resolving a merge conflict needs the git:sync permission.",
+  "instance": "/api/v1/_conflicts/resolve"
 }

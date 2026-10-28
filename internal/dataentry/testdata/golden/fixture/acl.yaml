@@ -35,6 +35,7 @@ roles:
       - comment:delete-any
       - close-ticket
       - settings:edit
+      - git:sync
   editor:
     read: [ticket, person, "policy@published", "world:published"]
     create: [ticket]

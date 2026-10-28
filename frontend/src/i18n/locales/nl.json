@@ -29,7 +29,8 @@
     "behind": "{n} achter",
     "synced": "Gesynchroniseerd",
     "fetchFailed": "Status ophalen mislukt",
-    "syncFailed": "Synchroniseren mislukt"
+    "syncFailed": "Synchroniseren mislukt",
+    "conflictsNeedSync": "Voor het bekijken en oplossen van merge-conflicten heb je de permissie git:sync nodig. Vraag een beheerder die toe te kennen."
   },
   "account": {
     "profile": "Profiel",

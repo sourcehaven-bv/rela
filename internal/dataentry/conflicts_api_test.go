@@ -1,6 +1,9 @@
 package dataentry
 
 import (
+	"context"
+	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -157,20 +160,32 @@ func TestV1ConflictResolvePathTraversal(t *testing.T) {
 	}
 }
 
+// TestV1ConflictResolveACLDenied pins that git:sync does not replace the
+// write check: alice may sync but may not update tickets, so the resolve is
+// refused by the write check and audited as a denied write.
 func TestV1ConflictResolveACLDenied(t *testing.T) {
 	app, root := newConflictTestApp(t)
 	path := writeProjectFile(t, root, "entities/ticket/TKT-001.md", conflictedTicket)
-	setTestACL(t, app, acl.ReadOnlyACL{})
+	d := mustNewACL(t, &acl.Policy{
+		Roles: map[string]acl.RoleDef{"syncer": {
+			Read: []string{"ticket"}, Permissions: []string{acl.PermGitSync},
+		}},
+		Assignments: map[string]string{"alice": "syncer"},
+	}, app.store)
+	setTestACL(t, app, d)
 	sink := audit.NewMemory()
 	app.auditSink = sink
 
-	rec := postConflictResolve(app, `{"path":"entities/ticket/TKT-001.md","content_choice":"ours"}`)
+	req := asAlice(t, d, httptest.NewRequest(http.MethodPost, "/api/v1/_conflicts/resolve",
+		strings.NewReader(`{"path":"entities/ticket/TKT-001.md","content_choice":"ours"}`)))
+	rec := httptest.NewRecorder()
+	app.write.handleV1ConflictResolve(rec, req)
 
 	if rec.Code != http.StatusForbidden {
 		t.Fatalf("expected 403, got %d: %s", rec.Code, rec.Body.String())
 	}
-	if !strings.Contains(rec.Body.String(), "read-only-acl") {
-		t.Errorf("expected structured ACL deny body, got: %s", rec.Body.String())
+	if !strings.Contains(rec.Body.String(), "role-grant") {
+		t.Errorf("expected structured ACL deny body from the write check, got: %s", rec.Body.String())
 	}
 	got, err := os.ReadFile(path)
 	if err != nil {
@@ -257,5 +272,111 @@ func TestV1ConflictResolveRelationWritesAndAudits(t *testing.T) {
 	}
 	if !audited {
 		t.Errorf("expected an update-relation audit record, got %+v", sink.Records())
+	}
+}
+
+// TestV1Conflicts_GitSyncGate pins that every conflict route needs git:sync,
+// under the same rule as the sync itself. A refused list or detail must not
+// name the conflicted file, and a refused resolve must not touch it.
+func TestV1Conflicts_GitSyncGate(t *testing.T) {
+	const rel = "entities/ticket/TKT-001.md"
+	routes := []struct {
+		name string
+		call func(app *App, ctx context.Context) *httptest.ResponseRecorder
+	}{
+		{"list", func(app *App, ctx context.Context) *httptest.ResponseRecorder {
+			rec := httptest.NewRecorder()
+			app.handleV1Conflicts(rec, httptest.NewRequestWithContext(ctx, http.MethodGet,
+				"/api/v1/_conflicts", http.NoBody))
+			return rec
+		}},
+		{"detail", func(app *App, ctx context.Context) *httptest.ResponseRecorder {
+			rec := httptest.NewRecorder()
+			app.handleV1ConflictRoutes(rec, httptest.NewRequestWithContext(ctx, http.MethodGet,
+				"/api/v1/_conflicts/"+rel, http.NoBody))
+			return rec
+		}},
+		// A missing file must get the same 403 as a present one, or the
+		// answer would tell a caller without git:sync which files exist.
+		{"detail of a missing file", func(app *App, ctx context.Context) *httptest.ResponseRecorder {
+			rec := httptest.NewRecorder()
+			app.handleV1ConflictRoutes(rec, httptest.NewRequestWithContext(ctx, http.MethodGet,
+				"/api/v1/_conflicts/entities/ticket/NOPE.md", http.NoBody))
+			return rec
+		}},
+		{"resolve of a missing file", func(app *App, ctx context.Context) *httptest.ResponseRecorder {
+			rec := httptest.NewRecorder()
+			app.handleV1ConflictRoutes(rec, httptest.NewRequestWithContext(ctx, http.MethodPost,
+				"/api/v1/_conflicts/resolve", strings.NewReader(`{"path":"entities/ticket/NOPE.md"}`)))
+			return rec
+		}},
+		{"resolve", func(app *App, ctx context.Context) *httptest.ResponseRecorder {
+			rec := httptest.NewRecorder()
+			app.handleV1ConflictRoutes(rec, httptest.NewRequestWithContext(ctx, http.MethodPost,
+				"/api/v1/_conflicts/resolve", strings.NewReader(`{"path":"`+rel+`","content_choice":"theirs"}`)))
+			return rec
+		}},
+	}
+	modes := []struct {
+		name    string
+		acl     string // "nop", "read-only", "policy", "broken" or "unwired"
+		holds   bool
+		allowed bool
+	}{
+		{name: "no policy", acl: "nop", allowed: true},
+		{name: "read-only", acl: "read-only", holds: true},
+		{name: "policy without git:sync", acl: "policy"},
+		{name: "policy with git:sync", acl: "policy", holds: true, allowed: true},
+		{name: "broken policy", acl: "broken", holds: true},
+		{name: "unwired", acl: "unwired", holds: true},
+	}
+	for _, route := range routes {
+		for _, mode := range modes {
+			t.Run(route.name+"/"+mode.name, func(t *testing.T) {
+				app, root := newConflictTestApp(t)
+				path := writeProjectFile(t, root, rel, conflictedTicket)
+				switch mode.acl {
+				case "nop":
+					setTestACL(t, app, acl.NopACL{})
+				case "read-only":
+					setTestACL(t, app, acl.ReadOnlyACL{})
+				case "policy":
+					setTestACL(t, app, mustNewACL(t, &acl.Policy{}, app.store))
+				case "broken":
+					setTestACL(t, app, (*acl.Declarative)(nil))
+				case "unwired":
+					setTestACL(t, app, nil)
+				}
+				ctx := withReadGate(context.Background(), fakeGate{holdsPermission: mode.holds})
+
+				rec := route.call(app, ctx)
+
+				refusedForSync := rec.Code == http.StatusForbidden &&
+					strings.Contains(rec.Body.String(), acl.PermGitSync)
+				if refusedForSync == mode.allowed {
+					t.Fatalf("allowed=%v, got %d: %s", mode.allowed, rec.Code, rec.Body.String())
+				}
+				if mode.allowed {
+					return
+				}
+				// The problem body's instance echoes the path the caller sent;
+				// only the rest may not name the file.
+				var body map[string]any
+				if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+					t.Fatalf("decode: %v", err)
+				}
+				delete(body, "instance")
+				if strings.Contains(fmt.Sprint(body), "TKT-001") {
+					t.Errorf("refused response names the conflicted file: %s", rec.Body.String())
+				}
+				got, err := os.ReadFile(path)
+				if err != nil {
+					t.Fatalf("ReadFile: %v", err)
+				}
+				if string(got) != conflictedTicket {
+					t.Error("refused request modified the conflicted file")
+				}
+			})
+		}
 	}
 }

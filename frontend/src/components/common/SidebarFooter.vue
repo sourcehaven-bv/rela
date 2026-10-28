@@ -123,7 +123,7 @@ async function handleSync() {
         <span class="git-status-text">{{ gitStore.statusText }}</span>
       </button>
       <RouterLink
-        v-if="gitStore.hasConflicts"
+        v-if="gitStore.hasConflicts && gitStore.canSync"
         to="/conflicts"
         class="footer-row status-warning status-item"
         :title="t('footer.resolveConflicts')"

@@ -19,6 +19,7 @@ export const useGitStore = defineStore('git', () => {
   const remoteAhead = computed(() => status.value?.remote_ahead ?? 0)
   const hasConflicts = computed(() => status.value?.conflict ?? false)
   const conflictFiles = computed(() => status.value?.conflict_files ?? [])
+  const canSync = computed(() => status.value?.can_sync ?? false)
 
   const statusText = computed(() => {
     if (!isAvailable.value) return ''
@@ -84,6 +85,7 @@ export const useGitStore = defineStore('git', () => {
     remoteAhead,
     hasConflicts,
     conflictFiles,
+    canSync,
     statusText,
     statusClass,
 

@@ -8,6 +8,8 @@ export interface GitStatus {
   syncing: boolean
   conflict: boolean
   conflict_files?: string[]
+  /** Whether POST /_git/sync, and so the conflict routes, would be accepted (git:sync). */
+  can_sync?: boolean
 }
 
 export interface GitSyncResponse {

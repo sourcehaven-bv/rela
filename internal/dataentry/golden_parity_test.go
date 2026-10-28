@@ -30,7 +30,7 @@ import (
 // are the wire contract a refactor of the access layer must keep: a change in
 // any of them is either the intended fix of a recorded gap or a regression.
 //
-// Cases named after a bug (BUG-2TPO2F, BUG-C8DHGF, BUG-VUNO11, BUG-T6HNKS)
+// Cases named after a bug (BUG-2TPO2F, BUG-C8DHGF, BUG-VUNO11)
 // record a known gap as it is today. The fix of that bug is expected to
 // change those files.
 //
@@ -287,12 +287,12 @@ var goldenReads = []goldenEndpoint{
 	{slug: "nav-status", method: http.MethodGet, path: "/api/v1/_nav_status"},
 	{slug: "nav-items", method: http.MethodGet, path: "/api/v1/_nav_items"},
 	{slug: "dashboard", method: http.MethodGet, path: "/api/v1/_dashboard"},
-	// The conflict list names the conflicted file of the hidden TKT-4.
-	{slug: "BUG-T6HNKS-conflicts", method: http.MethodGet, path: "/api/v1/_conflicts"},
+	// The conflict routes need git:sync, which only admin holds. The fixture
+	// holds a conflicted copy of TKT-4, which the viewer may not read; nobody
+	// without git:sync gets its path or values (BUG-T6HNKS).
+	{slug: "conflicts", method: http.MethodGet, path: "/api/v1/_conflicts"},
 	{slug: "conflict", method: http.MethodGet, path: "/api/v1/_conflicts/TKT-1"},
-	// The fixture holds a conflicted copy of TKT-4, which the viewer may not
-	// read; the detail shows its values.
-	{slug: "BUG-T6HNKS-conflict-hidden", method: http.MethodGet, path: "/api/v1/_conflicts/entities/ticket/TKT-4.md"},
+	{slug: "conflict-hidden", method: http.MethodGet, path: "/api/v1/_conflicts/entities/ticket/TKT-4.md"},
 	{slug: "document", method: http.MethodGet, path: "/api/v1/_documents/report"},
 	{slug: "document-elevated", method: http.MethodGet, path: "/api/v1/_documents/elevated_report"},
 	{slug: "export-document", method: http.MethodGet, path: "/api/v1/_documents/report/_export?transform=copy"},
