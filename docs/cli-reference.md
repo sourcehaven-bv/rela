@@ -2166,7 +2166,7 @@ rela channel remove ID TYPE SEQ [--name N] [--reason R]
 rela channel create ID TYPE [--title T]
 rela channel watch ID TYPE [--name N] [--after-rev R] [--timeout 30s] [--follow] [--poll 2s] [--limit N]
 rela channel mark-read ID TYPE [--name N] [--seq S]
-rela channel inbox [--limit N] [--cursor C] [--kinds waiting,unread]
+rela channel inbox [--limit N] [--cursor C] [--kinds waiting,unread,mention,reply]
 ```
 
 `ID` is an entity id, or `ID@face` for a channel type that anchors to a face.
@@ -2182,7 +2182,7 @@ channel of a type with many channels.
 | `--schemas`    | Show each message type's properties                                                            |
 | `--reason`     | Why a message was removed; shown to moderators                                                 |
 | `--seq`        | For `mark-read`: mark read up to this sequence number, 0 or more. Without it, up to the last message |
-| `--kinds`      | For `inbox`: what to list, `waiting`, `unread` or both (the default). Comma separated          |
+| `--kinds`      | For `inbox`: what to list, any of `waiting`, `unread`, `mention` and `reply`; all four by default. Comma separated |
 
 `edit` replaces all properties of your message, so name every property you
 keep.
@@ -2250,7 +2250,31 @@ your read marker and the channel's last sequence number. When more than 50
 channels have unread messages, a last line says how many are shown. When
 no channel has unread messages, the section is `No unread channels.` A
 `--cursor` page has no unread section, because it does not compute it.
-With `--kinds unread` the sessions are left out and `--cursor` is refused.
+
+Then `inbox` prints the unread messages that mention you or reply to one
+of yours, newest first:
+
+```text
+Mentions and replies:
+ITEM-1 case #3: integration:triage-bot mentioned you (2026-10-27T09:00:00Z)
+ITEM-1 case #2: integration:triage-bot replied to #1 (2026-10-27T08:55:00Z)
+```
+
+Each line names the entity, the channel type and name, the message's
+sequence number, its author, and whether it mentions you or replies to
+your message. A line carries no message text; read it with
+`rela channel read`. When more than 50 messages address you, a last line
+says how many are shown. When there are none, the section is
+`No mentions or replies.` A `--cursor` page has no such section.
+`rela channel mark-read` on the channel clears its entries. To mention
+someone in `rela channel post`, put the name in a code span in a markdown
+property; the realtime guide describes the forms. Over the CLI you are your
+login, or the job identity with `--run-as`, so the section lists mentions
+of that key only. With person mapping on, a login receives replies but no
+mentions.
+
+Without `waiting` in `--kinds` the sessions are left out and `--cursor` is
+refused.
 
 The CLI opens the project itself; it does not talk to a running
 `rela-server`. Each call applies `acl.yaml` for the CLI's identity, as

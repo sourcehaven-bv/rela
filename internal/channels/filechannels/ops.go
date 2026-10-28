@@ -63,12 +63,11 @@ func (s *Store) Append(ctx context.Context, k channels.Key, nm channels.NewMessa
 	msg := channels.Message{
 		Seq: seq, Rev: m.bump(idx), Type: nm.Type, Author: nm.Author, At: nm.At, Props: nm.Props,
 		ReplyTo: nm.ReplyTo, SchemaHash: nm.SchemaHash, TriggeredBy: nm.TriggeredBy, MovedSession: moved,
+		Mentions: nm.Mentions,
 	}
 	recs := []segRecord{{idx: idx, rec: encodeLine(line{K: "m", Message: msg})}}
 	if nm.ReplyTo > 0 {
-		count := parent.ReplyCount + 1
-		recs = append(recs, segRecord{idx: s.idx(parent.Seq), seg: parentSeg, rec: encodeLine(line{K: "p",
-			Message: channels.Message{Seq: parent.Seq, Rev: m.bump(s.idx(parent.Seq))}, ReplyCount: &count})})
+		recs = append(recs, replyCountRecord(&s.disk, m, parent, parentSeg))
 	}
 	m.advance(seq, msg.At)
 	var after channels.Channel
@@ -109,7 +108,36 @@ func (s *Store) Append(ctx context.Context, k channels.Key, nm channels.NewMessa
 	if nm.MarkRead {
 		markAfterWrite(&s.disk, k, channels.ReaderOf(nm.Author), m.LastSeq, nm.At)
 	}
+	msg.ReplyTarget = appendRows(&s.disk, k, msg, parent)
 	return msg, nil
+}
+
+// appendRows writes the addressed rows of the appended message msg after
+// its log record: one per mention target, and a reply row for the author
+// of parent when the reply addresses them. It returns the reply target
+// when its row was written, else "". A failed row write does not fail the
+// append (see mentionsFile). parent is unused when msg is no reply.
+func appendRows(d *disk, k channels.Key, msg, parent channels.Message) string {
+	replyTarget := ""
+	if msg.ReplyTo > 0 {
+		replyTarget, _ = channels.ReplyTarget(parent, msg.Author)
+	}
+	if len(msg.Mentions) == 0 && replyTarget == "" {
+		return ""
+	}
+	if !rowsAfterWrite(d, k, msg, replyTarget, msg.At) {
+		return ""
+	}
+	return replyTarget
+}
+
+// replyCountRecord is the log record that raises the reply count of
+// parent, read from segment seg of d, at the next rev of its segment in m.
+func replyCountRecord(d *disk, m *meta, parent channels.Message, seg []byte) segRecord {
+	count := parent.ReplyCount + 1
+	idx := d.idx(parent.Seq)
+	return segRecord{idx: idx, seg: seg, rec: encodeLine(line{K: "p",
+		Message: channels.Message{Seq: parent.Seq, Rev: m.bump(idx)}, ReplyCount: &count})}
 }
 
 // appendCreateAudit appends the create record of channel k, by by at at.
@@ -238,6 +266,15 @@ func (s *Store) mutate(
 	ctx context.Context, k channels.Key, seq int64,
 	change func(m *meta, msg *channels.Message, idx int64) error,
 ) (channels.Message, error) {
+	return s.mutateThen(ctx, k, seq, change, nil)
+}
+
+// mutateThen is mutate with a step after the rewrite, still under the
+// lock. Nil: accepted; mutate passes it.
+func (s *Store) mutateThen(
+	ctx context.Context, k channels.Key, seq int64,
+	change func(m *meta, msg *channels.Message, idx int64) error, after func(msg channels.Message),
+) (channels.Message, error) {
 	unlock, err := s.lock(ctx)
 	if err != nil {
 		return channels.Message{}, err
@@ -267,12 +304,19 @@ func (s *Store) mutate(
 	if err := s.rewrite(k, idx, msgs); err != nil {
 		return channels.Message{}, err
 	}
+	if after != nil {
+		after(msgs[i])
+	}
 	return msgs[i], nil
 }
 
-// Edit implements [channels.Store].
+// Edit implements [channels.Store]. The rows of dropped targets go before
+// the log record and the rows of added targets come after it, at the edit
+// time (see mentionsFile). A kept target's row is left as it is: a row the
+// cap evicted stays gone, and the reply row stays, as on the SQL tiers.
 func (s *Store) Edit(
-	ctx context.Context, k channels.Key, seq int64, props map[string]any, at time.Time,
+	ctx context.Context, k channels.Key, seq int64, props map[string]any, mentions []channels.Mention,
+	at time.Time,
 ) (channels.Message, error) {
 	if err := k.Validate(); err != nil {
 		return channels.Message{}, err
@@ -281,10 +325,28 @@ func (s *Store) Edit(
 	if err != nil {
 		return channels.Message{}, err
 	}
+	mentions, err = channels.CheckMentions(mentions)
+	if err != nil {
+		return channels.Message{}, err
+	}
 	at = channels.NormTime(at)
-	return s.mutate(ctx, k, seq, func(m *meta, msg *channels.Message, idx int64) error {
-		msg.Props, msg.EditedAt, msg.Rev = props, at, m.bump(idx)
-		return nil
+	var added []channels.Mention
+	return s.mutateThen(ctx, k, seq, func(m *meta, msg *channels.Message, idx int64) error {
+		next := make(map[string]bool, len(mentions))
+		for _, t := range mentions {
+			next[t.Target] = true
+		}
+		added = channels.AddedMentions(msg.Mentions, mentions)
+		msg.Props, msg.EditedAt, msg.Rev, msg.Mentions = props, at, m.bump(idx), mentions
+		return dropRows(&s.disk, k, seq, func(r mentionRow) bool {
+			return r.Kind != channels.AddressMention || next[r.Target]
+		})
+	}, func(msg channels.Message) {
+		if len(added) == 0 {
+			return
+		}
+		msg.Mentions = added
+		rowsAfterWrite(&s.disk, k, msg, "", at)
 	})
 }
 
@@ -315,6 +377,10 @@ func (s *Store) mutateRemove(
 		}
 		delete(m.Pending, seq)
 		out = *msg
+		// The rows go before the log record (see mentionsFile).
+		if err := dropRows(&s.disk, k, seq, func(mentionRow) bool { return false }); err != nil {
+			return err
+		}
 		rec := channels.KeyAudit(k, channels.AuditRemove, r.At)
 		rec.Seq, rec.By = seq, r.By
 		// The audit record goes first: a removal that is not audited must

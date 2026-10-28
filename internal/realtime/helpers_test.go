@@ -15,6 +15,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/channels"
 	"github.com/Sourcehaven-BV/rela/internal/channels/filechannels"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
@@ -46,6 +47,11 @@ entities:
   doc:
     label: Doc
     id_prefix: DOC
+    properties:
+      title: {type: string}
+  person:
+    label: Person
+    id_prefix: USR
     properties:
       title: {type: string}
   page:
@@ -202,8 +208,15 @@ func testMeta(t *testing.T) *metamodel.Metamodel {
 
 func testCompiled(t *testing.T, yaml string) *realtimecfg.Compiled {
 	t.Helper()
-	meta := testMeta(t)
-	c, err := realtimecfg.Parse([]byte(yaml), meta, nil)
+	return testCompiledWith(t, yaml, nil)
+}
+
+// testCompiledWith compiles yaml under policy.
+//
+// Nil: policy is accepted and means no acl.yaml.
+func testCompiledWith(t *testing.T, yaml string, policy *acl.Policy) *realtimecfg.Compiled {
+	t.Helper()
+	c, err := realtimecfg.Parse([]byte(yaml), testMeta(t), policy)
 	require.NoError(t, err)
 	return c
 }
@@ -468,15 +481,21 @@ type fakeRefs struct {
 	mu    sync.Mutex
 	views map[string]RefView
 	calls atomic.Int64
+	// hide names, per caller, the ids the caller may not read.
+	hide map[string][]string
 }
 
-func (f *fakeRefs) Resolve(_ context.Context, ids []string) (map[string]RefView, error) {
+func (f *fakeRefs) Resolve(ctx context.Context, ids []string) (map[string]RefView, error) {
 	f.calls.Add(1)
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	var hidden []string
+	if a, ok := ctx.Value(accessKey{}).(*fakeAccess); ok {
+		hidden = f.hide[a.p.User]
+	}
 	out := map[string]RefView{}
 	for _, id := range ids {
-		if v, ok := f.views[id]; ok {
+		if v, ok := f.views[id]; ok && !slices.Contains(hidden, id) {
 			out[id] = v
 		}
 	}
@@ -549,6 +568,8 @@ type countingStore struct {
 	entityLists atomic.Int64
 	// waitingLists counts ListWaiting calls.
 	waitingLists atomic.Int64
+	// addressedLists counts ListAddressed calls.
+	addressedLists atomic.Int64
 	// reads, listReads and setReads count the read marker calls.
 	reads, listReads, setReads atomic.Int64
 	// beforeReads runs once, before the next Reads reaches the store.
@@ -576,6 +597,13 @@ func (s *countingStore) SetRead(
 ) (channels.ReadState, bool, error) {
 	s.setReads.Add(1)
 	return s.Store.SetRead(ctx, k, r, seq, at)
+}
+
+func (s *countingStore) ListAddressed(
+	ctx context.Context, r channels.Reader, kind channels.AddressKind, limit int,
+) ([]channels.Addressed, error) {
+	s.addressedLists.Add(1)
+	return s.Store.ListAddressed(ctx, r, kind, limit)
 }
 
 func (s *countingStore) ListWaiting(ctx context.Context, q channels.WaitingQuery) ([]channels.Channel, error) {
@@ -692,6 +720,7 @@ type harnessOpt func(*harnessOpts)
 
 type harnessOpts struct {
 	yaml     string
+	policy   *acl.Policy
 	lim      ephemeralLimits
 	caps     limitCaps
 	promoter Promoter
@@ -704,6 +733,20 @@ func withLifecycleYAML() harnessOpt              { return func(o *harnessOpts) {
 func withYAML(y string) harnessOpt               { return func(o *harnessOpts) { o.yaml = y } }
 func withPromoter(p Promoter) harnessOpt         { return func(o *harnessOpts) { o.promoter = p } }
 func withOutputs(w OutputWriter) harnessOpt      { return func(o *harnessOpts) { o.outputs = w } }
+
+// withPersonMapping compiles the config under an acl.yaml that maps logins
+// to person entities, so the mention user type is person.
+func withPersonMapping() harnessOpt {
+	return func(o *harnessOpts) { o.policy = personMappingPolicy() }
+}
+
+// personMappingPolicy is an acl.yaml that maps logins to person entities.
+func personMappingPolicy() *acl.Policy {
+	return &acl.Policy{
+		UserEntityType: "person", PrincipalProperty: "login",
+		Roles: map[string]acl.RoleDef{"secret-reader": {Permissions: []string{"chat.secret"}}},
+	}
+}
 
 func newHarness(t *testing.T, opts ...harnessOpt) *harness {
 	t.Helper()
@@ -737,7 +780,7 @@ func newHarness(t *testing.T, opts ...harnessOpt) *harness {
 			"TKT-2": {ID: "TKT-2", Type: "ticket", Title: "Second"},
 			"DOC-1": {ID: "DOC-1", Type: "doc", Title: "A doc"},
 		}},
-		cfg: &fakeConfig{snap: Snapshot{Config: testCompiled(t, o.yaml)}},
+		cfg: &fakeConfig{snap: Snapshot{Config: testCompiledWith(t, o.yaml, o.policy)}},
 	}
 	h.holders = &fakeHolders{anchors: h.anchors}
 	h.svc, err = New(Deps{

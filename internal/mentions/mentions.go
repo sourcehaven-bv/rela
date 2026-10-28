@@ -30,17 +30,36 @@ import (
 // every later save.
 const MaxTargets = 1000
 
-// All returns the distinct entity ids that body mentions, sorted. A span
-// counts only when its whole text is plain and passes [entity.ValidateID];
-// whether the id exists is the caller's question. Code blocks are never
-// CodeSpan nodes in goldmark, so they are excluded; a span inside link text
-// is skipped because the link already points somewhere else.
+// All returns the distinct entity ids that body mentions, sorted. It is
+// [Spans] filtered by [entity.ValidateID]; whether the id exists is the
+// caller's question.
 //
 // Nil: returned when body has no mentions.
 func All(body string) []string {
+	var out []string
+	for _, s := range Spans(body) {
+		if entity.ValidateID(s) == nil {
+			out = append(out, s)
+		}
+	}
+	slices.Sort(out)
+	return out
+}
+
+// Spans returns the distinct texts of the complete, plain code spans of
+// body, in document order. A span in link text, or one that holds a line
+// break, is skipped; code blocks are never spans. It is the one walk [All]
+// and principal mentions share.
+//
+// A span that holds a line break is refused because the server and the SPA
+// would read its text differently.
+//
+// Nil: returned when body has no spans.
+func Spans(body string) []string {
 	if body == "" {
 		return nil
 	}
+	var out []string
 	seen := make(map[string]struct{})
 	source := []byte(body)
 	doc := parser.Parser().Parse(text.NewReader(source))
@@ -56,19 +75,14 @@ func All(body string) []string {
 		if !ok {
 			return ast.WalkContinue, nil
 		}
-		if id, complete := codeSpanText(cs, source); complete && entity.ValidateID(id) == nil {
-			seen[id] = struct{}{}
+		if s, plain := codeSpanText(cs, source); plain {
+			if _, dup := seen[s]; !dup {
+				seen[s] = struct{}{}
+				out = append(out, s)
+			}
 		}
 		return ast.WalkSkipChildren, nil
 	})
-	if len(seen) == 0 {
-		return nil
-	}
-	out := make([]string, 0, len(seen))
-	for id := range seen {
-		out = append(out, id)
-	}
-	slices.Sort(out)
 	return out
 }
 
@@ -95,20 +109,23 @@ func Index(body string) []string {
 	return out
 }
 
-// codeSpanText concatenates the literal text segments inside a code span.
-// It returns complete=false when the span holds any child that is not a
-// plain text segment, so a partial reconstruction is never matched against
-// an entity id.
+// codeSpanText returns the text of a code span. It returns plain=false
+// when the span holds anything but one text segment without a line break,
+// so a partial reconstruction is never matched.
 func codeSpanText(cs *ast.CodeSpan, source []byte) (string, bool) {
-	var b []byte
-	for c := cs.FirstChild(); c != nil; c = c.NextSibling() {
-		t, ok := c.(*ast.Text)
-		if !ok {
-			return "", false
-		}
-		b = append(b, t.Segment.Value(source)...)
+	c := cs.FirstChild()
+	if c == nil || c.NextSibling() != nil {
+		return "", false
 	}
-	return string(b), true
+	t, ok := c.(*ast.Text)
+	if !ok {
+		return "", false
+	}
+	v := t.Segment.Value(source)
+	if slices.Contains(v, '\n') || slices.Contains(v, '\r') {
+		return "", false
+	}
+	return string(v), true
 }
 
 // parser uses the same GFM extension set as the data-entry document

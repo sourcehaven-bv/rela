@@ -211,7 +211,7 @@ func testReadsCount(t *testing.T, h Harness) {
 	contained(t, s, k, dueAt(T0.Add(time.Hour))) // seq 1 and its notice at 2
 	edited := mustAppend(t, s, k, fromBob("edited below the marker"))
 	setRead(t, s, k, readerAlice, edited.Seq, T0)
-	_, err := s.Edit(ctx, k, edited.Seq, map[string]any{"body": "changed"}, T0)
+	_, err := s.Edit(ctx, k, edited.Seq, map[string]any{"body": "changed"}, nil, T0)
 	require.NoError(t, err)
 	require.Zero(t, reads(t, s, readerAlice, k)[k].Unread, "an edit below the marker does not count")
 

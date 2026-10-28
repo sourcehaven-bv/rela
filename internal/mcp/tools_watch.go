@@ -170,6 +170,11 @@ type watchChannel struct {
 	types map[string]bool
 	keys  map[realtime.Key]bool
 	known bool
+	// user is the caller's principal key, for a list_inbox target, and
+	// mentionKinds is set when its kinds hold mention or reply: a post or
+	// edit that addresses user wakes the target.
+	user         string
+	mentionKinds bool
 
 	anchor string // entity id, without a face
 	typ    string
@@ -194,6 +199,33 @@ func (c *watchChannel) matches(id, typ, name string) bool {
 // reported.
 func (c *watchChannel) matchesKey(k realtime.Key) bool {
 	return c.inbox && c.keys[k]
+}
+
+// addressed reports whether a post or edit that addressed the principal
+// keys users may change a list_inbox target.
+func (c *watchChannel) addressed(users []string) bool {
+	return c.inbox && c.mentionKinds && c.user != "" && slices.Contains(users, c.user)
+}
+
+// asksMentions reports whether list_inbox args ask for the mention or
+// reply kind. Absent kinds ask for every kind. Kinds of the wrong shape
+// count as asking, so a wake is never missed; the replay answers the
+// tool's error.
+func asksMentions(args map[string]any) bool {
+	raw, ok := args[inboxKindsArg]
+	if !ok {
+		return true
+	}
+	list, ok := raw.([]any)
+	if !ok {
+		return true
+	}
+	for _, k := range list {
+		if k == realtime.InboxKindMention || k == realtime.InboxKindReply {
+			return true
+		}
+	}
+	return false
 }
 
 // learnInbox records the waiting types and the window keys a list_inbox
@@ -254,6 +286,11 @@ func (w *watchHandler) handle(ctx context.Context, req *mcpgo.CallToolRequest) (
 	}
 
 	p := principal.From(ctx)
+	for _, t := range targets {
+		if t.channel != nil && t.channel.inbox {
+			t.channel.user = p.User
+		}
+	}
 	entry, ok := w.acquire(p)
 	if !ok {
 		return errorResult(watchTooManyMessage), nil
@@ -454,7 +491,7 @@ func newChannelWake(d Deps, targets []watchTarget) *channelWake {
 		return c
 	}
 	if d.Channels.Waker != nil {
-		c.sub = d.Channels.Waker.Subscribe()
+		c.sub = d.Channels.Waker.SubscribeAddressed()
 		c.wake = c.sub.Wake()
 	}
 	// A post made in another process wakes no subscription here; only the
@@ -469,11 +506,18 @@ func newChannelWake(d Deps, targets []watchTarget) *channelWake {
 }
 
 // take drains the subscription and reports whether a changed channel is
-// one a target reads.
+// one a target reads, or a post or edit addressed a list_inbox target's
+// caller.
 func (c *channelWake) take() bool {
 	keys, resync := c.sub.Take()
+	users := c.sub.TakeAddressed()
 	if resync {
 		return true
+	}
+	for _, t := range c.targets {
+		if t.addressed(users) {
+			return true
+		}
 	}
 	for _, k := range keys {
 		for _, t := range c.targets {
@@ -855,7 +899,7 @@ func (w *watchHandler) parseTargets(raw any) ([]watchTarget, error) {
 			if inboxes > 1 {
 				return nil, fmt.Errorf("targets[%d]: at most one %s target per watch", i, toolListInbox)
 			}
-			channel = &watchChannel{inbox: true}
+			channel = &watchChannel{inbox: true, mentionKinds: asksMentions(args)}
 		}
 		rawArgs, err := json.Marshal(args)
 		if err != nil { // coverage-ignore: decoded JSON always re-marshals

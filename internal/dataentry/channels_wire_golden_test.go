@@ -78,6 +78,8 @@ var channelWireTypes = map[string]any{
 	"InboxSession":               v1.InboxSession{},
 	"InboxLinks":                 v1.InboxLinks{},
 	"InboxUnread":                v1.InboxUnread{},
+	"InboxMention":               v1.InboxMention{},
+	"MessageMention":             v1.MessageMention{},
 }
 
 // jsonFields lists the JSON names of v's struct fields, sorted. An

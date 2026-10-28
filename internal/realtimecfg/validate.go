@@ -80,6 +80,9 @@ func (v *validator) compile(raw *rawFile) *Compiled {
 	}
 	grantChecker{v: v, c: c}.check()
 	c.waiting = buildWaiting(c.channelTypes)
+	if v.policy.PrincipalPropertyLookupEnabled() {
+		c.mentionUserType = strings.TrimSpace(v.policy.UserEntityType)
+	}
 	c.warnings = v.warnings
 	for p := range v.perms {
 		c.permissions = append(c.permissions, p)
@@ -498,6 +501,13 @@ func (v *validator) property(key, name string, raw *rawProperty, limits Limits) 
 		if !v.meta.HasEntityType(t) {
 			v.add(fmt.Sprintf("%s.to[%d]", key, i), fmt.Sprintf("unknown entity type %q", t))
 		}
+	}
+	if raw.Notify != nil {
+		if p.Type != PropertyRef {
+			v.add(key+".notify", "only a ref property has notify; it says whether a value that names a "+
+				"person entity mentions that person")
+		}
+		p.NoNotify = !*raw.Notify
 	}
 	return p
 }

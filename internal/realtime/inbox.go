@@ -47,46 +47,85 @@ const (
 	// InboxKindUnread asks for the channels with messages above the
 	// caller's read marker.
 	InboxKindUnread = "unread"
+	// InboxKindMention asks for the unread messages that mention the
+	// caller, and is the kind of such an entry.
+	InboxKindMention = "mention"
+	// InboxKindReply asks for the unread replies to the caller's messages,
+	// and is the kind of such an entry.
+	InboxKindReply = "reply"
 )
 
 // MaxInboxUnread is the most unread channels one inbox answer lists.
 const MaxInboxUnread = 50
 
+// MaxInboxMentions is the most mention and reply entries one inbox answer
+// lists.
+const MaxInboxMentions = 50
+
 // InboxRequest asks for one page of the caller's inbox. Limit 0 is
 // [DefaultInboxLimit], for a caller that names no limit; a surface that
 // reads a limit the user typed checks it with [CheckInboxLimit] first, so
 // a typed 0 is refused rather than read as the default. Cursor "" is the
-// first page. Kinds is a subset of [InboxKindWaiting] and
-// [InboxKindUnread]; empty asks for both (see [CheckInboxKinds]).
+// first page. Kinds is a subset of [InboxKindWaiting], [InboxKindUnread],
+// [InboxKindMention] and [InboxKindReply]; empty asks for all four (see
+// [CheckInboxKinds]).
 type InboxRequest struct {
 	Limit  int
 	Cursor string
 	Kinds  []string
 }
 
-// CheckInboxKinds checks kinds a caller named: each is [InboxKindWaiting]
-// or [InboxKindUnread], else [TypeInvalid]. An empty list is both.
+// CheckInboxKinds checks kinds a caller named: each is one of the inbox
+// kinds, else [TypeInvalid]. An empty list is all four.
 func CheckInboxKinds(kinds []string) error {
-	_, _, err := inboxKinds(kinds)
+	_, err := inboxKinds(kinds)
 	return err
 }
 
-// inboxKinds reports which halves of the inbox kinds asks for.
-func inboxKinds(kinds []string) (waiting, unread bool, err error) {
-	if len(kinds) == 0 {
-		return true, true, nil
+// askedKinds are the parts of the inbox a request asks for.
+type askedKinds struct {
+	waiting, unread, mention, reply bool
+}
+
+// addressed reports whether the request asks for mention or reply entries.
+func (k askedKinds) addressed() bool { return k.mention || k.reply }
+
+// addressKind is the kind of addressed row the request asks the store
+// for: one kind, or [channels.AddressAny] for both. It is meaningful only
+// when addressed holds.
+func (k askedKinds) addressKind() channels.AddressKind {
+	switch {
+	case k.mention && !k.reply:
+		return channels.AddressMention
+	case k.reply && !k.mention:
+		return channels.AddressReply
+	default:
+		return channels.AddressAny
 	}
-	for _, k := range kinds {
-		switch k {
+}
+
+// inboxKinds reports which parts of the inbox kinds asks for.
+func inboxKinds(kinds []string) (askedKinds, error) {
+	if len(kinds) == 0 {
+		return askedKinds{waiting: true, unread: true, mention: true, reply: true}, nil
+	}
+	var k askedKinds
+	for _, name := range kinds {
+		switch name {
 		case InboxKindWaiting:
-			waiting = true
+			k.waiting = true
 		case InboxKindUnread:
-			unread = true
+			k.unread = true
+		case InboxKindMention:
+			k.mention = true
+		case InboxKindReply:
+			k.reply = true
 		default:
-			return false, false, invalid("kinds must be %s or %s", InboxKindWaiting, InboxKindUnread)
+			return askedKinds{}, invalid("kinds must be %s, %s, %s or %s", InboxKindWaiting, InboxKindUnread,
+				InboxKindMention, InboxKindReply)
 		}
 	}
-	return waiting, unread, nil
+	return k, nil
 }
 
 // InboxView is one page of the caller's inbox: the sessions that wait on
@@ -106,9 +145,16 @@ func inboxKinds(kinds []string) (waiting, unread bool, err error) {
 // leaves Entries, Count, Truncated and NextCursor out of the JSON rather
 // than answering "0 waiting".
 //
+// Mentions are the unread messages that mention the caller or reply to
+// the caller's messages, newest first, one entry per message, at most
+// [MaxInboxMentions]; MentionCount is how many entries the gated window
+// holds. Both are set on the first page when the request asks for the
+// mention or reply kind; they are nil otherwise.
+//
 // WaitingTypes are the channel types that have a waiting state in the
 // configuration the answer used, sorted. WakeKeys are the keys of every
-// channel in the caller's gated read window. Neither is part of the
+// channel in the caller's gated read window and of every gated mention
+// entry, sorted. Neither is part of the
 // answer on any wire; a watcher uses them to skip channel changes that
 // cannot change an inbox.
 type InboxView struct {
@@ -120,6 +166,8 @@ type InboxView struct {
 	NextCursor     string         `json:"next_cursor,omitempty"`
 	UnreadChannels []InboxUnread  `json:"unread_channels,omitzero"`
 	UnreadCount    *int           `json:"unread_count,omitempty"`
+	Mentions       []InboxMention `json:"mentions,omitzero"`
+	MentionCount   *int           `json:"mention_count,omitempty"`
 	WaitingTypes   []string       `json:"-"`
 	WakeKeys       []channels.Key `json:"-"`
 	// noWaiting is set when the request left the waiting kind out.
@@ -160,6 +208,21 @@ type InboxUnread struct {
 	Seq     int64        `json:"seq"`
 	LastSeq int64        `json:"last_seq"`
 	Unread  int          `json:"unread"`
+}
+
+// InboxMention is one unread message that addresses the caller. Kind is
+// [InboxKindMention] when the message mentions the caller, else
+// [InboxKindReply]. It carries no message content: the caller reads the
+// message in its channel.
+type InboxMention struct {
+	Kind        string       `json:"kind"`
+	Channel     InboxChannel `json:"channel"`
+	Seq         int64        `json:"seq"`
+	At          time.Time    `json:"at"`
+	MessageType string       `json:"message_type"`
+	Author      AuthorView   `json:"author"`
+	// ReplyTo is the parent seq of a reply; 0 otherwise.
+	ReplyTo int64 `json:"reply_to,omitempty"`
 }
 
 // InboxEntry is one session that waits on the caller.
@@ -229,7 +292,7 @@ func invalidCursor() *DenialError {
 func inboxTooLarge() *DenialError {
 	return deny(http.StatusServiceUnavailable, TypeInboxTooLarge,
 		"the inbox matches too many channels to answer; narrow the waiting roles or close old sessions, "+
-			"or ask for kinds=unread only")
+			"or ask for kinds=unread,mention,reply")
 }
 
 func encodeCursor(e InboxEntry, key channels.Key) string {
@@ -283,12 +346,13 @@ func (c *inboxCursor) after(it inboxItem) bool {
 // channels in an input_required state whose waiting role the caller holds
 // for update, exactly where [Service.Session] answers waiting_on_me. On
 // the first page it also lists the channels of the caller's read window
-// with unread messages (see [InboxView]).
+// with unread messages, and the unread messages that mention the caller
+// or reply to them (see [InboxView]).
 //
 // It costs one holder query per waiting pair of the configuration, one
-// channel listing, one read window listing, one batch anchor read and one
-// role prime shared by both halves, and one marker read, whatever the
-// number of entries. Every anchor passed the row gate and redaction
+// channel listing, one read window listing, one addressed-row listing, one
+// batch anchor read and one role prime shared by every part, and one
+// marker read, whatever the number of entries. Every anchor passed the row gate and redaction
 // before it is counted, so Truncated, the ceiling and the unread fields
 // are taken after the gate. Nothing is cached: every call answers for its
 // own principal.
@@ -300,10 +364,11 @@ func (s *Service) Inbox(ctx context.Context, req InboxRequest) (InboxView, error
 	if err := CheckInboxLimit(limit); err != nil {
 		return InboxView{}, err
 	}
-	waiting, unread, err := inboxKinds(req.Kinds)
+	kinds, err := inboxKinds(req.Kinds)
 	if err != nil {
 		return InboxView{}, err
 	}
+	waiting, unread := kinds.waiting, kinds.unread
 	cur, err := decodeCursor(req.Cursor)
 	if err != nil {
 		return InboxView{}, err
@@ -334,34 +399,27 @@ func (s *Service) Inbox(ctx context.Context, req InboxRequest) (InboxView, error
 	run := inboxRun{s: s, c: c}
 	w := c.snap.Config.Waiting()
 	view.WaitingTypes = slices.Sorted(maps.Keys(w.States))
-	var stored []channels.Channel
-	if waiting {
-		var anchors []channels.Anchor
-		if anchors, view.Truncated, err = run.holderAnchors(w, identity.ID()); err != nil {
-			return InboxView{}, err
-		}
-		if stored, err = run.listWaiting(w, anchors); err != nil {
-			return InboxView{}, err
-		}
+	got, err := run.gather(&view, kinds, cur == nil, identity.ID())
+	if err != nil {
+		return InboxView{}, err
 	}
-	var marks []channels.ReadMarker
-	if unread && cur == nil {
-		if marks, err = run.readWindow(); err != nil {
-			return InboxView{}, err
-		}
-	}
-	views, err := run.prime(stored, marks)
+	views, err := run.prime(got.stored, got.marks, got.rows)
 	if err != nil {
 		return InboxView{}, err
 	}
 	if waiting {
-		run.page(&view, run.waitingItems(stored, views), cur, limit)
+		run.page(&view, run.waitingItems(got.stored, views), cur, limit)
 	}
 	if unread && cur == nil {
-		if err := run.unread(&view, marks, views); err != nil {
+		if err := run.unread(&view, got.marks, views); err != nil {
 			return InboxView{}, err
 		}
 	}
+	if kinds.addressed() && cur == nil {
+		run.mentions(&view, got.rows, views)
+	}
+	channels.SortKeys(view.WakeKeys)
+	view.WakeKeys = slices.Compact(view.WakeKeys)
 	return view, nil
 }
 
@@ -370,6 +428,44 @@ func (s *Service) Inbox(ctx context.Context, req InboxRequest) (InboxView, error
 type inboxRun struct {
 	s *Service
 	c *call
+}
+
+// inboxRows are the stored rows one inbox call judges: the waiting
+// channels, the caller's read markers and the rows that address the
+// caller. A kind not asked for, or not on this page, leaves its rows nil.
+type inboxRows struct {
+	stored []channels.Channel
+	marks  []channels.ReadMarker
+	rows   []channels.Addressed
+}
+
+// gather lists the rows each asked kind needs. first is set on a first
+// page: only there are the unread and addressed halves computed. It sets
+// view.Truncated when the holder query was cut short.
+func (r inboxRun) gather(view *InboxView, kinds askedKinds, first bool, id string) (inboxRows, error) {
+	var out inboxRows
+	var err error
+	if kinds.waiting {
+		w := r.c.snap.Config.Waiting()
+		var anchors []channels.Anchor
+		if anchors, view.Truncated, err = r.holderAnchors(w, id); err != nil {
+			return inboxRows{}, err
+		}
+		if out.stored, err = r.listWaiting(w, anchors); err != nil {
+			return inboxRows{}, err
+		}
+	}
+	if kinds.unread && first {
+		if out.marks, err = r.readWindow(); err != nil {
+			return inboxRows{}, err
+		}
+	}
+	if kinds.addressed() && first {
+		if out.rows, err = r.addressedWindow(kinds); err != nil {
+			return inboxRows{}, err
+		}
+	}
+	return out, nil
 }
 
 // page sorts items, counts them and fills view with the page after cur.
@@ -463,15 +559,21 @@ func (r inboxRun) readWindow() ([]channels.ReadMarker, error) {
 	}), nil
 }
 
-// prime reads the anchors of the waiting candidates and the read window
-// in one batch, and primes the role answers for them once.
-func (r inboxRun) prime(stored []channels.Channel, marks []channels.ReadMarker) (map[entity.Address]AnchorView, error) {
+// prime reads the anchors of the waiting candidates, the read window and
+// the addressed rows in one batch, and primes the role answers for them
+// once.
+func (r inboxRun) prime(
+	stored []channels.Channel, marks []channels.ReadMarker, rows []channels.Addressed,
+) (map[entity.Address]AnchorView, error) {
 	all := stored
-	if len(marks) > 0 {
-		all = make([]channels.Channel, 0, len(stored)+len(marks))
+	if len(marks) > 0 || len(rows) > 0 {
+		all = make([]channels.Channel, 0, len(stored)+len(marks)+len(rows))
 		all = append(all, stored...)
 		for _, m := range marks {
 			all = append(all, m.Channel)
+		}
+		for _, a := range rows {
+			all = append(all, a.Channel)
 		}
 	}
 	if len(all) == 0 {
@@ -553,7 +655,7 @@ func (r inboxRun) unread(view *InboxView, marks []channels.ReadMarker, views map
 		}
 	}
 	c.head = nil
-	view.WakeKeys = keys
+	view.WakeKeys = append(view.WakeKeys, keys...)
 	var states map[channels.Key]channels.ReadState
 	if len(behind) > 0 {
 		var err error
@@ -580,6 +682,77 @@ func (r inboxRun) unread(view *InboxView, marks []channels.ReadMarker, views map
 	}
 	view.UnreadCount = &n
 	return nil
+}
+
+// addressedWindow lists the caller's unread addressed rows of the kinds
+// the request asks for, without the rows of a channel type the
+// configuration no longer declares. The store filters the kind inside its
+// scan, and returns every unread row the scan finds, so the only cut
+// before the gate in [inboxRun.mentions] is the documented scan of
+// [channels.MaxAddressedScan] rows: rows in channels the caller cannot
+// read never push a visible row out.
+func (r inboxRun) addressedWindow(kinds askedKinds) ([]channels.Addressed, error) {
+	c := r.c
+	reader, _ := callReader(c)
+	rows, err := r.s.store.ListAddressed(c.ctx, reader, kinds.addressKind(), channels.MaxAddressedScan)
+	if err != nil {
+		return nil, fmt.Errorf("realtime: list addressed rows: %w", err)
+	}
+	return slices.DeleteFunc(rows, func(a channels.Addressed) bool {
+		_, ok := c.snap.Config.ChannelType(a.Channel.Key.Type)
+		return !ok
+	}), nil
+}
+
+// mentions fills view's mention fields from the addressed rows: it gates
+// each row's channel as the unread channels are gated, then keeps one
+// entry per message, a mention before a reply, in the rows' newest-first
+// order. The count is taken after the gate, so a row the caller may not
+// see changes nothing.
+func (r inboxRun) mentions(view *InboxView, rows []channels.Addressed, views map[entity.Address]AnchorView) {
+	c := r.c
+	type msgKey struct {
+		key channels.Key
+		seq int64
+	}
+	at := map[msgKey]int{}
+	var out []InboxMention
+	for i := range rows {
+		a := rows[i]
+		ch := a.Channel
+		ct, av, ok := r.anchorOf(ch.Key, views)
+		if !ok {
+			continue
+		}
+		c.ct, c.anchor, c.key, c.head, c.ops = ct, av, ch.Key, &ch, opGates{}
+		if !roleAdmits(c, &ch, ct.Read, realtimecfg.CapabilityRead) {
+			continue
+		}
+		mk := msgKey{ch.Key, a.Seq}
+		if j, seen := at[mk]; seen {
+			if a.Kind == channels.AddressMention {
+				out[j].Kind, out[j].ReplyTo = InboxKindMention, a.ReplyTo
+			}
+			continue
+		}
+		at[mk] = len(out)
+		kind := InboxKindReply
+		if a.Kind == channels.AddressMention {
+			kind = InboxKindMention
+		}
+		out = append(out, InboxMention{
+			Kind: kind, Channel: inboxChannel(ch, av), Seq: a.Seq, At: a.At, MessageType: a.Type,
+			Author: authorView(a.Author), ReplyTo: a.ReplyTo,
+		})
+		view.WakeKeys = append(view.WakeKeys, ch.Key)
+	}
+	c.head = nil
+	n := len(out)
+	view.MentionCount = &n
+	if len(out) > MaxInboxMentions {
+		out = out[:MaxInboxMentions]
+	}
+	view.Mentions = append([]InboxMention{}, out...)
 }
 
 // inboxChannel names ch, anchored to view, in an inbox answer.

@@ -153,6 +153,10 @@ func (s *Service) Subscribe() *Subscription { return s.local.Subscribe() }
 // takes channel changes, and from TakeReads every reader's moved markers.
 func (s *Service) SubscribeReads() *Subscription { return s.local.SubscribeReads() }
 
+// SubscribeAddressed registers a consumer that also takes the principal
+// keys each post or edit addressed; see [Local.SubscribeAddressed].
+func (s *Service) SubscribeAddressed() *Subscription { return s.local.SubscribeAddressed() }
+
 // Config returns the realtime configuration in force now, or nil when
 // realtime is off. It is for describing the API (the OpenAPI document);
 // an operation loads its own snapshot.
@@ -303,7 +307,7 @@ func (c *call) postable() map[string]bool {
 // in one batch. A property the store recorded as a ref renders as one
 // whatever the configuration now says (see Local.storedRefs).
 func (s *Service) renderer(c *call, msgs []channels.Message, sigs []signal) (*renderer, error) {
-	r := &renderer{ct: c.ct, moderator: c.moderator(), call: c}
+	r := &renderer{ct: c.ct, moderator: c.moderator(), call: c, userType: c.snap.Config.MentionUserType()}
 	if len(msgs) == 0 && len(sigs) == 0 {
 		return r, nil
 	}
@@ -387,12 +391,21 @@ func (s *Service) Post(ctx context.Context, addr RawAddress, in PostInput) (Post
 	if ephemeral {
 		maxBytes = min(maxBytes, realtimelimits.MaxEphemeralBytes)
 	}
-	vp, refs, err := s.checkMessage(c, mt, in.Props, maxBytes)
+	// A signal is never stored, so it addresses no one.
+	var mplan *mentionPlan
+	if !ephemeral {
+		mplan = &mentionPlan{}
+	}
+	vp, refs, err := s.checkMessageKeeping(c, mt, in.Props, maxBytes, nil, mplan)
 	if err != nil {
 		return PostResult{}, err
 	}
 	if ephemeral {
 		return s.postSignal(c, mt, vp, in.ReplyTo)
+	}
+	targets := mplan.targets(refs, c.snap.Config.MentionUserType(), c.p.User)
+	if len(targets) > channels.MaxMentions {
+		return PostResult{}, tooManyMentions()
 	}
 	err = s.record(c)
 	if err != nil {
@@ -408,7 +421,7 @@ func (s *Service) Post(ctx context.Context, addr RawAddress, in PostInput) (Post
 	}
 	m, err := s.store.Append(c.ctx, c.key, channels.NewMessage{
 		Type: mt.Name, Author: authorOf(c.p), At: c.now, Props: vp.props, ReplyTo: in.ReplyTo, Session: sp.step,
-		MarkRead: true,
+		MarkRead: true, Mentions: targets,
 	})
 	sp.logGuardFailure(c.ctx)
 	if err != nil {
@@ -418,7 +431,11 @@ func (s *Service) Post(ctx context.Context, addr RawAddress, in PostInput) (Post
 	// A log post ends the poster's typing entry; the mark below wakes the
 	// readers for both.
 	s.local.typing.clear(c.key, bucketIdentity(c.p))
-	s.local.mark(c.key)
+	addressed := channels.MentionTargets(m.Mentions)
+	if m.ReplyTarget != "" {
+		addressed = append(addressed, m.ReplyTarget)
+	}
+	s.local.markAddressed(addressed, c.key)
 	v := rendererWith(c, refs).message(m)
 	out := PostResult{Message: &v, Session: postedSession(c, sp.step)}
 	if plan.marked && sp.step.Outcome.Moved {
@@ -478,7 +495,9 @@ func (s *Service) sessionAfterOutputs(c *call, before *SessionView, handoff bool
 // Service.record, which refuses a config that declares a recorded ref as
 // another type, or after a removal, which keeps no properties.
 func rendererWith(c *call, refs map[string]RefView) *renderer {
-	return &renderer{ct: c.ct, refs: refs, moderator: c.moderator(), call: c}
+	return &renderer{
+		ct: c.ct, refs: refs, moderator: c.moderator(), call: c, userType: c.snap.Config.MentionUserType(),
+	}
 }
 
 // postRate is the rate of mt: its own, or the configured default for its
@@ -500,20 +519,19 @@ func (c *call) requireOpen() error {
 	return nil
 }
 
-// checkMessage validates props against mt, evaluates its `when:` and
-// resolves its refs in one batch. Every ref must name an entity the caller
-// may read, of a type the property allows; any other ref is the same 422.
-func (s *Service) checkMessage(
-	c *call, mt *realtimecfg.MessageType, props map[string]any, maxBytes int,
-) (validProps, map[string]RefView, error) {
-	return s.checkMessageKeeping(c, mt, props, maxBytes, nil)
-}
-
-// checkMessageKeeping is Service.checkMessage for an edit that keeps the
-// stored refs in kept (property name to id; see [Service.Edit]): a kept ref
-// skips the readability check, since the caller did not choose it.
+// checkMessageKeeping validates props against mt, evaluates its `when:`
+// and resolves its refs, and the user candidates of plan when set, in one
+// batch. Every ref must name an entity the caller may read, of a type the
+// property allows; any other ref is the same 422. A user candidate that
+// does not resolve is no error: it is just not a target. An edit passes
+// the stored refs it keeps in kept (property name to id; see
+// [Service.Edit]): a kept ref skips the readability check, since the
+// caller did not choose it.
+//
+// Nil: kept and plan are accepted and mean none.
 func (s *Service) checkMessageKeeping(
 	c *call, mt *realtimecfg.MessageType, props map[string]any, maxBytes int, kept map[string]string,
+	plan *mentionPlan,
 ) (validProps, map[string]RefView, error) {
 	vp, err := validateProps(mt, props, maxBytes)
 	if err != nil {
@@ -524,10 +542,17 @@ func (s *Service) checkMessageKeeping(
 			"the message does not meet the when: condition of "+mt.Name,
 			"channel_types."+c.ct.Name+".message_types."+mt.Name+".when")
 	}
-	if len(vp.refs) == 0 {
+	ids := vp.refs
+	if plan != nil {
+		*plan = planMentions(mt, vp.props, c.snap.Config.MentionUserType())
+		ids = append(slices.Clone(ids), plan.users...)
+		slices.Sort(ids)
+		ids = slices.Compact(ids)
+	}
+	if len(ids) == 0 {
 		return vp, nil, nil
 	}
-	got, err := s.refs.Resolve(c.ctx, vp.refs)
+	got, err := s.refs.Resolve(c.ctx, ids)
 	if err != nil {
 		return validProps{}, nil, fmt.Errorf("realtime: resolve refs: %w", err)
 	}

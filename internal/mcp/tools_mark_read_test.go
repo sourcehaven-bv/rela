@@ -171,7 +171,7 @@ func TestListInbox_Kinds(t *testing.T) {
 	if got.UnreadCount == nil || *got.UnreadCount != 1 || len(got.Unread) != 1 || got.Entries != nil {
 		t.Fatalf("list_inbox unread = %+v", got)
 	}
-	for _, bad := range []any{[]string{"mention"}, "unread", []any{1}} {
+	for _, bad := range []any{[]string{"bogus"}, "unread", []any{1}} {
 		if text, isErr := call(t, cs, toolListInbox, map[string]any{"kinds": bad}); !isErr {
 			t.Errorf("kinds %v = %q, want an error", bad, text)
 		}

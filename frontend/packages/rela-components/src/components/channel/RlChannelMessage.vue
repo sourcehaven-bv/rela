@@ -397,6 +397,16 @@ function hrefFor(v: ChannelRef): string | undefined {
   font-size: 0.9em;
 }
 
+/* A job or login the message mentions; the app's renderer builds the span. */
+.rl-channel-message__md :deep(.mention) {
+  padding: 0 var(--rl-space-1);
+  border-radius: var(--rl-radius-sm);
+  background: var(--rl-color-bg-selected);
+  color: var(--rl-color-info-fg);
+  font-weight: var(--rl-font-weight-medium);
+  white-space: nowrap;
+}
+
 .rl-channel-message__card {
   max-width: 560px;
   margin-top: var(--rl-space-2);

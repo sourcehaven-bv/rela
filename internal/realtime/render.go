@@ -35,6 +35,17 @@ type RefValue struct {
 	Restricted bool   `json:"restricted,omitempty"`
 }
 
+// MentionView is one principal a message addresses, as a reader sees it.
+// Text is the span text the author wrote, so a client can match the span
+// in the rendered markdown. Kind is the stored form: "user", "job" or
+// "login". Ref is set for a user the reader may read; a user the reader
+// cannot read has no MentionView at all.
+type MentionView struct {
+	Text string    `json:"text"`
+	Kind string    `json:"kind"`
+	Ref  *RefValue `json:"ref,omitempty"`
+}
+
 // RemovedView is the removal record of a removed message. By and Reason
 // are set only for a reader who passes the remove gate.
 type RemovedView struct {
@@ -71,8 +82,11 @@ type MessageView struct {
 	ReplyTo    int64          `json:"reply_to,omitempty"`
 	ReplyCount int            `json:"reply_count,omitempty"`
 	EditedAt   time.Time      `json:"edited_at,omitzero"`
-	Removed    *RemovedView   `json:"removed,omitempty"`
-	Action     *ActionView    `json:"action,omitempty"`
+	// Mentions lists the principals the message addresses that the reader
+	// may see (see [MentionView]). Nil when there are none.
+	Mentions []MentionView `json:"mentions,omitempty"`
+	Removed  *RemovedView  `json:"removed,omitempty"`
+	Action   *ActionView   `json:"action,omitempty"`
 	// Outputs is a session notice's outputs mark, in place of Action.
 	Outputs *OutputsView `json:"outputs,omitempty"`
 	// TriggeredBy names the trigger that posted the message, as
@@ -157,6 +171,9 @@ type renderer struct {
 	refs      map[string]RefView
 	// call, when set, decides the actions each message offers.
 	call *call
+	// userType is the mention user type; a user mention that resolves to
+	// another type is left out. Empty means no check.
+	userType string
 }
 
 // refIDs returns the entity ids msgs and sigs name in ref properties,
@@ -182,22 +199,37 @@ func (r *renderer) refIDs(msgs []channels.Message, sigs []signal) []string {
 			continue
 		}
 		collect(m.Type, m.Props)
-		if m.Action != nil && m.Action.Promoted != nil {
-			ids = append(ids, m.Action.Promoted.ID)
-		}
-		if isOutputs(m.Action) {
-			for _, res := range m.Action.Outputs.Results {
-				if res.Entity != nil {
-					ids = append(ids, res.Entity.ID)
-				}
-			}
-		}
+		ids = append(ids, messageEntityIDs(m)...)
 	}
 	for _, s := range sigs {
 		collect(s.typ, s.props)
 	}
 	slices.Sort(ids)
 	return slices.Compact(ids)
+}
+
+// messageEntityIDs returns the entity ids m names outside its properties:
+// its user mention targets, its promoted entity and its outputs results.
+//
+// Nil: returned when m names none.
+func messageEntityIDs(m channels.Message) []string {
+	var ids []string
+	for _, t := range m.Mentions {
+		if t.Form == channels.FormUser {
+			ids = append(ids, t.Target)
+		}
+	}
+	if m.Action != nil && m.Action.Promoted != nil {
+		ids = append(ids, m.Action.Promoted.ID)
+	}
+	if isOutputs(m.Action) {
+		for _, res := range m.Action.Outputs.Results {
+			if res.Entity != nil {
+				ids = append(ids, res.Entity.ID)
+			}
+		}
+	}
+	return ids
 }
 
 // isRef reports whether property name of message type typ renders as a
@@ -257,6 +289,7 @@ func (r *renderer) message(m channels.Message) MessageView {
 	a.System = m.TriggeredBy != ""
 	v.Type, v.Author, v.At, v.EditedAt, v.TriggeredBy = m.Type, &a, m.At, m.EditedAt, m.TriggeredBy
 	v.Props = r.props(m.Type, m.Props)
+	v.Mentions = r.mentions(m.Mentions)
 	if isNotice(m.Type, m.TriggeredBy) {
 		// A notice's type is not declared, but its props are the record of
 		// the transition: from, to, generation and cause.
@@ -276,6 +309,43 @@ func (r *renderer) message(m channels.Message) MessageView {
 		v.EditUntil, v.ReleaseAfter = r.call.messageDeadlines(m, v.Actions)
 	}
 	return v
+}
+
+// mentions renders the stored targets of a message by their stored form,
+// never re-deriving it from the current configuration. A user target is
+// looked up by its id, then by the span the author wrote (a post's own
+// answer resolved the span). A user the reader cannot read, or that no
+// longer has the mention user type, is left out.
+//
+// Nil: returned when no target is visible.
+func (r *renderer) mentions(ms []channels.Mention) []MentionView {
+	var out []MentionView
+	for _, m := range ms {
+		text := m.Target
+		if m.Span != "" {
+			text = m.Span
+		}
+		switch m.Form {
+		case channels.FormUser:
+			ref, ok := r.refs[m.Target]
+			if !ok && m.Span != "" {
+				ref, ok = r.refs[m.Span]
+			}
+			if !ok || (r.userType != "" && ref.Type != r.userType) {
+				continue
+			}
+			out = append(out, MentionView{Text: text, Kind: string(m.Form),
+				Ref: &RefValue{ID: ref.ID, Type: ref.Type, Title: ref.Title}})
+		case channels.FormLogin:
+			if m.Span == "" {
+				text = loginPrefix + m.Target
+			}
+			out = append(out, MentionView{Text: text, Kind: string(m.Form)})
+		case channels.FormJob:
+			out = append(out, MentionView{Text: text, Kind: string(m.Form)})
+		}
+	}
+	return out
 }
 
 func (r *renderer) signal(s signal) EphemeralView {

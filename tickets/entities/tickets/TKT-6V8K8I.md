@@ -21,3 +21,8 @@ deleted, and expose it to operators through a CLI command and an admin-only API.
 
 Link it from the privacy and retention notes in docs/realtime.md, so an erasure
 request covers markers along with the other per-user data.
+
+Person rename or delete: channel read markers and `channel_mentions` rows
+(target column) stay on the old id, so open mentions are lost and a reused id
+inherits entry pointers; move or drop both together, as piles do via
+`pilePersonType`. (from TKT-6RXAC0 design review)

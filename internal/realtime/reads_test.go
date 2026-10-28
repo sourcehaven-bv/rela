@@ -423,7 +423,7 @@ func TestInbox_Kinds(t *testing.T) {
 	t.Run("unknown kind", func(t *testing.T) {
 		t.Parallel()
 		h := fresh(t)
-		_, err := h.svc.Inbox(as(alice), InboxRequest{Kinds: []string{"mention"}})
+		_, err := h.svc.Inbox(as(alice), InboxRequest{Kinds: []string{"x"}})
 		requireDenial(t, err, http.StatusBadRequest, TypeInvalid)
 		require.Error(t, CheckInboxKinds([]string{""}))
 		require.NoError(t, CheckInboxKinds(nil))

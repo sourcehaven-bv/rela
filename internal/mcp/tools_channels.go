@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"math"
+	"strconv"
 	"time"
 
 	mcpgo "github.com/modelcontextprotocol/go-sdk/mcp"
@@ -51,9 +52,10 @@ type ChannelMarker interface {
 }
 
 // ChannelWaker wakes a watch on read_channel when a channel in this process
-// changes. The wiring site passes *realtime.Service.
+// changes, and a watch on list_inbox when a post or edit in this process
+// addresses the caller. The wiring site passes *realtime.Service.
 type ChannelWaker interface {
-	Subscribe() *realtime.Subscription
+	SubscribeAddressed() *realtime.Subscription
 }
 
 // ChannelDeps backs the channel tools.
@@ -287,6 +289,8 @@ func toolReadChannelDef() *mcpgo.Tool {
 			"in typing_now, and actions.typing says whether you may type there; there is no tool to type, "+
 			"and typing_now is empty over stdio, because typing entries live in the server process. "+
 			"To wait for a session's status or your turn, watch read_session instead: it carries no rev. "+
+			"A message's mentions lists the people and agents it addresses as you may see them: text (the "+
+			"code span), kind (user, job or login) and, for a user, ref. "+
 			realtime.UntrustedNotice),
 		withNumber(chanAfterRevArg, description("Messages changed after this rev, ordered by rev; 0 is valid")),
 		withNumber("after", description("Messages after this seq, oldest first")),
@@ -319,7 +323,11 @@ func toolPostMessage(refuseSignals bool) *mcpgo.Tool {
 		"In a channel with a session, the answer shows the session after the post, with its due_at. " +
 		"A post that moves the session along a transition with outputs answers outputs: the graph " +
 		"writes the move made as you, each done or failed with a code. A failed write does not undo the " +
-		"move; you are refused before posting when you may not write one. "
+		"move; you are refused before posting when you may not write one. " +
+		"In a markdown property, to mention a person, put their user entity id in backticks (`USR-7`) " +
+		"where person mapping is configured, or `@login` in backticks where it is not; to mention an " +
+		"agent, its job identity (`integration:triage-bot`). At most " + strconv.Itoa(realtime.MaxMentions) +
+		" per message. A reply addresses the author of the message it replies to. "
 	if !refuseSignals {
 		desc += "A signal type (persist ephemeral) is kept in memory until its ttl and answers " +
 			"{ephemeral,id,expires_at}. "

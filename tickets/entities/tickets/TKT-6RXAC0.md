@@ -5,7 +5,9 @@ title: 'Inbox 3: principal mentions and replies'
 kind: enhancement
 priority: medium
 effort: l
-status: backlog
+started: "2026-10-27"
+completed: "2026-10-28"
+status: done
 ---
 
 ## Description

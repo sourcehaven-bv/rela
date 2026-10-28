@@ -397,7 +397,7 @@ func testSessionReply(t *testing.T, h Harness) {
 	for _, m := range all {
 		require.Equal(t, m.Seq == 3, m.MovedSession, "seq %d", m.Seq)
 	}
-	edited, err := h.Store.Edit(ctx, k, 3, map[string]any{"body": "edited"}, T0.Add(2*time.Minute))
+	edited, err := h.Store.Edit(ctx, k, 3, map[string]any{"body": "edited"}, nil, T0.Add(2*time.Minute))
 	require.NoError(t, err)
 	require.True(t, edited.MovedSession, "an edit keeps the mark")
 	got, err := h.Store.Get(ctx, k, 3)

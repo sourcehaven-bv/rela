@@ -125,6 +125,25 @@ export interface Inbox {
   next_cursor?: string
   unread_channels?: InboxUnread[]
   unread_count?: number
+  /** Messages that mention the caller or reply to the caller's messages. */
+  mentions?: InboxMention[]
+  /** Like unread_count, for mentions; only when mention or reply is asked for. */
+  mention_count?: number
+}
+
+/**
+ * A message that mentions the caller (kind "mention") or replies to a
+ * message of the caller (kind "reply"). reply_to is the seq replied to.
+ */
+export interface InboxMention {
+  kind: 'mention' | 'reply'
+  channel: InboxChannel
+  seq: number
+  at: string
+  message_type: string
+  author: ChannelAuthor
+  reply_to?: number
+  links: InboxLinks
 }
 
 /** A channel with messages the caller has not read. */
@@ -168,10 +187,14 @@ export interface InboxSession {
   entered_at?: string
 }
 
-/** The API paths of an inbox entry's anchor entity and channel. */
+/**
+ * The API paths of an inbox entry's anchor entity and channel, and for a
+ * mention the message itself.
+ */
 export interface InboxLinks {
   entity: string
   channel: string
+  message?: string
 }
 
 /**
@@ -361,6 +384,17 @@ export const LIFECYCLE_DELETE = 'delete'
 /** A prop value: a scalar, or a RefProp for a ref property. */
 export type MessagePropValue = string | number | boolean | RefProp
 
+/**
+ * One person or agent a message mentions. text is the code span text as
+ * the author wrote it, which the renderer matches exactly. A user carries
+ * ref; a job or login does not. A user the reader may not read is left out.
+ */
+export interface MessageMention {
+  text: string
+  kind: 'user' | 'job' | 'login'
+  ref?: ReadableRef
+}
+
 export interface Message {
   seq: number
   rev: number
@@ -389,6 +423,8 @@ export interface Message {
    * keeps it back; re-read the message then.
    */
   release_after?: string
+  /** The people and agents the message mentions; absent on a removed message. */
+  mentions?: MessageMention[]
 }
 
 export interface MessageActionResponse {
@@ -659,7 +695,9 @@ export const CHANNEL_WIRE_FIELDS: Record<string, readonly string[]> = {
     '_actions',
     'edit_until',
     'release_after',
+    'mentions',
   ]),
+  MessageMention: wireKeys<MessageMention>()(['text', 'kind', 'ref']),
   MessageActionResponse: wireKeys<MessageActionResponse>()(['message', 'warnings']),
   MessagePage: wireKeys<MessagePage>()([
     'channel',
@@ -714,6 +752,18 @@ export const CHANNEL_WIRE_FIELDS: Record<string, readonly string[]> = {
     'next_cursor',
     'unread_channels',
     'unread_count',
+    'mentions',
+    'mention_count',
+  ]),
+  InboxMention: wireKeys<InboxMention>()([
+    'kind',
+    'channel',
+    'seq',
+    'at',
+    'message_type',
+    'author',
+    'reply_to',
+    'links',
   ]),
   InboxUnread: wireKeys<InboxUnread>()(['channel', 'seq', 'last_seq', 'unread', 'links']),
   InboxEntry: wireKeys<InboxEntry>()([
@@ -742,7 +792,7 @@ export const CHANNEL_WIRE_FIELDS: Record<string, readonly string[]> = {
     'generation',
     'entered_at',
   ]),
-  InboxLinks: wireKeys<InboxLinks>()(['entity', 'channel']),
+  InboxLinks: wireKeys<InboxLinks>()(['entity', 'channel', 'message']),
   ChannelMessageTypeSchema: wireKeys<ChannelMessageTypeSchema>()([
     'name',
     'label',

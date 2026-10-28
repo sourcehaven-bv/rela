@@ -37,6 +37,11 @@ type Harness struct {
 	// cardinality was kept left it: the anchor mode only. Nil skips the
 	// legacy-record test.
 	SeedLegacyType func(t *testing.T, typ string, anchor channels.AnchorMode)
+	// SkipScale skips the tests that write thousands of messages. Set it
+	// on a harness whose code another harness already runs at scale: the
+	// disk store shares every line with the MemFS store, and pays a file
+	// sync per write.
+	SkipScale bool
 }
 
 // T0 is the suite's base time. It has a sub-microsecond part on purpose:
@@ -119,7 +124,8 @@ func RunAll(t *testing.T, newHarness func(t *testing.T) Harness) {
 		{"SessionStateNames", testSessionStateNames},
 		{"SessionReply", testSessionReply},
 	}
-	for _, list := range [][]conformanceTest{tests, timerTests, reminderTests, outputsTests, waitingTests, readsTests} {
+	for _, list := range [][]conformanceTest{tests, timerTests, reminderTests, outputsTests, waitingTests, readsTests,
+		addressedTests} {
 		for _, tc := range list {
 			t.Run(tc.name, func(t *testing.T) {
 				tc.fn(t, newHarness(t))
@@ -376,7 +382,7 @@ func testAfterRev(t *testing.T, h Harness) {
 	head, err := h.Store.Head(ctx, k)
 	require.NoError(t, err)
 
-	edited, err := h.Store.Edit(ctx, k, 1, map[string]any{"body": "m1 edited"}, T0.Add(time.Minute))
+	edited, err := h.Store.Edit(ctx, k, 1, map[string]any{"body": "m1 edited"}, nil, T0.Add(time.Minute))
 	require.NoError(t, err)
 	require.Greater(t, edited.Rev, head.Rev)
 	removed, err := h.Store.Remove(ctx, k, 2, channels.Removal{By: Bob, At: T0.Add(2 * time.Minute)})
@@ -403,7 +409,7 @@ func testEdit(t *testing.T, h Harness) {
 	k := key("TKT-1", "room")
 	orig := mustAppend(t, h.Store, k, text("first"))
 	at := T0.Add(time.Minute)
-	got, err := h.Store.Edit(ctx, k, 1, map[string]any{"body": "second", "n": 2}, at)
+	got, err := h.Store.Edit(ctx, k, 1, map[string]any{"body": "second", "n": 2}, nil, at)
 	require.NoError(t, err)
 	require.Equal(t, map[string]any{"body": "second", "n": float64(2)}, got.Props)
 	require.Equal(t, channels.NormTime(at), got.EditedAt)
@@ -413,13 +419,13 @@ func testEdit(t *testing.T, h Harness) {
 	require.NoError(t, err)
 	require.Equal(t, got, read)
 
-	_, err = h.Store.Edit(ctx, k, 9, map[string]any{"body": "x"}, at)
+	_, err = h.Store.Edit(ctx, k, 9, map[string]any{"body": "x"}, nil, at)
 	require.ErrorIs(t, err, channels.ErrNotFound)
-	_, err = h.Store.Edit(ctx, key("TKT-2", "room"), 1, map[string]any{"body": "x"}, at)
+	_, err = h.Store.Edit(ctx, key("TKT-2", "room"), 1, map[string]any{"body": "x"}, nil, at)
 	require.ErrorIs(t, err, channels.ErrNotFound)
 	_, err = h.Store.Remove(ctx, k, 1, channels.Removal{By: Alice, At: at})
 	require.NoError(t, err)
-	_, err = h.Store.Edit(ctx, k, 1, map[string]any{"body": "x"}, at)
+	_, err = h.Store.Edit(ctx, k, 1, map[string]any{"body": "x"}, nil, at)
 	require.ErrorIs(t, err, channels.ErrRemoved)
 	_, err = h.Store.Remove(ctx, k, 1, channels.Removal{By: Alice, At: at})
 	require.ErrorIs(t, err, channels.ErrRemoved)
@@ -491,7 +497,7 @@ func testEditErases(t *testing.T, h Harness) {
 	const old = "before-edit-5c1d"
 	mustAppend(t, h.Store, k, text(old))
 	mustAppend(t, h.Store, k, text("other"))
-	_, err := h.Store.Edit(ctx, k, 1, map[string]any{"body": "after"}, T0.Add(time.Minute))
+	_, err := h.Store.Edit(ctx, k, 1, map[string]any{"body": "after"}, nil, T0.Add(time.Minute))
 	require.NoError(t, err)
 	require.NotContains(t, string(h.Raw(t)), old, "an edit keeps no history")
 }
@@ -628,7 +634,7 @@ func testActionGuards(t *testing.T, h Harness) {
 
 	_, err := h.Store.SetAction(ctx, k, 1, "accept", channels.ActionNone, pending)
 	require.NoError(t, err)
-	_, err = h.Store.Edit(ctx, k, 1, map[string]any{"body": "changed"}, at)
+	_, err = h.Store.Edit(ctx, k, 1, map[string]any{"body": "changed"}, nil, at)
 	require.ErrorIs(t, err, channels.ErrActionPending)
 	_, err = h.Store.Remove(ctx, k, 1, channels.Removal{By: Bob, At: at})
 	require.ErrorIs(t, err, channels.ErrActionPending)
@@ -644,7 +650,7 @@ func testActionGuards(t *testing.T, h Harness) {
 	done := channels.Action{Status: channels.ActionDone, By: Alice, At: at.Add(time.Second), PendingAt: at}
 	_, err = h.Store.SetAction(ctx, k, 1, "accept", channels.ActionPending, done)
 	require.NoError(t, err, "a pending action may finish after the close")
-	_, err = h.Store.Edit(ctx, k, 1, map[string]any{"body": "after"}, at)
+	_, err = h.Store.Edit(ctx, k, 1, map[string]any{"body": "after"}, nil, at)
 	require.NoError(t, err, "a done action no longer freezes the message")
 }
 
@@ -1244,9 +1250,9 @@ func testCaps(t *testing.T, h Harness) {
 	_, err = h.Store.Append(ctx, k, untimed)
 	require.ErrorIs(t, err, channels.ErrInvalidMessage)
 
-	_, err = h.Store.Edit(ctx, k, 1, many, T0)
+	_, err = h.Store.Edit(ctx, k, 1, many, nil, T0)
 	require.NoError(t, err)
-	_, err = h.Store.Edit(ctx, k, 1, map[string]any{"body": strings.Repeat("x", channels.MaxPropsBytes)}, T0)
+	_, err = h.Store.Edit(ctx, k, 1, map[string]any{"body": strings.Repeat("x", channels.MaxPropsBytes)}, nil, T0)
 	require.ErrorIs(t, err, channels.ErrTooLarge)
 
 	_, err = h.Store.Remove(ctx, k, 1, channels.Removal{
@@ -1652,7 +1658,7 @@ func testAfterRevPaging(t *testing.T, h Harness) {
 	start, err := h.Store.Head(ctx, k)
 	require.NoError(t, err)
 	for _, seq := range []int64{11, 2, 7, 1} {
-		_, err = h.Store.Edit(ctx, k, seq, map[string]any{"body": "edited"}, T0)
+		_, err = h.Store.Edit(ctx, k, seq, map[string]any{"body": "edited"}, nil, T0)
 		require.NoError(t, err)
 	}
 	mustAppend(t, h.Store, k, text("m13"))

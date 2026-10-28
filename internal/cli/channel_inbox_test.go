@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -41,6 +42,7 @@ channel_types:
       member: { from: attached }
     message_types:
       chat:   { properties: { body: { type: string } }, post: [member] }
+      note:   { properties: { body: { type: markdown } }, post: [member] }
       answer: { properties: { note: { type: string } }, post: [lead] }
     session:
       initial: asked
@@ -108,7 +110,7 @@ func TestChannelInbox_Text(t *testing.T) {
 
 	got, err := runChannel(t, svc, "alice", "", "channel", "inbox")
 	require.NoError(t, err)
-	assert.Equal(t, "No session waits on you.\n\nNo unread channels.\n", got)
+	assert.Equal(t, "No session waits on you.\n\nNo unread channels.\n\nNo mentions or replies.\n", got)
 
 	for _, id := range items {
 		_, err = runChannel(t, svc, "alice", "", "channel", "post", id, "case", "chat", "-P", "body=hi")
@@ -118,7 +120,7 @@ func TestChannelInbox_Text(t *testing.T) {
 	require.NoError(t, err)
 	waiting, unread, ok := strings.Cut(got, "\n\n")
 	require.True(t, ok, got)
-	assert.Equal(t, "No unread channels.\n", unread)
+	assert.Equal(t, "No unread channels.\n\nNo mentions or replies.\n", unread)
 	lines := strings.Split(waiting, "\n")
 	require.Len(t, lines, 1, got)
 	prefix, rest, ok := strings.Cut(lines[0], " since ")
@@ -231,8 +233,12 @@ func TestChannelInbox_Unread(t *testing.T) {
 
 	got, err := runChannel(t, svc, "alice", "", "channel", "inbox")
 	require.NoError(t, err)
-	waiting, unread, ok := strings.Cut(got, "\n\n")
+	waiting, rest, ok := strings.Cut(got, "\n\n")
 	require.True(t, ok, got)
+	unread, mentions, ok := strings.Cut(rest, "\n\n")
+	require.True(t, ok, got)
+	assert.Equal(t, "No mentions or replies.\n", mentions)
+	unread += "\n"
 	assert.Contains(t, waiting, items[0]+" case Asked")
 	assert.Equal(t, "Unread channels:\n"+items[0]+" case: 2 unread (read up to 1 of 3)\n", unread)
 
@@ -249,8 +255,105 @@ func TestChannelInbox_Unread(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "No unread channels.\n", got)
 
-	_, err = runChannel(t, svc, "alice", "", "channel", "inbox", "--kinds", "mention")
-	require.ErrorContains(t, err, "kinds must be waiting or unread")
+	_, err = runChannel(t, svc, "alice", "", "channel", "inbox", "--kinds", "bogus")
+	require.ErrorContains(t, err, "kinds must be waiting, unread, mention or reply")
+}
+
+// TestChannelInbox_Mentions pins TKT-6RXAC0 AC 18: the "Mentions and
+// replies" section lists a mention and a reply, and mark-read clears both.
+func TestChannelInbox_Mentions(t *testing.T) {
+	svc, items := newInboxProject(t)
+	const bot = "integration:triage-bot"
+	_, err := runChannel(t, svc, "alice", "", "channel", "post", items[0], "case", "chat", "-P", "body=question")
+	require.NoError(t, err)
+	_, err = runChannel(t, svc, bot, "", "channel", "post", items[0], "case", "chat", "-P", "body=answer",
+		"--reply-to", "1")
+	require.NoError(t, err)
+	_, err = runChannel(t, svc, bot, "", "channel", "post", items[0], "case", "note", "-P", "body=`@alice` look")
+	require.NoError(t, err)
+
+	got, err := runChannel(t, svc, "alice", "", "channel", "inbox", "--kinds", "mention,reply")
+	require.NoError(t, err)
+	assert.Regexp(t, "^Mentions and replies:\n"+
+		items[0]+` case #3: integration:triage-bot mentioned you \(\S+\)\n`+
+		items[0]+` case #2: integration:triage-bot replied to #1 \(\S+\)\n$`, got)
+
+	got, err = runChannel(t, svc, "alice", "", "channel", "inbox", "--kinds", "reply")
+	require.NoError(t, err)
+	assert.NotContains(t, got, "mentioned you")
+	assert.Contains(t, got, "replied to #1")
+
+	got, err = runChannel(t, svc, "alice", "", "-o", "json", "channel", "inbox", "--kinds", "mention,reply")
+	require.NoError(t, err)
+	var view struct {
+		MentionCount *int `json:"mention_count"`
+		Mentions     []struct {
+			Kind    string `json:"kind"`
+			Seq     int64  `json:"seq"`
+			ReplyTo int64  `json:"reply_to"`
+		} `json:"mentions"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(got), &view), got)
+	require.NotNil(t, view.MentionCount)
+	assert.Equal(t, 2, *view.MentionCount)
+	require.Len(t, view.Mentions, 2)
+	assert.Equal(t, "reply", view.Mentions[1].Kind)
+	assert.Equal(t, int64(1), view.Mentions[1].ReplyTo)
+
+	_, err = runChannel(t, svc, "alice", "", "channel", "mark-read", items[0], "case")
+	require.NoError(t, err)
+	got, err = runChannel(t, svc, "alice", "", "channel", "inbox", "--kinds", "mention,reply")
+	require.NoError(t, err)
+	assert.Equal(t, "No mentions or replies.\n", got)
+}
+
+// TestInbox_JobIdentityMention pins TKT-6RXAC0 AC 17: a mention of a job
+// identity shows in its list_inbox mentions through the stdio MCP wiring,
+// it reads the message after its marker, and mark_read clears it. A reply
+// to its own message shows as a reply entry.
+func TestInbox_JobIdentityMention(t *testing.T) {
+	svc, items := newInboxProject(t)
+	const bot = "integration:triage-bot"
+	_, err := runChannel(t, svc, bot, "", "channel", "post", items[1], "case", "chat", "-P", "body=status?")
+	require.NoError(t, err)
+	_, err = runChannel(t, svc, "alice", "", "channel", "post", items[1], "case", "chat", "-P", "body=fine",
+		"--reply-to", "1")
+	require.NoError(t, err)
+	_, err = runChannel(t, svc, "alice", "", "channel", "post", items[0], "case", "note",
+		"-P", "body=`integration:triage-bot` please triage")
+	require.NoError(t, err)
+
+	deps := channelDeps(svc)
+	ctx := stdioCtx(t, deps, bot)
+	mentionOnly := realtime.InboxRequest{Kinds: []string{realtime.InboxKindMention}}
+	view, err := deps.Inbox.Inbox(ctx, mentionOnly)
+	require.NoError(t, err)
+	require.Len(t, view.Mentions, 1)
+	m := view.Mentions[0]
+	assert.Equal(t, items[0], m.Channel.Anchor)
+	assert.Equal(t, realtime.InboxKindMention, m.Kind)
+	assert.Equal(t, "alice", m.Author.User)
+
+	replies, err := deps.Inbox.Inbox(ctx, realtime.InboxRequest{Kinds: []string{realtime.InboxKindReply}})
+	require.NoError(t, err)
+	require.Len(t, replies.Mentions, 1)
+	assert.Equal(t, realtime.InboxKindReply, replies.Mentions[0].Kind)
+	assert.Equal(t, items[1], replies.Mentions[0].Channel.Anchor)
+	assert.Equal(t, int64(1), replies.Mentions[0].ReplyTo)
+
+	page, err := deps.Reader.Read(ctx, realtime.RawAddress{Anchor: items[0], Type: "case"},
+		realtime.ReadRequest{AfterSeq: m.Seq - 1})
+	require.NoError(t, err)
+	require.NotEmpty(t, page.Messages)
+	assert.Equal(t, m.Seq, page.Messages[0].Seq)
+
+	_, err = deps.Marker.MarkRead(ctx, realtime.RawAddress{Anchor: items[0], Type: "case"}, nil)
+	require.NoError(t, err)
+	view, err = deps.Inbox.Inbox(ctx, mentionOnly)
+	require.NoError(t, err)
+	assert.Empty(t, view.Mentions)
+	require.NotNil(t, view.MentionCount)
+	assert.Zero(t, *view.MentionCount)
 }
 
 // TestInbox_JobIdentityUnread pins TKT-2B2AIA AC 17: a job identity that

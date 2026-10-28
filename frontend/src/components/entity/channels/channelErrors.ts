@@ -44,6 +44,7 @@ export const CHANNEL_ERROR_RULES: Readonly<Record<string, ChannelErrorRule>> = {
   // The request itself: shown where it was written.
   invalid_message: FORM,
   too_many_props: FORM,
+  too_many_mentions: FORM,
   reason_required: FORM,
   too_large: FORM,
   invalid_ref: FORM,

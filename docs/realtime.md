@@ -220,7 +220,7 @@ client_baselines:
 | --- | --- |
 | `label` | The name the web app shows for the type. Without it, the type's name. |
 | `persist` | `log` (default) stores messages. `ephemeral` keeps signals, such as a status line, in memory for `ttl`, at most 60s. For a typing indicator, use `typing: true` on the channel type. |
-| `properties` | At most 32. Types: `string`, `markdown`, `integer`, `boolean`, `date`, `datetime`, `ref` (with `to:`), or an enum type from `schema.yaml`. `max` limits a string or markdown property in characters (Unicode code points). A property may have a `label`; without one, the label is its name. |
+| `properties` | At most 32. Types: `string`, `markdown`, `integer`, `boolean`, `date`, `datetime`, `ref` (with `to:`), or an enum type from `schema.yaml`. `max` limits a string or markdown property in characters (Unicode code points). A property may have a `label`; without one, the label is its name. A `ref` property may set `notify: false`, so a value that names a person does not mention them (see [Mentions and replies](#mentions-and-replies)). `notify` on any other type is a config error. |
 | `when` | A condition on the `message` record that a post must meet. |
 | `post` | The roles that may post. Receiving needs only `read`. |
 | `rate` | Posts per identity, such as `10/m`. It may only lower the limit. |
@@ -1307,6 +1307,18 @@ channel in the project, and a mark that moves a marker takes the store's
 project-wide write lock. A mark that does not move the marker takes no
 lock. The database backends use indexes for both.
 
+Mentions have fixed limits. A message may address at most 10 people and
+agents. A person or agent keeps at most 200 mention and reply rows per
+channel. The inbox looks at the 2000 newest rows of the caller of the
+asked kinds, checks every unread one against what the caller may read,
+and lists at most 50. With the file
+store, each channel keeps its rows in `mentions.json`, at most 5000 rows
+per channel. An inbox call that asks for mentions or replies then reads
+the directory of every channel in the project a second time, beside the
+walk for unread channels. Each post that writes a row rewrites that
+channel's `mentions.json` under the project-wide write lock. The database
+backends use indexes.
+
 Outputs have fixed limits: at most 4 per transition and 1024 bytes per
 template. Retries run once a minute, at most 16 per round and 5 attempts
 per move, for 30 minutes after the notice; a claim holds for 90 seconds.
@@ -1426,6 +1438,13 @@ and `mailto` addresses. It drops images and raw HTML. An entity id in a code
 span, such as `` `FEAT-001` ``, becomes a link when the message holds a
 readable ref to that entity.
 
+A mention in a message shows as a chip. A person you may read becomes a
+link to their entity, labelled with the title the server sends. A job
+identity or a login becomes a plain chip with its text. A mention of a
+person you cannot read stays code. The composer has no `@` picker yet:
+type the mention as a code span. See
+[Mentions and replies](#mentions-and-replies).
+
 Field order, labels and widgets come from the `channels:` block of
 `data-entry.yaml` (see the data-entry guide).
 
@@ -1452,7 +1471,7 @@ The data-entry API serves channels under the entity they are attached to.
 | `POST .../{channel}/_lifecycle/{op}` | Runs `close`, `reopen`, `archive` or `delete`. The body is empty or `{}`. A `delete` gets a 204; the other operations get the channel. |
 | `POST .../{channel}/_typing` | Starts or refreshes the caller's typing entry, on a type with `typing: true`. The body is empty or `{}`. The answer is a 202 with `{"ttl_seconds": 6}`. |
 | `PUT .../{channel}/_read` | Marks the channel read for the caller. The body is empty, `{}` or `{"seq": n}`. The answer is `{"seq", "unread", "last_seq"}`. See [Read markers and unread counts](#read-markers-and-unread-counts). |
-| `GET /api/v1/_inbox` | The sessions that wait on the caller now, oldest wait first, and the channels with unread messages. `?limit=` (1 to 200, default 50) and `?cursor=` page the sessions. `?kinds=` chooses `waiting`, `unread` or both. See [Inbox](#inbox). |
+| `GET /api/v1/_inbox` | The sessions that wait on the caller now, oldest wait first, the channels with unread messages, and the unread messages that mention the caller or reply to them. `?limit=` (1 to 200, default 50) and `?cursor=` page the sessions. `?kinds=` chooses from `waiting`, `unread`, `mention` and `reply`; all four by default. See [Inbox](#inbox). |
 
 `{channel}` is `_channels/{type}` or `_channels/{type}/{name}`.
 
@@ -1561,6 +1580,21 @@ A `ref` property is served with the target's id, type and display title. A
 target the caller cannot read, or that no longer exists, is served as
 `{"restricted": true}`, without its id.
 
+A message that addresses people or agents carries `mentions`, a list of
+`{text, kind, ref}`. `text` is the code span as the author wrote it, so a
+client can find it in the rendered markdown. `kind` is `user`, `job` or
+`login`. `ref` is set for a `user` only, with the person's id, type and
+title. A person the reader cannot read is left out of the list. A removed
+message has no `mentions`. See [Mentions and replies](#mentions-and-replies).
+
+```json
+{ "seq": 15, "type": "note",
+  "props": { "body": "`USR-7` can you check the log? `integration:triage-bot` please summarise." },
+  "mentions": [
+    { "text": "USR-7", "kind": "user", "ref": { "id": "USR-7", "type": "person", "title": "Ann de Vries" } },
+    { "text": "integration:triage-bot", "kind": "job" } ] }
+```
+
 A channel of a type with a session carries a `session` block in the head,
 the message page and the list. The `POST` of a message still answers with
 the message; read the head, or follow the live frame of the notice, to see
@@ -1659,7 +1693,8 @@ Every error is a problem body (`application/problem+json`) with a `type`.
 | 404 | The channel type is not attached to the entity type, or the channel or the message does not exist. |
 | 403 | The caller may not perform the operation, the edit window has passed, the lifecycle operation is not declared (`lifecycle_not_offered`), or its `condition` does not hold (`lifecycle_denied`). For actions: the message type does not declare the action, or this process cannot promote (`action_not_offered`), the action's gate refuses (`action_denied`), or the create ACL or a `fields:` grant refuses the promote (`promote_denied`). For a post: the poster may not write an output of the transition the message would fire (`session_output_denied`); nothing is stored. `title` says what the operation needs and `detail` names the rule in `realtime.yaml`, such as `channel_types.room.message_types.text.post`. |
 | 400 | The message does not match its type (`invalid_message`), has too many properties, or a removal lacks a required reason. |
-| 400 | The body is not valid JSON, has unknown fields, or a query parameter is not a positive number. A mark read names a `seq` below 0 or one that is not a whole number. The inbox `kinds` names something other than `waiting` or `unread` (`invalid_request`). |
+| 400 | The body is not valid JSON, has unknown fields, or a query parameter is not a positive number. A mark read names a `seq` below 0 or one that is not a whole number. The inbox `kinds` names something other than `waiting`, `unread`, `mention` or `reply` (`invalid_request`). |
+| 422 `too_many_mentions` | A post or edit addresses more than 10 people and agents. Nothing is stored. See [Mentions and replies](#mentions-and-replies). |
 | 403 `no_principal` | The request carries no identity. A mark read and the inbox need one, because they act for a person. |
 | 405 | A method other than `PUT` on `.../_read`. `Allow` names `PUT`. |
 | 413 `too_large` | The message is over `message_bytes`. |
@@ -1667,8 +1702,8 @@ Every error is a problem body (`application/problem+json`) with a `type`.
 | 422 `promote_invalid` | The promoted entity or its relation fails validation, for example a `unique` property that another entity already has, or a mapped `ref` names an entity the caller cannot read. The body names properties, never entity ids. |
 | 409 | The channel is not open, the channel is not in a state the lifecycle operation starts from (`lifecycle_wrong_state`), `retention` keeps the channel (`retention_active`), a concurrent change won (`conflict`), the message was removed, `channels_per_entity` is reached, the POST tried to open a channel of a `one` type, or the configuration changed during the request. An edit or removal targets a session notice (`session_notice`), or an author's edit or delete targets a message that moved the session (`session_message`). For actions: the message already carries an action (`action_taken`), its action is pending (`action_pending`, also for an edit, a removal, a release within the release window, or an action that lost a race to a promote that started first), a release finds no pending action (`action_not_pending`), or the promoted entity already exists (`promote_conflict`). A removal of the message that moved the session, or a release of a notice's outputs mark, while the outputs still run (`outputs_pending`). |
 | 429 | A rate limit. `Retry-After` gives the seconds to wait, rounded up. |
-| 400 `invalid_cursor` | The inbox `cursor` is not one an inbox answer gave, or comes with `kinds=unread`. |
-| 503 `inbox_too_large` | The inbox would read more than 20 000 channels. Nothing is listed; see [Inbox](#inbox). The `detail` suggests `kinds=unread`, which still answers. |
+| 400 `invalid_cursor` | The inbox `cursor` is not one an inbox answer gave, or comes with `kinds` that do not hold `waiting`. |
+| 503 `inbox_too_large` | The inbox would read more than 20 000 channels. Nothing is listed; see [Inbox](#inbox). The `detail` suggests `kinds=unread,mention,reply`, which still answers. |
 
 The OpenAPI document at `/api/v1/_openapi.json` lists these paths for every
 entity type a channel type attaches to, with one request body per message
@@ -1898,20 +1933,188 @@ user had a marker, and how far that user read. They see no content they
 could not already read. Avoid reusing ids and logins. Erasing a reader's
 markers when the user is deleted is planned in TKT-6V8K8I.
 
+### Mentions and replies
+
+A message can address a person or an agent. Such a message then shows in
+that principal's inbox until they read it. A principal is whoever a post
+names as its author: a person, or an agent with a job identity. There are
+two ways to address someone:
+
+- A **mention** names the principal in the message.
+- A **reply** addresses the author of the message it replies to.
+
+**How to write a mention.** Put the name in a code span (backticks) in a
+`markdown` property of the message. The span must hold only the name.
+rela reads no other property type: a mention in a `string` or enum
+property is plain text. Which form names a person depends on the project:
+
+| Mention | Person mapping on | Person mapping off |
+| --- | --- | --- |
+| A person, by user entity id: `` `USR-7` `` | Mentions USR-7 | Plain code |
+| A person, by login: `` `@jeroen` `` | Plain code | Mentions the login `jeroen` |
+| An agent, by job identity: `` `integration:triage-bot` `` | Mentions the agent | Mentions the agent |
+| A `ref` property whose value is a user entity | Mentions that person, unless the property has `notify: false` | Not applicable |
+
+Person mapping is on when `acl.yaml` sets both `user_entity_type` and
+`principal_property`. Only then does the web app know a person by their
+user entity id. With `user_entity_type` alone, mapping is off and the
+login form applies.
+
+- An id span mentions someone only when it names an entity of the user
+  entity type. A ticket id in a code span is not a mention and does not
+  count toward the limit. The mention is stored under the entity's own id,
+  so `` `usr-7` `` on a store that ignores case is stored as `USR-7`.
+- A login match is exact and case-sensitive, as in `acl.yaml`. A login
+  with a space, a control character or an invisible format character
+  (such as a zero-width space) is not a mention.
+- A code span inside a link, a code block, a span with formatting inside,
+  or a span across a line break is not a mention.
+- Mentioning yourself does nothing. Naming one principal twice counts
+  once.
+- `notify: false` on a `ref` property keeps its value from mentioning the
+  person, for a field such as "reported by". It is allowed on `ref`
+  properties only.
+
+**Who may mention.** Anyone who may post the message type may mention.
+There is no separate permission. A person the poster cannot read is not
+mentioned, and the poster is not told so. The answer to the post is the
+same as for an id that is not a person at all. Mentioning a person who
+cannot read the channel stores the mention, but it shows in their inbox
+only once they can read the channel.
+
+**Limits.** A message may address at most 10 principals, counted after
+the names are resolved. More are refused with 422 `too_many_mentions`,
+and nothing is stored. An edit counts a mention it
+keeps of a person the editor can no longer read (see below).
+
+A principal keeps at most 200 mention and reply rows per channel. When a
+new row would make 201, rela frees one slot in this order:
+
+1. The oldest row that the principal has read under every read marker
+   they hold on the channel.
+2. Otherwise, the oldest unread row from the same poster as the new row.
+3. Otherwise, the new row is not stored. The server logs the channel, the
+   seq and the target, never the content.
+
+rela never removes another poster's unread row to make room. So one poster
+cannot erase the mentions that others sent. The cost is that a principal
+with 200 unread rows from other posters in one channel gets no new rows
+there until they read.
+
+**What the poster sees.** The answer to a post or edit lists the
+`mentions` the poster may see (see [HTTP API](#http-api)). It says nothing
+about the target: not whether they can read the channel, nor whether they
+will see the mention.
+
+**Replies.** A reply (`reply_to`) addresses the author of the parent
+message, with these exceptions:
+
+| Parent | Reply row |
+| --- | --- |
+| A message by another user | Yes, for the parent's author |
+| Your own message, from any tool | No |
+| A message by the same user name in another organization | No: a row names a user, not an organization |
+| A trigger post, a reminder, or a message by `unknown` or a rela identity | No |
+
+A reply that also mentions the parent's author shows once in the inbox,
+as a mention.
+
+**Edits.** An edit recomputes the mentions from the new text. A mention
+that stays keeps its time. A new mention gets the time of the edit. A
+mention that is gone is removed. An edit keeps a mention of a person the
+editor can no longer read, as long as the span or ref value is still in
+the text. That mention counts toward the limit of 10. The editor wrote it
+while they could see the person, so this reveals nothing new. An edit
+never adds or removes a reply row.
+
+**Read state.** The read marker decides whether a mention or reply is
+unread (see [Read markers and unread counts](#read-markers-and-unread-counts)).
+It leaves the inbox once the target's marker on the channel reaches its
+seq: through `mark_read`, `PUT .../_read`, the web app, or the target's
+own later post in the channel. A mention does not create a marker. A new
+mention added by an edit to a message the target has already read does
+not show. Removing the message removes its mention and reply rows.
+
+**Retention.** Mention and reply rows live with their channel:
+
+| Event | Rows |
+| --- | --- |
+| The message is edited | Recomputed, as above |
+| The message is removed | Removed |
+| The parent of a reply is removed | The reply row stays |
+| The anchor entity is renamed | Kept, under the new id |
+| The channel is detached, or comes back | Kept, out of reach while detached |
+| The channel is deleted or purged | Erased |
+| The person's user entity is renamed | Kept under the old id, so the person loses the open mentions. Planned in TKT-6V8K8I |
+| The person's user entity is deleted | Kept, never shown to anyone else. A new user with the same id sees the author and channel of entries for channels they may read, never content |
+
+The file store keeps the rows in `mentions.json` in each channel's
+directory; the database backends keep them in the `channel_mentions`
+table. A row records that one principal addressed another in a channel.
+It is per-user data, like read markers.
+
+**The scan window.** The inbox looks only at the caller's 2000 newest rows
+across all channels, of the kinds the request asks for. It checks every
+unread row in that window against what the caller may read before it
+counts or cuts, so rows in channels the caller cannot read never push a
+visible row out. An unread row older than 2000 newer rows of its kind is
+not listed. The window is fixed: `mention_count` counts what the window
+holds, not everything ever sent.
+
+**Rendering trusts the stored form.** A mention is stored with its form
+(`user`, `job` or `login`) when the message is posted. Turning person
+mapping on or off later does not change how old messages render or whom
+they address. Messages stored before this feature have no mentions.
+
+**Which identity a mention reaches.** A mention or reply reaches one
+principal key: the user that a post of that principal names as its author.
+A person who uses two transports can have two keys:
+
+| Transport | Key | A mention of this key is seen in | A reply to a message posted here goes to |
+| --- | --- | --- | --- |
+| Web app, remote MCP, mapping on and matched | The user entity id (`USR-7`) | The web app and remote MCP | `USR-7` |
+| Web app, remote MCP, mapping off | The login (`jeroen`) | Every transport of that login | `jeroen` |
+| Stdio `rela mcp`, `rela channel` | The login (`jeroen`) | Stdio and the CLI, and the web app when mapping is off. With mapping on, only a reply reaches this key | `jeroen`, so the web app does not show it when mapping is on |
+| Job identity (`--run-as integration:triage-bot`) | `integration:triage-bot` | Every transport | `integration:triage-bot` |
+
+With person mapping on, a mention of `` `USR-7` `` does not reach the
+same person over stdio or the CLI. A reply to a message they posted over
+stdio does not reach them in the web app. Agents use job identities,
+which are the same everywhere.
+
+A login that person mapping does not match, such as a break-glass admin
+login without a user entity, cannot be mentioned while mapping is on. No
+id names it, and the `@login` form is off. A reply to a message by that
+login still reaches it.
+
+**The wake.** A post or edit that addresses a principal wakes an MCP
+`watch` on that principal's own `list_inbox`, when the watch asks for
+`mention` or `reply`. This works only within one process. A watch in
+another process, such as stdio `rela mcp` while the web app takes the
+post, sees the mention on its next poll, at most 15 seconds later.
+
+**Agents and untrusted text.** Anyone who may post can put text in front
+of an agent by mentioning its job identity. An inbox entry carries no
+message text. The text comes only through `read_channel`, whose answer
+starts with the untrusted-content `notice`. An agent must treat the text
+of a mention as data, never as instructions. Rules that limit who may
+mention an agent are planned.
+
 ### Inbox
 
 The inbox lists every session that waits on you now: each open channel
 whose session is in a state with `waiting_for`, where you hold one of
 those roles. It answers "what is waiting on me" without knowing the
 channels in advance. It also lists the channels with messages you have not
-read. The web app serves it as `GET /api/v1/_inbox`, MCP as `list_inbox`
+read, and the unread messages that mention you or reply to you. The web app serves it as `GET /api/v1/_inbox`, MCP as `list_inbox`
 and the CLI as `rela channel inbox`. All three give the same entries.
 
 **Kinds.** `kinds` chooses what the inbox lists: `waiting` (the sessions
-that wait on you), `unread` (the channels with unread messages), or both.
-Both is the default. The web app takes `?kinds=waiting,unread`, MCP an
-array such as `["unread"]`, and the CLI `--kinds unread`. Any other kind
-is refused with `invalid_request`.
+that wait on you), `unread` (the channels with unread messages), `mention`
+(the unread messages that mention you) and `reply` (the unread replies to
+your messages). All four is the default. The web app takes
+`?kinds=waiting,unread`, MCP an array such as `["unread"]`, and the CLI
+`--kinds unread`. Any other kind is refused with `invalid_request`.
 
 An entry names the channel (anchor, entity type, anchor title, type, name,
 title and state), the session (state, label, status, `waiting_for`,
@@ -1972,11 +2175,48 @@ web app adds `links`. An entry carries no message content.
 - Later pages (with `cursor`) carry no unread fields, because a cursor
   pages the waiting sessions only.
 
-With `kinds` set to `unread` only, the answer has no `entries`, `count`,
+**Mentions and replies.** The first page adds `mentions` and
+`mention_count` when `kinds` includes `mention` or `reply`:
+
+```json
+"mentions": [
+  { "kind": "mention",
+    "channel": { "anchor": "RISK-2", "entity_type": "risk", "anchor_title": "Server room",
+                 "type": "breach-response", "name": "7m2c…", "title": "Breach 13", "state": "open" },
+    "seq": 15, "at": "2026-10-27T10:04:00Z", "message_type": "note",
+    "author": { "user": "USR-3" },
+    "links": { "entity": "/api/v1/risks/RISK-2",
+               "channel": "/api/v1/risks/RISK-2/_channels/breach-response/7m2c…",
+               "message": "/api/v1/risks/RISK-2/_channels/breach-response/7m2c…/messages/15" } }
+],
+"mention_count": 1
+```
+
+Each entry names the channel, the message's `seq`, its time (`at`), its
+message type and its author. `kind` is `mention` when the message
+mentions you, else `reply`. A reply carries `reply_to`, the seq of your
+message. Only the web app adds `links`, with the path of the message. An
+entry carries no message text: read the message in its channel.
+
+- There is one entry per message. A reply that also mentions you is a
+  `mention`.
+- The newest message comes first. At most 50 are listed. `limit` does not
+  change that.
+- `mention_count` is the number of entries in the scan window, at most
+  500, also when it is above 50. It is present, as 0, when there are
+  none.
+- Only unread messages are listed: those above your read marker on the
+  channel.
+- Later pages (with `cursor`) carry no mention fields.
+
+[Mentions and replies](#mentions-and-replies) describes how to address
+someone, the limits, and the scan window.
+
+Without `waiting` in `kinds`, the answer has no `entries`, `count`,
 `truncated` or `next_cursor`, so an absent list is not read as "nothing
 waits on you". A `cursor` is then refused with `invalid_cursor`. When the
-waiting half answers `inbox_too_large`, ask for `unread` only to still get
-the unread channels.
+waiting half answers `inbox_too_large`, ask for
+`kinds=unread,mention,reply` to still get the rest.
 
 **What counts.** The inbox applies the same rules as `waiting_on_me` in
 `read_session`. A named role counts when the role's property on the entity
@@ -1985,14 +2225,17 @@ when you created the channel. You must be able to read the entity and the
 channel. The list is gated and redacted before it is counted, paged or
 cut, so `count`, `truncated` and `next_cursor` never reflect an entry you
 cannot see. The same holds for unread channels: a channel you can no
-longer read is not listed and does not change `unread_count`.
+longer read is not listed and does not change `unread_count`. It holds for
+mentions and replies too: a message in a channel you cannot read, on an
+anchor or face you cannot read, or of a channel type the configuration no
+longer declares is not listed and does not change `mention_count`.
 
 **Caps.** When you hold a waiting role on more than 20 000 entities, the
 inbox keeps the first 20 000 by id and face and sets `truncated`. When the
 inbox would read more than 20 000 channels, it lists nothing and answers
 `inbox_too_large` (503 on the web app, a tool error on MCP and the CLI).
 A degraded configuration answers an empty list with `degraded: true`, and
-no unread channels.
+no unread channels or mentions.
 
 **Which identity holds a role.** A named role compares the property with
 the identity the caller acts as:
@@ -2015,13 +2258,16 @@ agents against the file or PostgreSQL backend.
    one of its `transitions`.
 3. For each unread channel, read the new messages with `read_channel`
    (`after` its `seq`), and call `mark_read` when it has handled them.
-4. Call `watch` with the target `{"tool":"list_inbox","args":{}}`, then
+4. For each of `mentions`, read the channel with `read_channel` after
+   your marker, act, and call `mark_read`.
+5. Call `watch` with the target `{"tool":"list_inbox","args":{}}`, then
    again with the returned cursor, up to 50 seconds per call. Go back to
    step 1 when it reports a change.
 
 An entry leaves the inbox when the session moves, the role moves to
-someone else, the channel closes, or you lose access. An unread channel
-leaves it when you mark it read or post in it. A post in the same process
+someone else, the channel closes, or you lose access. An unread channel,
+a mention and a reply leave it when you mark the channel read or post in
+it. A post in the same process
 and an edit of an entity wake the watch at once. A post in another process
 is seen by the poll, which replays the inbox at most every 15 seconds.
 
@@ -2031,6 +2277,12 @@ message in any other channel does not wake it, even one of the same
 channel type. A channel you mark read for the first time after the last
 replay is picked up at the next replay or poll. With `"kinds":
 ["waiting"]` in the target's args, no plain message wakes the watch.
+
+A post or edit in the same process that mentions you, or replies to you,
+wakes the watch, also in a channel the inbox did not look at. It wakes
+only a watch bound to your own principal key, and only while the target's
+`kinds` hold `mention` or `reply`. A mention of someone else does not
+wake it.
 
 **Outputs.** `post_message` answers `outputs` for a post whose move wrote
 to the graph, and notices in `read_channel` carry the same block (see

@@ -228,7 +228,9 @@ func seedInbox(t *testing.T, n int) (env *inboxEnv, entries int) {
 // branch; as many anchors are hidden as shown, and the read role is a
 // permission a relation confers per entity. alice also holds a marker with
 // unread messages on every waiting channel, half of them hidden
-// (TKT-2B2AIA AC 10).
+// (TKT-2B2AIA AC 10), and n messages mention her on readable channels and
+// n on hidden ones (TKT-6RXAC0 AC 13): one ListAddressed and no message
+// read pays for them.
 func TestInboxBudget_10vs50(t *testing.T) {
 	cost := func(n int) channelCost {
 		e, want := seedInbox(t, n)
@@ -236,6 +238,8 @@ func TestInboxBudget_10vs50(t *testing.T) {
 		for i := range n {
 			e.markAndChat(t, fmt.Sprintf("TKT-%d", 100+i), at)
 			e.markAndChat(t, fmt.Sprintf("FEAT-%d", 100+i), at)
+			e.mentionAlice(t, fmt.Sprintf("TKT-%d", 100+i), at)
+			e.mentionAlice(t, fmt.Sprintf("TKT-%d", 500+i), at)
 		}
 		rec, c := e.get(t, http.MethodGet, "?limit=200")
 		require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
@@ -246,6 +250,8 @@ func TestInboxBudget_10vs50(t *testing.T) {
 			require.True(t, strings.HasPrefix(en.Channel.Anchor, "TKT-1"), en.Channel.Anchor)
 		}
 		require.Equal(t, n, *got.UnreadCount)
+		require.Equal(t, n, *got.MentionCount)
+		require.Len(t, got.Mentions, n)
 		return c
 	}
 	small, large := cost(10), cost(50)
@@ -257,6 +263,20 @@ func TestInboxBudget_10vs50(t *testing.T) {
 	require.LessOrEqual(t, small.entity["ResolveHeaders"], 1, small.String())
 	require.Equal(t, 1, small.channel["ListReads"], small.String())
 	require.Equal(t, 1, small.channel["Reads"], small.String())
+	require.Equal(t, 1, small.channel["ListAddressed"], small.String())
+	require.Zero(t, small.channel["Get"], small.String())
+}
+
+// mentionAlice appends to the case channel on id a message by bob that
+// mentions alice by login.
+func (e *inboxEnv) mentionAlice(t *testing.T, id string, at time.Time) {
+	t.Helper()
+	_, err := e.ch.store.Append(context.Background(), channels.Key{Anchor: channels.Anchor{ID: id}, Type: "case"},
+		channels.NewMessage{
+			Type: "chat", Author: channels.Author{User: "bob", Tool: principal.ToolDataEntry}, At: at,
+			Props: map[string]any{"body": "`@alice`"}, Mentions: []channels.Mention{{Target: "alice", Form: channels.FormLogin}},
+		})
+	require.NoError(t, err)
 }
 
 // TestInbox_HiddenRowsChangeNothingRealACL pins AC 8 through the deployed
@@ -337,6 +357,7 @@ func TestInboxHandler_Shape(t *testing.T) {
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &raw))
 	require.ElementsMatch(t, []string{
 		"notice", "entries", "count", "truncated", "degraded", "next_cursor", "unread_channels", "unread_count",
+		"mentions", "mention_count",
 	},
 		jsonKeys(raw))
 	got := decodeAs[v1.Inbox](t, rec.Body.Bytes())

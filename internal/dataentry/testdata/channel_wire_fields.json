@@ -191,6 +191,8 @@
     "count",
     "degraded",
     "entries",
+    "mention_count",
+    "mentions",
     "next_cursor",
     "notice",
     "truncated",
@@ -217,7 +219,18 @@
   ],
   "InboxLinks": [
     "channel",
-    "entity"
+    "entity",
+    "message"
+  ],
+  "InboxMention": [
+    "at",
+    "author",
+    "channel",
+    "kind",
+    "links",
+    "message_type",
+    "reply_to",
+    "seq"
   ],
   "InboxSession": [
     "entered_at",
@@ -244,6 +257,7 @@
     "author",
     "edit_until",
     "edited_at",
+    "mentions",
     "outputs",
     "props",
     "release_after",
@@ -264,6 +278,11 @@
   "MessageActionResponse": [
     "message",
     "warnings"
+  ],
+  "MessageMention": [
+    "kind",
+    "ref",
+    "text"
   ],
   "MessagePage": [
     "channel",

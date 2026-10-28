@@ -138,6 +138,31 @@ describe('messageViews', () => {
     expect(v.html?.body).not.toContain('onerror')
   })
 
+  it('passes the message mentions to the renderer (TKT-6RXAC0)', () => {
+    const m: Message = {
+      seq: 5,
+      rev: 5,
+      type: 'card',
+      props: { body: 'ask `usr-7` and `@jeroen`' },
+      mentions: [
+        { text: 'usr-7', kind: 'user', ref: { id: 'USR-7', type: 'user', title: 'Ann' } },
+        { text: '@jeroen', kind: 'login' },
+      ],
+    }
+    renderSpy.mockClear()
+    const [v] = messageViews([m], byName, ctx)
+    expect(renderSpy).toHaveBeenCalledWith('ask `usr-7` and `@jeroen`', {
+      refs: [],
+      mentions: [
+        { text: 'usr-7', kind: 'user', ref: { id: 'USR-7', type: 'user', title: 'Ann' } },
+        { text: '@jeroen', kind: 'login', ref: undefined },
+      ],
+      world: undefined,
+    })
+    expect(v.html?.body).toContain('entity/user/USR-7')
+    expect(v.html?.body).toContain('<span class="mention">@jeroen</span>')
+  })
+
   it('formats dates and times in the given zone', () => {
     const [v] = messageViews([m1], byName, ctx)
     expect(v.text?.due).toBe('Mar 2, 2026, 2:30 PM')

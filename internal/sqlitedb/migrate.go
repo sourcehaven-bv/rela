@@ -304,6 +304,13 @@ var migrations = []migration{
 		to:    29,
 		apply: addAttachmentSHA256,
 	},
+	{
+		// v29 → v30: the addressed rows of principal mentions and replies
+		// (TKT-6RXAC0). A new table and its indexes; no backfill, because
+		// messages stored before it were written under no mention rule.
+		to:    30,
+		apply: sqlSteps(channelMentionsDDL),
+	},
 }
 
 // channelLastAtColumns are the last-activity column of channels.

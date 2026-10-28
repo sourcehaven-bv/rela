@@ -347,6 +347,16 @@ type Message struct {
 	// channel's session (see [SessionStep]). Nothing else sets it, and a
 	// removal clears it with the rest of the message.
 	MovedSession bool `json:"moved_session,omitempty"`
+	// Mentions are the principals the message mentions, set by the store
+	// from [NewMessage.Mentions], replaced by [Store.Edit] and cleared by
+	// [Store.Remove]. The store writes one addressed row per target.
+	Mentions []Mention `json:"mentions,omitempty"`
+	// ReplyTarget names the user a reply addressed (see [ReplyTarget]), so
+	// the caller can wake that user without reading the parent.
+	//
+	// Zero: always, except on the message Append returns, where it names
+	// the reply row's target, if one was written. Never stored.
+	ReplyTarget string `json:"-"`
 }
 
 // ActionStatus returns the status of the message's action, or [ActionNone].
@@ -387,6 +397,10 @@ type NewMessage struct {
 	// store step, creating the marker. A person's post sets it; timers,
 	// reminders and the trigger engine do not.
 	MarkRead bool
+	// Mentions are the principals the message mentions (see
+	// [CheckMentions]). The store keeps them on [Message.Mentions] and
+	// writes one addressed row per target in the same step.
+	Mentions []Mention
 }
 
 // CheckAppendState refuses an append that requires an open channel to one
@@ -721,11 +735,15 @@ func PrepareMessage(m NewMessage) (NewMessage, []byte, error) {
 		return m, nil, fmt.Errorf("%w: schema hash, triggered_by or incarnation over %d bytes",
 			ErrTooLarge, MaxTextBytes)
 	}
+	mentions, err := CheckMentions(m.Mentions)
+	if err != nil {
+		return m, nil, err
+	}
 	props, raw, err := PrepareProps(m.Props)
 	if err != nil {
 		return m, nil, err
 	}
-	m.Props = props
+	m.Props, m.Mentions = props, mentions
 	m.At = NormTime(m.At)
 	return m, raw, nil
 }

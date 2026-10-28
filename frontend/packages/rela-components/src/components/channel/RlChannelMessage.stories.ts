@@ -193,6 +193,42 @@ export const MarkupIsText: Story = {
   },
 }
 
+/**
+ * Mentions (TKT-6RXAC0). The app's renderer turns a code span the server
+ * listed as a mention into an entity link for a person, and into a chip for
+ * an agent or a login. A span the server did not list, here a person the
+ * reader may not read, stays code. The HTML below is what the renderer gives.
+ */
+export const Mentions: Story = {
+  args: {
+    message: {
+      seq: 22,
+      rev: 1,
+      type: 'text',
+      author: { name: 'Ann' },
+      at: '09:20',
+      props: { body: 'usr-7 integration:triage-bot @jeroen USR-9' },
+      html: {
+        body:
+          '<p><a href="#/entity/user/USR-7" class="entity-ref" title="USR-7">Pat Jansen</a>, ' +
+          '<span class="mention">integration:triage-bot</span> and ' +
+          '<span class="mention">@jeroen</span>: please check this. ' +
+          '<code>USR-9</code> was not listed.</p>',
+      },
+      actions: [],
+    },
+    messageType: channelMessageTypes.find((t) => t.name === 'text'),
+    canReply: false,
+  },
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement)
+    await expect(canvas.getByRole('link', { name: 'Pat Jansen' })).toHaveAttribute('title', 'USR-7')
+    const chips = [...canvasElement.querySelectorAll('.mention')].map((el) => el.textContent)
+    await expect(chips).toEqual(['integration:triage-bot', '@jeroen'])
+    await expect(canvasElement.querySelector('code')?.textContent).toBe('USR-9')
+  },
+}
+
 /** A removal reason with markup is text too. */
 export const MarkupInReason: Story = {
   args: {

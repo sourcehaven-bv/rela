@@ -318,11 +318,23 @@ type Message struct {
 	Removed     *MessageRemoval `json:"removed,omitempty"`
 	Action      *MessageAction  `json:"action,omitempty"`
 	// Outputs is a session notice's outputs mark, in place of Action.
-	Outputs   *ChannelMessageOutputs `json:"outputs,omitempty"`
-	Actions   []string               `json:"_actions,omitempty"`
-	EditUntil string                 `json:"edit_until,omitempty"`
+	Outputs *ChannelMessageOutputs `json:"outputs,omitempty"`
+	// Mentions are the people and agents the message addresses, as the
+	// caller may see them: a user the caller cannot read is absent.
+	Mentions  []MessageMention `json:"mentions,omitempty"`
+	Actions   []string         `json:"_actions,omitempty"`
+	EditUntil string           `json:"edit_until,omitempty"`
 	// ReleaseAfter: see Message.
 	ReleaseAfter string `json:"release_after,omitempty"`
+}
+
+// MessageMention is one target of a message. Text is the code span text
+// that names it. Kind is "user", "job" or "login". Ref is set for a user
+// only: the user entity as the caller may see it.
+type MessageMention struct {
+	Text string   `json:"text"`
+	Kind string   `json:"kind"`
+	Ref  *RefProp `json:"ref,omitempty"`
 }
 
 // MessageActionResponse answers an action: the message after it, and the
@@ -518,6 +530,24 @@ type Inbox struct {
 	NextCursor     string        `json:"next_cursor,omitempty"`
 	UnreadChannels []InboxUnread `json:"unread_channels,omitzero"`
 	UnreadCount    *int          `json:"unread_count,omitempty"`
+	// Mentions and MentionCount are set on a first page that asks for the
+	// mention or reply kind.
+	Mentions     []InboxMention `json:"mentions,omitzero"`
+	MentionCount *int           `json:"mention_count,omitempty"`
+}
+
+// InboxMention is one unread message that mentions the caller (Kind
+// "mention") or replies to the caller's message (Kind "reply"). It carries
+// no message text: Links.Message reads the message.
+type InboxMention struct {
+	Kind        string        `json:"kind"`
+	Channel     InboxChannel  `json:"channel"`
+	Seq         int64         `json:"seq"`
+	At          string        `json:"at"`
+	MessageType string        `json:"message_type"`
+	Author      ChannelAuthor `json:"author"`
+	ReplyTo     int64         `json:"reply_to,omitempty"`
+	Links       InboxLinks    `json:"links"`
 }
 
 // InboxUnread is a channel with messages above the caller's read marker.
@@ -572,4 +602,6 @@ type InboxSession struct {
 type InboxLinks struct {
 	Entity  string `json:"entity"`
 	Channel string `json:"channel"`
+	// Message is set on an InboxMention: the path of its message.
+	Message string `json:"message,omitempty"`
 }

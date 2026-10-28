@@ -709,6 +709,7 @@ func TestInboxView_MarshalJSON(t *testing.T) {
 	v := InboxView{
 		Notice: "n", Entries: []InboxEntry{{Kind: "k"}}, Count: 1, Truncated: true, Degraded: true,
 		NextCursor: "c", UnreadChannels: []InboxUnread{{Seq: 1}}, UnreadCount: &n,
+		Mentions: []InboxMention{{Seq: 1}}, MentionCount: &n,
 	}
 	var all []string
 	rt := reflect.TypeFor[InboxView]()
