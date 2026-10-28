@@ -110,7 +110,7 @@ func (h *writeHandler) handleV1RestoreEntity(w http.ResponseWriter, r *http.Requ
 }
 
 func (h *writeHandler) writeRestoreError(w http.ResponseWriter, r *http.Request, err error) {
-	if writeForbiddenIfACLDenied(w, err) {
+	if writeForbiddenIfACLDenied(w, r, err) {
 		return
 	}
 	if errors.Is(err, entitymanager.ErrEntityNotFound) {

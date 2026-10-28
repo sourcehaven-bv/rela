@@ -1266,6 +1266,9 @@ func writeGateError(w http.ResponseWriter, r *http.Request, err error) {
 	if errors.Is(err, context.Canceled) {
 		return
 	}
+	if writeNoIdentity(w, r, err) {
+		return
+	}
 	slog.Warn("acl: read-gate query failed",
 		"err", err, "path", r.URL.Path, "method", r.Method)
 	if errors.Is(err, context.DeadlineExceeded) {
@@ -1275,6 +1278,38 @@ func writeGateError(w http.ResponseWriter, r *http.Request, err error) {
 	}
 	writeV1Error(w, r, http.StatusInternalServerError, "acl_query_failed",
 		"ACL read-permission check failed", "check server logs")
+}
+
+// writeNoIdentity answers 401 when err reports that the request reached code
+// below the edge with no bound identity ([acl.ErrNoIdentity]). It reports
+// whether it wrote a response.
+//
+// Every shared error mapper in this package calls it first (writeGateError,
+// writeInternalProblem, writeInternalJSONError, and writeIdentityFaultDeny for
+// a denied write), so the mapping lives in one place rather than in each
+// handler. The body is the one the JWT gate sends for a missing assertion.
+// It carries no WWW-Authenticate challenge: that names the JWT gate's
+// credential header, and a deployment without the gate has no scheme to name.
+//
+// In production attachACLRequest binds a Request on every /api request or
+// fails it, so reaching this means a route or a ctx lost the binding. That is
+// a wiring fault, hence the Error log, but the client is told what is true for
+// it: the request is not authenticated.
+//
+// A mismatched or foreign identity ([acl.ErrIdentityMismatch],
+// [acl.ErrForeignIdentity]) is not handled here. The caller did authenticate;
+// the server attached the wrong Request, which is a server fault and stays 500.
+//
+// Nothing here resolves the principal as a fallback. The edge binds it or the
+// request fails.
+func writeNoIdentity(w http.ResponseWriter, r *http.Request, err error) bool {
+	if !errors.Is(err, acl.ErrNoIdentity) {
+		return false
+	}
+	slog.ErrorContext(r.Context(), "acl: request reached a handler with no bound identity",
+		"err", err, "path", r.URL.Path, "method", r.Method)
+	writeV1Error(w, r, http.StatusUnauthorized, "unauthenticated", "Authentication required", "")
+	return true
 }
 
 // internalErrorDetail is the detail of every 500 this package answers.
@@ -1299,6 +1334,9 @@ func writeInternalErrorDetail(w http.ResponseWriter, r *http.Request, code, titl
 // extension fields. Like the detail, they are built from the request and
 // what it wrote, never from err. It sets the type, status and instance.
 func writeInternalProblem(w http.ResponseWriter, r *http.Request, code string, problem v1.Error, err error) {
+	if writeNoIdentity(w, r, err) {
+		return
+	}
 	if !logInternalError(r, code, err) {
 		return
 	}
@@ -1313,6 +1351,9 @@ func writeInternalProblem(w http.ResponseWriter, r *http.Request, code string, p
 // writeInternalJSONError is [writeInternalError] for the settings and theme
 // endpoints, which answer with the plain {"error": message} body.
 func writeInternalJSONError(w http.ResponseWriter, r *http.Request, message string, err error) {
+	if writeNoIdentity(w, r, err) {
+		return
+	}
 	if !logInternalError(r, message, err) {
 		return
 	}

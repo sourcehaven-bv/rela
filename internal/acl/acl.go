@@ -149,6 +149,14 @@ type Decision struct {
 	// delegate-permission gate) or when the implementation is one of
 	// the constant deciders ([NopACL], [ReadOnlyACL]).
 	Attributions []RoleAttribution
+
+	// Cause is the sentinel behind a deny that no rule decided: the
+	// operation had no usable [Request] ([ErrNoIdentity],
+	// [ErrIdentityMismatch], [ErrForeignIdentity]). [ForbiddenError]
+	// unwraps to it, so an HTTP edge can tell "not authenticated" or "wiring
+	// fault" from a policy deny with [errors.Is]. Nil for every rule-based
+	// decision.
+	Cause error
 }
 
 // ErrForbidden is the sentinel that [ForbiddenError] reports via
@@ -173,4 +181,10 @@ func (e *ForbiddenError) Error() string {
 // error type.
 func (e *ForbiddenError) Is(target error) bool {
 	return target == ErrForbidden
+}
+
+// Unwrap returns [Decision.Cause], so `errors.Is(err, acl.ErrNoIdentity)`
+// holds for a write denied because no identity was bound.
+func (e *ForbiddenError) Unwrap() error {
+	return e.Decision.Cause
 }

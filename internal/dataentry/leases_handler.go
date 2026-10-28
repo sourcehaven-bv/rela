@@ -321,7 +321,7 @@ func writeClaimError(w http.ResponseWriter, r *http.Request, err error) {
 	case errors.As(err, &amb):
 		writeWriteTargetError(w, r, amb)
 	case errors.Is(err, acl.ErrForbidden):
-		if !writeForbiddenIfACLDenied(w, err) {
+		if !writeForbiddenIfACLDenied(w, r, err) {
 			writeV1Error(w, r, http.StatusForbidden, "forbidden", "Not allowed to update this entity", "")
 		}
 	case errors.As(err, &held):

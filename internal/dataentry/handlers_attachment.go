@@ -372,7 +372,7 @@ func writeAttachmentWriteError(w http.ResponseWriter, r *http.Request, limit int
 			"Attachment rejected", attachment.RejectionReason(err))
 		return
 	}
-	if writeForbiddenIfACLDenied(w, err) {
+	if writeForbiddenIfACLDenied(w, r, err) {
 		return
 	}
 	slog.Warn("dataentry: attachment write failed", "err", err, "path", shapedPath(r))
@@ -637,7 +637,7 @@ func (h *attachmentHandler) handleV1DeleteAttachment(
 	}
 	propDef := filePropertyDef(s, typeName, property)
 	if err := svc.DeleteAttachment(ctx, entity, propDef, property, fileName); err != nil {
-		if writeAttachmentBusy(w, r, err) || writeForbiddenIfACLDenied(w, err) {
+		if writeAttachmentBusy(w, r, err) || writeForbiddenIfACLDenied(w, r, err) {
 			return
 		}
 		slog.Warn("dataentry: delete attachment failed", "err", err, "path", shapedPath(r))
@@ -683,7 +683,7 @@ func (h *attachmentHandler) attachmentWritePreflight(
 	if !decision.Allow {
 		h.audit().Record(audit.AttachmentWriteDenied(ctx, entity.Type, entity.ID,
 			decision.Reason, decision.RuleKind, decision.RuleID))
-		writeForbiddenIfACLDenied(w, &acl.ForbiddenError{Decision: decision})
+		writeForbiddenIfACLDenied(w, r, &acl.ForbiddenError{Decision: decision})
 		return nil, false
 	}
 	// An upload or detach sets the property, so a `fields:` policy that
