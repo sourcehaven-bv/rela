@@ -173,6 +173,9 @@ func (a *App) registerAPIV1Routes(mux *http.ServeMux) {
 	mux.HandleFunc(inboxPath, func(w http.ResponseWriter, r *http.Request) {
 		a.channels.serveInbox(w, r, a.State().Meta)
 	})
+	mux.HandleFunc(inboxSummaryPath, func(w http.ResponseWriter, r *http.Request) {
+		a.channels.serveInboxSummary(w, r)
+	})
 	mux.HandleFunc(leasesPath, a.leases.handleV1Leases)
 	mux.HandleFunc(leasesPath+"/", a.leases.handleV1Leases)
 	mux.HandleFunc("/api/v1/_templates/", a.handleV1Templates)

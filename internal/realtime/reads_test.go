@@ -234,15 +234,17 @@ func TestMarkRead_OwnLimiter(t *testing.T) {
 	h.post(t, bob, text("still free to post"))
 }
 
-// TestMarkRead_WakesOnlyItsReader pins that a moved marker reaches the
+// TestMarkRead_WakesOnlyItsReader pins that a stored mark reaches the
 // many-reader subscription tagged with its reader and no plain change
-// set, and a mark that does not move reaches nobody (TKT-2B2AIA AC 14).
+// set (TKT-2B2AIA AC 14). A mark that does not move reaches it too, so a
+// first marker at 0 adds the channel to the reader's inbox window
+// (TKT-9YRRM5 AC 10); it still reaches no plain change set.
 func TestMarkRead_WakesOnlyItsReader(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t)
 	alice, bob := user("alice"), user("bob")
 	h.post(t, alice, text("one"))
-	hub, plain := h.svc.SubscribeReads(), h.svc.Subscribe()
+	hub, plain := h.svc.SubscribeLive(), h.svc.Subscribe()
 	for _, s := range []*Subscription{hub, plain} {
 		s.Take()
 		s.TakeReads()
@@ -254,7 +256,9 @@ func TestMarkRead_WakesOnlyItsReader(t *testing.T) {
 
 	h.clock.Add(2 * time.Second)
 	markRead(t, h, bob, room, nil)
-	require.Nil(t, hub.TakeReads(), "a mark that does not move reaches nobody")
+	require.Equal(t, map[channels.Reader][]channels.Key{readerOf(bob): {roomKey()}}, hub.TakeReads(),
+		"a mark that does not move still reaches the reader's own inbox")
+	require.Empty(t, takeKeys(t, plain))
 }
 
 // TestLocal_MarkForScopesReader pins Local.markFor: an organization is
@@ -267,7 +271,7 @@ func TestLocal_MarkForScopesReader(t *testing.T) {
 	t.Cleanup(l.Stop)
 	a := channels.Reader{User: "alice"}
 	b := channels.Reader{User: "alice", OrgID: "acme"}
-	hub, plain := l.SubscribeReads(), l.Subscribe()
+	hub, plain := l.SubscribeLive(), l.Subscribe()
 	l.markFor(a, keyOf("TKT-1"))
 	l.markFor(b, keyOf("TKT-2"))
 	require.Equal(t, map[channels.Reader][]channels.Key{
@@ -279,17 +283,18 @@ func TestLocal_MarkForScopesReader(t *testing.T) {
 	require.Empty(t, takeKeys(t, plain))
 }
 
-// TestLocal_SubscribeReads pins the many-reader subscription of the live
-// hub: Take returns channel changes only, TakeReads every reader's marks
-// tagged by reader, and an overflow of marks turns into one resync.
-func TestLocal_SubscribeReads(t *testing.T) {
+// TestLocal_SubscribeLiveReads pins the reads of the live hub's
+// subscription: Take returns channel changes only, TakeReads every
+// reader's marks tagged by reader, and an overflow of marks turns into one
+// resync.
+func TestLocal_SubscribeLiveReads(t *testing.T) {
 	t.Parallel()
 	l, err := NewLocal(time.Now)
 	require.NoError(t, err)
 	t.Cleanup(l.Stop)
 	a := channels.Reader{User: "alice"}
 	b := channels.Reader{User: "bob"}
-	hub, plain := l.SubscribeReads(), l.Subscribe()
+	hub, plain := l.SubscribeLive(), l.Subscribe()
 	l.markFor(a, keyOf("TKT-1"))
 	l.markFor(b, keyOf("TKT-2"))
 	l.mark(keyOf("TKT-3"))

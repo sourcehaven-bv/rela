@@ -240,6 +240,13 @@
     "status",
     "waiting_for"
   ],
+  "InboxSummary": [
+    "degraded",
+    "mentions",
+    "unread_channels",
+    "waiting",
+    "waiting_truncated"
+  ],
   "InboxUnread": [
     "channel",
     "last_seq",

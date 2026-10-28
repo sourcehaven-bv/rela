@@ -355,4 +355,17 @@ export const NL_MESSAGES: Messages = {
 
   editorCommand: ({ id, label }) => EDITOR_COMMANDS_NL[id] ?? label,
   commandUnavailable: ({ label }) => `${label} (hier niet beschikbaar)`,
+
+  inboxWaitingHeading: () => 'Wacht op jou',
+  inboxMentionsHeading: () => 'Vermeldingen en reacties',
+  inboxUnreadHeading: () => 'Ongelezen kanalen',
+  inboxWaitingEmpty: () => 'Er wacht niets op jou.',
+  inboxMentionsEmpty: () => 'Geen ongelezen vermeldingen of reacties.',
+  inboxUnreadEmpty: () => 'Alle kanalen zijn gelezen.',
+  inboxMentioned: ({ author }) => `${author} heeft je genoemd`,
+  inboxReplied: ({ author }) => `${author} heeft op je gereageerd`,
+  inboxMarkRead: () => 'Markeer als gelezen',
+  inboxShowing: ({ shown, total }) => `${shown} van ${total} getoond`,
+  inboxDegraded: () =>
+    'Sommige kanaalinstellingen konden niet worden geladen. De lijst is mogelijk onvolledig.',
 }

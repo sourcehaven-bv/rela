@@ -125,4 +125,51 @@ export class ChannelsPage extends BasePage {
     const row = this.messages.filter({ hasText: text });
     await expect(row.getByRole('button', { name: label, exact: true })).toHaveCount(offered ? 1 : 0);
   }
+
+  // --- Inbox (TKT-9YRRM5) ---------------------------------------------------
+
+  /** The pinned Inbox entry in the sidebar. */
+  get inboxItem(): Locator {
+    return this.page.locator('.rl-sidebar a[href="/inbox"]');
+  }
+
+  /** Opens the app at its start page and waits for the Inbox entry. */
+  async openHome() {
+    await this.page.goto('/');
+    await expect(this.inboxItem).toBeVisible({ timeout: 15_000 });
+  }
+
+  /** The Inbox badge shows `count`. */
+  async expectInboxBadge(count: number, timeout = 15_000) {
+    await expect(this.inboxItem.locator('.rl-nav-status__count')).toHaveText(String(count), {
+      timeout,
+    });
+  }
+
+  /** The Inbox entry shows no badge at all. */
+  async expectNoInboxBadge(timeout = 15_000) {
+    await expect(this.inboxItem.locator('.rl-nav-status')).toHaveCount(0, { timeout });
+  }
+
+  /** Opens the inbox page from the sidebar. */
+  async openInbox() {
+    await this.inboxItem.click();
+    await expect(this.page).toHaveURL(/\/inbox$/);
+    await expect(this.page.locator('.rl-inbox')).toBeVisible({ timeout: 15_000 });
+  }
+
+  /** Clicks the row of the inbox section `section` that reads `text`. */
+  async openInboxRow(section: 'waiting' | 'mentions' | 'unread', text: string) {
+    await this.page
+      .locator(`.rl-inbox li[data-section="${section}"]`)
+      .filter({ hasText: text })
+      .getByRole('link')
+      .click();
+  }
+
+  /** The page is the entity page with the deep link to `channelKey`. */
+  async expectChannelDeepLink(type: string, id: string, channelKey: string) {
+    const query = `channel=${encodeURIComponent(channelKey)}`;
+    await expect(this.page).toHaveURL(new RegExp(`/entity/${type}/${id}\\?${query}$`));
+  }
 }

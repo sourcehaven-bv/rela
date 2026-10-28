@@ -15,6 +15,8 @@ import (
 
 const (
 	inboxPath = "/api/v1/_inbox"
+	// inboxSummaryPath answers the counts of the inbox's first page.
+	inboxSummaryPath = "/api/v1/_inbox/summary"
 	// realtimeOffTitle is the title of the inbox's 404 with realtime off.
 	// The inbox names no entity, so it need not look like an entity miss.
 	realtimeOffTitle = "Realtime is not enabled"
@@ -66,16 +68,62 @@ func (h *channelsHandler) serveInbox(w http.ResponseWriter, r *http.Request, met
 			return
 		}
 	}
-	got, err := h.inbox.Inbox(r.Context(), req)
-	if errors.Is(err, realtime.ErrRealtimeOff) {
-		writeV1Error(w, r, http.StatusNotFound, "not_found", realtimeOffTitle, "")
-		return
-	}
-	if err != nil {
-		writeChannelError(w, r, err)
+	got, ok := h.readInbox(w, r, req)
+	if !ok {
 		return
 	}
 	writeV1JSON(w, http.StatusOK, wireInbox(got, meta))
+}
+
+// serveInboxSummary answers GET /api/v1/_inbox/summary: the counts of the
+// default first page of the caller's inbox, for a badge. It is a
+// projection of the same [realtime.Service.Inbox] call the inbox route
+// makes with no query, so it reveals nothing that route does not, and
+// answers the same refusals. Its query string is ignored; the live path
+// refuses any query on it.
+//
+// A nil *channelsHandler is accepted, for channels not wired.
+//
+//archplan:auth=required
+func (h *channelsHandler) serveInboxSummary(w http.ResponseWriter, r *http.Request) {
+	if h == nil || h.inbox == nil || !h.on.Enabled() {
+		writeV1Error(w, r, http.StatusNotFound, "not_found", realtimeOffTitle, "")
+		return
+	}
+	if !allowMethod(w, r, http.MethodGet) {
+		return
+	}
+	got, ok := h.readInbox(w, r, realtime.InboxRequest{})
+	if !ok {
+		return
+	}
+	writeV1JSON(w, http.StatusOK, wireInboxSummary(got.Summary()))
+}
+
+// readInbox reads the inbox for req, through the round's memo during a
+// live replay, and reports the wake set of a 200 to the replay's probe.
+// It writes the refusal and reports false on an error.
+func (h *channelsHandler) readInbox(
+	w http.ResponseWriter, r *http.Request, req realtime.InboxRequest,
+) (realtime.InboxView, bool) {
+	got, err := h.inboxFor(r.Context(), req)
+	if errors.Is(err, realtime.ErrRealtimeOff) {
+		writeV1Error(w, r, http.StatusNotFound, "not_found", realtimeOffTitle, "")
+		return realtime.InboxView{}, false
+	}
+	if err != nil {
+		writeChannelError(w, r, err)
+		return realtime.InboxView{}, false
+	}
+	recordInbox(r.Context(), got, req)
+	return got, true
+}
+
+func wireInboxSummary(s realtime.InboxSummary) v1.InboxSummary {
+	return v1.InboxSummary{
+		Waiting: s.Waiting, WaitingTruncated: s.WaitingTruncated, UnreadChannels: s.UnreadChannels,
+		Mentions: s.Mentions, Degraded: s.Degraded,
+	}
 }
 
 func wireInbox(v realtime.InboxView, meta *metamodel.Metamodel) v1.Inbox {

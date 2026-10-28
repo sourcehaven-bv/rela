@@ -69,6 +69,20 @@ func memoryChannels() channels.Store {
 // Nil: returned only for a Services built by [NewFromCollaborators].
 func Channels(s *Services) channels.Store { return s.channels }
 
+// ChannelsScan reports whether the channel store of s answers a reader's
+// markers and mentions by scanning every channel, as the file store does.
+// The data-entry wiring widens the live inbox grid for such a store, so a
+// full inbox round still fits in one grid period.
+//
+// Nil: s is accepted and reports false.
+func ChannelsScan(s *Services) bool {
+	if s == nil {
+		return false
+	}
+	_, scan := s.channels.(*filechannels.Store)
+	return scan
+}
+
 // channelAliases keeps channels attached to their entity across a rename,
 // and keeps channels left behind by a deleted entity or face away from a
 // new entity that reuses the id. It is an alias subscriber (see

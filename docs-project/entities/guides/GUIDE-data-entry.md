@@ -1407,6 +1407,51 @@ A code span inside a link or a code block stays as it is. The composer has
 no `@` picker yet, so type the mention as a code span. The realtime guide
 describes which form names a person in your project.
 
+### Inbox
+
+When `realtime.yaml` declares at least one channel type, the sidebar shows
+an **Inbox** item under **Search**. It opens the inbox page, which lists
+what needs you across all entities:
+
+- **Waiting on you**: the sessions that wait on a role you hold, oldest
+  wait first. Each row shows the entity, the channel, the session's state
+  and since when it waits.
+- **Mentions and replies**: the unread messages that mention you or reply
+  to one of yours, newest first. The row shows the author and the time,
+  not the message text.
+- **Unread channels**: the channels you opened or posted in that have new
+  messages, newest activity first.
+
+The page shows the first 50 waiting sessions. With more, it says, for
+example, "Showing 50 of 120".
+
+The Inbox item has a badge:
+
+| You have | The badge shows |
+| --- | --- |
+| Sessions that wait on you | The number of waiting sessions plus mentions and replies, in the warning colour |
+| Only mentions or replies | Their number |
+| Only unread channels | A dot without a number |
+| Nothing | No badge |
+
+The badge and the page update without a reload, within about 2 seconds
+of a change in the server, or 4 seconds when channels are stored in files. A post made outside the web app, for example
+with `rela channel post` or an agent over stdio `rela mcp`, can take up to
+15 seconds to show. When realtime is off, or you are not signed in as a
+person, the item is not shown.
+
+Click a row to open its channel on the entity page. This works for closed
+and archived channels too: the channel list then switches to **All**
+channels. The link adds `?channel=<type>` or `?channel=<type>/<name>` to
+the entity page, so you can bookmark or share it. It opens the channel
+but does not scroll to the message.
+
+**Mark read** on an unread channel marks the channel read up to its
+newest message. On a mention or reply it marks the channel read up to
+that message, so earlier messages in that channel are marked read too. If
+you never opened that channel, this starts tracking it, so later messages
+show it under **Unread channels**.
+
 ## Lists
 
 Lists display entities in a sortable, filterable table with optional create/edit actions.

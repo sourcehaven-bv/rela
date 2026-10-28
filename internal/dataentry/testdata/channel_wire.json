@@ -229,6 +229,13 @@
     },
     "typing_now": []
   },
+  "inbox_summary": {
+    "degraded": false,
+    "mentions": 0,
+    "unread_channels": 0,
+    "waiting": 0,
+    "waiting_truncated": false
+  },
   "list": {
     "anchor": "TKT-1",
     "types": [

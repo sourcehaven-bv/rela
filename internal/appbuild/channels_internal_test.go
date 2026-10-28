@@ -252,3 +252,18 @@ func TestBuildChannels(t *testing.T) {
 	require.FileExists(t, filepath.Join(disk.CacheDir, channelsLockFile))
 	require.DirExists(t, filepath.Join(disk.CacheDir, channelsDir))
 }
+
+// TestChannelsScan pins which channel stores get the wide live inbox grid
+// (TKT-9YRRM5): the file store does, a database store and an absent
+// Services do not.
+func TestChannelsScan(t *testing.T) {
+	file, err := filechannels.New(storage.NewMemFS(), "/x", filelock.ProcessPrivate{})
+	require.NoError(t, err)
+	require.True(t, ChannelsScan(&Services{channels: file}))
+	require.False(t, ChannelsScan(&Services{channels: dbChannels{}}))
+	require.False(t, ChannelsScan(&Services{}))
+	require.False(t, ChannelsScan(nil))
+}
+
+// dbChannels stands in for a database channel store.
+type dbChannels struct{ channels.Store }

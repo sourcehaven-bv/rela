@@ -1478,6 +1478,7 @@ The data-entry API serves channels under the entity they are attached to.
 | `POST .../{channel}/_typing` | Starts or refreshes the caller's typing entry, on a type with `typing: true`. The body is empty or `{}`. The answer is a 202 with `{"ttl_seconds": 6}`. |
 | `PUT .../{channel}/_read` | Marks the channel read for the caller. The body is empty, `{}` or `{"seq": n}`. The answer is `{"seq", "unread", "last_seq"}`. See [Read markers and unread counts](#read-markers-and-unread-counts). |
 | `GET /api/v1/_inbox` | The sessions that wait on the caller now, oldest wait first, the channels with unread messages, and the unread messages that mention the caller or reply to them. `?limit=` (1 to 200, default 50) and `?cursor=` page the sessions. `?kinds=` chooses from `waiting`, `unread`, `mention` and `reply`; all four by default. See [Inbox](#inbox). |
+| `GET /api/v1/_inbox/summary` | The counts of the inbox, for a badge: `{"waiting", "waiting_truncated", "unread_channels", "mentions", "degraded"}`. The query string is ignored. See [Inbox](#inbox). |
 
 `{channel}` is `_channels/{type}` or `_channels/{type}/{name}`.
 
@@ -1742,8 +1743,12 @@ entity's channel list, for example in another tab. The frame lets that tab
 show the new `read`; the channel's revision stays the same, so there are no
 messages to fetch. A mark that does not move the marker sends no frame.
 
+The inbox (`/api/v1/_inbox`) and its summary (`/api/v1/_inbox/summary`)
+can be subscribed to as well. [Inbox](#inbox) says when they get a frame.
+
 A single server process delivers frames for the messages posted through it;
-it does not yet poll for messages posted by another process.
+it does not yet poll for messages posted by another process. The inbox is
+the exception: it is checked again at least every 15 seconds.
 
 ## Agents and other processes
 
@@ -2289,6 +2294,73 @@ wakes the watch, also in a channel the inbox did not look at. It wakes
 only a watch bound to your own principal key, and only while the target's
 `kinds` hold `mention` or `reply`. A mention of someone else does not
 wake it.
+
+**Summary.** `GET /api/v1/_inbox/summary` answers the counts of the
+inbox as the web app's sidebar badge shows them:
+
+```json
+{ "waiting": 3, "waiting_truncated": false, "unread_channels": 2, "mentions": 1, "degraded": false }
+```
+
+`waiting`, `waiting_truncated`, `unread_channels`, `mentions` and
+`degraded` are `count`, `truncated`, `unread_count`, `mention_count` and
+`degraded` of `GET /api/v1/_inbox` with its default parameters. The query
+string is ignored. The summary refuses like the inbox: 404 with realtime
+off, 403 `no_principal` without an identity, and 503 `inbox_too_large`.
+
+**Live updates in the web app.** A client can subscribe to
+`/api/v1/_inbox` and `/api/v1/_inbox/summary` on the live event stream.
+The inbox path takes `limit` and `kinds`, each at most once. It does not
+take `cursor`: only the first page is live. The summary path takes no
+query. Any other key, a repeated key, or a bad value is refused with 400.
+Equal requests are the same subscription: `kinds=mention,waiting` and
+`kinds=waiting,mention,waiting` are one, and so are `limit=05` and
+`limit=5`.
+
+Like every live path, the server replays the GET as you and sends a frame
+only when the answer changed. It replays your inbox when one of these
+happens in the server process:
+
+- a stored change in a channel of a type that has a waiting state: a
+  message, an edit, a removal, a session or lifecycle move, or an action;
+- a stored change in a channel the inbox looked at: one where you have a
+  read marker (see Unread channels), or one with an entry under
+  `mentions`;
+- a move of your own read marker, by a mark read or by your own post;
+- a post or edit that mentions you or replies to you, while the
+  subscription's `kinds` hold `mention` or `reply`;
+- an edit of an entity.
+
+Typing and `ephemeral` signals, and their expiry, do not replay an inbox.
+
+An inbox is replayed on a fixed clock that is the same for every
+subscription: at most every 2 seconds when channels are stored in
+PostgreSQL or SQLite, and at most every 4 seconds with the file channel
+store. The file store reads a person's read markers and mentions by
+scanning every channel, so one round of inbox replays takes longer; the
+clock step is chosen so that one round finishes within it. The steps
+are counted in wall-clock time, so a slow round does not move later
+steps. A change waits for the next step of that clock. So when an inbox
+round starts does not depend on changes you cannot see. How long the
+round takes can still vary, as it does for every full round: frames
+leave when the whole round has finished, and the round is longer when
+more inboxes need a replay, including for changes you cannot see. An
+inbox that does not fit in a round (the round's limit on replays or on
+time) waits for the next step and gets no frame until its answer
+changes.
+
+The server also replays every inbox subscription once every 14 seconds
+(12 seconds with the file store), whether or not anything changed. The
+people are spread over the steps of that period, so each step replays
+only a share of them. That picks up a post made in another process, such
+as `rela channel post` or stdio `rela mcp`, within 15 seconds.
+
+An inbox whose last replay was refused, for example because realtime was
+off, is replayed again only after an entity edit or when realtime is
+turned on again.
+
+The summary and the first page of one person read the same inbox: the
+server computes it once per person per replay round.
 
 **Outputs.** `post_message` answers `outputs` for a post whose move wrote
 to the graph, and notices in `read_channel` carry the same block (see

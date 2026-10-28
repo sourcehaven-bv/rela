@@ -57,14 +57,17 @@ export const CHANNEL_ERROR_RULES: Readonly<Record<string, ChannelErrorRule>> = {
   unknown_channel_type: LIST,
   // Only the MCP read_session tool returns it; the SPA reads sessions on the channel.
   no_session: LIST,
-  // Only the inbox returns these; the SPA has no inbox page yet (TKT-9YRRM5).
+  // Only the inbox returns these. The inbox page (TKT-9YRRM5) reads it and
+  // shows the problem's own message; it sends no cursor, so invalid_cursor
+  // cannot reach it and keeps its rule for completeness.
   invalid_cursor: TOAST,
   inbox_too_large: TOAST,
   // The configuration moved under the request.
   message_type_gone: SCHEMA,
   channel_type_conflict: SCHEMA,
   config_changed: SCHEMA,
-  // Refused for this caller now.
+  // Refused for this caller now. For the inbox summary, no_principal hides
+  // the sidebar item instead (useInboxSummary).
   no_principal: TOAST,
   channel_read_denied: REFETCH,
   channel_post_denied: REFETCH,

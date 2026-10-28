@@ -11,6 +11,7 @@
  * The rest (message, author, ephemeral line, list row) are views the app
  * builds from the wire.
  */
+import type { Component } from 'vue'
 import type { TagColor } from '../../types'
 
 /**
@@ -390,4 +391,60 @@ export interface ChannelEditing {
    * the user picks a replacement.
    */
   restricted?: string[]
+}
+
+/**
+ * Where an inbox row leads. Like `NavItem`, it carries the component itself
+ * (a router link) and its attributes, so the library needs no router.
+ */
+export interface InboxRowLink {
+  /** What the row's link renders as; a plain anchor when absent. */
+  as?: 'a' | Component
+  /** Attributes for the link, such as `to` for a router link or `href`. */
+  attrs: Record<string, unknown>
+}
+
+/**
+ * A session that waits on the user. Every string is already formatted by
+ * the app: the library does no date handling and no lookups.
+ */
+export interface InboxWaitingRow {
+  id: string
+  /** The anchor entity's title, as the server let the user read it. */
+  anchorTitle: string
+  /** The anchor entity's type label. */
+  entityType: string
+  /** The channel's title, or its type label. */
+  channel: string
+  /** The session state's label. */
+  state: string
+  /** Since when it waits, formatted. */
+  since: string
+  /** The machine-readable time of `since`, for `<time datetime>`. */
+  sinceIso?: string
+  link: InboxRowLink
+}
+
+/** An unread message that mentions the user or replies to the user. */
+export interface InboxMentionRow {
+  id: string
+  kind: 'mention' | 'reply'
+  /** The author's display name. */
+  author: string
+  anchorTitle: string
+  channel: string
+  /** When the message was posted, formatted. */
+  at: string
+  atIso?: string
+  link: InboxRowLink
+}
+
+/** A channel with messages the user has not read. */
+export interface InboxUnreadRow {
+  id: string
+  anchorTitle: string
+  channel: string
+  /** How many messages are unread. */
+  unread: number
+  link: InboxRowLink
 }

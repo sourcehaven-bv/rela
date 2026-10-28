@@ -119,7 +119,7 @@ type channelsHandler struct {
 	changes func() channelChanges
 	// describe serves `GET /api/v1/_schema/channels`.
 	describe channelDescriber
-	// inbox serves `GET /api/v1/_inbox`.
+	// inbox serves `GET /api/v1/_inbox` and `GET /api/v1/_inbox/summary`.
 	inbox inboxReader
 }
 
@@ -136,7 +136,7 @@ func SetChannels(a *App, svc *realtime.Service) error {
 	a.channels = &channelsHandler{
 		read: svc, messageOps: svc, actions: svc, channels: svc, typist: svc, marker: svc,
 		on:       svc,
-		changes:  func() channelChanges { return svc.SubscribeReads() },
+		changes:  func() channelChanges { return svc.SubscribeLive() },
 		describe: svc,
 		inbox:    svc,
 	}

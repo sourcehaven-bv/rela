@@ -50,6 +50,12 @@
       "at": "2026-10-28T13:29:06Z",
       "title": "6 entry points make the same 3 calls: acl.NewEntitySubject → acl.AuthorizeWrite → affordances.FieldVerdicts."
     },
+    "types.synonyms-70a7e5175ef2": {
+      "state": "accepted",
+      "reason": "Design: wire DTOs (apiwire, realtime, channels) mirror domain types on purpose, as the rule against leaking storage types asks.",
+      "at": "2026-10-28T15:00:00Z",
+      "title": "InboxSummary (apiwire) and InboxSummary (realtime) share most of their fields."
+    },
     "types.synonyms-79dbd2166f5f": {
       "state": "accepted",
       "reason": "Design: wire DTOs (apiwire, realtime, channels) mirror domain types on purpose, as the rule against leaking storage types asks.",
@@ -2482,7 +2488,7 @@
       "weight.structure": 936,
       "weight.layers": 0,
       "weight.vocabulary": 908,
-      "weight.types": 3780,
+      "weight.types": 3810,
       "weight.concepts": 7186,
       "weight.boundaries": 1512,
       "weight.data": 1297,
@@ -2493,13 +2499,24 @@
       "propagation_cost": 10.0
     },
     "min_weight": 0,
-    "at": "2026-10-28T13:29:24Z",
+    "at": "2026-10-28T14:49:20Z",
     "log": [
       {
         "at": "2026-10-28T13:29:24Z",
         "change": "start",
         "reason": null,
         "metrics": {}
+      },
+      {
+        "at": "2026-10-28T14:49:20Z",
+        "change": "loosen",
+        "reason": "InboxSummary wire mirror accepted like the other apiwire DTOs, TKT-9YRRM5",
+        "metrics": {
+          "weight.types": [
+            3780,
+            3810
+          ]
+        }
       }
     ]
   }

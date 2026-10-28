@@ -18,6 +18,7 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/aclstore"
+	v1 "github.com/Sourcehaven-BV/rela/internal/apiwire/v1"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
 )
@@ -43,7 +44,12 @@ type liveEnv struct {
 // principal with those comma-separated roles or scopes.
 func newLiveEnv(t *testing.T, setup func(app *App)) *liveEnv {
 	t.Helper()
-	app := newTestAppV1(t)
+	return newLiveEnvFor(t, newTestAppV1(t), setup)
+}
+
+// newLiveEnvFor is newLiveEnv over app.
+func newLiveEnvFor(tb testing.TB, app *App, setup func(app *App)) *liveEnv {
+	tb.Helper()
 	app.broker = newEventBroker()
 	app.sseTiming = sseTimings{flush: 10 * time.Millisecond, ping: time.Hour}
 	app.live.window = 20 * time.Millisecond
@@ -64,21 +70,21 @@ func newLiveEnv(t *testing.T, setup func(app *App)) *liveEnv {
 		return principal.Principal{User: user, Tool: principal.ToolDataEntry}
 	})
 	srv := httptest.NewServer(app.NewRouter())
-	t.Cleanup(srv.Close)
+	tb.Cleanup(srv.Close)
 	app.startStoreEventBridge()
-	t.Cleanup(app.StopWatching)
+	tb.Cleanup(app.StopWatching)
 	return &liveEnv{app: app, srv: srv}
 }
 
 // open opens a v1 stream as user and returns it with its connection id.
-func (e *liveEnv) open(t *testing.T, user string) (c *sseClient, conn string) {
-	t.Helper()
-	c = openStream(t, e.srv, "/api/v1/_events", http.Header{testUserHeader: {user}})
-	f := c.next(t)
+func (e *liveEnv) open(tb testing.TB, user string) (c *sseClient, conn string) {
+	tb.Helper()
+	c = openStream(tb, e.srv, "/api/v1/_events", http.Header{testUserHeader: {user}})
+	f := c.next(tb)
 	if f.event != "ready" {
-		t.Fatalf("first frame = %+v, want ready", f)
+		tb.Fatalf("first frame = %+v, want ready", f)
 	}
-	return c, frameData(t, f)["conn"]
+	return c, frameData(tb, f)["conn"]
 }
 
 // liveSub is one entry of a PUT body.
@@ -89,27 +95,27 @@ type liveSubEntry struct {
 
 // put replaces conn's subscriptions as hdr's principal and returns the
 // status and body.
-func (e *liveEnv) put(t *testing.T, hdr http.Header, conn string, subs ...liveSubEntry) (code int, body string) {
-	t.Helper()
+func (e *liveEnv) put(tb testing.TB, hdr http.Header, conn string, subs ...liveSubEntry) (code int, body string) {
+	tb.Helper()
 	b, err := json.Marshal(map[string]any{"subscriptions": subs})
 	if err != nil {
-		t.Fatal(err)
+		tb.Fatal(err)
 	}
-	return e.putRaw(t, hdr, "/api/v1/_events/"+conn+"/subscriptions", string(b))
+	return e.putRaw(tb, hdr, "/api/v1/_events/"+conn+"/subscriptions", string(b))
 }
 
-func (e *liveEnv) putRaw(t *testing.T, hdr http.Header, path, reqBody string) (code int, body string) {
-	t.Helper()
+func (e *liveEnv) putRaw(tb testing.TB, hdr http.Header, path, reqBody string) (code int, body string) {
+	tb.Helper()
 	req, err := http.NewRequestWithContext(context.Background(), http.MethodPut, e.srv.URL+path,
 		strings.NewReader(reqBody))
 	if err != nil {
-		t.Fatal(err)
+		tb.Fatal(err)
 	}
 	maps.Copy(req.Header, hdr)
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := e.srv.Client().Do(req)
 	if err != nil {
-		t.Fatal(err)
+		tb.Fatal(err)
 	}
 	defer resp.Body.Close()
 	b, _ := io.ReadAll(resp.Body)
@@ -117,12 +123,12 @@ func (e *liveEnv) putRaw(t *testing.T, hdr http.Header, path, reqBody string) (c
 }
 
 // subscribe PUTs subs as user, requires 204 and waits for the baselines.
-func (e *liveEnv) subscribe(t *testing.T, user, conn string, subs ...liveSubEntry) {
-	t.Helper()
-	if code, body := e.put(t, as(user), conn, subs...); code != http.StatusNoContent {
-		t.Fatalf("PUT = %d %s, want 204", code, body)
+func (e *liveEnv) subscribe(tb testing.TB, user, conn string, subs ...liveSubEntry) {
+	tb.Helper()
+	if code, body := e.put(tb, as(user), conn, subs...); code != http.StatusNoContent {
+		tb.Fatalf("PUT = %d %s, want 204", code, body)
 	}
-	e.waitBaselines(t)
+	e.waitBaselines(tb)
 }
 
 // get fetches path as user and returns the status and body.
@@ -143,8 +149,8 @@ func (e *liveEnv) get(t *testing.T, user, path string) (code int, body []byte) {
 }
 
 // waitBaselines waits until every subscription has taken its baseline.
-func (e *liveEnv) waitBaselines(t *testing.T) {
-	t.Helper()
+func (e *liveEnv) waitBaselines(tb testing.TB) {
+	tb.Helper()
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
 		if e.app.live.allBaselined() {
@@ -152,7 +158,7 @@ func (e *liveEnv) waitBaselines(t *testing.T) {
 		}
 		time.Sleep(5 * time.Millisecond)
 	}
-	t.Fatal("subscriptions did not take their baselines")
+	tb.Fatal("subscriptions did not take their baselines")
 }
 
 // allBaselined reports whether every subscription has a hash.
@@ -275,6 +281,9 @@ func TestLive_PutValidation(t *testing.T) {
 		liveSubEntry{"e", "/api/v1/tickets/TKT-1"},
 		liveSubEntry{"l", "/api/v1/tickets?per_page=20"},
 		liveSubEntry{"v", "/api/v1/_views/ticket/TKT-1"},
+		liveSubEntry{"i", "/api/v1/_inbox"},
+		liveSubEntry{"ik", "/api/v1/_inbox?limit=10&kinds=waiting,mention"},
+		liveSubEntry{"is", "/api/v1/_inbox/summary"},
 	); code != http.StatusNoContent {
 		t.Fatalf("valid PUT = %d %s", code, body)
 	}
@@ -296,6 +305,15 @@ func TestLive_PutValidation(t *testing.T) {
 		{"dot dot", []liveSubEntry{{"k", "/api/v1/features/../tickets"}}},
 		{"absolute URL", []liveSubEntry{{"k", "http://example.com/api/v1/tickets"}}},
 		{"unknown query key", []liveSubEntry{{"k", "/api/v1/tickets?format=csv"}}},
+		{"inbox cursor", []liveSubEntry{{"k", "/api/v1/_inbox?cursor=x"}}},
+		{"inbox q", []liveSubEntry{{"k", "/api/v1/_inbox?q=x"}}},
+		{"inbox unknown key", []liveSubEntry{{"k", "/api/v1/_inbox?foo=1"}}},
+		{"inbox repeated kinds", []liveSubEntry{{"k", "/api/v1/_inbox?kinds=waiting&kinds=mention"}}},
+		{"inbox repeated limit", []liveSubEntry{{"k", "/api/v1/_inbox?limit=5&limit=6"}}},
+		{"inbox bad limit", []liveSubEntry{{"k", "/api/v1/_inbox?limit=0"}}},
+		{"inbox bad kinds", []liveSubEntry{{"k", "/api/v1/_inbox?kinds=bogus"}}},
+		{"inbox summary query", []liveSubEntry{{"k", "/api/v1/_inbox/summary?limit=1"}}},
+		{"inbox other", []liveSubEntry{{"k", "/api/v1/_inbox/other"}}},
 		{"too many", tooMany},
 		{"duplicate key", []liveSubEntry{{"k", "/api/v1/tickets"}, {"k", "/api/v1/features"}}},
 		{"bad key characters", []liveSubEntry{{"k y", "/api/v1/tickets"}}},
@@ -572,9 +590,50 @@ func TestLive_ReplayMatchesGet(t *testing.T) {
 			"/api/v1/tickets/TKT-1": http.StatusOK,
 		}},
 	}
+	// The inbox shapes, on an app with channels (TKT-9YRRM5 AC 8).
+	inboxPaths := map[string]int{
+		inboxPath:                            http.StatusOK,
+		inboxPath + "?kinds=mention,waiting": http.StatusOK,
+		inboxPath + "?limit=1":               http.StatusOK,
+		inboxSummaryPath:                     http.StatusOK,
+	}
+	ownerHidden := inboxLivePolicy()
+	editor := ownerHidden.Roles["editor"]
+	editor.Visible = map[string][]acl.FieldGrant{"ticket": {{Field: "title"}, {Field: "owner", When: "entity.title == 'two'"}}}
+	ownerHidden.Roles["editor"] = editor
+	byLogin := inboxLivePolicy()
+	byLogin.UserEntityType, byLogin.PrincipalProperty = "person", "email"
+	inboxEnvs := map[string]struct {
+		policy *acl.Policy
+		user   string
+		want   v1.InboxSummary
+	}{
+		"inbox row gating":         {inboxLivePolicy(), "alice", v1.InboxSummary{Waiting: 1, UnreadChannels: 1, Mentions: 1}},
+		"inbox redacted field":     {ownerHidden, "alice", v1.InboxSummary{UnreadChannels: 1, Mentions: 1}},
+		"inbox principal_property": {byLogin, "alice@example.com", v1.InboxSummary{Waiting: 1, UnreadChannels: 1, Mentions: 1}},
+	}
+	for name, ie := range inboxEnvs {
+		cases = append(cases, struct {
+			name  string
+			setup func(app *App)
+			user  string
+			paths map[string]int
+		}{name, nil, ie.user, inboxPaths})
+	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			env := newLiveEnv(t, tc.setup)
+			var env *liveEnv
+			if ie, ok := inboxEnvs[tc.name]; ok {
+				ienv := newInboxLiveEnv(t, ie.policy)
+				ienv.seedInboxAnswers(t)
+				env = ienv.liveEnv
+				code, body := env.get(t, tc.user, inboxSummaryPath)
+				if code != http.StatusOK || ie.want != decodeAs[v1.InboxSummary](t, body) {
+					t.Fatalf("summary = %d %s, want %+v", code, body, ie.want)
+				}
+			} else {
+				env = newLiveEnv(t, tc.setup)
+			}
 			handler := *env.app.live.replay.Load()
 			p := principal.Principal{User: tc.user, Tool: principal.ToolDataEntry}
 			for path, wantCode := range tc.paths {

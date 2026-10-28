@@ -9,6 +9,8 @@ import type {
   ChannelSchema,
   ChannelState,
   EphemeralAccepted,
+  Inbox,
+  InboxSummary,
   Message,
   MessageActionResponse,
   MarkReadRequest,
@@ -203,4 +205,46 @@ export async function createChannel(
 /** GET the channel type descriptor. The same for every principal. */
 export async function getChannelSchema(): Promise<ChannelSchema> {
   return api.get<ChannelSchema>('/_schema/channels')
+}
+
+/** The inbox kinds the server accepts in `kinds`. */
+export type InboxKind = 'waiting' | 'unread' | 'mention' | 'reply'
+
+/**
+ * The query of an inbox read. Both are optional; the server's defaults are
+ * the first page of every kind.
+ */
+export interface InboxQuery {
+  limit?: number
+  kinds?: InboxKind[]
+}
+
+export const INBOX_PATH = '/_inbox'
+export const INBOX_SUMMARY_PATH = '/_inbox/summary'
+
+/**
+ * The query parameters of an inbox read, as the server reads them: kinds as
+ * one comma list. The live path builder sends the same parameters, so a
+ * subscription names the request the page made.
+ */
+export function inboxParams(q?: InboxQuery): Record<string, string | number> | undefined {
+  if (!q) return undefined
+  const params: Record<string, string | number> = {}
+  if (q.limit !== undefined) params.limit = q.limit
+  if (q.kinds?.length) params.kinds = q.kinds.join(',')
+  return Object.keys(params).length ? params : undefined
+}
+
+/**
+ * GET the caller's inbox: the sessions that wait on the caller, the unread
+ * channels and the unread mentions and replies (TKT-ZZ4PNX). The page reads
+ * only the first page, so it sends no cursor.
+ */
+export async function getInbox(q?: InboxQuery): Promise<Inbox> {
+  return api.get<Inbox>(INBOX_PATH, inboxParams(q))
+}
+
+/** GET the counts of the caller's inbox first page, for the sidebar badge. */
+export async function getInboxSummary(): Promise<InboxSummary> {
+  return api.get<InboxSummary>(INBOX_SUMMARY_PATH)
 }

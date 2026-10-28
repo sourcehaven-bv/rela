@@ -10,7 +10,15 @@
     "showAll": "Show all",
     "piles": "Piles",
     "newPile": "New pile",
-    "newItem": "New {label}"
+    "newItem": "New {label}",
+    "inbox": "Inbox",
+    "inboxWaiting": "{n} waiting | {n} waiting",
+    "inboxMentions": "{n} mention | {n} mentions",
+    "inboxUnread": "{n} unread channel | {n} unread channels"
+  },
+  "inbox": {
+    "title": "Inbox",
+    "loadError": "The inbox could not be loaded."
   },
   "footer": {
     "settings": "Settings",

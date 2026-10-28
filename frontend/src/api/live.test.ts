@@ -5,6 +5,8 @@ import {
   liveChannelPath,
   liveChannelsPath,
   liveEntityPath,
+  liveInboxPath,
+  liveInboxSummaryPath,
   liveListPath,
   livePresencePath,
   liveViewPath,
@@ -64,5 +66,17 @@ describe('live subscription paths', () => {
     expect(
       liveChannelPath({ type: 'ticket', address: 'TKT-1', channelType: 'threads', name: 'x1' })
     ).toBe('/api/v1/tickets/TKT-1/_channels/threads/x1')
+  })
+
+  it('builds inbox paths the server accepts', () => {
+    expect(liveInboxPath()).toBe('/api/v1/_inbox')
+    expect(liveInboxPath({ limit: 10, kinds: ['waiting', 'mention'] })).toBe(
+      '/api/v1/_inbox?limit=10&kinds=waiting,mention'
+    )
+    expect(liveInboxPath({ kinds: [] })).toBe('/api/v1/_inbox')
+    expect(liveInboxPath({ limit: 10, kinds: ['unread'] })).toBe(
+      sent('/_inbox', { limit: 10, kinds: 'unread' })
+    )
+    expect(liveInboxSummaryPath()).toBe('/api/v1/_inbox/summary')
   })
 })

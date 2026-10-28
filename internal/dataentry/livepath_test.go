@@ -22,6 +22,13 @@ func TestParseLivePath(t *testing.T) {
 		{"presence", "/api/v1/tickets/TKT-1/_presence", "/api/v1/tickets/TKT-1/_presence"},
 		{"presence with face and world", "/api/v1/tickets/TKT-1@draft/_presence?world=main",
 			"/api/v1/tickets/TKT-1@draft/_presence?world=main"},
+		{"inbox", "/api/v1/_inbox", "/api/v1/_inbox"},
+		{"inbox with limit and kinds", "/api/v1/_inbox?limit=10&kinds=waiting,mention",
+			"/api/v1/_inbox?kinds=mention%2Cwaiting&limit=10"},
+		{"inbox limit without leading zero", "/api/v1/_inbox?limit=05", "/api/v1/_inbox?limit=5"},
+		{"inbox kinds deduplicated", "/api/v1/_inbox?kinds=waiting,mention,waiting",
+			"/api/v1/_inbox?kinds=mention%2Cwaiting"},
+		{"inbox summary", "/api/v1/_inbox/summary", "/api/v1/_inbox/summary"},
 		{"channel list", "/api/v1/tickets/TKT-1/_channels", "/api/v1/tickets/TKT-1/_channels"},
 		{"channel list by state", "/api/v1/tickets/TKT-1/_channels?state=open&world=main",
 			"/api/v1/tickets/TKT-1/_channels?state=open&world=main"},
@@ -106,6 +113,19 @@ func TestParseLivePath(t *testing.T) {
 		{"channels on sub-resource id", "/api/v1/tickets/_export/_channels"},
 		{"channel list unknown query key", "/api/v1/tickets/TKT-1/_channels?include=x"},
 		{"channel head state", "/api/v1/tickets/TKT-1/_channels/room?state=open"},
+		{"inbox cursor", "/api/v1/_inbox?cursor=x"},
+		{"inbox q", "/api/v1/_inbox?q=x"},
+		{"inbox unknown key", "/api/v1/_inbox?foo=1"},
+		{"inbox limit zero", "/api/v1/_inbox?limit=0"},
+		{"inbox limit over max", "/api/v1/_inbox?limit=201"},
+		{"inbox limit not a number", "/api/v1/_inbox?limit=abc"},
+		{"inbox bad kind", "/api/v1/_inbox?kinds=bogus"},
+		{"inbox empty kinds", "/api/v1/_inbox?kinds="},
+		{"inbox repeated kinds", "/api/v1/_inbox?kinds=waiting&kinds=mention"},
+		{"inbox repeated limit", "/api/v1/_inbox?limit=5&limit=6"},
+		{"inbox summary with query", "/api/v1/_inbox/summary?limit=1"},
+		{"inbox other", "/api/v1/_inbox/other"},
+		{"inbox too deep", "/api/v1/_inbox/summary/x"},
 	}
 	for _, tc := range rejected {
 		t.Run("rejects "+tc.name, func(t *testing.T) {
@@ -146,6 +166,33 @@ func TestLivePath_PresenceID(t *testing.T) {
 		}
 		if got := lp.presenceID(); got != want {
 			t.Errorf("%s: presenceID = %q, want %q", raw, got, want)
+		}
+	}
+}
+
+// TestLivePath_InboxCanonical pins AC 7: equal inbox requests rebuild one
+// replay URL, so they share one replay pair.
+func TestLivePath_InboxCanonical(t *testing.T) {
+	meta := newTestAppV1(t).State().Meta
+	for _, group := range [][]string{
+		{"/api/v1/_inbox?kinds=mention,waiting", "/api/v1/_inbox?kinds=waiting,mention,waiting"},
+		{"/api/v1/_inbox?limit=05", "/api/v1/_inbox?limit=5"},
+		{"/api/v1/_inbox?limit=5&kinds=reply", "/api/v1/_inbox?kinds=reply&limit=005"},
+	} {
+		var want string
+		for _, raw := range group {
+			lp, err := parseLivePath(raw, meta)
+			if err != nil {
+				t.Fatalf("parseLivePath(%q) = %v", raw, err)
+			}
+			if !lp.isInbox() {
+				t.Fatalf("%q is not an inbox path", raw)
+			}
+			if want == "" {
+				want = lp.String()
+			} else if got := lp.String(); got != want {
+				t.Fatalf("%q replays %q, want %q like %q", raw, got, want, group[0])
+			}
 		}
 	}
 }

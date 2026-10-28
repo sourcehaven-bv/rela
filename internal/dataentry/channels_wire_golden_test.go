@@ -79,6 +79,7 @@ var channelWireTypes = map[string]any{
 	"InboxLinks":                 v1.InboxLinks{},
 	"InboxUnread":                v1.InboxUnread{},
 	"InboxMention":               v1.InboxMention{},
+	"InboxSummary":               v1.InboxSummary{},
 	"MessageMention":             v1.MessageMention{},
 }
 
@@ -228,6 +229,7 @@ func TestChannelWireGolden(t *testing.T) {
 		"session_head":     incidentPath,
 		"session_messages": incidentPath + "/messages",
 		"typing_head":      chatPath,
+		"inbox_summary":    inboxSummaryPath,
 	} {
 		code, b := env.get(t, "alice", path)
 		require.Equal(t, http.StatusOK, code, "%s: %s", path, b)

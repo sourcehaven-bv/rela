@@ -96,20 +96,23 @@ func newLocal(clock Clock, lim ephemeralLimits, caps limitCaps) (*Local, error) 
 // of the keys, and rechecks every channel it follows.
 type Subscription struct {
 	local *Local
-	// allReaders and allAddressed are set before the subscription is
-	// registered and never change, so they need no lock (see
-	// Local.subscribe).
+	// allReaders, allAddressed and allDurable are set before the
+	// subscription is registered and never change, so they need no lock
+	// (see Local.subscribe).
 	//
-	// allReaders is set by [Local.SubscribeReads]: the subscriber takes
+	// allReaders is set by [Local.SubscribeLive]: the subscriber takes
 	// every reader's marks, tagged by reader, through TakeReads.
 	allReaders bool
-	// allAddressed is set by [Local.SubscribeAddressed]: the subscriber
-	// also takes the principal keys a post or edit addressed, through
-	// TakeAddressed.
+	// allAddressed is set by [Local.SubscribeAddressed] and
+	// [Local.SubscribeLive]: the subscriber also takes the principal keys a
+	// post or edit addressed, through TakeAddressed.
 	allAddressed bool
-	wake         chan struct{}
-	mu           sync.Mutex
-	changed      map[channels.Key]struct{}
+	// allDurable is set by [Local.SubscribeLive]: the subscriber also
+	// takes the channels a stored write changed, through TakeDurable.
+	allDurable bool
+	wake       chan struct{}
+	mu         sync.Mutex
+	changed    map[channels.Key]struct{}
 	// reads holds the marks of an allReaders subscriber, by reader. It
 	// shares max with changed: past it, the subscriber resyncs.
 	reads  map[channels.Reader]map[channels.Key]struct{}
@@ -118,8 +121,14 @@ type Subscription struct {
 	// not taken yet. It shares max with changed: past it, the subscriber
 	// resyncs.
 	addressed map[string]struct{}
-	resync    bool
-	max       int
+	// durable holds the channels of an allDurable subscriber that a
+	// stored write changed: a message, an edit, a removal, a session or
+	// lifecycle move, an action. Typing and ephemeral signals, and their
+	// expiry, are not in it. Every key in it is in changed too, so it
+	// shares max with changed.
+	durable map[channels.Key]struct{}
+	resync  bool
+	max     int
 }
 
 // Subscribe registers a consumer. Close it when done.
@@ -142,15 +151,40 @@ func (l *Local) subscribe(setup func(*Subscription)) *Subscription {
 	return s
 }
 
-// SubscribeReads registers a consumer that serves many readers, such as
-// the live hub: it takes channel changes as [Local.Subscribe] does, and
-// every reader's moved markers, tagged by reader, from TakeReads. Close it
-// when done.
-func (l *Local) SubscribeReads() *Subscription {
+// SubscribeLive registers a consumer that serves many readers, such as
+// the live hub: it takes channel changes as [Local.Subscribe] does, every
+// reader's moved markers, tagged by reader, from TakeReads, the principal
+// keys a post or edit addressed from TakeAddressed, and the channels a
+// stored write changed from TakeDurable. An overflow of any of them
+// resyncs. Close it when done.
+func (l *Local) SubscribeLive() *Subscription {
 	return l.subscribe(func(s *Subscription) {
 		s.allReaders = true
 		s.reads = map[channels.Reader]map[channels.Key]struct{}{}
+		s.allAddressed = true
+		s.addressed = map[string]struct{}{}
+		s.allDurable = true
+		s.durable = map[channels.Key]struct{}{}
 	})
+}
+
+// TakeDurable returns the channels a stored write changed since the
+// previous TakeDurable, sorted, and empties the set. It returns nil for a
+// subscription not made by [Local.SubscribeLive], and nil when the set
+// overflowed: Take then reports resync.
+func (s *Subscription) TakeDurable() []channels.Key {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if len(s.durable) == 0 {
+		return nil
+	}
+	out := make([]channels.Key, 0, len(s.durable))
+	for k := range s.durable {
+		out = append(out, k)
+	}
+	clear(s.durable)
+	channels.SortKeys(out)
+	return out
 }
 
 // SubscribeAddressed registers a consumer that wakes a principal's inbox,
@@ -167,7 +201,8 @@ func (l *Local) SubscribeAddressed() *Subscription {
 
 // TakeAddressed returns the principal keys addressed since the previous
 // TakeAddressed, sorted, and empties the set. It returns nil for a
-// subscription not made by [Local.SubscribeAddressed], and nil when the
+// subscription made by neither [Local.SubscribeAddressed] nor
+// [Local.SubscribeLive], and nil when the
 // set overflowed: Take then reports resync.
 func (s *Subscription) TakeAddressed() []string {
 	s.mu.Lock()
@@ -186,7 +221,7 @@ func (s *Subscription) TakeAddressed() []string {
 
 // TakeReads returns the channels on which each reader's marker moved since
 // the previous TakeReads, and empties the set. It returns nil for a
-// subscription not made by [Local.SubscribeReads], and nil when the set
+// subscription not made by [Local.SubscribeLive], and nil when the set
 // overflowed: Take then reports resync.
 func (s *Subscription) TakeReads() map[channels.Reader][]channels.Key {
 	s.mu.Lock()
@@ -226,6 +261,7 @@ func (s *Subscription) Take() (keys []channels.Key, resync bool) {
 		clear(s.changed)
 		clear(s.reads)
 		clear(s.addressed)
+		clear(s.durable)
 		s.nReads = 0
 		return []channels.Key{}, true
 	}
@@ -250,9 +286,18 @@ func (s *Subscription) Close() {
 // it changed, so this process's subscribers see them.
 func (l *Local) Mark(keys ...channels.Key) { l.mark(keys...) }
 
-// mark adds keys to every subscriber's change set and wakes each one.
+// mark adds keys to every subscriber's change set, and to the durable set
+// of each [Local.SubscribeLive] subscriber, and wakes each one. It is for
+// changes a stored write made.
 func (l *Local) mark(keys ...channels.Key) {
-	l.markWhere(func(*Subscription) bool { return true }, keys)
+	l.markWhere(func(*Subscription) bool { return true }, keys, true)
+}
+
+// markEphemeral adds keys to every subscriber's change set only: a typing
+// entry or an ephemeral signal started, ended or expired. A channel head
+// shows them; an inbox does not, so the live hub need not replay one.
+func (l *Local) markEphemeral(keys ...channels.Key) {
+	l.markWhere(func(*Subscription) bool { return true }, keys, false)
 }
 
 // markAddressed marks key changed for every subscriber, as mark does, and
@@ -282,6 +327,7 @@ func (l *Local) markAddressed(targets []string, key channels.Key) {
 				s.resync = true
 				clear(s.changed)
 				clear(s.addressed)
+				clear(s.durable)
 			}
 		}
 		s.mu.Unlock()
@@ -292,7 +338,7 @@ func (l *Local) markAddressed(targets []string, key channels.Key) {
 	}
 }
 
-// markFor adds keys to the reads of every [Local.SubscribeReads]
+// markFor adds keys to the reads of every [Local.SubscribeLive]
 // subscriber, tagged with reader, and to no change set: a moved read
 // marker changes nothing another principal sees, and the live hub scopes
 // the replay to reader's own connections.
@@ -333,6 +379,7 @@ func (s *Subscription) addReads(reader channels.Reader, keys []channels.Key) {
 			s.resync = true
 			clear(s.changed)
 			clear(s.reads)
+			clear(s.durable)
 			s.nReads = 0
 		}
 	}
@@ -344,8 +391,9 @@ func (s *Subscription) addReads(reader channels.Reader, keys []channels.Key) {
 }
 
 // markWhere adds keys to the change set of each subscriber that pick
-// admits, and wakes it.
-func (l *Local) markWhere(pick func(*Subscription) bool, keys []channels.Key) {
+// admits, and wakes it. durable also adds them to the durable set of each
+// such subscriber that takes one.
+func (l *Local) markWhere(pick func(*Subscription) bool, keys []channels.Key, durable bool) {
 	if len(keys) == 0 {
 		return
 	}
@@ -364,9 +412,13 @@ func (l *Local) markWhere(pick func(*Subscription) bool, keys []channels.Key) {
 				break
 			}
 			s.changed[k] = struct{}{}
+			if durable && s.allDurable {
+				s.durable[k] = struct{}{}
+			}
 			if len(s.changed) > s.max {
 				s.resync = true
 				clear(s.changed)
+				clear(s.durable)
 			}
 		}
 		s.mu.Unlock()
@@ -381,8 +433,8 @@ func (l *Local) markWhere(pick func(*Subscription) bool, keys []channels.Key) {
 // channels changed.
 func (l *Local) expire() {
 	now := l.clock()
-	l.mark(l.ephemeral.sweep(now)...)
-	l.mark(l.typing.sweep(now)...)
+	l.markEphemeral(l.ephemeral.sweep(now)...)
+	l.markEphemeral(l.typing.sweep(now)...)
 }
 
 // scheduleExpiry arms the timer for the earliest signal expiry or typing
@@ -433,8 +485,8 @@ func (l *Local) Stop() {
 func (l *Local) dropAnchor(id string, face entity.Face) {
 	l.limiter.dropAnchor(id, face)
 	l.readLimiter.dropAnchor(id, face)
-	l.mark(l.ephemeral.dropAnchor(id, face)...)
-	l.mark(l.typing.dropAnchor(id, face)...)
+	l.markEphemeral(l.ephemeral.dropAnchor(id, face)...)
+	l.markEphemeral(l.typing.dropAnchor(id, face)...)
 }
 
 // EntityRenamed moves the rate buckets of the channels of oldID to newID,

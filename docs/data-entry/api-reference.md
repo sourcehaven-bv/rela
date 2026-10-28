@@ -581,14 +581,26 @@ The body replaces the whole set; an empty list clears it. The answer is 204.
 
 - `key` is the client's label: 1 to 64 characters of letters, digits and
   `_ : . -`, unique within the request.
-- `path` is one of four GETs: an entity
+- `path` is one of six GETs: an entity
   (`/api/v1/{plural}/{id}`, query `include`, `fields`, `world`), a list
   (`/api/v1/{plural}`, the list query parameters including `filter[...]`),
-  a view (`/api/v1/_views/{type}/{id}`, query `world`), or an entity's
-  presence (`/api/v1/{plural}/{id}/_presence`, query `world`). Any other path
-  or query parameter is a 400, and so is a presence path with a bare id on a
-  type that has faces. Subscribing to a presence path is what makes you a
-  viewer; see [Presence](#presence-_presence).
+  a view (`/api/v1/_views/{type}/{id}`, query `world`), an entity's
+  presence (`/api/v1/{plural}/{id}/_presence`, query `world`), the inbox
+  (`/api/v1/_inbox`, query `limit` and `kinds`) or the inbox summary
+  (`/api/v1/_inbox/summary`, no query; it answers the inbox's counts for a
+  badge). Any other path or query parameter
+  is a 400, and so is a presence path with a bare id on a type that has
+  faces. Subscribing to a presence path is what makes you a viewer; see
+  [Presence](#presence-_presence). The channel paths are in the realtime
+  guide.
+- An inbox path takes each key at most once, and no `cursor`: only the
+  first page is live. A bad `limit` or `kinds` value is a 400, as on the
+  GET. Equal requests are one subscription: the server sorts `kinds` and
+  drops repeats, and writes `limit` without leading zeros. Inbox
+  subscriptions are checked at most every 2 seconds (4 seconds with the
+  file channel store), and every 14 seconds (12) whether or not anything
+  changed; the realtime guide says what wakes
+  them.
 - A list path cannot carry the free-text `q`: its hits are gated after a
   capped search over every entity, so a hidden write could change the visible
   result and a frame would signal that write.
