@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { intlLocale } from '@/i18n/locale'
+import { useI18n } from 'vue-i18n'
 import { ref, computed, watch } from 'vue'
 import { useSchemaStore, useUIStore } from '@/stores'
 import {
@@ -49,6 +50,7 @@ const props = defineProps<{
 // `accept` included: the parent settles pending body writes first.
 const emit = defineEmits<{ changed: []; accept: [comment: Comment] }>()
 
+const { t } = useI18n()
 const schemaStore = useSchemaStore()
 const uiStore = useUIStore()
 const { confirm } = useConfirm()
@@ -92,7 +94,7 @@ const anchorOptions = computed<AnchorOption[]>(() => {
   for (const id of props.sectionIds ?? []) {
     options.push({
       key: `section:${id}`,
-      label: `Section: ${id}`,
+      label: t('comments.section', { id }),
       anchor: { kind: 'section', ref: id },
     })
   }
@@ -114,7 +116,7 @@ const homelessCount = computed(
 )
 
 function anchorLabel(anchor: CommentAnchor): string {
-  return anchor.kind === 'section' ? `Section: ${anchor.ref}` : anchor.ref
+  return anchor.kind === 'section' ? t('comments.section', { id: anchor.ref }) : anchor.ref
 }
 
 function formatDate(iso: string): string {
@@ -182,9 +184,9 @@ async function remove(comment: Comment) {
   // Branch on the boolean: useConfirm resolves false if the shell unmounts
   // while the dialog is open, and a DELETE must not fire on that path.
   const ok = await confirm({
-    title: 'Delete comment',
-    message: 'Delete this comment? This cannot be undone.',
-    confirmLabel: 'Delete',
+    title: t('comments.deleteTitle'),
+    message: t('comments.deleteMessage'),
+    confirmLabel: t('common.delete'),
     danger: true,
   })
   if (!ok) return
@@ -234,12 +236,15 @@ watch(
     >
       <span class="chev" aria-hidden="true">{{ expanded ? '▾' : '▸' }}</span>
       <h2>
-        All comments
-        <span v-if="unresolvedCount > 0" class="unresolved-count">{{ unresolvedCount }} open</span>
+        {{ t('comments.allComments') }}
+        <span v-if="unresolvedCount > 0" class="unresolved-count">{{
+          t('comments.openCount', { n: unresolvedCount })
+        }}</span>
       </h2>
       <span class="panel-summary">
-        {{ comments.length }} total<template v-if="homelessCount > 0">
-          · {{ homelessCount }} not on a field</template
+        {{ t('comments.totalCount', { n: comments.length })
+        }}<template v-if="homelessCount > 0">
+          · {{ t('comments.notOnField', { n: homelessCount }) }}</template
         >
       </span>
     </header>
@@ -257,9 +262,9 @@ watch(
             <span
               v-if="comment.detached"
               class="comment-detached"
-              title="The property this comment points at no longer exists on this entity"
+              :title="t('comments.detachedOnEntityTitle')"
             >
-              detached
+              {{ t('comments.detached') }}
             </span>
             <span class="comment-author">{{ comment.author }}</span>
             <span class="comment-date">{{ formatDate(comment.created_at) }}</span>
@@ -268,8 +273,12 @@ watch(
           <div v-if="editingId === comment.id" class="comment-edit">
             <textarea v-model="editBody" class="comment-input" rows="3" />
             <div class="comment-actions">
-              <RlButton variant="primary" size="sm" @click="saveEdit(comment)">Save</RlButton>
-              <RlButton variant="secondary" size="sm" @click="cancelEdit">Cancel</RlButton>
+              <RlButton variant="primary" size="sm" @click="saveEdit(comment)">{{
+                t('common.save')
+              }}</RlButton>
+              <RlButton variant="secondary" size="sm" @click="cancelEdit">{{
+                t('common.cancel')
+              }}</RlButton>
             </div>
           </div>
 
@@ -287,7 +296,7 @@ watch(
                 size="sm"
                 @click="emit('accept', comment)"
               >
-                Accept
+                {{ t('comments.accept') }}
               </RlButton>
               <RlButton
                 v-if="comment.editable"
@@ -295,7 +304,7 @@ watch(
                 size="sm"
                 @click="toggleResolved(comment)"
               >
-                {{ comment.resolved ? 'Reopen' : 'Resolve' }}
+                {{ comment.resolved ? t('comments.reopen') : t('comments.resolve') }}
               </RlButton>
               <RlButton
                 v-if="comment.editable"
@@ -303,7 +312,7 @@ watch(
                 size="sm"
                 @click="startEdit(comment)"
               >
-                Edit
+                {{ t('common.edit') }}
               </RlButton>
               <RlButton
                 v-if="comment.deletable"
@@ -312,19 +321,23 @@ watch(
                 tone="danger"
                 @click="remove(comment)"
               >
-                Delete
+                {{ t('common.delete') }}
               </RlButton>
             </div>
           </template>
         </li>
       </ul>
 
-      <div v-else class="comments-state">No comments yet.</div>
+      <div v-else class="comments-state">{{ t('comments.noComments') }}</div>
 
       <!-- Always offered: whether this user may post is the server's call, and
            a hidden box would misreport a permission we have not been told. -->
       <form class="comment-form" @submit.prevent="submit">
-        <select v-model="newAnchorKey" class="anchor-select" aria-label="Comment anchor">
+        <select
+          v-model="newAnchorKey"
+          class="anchor-select"
+          :aria-label="t('comments.anchorLabel')"
+        >
           <option v-for="option in anchorOptions" :key="option.key" :value="option.key">
             {{ option.label }}
           </option>
@@ -333,18 +346,18 @@ watch(
           v-model="newBody"
           class="comment-input"
           rows="3"
-          placeholder="Add a comment…"
-          aria-label="Comment body"
+          :placeholder="t('comments.addPlaceholder')"
+          :aria-label="t('comments.bodyLabel')"
         />
         <RlButton
           type="submit"
           variant="primary"
           size="sm"
           :loading="submitting"
-          pending-label="Adding…"
+          :pending-label="t('comments.adding')"
           :disabled="!newBody.trim() || !newAnchorKey"
         >
-          Add comment
+          {{ t('comments.addComment') }}
         </RlButton>
       </form>
     </template>

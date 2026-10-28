@@ -25,6 +25,7 @@
  * us. It is deliberately not imported here (it is also absent from the
  * package's public type surface).
  */
+import { t } from '@/i18n'
 
 /**
  * Characters a browser discards while resolving a URL's scheme.
@@ -115,16 +116,18 @@ export interface LinkUrlRejected {
 
 export type LinkUrlResult = LinkUrlAccepted | LinkUrlRejected
 
-const MESSAGES: Record<LinkUrlRejection, string> = {
-  empty: 'Enter a link address.',
-  'protocol-relative': 'Enter a full address starting with https://.',
-  'not-absolute': 'Enter a full web address, for example https://example.com.',
-  unparseable: 'That is not a valid web address.',
-  'blocked-scheme': 'Only http, https and mailto links are allowed.',
-}
+// Literal keys, so the unused-key check can see them. The message is built
+// when the URL is rejected, in the language shown at that moment.
+const MESSAGES = {
+  empty: 'editor.linkUrl.empty',
+  'protocol-relative': 'editor.linkUrl.protocolRelative',
+  'not-absolute': 'editor.linkUrl.notAbsolute',
+  unparseable: 'editor.linkUrl.unparseable',
+  'blocked-scheme': 'editor.linkUrl.blockedScheme',
+} as const satisfies Record<LinkUrlRejection, string>
 
 function reject(reason: LinkUrlRejection): LinkUrlRejected {
-  return { ok: false, reason, message: MESSAGES[reason] }
+  return { ok: false, reason, message: t(MESSAGES[reason]) }
 }
 
 /**

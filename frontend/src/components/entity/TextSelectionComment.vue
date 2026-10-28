@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, onMounted, onBeforeUnmount, nextTick, useTemplateRef } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { useUIStore } from '@/stores'
 import { addComment, checkAnchorable } from '@/api/comments'
 import { getErrorMessage } from '@/api/errors'
@@ -39,6 +40,7 @@ const props = defineProps<{
 
 const emit = defineEmits<{ added: [] }>()
 
+const { t } = useI18n()
 const uiStore = useUIStore()
 
 /** Minimum selection length, mirroring the server's MinQuoteRunes. */
@@ -66,8 +68,6 @@ const body = ref('')
 const sourceQuote = ref<string | null>(null)
 const suggesting = ref(false)
 const replacement = ref('')
-/** Posted when a suggestion carries no comment text of its own. */
-const DEFAULT_SUGGESTION_BODY = 'Suggested a change.'
 
 const submitting = ref(false)
 const composerRef = useTemplateRef<HTMLTextAreaElement>('composer')
@@ -181,7 +181,7 @@ async function verifySelection() {
     if (token !== checkToken) return
     blockedReason.value = res.anchorable
       ? null
-      : res.reason || 'This selection cannot be commented on'
+      : res.reason || t('comments.selection.cannotComment')
     // Only offered where a replacement would be accepted: one spanning list
     // items or paragraphs is refused on submit.
     sourceQuote.value = res.anchorable && res.suggestable ? (res.source_quote ?? null) : null
@@ -202,7 +202,8 @@ async function startComposing() {
 
 async function submit() {
   if (!canSubmit() || submitting.value) return
-  const text = body.value.trim() || DEFAULT_SUGGESTION_BODY
+  // Posted when a suggestion carries no comment text of its own.
+  const text = body.value.trim() || t('comments.selection.defaultSuggestionBody')
   submitting.value = true
   try {
     await addComment(props.entityType, props.entityId, {
@@ -257,7 +258,7 @@ onBeforeUnmount(() => {
       <svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
         <path d="M8 1.5 15 14H1L8 1.5Zm0 4.5v4m0 2v.5" stroke="currentColor" fill="none" />
       </svg>
-      Can't comment here
+      {{ t('comments.selection.blocked') }}
     </span>
 
     <button
@@ -270,19 +271,21 @@ onBeforeUnmount(() => {
       <svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
         <path d="M8 1a7 7 0 0 0-6.1 10.4L1 15l3.8-.9A7 7 0 1 0 8 1Z" />
       </svg>
-      {{ checking ? 'Checking…' : 'Comment' }}
+      {{ checking ? t('comments.selection.checking') : t('comments.comment') }}
     </button>
 
     <form v-else class="tsc-form" @submit.prevent="submit">
       <blockquote class="tsc-quote">{{ quote }}</blockquote>
-      <label v-if="suggesting" class="tsc-label" for="tsc-replacement">Replace with</label>
+      <label v-if="suggesting" class="tsc-label" for="tsc-replacement">{{
+        t('comments.selection.replaceWith')
+      }}</label>
       <textarea
         v-if="suggesting"
         id="tsc-replacement"
         v-model="replacement"
         class="tsc-input tsc-replacement"
         rows="3"
-        aria-label="Suggested replacement"
+        :aria-label="t('comments.selection.replacementLabel')"
         @keydown.meta.enter="submit"
         @keydown.ctrl.enter="submit"
       />
@@ -291,8 +294,10 @@ onBeforeUnmount(() => {
         v-model="body"
         class="tsc-input"
         rows="3"
-        :placeholder="suggesting ? 'Explain the change (optional)…' : 'Add a comment…'"
-        aria-label="Comment body"
+        :placeholder="
+          suggesting ? t('comments.selection.explainPlaceholder') : t('comments.addPlaceholder')
+        "
+        :aria-label="t('comments.bodyLabel')"
         @keydown.meta.enter="submit"
         @keydown.ctrl.enter="submit"
       />
@@ -306,12 +311,28 @@ onBeforeUnmount(() => {
           :aria-pressed="suggesting"
           @click="toggleSuggesting"
         >
-          {{ suggesting ? 'Comment only' : 'Suggest a change' }}
+          {{
+            suggesting ? t('comments.selection.commentOnly') : t('comments.selection.suggestChange')
+          }}
         </RlButton>
-        <span class="tsc-hint">⌘↵ to post</span>
-        <RlButton type="button" variant="secondary" size="sm" @click="reset">Cancel</RlButton>
-        <RlButton type="submit" class="tsc-submit" variant="primary" size="sm" :disabled="submitting || !canSubmit()">
-          {{ submitting ? 'Adding…' : suggesting ? 'Suggest' : 'Comment' }}
+        <span class="tsc-hint">{{ t('comments.postHint') }}</span>
+        <RlButton type="button" variant="secondary" size="sm" @click="reset">{{
+          t('common.cancel')
+        }}</RlButton>
+        <RlButton
+          type="submit"
+          class="tsc-submit"
+          variant="primary"
+          size="sm"
+          :disabled="submitting || !canSubmit()"
+        >
+          {{
+            submitting
+              ? t('comments.adding')
+              : suggesting
+                ? t('comments.selection.suggest')
+                : t('comments.comment')
+          }}
         </RlButton>
       </div>
     </form>

@@ -17,6 +17,7 @@
 import RlDetailPanel from 'rela-components/components/task/RlDetailPanel.vue'
 import RlIconButton from 'rela-components/components/common/RlIconButton.vue'
 import { ref } from 'vue'
+import { useI18n } from 'vue-i18n'
 import EntityDetail from './EntityDetail.vue'
 import EntityActionsMenu from './EntityActionsMenu.vue'
 import type { EntityAction } from './entityActions'
@@ -32,6 +33,7 @@ const emit = defineEmits<{
 }>()
 
 const actions = ref<EntityAction[]>([])
+const { t } = useI18n()
 </script>
 
 <template>
@@ -52,7 +54,7 @@ const actions = ref<EntityAction[]>([])
       <RlIconButton
         class="rl-phone-only"
         icon="arrow-left"
-        label="Back to list"
+        :label="t('entity.backToList')"
         @click="emit('close')"
       />
     </template>

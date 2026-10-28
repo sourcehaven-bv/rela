@@ -20,6 +20,7 @@
  * lifecycle operation, since the list is not live while a channel is open.
  */
 import { computed, ref, useTemplateRef, watch } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { useChannel } from '@/composables/useChannel'
 import { useMarkRead } from '@/composables/useMarkRead'
 import { useTyping } from '@/composables/useTyping'
@@ -84,6 +85,7 @@ const props = defineProps<{
 
 const emit = defineEmits<{ gone: []; changed: [] }>()
 
+const { t } = useI18n()
 const ui = useUIStore()
 const schema = useSchemaStore()
 const channelSchema = useChannelSchemaStore()
@@ -293,7 +295,7 @@ async function onSave(event: ChannelEditEvent) {
   // never erases a field the user could not see (AC 11). Without the stored
   // copy the save would send a partial body, so it is refused instead.
   if (editProps?.seq !== event.seq) {
-    formError.value = 'This edit lost track of the message. Cancel it and edit the message again.'
+    formError.value = t('channels.editLost')
     return
   }
   const converted = toEditProps(
@@ -344,9 +346,9 @@ function onCancelEdit() {
 
 async function onDelete(seq: number) {
   const ok = await confirm({
-    title: 'Delete message?',
-    message: 'The message is replaced by a note that it was deleted. This cannot be undone.',
-    confirmLabel: 'Delete',
+    title: t('channels.deleteMessageTitle'),
+    message: t('channels.deleteMessageBody'),
+    confirmLabel: t('common.delete'),
     danger: true,
   })
   if (ok) await runPending(messagePendingKey(seq, 'delete'), () => ch.remove(seq))
@@ -392,9 +394,11 @@ async function onLifecycle(op: string) {
   const def = props.channelType.lifecycle.find((l) => l.name === op)
   if (op === LIFECYCLE_DELETE) {
     const ok = await confirm({
-      title: `${def?.label ?? 'Delete'} channel?`,
-      message: 'The channel and all its messages are deleted. This cannot be undone.',
-      confirmLabel: def?.label ?? 'Delete',
+      title: def?.label
+        ? t('channels.lifecycleTitle', { label: def.label })
+        : t('channels.deleteChannelTitle'),
+      message: t('channels.deleteChannelBody'),
+      confirmLabel: def?.label ?? t('common.delete'),
       danger: true,
     })
     if (!ok) return
@@ -448,9 +452,9 @@ const pickerTypes = picker.types
     <RlBanner
       v-if="ch.error.value && !ch.head.value"
       tone="danger"
-      title="The channel could not be loaded."
+      :title="t('channels.loadFailed')"
     >
-      <RlButton size="sm" @click="ch.refetch()">Try again</RlButton>
+      <RlButton size="sm" @click="ch.refetch()">{{ t('common.retry') }}</RlButton>
     </RlBanner>
     <RlChannel
       v-else-if="ch.head.value"
@@ -509,17 +513,17 @@ const pickerTypes = picker.types
         />
       </template>
     </RlChannel>
-    <p v-else class="open-channel__loading" role="status">Loading the channel…</p>
+    <p v-else class="open-channel__loading" role="status">{{ t('channels.loading') }}</p>
 
     <ChannelTextDialog
       v-if="removing !== null"
-      title="Remove message?"
-      description="The message is replaced by a note that a moderator removed it. Its author and readers see the reason."
-      label="Reason"
+      :title="t('channels.removeTitle')"
+      :description="t('channels.removeDescription')"
+      :label="t('channels.reason')"
       :required="channelType.remove_reason_required"
       multiline
-      confirm-label="Remove"
-      pending-label="Removing…"
+      :confirm-label="t('common.remove')"
+      :pending-label="t('channels.removing')"
       danger
       :busy="removeBusy"
       :error="removeError"
@@ -529,7 +533,7 @@ const pickerTypes = picker.types
     <EntityPickerModal
       :open="pickerOpen"
       :types="pickerTypes"
-      label="Choose an entity"
+      :label="t('channels.chooseEntity')"
       @select="picker.onPicked"
       @close="picker.onClose"
     />

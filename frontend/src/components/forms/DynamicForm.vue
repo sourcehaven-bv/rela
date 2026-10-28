@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, shallowRef, computed, watch, nextTick, onMounted, onBeforeUnmount } from 'vue'
 import { RouterLink, useRouter, useRoute, onBeforeRouteLeave } from 'vue-router'
+import { I18nT, useI18n } from 'vue-i18n'
 import { planPrefillRouting } from './prefillRouting'
 import { useSchemaStore, useEntitiesStore, useUIStore } from '@/stores'
 import { isCancelledFetch } from '@/composables/usePageData'
@@ -174,6 +175,7 @@ const schemaStore = useSchemaStore()
 const entitiesStore = useEntitiesStore()
 const uiStore = useUIStore()
 const { confirm } = useConfirm()
+const { t } = useI18n()
 
 // Link params for auto-linking after create (from custom views / side panels)
 interface LinkParams {
@@ -412,7 +414,7 @@ const showReadOnlyID = computed(() => isEdit.value && entityType.value?.id_type 
 const title = computed(() => {
   if (!formConfig.value) return ''
   const label = entityType.value?.label || formConfig.value.entity
-  return isEdit.value ? `Edit ${label}` : `New ${label}`
+  return isEdit.value ? t('form.editOfType', { type: label }) : t('form.newOfType', { type: label })
 })
 
 const allFields = computed((): FormFieldOrRelation[] => {
@@ -685,7 +687,7 @@ async function loadEntity(force = false) {
     // (see BUG-6C3V and src/composables/usePageData.ts).
     if (isCancelledFetch(err)) return
     loadState.value = 'error'
-    uiStore.error('Failed to load entity')
+    uiStore.error(t('form.loadFailed'))
     console.error(err)
   }
 }
@@ -729,11 +731,10 @@ async function uploadStagedFiles(
 // is answerable without comparing lists by hand.
 function stagedFailureMessage(failures: { file: string; message: string }[]): string {
   const detail = failures.map((f) => `${f.file} (${f.message})`).join(', ')
-  const plural = failures.length > 1 ? 's' : ''
   // Names the files AND says where to fix it: the staged copies are gone once
   // this form unmounts (RR-4QO887), so "re-attach on the entity" is the only
   // honest instruction.
-  return `Entity created, but ${failures.length} file${plural} failed to attach: ${detail}. Re-attach on the entity.`
+  return t('form.attachFailed', { n: failures.length, detail }, failures.length)
 }
 
 // onAttachmentChanged fires after a file widget uploads or removes an
@@ -1241,9 +1242,9 @@ async function onTemplateChange(name: string) {
   checkDirty()
   if (dirty.value) {
     const ok = await confirm({
-      title: 'Switch template?',
-      message: 'The new template replaces what you have entered in this form.',
-      confirmLabel: 'Switch',
+      title: t('form.template.switchTitle'),
+      message: t('form.template.switchMessage'),
+      confirmLabel: t('form.template.switch'),
       danger: true,
     })
     if (!ok) {
@@ -1258,7 +1259,7 @@ async function onTemplateChange(name: string) {
 // The variant name is a file-name identifier (`<type>--<variant>.md`), so
 // `-` and `_` stand in for spaces: `corrective_action` reads "Corrective action".
 function getTemplateLabel(name: string): string {
-  if (name === '') return 'Default'
+  if (name === '') return t('form.template.default')
   const words = name.replace(/[-_]+/g, ' ').trim()
   // A name of separators only has no words; show it as written.
   if (words === '') return name
@@ -1462,7 +1463,7 @@ function validate(scopeFields?: FormFieldOrRelation[], requiredProps?: Set<strin
     const isRequired = propDef.required || (requiredProps?.has(propName) ?? false)
     const hasStagedFile = (stagedFiles.value[propName]?.length ?? 0) > 0
     if (isRequired && !hasStagedFile && (value === undefined || value === null || value === '')) {
-      next[propName] = 'This field is required'
+      next[propName] = t('form.validation.required')
       scopeValid = false
       continue
     }
@@ -1472,7 +1473,7 @@ function validate(scopeFields?: FormFieldOrRelation[], requiredProps?: Set<strin
       if (propDef.type === 'integer' && typeof value === 'string') {
         const num = parseInt(value, 10)
         if (isNaN(num)) {
-          next[propName] = 'Must be a valid number'
+          next[propName] = t('form.validation.number')
           scopeValid = false
         }
       }
@@ -1480,7 +1481,7 @@ function validate(scopeFields?: FormFieldOrRelation[], requiredProps?: Set<strin
       if (propDef.type === 'date' && typeof value === 'string') {
         const date = new Date(value)
         if (isNaN(date.getTime())) {
-          next[propName] = 'Must be a valid date'
+          next[propName] = t('form.validation.date')
           scopeValid = false
         }
       }
@@ -1490,7 +1491,7 @@ function validate(scopeFields?: FormFieldOrRelation[], requiredProps?: Set<strin
         const items = propDef.list && Array.isArray(value) ? value : [value]
         const invalid = items.some((v) => !allowed.includes(String(v)))
         if (invalid) {
-          next[propName] = `Must be one of: ${allowed.join(', ')}`
+          next[propName] = t('form.validation.oneOf', { values: allowed.join(', ') })
           scopeValid = false
         }
       }
@@ -1634,16 +1635,18 @@ function relationTypeErrorMessage(
   lead: string
 ): string {
   const bad = untypedRelationKeys(filteredRelations, pickerTypes.value)
-  const which = bad.length > 0 ? ` for "${bad.join('", "')}"` : ''
   const owned = ownedRelationKeys(allFields.value)
   const anyRendered = bad.length === 0 || bad.some((rel) => owned.has(rel))
   const remedy = anyRendered
-    ? `Reload the form and try again; if it persists, ask your operator to check ` +
-      `this form's relation fields.`
-    : `This form has no field for it, so it arrived as a pre-filled link. Ask ` +
-      `your operator to check the originating create button's section config ` +
-      `against this form.`
-  return `${lead}: could not resolve the entity type of every related item${which}. ${remedy}`
+    ? t('form.relationType.remedyReload')
+    : t('form.relationType.remedyConfig')
+  return bad.length > 0
+    ? t('form.relationType.messageFor', {
+        lead,
+        relations: `"${bad.join('", "')}"`,
+        remedy,
+      })
+    : t('form.relationType.message', { lead, remedy })
 }
 
 // Property keys made required right now by a matching `required_when`.
@@ -1846,7 +1849,7 @@ async function handleSubmit(mode: SubmitMode = 'navigate') {
       // this form renders failed to type one of its own targets (a reload may
       // help), or a prefilled relation with no field here carried a peer whose
       // type nothing could resolve (a config problem — a reload will not help).
-      uiStore.error(relationTypeErrorMessage(filteredRelations, 'Save aborted'))
+      uiStore.error(relationTypeErrorMessage(filteredRelations, t('form.relationType.saveAborted')))
       // Drop the outgoing card-edit Map entries so they aren't
       // mistakenly cleared on success below.
       for (const key of Array.from(pendingCardChanges.value.keys())) {
@@ -1883,9 +1886,11 @@ async function handleSubmit(mode: SubmitMode = 'navigate') {
       const carried = sent.some((r) => r.id === linkParams.value!.peer)
       if (!carried) {
         uiStore.error(
-          `Cannot pre-link this ${formConfig.value.entity} to ${linkParams.value.peer}: ` +
-            `the form's "${linkParams.value.relation}" field cannot carry it. Ask your operator to check the ` +
-            `create button's section config against this form.`
+          t('form.preLinkFailed', {
+            type: formConfig.value.entity,
+            peer: linkParams.value.peer,
+            relation: linkParams.value.relation,
+          })
         )
         saving.value = false
         return
@@ -1937,7 +1942,7 @@ async function handleSubmit(mode: SubmitMode = 'navigate') {
     // `embedded` could silently break, the way the empty-query rule would
     // otherwise suggest the world is dropped too.
     if (createFace.needsFace.value && !createFace.face.value) {
-      uiStore.error('Choose a face for the new entity.')
+      uiStore.error(t('form.face.required'))
       saving.value = false
       return
     }
@@ -2004,7 +2009,7 @@ async function handleSubmit(mode: SubmitMode = 'navigate') {
         // and can see the gap — does not hold here: `return_to` sends them back
         // to the ORIGINATING entity, where a missing link looks exactly like a
         // section that has not refreshed yet.
-        uiStore.error(`${entity.id} was created, but linking it failed. Link it manually.`)
+        uiStore.error(t('form.autoLinkFailed', { id: entity.id }))
         // Continue with navigation even if link fails: the entity exists, and
         // stranding the user on a form that would re-create it on resubmit is
         // worse than landing them somewhere they can fix the link.
@@ -2053,10 +2058,10 @@ async function handleSubmit(mode: SubmitMode = 'navigate') {
       // only evidence it exists. (Toast carries no link — the store's Toast
       // type has no action field; making it clickable would change every toast
       // in the app and is deliberately out of scope.)
-      uiStore.success(`Created ${entity.id}. Form cleared for the next one.`)
-      announce(`Created ${entity.id}. Form cleared for the next entry.`)
+      uiStore.success(t('form.createdAgain', { id: entity.id }))
+      announce(t('form.createdAgainAnnouncement', { id: entity.id }))
     } else {
-      uiStore.success('Entity created successfully')
+      uiStore.success(t('form.created'))
     }
 
     // RR-QQQ2JR: the upload phase can outlive the component (the user clicks
@@ -2105,13 +2110,13 @@ async function handleSubmit(mode: SubmitMode = 'navigate') {
       const next = { ...errors.value }
       for (const e of validationErrors) {
         if (e.field) {
-          next[e.field] = e.message || e.detail || 'Invalid value'
+          next[e.field] = e.message || e.detail || t('form.validation.invalid')
         }
       }
       errors.value = next
-      uiStore.error('Please fix the validation errors')
+      uiStore.error(t('form.validation.fixErrors'))
     } else {
-      uiStore.error(getErrorMessage(err, 'Failed to save entity'))
+      uiStore.error(getErrorMessage(err, t('form.saveEntityFailed')))
     }
     console.error(err)
   } finally {
@@ -2236,9 +2241,9 @@ const changePolicy = useChangePolicy({
     confirmingClear.value = true
     try {
       return await confirm({
-        title: properties.length > 1 ? 'Clear these fields?' : 'Clear this field?',
+        title: t('form.clear.title', properties.length),
         message: clearConfirmMessage(properties),
-        confirmLabel: 'Clear',
+        confirmLabel: t('common.clear'),
         danger: true,
       })
     } finally {
@@ -2264,13 +2269,7 @@ function clearConfirmMessage(properties: string[]): string {
     const label = fieldByProperty.value.get(p)?.label || p
     return `• ${label}: ${describeValue(formData.value[p])}`
   })
-  return [
-    'This change hides the following, which will be cleared:',
-    '',
-    ...lines,
-    '',
-    'Continue?',
-  ].join('\n')
+  return [t('form.clear.intro'), '', ...lines, '', t('form.clear.continue')].join('\n')
 }
 
 /** Widget edits enter here. See useChangePolicy for why this is not a write. */
@@ -2448,7 +2447,7 @@ function buildAutoSaveRelationsBody(): ModernRelationsField | null {
     // A rendered picker target without a known type. Surface and skip —
     // autosave is best-effort. Ownership filtering above already removed the
     // unrendered-relation cause, so this is a genuine picker gap.
-    uiStore.error(relationTypeErrorMessage(filteredRelations, 'Relation changes were not saved'))
+    uiStore.error(relationTypeErrorMessage(filteredRelations, t('form.relationType.notSaved')))
     return null
   }
   return { ...reshaped, ...modernCards }
@@ -2487,7 +2486,7 @@ function updateIncomingPicker(relation: string, state: RelationPickerIncomingSta
 function surfaceWarnings(warnings: { code: string; path: string; detail: string }[] | undefined) {
   if (!warnings || warnings.length === 0) return
   const codes = [...new Set(warnings.map((w) => w.code))].join(', ')
-  uiStore.warning(`Saved with ${warnings.length} warning(s): ${codes}`)
+  uiStore.warning(t('form.savedWithWarnings', { n: warnings.length, codes }, warnings.length))
 }
 
 function updateContent(value: string) {
@@ -2648,10 +2647,7 @@ onMounted(async () => {
     if (f.relation && f.direction === 'incoming') {
       const inverse = schemaStore.getInverseName(f.relation)
       if (!inverse) {
-        uiStore.warning(
-          `Relation '${f.relation}' has no 'inverse:' declared in the metamodel. ` +
-            `Saving changes from this widget will fail until the metamodel is updated.`
-        )
+        uiStore.warning(t('form.relationNoInverse', { relation: f.relation }))
       }
     }
   }
@@ -2714,18 +2710,18 @@ if (!props.embedded) {
         return true
       }
       return await confirm({
-        title: 'Unsaved changes',
-        message: result.error ?? 'Some changes are still saving.',
-        confirmLabel: 'Leave anyway',
+        title: t('form.leave.title'),
+        message: result.error ?? t('form.leave.stillSaving'),
+        confirmLabel: t('form.leave.anyway'),
         danger: true,
       })
     }
     // Create-mode / no autosave: original prompt.
     if (!dirty.value) return true
     const ok = await confirm({
-      title: 'Unsaved changes',
-      message: 'You have unsaved changes. Are you sure you want to leave?',
-      confirmLabel: 'Leave',
+      title: t('form.leave.title'),
+      message: t('form.leave.message'),
+      confirmLabel: t('form.leave.leave'),
       danger: true,
     })
     if (ok) dirty.value = false
@@ -2773,7 +2769,7 @@ defineExpose({
         <button
           type="button"
           class="help-btn"
-          title="Show help for this entity type"
+          :title="t('form.showHelp')"
           @click="helpModalOpen = true"
         >
           ?
@@ -2784,24 +2780,24 @@ defineExpose({
       <div v-if="!isEdit && templates.length > 1" class="template-selector">
         <RlSelect
           :key="templateSelectKey"
-          label="Template"
+          :label="t('form.template.label')"
           :model-value="selectedTemplate"
           :options="templateOptions"
           @update:model-value="onTemplateChange"
         />
       </div>
 
-      <RlStatusRegion v-if="showBlockLoader">Loading…</RlStatusRegion>
+      <RlStatusRegion v-if="showBlockLoader">{{ t('common.loading') }}</RlStatusRegion>
       <div v-else-if="loading" class="form-loading-placeholder" />
 
       <div v-else-if="notEditable" class="not-editable-state">
-        <h2>This entity is not editable</h2>
+        <h2>{{ t('form.notEditable.title') }}</h2>
         <p v-if="notEditableNote">{{ notEditableNote }}</p>
-        <p v-else>
-          Your current permissions don't allow updating
-          <code>{{ entityId }}</code
-          >. Return to the entity view to see available actions.
-        </p>
+        <I18nT v-else keypath="form.notEditable.body" tag="p">
+          <template #id>
+            <code>{{ entityId }}</code>
+          </template>
+        </I18nT>
         <RlButton
           v-if="formConfig && entityId"
           :as="RouterLink"
@@ -2811,7 +2807,7 @@ defineExpose({
             query: formWorld ? { world: formWorld } : {},
           }"
         >
-          ← Back to entity
+          {{ t('form.backToEntity') }}
         </RlButton>
       </div>
 
@@ -2819,30 +2815,32 @@ defineExpose({
            SubmitEvent as the first argument, which would land in `mode`. -->
       <form v-else @submit.prevent="handleSubmit('navigate')">
         <div v-if="showReadOnlyID" class="form-field id-field">
-          <label>ID</label>
+          <label>{{ t('form.id.label') }}</label>
           <div class="id-display">{{ entityId }}</div>
-          <p class="field-help">IDs cannot be changed here; use rename.</p>
+          <p class="field-help">{{ t('form.id.readOnlyHelp') }}</p>
         </div>
         <div v-if="showManualIDInput" class="form-field id-field">
-          <label>ID <span class="required">*</span></label>
-          <input v-model="manualId" type="text" required placeholder="Unique ID..." />
+          <label>{{ t('form.id.label') }} <span class="required">*</span></label>
+          <input v-model="manualId" type="text" required :placeholder="t('form.id.placeholder')" />
         </div>
         <div v-if="createFace.needsFace.value" class="form-field id-field">
-          <label for="create-face">Face <span class="required">*</span></label>
+          <label for="create-face"
+            >{{ t('form.face.label') }} <span class="required">*</span></label
+          >
           <select
             id="create-face"
             v-model="createFace.face.value"
             data-testid="create-face"
             required
           >
-            <option value="" disabled>Choose a face...</option>
+            <option value="" disabled>{{ t('form.face.placeholder') }}</option>
             <option v-for="f in createFace.faces.value" :key="f" :value="f">
               {{ entityType?.faces?.[f]?.label || f }}
             </option>
           </select>
         </div>
         <div v-if="showPrefixPicker" class="form-field id-field">
-          <label>Prefix <span class="required">*</span></label>
+          <label>{{ t('form.id.prefix') }} <span class="required">*</span></label>
           <select v-model="selectedPrefix" required>
             <option v-for="p in prefixOptions" :key="p" :value="p">{{ p }}</option>
           </select>
@@ -2851,7 +2849,7 @@ defineExpose({
         <!-- Every form renders through the same step model. A single-page (flat)
              form is one implicit, title-less step, so the stepper bar only shows
              when there is more than one step. -->
-        <ol v-if="wizard.isMultiStep.value" class="wizard-steps" aria-label="Form steps">
+        <ol v-if="wizard.isMultiStep.value" class="wizard-steps" :aria-label="t('form.steps')">
           <li v-for="(step, sIdx) in wizard.visibleSteps.value" :key="sIdx">
             <button
               type="button"
@@ -2910,11 +2908,11 @@ defineExpose({
         </div>
 
         <!-- Degenerate config: every step is conditionally hidden right now. -->
-        <p v-else class="section-description">No fields to display.</p>
+        <p v-else class="section-description">{{ t('form.noFields') }}</p>
 
         <!-- Content field (markdown body). Shown on the final (or only) step. -->
         <div v-if="wizard.isLastStep.value" class="form-field content-field">
-          <label for="content">Content</label>
+          <label for="content">{{ t('form.content') }}</label>
           <MarkdownEditor
             ref="markdownEditorRef"
             :model-value="content"
@@ -2943,12 +2941,16 @@ defineExpose({
         <!-- Submit-time validation summary (create only — edit autosaves and has
              no submit gate). Announced via role=alert. -->
         <p v-if="!isEdit && errorCount > 0" class="wizard-error-summary" role="alert">
-          ⚠ {{ errorCount }}
-          {{ errorCount === 1 ? 'field needs' : 'fields need' }} attention<template
-            v-if="wizard.isMultiStep.value && stepsWithErrors.size > 0"
-          >
-            — see the flagged step{{ stepsWithErrors.size === 1 ? '' : 's' }} above</template
-          >.
+          {{
+            wizard.isMultiStep.value && stepsWithErrors.size > 0
+              ? t('form.errorSummary.withSteps', {
+                  fields: t('form.errorSummary.fields', { n: errorCount }, errorCount),
+                  steps: t('form.errorSummary.steps', stepsWithErrors.size),
+                })
+              : t('form.errorSummary.plain', {
+                  fields: t('form.errorSummary.fields', { n: errorCount }, errorCount),
+                })
+          }}
         </p>
 
         <!--
@@ -2961,17 +2963,17 @@ defineExpose({
         <div v-if="wizard.currentStepDef.value" class="form-actions mobile-actionbar">
           <!-- Leave-the-form control (autosave Back in edit, Cancel in create). -->
           <RlButton variant="secondary" :disabled="!autoSave && saving" @click="handleCancel">
-            {{ autoSave ? 'Back' : 'Cancel' }}
+            {{ autoSave ? t('common.back') : t('common.cancel') }}
             <template #trailing><RlKbd keys="Esc" /></template>
           </RlButton>
 
           <!-- Step navigation (multi-step only). -->
           <template v-if="wizard.isMultiStep.value">
             <RlButton variant="secondary" :disabled="wizard.isFirstStep.value" @click="handleBack">
-              ← Prev step
+              {{ t('form.prevStep') }}
             </RlButton>
             <RlButton v-if="!wizard.isLastStep.value" variant="primary" @click="handleNext">
-              Next step →
+              {{ t('form.nextStep') }}
             </RlButton>
           </template>
 
@@ -2981,9 +2983,9 @@ defineExpose({
             type="submit"
             variant="primary"
             :loading="saving"
-            pending-label="Saving…"
+            :pending-label="t('common.saving')"
           >
-            Create
+            {{ t('common.create') }}
             <template #trailing><RlKbd keys="&#8984;+&#8629;" /></template>
           </RlButton>
 
@@ -3000,10 +3002,10 @@ defineExpose({
             v-if="!isEdit && (!embedded || embeddedAddAnother) && wizard.isLastStep.value"
             variant="secondary"
             :loading="saving"
-            pending-label="Saving…"
+            :pending-label="t('common.saving')"
             @click="handleSubmit('again')"
           >
-            Create &amp; add another
+            {{ t('form.createAndAddAnother') }}
           </RlButton>
 
           <!-- Edit: ambient autosave status stands in for a Save button. -->
@@ -3021,7 +3023,7 @@ defineExpose({
   </div>
 
   <RlStatusRegion v-else tone="error">
-    The form "{{ formId }}" does not exist in the configuration.
+    {{ t('form.missingForm', { id: formId }) }}
   </RlStatusRegion>
 
   <!-- Help Modal -->

@@ -1,6 +1,7 @@
 import { computed, ref, toValue, type MaybeRefOrGetter } from 'vue'
 import { useRouter } from 'vue-router'
 import { useSchemaStore } from '@/stores'
+import { t } from '@/i18n'
 import { runAction } from '@/api/actions'
 import { useActionFeedback } from './useActionFeedback'
 import { useConfirm } from './useConfirm'
@@ -55,8 +56,9 @@ export function useToolbarActions(
     const triggerEl = ev?.currentTarget instanceof HTMLElement ? ev.currentTarget : null
     if (config.confirm) {
       const ok = await confirm({
-        title: `${label}?`,
-        message: typeof config.confirm === 'string' ? config.confirm : `Run ${label}?`,
+        title: t('entity.action.confirmTitle', { label }),
+        message:
+          typeof config.confirm === 'string' ? config.confirm : t('page.confirmRun', { label }),
         confirmLabel: label,
       })
       if (!ok) return
@@ -64,7 +66,7 @@ export function useToolbarActions(
     busy.value = true
     try {
       const res = await runAction(id)
-      reportResult(res, `${label}: done`)
+      reportResult(res, t('entity.action.done', { label }))
       if (res?.redirect) {
         void router.push(res.redirect)
         return

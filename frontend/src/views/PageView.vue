@@ -19,6 +19,8 @@
  */
 import { computed, defineAsyncComponent, onBeforeUnmount, watchEffect, type Component } from 'vue'
 import { RouterLink, useRouter } from 'vue-router'
+import { useI18n } from 'vue-i18n'
+import { intlLocale } from '@/i18n/locale'
 import { useQuery, useQueryCache } from '@pinia/colada'
 import RlEmptyState from 'rela-components/components/feedback/RlEmptyState.vue'
 import { isIconName } from 'rela-components/components/common/icons'
@@ -45,6 +47,7 @@ const props = defineProps<{
 }>()
 
 const router = useRouter()
+const { t } = useI18n()
 const pageStore = usePageStore()
 const spaceStore = useSpaceStore()
 const frame = usePageFrame()
@@ -231,11 +234,14 @@ onBeforeUnmount(() => {
     <RlEmptyState
       v-if="pageStore.loaded && pageConfig && anchorMissing"
       icon="warning"
-      title="Not found"
+      :title="t('page.notFound')"
       :description="
         anchorId
-          ? `There is no ${pageConfig.label.toLowerCase()} “${anchorId}”, or you cannot open it.`
-          : `Open a ${pageConfig.label.toLowerCase()} to see this page.`
+          ? t('page.anchorMissing', {
+              type: pageConfig.label.toLocaleLowerCase(intlLocale()),
+              id: anchorId,
+            })
+          : t('page.anchorNone', { type: pageConfig.label.toLocaleLowerCase(intlLocale()) })
       "
     />
     <component
@@ -247,13 +253,13 @@ onBeforeUnmount(() => {
     <RlEmptyState
       v-else-if="pageStore.loaded && !pageConfig"
       icon="warning"
-      title="Page not found"
-      :description="`There is no page “${page}” in the configuration.`"
+      :title="t('page.pageNotFound')"
+      :description="t('page.pageNotConfigured', { page })"
     />
     <RlEmptyState
       v-else-if="pageStore.loaded && tabs.length === 0"
-      title="Nothing to show"
-      description="This page has no views you can open."
+      :title="t('page.nothingToShow')"
+      :description="t('page.noViews')"
     />
   </div>
 </template>

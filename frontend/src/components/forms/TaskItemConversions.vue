@@ -1,5 +1,6 @@
 <script lang="ts">
 import type { PropertyDef, TaskItemConversionOffer } from '@/types'
+import { t as translate } from '@/i18n'
 import type { TaskItemTarget } from './milkdown/taskItemConvert'
 import type { EntityRefInsert } from './milkdown/insertEntityRef'
 
@@ -22,7 +23,7 @@ export interface TaskItemEditor {
 export function taskItemConvertLabel(offers: TaskItemConversionOffer[] | undefined): string {
   const allowed = (offers ?? []).filter((o) => o.allowed)
   if (allowed.length === 0) return ''
-  return allowed.length === 1 ? allowed[0].label : 'Convert task item'
+  return allowed.length === 1 ? allowed[0].label : translate('form.taskItem.convert')
 }
 </script>
 
@@ -41,6 +42,7 @@ export function taskItemConvertLabel(offers: TaskItemConversionOffer[] | undefin
  * it, so it lands on the item that was converted, wherever edits moved it.
  */
 import { computed, reactive, ref } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { useSchemaStore } from '@/stores'
 import { useUIStore } from '@/stores/ui'
 import { getErrorMessage } from '@/api'
@@ -70,6 +72,7 @@ const props = defineProps<{
 
 const schema = useSchemaStore()
 const ui = useUIStore()
+const { t } = useI18n()
 
 const allowed = computed(() => (props.offers ?? []).filter((o) => o.allowed))
 const step = ref<'closed' | 'choose' | 'fields'>('closed')
@@ -214,8 +217,9 @@ async function commit(properties?: Record<string, unknown>) {
     // the item from being converted into a second one.
     close()
     const linked = apply(item, 'link', { id, title: '', entityType: chosen.to })
-    const missing = `Created ${id}, but could not link it to this item's source. Link it by hand.`
-    ui.error(linked ? missing : `${missing} The task item changed, so it was left as it is.`)
+    ui.error(
+      linked ? t('form.taskItem.notLinked', { id }) : t('form.taskItem.notLinkedChanged', { id })
+    )
     return
   }
   close()
@@ -228,11 +232,19 @@ async function commit(properties?: Record<string, unknown>) {
   const warnings = result.warnings ?? []
   const codes = [...new Set(warnings.map((w) => w.code))].join(', ')
   const created = warnings.length
-    ? `Created ${result.entity_id} with ${warnings.length} warning(s): ${codes}`
-    : `Created ${result.entity_id}`
+    ? t(
+        'form.taskItem.createdWithWarnings',
+        {
+          id: result.entity_id,
+          n: warnings.length,
+          codes,
+        },
+        warnings.length
+      )
+    : t('form.taskItem.created', { id: result.entity_id })
   if (!applied) {
     // The entity exists; only the edit to the body could not be made.
-    ui.warning(`${created}, but the task item changed, so it was left as it is`)
+    ui.warning(t('form.taskItem.createdChanged', { created }))
   } else if (warnings.length) {
     ui.warning(created)
   } else {
@@ -253,7 +265,7 @@ async function run(fn: () => Promise<void>) {
   try {
     await fn()
   } catch (err) {
-    const message = getErrorMessage(err, 'Conversion failed')
+    const message = getErrorMessage(err, t('form.taskItem.failed'))
     if (step.value === 'closed') ui.error(message)
     else error.value = message
   } finally {
@@ -284,7 +296,7 @@ defineExpose({ start, panels })
     v-if="step !== 'closed'"
     class="task-item-dialog"
     :open="true"
-    :title="step === 'fields' && offer ? offer.label : 'Convert task item'"
+    :title="step === 'fields' && offer ? offer.label : t('form.taskItem.convert')"
     @close="close"
   >
     <p class="task-item-text">{{ target?.text }}</p>
@@ -294,7 +306,7 @@ defineExpose({ start, panels })
         :key="choice.name"
         variant="secondary"
         :loading="busy && offer?.name === choice.name"
-        pending-label="Converting…"
+        :pending-label="t('form.taskItem.converting')"
         :disabled="busy && offer?.name !== choice.name"
         @click="choose(choice)"
         >{{ choice.label }}</RlButton
@@ -317,7 +329,7 @@ defineExpose({ start, panels })
           :model-value="String(values[name] ?? '')"
           :label="fieldLabel(name)"
           :options="enumOptions(name)"
-          placeholder="Select…"
+          :placeholder="t('form.selectPlaceholder')"
           required
           @update:model-value="values[name] = $event"
         />
@@ -364,7 +376,7 @@ defineExpose({ start, panels })
             Array.isArray(values[name]) ? values[name].join(', ') : String(values[name] ?? '')
           "
           :label="fieldLabel(name)"
-          :hint="fieldDef(name)?.list ? 'Separate values with commas.' : undefined"
+          :hint="fieldDef(name)?.list ? t('form.separateWithCommas') : undefined"
           required
           autocomplete="off"
           @update:model-value="setValue(name, $event)"
@@ -374,15 +386,17 @@ defineExpose({ start, panels })
     <p v-if="error" role="alert">{{ error }}</p>
     <template #actions>
       <RlButtonGroup>
-        <RlButton variant="secondary" :disabled="busy" @click="close">Cancel</RlButton>
+        <RlButton variant="secondary" :disabled="busy" @click="close">{{
+          t('common.cancel')
+        }}</RlButton>
         <RlButton
           v-if="step === 'fields'"
           variant="primary"
           type="submit"
           form="task-item-fields"
           :loading="busy"
-          pending-label="Creating…"
-          >Create</RlButton
+          :pending-label="t('common.creating')"
+          >{{ t('common.create') }}</RlButton
         >
       </RlButtonGroup>
     </template>

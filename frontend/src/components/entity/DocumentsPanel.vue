@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, computed, watch, onMounted, onUnmounted, nextTick, useTemplateRef } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import { useI18n } from 'vue-i18n'
 import { useSchemaStore, useUIStore } from '@/stores'
 import { useScriptErrorStore } from '@/stores/scriptError'
 import { renderDocument } from '@/api/documents'
@@ -28,6 +29,7 @@ const route = useRoute()
 const router = useRouter()
 const schemaStore = useSchemaStore()
 const uiStore = useUIStore()
+const { t } = useI18n()
 const scriptErrorStore = useScriptErrorStore()
 const { on, off } = useEvents()
 
@@ -191,7 +193,7 @@ async function loadDocument(refresh = false, cold = false) {
     if (scriptErr) {
       scriptErrorStore.show(scriptErr)
     } else {
-      uiStore.error(getErrorMessage(err, 'Failed to render document'))
+      uiStore.error(getErrorMessage(err, t('document.renderFailed')))
     }
     // Keep whatever is already rendered. The error is surfaced via the toast
     // or the script-error panel, so replacing a readable document with the
@@ -247,7 +249,7 @@ function getDocTitle(name: string, config: DocumentConfig): string {
 <template>
   <section v-if="availableDocuments.length > 0" class="documents-panel">
     <header class="panel-header">
-      <h2>Documents</h2>
+      <h2>{{ t('document.panelTitle') }}</h2>
       <div class="header-controls">
         <select v-if="availableDocuments.length > 1" v-model="selectedDoc" class="doc-select">
           <option v-for="doc in availableDocuments" :key="doc.name" :value="doc.name">
@@ -258,21 +260,21 @@ function getDocTitle(name: string, config: DocumentConfig): string {
           variant="secondary"
           size="sm"
           :loading="loading"
-          pending-label="Refreshing…"
-          title="Refresh document"
+          :pending-label="t('document.refreshing')"
+          :title="t('document.refreshTitle')"
           @click="loadDocument(true)"
         >
-          Refresh
+          {{ t('document.refresh') }}
         </RlButton>
       </div>
     </header>
 
-    <RlStatusRegion v-if="showBlockLoader" size="sm" pending-label="Rendering">
-      Rendering document...
+    <RlStatusRegion v-if="showBlockLoader" size="sm" :pending-label="t('document.rendering')">
+      {{ t('document.renderingDocument') }}
     </RlStatusRegion>
 
     <div v-else-if="docContent" class="document-content">
-      <div v-if="isCached" class="cached-badge">cached</div>
+      <div v-if="isCached" class="cached-badge">{{ t('document.cached') }}</div>
       <div
         ref="docBody"
         class="document-body md-body"
@@ -289,7 +291,7 @@ function getDocTitle(name: string, config: DocumentConfig): string {
          the document as unconfigured, and config names are not secret
          (docs/acl-security.md). -->
     <div v-else class="empty-state">
-      <p>No document content available</p>
+      <p>{{ t('document.empty') }}</p>
     </div>
   </section>
 </template>

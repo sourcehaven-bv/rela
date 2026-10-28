@@ -6,8 +6,8 @@ import { ref } from 'vue'
 import { useEntitiesStore } from '@/stores/entities'
 import {
   useAutoSave,
-  CONFLICT_MESSAGE,
-  CONTENT_CONFLICT_MESSAGE,
+  conflictMessage,
+  contentConflictMessage,
   type AutoSaveOptions,
 } from './useAutoSave'
 import { ApiError } from '@/api/errors'
@@ -181,9 +181,9 @@ describe('useAutoSave preconditions', () => {
     await vi.runAllTimersAsync()
 
     expect(h.updateMock).toHaveBeenCalledTimes(1)
-    expect(h.autoSave.fieldErrors.value.status).toBe(CONFLICT_MESSAGE)
+    expect(h.autoSave.fieldErrors.value.status).toBe(conflictMessage())
     expect(h.onError).toHaveBeenCalledWith(
-      CONFLICT_MESSAGE,
+      conflictMessage(),
       expect.objectContaining({ status: 412 })
     )
     expect(h.formData.value.status).toBe('done')
@@ -226,7 +226,7 @@ describe('useAutoSave preconditions', () => {
     h.autoSave.scheduleContentSave('mine\n')
     await vi.runAllTimersAsync()
     expect(h.updateMock).toHaveBeenCalledTimes(1)
-    expect(h.autoSave.contentError.value).toBe(CONTENT_CONFLICT_MESSAGE)
+    expect(h.autoSave.contentError.value).toBe(contentConflictMessage())
     expect(h.contentRef.value).toBe('mine\n')
   })
 
@@ -338,7 +338,7 @@ describe('useAutoSave preconditions', () => {
     h.contentRef.value = 'A1\nb\nc\n'
     h.autoSave.scheduleContentSave('A1\nb\nc\n')
     await vi.runAllTimersAsync()
-    expect(h.autoSave.contentError.value).toBe(CONTENT_CONFLICT_MESSAGE)
+    expect(h.autoSave.contentError.value).toBe(contentConflictMessage())
     expect(h.contentRef.value).toBe('A1\nb\nC\n')
 
     h.autoSave.scheduleContentSave('A1\nb\nC\nd\n')
@@ -388,7 +388,7 @@ describe('useAutoSave preconditions', () => {
     h.autoSave.scheduleContentSave('A\nb\nc\n')
     await vi.runAllTimersAsync()
     expect(h.updateMock).toHaveBeenCalledTimes(1)
-    expect(h.autoSave.contentError.value).toBe(CONTENT_CONFLICT_MESSAGE)
+    expect(h.autoSave.contentError.value).toBe(contentConflictMessage())
   })
 
   // AC10 (RR-R2A2T5): a property the refetch does not carry (redacted for

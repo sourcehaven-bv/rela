@@ -16,6 +16,7 @@ import { entityKeys } from '@/queries/entities'
 import { useConfirm } from '@/composables/useConfirm'
 import { useDetailPanel } from '@/composables/useDetailPanel'
 import { useUIStore } from '@/stores'
+import { t } from '@/i18n'
 import { useSchemaStore } from '@/stores/schema'
 import { useSpaceStore } from '@/stores/space'
 import { isFieldWritable, isPropertyRedacted } from '@/utils/affordances'
@@ -74,7 +75,7 @@ export function useEntityPageEditing(options: {
         empty ? { properties_unset: [property] } : { properties: { [property]: value } }
       )
     } catch (err) {
-      uiStore.error(err instanceof Error ? err.message : 'Failed to save')
+      uiStore.error(err instanceof Error ? err.message : t('page.saveFailed'))
     }
     void queryCache.invalidateQueries({ key })
     void queryCache.invalidateQueries({ key: entityKeys.list(type) })
@@ -139,24 +140,26 @@ export function useEntityPageEditing(options: {
     const ref = entityRef(entity)
     const face = refFace(ref)
     const ok = await confirm({
-      title: `Delete ${typeDef.value?.label ?? type}?`,
+      title: t('page.deleteTitle', { type: typeDef.value?.label ?? type }),
       message: face
-        ? `Are you sure you want to delete the ${schemaStore.faceLabel(type, face) || face} face of '${entityDisplayTitle(entity)}'? ` +
-          'Its other faces are kept. This action cannot be undone.'
-        : `Are you sure you want to delete '${entityDisplayTitle(entity)}'? This action cannot be undone.`,
-      confirmLabel: 'Delete',
+        ? t('entity.delete.faceMessage', {
+            face: schemaStore.faceLabel(type, face) || face,
+            id: entityDisplayTitle(entity),
+          })
+        : t('entity.delete.message', { id: entityDisplayTitle(entity) }),
+      confirmLabel: t('common.delete'),
       danger: true,
     })
     if (!ok) return
     try {
       await deleteEntity(type, ref)
     } catch (err) {
-      uiStore.error(err instanceof Error ? err.message : 'Failed to delete')
+      uiStore.error(err instanceof Error ? err.message : t('page.deleteFailed'))
       return
     }
     panel.clear()
     void queryCache.invalidateQueries({ key: entityKeys.list(type) })
-    uiStore.success('Deleted')
+    uiStore.success(t('page.deleted'))
     // The page was this entity; the space's home is the nearest place left.
     void router.push(spaceStore.href('/'))
   }

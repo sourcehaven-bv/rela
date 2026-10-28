@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, watch, onMounted } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { RouterLink, useRouter, type RouteLocationRaw } from 'vue-router'
 import { api } from '@/api/client'
 import { isCancelledFetch } from '@/composables/usePageData'
@@ -16,6 +17,7 @@ const props = defineProps<{
   entityId?: string
 }>()
 
+const { t } = useI18n()
 const router = useRouter()
 const { worldParam } = useWorld()
 
@@ -45,7 +47,7 @@ async function loadSidePanel() {
     // (see BUG-6C3V and src/composables/usePageData.ts).
     if (isCancelledFetch(err)) return
     console.error('Failed to load side panel:', err)
-    error.value = 'Failed to load side panel'
+    error.value = t('form.sidePanel.loadFailed')
     sections.value = []
   } finally {
     loading.value = false
@@ -99,7 +101,7 @@ onMounted(() => loadSidePanel())
 
 <template>
   <aside v-if="hasSections || loading" class="side-panel">
-    <RlStatusRegion v-if="loading" size="sm">Loading side panel…</RlStatusRegion>
+    <RlStatusRegion v-if="loading" size="sm">{{ t('form.sidePanel.loading') }}</RlStatusRegion>
 
     <RlStatusRegion v-else-if="error" tone="error" size="sm">{{ error }}</RlStatusRegion>
 
@@ -121,7 +123,7 @@ onMounted(() => loadSidePanel())
         <div v-if="!isCollapsed(section.sectionId)" class="section-content">
           <!-- Empty state -->
           <div v-if="section.isEmpty" class="empty-state">
-            {{ section.emptyMessage || 'No items' }}
+            {{ section.emptyMessage || t('form.sidePanel.noItems') }}
           </div>
 
           <!-- Properties display -->

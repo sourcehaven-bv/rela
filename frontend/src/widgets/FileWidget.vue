@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, shallowRef, watch } from 'vue'
+import { useI18n } from 'vue-i18n'
 import type { WidgetProps } from './types'
 import type { AttachmentInfo } from '@/types'
 import {
@@ -27,6 +28,7 @@ const emit = defineEmits<{
 }>()
 
 const { confirm } = useConfirm()
+const { t } = useI18n()
 
 const files = computed<AttachmentInfo[]>(() => props.attachments ?? [])
 const staged = computed<File[]>(() => props.stagedFiles ?? [])
@@ -149,7 +151,7 @@ function stagedCard(file: File, index: number): Attachment {
     id: `staged-${index}`,
     name: file.name,
     kind: attachmentKind(file.name, file.type),
-    action: 'Pending save',
+    action: t('widgets.file.pendingSave'),
     preview: stagedPreviewUrl(file),
   }
 }
@@ -173,7 +175,7 @@ async function doUpload(file: File) {
 
 // Frames the shared reason (RR-1556G1 M4) as a sentence for inline display.
 function uploadErrorMessage(err: unknown): string {
-  return `Upload failed: ${attachmentErrorReason(err)}.`
+  return t('widgets.file.uploadFailed', { reason: attachmentErrorReason(err) })
 }
 
 async function doDelete(att: AttachmentInfo) {
@@ -181,9 +183,9 @@ async function doDelete(att: AttachmentInfo) {
   // Deleting removes the stored file for good, so it asks first. Unstaging a
   // pending file does not: nothing has been saved yet.
   const ok = await confirm({
-    title: 'Delete attachment?',
-    message: `'${att.filename}' will be deleted. This cannot be undone.`,
-    confirmLabel: 'Delete',
+    title: t('widgets.file.deleteTitle'),
+    message: t('widgets.file.deleteMessage', { name: att.filename }),
+    confirmLabel: t('common.delete'),
     danger: true,
   })
   if (!ok) return
@@ -193,7 +195,7 @@ async function doDelete(att: AttachmentInfo) {
     await deleteAttachment(att.href)
     emit('attachment-changed')
   } catch (err) {
-    uploadError.value = err instanceof AttachmentError ? err.message : 'Delete failed.'
+    uploadError.value = err instanceof AttachmentError ? err.message : t('widgets.file.deleteFailed')
   } finally {
     busy.value = false
   }
@@ -250,7 +252,7 @@ function onDrop(event: DragEvent) {
       />
     </RlAttachmentList>
 
-    <span v-else-if="mode !== 'edit'" class="file-empty">No file attached</span>
+    <span v-else-if="mode !== 'edit'" class="file-empty">{{ t('widgets.file.none') }}</span>
 
     <!-- Add / replace control (edit mode, with room). -->
     <div
@@ -263,9 +265,13 @@ function onDrop(event: DragEvent) {
     >
       <label class="file-pick">
         <input type="file" :disabled="busy" @change="onFileInput" />
-        <span>{{ isSingle && (files.length || staged.length) ? 'Replace file' : 'Add a file' }}</span>
+        <span>{{
+          isSingle && (files.length || staged.length)
+            ? t('widgets.file.replace')
+            : t('widgets.file.add')
+        }}</span>
       </label>
-      <span class="file-hint">or drag &amp; drop</span>
+      <span class="file-hint">{{ t('widgets.file.dragHint') }}</span>
       <span v-if="!isSingle" class="file-count">
         {{ files.length + staged.length }} / {{ maxCount }}
       </span>
@@ -273,12 +279,12 @@ function onDrop(event: DragEvent) {
 
     <!-- At capacity in multi mode: explain why no add control. -->
     <p v-else-if="(canEdit || canStage) && !isSingle && atCapacity" class="file-edit-note">
-      Maximum of {{ maxCount }} files reached — remove one to add another.
+      {{ t('widgets.file.atCapacity', { n: maxCount }) }}
     </p>
 
     <!-- Edit mode but the widget can't mutate (no entity context / ACL). -->
     <p v-else-if="mode === 'edit' && !canEdit && !canStage" class="file-edit-note">
-      {{ disabled ? 'Editing this attachment is not permitted.' : 'Attachment editing unavailable.' }}
+      {{ disabled ? t('widgets.file.notPermitted') : t('widgets.file.unavailable') }}
     </p>
 
     <!-- Upload progress. -->

@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
+import { useI18n } from 'vue-i18n'
 import type { WidgetProps } from './types'
 import { useUIStore } from '@/stores'
 import { useStringValue } from './useStringValue'
@@ -10,6 +11,7 @@ import {
 } from '@/utils/format'
 
 const props = defineProps<WidgetProps>()
+const { t } = useI18n()
 
 const emit = defineEmits<{
   'update:modelValue': [value: unknown]
@@ -61,7 +63,7 @@ function onInput(event: Event) {
       :disabled="disabled"
       @input="onInput"
     />
-    <span class="tz-indicator">Times shown in {{ timezone }}</span>
+    <span class="tz-indicator">{{ t('widgets.datetime.timezone', { timezone }) }}</span>
   </div>
 </template>
 

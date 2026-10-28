@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, watch, onBeforeUnmount } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { RouterLink, type RouteLocationRaw } from 'vue-router'
 import RlButton from 'rela-components/components/common/RlButton.vue'
 import { getMentionedBy, type MentionSource } from '@/api/mentions'
@@ -19,6 +20,7 @@ const props = defineProps<{
 }>()
 
 const { worldParam } = useWorld()
+const { t } = useI18n()
 
 const items = ref<MentionSource[]>([])
 const nextCursor = ref<string | undefined>()
@@ -96,7 +98,7 @@ onBeforeUnmount(() => controller?.abort())
     class="mentioned-by-panel"
     aria-labelledby="mentioned-by-heading"
   >
-    <h2 id="mentioned-by-heading" class="panel-heading">Mentioned by</h2>
+    <h2 id="mentioned-by-heading" class="panel-heading">{{ t('entity.mentionedBy.title') }}</h2>
     <p v-if="error" class="panel-error" role="alert">{{ error }}</p>
     <ul v-if="items.length > 0" class="mention-list">
       <li v-for="s in items" :key="sourceAddress(s)" :data-entity-id="s.id">
@@ -107,17 +109,17 @@ onBeforeUnmount(() => controller?.abort())
       </li>
     </ul>
     <p v-if="truncated" class="panel-note">
-      Some entities that mention this one could not be listed.
+      {{ t('entity.mentionedBy.truncated') }}
     </p>
     <div v-if="nextCursor" class="panel-more">
       <RlButton
         variant="secondary"
         size="sm"
         :loading="loadingMore"
-        pending-label="Loading…"
+        :pending-label="t('common.loading')"
         @click="loadMore"
       >
-        Show more
+        {{ t('entity.mentionedBy.showMore') }}
       </RlButton>
     </div>
   </section>

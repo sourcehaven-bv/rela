@@ -3,7 +3,23 @@
 // the panel only needs added/removed/unchanged line classification, not a full
 // patch format.
 
+import { t } from '@/i18n'
+
 export type DiffOp = 'equal' | 'add' | 'del'
+
+// The history timeline's badge text per version op, as literal keys.
+const VERSION_OP_KEYS = {
+  create: 'history.op.create',
+  update: 'history.op.update',
+  rename: 'history.op.rename',
+  delete: 'history.op.delete',
+} as const
+
+/** The badge text for a version op; an op this list does not know shows as sent. */
+export function versionOpLabel(op: string): string {
+  const key = VERSION_OP_KEYS[op as keyof typeof VERSION_OP_KEYS]
+  return key ? t(key) : op
+}
 
 export interface DiffLine {
   op: DiffOp

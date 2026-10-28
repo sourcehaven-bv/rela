@@ -17,6 +17,7 @@
  * while the body is open (TKT-3IBLIP).
  */
 import { computed, ref } from 'vue'
+import { useI18n } from 'vue-i18n'
 import RlInlineEdit from 'rela-components/components/common/RlInlineEdit.vue'
 import MarkdownEditor from '@/components/forms/milkdown/MilkdownEditor.vue'
 import TaskItemConversions, {
@@ -54,6 +55,7 @@ function conversionDialogs(): Element[] {
 // The editor owns the document while it is open. Feeding each save back in
 // as `modelValue` would reset it under the cursor, so it opens on a snapshot.
 const draft = ref('')
+const { t } = useI18n()
 
 function onLeave() {
   editorRef.value?.flush()
@@ -76,7 +78,7 @@ function onEditorKeydown(event: KeyboardEvent) {
     v-if="editable"
     block
     trigger="explicit"
-    label="Body"
+    :label="t('entity.bodyLabel')"
     :keep-open-within="conversionDialogs"
     @edit="draft = props.content"
     @commit="onLeave"

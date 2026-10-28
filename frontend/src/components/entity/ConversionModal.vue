@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, reactive, ref, watch } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { useModalStack } from '@/composables/modalStack'
 import { useSchemaStore } from '@/stores'
 import type { ConversionOffer, Entity, PropertyDef } from '@/types'
@@ -12,6 +13,7 @@ const props = defineProps<{ source: Entity; offer: ConversionOffer }>()
 const emit = defineEmits<{ close: []; converted: [id: string, face: string] }>()
 useModalStack(computed(() => true))
 const schema = useSchemaStore()
+const { t } = useI18n()
 const target = computed(() => schema.getEntityType(props.offer.to))
 const values = reactive<Record<string, unknown>>({})
 const targetID = ref('')
@@ -23,7 +25,7 @@ const acceptDrops = ref(false)
 const reviewed = ref(false)
 const targetLabel = computed(() => target.value?.label || props.offer.to)
 function faceLabel(face: string) {
-  return face || 'default face'
+  return face || t('entity.convert.defaultFaceLower')
 }
 const faceMapping = reactive<Record<string, string>>({})
 // A changed input invalidates the reviewed preview.
@@ -70,23 +72,29 @@ async function submit() {
     }
     preview.value = await previewConversion(props.offer.name, request)
     if (preview.value.invalid_relations.length) {
-      error.value = `These relationships cannot be kept: ${preview.value.invalid_relations.join(', ')}`
+      error.value = t('entity.convert.invalidRelations', {
+        list: preview.value.invalid_relations.join(', '),
+      })
       return
     }
     if (preview.value.invalid_faces?.length) {
-      error.value = `These face choices are invalid: ${preview.value.invalid_faces.join(', ')}`
+      error.value = t('entity.convert.invalidFaces', {
+        list: preview.value.invalid_faces.join(', '),
+      })
       return
     }
     if (preview.value.required_faces?.length) {
-      error.value = `Choose a destination face for: ${preview.value.required_faces.map((face) => face || 'default face').join(', ')}`
+      error.value = t('entity.convert.requiredFaces', {
+        list: preview.value.required_faces.map((face) => faceLabel(face)).join(', '),
+      })
       return
     }
     if (preview.value.required.length) {
-      error.value = `Required fields need a value: ${preview.value.required.join(', ')}`
+      error.value = t('entity.convert.requiredFields', { list: preview.value.required.join(', ') })
       return
     }
     if (preview.value.relations_to_drop.length && !acceptDrops.value) {
-      error.value = 'Confirm that the listed relationships may be removed.'
+      error.value = t('entity.convert.confirmDrops')
       return
     }
     // The first passing preview only shows its consequences, including who
@@ -101,7 +109,7 @@ async function submit() {
     })
     emit('converted', result.entity_id, result.face)
   } catch (err) {
-    error.value = err instanceof Error ? err.message : 'Conversion failed'
+    error.value = err instanceof Error ? err.message : t('entity.convert.failed')
   } finally {
     busy.value = false
   }
@@ -110,18 +118,18 @@ async function submit() {
 
 <template>
   <RlModal :open="true" :title="offer.label" size="lg" @close="emit('close')">
-    <p>Convert {{ source.id }} into {{ target?.label || offer.to }}.</p>
+    <p>{{ t('entity.convert.intro', { id: source.id, type: target?.label || offer.to }) }}</p>
     <label v-for="face in sourceFaces" :key="face" class="convert-field">
-      {{ face || 'Default face' }} →
+      {{ face || t('entity.convert.defaultFace') }} →
       <select v-model="faceMapping[face]" :required="(offer.face_choices?.[face]?.length ?? 0) > 1">
-        <option value="">Choose destination face…</option>
+        <option value="">{{ t('entity.convert.chooseFace') }}</option>
         <option v-for="choice in offer.face_choices?.[face] ?? []" :key="choice" :value="choice">
-          {{ choice || 'Default face' }}
+          {{ choice || t('entity.convert.defaultFace') }}
         </option>
       </select>
     </label>
     <label v-if="target?.id_type === 'manual'" class="convert-field">
-      New ID <span aria-hidden="true">*</span>
+      {{ t('entity.convert.newId') }} <span aria-hidden="true">*</span>
       <input v-model="targetID" required autocomplete="off" />
     </label>
     <label v-for="[name, def] in fields" :key="name" class="convert-field">
@@ -133,7 +141,7 @@ async function submit() {
         @change="values[name] = ($event.target as HTMLInputElement).checked"
       />
       <select v-else-if="def.type === 'enum'" v-model="values[name]" :required="def.required">
-        <option value="">Select…</option>
+        <option value="">{{ t('entity.convert.select') }}</option>
         <option v-for="option in def.values || []" :key="option" :value="option">
           {{ def.labels?.[option] || option }}
         </option>
@@ -159,53 +167,58 @@ async function submit() {
       />
     </label>
     <label v-if="!offer.content_mapped" class="convert-field"
-      >Content <textarea v-model="content" rows="7" />
+      >{{ t('entity.convert.content') }} <textarea v-model="content" rows="7" />
     </label>
     <section v-if="preview?.relations_to_drop.length" class="convert-warning" aria-live="polite">
-      <strong>Relationships that will be removed</strong>
+      <strong>{{ t('entity.convert.dropsHeading') }}</strong>
       <ul>
         <li v-for="rel in preview.relations_to_drop" :key="rel">{{ rel }}</li>
       </ul>
       <label
-        ><input v-model="acceptDrops" type="checkbox" /> I understand these relationships will be
-        removed.</label
+        ><input v-model="acceptDrops" type="checkbox" />
+        {{ t('entity.convert.acceptDrops') }}</label
       >
     </section>
     <section v-if="preview?.invalid_relations.length" class="convert-warning" role="alert">
-      <strong>Relationships that cannot be converted</strong>
+      <strong>{{ t('entity.convert.invalidRelationsHeading') }}</strong>
       <ul>
         <li v-for="rel in preview.invalid_relations" :key="rel">{{ rel }}</li>
       </ul>
     </section>
     <section v-if="preview?.invalid_faces?.length" class="convert-warning" role="alert">
-      <strong>Face choices that cannot be converted</strong>
+      <strong>{{ t('entity.convert.invalidFacesHeading') }}</strong>
       <ul>
         <li v-for="face in preview.invalid_faces" :key="face">{{ face }}</li>
       </ul>
     </section>
     <p v-if="reviewed" class="convert-ready" aria-live="polite">
-      Review done. Choose Convert to turn {{ source.id }} into a new {{ targetLabel }}.
+      {{ t('entity.convert.reviewDone', { id: source.id, type: targetLabel }) }}
     </p>
     <section v-if="reviewed && preview?.moves?.length" class="convert-warning" aria-live="polite">
-      <strong>Comments move to the new {{ targetLabel }}</strong>
+      <strong>{{ t('entity.convert.commentsMoveHeading', { type: targetLabel }) }}</strong>
       <ul>
         <li v-for="move in preview.moves" :key="move.source_face">
-          Comments on the {{ faceLabel(move.source_face) }} move to {{ targetLabel }} ({{
-            faceLabel(move.target_face)
-          }}).
+          {{
+            t('entity.convert.commentsMove', {
+              from: faceLabel(move.source_face),
+              type: targetLabel,
+              to: faceLabel(move.target_face),
+            })
+          }}
         </li>
       </ul>
       <p>
-        Everyone who can read the new {{ targetLabel }} can read these comments. Its history starts
-        at this conversion.
+        {{ t('entity.convert.commentsReaders', { type: targetLabel }) }}
       </p>
     </section>
     <p v-if="error" role="alert">{{ error }}</p>
     <template #actions>
       <RlButtonGroup>
-        <RlButton variant="secondary" :disabled="busy" @click="emit('close')">Cancel</RlButton>
+        <RlButton variant="secondary" :disabled="busy" @click="emit('close')">{{
+          t('common.cancel')
+        }}</RlButton>
         <RlButton variant="primary" :disabled="busy" @click="submit">{{
-          reviewed ? 'Convert' : 'Review'
+          reviewed ? t('entity.convert.convert') : t('entity.convert.review')
         }}</RlButton>
       </RlButtonGroup>
     </template>

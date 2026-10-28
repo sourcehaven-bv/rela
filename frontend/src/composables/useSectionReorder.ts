@@ -4,6 +4,7 @@ import { moveRelation } from '@/api/entities'
 import { getErrorMessage } from '@/api/errors'
 import type { ViewResponse, ViewRow, ViewSection } from '@/api/views'
 import { useUIStore } from '@/stores/ui'
+import { t } from '@/i18n'
 import { createMoveQueue } from '@/utils/moveQueue'
 import { orderMoveArgs, planRowMove } from '@/utils/relationOrder'
 
@@ -72,7 +73,10 @@ export function useSectionReorder(opts: {
       const label = row ? sectionRowLabel(row) : move.itemId
       status.value = {
         section: sectionIndex,
-        text: `${label} moved ${move.step < 0 ? 'up' : 'down'}`,
+        text:
+          move.step < 0
+            ? t('entity.reorder.movedUp', { label })
+            : t('entity.reorder.movedDown', { label }),
       }
     }
 
@@ -80,7 +84,7 @@ export function useSectionReorder(opts: {
       try {
         await moveRelation(...orderMoveArgs(order, move.itemId, plan.position))
       } catch (err) {
-        ui.error(getErrorMessage(err, 'Could not move the row'))
+        ui.error(getErrorMessage(err, t('entity.reorder.failed')))
       }
     })
   }

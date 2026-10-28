@@ -10,6 +10,7 @@
  * user can fix the text or cancel.
  */
 import { computed, ref, useId } from 'vue'
+import { useI18n } from 'vue-i18n'
 import RlButton from 'rela-components/components/common/RlButton.vue'
 import RlText from 'rela-components/components/common/RlText.vue'
 import RlModal from 'rela-components/components/overlay/RlModal.vue'
@@ -42,6 +43,7 @@ const props = withDefaults(
 )
 
 const emit = defineEmits<{ close: []; submit: [text: string] }>()
+const { t } = useI18n()
 
 const formId = `channel-text-dialog-${useId()}`
 const text = ref('')
@@ -49,7 +51,9 @@ const text = ref('')
 const attempted = ref(false)
 
 const missing = computed(() => props.required && text.value.trim() === '')
-const fieldError = computed(() => (attempted.value && missing.value ? 'Required.' : props.error))
+const fieldError = computed(() =>
+  attempted.value && missing.value ? t('channels.required') : props.error
+)
 
 function submit() {
   attempted.value = true
@@ -82,7 +86,7 @@ function submit() {
       />
     </form>
     <template #actions>
-      <RlButton :disabled="busy" @click="emit('close')">Cancel</RlButton>
+      <RlButton :disabled="busy" @click="emit('close')">{{ t('common.cancel') }}</RlButton>
       <RlButton
         variant="primary"
         :tone="danger ? 'danger' : 'default'"

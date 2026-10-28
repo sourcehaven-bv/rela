@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { intlLocale } from '@/i18n/locale'
+import { I18nT, useI18n } from 'vue-i18n'
 import { ref, computed, watch, onBeforeUnmount, nextTick, useTemplateRef } from 'vue'
 import { useUIStore } from '@/stores'
 import { useConfirm } from '@/composables/useConfirm'
@@ -49,6 +50,7 @@ const props = defineProps<{
 
 const emit = defineEmits<{ changed: [] }>()
 
+const { t } = useI18n()
 const uiStore = useUIStore()
 const { confirm } = useConfirm()
 
@@ -71,9 +73,8 @@ const ordered = computed(() =>
 )
 
 const title = computed(() => {
-  if (total.value === 0) return `Comment on ${props.anchor.ref}`
-  const noun = total.value === 1 ? 'comment' : 'comments'
-  return `${total.value} ${noun} on ${props.anchor.ref}`
+  if (total.value === 0) return t('comments.commentOn', { ref: props.anchor.ref })
+  return t('comments.countOn', { n: total.value, ref: props.anchor.ref }, total.value)
 })
 
 async function toggle() {
@@ -138,9 +139,9 @@ async function remove(c: Comment) {
   // Branch on the boolean: useConfirm resolves false if the shell unmounts
   // while the dialog is open, and a DELETE must not fire on that path.
   const ok = await confirm({
-    title: 'Delete comment',
-    message: 'Delete this comment? This cannot be undone.',
-    confirmLabel: 'Delete',
+    title: t('comments.deleteTitle'),
+    message: t('comments.deleteMessage'),
+    confirmLabel: t('common.delete'),
     danger: true,
   })
   if (!ok) return
@@ -219,10 +220,12 @@ function formatDate(iso: string): string {
 
     <div v-if="open" class="ci-pop" :class="{ 'ci-pop--flip': flip }" @click.stop>
       <header class="ci-pop-head">
-        <span
-          >Comments on <code>{{ anchor.ref }}</code></span
-        >
-        <button type="button" class="ci-x" aria-label="Close" @click="close">✕</button>
+        <I18nT keypath="comments.commentsOn" tag="span">
+          <template #ref
+            ><code>{{ anchor.ref }}</code></template
+          >
+        </I18nT>
+        <button type="button" class="ci-x" :aria-label="t('common.close')" @click="close">✕</button>
       </header>
 
       <ul v-if="ordered.length > 0" class="ci-list">
@@ -238,16 +241,20 @@ function formatDate(iso: string): string {
             <span
               v-if="c.detached"
               class="ci-detached"
-              title="The property this comment points at no longer exists"
-              >detached</span
+              :title="t('comments.detachedPropertyTitle')"
+              >{{ t('comments.detached') }}</span
             >
           </div>
 
           <template v-if="editingId === c.id">
             <textarea v-model="editBody" class="ci-input" rows="3" />
             <div class="ci-acts">
-              <RlButton variant="primary" size="sm" @click="saveEdit(c)">Save</RlButton>
-              <RlButton variant="secondary" size="sm" @click="editingId = null">Cancel</RlButton>
+              <RlButton variant="primary" size="sm" @click="saveEdit(c)">{{
+                t('common.save')
+              }}</RlButton>
+              <RlButton variant="secondary" size="sm" @click="editingId = null">{{
+                t('common.cancel')
+              }}</RlButton>
             </div>
           </template>
 
@@ -255,11 +262,19 @@ function formatDate(iso: string): string {
             <p class="ci-body">{{ c.body }}</p>
             <div class="ci-acts">
               <RlButton v-if="c.editable" variant="secondary" size="sm" @click="toggleResolved(c)">
-                {{ c.resolved ? 'Reopen' : 'Resolve' }}
+                {{ c.resolved ? t('comments.reopen') : t('comments.resolve') }}
               </RlButton>
-              <RlButton v-if="c.editable" variant="secondary" size="sm" @click="startEdit(c)">Edit</RlButton>
-              <RlButton v-if="c.deletable" variant="secondary" size="sm" tone="danger" @click="remove(c)">
-                Delete
+              <RlButton v-if="c.editable" variant="secondary" size="sm" @click="startEdit(c)">{{
+                t('common.edit')
+              }}</RlButton>
+              <RlButton
+                v-if="c.deletable"
+                variant="secondary"
+                size="sm"
+                tone="danger"
+                @click="remove(c)"
+              >
+                {{ t('common.delete') }}
               </RlButton>
             </div>
           </template>
@@ -274,20 +289,20 @@ function formatDate(iso: string): string {
           v-model="body"
           class="ci-input"
           rows="3"
-          :placeholder="total > 0 ? 'Reply…' : 'Add a comment…'"
-          aria-label="Comment body"
+          :placeholder="total > 0 ? t('comments.replyPlaceholder') : t('comments.addPlaceholder')"
+          :aria-label="t('comments.bodyLabel')"
           @keydown.meta.enter="submit"
           @keydown.ctrl.enter="submit"
         />
         <div class="ci-composer-row">
-          <span class="ci-hint">⌘↵ to post</span>
+          <span class="ci-hint">{{ t('comments.postHint') }}</span>
           <RlButton
             type="submit"
             variant="primary"
             size="sm"
             :disabled="submitting || !body.trim()"
           >
-            {{ submitting ? 'Adding…' : 'Comment' }}
+            {{ submitting ? t('comments.adding') : t('comments.comment') }}
           </RlButton>
         </div>
       </form>

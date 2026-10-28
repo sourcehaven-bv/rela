@@ -8,6 +8,7 @@ import type { PropertyDef, EntityType } from '@/types'
 import { parseExternalRef } from '@/widgets/externalRef'
 import { fileRefNames } from './fileRefs'
 import { intlLocale } from '@/i18n/locale'
+import { t } from '@/i18n'
 
 export const DATE_FORMAT_OPTIONS: Intl.DateTimeFormatOptions = {
   year: 'numeric',
@@ -223,7 +224,7 @@ export function formatValue(value: unknown, type?: string, tz: string = browserT
   }
 
   if (type === 'boolean') {
-    return value ? 'Yes' : 'No'
+    return value ? t('common.yes') : t('common.no')
   }
 
   if (type === 'external_ref') {
@@ -278,7 +279,7 @@ export function formatCellValue(
       // A view table cell carries the server's string form, where "false" is
       // truthy; read it as the boolean it spells.
       const b = typeof value === 'string' ? value === 'true' : Boolean(value)
-      return b ? 'Yes' : 'No'
+      return b ? t('common.yes') : t('common.no')
     }
     if (propDef?.type === 'rrule') {
       const single = Array.isArray(value) ? value[0] : value

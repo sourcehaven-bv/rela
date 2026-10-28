@@ -21,6 +21,8 @@
  *    `modalStack` is a Set and cannot say which dialog is topmost.
  */
 import { computed, ref } from 'vue'
+import { useI18n } from 'vue-i18n'
+import { intlLocale } from '@/i18n/locale'
 import DynamicForm from './DynamicForm.vue'
 import { useModalStack } from '@/composables/modalStack'
 // RlModal owns the scrim, Tab trap, scroll lock, Escape and focus restore.
@@ -87,6 +89,7 @@ const emit = defineEmits<{
 
 const schemaStore = useSchemaStore()
 const { confirm } = useConfirm()
+const { t } = useI18n()
 
 useModalStack(computed(() => props.show))
 provideInlineCreateDepth()
@@ -110,9 +113,11 @@ async function requestClose() {
   if (formRef.value?.isSaving()) return
   if (formRef.value?.isDirty()) {
     const ok = await confirm({
-      title: 'Discard new ' + typeLabel.value.toLowerCase() + '?',
-      message: 'This entity has not been created yet. Your input will be lost.',
-      confirmLabel: 'Discard',
+      title: t('form.inlineCreate.discardTitle', {
+        type: typeLabel.value.toLocaleLowerCase(intlLocale()),
+      }),
+      message: t('form.inlineCreate.discardMessage'),
+      confirmLabel: t('form.discard'),
       danger: true,
     })
     if (!ok) return
@@ -142,7 +147,7 @@ function handleKeydown(e: KeyboardEvent) {
 <template>
   <RlModal
     :open="show"
-    :title="`New ${typeLabel}`"
+    :title="t('form.newOfType', { type: typeLabel })"
     size="lg"
     panel-class="inline-create-panel"
     :layer="900"

@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { ref, computed, watch, onMounted } from 'vue'
 import { RRule, Weekday } from 'rrule'
+import { useI18n } from 'vue-i18n'
+import { intlLocale } from '@/i18n/locale'
 
 const props = defineProps<{
   modelValue: string
@@ -13,22 +15,23 @@ const emit = defineEmits<{
   'update:modelValue': [value: string]
 }>()
 
-const frequencies = [
-  { value: RRule.DAILY, label: 'Daily' },
-  { value: RRule.WEEKLY, label: 'Weekly' },
-  { value: RRule.MONTHLY, label: 'Monthly' },
-  { value: RRule.YEARLY, label: 'Yearly' },
-]
+const { t } = useI18n()
 
-const weekdays = [
-  { value: RRule.MO, label: 'Mon' },
-  { value: RRule.TU, label: 'Tue' },
-  { value: RRule.WE, label: 'Wed' },
-  { value: RRule.TH, label: 'Thu' },
-  { value: RRule.FR, label: 'Fri' },
-  { value: RRule.SA, label: 'Sat' },
-  { value: RRule.SU, label: 'Sun' },
-]
+const frequencies = computed(() => [
+  { value: RRule.DAILY, label: t('form.rrule.daily') },
+  { value: RRule.WEEKLY, label: t('form.rrule.weekly') },
+  { value: RRule.MONTHLY, label: t('form.rrule.monthly') },
+  { value: RRule.YEARLY, label: t('form.rrule.yearly') },
+])
+
+// Day and month names come from Intl in the interface language. 1 January
+// 2024 was a Monday, so day i of that week is weekday i (Monday first).
+const weekdays = computed(() => {
+  const fmt = new Intl.DateTimeFormat(intlLocale(), { weekday: 'short', timeZone: 'UTC' })
+  return [RRule.MO, RRule.TU, RRule.WE, RRule.TH, RRule.FR, RRule.SA, RRule.SU].map(
+    (value, i) => ({ value, label: fmt.format(new Date(Date.UTC(2024, 0, 1 + i))) })
+  )
+})
 
 const freq = ref(RRule.WEEKLY)
 const interval = ref(1)
@@ -37,20 +40,13 @@ const dtstart = ref('')
 const selectedMonth = ref<number | null>(null)
 const selectedDay = ref<number | null>(null)
 
-const months = [
-  { value: 1, label: 'January' },
-  { value: 2, label: 'February' },
-  { value: 3, label: 'March' },
-  { value: 4, label: 'April' },
-  { value: 5, label: 'May' },
-  { value: 6, label: 'June' },
-  { value: 7, label: 'July' },
-  { value: 8, label: 'August' },
-  { value: 9, label: 'September' },
-  { value: 10, label: 'October' },
-  { value: 11, label: 'November' },
-  { value: 12, label: 'December' },
-]
+const months = computed(() => {
+  const fmt = new Intl.DateTimeFormat(intlLocale(), { month: 'long', timeZone: 'UTC' })
+  return Array.from({ length: 12 }, (_, i) => ({
+    value: i + 1,
+    label: fmt.format(new Date(Date.UTC(2024, i, 1))),
+  }))
+})
 
 const maxDay = computed(() => {
   if (!selectedMonth.value) return 31
@@ -179,7 +175,7 @@ function isDaySelected(day: Weekday): boolean {
     <label v-if="label" class="rrule-builder__label">{{ label }}</label>
 
     <div class="rrule-builder__row">
-      <label class="rrule-builder__field-label">Every</label>
+      <label class="rrule-builder__field-label">{{ t('form.rrule.every') }}</label>
       <input
         v-model.number="interval"
         type="number"
@@ -211,14 +207,14 @@ function isDaySelected(day: Weekday): boolean {
 
     <div v-if="freq === RRule.YEARLY" class="rrule-builder__yearly">
       <div class="rrule-builder__row">
-        <label class="rrule-builder__field-label">On</label>
+        <label class="rrule-builder__field-label">{{ t('form.rrule.on') }}</label>
         <select
           :value="selectedMonth ?? ''"
           class="rrule-builder__month"
           :disabled="readonly"
           @change="selectedMonth = ($event.target as HTMLSelectElement).value ? Number(($event.target as HTMLSelectElement).value) : null"
         >
-          <option value="">Month...</option>
+          <option value="">{{ t('form.rrule.monthPlaceholder') }}</option>
           <option v-for="m in months" :key="m.value" :value="m.value">
             {{ m.label }}
           </option>
@@ -228,7 +224,7 @@ function isDaySelected(day: Weekday): boolean {
           type="number"
           min="1"
           :max="maxDay"
-          placeholder="Day"
+          :placeholder="t('form.rrule.day')"
           class="rrule-builder__day-input"
           :disabled="readonly"
           @input="selectedDay = (() => { const v = Number(($event.target as HTMLInputElement).value); return Number.isFinite(v) && v >= 1 ? Math.min(v, maxDay) : null })()"
@@ -238,7 +234,7 @@ function isDaySelected(day: Weekday): boolean {
 
     <div v-if="interval > 1" class="rrule-builder__dtstart">
       <div class="rrule-builder__row">
-        <label class="rrule-builder__field-label">Starting from</label>
+        <label class="rrule-builder__field-label">{{ t('form.rrule.startingFrom') }}</label>
         <input
           v-model="dtstart"
           type="date"
@@ -248,7 +244,7 @@ function isDaySelected(day: Weekday): boolean {
         />
       </div>
       <p v-if="!dtstart" class="rrule-builder__warning">
-        Required when interval &gt; 1
+        {{ t('form.rrule.startRequired') }}
       </p>
     </div>
 

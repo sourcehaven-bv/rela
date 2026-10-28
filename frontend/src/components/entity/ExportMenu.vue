@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { getTransforms, type TransformInfo } from '@/api/transforms'
 import RlButton from 'rela-components/components/common/RlButton.vue'
 import RlIcon from 'rela-components/components/common/RlIcon.vue'
@@ -22,10 +23,13 @@ const props = defineProps<{
 }>()
 
 const transforms = ref<TransformInfo[]>([])
+const { t } = useI18n()
 
 const offered = computed(() => {
   const allowed = props.allowed
-  return allowed?.length ? transforms.value.filter((t) => allowed.includes(t.name)) : transforms.value
+  return allowed?.length
+    ? transforms.value.filter((tr) => allowed.includes(tr.name))
+    : transforms.value
 })
 let abort: AbortController | null = null
 
@@ -42,11 +46,11 @@ onMounted(async () => {
 
 onBeforeUnmount(() => abort?.abort())
 
-function exportAs(t: TransformInfo) {
+function exportAs(tr: TransformInfo) {
   // Navigate to the hardened forced-download endpoint. Using a real nav (not
   // fetch) lets the browser's download machinery handle Content-Disposition.
   // RlMenu closes itself on a click inside the panel.
-  window.location.href = props.urlFor(t.name)
+  window.location.href = props.urlFor(tr.name)
 }
 </script>
 
@@ -59,20 +63,15 @@ function exportAs(t: TransformInfo) {
   <RlMenu v-if="offered.length" class="export-menu">
     <template #trigger="{ toggle, attrs }">
       <RlButton variant="secondary" :size="size" v-bind="attrs" @click="toggle">
-        Export
+        {{ t('entity.export') }}
         <template #trailing>
           <RlIcon name="chevron-down" :size="14" aria-hidden="true" />
         </template>
       </RlButton>
     </template>
 
-    <RlMenuItem
-      v-for="t in offered"
-      :key="t.name"
-      class="export-menu-item"
-      @click="exportAs(t)"
-    >
-      {{ t.name }}
+    <RlMenuItem v-for="tr in offered" :key="tr.name" class="export-menu-item" @click="exportAs(tr)">
+      {{ tr.name }}
     </RlMenuItem>
   </RlMenu>
 </template>

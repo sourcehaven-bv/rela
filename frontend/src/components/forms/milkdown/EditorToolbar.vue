@@ -11,8 +11,11 @@
  * of the document. Without that the selection collapses before the command
  * runs, and formatting a selection from the toolbar becomes impossible.
  */
+import { useI18n } from 'vue-i18n'
 import BlockIcon from './BlockIcon.vue'
 import type { EditorCommand } from './editorCommands'
+
+const { t } = useI18n()
 
 const props = defineProps<{
   inlineCommands: readonly EditorCommand[]
@@ -55,6 +58,49 @@ const emit = defineEmits<{
  * while keeping the control in the tab order. Because it does not prevent
  * activation, the click handler and the editor's `runCommand` both refuse.
  */
+/**
+ * The translated label per command id. The shared command modules keep their
+ * English `label`, because `<rela-editor>` imports them and carries no
+ * vue-i18n; a command missing here falls back to that English label.
+ */
+const COMMAND_LABELS: Record<string, () => string> = {
+  strong: () => t('editor.command.bold'),
+  emphasis: () => t('editor.command.italic'),
+  strikethrough: () => t('editor.command.strikethrough'),
+  inlineCode: () => t('editor.command.inlineCode'),
+  link: () => t('editor.command.link'),
+  h1: () => t('editor.command.heading1'),
+  h2: () => t('editor.command.heading2'),
+  h3: () => t('editor.command.heading3'),
+  bulletList: () => t('editor.command.bulletList'),
+  orderedList: () => t('editor.command.numberedList'),
+  taskList: () => t('editor.command.taskList'),
+  blockquote: () => t('editor.command.quote'),
+  codeBlock: () => t('editor.command.codeBlock'),
+  table: () => t('editor.command.table'),
+  hr: () => t('editor.command.divider'),
+  undo: () => t('editor.command.undo'),
+  redo: () => t('editor.command.redo'),
+  addRowBefore: () => t('editor.table.insertRowAbove'),
+  addRowAfter: () => t('editor.table.insertRowBelow'),
+  addColBefore: () => t('editor.table.insertColumnLeft'),
+  addColAfter: () => t('editor.table.insertColumnRight'),
+  deleteRow: () => t('editor.table.deleteRow'),
+  deleteColumn: () => t('editor.table.deleteColumn'),
+  deleteTable: () => t('editor.table.deleteTable'),
+}
+
+function label(cmd: EditorCommand): string {
+  return COMMAND_LABELS[cmd.id]?.() ?? cmd.label
+}
+
+/** The tooltip: the label, plus why the button does nothing here. */
+function tooltip(cmd: EditorCommand): string {
+  return props.unavailableIds.has(cmd.id)
+    ? t('editor.toolbar.notAvailable', { label: label(cmd) })
+    : label(cmd)
+}
+
 function onActivate(cmd: EditorCommand): void {
   if (props.unavailableIds.has(cmd.id)) return
   emit('run', cmd)
@@ -62,7 +108,7 @@ function onActivate(cmd: EditorCommand): void {
 </script>
 
 <template>
-  <div class="editor-toolbar" role="toolbar" aria-label="Formatting">
+  <div class="editor-toolbar" role="toolbar" :aria-label="t('editor.toolbar.formatting')">
     <div class="toolbar-group">
       <button
         v-for="cmd in props.inlineCommands"
@@ -73,8 +119,8 @@ function onActivate(cmd: EditorCommand): void {
           'is-active': props.activeIds.has(cmd.id),
           'is-unavailable': props.unavailableIds.has(cmd.id),
         }"
-        :title="props.unavailableIds.has(cmd.id) ? `${cmd.label} (not available here)` : cmd.label"
-        :aria-label="cmd.label"
+        :title="tooltip(cmd)"
+        :aria-label="label(cmd)"
         :aria-pressed="props.activeIds.has(cmd.id)"
         :aria-disabled="props.unavailableIds.has(cmd.id)"
         @mousedown.prevent
@@ -90,8 +136,8 @@ function onActivate(cmd: EditorCommand): void {
         v-if="props.showUnlink"
         type="button"
         class="toolbar-button"
-        title="Remove link"
-        aria-label="Remove link"
+        :title="t('editor.toolbar.removeLink')"
+        :aria-label="t('editor.toolbar.removeLink')"
         @mousedown.prevent
         @click="emit('unlink')"
       >
@@ -111,8 +157,8 @@ function onActivate(cmd: EditorCommand): void {
           'is-active': props.activeIds.has(cmd.id),
           'is-unavailable': props.unavailableIds.has(cmd.id),
         }"
-        :title="props.unavailableIds.has(cmd.id) ? `${cmd.label} (not available here)` : cmd.label"
-        :aria-label="cmd.label"
+        :title="tooltip(cmd)"
+        :aria-label="label(cmd)"
         :aria-pressed="props.activeIds.has(cmd.id)"
         :aria-disabled="props.unavailableIds.has(cmd.id)"
         @mousedown.prevent
@@ -128,17 +174,15 @@ function onActivate(cmd: EditorCommand): void {
     <template v-if="props.showTableGroup">
       <span class="toolbar-divider" role="separator" />
 
-      <div class="toolbar-group" aria-label="Table">
+      <div class="toolbar-group" :aria-label="t('editor.command.table')">
         <button
           v-for="cmd in props.tableCommands"
           :key="cmd.id"
           type="button"
           class="toolbar-button"
           :class="{ 'is-unavailable': props.unavailableIds.has(cmd.id) }"
-          :title="
-            props.unavailableIds.has(cmd.id) ? `${cmd.label} (not available here)` : cmd.label
-          "
-          :aria-label="cmd.label"
+          :title="tooltip(cmd)"
+          :aria-label="label(cmd)"
           :aria-disabled="props.unavailableIds.has(cmd.id)"
           @mousedown.prevent
           @click="onActivate(cmd)"
@@ -156,8 +200,8 @@ function onActivate(cmd: EditorCommand): void {
       <button
         type="button"
         class="toolbar-button entity-ref-button"
-        title="Insert entity reference"
-        aria-label="Insert entity reference"
+        :title="t('editor.toolbar.insertEntityRef')"
+        :aria-label="t('editor.toolbar.insertEntityRef')"
         @mousedown.prevent
         @click="emit('openEntityPicker')"
       >
@@ -172,15 +216,15 @@ function onActivate(cmd: EditorCommand): void {
          groups. These are `aria-disabled` like every other button here, which
          matters most for these two — their availability flips on every
          transaction, so native `disabled` would drop focus mid-typing. -->
-    <div class="toolbar-group" aria-label="History">
+    <div class="toolbar-group" :aria-label="t('editor.toolbar.history')">
       <button
         v-for="cmd in props.historyCommands"
         :key="cmd.id"
         type="button"
         class="toolbar-button"
         :class="{ 'is-unavailable': props.unavailableIds.has(cmd.id) }"
-        :title="props.unavailableIds.has(cmd.id) ? `${cmd.label} (not available here)` : cmd.label"
-        :aria-label="cmd.label"
+        :title="tooltip(cmd)"
+        :aria-label="label(cmd)"
         :aria-disabled="props.unavailableIds.has(cmd.id)"
         @mousedown.prevent
         @click="onActivate(cmd)"

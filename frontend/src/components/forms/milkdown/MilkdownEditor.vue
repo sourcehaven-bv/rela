@@ -19,6 +19,7 @@
  *    from the graph itself.
  */
 import { ref, onMounted, onBeforeUnmount, watch, shallowRef, computed, nextTick } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { Editor, rootCtx, defaultValueCtx, editorViewOptionsCtx } from '@milkdown/kit/core'
 import { gfm } from '@milkdown/kit/preset/gfm'
 import { history } from '@milkdown/kit/plugin/history'
@@ -105,6 +106,8 @@ const props = defineProps<{
    */
   taskItemConvertLabel?: string
 }>()
+
+const { t } = useI18n()
 
 const emit = defineEmits<{
   'update:modelValue': [value: string]
@@ -386,7 +389,7 @@ function onLinkSubmit(payload: { url: string; text: string; strippedParams: bool
   // Silently changing what someone typed is worse than refusing it, so say so
   // when a mailto's parameters were dropped.
   if (payload.strippedParams) {
-    uiStore.showToast('info', 'Email parameters were removed from the link.')
+    uiStore.showToast('info', t('editor.link.paramsRemoved'))
   }
 }
 
@@ -788,7 +791,7 @@ onBeforeUnmount(() => {
              `aria-hidden` because ProseMirror's own textbox role already names
              the field; a screen reader announcing both would read it twice. -->
         <div v-if="showPlaceholder" class="milkdown-placeholder" aria-hidden="true">
-          {{ props.placeholder || 'Write, or type @ to link an entity' }}
+          {{ props.placeholder || t('editor.placeholder') }}
         </div>
       </div>
     </div>
