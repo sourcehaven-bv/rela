@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"maps"
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
@@ -162,4 +163,24 @@ func validateMatrixCard(
 		}
 	}
 	return errs
+}
+
+// validDashboardCardWidths are the values of a card's `width:` (TKT-H21TYS).
+// An empty width means normal. A slice, unlike validDashboardDisplayModes, so
+// the error lists the sizes from narrow to wide.
+var validDashboardCardWidths = []string{"normal", "wide", "full"}
+
+// validateDashboardCardWidth checks a card's `width:`. A number gets its own
+// hint, because a column count is the shape an operator is most likely to
+// guess.
+func validateDashboardCardWidth(prefix string, i int, card DashboardCard) []string {
+	if card.Width == "" || slices.Contains(validDashboardCardWidths, card.Width) {
+		return nil
+	}
+	msg := fmt.Sprintf("%s: card[%d] %q has invalid width %q (valid: %s)",
+		prefix, i, card.Title, card.Width, strings.Join(validDashboardCardWidths, ", "))
+	if _, err := strconv.Atoi(card.Width); err == nil {
+		msg += "; width takes a named size, not a column count"
+	}
+	return []string{msg}
 }

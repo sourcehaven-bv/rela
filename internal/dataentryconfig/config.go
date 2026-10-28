@@ -1960,6 +1960,13 @@ type DashboardCard struct {
 	// many of the list's rows it matches.
 	Match string `yaml:"match,omitempty" json:"match,omitempty"`
 
+	// Width is how much of the dashboard row the tile takes (TKT-H21TYS):
+	// "normal" (one cell; also when empty), "wide" (two columns, or the whole
+	// row when the grid has fewer) or "full" (the whole row). It is a named
+	// size, not a column count, because the grid's column count follows the
+	// viewport, which the operator cannot know.
+	Width string `yaml:"width,omitempty" json:"width,omitempty"`
+
 	// Permission optionally hides this card from the dashboard for principals
 	// who do not hold the named global ACL permission (TKT-53KICM). Empty —
 	// the overwhelmingly common case — means the card is always shown.

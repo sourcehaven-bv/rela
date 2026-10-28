@@ -3018,6 +3018,7 @@ dashboard:
 | `tone_by`    | string | `matrix`: the enum property that colours a cell                             |
 | `colors`     | map    | `matrix`: a colour per `tone_by` value                                      |
 | `match`      | string | `ratio`: the query scope on the list's type that counts as matched          |
+| `width`      | string | `normal` (default), `wide` or `full`: how much of the row the card takes    |
 | `permission` | string | Hide this card from principals who do not hold the named ACL permission     |
 
 ### Cards from a list (`list:`)
@@ -3116,10 +3117,56 @@ dashboard:
       group_by: status
 ```
 
+### Card width (`width`)
+
+Every card takes one cell of the dashboard grid. A matrix, a table with
+several columns or a long breakdown can take more room with `width:`:
+
+| Value    | Width                                                          |
+| -------- | -------------------------------------------------------------- |
+| `normal` | One cell. This is the default.                                 |
+| `wide`   | Two columns. On a grid with fewer columns, the whole row.      |
+| `full`   | The whole row.                                                 |
+
+```yaml
+dashboard:
+  cards:
+    - title: "Risk heat map"
+      list: open-risks
+      display: matrix
+      rows: impact
+      columns: likelihood
+      width: wide
+    - title: "Open risks"
+      list: open-risks
+      display: table
+      columns:
+        - property: title
+        - property: owner
+        - property: due
+      width: full
+```
+
+`width` works on list cards and query cards alike. Any other value, such as a
+column count (`width: 2`), fails config load.
+
+The number of columns follows the width of the screen, so `width` names a size
+rather than a column count. On a phone, a `wide` or `full` card takes the whole
+row. Cards have no height setting: a card grows to fit its content, and the
+cards in one row share the height of the tallest.
+
+Cards appear in the order of `cards:`, which is also the order a keyboard and a
+screen reader follow. The grid does not move a later card up to fill a hole. A
+`wide` card that does not fit at the end of a row starts the next row and
+leaves one cell empty, and a `full` card always starts a new row. To avoid
+holes, put wide cards at the start of a row, for example first, or after a
+number of normal cards that fills a row.
+
 ### Editing list cards in Configure
 
 The Configure space edits query cards only. Write `list:`, matrix and ratio
-cards in `data-entry.yaml`.
+cards in `data-entry.yaml`. The Configure space does not edit `width` either;
+editing a card there keeps the width it has.
 
 ### Hiding cards a user cannot use (`permission`)
 

@@ -85,3 +85,56 @@ dashboard:
 		})
 	}
 }
+
+// Card width (TKT-H21TYS).
+
+func TestValidateDashboardCardWidth(t *testing.T) {
+	tests := []struct {
+		name  string
+		width string
+		want  string // empty: the config loads
+	}{
+		{"unset", "", ""},
+		{"normal", "normal", ""},
+		{"wide", "wide", ""},
+		{"full", "full", ""},
+		{"unknown name", "huge", `dashboard: card[0] "X" has invalid width "huge" (valid: normal, wide, full)`},
+		{"case matters", "Wide", `invalid width "Wide"`},
+		{"surrounding space", `" wide"`, `invalid width " wide"`},
+		{"column count", "2",
+			`invalid width "2" (valid: normal, wide, full); width takes a named size, not a column count`},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			width := ""
+			if tc.width != "" {
+				width = ", width: " + tc.width
+			}
+			cfg, err := loadAndValidate(t, `
+version: "1.0"
+dashboard:
+  cards:
+    - {title: X, query: "type:ticket", display: count`+width+`}
+`)
+			if tc.want != "" {
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), tc.want)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, tc.width, cfg.Dashboard.Cards[0].Width)
+		})
+	}
+}
+
+func TestValidateDashboardCardWidth_NamedDashboard(t *testing.T) {
+	_, err := loadAndValidate(t, `
+version: "1.0"
+dashboards:
+  ops:
+    cards:
+      - {title: Y, query: "type:ticket", display: count, width: half}
+`)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), `dashboards[ops]: card[0] "Y" has invalid width "half"`)
+}
