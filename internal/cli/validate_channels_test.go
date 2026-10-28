@@ -2,7 +2,9 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -40,6 +42,21 @@ func TestValidate_ChannelsAgainstRealtime(t *testing.T) {
 	writeProjectFile(t, root, "data-entry.yaml", fmt.Sprintf(section, "body"))
 	writeProjectFile(t, root, "realtime.yaml", "version: 1\nchannel_types: {room: {bogus: 1}}\n")
 	require.True(t, check(), "a broken realtime.yaml is a failed check")
+
+	// TKT-QYFLRH AC 2: in: on a type without a session fails the check
+	// and prints the problem at its key.
+	writeProjectFile(t, root, "realtime.yaml", strings.Replace(stdioRealtimeYAML, "        post: [member]\n",
+		"        post: [member]\n        in: [open]\n", 1))
+	out, err := captureStdout(t, func() error {
+		if check() {
+			return errors.New("failed")
+		}
+		return nil
+	})
+	require.Error(t, err)
+	require.Contains(t, out, "✗")
+	require.Contains(t, out, "channel_types.room.message_types.text.in: in names session states; "+
+		"this channel type has no session")
 
 	require.True(t, reportRealtimeValidation(context.Background(), &projectsetup.ValidateResult{
 		ProjectRoot: root, DataEntryValid: true,

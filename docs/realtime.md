@@ -223,6 +223,7 @@ client_baselines:
 | `properties` | At most 32. Types: `string`, `markdown`, `integer`, `boolean`, `date`, `datetime`, `ref` (with `to:`), or an enum type from `schema.yaml`. `max` limits a string or markdown property in characters (Unicode code points). A property may have a `label`; without one, the label is its name. A `ref` property may set `notify: false`, so a value that names a person does not mention them (see [Mentions and replies](#mentions-and-replies)). `notify` on any other type is a config error. |
 | `when` | A condition on the `message` record that a post must meet. |
 | `post` | The roles that may post. Receiving needs only `read`. |
+| `in` | The session states in which the type may be posted. Without it, every state. Only on a channel type with a `session`. See [Sessions](#sessions). |
 | `rate` | Posts per identity, such as `10/m`. It may only lower the limit. |
 | `actions` | Buttons on a message, each gated by `roles` or a `permission`. An action may have a `promote_to`. Only for `log` messages. The names `edit`, `delete`, `remove` and `release` are reserved. See [Actions and promote](#actions-and-promote). |
 
@@ -546,6 +547,69 @@ judged against the new state. A reply moves the session like any other
 message. A signal (`persist: ephemeral`) is never stored and cannot be a
 transition.
 
+**Where a message type may be posted.** Without `in:`, a message type may
+be posted in every state by everyone its `post` admits. `in:` limits the
+type to the states it lists:
+
+```yaml
+channel_types:
+  plan:
+    label: Plan review
+    attach_to: [datalek]
+    roles:
+      owner:  { label: the owner, from: entity.owner }
+      member: { from: attached }
+    message_types:
+      text:    { properties: { body: { type: markdown, required: true } }, post: [owner, member] }
+      plan:    { properties: { plan: { type: markdown, required: true } }, post: [member], in: [drafting] }
+      approve: { properties: { note: { type: string } }, post: [owner], in: [review] }
+      revise:  { properties: { feedback: { type: markdown, required: true } }, post: [owner], in: [review] }
+    session:
+      initial: drafting
+      states:
+        drafting:
+          on:
+            plan: { to: review }
+        review:
+          waiting_for: [owner]
+          on:
+            approve: { to: approved, roles: [owner] }
+            revise:  { to: drafting, roles: [owner] }
+        approved: { final: true }
+```
+
+Here the owner is offered Approve and Revise only while the plan is in
+review, and a member is offered Plan only while drafting. Text has no
+`in:`, so it may be posted in every state. `in:` decides whether a new
+message may be posted; `on:` decides whether it moves the session.
+
+- A post outside `in:` is refused with 409 `session_wrong_state`. The
+  `title` names the allowed states and the current one, and `detail` names
+  the rule, such as `channel_types.plan.message_types.approve.in`. Nothing
+  is stored. The store decides under its lock, so of two posts that arrive
+  together, the second is judged against the state the first moved the
+  session to.
+- `in:` narrows what rela offers: `_actions.post`, and `can_post` in
+  `read_channel`. The web app's composer offers only these types. The
+  session's transitions, in `read_session` and the inbox too, are already
+  limited to the current state's `on:`, and the load check keeps them
+  consistent with `in:`.
+- `in:` governs new posts and replies only. An edit of a stored message is
+  judged by `edit_own` as before, so a message whose type the state no
+  longer admits can still be edited.
+- A final state admits the types that list it. A stranded session admits
+  only the types without `in:`.
+- A trigger whose message type the current state does not admit posts
+  nothing and is skipped. This holds for `when_closed: post` too. Unlike a
+  skip for a closed channel, rela logs it as a warning that names the
+  trigger and the `in:` key, because it usually means `in:` is narrower
+  than the states the trigger fires in.
+- Typing follows `post` roles, not states. Whoever may post a `log` type
+  of the channel may type, whatever the state.
+- `in:` is new in this release. Every process that loads the project needs
+  this release or later: rela-server, stdio `rela mcp`, `rela channel` and
+  rela-desktop. An older one refuses the key.
+
 **Who can move a session.** Only a principal who may post the message type.
 The entry narrows that further:
 
@@ -607,10 +671,10 @@ that caused a move does not undo the move.
 
 **Stranded states.** A channel whose stored state the file no longer
 declares is stranded. It reads with `stranded: true`, its stored state name
-as label, and no transitions. Posts are accepted and move nothing; the
-lifecycle still works. To unstick such channels, declare the state again
-with an `on:` that leads to a current state. A state no transition leads to
-is allowed for this reason.
+as label, and no transitions. Posts of types without `in:` are accepted
+and move nothing; the lifecycle still works. To unstick such channels,
+declare the state again with an `on:` that leads to a current state. A
+state no transition leads to is allowed for this reason.
 
 **In the web app.** The channel shows the session as a row of states above
 the messages, and the composer marks the message types that move it. See
@@ -1201,6 +1265,14 @@ unknown entity type "nope"`. It checks:
   keyed by, with `props` checked as for a trigger. `session.timers` and
   `reminders` under a state are refused with a pointer to
   `session.reminders`; `to`, `period` and `since` on a reminder are refused;
+- that `in:` on a message type is on a channel type with a `session`, is a
+  list with at least one state, and names states that exist, each once.
+  A state whose `on:` is keyed by the type must be in its `in:`, or the
+  transition could never fire. A reminder's states must lie inside its
+  post type's `in:`, and with `on_final: close` the `in:` cannot list only
+  final states. `in:` with no value is refused with "name the states, or
+  drop in to allow every state". `states` and `from` on a message type are
+  refused with a pointer to `in:`;
 - that a channel type with `typing: true` has at least one `log` message
   type, and no message type named `typing`. `typing` must be `true` or
   `false`;
@@ -1344,7 +1416,7 @@ A button appears only when you may use it. It is left out, not disabled.
 
 | Control | Shown when |
 | --- | --- |
-| The composer and **Send** | The channel is open and a message type's `post` admits you. With several such types, the composer lets you choose the type. |
+| The composer and **Send** | The channel is open, a message type's `post` admits you, and the session's state is in the type's `in:`. With several such types, the composer lets you choose the type. If the session moves on before you send, the post is refused, the app says so and reads the channel again, and the type leaves the composer. |
 | **Reply** | You may post in the channel now. |
 | **Edit** | The message is yours, `edit_own` admits you, and its time window has not passed. |
 | **Delete** | The message is yours and `delete_own` admits you. The app asks you to confirm. |
@@ -1701,7 +1773,7 @@ Every error is a problem body (`application/problem+json`) with a `type`.
 | 413 `too_large` | The message is over `message_bytes`. |
 | 422 | A `ref` names an entity that does not exist or that the caller cannot read. Both get the same body. |
 | 422 `promote_invalid` | The promoted entity or its relation fails validation, for example a `unique` property that another entity already has, or a mapped `ref` names an entity the caller cannot read. The body names properties, never entity ids. |
-| 409 | The channel is not open, the channel is not in a state the lifecycle operation starts from (`lifecycle_wrong_state`), `retention` keeps the channel (`retention_active`), a concurrent change won (`conflict`), the message was removed, `channels_per_entity` is reached, the POST tried to open a channel of a `one` type, or the configuration changed during the request. An edit or removal targets a session notice (`session_notice`), or an author's edit or delete targets a message that moved the session (`session_message`). For actions: the message already carries an action (`action_taken`), its action is pending (`action_pending`, also for an edit, a removal, a release within the release window, or an action that lost a race to a promote that started first), a release finds no pending action (`action_not_pending`), or the promoted entity already exists (`promote_conflict`). A removal of the message that moved the session, or a release of a notice's outputs mark, while the outputs still run (`outputs_pending`). |
+| 409 | The channel is not open, the channel is not in a state the lifecycle operation starts from (`lifecycle_wrong_state`), `retention` keeps the channel (`retention_active`), a concurrent change won (`conflict`), the message was removed, `channels_per_entity` is reached, the POST tried to open a channel of a `one` type, or the configuration changed during the request. An edit or removal targets a session notice (`session_notice`), or an author's edit or delete targets a message that moved the session (`session_message`). A post of a type whose `in:` does not hold the session's state (`session_wrong_state`; `title` names the allowed states, `detail` the rule). For actions: the message already carries an action (`action_taken`), its action is pending (`action_pending`, also for an edit, a removal, a release within the release window, or an action that lost a race to a promote that started first), a release finds no pending action (`action_not_pending`), or the promoted entity already exists (`promote_conflict`). A removal of the message that moved the session, or a release of a notice's outputs mark, while the outputs still run (`outputs_pending`). |
 | 429 | A rate limit. `Retry-After` gives the seconds to wait, rounded up. |
 | 400 `invalid_cursor` | The inbox `cursor` is not one an inbox answer gave, or comes with `kinds` that do not hold `waiting`. |
 | 503 `inbox_too_large` | The inbox would read more than 20 000 channels. Nothing is listed; see [Inbox](#inbox). The `detail` suggests `kinds=unread,mention,reply`, which still answers. |
@@ -1803,6 +1875,10 @@ reminder, such as `reminder status-update: 2 of 48, next at
 The session line also gives the status and whom the session waits for,
 by each role's label, such as `, input_required, waiting for the incident
 lead (USR-1), waiting on you`, or `, failed (stranded)`.
+A message type with `in:` is offered only in the states it lists, so
+`actions.post` in `read_channel` and `You may post` in `rela channel read`
+change as the session moves. A post outside them answers
+`session_wrong_state` with the allowed states and the current one.
 
 **Waiting for a session.** `read_session` returns only a channel's session,
 the channel's name and state, and the message types whose post by the

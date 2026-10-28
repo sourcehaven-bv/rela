@@ -18,16 +18,22 @@ func yamlBlock(t *testing.T, doc, heading, prefix string) string {
 	if at < 0 {
 		t.Fatalf("heading %q not found in the guide", heading)
 	}
-	rest := doc[at:]
+	return yamlBlockIn(t, doc[at:], heading, prefix)
+}
+
+// yamlBlockIn returns the first fenced yaml block in rest whose body starts
+// with prefix. after names where rest starts, for the failure message.
+func yamlBlockIn(t *testing.T, rest, after, prefix string) string {
+	t.Helper()
 	for {
 		start := strings.Index(rest, "```yaml\n")
 		if start < 0 {
-			t.Fatalf("no yaml block starting with %q after %q", prefix, heading)
+			t.Fatalf("no yaml block starting with %q after %q", prefix, after)
 		}
 		rest = rest[start+len("```yaml\n"):]
 		end := strings.Index(rest, "```")
 		if end < 0 {
-			t.Fatalf("unterminated yaml block after %q", heading)
+			t.Fatalf("unterminated yaml block after %q", after)
 		}
 		if body := rest[:end]; strings.HasPrefix(body, prefix) {
 			return body

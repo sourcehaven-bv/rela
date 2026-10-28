@@ -3,6 +3,7 @@ package mcp
 import (
 	"context"
 	"encoding/json"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -34,6 +35,7 @@ var reviewYAML = strings.Replace(channelTestYAML, "  chat:\n", `  review:
       text:    { properties: { body: { type: string } }, post: [member] }
       handoff: { properties: { to: { type: string, required: true } }, post: [lead] }
       done:    { properties: { note: { type: string } }, post: [lead] }
+      closing: { properties: { note: { type: string } }, post: [lead], in: [finished] }
     session:
       initial: waiting
       states:
@@ -192,6 +194,44 @@ func TestReadSession(t *testing.T) {
 			t.Errorf("read_session = %q (error %v); read_channel = %q (error %v)", text, isErr, want, wantErr)
 		}
 	})
+}
+
+// TestPostMessage_SessionWrongState pins TKT-QYFLRH AC 4 over MCP: a type
+// limited by in: is not in read_channel's actions.post outside its states,
+// and post_message answers session_wrong_state with the allowed states
+// and the rule. In its state it is offered and posts.
+func TestPostMessage_SessionWrongState(t *testing.T) {
+	t.Parallel()
+	f := newReviewFixture(t)
+	cs := f.client(t, "alice")
+	offered := func() bool {
+		t.Helper()
+		text := mustCall(t, cs, toolReadChannel, with(reviewArgs, map[string]any{"limit": 1}), nil)
+		var v struct {
+			Actions struct {
+				Post []string `json:"post"`
+			} `json:"actions"`
+		}
+		if err := json.Unmarshal([]byte(text), &v); err != nil {
+			t.Fatal(err)
+		}
+		return slices.Contains(v.Actions.Post, "closing")
+	}
+	if offered() {
+		t.Error("closing is offered in waiting")
+	}
+	closing := with(reviewArgs, map[string]any{"message_type": "closing", "props": map[string]any{"note": "bye"}})
+	text, isErr := call(t, cs, "post_message", closing)
+	want := "session_wrong_state: closing may be posted only while the session is in finished; it is in waiting " +
+		"(rule: channel_types.review.message_types.closing.in)"
+	if !isErr || text != want {
+		t.Fatalf("post_message = %q (error %v); want %q", text, isErr, want)
+	}
+	mustCall(t, cs, "post_message", with(reviewArgs, map[string]any{"message_type": "done"}), nil)
+	if !offered() {
+		t.Error("closing is not offered in finished")
+	}
+	mustCall(t, cs, "post_message", closing, nil)
 }
 
 // TestReadChannel_UnstoredSessionStable pins the read_channel row of AC

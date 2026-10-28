@@ -15,6 +15,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/Sourcehaven-BV/rela/internal/channels"
 	"github.com/Sourcehaven-BV/rela/internal/realtimecfg"
 )
 
@@ -78,7 +79,9 @@ func denialConstructors() map[string]*DenialError {
 		"outputsPending":     outputsPending("the mark is pending"),
 		"readDenied":         readDenied(ct),
 		"postDenied":         postDenied(ct, mt),
-		"gateDenied":         gateDenied(TypeCreateDenied, "creating", "r", realtimecfg.Gate{}, nil),
+		"sessionWrongState": sessionWrongState(ct, &realtimecfg.MessageType{Name: "approve", In: []string{"review"}},
+			&channels.SessionStateError{State: "working"}),
+		"gateDenied": gateDenied(TypeCreateDenied, "creating", "r", realtimecfg.Gate{}, nil),
 	}
 }
 

@@ -121,7 +121,32 @@ var (
 	// from the message as it was, so the message may not change until
 	// the action is done or released.
 	ErrActionPending = errors.New("channels: message has a pending action")
+
+	// ErrSessionState reports an append whose [SessionStep.Admit] refused
+	// it in the session state it saw. Nothing was stored. Admit must
+	// return an error that wraps it, so every backend passes the error
+	// through unchanged; [*SessionStateError] does and names the state.
+	ErrSessionState = errors.New("channels: message type does not apply in the session state")
 )
+
+// SessionStateError is the refusal a [SessionStep.Admit] returns: the
+// session is in State, which the message type does not admit. Stranded is
+// true when State is no longer declared by the configuration. It unwraps
+// to [ErrSessionState].
+type SessionStateError struct {
+	State    string
+	Stranded bool
+}
+
+func (e *SessionStateError) Error() string {
+	if e.Stranded {
+		return fmt.Sprintf("%v: the session is stranded in %s", ErrSessionState, e.State)
+	}
+	return fmt.Sprintf("%v: the session is in %s", ErrSessionState, e.State)
+}
+
+// Unwrap returns [ErrSessionState].
+func (e *SessionStateError) Unwrap() error { return ErrSessionState }
 
 // Caps enforced at the store boundary, so no backend and no caller above it
 // can exceed them.

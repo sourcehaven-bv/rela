@@ -372,7 +372,7 @@ func (s *Store) wrap(err error, format string, args ...any) error {
 		channels.ErrNotFound, channels.ErrInvalidKey, channels.ErrInvalidMessage, channels.ErrTooLarge,
 		channels.ErrTooManyChannels, channels.ErrConflict, channels.ErrRemoved, channels.ErrInvalidReply,
 		channels.ErrInvalidPage, channels.ErrRekeyConflict, channels.ErrStaleAnchor, channels.ErrTypeShapeConflict,
-		channels.ErrTypeInUse, channels.ErrNotOpen, channels.ErrActionPending,
+		channels.ErrTypeInUse, channels.ErrNotOpen, channels.ErrActionPending, channels.ErrSessionState,
 	} {
 		if errors.Is(err, sentinel) {
 			return err

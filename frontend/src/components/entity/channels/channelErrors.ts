@@ -88,6 +88,9 @@ export const CHANNEL_ERROR_RULES: Readonly<Record<string, ChannelErrorRule>> = {
   removed: REFETCH,
   conflict: REFETCH,
   lifecycle_wrong_state: REFETCH,
+  // The message type does not apply in the session's state (in:); the
+  // refetch drops it from the composer.
+  session_wrong_state: REFETCH,
   action_taken: REFETCH,
   action_pending: REFETCH,
   action_not_pending: REFETCH,
@@ -150,6 +153,13 @@ export function classifyChannelError(err: unknown): ChannelErrorOutcome {
       ...TOAST,
       message: secs ? t('channels.rateLimitedIn', { n: secs }) : t('channels.rateLimited'),
     }
+  }
+  // The SPA posts only a type it was offered, so this refusal means the
+  // session moved, or a reload changed in: or the states, since the
+  // offer. The server's title (with the allowed states) is for MCP and
+  // the CLI.
+  if (type === 'session_wrong_state') {
+    return { ...REFETCH, message: t('channels.sessionWrongState') }
   }
   const rule = CHANNEL_ERROR_RULES[type]
   if (rule) return { ...rule, message }

@@ -123,6 +123,7 @@ func RunAll(t *testing.T, newHarness func(t *testing.T) Harness) {
 		{"SessionNoticeMarker", testSessionNoticeMarker},
 		{"SessionStateNames", testSessionStateNames},
 		{"SessionReply", testSessionReply},
+		{"SessionAdmit", testSessionAdmit},
 	}
 	for _, list := range [][]conformanceTest{tests, timerTests, reminderTests, outputsTests, waitingTests, readsTests,
 		addressedTests} {

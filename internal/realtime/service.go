@@ -288,15 +288,16 @@ func (c *call) affordancesWith(post map[string]bool) Affordances {
 }
 
 // postable is the set of message types the caller may post here now: they
-// hold a post role and the channel is open. It is nil for a caller without
-// identity.
+// hold a post role, the channel is open, and the session's state is in
+// the type's `in:`. It is nil for a caller without identity.
 func (c *call) postable() map[string]bool {
 	if c.requireCaller() != nil || c.state() != channels.StateOpen {
 		return nil
 	}
 	out := map[string]bool{}
+	s, ch := c.ct.Session(), sessionChannel(c.head, c.now)
 	for name, mt := range c.ct.MessageTypes {
-		if c.mayPost(mt) {
+		if c.mayPost(mt) && sessionRefusal(s, mt, ch) == nil {
 			out[name] = true
 		}
 	}
@@ -358,9 +359,11 @@ type PostResult struct {
 
 // Post posts a message. The checks run in this order: read access, a post
 // role of the message type, a transport that keeps the type (see
-// [PostInput.LogOnly]), an open channel, the rate limit, the
-// properties, the type's `when:`, the refs. A denied caller is not charged
-// a token; an invalid message is.
+// [PostInput.LogOnly]), an open channel, the session state (`in:`), the
+// rate limit, the properties, the type's `when:`, the refs. A denied caller
+// is not charged a token; an invalid message is. The store checks the
+// session state again under its lock (see [admitIn]); a refusal there,
+// after a concurrent move, has spent a token like any failed append.
 func (s *Service) Post(ctx context.Context, addr RawAddress, in PostInput) (PostResult, error) {
 	c, openErr := s.open(ctx, addr)
 	if openErr != nil {
@@ -382,6 +385,9 @@ func (s *Service) Post(ctx context.Context, addr RawAddress, in PostInput) (Post
 	}
 	if err := c.requireOpen(); err != nil {
 		return PostResult{}, err
+	}
+	if e := sessionRefusal(c.ct.Session(), mt, sessionChannel(c.head, c.now)); e != nil {
+		return PostResult{}, sessionWrongState(c.ct, mt, e)
 	}
 	if err := s.local.limiter.take(c.now, bucketIdentity(c.p), c.key, opPostPfx+mt.Name,
 		postRate(c.snap.Config.Limits(), mt)); err != nil {
@@ -424,23 +430,14 @@ func (s *Service) Post(ctx context.Context, addr RawAddress, in PostInput) (Post
 		MarkRead: true, Mentions: targets,
 	})
 	sp.logGuardFailure(c.ctx)
+	if e, ok := errors.AsType[*channels.SessionStateError](err); ok {
+		return PostResult{}, sessionWrongState(c.ct, mt, e)
+	}
 	if err != nil {
 		return PostResult{}, storeError(err)
 	}
 	noteDue(s.dueWake, sp.step)
-	// A log post ends the poster's typing entry; the mark below wakes the
-	// readers for both.
-	s.local.typing.clear(c.key, bucketIdentity(c.p))
-	addressed := channels.MentionTargets(m.Mentions)
-	if m.ReplyTarget != "" {
-		addressed = append(addressed, m.ReplyTarget)
-	}
-	s.local.markAddressed(addressed, c.key)
-	// The append moved the poster's marker (MarkRead), so the poster's
-	// inbox learns the channel even when it held no marker on it before.
-	if reader, ok := callReader(c); ok {
-		s.local.markFor(reader, c.key)
-	}
+	s.local.notePosted(c, m)
 	v := rendererWith(c, refs).message(m)
 	out := PostResult{Message: &v, Session: postedSession(c, sp.step)}
 	if plan.marked && sp.step.Outcome.Moved {
@@ -452,6 +449,25 @@ func (s *Service) Post(ctx context.Context, addr RawAddress, in PostInput) (Post
 		}
 	}
 	return out, nil
+}
+
+// notePosted tells the process-local state about m, the log message c
+// just appended: it ends the poster's typing entry and wakes the people m
+// addresses and the poster's inbox.
+func (l *Local) notePosted(c *call, m channels.Message) {
+	// A log post ends the poster's typing entry; the marks below wake the
+	// readers for both.
+	l.typing.clear(c.key, bucketIdentity(c.p))
+	addressed := channels.MentionTargets(m.Mentions)
+	if m.ReplyTarget != "" {
+		addressed = append(addressed, m.ReplyTarget)
+	}
+	l.markAddressed(addressed, c.key)
+	// The append moved the poster's marker (MarkRead), so the poster's
+	// inbox learns the channel even when it held no marker on it before.
+	if reader, ok := callReader(c); ok {
+		l.markFor(reader, c.key)
+	}
 }
 
 // runInline runs the mark the post's move wrote, as the poster, and

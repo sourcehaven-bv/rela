@@ -3,6 +3,7 @@ package realtime
 import (
 	"context"
 	"net/http"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -551,4 +552,174 @@ func TestSessionNotice_Marker(t *testing.T) {
 	require.True(t, isNotice("session", "session:incident"))
 	require.False(t, isNotice("session", "trigger:x"))
 	require.False(t, isNotice("text", "session:incident"))
+}
+
+// postBucket returns a copy of a's per-channel bucket for posts of typ on
+// the PoC run channel, or nil when there is none. A post that takes a
+// token creates or changes it.
+func (h *harness) postBucket(a *fakeAccess, typ string) *bucket {
+	h.local.limiter.mu.Lock()
+	defer h.local.limiter.mu.Unlock()
+	ib := h.local.limiter.ids[bucketIdentity(a.p)]
+	if ib == nil {
+		return nil
+	}
+	b := ib.perOp[channelOp{key: pocKey(), op: opPostPfx + typ}]
+	if b == nil {
+		return nil
+	}
+	c := *b
+	return &c
+}
+
+// requireNothingAppended fails unless the PoC run channel still ends at
+// lastSeq.
+func (h *harness) requireNothingAppended(t *testing.T, lastSeq int64) {
+	t.Helper()
+	head, err := h.store.Store.Head(context.Background(), pocKey())
+	require.NoError(t, err)
+	require.Equal(t, lastSeq, head.LastSeq, "a refused post stored something")
+}
+
+// TestPost_MessageIn pins AC 4 and AC 7: a post of a type outside its in:
+// states is refused 409 session_wrong_state with the allowed states and
+// the state it saw, stores nothing and spends no rate token; a stranded
+// session admits only types without in:, a final state the types that list
+// it, and a closed channel answers channel_not_open first.
+func TestPost_MessageIn(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name  string
+		who   *fakeAccess
+		state string
+		setup func(t *testing.T, h *harness)
+		in    PostInput
+		typ   string // empty: the post lands
+		title string
+		rule  string
+	}{
+		{name: "approve in working", who: pocOwner(), state: "working",
+			in: PostInput{Type: "approve", Props: map[string]any{"note": "ok"}}, typ: TypeSessionWrongState,
+			title: "approve may be posted only while the session is in plan-review; it is in working",
+			rule:  "channel_types.run.message_types.approve.in"},
+		{name: "two states listed", who: pocRunner(), state: "review",
+			in: PostInput{Type: "progress", Props: map[string]any{"note": "n"}}, typ: TypeSessionWrongState,
+			title: "progress may be posted only while the session is in planning, working; it is in review",
+			rule:  "channel_types.run.message_types.progress.in"},
+		{name: "unstored reads as initial", who: pocOwner(), state: "unstored",
+			in: PostInput{Type: "approve", Props: map[string]any{"note": "ok"}}, typ: TypeSessionWrongState,
+			title: "approve may be posted only while the session is in plan-review; it is in new",
+			rule:  "channel_types.run.message_types.approve.in"},
+		{name: "a type without in posts in every state", who: pocOwner(), state: "working",
+			in: PostInput{Type: "text", Props: map[string]any{"body": "hi"}}},
+		{name: "plain message where it moves nothing", who: pocOwner(), state: "plan-review",
+			in: PostInput{Type: "approve", Props: map[string]any{"note": "ok"}}},
+		{name: "final state admits a type that lists it", who: pocOwner(), state: "done",
+			in: PostInput{Type: "thanks", Props: map[string]any{"note": "ty"}}},
+		{name: "a type that lists only a final state", who: pocOwner(), state: "review",
+			in: PostInput{Type: "thanks", Props: map[string]any{"note": "ty"}}, typ: TypeSessionWrongState,
+			title: "thanks may be posted only while the session is in done; it is in review",
+			rule:  "channel_types.run.message_types.thanks.in"},
+		{name: "stranded refuses a type with in", who: pocRunner(), state: "working",
+			setup: strandWorking, in: PostInput{Type: "progress", Props: map[string]any{"note": "n"}},
+			typ: TypeSessionWrongState,
+			title: "progress may be posted only while the session is in planning, busy; " +
+				"the session is stranded in working",
+			rule: "channel_types.run.message_types.progress.in"},
+		{name: "stranded admits a type without in", who: pocRunner(), state: "working", setup: strandWorking,
+			in: PostInput{Type: "text", Props: map[string]any{"body": "hi"}}},
+		{name: "closed channel answers channel_not_open first", who: pocOwner(), state: "plan-review",
+			setup: func(t *testing.T, h *harness) {
+				t.Helper()
+				_, err := h.svc.Lifecycle(as(pocOwner()), pocRun, realtimecfg.LifecycleClose)
+				require.NoError(t, err)
+			},
+			in: PostInput{Type: "go", Props: map[string]any{"note": "n"}}, typ: TypeChannelNotOpen},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			h := newPocHarness(t)
+			h.pocDriveTo(t, tc.state)
+			if tc.setup != nil {
+				tc.setup(t, h)
+			}
+			var lastSeq int64
+			if tc.state != "unstored" {
+				head, err := h.store.Store.Head(context.Background(), pocKey())
+				require.NoError(t, err)
+				lastSeq = head.LastSeq
+			}
+			bucketBefore := h.postBucket(tc.who, tc.in.Type)
+			res, err := h.svc.Post(as(tc.who), pocRun, tc.in)
+			if tc.typ == "" {
+				require.NoError(t, err)
+				require.NotNil(t, res.Message)
+				return
+			}
+			d := requireDenial(t, err, http.StatusConflict, tc.typ)
+			if tc.title != "" {
+				require.Equal(t, tc.title, d.Title)
+				require.Equal(t, tc.rule, d.Rule)
+			}
+			if tc.state == "unstored" {
+				_, err := h.store.Store.Head(context.Background(), pocKey())
+				require.ErrorIs(t, err, channels.ErrNotFound, "a refused post created the channel")
+			} else {
+				h.requireNothingAppended(t, lastSeq)
+			}
+			require.Equal(t, bucketBefore, h.postBucket(tc.who, tc.in.Type), "a refused pre-check spent a rate token")
+		})
+	}
+}
+
+// strandWorking renames the PoC's working state, so a channel in working
+// is stranded.
+func strandWorking(t *testing.T, h *harness) {
+	t.Helper()
+	y := strings.NewReplacer("        working:\n", "        busy:\n", "to: working", "to: busy",
+		"in: [planning, working]", "in: [planning, busy]", "in: [working]", "in: [busy]").
+		Replace(pocRealtime(""))
+	h.cfg.set(Snapshot{Config: testCompiled(t, y)})
+}
+
+// TestPost_MessageInStoreRefuses pins AC 5 for one post: when the session
+// moves between the post's read and its append, the store refuses the
+// post with the state it saw. The title names that state, not the head
+// the call read; nothing is stored, and the token is spent like any failed
+// append.
+func TestPost_MessageInStoreRefuses(t *testing.T) {
+	t.Parallel()
+	h := newPocHarness(t)
+	h.pocDriveTo(t, "plan-review")
+	o := pocOwner()
+	var lastSeq int64
+	h.store.beforeAppend = func() {
+		h.postTo(t, o, pocRun, "approve", map[string]any{"note": "go"})
+		head, err := h.store.Store.Head(context.Background(), pocKey())
+		require.NoError(t, err)
+		lastSeq = head.LastSeq
+	}
+	require.Nil(t, h.postBucket(o, "revise"))
+	_, err := h.svc.Post(as(o), pocRun, PostInput{Type: "revise", Props: map[string]any{"note": "again"}})
+	d := requireDenial(t, err, http.StatusConflict, TypeSessionWrongState)
+	require.Equal(t, "revise may be posted only while the session is in plan-review; it is in working", d.Title)
+	require.Equal(t, "channel_types.run.message_types.revise.in", d.Rule)
+	h.requireNothingAppended(t, lastSeq)
+	require.NotNil(t, h.postBucket(o, "revise"), "a refusal by the store spends the token")
+	v, err := h.svc.Head(as(o), pocRun)
+	require.NoError(t, err)
+	require.Equal(t, "working", v.Channel.Session.State)
+}
+
+// TestPost_MessageInEphemeral pins that an ephemeral type with in: is
+// checked by the pre-check, the only check a signal meets.
+func TestPost_MessageInEphemeral(t *testing.T) {
+	t.Parallel()
+	y := strings.Replace(pocRealtime(""), "    lifecycle:\n",
+		"      nudge: { persist: ephemeral, ttl: 30s, post: [owner], in: [plan-review] }\n    lifecycle:\n", 1)
+	h := newHarness(t, withYAML(y))
+	h.pocDriveTo(t, "working")
+	_, err := h.svc.Post(as(pocOwner()), pocRun, PostInput{Type: "nudge"})
+	requireDenial(t, err, http.StatusConflict, TypeSessionWrongState)
 }

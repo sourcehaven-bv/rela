@@ -62,6 +62,9 @@ const (
 	// TypeLifecycleWrongState is a 409 for a lifecycle operation that does
 	// not start from the channel's current state.
 	TypeLifecycleWrongState = "lifecycle_wrong_state"
+	// TypeSessionWrongState is a 409 for a post of a message type whose
+	// `in:` does not list the session's current state.
+	TypeSessionWrongState = "session_wrong_state"
 	// TypeRetentionActive is a 409 for a delete before the channel's
 	// retention ends, or of a channel under retention that was never closed.
 	TypeRetentionActive = "retention_active"

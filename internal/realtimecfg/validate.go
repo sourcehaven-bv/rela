@@ -209,6 +209,8 @@ func (v *validator) channelType(name string, raw *rawChannelType, limits Limits)
 			v.add(key+".session.states", err.Error())
 		}
 		ct.session = v.session(key+".session", raw.Session, order, ct, raw, limits)
+	} else {
+		messageInCheck{v: v, raw: raw, ct: ct}.withoutSession()
 	}
 	return ct
 }

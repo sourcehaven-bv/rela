@@ -972,3 +972,35 @@ func TestChannelsHandler_NoticeOutputs(t *testing.T) {
 	require.False(t, seen.Restricted)
 	require.Equal(t, "FEAT-1", seen.ID)
 }
+
+// TestChannelsHandler_SessionWrongState pins TKT-QYFLRH AC 4 over HTTP: a
+// type limited by in: is missing from _actions.post outside its states,
+// and a post of it is 409 session_wrong_state naming the rule. Once the
+// session is in the state, the type is offered and posts.
+func TestChannelsHandler_SessionWrongState(t *testing.T) {
+	env := newChannelEnv(t)
+	env.ch.cfg.Store(env.ch.parse(t, strings.Replace(channelTestRealtime,
+		"      note:      { properties: { body: { type: string } }, post: [member] }\n",
+		"      note:      { properties: { body: { type: string } }, post: [member] }\n"+
+			"      closing:   { properties: { note: { type: string } }, post: [member], in: [contained] }\n", 1)))
+	actions := func() []string {
+		t.Helper()
+		code, b := env.get(t, "alice", incidentPath)
+		require.Equal(t, http.StatusOK, code, "%s", b)
+		return decodeAs[v1.ChannelHead](t, b).Actions.Post
+	}
+	require.NotContains(t, actions(), "closing")
+
+	resp, b := env.do(t, "alice", http.MethodPost, incidentPath+"/messages", `{"type":"closing"}`, nil)
+	require.Equal(t, http.StatusConflict, resp.StatusCode, "%s", b)
+	require.Equal(t, realtime.TypeSessionWrongState, problemType(t, b))
+	p := decodeAs[v1.Error](t, b)
+	require.Equal(t, "closing may be posted only while the session is in contained; it is in detected", p.Title)
+	require.Equal(t, "channel_types.incident.message_types.closing.in", p.Detail)
+
+	resp, b = env.do(t, "alice", http.MethodPost, incidentPath+"/messages", `{"type":"contained"}`, nil)
+	require.Equal(t, http.StatusCreated, resp.StatusCode, "%s", b)
+	require.Contains(t, actions(), "closing")
+	resp, b = env.do(t, "alice", http.MethodPost, incidentPath+"/messages", `{"type":"closing"}`, nil)
+	require.Equal(t, http.StatusCreated, resp.StatusCode, "%s", b)
+}

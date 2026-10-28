@@ -2,6 +2,7 @@ package channelstest
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -403,4 +404,98 @@ func testSessionReply(t *testing.T, h Harness) {
 	got, err := h.Store.Get(ctx, k, 3)
 	require.NoError(t, err)
 	require.True(t, got.MovedSession)
+}
+
+// testSessionAdmit pins [channels.SessionStep.Admit]: it sees the channel
+// as committed, including the unset session of a channel the append would
+// create; a refusal stores nothing (no message, no notice, no addressed
+// row, no implicit channel, no audit) and comes back unchanged; and
+// SetSession refuses a step that sets it.
+func testSessionAdmit(t *testing.T, h Harness) {
+	t.Helper()
+	ctx := context.Background()
+	k := key("TKT-1", "room")
+	mustAppend(t, h.Store, k, stepped("move", T0, sessionStep(fromUnset())))
+	before, err := h.Store.Head(ctx, k)
+	require.NoError(t, err)
+	trail, err := h.Store.Audit(ctx, "TKT-1")
+	require.NoError(t, err)
+	carolR := channels.Reader{User: "carol"}
+	rows := addressed(t, h.Store, carolR)
+
+	var seen channels.Channel
+	refusal := &channels.SessionStateError{State: "contained"}
+	step := sessionStep(moveFrom("contained", "assessed"))
+	step.Admit = func(c channels.Channel) error {
+		seen = c
+		return refusal
+	}
+	nm := stepped("refused", T0.Add(time.Minute), step)
+	nm.Mentions = []channels.Mention{login("carol")}
+	_, err = h.Store.Append(ctx, k, nm)
+	require.ErrorIs(t, err, channels.ErrSessionState)
+	got, ok := errors.AsType[*channels.SessionStateError](err)
+	require.True(t, ok, "want the *SessionStateError back, got %v", err)
+	require.Same(t, refusal, got, "the store returns Admit's error unchanged")
+	require.Equal(t, before.Session, seen.Session, "Admit sees the committed session")
+	require.Equal(t, before.LastSeq, seen.LastSeq)
+
+	head, err := h.Store.Head(ctx, k)
+	require.NoError(t, err)
+	require.Equal(t, before, head, "a refused append stored something")
+	after, err := h.Store.Audit(ctx, "TKT-1")
+	require.NoError(t, err)
+	require.Equal(t, trail, after)
+	require.Equal(t, rows, addressed(t, h.Store, carolR), "a refused append wrote an addressed row")
+	page, err := h.Store.Messages(ctx, k, channels.Page{})
+	require.NoError(t, err)
+	require.Len(t, page, int(before.LastSeq))
+
+	admitted := sessionStep(moveFrom("contained", "assessed"))
+	admitted.Admit = func(channels.Channel) error { return nil }
+	msg := mustAppend(t, h.Store, k, stepped("admitted", T0.Add(2*time.Minute), admitted))
+	require.Equal(t, before.LastSeq+1, msg.Seq)
+	require.True(t, admitted.Outcome.Moved, "an admitted append runs the decider")
+
+	testSessionAdmitCreate(t, h)
+	testSessionAdmitTimer(t, h, k)
+}
+
+// testSessionAdmitCreate pins that Admit sees the unset session of a
+// channel the append would create, and that its refusal creates nothing.
+func testSessionAdmitCreate(t *testing.T, h Harness) {
+	t.Helper()
+	ctx := context.Background()
+	fresh := key("TKT-3", "room")
+	var unset channels.Channel
+	create := sessionStep(fromUnset())
+	create.Admit = func(c channels.Channel) error {
+		unset = c
+		return &channels.SessionStateError{State: "detected"}
+	}
+	_, err := h.Store.Append(ctx, fresh, stepped("first", T0, create))
+	require.ErrorIs(t, err, channels.ErrSessionState)
+	require.Equal(t, channels.StateOpen, unset.State)
+	require.True(t, unset.Session.IsZero(), "Admit sees the unset session of a channel the append creates")
+	_, err = h.Store.Head(ctx, fresh)
+	require.ErrorIs(t, err, channels.ErrNotFound, "a refused append created the channel")
+	freshTrail, err := h.Store.Audit(ctx, "TKT-3")
+	require.NoError(t, err)
+	require.Empty(t, freshTrail)
+}
+
+// testSessionAdmitTimer pins that a timer step with Admit is refused and
+// stores nothing.
+func testSessionAdmitTimer(t *testing.T, h Harness, k channels.Key) {
+	t.Helper()
+	ctx := context.Background()
+	timer := timerStep(moveFrom("assessed", "overdue"), "late", dueAt(T0))
+	timer.Admit = func(channels.Channel) error { return nil }
+	headBefore, err := h.Store.Head(ctx, k)
+	require.NoError(t, err)
+	_, err = h.Store.SetSession(ctx, k, T0.Add(3*time.Minute), timer)
+	require.ErrorIs(t, err, channels.ErrInvalidMessage)
+	headAfter, err := h.Store.Head(ctx, k)
+	require.NoError(t, err)
+	require.Equal(t, headBefore, headAfter, "a refused SetSession stored something")
 }

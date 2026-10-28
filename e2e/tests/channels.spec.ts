@@ -183,6 +183,9 @@ sessionTest.describe("channels with a session", () => {
     await alice.expectTransitionMark(SESSION.messageLabel, true);
     await bob.expectComposer();
     await bob.expectMessageType(SESSION.messageLabel, true);
+    // Wrap-up has in: [contained], so neither is offered it yet.
+    await alice.expectMessageType(SESSION.wrapUpLabel, false);
+    await bob.expectMessageType(SESSION.wrapUpLabel, false);
     await bob.expectTransitionMark(SESSION.messageLabel, false);
     await bob.selectMessageType(SESSION.messageLabel);
     await bob.expectSessionHint(null);
@@ -200,6 +203,8 @@ sessionTest.describe("channels with a session", () => {
     for (const p of [alice, bob]) {
       await p.expectSessionAt(SESSION.to);
       await p.expectMessage(notice);
+      // The session is in Contained now, so Wrap-up is offered.
+      await p.expectMessageType(SESSION.wrapUpLabel, true);
     }
     // A message that moved the session cannot be edited.
     await alice.expectMessage("Access revoked");

@@ -280,7 +280,9 @@ func toolReadChannelDef() *mcpgo.Tool {
 			"after_rev to wait for new, edited or removed messages. A channel type with a session shows it on "+
 			"the channel: its state, generation and the message types that move it from here, and "+
 			"actions.transitions lists those your post would fire if the guard holds; a move appends "+
-			"a notice of type session. A state with timers lists them in timers, and due_at is when the "+
+			"a notice of type session. A message type may be limited to some session states; outside them "+
+			"it is not in actions.post, and a post is refused with session_wrong_state, which names the "+
+			"allowed states. A state with timers lists them in timers, and due_at is when the "+
 			"first moves the session on its own (only on an open channel); a timer's move appends a "+
 			"session notice with a timer prop. A state with reminders lists them in reminders, each with its "+
 			"count and due_at; a reminder posts a message of its type from system:realtime with triggered_by "+
@@ -324,6 +326,8 @@ func toolPostMessage(refuseSignals bool) *mcpgo.Tool {
 		"A post that moves the session along a transition with outputs answers outputs: the graph " +
 		"writes the move made as you, each done or failed with a code. A failed write does not undo the " +
 		"move; you are refused before posting when you may not write one. " +
+		"A message type may be limited to some session states; outside them it is not in actions.post, " +
+		"and a post is refused with session_wrong_state, which names the allowed states. " +
 		"In a markdown property, to mention a person, put their user entity id in backticks (`USR-7`) " +
 		"where person mapping is configured, or `@login` in backticks where it is not; to mention an " +
 		"agent, its job identity (`integration:triage-bot`). At most " + strconv.Itoa(realtime.MaxMentions) +
