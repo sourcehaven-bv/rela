@@ -16,6 +16,7 @@
  */
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import { RouterLink, useRouter } from 'vue-router'
+import { useI18n } from 'vue-i18n'
 import { searchEntities } from '@/api'
 import { entityDisplayTitle } from '@/utils/entityDisplay'
 import { useSchemaStore } from '@/stores'
@@ -45,6 +46,7 @@ const emit = defineEmits<{
   close: []
 }>()
 
+const { t } = useI18n()
 const router = useRouter()
 const schemaStore = useSchemaStore()
 
@@ -109,7 +111,7 @@ async function runSearch(q: string): Promise<void> {
     highlightedIndex.value = 0
   } catch (err: unknown) {
     if (isCancelledFetch(err)) return
-    errorMsg.value = 'Search failed'
+    errorMsg.value = t('palette.failed')
   } finally {
     loading.value = false
   }
@@ -156,7 +158,7 @@ function entityLabel(entity: Entity): string {
 }
 
 function entityTypeLabel(type: string): string {
-  if (!type) return 'Unknown'
+  if (!type) return t('palette.unknownType')
   return schemaStore.entityTypes.get(type)?.label || type
 }
 
@@ -258,7 +260,7 @@ const showNoMatches = computed(
       class="cmdk-overlay"
       role="dialog"
       aria-modal="true"
-      aria-label="Quick jump"
+      :aria-label="t('palette.label')"
       @click="handleOverlayClick"
       @keydown="handleKeydown"
     >
@@ -269,7 +271,7 @@ const showNoMatches = computed(
             v-model="query"
             type="text"
             class="cmdk-input"
-            placeholder="Type to search entities…"
+            :placeholder="t('palette.placeholder')"
             autocomplete="off"
             spellcheck="false"
             role="combobox"
@@ -286,9 +288,9 @@ const showNoMatches = computed(
           <RlSpinner v-if="loading" class="cmdk-spinner" :size="16" aria-hidden="true" />
         </div>
 
-        <div v-if="showEmptyHint" class="cmdk-hint">Type to search entities</div>
+        <div v-if="showEmptyHint" class="cmdk-hint">{{ t('palette.hint') }}</div>
         <div v-else-if="errorMsg" class="cmdk-hint cmdk-error">{{ errorMsg }}</div>
-        <div v-else-if="showNoMatches" class="cmdk-hint">No matches</div>
+        <div v-else-if="showNoMatches" class="cmdk-hint">{{ t('palette.noMatches') }}</div>
 
         <ul
           v-if="results.length > 0"
@@ -321,7 +323,7 @@ const showNoMatches = computed(
               <span class="cmdk-type">{{ entityTypeLabel(entity.type) }}</span>
               <span class="cmdk-title"
                 >{{ entityLabel(entity)
-                }}<span v-if="entity._owner" class="cmdk-owner">in {{ entity._owner.title }}</span></span
+                }}<span v-if="entity._owner" class="cmdk-owner">{{ t('palette.inOwner', { title: entity._owner.title }) }}</span></span
               >
               <span class="cmdk-id">{{ entity.id }}</span>
             </RouterLink>

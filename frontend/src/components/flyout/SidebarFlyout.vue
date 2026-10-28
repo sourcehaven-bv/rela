@@ -11,6 +11,7 @@
  */
 import { computed, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import { useI18n } from 'vue-i18n'
 import { useFlyout } from '@/composables/useFlyout'
 import { entityDisplayTitle } from '@/utils/entityDisplay'
 import { entityDetailHref } from '@/utils/entityRoute'
@@ -22,6 +23,7 @@ import FlyoutList from './FlyoutList.vue'
 import PilePanel from '@/components/piles/PilePanel.vue'
 import { usePiles } from '@/composables/usePiles'
 
+const { t } = useI18n()
 const route = useRoute()
 const router = useRouter()
 const flyout = useFlyout()
@@ -73,7 +75,7 @@ watch(() => route.path, () => flyout.close())
       <RlIconButton
         v-if="panel.id !== 'pile'"
         icon="maximize-2"
-        :label="panel.id === 'list' ? 'Open the full list' : 'Open the full page'"
+        :label="panel.id === 'list' ? t('flyout.openFullList') : t('flyout.openFullPage')"
         @click="expand(panel.id)"
       />
     </template>

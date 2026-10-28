@@ -5,6 +5,7 @@ import { entityKeys } from '@/queries/entities'
 import { usePageStore } from '@/stores/pages'
 import { useSchemaStore } from '@/stores/schema'
 import { useUIStore } from '@/stores/ui'
+import { t } from '@/i18n'
 import { pageScopeParams } from '@/utils/listParams'
 import { tabIsRelationOrdered } from '@/utils/relationOrder'
 import type { Entity, PageScope, SidebarPage, SidebarPageLink } from '@/types'
@@ -36,7 +37,7 @@ async function linkToAnchor(link: AnchorLink, entity: Entity): Promise<boolean> 
     return true
   } catch {
     useUIStore().error(
-      `${entity.id} was created, but linking it to ${link.anchor} failed. Link it by hand.`
+      t('shell.linkAnchorFailed', { id: entity.id, anchor: link.anchor })
     )
     return false
   }

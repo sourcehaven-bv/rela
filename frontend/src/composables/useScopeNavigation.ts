@@ -10,6 +10,7 @@ import { tabIsRelationOrdered } from '@/utils/relationOrder'
 import { listPiles } from '@/api/piles'
 import { knownPileName, rememberPileNames } from '@/composables/pileNames'
 import { useWorld } from '@/composables/useWorld'
+import { t } from '@/i18n'
 
 export interface ScopeNav {
   // Neighbours carry their type, not just id, so navigation builds the correct
@@ -87,7 +88,7 @@ export function useScopeNavigation(entityId: () => string, servedAddress?: () =>
     const scope: ScopeDescriptor = { source: 'search', q }
     const type = route.query.type as string | undefined
     if (type) scope.type = type
-    return { scope, label: `Search: ${q}` }
+    return { scope, label: t('search.scopeLabel', { q }) }
   }
 
   // buildPileScope walks one of the user's piles. The descriptor carries the
@@ -107,7 +108,7 @@ export function useScopeNavigation(entityId: () => string, servedAddress?: () =>
         // name only costs the label.
       }
     }
-    return { scope: { source: 'pile', pile }, label: name ?? 'Pile' }
+    return { scope: { source: 'pile', pile }, label: name ?? t('list.scope.pile') }
   }
 
   // buildListScope reconstructs the scope EntityList rendered: list-config

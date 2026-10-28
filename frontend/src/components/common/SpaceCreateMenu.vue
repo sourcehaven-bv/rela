@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { useRouter } from 'vue-router'
+import { useI18n } from 'vue-i18n'
 import RlMenu from 'rela-components/components/overlay/RlMenu.vue'
 import RlMenuItem from 'rela-components/components/overlay/RlMenuItem.vue'
 import RlMenuSeparator from 'rela-components/components/overlay/RlMenuSeparator.vue'
@@ -34,6 +35,7 @@ import type { Entity, SidebarCreate } from '@/types'
  * the types the view shows come first, so the likely choice is the top row.
  * The other types follow in config order, after a separator.
  */
+const { t } = useI18n()
 const space = useSpaceStore()
 const pages = usePageStore()
 const router = useRouter()
@@ -81,10 +83,10 @@ function onCreatedAnother(entity: Entity) {
           data-testid="space-create"
           v-bind="triggerAttrs(attrs)"
           :loading="pages.opening"
-          loading-label="Loading"
+          :loading-label="t('shell.loadingLabel')"
           @click="toggle"
         >
-          Create
+          {{ t('common.create') }}
           <template #trailing><RlIcon name="chevron-down" :size="12" /></template>
         </RlButton>
       </template>

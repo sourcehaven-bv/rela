@@ -9,8 +9,11 @@
  * in-progress text wins.
  */
 import { ref, watch, onBeforeUnmount } from 'vue'
+import { useI18n } from 'vue-i18n'
 
 const TEXT_DEBOUNCE_MS = 250
+
+const { t } = useI18n()
 
 const props = defineProps<{
   modelValue: string
@@ -92,7 +95,7 @@ defineExpose({ focus })
       ref="inputRef"
       v-model="local"
       type="search"
-      :placeholder="placeholder || 'Search...'"
+      :placeholder="placeholder || t('list.searchPlaceholder')"
       @input="handleInput"
       @keyup.enter="emitNow"
       @keydown="handleKeydown"
@@ -101,7 +104,7 @@ defineExpose({ focus })
       v-if="local"
       type="button"
       class="clear-btn"
-      title="Clear search"
+      :title="t('list.clearSearch')"
       @click="handleClear"
     >
       &times;

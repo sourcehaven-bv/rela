@@ -58,6 +58,7 @@ import RlSwimlaneBoard from 'rela-components/components/board/RlSwimlaneBoard.vu
 import type { DotColor, Section, Swimlane } from 'rela-components/types'
 import type { BoardDropPosition } from 'rela-components/composables/useBoardDnd'
 import RlStatusRegion from 'rela-components/components/feedback/RlStatusRegion.vue'
+import { useI18n } from 'vue-i18n'
 
 const props = defineProps<{
   id: string
@@ -69,6 +70,7 @@ const router = useRouter()
 const route = useRoute()
 const schemaStore = useSchemaStore()
 const uiStore = useUIStore()
+const { t } = useI18n()
 const queryCache = useQueryCache()
 
 // Back affordance — renders when ?return_to= or ?from= is present.
@@ -267,7 +269,7 @@ const totalCount = computed(() => boardQuery.data.value?.meta.total ?? 0)
 const loadError = computed(() => {
   const err = boardQuery.error.value
   if (!err) return null
-  return getErrorMessage(err, 'Failed to load board')
+  return getErrorMessage(err, t('kanban.loadFailed'))
 })
 
 // pageState mirrors DynamicForm's `form-state-*` contract: a stable signal
@@ -302,7 +304,7 @@ const columns = computed(() => {
     const hasOther = entities.value.some(
       (e) => relationColumns.columnOf(e) === OTHER_COLUMN
     )
-    if (hasOther) cols.push({ value: OTHER_COLUMN, label: 'Other' })
+    if (hasOther) cols.push({ value: OTHER_COLUMN, label: t('kanban.otherColumn') })
     return cols
   }
 
@@ -403,7 +405,11 @@ const hasSwimmlanes = computed(() => swimlanes.value.length > 0)
 
 // Accessible name for the board region. The columns are sections inside it, so
 // the group needs its own name to be distinguishable from the rest of the page.
-const boardLabel = computed(() => `${kanbanConfig.value?.title || 'Kanban'} board`)
+const boardLabel = computed(() =>
+  kanbanConfig.value?.title
+    ? t('kanban.boardLabel', { title: kanbanConfig.value.title })
+    : t('kanban.boardLabelDefault')
+)
 
 // Column header text. An explicit kanban-config column label wins; otherwise
 // fall back to the enum's display label for the grouping value, then the raw
@@ -621,7 +627,7 @@ const { mutateAsync: moveCard } = useMutation({
   onError(err, _vars, context) {
     rollbackOptimistic(queryCache, context)
     console.error('Failed to update entity:', err)
-    uiStore.error(getErrorMessage(err, 'Failed to move card'))
+    uiStore.error(getErrorMessage(err, t('kanban.moveFailed')))
   },
   async onSettled(_data, _err, _vars, context) {
     await settleOptimistic(queryCache, context)
@@ -833,7 +839,7 @@ async function onMove({
     if (!target || to.id === OTHER_COLUMN) return
     if (relationColumns.columnOf(entity) !== to.id) {
       if (!canUpdate(entity)) {
-        uiStore.error('You may not move this card to another column')
+        uiStore.error(t('kanban.moveForbidden'))
         return
       }
       try {
@@ -867,7 +873,7 @@ async function onMove({
     // picked up, to move it within its column; a drop into another column
     // would change the card itself, so it is refused out loud.
     if (!canUpdate(entity)) {
-      uiStore.error('You may not move this card to another column')
+      uiStore.error(t('kanban.moveForbidden'))
       return
     }
     try {
@@ -1024,7 +1030,7 @@ watch(createModal.open, (open) => {
           icon="plus"
           @click="createModal.show"
         >
-          New
+          {{ t('common.new') }}
         </RlButton>
       </template>
     </PageHeaderContent>
@@ -1062,10 +1068,10 @@ watch(createModal.open, (open) => {
     <div v-if="headerHtml" class="view-info view-info--top" v-html="headerHtml"/>
 
     <div v-if="truncated" class="truncation-banner" role="alert">
-      Showing {{ entities.length }} of {{ totalCount }} items — the board is incomplete.
+      {{ t('kanban.truncated', { shown: entities.length, total: totalCount }) }}
     </div>
 
-    <RlStatusRegion v-if="loading">Loading board...</RlStatusRegion>
+    <RlStatusRegion v-if="loading">{{ t('kanban.loading') }}</RlStatusRegion>
 
     <RlStatusRegion v-else-if="loadError" tone="error">{{ loadError }}</RlStatusRegion>
 

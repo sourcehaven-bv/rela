@@ -90,7 +90,7 @@ function valueMatches(card: DashboardCardEntry, value: DashboardCardValue): bool
 
 // Computed
 const dashboardConfig = computed(() => (props.name ? named.value : schemaStore.dashboard))
-const title = computed(() => dashboardConfig.value?.title || 'Dashboard')
+const title = computed(() => dashboardConfig.value?.title || t('dashboardView.title'))
 const description = computed(() => dashboardConfig.value?.description)
 const cards = computed(() => dashboardConfig.value?.cards || [])
 
@@ -189,7 +189,7 @@ function buildBreakdown(card: DashboardCardEntry, entities: Entity[]): Breakdown
   let total = 0
 
   for (const entity of entities) {
-    const value = String(entity.properties[groupBy] || 'Unknown')
+    const value = String(entity.properties[groupBy] || t('dashboard.unknown'))
     counts[value] = (counts[value] || 0) + 1
     total++
   }
@@ -355,12 +355,12 @@ watch([() => props.name, worldParam], () => void loadData())
       <p v-if="description" class="description">{{ description }}</p>
     </header>
 
-    <RlStatusRegion v-if="loading">Loading dashboard...</RlStatusRegion>
+    <RlStatusRegion v-if="loading">{{ t('dashboardView.loading') }}</RlStatusRegion>
 
     <RlEmptyState
       v-else-if="notFound"
-      title="Dashboard not found"
-      :description="`No dashboard is named “${name}”.`"
+      :title="t('dashboardView.notFound')"
+      :description="t('dashboardView.notFoundDescription', { name })"
       data-testid="dashboard-not-found"
     />
 
@@ -377,7 +377,7 @@ watch([() => props.name, worldParam], () => void loadData())
         by `permission:` (TKT-53KICM). Distinguishing them would tell a user
         about cards they cannot use, which is the opposite of the point.
       -->
-      <p v-if="cards.length === 0" class="no-data dashboard-empty">No dashboard cards to show.</p>
+      <p v-if="cards.length === 0" class="no-data dashboard-empty">{{ t('dashboardView.noCards') }}</p>
 
       <div v-else class="dashboard-grid">
         <section
@@ -421,7 +421,7 @@ watch([() => props.name, worldParam], () => void loadData())
               </div>
               <span class="breakdown-count">{{ item.count }}</span>
             </div>
-            <div v-if="view.breakdown.length === 0" class="no-data">No data</div>
+            <div v-if="view.breakdown.length === 0" class="no-data">{{ t('dashboard.noData') }}</div>
           </div>
 
           <!-- Table display -->
@@ -458,7 +458,7 @@ watch([() => props.name, worldParam], () => void loadData())
                 </tr>
               </tbody>
             </table>
-            <div v-else class="no-data">No results</div>
+            <div v-else class="no-data">{{ t('dashboardView.noResults') }}</div>
           </div>
 
           <!-- Matrix display (list cards only) -->
@@ -490,8 +490,8 @@ watch([() => props.name, worldParam], () => void loadData())
       <!-- Validation card -->
       <div class="validation-card">
         <div class="card-header">
-          <h3>&#9888; Validation</h3>
-          <router-link to="/analyze" class="card-link" title="View full analysis">
+          <h3>&#9888; {{ t('dashboardView.validation') }}</h3>
+          <router-link to="/analyze" class="card-link" :title="t('dashboardView.viewAnalysis')">
             &#8599;
           </router-link>
         </div>
@@ -501,17 +501,16 @@ watch([() => props.name, worldParam], () => void loadData())
               v-if="analysisResult.errors === 0 && analysisResult.warnings === 0"
               class="validation-success"
             >
-              &#10003; All checks passed
+              &#10003; {{ t('dashboardView.allPassed') }}
             </span>
             <template v-else>
               <span v-if="analysisResult.errors > 0" class="badge badge-error">
-                {{ analysisResult.errors }} {{ analysisResult.errors === 1 ? 'error' : 'errors' }}
+                {{ t('dashboardView.errors', { n: analysisResult.errors }, analysisResult.errors) }}
               </span>
               <span v-if="analysisResult.warnings > 0" class="badge badge-warning">
-                {{ analysisResult.warnings }}
-                {{ analysisResult.warnings === 1 ? 'warning' : 'warnings' }}
+                {{ t('dashboardView.warnings', { n: analysisResult.warnings }, analysisResult.warnings) }}
               </span>
-              <router-link to="/analyze" class="view-details"> View details &rarr; </router-link>
+              <router-link to="/analyze" class="view-details"> {{ t('dashboardView.viewDetails') }} &rarr; </router-link>
             </template>
           </template>
         </div>

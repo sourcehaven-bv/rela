@@ -27,6 +27,7 @@ import RlIconButton from 'rela-components/components/common/RlIconButton.vue'
 import { useQueryCache } from '@pinia/colada'
 import { entityKeys } from '@/queries/entities'
 import { useUIStore } from '@/stores/ui'
+import { useI18n } from 'vue-i18n'
 import { useGanttDrag, type GanttDragMode } from '@/composables/useGanttDrag'
 import {
   barSpan,
@@ -58,6 +59,7 @@ const route = useRoute()
 const router = useRouter()
 const schemaStore = useSchemaStore()
 const uiStore = useUIStore()
+const { t } = useI18n()
 const queryCache = useQueryCache()
 
 const config = computed(() => schemaStore.getGantt(props.id))
@@ -102,7 +104,7 @@ async function fetchScope(root: string | null, keep = false) {
   } catch (e) {
     if (seq !== fetchSeq) return
     if (keep) {
-      uiStore.error(`Could not reload the chart: ${getErrorMessage(e)}`)
+      uiStore.error(t('gantt.reloadFailed', { error: getErrorMessage(e) }))
       return
     }
     data.value = null
@@ -129,6 +131,11 @@ function pathQuery(path: string[]): string | undefined {
 }
 
 const zoom = ref<GanttZoom>('month')
+const ZOOM_LABELS = {
+  quarter: 'gantt.zoom.quarter',
+  month: 'gantt.zoom.month',
+  week: 'gantt.zoom.week',
+} as const satisfies Record<GanttZoom, string>
 const expanded = ref<Set<string>>(new Set())
 
 const drag = useGanttDrag({
@@ -420,11 +427,11 @@ function staysInBar(ev: FocusEvent): boolean {
 
 /** The three controls of a draggable bar, in tab order. The move control
  * covers the window; the edges sit on top of its sides. */
-const DRAG_HANDLES: { mode: GanttDragMode; label: string }[] = [
-  { mode: 'start', label: 'Start of' },
-  { mode: 'move', label: 'Move' },
-  { mode: 'end', label: 'End of' },
-]
+const DRAG_HANDLES = [
+  { mode: 'start', label: 'gantt.handle.start' },
+  { mode: 'move', label: 'gantt.handle.move' },
+  { mode: 'end', label: 'gantt.handle.end' },
+] as const satisfies readonly { mode: GanttDragMode; label: string }[]
 
 /** A handle's slider value: the day of the edge it moves, or the start
  * for the move control, which announces the whole range. */
@@ -458,7 +465,7 @@ const rows = computed(() =>
  * containment depends on the operator's schema, so the UI reports the shape
  * and the consequence without calling it a mistake. */
 function cycleLabel(node: GanttNode): string {
-  return `${node.title || node.id} is part of a containment loop — one repeating edge is not shown`
+  return t('gantt.cycle', { name: node.title || node.id })
 }
 
 /** openEntity navigates to the node's entity page — the tree-column name's
@@ -668,16 +675,16 @@ function breachLines(node: GanttNode): { text: string; kind: 'overrun' | 'commit
   const rs = parseDay(node.rolled?.start)
   const re = parseDay(node.rolled?.end)
   if (node.breach?.before && ps !== null && rs !== null) {
-    out.push({ text: `children start ${ps - rs}d before the planned start`, kind: 'overrun' })
+    out.push({ text: t('gantt.breach.startsBefore', { n: ps - rs }), kind: 'overrun' })
   }
   if (node.breach?.after && pe !== null && re !== null) {
-    out.push({ text: `children end ${re - pe}d after the planned end`, kind: 'overrun' })
+    out.push({ text: t('gantt.breach.endsAfter', { n: re - pe }), kind: 'overrun' })
   }
   const c = parseDay(node.committed)
   const span = barSpan(node)
   if (c !== null && span.end !== null && span.end > c) {
     out.push({
-      text: `${span.end - c}d past the committed date (${node.committed})`,
+      text: t('gantt.breach.pastCommit', { n: span.end - c, date: node.committed ?? '' }),
       kind: 'commit',
     })
   }
@@ -693,19 +700,19 @@ const footerHtml = computed(() => (config.value?.footer ? renderMarkdown(config.
     <div class="gantt-head">
       <h1>{{ config?.title || id }}</h1>
       <div class="gantt-nav">
-        <RlIconButton icon="chevron-left" label="Earlier" :disabled="!axis" @click="step(-1)" />
-        <span v-if="axis && nowDay === null" class="now-hint">Today is outside this plan</span>
-        <RlButton variant="secondary" :disabled="nowDay === null" @click="goNow">Now</RlButton>
-        <RlIconButton icon="chevron-right" label="Later" :disabled="!axis" @click="step(1)" />
+        <RlIconButton icon="chevron-left" :label="t('gantt.earlier')" :disabled="!axis" @click="step(-1)" />
+        <span v-if="axis && nowDay === null" class="now-hint">{{ t('gantt.todayOutside') }}</span>
+        <RlButton variant="secondary" :disabled="nowDay === null" @click="goNow">{{ t('gantt.now') }}</RlButton>
+        <RlIconButton icon="chevron-right" :label="t('gantt.later')" :disabled="!axis" @click="step(1)" />
       </div>
-      <div class="zoom-seg" role="group" aria-label="Time zoom">
+      <div class="zoom-seg" role="group" :aria-label="t('gantt.zoomLabel')">
         <button
           v-for="z in ['quarter', 'month', 'week'] as GanttZoom[]"
           :key="z"
           :class="{ on: zoom === z }"
           @click="zoom = z"
         >
-          {{ z }}
+          {{ t(ZOOM_LABELS[z]) }}
         </button>
       </div>
     </div>
@@ -723,7 +730,7 @@ const footerHtml = computed(() => (config.value?.footer ? renderMarkdown(config.
           :class="{ current: crumbs.length === 0 }"
           @click="drillTo(-1)"
         >
-          All work
+          {{ t('gantt.allWork') }}
         </button>
         <button
           v-for="(c, i) in crumbs"
@@ -737,16 +744,16 @@ const footerHtml = computed(() => (config.value?.footer ? renderMarkdown(config.
         <span
           v-if="data?.truncated"
           class="truncated-flag"
-          title="The tree was cut at the node cap; drill in to see more"
+          :title="t('gantt.truncatedTitle')"
         >
-          truncated
+          {{ t('gantt.truncated') }}
         </span>
         <span
           v-if="compressed"
           class="truncated-flag"
-          title="The plan spans too long to draw at this zoom; days are drawn narrower"
+          :title="t('gantt.compressedTitle')"
         >
-          compressed
+          {{ t('gantt.compressed') }}
         </span>
       </div>
 
@@ -765,12 +772,12 @@ const footerHtml = computed(() => (config.value?.footer ? renderMarkdown(config.
           <div class="tree-gutter" />
           <div class="axis">
             <span
-              v-for="t in ticks"
-              :key="t.day"
+              v-for="tk in ticks"
+              :key="tk.day"
               class="tick"
-              :style="{ left: scale!(t.day) + '%' }"
+              :style="{ left: scale!(tk.day) + '%' }"
             >
-              {{ t.label }}
+              {{ tk.label }}
             </span>
             <span
               v-if="todayDay !== null && todayDay >= axis.start && todayDay <= axis.end"
@@ -881,7 +888,7 @@ const footerHtml = computed(() => (config.value?.footer ? renderMarkdown(config.
                   :class="['drag-handle', h.mode]"
                   role="slider"
                   tabindex="0"
-                  :aria-label="`${h.label} ${row.node.title || row.node.id}`"
+                  :aria-label="t(h.label, { name: row.node.title || row.node.id })"
                   :aria-valuemin="axis.start"
                   :aria-valuemax="axis.end"
                   :aria-valuenow="handleValue(row.node, h.mode).now"
@@ -896,7 +903,7 @@ const footerHtml = computed(() => (config.value?.footer ? renderMarkdown(config.
                 v-if="committedStyle(row.node)"
                 class="commit-marker"
                 :style="committedStyle(row.node)!"
-                :title="'Committed ' + row.node.committed"
+                :title="t('gantt.committedTitle', { date: row.node.committed ?? '' })"
               >
                 <component :is="ICONS.flag" class="commit-flag" />
                 <span class="commit-line" />
@@ -905,7 +912,7 @@ const footerHtml = computed(() => (config.value?.footer ? renderMarkdown(config.
                 v-if="pastCommitStyle(row.node)"
                 class="past-commit"
                 :style="pastCommitStyle(row.node)!"
-                :title="pastCommitDays(row.node) + 'd past the committed date'"
+                :title="t('gantt.pastCommitTitle', { n: pastCommitDays(row.node) })"
               />
             </template>
             <span
@@ -916,16 +923,16 @@ const footerHtml = computed(() => (config.value?.footer ? renderMarkdown(config.
           </div>
         </div>
 
-        <div v-if="rows.length === 0" class="empty">Nothing to show.</div>
+        <div v-if="rows.length === 0" class="empty">{{ t('gantt.nothingToShow') }}</div>
       </div>
-      <div v-else class="empty">No dated entities yet.</div>
+      <div v-else class="empty">{{ t('gantt.empty') }}</div>
 
       <div class="legend">
-        <span><i class="sw leaf-sw" /> work item</span>
-        <span><i class="sw parent-sw" /> project window</span>
-        <span><i class="sw planned-sw" /> planned window</span>
-        <span><i class="sw overrun-sw" /> ● outside planned window</span>
-        <span><i class="sw commit-sw" /> ╱ past committed date</span>
+        <span><i class="sw leaf-sw" /> {{ t('gantt.legend.workItem') }}</span>
+        <span><i class="sw parent-sw" /> {{ t('gantt.legend.projectWindow') }}</span>
+        <span><i class="sw planned-sw" /> {{ t('gantt.legend.plannedWindow') }}</span>
+        <span><i class="sw overrun-sw" /> ● {{ t('gantt.legend.outsidePlanned') }}</span>
+        <span><i class="sw commit-sw" /> ╱ {{ t('gantt.legend.pastCommitted') }}</span>
       </div>
     </div>
 
@@ -945,22 +952,22 @@ const footerHtml = computed(() => (config.value?.footer ? renderMarkdown(config.
         </div>
         <dl class="tip-grid">
           <template v-if="tip.node.planned">
-            <dt>Planned</dt>
+            <dt>{{ t('gantt.tip.planned') }}</dt>
             <dd>{{ fmtRange(tip.node.planned) }}</dd>
           </template>
           <template v-if="tip.node.rolled">
-            <dt>Rolled up</dt>
+            <dt>{{ t('gantt.tip.rolledUp') }}</dt>
             <dd>
               {{ fmtRange(tip.node.rolled) }}
-              <span class="tip-muted">from {{ countDescendants(tip.node) }} items</span>
+              <span class="tip-muted">{{ t('gantt.tip.fromItems', { n: countDescendants(tip.node) }) }}</span>
             </dd>
           </template>
           <template v-if="!tip.node.planned && tip.node.rolled">
             <dt />
-            <dd class="tip-muted">no dates of its own — span derived from children</dd>
+            <dd class="tip-muted">{{ t('gantt.tip.derived') }}</dd>
           </template>
           <template v-if="tip.node.committed">
-            <dt>Committed</dt>
+            <dt>{{ t('gantt.tip.committed') }}</dt>
             <dd>{{ tip.node.committed }}</dd>
           </template>
           <template v-for="row in tooltipRows(tip.node)" :key="row.label">

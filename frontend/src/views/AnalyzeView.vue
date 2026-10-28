@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { analyze } from '@/api'
 import type { AnalyzeResult, AnalyzeIssue } from '@/types'
 import { useBackTarget } from '@/composables/useBackTarget'
@@ -10,6 +11,7 @@ import IssuesTable from '@/components/common/IssuesTable.vue'
 import RlButton from 'rela-components/components/common/RlButton.vue'
 import RlStatusRegion from 'rela-components/components/feedback/RlStatusRegion.vue'
 
+const { t } = useI18n()
 const backTarget = useBackTarget()
 
 // Check type definitions with descriptions. Three-way contract:
@@ -21,38 +23,40 @@ const backTarget = useBackTarget()
 //      list against the rendered cards.
 // `TestRunAnalysisSectionNames` in analyze_test.go pins the Go side so a
 // rename can't silently regress GH#785 (hidden cards inflating the badge).
+// `label` and `description` are message keys, written literally so the
+// unused-key check can see them.
 const CHECK_TYPES = [
   {
     key: 'Properties',
-    label: 'Properties',
-    description: 'Property validation errors (required fields, invalid values, ID patterns)',
+    label: 'analyze.check.properties.label',
+    description: 'analyze.check.properties.description',
   },
   {
     key: 'Cardinality',
-    label: 'Cardinality',
-    description: 'Relation cardinality constraint violations',
+    label: 'analyze.check.cardinality.label',
+    description: 'analyze.check.cardinality.description',
   },
   {
     key: 'Validations',
-    label: 'Validations',
-    description: 'Custom validation rules defined in the metamodel',
+    label: 'analyze.check.validations.label',
+    description: 'analyze.check.validations.description',
   },
   {
     key: 'Orphans',
-    label: 'Orphans',
-    description: 'Entities with no incoming or outgoing relations',
+    label: 'analyze.check.orphans.label',
+    description: 'analyze.check.orphans.description',
   },
   {
     key: 'Duplicates',
-    label: 'Duplicates',
-    description: 'Entities with identical titles',
+    label: 'analyze.check.duplicates.label',
+    description: 'analyze.check.duplicates.description',
   },
   {
     key: 'ID Gaps',
-    label: 'ID Gaps',
-    description: 'Missing numbers in auto-generated ID sequences',
+    label: 'analyze.check.idGaps.label',
+    description: 'analyze.check.idGaps.description',
   },
-]
+] as const
 
 // State
 const loading = ref(true)
@@ -147,32 +151,32 @@ onMounted(() => {
     </template>
 
     <template #topbar>
-      <PageTitle title="Analysis" subtitle="Validation checks across all entities and relations" />
+      <PageTitle :title="t('analyze.title')" :subtitle="t('analyze.subtitle')" />
     </template>
 
     <template #actions>
       <RlButton
         variant="secondary"
         :loading="loading"
-        pending-label="Refreshing…"
+        :pending-label="t('analyze.refreshing')"
         @click="loadAnalysis"
       >
-        Refresh
+        {{ t('analyze.refresh') }}
       </RlButton>
     </template>
 
-    <RlStatusRegion v-if="loading" pending-label="Analysing">
-      Running analysis...
+    <RlStatusRegion v-if="loading" :pending-label="t('analyze.analysing')">
+      {{ t('analyze.running') }}
     </RlStatusRegion>
 
     <template v-else-if="result">
       <!-- Summary badge -->
       <div v-if="result.errors > 0 || result.warnings > 0" class="summary-badge">
         <span v-if="result.errors > 0" class="badge error">
-          {{ result.errors }} {{ result.errors === 1 ? 'error' : 'errors' }}
+          {{ t('analyze.errorCount', { n: result.errors }, result.errors) }}
         </span>
         <span v-if="result.warnings > 0" class="badge warning">
-          {{ result.warnings }} {{ result.warnings === 1 ? 'warning' : 'warnings' }}
+          {{ t('analyze.warningCount', { n: result.warnings }, result.warnings) }}
         </span>
       </div>
 
@@ -186,22 +190,21 @@ onMounted(() => {
         >
           <div class="check-header">
             <h3 :id="`check-${checkType.key}-title`" class="check-title">
-              {{ checkType.label }}
+              {{ t(checkType.label) }}
               <span class="check-count" :class="{ 'has-issues': getCheckCount(checkType.key) > 0 }">
                 {{ getCheckCount(checkType.key) }}{{ isTruncated(checkType.key) ? '+' : '' }}
               </span>
             </h3>
-            <p class="check-description">{{ checkType.description }}</p>
+            <p class="check-description">{{ t(checkType.description) }}</p>
           </div>
 
           <p v-if="isTruncated(checkType.key)" class="check-truncated" role="status">
-            Showing the first {{ getCheckCount(checkType.key) }} issues &mdash; this check found
-            more. Fix these and re-run to see the rest.
+            {{ t('analyze.truncated', { n: getCheckCount(checkType.key) }) }}
           </p>
 
           <div v-if="getCheckCount(checkType.key) === 0" class="no-issues">
             <span class="check-icon">&#10003;</span>
-            No issues
+            {{ t('analyze.noIssues') }}
           </div>
 
           <template v-else>

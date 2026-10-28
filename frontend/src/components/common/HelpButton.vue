@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref } from 'vue'
+import { useI18n } from 'vue-i18n'
 import HelpModal from '@/components/ui/HelpModal.vue'
 
 /**
@@ -25,6 +26,7 @@ defineSlots<{
   content?(): unknown
 }>()
 
+const { t } = useI18n()
 const open = ref(false)
 
 function toggle() {
@@ -46,8 +48,8 @@ function handleOverlayClick(e: MouseEvent) {
   <button
     type="button"
     class="help-button"
-    :title="title || 'Show help'"
-    :aria-label="title || 'Show help'"
+    :title="title || t('help.show')"
+    :aria-label="title || t('help.show')"
     :aria-expanded="open"
     @click="toggle"
   >
@@ -68,8 +70,8 @@ function handleOverlayClick(e: MouseEvent) {
     <div v-if="open" class="help-button__overlay" @click="handleOverlayClick">
       <div class="help-button__modal" role="dialog" aria-modal="true">
         <div class="help-button__header">
-          <h3>{{ title || 'Help' }}</h3>
-          <button class="help-button__close" :aria-label="'Close help'" @click="close">
+          <h3>{{ title || t('help.title') }}</h3>
+          <button class="help-button__close" :aria-label="t('help.close')" @click="close">
             &times;
           </button>
         </div>

@@ -26,6 +26,7 @@
  * multi-select). It is presentational: candidates in, one title out.
  */
 import { ref, computed, watch, onBeforeUnmount } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { entityDisplayTitle, entityDisplayTitleWithId } from '@/utils/entityDisplay'
 import type { TargetCandidate } from '@/types'
 
@@ -46,10 +47,14 @@ const props = withDefaults(
   }>(),
   {
     controlId: undefined,
-    placeholder: 'Search…',
-    allLabel: 'All',
+    placeholder: undefined,
+    allLabel: undefined,
   }
 )
+
+const { t } = useI18n()
+const placeholderText = computed(() => props.placeholder ?? t('shell.targetSelect.search'))
+const allText = computed(() => props.allLabel ?? t('shell.targetSelect.all'))
 
 const emit = defineEmits<{
   'update:modelValue': [value: string]
@@ -166,7 +171,7 @@ onBeforeUnmount(() => {
   <div class="entity-target-select">
     <!-- select mode: native <select> of titles -->
     <select v-if="mode === 'select'" :id="controlId" v-model="selectValue">
-      <option value="">{{ allLabel }}</option>
+      <option value="">{{ allText }}</option>
       <!-- Active committed value not covered by the loaded candidates (deep
            link beyond the fetch cap, or pre-load). Keeps the control honest
            about what's actually filtered (RR-5GU270). -->
@@ -189,7 +194,7 @@ onBeforeUnmount(() => {
           :aria-expanded="showDropdown"
           aria-haspopup="listbox"
           aria-autocomplete="list"
-          :placeholder="committedLabel || placeholder"
+          :placeholder="committedLabel || placeholderText"
           :class="{ 'has-selection': !!committedLabel }"
           @focus="openTypeahead"
           @input="showDropdown = true"
@@ -198,7 +203,7 @@ onBeforeUnmount(() => {
           v-if="committedLabel"
           type="button"
           class="clear-selection"
-          :aria-label="`Clear ${committedLabel}`"
+          :aria-label="t('shell.targetSelect.clear', { label: committedLabel })"
           @click="clearSelection"
         >
           &times;
@@ -212,7 +217,7 @@ onBeforeUnmount(() => {
           :aria-selected="!committedLabel"
           @click="commit('')"
         >
-          {{ allLabel }}
+          {{ allText }}
         </div>
         <div
           v-for="opt in filteredOptions"
@@ -224,7 +229,7 @@ onBeforeUnmount(() => {
         >
           {{ opt.label }}
         </div>
-        <div v-if="filteredOptions.length === 0" class="dropdown-empty">No matching entities</div>
+        <div v-if="filteredOptions.length === 0" class="dropdown-empty">{{ t('shell.targetSelect.noMatches') }}</div>
       </div>
     </div>
   </div>

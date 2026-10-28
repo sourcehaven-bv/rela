@@ -291,7 +291,7 @@ export function pileNamed(piles: readonly PileSummary[], name: string): PileSumm
 /** The count marker a pile row shows; none for an empty pile. */
 export function pileStatus(count: number): NavItemStatus | undefined {
   return count > 0
-    ? { tone: 'info', label: `${count} item${count === 1 ? '' : 's'}`, count }
+    ? { tone: 'info', label: t('piles.itemCount', { n: count }, count), count }
     : undefined
 }
 

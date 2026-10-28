@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, watch, computed, onBeforeUnmount } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { useSchemaStore, useEntitiesStore, useUIStore } from '@/stores'
 import { isCancelledFetch } from '@/composables/usePageData'
 import EntityTargetSelect from '@/components/common/EntityTargetSelect.vue'
@@ -26,6 +27,7 @@ const emit = defineEmits<{
   filter: [filters: FilterState]
 }>()
 
+const { t } = useI18n()
 const schemaStore = useSchemaStore()
 const entitiesStore = useEntitiesStore()
 const uiStore = useUIStore()
@@ -149,7 +151,7 @@ async function loadRelationCandidates() {
       // Suppress cancellations (rapid nav); continue to the next control so a
       // sibling isn't left permanently unloaded (RR-TE8HA6).
       if (isCancelledFetch(err)) continue
-      uiStore.error(`Could not load filter options for “${fc.label || relation}”.`)
+      uiStore.error(t('list.filter.optionsLoadFailed', { label: fc.label || relation }))
       console.error(`Failed to load relation filter candidates for ${relation}:`, err)
     }
   }
@@ -344,7 +346,7 @@ onBeforeUnmount(() => {
           :options="multiOptions(filter)"
           :label="filter.label"
           label-hidden
-          placeholder="All"
+          :placeholder="t('list.filter.all')"
           @update:model-value="(v: string[]) => handleMultiSelectChange(filter.key, v)"
         >
           <template #option="{ value: option }">
@@ -361,8 +363,8 @@ onBeforeUnmount(() => {
           :candidates="filter.relationCandidates || []"
           :mode="filter.relationMode || 'select'"
           :model-value="localFilters[filter.key] || ''"
-          :placeholder="`Filter by ${filter.label}`"
-          all-label="All"
+          :placeholder="t('list.filter.filterBy', { label: filter.label })"
+          :all-label="t('list.filter.all')"
           @update:model-value="(v: string) => handleRelationChange(filter.key, v)"
         />
 
@@ -372,13 +374,13 @@ onBeforeUnmount(() => {
           :id="`filter-${filter.key}`"
           v-model="localFilters[filter.key]"
           type="text"
-          :placeholder="`Filter by ${filter.label}`"
+          :placeholder="t('list.filter.filterBy', { label: filter.label })"
           @input="handleTextInput"
         />
       </div>
     </div>
     <RlButton v-if="hasActiveFilters()" variant="secondary" size="sm" @click="clearFilters">
-      Clear filters
+      {{ t('list.filter.clear') }}
     </RlButton>
   </div>
 </template>

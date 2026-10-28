@@ -24,7 +24,8 @@ import { useRelationColumns, OTHER_COLUMN } from '@/composables/useRelationColum
 import type { DotColor } from 'rela-components/types'
 import { useUIStore } from '@/stores'
 import { formatCellValue } from '@/utils/format'
-import { BUCKET_ORDER, DEFAULT_BUCKET_LABELS, bucketDate, bucketOf } from '@/utils/dateBuckets'
+import { BUCKET_ORDER, bucketDate, bucketOf, defaultBucketLabel } from '@/utils/dateBuckets'
+import { t } from '@/i18n'
 import type { DateBucket, Entity, EntityType, ListGroupBy, ListResponse, PageScope } from '@/types'
 
 export interface ListSection {
@@ -89,7 +90,6 @@ export function filtersAdmit(
 }
 
 const NONE_ID = 'none'
-const NONE_TITLE = '(none)'
 
 function isEmptyValue(value: unknown): boolean {
   return value === undefined || value === null || value === ''
@@ -121,7 +121,7 @@ export function groupRows(
     })
   }
 
-  const none: ListSection = { id: NONE_ID, title: NONE_TITLE, items: [] }
+  const none: ListSection = { id: NONE_ID, title: t('list.group.none'), items: [] }
   for (const row of rows) {
     const value = row.properties[property]
     if (isEmptyValue(value)) {
@@ -181,7 +181,7 @@ function bucketSections(
     return [
       {
         id: `bucket:${bucket}`,
-        title: groupBy.labels?.[bucket] || DEFAULT_BUCKET_LABELS[bucket],
+        title: groupBy.labels?.[bucket] || defaultBucketLabel(bucket),
         // Overdue is the one bucket that asks for action; the rest are only
         // a when.
         color: bucket === 'overdue' ? 'red' : undefined,
@@ -270,7 +270,7 @@ export function useListGrouping(options: {
         },
       ])
     )
-    const other: ListSection = { id: `rel:${OTHER_COLUMN}`, title: 'Other', items: [] }
+    const other: ListSection = { id: `rel:${OTHER_COLUMN}`, title: t('list.group.other'), items: [] }
     for (const row of rows) {
       const column = relationColumns.columnOf(row)
       ;(byId.get(column) ?? other).items.push(row)

@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { apiUrl } from '@/api/base'
 
 /**
@@ -19,6 +20,7 @@ interface ProjectSummary {
   active: boolean
 }
 
+const { t } = useI18n()
 const projects = ref<ProjectSummary[]>([])
 const open = ref(false)
 
@@ -58,7 +60,7 @@ function switchTo(p: ProjectSummary) {
       aria-haspopup="listbox"
       @click="open = !open"
     >
-      <span class="switcher-name">{{ current?.name ?? 'Projects' }}</span>
+      <span class="switcher-name">{{ current?.name ?? t('switcher.projects') }}</span>
       <span class="switcher-caret" aria-hidden="true">▾</span>
     </button>
 

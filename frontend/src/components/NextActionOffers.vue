@@ -13,6 +13,7 @@
  */
 import { computed, onMounted, onUnmounted, ref, useTemplateRef } from 'vue'
 import { RouterLink, useRouter } from 'vue-router'
+import { useI18n } from 'vue-i18n'
 import RlButton from 'rela-components/components/common/RlButton.vue'
 import { useNextAction } from '@/composables/useNextAction'
 import { runAction } from '@/api/actions'
@@ -51,6 +52,7 @@ function optionsFor(index: number): NextActionPickOption[] {
   return props.pickOptions?.[String(index)] ?? []
 }
 
+const { t } = useI18n()
 const { busy, acting, respond, acknowledge, reload } = useNextAction()
 const router = useRouter()
 const { confirm } = useConfirm()
@@ -83,12 +85,12 @@ async function act(offer: NextActionOffer, triggerEl: HTMLElement | null) {
   // same tick; latching after the dialog would open two of them and run the
   // mutation twice on two OKs.
   acting.value = true
-  const label = offerLabel(offer, 'Do it')
+  const label = offerLabel(offer, t('nextAction.doIt'))
   try {
     if (offer.confirm) {
       const ok = await confirm({
-        title: `${label}?`,
-        message: 'This runs immediately and cannot be undone.',
+        title: t('nextAction.confirmTitle', { label }),
+        message: t('nextAction.confirmMessage'),
         confirmLabel: label,
       })
       if (!ok) return
@@ -96,7 +98,7 @@ async function act(offer: NextActionOffer, triggerEl: HTMLElement | null) {
     // No entity type: the server reads it off the stored row and deliberately
     // ignores a caller-supplied one (actions_request.go, BUG-ZWTDH9).
     const res = await runAction(offer.action, props.entityId)
-    reportResult(res, `${label}: done`)
+    reportResult(res, t('nextAction.done', { label }))
     // The suggestion was resolved BY acting, so re-ask rather than leave a
     // banner recommending work that is now done.
     await reload()
@@ -146,7 +148,7 @@ onUnmounted(() => document.removeEventListener('click', handleClickOutside))
         size="sm"
         :to="offer.navigate.replace('{id}', entityId || '')"
       >
-        {{ offerLabel(offer, 'Open') }}
+        {{ offerLabel(offer, t('common.open')) }}
       </RlButton>
 
       <RlButton
@@ -156,7 +158,7 @@ onUnmounted(() => document.removeEventListener('click', handleClickOutside))
         :disabled="busy"
         @click="acknowledge()"
       >
-        {{ offerLabel(offer, 'Nice') }}
+        {{ offerLabel(offer, t('nextAction.nice')) }}
       </RlButton>
 
       <!-- action: run a configured Lua action against the suggested entity.
@@ -168,7 +170,7 @@ onUnmounted(() => document.removeEventListener('click', handleClickOutside))
         :disabled="busy || acting"
         @click="act(offer, $event.currentTarget as HTMLElement)"
       >
-        {{ offerLabel(offer, 'Do it') }}
+        {{ offerLabel(offer, t('nextAction.doIt')) }}
       </RlButton>
 
       <!-- pick_one: one button per live option. Rendered only when the server
@@ -204,7 +206,7 @@ onUnmounted(() => document.removeEventListener('click', handleClickOutside))
         :aria-expanded="deferOpen"
         @click.stop="deferOpen = !deferOpen"
       >
-        Not now
+        {{ t('nextAction.notNow') }}
         <span class="na-defer__caret" aria-hidden="true">&#9662;</span>
       </button>
 
@@ -216,7 +218,7 @@ onUnmounted(() => document.removeEventListener('click', handleClickOutside))
             role="menuitem"
             @click.stop="defer('snooze', d)"
           >
-            Remind me in {{ d }}
+            {{ t('nextAction.remindIn', { duration: d }) }}
           </button>
         </li>
         <li v-if="hasDismiss" role="none">
@@ -226,7 +228,7 @@ onUnmounted(() => document.removeEventListener('click', handleClickOutside))
             role="menuitem"
             @click.stop="defer('dismiss')"
           >
-            Not this one
+            {{ t('nextAction.notThisOne') }}
           </button>
         </li>
         <li role="none">
@@ -236,7 +238,7 @@ onUnmounted(() => document.removeEventListener('click', handleClickOutside))
             role="menuitem"
             @click.stop="defer('mute')"
           >
-            Stop suggesting this
+            {{ t('nextAction.stop') }}
           </button>
         </li>
       </ul>

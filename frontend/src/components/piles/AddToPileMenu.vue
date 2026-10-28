@@ -10,7 +10,8 @@
  *
  * Renders nothing when piles are not available to this principal.
  */
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { usePiles } from '@/composables/usePiles'
 import type { Pile, PileSummary } from '@/api/piles'
 import { pileIcon } from './pileIcon'
@@ -33,8 +34,8 @@ const props = withDefaults(
     placement?: 'top' | 'bottom'
   }>(),
   {
-    label: 'Add to pile',
-    newLabel: 'New pile from selection…',
+    label: undefined,
+    newLabel: undefined,
     variant: 'secondary',
     size: 'sm',
     placement: 'bottom',
@@ -46,7 +47,10 @@ const emit = defineEmits<{
   added: [pile: PileSummary | Pile]
 }>()
 
+const { t } = useI18n()
 const piles = usePiles()
+const labelText = computed(() => props.label ?? t('piles.addToPile'))
+const newLabelText = computed(() => props.newLabel ?? t('piles.newFromSelection'))
 
 /** The addresses captured when "New pile…" was chosen, so the dialog shows their count. */
 const newPileItems = ref<string[] | null>(null)
@@ -66,7 +70,7 @@ function startNew() {
     <RlMenu :placement="placement" align="start" data-testid="add-to-pile">
       <template #trigger="{ toggle, attrs }">
         <RlButton :variant="variant" :size="size" icon="layers" v-bind="attrs" @click="toggle">
-          {{ label }}
+          {{ labelText }}
           <template #trailing>
             <RlIcon
               :name="placement === 'top' ? 'chevron-up' : 'chevron-down'"
@@ -87,7 +91,7 @@ function startNew() {
       </RlMenuItem>
       <RlMenuSeparator v-if="piles.piles.value.length" />
       <RlMenuItem icon="plus" data-testid="add-to-new-pile" @click="startNew">{{
-        newLabel
+        newLabelText
       }}</RlMenuItem>
     </RlMenu>
     <NewPileDialog

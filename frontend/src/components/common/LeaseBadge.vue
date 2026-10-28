@@ -15,17 +15,22 @@
  * readers read with the badge.
  */
 import { computed } from 'vue'
+import { useI18n } from 'vue-i18n'
 import type { EntityLease } from '@/types'
 
 const props = defineProps<{
   lease?: EntityLease
 }>()
 
+const { t } = useI18n()
+
 const text = computed(() => {
   const l = props.lease
   if (!l) return ''
   const who = l.label || l.tool
-  return who ? `Claimed by ${l.user} (${who})` : `Claimed by ${l.user}`
+  return who
+    ? t('shell.lease.claimedByWho', { user: l.user, who })
+    : t('shell.lease.claimedBy', { user: l.user })
 })
 
 const title = computed(() => {
@@ -37,7 +42,7 @@ const title = computed(() => {
 <template>
   <span v-if="lease" class="lease-badge" :title="title"
     ><span class="lease-badge__text">{{ text }}</span
-    ><span v-if="lease.status" class="rl-visually-hidden">, status: {{ lease.status }}</span></span
+    ><span v-if="lease.status" class="rl-visually-hidden">{{ t('shell.lease.status', { status: lease.status }) }}</span></span
   >
 </template>
 

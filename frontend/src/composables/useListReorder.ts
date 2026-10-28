@@ -9,6 +9,7 @@ import { useUIStore } from '@/stores/ui'
 import { createMoveQueue } from '@/utils/moveQueue'
 import { orderMoveArgs, planRowMove } from '@/utils/relationOrder'
 import type { Entity, RelationOrder } from '@/types'
+import { t } from '@/i18n'
 
 /**
  * Moving rows of a list shown in relation order (see `RelationOrder`).
@@ -57,7 +58,7 @@ export function useListReorder(opts: {
         await moveRelation(...orderMoveArgs(order, move.itemId, plan.position))
       } catch (err) {
         if (id === latest) rollbackOptimistic(queryCache, ctx)
-        ui.error(getErrorMessage(err, 'Could not move the row'))
+        ui.error(getErrorMessage(err, t('list.moveFailed')))
       }
     })
   }
