@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 import { RouterLink } from 'vue-router'
+import { useI18n } from 'vue-i18n'
 import type { AnalyzeIssue } from '@/types'
 import { useSchemaStore } from '@/stores'
 import { useScriptErrorStore } from '@/stores/scriptError'
@@ -13,7 +14,19 @@ import { useScriptErrorStore } from '@/stores/scriptError'
 // interactive when it has nothing to do.
 const props = defineProps<{ issues: AnalyzeIssue[] }>()
 
+const { t } = useI18n()
 const schemaStore = useSchemaStore()
+
+// Literal keys, so the unused-key check can see them.
+const SEVERITY_LABELS = {
+  error: 'analyze.severity.error',
+  warning: 'analyze.severity.warning',
+} as const
+
+function severityLabel(severity: AnalyzeIssue['severity']): string {
+  const key = SEVERITY_LABELS[severity] as (typeof SEVERITY_LABELS)[keyof typeof SEVERITY_LABELS] | undefined
+  return key ? t(key) : String(severity).toUpperCase()
+}
 const scriptErrorStore = useScriptErrorStore()
 
 interface IssueRow {
@@ -89,10 +102,10 @@ function onMessageClick(key: string, issue: AnalyzeIssue, ev: Event) {
     <table class="issues-table">
       <thead>
         <tr>
-          <th>Entity</th>
-          <th>Type</th>
-          <th>Message</th>
-          <th>Severity</th>
+          <th>{{ t('analyze.issues.entity') }}</th>
+          <th>{{ t('analyze.issues.type') }}</th>
+          <th>{{ t('analyze.issues.message') }}</th>
+          <th>{{ t('analyze.issues.severity') }}</th>
         </tr>
       </thead>
       <tbody>
@@ -148,13 +161,13 @@ function onMessageClick(key: string, issue: AnalyzeIssue, ev: Event) {
             </td>
             <td>
               <span class="severity-badge" :class="row.issue.severity">
-                {{ row.issue.severity.toUpperCase() }}
+                {{ severityLabel(row.issue.severity) }}
               </span>
             </td>
           </tr>
           <tr v-if="row.issue.detail?.length && isExpanded(row.key)" class="issue-detail-row">
             <td colspan="4">
-              <div class="detail-label">Missing required headers:</div>
+              <div class="detail-label">{{ t('analyze.issues.missingHeaders') }}</div>
               <ul class="detail-list">
                 <li v-for="(d, i) in row.issue.detail" :key="i">{{ d }}</li>
               </ul>
@@ -184,7 +197,7 @@ function onMessageClick(key: string, issue: AnalyzeIssue, ev: Event) {
           }}</span>
           <span v-else class="entity-empty">&mdash;</span>
           <span class="severity-badge" :class="row.issue.severity">
-            {{ row.issue.severity.toUpperCase() }}
+            {{ severityLabel(row.issue.severity) }}
           </span>
         </div>
         <div class="issue-card-row issue-card-meta">
@@ -220,7 +233,7 @@ function onMessageClick(key: string, issue: AnalyzeIssue, ev: Event) {
           }}</span>
         </div>
         <div v-if="row.issue.detail?.length && isExpanded(row.key)" class="issue-card-detail">
-          <div class="detail-label">Missing required headers:</div>
+          <div class="detail-label">{{ t('analyze.issues.missingHeaders') }}</div>
           <ul class="detail-list">
             <li v-for="(d, i) in row.issue.detail" :key="i">{{ d }}</li>
           </ul>

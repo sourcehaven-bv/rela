@@ -10,6 +10,7 @@
  */
 
 import type { GanttNode } from '@/api/gantts'
+import { t } from '@/i18n'
 
 export type GanttZoom = 'quarter' | 'month' | 'week'
 
@@ -122,7 +123,22 @@ export interface GanttTick {
   label: string
 }
 
-const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+// Message keys, looked up when the ticks are built so a language switch
+// relabels the axis on the next render.
+const MONTHS = [
+  'gantt.month.jan',
+  'gantt.month.feb',
+  'gantt.month.mar',
+  'gantt.month.apr',
+  'gantt.month.may',
+  'gantt.month.jun',
+  'gantt.month.jul',
+  'gantt.month.aug',
+  'gantt.month.sep',
+  'gantt.month.oct',
+  'gantt.month.nov',
+  'gantt.month.dec',
+] as const
 
 /** isoWeek returns the ISO 8601 week number for an epoch day (UTC). */
 export function isoWeek(day: number): number {
@@ -161,16 +177,21 @@ export function ticksFor(axis: { start: number; end: number }, zoom: GanttZoom):
     if (zoom === 'quarter') {
       out.push({
         day,
-        label: `Q${Math.floor(cur.getUTCMonth() / 3) + 1} '${String(cur.getUTCFullYear()).slice(2)}`,
+        label: t('gantt.tick.quarter', {
+          q: Math.floor(cur.getUTCMonth() / 3) + 1,
+          yy: String(cur.getUTCFullYear()).slice(2),
+        }),
       })
       cur.setUTCMonth(cur.getUTCMonth() + 3)
     } else if (zoom === 'month') {
       const m = cur.getUTCMonth()
-      const label = m === 0 ? `${MONTHS[m]} '${String(cur.getUTCFullYear()).slice(2)}` : MONTHS[m]
+      const month = t(MONTHS[m])
+      const label =
+        m === 0 ? t('gantt.tick.monthYear', { month, yy: String(cur.getUTCFullYear()).slice(2) }) : month
       out.push({ day, label })
       cur.setUTCMonth(cur.getUTCMonth() + 1)
     } else {
-      out.push({ day, label: `W${isoWeek(day)}` })
+      out.push({ day, label: t('gantt.tick.week', { w: isoWeek(day) }) })
       cur.setTime(cur.getTime() + 7 * MS_PER_DAY)
     }
   }

@@ -10,6 +10,7 @@
  * event per render.
  */
 import { computed } from 'vue'
+import { useI18n } from 'vue-i18n'
 import type { CalendarEvent } from '@/composables/useCalendarEvents'
 import CardFieldList from '@/components/common/CardFieldList.vue'
 import { compareDays, sameDay, type CalendarDay } from '@/utils/calendarGrid'
@@ -26,6 +27,8 @@ const props = defineProps<{
   /** Whether this event may be dragged (the ACL affordance, not a style). */
   draggable: boolean
 }>()
+
+const { t } = useI18n()
 
 /**
  * Which segment of a multi-day event this chip is.
@@ -60,11 +63,11 @@ const spanMarker = computed(() => {
 const spanDescription = computed(() => {
   switch (span.value) {
     case 'start':
-      return 'Continues on following days'
+      return t('calendar.continuesAfter')
     case 'end':
-      return 'Continued from earlier days'
+      return t('calendar.continuedFrom')
     case 'middle':
-      return 'Continues before and after this day'
+      return t('calendar.continuesBoth')
     default:
       return ''
   }

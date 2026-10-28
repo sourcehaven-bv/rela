@@ -8,6 +8,7 @@
  * min and max an integer, date or datetime.
  */
 import type { PropertyDef, Summary, SummaryFunction } from '@/types'
+import { t } from '@/i18n'
 import {
   browserTimeZone,
   formatAmount,
@@ -26,13 +27,13 @@ export interface SummarizedEntity {
 /** Shown when there is no value to report, such as the average of nothing. */
 export const NO_VALUE = '–'
 
-const DEFAULT_LABELS: Record<SummaryFunction, string> = {
-  count: 'Count',
-  sum: 'Total',
-  avg: 'Average',
-  min: 'Minimum',
-  max: 'Maximum',
-}
+const DEFAULT_LABELS = {
+  count: 'list.summary.count',
+  sum: 'list.summary.sum',
+  avg: 'list.summary.avg',
+  min: 'list.summary.min',
+  max: 'list.summary.max',
+} as const satisfies Record<SummaryFunction, string>
 
 /**
  * One summary as display text, such as "Total: € 11.500".
@@ -50,11 +51,12 @@ export function formatSummary(
   propDef: PropertyDef | undefined,
   tz: string = browserTimeZone()
 ): string {
-  const label = spec.label || DEFAULT_LABELS[spec.function] || spec.function
+  const key = DEFAULT_LABELS[spec.function] as (typeof DEFAULT_LABELS)[SummaryFunction] | undefined
+  const label = spec.label || (key ? t(key) : spec.function)
   const line = `${label}: ${summaryValue(spec, entities, propDef, tz)}`
   const prop = spec.property
   const partial = prop !== undefined && entities.some((e) => e._redacted?.includes(prop))
-  return partial ? `${line} (partial)` : line
+  return partial ? t('list.summary.partial', { line }) : line
 }
 
 function summaryValue(
@@ -97,12 +99,12 @@ function summaryValue(
 // The earliest or latest of the date values, as the stored string so the
 // caller formats it the way the property formats everywhere else.
 function extremeDate(values: unknown[], fn: 'min' | 'max'): string | undefined {
-  let best: { raw: string; t: number } | undefined
+  let best: { raw: string; ms: number } | undefined
   for (const v of values) {
     if (typeof v !== 'string' || v === '') continue
-    const t = Date.parse(v)
-    if (Number.isNaN(t)) continue
-    if (!best || (fn === 'min' ? t < best.t : t > best.t)) best = { raw: v, t }
+    const ms = Date.parse(v)
+    if (Number.isNaN(ms)) continue
+    if (!best || (fn === 'min' ? ms < best.ms : ms > best.ms)) best = { raw: v, ms }
   }
   return best?.raw
 }

@@ -5,7 +5,9 @@ title: Translate end-user screens of the data-entry SPA to Dutch
 kind: enhancement
 priority: medium
 effort: xl
-status: backlog
+started: "2026-10-28"
+completed: "2026-10-28"
+status: done
 ---
 
 ## Description

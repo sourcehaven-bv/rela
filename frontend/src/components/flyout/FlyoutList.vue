@@ -21,6 +21,7 @@
  */
 import { computed } from 'vue'
 import { useQuery } from '@pinia/colada'
+import { useI18n } from 'vue-i18n'
 import { useSchemaStore, useUIStore } from '@/stores'
 import { listEntities, getErrorMessage, withSortFallback } from '@/api'
 import { entityKeys } from '@/queries/entities'
@@ -40,6 +41,7 @@ import RlText from 'rela-components/components/common/RlText.vue'
 import RlSectionHeading from 'rela-components/components/layout/RlSectionHeading.vue'
 
 const props = defineProps<{ listId: string }>()
+const { t } = useI18n()
 
 /** Enough to scan; the expand control is the way to the rest. */
 const FLYOUT_ROWS = 50
@@ -83,7 +85,7 @@ const grouping = useListGrouping({
 })
 const total = computed(() => query.data.value?.meta.total ?? 0)
 const loadError = computed(() =>
-  query.error.value ? getErrorMessage(query.error.value, 'Failed to load the list') : null,
+  query.error.value ? getErrorMessage(query.error.value, t('flyout.loadFailed')) : null,
 )
 
 /*
@@ -120,11 +122,11 @@ function metaOf(entity: (typeof rows.value)[number], section?: ListSection): str
 
 <template>
   <RlStatusRegion v-if="loadError" tone="error">{{ loadError }}</RlStatusRegion>
-  <RlStatusRegion v-else-if="query.isPending.value">Loading...</RlStatusRegion>
+  <RlStatusRegion v-else-if="query.isPending.value">{{ t('list.loading') }}</RlStatusRegion>
   <RlEmptyState
     v-else-if="rows.length === 0"
     size="sm"
-    :title="`No ${listConfig?.title ?? 'entries'}`"
+    :title="t('flyout.empty', { title: listConfig?.title ?? t('flyout.entries') })"
   />
   <div v-else class="flyout-list" :data-list-id="listId">
     <!--
@@ -162,7 +164,7 @@ function metaOf(entity: (typeof rows.value)[number], section?: ListSection): str
       @select="flyout.openEntity(entity)"
     />
     <RlText v-if="total > rows.length" as="p" tone="subtle" class="flyout-list__more">
-      {{ rows.length }} of {{ total }} shown
+      {{ t('flyout.shownOf', { shown: rows.length, total }) }}
     </RlText>
   </div>
 </template>

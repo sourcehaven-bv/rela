@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, computed, watch, onMounted, onBeforeUnmount, nextTick } from 'vue'
 import { RouterLink, useRoute, useRouter, type RouteLocationRaw } from 'vue-router'
+import { I18nT, useI18n } from 'vue-i18n'
 import { searchEntities } from '@/api'
 import { useSchemaStore } from '@/stores'
 import { parseFilterQueryParams } from '@/utils/filters'
@@ -21,6 +22,7 @@ import RlKbd from 'rela-components/components/data/RlKbd.vue'
 import AddToPileMenu from '@/components/piles/AddToPileMenu.vue'
 import { entityRef } from '@/utils/entityRef'
 
+const { t } = useI18n()
 const route = useRoute()
 const router = useRouter()
 const { worldParam } = useWorld()
@@ -89,8 +91,8 @@ const entityTypes = computed(() => {
 
 function buildFilterLabel(property: string, value: string): string {
   if (property === 'type') {
-    const t = entityTypes.value.find((t) => t.value === value)
-    return `Entity Type: ${t?.label || value}`
+    const match = entityTypes.value.find((type) => type.value === value)
+    return t('search.typeFilter', { label: match?.label || value })
   }
   // DEC-6C1NAA: the property name is shown raw, not title-cased.
   return `${property}: ${value}`
@@ -441,11 +443,11 @@ watch(
     <header class="search-header mobile-topbar mobile-topbar--with-menu">
       <div class="header-left">
         <BackButton v-if="backTarget" :target="backTarget" />
-        <h1>Search</h1>
+        <h1>{{ t('common.search') }}</h1>
       </div>
       <RlIconButton
         icon="help"
-        label="Search syntax help"
+        :label="t('search.help.toggle')"
         :pressed="showHelp"
         @click="showHelp = !showHelp"
       />
@@ -453,31 +455,34 @@ watch(
 
     <!-- Search syntax help panel -->
     <div v-if="showHelp" class="help-panel">
-      <h3>How to Search</h3>
+      <h3>{{ t('search.help.title') }}</h3>
       <div class="help-content">
         <div class="help-section">
-          <h4>Text Search</h4>
-          <p>Type keywords in the search box to find matching entities by title or content.</p>
+          <h4>{{ t('search.help.textTitle') }}</h4>
+          <p>{{ t('search.help.text') }}</p>
         </div>
 
         <div class="help-section">
-          <h4>Add Filters</h4>
-          <p>Click <strong>+ Filter</strong> or press <RlKbd keys="F" /> to filter by entity type or property values.</p>
+          <h4>{{ t('search.help.filtersTitle') }}</h4>
+          <I18nT keypath="search.help.filters" tag="p">
+            <template #button><strong>{{ t('list.adhoc.button') }}</strong></template>
+            <template #key><RlKbd keys="F" /></template>
+          </I18nT>
         </div>
 
         <div class="help-section">
-          <h4>Combine Search &amp; Filters</h4>
-          <p>Use text search together with multiple filters for precise results.</p>
+          <h4>{{ t('search.help.combineTitle') }}</h4>
+          <p>{{ t('search.help.combine') }}</p>
         </div>
 
         <div class="help-section shortcuts-section">
-          <h4>Keyboard Shortcuts</h4>
+          <h4>{{ t('search.help.shortcutsTitle') }}</h4>
           <ul class="shortcut-list">
-            <li><RlKbd keys="F" /> Open filter menu</li>
-            <li><RlKbd keys="Tab or &darr;" separator="or" /> Enter results</li>
-            <li><RlKbd keys="j or k" separator="or" /> Navigate results</li>
-            <li><RlKbd keys="Enter or o" separator="or" /> Open selected</li>
-            <li><RlKbd keys="/" /> Focus search input</li>
+            <li><RlKbd keys="F" /> {{ t('search.help.openFilterMenu') }}</li>
+            <li><RlKbd keys="Tab or &darr;" separator="or" /> {{ t('search.help.enterResults') }}</li>
+            <li><RlKbd keys="j or k" separator="or" /> {{ t('search.help.navigateResults') }}</li>
+            <li><RlKbd keys="Enter or o" separator="or" /> {{ t('search.help.openSelected') }}</li>
+            <li><RlKbd keys="/" /> {{ t('search.help.focusInput') }}</li>
           </ul>
         </div>
       </div>
@@ -489,7 +494,7 @@ watch(
           ref="searchInputRef"
           v-model="query"
           type="text"
-          placeholder="Search entities..."
+          :placeholder="t('search.placeholder')"
           class="search-input"
           @keyup.enter="search"
           @focus="inResults = false"
@@ -505,16 +510,16 @@ watch(
         <RlButton
           variant="primary"
           :loading="loading"
-          pending-label="Searching…"
+          :pending-label="t('search.searching')"
           @click="search"
         >
-          Search
+          {{ t('common.search') }}
         </RlButton>
       </div>
 
       <!-- Active filters chips -->
       <div v-if="activeFilters.length > 0" class="active-filters">
-        <span class="filters-label">Filters:</span>
+        <span class="filters-label">{{ t('search.filtersLabel') }}</span>
         <div
           v-for="filter in activeFilters"
           :key="filter.id"
@@ -524,7 +529,7 @@ watch(
           <button class="chip-remove" type="button" @click="removeFilter(filter.id)">&times;</button>
         </div>
         <button class="clear-filters" type="button" @click="clearAllFilters">
-          Clear all
+          {{ t('search.clearAll') }}
         </button>
       </div>
     </div>
@@ -538,7 +543,7 @@ watch(
       v-if="searched && !loading && results.length === 0"
       class="empty-state"
       icon="search"
-      :title="`No results found for \u201c${query}\u201d`"
+      :title="t('search.noResults', { query })"
     />
 
     <!-- Before the first query: say what search covers, so the page is not blank. -->
@@ -546,14 +551,18 @@ watch(
       v-else-if="!searched && !loading"
       class="search-intro"
       icon="search"
-      title="Search entities"
-      description="Find entities by title or content, and narrow the results with filters."
+      :title="t('search.introTitle')"
+      :description="t('search.introDescription')"
     />
 
     <section v-else-if="results.length > 0" class="search-results" aria-labelledby="search-results-heading">
       <div class="results-head">
-        <p id="search-results-heading" class="results-count">{{ results.length }} result{{ results.length !== 1 ? 's' : '' }} found</p>
-        <AddToPileMenu :addresses="resultAddresses" label="Add results to pile" new-label="New pile from results…" />
+        <p id="search-results-heading" class="results-count">{{ t('search.resultCount', { n: results.length }, results.length) }}</p>
+        <AddToPileMenu
+          :addresses="resultAddresses"
+          :label="t('search.addResultsToPile')"
+          :new-label="t('search.newPileFromResults')"
+        />
       </div>
 
       <ul class="results-list">
@@ -569,7 +578,7 @@ watch(
             <span class="result-id">{{ entity.id }}</span>
             <span class="result-title"
               >{{ getEntityLabel(entity)
-              }}<span v-if="entity._owner" class="result-owner">in {{ entity._owner.title }}</span></span
+              }}<span v-if="entity._owner" class="result-owner">{{ t('search.inOwner', { title: entity._owner.title }) }}</span></span
             >
           </RouterLink>
         </li>

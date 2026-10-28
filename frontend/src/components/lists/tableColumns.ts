@@ -20,6 +20,7 @@
  */
 import type { ListColumn } from '@/types/config'
 import type { TableColumn } from 'rela-components/components/table/types'
+import { t } from '@/i18n'
 
 /**
  * The stable identifier for a column, naming both the column and its
@@ -47,7 +48,7 @@ export function columnKey(column: ListColumn): string {
 
 /** The header text a column shows, falling back the way rela's table did. */
 export function columnHeader(column: ListColumn): string {
-  return column.label || column.property || column.relation || (column.face ? 'Face' : '')
+  return column.label || column.property || column.relation || (column.face ? t('list.column.face') : '')
 }
 
 /**

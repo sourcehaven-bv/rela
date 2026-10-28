@@ -29,8 +29,8 @@ const RULE = 'vue/no-bare-strings-in-template'
 
 // The allowlist may only shrink. These are its size when the guard was added
 // (TKT-ZL1QAO); lower them as files are converted, never raise them.
-const MAX_LISTED_FILES = 79
-const MAX_LISTED_STRINGS = 633
+const MAX_LISTED_FILES = 60
+const MAX_LISTED_STRINGS = 441
 
 function walk(dir: string, out: string[] = []): string[] {
   for (const entry of readdirSync(dir, { withFileTypes: true })) {

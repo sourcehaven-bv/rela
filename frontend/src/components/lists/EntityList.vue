@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, shallowRef, computed, watch, nextTick, onMounted, onUnmounted, type Component } from 'vue'
 import { RouterLink, useRoute, useRouter, type RouteLocationRaw } from 'vue-router'
+import { useI18n } from 'vue-i18n'
 import { useQuery, useQueryCache } from '@pinia/colada'
 import { useSchemaStore, useUIStore } from '@/stores'
 import { useListKeyboard } from '@/composables/useListKeyboard'
@@ -74,6 +75,7 @@ const router = useRouter()
 const schemaStore = useSchemaStore()
 const uiStore = useUIStore()
 const { confirm } = useConfirm()
+const { t } = useI18n()
 
 // Back affordance — renders when ?return_to= or ?from= is present. See TKT-JIEKC.
 const backTarget = useBackTarget()
@@ -158,7 +160,7 @@ const pageState = computed<'pending' | 'loaded' | 'error'>(() => {
 })
 const loadError = computed(() => {
   const err = listQueryRef.value?.error.value
-  return err ? getErrorMessage(err, 'Failed to load entities') : null
+  return err ? getErrorMessage(err, t('list.loadFailed')) : null
 })
 // Set when the server refused the list's sort because the reader cannot see
 // a sorted property, and the rows were read again unsorted.
@@ -276,7 +278,7 @@ useDeleteKey({
 const entityNoun = computed(() => {
   const type = listConfig.value?.entity ?? ''
   const def = schemaStore.getEntityType(type)
-  const singular = def?.label || type || 'item'
+  const singular = def?.label || type || t('list.item')
   return { singular, plural: def?.label_plural || def?.plural || undefined }
 })
 
@@ -324,7 +326,7 @@ async function requestActionConfirm(
     message:
       typeof action.confirm === 'string'
         ? action.confirm
-        : `Apply ${action.label} to ${selectedIds.value.size} selected entities?`,
+        : t('list.actionConfirm', { label: action.label, n: selectedIds.value.size }),
     confirmLabel: action.label,
   })
   if (!ok) return
@@ -1353,7 +1355,7 @@ watch(searchQuery, () => {
           icon="plus"
           @click.capture="createModal.onClick"
         >
-          New
+          {{ t('common.new') }}
           <template #trailing><RlKbd keys="N" /></template>
         </RlButton>
       </template>
@@ -1370,7 +1372,7 @@ watch(searchQuery, () => {
         <SearchBox
           ref="searchBoxRef"
           :model-value="searchQuery"
-          :placeholder="`Search ${listConfig.entity}s...`"
+          :placeholder="t('list.searchEntities', { entity: listConfig.entity })"
           @update:model-value="handleSearchUpdate"
         />
         <AdHocFilterMenu
@@ -1413,7 +1415,7 @@ watch(searchQuery, () => {
         <button
           type="button"
           class="chip-remove"
-          :title="`Remove ${chip.property} filter`"
+          :title="t('list.removeFilter', { property: chip.property })"
           @click="removeAdHocFilter(chip.property)"
         >
           &times;
@@ -1439,20 +1441,20 @@ watch(searchQuery, () => {
         tone="warning"
         data-testid="group-truncated"
       >
-        Showing the first {{ entities.length }} of {{ grouping.total.value }} rows. Filter the list to see the rest.
+        {{ t('list.groupTruncated', { shown: entities.length, total: grouping.total.value }) }}
       </RlBanner>
       <RlBanner
         v-if="sortDropped && !loading && !loadError"
         tone="info"
         data-testid="sort-dropped"
       >
-        Shown unsorted: {{ sortDropped.reason }}
+        {{ t('list.sortDropped', { reason: sortDropped.reason }) }}
       </RlBanner>
-      <RlStatusRegion v-if="loading">Loading...</RlStatusRegion>
+      <RlStatusRegion v-if="loading">{{ t('list.loading') }}</RlStatusRegion>
 
       <div v-else-if="loadError" class="empty-state load-error">
         <p>{{ loadError }}</p>
-        <RlButton variant="secondary" @click="listQuery.refetch()">Retry</RlButton>
+        <RlButton variant="secondary" @click="listQuery.refetch()">{{ t('list.retry') }}</RlButton>
       </div>
 
       <!--
@@ -1466,13 +1468,13 @@ watch(searchQuery, () => {
         :icon="searchQuery ? 'search' : 'inbox'"
         :title="
           searchQuery
-            ? `No matches for \u201c${searchQuery}\u201d.`
-            : `No ${listConfig.entity}s found.`
+            ? t('list.noMatches', { query: searchQuery })
+            : t('list.noEntities', { entity: listConfig.entity })
         "
       >
         <template #actions>
           <RlButton v-if="searchQuery" variant="secondary" @click="handleSearchUpdate('')">
-            Clear search
+            {{ t('list.clearSearch') }}
           </RlButton>
           <RlButton
             v-else-if="createFormTarget && canCreate()"
@@ -1481,7 +1483,7 @@ watch(searchQuery, () => {
             variant="secondary"
             @click.capture="createModal.onClick"
           >
-            Create one
+            {{ t('list.createOne') }}
           </RlButton>
         </template>
       </RlEmptyState>
@@ -1526,7 +1528,7 @@ watch(searchQuery, () => {
           Two stretched overlays would fight, which is why this slot exists.
         -->
         <template #name="{ item }">
-          <span v-if="titleColumn && isCellInaccessible(item as Entity, titleColumn)" class="inaccessible-cell" title="inaccessible">🔒</span>
+          <span v-if="titleColumn && isCellInaccessible(item as Entity, titleColumn)" class="inaccessible-cell" :title="t('list.inaccessible')">🔒</span>
           <RouterLink
             v-else-if="rowTargets.get(item.id)"
             :to="rowTargets.get(item.id)!"
@@ -1568,7 +1570,7 @@ watch(searchQuery, () => {
           <span
             v-if="listColumnOf(column!) && isCellInaccessible(item as Entity, listColumnOf(column!)!)"
             class="inaccessible-cell"
-            title="inaccessible"
+            :title="t('list.inaccessible')"
           >🔒</span>
           <span v-else class="list-cell">
             <component
@@ -1630,7 +1632,7 @@ watch(searchQuery, () => {
             data-testid="bulk-delete"
             @click="deleteSelected"
           >
-            Delete
+            {{ t('common.delete') }}
           </RlButton>
           <AddToPileMenu
             :addresses="selectedAddresses"
@@ -1671,7 +1673,7 @@ watch(searchQuery, () => {
   </div>
 
   <RlStatusRegion v-else tone="error">
-    The list "{{ listId }}" does not exist in the configuration.
+    {{ t('list.unknownList', { id: listId }) }}
   </RlStatusRegion>
 </template>
 

@@ -16,6 +16,7 @@ import {
   type UpdatePileInput,
 } from '@/api/piles'
 import { getErrorMessage } from '@/api/errors'
+import { t } from '@/i18n'
 import { useSchemaStore, useUIStore } from '@/stores'
 import { useEvents } from '@/composables/useEvents'
 import { useWorld } from '@/composables/useWorld'
@@ -51,10 +52,6 @@ export function resetPilesState(): void {
   eventTimer = null
 }
 
-function countLabel(n: number): string {
-  return `${n} item${n === 1 ? '' : 's'}`
-}
-
 /**
  * The sentence a toast appends when a selection was longer than one request
  * may carry and only its head was sent; empty otherwise. The server would
@@ -63,13 +60,13 @@ function countLabel(n: number): string {
  */
 export function truncationNote(selected: number): string {
   if (selected <= PILE_REQUEST_MAX_ITEMS) return ''
-  return `Only the first ${PILE_REQUEST_MAX_ITEMS} of ${selected} selected items were sent.`
+  return t('piles.truncated', { max: PILE_REQUEST_MAX_ITEMS, selected })
 }
 
 /** message, followed by the truncation note when `selected` was cut. */
 function withNote(message: string, selected: number): string {
   const note = truncationNote(selected)
-  return note ? `${message}. ${note}` : message
+  return note ? t('piles.withNote', { message, note }) : message
 }
 
 /**
@@ -82,15 +79,15 @@ function withNote(message: string, selected: number): string {
 export function pileErrorMessage(err: unknown, fallback: string): string {
   switch (pileErrorCode(err)) {
     case 'pile_name_taken':
-      return 'You already have a pile with that name'
+      return t('piles.nameTaken')
     case 'pile_limit':
-      return 'You have reached the maximum number of piles. Delete one to make room.'
+      return t('piles.limit')
     case 'item_not_found':
-      return 'Some items are not available'
+      return t('piles.itemNotFound')
     case 'pile_not_found':
-      return 'This pile no longer exists'
+      return t('piles.notFound')
     case 'no_owner':
-      return 'Piles are not available without a signed-in user'
+      return t('piles.noOwner')
     default:
       return getErrorMessage(err, fallback)
   }
@@ -166,14 +163,17 @@ export function usePiles() {
       uiStore.showToast(
         'success',
         n > 0
-          ? withNote(`Pile ${pile.name} created with ${countLabel(pile.count)}`, n)
-          : `Pile ${pile.name} created`,
+          ? withNote(
+              t('piles.createdWith', { name: pile.name, n: pile.count }, pile.count),
+              n
+            )
+          : t('piles.created', { name: pile.name }),
         5000,
-        { label: 'Open pile', onAction: () => openPile(pile) }
+        { label: t('piles.open'), onAction: () => openPile(pile) }
       )
       return pile
     } catch (err) {
-      uiStore.error(pileErrorMessage(err, 'Could not create the pile'))
+      uiStore.error(pileErrorMessage(err, t('piles.createFailed')))
       return null
     } finally {
       await refresh()
@@ -186,7 +186,7 @@ export function usePiles() {
       rememberPileNames([updated])
       return updated
     } catch (err) {
-      uiStore.error(pileErrorMessage(err, 'Could not change the pile'))
+      uiStore.error(pileErrorMessage(err, t('piles.changeFailed')))
       return null
     } finally {
       await refresh()
@@ -198,10 +198,10 @@ export function usePiles() {
       await deletePile(pile.id)
       forgetPileName(pile.id)
       if (flyout.pile.value?.pileId === pile.id) flyout.close()
-      uiStore.success(`Pile ${pile.name} deleted`)
+      uiStore.success(t('piles.deleted', { name: pile.name }))
       return true
     } catch (err) {
-      uiStore.error(pileErrorMessage(err, 'Could not delete the pile'))
+      uiStore.error(pileErrorMessage(err, t('piles.deleteFailed')))
       return false
     } finally {
       await refresh()
@@ -224,16 +224,19 @@ export function usePiles() {
       const { added } = await addPileItems(pile.id, items)
       if (!opts.quiet) {
         const skipped = items.length - added
-        const tail = skipped > 0 ? ` (${skipped} already on it)` : ''
-        const message = withNote(`${added} added to ${pile.name}${tail}`, addresses.length)
+        const addedText =
+          skipped > 0
+            ? t('piles.addedSkipped', { n: added, name: pile.name, skipped })
+            : t('piles.added', { n: added, name: pile.name })
+        const message = withNote(addedText, addresses.length)
         uiStore.showToast('success', message, 5000, {
-          label: 'Open pile',
+          label: t('piles.open'),
           onAction: () => openPile(pile),
         })
       }
       return added
     } catch (err) {
-      uiStore.error(pileErrorMessage(err, `Could not add to ${pile.name}`))
+      uiStore.error(pileErrorMessage(err, t('piles.addFailed', { name: pile.name })))
       return null
     } finally {
       await refresh()
@@ -247,21 +250,23 @@ export function usePiles() {
       await removePileItems(pile.id, addresses)
       uiStore.showToast(
         'success',
-        `${countLabel(addresses.length)} removed from ${pile.name}`,
+        t('piles.removed', { n: addresses.length, name: pile.name }, addresses.length),
         PILE_UNDO_TOAST_MS,
         {
-          label: 'Undo',
+          label: t('common.undo'),
           onAction: () => {
             void addItems(pile, addresses, { quiet: true }).then((added) => {
               if (added !== null)
-                uiStore.success(`${countLabel(addresses.length)} back on ${pile.name}`)
+                uiStore.success(
+                  t('piles.restored', { n: addresses.length, name: pile.name }, addresses.length)
+                )
             })
           },
         }
       )
       return true
     } catch (err) {
-      uiStore.error(pileErrorMessage(err, `Could not remove from ${pile.name}`))
+      uiStore.error(pileErrorMessage(err, t('piles.removeFailed', { name: pile.name })))
       return false
     } finally {
       await refresh()

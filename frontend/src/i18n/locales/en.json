@@ -225,9 +225,14 @@
     "back": "Back",
     "next": "Next",
     "confirm": "Confirm",
+    "undo": "Undo",
     "retry": "Try again",
     "loading": "Loading…",
+    "search": "Search",
     "clear": "Clear",
+    "copy": "Copy",
+    "open": "Open",
+    "apply": "Apply",
     "yes": "Yes",
     "no": "No",
     "none": "None",
@@ -644,6 +649,522 @@
       "fieldConflict": "Someone else changed this field while you were editing. Your change was not saved. Edit it again to overwrite their value.",
       "contentConflict": "Someone else changed the same lines of the body. Your change was not saved. Edit it again to overwrite their version.",
       "relationsConflict": "Someone else changed these relations and the changes could not be combined. Your relation change was not saved."
+    }
+  },
+  "list": {
+    "loading": "Loading...",
+    "loadFailed": "Failed to load entities",
+    "retry": "Retry",
+    "item": "item",
+    "actionConfirm": "Apply {label} to {n} selected entities?",
+    "searchPlaceholder": "Search...",
+    "searchEntities": "Search {entity}s...",
+    "clearSearch": "Clear search",
+    "removeFilter": "Remove {property} filter",
+    "groupTruncated": "Showing the first {shown} of {total} rows. Filter the list to see the rest.",
+    "sortDropped": "Shown unsorted: {reason}",
+    "noMatches": "No matches for “{query}”.",
+    "noEntities": "No {entity}s found.",
+    "createOne": "Create one",
+    "inaccessible": "inaccessible",
+    "unknownList": "The list \"{id}\" does not exist in the configuration.",
+    "moveFailed": "Could not move the row",
+    "pagination": {
+      "summary": "Showing {first} - {last} of {total}"
+    },
+    "column": {
+      "face": "Face"
+    },
+    "filter": {
+      "all": "All",
+      "filterBy": "Filter by {label}",
+      "clear": "Clear filters",
+      "optionsLoadFailed": "Could not load filter options for “{label}”."
+    },
+    "adhoc": {
+      "button": "+ Filter",
+      "entityType": "Entity Type",
+      "searchProperties": "Search properties...",
+      "noMatches": "No matching properties",
+      "enterValue": "Enter value...",
+      "category": {
+        "type": "type",
+        "property": "property"
+      }
+    },
+    "action": {
+      "partial": "{label}: {failed} failed, {succeeded} succeeded",
+      "done": "{label}: {n} updated"
+    },
+    "bulkDelete": {
+      "count": "{n} {noun}",
+      "pluralFallback": "{noun}s",
+      "andMore": "{ids} and {n} more",
+      "deleted": "Deleted {items}",
+      "deleteError": "Could not delete {ids}: {reason}",
+      "deleteFailed": "delete failed",
+      "restored": "Restored {items}",
+      "restoreError": "Could not restore {ids}: {reason}",
+      "restoreFailed": "restore failed",
+      "restoreGone": "it can no longer be restored"
+    },
+    "group": {
+      "none": "(none)",
+      "other": "Other"
+    },
+    "bucket": {
+      "overdue": "Overdue",
+      "today": "Today",
+      "tomorrow": "Tomorrow",
+      "next7Days": "Next 7 days",
+      "later": "Later",
+      "noDate": "No date"
+    },
+    "summary": {
+      "count": "Count",
+      "sum": "Total",
+      "avg": "Average",
+      "min": "Minimum",
+      "max": "Maximum",
+      "partial": "{line} (partial)"
+    },
+    "scope": {
+      "pile": "Pile"
+    }
+  },
+  "flyout": {
+    "openFullList": "Open the full list",
+    "openFullPage": "Open the full page",
+    "loadFailed": "Failed to load the list",
+    "empty": "No {title}",
+    "entries": "entries",
+    "shownOf": "{shown} of {total} shown"
+  },
+  "search": {
+    "scopeLabel": "Search: {q}",
+    "typeFilter": "Entity Type: {label}",
+    "placeholder": "Search entities...",
+    "searching": "Searching…",
+    "filtersLabel": "Filters:",
+    "clearAll": "Clear all",
+    "noResults": "No results found for “{query}”",
+    "introTitle": "Search entities",
+    "introDescription": "Find entities by title or content, and narrow the results with filters.",
+    "resultCount": "{n} result found | {n} results found",
+    "addResultsToPile": "Add results to pile",
+    "newPileFromResults": "New pile from results…",
+    "inOwner": "in {title}",
+    "help": {
+      "toggle": "Search syntax help",
+      "title": "How to Search",
+      "textTitle": "Text Search",
+      "text": "Type keywords in the search box to find matching entities by title or content.",
+      "filtersTitle": "Add Filters",
+      "filters": "Click {button} or press {key} to filter by entity type or property values.",
+      "combineTitle": "Combine Search & Filters",
+      "combine": "Use text search together with multiple filters for precise results.",
+      "shortcutsTitle": "Keyboard Shortcuts",
+      "openFilterMenu": "Open filter menu",
+      "enterResults": "Enter results",
+      "navigateResults": "Navigate results",
+      "openSelected": "Open selected",
+      "focusInput": "Focus search input"
+    }
+  },
+  "analyze": {
+    "title": "Analysis",
+    "subtitle": "Validation checks across all entities and relations",
+    "refresh": "Refresh",
+    "refreshing": "Refreshing…",
+    "analysing": "Analysing",
+    "running": "Running analysis...",
+    "errorCount": "{n} error | {n} errors",
+    "warningCount": "{n} warning | {n} warnings",
+    "truncated": "Showing the first {n} issues — this check found more. Fix these and re-run to see the rest.",
+    "noIssues": "No issues",
+    "check": {
+      "properties": {
+        "label": "Properties",
+        "description": "Property validation errors (required fields, invalid values, ID patterns)"
+      },
+      "cardinality": {
+        "label": "Cardinality",
+        "description": "Relation cardinality constraint violations"
+      },
+      "validations": {
+        "label": "Validations",
+        "description": "Custom validation rules defined in the metamodel"
+      },
+      "orphans": {
+        "label": "Orphans",
+        "description": "Entities with no incoming or outgoing relations"
+      },
+      "duplicates": {
+        "label": "Duplicates",
+        "description": "Entities with identical titles"
+      },
+      "idGaps": {
+        "label": "ID Gaps",
+        "description": "Missing numbers in auto-generated ID sequences"
+      }
+    },
+    "issues": {
+      "entity": "Entity",
+      "type": "Type",
+      "message": "Message",
+      "severity": "Severity",
+      "missingHeaders": "Missing required headers:"
+    },
+    "severity": {
+      "error": "ERROR",
+      "warning": "WARNING"
+    }
+  },
+  "shell": {
+    "loading": "Loading...",
+    "loadingLabel": "Loading",
+    "retry": "Retry",
+    "loadFailed": "Failed to load application",
+    "toggleNav": "Toggle navigation",
+    "loadSchemaFailed": "Failed to load schema",
+    "fetchEntityFailed": "Failed to fetch entity",
+    "configNotReloaded": "Configuration not reloaded; the previous version is still in use.",
+    "configAppliedFile": "{applied} was applied, but {file} does not load against it; the previous {file} is still in use.",
+    "configApplied": "{applied} was applied, but the configuration does not load against it; the previous version is still in use.",
+    "linkAnchorFailed": "{id} was created, but linking it to {anchor} failed. Link it by hand.",
+    "inaccessible": {
+      "label": "inaccessible",
+      "reason": "inaccessible ({reason})",
+      "gitCrypt": "git-crypt encrypted (run `git-crypt unlock` to read)"
+    },
+    "lease": {
+      "claimedBy": "Claimed by {user}",
+      "claimedByWho": "Claimed by {user} ({who})",
+      "status": ", status: {status}"
+    },
+    "targetSelect": {
+      "search": "Search…",
+      "all": "All",
+      "noMatches": "No matching entities",
+      "clear": "Clear {label}"
+    },
+    "tagSelect": {
+      "placeholder": "Select...",
+      "search": "Search...",
+      "noResults": "No Results",
+      "searching": "Searching...",
+      "selected": "{number} selected"
+    }
+  },
+  "switcher": {
+    "projects": "Projects",
+    "world": "World",
+    "configure": "Configure"
+  },
+  "help": {
+    "show": "Show help",
+    "title": "Help",
+    "close": "Close help",
+    "entityTitle": "{label} Help",
+    "loadFailed": "Failed to load help content"
+  },
+  "scriptError": {
+    "title": "Script error",
+    "surface": {
+      "action": "Action",
+      "document": "Document",
+      "automation": "Automation",
+      "luaRun": "Lua Run",
+      "luaEval": "Lua Eval",
+      "validation": "Validation"
+    },
+    "fileLine": "{file} line {line}:",
+    "line": "line {line}:",
+    "stack": "Stack ({n} frame) | Stack ({n} frames)",
+    "inFunc": "in {func}",
+    "output": "Output before error",
+    "args": "Args",
+    "correlationId": "Correlation ID:"
+  },
+  "actions": {
+    "failed": "Action failed",
+    "labelled": "{label}: {detail}",
+    "withRef": "{message} (ref: {id})"
+  },
+  "nextAction": {
+    "doIt": "Do it",
+    "nice": "Nice",
+    "confirmTitle": "{label}?",
+    "confirmMessage": "This runs immediately and cannot be undone.",
+    "done": "{label}: done",
+    "notNow": "Not now",
+    "remindIn": "Remind me in {duration}",
+    "notThisOne": "Not this one",
+    "stop": "Stop suggesting this"
+  },
+  "palette": {
+    "label": "Quick jump",
+    "placeholder": "Type to search entities…",
+    "hint": "Type to search entities",
+    "noMatches": "No matches",
+    "failed": "Search failed",
+    "unknownType": "Unknown",
+    "inOwner": "in {title}"
+  },
+  "shortcuts": {
+    "title": "Keyboard Shortcuts",
+    "group": {
+      "global": "Global",
+      "navigation": "Navigation",
+      "listView": "List View",
+      "entityDetail": "Entity Detail",
+      "formEditor": "Form / Editor"
+    },
+    "showShortcuts": "Show keyboard shortcuts",
+    "focusSearch": "Focus search",
+    "quickJump": "Quick jump",
+    "closeModal": "Close modal / cancel",
+    "goDashboard": "Go to Dashboard",
+    "goGraph": "Go to Graph",
+    "goSearch": "Go to Search",
+    "goAnalyze": "Go to Analyze",
+    "moveDown": "Move selection down",
+    "moveUp": "Move selection up",
+    "openSelected": "Open selected entity",
+    "editSelected": "Edit selected entity",
+    "createNew": "Create new entity",
+    "deleteSelected": "Delete selected entity",
+    "editEntity": "Edit entity",
+    "deleteEntity": "Delete entity",
+    "submit": "Save / submit",
+    "cancelBack": "Cancel and go back"
+  },
+  "piles": {
+    "itemCount": "{n} item | {n} items",
+    "truncated": "Only the first {max} of {selected} selected items were sent.",
+    "withNote": "{message}. {note}",
+    "nameTaken": "You already have a pile with that name",
+    "limit": "You have reached the maximum number of piles. Delete one to make room.",
+    "itemNotFound": "Some items are not available",
+    "notFound": "This pile no longer exists",
+    "noOwner": "Piles are not available without a signed-in user",
+    "created": "Pile {name} created",
+    "createdWith": "Pile {name} created with {n} item | Pile {name} created with {n} items",
+    "open": "Open pile",
+    "createFailed": "Could not create the pile",
+    "changeFailed": "Could not change the pile",
+    "deleted": "Pile {name} deleted",
+    "deleteFailed": "Could not delete the pile",
+    "added": "{n} added to {name}",
+    "addedSkipped": "{n} added to {name} ({skipped} already on it)",
+    "addFailed": "Could not add to {name}",
+    "removed": "{n} item removed from {name} | {n} items removed from {name}",
+    "restored": "{n} item back on {name} | {n} items back on {name}",
+    "removeFailed": "Could not remove from {name}",
+    "addTo": "Add to {name}",
+    "addToNew": "Add to new pile…",
+    "removeFromPile": "Remove from pile",
+    "thePile": "the pile",
+    "addToPile": "Add to pile",
+    "newFromSelection": "New pile from selection…",
+    "icon": {
+      "layers": "Layers",
+      "star": "Star",
+      "flag": "Flag",
+      "bookmark": "Bookmark",
+      "inbox": "Inbox",
+      "folder": "Folder",
+      "tag": "Tag",
+      "heart": "Heart",
+      "clock": "Clock",
+      "target": "Target"
+    },
+    "dialog": {
+      "rename": "Rename pile",
+      "itemsGo": "The {n} selected item go on the new pile. | The {n} selected items go on the new pile.",
+      "name": "Name",
+      "namePlaceholder": "e.g. Friday review",
+      "icon": "Icon",
+      "nameTooLong": "Use at most {max} characters",
+      "nameRequired": "Give the pile a name",
+      "create": "Create pile"
+    },
+    "panel": {
+      "loadFailed": "This pile could not be loaded.",
+      "stepThrough": "Step through",
+      "actions": "Pile actions",
+      "actionsFor": "Actions · {target}",
+      "runOnSelected": "Run on {n} selected",
+      "runOnAll": "Run on all {n}",
+      "rename": "Rename",
+      "copyIds": "Copy IDs",
+      "delete": "Delete pile",
+      "selected": "{n} selected",
+      "runAction": "Run action",
+      "removeN": "Remove {n}",
+      "clearSelection": "Clear selection",
+      "empty": "This pile is empty",
+      "emptyHint": "Select rows in a list and choose Add to pile, or use Add to pile on a search or an entity page.",
+      "runConfirm": "Run {action} on {n} item? | Run {action} on {n} items?",
+      "run": "Run",
+      "copied": "Copied {n} ID | Copied {n} IDs",
+      "copyFailed": "Could not copy to the clipboard",
+      "deleteMessage": "Delete the pile {name}? The entities on it are not affected."
+    }
+  },
+  "kanban": {
+    "loadFailed": "Failed to load board",
+    "otherColumn": "Other",
+    "boardLabel": "{title} board",
+    "boardLabelDefault": "Kanban board",
+    "moveFailed": "Failed to move card",
+    "moveForbidden": "You may not move this card to another column",
+    "truncated": "Showing {shown} of {total} items — the board is incomplete.",
+    "loading": "Loading board..."
+  },
+  "calendar": {
+    "month": "Month",
+    "week": "Week",
+    "sourceLoadFailed": "Failed to load this source",
+    "loadFailed": "Failed to load calendar",
+    "moveFailed": "Failed to move event",
+    "previousPeriod": "Previous period",
+    "nextPeriod": "Next period",
+    "today": "Today",
+    "updating": "updating…",
+    "range": "Calendar range",
+    "truncated": "Some events are not shown — this period returned more entities than the calendar can load.",
+    "longEvents": "Some long events may not be shown; increase {setting} for this calendar's sources.",
+    "sourceError": "{source}: {message}",
+    "allHidden": "All sources are hidden — use the legend above to show them again.",
+    "empty": "No events in this period.",
+    "continuesAfter": "Continues on following days",
+    "continuedFrom": "Continued from earlier days",
+    "continuesBoth": "Continues before and after this day",
+    "more": "+{n} more",
+    "preview": {
+      "title": "Entity preview",
+      "openFullPage": "Open full page"
+    }
+  },
+  "dashboardView": {
+    "title": "Dashboard",
+    "loading": "Loading dashboard...",
+    "notFound": "Dashboard not found",
+    "notFoundDescription": "No dashboard is named “{name}”.",
+    "noCards": "No dashboard cards to show.",
+    "noResults": "No results",
+    "validation": "Validation",
+    "viewAnalysis": "View full analysis",
+    "allPassed": "All checks passed",
+    "errors": "{n} error | {n} errors",
+    "warnings": "{n} warning | {n} warnings",
+    "viewDetails": "View details"
+  },
+  "conflicts": {
+    "loadFailed": "Failed to load conflicts",
+    "detailLoadFailed": "Failed to load conflict details",
+    "resolveFailed": "Failed to resolve conflict",
+    "title": "Merge Conflicts",
+    "subtitle": "Files with unresolved git conflicts",
+    "backToDashboard": "Back to Dashboard",
+    "loading": "Loading conflicts...",
+    "retry": "Retry",
+    "fileCount": "{n} file with conflicts | {n} files with conflicts",
+    "file": "File",
+    "type": "Type",
+    "conflicts": "Conflicts",
+    "relation": "relation",
+    "emptyTitle": "No conflicts detected",
+    "emptyDescription": "All entity and relation files are clean.",
+    "resolveTitle": "Resolve Conflict",
+    "backToConflicts": "Back to Conflicts",
+    "loadingDetail": "Loading conflict details...",
+    "selectAllOurs": "Select All Ours",
+    "selectAllTheirs": "Select All Theirs",
+    "properties": "Properties",
+    "property": "Property",
+    "ours": "Ours (HEAD)",
+    "theirs": "Theirs",
+    "empty": "empty",
+    "content": "Content",
+    "useOurs": "Use Ours",
+    "useTheirs": "Use Theirs",
+    "editManually": "Edit Manually",
+    "manualContent": "Manual Content",
+    "applying": "Applying…",
+    "apply": "Apply Resolution"
+  },
+  "gantt": {
+    "reloadFailed": "Could not reload the chart: {error}",
+    "handle": {
+      "start": "Start of {name}",
+      "move": "Move {name}",
+      "end": "End of {name}"
+    },
+    "cycle": "{name} is part of a containment loop — one repeating edge is not shown",
+    "breach": {
+      "startsBefore": "children start {n}d before the planned start",
+      "endsAfter": "children end {n}d after the planned end",
+      "pastCommit": "{n}d past the committed date ({date})"
+    },
+    "earlier": "Earlier",
+    "later": "Later",
+    "now": "Now",
+    "todayOutside": "Today is outside this plan",
+    "zoomLabel": "Time zoom",
+    "zoom": {
+      "quarter": "quarter",
+      "month": "month",
+      "week": "week"
+    },
+    "allWork": "All work",
+    "truncated": "truncated",
+    "truncatedTitle": "The tree was cut at the node cap; drill in to see more",
+    "compressed": "compressed",
+    "compressedTitle": "The plan spans too long to draw at this zoom; days are drawn narrower",
+    "committedTitle": "Committed {date}",
+    "pastCommitTitle": "{n}d past the committed date",
+    "empty": "No dated entities yet.",
+    "nothingToShow": "Nothing to show.",
+    "legend": {
+      "workItem": "work item",
+      "projectWindow": "project window",
+      "plannedWindow": "planned window",
+      "outsidePlanned": "outside planned window",
+      "pastCommitted": "past committed date"
+    },
+    "tip": {
+      "planned": "Planned",
+      "rolledUp": "Rolled up",
+      "fromItems": "from {n} items",
+      "derived": "no dates of its own — span derived from children",
+      "committed": "Committed"
+    },
+    "month": {
+      "jan": "Jan",
+      "feb": "Feb",
+      "mar": "Mar",
+      "apr": "Apr",
+      "may": "May",
+      "jun": "Jun",
+      "jul": "Jul",
+      "aug": "Aug",
+      "sep": "Sep",
+      "oct": "Oct",
+      "nov": "Nov",
+      "dec": "Dec"
+    },
+    "tick": {
+      "quarter": "Q{q} '{yy}",
+      "monthYear": "{month} '{yy}",
+      "week": "W{w}"
+    },
+    "drag": {
+      "noLongerAllowed": "You can no longer change the dates of {name}.",
+      "changedElsewhere": "{name} was changed by someone else. The chart now shows its current dates.",
+      "warnings": "{name} was rescheduled with warnings: {warnings}",
+      "failed": "Could not reschedule {name}: {error}"
     }
   }
 }

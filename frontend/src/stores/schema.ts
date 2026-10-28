@@ -4,6 +4,7 @@ import { getSchema, getConfig } from '@/api/schema'
 import { getDashboard } from '@/api/dashboard'
 import { registerEntityPlurals } from '@/api/entities'
 import { getErrorMessage } from '@/api/errors'
+import { t } from '@/i18n'
 import type {
   EntityType,
   PropertyDef,
@@ -475,7 +476,7 @@ export const useSchemaStore = defineStore('schema', () => {
 
       loaded.value = true
     } catch (err) {
-      error.value = getErrorMessage(err, 'Failed to load schema')
+      error.value = getErrorMessage(err, t('shell.loadSchemaFailed'))
       throw err
     } finally {
       loading.value = false

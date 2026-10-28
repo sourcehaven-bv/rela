@@ -56,7 +56,7 @@ async function loadConflicts() {
     const result = await getConflicts()
     conflicts.value = result.conflicts
   } catch (err) {
-    error.value = conflictError(err, 'Failed to load conflicts')
+    error.value = conflictError(err, t('conflicts.loadFailed'))
   } finally {
     loading.value = false
   }
@@ -87,7 +87,7 @@ async function selectConflict(path: string) {
       manualContent.value = detail.value.content_ours
     }
   } catch (err) {
-    detailError.value = conflictError(err, 'Failed to load conflict details')
+    detailError.value = conflictError(err, t('conflicts.detailLoadFailed'))
   } finally {
     detailLoading.value = false
   }
@@ -129,7 +129,7 @@ async function applyResolution() {
     // Go back to list if no more conflicts
     backToList()
   } catch (err) {
-    detailError.value = conflictError(err, 'Failed to resolve conflict')
+    detailError.value = conflictError(err, t('conflicts.resolveFailed'))
   } finally {
     resolving.value = false
   }
@@ -146,27 +146,27 @@ onMounted(() => {
     <template v-if="!showingDetail">
       <div class="page-header">
         <div>
-          <h2>Merge Conflicts</h2>
-          <p>Files with unresolved git conflicts</p>
+          <h2>{{ t('conflicts.title') }}</h2>
+          <p>{{ t('conflicts.subtitle') }}</p>
         </div>
         <RlButton variant="secondary" @click="router.push('/')">
-          Back to Dashboard
+          {{ t('conflicts.backToDashboard') }}
         </RlButton>
       </div>
 
-      <RlStatusRegion v-if="loading">Loading conflicts...</RlStatusRegion>
+      <RlStatusRegion v-if="loading">{{ t('conflicts.loading') }}</RlStatusRegion>
 
       <RlStatusRegion v-else-if="error" tone="error" data-testid="conflicts-error">
         {{ error }}
         <template v-if="!forbidden" #actions>
-          <RlButton variant="secondary" size="sm" @click="loadConflicts">Retry</RlButton>
+          <RlButton variant="secondary" size="sm" @click="loadConflicts">{{ t('conflicts.retry') }}</RlButton>
         </template>
       </RlStatusRegion>
 
       <template v-else-if="hasConflicts">
         <div class="conflict-summary">
           <span class="conflict-chip">
-            {{ conflicts.length }} file{{ conflicts.length !== 1 ? 's' : '' }} with conflicts
+            {{ t('conflicts.fileCount', { n: conflicts.length }, conflicts.length) }}
           </span>
         </div>
 
@@ -174,9 +174,9 @@ onMounted(() => {
           <table class="conflicts-table">
             <thead>
               <tr>
-                <th>File</th>
-                <th>Type</th>
-                <th>Conflicts</th>
+                <th>{{ t('conflicts.file') }}</th>
+                <th>{{ t('conflicts.type') }}</th>
+                <th>{{ t('conflicts.conflicts') }}</th>
               </tr>
             </thead>
             <tbody>
@@ -194,7 +194,7 @@ onMounted(() => {
                   <span v-if="conflict.entity_type" class="badge badge-gray">
                     {{ conflict.entity_type }}
                   </span>
-                  <span v-else class="badge badge-purple">relation</span>
+                  <span v-else class="badge badge-purple">{{ t('conflicts.relation') }}</span>
                 </td>
                 <td>
                   <span class="badge badge-orange">{{ conflict.marker_count }}</span>
@@ -209,8 +209,8 @@ onMounted(() => {
         v-else
         class="conflict-empty"
         icon="shield-check"
-        title="No conflicts detected"
-        description="All entity and relation files are clean."
+        :title="t('conflicts.emptyTitle')"
+        :description="t('conflicts.emptyDescription')"
       />
     </template>
 
@@ -218,21 +218,21 @@ onMounted(() => {
     <template v-else>
       <div class="page-header">
         <div>
-          <h2>Resolve Conflict</h2>
+          <h2>{{ t('conflicts.resolveTitle') }}</h2>
           <p>{{ selectedPath }}</p>
         </div>
         <RlButton variant="secondary" @click="backToList">
-          Back to Conflicts
+          {{ t('conflicts.backToConflicts') }}
         </RlButton>
       </div>
 
-      <RlStatusRegion v-if="detailLoading" size="sm">Loading conflict details...</RlStatusRegion>
+      <RlStatusRegion v-if="detailLoading" size="sm">{{ t('conflicts.loadingDetail') }}</RlStatusRegion>
 
       <RlStatusRegion v-else-if="detailError" tone="error" size="sm">
         {{ detailError }}
         <template #actions>
           <RlButton variant="secondary" size="sm" @click="selectConflict(selectedPath!)">
-            Retry
+            {{ t('conflicts.retry') }}
           </RlButton>
         </template>
       </RlStatusRegion>
@@ -245,23 +245,23 @@ onMounted(() => {
             width reservation for nothing.
           -->
           <RlButton variant="secondary" @click="selectAllSide('ours')">
-            Select All Ours
+            {{ t('conflicts.selectAllOurs') }}
             <template #trailing><RlKbd keys="O" /></template>
           </RlButton>
           <RlButton variant="secondary" @click="selectAllSide('theirs')">
-            Select All Theirs
+            {{ t('conflicts.selectAllTheirs') }}
             <template #trailing><RlKbd keys="T" /></template>
           </RlButton>
         </div>
 
         <div class="card resolve-card">
-          <h3>Properties</h3>
+          <h3>{{ t('conflicts.properties') }}</h3>
           <table class="resolve-table">
             <thead>
               <tr>
-                <th>Property</th>
-                <th>Ours (HEAD)</th>
-                <th>Theirs</th>
+                <th>{{ t('conflicts.property') }}</th>
+                <th>{{ t('conflicts.ours') }}</th>
+                <th>{{ t('conflicts.theirs') }}</th>
               </tr>
             </thead>
             <tbody>
@@ -276,7 +276,7 @@ onMounted(() => {
                   class="resolve-value resolve-value-same"
                   colspan="2"
                 >
-                  {{ diff.ours_value || 'empty' }}
+                  {{ diff.ours_value || t('conflicts.empty') }}
                 </td>
                 <template v-else>
                   <td
@@ -284,14 +284,14 @@ onMounted(() => {
                     :class="{ 'resolve-value-selected': propertyChoices[diff.property] === 'ours' }"
                     @click="propertyChoices[diff.property] = 'ours'"
                   >
-                    <span class="resolve-value-text">{{ diff.ours_value || 'empty' }}</span>
+                    <span class="resolve-value-text">{{ diff.ours_value || t('conflicts.empty') }}</span>
                   </td>
                   <td
                     class="resolve-value resolve-value-selectable"
                     :class="{ 'resolve-value-selected': propertyChoices[diff.property] === 'theirs' }"
                     @click="propertyChoices[diff.property] = 'theirs'"
                   >
-                    <span class="resolve-value-text">{{ diff.theirs_value || 'empty' }}</span>
+                    <span class="resolve-value-text">{{ diff.theirs_value || t('conflicts.empty') }}</span>
                   </td>
                 </template>
               </tr>
@@ -300,33 +300,33 @@ onMounted(() => {
         </div>
 
         <div v-if="!detail.content_same" class="card resolve-card">
-          <h3>Content</h3>
+          <h3>{{ t('conflicts.content') }}</h3>
           <div class="resolve-content-choice">
             <label>
               <input v-model="contentChoice" type="radio" value="ours" />
-              Use Ours
+              {{ t('conflicts.useOurs') }}
             </label>
             <label>
               <input v-model="contentChoice" type="radio" value="theirs" />
-              Use Theirs
+              {{ t('conflicts.useTheirs') }}
             </label>
             <label>
               <input v-model="contentChoice" type="radio" value="manual" />
-              Edit Manually
+              {{ t('conflicts.editManually') }}
             </label>
           </div>
           <div class="resolve-content-compare">
             <div class="resolve-content-side">
-              <div class="resolve-content-label">Ours (HEAD)</div>
+              <div class="resolve-content-label">{{ t('conflicts.ours') }}</div>
               <pre class="resolve-content-pre">{{ detail.content_ours }}</pre>
             </div>
             <div class="resolve-content-side">
-              <div class="resolve-content-label">Theirs</div>
+              <div class="resolve-content-label">{{ t('conflicts.theirs') }}</div>
               <pre class="resolve-content-pre">{{ detail.content_theirs }}</pre>
             </div>
           </div>
           <div v-if="contentChoice === 'manual'" class="resolve-manual-edit">
-            <label>Manual Content</label>
+            <label>{{ t('conflicts.manualContent') }}</label>
             <textarea v-model="manualContent" rows="10"/>
           </div>
         </div>
@@ -341,10 +341,10 @@ onMounted(() => {
           <RlButton
             variant="primary"
             :loading="resolving"
-            pending-label="Applying…"
+            :pending-label="t('conflicts.applying')"
             @click="applyResolution"
           >
-            Apply Resolution
+            {{ t('conflicts.apply') }}
           </RlButton>
         </div>
       </template>

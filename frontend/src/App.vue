@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import { useI18n } from 'vue-i18n'
 import { navigationPending } from '@/router'
 import { useSchemaStore, useUIStore } from '@/stores'
 import { provideMessages } from 'rela-components/composables/useMessages'
@@ -53,6 +54,7 @@ import RlIconButton from 'rela-components/components/common/RlIconButton.vue'
 // Gate 2 — route name: forms always have a Cancel that navigates back, so
 // even a "top-level" form (linked from the sidebar with no back-target
 // query) should hide the hamburger.
+const { t } = useI18n()
 const route = useRoute()
 const backTarget = useBackTarget()
 const NON_TOP_LEVEL_ROUTES = new Set(['form-create', 'form-edit'])
@@ -152,7 +154,7 @@ onMounted(async () => {
   try {
     await schemaStore.load()
   } catch (err) {
-    error.value = getErrorMessage(err, 'Failed to load application')
+    error.value = getErrorMessage(err, t('shell.loadFailed'))
     uiStore.error(error.value)
   } finally {
     loading.value = false
@@ -228,14 +230,14 @@ watch(
     there is no parent pane for it to fill.
   -->
   <div v-if="loading" class="boot-screen">
-    <RlStatusRegion>Loading...</RlStatusRegion>
+    <RlStatusRegion>{{ t('shell.loading') }}</RlStatusRegion>
   </div>
 
   <div v-else-if="error" class="boot-screen">
     <RlStatusRegion tone="error">
       {{ error }}
       <template #actions>
-        <RlButton variant="primary" @click="schemaStore.reload()">Retry</RlButton>
+        <RlButton variant="primary" @click="schemaStore.reload()">{{ t('shell.retry') }}</RlButton>
       </template>
     </RlStatusRegion>
   </div>
@@ -321,7 +323,7 @@ watch(
         v-if="showHamburger && !navOpen"
         class="mobile-menu-btn"
         icon="menu"
-        label="Toggle navigation"
+        :label="t('shell.toggleNav')"
         :aria-expanded="navOpen"
         aria-controls="main-sidebar"
         @click="navOpen = !navOpen"

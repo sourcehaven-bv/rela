@@ -1,10 +1,13 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
+import { useI18n } from 'vue-i18n'
 
 import type { ScriptError } from '../../types/scriptError'
 import RlButton from 'rela-components/components/common/RlButton.vue'
 
 const props = defineProps<{ error: ScriptError }>()
+
+const { t } = useI18n()
 
 const stackOpen = ref(false)
 const outputOpen = ref(false)
@@ -13,17 +16,17 @@ const argsOpen = ref(false)
 const surfaceLabel = computed((): string => {
   switch (props.error.script.surface) {
     case 'action':
-      return 'Action'
+      return t('scriptError.surface.action')
     case 'document':
-      return 'Document'
+      return t('scriptError.surface.document')
     case 'automation':
-      return 'Automation'
+      return t('scriptError.surface.automation')
     case 'lua_run':
-      return 'Lua Run'
+      return t('scriptError.surface.luaRun')
     case 'lua_eval':
-      return 'Lua Eval'
+      return t('scriptError.surface.luaEval')
     case 'validation':
-      return 'Validation'
+      return t('scriptError.surface.validation')
     default:
       return props.error.script.surface
   }
@@ -54,8 +57,8 @@ async function copyCorrelationId(): Promise<void> {
     </header>
 
     <p class="se-message">
-      <strong v-if="error.lua.line && error.lua.file">{{ error.lua.file }} line {{ error.lua.line }}:</strong>
-      <strong v-else-if="error.lua.line">line {{ error.lua.line }}:</strong>
+      <strong v-if="error.lua.line && error.lua.file">{{ t('scriptError.fileLine', { file: error.lua.file, line: error.lua.line }) }}</strong>
+      <strong v-else-if="error.lua.line">{{ t('scriptError.line', { line: error.lua.line }) }}</strong>
       {{ error.lua.message }}
     </p>
 
@@ -69,22 +72,22 @@ async function copyCorrelationId(): Promise<void> {
     </div>
 
     <details v-if="error.stack && error.stack.length > 0" :open="stackOpen" @toggle="stackOpen = !stackOpen">
-      <summary>Stack ({{ error.stack.length }} frame{{ error.stack.length === 1 ? '' : 's' }})</summary>
+      <summary>{{ t('scriptError.stack', { n: error.stack.length }, error.stack.length) }}</summary>
       <ol class="se-stack">
         <li v-for="(frame, i) in error.stack" :key="i">
           <code v-if="frame.path">{{ frame.path }}<span v-if="frame.line">:{{ frame.line }}</span></code>
-          <span v-if="frame.func" class="se-func">in {{ frame.func }}</span>
+          <span v-if="frame.func" class="se-func">{{ t('scriptError.inFunc', { func: frame.func }) }}</span>
         </li>
       </ol>
     </details>
 
     <details v-if="error.captured_output" :open="outputOpen" @toggle="outputOpen = !outputOpen">
-      <summary>Output before error</summary>
+      <summary>{{ t('scriptError.output') }}</summary>
       <pre class="se-output">{{ error.captured_output }}</pre>
     </details>
 
     <details v-if="argsEntries.length > 0" :open="argsOpen" @toggle="argsOpen = !argsOpen">
-      <summary>Args</summary>
+      <summary>{{ t('scriptError.args') }}</summary>
       <dl class="se-args">
         <template v-for="[k, v] in argsEntries" :key="k">
           <dt>{{ k }}</dt>
@@ -94,9 +97,9 @@ async function copyCorrelationId(): Promise<void> {
     </details>
 
     <footer v-if="error.correlation_id" class="se-footer">
-      <span class="se-corr-label">Correlation ID:</span>
+      <span class="se-corr-label">{{ t('scriptError.correlationId') }}</span>
       <code class="se-corr">{{ error.correlation_id }}</code>
-      <RlButton variant="secondary" size="sm" @click="copyCorrelationId">Copy</RlButton>
+      <RlButton variant="secondary" size="sm" @click="copyCorrelationId">{{ t('common.copy') }}</RlButton>
     </footer>
   </div>
 </template>

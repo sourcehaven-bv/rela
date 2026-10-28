@@ -225,9 +225,14 @@
     "back": "Terug",
     "next": "Volgende",
     "confirm": "Bevestigen",
+    "undo": "Ongedaan maken",
     "retry": "Opnieuw proberen",
     "loading": "Laden…",
+    "search": "Zoeken",
     "clear": "Wissen",
+    "copy": "Kopiëren",
+    "open": "Openen",
+    "apply": "Toepassen",
     "yes": "Ja",
     "no": "Nee",
     "none": "Geen",
@@ -644,6 +649,522 @@
       "fieldConflict": "Iemand anders heeft dit veld gewijzigd terwijl jij aan het bewerken was. Jouw wijziging is niet opgeslagen. Bewerk het opnieuw om hun waarde te overschrijven.",
       "contentConflict": "Iemand anders heeft dezelfde regels van de tekst gewijzigd. Jouw wijziging is niet opgeslagen. Bewerk het opnieuw om hun versie te overschrijven.",
       "relationsConflict": "Iemand anders heeft deze relaties gewijzigd en de wijzigingen konden niet worden samengevoegd. Jouw wijziging in de relaties is niet opgeslagen."
+    }
+  },
+  "list": {
+    "loading": "Laden...",
+    "loadFailed": "Items laden mislukt",
+    "retry": "Opnieuw proberen",
+    "item": "item",
+    "actionConfirm": "{label} toepassen op {n} geselecteerde items?",
+    "searchPlaceholder": "Zoeken...",
+    "searchEntities": "{entity} zoeken...",
+    "clearSearch": "Zoekopdracht wissen",
+    "removeFilter": "Filter op {property} weghalen",
+    "groupTruncated": "De eerste {shown} van {total} rijen worden getoond. Filter de lijst om de rest te zien.",
+    "sortDropped": "Ongesorteerd getoond: {reason}",
+    "noMatches": "Geen resultaten voor “{query}”.",
+    "noEntities": "Geen {entity} gevonden.",
+    "createOne": "Aanmaken",
+    "inaccessible": "niet toegankelijk",
+    "unknownList": "De lijst \"{id}\" bestaat niet in de configuratie.",
+    "moveFailed": "Kon de rij niet verplaatsen",
+    "pagination": {
+      "summary": "{first} - {last} van {total}"
+    },
+    "column": {
+      "face": "Variant"
+    },
+    "filter": {
+      "all": "Alle",
+      "filterBy": "Filteren op {label}",
+      "clear": "Filters wissen",
+      "optionsLoadFailed": "Kon de filteropties voor “{label}” niet laden."
+    },
+    "adhoc": {
+      "button": "+ Filter",
+      "entityType": "Itemtype",
+      "searchProperties": "Eigenschappen zoeken...",
+      "noMatches": "Geen eigenschappen gevonden",
+      "enterValue": "Waarde invoeren...",
+      "category": {
+        "type": "type",
+        "property": "eigenschap"
+      }
+    },
+    "action": {
+      "partial": "{label}: {failed} mislukt, {succeeded} gelukt",
+      "done": "{label}: {n} bijgewerkt"
+    },
+    "bulkDelete": {
+      "count": "{n} {noun}",
+      "pluralFallback": "{noun}",
+      "andMore": "{ids} en nog {n}",
+      "deleted": "{items} verwijderd",
+      "deleteError": "Kon {ids} niet verwijderen: {reason}",
+      "deleteFailed": "verwijderen mislukt",
+      "restored": "{items} teruggezet",
+      "restoreError": "Kon {ids} niet terugzetten: {reason}",
+      "restoreFailed": "terugzetten mislukt",
+      "restoreGone": "het kan niet meer worden teruggezet"
+    },
+    "group": {
+      "none": "(geen)",
+      "other": "Overig"
+    },
+    "bucket": {
+      "overdue": "Te laat",
+      "today": "Vandaag",
+      "tomorrow": "Morgen",
+      "next7Days": "Komende 7 dagen",
+      "later": "Later",
+      "noDate": "Geen datum"
+    },
+    "summary": {
+      "count": "Aantal",
+      "sum": "Totaal",
+      "avg": "Gemiddelde",
+      "min": "Minimum",
+      "max": "Maximum",
+      "partial": "{line} (gedeeltelijk)"
+    },
+    "scope": {
+      "pile": "Stapel"
+    }
+  },
+  "flyout": {
+    "openFullList": "Volledige lijst openen",
+    "openFullPage": "Volledige pagina openen",
+    "loadFailed": "Lijst laden mislukt",
+    "empty": "Geen {title}",
+    "entries": "items",
+    "shownOf": "{shown} van {total} getoond"
+  },
+  "search": {
+    "scopeLabel": "Zoeken: {q}",
+    "typeFilter": "Itemtype: {label}",
+    "placeholder": "Items zoeken...",
+    "searching": "Zoeken…",
+    "filtersLabel": "Filters:",
+    "clearAll": "Alles wissen",
+    "noResults": "Geen resultaten voor “{query}”",
+    "introTitle": "Items zoeken",
+    "introDescription": "Vind items op titel of inhoud en verfijn de resultaten met filters.",
+    "resultCount": "{n} resultaat gevonden | {n} resultaten gevonden",
+    "addResultsToPile": "Resultaten aan stapel toevoegen",
+    "newPileFromResults": "Nieuwe stapel met de resultaten…",
+    "inOwner": "in {title}",
+    "help": {
+      "toggle": "Hulp bij zoeken",
+      "title": "Zo zoek je",
+      "textTitle": "Zoeken op tekst",
+      "text": "Typ trefwoorden in het zoekvak om items te vinden op titel of inhoud.",
+      "filtersTitle": "Filters toevoegen",
+      "filters": "Klik op {button} of druk op {key} om te filteren op itemtype of eigenschapswaarden.",
+      "combineTitle": "Zoeken en filters combineren",
+      "combine": "Gebruik zoeken op tekst samen met meerdere filters voor precieze resultaten.",
+      "shortcutsTitle": "Sneltoetsen",
+      "openFilterMenu": "Filtermenu openen",
+      "enterResults": "Naar de resultaten",
+      "navigateResults": "Door resultaten bladeren",
+      "openSelected": "Selectie openen",
+      "focusInput": "Naar het zoekvak"
+    }
+  },
+  "analyze": {
+    "title": "Analyse",
+    "subtitle": "Validatiecontroles over alle items en relaties",
+    "refresh": "Vernieuwen",
+    "refreshing": "Vernieuwen…",
+    "analysing": "Analyseren",
+    "running": "Analyse wordt uitgevoerd...",
+    "errorCount": "{n} fout | {n} fouten",
+    "warningCount": "{n} waarschuwing | {n} waarschuwingen",
+    "truncated": "De eerste {n} problemen worden getoond. Deze controle vond er meer. Los deze op en voer de analyse opnieuw uit om de rest te zien.",
+    "noIssues": "Geen problemen",
+    "check": {
+      "properties": {
+        "label": "Eigenschappen",
+        "description": "Validatiefouten in eigenschappen (verplichte velden, ongeldige waarden, ID-patronen)"
+      },
+      "cardinality": {
+        "label": "Kardinaliteit",
+        "description": "Schendingen van de kardinaliteit van relaties"
+      },
+      "validations": {
+        "label": "Validaties",
+        "description": "Eigen validatieregels uit het metamodel"
+      },
+      "orphans": {
+        "label": "Losse items",
+        "description": "Items zonder inkomende of uitgaande relaties"
+      },
+      "duplicates": {
+        "label": "Duplicaten",
+        "description": "Items met dezelfde titel"
+      },
+      "idGaps": {
+        "label": "ID-gaten",
+        "description": "Ontbrekende nummers in automatisch gemaakte ID-reeksen"
+      }
+    },
+    "issues": {
+      "entity": "Item",
+      "type": "Type",
+      "message": "Melding",
+      "severity": "Ernst",
+      "missingHeaders": "Ontbrekende verplichte koppen:"
+    },
+    "severity": {
+      "error": "FOUT",
+      "warning": "WAARSCHUWING"
+    }
+  },
+  "shell": {
+    "loading": "Laden...",
+    "loadingLabel": "Laden",
+    "retry": "Opnieuw proberen",
+    "loadFailed": "De applicatie kon niet worden geladen",
+    "toggleNav": "Navigatie tonen of verbergen",
+    "loadSchemaFailed": "Het schema kon niet worden geladen",
+    "fetchEntityFailed": "Het item kon niet worden opgehaald",
+    "configNotReloaded": "Configuratie niet opnieuw geladen; de vorige versie is nog in gebruik.",
+    "configAppliedFile": "{applied} is toegepast, maar daarmee kan {file} niet worden geladen; de vorige {file} is nog in gebruik.",
+    "configApplied": "{applied} is toegepast, maar daarmee kan de configuratie niet worden geladen; de vorige versie is nog in gebruik.",
+    "linkAnchorFailed": "{id} is aangemaakt, maar koppelen aan {anchor} is mislukt. Koppel het zelf.",
+    "inaccessible": {
+      "label": "niet toegankelijk",
+      "reason": "niet toegankelijk ({reason})",
+      "gitCrypt": "versleuteld met git-crypt (voer `git-crypt unlock` uit om het te lezen)"
+    },
+    "lease": {
+      "claimedBy": "Geclaimd door {user}",
+      "claimedByWho": "Geclaimd door {user} ({who})",
+      "status": ", status: {status}"
+    },
+    "targetSelect": {
+      "search": "Zoeken…",
+      "all": "Alle",
+      "noMatches": "Geen passende items",
+      "clear": "{label} wissen"
+    },
+    "tagSelect": {
+      "placeholder": "Kiezen...",
+      "search": "Zoeken...",
+      "noResults": "Geen resultaten",
+      "searching": "Zoeken...",
+      "selected": "{number} geselecteerd"
+    }
+  },
+  "switcher": {
+    "projects": "Projecten",
+    "world": "Wereld",
+    "configure": "Configureren"
+  },
+  "help": {
+    "show": "Help tonen",
+    "title": "Help",
+    "close": "Help sluiten",
+    "entityTitle": "Help bij {label}",
+    "loadFailed": "De help kon niet worden geladen"
+  },
+  "scriptError": {
+    "title": "Scriptfout",
+    "surface": {
+      "action": "Actie",
+      "document": "Document",
+      "automation": "Automatisering",
+      "luaRun": "Lua uitvoeren",
+      "luaEval": "Lua evalueren",
+      "validation": "Validatie"
+    },
+    "fileLine": "{file} regel {line}:",
+    "line": "regel {line}:",
+    "stack": "Stack ({n} frame) | Stack ({n} frames)",
+    "inFunc": "in {func}",
+    "output": "Uitvoer vóór de fout",
+    "args": "Argumenten",
+    "correlationId": "Correlatie-ID:"
+  },
+  "actions": {
+    "failed": "Actie mislukt",
+    "labelled": "{label}: {detail}",
+    "withRef": "{message} (ref: {id})"
+  },
+  "nextAction": {
+    "doIt": "Doen",
+    "nice": "Mooi",
+    "confirmTitle": "{label}?",
+    "confirmMessage": "Dit wordt direct uitgevoerd. Je kunt het niet ongedaan maken.",
+    "done": "{label}: klaar",
+    "notNow": "Niet nu",
+    "remindIn": "Herinner me over {duration}",
+    "notThisOne": "Deze niet",
+    "stop": "Dit niet meer voorstellen"
+  },
+  "palette": {
+    "label": "Snel naar",
+    "placeholder": "Typ om items te zoeken…",
+    "hint": "Typ om items te zoeken",
+    "noMatches": "Geen resultaten",
+    "failed": "Zoeken mislukt",
+    "unknownType": "Onbekend",
+    "inOwner": "in {title}"
+  },
+  "shortcuts": {
+    "title": "Sneltoetsen",
+    "group": {
+      "global": "Algemeen",
+      "navigation": "Navigatie",
+      "listView": "Lijstweergave",
+      "entityDetail": "Itempagina",
+      "formEditor": "Formulier / editor"
+    },
+    "showShortcuts": "Sneltoetsen tonen",
+    "focusSearch": "Naar het zoekvak",
+    "quickJump": "Snel naar",
+    "closeModal": "Venster sluiten / annuleren",
+    "goDashboard": "Naar het dashboard",
+    "goGraph": "Naar de graaf",
+    "goSearch": "Naar zoeken",
+    "goAnalyze": "Naar analyse",
+    "moveDown": "Selectie omlaag",
+    "moveUp": "Selectie omhoog",
+    "openSelected": "Geselecteerd item openen",
+    "editSelected": "Geselecteerd item bewerken",
+    "createNew": "Nieuw item aanmaken",
+    "deleteSelected": "Geselecteerd item verwijderen",
+    "editEntity": "Item bewerken",
+    "deleteEntity": "Item verwijderen",
+    "submit": "Opslaan / versturen",
+    "cancelBack": "Annuleren en teruggaan"
+  },
+  "piles": {
+    "itemCount": "{n} item | {n} items",
+    "truncated": "Alleen de eerste {max} van {selected} geselecteerde items zijn verstuurd.",
+    "withNote": "{message}. {note}",
+    "nameTaken": "Je hebt al een stapel met die naam",
+    "limit": "Je hebt het maximale aantal stapels bereikt. Verwijder er een om ruimte te maken.",
+    "itemNotFound": "Sommige items zijn niet beschikbaar",
+    "notFound": "Deze stapel bestaat niet meer",
+    "noOwner": "Stapels zijn alleen beschikbaar als je bent aangemeld",
+    "created": "Stapel {name} aangemaakt",
+    "createdWith": "Stapel {name} aangemaakt met {n} item | Stapel {name} aangemaakt met {n} items",
+    "open": "Stapel openen",
+    "createFailed": "De stapel kon niet worden aangemaakt",
+    "changeFailed": "De stapel kon niet worden gewijzigd",
+    "deleted": "Stapel {name} verwijderd",
+    "deleteFailed": "De stapel kon niet worden verwijderd",
+    "added": "{n} toegevoegd aan {name}",
+    "addedSkipped": "{n} toegevoegd aan {name} ({skipped} al aanwezig)",
+    "addFailed": "Toevoegen aan {name} is mislukt",
+    "removed": "{n} item weggehaald uit {name} | {n} items weggehaald uit {name}",
+    "restored": "{n} item terug op {name} | {n} items terug op {name}",
+    "removeFailed": "Weghalen uit {name} is mislukt",
+    "addTo": "Toevoegen aan {name}",
+    "addToNew": "Toevoegen aan nieuwe stapel…",
+    "removeFromPile": "Weghalen uit stapel",
+    "thePile": "de stapel",
+    "addToPile": "Toevoegen aan stapel",
+    "newFromSelection": "Nieuwe stapel met de selectie…",
+    "icon": {
+      "layers": "Lagen",
+      "star": "Ster",
+      "flag": "Vlag",
+      "bookmark": "Bladwijzer",
+      "inbox": "Inbox",
+      "folder": "Map",
+      "tag": "Label",
+      "heart": "Hart",
+      "clock": "Klok",
+      "target": "Doel"
+    },
+    "dialog": {
+      "rename": "Stapel hernoemen",
+      "itemsGo": "{n} geselecteerd item komt op de nieuwe stapel. | {n} geselecteerde items komen op de nieuwe stapel.",
+      "name": "Naam",
+      "namePlaceholder": "bijv. Vrijdagoverzicht",
+      "icon": "Pictogram",
+      "nameTooLong": "Gebruik maximaal {max} tekens",
+      "nameRequired": "Geef de stapel een naam",
+      "create": "Stapel aanmaken"
+    },
+    "panel": {
+      "loadFailed": "Deze stapel kon niet worden geladen.",
+      "stepThrough": "Doorlopen",
+      "actions": "Stapelacties",
+      "actionsFor": "Acties · {target}",
+      "runOnSelected": "Uitvoeren op {n} geselecteerde",
+      "runOnAll": "Uitvoeren op alle {n}",
+      "rename": "Hernoemen",
+      "copyIds": "ID's kopiëren",
+      "delete": "Stapel verwijderen",
+      "selected": "{n} geselecteerd",
+      "runAction": "Actie uitvoeren",
+      "removeN": "{n} weghalen",
+      "clearSelection": "Selectie wissen",
+      "empty": "Deze stapel is leeg",
+      "emptyHint": "Selecteer rijen in een lijst en kies Toevoegen aan stapel, of gebruik Toevoegen aan stapel bij een zoekopdracht of op de pagina van een item.",
+      "runConfirm": "{action} uitvoeren op {n} item? | {action} uitvoeren op {n} items?",
+      "run": "Uitvoeren",
+      "copied": "{n} ID gekopieerd | {n} ID's gekopieerd",
+      "copyFailed": "Kopiëren naar het klembord is mislukt",
+      "deleteMessage": "De stapel {name} verwijderen? De items erop blijven bestaan."
+    }
+  },
+  "kanban": {
+    "loadFailed": "Het bord kon niet worden geladen",
+    "otherColumn": "Overig",
+    "boardLabel": "Bord {title}",
+    "boardLabelDefault": "Kanbanbord",
+    "moveFailed": "De kaart kon niet worden verplaatst",
+    "moveForbidden": "Je mag deze kaart niet naar een andere kolom verplaatsen",
+    "truncated": "{shown} van {total} items getoond. Het bord is onvolledig.",
+    "loading": "Bord laden…"
+  },
+  "calendar": {
+    "month": "Maand",
+    "week": "Week",
+    "sourceLoadFailed": "Deze bron kon niet worden geladen",
+    "loadFailed": "De kalender kon niet worden geladen",
+    "moveFailed": "De gebeurtenis kon niet worden verplaatst",
+    "previousPeriod": "Vorige periode",
+    "nextPeriod": "Volgende periode",
+    "today": "Vandaag",
+    "updating": "bijwerken…",
+    "range": "Kalenderbereik",
+    "truncated": "Niet alle gebeurtenissen worden getoond. Deze periode bevat meer items dan de kalender kan laden.",
+    "longEvents": "Sommige lange gebeurtenissen worden misschien niet getoond. Verhoog {setting} voor de bronnen van deze kalender.",
+    "sourceError": "{source}: {message}",
+    "allHidden": "Alle bronnen zijn verborgen. Gebruik de legenda hierboven om ze weer te tonen.",
+    "empty": "Geen gebeurtenissen in deze periode.",
+    "continuesAfter": "Loopt door op de volgende dagen",
+    "continuedFrom": "Begonnen op een eerdere dag",
+    "continuesBoth": "Loopt door voor en na deze dag",
+    "more": "+{n} meer",
+    "preview": {
+      "title": "Voorbeeld van item",
+      "openFullPage": "Volledige pagina openen"
+    }
+  },
+  "dashboardView": {
+    "title": "Dashboard",
+    "loading": "Dashboard laden…",
+    "notFound": "Dashboard niet gevonden",
+    "notFoundDescription": "Er is geen dashboard met de naam “{name}”.",
+    "noCards": "Geen dashboardkaarten om te tonen.",
+    "noResults": "Geen resultaten",
+    "validation": "Validatie",
+    "viewAnalysis": "Volledige analyse bekijken",
+    "allPassed": "Alle controles geslaagd",
+    "errors": "{n} fout | {n} fouten",
+    "warnings": "{n} waarschuwing | {n} waarschuwingen",
+    "viewDetails": "Details bekijken"
+  },
+  "conflicts": {
+    "loadFailed": "De conflicten konden niet worden geladen",
+    "detailLoadFailed": "De details van het conflict konden niet worden geladen",
+    "resolveFailed": "Het conflict kon niet worden opgelost",
+    "title": "Mergeconflicten",
+    "subtitle": "Bestanden met onopgeloste git-conflicten",
+    "backToDashboard": "Terug naar dashboard",
+    "loading": "Conflicten laden…",
+    "retry": "Opnieuw proberen",
+    "fileCount": "{n} bestand met conflicten | {n} bestanden met conflicten",
+    "file": "Bestand",
+    "type": "Type",
+    "conflicts": "Conflicten",
+    "relation": "relatie",
+    "emptyTitle": "Geen conflicten gevonden",
+    "emptyDescription": "Alle item- en relatiebestanden zijn in orde.",
+    "resolveTitle": "Conflict oplossen",
+    "backToConflicts": "Terug naar conflicten",
+    "loadingDetail": "Details van het conflict laden…",
+    "selectAllOurs": "Alles van ons kiezen",
+    "selectAllTheirs": "Alles van hen kiezen",
+    "properties": "Eigenschappen",
+    "property": "Eigenschap",
+    "ours": "Van ons (HEAD)",
+    "theirs": "Van hen",
+    "empty": "leeg",
+    "content": "Inhoud",
+    "useOurs": "Onze versie gebruiken",
+    "useTheirs": "Hun versie gebruiken",
+    "editManually": "Handmatig bewerken",
+    "manualContent": "Handmatige inhoud",
+    "applying": "Toepassen…",
+    "apply": "Oplossing toepassen"
+  },
+  "gantt": {
+    "reloadFailed": "Het diagram kon niet opnieuw worden geladen: {error}",
+    "handle": {
+      "start": "Begin van {name}",
+      "move": "{name} verplaatsen",
+      "end": "Einde van {name}"
+    },
+    "cycle": "{name} zit in een lus van onderdelen. Eén herhaalde koppeling wordt niet getoond",
+    "breach": {
+      "startsBefore": "onderdelen beginnen {n} d voor het geplande begin",
+      "endsAfter": "onderdelen eindigen {n} d na het geplande einde",
+      "pastCommit": "{n} d na de toegezegde datum ({date})"
+    },
+    "earlier": "Eerder",
+    "later": "Later",
+    "now": "Nu",
+    "todayOutside": "Vandaag valt buiten dit plan",
+    "zoomLabel": "Tijdschaal",
+    "zoom": {
+      "quarter": "kwartaal",
+      "month": "maand",
+      "week": "week"
+    },
+    "allWork": "Al het werk",
+    "truncated": "ingekort",
+    "truncatedTitle": "De boom is ingekort bij het maximumaantal knopen. Open een onderdeel om meer te zien",
+    "compressed": "versmald",
+    "compressedTitle": "Het plan is te lang om op deze schaal te tekenen. Dagen worden smaller getekend",
+    "committedTitle": "Toegezegd {date}",
+    "pastCommitTitle": "{n} d na de toegezegde datum",
+    "empty": "Nog geen items met datums.",
+    "nothingToShow": "Niets om te tonen.",
+    "legend": {
+      "workItem": "werkitem",
+      "projectWindow": "projectperiode",
+      "plannedWindow": "geplande periode",
+      "outsidePlanned": "buiten de geplande periode",
+      "pastCommitted": "na de toegezegde datum"
+    },
+    "tip": {
+      "planned": "Gepland",
+      "rolledUp": "Opgeteld",
+      "fromItems": "uit {n} items",
+      "derived": "geen eigen datums; periode afgeleid van onderdelen",
+      "committed": "Toegezegd"
+    },
+    "month": {
+      "jan": "jan",
+      "feb": "feb",
+      "mar": "mrt",
+      "apr": "apr",
+      "may": "mei",
+      "jun": "jun",
+      "jul": "jul",
+      "aug": "aug",
+      "sep": "sep",
+      "oct": "okt",
+      "nov": "nov",
+      "dec": "dec"
+    },
+    "tick": {
+      "quarter": "K{q} '{yy}",
+      "monthYear": "{month} '{yy}",
+      "week": "W{w}"
+    },
+    "drag": {
+      "noLongerAllowed": "Je kunt de datums van {name} niet meer wijzigen.",
+      "changedElsewhere": "{name} is door iemand anders gewijzigd. Het diagram toont nu de huidige datums.",
+      "warnings": "{name} is verplaatst, met waarschuwingen: {warnings}",
+      "failed": "{name} kon niet worden verplaatst: {error}"
     }
   }
 }

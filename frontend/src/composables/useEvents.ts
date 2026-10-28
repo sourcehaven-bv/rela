@@ -3,6 +3,7 @@ import { useQueryCache } from '@pinia/colada'
 import { useGitStore, useEntitiesStore, useUIStore } from '@/stores'
 import { entityKeys } from '@/queries/entities'
 import { isConfigSaveInFlight } from '@/configure/saveGate'
+import { t } from '@/i18n'
 import {
   setLiveConnection,
   clearLiveConnection,
@@ -45,12 +46,12 @@ export function configErrorMessage(data: Partial<ConfigErrorData>): string {
   const file = typeof data.file === 'string' ? data.file : ''
   const detail = error ? ` ${file ? `${file}: ${error}` : error}` : ''
   if (typeof data.applied === 'string' && data.applied) {
-    return (
-      `${data.applied} was applied, but ${file || 'the configuration'} does not load against it; ` +
-      `the previous ${file || 'version'} is still in use.${detail}`
-    )
+    const message = file
+      ? t('shell.configAppliedFile', { applied: data.applied, file })
+      : t('shell.configApplied', { applied: data.applied })
+    return `${message}${detail}`
   }
-  return `Configuration not reloaded; the previous version is still in use.${detail}`
+  return `${t('shell.configNotReloaded')}${detail}`
 }
 
 export interface SSEConnectionState {

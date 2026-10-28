@@ -17,6 +17,7 @@
 import { TZDate } from '@date-fns/tz'
 import { NAIVE_DATETIME_RE } from '@/utils/format'
 import { intlLocale } from '@/i18n/locale'
+import { t } from '@/i18n'
 import type { DateBucket } from '@/types'
 
 /**
@@ -34,14 +35,22 @@ export const BUCKET_ORDER: readonly DateBucket[] = [
   'no_date',
 ]
 
-/** Section titles when the list's `labels:` does not name one. */
-export const DEFAULT_BUCKET_LABELS: Readonly<Record<DateBucket, string>> = {
-  overdue: 'Overdue',
-  today: 'Today',
-  tomorrow: 'Tomorrow',
-  next_7_days: 'Next 7 days',
-  later: 'Later',
-  no_date: 'No date',
+/**
+ * Message keys of the section titles used when the list's `labels:` does not
+ * name one. Literal keys, so the unused-key check can see them.
+ */
+const DEFAULT_BUCKET_LABELS = {
+  overdue: 'list.bucket.overdue',
+  today: 'list.bucket.today',
+  tomorrow: 'list.bucket.tomorrow',
+  next_7_days: 'list.bucket.next7Days',
+  later: 'list.bucket.later',
+  no_date: 'list.bucket.noDate',
+} as const satisfies Record<DateBucket, string>
+
+/** The section title for a bucket the list's `labels:` does not name. */
+export function defaultBucketLabel(bucket: DateBucket): string {
+  return t(DEFAULT_BUCKET_LABELS[bucket])
 }
 
 /** How far ahead `next_7_days` reaches, counting today as day 0. */

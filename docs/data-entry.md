@@ -345,7 +345,8 @@ names a language without a translation, fails the config check.
 
 Text you write in the configuration, such as entity type labels, list and form
 titles and navigation groups, is shown as you wrote it. It is not translated.
-Some screens are not translated yet and stay in English.
+The Configure space and the Settings page are not translated yet and stay in
+English.
 
 ### PlantUML diagrams
 

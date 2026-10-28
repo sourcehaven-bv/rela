@@ -11,6 +11,7 @@
  * server validates the icon against its own allowlist.
  */
 import { computed, ref } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { usePiles } from '@/composables/usePiles'
 import { PILE_NAME_MAX, type Pile, type PileSummary } from '@/api/piles'
 import { isIconName } from 'rela-components/components/common/icons'
@@ -35,6 +36,7 @@ const emit = defineEmits<{
   saved: [pile: Pile]
 }>()
 
+const { t } = useI18n()
 const piles = usePiles()
 
 const DEFAULT_ICON = 'layers'
@@ -53,8 +55,8 @@ const trimmed = computed(() => name.value.trim())
 const nameLength = computed(() => [...trimmed.value].length)
 
 const nameError = computed(() => {
-  if (nameLength.value > PILE_NAME_MAX) return `Use at most ${PILE_NAME_MAX} characters`
-  if (attempted.value && nameLength.value === 0) return 'Give the pile a name'
+  if (nameLength.value > PILE_NAME_MAX) return t('piles.dialog.nameTooLong', { max: PILE_NAME_MAX })
+  if (attempted.value && nameLength.value === 0) return t('piles.dialog.nameRequired')
   return undefined
 })
 const valid = computed(() => nameLength.value > 0 && nameLength.value <= PILE_NAME_MAX)
@@ -94,47 +96,47 @@ async function submit() {
 <template>
   <RlModal
     :open="true"
-    :title="editing ? 'Rename pile' : 'New pile'"
+    :title="editing ? t('piles.dialog.rename') : t('nav.newPile')"
     size="sm"
     :persistent="saving"
     @close="emit('close')"
   >
     <form id="new-pile-form" class="new-pile" novalidate @submit.prevent="submit">
       <RlText v-if="itemCount > 0" as="p" tone="subtle" size="sm" data-testid="new-pile-items">
-        The {{ itemCount }} selected item{{ itemCount === 1 ? '' : 's' }} go on the new pile.
+        {{ t('piles.dialog.itemsGo', { n: itemCount }, itemCount) }}
       </RlText>
       <RlTextField
         v-model="name"
-        label="Name"
-        placeholder="e.g. Friday review"
+        :label="t('piles.dialog.name')"
+        :placeholder="t('piles.dialog.namePlaceholder')"
         required
         autocomplete="off"
         :error="nameError"
         data-testid="pile-name"
       />
       <div v-if="iconOptions.length > 1" class="new-pile__icon">
-        <RlText size="sm" weight="medium">Icon</RlText>
+        <RlText size="sm" weight="medium">{{ t('piles.dialog.icon') }}</RlText>
         <RlSegmentedControl
           v-model="icon"
           :options="iconOptions"
-          label="Icon"
+          :label="t('piles.dialog.icon')"
           icon-only
           size="sm"
         />
       </div>
     </form>
     <template #actions>
-      <RlButton :disabled="saving" @click="emit('close')">Cancel</RlButton>
+      <RlButton :disabled="saving" @click="emit('close')">{{ t('common.cancel') }}</RlButton>
       <RlButton
         variant="primary"
         type="submit"
         form="new-pile-form"
         :loading="saving"
-        :pending-label="editing ? 'Saving…' : 'Creating…'"
+        :pending-label="editing ? t('common.saving') : t('common.creating')"
         :disabled="!valid"
         data-testid="pile-submit"
       >
-        {{ editing ? 'Save' : 'Create pile' }}
+        {{ editing ? t('common.save') : t('piles.dialog.create') }}
       </RlButton>
     </template>
   </RlModal>

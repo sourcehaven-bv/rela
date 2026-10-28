@@ -1,6 +1,7 @@
 import { ApiError, getErrorMessage, getScriptError } from '@/api/errors'
 import type { ActionResponse } from '@/api/actions'
 import { useUIStore } from '@/stores'
+import { t } from '@/i18n'
 import { useScriptErrorStore } from '@/stores/scriptError'
 
 /**
@@ -39,9 +40,9 @@ export function useActionFeedback() {
       return
     }
     const corrID = err instanceof ApiError ? err.correlationId : undefined
-    const detail = getErrorMessage(err, 'Action failed')
-    const msg = label ? `${label}: ${detail}` : detail
-    uiStore.error(corrID ? `${msg} (ref: ${corrID})` : msg)
+    const detail = getErrorMessage(err, t('actions.failed'))
+    const msg = label ? t('actions.labelled', { label, detail }) : detail
+    uiStore.error(corrID ? t('actions.withRef', { message: msg, id: corrID }) : msg)
   }
 
   return { reportResult, reportError }

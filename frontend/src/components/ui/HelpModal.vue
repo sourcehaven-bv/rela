@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, watch, nextTick, toRef, useTemplateRef } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { useModalStack } from '@/composables/modalStack'
 // RlModal brings Escape, the focus trap, focus restore and the scroll lock,
 // none of which this dialog had.
@@ -21,6 +22,7 @@ const emit = defineEmits<{
   close: []
 }>()
 
+const { t } = useI18n()
 const loading = ref(false)
 const error = ref<string | null>(null)
 const helpContent = ref('')
@@ -52,7 +54,7 @@ async function loadHelp() {
     // (see BUG-6C3V and src/composables/usePageData.ts).
     if (isCancelledFetch(err)) return
     console.error('Failed to load help:', err)
-    error.value = 'Failed to load help content'
+    error.value = t('help.loadFailed')
     helpContent.value = ''
   } finally {
     if (myToken === loadToken) loading.value = false
@@ -89,11 +91,11 @@ useModalStack(toRef(props, 'open'))
 <template>
   <RlModal
     :open="open"
-    :title="`${entityLabel || entityType} Help`"
+    :title="t('help.entityTitle', { label: entityLabel || entityType })"
     size="lg"
     @close="emit('close')"
   >
-    <RlStatusRegion v-if="loading">Loading...</RlStatusRegion>
+    <RlStatusRegion v-if="loading">{{ t('shell.loading') }}</RlStatusRegion>
     <RlStatusRegion v-else-if="error" tone="error">{{ error }}</RlStatusRegion>
     <!-- eslint-disable-next-line vue/no-v-html -->
     <div v-else ref="contentBody" class="help-content-wrapper" v-html="helpContent"/>
