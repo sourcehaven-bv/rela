@@ -86,6 +86,7 @@ func TestConformance_Disk(t *testing.T) {
 			Raw:            func(t *testing.T) []byte { t.Helper(); return rawDisk(t, dir) },
 			Second:         func(t *testing.T) channels.Store { t.Helper(); return newDiskStore(t, dir) },
 			SeedLegacyType: seedLegacyType(s),
+			SkipScale:      true,
 		}
 	})
 }

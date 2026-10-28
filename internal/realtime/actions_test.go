@@ -474,7 +474,7 @@ func TestAction_EditBeforePendingReleases(t *testing.T) {
 	h.store.onSetAction = func() {
 		once.Do(func() {
 			_, err := h.store.Edit(context.Background(), roomKey(), m.Seq,
-				map[string]any{"summary": "changed", "about": "TKT-2"}, h.clock.Now().Add(time.Second))
+				map[string]any{"summary": "changed", "about": "TKT-2"}, nil, h.clock.Now().Add(time.Second))
 			require.NoError(t, err)
 		})
 	}

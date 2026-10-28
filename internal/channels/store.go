@@ -96,15 +96,22 @@ type Store interface {
 	// of the creator types. Both skip a damaged channel with a warning.
 	ListWaiting(ctx context.Context, q WaitingQuery) ([]Channel, error)
 
-	// Edit replaces a message's properties and sets its edit time. The old
-	// properties are not kept. A removed message is [ErrRemoved], and a
-	// message with a pending action is [ErrActionPending].
-	Edit(ctx context.Context, key Key, seq int64, props map[string]any, at time.Time) (Message, error)
+	// Edit replaces a message's properties and mention targets and sets
+	// its edit time. The old properties are not kept. mentions is the full
+	// new target set (see [CheckMentions]): rows of kept targets keep their
+	// time, rows of added targets get at, rows of dropped targets go, and
+	// an empty set drops them all. The reply row stays. A removed message
+	// is [ErrRemoved], and a message with a pending action is
+	// [ErrActionPending].
+	Edit(ctx context.Context, key Key, seq int64, props map[string]any, mentions []Mention,
+		at time.Time) (Message, error)
 
 	// Remove erases a message's content and records the removal. Only the
 	// seq, the thread link and the removal survive, in storage as well as on
-	// read. Writes an audit record without the reason. A message with a
-	// pending action is [ErrActionPending].
+	// read. Every addressed row of the message goes in the same step, the
+	// reply row included; the reply rows of its replies stay. Writes an
+	// audit record without the reason. A message with a pending action is
+	// [ErrActionPending].
 	Remove(ctx context.Context, key Key, seq int64, removal Removal) (Message, error)
 
 	// SetAction moves the message's action named name from status expect to
@@ -322,6 +329,26 @@ type Store interface {
 	// directory and the meta.yaml and log tail of each channel the reader
 	// holds a marker on.
 	ListReads(ctx context.Context, r Reader, limit int) ([]ReadMarker, error)
+
+	// ListAddressed returns the addressed rows of kind (every kind for
+	// [AddressAny]) whose target is r.User, on live channels, with a seq
+	// above r's marker on that channel (no marker is seq 0). It reads only
+	// the target's newest [MaxAddressedScan] rows of kind, so an unread row
+	// older than that many newer rows of its kind is absent. The result is
+	// newest first (see [SortAddressed]), at most limit (1 to
+	// [MaxAddressedScan]; see [CheckListAddressed]). A damaged channel is
+	// skipped with a warning.
+	//
+	// Append writes the rows: one per mention target, and one for the
+	// parent author of a reply (see [ReplyTarget]). A target keeps at most
+	// [MaxAddressedPerTarget] rows in one channel; a full set frees a row
+	// as [Evict] picks, or skips the new row.
+	//
+	// The database backends read an index on the target and decode no
+	// message. The file backend walks the tree once, reading the
+	// mentions.json of every channel directory, and the reads.json and
+	// meta.yaml of each channel that holds rows for the target.
+	ListAddressed(ctx context.Context, r Reader, kind AddressKind, limit int) ([]Addressed, error)
 
 	// RecordTypes records each given type that the store holds no record
 	// for, and adds the given refs to the record of a type it does hold.

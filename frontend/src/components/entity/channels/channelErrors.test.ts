@@ -63,6 +63,13 @@ describe('classifyChannelError', () => {
       then: 'none',
     },
     {
+      name: 'too many mentions shows in the form',
+      err: problem(422, 'too_many_mentions', 'a message may mention at most 10 people or agents'),
+      place: 'form',
+      then: 'none',
+      message: 'a message may mention at most 10 people or agents',
+    },
+    {
       name: 'too large shows in the form',
       err: problem(413, 'too_large'),
       place: 'form',
@@ -147,6 +154,7 @@ describe('classifyChannelError', () => {
       const out = classifyChannelError(tc.err)
       expect({ place: out.place, then: out.then }).toEqual({ place: tc.place, then: tc.then })
       expect(out.message).not.toBe('')
+      if (tc.message) expect(out.message).toBe(tc.message)
     })
   }
 

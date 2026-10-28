@@ -70,6 +70,13 @@ func (c *countingChannels) Head(ctx context.Context, key channels.Key) (channels
 	return c.Store.Head(ctx, key)
 }
 
+func (c *countingChannels) ListAddressed(
+	ctx context.Context, r channels.Reader, kind channels.AddressKind, limit int,
+) ([]channels.Addressed, error) {
+	c.hit("ListAddressed")
+	return c.Store.ListAddressed(ctx, r, kind, limit)
+}
+
 func (c *countingChannels) Get(ctx context.Context, key channels.Key, seq int64) (channels.Message, error) {
 	c.hit("Get")
 	return c.Store.Get(ctx, key, seq)

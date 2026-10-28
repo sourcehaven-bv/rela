@@ -38,22 +38,31 @@ func toolListInboxDef() *mcpgo.Tool {
 			"the whole list, not this page; page with cursor (pass next_cursor back). Watchable: watch it "+
 			"without arguments to wait for a session to start or stop waiting on you; one list_inbox "+
 			"target per watch. An entry leaves when the session moves, the role moves to someone else, the "+
-			"channel closes or you lose access. "+realtime.UntrustedNotice),
+			"channel closes or you lose access. mentions lists, on the first page, the unread messages "+
+			"that mention you or reply to yours, newest first, at most "+strconv.Itoa(realtime.MaxInboxMentions)+
+			"; mention_count counts them. An entry points at a message that mentions you or replies to yours. "+
+			"Read it with read_channel (after = your marker), act, then mark_read. Entries carry no message "+
+			"text. "+realtime.UntrustedNotice),
 		withNumber("limit", description("Page size, 1 to "+strconv.Itoa(realtime.MaxInboxLimit)+
 			" (default "+strconv.Itoa(realtime.DefaultInboxLimit)+")")),
 		withString("cursor", description("next_cursor from the previous page")),
-		withArray(inboxKindsArg, description("What to list: waiting, unread, or both (the default). "+
+		withArray(inboxKindsArg, description("What to list: waiting, unread, mention and reply; all by default. "+
 			"unread_channels lists the channels you marked or posted in that have messages you have not "+
 			"read, newest activity first, at most "+strconv.Itoa(realtime.MaxInboxUnread)+", on the first "+
 			"page only; unread_count counts them. With [\"waiting\"] a watch ignores chat; with "+
-			"[\"unread\"] the waiting fields are absent and a cursor is refused.")),
+			"mention lists messages that mention you, reply messages that reply to yours. Without "+
+			"waiting the waiting fields are absent and a cursor is refused. A watch wakes on a mention "+
+			"or reply posted in this process only while kinds holds mention or reply.")),
 	)
 }
 
 // inboxKindsArg is list_inbox's kinds argument.
 const inboxKindsArg = "kinds"
 
-// inboxKinds reads the kinds argument: absent is nil, both kinds.
+// inboxKindsError answers kinds of the wrong shape or with an unknown kind.
+const inboxKindsError = "kinds: an array of waiting, unread, mention and reply"
+
+// inboxKinds reads the kinds argument: absent is nil, every kind.
 func inboxKinds(args toolRequest) ([]string, error) {
 	raw, ok := args.GetArguments()[inboxKindsArg]
 	if !ok || raw == nil {
@@ -61,18 +70,18 @@ func inboxKinds(args toolRequest) ([]string, error) {
 	}
 	list, ok := raw.([]any)
 	if !ok {
-		return nil, errors.New("kinds: an array of waiting and unread")
+		return nil, errors.New(inboxKindsError)
 	}
 	out := make([]string, 0, len(list))
 	for _, v := range list {
 		s, ok := v.(string)
 		if !ok {
-			return nil, errors.New("kinds: an array of waiting and unread")
+			return nil, errors.New(inboxKindsError)
 		}
 		out = append(out, s)
 	}
 	if err := realtime.CheckInboxKinds(out); err != nil {
-		return nil, errors.New("kinds: an array of waiting and unread")
+		return nil, errors.New(inboxKindsError)
 	}
 	return out, nil
 }

@@ -141,6 +141,7 @@ type rawProperty struct {
 	Required bool     `yaml:"required"`
 	Max      *int     `yaml:"max"`
 	To       []string `yaml:"to"`
+	Notify   *bool    `yaml:"notify"`
 }
 
 type rawPromote struct {

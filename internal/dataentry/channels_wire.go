@@ -137,6 +137,9 @@ func wireMessage(m realtime.MessageView) v1.Message {
 		}
 	}
 	out.Outputs = wireOutputs(m.Outputs)
+	for _, mv := range m.Mentions {
+		out.Mentions = append(out.Mentions, v1.MessageMention{Text: mv.Text, Kind: mv.Kind, Ref: wireRef(mv.Ref)})
+	}
 	return out
 }
 

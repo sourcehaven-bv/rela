@@ -328,6 +328,17 @@ export interface MessageRefLink {
   title?: string
 }
 
+/**
+ * A mention the server listed for the message. text is the code span text
+ * to match. A user carries ref, the entity the link opens; a job or a
+ * login carries none and shows as a chip.
+ */
+export interface MessageMentionLink {
+  text: string
+  kind: 'user' | 'job' | 'login'
+  ref?: MessageRefLink
+}
+
 export interface RenderMessageMarkdownOptions {
   /**
    * The readable refs of the message (its RefProp values). A code span whose
@@ -335,6 +346,12 @@ export interface RenderMessageMarkdownOptions {
    * looked up.
    */
   refs?: readonly MessageRefLink[]
+  /**
+   * The people and agents the message mentions, as the server listed them.
+   * A code span whose whole text is a mention's text becomes an in-app link
+   * (a user) or a mention chip (a job or a login).
+   */
+  mentions?: readonly MessageMentionLink[]
   /** The page world, carried on the in-app links. */
   world?: string
 }
@@ -401,7 +418,9 @@ const REF_TYPE = /^[A-Za-z][A-Za-z0-9_-]*$/
  *
  * After sanitizing, a code span whose whole text is the id of one of
  * `refs` becomes an in-app link to that entity, built with DOM APIs from
- * the id, its type and the page world only.
+ * the id, its type and the page world only. A code span whose whole text
+ * is the text of one of `mentions` becomes the same link for a user, or a
+ * `<span class="mention">` holding the text for a job or a login.
  */
 export function renderMessageMarkdown(
   content: string,
@@ -420,14 +439,37 @@ export function renderMessageMarkdown(
   return wrapTablesForScroll(linkMessageRefs(clean, options))
 }
 
-// linkMessageRefs turns ref code spans into in-app links. html is the
-// sanitized output of renderMessageMarkdown; a <template> parses it inertly.
-function linkMessageRefs(html: string, options: RenderMessageMarkdownOptions): string {
-  const refs = new Map<string, MessageRefLink>()
+// What a code span turns into: an entity link, or a mention chip.
+type CodeSpanTarget = { link: MessageRefLink } | { chip: string }
+
+// codeSpanTargets maps code span text to its replacement. Refs and user
+// mentions must pass the same shape check before they reach an href; a
+// ref wins over a mention with the same text.
+function codeSpanTargets(options: RenderMessageMarkdownOptions): Map<string, CodeSpanTarget> {
+  const targets = new Map<string, CodeSpanTarget>()
+  const linkable = (r: MessageRefLink | undefined): r is MessageRefLink =>
+    !!r && REF_ID.test(r.id) && REF_TYPE.test(r.type)
   for (const r of options.refs ?? []) {
-    if (REF_ID.test(r.id) && REF_TYPE.test(r.type)) refs.set(r.id, r)
+    if (linkable(r)) targets.set(r.id, { link: r })
   }
-  if (refs.size === 0 || !html.includes('<code')) return html
+  for (const m of options.mentions ?? []) {
+    if (!m.text || targets.has(m.text)) continue
+    if (m.kind === 'user') {
+      if (linkable(m.ref)) targets.set(m.text, { link: m.ref })
+    } else if (m.kind === 'job' || m.kind === 'login') {
+      targets.set(m.text, { chip: m.text })
+    }
+  }
+  return targets
+}
+
+// linkMessageRefs turns ref and mention code spans into in-app links and
+// mention chips. html is the sanitized output of renderMessageMarkdown; a
+// <template> parses it inertly. Every new node is built with DOM APIs and
+// its text set with textContent, so no server value is parsed as markup.
+function linkMessageRefs(html: string, options: RenderMessageMarkdownOptions): string {
+  const targets = codeSpanTargets(options)
+  if (targets.size === 0 || !html.includes('<code')) return html
 
   const template = document.createElement('template')
   // nosemgrep: dom-innerhtml-assignment
@@ -435,15 +477,23 @@ function linkMessageRefs(html: string, options: RenderMessageMarkdownOptions): s
   let changed = false
   for (const code of template.content.querySelectorAll('code')) {
     if (code.closest('pre, a')) continue
-    const ref = refs.get(code.textContent ?? '')
-    if (!ref) continue
-    const query = options.world ? `?world=${encodeURIComponent(options.world)}` : ''
-    const a = document.createElement('a')
-    a.setAttribute('href', `${relaBase()}entity/${ref.type}/${ref.id}${query}`)
-    a.className = 'entity-ref'
-    a.textContent = ref.title || ref.id
-    if (ref.title) a.setAttribute('title', ref.id)
-    code.replaceWith(a)
+    const target = targets.get(code.textContent ?? '')
+    if (!target) continue
+    if ('chip' in target) {
+      const span = document.createElement('span')
+      span.className = 'mention'
+      span.textContent = target.chip
+      code.replaceWith(span)
+    } else {
+      const ref = target.link
+      const query = options.world ? `?world=${encodeURIComponent(options.world)}` : ''
+      const a = document.createElement('a')
+      a.setAttribute('href', `${relaBase()}entity/${ref.type}/${ref.id}${query}`)
+      a.className = 'entity-ref'
+      a.textContent = ref.title || ref.id
+      if (ref.title) a.setAttribute('title', ref.id)
+      code.replaceWith(a)
+    }
     changed = true
   }
   return changed ? template.innerHTML : html

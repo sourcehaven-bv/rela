@@ -10,7 +10,11 @@
  * panel's tests and this module's tests pin the same mapping.
  */
 import { formatDate, formatDatetime } from '@/utils/format'
-import { renderMessageMarkdown, type MessageRefLink } from '@/utils/markdown'
+import {
+  renderMessageMarkdown,
+  type MessageMentionLink,
+  type MessageRefLink,
+} from '@/utils/markdown'
 import { fromPropValue } from '@/utils/channelValues'
 import { tagColor } from '@/configure/names'
 import type { ChannelPresentation as AppChannelPresentation, CustomType } from '@/types'
@@ -166,7 +170,12 @@ function renderProp(
     type: r.type,
     title: r.title,
   }))
-  const html = renderMessageMarkdown(src, { refs, world: ctx.world })
+  const mentions: MessageMentionLink[] = (m.mentions ?? []).map((x) => ({
+    text: x.text,
+    kind: x.kind,
+    ref: x.ref ? { id: x.ref.id, type: x.ref.type, title: x.ref.title } : undefined,
+  }))
+  const html = renderMessageMarkdown(src, { refs, mentions, world: ctx.world })
   memo?.set(key, html)
   return html
 }

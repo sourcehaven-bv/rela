@@ -1385,6 +1385,21 @@ open are marked read too. A hidden tab marks nothing until you return to
 it. A failed mark is not shown to you. The realtime guide describes read
 markers and which messages count as unread.
 
+### Mentions in messages
+
+A message can mention a person or an agent with a code span, such as
+`` `USR-7` `` or `` `integration:triage-bot` ``. The app shows each
+mention the server lists for the message as a chip:
+
+- A person you may read becomes a link to their entity. The link shows the
+  title the server sends, and the id as a tooltip.
+- A job identity or a login becomes a chip with its text.
+- A person you cannot read stays plain code.
+
+A code span inside a link or a code block stays as it is. The composer has
+no `@` picker yet, so type the mention as a code span. The realtime guide
+describes which form names a person in your project.
+
 ## Lists
 
 Lists display entities in a sortable, filterable table with optional create/edit actions.

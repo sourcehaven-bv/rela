@@ -269,7 +269,8 @@ func TestInboxHandler_Kinds(t *testing.T) {
 		code        int
 		ptype       string
 	}{
-		{"unknown", "?kinds=mention", http.StatusBadRequest, realtime.TypeInvalid},
+		{"unknown", "?kinds=bogus", http.StatusBadRequest, realtime.TypeInvalid},
+		{"cursor with mention only", "?kinds=mention&cursor=abc", http.StatusBadRequest, realtime.TypeInvalidCursor},
 		{"empty", "?kinds=", http.StatusBadRequest, realtime.TypeInvalid},
 		{"cursor with unread only", "?kinds=unread&cursor=abc", http.StatusBadRequest, realtime.TypeInvalidCursor},
 	} {
@@ -284,9 +285,18 @@ func TestInboxHandler_Kinds(t *testing.T) {
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 	require.Contains(t, rec.Body.String(), `"unread_count":0`)
 	require.Contains(t, rec.Body.String(), `"unread_channels":[]`)
+	require.Contains(t, rec.Body.String(), `"mention_count":0`)
+	require.Contains(t, rec.Body.String(), `"mentions":[]`)
+
+	rec, _ = e.get(t, http.MethodGet, "?kinds=mention,reply")
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	require.Contains(t, rec.Body.String(), `"mention_count":0`)
+	require.NotContains(t, rec.Body.String(), "unread")
+	require.NotContains(t, rec.Body.String(), `"entries"`)
 
 	rec, _ = e.get(t, http.MethodGet, "?kinds=waiting")
 	require.NotContains(t, rec.Body.String(), "unread")
+	require.NotContains(t, rec.Body.String(), "mention")
 
 	rec, _ = e.get(t, http.MethodGet, "?kinds=unread")
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())

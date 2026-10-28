@@ -485,7 +485,8 @@ var channelErrorText = map[string]string{
 		"a limit, the retention or a concurrent change refused. outputs_pending: the outputs of the session " +
 		"move the message caused are still running",
 	"413": "Request body or a value too large",
-	"422": "A ref to an entity that cannot be referenced, or a bare id for a face-anchored type",
+	"422": "A ref to an entity that cannot be referenced, or a bare id for a face-anchored type. " +
+		"too_many_mentions: a message may mention at most 10 people or agents",
 	"429": "Rate limited; see Retry-After",
 }
 
@@ -642,7 +643,8 @@ func addChannelSchemas(spec *Spec) {
 					Description: "pending while a promote runs, or after one failed until it is released"},
 				"at": dateTimeSchema(), "promoted": Ref(refPropSchema),
 			}, []string{"name", "status", "at"}),
-			"outputs": Ref(outputsSchema),
+			"outputs":  Ref(outputsSchema),
+			"mentions": messageMentionsSchema(),
 			"_actions": {Type: "array", Items: str(),
 				Description: "What you may do with the message now, sorted: its actions, and the operations " +
 					"edit (PATCH), delete (your own, DELETE), remove (a moderator's DELETE with a reason) and " +
@@ -667,6 +669,14 @@ func addChannelSchemas(spec *Spec) {
 		"next_before":    {Type: "integer", Description: "Seq to pass as before; set on the newest and a before page"},
 		"next_after_rev": {Type: "integer", Description: "Rev to pass as after_rev; set on the newest and an after_rev page, also when it is 0"},
 	}, []string{"channel", "messages", "has_more"})
+	addEphemeralSchemas(sc)
+	addHeadSchemas(sc)
+}
+
+// addEphemeralSchemas adds the schemas of an ephemeral message and the
+// answer to posting one.
+func addEphemeralSchemas(sc map[string]*Schema) {
+	str := StringSchema
 	sc[ephemeralSchema] = ObjectSchema(map[string]*Schema{
 		"id": str(), "type": str(), "author": Ref(channelAuthorRef), "at": dateTimeSchema(),
 		"expires_at": dateTimeSchema(), "props": {Type: "object", AdditionalProperties: &Schema{}},
@@ -674,7 +684,6 @@ func addChannelSchemas(spec *Spec) {
 	sc[ephemeralAccSchema] = ObjectSchema(map[string]*Schema{
 		"id": str(), "expires_at": dateTimeSchema(),
 	}, []string{"id", "expires_at"})
-	addHeadSchemas(sc)
 }
 
 // addOutputsSchemas adds the schemas of a session notice's outputs mark.
@@ -840,6 +849,18 @@ func channelTimerSchema() *Schema {
 	return s
 }
 
+// messageMentionsSchema is the mentions list of a message.
+func messageMentionsSchema() *Schema {
+	return &Schema{Type: "array", Items: ObjectSchema(map[string]*Schema{
+		"text": {Type: "string", Description: "The code span text that names the target"},
+		"kind": {Type: "string", Enum: []string{"user", "job", "login"}},
+		"ref":  Ref(refPropSchema),
+	}, []string{"text", "kind"}),
+		Description: "The people and agents the message addresses, at most 10. A person is a user " +
+			"entity id in backticks where acl.yaml maps logins to entities, else `@login`; an agent is " +
+			"its job identity in backticks. A user you may not read is absent; ref is set for a user only"}
+}
+
 // addInboxPath adds `GET /api/v1/_inbox` and its schema. The route answers
 // 404 with realtime off, so it is documented only while realtime is on.
 func addInboxPath(spec *Spec) {
@@ -847,8 +868,8 @@ func addInboxPath(spec *Spec) {
 	errs := channelErrors("403")
 	errs["400"] = Response{
 		Description: "invalid: limit is not a whole number from 1 to 200, or kinds names something other than " +
-			"waiting and unread. invalid_cursor: the cursor is not one an inbox answer gave, or kinds is unread " +
-			"only",
+			"waiting, unread, mention and reply. invalid_cursor: the cursor is not one an inbox answer gave, or " +
+			"kinds does not hold waiting",
 		Content: problemContent(),
 	}
 	errs["404"] = Response{Description: "Realtime is not enabled", Content: problemContent()}
@@ -860,17 +881,19 @@ func addInboxPath(spec *Spec) {
 	spec.Paths["/api/v1/_inbox"] = PathItem{
 		Get: &Operation{
 			OperationID: "getInbox",
-			Summary:     "List the sessions that wait on you",
+			Summary:     "List the sessions that wait on you, your unread channels, mentions and replies",
 			Description: "Open, stored channels whose session is in an input_required state with a waiting " +
 				"role you hold, oldest wait first: exactly the channels whose session answers waiting_on_me. " +
+				"On the first page, also the channels you marked with unread messages, and the unread messages " +
+				"that mention you or reply to yours. " +
 				"Every row is gated and redacted before it is counted, paged or truncated.",
 			Tags: []string{"System"},
 			Parameters: []Parameter{
 				{Name: "limit", In: "query", Description: "Entries per page, 1 to 200; default 50",
 					Schema: IntegerSchema()},
 				{Name: "cursor", In: "query", Description: "next_cursor of the previous page", Schema: str()},
-				{Name: "kinds", In: "query", Description: "Comma list of waiting and unread; default both. " +
-					"With unread only, the waiting fields are absent and a cursor is refused", Schema: str()},
+				{Name: "kinds", In: "query", Description: "Comma list of waiting, unread, mention and reply; default all. " +
+					"Without waiting, the waiting fields are absent and a cursor is refused", Schema: str()},
 			},
 			Responses: withResponse(errs, "200",
 				Response{Description: "One page of the inbox", Content: jsonContent(Ref(inboxSchema))}),
@@ -907,6 +930,19 @@ func addInboxPath(spec *Spec) {
 		"unread":   {Type: "integer", Description: "Messages above your marker, at most 100"},
 		"links":    entry.Properties["links"],
 	}, []string{"channel", "seq", "last_seq", "unread", "links"})
+	links := ObjectSchema(map[string]*Schema{"entity": str(), "channel": str(), "message": str()},
+		[]string{"entity", "channel", "message"})
+	mention := ObjectSchema(map[string]*Schema{
+		"kind": {Type: "string", Enum: []string{"mention", "reply"},
+			Description: "mention when the message mentions you, else reply"},
+		"channel":      entry.Properties["channel"],
+		"seq":          i64(),
+		"at":           dateTimeSchema(),
+		"message_type": str(),
+		"author":       Ref(channelAuthorRef),
+		"reply_to":     {Type: "integer", Description: "The seq of the message it replies to"},
+		"links":        links,
+	}, []string{"kind", "channel", "seq", "at", "message_type", "author", "links"})
 	spec.Components.Schemas[inboxSchema] = ObjectSchema(map[string]*Schema{
 		"notice":  {Type: "string", Description: "Channel titles and holders are untrusted text"},
 		"entries": ArraySchema(entry),
@@ -920,5 +956,10 @@ func addInboxPath(spec *Spec) {
 				"most 50; on the first page only, when kinds includes unread"},
 		"unread_count": {Type: "integer",
 			Description: "How many channels have unread messages; on the first page only, when kinds includes unread"},
+		"mentions": {Type: "array", Items: mention,
+			Description: "Unread messages that mention you or reply to yours, newest first, at most 50; no " +
+				"message text. On the first page only, when kinds includes mention or reply"},
+		"mention_count": {Type: "integer",
+			Description: "How many such messages; on the first page only, when kinds includes mention or reply"},
 	}, []string{"notice", "degraded"})
 }

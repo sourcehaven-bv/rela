@@ -126,6 +126,9 @@ const (
 	// [channels.MaxWaitingRows]. Nothing is answered, because a partial
 	// inbox would read as a complete one.
 	TypeInboxTooLarge = "inbox_too_large"
+	// TypeTooManyMentions is a 422 for a post or edit that addresses more
+	// than [channels.MaxMentions] principals.
+	TypeTooManyMentions = "too_many_mentions"
 )
 
 // DenialError is a refused operation: an HTTP status, a stable type, a title for
@@ -200,6 +203,14 @@ func typeConflict(typ string) *DenialError {
 			"than realtime.yaml declares; writes stay refused until they match", typ),
 		Rule: "channel_types." + typ,
 	}
+}
+
+// tooManyMentions is the 422 for a message that addresses more than
+// [channels.MaxMentions] principals. It names no target, so it tells the
+// poster nothing about who they may not see.
+func tooManyMentions() *DenialError {
+	return deny(http.StatusUnprocessableEntity, TypeTooManyMentions, fmt.Sprintf(
+		"a message may mention at most %d people or agents", channels.MaxMentions))
 }
 
 func signalsNotKept(typ string) *DenialError {

@@ -111,14 +111,15 @@ type Dialect struct {
 // 20 -> 21 (TKT-ZU7P13): Untombstone. 21 -> 25 (TKT-964SIS):
 // ConfirmTombstone, Tombstones, Purge and DropTypeRecord. 27 -> 29
 // (TKT-INM3AZ): SetSession and ListSessionsDue. 29 -> 30 (TKT-ZZ4PNX):
-// ListWaiting. 30 -> 33 (TKT-2B2AIA): SetRead, Reads and ListReads. The
+// ListWaiting. 30 -> 33 (TKT-2B2AIA): SetRead, Reads and ListReads. 33 ->
+// 34 (TKT-6RXAC0): ListAddressed. The
 // exported methods are the mandated [channels.Store] interface, so this is
 // a required-interface exception rather than a ratchet target. Helpers
 // stay free functions. The total crossed 40 with the three read marker
 // methods; it is the same exception.
 //
-//plimsoll:max-exported-methods=33
-//plimsoll:max-methods=43
+//plimsoll:max-exported-methods=34
+//plimsoll:max-methods=44
 type Store struct {
 	db DB
 	d  Dialect
@@ -158,23 +159,24 @@ func fromMicros(v int64) time.Time {
 
 // doc is the JSON column of a message: everything but the columns.
 type doc struct {
-	Type         string            `json:"type,omitempty"`
-	Author       channels.Author   `json:"author,omitzero"`
-	At           time.Time         `json:"at,omitzero"`
-	Props        map[string]any    `json:"props,omitempty"`
-	EditedAt     time.Time         `json:"edited_at,omitzero"`
-	Removed      *channels.Removal `json:"removed,omitempty"`
-	Action       *channels.Action  `json:"action,omitempty"`
-	SchemaHash   string            `json:"schema_hash,omitempty"`
-	TriggeredBy  string            `json:"triggered_by,omitempty"`
-	MovedSession bool              `json:"moved_session,omitempty"`
+	Type         string             `json:"type,omitempty"`
+	Author       channels.Author    `json:"author,omitzero"`
+	At           time.Time          `json:"at,omitzero"`
+	Props        map[string]any     `json:"props,omitempty"`
+	EditedAt     time.Time          `json:"edited_at,omitzero"`
+	Removed      *channels.Removal  `json:"removed,omitempty"`
+	Action       *channels.Action   `json:"action,omitempty"`
+	SchemaHash   string             `json:"schema_hash,omitempty"`
+	TriggeredBy  string             `json:"triggered_by,omitempty"`
+	MovedSession bool               `json:"moved_session,omitempty"`
+	Mentions     []channels.Mention `json:"mentions,omitempty"`
 }
 
 func docOf(m channels.Message) string {
 	return mustJSON(doc{
 		Type: m.Type, Author: m.Author, At: m.At, Props: m.Props, EditedAt: m.EditedAt,
 		Removed: m.Removed, Action: m.Action, SchemaHash: m.SchemaHash, TriggeredBy: m.TriggeredBy,
-		MovedSession: m.MovedSession,
+		MovedSession: m.MovedSession, Mentions: m.Mentions,
 	})
 }
 
@@ -199,7 +201,7 @@ func scanMessage(r interface{ Scan(...any) error }) (channels.Message, error) {
 		return m, fmt.Errorf("message %d has a damaged doc: %w", m.Seq, err)
 	}
 	m.Type, m.Author, m.Props, m.SchemaHash, m.TriggeredBy = d.Type, d.Author, d.Props, d.SchemaHash, d.TriggeredBy
-	m.MovedSession = d.MovedSession
+	m.MovedSession, m.Mentions = d.MovedSession, d.Mentions
 	m.At, m.EditedAt = utc(d.At), utc(d.EditedAt)
 	m.Removed, m.Action = d.Removed, d.Action
 	if m.Removed != nil {
@@ -420,6 +422,11 @@ func readMessage(ctx context.Context, q Querier, chanID, seq int64, k channels.K
 }
 
 func (s *Store) audit(ctx context.Context, q Querier, id string, rec channels.AuditRecord) error {
+	return writeAudit(ctx, q, id, rec)
+}
+
+// writeAudit inserts audit record rec of anchor id.
+func writeAudit(ctx context.Context, q Querier, id string, rec channels.AuditRecord) error {
 	_, err := q.Exec(ctx, `INSERT INTO channel_audit (anchor_id, tomb, record) VALUES (?, '', ?)`, id, mustJSON(rec))
 	return err
 }
@@ -449,7 +456,7 @@ func (s *Store) Append(ctx context.Context, k channels.Key, nm channels.NewMessa
 		if err != nil {
 			return err
 		}
-		err = checkParent(ctx, q, r.id, k, nm.ReplyTo)
+		parent, err := checkParent(ctx, q, r.id, k, nm.ReplyTo)
 		if err != nil {
 			return err
 		}
@@ -461,9 +468,13 @@ func (s *Store) Append(ctx context.Context, k channels.Key, nm channels.NewMessa
 		out = channels.Message{
 			Seq: r.c.LastSeq + 1, Rev: rev, Type: nm.Type, Author: nm.Author, At: nm.At, Props: nm.Props,
 			ReplyTo: nm.ReplyTo, SchemaHash: nm.SchemaHash, TriggeredBy: nm.TriggeredBy, MovedSession: moved,
+			Mentions: nm.Mentions,
 		}
 		rev, err = insertMessage(ctx, q, r.id, out)
 		if err != nil {
+			return err
+		}
+		if out.ReplyTarget, err = appendAddressed(ctx, q, r, out, parent); err != nil {
 			return err
 		}
 		lastSeq, rev, err := appendSession(ctx, q, &r, nm, out, move, moved, rev)
@@ -478,23 +489,53 @@ func (s *Store) Append(ctx context.Context, k channels.Key, nm channels.NewMessa
 				return err
 			}
 		}
-		if created {
-			rec := channels.KeyAudit(k, channels.AuditCreate, nm.At)
-			rec.By = nm.Author
-			if err := s.audit(ctx, q, k.ID, rec); err != nil {
-				return err
-			}
-		}
-		if moved {
-			rec := channels.SessionAudit(k, nm.Session, out, move, r.c.Session.Generation)
-			if err := s.audit(ctx, q, k.ID, rec); err != nil {
-				return err
-			}
+		if err := appendAudits(ctx, q, k, nm, out, created, moved, move, r.c.Session.Generation); err != nil {
+			return err
 		}
 		channels.FillSessionOutcome(nm.Session, r.c, move, moved)
 		return nil
 	})
 	return out, s.wrap(werr, "append to %s", k)
+}
+
+// appendAudits writes the audit records of an append of nm to k that wrote
+// out: a create record when the append created the channel, and a session
+// record when it moved the session from generation gen.
+func appendAudits(
+	ctx context.Context, q Querier, k channels.Key, nm channels.NewMessage, out channels.Message,
+	created, moved bool, move channels.SessionMove, gen int64,
+) error {
+	if created {
+		rec := channels.KeyAudit(k, channels.AuditCreate, nm.At)
+		rec.By = nm.Author
+		if err := writeAudit(ctx, q, k.ID, rec); err != nil {
+			return err
+		}
+	}
+	if !moved {
+		return nil
+	}
+	return writeAudit(ctx, q, k.ID, channels.SessionAudit(k, nm.Session, out, move, gen))
+}
+
+// appendAddressed writes the addressed rows of the appended message out:
+// one per mention target, and a reply row for the author of parent when
+// the reply addresses them. It returns the reply target when its row was
+// written, else "".
+//
+// Nil: parent is accepted and means out is no reply.
+func appendAddressed(
+	ctx context.Context, q Querier, r row, out channels.Message, parent *channels.Message,
+) (string, error) {
+	replyTarget := ""
+	if parent != nil {
+		replyTarget, _ = channels.ReplyTarget(*parent, out.Author)
+	}
+	replied, err := writeAddressed(ctx, q, r, out, channels.AppendRows(out, replyTarget), out.At)
+	if err != nil || !replied {
+		return "", err
+	}
+	return replyTarget, nil
 }
 
 // insertMessage inserts out and, for a reply, raises the parent's reply
@@ -611,23 +652,28 @@ func (s *Store) appendTarget(
 	return r, false, err
 }
 
-// checkParent refuses a reply to a missing, removed or reply message. A
-// replyTo of zero is not a reply and passes.
-func checkParent(ctx context.Context, q Querier, channelID int64, k channels.Key, replyTo int64) error {
+// checkParent refuses a reply to a missing, removed or reply message, and
+// returns the parent it read, so the append can write the reply row
+// without another read.
+//
+// Nil: returned for a replyTo of zero, which is not a reply and passes.
+func checkParent(
+	ctx context.Context, q Querier, channelID int64, k channels.Key, replyTo int64,
+) (*channels.Message, error) {
 	if replyTo == 0 {
-		return nil
+		return nil, nil //nolint:nilnil // a replyTo of zero is no reply: no parent, and it passes
 	}
 	parent, err := readMessage(ctx, q, channelID, replyTo, k)
 	if errors.Is(err, channels.ErrNotFound) {
-		return fmt.Errorf("%w: message %d does not exist", channels.ErrInvalidReply, replyTo)
+		return nil, fmt.Errorf("%w: message %d does not exist", channels.ErrInvalidReply, replyTo)
 	}
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if parent.Removed != nil || parent.ReplyTo != 0 {
-		return fmt.Errorf("%w: message %d is removed or a reply", channels.ErrInvalidReply, replyTo)
+		return nil, fmt.Errorf("%w: message %d is removed or a reply", channels.ErrInvalidReply, replyTo)
 	}
-	return nil
+	return &parent, nil
 }
 
 // insertChannel inserts the channel k. Only the title, incarnation, author
@@ -700,7 +746,8 @@ func (s *Store) update(
 
 // Edit implements [channels.Store].
 func (s *Store) Edit(
-	ctx context.Context, k channels.Key, seq int64, props map[string]any, at time.Time,
+	ctx context.Context, k channels.Key, seq int64, props map[string]any, mentions []channels.Mention,
+	at time.Time,
 ) (channels.Message, error) {
 	if err := k.Validate(); err != nil {
 		return channels.Message{}, err
@@ -709,13 +756,18 @@ func (s *Store) Edit(
 	if err != nil {
 		return channels.Message{}, err
 	}
+	mentions, err = channels.CheckMentions(mentions)
+	if err != nil {
+		return channels.Message{}, err
+	}
 	at = channels.NormTime(at)
-	return s.update(ctx, k, seq, "edit", func(_ Querier, _ row, m *channels.Message) error {
+	return s.update(ctx, k, seq, "edit", func(q Querier, r row, m *channels.Message) error {
 		if err := channels.CheckNotPending(m); err != nil {
 			return err
 		}
-		m.Props, m.EditedAt = props, at
-		return nil
+		old := m.Mentions
+		m.Props, m.EditedAt, m.Mentions = props, at, mentions
+		return editAddressed(ctx, q, r, *m, old)
 	})
 }
 
@@ -728,11 +780,14 @@ func (s *Store) Remove(ctx context.Context, k channels.Key, seq int64, rm channe
 	if err != nil {
 		return channels.Message{}, err
 	}
-	return s.update(ctx, k, seq, "remove", func(q Querier, _ row, m *channels.Message) error {
+	return s.update(ctx, k, seq, "remove", func(q Querier, r row, m *channels.Message) error {
 		if err := channels.CheckNotPending(m); err != nil {
 			return err
 		}
 		*m = channels.Message{Seq: m.Seq, Rev: m.Rev, ReplyTo: m.ReplyTo, ReplyCount: m.ReplyCount, Removed: &rm}
+		if err := removeAddressed(ctx, q, r.id, seq); err != nil {
+			return err
+		}
 		rec := channels.KeyAudit(k, channels.AuditRemove, rm.At)
 		rec.Seq, rec.By = seq, rm.By
 		return s.audit(ctx, q, k.ID, rec)
@@ -1567,6 +1622,7 @@ func Raw(ctx context.Context, s *Store) ([]byte, error) {
 		`SELECT doc FROM channel_messages`,
 		`SELECT record FROM channel_audit`,
 		`SELECT 'read ' || reader_user || ' ' || reader_org FROM channel_reads`,
+		`SELECT 'mention ' || target || ' ' || kind || ' ' || author_user FROM channel_mentions`,
 	} {
 		lines, err := collect(ctx, s.db, q, nil, func(r interface{ Scan(...any) error }) (string, error) {
 			var v string

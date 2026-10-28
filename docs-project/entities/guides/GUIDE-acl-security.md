@@ -1899,6 +1899,67 @@ Unread counts are derived from it. The realtime guide describes both.
 - **Marks are rate limited apart from posts.** A client cannot flood the
   store with marks, and marks cannot use up the same user's posts.
 
+## Mentions and replies
+
+A message can address a person or an agent by a mention, and a reply
+addresses the author of its parent (TKT-6RXAC0). rela stores one row per
+addressed principal, and the inbox lists the unread ones. The realtime
+guide describes the syntax and the limits.
+
+- **No feedback to the poster.** A person the poster cannot read is not
+  a target. The post resolves each candidate id through the poster's own
+  gate, so a hidden person, a missing entity and an entity of another type
+  give the same answer. A readable person who can read the channel and one
+  who cannot also give the same answer. The poster never learns whether a
+  target will see the mention. The limit of 10 targets on a post counts
+  only targets the poster can see. On an edit it also counts a kept target
+  the editor can no longer see; the editor wrote that id while it was
+  visible, so this reveals nothing new.
+- **A hidden target is absent from rendered mentions.** A message's
+  `mentions` list leaves out a person the reader cannot read: no id, no
+  kind, and the span renders as code. The API never tells a reader that an
+  id they cannot read is a user entity.
+- **Gate at read time, before counting.** A target need not be able to
+  read the channel when the message is posted. The inbox gates each row
+  when it is read, with the same checks as unread channels: the anchor's
+  row gate and redaction, the anchor's face, the channel's `read:` rule
+  (named, permission and creator roles), and whether the configuration
+  still declares the channel type. Only then does it count.
+  `mention_count` is taken after the gate. The answer is the same as for a
+  project without the hidden rows. It is computed per caller and never
+  cached across principals.
+- **Rows are private.** The store lists only rows whose target is the
+  caller's own principal key, taken from the bound principal, never from
+  the request. An inbox entry carries no message text.
+- **The window is cut before the gate.** The inbox looks at the caller's
+  2000 newest rows before the gates run, so a hidden row can take a slot.
+  With more than 2000 rows, a caller could notice that a visible old entry
+  drops out, and infer that some hidden mention or reply exists. This
+  needs someone to have addressed the caller. It shows no channel, no
+  content and no author, so rela accepts this one-bit channel, as it does
+  for the read marker window.
+- **Eviction never removes another poster's unread row.** A target keeps
+  at most 200 rows per channel. To make room, rela removes the oldest read
+  row, else the same poster's oldest unread row, else it skips the new
+  row. A flood by one poster therefore cannot erase another poster's
+  unread mention. The cost is that a target with 200 unread rows from
+  others in one channel gets no new rows there until they read.
+- **The wake reaches only the target's own watch.** A post or edit that
+  addresses a principal wakes only MCP watches bound to that principal
+  key. The replay is gated, and a watch reports a change only when the
+  gated answer changes. A mention in a hidden channel therefore causes no
+  visible event and no timing signal for anyone else.
+- **Mention text can carry prompt injection.** Anyone who may post can
+  put text in front of an agent by mentioning its job identity. The text
+  reaches the agent only through `read_channel`, under the
+  untrusted-content `notice`. A policy that limits who may mention an
+  agent is planned.
+- **Rows are personal data.** A row records that one principal addressed
+  another in a channel. It is shown only to the target, and only while the
+  target may read the channel. It goes with the message or the channel.
+  Rows are channel-store state outside the graph: no audit record, no
+  version and no search.
+
 ## Session `run_as` identities
 
 A session in `realtime.yaml` may name a job identity in `session.run_as`,

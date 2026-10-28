@@ -27,6 +27,21 @@ type Compiled struct {
 	warnings     []Problem
 	// waiting is the inbox index; see [Compiled.Waiting].
 	waiting WaitingIndex
+	// mentionUserType is the person entity type; see
+	// [Compiled.MentionUserType].
+	mentionUserType string
+}
+
+// MentionUserType is the entity type a mention names a person by: the
+// ACL's user_entity_type when acl.yaml also sets principal_property, so
+// the web app stamps a person entity id as the principal; else empty, and
+// a person is mentioned by login. It is the one predicate that picks the
+// mention form. A nil Compiled has none.
+func (c *Compiled) MentionUserType() string {
+	if c == nil {
+		return ""
+	}
+	return c.mentionUserType
 }
 
 // Limits are the effective caps: the built-in ones from [realtimelimits],
@@ -497,6 +512,9 @@ type Property struct {
 	Required bool
 	Max      int
 	To       []string
+	// NoNotify is set by `notify: false` on a ref property: a value that
+	// names a person entity is then no mention target.
+	NoNotify bool
 }
 
 // Promote turns a message into an entity: Map names, per entity property,

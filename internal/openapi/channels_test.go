@@ -533,6 +533,18 @@ func TestChannelPaths_Read(t *testing.T) {
 	if got, want := schemaKeys(unread), jsonNames(reflect.TypeFor[v1.InboxUnread]()); !slices.Equal(got, want) {
 		t.Errorf("InboxUnread properties = %v, want %v", got, want)
 	}
+	mention := sc[inboxSchema].Properties["mentions"].Items
+	if got, want := schemaKeys(mention), jsonNames(reflect.TypeFor[v1.InboxMention]()); !slices.Equal(got, want) {
+		t.Errorf("InboxMention properties = %v, want %v", got, want)
+	}
+	links := mention.Properties["links"]
+	if got, want := schemaKeys(links), jsonNames(reflect.TypeFor[v1.InboxLinks]()); !slices.Equal(got, want) {
+		t.Errorf("InboxMention links = %v, want %v", got, want)
+	}
+	msgMention := sc[messageSchema].Properties["mentions"].Items
+	if got, want := schemaKeys(msgMention), jsonNames(reflect.TypeFor[v1.MessageMention]()); !slices.Equal(got, want) {
+		t.Errorf("MessageMention properties = %v, want %v", got, want)
+	}
 	var kinds bool
 	for _, p := range spec.Paths["/api/v1/_inbox"].Get.Parameters {
 		kinds = kinds || p.Name == "kinds"

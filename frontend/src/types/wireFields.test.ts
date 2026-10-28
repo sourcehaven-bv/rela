@@ -68,6 +68,10 @@ describe('real channel answers use only mirrored keys', () => {
         if (r.entity) keysOf('RefProp', r.entity)
       }
     }
+    for (const mention of (m.mentions ?? []) as Json[]) {
+      keysOf('MessageMention', mention)
+      if (mention.ref) keysOf('RefProp', mention.ref)
+    }
     for (const v of Object.values((m.props ?? {}) as Json)) {
       if (v !== null && typeof v === 'object') keysOf('RefProp', v)
     }

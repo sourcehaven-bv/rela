@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"maps"
 	"net/http"
+	"slices"
+	"strings"
 
 	"github.com/Sourcehaven-BV/rela/internal/channels"
 	"github.com/Sourcehaven-BV/rela/internal/realtimecfg"
@@ -79,20 +81,45 @@ func (s *Service) Edit(ctx context.Context, addr RawAddress, seq int64, props ma
 	if err != nil {
 		return MessageView{}, err
 	}
-	vp, refs, err := s.checkMessageKeeping(c, mt, props, c.snap.Config.Limits().MessageBytes, kept)
+	var mplan mentionPlan
+	vp, refs, err := s.checkMessageKeeping(c, mt, props, c.snap.Config.Limits().MessageBytes, kept, &mplan)
 	if err != nil {
 		return MessageView{}, err
+	}
+	targets := editTargets(mplan.targets(refs, c.snap.Config.MentionUserType(), c.p.User), m.Mentions, mplan)
+	if len(targets) > channels.MaxMentions {
+		return MessageView{}, tooManyMentions()
 	}
 	// The new props may hold a ref the type's record lacks.
 	if recErr := s.record(c); recErr != nil {
 		return MessageView{}, recErr
 	}
-	got, err := s.store.Edit(c.ctx, c.key, seq, vp.props, c.now)
+	got, err := s.store.Edit(c.ctx, c.key, seq, vp.props, targets, c.now)
 	if err != nil {
 		return MessageView{}, messageStoreError(err)
 	}
-	s.local.mark(c.key)
+	s.local.markAddressed(channels.MentionTargets(channels.AddedMentions(m.Mentions, got.Mentions)), c.key)
 	return rendererWith(c, refs).message(got), nil
+}
+
+// editTargets is the target set of an edit: the editor's own resolution,
+// plus each old target that the new props still name (see
+// [mentionPlan.candidate]). So an edit keeps a target the editor can no
+// longer read, as long as its span or ref value stays: the editor wrote
+// that id while they could see it, and dropping it would erase what they
+// cannot see. The result is sorted by target.
+//
+// Nil: returned when the edit addresses no one.
+func editTargets(resolved, old []channels.Mention, p mentionPlan) []channels.Mention {
+	out := slices.Clone(resolved)
+	for _, m := range old {
+		held := slices.ContainsFunc(out, func(o channels.Mention) bool { return o.Target == m.Target })
+		if !held && p.candidate(m) {
+			out = append(out, m)
+		}
+	}
+	slices.SortFunc(out, func(a, b channels.Mention) int { return strings.Compare(a.Target, b.Target) })
+	return out
 }
 
 // keepUnreadableRefs returns props with every ref property of m added back

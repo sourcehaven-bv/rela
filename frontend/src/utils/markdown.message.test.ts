@@ -132,6 +132,72 @@ describe('renderMessageMarkdown', () => {
     expect(t.content.querySelector('script')).toBeNull()
   })
 
+  describe('mentions (TKT-6RXAC0)', () => {
+    const mentions = [
+      {
+        text: 'usr-7',
+        kind: 'user' as const,
+        ref: { id: 'USR-7', type: 'user', title: 'Ann <img src=x onerror=alert(1)>' },
+      },
+      { text: 'integration:triage-bot', kind: 'job' as const },
+      { text: '@jeroen', kind: 'login' as const },
+    ]
+
+    it.each([
+      ['user', 'ask `usr-7`', 'a.entity-ref', 'Ann <img src=x onerror=alert(1)>'],
+      ['job', 'ask `integration:triage-bot`', 'span.mention', 'integration:triage-bot'],
+      ['login', 'ask `@jeroen`', 'span.mention', '@jeroen'],
+    ])('turns a %s mention span into its element', (_kind, src, selector, text) => {
+      const t = dom(renderMessageMarkdown(src, { mentions, world: 'main' }))
+      const el = t.content.querySelector(selector)!
+      expect(el.textContent).toBe(text)
+      expect(t.content.querySelector('code')).toBeNull()
+    })
+
+    it('links a user to the server id, with the title as text only', () => {
+      const t = dom(renderMessageMarkdown('ask `usr-7`', { mentions, world: 'main' }))
+      const a = t.content.querySelector('a.entity-ref')!
+      expect(a.getAttribute('href')).toBe('/entity/user/USR-7?world=main')
+      expect(a.getAttribute('title')).toBe('USR-7')
+      expect(t.content.querySelector('img')).toBeNull()
+    })
+
+    it('builds a chip whose text holds markup as text', () => {
+      const text = '@<b>x</b>'
+      const t = dom(
+        renderMessageMarkdown('ask `@<b>x</b>`', { mentions: [{ text, kind: 'login' }] })
+      )
+      const span = t.content.querySelector('span.mention')!
+      expect(span.textContent).toBe(text)
+      expect(span.querySelector('b')).toBeNull()
+    })
+
+    it('leaves a span code when its user is absent or malformed', () => {
+      const t = dom(
+        renderMessageMarkdown('ask `USR-8` and `usr-9` and `usr-10`', {
+          mentions: [
+            { text: 'usr-9', kind: 'user' },
+            { text: 'usr-10', kind: 'user', ref: { id: 'x"><script>', type: 'user' } },
+          ],
+        })
+      )
+      expect(t.content.querySelector('a, span.mention, script')).toBeNull()
+      expect([...t.content.querySelectorAll('code')].map((c) => c.textContent)).toEqual([
+        'USR-8',
+        'usr-9',
+        'usr-10',
+      ])
+    })
+
+    it('leaves spans in a link or a code block, and partial matches, alone', () => {
+      const src =
+        '[`@jeroen`](https://ok.example)\n\n```\nusr-7\n@jeroen\n```\n\n`@jeroen and more`'
+      const t = dom(renderMessageMarkdown(src, { mentions }))
+      expect(t.content.querySelector('span.mention, a.entity-ref')).toBeNull()
+      expect(t.content.querySelector('a code')?.textContent).toBe('@jeroen')
+    })
+  })
+
   it('returns an empty string for empty content', () => {
     expect(renderMessageMarkdown('')).toBe('')
   })

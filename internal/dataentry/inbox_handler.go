@@ -26,9 +26,11 @@ type inboxReader interface {
 }
 
 // serveInbox answers GET /api/v1/_inbox?limit=&cursor=&kinds=: the
-// sessions that wait on the caller now, and the channels with unread
-// messages. kinds is a comma list of waiting and unread; both by default. The service gates and redacts every row before
-// it counts, pages or truncates, so this only parses and reshapes.
+// sessions that wait on the caller now, the channels with unread messages,
+// and the unread messages that mention the caller or reply to the caller.
+// kinds is a comma list of waiting, unread, mention and reply; all by
+// default. The service gates and redacts every row before it counts, pages
+// or truncates, so this only parses and reshapes.
 //
 // Realtime off, or channels not wired, is a 404. A nil *channelsHandler is
 // accepted, for channels not wired.
@@ -77,7 +79,9 @@ func (h *channelsHandler) serveInbox(w http.ResponseWriter, r *http.Request, met
 }
 
 func wireInbox(v realtime.InboxView, meta *metamodel.Metamodel) v1.Inbox {
-	out := v1.Inbox{Notice: v.Notice, Degraded: v.Degraded, UnreadCount: v.UnreadCount}
+	out := v1.Inbox{
+		Notice: v.Notice, Degraded: v.Degraded, UnreadCount: v.UnreadCount, MentionCount: v.MentionCount,
+	}
 	if v.HasWaiting() {
 		count, truncated := v.Count, v.Truncated
 		out.Entries, out.Count, out.Truncated = make([]v1.InboxEntry, 0, len(v.Entries)), &count, &truncated
@@ -95,7 +99,24 @@ func wireInbox(v realtime.InboxView, meta *metamodel.Metamodel) v1.Inbox {
 			})
 		}
 	}
+	if v.Mentions != nil {
+		out.Mentions = make([]v1.InboxMention, 0, len(v.Mentions))
+		for _, m := range v.Mentions {
+			out.Mentions = append(out.Mentions, wireInboxMention(m, meta))
+		}
+	}
 	return out
+}
+
+// wireInboxMention renders a mention or reply entry with the path of its
+// message.
+func wireInboxMention(m realtime.InboxMention, meta *metamodel.Metamodel) v1.InboxMention {
+	ch, links := wireInboxChannel(m.Channel, meta)
+	links.Message = links.Channel + "/" + messagesSegment + "/" + strconv.FormatInt(m.Seq, 10)
+	return v1.InboxMention{
+		Kind: m.Kind, Channel: ch, Seq: m.Seq, At: channelTime(m.At), MessageType: m.MessageType,
+		Author: *wireChannelAuthor(&m.Author), ReplyTo: m.ReplyTo, Links: links,
+	}
 }
 
 // wireInboxChannel renders an inbox channel and the API paths of its

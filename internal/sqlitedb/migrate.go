@@ -12,7 +12,7 @@ import (
 // schemaVersion is the shape of the tables this binary expects. Bump it
 // whenever schemaSQL changes shape, and append the step that carries an
 // existing database forward to [migrations].
-const schemaVersion = 29
+const schemaVersion = 30
 
 // SchemaVersion reports the table shape this binary expects, so the CLI can
 // show a real number rather than prose.
@@ -303,6 +303,13 @@ var migrations = []migration{
 		// v28 → v29: the SHA-256 of each attachment (TKT-1TS55R).
 		to:    29,
 		apply: addAttachmentSHA256,
+	},
+	{
+		// v29 → v30: the addressed rows of principal mentions and replies
+		// (TKT-6RXAC0). A new table and its indexes; no backfill, because
+		// messages stored before it were written under no mention rule.
+		to:    30,
+		apply: sqlSteps(channelMentionsDDL),
 	},
 }
 

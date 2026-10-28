@@ -743,7 +743,7 @@ CREATE TABLE IF NOT EXISTS channel_types (
 	type        TEXT PRIMARY KEY,
 	anchor_mode TEXT NOT NULL,
 	cardinality TEXT NOT NULL DEFAULT ''
-) STRICT;` + channelTypeRefsDDL + channelRetentionDDL + channelReadsDDL
+) STRICT;` + channelTypeRefsDDL + channelRetentionDDL + channelReadsDDL + channelMentionsDDL
 
 // channelTypeRefsDDL holds the ref properties recorded for each channel
 // type (see channels.TypeRecord). Shared between channelsDDL and the v19 to
@@ -799,6 +799,36 @@ CREATE TABLE IF NOT EXISTS channel_reads (
 const channelReadsIndexDDL = `
 CREATE INDEX IF NOT EXISTS channel_messages_counts_idx ON channel_messages(channel_id, seq) WHERE counts = 1;
 CREATE INDEX IF NOT EXISTS channel_reads_reader_idx ON channel_reads(reader_user, reader_org);`
+
+// channelMentionsDDL holds the addressed rows of channels.Store.Append:
+// one row per (channel, seq, target, kind), with the message's author and
+// type copied so channels.Store.ListAddressed decodes no message.
+// channel_mentions_target_idx serves the newest-first scan of one target;
+// channel_mentions_kind_idx serves that scan for one kind;
+// channel_mentions_cap_idx serves the per-target cap in one channel. No
+// rung adds a column it names, so the indexes sit here too. pgstore
+// migration 0037 has the same shape. Shared between channelsDDL and the
+// v29 to v30 rung.
+const channelMentionsDDL = `
+CREATE TABLE IF NOT EXISTS channel_mentions (
+	channel_id  INTEGER NOT NULL REFERENCES channels(id) ON DELETE CASCADE,
+	seq         INTEGER NOT NULL,
+	target      TEXT    NOT NULL,
+	kind        TEXT    NOT NULL CHECK (kind IN ('mention', 'reply')),
+	at          INTEGER NOT NULL,
+	author_user TEXT    NOT NULL,
+	author_tool TEXT    NOT NULL DEFAULT '',
+	author_org  TEXT    NOT NULL DEFAULT '',
+	author_type TEXT    NOT NULL DEFAULT '',
+	msg_type    TEXT    NOT NULL,
+	reply_to    INTEGER NOT NULL DEFAULT 0,
+	PRIMARY KEY (channel_id, seq, target, kind)
+) STRICT;
+CREATE INDEX IF NOT EXISTS channel_mentions_target_idx
+	ON channel_mentions(target, at DESC, channel_id DESC, seq DESC);
+CREATE INDEX IF NOT EXISTS channel_mentions_kind_idx
+	ON channel_mentions(target, kind, at DESC, channel_id DESC, seq DESC);
+CREATE INDEX IF NOT EXISTS channel_mentions_cap_idx ON channel_mentions(channel_id, target, seq);`
 
 // searchKeyDDL is the key table of the search index; see searchDDL. It is in
 // schemaSQL because it depends on no column a rung adds.
