@@ -75,7 +75,8 @@ const label = computed(() => {
   if (total.value === 0) return messages.commentOnAnchor({ anchor: anchorName.value })
   return messages.commentCountOnAnchor({
     count: total.value,
-    noun: 'comment',
+    noun: messages.chromeText({ key: 'commentNoun' }),
+    pluralNoun: messages.chromeText({ key: 'comments' }),
     anchor: anchorName.value,
   })
 })
@@ -150,8 +151,15 @@ function onAdd(body: string) {
         :style="floatingStyles"
       >
         <header class="rl-comment-indicator__header">
-          <span class="rl-comment-indicator__target">Comments on {{ anchorName }}</span>
-          <RlIconButton icon="x" label="Close comments" :size="14" @click="hide()" />
+          <span class="rl-comment-indicator__target">{{
+            messages.commentsOn({ anchor: anchorName })
+          }}</span>
+          <RlIconButton
+            icon="x"
+            :label="messages.chromeText({ key: 'closeComments' })"
+            :size="14"
+            @click="hide()"
+          />
         </header>
 
         <RlCommentThread
@@ -166,8 +174,8 @@ function onAdd(body: string) {
 
         <RlCommentComposerBox
           ref="composer"
-          :placeholder="total > 0 ? 'Reply...' : 'Add a comment...'"
-          :submit-label="total > 0 ? 'Reply' : 'Comment'"
+          :placeholder="messages.chromeText({ key: total > 0 ? 'replyPlaceholder' : 'addCommentPlaceholder' })"
+          :submit-label="messages.chromeText({ key: total > 0 ? 'reply' : 'commentAction' })"
           :submitting="submitting"
           @submit="onAdd"
         />

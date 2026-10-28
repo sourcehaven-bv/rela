@@ -3,6 +3,9 @@ import type { StatusColor } from '../../types'
 import RlIconButton from '../common/RlIconButton.vue'
 import RlStatusPill from '../common/RlStatusPill.vue'
 import RlHeading from '../common/RlHeading.vue'
+import { useMessages } from '../../composables/useMessages'
+
+const messages = useMessages()
 
 withDefaults(
   defineProps<{
@@ -34,7 +37,7 @@ const emit = defineEmits<{ toggleStar: []; menu: []; openNav: [] }>()
         v-if="showNavToggle"
         class="rl-page-header__nav-toggle"
         icon="menu"
-        label="Open navigation"
+        :label="messages.chromeText({ key: 'openNavigation' })"
         @click="emit('openNav')"
       />
 
@@ -43,7 +46,7 @@ const emit = defineEmits<{ toggleStar: []; menu: []; openNav: [] }>()
       <RlIconButton
         v-if="showStar"
         icon="star"
-        label="Star"
+        :label="messages.chromeText({ key: 'star' })"
         :active="starred"
         :pressed="starred"
         @click="emit('toggleStar')"
@@ -54,7 +57,7 @@ const emit = defineEmits<{ toggleStar: []; menu: []; openNav: [] }>()
         <RlIconButton
           v-if="showMenu"
           icon="ellipsis"
-          label="More options"
+          :label="messages.chromeText({ key: 'moreOptions' })"
           @click="emit('menu')"
         />
       </slot>

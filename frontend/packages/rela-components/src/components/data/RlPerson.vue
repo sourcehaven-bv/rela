@@ -19,6 +19,9 @@
 import { computed } from 'vue'
 import RlAvatar from './RlAvatar.vue'
 import type { Person } from './types'
+import { useMessages } from '../../composables/useMessages'
+
+const messages = useMessages()
 
 const props = withDefaults(
   defineProps<{
@@ -41,10 +44,12 @@ const props = withDefaults(
     /** Wording for the empty state. */
     emptyLabel?: string
   }>(),
-  { size: 'sm', nameHidden: false, secondaryHidden: false, emptyLabel: 'Unassigned' },
+  { size: 'sm', nameHidden: false, secondaryHidden: false, emptyLabel: undefined },
 )
 
-const label = computed(() => props.person?.name ?? props.emptyLabel)
+const label = computed(
+  () => props.person?.name ?? props.emptyLabel ?? messages.chromeText({ key: 'unassigned' }),
+)
 </script>
 
 <template>

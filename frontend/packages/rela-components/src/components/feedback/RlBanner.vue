@@ -11,6 +11,9 @@ import RlIcon from '../common/RlIcon.vue'
 import RlIconButton from '../common/RlIconButton.vue'
 import RlText from '../common/RlText.vue'
 import type { MessageTone } from './types'
+import { useMessages } from '../../composables/useMessages'
+
+const messages = useMessages()
 
 const props = withDefaults(
   defineProps<{
@@ -54,7 +57,7 @@ const role = computed(() => (props.tone === 'danger' ? 'alert' : 'status'))
     <RlIconButton
       v-if="dismissible"
       icon="x"
-      label="Dismiss message"
+      :label="messages.chromeText({ key: 'dismissMessage' })"
       :size="14"
       class="rl-banner__close"
       @click="$emit('dismiss')"

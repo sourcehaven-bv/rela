@@ -17,6 +17,9 @@ import RlEmptyState from '../feedback/RlEmptyState.vue'
 import RlDisclosure from '../common/RlDisclosure.vue'
 import RlSectionHeading from '../layout/RlSectionHeading.vue'
 import RlTableRow from './RlTableRow.vue'
+import { useMessages } from '../../composables/useMessages'
+
+const messages = useMessages()
 
 const props = withDefaults(
   defineProps<{
@@ -94,12 +97,12 @@ const props = withDefaults(
   {
     columns: () => [],
     showHeaderRow: true,
-    addLabel: 'Add',
+    addLabel: undefined,
     reorderable: undefined,
     reorderGroup: '',
     cursorId: undefined,
     pageSize: 0,
-    nameLabel: 'Name',
+    nameLabel: undefined,
     nameColumn: undefined,
     showSectionHeader: true,
     showAdd: true,
@@ -257,8 +260,14 @@ function onSortClick(column: TableColumn, event: MouseEvent | KeyboardEvent) {
  * anything needed to sort by it.
  */
 const nameCol = computed<TableColumn>(
-  () => props.nameColumn ?? { key: '__name', header: props.nameLabel },
+  () =>
+    props.nameColumn ?? {
+      key: '__name',
+      header: props.nameLabel ?? messages.chromeText({ key: 'name' }),
+    },
 )
+
+const addText = computed(() => props.addLabel ?? messages.chromeText({ key: 'add' }))
 
 /** Where a column sits in the sort, 1-based, or zero when it is not in it. */
 function sortPosition(column: TableColumn) {
@@ -302,7 +311,7 @@ function sortHint(column: TableColumn) {
       <RlIconButton
         v-if="showAdd"
         icon="plus"
-        :label="`${addLabel} to ${section.title}`"
+        :label="messages.addToSection({ addLabel: addText, section: section.title })"
         :size="14"
         @click="emit('add', section)"
       />
@@ -337,7 +346,7 @@ function sortHint(column: TableColumn) {
               <RlCheckbox
                 :model-value="allSelected"
                 :indeterminate="someSelected"
-                :label="`Select all in ${section.title}`"
+                :label="messages.selectAllIn({ section: section.title })"
                 label-hidden
                 @update:model-value="emit('toggleAll', section, $event)"
               />
@@ -365,7 +374,7 @@ function sortHint(column: TableColumn) {
                 v-if="selectable"
                 :model-value="allSelected"
                 :indeterminate="someSelected"
-                :label="`Select all in ${section.title}`"
+                :label="messages.selectAllIn({ section: section.title })"
                 label-hidden
                 @update:model-value="emit('toggleAll', section, $event)"
               />
@@ -495,14 +504,14 @@ function sortHint(column: TableColumn) {
         class="rl-table-section__more"
         @click="showMore"
       >
-        Show {{ Math.min(remaining, pageSize || remaining) }} more
-        <span class="rl-table-section__more-rest">of {{ remaining }} remaining</span>
+        {{ messages.showMoreRows({ count: Math.min(remaining, pageSize || remaining) }) }}
+        <span class="rl-table-section__more-rest">{{ messages.ofRemaining({ remaining }) }}</span>
       </button>
 
       <RlAddButton
         v-if="showAdd"
         class="rl-table-section__add"
-        :label="addLabel"
+        :label="addText"
         block
         @click="emit('add', section)"
       />

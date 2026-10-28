@@ -42,7 +42,7 @@ const props = withDefaults(
   }>(),
   {
     columns: undefined,
-    addLabel: 'Add',
+    addLabel: undefined,
     showAdd: true,
     canMove: undefined,
     grabbedId: undefined,

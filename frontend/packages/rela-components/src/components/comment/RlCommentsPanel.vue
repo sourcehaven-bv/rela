@@ -21,6 +21,9 @@ import RlButton from '../common/RlButton.vue'
 import RlEmptyState from '../feedback/RlEmptyState.vue'
 import RlCommentThread from './RlCommentThread.vue'
 import type { AnchoredComment, CommentAnchorOption, NewComment } from './types'
+import { useMessages } from '../../composables/useMessages'
+
+const messages = useMessages()
 
 const props = withDefaults(
   defineProps<{
@@ -33,7 +36,7 @@ const props = withDefaults(
     /** Blocks the composer and shows its pending state. */
     submitting?: boolean
   }>(),
-  { anchorOptions: () => [], title: 'All comments', defaultExpanded: false, submitting: false },
+  { anchorOptions: () => [], title: undefined, defaultExpanded: false, submitting: false },
 )
 
 const emit = defineEmits<{
@@ -104,13 +107,13 @@ function submit() {
           :name="expanded ? 'chevron-up' : 'chevron-right'"
           :size="16"
         />
-        <span class="rl-comments-panel__title">{{ title }}</span>
+        <span class="rl-comments-panel__title">{{ title ?? messages.chromeText({ key: 'allComments' }) }}</span>
         <span v-if="unresolvedCount > 0" class="rl-comments-panel__open">
-          {{ unresolvedCount }} open
+          {{ messages.openCount({ count: unresolvedCount }) }}
         </span>
         <span class="rl-comments-panel__summary">
           <RlCount :value="comments.length" />
-          <template v-if="homelessCount > 0"> &middot; {{ homelessCount }} not on a field</template>
+          <template v-if="homelessCount > 0"> &middot; {{ messages.notOnField({ count: homelessCount }) }}</template>
         </span>
       </button>
     </h2>
@@ -124,14 +127,18 @@ function submit() {
         @toggle-resolved="(id) => $emit('toggleResolved', id)"
         @remove="(id) => $emit('remove', id)"
       />
-      <RlEmptyState v-else title="No comments yet" description="Start the thread below." />
+      <RlEmptyState
+        v-else
+        :title="messages.chromeText({ key: 'noComments' })"
+        :description="messages.chromeText({ key: 'startThread' })"
+      />
 
       <form class="rl-comments-panel__composer" @submit.prevent="submit">
         <select
           v-if="anchorOptions.length > 0"
           v-model="anchorKey"
           class="rl-comments-panel__anchor"
-          aria-label="What this comment is about"
+          :aria-label="messages.chromeText({ key: 'commentAbout' })"
         >
           <option v-for="option in anchorOptions" :key="option.key" :value="option.key">
             {{ option.label }}
@@ -142,8 +149,8 @@ function submit() {
           v-model="body"
           class="rl-comments-panel__input"
           rows="3"
-          placeholder="Add a comment..."
-          aria-label="Comment body"
+          :placeholder="messages.chromeText({ key: 'addCommentPlaceholder' })"
+          :aria-label="messages.chromeText({ key: 'commentBody' })"
           @keydown.meta.enter.prevent="submit"
           @keydown.ctrl.enter.prevent="submit"
         />
@@ -155,9 +162,9 @@ function submit() {
           class="rl-comments-panel__submit"
           :disabled="!canSubmit"
           :loading="submitting"
-          loading-label="Posting comment"
+          :loading-label="messages.chromeText({ key: 'postingComment' })"
         >
-          Add comment
+          {{ messages.chromeText({ key: 'addComment' }) }}
         </RlButton>
       </form>
     </div>

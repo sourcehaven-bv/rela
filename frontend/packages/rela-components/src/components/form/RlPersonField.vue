@@ -24,6 +24,9 @@ import RlFieldShell from './RlFieldShell.vue'
 import RlPerson from '../data/RlPerson.vue'
 import RlIcon from '../common/RlIcon.vue'
 import type { Person } from '../data/types'
+import { useMessages } from '../../composables/useMessages'
+
+const messages = useMessages()
 
 const props = withDefaults(
   defineProps<{
@@ -65,11 +68,11 @@ const props = withDefaults(
     required: false,
     disabled: false,
     labelHidden: false,
-    placeholder: 'Unassigned',
+    placeholder: undefined,
     clearable: true,
-    emptyLabel: 'Unassigned',
+    emptyLabel: undefined,
     filter: true,
-    noMatchLabel: 'No matching people',
+    noMatchLabel: undefined,
     variant: 'control',
   },
 )
@@ -334,7 +337,9 @@ defineExpose({ open: show, close: hide, focus: () => input.value?.focus() })
             <RlPerson :person="row ?? undefined" size="sm" :empty-label="emptyLabel" />
           </div>
 
-          <p v-if="!rows.length" class="rl-person-field__empty">{{ noMatchLabel }}</p>
+          <p v-if="!rows.length" class="rl-person-field__empty">{{
+            noMatchLabel ?? messages.chromeText({ key: 'noMatchingPeople' })
+          }}</p>
         </div>
       </Teleport>
     </div>

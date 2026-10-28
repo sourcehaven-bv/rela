@@ -142,11 +142,16 @@ export type ChannelTextKey =
   | 'sessionHideAll'
 
 /**
- * The fixed captions of the app chrome: the sidebar's own controls and the
- * theme picker. Same reasoning as `ChannelTextKey`: each could be a prop, but
- * an app would then pass the same translated word into every instance.
+ * The fixed captions of every component outside the channel set: control
+ * names, default placeholders and labels, and screen-reader text. Same
+ * reasoning as `ChannelTextKey`: each could be a prop, but an app would then
+ * pass the same translated word into every instance.
+ *
+ * Where a component also takes the caption as a prop, the prop wins; the text
+ * here is only its default.
  */
 export type ChromeTextKey =
+  // Sidebar and theme picker
   | 'sidebar'
   | 'mainNavigation'
   | 'collapseSidebar'
@@ -158,6 +163,114 @@ export type ChromeTextKey =
   | 'themeSystem'
   | 'themeLight'
   | 'themeDark'
+  | 'emptyValue'
+  | 'helpDocs'
+  // Shared verbs and states
+  | 'add'
+  | 'cancel'
+  | 'save'
+  | 'edit'
+  | 'delete'
+  | 'back'
+  | 'expand'
+  | 'previous'
+  | 'next'
+  | 'help'
+  | 'more'
+  | 'loading'
+  | 'working'
+  | 'saving'
+  | 'saved'
+  | 'couldNotSave'
+  | 'search'
+  | 'clearSearch'
+  | 'clearSelection'
+  | 'select'
+  | 'selectOptions'
+  | 'from'
+  | 'to'
+  | 'name'
+  | 'unassigned'
+  | 'assignedTo'
+  | 'noMatchingPeople'
+  | 'due'
+  | 'today'
+  | 'keyThen'
+  | 'keyOr'
+  // Page and panel chrome
+  | 'openNavigation'
+  | 'moreOptions'
+  | 'star'
+  | 'like'
+  | 'share'
+  | 'copyLink'
+  | 'attachFile'
+  | 'closePanel'
+  | 'closeDialog'
+  | 'resizeSidebar'
+  | 'resizePanel'
+  | 'view'
+  | 'documentActions'
+  | 'taskActions'
+  | 'pagination'
+  | 'previousPage'
+  | 'nextPage'
+  | 'notifications'
+  | 'dismissMessage'
+  | 'dismissNotification'
+  | 'commandPalette'
+  | 'commandPlaceholder'
+  | 'noMatchingCommands'
+  // Boards and tables
+  | 'addSection'
+  | 'draggableCard'
+  | 'moveRowHint'
+  | 'subtasks'
+  // Calendar
+  | 'continuesAfter'
+  | 'continuesBeforeAndAfter'
+  | 'continuedFromBefore'
+  // Comments
+  | 'commentNoun'
+  | 'comments'
+  | 'commentAction'
+  | 'addComment'
+  | 'addCommentLabel'
+  | 'addCommentPlaceholder'
+  | 'replyPlaceholder'
+  | 'reply'
+  | 'commentBody'
+  | 'commentAbout'
+  | 'editComment'
+  | 'postingComment'
+  | 'toPost'
+  | 'checking'
+  | 'allComments'
+  | 'noComments'
+  | 'startThread'
+  | 'closeComments'
+  | 'detached'
+  | 'detachedComment'
+  | 'resolve'
+  | 'reopen'
+  // Task detail and attachments
+  | 'description'
+  | 'attachments'
+  | 'subtasksHeading'
+  | 'showEmptyFields'
+  | 'download'
+  | 'fileKindSheet'
+  | 'fileKindImage'
+  | 'fileKindOther'
+  // Editors and code
+  | 'formatting'
+  | 'table'
+  | 'writeSomething'
+  | 'docTitlePlaceholder'
+  | 'docBodyPlaceholder'
+  | 'code'
+  | 'copyCode'
+  | 'copied'
 
 const CHROME_TEXT: Record<ChromeTextKey, string> = {
   sidebar: 'Sidebar',
@@ -171,6 +284,107 @@ const CHROME_TEXT: Record<ChromeTextKey, string> = {
   themeSystem: 'System',
   themeLight: 'Light',
   themeDark: 'Dark',
+  emptyValue: 'Empty',
+  helpDocs: 'Help docs',
+  add: 'Add',
+  cancel: 'Cancel',
+  save: 'Save',
+  edit: 'Edit',
+  delete: 'Delete',
+  back: 'Back',
+  expand: 'Expand',
+  previous: 'Previous',
+  next: 'Next',
+  help: 'Help',
+  more: 'more',
+  loading: 'Loading',
+  working: 'Working',
+  saving: 'Saving',
+  saved: 'Saved',
+  couldNotSave: 'Could not save',
+  search: 'Search',
+  clearSearch: 'Clear search',
+  clearSelection: 'Clear selection',
+  select: 'Select',
+  selectOptions: 'Select options',
+  from: 'From',
+  to: 'To',
+  name: 'Name',
+  unassigned: 'Unassigned',
+  assignedTo: 'Assigned to',
+  noMatchingPeople: 'No matching people',
+  due: 'Due',
+  today: 'Today',
+  keyThen: 'then',
+  keyOr: 'or',
+  openNavigation: 'Open navigation',
+  moreOptions: 'More options',
+  star: 'Star',
+  like: 'Like',
+  share: 'Share',
+  copyLink: 'Copy link',
+  attachFile: 'Attach file',
+  closePanel: 'Close panel',
+  closeDialog: 'Close dialog',
+  resizeSidebar: 'Resize sidebar',
+  resizePanel: 'Resize panel',
+  view: 'View',
+  documentActions: 'Document actions',
+  taskActions: 'Task actions',
+  pagination: 'Pagination',
+  previousPage: 'Previous page',
+  nextPage: 'Next page',
+  notifications: 'Notifications',
+  dismissMessage: 'Dismiss message',
+  dismissNotification: 'Dismiss notification',
+  commandPalette: 'Command palette',
+  commandPlaceholder: 'Type a command or search',
+  noMatchingCommands: 'No matching commands',
+  addSection: 'Add section',
+  draggableCard: 'Draggable card',
+  moveRowHint: 'Use the up and down arrow keys to move this row',
+  subtasks: 'subtasks',
+  continuesAfter: 'Continues on following days',
+  continuesBeforeAndAfter: 'Continues before and after this day',
+  continuedFromBefore: 'Continued from earlier days',
+  commentNoun: 'comment',
+  comments: 'comments',
+  commentAction: 'Comment',
+  addComment: 'Add comment',
+  addCommentLabel: 'Add a comment',
+  addCommentPlaceholder: 'Add a comment...',
+  replyPlaceholder: 'Reply...',
+  reply: 'Reply',
+  commentBody: 'Comment body',
+  commentAbout: 'What this comment is about',
+  editComment: 'Edit comment',
+  postingComment: 'Posting comment',
+  toPost: 'to post',
+  checking: 'Checking...',
+  allComments: 'All comments',
+  noComments: 'No comments yet',
+  startThread: 'Start the thread below.',
+  closeComments: 'Close comments',
+  detached: 'detached',
+  detachedComment: 'What this comment points at no longer exists',
+  resolve: 'Resolve',
+  reopen: 'Reopen',
+  description: 'Description',
+  attachments: 'Attachements',
+  subtasksHeading: 'Subtasks',
+  showEmptyFields: 'Show empty fields',
+  download: 'Download',
+  fileKindSheet: 'SHEET',
+  fileKindImage: 'IMAGE',
+  fileKindOther: 'FILE',
+  formatting: 'Formatting',
+  table: 'Table',
+  writeSomething: 'Write something...',
+  docTitlePlaceholder: 'Give your doc a title...',
+  docBodyPlaceholder: 'Click here to start writing',
+  code: 'Code',
+  copyCode: 'Copy code',
+  copied: 'Copied',
 }
 
 const CHANNEL_TEXT: Record<ChannelTextKey, string> = {
@@ -389,10 +603,49 @@ export interface Messages {
   channelTyping: (args: { names: string[]; others: number }) => string
   /** The channel components' fixed captions; see `ChannelTextKey`. */
   channelText: (args: { key: ChannelTextKey }) => string
-  /** The sidebar's and theme picker's fixed captions; see `ChromeTextKey`. */
+  /** Every other component's fixed captions; see `ChromeTextKey`. */
   chromeText: (args: { key: ChromeTextKey }) => string
   /** The name of a channel row's unread badge: `3 unread`. */
   channelUnreadCount: (args: { count: number }) => string
+
+  /** A button's pending label, built from its caption: `Delete in progress`. */
+  inProgress: (args: { label: string }) => string
+  /** A sidebar group's menu control: `Projects options`. */
+  groupOptions: (args: { label: string }) => string
+  /** A calendar day's overflow control: `+3 more`. */
+  moreCount: (args: { count: number }) => string
+  /** A file field's drop zone. */
+  dropFiles: (args: { multiple: boolean }) => string
+
+  /** A table row's checkbox: `Select Fix login`. */
+  selectItem: (args: { title: string }) => string
+  /** A table section's select-all checkbox: `Select all in Done`. */
+  selectAllIn: (args: { section: string }) => string
+  /** A table row's drag handle: `Move Fix login`. */
+  moveRow: (args: { title: string }) => string
+  /** A table section's show-more button: `Show 20 more`. */
+  showMoreRows: (args: { count: number }) => string
+  /** Follows `showMoreRows` in a quieter style: `of 45 remaining`. */
+  ofRemaining: (args: { remaining: number }) => string
+
+  /** The comments panel's unresolved tally: `2 open`. */
+  openCount: (args: { count: number }) => string
+  /** The comments panel's tally of comments with no field: `1 not on a field`. */
+  notOnField: (args: { count: number }) => string
+  /** The heading of a field's comment popover: `Comments on Title`. */
+  commentsOn: (args: { anchor: string }) => string
+  /** The heading of a block's comment popover: `On this paragraph`. */
+  onThisBlock: (args: { kind: string }) => string
+
+  /**
+   * An editor toolbar button's name. `label` is the command's own English
+   * label, which the English set returns unchanged; a translation looks the
+   * command up by `id` and falls back to `label` for a command it does not
+   * know, such as one an app added.
+   */
+  editorCommand: (args: { id: string; label: string }) => string
+  /** The tooltip of a toolbar button that cannot run where the cursor is. */
+  commandUnavailable: (args: { label: string }) => string
 }
 
 /** `a`, `a or b`, `a, b or c`. */
@@ -515,6 +768,25 @@ export const DEFAULT_MESSAGES: Messages = {
   channelText: ({ key }) => CHANNEL_TEXT[key],
   chromeText: ({ key }) => CHROME_TEXT[key],
   channelUnreadCount: ({ count }) => `${count} unread`,
+
+  inProgress: ({ label }) => `${label} in progress`,
+  groupOptions: ({ label }) => `${label} options`,
+  moreCount: ({ count }) => `+${count} more`,
+  dropFiles: ({ multiple }) => `Drop ${multiple ? 'files' : 'a file'} here, or click to choose`,
+
+  selectItem: ({ title }) => `Select ${title}`,
+  selectAllIn: ({ section }) => `Select all in ${section}`,
+  moveRow: ({ title }) => `Move ${title}`,
+  showMoreRows: ({ count }) => `Show ${count} more`,
+  ofRemaining: ({ remaining }) => `of ${remaining} remaining`,
+
+  openCount: ({ count }) => `${count} open`,
+  notOnField: ({ count }) => `${count} not on a field`,
+  commentsOn: ({ anchor }) => `Comments on ${anchor}`,
+  onThisBlock: ({ kind }) => `On this ${kind}`,
+
+  editorCommand: ({ label }) => label,
+  commandUnavailable: ({ label }) => `${label} (not available here)`,
 }
 
 const MessagesKey: InjectionKey<Messages> = Symbol('rl-messages')

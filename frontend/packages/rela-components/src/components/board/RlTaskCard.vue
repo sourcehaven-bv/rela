@@ -3,6 +3,9 @@ import type { Task } from '../../types'
 import RlTag from '../common/RlTag.vue'
 import RlMetaItem from '../common/RlMetaItem.vue'
 import RlHeading from '../common/RlHeading.vue'
+import { useMessages } from '../../composables/useMessages'
+
+const messages = useMessages()
 
 withDefaults(defineProps<{ task: Task; selected?: boolean }>(), { selected: false })
 const emit = defineEmits<{ click: [task: Task] }>()
@@ -37,10 +40,10 @@ const emit = defineEmits<{ click: [task: Task] }>()
       <span v-if="task.assignee" class="rl-task-card__assignee">{{ task.assignee }}</span>
 
       <div class="rl-task-card__meta">
-        <RlMetaItem v-if="task.commentCount" icon="message-square" :label="task.commentCount" countLabel="comments" />
-        <RlMetaItem v-if="task.subtaskCount" icon="git-branch" :label="task.subtaskCount" countLabel="subtasks" />
+        <RlMetaItem v-if="task.commentCount" icon="message-square" :label="task.commentCount" :count-label="messages.chromeText({ key: 'comments' })" />
+        <RlMetaItem v-if="task.subtaskCount" icon="git-branch" :label="task.subtaskCount" :count-label="messages.chromeText({ key: 'subtasks' })" />
         <span v-if="task.dueDate" class="rl-task-card__due">
-          <span class="rl-visually-hidden">Due </span>{{ task.dueDate }}
+          <span class="rl-visually-hidden">{{ messages.chromeText({ key: 'due' }) }} </span>{{ task.dueDate }}
         </span>
       </div>
     </footer>

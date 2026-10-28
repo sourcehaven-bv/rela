@@ -127,7 +127,7 @@ function onKeydown(event: KeyboardEvent) {
     }"
     :tabindex="draggable ? 0 : undefined"
     :role="draggable ? 'button' : undefined"
-    :aria-roledescription="draggable ? 'Draggable card' : undefined"
+    :aria-roledescription="draggable ? messages.chromeText({ key: 'draggableCard' }) : undefined"
     :aria-grabbed="draggable ? grabbed : undefined"
     :aria-label="
       draggable

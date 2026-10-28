@@ -10,6 +10,9 @@
  */
 import type { Tag } from '../../types'
 import RlTag from './RlTag.vue'
+import { useMessages } from '../../composables/useMessages'
+
+const messages = useMessages()
 
 const props = withDefaults(defineProps<{ tags: Tag[]; max?: number }>(), { max: 2 })
 
@@ -28,7 +31,7 @@ const hiddenLabel = () =>
     <RlTag v-for="tag in shown()" :key="tag.id" :label="tag.label" :color="tag.color" />
     <span v-if="hidden() > 0" class="rl-tag-list__more" :title="hiddenLabel()">
       +{{ hidden() }}
-      <span class="rl-visually-hidden">more: {{ hiddenLabel() }}</span>
+      <span class="rl-visually-hidden">{{ messages.chromeText({ key: 'more' }) }}: {{ hiddenLabel() }}</span>
     </span>
   </span>
 </template>

@@ -118,8 +118,8 @@ const target = computed(() => over.value || props.keyboardTarget)
     <RlAddButton
       v-if="showAdd && !collapsed"
       class="rl-swimlane-column__add"
-      :label="addLabel ?? 'Add'"
-      :aria-label="messages.addToSection({ addLabel: addLabel ?? 'Add', section: section.title, lane: laneTitle })"
+      :label="addLabel ?? messages.chromeText({ key: 'add' })"
+      :aria-label="messages.addToSection({ addLabel: addLabel ?? messages.chromeText({ key: 'add' }), section: section.title, lane: laneTitle })"
       @click="emit('add', section)"
     />
   </div>
