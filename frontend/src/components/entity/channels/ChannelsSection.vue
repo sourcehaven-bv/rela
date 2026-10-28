@@ -13,12 +13,19 @@
  * opened directly keeps the list subscription, so a second channel created
  * meanwhile brings the list back, with the open channel still open.
  *
+ * A `?channel=<type>[/<name>]` query on the page opens that channel
+ * (TKT-9YRRM5), as the inbox links do. A channel that is not in the open
+ * list is looked for once more under the `all` filter, so a closed or
+ * archived channel opens too. The value is only compared with the keys of
+ * the rows the server listed; it never builds a request.
+ *
  * Channel routes take no `?world=`: the server refuses a non-default world
  * there, and the address carries the face (R14). The page world goes on
  * entity links only.
  */
-import { computed, ref, watch } from 'vue'
+import { computed, nextTick, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { useRoute } from 'vue-router'
 import { createChannel, type ChannelAnchor } from '@/api/channels'
 import { useEntityChannels } from '@/composables/useEntityChannels'
 import { useChannelSchemaStore } from '@/stores/channelSchema'
@@ -101,6 +108,51 @@ const open = computed(() => {
 
 const visible = computed(() => groups.value.length > 0)
 
+// --- Deep link (?channel=) -----------------------------------------------------
+
+const route = useRoute()
+const root = ref<HTMLElement | null>(null)
+// The key the query asks for, until it is opened or found missing.
+let linked: string | null = null
+// Whether this query value already switched the filter to `all`.
+let triedAll = false
+
+/** The query value as a row key; `case` and `case/` give the same key. */
+function linkedKey(raw: unknown): string | null {
+  const value = Array.isArray(raw) ? raw[0] : raw
+  if (typeof value !== 'string' || value === '') return null
+  const { channelType, name } = parseChannelKey(value)
+  return channelType ? channelKey(channelType, name) : null
+}
+
+function applyLink() {
+  if (linked === null || !list.loaded.value) return
+  const key = linked
+  if (rows.value.some((r) => r.key === key)) {
+    linked = null
+    selected.value = key
+    void nextTick(() => root.value?.scrollIntoView?.({ block: 'start' }))
+    return
+  }
+  if (filter.value === 'open' && !triedAll) {
+    triedAll = true
+    filter.value = 'all'
+    return
+  }
+  linked = null
+}
+
+watch(
+  () => route?.query.channel,
+  (raw) => {
+    linked = linkedKey(raw)
+    triedAll = false
+    applyLink()
+  },
+  { immediate: true }
+)
+watch([rows, list.loaded], applyLink)
+
 function onSelect(key: string) {
   selected.value = selected.value === key ? null : key
 }
@@ -157,7 +209,7 @@ async function submitCreate(title: string) {
 </script>
 
 <template>
-  <section v-if="visible" class="channels-panel" aria-labelledby="channels-panel-title">
+  <section v-if="visible" ref="root" class="channels-panel" aria-labelledby="channels-panel-title">
     <header class="channels-panel__header">
       <h2 id="channels-panel-title">{{ t('channels.title') }}</h2>
     </header>

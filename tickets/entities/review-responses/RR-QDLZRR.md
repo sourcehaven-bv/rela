@@ -1,0 +1,9 @@
+---
+id: RR-QDLZRR
+type: review-response
+title: Round overflow sends a fallback frame to an inbox subscription that a hidden change selected
+finding: 'internal/dataentry/live.go:739 and :762 call fallback (live.go:884), which marks every overflowed subscription changed, inbox ones included. The inbox filter selects by hidden-dependent inputs: any durable write in any channel of a waiting type (live_inbox.go:193, f.types) and any post that addresses the principal key, even in a channel the user cannot read and even in another org (live_inbox.go:190, f.addressed[w.user] keyed on bare User). On a grid tick where the round passes liveRoundCap (256 pairs) or liveRoundBudget (10 s), Alice''s inbox subscription gets a "changed" frame although a GET of her inbox is unchanged. Attack path: Alice keeps one inbox subscription open while the server is loaded (or pushes the round over budget with her own 64 slow inbox subscriptions, distinct limit values so the memo cannot share them, on the file channel store); a changed frame with no content change tells her that someone mentioned her in a channel she cannot read, or that a hidden channel of a waiting type was written. This breaks the slice''s stated property that a frame reveals no more than polling the GET; the plan''s "overflow behaves as for every other shape" missed that no other shape is selected by changes the subscriber cannot see. Fix: in fallback, put an inbox subscription into pending without markChanged (the same "deferred, no fallback frame" rule collect already applies off the grid), so it replays at the next grid tick and frames only on a real hash change; pin it with a test that overflows a round selected only by a hidden waiting-type write.'
+severity: significant
+resolution: On round overflow an inbox subscription goes to pending with no frame, and the next round resumes where the overflow stopped. TestLive_InboxOverflowNoFallbackFrame covers cap and budget.
+status: addressed
+---

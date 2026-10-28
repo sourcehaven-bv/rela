@@ -132,6 +132,20 @@ export interface Inbox {
 }
 
 /**
+ * GET /api/v1/_inbox/summary: the counts of the caller's inbox first page,
+ * for the sidebar badge. waiting, waiting_truncated, unread_channels and
+ * mentions equal count, truncated, unread_count and mention_count of the
+ * inbox read with default parameters.
+ */
+export interface InboxSummary {
+  waiting: number
+  waiting_truncated: boolean
+  unread_channels: number
+  mentions: number
+  degraded: boolean
+}
+
+/**
  * A message that mentions the caller (kind "mention") or replies to a
  * message of the caller (kind "reply"). reply_to is the seq replied to.
  */
@@ -754,6 +768,13 @@ export const CHANNEL_WIRE_FIELDS: Record<string, readonly string[]> = {
     'unread_count',
     'mentions',
     'mention_count',
+  ]),
+  InboxSummary: wireKeys<InboxSummary>()([
+    'waiting',
+    'waiting_truncated',
+    'unread_channels',
+    'mentions',
+    'degraded',
   ]),
   InboxMention: wireKeys<InboxMention>()([
     'kind',

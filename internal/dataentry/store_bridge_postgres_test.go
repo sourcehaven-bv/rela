@@ -86,11 +86,11 @@ func TestStoreEventBridgeCrossProcessSSE(t *testing.T) {
 // v5.11.0 on) reads the parameter name as "+search_path" and the server rejects
 // the connection. Percent-encoding the space instead breaks the "=" inside the
 // value. A key/value DSN has no such escaping to get wrong.
-func dsnWithSchema(t *testing.T, base, schema string) string {
-	t.Helper()
+func dsnWithSchema(tb testing.TB, base, schema string) string {
+	tb.Helper()
 	cfg, err := pgx.ParseConfig(base)
 	// pgx redacts the password in parse errors, so this is safe to surface.
-	require.NoError(t, err)
+	require.NoError(tb, err)
 	kv := []string{
 		"host=" + cfg.Host,
 		fmt.Sprintf("port=%d", cfg.Port),

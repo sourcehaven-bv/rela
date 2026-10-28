@@ -131,6 +131,7 @@ export { default as RlChannelSession } from './components/channel/RlChannelSessi
 export { default as RlChannelAuthor } from './components/channel/RlChannelAuthor.vue'
 export { default as RlEntityChannels } from './components/channel/RlEntityChannels.vue'
 export { default as RlRefChip } from './components/channel/RlRefChip.vue'
+export { default as RlInbox } from './components/channel/RlInbox.vue'
 export {
   resolveChannelFields,
   codePointLength,

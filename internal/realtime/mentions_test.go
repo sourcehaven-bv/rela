@@ -444,11 +444,11 @@ func TestLocal_SubscribeWhileMarking(t *testing.T) {
 	})
 	for range 200 {
 		l.SubscribeAddressed().Close()
-		l.SubscribeReads().Close()
+		l.SubscribeLive().Close()
 	}
 	close(stop)
 	wg.Wait()
-	addr, reads := l.SubscribeAddressed(), l.SubscribeReads()
+	addr, reads := l.SubscribeAddressed(), l.SubscribeLive()
 	l.markAddressed([]string{"alice"}, k)
 	l.markFor(channels.Reader{User: "alice"}, k)
 	require.Equal(t, []string{"alice"}, addr.TakeAddressed())

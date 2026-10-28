@@ -36,6 +36,9 @@ import {
 import { usePiles } from '@/composables/usePiles'
 import NewPileDialog from '@/components/piles/NewPileDialog.vue'
 import { useNavStatus } from '@/composables/useNavStatus'
+import { useInboxSummary } from '@/composables/useInboxSummary'
+import { useChannelSchema } from '@/stores/channelSchema'
+import { inboxStatus } from './inboxStatus'
 import { useNavItems } from '@/composables/useNavItems'
 import { useNavEntities } from '@/composables/useNavEntities'
 import { useFlyout } from '@/composables/useFlyout'
@@ -203,17 +206,37 @@ function onCreated(entity: Entity) {
   void router.push(spaceStore.href(page ? `/p/${page}/${id}` : `/entity/${entity.type}/${id}`))
 }
 
+/*
+ * The Inbox entry (TKT-9YRRM5) shows once the channel schema has loaded a
+ * channel type, so the row is there with the other pinned rows and only its
+ * badge arrives with the summary. A 404 or `no_principal` from the summary
+ * hides it. The sidebar lives as long as the app, so it owns the summary's
+ * live registration.
+ */
+const channelSchema = useChannelSchema()
+const hasChannels = computed(() => channelSchema.channelTypes.length > 0)
+const inbox = useInboxSummary(hasChannels)
+const inboxStatusFor = (key: string | undefined) =>
+  key === 'inbox' && inbox.summary.value
+    ? inboxStatus(inbox.summary.value, (k, n) => t(k, { n }, n))
+    : undefined
+
 const pinnedGroups = computed(() =>
   toNavGroups(
     inSpace([
       {
         items: [
           { label: t('nav.search'), href: '/search', icon: 'search' },
+          ...(hasChannels.value && !inbox.hidden.value
+            ? [{ label: t('nav.inbox'), href: '/inbox', icon: 'inbox', status_key: 'inbox' }]
+            : []),
           { label: t('nav.analysis'), href: '/analyze', icon: 'warning' },
         ],
       },
     ]),
-    RouterLink
+    RouterLink,
+    undefined,
+    inboxStatusFor
   )
 )
 
@@ -440,7 +463,7 @@ async function handleAction(item: SidebarItem, ev?: Event) {
     </template>
 
     <!--
-      Search and Analysis sit above the config-driven nav and never scroll out
+      Search, Inbox and Analysis sit above the config-driven nav and never scroll out
       of reach, which is why they are a slot rather than a first group.
     -->
     <template #pinned>

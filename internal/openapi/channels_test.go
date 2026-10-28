@@ -524,6 +524,7 @@ func TestChannelPaths_Read(t *testing.T) {
 		channelReadSchema:     reflect.TypeFor[v1.ChannelRead](),
 		channelMarkReadSchema: reflect.TypeFor[v1.ChannelMarkRead](),
 		inboxSchema:           reflect.TypeFor[v1.Inbox](),
+		inboxSummarySchema:    reflect.TypeFor[v1.InboxSummary](),
 	} {
 		if got, want := schemaKeys(sc[name]), jsonNames(typ); !slices.Equal(got, want) {
 			t.Errorf("%s properties = %v, want %v", name, got, want)
@@ -551,5 +552,8 @@ func TestChannelPaths_Read(t *testing.T) {
 	}
 	if !kinds {
 		t.Error("the inbox does not document kinds")
+	}
+	if op := spec.Paths["/api/v1/_inbox/summary"].Get; op == nil || op.OperationID != "getInboxSummary" {
+		t.Error("the inbox summary route is not documented")
 	}
 }

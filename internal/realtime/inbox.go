@@ -170,8 +170,35 @@ type InboxView struct {
 	MentionCount   *int           `json:"mention_count,omitempty"`
 	WaitingTypes   []string       `json:"-"`
 	WakeKeys       []channels.Key `json:"-"`
+	// Reader is whose inbox the answer is: the caller's reader. It is not
+	// part of the answer on any wire; the live hub uses it to tell which
+	// moved markers can change this inbox.
+	Reader channels.Reader `json:"-"`
 	// noWaiting is set when the request left the waiting kind out.
 	noWaiting bool
+}
+
+// InboxSummary counts what an inbox first page holds, for a badge.
+type InboxSummary struct {
+	Waiting          int
+	WaitingTruncated bool
+	UnreadChannels   int
+	Mentions         int
+	Degraded         bool
+}
+
+// Summary projects v. It reads only fields the first page already
+// carries, so it discloses nothing the page does not. A nil UnreadCount
+// or MentionCount counts 0.
+func (v InboxView) Summary() InboxSummary {
+	out := InboxSummary{Waiting: v.Count, WaitingTruncated: v.Truncated, Degraded: v.Degraded}
+	if v.UnreadCount != nil {
+		out.UnreadChannels = *v.UnreadCount
+	}
+	if v.MentionCount != nil {
+		out.Mentions = *v.MentionCount
+	}
+	return out
 }
 
 // HasWaiting reports whether the answer carries the waiting entries: the
@@ -389,6 +416,7 @@ func (s *Service) Inbox(ctx context.Context, req InboxRequest) (InboxView, error
 		return InboxView{}, noPrincipal()
 	}
 	view := InboxView{Notice: UntrustedNotice, noWaiting: !waiting}
+	view.Reader, _ = callReader(c)
 	if waiting {
 		view.Entries = []InboxEntry{}
 	}

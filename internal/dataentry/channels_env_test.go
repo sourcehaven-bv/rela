@@ -214,11 +214,11 @@ var outputsRealtime = strings.Replace(channelTestRealtime,
         reviewed: { label: Reviewed, final: true }`, 1)
 
 // parse compiles yaml as realtime.yaml against the service's schema.
-func (c *channelService) parse(t *testing.T, yaml string) *realtimecfg.Compiled {
-	t.Helper()
+func (c *channelService) parse(tb testing.TB, yaml string) *realtimecfg.Compiled {
+	tb.Helper()
 	compiled, err := realtimecfg.Parse([]byte(yaml), c.meta, nil)
 	if err != nil {
-		t.Fatal(err)
+		tb.Fatal(err)
 	}
 	return compiled
 }
@@ -247,18 +247,18 @@ func newChannelServiceOver(
 // newChannelServiceLocal is newChannelServiceOver over the process-local
 // state local. Nil: a new one on the real clock.
 func newChannelServiceLocal(
-	t *testing.T, meta *metamodel.Metamodel, st store.Store, d *acl.Declarative, yaml string, cs channels.Store,
+	tb testing.TB, meta *metamodel.Metamodel, st store.Store, d *acl.Declarative, yaml string, cs channels.Store,
 	local *realtime.Local,
 ) *channelService {
-	t.Helper()
+	tb.Helper()
 	out := &channelService{store: cs, cfg: &atomic.Pointer[realtimecfg.Compiled]{}, meta: meta, outputs: &fakeOutputs{}}
-	out.cfg.Store(out.parse(t, yaml))
+	out.cfg.Store(out.parse(tb, yaml))
 	bundle := appbuildtest.New(meta, appbuildtest.WithStore(st), appbuildtest.WithDeclarative(d),
 		appbuildtest.WithChannelsLocal(cs, testRealtimeConfig{p: out.cfg, degraded: &out.degraded}, local),
 		appbuildtest.WithChannelOutputs(out.outputs))
-	t.Cleanup(func() { _ = bundle.Close() })
+	tb.Cleanup(func() { _ = bundle.Close() })
 	if out.svc = appbuild.ChannelService(bundle); out.svc == nil {
-		t.Fatal("appbuildtest built no channel service")
+		tb.Fatal("appbuildtest built no channel service")
 	}
 	return out
 }

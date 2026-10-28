@@ -61,6 +61,13 @@ func Services(app *dataentry.App, svc *appbuild.Services) error {
 		if err := dataentry.SetChannels(app, c); err != nil {
 			return fmt.Errorf("wire channels: %w", err)
 		}
+		grid := dataentry.LiveInboxGrid
+		if appbuild.ChannelsScan(svc) {
+			grid = dataentry.LiveInboxGridScan
+		}
+		if err := dataentry.SetInboxGrid(app, grid); err != nil {
+			return fmt.Errorf("wire inbox grid: %w", err)
+		}
 	}
 
 	// The worlds themselves are a NewApp argument; this resolves their links.

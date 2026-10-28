@@ -45,9 +45,11 @@ func callReader(c *call) (channels.Reader, bool) {
 // A cardinality-one channel that does not exist yet answers zeros and
 // stores nothing. Marks have a rate limit of their own
 // ([realtimelimits.ReadRate] per channel, under
-// [realtimelimits.ReadIdentityRate]), apart from posts. A moved marker
-// reaches [Service.SubscribeReads] tagged with the caller, and no plain
-// subscription.
+// [realtimelimits.ReadIdentityRate]), apart from posts. Every stored
+// mark, moved or not, reaches [Service.SubscribeLive] tagged with the
+// caller, and no plain subscription: a first marker at 0 moves nothing
+// but adds the channel to the caller's inbox window. The read rate limit
+// bounds how often.
 func (s *Service) MarkRead(ctx context.Context, addr RawAddress, seq *int64) (MarkReadResult, error) {
 	c, err := s.open(ctx, addr)
 	if err != nil {
@@ -72,13 +74,11 @@ func (s *Service) MarkRead(ctx context.Context, addr RawAddress, seq *int64) (Ma
 		target = *seq
 	}
 	//nolint:contextcheck // c.ctx is ctx with the acl.Request attached; see .golangci.yml on realtime.
-	st, moved, err := s.store.SetRead(c.ctx, c.key, reader, target, c.now)
+	st, _, err := s.store.SetRead(c.ctx, c.key, reader, target, c.now)
 	if err != nil {
 		return MarkReadResult{}, storeError(err)
 	}
-	if moved {
-		s.local.markFor(reader, c.key)
-	}
+	s.local.markFor(reader, c.key)
 	return MarkReadResult{Seq: st.Seq, Unread: st.Unread, LastSeq: st.LastSeq}, nil
 }
 

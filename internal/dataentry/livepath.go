@@ -6,28 +6,33 @@ import (
 	"net/url"
 	"path"
 	"regexp"
+	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/Sourcehaven-BV/rela/internal/channels"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
+	"github.com/Sourcehaven-BV/rela/internal/realtime"
 )
 
 // liveShape is the kind of GET resource a live subscription tracks.
 type liveShape int
 
 const (
-	liveEntity   liveShape = iota + 1 // /api/v1/{plural}/{id}
-	liveList                          // /api/v1/{plural}
-	liveView                          // /api/v1/_views/{type}/{id}
-	livePresence                      // /api/v1/{plural}/{id}/_presence
-	liveChannels                      // /api/v1/{plural}/{id}/_channels
-	liveChannel                       // /api/v1/{plural}/{id}/_channels/{type}[/{name}]
+	liveEntity       liveShape = iota + 1 // /api/v1/{plural}/{id}
+	liveList                              // /api/v1/{plural}
+	liveView                              // /api/v1/_views/{type}/{id}
+	livePresence                          // /api/v1/{plural}/{id}/_presence
+	liveChannels                          // /api/v1/{plural}/{id}/_channels
+	liveChannel                           // /api/v1/{plural}/{id}/_channels/{type}[/{name}]
+	liveInbox                             // /api/v1/_inbox
+	liveInboxSummary                      // /api/v1/_inbox/summary
 )
 
 // livePath is a subscription path parsed into checked parts. The replay URL
 // is rebuilt from these parts by [livePath.String], never taken from the
-// client, so a subscription can only ever reach the six read handlers.
+// client, so a subscription can only ever reach the eight read handlers.
 type livePath struct {
 	shape  liveShape
 	plural string // entity, list and presence
@@ -58,7 +63,12 @@ var (
 	livePresenceKeys = keySet("world")
 	liveChannelsKeys = keySet("state", "world")
 	liveChannelKeys  = keySet("world")
-	liveListKeys     = keySet(
+	// liveInboxKeys are the inbox page's keys. cursor is refused: a later
+	// page is positioned by a cursor from an earlier answer, and a frame on
+	// it would add nothing the first page does not show. The summary takes
+	// no key.
+	liveInboxKeys = keySet("limit", "kinds")
+	liveListKeys  = keySet(
 		"page", "per_page", "cursor", "sort", "fields", "include", "comment_counts",
 		"world", "list_id", "query_scope", "scope_page", "scope_tab", "anchor",
 		"relation", "direction",
@@ -110,6 +120,13 @@ func parseLivePath(raw string, meta *metamodel.Metamodel) (livePath, error) {
 	if err != nil {
 		return livePath{}, err
 	}
+	if lp.isInbox() {
+		lp.query, err = liveInboxQuery(query, allowed)
+		if err != nil {
+			return livePath{}, err
+		}
+		return lp, nil
+	}
 
 	for k := range query {
 		if !allowed[k] && (lp.shape != liveList || !liveFilterKey.MatchString(k)) {
@@ -124,6 +141,10 @@ func parseLivePath(raw string, meta *metamodel.Metamodel) (livePath, error) {
 // query keys it accepts.
 func liveShapeOf(segs []string, meta *metamodel.Metamodel) (livePath, map[string]bool, error) {
 	switch {
+	case len(segs) == 1 && segs[0] == "_inbox":
+		return livePath{shape: liveInbox}, liveInboxKeys, nil
+	case len(segs) == 2 && segs[0] == "_inbox" && segs[1] == "summary":
+		return livePath{shape: liveInboxSummary}, nil, nil
 	case len(segs) == 3 && segs[0] == "_views":
 		if !isSafePathSegment(segs[1]) || !meta.HasEntityType(segs[1]) {
 			return livePath{}, nil, fmt.Errorf("%w: unknown view entity type", errLivePath)
@@ -157,8 +178,42 @@ func liveShapeOf(segs []string, meta *metamodel.Metamodel) (livePath, map[string
 		}
 		return livePath{shape: liveEntity, plural: segs[0], id: segs[1]}, liveEntityKeys, nil
 	default:
-		return livePath{}, nil, fmt.Errorf("%w: not an entity, list, view, presence or channel", errLivePath)
+		return livePath{}, nil, fmt.Errorf("%w: not an entity, list, view, presence, channel or inbox", errLivePath)
 	}
+}
+
+// liveInboxQuery checks the query of an inbox path and returns it in
+// canonical form: each key in allowed at most once, limit and kinds valid
+// as the inbox route reads them, limit written without leading zeros and
+// kinds sorted without duplicates. Equal requests therefore rebuild one
+// URL, and share one replay.
+func liveInboxQuery(query url.Values, allowed map[string]bool) (url.Values, error) {
+	out := url.Values{}
+	for k, vs := range query {
+		if !allowed[k] {
+			return nil, fmt.Errorf("%w: query parameter %q is not accepted", errLivePath, k)
+		}
+		if len(vs) != 1 {
+			return nil, fmt.Errorf("%w: query parameter %q is repeated", errLivePath, k)
+		}
+	}
+	if query.Has("limit") {
+		n, err := strconv.Atoi(query.Get("limit"))
+		if err != nil || realtime.CheckInboxLimit(n) != nil {
+			return nil, fmt.Errorf("%w: limit must be a whole number from 1 to %d", errLivePath, realtime.MaxInboxLimit)
+		}
+		out.Set("limit", strconv.Itoa(n))
+	}
+	if query.Has("kinds") {
+		kinds := strings.Split(query.Get("kinds"), ",")
+		if realtime.CheckInboxKinds(kinds) != nil {
+			return nil, fmt.Errorf("%w: kinds must be a comma list of %s, %s, %s and %s", errLivePath,
+				realtime.InboxKindWaiting, realtime.InboxKindUnread, realtime.InboxKindMention, realtime.InboxKindReply)
+		}
+		slices.Sort(kinds)
+		out.Set("kinds", strings.Join(slices.Compact(kinds), ","))
+	}
+	return out, nil
 }
 
 // namedChannelSegs is the segment count of a named channel head,
@@ -251,6 +306,10 @@ func (lp livePath) String() string {
 		p = "/api/v1/_views/" + url.PathEscape(lp.typ) + "/" + url.PathEscape(lp.id)
 	case livePresence:
 		p = "/api/v1/" + url.PathEscape(lp.plural) + "/" + url.PathEscape(lp.id) + "/_presence"
+	case liveInbox:
+		p = inboxPath
+	case liveInboxSummary:
+		p = inboxSummaryPath
 	case liveChannels, liveChannel:
 		p = "/api/v1/" + url.PathEscape(lp.plural) + "/" + url.PathEscape(lp.id) + "/" + channelsSegment
 		if lp.chtype != "" {
@@ -284,3 +343,9 @@ func (lp livePath) presenceID() string {
 // isChannel reports whether lp is a channel head or channel list. Such a
 // subscription is replayed by a topic round over the channels that changed.
 func (lp livePath) isChannel() bool { return lp.shape == liveChannels || lp.shape == liveChannel }
+
+// isInbox reports whether lp is the inbox page or its summary. Such a
+// subscription is replayed when a durable channel change, a moved marker
+// of its reader or a post that addresses its principal can move it, on
+// the inbox grid (see live_inbox.go).
+func (lp livePath) isInbox() bool { return lp.shape == liveInbox || lp.shape == liveInboxSummary }

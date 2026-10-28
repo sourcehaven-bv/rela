@@ -101,8 +101,28 @@ type liveHub struct {
 	presenceRotate int
 
 	// ticks counts the ticks the worker has finished, the round of each
-	// included. Tests wait on it instead of on the wall clock.
+	// included. Tests wait on it instead of on the wall clock. The inbox
+	// grid does not read it: a ticker drops ticks during a slow round (see
+	// live_inbox.go).
 	ticks atomic.Uint64
+	// ticker makes the round clock; nil is a time.Ticker of window. Tests
+	// replace it before start to drive ticks one at a time.
+	ticker func(time.Duration) (c <-chan time.Time, stop func())
+	// inboxGrid is the tick spacing of inbox replays; see [SetInboxGrid].
+	// Set before start.
+	inboxGrid uint64
+	// inboxClock places ticks on the inbox grid (worker goroutine only),
+	// and inboxNow is what the tick in progress does for inbox
+	// subscriptions, packed by [inboxTick.pack] (see live_inbox.go).
+	inboxClock inboxClock
+	inboxNow   atomic.Uint64
+	// inboxSliceOf replaces the safety slice hash; tests set it before
+	// start. Nil is FNV-1a of the share key.
+	inboxSliceOf func(fp string) uint64
+	// roundCap and roundBudget are liveRoundCap and liveRoundBudget;
+	// tests lower them before start.
+	roundCap    int
+	roundBudget time.Duration
 
 	runMu  sync.Mutex
 	cancel context.CancelFunc
@@ -114,6 +134,7 @@ func newLiveHub(meta func() *metamodel.Metamodel) *liveHub {
 		meta: meta, window: liveWindow, slots: make(chan struct{}, liveParallel),
 		conns: make(map[string]*liveConn), kick: make(chan struct{}, 1),
 		reconfigured: make(chan struct{}, 1), presence: presence.New(), now: time.Now,
+		inboxGrid: LiveInboxGrid, roundCap: liveRoundCap, roundBudget: liveRoundBudget,
 	}
 }
 
@@ -154,11 +175,17 @@ type liveConn struct {
 //
 // A channel subscription (channel set) has a topic: the channel head or
 // anchor its last finished replay resolved with a 200 (see live_topics.go).
+// An inbox subscription (inbox set) has a wake set instead, learned the
+// same way (see live_inbox.go).
 type liveSub struct {
 	url        string // replay URL rebuilt by livePath.String
 	presenceID string // livePath.presenceID
-	channel    bool   // livePath.channel
-	topic      string
+	channel    bool   // livePath.isChannel
+	inbox      bool   // livePath.isInbox
+	// wake is what an inbox subscription's last 200 reported it listens
+	// to; nil until then, and after a refusal (see live_inbox.go).
+	wake  *inboxWake
+	topic string
 	// reader is whose read marker the topic's last 200 showed; a moved
 	// marker of that reader replays it (see live_topics.go).
 	reader   channels.Reader
@@ -175,6 +202,7 @@ type liveTarget struct {
 	url        string
 	presenceID string
 	channel    bool
+	inbox      bool
 }
 
 // keyedSub is a subscription with its key.
@@ -310,7 +338,9 @@ func (h *liveHub) handlePut(w http.ResponseWriter, r *http.Request) {
 			writeV1Error(w, r, http.StatusBadRequest, "invalid_path", err.Error(), at+".path")
 			return
 		}
-		next[s.Key] = liveTarget{url: lp.String(), presenceID: lp.presenceID(), channel: lp.isChannel()}
+		next[s.Key] = liveTarget{
+			url: lp.String(), presenceID: lp.presenceID(), channel: lp.isChannel(), inbox: lp.isInbox(),
+		}
 	}
 	added, ok := h.replace(c, next)
 	if !ok {
@@ -356,7 +386,10 @@ func (h *liveHub) replace(c *liveConn, next map[string]liveTarget) (added []keye
 		if old := c.subs[key]; old != nil && old.url == target.url {
 			subs[key] = old // unchanged: keep its baseline
 		} else {
-			s := &liveSub{url: target.url, presenceID: target.presenceID, channel: target.channel, syncing: true}
+			s := &liveSub{
+				url: target.url, presenceID: target.presenceID, channel: target.channel, inbox: target.inbox,
+				syncing: true,
+			}
 			subs[key] = s
 			added = append(added, keyedSub{key: key, sub: s})
 		}
@@ -384,6 +417,7 @@ func (h *liveHub) replace(c *liveConn, next map[string]liveTarget) (added []keye
 func (h *liveHub) baseline(ctx context.Context, c *liveConn, added []keyedSub) bool {
 	hp := h.replay.Load()
 	results := make([]replayResult, len(added))
+	ctx = withInboxMemo(ctx)
 	if hp != nil {
 		var wg sync.WaitGroup
 	acquire:
@@ -548,6 +582,15 @@ func (h *liveHub) start(feed *changefeed.Bus, leases leaseWaker, chans func() ch
 	}()
 }
 
+// clock returns the round clock's channel and its stop.
+func (h *liveHub) clock() (tick <-chan time.Time, stop func()) {
+	if h.ticker != nil {
+		return h.ticker(h.window)
+	}
+	t := time.NewTicker(h.window)
+	return t.C, t.Stop
+}
+
 // stop ends the worker and waits for it. Safe before start and repeated.
 func (h *liveHub) stop() {
 	h.runMu.Lock()
@@ -585,8 +628,8 @@ type liveFeed interface {
 // and waits for a full round. A reload of realtime.yaml (reconfigured) dirties
 // the round, so a reader it revokes is re-checked at once.
 func (h *liveHub) run(ctx context.Context, feed liveFeed, leaseWake <-chan struct{}, chans channelChanges) {
-	tick := time.NewTicker(h.window)
-	defer tick.Stop()
+	tick, stopTick := h.clock()
+	defer stopTick()
 	var chanWake <-chan struct{} // nil: never ready
 	if chans != nil {
 		chanWake = chans.Wake()
@@ -606,26 +649,46 @@ func (h *liveHub) run(ctx context.Context, feed liveFeed, leaseWake <-chan struc
 			channelsDirty = true
 		case <-h.kick:
 			h.round(ctx, false) // baselines only; nothing changed
-		case <-tick.C:
+		case at := <-tick:
+			now := h.inboxClock.tickAt(at, h.window, h.inboxGrid, h.inboxSlices())
+			h.inboxNow.Store(now.pack())
+			// A wake that is ready now belongs to this tick, whichever
+			// case the select picked first.
+			select {
+			case <-chanWake:
+				channelsDirty = true
+			default:
+			}
+			select {
+			case <-feed.Wake():
+				dirty = true
+			default:
+			}
 			// Presence expiry takes effect here, on the fixed clock, so
 			// when a viewer drops out never depends on when a replay ran.
 			faces := h.presence.TakeChanged(h.now())
-			var keys []channels.Key
+			var keys, durable []channels.Key
 			var reads map[channels.Reader][]channels.Key
+			var addressed []string
 			resync := false
 			if channelsDirty {
 				channelsDirty = false
 				keys, resync = chans.Take()
 				reads = chans.TakeReads()
+				durable = chans.TakeDurable()
+				addressed = chans.TakeAddressed()
 			}
+			safety := now.slices != 0
 			switch {
 			case dirty:
 				dirty = false
 				feed.Take() // any change re-reads every subscription
 				h.round(ctx, true)
-			case len(faces) > 0 || len(keys) > 0 || len(reads) > 0 || resync || h.hasPending():
+			case len(faces) > 0 || len(keys) > 0 || len(reads) > 0 || len(addressed) > 0 || resync || safety ||
+				h.hasPending():
 				f := newRoundFilter(faces, keys, resync)
 				f.addReads(reads)
+				f.addInbox(durable, addressed)
 				h.replayRound(ctx, true, f)
 			}
 			h.ticks.Add(1)
@@ -676,26 +739,30 @@ func (h *liveHub) replayRound(ctx context.Context, changed bool, only *roundFilt
 	if len(pairs) == 0 {
 		return
 	}
+	// The round starts where the last overflowed round stopped, so the
+	// cap and the budget pass over every pair in turn. An inbox pair that
+	// never fit would never frame, since it gets no fallback frame.
+	cursor := &h.rotate
+	if only != nil {
+		cursor = &h.presenceRotate
+	}
+	first := *cursor % len(pairs)
+	pairs = append(pairs[first:], pairs[:first]...)
 	overflow := 0
-	if len(pairs) > liveRoundCap {
-		cursor := &h.rotate
-		if only != nil {
-			cursor = &h.presenceRotate
-		}
-		start := *cursor % len(pairs)
-		pairs = append(pairs[start:], pairs[:start]...)
-		*cursor = start + liveRoundCap
-		overflow = len(pairs) - liveRoundCap
-		h.fallback(pairs[liveRoundCap:])
-		pairs = pairs[:liveRoundCap]
+	if len(pairs) > h.roundCap {
+		*cursor = first + h.roundCap
+		overflow = len(pairs) - h.roundCap
+		h.fallback(pairs[h.roundCap:])
+		pairs = pairs[:h.roundCap]
 	}
 
 	ctx, stats := store.WithQueryStats(ctx)
+	ctx = withInboxMemo(ctx)
 	var wg sync.WaitGroup
 	started := len(pairs)
 	for i, p := range pairs {
 		h.slots <- struct{}{}
-		if time.Since(start) > liveRoundBudget {
+		if time.Since(start) > h.roundBudget {
 			<-h.slots
 			started = i
 			break
@@ -707,6 +774,7 @@ func (h *liveHub) replayRound(ctx context.Context, changed bool, only *roundFilt
 	}
 	wg.Wait()
 	if started < len(pairs) {
+		*cursor = first + started
 		overflow += len(pairs) - started
 		h.fallback(pairs[started:])
 		pairs = pairs[:started]
@@ -760,10 +828,16 @@ func (h *liveHub) commitRound(pairs []*replayPair) {
 // subscriptions anyway, and a baseline round (changed false) does not, so
 // it leaves the set alone. A changed round also marks the syncing
 // subscriptions it skips for a recheck; a topic round marks only the
-// presence and channel ones, since a change of viewers or of a channel
-// moves no other response.
+// presence, channel and inbox ones, since a change of viewers or of a
+// channel moves no other response.
+//
+// A changed round off the inbox grid defers each inbox subscription it
+// would replay to pending, with no fallback frame: the next grid tick
+// replays it (see live_inbox.go). A baseline round is not deferred; its
+// timing depends only on the client's own PUT.
 func (h *liveHub) collect(changed bool, only *roundFilter) []*replayPair {
 	byKey := make(map[string]*replayPair)
+	now := h.inboxTickNow()
 	h.mu.Lock()
 	var due map[*liveSub]struct{}
 	if changed {
@@ -773,13 +847,17 @@ func (h *liveHub) collect(changed bool, only *roundFilter) []*replayPair {
 		c.mu.Lock()
 		for key, s := range c.subs {
 			if s.syncing {
-				s.recheck = s.recheck || changed && (only == nil || s.presenceID != "" || s.channel)
+				s.recheck = s.recheck || changed && (only == nil || s.presenceID != "" || s.channel || s.inbox)
 				continue
 			}
 			if !changed && s.hash != "" {
 				continue
 			}
-			if _, ok := due[s]; only != nil && !ok && !only.selects(s) {
+			if _, ok := due[s]; only != nil && !ok && !only.selects(s) && !h.safetyDue(now, c.fp, s) {
+				continue
+			}
+			if changed && s.inbox && !now.grid {
+				h.addPendingLocked(s)
 				continue
 			}
 			k := c.fp + " " + s.url
@@ -806,7 +884,10 @@ func (h *liveHub) collect(changed bool, only *roundFilter) []*replayPair {
 }
 
 // fallback handles replays a round had no room or time for: each
-// subscription is told it changed, so the client refetches. It keeps its
+// subscription is told it changed, so the client refetches. An inbox
+// subscription is not told: a change it cannot see may have chosen its
+// round, so the frame would reveal that change (see live_inbox.go). It
+// only goes into pending, and frames when a later replay moves its hash. It keeps its
 // baseline and goes into pending, so the next tick replays it and frames
 // again if the response moved past that baseline. Without that replay a
 // later change back to the baseline would send no frame.
@@ -828,7 +909,9 @@ func (h *liveHub) fallback(pairs []*replayPair) {
 			current := h.conns[ref.conn.id] == ref.conn
 			ref.conn.mu.Lock()
 			if s := ref.conn.subs[ref.key]; current && s == ref.sub {
-				ref.conn.markChanged(ref.key)
+				if !s.inbox {
+					ref.conn.markChanged(ref.key)
+				}
 				h.addPendingLocked(s)
 			}
 			ref.conn.mu.Unlock()
@@ -861,6 +944,7 @@ type replayResult struct {
 	probe  presenceProbe
 	topic  string          // the topic a channel route recorded, see live_topics.go
 	reader channels.Reader // the reader that route recorded with the topic
+	inbox  *inboxWake      // the wake set an inbox route recorded, see live_inbox.go
 }
 
 // presenceJoin returns the face to join and who joins it, for a presence
@@ -909,7 +993,7 @@ func replayHash(
 	}
 	return replayResult{
 		hash: fmt.Sprintf("%d:%x", status, hw.h.Sum(nil)), status: status, ok: true, probe: *probe, topic: topic.topic,
-		reader: topic.reader,
+		reader: topic.reader, inbox: topic.inbox,
 	}
 }
 

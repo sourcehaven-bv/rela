@@ -170,7 +170,9 @@ func TestChannelMarkRead_Handler(t *testing.T) {
 
 // TestLive_MarkReadFramesHead pins TKT-2B2AIA AC 14: a moved marker frames
 // the reader's own live head and replays nobody else's; a mark that does
-// not move frames nothing.
+// not move frames nothing. Since TKT-9YRRM5 every stored mark wakes the
+// reader's own subscriptions, so the unmoved mark replays alice's head,
+// with the same hash.
 func TestLive_MarkReadFramesHead(t *testing.T) {
 	env := newChannelEnv(t)
 	env.postText(t, "carol", roomPath, "one")
@@ -191,8 +193,9 @@ func TestLive_MarkReadFramesHead(t *testing.T) {
 
 	env.mark(t, "alice", roomPath, `{"seq":1}`)
 	liveQuiet(t, a)
-	if got := replays.take(); len(got) != 0 {
-		t.Fatalf("a mark that does not move replayed %v", got)
+	liveQuiet(t, b)
+	if got, want := replays.take(), map[string]int{roomPath: 1}; !maps.Equal(got, want) {
+		t.Fatalf("a mark that does not move replayed %v, want only alice's head %v", got, want)
 	}
 }
 

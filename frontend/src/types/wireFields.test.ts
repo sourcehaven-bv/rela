@@ -176,4 +176,8 @@ describe('real channel answers use only mirrored keys', () => {
       }
     }
   })
+
+  it('inbox summary', () => {
+    keysOf('InboxSummary', samples.inbox_summary!)
+  })
 })

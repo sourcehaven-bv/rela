@@ -131,6 +131,31 @@ test.describe("channels", () => {
     await alice.post("After the change");
     await alice.expectMessage("After the change");
   });
+
+  test("a mention reaches the target's inbox live and clears when the channel is read", async ({
+    as,
+  }) => {
+    const alice = await as(CHANNEL_USERS.lead);
+    const bob = await as(CHANNEL_USERS.member);
+    await alice.openHome();
+    await alice.expectNoInboxBadge();
+
+    await bob.openEntity("feature", FEATURE);
+    await bob.expectChannel(ROOM.label);
+    await bob.post(`\`@${CHANNEL_USERS.lead}\` can you approve?`);
+    await bob.expectMessage("can you approve?");
+
+    // The badge moves without a reload.
+    await alice.expectInboxBadge(1);
+    await alice.openInbox();
+    await alice.openInboxRow("mentions", `${CHANNEL_USERS.member} mentioned you`);
+    await alice.expectChannelDeepLink("feature", FEATURE, `${ROOM.type}/`);
+    await alice.expectChannel(ROOM.label);
+    await alice.expectMessage("can you approve?");
+
+    // Opening the channel marks it read, and the badge clears.
+    await alice.expectNoInboxBadge();
+  });
 });
 
 // A room with a session: the lead's message moves it for every reader.

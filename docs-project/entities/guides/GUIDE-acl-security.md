@@ -1853,7 +1853,49 @@ over many entities, so it follows the rule that gates before it folds.
   hidden write. A distinct code keeps the fault diagnosable; a generic 500
   would hide nothing, because the failure itself is the signal.
 - **No cache across principals.** Each call computes the inbox for its
-  caller, and a `watch` digest is keyed to the caller.
+  caller, and a `watch` digest is keyed to the caller. The live hub
+  shares one inbox computation between the summary and the first page of
+  one principal, for one replay round only. The key is the principal and
+  the request, so it is never shared across principals or rounds.
+- **The summary is the gated first page.** `GET /api/v1/_inbox/summary`
+  (TKT-9YRRM5) answers the counts of the inbox's default first page and
+  nothing else. It reads the same gated, redacted answer, so a hidden row
+  changes none of its counts.
+- **Live frames follow the replay rule, on a fixed clock.** An inbox
+  subscription gets a frame only when the replay of its `GET`, as the
+  subscriber, answers a different hash. What the hub listens to for a
+  subscription (its wake set: the principal key, the reader, the channel
+  types with a waiting state, and the channels of the gated answer) comes
+  only from a 200 replay, never from the client. A change on a channel the
+  subscriber cannot read can trigger a replay, but that replay answers the
+  same hash, so it sends no frame. Inbox replays run only on grid ticks: the
+  first tick of every 2 seconds of wall-clock time (4 seconds with the
+  file channel store), the same ticks for every subscription. The slot
+  of a tick comes from its time, not from how many ticks ran, so a slow
+  round that a hidden change caused does not shift later grid ticks. The
+  spacing is fixed at wiring from the channel store, never per request or
+  per principal. A change waits in pending for the next grid tick and
+  gets no frame of its own. So a hidden change can neither delay nor
+  advance the start of the round that frames a visible change, and the
+  time of a frame does not reveal the time of a hidden write.
+- **The grid fixes when a round starts, not when its frames leave.**
+  Frames go out after the whole round, and a hidden change can add
+  replays to it (a hidden write in a channel of a waiting type replays
+  every inbox with that type). So a subscriber who triggers a visible
+  change every grid tick and times the frame can see a longer round.
+  That is the same channel as the full round any hidden entity edit
+  starts, and rela accepts it.
+- **Overflow defers, it does not frame.** An inbox subscription that a
+  round has no room (256 replays) or time (10 seconds) for goes into
+  pending with no refetch frame, unlike other live paths. Its round may
+  have been chosen by a change the subscriber cannot see, so a refetch
+  frame would tell them one happened. It frames only when a later replay
+  answers a different hash.
+- **The safety replay is staggered by principal, not by change.** Every
+  inbox subscription with a wake set is replayed once per safety period,
+  14 seconds (12 with the file channel store), whatever changed. Each
+  principal has a fixed slice from a hash of its identity, so which
+  grid tick replays it never depends on a change.
 
 ## Read markers
 

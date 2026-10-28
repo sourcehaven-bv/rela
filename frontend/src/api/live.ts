@@ -1,7 +1,16 @@
 import { api } from './client'
 import { getPlural } from './entities'
 import { addressSegment } from '@/utils/entityAddress'
-import { channelPath, channelsPath, type ChannelAnchor, type ChannelTarget } from './channels'
+import {
+  channelPath,
+  channelsPath,
+  INBOX_PATH,
+  INBOX_SUMMARY_PATH,
+  inboxParams,
+  type ChannelAnchor,
+  type ChannelTarget,
+  type InboxQuery,
+} from './channels'
 import type { ChannelState } from '@/types/channels'
 import type { ListParams } from '@/types/entity'
 
@@ -73,6 +82,19 @@ export function liveChannelsPath(a: ChannelAnchor, state?: ChannelState): string
 /** The subscription path for fetchView(type, id, world). */
 export function liveViewPath(type: string, id: string, world?: string): string {
   return livePath(`/_views/${type}/${id}`, world ? { world } : undefined)
+}
+
+/**
+ * The subscription path for getInbox(q). The server accepts `limit` and
+ * `kinds` only; the page never sends a cursor, and the server refuses one.
+ */
+export function liveInboxPath(q?: InboxQuery): string {
+  return livePath(INBOX_PATH, inboxParams(q))
+}
+
+/** The subscription path for getInboxSummary(). It takes no query. */
+export function liveInboxSummaryPath(): string {
+  return livePath(INBOX_SUMMARY_PATH)
 }
 
 /** Replaces the stream's subscription set. */

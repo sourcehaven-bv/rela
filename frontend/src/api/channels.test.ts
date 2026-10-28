@@ -5,6 +5,8 @@ import {
   editMessage,
   getChannelHead,
   getChannelSchema,
+  getInbox,
+  getInboxSummary,
   getMessages,
   listChannels,
   markChannelRead,
@@ -121,5 +123,15 @@ describe('channel requests', () => {
     expect(api.put).toHaveBeenLastCalledWith(`${base}/x1/_read`, { seq: 7 })
     await markChannelRead(target)
     expect(api.put).toHaveBeenLastCalledWith(`${base}/_read`, {})
+  })
+
+  it('reads the inbox and its summary', async () => {
+    vi.mocked(api.get).mockClear()
+    await getInbox()
+    await getInbox({ limit: 10, kinds: ['waiting', 'mention'] })
+    await getInboxSummary()
+    expect(api.get).toHaveBeenNthCalledWith(1, '/_inbox', undefined)
+    expect(api.get).toHaveBeenNthCalledWith(2, '/_inbox', { limit: 10, kinds: 'waiting,mention' })
+    expect(api.get).toHaveBeenNthCalledWith(3, '/_inbox/summary')
   })
 })

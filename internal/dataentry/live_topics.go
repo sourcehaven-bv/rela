@@ -59,12 +59,17 @@ func channelKeyTopics(k channels.Key) []string {
 // channelChanges is the channel change subscription the live worker reads.
 // *realtime.Subscription satisfies it: Take returns the channels that
 // changed since the last call, or resync when it lost count. TakeReads
-// returns the channels on which each reader's marker moved: such a change
-// replays only the subscriptions that show that reader's marker.
+// returns the channels on which each reader's marker was written: such a
+// change replays only the subscriptions that show that reader's marker,
+// and that reader's inbox. TakeDurable returns the channels a stored write
+// changed, and TakeAddressed the principal keys a post or edit addressed;
+// both select inbox subscriptions (see live_inbox.go).
 type channelChanges interface {
 	Wake() <-chan struct{}
 	Take() (keys []channels.Key, resync bool)
 	TakeReads() map[channels.Reader][]channels.Key
+	TakeDurable() []channels.Key
+	TakeAddressed() []string
 	Close()
 }
 
@@ -80,8 +85,16 @@ type roundFilter struct {
 	// a message it cannot read.
 	allChannels bool
 	// readTopics selects, per reader, the channel subscriptions of that
-	// reader on the topics of the channels where its marker moved.
+	// reader on the topics of the channels where its marker moved, and
+	// that reader's inbox subscriptions.
 	readTopics map[channels.Reader]map[string]bool
+	// durable holds the head topics of the channels a stored write
+	// changed, and types their channel types; addressed holds the
+	// principal keys a post or edit addressed. They select inbox
+	// subscriptions ([roundFilter.selectsInbox]).
+	durable   map[string]bool
+	types     map[string]bool
+	addressed map[string]bool
 }
 
 // addReads adds the topics of the channels where each reader's marker
@@ -127,6 +140,9 @@ func (f *roundFilter) selects(s *liveSub) bool {
 			return true
 		}
 	}
+	if s.inbox {
+		return f.selectsInbox(s)
+	}
 	if !s.channel || s.topic == "" {
 		return false
 	}
@@ -138,6 +154,8 @@ func (f *roundFilter) selects(s *liveSub) bool {
 type topicProbe struct {
 	topic  string
 	reader channels.Reader
+	// inbox is the wake set an inbox route recorded (see recordInbox).
+	inbox *inboxWake
 }
 
 type topicProbeKey struct{}
@@ -156,12 +174,23 @@ func recordTopic(ctx context.Context, topic string, reader channels.Reader) {
 	}
 }
 
-// applyTopic sets the topic of the channel subscription s after a replay
-// that ran, with result res. A 200 takes the topic its probe resolved; any
-// other status clears it. A replay that did not finish keeps the topic, so
-// the next channel change still replays it. Callers hold the stream's mu.
+// applyTopic sets the topic of the channel subscription s, or the wake
+// set of the inbox subscription s, after a replay that ran, with result
+// res. A 200 takes what its probe recorded; any other status clears it. A
+// replay that did not finish keeps it, so the next channel change still
+// replays s. Callers hold the stream's mu.
 func applyTopic(s *liveSub, res replayResult) {
-	if !s.channel || !res.ok {
+	if !res.ok {
+		return
+	}
+	if s.inbox {
+		s.wake = nil
+		if res.status == http.StatusOK {
+			s.wake = res.inbox
+		}
+		return
+	}
+	if !s.channel {
 		return
 	}
 	if res.status == http.StatusOK {

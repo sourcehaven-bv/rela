@@ -60,8 +60,8 @@ type Deps struct {
 
 // Service is the channel service.
 //
-// 40 -> 42 (TKT-2B2AIA): MarkRead and SubscribeReads, the read marker
-// entry points the transports call. Their helpers are free functions.
+// 40 -> 42 (TKT-2B2AIA): MarkRead and SubscribeLive (named SubscribeReads
+// until TKT-9YRRM5), the read marker entry points the transports call. Their helpers are free functions.
 // Ratchet target: TKT-N0IKN9.
 //
 //plimsoll:max-methods=42
@@ -149,9 +149,9 @@ func declaresPromote(c *realtimecfg.Compiled) bool {
 // Subscribe registers a live consumer of channel changes.
 func (s *Service) Subscribe() *Subscription { return s.local.Subscribe() }
 
-// SubscribeReads registers a live consumer that serves many readers: it
-// takes channel changes, and from TakeReads every reader's moved markers.
-func (s *Service) SubscribeReads() *Subscription { return s.local.SubscribeReads() }
+// SubscribeLive registers a live consumer that serves many readers; see
+// [Local.SubscribeLive].
+func (s *Service) SubscribeLive() *Subscription { return s.local.SubscribeLive() }
 
 // SubscribeAddressed registers a consumer that also takes the principal
 // keys each post or edit addressed; see [Local.SubscribeAddressed].
@@ -436,6 +436,11 @@ func (s *Service) Post(ctx context.Context, addr RawAddress, in PostInput) (Post
 		addressed = append(addressed, m.ReplyTarget)
 	}
 	s.local.markAddressed(addressed, c.key)
+	// The append moved the poster's marker (MarkRead), so the poster's
+	// inbox learns the channel even when it held no marker on it before.
+	if reader, ok := callReader(c); ok {
+		s.local.markFor(reader, c.key)
+	}
 	v := rendererWith(c, refs).message(m)
 	out := PostResult{Message: &v, Session: postedSession(c, sp.step)}
 	if plan.marked && sp.step.Outcome.Moved {
@@ -585,11 +590,11 @@ func (s *Service) postSignal(
 		at: c.now, expires: c.now.Add(ttl), props: vp.props, size: vp.size,
 	}
 	expired, err := s.local.ephemeral.add(c.key, sg, c.now)
-	s.local.mark(expired...)
+	s.local.markEphemeral(expired...)
 	if err != nil {
 		return PostResult{}, err
 	}
-	s.local.mark(c.key)
+	s.local.markEphemeral(c.key)
 	s.local.scheduleExpiry()
 	return PostResult{Ephemeral: true, ID: sg.id, ExpiresAt: sg.expires}, nil
 }
@@ -705,6 +710,10 @@ func (s *Service) Create(
 	}
 	s.dueWake.Note(ch.Session.NextDueAt)
 	s.local.mark(ch.Key)
+	// The create wrote the creator's marker at 0 (MarkRead).
+	if reader, ok := callReader(c); ok {
+		s.local.markFor(reader, ch.Key)
+	}
 	return c.channelView(ch.Key, &ch), nil
 }
 

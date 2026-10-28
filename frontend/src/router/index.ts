@@ -90,6 +90,11 @@ const routes: RouteRecordRaw[] = [
     component: () => import('@/views/SearchView.vue'),
   },
   {
+    path: '/inbox',
+    name: 'inbox',
+    component: () => import('@/views/InboxView.vue'),
+  },
+  {
     path: '/analyze',
     name: 'analyze',
     component: () => import('@/views/AnalyzeView.vue'),

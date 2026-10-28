@@ -10,7 +10,15 @@
     "showAll": "Alles tonen",
     "piles": "Stapels",
     "newPile": "Nieuwe stapel",
-    "newItem": "Nieuw: {label}"
+    "newItem": "Nieuw: {label}",
+    "inbox": "Inbox",
+    "inboxWaiting": "{n} wachtend | {n} wachtend",
+    "inboxMentions": "{n} vermelding | {n} vermeldingen",
+    "inboxUnread": "{n} ongelezen kanaal | {n} ongelezen kanalen"
+  },
+  "inbox": {
+    "title": "Inbox",
+    "loadError": "De inbox kon niet worden geladen."
   },
   "footer": {
     "settings": "Instellingen",

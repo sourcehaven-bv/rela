@@ -72,7 +72,7 @@ func (s *Service) Typing(ctx context.Context, addr RawAddress) (TypingResult, er
 	}
 	started, pruned, err := s.local.typing.touch(c.key, identity, authorOf(c.p), c.now)
 	if pruned || started {
-		s.local.mark(c.key)
+		s.local.markEphemeral(c.key)
 	}
 	if err != nil {
 		return TypingResult{}, err

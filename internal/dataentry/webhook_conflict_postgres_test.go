@@ -65,11 +65,11 @@ func openPGStore(t *testing.T, dsn string) store.Store {
 	return st
 }
 
-func conflictTestSchema(t *testing.T) (pool *pgxpool.Pool, dsn string) {
-	t.Helper()
+func conflictTestSchema(tb testing.TB) (pool *pgxpool.Pool, dsn string) {
+	tb.Helper()
 	base := os.Getenv("RELA_TEST_DATABASE_URL")
 	if base == "" {
-		t.Skip("RELA_TEST_DATABASE_URL not set; skipping webhook conflict tests")
+		tb.Skip("RELA_TEST_DATABASE_URL not set; skipping webhook conflict tests")
 	}
 
 	schema := fmt.Sprintf("relahook_%d_%d", os.Getpid(), conflictSchemaCounter.Add(1))
@@ -77,16 +77,16 @@ func conflictTestSchema(t *testing.T) (pool *pgxpool.Pool, dsn string) {
 	// Pin every connection from this DSN to the test schema. Keeping `public`
 	// on the path is what pg_trgm needs; the schema itself comes first so every
 	// unqualified table resolves inside the test's own namespace.
-	dsn = dsnWithSchema(t, base, schema)
+	dsn = dsnWithSchema(tb, base, schema)
 
-	ctx := t.Context()
+	ctx := tb.Context()
 	pool, err := pgxpool.New(ctx, dsn)
-	require.NoError(t, err)
+	require.NoError(tb, err)
 	_, err = pool.Exec(ctx, `CREATE SCHEMA IF NOT EXISTS "`+schema+`"`)
-	require.NoError(t, err)
-	require.NoError(t, pgstore.Migrate(ctx, pool))
+	require.NoError(tb, err)
+	require.NoError(tb, pgstore.Migrate(ctx, pool))
 
-	t.Cleanup(func() {
+	tb.Cleanup(func() {
 		_, _ = pool.Exec(context.Background(), `DROP SCHEMA "`+schema+`" CASCADE`)
 		pool.Close()
 	})

@@ -194,6 +194,8 @@ func (f *fakeChanges) Take() ([]channels.Key, bool) {
 	return nil, f.resync.Swap(false)
 }
 func (f *fakeChanges) TakeReads() map[channels.Reader][]channels.Key { return nil }
+func (f *fakeChanges) TakeDurable() []channels.Key                   { return nil }
+func (f *fakeChanges) TakeAddressed() []string                       { return nil }
 func (f *fakeChanges) Close()                                        {}
 
 // resync makes the worker's next tick a channel resync round.
@@ -323,6 +325,8 @@ func TestRoundFilter_Selects(t *testing.T) {
 	present := &liveSub{presenceID: "TKT-1", watching: "TKT-1"}
 	left := &liveSub{presenceID: "TKT-1", left: "TKT-1"}
 	plain := &liveSub{}
+	inbox := &liveSub{inbox: true, wake: &inboxWake{user: "alice"}}
+	unlearned := &liveSub{inbox: true}
 	for _, tc := range []struct {
 		name string
 		f    *roundFilter
@@ -342,6 +346,9 @@ func TestRoundFilter_Selects(t *testing.T) {
 		{"resync: head", resync, head, true},
 		{"resync: other channel", resync, other, true},
 		{"resync: plain", resync, plain, false},
+		{"resync: inbox with a wake set", resync, inbox, true},
+		{"resync: inbox without a wake set", resync, unlearned, false},
+		{"inbox on a plain channel change", byKey, inbox, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if got := tc.f.selects(tc.sub); got != tc.want {

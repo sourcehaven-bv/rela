@@ -32,6 +32,8 @@ export function useEntityChannels(
 ) {
   const types = shallowRef<ChannelTypeList[]>([])
   const error = shallowRef<unknown>(null)
+  /** Whether the current list has been answered, with rows or with an error. */
+  const loaded = shallowRef(false)
   let seq = 0
 
   const isLive = () => toValue(options.live) ?? true
@@ -48,10 +50,12 @@ export function useEntityChannels(
       if (mine !== seq) return
       types.value = res.types
       error.value = null
+      loaded.value = true
     } catch (err) {
       if (mine !== seq) return
       error.value = err
       if (shouldDropHeldContent(err)) types.value = []
+      loaded.value = true
     }
   }
 
@@ -65,6 +69,7 @@ export function useEntityChannels(
       // Another entity's channels must not linger while the new list loads.
       types.value = []
       error.value = null
+      loaded.value = false
       void refetch()
     },
     { immediate: true }
@@ -87,5 +92,5 @@ export function useEntityChannels(
     () => void refetch()
   )
 
-  return { types, error, refetch }
+  return { types, error, loaded, refetch }
 }

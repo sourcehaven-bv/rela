@@ -34,6 +34,7 @@ const (
 	outputsSchema         = "ChannelMessageOutputs"
 	outputResultSchema    = "ChannelMessageOutputResult"
 	inboxSchema           = "Inbox"
+	inboxSummarySchema    = "InboxSummary"
 	channelReadSchema     = "ChannelRead"
 	channelMarkReadSchema = "ChannelMarkRead"
 )
@@ -137,6 +138,7 @@ func (g *Generator) addChannelPaths(spec *Spec, rt *realtimecfg.Compiled, entity
 		return
 	}
 	addInboxPath(spec)
+	addInboxSummaryPath(spec)
 	added := false
 	for _, typeName := range entityTypes {
 		var cts []realtimecfg.ChannelType
@@ -962,4 +964,38 @@ func addInboxPath(spec *Spec) {
 		"mention_count": {Type: "integer",
 			Description: "How many such messages; on the first page only, when kinds includes mention or reply"},
 	}, []string{"notice", "degraded"})
+}
+
+// addInboxSummaryPath adds `GET /api/v1/_inbox/summary` and its schema. Like
+// the inbox route it answers 404 with realtime off, so it is documented
+// only while realtime is on.
+func addInboxSummaryPath(spec *Spec) {
+	b := BooleanSchema
+	errs := channelErrors("403")
+	errs["404"] = Response{Description: "Realtime is not enabled", Content: problemContent()}
+	errs["503"] = Response{
+		Description: "inbox_too_large: the inbox matches more channels than one answer judges; no counts are " +
+			"answered, because partial counts would read as complete",
+		Content: problemContent(),
+	}
+	spec.Paths["/api/v1/_inbox/summary"] = PathItem{
+		Get: &Operation{
+			OperationID: "getInboxSummary",
+			Summary:     "Count the sessions that wait on you, your unread channels and your mentions",
+			Description: "The counts of GET /api/v1/_inbox with its default parameters: waiting is count, " +
+				"waiting_truncated is truncated, unread_channels is unread_count and mentions is mention_count. " +
+				"The query string is ignored. Every row is gated and redacted before it is counted.",
+			Tags: []string{"System"},
+			Responses: withResponse(errs, "200",
+				Response{Description: "The inbox counts", Content: jsonContent(Ref(inboxSummarySchema))}),
+		},
+	}
+	spec.Components.Schemas[inboxSummarySchema] = ObjectSchema(map[string]*Schema{
+		"waiting": {Type: "integer", Description: "Sessions that wait on you"},
+		"waiting_truncated": {Type: "boolean",
+			Description: "More anchors named you than one inbox reads; waiting counts only those it read"},
+		"unread_channels": {Type: "integer", Description: "Channels you marked with unread messages"},
+		"mentions":        {Type: "integer", Description: "Unread messages that mention you or reply to yours"},
+		"degraded":        b(),
+	}, []string{"waiting", "waiting_truncated", "unread_channels", "mentions", "degraded"})
 }

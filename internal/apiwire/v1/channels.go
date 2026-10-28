@@ -536,6 +536,18 @@ type Inbox struct {
 	MentionCount *int           `json:"mention_count,omitempty"`
 }
 
+// InboxSummary is GET /api/v1/_inbox/summary: the counts of the default
+// first page of GET /api/v1/_inbox, for a badge. Waiting, WaitingTruncated,
+// UnreadChannels and Mentions are that page's count, truncated,
+// unread_count and mention_count; Degraded is its degraded.
+type InboxSummary struct {
+	Waiting          int  `json:"waiting"`
+	WaitingTruncated bool `json:"waiting_truncated"`
+	UnreadChannels   int  `json:"unread_channels"`
+	Mentions         int  `json:"mentions"`
+	Degraded         bool `json:"degraded"`
+}
+
 // InboxMention is one unread message that mentions the caller (Kind
 // "mention") or replies to the caller's message (Kind "reply"). It carries
 // no message text: Links.Message reads the message.

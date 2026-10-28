@@ -75,19 +75,19 @@ func connect(t *testing.T, srv *httptest.Server, lastEventID, query string) *sse
 }
 
 // openStream opens the stream at path on srv with the given request headers.
-func openStream(t *testing.T, srv *httptest.Server, path string, hdr http.Header) *sseClient {
-	t.Helper()
+func openStream(tb testing.TB, srv *httptest.Server, path string, hdr http.Header) *sseClient {
+	tb.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, srv.URL+path, http.NoBody)
 	if err != nil {
 		cancel()
-		t.Fatal(err)
+		tb.Fatal(err)
 	}
 	maps.Copy(req.Header, hdr)
 	resp, err := srv.Client().Do(req) //nolint:bodyclose // the reader goroutine and c.close close it
 	if err != nil {
 		cancel()
-		t.Fatal(err)
+		tb.Fatal(err)
 	}
 	frames := make(chan sseFrame, 64)
 	go func() {
@@ -113,7 +113,7 @@ func openStream(t *testing.T, srv *httptest.Server, path string, hdr http.Header
 		}
 	}()
 	c := &sseClient{frames: frames, close: func() { cancel(); _ = resp.Body.Close() }}
-	t.Cleanup(c.close)
+	tb.Cleanup(c.close)
 	return c
 }
 
@@ -122,30 +122,30 @@ func openStream(t *testing.T, srv *httptest.Server, path string, hdr http.Header
 const liveConnIDLen = 22
 
 // frameData decodes a frame's JSON object data.
-func frameData(t *testing.T, f sseFrame) map[string]string {
-	t.Helper()
+func frameData(tb testing.TB, f sseFrame) map[string]string {
+	tb.Helper()
 	var d map[string]string
 	if err := json.Unmarshal([]byte(f.data), &d); err != nil {
-		t.Fatalf("frame %+v: data is not a JSON object: %v", f, err)
+		tb.Fatalf("frame %+v: data is not a JSON object: %v", f, err)
 	}
 	return d
 }
 
 // next returns the next frame other than ping, failing after a second.
-func (c *sseClient) next(t *testing.T) sseFrame {
-	t.Helper()
+func (c *sseClient) next(tb testing.TB) sseFrame {
+	tb.Helper()
 	deadline := time.After(time.Second)
 	for {
 		select {
 		case f, ok := <-c.frames:
 			if !ok {
-				t.Fatal("stream ended")
+				tb.Fatal("stream ended")
 			}
 			if f.event != "ping" {
 				return f
 			}
 		case <-deadline:
-			t.Fatal("no frame within timeout")
+			tb.Fatal("no frame within timeout")
 		}
 	}
 }

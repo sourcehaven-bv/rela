@@ -101,3 +101,41 @@ export const OpenSeams: Story = {
     `,
   }),
 }
+
+/**
+ * The pinned Inbox entry with its badge, as rela shows it under Search. The
+ * badge counts what needs the user (waiting sessions plus mentions), in the
+ * warning tone while a session waits. Unread channels alone get a dot
+ * without a count.
+ */
+export const InboxBadge: Story = {
+  render: () => ({
+    components: { RlSidebar, RlSidebarNavItem },
+    setup: () => ({
+      groups: navGroups,
+      pinned: [
+        { id: 'search', label: 'Search', icon: 'search' },
+        {
+          id: 'inbox',
+          label: 'Inbox',
+          icon: 'inbox',
+          status: { tone: 'warning', label: '2 waiting, 1 mention', count: 3 },
+        },
+        { id: 'analysis', label: 'Analysis', icon: 'warning' },
+      ] as NavItem[],
+      onlyUnread: [
+        { id: 'inbox-dot', label: 'Inbox', icon: 'inbox', status: { tone: 'info', label: '3 unread channels' } },
+      ] as NavItem[],
+    }),
+    template: `
+      <div style="height:100vh; display:flex">
+        <RlSidebar :groups="groups" workspace-name="Atlas Projects" active-id="inbox">
+          <template #pinned>
+            <RlSidebarNavItem v-for="item in pinned" :key="item.id" :item="item" />
+            <RlSidebarNavItem v-for="item in onlyUnread" :key="item.id" :item="item" />
+          </template>
+        </RlSidebar>
+      </div>
+    `,
+  }),
+}

@@ -646,6 +646,29 @@ export interface Messages {
   editorCommand: (args: { id: string; label: string }) => string
   /** The tooltip of a toolbar button that cannot run where the cursor is. */
   commandUnavailable: (args: { label: string }) => string
+
+  /** The inbox section of sessions that wait on the user. */
+  inboxWaitingHeading: () => string
+  /** The inbox section of unread mentions and replies. */
+  inboxMentionsHeading: () => string
+  /** The inbox section of channels with unread messages. */
+  inboxUnreadHeading: () => string
+  /** The empty state of the waiting section. */
+  inboxWaitingEmpty: () => string
+  /** The empty state of the mentions section. */
+  inboxMentionsEmpty: () => string
+  /** The empty state of the unread section. */
+  inboxUnreadEmpty: () => string
+  /** A mention row: `Bob mentioned you`. */
+  inboxMentioned: (args: { author: string }) => string
+  /** A reply row: `Bob replied to you`. */
+  inboxReplied: (args: { author: string }) => string
+  /** The button that marks a row read. */
+  inboxMarkRead: () => string
+  /** The note under a cut-off waiting list. `total` is preformatted, such as `20000+`. */
+  inboxShowing: (args: { shown: number; total: string }) => string
+  /** The notice shown when the server could not load every channel setting. */
+  inboxDegraded: () => string
 }
 
 /** `a`, `a or b`, `a, b or c`. */
@@ -787,6 +810,19 @@ export const DEFAULT_MESSAGES: Messages = {
 
   editorCommand: ({ label }) => label,
   commandUnavailable: ({ label }) => `${label} (not available here)`,
+
+  inboxWaitingHeading: () => 'Waiting on you',
+  inboxMentionsHeading: () => 'Mentions and replies',
+  inboxUnreadHeading: () => 'Unread channels',
+  inboxWaitingEmpty: () => 'Nothing waits on you.',
+  inboxMentionsEmpty: () => 'No unread mentions or replies.',
+  inboxUnreadEmpty: () => 'All channels are read.',
+  inboxMentioned: ({ author }) => `${author} mentioned you`,
+  inboxReplied: ({ author }) => `${author} replied to you`,
+  inboxMarkRead: () => 'Mark read',
+  inboxShowing: ({ shown, total }) => `Showing ${shown} of ${total}`,
+  inboxDegraded: () =>
+    'Some channel settings could not be loaded. The list may be incomplete.',
 }
 
 const MessagesKey: InjectionKey<Messages> = Symbol('rl-messages')
