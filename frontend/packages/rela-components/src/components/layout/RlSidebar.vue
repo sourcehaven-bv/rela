@@ -75,7 +75,7 @@ const props = withDefaults(
   {
     workspaceMenu: true,
     flyoutId: null,
-    footerLabel: 'Help docs',
+    footerLabel: undefined,
     filterThreshold: 25,
     groupThreshold: 20,
     fallbackLabel: undefined,
@@ -273,7 +273,7 @@ watch(() => props.activeId, () => nextTick(revealActive))
     -->
     <footer class="rl-sidebar__footer">
       <slot name="footer">
-        <RlSidebarFooterLink :label="footerLabel" @click="emit('footerClick')" />
+        <RlSidebarFooterLink :label="footerLabel ?? messages.chromeText({ key: 'helpDocs' })" @click="emit('footerClick')" />
         <RlThemeToggle
           v-if="themeToggle"
           class="rl-sidebar__theme"

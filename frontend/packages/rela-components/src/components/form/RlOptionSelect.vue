@@ -22,6 +22,9 @@ import { nextTick, ref, useId, watch } from 'vue'
 import { useAnchoredPanel } from '../../composables/useAnchoredPanel'
 import { useOverlayStack } from '../../composables/useOverlayStack'
 import RlIcon from '../common/RlIcon.vue'
+import { useMessages } from '../../composables/useMessages'
+
+const messages = useMessages()
 
 const props = withDefaults(
   defineProps<{
@@ -53,7 +56,7 @@ const props = withDefaults(
   }>(),
   {
     modelValue: '',
-    placeholder: 'Select',
+    placeholder: undefined,
     disabled: false,
     isOptionDisabled: () => false,
     matchWidth: false,
@@ -229,7 +232,9 @@ defineExpose({ open: show, close: hide })
     >
       <span class="rl-option-select__value">
         <slot v-if="modelValue" name="option" :value="modelValue" :active="false" :selected="true" />
-        <span v-else class="rl-option-select__placeholder">{{ placeholder }}</span>
+        <span v-else class="rl-option-select__placeholder">{{
+          placeholder ?? messages.chromeText({ key: 'select' })
+        }}</span>
       </span>
       <RlIcon name="chevron-down" :size="14" class="rl-option-select__arrow" aria-hidden="true" />
     </button>

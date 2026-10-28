@@ -16,6 +16,9 @@ import {
 } from '../../composables/useOverlayStack'
 import RlHeading from '../common/RlHeading.vue'
 import RlIconButton from '../common/RlIconButton.vue'
+import { useMessages } from '../../composables/useMessages'
+
+const messages = useMessages()
 
 /*
  * The root is a Teleport, so Vue has no single element to fall attributes
@@ -146,7 +149,7 @@ watch(
           <RlIconButton
             v-if="showClose && !persistent"
             icon="x"
-            label="Close dialog"
+            :label="messages.chromeText({ key: 'closeDialog' })"
             class="rl-modal__close"
             @click="close"
           />

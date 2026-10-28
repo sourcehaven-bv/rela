@@ -1,13 +1,17 @@
 <script setup lang="ts">
 /** Indeterminate activity indicator, sized to sit inline with button text. */
+import { useMessages } from '../../composables/useMessages'
+
+const messages = useMessages()
+
 withDefaults(defineProps<{ size?: number; label?: string }>(), {
   size: 15,
-  label: 'Loading',
+  label: undefined,
 })
 </script>
 
 <template>
-  <span class="rl-spinner" role="status" :aria-label="label">
+  <span class="rl-spinner" role="status" :aria-label="label ?? messages.chromeText({ key: 'loading' })">
     <svg
       class="rl-spinner__svg"
       :width="size"

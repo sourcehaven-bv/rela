@@ -30,6 +30,9 @@
 import { computed, ref, onBeforeUnmount } from 'vue'
 import RlIconButton from '../common/RlIconButton.vue'
 import RlText from '../common/RlText.vue'
+import { useMessages } from '../../composables/useMessages'
+
+const messages = useMessages()
 
 const props = withDefaults(
   defineProps<{
@@ -78,8 +81,8 @@ const props = withDefaults(
     lineNumbers: false,
     maxLines: 0,
     copyable: true,
-    copyLabel: 'Copy code',
-    copiedLabel: 'Copied',
+    copyLabel: undefined,
+    copiedLabel: undefined,
   },
 )
 
@@ -176,12 +179,12 @@ async function copy() {
           class="rl-code-block__copied"
           role="status"
           aria-live="polite"
-          >{{ copiedLabel }}</span
+          >{{ copiedLabel ?? messages.chromeText({ key: 'copied' }) }}</span
         >
         <RlIconButton
           v-if="copyable && code !== undefined"
           :icon="copied ? 'check' : 'copy'"
-          :label="copyLabel"
+          :label="copyLabel ?? messages.chromeText({ key: 'copyCode' })"
           @click="copy"
         />
       </div>
@@ -199,7 +202,7 @@ async function copy() {
       :style="maxHeight ? { maxHeight } : undefined"
       :tabindex="maxLines > 0 ? 0 : undefined"
       :role="maxLines > 0 ? 'group' : undefined"
-      :aria-label="maxLines > 0 ? (title ?? language ?? 'Code') : undefined"
+      :aria-label="maxLines > 0 ? (title ?? language ?? messages.chromeText({ key: 'code' })) : undefined"
     ><code :class="language ? `language-${language}` : undefined"><slot><template v-if="lineNumbers"><span v-for="(line, index) in lines" :key="index" class="rl-code-block__line"><span class="rl-code-block__number" aria-hidden="true">{{ index + 1 }}</span><span class="rl-code-block__text">{{ line }}</span></span></template><template v-else>{{ code }}</template></slot></code></pre>
   </div>
 </template>

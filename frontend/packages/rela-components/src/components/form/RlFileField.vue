@@ -100,7 +100,7 @@ function readableSize(bytes: number): string {
       />
       <RlIcon name="upload" :size="20" class="rl-file__icon" aria-hidden="true" />
       <RlText size="sm" tone="muted">
-        Drop {{ multiple ? 'files' : 'a file' }} here, or click to choose
+        {{ messages.dropFiles({ multiple }) }}
       </RlText>
     </label>
 

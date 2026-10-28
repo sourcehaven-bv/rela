@@ -28,6 +28,9 @@
 import { computed } from 'vue'
 import RlToast from './RlToast.vue'
 import type { ToastMessage } from './types'
+import { useMessages } from '../../composables/useMessages'
+
+const messages = useMessages()
 
 const props = withDefaults(
   defineProps<{
@@ -49,7 +52,7 @@ const polite = computed(() => props.toasts.filter((t) => t.tone !== 'danger'))
       class="rl-toast-host"
       :class="`rl-toast-host--${placement}`"
       role="region"
-      aria-label="Notifications"
+      :aria-label="messages.chromeText({ key: 'notifications' })"
     >
       <!--
         Assertive first, so a failure is also the first thing reached when

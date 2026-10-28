@@ -1,8 +1,11 @@
 <script setup lang="ts">
 import RlIconButton from '../common/RlIconButton.vue'
+import { useMessages } from '../../composables/useMessages'
+
+const messages = useMessages()
 
 withDefaults(defineProps<{ shareLabel?: string; starred?: boolean }>(), {
-  shareLabel: 'Share',
+  shareLabel: undefined,
   starred: false,
 })
 
@@ -18,29 +21,29 @@ defineEmits<{
 </script>
 
 <template>
-  <header class="rl-doc-toolbar" aria-label="Document actions">
+  <header class="rl-doc-toolbar" :aria-label="messages.chromeText({ key: 'documentActions' })">
     <RlIconButton
       class="rl-doc-toolbar__nav-toggle"
       icon="menu"
-      label="Open navigation"
+      :label="messages.chromeText({ key: 'openNavigation' })"
       @click="$emit('openNav')"
     />
 
     <button type="button" class="rl-doc-toolbar__share" @click="$emit('share')">
-      {{ shareLabel }}
+      {{ shareLabel ?? messages.chromeText({ key: 'share' }) }}
     </button>
 
-    <RlIconButton icon="thumbs-up" label="Like" @click="$emit('like')" />
+    <RlIconButton icon="thumbs-up" :label="messages.chromeText({ key: 'like' })" @click="$emit('like')" />
     <RlIconButton
       icon="star"
-      label="Star"
+      :label="messages.chromeText({ key: 'star' })"
       :active="starred"
       :pressed="starred"
       @click="$emit('toggleStar')"
     />
-    <RlIconButton icon="link" label="Copy link" @click="$emit('copyLink')" />
-    <RlIconButton icon="paperclip" label="Attach file" @click="$emit('attach')" />
-    <RlIconButton icon="ellipsis" label="More options" @click="$emit('menu')" />
+    <RlIconButton icon="link" :label="messages.chromeText({ key: 'copyLink' })" @click="$emit('copyLink')" />
+    <RlIconButton icon="paperclip" :label="messages.chromeText({ key: 'attachFile' })" @click="$emit('attach')" />
+    <RlIconButton icon="ellipsis" :label="messages.chromeText({ key: 'moreOptions' })" @click="$emit('menu')" />
   </header>
 </template>
 

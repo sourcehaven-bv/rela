@@ -54,7 +54,7 @@ const props = withDefaults(
     /** Whether each column heading offers a collapse control. See `RlBoard`. */
     collapsible?: boolean
   }>(),
-  { showAddSection: true, addLabel: 'Add', showAdd: true, canMove: undefined, collapsible: false },
+  { showAddSection: true, addLabel: undefined, showAdd: true, canMove: undefined, collapsible: false },
 )
 
 const emit = defineEmits<{
@@ -195,7 +195,7 @@ const {
       <RlAddButton
         v-if="showAddSection"
         class="rl-swimlane-board__add-section"
-        label="Add section"
+        :label="messages.chromeText({ key: 'addSection' })"
         @click="emit('addSection')"
       />
     </div>

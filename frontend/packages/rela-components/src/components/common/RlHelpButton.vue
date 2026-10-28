@@ -13,9 +13,12 @@
  * fetched for a field. Fetching it here would make the library know where help
  * lives.
  */
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
 import RlIconButton from './RlIconButton.vue'
 import RlModal from '../overlay/RlModal.vue'
+import { useMessages } from '../../composables/useMessages'
+
+const messages = useMessages()
 
 const props = withDefaults(
   defineProps<{
@@ -29,11 +32,12 @@ const props = withDefaults(
     label?: string
     size?: 'sm' | 'md' | 'lg'
   }>(),
-  { title: 'Help', size: 'sm' },
+  { title: undefined, size: 'sm' },
 )
 
 const open = ref(false)
-const accessibleName = () => props.label ?? `Help: ${props.title}`
+const titleText = computed(() => props.title ?? messages.chromeText({ key: 'help' }))
+const accessibleName = () => props.label ?? `${messages.chromeText({ key: 'help' })}: ${titleText.value}`
 </script>
 
 <template>
@@ -45,7 +49,7 @@ const accessibleName = () => props.label ?? `Help: ${props.title}`
     @click="open = true"
   />
 
-  <RlModal :open="open" :title="title" :size="size" @close="open = false">
+  <RlModal :open="open" :title="titleText" :size="size" @close="open = false">
     <slot />
   </RlModal>
 </template>

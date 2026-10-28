@@ -20,6 +20,9 @@
  */
 import { computed, onBeforeUnmount, watch } from 'vue'
 import RlResizer from './RlResizer.vue'
+import { useMessages } from '../../composables/useMessages'
+
+const messages = useMessages()
 
 const props = withDefaults(
   defineProps<{
@@ -134,7 +137,7 @@ onBeforeUnmount(() => {
     <RlResizer
       v-if="resizable"
       class="rl-app-shell__resizer"
-      label="Resize sidebar"
+      :label="messages.chromeText({ key: 'resizeSidebar' })"
       :model-value="sidebarWidth as number"
       :min="sidebarMinWidth"
       :max="sidebarMaxWidth"

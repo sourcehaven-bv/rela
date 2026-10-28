@@ -23,6 +23,9 @@ import RlFieldShell from './RlFieldShell.vue'
 import RlIcon from '../common/RlIcon.vue'
 import RlText from '../common/RlText.vue'
 import type { SelectOption } from './types'
+import { useMessages } from '../../composables/useMessages'
+
+const messages = useMessages()
 
 const props = withDefaults(
   defineProps<{
@@ -63,7 +66,7 @@ const props = withDefaults(
     required: false,
     labelHidden: false,
     disabled: false,
-    placeholder: 'Select options',
+    placeholder: undefined,
     isOptionDisabled: () => false,
     variant: 'control',
   },
@@ -101,6 +104,10 @@ const { floatingStyles, containsTarget, panelHandlers } = useAnchoredPanel(root,
   // variant does not change over a component's life.
   matchWidth: props.variant === 'control',
 })
+
+const placeholderText = computed(
+  () => props.placeholder ?? messages.chromeText({ key: 'selectOptions' }),
+)
 
 const selected = computed(() =>
   props.modelValue
@@ -176,7 +183,7 @@ function onFocusout(event: FocusEvent) {
               </slot>
             </span>
           </template>
-          <RlText v-else size="md" tone="subtle">{{ placeholder }}</RlText>
+          <RlText v-else size="md" tone="subtle">{{ placeholderText }}</RlText>
         </span>
         <RlIcon name="chevron-down" :size="16" class="rl-multi__arrow" aria-hidden="true" />
       </button>
@@ -207,7 +214,7 @@ function onFocusout(event: FocusEvent) {
             </slot>
           </span>
         </template>
-        <RlText v-else size="md" tone="subtle">{{ placeholder }}</RlText>
+        <RlText v-else size="md" tone="subtle">{{ placeholderText }}</RlText>
       </span>
       <RlIcon name="chevron-down" :size="14" class="rl-multi__arrow" aria-hidden="true" />
     </button>

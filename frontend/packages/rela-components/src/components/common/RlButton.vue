@@ -9,6 +9,9 @@ import RlIcon from './RlIcon.vue'
 import RlSpinner from './RlSpinner.vue'
 import type { IconName } from './icons'
 import { useDelayedPending } from '../../composables/useDelayedPending'
+import { useMessages } from '../../composables/useMessages'
+
+const messages = useMessages()
 
 const props = withDefaults(
   defineProps<{
@@ -59,7 +62,7 @@ const props = withDefaults(
     tone: 'default',
     size: 'md',
     loading: false,
-    loadingLabel: 'Working',
+    loadingLabel: undefined,
     disabled: false,
     block: false,
     type: 'button',
@@ -190,10 +193,10 @@ function onKeydown(event: KeyboardEvent) {
       class="rl-button__spinner-slot"
       :style="spinnerSlotStyle"
     >
-      <RlSpinner v-if="showSpinner" :size="iconSize[size]" :label="loadingLabel" />
+      <RlSpinner v-if="showSpinner" :size="iconSize[size]" :label="loadingLabel ?? messages.chromeText({ key: 'working' })" />
     </span>
     <template v-else-if="!reservesSpinner">
-      <RlSpinner v-if="showSpinner" :size="iconSize[size]" :label="loadingLabel" />
+      <RlSpinner v-if="showSpinner" :size="iconSize[size]" :label="loadingLabel ?? messages.chromeText({ key: 'working' })" />
       <slot v-else name="icon">
         <RlIcon v-if="icon" :name="icon" :size="iconSize[size]" />
       </slot>
@@ -217,7 +220,7 @@ function onKeydown(event: KeyboardEvent) {
         :class="{ 'rl-button__label--hidden': !showPendingLabel }"
       >
         <span v-if="reservesSpinner" class="rl-button__spinner-slot" :style="spinnerSlotStyle">
-          <RlSpinner v-if="showSpinner" :size="iconSize[size]" :label="loadingLabel" />
+          <RlSpinner v-if="showSpinner" :size="iconSize[size]" :label="loadingLabel ?? messages.chromeText({ key: 'working' })" />
         </span>
         {{ pendingLabel }}
       </span>

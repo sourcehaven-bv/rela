@@ -17,6 +17,9 @@ import {
 } from '../../composables/useBoardDnd'
 import { useBoardKeyboardMove } from './useBoardKeyboardMove'
 import { useSectionToggleFocus } from './useSectionToggleFocus'
+import { useMessages } from '../../composables/useMessages'
+
+const messages = useMessages()
 
 const props = withDefaults(
   defineProps<{
@@ -66,7 +69,7 @@ const props = withDefaults(
     reorder: false,
     collapsible: false,
     showAddSection: true,
-    addLabel: 'Add',
+    addLabel: undefined,
     showAdd: true,
     canMove: undefined,
     emptyLabel: undefined,
@@ -179,7 +182,7 @@ defineSlots<{
     <RlAddButton
       v-if="showAddSection"
       class="rl-board__add-section"
-      label="Add section"
+      :label="messages.chromeText({ key: 'addSection' })"
       @click="emit('addSection')"
     />
 

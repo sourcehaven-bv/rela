@@ -9,11 +9,14 @@
  * Built on RlModal, so the scrim, focus trap, scroll lock and overlay stack
  * are the shared ones rather than a second copy.
  */
-import { nextTick, ref, watch } from 'vue'
+import { computed, nextTick, ref, watch } from 'vue'
 import RlModal from '../overlay/RlModal.vue'
 import RlButton from './RlButton.vue'
 import RlButtonGroup from './RlButtonGroup.vue'
 import RlText from './RlText.vue'
+import { useMessages } from '../../composables/useMessages'
+
+const messages = useMessages()
 
 const props = withDefaults(
   defineProps<{
@@ -28,14 +31,17 @@ const props = withDefaults(
     confirming?: boolean
   }>(),
   {
-    confirmLabel: 'Delete',
-    cancelLabel: 'Cancel',
+    confirmLabel: undefined,
+    cancelLabel: undefined,
     tone: 'danger',
     confirming: false,
   },
 )
 
 const emit = defineEmits<{ confirm: []; cancel: [] }>()
+
+const confirmText = computed(() => props.confirmLabel ?? messages.chromeText({ key: 'delete' }))
+const cancelText = computed(() => props.cancelLabel ?? messages.chromeText({ key: 'cancel' }))
 
 const cancelButton = ref<InstanceType<typeof RlButton> | null>(null)
 
@@ -77,16 +83,16 @@ watch(
     <template #actions>
       <RlButtonGroup class="rl-confirm-dialog__actions" :stacked="false">
         <RlButton ref="cancelButton" variant="secondary" @click="cancel">
-          {{ cancelLabel }}
+          {{ cancelText }}
         </RlButton>
         <RlButton
           variant="primary"
           :tone="tone"
           :loading="confirming"
-          :loading-label="`${confirmLabel} in progress`"
+          :loading-label="messages.inProgress({ label: confirmText })"
           @click="emit('confirm')"
         >
-          {{ confirmLabel }}
+          {{ confirmText }}
         </RlButton>
       </RlButtonGroup>
     </template>

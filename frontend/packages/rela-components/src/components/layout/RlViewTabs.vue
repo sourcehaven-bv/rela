@@ -27,6 +27,9 @@
 import type { Component } from 'vue'
 import RlIcon from '../common/RlIcon.vue'
 import type { IconName } from '../common/icons'
+import { useMessages } from '../../composables/useMessages'
+
+const messages = useMessages()
 
 export interface ViewTab {
   id: string
@@ -94,7 +97,7 @@ function move(event: KeyboardEvent, delta: number) {
 <template>
   <div class="rl-view-tabs">
     <!-- Only tabs may live inside a tablist, so "Add" sits outside it. -->
-    <div class="rl-view-tabs__list" role="tablist" aria-label="View">
+    <div class="rl-view-tabs__list" role="tablist" :aria-label="messages.chromeText({ key: 'view' })">
       <!--
         `data-tab-id` is how the arrow keys find the tab to focus. Needed
         because a tab may be a router link, whose rendered element this
@@ -123,7 +126,7 @@ function move(event: KeyboardEvent, delta: number) {
 
     <button v-if="showAdd" type="button" class="rl-view-tab rl-view-tab--add" @click="emit('add')">
       <RlIcon name="plus" :size="15" />
-      Add
+      {{ messages.chromeText({ key: 'add' }) }}
     </button>
   </div>
 </template>

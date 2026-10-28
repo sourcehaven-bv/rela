@@ -14,6 +14,9 @@
  */
 import { computed, type Component } from 'vue'
 import RlIcon from '../common/RlIcon.vue'
+import { useMessages } from '../../composables/useMessages'
+
+const messages = useMessages()
 
 const props = withDefaults(
   defineProps<{
@@ -42,7 +45,7 @@ const props = withDefaults(
      */
     as?: 'button' | 'a' | Component
   }>(),
-  { label: 'Back' },
+  { label: undefined },
 )
 
 /*
@@ -93,7 +96,7 @@ function onClick(event: MouseEvent) {
   >
     <!-- The arrow is decorative: the label already says this goes back. -->
     <RlIcon name="arrow-left" :size="14" aria-hidden="true" />
-    <span>{{ label }}</span>
+    <span>{{ label ?? messages.chromeText({ key: 'back' }) }}</span>
   </component>
 </template>
 

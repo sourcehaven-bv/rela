@@ -19,6 +19,9 @@ import {
   type BoardDragData,
   type BoardDropPosition,
 } from '../../composables/useBoardDnd'
+import { useMessages } from '../../composables/useMessages'
+
+const messages = useMessages()
 
 const props = withDefaults(
   defineProps<{
@@ -182,7 +185,7 @@ function onRelease() {
     <RlAddButton
       v-if="showAdd"
       class="rl-board-column__add"
-      :label="addLabel ?? 'Add'"
+      :label="addLabel ?? messages.chromeText({ key: 'add' })"
       @click="emit('add', section)"
     />
   </section>

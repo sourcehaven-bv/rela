@@ -12,6 +12,9 @@ import type { Attachment, AttachmentKind } from '../../types'
 import type { IconName } from '../common/icons'
 import RlIcon from '../common/RlIcon.vue'
 import RlIconButton from '../common/RlIconButton.vue'
+import { useMessages } from '../../composables/useMessages'
+
+const messages = useMessages()
 
 const props = withDefaults(
   defineProps<{
@@ -25,13 +28,13 @@ const props = withDefaults(
 )
 const emit = defineEmits<{ click: [attachment: Attachment]; remove: [attachment: Attachment] }>()
 
-const kindLabel: Record<AttachmentKind, string> = {
+const kindLabel = computed<Record<AttachmentKind, string>>(() => ({
   pdf: 'PDF',
   doc: 'DOC',
-  sheet: 'SHEET',
-  image: 'IMAGE',
-  other: 'FILE',
-}
+  sheet: messages.chromeText({ key: 'fileKindSheet' }),
+  image: messages.chromeText({ key: 'fileKindImage' }),
+  other: messages.chromeText({ key: 'fileKindOther' }),
+}))
 
 const kindIcon: Record<AttachmentKind, IconName> = {
   pdf: 'file',
@@ -41,7 +44,9 @@ const kindIcon: Record<AttachmentKind, IconName> = {
   other: 'file',
 }
 
-const action = computed(() => props.attachment.action ?? (props.attachment.href ? 'Download' : undefined))
+const action = computed(
+  () => props.attachment.action ?? (props.attachment.href ? messages.chromeText({ key: 'download' }) : undefined),
+)
 </script>
 
 <template>
@@ -81,7 +86,7 @@ const action = computed(() => props.attachment.action ?? (props.attachment.href 
       icon="x"
       tone="danger"
       :size="16"
-      :label="`Remove ${attachment.name}`"
+      :label="messages.removeFile({ name: attachment.name })"
       :disabled="busy"
       @click="emit('remove', attachment)"
     />

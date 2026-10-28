@@ -15,6 +15,9 @@ import RlText from '../common/RlText.vue'
 import RlAttachmentCard from './RlAttachmentCard.vue'
 import RlAttachmentList from './RlAttachmentList.vue'
 import RlSubtaskRow from './RlSubtaskRow.vue'
+import { useMessages } from '../../composables/useMessages'
+
+const messages = useMessages()
 
 withDefaults(
   defineProps<{
@@ -37,7 +40,7 @@ withDefaults(
     attachments: () => [],
     subtasks: () => [],
     showEmptyFieldsToggle: true,
-    emptyFieldsLabel: 'Show empty fields',
+    emptyFieldsLabel: undefined,
     editableFields: false,
     statusOptions: () => [],
     tagOptions: () => [],
@@ -85,7 +88,7 @@ const emit = defineEmits<{
 
     <div v-if="showEmptyFieldsToggle" class="rl-task-detail__divider">
       <button type="button" class="rl-task-detail__divider-button" @click="emit('toggleEmptyFields')">
-        {{ emptyFieldsLabel }}
+        {{ emptyFieldsLabel ?? messages.chromeText({ key: 'showEmptyFields' }) }}
       </button>
     </div>
 
@@ -97,7 +100,7 @@ const emit = defineEmits<{
         tone="muted"
         line-height="normal"
         class="rl-task-detail__section-title"
-      >Description</RlHeading>
+      >{{ messages.chromeText({ key: 'description' }) }}</RlHeading>
       <RlText
         v-for="(paragraph, index) in description"
         :key="index"
@@ -118,7 +121,7 @@ const emit = defineEmits<{
         line-height="normal"
         class="rl-task-detail__section-title"
       >
-        Attachements <RlText size="md" tone="subtle">&middot; {{ attachments.length }}</RlText>
+        {{ messages.chromeText({ key: 'attachments' }) }} <RlText size="md" tone="subtle">&middot; {{ attachments.length }}</RlText>
       </RlHeading>
       <RlAttachmentList>
         <RlAttachmentCard
@@ -139,7 +142,7 @@ const emit = defineEmits<{
         line-height="normal"
         class="rl-task-detail__section-title"
       >
-        Subtasks <RlText size="md" tone="subtle">&middot; {{ subtasks.length }}</RlText>
+        {{ messages.chromeText({ key: 'subtasksHeading' }) }} <RlText size="md" tone="subtle">&middot; {{ subtasks.length }}</RlText>
       </RlHeading>
       <div class="rl-task-detail__subtasks">
         <RlSubtaskRow

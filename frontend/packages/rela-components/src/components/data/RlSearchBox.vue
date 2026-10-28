@@ -10,6 +10,9 @@
 import { onBeforeUnmount, ref, watch } from 'vue'
 import RlIcon from '../common/RlIcon.vue'
 import RlIconButton from '../common/RlIconButton.vue'
+import { useMessages } from '../../composables/useMessages'
+
+const messages = useMessages()
 
 const props = withDefaults(
   defineProps<{
@@ -25,8 +28,8 @@ const props = withDefaults(
   }>(),
   {
     modelValue: '',
-    label: 'Search',
-    placeholder: 'Search',
+    label: undefined,
+    placeholder: undefined,
     debounce: 250,
     size: 'md',
     disabled: false,
@@ -96,8 +99,8 @@ defineExpose({ focus: () => input.value?.focus() })
       class="rl-control rl-search__input"
       :class="size === 'sm' && 'rl-control--sm'"
       :value="draft"
-      :placeholder="placeholder"
-      :aria-label="label"
+      :placeholder="placeholder ?? messages.chromeText({ key: 'search' })"
+      :aria-label="label ?? messages.chromeText({ key: 'search' })"
       :disabled="disabled"
       @input="onInput"
       @keydown.enter.prevent="commit(draft)"
@@ -107,7 +110,7 @@ defineExpose({ focus: () => input.value?.focus() })
     <RlIconButton
       v-if="draft"
       icon="x"
-      label="Clear search"
+      :label="messages.chromeText({ key: 'clearSearch' })"
       :size="14"
       class="rl-search__clear"
       @click="clear"
