@@ -54,14 +54,16 @@ func (s *Store) AttachFamilyFile(ctx context.Context, entityID, property, fileNa
 	// way a separate SELECT-then-INSERT could. A faced id has one row per
 	// face; LIMIT 1 makes any face count as existence exactly once.
 	const q = `
-		INSERT INTO attachments (entity_id, property, file_name, data, size, updated_at)
-		SELECT id, ?, ?, ?, ?, ? FROM entities WHERE id = ? LIMIT 1
+		INSERT INTO attachments (entity_id, property, file_name, data, size, sha256, updated_at)
+		SELECT id, ?, ?, ?, ?, ?, ? FROM entities WHERE id = ? LIMIT 1
 		ON CONFLICT (entity_id, property, file_name)
 		DO UPDATE SET data = excluded.data,
 		              size = excluded.size,
+		              sha256 = excluded.sha256,
 		              updated_at = excluded.updated_at`
 	res, err := s.q().ExecContext(ctx, q,
-		property, fileName, data, int64(len(data)), sqlitedb.FormatTime(time.Now()), entityID)
+		property, fileName, data, int64(len(data)), store.HashAttachment(data),
+		sqlitedb.FormatTime(time.Now()), entityID)
 	if err != nil {
 		return fmt.Errorf("sqlitestore: attach %q to %s: %w", fileName, entityID, err)
 	}
@@ -130,7 +132,7 @@ func (s *Store) ListFamilyAttachments(ctx context.Context, entityID string) ([]s
 	// ContentType is deliberately left zero: it is never written (no column
 	// holds it), because the service layer derives content type from the file
 	// name. This matches pgstore, where the column exists but stays ''.
-	const q = `SELECT property, file_name, size FROM attachments
+	const q = `SELECT property, file_name, size, sha256 FROM attachments
 	           WHERE entity_id = ? ORDER BY property ASC, file_name ASC`
 	rows, err := s.q().QueryContext(ctx, q, entityID)
 	if err != nil {
@@ -141,7 +143,7 @@ func (s *Store) ListFamilyAttachments(ctx context.Context, entityID string) ([]s
 	var result []store.AttachmentInfo
 	for rows.Next() {
 		info := store.AttachmentInfo{EntityID: entityID}
-		if err := rows.Scan(&info.Property, &info.FileName, &info.Size); err != nil {
+		if err := rows.Scan(&info.Property, &info.FileName, &info.Size, &info.SHA256); err != nil {
 			return nil, fmt.Errorf("sqlitestore: scan attachment for %s: %w", entityID, err)
 		}
 		result = append(result, info)

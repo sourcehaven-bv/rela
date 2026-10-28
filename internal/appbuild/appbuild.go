@@ -276,6 +276,10 @@ type Services struct {
 	// finishAssembly over entityManager. See [VersionTags].
 	versionTags *entitymanager.VersionTags
 
+	// attachRender backs rela.attach_render for the scripts these services
+	// run (TKT-1TS55R), built in finishAssembly. See [SetAttachRenderer].
+	attachRender *attachRenderHolder
+
 	// tokens is the connector token broker, or why there is none
 	// (TKT-01KZSO). See [Tokens].
 	tokens tokenSetup
@@ -717,6 +721,7 @@ func (s *Services) LuaWriteDeps() lua.WriteDeps {
 		PileWriter:    pileWriterFor(s.piles),
 		VersionTags:   ScriptVersionTags(s),
 		OAuth:         ScriptOAuth(s),
+		AttachRender:  s.attachRender,
 	}
 }
 
@@ -732,6 +737,7 @@ func (s *Services) luaWriteDepsFor(redactor visibility.FieldRedactor) lua.WriteD
 		PileWriter:    pileWriterFor(s.piles),
 		VersionTags:   ScriptVersionTags(s),
 		OAuth:         ScriptOAuth(s),
+		AttachRender:  s.attachRender,
 	}
 }
 
@@ -1305,6 +1311,7 @@ func NewFromCollaborators(c Collaborators) (*Services, error) {
 		channelService: refs.channelService,
 		realtimeLocal:  refs.realtimeLocal,
 		dueWake:        refs.dueWake,
+		attachRender:   &attachRenderHolder{},
 	}, nil
 }
 
@@ -2893,6 +2900,7 @@ func finishAssembly(
 		return nil, err
 	}
 	s.versionTags = tags
+	s.attachRender = &attachRenderHolder{}
 	if bindErr := autoJobs.bind(servicesJobRunner{s}, engine); bindErr != nil {
 		return nil, bindErr
 	}

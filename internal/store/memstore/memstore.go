@@ -118,6 +118,7 @@ type attachment struct {
 	property string
 	fileName string
 	data     []byte
+	sha256   string
 }
 
 // New creates a new in-memory store.
@@ -1183,6 +1184,7 @@ func (m *MemStore) attachFile(_ context.Context, entityID, property, fileName st
 		property: property,
 		fileName: fileName,
 		data:     data,
+		sha256:   store.HashAttachment(data),
 	}
 	return nil
 }
@@ -1226,6 +1228,7 @@ func (m *MemStore) ListFamilyAttachments(_ context.Context, entityID string) ([]
 				Property: a.property,
 				FileName: a.fileName,
 				Size:     int64(len(a.data)),
+				SHA256:   a.sha256,
 			})
 		}
 	}

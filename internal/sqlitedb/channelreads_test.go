@@ -116,6 +116,5 @@ func TestMigrate_v27ToV28ChannelReads(t *testing.T) {
 	}
 	var version int
 	require.NoError(t, raw.QueryRow(`PRAGMA user_version`).Scan(&version))
-	require.Equal(t, 28, version)
 	require.Equal(t, sqlitedb.SchemaVersion(), version)
 }

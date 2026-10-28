@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strings"
 
 	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
@@ -37,18 +38,31 @@ func (h *exportHandler) handleV1ExportList(w http.ResponseWriter, r *http.Reques
 		writeV1Error(w, r, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed", "")
 		return
 	}
-	ctx := r.Context()
-	query := r.URL.Query()
-
 	name, reg, ok := h.resolveTransform(w, r)
 	if !ok {
 		return
 	}
+	renderer, err := h.listExportRenderer(r.Context(), typeName, r.URL.Query())
+	if err != nil {
+		writeListPipelineError(w, r, err)
+		return
+	}
+	h.convertAndWrite(w, r, reg, name, renderer, typeName+"-list", "type", typeName)
+}
 
+// listExportRenderer is the list export pipeline without the response: the
+// WHOLE ACL-scoped, filtered and conditioned set of typeName for query,
+// field-redacted, capped, and wrapped in the list's renderer. The export
+// route and rela.attach_render share it. An error is one
+// [writeListPipelineError] answers.
+func (h *exportHandler) listExportRenderer(
+	ctx context.Context, typeName string, query map[string][]string,
+) (transform.Renderer, error) {
+	q := url.Values(query)
 	// Resolve the effective list ONCE and derive both the columns and the
 	// render override from it — see resolveEffectiveList for why these must
 	// not be looked up independently.
-	effListID, effList, haveList := h.resolveEffectiveList(query.Get("list"), typeName)
+	effListID, effList, haveList := h.resolveEffectiveList(q.Get("list"), typeName)
 	columns := listColumnsOf(effList, haveList)
 
 	// The WHOLE ACL-scoped, filtered, sorted set — pre-pagination. Reuses the
@@ -58,8 +72,7 @@ func (h *exportHandler) handleV1ExportList(w http.ResponseWriter, r *http.Reques
 	// layer above this shared path.
 	entities, err := h.scopedEntities(ctx, typeName, query)
 	if err != nil {
-		writeListPipelineError(w, r, err)
-		return
+		return nil, err
 	}
 	// The list's `condition:` is applied in listPage, ABOVE the shared read
 	// path above, so it has to be applied here too — otherwise the export
@@ -75,13 +88,11 @@ func (h *exportHandler) handleV1ExportList(w http.ResponseWriter, r *http.Reques
 		// Without this the export 500s on exactly the per-user views the
 		// condition syntax exists to express.
 		if ctx, err = h.bindConditionIdentity(ctx, typeName, query); err != nil {
-			writeListPipelineError(w, r, err)
-			return
+			return nil, err
 		}
 		ctx = visibility.PrimeTraversals(ctx, h.redactor, entities)
 		if entities, err = applyViewCondition(ctx, entities, cond, h.redactForCondition, h.store); err != nil {
-			writeListPipelineError(w, r, err)
-			return
+			return nil, err
 		}
 	}
 	// Field-redact every row through the visibility seam before any cell is
@@ -115,15 +126,14 @@ func (h *exportHandler) handleV1ExportList(w http.ResponseWriter, r *http.Reques
 		// away. See the loadBodies field for why the failure it fixes is
 		// silent rather than loud.
 		if err := h.loadBodies(ctx, entities); err != nil {
-			writeListPipelineError(w, r, fmt.Errorf("%w: %w", errListLoad, err))
-			return
+			return nil, fmt.Errorf("%w: %w", errListLoad, err)
 		}
 		renderer = h.listOverrideRenderer(listOverride{
 			listID: effListID, script: effList.ExportRender, typeName: typeName,
 			rows: entities, total: total, query: query,
 		})
 	}
-	h.convertAndWrite(w, r, reg, name, renderer, typeName+"-list", "type", typeName)
+	return renderer, nil
 }
 
 // listOverride is what rendering a list THROUGH A SCRIPT needs: which list,

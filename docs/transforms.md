@@ -126,6 +126,38 @@ transform **name** — never a command, flag, path, or renderer.
 > so an exported document exposes precisely what its rendered counterpart does,
 > no more and no less.
 
+### Attaching an export to an entity
+
+A Lua script can store an export as an attachment with `rela.attach_render`.
+It renders a document or a list, converts it with a registered transform, and
+writes the file to a `file` property of an entity:
+
+```lua
+local att, err = rela.attach_render{
+  entity = entity.id, property = "report",
+  document = "audit_report", entry = entity.id,
+  format = "pdf", filename = "audit-report",
+}
+```
+
+The render passes the same gates as the export routes above, as the script's
+principal: the entity read gate, the document's `permission:`, and the list's
+own filters and scope. An elevated document (`allow_acl_bypass`) is refused,
+because its output is not bounded by the principal's reads. The file is then
+written like an upload: it needs `update` on the target entity, and the
+property's MIME rules and scanner apply. The returned table carries the
+SHA-256 hash of the stored bytes. `format = "md"` stores the markdown without
+a conversion.
+
+The file can be downloaded by everyone who can read the target entity, and
+that may be more people than the principal that rendered it. In a background
+automation the principal is the action's `run_as` identity, and in a schedule
+the task's identity, not the user who triggered it.
+
+The conversion runs in the same confined runner and shared pool as an export.
+See the [Lua scripting guide](lua-scripting.md#attach-a-rendered-document-relaattach_render)
+for the full contract.
+
 ### Custom per-entity rendering
 
 The built-in entity renderer emits the title as an H1, the properties as a

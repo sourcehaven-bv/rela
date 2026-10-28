@@ -399,6 +399,7 @@ CREATE TABLE IF NOT EXISTS attachments (
 	data       BLOB NOT NULL,
 	size       INTEGER NOT NULL,
 	updated_at TEXT NOT NULL,
+	sha256     TEXT NOT NULL DEFAULT '',
 	PRIMARY KEY (entity_id, property, file_name)
 ) STRICT;
 CREATE INDEX IF NOT EXISTS attachments_entity_idx ON attachments(entity_id);

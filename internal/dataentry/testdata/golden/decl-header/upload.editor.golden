@@ -50,6 +50,7 @@ body:
         "filename": "new.txt",
         "size": 8,
         "contentType": "text/plain; charset=utf-8",
+        "sha256": "228776796705d84c8094cf2ea04d86e7637c73cfeebccc0c2e68a6b28dc66789",
         "href": "/api/v1/tickets/TKT-3/_attachments/screenshot/new.txt"
       }
     ]

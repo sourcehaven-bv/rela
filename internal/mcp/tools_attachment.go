@@ -340,6 +340,7 @@ type attachmentListing struct {
 	FileName    string `json:"file_name"`
 	ContentType string `json:"content_type"`
 	Size        int64  `json:"size"`
+	SHA256      string `json:"sha256,omitempty"`
 }
 
 func (h attachmentHandler) handleListAttachments(
@@ -376,6 +377,7 @@ func (h attachmentHandler) handleListAttachments(
 		}
 		out = append(out, attachmentListing{
 			Property: info.Property, FileName: info.FileName, ContentType: info.ContentType, Size: info.Size,
+			SHA256: info.SHA256,
 		})
 	}
 	sort.Slice(out, func(i, j int) bool {

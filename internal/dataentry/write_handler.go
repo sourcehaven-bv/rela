@@ -157,6 +157,11 @@ type writeHandler struct {
 	// (TKT-01KZSO), kept out of luaDeps for the same reason as versionTags.
 	// Nil, or returning nil: rela.oauth reports not_configured.
 	oauth func() lua.OAuthTokens
+	// attachRender backs rela.attach_render in an action script
+	// (TKT-1TS55R), kept out of luaDeps for the same reason as versionTags:
+	// a document render must not render and attach another. Nil, or
+	// returning nil: the binding is absent.
+	attachRender func() lua.AttachRenderer
 
 	// visible is the read path's resolver. Every addressed write resolves its
 	// row through it first, so a row the caller may not read, at any face, is

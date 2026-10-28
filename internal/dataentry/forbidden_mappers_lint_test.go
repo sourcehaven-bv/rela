@@ -25,6 +25,8 @@ func TestForbiddenMappersHandleIdentityFaults(t *testing.T) {
 		"settings_handlers.go": "defines writeIdentityFaultDeny and writeForbiddenIfACLDenied",
 		"caldav_write.go": "CalDAV answers WebDAV statuses on its own edge; a denied create is " +
 			"the uniform not-found there, which a 401 would not improve",
+		"attach_render.go": "turns a refusal into a Lua script's error message, not an HTTP " +
+			"status; the script's own request answers the status",
 	}
 
 	files, err := filepath.Glob("*.go")

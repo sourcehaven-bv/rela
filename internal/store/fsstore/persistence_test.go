@@ -397,3 +397,35 @@ func TestPersistence_RenameSurvivedReopen(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "REQ-NEW", rel.To)
 }
+
+// TestPersistence_AttachmentHashAfterReopen: a file present when the store
+// opens has no hash in the index (opening only stats); the first list
+// hashes it. A file changed on disk behind the store reports the hash of
+// its new bytes (TKT-1TS55R).
+func TestPersistence_AttachmentHashAfterReopen(t *testing.T) {
+	fs := storage.NewMemFS()
+	ctx := context.Background()
+
+	s1 := openStore(t, fs)
+	require.NoError(t, s1.CreateEntity(ctx, entity.New("DOC-1", "document")))
+	require.NoError(t, s1.AttachFamilyFile(ctx, "DOC-1", "spec", "a.txt", strings.NewReader("abc")))
+	require.NoError(t, s1.Close())
+
+	s2 := openStore(t, fs)
+	defer s2.Close()
+	hash := func() (string, int64) {
+		t.Helper()
+		infos, err := s2.ListFamilyAttachments(ctx, "DOC-1")
+		require.NoError(t, err)
+		require.Len(t, infos, 1)
+		return infos[0].SHA256, infos[0].Size
+	}
+	sum, size := hash()
+	assert.Equal(t, store.HashAttachment([]byte("abc")), sum)
+	assert.Equal(t, int64(3), size)
+
+	require.NoError(t, fs.WriteFileExternal("/attachments/DOC-1/spec/a.txt", []byte("abcdef"), 0o644))
+	sum, size = hash()
+	assert.Equal(t, store.HashAttachment([]byte("abcdef")), sum, "a file changed on disk is hashed again")
+	assert.Equal(t, int64(6), size)
+}

@@ -180,20 +180,16 @@ func (h *attachmentHandler) handleV1PutAttachment(
 	// Delegate the cap / suffix / write-order / re-stamp policy to the
 	// shared attachment service so the HTTP and CLI paths apply identical
 	// rules (and the same data-loss-safe attach-then-delete ordering).
-	// Cap the reader at the configured limit (which clamps ≤ the store
+	// The reader is capped at the configured limit (which clamps ≤ the store
 	// backstop) so an under-declared multipart part still can't exceed it.
-	svc, err := h.attachmentService(s)
-	if err != nil {
+	written, err := h.storeUpload(ctx, s, entity, property, upload.fileName, upload.body, limit)
+	if errors.Is(err, errAttachmentServiceUnavailable) {
 		slog.Warn("dataentry: attachment service unavailable", "err", err)
 		writeV1Error(w, r, http.StatusInternalServerError, "attachment_write_failed",
 			"Writing the attachment failed", "check server logs")
 		return
 	}
-	propDef := filePropertyDef(s, typeName, property)
-	capped := store.CapAttachmentReader(upload.body, limit)
-	written, err := svc.WriteAttachment(ctx, entity, propDef, property, upload.fileName, capped)
 	if err != nil {
-		h.auditRejectedUpload(ctx, entity, property, upload.fileName, err)
 		writeAttachmentWriteError(w, r, limit, err)
 		return
 	}
@@ -649,32 +645,62 @@ func (h *attachmentHandler) handleV1DeleteAttachment(
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// attachmentWritePreflight runs the shared front matter for an attachment
-// write: resolve the face the address names, as every content write does
-// ([writeTargetOr404]: uniform 404, `face_required` for a bare id on a faced
-// type), validate the property is a declared `file` type, reject a locked
-// (inaccessible) entity, and authorize the `update` write on that face UP
-// FRONT so a deny never reaches the store. Returns the raw face and true
-// when the write may proceed.
+// errEntityLocked is the refusal [attachmentHandler.attachmentWriteCheck]
+// reports for a git-crypt encrypted entity.
+var errEntityLocked = errors.New("cannot edit an inaccessible entity")
+
+// attachmentWritePreflight runs [attachmentHandler.attachmentWriteCheck] and
+// writes the response for a refusal. Returns the raw face and true when the
+// write may proceed.
 func (h *attachmentHandler) attachmentWritePreflight(
 	w http.ResponseWriter, r *http.Request, s *Schema, typeName, addr, property string,
 ) (*entityPkg.Entity, bool) {
-	ctx := r.Context()
-
-	// Read first: a hidden, denied or nonexistent face yields a uniform 404
-	// (RR-NGMI), the same as the read path.
-	entity, found := writeTargetOr404(w, r, h.visible, typeName, addr)
-	if !found {
-		return nil, false
+	entity, err := h.attachmentWriteCheck(r.Context(), s, typeName, addr, property)
+	if err == nil {
+		return entity, true
 	}
-	if !isFileProperty(s, typeName, property) || h.isPropertyHidden(ctx, entity, property) {
-		writeV1Error(w, r, http.StatusNotFound, "not_found", entityNotFoundTitle, "")
-		return nil, false
-	}
-	if entity.IsLocked() {
+	var denial AffordanceDenialError
+	switch {
+	case errors.Is(err, errEntityLocked):
 		writeV1Error(w, r, http.StatusUnprocessableEntity, "encrypted_inaccessible",
 			"Cannot edit an inaccessible entity", "File is git-crypt encrypted; run `git-crypt unlock` first.")
-		return nil, false
+	case errors.As(err, &denial):
+		writeAffordanceDenialError(w, denial)
+	case writeForbiddenIfACLDenied(w, r, err):
+	default:
+		writeWriteTargetError(w, r, err)
+	}
+	return nil, false
+}
+
+// attachmentWriteCheck is the shared front matter for an attachment write,
+// without the response, so the upload route and rela.attach_render run one
+// chain. It resolves the face the address names, as every content write does
+// ([visibleReader.writeTarget]: one miss for a hidden, denied or absent face,
+// [*visibility.AmbiguousAddressError] for a bare id on a faced type),
+// validates that the property is a declared `file` property the caller can
+// see, rejects a locked (inaccessible) entity, and authorizes the `update`
+// write on that face UP FRONT so a deny never reaches the store.
+//
+// The error is [errWriteTargetNotFound] for every miss (an undeclared or
+// hidden property included, so it cannot be told from a missing entity),
+// [errEntityLocked], an [*acl.ForbiddenError], an [AffordanceDenialError],
+// the ambiguous-address error, or a gate error. Both denials are audited
+// here.
+func (h *attachmentHandler) attachmentWriteCheck(
+	ctx context.Context, s *Schema, typeName, addr, property string,
+) (*entityPkg.Entity, error) {
+	// Read first: a hidden, denied or nonexistent face yields one uniform
+	// miss (RR-NGMI), the same as the read path.
+	entity, err := h.visible.writeTarget(ctx, typeName, addr)
+	if err != nil {
+		return nil, err
+	}
+	if !isFileProperty(s, typeName, property) || h.isPropertyHidden(ctx, entity, property) {
+		return nil, errWriteTargetNotFound
+	}
+	if entity.IsLocked() {
+		return nil, errEntityLocked
 	}
 
 	// Authorize the `update` write up front (mirrors authorizeConflictResolve)
@@ -683,8 +709,7 @@ func (h *attachmentHandler) attachmentWritePreflight(
 	if !decision.Allow {
 		h.audit().Record(audit.AttachmentWriteDenied(ctx, entity.Type, entity.ID,
 			decision.Reason, decision.RuleKind, decision.RuleID))
-		writeForbiddenIfACLDenied(w, r, &acl.ForbiddenError{Decision: decision})
-		return nil, false
+		return nil, &acl.ForbiddenError{Decision: decision}
 	}
 	// An upload or detach sets the property, so a `fields:` policy that
 	// freezes it refuses the write, as on PATCH (GitHub #1760). The audit
@@ -697,11 +722,36 @@ func (h *attachmentHandler) attachmentWritePreflight(
 		}
 		h.audit().Record(audit.AttachmentWriteDenied(ctx, entity.Type, entity.ID,
 			reason, "affordance", denial.RuleID()))
-		writeAffordanceDenialError(w, *denial)
-		return nil, false
+		return nil, *denial
 	}
-	return entity, true
+	return entity, nil
 }
+
+// storeUpload is the write half of an upload, shared by the PUT route and
+// rela.attach_render: it caps body at limit, writes it through the shared
+// attachment service (scan, MIME policy, count limit, entitymanager stamp),
+// and audits a processor rejection. entity has passed
+// [attachmentHandler.attachmentWriteCheck]; the caller holds an upload slot.
+func (h *attachmentHandler) storeUpload(
+	ctx context.Context, s *Schema, entity *entityPkg.Entity, property, fileName string, body io.Reader, limit int64,
+) (*attachment.Result, error) {
+	svc, err := h.attachmentService(s)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %w", errAttachmentServiceUnavailable, err)
+	}
+	propDef := filePropertyDef(s, entity.Type, property)
+	written, err := svc.WriteAttachment(ctx, entity, propDef, property, fileName,
+		store.CapAttachmentReader(body, limit))
+	if err != nil {
+		h.auditRejectedUpload(ctx, entity, property, fileName, err)
+		return nil, err
+	}
+	return written, nil
+}
+
+// errAttachmentServiceUnavailable marks a failure to build the attachment
+// service, a server fault rather than anything about the upload.
+var errAttachmentServiceUnavailable = errors.New("attachment service unavailable")
 
 // maxAttachmentBytes returns the effective per-attachment cap for the
 // given app state: the configured override (or the product default),

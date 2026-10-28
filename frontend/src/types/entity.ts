@@ -347,12 +347,14 @@ export interface CopyOnSuccess {
 // property (its normalized name) and is used to build the per-file
 // download/delete URL. `href` is the ACL-gated download URL (inherits the
 // entity's read permission). `contentType` is inferred from the filename
-// by the backend.
+// by the backend. `sha256` is the lowercase hex SHA-256 of the stored bytes;
+// absent only when the backend could not read them.
 export interface AttachmentInfo {
   id: string
   filename: string
   size: number
   contentType: string
+  sha256?: string
   href: string
 }
 

@@ -141,6 +141,45 @@ func RunAttachmentTests(t *testing.T, f Factory) {
 		assert.True(t, found, "expected to find 'log' attachment")
 	})
 
+	// The hash is of the stored bytes, follows a replace and a rename, and is
+	// recorded on the transaction path too (TKT-1TS55R).
+	t.Run("SHA256", func(t *testing.T) {
+		const (
+			abcHash = "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+			defHash = "cb8379ac2098aa165029e3938a51da0bcecfc008fd6795f401178647f96c5b34"
+		)
+		s := f(t)
+		require.NoError(t, s.CreateEntity(ctx(), entity.New("T-1", "ticket")))
+		hashOf := func(id, name string) string {
+			t.Helper()
+			infos, err := s.ListFamilyAttachments(ctx(), id)
+			require.NoError(t, err)
+			for _, info := range infos {
+				if info.FileName == name {
+					return info.SHA256
+				}
+			}
+			t.Fatalf("no attachment %s on %s", name, id)
+			return ""
+		}
+
+		require.NoError(t, s.AttachFamilyFile(ctx(), "T-1", "spec", "a.txt", strings.NewReader("abc")))
+		assert.Equal(t, abcHash, hashOf("T-1", "a.txt"))
+		assert.Equal(t, abcHash, store.HashAttachment([]byte("abc")))
+
+		require.NoError(t, s.AttachFamilyFile(ctx(), "T-1", "spec", "a.txt", strings.NewReader("def")))
+		assert.Equal(t, defHash, hashOf("T-1", "a.txt"), "a replace rehashes")
+
+		require.NoError(t, s.Tx(ctx(), func(tx store.Store) error {
+			return tx.AttachFamilyFile(ctx(), "T-1", "spec", "b.txt", strings.NewReader("abc"))
+		}))
+		assert.Equal(t, abcHash, hashOf("T-1", "b.txt"), "the transaction path hashes")
+
+		_, err := s.RenameFamily(ctx(), "T-1", "T-2")
+		require.NoError(t, err)
+		assert.Equal(t, defHash, hashOf("T-2", "a.txt"), "a rename keeps the hash")
+	})
+
 	t.Run("ListEmpty", func(t *testing.T) {
 		s := f(t)
 		require.NoError(t, s.CreateEntity(ctx(), entity.New("T-1", "ticket")))

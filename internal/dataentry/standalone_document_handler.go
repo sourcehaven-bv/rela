@@ -40,19 +40,20 @@ import (
 // read gate and the document's own config, and App sits on its plimsoll load
 // line (see the directive on the type).
 //
+// It returns nil when the document's `permission:` is absent or held, else
+// the 403 denial naming it. The routes write it with [writeRequestDenial];
+// rela.attach_render hands it to the script.
+//
 //archplan:guard=authz reason="checks the document's config-declared permission"
-func gateDocumentPermission(
-	w http.ResponseWriter, r *http.Request, docName string, docCfg dataentryconfig.DocumentConfig,
-) bool {
+func gateDocumentPermission(ctx context.Context, docName string, docCfg dataentryconfig.DocumentConfig) error {
 	if docCfg.Permission == "" {
-		return true
+		return nil
 	}
-	if readGateFromContext(r.Context()).HoldsPermission(r.Context(), docCfg.Permission) {
-		return true
+	if readGateFromContext(ctx).HoldsPermission(ctx, docCfg.Permission) {
+		return nil
 	}
-	writeV1Error(w, r, http.StatusForbidden, "permission_required",
-		fmt.Sprintf("document %q requires the %q permission", docName, docCfg.Permission), "")
-	return false
+	return deny(http.StatusForbidden, "permission_required",
+		fmt.Sprintf("document %q requires the %q permission", docName, docCfg.Permission))
 }
 
 // authorizeElevatedDocument is the boundary for a document that declares
@@ -84,23 +85,20 @@ func authorizeElevatedDocument(
 	return access.ModeOf(aclImpl).PermitsElevatedRead(ctx, readGateFromContext(ctx), docCfg.Permission)
 }
 
-// gateElevatedDocument applies authorizeElevatedDocument and writes the deny
-// response. Split from the predicate so the decision stays testable without a
-// ResponseWriter.
+// gateElevatedDocument applies authorizeElevatedDocument and returns the
+// denial. Split from the predicate so the decision stays testable on its own.
 //
 // The deny names the document and the permission for the same reason
 // gateDocumentPermission does: which documents exist is config, not a secret.
 func gateElevatedDocument(
-	w http.ResponseWriter, r *http.Request, aclImpl acl.ACL,
-	docName string, docCfg dataentryconfig.DocumentConfig,
-) bool {
-	if authorizeElevatedDocument(r.Context(), aclImpl, docCfg) {
-		return true
+	ctx context.Context, aclImpl acl.ACL, docName string, docCfg dataentryconfig.DocumentConfig,
+) error {
+	if authorizeElevatedDocument(ctx, aclImpl, docCfg) {
+		return nil
 	}
-	writeV1Error(w, r, http.StatusForbidden, "permission_required",
+	return deny(http.StatusForbidden, "permission_required",
 		fmt.Sprintf("document %q reads with elevated privileges and requires the %q permission "+
-			"under a configured acl.yaml", docName, docCfg.Permission), "")
-	return false
+			"under a configured acl.yaml", docName, docCfg.Permission))
 }
 
 // handleV1StandaloneDocument handles GET /api/v1/_documents/{docName} — the
