@@ -37,8 +37,8 @@ status: done
   queries, against 1,107 on develop (1,100 of them per-row `ListRelations`).
 - The 57,486-byte export body is byte-identical (`cmp`) to the develop run.
 - `TestQueryBudget_ListExportIsSizeIndependent`: 6 store reads at 10 and 50
-  rows under both the fixture and the realistic ACL; before the change 15 and
-  55.
+  rows under both the fixture and the realistic ACL; before the change it was
+  15 and 55 reads.
 - `TestExport_List_RelationColumnsGolden` passed on the per-row code before
   the change and on the batched code after it.
 - The `export-list.*` golden files changed only in their `reads:` and
