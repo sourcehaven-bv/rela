@@ -1,14 +1,15 @@
 request: GET /api/v1/_conflicts/TKT-1
 identity: signed assertion for viewer@example.test
-status: 404
+status: 403
 reads: GraphQueryHeaders=1 ListRelations=1
 breadth: ListRelations=0/1
 bodies: GraphQuery=0/1
 versions: 
 body:
 {
-  "type": "https://rela.dev/errors/conflict_not_found",
-  "title": "Conflicted file not found",
-  "status": 404,
+  "type": "https://rela.dev/errors/permission_required",
+  "title": "Forbidden",
+  "status": 403,
+  "detail": "Viewing a merge conflict needs the git:sync permission.",
   "instance": "/api/v1/_conflicts/TKT-1"
 }

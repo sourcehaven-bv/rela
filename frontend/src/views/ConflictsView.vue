@@ -1,7 +1,9 @@
 <script setup lang="ts">
 import { ref, onMounted, computed } from 'vue'
 import { useRouter } from 'vue-router'
+import { useI18n } from 'vue-i18n'
 import { getConflicts, getConflictDetail, resolveConflict, getErrorMessage, type ConflictItem, type ConflictDetail } from '@/api'
+import { ApiError } from '@/api/errors'
 import { useGitStore } from '@/stores'
 import RlButton from 'rela-components/components/common/RlButton.vue'
 import RlEmptyState from 'rela-components/components/feedback/RlEmptyState.vue'
@@ -10,6 +12,21 @@ import RlKbd from 'rela-components/components/data/RlKbd.vue'
 
 const router = useRouter()
 const gitStore = useGitStore()
+const { t } = useI18n()
+
+// The conflict routes need git:sync. Their refusal is a permission_required
+// problem, not a failure a retry would fix, so it gets its own message and no
+// Retry button. Any other 403, such as resolve's write check, keeps the
+// server's own message.
+const forbidden = ref(false)
+
+function conflictError(err: unknown, fallback: string): string {
+  if (err instanceof ApiError && err.status === 403 && err.code === 'permission_required') {
+    forbidden.value = true
+    return t('git.conflictsNeedSync')
+  }
+  return getErrorMessage(err, fallback)
+}
 
 // List view state
 const conflicts = ref<ConflictItem[]>([])
@@ -34,11 +51,12 @@ const showingDetail = computed(() => selectedPath.value !== null)
 async function loadConflicts() {
   loading.value = true
   error.value = null
+  forbidden.value = false
   try {
     const result = await getConflicts()
     conflicts.value = result.conflicts
   } catch (err) {
-    error.value = getErrorMessage(err, 'Failed to load conflicts')
+    error.value = conflictError(err, 'Failed to load conflicts')
   } finally {
     loading.value = false
   }
@@ -69,7 +87,7 @@ async function selectConflict(path: string) {
       manualContent.value = detail.value.content_ours
     }
   } catch (err) {
-    detailError.value = getErrorMessage(err, 'Failed to load conflict details')
+    detailError.value = conflictError(err, 'Failed to load conflict details')
   } finally {
     detailLoading.value = false
   }
@@ -111,7 +129,7 @@ async function applyResolution() {
     // Go back to list if no more conflicts
     backToList()
   } catch (err) {
-    detailError.value = getErrorMessage(err, 'Failed to resolve conflict')
+    detailError.value = conflictError(err, 'Failed to resolve conflict')
   } finally {
     resolving.value = false
   }
@@ -138,9 +156,9 @@ onMounted(() => {
 
       <RlStatusRegion v-if="loading">Loading conflicts...</RlStatusRegion>
 
-      <RlStatusRegion v-else-if="error" tone="error">
+      <RlStatusRegion v-else-if="error" tone="error" data-testid="conflicts-error">
         {{ error }}
-        <template #actions>
+        <template v-if="!forbidden" #actions>
           <RlButton variant="secondary" size="sm" @click="loadConflicts">Retry</RlButton>
         </template>
       </RlStatusRegion>

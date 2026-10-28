@@ -1736,10 +1736,19 @@ func (h *writeHandler) handleV1CloneEntity(
 	writeV1JSON(w, http.StatusCreated, result)
 }
 
-// handleV1ConflictResolve applies a conflict resolution.
+// handleV1ConflictResolve applies a conflict resolution. It needs git:sync
+// and then the write check of [writeHandler.authorizeConflictResolve].
 //
-//archplan:auth=authz
+//archplan:auth=authz reason="requires git:sync, then re-authorizes the write"
 func (h *writeHandler) handleV1ConflictResolve(w http.ResponseWriter, r *http.Request) {
+	// Resolving a conflict is part of a sync, so it needs git:sync like the
+	// list and the detail, before the body is read. The gate deliberately
+	// runs on the unprovisioned request, as handleGitSync does; keep the two
+	// in step. The write check in authorizeConflictResolve still runs on top.
+	if !permitsGitSync(h.acl(), r) {
+		writeGitSyncForbidden(w, r, "Resolving a merge conflict")
+		return
+	}
 	var req v1.ConflictResolveRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeV1Error(w, r, http.StatusBadRequest, "invalid_request", "Invalid JSON", err.Error())

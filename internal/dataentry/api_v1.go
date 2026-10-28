@@ -2858,12 +2858,21 @@ func writeV1Error(w http.ResponseWriter, r *http.Request, status int, errType, t
 
 // --- Conflicts API ---
 
-// handleV1Conflicts returns the list of conflicted files as JSON.
+// handleV1Conflicts returns the list of conflicted files as JSON. The list
+// names entity files, so it is served only to a principal who may sync
+// (git:sync); everyone else gets a 403. The paths are not row-gated: a
+// holder of git:sync sees the paths of entities they may not read.
+// Conflicts arise only on file storage, which runs locally, so the coarse
+// gate is accepted (BUG-T6HNKS).
 //
-//archplan:auth=authz reason="should row-gate each file and does not yet (BUG-T6HNKS)"
+//archplan:auth=authz reason="requires git:sync via permitsGitSync; paths are not row-gated (BUG-T6HNKS)"
 func (a *App) handleV1Conflicts(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		writeV1Error(w, r, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed", "")
+		return
+	}
+	if !permitsGitSync(a.acl, r) {
+		writeGitSyncForbidden(w, r, "Listing merge conflicts")
 		return
 	}
 
@@ -2897,6 +2906,11 @@ func (a *App) handleV1Conflicts(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleV1ConflictRoutes handles GET /api/v1/_conflicts/{path} and POST /api/v1/_conflicts/resolve.
+// Both require git:sync, like the list. The detail is gated here, before the
+// path is resolved, because it shows both sides of the file unredacted.
+// Resolve is gated in [writeHandler.handleV1ConflictResolve].
+//
+//archplan:auth=authz reason="detail requires git:sync via permitsGitSync; resolve is gated in its handler"
 func (a *App) handleV1ConflictRoutes(w http.ResponseWriter, r *http.Request) {
 	path := strings.TrimPrefix(r.URL.Path, "/api/v1/_conflicts/")
 
@@ -2907,6 +2921,10 @@ func (a *App) handleV1ConflictRoutes(w http.ResponseWriter, r *http.Request) {
 
 	if r.Method != http.MethodGet {
 		writeV1Error(w, r, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed", "")
+		return
+	}
+	if !permitsGitSync(a.acl, r) {
+		writeGitSyncForbidden(w, r, "Viewing a merge conflict")
 		return
 	}
 

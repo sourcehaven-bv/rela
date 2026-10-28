@@ -2484,15 +2484,28 @@ the ceiling narrows permissions. Only `config:edit` is never delegated.
 `GET /api/v1/_git/status` stays open to every signed-in principal. Its
 `can_sync` field says whether a sync would be accepted. It lists the paths of
 conflicting files only to a principal who may sync; everyone else sees only
-that a conflict exists. This is not a secrecy guarantee:
+that a conflict exists.
 
-- A holder of `git:sync` sees the paths of conflicting entities they may not
-  read.
-- `GET /api/v1/_conflicts` still lists the paths, with entity ids, to every
-  principal (BUG-T6HNKS).
+Resolving a merge conflict is part of a sync, so the conflict routes need
+`git:sync` too:
+
+- `GET /api/v1/_conflicts` lists the conflicting files.
+- `GET /api/v1/_conflicts/{path}` shows both sides of one file.
+- `POST /api/v1/_conflicts/resolve` writes the resolution. It also needs
+  `update` on the entity, as an ordinary edit does.
+
+Without `git:sync` these routes answer 403, and the response names the
+permission. The app hides its "Resolve conflicts" link from such a principal.
+
+The conflict routes are not row-gated. A holder of `git:sync` sees the paths
+and the unredacted values of conflicting entities they may not read. Merge
+conflicts arise only on file storage, which runs locally; the postgres and
+sqlite backends have none. Grant `git:sync` only to principals who may see
+every entity file.
 
 **Upgrading.** With an `acl.yaml`, nobody may sync after the upgrade until
-you grant `git:sync` to the roles that used the sync button.
+you grant `git:sync` to the roles that used the sync button or resolved merge
+conflicts.
 
 ## Saving the settings page (`settings:edit`)
 
