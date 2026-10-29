@@ -212,6 +212,7 @@ func (v *validator) channelType(name string, raw *rawChannelType, limits Limits)
 	} else {
 		messageInCheck{v: v, raw: raw, ct: ct}.withoutSession()
 	}
+	choiceChecker{v}.choices(raw, ct)
 	return ct
 }
 
@@ -483,15 +484,32 @@ func (v *validator) property(key, name string, raw *rawProperty, limits Limits) 
 			p.Type, p.Enum, p.Values = PropertyEnum, raw.Type, slices.Clone(ct.Values)
 		}
 	}
+	if raw.List {
+		if p.Type == PropertyString {
+			p.List = true
+		} else {
+			v.add(key+".list", "only a string property may be a list")
+		}
+	}
+	maxRunes := limits.MessageBytes
+	if p.List {
+		maxRunes = realtimelimits.MaxListItemRunes
+		p.Max = realtimelimits.DefaultListItemRunes
+	}
 	if raw.Max != nil {
 		switch {
 		case p.Type != PropertyString && p.Type != PropertyMarkdown:
 			v.add(key+".max", "only a string or markdown property has a max")
-		case *raw.Max <= 0 || *raw.Max > limits.MessageBytes:
-			v.add(key+".max", fmt.Sprintf("must be between 1 and %d", limits.MessageBytes))
+		case *raw.Max <= 0 || *raw.Max > maxRunes:
+			v.add(key+".max", fmt.Sprintf("must be between 1 and %d", maxRunes))
 		default:
 			p.Max = *raw.Max
 		}
+	}
+	if n, problem := maxItems(raw, p.List); problem != "" {
+		v.add(key+".max_items", problem)
+	} else {
+		p.MaxItems = n
 	}
 	switch {
 	case p.Type == PropertyRef && len(raw.To) == 0:
@@ -512,6 +530,26 @@ func (v *validator) property(key, name string, raw *rawProperty, limits Limits) 
 		p.NoNotify = !*raw.Notify
 	}
 	return p
+}
+
+// maxItems returns the item limit of a property from `max_items:`: the
+// limit of a list property, 0 for any other, or a problem. list is false
+// also when the author wrote `list: true` on a type that cannot be a list;
+// that already has its own problem, so max_items gets none. It is a
+// function and not a validator method because the validator is at its
+// method budget.
+func maxItems(raw *rawProperty, list bool) (limit int, problem string) {
+	switch {
+	case raw.MaxItems != nil && !raw.List:
+		return 0, "only a list property has max_items; add list: true"
+	case !list:
+		return 0, ""
+	case raw.MaxItems == nil:
+		return realtimelimits.MaxListItems, ""
+	case *raw.MaxItems <= 0 || *raw.MaxItems > realtimelimits.MaxListItems:
+		return 0, fmt.Sprintf("must be between 1 and %d", realtimelimits.MaxListItems)
+	}
+	return *raw.MaxItems, ""
 }
 
 // promote checks a promote_to block: the entity type and its face, each
@@ -616,7 +654,7 @@ func (v *validator) promoteMapping(key, entityType, ep, mp string, def *metamode
 	}
 	if !promotable(msgProp, pd) {
 		v.add(key, fmt.Sprintf("message property %s (%s) cannot fill %s.%s, a %s property",
-			mp, msgProp.Type, entityType, ep, pd.Type))
+			mp, msgProp.TypeName(), entityType, ep, pd.Type))
 	}
 }
 
@@ -638,8 +676,12 @@ func (v *validator) promoteFace(key, typ, face string) {
 
 // promotable reports whether a message property's value can fill entity
 // property pd. Text and a ref (the entity id) fill a string; an enum fills a
-// string or the same enum type; every other type fills only its own type.
+// string or the same enum type; every other type fills only its own type. A
+// list fills nothing.
 func promotable(mp Property, pd metamodel.PropertyDef) bool {
+	if mp.List {
+		return false
+	}
 	switch mp.Type {
 	case PropertyString, PropertyMarkdown, PropertyRef:
 		return pd.Type == metamodel.PropertyTypeString
@@ -928,6 +970,8 @@ func (v *validator) literalProps(key string, props map[string]string, mt *rawMes
 			v.add(pk, fmt.Sprintf("the message type has no property %q", pn))
 		case strings.Contains(val, "{{"):
 			v.add(pk, "a trigger or reminder posts literal text; {{...}} substitution is not supported")
+		case rp.List:
+			v.add(pk, "a trigger or reminder cannot set a list property; it posts one literal value")
 		case rp.Type == string(PropertyString) || rp.Type == string(PropertyMarkdown):
 		default:
 			if ct, isEnum := v.meta.Types[rp.Type]; isEnum && slices.Contains(ct.Values, val) {

@@ -477,7 +477,7 @@ type ChannelLifecycleSchema struct {
 // ChannelMessageTypeSchema describes one message type. Persist is "log"
 // or "ephemeral"; TTLSeconds is set for an ephemeral type; Reply reports
 // whether a message of the type may reply to another. Properties come
-// required first, then by name.
+// required first, then by name. Choices is set for a question type.
 type ChannelMessageTypeSchema struct {
 	Name       string                  `json:"name"`
 	Label      string                  `json:"label"`
@@ -486,13 +486,28 @@ type ChannelMessageTypeSchema struct {
 	Reply      bool                    `json:"reply"`
 	Properties []ChannelPropertySchema `json:"properties"`
 	Actions    []ChannelActionSchema   `json:"actions"`
+	Choices    *ChannelChoicesSchema   `json:"choices,omitempty"`
+}
+
+// ChannelChoicesSchema is `choices:` on a question type. The list
+// property From holds the options. A click on one posts message type
+// Answer with the option in its string property Into, as a reply to the
+// question. Other adds a button that opens the composer with Answer
+// selected.
+type ChannelChoicesSchema struct {
+	From   string `json:"from"`
+	Answer string `json:"answer"`
+	Into   string `json:"into"`
+	Other  bool   `json:"other"`
 }
 
 // ChannelPropertySchema describes one message property. Type is string,
 // markdown, integer, boolean, date, datetime, ref or enum. Max is the most
 // characters (Unicode code points) a string or markdown value may hold.
 // Enum names the schema.yaml enum type and Values its values; To lists the
-// entity types a ref may name.
+// entity types a ref may name. List is set for a list of strings, whose
+// value is a JSON array; Max then limits each item and MaxItems the number
+// of items.
 type ChannelPropertySchema struct {
 	Name     string   `json:"name"`
 	Label    string   `json:"label"`
@@ -502,6 +517,8 @@ type ChannelPropertySchema struct {
 	Enum     string   `json:"enum,omitempty"`
 	Values   []string `json:"values,omitempty"`
 	To       []string `json:"to,omitempty"`
+	List     bool     `json:"list,omitempty"`
+	MaxItems int      `json:"max_items,omitempty"`
 }
 
 // ChannelActionSchema describes one message action. PromoteTo is the

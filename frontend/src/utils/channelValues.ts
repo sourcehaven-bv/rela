@@ -183,12 +183,31 @@ export function initialValues(props: readonly ChannelPropertySchema[]): Record<s
 }
 
 function isRestrictedRef(value: MessagePropValue | undefined): boolean {
-  return typeof value === 'object' && value !== null && value.restricted === true
+  return (
+    !Array.isArray(value) &&
+    typeof value === 'object' &&
+    value !== null &&
+    value.restricted === true
+  )
 }
 
-/** A stored prop as a request sends it back unchanged; undefined to leave it out. */
-function carryProp(value: MessagePropValue | undefined): MessagePropInput | undefined {
+/**
+ * A stored prop as a request sends it back unchanged; undefined to leave it
+ * out. A list goes back as stored. A config reload can turn a string
+ * property into a list, so an older message may hold a string there: a
+ * non-empty string goes back as a list of one item, which the server
+ * accepts. Any other stored value of a list property is left out.
+ */
+function carryProp(
+  prop: ChannelPropertySchema,
+  value: MessagePropValue | undefined
+): MessagePropInput | undefined {
   if (value === undefined || value === null) return undefined
+  if (prop.list) {
+    if (Array.isArray(value)) return value
+    return typeof value === 'string' && value.trim() !== '' ? [value] : undefined
+  }
+  if (Array.isArray(value)) return value
   if (typeof value === 'object') return value.restricted ? undefined : value.id
   return value
 }
@@ -212,7 +231,7 @@ export function toEditProps(
   for (const p of props) {
     const stored = current?.[p.name]
     if (!rendered.has(p.name)) {
-      const carried = carryProp(stored)
+      const carried = carryProp(p, stored)
       if (carried !== undefined) out[p.name] = carried
       continue
     }
@@ -241,7 +260,9 @@ export function fromPropValue(
     case 'integer':
       return typeof value === 'number' ? String(value) : undefined
     case 'ref':
-      return typeof value === 'object' && !value.restricted ? value.id : undefined
+      return !Array.isArray(value) && typeof value === 'object' && !value.restricted
+        ? value.id
+        : undefined
     case 'datetime': {
       if (typeof value !== 'string') return undefined
       const d = new Date(value)

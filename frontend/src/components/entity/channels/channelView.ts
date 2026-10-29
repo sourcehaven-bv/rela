@@ -105,7 +105,7 @@ export function lifecycleDefs(ct: ChannelTypeSchema): ChannelLifecycleDef[] {
 }
 
 function isReadableRef(v: MessagePropValue | undefined): v is ReadableRef {
-  return typeof v === 'object' && v !== null && v.restricted !== true
+  return !Array.isArray(v) && typeof v === 'object' && v !== null && v.restricted !== true
 }
 
 /** The readable refs among a message's props, keyed by property name. */
@@ -122,8 +122,8 @@ function when(value: string | undefined, tz: string): string | undefined {
 
 /**
  * A short plain-text excerpt of a message: its first string or markdown
- * prop, collapsed to one line. It is rendered as text, so markdown syntax
- * shows as written.
+ * prop, collapsed to one line, where a list reads as its items joined by
+ * commas. It is rendered as text, so markdown syntax shows as written.
  */
 export function excerptOf(
   m: Message,
@@ -134,7 +134,8 @@ export function excerptOf(
     ? mt.properties.filter((p) => p.type === 'string' || p.type === 'markdown').map((p) => p.name)
     : Object.keys(m.props ?? {})
   for (const name of names) {
-    const v = m.props?.[name]
+    const raw = m.props?.[name]
+    const v = Array.isArray(raw) ? raw.join(', ') : raw
     if (typeof v !== 'string' || !v.trim()) continue
     const line = v.replace(/\s+/g, ' ').trim()
     const chars = [...line]
@@ -454,6 +455,94 @@ export function decisionCause(
   return undefined
 }
 
+/** The head fields the choices read. */
+export type ChoiceHead = Pick<ChannelHead, 'channel'> & { _actions: Pick<ChannelActions, 'post'> }
+
+/**
+ * The reply buttons of the questions open to an answer, keyed by the
+ * question's seq. A question is a held message whose type has `choices`,
+ * with a non-empty list in its `from` property. It gets one button per
+ * option, which posts the answer type with the option in `into`, and with
+ * `other` a button that opens the composer.
+ *
+ * There are none while newer messages exist than the held ones
+ * (`hasNewer`), when the channel is not open, or when the caller may not
+ * post the answer type. A question must not be removed, must be top-level
+ * (a reply to a reply would address the thread's author, not the asker),
+ * and must have no held reply of the answer type: once an answer is held,
+ * its buttons go. A removed answer does not count, so a moderator who
+ * removes a wrong answer brings the buttons back.
+ *
+ * In a channel with a session, only the question that moved the session
+ * into its current state is open (`decisionCause`), and only while the
+ * held `_actions` were fetched at the head's generation. That proof is
+ * what makes the click's `expect_generation` the question's own: a click
+ * after the session moved on is refused with session_moved.
+ */
+export function choiceViews(
+  ct: ChannelTypeSchema,
+  head: ChoiceHead,
+  actionsGeneration: number | undefined,
+  hasNewer: boolean,
+  messages: readonly Message[]
+): Map<number, ChannelDecisionView[]> {
+  const out = new Map<number, ChannelDecisionView[]>()
+  if (hasNewer || head.channel.state !== 'open') return out
+  const byName = new Map(ct.message_types.map((mt) => [mt.name, mt]))
+  const post = new Set(head._actions.post)
+  let candidates: readonly Message[] = messages
+  if (ct.session) {
+    const cs = head.channel.session
+    if (!cs || actionsGeneration !== cs.generation) return out
+    const cause = decisionCause(messages, cs)
+    const m = cause === undefined ? undefined : messages.find((x) => x.seq === cause)
+    candidates = m ? [m] : []
+  }
+  const answered = new Set<string>()
+  for (const m of messages) {
+    if (m.reply_to && m.type && !m.removed) answered.add(`${m.type}:${m.reply_to}`)
+  }
+  for (const m of candidates) {
+    const c = m.type ? byName.get(m.type)?.choices : undefined
+    if (!c || m.removed || m.reply_to || !post.has(c.answer)) continue
+    if (answered.has(`${c.answer}:${m.seq}`)) continue
+    const options = m.props?.[c.from]
+    if (!Array.isArray(options) || !options.length) continue
+    const views: ChannelDecisionView[] = options.map((option, i) => ({
+      key: `choice:${m.seq}:${i}`,
+      messageType: c.answer,
+      label: option,
+      props: { [c.into]: option },
+    }))
+    if (c.other) {
+      views.push({
+        key: `choice:${m.seq}:other`,
+        messageType: c.answer,
+        label: t('channels.choiceOther'),
+        opensForm: true,
+      })
+    }
+    out.set(m.seq, views)
+  }
+  return out
+}
+
+/**
+ * The decisions the row of `decisionSeq` shows. When that message is also
+ * a question with buttons, the decisions of its answer type are left out:
+ * its choices post that type already. The stepper keeps them.
+ */
+export function rowDecisions(
+  decisions: ChannelDecisionView[],
+  choices: ReadonlyMap<number, ChannelDecisionView[]>,
+  decisionSeq: number | undefined
+): ChannelDecisionView[] {
+  const own = decisionSeq === undefined ? undefined : choices.get(decisionSeq)
+  if (!own?.length) return decisions
+  const answers = new Set(own.map((c) => c.messageType))
+  return decisions.filter((d) => !answers.has(d.messageType))
+}
+
 /**
  * The `reply_to` of a decision: the deciding message, when it is known, is
  * itself top-level, and the decision's type may reply. Undefined otherwise.
@@ -521,7 +610,9 @@ export function ephemeralText(
     const p = f.property
     const v = e.props?.[p.name]
     if (v === undefined) continue
-    if (typeof v === 'object') {
+    if (Array.isArray(v)) {
+      parts.push(v.join(', '))
+    } else if (typeof v === 'object') {
       parts.push(v.restricted ? t('channels.restrictedRef') : (v.title ?? v.id))
     } else if (typeof v === 'boolean') {
       parts.push(v ? t('common.yes') : t('common.no'))
@@ -595,7 +686,7 @@ export function editingFor(m: Message, mt: ChannelMessageTypeSchema): ChannelEdi
   for (const p of mt.properties) {
     const v = m.props?.[p.name]
     values[p.name] = fromPropValue(p, v)
-    if (p.type !== 'ref' || typeof v !== 'object' || v === null) continue
+    if (p.type !== 'ref' || typeof v !== 'object' || v === null || Array.isArray(v)) continue
     if (v.restricted) restricted.push(p.name)
     else refs[p.name] = { id: v.id, type: v.type, title: v.title }
   }

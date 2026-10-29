@@ -2491,6 +2491,18 @@
       "reason": "Design: problem types are server wire codes; each consumer matches the few codes it handles, and channelErrors.ts owns the channel mapping.",
       "at": "2026-10-29T09:00:00Z",
       "title": "problem_type takes 2 string values in 2 components (web/components/entity, composables): 'session_wrong_state', 'no_principal'."
+    },
+    "types.synonyms-375d1b4bce66": {
+      "state": "accepted",
+      "reason": "Design: wire DTOs (apiwire, realtime, realtimecfg) mirror domain types on purpose, as the rule against leaking storage types asks.",
+      "at": "2026-10-29T15:00:00Z",
+      "title": "ChannelChoicesSchema (apiwire), ChoicesDescription (realtime) and Choices (realtimecfg) share most of their fields."
+    },
+    "boundaries.misplaced_file-d0563afa090d": {
+      "state": "accepted",
+      "reason": "Design: channel_render.go is the CLI's text renderer for realtime views; it belongs with the cli commands that print it.",
+      "at": "2026-10-29T16:00:00Z",
+      "title": "1 file with more links to realtime than to cli."
     }
   },
   "labels": {},
@@ -2500,7 +2512,7 @@
       "weight.structure": 936,
       "weight.layers": 0,
       "weight.vocabulary": 908,
-      "weight.types": 3849,
+      "weight.types": 3886,
       "weight.concepts": 7186,
       "weight.boundaries": 1512,
       "weight.data": 1297,
@@ -2538,6 +2550,17 @@
           "weight.types": [
             3810,
             3849
+          ]
+        }
+      },
+      {
+        "at": "2026-10-29T15:00:00Z",
+        "change": "loosen",
+        "reason": "ChannelChoicesSchema wire mirror accepted like the other apiwire DTOs, TKT-03FQPD",
+        "metrics": {
+          "weight.types": [
+            3849,
+            3886
           ]
         }
       }

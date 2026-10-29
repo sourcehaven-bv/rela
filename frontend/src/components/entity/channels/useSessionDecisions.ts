@@ -1,5 +1,5 @@
 import { computed, nextTick, ref, watch, type Ref } from 'vue'
-import { t } from '@/i18n'
+import { i18n, t } from '@/i18n'
 import type { useChannel } from '@/composables/useChannel'
 import type {
   ChannelMessageTypeSchema,
@@ -12,12 +12,18 @@ import type {
 } from 'rela-components/components/channel/types'
 import { decisionPendingKey } from 'rela-components/components/channel/channelFields'
 import { problemType } from './channelErrors'
-import { decisionCause, decisionReplyTo, decisionViews } from './channelView'
+import {
+  choiceViews,
+  decisionCause,
+  decisionReplyTo,
+  decisionViews,
+  rowDecisions as rowDecisionsOf,
+} from './channelView'
 
 /** The open channel's state the decisions read. */
 export type DecisionChannel = Pick<
   ReturnType<typeof useChannel>,
-  'head' | 'messages' | 'actionsGeneration' | 'refreshHead' | 'refetch'
+  'head' | 'messages' | 'hasNewer' | 'actionsGeneration' | 'refreshHead' | 'refetch'
 >
 
 /** The composer, as a decision that opens the form drives it. */
@@ -28,6 +34,8 @@ export interface DecisionComposer {
   discardEdit(): void
   /** Ends the reply being written. */
   endReply(): void
+  /** Starts a reply to the message with seq. */
+  reply(seq: number): void
   /** Selects the type; false when the composer does not offer it. */
   select(type: string): boolean
   /** Shows a refusal in the composer. */
@@ -97,6 +105,14 @@ export interface DecisionDeps {
  * session_moved refusal answers the send, on `resetDecisions()`, and when
  * a head frame brings another generation outside a send; only in that
  * last case is the user told the session moved on.
+ *
+ * Choices (TKT-03FQPD) are the reply buttons of a question's options. They
+ * share the lock and the pending keys with the decisions, so one click
+ * blocks both. A choice posts the answer type as a reply to the question,
+ * with the head generation read at the click in a channel with a session
+ * and none without. Other opens the composer with the answer type and the
+ * reply set; in a channel with a session it records a form decision, as a
+ * decision that opens the form does.
  */
 export function useSessionDecisions(d: DecisionDeps) {
   const deciding = ref(false)
@@ -138,8 +154,60 @@ export function useSessionDecisions(d: DecisionDeps) {
       : undefined
   )
 
+  // The choices also read the held messages. That ref is replaced on every
+  // merge, so its identity is part of the key: an answer arriving, an edit
+  // or a removal rebuilds them. The Other label is text, so the language is
+  // part of the key too.
+  type ChoicesMemo = {
+    ct: ChannelTypeSchema
+    key: string
+    messages: unknown
+    value: Map<number, ChannelDecisionView[]>
+  }
+  const choicesMemo = computed<ChoicesMemo>((prev) => {
+    const ct = d.channelType()
+    const h = d.ch.head.value
+    const messages = d.ch.messages.value
+    if (!h || !ct.message_types.some((mt) => mt.choices)) {
+      return prev && prev.ct === ct && prev.key === ''
+        ? prev
+        : { ct, key: '', messages, value: new Map() }
+    }
+    const key = JSON.stringify([
+      h.channel.session?.generation,
+      h.channel.state,
+      h._actions.post,
+      d.ch.actionsGeneration.value,
+      d.ch.hasNewer.value,
+      i18n.global.locale.value,
+    ])
+    if (prev && prev.ct === ct && prev.key === key && prev.messages === messages) return prev
+    const value = choiceViews(ct, h, d.ch.actionsGeneration.value, d.ch.hasNewer.value, messages)
+    return { ct, key, messages, value }
+  })
+  const choices = computed(() => choicesMemo.value.value)
+
+  // The row of the question that moved the session shows its choices, not
+  // the decision of the answer type as well; the stepper keeps that one.
+  const rowDecisions = computed(() =>
+    rowDecisionsOf(decisions.value, choices.value, decisionSeq.value)
+  )
+
   const find = (key: string) => decisions.value.find((x) => x.key === key)
+
+  /** The choice with key, and the seq of its question. */
+  function findChoice(key: string): { seq: number; view: ChannelDecisionView } | undefined {
+    for (const [seq, views] of choices.value) {
+      const view = views.find((v) => v.key === key)
+      if (view) return { seq, view }
+    }
+    return undefined
+  }
   const stale = () => d.ui.toast(t('channels.decisionStale'))
+  // Without a session, a choice goes stale because someone answered first;
+  // there is no session to name.
+  const staleChoice = () =>
+    d.channelType().session ? stale() : d.ui.toast(t('channels.choiceStale'))
 
   // A move outside a send makes the open form decision stale. During a
   // send the move is usually the send's own; a move by someone else then
@@ -224,7 +292,10 @@ export function useSessionDecisions(d: DecisionDeps) {
     const cause = decisionSeq.value
     const live = () => mine === click && channel === d.channelKey()
     try {
-      if (view0.opensForm) return await openForm(view0, generation, live)
+      if (view0.opensForm) {
+        await openForm(view0, generation, live)
+        return
+      }
       let view = view0
       if (view.confirm) {
         const ok = await d.ui.confirm({
@@ -240,22 +311,7 @@ export function useSessionDecisions(d: DecisionDeps) {
         view = again
       }
       const replyTo = decisionReplyTo(d.ch.messages.value, cause, d.messageType(view.messageType))
-      hold(decisionPendingKey(key))
-      try {
-        await d.post(view.messageType, presetProps(view.props), replyTo, generation)
-      } catch (err) {
-        if (live()) await refused(err, view, live)
-        return
-      }
-      if (!live()) return
-      try {
-        await d.ch.refreshHead()
-      } catch (err) {
-        if (live()) d.ui.handle(err, false)
-        return
-      }
-      await nextTick()
-      if (!live()) return
+      if (!(await postView(key, view, replyTo, generation, live))) return
       if (from === 'row' && cause !== undefined && d.ui.focusRow(cause)) return
       d.ui.focusHeader()
     } finally {
@@ -267,10 +323,76 @@ export function useSessionDecisions(d: DecisionDeps) {
   }
 
   /**
-   * A decision that opens the form: asks before it discards an edit, and
-   * records the generation read at the click for the form's Send.
+   * Posts view and refreshes the head. True when the post landed and the
+   * click still owns the lock, so the caller may move the focus.
    */
-  async function openForm(view: ChannelDecisionView, generation: number, live: () => boolean) {
+  async function postView(
+    key: string,
+    view: ChannelDecisionView,
+    replyTo: number | undefined,
+    generation: number | undefined,
+    live: () => boolean
+  ): Promise<boolean> {
+    hold(decisionPendingKey(key))
+    try {
+      await d.post(view.messageType, presetProps(view.props), replyTo, generation)
+    } catch (err) {
+      if (live()) await refused(err, view, live)
+      return false
+    }
+    if (!live()) return false
+    try {
+      await d.ch.refreshHead()
+    } catch (err) {
+      if (live()) d.ui.handle(err, false)
+      return false
+    }
+    await nextTick()
+    return live()
+  }
+
+  /**
+   * Answers a question with one of its options, or opens the composer for
+   * Other. Like `onDecide`, it reads the generation before the first await;
+   * without a session there is none to send.
+   */
+  async function onChoose(key: string) {
+    if (deciding.value || d.submitting.value) return
+    const found = findChoice(key)
+    if (!found) return staleChoice()
+    const { seq, view } = found
+    deciding.value = true
+    const mine = ++click
+    const channel = d.channelKey()
+    const generation = d.ch.head.value?.channel.session?.generation
+    const live = () => mine === click && channel === d.channelKey()
+    try {
+      if (view.opensForm) {
+        if ((await openForm(view, generation, live, staleChoice)) && live()) d.composer.reply(seq)
+        return
+      }
+      if (await postView(key, view, seq, generation, live)) d.ui.focusRow(seq)
+    } finally {
+      if (mine === click) {
+        hold(undefined)
+        deciding.value = false
+      }
+    }
+  }
+
+  /**
+   * A decision that opens the form: asks before it discards an edit, and
+   * records the generation read at the click for the form's Send. Without
+   * a session (`generation` undefined) there is nothing to record. True
+   * when the composer shows the type. onStale tells the user when the
+   * composer no longer offers the type.
+   */
+  async function openForm(
+    view: ChannelDecisionView,
+    generation: number | undefined,
+    live: () => boolean,
+    onStale: () => void = stale
+  ): Promise<boolean> {
     if (d.composer.editing()) {
       const ok = await d.ui.confirm({
         title: t('channels.decisionDiscardEditTitle'),
@@ -278,20 +400,22 @@ export function useSessionDecisions(d: DecisionDeps) {
         confirmLabel: t('channels.decisionDiscardEditConfirm'),
         danger: true,
       })
-      if (!ok || !live()) return
+      if (!ok || !live()) return false
       d.composer.discardEdit()
     }
     if (!(await select(view.messageType))) {
-      if (live()) stale()
-      return
+      if (live()) onStale()
+      return false
     }
-    if (!live()) return
+    if (!live()) return false
+    if (generation === undefined) return true
     if (d.ch.head.value?.channel.session?.generation !== generation) {
       formDecision.value = undefined
       stale()
-      return
+      return false
     }
     formDecision.value = { messageType: view.messageType, generation }
+    return true
   }
 
   /**
@@ -314,10 +438,13 @@ export function useSessionDecisions(d: DecisionDeps) {
   }
 
   return {
+    choices,
     decisions,
     decisionSeq,
+    rowDecisions,
     deciding,
     formDecision,
+    onChoose,
     onComposerSelect,
     onDecide,
     resetDecisions,
@@ -329,7 +456,7 @@ export function useSessionDecisions(d: DecisionDeps) {
 function presetProps(p: Record<string, ChannelPropValue> | undefined) {
   const out: Record<string, MessagePropInput> = {}
   for (const [name, v] of Object.entries(p ?? {})) {
-    if (typeof v !== 'object') out[name] = v
+    if (Array.isArray(v) || typeof v !== 'object') out[name] = v
     else if (!v.restricted) out[name] = v.id
   }
   return out

@@ -61,6 +61,20 @@ export const DECISIONS = {
   feedbackLabel: "Feedback",
 } as const;
 
+/**
+ * The question and answer types on ROOM when RoomOptions.choices is set
+ * (TKT-03FQPD). A member asks with a list of options; the composer cannot
+ * enter a list, so the spec posts the question over the API. Only the lead
+ * may answer, so only the lead sees the reply buttons.
+ */
+export const CHOICES = {
+  askType: "ask",
+  questionLabel: "Question",
+  optionsProperty: "options",
+  answerLabel: "Answer",
+  other: "Other answer…",
+} as const;
+
 /** The face-anchored channel type on the faced project's `policy`. */
 export const POLICY_ROOM = {
   type: "policy-room",
@@ -84,6 +98,8 @@ export interface RoomOptions {
    * combined with `session`.
    */
   decisions?: boolean;
+  /** Adds the question and answer types of CHOICES. No session. */
+  choices?: boolean;
 }
 
 /** realtime.yaml for the feature project. */
@@ -123,6 +139,21 @@ export function roomRealtimeYaml(opts: RoomOptions = {}): string {
           feedback: { type: string, required: true, label: ${DECISIONS.feedbackLabel} }
         post: [member, lead]
         in: [review]`
+    : "";
+  const choiceTypes = opts.choices
+    ? `
+      ${CHOICES.askType}:
+        label: ${CHOICES.questionLabel}
+        properties:
+          question: { type: string, required: true, label: ${CHOICES.questionLabel} }
+          ${CHOICES.optionsProperty}: { type: string, list: true, max: 80, max_items: 4, label: Options }
+        post: [member, lead]
+        choices: { from: ${CHOICES.optionsProperty}, answer: answer, into: note, other: true }
+      answer:
+        label: ${CHOICES.answerLabel}
+        properties:
+          note: { type: string, required: true, label: ${CHOICES.answerLabel} }
+        post: [lead]`
     : "";
   const decisionSession = opts.decisions
     ? `    session:
@@ -169,7 +200,7 @@ channel_types:
         label: Text
         properties:
           body: { type: markdown, required: true, max: 2000, label: ${ROOM.messageLabel} }
-        post: [member, lead]${contained}${decisionTypes}
+        post: [member, lead]${contained}${decisionTypes}${choiceTypes}
     lifecycle:
       close:  { roles: [lead], label: Close }
       reopen: { roles: [lead], label: Reopen }

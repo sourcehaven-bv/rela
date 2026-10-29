@@ -4,8 +4,10 @@ type: ticket
 title: Message options rendered as reply buttons
 kind: enhancement
 priority: medium
-effort: m
-status: backlog
+effort: l
+started: "2026-10-29"
+completed: "2026-10-29"
+status: done
 ---
 
 ## Description

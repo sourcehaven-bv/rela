@@ -74,6 +74,21 @@ const (
 	MaxSubscriberChanges = 1024
 )
 
+// List properties (`list: true` on a string message property). The whole
+// message stays within [MaxMessageBytes], so a long list of long items can
+// reach that cap first.
+const (
+	// MaxListItems caps the items of one list value. It is also the
+	// default of `max_items`.
+	MaxListItems = 20
+	// MaxListItemRunes caps the `max` of a list property: the code points
+	// one item may hold.
+	MaxListItemRunes = 500
+	// DefaultListItemRunes is the item limit of a list property without
+	// `max`.
+	DefaultListItemRunes = 200
+)
+
 // Typing indicator. The server owns these numbers: `limits:` in
 // realtime.yaml does not name them and cannot change them.
 const (

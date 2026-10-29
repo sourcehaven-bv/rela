@@ -537,6 +537,18 @@ give it. `props` is an object that must match the message type's
 `props_schema` from `read_channel`. `signals` and `schemas` default to true
 for a read without a cursor and to false for a read with one.
 
+**Lists and choices.** A list property takes a JSON array of strings, such
+as `"options": ["Yes", "No"]`; its `props_schema` is an `array` with
+`maxItems` and `uniqueItems`. Each item is trimmed and may not hold a
+control, line-break or invisible character. The emoji style selectors
+U+FE0E and U+FE0F are dropped, and the joiner U+200D is allowed only
+between two emoji. A message type with `choices` names, under
+`message_types[].choices` in `read_channel`, the list property that holds
+the options (`from`), the type that answers them (`answer`) and the
+property the answer puts the option in (`into`). To answer such a
+question, post the `answer` type with the option in `into` and
+`reply_to` the question. The realtime guide describes choices.
+
 **Typing.** On a channel type with `typing: true`, `read_channel` shows
 `actions.typing`, which says whether you may type there, and, with signals,
 `typing_now`: who else is typing in the web app. There is no tool to send

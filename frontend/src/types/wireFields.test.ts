@@ -177,6 +177,26 @@ describe('real channel answers use only mirrored keys', () => {
     }
   })
 
+  it('choices', () => {
+    const schema = samples.choices_schema!
+    let seen = 0
+    for (const ct of schema.channel_types as Json[]) {
+      for (const mt of ct.message_types as Json[]) {
+        keysOf('ChannelMessageTypeSchema', mt)
+        for (const p of mt.properties as Json[]) keysOf('ChannelPropertySchema', p)
+        if (mt.choices) {
+          keysOf('ChannelChoicesSchema', mt.choices as Json)
+          seen++
+        }
+      }
+    }
+    expect(seen).toBe(1)
+    const page = samples.choices_messages!
+    keysOf('MessagePage', page)
+    const lists = (page.messages as Json[]).filter((m) => Array.isArray((m.props as Json)?.options))
+    expect(lists).toHaveLength(1)
+  })
+
   it('inbox summary', () => {
     keysOf('InboxSummary', samples.inbox_summary!)
   })

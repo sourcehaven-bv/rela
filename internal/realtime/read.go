@@ -92,6 +92,10 @@ type MessageTypeView struct {
 	// Only log messages can.
 	Reply bool                    `json:"reply"`
 	Props realtimecfg.PropsSchema `json:"props_schema"`
+	// Choices is the type's `choices:`: a message of this type shows its
+	// options as buttons, and a click posts the answer type as a reply.
+	// Nil when the type has none.
+	Choices *ChoicesDescription `json:"choices,omitempty"`
 }
 
 // ReadView is a channel and one page of its messages, oldest first, or by
@@ -224,6 +228,7 @@ func (c *call) messageTypes(post map[string]bool) []MessageTypeView {
 			Name: mt.Name, Label: mt.Label, Persist: mt.Persist, TTLSeconds: ttl, Reply: reply,
 			CanPost: post[name],
 			Props:   mt.PropsSchema(),
+			Choices: describeChoices(mt.Choices),
 		})
 	}
 	return out

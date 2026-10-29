@@ -10,6 +10,8 @@
  * The fields follow the presentation (data-entry.yaml `channels:`) through
  * `resolveChannelFields`: listed order, labels, help, placeholders, widgets
  * and spans, hidden fields left out, the rest required-first then by name.
+ * A list property has no field: agents post lists, and an edit sends a
+ * stored list back unchanged (the app carries what is not rendered).
  *
  * It checks only what it can know for certain: a required field is filled,
  * and a text is within `max` code points (as the server counts). Everything
@@ -237,7 +239,9 @@ const sessionHint = computed(() => {
 
 const fields = computed<ResolvedChannelField[]>(() =>
   current.value
-    ? resolveChannelFields(current.value, props.presentation?.messages?.[current.value.name])
+    ? resolveChannelFields(current.value, props.presentation?.messages?.[current.value.name]).filter(
+        (f) => !f.property.list,
+      )
     : [],
 )
 

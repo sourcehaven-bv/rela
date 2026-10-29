@@ -142,6 +142,8 @@ export type ChannelTextKey =
   | 'sessionHideAll'
   // Session decisions
   | 'decisions'
+  // Reply buttons of a question's options
+  | 'choices'
 
 /**
  * The fixed captions of every component outside the channel set: control
@@ -452,6 +454,7 @@ const CHANNEL_TEXT: Record<ChannelTextKey, string> = {
   sessionShowAll: 'Show all states',
   sessionHideAll: 'Hide the states',
   decisions: 'Decisions',
+  choices: 'Choices',
 }
 
 /**
@@ -596,6 +599,11 @@ export interface Messages {
    * the composer instead of posting.
    */
   channelDecisionHint: (args: { to?: string; form?: boolean }) => string
+  /**
+   * Screen-reader text read after the label of a choice button, which
+   * posts that option as a reply: ` (posts this answer as a reply)`.
+   */
+  channelChoiceHint: () => string
   /**
    * The one-line summary of a narrow session stepper. `label` is the
    * current state's label, or its stored name when stranded or loading.
@@ -784,6 +792,7 @@ export const DEFAULT_MESSAGES: Messages = {
   channelSessionOptionHint: () => ' (moves the session)',
   channelDecisionHint: ({ to, form }) =>
     form ? ' (opens the form)' : to ? ` (moves the session to ${to})` : ' (moves the session)',
+  channelChoiceHint: () => ' (posts this answer as a reply)',
   channelSessionSummary: ({ status, label, outcome }) => {
     switch (status) {
       case 'stranded':

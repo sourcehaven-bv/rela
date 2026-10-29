@@ -18,6 +18,12 @@
  * card's type label and the author line, and emit `decide`. A notice or a
  * removed message never shows them.
  *
+ * `choices` are the reply buttons of a question's options, which the app
+ * builds only while the question is open to an answer. They render after
+ * the fields, as a group named "Choices", and emit `choose`. While they
+ * show, the list property they come from is not rendered as well. A list
+ * property renders as a bulleted list, each item as text.
+ *
  * A session notice (`message.notice`) renders as one system line: the move,
  * and the time. It has no controls, not even reply: the server sends no
  * actions on a notice, and the message that caused it is the row above,
@@ -65,6 +71,8 @@ const props = withDefaults(
     canReply?: boolean
     /** The session decisions this row shows; see the header comment. */
     decisions?: ChannelDecisionView[]
+    /** The reply buttons of this question's options; see the header comment. */
+    choices?: ChannelDecisionView[]
   }>(),
   { canReply: false },
 )
@@ -79,6 +87,7 @@ const emit = defineEmits<{
   openRef: [ref: ChannelReadableRef, event: MouseEvent]
   jump: [seq: number]
   decide: [key: string]
+  choose: [key: string]
 }>()
 
 const headId = useId()
@@ -97,7 +106,18 @@ const fields = computed<ResolvedChannelField[]>(() => {
     .map((name) => ({ property: { name, label: name, type: 'string' }, label: name, widget: 'text' }))
 })
 
-const shown = computed(() => fields.value.filter((f) => props.message.props?.[f.property.name] !== undefined))
+const choiceList = computed(() => props.choices ?? [])
+
+/** The list property the choices come from, while they show. */
+const choicesFrom = computed(() =>
+  choiceList.value.length ? props.messageType?.choices?.from : undefined,
+)
+
+const shown = computed(() =>
+  fields.value.filter(
+    (f) => props.message.props?.[f.property.name] !== undefined && f.property.name !== choicesFrom.value,
+  ),
+)
 
 /** One markdown property and no actions: show it as plain prose, without a card. */
 const prose = computed(
@@ -150,7 +170,7 @@ function isPending(op: string): boolean {
 }
 
 function isRef(v: ChannelPropValue): v is ChannelRef {
-  return typeof v === 'object' && v !== null
+  return !Array.isArray(v) && typeof v === 'object' && v !== null
 }
 
 function enumOption(f: ResolvedChannelField, v: ChannelPropValue): ChannelEnumOption | undefined {
@@ -162,6 +182,7 @@ function plain(f: ResolvedChannelField, v: ChannelPropValue): string {
   const text = props.message.text?.[f.property.name]
   if (text !== undefined) return text
   if (typeof v === 'boolean') return t(v ? 'yes' : 'no')
+  if (Array.isArray(v)) return v.join(', ')
   return String(v)
 }
 
@@ -227,8 +248,11 @@ function hrefFor(v: ChannelRef): string | undefined {
           <template v-for="f in shown" :key="f.property.name">
             <dt>{{ f.label }}</dt>
             <dd>
+              <ul v-if="Array.isArray(message.props![f.property.name])" class="rl-channel-message__list">
+                <li v-for="(item, i) in message.props![f.property.name] as string[]" :key="i">{{ item }}</li>
+              </ul>
               <RlRefChip
-                v-if="isRef(message.props![f.property.name]!)"
+                v-else-if="isRef(message.props![f.property.name]!)"
                 :value="message.props![f.property.name] as ChannelRef"
                 :href="hrefFor(message.props![f.property.name] as ChannelRef)"
                 @open="(r, e) => emit('openRef', r, e)"
@@ -268,6 +292,16 @@ function hrefFor(v: ChannelRef): string | undefined {
           </template>
         </div>
       </div>
+
+      <RlChannelDecisions
+        v-if="choiceList.length"
+        kind="choice"
+        class="rl-channel-message__choices"
+        :decisions="choiceList"
+        :pending="pending"
+        :described-by="decisionsDescribedBy"
+        @decide="(key) => emit('choose', key)"
+      />
 
       <RlButtonGroup v-if="hasControls" align="start" class="rl-channel-message__controls">
         <RlChannelDecisions
@@ -478,6 +512,17 @@ function hrefFor(v: ChannelRef): string | undefined {
   gap: var(--rl-space-2);
   padding: var(--rl-space-2) var(--rl-space-3);
   border-top: 1px solid var(--rl-color-border);
+}
+
+.rl-channel-message__list {
+  margin: 0;
+  padding-left: var(--rl-space-5);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.rl-channel-message__choices {
+  margin-top: var(--rl-space-2);
 }
 
 .rl-channel-message__controls {

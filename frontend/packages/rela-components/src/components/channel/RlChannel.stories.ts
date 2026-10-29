@@ -22,6 +22,10 @@ import {
   channelPresentation,
   manyChannelMessages,
   pickedPerson,
+  answerMessage,
+  questionChoices,
+  questionMessage,
+  questionMessageTypes,
 } from '../../fixtures/channels'
 
 const meta: Meta<typeof RlChannel> = {
@@ -545,5 +549,34 @@ export const DecisionsOnMessage: Story = {
     await expect(row).toHaveAttribute('data-seq', '2')
     await userEvent.click(within(row as HTMLElement).getByRole('button', { name: /Contained again/ }))
     await expect(args.onDecide).toHaveBeenCalledWith('contained', 'row')
+  },
+}
+
+/**
+ * A question with live choices on its own row (TKT-03FQPD); the answered
+ * question above it shows its options as a list. A click emits `choose`.
+ */
+export const WithChoices: Story = {
+  args: {
+    title: 'Importer run',
+    messages: [
+      { ...questionMessage, seq: 10, rev: 10 },
+      { ...answerMessage, seq: 11, rev: 11, replyTo: { ...answerMessage.replyTo!, seq: 10 } },
+      questionMessage,
+    ],
+    messageTypes: questionMessageTypes,
+    postable: ['answer'],
+    choices: new Map([[12, questionChoices]]),
+    onChoose: fn(),
+  },
+  play: async ({ args, canvasElement }) => {
+    const groups = canvasElement.querySelectorAll('[role="group"][aria-label="Choices"]')
+    await expect(groups).toHaveLength(1)
+    const row = groups[0]!.closest('.rl-channel-message')!
+    await expect(row).toHaveAttribute('data-seq', '12')
+    const answered = canvasElement.querySelector('.rl-channel-message[data-seq="10"]')!
+    await expect(answered.querySelectorAll('.rl-channel-message__list li')).toHaveLength(3)
+    await userEvent.click(within(row as HTMLElement).getByRole('button', { name: /^SQLite/ }))
+    await expect(args.onChoose).toHaveBeenCalledWith('choice:12:1')
   },
 }

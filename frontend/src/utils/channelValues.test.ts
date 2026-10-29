@@ -189,6 +189,31 @@ describe('toEditProps', () => {
     })
   })
 
+  it('list prop carried through an edit', () => {
+    const withList: ChannelPropertySchema[] = [
+      { name: 'body', label: 'body', type: 'string', required: true },
+      { name: 'options', label: 'options', type: 'string', list: true },
+    ]
+    const stored: Record<string, MessagePropValue> = { body: 'old', options: ['A', 'B, C'] }
+    expect(toEditProps(withList, new Set(['body']), { body: 'new' }, stored)).toEqual({
+      ok: true,
+      props: { body: 'new', options: ['A', 'B, C'] },
+    })
+  })
+
+  it('a stored string of a property that became a list goes back as one item', () => {
+    const withList: ChannelPropertySchema[] = [
+      { name: 'body', label: 'body', type: 'string', required: true },
+      { name: 'options', label: 'options', type: 'string', list: true },
+      { name: 'tags', label: 'tags', type: 'string', list: true },
+    ]
+    const stored: Record<string, MessagePropValue> = { body: 'old', options: 'A', tags: '  ' }
+    expect(toEditProps(withList, new Set(['body']), { body: 'new' }, stored)).toEqual({
+      ok: true,
+      props: { body: 'new', options: ['A'] },
+    })
+  })
+
   it('lets a rendered field clear an optional prop', () => {
     const rendered = new Set(['body', 'note', 'flag'])
     expect(toEditProps(schema, rendered, { body: 'new' }, current)).toEqual({

@@ -28,6 +28,11 @@ type PropSchema struct {
 	Enum        []string `json:"enum,omitempty"`
 	MaxLength   int      `json:"maxLength,omitempty"`
 	Description string   `json:"description,omitempty"`
+	// Items, MaxItems and UniqueItems describe a list property, whose
+	// Type is "array".
+	Items       *PropSchema `json:"items,omitempty"`
+	MaxItems    int         `json:"maxItems,omitempty"`
+	UniqueItems bool        `json:"uniqueItems,omitempty"`
 }
 
 // JSON Schema formats of the date and datetime property types.
@@ -51,8 +56,15 @@ func (mt *MessageType) PropsSchema() PropsSchema {
 }
 
 // schema is the JSON Schema of p. The service limits only string and
-// markdown values by max, so only those carry maxLength.
+// markdown values by max, so only those carry maxLength. A list is an
+// array of unique strings; its max limits each item.
 func (p Property) schema() PropSchema {
+	if p.List {
+		return PropSchema{
+			Type: "array", Description: p.Label, MaxItems: p.MaxItems, UniqueItems: true,
+			Items: &PropSchema{Type: "string", MaxLength: p.Max},
+		}
+	}
 	s := PropSchema{Type: "string", Description: p.Label}
 	switch p.Type {
 	case PropertyInteger:

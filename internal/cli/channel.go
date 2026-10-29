@@ -147,7 +147,7 @@ func (a channelAddr) raw() realtime.RawAddress {
 
 // channelProps are the props flags of post and edit.
 type channelProps struct {
-	Props     []string `short:"P" name:"prop" sep:"none" placeholder:"KEY=VALUE" help:"A message property (repeatable). The value is read as the property's declared type; commas are kept."`
+	Props     []string `short:"P" name:"prop" sep:"none" placeholder:"KEY=VALUE" help:"A message property (repeatable). The value is read as the property's declared type; commas are kept. Repeat the key for each item of a list property."`
 	PropsJSON string   `name:"props-json" placeholder:"JSON|@FILE|-" help:"All message properties as one JSON object: inline, from a file (@path) or from stdin (-)."`
 }
 
@@ -156,7 +156,8 @@ func (p channelProps) set() bool { return len(p.Props) > 0 || p.PropsJSON != "" 
 
 // collect builds the props object. --props-json is taken as is; -P values
 // are coerced by the declared types in schema (nil reads every value as a
-// string). The service validates the result.
+// string). A repeated -P adds an item to a list property (JSON Schema type
+// array) and is refused for any other. The service validates the result.
 func (p channelProps) collect(schema map[string]string) (map[string]any, error) {
 	if len(p.Props) > 0 && p.PropsJSON != "" {
 		return nil, errors.New("use -P or --props-json, not both")
@@ -169,6 +170,11 @@ func (p channelProps) collect(schema map[string]string) (map[string]any, error) 
 		key, value, ok := strings.Cut(kv, "=")
 		if !ok || key == "" {
 			return nil, fmt.Errorf("-P %q: want key=value", kv)
+		}
+		if schema[key] == "array" {
+			list, _ := props[key].([]any)
+			props[key] = append(list, value)
+			continue
 		}
 		if _, dup := props[key]; dup {
 			return nil, fmt.Errorf("-P %s: given twice", key)

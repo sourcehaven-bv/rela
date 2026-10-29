@@ -135,6 +135,8 @@ func TestParse_SessionOutputsInvalid(t *testing.T) {
 	setTo := func(props string) []replace { return []replace{{set, "- set: { properties: { " + props + " } }"}} }
 	createAs := func(body string) []replace { return []replace{{create, "- create: { " + body + " }"}} }
 	more := "\n                " + create
+	// listOpts adds the list property opts to contained.
+	listOpts := replace{"n: { type: integer } }", "n: { type: integer }, opts: { type: string, list: true } }"}
 	cases := []struct {
 		name   string
 		edits  []replace
@@ -169,6 +171,10 @@ func TestParse_SessionOutputsInvalid(t *testing.T) {
 			o + "[0].set.properties.status", "message property n (integer) is not text"},
 		{"unterminated reference", setTo(`status: "{{message.note"`), o + "[0].set.properties.status",
 			"unterminated {{"},
+		{"whole reference to a list", append(setTo(`status: "{{message.opts}}"`), listOpts),
+			o + "[0].set.properties.status", "message property opts is a list; an output writes one value"},
+		{"mixed reference to a list", append(setTo(`status: "x {{message.opts}}"`), listOpts),
+			o + "[0].set.properties.status", "message property opts is a list; an output writes one value"},
 		{"template too long", setTo("status: " + strings.Repeat("x", 1100)), o + "[0].set.properties.status",
 			"a template is at most 1024 bytes"},
 		{"create type unknown", createAs("type: nope, properties: { title: x }"), o + "[1].create.type",

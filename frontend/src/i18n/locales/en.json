@@ -166,6 +166,8 @@
     "sessionWrongState": "This message type cannot be posted in the session's current state. Choose another.",
     "decisionConfirmBody": "This ends the session in {state}. You cannot undo it.",
     "decisionStale": "The session moved on. Choose again.",
+    "choiceOther": "Other answer…",
+    "choiceStale": "This question is no longer open.",
     "decisionDiscardEditTitle": "Discard your edit?",
     "decisionDiscardEditBody": "This decision opens a new message. The changes to the message you are editing are lost.",
     "decisionDiscardEditConfirm": "Discard",

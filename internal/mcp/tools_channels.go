@@ -293,6 +293,10 @@ func toolReadChannelDef() *mcpgo.Tool {
 			"To wait for a session's status or your turn, watch read_session instead: it carries no rev. "+
 			"A message's mentions lists the people and agents it addresses as you may see them: text (the "+
 			"code span), kind (user, job or login) and, for a user, ref. "+
+			"A list property has props_schema type array, and its value is a JSON array of strings. "+
+			"A message type with choices in message_types[].choices is a question: the web app shows the "+
+			"items of its from list as buttons, and a click posts the answer type with the item in its into "+
+			"property, as a reply to the question. "+
 			realtime.UntrustedNotice),
 		withNumber(chanAfterRevArg, description("Messages changed after this rev, ordered by rev; 0 is valid")),
 		withNumber("after", description("Messages after this seq, oldest first")),
@@ -344,7 +348,12 @@ func toolPostMessage(refuseSignals bool) *mcpgo.Tool {
 		"In a markdown property, to mention a person, put their user entity id in backticks (`USR-7`) " +
 		"where person mapping is configured, or `@login` in backticks where it is not; to mention an " +
 		"agent, its job identity (`integration:triage-bot`). At most " + strconv.Itoa(realtime.MaxMentions) +
-		" per message. A reply addresses the author of the message it replies to. "
+		" per message. A reply addresses the author of the message it replies to. " +
+		"A list property (props_schema type array) takes a JSON array of distinct strings; each item is " +
+		"trimmed and may not hold control, line-break or invisible characters (U+FE0E and U+FE0F are " +
+		"dropped, and U+200D is allowed only between two emoji). To ask a person to choose, post a type with choices (message_types[].choices on " +
+		"read_channel) with the options in its from list; the web app shows them as buttons, and the " +
+		"answer arrives as a reply of the answer type. "
 	if !refuseSignals {
 		desc += "A signal type (persist ephemeral) is kept in memory until its ttl and answers " +
 			"{ephemeral,id,expires_at}. "

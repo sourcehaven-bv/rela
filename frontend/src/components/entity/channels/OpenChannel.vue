@@ -7,15 +7,16 @@
  * channelErrors.ts; this component holds the session state between them:
  * which message is being replied to or edited, which operations are in
  * flight, the remove dialog and the ref picker. The ephemeral clock is
- * useExpiryClock and the picker plumbing useRefPicker. useTyping sends the
- * composer's typing events; the head's typing_now is shown as it is, with
- * no clock, since the server expires entries and frames the head then.
+ * useExpiryClock, the paging useChannelPaging and the picker plumbing
+ * useRefPicker. useTyping sends the composer's typing events; the head's
+ * typing_now is shown as it is, with no clock, since the server expires
+ * entries and frames the head then.
  * A channel type with a session gets the stepper in RlChannel's session
  * slot, and the composer marks the types whose post would move it.
  *
  * Session decisions (TKT-T9G1AE) are buttons in the stepper and on the
- * message that moved the session into its current state; their logic is
- * useSessionDecisions.
+ * message that moved the session into its current state, and choices
+ * (TKT-03FQPD) on a question's row; their logic is useSessionDecisions.
  *
  * It emits `gone` when the channel can no longer be shown: a refused read
  * (the reader lost access, or the channel was deleted) or a refusal that
@@ -62,6 +63,7 @@ import EntityPickerModal from '@/components/forms/EntityPickerModal.vue'
 import ChannelTextDialog from './ChannelTextDialog.vue'
 import { classifyChannelError } from './channelErrors'
 import { useChannelLinks } from './useChannelLinks'
+import { useChannelPaging } from './useChannelPaging'
 import { useExpiryClock } from './useExpiryClock'
 import { usePendingKeys } from './usePendingKeys'
 import { useRefPicker } from './useRefPicker'
@@ -104,8 +106,6 @@ const channelSchema = useChannelSchemaStore()
 const { confirm } = useConfirm()
 
 const tz = browserTimeZone()
-/** How many older pages a reply quote's jump reads before it gives up. */
-const JUMP_MAX_PAGES = 10
 
 const target = computed(() => ({
   type: props.entityType,
@@ -396,6 +396,7 @@ const decisionsApi = useSessionDecisions({
     editing: () => !!editing.value,
     discardEdit: onCancelEdit,
     endReply: () => (replyTo.value = null),
+    reply: onReply,
     select: (type) => composer.value?.select(type) ?? false,
     showError: (m) => (formError.value = m),
   },
@@ -477,34 +478,9 @@ async function onLifecycle(op: string) {
   else if (channel !== undefined) emit('changed')
 }
 
-const loadingOlder = ref(false)
-async function onLoadOlder() {
-  if (loadingOlder.value) return
-  loadingOlder.value = true
-  try {
-    await ch.loadOlder()
-  } catch (err) {
-    handle(err, false)
-  } finally {
-    loadingOlder.value = false
-  }
-}
-
-async function onLoadNewest() {
-  try {
-    await ch.loadNewest()
-  } catch (err) {
-    handle(err, false)
-  }
-}
-
-/** Reads older pages until the quoted message is held, within a bound. */
-async function onJump(seq: number) {
-  for (let i = 0; i < JUMP_MAX_PAGES; i++) {
-    if (ch.messages.value.some((m) => m.seq === seq) || !ch.hasOlder.value) return
-    await onLoadOlder()
-  }
-}
+const { loadingOlder, onLoadOlder, onLoadNewest, onJump } = useChannelPaging(ch, (err) =>
+  handle(err, false)
+)
 
 // --- Links and the ref picker -----------------------------------------------
 
@@ -540,8 +516,9 @@ const pickerTypes = picker.types
       :enum-options="enumOptions"
       :entity-href="entityHref"
       :pending="shownPending"
-      :decisions="decisions"
+      :decisions="decisionsApi.rowDecisions.value"
       :decision-seq="decisionSeq"
+      :choices="decisionsApi.choices.value"
       :has-older="ch.hasOlder.value"
       :has-newer="ch.hasNewer.value"
       :loading-older="loadingOlder"
@@ -557,6 +534,7 @@ const pickerTypes = picker.types
       @load-newest="onLoadNewest"
       @jump="onJump"
       @decide="(key) => onDecide(key, 'row')"
+      @choose="decisionsApi.onChoose"
     >
       <template v-if="session.value" #session>
         <RlChannelSession ref="sessionHeader" :session="session.value">

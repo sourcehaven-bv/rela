@@ -147,12 +147,23 @@ type Schema struct {
 	// ReadOnly marks a value the API serves but refuses on write.
 	ReadOnly bool `json:"readOnly,omitempty"`
 
+	// Limits are the value constraints. They render inline.
+	Limits
+}
+
+// Limits are the value constraints of a [Schema]: numeric bounds, the
+// length of a string and the size of an array.
+type Limits struct {
 	// Numeric constraints
 	Minimum *float64 `json:"minimum,omitempty"`
 	Maximum *float64 `json:"maximum,omitempty"`
 
 	// String constraints
 	MaxLength int `json:"maxLength,omitempty"`
+
+	// Array constraints
+	MaxItems    int  `json:"maxItems,omitempty"`
+	UniqueItems bool `json:"uniqueItems,omitempty"`
 }
 
 // MarshalJSON renders s, with `additionalProperties: false` when s is

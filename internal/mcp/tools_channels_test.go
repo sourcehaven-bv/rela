@@ -7,6 +7,7 @@ import (
 	"errors"
 	"log/slog"
 	"maps"
+	"reflect"
 	"slices"
 	"sort"
 	"strings"
@@ -890,5 +891,44 @@ func TestReadChannel_IncludesTransitions(t *testing.T) {
 		if read.Actions == nil || !slices.Equal(read.Actions.Transitions, want) {
 			t.Errorf("%s: actions = %+v, want transitions %v", user, read.Actions, want)
 		}
+	}
+}
+
+// TestPostMessage_ListProp pins AC 7 of TKT-03FQPD for MCP: post_message
+// takes a JSON array for a list property, and read_channel returns the
+// list and the question type's choices.
+func TestPostMessage_ListProp(t *testing.T) {
+	t.Parallel()
+	f := newChannelFixture(t)
+	y := strings.Replace(channelTestYAML,
+		"          about: { type: ref, to: [requirement, decision] }\n        post: [member]\n",
+		"          about: { type: ref, to: [requirement, decision] }\n"+
+			"          options: { type: string, list: true, max: 40, max_items: 4 }\n        post: [member]\n"+
+			"        choices: { from: options, answer: announce, into: body }\n", 1)
+	compiled, err := realtimecfg.Parse([]byte(y), f.meta, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.cfg.Store(compiled)
+	cs := f.client(t, "alice")
+	room := map[string]any{"id": "REQ-001", "channel_type": "room"}
+	var posted struct {
+		Message realtime.MessageView `json:"message"`
+	}
+	mustCall(t, cs, "post_message", with(room, map[string]any{
+		"message_type": "text", "props": map[string]any{"body": "Which?", "options": []any{"A", " B "}},
+	}), &posted)
+	if got := posted.Message.Props["options"]; !reflect.DeepEqual(got, []any{"A", "B"}) {
+		t.Errorf("options = %#v; want [A B]", got)
+	}
+	got, isErr := call(t, cs, "post_message", with(room, map[string]any{
+		"message_type": "text", "props": map[string]any{"body": "x", "options": "A"},
+	}))
+	if !isErr || !strings.Contains(got, `property "options": must be a list of strings`) {
+		t.Errorf("a string for a list: isErr=%v %s", isErr, got)
+	}
+	text := mustCall(t, cs, "read_channel", room, nil)
+	if !strings.Contains(text, `"choices":{"from":"options","answer":"announce","into":"body","other":false}`) {
+		t.Errorf("read_channel lists no choices for text: %s", text)
 	}
 }

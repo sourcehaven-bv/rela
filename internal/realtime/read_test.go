@@ -2,6 +2,7 @@ package realtime
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -275,4 +276,23 @@ func TestRead_UntypedRouteOutsideAttachTo(t *testing.T) {
 	require.Contains(t, d.Title, "doc")
 	_, err = h.svc.Read(as(user("bob")), RawAddress{Anchor: "DOC-9", Type: "room"}, ReadRequest{})
 	require.ErrorIs(t, err, ErrAnchorNotFound)
+}
+
+// TestRead_Choices pins AC 6 of TKT-03FQPD: read lists a question type's
+// choices under message_types, and omits the key for a type without.
+func TestRead_Choices(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t, withYAML(listRealtime))
+	v, err := h.svc.Read(as(user("bob")), room, ReadRequest{Schemas: true})
+	require.NoError(t, err)
+	byName := map[string]MessageTypeView{}
+	for _, mt := range v.MessageTypes {
+		byName[mt.Name] = mt
+	}
+	require.Equal(t, &ChoicesDescription{From: "options", Answer: "answer", Into: "body", Other: true},
+		byName["ask"].Choices)
+	require.Equal(t, "array", byName["ask"].Props.Properties["options"].Type)
+	answer, err := json.Marshal(byName["answer"])
+	require.NoError(t, err)
+	require.NotContains(t, string(answer), "choices")
 }

@@ -131,3 +131,29 @@ func TestDocsExample_Branching(t *testing.T) {
 		t.Errorf("decide entries lead to %v; want approved, drafting", tos)
 	}
 }
+
+// TestDocsExample_Choices pins AC 14 of TKT-03FQPD: the Choices example of
+// the realtime guide loads with no warnings, and its question type holds
+// the choices the guide describes.
+func TestDocsExample_Choices(t *testing.T) {
+	data, err := os.ReadFile(realtimeGuide)
+	if err != nil {
+		t.Fatal(err)
+	}
+	example := "version: 1\n" + yamlBlock(t, string(data), "## Choices", "channel_types:\n  agent-run:")
+	c, err := Parse([]byte(example), testMeta(t), testPolicy(t))
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if w := c.Warnings(); len(w) != 0 {
+		t.Errorf("warnings = %v", w)
+	}
+	ct, _ := c.ChannelType("agent-run")
+	want := Choices{From: "options", Answer: "answer", Into: "body", Other: true}
+	if got := ct.MessageTypes["ask"].Choices; got == nil || *got != want {
+		t.Errorf("ask.Choices = %+v; want %+v", got, want)
+	}
+	if p := ct.MessageTypes["ask"].Properties["options"]; !p.List || p.Max != 80 || p.MaxItems != 4 {
+		t.Errorf("options = %+v; want a list of at most 4 items of 80 characters", p)
+	}
+}

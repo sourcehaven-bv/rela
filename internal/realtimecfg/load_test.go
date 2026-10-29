@@ -252,6 +252,13 @@ func TestParse_Invalid(t *testing.T) {
 			"run_as is set once per session type, at session.run_as"},
 		{"state on_final", []replace{{"          label: Detected\n", "          label: Detected\n          on_final: close\n"}},
 			"channel_types.breach-response.session.states.detected.on_final", "on_final belongs to the session"},
+		{"list in a trigger literal", []replace{{"summary:  { type: string, required: true }",
+			"summary:  { type: string, list: true, required: true }"}},
+			"triggers.breach-escalated.post.props.summary", "a trigger or reminder cannot set a list property"},
+		{"list in promote_to.map", []replace{{"summary:  { type: string, required: true }",
+			"summary:  { type: string, list: true, required: true }"}},
+			"channel_types.incident-room.message_types.status-update.actions.log.promote_to.map.title",
+			"message property summary (list of string) cannot fill timeline-entry.title"},
 		{"session", []replace{{"version: 1\n", "version: 1\nsession: {}\n"}}, "session",
 			"a session belongs under a channel type: channel_types.<name>.session"},
 		{"session timers", []replace{{"      initial: detected\n", "      initial: detected\n      timers: {}\n"}},
@@ -993,4 +1000,63 @@ func TestCheckReload_TypingToggleAllowed(t *testing.T) {
 	if err := CheckReload(off, on); err != nil {
 		t.Errorf("turning typing on refused: %v", err)
 	}
+}
+
+// TestParse_ListProperty pins AC 2 of TKT-03FQPD: a list property loads
+// with its limits and defaults, and each bad declaration is refused at its
+// key.
+func TestParse_ListProperty(t *testing.T) {
+	src := func(prop string) string {
+		return "version: 1\nchannel_types:\n  room:\n    attach_to: [datalek]\n    roles: {m: {from: attached}}\n" +
+			"    message_types:\n      ask:\n        post: [m]\n        properties:\n          options: " + prop + "\n"
+	}
+	const k = "channel_types.room.message_types.ask.properties.options"
+	loads := []struct {
+		name          string
+		prop          string
+		max, maxItems int
+	}{
+		{"declared limits", "{ type: string, list: true, max: 80, max_items: 4 }", 80, 4},
+		{"defaults", "{ type: string, list: true }", realtimelimits.DefaultListItemRunes, realtimelimits.MaxListItems},
+		{"caps", "{ type: string, list: true, max: 500, max_items: 20 }", 500, 20},
+	}
+	for _, tc := range loads {
+		t.Run(tc.name, func(t *testing.T) {
+			c, err := Parse([]byte(src(tc.prop)), testMeta(t), nil)
+			if err != nil {
+				t.Fatalf("Parse: %v", err)
+			}
+			ct, _ := c.ChannelType("room")
+			p := ct.MessageTypes["ask"].Properties["options"]
+			if !p.List || p.Max != tc.max || p.MaxItems != tc.maxItems {
+				t.Errorf("options = %+v; want a list with max %d and max_items %d", p, tc.max, tc.maxItems)
+			}
+		})
+	}
+	refused := []struct {
+		name, prop, key, reason string
+	}{
+		{"list on markdown", "{ type: markdown, list: true }", k + ".list", "only a string property may be a list"},
+		{"list on integer", "{ type: integer, list: true }", k + ".list", "only a string property may be a list"},
+		{"list on an enum", "{ type: severity, list: true }", k + ".list", "only a string property may be a list"},
+		{"max_items without list", "{ type: string, max_items: 3 }", k + ".max_items", "only a list property has max_items"},
+		{"max_items zero", "{ type: string, list: true, max_items: 0 }", k + ".max_items", "must be between 1 and 20"},
+		{"max_items over the cap", "{ type: string, list: true, max_items: 21 }", k + ".max_items",
+			"must be between 1 and 20"},
+		{"max over the cap", "{ type: string, list: true, max: 501 }", k + ".max", "must be between 1 and 500"},
+		{"max zero", "{ type: string, list: true, max: 0 }", k + ".max", "must be between 1 and 500"},
+	}
+	for _, tc := range refused {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := Parse([]byte(src(tc.prop)), testMeta(t), nil)
+			assertProblem(t, err, tc.key, tc.reason)
+		})
+	}
+	t.Run("list on integer with max_items has one problem", func(t *testing.T) {
+		_, err := Parse([]byte(src("{ type: integer, list: true, max_items: 3 }")), testMeta(t), nil)
+		assertProblem(t, err, k+".list", "only a string property may be a list")
+		if strings.Contains(err.Error(), k+".max_items") {
+			t.Errorf("max_items got a problem although list: true is written: %v", err)
+		}
+	})
 }

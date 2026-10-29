@@ -52,6 +52,7 @@ channel_types:
           count:  { type: integer }
           urgent: { type: boolean }
           about:  { type: ref, to: [item, doc] }
+          options: { type: string, list: true, max_items: 3 }
         post: [member]
       typing: { persist: ephemeral, ttl: 5s, post: [member] }
     message_ops:
@@ -489,4 +490,41 @@ func TestChannelCLI_ExpectGeneration(t *testing.T) {
 		"--expect-generation", "0")
 	require.NoError(t, err)
 	assert.Contains(t, got, "generation 1")
+}
+
+// TestChannelCLI_ListProp pins AC 3 and AC 7 of TKT-03FQPD for the CLI: a
+// repeated -P adds an item to a list property, a comma stays inside one
+// item, the read describes the property and prints the list one item per
+// line, and a scalar given twice is still refused.
+func TestChannelCLI_ListProp(t *testing.T) {
+	p := newChannelProject(t)
+	_, err := runChannel(t, p.svc, "alice", "", "channel", "post", p.item, "room", "text",
+		"-P", "body=Which", "-P", "options=A", "-P", "options=b,c")
+	require.NoError(t, err)
+
+	got, err := runChannel(t, p.svc, "alice", "", "-o", "json", "channel", "read", p.item, "room")
+	require.NoError(t, err)
+	var read struct {
+		Messages []struct {
+			Props map[string]any `json:"props"`
+		} `json:"messages"`
+	}
+	channelJSONOf(t, got, &read)
+	require.Len(t, read.Messages, 1)
+	assert.Equal(t, []any{"A", "b,c"}, read.Messages[0].Props["options"])
+
+	got, err = runChannel(t, p.svc, "alice", "", "channel", "read", p.item, "room", "--schemas")
+	require.NoError(t, err)
+	assert.Contains(t, got, "  options: list of string, at most 3\n")
+	assert.Contains(t, got, propIndent+"options:\n"+propIndent+"  - A\n"+propIndent+"  - b,c\n")
+
+	_, err = runChannel(t, p.svc, "alice", "", "channel", "post", p.item, "room", "text",
+		"-P", "body=a", "-P", "body=b")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "-P body: given twice")
+
+	_, err = runChannel(t, p.svc, "alice", "", "channel", "post", p.item, "room", "text",
+		"--props-json", `{"body":"x","options":["A","A"]}`)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), `property "options": item 2 repeats an earlier item`)
 }
