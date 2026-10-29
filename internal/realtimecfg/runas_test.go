@@ -209,7 +209,7 @@ func TestTriggerOutputs_Compile(t *testing.T) {
 			t.Fatalf("%s: Parse: %v", kind, err)
 		}
 		ct, _ := c.ChannelType("br")
-		tr, _ := ct.Session().Transition("open", "contained")
+		tr, _ := firstBranch(ct.Session(), "open", "contained")
 		if len(tr.Outputs()) != 1 || !tr.job {
 			t.Errorf("%s: outputs = %+v, job = %v", kind, tr.Outputs(), tr.job)
 		}
@@ -223,8 +223,33 @@ func TestTriggerOutputs_Compile(t *testing.T) {
 		t.Fatalf("person transition: %v", err)
 	}
 	ct, _ := c.ChannelType("br")
-	if tr, _ := ct.Session().Transition("open", "contained"); tr.job || len(tr.Outputs()) != 1 {
+	if tr, _ := firstBranch(ct.Session(), "open", "contained"); tr.job || len(tr.Outputs()) != 1 {
 		t.Errorf("a transition with roles is a person move: job = %v", tr.job)
+	}
+}
+
+// TestTriggerOutputs_Branches pins TKT-FPXTQJ AC 7: a list entry a trigger
+// can reach is a job move whose outputs need session.run_as, unless an
+// earlier entry without when already admits triggers.
+func TestTriggerOutputs_Branches(t *testing.T) {
+	const out = "outputs: [ { set: { properties: { status: x } } } ]"
+	base := func(on string) string {
+		return editBase(t, replace{runAsLine, ""},
+			replace{"              outputs:\n                - set: { properties: { status: late } }\n", ""},
+			replace{"contained: { to: done, roles: [lead] }", "contained: " + on},
+			replace{"        done: { final: true }\n", "        done: { final: true }\n" + triggerT1})
+	}
+	_, err := Parse([]byte(base("[ { to: open, roles: [lead] }, { to: done, "+out+" } ]")), testMeta(t), nil)
+	assertOneProblem(t, err, "channel_types.br.session.states.open.on.contained[1].outputs[0].set",
+		"set session.run_as to a job identity")
+
+	c, err := Parse([]byte(base("[ { to: open, by: trigger }, { to: done, "+out+" } ]")), testMeta(t), nil)
+	if err != nil {
+		t.Fatalf("an entry no trigger reaches needs no run_as: %v", err)
+	}
+	ct, _ := c.ChannelType("br")
+	if tr, ok := ct.Session().TransitionTo("open", "contained", "done"); !ok || tr.Job() {
+		t.Errorf("shadowed entry: %+v, job = %v", tr, tr.Job())
 	}
 }
 
@@ -398,6 +423,9 @@ func TestJobLoops(t *testing.T) {
 			"{ to: open, by: trigger, outputs: [ { set: { properties: { status: late } } } ] }", ""), timerKey},
 		{"no outputs on the loop", loop("{ to: open, by: trigger }", ""), ""},
 		{"a person closes the loop", loop("{ to: open, roles: [lead] }", withOutputs), ""},
+		// TKT-FPXTQJ AC 7: a list entry a trigger reaches is a job edge.
+		{"by: trigger move back in a second entry", loop("[ { to: done, roles: [lead] }, { to: open, by: trigger } ]",
+			withOutputs), timerKey},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

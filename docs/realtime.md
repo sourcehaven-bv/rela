@@ -525,12 +525,12 @@ channel_types:
 | `states.<name>.final` | `true` for a state the session ends in. A final state has no `on:` and no `after:`. |
 | `states.<name>.status` | What the state means to an agent: `working`, `input_required`, `completed`, `cancelled` or `failed`. See [Status and waiting_for](#status-and-waiting_for). |
 | `states.<name>.waiting_for` | The roles the state waits for. It makes the status `input_required`. |
-| `states.<name>.on` | The transitions out of the state, keyed by message type. A state that is not final needs at least one transition or one timer. |
+| `states.<name>.on` | The transitions out of the state, keyed by message type. Each key holds one entry, or a list of entries tried in order (see "Several targets for one message type" under [Sessions](#sessions)). A state that is not final needs at least one transition or one timer. |
 | `states.<name>.after` | The timers of the state, keyed by timer name. At most 8. See [Timers](#timers). |
 | `session.reminders` | Messages the session posts at a fixed interval, keyed by reminder name. At most 8. See [Reminders](#reminders). |
 | `session.on_final` | `close`: a move into any final state closes the channel. See [Outputs](#outputs). |
 | `session.run_as` | The job identity that writes the outputs of timer and trigger moves. See [Outputs](#outputs). |
-| `on.<type>.to` | The state the message moves the session to. It may be the same state: a re-entry. |
+| `on.<type>.to` | The state the message moves the session to. It may be the same state: a re-entry. In a list, each entry has its own `to`, `roles`, `by`, `when` and `outputs`. |
 | `on.<type>.roles` | Only a poster holding one of these roles moves the session. Each role must be in the message type's `post`. |
 | `on.<type>.by` | `trigger`: only a trigger's message moves the session. |
 | `on.<type>.when` | A condition the message must meet to move the session. |
@@ -539,7 +539,8 @@ channel_types:
 **How a message moves a session.** A posted message moves the session when,
 at the moment it is stored, the channel is open, the current state has an
 `on:` entry for the message's type, the poster passes the entry's rule, and
-its `when` holds. Otherwise the message is posted and the session stays
+its `when` holds. With a list of entries, rela tries them in order and the
+first that applies moves the session. Otherwise the message is posted and the session stays
 where it is: a transition is part of what a message means, not a separate
 permission. The store decides under its lock, so of two messages that
 arrive together, the one stored first moves the session, and the second is
@@ -661,14 +662,102 @@ The entry narrows that further:
 
 `roles` and `by: trigger` cannot be combined.
 
+**Several targets for one message type.** `on.<type>` may hold a list of
+entries instead of one. Use it when one decision has several outcomes,
+such as a review that approves or sends a plan back:
+
+```yaml
+channel_types:
+  plan-review:
+    label: Plan review
+    attach_to: [datalek]
+    roles:
+      owner:  { label: the owner, from: entity.owner }
+      member: { from: attached }
+    message_types:
+      text: { properties: { body: { type: markdown, required: true } }, post: [owner, member] }
+      plan: { properties: { plan: { type: markdown, required: true } }, post: [member], in: [drafting] }
+      decide:
+        label: Decide
+        properties:
+          decision: { type: plan-decision, required: true }
+          note:     { type: markdown }
+        post: [owner]
+        in: [review]
+    session:
+      initial: drafting
+      states:
+        drafting:
+          on:
+            plan: { to: review }
+        review:
+          waiting_for: [owner]
+          on:
+            decide:
+              - to: approved
+                when: "message.decision == 'approve'"
+                outputs:
+                  - set: { properties: { status: approved } }
+              - to: drafting
+        approved: { final: true }
+```
+
+Here `plan-decision` is an enum type in `schema.yaml` with the values
+`approve` and `revise`. A Decide with `approve` moves the plan to
+Approved and sets its status; any other Decide sends it back to Drafting.
+
+- rela tries the entries in the order of the file. The first entry whose
+  poster rule (`roles` or `by`) and `when` both hold moves the session.
+  Later entries are not tried.
+- Each entry has its own poster rule. So `[{to: escalated, roles: [lead]},
+  {to: noted}]` moves a lead's post to Escalated and everyone else's,
+  a trigger's included, to Noted.
+- If no entry applies, the message is stored and the session stays,
+  as for a single entry whose `when` does not hold. The answer to the
+  post carries the session; compare `session.generation` with the one you
+  expected to see whether it moved. A list in which every entry has a
+  `when` loads with a warning. To make every post move the session, make
+  the property `required` and end the list with an entry without `when`,
+  as above.
+- A `when` that fails to evaluate stops the decision. The message is
+  stored, the session stays, and rela does not try the later entries. A
+  failure is not a "no": if rela went on, a message that makes a guard
+  fail could reach a catch-all entry that the guard was meant to keep it
+  from. rela logs a warning that names the entry, such as
+  `...states.review.on.decide[0]`.
+- A list has 1 to 8 entries. rela refuses an empty list, an entry that no
+  poster can reach because earlier entries without `when` admit every
+  poster it admits, and two entries with the same `to` when either has
+  outputs. Entries without outputs may share a `to`, such as one a lead
+  fires and one anyone fires when a condition holds. A problem inside a
+  list names the entry, such as `on.decide[1].to`.
+- The checks for `waiting_for`, deadlines and `run_as` judge the entries
+  per role: an entry counts for a role only when no earlier entry without
+  `when` admits that role. So with `waiting_for: [owner]` and
+  `[{to: review, roles: [owner]}, {to: working}]`, the owner always
+  re-enters review and has no answer.
+- Outputs follow the entry that moved the session. With
+  `expect_generation`, the only thing that can switch the entry between
+  the check of the outputs and the store is a reminder count in a `when`.
+  If that switches to another entry with outputs, the message is stored
+  and the session stays. If it switches to an entry without outputs, the
+  session moves along that entry.
+- The web app shows a branching type as a decision that opens the
+  composer, where an enum property is a select. If you want one-click
+  buttons, two message types (such as `approve` and `revise`) remain the
+  better choice for now.
+- Lists are new in this release. Every process that loads the project
+  needs this release or later; an older one refuses a list under `on:`.
+
 **Guards.** `when` reads `message.<property>` (the posted properties, typed
 as for the message type's own `when`), `session.state`,
 `session.generation`, `session.entered_at`, `session.reminders`
 (see [Reminders](#reminders)) and the standard functions such as
 `today()`. A comparison on an optional property the message leaves out
-does not hold, and neither does a `when` that fails to evaluate. rela
-logs such a failure as a warning, once per guard until the next reload,
-with the channel type, the state and the message type. A `when`
+does not hold. A `when` that fails to evaluate moves nothing, and rela
+does not try the entries after it. rela logs such a failure as a warning, once per entry until the next reload,
+with the channel type, the state, the message type, the target and the
+entry's key. A `when`
 cannot read the entity yet; rela refuses one that does, with "transition
 guards cannot read the entity yet; use a trigger that posts a message".
 Write "not equal" as `~=`.
@@ -1288,6 +1377,11 @@ unknown entity type "nope"`. It checks:
   never in a `cardinality: many` type, and a `when` that compiles and does
   not read the entity. A `session` at the top of the file is refused; it
   belongs under a channel type;
+- that `on.<type>` is a mapping or a list of 1 to 8 mappings, that no
+  entry of a list is unreachable because earlier entries without `when`
+  admit every poster it admits, and that two entries of a list lead to the
+  same state only when neither has outputs. A list in which every entry
+  has a `when` loads with a warning;
 - that each timer under `after:` is on a state that is not final, has a
   valid name, a `period` that parses and is at least `1m` when fixed, a
   `since` of `state` or `session`, and a `to` that exists. A state has at
@@ -1427,6 +1521,9 @@ walk for unread channels. Each post that writes a row rewrites that
 channel's `mentions.json` under the project-wide write lock. The database
 backends use indexes.
 
+Transitions have a fixed limit: at most 8 entries per message type and
+state.
+
 Outputs have fixed limits: at most 4 per transition and 1024 bytes per
 template. Retries run once a minute, at most 16 per round and 5 attempts
 per move, for 30 minutes after the notice; a claim holds for 90 seconds.
@@ -1516,9 +1613,12 @@ default, so a plain message does not move the session by accident. Only
 when every type you may post moves the session does it select the first of
 them, and the note below says the session will move. While a
 marked type is selected, the composer says "Sending this moves the session
-to ‹state›.", or "… to ‹state› if its condition holds." for a transition
-with a `when`. A reply shows the same note. An edit does not, because an
-edit never moves a session.
+to ‹state›.", or "… to ‹state› if its condition holds." when every
+entry of the type has a `when`. For a type with entries that lead to
+several states, or with entries of which only some have a `when`, it says
+"Sending this may move the session to ‹state› or ‹state›.", because which
+entry applies depends on what you send and on your roles. A reply shows
+the same note. An edit does not, because an edit never moves a session.
 
 A notice shows as one line, such as "Session moved from Detected to
 Contained" or "Session entered Contained again", with the time and no
@@ -1548,6 +1648,12 @@ message: only a message moves a session.
 - The post carries `expect_generation`. If the session moved on before it
   arrived, nothing is stored, the app says "The session moved on. Choose
   again." and shows the decisions of the new state.
+- A decision that opens the composer carries `expect_generation` too: the
+  generation when you clicked it. **Send** for that type posts with it. If
+  the session moves on before you send, the app drops the decision and
+  says "The session moved on. Choose again.". Choosing another type in the
+  composer drops it without a message, even if you switch back before you
+  send, and a plain message carries no generation.
 - While a decision is in flight, the other decision buttons and **Send**
   are disabled. After a one-click decision, focus moves to the message you
   clicked on, or to the session header. The notice in the log announces
@@ -1757,8 +1863,10 @@ with the clock. A stored channel that never moved gives its creation time.
 `transitions` lists the `on:` entries of the current state, with `by:
 "trigger"` when only a trigger fires one and `guarded: true` when the entry
 has a `when`, and `outputs` (the number of outputs) when the entry has any.
-It is the same for every reader; `_actions.transitions` says which of them
-the caller fires.
+They are sorted by message type. A message type with a list of entries
+appears once per entry, in the order rela tries them. It is the same for
+every reader; `_actions.transitions` says which message types the caller
+fires, each once.
 `final` and `stranded` are set when they apply.
 
 `timers` lists the timers of the current state, sorted by name, each with
@@ -1947,7 +2055,9 @@ When a post answers a request, pass the session's `generation` from
 `read_session` or `read_channel` as `expect_generation` (`rela channel
 post --expect-generation`). If the session moved on meanwhile, the post
 answers `session_moved` and nothing is stored: read the session again and
-decide again.
+decide again. If no transition entry applies, the message is stored and
+the session stays; compare `session.generation` in the answer with the
+generation you sent to see whether the post moved it.
 
 **Waiting for a session.** `read_session` returns only a channel's session,
 the channel's name and state, and the message types whose post by the

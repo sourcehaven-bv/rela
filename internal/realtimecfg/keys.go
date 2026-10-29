@@ -103,6 +103,10 @@ func (k *keyChecker) walk(n *yaml.Node, t reflect.Type, path string) {
 		add(path, mergeReason)
 		return
 	}
+	if t == reflect.TypeFor[rawBranches]() {
+		k.branches(n, path)
+		return
+	}
 	switch t.Kind() {
 	case reflect.Struct:
 		if n.Kind != yaml.MappingNode {
@@ -138,6 +142,22 @@ func (k *keyChecker) walk(n *yaml.Node, t reflect.Type, path string) {
 		}
 	default:
 		k.scalar(n, t, path)
+	}
+}
+
+// branches checks an `on.<message type>` value, which is one transition
+// entry (a mapping) or a list of them: see [rawBranches].
+func (k *keyChecker) branches(n *yaml.Node, path string) {
+	entry := reflect.TypeFor[rawTransition]()
+	switch n.Kind {
+	case yaml.MappingNode:
+		k.walk(n, entry, path)
+	case yaml.SequenceNode:
+		for i, c := range n.Content {
+			k.walk(c, entry, fmt.Sprintf("%s[%d]", path, i))
+		}
+	default:
+		k.add(path, "must be a mapping or a list of mappings")
 	}
 }
 

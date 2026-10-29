@@ -135,12 +135,12 @@ func TestCompiled_SessionIsReadOnly(t *testing.T) {
 	s.States()[0].Name = "x"
 	st, _ := s.State("detected")
 	st.Transitions()[0].Roles[0] = "x"
-	tr, _ := s.Transition("detected", "contained")
+	tr, _ := firstBranch(s, "detected", "contained")
 	tr.Roles[0] = "x"
 	if s.States()[0].Name != "detected" {
 		t.Error("States returned the shared slice")
 	}
-	if tr, _ := s.Transition("detected", "contained"); tr.Roles[0] != "lead" {
+	if tr, _ := firstBranch(s, "detected", "contained"); tr.Roles[0] != "lead" {
 		t.Error("a returned transition shares its roles")
 	}
 	st.Timers()[0].Name = "x"
@@ -157,7 +157,7 @@ func TestCompiled_SessionIsReadOnly(t *testing.T) {
 
 		t.Error("a reminder accessor returned shared state")
 	}
-	out, _ := s.Transition("detected", "contained")
+	out, _ := firstBranch(s, "detected", "contained")
 	out.Outputs()[0].Type = "x"
 	delete(out.Outputs()[0].Properties(), "title")
 	if o := out.Outputs()[0]; o.Type != "timeline-entry" || len(o.Properties()) != 2 {

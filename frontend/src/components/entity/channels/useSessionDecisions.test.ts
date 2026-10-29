@@ -264,3 +264,95 @@ describe('useSessionDecisions', () => {
     expect(s.deps.ui.focusHeader).not.toHaveBeenCalled()
   })
 })
+
+// TKT-FPXTQJ AC 13: a decision that opens the form carries the generation
+// read at the click into the composer's Send.
+describe('useSessionDecisions form decisions', () => {
+  let s: ReturnType<typeof setup>
+  beforeEach(() => {
+    s = setup()
+    s.move(3)
+  })
+  const send = (type: string) => s.d.sendComposer(type, {}, undefined)
+  const lastGeneration = () => (s.deps.post.mock.lastCall as unknown[] | undefined)?.[3]
+
+  it('the Send of the form type carries the generation read at the click', async () => {
+    await s.d.onDecide('revise', 'header')
+    expect(s.d.formDecision.value).toEqual({ messageType: 'revise', generation: 3 })
+    await send('revise')
+    expect(s.deps.post).toHaveBeenLastCalledWith('revise', {}, undefined, 3)
+    expect(s.d.formDecision.value).toBeUndefined()
+  })
+
+  it('a Send of another type carries no generation and ends the form decision', async () => {
+    await s.d.onDecide('revise', 'header')
+    await send('approve')
+    expect(s.deps.post).toHaveBeenLastCalledWith('approve', {}, undefined, undefined)
+    expect(s.d.formDecision.value).toBeUndefined()
+    await send('revise')
+    expect(lastGeneration()).toBeUndefined()
+  })
+
+  it('switching the composer to another type ends the form decision without a message', async () => {
+    await s.d.onDecide('revise', 'header')
+    s.d.onComposerSelect('revise')
+    expect(s.d.formDecision.value).toEqual({ messageType: 'revise', generation: 3 })
+    s.d.onComposerSelect('approve')
+    expect(s.d.formDecision.value).toBeUndefined()
+    s.d.onComposerSelect('revise')
+    s.move(4)
+    await nextTick()
+    expect(s.deps.ui.toast).not.toHaveBeenCalled()
+    await send('revise')
+    expect(lastGeneration()).toBeUndefined()
+  })
+
+  it('a plain composer post sends no generation', async () => {
+    await send('revise')
+    expect(s.deps.post).toHaveBeenLastCalledWith('revise', {}, undefined, undefined)
+  })
+
+  it('a move before the Send drops the form decision and says the session moved on', async () => {
+    await s.d.onDecide('revise', 'header')
+    s.move(4)
+    await nextTick()
+    expect(s.d.formDecision.value).toBeUndefined()
+    expect(s.deps.ui.toast).toHaveBeenCalledWith(STALE)
+    await send('revise')
+    expect(lastGeneration()).toBeUndefined()
+  })
+
+  it('a move during the Send is not reported as stale', async () => {
+    await s.d.onDecide('revise', 'header')
+    s.deps.submitting.value = true
+    s.deps.post.mockImplementationOnce(async () => {
+      s.move(4)
+      await nextTick()
+    })
+    await send('revise')
+    expect(lastGeneration()).toBe(3)
+    expect(s.deps.ui.toast).not.toHaveBeenCalled()
+    expect(s.d.formDecision.value).toBeUndefined()
+  })
+
+  it('a session_moved refusal on the Send ends the form decision and passes the error on', async () => {
+    await s.d.onDecide('revise', 'header')
+    const err = problem('session_moved')
+    s.deps.post.mockRejectedValueOnce(err)
+    await expect(send('revise')).rejects.toBe(err)
+    expect(s.d.formDecision.value).toBeUndefined()
+  })
+
+  it('another refusal keeps the form decision for the corrected Send', async () => {
+    await s.d.onDecide('revise', 'header')
+    s.deps.post.mockRejectedValueOnce(problem('invalid_message'))
+    await expect(send('revise')).rejects.toBeTruthy()
+    expect(s.d.formDecision.value).toEqual({ messageType: 'revise', generation: 3 })
+  })
+
+  it('a channel switch ends the form decision', async () => {
+    await s.d.onDecide('revise', 'header')
+    s.d.resetDecisions()
+    expect(s.d.formDecision.value).toBeUndefined()
+  })
+})

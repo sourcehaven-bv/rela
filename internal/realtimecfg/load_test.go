@@ -951,6 +951,27 @@ func TestParse_BoolKeysUnchanged(t *testing.T) {
 	assertProblem(t, err, "channel_types.page-threads.roles.starter.creator", "must be true or false")
 }
 
+// TestParse_BranchListKeys pins the key walk of TKT-FPXTQJ AC 6: inside a
+// list entry the walk names the index, a refused key keeps its reason, and
+// a value that is neither a mapping nor a list is refused.
+func TestParse_BranchListKeys(t *testing.T) {
+	cases := []struct {
+		name, on, key, reason string
+	}{
+		{"unknown key in an entry", "[ { to: working, nope: 1 } ]", branchKey + "[0].nope", "unknown key"},
+		{"run_as in an entry", "[ { to: working, run_as: system:bot } ]", branchKey + "[0].run_as",
+			"run_as is set once per session type, at session.run_as"},
+		{"scalar", "working", branchKey, "must be a mapping or a list of mappings"},
+		{"list of scalars", "[ working ]", branchKey + "[0]", "must be a mapping"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := Parse([]byte(branchSrc(tc.on)), testMeta(t), nil)
+			assertOneProblem(t, err, tc.key, tc.reason)
+		})
+	}
+}
+
 // TestCheckReload_TypingToggleAllowed pins that typing does not decide how
 // channels are keyed, so turning it on or off passes a reload.
 func TestCheckReload_TypingToggleAllowed(t *testing.T) {

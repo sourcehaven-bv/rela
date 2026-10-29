@@ -20,7 +20,9 @@
  * field does not, so a half-filled card is never sent by accident.
  *
  * Values and chosen refs are kept per message type, so switching type and
- * back keeps what was typed. The composer does not clear itself on submit,
+ * back keeps what was typed. `select` reports the type a new message is
+ * being written in whenever it changes, by the user or by `select()`; an
+ * edit does not report its type. The composer does not clear itself on submit,
  * since it cannot know whether the post landed; see `reset`.
  *
  * Edit mode starts when `editing` names a new message (by `seq` and `type`).
@@ -130,6 +132,8 @@ const emit = defineEmits<{
   cancelReply: []
   cancelEdit: []
   typing: []
+  /** The type of the new message being written changed. */
+  select: [type: string]
 }>()
 
 const messages = useMessages()
@@ -173,6 +177,13 @@ const current = computed(
 )
 
 watch(
+  () => (props.editing ? undefined : current.value?.name),
+  (type) => {
+    if (type !== undefined) emit('select', type)
+  },
+)
+
+watch(
   offered,
   (list) => {
     // An edit sets and restores the selection itself; see the editing watcher.
@@ -209,11 +220,19 @@ watch(
   { flush: 'post' },
 )
 
-/** Where the session goes if this message is sent; empty when it moves nothing. */
+/**
+ * Where the session goes if this message is sent; empty when it moves
+ * nothing. A type with several targets, or with transitions of which only
+ * some have a condition, says it may move the session.
+ */
 const sessionHint = computed(() => {
   if (props.editing || !current.value) return ''
   const tr = transitionByType.value.get(current.value.name)
-  return tr ? messages.channelSessionHint({ to: tr.toLabel, guarded: tr.guarded }) : ''
+  if (!tr || !tr.toLabels.length) return ''
+  const [to, ...more] = tr.toLabels
+  return more.length || tr.mayMove
+    ? messages.channelSessionBranchHint({ tos: tr.toLabels })
+    : messages.channelSessionHint({ to, guarded: tr.guarded })
 })
 
 const fields = computed<ResolvedChannelField[]>(() =>

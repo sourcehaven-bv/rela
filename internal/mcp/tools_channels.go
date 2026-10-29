@@ -280,7 +280,7 @@ func toolReadChannelDef() *mcpgo.Tool {
 			"after_rev to wait for new, edited or removed messages. A channel type with a session shows it on "+
 			"the channel: its state, generation and the message types that move it from here, and "+
 			"actions.transitions lists those your post would fire if the guard holds; a move appends "+
-			"a notice of type session. A message type may be limited to some session states; outside them "+
+			"a notice of type session. "+branchingNote+"A message type may be limited to some session states; outside them "+
 			"it is not in actions.post, and a post is refused with session_wrong_state, which names the "+
 			"allowed states. A state with timers lists them in timers, and due_at is when the "+
 			"first moves the session on its own (only on an open channel); a timer's move appends a "+
@@ -304,12 +304,20 @@ func toolReadChannelDef() *mcpgo.Tool {
 	)...)
 }
 
+// branchingNote explains, in the tools that show a session, that one
+// message type may lead to several states.
+const branchingNote = "A message type may lead to several states; session.transitions on read_channel then " +
+	"lists one row per entry, in the order rela tries them. The first entry whose poster rule and guard hold " +
+	"moves the session; a row shows by: trigger but not the roles of its entry, so which state your post " +
+	"reaches depends on your roles and on the message. The message types in transitions are the ones your " +
+	"post can move the session with at all. "
+
 func toolReadSessionDef() *mcpgo.Tool {
 	return newTool(toolReadSession, append(withChannelAddress(true),
 		withDescription("Read the session of a channel: its state, status (working, input_required, "+
 			"completed, cancelled or failed), whom it waits for in waiting_for, whether it waits for you in "+
 			"waiting_on_me, due_at, and transitions: the message types your post would move it with. "+
-			"It carries no rev, seq or message, so a watch on it wakes only when the session or your turn "+
+			branchingNote+"It carries no rev, seq or message, so a watch on it wakes only when the session or your turn "+
 			"changes. To wait for a human: read; if status is completed, cancelled or failed, stop; if "+
 			"waiting_on_me is false, watch read_session with the returned cursor and repeat; a watch times "+
 			"out after at most 50s, so loop it. A session whose state the configuration no longer declares "+
@@ -331,6 +339,8 @@ func toolPostMessage(refuseSignals bool) *mcpgo.Tool {
 		"To answer a request the session waits on, pass expect_generation: the session generation from " +
 		"read_session or read_channel you decided against; when the session has moved on since, the post " +
 		"is refused with session_moved and nothing is stored, so read again and decide again. " +
+		"If no transition entry applies, the message is stored and the session stays; compare " +
+		"session.generation in the answer. " +
 		"In a markdown property, to mention a person, put their user entity id in backticks (`USR-7`) " +
 		"where person mapping is configured, or `@login` in backticks where it is not; to mention an " +
 		"agent, its job identity (`integration:triage-bot`). At most " + strconv.Itoa(realtime.MaxMentions) +

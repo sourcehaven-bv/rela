@@ -1,4 +1,4 @@
-import { computed, nextTick, ref, type Ref } from 'vue'
+import { computed, nextTick, ref, watch, type Ref } from 'vue'
 import { t } from '@/i18n'
 import type { useChannel } from '@/composables/useChannel'
 import type {
@@ -62,7 +62,7 @@ export interface DecisionDeps {
     type: string,
     values: Record<string, MessagePropInput>,
     replyTo: number | undefined,
-    expectGeneration: number
+    expectGeneration: number | undefined
   ) => Promise<unknown>
   setPending: (key: string, on: boolean) => void
   /** The composer is sending; a decision waits for it. */
@@ -87,12 +87,24 @@ export interface DecisionDeps {
  *
  * The clicked button shows its pending treatment only while the post is in
  * flight, not while a dialog is open.
+ *
+ * A decision that opens the form records its type and the generation read
+ * at the click in `formDecision` (TKT-FPXTQJ). `sendComposer` posts the
+ * composer's message of that type with the generation, so a form decision
+ * is refused with session_moved like a one-click one. The record ends
+ * when the composer switches to another type (`onComposerSelect`), after a
+ * successful send, when a message of another type is sent, when a
+ * session_moved refusal answers the send, on `resetDecisions()`, and when
+ * a head frame brings another generation outside a send; only in that
+ * last case is the user told the session moved on.
  */
 export function useSessionDecisions(d: DecisionDeps) {
   const deciding = ref(false)
   /** The click that holds the lock; a reset or a later click moves it on. */
   let click = 0
   let heldKey: string | undefined
+  /** The form decision the composer's Send answers, if any. */
+  const formDecision = ref<{ messageType: string; generation: number }>()
 
   // The head is replaced on every frame; the views are rebuilt only when
   // what they read changes, so the buttons keep their identity.
@@ -129,6 +141,43 @@ export function useSessionDecisions(d: DecisionDeps) {
   const find = (key: string) => decisions.value.find((x) => x.key === key)
   const stale = () => d.ui.toast(t('channels.decisionStale'))
 
+  // A move outside a send makes the open form decision stale. During a
+  // send the move is usually the send's own; a move by someone else then
+  // is refused by the server with session_moved.
+  watch(
+    () => d.ch.head.value?.channel.session?.generation,
+    (g) => {
+      const f = formDecision.value
+      if (!f || g === undefined || g === f.generation || d.submitting.value) return
+      formDecision.value = undefined
+      stale()
+    }
+  )
+
+  /**
+   * Posts the composer's message, with the generation of the form decision
+   * when it is of that type. The error of a refused post is rethrown for
+   * the composer to show.
+   */
+  async function sendComposer(
+    type: string,
+    values: Record<string, MessagePropInput>,
+    replyTo: number | undefined
+  ): Promise<void> {
+    const f = formDecision.value
+    const generation = f?.messageType === type ? f.generation : undefined
+    if (generation === undefined) formDecision.value = undefined
+    try {
+      await d.post(type, values, replyTo, generation)
+    } catch (err) {
+      if (generation !== undefined && problemType(err) === 'session_moved') {
+        formDecision.value = undefined
+      }
+      throw err
+    }
+    formDecision.value = undefined
+  }
+
   function hold(key: string | undefined) {
     if (heldKey) d.setPending(heldKey, false)
     heldKey = key
@@ -145,11 +194,18 @@ export function useSessionDecisions(d: DecisionDeps) {
     return d.composer.select(type)
   }
 
+  /** The composer switched to type; a form decision of another type ends. */
+  function onComposerSelect(type: string) {
+    if (formDecision.value && formDecision.value.messageType !== type)
+      formDecision.value = undefined
+  }
+
   /** Releases the lock of a click in flight; for a channel switch. */
   function resetDecisions() {
     click++
     hold(undefined)
     deciding.value = false
+    formDecision.value = undefined
   }
 
   /**
@@ -168,7 +224,7 @@ export function useSessionDecisions(d: DecisionDeps) {
     const cause = decisionSeq.value
     const live = () => mine === click && channel === d.channelKey()
     try {
-      if (view0.opensForm) return await openForm(view0, live)
+      if (view0.opensForm) return await openForm(view0, generation, live)
       let view = view0
       if (view.confirm) {
         const ok = await d.ui.confirm({
@@ -210,8 +266,11 @@ export function useSessionDecisions(d: DecisionDeps) {
     }
   }
 
-  /** A decision that opens the form: asks before it discards an edit. */
-  async function openForm(view: ChannelDecisionView, live: () => boolean) {
+  /**
+   * A decision that opens the form: asks before it discards an edit, and
+   * records the generation read at the click for the form's Send.
+   */
+  async function openForm(view: ChannelDecisionView, generation: number, live: () => boolean) {
     if (d.composer.editing()) {
       const ok = await d.ui.confirm({
         title: t('channels.decisionDiscardEditTitle'),
@@ -222,7 +281,17 @@ export function useSessionDecisions(d: DecisionDeps) {
       if (!ok || !live()) return
       d.composer.discardEdit()
     }
-    if (!(await select(view.messageType)) && live()) stale()
+    if (!(await select(view.messageType))) {
+      if (live()) stale()
+      return
+    }
+    if (!live()) return
+    if (d.ch.head.value?.channel.session?.generation !== generation) {
+      formDecision.value = undefined
+      stale()
+      return
+    }
+    formDecision.value = { messageType: view.messageType, generation }
   }
 
   /**
@@ -244,7 +313,16 @@ export function useSessionDecisions(d: DecisionDeps) {
     else if (live()) d.ui.toast(message)
   }
 
-  return { decisions, decisionSeq, deciding, onDecide, resetDecisions }
+  return {
+    decisions,
+    decisionSeq,
+    deciding,
+    formDecision,
+    onComposerSelect,
+    onDecide,
+    resetDecisions,
+    sendComposer,
+  }
 }
 
 /** A preset prop value as a request sends it: a readable ref is its id. */

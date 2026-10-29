@@ -33,6 +33,7 @@ const meta: Meta<typeof RlChannelComposer> = {
     onSave: fn(),
     onCancelReply: fn(),
     onCancelEdit: fn(),
+    onSelect: fn(),
   },
   render: (args) => ({
     components: { RlChannelComposer },
@@ -672,13 +673,56 @@ export const GuardedTransitionHint: Story = {
   args: {
     ...breachArgs,
     postable: ['text', 'assessed'],
-    transitions: [{ messageType: 'assessed', toLabel: 'Risk assessed', guarded: true }],
+    transitions: [{ messageType: 'assessed', toLabels: ['Risk assessed'], guarded: true }],
   },
   play: async ({ canvasElement }) => {
     await userEvent.click(typeOptions(canvasElement)[0]!)
     await expect(describedHint(canvasElement)).toBe(
       'Sending this moves the session to Risk assessed if its condition holds.',
     )
+  },
+}
+
+/**
+ * A type with several transitions may move the session to one of their
+ * targets; which one depends on the message and the poster.
+ */
+export const BranchingTransitionHint: Story = {
+  args: {
+    ...breachArgs,
+    postable: ['text', 'assessed'],
+    transitions: [{ messageType: 'assessed', toLabels: ['Risk assessed', 'Contained'], guarded: true }],
+  },
+  play: async ({ canvasElement }) => {
+    await userEvent.click(typeOptions(canvasElement)[0]!)
+    await expect(describedHint(canvasElement)).toBe(
+      'Sending this may move the session to Risk assessed or Contained.',
+    )
+  },
+}
+
+/**
+ * One target, but only some transitions have a condition (say a lead's
+ * entry has none and everyone else's has one): the hint says "may".
+ */
+export const MixedGuardTransitionHint: Story = {
+  args: {
+    ...breachArgs,
+    postable: ['text', 'assessed'],
+    transitions: [{ messageType: 'assessed', toLabels: ['Risk assessed'], mayMove: true }],
+  },
+  play: async ({ canvasElement }) => {
+    await userEvent.click(typeOptions(canvasElement)[0]!)
+    await expect(describedHint(canvasElement)).toBe('Sending this may move the session to Risk assessed.')
+  },
+}
+
+/** Choosing another type reports it, so the app can drop what it tied to the old one. */
+export const SelectEmits: Story = {
+  args: breachArgs,
+  play: async ({ args, canvasElement }) => {
+    await userEvent.click(typeOptions(canvasElement)[2]!)
+    await expect(args.onSelect).toHaveBeenLastCalledWith('text')
   },
 }
 
@@ -711,7 +755,7 @@ export const ReorderKeepsFocus: Story = {
     setup() {
       const transitions = ref(args.transitions)
       const change = () => {
-        transitions.value = [{ messageType: 'text', toLabel: 'Contained' }]
+        transitions.value = [{ messageType: 'text', toLabels: ['Contained'] }]
       }
       return { args, transitions, change }
     },

@@ -213,27 +213,14 @@ type poster struct {
 	roles map[string]bool
 }
 
-// admits reports whether p passes t's poster rule. With roles, a person
-// or agent holding one passes and a trigger never does. With by: trigger,
-// only a trigger passes. With neither, every poster passes: they were
-// allowed to post the message type.
+// admits reports whether p passes t's poster rule,
+// [realtimecfg.Transition.Admits], the rule the load checks judge entries
+// by.
 func (p poster) admits(t realtimecfg.Transition) bool {
-	switch {
-	case len(t.Roles) > 0:
-		if p.trigger {
-			return false
-		}
-		for _, r := range t.Roles {
-			if p.roles[r] {
-				return true
-			}
-		}
-		return false
-	case t.By == realtimecfg.TransitionByTrigger:
-		return p.trigger
-	default:
-		return true
+	if p.trigger {
+		return t.Admits(nil)
 	}
+	return t.Admits(func(role string) bool { return p.roles[role] })
 }
 
 // transitionRoles reports which roles named by a transition that mt fires
@@ -247,7 +234,7 @@ func (c *call) transitionRoles(mt *realtimecfg.MessageType) map[string]bool {
 	}
 	var names []string
 	for _, st := range s.States() {
-		if t, ok := s.Transition(st.Name, mt.Name); ok {
+		for _, t := range s.Branches(st.Name, mt.Name) {
 			names = append(names, t.Roles...)
 		}
 	}
@@ -287,13 +274,14 @@ func (c *call) heldRole(name string) bool {
 	return held
 }
 
-// fireable lists, sorted, the message types in post whose post by the
-// caller would move the session out of its current state if the
+// fireable lists, sorted and once each, the message types in post whose
+// post by the caller would move the session out of its current state if a
 // transition's guard holds: the channel is open, the current state is
-// declared and not final, and the caller passes the transition's poster
-// rule ([poster.admits]), so a by: trigger entry is never listed. The
-// guard is not evaluated: it reads the message, which does not exist yet.
-// It reads the session as [sessionView] does. Never nil.
+// declared and not final, and the caller passes the poster rule
+// ([poster.admits]) of some entry of the type, so a type with only by:
+// trigger entries is never listed. The guard is not evaluated: it reads
+// the message, which does not exist yet. It reads the session as
+// [sessionView] does. Never nil.
 func (c *call) fireable(post map[string]bool) []string {
 	out := []string{}
 	s := c.ct.Session()
@@ -319,7 +307,7 @@ func (c *call) fireable(post map[string]bool) []string {
 		}
 	}
 	slices.Sort(out)
-	return out
+	return slices.Compact(out)
 }
 
 // sessionChannel is the channel a call reads the session of: its head, or
@@ -428,8 +416,9 @@ type sessionPost struct {
 	gate *outputGate
 }
 
-// guardFailure is a guard that failed to evaluate when the decider last
-// ran. err is nil when it did not fail.
+// guardFailure is the guard that failed to evaluate when the decider last
+// ran; the decider stopped there and moved nothing. err is nil when none
+// failed.
 type guardFailure struct {
 	t     realtimecfg.Transition
 	state string
@@ -463,27 +452,37 @@ func newSessionPost(
 	return sp
 }
 
-// logGuardFailure logs, at warn and once per guard per loaded
+// logGuardFailure logs, at warn and once per entry per loaded
 // configuration, a guard that failed to evaluate in the append. It runs
 // after the append, outside the store's lock. A guard that fails closed
-// otherwise looks like one that does not hold.
+// otherwise looks like one that does not hold; the decider stopped there
+// and moved nothing.
 func (sp sessionPost) logGuardFailure(ctx context.Context) {
 	f := sp.failed
 	if f == nil || f.err == nil || !f.t.WarnGuardOnce() {
 		return
 	}
 	slog.WarnContext(ctx, "realtime: a session transition guard failed to evaluate; the session did not move",
-		"channel_type", sp.ct, "state", f.state, "message_type", sp.mt, "error", f.err)
+		"channel_type", sp.ct, "state", f.state, "message_type", sp.mt, "to", f.t.To, "entry", f.t.Key(),
+		"error", f.err)
 }
 
-// sessionDecider returns the decider for a post of mt with props. It moves
-// nothing when the channel is not open, the state has no transition for
-// mt, the poster fails its rule, the transition has outputs the pre-check
-// did not allow (see [outputGate]), or its `when:` does not hold. A final
-// state has no transitions and a stranded state is not declared, so for
-// both Transition finds none. It reads only its arguments and the channel,
-// so it is safe to run under the store's lock; a guard that fails to
-// evaluate is recorded in failed for the caller to log.
+// sessionDecider returns the decider for a post of mt with props. It tries
+// the entries of `on.<mt>` out of the current state in file order and
+// takes the first whose poster rule passes ([poster.admits]) and whose
+// `when:` holds. It moves nothing when the channel is not open, no entry
+// applies, or the chosen entry has outputs the pre-check did not check
+// (see [outputGate]); after a gate refusal it does not try later entries,
+// so the pre-check and the store follow one rule. A final state has no
+// transitions and a stranded state is not declared, so for both
+// [realtimecfg.Session.Branches] finds none. It reads only its arguments
+// and the channel, so it is safe to run under the store's lock.
+//
+// A guard that fails to evaluate stops the decision: nothing moves, and
+// later entries are not tried. The failure is recorded in failed for the
+// caller to log. Falling through would let a message that makes a guard
+// fail, rather than not hold, reach a later entry such as a catch-all
+// with outputs (fail closed, as for a single entry).
 func sessionDecider(
 	ctx context.Context, s *realtimecfg.Session, mt *realtimecfg.MessageType, props map[string]any,
 	now time.Time, p poster, failed *guardFailure, gate *outputGate,
@@ -498,18 +497,29 @@ func sessionDecider(
 			return channels.SessionMove{}, false
 		}
 		cur := currentSession(s, ch)
-		t, ok := s.Transition(cur.State, mt.Name)
-		if !ok || !p.admits(t) || !gate.admits(t, cur.State) {
+		branches := s.Branches(cur.State, mt.Name)
+		if len(branches) == 0 {
 			return channels.SessionMove{}, false
 		}
-		holds, err := guardHolds(ctx, t.When, fields, reminderCounters(s, cur, ch), cur, now)
-		if err != nil {
-			*failed = guardFailure{t: t, state: cur.State, err: err}
+		reminders := reminderCounters(s, cur, ch)
+		for _, t := range branches {
+			if !p.admits(t) {
+				continue
+			}
+			holds, err := guardHolds(ctx, t.When, fields, reminders, cur, now)
+			if err != nil {
+				*failed = guardFailure{t: t, state: cur.State, err: err}
+				return channels.SessionMove{}, false
+			}
+			if !holds {
+				continue
+			}
+			if !gate.admits(t, cur.State) {
+				return channels.SessionMove{}, false
+			}
+			return channels.SessionMove{From: cur.State, To: t.To}, true
 		}
-		if !holds {
-			return channels.SessionMove{}, false
-		}
-		return channels.SessionMove{From: cur.State, To: t.To}, true
+		return channels.SessionMove{}, false
 	}
 }
 

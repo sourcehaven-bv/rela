@@ -251,11 +251,16 @@ func (v writeChecker) outputProps(
 	return out
 }
 
-// transitionCause classifies a transition: a job message when only a
+// transitionCause classifies a transition entry: a job message when only a
 // trigger fires it (by: trigger) or a trigger can (no roles, and a trigger
-// posts its message type into ct), else a person.
-func transitionCause(file *rawFile, ct string, t Transition, mt *MessageType) outputCause {
+// posts its message type into ct), else a person. triggerShadowed says an
+// earlier entry of the list without `when:` admits triggers, so no trigger
+// reaches this one and it is a person's move.
+func transitionCause(file *rawFile, ct string, t Transition, mt *MessageType, triggerShadowed bool) outputCause {
 	c := outputCause{kind: causePerson, mt: mt}
+	if triggerShadowed {
+		return c
+	}
 	if t.By == TransitionByTrigger || (len(t.Roles) == 0 && triggerReachable(file, ct, t.MessageType) != "") {
 		c.kind = causeJobMessage
 	}

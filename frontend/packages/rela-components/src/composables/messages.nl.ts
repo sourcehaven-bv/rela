@@ -309,6 +309,7 @@ export const NL_MESSAGES: Messages = {
     `${state} is geen stap van deze sessie meer. Berichten verplaatsen haar niet.`,
   channelSessionHint: ({ to, guarded }) =>
     `Dit bericht zet de sessie op ${to}${guarded ? ' als aan de voorwaarde is voldaan' : ''}.`,
+  channelSessionBranchHint: ({ tos }) => `Dit bericht kan de sessie op ${ofList(tos)} zetten.`,
   channelSessionOptionHint: () => ' (verplaatst de sessie)',
   channelDecisionHint: ({ to, form }) =>
     form ? ' (opent het formulier)' : to ? ` (zet de sessie op ${to})` : ' (zet de sessie verder)',

@@ -4,6 +4,8 @@ types:
     values: [low, medium, high]
   risk-level:
     values: [none, low, high]
+  plan-decision:
+    values: [approve, revise]
 entities:
   datalek:
     label: Data breach

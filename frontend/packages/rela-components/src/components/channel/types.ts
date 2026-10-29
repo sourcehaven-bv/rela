@@ -294,10 +294,19 @@ export interface ChannelSessionView {
  */
 export interface ChannelComposerTransition {
   messageType: string
-  /** The label of the state the session moves to. */
-  toLabel: string
-  /** The transition has a condition, so the move depends on the message. */
+  /**
+   * The labels of the states the session may move to, without repeats, in
+   * the order the server tries the type's transitions. Usually one.
+   */
+  toLabels: string[]
+  /** Every transition has a condition, so the move depends on the message. */
   guarded?: boolean
+  /**
+   * Some transitions have a condition and some do not, so whether a post
+   * moves the session depends on the poster or the message. The composer
+   * then says the post may move it, as for several targets.
+   */
+  mayMove?: boolean
 }
 
 /**

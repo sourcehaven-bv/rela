@@ -14,6 +14,9 @@ import type {
   Message,
   MessagePage,
 } from '@/types/channels'
+import { defineComponent, h as render } from 'vue'
+import { provideMessages } from 'rela-components/composables/useMessages'
+import { localeMessages } from 'rela-components/composables/localeMessages'
 import ChannelsPanel from './ChannelsPanel.vue'
 import RlChannelSession from 'rela-components/components/channel/RlChannelSession.vue'
 import RlChannelComposer from 'rela-components/components/channel/RlChannelComposer.vue'
@@ -169,6 +172,20 @@ async function mountPanel(entityType = 'feature', world?: string) {
     props: { entityType, entityId: 'FEAT-1', world },
     attachTo: document.body,
   })
+  await flushPromises()
+  await flushPromises()
+  return wrapper
+}
+
+/** Mounts the panel with the component library's text in language. */
+async function mountPanelIn(language: string) {
+  const Host = defineComponent({
+    setup() {
+      provideMessages(localeMessages(() => language))
+      return () => render(ChannelsPanel, { entityType: 'feature', entityId: 'FEAT-1' })
+    },
+  })
+  wrapper = mount(Host, { attachTo: document.body })
   await flushPromises()
   await flushPromises()
   return wrapper
@@ -835,6 +852,43 @@ describe('ChannelsPanel', () => {
       expect(options[1]!.attributes('aria-checked')).toBe('true')
     })
 
+    // TKT-FPXTQJ AC 11: a type with entries to several states says it may
+    // move the session to one of them.
+    for (const tc of [
+      { language: 'en', hint: 'Sending this may move the session to Contained or Escalated.' },
+      { language: 'nl', hint: 'Dit bericht kan de sessie op Contained of Escalated zetten.' },
+    ]) {
+      it(`says a branching type may move the session (${tc.language})`, async () => {
+        const branchRoom: ChannelTypeSchema = {
+          ...sessionRoom,
+          session: {
+            ...sessionRoom.session!,
+            states: [
+              ...sessionRoom.session!.states,
+              { name: 'escalated', label: 'Escalated', final: true, status: 'completed' },
+            ],
+          },
+        }
+        const branching = {
+          ...detected,
+          transitions: [
+            { message_type: 'contained', to: 'contained', guarded: true },
+            { message_type: 'contained', to: 'escalated' },
+          ],
+        }
+        api.getChannelSchema.mockResolvedValue({ channel_types: [branchRoom] })
+        const sh = sessionHead()
+        api.getChannelHead.mockResolvedValue({
+          ...sh,
+          channel: { ...sh.channel, session: branching },
+        })
+        await mountPanelIn(tc.language)
+        await composerForm().findAll('[role="radio"]')[0]!.trigger('click')
+        await flushPromises()
+        expect(composerForm().text()).toContain(tc.hint)
+      })
+    }
+
     it('keeps the stepper and transition views when a refetch brings the same session', async () => {
       api.getChannelSchema.mockResolvedValue({ channel_types: [sessionRoom] })
       api.getChannelHead.mockImplementation(() => Promise.resolve(sessionHead()))
@@ -1073,6 +1127,44 @@ describe('ChannelsPanel session decisions', () => {
     current = runHead(inReview, [])
     await mountPanel()
     expect(w().findAll('[data-decision]')).toHaveLength(0)
+  })
+
+  // TKT-FPXTQJ AC 13: the form's Send carries the generation read at the
+  // click; switching the composer to another type drops it.
+  it('the Send of a form decision carries its generation; another type drops it', async () => {
+    await mountPanel()
+    api.postMessage.mockResolvedValue(posted({ type: 'revise' }))
+    await click(decision(header(), 'revise'))
+    await composerForm().find('textarea').setValue('redo the plan')
+    await submitComposer()
+    expect(api.postMessage).toHaveBeenLastCalledWith(
+      expect.anything(),
+      'revise',
+      { feedback: 'redo the plan' },
+      undefined,
+      4
+    )
+
+    await click(decision(header(), 'revise'))
+    const card = composerForm()
+      .findAll('[role="radio"]')
+      .find((o) => o.text().includes('Card'))!
+    await card.trigger('click')
+    await flushPromises()
+    const revise = composerForm()
+      .findAll('[role="radio"]')
+      .find((o) => o.text().includes('Revise plan'))!
+    await revise.trigger('click')
+    await flushPromises()
+    await composerForm().find('textarea').setValue('again')
+    await submitComposer()
+    expect(api.postMessage).toHaveBeenLastCalledWith(
+      expect.anything(),
+      'revise',
+      { feedback: 'again' },
+      undefined,
+      undefined
+    )
   })
 
   it('Revise plan opens the composer and sends nothing', async () => {

@@ -315,6 +315,12 @@ export function sessionView(
  * follows every frame while the actions follow a head refetch, so a type
  * the session has already left is dropped here. A head state the held
  * descriptor does not know marks nothing: the stepper is loading then.
+ *
+ * A type may have several transitions (one per entry of its list). They
+ * are grouped into one view: `toLabels` holds each target once, in the
+ * server's order. `guarded` is set when every transition is guarded, and
+ * `mayMove` when only some are: the move then depends on the poster or
+ * the message, which the view cannot tell apart.
  */
 export function composerTransitions(
   ct: ChannelTypeSchema,
@@ -324,15 +330,22 @@ export function composerTransitions(
   if (!ct.session || !cs || cs.stranded) return []
   if (!ct.session.states.some((st) => st.name === cs.state)) return []
   const post = new Set(head._actions.post)
-  const out = new Map((cs.transitions ?? []).map((tr) => [tr.message_type, tr]))
-  return (head._actions.transitions ?? []).flatMap((name) => {
-    const tr = out.get(name)
-    if (!tr || !post.has(name)) return []
+  const out = new Map<string, ChannelSessionTransition[]>()
+  for (const tr of cs.transitions ?? []) {
+    const list = out.get(tr.message_type)
+    if (list) list.push(tr)
+    else out.set(tr.message_type, [tr])
+  }
+  return [...new Set(head._actions.transitions ?? [])].flatMap((name) => {
+    const list = out.get(name)
+    if (!list || !post.has(name)) return []
     const view: ChannelComposerTransition = {
       messageType: name,
-      toLabel: stateLabel(ct.session, tr.to),
+      toLabels: [...new Set(list.map((tr) => tr.to))].map((to) => stateLabel(ct.session, to)),
     }
-    if (tr.guarded) view.guarded = true
+    const guarded = list.filter((tr) => tr.guarded).length
+    if (guarded === list.length) view.guarded = true
+    else if (guarded > 0) view.mayMove = true
     return [view]
   })
 }

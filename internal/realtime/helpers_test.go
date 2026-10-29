@@ -34,6 +34,8 @@ types:
     values: [low, high]
   risk-level:
     values: [none, low, high]
+  plan-decision:
+    values: [approve, revise]
 entities:
   ticket:
     label: Ticket

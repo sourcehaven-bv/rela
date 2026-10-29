@@ -73,7 +73,7 @@ func (w waitChecker) check(statesKey string, raw map[string]rawSessionState, s *
 		st.Status = w.status(sk, rs, st)
 		if len(st.waitingFor) > 0 && !st.Final {
 			w.answers(sk, st, ct)
-			w.deadlineReset(sk, st, s, ct)
+			w.deadlineReset(st, s, ct)
 			w.answerGrants(st, ct)
 		}
 	}
@@ -166,16 +166,27 @@ func unboundedRole(r Role) string {
 }
 
 // fireableBy reports whether a holder of role can post a message that
-// fires t: the role may post the message type, t is not by: trigger, and
-// t's roles, when set, include the role. A guard is not evaluated.
-func fireableBy(t Transition, role string, mt *MessageType) bool {
-	return mt != nil && slices.Contains(mt.Post, role) && t.By != TransitionByTrigger &&
-		(len(t.Roles) == 0 || slices.Contains(t.Roles, role))
+// fires entry t of st: the role may post the message type, t admits the
+// role (it is not by: trigger, and its roles, when set, include the role),
+// and no earlier entry of its list without `when:` admits the role first
+// (see SessionState.firesFor). A guard is not evaluated.
+func fireableBy(st SessionState, t Transition, role string, mt *MessageType) bool {
+	return mt != nil && slices.Contains(mt.Post, role) && st.firesFor(t, posterClass{role: role})
 }
 
 // isAnswer reports whether a holder of role can fire t to leave st.
 func isAnswer(st *SessionState, t Transition, role string, ct *ChannelType) bool {
-	return t.To != st.Name && fireableBy(t, role, ct.MessageTypes[t.MessageType])
+	return t.To != st.Name && fireableBy(*st, t, role, ct.MessageTypes[t.MessageType])
+}
+
+// entries returns every transition entry of st, sorted by message type and
+// then in file order. Unlike [SessionState.Transitions] it does not copy.
+func (st SessionState) entries() []Transition {
+	var out []Transition
+	for _, mn := range sortedKeys(st.on) {
+		out = append(out, st.on[mn]...)
+	}
+	return out
 }
 
 // answers refuses a waiting role that cannot post a message that moves
@@ -186,7 +197,7 @@ func (w waitChecker) answers(sk string, st *SessionState, ct *ChannelType) {
 			continue
 		}
 		answered := false
-		for _, t := range st.on {
+		for _, t := range st.entries() {
 			answered = answered || isAnswer(st, t, role, ct)
 		}
 		if !answered {
@@ -203,23 +214,23 @@ func (w waitChecker) answers(sk string, st *SessionState, ct *ChannelType) {
 // reminder's span goes on across moves inside its in: states, so the
 // chain restarts a reminder only when it passes a state outside them.
 // Timers and trigger-only moves are not chains a holder controls.
-func (w waitChecker) deadlineReset(sk string, st *SessionState, s *Session, ct *ChannelType) {
+func (w waitChecker) deadlineReset(st *SessionState, s *Session, ct *ChannelType) {
 	stateTimers := slices.ContainsFunc(st.timers, func(t SessionTimer) bool { return t.Since == TimerSinceState })
 	reminders := s.RemindersIn(st.Name)
 	if !stateTimers && len(reminders) == 0 {
 		return
 	}
-	holder := func(t Transition) bool {
+	holder := func(from SessionState, t Transition) bool {
 		return slices.ContainsFunc(st.waitingFor, func(role string) bool {
-			return fireableBy(t, role, ct.MessageTypes[t.MessageType])
+			return fireableBy(from, t, role, ct.MessageTypes[t.MessageType])
 		})
 	}
 	leaves := func(state string) bool {
 		return slices.ContainsFunc(reminders, func(r SessionReminder) bool { return !r.Active(state) })
 	}
-	for _, mn := range sortedKeys(st.on) {
-		if t := st.on[mn]; holder(t) && returnsTo(st.Name, t.To, s, holder, leaves, stateTimers) {
-			w.add(sk+".on."+mn, deadlineReset)
+	for _, t := range st.entries() {
+		if holder(*st, t) && returnsTo(st.Name, t.To, s, holder, leaves, stateTimers) {
+			w.add(t.key, deadlineReset)
 		}
 	}
 }
@@ -229,7 +240,8 @@ func (w waitChecker) deadlineReset(sk string, st *SessionState, s *Session, ct *
 // (stateTimers) or a reminder, which needs the chain to pass a state where
 // leaves holds. It walks each (state, left) pair once.
 func returnsTo(
-	home, from string, s *Session, holder func(Transition) bool, leaves func(string) bool, stateTimers bool,
+	home, from string, s *Session, holder func(SessionState, Transition) bool, leaves func(string) bool,
+	stateTimers bool,
 ) bool {
 	type node struct {
 		state string
@@ -251,9 +263,8 @@ func returnsTo(
 		if !ok {
 			continue
 		}
-		for _, mn := range sortedKeys(st.on) {
-			t := st.on[mn]
-			if !holder(t) {
+		for _, t := range st.entries() {
+			if !holder(st, t) {
 				continue
 			}
 			next := node{t.To, n.left || leaves(t.To)}
@@ -274,8 +285,7 @@ func (w waitChecker) answerGrants(st *SessionState, ct *ChannelType) {
 	if w.policy == nil {
 		return
 	}
-	for _, mn := range sortedKeys(st.on) {
-		t := st.on[mn]
+	for _, t := range st.entries() {
 		if !slices.ContainsFunc(st.waitingFor, func(role string) bool { return isAnswer(st, t, role, ct) }) {
 			continue
 		}
@@ -344,8 +354,8 @@ func (w waitChecker) handoffs(s *Session, ct *ChannelType) {
 		for _, t := range st.timers {
 			w.handoffOutputs(t.outputs, nil, roles)
 		}
-		for _, mn := range sortedKeys(st.on) {
-			w.handoffOutputs(st.on[mn].outputs, ct.MessageTypes[mn], roles)
+		for _, t := range st.entries() {
+			w.handoffOutputs(t.outputs, ct.MessageTypes[t.MessageType], roles)
 		}
 	}
 }

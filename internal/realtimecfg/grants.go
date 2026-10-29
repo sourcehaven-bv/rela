@@ -26,13 +26,12 @@ func (s *Session) jobOutputs() []jobOutput {
 				out = append(out, jobOutput{out: o})
 			}
 		}
-		for _, mn := range sortedKeys(st.on) {
-			t := st.on[mn]
+		for _, t := range st.entries() {
 			if !t.job {
 				continue
 			}
 			for _, o := range t.outputs {
-				out = append(out, jobOutput{out: o, msgType: mn})
+				out = append(out, jobOutput{out: o, msgType: t.MessageType})
 			}
 		}
 	}

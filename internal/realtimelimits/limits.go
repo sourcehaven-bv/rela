@@ -191,6 +191,9 @@ const (
 const (
 	// MaxTransitionOutputs caps the outputs of one transition.
 	MaxTransitionOutputs = 4
+	// MaxTransitionBranches caps the entries of one `on.<type>` list: the
+	// guards the decider may evaluate under the store's lock for one post.
+	MaxTransitionBranches = 8
 	// MaxOutputTemplateBytes caps one output property template.
 	MaxOutputTemplateBytes = 1024
 	// OutputClaimTTL is how long a claim on an outputs mark holds after

@@ -180,3 +180,93 @@ func TestPersonMark_DeciderRerun(t *testing.T) {
 	require.Nil(t, mark(channels.SessionMove{From: "contained", To: "contained"}))
 	require.False(t, plan.marked, "a rerun on a head where the move has no outputs clears the flag")
 }
+
+// TestSessionBranches_GateRefusesOtherEntry pins TKT-FPXTQJ AC 9: when a
+// reminder count switches the entry between the pre-check and the lock,
+// the gate stops a move along another entry with outputs; a switch to an
+// entry without outputs still moves.
+func TestSessionBranches_GateRefusesOtherEntry(t *testing.T) {
+	t.Parallel()
+	at := func(count int64) channels.Channel {
+		return channels.Channel{State: channels.StateOpen, Session: channels.Session{
+			State: "plan-review", Reminders: map[string]channels.ReminderRecord{"nudge": {Count: count}},
+		}}
+	}
+	cases := []struct {
+		name, goB string
+		moves     bool
+	}{
+		{"other entry with outputs", "{ to: planning, outputs: [ { set: { properties: { status: late } } } ] }", false},
+		{"other entry without outputs", "{ to: planning }", true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			ct, _ := testCompiled(t, branchOutputsRealtime(tc.goB)).ChannelType("review")
+			gate := &outputGate{}
+			decide := sessionDecider(context.Background(), ct.Session(), ct.MessageTypes["go"], props(), time.Now(),
+				poster{roles: map[string]bool{}}, &guardFailure{}, gate)
+
+			// The pre-check: count 1, so entry A (to working) applies.
+			move, ok := decide(at(1))
+			require.True(t, ok)
+			require.Equal(t, "working", move.To)
+			gate.active, gate.from, gate.to = true, move.From, move.To
+
+			// Under the lock the count is 2, so entry B applies first.
+			move, ok = decide(at(2))
+			require.Equal(t, tc.moves, ok)
+			if tc.moves {
+				require.Equal(t, "planning", move.To)
+			}
+		})
+	}
+}
+
+// TestSessionBranches_GateThroughPost pins TKT-FPXTQJ AC 9 through
+// Service.Post: the pre-check reads nudge's count as 1 and checks entry
+// A's outputs; a reminder fires before the append, so under the lock entry
+// B applies. B with outputs is refused by the gate: the message is stored
+// without a notice, an outputs mark or a write. B without outputs moves.
+func TestSessionBranches_GateThroughPost(t *testing.T) {
+	t.Parallel()
+	review := RawAddress{EntityType: "ticket", Anchor: "TKT-1", Type: "review"}
+	key := channels.Key{Anchor: channels.Anchor{ID: "TKT-1"}, Type: "review"}
+	cases := []struct {
+		name, goB, state string
+		gen              int64
+	}{
+		{"other entry with outputs", "{ to: planning, outputs: [ { set: { properties: { status: late } } } ] }",
+			"plan-review", 0},
+		{"other entry without outputs", "{ to: planning }", "planning", 1},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			w := &fakeOutputs{}
+			h := newHarness(t, withYAML(branchOutputsRealtime(tc.goB)), withOutputs(w))
+			th := &timerHarness{harness: h, tm: h.timers(t)}
+			th.postTo(t, user("bob"), review, "text", props("body", "hi"))
+			th.at(time.Hour + time.Second)
+			th.round(t)
+			require.Equal(t, int64(1), th.head(t, key).Session.Reminders["nudge"].Count)
+			h.store.beforeAppend = func() {
+				th.at(2*time.Hour + 2*time.Second)
+				th.round(t)
+				require.Equal(t, int64(2), th.head(t, key).Session.Reminders["nudge"].Count)
+			}
+			res := h.postTo(t, user("bob"), review, "go", nil)
+			require.Equal(t, tc.state, res.Session.State)
+			require.Equal(t, tc.gen, res.Session.Generation)
+			require.Nil(t, res.Outputs)
+			require.Len(t, w.checks, 1, "the pre-check asked about entry A's outputs only")
+			require.Empty(t, w.requests(), "nothing is written")
+			last := h.readAll(t, user("bob"), review).Messages
+			if tc.gen == 0 {
+				require.Equal(t, "go", last[len(last)-1].Type, "the post is stored with no notice after it")
+			} else {
+				require.True(t, last[len(last)-1].IsSessionNotice())
+			}
+		})
+	}
+}

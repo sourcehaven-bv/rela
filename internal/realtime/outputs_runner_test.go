@@ -11,6 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/Sourcehaven-BV/rela/internal/channels"
+	"github.com/Sourcehaven-BV/rela/internal/realtimecfg"
 	"github.com/Sourcehaven-BV/rela/internal/realtimelimits"
 )
 
@@ -322,4 +323,28 @@ func TestRunner_Budget(t *testing.T) {
 	require.Equal(t, int64(1), h.store.staleLists.Load())
 	require.LessOrEqual(t, h.store.messages.Load(), int64(16), "one page read per mark")
 	require.LessOrEqual(t, h.store.setActions.Load(), int64(16), "one claim per mark; the writes failed")
+}
+
+// TestResolveMark_Branch pins TKT-FPXTQJ AC 8: a mark resolves to the entry
+// of its (from, type, to), and a mark whose target no entry names is
+// removed.
+func TestResolveMark_Branch(t *testing.T) {
+	t.Parallel()
+	snap := Snapshot{Config: testCompiled(t, branchOutputsRealtime("{ to: planning }"))}
+	key := channels.Key{Anchor: channels.Anchor{ID: "TKT-1"}, Type: "review"}
+	cause := channels.Message{Type: "decide"}
+
+	p := resolveMark(snap, key, cause, &channels.OutputMark{From: "plan-review", To: "planning"})
+	require.False(t, p.removed)
+	require.Len(t, p.outs, 1)
+	v, ok := p.outs[0].Properties()["status"].Eval(realtimecfg.OutputVars{})
+	require.True(t, ok)
+	require.Equal(t, "planning", v)
+
+	p = resolveMark(snap, key, cause, &channels.OutputMark{From: "plan-review", To: "working"})
+	v, ok = p.outs[0].Properties()["status"].Eval(realtimecfg.OutputVars{})
+	require.True(t, ok)
+	require.Equal(t, "in-progress", v)
+
+	require.True(t, resolveMark(snap, key, cause, &channels.OutputMark{From: "plan-review", To: "done"}).removed)
 }

@@ -463,3 +463,33 @@ func TestOutputs_LegacyRelaMarkRunsNoOutputs(t *testing.T) {
 	require.Equal(t, channels.ActionDone, n.Action.Status)
 	require.Empty(t, mark.Results)
 }
+
+// TestOutputs_SharedTargetTriggerCloseMark pins TKT-FPXTQJ: two entries
+// without outputs lead to closed, one for the lead and one for a trigger.
+// A trigger's post writes a close-only job mark, which resolves to the
+// trigger's entry, so the close runs and no transition_removed is
+// recorded.
+func TestOutputs_SharedTargetTriggerCloseMark(t *testing.T) {
+	t.Parallel()
+	shared := strings.Replace(watchRealtime(breachBot), "            wrapup: { to: closed, by: trigger }\n",
+		"            wrapup:\n              - { to: closed, roles: [lead] }\n              - { to: closed, by: trigger }\n", 1)
+	require.NotEqual(t, watchRealtime(breachBot), shared)
+	h := newHarness(t, withYAML(shared))
+	th := &timerHarness{harness: h, tm: h.timers(t)}
+	th.postTo(t, user("alice"), watchAddr, "text", props("body", "hi"))
+
+	th.svcPostAsTrigger(t, "escalated", props("note", "escalated"))
+	th.clock.Add(time.Second)
+	w := &fakeOutputs{}
+	th.runOutputs(t, w)
+
+	th.svcPostAsTrigger(t, "wrapup", props("note", "done"))
+	_, mark := th.lastMark(t)
+	require.True(t, mark.Job)
+	require.True(t, mark.Close)
+	th.clock.Add(time.Second)
+	require.Equal(t, 1, th.runOutputs(t, w).Ran)
+	_, mark = th.lastMark(t)
+	require.Equal(t, []channels.OutputResult{{Kind: "close", Status: channels.OutputDone}}, mark.Results)
+	require.Equal(t, channels.StateClosed, th.head(t, watchKey).State)
+}

@@ -197,3 +197,36 @@ func TestPost_MessageInConcurrent(t *testing.T) {
 		})
 	}
 }
+
+// TestSessionBranches_ConcurrentDecisions pins TKT-FPXTQJ: two decide posts
+// that expect the same generation but take different entries; exactly one
+// moves the session and the other is refused with session_moved.
+func TestSessionBranches_ConcurrentDecisions(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t, withYAML(branchRealtime))
+	var moved, refused atomic.Int64
+	var wg sync.WaitGroup
+	for _, d := range []string{"approve", "revise"} {
+		wg.Go(func() {
+			_, err := h.svc.Post(as(user("bob")), reviewCh, PostInput{
+				Type: "decide", Props: map[string]any{"decision": d}, ExpectGeneration: gen(0),
+			})
+			if err == nil {
+				moved.Add(1)
+				return
+			}
+			var de *DenialError
+			if errors.As(err, &de) && de.Status == http.StatusConflict && de.Type == TypeSessionMoved {
+				refused.Add(1)
+				return
+			}
+			t.Errorf("unexpected error: %v", err)
+		})
+	}
+	wg.Wait()
+	require.Equal(t, int64(1), moved.Load())
+	require.Equal(t, int64(1), refused.Load())
+	s := h.reviewSession(t)
+	require.Equal(t, int64(1), s.Generation)
+	require.Contains(t, []string{"working", "planning"}, s.State)
+}

@@ -59,19 +59,44 @@ func (s *Session) State(name string) (SessionState, bool) {
 	return s.states[i], true
 }
 
-// Transition returns the transition out of state that a message of type
-// msgType fires.
-func (s *Session) Transition(state, msgType string) (Transition, bool) {
+// Branches returns the entries of `on.<msgType>` out of state, in the
+// order the decider tries them: the first whose poster rule and guard hold
+// moves the session. The transitions are copies. Nil when state is not
+// declared or msgType moves nothing out of it.
+func (s *Session) Branches(state, msgType string) []Transition {
 	st, ok := s.State(state)
 	if !ok {
-		return Transition{}, false
+		return nil
 	}
-	t, ok := st.on[msgType]
-	if !ok {
-		return Transition{}, false
+	return cloneTransitions(st.on[msgType])
+}
+
+// TransitionTo returns the first entry of `on.<msgType>` out of state that
+// moves to to. An entry with outputs is the only one of its list with its
+// target (the load refuses a second), so (state, msgType, to) names it,
+// and its outputs are what the pre-check and the decider's gate read.
+// Entries without outputs may share a target and differ in whether a
+// trigger can fire them, so a reader of [Transition.Job] must pick among
+// [Session.Branches] itself.
+func (s *Session) TransitionTo(state, msgType, to string) (Transition, bool) {
+	for _, t := range s.Branches(state, msgType) {
+		if t.To == to {
+			return t, true
+		}
 	}
-	t.Roles = slices.Clone(t.Roles)
-	return t, true
+	return Transition{}, false
+}
+
+// cloneTransitions copies ts and the roles of each.
+func cloneTransitions(ts []Transition) []Transition {
+	if len(ts) == 0 {
+		return nil
+	}
+	out := slices.Clone(ts)
+	for i := range out {
+		out[i].Roles = slices.Clone(out[i].Roles)
+	}
+	return out
 }
 
 // Drives reports whether a message of type msgType fires a transition out
@@ -108,8 +133,9 @@ type SessionState struct {
 	// waitingFor is `waiting_for:`, in file order; see
 	// [SessionState.WaitingFor].
 	waitingFor []string
-	on         map[string]Transition
-	timers     []SessionTimer
+	// on holds the entries of each `on.<message type>`, in file order.
+	on     map[string][]Transition
+	timers []SessionTimer
 }
 
 // Timers returns the state's timers, sorted by name. The slice is a copy.
@@ -139,13 +165,18 @@ type SessionTimer struct {
 	outputs []Output
 }
 
-// Transitions returns the state's transitions, sorted by message type.
+// Transitions returns every entry of the state's transitions, sorted by
+// message type and then in file order, the order the decider tries the
+// entries of one type in. A message type with several entries appears once
+// per entry. The transitions are copies.
 func (st SessionState) Transitions() []Transition {
-	out := make([]Transition, 0, len(st.on))
+	n := 0
+	for _, list := range st.on {
+		n += len(list)
+	}
+	out := make([]Transition, 0, n)
 	for _, mt := range sortedKeys(st.on) {
-		t := st.on[mt]
-		t.Roles = slices.Clone(t.Roles)
-		out = append(out, t)
+		out = append(out, cloneTransitions(st.on[mt])...)
 	}
 	return out
 }
@@ -161,9 +192,10 @@ const (
 	TransitionByTrigger TransitionBy = "trigger"
 )
 
-// Transition is one `on.<message type>` entry: a message of MessageType
-// moves the session to To when its poster passes Roles or By and When
-// holds.
+// Transition is one entry of `on.<message type>`: a message of
+// MessageType moves the session to To when its poster passes Roles or By
+// and When holds, and no earlier entry of the same list did (see
+// [Session.Branches]).
 type Transition struct {
 	MessageType string
 	To          string
@@ -182,7 +214,20 @@ type Transition struct {
 	// warned is shared by every copy of the transition, so a guard failure
 	// is reported once per loaded configuration.
 	warned *atomic.Bool
+	// key is the entry's key path: `...on.<type>` for the mapping form,
+	// `...on.<type>[i]` for an entry of a list.
+	key string
+	// index is the entry's place in its list; 0 for the mapping form.
+	index int
+	// guarded is set when the entry has a `when:`, even one that failed to
+	// compile, so the load checks that judge which entries a poster can
+	// reach do not add a problem on top of the compile error.
+	guarded bool
 }
+
+// Key is the entry's key path in realtime.yaml, such as
+// `channel_types.ct.session.states.review.on.decide[1]`.
+func (t Transition) Key() string { return t.key }
 
 // WarnGuardOnce reports true the first time it is called for this
 // transition of this loaded configuration, and false after. A reload
@@ -251,7 +296,7 @@ func (v *validator) session(
 	for i := range s.states {
 		st := &s.states[i]
 		rs := raw.States[st.Name]
-		st.Label, st.Final, st.on = orDefault(rs.Label, st.Name), rs.Final, map[string]Transition{}
+		st.Label, st.Final, st.on = orDefault(rs.Label, st.Name), rs.Final, map[string][]Transition{}
 		sk := statesKey + "." + st.Name
 		switch {
 		case rs.Final && len(rs.On) > 0:
@@ -271,9 +316,8 @@ func (v *validator) session(
 				outputCause{kind: causeTimer}, ct)
 		}
 		for _, mn := range sortedKeys(rs.On) {
-			rt := rs.On[mn]
-			if t, ok := v.transition(sk+".on."+mn, mn, &rt, s, ct); ok {
-				st.on[mn] = t
+			if ts := (branchCompiler{v}).compile(sk+".on."+mn, mn, rs.On[mn], s, ct); len(ts) > 0 {
+				st.on[mn] = ts
 			}
 		}
 	}
@@ -418,7 +462,8 @@ func jobLoops(add problemSink, statesKey string, s *Session) {
 }
 
 // jobEdges returns the moves of s that no person makes: every timer and
-// every transition a trigger can fire.
+// every transition entry a trigger can fire, which [transitionCause] marks
+// job only when no earlier unguarded entry of its list admits triggers.
 func jobEdges(statesKey string, s *Session) []jobEdge {
 	var edges []jobEdge
 	for i, st := range s.states {
@@ -429,10 +474,10 @@ func jobEdges(statesKey string, s *Session) []jobEdge {
 			}
 		}
 		for _, mn := range sortedKeys(st.on) {
-			t := st.on[mn]
-			if j, ok := s.index[t.To]; ok && t.job {
-				edges = append(edges, jobEdge{from: i, to: j, outputs: len(t.outputs) > 0,
-					key: statesKey + "." + st.Name + ".on." + mn})
+			for _, t := range st.on[mn] {
+				if j, ok := s.index[t.To]; ok && t.job {
+					edges = append(edges, jobEdge{from: i, to: j, outputs: len(t.outputs) > 0, key: t.key})
+				}
 			}
 		}
 	}
@@ -519,21 +564,18 @@ func unknownState(name string) string {
 	return fmt.Sprintf("unknown state %q; declare it under states", name)
 }
 
-// transition compiles one `on.<message type>` entry. ok is false when the
-// message type is unusable, so the entry is left out.
+// transition compiles one `on.<message type>` entry at key. ok is false
+// when the message type is unusable, so the entry is left out.
+// triggerShadowed says an earlier entry of the same list without `when:`
+// admits triggers, so no trigger ever reaches this one (see
+// [transitionCause]).
 func (v *validator) transition(
-	key, msgType string, raw *rawTransition, s *Session, ct *ChannelType,
+	key, msgType string, raw *rawTransition, s *Session, ct *ChannelType, triggerShadowed bool,
 ) (Transition, bool) {
-	t := Transition{MessageType: msgType, To: raw.To, By: TransitionBy(raw.By)}
+	t := Transition{MessageType: msgType, To: raw.To, By: TransitionBy(raw.By), key: key, guarded: raw.When != ""}
+	// branchCompiler reports an unusable message type once, at on.<type>.
 	mt, ok := ct.MessageTypes[msgType]
-	switch {
-	case !ok:
-		v.add(key, fmt.Sprintf("unknown message type %q; a transition is keyed by a message type of "+
-			"this channel type", msgType))
-	case mt.Persist == PersistEphemeral:
-		v.add(key, "an ephemeral message is never stored, so it cannot move a session")
-		ok = false
-	}
+	ok = ok && transitionTypeProblem(ct, msgType) == ""
 	if raw.To == "" {
 		v.add(key+".to", "name the state this transition moves to")
 	} else if _, declared := s.index[raw.To]; !declared {
@@ -564,7 +606,7 @@ func (v *validator) transition(
 	if ok {
 		cause = mt
 	}
-	c := transitionCause(v.file, ct.Name, t, cause)
+	c := transitionCause(v.file, ct.Name, t, cause, triggerShadowed)
 	t.job = c.job()
 	t.outputs = writeChecker{v}.outputs(key+".outputs", raw.Outputs, c, ct)
 	return t, ok

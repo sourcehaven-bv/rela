@@ -7,6 +7,12 @@ package realtimecfg
 // The key checker walks these types by reflection to name unknown keys, so a
 // field added here is a key the file accepts.
 
+import (
+	"errors"
+
+	"gopkg.in/yaml.v3"
+)
+
 type rawFile struct {
 	Version      int                       `yaml:"version"`
 	Limits       *rawLimits                `yaml:"limits"`
@@ -66,7 +72,7 @@ type rawReminder struct {
 type rawSessionState struct {
 	Label string                     `yaml:"label"`
 	Final bool                       `yaml:"final"`
-	On    map[string]rawTransition   `yaml:"on"`
+	On    map[string]rawBranches     `yaml:"on"`
 	After map[string]rawSessionTimer `yaml:"after"`
 	// Status is `status`; nil when absent, so `status: ""` is refused
 	// rather than read as the default. See [SessionStatus].
@@ -82,6 +88,40 @@ type rawSessionTimer struct {
 	To      string      `yaml:"to"`
 	Label   string      `yaml:"label"`
 	Outputs []rawOutput `yaml:"outputs"`
+}
+
+// rawBranches is one `on.<message type>` value: a single mapping, which is
+// one entry, or a list of entries tried in file order. list records which
+// form the file used, so problems inside a list entry name its index. A
+// null value is not decoded (yaml.v3 leaves the zero value) and compiles
+// as one empty mapping entry.
+type rawBranches struct {
+	entries []rawTransition
+	list    bool
+}
+
+// UnmarshalYAML decodes a mapping as one entry and a sequence entry by
+// entry. The key checker runs first and names unknown keys and a value of
+// another shape by key path; the error here only stops the decode.
+func (b *rawBranches) UnmarshalYAML(n *yaml.Node) error {
+	switch n.Kind {
+	case yaml.MappingNode:
+		var t rawTransition
+		if err := n.Decode(&t); err != nil {
+			return err
+		}
+		*b = rawBranches{entries: []rawTransition{t}}
+		return nil
+	case yaml.SequenceNode:
+		var ts []rawTransition
+		if err := n.Decode(&ts); err != nil {
+			return err
+		}
+		*b = rawBranches{entries: ts, list: true}
+		return nil
+	default:
+		return errors.New("a transition must be a mapping or a list of mappings")
+	}
 }
 
 type rawTransition struct {
