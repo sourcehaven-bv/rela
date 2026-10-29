@@ -553,6 +553,36 @@ judged against the new state. A reply moves the session like any other
 message. A signal (`persist: ephemeral`) is never stored and cannot be a
 transition.
 
+**A post decided against a generation.** A post may name the session
+generation it was decided against, with `expect_generation` (HTTP and the
+MCP `post_message` tool) or `--expect-generation` (`rela channel post`).
+The generation counts the session's moves: 0 for a session that never
+moved, including a `one` channel that is not stored yet. The post is stored
+only while the session is still at that generation. Otherwise it is
+refused with 409 `session_moved`, whose `title` names the generation and
+state the session is at, and nothing is stored. Like `in:`, the store
+decides under its lock, so of two posts that expect the same generation,
+only the first is stored when it moves the session. Use it when a post
+answers a request: a re-entered state looks the same as before, but its
+generation differs, so an answer meant for the earlier request is not
+stored as an answer to the new one. The field applies only to a `log`
+message type of a channel type with a session; elsewhere, and for a
+negative value, the post is refused with 400 `invalid_message`. A post
+without it behaves as before. The web app's decision buttons always send
+it (see [In the web app](#in-the-web-app)).
+
+A post is checked in this order: the caller may post the type, the
+channel is open (`channel_not_open`), the type's `in:` holds the session's
+state (`session_wrong_state`), the session is at `expect_generation`
+(`session_moved`), and the rate limit. The store runs the `in:` and
+generation checks again under its lock; it does not check the rate limit
+again. A malformed `expect_generation` (negative, or on a type it does not
+apply to) is refused before all of these, and costs no rate-limit token.
+
+`expect_generation` is new in this release. Every process that loads the
+project needs this release or later to accept it; an older process refuses
+the unknown field with 400.
+
 **Where a message type may be posted.** Without `in:`, a message type may
 be posted in every state by everyone its `post` admits. `in:` limits the
 type to the states it lists:
@@ -588,6 +618,12 @@ Here the owner is offered Approve and Revise only while the plan is in
 review, and a member is offered Plan only while drafting. Text has no
 `in:`, so it may be posted in every state. `in:` decides whether a new
 message may be posted; `on:` decides whether it moves the session.
+
+Give a type that decides a session a `label:` and an `in:`. The web app
+shows the decisions you may make as buttons named by the type's label
+(the name without one), and `in:` refuses a late post in a state the type
+no longer belongs to. Without `in:`, a late post is stored and moves
+nothing.
 
 - A post outside `in:` is refused with 409 `session_wrong_state`. The
   `title` names the allowed states and the current one, and `detail` names
@@ -1432,6 +1468,7 @@ A button appears only when you may use it. It is left out, not disabled.
 | **New channel** | The type is `many` and its `create` admits you. |
 | Session header | The channel type has a `session`. It shows on a closed or archived channel too. |
 | A message type marked as moving the session | Your post of that type would move the session now: see `_actions.transitions` below. |
+| A decision button, such as **Approve** | The channel is open, the session is neither ended nor stranded, and your post of the type would move the session now: the type is in `_actions.transitions` and `_actions.post`. It shows in the session header, and on the message that moved the session into its current state. |
 
 A closed channel shows "This channel is closed." and an archived one "This
 channel is archived."; neither has a composer.
@@ -1496,6 +1533,33 @@ example "Contained from Ann. Session moved from Detected to Contained."
 When someone else moves the session, the header and the marked types
 follow without a reload.
 
+**Decision buttons.** The session header shows one button for each
+decision you may make now, named by the message type's label. The same
+buttons show on the message that moved the session into its current state,
+when the page holds that message and it is not removed. A button posts a
+message: only a message moves a session.
+
+- A type with no required property and no condition (`when`) on its move
+  posts with one click, with no properties.
+- A type with a required property, a condition, or moves to several states
+  opens the composer with that type selected and its first field focused.
+  If you are editing a message, the app first asks whether to discard the
+  edit.
+- A decision that ends the session (every move of the type leads to a
+  final state) asks you to confirm first and names the state. The confirm
+  button is red when that state ends as cancelled or failed. No other
+  decision asks.
+- A one-click post replies to the message that moved the session, when
+  that message is not itself a reply and the type allows replies.
+- The post carries `expect_generation`. If the session moved on before it
+  arrived, nothing is stored, the app says "The session moved on. Choose
+  again." and shows the decisions of the new state.
+- While a decision is in flight, the other decision buttons and **Send**
+  are disabled. After a one-click decision, focus moves to the message you
+  clicked on, or to the session header. The notice in the log announces
+  the move.
+- On a narrow panel the buttons stay visible on their own row and wrap.
+
 On a channel type with `typing: true`, the app tells the server you are
 typing while you write a `log` message. It does not while you edit a
 message or fill an `ephemeral` type. Other readers see a line under the
@@ -1541,7 +1605,7 @@ The data-entry API serves channels under the entity they are attached to.
 | `GET .../_channels/{type}` | The head of a `one` channel: its last sequence number, revision, and `_actions`, the operations the caller may perform. |
 | `GET .../_channels/{type}/{name}` | The head of a named channel. |
 | `GET .../{channel}/messages` | A page of messages. See below. |
-| `POST .../{channel}/messages` | Posts a message: `{"type": ..., "props": {...}, "reply_to": n}`. A `log` message gets a 201 with the message; an `ephemeral` one gets a 202. |
+| `POST .../{channel}/messages` | Posts a message: `{"type": ..., "props": {...}, "reply_to": n, "expect_generation": n}`. `expect_generation` is optional: see [Sessions](#sessions). A `log` message gets a 201 with the message; an `ephemeral` one gets a 202. |
 | `PATCH .../{channel}/messages/{seq}` | Edits a message: `{"props": {...}}`. The props replace the message's props, with one exception: a stored `ref` property the caller cannot read, and that the request does not name, is kept as stored. A caller cannot send back an id they cannot see, so leaving it out does not erase it. A property the request does not name is otherwise removed. |
 | `DELETE .../{channel}/messages/{seq}` | Removes a message. The body may hold a `reason`. |
 | `POST .../{channel}/messages/{seq}/_action/{name}` | Runs an action. The body is empty or `{}`. The answer is `{"message": ..., "warnings": [...]}`. |
@@ -1779,7 +1843,7 @@ Every error is a problem body (`application/problem+json`) with a `type`.
 | 413 `too_large` | The message is over `message_bytes`. |
 | 422 | A `ref` names an entity that does not exist or that the caller cannot read. Both get the same body. |
 | 422 `promote_invalid` | The promoted entity or its relation fails validation, for example a `unique` property that another entity already has, or a mapped `ref` names an entity the caller cannot read. The body names properties, never entity ids. |
-| 409 | The channel is not open, the channel is not in a state the lifecycle operation starts from (`lifecycle_wrong_state`), `retention` keeps the channel (`retention_active`), a concurrent change won (`conflict`), the message was removed, `channels_per_entity` is reached, the POST tried to open a channel of a `one` type, or the configuration changed during the request. An edit or removal targets a session notice (`session_notice`), or an author's edit or delete targets a message that moved the session (`session_message`). A post of a type whose `in:` does not hold the session's state (`session_wrong_state`; `title` names the allowed states, `detail` the rule). For actions: the message already carries an action (`action_taken`), its action is pending (`action_pending`, also for an edit, a removal, a release within the release window, or an action that lost a race to a promote that started first), a release finds no pending action (`action_not_pending`), or the promoted entity already exists (`promote_conflict`). A removal of the message that moved the session, or a release of a notice's outputs mark, while the outputs still run (`outputs_pending`). |
+| 409 | The channel is not open, the channel is not in a state the lifecycle operation starts from (`lifecycle_wrong_state`), `retention` keeps the channel (`retention_active`), a concurrent change won (`conflict`), the message was removed, `channels_per_entity` is reached, the POST tried to open a channel of a `one` type, or the configuration changed during the request. An edit or removal targets a session notice (`session_notice`), or an author's edit or delete targets a message that moved the session (`session_message`). A post of a type whose `in:` does not hold the session's state (`session_wrong_state`; `title` names the allowed states, `detail` the rule). A post whose `expect_generation` is not the session's generation (`session_moved`; `title` names the generation and state the session is at). For actions: the message already carries an action (`action_taken`), its action is pending (`action_pending`, also for an edit, a removal, a release within the release window, or an action that lost a race to a promote that started first), a release finds no pending action (`action_not_pending`), or the promoted entity already exists (`promote_conflict`). A removal of the message that moved the session, or a release of a notice's outputs mark, while the outputs still run (`outputs_pending`). |
 | 429 | A rate limit. `Retry-After` gives the seconds to wait, rounded up. |
 | 400 `invalid_cursor` | The inbox `cursor` is not one an inbox answer gave, or comes with `kinds` that do not hold `waiting`. |
 | 503 `inbox_too_large` | The inbox would read more than 20 000 channels. Nothing is listed; see [Inbox](#inbox). The `detail` suggests `kinds=unread,mention,reply`, which still answers. |
@@ -1885,6 +1949,11 @@ A message type with `in:` is offered only in the states it lists, so
 `actions.post` in `read_channel` and `You may post` in `rela channel read`
 change as the session moves. A post outside them answers
 `session_wrong_state` with the allowed states and the current one.
+When a post answers a request, pass the session's `generation` from
+`read_session` or `read_channel` as `expect_generation` (`rela channel
+post --expect-generation`). If the session moved on meanwhile, the post
+answers `session_moved` and nothing is stored: read the session again and
+decide again.
 
 **Waiting for a session.** `read_session` returns only a channel's session,
 the channel's name and state, and the message types whose post by the

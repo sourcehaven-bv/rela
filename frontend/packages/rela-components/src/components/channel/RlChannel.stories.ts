@@ -8,6 +8,7 @@ import { lifecyclePendingKey } from './channelFields'
 import { provideMessages } from '../../composables/useMessages'
 import type { ChannelMessageView } from './types'
 import {
+  breachDecisions,
   breachMessages,
   breachMessageTypes,
   breachNotice,
@@ -524,5 +525,25 @@ export const AnnouncesMessageAndNoticeWithOverride: Story = {
     await waitFor(() =>
       expect(announced(canvasElement)).toHaveTextContent(/^1 nieuw \/ Session moved from Detected to Contained$/),
     )
+  },
+}
+
+/** The decisions show on the message that moved the session, and on no other row. */
+export const DecisionsOnMessage: Story = {
+  args: {
+    messages: breachMessages,
+    messageTypes: breachMessageTypes,
+    postable: ['text', 'contained', 'dismiss'],
+    decisions: breachDecisions,
+    decisionSeq: 2,
+    onDecide: fn(),
+  },
+  play: async ({ args, canvasElement }) => {
+    const groups = canvasElement.querySelectorAll('.rl-channel-message [role="group"].rl-channel-decisions')
+    await expect(groups).toHaveLength(1)
+    const row = groups[0]!.closest('.rl-channel-message')!
+    await expect(row).toHaveAttribute('data-seq', '2')
+    await userEvent.click(within(row as HTMLElement).getByRole('button', { name: /Contained again/ }))
+    await expect(args.onDecide).toHaveBeenCalledWith('contained', 'row')
   },
 }

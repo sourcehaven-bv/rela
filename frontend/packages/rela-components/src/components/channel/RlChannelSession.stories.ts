@@ -1,8 +1,10 @@
 import type { Meta, StoryObj } from '@storybook/vue3-vite'
 import { expect, userEvent, within } from 'storybook/test'
 import RlChannelSession from './RlChannelSession.vue'
+import RlChannelDecisions from './RlChannelDecisions.vue'
 import { provideMessages } from '../../composables/useMessages'
 import {
+  breachDecisions,
   breachSessionAssessed,
   breachSessionCancelled,
   breachSessionDetected,
@@ -280,5 +282,41 @@ export const LocalizedTexts: Story = {
     await expect(canvas.getByText('[normal] Detected')).toBeVisible()
     await expect(canvasElement).toHaveTextContent('Contained: N')
     await expect(canvasElement).toHaveTextContent('Dismissed: F')
+  },
+}
+
+const withDecisions =
+  (width?: string): Story['render'] =>
+  (args) => ({
+    components: { RlChannelSession, RlChannelDecisions },
+    setup: () => ({ args, decisions: breachDecisions }),
+    template: `
+    <div :style="${width ? `'width:${width}'` : "''"}">
+      <RlChannelSession v-bind="args">
+        <template #decisions><RlChannelDecisions :decisions="decisions" /></template>
+      </RlChannelSession>
+    </div>`,
+  })
+
+/** The decisions sit on their own row under the states. */
+export const WithDecisions: Story = {
+  args: { session: breachSessionWaitingOnMe },
+  render: withDecisions(),
+  play: async ({ canvasElement }) => {
+    const group = within(canvasElement).getByRole('group', { name: 'Decisions' })
+    await expect(within(group).getAllByRole('button')).toHaveLength(3)
+    await expect(steps(canvasElement)[1]).toHaveAttribute('aria-current', 'step')
+  },
+}
+
+/** At 300px the states fold behind the toggle; the decisions stay visible and wrap. */
+export const NarrowWithDecisions: Story = {
+  args: { session: breachSessionWaitingOnMe },
+  render: withDecisions('300px'),
+  play: async ({ canvasElement }) => {
+    await expect(canvasElement.querySelector('ol')).not.toBeVisible()
+    const group = within(canvasElement).getByRole('group', { name: 'Decisions' })
+    for (const b of within(group).getAllByRole('button')) await expect(b).toBeVisible()
+    await expect(group.scrollWidth).toBeLessThanOrEqual(group.clientWidth + 1)
   },
 }

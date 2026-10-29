@@ -406,7 +406,9 @@ func (h *channelsHandler) post(w http.ResponseWriter, r *http.Request, rt channe
 	if !decodeChannelBody(w, r, &req, false) {
 		return
 	}
-	in := realtime.PostInput{Type: req.Type, Props: req.Props, ReplyTo: req.ReplyTo}
+	in := realtime.PostInput{
+		Type: req.Type, Props: req.Props, ReplyTo: req.ReplyTo, ExpectGeneration: req.ExpectGeneration,
+	}
 	got, err := h.messageOps.Post(r.Context(), rt.addr, in)
 	if err != nil {
 		writeChannelError(w, r, err)

@@ -65,6 +65,10 @@ const (
 	// TypeSessionWrongState is a 409 for a post of a message type whose
 	// `in:` does not list the session's current state.
 	TypeSessionWrongState = "session_wrong_state"
+	// TypeSessionMoved is a 409 for a post whose expect_generation is not
+	// the session's generation: the session moved on since the poster
+	// decided. The title names both generations and the current state.
+	TypeSessionMoved = "session_moved"
 	// TypeRetentionActive is a 409 for a delete before the channel's
 	// retention ends, or of a channel under retention that was never closed.
 	TypeRetentionActive = "retention_active"

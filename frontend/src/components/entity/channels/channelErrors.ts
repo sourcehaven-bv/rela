@@ -91,6 +91,9 @@ export const CHANNEL_ERROR_RULES: Readonly<Record<string, ChannelErrorRule>> = {
   // The message type does not apply in the session's state (in:); the
   // refetch drops it from the composer.
   session_wrong_state: REFETCH,
+  // A decision named the generation it was made against, and the session
+  // has moved on since; the refetch shows the decisions of the new state.
+  session_moved: REFETCH,
   action_taken: REFETCH,
   action_pending: REFETCH,
   action_not_pending: REFETCH,
@@ -160,6 +163,11 @@ export function classifyChannelError(err: unknown): ChannelErrorOutcome {
   // the CLI.
   if (type === 'session_wrong_state') {
     return { ...REFETCH, message: t('channels.sessionWrongState') }
+  }
+  // Only a decision button sends expect_generation. The server's title
+  // names generations, which mean nothing to a reader.
+  if (type === 'session_moved') {
+    return { ...REFETCH, message: t('channels.decisionStale') }
   }
   const rule = CHANNEL_ERROR_RULES[type]
   if (rule) return { ...rule, message }

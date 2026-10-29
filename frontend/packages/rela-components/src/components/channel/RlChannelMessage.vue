@@ -12,6 +12,12 @@
  * advertise that. Delete (own message, no reason) and Remove (moderator) are
  * separate controls because they are separate rights.
  *
+ * `decisions` are the session decisions shown on this row, the message
+ * that moved the session into its current state; the app passes them to
+ * that row only. They render before Reply, as a group described by the
+ * card's type label and the author line, and emit `decide`. A notice or a
+ * removed message never shows them.
+ *
  * A session notice (`message.notice`) renders as one system line: the move,
  * and the time. It has no controls, not even reply: the server sends no
  * actions on a notice, and the message that caused it is the row above,
@@ -22,15 +28,17 @@
  * already rendered and sanitized. It is inserted as it is; this component
  * never renders or cleans markdown, so the app's sanitizer is the only one.
  */
-import { computed } from 'vue'
+import { computed, useId } from 'vue'
 import RlButton from '../common/RlButton.vue'
 import RlButtonGroup from '../common/RlButtonGroup.vue'
 import RlIcon from '../common/RlIcon.vue'
 import RlTag from '../common/RlTag.vue'
 import RlChannelAuthor from './RlChannelAuthor.vue'
+import RlChannelDecisions from './RlChannelDecisions.vue'
 import RlRefChip from './RlRefChip.vue'
 import { resolveChannelFields, messagePendingKey, type ResolvedChannelField } from './channelFields'
 import type {
+  ChannelDecisionView,
   ChannelEnumOption,
   ChannelMessagePresentation,
   ChannelMessageTypeDef,
@@ -55,6 +63,8 @@ const props = withDefaults(
     pending?: ReadonlySet<string>
     /** Whether the user may post a reply in this channel now. */
     canReply?: boolean
+    /** The session decisions this row shows; see the header comment. */
+    decisions?: ChannelDecisionView[]
   }>(),
   { canReply: false },
 )
@@ -68,7 +78,11 @@ const emit = defineEmits<{
   action: [seq: number, name: string]
   openRef: [ref: ChannelReadableRef, event: MouseEvent]
   jump: [seq: number]
+  decide: [key: string]
 }>()
+
+const headId = useId()
+const metaId = useId()
 
 const messages = useMessages()
 const t = (key: ChannelTextKey) => messages.channelText({ key })
@@ -104,8 +118,20 @@ const actionLabel = computed(() => {
   return props.messageType?.actions.find((a) => a.name === name)?.label ?? name
 })
 
+const decisionList = computed(() => props.decisions ?? [])
+
+/**
+ * The ids that describe the decision group: the card's type label, if shown,
+ * and the author line. `!prose && messageType` must match the template's
+ * branch that renders the card head with `headId`; keep the two in step.
+ */
+const decisionsDescribedBy = computed(() =>
+  [!prose.value && props.messageType ? headId : undefined, metaId].filter(Boolean).join(' '),
+)
+
 const hasControls = computed(
   () =>
+    decisionList.value.length > 0 ||
     props.canReply ||
     actionButtons.value.length > 0 ||
     ['edit', 'delete', 'remove', 'release'].some((op) => allowed.value.has(op)),
@@ -159,7 +185,7 @@ function hrefFor(v: ChannelRef): string | undefined {
     </p>
 
     <template v-else>
-      <div class="rl-channel-message__meta">
+      <div :id="metaId" class="rl-channel-message__meta">
         <RlChannelAuthor v-if="message.author" :author="message.author" />
         <time v-if="message.at" class="rl-channel-message__time" :datetime="message.datetime">
           {{ message.at }}
@@ -194,7 +220,9 @@ function hrefFor(v: ChannelRef): string | undefined {
       </template>
 
       <div v-else-if="messageType || shown.length || message.action" class="rl-channel-message__card">
-        <div v-if="messageType" class="rl-channel-message__card-head">{{ messageType.label }}</div>
+        <div v-if="messageType" :id="headId" class="rl-channel-message__card-head">
+          {{ messageType.label }}
+        </div>
         <dl v-if="shown.length" class="rl-channel-message__fields">
           <template v-for="f in shown" :key="f.property.name">
             <dt>{{ f.label }}</dt>
@@ -242,6 +270,12 @@ function hrefFor(v: ChannelRef): string | undefined {
       </div>
 
       <RlButtonGroup v-if="hasControls" align="start" class="rl-channel-message__controls">
+        <RlChannelDecisions
+          :decisions="decisionList"
+          :pending="pending"
+          :described-by="decisionsDescribedBy"
+          @decide="(key) => emit('decide', key)"
+        />
         <RlButton
           v-for="a in actionButtons"
           :key="a.name"
@@ -446,5 +480,8 @@ function hrefFor(v: ChannelRef): string | undefined {
   border-top: 1px solid var(--rl-color-border);
 }
 
-.rl-channel-message__controls { margin-top: var(--rl-space-2); }
+.rl-channel-message__controls {
+  flex-wrap: wrap;
+  margin-top: var(--rl-space-2);
+}
 </style>

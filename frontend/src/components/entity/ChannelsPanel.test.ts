@@ -414,6 +414,7 @@ describe('ChannelsPanel', () => {
       expect.anything(),
       'card',
       { body: 'hello' },
+      undefined,
       undefined
     )
     expect((composerForm().find('textarea').element as HTMLTextAreaElement).value).toBe('')
@@ -922,6 +923,441 @@ describe('ChannelsPanel', () => {
       expect(labels.some((l) => l.includes('Edit'))).toBe(false)
       expect(labels.some((l) => l.includes('Delete'))).toBe(false)
       expect(labels.some((l) => l.includes('Remove'))).toBe(true)
+    })
+  })
+})
+
+// Session decisions as buttons (TKT-T9G1AE AC 3 to 11): the header and the
+// deciding message show one button per decision the caller may make now.
+describe('ChannelsPanel session decisions', () => {
+  const logType = (
+    name: string,
+    label: string,
+    properties: ChannelTypeSchema['message_types'][number]['properties'] = [],
+    reply = true
+  ) => ({ name, label, persist: 'log' as const, reply, actions: [], properties })
+  const run: ChannelTypeSchema = {
+    ...room,
+    message_types: [
+      room.message_types[0]!,
+      logType('approve', 'Approve plan', [{ name: 'note', label: 'Note', type: 'string' }]),
+      logType(
+        'revise',
+        'Revise plan',
+        [{ name: 'feedback', label: 'Feedback', type: 'markdown', required: true }],
+        false
+      ),
+      logType('abandon', 'Abandon'),
+      logType('accept', 'Accept'),
+    ],
+    session: {
+      label: 'Run',
+      initial: 'plan-review',
+      states: [
+        { name: 'plan-review', label: 'Plan review', status: 'input_required' },
+        { name: 'working', label: 'Working', status: 'working' },
+        { name: 'accepted', label: 'Accepted', final: true, status: 'completed' },
+        { name: 'abandoned', label: 'Abandoned', final: true, status: 'cancelled' },
+      ],
+    },
+  }
+  const inReview = {
+    state: 'plan-review',
+    status: 'input_required' as const,
+    generation: 4,
+    entered_at: '2026-03-01T10:00:00Z',
+    transitions: [
+      { message_type: 'approve', to: 'working' },
+      { message_type: 'revise', to: 'working' },
+      { message_type: 'abandon', to: 'abandoned' },
+      { message_type: 'accept', to: 'accepted' },
+    ],
+  }
+  const working = { ...inReview, state: 'working', status: 'working' as const, generation: 5 }
+  const POST = ['card', 'approve', 'revise', 'abandon', 'accept']
+
+  function runHead(
+    session: Channel['session'] = inReview,
+    transitions = ['approve', 'revise', 'abandon', 'accept'],
+    ch: Partial<Channel> = {}
+  ): ChannelHead {
+    const h = head({}, { last_seq: 13, rev: 13, session, ...ch })
+    return { ...h, _actions: { ...h._actions, post: POST, transitions } }
+  }
+  const notice = msg(13, {
+    type: 'session',
+    author: { user: 'system', system: true },
+    triggered_by: 'session:room',
+    props: { from: 'working', to: 'plan-review', generation: 4, cause: 12 },
+    _actions: [],
+  })
+
+  /** The head every fetch answers; a test replaces it to move the session. */
+  let current: ChannelHead
+
+  beforeEach(() => {
+    current = runHead()
+    api.getChannelSchema.mockResolvedValue({ channel_types: [run] })
+    api.getChannelHead.mockImplementation(() => Promise.resolve(current))
+    api.getMessages.mockResolvedValue({
+      ...page([msg(12, { props: { body: 'the plan' } }), notice]),
+      channel: channel({ last_seq: 13, rev: 13, session: inReview }),
+      next_after_rev: 13,
+    })
+  })
+
+  const header = () => w().find('.rl-channel-session')
+  const decision = (scope: ReturnType<VueWrapper['find']>, key: string) =>
+    scope.find(`[data-decision="${key}"]`)
+  const posted = (over: Partial<Message> = {}): PostResult => ({
+    kind: 'message',
+    message: msg(14, { type: 'approve', props: {}, reply_to: 12, _actions: [], ...over }),
+  })
+  async function click(el: ReturnType<VueWrapper['find']>) {
+    await el.trigger('click')
+    await flushPromises()
+    await flushPromises()
+  }
+
+  it('posts approve from the header button and the buttons go once the session moves', async () => {
+    await mountPanel()
+    api.postMessage.mockImplementation(async () => {
+      current = runHead(working, [])
+      return posted()
+    })
+    await click(decision(header(), 'approve'))
+    expect(api.postMessage).toHaveBeenCalledTimes(1)
+    expect(api.postMessage).toHaveBeenCalledWith(expect.anything(), 'approve', {}, 12, 4)
+    expect(w().findAll('[data-decision]')).toHaveLength(0)
+    expect(document.activeElement).toBe(header().element)
+  })
+
+  it('shows the same buttons on the deciding message and on no other', async () => {
+    await mountPanel()
+    expect(decision(messageEl(12), 'approve').exists()).toBe(true)
+    expect(decision(messageEl(13), 'approve').exists()).toBe(false)
+    expect(
+      header()
+        .findAll('[data-decision]')
+        .map((b) => b.attributes('data-decision'))
+    ).toEqual(['approve', 'revise', 'abandon', 'accept'])
+  })
+
+  it('focus returns to the row after a row decision', async () => {
+    await mountPanel()
+    api.postMessage.mockImplementation(async () => {
+      current = runHead(working, [])
+      return posted()
+    })
+    await click(decision(messageEl(12), 'approve'))
+    expect(document.activeElement).toBe(messageEl(12).element)
+  })
+
+  it('the row buttons go when the cause is removed, the header stays', async () => {
+    api.getMessages.mockResolvedValue({
+      ...page([
+        msg(12, {
+          removed: { kind: 'moderator', by: { user: 'bob' }, at: '2026-03-01T10:00:00Z' },
+        }),
+        notice,
+      ]),
+      channel: channel({ last_seq: 13, rev: 13, session: inReview }),
+      next_after_rev: 13,
+    })
+    await mountPanel()
+    expect(messageEl(12).find('[data-decision]').exists()).toBe(false)
+    expect(decision(header(), 'approve').exists()).toBe(true)
+  })
+
+  it('shows no decision to a caller without the transitions', async () => {
+    current = runHead(inReview, [])
+    await mountPanel()
+    expect(w().findAll('[data-decision]')).toHaveLength(0)
+  })
+
+  it('Revise plan opens the composer and sends nothing', async () => {
+    await mountPanel()
+    await click(decision(header(), 'revise'))
+    expect(api.postMessage).not.toHaveBeenCalled()
+    const composer = w().findComponent(RlChannelComposer)
+    const checked = composerForm().find('[role="radio"][aria-checked="true"]')
+    expect(checked.text()).toContain('Revise plan')
+    expect(composer.find('textarea').element).toBe(document.activeElement)
+  })
+
+  it('asks before discarding an edit; cancel keeps the edit and sends nothing', async () => {
+    await mountPanel()
+    await buttonIn(messageEl(12), 'Edit').trigger('click')
+    await flushPromises()
+    expect(composerForm().attributes('aria-label')).toBe('Edit message')
+    confirm.mockResolvedValue(false)
+    await click(decision(header(), 'revise'))
+    expect(confirm).toHaveBeenCalledTimes(1)
+    expect(composerForm().attributes('aria-label')).toBe('Edit message')
+    expect(api.postMessage).not.toHaveBeenCalled()
+
+    confirm.mockResolvedValue(true)
+    await click(decision(header(), 'revise'))
+    expect(composerForm().attributes('aria-label')).not.toBe('Edit message')
+    expect(composerForm().find('[role="radio"][aria-checked="true"]').text()).toContain(
+      'Revise plan'
+    )
+  })
+
+  it('a double click on the header and the row posts once', async () => {
+    await mountPanel()
+    let answer!: (r: PostResult) => void
+    api.postMessage.mockReturnValue(new Promise<PostResult>((r) => (answer = r)))
+    await decision(header(), 'approve').trigger('click')
+    await decision(header(), 'approve').trigger('click')
+    await decision(messageEl(12), 'approve').trigger('click')
+    await flushPromises()
+    expect(api.postMessage).toHaveBeenCalledTimes(1)
+    const pending = decision(header(), 'approve')
+    expect(pending.attributes('aria-disabled')).toBe('true')
+    expect(pending.attributes('disabled')).toBeUndefined()
+    expect(decision(header(), 'revise').attributes('disabled')).toBeDefined()
+    // The row shows the same decision, so it shows the same pending state.
+    expect(decision(messageEl(12), 'approve').attributes('aria-disabled')).toBe('true')
+    expect(decision(messageEl(12), 'revise').attributes('disabled')).toBeDefined()
+    current = runHead(working, [])
+    answer(posted())
+    await flushPromises()
+    await flushPromises()
+    expect(w().findAll('[data-decision]')).toHaveLength(0)
+  })
+
+  it('the composer cannot send while a decision is in flight and shows no Sending label', async () => {
+    await mountPanel()
+    let answer!: (r: PostResult) => void
+    api.postMessage.mockReturnValueOnce(new Promise<PostResult>((r) => (answer = r)))
+    await click(decision(header(), 'approve'))
+    await typeBody('hello')
+    await composerForm().trigger('submit')
+    await flushPromises()
+    expect(api.postMessage).toHaveBeenCalledTimes(1)
+    const send = buttonIn(composerForm(), 'Send')
+    expect(send.attributes('disabled')).toBeDefined()
+    expect(send.attributes('aria-busy')).toBeUndefined()
+    current = runHead(working, [])
+    answer(posted())
+    await flushPromises()
+  })
+
+  it('two clicks on Abandon confirm once and post once', async () => {
+    await mountPanel()
+    let ok!: (v: boolean) => void
+    confirm.mockReturnValue(new Promise<boolean>((r) => (ok = r)))
+    api.postMessage.mockImplementation(async () => {
+      current = runHead({ ...inReview, state: 'abandoned', final: true, generation: 5 }, [])
+      return posted({ type: 'abandon' })
+    })
+    await decision(header(), 'abandon').trigger('click')
+    await decision(header(), 'abandon').trigger('click')
+    await flushPromises()
+    expect(confirm).toHaveBeenCalledTimes(1)
+    expect(confirm.mock.calls[0]![0]).toMatchObject({ danger: true })
+    ok(true)
+    await flushPromises()
+    await flushPromises()
+    expect(api.postMessage).toHaveBeenCalledTimes(1)
+    expect(api.postMessage).toHaveBeenCalledWith(expect.anything(), 'abandon', {}, 12, 4)
+  })
+
+  it('abandon asks first; cancel sends nothing and releases the lock', async () => {
+    await mountPanel()
+    confirm.mockResolvedValue(false)
+    await click(decision(header(), 'abandon'))
+    expect(api.postMessage).not.toHaveBeenCalled()
+    expect(decision(header(), 'approve').attributes('disabled')).toBeUndefined()
+  })
+
+  it('accept asks without the danger tone and names the final state', async () => {
+    await mountPanel()
+    confirm.mockResolvedValue(true)
+    api.postMessage.mockResolvedValue(posted({ type: 'accept' }))
+    await click(decision(header(), 'accept'))
+    expect(confirm.mock.calls[0]![0]).toMatchObject({
+      danger: false,
+      message: 'This ends the session in Accepted. You cannot undo it.',
+    })
+    expect(api.postMessage).toHaveBeenCalledTimes(1)
+  })
+
+  it('the session moved while the dialog was open: nothing is sent', async () => {
+    await mountPanel()
+    let ok!: (v: boolean) => void
+    confirm.mockReturnValue(new Promise<boolean>((r) => (ok = r)))
+    await decision(header(), 'accept').trigger('click')
+    await flushPromises()
+    current = runHead(working, [])
+    api.getMessages.mockResolvedValue({
+      ...page([]),
+      channel: channel({ last_seq: 14, rev: 14, session: working }),
+      next_after_rev: 14,
+    })
+    await liveFrame('channel')
+    ok(true)
+    await flushPromises()
+    expect(api.postMessage).not.toHaveBeenCalled()
+    expect(toastTitles()).toContain('The session moved on. Choose again.')
+  })
+
+  it('the same state came back at a newer generation while the dialog was open: the post keeps the old one', async () => {
+    await mountPanel()
+    let ok!: (v: boolean) => void
+    confirm.mockReturnValue(new Promise<boolean>((r) => (ok = r)))
+    api.postMessage.mockRejectedValue(problem(409, 'session_moved', 'moved'))
+    await decision(header(), 'accept').trigger('click')
+    await flushPromises()
+    // review -> working -> review: the same decisions, two generations on.
+    const again = { ...inReview, generation: 6 }
+    current = runHead(again)
+    api.getMessages.mockResolvedValue({
+      ...page([]),
+      channel: channel({ last_seq: 15, rev: 15, session: again }),
+      next_after_rev: 15,
+    })
+    await liveFrame('channel')
+    expect(decision(header(), 'accept').exists()).toBe(true)
+    ok(true)
+    await flushPromises()
+    expect(api.postMessage).toHaveBeenCalledTimes(1)
+    expect(api.postMessage.mock.calls[0]?.[4]).toBe(4)
+    expect(toastTitles()).toContain('The session moved on. Choose again.')
+  })
+
+  it('a 201 that moves nothing brings the still-valid decisions back', async () => {
+    await mountPanel()
+    api.postMessage.mockImplementation(async () => {
+      current = runHead(inReview, ['revise'])
+      return posted()
+    })
+    await click(decision(header(), 'approve'))
+    expect(
+      header()
+        .findAll('[data-decision]')
+        .map((b) => b.attributes('data-decision'))
+    ).toEqual(['revise'])
+  })
+
+  it('a live frame before the POST answer shows no old decisions', async () => {
+    await mountPanel()
+    let answer!: (r: PostResult) => void
+    api.postMessage.mockReturnValue(new Promise<PostResult>((r) => (answer = r)))
+    await click(decision(header(), 'approve'))
+    // The page moves the session; the head that follows is held open.
+    let headAnswer!: (h: ChannelHead) => void
+    api.getChannelHead.mockReturnValueOnce(new Promise<ChannelHead>((r) => (headAnswer = r)))
+    api.getMessages.mockResolvedValue({
+      ...page([]),
+      channel: channel({ last_seq: 14, rev: 14, session: working }),
+      next_after_rev: 14,
+    })
+    await liveFrame('channel')
+    expect(w().findAll('[data-decision]')).toHaveLength(0)
+    current = runHead(working, [])
+    headAnswer(current)
+    answer(posted())
+    await flushPromises()
+    await flushPromises()
+    expect(w().findAll('[data-decision]')).toHaveLength(0)
+  })
+
+  it('a failed head refresh after the 201 releases the lock with a toast', async () => {
+    await mountPanel()
+    api.postMessage.mockImplementation(async () => {
+      api.getChannelHead.mockRejectedValueOnce(problem(500, 'internal', 'server error'))
+      return posted()
+    })
+    await click(decision(header(), 'approve'))
+    expect(toastTitles()).toContain('server error')
+    expect(decision(header(), 'revise').attributes('disabled')).toBeUndefined()
+  })
+
+  it('the channel closes during the request: no decisions after', async () => {
+    await mountPanel()
+    api.postMessage.mockImplementation(async () => {
+      current = runHead(inReview, ['approve', 'revise'], { state: 'closed' })
+      api.getMessages.mockResolvedValue({
+        ...page([]),
+        channel: channel({ last_seq: 13, rev: 14, state: 'closed', session: inReview }),
+        next_after_rev: 14,
+      })
+      throw problem(409, 'channel_not_open', 'The channel is closed.')
+    })
+    await click(decision(header(), 'approve'))
+    expect(toastTitles()).toContain('The channel is closed.')
+    expect(w().findAll('[data-decision]')).toHaveLength(0)
+  })
+
+  describe('decision refusals map by problem type', () => {
+    const cases: { name: string; status: number; type: string; toast?: string; form?: string }[] = [
+      {
+        name: 'session moved',
+        status: 409,
+        type: 'session_moved',
+        toast: 'The session moved on. Choose again.',
+      },
+      {
+        name: 'wrong state',
+        status: 409,
+        type: 'session_wrong_state',
+        toast: 'The session moved on. Choose again.',
+      },
+      {
+        name: 'output denied',
+        status: 403,
+        type: 'session_output_denied',
+        toast: 'refused as session_output_denied',
+      },
+      {
+        name: 'invalid message',
+        status: 400,
+        type: 'invalid_message',
+        form: 'refused as invalid_message',
+      },
+      {
+        name: 'rate limited',
+        status: 429,
+        type: 'rate_limited',
+        toast: 'Too many messages. Try again shortly.',
+      },
+    ]
+    for (const tc of cases) {
+      it(tc.name, async () => {
+        await mountPanel()
+        const heads = api.getChannelHead.mock.calls.length
+        // The refetch finds nothing new, so it reads the head again.
+        api.getMessages.mockResolvedValue({
+          ...page([]),
+          channel: channel({ last_seq: 13, rev: 13, session: inReview }),
+          next_after_rev: 13,
+        })
+        api.postMessage.mockRejectedValue(problem(tc.status, tc.type, `refused as ${tc.type}`))
+        await click(decision(header(), 'approve'))
+        if (tc.toast) expect(toastTitles()).toContain(tc.toast)
+        if (tc.form) {
+          expect(composerForm().text()).toContain(tc.form)
+          expect(composerForm().find('[role="radio"][aria-checked="true"]').text()).toContain(
+            'Approve plan'
+          )
+        }
+        if (tc.type.startsWith('session_') || tc.status === 403) {
+          expect(api.getChannelHead.mock.calls.length).toBeGreaterThan(heads)
+        }
+        expect(decision(header(), 'revise').attributes('disabled')).toBeUndefined()
+      })
+    }
+
+    it('a network error is a toast', async () => {
+      await mountPanel()
+      api.postMessage.mockRejectedValue(
+        new ApiError('Network down', { kind: 'network', original: null })
+      )
+      await click(decision(header(), 'approve'))
+      expect(toastTitles().length).toBeGreaterThan(0)
+      expect(decision(header(), 'revise').attributes('disabled')).toBeUndefined()
     })
   })
 })

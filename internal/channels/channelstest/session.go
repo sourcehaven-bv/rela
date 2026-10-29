@@ -499,3 +499,71 @@ func testSessionAdmitTimer(t *testing.T, h Harness, k channels.Key) {
 	require.NoError(t, err)
 	require.Equal(t, headBefore, headAfter, "a refused SetSession stored something")
 }
+
+// expectGeneration is an Admit that refuses a channel whose session is
+// not at generation want, as a post with expect_generation does.
+func expectGeneration(want int64) func(channels.Channel) error {
+	return func(c channels.Channel) error {
+		if c.Session.Generation != want {
+			return &channels.SessionGenerationError{Want: want, Got: c.Session.Generation, State: c.Session.State}
+		}
+		return nil
+	}
+}
+
+// testSessionAdmitGeneration pins the generation precondition: an Admit
+// that returns a [*channels.SessionGenerationError] gets it back unchanged
+// with nothing stored, and of concurrent appends that all expect the same
+// generation and all move, exactly one is stored.
+func testSessionAdmitGeneration(t *testing.T, h Harness) {
+	t.Helper()
+	ctx := context.Background()
+	k := key("TKT-1", "room")
+	mustAppend(t, h.Store, k, stepped("move", T0, sessionStep(fromUnset())))
+	before, err := h.Store.Head(ctx, k)
+	require.NoError(t, err)
+	require.Equal(t, int64(1), before.Session.Generation)
+
+	stale := sessionStep(moveFrom("contained", "assessed"))
+	stale.Admit = expectGeneration(0)
+	_, err = h.Store.Append(ctx, k, stepped("stale", T0.Add(time.Minute), stale))
+	require.ErrorIs(t, err, channels.ErrSessionState)
+	got, ok := errors.AsType[*channels.SessionGenerationError](err)
+	require.True(t, ok, "want the *SessionGenerationError back, got %v", err)
+	require.Equal(t, channels.SessionGenerationError{Want: 0, Got: 1, State: "contained"}, *got)
+	head, err := h.Store.Head(ctx, k)
+	require.NoError(t, err)
+	require.Equal(t, before, head, "a refused append stored something")
+
+	stores := []channels.Store{h.Store}
+	if h.Second != nil {
+		stores = append(stores, h.Second(t))
+	}
+	const n = 8
+	var stored atomic.Int32
+	var wg sync.WaitGroup
+	errs := make(chan error, n)
+	for i := range n {
+		wg.Go(func() {
+			step := sessionStep(moveFrom("contained", "contained"))
+			step.Admit = expectGeneration(1)
+			_, appendErr := stores[i%len(stores)].Append(ctx, k, stepped("race", T0.Add(2*time.Minute), step))
+			if appendErr != nil {
+				errs <- appendErr
+				return
+			}
+			stored.Add(1)
+		})
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		_, ok := errors.AsType[*channels.SessionGenerationError](err)
+		require.True(t, ok, "a losing append is refused by the precondition, got %v", err)
+	}
+	require.Equal(t, int32(1), stored.Load(), "exactly one append expecting generation 1 is stored")
+	head, err = h.Store.Head(ctx, k)
+	require.NoError(t, err)
+	require.Equal(t, int64(2), head.Session.Generation)
+	require.Equal(t, before.LastSeq+2, head.LastSeq, "one message and its notice")
+}

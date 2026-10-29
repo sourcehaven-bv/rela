@@ -112,3 +112,21 @@ export function messagePendingKey(seq: number, op: string): string {
 export function lifecyclePendingKey(op: string): string {
   return `lifecycle:${op}`
 }
+
+/** The key a `pending` set uses for a session decision. */
+export function decisionPendingKey(key: string): string {
+  return `decision:${key}`
+}
+
+/**
+ * The pending key that blocks every decision without marking one as in
+ * flight, such as while the composer sends.
+ */
+export const DECISIONS_BLOCKED_KEY = 'decision:*'
+
+/** Whether a `pending` set holds any decision key, the blocking one included. */
+export function anyDecisionPending(pending: ReadonlySet<string> | undefined): boolean {
+  if (!pending) return false
+  for (const k of pending) if (k.startsWith('decision:')) return true
+  return false
+}

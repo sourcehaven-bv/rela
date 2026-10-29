@@ -649,6 +649,59 @@ describe('useChannel session moves', () => {
 
     expect(getHead).not.toHaveBeenCalled()
   })
+
+  it('sets actionsGeneration from a fetched head, not from a message page', async () => {
+    getHead.mockResolvedValue(headOf({ last_seq: 1, rev: 1, session: detected }))
+    getPage.mockResolvedValueOnce(
+      page([msg(1)], { channel: channel({ session: detected }), next_after_rev: 1 })
+    )
+    const ch = host(() => room)
+    await flushPromises()
+    expect(ch.actionsGeneration.value).toBe(0)
+
+    // The page moves the session; the head that follows is held open, so
+    // only the page has landed.
+    let answer!: (h: ChannelHead) => void
+    getHead.mockReturnValueOnce(new Promise<ChannelHead>((r) => (answer = r)))
+    getPage.mockResolvedValueOnce(
+      page([{ ...msg(2), type: 'contained' }], {
+        channel: channel({ last_seq: 2, rev: 2, session: contained }),
+        next_after_rev: 2,
+      })
+    )
+    frame()
+    await flushPromises()
+    expect(ch.head.value?.channel.session?.generation).toBe(1)
+    expect(ch.actionsGeneration.value).toBe(0)
+
+    answer(headOf({ last_seq: 2, rev: 2, session: contained }))
+    await flushPromises()
+    expect(ch.actionsGeneration.value).toBe(1)
+  })
+
+  it('refreshHead fetches the head even while a follow runs, and throws its error', async () => {
+    getHead.mockResolvedValue(headOf({ last_seq: 1, rev: 1, session: detected }))
+    getPage.mockResolvedValueOnce(
+      page([msg(1)], { channel: channel({ session: detected }), next_after_rev: 1 })
+    )
+    const ch = host(() => room)
+    await flushPromises()
+    getHead.mockClear()
+
+    // A follow is running: its page is held open.
+    let answerPage!: (p: MessagePage) => void
+    getPage.mockReturnValueOnce(new Promise<MessagePage>((r) => (answerPage = r)))
+    frame()
+    getHead.mockResolvedValueOnce(headOf({ last_seq: 3, rev: 3, session: contained }))
+    await ch.refreshHead()
+    expect(getHead).toHaveBeenCalledTimes(1)
+    expect(ch.actionsGeneration.value).toBe(1)
+    answerPage(page([], { channel: channel({ last_seq: 3, rev: 3, session: contained }) }))
+    await flushPromises()
+
+    getHead.mockRejectedValueOnce(httpError(500))
+    await expect(ch.refreshHead()).rejects.toThrow('HTTP 500')
+  })
 })
 
 describe('useChannel read markers', () => {

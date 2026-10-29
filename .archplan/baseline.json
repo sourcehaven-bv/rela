@@ -2479,6 +2479,18 @@
       "reason": "Design: intended mentions, mostly in comments; a GraphQuery carries the compiled row gate, and packages name the gated reader they get at wiring.",
       "at": "2026-10-28T13:29:07Z",
       "title": "validationgraph uses the term \"Gated reader\", owned by visibility."
+    },
+    "types.synonyms-b58af7b3e6b6": {
+      "state": "accepted",
+      "reason": "Design: wire DTOs (apiwire, realtime, channels) mirror domain types on purpose, as the rule against leaking storage types asks.",
+      "at": "2026-10-29T09:00:00Z",
+      "title": "PostMessageRequest (apiwire) and PostInput (realtime) share most of their fields."
+    },
+    "concepts.string_enum-6beb2b08d61c": {
+      "state": "accepted",
+      "reason": "Design: problem types are server wire codes; each consumer matches the few codes it handles, and channelErrors.ts owns the channel mapping.",
+      "at": "2026-10-29T09:00:00Z",
+      "title": "problem_type takes 2 string values in 2 components (web/components/entity, composables): 'session_wrong_state', 'no_principal'."
     }
   },
   "labels": {},
@@ -2488,7 +2500,7 @@
       "weight.structure": 936,
       "weight.layers": 0,
       "weight.vocabulary": 908,
-      "weight.types": 3810,
+      "weight.types": 3849,
       "weight.concepts": 7186,
       "weight.boundaries": 1512,
       "weight.data": 1297,
@@ -2515,6 +2527,17 @@
           "weight.types": [
             3780,
             3810
+          ]
+        }
+      },
+      {
+        "at": "2026-10-29T09:00:00Z",
+        "change": "loosen",
+        "reason": "PostMessageRequest wire mirror accepted like the other apiwire DTOs, TKT-T9G1AE",
+        "metrics": {
+          "weight.types": [
+            3810,
+            3849
           ]
         }
       }

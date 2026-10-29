@@ -300,6 +300,31 @@ export interface ChannelComposerTransition {
   guarded?: boolean
 }
 
+/**
+ * A button that posts a message to move the session, or opens its form.
+ * The app builds the list from the caller's affordances, the head and the
+ * channel type's descriptor; the library only renders it and emits `key`.
+ */
+export interface ChannelDecisionView {
+  /** Unique in the list; what `decide` emits and the pending key uses. */
+  key: string
+  messageType: string
+  /** Props the post carries, for a button that stands for one choice. */
+  props?: Record<string, ChannelPropValue>
+  label: string
+  /** The target state's label; absent when the edges lead to several. */
+  toLabel?: string
+  /** The button opens the composer instead of posting. */
+  opensForm?: boolean
+  /**
+   * Ask before posting: the move ends the session. Only on a one-click
+   * decision, which always has `toLabel`.
+   */
+  confirm?: boolean
+  /** Draws the button in the danger tone: the session ends cancelled or failed. */
+  danger?: boolean
+}
+
 /** An ephemeral signal, shown as one compact line while it lasts. */
 export interface ChannelEphemeralView {
   id: string

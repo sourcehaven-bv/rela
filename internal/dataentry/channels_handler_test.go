@@ -1004,3 +1004,32 @@ func TestChannelsHandler_SessionWrongState(t *testing.T) {
 	resp, b = env.do(t, "alice", http.MethodPost, incidentPath+"/messages", `{"type":"closing"}`, nil)
 	require.Equal(t, http.StatusCreated, resp.StatusCode, "%s", b)
 }
+
+// TestChannelsHandler_ExpectGeneration pins TKT-T9G1AE AC 1 over HTTP: the
+// body's expect_generation reaches the service; a mismatch is 409
+// session_moved naming both generations and stores nothing, a match posts,
+// and the field on a channel type without a session is 400.
+func TestChannelsHandler_ExpectGeneration(t *testing.T) {
+	env := newChannelEnv(t)
+	resp, b := env.do(t, "alice", http.MethodPost, incidentPath+"/messages",
+		`{"type":"note","props":{"body":"x"},"expect_generation":1}`, nil)
+	require.Equal(t, http.StatusConflict, resp.StatusCode, "%s", b)
+	require.Equal(t, realtime.TypeSessionMoved, problemType(t, b))
+	require.Equal(t, "The session moved on: it is at generation 0 (detected); this post expected generation 1.",
+		decodeAs[v1.Error](t, b).Title)
+	code, b := env.get(t, "alice", incidentPath)
+	require.Equal(t, http.StatusOK, code, "%s", b)
+	require.Zero(t, decodeAs[v1.ChannelHead](t, b).Channel.LastSeq, "a refused post stored something")
+
+	resp, b = env.do(t, "alice", http.MethodPost, incidentPath+"/messages",
+		`{"type":"contained","expect_generation":0}`, nil)
+	require.Equal(t, http.StatusCreated, resp.StatusCode, "%s", b)
+	code, b = env.get(t, "alice", incidentPath)
+	require.Equal(t, http.StatusOK, code, "%s", b)
+	require.Equal(t, int64(1), decodeAs[v1.ChannelHead](t, b).Channel.Session.Generation)
+
+	resp, b = env.do(t, "alice", http.MethodPost, chatPath+"/messages",
+		`{"type":"text","props":{"body":"x"},"expect_generation":0}`, nil)
+	require.Equal(t, http.StatusBadRequest, resp.StatusCode, "%s", b)
+	require.Equal(t, realtime.TypeInvalid, problemType(t, b))
+}

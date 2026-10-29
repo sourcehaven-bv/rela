@@ -385,6 +385,10 @@ type PostMessageRequest struct {
 	Type    string         `json:"type"`
 	Props   map[string]any `json:"props,omitempty"`
 	ReplyTo int64          `json:"reply_to,omitempty"`
+	// ExpectGeneration is the session generation the post was decided
+	// against; a post at another generation is refused with 409
+	// session_moved. Absent: no precondition.
+	ExpectGeneration *int64 `json:"expect_generation,omitempty"`
 }
 
 // EditMessageRequest is the `PATCH …/messages/{seq}` body. Props replaces

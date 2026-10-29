@@ -2161,6 +2161,7 @@ The project needs a `realtime.yaml`.
 rela channel list ID [--state open|closed|archived]
 rela channel read ID TYPE [--name N] [--limit N] [--before S | --after S | --after-rev R] [--schemas]
 rela channel post ID TYPE MESSAGE_TYPE [--name N] [-P key=value ...] [--props-json JSON|@FILE|-] [--reply-to S]
+                  [--expect-generation G]
 rela channel edit ID TYPE SEQ [--name N] [-P key=value ...] [--props-json JSON|@FILE|-]
 rela channel remove ID TYPE SEQ [--name N] [--reason R]
 rela channel create ID TYPE [--title T]
@@ -2180,6 +2181,7 @@ channel of a type with many channels.
 | `--limit`      | Page size for `read` and `watch`, 1 to 200 (default 20). The project's page limit may cap it   |
 | `--before`, `--after`, `--after-rev` | Page cursors; name at most one. `read` prints the flag that continues from the page |
 | `--schemas`    | Show each message type's properties                                                            |
+| `--expect-generation` | For `post`: store the message only while the session is at this generation, 0 or more. Otherwise the post is refused with `session_moved` and nothing is stored |
 | `--reason`     | Why a message was removed; shown to moderators                                                 |
 | `--seq`        | For `mark-read`: mark read up to this sequence number, 0 or more. Without it, up to the last message |
 | `--kinds`      | For `inbox`: what to list, any of `waiting`, `unread`, `mention` and `reply`; all four by default. Comma separated |

@@ -4,6 +4,7 @@ import RlChannelMessage from './RlChannelMessage.vue'
 import { messagePendingKey } from './channelFields'
 import type { ChannelMessageView } from './types'
 import {
+  breachDecisions,
   breachNotice,
   channelEnumOptions,
   channelMessages,
@@ -271,5 +272,26 @@ export const SessionNoticeRemovedState: Story = {
   args: { message: breachNotice(3, 'triage', 'Contained'), messageType: undefined },
   play: async ({ canvasElement }) => {
     await expect(within(canvasElement).getByText('Session moved from triage to Contained')).toBeVisible()
+  },
+}
+
+/**
+ * The message that moved the session shows its decisions first among its
+ * controls; the group is described by the message's type label and author.
+ */
+export const WithDecisions: Story = {
+  args: { decisions: breachDecisions, onDecide: fn() },
+  play: async ({ args, canvasElement }) => {
+    const canvas = within(canvasElement)
+    const group = canvas.getByRole('group', { name: 'Decisions' })
+    // A card names its type label and author line; a prose message has no
+    // type label, so only the author line.
+    const described = (group.getAttribute('aria-describedby') ?? '').split(' ').filter(Boolean)
+    await expect(described.length).toBeGreaterThan(0)
+    for (const id of described) await expect(canvasElement.querySelector(`#${CSS.escape(id)}`)).not.toBeNull()
+    const meta = canvasElement.querySelector('.rl-channel-message__meta')!
+    await expect(described).toContain(meta.id)
+    await userEvent.click(canvas.getByRole('button', { name: /Contained again/ }))
+    await expect(args.onDecide).toHaveBeenCalledWith('contained')
   },
 }

@@ -477,7 +477,13 @@ const postMessageText = "A log message is stored and answered 201. An ephemeral 
 	"transition with outputs is refused 403 session_output_denied, before anything is stored, " +
 	"when you may not write one of them; the outputs' result is on the session notice. A message type " +
 	"may be limited to some session states with in:; outside them it is not in _actions.post, and a post " +
-	"is refused 409 session_wrong_state, whose title names the allowed states."
+	"is refused 409 session_wrong_state, whose title names the allowed states. A post with " +
+	"expect_generation is stored only while the session is at that generation; otherwise it is refused " +
+	"409 session_moved, whose title names the expected and the current generation."
+
+// expectGenerationText describes the post body's expect_generation.
+const expectGenerationText = "The session generation this post was decided against. A post at another " +
+	"generation is refused with 409 session_moved."
 
 // channelErrorText describes each error status a channel route answers.
 var channelErrorText = map[string]string{
@@ -488,7 +494,8 @@ var channelErrorText = map[string]string{
 	"409": "The channel is not open or not in the state the operation starts from, the message was removed, " +
 		"a limit, the retention or a concurrent change refused. outputs_pending: the outputs of the session " +
 		"move the message caused are still running. session_wrong_state: the message type may not be " +
-		"posted in the session's current state",
+		"posted in the session's current state. session_moved: the session is no longer at the post's " +
+		"expect_generation",
 	"413": "Request body or a value too large",
 	"422": "A ref to an entity that cannot be referenced, or a bare id for a face-anchored type. " +
 		"too_many_mentions: a message may mention at most 10 people or agents",
@@ -536,6 +543,9 @@ func postBodySchema(ct realtimecfg.ChannelType) *Schema {
 		}
 		if mt.Persist != realtimecfg.PersistEphemeral {
 			body["reply_to"] = &Schema{Type: "integer", Description: "Seq of the top-level message to reply to"}
+			if ct.Session() != nil {
+				body["expect_generation"] = &Schema{Type: "integer", Minimum: new(float64), Description: expectGenerationText}
+			}
 		}
 		top := []string{"type"}
 		if len(props.Required) > 0 {

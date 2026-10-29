@@ -557,3 +557,55 @@ func TestChannelPaths_Read(t *testing.T) {
 		t.Error("the inbox summary route is not documented")
 	}
 }
+
+// TestChannelPaths_ExpectGeneration pins TKT-T9G1AE AC 2: the post body of
+// a log message type of a channel type with a session lists
+// expect_generation, a non-negative integer; an ephemeral type and a type
+// without a session do not, and the 409 documents session_moved.
+func TestChannelPaths_ExpectGeneration(t *testing.T) {
+	y := channelTestRealtime + `  run:
+    attach_to: [task]
+    read: { from: attached }
+    roles:
+      member: { from: attached }
+    message_types:
+      approve: { properties: { note: { type: string } }, post: [member] }
+      nudge:   { persist: ephemeral, post: [member] }
+    session:
+      initial: review
+      states:
+        review: { on: { approve: { to: done } } }
+        done:   { final: true }
+`
+	rt, err := realtimecfg.Parse([]byte(y), attachmentTestMeta(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	g := New(attachmentTestMeta(), Config{Title: "T", Version: "1"})
+	g.SetRealtime(func() *realtimecfg.Compiled { return rt })
+	spec := g.Generate()
+	variants := func(ct string) map[string]*Schema {
+		out := map[string]*Schema{}
+		post := spec.Paths["/api/v1/tasks/{id}/_channels/"+ct+"/messages"].Post
+		for _, v := range post.RequestBody.Content["application/json"].Schema.OneOf {
+			out[v.Title] = v
+		}
+		return out
+	}
+	run := variants("run")
+	eg := run["approve"].Properties["expect_generation"]
+	if eg == nil || eg.Type != "integer" || eg.Minimum == nil || *eg.Minimum != 0 ||
+		!strings.Contains(eg.Description, "session_moved") {
+
+		t.Errorf("approve expect_generation = %+v, want a non-negative integer naming session_moved", eg)
+	}
+	if _, ok := run["nudge"].Properties["expect_generation"]; ok {
+		t.Error("an ephemeral message type offers expect_generation")
+	}
+	if _, ok := variants("room")["text"].Properties["expect_generation"]; ok {
+		t.Error("a message type of a channel type without a session offers expect_generation")
+	}
+	if !strings.Contains(channelErrorText["409"], realtime.TypeSessionMoved) {
+		t.Error("the 409 response does not document session_moved")
+	}
+}

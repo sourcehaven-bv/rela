@@ -337,7 +337,7 @@ func sessionChannel(head *channels.Channel, now time.Time) channels.Channel {
 // mt's `in:` does not list, or is stranded; nil when it admits the post,
 // there is no session, or mt has no `in:`. The pre-check in [Service.Post]
 // calls it on the channel the call read (see [sessionChannel]), and the
-// store calls it through [admitIn], so the two cannot drift. It reads only
+// store calls it through [admitPost], so the two cannot drift. It reads only
 // its arguments, so it is safe under the store's lock.
 func sessionRefusal(
 	s *realtimecfg.Session, mt *realtimecfg.MessageType, ch channels.Channel,
@@ -352,21 +352,50 @@ func sessionRefusal(
 	return nil
 }
 
-// admitIn adapts [sessionRefusal] to a [channels.SessionStep.Admit]. Nil
-// when there is no session or mt has no `in:`, so the store skips the call.
-func admitIn(s *realtimecfg.Session, mt *realtimecfg.MessageType) func(channels.Channel) error {
-	if s == nil || mt.In == nil {
+// admitPost is the [channels.SessionStep.Admit] of a person's post of mt:
+// the `in:` refusal of [sessionRefusal], then, when expect is set, a
+// [*channels.SessionGenerationError] when the session is not at generation
+// *expect. Nil when there is no session or neither check applies, so the
+// store skips the call.
+func admitPost(s *realtimecfg.Session, mt *realtimecfg.MessageType, expect *int64) func(channels.Channel) error {
+	if s == nil || (mt.In == nil && expect == nil) {
 		return nil
 	}
 	return func(ch channels.Channel) error {
 		// Not `return sessionRefusal(...)`: a nil *SessionStateError in an
 		// error is not a nil error.
-		e := sessionRefusal(s, mt, ch)
+		if e := sessionRefusal(s, mt, ch); e != nil {
+			return e
+		}
+		e := generationRefusal(s, ch, expect)
 		if e == nil {
 			return nil
 		}
 		return e
 	}
+}
+
+// generationRefusal is the generation precondition of a post that expects
+// the session on ch at generation *expect: nil when expect is nil or the
+// session is at it. The pre-check in [Service.Post] and the store (through
+// [admitPost]) both call it.
+func generationRefusal(s *realtimecfg.Session, ch channels.Channel, expect *int64) *channels.SessionGenerationError {
+	if s == nil || expect == nil {
+		return nil
+	}
+	cur := currentSession(s, ch)
+	if cur.Generation == *expect {
+		return nil
+	}
+	return &channels.SessionGenerationError{Want: *expect, Got: cur.Generation, State: cur.State}
+}
+
+// sessionMoved is the 409 for a post that expected the session at another
+// generation than e saw.
+func sessionMoved(e *channels.SessionGenerationError) *DenialError {
+	return deny(http.StatusConflict, TypeSessionMoved,
+		fmt.Sprintf("The session moved on: it is at generation %d (%s); this post expected generation %d.",
+			e.Got, e.State, e.Want))
 }
 
 // sessionWrongState is the 409 for a post of mt that e refused: the
@@ -412,9 +441,11 @@ type guardFailure struct {
 // session. A message type that fires no transition still gets a step that
 // never moves, so the store reports the session it committed. triggeredBy
 // names the trigger for a trigger's post and is empty for a person's.
+// expect is the generation a person's post was decided against; nil for no
+// precondition, and always nil for a trigger or a reminder.
 func newSessionPost(
 	ctx context.Context, ct realtimecfg.ChannelType, mt *realtimecfg.MessageType, props map[string]any,
-	now time.Time, p poster, triggeredBy string,
+	now time.Time, p poster, triggeredBy string, expect *int64,
 ) sessionPost {
 	s := ct.Session()
 	sp := sessionPost{ct: ct.Name, mt: mt.Name, failed: &guardFailure{}, gate: &outputGate{}}
@@ -422,7 +453,7 @@ func newSessionPost(
 		return sp
 	}
 	sp.step = &channels.SessionStep{
-		Admit:      admitIn(s, mt),
+		Admit:      admitPost(s, mt, expect),
 		Decide:     sessionDecider(ctx, s, mt, props, now, p, sp.failed, sp.gate),
 		NoticeType: realtimecfg.SessionNoticeType, NoticeBy: systemAuthor(),
 		TriggeredBy: channels.SessionMarker + ct.Name, AuditTriggeredBy: triggeredBy,

@@ -89,6 +89,23 @@ describe('channel requests', () => {
     expect(axiosPost).toHaveBeenLastCalledWith(`${base}/messages`, { type: 'typing', props: {} })
   })
 
+  it('sends expect_generation when set, 0 included', async () => {
+    axiosPost.mockResolvedValue({ status: 201, data: { seq: 3, rev: 3 } })
+    await postMessage(target, 'approve', {}, 12, 4)
+    expect(axiosPost).toHaveBeenLastCalledWith(`${base}/messages`, {
+      type: 'approve',
+      props: {},
+      reply_to: 12,
+      expect_generation: 4,
+    })
+    await postMessage(target, 'go', {}, undefined, 0)
+    expect(axiosPost).toHaveBeenLastCalledWith(`${base}/messages`, {
+      type: 'go',
+      props: {},
+      expect_generation: 0,
+    })
+  })
+
   it('sends delete and remove bodies, never the reason in the URL', async () => {
     axiosDelete.mockResolvedValue({ status: 200, data: { seq: 4 } })
     await removeMessage(target, 4)

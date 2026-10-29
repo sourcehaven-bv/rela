@@ -164,6 +164,11 @@
     "rateLimitedIn": "Te veel berichten. Probeer het over {n} s opnieuw.",
     "rateLimited": "Te veel berichten. Probeer het zo opnieuw.",
     "sessionWrongState": "Dit berichttype kan in de huidige stand van de sessie niet worden geplaatst. Kies een ander.",
+    "decisionConfirmBody": "Hiermee eindigt de sessie in {state}. Dit kun je niet ongedaan maken.",
+    "decisionStale": "De sessie is verder gegaan. Kies opnieuw.",
+    "decisionDiscardEditTitle": "Je bewerking weggooien?",
+    "decisionDiscardEditBody": "Deze beslissing opent een nieuw bericht. Je wijzigingen in het bericht dat je bewerkt gaan verloren.",
+    "decisionDiscardEditConfirm": "Weggooien",
     "restrictedRef": "Afgeschermde verwijzing",
     "system": "systeem",
     "value": {

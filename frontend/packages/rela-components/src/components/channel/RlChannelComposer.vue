@@ -45,6 +45,13 @@
  * refers to that text. An edit never moves a session, so it shows no hint.
  * When the list changes under the user (someone else moved the session),
  * the selection, and focus in the type picker, stay on the same type.
+ *
+ * `blocked` stops a submit without the pending treatment: the send button
+ * is disabled and shows no "Sending", for while the app posts something
+ * else, such as a session decision. `select(type)` selects an offered type
+ * and focuses its first field, for a decision that opens the form; it
+ * returns false, and changes nothing, during an edit or for a type that is
+ * not offered.
  */
 import { computed, nextTick, reactive, ref, useId, useTemplateRef, watch } from 'vue'
 import RlButton from '../common/RlButton.vue'
@@ -98,6 +105,8 @@ const props = withDefaults(
     submitShortcut?: string
     /** The message types whose post would move the session, in order. */
     transitions?: ChannelComposerTransition[]
+    /** Stops a submit without showing it as sending; see the header comment. */
+    blocked?: boolean
   }>(),
   {
     presentation: undefined,
@@ -111,6 +120,7 @@ const props = withDefaults(
     timeZoneLabel: undefined,
     submitShortcut: 'Ctrl+Enter',
     transitions: () => [],
+    blocked: false,
   },
 )
 
@@ -319,7 +329,7 @@ function errorFor(name: string): string | undefined {
 
 async function submit() {
   const type = current.value
-  if (!type || props.submitting) return
+  if (!type || props.submitting || props.blocked) return
   localErrors.value = check()
   if (Object.keys(localErrors.value).length) {
     await nextTick()
@@ -368,8 +378,28 @@ function reset(posted?: ChannelPostEvent | ChannelEditEvent) {
   reseed(type)
 }
 
+/**
+ * Selects `type` and, after the next render, focuses its first field. The
+ * type's draft is kept. False, with nothing changed, during an edit or when
+ * `type` is not offered now.
+ */
+function select(type: string): boolean {
+  if (props.editing || !offered.value.some((m) => m.name === type)) return false
+  selected.value = type
+  void nextTick(() => {
+    form.value
+      ?.querySelector<HTMLElement>(
+        '.rl-channel-composer__fields input, .rl-channel-composer__fields textarea, ' +
+          '.rl-channel-composer__fields select, .rl-channel-composer__fields button',
+      )
+      ?.focus()
+  })
+  return true
+}
+
 defineExpose({
   reset,
+  select,
   focus: () => form.value?.querySelector<HTMLElement>('input, textarea, select, button')?.focus(),
 })
 </script>
@@ -444,6 +474,7 @@ defineExpose({
           icon="send"
           :aria-describedby="sessionHint ? hintId : undefined"
           :loading="submitting"
+          :disabled="blocked && !submitting"
           :pending-label="t(editing ? 'saving' : 'sending')"
           @click="submit"
         >

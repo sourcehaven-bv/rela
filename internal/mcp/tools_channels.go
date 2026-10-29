@@ -328,6 +328,9 @@ func toolPostMessage(refuseSignals bool) *mcpgo.Tool {
 		"move; you are refused before posting when you may not write one. " +
 		"A message type may be limited to some session states; outside them it is not in actions.post, " +
 		"and a post is refused with session_wrong_state, which names the allowed states. " +
+		"To answer a request the session waits on, pass expect_generation: the session generation from " +
+		"read_session or read_channel you decided against; when the session has moved on since, the post " +
+		"is refused with session_moved and nothing is stored, so read again and decide again. " +
 		"In a markdown property, to mention a person, put their user entity id in backticks (`USR-7`) " +
 		"where person mapping is configured, or `@login` in backticks where it is not; to mention an " +
 		"agent, its job identity (`integration:triage-bot`). At most " + strconv.Itoa(realtime.MaxMentions) +
@@ -341,6 +344,8 @@ func toolPostMessage(refuseSignals bool) *mcpgo.Tool {
 		withString("message_type", required(), description("Message type, from read_channel")),
 		withObject(chanPropsArg, description("Message properties")),
 		withNumber("reply_to", description("Seq of the top-level message to reply to")),
+		withNumber("expect_generation", description("The session generation this post was decided against, "+
+			"0 or more; a post at another generation is refused with session_moved")),
 	)...)
 }
 
@@ -547,7 +552,11 @@ func (h channelHandler) handlePost(ctx context.Context, args toolRequest) *mcpgo
 	if err != nil {
 		return errorResult(err.Error())
 	}
-	in := realtime.PostInput{Type: typ, Props: props, LogOnly: h.refuseSignals}
+	expect, err := wholeArg(args, "expect_generation", 0)
+	if err != nil {
+		return errorResult(err.Error())
+	}
+	in := realtime.PostInput{Type: typ, Props: props, LogOnly: h.refuseSignals, ExpectGeneration: expect}
 	if replyTo != nil {
 		in.ReplyTo = *replyTo
 	}

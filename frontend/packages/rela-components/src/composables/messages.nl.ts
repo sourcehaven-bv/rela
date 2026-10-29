@@ -224,6 +224,7 @@ const CHANNEL_TEXT_NL: Record<ChannelTextKey, string> = {
   sessionPausedArchived: 'Gepauzeerd zolang het kanaal gearchiveerd is',
   sessionShowAll: 'Alle stappen tonen',
   sessionHideAll: 'Stappen verbergen',
+  decisions: 'Beslissingen',
 }
 
 export const NL_MESSAGES: Messages = {
@@ -309,6 +310,8 @@ export const NL_MESSAGES: Messages = {
   channelSessionHint: ({ to, guarded }) =>
     `Dit bericht zet de sessie op ${to}${guarded ? ' als aan de voorwaarde is voldaan' : ''}.`,
   channelSessionOptionHint: () => ' (verplaatst de sessie)',
+  channelDecisionHint: ({ to, form }) =>
+    form ? ' (opent het formulier)' : to ? ` (zet de sessie op ${to})` : ' (zet de sessie verder)',
   channelSessionSummary: ({ status, label, outcome }) => {
     switch (status) {
       case 'stranded':

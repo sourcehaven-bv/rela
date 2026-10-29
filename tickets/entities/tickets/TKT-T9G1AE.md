@@ -5,7 +5,9 @@ title: Session decisions as one-click buttons
 kind: enhancement
 priority: medium
 effort: m
-status: backlog
+started: "2026-10-28"
+completed: "2026-10-29"
+status: done
 ---
 
 ## Description

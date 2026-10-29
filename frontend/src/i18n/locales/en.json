@@ -164,6 +164,11 @@
     "rateLimitedIn": "Too many messages. Try again in {n} s.",
     "rateLimited": "Too many messages. Try again shortly.",
     "sessionWrongState": "This message type cannot be posted in the session's current state. Choose another.",
+    "decisionConfirmBody": "This ends the session in {state}. You cannot undo it.",
+    "decisionStale": "The session moved on. Choose again.",
+    "decisionDiscardEditTitle": "Discard your edit?",
+    "decisionDiscardEditBody": "This decision opens a new message. The changes to the message you are editing are lost.",
+    "decisionDiscardEditConfirm": "Discard",
     "restrictedRef": "Restricted reference",
     "system": "system",
     "value": {

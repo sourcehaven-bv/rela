@@ -29,6 +29,12 @@
  * own text, so a move is announced once and the stepper need not be a live
  * region.
  *
+ * `decisions` are the session decisions; the row whose seq is
+ * `decisionSeq` (the message that moved the session into its current
+ * state) shows them and emits `decide` with `from: 'row'`. No other row
+ * does. `focusRow(seq)` puts focus on a row without scrolling, for after a
+ * decision removes the button that had it.
+ *
  * `typing` shows who else is typing as one line, in its own polite, atomic
  * live region apart from the signals, so it is read out only when the line
  * changes. It names at most two typists and counts the rest. The line is
@@ -46,6 +52,7 @@ import RlChannelAuthor from './RlChannelAuthor.vue'
 import RlChannelMessage from './RlChannelMessage.vue'
 import { lifecyclePendingKey, resolveChannelFields } from './channelFields'
 import type {
+  ChannelDecisionView,
   ChannelEnumOption,
   ChannelEphemeralView,
   ChannelLifecycleDef,
@@ -93,6 +100,10 @@ const props = withDefaults(
     loadingOlder?: boolean
     /** The level of the title, so the channel fits the host page's outline. */
     headingLevel?: 2 | 3 | 4 | 5 | 6
+    /** The session decisions, shown on the row with seq `decisionSeq`. */
+    decisions?: ChannelDecisionView[]
+    /** The seq of the message that moved the session; absent shows them on no row. */
+    decisionSeq?: number
   }>(),
   {
     postable: () => [],
@@ -109,6 +120,8 @@ const props = withDefaults(
     hasNewer: false,
     loadingOlder: false,
     headingLevel: 3,
+    decisions: undefined,
+    decisionSeq: undefined,
   },
 )
 
@@ -125,6 +138,7 @@ const emit = defineEmits<{
   loadNewest: []
   /** A reply quote points at a message that is not loaded. */
   jump: [seq: number]
+  decide: [key: string, from: 'row']
 }>()
 
 const strings = useMessages()
@@ -290,6 +304,16 @@ function jumpTo(seq: number) {
   target.scrollIntoView({ block: 'center' })
   target.focus({ preventScroll: true })
 }
+
+defineExpose({
+  /** Moves focus to the row with seq, without scrolling; false when it is not shown. */
+  focusRow(seq: number): boolean {
+    const target = log.value?.querySelector<HTMLElement>(`[data-seq="${seq}"]`)
+    if (!target) return false
+    target.focus({ preventScroll: true })
+    return true
+  },
+})
 </script>
 
 <template>
@@ -345,6 +369,8 @@ function jumpTo(seq: number) {
             :entity-href="entityHref"
             :pending="pending"
             :can-reply="canReply"
+            :decisions="decisions && m.seq === decisionSeq ? decisions : undefined"
+            @decide="(key) => emit('decide', key, 'row')"
             @reply="(s) => emit('reply', s)"
             @edit="(s) => emit('edit', s)"
             @delete="(s) => emit('delete', s)"
