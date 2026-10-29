@@ -793,8 +793,19 @@ func addHeadSchemas(sc map[string]*Schema) {
 			"transitions": {Type: "array", Items: str(),
 				Description: "The message types whose post by you would move the session out of its current " +
 					"state, if the transition's guard holds; a subset of post; empty, never null"},
-		}, []string{"post", "edit_own", "delete_own", "remove", "lifecycle", "typing", "transitions"}),
+			"entries": {Type: "array", Items: entryRefSchema(),
+				Description: "The rows of session.transitions your post could take, by message_type and entry, " +
+					"sorted: you may post the type now, the entry admits you, and no earlier entry takes your " +
+					"post first. A row with a button you may click is listed here; empty, never null"},
+		}, []string{"post", "edit_own", "delete_own", "remove", "lifecycle", "typing", "transitions", "entries"}),
 	}, []string{"channel", "ephemeral", "typing_now", "_actions"})
+}
+
+// entryRefSchema names one transition of the session's current state.
+func entryRefSchema() *Schema {
+	return ObjectSchema(map[string]*Schema{
+		"message_type": StringSchema(), "entry": IntegerSchema(),
+	}, []string{"message_type", "entry"})
 }
 
 // channelSessionSchema is the ChannelSession schema.
@@ -832,7 +843,16 @@ func channelSessionSchema() *Schema {
 						"only if the guard holds for it"},
 				"outputs": {Type: "integer",
 					Description: "The number of graph writes the transition makes; absent when it makes none"},
-			}, []string{"message_type", "to"}), Description: "The on: entries of the current state, sorted by " +
+				"entry": {Type: "integer",
+					Description: "The transition's place in the list of its message type, from 0"},
+				"button": {Type: "object", Description: "Set for an entry with a one-click button. A click posts " +
+					"the message type with props, as stored (an integer as a number, a list as an array, a date " +
+					"as 2006-01-02), and expect_generation. Config, the same for every reader.",
+					Properties: map[string]*Schema{
+						"label": str(),
+						"props": {Type: "object", AdditionalProperties: &Schema{}},
+					}, Required: []string{"label", "props"}},
+			}, []string{"message_type", "to", "entry"}), Description: "The on: entries of the current state, sorted by " +
 				"message type. A message type may lead to several states; its entries are listed in the order " +
 				"rela tries them, and the first whose poster rule and guard hold moves the session."},
 			"due_at":    dateTimeSchema(),

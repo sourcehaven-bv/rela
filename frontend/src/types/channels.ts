@@ -255,6 +255,25 @@ export interface ChannelSessionTransition {
   guarded?: boolean
   /** The number of graph writes the transition makes; absent when none. */
   outputs?: number
+  /** The entry's place in its list, from 0; a single mapping is entry 0. */
+  entry?: number
+  /** The entry's one-click preset, when the file gives it a button. */
+  button?: ChannelSessionButton
+}
+
+/**
+ * A one-click preset of a transition entry: the text on the button and the
+ * props a click posts, in stored form, posted as they are.
+ */
+export interface ChannelSessionButton {
+  label: string
+  props?: Record<string, MessagePropInput>
+}
+
+/** One transition entry, by message type and its place in the type's list. */
+export interface ChannelEntryRef {
+  message_type: string
+  entry: number
 }
 
 export interface ChannelTypeList {
@@ -287,6 +306,11 @@ export interface ChannelActions {
    * transition is listed because its guard is judged on the message.
    */
   transitions: string[]
+  /**
+   * The transition entries the caller's post could take now, sorted by
+   * type and entry. A button entry's preset shows only when it is listed.
+   */
+  entries?: ChannelEntryRef[]
 }
 
 export interface ChannelHead {
@@ -692,7 +716,11 @@ export const CHANNEL_WIRE_FIELDS: Record<string, readonly string[]> = {
     'by',
     'guarded',
     'outputs',
+    'entry',
+    'button',
   ]),
+  ChannelSessionButton: wireKeys<ChannelSessionButton>()(['label', 'props']),
+  ChannelEntryRef: wireKeys<ChannelEntryRef>()(['message_type', 'entry']),
   ChannelTypeList: wireKeys<ChannelTypeList>()([
     'type',
     'label',
@@ -709,6 +737,7 @@ export const CHANNEL_WIRE_FIELDS: Record<string, readonly string[]> = {
     'lifecycle',
     'typing',
     'transitions',
+    'entries',
   ]),
   ChannelHead: wireKeys<ChannelHead>()(['channel', 'last', 'ephemeral', 'typing_now', '_actions']),
   TypingEntry: wireKeys<TypingEntry>()(['author', 'since']),

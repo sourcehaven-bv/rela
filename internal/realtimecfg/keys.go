@@ -3,6 +3,7 @@ package realtimecfg
 import (
 	"fmt"
 	"reflect"
+	"slices"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -107,6 +108,10 @@ func (k *keyChecker) walk(n *yaml.Node, t reflect.Type, path string) {
 		k.branches(n, path)
 		return
 	}
+	if t == reflect.TypeFor[rawPresetValue]() {
+		k.presetValue(n, path)
+		return
+	}
 	switch t.Kind() {
 	case reflect.Struct:
 		if n.Kind != yaml.MappingNode {
@@ -158,6 +163,18 @@ func (k *keyChecker) branches(n *yaml.Node, path string) {
 		}
 	default:
 		k.add(path, "must be a mapping or a list of mappings")
+	}
+}
+
+// presetValue checks one value of a button's preset: a single value or a
+// list of single values. A null was already let through by the caller.
+func (k *keyChecker) presetValue(n *yaml.Node, path string) {
+	ok := n.Kind == yaml.ScalarNode
+	if n.Kind == yaml.SequenceNode {
+		ok = !slices.ContainsFunc(n.Content, func(c *yaml.Node) bool { return resolveNode(c).Kind != yaml.ScalarNode })
+	}
+	if !ok {
+		k.add(path, "must be a single value or a list")
 	}
 }
 

@@ -130,6 +130,32 @@ type rawTransition struct {
 	By      string      `yaml:"by"`
 	When    string      `yaml:"when"`
 	Outputs []rawOutput `yaml:"outputs"`
+	// Button is `button:`; see [TransitionButton]. A null value decodes
+	// as absent.
+	Button *rawButton `yaml:"button"`
+}
+
+// rawButton is `on.<type>.button`: the label of a one-click button and
+// the preset it posts.
+type rawButton struct {
+	Label string    `yaml:"label"`
+	Props rawPreset `yaml:"props"`
+}
+
+// rawPreset is `button.props`: one value per message property.
+type rawPreset map[string]rawPresetValue
+
+// rawPresetValue keeps the YAML node of one preset value. The value is
+// read by the declared type of its property, not by the tag yaml.v3
+// guesses, so an unquoted date stays its text (see [presetValue]). The key
+// checker refuses a value that is neither null, a single value nor a list
+// of single values.
+type rawPresetValue struct{ node *yaml.Node }
+
+// UnmarshalYAML keeps n, with aliases followed.
+func (v *rawPresetValue) UnmarshalYAML(n *yaml.Node) error {
+	v.node = resolveNode(n)
+	return nil
 }
 
 // rawOutput is one entry of a transition's `outputs:`.

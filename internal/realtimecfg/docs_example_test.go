@@ -1,6 +1,7 @@
 package realtimecfg
 
 import (
+	"fmt"
 	"os"
 	"strings"
 	"testing"
@@ -130,6 +131,17 @@ func TestDocsExample_Branching(t *testing.T) {
 	}
 	if strings.Join(tos, ",") != "approved,drafting" {
 		t.Errorf("decide entries lead to %v; want approved, drafting", tos)
+	}
+	var labels []string
+	for _, tr := range ct.Session().Branches("review", "decide") {
+		b, ok := tr.Button()
+		if !ok {
+			t.Fatalf("entry %d has no button; the guide gives both entries one", tr.Index())
+		}
+		labels = append(labels, b.Label+"="+fmt.Sprint(b.Props()["decision"]))
+	}
+	if strings.Join(labels, ",") != "Approve=approve,Revise=revise" {
+		t.Errorf("buttons = %v; want Approve and Revise with their decisions", labels)
 	}
 }
 

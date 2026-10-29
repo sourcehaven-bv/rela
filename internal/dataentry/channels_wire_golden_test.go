@@ -41,6 +41,8 @@ var channelWireTypes = map[string]any{
 	"MarkReadRequest":            v1.MarkReadRequest{},
 	"ChannelSession":             v1.ChannelSession{},
 	"ChannelSessionTransition":   v1.ChannelSessionTransition{},
+	"ChannelSessionButton":       v1.ChannelSessionButton{},
+	"ChannelEntryRef":            v1.ChannelEntryRef{},
 	"ChannelSessionTimer":        v1.ChannelSessionTimer{},
 	"ChannelSessionWaiting":      v1.ChannelSessionWaiting{},
 	"ChannelSessionReminder":     v1.ChannelSessionReminder{},

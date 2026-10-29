@@ -4,8 +4,10 @@ type: ticket
 title: Authored one-click presets for session transition entries
 kind: enhancement
 priority: low
-effort: s
-status: backlog
+effort: l
+started: "2026-10-29"
+completed: "2026-10-29"
+status: done
 ---
 
 ## Description

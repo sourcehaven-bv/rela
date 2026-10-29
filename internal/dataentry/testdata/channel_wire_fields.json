@@ -22,6 +22,7 @@
   "ChannelActions": [
     "delete_own",
     "edit_own",
+    "entries",
     "lifecycle",
     "post",
     "remove",
@@ -39,6 +40,10 @@
     "from",
     "into",
     "other"
+  ],
+  "ChannelEntryRef": [
+    "entry",
+    "message_type"
   ],
   "ChannelHead": [
     "_actions",
@@ -118,6 +123,10 @@
     "waiting_for",
     "waiting_on_me"
   ],
+  "ChannelSessionButton": [
+    "label",
+    "props"
+  ],
   "ChannelSessionReminder": [
     "count",
     "due_at",
@@ -147,7 +156,9 @@
     "to"
   ],
   "ChannelSessionTransition": [
+    "button",
     "by",
+    "entry",
     "guarded",
     "message_type",
     "outputs",

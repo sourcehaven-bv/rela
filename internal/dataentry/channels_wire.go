@@ -55,9 +55,13 @@ func wireChannelSession(s *realtime.SessionView) *v1.ChannelSession {
 			v1.ChannelSessionWaiting{Role: w.Role, Label: w.Label, Holders: w.Holders})
 	}
 	for _, t := range s.Transitions {
-		out.Transitions = append(out.Transitions, v1.ChannelSessionTransition{
-			MessageType: t.MessageType, To: t.To, By: t.By, Guarded: t.Guarded, Outputs: t.Outputs,
-		})
+		w := v1.ChannelSessionTransition{
+			MessageType: t.MessageType, To: t.To, By: t.By, Guarded: t.Guarded, Outputs: t.Outputs, Entry: t.Entry,
+		}
+		if t.Button != nil {
+			w.Button = &v1.ChannelSessionButton{Label: t.Button.Label, Props: t.Button.Props}
+		}
+		out.Transitions = append(out.Transitions, w)
 	}
 	if s.DueAt != nil {
 		out.DueAt = channelTime(*s.DueAt)
@@ -170,8 +174,12 @@ func wireHead(h realtime.HeadView) v1.ChannelHead {
 		Actions: v1.ChannelActions{
 			Post: h.Actions.Post, EditOwn: h.Actions.EditOwn, DeleteOwn: h.Actions.DeleteOwn,
 			Remove: h.Actions.Remove, Lifecycle: h.Actions.Lifecycle, Typing: h.Actions.Typing,
-			Transitions: h.Actions.Transitions,
+			Transitions: h.Actions.Transitions, Entries: make([]v1.ChannelEntryRef, 0, len(h.Actions.Entries)),
 		},
+	}
+	for _, e := range h.Actions.Entries {
+		out.Actions.Entries = append(out.Actions.Entries,
+			v1.ChannelEntryRef{MessageType: e.MessageType, Entry: e.Entry})
 	}
 	if out.Actions.Transitions == nil {
 		out.Actions.Transitions = []string{}

@@ -8,6 +8,7 @@ import type {
   Channel,
   ChannelHead,
   ChannelMessageTypeSchema,
+  ChannelSessionTransition,
   ChannelTypeSchema,
   EphemeralMessage,
   Message,
@@ -1023,6 +1024,236 @@ describe('session decisions', () => {
     })
   })
 
+  describe('decisionViews presets', () => {
+    const plan: ChannelTypeSchema = {
+      ...run,
+      message_types: [
+        ...run.message_types,
+        logType('decide', 'Decide', [
+          { name: 'decision', label: 'Decision', type: 'string', required: true },
+          { name: 'tags', label: 'Tags', type: 'string', list: true },
+        ]),
+        logType('stop', 'Stop'),
+      ],
+    }
+    type Row = ChannelSessionTransition
+    const approve: Row = {
+      message_type: 'decide',
+      to: 'working',
+      guarded: true,
+      entry: 0,
+      button: { label: 'Approve', props: { decision: 'approve' } },
+    }
+    const revise: Row = {
+      message_type: 'decide',
+      to: 'plan-review',
+      entry: 1,
+      button: { label: 'Revise', props: { decision: 'revise' } },
+    }
+    const approveView = {
+      key: 'preset:decide:0',
+      messageType: 'decide',
+      label: 'Approve',
+      props: { decision: 'approve' },
+      toLabel: 'Working',
+    }
+    const reviseView = {
+      key: 'preset:decide:1',
+      messageType: 'decide',
+      label: 'Revise',
+      props: { decision: 'revise' },
+      toLabel: 'Plan review',
+    }
+    function ph(
+      rows: Row[],
+      entries: [string, number][] | undefined,
+      transitions: string[] = ['decide']
+    ) {
+      const h = head({ transitions: rows }, transitions, { post: [...all, 'decide', 'stop'] })
+      return {
+        ...h,
+        _actions: {
+          ...h._actions,
+          ...(entries && {
+            entries: entries.map(([message_type, entry]) => ({ message_type, entry })),
+          }),
+        },
+      }
+    }
+    const cases: { name: string; head: ReturnType<typeof ph>; gen?: number; want: unknown[] }[] = [
+      {
+        name: 'two presets and no type button',
+        head: ph(
+          [approve, revise],
+          [
+            ['decide', 0],
+            ['decide', 1],
+          ]
+        ),
+        want: [approveView, reviseView],
+      },
+      {
+        name: 'one preset and a type button computed from the rest',
+        head: ph(
+          [
+            { message_type: 'stop', to: 'abandoned', entry: 0, button: { label: 'Stop now' } },
+            { message_type: 'stop', to: 'accepted', entry: 1 },
+          ],
+          [
+            ['stop', 0],
+            ['stop', 1],
+          ],
+          ['stop']
+        ),
+        want: [
+          {
+            key: 'preset:stop:0',
+            messageType: 'stop',
+            label: 'Stop now',
+            props: {},
+            toLabel: 'Abandoned',
+            confirm: true,
+            danger: true,
+          },
+          { key: 'stop', messageType: 'stop', label: 'Stop', toLabel: 'Accepted', confirm: true },
+        ],
+      },
+      {
+        name: 'a lead-only entry not listed for a member gives no type button target',
+        head: ph(
+          [{ message_type: 'decide', to: 'accepted', entry: 0 }, { ...revise }],
+          [['decide', 1]]
+        ),
+        want: [reviseView],
+      },
+      {
+        name: 'an earlier guarded preset entry makes the type button open the form',
+        head: ph(
+          [
+            {
+              message_type: 'stop',
+              to: 'working',
+              guarded: true,
+              entry: 0,
+              button: { label: 'Go' },
+            },
+            { message_type: 'stop', to: 'accepted', entry: 1 },
+          ],
+          [
+            ['stop', 0],
+            ['stop', 1],
+          ],
+          ['stop']
+        ),
+        want: [
+          { key: 'preset:stop:0', messageType: 'stop', label: 'Go', props: {}, toLabel: 'Working' },
+          { key: 'stop', messageType: 'stop', label: 'Stop', toLabel: 'Accepted', opensForm: true },
+        ],
+      },
+      {
+        name: 'trigger entries are ignored',
+        head: ph(
+          [
+            { message_type: 'stop', to: 'accepted', by: 'trigger', guarded: true, entry: 0 },
+            { message_type: 'stop', to: 'working', entry: 1 },
+          ],
+          [['stop', 1]],
+          ['stop']
+        ),
+        want: [{ key: 'stop', messageType: 'stop', label: 'Stop', toLabel: 'Working' }],
+      },
+      {
+        name: 'a preset not in _actions.entries is hidden',
+        head: ph([approve, revise], []),
+        want: [],
+      },
+      {
+        name: 'a listed entry without a served row shows nothing',
+        head: ph(
+          [revise],
+          [
+            ['decide', 1],
+            ['decide', 5],
+          ]
+        ),
+        want: [reviseView],
+      },
+      {
+        name: 'a preset to a final state asks',
+        head: ph([{ ...revise, to: 'accepted' }], [['decide', 1]]),
+        want: [{ ...reviseView, toLabel: 'Accepted', confirm: true }],
+      },
+      {
+        name: 'a preset to a cancelled state is danger',
+        head: ph([{ ...revise, to: 'abandoned' }], [['decide', 1]]),
+        want: [{ ...reviseView, toLabel: 'Abandoned', confirm: true, danger: true }],
+      },
+      {
+        name: 'the order follows the types, then the entries',
+        head: ph(
+          [
+            revise,
+            approve,
+            { message_type: 'accept', to: 'accepted', entry: 0, button: { label: 'Done' } },
+          ],
+          [
+            ['accept', 0],
+            ['decide', 0],
+            ['decide', 1],
+          ],
+          ['accept', 'decide']
+        ),
+        want: [
+          {
+            key: 'preset:accept:0',
+            messageType: 'accept',
+            label: 'Done',
+            props: {},
+            toLabel: 'Accepted',
+            confirm: true,
+          },
+          approveView,
+          reviseView,
+        ],
+      },
+      {
+        name: 'a stale actions generation shows none',
+        head: ph(
+          [approve, revise],
+          [
+            ['decide', 0],
+            ['decide', 1],
+          ]
+        ),
+        gen: 3,
+        want: [],
+      },
+      {
+        name: 'a list preset is carried as an array',
+        head: ph(
+          [
+            {
+              ...revise,
+              button: { label: 'Tag', props: { decision: 'revise', tags: ['a', 'b'] } },
+            },
+          ],
+          [['decide', 1]]
+        ),
+        want: [{ ...reviseView, label: 'Tag', props: { decision: 'revise', tags: ['a', 'b'] } }],
+      },
+      {
+        name: 'without _actions.entries the type button stands for every entry',
+        head: ph([approve, revise], undefined),
+        want: [{ key: 'decide', messageType: 'decide', label: 'Decide', opensForm: true }],
+      },
+    ]
+    for (const tc of cases) {
+      it(tc.name, () => {
+        expect(decisionViews(plan, tc.head, tc.gen ?? 4)).toEqual(tc.want)
+      })
+    }
+  })
+
   const msgAt = (seq: number, over: Partial<Message> = {}): Message => ({
     seq,
     rev: seq,
@@ -1316,6 +1547,16 @@ describe('choices', () => {
     ]
     expect(rowDecisions(decisions, choices, 1).map((d) => d.key)).toEqual(['go'])
     expect(rowDecisions(decisions, choices, 2)).toBe(decisions)
+    expect(rowDecisions(decisions, choices, undefined)).toBe(decisions)
+  })
+
+  it('drops presets of the answer type', () => {
+    const choices = choiceViews(plain, head(), undefined, false, [q(1)])
+    const decisions = [
+      { key: 'preset:answer:0', messageType: 'answer', label: 'Yes', props: { body: 'yes' } },
+      { key: 'preset:go:1', messageType: 'go', label: 'Go now' },
+    ]
+    expect(rowDecisions(decisions, choices, 1).map((d) => d.key)).toEqual(['preset:go:1'])
     expect(rowDecisions(decisions, choices, undefined)).toBe(decisions)
   })
 

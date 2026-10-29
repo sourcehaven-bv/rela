@@ -128,3 +128,37 @@ func TestPost_ExpectGenerationStoreRefuses(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, channels.Session{State: "approving", Generation: 5, EnteredAt: head.Session.EnteredAt}, head.Session)
 }
+
+// TestPost_ButtonPreset pins TKT-S9TLJJ AC 8: a button's preset, posted
+// as the caller with expect_generation, is a normal post. It moves the
+// session along the button's entry and runs that entry's outputs; at an
+// old generation it is refused session_moved.
+func TestPost_ButtonPreset(t *testing.T) {
+	t.Parallel()
+	member := user("mo", "plan.member")
+	w := &fakeOutputs{}
+	h := newHarness(t, withYAML(buttonRealtime()), withOutputs(w))
+	head, err := h.svc.Head(as(member), planCh)
+	require.NoError(t, err)
+	var preset map[string]any
+	for _, r := range head.Channel.Session.Transitions {
+		if r.MessageType == "decide" && r.Entry == 3 {
+			require.NotNil(t, r.Button)
+			preset = r.Button.Props
+		}
+	}
+	require.Equal(t, map[string]any{"decision": "approve"}, preset)
+
+	_, err = h.svc.Post(as(member), planCh, PostInput{Type: "decide", Props: preset, ExpectGeneration: gen(1)})
+	requireDenial(t, err, http.StatusConflict, TypeSessionMoved)
+	require.Empty(t, w.requests(), "a refused preset wrote an output")
+
+	res, err := h.svc.Post(as(member), planCh, PostInput{
+		Type: "decide", Props: preset, ExpectGeneration: gen(head.Channel.Session.Generation),
+	})
+	require.NoError(t, err)
+	require.Equal(t, "working", res.Session.State)
+	reqs := w.requests()
+	require.Len(t, reqs, 1)
+	require.Equal(t, map[string]any{"status": "in-progress"}, reqs[0].Props, "the button entry's outputs ran")
+}

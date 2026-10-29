@@ -165,12 +165,15 @@ type SessionChannel struct {
 // SessionRead is a channel's session for an agent that waits on it: no
 // revision, sequence number or message, so it changes only when the
 // session or the reader's turn does. Transitions are the message types
-// whose post by the reader would move the session (see [call.fireable]).
+// whose post by the reader would move the session, and Entries the
+// transition entries their post could take (see
+// [call.sessionAffordances]).
 type SessionRead struct {
 	Notice      string         `json:"notice"`
 	Channel     SessionChannel `json:"channel"`
 	Session     *SessionView   `json:"session"`
 	Transitions []string       `json:"transitions"`
+	Entries     []EntryRef     `json:"entries"`
 }
 
 // Session reads the session of the channel at addr. A channel type
@@ -193,10 +196,12 @@ func (s *Service) Session(ctx context.Context, addr RawAddress) (SessionRead, er
 		return SessionRead{}, err
 	}
 	v := c.channelView(c.key, c.head)
+	types, entries := c.sessionAffordances(c.postable())
 	return SessionRead{
 		Notice:      UntrustedNotice,
 		Channel:     SessionChannel{Anchor: v.Anchor, Type: v.Type, Name: v.Name, State: v.State},
 		Session:     v.Session,
-		Transitions: c.fireable(c.postable()),
+		Transitions: types,
+		Entries:     entries,
 	}, nil
 }

@@ -2,8 +2,11 @@ package realtime
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"log/slog"
 	"net/http"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -953,5 +956,174 @@ func TestChoices_PoCFlow(t *testing.T) {
 			_, err = h.svc.Post(as(o), pocRun, click)
 			requireDenial(t, err, http.StatusConflict, tc.staleType)
 		})
+	}
+}
+
+// buttonRealtime declares plan, whose decide entries carry one-click
+// buttons (TKT-S9TLJJ). The roles come from permissions, so a caller holds
+// exactly the roles a test gives them. Entry 0 is reviewer-only with a
+// guard on the reminder count, which the load cannot decide; entry 1 is
+// lead-only without a guard; entry 2 is auditor-only with a guard that
+// holds for the Approve preset; entry 3 is the member-only Approve button
+// and entry 4 the Revise button. Each entry leads to its own state, so the
+// state a post reaches names the entry that fired.
+func buttonRealtime() string {
+	return `
+version: 1
+channel_types:
+  plan:
+    attach_to: [ticket]
+    read: { from: attached }
+    roles:
+      lead:     { permission: plan.lead }
+      member:   { permission: plan.member }
+      reviewer: { permission: plan.review }
+      auditor:  { permission: plan.audit }
+    message_types:
+      text: { properties: { body: { type: string } }, post: [lead, member, reviewer] }
+      ping: { properties: { body: { type: string } }, post: [lead] }
+      decide:
+        label: Decide
+        properties:
+          decision: { type: plan-decision, required: true }
+          count:    { type: integer }
+          tags:     { type: string, list: true, max: 20, max_items: 3 }
+        post: [lead, member, reviewer, auditor]
+    lifecycle:
+      close: { roles: [member] }
+    session:
+      initial: plan-review
+      states:
+        plan-review:
+          on:
+            decide:
+              - { to: nudged, roles: [reviewer], when: "session.reminders.nudge > 0" }
+              - { to: escalated, roles: [lead] }
+              - { to: audited, roles: [auditor], when: "message.decision == 'approve'" }
+              - to: working
+                roles: [member]
+                when: "message.decision == 'approve'"
+                button: { label: Approve, props: { decision: approve } }
+                outputs: [ { set: { properties: { status: in-progress } } } ]
+              - to: planning
+                button: { label: Revise, props: { decision: revise, count: 2, tags: [ a, ' b ' ] } }
+        nudged:    { final: true }
+        escalated: { final: true }
+        audited:   { final: true }
+        working:   { final: true }
+        planning:  { final: true }
+      reminders:
+        nudge: { in: [plan-review], every: 1h, post: { type: ping, props: { body: nudge } } }
+`
+}
+
+var planCh = RawAddress{EntityType: "ticket", Anchor: "TKT-1", Type: "plan"}
+
+// buttonPrincipals are the callers of the plan fixture, by the roles they
+// hold.
+func buttonPrincipals() map[string]*fakeAccess {
+	return map[string]*fakeAccess{
+		"lead":            user("lena", "plan.lead"),
+		"member":          user("mo", "plan.member"),
+		"reviewer":        user("rex", "plan.review"),
+		"lead+member":     user("lm", "plan.lead", "plan.member"),
+		"member+reviewer": user("mr", "plan.member", "plan.review"),
+		"auditor":         user("aud", "plan.audit"),
+		"auditor+member":  user("am", "plan.audit", "plan.member"),
+	}
+}
+
+// TestSessionView_Button pins TKT-S9TLJJ AC 6: each row of
+// session.transitions carries its entry, and a button entry's row its
+// label and props in stored form. Both are config, the same for every
+// reader.
+func TestSessionView_Button(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t, withYAML(buttonRealtime()), withOutputs(&fakeOutputs{}))
+	var rows []SessionTransitionView
+	for who, a := range buttonPrincipals() {
+		s := h.readAll(t, a, planCh).Channel.Session
+		require.NotNil(t, s, who)
+		if rows == nil {
+			rows = s.Transitions
+			continue
+		}
+		require.Equal(t, rows, s.Transitions, "%s reads other rows", who)
+	}
+	var decide []SessionTransitionView
+	for _, r := range rows {
+		if r.MessageType == "decide" {
+			decide = append(decide, r)
+		}
+	}
+	require.Equal(t, []SessionTransitionView{
+		{MessageType: "decide", To: "nudged", Guarded: true, Entry: 0},
+		{MessageType: "decide", To: "escalated", Entry: 1},
+		{MessageType: "decide", To: "audited", Guarded: true, Entry: 2},
+		{MessageType: "decide", To: "working", Guarded: true, Outputs: 1, Entry: 3,
+			Button: &SessionButtonView{Label: "Approve", Props: map[string]any{"decision": "approve"}}},
+		{MessageType: "decide", To: "planning", Entry: 4, Button: &SessionButtonView{Label: "Revise",
+			Props: map[string]any{"decision": "revise", "count": int64(2), "tags": []any{"a", "b"}}}},
+	}, decide)
+	b, err := json.Marshal(decide[4])
+	require.NoError(t, err)
+	require.JSONEq(t, `{"message_type":"decide","to":"planning","entry":4,"button":{"label":"Revise",`+
+		`"props":{"decision":"revise","count":2,"tags":["a","b"]}}}`, string(b))
+}
+
+// TestButtons_DeciderAgrees pins TKT-S9TLJJ AC 8 against the real
+// decider: for every caller and button, on a fresh channel, a preset post
+// with expect_generation moves the session along the button's entry
+// exactly when actions.entries lists it. The cases cover each reason the
+// load hides a button:
+//   - an earlier unguarded entry (lead): the post takes it, also for a
+//     caller who holds the button entry's role too (lead+member);
+//   - an earlier entry the load cannot judge (reviewer): hidden even where
+//     the post would pass it;
+//   - an earlier guarded entry whose guard holds for the preset and whose
+//     role the button's entry does not admit (auditor+member): the post
+//     takes it, while the Revise preset, for which it does not hold, stays
+//     listed.
+func TestButtons_DeciderAgrees(t *testing.T) {
+	t.Parallel()
+	presets := map[int]map[string]any{
+		3: {"decision": "approve"},
+		4: {"decision": "revise", "count": 2, "tags": []any{"a", " b "}},
+	}
+	own := map[int]string{3: "working", 4: "planning"}
+	tests := []struct {
+		who string
+		// listed and to are, by entry, whether actions.entries lists it and
+		// where its preset post goes.
+		listed map[int]bool
+		to     map[int]string
+	}{
+		{who: "member", listed: map[int]bool{3: true, 4: true}, to: own},
+		{who: "lead", to: map[int]string{3: "escalated", 4: "escalated"}},
+		{who: "lead+member", to: map[int]string{3: "escalated", 4: "escalated"}},
+		{who: "reviewer", to: map[int]string{3: "planning", 4: "planning"}},
+		{who: "member+reviewer", to: own},
+		{who: "auditor", listed: map[int]bool{4: true}, to: map[int]string{3: "audited", 4: "planning"}},
+		{who: "auditor+member", listed: map[int]bool{4: true}, to: map[int]string{3: "audited", 4: "planning"}},
+	}
+	for _, tc := range tests {
+		for entry, preset := range presets {
+			t.Run(fmt.Sprintf("%s entry %d", tc.who, entry), func(t *testing.T) {
+				t.Parallel()
+				a := buttonPrincipals()[tc.who]
+				h := newHarness(t, withYAML(buttonRealtime()), withOutputs(&fakeOutputs{}))
+				head, err := h.svc.Head(as(a), planCh)
+				require.NoError(t, err)
+				listed := slices.Contains(head.Actions.Entries, EntryRef{MessageType: "decide", Entry: entry})
+				require.Equal(t, tc.listed[entry], listed, "entries %v", head.Actions.Entries)
+				res, err := h.svc.Post(as(a), planCh,
+					PostInput{Type: "decide", Props: preset, ExpectGeneration: gen(0)})
+				require.NoError(t, err)
+				require.Equal(t, tc.to[entry], res.Session.State)
+				if listed {
+					require.Equal(t, own[entry], res.Session.State, "a listed button's post took another entry")
+				}
+			})
+		}
 	}
 }
