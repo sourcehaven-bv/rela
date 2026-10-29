@@ -20,7 +20,7 @@ import {
 } from '@/utils/affordances'
 import { isClearedForType } from '@/utils/formValue'
 import { resolveUserToken, USER_TOKEN } from '@/utils/userToken'
-import { useMeFor } from '@/queries/me'
+import { useUserToken } from '@/composables/useUserToken'
 import { useCreateFace } from '@/composables/useCreateFace'
 import { useEntityIDControls } from '@/composables/useEntityIDControls'
 import { useConfirm } from '@/composables/useConfirm'
@@ -437,7 +437,7 @@ const allFields = computed((): FormFieldOrRelation[] => {
   return [...propFields, ...relFields]
 })
 // The principal, for `$user` defaults; fetched only when a field uses it.
-const { data: me } = useMeFor(() => allFields.value.map((f) => f.default))
+const signedInUser = useUserToken(() => allFields.value.map((f) => f.default))
 
 // Live binding namespaces for condition evaluation. Supplied as a getter (not a
 // computed) so the reactive read of formData happens inside each wizard
@@ -846,7 +846,7 @@ function initializeDefaults() {
   // create-mode defaults.
   for (const field of allFields.value) {
     if (field.property && field.default !== undefined) {
-      const value = resolveUserToken(field.default, me.value?.user)
+      const value = resolveUserToken(field.default, signedInUser.value)
       if (value !== undefined) formData.value[field.property] = value
     }
     if (field.relation && field.default !== undefined) {
@@ -2540,7 +2540,7 @@ function fillLateUserDefaults(user: string | undefined) {
   }
   scheduleStagedAffordances()
 }
-watch(() => me.value?.user, fillLateUserDefaults)
+watch(() => signedInUser.value, fillLateUserDefaults)
 
 function getPropertyDef(property: string): PropertyDef | undefined {
   return entityType.value?.properties[property]

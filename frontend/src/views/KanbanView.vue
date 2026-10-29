@@ -37,7 +37,7 @@ import { actionAllowed } from '@/utils/affordancesWarning'
 import { filterStateToApiParams } from '@/utils/filters'
 import { entityRef } from '@/utils/entityRef'
 import { resolveUserToken } from '@/utils/userToken'
-import { useMeFor } from '@/queries/me'
+import { useUserToken } from '@/composables/useUserToken'
 import { editFormRoute } from '@/utils/entityRoute'
 import { fromPageQuery } from '@/utils/pageContext'
 import { worldText } from '@/utils/worldText'
@@ -349,7 +349,7 @@ const columns = computed(() => {
   return Array.from(values).map((v): KanbanColumn => ({ value: v, label: v }))
 })
 
-const { data: me } = useMeFor(() => (kanbanConfig.value?.filters ?? []).map((f) => f.value))
+const signedInUser = useUserToken(() => (kanbanConfig.value?.filters ?? []).map((f) => f.value))
 
 const filteredEntities = computed(() => {
   let result = [...entities.value]
@@ -358,7 +358,7 @@ const filteredEntities = computed(() => {
   // until /_me names one, it matches no card.
   if (kanbanConfig.value?.filters) {
     for (const filter of kanbanConfig.value.filters) {
-      const target = resolveUserToken(filter.value, me.value?.user)
+      const target = resolveUserToken(filter.value, signedInUser.value)
       result = result.filter((entity) => {
         if (target === undefined) return false
         const val = String(entity.properties[filter.property] || '')
