@@ -389,6 +389,19 @@ function onKeydown(event: KeyboardEvent) {
   background: var(--rl-color-danger-bg-hover);
 }
 
+/*
+ * A toggle that is on (`aria-pressed="true"`) takes the selected fill and an
+ * accent edge in every variant, so a sighted user sees the state a screen
+ * reader announces. The edge carries the state at 3:1; the fill alone is too
+ * light to. Hover keeps the pressed look.
+ */
+.rl-button[aria-pressed='true'],
+.rl-button[aria-pressed='true']:hover:not(:disabled) {
+  box-shadow: inset 0 0 0 1px var(--rl-color-accent);
+  background: var(--rl-color-bg-selected);
+  color: var(--rl-color-text);
+}
+
 .rl-button:focus-visible {
   outline: 2px solid var(--rl-color-focus);
   outline-offset: 2px;

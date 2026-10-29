@@ -103,6 +103,10 @@ export type ChannelTextKey =
   | 'jumpToLatest'
   | 'closedNotice'
   | 'archivedNotice'
+  // Quiet message types
+  | 'showAllMessages'
+  | 'onlyHidden'
+  | 'onlyHiddenOlder'
   // Message
   | 'yes'
   | 'no'
@@ -421,6 +425,9 @@ const CHANNEL_TEXT: Record<ChannelTextKey, string> = {
   jumpToLatest: 'Jump to latest',
   closedNotice: 'This channel is closed. It can be read but takes no new messages.',
   archivedNotice: 'This channel is archived. It can be read but takes no new messages.',
+  showAllMessages: 'Show all messages',
+  onlyHidden: 'Only hidden messages here. Use Show all messages to see them.',
+  onlyHiddenOlder: 'Only hidden messages so far. Load older messages or use Show all messages to see them.',
   yes: 'Yes',
   no: 'No',
   edited: '(edited)',
@@ -601,6 +608,17 @@ export interface Messages {
    * for the other messages that arrived with them, if any.
    */
   channelNewNotices: (args: { notices: string[]; messages?: string }) => string
+  /**
+   * The fold line of a run of collapsed messages: `3 messages: Claim,
+   * Progress`. `labels` are the type labels in first-seen order.
+   */
+  channelFold: (args: { count: number; labels: string[] }) => string
+  /**
+   * Announced when loading older messages added only messages that are
+   * not shown: `4 older messages are hidden. Use Show all messages to see
+   * them.`
+   */
+  channelOlderHidden: (args: { count: number }) => string
   /** A session notice: `Session moved from Detected to Contained`. */
   channelSessionMoved: (args: { from: string; to: string }) => string
   /** A session notice for a move into the same state: `Session entered Contained again`. */
@@ -872,6 +890,9 @@ export const DEFAULT_MESSAGES: Messages = {
   channelNewMessages: ({ count, type, author }) =>
     count === 1 && type ? `${type}${author ? ` from ${author}` : ''}` : `${count} new messages`,
   channelNewNotices: ({ notices, messages }) => `${[...(messages ? [messages] : []), ...notices].join('. ')}.`,
+  channelFold: ({ count, labels }) => `${count} ${count === 1 ? 'message' : 'messages'}: ${labels.join(', ')}`,
+  channelOlderHidden: ({ count }) =>
+    `${count} older ${count === 1 ? 'message is' : 'messages are'} hidden. Use Show all messages to see them.`,
   channelSessionMoved: ({ from, to }) => `Session moved from ${from} to ${to}`,
   channelSessionReentered: ({ state }) => `Session entered ${state} again`,
   channelSessionWaiting: ({ labels }) => `Waiting for ${orList(labels)}`,

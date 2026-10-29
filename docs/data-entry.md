@@ -1352,7 +1352,8 @@ The server refuses the file when the block:
 - hides a required property, because the composer could then never send
   it;
 - lists a property twice, or gives a widget that does not suit the
-  property type.
+  property type;
+- gives a message type a `display` other than `collapsed` or `hidden`.
 
 Without `realtime.yaml`, realtime is off and the block has no effect. The
 server then logs a warning instead of refusing the file, so you can add the
@@ -1372,6 +1373,88 @@ The structure the composer needs, such as property types and labels, comes
 from `GET /api/v1/_schema/channels` (see the realtime guide). A page that
 shows channels reads both again on a `refresh` event, so a change to
 either file reaches it without a page reload.
+
+### Quiet message types
+
+Some message types are only for an agent or a script. An agent runner, for
+example, posts `claim` and `resume` with a worktree path, and `progress`
+with a status note, often many in a row. People do not need to read them
+between the messages that ask for a decision. `display` on a message type
+tones such a type down in the web app:
+
+```yaml
+channels:
+  run:
+    messages:
+      claim:
+        display: hidden
+      resume:
+        display: hidden
+      progress:
+        display: collapsed
+        fields:
+          - property: body
+            label: Status
+```
+
+| Value | In the web app |
+| --- | --- |
+| `collapsed` | A run of these messages becomes one line, such as "3 messages: Progress". Click it to show the messages in place, below the line. Click it again to fold them. |
+| `hidden` | The messages are not shown. |
+| absent or empty | The messages are shown in full, as without the key. |
+
+A run is a sequence of adjacent messages of quiet types, that is, types
+with `collapsed` or `hidden`. A hidden message does not end a run, and it
+stays hidden when you expand the run. Any other message, or a session
+notice, ends a run. A removed message between two messages of a run joins
+the run: it counts in the line, and shows as a removed message when you
+expand the run. In a run without a collapsed message, a removed message
+stays a row of its own.
+
+When a channel type has a quiet type, the channel header shows a **Show
+all messages** button. Press it to show every message in full; press it
+again to go back. The web app does not remember it: each time you open a
+channel, quiet types are quiet again.
+
+Some messages of a quiet type are always shown in full, so that you never
+miss something you must act on or asked for:
+
+- the message that moved the session, when it carries the decision
+  buttons;
+- a question with choice buttons;
+- a message with an action you may run, such as **Record as decision**;
+- a message a reply quotes, after you click the quote. If it is folded,
+  its run expands.
+
+Such a message stays shown until you leave the channel, also after you
+decide or answer.
+
+A screen reader announces a new message only when it is shown in full. A
+new message that is hidden or folded is not announced. When it is shown in
+full later, because its choice buttons or decision buttons arrive, it is
+announced then. An ephemeral signal
+of a quiet type, `collapsed` or `hidden`, is not shown in the signal area
+until you press **Show all messages**. When every loaded message is
+hidden, the log says so, and points to **Show all messages**.
+
+Use `display` only on message types that people cannot post and that do
+not mention or reply to people. A person who posts a message of a hidden
+type does not see it either.
+
+`display: hidden` on a message type is not the same as `hidden: true` on a
+field. A hidden field is left out of the composer. A hidden message type is
+still sent to the browser, and **Show all messages** shows it.
+
+`display` is a display option, not access control. Everyone who may read
+the channel can still read every message: through the HTTP API, over MCP
+with `read_channel`, with `rela channel read`, and in the web app with
+**Show all messages**. To keep messages from a person, use the channel's
+`read` rule in `realtime.yaml`.
+
+Unread counts and the inbox do not know quiet types yet. The server counts
+every message as unread, so a channel can show "5 unread" when you see one
+folded line. A mention or reply in a quiet message still shows in the
+inbox, but the channel opens without showing it. TKT-O6RC8Z tracks this.
 
 ### Unread messages
 

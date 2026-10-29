@@ -44,6 +44,15 @@
  * there only when `typingOffered` is set and the channel is open with a
  * composer; it stays mounted while empty, so the live region exists before
  * its first text.
+ *
+ * Message types whose presentation sets `display` are quiet: `collapsed`
+ * runs fold into one line that expands in place, `hidden` messages are left
+ * out (see `channelFold.ts`). A row the reader must act on or asked for is
+ * kept in full for the rest of the mount. The header then offers a toggle
+ * that shows every message, and only messages shown in full are announced;
+ * a new quiet message that becomes kept later is announced then.
+ * `reveal(seq)` shows, scrolls to and focuses a held message, expanding or
+ * keeping it as needed.
  */
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, useId, useTemplateRef, watch } from 'vue'
 import RlButton from '../common/RlButton.vue'
@@ -52,8 +61,11 @@ import RlHeading from '../common/RlHeading.vue'
 import RlIcon from '../common/RlIcon.vue'
 import RlTag from '../common/RlTag.vue'
 import RlChannelAuthor from './RlChannelAuthor.vue'
+import RlChannelFold from './RlChannelFold.vue'
 import RlChannelMessage from './RlChannelMessage.vue'
-import { lifecyclePendingKey, resolveChannelFields } from './channelFields'
+import { ephemeralText, lifecyclePendingKey } from './channelFields'
+import { foldMessages, hasTypeAction, rowFor, shownAs, type ChannelFoldRow } from './channelFold'
+import { findAnchor, firstVisible, measured, type Anchor } from './channelAnchor'
 import type {
   ChannelDecisionView,
   ChannelEnumOption,
@@ -151,6 +163,7 @@ const emit = defineEmits<{
 const strings = useMessages()
 const t = (key: ChannelTextKey) => strings.channelText({ key })
 const titleId = useId()
+const foldId = useId()
 
 const log = useTemplateRef<HTMLElement>('log')
 const list = useTemplateRef<HTMLElement>('list')
@@ -175,30 +188,93 @@ const canReply = computed(
     props.messageTypes.some((t) => t.reply && props.postable.includes(t.name)),
 )
 
-function ephemeralText(e: ChannelEphemeralView): string {
-  const type = typeByName.value.get(e.type)
-  const label = type?.label ?? e.type
-  if (e.text !== undefined) return e.text ? `${label} · ${e.text}` : label
-  const values = e.props ?? {}
-  const names = type
-    ? resolveChannelFields(type, props.presentation?.messages?.[type.name]).map((f) => f.property)
-    : Object.keys(values).map((name) => ({ name, enum: undefined }))
-  const parts: string[] = []
-  for (const p of names) {
-    const v = values[p.name]
-    if (v === undefined) continue
-    if (Array.isArray(v)) {
-      parts.push(v.join(', '))
-    } else if (typeof v === 'object') {
-      parts.push(v.restricted ? t('restrictedRef') : (v.title ?? v.id))
-    } else if (typeof v === 'boolean') {
-      parts.push(t(v ? 'yes' : 'no'))
-    } else {
-      const opts = p.enum ? props.enumOptions?.[p.enum] : undefined
-      parts.push(opts?.find((o) => o.value === v)?.label ?? String(v))
-    }
+/* Quiet message types ------------------------------------------------- */
+
+const showAll = ref(false)
+/** Seqs of expanded runs. */
+const expanded = ref<ReadonlySet<number>>(new Set())
+/** Seqs kept in full during this mount; only grows. */
+const revealed = ref<ReadonlySet<number>>(new Set())
+
+const displayOf = (type: string) => props.presentation?.messages?.[type]?.display
+const hasQuiet = computed(() => Object.values(props.presentation?.messages ?? {}).some((p) => p?.display))
+const quietOn = computed(() => hasQuiet.value && !showAll.value)
+
+/** The rows kept right now: the decision cause, open questions, rows with a type action. */
+const keptNow = computed(() => {
+  const s = new Set<number>(props.choices?.keys() ?? [])
+  if (props.decisionSeq !== undefined) s.add(props.decisionSeq)
+  for (const m of props.messages) if (hasTypeAction(m)) s.add(m.seq)
+  return s
+})
+
+/** The text of the polite region that announces new messages. */
+const announcement = ref('')
+
+/**
+ * Seqs of new messages that were not announced only because they were quiet.
+ * The choices and the decision cause come with the head, after the messages,
+ * so such a row may become kept later; it is announced then.
+ */
+const silenced = new Set<number>()
+
+// With every message shown, the reader has seen them; nothing is late.
+watch(showAll, () => silenced.clear())
+
+watch(
+  keptNow,
+  (now) => {
+    const add = [...now].filter((seq) => !revealed.value.has(seq))
+    if (add.length) revealed.value = new Set([...revealed.value, ...add])
+    const late = props.messages.filter((m) => now.has(m.seq) && silenced.delete(m.seq))
+    if (late.length) announcement.value = newMessagesText(late)
+  },
+  { immediate: true },
+)
+
+const rows = computed(() =>
+  foldMessages(props.messages, {
+    displayOf,
+    labelOf: (type) => typeByName.value.get(type)?.label ?? type,
+    showAll: !quietOn.value,
+    keep: new Set([...revealed.value, ...keptNow.value]),
+    expanded: expanded.value,
+  }),
+)
+
+const signals = computed(() =>
+  quietOn.value ? props.ephemeral.filter((e) => !displayOf(e.type)) : props.ephemeral,
+)
+
+const signalText = (e: ChannelEphemeralView) =>
+  ephemeralText(e, typeByName.value, props.presentation, props.enumOptions, t)
+
+/** The props of one message row, the same in the log and in an expanded run. */
+function messageBind(m: ChannelMessageView) {
+  return {
+    message: m,
+    messageType: m.type ? typeByName.value.get(m.type) : undefined,
+    presentation: m.type ? props.presentation?.messages?.[m.type] : undefined,
+    enumOptions: props.enumOptions,
+    entityHref: props.entityHref,
+    pending: props.pending,
+    canReply: canReply.value,
+    decisions: props.decisions && m.seq === props.decisionSeq ? props.decisions : undefined,
+    choices: props.choices?.get(m.seq),
   }
-  return [label, ...parts].join(' · ')
+}
+
+const messageOn = {
+  decide: (key: string) => emit('decide', key, 'row'),
+  choose: (key: string) => emit('choose', key),
+  reply: (s: number) => emit('reply', s),
+  edit: (s: number) => emit('edit', s),
+  delete: (s: number) => emit('delete', s),
+  remove: (s: number) => emit('remove', s),
+  release: (s: number) => emit('release', s),
+  action: (s: number, n: string) => emit('action', s, n),
+  openRef: (r: ChannelReadableRef, e: MouseEvent) => emit('openRef', r, e),
+  jump: (s: number) => jumpTo(s),
 }
 
 /* Scroll handling ------------------------------------------------------- */
@@ -219,22 +295,52 @@ function onScroll() {
   if (log.value && log.value.clientHeight > 0) stuck.value = atBottom(log.value)
 }
 
-/** The first message whose bottom is below the top of the log, and its offset. */
-function firstVisible(el: HTMLElement): { seq: string; offset: number } | null {
-  const top = el.getBoundingClientRect().top
-  for (const row of el.querySelectorAll<HTMLElement>('[data-seq]')) {
-    const r = row.getBoundingClientRect()
-    if (r.bottom > top) return { seq: row.dataset.seq!, offset: r.top - top }
-  }
-  return null
+/**
+ * Keeps the reader's view across a change: at the bottom the log stays at
+ * the bottom, otherwise `given` or the first visible row keeps its offset.
+ * Call it before the change; it restores after the next render.
+ */
+function keepView(given?: Anchor) {
+  const el = log.value
+  if (!el) return
+  const follow = stuck.value
+  const anchor = follow ? null : (given ?? firstVisible(el))
+  void nextTick(() => {
+    if (follow) {
+      scrollToBottom()
+      return
+    }
+    if (!anchor) return
+    const row = findAnchor(el, anchor, rows.value)
+    if (!row) return
+    el.scrollTop += measured(row).getBoundingClientRect().top - el.getBoundingClientRect().top - anchor.offset
+  })
 }
 
-const announcement = ref('')
+/** The announcement of new messages that are not session notices. */
+function newMessagesText(added: ChannelMessageView[]): string {
+  const only = added.length === 1 ? added[0]! : undefined
+  return strings.channelNewMessages({
+    count: added.length,
+    type: only?.type ? (typeByName.value.get(only.type)?.label ?? only.type) : undefined,
+    author: only?.author?.name,
+  })
+}
 
 function announce(next: ChannelMessageView[], prev: ChannelMessageView[]) {
   if (prev.length === 0) return
+  const quiet = quietOn.value
+  const older = quiet && !jumping ? next.filter((m) => m.seq < prev[0]!.seq) : []
+  if (older.length && older.every((m) => !shownAs(rows.value, m.seq))) {
+    announcement.value = strings.channelOlderHidden({ count: older.length })
+    return
+  }
   const last = prev[prev.length - 1]!.seq
-  const added = next.filter((m) => m.seq > last && !m.removed)
+  const fresh = next.filter((m) => m.seq > last && !m.removed)
+  const added = quiet ? fresh.filter((m) => shownAs(rows.value, m.seq) === 'full') : fresh
+  const oldest = next[0]?.seq ?? Infinity
+  for (const seq of silenced) if (seq < oldest) silenced.delete(seq)
+  if (quiet) for (const m of fresh) if (!added.includes(m)) silenced.add(m.seq)
   if (added.length === 0) return
   const others = added.filter((m) => !m.notice)
   const notices = added.flatMap((m) =>
@@ -246,15 +352,7 @@ function announce(next: ChannelMessageView[], prev: ChannelMessageView[]) {
         ]
       : [],
   )
-  const only = others.length === 1 ? others[0]! : undefined
-  const messages =
-    others.length > 0
-      ? strings.channelNewMessages({
-          count: others.length,
-          type: only?.type ? (typeByName.value.get(only.type)?.label ?? only.type) : undefined,
-          author: only?.author?.name,
-        })
-      : undefined
+  const messages = others.length > 0 ? newMessagesText(others) : undefined
   announcement.value = notices.length ? strings.channelNewNotices({ notices, messages }) : messages!
 }
 
@@ -262,24 +360,38 @@ watch(
   () => props.messages,
   (next, prev) => {
     announce(next, prev)
-    const el = log.value
-    if (!el) return
-    const follow = stuck.value
-    const anchor = follow ? null : firstVisible(el)
-    void nextTick(() => {
-      if (follow) {
-        scrollToBottom()
-        return
-      }
-      if (!anchor) return
-      const row = el.querySelector<HTMLElement>(`[data-seq="${anchor.seq}"]`)
-      if (!row) return
-      const offset = row.getBoundingClientRect().top - el.getBoundingClientRect().top
-      el.scrollTop += offset - anchor.offset
-    })
+    keepView()
   },
   { flush: 'pre' },
 )
+
+/**
+ * The anchor for the next row change: a fold line the reader toggled, or
+ * `skip` when `reveal` scrolls by itself.
+ */
+let rowChangeAnchor: Anchor | 'skip' | undefined
+
+watch([showAll, expanded, revealed, () => props.presentation], () => {
+  const given = rowChangeAnchor
+  rowChangeAnchor = undefined
+  if (given !== 'skip') keepView(given)
+})
+
+function toggleFold(row: ChannelFoldRow) {
+  const el = log.value
+  const button = el?.querySelector<HTMLElement>(`[data-fold-seq="${row.last}"]`)
+  stuck.value = false
+  if (el && button) {
+    const offset = measured(button).getBoundingClientRect().top - el.getBoundingClientRect().top
+    rowChangeAnchor = { seq: row.last, first: row.first, fold: true, offset }
+  }
+  const next = new Set(expanded.value)
+  for (const s of row.seqs) {
+    if (row.expanded) next.delete(s)
+    else next.add(s)
+  }
+  expanded.value = next
+}
 
 /**
  * Follows the bottom when the log gets its first height (a hidden tab shown)
@@ -304,17 +416,50 @@ watch(list, (el, old) => {
 
 onBeforeUnmount(() => observer?.disconnect())
 
-function jumpTo(seq: number) {
-  const target = log.value?.querySelector<HTMLElement>(`[data-seq="${seq}"]`)
-  if (!target) {
-    emit('jump', seq)
-    return
+/**
+ * Shows the held message with seq, scrolls to it and focuses it: a hidden
+ * or folded message is kept in full, or its run expanded. False when the
+ * message is not held.
+ */
+function reveal(seq: number): boolean {
+  if (!props.messages.some((m) => m.seq === seq)) return false
+  jumping = false
+  const row = rowFor(rows.value, seq)
+  const shown = shownAs(rows.value, seq)
+  if (shown !== 'full') {
+    rowChangeAnchor = 'skip'
+    stuck.value = false
+    if (shown === 'folded' && row?.kind === 'fold') expanded.value = new Set([...expanded.value, ...row.seqs])
+    else revealed.value = new Set([...revealed.value, seq])
   }
-  target.scrollIntoView({ block: 'center' })
-  target.focus({ preventScroll: true })
+  void nextTick(() => {
+    const target = log.value?.querySelector<HTMLElement>(`[data-seq="${seq}"]`)
+    target?.scrollIntoView({ block: 'center' })
+    target?.focus({ preventScroll: true })
+  })
+  return true
+}
+
+/**
+ * Set while the app loads older pages for a reply quote's jump, so a page of
+ * hidden messages is not announced just before `reveal` shows one of them.
+ * Cleared by `reveal` and by a click on Load older.
+ */
+let jumping = false
+
+function jumpTo(seq: number) {
+  if (reveal(seq)) return
+  jumping = true
+  emit('jump', seq)
+}
+
+function loadOlder() {
+  jumping = false
+  emit('loadOlder')
 }
 
 defineExpose({
+  reveal,
   /** Moves focus to the row with seq, without scrolling; false when it is not shown. */
   focusRow(seq: number): boolean {
     const target = log.value?.querySelector<HTMLElement>(`[data-seq="${seq}"]`)
@@ -335,6 +480,9 @@ defineExpose({
         <RlTag v-if="state !== 'open'" :label="t(state)" color="grey" />
         <slot name="header" />
       </div>
+      <RlButton v-if="hasQuiet" size="sm" variant="ghost" :aria-pressed="showAll" @click="showAll = !showAll">
+        {{ t('showAllMessages') }}
+      </RlButton>
       <RlButtonGroup v-if="lifecycleButtons.length" class="rl-channel__lifecycle">
         <RlButton
           v-for="op in lifecycleButtons"
@@ -363,35 +511,34 @@ defineExpose({
       @scroll.passive="onScroll"
     >
       <div v-if="hasOlder" class="rl-channel__more">
-        <RlButton size="sm" :loading="loadingOlder" :pending-label="t('loading')" @click="emit('loadOlder')">
+        <RlButton size="sm" :loading="loadingOlder" :pending-label="t('loading')" @click="loadOlder">
           {{ t('loadOlder') }}
         </RlButton>
       </div>
       <p v-if="messages.length === 0" class="rl-channel__empty">{{ t('noMessages') }}</p>
+      <p v-else-if="rows.length === 0" class="rl-channel__empty">
+        {{ t(hasOlder ? 'onlyHiddenOlder' : 'onlyHidden') }}
+      </p>
       <ol v-else ref="list" class="rl-channel__messages">
-        <li v-for="m in messages" :key="m.seq">
-          <RlChannelMessage
-            :message="m"
-            :message-type="m.type ? typeByName.get(m.type) : undefined"
-            :presentation="m.type ? presentation?.messages?.[m.type] : undefined"
-            :enum-options="enumOptions"
-            :entity-href="entityHref"
-            :pending="pending"
-            :can-reply="canReply"
-            :decisions="decisions && m.seq === decisionSeq ? decisions : undefined"
-            :choices="choices?.get(m.seq)"
-            @decide="(key) => emit('decide', key, 'row')"
-            @choose="(key) => emit('choose', key)"
-            @reply="(s) => emit('reply', s)"
-            @edit="(s) => emit('edit', s)"
-            @delete="(s) => emit('delete', s)"
-            @remove="(s) => emit('remove', s)"
-            @release="(s) => emit('release', s)"
-            @action="(s, n) => emit('action', s, n)"
-            @open-ref="(r, e) => emit('openRef', r, e)"
-            @jump="jumpTo"
-          />
-        </li>
+        <template v-for="row in rows" :key="row.kind === 'fold' ? row.key : row.message.seq">
+          <li v-if="row.kind === 'message'">
+            <RlChannelMessage v-bind="messageBind(row.message)" v-on="messageOn" />
+          </li>
+          <li v-else :data-fold-seq="row.last" :data-fold-first="row.first">
+            <RlChannelFold
+              :count="row.messages.length"
+              :labels="row.labels"
+              :expanded="row.expanded"
+              :controls="`${foldId}-${row.first}`"
+              @toggle="toggleFold(row)"
+            />
+            <ol v-if="row.expanded" :id="`${foldId}-${row.first}`" class="rl-channel__messages">
+              <li v-for="m in row.messages" :key="m.seq">
+                <RlChannelMessage v-bind="messageBind(m)" v-on="messageOn" />
+              </li>
+            </ol>
+          </li>
+        </template>
       </ol>
       <div v-if="hasNewer" class="rl-channel__more">
         <RlButton size="sm" @click="emit('loadNewest')">{{ t('jumpToLatest') }}</RlButton>
@@ -401,9 +548,9 @@ defineExpose({
 
     <template v-if="state === 'open'">
       <div class="rl-channel__ephemeral" aria-live="polite">
-        <span v-for="e in ephemeral" :key="e.id" class="rl-channel__signal">
+        <span v-for="e in signals" :key="e.id" class="rl-channel__signal">
           <RlChannelAuthor :author="e.author" compact />
-          <span>{{ ephemeralText(e) }}</span>
+          <span>{{ signalText(e) }}</span>
         </span>
       </div>
       <p

@@ -1,4 +1,4 @@
-import { ref } from 'vue'
+import { nextTick, ref } from 'vue'
 import type { useChannel } from '@/composables/useChannel'
 
 /** How many older pages a reply quote's jump reads before it gives up. */
@@ -13,9 +13,14 @@ export type PagedChannel = Pick<
 /**
  * The paging handlers of an open channel: load older, load newest, and
  * the jump to a quoted message. A failure goes to onError, which shows it
- * without a form.
+ * without a form. onHeld runs after the render once a jump has loaded the
+ * quoted message, so the log can show, scroll to and focus it.
  */
-export function useChannelPaging(ch: PagedChannel, onError: (err: unknown) => void) {
+export function useChannelPaging(
+  ch: PagedChannel,
+  onError: (err: unknown) => void,
+  onHeld: (seq: number) => void
+) {
   const loadingOlder = ref(false)
 
   async function onLoadOlder() {
@@ -40,10 +45,11 @@ export function useChannelPaging(ch: PagedChannel, onError: (err: unknown) => vo
 
   /** Reads older pages until the quoted message is held, within a bound. */
   async function onJump(seq: number) {
-    for (let i = 0; i < JUMP_MAX_PAGES; i++) {
-      if (ch.messages.value.some((m) => m.seq === seq) || !ch.hasOlder.value) return
-      await onLoadOlder()
-    }
+    const held = () => ch.messages.value.some((m) => m.seq === seq)
+    for (let i = 0; i < JUMP_MAX_PAGES && !held() && ch.hasOlder.value; i++) await onLoadOlder()
+    if (!held()) return
+    await nextTick()
+    onHeld(seq)
   }
 
   return { loadingOlder, onLoadOlder, onLoadNewest, onJump }

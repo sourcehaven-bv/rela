@@ -1690,3 +1690,401 @@ describe('ChannelsPanel choices', () => {
     expect(row.findAll('.rl-channel-message__list li').map((li) => li.text())).toEqual(['A', 'B'])
   })
 })
+
+// TKT-03DMXH: message types whose presentation sets `display`. The schema
+// is based on the agent-runner PoC, plus a hidden `handoff` that moves the
+// session into a state where the owner has decisions.
+describe('ChannelsPanel quiet types', () => {
+  const logType = (
+    name: string,
+    label: string,
+    properties: ChannelTypeSchema['message_types'][number]['properties'] = [
+      { name: 'body', label: 'Body', type: 'markdown' },
+    ],
+    extra: Partial<ChannelTypeSchema['message_types'][number]> = {}
+  ) => ({ name, label, persist: 'log' as const, reply: true, actions: [], properties, ...extra })
+  const run: ChannelTypeSchema = {
+    ...room,
+    message_types: [
+      logType('text', 'Message'),
+      logType('claim', 'Claim', [{ name: 'worktree', label: 'Worktree', type: 'string' }]),
+      logType('resume', 'Resume', [{ name: 'worktree', label: 'Worktree', type: 'string' }]),
+      logType('progress', 'Progress', undefined, {
+        actions: [{ name: 'record', label: 'Record' }],
+      }),
+      logType('handoff', 'Handoff'),
+      logType('approve', 'Approve'),
+      logType(
+        'ask',
+        'Question',
+        [
+          { name: 'note', label: 'Note', type: 'string' },
+          { name: 'options', label: 'Options', type: 'string', list: true },
+        ],
+        { choices: { from: 'options', answer: 'answer', into: 'note', other: false } }
+      ),
+      logType('answer', 'Answer', [{ name: 'note', label: 'Note', type: 'string' }]),
+      { ...logType('heartbeat', 'Heartbeat'), persist: 'ephemeral' as const, reply: false },
+      { ...logType('typing', 'Typing'), persist: 'ephemeral' as const, reply: false },
+      { ...logType('ping', 'Ping'), persist: 'ephemeral' as const, reply: false },
+    ],
+    session: {
+      label: 'Run',
+      initial: 'working',
+      states: [
+        { name: 'working', label: 'Working', status: 'working' },
+        { name: 'review', label: 'Review', status: 'input_required' },
+        { name: 'asking', label: 'Asking', status: 'input_required' },
+      ],
+    },
+  }
+  const state = (
+    name: string,
+    generation: number,
+    transitions: { message_type: string; to: string }[]
+  ) => ({
+    state: name,
+    status: name === 'working' ? ('working' as const) : ('input_required' as const),
+    generation,
+    entered_at: '2026-03-01T10:00:00Z',
+    transitions,
+  })
+  const working = state('working', 6, [])
+  const review = state('review', 5, [{ message_type: 'approve', to: 'working' }])
+  const asking = state('asking', 5, [{ message_type: 'answer', to: 'working' }])
+  const POST = ['text', 'approve', 'answer']
+
+  function runHead(
+    session: Channel['session'],
+    transitions: string[] = [],
+    over: Partial<ChannelHead> = {}
+  ) {
+    const h = head(over, { last_seq: 13, rev: 13, session })
+    return { ...h, _actions: { ...h._actions, post: POST, transitions } }
+  }
+  const m = (seq: number, type: string, over: Partial<Message> = {}) =>
+    msg(seq, {
+      type,
+      author: { user: 'robot' },
+      props: { body: `${type} ${seq}` },
+      _actions: [],
+      ...over,
+    })
+  const notice = (seq: number, to: string, cause: number) =>
+    msg(seq, {
+      type: 'session',
+      author: { user: 'system', system: true },
+      triggered_by: 'session:room',
+      props: { from: 'working', to, generation: 5, cause },
+      _actions: [],
+    })
+  function serve(
+    messages: Message[],
+    session: Channel['session'] = working,
+    over: Partial<MessagePage> = {}
+  ) {
+    api.getMessages.mockResolvedValue({
+      ...page(messages),
+      channel: channel({ last_seq: 13, rev: 13, session }),
+      next_after_rev: 13,
+      ...over,
+    })
+  }
+
+  let current: ChannelHead
+
+  beforeEach(() => {
+    current = runHead(working)
+    api.getChannelSchema.mockResolvedValue({ channel_types: [run] })
+    api.getChannelHead.mockImplementation(() => Promise.resolve(current))
+    useSchemaStore().channelPresentations = new Map([
+      [
+        'room',
+        {
+          messages: {
+            claim: { display: 'hidden' },
+            resume: { display: 'hidden' },
+            handoff: { display: 'hidden' },
+            ask: { display: 'hidden' },
+            heartbeat: { display: 'collapsed' },
+            ping: { display: 'hidden' },
+            progress: { display: 'collapsed' },
+          },
+        },
+      ],
+    ])
+  })
+
+  async function click(el: ReturnType<VueWrapper['find']>) {
+    await el.trigger('click')
+    await flushPromises()
+    await flushPromises()
+  }
+  const announcement = () =>
+    w().find('.rl-channel > p.rl-visually-hidden[aria-live="polite"]').text()
+  const folds = () => w().findAll('button.rl-channel-fold')
+  const quote = (seq: number) => messageEl(seq).find('button.rl-channel-message__quote')
+
+  /** Serves `messages` on the next live frame, as an after_rev page. */
+  async function liveAdds(messages: Message[], session: Channel['session'] = working) {
+    api.getMessages.mockImplementation(async (_t, q?: { afterRev?: number }) => ({
+      ...page(q?.afterRev !== undefined ? messages : []),
+      channel: channel({ last_seq: 20, rev: 20, session }),
+      next_after_rev: 20,
+    }))
+    await liveFrame('channel')
+  }
+
+  it('hidden decision cause keeps its buttons', async () => {
+    current = runHead(review, ['approve'])
+    serve([m(10, 'text'), m(11, 'claim'), m(12, 'handoff'), notice(13, 'review', 12)], review)
+    await mountPanel()
+    expect(messageEl(11).exists()).toBe(false)
+    expect(messageEl(12).find('[data-decision="approve"]').exists()).toBe(true)
+  })
+
+  it('decided hidden cause keeps its row and focus', async () => {
+    current = runHead(review, ['approve'])
+    serve([m(10, 'text'), m(12, 'handoff'), notice(13, 'review', 12)], review)
+    await mountPanel()
+    api.postMessage.mockImplementation(async () => {
+      current = runHead(working)
+      return { kind: 'message', message: m(14, 'approve', { reply_to: 12 }) }
+    })
+    await click(messageEl(12).find('[data-decision="approve"]'))
+    expect(api.postMessage).toHaveBeenCalledTimes(1)
+    expect(messageEl(12).exists()).toBe(true)
+    expect(messageEl(12).find('[data-decision]').exists()).toBe(false)
+    expect(document.activeElement).toBe(messageEl(12).element)
+  })
+
+  it('hidden question keeps its choices', async () => {
+    current = runHead(asking, ['answer'])
+    serve(
+      [m(12, 'ask', { props: { note: 'Which?', options: ['A', 'B'] } }), notice(13, 'asking', 12)],
+      asking
+    )
+    await mountPanel()
+    expect(messageEl(12).findAll('[data-decision^="choice:12:"]')).toHaveLength(2)
+  })
+
+  it('answered hidden question keeps its row and focus', async () => {
+    current = runHead(asking, ['answer'])
+    serve(
+      [m(12, 'ask', { props: { note: 'Which?', options: ['A', 'B'] } }), notice(13, 'asking', 12)],
+      asking
+    )
+    await mountPanel()
+    api.postMessage.mockImplementation(async () => {
+      current = runHead(working)
+      return { kind: 'message', message: m(14, 'answer', { props: { note: 'B' }, reply_to: 12 }) }
+    })
+    await click(messageEl(12).find('[data-decision="choice:12:1"]'))
+    expect(api.postMessage).toHaveBeenCalledWith(expect.anything(), 'answer', { note: 'B' }, 12, 5)
+    expect(messageEl(12).exists()).toBe(true)
+    expect(messageEl(12).find('[data-decision]').exists()).toBe(false)
+    expect(document.activeElement).toBe(messageEl(12).element)
+  })
+
+  it('reply quote reveals a hidden target', async () => {
+    serve([m(11, 'claim'), m(12, 'text', { reply_to: 11 })])
+    await mountPanel()
+    expect(messageEl(11).exists()).toBe(false)
+    await click(quote(12))
+    expect(messageEl(11).exists()).toBe(true)
+    expect(document.activeElement).toBe(messageEl(11).element)
+  })
+
+  it('reply quote to a removed message between hidden ones', async () => {
+    serve([
+      m(10, 'text'),
+      m(11, 'claim'),
+      m(12, 'claim', { removed: { at: '2026-03-01T11:00:00Z', kind: 'author' } }),
+      m(13, 'claim'),
+      m(14, 'text', { reply_to: 12 }),
+    ])
+    await mountPanel()
+    expect(messageEl(12).exists()).toBe(true)
+    await click(quote(14))
+    expect(document.activeElement).toBe(messageEl(12).element)
+  })
+
+  it('reply quote expands a collapsed run', async () => {
+    serve([m(10, 'progress'), m(11, 'progress'), m(12, 'text', { reply_to: 11 })])
+    await mountPanel()
+    expect(folds()).toHaveLength(1)
+    expect(folds()[0]!.attributes('aria-expanded')).toBe('false')
+    await click(quote(12))
+    expect(folds()[0]!.attributes('aria-expanded')).toBe('true')
+    expect(messageEl(10).exists()).toBe(true)
+    expect(document.activeElement).toBe(messageEl(11).element)
+  })
+
+  it('reply quote reveals a hidden target on an older page', async () => {
+    api.getMessages.mockImplementation(async (_t, q?: { afterRev?: number; before?: number }) =>
+      q?.before !== undefined
+        ? {
+            ...page([m(5, 'claim'), m(6, 'resume')]),
+            channel: channel({ last_seq: 13, rev: 13, session: working }),
+          }
+        : {
+            ...page([m(12, 'text', { reply_to: 5 })]),
+            channel: channel({ last_seq: 13, rev: 13, session: working }),
+            has_more: true,
+            next_before: 12,
+            next_after_rev: 13,
+          }
+    )
+    await mountPanel()
+    await click(quote(12))
+    await flushPromises()
+    expect(messageEl(5).exists()).toBe(true)
+    expect(document.activeElement).toBe(messageEl(5).element)
+    expect(announcement()).toBe('')
+  })
+
+  it('reply quote to the last message of an expanded run', async () => {
+    serve([m(10, 'progress'), m(11, 'progress'), m(12, 'text', { reply_to: 11 })])
+    await mountPanel()
+    await click(folds()[0]!)
+    expect(messageEl(11).exists()).toBe(true)
+    await click(quote(12))
+    expect(document.activeElement).toBe(messageEl(11).element)
+  })
+
+  it('toggle absent without quiet types', async () => {
+    useSchemaStore().channelPresentations = new Map()
+    serve([m(10, 'claim'), m(11, 'progress')])
+    await mountPanel()
+    expect(w().text()).not.toContain('Show all messages')
+    expect(messageEl(10).exists()).toBe(true)
+  })
+
+  it('the toggle shows every message and is not stored', async () => {
+    serve([m(10, 'text'), m(11, 'claim'), m(12, 'progress')])
+    await mountPanel()
+    const toggle = buttonIn(w(), 'Show all messages')
+    expect(toggle.attributes('aria-pressed')).toBe('false')
+    await click(toggle)
+    expect(buttonIn(w(), 'Show all messages').attributes('aria-pressed')).toBe('true')
+    expect(messageEl(11).exists()).toBe(true)
+    expect(folds()).toHaveLength(0)
+    w().unmount()
+    await mountPanel()
+    expect(buttonIn(w(), 'Show all messages').attributes('aria-pressed')).toBe('false')
+    expect(messageEl(11).exists()).toBe(false)
+  })
+
+  it('live quiet message not announced', async () => {
+    serve([m(10, 'text')])
+    await mountPanel()
+    await liveAdds([m(11, 'text'), m(12, 'progress')])
+    expect(messageEl(11).exists()).toBe(true)
+    expect(announcement()).toBe('Message from robot')
+  })
+
+  it('kept quiet row is announced', async () => {
+    serve([m(10, 'text')])
+    await mountPanel()
+    await liveAdds([m(11, 'progress', { _actions: ['record'] })])
+    expect(messageEl(11).exists()).toBe(true)
+    expect(announcement()).toBe('Progress from robot')
+  })
+
+  it('hidden question announced once its choices arrive', async () => {
+    serve([m(10, 'text')])
+    await mountPanel()
+    current = runHead(asking, ['answer'])
+    await liveAdds(
+      [m(11, 'ask', { props: { note: 'Which?', options: ['A', 'B'] } }), notice(12, 'asking', 11)],
+      asking
+    )
+    expect(messageEl(11).findAll('[data-decision^="choice:11:"]')).toHaveLength(2)
+    expect(announcement()).toBe('Question from robot')
+  })
+
+  it('only quiet additions announce nothing', async () => {
+    serve([m(10, 'text')])
+    await mountPanel()
+    await liveAdds([m(11, 'claim'), m(12, 'progress')])
+    expect(folds()).toHaveLength(1)
+    expect(announcement()).toBe('')
+  })
+
+  it('quiet signal not shown', async () => {
+    const signal = (id: string, type: string, note: string) => ({
+      id,
+      type,
+      author: { user: 'robot' },
+      at: '2026-03-01T10:00:00Z',
+      expires_at: '2099-01-01T00:00:00Z',
+      props: { body: note },
+    })
+    current = runHead(working, [], {
+      ephemeral: [
+        signal('e1', 'heartbeat', 'tick'),
+        signal('e2', 'typing', 'is typing'),
+        signal('e3', 'ping', 'pong'),
+      ],
+    })
+    serve([m(10, 'text')])
+    await mountPanel()
+    const area = w().find('.rl-channel__ephemeral')
+    expect(area.text()).toContain('is typing')
+    expect(area.text()).not.toContain('tick')
+    expect(area.text()).not.toContain('pong')
+    await click(buttonIn(w(), 'Show all messages'))
+    expect(w().find('.rl-channel__ephemeral').text()).toContain('tick')
+    expect(w().find('.rl-channel__ephemeral').text()).toContain('pong')
+  })
+
+  it('all hidden shows the hint', async () => {
+    serve([m(10, 'claim'), m(11, 'resume')])
+    await mountPanel()
+    expect(w().text()).toContain('Only hidden messages here. Use Show all messages to see them.')
+    expect(w().text()).not.toContain('No messages yet.')
+  })
+
+  it('all hidden with older pages', async () => {
+    serve([m(10, 'claim'), m(11, 'resume')], working, { has_more: true, next_before: 10 })
+    await mountPanel()
+    expect(w().text()).toContain(
+      'Only hidden messages so far. Load older messages or use Show all messages to see them.'
+    )
+  })
+
+  it('load older with only hidden is announced', async () => {
+    serve([m(10, 'text')], working, { has_more: true, next_before: 10 })
+    await mountPanel()
+    serve([m(8, 'claim'), m(9, 'resume')])
+    await click(buttonIn(w(), 'Load older messages'))
+    expect(api.getMessages).toHaveBeenLastCalledWith(expect.anything(), { before: 10 })
+    expect(announcement()).toBe('2 older messages are hidden. Use Show all messages to see them.')
+  })
+
+  it('focus inside an expanded run survives an append', async () => {
+    serve([m(10, 'text'), m(11, 'progress'), m(12, 'progress')])
+    await mountPanel()
+    await click(folds()[0]!)
+    const row = messageEl(11).element as HTMLElement
+    row.focus()
+    expect(document.activeElement).toBe(row)
+    await liveAdds([m(13, 'progress')])
+    expect(folds()[0]!.attributes('aria-expanded')).toBe('true')
+    expect(messageEl(13).exists()).toBe(true)
+    expect(messageEl(11).element).toBe(row)
+    expect(document.activeElement).toBe(row)
+  })
+
+  it('focus on the tail fold survives an append', async () => {
+    serve([m(10, 'text'), m(11, 'progress')])
+    await mountPanel()
+    const button = folds()[0]!.element as HTMLButtonElement
+    button.focus()
+    await liveAdds([m(12, 'progress')])
+    expect(folds()).toHaveLength(1)
+    expect(folds()[0]!.element).toBe(button)
+    expect(document.activeElement).toBe(button)
+    expect(button.textContent).toContain('2 messages: Progress')
+  })
+})

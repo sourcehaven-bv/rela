@@ -443,6 +443,27 @@ describe('presentationView', () => {
       })
     ).toEqual({ messages: { card: { fields: [{ property: 'body', label: 'Text' }] } } })
   })
+
+  it('passes display', () => {
+    expect(
+      presentationView({
+        messages: { claim: { display: 'hidden' }, progress: { display: 'collapsed' }, card: {} },
+      })
+    ).toEqual({
+      messages: {
+        claim: { fields: undefined, display: 'hidden' },
+        progress: { fields: undefined, display: 'collapsed' },
+        card: { fields: undefined },
+      },
+    })
+  })
+
+  it('drops an unknown display, so the messages show in full', () => {
+    const p = { messages: { claim: { display: 'folded' } } } as unknown as Parameters<
+      typeof presentationView
+    >[0]
+    expect(presentationView(p)).toEqual({ messages: { claim: { fields: undefined } } })
+  })
 })
 
 describe('sessions', () => {

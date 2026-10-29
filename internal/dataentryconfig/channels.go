@@ -27,8 +27,37 @@ type ChannelPresentation struct {
 // A field takes the [FormField] keys property, label, placeholder, help,
 // widget, span and hidden. The keys a channel composer has no behavior
 // for are refused at load, see channelFieldRefusedKeys.
+//
+// Display tones the message type down in the web app (TKT-03DMXH):
+// [MessageDisplayCollapsed] folds a run of such messages into one line,
+// [MessageDisplayHidden] leaves them out until the reader shows all
+// messages. Empty shows them in full. This is presentation only: the
+// messages stay readable through the API, MCP and the CLI.
 type MessagePresentation struct {
-	Fields []FormField `yaml:"fields,omitempty" json:"fields,omitempty"`
+	Fields  []FormField    `yaml:"fields,omitempty" json:"fields,omitempty"`
+	Display MessageDisplay `yaml:"display,omitempty" json:"display,omitempty"`
+}
+
+// MessageDisplay is how the web app shows the messages of one type; see
+// [MessagePresentation]. The empty value shows them in full.
+type MessageDisplay string
+
+// The values of [MessageDisplay].
+const (
+	MessageDisplayCollapsed MessageDisplay = "collapsed"
+	MessageDisplayHidden    MessageDisplay = "hidden"
+)
+
+// messageDisplayValues lists the valid non-empty values of [MessageDisplay].
+var messageDisplayValues = []MessageDisplay{MessageDisplayCollapsed, MessageDisplayHidden}
+
+// messageDisplayList is messageDisplayValues as the error text names them.
+func messageDisplayList() string {
+	names := make([]string, len(messageDisplayValues))
+	for i, d := range messageDisplayValues {
+		names[i] = string(d)
+	}
+	return strings.Join(names, ", ")
 }
 
 // ChannelProperty is a message property as the channel presentation check
@@ -73,7 +102,7 @@ type BusyFacts struct {
 
 var (
 	channelPresentationKeys = []string{"messages"}
-	messagePresentationKeys = []string{"fields"}
+	messagePresentationKeys = []string{"fields", "display"}
 	channelFieldKeys        = []string{"property", "label", "placeholder", "help", "widget", "span", "hidden"}
 )
 
@@ -101,13 +130,17 @@ var channelWidgetTypes = map[string][]string{
 
 // validateChannelsShape checks what the `channels:` block can be checked
 // for without realtime.yaml: known keys, a property on every field, no
-// property twice, a known widget and a span in range. data is the raw
-// YAML, needed for the key checks.
+// property twice, a known widget, a span in range and a known display
+// value. data is the raw YAML, needed for the key checks.
 func validateChannelsShape(data []byte, cfg *Config) []string {
 	errs := channelsUnknownKeys(data)
 	for _, ctName := range sortedMapKeys(cfg.Channels) {
 		ct := cfg.Channels[ctName]
 		for _, mtName := range sortedMapKeys(ct.Messages) {
+			if d := ct.Messages[mtName].Display; d != "" && !slices.Contains(messageDisplayValues, d) {
+				errs = append(errs, fmt.Sprintf("channels.%s.messages.%s.display: unknown value %q (valid values: %s)",
+					ctName, mtName, d, messageDisplayList()))
+			}
 			prefix := fmt.Sprintf("channels.%s.messages.%s.fields", ctName, mtName)
 			seen := map[string]bool{}
 			for i, f := range ct.Messages[mtName].Fields {

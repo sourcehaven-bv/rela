@@ -199,14 +199,18 @@ func TestChannelSchema_Off(t *testing.T) {
 }
 
 // TestConfig_ServesChannels pins that the `channels:` block reaches the
-// SPA in `_config`, next to forms, in field order.
+// SPA in `_config`, next to forms, in field order, with a message type's
+// `display:` (TKT-03DMXH).
 func TestConfig_ServesChannels(t *testing.T) {
 	app := newTestAppV1(t)
 	app.State().Cfg.Channels = map[string]dataentryconfig.ChannelPresentation{"room": {
-		Messages: map[string]dataentryconfig.MessagePresentation{"text": {Fields: []dataentryconfig.FormField{
-			{Property: "body", Label: "Message", Widget: dataentryconfig.WidgetTextarea},
-			{Property: "about", Span: 6},
-		}}},
+		Messages: map[string]dataentryconfig.MessagePresentation{
+			"text": {Fields: []dataentryconfig.FormField{
+				{Property: "body", Label: "Message", Widget: dataentryconfig.WidgetTextarea},
+				{Property: "about", Span: 6},
+			}},
+			"claim": {Display: dataentryconfig.MessageDisplayHidden},
+		},
 	}}
 	rec := httptest.NewRecorder()
 	app.handleV1Config(rec, httptest.NewRequest(http.MethodGet, "/api/v1/_config", http.NoBody))
@@ -217,5 +221,6 @@ func TestConfig_ServesChannels(t *testing.T) {
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &raw))
 	require.JSONEq(t, `{"room":{"messages":{"text":{"fields":[
 		{"property":"body","label":"Message","widget":"textarea"},
-		{"property":"about","span":6}]}}}}`, string(raw.Channels))
+		{"property":"about","span":6}]},
+		"claim":{"display":"hidden"}}}}`, string(raw.Channels))
 }

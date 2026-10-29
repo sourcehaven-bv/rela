@@ -42,7 +42,12 @@ import RlTag from '../common/RlTag.vue'
 import RlChannelAuthor from './RlChannelAuthor.vue'
 import RlChannelDecisions from './RlChannelDecisions.vue'
 import RlRefChip from './RlRefChip.vue'
-import { resolveChannelFields, messagePendingKey, type ResolvedChannelField } from './channelFields'
+import {
+  CHANNEL_OPERATIONS,
+  resolveChannelFields,
+  messagePendingKey,
+  type ResolvedChannelField,
+} from './channelFields'
 import type {
   ChannelDecisionView,
   ChannelEnumOption,
@@ -154,7 +159,7 @@ const hasControls = computed(
     decisionList.value.length > 0 ||
     props.canReply ||
     actionButtons.value.length > 0 ||
-    ['edit', 'delete', 'remove', 'release'].some((op) => allowed.value.has(op)),
+    [...CHANNEL_OPERATIONS].some((op) => allowed.value.has(op)),
 )
 
 const noticeText = computed(() => {

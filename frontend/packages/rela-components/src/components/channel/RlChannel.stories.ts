@@ -5,8 +5,9 @@ import RlChannel from './RlChannel.vue'
 import RlChannelComposer from './RlChannelComposer.vue'
 import RlChannelSession from './RlChannelSession.vue'
 import { lifecyclePendingKey } from './channelFields'
+import { firstVisible } from './channelAnchor'
 import { provideMessages } from '../../composables/useMessages'
-import type { ChannelMessageView } from './types'
+import type { ChannelMessageView, ChannelPresentation } from './types'
 import {
   breachDecisions,
   breachMessages,
@@ -26,6 +27,11 @@ import {
   questionChoices,
   questionMessage,
   questionMessageTypes,
+  longRunMessages,
+  runMessage,
+  runMessages,
+  runMessageTypes,
+  runPresentation,
 } from '../../fixtures/channels'
 
 const meta: Meta<typeof RlChannel> = {
@@ -578,5 +584,196 @@ export const WithChoices: Story = {
     await expect(answered.querySelectorAll('.rl-channel-message__list li')).toHaveLength(3)
     await userEvent.click(within(row as HTMLElement).getByRole('button', { name: /^SQLite/ }))
     await expect(args.onChoose).toHaveBeenCalledWith('choice:12:1')
+  },
+}
+
+/*
+ * Quiet message types (TKT-03DMXH): the run's `claim` and `resume` are
+ * hidden and its `progress` notes collapsed.
+ */
+
+const quietArgs = {
+  messageTypes: runMessageTypes,
+  presentation: runPresentation,
+  postable: ['text'],
+  ephemeral: [],
+  allowedLifecycle: [],
+}
+
+/**
+ * A long run whose messages and presentation the play steps change: append
+ * adds a message from the owner, and the reload buttons replace the
+ * presentation as a config reload does.
+ */
+const quietLiveRender =
+  (count: number): Story['render'] =>
+  (args) => ({
+    components: { RlChannel },
+    setup() {
+      const messages = ref<ChannelMessageView[]>(longRunMessages(count))
+      const presentation = ref<ChannelPresentation>(runPresentation)
+      const append = () => {
+        const seq = messages.value[messages.value.length - 1]!.seq + 1
+        messages.value = [...messages.value, runMessage(seq, 'text', `Message ${seq}.`)]
+      }
+      const reloadPlain = () => (presentation.value = { messages: {} })
+      const reloadQuiet = () => (presentation.value = { ...runPresentation })
+      return { args, messages, presentation, append, reloadPlain, reloadQuiet }
+    },
+    template: `
+      <div>
+        <button type="button" data-testid="append" @click="append">Append</button>
+        <button type="button" data-testid="reload-plain" @click="reloadPlain">Reload without display</button>
+        <button type="button" data-testid="reload-quiet" @click="reloadQuiet">Reload with display</button>
+        <div style="height:400px">
+          <RlChannel v-bind="args" :messages="messages" :presentation="presentation" />
+        </div>
+      </div>`,
+  })
+
+/** Scrolls the log so the fold line with the given last seq is the first visible row. */
+async function scrollToFold(log: HTMLElement, last: number) {
+  const button = log.querySelector<HTMLElement>(`[data-fold-seq="${last}"] > button`)!
+  log.scrollTop += button.getBoundingClientRect().top - log.getBoundingClientRect().top - 2
+  log.dispatchEvent(new Event('scroll'))
+  await new Promise((r) => setTimeout(r, 50))
+}
+
+/**
+ * A run with quiet types. Collapsed `progress` notes fold into one line
+ * that expands in place below its button; hidden ones never show. The
+ * header offers "Show all messages", which shows every message.
+ */
+export const QuietTypes: Story = {
+  args: { ...quietArgs, title: 'Agent run' },
+  render: quietLiveRender(60),
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement)
+    const log = canvas.getByRole('log')
+    // Without the browser's own scroll anchoring, as in Safari, so the
+    // channel's anchoring is what keeps the view.
+    log.style.overflowAnchor = 'none'
+    const toggle = canvas.getByRole('button', { name: 'Show all messages' })
+    await expect(toggle).toHaveAttribute('aria-pressed', 'false')
+    await expect(canvasElement.querySelector('[data-seq="60"]')).toBeNull()
+    await expect(canvasElement.querySelector('[data-seq="59"]')).toBeNull()
+    await waitFor(() => expect(isAtBottom(log)).toBe(true))
+
+    const folds = canvas.getAllByRole('button', { name: '1 message: Progress' })
+    const tail = folds[folds.length - 1]!
+    await expect(tail).toHaveAttribute('aria-expanded', 'false')
+    await expect(tail).not.toHaveAttribute('aria-controls')
+    const before = tail.getBoundingClientRect().top - log.getBoundingClientRect().top
+    await userEvent.click(tail)
+    await expect(tail).toHaveAttribute('aria-expanded', 'true')
+    await expect(tail).toHaveAttribute('aria-controls')
+    await waitFor(() => expect(canvasElement.querySelector('[data-seq="59"]')).not.toBeNull())
+    await expect(canvasElement.querySelector('[data-seq="60"]')).toBeNull()
+    await new Promise((r) => setTimeout(r, 50))
+    const after = tail.getBoundingClientRect().top - log.getBoundingClientRect().top
+    await expect(Math.abs(after - before)).toBeLessThan(2)
+    await expect(tail).toHaveTextContent('1 message: Progress')
+    await expect(tail).toHaveFocus()
+
+    // The expand left the bottom, so a new message does not pull the view
+    // down past the run the reader opened.
+    await userEvent.click(canvas.getByTestId('append'))
+    await waitFor(() => expect(canvasElement.querySelector('[data-seq="61"]')).not.toBeNull())
+    await new Promise((r) => setTimeout(r, 50))
+    await expect(Math.abs(tail.getBoundingClientRect().top - log.getBoundingClientRect().top - before)).toBeLessThan(2)
+    await expect(isAtBottom(log)).toBe(false)
+    tail.focus()
+
+    await userEvent.click(tail)
+    await expect(tail).toHaveAttribute('aria-expanded', 'false')
+    await waitFor(() => expect(canvasElement.querySelector('[data-seq="59"]')).toBeNull())
+
+    // Back at the bottom, the log follows again, also across the toggle.
+    log.scrollTop = log.scrollHeight
+    log.dispatchEvent(new Event('scroll'))
+    await userEvent.click(toggle)
+    await expect(toggle).toHaveAttribute('aria-pressed', 'true')
+    await expect(canvas.queryAllByRole('button', { name: /message: Progress$/ })).toHaveLength(0)
+    await expect(canvasElement.querySelector('[data-seq="60"]')).not.toBeNull()
+    await waitFor(() => expect(isAtBottom(log)).toBe(true))
+  },
+}
+
+/**
+ * Showing all messages while scrolled up keeps the first visible row where it
+ * was. When that row is a fold line, the run's first message takes its place.
+ */
+export const QuietTypesScrolledUp: Story = {
+  name: 'Quiet types, scrolled up',
+  args: { ...quietArgs, title: 'Agent run' },
+  render: quietLiveRender(90),
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement)
+    const log = canvas.getByRole('log')
+    log.style.overflowAnchor = 'none'
+    await waitFor(() => expect(isAtBottom(log)).toBe(true))
+    // The run of progress 47 and the hidden claim 48.
+    await scrollToFold(log, 48)
+    const anchor = firstVisible(log)!
+    await expect(anchor).toMatchObject({ fold: true, seq: 48, first: 47 })
+    await userEvent.click(canvas.getByRole('button', { name: 'Show all messages' }))
+    await waitFor(() => expect(canvasElement.querySelector('[data-seq="90"]')).not.toBeNull())
+    await waitFor(() => expect(Math.abs(offsetOf(log, anchor.first) - anchor.offset)).toBeLessThan(2))
+    await expect(isAtBottom(log)).toBe(false)
+  },
+}
+
+/**
+ * A config reload that drops `display` keeps the first visible row where it
+ * was and removes the toggle, also while the toggle is on.
+ */
+export const QuietTypesReload: Story = {
+  name: 'Quiet types, config reload',
+  args: { ...quietArgs, title: 'Agent run' },
+  render: quietLiveRender(90),
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement)
+    const log = canvas.getByRole('log')
+    log.style.overflowAnchor = 'none'
+    await waitFor(() => expect(isAtBottom(log)).toBe(true))
+    await scrollToFold(log, 48)
+    const anchor = firstVisible(log)!
+    await userEvent.click(canvas.getByTestId('reload-plain'))
+    await waitFor(() => expect(canvasElement.querySelector('[data-seq="48"]')).not.toBeNull())
+    await waitFor(() => expect(Math.abs(offsetOf(log, anchor.first) - anchor.offset)).toBeLessThan(2))
+    await expect(canvas.queryByRole('button', { name: 'Show all messages' })).toBeNull()
+
+    await userEvent.click(canvas.getByTestId('reload-quiet'))
+    await waitFor(() => expect(canvasElement.querySelector('[data-seq="48"]')).toBeNull())
+    const toggle = canvas.getByRole('button', { name: 'Show all messages' })
+    await userEvent.click(toggle)
+    await expect(toggle).toHaveAttribute('aria-pressed', 'true')
+    await userEvent.click(canvas.getByTestId('reload-plain'))
+    await waitFor(() => expect(canvas.queryByRole('button', { name: 'Show all messages' })).toBeNull())
+    await expect(canvasElement.querySelector('[data-seq="48"]')).not.toBeNull()
+  },
+}
+
+/** A page with only hidden messages says so instead of "No messages yet." */
+export const QuietTypesOnlyHidden: Story = {
+  args: { ...quietArgs, title: 'Agent run', messages: [runMessage(1, 'claim'), runMessage(2, 'resume')] },
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement)
+    await expect(
+      canvas.getByText('Only hidden messages here. Use Show all messages to see them.'),
+    ).toBeVisible()
+    await userEvent.click(canvas.getByRole('button', { name: 'Show all messages' }))
+    await waitFor(() => expect(canvasElement.querySelector('[data-seq="2"]')).not.toBeNull())
+  },
+}
+
+/** A short run: one fold for the progress notes around a hidden resume, the plan in full. */
+export const QuietTypesShortRun: Story = {
+  args: { ...quietArgs, title: 'Agent run', messages: runMessages },
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement)
+    await expect(canvas.getAllByRole('button', { name: '2 messages: Progress' })).toHaveLength(2)
+    await expect(canvasElement.querySelector('[data-seq="6"]')).not.toBeNull()
+    await expect(canvasElement.querySelector('[data-seq="4"]')).toBeNull()
   },
 }

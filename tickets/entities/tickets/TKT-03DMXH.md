@@ -4,8 +4,10 @@ type: ticket
 title: Hide agent-internal message types from people
 kind: enhancement
 priority: low
-effort: s
-status: backlog
+effort: m
+started: "2026-10-29"
+completed: "2026-10-29"
+status: done
 ---
 
 ## Description

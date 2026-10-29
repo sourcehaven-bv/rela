@@ -1,4 +1,5 @@
 import type { StatusColor } from 'rela-components/types'
+import type { ChannelMessageDisplay } from 'rela-components/components/channel/types'
 import type { SortSpec } from './schema'
 import type { ScriptError } from './scriptError'
 
@@ -207,7 +208,7 @@ export type ChannelField = Pick<
 /** One `channels.<channel type>` entry of data-entry.yaml. */
 export interface ChannelPresentation {
   /** Keyed by message type. */
-  messages?: Record<string, { fields?: ChannelField[] }>
+  messages?: Record<string, { fields?: ChannelField[]; display?: ChannelMessageDisplay }>
 }
 
 export interface RelationProperty {

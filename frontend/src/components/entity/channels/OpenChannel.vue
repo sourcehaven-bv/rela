@@ -478,8 +478,10 @@ async function onLifecycle(op: string) {
   else if (channel !== undefined) emit('changed')
 }
 
-const { loadingOlder, onLoadOlder, onLoadNewest, onJump } = useChannelPaging(ch, (err) =>
-  handle(err, false)
+const { loadingOlder, onLoadOlder, onLoadNewest, onJump } = useChannelPaging(
+  ch,
+  (err) => handle(err, false),
+  (seq) => channelView.value?.reveal(seq)
 )
 
 // --- Links and the ref picker -----------------------------------------------
