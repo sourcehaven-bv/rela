@@ -11,7 +11,7 @@ import { newMap, type TreePath } from '@/configure/tree'
 
 /**
  * The `filters:` of a list or board: conditions every record it shows must
- * meet. People cannot turn these off. `$USER` as a value means the person
+ * meet. People cannot turn these off. `$user` as a value means the person
  * looking at the list.
  */
 const props = defineProps<{

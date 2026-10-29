@@ -5,7 +5,9 @@ title: 'Form default: current-user token'
 kind: enhancement
 priority: low
 effort: s
-status: backlog
+started: "2026-10-29"
+completed: "2026-10-29"
+status: done
 ---
 
 ## Description

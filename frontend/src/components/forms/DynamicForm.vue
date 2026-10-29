@@ -19,6 +19,8 @@ import {
   optionVerdictsFor as optionVerdictsForVerdict,
 } from '@/utils/affordances'
 import { isClearedForType } from '@/utils/formValue'
+import { resolveUserToken, USER_TOKEN } from '@/utils/userToken'
+import { useUserToken } from '@/composables/useUserToken'
 import { useCreateFace } from '@/composables/useCreateFace'
 import { useEntityIDControls } from '@/composables/useEntityIDControls'
 import { useConfirm } from '@/composables/useConfirm'
@@ -434,6 +436,8 @@ const allFields = computed((): FormFieldOrRelation[] => {
   const relFields = (formConfig.value.relations || []) as FormFieldOrRelation[]
   return [...propFields, ...relFields]
 })
+// The principal, for `$user` defaults; fetched only when a field uses it.
+const signedInUser = useUserToken(() => allFields.value.map((f) => f.default))
 
 // Live binding namespaces for condition evaluation. Supplied as a getter (not a
 // computed) so the reactive read of formData happens inside each wizard
@@ -842,7 +846,8 @@ function initializeDefaults() {
   // create-mode defaults.
   for (const field of allFields.value) {
     if (field.property && field.default !== undefined) {
-      formData.value[field.property] = field.default
+      const value = resolveUserToken(field.default, signedInUser.value)
+      if (value !== undefined) formData.value[field.property] = value
     }
     if (field.relation && field.default !== undefined) {
       const defaultValue = field.default
@@ -2509,6 +2514,33 @@ function checkDirty() {
   // out-of-band dirtiness.
   dirty.value = currentData !== originalData.value || hasCardChanges || hasStagedFiles()
 }
+
+// A `$user` default resolves from `/_me`, which may answer after the form
+// initialised. Fill such a field then, unless the user touched it or it holds
+// a value (a `prop.*` pre-fill, a template). Only the filled keys join the
+// dirty baseline, so the late default is never an unsaved change on its own,
+// and the dry-run runs again because the server's verdicts may depend on it.
+function fillLateUserDefaults(user: string | undefined) {
+  if (!entityType.value || isEdit.value) return
+  const filled: Record<string, unknown> = {}
+  for (const field of allFields.value) {
+    const prop = field.property
+    if (!prop || field.default !== USER_TOKEN || userTouched.value.has(prop)) continue
+    if (!isClearedForType(formData.value[prop], getPropertyDef(prop))) continue
+    const value = resolveUserToken(field.default, user)
+    if (value === undefined) continue
+    formData.value[prop] = value
+    filled[prop] = value
+  }
+  if (Object.keys(filled).length === 0) return
+  if (originalData.value) {
+    const baseline = JSON.parse(originalData.value)
+    baseline.formData = { ...baseline.formData, ...filled }
+    originalData.value = JSON.stringify(baseline)
+  }
+  scheduleStagedAffordances()
+}
+watch(() => signedInUser.value, fillLateUserDefaults)
 
 function getPropertyDef(property: string): PropertyDef | undefined {
   return entityType.value?.properties[property]

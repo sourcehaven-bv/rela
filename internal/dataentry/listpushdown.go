@@ -97,7 +97,7 @@ func planListPushdown(
 		if !stringShaped(property) || len(values) != 1 {
 			return listPlan{}, false
 		}
-		value := resolveFilterVariable(values[0])
+		value := resolveFilterVariable(values[0], gated.user)
 		switch operator {
 		case "eq":
 			props = append(props, store.PropPredicate{

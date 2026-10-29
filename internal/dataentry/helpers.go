@@ -42,11 +42,18 @@ var nowFunc = func() time.Time { return time.Now().UTC() }
 //	$today          today's date in YYYY-MM-DD format (UTC)
 //	$tomorrow       tomorrow's date (UTC)
 //	$yesterday      yesterday's date (UTC)
+//	$user           the caller's principal id, passed as user
 //
 // Times are evaluated in UTC for predictability across server timezones.
-// Other values are returned unchanged.
-func resolveFilterVariable(value string) string {
+// Other values are returned unchanged, and so is $user when user is empty:
+// with no identified caller it stays literal rather than matching rows with
+// an empty property.
+func resolveFilterVariable(value, user string) string {
 	switch value {
+	case "$user":
+		if user != "" {
+			return user
+		}
 	case "$today":
 		return nowFunc().Format("2006-01-02")
 	case "$tomorrow":
@@ -59,13 +66,13 @@ func resolveFilterVariable(value string) string {
 
 // resolveFilterVariablesInList applies resolveFilterVariable to each
 // comma-separated token in value. Used by the in/ne operators.
-func resolveFilterVariablesInList(value string) string {
+func resolveFilterVariablesInList(value, user string) string {
 	if !strings.Contains(value, ",") {
-		return resolveFilterVariable(value)
+		return resolveFilterVariable(value, user)
 	}
 	parts := strings.Split(value, ",")
 	for i, p := range parts {
-		parts[i] = resolveFilterVariable(strings.TrimSpace(p))
+		parts[i] = resolveFilterVariable(strings.TrimSpace(p), user)
 	}
 	return strings.Join(parts, ",")
 }
@@ -226,10 +233,12 @@ func propertyIsEmpty(prop any) bool {
 	}
 }
 
-// applyFilters filters entities by a set of filter conditions.
+// applyFilters filters entities by a set of filter conditions. A `$user`
+// value is user (see [resolveFilterVariable]); with no identified user it
+// matches no row, as on the list path. Other `$` variables are skipped.
 //
 //nolint:gocognit // applies each filter operator against each entity property; the branches are per-operator match semantics, not shared logic to extract.
-func applyFilters(entities []*entity.Entity, filters []FilterConfig) []*entity.Entity {
+func applyFilters(entities []*entity.Entity, filters []FilterConfig, user string) []*entity.Entity {
 	if len(filters) == 0 {
 		return entities
 	}
@@ -237,6 +246,13 @@ func applyFilters(entities []*entity.Entity, filters []FilterConfig) []*entity.E
 	for _, e := range entities {
 		match := true
 		for _, f := range filters {
+			if f.Value == "$user" {
+				if user == "" {
+					match = false
+					break
+				}
+				f.Value = user
+			}
 			if strings.HasPrefix(f.Value, "$") {
 				continue // skip variable substitution
 			}
@@ -706,15 +722,15 @@ func anyElement(prop any, match func(string) bool) bool {
 //
 // Each member is trimmed and variable-resolved ($today and friends) exactly as
 // the joined form is, so both representations of a filter agree.
-func filterSetValues(values []string, isArrayForm bool) []string {
+func filterSetValues(values []string, isArrayForm bool, user string) []string {
 	out := make([]string, 0, len(values))
 	for _, v := range values {
 		if isArrayForm {
-			out = append(out, resolveFilterVariable(strings.TrimSpace(v)))
+			out = append(out, resolveFilterVariable(strings.TrimSpace(v), user))
 			continue
 		}
 		for part := range strings.SplitSeq(v, ",") {
-			out = append(out, resolveFilterVariable(strings.TrimSpace(part)))
+			out = append(out, resolveFilterVariable(strings.TrimSpace(part), user))
 		}
 	}
 	return out
