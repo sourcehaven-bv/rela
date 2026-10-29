@@ -36,6 +36,8 @@ import { useWorld } from '@/composables/useWorld'
 import { actionAllowed } from '@/utils/affordancesWarning'
 import { filterStateToApiParams } from '@/utils/filters'
 import { entityRef } from '@/utils/entityRef'
+import { resolveUserToken } from '@/utils/userToken'
+import { useMeFor } from '@/queries/me'
 import { editFormRoute } from '@/utils/entityRoute'
 import { fromPageQuery } from '@/utils/pageContext'
 import { worldText } from '@/utils/worldText'
@@ -347,20 +349,25 @@ const columns = computed(() => {
   return Array.from(values).map((v): KanbanColumn => ({ value: v, label: v }))
 })
 
+const { data: me } = useMeFor(() => (kanbanConfig.value?.filters ?? []).map((f) => f.value))
+
 const filteredEntities = computed(() => {
   let result = [...entities.value]
 
-  // Apply kanban config filters
+  // Apply kanban config filters. A `$user` value is the signed-in user;
+  // until /_me names one, it matches no card.
   if (kanbanConfig.value?.filters) {
     for (const filter of kanbanConfig.value.filters) {
+      const target = resolveUserToken(filter.value, me.value?.user)
       result = result.filter((entity) => {
+        if (target === undefined) return false
         const val = String(entity.properties[filter.property] || '')
         switch (filter.operator) {
           case '=':
           case '==':
-            return val === filter.value
+            return val === target
           case '!=':
-            return val !== filter.value
+            return val !== target
           default:
             return true
         }

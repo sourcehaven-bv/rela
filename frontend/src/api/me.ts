@@ -23,7 +23,10 @@ export interface MeLinks {
 
 /** `GET /_me`: who the request principal is, for the account menu (TKT-MJTD12). */
 export interface MeResponse {
-  /** The principal's user id. Always present. */
+  /**
+   * The principal's user id. Always present; `unknown` when the server
+   * could not identify the caller (UNKNOWN_USER in utils/userToken).
+   */
   user: string
   email?: string
   org?: { id: string; slug?: string; name?: string }
