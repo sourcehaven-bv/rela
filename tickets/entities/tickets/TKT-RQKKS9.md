@@ -21,3 +21,8 @@ Add `add_comment` (as the job identity under `--run-as`) and make
 
 Reported by the agent-runner PoC (rela-agent-runner-poc/rela-mission),
 2026-10-28.
+
+## Follow-up
+
+The doc changes were made in the generated `docs/` files and reverted by `just
+docs`. PR #2022 makes them in the docs-project guides.
