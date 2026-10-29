@@ -33,6 +33,8 @@ type ChannelCmd struct {
 	Watch    ChannelWatchCmd    `cmd:"" help:"Wait for new, edited or removed messages in a channel."`
 	Inbox    ChannelInboxCmd    `cmd:"" help:"List the sessions that wait on you, and the channels you have not read."`
 	MarkRead ChannelMarkReadCmd `cmd:"" name:"mark-read" help:"Mark a channel read up to a seq, or up to its last message."`
+	Action   ChannelActionCmd   `cmd:"" help:"Run a message action, such as a promote, or release a stuck one."`
+	Session  ChannelSessionCmd  `cmd:"" help:"Show a channel's session: its state, who it waits for, and what you may post to move it."`
 }
 
 // channelReader reads channels. The wiring site passes the project's
@@ -52,6 +54,17 @@ type channelWriter interface {
 	MarkRead(ctx context.Context, addr realtime.RawAddress, seq *int64) (realtime.MarkReadResult, error)
 }
 
+// channelActor runs and releases message actions.
+type channelActor interface {
+	RunAction(ctx context.Context, addr realtime.RawAddress, seq int64, name string) (realtime.ActionResult, error)
+	ReleaseAction(ctx context.Context, addr realtime.RawAddress, seq int64) (realtime.MessageView, error)
+}
+
+// channelSessionReader reads a channel's session.
+type channelSessionReader interface {
+	Session(ctx context.Context, addr realtime.RawAddress) (realtime.SessionRead, error)
+}
+
 // channelCreator creates named channels.
 type channelCreator interface {
 	Create(ctx context.Context, entityType, anchor, typ string, in realtime.CreateInput) (realtime.ChannelView, error)
@@ -66,6 +79,8 @@ type channelWaker interface {
 type channelService interface {
 	channelReader
 	channelWriter
+	channelActor
+	channelSessionReader
 	channelCreator
 	channelWaker
 }

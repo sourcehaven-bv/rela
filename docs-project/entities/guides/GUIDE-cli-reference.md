@@ -2173,6 +2173,9 @@ rela channel remove ID TYPE SEQ [--name N] [--reason R]
 rela channel create ID TYPE [--title T]
 rela channel watch ID TYPE [--name N] [--after-rev R] [--timeout 30s] [--follow] [--poll 2s] [--limit N]
 rela channel mark-read ID TYPE [--name N] [--seq S]
+rela channel action ID TYPE SEQ ACTION [--name N]
+rela channel action ID TYPE SEQ --release [--name N]
+rela channel session ID TYPE [--name N]
 rela channel inbox [--limit N] [--cursor C] [--kinds waiting,unread,mention,reply]
 ```
 
@@ -2214,7 +2217,9 @@ guide describes read markers and which messages count as unread.
 
 The table output prints each message as a header line, `#seq  time  user (tool)  type`,
 followed by its properties. A list property prints one item per line, each line indented below
-the property name. Every line of message content starts with two spaces and a `|`,
+the property name. A message that carries an action shows `action <name>: <status>`, and
+`may: ...` lists what you may do with it now: its actions and `edit`, `delete`, `remove` or
+`release`. Every line of message content starts with two spaces and a `|`,
 and control and bidi characters are replaced, so content cannot pass for
 output of its own. A ref shows `ID "title"`, or `(restricted)` when you may
 not read the entity. A removed message shows `[removed by author]` or
@@ -2231,6 +2236,34 @@ interrupt it, and then exits 0. Interrupting a watch without `--follow` exits
 130. Another process's change is seen within `--poll` (1 to 60 seconds). With
 `-o json` each change is one line of JSON (JSON Lines). An error exits 1 at
 once.
+
+`action` runs an action on message `SEQ`, such as a promote that turns
+the message into an entity. `read` lists under each message, after `may:`,
+the actions and operations you may use on it now. The same rules apply as in the web app: your role
+must allow the action, a promote needs your create permission, and an
+action runs once per message. It prints the result:
+
+```text
+#3 action accept: done -> ITEM-12
+```
+
+A promote whose write had soft validation findings prints one `warning:`
+line per finding after it. `-o json` prints `{"notice", "message",
+"warnings"}`. `--release` frees a message's action that is stuck pending
+after a failed promote, so the action can run again. Check first whether
+the failed promote made its entity.
+
+`session` shows a channel's session: its state, who it waits for, and the
+message types you may post to move it:
+
+```text
+ITEM-1 incident (open)
+session: detected (Detected), generation 0, working
+may post: contained
+```
+
+`-o json` prints the same object as the MCP tool `read_session`. On a
+channel type without a session it fails with `no_session` and exits 1.
 
 `inbox` lists the sessions that wait on you now, oldest wait first, one
 line per entry:
