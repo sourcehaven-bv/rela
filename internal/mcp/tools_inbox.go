@@ -34,7 +34,8 @@ func toolListInboxDef() *mcpgo.Tool {
 		withDescription("List the sessions that wait on you now: each channel whose session waits for a role "+
 			"you hold, oldest wait first. An entry names the channel, the session state, your waiting roles, "+
 			"since (when the session entered its state) and transitions: the message types your post would "+
-			"move it with. Read it with read_session or read_channel and post one of transitions. count is "+
+			"move it with, each once. "+branchingNote+
+			"Read it with read_session or read_channel and post one of transitions. count is "+
 			"the whole list, not this page; page with cursor (pass next_cursor back). Watchable: watch it "+
 			"without arguments to wait for a session to start or stop waiting on you; one list_inbox "+
 			"target per watch. An entry leaves when the session moves, the role moves to someone else, the "+

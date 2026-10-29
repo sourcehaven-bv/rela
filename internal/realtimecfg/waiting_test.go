@@ -264,6 +264,13 @@ func TestSessionWaitingFor_CanAnswer(t *testing.T) {
 		{"only re-entries", []replace{{answerLine, "            answer: { to: open }\n"}}, false},
 		{"guarded answer", []replace{{answerLine,
 			"            answer: { to: done, roles: [lead], when: \"message.note == 'ok'\" }\n"}}, true},
+		// TKT-FPXTQJ AC 7: entries are judged per role.
+		{"answered by the second entry of a list", []replace{{answerLine,
+			"            answer: [ { to: open, roles: [member] }, { to: done } ]\n"}}, true},
+		{"answer shadowed by an earlier re-entry for the role", []replace{{answerLine,
+			"            answer: [ { to: open, roles: [lead] }, { to: done } ]\n"}}, false},
+		{"answer after a guarded re-entry", []replace{{answerLine,
+			"            answer: [ { to: open, roles: [lead], when: \"message.note == 'x'\" }, { to: done } ]\n"}}, true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -334,6 +341,33 @@ func TestSessionWaitingFor_DeadlineReset(t *testing.T) {
 				return
 			}
 			assertOneProblem(t, err, openKey+".on.poke", deadlineReset)
+		})
+	}
+}
+
+// TestSessionWaitingFor_DeadlineResetBranches pins TKT-FPXTQJ AC 7: the
+// deadline check walks list entries per role and reports at the entry.
+func TestSessionWaitingFor_DeadlineResetBranches(t *testing.T) {
+	timer := replace{pokeLine, "POKE          after:\n            late: { period: 4h, to: done }\n"}
+	cases := []struct {
+		name, poke string
+		key        string
+	}{
+		{"re-entry in the second entry", "            poke: [ { to: done, when: \"message.note == 'x'\" }, { to: open } ]\n",
+			openKey + ".on.poke[1]"},
+		{"re-entry the waiting role never reaches", "            poke: [ { to: done, roles: [lead] }, { to: open } ]\n", ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			src := strings.Replace(waitEdit(t, timer), "POKE", tc.poke, 1)
+			_, err := Parse([]byte(src), testMeta(t), nil)
+			if tc.key == "" {
+				if err != nil {
+					t.Fatalf("Parse: %v", err)
+				}
+				return
+			}
+			assertOneProblem(t, err, tc.key, deadlineReset)
 		})
 	}
 }
@@ -411,6 +445,22 @@ func TestHandoffWarning(t *testing.T) {
 			}
 		})
 	}
+	t.Run("second entry of a list", func(t *testing.T) {
+		// TKT-FPXTQJ AC 7: the warning names the entry's own key.
+		src := strings.Replace(handoffBase, "            handoff:\n              to: open\n              roles: [lead]\n"+
+			"              outputs:\n                - set: { properties: { PROP: \"VALUE\" } }\n",
+			"            handoff:\n              - { to: done, roles: [lead], when: \"message.name == 'x'\" }\n"+
+				"              - to: open\n                roles: [lead]\n"+
+				"                outputs:\n                  - set: { properties: { owner: \"{{message.name}}\" } }\n", 1)
+		c, err := Parse([]byte(src), testMeta(t), testPolicy(t))
+		if err != nil {
+			t.Fatalf("Parse: %v", err)
+		}
+		const want = openKey + ".on.handoff[1].outputs[0].set.properties.owner"
+		if w := c.Warnings(); len(w) != 1 || w[0].Key != want {
+			t.Errorf("warnings = %v; want one at %s", w, want)
+		}
+	})
 	t.Run("no user_entity_type", func(t *testing.T) {
 		src := strings.NewReplacer("PROP", "owner", "VALUE", "{{message.name}}").Replace(handoffBase)
 		p := parsePolicy(t, "roles:\n  handler:\n    read: [datalek]\n    update: [datalek]\n")

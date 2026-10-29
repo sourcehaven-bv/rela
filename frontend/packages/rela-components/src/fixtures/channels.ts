@@ -410,8 +410,8 @@ export const breachSessionFailed: ChannelSessionView = {
 
 /** The transitions the lead may fire in Detected. */
 export const breachTransitions: ChannelComposerTransition[] = [
-  { messageType: 'contained', toLabel: 'Contained' },
-  { messageType: 'dismiss', toLabel: 'Dismissed' },
+  { messageType: 'contained', toLabels: ['Contained'] },
+  { messageType: 'dismiss', toLabels: ['Dismissed'] },
 ]
 
 const ann = { name: 'Ann' }

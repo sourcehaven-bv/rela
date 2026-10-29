@@ -164,7 +164,8 @@ export function classifyChannelError(err: unknown): ChannelErrorOutcome {
   if (type === 'session_wrong_state') {
     return { ...REFETCH, message: t('channels.sessionWrongState') }
   }
-  // Only a decision button sends expect_generation. The server's title
+  // Only a decision sends expect_generation: a one-click button, or the
+  // composer's Send after a decision that opened the form. The server's title
   // names generations, which mean nothing to a reader.
   if (type === 'session_moved') {
     return { ...REFETCH, message: t('channels.decisionStale') }

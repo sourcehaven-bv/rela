@@ -738,3 +738,20 @@ func TestInboxView_MarshalJSON(t *testing.T) {
 	want := slices.DeleteFunc(slices.Clone(all), func(k string) bool { return slices.Contains(waitingJSON, k) })
 	require.Equal(t, want, keys(v))
 }
+
+// TestInbox_BranchTypeOnce pins TKT-FPXTQJ AC 10: a message type with
+// several entries is listed once in an inbox entry's transitions.
+func TestInbox_BranchTypeOnce(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t, withYAML(branchRealtime))
+	h.postTo(t, user("bob"), reviewCh, "text", props("body", "plan is up"))
+	view := h.inbox(t, user("alice"), InboxRequest{Limit: MaxInboxLimit})
+	var found bool
+	for _, e := range view.Entries {
+		if entryAddr(e) == reviewCh && e.Kind == InboxKindWaiting {
+			found = true
+			require.Equal(t, []string{"decide", "flag", "ping", "probe"}, e.Transitions)
+		}
+	}
+	require.True(t, found, "the review channel waits for alice")
+}

@@ -55,17 +55,17 @@ func TestParse_Session(t *testing.T) {
 	if want := []string{"contained>contained", "dismiss>dismissed", "escalated>contained"}; !slices.Equal(keyed, want) {
 		t.Errorf("detected transitions = %v; want %v", keyed, want)
 	}
-	tr, ok := s.Transition("detected", "contained")
+	tr, ok := firstBranch(s, "detected", "contained")
 	if !ok || !slices.Equal(tr.Roles, []string{"lead"}) || tr.By != TransitionByAny || tr.When != nil {
 		t.Errorf("detected.contained = %+v", tr)
 	}
-	if tr, _ := s.Transition("detected", "escalated"); tr.By != TransitionByTrigger || len(tr.Roles) != 0 {
+	if tr, _ := firstBranch(s, "detected", "escalated"); tr.By != TransitionByTrigger || len(tr.Roles) != 0 {
 		t.Errorf("detected.escalated = %+v", tr)
 	}
-	if tr, _ := s.Transition("contained", "assessed"); tr.When == nil {
+	if tr, _ := firstBranch(s, "contained", "assessed"); tr.When == nil {
 		t.Error("contained.assessed lost its guard")
 	}
-	if _, ok := s.Transition("notified", "text"); ok {
+	if _, ok := firstBranch(s, "notified", "text"); ok {
 		t.Error("a final state has a transition")
 	}
 	if !s.Drives("dismiss") || s.Drives("text") {
@@ -106,7 +106,7 @@ channel_types:
 		if !slices.Equal(got, []string{"zeta", "aux"}) {
 			t.Errorf("%s states = %v; want the file order zeta, aux", name, got)
 		}
-		if tr, ok := ct.Session().Transition("zeta", "text"); !ok || tr.To != "aux" {
+		if tr, ok := firstBranch(ct.Session(), "zeta", "text"); !ok || tr.To != "aux" {
 			t.Errorf("%s cannot move into aux: %+v", name, tr)
 		}
 	}
@@ -293,6 +293,250 @@ func TestCheckReload_SessionChangesAllowed(t *testing.T) {
 			}
 			if err := CheckReload(prev, next); err != nil {
 				t.Errorf("refused: %v", err)
+			}
+		})
+	}
+}
+
+// firstBranch is the first entry of on.<msgType> out of state, as the
+// mapping form compiles it.
+func firstBranch(s *Session, state, msgType string) (Transition, bool) {
+	b := s.Branches(state, msgType)
+	if len(b) == 0 {
+		return Transition{}, false
+	}
+	return b[0], true
+}
+
+// branchBase is a session whose review state moves on decide; ON is
+// replaced by the value of on.decide.
+const branchBase = `version: 1
+channel_types:
+  br:
+    attach_to: [datalek]
+    roles:
+      lead:   { from: entity.owner }
+      member: { from: attached }
+    message_types:
+      text:   { properties: { body: { type: string } }, post: [member] }
+      decide: { properties: { risk: { type: risk-level } }, post: [lead, member] }
+    session:
+      initial: review
+      states:
+        review:
+          on:
+            decide: ON
+        working:  { on: { text: { to: done } } }
+        planning: { on: { text: { to: review } } }
+        done: { final: true }
+`
+
+// branchKey is the key of review's on.decide in branchBase.
+const branchKey = "channel_types.br.session.states.review.on.decide"
+
+// branchSrc returns branchBase with on.decide set to on.
+func branchSrc(on string) string { return strings.Replace(branchBase, "ON", on, 1) }
+
+// TestSession_BranchList pins AC 1 of TKT-FPXTQJ: on.<type> takes a
+// mapping or a list of entries; a one-entry list compiles to the same
+// transition as the mapping, and the entries keep file order.
+func TestSession_BranchList(t *testing.T) {
+	type entry struct {
+		to, key string
+		roles   []string
+		guarded bool
+	}
+	cases := []struct {
+		name, on string
+		want     []entry
+	}{
+		{"mapping", "{ to: working, roles: [lead] }", []entry{{"working", branchKey, []string{"lead"}, false}}},
+		{"one-entry list", "[ { to: working, roles: [lead] } ]",
+			[]entry{{"working", branchKey + "[0]", []string{"lead"}, false}}},
+		{"two-entry list", `[ { to: working, when: "message.risk == 'high'" }, { to: planning } ]`, []entry{
+			{"working", branchKey + "[0]", nil, true}, {"planning", branchKey + "[1]", nil, false},
+		}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			c, err := Parse([]byte(branchSrc(tc.on)), testMeta(t), nil)
+			if err != nil {
+				t.Fatalf("Parse: %v", err)
+			}
+			ct, _ := c.ChannelType("br")
+			s := ct.Session()
+			var got []entry
+			for _, tr := range s.Branches("review", "decide") {
+				if tr.MessageType != "decide" || tr.By != TransitionByAny {
+					t.Errorf("entry %+v", tr)
+				}
+				got = append(got, entry{tr.To, tr.Key(), tr.Roles, tr.When != nil})
+			}
+			if fmt.Sprint(got) != fmt.Sprint(tc.want) {
+				t.Errorf("Branches = %v; want %v", got, tc.want)
+			}
+			st, _ := s.State("review")
+			if n := len(st.Transitions()); n != len(tc.want) {
+				t.Errorf("Transitions has %d rows; want one per entry (%d)", n, len(tc.want))
+			}
+			if tr, ok := s.TransitionTo("review", "decide", tc.want[len(tc.want)-1].to); !ok ||
+				tr.Key() != tc.want[len(tc.want)-1].key {
+
+				t.Errorf("TransitionTo = %+v, %v", tr, ok)
+			}
+			if _, ok := s.TransitionTo("review", "decide", "done"); ok {
+				t.Error("TransitionTo found a target no entry names")
+			}
+		})
+	}
+}
+
+// TestSession_BranchListWarnings pins AC 4 of TKT-FPXTQJ: a list in which
+// every entry has a when loads with a warning at on.<type>; a list ending
+// in an unguarded entry and the mapping form do not warn.
+func TestSession_BranchListWarnings(t *testing.T) {
+	cases := []struct {
+		name, on string
+		warn     bool
+	}{
+		{"no catch-all", `[ { to: working, when: "message.risk == 'high'" }, ` +
+			`{ to: planning, when: "message.risk == 'low'" } ]`, true},
+		{"unguarded last entry", `[ { to: working, when: "message.risk == 'high'" }, { to: planning } ]`, false},
+		{"guarded mapping", `{ to: working, when: "message.risk == 'high'" }`, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			c, err := Parse([]byte(branchSrc(tc.on)), testMeta(t), nil)
+			if err != nil {
+				t.Fatalf("Parse: %v", err)
+			}
+			w := c.Warnings()
+			if !tc.warn {
+				if len(w) != 0 {
+					t.Errorf("warnings = %v; want none", w)
+				}
+				return
+			}
+			if len(w) != 1 || w[0].Key != branchKey || !strings.Contains(w[0].Reason,
+				"every entry has a when; a post that matches none is stored and does not move the session") {
+
+				t.Errorf("warnings = %v; want one at %s", w, branchKey)
+			}
+		})
+	}
+}
+
+// TestSession_BranchListProblems pins AC 6 of TKT-FPXTQJ: the load refuses
+// a bad list with the key of the entry, and keeps the mapping form's keys.
+func TestSession_BranchListProblems(t *testing.T) {
+	const set = `outputs: [ { set: { properties: { status: x } } } ]`
+	nine := "[" + strings.Repeat("{ to: working, roles: [lead] }, ", 8) + "{ to: planning } ]"
+	cases := []struct {
+		name, on    string
+		edits       []replace
+		key, reason string
+	}{
+		{"empty list", "[]", nil, branchKey, "name at least one entry, or drop on.decide"},
+		{"nine entries", nine, nil, branchKey, "at most 8 entries per message type"},
+		{"covered by an entry without a rule", "[ { to: working }, { to: planning } ]", nil, branchKey + "[1]",
+			"earlier entries without when admit every poster this entry admits, so it can never fire"},
+		{"covered by the same role", "[ { to: working, roles: [lead] }, { to: planning, roles: [lead] } ]", nil,
+			branchKey + "[1]", "so it can never fire"},
+		{"covered by two earlier entries", "[ { to: working, roles: [lead, member] }, { to: planning, by: trigger }, " +
+			"{ to: done } ]", nil, branchKey + "[2]", "so it can never fire"},
+		{"duplicate target with outputs", "[ { to: working, roles: [lead], " + set + " }, { to: working } ]", nil,
+			branchKey + "[1].to", "entry 0 already leads to working and one of the two has outputs"},
+		{"duplicate target with outputs on the later entry", "[ { to: working, roles: [lead] }, { to: working, " +
+			set + " } ]", nil, branchKey + "[1].to", "entry 0 already leads to working"},
+		{"unknown target in an entry", "[ { to: working, roles: [lead] }, { to: gone } ]", nil,
+			branchKey + "[1].to", `unknown state "gone"`},
+		{"missing target in an entry", "[ { to: working, roles: [lead] }, { when: \"message.risk == 'high'\" } ]", nil,
+			branchKey + "[1].to", "name the state this transition moves to"},
+		{"entity guard in an entry", `[ { to: working, roles: [lead] }, { to: planning, when: "entity.status == 'x'" } ]`,
+			nil, branchKey + "[1].when", "transition guards cannot read the entity yet"},
+		{"unknown role in an entry", "[ { to: working, roles: [lead] }, { to: planning, roles: [boss] } ]", nil,
+			branchKey + "[1].roles[0]", `unknown role "boss"`},
+		{"role that may not post in an entry", "[ { to: working, roles: [lead] }, { to: planning, roles: [dpo] } ]",
+			[]replace{{"      member: { from: attached }\n",
+				"      member: { from: attached }\n      dpo:    { permission: privacy.officer }\n"}},
+			branchKey + "[1].roles[0]", `role "dpo" may not post decide`},
+		{"state not in the type's in", "[ { to: working, roles: [lead] }, { to: planning } ]",
+			[]replace{{"post: [lead, member] }", "post: [lead, member], in: [working] }"}},
+			branchKey, "decide may be posted only in working, so this transition could never fire"},
+		{"null mapping", "~", nil, branchKey + ".to", "name the state this transition moves to"},
+		{"broken guard counts as guarded", `[ { to: working, when: "message.nope == 1" }, { to: planning } ]`, nil,
+			branchKey + "[0].when", "does not compile"},
+	}
+	meta := testMeta(t)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			src := branchSrc(tc.on)
+			for _, e := range tc.edits {
+				src = strings.Replace(src, e.old, e.new, 1)
+			}
+			_, err := Parse([]byte(src), meta, nil)
+			assertOneProblem(t, err, tc.key, tc.reason)
+		})
+	}
+	// An unusable message type is reported once at on.<type>, and the
+	// entries' own problems show in the same load.
+	t.Run("unknown type reported at the key with entry problems", func(t *testing.T) {
+		src := strings.Replace(branchSrc("[ { to: working }, { to: gone } ]"), "decide: [", "nope: [", 1)
+		_, err := Parse([]byte(src), meta, nil)
+		nope := strings.TrimSuffix(branchKey, "decide") + "nope"
+		assertProblem(t, err, nope, `unknown message type "nope"`)
+		assertProblem(t, err, nope+"[1].to", `unknown state "gone"`)
+	})
+	for name, on := range map[string]string{
+		"duplicate target without outputs":  `[ { to: working, roles: [lead] }, { to: working, when: "message.urgent" } ]`,
+		"entry after a role-narrowed entry": "[ { to: working, roles: [lead] }, { to: planning } ]",
+		"entry after a guarded entry":       `[ { to: working, when: "message.risk == 'high'" }, { to: planning } ]`,
+		"other roles after a covering role": "[ { to: working, roles: [lead] }, { to: planning, roles: [member] } ]",
+	} {
+		t.Run(name, func(t *testing.T) {
+			src := branchSrc(on)
+			if name == "duplicate target without outputs" {
+				src = strings.Replace(src, "risk: { type: risk-level } }", "risk: { type: risk-level }, "+
+					"urgent: { type: boolean } }", 1)
+			}
+			if _, err := Parse([]byte(src), meta, nil); err != nil {
+				t.Errorf("Parse: %v", err)
+			}
+		})
+	}
+}
+
+// TestTransition_Admits pins the poster rule the decider and the load
+// checks share (TKT-FPXTQJ): roles exclude a trigger, by: trigger admits
+// only a trigger, and an entry with neither admits everyone. A nil holds
+// is a trigger's post.
+func TestTransition_Admits(t *testing.T) {
+	t.Parallel()
+	lead := func(r string) bool { return r == "lead" }
+	none := func(string) bool { return false }
+	cases := []struct {
+		name  string
+		t     Transition
+		holds func(string) bool
+		who   posterClass
+		want  bool
+	}{
+		{"roles, holder", Transition{Roles: []string{"lead"}}, lead, posterClass{role: "lead"}, true},
+		{"roles, non-holder", Transition{Roles: []string{"lead"}}, none, posterClass{role: "member"}, false},
+		{"roles, trigger", Transition{Roles: []string{"lead"}}, nil, triggerPoster, false},
+		{"by trigger, trigger", Transition{By: TransitionByTrigger}, nil, triggerPoster, true},
+		{"by trigger, person", Transition{By: TransitionByTrigger}, lead, posterClass{role: "lead"}, false},
+		{"no rule, person", Transition{}, none, posterClass{role: "member"}, true},
+		{"no rule, trigger", Transition{}, nil, triggerPoster, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if got := tc.t.Admits(tc.holds); got != tc.want {
+				t.Errorf("Admits = %v; want %v", got, tc.want)
+			}
+			if got := entryAdmits(tc.t, tc.who); got != tc.want {
+				t.Errorf("entryAdmits = %v; want %v", got, tc.want)
 			}
 		})
 	}

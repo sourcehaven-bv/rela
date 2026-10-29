@@ -240,7 +240,12 @@ export interface ChannelSessionTimer {
   outputs?: number
 }
 
-/** A message of message_type moves the session to to. */
+/**
+ * A message of message_type moves the session to to. A type may appear
+ * more than once, once per entry of its list, in the order the server
+ * tries the entries; the first whose poster rule and guard hold moves the
+ * session.
+ */
 export interface ChannelSessionTransition {
   message_type: string
   to: string

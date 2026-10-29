@@ -717,9 +717,47 @@ describe('sessions', () => {
           headWith(guarded, ['assessed', 'contained', 'dismiss'], ['contained', 'assessed'])
         )
       ).toEqual([
-        { messageType: 'assessed', toLabel: 'Risk assessed', guarded: true },
-        { messageType: 'contained', toLabel: 'Contained' },
+        { messageType: 'assessed', toLabels: ['Risk assessed'], guarded: true },
+        { messageType: 'contained', toLabels: ['Contained'] },
       ])
+    })
+
+    // TKT-FPXTQJ AC 11: a type with several entries is one view with
+    // every target once, in the server's order.
+    it('groups the entries of one type into one view with each target once', () => {
+      const branching = {
+        ...inDetected,
+        transitions: [
+          { message_type: 'contained', to: 'assessed', guarded: true },
+          { message_type: 'contained', to: 'contained' },
+          { message_type: 'contained', to: 'assessed' },
+          { message_type: 'dismiss', to: 'dismissed' },
+        ],
+      }
+      expect(composerTransitions(breach, headWith(branching, ['contained', 'dismiss']))).toEqual([
+        { messageType: 'contained', toLabels: ['Risk assessed', 'Contained'], mayMove: true },
+        { messageType: 'dismiss', toLabels: ['Dismissed'] },
+      ])
+    })
+
+    it('marks one target guarded only when every entry is, else may move', () => {
+      const split = (guards: boolean[]) => ({
+        ...inDetected,
+        transitions: guards.map((g) => ({
+          message_type: 'contained',
+          to: 'contained',
+          guarded: g,
+        })),
+      })
+      const view = (guards: boolean[]) =>
+        composerTransitions(breach, headWith(split(guards), ['contained']))
+      expect(view([true, true])).toEqual([
+        { messageType: 'contained', toLabels: ['Contained'], guarded: true },
+      ])
+      expect(view([false, true])).toEqual([
+        { messageType: 'contained', toLabels: ['Contained'], mayMove: true },
+      ])
+      expect(view([false, false])).toEqual([{ messageType: 'contained', toLabels: ['Contained'] }])
     })
 
     it('drops types the session already left before the head refetch', () => {

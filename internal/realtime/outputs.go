@@ -261,21 +261,20 @@ func outputsPending(title string) *DenialError {
 	return deny(http.StatusConflict, TypeOutputsPending, title)
 }
 
-// outputKey is the config key of output i of the transition from on mt.
-func outputKey(ct, from, mt string, i int) string {
-	return fmt.Sprintf("channel_types.%s.session.states.%s.on.%s.outputs[%d]", ct, from, mt, i)
-}
-
-// outputGate is the decider's backstop: once the pre-check ran, a
-// transition with outputs moves only out of the state whose outputs were
-// checked.
+// outputGate is the decider's backstop: once the pre-check ran, an entry
+// with outputs moves the session only when it is the entry whose outputs
+// were checked, named by (from, to); see [realtimecfg.Session.TransitionTo].
+// The decider may still choose another entry under the store's lock than
+// the pre-check did (a reminder counter in a guard can change in between);
+// a move along an entry without outputs writes nothing, so it needs no
+// check and the gate lets it through.
 type outputGate struct {
-	active bool
-	from   string
+	active   bool
+	from, to string
 }
 
 func (g *outputGate) admits(t realtimecfg.Transition, from string) bool {
-	return g == nil || !g.active || len(t.Outputs()) == 0 || g.from == from
+	return g == nil || !g.active || len(t.Outputs()) == 0 || (g.from == from && g.to == t.To)
 }
 
 // outputPlan is what the pre-check of a post found: the poster's identity
@@ -306,7 +305,7 @@ func (s *Service) precheckOutputs(c *call, mt *realtimecfg.MessageType, sp sessi
 	if !moves {
 		return plan, nil
 	}
-	t, _ := c.ct.Session().Transition(move.From, mt.Name)
+	t, _ := c.ct.Session().TransitionTo(move.From, mt.Name, move.To)
 	outs := t.Outputs()
 	if len(outs) == 0 {
 		return plan, nil
@@ -325,14 +324,14 @@ func (s *Service) precheckOutputs(c *call, mt *realtimecfg.MessageType, sp sessi
 			if d, ok := errors.AsType[*DenialError](err); ok {
 				return nil, &DenialError{
 					Status: http.StatusForbidden, Type: TypeSessionOutputDenied,
-					Title: "the poster may not write " + outputKey(c.ct.Name, move.From, mt.Name, i) + ": " + d.Title,
+					Title: fmt.Sprintf("the poster may not write %s.outputs[%d]: %s", t.Key(), i, d.Title),
 					Rule:  d.Rule,
 				}
 			}
 			return nil, fmt.Errorf("realtime: check output: %w", err)
 		}
 	}
-	sp.gate.from = move.From
+	sp.gate.from, sp.gate.to = move.From, move.To
 	return plan, nil
 }
 
@@ -349,7 +348,7 @@ func personMark(
 	sess *realtimecfg.Session, mt string, writer channels.Author, roles []string, now time.Time, plan *outputPlan,
 ) func(channels.SessionMove) *channels.Action {
 	return func(move channels.SessionMove) *channels.Action {
-		t, _ := sess.Transition(move.From, mt)
+		t, _ := sess.TransitionTo(move.From, mt, move.To)
 		closes := closesOn(sess, move.To)
 		// Assigned, not set: a backend may run the decider more than once.
 		plan.marked = len(t.Outputs()) > 0 || closes
@@ -376,7 +375,7 @@ func triggerMark(
 ) func(channels.SessionMove) *channels.Action {
 	sess := ct.Session()
 	return func(move channels.SessionMove) *channels.Action {
-		t, _ := sess.Transition(move.From, mt)
+		t, _ := sess.TransitionTo(move.From, mt, move.To)
 		a := jobMark(ct, len(t.Outputs()) > 0, move.To, now)
 		if marked != nil {
 			// Assigned, not set: a backend may run the decider more than once.
@@ -500,10 +499,11 @@ type markPlan struct {
 	attachTo []string
 }
 
-// resolveMark finds the transition or timer of mark's move on key in snap:
-// by (mark.From, cause.Type) or (mark.From, mark.Timer), with the same
-// target state. A trigger's job mark whose transition no longer is one a
-// trigger can fire is removed: its outputs were compiled for a poster. A
+// resolveMark finds the transition entry or timer of mark's move on key in
+// snap: by (mark.From, cause.Type, mark.To) and the mark's job flag (see
+// [markEntry]), or by (mark.From, mark.Timer) with the same target state.
+// A trigger's job mark whose transition no longer is one a trigger can
+// fire is removed: its outputs were compiled for a poster. A
 // mark that is not a job mark but names one of rela's own identities as
 // its writer (a close-only trigger mark from before job marks) runs no
 // outputs, so nothing writes as rela itself; its close still runs.
@@ -519,8 +519,8 @@ func resolveMark(snap Snapshot, key channels.Key, cause channels.Message, mark *
 	sess := ct.Session()
 	p := markPlan{runAs: sess.RunAs(), attachTo: ct.AttachTo}
 	if mark.Timer == "" {
-		t, ok := sess.Transition(mark.From, cause.Type)
-		if !ok || t.To != mark.To || (mark.Job && !t.Job()) {
+		t, ok := markEntry(sess.Branches(mark.From, cause.Type), mark)
+		if !ok || (mark.Job && !t.Job()) {
 			return removed
 		}
 		if !mark.Job && principal.IsRelaIdentity(mark.Writer.User) {
@@ -537,6 +537,32 @@ func resolveMark(snap Snapshot, key channels.Key, cause channels.Message, mark *
 		}
 	}
 	return removed
+}
+
+// markEntry picks the entry of a list that mark's move went along: the
+// first that leads to mark.To and, for a job mark, that a trigger can
+// fire. Entries without outputs may share a target, such as one a lead
+// fires and one a trigger fires into a state that closes the channel; a
+// trigger's close-only mark then names the trigger's entry, not the
+// lead's. An entry with outputs is the only one with its target, so for
+// it the target alone decides. ok is false when no entry leads to
+// mark.To; a job mark with only person entries to mark.To returns the
+// first, which resolveMark then removes.
+func markEntry(list []realtimecfg.Transition, mark *channels.OutputMark) (realtimecfg.Transition, bool) {
+	var first realtimecfg.Transition
+	found := false
+	for _, t := range list {
+		if t.To != mark.To {
+			continue
+		}
+		if !mark.Job || t.Job() {
+			return t, true
+		}
+		if !found {
+			first, found = t, true
+		}
+	}
+	return first, found
 }
 
 // supersedePage is the page size of the supersede read.

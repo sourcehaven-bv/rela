@@ -2,6 +2,7 @@ package realtime
 
 import (
 	"context"
+	"log/slog"
 	"net/http"
 	"strings"
 	"sync"
@@ -12,6 +13,7 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/channels"
 	"github.com/Sourcehaven-BV/rela/internal/realtimecfg"
+	"github.com/Sourcehaven-BV/rela/internal/testutil/logtest"
 )
 
 // sessionStates is the session of the incident type: the breach-response
@@ -722,4 +724,177 @@ func TestPost_MessageInEphemeral(t *testing.T) {
 	h.pocDriveTo(t, "working")
 	_, err := h.svc.Post(as(pocOwner()), pocRun, PostInput{Type: "nudge"})
 	requireDenial(t, err, http.StatusConflict, TypeSessionWrongState)
+}
+
+// branchRealtime declares review, a session type whose message types lead
+// to several states each (TKT-FPXTQJ). alice owns TKT-1, so she holds
+// lead; plan-review waits for her.
+const branchRealtime = `
+version: 1
+channel_types:
+  review:
+    attach_to: [ticket]
+    read: { from: attached }
+    roles:
+      lead:   { from: entity.owner }
+      member: { from: attached }
+    message_types:
+      text:   { properties: { body: { type: markdown, required: true } }, post: [member] }
+      decide: { properties: { decision: { type: plan-decision } }, post: [lead, member] }
+      flag:   { properties: { note: { type: string } }, post: [lead, member] }
+      ping:   { properties: { note: { type: string } }, post: [lead, member] }
+      probe:  { properties: { pattern: { type: string } }, post: [member] }
+    session:
+      initial: plan-review
+      states:
+        plan-review:
+          waiting_for: [lead]
+          on:
+            decide:
+              - { to: working, when: "message.decision == 'approve'" }
+              - { to: planning, when: "message.decision == 'revise'" }
+              - { to: done, when: "message.decision == 'approve'" }
+            flag:
+              - { to: escalated, roles: [lead] }
+              - { to: noted }
+            ping:
+              - { to: escalated, by: trigger }
+              - { to: noted }
+            probe:
+              - { to: working, when: "regex('a', message.pattern)" }
+              - { to: plan-review }
+        working:   { final: true }
+        planning:  { final: true }
+        escalated: { final: true }
+        noted:     { final: true }
+        done:      { final: true }
+`
+
+var reviewCh = RawAddress{EntityType: "ticket", Anchor: "TKT-1", Type: "review"}
+
+func reviewKey() channels.Key {
+	return channels.Key{Anchor: channels.Anchor{ID: "TKT-1"}, Type: "review"}
+}
+
+// reviewSession reads the review channel's session as alice.
+func (h *harness) reviewSession(t *testing.T) *SessionView {
+	t.Helper()
+	s := h.readAll(t, user("alice"), reviewCh).Channel.Session
+	require.NotNil(t, s)
+	return s
+}
+
+// postAsTrigger posts typ into the review channel as a trigger would.
+func (h *harness) postAsTrigger(t *testing.T, typ string, p map[string]any) {
+	t.Helper()
+	snap := h.cfg.Load()
+	ct, ok := snap.Config.ChannelType("review")
+	require.True(t, ok)
+	w := &systemWriter{store: h.store, local: h.local, cfg: h.cfg, dueWake: h.wake}
+	_, err := w.post(context.Background(), snap, h.clock.Now(), reviewKey(), ct, ct.MessageTypes[typ], p,
+		"trigger:test", true)
+	require.NoError(t, err)
+}
+
+// TestSessionBranches_FirstWins pins TKT-FPXTQJ AC 2: entries are tried in
+// file order and the first that applies moves the session; of two that
+// both hold, the first wins.
+func TestSessionBranches_FirstWins(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct{ decision, to string }{{"revise", "planning"}, {"approve", "working"}} {
+		t.Run(tc.decision, func(t *testing.T) {
+			t.Parallel()
+			h := newHarness(t, withYAML(branchRealtime))
+			res := h.postTo(t, user("bob"), reviewCh, "decide", props("decision", tc.decision))
+			require.Equal(t, tc.to, res.Session.State)
+			require.Equal(t, int64(1), res.Session.Generation)
+			msgs := h.readAll(t, user("bob"), reviewCh).Messages
+			require.Len(t, msgs, 2)
+			require.True(t, msgs[1].IsSessionNotice())
+			require.Equal(t, "plan-review", msgs[1].Props["from"])
+			require.Equal(t, tc.to, msgs[1].Props["to"])
+		})
+	}
+}
+
+// TestSessionBranches_PosterRulePerEntry pins TKT-FPXTQJ AC 3: each entry
+// has its own poster rule, and a by: trigger entry is skipped for a
+// person's post.
+func TestSessionBranches_PosterRulePerEntry(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name, typ, to string
+		post          func(t *testing.T, h *harness, typ string)
+	}{
+		{"lead takes the roles entry", "flag", "escalated", func(t *testing.T, h *harness, typ string) {
+			t.Helper()
+			h.postTo(t, user("alice"), reviewCh, typ, nil)
+		}},
+		{"member falls through", "flag", "noted", func(t *testing.T, h *harness, typ string) {
+			t.Helper()
+			h.postTo(t, user("bob"), reviewCh, typ, nil)
+		}},
+		{"trigger skips the roles entry", "flag", "noted", func(t *testing.T, h *harness, typ string) {
+			t.Helper()
+			h.postAsTrigger(t, typ, nil)
+		}},
+		{"person skips the by: trigger entry", "ping", "noted", func(t *testing.T, h *harness, typ string) {
+			t.Helper()
+			h.postTo(t, user("alice"), reviewCh, typ, nil)
+		}},
+		{"trigger takes the by: trigger entry", "ping", "escalated", func(t *testing.T, h *harness, typ string) {
+			t.Helper()
+			h.postAsTrigger(t, typ, nil)
+		}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			h := newHarness(t, withYAML(branchRealtime))
+			tc.post(t, h, tc.typ)
+			s := h.reviewSession(t)
+			require.Equal(t, tc.to, s.State)
+			require.Equal(t, int64(1), s.Generation)
+		})
+	}
+}
+
+// TestSessionBranches_NoMatchStoresWithoutMove pins TKT-FPXTQJ AC 4: a
+// post that matches no entry is stored and the session stays, with no
+// notice.
+func TestSessionBranches_NoMatchStoresWithoutMove(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t, withYAML(branchRealtime))
+	res := h.postTo(t, user("bob"), reviewCh, "decide", nil)
+	require.Equal(t, "plan-review", res.Session.State)
+	require.Equal(t, int64(0), res.Session.Generation)
+	msgs := h.readAll(t, user("bob"), reviewCh).Messages
+	require.Len(t, msgs, 1, "no notice")
+	require.Equal(t, "decide", msgs[0].Type)
+}
+
+// TestSessionBranches_GuardErrorStops pins TKT-FPXTQJ AC 5: a guard that
+// fails to evaluate stops the decision, so the message is stored and the
+// session does not move, even though a later entry would apply. The
+// failure is logged once per entry with its key. Not parallel: it captures
+// the default logger.
+func TestSessionBranches_GuardErrorStops(t *testing.T) {
+	h := newHarness(t, withYAML(branchRealtime))
+	logs := logtest.Capture(t, slog.LevelWarn)
+	for range 2 {
+		res := h.postTo(t, user("bob"), reviewCh, "probe", props("pattern", "("))
+		require.Equal(t, "plan-review", res.Session.State)
+		require.Equal(t, int64(0), res.Session.Generation, "the catch-all after the failed guard is not tried")
+	}
+	require.Len(t, h.readAll(t, user("bob"), reviewCh).Messages, 2, "both posts are stored, with no notice")
+	out := logs()
+	const key = "entry=channel_types.review.session.states.plan-review.on.probe[0]"
+	require.Equal(t, 1, strings.Count(out, key), out)
+	require.Contains(t, out, "the session did not move")
+	require.Contains(t, out, "to=working")
+
+	// A pattern the guard can evaluate still takes the entries in order.
+	res := h.postTo(t, user("bob"), reviewCh, "probe", props("pattern", "b"))
+	require.Equal(t, "plan-review", res.Session.State)
+	require.Equal(t, int64(1), res.Session.Generation, "the catch-all re-enters")
 }

@@ -696,3 +696,29 @@ func TestAffordances_MessageInNoSession(t *testing.T) {
 	require.Equal(t, []string{"text"}, a.Post)
 	require.Equal(t, []string{}, a.Transitions)
 }
+
+// TestSessionView_BranchEdges pins TKT-FPXTQJ AC 10: session.transitions
+// lists one row per entry, sorted by message type and then in file order,
+// while _actions.transitions and read_session list each type once.
+func TestSessionView_BranchEdges(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t, withYAML(branchRealtime))
+	s := h.reviewSession(t)
+	var decide []SessionTransitionView
+	for _, tr := range s.Transitions {
+		if tr.MessageType == "decide" {
+			decide = append(decide, tr)
+		}
+	}
+	require.Equal(t, []SessionTransitionView{
+		{MessageType: "decide", To: "working", Guarded: true},
+		{MessageType: "decide", To: "planning", Guarded: true},
+		{MessageType: "decide", To: "done", Guarded: true},
+	}, decide)
+	require.Equal(t, SessionTransitionView{MessageType: "ping", To: "escalated", By: "trigger"}, s.Transitions[5])
+
+	require.Equal(t, []string{"decide", "flag", "ping", "probe"}, h.headActions(t, user("alice"), reviewCh).Transitions)
+	read, err := h.svc.Session(as(user("alice")), reviewCh)
+	require.NoError(t, err)
+	require.Equal(t, []string{"decide", "flag", "ping", "probe"}, read.Transitions)
+}

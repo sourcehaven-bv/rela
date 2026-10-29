@@ -30,7 +30,7 @@ func TestParse_SessionOutputs(t *testing.T) {
 			t.Errorf("%s timers = %+v", state, timers)
 		}
 	}
-	tr, _ := s.Transition("detected", "contained")
+	tr, _ := firstBranch(s, "detected", "contained")
 	outs := tr.Outputs()
 	if len(outs) != 1 {
 		t.Fatalf("detected.contained outputs = %d; want 1", len(outs))
@@ -51,7 +51,7 @@ func TestParse_SessionOutputs(t *testing.T) {
 		t.Errorf("at = %v", v)
 	}
 
-	set, _ := s.Transition("assessed", "notified")
+	set, _ := firstBranch(s, "assessed", "notified")
 	outs = set.Outputs()
 	if len(outs) != 1 || outs[0].Kind != OutputSet || outs[0].Type != "" || outs[0].Face != "" {
 		t.Fatalf("assessed.notified outputs = %+v", outs)
@@ -63,7 +63,7 @@ func TestParse_SessionOutputs(t *testing.T) {
 	if v, ok := props["reference"].Eval(OutputVars{Message: map[string]any{"reference": "AP-1"}}); !ok || v != "AP-1" {
 		t.Errorf("reference = %v, %v", v, ok)
 	}
-	if none, _ := s.Transition("detected", "dismiss"); none.Outputs() != nil {
+	if none, _ := firstBranch(s, "detected", "dismiss"); none.Outputs() != nil {
 		t.Errorf("dismiss has outputs: %+v", none.Outputs())
 	}
 
@@ -89,7 +89,7 @@ channel_types:
 		t.Fatalf("mixed attach_to: %v", err)
 	}
 	ct, _ = c.ChannelType("mix")
-	if tr, _ := ct.Session().Transition("open", "text"); tr.Outputs()[0].Face != "draft" {
+	if tr, _ := firstBranch(ct.Session(), "open", "text"); tr.Outputs()[0].Face != "draft" {
 		t.Errorf("mixed set face = %q", tr.Outputs()[0].Face)
 	}
 }

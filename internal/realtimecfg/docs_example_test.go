@@ -105,3 +105,29 @@ func TestDocsExample_Realtime(t *testing.T) {
 		}
 	})
 }
+
+// TestDocsExample_Branching pins TKT-FPXTQJ AC 12: the guide's example of
+// a branching message type loads with no problems and no warnings, and its
+// decide type has two entries in file order.
+func TestDocsExample_Branching(t *testing.T) {
+	data, err := os.ReadFile(realtimeGuide)
+	if err != nil {
+		t.Fatal(err)
+	}
+	example := "version: 1\n" + yamlBlock(t, string(data), "## Sessions", "channel_types:\n  plan-review:")
+	c, err := Parse([]byte(example), testMeta(t), testPolicy(t))
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if w := c.Warnings(); len(w) != 0 {
+		t.Errorf("warnings = %v", w)
+	}
+	ct, _ := c.ChannelType("plan-review")
+	var tos []string
+	for _, tr := range ct.Session().Branches("review", "decide") {
+		tos = append(tos, tr.To)
+	}
+	if strings.Join(tos, ",") != "approved,drafting" {
+		t.Errorf("decide entries lead to %v; want approved, drafting", tos)
+	}
+}

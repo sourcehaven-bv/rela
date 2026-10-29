@@ -318,7 +318,7 @@ async function onPost(event: ChannelPostEvent) {
   clearErrors()
   submitting.value = true
   try {
-    await postTyped(event.type, converted.props, event.replyTo)
+    await decisionsApi.sendComposer(event.type, converted.props, event.replyTo)
     composer.value?.reset(event)
     replyTo.value = null
   } catch (err) {
@@ -384,7 +384,7 @@ function onCancelEdit() {
 
 // --- Session decisions ---------------------------------------------------------
 
-const { decisions, decisionSeq, deciding, onDecide, resetDecisions } = useSessionDecisions({
+const decisionsApi = useSessionDecisions({
   channelType: () => props.channelType,
   channelKey,
   ch,
@@ -407,6 +407,7 @@ const { decisions, decisionSeq, deciding, onDecide, resetDecisions } = useSessio
     focusHeader: () => sessionHeader.value?.focus(),
   },
 })
+const { decisions, decisionSeq, deciding, onDecide, resetDecisions } = decisionsApi
 
 // --- Message and channel operations -----------------------------------------
 
@@ -589,6 +590,7 @@ const pickerTypes = picker.types
           @cancel-reply="replyTo = null"
           @cancel-edit="onCancelEdit"
           @typing="typing.onInput"
+          @select="decisionsApi.onComposerSelect"
         />
       </template>
     </RlChannel>

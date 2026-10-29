@@ -1033,3 +1033,17 @@ func TestChannelsHandler_ExpectGeneration(t *testing.T) {
 	require.Equal(t, http.StatusBadRequest, resp.StatusCode, "%s", b)
 	require.Equal(t, realtime.TypeInvalid, problemType(t, b))
 }
+
+// TestWireChannelSession_BranchEdges pins TKT-FPXTQJ AC 10: every entry of
+// a branching message type reaches the wire as its own transition row, in
+// the order the session view lists them.
+func TestWireChannelSession_BranchEdges(t *testing.T) {
+	got := wireChannelSession(&realtime.SessionView{State: "review", Transitions: []realtime.SessionTransitionView{
+		{MessageType: "decide", To: "working", Guarded: true, Outputs: 1},
+		{MessageType: "decide", To: "planning", Guarded: true},
+	}})
+	require.Equal(t, []v1.ChannelSessionTransition{
+		{MessageType: "decide", To: "working", Guarded: true, Outputs: 1},
+		{MessageType: "decide", To: "planning", Guarded: true},
+	}, got.Transitions)
+}

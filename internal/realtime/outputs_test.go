@@ -293,7 +293,7 @@ func TestOutputs_PreCheckRefuses(t *testing.T) {
 			before := h.store.appends.Load()
 			_, err := h.svc.Post(as(outLead()), outCh, PostInput{Type: typ, Props: p})
 			d := requireDenial(t, err, http.StatusForbidden, TypeSessionOutputDenied)
-			require.Contains(t, d.Title, key)
+			require.Equal(t, "the poster may not write "+key+": no", d.Title, "the mapping form's title")
 			require.Equal(t, "rule-1", d.Rule)
 			require.Equal(t, before, h.store.appends.Load(), "nothing is stored")
 		})
@@ -568,4 +568,70 @@ func TestOutputs_PostBudget(t *testing.T) {
 func TestOutputsActionName(t *testing.T) {
 	t.Parallel()
 	require.Equal(t, channels.OutputsAction, realtimecfg.OutputsActionName)
+}
+
+// branchOutputsRealtime declares review, whose decide entries write
+// different statuses (TKT-FPXTQJ), and whose go entries are switched by
+// the nudge reminder's count. goB is go's second entry.
+func branchOutputsRealtime(goB string) string {
+	return `
+version: 1
+channel_types:
+  review:
+    attach_to: [ticket]
+    read: { from: attached }
+    roles:
+      member: { from: attached }
+    message_types:
+      text:   { properties: { body: { type: string } }, post: [member] }
+      decide: { properties: { decision: { type: plan-decision, required: true } }, post: [member] }
+      go:     { properties: { note: { type: string } }, post: [member] }
+    session:
+      initial: plan-review
+      states:
+        plan-review:
+          on:
+            decide:
+              - to: working
+                when: "message.decision == 'approve'"
+                outputs: [ { set: { properties: { status: in-progress } } } ]
+              - to: planning
+                outputs: [ { set: { properties: { status: planning } } } ]
+            go:
+              - to: working
+                when: "session.reminders['nudge'] < 2"
+                outputs: [ { set: { properties: { status: nudged } } } ]
+              - ` + goB + `
+        working:  { final: true }
+        planning: { final: true }
+      reminders:
+        nudge: { in: [plan-review], every: 1h, post: { type: text, props: { body: nudge } } }
+`
+}
+
+// TestOutputs_BranchUsesFiredEntry pins TKT-FPXTQJ AC 8: the pre-check and
+// the write use the outputs of the entry that fired, and a denial names
+// that entry's output.
+func TestOutputs_BranchUsesFiredEntry(t *testing.T) {
+	t.Parallel()
+	review := RawAddress{EntityType: "ticket", Anchor: "TKT-1", Type: "review"}
+	yaml := branchOutputsRealtime("{ to: planning }")
+
+	w := &fakeOutputs{}
+	h := newHarness(t, withYAML(yaml), withOutputs(w))
+	res := h.postTo(t, user("bob"), review, "decide", props("decision", "revise"))
+	require.Equal(t, "planning", res.Session.State)
+	require.Len(t, w.checks, 1)
+	require.Equal(t, map[string]any{"status": "planning"}, w.checks[0].Fields, "only entry 1's outputs are checked")
+	reqs := w.requests()
+	require.Len(t, reqs, 1)
+	require.Equal(t, map[string]any{"status": "planning"}, reqs[0].Props)
+
+	denied := &DenialError{Status: http.StatusForbidden, Type: "denied", Title: "no", Rule: "rule-1"}
+	w = &fakeOutputs{deny: map[string]*DenialError{"set": denied}}
+	h = newHarness(t, withYAML(yaml), withOutputs(w))
+	_, err := h.svc.Post(as(user("bob")), review, PostInput{Type: "decide", Props: props("decision", "revise")})
+	d := requireDenial(t, err, http.StatusForbidden, TypeSessionOutputDenied)
+	require.Equal(t, "the poster may not write channel_types.review.session.states.plan-review.on.decide[1]."+
+		"outputs[0]: no", d.Title, "a list entry's title names the entry")
 }

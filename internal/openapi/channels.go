@@ -797,7 +797,7 @@ func channelSessionSchema() *Schema {
 						"Absent for a creator role (see created_by) or a property you may not see."},
 			}, []string{"role"})),
 			"waiting_on_me": b(),
-			"transitions": ArraySchema(ObjectSchema(map[string]*Schema{
+			"transitions": {Type: "array", Items: ObjectSchema(map[string]*Schema{
 				"message_type": str(), "to": str(),
 				"by": {Type: "string", Enum: []string{"trigger"},
 					Description: "Set when only a trigger's message fires the transition"},
@@ -806,7 +806,9 @@ func channelSessionSchema() *Schema {
 						"only if the guard holds for it"},
 				"outputs": {Type: "integer",
 					Description: "The number of graph writes the transition makes; absent when it makes none"},
-			}, []string{"message_type", "to"})),
+			}, []string{"message_type", "to"}), Description: "The on: entries of the current state, sorted by " +
+				"message type. A message type may lead to several states; its entries are listed in the order " +
+				"rela tries them, and the first whose poster rule and guard hold moves the session."},
 			"due_at":    dateTimeSchema(),
 			"timers":    ArraySchema(Ref(channelTimerRef)),
 			"reminders": ArraySchema(Ref(channelReminderRef)),

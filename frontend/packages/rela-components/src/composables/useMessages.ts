@@ -579,6 +579,12 @@ export interface Messages {
   /** The composer's note while a message type that moves the session is selected. */
   channelSessionHint: (args: { to: string; guarded?: boolean }) => string
   /**
+   * The composer's note while a message type that may move the session to
+   * one of several states is selected: `Sending this may move the session
+   * to Working or Planning.`
+   */
+  channelSessionBranchHint: (args: { tos: string[] }) => string
+  /**
    * Screen-reader text read after the label of a composer message type
    * that moves the session: ` (moves the session)`.
    */
@@ -774,6 +780,7 @@ export const DEFAULT_MESSAGES: Messages = {
     `${state} is no longer a state of this session. Messages do not move it.`,
   channelSessionHint: ({ to, guarded }) =>
     `Sending this moves the session to ${to}${guarded ? ' if its condition holds' : ''}.`,
+  channelSessionBranchHint: ({ tos }) => `Sending this may move the session to ${orList(tos)}.`,
   channelSessionOptionHint: () => ' (moves the session)',
   channelDecisionHint: ({ to, form }) =>
     form ? ' (opens the form)' : to ? ` (moves the session to ${to})` : ' (moves the session)',
