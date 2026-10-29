@@ -69,7 +69,7 @@ channel_types:
         properties: { body: { type: string } }
         post: [member]
   incident:
-    attach_to: [item]
+    attach_to: [item, doc]
     roles:
       member: { from: attached }
     message_types:
@@ -90,7 +90,7 @@ channel_types:
 `
 
 // channelCLIACL lets alice read and write items, and the job identity
-// system:ci read docs too. A doc is a hidden anchor for alice.
+// system:ci read docs too and hold chat.lead. A doc is a hidden anchor for alice.
 const channelCLIACL = `roles:
   editor:
     read: [item]
@@ -100,6 +100,7 @@ const channelCLIACL = `roles:
     read: [item, doc]
     create: [item]
     update: [item]
+    permissions: [chat.lead]
 assignments:
   alice: editor
   "system:ci": ci
@@ -115,11 +116,17 @@ type channelProject struct {
 
 func newChannelProject(t *testing.T) channelProject {
 	t.Helper()
+	return newChannelProjectWith(t, channelCLIRealtime)
+}
+
+// newChannelProjectWith is newChannelProject with its own realtime.yaml.
+func newChannelProjectWith(t *testing.T, realtimeYAML string) channelProject {
+	t.Helper()
 	setBackendEnv(t)
 	root := t.TempDir()
 	require.NoError(t, os.MkdirAll(filepath.Join(root, ".rela"), 0o755))
 	writeProjectFile(t, root, "metamodel.yaml", channelCLIMetamodel)
-	writeProjectFile(t, root, "realtime.yaml", channelCLIRealtime)
+	writeProjectFile(t, root, "realtime.yaml", realtimeYAML)
 	// Seed before acl.yaml exists, so the seed needs no grant.
 	seed := openLeaseServices(t, root)
 	var ids []string
@@ -290,6 +297,9 @@ func TestChannelCLI_HiddenAnchorTextEqualsShow(t *testing.T) {
 			{"channel", "create", id, "threads"},
 			{"channel", "watch", id, "room", "--timeout", "1s"},
 			{"channel", "mark-read", id, "room"},
+			{"channel", "action", id, "room", "1", "x"},
+			{"channel", "action", id, "room", "1", "--release"},
+			{"channel", "session", id, "incident"},
 		} {
 			_, err := runChannel(t, p.svc, "alice", "", args...)
 			require.Error(t, err, args)

@@ -289,12 +289,29 @@ func writeMessageLines(b *strings.Builder, m realtime.MessageView, anchor string
 		writeProp(b, name, m.Props[name])
 	}
 	if m.Action != nil {
-		fmt.Fprintf(b, "  action %s: %s", printable(m.Action.Name), printable(string(m.Action.Status)))
-		if m.Action.Promoted != nil {
-			fmt.Fprintf(b, " -> %s", refText(m.Action.Promoted))
+		fmt.Fprintf(b, "  %s\n", actionText(m.Action))
+	}
+	if len(m.Actions) > 0 {
+		names := make([]string, len(m.Actions))
+		for i, a := range m.Actions {
+			names[i] = printable(a)
+		}
+		fmt.Fprintf(b, "  may: %s", strings.Join(names, ", "))
+		if !m.ReleaseAfter.IsZero() {
+			fmt.Fprintf(b, " (release from %s)", m.ReleaseAfter.UTC().Format(time.RFC3339))
 		}
 		b.WriteString("\n")
 	}
+}
+
+// actionText is a message's action: "action <name>: <status>", and
+// " -> <ref>" when it promoted the message to an entity.
+func actionText(a *realtime.ActionView) string {
+	text := fmt.Sprintf("action %s: %s", printable(a.Name), printable(string(a.Status)))
+	if a.Promoted != nil {
+		text += " -> " + refText(a.Promoted)
+	}
+	return text
 }
 
 // outputsText renders a notice's outputs mark on one line, such as
