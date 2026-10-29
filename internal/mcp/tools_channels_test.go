@@ -428,6 +428,22 @@ func TestChannelToolDescriptions_Notice(t *testing.T) {
 	}
 }
 
+// TestChannelToolDescriptions_Busy pins AC 11 of TKT-21G6JS: read_session
+// and post_message tell an agent that a working state shows the anchor as
+// busy, and how to get there.
+func TestChannelToolDescriptions_Busy(t *testing.T) {
+	t.Parallel()
+	tools := toolNames(t, newChannelFixture(t).client(t, "alice"))
+	for name, want := range map[string]string{
+		toolReadSession: "in a state with status working, a web app board that asks for its type shows the anchor as busy",
+		"post_message":  "post the message that moves the session into a state with status working",
+	} {
+		if !strings.Contains(tools[name].Description, want) {
+			t.Errorf("%s description lacks %q", name, want)
+		}
+	}
+}
+
 // TestChannelFailed_Internal pins that an unexpected error is answered
 // generically, without its text.
 func TestChannelFailed_Internal(t *testing.T) {

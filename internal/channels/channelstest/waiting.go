@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -19,6 +20,7 @@ var waitingTests = []conformanceTest{
 	{"ListWaiting", testListWaiting},
 	{"ListWaitingCreator", testListWaitingCreator},
 	{"ListWaitingChunks", testListWaitingChunks},
+	{"ListWaitingNames", testListWaitingNames},
 	{"ListWaitingInvalid", testListWaitingInvalid},
 }
 
@@ -177,6 +179,38 @@ func testListWaitingChunks(t *testing.T, h Harness) {
 	require.Equal(t, want, listWaitingKeys(t, s, both))
 }
 
+// testListWaitingNames pins [channels.WaitingQuery.Names] on both
+// branches: an anchor holds one unnamed and two named topics, and the
+// filter decides which are listed and which count toward the ceiling
+// (TKT-21G6JS).
+func testListWaitingNames(t *testing.T, h Harness) {
+	t.Helper()
+	ctx := context.Background()
+	s := h.Store
+	unnamed := key("N-1", "topic")
+	mustAppend(t, s, unnamed, text("unnamed"))
+	named := make([]channels.Key, 0, 2)
+	for range 2 {
+		c, err := s.CreateMany(ctx, channels.Anchor{ID: "N-1"}, channels.NewChannel{Type: "topic", By: Alice, At: T0})
+		require.NoError(t, err)
+		named = append(named, c.Key)
+	}
+	slices.SortFunc(named, func(a, b channels.Key) int { return strings.Compare(a.Name, b.Name) })
+	for _, branch := range []channels.WaitingQuery{
+		{States: waitStates(), Anchors: []channels.Anchor{{ID: "N-1"}}},
+		{States: waitStates(), CreatorTypes: []string{"topic"}, CreatedBy: Alice.User},
+	} {
+		q := branch
+		require.Len(t, listWaitingKeys(t, s, q), 3)
+		q.Names = channels.UnnamedOnly
+		q.MaxRows = 1
+		require.Equal(t, []channels.Key{unnamed}, listWaitingKeys(t, s, q), "the named topics do not count")
+		q.Names = channels.NamedOnly
+		q.MaxRows = 2
+		require.Equal(t, named, listWaitingKeys(t, s, q), "the unnamed topic does not count")
+	}
+}
+
 // testListWaitingInvalid pins the argument checks.
 func testListWaitingInvalid(t *testing.T, h Harness) {
 	t.Helper()
@@ -201,6 +235,7 @@ func testListWaitingInvalid(t *testing.T, h Harness) {
 		},
 		"negative row ceiling": {States: waitStates(), Anchors: ok, MaxRows: -1},
 		"row ceiling too high": {States: waitStates(), Anchors: ok, MaxRows: channels.MaxWaitingRows + 1},
+		"unknown name filter":  {States: waitStates(), Anchors: ok, Names: channels.NamedOnly + 1},
 	}
 	for name, q := range cases {
 		t.Run(name, func(t *testing.T) {

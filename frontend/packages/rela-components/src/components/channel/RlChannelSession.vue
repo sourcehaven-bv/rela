@@ -33,6 +33,11 @@
  * signal: the current item has `aria-current="step"`, a next item has an
  * outline and hidden text, a final item an icon or hidden text.
  *
+ * In the normal status a `working` state shows an activity line in the
+ * same live region: "Working…" and a busy indicator with the state's
+ * label. So the strip announces both whose turn it is and that someone is
+ * at work, and it never holds a second live region.
+ *
  * The stepper is not a live region: every move appends a notice to the log,
  * and the channel announces that. The `aside` slot holds what later belongs
  * next to the states, such as timers.
@@ -44,6 +49,7 @@
 import { computed, ref, useId, useTemplateRef } from 'vue'
 import RlIcon from '../common/RlIcon.vue'
 import RlTag from '../common/RlTag.vue'
+import RlBusyIndicator from '../feedback/RlBusyIndicator.vue'
 import type { ChannelSessionView } from './types'
 import { useMessages, type ChannelTextKey } from '../../composables/useMessages'
 
@@ -94,6 +100,7 @@ const outcome = computed(() => {
 const failed = computed(() => props.session.status === 'failed')
 const ticked = computed(() => !failed.value && props.session.status !== 'cancelled')
 const inputRequired = computed(() => status.value === 'normal' && props.session.status === 'input_required')
+const working = computed(() => status.value === 'normal' && props.session.status === 'working')
 const waitingText = computed(() => {
   const labels = (props.session.waitingFor ?? []).map((w) => w.label)
   return labels.length ? strings.channelSessionWaiting({ labels }) : ''
@@ -169,6 +176,10 @@ const pausedText = computed(() =>
           <RlTag v-if="session.waitingOnMe" :label="t('sessionWaitingForYou')" color="blue" />
           <span v-else-if="waitingText">{{ waitingText }}</span>
         </template>
+        <span v-else-if="working" class="rl-channel-session__working">
+          {{ t('sessionWorking') }}
+          <RlBusyIndicator :entries="[{ label: session.currentLabel }]" />
+        </span>
       </div>
       <span v-if="status === 'paused'" class="rl-channel-session__caption">{{ pausedText }}</span>
       <span v-if="status === 'loading'" class="rl-channel-session__caption">{{ t('sessionLoading') }}</span>
@@ -297,6 +308,12 @@ const pausedText = computed(() =>
 .rl-channel-session__waiting {
   margin: 0;
   color: var(--rl-color-text-muted);
+}
+
+.rl-channel-session__working {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--rl-space-2);
 }
 
 .rl-channel-session__stranded {

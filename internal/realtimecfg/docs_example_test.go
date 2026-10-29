@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
+	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 )
 
 const realtimeGuide = "../../docs-project/entities/guides/GUIDE-realtime.md"
@@ -155,5 +156,44 @@ func TestDocsExample_Choices(t *testing.T) {
 	}
 	if p := ct.MessageTypes["ask"].Properties["options"]; !p.List || p.Max != 80 || p.MaxItems != 4 {
 		t.Errorf("options = %+v; want a list of at most 4 items of 80 characters", p)
+	}
+}
+
+// TestDocsExample_Busy pins AC 12 of TKT-21G6JS: the agent-run example under
+// "Busy indicator" in the realtime guide loads with no warnings, only
+// planning counts as working, and the initial state is not working.
+func TestDocsExample_Busy(t *testing.T) {
+	data, err := os.ReadFile(realtimeGuide)
+	if err != nil {
+		t.Fatal(err)
+	}
+	example := yamlBlock(t, string(data), "## Busy indicator", "version: 1\nchannel_types:\n  run:")
+	meta, err := metamodel.Parse([]byte(`
+entities:
+  ticket:
+    label: Ticket
+    id_prefix: TKT
+    properties:
+      title:  { type: string }
+      owner:  { type: string }
+      runner: { type: string }
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	c, err := Parse([]byte(example), meta, testPolicy(t))
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if w := c.Warnings(); len(w) != 0 {
+		t.Errorf("warnings = %v", w)
+	}
+	ct, _ := c.ChannelType("run")
+	s := ct.Session()
+	if got := strings.Join(s.WorkingStates(), ","); got != "planning" {
+		t.Errorf("working states = %q; want planning", got)
+	}
+	if st, _ := s.State(s.Initial()); st.Status == StatusWorking {
+		t.Errorf("initial state %q reads working; the guide says it waits", st.Name)
 	}
 }

@@ -110,6 +110,25 @@ func (s *Session) Drives(msgType string) bool {
 	return false
 }
 
+// WorkingStates returns the stored session states whose status is
+// [StatusWorking], in declaration order. "" stands for a session that
+// never moved, listed when the initial state is working. A state reads
+// working when its `status:` says so, or by default (see
+// [SessionStatus]). Nil when no state is working.
+func (s *Session) WorkingStates() []string {
+	var out []string
+	for _, st := range s.states {
+		if st.Status != StatusWorking {
+			continue
+		}
+		out = append(out, st.Name)
+		if st.Name == s.initial {
+			out = append(out, "")
+		}
+	}
+	return out
+}
+
 // HasTimers reports whether some state of the session declares a timer.
 func (s *Session) HasTimers() bool {
 	for _, st := range s.states {
@@ -130,6 +149,9 @@ type SessionState struct {
 	// Status is what the state means to an agent: `status:`, or its
 	// default (see [SessionStatus]).
 	Status SessionStatus
+	// statusDeclared is set when the file writes `status:`; see
+	// [SessionState.StatusDeclared].
+	statusDeclared bool
 	// waitingFor is `waiting_for:`, in file order; see
 	// [SessionState.WaitingFor].
 	waitingFor []string

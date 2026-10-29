@@ -325,7 +325,7 @@ var queryKeyWords = map[string]bool{
 	"include_content": true, "comment_counts": true, "world": true, "list_id": true,
 	"query_scope": true, "scope_page": true, "scope_tab": true, "anchor": true, "relation": true,
 	"direction": true, "q": true, "type": true, "types": true, "limit": true, "offset": true,
-	"view": true, "depth": true, "last_event_id": true, "format": true, "face": true,
+	"view": true, "depth": true, "last_event_id": true, "format": true, "face": true, "busy": true,
 }
 
 // numericQueryKeys are the paging keys whose numeric values are logged. A

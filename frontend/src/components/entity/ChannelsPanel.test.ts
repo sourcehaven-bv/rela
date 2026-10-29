@@ -960,6 +960,110 @@ describe('ChannelsPanel', () => {
       })
     })
 
+    // TKT-21G6JS AC 10: a working session says so in the strip's one live
+    // region, and nowhere else.
+    for (const tc of [
+      { language: 'en', text: 'Working…' },
+      { language: 'nl', text: 'Bezig…' },
+    ]) {
+      it(`activity line while working (${tc.language})`, async () => {
+        api.getChannelSchema.mockResolvedValue({ channel_types: [sessionRoom] })
+        api.getChannelHead.mockResolvedValue(sessionHead())
+        await mountPanelIn(tc.language)
+        const strip = w().find('.rl-channel-session')
+        // The decision buttons in the strip's slot carry their own pending
+        // region; the strip itself holds one.
+        const regions = strip
+          .findAll('[role="status"], [aria-live]')
+          .filter((r) => !r.element.closest('.rl-channel-session__decisions'))
+        expect(regions).toHaveLength(1)
+        expect(regions[0]!.text()).toContain(tc.text)
+        expect(regions[0]!.find('.rl-busy').text()).toContain('Detected')
+      })
+    }
+
+    it('no activity line when paused', async () => {
+      api.getChannelSchema.mockResolvedValue({ channel_types: [sessionRoom] })
+      const h = sessionHead()
+      api.getChannelHead.mockResolvedValue({ ...h, channel: { ...h.channel, state: 'closed' } })
+      await mountPanel()
+      const strip = w().find('.rl-channel-session')
+      expect(strip.exists()).toBe(true)
+      expect(strip.text()).not.toContain('Working…')
+      expect(strip.find('.rl-busy').exists()).toBe(false)
+    })
+
+    it('no activity line for input_required', async () => {
+      const waitingRoom: ChannelTypeSchema = {
+        ...sessionRoom,
+        session: {
+          ...sessionRoom.session!,
+          states: [
+            { name: 'detected', label: 'Detected', status: 'input_required' },
+            ...sessionRoom.session!.states.slice(1),
+          ],
+        },
+      }
+      api.getChannelSchema.mockResolvedValue({ channel_types: [waitingRoom] })
+      const h = sessionHead()
+      api.getChannelHead.mockResolvedValue({
+        ...h,
+        channel: { ...h.channel, session: { ...detected, status: 'input_required' as const } },
+      })
+      await mountPanel()
+      const strip = w().find('.rl-channel-session')
+      expect(strip.text()).toContain('Input required')
+      expect(strip.text()).not.toContain('Working…')
+      expect(strip.find('.rl-busy').exists()).toBe(false)
+    })
+
+    // A stranded or loading session keeps the stored status working, and
+    // still shows no activity line: only the normal status does.
+    it.each([
+      {
+        name: 'final',
+        session: {
+          ...detected,
+          state: 'contained',
+          status: 'completed' as const,
+          final: true,
+          transitions: [],
+        },
+        settle: false,
+        want: { final: true },
+      },
+      {
+        name: 'stranded',
+        session: { ...detected, state: 'escalated' },
+        settle: true,
+        want: { stranded: true },
+      },
+      {
+        name: 'loading',
+        session: { ...detected, state: 'escalated' },
+        settle: false,
+        loading: true,
+        want: { loading: true },
+      },
+    ])('no activity line when $name', async ({ session, settle, loading, want }) => {
+      if (loading) {
+        api.getChannelSchema
+          .mockResolvedValueOnce({ channel_types: [sessionRoom] })
+          .mockReturnValue(new Promise(() => {}))
+      } else {
+        api.getChannelSchema.mockResolvedValue({ channel_types: [sessionRoom] })
+      }
+      const h = sessionHead()
+      api.getChannelHead.mockResolvedValue({ ...h, channel: { ...h.channel, session } })
+      await mountPanel()
+      if (settle) await flushPromises()
+      expect(w().findComponent(RlChannelSession).props('session')).toMatchObject(want)
+      const strip = w().find('.rl-channel-session')
+      expect(strip.exists()).toBe(true)
+      expect(strip.text()).not.toContain('Working…')
+      expect(strip.find('.rl-busy').exists()).toBe(false)
+    })
+
     it('shows no stepper on a channel type without a session', async () => {
       await mountPanel()
       expect(w().find('.rl-channel').exists()).toBe(true)

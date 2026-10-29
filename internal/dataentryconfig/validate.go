@@ -2448,8 +2448,17 @@ func validateKanbans(cfg *Config, meta *metamodel.Metamodel) []string {
 		}
 
 		// Validate card fields
+		busySeen := false
 		for i, f := range kanban.Card.Fields {
 			errs = append(errs, checkCardFieldCounts(kanbanID, i, f, kanban.EntityType, meta)...)
+			if f.Busy != "" {
+				if busySeen {
+					errs = append(errs, fmt.Sprintf(
+						"kanban %q: card.fields[%d]: a card has at most one busy field", kanbanID, i))
+				}
+				busySeen = true
+				continue
+			}
 			if f.Comments {
 				continue
 			}
@@ -3476,8 +3485,10 @@ func validateStyleFrom(prefix, styleFrom string, targets []string, meta *metamod
 // cardDisplayCount is the one accepted card field `display:` value.
 const cardDisplayCount = "count"
 
-// checkCardFieldCounts validates the two count shapes of a kanban card field:
-// `display: count` on a relation, and `comments: true` on its own.
+// checkCardFieldCounts validates the shapes of a kanban card field that
+// stand for a served extra rather than a property: `display: count` on a
+// relation, and `comments: true` and `busy: <channel type>` on their own.
+// [ValidateChannels] checks the busy channel type against realtime.yaml.
 func checkCardFieldCounts(
 	kanbanID string, i int, f KanbanCardField, entityType string, meta *metamodel.Metamodel,
 ) []string {
@@ -3499,14 +3510,17 @@ func checkCardFieldCounts(
 			errs = append(errs, fmt.Sprintf("%s: comments are not enabled for entity type %q", at, entityType))
 		}
 	}
+	if f.Busy != "" && (f.Property != "" || f.Relation != "" || f.Comments || f.Display != "") {
+		errs = append(errs, at+": busy cannot be combined with property, relation, comments or display")
+	}
 	return errs
 }
 
 // refuseKanbanOnlyFields rejects the kanban-only card field shapes on the
-// other surfaces that share [KanbanCardField]: the count shapes and a related
-// property (relation plus property). Calendar chips and gantt tooltips are not
-// served counts or related entities, so accepting the keys there would load
-// and render nothing.
+// other surfaces that share [KanbanCardField]: the count shapes, the busy
+// indicator and a related property (relation plus property). Calendar chips
+// and gantt tooltips are not served counts, busy state or related entities,
+// so accepting the keys there would load and render nothing.
 func refuseKanbanOnlyFields(prefix string, f KanbanCardField) []string {
 	var errs []string
 	if f.Display != "" {
@@ -3514,6 +3528,9 @@ func refuseKanbanOnlyFields(prefix string, f KanbanCardField) []string {
 	}
 	if f.Comments {
 		errs = append(errs, prefix+": comments is only supported on kanban card fields")
+	}
+	if f.Busy != "" {
+		errs = append(errs, prefix+": busy is only supported on kanban card fields")
 	}
 	if f.Relation != "" && f.Property != "" {
 		errs = append(errs, prefix+": a related property (relation with property) is only supported on kanban card fields")

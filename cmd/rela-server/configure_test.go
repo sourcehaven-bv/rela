@@ -569,3 +569,21 @@ func TestConfigure_ChannelsAgainstRealtime(t *testing.T) {
 	require.Len(t, verr.Problems, 1)
 	require.Contains(t, verr.Problems[0], `data-entry.yaml: channels.room.messages.note.fields[0]: message type note declares no property "nope"`)
 }
+
+// TestConfigure_BusyFieldAgainstRealtime pins that a Configure save checks
+// a kanban busy field against realtime.yaml, also without a channels:
+// section (TKT-21G6JS).
+func TestConfigure_BusyFieldAgainstRealtime(t *testing.T) {
+	srv, dir := configServer(t)
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "realtime.yaml"), []byte(cfgRealtime), 0o644))
+	host := configureHost{s: srv}
+
+	bad := cfgDataEntry + "kanbans:\n  board:\n    entity_type: task\n    column_property: state\n" +
+		"    card:\n      fields: [{ busy: nope }]\n"
+	_, err := host.Validate([]byte(cfgSchema), []byte(bad))
+	var verr *configedit.ValidationError
+	require.ErrorAs(t, err, &verr)
+	require.Len(t, verr.Problems, 1)
+	require.Contains(t, verr.Problems[0],
+		`data-entry.yaml: kanban "board": card.fields[0]: realtime.yaml declares no channel type "nope"`)
+}

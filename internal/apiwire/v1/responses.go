@@ -182,9 +182,10 @@ type Entity struct {
 }
 
 // Activity groups what people are doing around an entity, computed per
-// request: its comment count and its lease. It is embedded in [Entity] for the
-// same reason as [EditState]: the fields serialize flat, and Entity's own
-// field count stays under the plimsoll cap.
+// request: its comment count, its lease and its busy channels. It is
+// embedded in [Entity] for the same reason as [EditState]: the fields
+// serialize flat, and Entity's own field count stays under the plimsoll
+// cap.
 type Activity struct {
 	// CommentCount is the number of comments on this row's face, present only
 	// when the list request asked for it (`?comment_counts=1`), commenting is
@@ -195,6 +196,23 @@ type Activity struct {
 	// single-entity GET and on list rows, after the read gate, and is absent
 	// when nobody holds the entity.
 	Lease *EntityLease `json:"_lease,omitempty"`
+	// Busy lists the row's busy channels of the type the list request named
+	// (`?busy=<channel type>`): channels whose session is in a state with
+	// status working, which the caller may read. Nil is absent ("not
+	// served"); an empty slice is `[]` ("none busy that you may see").
+	Busy []BusyChannel `json:"_busy,omitzero"`
+}
+
+// BusyChannel is one busy channel of a list row. Since is when the session
+// entered its state, in RFC 3339; a client computes the time in the state
+// from it.
+type BusyChannel struct {
+	Type      string `json:"type"`
+	TypeLabel string `json:"type_label,omitempty"`
+	Name      string `json:"name,omitempty"`
+	State     string `json:"state"`
+	Label     string `json:"label,omitempty"`
+	Since     string `json:"since"`
 }
 
 // EditState groups the per-entity fields an edit surface needs and a read

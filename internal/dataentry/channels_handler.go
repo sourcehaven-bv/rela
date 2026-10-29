@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/url"
@@ -121,6 +122,8 @@ type channelsHandler struct {
 	describe channelDescriber
 	// inbox serves `GET /api/v1/_inbox` and `GET /api/v1/_inbox/summary`.
 	inbox inboxReader
+	// busy serves `?busy=` on list rows; see [serveRowBusy].
+	busy busyReader
 }
 
 // SetChannels installs the channel service and describes its routes in the
@@ -133,12 +136,17 @@ func SetChannels(a *App, svc *realtime.Service) error {
 	if svc == nil {
 		return errors.New("dataentry: SetChannels requires a channel service")
 	}
+	busy, err := realtime.NewBusyReader(svc)
+	if err != nil {
+		return fmt.Errorf("dataentry: SetChannels: %w", err)
+	}
 	a.channels = &channelsHandler{
 		read: svc, messageOps: svc, actions: svc, channels: svc, typist: svc, marker: svc,
 		on:       svc,
 		changes:  func() channelChanges { return svc.SubscribeLive() },
 		describe: svc,
 		inbox:    svc,
+		busy:     busy,
 	}
 	if st := a.State(); st != nil && st.OpenAPIGen != nil {
 		st.OpenAPIGen.SetRealtime(svc.Config)

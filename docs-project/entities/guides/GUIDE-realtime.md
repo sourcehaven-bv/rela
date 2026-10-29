@@ -1741,14 +1741,18 @@ Exactly one status applies, in this order:
    `input_required` state has an "Input required" tag, and the header says
    whom it waits for, such as "Waiting for the incident lead", or shows a
    "Waiting for you" tag when you hold a waiting role. It does not show the
-   holders' ids: the entity page shows the property.
+   holders' ids: the entity page shows the property. A `working` state
+   shows an activity line instead: "Working…" with pulsing dots and the
+   state's label. See [Busy indicator](#busy-indicator).
 
 A notice names the move only, such as "Session moved from Detected to
 Contained". It does not say whom the session waited for: a notice is
 history, and the current configuration cannot tell whom an earlier state
 waited for. The header says whom the session waits for now, and a screen
-reader announces it when it changes. A handoff made by editing the entity
-has no notice; the header updates with the next live update.
+reader announces it when it changes. The activity line is in the same
+announced line, so a screen reader also hears when work starts. A handoff
+made by editing the entity has no notice; the header updates with the next
+live update.
 
 A channel row in the list shows a badge with its number of unread
 messages, or "99+" above 99. A screen reader reads it as, for example, "3
@@ -1858,6 +1862,140 @@ type the mention as a code span. See
 
 Field order, labels and widgets come from the `channels:` block of
 `data-entry.yaml` (see the data-entry guide).
+
+## Busy indicator
+
+A board can show which cards someone works on now, such as an agent that
+plans a ticket. A card is busy while a channel on its entity has a session
+in a state with status `working`. The indicator shows pulsing dots, the
+state's label and how long the session has been in that state, such as
+"Planning · 3h". A screen reader hears the channel type, the state and the
+time, such as "Agent run: Planning, for 3 hours". With several busy
+channels the card shows the one longest in its state, the likeliest to
+have stalled, and "+N". With a reduced-motion setting the dots are
+replaced by a still icon.
+
+Turn it on per board with a `busy:` card field in `data-entry.yaml`. It
+names a channel type; see the kanban section of the data-entry guide.
+
+```yaml
+kanbans:
+  tickets:
+    entity_type: ticket
+    title: Tickets
+    column_property: status
+    columns:
+      - value: open
+        label: Open
+    card:
+      title: title
+      fields:
+        - busy: run
+```
+
+**Which states count.** A state counts when its status reads `working`,
+whether you declare `status: working` or it is the default. This is the
+same status `read_session` gives an agent, so the board and the agent
+agree. A state with `waiting_for` reads `input_required` and does not
+count, and neither does a final state.
+
+This example follows an agent runner. The owner starts a run, the runner
+claims it and plans, and the owner reviews the plan. Only `planning` has
+status `working`, so the card is busy only while the runner plans:
+
+```yaml
+version: 1
+channel_types:
+  run:
+    label: Agent run
+    attach_to: [ticket]
+    read: { from: attached }
+    roles:
+      owner:  { from: entity.owner }
+      runner: { from: entity.runner }
+    message_types:
+      go:      { properties: { note: { type: string } }, post: [owner] }
+      claim:   { properties: { worktree: { type: string } }, post: [runner] }
+      plan:    { properties: { plan: { type: string } }, post: [runner] }
+      approve: { properties: { note: { type: string } }, post: [owner] }
+      unblock: { properties: { note: { type: string } }, post: [owner] }
+    session:
+      initial: new
+      states:
+        new:
+          label: Not started
+          waiting_for: [owner]
+          on: { go: { to: queued } }
+        queued:
+          label: Queued
+          waiting_for: [runner]
+          on: { claim: { to: planning } }
+        planning:
+          label: Planning
+          status: working
+          on: { plan: { to: plan-review } }
+          after:
+            stalled: { period: 4h, to: blocked, label: Stalled }
+        plan-review:
+          label: Plan review
+          waiting_for: [owner]
+          on: { approve: { to: planning } }
+        blocked:
+          label: Blocked
+          waiting_for: [owner]
+          on: { unblock: { to: queued } }
+```
+
+**A working initial state.** If the initial state reads `working` only by
+default (no `status:` and no `waiting_for`), every new channel of the type
+is busy from the start, even before anyone works on it. rela warns about a
+busy field for such a type when the file loads. Give the initial state
+`waiting_for`, as `new` above, or write `status: working` if busy from the
+start is what you mean.
+
+A channel whose session never moved reads as in the initial state since
+the channel was created. So if you add a session with a working initial
+state to a type that already has channels, every open channel of the type
+turns busy at once, with the time since it was created, such as
+"Planning · 120d". This happens with a declared `status: working` too,
+and rela does not warn about it. Give such a session an initial state
+that waits, or close the old channels first.
+
+**A run that stalls.** The board shows how long a run has worked, but it
+does not detect a run that stopped. Use a timer with `since: state` for
+that, as `stalled` above: after four hours in `planning` the session moves
+to `blocked`, which waits for the owner, and the card is no longer busy.
+See [Timers](#timers).
+
+**Who sees it.** The board asks for the busy channels of its rows in one
+read per page. A card shows a channel only when you may read the entity
+and the channel type's `read` role admits you. A row you cannot read is
+not on the board at all. A channel type with `anchor: face` shows on the
+card of its own face. A family channel shows on the card of every face.
+
+**What the board needs.** The busy field shows nothing when realtime is
+off, when the configuration is degraded, or when the type has no session.
+`rela validate` and the server refuse a busy field that names an unknown
+type, a type without a session, a type whose session has no state with
+status `working`, or a type that does not attach to the board's entity
+type.
+
+**When it updates.** The board reads the busy channels when it loads, and
+again when its entities change and the live list updates. A move whose
+transition has `outputs:` writes to the entity, so that write updates an
+open board live. A session move without outputs does not update an open
+board yet; reload the page to see it (TKT-W5ZSYJ). The time in the state
+is computed in the browser and moves on each minute. How a move from
+another process reaches the board depends on the backend:
+
+| Backend | A move by stdio `rela mcp` or `rela channel` |
+| --- | --- |
+| Files (default) | Live when the transition has outputs: the server sees the entity file change. Otherwise on the next board read: each read reads the channel files. |
+| PostgreSQL | Live when the transition has outputs: the server hears the entity write. Otherwise on the next board read: every process shares the database. |
+| SQLite | Not possible while rela-server runs, because only one process may open the project. Agents use remote MCP, which runs inside rela-server. |
+
+A list view has no busy column yet (TKT-TU3XH4). The API answers for any
+list; see `?busy=` in the data-entry API reference.
 
 ## HTTP API
 
@@ -2243,6 +2381,14 @@ array of strings. `rela channel post` takes one `-P` per item, such as
 prints them on the type's `choices:` line and a list one item per line. To answer a question, post its `answer`
 type with the option in `into` and `reply_to` the question, as the web
 app does. See [Choices](#choices).
+
+**Showing that you work.** An agent shows people that it works by moving
+the session into a state with status `working`, such as the runner's
+`claim` in the example under [Busy indicator](#busy-indicator). Boards
+with a busy field then show the entity as busy, and the session header
+shows "Working…". This works from every process, because the session is
+stored. Post the message that leaves the state when the work is done, or
+let a timer move a stalled run on. There is no typing over stdio yet.
 
 **Waiting for a session.** `read_session` returns only a channel's session,
 the channel's name and state, and the message types whose post by the

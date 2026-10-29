@@ -31,13 +31,14 @@ func (s *Store) ListWaiting(ctx context.Context, q channels.WaitingQuery) ([]cha
 		return nil, err
 	}
 	stateSQL, stateArgs := waitingStates(q.States)
+	stateSQL = `(` + stateSQL + `)` + waitingNames(q.Names)
 	found := map[channels.Key]channels.Channel{}
 	ceiling := q.RowCeiling()
 	run := func(where string, args []any) error {
 		all := append(append([]any{string(channels.StateOpen)}, stateArgs...), args...)
 		all = append(all, ceiling+1)
 		rows, err := collect(ctx, s.db, `SELECT `+chanCols+` FROM channels
-			WHERE tomb = '' AND state = ? AND (`+stateSQL+`) AND `+where+` LIMIT ?`, all, scanDue)
+			WHERE tomb = '' AND state = ? AND `+stateSQL+` AND `+where+` LIMIT ?`, all, scanDue)
 		if err != nil {
 			return s.wrap(err, "list waiting sessions")
 		}
@@ -87,6 +88,19 @@ func (s *Store) ListWaiting(ctx context.Context, q channels.WaitingQuery) ([]cha
 	}
 	channels.SortChannels(out)
 	return out, nil
+}
+
+// waitingNames renders the name filter of a waiting query as a literal
+// condition, empty for [channels.AnyName].
+func waitingNames(f channels.NameFilter) string {
+	switch f {
+	case channels.UnnamedOnly:
+		return ` AND name = ''`
+	case channels.NamedOnly:
+		return ` AND name <> ''`
+	default:
+		return ``
+	}
 }
 
 // waitingStates renders the type and session state filter of a waiting

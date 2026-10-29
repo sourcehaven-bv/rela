@@ -21,6 +21,9 @@
  */
 import { computed, type Component } from 'vue'
 import RlMetaItem from 'rela-components/components/common/RlMetaItem.vue'
+import RlBusyIndicator, {
+  type BusyIndicatorEntry,
+} from 'rela-components/components/feedback/RlBusyIndicator.vue'
 import type { IconName } from 'rela-components/components/common/icons'
 import { cardFieldLabel, cardFieldLabelShown, type KanbanCardField } from '@/types/config'
 import { useSchemaStore } from '@/stores/schema'
@@ -57,6 +60,9 @@ export interface ResolvedCardField {
   /** Set for a related-property field: one entry per distinct value, in the
    * order the related entities came. Rendered side by side. */
   values?: RelatedCardValue[]
+  /** Set for a busy field: the busy channels of its type, in name order.
+   * Rendered as one busy indicator. */
+  busy?: BusyIndicatorEntry[]
 }
 
 const props = defineProps<{
@@ -79,7 +85,7 @@ function relationLabel(relation: string): string | undefined {
 /** A stable key per line. A card may show a relation's titles and one of its
  * properties, or two properties through the same relation. */
 function lineKey(field: KanbanCardField, i: number): string {
-  return `${field.relation ?? ''}:${field.direction ?? ''}:${field.property ?? ''}:${i}`
+  return `${field.busy ?? ''}:${field.relation ?? ''}:${field.direction ?? ''}:${field.property ?? ''}:${i}`
 }
 
 /** A stable key per count field: a card may count a relation both ways. */
@@ -96,8 +102,10 @@ function countKey(field: KanbanCardField): string {
       </span>
       <!-- Related values: widgets (badges, dates) side by side; plain text
            values joined with commas so two names do not read as one. -->
+      <!-- A busy field: the indicator carries its own accessible name. -->
+      <RlBusyIndicator v-if="resolved.busy" class="field-value" :entries="resolved.busy" />
       <span
-        v-if="resolved.values && resolved.values.every((v) => !v.component)"
+        v-else-if="resolved.values && resolved.values.every((v) => !v.component)"
         class="field-value"
         >{{ resolved.text }}</span
       >

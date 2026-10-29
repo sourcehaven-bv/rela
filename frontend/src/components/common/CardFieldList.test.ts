@@ -52,6 +52,12 @@ describe('cardFieldLabelShown', () => {
     expect(cardFieldLabelShown({ property: 'assignee', show_label: true })).toBe(true)
     expect(cardFieldLabelShown({ property: 'priority', show_label: false })).toBe(false)
   })
+
+  // A busy indicator names its channel type to a screen reader already.
+  it('hides a busy field label unless asked for', () => {
+    expect(cardFieldLabelShown({ busy: 'run' })).toBe(false)
+    expect(cardFieldLabelShown({ busy: 'run', show_label: true })).toBe(true)
+  })
 })
 
 describe('CardFieldList', () => {

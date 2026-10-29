@@ -69,7 +69,7 @@ var (
 	// no key.
 	liveInboxKeys = keySet("limit", "kinds")
 	liveListKeys  = keySet(
-		"page", "per_page", "cursor", "sort", "fields", "include", "comment_counts",
+		"page", "per_page", "cursor", "sort", "fields", "include", "comment_counts", "busy",
 		"world", "list_id", "query_scope", "scope_page", "scope_tab", "anchor",
 		"relation", "direction",
 	)

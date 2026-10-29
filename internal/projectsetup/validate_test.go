@@ -303,23 +303,30 @@ entities:
 	})
 }
 
-// TestCheckChannels pins that only a non-empty channels: section is checked,
-// and that realtime off makes it a warning.
+// TestCheckChannels pins that only a non-empty channels: section or a
+// kanban busy field is checked, and that realtime off makes it a warning.
 func TestCheckChannels(t *testing.T) {
-	for _, data := range []string{"", "version: \"1.0\"\n", "channels: {}\n", "channels: [broken"} {
-		if projectsetup.HasChannels([]byte(data)) {
-			t.Errorf("HasChannels(%q) = true", data)
+	for _, data := range []string{
+		"", "version: \"1.0\"\n", "channels: {}\n", "channels: [broken",
+		"kanbans:\n  board:\n    card:\n      fields: [{ property: title }]\n",
+	} {
+		if projectsetup.HasRealtimePresentation([]byte(data)) {
+			t.Errorf("HasRealtimePresentation(%q) = true", data)
 		}
 		if errs, warnings := projectsetup.CheckChannels([]byte(data), nil); errs != nil || warnings != nil {
 			t.Errorf("CheckChannels(%q) = %v, %v", data, errs, warnings)
 		}
 	}
-	data := []byte("channels:\n  room: {}\n")
-	if !projectsetup.HasChannels(data) {
-		t.Fatal("HasChannels missed the section")
-	}
-	errs, warnings := projectsetup.CheckChannels(data, nil)
-	if len(errs) != 0 || len(warnings) != 1 {
-		t.Fatalf("realtime off: errs %v, warnings %v", errs, warnings)
+	for _, data := range []string{
+		"channels:\n  room: {}\n",
+		"kanbans:\n  board:\n    entity_type: ticket\n    card:\n      fields: [{ busy: run }]\n",
+	} {
+		if !projectsetup.HasRealtimePresentation([]byte(data)) {
+			t.Fatalf("HasRealtimePresentation missed %q", data)
+		}
+		errs, warnings := projectsetup.CheckChannels([]byte(data), nil)
+		if len(errs) != 0 || len(warnings) != 1 {
+			t.Fatalf("realtime off, %q: errs %v, warnings %v", data, errs, warnings)
+		}
 	}
 }

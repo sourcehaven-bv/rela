@@ -98,6 +98,12 @@ export class ChannelsPage extends BasePage {
     await expect(this.session.locator('[aria-current="step"]')).toContainText(label, { timeout });
   }
 
+  /** The session's live region holds the activity line with `text`, or is empty of it. */
+  async expectActivityLine(text: string, shown: boolean, timeout = 15_000) {
+    const line = this.session.getByRole('status').filter({ hasText: text });
+    await expect(line).toHaveCount(shown ? 1 : 0, { timeout });
+  }
+
   /** Selects the message type `label` in the composer's type picker. */
   async selectMessageType(label: string) {
     await this.composer.getByRole('radio', { name: new RegExp(`^${label}\\b`) }).click();

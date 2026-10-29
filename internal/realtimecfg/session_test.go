@@ -541,3 +541,100 @@ func TestTransition_Admits(t *testing.T) {
 		})
 	}
 }
+
+// workingType is a channel type on datalek whose session starts in initial
+// and has the states given, each a line under `states:`.
+func workingType(initial string, states ...string) string {
+	return `  run:
+    attach_to: [datalek]
+    roles:
+      owner:  { from: entity.owner }
+      member: { from: attached }
+    message_types:
+      go:   { properties: { note: { type: string } }, post: [owner, member] }
+      done: { properties: { note: { type: string } }, post: [owner, member] }
+    session:
+      initial: ` + initial + `
+      states:
+` + "        " + strings.Join(states, "\n        ") + "\n"
+}
+
+// TestSession_WorkingStates pins AC 1 of TKT-21G6JS: the working states
+// come from each state's status, declared or defaulted, and "" is listed
+// when the initial state is working.
+func TestSession_WorkingStates(t *testing.T) {
+	cases := []struct {
+		name  string
+		types string
+		want  []string
+	}{
+		{
+			name: "PoC shape",
+			types: workingType("queued",
+				"queued:   { waiting_for: [owner], on: { go: { to: planning } } }",
+				"planning: { status: working, on: { go: { to: review } } }",
+				"review:   { waiting_for: [owner], on: { go: { to: working } } }",
+				"working:  { status: working, on: { done: { to: finished } } }",
+				"finished: { final: true }",
+			),
+			want: []string{"planning", "working"},
+		},
+		{
+			name: "working initial",
+			types: workingType("planning",
+				"planning: { status: working, on: { go: { to: review } } }",
+				"review:   { waiting_for: [owner], on: { done: { to: finished } } }",
+				"finished: { final: true }",
+			),
+			want: []string{"planning", ""},
+		},
+		{
+			name: "default status",
+			types: workingType("queued",
+				"queued:   { waiting_for: [owner], on: { go: { to: busy } } }",
+				"busy:     { on: { done: { to: finished } } }",
+				"finished: { final: true }",
+			),
+			want: []string{"busy"},
+		},
+		{
+			name: "all final or waiting",
+			types: workingType("queued",
+				"queued:    { waiting_for: [owner], on: { go: { to: finished }, done: { to: failed } } }",
+				"finished:  { final: true }",
+				"failed:    { final: true, status: failed }",
+				"cancelled: { final: true, status: cancelled }",
+			),
+			want: nil,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			c, err := Parse([]byte("version: 1\nchannel_types:\n"+tc.types), testMeta(t), nil)
+			if err != nil {
+				t.Fatalf("Parse: %v", err)
+			}
+			ct, _ := c.ChannelType("run")
+			if got := ct.Session().WorkingStates(); !slices.Equal(got, tc.want) {
+				t.Errorf("WorkingStates() = %q; want %q", got, tc.want)
+			}
+		})
+	}
+	t.Run("status declared", func(t *testing.T) {
+		c, err := Parse([]byte("version: 1\nchannel_types:\n"+workingType("busy",
+			"busy:     { on: { go: { to: planning } } }",
+			"planning: { status: working, on: { done: { to: finished } } }",
+			"finished: { final: true }",
+		)), testMeta(t), nil)
+		if err != nil {
+			t.Fatalf("Parse: %v", err)
+		}
+		ct, _ := c.ChannelType("run")
+		busy, _ := ct.Session().State("busy")
+		planning, _ := ct.Session().State("planning")
+		if busy.StatusDeclared() || !planning.StatusDeclared() {
+			t.Errorf("StatusDeclared busy, planning = %v, %v; want false, true",
+				busy.StatusDeclared(), planning.StatusDeclared())
+		}
+	})
+}

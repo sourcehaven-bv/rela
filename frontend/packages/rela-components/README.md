@@ -918,6 +918,12 @@ act is the mistake they exist to prevent.
 `RlSkeleton` is preferred over a spinner where the shape of the content is
 known, since it reserves the space and stops the page jumping.
 
+`RlBusyIndicator` is not a pending state of the user's own act. It shows
+that someone else, such as an agent, works on an item now: pulsing dots, the
+state and the time in it. It is not a live region, because a board shows
+many of them at once. The time moves on each minute through
+`useMinuteClock`, whose one timer every indicator on the page shares.
+
 ### History and activity
 
 `RlTimeline` is what happened to something: an activity feed, an audit trail, the

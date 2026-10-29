@@ -1501,6 +1501,12 @@ type KanbanCardField struct {
 	// alone: no Property or Relation. The count is served only to a reader
 	// who holds `comment:read` across the project (TKT-WA25G2).
 	Comments bool `yaml:"comments,omitempty" json:"comments,omitempty"`
+	// Busy names a channel type with a session. The card shows an indicator
+	// while a channel of that type on its entity is in a state with status
+	// working. It stands alone, like Comments, and at most one field of a
+	// card may set it (TKT-21G6JS). Its label is hidden unless ShowLabel
+	// is true; see [KanbanCardField.LabelShown].
+	Busy string `yaml:"busy,omitempty" json:"busy,omitempty"`
 	// Label overrides the displayed name. Left empty it is DERIVED from the
 	// property or relation name, so an author never restates `assignee` as
 	// "Assignee" — only a genuine rename needs writing down.
@@ -1519,21 +1525,29 @@ type KanbanCardField struct {
 
 // LabelShown reports whether this field's label should render.
 // Nil: an unset ShowLabel means true — labels are the safe default, since an
-// unlabelled ambiguous value is worse than a redundant one.
+// unlabelled ambiguous value is worse than a redundant one. A busy field is
+// the exception and defaults to false: its indicator already names the
+// channel type to a screen reader, so a label would say the type twice.
 func (f KanbanCardField) LabelShown() bool {
-	return f.ShowLabel == nil || *f.ShowLabel
+	if f.ShowLabel == nil {
+		return f.Busy == ""
+	}
+	return *f.ShowLabel
 }
 
 // DisplayLabel is the label to render: the explicit override when set,
 // otherwise the relation or property name it was derived from. A field that
 // shows a related entity's property is labeled by the property, the value it
-// shows.
+// shows. A busy field is labeled by its channel type.
 func (f KanbanCardField) DisplayLabel() string {
 	if f.Label != "" {
 		return f.Label
 	}
 	if f.Comments {
 		return "comments"
+	}
+	if f.Busy != "" {
+		return f.Busy
 	}
 	if f.Relation != "" && f.Property == "" {
 		return f.Relation

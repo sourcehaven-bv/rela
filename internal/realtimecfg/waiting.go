@@ -49,6 +49,10 @@ func (s SessionStatus) Terminal() bool {
 // answer out of the state. The slice is a copy.
 func (st SessionState) WaitingFor() []string { return slices.Clone(st.waitingFor) }
 
+// StatusDeclared reports whether the file writes the state's `status:`.
+// When it does not, [SessionState.Status] is the default.
+func (st SessionState) StatusDeclared() bool { return st.statusDeclared }
+
 // waitChecker checks the `status:` and `waiting_for:` of every session
 // state, after the transitions and timers compiled, and gives the handoff
 // and answer grant warnings. It keeps these checks off the validator,
@@ -71,6 +75,7 @@ func (w waitChecker) check(statesKey string, raw map[string]rawSessionState, s *
 		sk := statesKey + "." + st.Name
 		st.waitingFor = w.waitingFor(sk, rs, st, ct)
 		st.Status = w.status(sk, rs, st)
+		st.statusDeclared = rs.Status != nil
 		if len(st.waitingFor) > 0 && !st.Final {
 			w.answers(sk, st, ct)
 			w.deadlineReset(st, s, ct)

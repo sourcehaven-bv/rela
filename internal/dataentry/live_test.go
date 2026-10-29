@@ -19,6 +19,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/aclstore"
 	v1 "github.com/Sourcehaven-BV/rela/internal/apiwire/v1"
+	"github.com/Sourcehaven-BV/rela/internal/channels"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
 )
@@ -760,4 +761,127 @@ func TestLive_ReplaySharing(t *testing.T) {
 	if got := replays.Load(); got != 2 {
 		t.Fatalf("principals differing in scopes: %d replays, want 2", got)
 	}
+}
+
+// newBusyLive is a live env over a busy env whose TKT-1 and TKT-2 alice
+// owns.
+func newBusyLive(t *testing.T) (*busyEnv, *liveEnv) {
+	t.Helper()
+	e := newBusyEnv(t, busyPolicy(), func(app *App) {
+		seedEntity(app, ownedTicket("TKT-1"))
+		seedEntity(app, ownedTicket("TKT-2"))
+	}, nil)
+	return e, newLiveEnvFor(t, e.app, nil)
+}
+
+// liveBusy fetches path as user and returns each row's `_busy` by id.
+func liveBusy(t *testing.T, env *liveEnv, user, path string) map[string][]v1.BusyChannel {
+	t.Helper()
+	code, body := env.get(t, user, path)
+	if code != http.StatusOK {
+		t.Fatalf("GET %s = %d %s", path, code, body)
+	}
+	return busyOf(decodeAs[v1.ListResponse](t, body))
+}
+
+// TestLive_BusyListFullRound pins AC 7 of TKT-21G6JS: a busy list is a
+// live shape, a graph write replays it, and the replay carries `_busy`.
+// The write is to a person, outside the list, so the list changes only
+// through TKT-2's `_busy`.
+func TestLive_BusyListFullRound(t *testing.T) {
+	e, env := newBusyLive(t)
+	const path = "/api/v1/tickets?busy=instant"
+	c, conn := env.open(t, "alice")
+	env.subscribe(t, "alice", conn, liveSubEntry{"board", path})
+	liveQuiet(t, c)
+
+	// Written straight to the store, the channel sends no change.
+	e.seedChannel(t, channels.Anchor{ID: "TKT-2"}, "instant", time.Now())
+	update(t, env.app, &entity.Entity{ID: "alice", Type: "person", Properties: map[string]any{"title": "Alice"}})
+	requireChanged(t, c, "board")
+	got := liveBusy(t, env, "alice", path)
+	if len(got["TKT-1"]) != 0 || len(got["TKT-2"]) != 1 {
+		t.Fatalf("_busy after the round = %v, want TKT-2 busy", got)
+	}
+}
+
+// TestLive_BusyListIgnoresChannelRound pins AC 7: a session move with no
+// graph write starts a topic round, and that round frames the channel but
+// not the busy list.
+func TestLive_BusyListIgnoresChannelRound(t *testing.T) {
+	_, env := newBusyLive(t)
+	const path = "/api/v1/tickets?busy=run"
+	runPath := "/api/v1/tickets/TKT-1/_channels/run"
+	c, conn := env.open(t, "alice")
+	env.subscribe(t, "alice", conn, liveSubEntry{"board", path}, liveSubEntry{"run", runPath})
+	liveQuiet(t, c)
+
+	post := func(user, typ, props string) {
+		t.Helper()
+		res, b := env.do(t, user, http.MethodPost, runPath+"/messages",
+			fmt.Sprintf(`{"type":%q,"props":%s}`, typ, props), nil)
+		if res.StatusCode != http.StatusCreated {
+			t.Fatalf("post %s as %s = %d %s", typ, user, res.StatusCode, b)
+		}
+	}
+	post("alice", "go", `{}`)
+	requireChanged(t, c, "run")
+	post("runner", "claim", `{"worktree":"wt"}`)
+	requireChanged(t, c, "run")
+	liveQuiet(t, c)
+	// The board would show the move on its next fetch.
+	if got := liveBusy(t, env, "alice", path); len(got["TKT-1"]) != 1 {
+		t.Fatalf("_busy = %v, want TKT-1 planning", got)
+	}
+}
+
+// TestLive_BusyListPerPrincipal pins AC 5: alice and bob subscribe to one
+// busy list, a graph write replays it for each, and the replays differ,
+// since only alice may read the channel.
+func TestLive_BusyListPerPrincipal(t *testing.T) {
+	e, env := newBusyLive(t)
+	const path = "/api/v1/tickets?busy=instant"
+	e.seedChannel(t, channels.Anchor{ID: "TKT-1"}, "instant", time.Now())
+	ca, conna := env.open(t, "alice")
+	cb, connb := env.open(t, "bob")
+	env.subscribe(t, "alice", conna, liveSubEntry{"board", path})
+	env.subscribe(t, "bob", connb, liveSubEntry{"board", path})
+	before := [2]string{env.app.live.hashOf("alice"), env.app.live.hashOf("bob")}
+	if before[0] == before[1] {
+		t.Fatal("alice and bob share one baseline; the replay is not per principal")
+	}
+
+	e.seedChannel(t, channels.Anchor{ID: "TKT-2"}, "instant", time.Now())
+	renamed := ownedTicket("TKT-1")
+	renamed.Properties["title"] = "renamed"
+	update(t, env.app, renamed)
+	requireChanged(t, ca, "board")
+	requireChanged(t, cb, "board")
+	after := [2]string{env.app.live.hashOf("alice"), env.app.live.hashOf("bob")}
+	if after[0] == after[1] || after[0] == before[0] {
+		t.Fatalf("hashes before %v, after %v: want per principal and moved", before, after)
+	}
+	if got := liveBusy(t, env, "bob", path); len(got["TKT-1"]) != 0 || len(got["TKT-2"]) != 0 {
+		t.Fatalf("bob's _busy = %v, want nothing busy", got)
+	}
+}
+
+// hashOf returns the hash of user's one subscription, read under the
+// locks the worker writes it under.
+func (h *liveHub) hashOf(user string) string {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	for _, c := range h.conns {
+		if c.owner.User != user {
+			continue
+		}
+		c.mu.Lock()
+		for _, s := range c.subs {
+			hash := s.hash
+			c.mu.Unlock()
+			return hash
+		}
+		c.mu.Unlock()
+	}
+	return ""
 }

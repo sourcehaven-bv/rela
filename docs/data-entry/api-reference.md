@@ -94,6 +94,55 @@ example through an ownership relation) is checked per entity, which would cost
 one ACL walk per row. Such a principal gets no counts on list rows; the thread
 itself is still readable at `/api/v1/_comments/{type}/{id}`.
 
+## Busy channels on list rows
+
+`GET /api/v1/{plural}` accepts `busy=<channel type>`. Each row then carries
+`_busy`, the channels of that type on the row whose session is in a state
+with status `working`. A kanban card with a `busy:` field sends it. Give one
+type; with several `busy` values only the first counts.
+
+```text
+GET /api/v1/tickets?busy=run
+```
+
+```json
+{
+  "id": "TKT-1",
+  "_busy": [
+    {
+      "type": "run",
+      "type_label": "Agent run",
+      "state": "planning",
+      "label": "Planning",
+      "since": "2026-10-29T09:12:03.123Z"
+    }
+  ]
+}
+```
+
+`since` is when the session entered the state, in RFC 3339. The client
+computes the time in the state from it, so the row does not change as time
+passes. `type_label` and `label` are left out when the configuration gives
+none, and `name` when the channel has none. Entries are sorted by `since`,
+oldest first, then by channel name, so the first entry is the one longest
+in its state. A channel is listed only when the principal may read the
+row's entity and the channel type's `read` role admits them.
+
+`_busy` is `[]` when no channel of the type is busy on the row. It is
+absent when the request did not ask, or when the server cannot answer for
+the type: realtime is off, the configuration is degraded, the type is
+unknown or has no session or no working state, no row is of a type it
+attaches to, or the request has no principal. A store error is logged, and
+the rows are served without `_busy`.
+
+The whole page costs one channel-store query, one read of the channels'
+entities and one role check, whatever the number of rows. A list path in a
+[live subscription](#live-views) may carry `busy`. The server repeats it
+after an entity change, so the hash follows `_busy` too. A channel change
+on its own does not repeat it, so a session move shows on the next entity
+change or the next read (TKT-W5ZSYJ). See the busy indicator section of the
+realtime guide.
+
 ## Limiting search results
 
 `GET /api/v1/_search` accepts an optional `limit` (an integer from 1 to 100)
