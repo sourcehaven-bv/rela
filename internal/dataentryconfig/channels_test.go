@@ -1,6 +1,8 @@
 package dataentryconfig
 
 import (
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -9,20 +11,26 @@ import (
 )
 
 // fakeChannelSchema declares channel type room with message types text
-// and note.
+// and note, and channel type run with the message types of the
+// agent-runner example in the data-entry guide.
 type fakeChannelSchema struct{}
 
-func (fakeChannelSchema) ChannelTypeNames() []string { return []string{"room"} }
+func (fakeChannelSchema) ChannelTypeNames() []string { return []string{"room", "run"} }
 
 func (fakeChannelSchema) MessageTypeNames(ct string) []string {
-	if ct != "room" {
-		return nil
+	switch ct {
+	case "room":
+		return []string{"note", "text"}
+	case "run":
+		return []string{"ask", "claim", "plan", "progress", "resume"}
 	}
-	return []string{"note", "text"}
+	return nil
 }
 
 func (fakeChannelSchema) MessageProperties(ct, mt string) []ChannelProperty {
 	switch {
+	case ct == "run" && mt == "progress":
+		return []ChannelProperty{{Name: "body", Type: "markdown", Required: true}}
 	case ct != "room":
 		return nil
 	case mt == "text":
@@ -58,6 +66,31 @@ func (fakeChannelSchema) BusyFacts(ct string) (BusyFacts, bool) {
 		return BusyFacts{AttachTo: []string{"feature"}, HasSession: true, HasWorkingState: true}, true
 	}
 	return BusyFacts{}, false
+}
+
+// docsExampleChannelsDisplay returns the first yaml block after the "Quiet
+// message types" heading of docs/data-entry.md, the generated copy of
+// GUIDE-data-entry.md. It fails the test when the heading or the block is
+// gone, so the documented example stays a validated case.
+func docsExampleChannelsDisplay(t *testing.T) string {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join("..", "..", "docs", "data-entry.md"))
+	if err != nil {
+		t.Fatalf("read docs: %v", err)
+	}
+	_, section, ok := strings.Cut(string(data), "\n### Quiet message types\n")
+	if !ok {
+		t.Fatal(`docs/data-entry.md has no "### Quiet message types" heading`)
+	}
+	_, block, ok := strings.Cut(section, "\n```yaml\n")
+	if !ok {
+		t.Fatal(`no yaml block after "### Quiet message types"`)
+	}
+	block, _, ok = strings.Cut(block, "\n```")
+	if !ok {
+		t.Fatal(`the yaml block after "### Quiet message types" is not closed`)
+	}
+	return block
 }
 
 // TestChannelsPresentation_Validate pins the `channels:` checks: the shape
@@ -109,6 +142,21 @@ func TestChannelsPresentation_Validate(t *testing.T) {
 			`widget "checkbox" cannot edit property "level" of type integer`},
 		{"widget on ref", "channels: {room: {messages: {note: {fields: [{property: about, widget: text}]}}}}",
 			`cannot edit property "about" of type ref`},
+
+		{"display collapsed", "channels: {room: {messages: {note: {display: collapsed}}}}", ""},
+		{"display hidden", "channels: {room: {messages: {note: {display: hidden}}}}", ""},
+		{"display empty", `channels: {room: {messages: {note: {display: ""}}}}`, ""},
+		{"display null", "channels: {room: {messages: {note: {display: null}}}}", ""},
+		{"display bad value", "channels: {room: {messages: {note: {display: shown}}}}",
+			`channels.room.messages.note.display: unknown value "shown" (valid values: collapsed, hidden)`},
+		{"display wrong case", "channels: {room: {messages: {note: {display: Hidden}}}}",
+			`channels.room.messages.note.display: unknown value "Hidden"`},
+		{"display number", "channels: {room: {messages: {note: {display: 1}}}}",
+			`channels.room.messages.note.display: unknown value "1"`},
+		{"display without fields", "channels: {room: {messages: {text: {display: collapsed}}}}", ""},
+		{"display on a field", "channels: {room: {messages: {text: {fields: [{property: body, display: hidden}]}}}}",
+			`fields[0]: unknown key "display"`},
+		{"docs example", docsExampleChannelsDisplay(t), ""},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -177,11 +225,11 @@ func TestChannelsUnknownKeys_Sorted(t *testing.T) {
 		"  mid: {messages: {q: {y: 1}, c: {y: 1}}}\n")
 	want := []string{
 		`channels.alpha: unknown key "x" (valid keys: messages)`,
-		`channels.mid.messages.c: unknown key "y" (valid keys: fields)`,
-		`channels.mid.messages.q: unknown key "y" (valid keys: fields)`,
+		`channels.mid.messages.c: unknown key "y" (valid keys: fields, display)`,
+		`channels.mid.messages.q: unknown key "y" (valid keys: fields, display)`,
 		`channels.zed: unknown key "x" (valid keys: messages)`,
-		`channels.zed.messages.a: unknown key "y" (valid keys: fields)`,
-		`channels.zed.messages.b: unknown key "y" (valid keys: fields)`,
+		`channels.zed.messages.a: unknown key "y" (valid keys: fields, display)`,
+		`channels.zed.messages.b: unknown key "y" (valid keys: fields, display)`,
 	}
 	for range 20 {
 		if got := channelsUnknownKeys(data); !slices.Equal(got, want) {
@@ -237,4 +285,17 @@ func TestValidateChannels_Busy(t *testing.T) {
 			t.Fatalf("errs %v, warnings %v; want one realtime-off warning for the busy field", errs, warnings)
 		}
 	})
+}
+
+// TestValidateChannels_Display pins that a `display:` under a message type
+// realtime.yaml does not declare is refused like any other entry for it.
+func TestValidateChannels_Display(t *testing.T) {
+	cfg := &Config{Channels: map[string]ChannelPresentation{"room": {Messages: map[string]MessagePresentation{
+		"poll": {Display: MessageDisplayHidden},
+	}}}}
+	errs, warnings := ValidateChannels(cfg, fakeChannelSchema{})
+	want := `channels.room.messages.poll: channel type room declares no message type "poll"`
+	if len(errs) != 1 || errs[0] != want || len(warnings) != 0 {
+		t.Fatalf("errs %v, warnings %v; want [%s]", errs, warnings, want)
+	}
 }

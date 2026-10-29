@@ -228,6 +228,7 @@ navigation:
 		{"add a view with export_render", de + "views:\n  t: {title: T, export_render: x.lua}\n", []string{"views.t.export_render added"}},
 		{"add a calendar", de + "calendars:\n  due:\n    sources: [{entity_type: ticket, date: due}]\n", nil},
 		{"add a timeline", de + "gantts:\n  plan: {hierarchy: [contains]}\n", nil},
+		{"set a message type display", de + "channels:\n  run:\n    messages:\n      claim: {display: hidden}\n", nil},
 		{"set the app logo injection", strings.Replace(de, "  name: Tickets\n", "  name: Tickets\n  disable_custom_injection: false\n", 1), []string{"app.disable_custom_injection added"}},
 	}
 	before := treeOf(t, de)

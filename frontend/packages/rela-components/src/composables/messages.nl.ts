@@ -213,6 +213,10 @@ const CHANNEL_TEXT_NL: Record<ChannelTextKey, string> = {
   closedNotice: 'Dit kanaal is gesloten. Je kunt het lezen, maar er kunnen geen berichten bij.',
   archivedNotice:
     'Dit kanaal is gearchiveerd. Je kunt het lezen, maar er kunnen geen berichten bij.',
+  showAllMessages: 'Alle berichten tonen',
+  onlyHidden: 'Hier staan alleen verborgen berichten. Gebruik Alle berichten tonen om ze te zien.',
+  onlyHiddenOlder:
+    'Tot nu toe alleen verborgen berichten. Laad oudere berichten of gebruik Alle berichten tonen om ze te zien.',
   yes: 'Ja',
   no: 'Nee',
   edited: '(bewerkt)',
@@ -326,6 +330,9 @@ export const NL_MESSAGES: Messages = {
       : `${count} ${count === 1 ? 'nieuw bericht' : 'nieuwe berichten'}`,
   channelNewNotices: ({ notices, messages }) =>
     `${[...(messages ? [messages] : []), ...notices].join('. ')}.`,
+  channelFold: ({ count, labels }) => `${count} ${count === 1 ? 'bericht' : 'berichten'}: ${labels.join(', ')}`,
+  channelOlderHidden: ({ count }) =>
+    `${count} ${count === 1 ? 'ouder bericht is' : 'oudere berichten zijn'} verborgen. Gebruik Alle berichten tonen om ze te zien.`,
   channelSessionMoved: ({ from, to }) => `Sessie van ${from} naar ${to}`,
   channelSessionReentered: ({ state }) => `Sessie opnieuw in ${state}`,
   channelSessionWaiting: ({ labels }) => `Wacht op ${ofList(labels)}`,

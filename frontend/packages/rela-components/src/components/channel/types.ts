@@ -112,9 +112,18 @@ export interface ChannelFieldPresentation {
   hidden?: boolean
 }
 
+/**
+ * How the log shows the messages of a type: `collapsed` folds a run of them
+ * into one line that expands in place, `hidden` leaves them out until the
+ * reader shows all messages. Absent shows them in full.
+ */
+export type ChannelMessageDisplay = 'collapsed' | 'hidden'
+
 /** The presentation of one message type. */
 export interface ChannelMessagePresentation {
   fields?: ChannelFieldPresentation[]
+  /** A display option only: the messages stay readable everywhere else. */
+  display?: ChannelMessageDisplay
 }
 
 /** The presentation of one channel type: data-entry.yaml `channels.<type>`. */

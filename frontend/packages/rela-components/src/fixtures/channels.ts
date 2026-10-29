@@ -546,3 +546,102 @@ export const answerMessage: ChannelMessageView = {
   props: { note: 'SQLite' },
   replyTo: { seq: 12, author: agent.name, excerpt: 'Which storage backend should the importer use?' },
 }
+
+/*
+ * An agent run with quiet message types (TKT-03DMXH): the runner's `claim`
+ * and `resume` are hidden and its `progress` notes are collapsed, while
+ * `plan` and `text` show in full.
+ */
+
+export const runMessageTypes: ChannelMessageTypeDef[] = [
+  {
+    name: 'text',
+    label: 'Message',
+    persist: 'log',
+    reply: true,
+    properties: [{ name: 'body', label: 'Message', type: 'markdown', required: true }],
+    actions: [],
+  },
+  {
+    name: 'claim',
+    label: 'Claim',
+    persist: 'log',
+    reply: false,
+    properties: [{ name: 'worktree', label: 'Worktree', type: 'string', required: true }],
+    actions: [],
+  },
+  {
+    name: 'resume',
+    label: 'Resume',
+    persist: 'log',
+    reply: false,
+    properties: [{ name: 'worktree', label: 'Worktree', type: 'string', required: true }],
+    actions: [],
+  },
+  {
+    name: 'progress',
+    label: 'Progress',
+    persist: 'log',
+    reply: false,
+    properties: [{ name: 'body', label: 'Status', type: 'markdown', required: true }],
+    actions: [],
+  },
+  {
+    name: 'plan',
+    label: 'Plan',
+    persist: 'log',
+    reply: true,
+    properties: [{ name: 'plan', label: 'Plan', type: 'markdown', required: true }],
+    actions: [],
+  },
+]
+
+export const runPresentation: ChannelPresentation = {
+  messages: {
+    claim: { display: 'hidden' },
+    resume: { display: 'hidden' },
+    progress: { display: 'collapsed' },
+  },
+}
+
+/** One message of the run, of the given type, by the runner unless it is `text`. */
+export function runMessage(seq: number, type: string, body = `Step ${seq}.`): ChannelMessageView {
+  const prop = type === 'claim' || type === 'resume' ? 'worktree' : type === 'plan' ? 'plan' : 'body'
+  const value = prop === 'worktree' ? `/work/run-${seq}` : body
+  return {
+    seq,
+    rev: seq,
+    type,
+    author: type === 'text' ? marieke : agent,
+    at: `09:${String(seq % 60).padStart(2, '0')}`,
+    props: { [prop]: value },
+    ...(prop === 'worktree' ? {} : { html: { [prop]: storyHtml(value) } }),
+  }
+}
+
+/**
+ * A run: the owner asks, the runner claims (hidden) and reports progress
+ * (collapsed) around a hidden resume, then posts a plan, and reports more
+ * progress at the end.
+ */
+export const runMessages: ChannelMessageView[] = [
+  runMessage(1, 'text', 'Please pick this up.'),
+  runMessage(2, 'claim'),
+  runMessage(3, 'progress', 'Reading the code.'),
+  runMessage(4, 'resume'),
+  runMessage(5, 'progress', 'Writing the plan.'),
+  runMessage(6, 'plan', 'Add a `display` key and fold runs in the log.'),
+  runMessage(7, 'progress', 'Waiting for review.'),
+  runMessage(8, 'progress', 'Still waiting.'),
+]
+
+/**
+ * A long run for the scroll stories: plain messages with a collapsed
+ * `progress` and a hidden `claim` after every third one.
+ */
+export function longRunMessages(count: number): ChannelMessageView[] {
+  return Array.from({ length: count }, (_, i) => {
+    const seq = i + 1
+    return runMessage(seq, seq % 3 === 1 ? 'text' : seq % 3 === 2 ? 'progress' : 'claim', `Message ${seq}.`)
+  })
+}

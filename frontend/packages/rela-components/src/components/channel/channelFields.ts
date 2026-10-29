@@ -4,12 +4,16 @@
  * cannot disagree.
  */
 import type {
+  ChannelEnumOption,
+  ChannelEphemeralView,
   ChannelMessagePresentation,
   ChannelMessageTypeDef,
+  ChannelPresentation,
   ChannelPropertyDef,
   ChannelPropertyKind,
   ChannelWidget,
 } from './types'
+import type { ChannelTextKey } from '../../composables/useMessages'
 
 /** One property, ready to render. */
 export interface ResolvedChannelField {
@@ -103,6 +107,13 @@ export function codePointLength(s: string): number {
   return n
 }
 
+/**
+ * The operations any message may offer in its `actions`, next to the action
+ * names of its type. The server reserves these names, so no action takes
+ * one. The app pins this list to its own `MESSAGE_OPS`.
+ */
+export const CHANNEL_OPERATIONS: ReadonlySet<string> = new Set(['edit', 'delete', 'remove', 'release'])
+
 /** The key a `pending` set uses for one operation on one message. */
 export function messagePendingKey(seq: number, op: string): string {
   return `message:${seq}:${op}`
@@ -129,4 +140,41 @@ export function anyDecisionPending(pending: ReadonlySet<string> | undefined): bo
   if (!pending) return false
   for (const k of pending) if (k.startsWith('decision:')) return true
   return false
+}
+
+/**
+ * The line of an ephemeral signal: the type's label, then the app's text or
+ * the props in presentation order, with enum labels and readable refs by
+ * title.
+ */
+export function ephemeralText(
+  e: ChannelEphemeralView,
+  types: ReadonlyMap<string, ChannelMessageTypeDef>,
+  presentation: ChannelPresentation | undefined,
+  enumOptions: Record<string, ChannelEnumOption[]> | undefined,
+  t: (key: ChannelTextKey) => string,
+): string {
+  const type = types.get(e.type)
+  const label = type?.label ?? e.type
+  if (e.text !== undefined) return e.text ? `${label} · ${e.text}` : label
+  const values = e.props ?? {}
+  const names = type
+    ? resolveChannelFields(type, presentation?.messages?.[type.name]).map((f) => f.property)
+    : Object.keys(values).map((name) => ({ name, enum: undefined }))
+  const parts: string[] = []
+  for (const p of names) {
+    const v = values[p.name]
+    if (v === undefined) continue
+    if (Array.isArray(v)) {
+      parts.push(v.join(', '))
+    } else if (typeof v === 'object') {
+      parts.push(v.restricted ? t('restrictedRef') : (v.title ?? v.id))
+    } else if (typeof v === 'boolean') {
+      parts.push(t(v ? 'yes' : 'no'))
+    } else {
+      const opts = p.enum ? enumOptions?.[p.enum] : undefined
+      parts.push(opts?.find((o) => o.value === v)?.label ?? String(v))
+    }
+  }
+  return [label, ...parts].join(' · ')
 }

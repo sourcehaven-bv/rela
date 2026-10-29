@@ -1712,6 +1712,11 @@ A button appears only when you may use it. It is left out, not disabled.
 A closed channel shows "This channel is closed." and an archived one "This
 channel is archived."; neither has a composer.
 
+Message types that only an agent or a script needs, such as a runner's
+progress notes, can be folded into one line or hidden in the web app with
+`display` in `data-entry.yaml`. See "Quiet message types" in the
+data-entry guide.
+
 On a channel type with a session, a header between the title and the
 messages shows the session's label and its states, in the order the file
 declares them. The current state is highlighted. The states a transition

@@ -1,5 +1,5 @@
 import { ref } from 'vue'
-import { expect, within } from 'storybook/test'
+import { expect, userEvent, within } from 'storybook/test'
 import type { Meta, StoryObj } from '@storybook/vue3-vite'
 import RlButton from './RlButton.vue'
 import RlButtonGroup from './RlButtonGroup.vue'
@@ -191,6 +191,40 @@ export const Pending: Story = {
     const left = inner.left - outer.left
     const right = outer.right - inner.right
     await expect(Math.abs(left - right)).toBeLessThanOrEqual(1)
+  },
+}
+
+/**
+ * A toggle passes `aria-pressed`. When it is on, the button takes the
+ * selected fill and an accent edge in every variant, so the state is visible
+ * and not only announced.
+ */
+export const Toggle: Story = {
+  render: () => ({
+    components: { RlButton },
+    setup: () => ({ on: ref(false) }),
+    template: `
+      <div style="${row}">
+        <RlButton variant="ghost" size="sm" :aria-pressed="on" @click="on = !on">Show all messages</RlButton>
+        <RlButton variant="secondary" aria-pressed="true">Secondary, on</RlButton>
+        <RlButton variant="subtle" aria-pressed="true">Subtle, on</RlButton>
+      </div>
+    `,
+  }),
+  play: async ({ canvasElement }) => {
+    const button = within(canvasElement).getByRole('button', { name: 'Show all messages' })
+    const look = () => {
+      const s = getComputedStyle(button)
+      return `${s.backgroundColor} ${s.boxShadow}`
+    }
+    const off = look()
+    await expect(getComputedStyle(button).boxShadow).toBe('none')
+    await userEvent.click(button)
+    await expect(button).toHaveAttribute('aria-pressed', 'true')
+    await expect(look()).not.toBe(off)
+    await expect(getComputedStyle(button).boxShadow).toContain('inset')
+    await userEvent.click(button)
+    await expect(button).toHaveAttribute('aria-pressed', 'false')
   },
 }
 

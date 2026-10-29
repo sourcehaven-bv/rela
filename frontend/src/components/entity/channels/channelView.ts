@@ -47,6 +47,7 @@ import type {
   ChannelEphemeralView,
   ChannelGroupView,
   ChannelLifecycleDef,
+  ChannelMessageDisplay,
   ChannelMessageView,
   ChannelNoticeView,
   ChannelPresentation,
@@ -62,6 +63,14 @@ import { resolveChannelFields } from 'rela-components/components/channel/channel
 export const EXCERPT_MAX = 80
 
 /**
+ * Whether d is a display the library knows. A value from a newer server is
+ * dropped, so its messages show in full rather than silently hidden.
+ */
+function isDisplay(d: unknown): d is ChannelMessageDisplay {
+  return d === 'collapsed' || d === 'hidden'
+}
+
+/**
  * The data-entry.yaml presentation as the library takes it. A form field
  * may omit `property`; a channel field names one (the server refuses any
  * other at load), so a field without one is left out rather than trusted.
@@ -74,6 +83,7 @@ export function presentationView(
   for (const [type, mp] of Object.entries(p.messages ?? {})) {
     messages[type] = {
       fields: mp.fields?.flatMap((f) => (f.property ? [{ ...f, property: f.property }] : [])),
+      ...(isDisplay(mp.display) ? { display: mp.display } : {}),
     }
   }
   return { messages }

@@ -182,6 +182,9 @@ var editable = map[File][]string{
 		// Channel message fields only order and label what realtime.yaml
 		// declares; the load check refuses form-only keys.
 		"channels.*.messages.*.fields.[].**",
+		// A message type's display only folds or hides it in the web app;
+		// the messages stay readable everywhere, so it restricts nothing.
+		"channels.*.messages.*.display",
 
 		"lists.*.columns.[].direction",
 		"lists.*.columns.[].label",
