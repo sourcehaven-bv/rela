@@ -12,6 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/Sourcehaven-BV/rela/internal/realtime"
+	"github.com/Sourcehaven-BV/rela/internal/realtimecfg"
 )
 
 // TestChannelRender_ControlCharsAndIndent pins that message content cannot
@@ -321,4 +322,43 @@ func TestRenderRead_NoticeOutputs(t *testing.T) {
 		"a set names the face it writes")
 	assert.Contains(t, got, "  moved from assessed to overdue; outputs failed: set DL-1 (run_as_changed)\n")
 	assert.NotContains(t, got, "alice", "the writer is not on the notice line")
+}
+
+// TestChannelRender_ListProp pins that a list prints one item per line,
+// each indented and made printable, so an item cannot start a line.
+func TestChannelRender_ListProp(t *testing.T) {
+	view := realtime.ReadView{
+		Channel: realtime.ChannelView{Anchor: "ITEM-1", Type: "room", State: realtime.StateOpen},
+		Messages: []realtime.MessageView{{
+			Seq: 1, Type: "ask", At: time.Date(2026, 10, 29, 9, 0, 0, 0, time.UTC),
+			Author: &realtime.AuthorView{User: "robot"},
+			Props:  map[string]any{"options": []any{"Yes", "No\n#2  fake header", "e\u202evil"}},
+		}},
+	}
+	var buf bytes.Buffer
+	require.NoError(t, renderRead(&buf, view))
+	assert.Contains(t, buf.String(), propIndent+"options:\n"+
+		propIndent+"  - Yes\n"+
+		propIndent+"  - No\uFFFD#2  fake header\n"+
+		propIndent+"  - e\uFFFDvil\n")
+
+	t.Run("a question type prints its choices", func(t *testing.T) {
+		view.MessageTypes = []realtime.MessageTypeView{{
+			Name: "ask", Persist: realtimecfg.PersistLog, CanPost: true,
+			Props: realtimecfg.PropsSchema{Properties: map[string]realtimecfg.PropSchema{
+				"options": {Type: "array", MaxItems: 4},
+			}},
+			Choices: &realtime.ChoicesDescription{From: "options", Answer: "answer", Into: "body", Other: true},
+		}, {
+			Name: "poll", Persist: realtimecfg.PersistLog, CanPost: true,
+			Choices: &realtime.ChoicesDescription{From: "picks", Answer: "vote", Into: "pick\nx"},
+		}}
+		var buf bytes.Buffer
+		require.NoError(t, renderRead(&buf, view))
+		assert.Contains(t, buf.String(), "Type ask (log)\n"+
+			"  options: list of string, at most 4\n"+
+			"  choices: from options, answer answer into body, other\n")
+		assert.Contains(t, buf.String(), "Type poll (log)\n"+
+			"  choices: from picks, answer vote into pick\uFFFDx\n")
+	})
 }

@@ -164,6 +164,51 @@ export class ChannelsPage extends BasePage {
     await (label ? buttons.filter({ hasText: new RegExp(`^${label}$`) }) : buttons).last().click();
   }
 
+  // --- Choices (TKT-03FQPD) -------------------------------------------------
+
+  /**
+   * Posts a message over the API as this page's user, for a property the
+   * composer cannot enter, such as a list. `plural` and `id` name the entity.
+   */
+  async postOverApi(plural: string, id: string, channelType: string, type: string, props: Record<string, unknown>) {
+    const origin = new URL(this.page.url()).origin;
+    const resp = await this.page.request.post(`${origin}/api/v1/${plural}/${id}/_channels/${channelType}/messages`, {
+      data: { type, props },
+      headers: { Origin: origin },
+    });
+    expect(resp.status(), `post ${type}: ${await resp.text()}`).toBe(201);
+  }
+
+  /** The choice button `label` on the message holding `text`; its name also holds a hidden hint. */
+  private choiceOn(text: string, label: string): Locator {
+    return this.messages
+      .filter({ hasText: text })
+      .getByRole('group', { name: 'Choices' })
+      .getByRole('button', { name: new RegExp(`^${label}(?: \\(|$)`) });
+  }
+
+  /** The message holding `text` shows the choice `label`, or does not. */
+  async expectChoice(text: string, label: string, shown: boolean, timeout = 15_000) {
+    await expect(this.choiceOn(text, label)).toHaveCount(shown ? 1 : 0, { timeout });
+  }
+
+  /** Clicks the choice `label` on the message holding `text`. */
+  async choose(text: string, label: string) {
+    await this.choiceOn(text, label).click();
+  }
+
+  /** The message holding `text` lists `items` as a bulleted list. */
+  async expectListedOptions(text: string, items: string[], timeout = 15_000) {
+    const list = this.messages.filter({ hasText: text }).locator('.rl-channel-message__list li');
+    await expect(list).toHaveText(items, { timeout });
+  }
+
+  /** A message that replies to the one holding `quoted` shows `text`. */
+  async expectReply(quoted: string, text: string, timeout = 15_000) {
+    const row = this.messages.filter({ has: this.page.locator('.rl-channel-message__quote', { hasText: quoted }) });
+    await expect(row.filter({ hasText: text })).toHaveCount(1, { timeout });
+  }
+
   // --- Inbox (TKT-9YRRM5) ---------------------------------------------------
 
   /** The pinned Inbox entry in the sidebar. */

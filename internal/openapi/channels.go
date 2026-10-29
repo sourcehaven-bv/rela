@@ -82,6 +82,9 @@ func addChannelDescriptorSchema(spec *Spec) {
 		"enum":     {Type: "string", Description: "The schema.yaml enum type of an enum property"},
 		"values":   ArraySchema(str()),
 		"to":       {Type: "array", Items: str(), Description: "Entity types a ref property may name"},
+		"list": {Type: "boolean", Description: "Set for a list of strings (type string), whose value is a JSON " +
+			"array; max then limits each item"},
+		"max_items": {Type: "integer", Description: "Most items of a list property"},
 	})
 	property.Required = append(property.Required, "type")
 	messageType := labeled(map[string]*Schema{
@@ -92,6 +95,7 @@ func addChannelDescriptorSchema(spec *Spec) {
 		"actions": ArraySchema(labeled(map[string]*Schema{
 			"promote_to": {Type: "string", Description: "The entity type a promoting action creates"},
 		})),
+		"choices": choicesSchema(),
 	})
 	messageType.Required = append(messageType.Required, "persist", "reply", "properties", "actions")
 	channelType := labeled(map[string]*Schema{
@@ -377,7 +381,7 @@ func addTypingPath(spec *Spec, headPath, opID, tag string, params []Parameter, c
 // The body is empty, `{}` or `{"seq": n}`.
 func addReadPath(spec *Spec, headPath, opID, tag string, params []Parameter) {
 	body := ObjectSchema(map[string]*Schema{
-		"seq": {Type: "integer", Minimum: new(float64),
+		"seq": {Type: "integer", Limits: Limits{Minimum: new(float64)},
 			Description: "Mark read up to this seq; a seq above the last one is clamped. Absent: up to the last"},
 	}, nil)
 	body.AdditionalProperties = &Schema{Not: &Schema{}}
@@ -544,7 +548,7 @@ func postBodySchema(ct realtimecfg.ChannelType) *Schema {
 		if mt.Persist != realtimecfg.PersistEphemeral {
 			body["reply_to"] = &Schema{Type: "integer", Description: "Seq of the top-level message to reply to"}
 			if ct.Session() != nil {
-				body["expect_generation"] = &Schema{Type: "integer", Minimum: new(float64), Description: expectGenerationText}
+				body["expect_generation"] = &Schema{Type: "integer", Limits: Limits{Minimum: new(float64)}, Description: expectGenerationText}
 			}
 		}
 		top := []string{"type"}
@@ -560,16 +564,38 @@ func postBodySchema(ct realtimecfg.ChannelType) *Schema {
 	return &Schema{OneOf: variants}
 }
 
+// choicesSchema is `choices:` on a question type, in the channel schema.
+func choicesSchema() *Schema {
+	s := ObjectSchema(map[string]*Schema{
+		"from":   {Type: "string", Description: "The list property that holds the options"},
+		"answer": {Type: "string", Description: "The message type a click posts, as a reply to the question"},
+		"into":   {Type: "string", Description: "The string property of the answer type that receives the option"},
+		"other":  {Type: "boolean", Description: "Whether a button opens the composer for a free-text answer"},
+	}, []string{"from", "answer", "into", "other"})
+	s.Description = "Set for a question type: its options show as reply buttons. Absent otherwise"
+	return s
+}
+
 // propsSchema converts a message type's props schema, which the MCP tools
 // publish too, to an OpenAPI schema.
 func propsSchema(ps realtimecfg.PropsSchema) *Schema {
 	props := make(map[string]*Schema, len(ps.Properties))
 	for name, p := range ps.Properties {
-		props[name] = &Schema{
-			Type: p.Type, Format: p.Format, Enum: p.Enum, MaxLength: p.MaxLength, Description: p.Description,
-		}
+		props[name] = propSchema(p)
 	}
 	return &Schema{Type: ps.Type, Properties: props, Required: ps.Required, Closed: !ps.AdditionalProperties}
+}
+
+// propSchema converts one property schema; a list carries its items.
+func propSchema(p realtimecfg.PropSchema) *Schema {
+	s := &Schema{
+		Type: p.Type, Format: p.Format, Enum: p.Enum, Description: p.Description,
+		Limits: Limits{MaxLength: p.MaxLength, MaxItems: p.MaxItems, UniqueItems: p.UniqueItems},
+	}
+	if p.Items != nil {
+		s.Items = propSchema(*p.Items)
+	}
+	return s
 }
 
 // addReadSchemas adds the read marker schemas, the read object of a

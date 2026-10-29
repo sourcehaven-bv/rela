@@ -81,13 +81,35 @@ type MessageTypeDescription struct {
 	// Actions are sorted by name. PromoteTo is the entity type a promoting
 	// action creates, empty otherwise.
 	Actions []ActionDescription
+	// Choices is the type's `choices:`; nil when it has none.
+	Choices *ChoicesDescription
+}
+
+// ChoicesDescription describes `choices:` on a question type: the list
+// property From holds the options, a click posts message type Answer with
+// the option in its property Into, and Other adds a free-text button. See
+// [realtimecfg.Choices].
+type ChoicesDescription struct {
+	From   string `json:"from"`
+	Answer string `json:"answer"`
+	Into   string `json:"into"`
+	Other  bool   `json:"other"`
+}
+
+// describeChoices describes c; nil for nil.
+func describeChoices(c *realtimecfg.Choices) *ChoicesDescription {
+	if c == nil {
+		return nil
+	}
+	return &ChoicesDescription{From: c.From, Answer: c.Answer, Into: c.Into, Other: c.Other}
 }
 
 // PropertyDescription describes one message property. Type is string,
 // markdown, integer, boolean, date, datetime, ref or enum. Max is the most
 // code points a string or markdown value may hold, 0 for no limit. Enum
 // names the schema.yaml enum type and Values its values; To lists the
-// entity types a ref may name.
+// entity types a ref may name. List is set for a list of strings; Max then
+// limits each item and MaxItems the number of items.
 type PropertyDescription struct {
 	Name     string
 	Label    string
@@ -97,6 +119,8 @@ type PropertyDescription struct {
 	Enum     string
 	Values   []string
 	To       []string
+	List     bool
+	MaxItems int
 }
 
 // ActionDescription describes one message action.
@@ -164,11 +188,13 @@ func describeMessageType(mt *realtimecfg.MessageType) MessageTypeDescription {
 		Name: mt.Name, Label: mt.Label, Persist: string(mt.Persist), TTLSeconds: ttl, Reply: reply,
 		Properties: make([]PropertyDescription, 0, len(mt.Properties)),
 		Actions:    []ActionDescription{},
+		Choices:    describeChoices(mt.Choices),
 	}
 	for _, p := range mt.Properties {
 		d.Properties = append(d.Properties, PropertyDescription{
 			Name: p.Name, Label: p.Label, Type: string(p.Type), Required: p.Required, Max: p.Max,
 			Enum: p.Enum, Values: slices.Clone(p.Values), To: slices.Clone(p.To),
+			List: p.List, MaxItems: p.MaxItems,
 		})
 	}
 	slices.SortFunc(d.Properties, func(a, b PropertyDescription) int {

@@ -6,6 +6,7 @@ import { test as base, SEED, contextsAs, serveWithPrincipalHeader } from "./fixt
 import { FACED_SEED, FACED_USERS, writeFacedProject } from "./faced-project";
 import {
   CHANNEL_USERS,
+  CHOICES,
   DECISIONS,
   POLICY_ROOM,
   ROOM,
@@ -268,6 +269,60 @@ decisionTest.describe("session decisions", () => {
       await p.expectSessionAt(DECISIONS.approved);
     }
     await alice.expectDecision(DECISIONS.approveLabel, false);
+  });
+});
+
+// A room where a member asks with options and the lead answers with a
+// click (TKT-03FQPD).
+const choiceTest = base.extend<ChannelFixtures>({
+  serverUrl: async ({ testProject, serverBinary }, use, testInfo) => {
+    writeRoomProject(testProject, { choices: true });
+    await serveWithPrincipalHeader(serverBinary, testProject, testInfo, use, CHANNEL_USERS.lead);
+  },
+  as: asFixture,
+});
+
+choiceTest.describe("choices", () => {
+  choiceTest.describe.configure({ timeout: 120_000 });
+
+  choiceTest("a click on an option posts the answer", async ({ as }) => {
+    const alice = await as(CHANNEL_USERS.lead);
+    const bob = await as(CHANNEL_USERS.member);
+    for (const p of [alice, bob]) {
+      await p.openEntity("feature", FEATURE);
+      await p.expectChannel(ROOM.label);
+    }
+
+    const question = "When do we ship?";
+    const options = ["Friday", "After the audit"];
+    await bob.postOverApi("features", FEATURE, ROOM.type, CHOICES.askType, {
+      question,
+      [CHOICES.optionsProperty]: options,
+    });
+
+    // The lead may answer, so sees a button per option and Other. The
+    // member may not, so sees the options as a list.
+    for (const label of [...options, CHOICES.other]) await alice.expectChoice(question, label, true);
+    await bob.expectMessage(question);
+    await bob.expectChoice(question, options[0], false);
+    await bob.expectListedOptions(question, options);
+
+    await alice.choose(question, options[1]);
+    for (const p of [alice, bob]) await p.expectReply(question, options[1]);
+    // Answered: the buttons are gone, and the options show as a list.
+    await alice.expectChoice(question, options[0], false);
+    await alice.expectListedOptions(question, options);
+
+    // Other opens the composer with the answer type and the reply set.
+    const second = "Who reviews the release notes?";
+    await bob.postOverApi("features", FEATURE, ROOM.type, CHOICES.askType, {
+      question: second,
+      [CHOICES.optionsProperty]: ["Ann", "Bo"],
+    });
+    await alice.choose(second, CHOICES.other);
+    await alice.post("Both of them", CHOICES.answerLabel);
+    for (const p of [alice, bob]) await p.expectReply(second, "Both of them");
+    await alice.expectChoice(second, "Ann", false);
   });
 });
 

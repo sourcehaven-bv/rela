@@ -138,6 +138,8 @@ components:
   # the channel service share.
   realtimecfg:      { in: internal/realtimecfg }
   realtimelimits:   { in: internal/realtimelimits }
+  # Runes that make text show something other than what it holds.
+  texthazard:       { in: internal/texthazard }
   # The pure three-way merge behind Lua rela.sync.merge (TKT-SM20FG): no
   # I/O, reads the metamodel only to type the synced fields.
   syncmerge:        { in: internal/syncmerge }
@@ -1679,6 +1681,7 @@ deps:
       - principal
       - realtimecfg
       - realtimelimits
+      - texthazard
     canUse:
       - xnorm
   # The file backend: one directory per channel through the storage seam,

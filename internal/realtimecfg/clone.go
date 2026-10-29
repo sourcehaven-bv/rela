@@ -77,6 +77,7 @@ func (mt *MessageType) clone() MessageType {
 	}
 	out.Post = slices.Clone(mt.Post)
 	out.In = slices.Clone(mt.In)
+	out.Choices = clonePtr(mt.Choices, func(c Choices) Choices { return c })
 	out.Actions = make(map[string]*Action, len(mt.Actions))
 	for name, a := range mt.Actions {
 		c := *a

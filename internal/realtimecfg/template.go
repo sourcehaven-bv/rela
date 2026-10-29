@@ -370,6 +370,10 @@ func refKind(ref string, c outputCause) (prop Property, isProp bool, reason stri
 	if !ok {
 		return Property{}, false, fmt.Sprintf("message type %s has no property %q", mt.Name, name)
 	}
+	if p.List {
+		return Property{}, false, fmt.Sprintf("message property %s is a list; an output writes one value, "+
+			"so it cannot read a list", name)
+	}
 	return p, true, ""
 }
 
@@ -395,7 +399,7 @@ func (v writeChecker) wholeRef(ref string, tt templateTarget, c outputCause) str
 		return ""
 	}
 	if isProp {
-		return fmt.Sprintf("message property %s (%s) cannot fill %s, a %s property", p.Name, p.Type, tt, pt)
+		return fmt.Sprintf("message property %s (%s) cannot fill %s, a %s property", p.Name, p.TypeName(), tt, pt)
 	}
 	return fmt.Sprintf("%s cannot fill %s, a %s property", ref, tt, pt)
 }

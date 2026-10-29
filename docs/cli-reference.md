@@ -2176,11 +2176,11 @@ channel of a type with many channels.
 
 | Option         | Description                                                                                    |
 | -------------- | ---------------------------------------------------------------------------------------------- |
-| `-P`           | One message property (repeatable). Commas in the value are kept. The value is read as the property's declared type: a whole number for `integer`, `true` or `false` for `boolean`, text otherwise |
-| `--props-json` | All properties as one JSON object: inline, from a file (`@path`) or from stdin (`-`). Not together with `-P` |
+| `-P`           | One message property (repeatable). Commas in the value are kept. The value is read as the property's declared type: a whole number for `integer`, `true` or `false` for `boolean`, text otherwise. For a list property, repeat `-P` once per item, such as `-P options=Yes -P options=No`; any other property may be given once |
+| `--props-json` | All properties as one JSON object: inline, from a file (`@path`) or from stdin (`-`). A list property is a JSON array of strings. Not together with `-P` |
 | `--limit`      | Page size for `read` and `watch`, 1 to 200 (default 20). The project's page limit may cap it   |
 | `--before`, `--after`, `--after-rev` | Page cursors; name at most one. `read` prints the flag that continues from the page |
-| `--schemas`    | Show each message type's properties                                                            |
+| `--schemas`    | Show each message type's properties. A list property shows as `list of string, at most N`. A question type also shows `choices: from <list>, answer <type> into <property>`, with `, other` when it offers Other |
 | `--expect-generation` | For `post`: store the message only while the session is at this generation, 0 or more. Otherwise the post is refused with `session_moved` and nothing is stored |
 | `--reason`     | Why a message was removed; shown to moderators                                                 |
 | `--seq`        | For `mark-read`: mark read up to this sequence number, 0 or more. Without it, up to the last message |
@@ -2207,7 +2207,8 @@ The marker never moves back, so the printed number can be above `--seq`.
 guide describes read markers and which messages count as unread.
 
 The table output prints each message as a header line, `#seq  time  user (tool)  type`,
-followed by its properties. Every line of message content starts with two spaces and a `|`,
+followed by its properties. A list property prints one item per line, each line indented below
+the property name. Every line of message content starts with two spaces and a `|`,
 and control and bidi characters are replaced, so content cannot pass for
 output of its own. A ref shows `ID "title"`, or `(restricted)` when you may
 not read the entity. A removed message shows `[removed by author]` or

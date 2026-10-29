@@ -69,6 +69,7 @@ var channelWireTypes = map[string]any{
 	"ChannelLifecycleSchema":     v1.ChannelLifecycleSchema{},
 	"ChannelMessageTypeSchema":   v1.ChannelMessageTypeSchema{},
 	"ChannelPropertySchema":      v1.ChannelPropertySchema{},
+	"ChannelChoicesSchema":       v1.ChannelChoicesSchema{},
 	"ChannelActionSchema":        v1.ChannelActionSchema{},
 	"ChannelSessionSchema":       v1.ChannelSessionSchema{},
 	"ChannelSessionStateSchema":  v1.ChannelSessionStateSchema{},
@@ -278,6 +279,27 @@ func TestChannelWireGolden(t *testing.T) {
 	require.Equal(t, http.StatusCreated, resp.StatusCode, "%s", posted)
 	for name, path := range map[string]string{
 		"outputs_messages": otherIncident + "/messages", "failed_outputs_messages": incidentPath + "/messages",
+	} {
+		code, b := env.get(t, "alice", path)
+		require.Equal(t, http.StatusOK, code, "%s: %s", path, b)
+		var v any
+		require.NoError(t, json.Unmarshal(b, &v))
+		samples[name] = normalizeWire(v)
+	}
+
+	// Choices: the room's text carries a list of options, and the schema
+	// names announce as its answer.
+	choices := strings.Replace(channelTestRealtime,
+		"          about: { type: ref, to: [ticket, feature] }\n        post: [member]\n",
+		"          about: { type: ref, to: [ticket, feature] }\n"+
+			"          options: { type: string, list: true, max: 80, max_items: 4 }\n        post: [member]\n"+
+			"        choices: { from: options, answer: announce, into: body, other: true }\n", 1)
+	env.ch.cfg.Store(env.ch.parse(t, choices))
+	resp, posted = env.do(t, "alice", http.MethodPost, roomPath+"/messages",
+		`{"type":"text","props":{"body":"Which?","options":["A","B"]}}`, nil)
+	require.Equal(t, http.StatusCreated, resp.StatusCode, "%s", posted)
+	for name, path := range map[string]string{
+		"choices_schema": channelSchemaPath, "choices_messages": roomPath + "/messages",
 	} {
 		code, b := env.get(t, "alice", path)
 		require.Equal(t, http.StatusOK, code, "%s: %s", path, b)

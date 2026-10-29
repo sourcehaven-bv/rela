@@ -35,6 +35,9 @@
  * does. `focusRow(seq)` puts focus on a row without scrolling, for after a
  * decision removes the button that had it.
  *
+ * `choices` are the reply buttons of open questions, keyed by the
+ * question's seq; each row shows its own and emits `choose` with the key.
+ *
  * `typing` shows who else is typing as one line, in its own polite, atomic
  * live region apart from the signals, so it is read out only when the line
  * changes. It names at most two typists and counts the rest. The line is
@@ -104,6 +107,8 @@ const props = withDefaults(
     decisions?: ChannelDecisionView[]
     /** The seq of the message that moved the session; absent shows them on no row. */
     decisionSeq?: number
+    /** The reply buttons of open questions, by the question's seq. */
+    choices?: ReadonlyMap<number, ChannelDecisionView[]>
   }>(),
   {
     postable: () => [],
@@ -122,6 +127,7 @@ const props = withDefaults(
     headingLevel: 3,
     decisions: undefined,
     decisionSeq: undefined,
+    choices: undefined,
   },
 )
 
@@ -139,6 +145,7 @@ const emit = defineEmits<{
   /** A reply quote points at a message that is not loaded. */
   jump: [seq: number]
   decide: [key: string, from: 'row']
+  choose: [key: string]
 }>()
 
 const strings = useMessages()
@@ -180,7 +187,9 @@ function ephemeralText(e: ChannelEphemeralView): string {
   for (const p of names) {
     const v = values[p.name]
     if (v === undefined) continue
-    if (typeof v === 'object') {
+    if (Array.isArray(v)) {
+      parts.push(v.join(', '))
+    } else if (typeof v === 'object') {
       parts.push(v.restricted ? t('restrictedRef') : (v.title ?? v.id))
     } else if (typeof v === 'boolean') {
       parts.push(t(v ? 'yes' : 'no'))
@@ -370,7 +379,9 @@ defineExpose({
             :pending="pending"
             :can-reply="canReply"
             :decisions="decisions && m.seq === decisionSeq ? decisions : undefined"
+            :choices="choices?.get(m.seq)"
             @decide="(key) => emit('decide', key, 'row')"
+            @choose="(key) => emit('choose', key)"
             @reply="(s) => emit('reply', s)"
             @edit="(s) => emit('edit', s)"
             @delete="(s) => emit('delete', s)"

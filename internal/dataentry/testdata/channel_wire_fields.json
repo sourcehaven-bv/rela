@@ -34,6 +34,12 @@
     "tool",
     "user"
   ],
+  "ChannelChoicesSchema": [
+    "answer",
+    "from",
+    "into",
+    "other"
+  ],
   "ChannelHead": [
     "_actions",
     "channel",
@@ -70,6 +76,7 @@
   ],
   "ChannelMessageTypeSchema": [
     "actions",
+    "choices",
     "label",
     "name",
     "persist",
@@ -80,7 +87,9 @@
   "ChannelPropertySchema": [
     "enum",
     "label",
+    "list",
     "max",
+    "max_items",
     "name",
     "required",
     "to",

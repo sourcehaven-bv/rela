@@ -35,8 +35,13 @@ export interface ChannelPropertyDef {
   label: string
   type: ChannelPropertyKind
   required?: boolean
-  /** The most Unicode code points a string or markdown value may hold. */
+  /**
+   * The most Unicode code points a string or markdown value may hold; for a
+   * list, the most each item may hold.
+   */
   max?: number
+  /** A list of strings: the value is an array, shown one item per line. */
+  list?: boolean
   /** The enum type whose labels and colours `enumOptions` carries. */
   enum?: string
   /** The allowed values of an enum property. */
@@ -63,6 +68,11 @@ export interface ChannelMessageTypeDef {
   reply: boolean
   properties: ChannelPropertyDef[]
   actions: ChannelActionDef[]
+  /**
+   * The options of a question: `from` names its list property, and a click
+   * posts `answer` with the option in `into`. The app builds the buttons.
+   */
+  choices?: { from: string; answer: string; into: string; other: boolean }
 }
 
 /** A lifecycle operation of a channel type, such as close or archive. */
@@ -139,8 +149,8 @@ export interface ChannelRestrictedRef {
 /** A ref property value as the user sees it. */
 export type ChannelRef = ChannelReadableRef | ChannelRestrictedRef
 
-/** A stored property value: a scalar, or a ref. */
-export type ChannelPropValue = string | number | boolean | ChannelRef
+/** A stored property value: a scalar, a ref, or the items of a list property. */
+export type ChannelPropValue = string | number | boolean | ChannelRef | string[]
 
 /**
  * A composer field's raw value: input text, a checkbox state, or a ref's

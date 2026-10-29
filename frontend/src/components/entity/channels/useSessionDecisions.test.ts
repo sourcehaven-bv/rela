@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { nextTick, ref } from 'vue'
 import { ApiError } from '@/api/errors'
+import { i18n } from '@/i18n'
 import type { ChannelHead, ChannelTypeSchema, Message } from '@/types/channels'
 import { useSessionDecisions, type DecisionChannel, type DecisionDeps } from './useSessionDecisions'
 
@@ -81,6 +82,7 @@ function setup() {
   const ch = {
     head: h,
     messages: ref<Message[]>([]),
+    hasNewer: ref(false),
     actionsGeneration,
     refreshHead: vi.fn(async () => {}),
     refetch: vi.fn(async () => {}),
@@ -97,6 +99,7 @@ function setup() {
       editing: vi.fn(() => false),
       discardEdit: vi.fn(),
       endReply: vi.fn(),
+      reply: vi.fn(),
       select: vi.fn(() => true),
       showError: vi.fn(),
     },
@@ -354,5 +357,261 @@ describe('useSessionDecisions form decisions', () => {
     await s.d.onDecide('revise', 'header')
     s.d.resetDecisions()
     expect(s.d.formDecision.value).toBeUndefined()
+  })
+})
+
+// A question type ask whose options post answer (TKT-03FQPD). With a
+// session, ask at seq 10 moved the session to generation 5.
+const askType = {
+  name: 'ask',
+  label: 'Ask',
+  persist: 'log' as const,
+  reply: true,
+  actions: [],
+  properties: [
+    { name: 'note', label: 'Note', type: 'string' },
+    { name: 'options', label: 'Options', type: 'string', list: true },
+  ],
+  choices: { from: 'options', answer: 'answer', into: 'body', other: true },
+}
+const answerType = {
+  name: 'answer',
+  label: 'Answer',
+  persist: 'log' as const,
+  reply: true,
+  actions: [],
+  properties: [{ name: 'body', label: 'Body', type: 'string' }],
+}
+
+function choiceSetup(withSession: boolean) {
+  const cct = {
+    name: 'run',
+    message_types: [askType, answerType],
+    ...(withSession
+      ? {
+          session: {
+            label: 'Run',
+            initial: 'working',
+            states: [
+              { name: 'working', label: 'Working', status: 'working' },
+              { name: 'asking', label: 'Asking', status: 'input_required' },
+            ],
+          },
+        }
+      : {}),
+  } as unknown as ChannelTypeSchema
+  const question: Message = {
+    seq: 10,
+    rev: 10,
+    type: 'ask',
+    at: '2026-03-01T10:00:00Z',
+    author: { user: 'robot' },
+    props: { note: 'Which one?', options: ['A', 'B'] },
+  }
+  const notice: Message = {
+    seq: 11,
+    rev: 11,
+    type: 'session',
+    at: '2026-03-01T10:00:00Z',
+    author: { user: 'system', system: true },
+    triggered_by: 'session:run',
+    props: { from: 'working', to: 'asking', generation: 5, cause: 10 },
+  }
+  const h = ref<ChannelHead | undefined>({
+    channel: {
+      state: 'open',
+      ...(withSession
+        ? {
+            session: {
+              state: 'asking',
+              status: 'input_required',
+              generation: 5,
+              entered_at: '2026-03-01T10:00:00Z',
+              transitions: [{ message_type: 'answer', to: 'working' }],
+            },
+          }
+        : {}),
+    },
+    _actions: { post: ['answer', 'ask'], transitions: withSession ? ['answer'] : [] },
+  } as unknown as ChannelHead)
+  const messages = ref<Message[]>(withSession ? [question, notice] : [question])
+  const ch = {
+    head: h,
+    messages,
+    hasNewer: ref(false),
+    actionsGeneration: ref<number | undefined>(withSession ? 5 : undefined),
+    refreshHead: vi.fn(async () => {}),
+    refetch: vi.fn(async () => {}),
+  } as unknown as DecisionChannel
+  const deps = {
+    channelType: () => cct,
+    channelKey: () => 'a',
+    ch,
+    messageType: (n: string) => cct.message_types.find((m) => m.name === n),
+    post: vi.fn(async () => {}),
+    setPending: vi.fn(),
+    submitting: ref(false),
+    composer: {
+      editing: vi.fn(() => false),
+      discardEdit: vi.fn(),
+      endReply: vi.fn(),
+      reply: vi.fn(),
+      select: vi.fn(() => true),
+      showError: vi.fn(),
+    },
+    ui: {
+      confirm: vi.fn(async () => true),
+      toast: vi.fn(),
+      handle: vi.fn((): string | undefined => undefined),
+      focusRow: vi.fn(() => true),
+      focusHeader: vi.fn(),
+    },
+  } satisfies DecisionDeps
+  return { deps, messages, question, d: useSessionDecisions(deps) }
+}
+
+describe('useSessionDecisions choices', () => {
+  it('builds one button per option and Other on the question', () => {
+    const s = choiceSetup(true)
+    expect(s.d.choices.value.get(10)?.map((v) => [v.key, v.label, !!v.opensForm])).toEqual([
+      ['choice:10:0', 'A', false],
+      ['choice:10:1', 'B', false],
+      ['choice:10:other', 'Other answer…', true],
+    ])
+  })
+
+  it('the Other label follows a language switch', () => {
+    const s = choiceSetup(false)
+    const other = () => s.d.choices.value.get(10)?.find((v) => v.opensForm)?.label
+    expect(other()).toBe('Other answer…')
+    const before = i18n.global.locale.value
+    try {
+      i18n.global.locale.value = 'nl'
+      expect(other()).toBe('Ander antwoord…')
+    } finally {
+      i18n.global.locale.value = before
+    }
+  })
+
+  it('a click posts the answer as a reply, with the head generation, and focuses the question', async () => {
+    const s = choiceSetup(true)
+    await s.d.onChoose('choice:10:1')
+    expect(s.deps.post).toHaveBeenCalledWith('answer', { body: 'B' }, 10, 5)
+    expect(s.deps.setPending).toHaveBeenCalledWith('decision:choice:10:1', true)
+    expect(s.deps.ui.focusRow).toHaveBeenCalledWith(10)
+  })
+
+  it('without a session the click sends no generation', async () => {
+    const s = choiceSetup(false)
+    await s.d.onChoose('choice:10:0')
+    expect(s.deps.post).toHaveBeenCalledWith('answer', { body: 'A' }, 10, undefined)
+  })
+
+  it('a double click posts once', async () => {
+    const s = choiceSetup(true)
+    const p = deferred<void>()
+    s.deps.post.mockReturnValueOnce(p.promise)
+    const first = s.d.onChoose('choice:10:0')
+    await s.d.onChoose('choice:10:0')
+    await s.d.onDecide('answer', 'header')
+    p.resolve()
+    await first
+    expect(s.deps.post).toHaveBeenCalledTimes(1)
+  })
+
+  it('session_moved goes through the panel mapping and opens no form', async () => {
+    const s = choiceSetup(true)
+    const err = problem('session_moved')
+    s.deps.post.mockRejectedValueOnce(err)
+    await s.d.onChoose('choice:10:0')
+    expect(s.deps.ui.handle).toHaveBeenCalledWith(err, true)
+    expect(s.deps.composer.select).not.toHaveBeenCalled()
+  })
+
+  it('invalid_message opens the composer with the answer type and shows the message', async () => {
+    const s = choiceSetup(true)
+    s.deps.post.mockRejectedValueOnce(problem('invalid_message'))
+    s.deps.ui.handle.mockReturnValueOnce('too long')
+    await s.d.onChoose('choice:10:0')
+    expect(s.deps.composer.select).toHaveBeenCalledWith('answer')
+    expect(s.deps.composer.showError).toHaveBeenCalledWith('too long')
+  })
+
+  it('other with session: opens the composer as a reply, and its Send carries the generation', async () => {
+    const s = choiceSetup(true)
+    await s.d.onChoose('choice:10:other')
+    expect(s.deps.composer.select).toHaveBeenCalledWith('answer')
+    expect(s.deps.composer.reply).toHaveBeenCalledWith(10)
+    expect(s.deps.post).not.toHaveBeenCalled()
+    await s.d.sendComposer('answer', { body: 'C' }, 10)
+    expect(s.deps.post).toHaveBeenCalledWith('answer', { body: 'C' }, 10, 5)
+  })
+
+  it('other without session sends no generation', async () => {
+    const s = choiceSetup(false)
+    await s.d.onChoose('choice:10:other')
+    expect(s.deps.composer.reply).toHaveBeenCalledWith(10)
+    expect(s.d.formDecision.value).toBeUndefined()
+    await s.d.sendComposer('answer', { body: 'C' }, 10)
+    expect(s.deps.post).toHaveBeenCalledWith('answer', { body: 'C' }, 10, undefined)
+  })
+
+  it('other during an edit asks first', async () => {
+    const s = choiceSetup(false)
+    s.deps.composer.editing.mockReturnValue(true)
+    s.deps.ui.confirm.mockResolvedValueOnce(false)
+    await s.d.onChoose('choice:10:other')
+    expect(s.deps.ui.confirm).toHaveBeenCalled()
+    expect(s.deps.composer.reply).not.toHaveBeenCalled()
+  })
+
+  it('an arriving answer hides the buttons; only the messages changed', () => {
+    const s = choiceSetup(false)
+    expect(s.d.choices.value.size).toBe(1)
+    s.messages.value = [
+      ...s.messages.value,
+      {
+        seq: 12,
+        rev: 12,
+        type: 'answer',
+        at: '2026-03-01T10:01:00Z',
+        author: { user: 'alice' },
+        props: { body: 'A' },
+        reply_to: 10,
+      },
+    ]
+    expect(s.d.choices.value.size).toBe(0)
+  })
+
+  it.each([
+    { withSession: true, text: STALE },
+    { withSession: false, text: 'This question is no longer open.' },
+  ])(
+    'a key that is no longer offered (session: $withSession) says so',
+    async ({ withSession, text }) => {
+      const s = choiceSetup(withSession)
+      await s.d.onChoose('choice:99:0')
+      expect(s.deps.ui.toast).toHaveBeenCalledWith(text)
+      expect(s.deps.post).not.toHaveBeenCalled()
+    }
+  )
+
+  it('without a session, Other the composer no longer offers says the question is closed', async () => {
+    const s = choiceSetup(false)
+    s.deps.composer.select.mockReturnValueOnce(false)
+    await s.d.onChoose('choice:10:other')
+    expect(s.deps.ui.toast).toHaveBeenCalledWith('This question is no longer open.')
+    expect(s.deps.composer.reply).not.toHaveBeenCalled()
+  })
+
+  it('session_wrong_state says the session moved on, refetches and opens no form', async () => {
+    const s = choiceSetup(true)
+    s.deps.post.mockRejectedValueOnce(problem('session_wrong_state'))
+    await s.d.onChoose('choice:10:0')
+    expect(s.deps.ui.toast).toHaveBeenCalledWith(STALE)
+    expect(s.deps.ch.refetch).toHaveBeenCalledTimes(1)
+    expect(s.deps.ui.handle).not.toHaveBeenCalled()
+    expect(s.deps.composer.select).not.toHaveBeenCalled()
+    expect(s.deps.ui.focusRow).not.toHaveBeenCalled()
   })
 })

@@ -86,3 +86,30 @@ func TestDescribe_Off(t *testing.T) {
 	require.NotNil(t, h.svc.Describe())
 	require.Empty(t, h.svc.Describe())
 }
+
+// TestDescribe_ListAndChoices pins AC 3 and AC 6 of TKT-03FQPD: a list
+// property carries list and max_items, a question type carries its
+// choices, and a type without choices has none.
+func TestDescribe_ListAndChoices(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t, withYAML(listRealtime))
+	views := h.svc.Describe()
+	require.Len(t, views, 1)
+	byName := map[string]MessageTypeDescription{}
+	for _, mt := range views[0].MessageTypes {
+		byName[mt.Name] = mt
+	}
+	ask := byName["ask"]
+	require.Equal(t, &ChoicesDescription{From: "options", Answer: "answer", Into: "body", Other: true}, ask.Choices)
+	var options PropertyDescription
+	for _, p := range ask.Properties {
+		if p.Name == "options" {
+			options = p
+		}
+	}
+	require.True(t, options.List)
+	require.Equal(t, 4, options.MaxItems)
+	require.Equal(t, 80, options.Max)
+	require.Equal(t, "string", options.Type)
+	require.Nil(t, byName["answer"].Choices)
+}

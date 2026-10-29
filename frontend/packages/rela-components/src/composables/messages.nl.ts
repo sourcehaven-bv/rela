@@ -225,6 +225,7 @@ const CHANNEL_TEXT_NL: Record<ChannelTextKey, string> = {
   sessionShowAll: 'Alle stappen tonen',
   sessionHideAll: 'Stappen verbergen',
   decisions: 'Beslissingen',
+  choices: 'Keuzes',
 }
 
 export const NL_MESSAGES: Messages = {
@@ -313,6 +314,7 @@ export const NL_MESSAGES: Messages = {
   channelSessionOptionHint: () => ' (verplaatst de sessie)',
   channelDecisionHint: ({ to, form }) =>
     form ? ' (opent het formulier)' : to ? ` (zet de sessie op ${to})` : ' (zet de sessie verder)',
+  channelChoiceHint: () => ' (plaatst dit antwoord als reactie)',
   channelSessionSummary: ({ status, label, outcome }) => {
     switch (status) {
       case 'stranded':

@@ -4,7 +4,7 @@ import RlChannelDecisions from './RlChannelDecisions.vue'
 import { DECISIONS_BLOCKED_KEY, decisionPendingKey } from './channelFields'
 import { provideMessages } from '../../composables/useMessages'
 import { NL_MESSAGES } from '../../composables/messages.nl'
-import { breachDecisions } from '../../fixtures/channels'
+import { breachDecisions, questionChoices } from '../../fixtures/channels'
 
 const meta: Meta<typeof RlChannelDecisions> = {
   title: 'Channel/Channel decisions',
@@ -118,6 +118,64 @@ export const Dutch: Story = {
       'Risk assessed (opent het formulier)',
       'Contained again (zet de sessie op Contained)',
       'Dismiss (zet de sessie op Dismissed)',
+    ])
+  },
+}
+
+/**
+ * A question's options (`kind: 'choice'`): a group named Choices, no
+ * workflow icon, and each option says it posts the answer. An option of
+ * 200 characters, the default item limit, wraps in a narrow container and
+ * shows in full.
+ */
+export const Choices: Story = {
+  args: { decisions: questionChoices, kind: 'choice' },
+  render: (args) => ({
+    components: { RlChannelDecisions },
+    setup: () => ({ args }),
+    template: '<div style="width:320px"><RlChannelDecisions v-bind="args" /></div>',
+  }),
+  play: async ({ args, canvasElement }) => {
+    const canvas = within(canvasElement)
+    const group = canvas.getByRole('group', { name: 'Choices' })
+    const buttons = within(group).getAllByRole('button')
+    await expect(buttons.map(label)).toEqual([
+      'PostgreSQL (posts this answer as a reply)',
+      'SQLite (posts this answer as a reply)',
+      `${questionChoices[2]!.label} (posts this answer as a reply)`,
+      'Other answer… (opens the form)',
+    ])
+    await expect(group.querySelector('svg')).toBeNull()
+    const text = (b: HTMLElement) => b.querySelector<HTMLElement>('.rl-channel-decisions__choice')!
+    // The long option wraps onto more lines, and none of it is cut off.
+    const long = text(buttons[2]!)
+    await expect(questionChoices[2]!.label).toHaveLength(200)
+    await expect(long.textContent).toBe(questionChoices[2]!.label)
+    await expect(long.clientHeight).toBeGreaterThan(text(buttons[0]!).clientHeight * 2)
+    await expect(long.scrollHeight).toBeLessThanOrEqual(long.clientHeight + 1)
+    await expect(long.scrollWidth).toBeLessThanOrEqual(long.clientWidth + 1)
+    await expect(buttons[2]!.scrollHeight).toBeLessThanOrEqual(buttons[2]!.clientHeight + 1)
+    await expect(group.scrollWidth).toBeLessThanOrEqual(group.clientWidth + 1)
+    await userEvent.click(buttons[0]!)
+    await expect(args.onDecide).toHaveBeenCalledWith('choice:12:0')
+  },
+}
+
+/** The choice texts in Dutch. */
+export const ChoicesDutch: Story = {
+  args: { decisions: questionChoices.slice(0, 1), kind: 'choice' },
+  render: (args) => ({
+    components: { RlChannelDecisions },
+    setup() {
+      provideMessages(NL_MESSAGES)
+      return { args }
+    },
+    template: '<RlChannelDecisions v-bind="args" />',
+  }),
+  play: async ({ canvasElement }) => {
+    const group = within(canvasElement).getByRole('group', { name: 'Keuzes' })
+    await expect(within(group).getAllByRole('button').map(label)).toEqual([
+      'PostgreSQL (plaatst dit antwoord als reactie)',
     ])
   },
 }

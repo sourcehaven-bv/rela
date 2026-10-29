@@ -1453,3 +1453,136 @@ describe('ChannelsPanel session decisions', () => {
     })
   })
 })
+
+// TKT-03FQPD: a question's options as reply buttons, in a PoC-shaped
+// session. ask (seq 12) moved the session to asking at generation 5.
+describe('ChannelsPanel choices', () => {
+  const ask = {
+    name: 'ask',
+    label: 'Ask',
+    persist: 'log' as const,
+    reply: true,
+    actions: [],
+    properties: [
+      { name: 'note', label: 'Note', type: 'string' as const },
+      { name: 'options', label: 'Options', type: 'string' as const, list: true },
+    ],
+    choices: { from: 'options', answer: 'answer', into: 'note', other: true },
+  }
+  const answer = {
+    name: 'answer',
+    label: 'Answer',
+    persist: 'log' as const,
+    reply: true,
+    actions: [],
+    properties: [{ name: 'note', label: 'Note', type: 'string' as const }],
+  }
+  const run: ChannelTypeSchema = {
+    ...room,
+    message_types: [room.message_types[0]!, ask, answer],
+    session: {
+      label: 'Run',
+      initial: 'working',
+      states: [
+        { name: 'working', label: 'Working', status: 'working' },
+        { name: 'asking', label: 'Asking', status: 'input_required' },
+      ],
+    },
+  }
+  const asking = {
+    state: 'asking',
+    status: 'input_required' as const,
+    generation: 5,
+    entered_at: '2026-03-01T10:00:00Z',
+    transitions: [{ message_type: 'answer', to: 'working' }],
+  }
+  const runHead = (): ChannelHead => {
+    const h = head({}, { last_seq: 13, rev: 13, session: asking })
+    return { ...h, _actions: { ...h._actions, post: ['card', 'answer'], transitions: ['answer'] } }
+  }
+  const question = msg(12, {
+    type: 'ask',
+    author: { user: 'robot' },
+    props: { note: 'Which one?', options: ['A', 'B'] },
+    _actions: [],
+  })
+  const notice = msg(13, {
+    type: 'session',
+    author: { user: 'system', system: true },
+    triggered_by: 'session:room',
+    props: { from: 'working', to: 'asking', generation: 5, cause: 12 },
+    _actions: [],
+  })
+
+  beforeEach(() => {
+    api.getChannelSchema.mockResolvedValue({ channel_types: [run] })
+    api.getChannelHead.mockImplementation(() => Promise.resolve(runHead()))
+    api.getMessages.mockResolvedValue({
+      ...page([question, notice]),
+      channel: channel({ last_seq: 13, rev: 13, session: asking }),
+      next_after_rev: 13,
+    })
+    api.postMessage.mockResolvedValue({
+      kind: 'message',
+      message: msg(14, { type: 'answer', props: { note: 'B' }, reply_to: 12, _actions: [] }),
+    })
+  })
+
+  const header = () => w().find('.rl-channel-session')
+  async function click(el: ReturnType<VueWrapper['find']>) {
+    await el.trigger('click')
+    await flushPromises()
+    await flushPromises()
+  }
+
+  it('shows the options on the question, and the answer decision only in the header', async () => {
+    await mountPanel()
+    const row = messageEl(12)
+    const group = row.find('[role="group"][aria-label="Choices"]')
+    expect(group.findAll('[data-decision]').map((b) => b.attributes('data-decision'))).toEqual([
+      'choice:12:0',
+      'choice:12:1',
+      'choice:12:other',
+    ])
+    expect(row.find('[data-decision="answer"]').exists()).toBe(false)
+    expect(header().findAll('[data-decision="answer"]')).toHaveLength(1)
+    // While the buttons show, the options are not listed a second time.
+    expect(row.find('.rl-channel-message__list').exists()).toBe(false)
+  })
+
+  it('a click on an option posts the answer as a reply at the head generation', async () => {
+    await mountPanel()
+    await click(messageEl(12).find('[data-decision="choice:12:1"]'))
+    expect(api.postMessage).toHaveBeenCalledTimes(1)
+    expect(api.postMessage).toHaveBeenCalledWith(expect.anything(), 'answer', { note: 'B' }, 12, 5)
+  })
+
+  it('Other opens the composer as a reply to the question, and the Send carries the generation', async () => {
+    await mountPanel()
+    await click(messageEl(12).find('[data-decision="choice:12:other"]'))
+    expect(api.postMessage).not.toHaveBeenCalled()
+    const checked = composerForm().find('[role="radio"][aria-checked="true"]')
+    expect(checked.text()).toContain('Answer')
+    expect(composerForm().text()).toContain('robot')
+    await composerForm().find('input[type="text"], textarea').setValue('Neither')
+    await submitComposer()
+    expect(api.postMessage).toHaveBeenCalledWith(
+      expect.anything(),
+      'answer',
+      { note: 'Neither' },
+      12,
+      5
+    )
+  })
+
+  it('a caller who may not post the answer sees the options as a list', async () => {
+    api.getChannelHead.mockImplementation(() => {
+      const h = runHead()
+      return Promise.resolve({ ...h, _actions: { ...h._actions, post: ['card'], transitions: [] } })
+    })
+    await mountPanel()
+    const row = messageEl(12)
+    expect(row.find('[data-decision]').exists()).toBe(false)
+    expect(row.findAll('.rl-channel-message__list li').map((li) => li.text())).toEqual(['A', 'B'])
+  })
+})

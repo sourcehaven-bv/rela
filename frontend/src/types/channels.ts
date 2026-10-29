@@ -400,8 +400,11 @@ export const MESSAGE_OPS: ReadonlySet<string> = new Set<MessageOp>([
  */
 export const LIFECYCLE_DELETE = 'delete'
 
-/** A prop value: a scalar, or a RefProp for a ref property. */
-export type MessagePropValue = string | number | boolean | RefProp
+/**
+ * A prop value: a scalar, a RefProp for a ref property, or the items of a
+ * list property.
+ */
+export type MessagePropValue = string | number | boolean | RefProp | string[]
 
 /**
  * One person or agent a message mentions. text is the code span text as
@@ -476,7 +479,7 @@ export interface EphemeralAccepted {
 }
 
 /** A prop value as a request sends it: a ref is its entity id. */
-export type MessagePropInput = string | number | boolean
+export type MessagePropInput = string | number | boolean | string[]
 
 export interface PostMessageRequest {
   type: string
@@ -564,6 +567,20 @@ export interface ChannelMessageTypeSchema {
   /** Required first, then by name. */
   properties: ChannelPropertySchema[]
   actions: ChannelActionSchema[]
+  /** Options in a list property, shown as reply buttons. */
+  choices?: ChannelChoicesSchema
+}
+
+/**
+ * The `choices:` of a question type: `from` is its list property, and a
+ * click posts `answer` with the option in `into`, as a reply to the
+ * question. `other` adds a button that opens the composer.
+ */
+export interface ChannelChoicesSchema {
+  from: string
+  answer: string
+  into: string
+  other: boolean
 }
 
 export type ChannelPropertyType =
@@ -574,8 +591,15 @@ export interface ChannelPropertySchema {
   label: string
   type: ChannelPropertyType
   required?: boolean
-  /** The most code points a string or markdown value may hold. */
+  /**
+   * The most code points a string or markdown value may hold; for a list,
+   * the most each item may hold.
+   */
   max?: number
+  /** Set for a list of strings (type string): the value is an array. */
+  list?: boolean
+  /** The most items of a list property. */
+  max_items?: number
   /** The schema enum type the values come from, for labels and colours. */
   enum?: string
   values?: string[]
@@ -837,13 +861,17 @@ export const CHANNEL_WIRE_FIELDS: Record<string, readonly string[]> = {
     'reply',
     'properties',
     'actions',
+    'choices',
   ]),
+  ChannelChoicesSchema: wireKeys<ChannelChoicesSchema>()(['from', 'answer', 'into', 'other']),
   ChannelPropertySchema: wireKeys<ChannelPropertySchema>()([
     'name',
     'label',
     'type',
     'required',
     'max',
+    'list',
+    'max_items',
     'enum',
     'values',
     'to',

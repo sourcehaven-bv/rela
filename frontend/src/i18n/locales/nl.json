@@ -166,6 +166,8 @@
     "sessionWrongState": "Dit berichttype kan in de huidige stand van de sessie niet worden geplaatst. Kies een ander.",
     "decisionConfirmBody": "Hiermee eindigt de sessie in {state}. Dit kun je niet ongedaan maken.",
     "decisionStale": "De sessie is verder gegaan. Kies opnieuw.",
+    "choiceOther": "Ander antwoord…",
+    "choiceStale": "Deze vraag is niet meer open.",
     "decisionDiscardEditTitle": "Je bewerking weggooien?",
     "decisionDiscardEditBody": "Deze beslissing opent een nieuw bericht. Je wijzigingen in het bericht dat je bewerkt gaan verloren.",
     "decisionDiscardEditConfirm": "Weggooien",

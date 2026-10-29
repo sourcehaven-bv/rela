@@ -6676,6 +6676,34 @@ body:
                           ]
                         }
                       },
+                      "choices": {
+                        "type": "object",
+                        "properties": {
+                          "answer": {
+                            "type": "string",
+                            "description": "The message type a click posts, as a reply to the question"
+                          },
+                          "from": {
+                            "type": "string",
+                            "description": "The list property that holds the options"
+                          },
+                          "into": {
+                            "type": "string",
+                            "description": "The string property of the answer type that receives the option"
+                          },
+                          "other": {
+                            "type": "boolean",
+                            "description": "Whether a button opens the composer for a free-text answer"
+                          }
+                        },
+                        "required": [
+                          "from",
+                          "answer",
+                          "into",
+                          "other"
+                        ],
+                        "description": "Set for a question type: its options show as reply buttons. Absent otherwise"
+                      },
                       "label": {
                         "type": "string",
                         "description": "The label from realtime.yaml, or the name when none is set; never empty"
@@ -6703,9 +6731,17 @@ body:
                               "type": "string",
                               "description": "The label from realtime.yaml, or the name when none is set; never empty"
                             },
+                            "list": {
+                              "type": "boolean",
+                              "description": "Set for a list of strings (type string), whose value is a JSON array; max then limits each item"
+                            },
                             "max": {
                               "type": "integer",
                               "description": "Most characters (Unicode code points) of a string or markdown value"
+                            },
+                            "max_items": {
+                              "type": "integer",
+                              "description": "Most items of a list property"
                             },
                             "name": {
                               "type": "string"

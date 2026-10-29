@@ -37,6 +37,19 @@ func TestPropsSchema(t *testing.T) {
 		}
 	}`, string(got))
 
+	list, err := json.Marshal((&MessageType{Name: "ask", Properties: map[string]Property{
+		"options": {Name: "options", Label: "Options", Type: PropertyString, List: true, Max: 80, MaxItems: 4},
+	}}).PropsSchema())
+	require.NoError(t, err)
+	require.JSONEq(t, `{
+		"type": "object",
+		"additionalProperties": false,
+		"properties": {
+			"options": {"type": "array", "description": "Options", "items": {"type": "string", "maxLength": 80},
+				"maxItems": 4, "uniqueItems": true}
+		}
+	}`, string(list))
+
 	empty, err := json.Marshal((&MessageType{Name: "typing"}).PropsSchema())
 	require.NoError(t, err)
 	require.JSONEq(t, `{"type": "object", "additionalProperties": false, "properties": {}}`, string(empty))

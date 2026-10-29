@@ -15,6 +15,13 @@
  * `DECISIONS_BLOCKED_KEY`, which blocks them without marking one. An empty
  * list renders nothing. The row wraps, so a narrow panel keeps every
  * button visible.
+ *
+ * The same group draws a question's choices (`kind: 'choice'`): it is then
+ * named "Choices", has no workflow icon, and a button's hidden text says it
+ * posts the answer (`channelChoiceHint`). A long option wraps onto as
+ * many lines as it needs and is never cut, because the click posts exactly
+ * that text in the person's name. Choice and decision buttons share the
+ * pending keys, so one click blocks both.
  */
 import { computed } from 'vue'
 import RlButton from '../common/RlButton.vue'
@@ -28,6 +35,8 @@ const props = defineProps<{
   pending?: ReadonlySet<string>
   /** Ids of elements that describe the group, such as the message it sits on. */
   describedBy?: string
+  /** `choice` draws a question's options; see the header comment. */
+  kind?: 'decision' | 'choice'
 }>()
 
 const emit = defineEmits<{ decide: [key: string] }>()
@@ -39,7 +48,10 @@ function isPending(d: ChannelDecisionView): boolean {
   return props.pending?.has(decisionPendingKey(d.key)) ?? false
 }
 
+const choice = computed(() => props.kind === 'choice')
+
 function hint(d: ChannelDecisionView): string {
+  if (choice.value && !d.opensForm) return messages.channelChoiceHint()
   return messages.channelDecisionHint({ to: d.toLabel, form: d.opensForm })
 }
 </script>
@@ -49,7 +61,7 @@ function hint(d: ChannelDecisionView): string {
     v-if="decisions.length"
     role="group"
     class="rl-channel-decisions"
-    :aria-label="messages.channelText({ key: 'decisions' })"
+    :aria-label="messages.channelText({ key: choice ? 'choices' : 'decisions' })"
     :aria-describedby="describedBy"
   >
     <RlButton
@@ -57,7 +69,7 @@ function hint(d: ChannelDecisionView): string {
       :key="d.key"
       size="sm"
       variant="secondary"
-      icon="workflow"
+      :icon="choice ? undefined : 'workflow'"
       :tone="d.danger ? 'danger' : 'default'"
       :loading="isPending(d)"
       :pending-label="messages.channelText({ key: 'sending' })"
@@ -65,7 +77,8 @@ function hint(d: ChannelDecisionView): string {
       :data-decision="d.key"
       @click="emit('decide', d.key)"
     >
-      {{ d.label }}<span class="rl-visually-hidden">{{ hint(d) }}</span>
+      <span v-if="choice" class="rl-channel-decisions__choice">{{ d.label }}</span>
+      <template v-else>{{ d.label }}</template><span class="rl-visually-hidden">{{ hint(d) }}</span>
     </RlButton>
   </div>
 </template>
@@ -77,5 +90,18 @@ function hint(d: ChannelDecisionView): string {
   align-items: center;
   gap: var(--rl-space-2);
   min-width: 0;
+}
+
+/*
+ * A long option wraps and shows in full: the click posts this text, so the
+ * person must be able to read all of it. The line length stays readable.
+ */
+.rl-channel-decisions__choice {
+  display: block;
+  max-width: 48ch;
+  padding-block: var(--rl-space-1);
+  white-space: normal;
+  text-align: left;
+  overflow-wrap: anywhere;
 }
 </style>

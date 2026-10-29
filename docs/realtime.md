@@ -220,15 +220,144 @@ client_baselines:
 | --- | --- |
 | `label` | The name the web app shows for the type. Without it, the type's name. |
 | `persist` | `log` (default) stores messages. `ephemeral` keeps signals, such as a status line, in memory for `ttl`, at most 60s. For a typing indicator, use `typing: true` on the channel type. |
-| `properties` | At most 32. Types: `string`, `markdown`, `integer`, `boolean`, `date`, `datetime`, `ref` (with `to:`), or an enum type from `schema.yaml`. `max` limits a string or markdown property in characters (Unicode code points). A property may have a `label`; without one, the label is its name. A `ref` property may set `notify: false`, so a value that names a person does not mention them (see [Mentions and replies](#mentions-and-replies)). `notify` on any other type is a config error. |
+| `properties` | At most 32. Types: `string`, `markdown`, `integer`, `boolean`, `date`, `datetime`, `ref` (with `to:`), or an enum type from `schema.yaml`. `max` limits a string or markdown property in characters (Unicode code points). A property may have a `label`; without one, the label is its name. A `ref` property may set `notify: false`, so a value that names a person does not mention them (see [Mentions and replies](#mentions-and-replies)). `notify` on any other type is a config error. A `string` property may set `list: true`: see [List properties](#list-properties). |
 | `when` | A condition on the `message` record that a post must meet. |
 | `post` | The roles that may post. Receiving needs only `read`. |
 | `in` | The session states in which the type may be posted. Without it, every state. Only on a channel type with a `session`. See [Sessions](#sessions). |
 | `rate` | Posts per identity, such as `10/m`. It may only lower the limit. |
 | `actions` | Buttons on a message, each gated by `roles` or a `permission`. An action may have a `promote_to`. Only for `log` messages. The names `edit`, `delete`, `remove` and `release` are reserved. See [Actions and promote](#actions-and-promote). |
+| `choices` | Reply buttons for the options in a list property. Only for `log` messages. See [Choices](#choices). |
 
 Labels are authored, never derived: rela shows a name as written when no
 `label` is given.
+
+### List properties
+
+A `string` property with `list: true` holds a list of strings, such as
+the options of a question. Only `string` properties can be lists.
+
+```yaml
+options: { type: string, list: true, max: 80, max_items: 4 }
+```
+
+- `max` limits each item, in characters. Without it, an item may hold 200
+  characters. It may be at most 500.
+- `max_items` limits the number of items. Without it, a list may hold 20
+  items, which is also the most it may allow. `max_items` on a property
+  without `list: true` is refused.
+
+A post sends the value as a JSON array of strings. rela trims each item
+and normalizes it to Unicode NFC. Unlike a single string, an item is
+trimmed. The post is refused with `invalid_message`, naming the property,
+when the value is not an array, an item is not a string, an item is empty
+after trimming, an item is too long, there are too many items, or two
+items are equal. An item may not hold a control character, a line break
+or an invisible character, such as U+200B or a bidi override, because a
+button would show it misleadingly. A few invisible characters are
+handled instead of refused:
+
+- The emoji style selectors U+FE0E and U+FE0F are dropped. Models often
+  write U+FE0F after a symbol such as a check mark; the item is stored
+  without it. Two items that differ only by a style selector are equal.
+- The zero-width joiner U+200D is allowed between two emoji, as in a
+  family emoji. Anywhere else it is refused, because `Yes` with a hidden
+  joiner would look like `Yes`.
+- Every other variation selector is refused.
+
+An empty array counts as absent, so a required list refuses it.
+
+A `when:` reads the list as `message.<name>`, for example
+`len(message.options) <= 3`. An absent list makes such a condition false.
+A trigger or reminder literal, a `promote_to.map` entry and a
+`{{message.<name>}}` template cannot name a list property; the file is
+refused.
+
+The composer of the web app does not offer a list property yet. Agents
+and scripts fill it: see [Agents and other processes](#agents-and-other-processes).
+When you edit a message in the web app, its list is kept as stored.
+
+If you change a `string` property to `list: true`, older messages still
+hold a single string there. A `when:` reads such a value as absent. When
+you edit such a message in the web app, the string is sent back as a list
+of one item. A post or edit through the API must send a list.
+
+## Choices
+
+`choices:` on a message type turns the options in one of its list
+properties into reply buttons. A click posts an answer with the option.
+This lets an agent ask a question that the person answers with one
+click. In the example, an agent that can read the incident asks its
+owner. The question moves the session to `asking`, and the answer moves
+it back to `working`.
+
+```yaml
+channel_types:
+  agent-run:
+    label: Agent run
+    attach_to: [incident]
+    roles:
+      owner:  { label: the owner, from: entity.owner }
+      member: { from: attached }
+    message_types:
+      text: { properties: { body: { type: markdown, required: true } }, post: [owner, member] }
+      ask:
+        label: Question
+        properties:
+          question: { type: markdown, required: true }
+          options:  { type: string, list: true, max: 80, max_items: 4 }
+        post: [member]
+        choices: { from: options, answer: answer, into: body, other: true }
+      answer:
+        label: Answer
+        properties:
+          body: { type: string, required: true }
+        post: [owner]
+        in: [asking]
+    session:
+      label: Run
+      initial: working
+      states:
+        working:
+          on: { ask: { to: asking } }
+        asking:
+          status: input_required
+          waiting_for: [owner]
+          on: { answer: { to: working, roles: [owner] } }
+```
+
+| Key | Meaning |
+| --- | --- |
+| `from` | The list property of this type that holds the options. |
+| `answer` | The message type a click posts. It must be another `log` type of the same channel type, and may require no property but `into`. |
+| `into` | The `string` property of the answer type that receives the option. It may not be a list or `markdown`, and its `max` must fit the longest option. |
+| `other` | When `true`, an extra button, **Other answer…**, opens the composer with the answer type selected, for an answer in your own words. |
+
+A click on an option posts the answer type with `{<into>: <option>}`, as a
+reply to the question. It is an ordinary post: the answer type's `post`,
+`in:` and `when:` apply, as for any other post. In a channel with a
+session, the post carries `expect_generation`, so a click after the
+session moved on is refused.
+
+The buttons show on a question only when all of these hold:
+
+- the question is not removed, and is not itself a reply;
+- the channel is open, and you may post the answer type now;
+- no answer replies to the question yet (a removed answer does not
+  count, so removing a wrong answer brings the buttons back);
+- the page shows the newest messages;
+- in a channel with a session: the question is the message that moved the
+  session into its current state.
+
+Otherwise the options show as a bulleted list. When the question is also
+the message that holds the session's decision buttons, it shows the
+choices and not a second button for the answer type. The session header
+keeps that button.
+
+The server does not check that an answer is one of the options, and does
+not record that a question was answered. Outside a session, a second
+answer to the same question is stored. Use a session if a question may be
+answered only once: the first answer moves the session, and a second
+click is refused because the session moved.
 
 ## Actions and promote
 
@@ -1432,6 +1561,15 @@ unknown entity type "nope"`. It checks:
   `awaits` on a state is refused with a pointer to `waiting_for`;
   `status` and `waiting_for` directly under `session`, `on:` or `after:`
   are refused with where they belong;
+- that `list: true` is only on a `string` property, that `max_items` is
+  only on a list and from 1 to 20, and that a list's `max` is from 1 to
+  500. A trigger or reminder literal, a `promote_to.map` entry or a
+  `{{message.<p>}}` template that names a list property is refused;
+- that `choices` is on a `log` type, that `from` names a list property of
+  that type, that `answer` names another `log` type of the channel type
+  that requires no property but `into`, and that `into` names a `string`
+  property of the answer type that is not a list and whose `max` holds
+  the longest option. An unknown key under `choices` is refused;
 - that the file has no merge key (`<<`) anywhere: write the entries out.
 
 Three more rules stop a message from revealing what `acl.yaml` hides:
@@ -1448,9 +1586,13 @@ Three more rules stop a message from revealing what `acl.yaml` hides:
 rela refuses the whole file for any of these problems, except one: a
 trigger or an `auto.when` it must leave out because of faces (see
 Triggers) is dropped with a warning, and the rest of the file stays in
-force. Two more checks only warn: an answer whose outputs no role in
-`acl.yaml` grants, and a handoff `set:` from free text (see
-[Handoff](#handoff)).
+force. Four more checks only warn: an answer whose outputs no role in
+`acl.yaml` grants, a handoff `set:` from free text (see
+[Handoff](#handoff)), a `choices.from` list that allows more than 10 items
+or more than 100 characters per item ("too many or too long for
+buttons"), and, in a channel with a session, a question type that never
+moves the session into a state where its answer type may be posted ("the
+buttons never show").
 
 An action named `edit`, `delete`, `remove` or `release` is refused too.
 Older versions accepted such a name; a file that has one no longer loads,
@@ -1524,6 +1666,11 @@ backends use indexes.
 Transitions have a fixed limit: at most 8 entries per message type and
 state.
 
+List properties have fixed limits: at most 20 items, and at most 500
+characters per item, 200 by default. The whole message still counts
+toward `message_bytes`, so 20 long items in a script other than Latin can
+reach that limit first.
+
 Outputs have fixed limits: at most 4 per transition and 1024 bytes per
 template. Retries run once a minute, at most 16 per round and 5 attempts
 per move, for 30 minutes after the notice; a claim holds for 90 seconds.
@@ -1560,6 +1707,7 @@ A button appears only when you may use it. It is left out, not disabled.
 | Session header | The channel type has a `session`. It shows on a closed or archived channel too. |
 | A message type marked as moving the session | Your post of that type would move the session now: see `_actions.transitions` below. |
 | A decision button, such as **Approve** | The channel is open, the session is neither ended nor stranded, and your post of the type would move the session now: the type is in `_actions.transitions` and `_actions.post`. It shows in the session header, and on the message that moved the session into its current state. |
+| A choice button, and **Other answer…** | The question's type has `choices`, and the rules under [Choices](#choices) hold. |
 
 A closed channel shows "This channel is closed." and an archived one "This
 channel is archived."; neither has a composer.
@@ -1660,6 +1808,21 @@ message: only a message moves a session.
   the move.
 - On a narrow panel the buttons stay visible on their own row and wrap.
 
+**Choice buttons.** A question with live choices shows a group named
+**Choices** below its fields, with one button per option and, with
+`other: true`, **Other answer…**. A long option wraps onto as many lines
+as it needs and is never cut off, because the click posts that text in
+your name. A click posts the answer as a reply. While it is in flight,
+the decision and choice buttons are disabled. If the session moved on,
+the app says "The session moved on. Choose again." In a channel without a
+session, if someone answered first, it says "This question is no longer
+open." If the answer type refuses the post, for
+example because of its `when:`, the composer opens with the answer type
+and shows why. **Other answer…** opens the composer with the answer type
+selected and the reply set; if you are editing a message, the app first
+asks whether to discard the edit. A list property shows as a bulleted
+list of text.
+
 On a channel type with `typing: true`, the app tells the server you are
 typing while you write a `log` message. It does not while you edit a
 message or fill an `ephemeral` type. Other readers see a line under the
@@ -1730,7 +1893,15 @@ type, whether a message may reply to another, the actions with their
 labels and the entity type a promote creates, and the properties. Each
 property has its name, label, type, and when set `required`, `max`, the
 enum type with its `values`, and the entity types a `ref` may point to
-(`to`). Properties come required first, then by name.
+(`to`). A list property also has `"list": true` and `max_items`; its
+`max` limits each item. A message type with `choices` has
+`"choices": {"from", "answer", "into", "other"}`. Properties come
+required first, then by name.
+
+A process older than list properties refuses a `realtime.yaml` with
+`list` or `choices` as unknown keys, and an older web app shows a list
+value as plain text. Upgrade every process that reads the project before
+you add them.
 
 The answer holds no roles, permissions or conditions, and is the same for
 every caller: the configuration is not a secret. What a caller may do
@@ -2058,6 +2229,14 @@ answers `session_moved` and nothing is stored: read the session again and
 decide again. If no transition entry applies, the message is stored and
 the session stays; compare `session.generation` in the answer with the
 generation you sent to see whether the post moved it.
+
+**Lists and choices.** `post_message` takes a list property as a JSON
+array of strings. `rela channel post` takes one `-P` per item, such as
+`-P options=Yes -P options=No`, or the array in `--props-json`.
+`read_channel` lists a message type's `choices`, and `rela channel read`
+prints them on the type's `choices:` line and a list one item per line. To answer a question, post its `answer`
+type with the option in `into` and `reply_to` the question, as the web
+app does. See [Choices](#choices).
 
 **Waiting for a session.** `read_session` returns only a channel's session,
 the channel's name and state, and the message types whose post by the

@@ -32,7 +32,9 @@ import {
   noticeView,
   parseChannelKey,
   presentationView,
+  rowDecisions,
   sessionView,
+  choiceViews,
 } from './channelView'
 
 const renderSpy = vi.hoisted(() => vi.fn())
@@ -1066,5 +1068,245 @@ describe('session decisions', () => {
         expect(decisionReplyTo(msgs, tc.cause, { reply: tc.reply ?? false })).toBe(tc.want)
       })
     }
+  })
+})
+
+describe('choices', () => {
+  const at = '2026-10-11T09:00:00Z'
+  const ask: ChannelMessageTypeSchema = {
+    name: 'ask',
+    label: 'Ask',
+    persist: 'log',
+    reply: true,
+    actions: [],
+    properties: [
+      { name: 'note', label: 'Note', type: 'string' },
+      { name: 'options', label: 'Options', type: 'string', list: true, max: 80, max_items: 4 },
+    ],
+    choices: { from: 'options', answer: 'answer', into: 'body', other: true },
+  }
+  const answer: ChannelMessageTypeSchema = {
+    name: 'answer',
+    label: 'Answer',
+    persist: 'log',
+    reply: true,
+    actions: [],
+    properties: [{ name: 'body', label: 'Body', type: 'string' }],
+  }
+  const plain: ChannelTypeSchema = { ...room, name: 'plain', message_types: [ask, answer] }
+  const withSession: ChannelTypeSchema = {
+    ...plain,
+    name: 'run',
+    session: {
+      label: 'Run',
+      initial: 'working',
+      states: [
+        { name: 'working', label: 'Working', status: 'working' },
+        { name: 'asking', label: 'Asking', status: 'input_required' },
+      ],
+    },
+  }
+  const q = (seq: number, over: Partial<Message> = {}): Message => ({
+    seq,
+    rev: seq,
+    type: 'ask',
+    author: { user: 'robot' },
+    at,
+    props: { note: 'Which?', options: ['A', 'B'] },
+    ...over,
+  })
+  const reply = (seq: number, to: number, type = 'answer'): Message => ({
+    seq,
+    rev: seq,
+    type,
+    author: { user: 'ann' },
+    at,
+    props: { body: 'A' },
+    reply_to: to,
+  })
+  const notice = (seq: number, generation: number, cause?: number): Message => ({
+    seq,
+    rev: seq,
+    type: 'session',
+    author: { user: 'system', system: true },
+    at,
+    triggered_by: 'session:run',
+    props: { from: 'working', to: 'asking', generation, ...(cause ? { cause } : {}) },
+  })
+  const head = (
+    over: { state?: Channel['state']; post?: string[]; generation?: number } = {}
+  ): ChannelHead =>
+    ({
+      channel: {
+        state: over.state ?? 'open',
+        ...(over.generation !== undefined
+          ? {
+              session: {
+                state: 'asking',
+                status: 'input_required',
+                generation: over.generation,
+                entered_at: at,
+                transitions: [],
+              },
+            }
+          : {}),
+      },
+      _actions: { post: over.post ?? ['ask', 'answer'] },
+    }) as unknown as ChannelHead
+  const keys = (m: Map<number, { key: string }[]>) =>
+    [...m].map(([seq, vs]) => [seq, vs.map((v) => v.key)])
+
+  const cases: {
+    name: string
+    ct?: ChannelTypeSchema
+    head?: ChannelHead
+    actionsGeneration?: number
+    hasNewer?: boolean
+    messages: Message[]
+    want: [number, string[]][]
+  }[] = [
+    {
+      name: 'live',
+      messages: [q(1)],
+      want: [[1, ['choice:1:0', 'choice:1:1', 'choice:1:other']]],
+    },
+    {
+      name: 'removed',
+      messages: [q(1, { removed: { kind: 'author', at }, props: undefined })],
+      want: [],
+    },
+    {
+      name: 'a reply gets no buttons',
+      messages: [q(1), q(2, { reply_to: 1 })],
+      want: [[1, ['choice:1:0', 'choice:1:1', 'choice:1:other']]],
+    },
+    { name: 'no post right', head: head({ post: ['ask'] }), messages: [q(1)], want: [] },
+    { name: 'answered', messages: [q(1), reply(2, 1)], want: [] },
+    {
+      name: 'a removed answer brings the buttons back',
+      messages: [
+        q(1),
+        {
+          ...reply(2, 1),
+          props: undefined,
+          removed: { kind: 'moderator', by: { user: 'bob' }, at },
+        },
+      ],
+      want: [[1, ['choice:1:0', 'choice:1:1', 'choice:1:other']]],
+    },
+    {
+      name: 'a reply of another type does not answer it',
+      messages: [q(1), reply(2, 1, 'ask')],
+      want: [[1, ['choice:1:0', 'choice:1:1', 'choice:1:other']]],
+    },
+    { name: 'hasNewer', hasNewer: true, messages: [q(1)], want: [] },
+    { name: 'closed channel', head: head({ state: 'closed' }), messages: [q(1)], want: [] },
+    { name: 'no options', messages: [q(1, { props: { note: 'x' } })], want: [] },
+    { name: 'empty options', messages: [q(1, { props: { options: [] } })], want: [] },
+    {
+      name: 'options that are not a list',
+      messages: [q(1, { props: { options: 'A' } })],
+      want: [],
+    },
+    {
+      name: 'other: false',
+      ct: {
+        ...plain,
+        message_types: [{ ...ask, choices: { ...ask.choices!, other: false } }, answer],
+      },
+      messages: [q(1)],
+      want: [[1, ['choice:1:0', 'choice:1:1']]],
+    },
+    {
+      name: 'session: the question caused the current generation',
+      ct: withSession,
+      head: head({ generation: 5 }),
+      actionsGeneration: 5,
+      messages: [q(1), q(10), notice(11, 5, 10)],
+      want: [[10, ['choice:10:0', 'choice:10:1', 'choice:10:other']]],
+    },
+    {
+      name: 'session: a later notice moved it',
+      ct: withSession,
+      head: head({ generation: 6 }),
+      actionsGeneration: 6,
+      messages: [q(10), notice(11, 5, 10), reply(12, 1, 'text'), notice(13, 6, 12)],
+      want: [],
+    },
+    {
+      name: 'session: the head is ahead of the held notice',
+      ct: withSession,
+      head: head({ generation: 6 }),
+      actionsGeneration: 6,
+      messages: [q(10), notice(11, 5, 10)],
+      want: [],
+    },
+    {
+      name: 'session: the question did not move it',
+      ct: withSession,
+      head: head({ generation: 5 }),
+      actionsGeneration: 5,
+      messages: [q(9), q(10, { type: 'text' }), notice(11, 5, 10)],
+      want: [],
+    },
+    {
+      name: 'session: _actions are stale',
+      ct: withSession,
+      head: head({ generation: 5 }),
+      actionsGeneration: 4,
+      messages: [q(10), notice(11, 5, 10)],
+      want: [],
+    },
+  ]
+  for (const tc of cases) {
+    it(tc.name, () => {
+      const got = choiceViews(
+        tc.ct ?? plain,
+        tc.head ?? head(),
+        tc.actionsGeneration,
+        tc.hasNewer ?? false,
+        tc.messages
+      )
+      expect(keys(got)).toEqual(tc.want)
+    })
+  }
+
+  it('a view posts the answer with the option in into; other opens the form', () => {
+    const [a, , other] = choiceViews(plain, head(), undefined, false, [q(1)]).get(1)!
+    expect(a).toEqual({
+      key: 'choice:1:0',
+      messageType: 'answer',
+      label: 'A',
+      props: { body: 'A' },
+    })
+    expect(other).toEqual({
+      key: 'choice:1:other',
+      messageType: 'answer',
+      label: 'Other answer…',
+      opensForm: true,
+    })
+  })
+
+  it('rowDecisions drops the decision of the answer type on the question row', () => {
+    const choices = choiceViews(plain, head(), undefined, false, [q(1)])
+    const decisions = [
+      { key: 'answer', messageType: 'answer', label: 'Answer' },
+      { key: 'go', messageType: 'go', label: 'Go' },
+    ]
+    expect(rowDecisions(decisions, choices, 1).map((d) => d.key)).toEqual(['go'])
+    expect(rowDecisions(decisions, choices, 2)).toBe(decisions)
+    expect(rowDecisions(decisions, choices, undefined)).toBe(decisions)
+  })
+
+  it('an excerpt reads a list as its items', () => {
+    expect(excerptOf(q(1, { props: { options: ['A', 'B'] } }), ask)).toBe('A, B')
+  })
+
+  it('a list prop is no ref, and a stored non-array value passes through as text', () => {
+    const [v] = messageViews([q(1, { props: { options: 'A' } })], () => ask, ctx)
+    expect(v!.props).toEqual({ options: 'A' })
+    const [w] = messageViews([q(2)], () => ask, ctx)
+    expect(w!.props?.options).toEqual(['A', 'B'])
+    expect(w!.html).toBeUndefined()
   })
 })

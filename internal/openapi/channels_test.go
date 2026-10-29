@@ -609,3 +609,50 @@ func TestChannelPaths_ExpectGeneration(t *testing.T) {
 		t.Error("the 409 response does not document session_moved")
 	}
 }
+
+// TestChannelPaths_ListProperty pins the post body schema of a list
+// property (TKT-03FQPD AC 3): an array of strings, each item limited by
+// max, the list by max_items, and no item twice.
+func TestChannelPaths_ListProperty(t *testing.T) {
+	y := channelTestRealtime + `  ask:
+    attach_to: [task]
+    read: { from: attached }
+    roles:
+      member: { from: attached }
+    message_types:
+      ask:
+        properties:
+          options: { type: string, list: true, max: 80, max_items: 4 }
+        post: [member]
+`
+	rt, err := realtimecfg.Parse([]byte(y), attachmentTestMeta(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	g := New(attachmentTestMeta(), Config{Title: "T", Version: "1"})
+	g.SetRealtime(func() *realtimecfg.Compiled { return rt })
+	spec := g.Generate()
+	post := spec.Paths["/api/v1/tasks/{id}/_channels/ask/messages"].Post
+	variants := post.RequestBody.Content["application/json"].Schema.OneOf
+	if len(variants) != 1 || variants[0].Title != "ask" {
+		t.Fatalf("post body variants = %+v, want ask", variants)
+	}
+	got, err := json.Marshal(variants[0].Properties["props"].Properties["options"])
+	if err != nil {
+		t.Fatal(err)
+	}
+	var options map[string]any
+	if err := json.Unmarshal(got, &options); err != nil {
+		t.Fatal(err)
+	}
+	delete(options, "description")
+	want := map[string]any{
+		"type":        "array",
+		"items":       map[string]any{"type": "string", "maxLength": 80.0},
+		"maxItems":    4.0,
+		"uniqueItems": true,
+	}
+	if !reflect.DeepEqual(options, want) {
+		t.Errorf("options schema = %s, want %v", got, want)
+	}
+}

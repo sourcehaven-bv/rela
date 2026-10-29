@@ -10,6 +10,9 @@ import {
   channelMessages,
   channelMessageTypes,
   channelPresentation,
+  questionChoices,
+  questionMessage,
+  questionMessageTypes,
 } from '../../fixtures/channels'
 
 function msg(seq: number): ChannelMessageView {
@@ -293,5 +296,72 @@ export const WithDecisions: Story = {
     await expect(described).toContain(meta.id)
     await userEvent.click(canvas.getByRole('button', { name: /Contained again/ }))
     await expect(args.onDecide).toHaveBeenCalledWith('contained')
+  },
+}
+
+/**
+ * A question with live choices (TKT-03FQPD): a group named Choices after
+ * the fields, one button per option and Other. The options are not listed
+ * a second time while the buttons show. A click emits `choose`.
+ */
+export const QuestionWithChoices: Story = {
+  args: {
+    message: questionMessage,
+    messageType: questionMessageTypes[0],
+    choices: questionChoices,
+    onChoose: fn(),
+  },
+  play: async ({ args, canvasElement }) => {
+    const canvas = within(canvasElement)
+    const group = canvas.getByRole('group', { name: 'Choices' })
+    const buttons = within(group).getAllByRole('button')
+    await expect(buttons).toHaveLength(4)
+    await expect(buttons[0]).toHaveAccessibleName('PostgreSQL (posts this answer as a reply)')
+    await expect(buttons[3]).toHaveAccessibleName('Other answer… (opens the form)')
+    // The long option shows in full.
+    await expect(buttons[2]!.textContent).toContain('once the new views pass QA.')
+    await expect(canvasElement.querySelector('.rl-channel-message__list')).toBeNull()
+    await expect(canvas.queryByText('Options')).toBeNull()
+    await userEvent.click(buttons[1]!)
+    await expect(args.onChoose).toHaveBeenCalledWith('choice:12:1')
+  },
+}
+
+/** The choices still show when the presentation hides the options field. */
+export const ChoicesWithOptionsHidden: Story = {
+  args: {
+    ...QuestionWithChoices.args,
+    presentation: { fields: [{ property: 'note' }, { property: 'options', hidden: true }] },
+  },
+  play: async ({ canvasElement }) => {
+    const group = within(canvasElement).getByRole('group', { name: 'Choices' })
+    await expect(within(group).getAllByRole('button')).toHaveLength(4)
+  },
+}
+
+/**
+ * An answered question, or a reader who may not answer: no buttons, and
+ * the options render as a bulleted list of text, not as ref chips.
+ */
+export const QuestionAnswered: Story = {
+  args: { message: questionMessage, messageType: questionMessageTypes[0] },
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement)
+    await expect(canvas.queryByRole('group', { name: 'Choices' })).toBeNull()
+    const items = [...canvasElement.querySelectorAll('.rl-channel-message__list li')].map((li) => li.textContent)
+    await expect(items).toEqual(questionMessage.props!.options)
+    await expect(canvasElement.querySelector('.rl-ref-chip')).toBeNull()
+  },
+}
+
+/** A stored value that is not an array, for a list property, shows as text. */
+export const ListValueNotArray: Story = {
+  args: {
+    message: { ...questionMessage, props: { note: 'Which?', options: 'PostgreSQL' } },
+    messageType: questionMessageTypes[0],
+  },
+  play: async ({ canvasElement }) => {
+    await expect(canvasElement.querySelector('.rl-channel-message__list')).toBeNull()
+    await expect(within(canvasElement).getByText('PostgreSQL')).toBeVisible()
   },
 }

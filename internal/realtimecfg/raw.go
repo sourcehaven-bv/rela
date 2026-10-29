@@ -177,6 +177,16 @@ type rawMessageType struct {
 	// an absent key and for a null value, so [messageInCheck.withSession]
 	// reads presence from the YAML node.
 	In []string `yaml:"in"`
+	// Choices is `choices:`; see [Choices].
+	Choices *rawChoices `yaml:"choices"`
+}
+
+// rawChoices is `message_types.<mt>.choices`.
+type rawChoices struct {
+	From   string `yaml:"from"`
+	Answer string `yaml:"answer"`
+	Into   string `yaml:"into"`
+	Other  bool   `yaml:"other"`
 }
 
 type rawProperty struct {
@@ -186,6 +196,8 @@ type rawProperty struct {
 	Max      *int     `yaml:"max"`
 	To       []string `yaml:"to"`
 	Notify   *bool    `yaml:"notify"`
+	List     bool     `yaml:"list"`
+	MaxItems *int     `yaml:"max_items"`
 }
 
 type rawPromote struct {

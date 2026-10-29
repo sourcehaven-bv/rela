@@ -483,3 +483,66 @@ export const breachDecisions: ChannelDecisionView[] = [
     danger: true,
   },
 ]
+
+/**
+ * An agent's run with a question (TKT-03FQPD): `ask` carries a list of
+ * options, and a click posts `answer` with the option in `note`.
+ */
+export const questionMessageTypes: ChannelMessageTypeDef[] = [
+  {
+    name: 'ask',
+    label: 'Question',
+    persist: 'log',
+    reply: true,
+    properties: [
+      { name: 'note', label: 'Question', type: 'string' },
+      { name: 'options', label: 'Options', type: 'string', list: true, max: 80 },
+    ],
+    actions: [],
+    choices: { from: 'options', answer: 'answer', into: 'note', other: true },
+  },
+  {
+    name: 'answer',
+    label: 'Answer',
+    persist: 'log',
+    reply: true,
+    properties: [{ name: 'note', label: 'Answer', type: 'string' }],
+    actions: [],
+  },
+]
+
+/** An option of 200 characters, the default item limit. */
+const longOption =
+  'Keep the current schema for now and migrate the reporting tables in a separate change after the release, ' +
+  'so the importer can ship on PostgreSQL first and the reports follow once the new views pass QA.'
+
+/** A question the agent asked, with three options, one of them long. */
+export const questionMessage: ChannelMessageView = {
+  seq: 12,
+  rev: 12,
+  type: 'ask',
+  author: agent,
+  at: '10:02',
+  datetime: '2026-10-29T10:02:00Z',
+  props: { note: 'Which storage backend should the importer use?', options: ['PostgreSQL', 'SQLite', longOption] },
+}
+
+/** The reply buttons of `questionMessage`, as the app builds them. */
+export const questionChoices: ChannelDecisionView[] = [
+  { key: 'choice:12:0', messageType: 'answer', label: 'PostgreSQL', props: { note: 'PostgreSQL' } },
+  { key: 'choice:12:1', messageType: 'answer', label: 'SQLite', props: { note: 'SQLite' } },
+  { key: 'choice:12:2', messageType: 'answer', label: longOption, props: { note: longOption } },
+  { key: 'choice:12:other', messageType: 'answer', label: 'Other answer…', opensForm: true },
+]
+
+/** The person's answer to `questionMessage`: after it, the question has no buttons. */
+export const answerMessage: ChannelMessageView = {
+  seq: 13,
+  rev: 13,
+  type: 'answer',
+  author: marieke,
+  at: '10:05',
+  datetime: '2026-10-29T10:05:00Z',
+  props: { note: 'SQLite' },
+  replyTo: { seq: 12, author: agent.name, excerpt: 'Which storage backend should the importer use?' },
+}

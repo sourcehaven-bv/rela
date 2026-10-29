@@ -9,14 +9,18 @@ import (
 	"net/http"
 	"slices"
 	"sort"
+	"strings"
 	"time"
 	"unicode/utf8"
+
+	"golang.org/x/text/unicode/norm"
 
 	"github.com/Sourcehaven-BV/rela/internal/channels"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/predicate"
 	"github.com/Sourcehaven-BV/rela/internal/realtimecfg"
+	"github.com/Sourcehaven-BV/rela/internal/texthazard"
 )
 
 // validProps is a message's properties after validation: every value in
@@ -33,7 +37,7 @@ type validProps struct {
 // refuses an undeclared property, a value of the wrong type, a missing
 // required property, an enum value outside its values, a string over its
 // max, more than [channels.MaxProps] properties, and an encoding over
-// maxBytes (413). A JSON null is an absent property.
+// maxBytes (413). A JSON null and an empty list are an absent property.
 func validateProps(mt *realtimecfg.MessageType, in map[string]any, maxBytes int) (validProps, error) {
 	if len(in) > channels.MaxProps {
 		return validProps{}, deny(http.StatusBadRequest, TypeTooManyProps,
@@ -53,6 +57,9 @@ func validateProps(mt *realtimecfg.MessageType, in map[string]any, maxBytes int)
 		v, err := normalizeProp(p, raw)
 		if err != nil {
 			return validProps{}, invalid("property %q: %s", name, err.Error())
+		}
+		if list, isList := v.([]any); isList && len(list) == 0 {
+			continue
 		}
 		out[name] = v
 		if id, ok := v.(string); ok && p.Type == realtimecfg.PropertyRef {
@@ -78,8 +85,12 @@ func validateProps(mt *realtimecfg.MessageType, in map[string]any, maxBytes int)
 
 // normalizeProp checks raw against p and returns its stored form: a string
 // for string, markdown, enum, ref, date and datetime (a datetime in
-// RFC 3339, UTC); an int64 for integer; a bool for boolean.
+// RFC 3339, UTC); an int64 for integer; a bool for boolean; a []any of
+// strings for a list.
 func normalizeProp(p realtimecfg.Property, raw any) (any, error) {
+	if p.List {
+		return normalizeList(p, raw)
+	}
 	switch p.Type {
 	case realtimecfg.PropertyInteger:
 		return normalizeInt(raw)
@@ -131,6 +142,67 @@ func normalizeProp(p realtimecfg.Property, raw any) (any, error) {
 	return s, nil
 }
 
+// normalizeList checks a list value against p and returns its stored form.
+// Each item loses its emoji style selectors and is trimmed and
+// NFC-normalized, unlike a scalar string, so two items that look the same
+// compare equal. An item must then be non-empty,
+// at most p.Max code points and free of display hazards, and differ from
+// every other item. The list holds at most p.MaxItems items.
+func normalizeList(p realtimecfg.Property, raw any) (any, error) {
+	var items []any
+	switch v := raw.(type) {
+	case []any:
+		items = v
+	case []string:
+		items = make([]any, len(v))
+		for i, s := range v {
+			items[i] = s
+		}
+	default:
+		return nil, errors.New("must be a list of strings")
+	}
+	if len(items) > p.MaxItems {
+		return nil, fmt.Errorf("must have at most %d items", p.MaxItems)
+	}
+	out := make([]any, 0, len(items))
+	seen := make(map[string]bool, len(items))
+	for i, item := range items {
+		s, err := normalizeListItem(p, item)
+		if err != nil {
+			return nil, fmt.Errorf("item %d %s", i+1, err.Error())
+		}
+		if seen[s] {
+			return nil, fmt.Errorf("item %d repeats an earlier item", i+1)
+		}
+		seen[s] = true
+		out = append(out, s)
+	}
+	return out, nil
+}
+
+// normalizeListItem checks one item of a list and returns its stored
+// form. Its errors read after "item N".
+func normalizeListItem(p realtimecfg.Property, item any) (string, error) {
+	s, ok := item.(string)
+	if !ok {
+		return "", errors.New("must be a string")
+	}
+	if !utf8.ValidString(s) {
+		return "", errors.New("must be valid UTF-8")
+	}
+	s = norm.NFC.String(strings.TrimSpace(texthazard.DropStyleSelectors(s)))
+	switch {
+	case s == "":
+		return "", errors.New("is empty")
+	case utf8.RuneCountInString(s) > p.Max:
+		return "", fmt.Errorf("must be at most %d characters", p.Max)
+	}
+	if r, found := texthazard.Find(s); found {
+		return "", fmt.Errorf("holds %U, which displays as something other than what it is", r)
+	}
+	return s, nil
+}
+
 // normalizeInt accepts a whole number from JSON (float64 or json.Number)
 // or Go (int, int64).
 func normalizeInt(raw any) (any, error) {
@@ -170,6 +242,19 @@ func whenHolds(ctx context.Context, mt *realtimecfg.MessageType, props map[strin
 func predicateValue(p realtimecfg.Property, v any) predicate.Value {
 	if v == nil {
 		return predicate.NewNil()
+	}
+	if p.List {
+		items, ok := v.([]any)
+		if !ok {
+			return predicate.NewNil()
+		}
+		elems := make([]predicate.Value, 0, len(items))
+		for _, item := range items {
+			if s, isStr := item.(string); isStr {
+				elems = append(elems, predicate.NewString(s))
+			}
+		}
+		return predicate.NewList(elems)
 	}
 	switch p.Type {
 	case realtimecfg.PropertyInteger:

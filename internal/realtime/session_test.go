@@ -898,3 +898,60 @@ func TestSessionBranches_GuardErrorStops(t *testing.T) {
 	require.Equal(t, "plan-review", res.Session.State)
 	require.Equal(t, int64(1), res.Session.Generation, "the catch-all re-enters")
 }
+
+// TestChoices_PoCFlow is the integration test of TKT-03FQPD: the runner
+// asks with options, the owner's click posts the answer as a reply at the
+// head generation and moves the session on, the runner gets a reply row,
+// and the same click again is refused. In the PoC session the answer type
+// has in: [plan-asking, asking], so the state check refuses the stale
+// click with session_wrong_state. Without in:, the stale click reaches the
+// generation check and is refused with session_moved.
+func TestChoices_PoCFlow(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name      string
+		answerIn  bool
+		staleType string
+	}{
+		{"PoC session", true, TypeSessionWrongState},
+		{"answer type without in", false, TypeSessionMoved},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			y := strings.Replace(pocRealtime(""),
+				"ask:        { properties: { note: { type: string } }, post: [runner], in: [planning, working] }",
+				"ask:        { properties: { note: { type: string }, options: { type: string, list: true, max: 80, "+
+					"max_items: 4 } }, post: [runner], in: [planning, working], "+
+					"choices: { from: options, answer: answer, into: note, other: true } }", 1)
+			require.Contains(t, y, "choices:")
+			if !tc.answerIn {
+				const in = "post: [owner], in: [plan-asking, asking] }"
+				require.Contains(t, y, in)
+				y = strings.Replace(y, in, "post: [owner] }", 1)
+			}
+			h := newHarness(t, withYAML(y))
+			h.pocDriveTo(t, "working")
+			o, r := pocOwner(), pocRunner()
+
+			q := h.postTo(t, r, pocRun, "ask", map[string]any{"note": "Which one?", "options": []any{"A", "B"}})
+			require.Equal(t, "asking", q.Session.State)
+			gen := q.Session.Generation
+			require.Equal(t, []any{"A", "B"}, q.Message.Props["options"])
+
+			click := PostInput{Type: "answer", Props: map[string]any{"note": "B"}, ReplyTo: q.Message.Seq,
+				ExpectGeneration: &gen}
+			res, err := h.svc.Post(as(o), pocRun, click)
+			require.NoError(t, err)
+			require.Equal(t, "working", res.Session.State)
+			require.Equal(t, q.Message.Seq, res.Message.ReplyTo)
+
+			inbox := h.inbox(t, r, InboxRequest{Kinds: []string{InboxKindReply}})
+			require.Len(t, inbox.Mentions, 1)
+			require.Equal(t, res.Message.Seq, inbox.Mentions[0].Seq)
+
+			_, err = h.svc.Post(as(o), pocRun, click)
+			requireDenial(t, err, http.StatusConflict, tc.staleType)
+		})
+	}
+}

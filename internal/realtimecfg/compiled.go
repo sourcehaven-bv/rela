@@ -463,6 +463,26 @@ type MessageType struct {
 	// In is `in:`: the session states in which the type may be posted, in
 	// file order. Nil means every state; see [MessageType.PostableIn].
 	In []string
+	// Choices is `choices:`, or nil.
+	Choices *Choices
+}
+
+// Choices is `choices:` on a message type, the question type. The web app
+// draws one button per item of the question's From list. A click posts a
+// message of type Answer, with the item in its Into property, as a reply
+// to the question. Other adds a button that opens the composer with
+// Answer selected, for a free-text answer.
+//
+// The load checks that From is a list property of the question type, that
+// Answer is another log type of the same channel type, and that Into is a
+// string property of Answer that fits every item. The server does not
+// check that an answer is one of the options: Other posts free text into
+// the same property.
+type Choices struct {
+	From   string
+	Answer string
+	Into   string
+	Other  bool
 }
 
 // PostableIn reports whether a message of type mt may be posted while the
@@ -524,6 +544,21 @@ type Property struct {
 	// NoNotify is set by `notify: false` on a ref property: a value that
 	// names a person entity is then no mention target.
 	NoNotify bool
+	// List is `list: true`: the value is a list of strings. Only a string
+	// property may be a list. Max is then the most code points of one
+	// item, and is always set.
+	List bool
+	// MaxItems is the most items of a list; 0 when List is not set.
+	MaxItems int
+}
+
+// TypeName is the property's type as a reason names it: "list of string"
+// for a list, else the type.
+func (p Property) TypeName() string {
+	if p.List {
+		return "list of " + string(p.Type)
+	}
+	return string(p.Type)
 }
 
 // Promote turns a message into an entity: Map names, per entity property,

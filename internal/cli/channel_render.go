@@ -200,7 +200,7 @@ func nextTimerText(s *realtime.SessionView) string {
 	return ""
 }
 
-// writeMessageType prints a message type and its properties.
+// writeMessageType prints a message type, its properties and its choices.
 func writeMessageType(b *strings.Builder, mt realtime.MessageTypeView) {
 	fmt.Fprintf(b, "Type %s (%s", printable(mt.Name), printable(string(mt.Persist)))
 	if !mt.CanPost {
@@ -221,11 +221,25 @@ func writeMessageType(b *strings.Builder, mt realtime.MessageTypeView) {
 		if len(p.Enum) > 0 {
 			typ = "one of " + strings.Join(p.Enum, ", ")
 		}
+		if p.Type == "array" {
+			typ = "list of string"
+			if p.MaxItems > 0 {
+				typ += fmt.Sprintf(", at most %d", p.MaxItems)
+			}
+		}
 		req := ""
 		if slices.Contains(mt.Props.Required, name) {
 			req = ", required"
 		}
 		fmt.Fprintf(b, "  %s: %s%s\n", printable(name), printable(typ), req)
+	}
+	if c := mt.Choices; c != nil {
+		other := ""
+		if c.Other {
+			other = ", other"
+		}
+		fmt.Fprintf(b, "  choices: from %s, answer %s into %s%s\n",
+			printable(c.From), printable(c.Answer), printable(c.Into), other)
 	}
 }
 
@@ -359,7 +373,15 @@ func authorText(a *realtime.AuthorView) string {
 
 // writeProp prints one property. Each line of its value is made printable
 // and prefixed with propIndent, so a value cannot start a line of its own.
+// A list prints one item per line, each as "- item".
 func writeProp(b *strings.Builder, name string, value any) {
+	if items, ok := value.([]any); ok {
+		fmt.Fprintf(b, "%s%s:\n", propIndent, printable(name))
+		for _, item := range items {
+			fmt.Fprintf(b, "%s  - %s\n", propIndent, printable(propText(item)))
+		}
+		return
+	}
 	lines := strings.Split(propText(value), "\n")
 	fmt.Fprintf(b, "%s%s: %s\n", propIndent, printable(name), printable(lines[0]))
 	for _, line := range lines[1:] {
