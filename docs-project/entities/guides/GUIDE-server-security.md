@@ -266,10 +266,12 @@ naming `integration:basecamp` is refused exactly like one naming
 `system:scheduler`, from every source in the table above. Only `run_as` in
 `schedules.yaml` and `schema.yaml` can reach it.
 
-A reserved identity cannot author comments either: the comment service
-refuses a `system:` or `integration:` author. A connector that needs to
-report something to people writes a property instead, such as the
-Basecamp example's `sync_conflict`.
+The comment service refuses a `system:` author. It accepts an
+`integration:` author, but no request reaches the server as one, so on the
+server that rule changes nothing. Only stdio `rela mcp --run-as` can write
+such a comment, for example from a coding agent; there the name is a label
+the local user chose. A connector that needs to report something to people
+writes a property, such as the Basecamp example's `sync_conflict`.
 
 > **Upgrade note.** If your IdP issues subjects that begin with
 > `integration:`, those users can no longer authenticate either. The log

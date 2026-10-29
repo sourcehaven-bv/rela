@@ -167,7 +167,9 @@ is `show_entity`, `list_entities` or `list_relations` and `args` is the object
 that tool takes. When the project has realtime channels, `read_channel`,
 `read_session` and `list_inbox` can be watched too (see
 [Channel Tools](#channel-tools)). A watch holds at most one `list_inbox`
-target.
+target. When the comment tools are on, `list_comments` can be watched as
+well. Comments are not graph changes, so the watch replays it every 2 seconds
+and after each graph change.
 
 | Tool | Description | Parameters |
 |------|-------------|------------|
@@ -342,8 +344,10 @@ the remote transport; stdio uses the 16 MiB tool limit.
 
 These tools exist only when `schema.yaml` has a `comments:` block (see
 [comments.md](comments.md)). The remote server offers all five. Stdio
-`rela mcp` offers only `list_comments`, because it runs as the system principal
-rather than as a signed-in user.
+`rela mcp` offers `list_comments`. Under `--run-as integration:<name>` it also
+offers `add_comment`, with that identity as the author. Stdio applies no
+`acl.yaml`: the local filesystem is the trust boundary. The other three tools
+stay remote-only.
 
 | Tool | Description | Key Parameters |
 |------|-------------|----------------|
