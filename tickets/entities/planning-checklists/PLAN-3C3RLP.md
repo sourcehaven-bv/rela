@@ -662,8 +662,8 @@ with `reply_to` the question, so the reply row addresses the asker. A threaded
 question would address the thread root's author, so it shows a plain list. In a
 session channel, buttons show only on the question `decisionCause` names, while
 the held `_actions` match the head; the click sends the head generation, and a
-click after a move gets
-  409. No buttons while `hasNewer`. The server does not record "answered"
+click after a move gets 409.
+  No buttons while `hasNewer`. The server does not record "answered"
 and does not check the text against the options; outside a session a second
 answer is stored (pinned by AC 13).
 - **Q4. How does Other work?** `other: true` adds "Other answer…" /
