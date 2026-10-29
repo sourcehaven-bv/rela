@@ -2497,6 +2497,12 @@
       "reason": "Design: wire DTOs (apiwire, realtime, realtimecfg) mirror domain types on purpose, as the rule against leaking storage types asks.",
       "at": "2026-10-29T15:00:00Z",
       "title": "ChannelChoicesSchema (apiwire), ChoicesDescription (realtime) and Choices (realtimecfg) share most of their fields."
+    },
+    "boundaries.misplaced_file-d0563afa090d": {
+      "state": "accepted",
+      "reason": "Design: channel_render.go is the CLI's text renderer for realtime views; it belongs with the cli commands that print it.",
+      "at": "2026-10-29T16:00:00Z",
+      "title": "1 file with more links to realtime than to cli."
     }
   },
   "labels": {},
