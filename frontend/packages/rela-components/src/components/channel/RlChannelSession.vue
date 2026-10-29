@@ -36,8 +36,12 @@
  * The stepper is not a live region: every move appends a notice to the log,
  * and the channel announces that. The `aside` slot holds what later belongs
  * next to the states, such as timers.
+ *
+ * The section takes focus (`tabindex="-1"`, with a visible focus style) so
+ * the app can put focus here after a decision made from the header removes
+ * the button that had it; `focus()` is exposed for that.
  */
-import { computed, ref, useId } from 'vue'
+import { computed, ref, useId, useTemplateRef } from 'vue'
 import RlIcon from '../common/RlIcon.vue'
 import RlTag from '../common/RlTag.vue'
 import type { ChannelSessionView } from './types'
@@ -50,6 +54,12 @@ const t = (key: ChannelTextKey) => strings.channelText({ key })
 const labelId = useId()
 const listId = useId()
 const expanded = ref(false)
+const root = useTemplateRef<HTMLElement>('root')
+
+defineExpose({
+  /** Moves focus to the session header, without scrolling it into view. */
+  focus: () => root.value?.focus({ preventScroll: true }),
+})
 
 type Status = 'stranded' | 'loading' | 'final' | 'paused' | 'normal'
 
@@ -109,7 +119,7 @@ const pausedText = computed(() =>
 </script>
 
 <template>
-  <section class="rl-channel-session" :aria-labelledby="labelId">
+  <section ref="root" class="rl-channel-session" tabindex="-1" :aria-labelledby="labelId">
     <div class="rl-channel-session__inner">
       <div :id="labelId" class="rl-channel-session__label">
         <span class="rl-channel-session__kicker">{{ t('session') }}</span>
@@ -170,6 +180,9 @@ const pausedText = computed(() =>
       <div v-if="$slots.aside" class="rl-channel-session__aside">
         <slot name="aside" />
       </div>
+      <div v-if="$slots.decisions" class="rl-channel-session__decisions">
+        <slot name="decisions" />
+      </div>
     </div>
   </section>
 </template>
@@ -182,6 +195,15 @@ const pausedText = computed(() =>
   background: var(--rl-color-bg-sunken);
   color: var(--rl-color-text);
   font-size: var(--rl-font-size-sm);
+}
+
+.rl-channel-session:focus {
+  outline: none;
+}
+
+.rl-channel-session:focus-visible {
+  outline: var(--rl-focus-ring-width) solid var(--rl-color-focus);
+  outline-offset: -2px;
 }
 
 .rl-channel-session__inner {
@@ -291,6 +313,11 @@ const pausedText = computed(() =>
   flex-wrap: wrap;
   gap: var(--rl-space-2);
   margin-left: auto;
+}
+
+.rl-channel-session__decisions {
+  flex-basis: 100%;
+  min-width: 0;
 }
 
 @container (max-width: 32rem) {

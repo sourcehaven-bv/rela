@@ -101,15 +101,20 @@ export async function getMessages(
 export type PostResult =
   { kind: 'message'; message: Message } | { kind: 'ephemeral'; accepted: EphemeralAccepted }
 
-/** POST a message. */
+/**
+ * POST a message. `expectGeneration` is the session generation the post was
+ * decided against; it is sent when set, 0 included.
+ */
 export async function postMessage(
   t: ChannelTarget,
   type: string,
   props: Record<string, MessagePropInput>,
-  replyTo?: number
+  replyTo?: number,
+  expectGeneration?: number
 ): Promise<PostResult> {
   const body: Record<string, unknown> = { type, props }
   if (replyTo) body.reply_to = replyTo
+  if (expectGeneration !== undefined) body.expect_generation = expectGeneration
   const res = await api
     .getAxios()
     .post<Message | EphemeralAccepted>(`${channelPath(t)}/messages`, body)

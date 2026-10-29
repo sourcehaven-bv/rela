@@ -155,11 +155,19 @@ export function useChannel(
    */
   const hasNewer = ref(false)
   const error = shallowRef<unknown>(null)
+  /**
+   * The session generation of the head whose `_actions` are held. Only a
+   * fetched head sets it: a message page moves `head.channel.session`
+   * ahead of the actions, so a caller that compares the two knows whether
+   * the held affordances describe the current state.
+   */
+  const actionsGeneration = ref<number | undefined>(undefined)
   let session: Session | null = null
   let deadlineTimer: ReturnType<typeof setTimeout> | undefined
 
   function clear() {
     head.value = null
+    actionsGeneration.value = undefined
     messages.value = []
     hasOlder.value = false
     hasNewer.value = false
@@ -254,6 +262,7 @@ export function useChannel(
       held && read && held.seq > read.seq
         ? { ...got, channel: { ...got.channel, read: held } }
         : got
+    actionsGeneration.value = got.channel.session?.generation
   }
 
   /**
@@ -461,6 +470,21 @@ export function useChannel(
     }
   }
 
+  /**
+   * Reads the head now and takes it, for a caller that must await a fresh
+   * head, such as after a session decision. It is not folded into a
+   * running follow, so it always fetches; a later head request wins over
+   * it as usual. It throws the server's error to the caller.
+   */
+  async function refreshHead(): Promise<void> {
+    const s = requireSession()
+    const mine = ++s.headSeq
+    const got = await getChannelHead(s.target)
+    if (!current(s) || mine !== s.headSeq) return
+    takeHead(got)
+    seen(s)
+  }
+
   /** Returns to the live end: reads the head and the newest page again. */
   function loadNewest(): Promise<void> {
     return session ? run(session, reload) : Promise.resolve()
@@ -481,11 +505,12 @@ export function useChannel(
   async function post(
     type: string,
     props: Record<string, MessagePropInput>,
-    replyTo?: number
+    replyTo?: number,
+    expectGeneration?: number
   ): Promise<PostResult> {
     const s = requireSession()
     const unstored = head.value?.channel.last_seq === 0
-    const res = await postMessage(s.target, type, props, replyTo)
+    const res = await postMessage(s.target, type, props, replyTo, expectGeneration)
     // A new message lands at the live end; when the list is not there,
     // go back to it so the user sees what they posted.
     if (res.kind === 'message' && hasNewer.value) await loadNewest()
@@ -593,6 +618,7 @@ export function useChannel(
 
   return {
     head,
+    actionsGeneration,
     messages,
     hasOlder,
     hasNewer,
@@ -607,5 +633,6 @@ export function useChannel(
     release,
     lifecycle,
     takeRead,
+    refreshHead,
   }
 }

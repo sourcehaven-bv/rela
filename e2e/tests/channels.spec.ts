@@ -6,6 +6,7 @@ import { test as base, SEED, contextsAs, serveWithPrincipalHeader } from "./fixt
 import { FACED_SEED, FACED_USERS, writeFacedProject } from "./faced-project";
 import {
   CHANNEL_USERS,
+  DECISIONS,
   POLICY_ROOM,
   ROOM,
   SESSION,
@@ -211,6 +212,62 @@ sessionTest.describe("channels with a session", () => {
     await alice.expectMessageControl("Access revoked", "Edit", false);
     // The session ended, so nothing moves it any more.
     await alice.expectTransitionMark(SESSION.messageLabel, false);
+  });
+});
+
+// A room with a review session: the lead decides with buttons (TKT-T9G1AE).
+const decisionTest = base.extend<ChannelFixtures>({
+  serverUrl: async ({ testProject, serverBinary }, use, testInfo) => {
+    writeRoomProject(testProject, { decisions: true });
+    await serveWithPrincipalHeader(serverBinary, testProject, testInfo, use, CHANNEL_USERS.lead);
+  },
+  as: asFixture,
+});
+
+decisionTest.describe("session decisions", () => {
+  decisionTest.describe.configure({ timeout: 120_000 });
+
+  decisionTest("the lead decides with one click", async ({ as }) => {
+    const alice = await as(CHANNEL_USERS.lead);
+    const bob = await as(CHANNEL_USERS.member);
+    for (const p of [alice, bob]) {
+      await p.openEntity("feature", FEATURE);
+      await p.expectChannel(ROOM.label);
+      await p.expectSessionAt(DECISIONS.drafting);
+    }
+
+    await alice.selectMessageType(DECISIONS.containedLabel);
+    await alice.post("Ready for review", DECISIONS.noteLabel);
+    for (const p of [alice, bob]) await p.expectSessionAt(DECISIONS.review);
+
+    // The lead may decide, in the header and on the message that asked;
+    // the member may not, so sees no button anywhere.
+    for (const label of [DECISIONS.approveLabel, DECISIONS.reviseLabel]) {
+      await alice.expectDecision(label, true);
+      await alice.expectDecisionOnMessage("Ready for review", label, true);
+      await bob.expectDecision(label, false);
+      await bob.expectDecisionOnMessage("Ready for review", label, false);
+    }
+
+    // Revise has a required field, so it opens the form.
+    await alice.decide(DECISIONS.reviseLabel);
+    await alice.post("Add the rollback plan", DECISIONS.feedbackLabel);
+    for (const p of [alice, bob]) await p.expectSessionAt(DECISIONS.drafting);
+    await alice.expectDecision(DECISIONS.approveLabel, false);
+
+    await alice.selectMessageType(DECISIONS.containedLabel);
+    await alice.post("Ready again", DECISIONS.noteLabel);
+    for (const p of [alice, bob]) await p.expectSessionAt(DECISIONS.review);
+
+    // Approve ends the session, so it asks first.
+    await alice.decideOnMessage("Ready again", DECISIONS.approveLabel);
+    await alice.confirmDialog(DECISIONS.approveLabel);
+    const notice = `Session moved from ${DECISIONS.review} to ${DECISIONS.approved}`;
+    for (const p of [alice, bob]) {
+      await p.expectMessage(notice);
+      await p.expectSessionAt(DECISIONS.approved);
+    }
+    await alice.expectDecision(DECISIONS.approveLabel, false);
   });
 });
 

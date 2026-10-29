@@ -126,6 +126,44 @@ export class ChannelsPage extends BasePage {
     await expect(row.getByRole('button', { name: label, exact: true })).toHaveCount(offered ? 1 : 0);
   }
 
+  // --- Session decisions (TKT-T9G1AE) ---------------------------------------
+
+  /** The decision button `label` in `scope`; its name also holds a hidden hint. */
+  private decisionIn(scope: Locator, label: string): Locator {
+    return scope
+      .getByRole('group', { name: 'Decisions' })
+      .getByRole('button', { name: new RegExp(`^${label}\\b`) });
+  }
+
+  /** The session header shows the decision `label`, or does not. */
+  async expectDecision(label: string, shown: boolean, timeout = 15_000) {
+    await expect(this.decisionIn(this.session, label)).toHaveCount(shown ? 1 : 0, { timeout });
+  }
+
+  /** Clicks the decision `label` in the session header. */
+  async decide(label: string) {
+    await this.decisionIn(this.session, label).click();
+  }
+
+  /** The message holding `text` shows the decision `label`, or does not. */
+  async expectDecisionOnMessage(text: string, label: string, shown: boolean, timeout = 15_000) {
+    const row = this.messages.filter({ hasText: text });
+    await expect(this.decisionIn(row, label)).toHaveCount(shown ? 1 : 0, { timeout });
+  }
+
+  /** Clicks the decision `label` on the message holding `text`. */
+  async decideOnMessage(text: string, label: string) {
+    await this.decisionIn(this.messages.filter({ hasText: text }), label).click();
+  }
+
+  /** Accepts the in-app confirm dialog with the button `label`. */
+  async confirmDialog(label?: string) {
+    const dialog = this.page.locator('[role=dialog], [role=alertdialog]').last();
+    await expect(dialog).toBeVisible({ timeout: 15_000 });
+    const buttons = dialog.getByRole('button');
+    await (label ? buttons.filter({ hasText: new RegExp(`^${label}$`) }) : buttons).last().click();
+  }
+
   // --- Inbox (TKT-9YRRM5) ---------------------------------------------------
 
   /** The pinned Inbox entry in the sidebar. */

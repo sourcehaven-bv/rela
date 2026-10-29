@@ -148,6 +148,22 @@ func (e *SessionStateError) Error() string {
 // Unwrap returns [ErrSessionState].
 func (e *SessionStateError) Unwrap() error { return ErrSessionState }
 
+// SessionGenerationError is the refusal of a post that expected the
+// session at generation Want; under the lock it was at Got, in State.
+// It unwraps to [ErrSessionState], so every backend returns it unchanged.
+type SessionGenerationError struct {
+	Want, Got int64
+	State     string
+}
+
+func (e *SessionGenerationError) Error() string {
+	return fmt.Sprintf("%v: the post expected generation %d; the session is at generation %d (%s)",
+		ErrSessionState, e.Want, e.Got, e.State)
+}
+
+// Unwrap returns [ErrSessionState].
+func (e *SessionGenerationError) Unwrap() error { return ErrSessionState }
+
 // Caps enforced at the store boundary, so no backend and no caller above it
 // can exceed them.
 const (

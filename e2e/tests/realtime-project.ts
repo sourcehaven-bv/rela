@@ -42,6 +42,25 @@ export const SESSION = {
   wrapUpLabel: "Wrap-up",
 } as const;
 
+/**
+ * The review session on ROOM when RoomOptions.decisions is set (TKT-T9G1AE):
+ * a Contained message sends the work to review, where the lead approves it
+ * with one click or asks for a revision through the form.
+ */
+export const DECISIONS = {
+  drafting: "Drafting",
+  review: "Review",
+  approved: "Approved",
+  /** Moves Drafting to Review; anyone who posts may send it, only the lead's moves. */
+  containedLabel: "Contained",
+  noteLabel: "Note",
+  /** One-click: no required property, no guard. Moves Review to Approved (final). */
+  approveLabel: "Approve",
+  /** Opens the form: a required Feedback. Moves Review back to Drafting. */
+  reviseLabel: "Revise",
+  feedbackLabel: "Feedback",
+} as const;
+
 /** The face-anchored channel type on the faced project's `policy`. */
 export const POLICY_ROOM = {
   type: "policy-room",
@@ -60,10 +79,16 @@ export interface RoomOptions {
    * Wrap-up message may be posted only in Contained.
    */
   session?: boolean;
+  /**
+   * Gives the room the review session of DECISIONS instead. Cannot be
+   * combined with `session`.
+   */
+  decisions?: boolean;
 }
 
 /** realtime.yaml for the feature project. */
 export function roomRealtimeYaml(opts: RoomOptions = {}): string {
+  if (opts.session && opts.decisions) throw new Error("RoomOptions: session and decisions are exclusive");
   const read = opts.leadReadsOnly ? "{ permission: channel-lead }" : "{ from: attached }";
   const contained = opts.session
     ? `
@@ -78,6 +103,43 @@ export function roomRealtimeYaml(opts: RoomOptions = {}): string {
           note: { type: string, label: ${SESSION.noteLabel} }
         post: [member, lead]
         in: [contained]`
+    : "";
+  const decisionTypes = opts.decisions
+    ? `
+      contained:
+        label: ${DECISIONS.containedLabel}
+        properties:
+          note: { type: string, required: true, label: ${DECISIONS.noteLabel} }
+        post: [member, lead]
+      approve:
+        label: ${DECISIONS.approveLabel}
+        properties:
+          note: { type: string, label: ${DECISIONS.noteLabel} }
+        post: [member, lead]
+        in: [review]
+      revise:
+        label: ${DECISIONS.reviseLabel}
+        properties:
+          feedback: { type: string, required: true, label: ${DECISIONS.feedbackLabel} }
+        post: [member, lead]
+        in: [review]`
+    : "";
+  const decisionSession = opts.decisions
+    ? `    session:
+      label: Review
+      initial: drafting
+      states:
+        drafting:
+          label: ${DECISIONS.drafting}
+          on:
+            contained: { to: review, roles: [lead] }
+        review:
+          label: ${DECISIONS.review}
+          on:
+            approve: { to: approved, roles: [lead] }
+            revise: { to: drafting, roles: [lead] }
+        approved: { label: ${DECISIONS.approved}, final: true, status: completed }
+`
     : "";
   const session = opts.session
     ? `    session:
@@ -107,14 +169,14 @@ channel_types:
         label: Text
         properties:
           body: { type: markdown, required: true, max: 2000, label: ${ROOM.messageLabel} }
-        post: [member, lead]${contained}
+        post: [member, lead]${contained}${decisionTypes}
     lifecycle:
       close:  { roles: [lead], label: Close }
       reopen: { roles: [lead], label: Reopen }
     message_ops:
       edit_own:   { roles: [member, lead] }
       delete_own: { roles: [member, lead] }
-${session}`;
+${session}${decisionSession}`;
 }
 
 /** acl.yaml for the feature project: everyone reads, two may post. */

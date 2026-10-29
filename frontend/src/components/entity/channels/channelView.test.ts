@@ -18,6 +18,9 @@ import {
   channelGroups,
   channelKey,
   composerTransitions,
+  decisionCause,
+  decisionReplyTo,
+  decisionViews,
   editingFor,
   enumOptionsFor,
   ephemeralViews,
@@ -736,5 +739,294 @@ describe('sessions', () => {
       ).toEqual([])
       expect(composerTransitions(room, headWith(inDetected, ['contained']))).toEqual([])
     })
+  })
+})
+
+describe('session decisions', () => {
+  const at = '2026-10-11T09:00:00Z'
+  const logType = (
+    name: string,
+    label: string,
+    properties: ChannelMessageTypeSchema['properties'] = [],
+    reply = true
+  ): ChannelMessageTypeSchema => ({
+    name,
+    label,
+    persist: 'log',
+    reply,
+    actions: [],
+    properties,
+  })
+  const run: ChannelTypeSchema = {
+    ...room,
+    name: 'run',
+    message_types: [
+      logType('approve', 'Approve plan', [{ name: 'note', label: 'Note', type: 'string' }]),
+      logType('revise', 'Revise plan', [
+        { name: 'feedback', label: 'Feedback', type: 'markdown', required: true },
+      ]),
+      logType('confirm', 'Confirm', [
+        { name: 'sure', label: 'Sure', type: 'boolean', required: true },
+      ]),
+      logType('accept', 'Accept'),
+      logType('abandon', 'Abandon', [], false),
+      logType('drop', 'Drop'),
+      logType('split', 'Split'),
+      logType('check', 'Check'),
+      { ...logType('nudge', 'Nudge'), persist: 'ephemeral' },
+    ],
+    session: {
+      label: 'Run',
+      initial: 'plan-review',
+      states: [
+        { name: 'plan-review', label: 'Plan review', status: 'input_required' },
+        { name: 'working', label: 'Working', status: 'working' },
+        { name: 'accepted', label: 'Accepted', final: true, status: 'completed' },
+        { name: 'abandoned', label: 'Abandoned', final: true, status: 'cancelled' },
+        { name: 'failed', label: 'Failed', final: true, status: 'failed' },
+      ],
+    },
+  }
+  const inReview: NonNullable<Channel['session']> = {
+    state: 'plan-review',
+    status: 'input_required',
+    generation: 4,
+    entered_at: at,
+    transitions: [
+      { message_type: 'approve', to: 'working' },
+      { message_type: 'revise', to: 'working' },
+      { message_type: 'accept', to: 'accepted' },
+      { message_type: 'abandon', to: 'abandoned' },
+      { message_type: 'drop', to: 'abandoned' },
+      { message_type: 'abandon', to: 'failed', guarded: true },
+      { message_type: 'split', to: 'working' },
+      { message_type: 'split', to: 'accepted', guarded: true },
+      { message_type: 'check', to: 'working', guarded: true },
+      { message_type: 'confirm', to: 'working' },
+      { message_type: 'nudge', to: 'working' },
+      { message_type: 'ghost', to: 'working' },
+      { message_type: 'timer', to: 'working', by: 'trigger' },
+    ],
+  }
+  const all = [
+    'approve',
+    'revise',
+    'confirm',
+    'accept',
+    'abandon',
+    'drop',
+    'split',
+    'check',
+    'nudge',
+    'ghost',
+  ]
+  function head(
+    over: Partial<NonNullable<Channel['session']>> = {},
+    transitions: string[] = ['approve', 'revise'],
+    opts: { post?: string[]; state?: Channel['state'] } = {}
+  ) {
+    return {
+      channel: {
+        anchor: 'TKT-1',
+        type: 'run',
+        state: opts.state ?? ('open' as const),
+        last_seq: 12,
+        rev: 12,
+        session: { ...inReview, ...over },
+      },
+      _actions: { post: opts.post ?? all, transitions },
+    }
+  }
+
+  describe('decisionViews', () => {
+    const approve = {
+      key: 'approve',
+      messageType: 'approve',
+      label: 'Approve plan',
+      toLabel: 'Working',
+    }
+    const revise = {
+      ...approve,
+      key: 'revise',
+      messageType: 'revise',
+      label: 'Revise plan',
+      opensForm: true,
+    }
+    const cases: {
+      name: string
+      head: ReturnType<typeof head>
+      gen?: number
+      want: unknown[]
+    }[] = [
+      {
+        name: 'the owner in plan review gets approve and revise',
+        head: head(),
+        want: [approve, revise],
+      },
+      { name: 'the runner gets none', head: head({}, []), want: [] },
+      {
+        name: 'a closed channel with stale transitions gets none',
+        head: head({}, ['approve'], { state: 'closed' }),
+        want: [],
+      },
+      { name: 'a final session gets none', head: head({ final: true }), want: [] },
+      { name: 'a stranded session gets none', head: head({ stranded: true }), want: [] },
+      { name: 'a state the descriptor lacks gets none', head: head({ state: 'gone' }), want: [] },
+      { name: 'actions of another generation give none', head: head(), gen: 3, want: [] },
+      { name: 'unknown actions generation gives none', head: head(), gen: -1, want: [] },
+      {
+        name: 'a type not postable is dropped',
+        head: head({}, ['approve'], { post: ['revise'] }),
+        want: [],
+      },
+      {
+        name: 'a guarded edge opens the form',
+        head: head({}, ['check']),
+        want: [
+          {
+            key: 'check',
+            messageType: 'check',
+            label: 'Check',
+            toLabel: 'Working',
+            opensForm: true,
+          },
+        ],
+      },
+      {
+        name: 'a required boolean opens the form',
+        head: head({}, ['confirm']),
+        want: [
+          {
+            key: 'confirm',
+            messageType: 'confirm',
+            label: 'Confirm',
+            toLabel: 'Working',
+            opensForm: true,
+          },
+        ],
+      },
+      { name: 'an ephemeral type is dropped', head: head({}, ['nudge']), want: [] },
+      { name: 'a type the descriptor lacks is dropped', head: head({}, ['ghost']), want: [] },
+      {
+        name: 'two edges to different states give one form button without a target',
+        head: head({}, ['split']),
+        want: [{ key: 'split', messageType: 'split', label: 'Split', opensForm: true }],
+      },
+      {
+        name: 'a move into a completed final state asks, without danger',
+        head: head({}, ['accept']),
+        want: [
+          {
+            key: 'accept',
+            messageType: 'accept',
+            label: 'Accept',
+            toLabel: 'Accepted',
+            confirm: true,
+          },
+        ],
+      },
+      {
+        name: 'a form decision into final states does not ask',
+        head: head({}, ['abandon']),
+        want: [{ key: 'abandon', messageType: 'abandon', label: 'Abandon', opensForm: true }],
+      },
+      {
+        name: 'a one-click move into a cancelled final state asks in the danger tone',
+        head: head({}, ['drop']),
+        want: [
+          {
+            key: 'drop',
+            messageType: 'drop',
+            label: 'Drop',
+            toLabel: 'Abandoned',
+            confirm: true,
+            danger: true,
+          },
+        ],
+      },
+      {
+        name: "the order is the server's and a trigger edge is ignored",
+        head: head({}, ['revise', 'timer', 'approve']),
+        want: [revise, approve],
+      },
+    ]
+    for (const tc of cases) {
+      it(tc.name, () => {
+        const gen = tc.gen === -1 ? undefined : (tc.gen ?? 4)
+        expect(decisionViews(run, tc.head, gen)).toEqual(tc.want)
+      })
+    }
+
+    it('is empty for a channel type without a session', () => {
+      expect(decisionViews(room, head(), 4)).toEqual([])
+    })
+  })
+
+  const msgAt = (seq: number, over: Partial<Message> = {}): Message => ({
+    seq,
+    rev: seq,
+    type: 'text',
+    author: { user: 'ann' },
+    at,
+    props: { body: `m${seq}` },
+    ...over,
+  })
+  const notice = (seq: number, generation: number, cause?: number): Message =>
+    msgAt(seq, {
+      type: 'session',
+      author: { user: 'system', system: true },
+      triggered_by: 'session:run',
+      props: { from: 'working', to: 'plan-review', generation, ...(cause ? { cause } : {}) },
+    })
+
+  describe('decisionCause', () => {
+    const cases: { name: string; messages: Message[]; gen: number | undefined; want?: number }[] = [
+      { name: 'found', messages: [msgAt(10), msgAt(12), notice(13, 4, 12)], gen: 4, want: 12 },
+      {
+        name: 'only an older generation is held',
+        messages: [msgAt(12), notice(13, 3, 12)],
+        gen: 4,
+      },
+      { name: 'generation 0', messages: [msgAt(12), notice(13, 0, 12)], gen: 0 },
+      { name: 'no session', messages: [msgAt(12), notice(13, 4, 12)], gen: undefined },
+      { name: 'a timer notice has no cause', messages: [msgAt(12), notice(13, 4)], gen: 4 },
+      { name: 'the cause is not held', messages: [msgAt(11), notice(13, 4, 12)], gen: 4 },
+      {
+        name: 'the cause is removed',
+        messages: [
+          msgAt(12, { removed: { kind: 'moderator', by: { user: 'bob' }, at } }),
+          notice(13, 4, 12),
+        ],
+        gen: 4,
+      },
+      {
+        name: 'the notice of the current generation wins over an older one',
+        messages: [msgAt(8), notice(9, 3, 8), msgAt(12), notice(13, 4, 12)],
+        gen: 4,
+        want: 12,
+      },
+    ]
+    for (const tc of cases) {
+      it(tc.name, () => {
+        const session = tc.gen === undefined ? undefined : { generation: tc.gen }
+        expect(decisionCause(tc.messages, session)).toBe(tc.want)
+      })
+    }
+  })
+
+  describe('decisionReplyTo', () => {
+    const msgs = [msgAt(12), msgAt(14, { reply_to: 12 })]
+    const cases: { name: string; cause?: number; reply?: boolean; want?: number }[] = [
+      { name: 'a top-level cause and a type that replies', cause: 12, reply: true, want: 12 },
+      { name: 'the cause is itself a reply', cause: 14, reply: true },
+      { name: 'the type may not reply', cause: 12, reply: false },
+      { name: 'no cause', reply: true },
+      { name: 'the cause is not held', cause: 13, reply: true },
+    ]
+    for (const tc of cases) {
+      it(tc.name, () => {
+        expect(decisionReplyTo(msgs, tc.cause, { reply: tc.reply ?? false })).toBe(tc.want)
+      })
+    }
   })
 })

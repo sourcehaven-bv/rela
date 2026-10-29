@@ -306,6 +306,7 @@
     "reason"
   ],
   "PostMessageRequest": [
+    "expect_generation",
     "props",
     "reply_to",
     "type"

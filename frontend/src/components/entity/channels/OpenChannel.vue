@@ -13,6 +13,10 @@
  * A channel type with a session gets the stepper in RlChannel's session
  * slot, and the composer marks the types whose post would move it.
  *
+ * Session decisions (TKT-T9G1AE) are buttons in the stepper and on the
+ * message that moved the session into its current state; their logic is
+ * useSessionDecisions.
+ *
  * It emits `gone` when the channel can no longer be shown: a refused read
  * (the reader lost access, or the channel was deleted) or a refusal that
  * names the channel as missing. useChannel has already dropped what it held
@@ -30,7 +34,12 @@ import { useSchemaStore, useUIStore } from '@/stores'
 import { shouldDropHeldContent } from '@/api/errors'
 import { browserTimeZone } from '@/utils/format'
 import { toEditProps, toProps } from '@/utils/channelValues'
-import { LIFECYCLE_DELETE, type ChannelTypeSchema, type Message } from '@/types/channels'
+import {
+  LIFECYCLE_DELETE,
+  type ChannelTypeSchema,
+  type Message,
+  type MessagePropInput,
+} from '@/types/channels'
 import type {
   ChannelComposerTransition,
   ChannelEditEvent,
@@ -39,6 +48,7 @@ import type {
   ChannelSessionView,
 } from 'rela-components/components/channel/types'
 import {
+  DECISIONS_BLOCKED_KEY,
   lifecyclePendingKey,
   messagePendingKey,
 } from 'rela-components/components/channel/channelFields'
@@ -46,6 +56,7 @@ import RlButton from 'rela-components/components/common/RlButton.vue'
 import RlBanner from 'rela-components/components/feedback/RlBanner.vue'
 import RlChannel from 'rela-components/components/channel/RlChannel.vue'
 import RlChannelComposer from 'rela-components/components/channel/RlChannelComposer.vue'
+import RlChannelDecisions from 'rela-components/components/channel/RlChannelDecisions.vue'
 import RlChannelSession from 'rela-components/components/channel/RlChannelSession.vue'
 import EntityPickerModal from '@/components/forms/EntityPickerModal.vue'
 import ChannelTextDialog from './ChannelTextDialog.vue'
@@ -54,6 +65,7 @@ import { useChannelLinks } from './useChannelLinks'
 import { useExpiryClock } from './useExpiryClock'
 import { usePendingKeys } from './usePendingKeys'
 import { useRefPicker } from './useRefPicker'
+import { useSessionDecisions } from './useSessionDecisions'
 import {
   composerTransitions,
   editingFor,
@@ -228,6 +240,19 @@ const editing = ref<ChannelEditing>()
 // the list at save time.
 let editProps: { seq: number; props: Message['props'] } | undefined
 const submitting = ref(false)
+const sessionHeader = useTemplateRef<InstanceType<typeof RlChannelSession>>('sessionHeader')
+const channelView = useTemplateRef<InstanceType<typeof RlChannel>>('channelView')
+
+/**
+ * The pending keys the library sees: a composer send, or a decision in
+ * progress (a dialog open, a post in flight), blocks every decision. Only
+ * the posting decision's own key shows it as sending.
+ */
+const shownPending = computed<ReadonlySet<string>>(() =>
+  submitting.value || deciding.value
+    ? new Set([...pending.value, DECISIONS_BLOCKED_KEY])
+    : pending.value
+)
 
 const replyQuoteView = computed(() => {
   const seq = replyTo.value
@@ -249,19 +274,38 @@ function stopEditing() {
 // Another channel starts clean: no reply, edit or error carries over. The
 // key is a string, so a descriptor reload (a new channelType object for the
 // same channel) does not count as another channel.
-watch(
-  () => [props.entityType, props.address, props.channelType.name, props.name ?? ''].join('\u0000'),
-  () => {
-    memo = new Map()
-    replyTo.value = null
-    stopEditing()
-    clearErrors()
+const channelKey = () =>
+  [props.entityType, props.address, props.channelType.name, props.name ?? ''].join('\u0000')
+watch(channelKey, () => {
+  memo = new Map()
+  replyTo.value = null
+  stopEditing()
+  clearErrors()
+  resetDecisions()
+})
+
+/**
+ * Posts a message. A log post ends the typing entry on the server; a
+ * typing call still in flight must land first, or it would bring the
+ * entry back.
+ */
+async function postTyped(
+  type: string,
+  values: Record<string, MessagePropInput>,
+  replyTo?: number,
+  expectGeneration?: number
+) {
+  try {
+    await typing.settle()
+    return await ch.post(type, values, replyTo, expectGeneration)
+  } finally {
+    typing.reset()
   }
-)
+}
 
 async function onPost(event: ChannelPostEvent) {
   const mt = messageType(event.type)
-  if (!mt || submitting.value) return
+  if (!mt || submitting.value || deciding.value) return
   const rendered = new Set(event.rendered)
   const converted = toProps(
     mt.properties.filter((p) => rendered.has(p.name)),
@@ -274,16 +318,12 @@ async function onPost(event: ChannelPostEvent) {
   clearErrors()
   submitting.value = true
   try {
-    // A log post ends the typing entry on the server; a typing call still
-    // in flight must land first, or it would bring the entry back.
-    await typing.settle()
-    await ch.post(event.type, converted.props, event.replyTo)
+    await postTyped(event.type, converted.props, event.replyTo)
     composer.value?.reset(event)
     replyTo.value = null
   } catch (err) {
     formError.value = handle(err, true)
   } finally {
-    typing.reset()
     submitting.value = false
   }
 }
@@ -341,6 +381,32 @@ function onCancelEdit() {
   stopEditing()
   clearErrors()
 }
+
+// --- Session decisions ---------------------------------------------------------
+
+const { decisions, decisionSeq, deciding, onDecide, resetDecisions } = useSessionDecisions({
+  channelType: () => props.channelType,
+  channelKey,
+  ch,
+  messageType,
+  post: postTyped,
+  setPending,
+  submitting,
+  composer: {
+    editing: () => !!editing.value,
+    discardEdit: onCancelEdit,
+    endReply: () => (replyTo.value = null),
+    select: (type) => composer.value?.select(type) ?? false,
+    showError: (m) => (formError.value = m),
+  },
+  ui: {
+    confirm,
+    toast: (m) => ui.error(m),
+    handle,
+    focusRow: (seq) => channelView.value?.focusRow(seq) ?? false,
+    focusHeader: () => sessionHeader.value?.focus(),
+  },
+})
 
 // --- Message and channel operations -----------------------------------------
 
@@ -458,6 +524,7 @@ const pickerTypes = picker.types
     </RlBanner>
     <RlChannel
       v-else-if="ch.head.value"
+      ref="channelView"
       :title="title"
       :state="ch.head.value.channel.state"
       :messages="views"
@@ -471,7 +538,9 @@ const pickerTypes = picker.types
       :presentation="presentation"
       :enum-options="enumOptions"
       :entity-href="entityHref"
-      :pending="pending"
+      :pending="shownPending"
+      :decisions="decisions"
+      :decision-seq="decisionSeq"
       :has-older="ch.hasOlder.value"
       :has-newer="ch.hasNewer.value"
       :loading-older="loadingOlder"
@@ -486,9 +555,18 @@ const pickerTypes = picker.types
       @load-older="onLoadOlder"
       @load-newest="onLoadNewest"
       @jump="onJump"
+      @decide="(key) => onDecide(key, 'row')"
     >
       <template v-if="session.value" #session>
-        <RlChannelSession :session="session.value" />
+        <RlChannelSession ref="sessionHeader" :session="session.value">
+          <template v-if="decisions.length" #decisions>
+            <RlChannelDecisions
+              :decisions="decisions"
+              :pending="shownPending"
+              @decide="(key) => onDecide(key, 'header')"
+            />
+          </template>
+        </RlChannelSession>
       </template>
       <template #composer>
         <RlChannelComposer
@@ -502,6 +580,7 @@ const pickerTypes = picker.types
           :reply-to="replyQuoteView"
           :editing="editing"
           :submitting="submitting"
+          :blocked="deciding"
           :errors="fieldErrors"
           :error="formError"
           :time-zone-label="tz"

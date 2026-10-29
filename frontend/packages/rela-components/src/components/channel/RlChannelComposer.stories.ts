@@ -241,6 +241,7 @@ export const Submitting: Story = {
 /** The composer's exposed methods, as a story harness calls them. */
 interface ComposerHandle {
   reset: (event?: ChannelPostEvent | ChannelEditEvent) => void
+  select: (type: string) => boolean
 }
 
 /** Two types that share a ref property name, and an optional boolean. */
@@ -757,5 +758,60 @@ export const ReplyShowsHint: Story = {
   },
   play: async ({ canvasElement }) => {
     await expect(describedHint(canvasElement)).toBe('Sending this moves the session to Contained.')
+  },
+}
+
+/**
+ * `select(type)` selects an offered type and focuses its first field. It
+ * returns false, and changes nothing, for a type not offered or during an
+ * edit.
+ */
+export const SelectByMethod: Story = {
+  args: breachArgs,
+  render: (args) => ({
+    components: { RlChannelComposer },
+    setup() {
+      const composer = ref<ComposerHandle | null>(null)
+      const editing = ref<ChannelEditing>()
+      const answers = ref<boolean[]>([])
+      const pick = (t: string) => answers.value.push(composer.value!.select(t))
+      const edit = () => (editing.value = { seq: 9, type: 'text', values: { body: 'old' }, refs: {} })
+      return { args, composer, editing, answers, pick, edit }
+    },
+    template: `
+      <div style="max-width:640px">
+        <RlChannelComposer ref="composer" v-bind="args" :editing="editing" />
+        <button type="button" @click="pick('dismiss')">select dismiss</button>
+        <button type="button" @click="pick('unknown')">select unknown</button>
+        <button type="button" @click="edit()">start edit</button>
+        <output data-testid="answers">{{ answers.join(',') }}</output>
+      </div>`,
+  }),
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement)
+    await userEvent.click(canvas.getByRole('button', { name: 'select dismiss' }))
+    await expect(typeOptions(canvasElement)[1]).toHaveAttribute('aria-checked', 'true')
+    await waitFor(() => expect(canvas.getByRole('textbox', { name: /Reason/ })).toHaveFocus())
+    await userEvent.click(canvas.getByRole('button', { name: 'select unknown' }))
+    await expect(typeOptions(canvasElement)[1]).toHaveAttribute('aria-checked', 'true')
+    await userEvent.click(canvas.getByRole('button', { name: 'start edit' }))
+    await nextTick()
+    await userEvent.click(canvas.getByRole('button', { name: 'select dismiss' }))
+    await expect(canvas.getByTestId('answers')).toHaveTextContent('true,false,false')
+    await expect(canvas.getByRole('form', { name: 'Edit message' })).toBeVisible()
+  },
+}
+
+/** Blocked by a decision in flight: the send button is disabled, with no pending label. */
+export const Blocked: Story = {
+  args: { blocked: true, onPost: fn() },
+  play: async ({ args, canvasElement }) => {
+    const canvas = within(canvasElement)
+    await userEvent.type(canvas.getByRole('textbox', { name: /Message/ }), 'Wait.')
+    await userEvent.keyboard('{Control>}{Enter}{/Control}')
+    await expect(args.onPost).not.toHaveBeenCalled()
+    const send = canvas.getByRole('button', { name: 'Send' })
+    await expect(send).toBeDisabled()
+    await expect(send).not.toHaveAttribute('aria-busy')
   },
 }

@@ -337,6 +337,8 @@ func TestChannelTools_Arguments(t *testing.T) {
 		{"props not object", "post_message", with(room, map[string]any{"message_type": "text", "props": "x"}), "props"},
 		{"no seq", "edit_message", with(room, map[string]any{"props": map[string]any{}}), "seq"},
 		{"no props", "edit_message", with(room, map[string]any{"seq": 1}), "props"},
+		{"negative expect_generation", "post_message",
+			with(room, map[string]any{"message_type": "text", "expect_generation": -1}), "expect_generation"},
 		{"reason not string", "remove_message", with(room, map[string]any{"seq": 1, "reason": 3}), "reason"},
 	}
 	for _, tc := range tests {
@@ -584,6 +586,31 @@ func TestPostMessage_ReturnsSession(t *testing.T) {
 	}, nil)
 	if strings.Contains(text, `"session"`) {
 		t.Errorf("a room post carries a session: %s", text)
+	}
+}
+
+// TestPostMessage_ExpectGeneration pins TKT-T9G1AE AC 2: post_message
+// passes expect_generation, so a post at another generation is refused
+// with session_moved and stores nothing, and one at the session's
+// generation posts.
+func TestPostMessage_ExpectGeneration(t *testing.T) {
+	t.Parallel()
+	f := newChannelFixture(t)
+	cs := f.client(t, "alice")
+	got, isErr := call(t, cs, "post_message", with(incidentArgs, map[string]any{
+		"message_type": "contained", "expect_generation": 1,
+	}))
+	if !isErr || !strings.Contains(got, realtime.TypeSessionMoved) {
+		t.Fatalf("post at generation 1 = %q (error %v), want session_moved", got, isErr)
+	}
+	var res struct {
+		Session *realtime.SessionView `json:"session"`
+	}
+	mustCall(t, cs, "post_message", with(incidentArgs, map[string]any{
+		"message_type": "contained", "expect_generation": 0,
+	}), &res)
+	if res.Session == nil || res.Session.State != "contained" || res.Session.Generation != 1 {
+		t.Fatalf("after a post at generation 0, session = %+v", res.Session)
 	}
 }
 

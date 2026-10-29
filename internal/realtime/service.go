@@ -334,6 +334,12 @@ type PostInput struct {
 	Type    string
 	Props   map[string]any
 	ReplyTo int64
+	// ExpectGeneration is the session generation the post was decided
+	// against: the post is stored only when the session is still at it,
+	// read under the store's lock, and is refused with 409 session_moved
+	// otherwise. Nil: no precondition. It applies only to a log message
+	// type of a channel type with a session.
+	ExpectGeneration *int64
 	// LogOnly is set by a transport that runs in a process other than the
 	// server's, such as the CLI or stdio MCP. A signal lives only in the
 	// process that receives it, so nobody would see one posted there; such
@@ -357,12 +363,15 @@ type PostResult struct {
 	Outputs *OutputsView
 }
 
-// Post posts a message. The checks run in this order: read access, a post
-// role of the message type, a transport that keeps the type (see
+// Post posts a message. The checks run in this order: read access, the
+// message type and the shape of [PostInput.ExpectGeneration], a post role
+// of the message type, a transport that keeps the type (see
 // [PostInput.LogOnly]), an open channel, the session state (`in:`), the
-// rate limit, the properties, the type's `when:`, the refs. A denied caller
-// is not charged a token; an invalid message is. The store checks the
-// session state again under its lock (see [admitIn]); a refusal there,
+// session generation, the rate limit, the properties, the type's `when:`,
+// the refs. A denied caller is not charged a token, and neither is a
+// request whose type or expect_generation is unusable; an invalid message
+// is. The store checks the session state and
+// generation again under its lock (see [admitPost]); a refusal there,
 // after a concurrent move, has spent a token like any failed append.
 func (s *Service) Post(ctx context.Context, addr RawAddress, in PostInput) (PostResult, error) {
 	c, openErr := s.open(ctx, addr)
@@ -376,6 +385,9 @@ func (s *Service) Post(ctx context.Context, addr RawAddress, in PostInput) (Post
 	if mt == nil {
 		return PostResult{}, invalid("channel type %s has no message type %q", c.ct.Name, in.Type)
 	}
+	if err := expectGenerationShape(c.ct.Session(), mt, in.ExpectGeneration); err != nil {
+		return PostResult{}, err
+	}
 	if !c.mayPost(mt) {
 		return PostResult{}, postDenied(c.ct, mt)
 	}
@@ -388,6 +400,9 @@ func (s *Service) Post(ctx context.Context, addr RawAddress, in PostInput) (Post
 	}
 	if e := sessionRefusal(c.ct.Session(), mt, sessionChannel(c.head, c.now)); e != nil {
 		return PostResult{}, sessionWrongState(c.ct, mt, e)
+	}
+	if e := generationRefusal(c.ct.Session(), sessionChannel(c.head, c.now), in.ExpectGeneration); e != nil {
+		return PostResult{}, sessionMoved(e)
 	}
 	if err := s.local.limiter.take(c.now, bucketIdentity(c.p), c.key, opPostPfx+mt.Name,
 		postRate(c.snap.Config.Limits(), mt)); err != nil {
@@ -417,7 +432,8 @@ func (s *Service) Post(ctx context.Context, addr RawAddress, in PostInput) (Post
 	if err != nil {
 		return PostResult{}, err
 	}
-	sp := newSessionPost(c.ctx, c.ct, mt, vp.props, c.now, poster{roles: c.transitionRoles(mt)}, "")
+	sp := newSessionPost(c.ctx, c.ct, mt, vp.props, c.now, poster{roles: c.transitionRoles(mt)}, "",
+		in.ExpectGeneration)
 	plan, err := s.precheckOutputs(c, mt, sp)
 	if err != nil {
 		return PostResult{}, err
@@ -430,11 +446,8 @@ func (s *Service) Post(ctx context.Context, addr RawAddress, in PostInput) (Post
 		MarkRead: true, Mentions: targets,
 	})
 	sp.logGuardFailure(c.ctx)
-	if e, ok := errors.AsType[*channels.SessionStateError](err); ok {
-		return PostResult{}, sessionWrongState(c.ct, mt, e)
-	}
 	if err != nil {
-		return PostResult{}, storeError(err)
+		return PostResult{}, appendRefusal(c, mt, err)
 	}
 	noteDue(s.dueWake, sp.step)
 	s.local.notePosted(c, m)
@@ -449,6 +462,34 @@ func (s *Service) Post(ctx context.Context, addr RawAddress, in PostInput) (Post
 		}
 	}
 	return out, nil
+}
+
+// appendRefusal maps a failed append of a post: a session precondition
+// the store refused under its lock (the generation, then in:) is the same
+// denial as the pre-check's; anything else is a store error.
+func appendRefusal(c *call, mt *realtimecfg.MessageType, err error) error {
+	if e, ok := errors.AsType[*channels.SessionGenerationError](err); ok {
+		return sessionMoved(e)
+	}
+	if e, ok := errors.AsType[*channels.SessionStateError](err); ok {
+		return sessionWrongState(c.ct, mt, e)
+	}
+	return storeError(err)
+}
+
+// expectGenerationShape refuses an expect_generation the post cannot use:
+// a negative one, or one on a channel type without a session or on an
+// ephemeral type. Nil when expect is nil or usable.
+func expectGenerationShape(sess *realtimecfg.Session, mt *realtimecfg.MessageType, expect *int64) error {
+	switch {
+	case expect == nil:
+		return nil
+	case *expect < 0:
+		return invalid("expect_generation must be at least 0")
+	case sess == nil || mt.Persist == realtimecfg.PersistEphemeral:
+		return invalid("expect_generation applies only to a log message type of a channel type with a session")
+	}
+	return nil
 }
 
 // notePosted tells the process-local state about m, the log message c

@@ -10,6 +10,7 @@ import type {
   ChannelLifecycleDef,
   ChannelMessageTypeDef,
   ChannelComposerTransition,
+  ChannelDecisionView,
   ChannelMessageView,
   ChannelPresentation,
   ChannelReadableRef,
@@ -461,4 +462,24 @@ export const breachMessages: ChannelMessageView[] = [
     props: { risk: 'high' },
   },
   breachNotice(5, 'Contained', 'Risk assessed', '09:30'),
+]
+
+/** The decisions the lead may make in Contained: one opens the form, two post, one of them ends the session. */
+export const breachDecisions: ChannelDecisionView[] = [
+  {
+    key: 'assessed',
+    messageType: 'assessed',
+    label: 'Risk assessed',
+    toLabel: 'Risk assessed',
+    opensForm: true,
+  },
+  { key: 'contained', messageType: 'contained', label: 'Contained again', toLabel: 'Contained' },
+  {
+    key: 'dismiss',
+    messageType: 'dismiss',
+    label: 'Dismiss',
+    toLabel: 'Dismissed',
+    confirm: true,
+    danger: true,
+  },
 ]

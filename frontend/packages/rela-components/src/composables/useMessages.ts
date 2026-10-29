@@ -140,6 +140,8 @@ export type ChannelTextKey =
   | 'sessionPausedArchived'
   | 'sessionShowAll'
   | 'sessionHideAll'
+  // Session decisions
+  | 'decisions'
 
 /**
  * The fixed captions of every component outside the channel set: control
@@ -449,6 +451,7 @@ const CHANNEL_TEXT: Record<ChannelTextKey, string> = {
   sessionPausedArchived: 'Paused while the channel is archived',
   sessionShowAll: 'Show all states',
   sessionHideAll: 'Hide the states',
+  decisions: 'Decisions',
 }
 
 /**
@@ -580,6 +583,13 @@ export interface Messages {
    * that moves the session: ` (moves the session)`.
    */
   channelSessionOptionHint: () => string
+  /**
+   * Screen-reader text read after the label of a session decision button:
+   * ` (moves the session to Working)`, ` (moves the session)` when the
+   * target is not one state, or ` (opens the form)` for a button that opens
+   * the composer instead of posting.
+   */
+  channelDecisionHint: (args: { to?: string; form?: boolean }) => string
   /**
    * The one-line summary of a narrow session stepper. `label` is the
    * current state's label, or its stored name when stranded or loading.
@@ -765,6 +775,8 @@ export const DEFAULT_MESSAGES: Messages = {
   channelSessionHint: ({ to, guarded }) =>
     `Sending this moves the session to ${to}${guarded ? ' if its condition holds' : ''}.`,
   channelSessionOptionHint: () => ' (moves the session)',
+  channelDecisionHint: ({ to, form }) =>
+    form ? ' (opens the form)' : to ? ` (moves the session to ${to})` : ' (moves the session)',
   channelSessionSummary: ({ status, label, outcome }) => {
     switch (status) {
       case 'stranded':

@@ -26,7 +26,9 @@ import type {
   ChannelHead,
   ChannelMessageTypeSchema,
   ChannelPropertySchema,
+  ChannelSession,
   ChannelSessionSchema,
+  ChannelSessionTransition,
   ChannelTypeList,
   ChannelTypeSchema,
   EphemeralMessage,
@@ -39,6 +41,7 @@ import { LIFECYCLE_DELETE, isSessionNotice } from '@/types/channels'
 import type {
   ChannelAuthorView,
   ChannelComposerTransition,
+  ChannelDecisionView,
   ChannelEditing,
   ChannelEnumOption,
   ChannelEphemeralView,
@@ -332,6 +335,124 @@ export function composerTransitions(
     if (tr.guarded) view.guarded = true
     return [view]
   })
+}
+
+/** The head fields the decisions read. */
+export type DecisionHead = Pick<ChannelHead, 'channel'> & {
+  _actions: Pick<ChannelActions, 'post' | 'transitions'>
+}
+
+/**
+ * The session decisions the caller may make now, as buttons: one per
+ * message type in the caller's `_actions.transitions`, in that order (the
+ * server's, by name).
+ *
+ * There are none unless the channel is open, the session is neither final
+ * nor stranded, its state is in the descriptor, and the held `_actions`
+ * were fetched at the head's current generation (`actionsGeneration`): a
+ * message page moves the head's session ahead of the actions, and stale
+ * actions would offer a decision of the state the session has left. A type
+ * is kept when it is also in `_actions.post`, is a `log` type of the
+ * descriptor, and has an edge out of the current state that a person's
+ * post fires.
+ *
+ * A decision opens the form when an edge is guarded, its edges lead to
+ * several states, or the type has a required property. `toLabel` is set
+ * when every edge leads to one state. A one-click decision asks first
+ * (`confirm`) when its state is final, and is `danger` when that state
+ * ends as cancelled or failed. A later offer, choice or authored style
+ * plugs in here.
+ */
+export function decisionViews(
+  ct: ChannelTypeSchema,
+  head: DecisionHead,
+  actionsGeneration: number | undefined
+): ChannelDecisionView[] {
+  const s = ct.session
+  const cs = head.channel.session
+  if (head.channel.state !== 'open' || !s || !cs || cs.final || cs.stranded) return []
+  if (!s.states.some((st) => st.name === cs.state)) return []
+  if (actionsGeneration !== cs.generation) return []
+  const post = new Set(head._actions.post)
+  const edges = new Map<string, ChannelSessionTransition[]>()
+  for (const tr of cs.transitions ?? []) {
+    if (tr.by === 'trigger') continue
+    const list = edges.get(tr.message_type)
+    if (list) list.push(tr)
+    else edges.set(tr.message_type, [tr])
+  }
+  const byName = new Map(ct.message_types.map((mt) => [mt.name, mt]))
+  const stateOf = new Map(s.states.map((st) => [st.name, st]))
+  return [...new Set(head._actions.transitions ?? [])].flatMap((name) => {
+    const list = edges.get(name)
+    const mt = byName.get(name)
+    if (!list || !mt || mt.persist !== 'log' || !post.has(name)) return []
+    const targets = [...new Set(list.map((tr) => tr.to))]
+    const finals = targets.map((to) => stateOf.get(to))
+    const view: ChannelDecisionView = { key: name, messageType: name, label: mt.label || name }
+    const [only, ...more] = targets
+    if (only !== undefined && !more.length) view.toLabel = stateLabel(s, only)
+    if (
+      targets.length > 1 ||
+      list.some((tr) => tr.guarded) ||
+      mt.properties.some((p) => p.required)
+    ) {
+      view.opensForm = true
+    }
+    // Only a one-click decision asks; a form decision asks nothing, since
+    // its own Send is the confirmation. A one-click decision has one target.
+    if (!view.opensForm && view.toLabel !== undefined && finals.every((st) => st?.final)) {
+      view.confirm = true
+      if (finals.every((st) => st?.status === 'cancelled' || st?.status === 'failed')) {
+        view.danger = true
+      }
+    }
+    return [view]
+  })
+}
+
+/**
+ * The seq of the message that moved the session into its current state,
+ * when the held page has it: the `cause` of the session notice of the
+ * current generation, if that message is held and not removed. Undefined
+ * at generation 0, for a timer's move (its notice has no cause), and when
+ * the notice or the message is not held. One pass over the held messages,
+ * newest first; no fetch.
+ */
+export function decisionCause(
+  messages: readonly Message[],
+  session: Pick<ChannelSession, 'generation'> | undefined
+): number | undefined {
+  if (!session || !session.generation) return undefined
+  let cause: number | undefined
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const m = messages[i]
+    if (!m) continue
+    if (cause === undefined) {
+      if (!isSessionNotice(m) || m.props?.generation !== session.generation) continue
+      const c = m.props?.cause
+      if (typeof c !== 'number') return undefined
+      cause = c
+      continue
+    }
+    if (m.seq < cause) return undefined
+    if (m.seq === cause) return m.removed ? undefined : cause
+  }
+  return undefined
+}
+
+/**
+ * The `reply_to` of a decision: the deciding message, when it is known, is
+ * itself top-level, and the decision's type may reply. Undefined otherwise.
+ */
+export function decisionReplyTo(
+  messages: readonly Message[],
+  cause: number | undefined,
+  mt: Pick<ChannelMessageTypeSchema, 'reply'> | undefined
+): number | undefined {
+  if (cause === undefined || !mt?.reply) return undefined
+  const m = messages.find((x) => x.seq === cause)
+  return m && !m.reply_to ? cause : undefined
 }
 
 /**

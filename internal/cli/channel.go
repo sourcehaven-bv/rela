@@ -387,7 +387,8 @@ type ChannelPostCmd struct {
 	channelAddr
 	MessageType string `arg:"" name:"message-type" help:"Message type, from rela channel read."`
 	channelProps
-	ReplyTo int64 `name:"reply-to" help:"Seq of the top-level message to reply to."`
+	ReplyTo          int64  `name:"reply-to" help:"Seq of the top-level message to reply to."`
+	ExpectGeneration *int64 `name:"expect-generation" help:"Post only while the session is at this generation."`
 }
 
 // Run posts the message.
@@ -399,6 +400,9 @@ func (c *ChannelPostCmd) Run(ctx context.Context, cs *channelServices) error {
 	if c.ReplyTo < 0 {
 		return errors.New("--reply-to: a seq of at least 1")
 	}
+	if c.ExpectGeneration != nil && *c.ExpectGeneration < 0 {
+		return errors.New("--expect-generation: a generation of at least 0")
+	}
 	addr := c.raw()
 	props, err := messageProps(ctx, svc, addr, c.channelProps, realtime.ReadRequest{Limit: 1},
 		func(realtime.ReadView) string { return c.MessageType })
@@ -406,7 +410,7 @@ func (c *ChannelPostCmd) Run(ctx context.Context, cs *channelServices) error {
 		return err
 	}
 	got, err := svc.Post(ctx, addr, realtime.PostInput{
-		Type: c.MessageType, Props: props, ReplyTo: c.ReplyTo, LogOnly: true,
+		Type: c.MessageType, Props: props, ReplyTo: c.ReplyTo, LogOnly: true, ExpectGeneration: c.ExpectGeneration,
 	})
 	if err != nil {
 		return channelFailed(ctx, "post", addr.Anchor, err)

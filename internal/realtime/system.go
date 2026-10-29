@@ -55,7 +55,7 @@ func (w systemWriter) post(
 	// A trigger's post fires a transition with by: trigger or with no
 	// poster rule. With requireOpen off it may land in a closed channel,
 	// which the decider never moves.
-	sp := newSessionPost(ctx, ct, mt, vp.props, now, poster{trigger: true}, triggeredBy)
+	sp := newSessionPost(ctx, ct, mt, vp.props, now, poster{trigger: true}, triggeredBy, nil)
 	if sp.step != nil {
 		sp.step.Mark = triggerMark(ct, mt.Name, now, &marked)
 	}

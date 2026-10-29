@@ -81,7 +81,8 @@ func denialConstructors() map[string]*DenialError {
 		"postDenied":         postDenied(ct, mt),
 		"sessionWrongState": sessionWrongState(ct, &realtimecfg.MessageType{Name: "approve", In: []string{"review"}},
 			&channels.SessionStateError{State: "working"}),
-		"gateDenied": gateDenied(TypeCreateDenied, "creating", "r", realtimecfg.Gate{}, nil),
+		"sessionMoved": sessionMoved(&channels.SessionGenerationError{Want: 2, Got: 3, State: "review"}),
+		"gateDenied":   gateDenied(TypeCreateDenied, "creating", "r", realtimecfg.Gate{}, nil),
 	}
 }
 

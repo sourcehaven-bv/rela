@@ -212,6 +212,26 @@ describe('session_wrong_state', () => {
   })
 })
 
+describe('session_moved', () => {
+  afterEach(() => resetLanguageState({ user: 'en' }))
+
+  it('refetches the channel with the stale decision toast, not the generation title', () => {
+    resetLanguageState({ user: 'en' })
+    const err = problem(
+      409,
+      'session_moved',
+      'The session moved on: it is at generation 5 (approving); this post expected generation 4.'
+    )
+    expect(classifyChannelError(err)).toEqual({
+      place: 'toast',
+      then: 'refetch',
+      message: 'The session moved on. Choose again.',
+    })
+    resetLanguageState({ user: 'nl' })
+    expect(classifyChannelError(err).message).toBe('De sessie is verder gegaan. Kies opnieuw.')
+  })
+})
+
 describe('problemType', () => {
   it('strips the problem type prefix', () => {
     expect(problemType(problem(409, 'removed'))).toBe('removed')

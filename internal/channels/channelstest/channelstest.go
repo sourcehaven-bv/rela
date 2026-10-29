@@ -124,6 +124,7 @@ func RunAll(t *testing.T, newHarness func(t *testing.T) Harness) {
 		{"SessionStateNames", testSessionStateNames},
 		{"SessionReply", testSessionReply},
 		{"SessionAdmit", testSessionAdmit},
+		{"SessionAdmitGeneration", testSessionAdmitGeneration},
 	}
 	for _, list := range [][]conformanceTest{tests, timerTests, reminderTests, outputsTests, waitingTests, readsTests,
 		addressedTests} {

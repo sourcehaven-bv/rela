@@ -477,6 +477,11 @@ export interface PostMessageRequest {
   type: string
   props?: Record<string, MessagePropInput>
   reply_to?: number
+  /**
+   * The session generation the post was decided against; a post at another
+   * generation is refused with 409 session_moved.
+   */
+  expect_generation?: number
 }
 
 export interface EditMessageRequest {
@@ -730,7 +735,12 @@ export const CHANNEL_WIRE_FIELDS: Record<string, readonly string[]> = {
     'props',
   ]),
   EphemeralAccepted: wireKeys<EphemeralAccepted>()(['id', 'expires_at']),
-  PostMessageRequest: wireKeys<PostMessageRequest>()(['type', 'props', 'reply_to']),
+  PostMessageRequest: wireKeys<PostMessageRequest>()([
+    'type',
+    'props',
+    'reply_to',
+    'expect_generation',
+  ]),
   EditMessageRequest: wireKeys<EditMessageRequest>()(['props']),
   RemoveMessageRequest: wireKeys<RemoveMessageRequest>()(['reason']),
   CreateChannelRequest: wireKeys<CreateChannelRequest>()(['title']),

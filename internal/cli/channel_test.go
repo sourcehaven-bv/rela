@@ -460,3 +460,33 @@ func TestChannelCLI_PostSession(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "#1 posted\n", got, "a type without a session prints no session")
 }
+
+// TestChannelCLI_ExpectGeneration pins TKT-T9G1AE AC 2 for the CLI:
+// --expect-generation reaches the service when set, 0 included, and is
+// not sent when absent; a negative value is refused before posting.
+func TestChannelCLI_ExpectGeneration(t *testing.T) {
+	p := newChannelProject(t)
+	_, err := runChannel(t, p.svc, "alice", "", "channel", "post", p.item, "incident", "contained",
+		"--expect-generation", "1")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "session_moved: The session moved on: it is at generation 0 (detected); "+
+		"this post expected generation 1.")
+
+	_, err = runChannel(t, p.svc, "alice", "", "channel", "post", p.item, "room", "text", "-P", "body=x",
+		"--expect-generation", "0")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "invalid_message: expect_generation applies only")
+
+	_, err = runChannel(t, p.svc, "alice", "", "channel", "post", p.item, "room", "text", "-P", "body=x")
+	require.NoError(t, err, "absent, the flag is not sent")
+
+	_, err = runChannel(t, p.svc, "alice", "", "channel", "post", p.item, "incident", "contained",
+		"--expect-generation=-1")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "--expect-generation: a generation of at least 0")
+
+	got, err := runChannel(t, p.svc, "alice", "", "channel", "post", p.item, "incident", "contained",
+		"--expect-generation", "0")
+	require.NoError(t, err)
+	assert.Contains(t, got, "generation 1")
+}
