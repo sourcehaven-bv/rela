@@ -7,7 +7,15 @@
  *
  * Plain, informal-neutral Dutch: "je", not "u".
  */
-import type { ChannelTextKey, ChromeTextKey, CountArgs, Messages } from './useMessages'
+import {
+  busyNameWith,
+  busyTailWith,
+  type BusyDuration,
+  type ChannelTextKey,
+  type ChromeTextKey,
+  type CountArgs,
+  type Messages,
+} from './useMessages'
 
 function counted({ count, noun, pluralNoun }: CountArgs): string {
   // The noun is the app's word, already in the app's language. Dutch plurals
@@ -20,6 +28,20 @@ function counted({ count, noun, pluralNoun }: CountArgs): string {
 function ofList(items: string[]): string {
   if (items.length <= 1) return items.join('')
   return `${items.slice(0, -1).join(', ')} of ${items[items.length - 1]}`
+}
+
+/** `al 3 uur`, or `nog geen minuut`. */
+function longDurationNl(d: BusyDuration): string {
+  switch (d.unit) {
+    case 'lessThanMinute':
+      return 'nog geen minuut'
+    case 'minutes':
+      return `al ${d.count} ${d.count === 1 ? 'minuut' : 'minuten'}`
+    case 'hours':
+      return `al ${d.count} uur`
+    default:
+      return `al ${d.count} ${d.count === 1 ? 'dag' : 'dagen'}`
+  }
 }
 
 const CHROME_TEXT_NL: Record<ChromeTextKey, string> = {
@@ -218,6 +240,7 @@ const CHANNEL_TEXT_NL: Record<ChannelTextKey, string> = {
   sessionFailed: 'Mislukt',
   sessionInputRequired: 'Invoer nodig',
   sessionWaitingForYou: 'Wacht op jou',
+  sessionWorking: 'Bezig…',
   sessionStranded: 'Vastgelopen',
   sessionLoading: 'De stappen van deze sessie laden…',
   sessionPausedClosed: 'Gepauzeerd zolang het kanaal gesloten is',
@@ -361,6 +384,9 @@ export const NL_MESSAGES: Messages = {
 
   editorCommand: ({ id, label }) => EDITOR_COMMANDS_NL[id] ?? label,
   commandUnavailable: ({ label }) => `${label} (hier niet beschikbaar)`,
+
+  busyTail: (args) => busyTailWith(args, 'u'),
+  busyName: ({ entries }) => busyNameWith(entries, longDurationNl),
 
   inboxWaitingHeading: () => 'Wacht op jou',
   inboxMentionsHeading: () => 'Vermeldingen en reacties',

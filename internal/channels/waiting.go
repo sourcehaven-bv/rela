@@ -41,6 +41,38 @@ type WaitingQuery struct {
 	// MaxRows is the row ceiling of this call, from 1 to [MaxWaitingRows].
 	// 0 is [MaxWaitingRows].
 	MaxRows int
+	// Names narrows both branches by channel name. The zero value lists
+	// every name.
+	Names NameFilter
+}
+
+// NameFilter narrows a [WaitingQuery] by channel name, so a caller that
+// knows a type's cardinality never counts a channel it cannot address.
+// A type switched between one and many keeps the channels of its old
+// cardinality, and those would otherwise count toward the row ceiling.
+type NameFilter int
+
+const (
+	// AnyName lists every channel.
+	AnyName NameFilter = iota
+	// UnnamedOnly lists only unnamed channels, the one channel of a
+	// cardinality one type.
+	UnnamedOnly
+	// NamedOnly lists only named channels, those of a cardinality many
+	// type.
+	NamedOnly
+)
+
+// Admits reports whether a channel named name passes f.
+func (f NameFilter) Admits(name string) bool {
+	switch f {
+	case UnnamedOnly:
+		return name == ""
+	case NamedOnly:
+		return name != ""
+	default:
+		return true
+	}
 }
 
 // RowCeiling is the most distinct channels q may return.
@@ -60,7 +92,7 @@ func (q WaitingQuery) CreatorBranch() bool { return q.CreatedBy != "" && len(q.C
 // agree on what a match is.
 func (q WaitingQuery) Matches(c Channel, anchors map[Anchor]bool) bool {
 	states, ok := q.States[c.Key.Type]
-	if !ok || c.State != StateOpen || !slices.Contains(states, c.Session.State) {
+	if !ok || c.State != StateOpen || !slices.Contains(states, c.Session.State) || !q.Names.Admits(c.Key.Name) {
 		return false
 	}
 	if anchors[c.Key.Anchor] {
@@ -72,11 +104,14 @@ func (q WaitingQuery) Matches(c Channel, anchors map[Anchor]bool) bool {
 // CheckWaitingQuery validates the arguments of [Store.ListWaiting], each
 // failure [ErrInvalidKey]: at least one type with at least one state, every
 // type and state valid, anchors or a creator branch, every anchor valid,
-// at most [MaxWaitingAnchors] anchors, every creator type valid, and a
-// MaxRows from 0 to [MaxWaitingRows].
+// at most [MaxWaitingAnchors] anchors, every creator type valid, a
+// MaxRows from 0 to [MaxWaitingRows], and a known [NameFilter].
 func CheckWaitingQuery(q WaitingQuery) error {
 	if q.MaxRows < 0 || q.MaxRows > MaxWaitingRows {
 		return fmt.Errorf("%w: row ceiling %d is not from 1 to %d", ErrInvalidKey, q.MaxRows, MaxWaitingRows)
+	}
+	if q.Names < AnyName || q.Names > NamedOnly {
+		return fmt.Errorf("%w: name filter %d", ErrInvalidKey, q.Names)
 	}
 	if len(q.States) == 0 {
 		return fmt.Errorf("%w: no channel type to list waiting sessions of", ErrInvalidKey)

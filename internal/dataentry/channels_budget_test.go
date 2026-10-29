@@ -573,3 +573,70 @@ func TestChannelsBudget_NoticeOutputs10vs50(t *testing.T) {
 		t.Errorf("a notice page grows with rows:\n10: %s\n50: %s", c10, c50)
 	}
 }
+
+// TestChannelsBudget_ListBusy10vs50 pins AC 6 of TKT-21G6JS: a page of 10
+// rows and one of 50, each row with a busy channel, cost the same reads.
+// The rows are on two faces of a face-anchored type, and half the channels
+// deny alice the read, so a per-row read or a per-row fallback for a
+// denied channel would show. ListWaiting runs once, with the page's
+// anchors.
+func TestChannelsBudget_ListBusy10vs50(t *testing.T) {
+	cost := func(n int) channelCost {
+		e := seedBusyPages(t, n)
+		e.counting.Reset()
+		e.chans.reset()
+		resp, _ := e.list(t, "alice", "/api/v1/pages?world=published&busy=facerun&per_page=100")
+		got := channelCost{entity: e.counting.Calls(), channel: e.chans.snapshot()}
+		if len(resp.Data) != n {
+			t.Fatalf("%d rows, want %d", len(resp.Data), n)
+		}
+		faces := map[entity.Face]int{}
+		for i, row := range busyOrdered(resp) {
+			faces[row.face]++
+			want := 0
+			if i%4 < 2 {
+				want = 1
+			}
+			if len(row.busy) != want {
+				t.Fatalf("%s: %d busy entries, want %d", row.id, len(row.busy), want)
+			}
+		}
+		if faces["published"] != n/2 || faces["draft"] != n/2 {
+			t.Fatalf("rows per face = %v, want %d on each", faces, n/2)
+		}
+		if got.channel["ListWaiting"] != 1 || len(e.chans.anchors) != n {
+			t.Fatalf("ListWaiting ran %d times over %d anchors, want once over %d",
+				got.channel["ListWaiting"], len(e.chans.anchors), n)
+		}
+		return got
+	}
+	c10, c50 := cost(10), cost(50)
+	if c10.entity["ListEntityHeaders"]+c10.entity["GetEntities"]+c10.entity["ListEntities"] == 0 {
+		t.Fatalf("the entity counter is not on the busy read path: %s", c10)
+	}
+	if !c10.equal(c50) {
+		t.Errorf("a busy list grows with rows:\n10: %s\n50: %s", c10, c50)
+	}
+}
+
+// busyRow is one row of a busy list: its id, the face it shows and its
+// `_busy`.
+type busyRow struct {
+	id   string
+	face entity.Face
+	busy []v1.BusyChannel
+}
+
+// busyOrdered returns the rows of resp by page number.
+func busyOrdered(resp v1.ListResponse) []busyRow {
+	out := make([]busyRow, 0, len(resp.Data))
+	for _, row := range resp.Data {
+		face := entity.Face("")
+		if _, f, ok := strings.Cut(row.Self, "@"); ok {
+			face = entity.Face(f)
+		}
+		out = append(out, busyRow{id: row.ID, face: face, busy: row.Busy})
+	}
+	slices.SortFunc(out, func(a, b busyRow) int { return strings.Compare(a.id, b.id) })
+	return out
+}

@@ -43,6 +43,22 @@ export const SESSION = {
 } as const;
 
 /**
+ * The agent-run session on ROOM when RoomOptions.run is set (TKT-21G6JS).
+ * It starts in Queued, which waits for the feature's owner, so a new
+ * channel is not busy. Start moves it to Planning, whose status is
+ * working, and Finish ends it.
+ */
+export const RUN = {
+  label: "Agent run",
+  queued: "Queued",
+  planning: "Planning",
+  done: "Plan ready",
+  startLabel: "Start",
+  finishLabel: "Finish",
+  noteLabel: "Note",
+} as const;
+
+/**
  * The review session on ROOM when RoomOptions.decisions is set (TKT-T9G1AE):
  * a Contained message sends the work to review, where the lead approves it
  * with one click or asks for a revision through the form.
@@ -100,11 +116,19 @@ export interface RoomOptions {
   decisions?: boolean;
   /** Adds the question and answer types of CHOICES. No session. */
   choices?: boolean;
+  /**
+   * Gives the room the agent-run session of RUN instead, and an owner role
+   * from the feature's `owner` property, which addBusyBoard adds to the
+   * schema. Cannot be combined with `session` or `decisions`.
+   */
+  run?: boolean;
 }
 
 /** realtime.yaml for the feature project. */
 export function roomRealtimeYaml(opts: RoomOptions = {}): string {
-  if (opts.session && opts.decisions) throw new Error("RoomOptions: session and decisions are exclusive");
+  if ([opts.session, opts.decisions, opts.run].filter(Boolean).length > 1) {
+    throw new Error("RoomOptions: session, decisions and run are exclusive");
+  }
   const read = opts.leadReadsOnly ? "{ permission: channel-lead }" : "{ from: attached }";
   const contained = opts.session
     ? `
@@ -172,6 +196,38 @@ export function roomRealtimeYaml(opts: RoomOptions = {}): string {
         approved: { label: ${DECISIONS.approved}, final: true, status: completed }
 `
     : "";
+  const runTypes = opts.run
+    ? `
+      start:
+        label: ${RUN.startLabel}
+        properties:
+          note: { type: string, required: true, label: ${RUN.noteLabel} }
+        post: [member, lead, owner]
+      finish:
+        label: ${RUN.finishLabel}
+        properties:
+          note: { type: string, required: true, label: ${RUN.noteLabel} }
+        post: [member, lead]`
+    : "";
+  const runSession = opts.run
+    ? `    session:
+      label: ${RUN.label}
+      initial: queued
+      states:
+        queued:
+          label: ${RUN.queued}
+          waiting_for: [owner]
+          on:
+            start: { to: planning, roles: [lead, owner] }
+        planning:
+          label: ${RUN.planning}
+          status: working
+          on:
+            finish: { to: done, roles: [lead] }
+        done: { label: ${RUN.done}, final: true }
+`
+    : "";
+  const ownerRole = opts.run ? "\n      owner:  { from: entity.owner }" : "";
   const session = opts.session
     ? `    session:
       label: ${SESSION.label}
@@ -194,20 +250,20 @@ channel_types:
     read: ${read}
     roles:
       member: { permission: channel-post }
-      lead:   { permission: channel-lead }
+      lead:   { permission: channel-lead }${ownerRole}
     message_types:
       text:
         label: Text
         properties:
           body: { type: markdown, required: true, max: 2000, label: ${ROOM.messageLabel} }
-        post: [member, lead]${contained}${decisionTypes}${choiceTypes}
+        post: [member, lead]${contained}${decisionTypes}${choiceTypes}${runTypes}
     lifecycle:
       close:  { roles: [lead], label: Close }
       reopen: { roles: [lead], label: Reopen }
     message_ops:
       edit_own:   { roles: [member, lead] }
       delete_own: { roles: [member, lead] }
-${session}${decisionSession}`;
+${session}${decisionSession}${runSession}`;
 }
 
 /** acl.yaml for the feature project: everyone reads, two may post. */
@@ -248,6 +304,49 @@ channel_types:
           body: { type: markdown, required: true, max: 2000, label: Message }
         post: [reader]
 `;
+
+/**
+ * The board of the busy spec (TKT-21G6JS): features with a busy field for
+ * ROOM. It is added to this project only, because the shared fixture has no
+ * realtime.yaml and a busy field names a channel type. addBusyBoard also
+ * gives features the `owner` property RUN's waiting role reads.
+ */
+export const BUSY_BOARD = {
+  id: "feature-busy",
+  title: "Feature Busy",
+} as const;
+
+/**
+ * Adds BUSY_BOARD to the data-entry.yaml written by the fixture, and an
+ * `owner` string property to `feature` in its schema.yaml.
+ */
+export function addBusyBoard(dir: string): void {
+  const schemaFile = path.join(dir, "schema.yaml");
+  const schema = fs.readFileSync(schemaFile, "utf8");
+  const feature = /^ {2}feature:\n(?: {4}.*\n)*? {4}properties:\n/m;
+  if (!feature.test(schema)) throw new Error("addBusyBoard: schema.yaml has no feature properties");
+  writeAtomic(schemaFile, schema.replace(feature, (m) => `${m}      owner:\n        type: string\n`));
+
+  const file = path.join(dir, "data-entry.yaml");
+  const yaml = fs.readFileSync(file, "utf8");
+  const board = `kanbans:
+  ${BUSY_BOARD.id}:
+    entity_type: feature
+    title: "${BUSY_BOARD.title}"
+    column_property: status
+    columns:
+      - value: draft
+        label: Draft
+      - value: approved
+        label: Approved
+    card:
+      title: title
+      fields:
+        - busy: ${ROOM.type}
+`;
+  if (!/^kanbans:\n/m.test(yaml)) throw new Error("addBusyBoard: data-entry.yaml has no kanbans block");
+  writeAtomic(file, yaml.replace(/^kanbans:\n/m, board));
+}
 
 /** Writes the feature project's realtime.yaml and acl.yaml into dir. */
 export function writeRoomProject(dir: string, opts: RoomOptions = {}): void {

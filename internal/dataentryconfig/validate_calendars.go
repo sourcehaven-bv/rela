@@ -240,7 +240,7 @@ func validateCalendarEventFields(calID string, cal Calendar, meta *metamodel.Met
 
 	for i, f := range cal.Event.Fields {
 		prefix := fmt.Sprintf("calendar %q: event.fields[%d]", calID, i)
-		if errs = append(errs, refuseKanbanOnlyFields(prefix, f)...); f.Comments || f.isRelatedProperty() {
+		if errs = append(errs, refuseKanbanOnlyFields(prefix, f)...); f.Comments || f.Busy != "" || f.isRelatedProperty() {
 			continue
 		}
 		switch {

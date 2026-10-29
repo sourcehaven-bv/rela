@@ -160,6 +160,9 @@ const hasRelationFields = computed(
 const hasCommentCounts = computed(
   () => kanbanConfig.value?.card.fields?.some((f) => f.comments) ?? false
 )
+// The channel type a busy card field shows, from the first field that names
+// one. Validation allows at most one per card.
+const busyType = computed(() => kanbanConfig.value?.card.fields?.find((f) => f.busy)?.busy)
 
 // A relation-backed board (`columns_from`) takes its columns from the
 // targets of a single-valued relation instead of an enum (TKT-KJ3Q07).
@@ -188,6 +191,7 @@ const boardParams = computed<ListParams | undefined>(() => {
   const params: ListParams = {}
   if (hasRelationFields.value) params.include = '*'
   if (hasCommentCounts.value) params.comment_counts = true
+  if (busyType.value) params.busy = busyType.value
   if (worldParam.value) params.world = worldParam.value
   // See the same attachment in EntityList: the board's configured scope has to
   // travel on the request, since the endpoint is keyed by type.
@@ -754,6 +758,18 @@ function resolvedCardFields(entity: Entity): ResolvedCardField[] {
   const out: ResolvedCardField[] = []
 
   for (const field of kanbanConfig.value?.card.fields ?? []) {
+    if (field.busy) {
+      // Only the asked type: the server answers for the board's one type.
+      const busy = (entity._busy ?? []).filter((b) => b.type === field.busy)
+      if (busy.length > 0) {
+        out.push({
+          field,
+          text: '',
+          busy: busy.map((b) => ({ typeLabel: b.type_label || b.type, label: b.label || b.state, since: b.since })),
+        })
+      }
+      continue
+    }
     const count = cardFieldCount(entity, field)
     if (count !== undefined) {
       // Zero renders nothing, like any empty card field.

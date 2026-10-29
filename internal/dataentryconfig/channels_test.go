@@ -38,6 +38,28 @@ func (fakeChannelSchema) MessageProperties(ct, mt string) []ChannelProperty {
 	return nil
 }
 
+// BusyFacts: run has a session with a working state and attaches to
+// tickets, room has no session, idle has a session without a working
+// state, eager starts in a state that reads working by default, and review
+// attaches only to features.
+func (fakeChannelSchema) BusyFacts(ct string) (BusyFacts, bool) {
+	switch ct {
+	case "room":
+		return BusyFacts{AttachTo: []string{"ticket"}}, true
+	case "run":
+		return BusyFacts{AttachTo: []string{"ticket"}, HasSession: true, HasWorkingState: true}, true
+	case "idle":
+		return BusyFacts{AttachTo: []string{"ticket"}, HasSession: true}, true
+	case "eager":
+		return BusyFacts{
+			AttachTo: []string{"ticket"}, HasSession: true, HasWorkingState: true, InitialDefaultWorking: true,
+		}, true
+	case "review":
+		return BusyFacts{AttachTo: []string{"feature"}, HasSession: true, HasWorkingState: true}, true
+	}
+	return BusyFacts{}, false
+}
+
 // TestChannelsPresentation_Validate pins the `channels:` checks: the shape
 // checks ValidateConfig runs alone, and the realtime.yaml checks of
 // ValidateChannels.
@@ -166,4 +188,53 @@ func TestChannelsUnknownKeys_Sorted(t *testing.T) {
 			t.Fatalf("errors =\n%s\nwant\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
 		}
 	}
+}
+
+// TestValidateChannels_Busy pins the realtime.yaml checks of a kanban busy
+// field (TKT-21G6JS). They run without a `channels:` block.
+func TestValidateChannels_Busy(t *testing.T) {
+	cases := []struct {
+		name     string
+		busy     string
+		wantErr  string // substring; "" means none
+		wantWarn string // substring; "" means none
+	}{
+		{name: "valid", busy: "run"},
+		{
+			name: "unknown type", busy: "nope",
+			wantErr: `kanban "k": card.fields[0]: realtime.yaml declares no channel type "nope"`,
+		},
+		{name: "no session", busy: "room", wantErr: "channel type room declares no session"},
+		{name: "no working state", busy: "idle", wantErr: "channel type idle has no state with status working"},
+		{name: "not attached", busy: "review", wantErr: `channel type review does not attach to entity type "ticket"`},
+		{name: "initial working by default", busy: "eager", wantWarn: "reads working by default"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := &Config{Kanbans: map[string]Kanban{"k": {
+				EntityType: "ticket", Card: KanbanCard{Fields: []KanbanCardField{{Busy: tc.busy}}},
+			}}}
+			errs, warnings := ValidateChannels(cfg, fakeChannelSchema{})
+			for _, c := range []struct {
+				got  []string
+				want string
+			}{{errs, tc.wantErr}, {warnings, tc.wantWarn}} {
+				all := strings.Join(c.got, "\n")
+				if c.want == "" && all != "" || !strings.Contains(all, c.want) {
+					t.Fatalf("got %q, want %q", all, c.want)
+				}
+			}
+		})
+	}
+	t.Run("realtime off", func(t *testing.T) {
+		cfg := &Config{Kanbans: map[string]Kanban{"k": {
+			EntityType: "ticket", Card: KanbanCard{Fields: []KanbanCardField{{Busy: "run"}}},
+		}}}
+		errs, warnings := ValidateChannels(cfg, nil)
+		if len(errs) != 0 || len(warnings) != 1 ||
+			!strings.Contains(warnings[0], `kanban "k": card.fields[0]: realtime is off`) {
+
+			t.Fatalf("errs %v, warnings %v; want one realtime-off warning for the busy field", errs, warnings)
+		}
+	})
 }

@@ -4156,6 +4156,44 @@ entity.
 `display` and `comments` are kanban-only: on a calendar or gantt field they are
 a config error.
 
+#### Busy cards
+
+A `busy` card field shows when someone, such as an agent, works on the
+card's entity now. It names a channel type from `realtime.yaml`. The card is
+busy while a channel of that type on the entity has its session in a state
+with status `working`:
+
+```yaml
+card:
+  title: title
+  fields:
+    - busy: run
+```
+
+The card shows pulsing dots, the state's label and the time in that state,
+such as "Planning · 3h". The time moves on each minute while the board is
+open. With several busy channels it shows the one longest in its state and
+"+1". A screen reader hears the type, the state and the time of each, such
+as "Agent run: Planning, for 3 hours". A card that is not busy shows
+nothing.
+
+A busy field shows no label by default, because the indicator already
+names the channel type to a screen reader. Set `show_label: true` to show
+one before the indicator. It defaults to the channel type's name; set
+`label` to change it.
+
+| Rule | Why |
+| --- | --- |
+| At most one `busy` field per card | The board asks for one channel type. |
+| `busy` stands alone: no `property`, `relation`, `comments` or `display` | It shows a channel, not a value. |
+| The channel type exists, has a session with a `working` state and attaches to the board's entity type | Otherwise no card could be busy. |
+| Kanban only | On a calendar or gantt field it is a config error. |
+
+These rules are checked by `rela validate`, when the server starts, and when
+you save in Configure. With realtime off the field loads with a warning and
+shows nothing. See the busy indicator section of the realtime guide for
+which states count, who sees the indicator and when it updates.
+
 #### Properties of related entities
 
 A card field with both `relation` and `property` shows that property of the

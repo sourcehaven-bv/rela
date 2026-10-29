@@ -71,3 +71,21 @@ func (s realtimeChannelSchema) MessageProperties(channelType, messageType string
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	return out
 }
+
+func (s realtimeChannelSchema) BusyFacts(channelType string) (dataentryconfig.BusyFacts, bool) {
+	ct, ok := s.c.ChannelType(channelType)
+	if !ok {
+		return dataentryconfig.BusyFacts{}, false
+	}
+	facts := dataentryconfig.BusyFacts{AttachTo: append([]string(nil), ct.AttachTo...)}
+	sess := ct.Session()
+	if sess == nil {
+		return facts, true
+	}
+	facts.HasSession = true
+	facts.HasWorkingState = len(sess.WorkingStates()) > 0
+	if st, ok := sess.State(sess.Initial()); ok {
+		facts.InitialDefaultWorking = st.Status == realtimecfg.StatusWorking && !st.StatusDeclared()
+	}
+	return facts, true
+}

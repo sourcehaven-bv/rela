@@ -32,6 +32,11 @@ export interface Entity {
   // with `comment_counts`, and only when the reader holds comment:read across
   // the project (TKT-WA25G2). Absent means not served, never zero.
   _comment_count?: number
+  // The busy channels of the type a list asked for with `?busy=<type>`:
+  // channels whose session is in a state with status `working`. Present
+  // as `[]` when none is busy; absent when the list did not ask or the
+  // server could not answer for the type.
+  _busy?: BusyChannel[]
   // Present only on rows of a `/_search` or list read made with a relation
   // context (`relation` + `direction=incoming`): whether the principal may
   // create that relation from this row's face. The server computes it with the gates the
@@ -489,6 +494,20 @@ export interface RelationOrder {
  */
 export type RelationPosition = { before: string } | { after: string } | { step: -1 | 1 }
 
+/**
+ * One busy channel of a list row. `since` is when the session entered its
+ * state, as an RFC 3339 time; the browser computes the time in the state.
+ * `type_label` and `label` are absent when the configuration gives none.
+ */
+export interface BusyChannel {
+  type: string
+  type_label?: string
+  name?: string
+  state: string
+  label?: string
+  since: string
+}
+
 export interface ListParams {
   page?: number
   per_page?: number
@@ -499,6 +518,9 @@ export interface ListParams {
   // Asks each row to carry `_comment_count`. Off unless a kanban card shows
   // a comment count.
   comment_counts?: boolean
+  // Asks each row to carry `_busy` for this channel type. Set when a kanban
+  // card has a `busy:` field.
+  busy?: string
   // world selects which FACE of each entity is served, and which entities
   // appear at all — an entity with no face in the requested world is omitted
   // entirely, because existence in a world IS the publication bit.

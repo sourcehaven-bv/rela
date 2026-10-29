@@ -134,6 +134,7 @@ export type ChannelTextKey =
   | 'sessionFailed'
   | 'sessionInputRequired'
   | 'sessionWaitingForYou'
+  | 'sessionWorking'
   | 'sessionStranded'
   | 'sessionLoading'
   | 'sessionPausedClosed'
@@ -447,6 +448,7 @@ const CHANNEL_TEXT: Record<ChannelTextKey, string> = {
   sessionFailed: 'Failed',
   sessionInputRequired: 'Input required',
   sessionWaitingForYou: 'Waiting for you',
+  sessionWorking: 'Working…',
   sessionStranded: 'Stranded',
   sessionLoading: 'Loading the states of this session…',
   sessionPausedClosed: 'Paused while the channel is closed',
@@ -455,6 +457,34 @@ const CHANNEL_TEXT: Record<ChannelTextKey, string> = {
   sessionHideAll: 'Hide the states',
   decisions: 'Decisions',
   choices: 'Choices',
+}
+
+/**
+ * How long a busy entry has been in its state, rounded down to the largest
+ * whole unit: under a minute, minutes, hours or days. A translation words it.
+ */
+export interface BusyDuration {
+  unit: 'lessThanMinute' | 'minutes' | 'hours' | 'days'
+  count: number
+}
+
+/** The `BusyDuration` of `ms` milliseconds. A negative span reads as under a minute. */
+export function busyDuration(ms: number): BusyDuration {
+  const minutes = Math.floor(ms / 60_000)
+  if (minutes < 1) return { unit: 'lessThanMinute', count: 0 }
+  if (minutes < 60) return { unit: 'minutes', count: minutes }
+  const hours = Math.floor(minutes / 60)
+  if (hours < 24) return { unit: 'hours', count: hours }
+  return { unit: 'days', count: Math.floor(hours / 24) }
+}
+
+/** One entry of the busy indicator's accessible name. */
+export interface BusyNameEntry {
+  /** What is busy, such as a channel type label: `Agent run`. */
+  type?: string
+  /** The state it is busy in: `Planning`. */
+  label: string
+  duration?: BusyDuration
 }
 
 /**
@@ -671,6 +701,20 @@ export interface Messages {
   /** The tooltip of a toolbar button that cannot run where the cursor is. */
   commandUnavailable: (args: { label: string }) => string
 
+  /**
+   * The busy indicator's visible text after the first entry's state label:
+   * the time in the state and how many more entries there are, ` · 3h +1`.
+   * It starts with a space, or is empty, because it follows the label
+   * directly. The label is rendered apart, so a long one can be cut off
+   * while this stays visible.
+   */
+  busyTail: (args: { duration?: BusyDuration; more: number }) => string
+  /**
+   * The busy indicator's accessible name, naming every entry:
+   * `Agent run: Planning, for 3 hours`.
+   */
+  busyName: (args: { entries: BusyNameEntry[] }) => string
+
   /** The inbox section of sessions that wait on the user. */
   inboxWaitingHeading: () => string
   /** The inbox section of unread mentions and replies. */
@@ -699,6 +743,53 @@ export interface Messages {
 function orList(items: string[]): string {
   if (items.length <= 1) return items.join('')
   return `${items.slice(0, -1).join(', ')} or ${items[items.length - 1]}`
+}
+
+/** `3h`, the short form of a busy duration. */
+function shortDuration(d: BusyDuration, hourUnit = 'h'): string {
+  switch (d.unit) {
+    case 'lessThanMinute':
+      return '<1m'
+    case 'minutes':
+      return `${d.count}m`
+    case 'hours':
+      return `${d.count}${hourUnit}`
+    default:
+      return `${d.count}d`
+  }
+}
+
+/** `for 3 hours`. */
+function longDuration(d: BusyDuration): string {
+  const n = (one: string, many: string) => `for ${d.count} ${d.count === 1 ? one : many}`
+  switch (d.unit) {
+    case 'lessThanMinute':
+      return 'for less than a minute'
+    case 'minutes':
+      return n('minute', 'minutes')
+    case 'hours':
+      return n('hour', 'hours')
+    default:
+      return n('day', 'days')
+  }
+}
+
+/**
+ * ` · 3h +1`, the text after a busy label. Shared with the Dutch set,
+ * which passes its own hour unit.
+ */
+export function busyTailWith(
+  { duration, more }: { duration?: BusyDuration; more: number },
+  hourUnit = 'h',
+): string {
+  return `${duration ? ` · ${shortDuration(duration, hourUnit)}` : ''}${more > 0 ? ` +${more}` : ''}`
+}
+
+/** `Agent run: Planning, for 3 hours`, with `long` wording the duration. */
+export function busyNameWith(entries: BusyNameEntry[], long: (d: BusyDuration) => string): string {
+  return entries
+    .map((e) => `${e.type ? `${e.type}: ` : ''}${e.label}${e.duration ? `, ${long(e.duration)}` : ''}`)
+    .join('; ')
 }
 
 /**
@@ -838,6 +929,9 @@ export const DEFAULT_MESSAGES: Messages = {
 
   editorCommand: ({ label }) => label,
   commandUnavailable: ({ label }) => `${label} (not available here)`,
+
+  busyTail: (args) => busyTailWith(args),
+  busyName: ({ entries }) => busyNameWith(entries, longDuration),
 
   inboxWaitingHeading: () => 'Waiting on you',
   inboxMentionsHeading: () => 'Mentions and replies',

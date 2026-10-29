@@ -320,3 +320,26 @@ export const NarrowWithDecisions: Story = {
     await expect(group.scrollWidth).toBeLessThanOrEqual(group.clientWidth + 1)
   },
 }
+
+/**
+ * A working state: the live region says "Working…" with the state's label,
+ * and the strip holds no second live region.
+ */
+export const Working: Story = {
+  args: { session: { ...breachSessionAssessed, status: 'working' } },
+  play: async ({ canvasElement }) => {
+    const regions = canvasElement.querySelectorAll('[role="status"], [aria-live]')
+    await expect(regions).toHaveLength(1)
+    await expect(regions[0]).toHaveTextContent('Working…')
+    await expect(regions[0]).toHaveTextContent('Risk assessed')
+  },
+}
+
+/** A working state on a closed channel is paused, so no activity line shows. */
+export const WorkingClosed: Story = {
+  args: { session: { ...breachSessionAssessed, status: 'working', paused: 'closed' } },
+  play: async ({ canvasElement }) => {
+    await expect(canvasElement).not.toHaveTextContent('Working…')
+    await expect(within(canvasElement).getByRole('status')).toBeEmptyDOMElement()
+  },
+}

@@ -5,7 +5,9 @@ title: Agent activity indicator on channels and boards
 kind: enhancement
 priority: medium
 effort: m
-status: backlog
+started: "2026-10-29"
+completed: "2026-10-29"
+status: done
 ---
 
 ## Description

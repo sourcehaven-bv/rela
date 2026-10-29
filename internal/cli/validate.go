@@ -574,10 +574,11 @@ const realtimeFile = "realtime.yaml"
 // one, compiled against the schema the earlier check loaded and acl.yaml,
 // as boot and Configure's write check do: that includes the session
 // run_as grant check. It then checks data-entry.yaml's `channels:` section
-// against it, when the section exists and data-entry.yaml is valid. It
-// builds no store or index. A realtime.yaml or acl.yaml that does not load
-// is a ✗ line, so the checks after this one still run. It needs a schema
-// that loaded. It returns hasErrors, set when a check failed.
+// and kanban `busy:` card fields against it, when one exists and
+// data-entry.yaml is valid. It builds no store or index. A realtime.yaml
+// or acl.yaml that does not load is a ✗ line, so the checks after this one
+// still run. It needs a schema that loaded. It returns hasErrors, set when
+// a check failed.
 func reportRealtimeValidation(ctx context.Context, result *projectsetup.ValidateResult, hasErrors bool) bool {
 	if result.Metamodel == nil {
 		return hasErrors
@@ -589,7 +590,7 @@ func reportRealtimeValidation(ctx context.Context, result *projectsetup.Validate
 		// which the data-entry check above has already read.
 		data, err := os.ReadFile(filepath.Join(root, dataentryconfig.ConfigFile))
 		// An unreadable file was already reported by the data-entry check.
-		if err == nil && projectsetup.HasChannels(data) {
+		if err == nil && projectsetup.HasRealtimePresentation(data) {
 			channelsData = data
 		}
 	}

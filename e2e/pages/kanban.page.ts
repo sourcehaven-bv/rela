@@ -22,6 +22,26 @@ export class KanbanPage extends BasePage {
     return this.cards.filter({ hasText: cardTitle }).locator('.rl-meta-item').filter({ hasText: label });
   }
 
+  /** The busy indicator on a card (TKT-21G6JS). */
+  cardBusy(cardTitle: string): Locator {
+    return this.cards.filter({ hasText: cardTitle }).locator('.rl-busy');
+  }
+
+  /**
+   * The card shows the busy indicator. `text` matches what a sighted user
+   * sees; `name` is what a screen reader hears, from the hidden text.
+   */
+  async expectCardBusy(cardTitle: string, text: RegExp, name: RegExp) {
+    const busy = this.cardBusy(cardTitle);
+    await expect(busy.locator('.rl-busy__text')).toHaveText(text);
+    await expect(busy.locator('.rl-visually-hidden')).toHaveText(name);
+  }
+
+  async expectNoCardBusy(cardTitle: string) {
+    await expect(this.cards.filter({ hasText: cardTitle })).toBeVisible();
+    await expect(this.cardBusy(cardTitle)).toHaveCount(0);
+  }
+
   async expectCardMetaCount(cardTitle: string, label: string, count: number) {
     await expect(this.cardMetaCount(cardTitle, label)).toHaveText(new RegExp(`^${count}\\s`));
   }

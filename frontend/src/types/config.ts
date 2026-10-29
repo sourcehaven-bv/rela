@@ -568,9 +568,15 @@ export interface KanbanCardField {
   display?: 'count'
   /** Shows the number of comments on the card's entity. Stands alone. */
   comments?: boolean
+  /**
+   * Shows a busy indicator while a channel of this type on the card's
+   * entity has its session in a state with status `working`. Names a
+   * channel type from realtime.yaml. Stands alone.
+   */
+  busy?: string
   /** Overrides the displayed name; derived from property/relation when unset. */
   label?: string
-  /** Renders the label before the value. Defaults to true when unset. */
+  /** Renders the label before the value. Defaults to true when unset, and to false for a busy field. */
   show_label?: boolean
 }
 
@@ -596,6 +602,7 @@ export function cardFieldLabel(
 ): string {
   if (field.label) return field.label
   if (field.comments) return 'comments'
+  if (field.busy) return field.busy
   // A related property is labeled by the property: that is the value shown.
   if (field.relation && !field.property) return relationLabel?.(field.relation) || field.relation
   return field.property || ''
@@ -604,6 +611,9 @@ export function cardFieldLabel(
 /** Whether a field's label renders. Unset means true: an unlabelled ambiguous
  * value is worse than a redundant label. */
 export function cardFieldLabelShown(field: KanbanCardField): boolean {
+  // A busy field's indicator names its channel type to a screen reader, so
+  // a default label would say the type twice. It shows only when asked.
+  if (field.busy) return field.show_label === true
   return field.show_label !== false
 }
 

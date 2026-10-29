@@ -55,6 +55,7 @@ export { default as RlProgressBar } from './components/feedback/RlProgressBar.vu
 export { default as RlActivityBar } from './components/feedback/RlActivityBar.vue'
 export { default as RlTimeline } from './components/feedback/RlTimeline.vue'
 export { default as RlAutoSaveIndicator } from './components/feedback/RlAutoSaveIndicator.vue'
+export { default as RlBusyIndicator } from './components/feedback/RlBusyIndicator.vue'
 export { useToasts } from './components/feedback/useToasts'
 
 export { default as RlSearchBox } from './components/data/RlSearchBox.vue'
@@ -187,6 +188,7 @@ export type { DateRange } from './components/form/RlDateRangeField.vue'
 export type { MessageTone, ToastAction, ToastMessage } from './components/feedback/types'
 export type { TimelineEntry, TimelineGroup } from './components/feedback/timeline'
 export type { ProgressSegment } from './components/feedback/RlProgressBar.vue'
+export type { BusyIndicatorEntry } from './components/feedback/RlBusyIndicator.vue'
 export type { SegmentOption } from './components/data/RlSegmentedControl.vue'
 export type { ThemeChoice } from './components/layout/RlThemeToggle.vue'
 export type {
@@ -234,7 +236,14 @@ export {
   FOCUSABLE_SELECTOR,
 } from './composables/useOverlayStack'
 export { provideMessages, useMessages, DEFAULT_MESSAGES } from './composables/useMessages'
-export type { Messages, CountArgs, ChannelTextKey, ChromeTextKey } from './composables/useMessages'
+export type {
+  Messages,
+  CountArgs,
+  ChannelTextKey,
+  ChromeTextKey,
+  BusyDuration,
+  BusyNameEntry,
+} from './composables/useMessages'
 export { NL_MESSAGES } from './composables/messages.nl'
 export { LOCALE_MESSAGES, localeMessages } from './composables/localeMessages'
 export type { MessagesLanguage } from './composables/localeMessages'

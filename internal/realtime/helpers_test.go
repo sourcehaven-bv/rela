@@ -570,6 +570,10 @@ type countingStore struct {
 	entityLists atomic.Int64
 	// waitingLists counts ListWaiting calls.
 	waitingLists atomic.Int64
+	// waitingErr, when set, fails every ListWaiting call.
+	waitingErr error
+	// lastWaiting is the query of the latest ListWaiting call.
+	lastWaiting atomic.Pointer[channels.WaitingQuery]
 	// addressedLists counts ListAddressed calls.
 	addressedLists atomic.Int64
 	// reads, listReads and setReads count the read marker calls.
@@ -610,6 +614,10 @@ func (s *countingStore) ListAddressed(
 
 func (s *countingStore) ListWaiting(ctx context.Context, q channels.WaitingQuery) ([]channels.Channel, error) {
 	s.waitingLists.Add(1)
+	s.lastWaiting.Store(&q)
+	if s.waitingErr != nil {
+		return nil, s.waitingErr
+	}
 	return s.Store.ListWaiting(ctx, q)
 }
 

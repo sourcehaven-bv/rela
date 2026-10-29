@@ -3859,3 +3859,57 @@ func TestValidateKanbans_CardFieldCounts(t *testing.T) {
 		})
 	}
 }
+
+// TestValidateKanbanBusyField pins the load-time rules for a busy card
+// field that need no realtime.yaml (TKT-21G6JS): it stands alone, a card
+// has at most one, and it is labeled by its channel type.
+func TestValidateKanbanBusyField(t *testing.T) {
+	tests := []struct {
+		name    string
+		fields  []KanbanCardField
+		wantErr string // substring; "" means valid
+	}{
+		{"alone", []KanbanCardField{{Property: "title"}, {Busy: "run"}}, ""},
+		{"with label off", []KanbanCardField{{Busy: "run", ShowLabel: new(false)}}, ""},
+		{"with property", []KanbanCardField{{Busy: "run", Property: "status"}}, "busy cannot be combined"},
+		{"with relation", []KanbanCardField{{Busy: "run", Relation: "blocks"}}, "busy cannot be combined"},
+		{"with comments", []KanbanCardField{{Busy: "run", Comments: true}}, "busy cannot be combined"},
+		{"with display", []KanbanCardField{{Busy: "run", Display: "count"}}, "busy cannot be combined"},
+		{"twice", []KanbanCardField{{Busy: "run"}, {Busy: "review"}},
+			`kanban "k": card.fields[1]: a card has at most one busy field`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := &Config{Kanbans: map[string]Kanban{"k": {
+				EntityType:     "ticket",
+				ColumnProperty: "status",
+				Card:           KanbanCard{Fields: tt.fields},
+			}}}
+			err := ValidateConfig([]byte(`version: "1.0"`), cfg, testMetamodel())
+			if tt.wantErr == "" {
+				if err != nil {
+					t.Fatalf("expected valid, got: %v", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+				t.Fatalf("expected error containing %q, got: %v", tt.wantErr, err)
+			}
+		})
+	}
+	if got := (KanbanCardField{Busy: "run"}).DisplayLabel(); got != "run" {
+		t.Errorf("DisplayLabel = %q, want the channel type", got)
+	}
+	if got := (KanbanCardField{Busy: "run", Label: "Agent"}).DisplayLabel(); got != "Agent" {
+		t.Errorf("DisplayLabel = %q, want the label", got)
+	}
+	// The indicator names its type, so a busy field's label is off unless
+	// asked for.
+	shown := true
+	if (KanbanCardField{Busy: "run"}).LabelShown() {
+		t.Error("a busy field shows its label by default")
+	}
+	if !(KanbanCardField{Busy: "run", ShowLabel: &shown}).LabelShown() {
+		t.Error("show_label: true does not show a busy field's label")
+	}
+}

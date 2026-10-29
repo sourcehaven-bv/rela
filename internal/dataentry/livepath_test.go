@@ -17,6 +17,7 @@ func TestParseLivePath(t *testing.T) {
 		{"list", "/api/v1/tickets", "/api/v1/tickets"},
 		{"list with paging", "/api/v1/tickets?per_page=20&page=2", "/api/v1/tickets?page=2&per_page=20"},
 		{"list with filter", "/api/v1/tickets?filter%5Bstatus%5D=open", "/api/v1/tickets?filter%5Bstatus%5D=open"},
+		{"list with busy", "/api/v1/tickets?busy=run", "/api/v1/tickets?busy=run"},
 		{"list with filter op", "/api/v1/tickets?filter[status][ne]=done", "/api/v1/tickets?filter%5Bstatus%5D%5Bne%5D=done"},
 		{"view", "/api/v1/_views/ticket/TKT-1", "/api/v1/_views/ticket/TKT-1"},
 		{"presence", "/api/v1/tickets/TKT-1/_presence", "/api/v1/tickets/TKT-1/_presence"},
@@ -45,9 +46,9 @@ func TestParseLivePath(t *testing.T) {
 		{
 			"list with every client parameter",
 			"/api/v1/tickets?page=1&per_page=25&cursor=c&sort=title&fields=title&include=*&comment_counts=true" +
-				"&world=main&list_id=l&query_scope=open&scope_page=p&scope_tab=t&anchor=A-1" +
+				"&busy=run&world=main&list_id=l&query_scope=open&scope_page=p&scope_tab=t&anchor=A-1" +
 				"&relation=r&direction=incoming&filter[status]=open",
-			"/api/v1/tickets?anchor=A-1&comment_counts=true&cursor=c&direction=incoming&fields=title" +
+			"/api/v1/tickets?anchor=A-1&busy=run&comment_counts=true&cursor=c&direction=incoming&fields=title" +
 				"&filter%5Bstatus%5D=open&include=%2A&list_id=l&page=1&per_page=25&query_scope=open" +
 				"&relation=r&scope_page=p&scope_tab=t&sort=title&world=main",
 		},

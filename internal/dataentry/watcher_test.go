@@ -76,6 +76,12 @@ func setupReloadTestApp(t *testing.T) (*App, *storage.MemFS) {
 // that exercise them pass a t.TempDir() and put scripts there.
 func setupReloadTestAppAt(t *testing.T, root string) (*App, *storage.MemFS) {
 	t.Helper()
+	return setupReloadTestAppWith(t, root, testReloadMetamodelYAML)
+}
+
+// setupReloadTestAppWith is setupReloadTestAppAt over the schema metaYAML.
+func setupReloadTestAppWith(t *testing.T, root, metaYAML string) (*App, *storage.MemFS) {
+	t.Helper()
 
 	fs := storage.NewMemFS()
 
@@ -98,7 +104,7 @@ func setupReloadTestAppAt(t *testing.T, root string) (*App, *storage.MemFS) {
 	_ = fs.MkdirAll(ctx.RelationTemplatesDir, 0o755)
 
 	// Write metamodel and config files
-	_ = fs.WriteFile(ctx.SchemaPath, []byte(testReloadMetamodelYAML), 0o644)
+	_ = fs.WriteFile(ctx.SchemaPath, []byte(metaYAML), 0o644)
 	_ = fs.WriteFile(root+"/data-entry.yaml", []byte(testReloadConfigYAML), 0o644)
 
 	// Write a sample entity
