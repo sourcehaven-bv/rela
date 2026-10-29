@@ -57,16 +57,22 @@ relations: {}
 // need a store to exist.
 func mcpServicesForTest(t *testing.T, root string) (*mcpServices, error) {
 	t.Helper()
+	return mcpServicesRunAs(t, root, "")
+}
+
+// mcpServicesRunAs is mcpServicesForTest for a `--run-as` identity.
+func mcpServicesRunAs(t *testing.T, root, runAs string) (*mcpServices, error) {
+	t.Helper()
 	for k, v := range backendtest.Env(t) {
 		t.Setenv(k, v)
 	}
-	return newMCPServices(root)
+	return newMCPServices(root, runAs)
 }
 
 func TestNewMCPServices_NoProject(t *testing.T) {
 	dir := t.TempDir() // empty — no metamodel.yaml
 
-	_, err := newMCPServices(dir)
+	_, err := newMCPServices(dir, "")
 	require.Error(t, err)
 	assert.ErrorIs(t, err, relaerrors.ErrNoProject,
 		"missing metamodel.yaml must surface as ErrNoProject so runMCPServer can emit the user-friendly message")
@@ -80,7 +86,7 @@ func TestNewMCPServices_BadMetamodel(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(root, "metamodel.yaml"),
 		[]byte("entities: this-is-not-a-map\nrelations: {}\n"), 0o644))
 
-	_, err := newMCPServices(root)
+	_, err := newMCPServices(root, "")
 	require.Error(t, err)
 	// Real diagnostic must propagate, not be flattened to ErrNoProject.
 	assert.NotErrorIs(t, err, relaerrors.ErrNoProject,

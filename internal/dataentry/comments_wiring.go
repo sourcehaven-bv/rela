@@ -3,9 +3,7 @@ package dataentry
 import (
 	"context"
 	"errors"
-	"fmt"
 	"net/http"
-	"strings"
 
 	"github.com/Sourcehaven-BV/rela/internal/access"
 	"github.com/Sourcehaven-BV/rela/internal/acl"
@@ -229,48 +227,13 @@ func (h *commentsHandler) liveAnchors(target comments.Target, ent *entity.Entity
 	return anchorContext{properties: refs, body: comments.NewBody(ent.Content), loaded: true}
 }
 
-// buildTextAnchor derives a text anchor's descriptors from the entity's own
-// body, given the quote the client selected.
-//
-// The client supplies only the quote; everything else (prefix, suffix,
-// sentence, heading, paragraph index) is computed here. That asymmetry is
-// deliberate and is the security-relevant part: descriptors sourced from the
-// request could describe context that does not exist in the entity, so a later
-// resolve would land on text the commenter never selected.
-//
-// WHICH occurrence was meant is decided by the surrounding rendered text the
-// client sends alongside the quote. That context is untrusted in the sense that
-// it only selects among real occurrences — it can never introduce a location,
-// because the quote must still be found in the body. Without it a repeated
-// quote resolves to the first occurrence, which is how a comment on "Geordend"
-// ended up highlighting "Ongeordend".
-//
-// ent is the row the request gate resolved through the visibility wrapper, so
-// a principal can only anchor to text it may already read, and only within the
-// face the thread belongs to.
+// buildTextAnchor builds a text anchor in ent's body with
+// [comments.BuildTextAnchor]. ent is the row the request gate resolved
+// through the visibility wrapper, so a principal can only anchor to text it
+// may already read, and only within the face the thread belongs to.
 func buildTextAnchor(ent *entity.Entity, quote, prefix, suffix string) (*comments.TextAnchor, error) {
-	quote = strings.TrimSpace(quote)
-	if len([]rune(quote)) < comments.MinQuoteRunes {
-		return nil, fmt.Errorf("selected text must be at least %d characters", comments.MinQuoteRunes)
-	}
-	if len(quote) > comments.MaxQuoteBytes {
-		return nil, fmt.Errorf("selected text exceeds %d bytes", comments.MaxQuoteBytes)
-	}
-
 	if ent == nil {
 		return nil, errors.New("could not read the entity body")
 	}
-
-	// The quote came from RENDERED markdown, so it is display text: no list
-	// markers, no backticks, blocks joined by newlines. Matching it against the
-	// source with a plain substring search fails for any selection crossing a
-	// bullet or a code span — FindRenderedQuote maps through the AST instead.
-	start, end, ok := comments.FindRenderedQuote(ent.Content, quote, prefix, suffix)
-	if !ok {
-		// Either a stale tab (the body changed between render and submit) or a
-		// selection that genuinely spans nothing locatable.
-		return nil, errors.New("the selected text was not found in the current body")
-	}
-
-	return comments.NewTextAnchor(ent.Content, start, end)
+	return comments.BuildTextAnchor(ent.Content, quote, prefix, suffix)
 }

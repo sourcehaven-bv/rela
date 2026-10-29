@@ -261,22 +261,43 @@ func (s *Service) FaceMoved(ctx context.Context, entityType, entityID string, fr
 //
 // Uses [principal.Stamped] rather than From because the two cases differ here:
 // From's unknown/unknown default is a reasonable audit-log placeholder but an
-// unusable comment author (see [Service.Add]). A reserved system identity is
-// refused for the same reason — a system job has no business authoring
-// commentary in a human's thread.
+// unusable comment author (see [Service.Add]).
 func authorFrom(ctx context.Context) (string, error) {
 	p, ok := principal.Stamped(ctx)
 	if !ok {
 		return "", ErrUnknownAuthor
 	}
 	user := strings.TrimSpace(p.User)
-	if user == "" || user == "unknown" {
-		return "", ErrUnknownAuthor
-	}
-	if principal.IsReserved(user) {
-		return "", fmt.Errorf("%w: %q is a reserved system identity", ErrUnknownAuthor, user)
+	if err := ValidAuthor(user); err != nil {
+		return "", err
 	}
 	return user, nil
+}
+
+// ValidAuthor reports whether user may author a comment. A person may. Of
+// the job identities only an `integration:` one may (TKT-RQKKS9): an outside
+// actor, such as a coding agent, whose remarks belong in the thread the way
+// a person's do. Request paths refuse the namespace, so today only stdio
+// `rela mcp --run-as` stamps one, and there the name is a self-asserted
+// label, not an authenticated identity. A `system:` identity is refused,
+// rela's own or an operator's: a system job has no business authoring
+// commentary in a human's thread. Empty and
+// [principal.Unknown] are refused because nobody could edit or delete what
+// they wrote.
+func ValidAuthor(user string) error {
+	if user == "" || user == principal.Unknown {
+		return ErrUnknownAuthor
+	}
+	if !principal.IsReserved(user) {
+		return nil
+	}
+	if strings.HasPrefix(user, principal.IntegrationPrefix) && principal.ValidJobIdentity(user) == nil {
+		return nil
+	}
+	if strings.HasPrefix(user, principal.IntegrationPrefix) {
+		return fmt.Errorf("%w: %q is not a valid integration identity", ErrUnknownAuthor, user)
+	}
+	return fmt.Errorf("%w: %q is a reserved system identity", ErrUnknownAuthor, user)
 }
 
 // mintID returns a fresh opaque comment ID.

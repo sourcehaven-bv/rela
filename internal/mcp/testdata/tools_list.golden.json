@@ -693,7 +693,7 @@
           "type": "string"
         },
         "targets": {
-          "description": "Up to 16 read calls: [{tool, args}], tool one of show_entity, list_entities, list_relations; args is the object that tool takes",
+          "description": "Up to 16 read calls: [{tool, args}], tool one of show_entity, list_entities, list_relations, list_comments; args is the object that tool takes",
           "items": {
             "properties": {
               "args": {
@@ -703,7 +703,8 @@
                 "enum": [
                   "show_entity",
                   "list_entities",
-                  "list_relations"
+                  "list_relations",
+                  "list_comments"
                 ],
                 "type": "string"
               }

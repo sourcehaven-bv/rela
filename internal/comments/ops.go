@@ -1,6 +1,7 @@
 package comments
 
 import (
+	"errors"
 	"strings"
 	"time"
 
@@ -83,6 +84,55 @@ type AddInput struct {
 	// Nil is no suggestion; "" suggests deleting the quote.
 	Replacement *string
 	Body        string
+}
+
+// Anchor builds the anchor in to store for a comment on an entity whose body
+// is content. A text anchor is derived from the body ([BuildTextAnchor]); a
+// failure there is a refusal of the request, which both transports answer as
+// `invalid_comment`.
+func (in AddInput) Anchor(content string) (Anchor, error) {
+	anchor := Anchor{Kind: in.Kind, Ref: in.Ref, Replacement: in.Replacement}
+	if anchor.Kind != AnchorText {
+		return anchor, nil
+	}
+	text, err := BuildTextAnchor(content, in.Quote, in.QuotePrefix, in.QuoteSuffix)
+	if err != nil {
+		return Anchor{}, &OpError{Code: CodeInvalidComment, Title: err.Error()}
+	}
+	anchor.Text = text
+	return anchor, nil
+}
+
+// Refusal codes a [Service] error carries, in the HTTP API's vocabulary.
+const (
+	CodeNotFound        = "not_found"
+	CodeInvalidComment  = "invalid_comment"
+	CodeTooManyComments = "too_many_comments"
+	CodeForbidden       = "forbidden"
+)
+
+// Refusal returns err as the refusal the caller should see, or nil when err
+// is not one: a storage failure stays an internal error. The data-entry
+// routes and stdio `rela mcp` share it, so the two answer a bad request with
+// the same code.
+func Refusal(err error) *OpError {
+	var op *OpError
+	switch {
+	case errors.As(err, &op):
+		return op
+	case errors.Is(err, ErrNotFound):
+		return &OpError{Code: CodeNotFound, Title: "Comment not found"}
+	case errors.Is(err, ErrEmptyBody), errors.Is(err, ErrBodyTooLong), errors.Is(err, ErrBodyControlChars),
+		errors.Is(err, ErrInvalidAnchor), errors.Is(err, ErrInvalidReplacement):
+		return &OpError{Code: CodeInvalidComment, Title: err.Error()}
+	case errors.Is(err, ErrTooManyComments):
+		return &OpError{Code: CodeTooManyComments, Title: err.Error()}
+	case errors.Is(err, ErrUnknownAuthor):
+		// The caller got this far but has no identity a comment can be
+		// attributed to.
+		return &OpError{Code: CodeForbidden, Title: "Comments require an identified author"}
+	}
+	return nil
 }
 
 // Accepted is the result of applying a comment's suggested replacement.

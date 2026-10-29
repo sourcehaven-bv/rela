@@ -23,65 +23,93 @@ type CommentReader interface {
 	ListComments(ctx context.Context, address string) ([]comments.View, error)
 }
 
-// CommentWriter backs the four comment write tools. Addresses and refusals
-// are as for [CommentReader].
-type CommentWriter interface {
+// CommentAdder backs add_comment. Addresses and refusals are as for
+// [CommentReader]. The author is the ctx principal.
+type CommentAdder interface {
 	AddComment(ctx context.Context, address string, in comments.AddInput) (comments.Comment, error)
+}
+
+// CommentWriter backs the other three comment write tools. Addresses and
+// refusals are as for [CommentReader].
+type CommentWriter interface {
 	// UpdateComment edits a comment. A nil field keeps its stored value.
 	UpdateComment(ctx context.Context, address, commentID string, body *string, resolved *bool) error
 	DeleteComment(ctx context.Context, address, commentID string) error
 	AcceptSuggestion(ctx context.Context, address, commentID string) (comments.Accepted, error)
 }
 
-// CommentDeps backs the comment tools: Reader list_comments, and Writer the
-// comment write tools.
+// CommentDeps backs the comment tools: Reader list_comments, Adder
+// add_comment, and Writer update_comment, delete_comment and
+// accept_comment_suggestion.
 //
-// Nil: accepted for both. A nil Reader means the project declares no
-// `comments:` block and no comment tool is registered; a nil Writer leaves
-// out the write tools, as stdio `rela mcp` does.
+// Nil: accepted for all three. A nil Reader means the project declares no
+// `comments:` block and no comment tool is registered. A nil Adder or Writer
+// leaves out its tools: stdio `rela mcp` sets Adder only under `--run-as`,
+// and never Writer.
 type CommentDeps struct {
 	Reader CommentReader
+	Adder  CommentAdder
 	Writer CommentWriter
 }
 
 // commentHandler serves the comment tools.
 type commentHandler struct {
 	reader CommentReader
+	adder  CommentAdder
 	writer CommentWriter
 }
 
 func selComments(h handlerSet) commentHandler { return h.comments }
 
 // registerCommentTools registers the comment tools: list_comments when
-// [CommentDeps.Reader] is set, the write tools when [CommentDeps.Writer] is. A
-// project without a `comments:` block lists none; stdio `rela mcp`, which
-// runs as the system principal rather than a signed-in user, lists only
-// list_comments.
-func (s *Server) registerCommentTools() {
+// [CommentDeps.Reader] is set, add_comment when [CommentDeps.Adder] is, and
+// the other write tools when [CommentDeps.Writer] is. A project without a
+// `comments:` block lists none. list_comments is added to reads, the tools a
+// watch may replay.
+func (s *Server) registerCommentTools(reads map[string]mcpgo.ToolHandler) {
 	d := s.deps()
-	if d.Comments.Reader != nil {
-		addTool(s, toolListComments(), commentTool(s, false, commentHandler.handleListComments))
+	if d.Comments.Reader == nil {
+		return
+	}
+	reads[toolListCommentsName] = addTool(s, toolListComments(),
+		commentTool(s, commentReads, commentHandler.handleListComments))
+	if d.Comments.Adder != nil {
+		addTool(s, toolAddComment(), commentTool(s, commentAdds, commentHandler.handleAddComment))
 	}
 	if d.Comments.Writer == nil {
 		return
 	}
-	addTool(s, toolAddComment(), commentTool(s, true, commentHandler.handleAddComment))
-	addTool(s, toolUpdateComment(), commentTool(s, true, commentHandler.handleUpdateComment))
-	addTool(s, toolDeleteComment(), commentTool(s, true, commentHandler.handleDeleteComment))
-	addTool(s, toolAcceptCommentSuggestion(), commentTool(s, true, commentHandler.handleAcceptSuggestion))
+	addTool(s, toolUpdateComment(), commentTool(s, commentWrites, commentHandler.handleUpdateComment))
+	addTool(s, toolDeleteComment(), commentTool(s, commentWrites, commentHandler.handleDeleteComment))
+	addTool(s, toolAcceptCommentSuggestion(), commentTool(s, commentWrites, commentHandler.handleAcceptSuggestion))
 }
+
+// toolListCommentsName names list_comments, which a watch may replay.
+// Comments are not in the graph, so a comment write sends no store event: a
+// list_comments target replays on the channel poll, and with every store
+// event, since an entity edit can detach an anchor (TKT-RQKKS9).
+const toolListCommentsName = "list_comments"
+
+// commentNeed is the dependency a comment tool calls besides the reader.
+type commentNeed int
+
+const (
+	commentReads commentNeed = iota
+	commentAdds
+	commentWrites
+)
 
 // commentTool binds a comment handler. A reload can drop the comment deps
 // after the tools were registered; the tools then answer that commenting is
 // off instead of calling a nil interface.
 func commentTool(
-	s *Server, writes bool,
+	s *Server, need commentNeed,
 	method func(commentHandler, context.Context, *mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error),
 ) mcpgo.ToolHandler {
 	return bind(s, selComments, func(
 		h commentHandler, ctx context.Context, req *mcpgo.CallToolRequest,
 	) (*mcpgo.CallToolResult, error) {
-		if h.reader == nil || (writes && h.writer == nil) {
+		if h.reader == nil || (need == commentAdds && h.adder == nil) || (need == commentWrites && h.writer == nil) {
 			return errorResult("comments are not enabled in this project"), nil
 		}
 		return method(h, ctx, req)
@@ -92,7 +120,7 @@ const commentAddressDescription = "Entity ID, or ID@face for an entity with cont
 	"Writes to such an entity must name the face."
 
 func toolListComments() *mcpgo.Tool {
-	return newTool("list_comments",
+	return newTool(toolListCommentsName,
 		withDescription("List the comments on an entity, oldest first. Each has its anchor, body, "+
 			"resolved state, and whether the anchor still resolves (detached), you may edit or delete it, "+
 			"and its suggested replacement can be accepted."),
@@ -258,7 +286,7 @@ func (h commentHandler) handleAddComment(
 	if in.Replacement, err = optionalString(args, "replacement"); err != nil {
 		return errorResult(err.Error()), nil
 	}
-	created, err := h.writer.AddComment(ctx, address, in)
+	created, err := h.adder.AddComment(ctx, address, in)
 	if err != nil {
 		return commentOpResult(err), nil
 	}

@@ -7,6 +7,7 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/comments"
 	"github.com/Sourcehaven-BV/rela/internal/comments/filecomments"
+	"github.com/Sourcehaven-BV/rela/internal/filelock"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/project"
 	"github.com/Sourcehaven-BV/rela/internal/storage"
@@ -57,7 +58,12 @@ func buildComments(
 			// the operator switched on would surface later as comments vanishing.
 			return nil, errors.New("comments: enabled in the metamodel but no project cache directory is available")
 		}
-		fileStore, err := filecomments.New(fs, filepath.Join(paths.CacheDir, commentsDirName))
+		locker, err := commentsLocker(fs, paths.CacheDir)
+		if err != nil {
+			return nil, fmt.Errorf("comments: %w", err)
+		}
+		fileStore, err := filecomments.New(fs, filepath.Join(paths.CacheDir, commentsDirName),
+			filecomments.WithLocker(locker))
 		if err != nil {
 			return nil, fmt.Errorf("comments: %w", err)
 		}
@@ -69,4 +75,18 @@ func buildComments(
 		return nil, fmt.Errorf("comments: %w", err)
 	}
 	return svc, nil
+}
+
+// commentsLockFile is the lock file every process that writes the comment
+// files takes, next to the comments directory (see [filelock.Locker]).
+const commentsLockFile = "comments.lock"
+
+// commentsLocker returns the cross-process lock for the comment files on fs.
+// Only an in-memory fs gets the process-private locker, as for piles
+// ([pilesLocker]).
+func commentsLocker(fs storage.FS, cacheDir string) (filecomments.Locker, error) {
+	if _, mem := fs.(*storage.MemFS); mem {
+		return filelock.ProcessPrivate{}, nil
+	}
+	return filelock.New(filepath.Join(cacheDir, commentsLockFile))
 }

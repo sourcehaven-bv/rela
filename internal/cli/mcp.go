@@ -16,7 +16,7 @@ import (
 // openMCPServices opens the project for `rela mcp` and warns when acl.yaml
 // assigns the identity no role.
 func openMCPServices(startDir string, identity localIdentity) (*mcpServices, error) {
-	svc, err := newMCPServices(startDir)
+	svc, err := newMCPServices(startDir, identity.runAs())
 	if err != nil {
 		if errors.Is(err, relaerrors.ErrNoProject) {
 			return nil, errors.New("no project found: run 'rela init' to create one")

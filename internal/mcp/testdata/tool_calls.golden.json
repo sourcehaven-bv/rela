@@ -183,6 +183,6 @@
     "tool": "watch",
     "args": "{\"targets\":[{\"tool\":\"search_entities\",\"args\":{\"query\":\"x\"}}]}",
     "isError": true,
-    "text": "targets[0]: tool must be one of show_entity, list_entities, list_relations"
+    "text": "targets[0]: tool must be one of show_entity, list_entities, list_relations, list_comments"
   }
 ]

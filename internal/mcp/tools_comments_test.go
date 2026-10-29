@@ -79,6 +79,7 @@ func newCommentServer(t *testing.T, fake *fakeComments, writes bool) *Server {
 	deps := newTestDeps(t, meta, st)
 	deps.Comments.Reader = fake
 	if writes {
+		deps.Comments.Adder = fake
 		deps.Comments.Writer = fake
 	}
 	srv, err := NewServer(deps, "test", WithPrincipal(principal.Principal{User: "tester", Tool: principal.ToolMCP}))
@@ -136,6 +137,28 @@ func TestCommentTools_Registration(t *testing.T) {
 			t.Error("list_comments not registered")
 		}
 		for _, name := range commentWriteTools {
+			if slices.Contains(names, name) {
+				t.Errorf("%s registered without a comment writer", name)
+			}
+		}
+	})
+	t.Run("stdio under --run-as: list and add", func(t *testing.T) {
+		t.Parallel()
+		meta, st := makeTestFixture(t)
+		deps := newTestDeps(t, meta, st)
+		fake := &fakeComments{}
+		deps.Comments = CommentDeps{Reader: fake, Adder: fake}
+		srv, err := NewServer(deps, "test", WithPrincipal(principal.Principal{User: "integration:runner", Tool: principal.ToolMCP}))
+		if err != nil {
+			t.Fatal(err)
+		}
+		names := listedTools(t, srv)
+		for _, name := range []string{"list_comments", "add_comment"} {
+			if !slices.Contains(names, name) {
+				t.Errorf("%s not registered", name)
+			}
+		}
+		for _, name := range commentWriteTools[1:] {
 			if slices.Contains(names, name) {
 				t.Errorf("%s registered without a comment writer", name)
 			}

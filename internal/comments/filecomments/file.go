@@ -12,11 +12,13 @@
 // (atomic on POSIX) and fsyncs the parent directory.
 //
 // Every mutation is read-modify-write, so the store serializes writes with a
-// single mutex. That is the same guarantee fsstore's Tx gives the entity store
-// (DEC-8UIL0, "write mutex, mutual exclusion only"): it does not make a
-// mutation transactional across targets, only free of lost updates. A
-// cross-process writer is out of scope for this tier, exactly as it is for
-// fsstore.
+// mutex, and across processes with the [Locker] given by [WithLocker]. Several
+// processes write comments on one project: rela-server or the desktop app for
+// people, and `rela mcp --run-as` for an agent (TKT-RQKKS9). That is the
+// guarantee fsstore's Tx gives the entity store (DEC-8UIL0, "mutual exclusion
+// only"): it does not make a mutation transactional across targets, only free
+// of lost updates. A read takes only the mutex: a rename replaces a file
+// atomically, so a reader sees the old thread or the new one.
 package filecomments
 
 import (
@@ -40,9 +42,24 @@ import (
 // than the entities they annotate, which fsstore writes 0644.
 const filePerm = 0o644
 
+// Locker excludes the other processes that write the same comment files. It
+// has the method set of [filelock.Locker].
+type Locker interface {
+	Lock(ctx context.Context) (release func(), err error)
+}
+
+// Option configures a [Store].
+type Option func(*Store)
+
+// WithLocker sets the cross-process lock that every write holds. Without it
+// a write excludes only the writers in this process, which is right for a
+// filesystem no other process can open, such as an in-memory one.
+func WithLocker(l Locker) Option { return func(s *Store) { s.locker = l } }
+
 // Store persists comment threads as per-target YAML files.
 type Store struct {
-	mu sync.Mutex
+	mu     sync.Mutex
+	locker Locker
 	// root is a RootedFS over a SafeFS, so a write is both contained
 	// (traversal refused) and atomic (temp + fsync + rename).
 	root *storage.RootedFS
@@ -62,7 +79,7 @@ type thread struct {
 // commenting should not find an empty directory in their project.
 //
 // Nil: base is required; it is the filesystem the store writes through.
-func New(base storage.FS, root string) (*Store, error) {
+func New(base storage.FS, root string, opts ...Option) (*Store, error) {
 	if base == nil {
 		return nil, errors.New("filecomments: New requires a filesystem")
 	}
@@ -76,7 +93,25 @@ func New(base storage.FS, root string) (*Store, error) {
 	if err != nil {
 		return nil, fmt.Errorf("filecomments: rooting at %q: %w", root, err)
 	}
-	return &Store{root: rooted}, nil
+	s := &Store{root: rooted}
+	for _, o := range opts {
+		o(s)
+	}
+	return s, nil
+}
+
+// lockWrite takes the mutex and the cross-process lock for one write.
+func (s *Store) lockWrite(ctx context.Context) (unlock func(), err error) {
+	s.mu.Lock()
+	if s.locker == nil {
+		return s.mu.Unlock, nil
+	}
+	release, err := s.locker.Lock(ctx)
+	if err != nil {
+		s.mu.Unlock()
+		return nil, fmt.Errorf("filecomments: %w", err)
+	}
+	return func() { release(); s.mu.Unlock() }, nil
 }
 
 var _ comments.Store = (*Store)(nil)
@@ -131,9 +166,12 @@ func (s *Store) Count(_ context.Context, targets []comments.Target) (map[string]
 }
 
 // Add appends a comment to the target's thread.
-func (s *Store) Add(_ context.Context, target comments.Target, c comments.Comment) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+func (s *Store) Add(ctx context.Context, target comments.Target, c comments.Comment) error {
+	unlock, err := s.lockWrite(ctx)
+	if err != nil {
+		return err
+	}
+	defer unlock()
 
 	list, err := s.readThread(target.Key())
 	if err != nil {
@@ -143,9 +181,12 @@ func (s *Store) Add(_ context.Context, target comments.Target, c comments.Commen
 }
 
 // Update replaces the mutable fields of one comment.
-func (s *Store) Update(_ context.Context, target comments.Target, id, body string, resolved bool) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+func (s *Store) Update(ctx context.Context, target comments.Target, id, body string, resolved bool) error {
+	unlock, err := s.lockWrite(ctx)
+	if err != nil {
+		return err
+	}
+	defer unlock()
 
 	list, err := s.readThread(target.Key())
 	if err != nil {
@@ -163,11 +204,13 @@ func (s *Store) Update(_ context.Context, target comments.Target, id, body strin
 }
 
 // SetResolved flips the resolved flag only when it differs. The read-modify-
-// write runs under s.mu, which makes it atomic within this process; the file
-// backend is single-process, so that is the whole guarantee it needs.
-func (s *Store) SetResolved(_ context.Context, target comments.Target, id string, resolved bool) (bool, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+// write runs under the write locks, which makes it atomic.
+func (s *Store) SetResolved(ctx context.Context, target comments.Target, id string, resolved bool) (bool, error) {
+	unlock, err := s.lockWrite(ctx)
+	if err != nil {
+		return false, err
+	}
+	defer unlock()
 
 	list, err := s.readThread(target.Key())
 	if err != nil {
@@ -188,9 +231,12 @@ func (s *Store) SetResolved(_ context.Context, target comments.Target, id string
 
 // Delete removes one comment, dropping the file once its last comment goes so
 // an emptied thread leaves no residue in the project tree.
-func (s *Store) Delete(_ context.Context, target comments.Target, id string) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+func (s *Store) Delete(ctx context.Context, target comments.Target, id string) error {
+	unlock, err := s.lockWrite(ctx)
+	if err != nil {
+		return err
+	}
+	defer unlock()
 
 	list, err := s.readThread(target.Key())
 	if err != nil {
@@ -212,16 +258,22 @@ func (s *Store) Delete(_ context.Context, target comments.Target, id string) err
 }
 
 // DeleteTarget removes a target's whole thread.
-func (s *Store) DeleteTarget(_ context.Context, target comments.Target) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+func (s *Store) DeleteTarget(ctx context.Context, target comments.Target) error {
+	unlock, err := s.lockWrite(ctx)
+	if err != nil {
+		return err
+	}
+	defer unlock()
 	return s.removeThread(target.Key())
 }
 
 // DeleteAllFaces removes every face's thread for an entity id.
-func (s *Store) DeleteAllFaces(_ context.Context, entityID string) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+func (s *Store) DeleteAllFaces(ctx context.Context, entityID string) error {
+	unlock, err := s.lockWrite(ctx)
+	if err != nil {
+		return err
+	}
+	defer unlock()
 
 	keys, err := s.threadKeysFor(entityID)
 	if err != nil {
@@ -303,9 +355,12 @@ func (s *Store) allThreadKeys() ([]string, error) {
 // Merging rather than replacing because rela permits ID reuse, so the
 // destination is not guaranteed empty — and silently discarding the occupant's
 // comments would destroy data nobody asked to remove.
-func (s *Store) Rename(_ context.Context, oldID, newID string) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+func (s *Store) Rename(ctx context.Context, oldID, newID string) error {
+	unlock, err := s.lockWrite(ctx)
+	if err != nil {
+		return err
+	}
+	defer unlock()
 
 	if oldID == newID {
 		return nil

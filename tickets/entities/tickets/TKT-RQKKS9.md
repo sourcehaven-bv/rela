@@ -5,7 +5,9 @@ title: 'Comments over stdio MCP: add_comment and watch on list_comments'
 kind: enhancement
 priority: medium
 effort: m
-status: backlog
+started: "2026-10-28"
+completed: "2026-10-28"
+status: done
 ---
 
 ## Description

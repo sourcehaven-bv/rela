@@ -120,6 +120,20 @@ func TestLocalIdentity_Stamp(t *testing.T) {
 	assert.Equal(t, "alice", audit.AssertedByFrom(ctx))
 }
 
+// TestLocalIdentity_RunAs pins what `rela mcp` wires add_comment by: the
+// --run-as identity, and nothing for the OS user (TKT-RQKKS9).
+func TestLocalIdentity_RunAs(t *testing.T) {
+	t.Setenv("USER", "alice")
+	stubOSUser(t, "alice")
+	plain, err := newLocalIdentity(principal.ToolMCP, "")
+	require.NoError(t, err)
+	assert.Empty(t, plain.runAs())
+
+	asserted, err := newLocalIdentity(principal.ToolMCP, "integration:runner")
+	require.NoError(t, err)
+	assert.Equal(t, "integration:runner", asserted.runAs())
+}
+
 // TestAssertingUser pins the OS user behind --run-as: the account of the
 // uid whatever $USER says, and the numeric uid when it has no account.
 func TestAssertingUser(t *testing.T) {

@@ -30,6 +30,9 @@ func (s *Server) registerTools() {
 	reads["list_relations"] = addTool(s, toolListRelations(), s.handleListRelations)
 	// Channel tools, when realtime is on; read_channel joins reads.
 	registerChannelTools(s, reads)
+	// Comment tools, when the project enables commenting; list_comments
+	// joins reads.
+	s.registerCommentTools(reads)
 	s.watch = newWatchHandler(s, reads)
 	addTool(s, toolWatch(s.watch.names), s.watch.handle)
 	addTool(s, toolCreateRelation(), s.handleCreateRelation)
@@ -51,9 +54,6 @@ func (s *Server) registerTools() {
 
 	// Pile tools: only when the wiring supplies piles (see WithPiles).
 	registerPileTools(s)
-
-	// Comment tools: only when the project enables commenting.
-	s.registerCommentTools()
 
 	// Action tools: only when the wiring supplies a runner.
 	registerActionTools(s)
