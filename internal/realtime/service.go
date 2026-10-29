@@ -191,8 +191,14 @@ type Affordances struct {
 	// Transitions lists the message types whose post by the caller would
 	// move the session out of its current state, if the transition's guard
 	// holds, sorted. It is a subset of Post, and empty, never nil, for a
-	// channel type without a session; see [call.fireable].
+	// channel type without a session; see [call.sessionAffordances].
 	Transitions []string `json:"transitions"`
+	// Entries lists the transition entries of the current state the
+	// caller's post could take, sorted by message type and entry: the
+	// caller may post the type now, the entry admits them, and no earlier
+	// entry takes their post first. Empty, never nil; see
+	// [call.sessionAffordances].
+	Entries []EntryRef `json:"entries"`
 }
 
 // HeadView is a channel's head: its metadata, the last message, the live
@@ -267,7 +273,7 @@ func (c *call) affordances() Affordances {
 // [call.postable], so a caller that needs the set twice evaluates the post
 // gates once.
 func (c *call) affordancesWith(post map[string]bool) Affordances {
-	a := Affordances{Post: []string{}, Lifecycle: []string{}, Transitions: []string{}}
+	a := Affordances{Post: []string{}, Lifecycle: []string{}, Transitions: []string{}, Entries: []EntryRef{}}
 	if c.requireCaller() != nil {
 		return a
 	}
@@ -283,7 +289,7 @@ func (c *call) affordancesWith(post map[string]bool) Affordances {
 	}
 	a.DeleteOwn = c.deleteOwnGate()
 	a.Typing = c.typingAllowed()
-	a.Transitions = c.fireable(post)
+	a.Transitions, a.Entries = c.sessionAffordances(post)
 	return a
 }
 

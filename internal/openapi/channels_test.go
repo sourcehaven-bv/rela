@@ -373,6 +373,36 @@ func TestOpenAPI_ChannelSessionDescriptor(t *testing.T) {
 	if !slices.Contains(actions.Required, "transitions") {
 		t.Errorf("_actions.transitions is not required: %v", actions.Required)
 	}
+	entries := actions.Properties["entries"]
+	if entries == nil || entries.Type != "array" || entries.Items == nil || !slices.Contains(actions.Required, "entries") {
+		t.Fatalf("_actions.entries = %+v, want a required array", entries)
+	}
+	if got, want := schemaKeys(entries.Items), jsonNames(reflect.TypeFor[v1.ChannelEntryRef]()); !slices.Equal(got, want) {
+		t.Errorf("_actions.entries[] properties = %v, want %v", got, want)
+	}
+}
+
+// TestOpenAPI_ChannelSessionButton pins TKT-S9TLJJ AC 6 in the schema: a
+// transition row has a required entry and an optional button with a label
+// and props of free values.
+func TestOpenAPI_ChannelSessionButton(t *testing.T) {
+	rt := channelTestConfig(t)
+	g := New(attachmentTestMeta(), Config{Title: "T", Version: "1"})
+	g.SetRealtime(func() *realtimecfg.Compiled { return rt })
+	tr := g.Generate().Components.Schemas[channelSessionRef].Properties["transitions"].Items
+	if e := tr.Properties["entry"]; e == nil || e.Type != "integer" || !slices.Contains(tr.Required, "entry") {
+		t.Errorf("transition entry = %+v, want a required integer", e)
+	}
+	b := tr.Properties["button"]
+	if b == nil || slices.Contains(tr.Required, "button") {
+		t.Fatalf("transition button = %+v, want an optional object", b)
+	}
+	if got, want := schemaKeys(b), jsonNames(reflect.TypeFor[v1.ChannelSessionButton]()); !slices.Equal(got, want) {
+		t.Errorf("button properties = %v, want %v", got, want)
+	}
+	if p := b.Properties["props"]; p == nil || p.Type != "object" || p.AdditionalProperties == nil {
+		t.Errorf("button props = %+v, want an object of free values", p)
+	}
 }
 
 func schemaKeys(s *Schema) []string {

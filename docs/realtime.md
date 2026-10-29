@@ -664,6 +664,7 @@ channel_types:
 | `on.<type>.by` | `trigger`: only a trigger's message moves the session. |
 | `on.<type>.when` | A condition the message must meet to move the session. |
 | `on.<type>.outputs` | Graph writes the move makes, as the poster, or as `run_as` for a trigger's move. At most 4. See [Outputs](#outputs). |
+| `on.<type>.button` | A one-click button for this entry: `label`, the text on the button, and `props`, the properties a click posts. A boolean preset is `true` or `false`. See "One-click buttons" under [Sessions](#sessions). |
 
 **How a message moves a session.** A posted message moves the session when,
 at the moment it is stored, the channel is open, the current state has an
@@ -825,15 +826,19 @@ channel_types:
             decide:
               - to: approved
                 when: "message.decision == 'approve'"
+                button: { label: Approve, props: { decision: approve } }
                 outputs:
                   - set: { properties: { status: approved } }
               - to: drafting
+                button: { label: Revise, props: { decision: revise } }
         approved: { final: true }
 ```
 
 Here `plan-decision` is an enum type in `schema.yaml` with the values
 `approve` and `revise`. A Decide with `approve` moves the plan to
 Approved and sets its status; any other Decide sends it back to Drafting.
+The `button:` keys give the owner an Approve and a Revise button; see
+"One-click buttons" below.
 
 - rela tries the entries in the order of the file. The first entry whose
   poster rule (`roles` or `by`) and `when` both hold moves the session.
@@ -871,12 +876,60 @@ Approved and sets its status; any other Decide sends it back to Drafting.
   If that switches to another entry with outputs, the message is stored
   and the session stays. If it switches to an entry without outputs, the
   session moves along that entry.
-- The web app shows a branching type as a decision that opens the
-  composer, where an enum property is a select. If you want one-click
-  buttons, two message types (such as `approve` and `revise`) remain the
-  better choice for now.
+- Without `button:`, the web app shows a branching type as one decision
+  button that opens the composer, where an enum property is a select. With
+  `button:` on an entry, it shows a one-click button for that entry; see
+  "One-click buttons" below.
 - Lists are new in this release. Every process that loads the project
   needs this release or later; an older one refuses a list under `on:`.
+
+**One-click buttons.** `button:` on an entry gives that entry a button
+in the web app. A click posts the message type with the button's `props`,
+so a decision that needs no text takes one click. In the example above,
+the owner sees Approve and Revise instead of one Decide button.
+
+- `label` is the text on the button: 1 to 100 characters, without
+  characters that display as something else. `props` are the properties a
+  click posts. They follow the rules of a post: each must be declared by
+  the message type and have the right type, a required property must be
+  set, and the type's own `when:` must hold. A preset cannot set a `ref`
+  or `markdown` property, because a click cannot check the entity or show
+  the text. A list preset is a YAML list; a date may be written unquoted.
+- The button's own entry must take its preset. If the entry has a `when`,
+  it must hold for the preset, and it may read only `message` and
+  `session.state`, because the load cannot know the other session values.
+  rela refuses a button whose `when` fails for its preset.
+- An earlier entry of the same type can take the click instead. rela
+  judges at load every earlier entry a person could fire, not only those
+  that share a role with the button's entry. A caller who holds any role
+  that such an entry admits does not see the button when the entry:
+  - has no `when`;
+  - has a `when` that holds for the preset; or
+  - has a `when` that reads other session values, such as
+    `session.reminders`, so the load cannot judge it.
+
+  So a caller with both the `lead` and `member` roles does not see a
+  button on a `member` entry when an earlier `lead` entry takes the
+  preset. If no poster could see the button, rela refuses it.
+- The `when` of an earlier entry can fail to evaluate for the preset. If
+  that entry admits one of the posters of the button's entry, rela
+  refuses the button. Otherwise the callers that entry admits do not see
+  the button.
+- A button on an entry with `by: trigger`, or on an entry no role may
+  fire, is refused: no person could click it.
+- Two buttons in one state may not have the same label unless no poster
+  can see both. rela warns when a state has more than 10 buttons, and when
+  a button's label equals the label of a message type in the same state.
+- A click is a normal post with `expect_generation`. The server does not
+  know it came from a button, and decides the entry as for any post. If
+  the session moved since the page was read, the post is refused with
+  `session_moved`.
+- A preset cannot leave a required property for the person to fill in.
+  A decision that needs text, such as a revise type that requires a
+  `feedback` property, stays in the composer; buttons that open the composer prefilled are a planned
+  follow-up (TKT-53FN0L).
+- `button:` is new in this release. Every process that loads the project
+  needs this release or later; an older one refuses the key.
 
 **Guards.** `when` reads `message.<property>` (the posted properties, typed
 as for the message type's own `when`), `session.state`,
@@ -1570,6 +1623,15 @@ unknown entity type "nope"`. It checks:
   that requires no property but `into`, and that `into` names a `string`
   property of the answer type that is not a list and whose `max` holds
   the longest option. An unknown key under `choices` is refused;
+- that each `button:` follows the rules under "One-click buttons" in
+  [Sessions](#sessions): a mapping with a `label` and `props`, a label of
+  1 to 100 characters without display hazards, an entry a person can
+  fire, a preset that passes the rules of a post and the type's `when:`
+  and sets no `ref` or `markdown` property, an entry `when` that reads
+  only `message` and `session.state` and holds for the preset, no earlier
+  `when` that fails to evaluate for it, at least one poster who could see
+  the button, and no two buttons of a state with the same label that one
+  poster could both see;
 - that the file has no merge key (`<<`) anywhere: write the entries out.
 
 Three more rules stop a message from revealing what `acl.yaml` hides:
@@ -1586,13 +1648,14 @@ Three more rules stop a message from revealing what `acl.yaml` hides:
 rela refuses the whole file for any of these problems, except one: a
 trigger or an `auto.when` it must leave out because of faces (see
 Triggers) is dropped with a warning, and the rest of the file stays in
-force. Four more checks only warn: an answer whose outputs no role in
+force. Six more checks only warn: an answer whose outputs no role in
 `acl.yaml` grants, a handoff `set:` from free text (see
 [Handoff](#handoff)), a `choices.from` list that allows more than 10 items
 or more than 100 characters per item ("too many or too long for
-buttons"), and, in a channel with a session, a question type that never
+buttons"), in a channel with a session, a question type that never
 moves the session into a state where its answer type may be posted ("the
-buttons never show").
+buttons never show"), a state with more than 10 preset buttons, and a
+button whose label equals the label of a message type in that state.
 
 An action named `edit`, `delete`, `remove` or `release` is refused too.
 Older versions accepted such a name; a file that has one no longer loads,
@@ -1707,6 +1770,7 @@ A button appears only when you may use it. It is left out, not disabled.
 | Session header | The channel type has a `session`. It shows on a closed or archived channel too. |
 | A message type marked as moving the session | Your post of that type would move the session now: see `_actions.transitions` below. |
 | A decision button, such as **Approve** | The channel is open, the session is neither ended nor stranded, and your post of the type would move the session now: the type is in `_actions.transitions` and `_actions.post`. It shows in the session header, and on the message that moved the session into its current state. |
+| A preset button, such as **Approve** on a `button:` entry | As for a decision button, and your post of the preset would take that entry: the entry is in `_actions.entries`. See "Preset buttons" below. |
 | A choice button, and **Other answer…** | The question's type has `choices`, and the rules under [Choices](#choices) hold. |
 
 A closed channel shows "This channel is closed." and an archived one "This
@@ -1790,14 +1854,22 @@ buttons show on the message that moved the session into its current state,
 when the page holds that message and it is not removed. A button posts a
 message: only a message moves a session.
 
-- A type with no required property and no condition (`when`) on its move
-  posts with one click, with no properties.
-- A type with a required property, a condition, or moves to several states
-  opens the composer with that type selected and its first field focused.
-  If you are editing a message, the app first asks whether to discard the
-  edit.
-- A decision that ends the session (every move of the type leads to a
-  final state) asks you to confirm first and names the state. The confirm
+- The type's button stands for the entries your post could take
+  (`_actions.entries`) that have no `button:`. Entries with a button show
+  their own button instead; see "Preset buttons" below.
+- The button posts with one click, with no properties, when the type has
+  no required property, none of those entries has a condition (`when`),
+  no entry a person could fire before one of them has a `when`, and they
+  all lead to one state.
+- Otherwise the button opens the composer with that type selected and its
+  first field focused. If you are editing a message, the app first asks
+  whether to discard the edit.
+- This rule reads only the entries your post could take, also in a file
+  without `button:`. A branching type whose only entry you could take is
+  an unguarded edge to one state is therefore a one-click decision for
+  you, where earlier releases opened the composer.
+- A one-click decision that ends the session (the entries it stands for
+  lead to a final state) asks you to confirm first and names the state. The confirm
   button is red when that state ends as cancelled or failed. No other
   decision asks.
 - A one-click post replies to the message that moved the session, when
@@ -1816,6 +1888,32 @@ message: only a message moves a session.
   clicked on, or to the session header. The notice in the log announces
   the move.
 - On a narrow panel the buttons stay visible on their own row and wrap.
+
+**Preset buttons.** An entry with `button:` (see "One-click buttons" under
+[Sessions](#sessions)) shows its own button, named by the button's
+`label`. For each message type, the app first shows the preset buttons of
+the entries your post could take, in the order of the file. The server
+lists those entries in `_actions.entries`, because only the server knows
+your roles. After them comes the decision button of the type, but only
+when one of those entries has no `button:`. So with every entry buttoned,
+as in the example, the owner sees Approve and Revise and no Decide button;
+to write the optional `note`, pick Decide in the composer.
+
+- A click posts the preset with `expect_generation`, as a one-click
+  decision does, and never opens the composer. It replies to the message
+  that moved the session in the same way.
+- A preset to a final state asks you to confirm first. The confirm button
+  is red when that state ends as cancelled or failed. Choosing whether a
+  button asks and how it looks is planned (TKT-TXZZZ2).
+- If the server refuses the preset, for example because the file changed,
+  the composer opens with the type selected and shows why.
+- Preset buttons share the in-flight lock with the decision and choice
+  buttons. On the message of a question with choices, the presets of the
+  answer type are left out, as its decision button is; the session header
+  keeps them.
+- A decision type whose messages are folded or hidden with `display`
+  still shows its preset buttons. The message a click posts may then be
+  folded or hidden in the log.
 
 **Choice buttons.** A question with live choices shows a group named
 **Choices** below its fields, with one button per option and, with
@@ -2086,6 +2184,21 @@ on the message: the post moves the session only if it holds. In the example
 above, the lead of a channel in `detected` gets `["contained", "dismiss"]`
 and a member gets `[]`.
 
+The head's `_actions.entries` lists the `on:` entries the caller's post
+could take now, as `{"message_type": ..., "entry": ...}`, sorted by
+message type and entry. `entry` is the entry's place in its list, from 0;
+a single mapping is entry 0. An entry is listed when the caller may post
+its type now, the entry's poster rule admits the caller, and no earlier
+entry without `when` admits the caller. A `button:` entry is also left out
+when an earlier entry that takes its preset, or whose `when` the load
+could not judge, admits the caller (see "One-click buttons" under
+[Sessions](#sessions)). The caller's roles are judged together, so a
+caller with two roles is judged on both. The list is empty, never `null`,
+in the same cases as `_actions.transitions`. In the plan review example,
+the owner of a channel in `review` gets both entries of `decide`. A
+client shows a `button:` entry's preset button only when the entry is in
+this list.
+
 The head's `typing_now` lists who else is typing, oldest first, as
 `[{"author": {...}, "since": "..."}]`. It never lists the caller, and it is
 empty unless the channel is open and its type has `typing: true`. A client
@@ -2163,7 +2276,7 @@ the session move.
   "entered_at": "2026-10-21T09:12:03Z",
   "waiting_for": [ { "role": "lead", "label": "the incident lead", "holders": ["USR-1"] } ],
   "waiting_on_me": true,
-  "transitions": [ { "message_type": "assessed", "to": "assessed", "guarded": true } ]
+  "transitions": [ { "message_type": "assessed", "to": "assessed", "guarded": true, "entry": 0 } ]
 }
 ```
 
@@ -2178,9 +2291,13 @@ with the clock. A stored channel that never moved gives its creation time.
 "trigger"` when only a trigger fires one and `guarded: true` when the entry
 has a `when`, and `outputs` (the number of outputs) when the entry has any.
 They are sorted by message type. A message type with a list of entries
-appears once per entry, in the order rela tries them. It is the same for
-every reader; `_actions.transitions` says which message types the caller
-fires, each once.
+appears once per entry, in the order rela tries them. Each row carries
+`entry`, its place in its list from 0. A `button:` entry's row also
+carries `button`, with its `label` and its `props` in stored form: an
+integer as a number, a list as an array, a date as `2006-01-02`. A client
+posts those `props` as they are. It is the same for every reader;
+`_actions.transitions` says which message types the caller fires, each
+once, and `_actions.entries` which entries.
 `final` and `stranded` are set when they apply.
 
 `timers` lists the timers of the current state, sorted by name, each with
@@ -2202,7 +2319,7 @@ stranded state, or a state outside the reminder's `in:`, has no reminders.
 "session": {
   "state": "detected", "label": "Detected", "generation": 0,
   "entered_at": "2026-10-21T09:12:03Z", "due_at": "2026-10-22T09:12:03Z",
-  "transitions": [ { "message_type": "contained", "to": "contained" } ],
+  "transitions": [ { "message_type": "contained", "to": "contained", "entry": 0 } ],
   "timers": [ { "name": "no-containment", "label": "Not contained within a day",
                 "to": "overdue", "since": "state", "due_at": "2026-10-22T09:12:03Z" } ],
   "reminders": [ { "name": "status-update", "label": "Status update", "every": "30m",
@@ -2391,7 +2508,10 @@ let a timer move a stalled run on. There is no typing over stdio yet.
 
 **Waiting for a session.** `read_session` returns only a channel's session,
 the channel's name and state, and the message types whose post by the
-agent would move the session (`transitions`). It has no rev, sequence
+agent would move the session (`transitions`), and the entries such a post
+could take (`entries`, as `_actions.entries` under [HTTP API](#http-api)).
+A row of `session.transitions` with `button` is a one-click preset: post
+its type with its `props`. It has no rev, sequence
 number or messages, so its answer changes only when the session moves or
 the agent's turn changes, such as after a handoff or an edit of the lead's
 property on the entity. An agent waits for its turn like this:

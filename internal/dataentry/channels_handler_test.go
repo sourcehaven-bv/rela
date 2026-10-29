@@ -1040,10 +1040,43 @@ func TestChannelsHandler_ExpectGeneration(t *testing.T) {
 func TestWireChannelSession_BranchEdges(t *testing.T) {
 	got := wireChannelSession(&realtime.SessionView{State: "review", Transitions: []realtime.SessionTransitionView{
 		{MessageType: "decide", To: "working", Guarded: true, Outputs: 1},
-		{MessageType: "decide", To: "planning", Guarded: true},
+		{MessageType: "decide", To: "planning", Guarded: true, Entry: 1},
 	}})
 	require.Equal(t, []v1.ChannelSessionTransition{
 		{MessageType: "decide", To: "working", Guarded: true, Outputs: 1},
-		{MessageType: "decide", To: "planning", Guarded: true},
+		{MessageType: "decide", To: "planning", Guarded: true, Entry: 1},
 	}, got.Transitions)
+}
+
+// TestWireChannelSession_Button pins TKT-S9TLJJ AC 6 and 7 on the wire: a
+// button entry's row carries its entry, label and props, a row without a
+// button has no button key, and actions.entries is mapped and never null.
+func TestWireChannelSession_Button(t *testing.T) {
+	t.Run("button", func(t *testing.T) {
+		got := wireChannelSession(&realtime.SessionView{State: "review", Transitions: []realtime.SessionTransitionView{
+			{MessageType: "decide", To: "escalated"},
+			{MessageType: "decide", To: "planning", Entry: 1, Button: &realtime.SessionButtonView{
+				Label: "Revise", Props: map[string]any{"decision": "revise", "tags": []any{"a"}}}},
+		}})
+		require.Equal(t, []v1.ChannelSessionTransition{
+			{MessageType: "decide", To: "escalated"},
+			{MessageType: "decide", To: "planning", Entry: 1, Button: &v1.ChannelSessionButton{
+				Label: "Revise", Props: map[string]any{"decision": "revise", "tags": []any{"a"}}}},
+		}, got.Transitions)
+		b, err := json.Marshal(got.Transitions)
+		require.NoError(t, err)
+		require.JSONEq(t, `[{"message_type":"decide","to":"escalated","entry":0},`+
+			`{"message_type":"decide","to":"planning","entry":1,`+
+			`"button":{"label":"Revise","props":{"decision":"revise","tags":["a"]}}}]`, string(b))
+	})
+	t.Run("entries", func(t *testing.T) {
+		head := wireHead(realtime.HeadView{Actions: realtime.Affordances{
+			Entries: []realtime.EntryRef{{MessageType: "decide", Entry: 1}},
+		}})
+		require.Equal(t, []v1.ChannelEntryRef{{MessageType: "decide", Entry: 1}}, head.Actions.Entries)
+		empty := wireHead(realtime.HeadView{})
+		b, err := json.Marshal(empty.Actions)
+		require.NoError(t, err)
+		require.Contains(t, string(b), `"entries":[]`)
+	})
 }

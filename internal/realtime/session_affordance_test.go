@@ -712,8 +712,8 @@ func TestSessionView_BranchEdges(t *testing.T) {
 	}
 	require.Equal(t, []SessionTransitionView{
 		{MessageType: "decide", To: "working", Guarded: true},
-		{MessageType: "decide", To: "planning", Guarded: true},
-		{MessageType: "decide", To: "done", Guarded: true},
+		{MessageType: "decide", To: "planning", Guarded: true, Entry: 1},
+		{MessageType: "decide", To: "done", Guarded: true, Entry: 2},
 	}, decide)
 	require.Equal(t, SessionTransitionView{MessageType: "ping", To: "escalated", By: "trigger"}, s.Transitions[5])
 
@@ -721,4 +721,77 @@ func TestSessionView_BranchEdges(t *testing.T) {
 	read, err := h.svc.Session(as(user("alice")), reviewCh)
 	require.NoError(t, err)
 	require.Equal(t, []string{"decide", "flag", "ping", "probe"}, read.Transitions)
+}
+
+// TestAffordances_Entries pins TKT-S9TLJJ AC 7: actions.entries lists the
+// entries the caller's post could take, judged on all the caller's roles,
+// sorted, and empty, never null, where no post moves the session.
+func TestAffordances_Entries(t *testing.T) {
+	t.Parallel()
+	d := func(entries ...int) []EntryRef {
+		out := []EntryRef{}
+		for _, e := range entries {
+			out = append(out, EntryRef{MessageType: "decide", Entry: e})
+		}
+		return out
+	}
+	anon := user("")
+	anon.p = principal.Principal{}
+	tests := []struct {
+		name  string
+		yaml  string // "": buttonRealtime()
+		addr  RawAddress
+		who   *fakeAccess
+		setup func(t *testing.T, h *harness)
+		want  []EntryRef
+	}{
+		{name: "member sees both buttons", who: user("mo", "plan.member"), want: d(3, 4)},
+		{name: "lead is shadowed by the lead-only entry", who: user("lena", "plan.lead"), want: d(1)},
+		{name: "lead and member is shadowed too", who: user("lm", "plan.lead", "plan.member"), want: d(1)},
+		{name: "reviewer loses the buttons to the reminders entry", who: user("rex", "plan.review"), want: d(0)},
+		{name: "member and reviewer loses the buttons", who: user("mr", "plan.member", "plan.review"),
+			want: d(0)},
+		{name: "auditor sees Revise and the audit entry", who: user("aud", "plan.audit"), want: d(2, 4)},
+		{name: "auditor and member loses Approve to the audit entry", who: user("am", "plan.audit", "plan.member"),
+			want: d(2, 4)},
+		{name: "caller who may not post sees none", who: user("nobody"), want: d()},
+		{name: "closed channel", who: user("mo", "plan.member"), want: d(),
+			setup: func(t *testing.T, h *harness) {
+				t.Helper()
+				h.postTo(t, user("mo", "plan.member"), planCh, "text", props("body", "hi"))
+				_, err := h.svc.Lifecycle(as(user("mo", "plan.member")), planCh, "close")
+				require.NoError(t, err)
+			}},
+		{name: "final state", who: user("mo", "plan.member"), want: d(),
+			setup: func(t *testing.T, h *harness) {
+				t.Helper()
+				h.postTo(t, user("mo", "plan.member"), planCh, "decide", props("decision", "approve"))
+			}},
+		{name: "no session", yaml: testRealtime, addr: room, who: user("alice", "chat.read", "chat.post"),
+			want: d()},
+		{name: "no identity", who: anon, want: d()},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			y, addr := tc.yaml, tc.addr
+			if y == "" {
+				y = buttonRealtime()
+			}
+			if addr == (RawAddress{}) {
+				addr = planCh
+			}
+			h := newHarness(t, withYAML(y), withOutputs(&fakeOutputs{}))
+			if tc.setup != nil {
+				tc.setup(t, h)
+			}
+			aff := h.headActions(t, tc.who, addr)
+			require.Equal(t, tc.want, aff.Entries)
+			b, err := json.Marshal(aff)
+			require.NoError(t, err)
+			if len(tc.want) == 0 {
+				require.Contains(t, string(b), `"entries":[]`)
+			}
+		})
+	}
 }

@@ -574,3 +574,21 @@ func TestSession_NoSession(t *testing.T) {
 		EntityType: "ticket", Anchor: "TKT-1", Type: "topics", Name: "n"})
 	requireDenial(t, err, 404, TypeNoSession)
 }
+
+// TestSession_Entries pins TKT-S9TLJJ AC 7 on read_session: the session
+// read carries the same entries as the head's actions.
+func TestSession_Entries(t *testing.T) {
+	t.Parallel()
+	t.Run("session read carries entries", func(t *testing.T) {
+		t.Parallel()
+		h := newHarness(t, withYAML(buttonRealtime()), withOutputs(&fakeOutputs{}))
+		for who, a := range buttonPrincipals() {
+			got, err := h.svc.Session(as(a), planCh)
+			require.NoError(t, err)
+			require.Equal(t, h.headActions(t, a, planCh).Entries, got.Entries, who)
+		}
+		got, err := h.svc.Session(as(user("mo", "plan.member")), planCh)
+		require.NoError(t, err)
+		require.Equal(t, []EntryRef{{MessageType: "decide", Entry: 3}, {MessageType: "decide", Entry: 4}}, got.Entries)
+	})
+}

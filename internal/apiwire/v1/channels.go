@@ -141,12 +141,34 @@ type ChannelSessionTimer struct {
 //
 // Outputs is the number of graph writes the transition makes (its
 // `outputs:`), so a client can say that the message updates the anchor.
+//
+// Entry is the transition's place in the list of its message type, from
+// 0; [ChannelEntryRef] names a transition by it. Button is set for an
+// entry with a one-click button.
 type ChannelSessionTransition struct {
+	MessageType string                `json:"message_type"`
+	To          string                `json:"to"`
+	By          string                `json:"by,omitempty"`
+	Guarded     bool                  `json:"guarded,omitempty"`
+	Outputs     int                   `json:"outputs,omitempty"`
+	Entry       int                   `json:"entry"`
+	Button      *ChannelSessionButton `json:"button,omitempty"`
+}
+
+// ChannelSessionButton is a transition entry's one-click button. A click
+// posts the entry's message type with Props, in stored form (an integer
+// as a number, a list as an array, a date as 2006-01-02), and
+// expect_generation. Config, the same for every reader.
+type ChannelSessionButton struct {
+	Label string         `json:"label"`
+	Props map[string]any `json:"props"`
+}
+
+// ChannelEntryRef names one transition of the session's current state:
+// its message type and its entry.
+type ChannelEntryRef struct {
 	MessageType string `json:"message_type"`
-	To          string `json:"to"`
-	By          string `json:"by,omitempty"`
-	Guarded     bool   `json:"guarded,omitempty"`
-	Outputs     int    `json:"outputs,omitempty"`
+	Entry       int    `json:"entry"`
 }
 
 // ChannelTypeList is one channel type on an anchor and the channels of it
@@ -192,6 +214,11 @@ type ChannelActions struct {
 	// move the session out of its current state, if the transition's guard
 	// holds, sorted. It is a subset of Post; empty, never null.
 	Transitions []string `json:"transitions"`
+	// Entries lists the transitions of the current state the caller's post
+	// could take, sorted by message type and entry: the caller may post
+	// the type now, the entry admits them, and no earlier entry takes
+	// their post first. Empty, never null.
+	Entries []ChannelEntryRef `json:"entries"`
 }
 
 // ChannelHead is the `GET` answer for one channel: its metadata, the last

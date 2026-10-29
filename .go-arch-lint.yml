@@ -1462,6 +1462,11 @@ deps:
       # principal.ValidJobIdentity: session.run_as follows the --run-as rules.
       - principal
       - realtimelimits
+      # The prop rules of a post (TKT-S9TLJJ): the load checks a button's
+      # preset with the same code the channel service runs on a post.
+      - texthazard
+    canUse:
+      - xnorm
   syncmerge:
     mayDependOn:
       - metamodel
