@@ -340,6 +340,7 @@ code outside its globs.
 | `classification.md`   | `classification.yaml` describes data and never drives behavior                                     |
 | `predicate.md`        | Conditions evaluate through `internal/predicate`; `condition:` and `when:` stay separate keys      |
 | `transforms.md`       | Export follows an authorized view; external commands run only through `cmdexec`                    |
+| `checkers.md`         | Prose findings are advisory: never on the write path; a request names no command                   |
 | `storage.md`          | Runtime state uses `state.KV`, not local files; test postgres dependencies via a schema-pinned DSN |
 | `comments.md`         | Comments stay out of the graph: no entity type, audit, versioning or search                        |
 | `versioning.md`       | History reads are gated like live reads; relation history on both endpoints                        |
@@ -426,6 +427,7 @@ Subsystems (see each package's doc comment for details):
 | `internal/migration`   | Schema migrations for project YAML files                                                                   |
 | `internal/cmdexec`     | Safe external-command core (argv, no shell, `{in}`/`{out}`, timeout, cap) shared by attachment + transform |
 | `internal/transform`   | View-export engine: markdown `Renderer` → external-tool format conversion (the `transforms:` registry)     |
+| `internal/check`       | Prose-check engine: runs the `checkers:` registry over entity bodies, one finding shape for every tool     |
 
 Other packages under `internal/` are self-descriptive — ls the tree.
 

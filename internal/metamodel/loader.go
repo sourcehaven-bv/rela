@@ -26,6 +26,7 @@ var validTopLevelKeys = map[string]bool{
 	"includes":              true,
 	"attachments":           true,
 	"transforms":            true,
+	"checkers":              true,
 	"worlds":                true,
 	"copies":                true,
 	"conversions":           true,
@@ -283,6 +284,7 @@ func validate(m *Metamodel) error {
 	validationErrors = append(validationErrors, validateRelationScope(m)...)
 	validationErrors = append(validationErrors, validateRelationOwning(m)...)
 	validationErrors = append(validationErrors, validateTransforms(m)...)
+	validationErrors = append(validationErrors, validateCheckers(m)...)
 	validationErrors = append(validationErrors, validateAttachments(m)...)
 	validationErrors = append(validationErrors, validateCopies(m)...)
 	validationErrors = append(validationErrors, validateConversions(m)...)

@@ -31,6 +31,10 @@ relations:
   # Relation definitions
 ```
 
+Other root-only keys include `transforms:` (export formats, see
+[transforms.md](transforms.md)) and `checkers:` (prose checkers, see
+[checkers.md](checkers.md)).
+
 ## Including Partial Metamodels
 
 For larger projects, you can split your metamodel across multiple files using the

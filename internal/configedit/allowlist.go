@@ -295,7 +295,7 @@ var locked = map[File][]string{
 	SchemaFile: {
 		"version", "namespace", "includes.**",
 		// External commands and upload policy.
-		"attachments.**", "transforms.**",
+		"attachments.**", "transforms.**", "checkers.**",
 		"entities.*.properties.*.accept.**",
 		"entities.*.properties.*.scan",
 		"entities.*.properties.*.scan_cmd.**",
