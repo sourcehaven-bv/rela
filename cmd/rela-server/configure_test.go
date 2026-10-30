@@ -165,10 +165,10 @@ func taskProperties(t *testing.T, schema *configedit.Map) *configedit.Map {
 
 func TestConfigure_Gate(t *testing.T) {
 	srv, _ := configServer(t)
-	// No user: the ACL middleware refuses the unresolved principal before
-	// the Configure gate runs.
+	// No user: the ACL middleware answers 401 before the Configure gate
+	// runs (BUG-C8DHGF).
 	for user, want := range map[string]int{
-		"bob": http.StatusForbidden, "": http.StatusInternalServerError, "ada": http.StatusOK,
+		"bob": http.StatusForbidden, "": http.StatusUnauthorized, "ada": http.StatusOK,
 	} {
 		rec := call(t, srv, user, http.MethodGet, dataentry.ConfigurePath, nil)
 		require.Equal(t, want, rec.Code, "user %q: %s", user, rec.Body.String())
