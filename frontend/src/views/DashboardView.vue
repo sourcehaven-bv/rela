@@ -562,7 +562,7 @@ watch([() => props.name, worldParam], () => void loadData())
    A wide tile takes the whole row by default and spans two tracks only on a
    grid of at least 580px, which always holds two or more tracks. Below 580px
    the grid holds at most two tracks (280px tracks + 20px gap above; 200px +
-   12px gap at <= 768px; two fixed tracks on phones), so the whole row is "two
+   12px gap at <= 768px; a single track at <= 480px), so the whole row is "two
    tracks or one", and the tile never creates an implicit column. A browser
    without container queries gets the whole row, which never overflows.
 
@@ -805,17 +805,10 @@ watch([() => props.name, worldParam], () => void loadData())
 
 @media (max-width: 480px) {
   .dashboard-grid {
-    /* Two compact stat cards per row instead of one tall one. minmax(0, …)
-       lets a track shrink below item min-content — with plain 1fr the
-       full-width table cards blow the tracks past the viewport. */
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
-  /* Breakdown and table cards still want full width — too cramped at
-     half width. */
-  .dashboard-card:has(.card-breakdown),
-  .dashboard-card:has(.card-table) {
-    grid-column: 1 / -1;
+    /* One card per row on phones, whatever its `width`. minmax(0, …) lets
+       the track shrink below item min-content — with plain 1fr a table card
+       blows the track past the viewport. */
+    grid-template-columns: minmax(0, 1fr);
   }
 }
 </style>
