@@ -165,7 +165,7 @@ func ApplyWithMetamodel(path string, ft FileType, fs storage.FS, meta MetamodelP
 		// coverage-ignore-end
 	}
 
-	if err := fs.WriteFile(path, buf.Bytes(), 0o644); err != nil {
+	if err := fs.WriteFile(path, refoldFolded(buf.Bytes()), 0o644); err != nil {
 		result.Error = fmt.Errorf("writing file: %w", err)
 		return result, nil
 	}
