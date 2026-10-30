@@ -481,7 +481,7 @@ func sessionWrongState(
 		Status: http.StatusConflict, Type: TypeSessionWrongState,
 		Title: fmt.Sprintf("%s may be posted only while the session is in %s; %s",
 			mt.Name, strings.Join(mt.In, ", "), where),
-		Rule: "channel_types." + ct.Name + ".message_types." + mt.Name + ".in",
+		Rule: ct.InKey(mt),
 	}
 }
 
