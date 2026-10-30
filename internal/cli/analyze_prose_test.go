@@ -13,14 +13,22 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/output"
 )
 
-// fakeProseChecker reports every occurrence of "altijd" in the {in} file as a
-// rela-format finding, using only sh and awk so the sandbox needs no extra
-// read path.
+// fakeProseChecker reports every line containing "altijd" in the {in} file
+// as a rela-format finding. It uses only sh builtins: in the Linux sandbox
+// /etc is absent, so a tool reached through /etc/alternatives (awk on
+// Debian/Ubuntu) does not resolve.
 var fakeProseChecker = metamodel.CheckerDef{
-	Command: []string{"sh", "-c", `awk '
-BEGIN { printf "{\"findings\":[" ; n = 0 }
-{ i = index($0, "altijd"); if (i > 0) { if (n++) printf ","; printf "{\"rule\":\"Fake.Absolute\",\"severity\":\"warning\",\"message\":\"absolute claim\",\"line\":%d,\"column\":%d,\"length\":6,\"replacements\":[\"meestal\"]}", NR, i } }
-END { printf "]}" }' "$1"`, "sh", cmdexec.TemplateIn},
+	Command: []string{"sh", "-c", `
+printf '{"findings":['; n=0; sep=''
+while IFS= read -r line; do
+  n=$((n+1))
+  case "$line" in *altijd*)
+    pre=${line%%altijd*}
+    printf '%s{"rule":"Fake.Absolute","severity":"warning","message":"absolute claim","line":%d,"column":%d,"length":6,"replacements":["meestal"]}' "$sep" "$n" "$((${#pre}+1))"
+    sep=',';;
+  esac
+done < "$1"
+printf ']}'`, "sh", cmdexec.TemplateIn},
 	Format:  metamodel.CheckerFormatRela,
 	Analyze: true,
 }
@@ -60,7 +68,7 @@ func TestAnalyzeProse_Text(t *testing.T) {
 	b := proseCLIBundles(t, map[string]metamodel.CheckerDef{"fake": fakeProseChecker})
 	buf := withOutput(t, output.FormatTable)
 	if err := (&AnalyzeProseCmd{}).Run(context.Background(), b.read); err != nil {
-		t.Fatal(err)
+		t.Fatalf("%v\n%s", err, buf)
 	}
 	for _, w := range []string{
 		"PROC-1 (procedure)",
@@ -82,7 +90,7 @@ func TestAnalyzeProse_TypeFilterAndJSON(t *testing.T) {
 	b := proseCLIBundles(t, map[string]metamodel.CheckerDef{"fake": fakeProseChecker})
 	buf := withOutput(t, output.FormatJSON)
 	if err := (&AnalyzeProseCmd{Type: "task"}).Run(context.Background(), b.read); err != nil {
-		t.Fatal(err)
+		t.Fatalf("%v\n%s", err, buf)
 	}
 	var res struct {
 		Status  string `json:"status"`
@@ -119,7 +127,7 @@ func TestAnalyzeProse_OnlyAnalyzeCheckersRun(t *testing.T) {
 	b := proseCLIBundles(t, map[string]metamodel.CheckerDef{"fake": off})
 	buf := withOutput(t, output.FormatTable)
 	if err := (&AnalyzeProseCmd{}).Run(context.Background(), b.read); err != nil {
-		t.Fatal(err)
+		t.Fatalf("%v\n%s", err, buf)
 	}
 	if !strings.Contains(buf.String(), "No checkers with analyze: true configured") {
 		t.Errorf("output:\n%s", buf)
@@ -155,7 +163,7 @@ func TestAnalyzeAll_ProseOnlyWithFlag(t *testing.T) {
 	b = proseCLIBundles(t, map[string]metamodel.CheckerDef{"fake": fakeProseChecker})
 	buf = withOutput(t, output.FormatJSON)
 	if err := (&AnalyzeAllCmd{Prose: true}).Run(ctx, b.read, b.analysis); err != nil {
-		t.Fatal(err)
+		t.Fatalf("%v\n%s", err, buf)
 	}
 	var res struct {
 		Details struct {
@@ -171,7 +179,7 @@ func TestAnalyzeAll_ProseOnlyWithFlag(t *testing.T) {
 
 	buf = withOutput(t, output.FormatTable)
 	if err := (&AnalyzeAllCmd{Prose: true}).Run(ctx, b.read, b.analysis); err != nil {
-		t.Fatal(err)
+		t.Fatalf("%v\n%s", err, buf)
 	}
 	for _, w := range []string{"Prose: 2", "Prose Checks", "PROC-1 (procedure)"} {
 		if !strings.Contains(buf.String(), w) {
