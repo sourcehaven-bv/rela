@@ -138,10 +138,18 @@ the rows are served without `_busy`.
 The whole page costs one channel-store query, one read of the channels'
 entities and one role check, whatever the number of rows. A list path in a
 [live subscription](#live-views) may carry `busy`. The server repeats it
-after an entity change, so the hash follows `_busy` too. A channel change
-on its own does not repeat it, so a session move shows on the next entity
-change or the next read (TKT-W5ZSYJ). See the busy indicator section of the
-realtime guide.
+after an entity change, so the hash follows `_busy` too. It also repeats it
+when a channel of the busy type, on a row of the page, moves its session,
+is created, closed, reopened, archived or deleted (TKT-W5ZSYJ). A message
+that moves no session, an edit, a removal or a typing signal does not
+repeat it. A move made in another process is caught by a periodic safety
+check, within about 12 seconds with the file channel store and 14 seconds
+with a database. Only the rows of the subscribed page are watched, so a
+kanban card past the first 100 refreshes on the next entity change or
+reload. A list whose page is empty, or whose `_busy` the server could not
+answer for a reason above other than a store error, is not repeated on
+channel changes or by the safety check, only after an entity change or a
+reload. See the busy indicator section of the realtime guide.
 
 ## Limiting search results
 
@@ -671,7 +679,18 @@ many streams subscribe to it. A round checks at most 256 pairs and starts no
 check after 10 seconds. The pairs it skips get a `live:changed` frame without
 a check, so the client re-fetches. The next round starts where the last one
 stopped, so every pair is checked in turn. A skipped pair is also checked on
-the next tick, even when nothing else changed.
+the next tick, even when nothing else changed. There are three
+exceptions, which get no frame when a round skips them and are checked on
+a later tick instead:
+
+- An inbox path never gets a frame without a check, in any round.
+- A list with `busy` gets none in a round that is not a full re-check: a
+  round started by channel changes, presence changes, the periodic safety
+  check or the retry of skipped pairs. In a full re-check (after an entity
+  change, a lease change or a reload) it gets the frame like any list.
+- A pair that a round that is not a full re-check checks only because an
+  earlier round skipped it gets none. It already had its frame when it was
+  first skipped.
 
 A change can land while a PUT takes its baseline. The round skips that
 subscription, and checks it on the first tick after the PUT stored the

@@ -90,22 +90,32 @@ func manualClock(app *App) *liveStepper {
 func (s *liveStepper) step(tb testing.TB, n int) {
 	tb.Helper()
 	for range n {
-		want := s.h.ticks.Load() + 1
-		at := s.base.Add(time.Duration(s.slot) * s.h.window)
-		select {
-		case s.c <- at:
-		case <-time.After(2 * time.Second):
-			tb.Fatal("the live worker took no tick")
-		}
-		s.slot++
-		deadline := time.Now().Add(30 * time.Second)
-		for s.h.ticks.Load() < want {
-			if time.Now().After(deadline) {
-				tb.Fatal("the live worker did not finish its tick")
-			}
-			time.Sleep(time.Millisecond)
+		if !s.tryStep() {
+			tb.Fatal("the live worker took no tick, or did not finish it")
 		}
 	}
+}
+
+// tryStep runs one tick and waits until it has finished. It reports a
+// failure instead of failing the test, so it may run off the test
+// goroutine.
+func (s *liveStepper) tryStep() bool {
+	want := s.h.ticks.Load() + 1
+	at := s.base.Add(time.Duration(s.slot) * s.h.window)
+	select {
+	case s.c <- at:
+	case <-time.After(2 * time.Second):
+		return false
+	}
+	s.slot++
+	deadline := time.Now().Add(30 * time.Second)
+	for s.h.ticks.Load() < want {
+		if time.Now().After(deadline) {
+			return false
+		}
+		time.Sleep(time.Millisecond)
+	}
+	return true
 }
 
 // through runs every tick up to and including tick n.
@@ -155,6 +165,13 @@ func (c *principalReplays) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	c.n[principal.From(r.Context()).User+" "+r.URL.RequestURI()]++
 	c.mu.Unlock()
 	c.inner.ServeHTTP(w, r)
+}
+
+// count is the count of key, "user URL", since the last take.
+func (c *principalReplays) count(key string) int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.n[key]
 }
 
 // take returns the counts since the last take and clears them.
@@ -297,8 +314,8 @@ func newInboxLiveEnvOn(
 	require.NoError(tb, SetInboxGrid(app, grid))
 	// Every principal takes the last safety slice, so the safety replay
 	// runs on a known tick: the last grid tick of the first safety period.
-	last := app.live.inboxSlices() - 1
-	app.live.inboxSliceOf = func(string) uint64 { return last }
+	last := app.live.safetySlices() - 1
+	app.live.safetySliceOf = func(string) uint64 { return last }
 	env := &inboxLiveEnv{ch: ch, local: local, clock: clock}
 	env.liveEnv = newLiveEnvFor(tb, app, func(app *App) { env.ticks = manualClock(app) })
 	return env
@@ -701,7 +718,7 @@ func TestLive_InboxSafetyReplay(t *testing.T) {
 func testInboxSafetyReplay(t *testing.T, grid, safety int) {
 	t.Helper()
 	env := newInboxLiveEnvGrid(t, inboxLivePolicy(), grid)
-	require.Equal(t, uint64(safety), env.app.live.inboxSafety())
+	require.Equal(t, uint64(safety), env.app.live.safetyPeriod())
 	seq := env.chat(t, "bob", inboxRoom1, "hello")
 	env.markRead(t, "alice", inboxRoom1, seq)
 	env.app.channels.inbox = refusingInbox{inner: env.app.channels.inbox, user: "erin"}
@@ -871,18 +888,18 @@ func TestInboxRequestKey(t *testing.T) {
 }
 
 // TestSetInboxGrid pins the grid setter: it rejects a spacing outside one
-// to liveInboxSafetyMax ticks, and the safety spacing stays the largest
+// to liveSafetyMax ticks, and the safety spacing stays the largest
 // multiple of the grid within that bound.
 func TestSetInboxGrid(t *testing.T) {
 	app := newAppFromParts(&Config{}, inboxTestMeta(), newFixture())
 	require.Equal(t, uint64(LiveInboxGrid), app.live.inboxGrid, "the default is the database grid")
-	for _, bad := range []int{0, -1, liveInboxSafetyMax + 1} {
+	for _, bad := range []int{0, -1, liveSafetyMax + 1} {
 		require.Error(t, SetInboxGrid(app, bad), "grid %d", bad)
 	}
 	for grid, safety := range map[int]uint64{LiveInboxGrid: 28, LiveInboxGridScan: 24, 5: 25, 28: 28} {
 		require.NoError(t, SetInboxGrid(app, grid))
-		require.Equal(t, safety, app.live.inboxSafety(), "grid %d", grid)
-		require.Equal(t, safety/uint64(grid), app.live.inboxSlices(), "grid %d", grid)
+		require.Equal(t, safety, app.live.safetyPeriod(), "grid %d", grid)
+		require.Equal(t, safety/uint64(grid), app.live.safetySlices(), "grid %d", grid)
 	}
 }
 
@@ -976,7 +993,7 @@ func TestLive_InboxSafetyStaggered(t *testing.T) {
 		users[i] = fmt.Sprintf("u%02d", i)
 	}
 	env := newInboxLiveEnv(t, inboxLivePolicy(users...))
-	env.app.live.inboxSliceOf = nil // the real hash
+	env.app.live.safetySliceOf = nil // the real hash
 	for _, u := range users {
 		env.inboxSubs(t, u)
 	}
@@ -984,8 +1001,8 @@ func TestLive_InboxSafetyStaggered(t *testing.T) {
 	h := env.app.live
 	replays := countPrincipalReplays(t, h)
 	total := map[string]int{}
-	period := int(h.inboxSafety())
-	perTick := 2 * len(users) / int(h.inboxSlices()) * 2 // twice the even share
+	period := int(h.safetyPeriod())
+	perTick := 2 * len(users) / int(h.safetySlices()) * 2 // twice the even share
 	for range period {
 		env.ticks.step(t, 1)
 		got := inboxReplays(replays.take())

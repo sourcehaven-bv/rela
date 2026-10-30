@@ -59,7 +59,7 @@ func (w systemWriter) post(
 	if sp.step != nil {
 		sp.step.Mark = triggerMark(ct, mt.Name, now, &marked)
 	}
-	_, err = w.store.Append(ctx, key, channels.NewMessage{
+	appended, err := w.store.Append(ctx, key, channels.NewMessage{
 		Type: mt.Name, Author: systemAuthor(), At: now, Props: vp.props, TriggeredBy: triggeredBy,
 		RequireOpen: requireOpen, Session: sp.step,
 	})
@@ -71,7 +71,7 @@ func (w systemWriter) post(
 		return false, err
 	}
 	noteDue(w.dueWake, sp.step)
-	w.local.mark(key)
+	w.local.markAs(postKind(appended), key)
 	moved := sp.step != nil && sp.step.Outcome != nil && sp.step.Outcome.Moved
 	return marked && moved, nil
 }

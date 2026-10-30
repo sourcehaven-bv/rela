@@ -851,7 +851,7 @@ func (e *outputEngine) runOne(
 		res.Status, res.Entity, res.Warnings = channels.OutputDone, got.Entity, got.Warnings
 		if got.Marked {
 			r.notice = got.Message
-			e.local.mark(r.key)
+			e.local.markMessage(r.key)
 			return res, outputMarked
 		}
 		return res, outputRan
@@ -999,6 +999,6 @@ func (e *outputEngine) write(
 		return err
 	}
 	r.notice = got
-	e.local.mark(r.key)
+	e.local.markMessage(r.key)
 	return nil
 }

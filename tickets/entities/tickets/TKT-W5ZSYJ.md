@@ -4,8 +4,10 @@ type: ticket
 title: Busy board live refresh on session moves
 kind: enhancement
 priority: low
-effort: s
-status: backlog
+effort: l
+started: "2026-10-30"
+completed: "2026-10-30"
+status: done
 ---
 
 ## Description

@@ -398,6 +398,13 @@ type Message struct {
 	// Zero: always, except on the message Append returns, where it names
 	// the reply row's target, if one was written. Never stored.
 	ReplyTarget string `json:"-"`
+	// CreatedChannel reports that the append created the implicit channel,
+	// so the caller can tell a channel that may start in a working session
+	// state from a message in an existing one.
+	//
+	// Zero: always, except on the message Append returns, where it reports
+	// that the append created the implicit channel. Never stored.
+	CreatedChannel bool `json:"-"`
 }
 
 // ActionStatus returns the status of the message's action, or [ActionNone].

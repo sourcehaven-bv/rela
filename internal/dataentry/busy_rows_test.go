@@ -32,11 +32,17 @@ import (
 
 // busyRowsRealtime declares the session types the list tests seed:
 //
-//   - run: the agent-runner PoC shape, which works only in planning;
+//   - run: the agent-runner PoC shape, which works only in planning, with
+//     typing and the owner's own edits and removals;
 //   - instant: starts in a working state, so a seeded channel is busy at
 //     once, and only the ticket's owner may read it;
 //   - facerun: instant on each face of a page;
-//   - chat: no session.
+//   - chat: no session;
+//   - job: one per ticket, starts working, so its first post creates a busy
+//     channel without moving it; the owner closes, reopens and deletes it.
+//     Its delete has no retention: a delete under retention needs a closed
+//     channel, which is not busy, so it could not move `_busy`;
+//   - task: many per ticket, created explicitly, starts working.
 const busyRowsRealtime = `
 version: 1
 channel_types:
@@ -44,9 +50,13 @@ channel_types:
     label: Agent run
     attach_to: [ticket]
     read: { from: attached }
+    typing: true
     roles:
       owner:  { from: entity.owner }
       runner: { from: entity.runner }
+    message_ops:
+      edit_own:   { roles: [owner] }
+      delete_own: { roles: [owner] }
     message_types:
       go:      { properties: { note: { type: string } }, post: [owner] }
       claim:   { properties: { worktree: { type: string } }, post: [runner] }
@@ -85,6 +95,36 @@ channel_types:
     read: { from: attached }
     roles: *roles
     message_types: *types
+  job:
+    attach_to: [ticket]
+    read: { from: attached }
+    roles: { owner: { from: entity.owner } }
+    message_types:
+      log:    { properties: { body: { type: string } }, post: [owner] }
+      finish: { properties: { body: { type: string } }, post: [owner] }
+    session:
+      initial: working
+      states:
+        working: { label: Working, status: working, on: { finish: { to: done } } }
+        done:    { label: Done, final: true }
+    lifecycle:
+      close:  { roles: [owner] }
+      reopen: { roles: [owner] }
+      delete: { roles: [owner] }
+  task:
+    attach_to: [ticket]
+    cardinality: many
+    read: { from: attached }
+    create: { roles: [owner] }
+    roles: { owner: { from: entity.owner } }
+    message_types:
+      log:    { properties: { body: { type: string } }, post: [owner] }
+      finish: { properties: { body: { type: string } }, post: [owner] }
+    session:
+      initial: working
+      states:
+        working: { label: Working, status: working, on: { finish: { to: done } } }
+        done:    { label: Done, final: true }
 `
 
 // busyRowsMeta has tickets, pages with a draft and a published face, and

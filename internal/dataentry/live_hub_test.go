@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Sourcehaven-BV/rela/internal/channels"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
 )
 
@@ -259,5 +260,39 @@ func TestLiveHub_ReplayLimitShared(t *testing.T) {
 	wg.Wait()
 	if got := peak.Load(); got > liveParallel {
 		t.Fatalf("peak replays in flight = %d, want at most %d", got, liveParallel)
+	}
+}
+
+// A changed round marks a syncing busy list for a recheck when it may move
+// the list's `_busy`: a moved key of its type, a resync or a full round.
+func TestLiveHub_CollectRechecksBusy(t *testing.T) {
+	run := channels.Key{Anchor: channels.Anchor{ID: "TKT-1"}, Type: "run"}
+	chat := channels.Key{Anchor: channels.Anchor{ID: "TKT-1"}, Type: "chat"}
+	topic := func(moved, keys []channels.Key, resync bool) *roundFilter {
+		f := newRoundFilter(nil, keys, resync)
+		f.addMoved(moved)
+		return f
+	}
+	for _, tc := range []struct {
+		name string
+		only *roundFilter
+		want bool
+	}{
+		{"moved key of its type", topic([]channels.Key{run}, []channels.Key{run}, false), true},
+		{"resync", topic(nil, nil, true), true},
+		{"message-only", topic(nil, []channels.Key{run}, false), false},
+		{"other type", topic([]channels.Key{chat}, []channels.Key{chat}, false), false},
+		{"full round", nil, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newLiveHub(nil)
+			c := h.register(principal.Principal{User: "alice", Tool: principal.ToolDataEntry})
+			s := &liveSub{url: "/api/v1/tickets?busy=run", busy: "run", syncing: true}
+			c.subs["board"] = s
+			h.collect(true, tc.only)
+			if s.recheck != tc.want {
+				t.Fatalf("recheck = %v, want %v", s.recheck, tc.want)
+			}
+		})
 	}
 }

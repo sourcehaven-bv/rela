@@ -127,8 +127,14 @@ type Subscription struct {
 	// expiry, are not in it. Every key in it is in changed too, so it
 	// shares max with changed.
 	durable map[channels.Key]struct{}
-	resync  bool
-	max     int
+	// moved holds the channels of an allDurable subscriber that a stored
+	// write may have moved: a session move, a create, a lifecycle move, a
+	// delete, and every [Local.Mark]. A message-only write (see
+	// markMessage) is not in it. Every key in it is in durable too, so it
+	// shares max with changed.
+	moved  map[channels.Key]struct{}
+	resync bool
+	max    int
 }
 
 // Subscribe registers a consumer. Close it when done.
@@ -154,9 +160,10 @@ func (l *Local) subscribe(setup func(*Subscription)) *Subscription {
 // SubscribeLive registers a consumer that serves many readers, such as
 // the live hub: it takes channel changes as [Local.Subscribe] does, every
 // reader's moved markers, tagged by reader, from TakeReads, the principal
-// keys a post or edit addressed from TakeAddressed, and the channels a
-// stored write changed from TakeDurable. An overflow of any of them
-// resyncs. Close it when done.
+// keys a post or edit addressed from TakeAddressed, the channels a stored
+// write changed from TakeDurable, and the channels a stored write may have
+// moved from TakeMoved. An overflow of any of them resyncs. Close it when
+// done.
 func (l *Local) SubscribeLive() *Subscription {
 	return l.subscribe(func(s *Subscription) {
 		s.allReaders = true
@@ -165,6 +172,7 @@ func (l *Local) SubscribeLive() *Subscription {
 		s.addressed = map[string]struct{}{}
 		s.allDurable = true
 		s.durable = map[channels.Key]struct{}{}
+		s.moved = map[channels.Key]struct{}{}
 	})
 }
 
@@ -175,16 +183,36 @@ func (l *Local) SubscribeLive() *Subscription {
 func (s *Subscription) TakeDurable() []channels.Key {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if len(s.durable) == 0 {
+	return takeKeysLocked(s.durable)
+}
+
+// takeKeysLocked returns the keys in set, sorted, or nil when it is
+// empty, and empties it. Callers hold s.mu.
+func takeKeysLocked(set map[channels.Key]struct{}) []channels.Key {
+	if len(set) == 0 {
 		return nil
 	}
-	out := make([]channels.Key, 0, len(s.durable))
-	for k := range s.durable {
+	out := make([]channels.Key, 0, len(set))
+	for k := range set {
 		out = append(out, k)
 	}
-	clear(s.durable)
+	clear(set)
 	channels.SortKeys(out)
 	return out
+}
+
+// TakeMoved returns the channels a stored write may have moved since the
+// previous TakeMoved, sorted, and empties the set: a session move, a
+// create, a lifecycle move, a delete, a timer or sweep write. A
+// message-only write (a post that moved no session and created no channel,
+// an edit, a removal, an action, an outputs progress write) is durable but
+// not moved. It returns nil for a subscription not made by
+// [Local.SubscribeLive], and nil when the set overflowed: Take then reports
+// resync.
+func (s *Subscription) TakeMoved() []channels.Key {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return takeKeysLocked(s.moved)
 }
 
 // SubscribeAddressed registers a consumer that wakes a principal's inbox,
@@ -207,6 +235,11 @@ func (l *Local) SubscribeAddressed() *Subscription {
 func (s *Subscription) TakeAddressed() []string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	return s.takeAddressedLocked()
+}
+
+// takeAddressedLocked is the body of TakeAddressed. Callers hold s.mu.
+func (s *Subscription) takeAddressedLocked() []string {
 	if len(s.addressed) == 0 {
 		return nil
 	}
@@ -226,6 +259,11 @@ func (s *Subscription) TakeAddressed() []string {
 func (s *Subscription) TakeReads() map[channels.Reader][]channels.Key {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	return s.takeReadsLocked()
+}
+
+// takeReadsLocked is the body of TakeReads. Callers hold s.mu.
+func (s *Subscription) takeReadsLocked() map[channels.Reader][]channels.Key {
 	if len(s.reads) == 0 {
 		return nil
 	}
@@ -256,12 +294,18 @@ func (s *Subscription) Take() (keys []channels.Key, resync bool) {
 	s.local.expire()
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	return s.takeLocked()
+}
+
+// takeLocked is the body of Take after the expiry. Callers hold s.mu.
+func (s *Subscription) takeLocked() (keys []channels.Key, resync bool) {
 	if s.resync {
 		s.resync = false
 		clear(s.changed)
 		clear(s.reads)
 		clear(s.addressed)
 		clear(s.durable)
+		clear(s.moved)
 		s.nReads = 0
 		return []channels.Key{}, true
 	}
@@ -274,6 +318,42 @@ func (s *Subscription) Take() (keys []channels.Key, resync bool) {
 	return out, false
 }
 
+// LiveChanges is everything a [Local.SubscribeLive] subscriber has not
+// taken yet, taken at once by [Subscription.TakeLive]. Each field is what
+// the Take method of the same name returns.
+type LiveChanges struct {
+	Keys      []channels.Key
+	Resync    bool
+	Reads     map[channels.Reader][]channels.Key
+	Durable   []channels.Key
+	Addressed []string
+	Moved     []channels.Key
+}
+
+// Empty reports whether c carries no change and no resync.
+func (c LiveChanges) Empty() bool {
+	return !c.Resync && len(c.Keys) == 0 && len(c.Reads) == 0 && len(c.Durable) == 0 &&
+		len(c.Addressed) == 0 && len(c.Moved) == 0
+}
+
+// TakeLive takes every set of the subscription in one critical section,
+// as Take, TakeReads, TakeDurable, TakeAddressed and TakeMoved would in
+// turn. A mark lands wholly before or wholly after it, so a moved key is
+// never taken in one call and its changed key in another: a consumer that
+// starts a round only on changed keys would otherwise drop the moved key.
+func (s *Subscription) TakeLive() LiveChanges {
+	s.local.expire()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var c LiveChanges
+	c.Keys, c.Resync = s.takeLocked()
+	c.Reads = s.takeReadsLocked()
+	c.Durable = takeKeysLocked(s.durable)
+	c.Addressed = s.takeAddressedLocked()
+	c.Moved = takeKeysLocked(s.moved)
+	return c
+}
+
 // Close unregisters the subscription. Take keeps working and returns
 // nothing new.
 func (s *Subscription) Close() {
@@ -282,29 +362,56 @@ func (s *Subscription) Close() {
 	s.local.subMu.Unlock()
 }
 
-// Mark implements [ChangeMarker]: the background sweep reports the channels
-// it changed, so this process's subscribers see them.
+// Mark implements [ChangeMarker]: the background sweep, the timers, the
+// retention sweep and applyTransition report the channels they changed, so
+// this process's subscribers see them. The keys count as moved, as mark
+// does: a caller of Mark does not say whether it moved a session, and a
+// timer reminder that moved nothing only costs a replay that sends no
+// frame, while a move missed would leave a busy board stale.
 func (l *Local) Mark(keys ...channels.Key) { l.mark(keys...) }
 
-// mark adds keys to every subscriber's change set, and to the durable set
-// of each [Local.SubscribeLive] subscriber, and wakes each one. It is for
-// changes a stored write made.
-func (l *Local) mark(keys ...channels.Key) {
-	l.markWhere(func(*Subscription) bool { return true }, keys, true)
-}
+// markKind is what a mark adds a key to, past every subscriber's change
+// set.
+type markKind int
+
+const (
+	// markKindEphemeral adds to the change set only.
+	markKindEphemeral markKind = iota
+	// markKindMessage adds to the durable set too: a stored write that
+	// cannot move a session or a lifecycle.
+	markKindMessage
+	// markKindMoved adds to the durable and the moved set: a stored write
+	// that may move a session or a lifecycle.
+	markKindMoved
+)
+
+// mark adds keys to every subscriber's change set, and to the durable and
+// moved sets of each [Local.SubscribeLive] subscriber, and wakes each one.
+// It is for changes a stored write made that may move a session or a
+// lifecycle. It is the default on purpose: a write site that should have
+// used markMessage costs a replay, never a stale board.
+func (l *Local) mark(keys ...channels.Key) { l.markAs(markKindMoved, keys...) }
+
+// markMessage is mark for a stored write that cannot move a session or
+// a lifecycle: the keys join the durable set, not the moved one.
+func (l *Local) markMessage(keys ...channels.Key) { l.markAs(markKindMessage, keys...) }
 
 // markEphemeral adds keys to every subscriber's change set only: a typing
 // entry or an ephemeral signal started, ended or expired. A channel head
 // shows them; an inbox does not, so the live hub need not replay one.
-func (l *Local) markEphemeral(keys ...channels.Key) {
-	l.markWhere(func(*Subscription) bool { return true }, keys, false)
+func (l *Local) markEphemeral(keys ...channels.Key) { l.markAs(markKindEphemeral, keys...) }
+
+// markAs adds keys to every subscriber's sets that kind names, and wakes
+// each one.
+func (l *Local) markAs(kind markKind, keys ...channels.Key) {
+	l.markWhere(func(*Subscription) bool { return true }, keys, kind)
 }
 
-// markAddressed marks key changed for every subscriber, as mark does, and
+// markAddressed marks key changed for every subscriber with kind, and
 // adds targets, the principal keys a post or edit addressed, to every
 // [Local.SubscribeAddressed] subscriber.
-func (l *Local) markAddressed(targets []string, key channels.Key) {
-	l.mark(key)
+func (l *Local) markAddressed(targets []string, key channels.Key, kind markKind) {
+	l.markAs(kind, key)
 	if len(targets) == 0 {
 		return
 	}
@@ -328,6 +435,7 @@ func (l *Local) markAddressed(targets []string, key channels.Key) {
 				clear(s.changed)
 				clear(s.addressed)
 				clear(s.durable)
+				clear(s.moved)
 			}
 		}
 		s.mu.Unlock()
@@ -380,6 +488,7 @@ func (s *Subscription) addReads(reader channels.Reader, keys []channels.Key) {
 			clear(s.changed)
 			clear(s.reads)
 			clear(s.durable)
+			clear(s.moved)
 			s.nReads = 0
 		}
 	}
@@ -391,9 +500,10 @@ func (s *Subscription) addReads(reader channels.Reader, keys []channels.Key) {
 }
 
 // markWhere adds keys to the change set of each subscriber that pick
-// admits, and wakes it. durable also adds them to the durable set of each
-// such subscriber that takes one.
-func (l *Local) markWhere(pick func(*Subscription) bool, keys []channels.Key, durable bool) {
+// admits, and wakes it. A message or moved kind also adds them to the
+// durable set of each such subscriber that takes one, and a moved kind to
+// its moved set.
+func (l *Local) markWhere(pick func(*Subscription) bool, keys []channels.Key, kind markKind) {
 	if len(keys) == 0 {
 		return
 	}
@@ -412,13 +522,17 @@ func (l *Local) markWhere(pick func(*Subscription) bool, keys []channels.Key, du
 				break
 			}
 			s.changed[k] = struct{}{}
-			if durable && s.allDurable {
+			if kind != markKindEphemeral && s.allDurable {
 				s.durable[k] = struct{}{}
+				if kind == markKindMoved {
+					s.moved[k] = struct{}{}
+				}
 			}
 			if len(s.changed) > s.max {
 				s.resync = true
 				clear(s.changed)
 				clear(s.durable)
+				clear(s.moved)
 			}
 		}
 		s.mu.Unlock()
