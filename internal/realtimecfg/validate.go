@@ -383,7 +383,26 @@ func (v *validator) messageType(key, name string, raw *rawMessageType, ct *Chann
 		Name: name, Label: orDefault(raw.Label, name),
 		Properties: map[string]Property{}, Actions: map[string]*Action{},
 	}
-	v.persist(key, raw, mt, limits)
+	switch Persist(raw.Persist) {
+	case "", PersistLog:
+		mt.Persist = PersistLog
+		mt.Rate = v.lowerRate(key+".rate", raw.Rate, limits.LogRate)
+		if raw.TTL != "" {
+			v.add(key+".ttl", "only an ephemeral message type has a ttl")
+		}
+	case PersistEphemeral:
+		mt.Persist = PersistEphemeral
+		mt.Rate = v.lowerRate(key+".rate", raw.Rate, limits.EphemeralRate)
+		mt.TTL = v.ttl(key+".ttl", raw.TTL)
+		if raw.PromoteTo != nil {
+			v.add(key+".promote_to", "an ephemeral message is never stored, so it cannot be promoted")
+		}
+		if len(raw.Actions) > 0 {
+			v.add(key+".actions", "an ephemeral message is never stored, so it cannot carry actions")
+		}
+	default:
+		v.add(key+".persist", fmt.Sprintf("must be log or ephemeral, got %q", raw.Persist))
+	}
 	if raw.Unread.set() {
 		noUnread, problem := unreadOf(raw.Unread.node, mt.Persist)
 		if problem != "" {
@@ -435,32 +454,6 @@ func (v *validator) messageType(key, name string, raw *rawMessageType, ct *Chann
 		}
 	}
 	return mt
-}
-
-// persist checks the keys that depend on persist: rate, ttl, and those a
-// signal may not have. It sets mt.Persist, Rate and TTL. `unread:`, which
-// a signal may not have either, is checked by [unreadOf].
-func (v *validator) persist(key string, raw *rawMessageType, mt *MessageType, limits Limits) {
-	switch Persist(raw.Persist) {
-	case "", PersistLog:
-		mt.Persist = PersistLog
-		mt.Rate = v.lowerRate(key+".rate", raw.Rate, limits.LogRate)
-		if raw.TTL != "" {
-			v.add(key+".ttl", "only an ephemeral message type has a ttl")
-		}
-	case PersistEphemeral:
-		mt.Persist = PersistEphemeral
-		mt.Rate = v.lowerRate(key+".rate", raw.Rate, limits.EphemeralRate)
-		mt.TTL = v.ttl(key+".ttl", raw.TTL)
-		if raw.PromoteTo != nil {
-			v.add(key+".promote_to", "an ephemeral message is never stored, so it cannot be promoted")
-		}
-		if len(raw.Actions) > 0 {
-			v.add(key+".actions", "an ephemeral message is never stored, so it cannot carry actions")
-		}
-	default:
-		v.add(key+".persist", fmt.Sprintf("must be log or ephemeral, got %q", raw.Persist))
-	}
 }
 
 // unreadOf reads a set `unread:` on a type with the given persist. It

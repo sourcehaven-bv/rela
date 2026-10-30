@@ -256,9 +256,14 @@ export class ChannelsPage extends BasePage {
       .click();
   }
 
-  /** The page is the entity page with the deep link to `channelKey`. */
+  /**
+   * The page is the entity page with the deep link to `channelKey`. A
+   * message link arrives with `&seq=`, which the page drops once it has
+   * revealed the message; the router then writes the key unencoded, so
+   * both spellings of `/` are accepted.
+   */
   async expectChannelDeepLink(type: string, id: string, channelKey: string) {
-    const query = `channel=${encodeURIComponent(channelKey)}`;
-    await expect(this.page).toHaveURL(new RegExp(`/entity/${type}/${id}\\?${query}$`));
+    const key = encodeURIComponent(channelKey).replace(/%2F/g, '(?:%2F|/)');
+    await expect(this.page).toHaveURL(new RegExp(`/entity/${type}/${id}\\?channel=${key}$`));
   }
 }
