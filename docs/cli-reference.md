@@ -1324,6 +1324,7 @@ the text output as a `Coverage:` line and in JSON as a `coverage` field:
 | `gaps`        | Families: an id counts as used when any face of it exists       |
 | `cardinality` | Per face for outgoing content-scoped relations, else families   |
 | `properties`, `validations` | Every face, each row checked on its own        |
+| `prose`       | The face the CLI's world selects for each entity                |
 
 In JSON, an orphan entry is an object with `id`, `type`, `title` and, for a
 faced type, `faces`. `trace` and `path` show one node per id, with the faces
@@ -1468,6 +1469,21 @@ Checks for:
 - Entity IDs not matching configured patterns
 
 This catches issues in manually-edited markdown files that bypass CLI validation.
+
+#### rela analyze prose
+
+Run the prose checkers marked `analyze: true` over entity bodies. See
+[checkers.md](checkers.md).
+
+```bash
+rela analyze prose
+rela analyze prose --type procedure
+rela analyze all --prose
+```
+
+Findings are listed per entity with line, column, severity, rule and message.
+Findings alone do not make the command fail; a checker that cannot run does.
+`rela analyze all` includes prose checks only with `--prose`.
 
 #### rela analyze schema
 

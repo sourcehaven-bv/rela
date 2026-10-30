@@ -188,7 +188,7 @@ lists:
       - property: title
         label: "Title"
         sortable: true
-        link: true
+        link: detail
       - property: status
         label: "Status"
         sortable: true
@@ -1563,7 +1563,7 @@ lists:
       - property: title
         label: "Title"
         sortable: true
-        link: true
+        link: detail
       - property: status
         label: "Status"
         sortable: true
@@ -1655,7 +1655,7 @@ or the face each row was served in. Set exactly one of `property`, `relation` or
 | `face`      | bool   | Shows the label of the face each row was served in; faced types only        |
 | `label`     | string | Column header (defaults to property / relation name, or `Face`)             |
 | `sortable`  | bool   | Column can be sorted by clicking the header                                 |
-| `link`      | bool   | Cell value links to the entity's detail page                                |
+| `link`      | string | `detail` links the cell to the entity's detail page; `document/<name>` to a document |
 
 **Face column example** — on a list of a type with `concept` and `vastgesteld` faces, show
 which one the world serves for each row:
@@ -1675,7 +1675,7 @@ default world a row has no face, so the cell is empty.
 ```yaml
 columns:
   - property: title
-    link: true
+    link: detail
   - relation: implements
     direction: incoming
     label: "Implemented by"
@@ -2247,7 +2247,7 @@ views:
         columns:
           - property: title
             label: "Title"
-            link: true
+            link: detail
           - property: status
             label: "Status"
         empty_message: "No blocked tickets"
@@ -2476,7 +2476,7 @@ sections:
     columns:
       - property: title
         label: "Title"
-        link: true
+        link: detail
       - property: status
         label: "Status"
     empty_message: "No related items found"
@@ -2501,7 +2501,7 @@ sections:
 | `group_by`      | string | Property to group entities by                           |
 | `empty_message` | string | Text shown when the collection is empty                 |
 | `hide_empty`    | bool   | Leave the section out when the collection is empty (see below) |
-| `link`          | bool   | Link entity titles to their detail pages                |
+| `link`          | string | `detail` links entity titles to their detail pages      |
 | `create`        | map    | Offer a "create related entity" button (see below)      |
 
 Each entry under `fields:` takes:
@@ -3135,7 +3135,7 @@ dashboard:
       columns:
         - property: title
           label: "Title"
-          link: true
+          link: detail
         - property: status
           label: "Status"
         - property: assignee
@@ -3330,9 +3330,10 @@ dashboard:
 column count (`width: 2`), fails config load.
 
 The number of columns follows the width of the screen, so `width` names a size
-rather than a column count. On a phone, a `wide` or `full` card takes the whole
-row. Cards have no height setting: a card grows to fit its content, and the
-cards in one row share the height of the tallest.
+rather than a column count. On a phone (a screen 480 pixels wide or less),
+every card takes the whole row, whatever its `width`. Cards have no height
+setting: a card grows to fit its content, and the cards in one row share the
+height of the tallest.
 
 Cards appear in the order of `cards:`, which is also the order a keyboard and a
 screen reader follow. The grid does not move a later card up to fill a hole. A
@@ -5766,7 +5767,7 @@ lists:
     title: "All Tickets"
     columns:
       - property: title
-        link: true
+        link: detail
       - property: status
     actions: [resolve-ticket, close-ticket]
 ```
@@ -5807,7 +5808,7 @@ lists:
     title: "Documenten"
     columns:
       - property: title
-        link: true
+        link: detail
     toolbar_actions: [vvt-nieuw]
 ```
 
@@ -7114,7 +7115,7 @@ lists:
       - property: title
         label: "Title"
         sortable: true
-        link: true
+        link: detail
       - property: status
         label: "Status"
         sortable: true
@@ -7144,7 +7145,7 @@ lists:
     title: "Open Tickets"
     columns:
       - property: title
-        link: true
+        link: detail
         sortable: true
       - property: priority
         sortable: true
@@ -7162,7 +7163,7 @@ lists:
     title: "My Tickets"
     columns:
       - property: title
-        link: true
+        link: detail
         sortable: true
       - property: status
         sortable: true
@@ -7235,7 +7236,7 @@ dashboard:
       columns:
         - property: title
           label: "Title"
-          link: true
+          link: detail
         - property: assignee
           label: "Assignee"
       limit: 5
@@ -8943,7 +8944,7 @@ This version has no screen for migration history.
 2. **Create before edit** - Define a create form with sensible defaults and hidden fields (like
    `status: open`). Then define an edit form with transitions and all fields visible.
 
-3. **Use `link: true`** on the primary column (usually `title` or `name`) so users can click
+3. **Use `link: detail`** on the primary column (usually `title` or `name`) so users can click
    through to entity details.
 
 4. **Filter strategically** - Use static filters for focused views (e.g., "Open Tickets") and

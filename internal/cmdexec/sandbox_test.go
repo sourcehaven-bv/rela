@@ -332,11 +332,14 @@ func TestHostReadOnlyIsPerPurpose(t *testing.T) {
 	t.Cleanup(func() {
 		SetHostReadOnly(PurposeScan, nil)
 		SetHostReadOnly(PurposeTransform, nil)
+		SetHostReadOnly(PurposeCheck, nil)
 	})
 	scan := []string{"/run/clamav/clamd.ctl", "/etc/clamav/clamd.conf"}
 	transform := []string{"/etc/paperspecs", "/var/lib/texmf"}
+	check := []string{"/etc/rela/vale"}
 	SetHostReadOnly(PurposeScan, scan)
 	SetHostReadOnly(PurposeTransform, transform)
+	SetHostReadOnly(PurposeCheck, check)
 
 	cases := []struct {
 		name string
@@ -345,6 +348,7 @@ func TestHostReadOnlyIsPerPurpose(t *testing.T) {
 	}{
 		{"scan", []Option{WithPurpose(PurposeScan)}, scan},
 		{"transform", []Option{WithPurpose(PurposeTransform)}, transform},
+		{"check", []Option{WithPurpose(PurposeCheck)}, check},
 		{"no purpose", nil, transform},
 	}
 	for _, tc := range cases {
@@ -488,7 +492,7 @@ func TestCheckProjectNotExposed(t *testing.T) {
 	}
 	// Every purpose's list is checked: a scan path inside the project would
 	// expose it as surely as a transform path.
-	for _, purpose := range []Purpose{PurposeTransform, PurposeScan} {
+	for _, purpose := range []Purpose{PurposeTransform, PurposeScan, PurposeCheck} {
 		for _, tc := range cases {
 			t.Run(purpose.String()+"/"+tc.name, func(t *testing.T) {
 				// Bypass SetHostReadOnly: a TempDir path may itself be refused as

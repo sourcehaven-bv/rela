@@ -67,7 +67,7 @@ async function measure(page: import("@playwright/test").Page): Promise<Geometry>
 }
 
 test.describe("Dashboard card width", () => {
-  for (const width of [1440, 900, 700, 375]) {
+  for (const width of [1440, 900, 700]) {
     test(`tiles take their width without overflow at ${width}px`, async ({ appPage }) => {
       await appPage.setViewportSize({ width, height: 1000 });
       const dashboard = new DashboardPage(appPage);
@@ -89,4 +89,20 @@ test.describe("Dashboard card width", () => {
       expect(g.tiles["Full"].width).toBeCloseTo(row, 0);
     });
   }
+
+  // Phones show one card per row, whatever its width (TKT-26UHHKL).
+  test("phones stack every card in one track at 480px", async ({ appPage }) => {
+    // 480px is the inclusive edge of the phone breakpoint.
+    await appPage.setViewportSize({ width: 480, height: 1000 });
+    const dashboard = new DashboardPage(appPage);
+    await dashboard.navigateNamed("widths");
+    await dashboard.expectCardTitles(["Normal A", "Wide", "Normal B", "Full"]);
+
+    const g = await measure(appPage);
+    expect(g.tracks).toHaveLength(1);
+    expect(g.overflows).toBe(false);
+    for (const tile of Object.values(g.tiles)) {
+      expect(tile.width).toBeCloseTo(g.gridWidth, 0);
+    }
+  });
 });

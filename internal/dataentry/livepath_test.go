@@ -171,6 +171,28 @@ func TestLivePath_PresenceID(t *testing.T) {
 	}
 }
 
+// busyType is the channel type of a busy list path and empty for every
+// other shape, a detail or a view included.
+func TestLivePath_BusyType(t *testing.T) {
+	meta := newTestAppV1(t).State().Meta
+	for raw, want := range map[string]string{
+		"/api/v1/tickets?busy=run":            "run",
+		"/api/v1/tickets?per_page=5&busy=job": "job",
+		"/api/v1/tickets":                     "",
+		"/api/v1/tickets/TKT-1/_presence":     "",
+		"/api/v1/tickets/TKT-1/_channels/run": "",
+		"/api/v1/_inbox":                      "",
+	} {
+		lp, err := parseLivePath(raw, meta)
+		if err != nil {
+			t.Fatalf("parseLivePath(%q) = %v", raw, err)
+		}
+		if got := lp.busyType(); got != want {
+			t.Errorf("%s: busyType = %q, want %q", raw, got, want)
+		}
+	}
+}
+
 // TestLivePath_InboxCanonical pins AC 7: equal inbox requests rebuild one
 // replay URL, so they share one replay pair.
 func TestLivePath_InboxCanonical(t *testing.T) {

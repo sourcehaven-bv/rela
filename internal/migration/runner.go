@@ -165,7 +165,7 @@ func ApplyWithMetamodel(path string, ft FileType, fs storage.FS, meta MetamodelP
 		// coverage-ignore-end
 	}
 
-	if err := fs.WriteFile(path, buf.Bytes(), 0o644); err != nil {
+	if err := fs.WriteFile(path, refoldFolded(buf.Bytes()), 0o644); err != nil {
 		result.Error = fmt.Errorf("writing file: %w", err)
 		return result, nil
 	}
@@ -223,6 +223,16 @@ func (e *Error) Error() string {
 	}
 	buf.WriteString("\nRun 'rela migrate' to update your project files.")
 	return buf.String()
+}
+
+// Descriptions returns the description of each detected migration, in
+// detection order, for a caller that reports them one per line.
+func (e *Error) Descriptions() []string {
+	out := make([]string, len(e.Detections))
+	for i, d := range e.Detections {
+		out[i] = d.Description
+	}
+	return out
 }
 
 // IsMigrationError checks if an error is a migration Error.

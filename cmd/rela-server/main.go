@@ -351,6 +351,20 @@ func validateIdentityFlags(f *serverFlags, envUser string) (identityMode, error)
 	return identityJWT, nil
 }
 
+// hasIdentitySource reports whether a request can carry a user identity: JWT
+// identity, a principal header, or $RELA_DATAENTRY_USER. The env resolver
+// trims the value, so a blank one counts as unset.
+func hasIdentitySource(mode identityMode, f *serverFlags, envUser string) bool {
+	return mode == identityJWT || f.principalHeader != "" || strings.TrimSpace(envUser) != ""
+}
+
+// warnUnidentifiedACL reports whether the server would refuse every /api/
+// request with 401 unauthenticated: ACL is configured, but there is no
+// identity source, so every caller is "unknown" (TKT-QR1VTP).
+func warnUnidentifiedACL(mode identityMode, f *serverFlags, envUser string, hasACL bool) bool {
+	return hasACL && !hasIdentitySource(mode, f, envUser)
+}
+
 // wirePrincipalResolvers installs the identity source on the app, per mode.
 //
 // identityHeader keeps the legacy chain: $RELA_DATAENTRY_USER, then the plain
@@ -584,6 +598,15 @@ func main() {
 				"only safe if a reverse proxy strips + replaces the header. "+
 				"See docs/server-security.md.",
 				"bind", f.bind, "header", f.principalHeader)
+		}
+		if strings.TrimSpace(os.Getenv(dataentry.EnvDataEntryUserVar)) != "" {
+			// The 401 unauthenticated hint offers the env var for local
+			// use (TKT-QR1VTP). Beyond loopback it makes every caller that
+			// one user, so say so here too.
+			slog.Warn("$"+dataentry.EnvDataEntryUserVar+" set on non-loopback bind: "+
+				"every client that reaches this server acts as that user. "+
+				"Use --jwt-* instead. See docs/server-security.md.",
+				"bind", f.bind)
 		}
 		if shouldWarnNoACL(svc.ACL(), f.readOnly) {
 			// Non-loopback bind without `acl.yaml` and without

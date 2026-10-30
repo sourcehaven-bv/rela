@@ -165,10 +165,10 @@ func taskProperties(t *testing.T, schema *configedit.Map) *configedit.Map {
 
 func TestConfigure_Gate(t *testing.T) {
 	srv, _ := configServer(t)
-	// No user: the ACL middleware refuses the unresolved principal before
-	// the Configure gate runs.
+	// No user: the ACL middleware answers 401 before the Configure gate
+	// runs (BUG-C8DHGF).
 	for user, want := range map[string]int{
-		"bob": http.StatusForbidden, "": http.StatusInternalServerError, "ada": http.StatusOK,
+		"bob": http.StatusForbidden, "": http.StatusUnauthorized, "ada": http.StatusOK,
 	} {
 		rec := call(t, srv, user, http.MethodGet, dataentry.ConfigurePath, nil)
 		require.Equal(t, want, rec.Code, "user %q: %s", user, rec.Body.String())
@@ -264,6 +264,8 @@ func TestValidateConfigEditing(t *testing.T) {
 			wantErr: "--read-only"},
 		{name: "no acl.yaml", dir: noACL, flags: serverFlags{principalHeader: "X-User"}, wantErr: "acl.yaml"},
 		{name: "no identity", dir: withACL, wantErr: "identity source"},
+		{name: "blank env identity", dir: withACL, flags: serverFlags{bind: "127.0.0.1"}, envUser: " ",
+			wantErr: "identity source"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -586,4 +588,19 @@ func TestConfigure_BusyFieldAgainstRealtime(t *testing.T) {
 	require.Len(t, verr.Problems, 1)
 	require.Contains(t, verr.Problems[0],
 		`data-entry.yaml: kanban "board": card.fields[0]: realtime.yaml declares no channel type "nope"`)
+}
+
+// TestConfigure_DeprecatedDataEntry pins that the Configure preview reports
+// deprecated data-entry.yaml syntax as one problem per detection. It names
+// the fix rather than `rela migrate`, which rewrites files on disk and cannot
+// change an edit that is not saved yet (TKT-BDKE4K).
+func TestConfigure_DeprecatedDataEntry(t *testing.T) {
+	srv, _ := configServer(t)
+	bad := cfgDataEntry + "lists:\n  tasks:\n    entity_type: task\n    columns:\n      - property: title\n        link: true\n"
+	_, err := configureHost{s: srv}.Validate([]byte(cfgSchema), []byte(bad))
+	var verr *configedit.ValidationError
+	require.ErrorAs(t, err, &verr)
+	require.Len(t, verr.Problems, 1)
+	require.Equal(t, "data-entry.yaml: deprecated syntax: Convert link: true to link: detail in data-entry.yaml",
+		verr.Problems[0])
 }

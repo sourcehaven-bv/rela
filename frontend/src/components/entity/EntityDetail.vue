@@ -22,7 +22,7 @@ import { worldText, type WorldTextVars } from '@/utils/worldText'
 import type { ViewEntity, ViewResponse, ViewSection, ViewSectionField, ViewTreeNode } from '@/api'
 import type { Entity } from '@/types'
 import { entityDisplayTitle } from '@/utils/entityDisplay'
-import { useAutoSave } from '@/composables/useAutoSave'
+import { useAutoSave, type AutoSaveTarget } from '@/composables/useAutoSave'
 import { toggleCheckboxInSource } from '@/utils/checkboxToggle'
 import type { ActionConfig, Command } from '@/types'
 import { getEditFormId } from '@/types'
@@ -292,7 +292,7 @@ const sectionReorder = useSectionReorder({
     const ticket = viewTicket()
     const world = worldParam.value
     const view = await fetchView(props.entityType, props.entityId, world)
-    if (view) await landView(ticket, view, world)
+    if (view) landView(ticket, view, world)
   },
 })
 const loadedCommands = ref<Command[]>([])
@@ -591,79 +591,95 @@ watch(
   { immediate: true }
 )
 
-// Content-only useAutoSave instance. EntityDetail does not own a form
-// surface, so the property and relations channels are disabled —
-// scheduleFieldSave/scheduleRelationsChange would throw if called. The
-// content channel debounces at 100ms so rapid checkbox clicks coalesce
-// into one PATCH while still feeling instant; the e2e suite tolerates
-// up to 2s for the UI poll and 5s for the server poll.
+// Content-only useAutoSave instances. EntityDetail does not own a form
+// surface, so the relations channel is disabled. The content channel
+// debounces at 100ms so rapid checkbox clicks coalesce into one PATCH while
+// still feeling instant; the e2e suite tolerates up to 2s for the UI poll and
+// 5s for the server poll.
 //
-// contentRef is a computed mirror of viewData.entry.content; the
-// composable only reads its shape (never writes), so a read-only
-// computed is sufficient. Property/relations callbacks are no-ops to
-// satisfy AutoSaveOptions's required surface; they are unreachable
-// because their channels are disabled and mergeServerResponse skips
-// them.
-const entryContent = computed(() => entry.value?.content ?? '')
-const entryProperties = computed<Record<string, unknown>>(() => entry.value?.properties ?? {})
-// When the route changes mid-debounce, the watch pins the previous
-// entity identity here so the in-flight flush PATCHes the entity the
-// user actually clicked, not the one they just navigated to.
-// A shallowRef, because each pin is released by identity (`value === pin`).
-// A ref hands back a reactive proxy of the object, which is never `===` the
-// object, so the pin was never released: after one switch every later save
-// went to the previous entity (TKT-7LTLHW3).
-const pinEntityForFlush = shallowRef<{ type: string; id: string } | null>(null)
-// A save can only be scheduled by editing a loaded entry, so a missing
-// address here is a bug. Throwing fails that save visibly; a fallback id
-// would PATCH a row the page is not showing.
-function requireServedRef(): string {
-  const address = servedRef.value
-  if (address === null) throw new Error('entity address requested before the entry loaded')
-  return address
+// One instance per served address, built when an entry loads (BUG-NSGD6OE).
+// An instance writes only to its own target, so a route or world change that
+// puts another row on screen cannot send the previous row's pending edit to
+// the new one: the previous instance keeps saving to the previous row, and
+// its server responses stop touching the view once that row is gone.
+type ContentAutoSave = ReturnType<typeof useAutoSave>
+const contentAutoSave = shallowRef<ContentAutoSave | null>(null)
+
+// Whether the row on screen is the one `target` names.
+function showing(target: AutoSaveTarget): boolean {
+  const ent = entry.value
+  return ent !== undefined && ent !== null && ent.type === target.type && servedRef.value === target.id
 }
-const contentAutoSave = useAutoSave({
-  getEntityType: () => pinEntityForFlush.value?.type ?? props.entityType,
-  // The row's ADDRESS, face included: a checkbox toggled on the published
-  // face must land on the published face. The pin holds an address too.
-  getEntityId: () => pinEntityForFlush.value?.id ?? requireServedRef(),
-  contentDebounceMs: 100,
-  formData: entryProperties as unknown as import('vue').Ref<Record<string, unknown>>,
-  contentRef: entryContent as unknown as import('vue').Ref<string>,
-  inverseToCanonical: new Map(),
-  buildRelationsBody: () => null,
-  applyServerProperty: (prop, value) => {
-    const view = viewData.value
-    if (!view?.entry) return
-    const pinned = pinEntityForFlush.value
-    if (pinned && (view.entry.id !== pinned.id || view.entry.type !== pinned.type)) return
-    const properties = { ...view.entry.properties }
-    if (value === undefined) delete properties[prop]
-    else properties[prop] = value
-    viewData.value = { ...view, entry: { ...view.entry, properties } }
-  },
-  applyServerContent: (next) => {
-    const view = viewData.value
-    if (!view || !view.entry) return
-    // If the route changed mid-flush, the previous entity's PATCH may
-    // resolve after the new entity's loadView; reject the apply by
-    // entity-identity rather than splice stale content into the new
-    // view.
-    const pinned = pinEntityForFlush.value
-    if (pinned && (view.entry.id !== pinned.id || view.entry.type !== pinned.type)) return
-    const nextSections = view.sections.map((s) =>
-      isEntryContentSection(s) ? { ...s, content: next } : s
-    )
-    viewData.value = { ...view, entry: { ...view.entry, content: next }, sections: nextSections }
-  },
-  onError: (msg, info) => {
-    uiStore.error(msg)
-    // A refused title leaves the optimistic heading on screen; reload so the
-    // page shows what the server holds.
-    if (info?.channel === 'property') void loadView()
-  },
-  disableRelationsChannel: true,
-})
+
+function makeContentAutoSave(target: AutoSaveTarget): ContentAutoSave {
+  // The composable only reads these. Another row's state is not this
+  // instance's form, so it reads as empty once its row has left the screen.
+  // From then on its server responses still move its bases but no longer
+  // reach the view, so a replaced instance must not take new edits: returning
+  // to its row builds a fresh one.
+  const formData = computed(() => (showing(target) ? (entry.value?.properties ?? {}) : {}))
+  const contentRef = computed(() => (showing(target) ? (entry.value?.content ?? '') : ''))
+  return useAutoSave({
+    target,
+    contentDebounceMs: 100,
+    formData: formData as unknown as import('vue').Ref<Record<string, unknown>>,
+    contentRef: contentRef as unknown as import('vue').Ref<string>,
+    inverseToCanonical: new Map(),
+    buildRelationsBody: () => null,
+    applyServerProperty: (prop, value) => {
+      const view = viewData.value
+      if (!view?.entry || !showing(target)) return
+      const properties = { ...view.entry.properties }
+      if (value === undefined) delete properties[prop]
+      else properties[prop] = value
+      viewData.value = { ...view, entry: { ...view.entry, properties } }
+    },
+    applyServerContent: (next) => {
+      const view = viewData.value
+      if (!view?.entry || !showing(target)) return
+      const nextSections = view.sections.map((s) =>
+        isEntryContentSection(s) ? { ...s, content: next } : s
+      )
+      viewData.value = { ...view, entry: { ...view.entry, content: next }, sections: nextSections }
+    },
+    onError: (msg, info) => {
+      uiStore.error(msg)
+      // A refused title leaves the optimistic heading on screen; reload so the
+      // page shows what the server holds.
+      if (info?.channel === 'property' && showing(target)) void loadView()
+    },
+    disableRelationsChannel: true,
+  })
+}
+
+// The instance for `ent`, replacing the current one when `ent` is another
+// row. The replaced instance is flushed; it still writes to its own row.
+function autoSaveFor(ent: Entity): ContentAutoSave {
+  const target = { type: ent.type, id: entityRef(ent) }
+  const current = contentAutoSave.value
+  if (current && current.target.type === target.type && current.target.id === target.id) {
+    return current
+  }
+  void current?.commitImmediately()
+  // Built after an await, outside setup. The composable registers no watchers
+  // or hooks, so a replaced instance needs no teardown and is collected once
+  // its last save settles.
+  const next = makeContentAutoSave(target)
+  contentAutoSave.value = next
+  return next
+}
+
+// The instance an edit on screen goes to. An edit needs a loaded entry, and
+// loading one builds its instance, so a missing or mismatched instance is a
+// bug. Throwing fails that edit visibly; any other instance would write a row
+// the page is not showing.
+function editAutoSave(): ContentAutoSave {
+  const save = contentAutoSave.value
+  if (!save || !showing(save.target)) {
+    throw new Error('EntityDetail: no autosave instance for the entry on screen')
+  }
+  return save
+}
 
 // Accepting a suggestion (TKT-S5C0K3) writes the body on the server, so it must
 // not race a pending checkbox save: that PATCH would carry the pre-accept body
@@ -671,7 +687,7 @@ const contentAutoSave = useAutoSave({
 // first, and toggles are refused while the accept is in flight.
 const accepting = ref(false)
 const canAccept = computed(
-  () => canUpdate.value && !accepting.value && contentAutoSave.status.value !== 'saving'
+  () => canUpdate.value && !accepting.value && contentAutoSave.value?.status.value !== 'saving'
 )
 
 async function acceptSuggestion(c: Comment) {
@@ -680,8 +696,8 @@ async function acceptSuggestion(c: Comment) {
   try {
     // A save that timed out may still land on the server after the accept and
     // overwrite it with the pre-accept body, so an unsettled flush aborts.
-    const flushed = await contentAutoSave.commitImmediately()
-    if (!flushed.settled || flushed.error) {
+    const flushed = await contentAutoSave.value?.commitImmediately()
+    if (flushed && (!flushed.settled || flushed.error)) {
       uiStore.error(t('entity.suggestion.flushFailed'))
       return
     }
@@ -689,7 +705,7 @@ async function acceptSuggestion(c: Comment) {
     if (address === null) return
     const res = await acceptComment(props.entityType, address, c.id)
     const view = viewData.value
-    if (view?.entry) {
+    if (view?.entry && servedRef.value === address) {
       const nextSections = view.sections.map((s) =>
         isEntryContentSection(s) ? { ...s, content: res.content } : s
       )
@@ -736,35 +752,57 @@ const canEditBody = computed(() => canUpdate.value && !isInaccessible.value)
 // A pause in typing, not a keystroke, is worth a save.
 const BODY_SAVE_DEBOUNCE_MS = 800
 
+// An open editor writes to the row it was opened on, taken when the edit
+// starts. Choosing the instance when the editor emits would send an edit that
+// outlives a route change to the row that replaced it (BUG-NSGD6OE).
+let bodySave: ContentAutoSave | null = null
+let titleEdit: { save: ContentAutoSave; prop: string } | null = null
+
+function onBodyEdit() {
+  bodySave = editAutoSave()
+}
+
 function onBodyInput(next: string) {
+  const save = bodySave ?? editAutoSave()
   const view = viewData.value
-  if (!view?.entry) return
   // Mirrored into the view at once so the read view is current on leaving.
-  const sections = view.sections.map((s) =>
-    isEntryContentSection(s) ? { ...s, content: next } : s
-  )
-  viewData.value = { ...view, entry: { ...view.entry, content: next }, sections }
-  contentAutoSave.scheduleContentSave(next, BODY_SAVE_DEBOUNCE_MS)
+  if (view?.entry && showing(save.target)) {
+    const sections = view.sections.map((s) =>
+      isEntryContentSection(s) ? { ...s, content: next } : s
+    )
+    viewData.value = { ...view, entry: { ...view.entry, content: next }, sections }
+  }
+  save.scheduleContentSave(next, BODY_SAVE_DEBOUNCE_MS)
 }
 
 function onBodyDone() {
-  void contentAutoSave.commitImmediately()
+  void (bodySave ?? contentAutoSave.value)?.commitImmediately()
+  bodySave = null
+}
+
+function onTitleEdit() {
+  const prop = titleProperty.value
+  titleEdit = prop ? { save: editAutoSave(), prop } : null
 }
 
 function saveTitle(value: string) {
-  const prop = titleProperty.value
+  const edit = titleEdit
+  titleEdit = null
+  if (!edit) return
+  const { save, prop } = edit
   const view = viewData.value
-  if (!prop || !view?.entry) return
   // Optimistic: the heading changes as the control closes. `_title` falls
   // back to the ID when empty, as the server derives it.
-  const properties = { ...view.entry.properties, [prop]: value }
-  viewData.value = {
-    ...view,
-    entry: { ...view.entry, properties, _title: value || view.entry.id },
+  if (view?.entry && showing(save.target)) {
+    const properties = { ...view.entry.properties, [prop]: value }
+    viewData.value = {
+      ...view,
+      entry: { ...view.entry, properties, _title: value || view.entry.id },
+    }
   }
-  if (value === '') contentAutoSave.scheduleUnset(prop)
-  else contentAutoSave.scheduleFieldSave(prop, value)
-  void contentAutoSave.commitImmediately()
+  if (value === '') save.scheduleUnset(prop)
+  else save.scheduleFieldSave(prop, value)
+  void save.commitImmediately()
 }
 
 function contentClick(event: MouseEvent) {
@@ -876,6 +914,8 @@ function handleCheckboxToggle(index: number) {
     uiStore.warning(t('entity.suggestion.applyingBusy'))
     return
   }
+  // Taken before the view changes, so a refusal leaves the box as it was.
+  const save = editAutoSave()
   let newContent: string
   try {
     newContent = toggleCheckboxInSource(current.content || '', index)
@@ -898,7 +938,7 @@ function handleCheckboxToggle(index: number) {
     isEntryContentSection(s) ? { ...s, content: newContent } : s
   )
   viewData.value = { ...view, entry: { ...current, content: newContent }, sections: nextSections }
-  contentAutoSave.scheduleContentSave(newContent)
+  save.scheduleContentSave(newContent)
 }
 
 // Keyboard shortcuts
@@ -1055,7 +1095,8 @@ useLiveSubscription(
 // Both counts are reactive, which the watch below needs; isContentDirty is
 // not, and its post-save window would defer a refresh with nothing to rerun it.
 const autoSaveBusy = () =>
-  contentAutoSave.pendingCount.value > 0 || contentAutoSave.inFlightCount.value > 0
+  (contentAutoSave.value?.pendingCount.value ?? 0) > 0 ||
+  (contentAutoSave.value?.inFlightCount.value ?? 0) > 0
 let refreshDeferred = false
 watch(
   () => !autoSaveBusy(),
@@ -1079,7 +1120,7 @@ async function refreshView() {
       refreshDeferred = true
       return
     }
-    await landView(ticket, view, world)
+    landView(ticket, view, world)
   } catch (err) {
     // A refusal wins over every answer, older or newer: held content the
     // server has refused must go (frontend/CLAUDE.md, BUG-E8XE7I).
@@ -1093,35 +1134,18 @@ function dropRefusedView(ticket: ViewTicket, err: unknown) {
   error.value = getErrorMessage(err, t('entity.loadFailed'))
 }
 
-// Puts a fetched view on screen; returns whether it landed. When the view
-// shows another entity than the one on screen, the edits autosave still holds
-// for the one on screen are sent to it first. Autosave reads its target when
-// a save is sent, so after the swap they would go to the new entity.
-async function landView(
-  ticket: ViewTicket,
-  view: ViewResponse | null,
-  world: string | undefined
-): Promise<boolean> {
-  const leaving = entry.value
-  const arriving = view?.entry ? entityRef(view.entry) : null
-  if (ticket.fresh() && leaving && entityRef(leaving) !== arriving && autoSaveBusy()) {
-    const pin = { type: leaving.type, id: entityRef(leaving) }
-    pinEntityForFlush.value = pin
-    try {
-      await contentAutoSave.commitImmediately()
-    } finally {
-      if (pinEntityForFlush.value === pin) pinEntityForFlush.value = null
-    }
-  }
-  if (!ticket.fresh()) return false
+// Puts a fetched view on screen if the ticket is still fresh. A view of
+// another row replaces the autosave instance; the replaced one keeps writing
+// to its own row (autoSaveFor).
+function landView(ticket: ViewTicket, view: ViewResponse | null, world: string | undefined) {
+  if (!ticket.fresh()) return
   viewData.value = view
   viewWorld.value = world
   ticket.land()
   // Seed the autosave baseline so the first toggle's no-op suppression can
   // compare against server state without waiting for the response of a
   // sentinel PATCH.
-  if (view?.entry) contentAutoSave.recordServerSnapshot(view.entry)
-  return true
+  if (view?.entry) autoSaveFor(view.entry).recordServerSnapshot(view.entry)
 }
 
 // Comments and pile scope navigation belong to the row on screen, which
@@ -1185,7 +1209,7 @@ async function loadView() {
     // A refresh that started after this load may already have landed a
     // newer answer for the same entity; then this one does not land.
     const before = servedRef.value
-    await landView(ticket, view, fetchedWorld)
+    landView(ticket, view, fetchedWorld)
     // A new row on screen reloads comments and navigation through the
     // servedRef watch; a reload of the same row reloads them here.
     // loadComments swallows its own failures (see its doc): a comment-service
@@ -1350,7 +1374,7 @@ async function runCopy(offer: CopyOffer) {
   // the page can be showing a different entity by the time the invoke
   // resolves. Without this the success toast names a face on the entity the
   // user has already left, and `loadView()` fires a second, pointless fetch
-  // for the one they are now on. Same shape as `pinEntityForFlush` below.
+  // for the one they are now on.
   const subject = bareEntityId.value
   const label = offer.label || offer.name
   copyBusy.value = true
@@ -2088,7 +2112,7 @@ onBeforeUnmount(() => {
   // doesn't silently drop the user's click. commitImmediately returns
   // a promise; we don't await it because Vue's onBeforeUnmount is
   // synchronous — the FIFO chain will run to completion regardless.
-  void contentAutoSave.commitImmediately()
+  void contentAutoSave.value?.commitImmediately()
 })
 
 
@@ -2118,7 +2142,7 @@ function onEntityChanged(data: EntityEventData) {
   clearTimeout(entityChangedTimer)
   entityChangedTimer = setTimeout(() => {
     entityChangedSince = undefined
-    if (contentAutoSave.pendingCount.value > 0) return
+    if ((contentAutoSave.value?.pendingCount.value ?? 0) > 0) return
     void loadView()
   }, delay)
 }
@@ -2128,48 +2152,14 @@ onBeforeUnmount(() => {
   clearTimeout(entityChangedTimer)
 })
 
-// Switching WORLD reloads the view, but is deliberately NOT folded into the
-// entity watcher below.
-//
-// That watcher flushes pending autosaves against the PREVIOUS entity's
-// identity before loading the next one. A world change is the SAME entity seen
-// through a different world, so there is no previous identity to pin and no
-// cross-entity flush to arrange — running that machinery would capture the
-// current entity as its own "previous" and commit a flush nobody asked for.
-//
-// What a world change does need is a refetch, because the face being displayed
-// changes even though the id does not.
+// A route or world change puts another row on screen. Pending edits are
+// flushed first, to the row they were made on: each instance keeps its own
+// target, so the flush cannot reach the row loaded next. A world change can
+// show another face of the same entity, which is another row.
 watch(
-  () => worldParam.value,
+  () => [props.entityType, props.entityId, worldParam.value],
   () => {
-    loadView()
-  }
-)
-
-// Watch for route changes
-watch(
-  () => [props.entityType, props.entityId],
-  (_next, prev) => {
-    // Flush pending toggles for the previous entity before loading the
-    // next one. The composable reads entity identity from
-    // getEntityType/getEntityId at fire time, which would resolve to
-    // the new entity by the time the FIFO chain runs — so we capture
-    // the previous identity for the duration of the flush via a
-    // one-shot override before triggering commit.
-    // The pin is the previous entry's served address, face included, read
-    // before loadView replaces the entry. With no entry loaded there is
-    // nothing to flush.
-    const [prevType] = prev
-    const prevAddress = servedRef.value
-    if (prevAddress === null) {
-      loadView()
-      return
-    }
-    const fireWith = { type: prevType, id: prevAddress }
-    pinEntityForFlush.value = fireWith
-    void contentAutoSave.commitImmediately().finally(() => {
-      if (pinEntityForFlush.value === fireWith) pinEntityForFlush.value = null
-    })
+    void contentAutoSave.value?.commitImmediately()
     loadView()
   }
 )
@@ -2405,14 +2395,14 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
           <RouterLink v-if="ownerHref" :to="ownerHref" class="owner-link">
             {{ t('entity.partOf', { title: viewData?.entry?._owner?.title }) }}
           </RouterLink>
-          <!-- Keyed on the row, so an open title edit closes when another
-               entity lands rather than committing onto it. -->
+          <!-- Keyed per row: a route change closes an open edit. -->
           <EntityTitle
             :key="servedRef ?? ''"
             :title="entryTitle"
             :value="titleValue"
             :editable="!!titleProperty"
             :required="!!(titleProperty && typeDef?.properties[titleProperty]?.required)"
+            @edit="onTitleEdit"
             @commit="saveTitle"
           />
           <div v-if="entry?._lease || presence.viewers.value.length || presence.more.value" class="header-presence">
@@ -2712,11 +2702,13 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
           -->
           <EntityBody
             v-else-if="section === entryContentSection"
+            :key="servedRef ?? ''"
             :content="entryContentSection.content || ''"
             :editable="canEditBody"
             :ref-resolver="refResolver"
             :source="taskItemSource"
             :task-item-conversions="entry?._task_item_conversions"
+            @edit="onBodyEdit"
             @input="onBodyInput"
             @done="onBodyDone"
           >

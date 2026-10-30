@@ -15,6 +15,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
 	"github.com/Sourcehaven-BV/rela/internal/mailtemplate"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
+	"github.com/Sourcehaven-BV/rela/internal/migration"
 	"github.com/Sourcehaven-BV/rela/internal/project"
 	"github.com/Sourcehaven-BV/rela/internal/rollup"
 	"github.com/Sourcehaven-BV/rela/internal/scheduler"
@@ -225,7 +226,16 @@ func validateDataEntry(path string, mm *metamodel.Metamodel, fs storage.FS) erro
 // CheckDataEntry validates data-entry.yaml content against mm the way
 // `rela validate` does: structure, references, and every condition the
 // server compiles.
+//
+// Deprecated syntax is reported as a [*migration.Error], the error type the
+// server returns when it loads the file: a config that rela-server refuses
+// must not pass. Like the server, it stops there, so other errors in the file
+// show only after `rela migrate`, which rewrites the deprecated syntax.
 func CheckDataEntry(data []byte, mm *metamodel.Metamodel) error {
+	if detections := migration.DetectBytes(data, migration.FileTypeDataEntry); len(detections) > 0 {
+		return &migration.Error{FilePath: dataentryconfig.ConfigFile, Detections: detections}
+	}
+
 	var cfg dataentryconfig.Config
 	if err := yaml.Unmarshal(data, &cfg); err != nil {
 		return fmt.Errorf("parsing YAML: %w", err)

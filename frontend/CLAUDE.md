@@ -307,6 +307,13 @@ Autosave sends a per-field precondition (the server's `_versions` token) for
 every field it writes, and merges on a 412 (TKT-2VDVHF; API contract in
 `docs/data-entry/api-reference.md`). Rules for new code:
 
+- **An instance writes to one fixed entity.** `useAutoSave` takes a `target`
+  at construction and refuses a snapshot, refetch or response about any other
+  entity. A host that puts another row on screen builds a new instance:
+  `FormView` keys `DynamicForm` per entity, and `EntityDetail` keeps one per
+  served address. Never pass a target that is read when the save fires. A
+  form reused across a route change once sent an edit made on one entity to
+  the next, and the 412 merge then wrote it there (BUG-NSGD6OE).
 - **A merge base moves only when the local state moves with it:** when the
   form takes the server value, or when a save of that field succeeds. A base
   that runs ahead of the form lets the next save overwrite a change the user

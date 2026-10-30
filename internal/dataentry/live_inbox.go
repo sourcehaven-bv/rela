@@ -53,8 +53,19 @@ import (
 // by then. It is staggered: each principal has a fixed slice, from a
 // stable hash of its share key, and each grid tick replays the slices
 // whose turn it is (and any a skipped grid period missed). So a grid tick
-// replays about one slice in inboxSafety/inboxGrid of the pairs, and the
+// replays about one slice in safetyPeriod/inboxGrid of the pairs, and the
 // summary and page of one principal still share one round and its memo.
+// The safety replay also takes each busy list subscription that has a
+// wake, on the same slice of its principal, since a session move in
+// another process never reaches this process's realtime.Local either (see
+// live_busy.go). Which pairs a safety turn takes depends only on the clock
+// and the principal, never on a change, so it adds no oracle.
+//
+// The safety clock (safetyPeriod, safetySlices, safetySlice and
+// liveSafetyMax) is therefore shared by both shapes, and so is the grid it
+// runs on: a change to either moves the latency and the cost of busy
+// boards as well as of inboxes. Only the deferral of an inbox replay to
+// the next grid tick is inbox-specific.
 //
 // The grid is chosen at wiring ([SetInboxGrid]) from the channel store:
 // one full inbox round must finish within one grid period. The file
@@ -72,10 +83,11 @@ const (
 	// LiveInboxGridScan is the tick spacing of inbox replays over the
 	// file channel store: at most every 4 s.
 	LiveInboxGridScan = 8
-	// liveInboxSafetyMax bounds the safety replay spacing: 28 ticks is
+	// liveSafetyMax bounds the safety replay spacing: 28 ticks is
 	// 14 s, within the 15 s the docs promise. The spacing is the largest
-	// multiple of the grid at or below it.
-	liveInboxSafetyMax = 28
+	// multiple of the grid at or below it. Busy list subscriptions share
+	// it: a move in another process reaches an open board within it.
+	liveSafetyMax = 28
 )
 
 // SetInboxGrid sets the tick spacing of inbox replays: [LiveInboxGrid] or
@@ -83,19 +95,19 @@ const (
 // it before [App.StartWatching], like [SetChannels]. A package function
 // because App is at its plimsoll method cap.
 func SetInboxGrid(a *App, ticks int) error {
-	if ticks < 1 || ticks > liveInboxSafetyMax {
-		return fmt.Errorf("dataentry: inbox grid %d is outside 1..%d ticks", ticks, liveInboxSafetyMax)
+	if ticks < 1 || ticks > liveSafetyMax {
+		return fmt.Errorf("dataentry: inbox grid %d is outside 1..%d ticks", ticks, liveSafetyMax)
 	}
 	a.live.inboxGrid = uint64(ticks)
 	return nil
 }
 
-// inboxSafety is the tick spacing of the safety replay.
-func (h *liveHub) inboxSafety() uint64 { return liveInboxSafetyMax / h.inboxGrid * h.inboxGrid }
+// safetyPeriod is the tick spacing of the safety replay.
+func (h *liveHub) safetyPeriod() uint64 { return liveSafetyMax / h.inboxGrid * h.inboxGrid }
 
-// inboxSlices is the number of safety slices: grid periods per safety
+// safetySlices is the number of safety slices: grid periods per safety
 // period.
-func (h *liveHub) inboxSlices() uint64 { return h.inboxSafety() / h.inboxGrid }
+func (h *liveHub) safetySlices() uint64 { return h.safetyPeriod() / h.inboxGrid }
 
 // inboxTick is what one tick does for inbox subscriptions: whether it is
 // a grid tick, and which safety slices (a bit each) it replays.
@@ -105,7 +117,7 @@ type inboxTick struct {
 }
 
 // pack encodes t in one word: the grid flag in the top bit, the slices
-// below it. liveInboxSafetyMax keeps the slices under 63 bits.
+// below it. liveSafetyMax keeps the slices under 63 bits.
 func (t inboxTick) pack() uint64 {
 	v := t.slices
 	if t.grid {
@@ -157,22 +169,28 @@ func (c *inboxClock) tickAt(t time.Time, window time.Duration, grid, slices uint
 	return tk
 }
 
-// inboxSlice is the safety slice of the principal with share key fp.
-func (h *liveHub) inboxSlice(fp string) uint64 {
-	if h.inboxSliceOf != nil {
-		return h.inboxSliceOf(fp) % h.inboxSlices()
+// safetySlice is the safety slice of the principal with share key fp.
+func (h *liveHub) safetySlice(fp string) uint64 {
+	if h.safetySliceOf != nil {
+		return h.safetySliceOf(fp) % h.safetySlices()
 	}
 	f := fnv.New64a()
 	_, _ = f.Write([]byte(fp))
-	return f.Sum64() % h.inboxSlices()
+	return f.Sum64() % h.safetySlices()
 }
 
-// safetyDue reports whether this tick's safety replay takes the inbox
-// subscription s of the principal with share key fp, on the tick now. One without a wake
-// set is not taken: its last replay was refused, so no channel change can
-// move it; a full round still replays it.
+// safetyDue reports whether this tick's safety replay takes the inbox or
+// busy list subscription s of the principal with share key fp, on the tick
+// now. One without a wake is not taken: its last replay was refused, or
+// its busy read was not served, so no channel change can move it; a full
+// round still replays it. A busy list takes part because a move in another
+// process never reaches this process's realtime.Local.
 func (h *liveHub) safetyDue(now inboxTick, fp string, s *liveSub) bool {
-	return s.inbox && s.wake != nil && now.slices&(1<<h.inboxSlice(fp)) != 0
+	if now.slices == 0 {
+		return false
+	}
+	eligible := (s.inbox && s.wake != nil) || s.busyWake != nil
+	return eligible && now.slices&(1<<h.safetySlice(fp)) != 0
 }
 
 // inboxWake is what an inbox subscription listens to. Its replay reports

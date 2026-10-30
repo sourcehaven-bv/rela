@@ -1426,13 +1426,19 @@ The `attachACLRequest` middleware:
   500 on `/api/v1/...` but lets the UI keep rendering. Otherwise
   operators would be locked out of the very surface they need to
   diagnose the misconfig from.
-- **Fails loud inside `/api/`.** When ACL is configured and the
-  principal stamper produces an unstamped principal, the middleware
-  returns 500 with `acl_unstamped_principal` rather than silently
-  proceeding with no `acl.Request` attached. Silent fall-through
-  was a fail-open path — every read became AllowAll because the
-  read handlers couldn't tell "no ACL" from "ACL but no
-  principal."
+- **Fails closed inside `/api/`.** When ACL is configured and no
+  `acl.Request` can be attached, the request is refused rather than
+  proceeding without one. Silent fall-through was a fail-open path:
+  every read became AllowAll because the read handlers couldn't tell
+  "no ACL" from "ACL but no principal." A request no resolver named a
+  user for (no proxy header, no `RELA_DATAENTRY_USER`) gets 401
+  `unauthenticated`, the answer the JWT gate gives a missing
+  assertion. A principal the stamper never set, or one with an
+  unknown tool, is a wiring fault and gets 500
+  `acl_unstamped_principal`. When every request gets the 401, the
+  server usually has no identity source; the 401 detail and a startup
+  warning point to `$RELA_DATAENTRY_USER`, `--principal-header` and
+  `--jwt-*` (see [Server security](server-security.md)).
 - **Refuses script reads when the read gate cannot be built.** If an
   `acl.yaml` is configured but the visibility decorator fails to
   construct, script runtimes (data-entry actions, `export_render`,

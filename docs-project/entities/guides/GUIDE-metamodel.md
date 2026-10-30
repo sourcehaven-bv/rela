@@ -37,6 +37,10 @@ relations:
   # Relation definitions
 ```
 
+Other root-only keys include `transforms:` (export formats, see
+[transforms.md](transforms.md)) and `checkers:` (prose checkers, see
+[checkers.md](checkers.md)).
+
 ## Including Partial Metamodels
 
 For larger projects, you can split your metamodel across multiple files using the
@@ -645,10 +649,10 @@ entities:
 | `datetime` | Time-bearing instant (RFC3339, stored as UTC) | `=`, `!=`, `<`, `<=`, `>`, `>=`     |
 | `integer`  | Whole number                                  | `=`, `!=`, `<`, `<=`, `>`, `>=`     |
 | `boolean`  | True or false                                 | `=`, `!=`                           |
-| `enum`     | Inline enum with `values`                     | `=`, `!=`                           |
+| `enum`     | Inline enum with `values`                     | `=`, `!=`, `=~` (regex)             |
 | `file`     | File attachment (stored under `attachments/`) | N/A                                 |
 | `external_ref` | Link to the entity's counterpart in another system (see [External refs](#external-refs)) | N/A |
-| `<custom>` | Reference to a type defined in `types:`       | `=`, `!=`                           |
+| `<custom>` | Reference to a type defined in `types:`       | `=`, `!=`, `=~` (regex)             |
 
 ### Property Options
 
@@ -2424,7 +2428,12 @@ rela list control --where "status=implemented" --where "applicability=applicable
 | `<=`     | Less than or equal          | `date`, `datetime`, `integer` |
 | `>`      | Greater than                | `date`, `datetime`, `integer` |
 | `>=`     | Greater than or equal       | `date`, `datetime`, `integer` |
-| `=~`     | Regex match                 | `string`          |
+| `=~`     | Regex match                 | `string`, `enum`, `<custom>` |
+
+`=~` matches any part of the value and is case-sensitive: `niveau=~hoog`
+also matches `zeer_hoog`. Anchor the pattern (`^hoog$`) for a whole value. On
+an enum, a pattern is not checked against the allowed values, so a misspelled
+pattern matches nothing instead of reporting an error.
 
 ### Error Handling
 
@@ -2664,7 +2673,7 @@ Validation rules support all the same operators as `--where` filters:
 | `<=`     | `deadline<=2025-12-31` | Less than or equal                                |
 | `>`      | `priority>low`         | Greater than                                      |
 | `>=`     | `created>=2025-01-01`  | Greater than or equal                             |
-| `=~`     | `title=~^ADR-\\d+`     | Regex match (strings)                             |
+| `=~`     | `title=~^ADR-\\d+`     | Regex match (strings and enums)                   |
 
 ### Content Validation
 

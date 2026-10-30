@@ -67,7 +67,7 @@ func (s *Service) RunAction(ctx context.Context, addr RawAddress, seq int64, nam
 		if serr != nil {
 			return ActionResult{}, actionStoreError(serr)
 		}
-		s.local.mark(c.key)
+		s.local.markMessage(c.key)
 		return s.actionResult(c, got, nil)
 	}
 	//nolint:contextcheck // c.ctx is ctx with the acl.Request attached; see .golangci.yml on realtime.
@@ -76,7 +76,7 @@ func (s *Service) RunAction(ctx context.Context, addr RawAddress, seq int64, nam
 	if err != nil {
 		return ActionResult{}, actionStoreError(err)
 	}
-	s.local.mark(c.key)
+	s.local.markMessage(c.key)
 	if !pending.EditedAt.Equal(m.EditedAt) {
 		// The message was edited after its refs were checked: release the
 		// action rather than promote content nobody checked.
@@ -90,7 +90,7 @@ func (s *Service) RunAction(ctx context.Context, addr RawAddress, seq int64, nam
 	if err != nil {
 		return ActionResult{}, err
 	}
-	s.local.mark(c.key)
+	s.local.markMessage(c.key)
 	return s.actionResult(c, got, warnings)
 }
 
@@ -142,7 +142,7 @@ func (s *Service) ReleaseAction(ctx context.Context, addr RawAddress, seq int64)
 	if err != nil {
 		return MessageView{}, messageStoreError(err)
 	}
-	s.local.mark(c.key)
+	s.local.markMessage(c.key)
 	return rendererWith(c, nil).message(got), nil
 }
 

@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Sourcehaven-BV/rela/internal/metamodel"
+	"github.com/Sourcehaven-BV/rela/internal/migration"
 	"github.com/Sourcehaven-BV/rela/internal/projectsetup"
 	"github.com/Sourcehaven-BV/rela/internal/storage"
 )
@@ -328,5 +330,75 @@ func TestCheckChannels(t *testing.T) {
 		if len(errs) != 0 || len(warnings) != 1 {
 			t.Fatalf("realtime off, %q: errs %v, warnings %v", data, errs, warnings)
 		}
+	}
+}
+
+// rela validate refuses data-entry.yaml syntax that rela-server refuses at
+// load, and reports it as the same migration error (TKT-BDKE4K).
+func TestValidateWithFS_DeprecatedDataEntry(t *testing.T) {
+	t.Parallel()
+	const list = "lists:\n  persons:\n    entity_type: person\n    columns:\n      - property: name\n        link: %s\n"
+	tests := []struct {
+		name       string
+		dataEntry  string
+		deprecated bool
+	}{
+		{"list column link true", fmt.Sprintf(list, "true"), true},
+		{"view section link true", "views:\n  overview:\n    sections:\n      - source: self\n        link: true\n", true},
+		{"list column link detail", fmt.Sprintf(list, "detail"), false},
+	}
+	// A view section with link: detail may still be invalid for other reasons;
+	// it only must not count as deprecated.
+	t.Run("view section link detail", func(t *testing.T) {
+		t.Parallel()
+		mm, err := metamodel.Parse([]byte("entities:\n  person:\n    label: Person\n    id_type: manual\n    properties:\n      name: {type: string}\n"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		err = projectsetup.CheckDataEntry([]byte("views:\n  overview:\n    sections:\n      - source: self\n        link: detail\n"), mm)
+		if migration.IsMigrationError(err) {
+			t.Errorf("link: detail reported as deprecated: %v", err)
+		}
+	})
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			fs := storage.NewMemFS()
+			root := "/proj"
+			if _, err := projectsetup.InitializeWithFS(root, fs); err != nil {
+				t.Fatal(err)
+			}
+			write := func(name, body string) {
+				t.Helper()
+				if err := fs.WriteFile(filepath.Join(root, name), []byte(body), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			write("schema.yaml", "entities:\n  person:\n    label: Person\n    id_type: manual\n"+
+				"    properties:\n      name: {type: string}\n")
+			write("data-entry.yaml", tc.dataEntry)
+
+			result, err := projectsetup.ValidateWithFS(context.Background(), root, fs)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !tc.deprecated {
+				if result.HasErrors() || !result.DataEntryValid {
+					t.Fatalf("want valid, got data-entry error %v", result.DataEntryError)
+				}
+				return
+			}
+			if !migration.IsMigrationError(result.DataEntryError) {
+				t.Fatalf("DataEntryError = %v, want a migration error", result.DataEntryError)
+			}
+			for _, want := range []string{"link: detail", "rela migrate"} {
+				if !strings.Contains(result.DataEntryError.Error(), want) {
+					t.Errorf("error %q does not contain %q", result.DataEntryError, want)
+				}
+			}
+			if !result.HasErrors() || result.DataEntryValid {
+				t.Errorf("HasErrors() = %v, DataEntryValid = %v; want true, false", result.HasErrors(), result.DataEntryValid)
+			}
+		})
 	}
 }

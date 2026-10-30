@@ -170,3 +170,32 @@ func TestAssertedIdentity_CopiesEveryField(t *testing.T) {
 		}
 	}
 }
+
+// TestWarnUnidentifiedACL pins when startup warns that every /api/ request
+// will be refused with 401 unauthenticated (TKT-QR1VTP).
+func TestWarnUnidentifiedACL(t *testing.T) {
+	tests := []struct {
+		name    string
+		mode    identityMode
+		header  string
+		envUser string
+		hasACL  bool
+		want    bool
+	}{
+		{name: "acl without identity source", mode: identityHeader, hasACL: true, want: true},
+		{name: "no acl", mode: identityHeader},
+		{name: "principal header", mode: identityHeader, header: "X-Forwarded-User", hasACL: true},
+		{name: "env user", mode: identityHeader, envUser: "alice", hasACL: true},
+		{name: "jwt identity", mode: identityJWT, hasACL: true},
+		{name: "jwt without acl", mode: identityJWT},
+		{name: "blank env user", mode: identityHeader, envUser: "  ", hasACL: true, want: true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			f := &serverFlags{principalHeader: tc.header}
+			if got := warnUnidentifiedACL(tc.mode, f, tc.envUser, tc.hasACL); got != tc.want {
+				t.Errorf("warnUnidentifiedACL() = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}

@@ -63,7 +63,7 @@ func (s *Store) Append(ctx context.Context, k channels.Key, nm channels.NewMessa
 	msg := channels.Message{
 		Seq: seq, Rev: m.bump(idx), Type: nm.Type, Author: nm.Author, At: nm.At, Props: nm.Props,
 		ReplyTo: nm.ReplyTo, SchemaHash: nm.SchemaHash, TriggeredBy: nm.TriggeredBy, MovedSession: moved,
-		Mentions: nm.Mentions,
+		Mentions: nm.Mentions, CreatedChannel: created,
 	}
 	recs := []segRecord{{idx: idx, rec: encodeLine(line{K: "m", Message: msg})}}
 	if nm.ReplyTo > 0 {

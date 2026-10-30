@@ -2275,17 +2275,20 @@ status `working`, or a type that does not attach to the board's entity
 type.
 
 **When it updates.** The board reads the busy channels when it loads, and
-again when its entities change and the live list updates. A move whose
-transition has `outputs:` writes to the entity, so that write updates an
-open board live. A session move without outputs does not update an open
-board yet; reload the page to see it (TKT-W5ZSYJ). The time in the state
-is computed in the browser and moves on each minute. How a move from
-another process reaches the board depends on the backend:
+again when its entities change and the live list updates. A channel of the
+board's busy type, on a card of the board, also updates an open board
+within a tick when the server process moves its session, creates it,
+closes, reopens, archives or deletes it, with or without `outputs:`
+(TKT-W5ZSYJ). A message that moves no session, an edit, a removal or a
+typing signal does not. Only the first 100 cards are watched; a card past
+them updates on the next entity change or reload. The time in the state is
+computed in the browser and moves on each minute. How a move from another
+process reaches the board depends on the backend:
 
 | Backend | A move by stdio `rela mcp` or `rela channel` |
 | --- | --- |
-| Files (default) | Live when the transition has outputs: the server sees the entity file change. Otherwise on the next board read: each read reads the channel files. |
-| PostgreSQL | Live when the transition has outputs: the server hears the entity write. Otherwise on the next board read: every process shares the database. |
+| Files (default) | Live when the transition has outputs: the server sees the entity file change. Otherwise within about 12 seconds, on the board's periodic safety check. |
+| PostgreSQL | Live when the transition has outputs: the server hears the entity write. Otherwise within about 14 seconds, on the board's periodic safety check. |
 | SQLite | Not possible while rela-server runs, because only one process may open the project. Agents use remote MCP, which runs inside rela-server. |
 
 A list view has no busy column yet (TKT-TU3XH4). The API answers for any

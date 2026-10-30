@@ -349,3 +349,14 @@ func (lp livePath) isChannel() bool { return lp.shape == liveChannels || lp.shap
 // of its reader or a post that addresses its principal can move it, on
 // the inbox grid (see live_inbox.go).
 func (lp livePath) isInbox() bool { return lp.shape == liveInbox || lp.shape == liveInboxSummary }
+
+// busyType is the channel type a list path asks busy state for, as
+// wantBusy reads it, or "" for a list without busy and every other shape.
+// Such a subscription is replayed when a channel move can change its
+// `_busy` (see live_busy.go).
+func (lp livePath) busyType() string {
+	if lp.shape != liveList {
+		return ""
+	}
+	return wantBusy(lp.query)
+}

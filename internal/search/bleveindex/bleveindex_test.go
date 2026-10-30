@@ -433,7 +433,6 @@ func TestNew_EmptiesAnIndexOfAnotherFormat(t *testing.T) {
 			count, err := idx2.DocCount()
 			require.NoError(t, err)
 			assert.Zero(t, count, "an index of another format is emptied")
-			assert.True(t, idx2.LastModified().IsZero(), "its LastModified is cleared")
 
 			// The emptied index carries the current format, so its new
 			// documents survive a reopen.

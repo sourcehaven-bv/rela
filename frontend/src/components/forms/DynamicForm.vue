@@ -1,6 +1,12 @@
 <script setup lang="ts">
 import { ref, shallowRef, computed, watch, nextTick, onMounted, onBeforeUnmount } from 'vue'
-import { RouterLink, useRouter, useRoute, onBeforeRouteLeave } from 'vue-router'
+import {
+  RouterLink,
+  useRouter,
+  useRoute,
+  onBeforeRouteLeave,
+  onBeforeRouteUpdate,
+} from 'vue-router'
 import { I18nT, useI18n } from 'vue-i18n'
 import { planPrefillRouting } from './prefillRouting'
 import { useSchemaStore, useEntitiesStore, useUIStore } from '@/stores'
@@ -2631,8 +2637,9 @@ onMounted(async () => {
       if (inv) inverseToCanonical.set(inv, f.relation)
     }
     _autoSaveInstance.value = useAutoSave({
-      getEntityType: () => formConfig.value!.entity,
-      getEntityId: () => props.entityId!,
+      // Captured once: FormView mounts a new form per entity, so this
+      // instance only ever holds edits made on this entity (BUG-NSGD6OE).
+      target: { type: formConfig.value.entity, id: props.entityId },
       formData,
       contentRef: content,
       // Seed the merge base from the load that already happened above
@@ -2719,46 +2726,57 @@ onBeforeUnmount(() => {
 // mount, so this setup-time conditional is sound; the host modal owns
 // discard-confirmation for the nested form.
 if (!props.embedded) {
-  onBeforeRouteLeave(async () => {
-    // A clear-confirm dialog is open. `useConfirm` is a singleton that hands a
-    // concurrent caller the SAME in-flight promise, so prompting here would
-    // return that dialog's answer: the user clicking "Clear" would also be
-    // answering "Leave anyway" without ever seeing the question. Block the
-    // navigation instead and let them finish the decision in front of them.
-    if (confirmingClear.value) return false
+  onBeforeRouteLeave(() => confirmLeave())
+  // A switch to another entity's edit form keeps this route record, so the
+  // leave guard does not run. FormView then mounts a new form for the new
+  // entity; this one must save its edits first, like on a leave
+  // (BUG-NSGD6OE). A query change (`?step=`) is not a switch.
+  onBeforeRouteUpdate((to, from) =>
+    to.params.id === from.params.id && to.params.entityId === from.params.entityId
+      ? true
+      : confirmLeave()
+  )
+}
 
-    // TKT-E6094: in edit mode, flush autosave before navigating away.
-    // On clean commit we proceed silently; on error or timeout we
-    // prompt the user to confirm.
-    if (autoSave.value) {
-      // Same reason as on submit: a body change inside the editor's debounce
-      // window is not in `content` yet, so committing without flushing would
-      // leave it behind on navigation.
-      flushEditor()
-      await nextTick()
-      const result = await autoSave.value.commitImmediately()
-      if (result.settled && !result.error) {
-        dirty.value = false
-        return true
-      }
-      return await confirm({
-        title: t('form.leave.title'),
-        message: result.error ?? t('form.leave.stillSaving'),
-        confirmLabel: t('form.leave.anyway'),
-        danger: true,
-      })
+async function confirmLeave(): Promise<boolean> {
+  // A clear-confirm dialog is open. `useConfirm` is a singleton that hands a
+  // concurrent caller the SAME in-flight promise, so prompting here would
+  // return that dialog's answer: the user clicking "Clear" would also be
+  // answering "Leave anyway" without ever seeing the question. Block the
+  // navigation instead and let them finish the decision in front of them.
+  if (confirmingClear.value) return false
+
+  // TKT-E6094: in edit mode, flush autosave before navigating away.
+  // On clean commit we proceed silently; on error or timeout we
+  // prompt the user to confirm.
+  if (autoSave.value) {
+    // Same reason as on submit: a body change inside the editor's debounce
+    // window is not in `content` yet, so committing without flushing would
+    // leave it behind on navigation.
+    flushEditor()
+    await nextTick()
+    const result = await autoSave.value.commitImmediately()
+    if (result.settled && !result.error) {
+      dirty.value = false
+      return true
     }
-    // Create-mode / no autosave: original prompt.
-    if (!dirty.value) return true
-    const ok = await confirm({
+    return await confirm({
       title: t('form.leave.title'),
-      message: t('form.leave.message'),
-      confirmLabel: t('form.leave.leave'),
+      message: result.error ?? t('form.leave.stillSaving'),
+      confirmLabel: t('form.leave.anyway'),
       danger: true,
     })
-    if (ok) dirty.value = false
-    return ok
+  }
+  // Create-mode / no autosave: original prompt.
+  if (!dirty.value) return true
+  const ok = await confirm({
+    title: t('form.leave.title'),
+    message: t('form.leave.message'),
+    confirmLabel: t('form.leave.leave'),
+    danger: true,
   })
+  if (ok) dirty.value = false
+  return ok
 }
 
 /**

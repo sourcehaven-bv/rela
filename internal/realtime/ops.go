@@ -98,7 +98,8 @@ func (s *Service) Edit(ctx context.Context, addr RawAddress, seq int64, props ma
 	if err != nil {
 		return MessageView{}, messageStoreError(err)
 	}
-	s.local.markAddressed(channels.MentionTargets(channels.AddedMentions(m.Mentions, got.Mentions)), c.key)
+	s.local.markAddressed(channels.MentionTargets(channels.AddedMentions(m.Mentions, got.Mentions)), c.key,
+		markKindMessage)
 	return rendererWith(c, refs).message(got), nil
 }
 
@@ -226,7 +227,7 @@ func (s *Service) Delete(ctx context.Context, addr RawAddress, seq int64, reason
 	if err != nil {
 		return MessageView{}, messageStoreError(err)
 	}
-	s.local.mark(c.key)
+	s.local.markMessage(c.key)
 	return rendererWith(c, nil).message(got), nil
 }
 
