@@ -12,6 +12,7 @@ import RlIconButton from 'rela-components/components/common/RlIconButton.vue'
 import RlHeading from 'rela-components/components/common/RlHeading.vue'
 import RlText from 'rela-components/components/common/RlText.vue'
 import RlEmptyState from 'rela-components/components/feedback/RlEmptyState.vue'
+import RlCallout from 'rela-components/components/feedback/RlCallout.vue'
 import type { Section } from 'rela-components/types'
 import type { TableColumn } from 'rela-components/components/table/types'
 import ConfigurePage from '@/components/configure/ConfigurePage.vue'
@@ -23,7 +24,13 @@ import FilterControlsEditor from '@/components/configure/FilterControlsEditor.vu
 import FixedFiltersEditor from '@/components/configure/FixedFiltersEditor.vue'
 import RlTextarea from 'rela-components/components/form/RlTextarea.vue'
 import { useConfigDraftStore } from '@/stores/configDraft'
+import { columnHeader } from '@/components/lists/tableColumns'
 import {
+  type ColumnModel,
+  canSortColumn,
+  columnMoveAllowed,
+  columnRemoveAllowed,
+  columnSource,
   columnTitle,
   entityTypeLabel,
   forms,
@@ -59,6 +66,57 @@ function setting(key: string, value: TreeValue | undefined) {
 
 function column(index: number, key: string, value: TreeValue | undefined) {
   draft.setAt('screens', [...path.value, 'columns', index], key, value)
+}
+
+/**
+ * The header the list shows for a column: its label, else the same default
+ * the list falls back to ("Busy", "Face"), so the placeholder and the preview
+ * match what people will see.
+ */
+function shownHeader(c: ColumnModel): string {
+  return columnHeader({
+    label: c.label || undefined,
+    property: c.property || undefined,
+    relation: c.relation || undefined,
+    busy: c.busy || undefined,
+    face: c.face,
+  })
+}
+
+/*
+ * A busy column (TKT-TU3XH4) cannot be the first column, which is the row
+ * title; the load refuses it. `refuseMove` vetoes a move that would put one
+ * first, so RlSortableList announces the reason instead of the drop, and the
+ * callout below shows it. A removal that would do the same is disabled.
+ */
+const busyFirstReason = 'A busy column cannot be the first column.'
+const hasBusyColumn = computed(() => (list.value?.columns ?? []).some((c) => c.busy))
+const columnsDescription = computed(
+  () =>
+    "The first column holds each record's title." +
+    (hasBusyColumn.value ? ` ${busyFirstReason}` : '')
+)
+
+/** The reason the last column move was refused; cleared by the next move. */
+const refusedMove = ref('')
+
+function refuseColumnMove(row: ColumnModel, to: number): string | undefined {
+  return columnMoveAllowed(list.value?.columns ?? [], row.index, to) ? undefined : busyFirstReason
+}
+
+function moveColumn(index: number, to: number) {
+  if (!columnMoveAllowed(list.value?.columns ?? [], index, to)) return
+  refusedMove.value = ''
+  draft.moveAt('screens', [...path.value, 'columns'], index, to)
+}
+
+function canRemoveColumn(index: number): boolean {
+  return columnRemoveAllowed(list.value?.columns ?? [], index)
+}
+
+function removeColumn(index: number) {
+  if (!canRemoveColumn(index)) return
+  draft.removeAt('screens', [...path.value, 'columns'], index)
 }
 
 const unused = computed(() =>
@@ -107,7 +165,9 @@ function removeList() {
 }
 
 const previewColumns = computed<TableColumn[]>(() =>
-  rows.value.slice(1).map((c) => ({ key: c.id, header: c.title, sortable: c.sortable }))
+  rows.value
+    .slice(1)
+    .map((c) => ({ key: c.id, header: shownHeader(c), sortable: canSortColumn(c) && c.sortable }))
 )
 const previewSections = computed<Section<{ id: string; title: string }>[]>(() => [
   { id: 'preview', title: list.value?.title ?? '', items: [] },
@@ -121,16 +181,14 @@ const previewSections = computed<Section<{ id: string; title: string }>[]>(() =>
     </template>
     <RlEmptyState v-if="!list" title="No such list" />
     <ConfigSplit v-else>
-      <ConfigSection
-        title="Columns"
-        :count="rows.length"
-        description="The first column holds each record's title."
-      >
+      <ConfigSection title="Columns" :count="rows.length" :description="columnsDescription">
         <RlSortableList
           :items="rows"
           :label="`Columns of ${list.title}`"
           data-testid="config-columns"
-          @move="(row, to) => draft.moveAt('screens', [...path, 'columns'], row.index, to)"
+          :refuse-move="refuseColumnMove"
+          @move="(row, to) => moveColumn(row.index, to)"
+          @refuse="(_row, reason) => (refusedMove = reason)"
         >
           <template #item="{ item }">
             <div class="column-row">
@@ -138,15 +196,16 @@ const previewSections = computed<Section<{ id: string; title: string }>[]>(() =>
                 :model-value="item.label"
                 :label="`Header of ${item.title}`"
                 label-hidden
-                :placeholder="item.property || item.relation"
+                :placeholder="shownHeader({ ...item, label: '' })"
                 size="sm"
                 class="column-row__label"
                 @update:model-value="column(item.index, 'label', $event)"
               />
               <RlText size="sm" tone="subtle" class="column-row__source">{{
-                item.property || item.relation
+                columnSource(item)
               }}</RlText>
               <RlSwitch
+                v-if="canSortColumn(item)"
                 :model-value="item.sortable"
                 label="Sortable"
                 @update:model-value="column(item.index, 'sortable', $event)"
@@ -154,11 +213,15 @@ const previewSections = computed<Section<{ id: string; title: string }>[]>(() =>
               <RlIconButton
                 icon="delete"
                 :label="`Remove ${item.title}`"
-                @click="draft.removeAt('screens', [...path, 'columns'], item.index)"
+                :disabled="!canRemoveColumn(item.index)"
+                @click="removeColumn(item.index)"
               />
             </div>
           </template>
         </RlSortableList>
+        <RlCallout v-if="refusedMove" tone="warning" data-testid="config-column-refused">
+          {{ refusedMove }}
+        </RlCallout>
         <form v-if="unused.length" class="add-row" @submit.prevent="addColumn">
           <RlSelect
             v-model="adding"
@@ -252,7 +315,7 @@ const previewSections = computed<Section<{ id: string; title: string }>[]>(() =>
           <RlTable
             :sections="previewSections"
             :columns="previewColumns"
-            :name-label="rows[0]?.title ?? 'Name'"
+            :name-label="rows[0] ? shownHeader(rows[0]) || 'Name' : 'Name'"
             :show-section-header="false"
             :show-add="false"
           />

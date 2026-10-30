@@ -1244,7 +1244,13 @@ func validateLists(cfg *Config, meta *metamodel.Metamodel) []string {
 		}
 
 		// Validate columns
+		busyColumns := 0
 		for i, c := range list.Columns {
+			if c.Busy != "" {
+				errs = append(errs, checkListBusyColumn(listID, i, c, busyColumns > 0)...)
+				busyColumns++
+				continue
+			}
 			if c.Face {
 				if c.Property != "" || c.Relation != "" {
 					errs = append(errs, fmt.Sprintf(
@@ -1872,6 +1878,9 @@ func validateViews(cfg *Config, meta *metamodel.Metamodel) []string {
 			// must still have it checked (RR-4ICH8M). The per-field loops below
 			// also never see the section-level value.
 			errs = append(errs, validateSectionRender(viewID, i, s)...)
+			// Busy columns are list-only (TKT-TU3XH4). Outside the source
+			// guards for the same reason as render: no metamodel is needed.
+			errs = append(errs, refuseSectionBusyColumns(viewID, i, s)...)
 
 			// Relation fields (TKT-CADCFX) need only the entry type, which is
 			// known whatever the section's source resolves to.
@@ -2614,6 +2623,11 @@ func validateDashboardCards(prefix string, cards []DashboardCard) []string {
 				prefix, i, card.Title, card.Display, joinMapKeys(validDashboardDisplayModes)))
 		}
 		errs = append(errs, validateDashboardCardWidth(prefix, i, card)...)
+		// Busy columns are list-only (TKT-TU3XH4). Every card is checked
+		// here, whatever its source or display.
+		for j, c := range card.Columns {
+			errs = append(errs, refuseListOnlyColumn(fmt.Sprintf("%s: card[%d] %q column[%d]", prefix, i, card.Title, j), c)...)
+		}
 
 		// Validate sort directions
 		for j, s := range card.Sort {

@@ -275,6 +275,8 @@ export const NL_MESSAGES: Messages = {
   sortDropped: ({ title, position, count }) => `${title}, neergezet op ${position} van ${count}.`,
   sortCancelled: ({ title, position, count }) =>
     `${title}, teruggezet op ${position} van ${count}.`,
+  sortRefused: ({ title, position, count, reason }) =>
+    `${title} kan daar niet staan. ${reason} Teruggezet op ${position} van ${count}.`,
 
   changeKind: ({ kind }) =>
     ({ added: 'Toegevoegd', changed: 'Gewijzigd', removed: 'Verwijderd' })[kind],

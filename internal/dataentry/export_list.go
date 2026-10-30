@@ -301,7 +301,16 @@ func (h *exportHandler) resolveEffectiveList(
 // different list than the render override — see resolveEffectiveList.
 func listColumnsOf(l dataentryconfig.List, haveList bool) []dataentryconfig.ListColumn {
 	if haveList && len(l.Columns) > 0 {
-		return l.Columns
+		// A busy column (TKT-TU3XH4) is live, per-principal channel state,
+		// not a document value, so the export leaves it out. It is never
+		// column 0, so the title column always stays.
+		cols := make([]dataentryconfig.ListColumn, 0, len(l.Columns))
+		for _, c := range l.Columns {
+			if c.Busy == "" {
+				cols = append(cols, c)
+			}
+		}
+		return cols
 	}
 	return []dataentryconfig.ListColumn{
 		{Property: "id", Label: "ID"},

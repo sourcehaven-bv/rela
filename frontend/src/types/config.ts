@@ -425,6 +425,12 @@ export interface ListColumn {
   direction?: 'outgoing' | 'incoming'
   /** Shows the face each row was served in, by its label. */
   face?: boolean
+  /**
+   * A channel type: the column shows a busy indicator while a channel of
+   * this type on the row works (TKT-TU3XH4). Lists only, never the first
+   * column, and at most one per list.
+   */
+  busy?: string
   label?: string
   sortable?: boolean
   link?: string

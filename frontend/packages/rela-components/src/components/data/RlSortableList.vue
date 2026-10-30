@@ -49,6 +49,12 @@ const props = withDefaults(
     label: string
     /** Turns the handles off, for a reader who may see the order but not change it. */
     disabled?: boolean
+    /**
+     * Vetoes one move. Returns the reason a move of `item` to `toIndex` is
+     * not allowed, or undefined to allow it. A refused move puts the row back,
+     * announces the reason instead of the drop, and emits `refuse`.
+     */
+    refuseMove?: (item: T, toIndex: number) => string | undefined
   }>(),
   { disabled: false },
 )
@@ -56,6 +62,8 @@ const props = withDefaults(
 const emit = defineEmits<{
   /** A row was put down somewhere new. `toIndex` is its index in the reordered list. */
   move: [item: T, toIndex: number]
+  /** A move was vetoed by `refuseMove`; `reason` is what it returned. */
+  refuse: [item: T, reason: string]
 }>()
 
 defineSlots<{
@@ -131,12 +139,32 @@ function grab(item: T, index: number) {
   announcement.value = messages.sortGrabbed(describe(item, index))
 }
 
+/** The reason `refuseMove` gives for moving `item` to `to`, if it refuses. */
+function refusal(item: T, to: number): string | undefined {
+  return props.refuseMove?.(item, to)
+}
+
+/**
+ * Settles a finished move: emits `move`, or announces and emits `refuse`
+ * when `refuseMove` vetoes it. The row stays at `from` when refused.
+ */
+function settle(item: T, from: number, to: number): boolean {
+  if (to === from) return true
+  const reason = refusal(item, to)
+  if (reason !== undefined) {
+    announcement.value = messages.sortRefused({ ...describe(item, from), reason })
+    emit('refuse', item, reason)
+    return false
+  }
+  emit('move', item, to)
+  return true
+}
+
 function place(item: T) {
   const from = heldFrom.value
   const to = heldAt.value
   heldId.value = undefined
-  announcement.value = messages.sortDropped(describe(item, to))
-  if (to !== from) emit('move', item, to)
+  if (settle(item, from, to)) announcement.value = messages.sortDropped(describe(item, to))
   void refocus(item.id)
 }
 
@@ -255,8 +283,12 @@ watch(
                 const edge = self.data.edge as Edge
                 const from = props.items.findIndex((entry) => entry.id === (source.data as unknown as RowDragData).itemId)
                 const target = props.items.findIndex((entry) => entry.id === item.id)
-                // An indicator that would put the row back where it is promises nothing.
-                indicator.value = dropIndex(from, target, edge) === from ? undefined : { id: item.id, edge }
+                // An indicator that would put the row back where it is, or at a
+                // place `refuseMove` vetoes, promises nothing.
+                const to = dropIndex(from, target, edge)
+                const dragged = props.items[from]
+                const shows = to !== from && dragged !== undefined && refusal(dragged, to) === undefined
+                indicator.value = shows ? { id: item.id, edge } : undefined
               },
               onDragLeave: () => {
                 indicator.value = undefined
@@ -268,8 +300,7 @@ watch(
                 const target = props.items.findIndex((entry) => entry.id === item.id)
                 const dragged = props.items[from]
                 if (!dragged || target < 0) return
-                const to = dropIndex(from, target, self.data.edge as Edge)
-                if (to !== from) emit('move', dragged, to)
+                settle(dragged, from, dropIndex(from, target, self.data.edge as Edge))
               },
             }),
           ),

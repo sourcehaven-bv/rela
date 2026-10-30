@@ -186,6 +186,9 @@ var editable = map[File][]string{
 		// the messages stay readable everywhere, so it restricts nothing.
 		"channels.*.messages.*.display",
 
+		// A busy column (TKT-TU3XH4) is display only, like a kanban busy
+		// card field; the save checks it against realtime.yaml.
+		"lists.*.columns.[].busy",
 		"lists.*.columns.[].direction",
 		"lists.*.columns.[].label",
 		"lists.*.columns.[].link",
@@ -353,6 +356,8 @@ var locked = map[File][]string{
 		"pages.**", "next_action_bands.**", "next_actions.**", "account.**", "lists.*.create_world",
 		"lists.*.columns.[].face", "dashboard.cards.[].columns.[].face",
 		"dashboards.*.cards.[].columns.[].face",
+		// Busy columns are list-only (TKT-TU3XH4); the load refuses them here.
+		"dashboard.cards.[].columns.[].busy", "dashboards.*.cards.[].columns.[].busy",
 	},
 }
 

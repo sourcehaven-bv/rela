@@ -519,7 +519,7 @@ export interface ListParams {
   // a comment count.
   comment_counts?: boolean
   // Asks each row to carry `_busy` for this channel type. Set when a kanban
-  // card has a `busy:` field.
+  // card has a `busy:` field or a list has a busy column.
   busy?: string
   // world selects which FACE of each entity is served, and which entities
   // appear at all — an entity with no face in the requested world is omitted

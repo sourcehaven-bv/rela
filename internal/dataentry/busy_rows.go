@@ -10,8 +10,8 @@ import (
 )
 
 // busyParam asks a collection response to carry each row's busy channels
-// of one channel type (TKT-21G6JS). Off by default: only a kanban card with
-// a `busy:` field asks for it.
+// of one channel type (TKT-21G6JS). Off by default: a kanban card with a
+// `busy:` field or a list with a busy column (TKT-TU3XH4) asks for it.
 const busyParam = "busy"
 
 // busyReader answers the busy channels of one type on a page of rows.

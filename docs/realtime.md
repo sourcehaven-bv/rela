@@ -2154,7 +2154,8 @@ Field order, labels and widgets come from the `channels:` block of
 ## Busy indicator
 
 A board can show which cards someone works on now, such as an agent that
-plans a ticket. A card is busy while a channel on its entity has a session
+plans a ticket, and a list can show the same for its rows. A card or row is
+busy while a channel on its entity has a session
 in a state with status `working`. The indicator shows pulsing dots, the
 state's label and how long the session has been in that state, such as
 "Planning · 3h". A screen reader hears the channel type, the state and the
@@ -2163,8 +2164,9 @@ channels the card shows the one longest in its state, the likeliest to
 have stalled, and "+N". With a reduced-motion setting the dots are
 replaced by a still icon.
 
-Turn it on per board with a `busy:` card field in `data-entry.yaml`. It
-names a channel type; see the kanban section of the data-entry guide.
+Turn it on per board with a `busy:` card field in `data-entry.yaml`, or
+per list with a `busy:` column. Each names a channel type; see "Busy
+cards" and "Busy column example" in the data-entry guide.
 
 ```yaml
 kanbans:
@@ -2180,6 +2182,23 @@ kanbans:
       fields:
         - busy: run
 ```
+
+A list takes a column entry instead. It may not be the first column, which
+is the row title:
+
+```yaml
+lists:
+  tickets:
+    entity_type: ticket
+    columns:
+      - property: title
+        link: detail
+      - busy: run
+        label: Agent
+```
+
+The rest of this section says "board" and "card"; a list and its rows work
+the same way, except where "When it updates" says otherwise.
 
 **Which states count.** A state counts when its status reads `working`,
 whether you declare `status: working` or it is the default. This is the
@@ -2285,8 +2304,13 @@ process reaches the board depends on the backend:
 | PostgreSQL | Live when the transition has outputs: the server hears the entity write. Otherwise within about 14 seconds, on the board's periodic safety check. |
 | SQLite | Not possible while rela-server runs, because only one process may open the project. Agents use remote MCP, which runs inside rela-server. |
 
-A list view has no busy column yet (TKT-TU3XH4). The API answers for any
-list; see `?busy=` in the data-entry API reference.
+A list updates the same way, for the rows it watches. A paged list
+watches the page on screen. A grouped list watches its first 100 rows, as
+a board does. A list with a search term does not update live, because a
+searched list has no live subscription: its indicators keep counting
+minutes but change state only on the next refetch, such as a reload or a
+change of page or filter. The API answers for any list; see `?busy=` in
+the data-entry API reference.
 
 ## HTTP API
 

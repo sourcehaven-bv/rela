@@ -690,7 +690,8 @@
       "summary": "{first} - {last} van {total}"
     },
     "column": {
-      "face": "Variant"
+      "face": "Variant",
+      "busy": "Bezig"
     },
     "filter": {
       "all": "Alle",

@@ -3913,3 +3913,123 @@ func TestValidateKanbanBusyField(t *testing.T) {
 		t.Error("show_label: true does not show a busy field's label")
 	}
 }
+
+// TestValidateConfig_ListBusyColumn pins the load-time shape rules for a
+// list busy column (TKT-TU3XH4).
+func TestValidateConfig_ListBusyColumn(t *testing.T) {
+	title := ListColumn{Property: "title"}
+	tests := []struct {
+		name    string
+		columns []ListColumn
+		wantErr string // substring; "" means valid
+	}{
+		{"alone", []ListColumn{title, {Busy: "run"}}, ""},
+		{"with label", []ListColumn{title, {Busy: "run", Label: "Agent"}}, ""},
+		{"with property", []ListColumn{title, {Busy: "run", Property: "status"}}, "busy cannot be combined"},
+		{"with relation", []ListColumn{title, {Busy: "run", Relation: "blocks"}}, "busy cannot be combined"},
+		{"with direction", []ListColumn{title, {Busy: "run", Direction: "incoming"}}, "busy cannot be combined"},
+		{"with face", []ListColumn{title, {Busy: "run", Face: true}}, "busy cannot be combined"},
+		{"with link", []ListColumn{title, {Busy: "run", Link: "detail"}}, "busy cannot be combined"},
+		{"with sortable", []ListColumn{title, {Busy: "run", Sortable: true}}, "busy cannot be combined"},
+		{"twice", []ListColumn{title, {Busy: "run"}, {Busy: "run"}},
+			`list "test": column[2]: a list has at most one busy column`},
+		{"first column", []ListColumn{{Busy: "run"}, title},
+			`list "test": column[0]: the first column is the row title and cannot be busy`},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := &Config{Lists: map[string]List{
+				"test": {EntityType: "ticket", Columns: tc.columns},
+			}}
+			err := ValidateConfig([]byte(`version: "1.0"`), cfg, testMetamodel())
+			if tc.wantErr == "" {
+				if err != nil {
+					t.Fatalf("unexpected error: %v", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+				t.Fatalf("want error containing %q, got %v", tc.wantErr, err)
+			}
+			if strings.Contains(tc.wantErr, "combined") && !strings.Contains(err.Error(), `list "test": column[1]`) {
+				t.Errorf("error does not name the column: %v", err)
+			}
+		})
+	}
+}
+
+// TestValidateConfig_BusyColumnOnlyOnLists pins that dashboard card columns
+// and view section columns refuse `busy` (TKT-TU3XH4), whatever the card's
+// source or display and whether or not the section's source resolves, and
+// that each busy column is reported once.
+func TestValidateConfig_BusyColumnOnlyOnLists(t *testing.T) {
+	const want = "busy is only supported on list columns"
+	busy := ListColumn{Busy: "run"}
+	listCard := DashboardCard{Title: "T", List: "all", Display: "table", Columns: []ListColumn{{Property: "title"}, busy}}
+	lists := map[string]List{"all": {EntityType: "ticket", Columns: []ListColumn{{Property: "title"}}}}
+	mentions := []ViewTraverse{{From: "entry", MentionedBy: true, CollectAs: "mentions"}}
+	nested := []ViewTraverse{
+		{From: "entry", Follow: "blocks", CollectAs: "blocked"},
+		{From: "blocked", Follow: "blocks", CollectAs: "deeper"},
+	}
+	view := func(traverse []ViewTraverse, s ViewSection) map[string]ViewConfig {
+		return map[string]ViewConfig{"v": {Entry: ViewEntry{Type: "ticket"}, Traverse: traverse, Sections: []ViewSection{s}}}
+	}
+
+	tests := []struct {
+		name   string
+		cfg    *Config
+		wantAt string
+	}{
+		{"default dashboard", &Config{Lists: lists, Dashboard: &DashboardConfig{Cards: []DashboardCard{listCard}}},
+			`dashboard: card[0] "T" column[1]`},
+		{"named dashboard", &Config{Lists: lists, Dashboards: map[string]DashboardConfig{
+			"ops": {Cards: []DashboardCard{listCard}},
+		}}, `dashboards[ops]: card[0] "T" column[1]`},
+		{"query card", &Config{Dashboard: &DashboardConfig{Cards: []DashboardCard{
+			{Title: "Q", Query: "type:ticket", Display: "table", Columns: []ListColumn{{Property: "title"}, busy}},
+		}}}, `dashboard: card[0] "Q" column[1]`},
+		{"list card with display list", &Config{Lists: lists, Dashboard: &DashboardConfig{Cards: []DashboardCard{
+			{Title: "L", List: "all", Display: "list", Columns: []ListColumn{busy}},
+		}}}, `dashboard: card[0] "L" column[0]`},
+		{"section columns", &Config{Views: view(mentions, ViewSection{
+			Source: "mentions", Display: "table", Columns: []ListColumn{{Property: "title"}, busy},
+		})}, `view "v": section[0] column[1]`},
+		{"section with an unresolvable source", &Config{Views: view(mentions, ViewSection{
+			Source: "nowhere", Display: "table", Columns: []ListColumn{busy},
+		})}, `view "v": section[0] column[0]`},
+		{"parent_columns", &Config{Views: view(nested, ViewSection{
+			Source: "blocked", Display: DisplayNested, Children: "deeper",
+			ParentColumns: map[string][]ListColumn{"ticket": {busy}},
+		})}, `view "v": section[0] parent_columns.ticket[0]`},
+		{"child_columns", &Config{Views: view(nested, ViewSection{
+			Source: "blocked", Display: DisplayNested, Children: "deeper",
+			ChildColumns: map[string][]ListColumn{"ticket": {busy}},
+		})}, `view "v": section[0] child_columns.ticket[0]`},
+		{"columns_by_type", &Config{Views: view(mentions, ViewSection{
+			Source: "mentions", Display: "table", Columns: []ListColumn{{Property: "name"}},
+			ColumnsByType: map[string][]ListColumn{"ticket": {{Property: "title"}, busy}},
+		})}, `view "v": section[0] columns_by_type.ticket[1]`},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			err := ValidateConfig([]byte(`version: "1.0"`), tc.cfg, testMetamodel())
+			var cve *ConfigValidationError
+			if !errors.As(err, &cve) {
+				t.Fatalf("want a ConfigValidationError, got %v", err)
+			}
+			n := 0
+			for _, e := range cve.Errors {
+				if strings.Contains(e, want) {
+					n++
+					if !strings.Contains(e, tc.wantAt) {
+						t.Errorf("error %q does not name %q", e, tc.wantAt)
+					}
+				}
+			}
+			if n != 1 {
+				t.Errorf("want exactly one %q error, got %d in %v", want, n, cve.Errors)
+			}
+		})
+	}
+}

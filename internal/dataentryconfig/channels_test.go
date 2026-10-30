@@ -299,3 +299,101 @@ func TestValidateChannels_Display(t *testing.T) {
 		t.Fatalf("errs %v, warnings %v; want [%s]", errs, warnings, want)
 	}
 }
+
+// TestValidateChannels_BusyListColumn pins the realtime.yaml checks for a
+// list busy column (TKT-TU3XH4). No case has a `channels:` block, so the
+// list column alone must turn the checks on.
+func TestValidateChannels_BusyListColumn(t *testing.T) {
+	listWith := func(busy string) *Config {
+		return &Config{Lists: map[string]List{"l": {
+			EntityType: "ticket", Columns: []ListColumn{{Property: "title"}, {Busy: busy}},
+		}}}
+	}
+	cases := []struct {
+		name     string
+		busy     string
+		wantErr  string // substring; "" means none
+		wantWarn string // substring; "" means none
+	}{
+		{name: "valid", busy: "run"},
+		{
+			name: "unknown type", busy: "nope",
+			wantErr: `list "l": column[1]: realtime.yaml declares no channel type "nope"`,
+		},
+		{name: "no session", busy: "room", wantErr: `list "l": column[1]: channel type room declares no session`},
+		{name: "no working state", busy: "idle", wantErr: "channel type idle has no state with status working"},
+		{name: "not attached", busy: "review", wantErr: `channel type review does not attach to entity type "ticket"`},
+		{name: "initial working by default", busy: "eager", wantWarn: `list "l": column[1]: the initial state`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			errs, warnings := ValidateChannels(listWith(tc.busy), fakeChannelSchema{})
+			for _, c := range []struct {
+				got  []string
+				want string
+			}{{errs, tc.wantErr}, {warnings, tc.wantWarn}} {
+				all := strings.Join(c.got, "\n")
+				if c.want == "" && all != "" || !strings.Contains(all, c.want) {
+					t.Fatalf("got %q, want %q", all, c.want)
+				}
+			}
+		})
+	}
+	t.Run("realtime off", func(t *testing.T) {
+		errs, warnings := ValidateChannels(listWith("run"), nil)
+		want := `list "l": column[1]: realtime is off (no realtime.yaml), so this busy column shows nothing`
+		if len(errs) != 0 || len(warnings) != 1 || warnings[0] != want {
+			t.Fatalf("errs %v, warnings %v; want %q", errs, warnings, want)
+		}
+	})
+	t.Run("has realtime presentation", func(t *testing.T) {
+		if !HasRealtimePresentation(listWith("run")) {
+			t.Fatal("a list busy column alone does not count as realtime presentation")
+		}
+	})
+}
+
+// docsExampleBusyColumn returns the first yaml block after the "Busy column
+// example" heading of docs/data-entry.md. It fails the test when the
+// heading or the block is gone.
+func docsExampleBusyColumn(t *testing.T) string {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join("..", "..", "docs", "data-entry.md"))
+	if err != nil {
+		t.Fatalf("read docs: %v", err)
+	}
+	_, section, ok := strings.Cut(string(data), "\n#### Busy column example\n")
+	if !ok {
+		t.Fatal(`docs/data-entry.md has no "#### Busy column example" heading`)
+	}
+	_, block, ok := strings.Cut(section, "\n```yaml\n")
+	if !ok {
+		t.Fatal(`no yaml block after "#### Busy column example"`)
+	}
+	block, _, ok = strings.Cut(block, "\n```")
+	if !ok {
+		t.Fatal(`the yaml block after "#### Busy column example" is not closed`)
+	}
+	return block
+}
+
+// TestDocsExample_BusyListColumn pins the documented busy column example
+// (TKT-TU3XH4): it parses, passes the load checks and passes the
+// realtime.yaml checks against the fake schema.
+func TestDocsExample_BusyListColumn(t *testing.T) {
+	data := []byte("version: \"1.0\"\n" + docsExampleBusyColumn(t))
+	var cfg Config
+	if err := yaml.Unmarshal(data, &cfg); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if err := ValidateConfig(data, &cfg, testMetamodel()); err != nil {
+		t.Fatalf("ValidateConfig: %v", err)
+	}
+	if len(busyFields(&cfg)) == 0 {
+		t.Fatal("the example has no busy column")
+	}
+	errs, warnings := ValidateChannels(&cfg, fakeChannelSchema{})
+	if len(errs) != 0 || len(warnings) != 0 {
+		t.Fatalf("ValidateChannels: errs %v, warnings %v", errs, warnings)
+	}
+}
