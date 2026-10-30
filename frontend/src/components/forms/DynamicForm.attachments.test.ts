@@ -23,6 +23,7 @@ vi.mock('vue-router', () => ({
   useRouter: () => ({ push, replace: vi.fn(), back: vi.fn() }),
   useRoute: () => ({ query: {}, params: {}, path: '/form/bug-form' }),
   onBeforeRouteLeave: vi.fn(),
+  onBeforeRouteUpdate: vi.fn(),
 }))
 
 // Create mode fetches templates and runs the staged-affordance dry-run on

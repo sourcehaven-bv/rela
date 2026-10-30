@@ -16,6 +16,7 @@ vi.mock('vue-router', () => ({
   useRouter: () => ({ push: vi.fn(), replace: vi.fn(), back: vi.fn() }),
   useRoute: () => ({ query: routeQuery.value, params: {}, path: '/form/ticket-form' }),
   onBeforeRouteLeave: vi.fn(),
+  onBeforeRouteUpdate: vi.fn(),
 }))
 
 // `DynamicForm` destructures `confirm` at setup, so the module has to be

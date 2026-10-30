@@ -16,7 +16,7 @@
  * With `taskItemConversions` offered, each task item gets a convert button
  * while the body is open (TKT-3IBLIP).
  */
-import { computed, ref } from 'vue'
+import { computed, onBeforeUnmount, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import RlInlineEdit from 'rela-components/components/common/RlInlineEdit.vue'
 import MarkdownEditor from '@/components/forms/milkdown/MilkdownEditor.vue'
@@ -36,6 +36,7 @@ const props = defineProps<{
 }>()
 
 const emit = defineEmits<{
+  edit: []
   input: [content: string]
   done: []
 }>()
@@ -56,6 +57,15 @@ function conversionDialogs(): Element[] {
 // as `modelValue` would reset it under the cursor, so it opens on a snapshot.
 const draft = ref('')
 const { t } = useI18n()
+
+function onEdit() {
+  draft.value = props.content
+  emit('edit')
+}
+
+// Unmounted while open (the caller keys it per row): the editor's last
+// keystrokes still go out, to the row the edit started on.
+onBeforeUnmount(() => editorRef.value?.flush())
 
 function onLeave() {
   editorRef.value?.flush()
@@ -80,7 +90,7 @@ function onEditorKeydown(event: KeyboardEvent) {
     trigger="explicit"
     :label="t('entity.bodyLabel')"
     :keep-open-within="conversionDialogs"
-    @edit="draft = props.content"
+    @edit="onEdit"
     @commit="onLeave"
     @cancel="onLeave"
   >

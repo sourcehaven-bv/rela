@@ -14,6 +14,7 @@ vi.mock('vue-router', () => ({
   useRouter: () => ({ push: vi.fn(), replace: vi.fn(), back: vi.fn() }),
   useRoute: () => ({ query: routeQuery, params: {}, path: '/form/task-form' }),
   onBeforeRouteLeave: vi.fn(),
+  onBeforeRouteUpdate: vi.fn(),
 }))
 
 let answerMe: (me: MeResponse) => void = () => {}
