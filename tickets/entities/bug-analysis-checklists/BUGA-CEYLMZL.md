@@ -23,6 +23,6 @@ status: done
 
 ## Fix Planning
 
-- [x] Fix approach determined (own-write tokens in useAutoSave; useEntitySession for EntityDetail)
+- [x] Fix approach determined (useEntitySession orders reads against writes for EntityDetail and its section forms; the own-write token rule was dropped in review, RR-BCOTPJH)
 - [x] Regression test planned (bodyConflict test; session property test; AM-autosave-single-user-no-conflict)
 - [x] Related areas checked for similar issues (DynamicForm has the same gap: TKT-60R64HZ; refreshView misses a save that starts and ends during its fetch)
