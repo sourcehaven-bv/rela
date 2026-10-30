@@ -3330,9 +3330,10 @@ dashboard:
 column count (`width: 2`), fails config load.
 
 The number of columns follows the width of the screen, so `width` names a size
-rather than a column count. On a phone, a `wide` or `full` card takes the whole
-row. Cards have no height setting: a card grows to fit its content, and the
-cards in one row share the height of the tallest.
+rather than a column count. On a phone (a screen 480 pixels wide or less),
+every card takes the whole row, whatever its `width`. Cards have no height
+setting: a card grows to fit its content, and the cards in one row share the
+height of the tallest.
 
 Cards appear in the order of `cards:`, which is also the order a keyboard and a
 screen reader follow. The grid does not move a later card up to fill a hole. A
