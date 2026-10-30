@@ -587,3 +587,18 @@ func TestConfigure_BusyFieldAgainstRealtime(t *testing.T) {
 	require.Contains(t, verr.Problems[0],
 		`data-entry.yaml: kanban "board": card.fields[0]: realtime.yaml declares no channel type "nope"`)
 }
+
+// TestConfigure_DeprecatedDataEntry pins that the Configure preview reports
+// deprecated data-entry.yaml syntax as one problem per detection. It names
+// the fix rather than `rela migrate`, which rewrites files on disk and cannot
+// change an edit that is not saved yet (TKT-BDKE4K).
+func TestConfigure_DeprecatedDataEntry(t *testing.T) {
+	srv, _ := configServer(t)
+	bad := cfgDataEntry + "lists:\n  tasks:\n    entity_type: task\n    columns:\n      - property: title\n        link: true\n"
+	_, err := configureHost{s: srv}.Validate([]byte(cfgSchema), []byte(bad))
+	var verr *configedit.ValidationError
+	require.ErrorAs(t, err, &verr)
+	require.Len(t, verr.Problems, 1)
+	require.Equal(t, "data-entry.yaml: deprecated syntax: Convert link: true to link: detail in data-entry.yaml",
+		verr.Problems[0])
+}

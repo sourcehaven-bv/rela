@@ -225,6 +225,16 @@ func (e *Error) Error() string {
 	return buf.String()
 }
 
+// Descriptions returns the description of each detected migration, in
+// detection order, for a caller that reports them one per line.
+func (e *Error) Descriptions() []string {
+	out := make([]string, len(e.Detections))
+	for i, d := range e.Detections {
+		out[i] = d.Description
+	}
+	return out
+}
+
 // IsMigrationError checks if an error is a migration Error.
 func IsMigrationError(err error) bool {
 	var migErr *Error

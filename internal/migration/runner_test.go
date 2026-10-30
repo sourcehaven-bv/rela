@@ -37,3 +37,10 @@ func TestDetectFromNodeWithMetamodel_DoesNotLeakMetamodelAcrossRuns(t *testing.T
 		}
 	}
 }
+
+func TestErrorDescriptions(t *testing.T) {
+	e := &Error{FilePath: "data-entry.yaml", Detections: []DetectionResult{{Description: "a"}, {Description: "b"}}}
+	if got := strings.Join(e.Descriptions(), ","); got != "a,b" {
+		t.Errorf("Descriptions() = %q, want %q", got, "a,b")
+	}
+}
