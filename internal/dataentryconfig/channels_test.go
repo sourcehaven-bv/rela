@@ -17,33 +17,28 @@ type fakeChannelSchema struct{}
 
 func (fakeChannelSchema) ChannelTypeNames() []string { return []string{"room", "run"} }
 
-func (fakeChannelSchema) MessageTypeNames(ct string) []string {
-	switch ct {
-	case "room":
-		return []string{"note", "text"}
-	case "run":
-		return []string{"ask", "claim", "plan", "progress", "resume"}
-	}
-	return nil
-}
-
-func (fakeChannelSchema) MessageProperties(ct, mt string) []ChannelProperty {
-	switch {
-	case ct == "run" && mt == "progress":
-		return []ChannelProperty{{Name: "body", Type: "markdown", Required: true}}
-	case ct != "room":
-		return nil
-	case mt == "text":
-		return []ChannelProperty{{Name: "body", Type: "markdown", Required: true}}
-	case mt == "note":
-		return []ChannelProperty{
+// MessageType: as in the agent-runner example of the guides, claim,
+// resume and progress in run have `unread: false`; every other type counts.
+func (fakeChannelSchema) MessageType(ct, mt string) (MessageFacts, bool) {
+	text := []ChannelProperty{{Name: "body", Type: "markdown", Required: true}}
+	switch ct + "." + mt {
+	case "room.text":
+		return MessageFacts{Properties: text, CountsUnread: true}, true
+	case "room.note":
+		return MessageFacts{Properties: []ChannelProperty{
 			{Name: "summary", Type: "string", Required: true},
 			{Name: "level", Type: "integer"},
 			{Name: "about", Type: "ref"},
 			{Name: "pick", Type: "enum"},
-		}
+		}, CountsUnread: true}, true
+	case "run.progress":
+		return MessageFacts{Properties: text}, true
+	case "run.claim", "run.resume":
+		return MessageFacts{}, true
+	case "run.ask", "run.plan":
+		return MessageFacts{CountsUnread: true}, true
 	}
-	return nil
+	return MessageFacts{}, false
 }
 
 // BusyFacts: run has a session with a working state and attaches to
@@ -144,7 +139,7 @@ func TestChannelsPresentation_Validate(t *testing.T) {
 			`cannot edit property "about" of type ref`},
 
 		{"display collapsed", "channels: {room: {messages: {note: {display: collapsed}}}}", ""},
-		{"display hidden", "channels: {room: {messages: {note: {display: hidden}}}}", ""},
+		{"display hidden", "channels: {run: {messages: {claim: {display: hidden}}}}", ""},
 		{"display empty", `channels: {room: {messages: {note: {display: ""}}}}`, ""},
 		{"display null", "channels: {room: {messages: {note: {display: null}}}}", ""},
 		{"display bad value", "channels: {room: {messages: {note: {display: shown}}}}",
@@ -395,5 +390,56 @@ func TestDocsExample_BusyListColumn(t *testing.T) {
 	errs, warnings := ValidateChannels(&cfg, fakeChannelSchema{})
 	if len(errs) != 0 || len(warnings) != 0 {
 		t.Fatalf("ValidateChannels: errs %v, warnings %v", errs, warnings)
+	}
+}
+
+// countingClaim is fakeChannelSchema with claim in run counting as unread.
+type countingClaim struct{ fakeChannelSchema }
+
+func (s countingClaim) MessageType(ct, mt string) (MessageFacts, bool) {
+	f, ok := s.fakeChannelSchema.MessageType(ct, mt)
+	if ct == "run" && mt == "claim" {
+		f.CountsUnread = true
+	}
+	return f, ok
+}
+
+// TestValidateChannels_HiddenCountsUnread pins the cross-file warning of
+// TKT-O6RC8Z AC 8: `display: hidden` on a type realtime.yaml counts as
+// unread warns once, naming both paths; collapsed, or hidden with
+// `unread: false`, does not; it is never an error.
+func TestValidateChannels_HiddenCountsUnread(t *testing.T) {
+	const want = "channels.run.messages.claim.display: hidden, but realtime.yaml counts claim as unread; " +
+		"set unread: false on channel_types.run.message_types.claim"
+	for _, tc := range []struct {
+		name    string
+		yaml    string
+		schema  ChannelSchema
+		warning string
+	}{
+		{"hidden counting", "channels: {run: {messages: {claim: {display: hidden}}}}", countingClaim{}, want},
+		{"collapsed counting", "channels: {run: {messages: {claim: {display: collapsed}}}}", countingClaim{}, ""},
+		{"hidden non-counting", "channels: {run: {messages: {claim: {display: hidden}}}}", fakeChannelSchema{}, ""},
+		{"shown counting", "channels: {run: {messages: {claim: {}}}}", countingClaim{}, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var cfg Config
+			if err := yaml.Unmarshal([]byte(tc.yaml), &cfg); err != nil {
+				t.Fatal(err)
+			}
+			errs, warnings := ValidateChannels(&cfg, tc.schema)
+			if len(errs) != 0 {
+				t.Fatalf("errs = %v; a hidden counting type is never an error", errs)
+			}
+			if tc.warning == "" {
+				if len(warnings) != 0 {
+					t.Fatalf("warnings = %v; want none", warnings)
+				}
+				return
+			}
+			if !slices.Equal(warnings, []string{tc.warning}) {
+				t.Fatalf("warnings = %v; want [%s]", warnings, tc.warning)
+			}
+		})
 	}
 }

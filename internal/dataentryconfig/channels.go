@@ -74,13 +74,22 @@ type ChannelProperty struct {
 // supplies this from the compiled configuration.
 type ChannelSchema interface {
 	ChannelTypeNames() []string
-	MessageTypeNames(channelType string) []string
-	// MessageProperties lists the properties of a message type; nil for an
-	// unknown channel or message type.
-	MessageProperties(channelType, messageType string) []ChannelProperty
+	// MessageType reports what the check needs to know of a message type;
+	// false for an unknown channel or message type.
+	MessageType(channelType, messageType string) (MessageFacts, bool)
 	// BusyFacts reports what a busy field or column needs to know of a channel
 	// type; false for an unknown type.
 	BusyFacts(channelType string) (BusyFacts, bool)
+}
+
+// MessageFacts is what [ValidateChannels] checks a message type's
+// presentation against.
+type MessageFacts struct {
+	// Properties lists the properties of the message type.
+	Properties []ChannelProperty
+	// CountsUnread reports whether the type's messages count toward a
+	// reader's unread: a stored type without `unread: false`.
+	CountsUnread bool
 }
 
 // BusyFacts is what [ValidateChannels] checks a `busy:` card field or column
@@ -240,7 +249,7 @@ func ValidateChannels(cfg *Config, schema ChannelSchema) (errs, warnings []strin
 		}
 		return nil, warnings
 	}
-	errs = channelBlockErrors(cfg, schema)
+	errs, warnings = checkChannelBlock(cfg, schema)
 	for _, b := range busy {
 		e, w := busyFieldErrors(b, schema)
 		errs, warnings = append(errs, e...), append(warnings, w...)
@@ -319,28 +328,34 @@ func busyFieldErrors(b busyField, schema ChannelSchema) (errs, warnings []string
 	return nil, nil
 }
 
-// channelBlockErrors checks the `channels:` block against schema.
-func channelBlockErrors(cfg *Config, schema ChannelSchema) []string {
-	var errs []string
+// checkChannelBlock checks the `channels:` block against schema. A message
+// type with `display: hidden` that realtime.yaml still counts as unread is
+// a warning, not an error: a project may change the two files one at a
+// time.
+func checkChannelBlock(cfg *Config, schema ChannelSchema) (errs, warnings []string) {
 	ctNames := schema.ChannelTypeNames()
 	for _, ctName := range sortedMapKeys(cfg.Channels) {
 		if !slices.Contains(ctNames, ctName) {
 			errs = append(errs, fmt.Sprintf("channels.%s: realtime.yaml declares no channel type %q", ctName, ctName))
 			continue
 		}
-		mtNames := schema.MessageTypeNames(ctName)
 		ct := cfg.Channels[ctName]
 		for _, mtName := range sortedMapKeys(ct.Messages) {
 			prefix := fmt.Sprintf("channels.%s.messages.%s", ctName, mtName)
-			if !slices.Contains(mtNames, mtName) {
+			facts, ok := schema.MessageType(ctName, mtName)
+			if !ok {
 				errs = append(errs, fmt.Sprintf("%s: channel type %s declares no message type %q", prefix, ctName, mtName))
 				continue
 			}
-			props := schema.MessageProperties(ctName, mtName)
-			errs = append(errs, channelFieldErrors(prefix+".fields", mtName, ct.Messages[mtName].Fields, props)...)
+			mp := ct.Messages[mtName]
+			errs = append(errs, channelFieldErrors(prefix+".fields", mtName, mp.Fields, facts.Properties)...)
+			if mp.Display == MessageDisplayHidden && facts.CountsUnread {
+				warnings = append(warnings, fmt.Sprintf("%s.display: hidden, but realtime.yaml counts %s as unread; "+
+					"set unread: false on channel_types.%s.message_types.%s", prefix, mtName, ctName, mtName))
+			}
 		}
 	}
-	return errs
+	return errs, warnings
 }
 
 func channelFieldErrors(prefix, mtName string, fields []FormField, props []ChannelProperty) []string {

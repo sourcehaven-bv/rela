@@ -580,6 +580,8 @@ type countingStore struct {
 	reads, listReads, setReads atomic.Int64
 	// beforeReads runs once, before the next Reads reaches the store.
 	beforeReads func()
+	// lastAppend is the NewMessage of the latest Append call.
+	lastAppend atomic.Pointer[channels.NewMessage]
 }
 
 func (s *countingStore) Reads(
@@ -697,6 +699,7 @@ func (s *countingStore) TypeRecords(ctx context.Context) (map[string]channels.Ty
 
 func (s *countingStore) Append(ctx context.Context, k channels.Key, m channels.NewMessage) (channels.Message, error) {
 	s.appends.Add(1)
+	s.lastAppend.Store(&m)
 	if f := s.beforeAppend; f != nil {
 		s.beforeAppend = nil
 		f()

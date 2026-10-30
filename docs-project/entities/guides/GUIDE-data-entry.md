@@ -1468,10 +1468,29 @@ with `read_channel`, with `rela channel read`, and in the web app with
 **Show all messages**. To keep messages from a person, use the channel's
 `read` rule in `realtime.yaml`.
 
-Unread counts and the inbox do not know quiet types yet. The server counts
-every message as unread, so a channel can show "5 unread" when you see one
-folded line. A mention or reply in a quiet message still shows in the
-inbox, but the channel opens without showing it. TKT-O6RC8Z tracks this.
+`display` does not change unread counts. The server decides what counts
+from `realtime.yaml`, so pair each quiet type with `unread: false` there.
+Then the badge agrees with what you see: a channel does not show
+"5 unread" when you see one folded line.
+
+```yaml
+# realtime.yaml
+channel_types:
+  run:
+    message_types:
+      progress:
+        properties: { body: { type: markdown } }
+        post: [member]
+        unread: false
+```
+
+When a type is `hidden` here but still counts as unread in
+`realtime.yaml`, rela warns at load, on a reload of either file and in
+`rela validate`. The warning names the type; it does not stop the app.
+
+A mention or reply in a quiet message still shows in the inbox. Clicking
+it opens the channel at that message and shows it in full, also when its
+type is `hidden` or `collapsed`.
 
 ### Unread messages
 
@@ -1537,8 +1556,12 @@ person, the item is not shown.
 Click a row to open its channel on the entity page. This works for closed
 and archived channels too: the channel list then switches to **All**
 channels. The link adds `?channel=<type>` or `?channel=<type>/<name>` to
-the entity page, so you can bookmark or share it. It opens the channel
-but does not scroll to the message.
+the entity page, so you can bookmark or share it. A mention or reply row
+also adds `&seq=<n>`: the page then scrolls to that message, shows it in
+full even when its type is quiet, and focuses it. This happens once; the
+address then drops `seq`, so clicking the same row again works. A message
+that is not in the channel's loaded pages within ten older pages is not
+shown, and nothing is reported.
 
 **Mark read** on an unread channel marks the channel read up to its
 newest message. On a mention or reply it marks the channel read up to

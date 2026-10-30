@@ -45,6 +45,10 @@ var refusedKeys = []struct {
 		"enters: set it on that state"},
 	{"channel_types.*.message_types.*.states", "use in: the session states in which the type may be posted"},
 	{"channel_types.*.message_types.*.from", "use in: the session states in which the type may be posted"},
+	{"channel_types.*.message_types.*.quiet", "use unread: false to keep the type out of unread counts; " +
+		"to fold or hide it in the web app, use display in data-entry.yaml"},
+	{"channel_types.*.message_types.*.display", "display belongs in data-entry.yaml: " +
+		"channels.<type>.messages.<mt>.display"},
 	{"channel_types.*.message_types.*.decision_button.label", "the type's decision button reads as the " +
 		"message type's label; for another text, add a button: to the entry"},
 	{"channel_types.*.message_types.*.decision_button.props", "the type's decision button posts no preset; " +
@@ -117,9 +121,9 @@ func (k *keyChecker) walk(n *yaml.Node, t reflect.Type, path string) {
 		k.presetValue(n, path)
 		return
 	}
-	if t == reflect.TypeFor[rawConfirm]() {
+	if reason, ok := nodeScalars[t]; ok {
 		if n.Kind != yaml.ScalarNode {
-			k.add(path, "must be true, false or the text to show")
+			k.add(path, reason)
 		}
 		return
 	}
@@ -159,6 +163,14 @@ func (k *keyChecker) walk(n *yaml.Node, t reflect.Type, path string) {
 	default:
 		k.scalar(n, t, path)
 	}
+}
+
+// nodeScalars are the raw types that keep their YAML node for the
+// validator to read, keyed to the reason a value that is not a single
+// value is refused. The validator checks the value itself.
+var nodeScalars = map[reflect.Type]string{
+	reflect.TypeFor[rawConfirm](): "must be true, false or the text to show",
+	reflect.TypeFor[rawUnread]():  "must be a single value: true or false",
 }
 
 // branches checks an `on.<message type>` value, which is one transition

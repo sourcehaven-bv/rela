@@ -164,6 +164,21 @@ func TestDecideAndApplyReminder(t *testing.T) {
 	FillReminderOutcome(&SessionStep{}, after)
 }
 
+// TestReminderMessage_CopiesNoUnread pins that [ReminderMessage] copies
+// [ReminderPost.NoUnread] onto the message, so a reminder of a type with
+// `unread: false` is stored as non-counting (TKT-O6RC8Z).
+func TestReminderMessage_CopiesNoUnread(t *testing.T) {
+	step := &SessionStep{NoticeBy: Author{User: "system:realtime"}}
+	for _, noUnread := range []bool{false, true} {
+		post := validPost()
+		post.NoUnread = noUnread
+		m, _, err := ReminderMessage(step, post, 5, t0, 9)
+		require.NoError(t, err)
+		require.Equal(t, noUnread, m.NoUnread)
+		require.Equal(t, !noUnread, Counts(m))
+	}
+}
+
 func TestPrepareAppendStep_RefusesRemind(t *testing.T) {
 	step := &SessionStep{
 		Decide: func(Channel) (SessionMove, bool) { return SessionMove{}, false },

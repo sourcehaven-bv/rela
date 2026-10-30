@@ -19,6 +19,7 @@ var readsTests = []conformanceTest{
 	{"SetReadConcurrent", testSetReadConcurrent},
 	{"SetReadErased", testSetReadErased},
 	{"ReadsCount", testReadsCount},
+	{"ReadsNoUnread", testReadsNoUnread},
 	{"ReadsChunks", testReadsChunks},
 	{"ReadsCarried", testReadsCarried},
 	{"ListReads", testListReads},
@@ -261,6 +262,83 @@ func testReadsCount(t *testing.T, h Harness) {
 	require.ErrorIs(t, err, channels.ErrInvalidKey)
 	_, err = s.Reads(ctx, channels.Reader{}, []channels.Key{k})
 	require.ErrorIs(t, err, channels.ErrInvalidMessage)
+}
+
+// quietFromBob is fromBob(body) of a type with `unread: false`.
+func quietFromBob(body string) channels.NewMessage {
+	m := fromBob(body)
+	m.NoUnread = true
+	return m
+}
+
+// testReadsNoUnread pins [channels.NewMessage.NoUnread] (TKT-O6RC8Z): the
+// store keeps it, and a non-counting message above the marker adds nothing
+// to Reads or SetRead, after an edit or an action change too; 150
+// non-counting messages and 3 counting ones above the marker give 3.
+func testReadsNoUnread(t *testing.T, h Harness) {
+	t.Helper()
+	s, ctx := h.Store, context.Background()
+	k := key("TKT-1", "room")
+	mustAppend(t, s, k, fromBob("read"))
+	setRead(t, s, k, readerAlice, 1, T0)
+	quiet := mustAppend(t, s, k, quietFromBob("progress"))
+	require.True(t, quiet.NoUnread, "Append returns the flag")
+	got, err := s.Get(ctx, k, quiet.Seq)
+	require.NoError(t, err)
+	require.True(t, got.NoUnread, "the store keeps the flag")
+	require.Zero(t, reads(t, s, readerAlice, k)[k].Unread, "a non-counting message does not count")
+
+	unread := func(t *testing.T) int {
+		t.Helper()
+		got, err := s.Reads(ctx, readerAlice, []channels.Key{k})
+		require.NoError(t, err)
+		return got[k].Unread
+	}
+
+	t.Run("edit", func(t *testing.T) {
+		edited, err := s.Edit(ctx, k, quiet.Seq, map[string]any{"body": "changed"}, nil, T0)
+		require.NoError(t, err)
+		require.True(t, edited.NoUnread, "an edit keeps the flag")
+		got, err := s.Get(ctx, k, quiet.Seq)
+		require.NoError(t, err)
+		require.True(t, got.NoUnread)
+		require.Zero(t, unread(t), "an edit does not make it count")
+	})
+
+	t.Run("action change", func(t *testing.T) {
+		at := T0.Add(time.Minute)
+		pending := channels.Action{Status: channels.ActionPending, By: Alice, At: at}
+		_, err := s.SetAction(ctx, k, quiet.Seq, "accept", channels.ActionNone, pending)
+		require.NoError(t, err)
+		require.Zero(t, unread(t), "pending")
+		_, err = s.SetAction(ctx, k, quiet.Seq, "accept", channels.ActionPending, channels.Action{By: Bob, At: at})
+		require.NoError(t, err)
+		require.Zero(t, unread(t), "cleared")
+		_, err = s.SetAction(ctx, k, quiet.Seq, "accept", channels.ActionNone, pending)
+		require.NoError(t, err)
+		done := channels.Action{Status: channels.ActionDone, By: Alice, At: at.Add(time.Second), PendingAt: at}
+		got, err := s.SetAction(ctx, k, quiet.Seq, "accept", channels.ActionPending, done)
+		require.NoError(t, err)
+		require.True(t, got.NoUnread, "an action change keeps the flag")
+		require.Zero(t, unread(t), "done")
+	})
+
+	many := key("TKT-2", "room")
+	mustAppend(t, s, many, fromBob("read"))
+	setRead(t, s, many, readerAlice, 1, T0)
+	for i := range 3 {
+		mustAppend(t, s, many, fromBob(fmt.Sprint("c", i)))
+	}
+	for i := range 150 {
+		mustAppend(t, s, many, quietFromBob(fmt.Sprint("q", i)))
+	}
+	require.Equal(t, 3, reads(t, s, readerAlice, many)[many].Unread, "only counting messages count")
+	st, moved := setRead(t, s, many, readerAlice, 2, T0)
+	require.True(t, moved)
+	require.Equal(t, 2, st.Unread, "SetRead answers the same rule")
+	keys := markerKeys(listReads(t, s, readerAlice, 10))
+	require.Contains(t, keys, many, "ListReads keeps the channel")
+	require.Contains(t, keys, k)
 }
 
 // testReadsChunks pins a Reads call over more keys than one database

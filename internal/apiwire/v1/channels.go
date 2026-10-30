@@ -38,7 +38,8 @@ type Channel struct {
 
 // ChannelRead is the caller's read marker on a channel: the highest seq
 // they marked read, and how many messages above it count as unread, at
-// most 100. Removed messages and session notices do not count.
+// most 100. Removed messages, session notices and messages of a type with
+// `unread: false` do not count.
 type ChannelRead struct {
 	Seq    int64 `json:"seq"`
 	Unread int   `json:"unread"`

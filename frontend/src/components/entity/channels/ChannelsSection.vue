@@ -19,13 +19,20 @@
  * archived channel opens too. The value is only compared with the keys of
  * the rows the server listed; it never builds a request.
  *
+ * A `?seq=<n>` beside it (TKT-O6RC8Z, the inbox's mention and reply links)
+ * reveals that message once, in that channel only: a pending reveal holds
+ * the key and the seq, and goes to OpenChannel only while that channel is
+ * the open one. After the reveal the query drops `seq`, so the same link
+ * works again. Picking a channel by hand drops a pending reveal. A seq that
+ * is not a positive integer is ignored, and drops a pending reveal.
+ *
  * Channel routes take no `?world=`: the server refuses a non-default world
  * there, and the address carries the face (R14). The page world goes on
  * entity links only.
  */
 import { computed, nextTick, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { createChannel, type ChannelAnchor } from '@/api/channels'
 import { useEntityChannels } from '@/composables/useEntityChannels'
 import { useChannelSchemaStore } from '@/stores/channelSchema'
@@ -111,11 +118,15 @@ const visible = computed(() => groups.value.length > 0)
 // --- Deep link (?channel=) -----------------------------------------------------
 
 const route = useRoute()
+const router = useRouter()
 const root = ref<HTMLElement | null>(null)
 // The key the query asks for, until it is opened or found missing.
 let linked: string | null = null
 // Whether this query value already switched the filter to `all`.
 let triedAll = false
+
+/** The message a link reveals once, in the channel with key. */
+const pendingReveal = ref<{ key: string; seq: number } | null>(null)
 
 /** The query value as a row key; `case` and `case/` give the same key. */
 function linkedKey(raw: unknown): string | null {
@@ -140,20 +151,63 @@ function applyLink() {
     return
   }
   linked = null
+  pendingReveal.value = null
+}
+
+/** The `seq` query value as a positive integer, else null. */
+function linkedSeq(raw: unknown): number | null {
+  const value = Array.isArray(raw) ? raw[0] : raw
+  if (typeof value !== 'string' || !/^[1-9]\d*$/.test(value)) return null
+  const n = Number(value)
+  return Number.isSafeInteger(n) ? n : null
 }
 
 watch(
-  () => route?.query.channel,
-  (raw) => {
-    linked = linkedKey(raw)
-    triedAll = false
-    applyLink()
+  () => [route?.query.channel, route?.query.seq] as const,
+  ([rawChannel, rawSeq], old) => {
+    const key = linkedKey(rawChannel)
+    const seq = linkedSeq(rawSeq)
+    if (old === undefined || old[0] !== rawChannel) {
+      pendingReveal.value = key !== null && seq !== null ? { key, seq } : null
+      linked = key
+      triedAll = false
+      applyLink()
+      return
+    }
+    // Only seq changed. An absent seq is our own replace after a reveal; a
+    // bad one asks for nothing, so it drops a reveal that is still pending.
+    if (rawSeq === undefined) return
+    if (key === null || seq === null) {
+      pendingReveal.value = null
+      return
+    }
+    pendingReveal.value = { key, seq }
+    if (rows.value.some((r) => r.key === key)) selected.value = key
+    else {
+      linked = key
+      triedAll = false
+      applyLink()
+    }
   },
   { immediate: true }
 )
 watch([rows, list.loaded], applyLink)
 
+const revealSeq = computed(() => {
+  const p = pendingReveal.value
+  return p !== null && p.key === open.value?.key ? p.seq : undefined
+})
+
+/** The link's message is shown: drop it, and `seq` from the address. */
+function onRevealed() {
+  pendingReveal.value = null
+  const query = { ...route.query }
+  delete query.seq
+  void router.replace({ query, hash: route.hash })
+}
+
 function onSelect(key: string) {
+  pendingReveal.value = null
   selected.value = selected.value === key ? null : key
 }
 
@@ -188,6 +242,7 @@ async function submitCreate(title: string) {
     const channel = await createChannel(anchor.value, type, title || undefined)
     creating.value = null
     filter.value = 'open'
+    pendingReveal.value = null
     selected.value = channelKey(type, channel.name)
     await list.refetch()
   } catch (err) {
@@ -231,8 +286,10 @@ async function submitCreate(title: string) {
         :channel-type="open.ct"
         :name="open.name"
         :world="world"
+        :reveal-seq="revealSeq"
         @gone="onGone"
         @changed="list.refetch()"
+        @revealed="onRevealed"
       />
     </div>
     <ChannelTextDialog

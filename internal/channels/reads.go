@@ -79,9 +79,10 @@ type ReadState struct {
 func IsSessionNotice(m Message) bool { return strings.HasPrefix(m.TriggeredBy, SessionMarker) }
 
 // Counts reports whether m counts toward a reader's unread: a message that
-// is not removed and is not a session notice. It is the one definition;
-// the file backend calls it, and the database backends store its result.
-func Counts(m Message) bool { return m.Removed == nil && !IsSessionNotice(m) }
+// is not removed, is not a session notice and was not posted under a type
+// with `unread: false` ([Message.NoUnread]). It is the one definition; the
+// file backend calls it, and the database backends store its result.
+func Counts(m Message) bool { return m.Removed == nil && !IsSessionNotice(m) && !m.NoUnread }
 
 // CheckReads validates the arguments of [Store.Reads]: a valid reader
 // ([ErrInvalidMessage]), at most [MaxReadKeys] keys and each key valid
@@ -161,7 +162,10 @@ func LastActivity(c Channel, msgAt time.Time) time.Time {
 // SortReadWindow sorts ms into window order and cuts it to limit: markers
 // on channels with messages above the marker first, then the rest; within
 // each group the newest LastAt first, then [KeyLess]. A file backend that
-// sorts in Go uses it, so the backends agree on the window.
+// sorts in Go uses it, so the backends agree on the window. The first group
+// is decided by LastSeq, not by the count, so a channel with only
+// non-counting messages above the marker (session notices, or types with
+// `unread: false`) sorts there with an unread count of 0.
 func SortReadWindow(ms []ReadMarker, limit int) []ReadMarker {
 	sort.Slice(ms, func(i, j int) bool {
 		a, b := ms[i], ms[j]

@@ -74,12 +74,13 @@ type recordHead struct {
 	At          time.Time         `json:"at,omitzero"`
 	TriggeredBy string            `json:"triggered_by,omitempty"`
 	Removed     *channels.Removal `json:"removed,omitempty"`
+	NoUnread    bool              `json:"no_unread,omitempty"`
 }
 
 // counts reports whether the message record h counts toward unread (see
 // [channels.Counts]).
 func (h recordHead) counts() bool {
-	return channels.Counts(channels.Message{TriggeredBy: h.TriggeredBy, Removed: h.Removed})
+	return channels.Counts(channels.Message{TriggeredBy: h.TriggeredBy, Removed: h.Removed, NoUnread: h.NoUnread})
 }
 
 // lastHead is lastMessage with the head of the record found.
