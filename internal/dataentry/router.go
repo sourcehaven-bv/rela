@@ -399,6 +399,23 @@ func isAPIPath(p string) bool {
 	return strings.HasPrefix(p, "/api/") || p == "/api"
 }
 
+// isUnnamedStamp reports whether ctx carries a principal [stampAuditPrincipal]
+// stamped without a user: no resolver named one (no proxy header, no
+// RELA_DATAENTRY_USER). That is a request without credentials, a client
+// error. A proxy that sends the placeholder value "unknown" lands here too.
+//
+// A ctx the stamper never ran on does not match, and neither does a named
+// user with an unknown tool. Both are wiring faults and keep their 500.
+//
+// This is not an access predicate: it says nothing about
+// Identity.UnmatchedVerified or any grant. Its one use picks the status code
+// of a refusal. That 401 carries no WWW-Authenticate header, like the JWT
+// gate and writeNoIdentity: header mode has no scheme a client could answer.
+func isUnnamedStamp(ctx context.Context) bool {
+	p, ok := principal.Stamped(ctx)
+	return ok && (p.User == "" || p.User == principal.Unknown)
+}
+
 // attachACLRequest opens the request's ACL state through [access.Opener.Open]
 // for the principal stamped on ctx (by stampAuditPrincipal above) and attaches
 // the read gate built from it, so downstream affordance and read-gate
@@ -412,9 +429,10 @@ func isAPIPath(p string) bool {
 // a bug; otherwise a misconfigured stamper renders the UI as a raw JSON 500 and
 // locks operators out of the surface they need to recover from it.
 //
-// **Fail-loud (RR-875A).** Inside `/api/` a failure to open returns 500 with a
-// structured error rather than proceeding with no request attached, which
-// would make ACL fail open.
+// **Fail-loud (RR-875A).** Inside `/api/` a failure to open refuses the
+// request rather than proceeding with no request attached, which would make
+// ACL fail open. A request without a user ([isUnnamedStamp]) gets 401; every
+// other failure gets 500 with a structured error.
 //
 // RR-8ZGO, RR-E703: a request already attached upstream (chiefly by tests) is
 // reused after a principal check, and still gets its read gate here.
@@ -439,6 +457,12 @@ func attachACLRequest(next http.Handler, d *acl.Declarative, jwtVerified bool) h
 				"acl_principal_mismatch",
 				"Upstream ACL request principal does not match context principal",
 				"check server logs")
+			return
+		case errors.Is(err, acl.ErrUnstampedPrincipal) && isUnnamedStamp(r.Context()):
+			// BUG-C8DHGF: the stamper ran and no resolver named a user.
+			// The client sent no credentials, so it is told so, with the
+			// body the JWT gate and writeNoIdentity send.
+			writeV1Error(w, r, http.StatusUnauthorized, "unauthenticated", "Authentication required", "")
 			return
 		case errors.Is(err, acl.ErrUnstampedPrincipal):
 			// RR-372L: Open logged the raw error; it never reaches the body.
