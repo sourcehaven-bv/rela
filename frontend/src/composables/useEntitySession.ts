@@ -10,7 +10,7 @@
 // The session owns that decision. A read lands only when
 //   (a) the address is the one it was sent for,
 //   (b) no read sent after it has landed, and
-//   (c) no write to that address completed while it was on its way.
+//   (c) no write to the row it shows completed while it was on its way.
 // A read that fails (c) is sent again, a few times at most. Live changes
 // (`invalidate`) mark the entity stale and reload it once nothing is written,
 // so several of them cost one read.
@@ -50,6 +50,13 @@ export interface ReadOptions<T> {
   prepare?: (value: T) => boolean | Promise<boolean>
   /** Puts the answer on screen. Called at the moment the read lands. */
   land: (value: T) => void
+  /**
+   * The key the answer's writes are counted under (rule c): the row it shows,
+   * when the page tags its writes with the row they save rather than with the
+   * address on screen. Undefined, or left out, means the address the read
+   * was sent for.
+   */
+  shows?: (value: T) => string | undefined
   /**
    * A refresh rather than a load: it does not land while writes are held or
    * on their way (it would replace state the next edit derives from), and
@@ -92,11 +99,14 @@ export interface EntitySessionOptions {
 export function useEntitySession(address: () => string, opts: EntitySessionOptions) {
   let issued = 0
   let landed = 0
-  // Completed writes per address (rule c). The edits of the entity being
-  // left drain after the route has moved on; they must not void the reads of
-  // the entity arriving.
-  const writesDone = new Map<string, number>()
-  const doneFor = (target: string) => writesDone.get(target) ?? 0
+  // Completed writes per key (rule c): the sequence number of the last one
+  // that completed for each. The edits of the entity being left drain after
+  // the route has moved on; they must not void the reads of the entity
+  // arriving. A read learns its key only from its answer, so it compares
+  // against the sequence at send rather than a count per key.
+  let writesDone = 0
+  const lastWrite = new Map<string, number>()
+  const writtenSince = (key: string, since: number) => (lastWrite.get(key) ?? 0) > since
   const writing = ref(0)
   let writeTail: Promise<unknown> = Promise.resolve()
   const reading = new Set<{ target: string; ac: AbortController }>()
@@ -118,7 +128,7 @@ export function useEntitySession(address: () => string, opts: EntitySessionOptio
     try {
       for (let attempt = 0; ; attempt++) {
         const seq = ++issued
-        const writesAtSend = doneFor(target)
+        const writesAtSend = writesDone
         const entry = { target, ac: new AbortController() }
         reading.add(entry)
         let value: T
@@ -149,7 +159,7 @@ export function useEntitySession(address: () => string, opts: EntitySessionOptio
             markStale(full)
             return { kind: 'stale' }
           }
-          if (doneFor(target) !== writesAtSend) {
+          if (writtenSince(o.shows?.(value) ?? target, writesAtSend)) {
             if (attempt < READ_RETRIES) return 'retry'
             markStale(full)
             return { kind: 'stale' }
@@ -178,9 +188,9 @@ export function useEntitySession(address: () => string, opts: EntitySessionOptio
   }
 
   /**
-   * Runs a write after the writes before it. `target` is the address it
-   * writes to, by default the one on screen now; it voids the reads of that
-   * address that are on their way.
+   * Runs a write after the writes before it. `target` is the key it writes
+   * to, by default the address on screen now; it voids the reads on their way
+   * whose answer has that key (`ReadOptions.shows`).
    *
    * Do not call `write` from inside `run`: the inner write would wait for
    * the outer one. A `run` that never settles blocks every later write, so
@@ -193,7 +203,7 @@ export function useEntitySession(address: () => string, opts: EntitySessionOptio
     // Counted when it settles either way: a write that failed on the way back
     // may still have reached the server.
     return result.finally(() => {
-      writesDone.set(target, doneFor(target) + 1)
+      lastWrite.set(target, ++writesDone)
       writing.value--
     })
   }

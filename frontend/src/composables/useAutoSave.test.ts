@@ -42,8 +42,7 @@ function makeHarness(
   const onError = vi.fn()
   const buildRelationsBody = vi.fn(() => null)
   const opts: AutoSaveOptions = {
-    getEntityType: () => 'ticket',
-    getEntityId: () => 'TKT-001',
+    target: { type: 'ticket', id: 'TKT-001' },
     debounceMs: 100,
     dirtyWindowMs: 200,
     formData,
@@ -539,8 +538,7 @@ describe('useAutoSave', () => {
       properties: { title: 'seeded' },
     } satisfies Partial<Entity>
     const opts: AutoSaveOptions = {
-      getEntityType: () => 'ticket',
-      getEntityId: () => 'TKT-001',
+      target: { type: 'ticket', id: 'TKT-001' },
       debounceMs: 100,
       dirtyWindowMs: 200,
       formData,
@@ -573,8 +571,7 @@ describe('useAutoSave', () => {
       properties: { title: 'seeded', stale: 'gone-after-replace' },
     } satisfies Partial<Entity>
     const opts: AutoSaveOptions = {
-      getEntityType: () => 'ticket',
-      getEntityId: () => 'TKT-001',
+      target: { type: 'ticket', id: 'TKT-001' },
       debounceMs: 100,
       formData,
       contentRef: ref(''),
@@ -608,8 +605,7 @@ describe('useAutoSave', () => {
   it('IHC7A AC3: disabled channels throw on schedule*', () => {
     const formData = ref<Record<string, unknown>>({})
     const opts: AutoSaveOptions = {
-      getEntityType: () => 'ticket',
-      getEntityId: () => 'TKT-001',
+      target: { type: 'ticket', id: 'TKT-001' },
       debounceMs: 100,
       formData,
       contentRef: ref(''),
@@ -633,8 +629,7 @@ describe('useAutoSave', () => {
     const apply = vi.fn()
     const applyContent = vi.fn()
     const opts: AutoSaveOptions = {
-      getEntityType: () => 'ticket',
-      getEntityId: () => 'TKT-001',
+      target: { type: 'ticket', id: 'TKT-001' },
       debounceMs: 100,
       formData: ref<Record<string, unknown>>({}),
       contentRef: ref(''),
@@ -666,8 +661,7 @@ describe('useAutoSave', () => {
 
   it('IHC7A AC3: commitImmediately is a no-op on disabled channels', async () => {
     const opts: AutoSaveOptions = {
-      getEntityType: () => 'ticket',
-      getEntityId: () => 'TKT-001',
+      target: { type: 'ticket', id: 'TKT-001' },
       debounceMs: 100,
       formData: ref<Record<string, unknown>>({}),
       contentRef: ref(''),

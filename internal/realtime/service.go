@@ -498,6 +498,20 @@ func expectGenerationShape(sess *realtimecfg.Session, mt *realtimecfg.MessageTyp
 	return nil
 }
 
+// postKind is the kind of the mark of the appended message m: moved when
+// postMoved holds, message otherwise.
+func postKind(m channels.Message) markKind {
+	if postMoved(m) {
+		return markKindMoved
+	}
+	return markKindMessage
+}
+
+// postMoved reports whether the appended message m may change a busy
+// answer: its append moved the session, or created the implicit channel,
+// which may start in a working state.
+func postMoved(m channels.Message) bool { return m.MovedSession || m.CreatedChannel }
+
 // notePosted tells the process-local state about m, the log message c
 // just appended: it ends the poster's typing entry and wakes the people m
 // addresses and the poster's inbox.
@@ -509,7 +523,7 @@ func (l *Local) notePosted(c *call, m channels.Message) {
 	if m.ReplyTarget != "" {
 		addressed = append(addressed, m.ReplyTarget)
 	}
-	l.markAddressed(addressed, c.key)
+	l.markAddressed(addressed, c.key, postKind(m))
 	// The append moved the poster's marker (MarkRead), so the poster's
 	// inbox learns the channel even when it held no marker on it before.
 	if reader, ok := callReader(c); ok {

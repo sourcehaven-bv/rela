@@ -183,25 +183,40 @@ func TestLive_RevokedReaderStops(t *testing.T) {
 }
 
 // fakeChanges is a channelChanges a test drives: a wake makes the next
-// Take report resync.
+// TakeLive report resync, or the changes a test queued with send.
 type fakeChanges struct {
 	wake   chan struct{}
 	resync atomic.Bool
+	mu     sync.Mutex
+	next   realtime.LiveChanges
 }
 
 func (f *fakeChanges) Wake() <-chan struct{} { return f.wake }
-func (f *fakeChanges) Take() ([]channels.Key, bool) {
-	return nil, f.resync.Swap(false)
+func (f *fakeChanges) TakeLive() realtime.LiveChanges {
+	f.mu.Lock()
+	c := f.next
+	f.next = realtime.LiveChanges{}
+	f.mu.Unlock()
+	c.Resync = f.resync.Swap(false)
+	return c
 }
-func (f *fakeChanges) TakeReads() map[channels.Reader][]channels.Key { return nil }
-func (f *fakeChanges) TakeDurable() []channels.Key                   { return nil }
-func (f *fakeChanges) TakeAddressed() []string                       { return nil }
-func (f *fakeChanges) Close()                                        {}
+func (f *fakeChanges) Close() {}
 
 // resync makes the worker's next tick a channel resync round.
 func (f *fakeChanges) fire() {
 	f.resync.Store(true)
 	f.wake <- struct{}{}
+}
+
+// send makes the worker's next tick take c.
+func (f *fakeChanges) send(c realtime.LiveChanges) {
+	f.mu.Lock()
+	f.next = c
+	f.mu.Unlock()
+	select {
+	case f.wake <- struct{}{}:
+	default:
+	}
 }
 
 // A resync replays every channel subscription that has a topic and none

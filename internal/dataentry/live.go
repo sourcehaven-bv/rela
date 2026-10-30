@@ -22,6 +22,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/presence"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
+	"github.com/Sourcehaven-BV/rela/internal/realtime"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
@@ -116,9 +117,9 @@ type liveHub struct {
 	// subscriptions, packed by [inboxTick.pack] (see live_inbox.go).
 	inboxClock inboxClock
 	inboxNow   atomic.Uint64
-	// inboxSliceOf replaces the safety slice hash; tests set it before
+	// safetySliceOf replaces the safety slice hash; tests set it before
 	// start. Nil is FNV-1a of the share key.
-	inboxSliceOf func(fp string) uint64
+	safetySliceOf func(fp string) uint64
 	// roundCap and roundBudget are liveRoundCap and liveRoundBudget;
 	// tests lower them before start.
 	roundCap    int
@@ -176,16 +177,22 @@ type liveConn struct {
 // A channel subscription (channel set) has a topic: the channel head or
 // anchor its last finished replay resolved with a 200 (see live_topics.go).
 // An inbox subscription (inbox set) has a wake set instead, learned the
-// same way (see live_inbox.go).
+// same way (see live_inbox.go), and so has a busy list subscription (busy
+// set; see live_busy.go).
 type liveSub struct {
 	url        string // replay URL rebuilt by livePath.String
 	presenceID string // livePath.presenceID
 	channel    bool   // livePath.isChannel
 	inbox      bool   // livePath.isInbox
+	busy       string // livePath.busyType
 	// wake is what an inbox subscription's last 200 reported it listens
 	// to; nil until then, and after a refusal (see live_inbox.go).
-	wake  *inboxWake
-	topic string
+	wake *inboxWake
+	// busyWake is what a busy list subscription's last 200 reported it
+	// listens to; nil until then, after a refusal, and after a replay whose
+	// busy read was not served (see live_busy.go).
+	busyWake *busyWake
+	topic    string
 	// reader is whose read marker the topic's last 200 showed; a moved
 	// marker of that reader replays it (see live_topics.go).
 	reader   channels.Reader
@@ -203,6 +210,7 @@ type liveTarget struct {
 	presenceID string
 	channel    bool
 	inbox      bool
+	busy       string
 }
 
 // keyedSub is a subscription with its key.
@@ -340,6 +348,7 @@ func (h *liveHub) handlePut(w http.ResponseWriter, r *http.Request) {
 		}
 		next[s.Key] = liveTarget{
 			url: lp.String(), presenceID: lp.presenceID(), channel: lp.isChannel(), inbox: lp.isInbox(),
+			busy: lp.busyType(),
 		}
 	}
 	added, ok := h.replace(c, next)
@@ -388,7 +397,7 @@ func (h *liveHub) replace(c *liveConn, next map[string]liveTarget) (added []keye
 		} else {
 			s := &liveSub{
 				url: target.url, presenceID: target.presenceID, channel: target.channel, inbox: target.inbox,
-				syncing: true,
+				busy: target.busy, syncing: true,
 			}
 			subs[key] = s
 			added = append(added, keyedSub{key: key, sub: s})
@@ -625,8 +634,10 @@ type liveFeed interface {
 // of the channels that changed, together with the presence faces that
 // changed. A channel subscription that lost count (resync) replays every
 // channel subscription that has a topic; one without a topic is not readable
-// and waits for a full round. A reload of realtime.yaml (reconfigured) dirties
-// the round, so a reader it revokes is re-checked at once.
+// and waits for a full round. The channels a stored write may have moved
+// also select the busy lists that show them (see live_busy.go). A reload
+// of realtime.yaml (reconfigured) dirties the round, so a reader it
+// revokes is re-checked at once.
 func (h *liveHub) run(ctx context.Context, feed liveFeed, leaseWake <-chan struct{}, chans channelChanges) {
 	tick, stopTick := h.clock()
 	defer stopTick()
@@ -650,7 +661,7 @@ func (h *liveHub) run(ctx context.Context, feed liveFeed, leaseWake <-chan struc
 		case <-h.kick:
 			h.round(ctx, false) // baselines only; nothing changed
 		case at := <-tick:
-			now := h.inboxClock.tickAt(at, h.window, h.inboxGrid, h.inboxSlices())
+			now := h.inboxClock.tickAt(at, h.window, h.inboxGrid, h.safetySlices())
 			h.inboxNow.Store(now.pack())
 			// A wake that is ready now belongs to this tick, whichever
 			// case the select picked first.
@@ -667,16 +678,10 @@ func (h *liveHub) run(ctx context.Context, feed liveFeed, leaseWake <-chan struc
 			// Presence expiry takes effect here, on the fixed clock, so
 			// when a viewer drops out never depends on when a replay ran.
 			faces := h.presence.TakeChanged(h.now())
-			var keys, durable []channels.Key
-			var reads map[channels.Reader][]channels.Key
-			var addressed []string
-			resync := false
+			var ch realtime.LiveChanges
 			if channelsDirty {
 				channelsDirty = false
-				keys, resync = chans.Take()
-				reads = chans.TakeReads()
-				durable = chans.TakeDurable()
-				addressed = chans.TakeAddressed()
+				ch = chans.TakeLive()
 			}
 			safety := now.slices != 0
 			switch {
@@ -684,11 +689,11 @@ func (h *liveHub) run(ctx context.Context, feed liveFeed, leaseWake <-chan struc
 				dirty = false
 				feed.Take() // any change re-reads every subscription
 				h.round(ctx, true)
-			case len(faces) > 0 || len(keys) > 0 || len(reads) > 0 || len(addressed) > 0 || resync || safety ||
-				h.hasPending():
-				f := newRoundFilter(faces, keys, resync)
-				f.addReads(reads)
-				f.addInbox(durable, addressed)
+			case len(faces) > 0 || !ch.Empty() || safety || h.hasPending():
+				f := newRoundFilter(faces, ch.Keys, ch.Resync)
+				f.addReads(ch.Reads)
+				f.addInbox(ch.Durable, ch.Addressed)
+				f.addMoved(ch.Moved)
 				h.replayRound(ctx, true, f)
 			}
 			h.ticks.Add(1)
@@ -709,6 +714,31 @@ type subRef struct {
 	conn *liveConn
 	key  string
 	sub  *liveSub
+	// dueOnly is set when a topic round took the subscription only because
+	// it was pending: the round's changes did not select it, and neither
+	// did a safety turn (see liveHub.fallback).
+	dueOnly bool
+}
+
+// roundKind is whether a round replays every subscription or only those a
+// topic round selects.
+type roundKind int
+
+const (
+	// fullRound replays every subscription: a graph or lease change, a
+	// reload of realtime.yaml, or a baseline round.
+	fullRound roundKind = iota
+	// topicRound replays the subscriptions a [roundFilter] selects, and
+	// the pending ones.
+	topicRound
+)
+
+// kindOf is the kind of a round with filter only.
+func kindOf(only *roundFilter) roundKind {
+	if only == nil {
+		return fullRound
+	}
+	return topicRound
 }
 
 // round replays the subscriptions and flags changed ones. When changed is
@@ -740,8 +770,9 @@ func (h *liveHub) replayRound(ctx context.Context, changed bool, only *roundFilt
 		return
 	}
 	// The round starts where the last overflowed round stopped, so the
-	// cap and the budget pass over every pair in turn. An inbox pair that
-	// never fit would never frame, since it gets no fallback frame.
+	// cap and the budget pass over every pair in turn. An inbox pair, or a
+	// busy list pair in a topic round, that never fit would never frame,
+	// since it gets no fallback frame.
 	cursor := &h.rotate
 	if only != nil {
 		cursor = &h.presenceRotate
@@ -752,7 +783,7 @@ func (h *liveHub) replayRound(ctx context.Context, changed bool, only *roundFilt
 	if len(pairs) > h.roundCap {
 		*cursor = first + h.roundCap
 		overflow = len(pairs) - h.roundCap
-		h.fallback(pairs[h.roundCap:])
+		h.fallback(pairs[h.roundCap:], kindOf(only))
 		pairs = pairs[:h.roundCap]
 	}
 
@@ -776,7 +807,7 @@ func (h *liveHub) replayRound(ctx context.Context, changed bool, only *roundFilt
 	if started < len(pairs) {
 		*cursor = first + started
 		overflow += len(pairs) - started
-		h.fallback(pairs[started:])
+		h.fallback(pairs[started:], kindOf(only))
 		pairs = pairs[:started]
 	}
 
@@ -829,7 +860,12 @@ func (h *liveHub) commitRound(pairs []*replayPair) {
 // it leaves the set alone. A changed round also marks the syncing
 // subscriptions it skips for a recheck; a topic round marks only the
 // presence, channel and inbox ones, since a change of viewers or of a
-// channel moves no other response.
+// channel moves no other response, except a busy list's `_busy`: it
+// marks a busy list when the round carries a moved key of its type, or a
+// resync ([roundFilter.movesBusy]).
+//
+// A topic round marks each subscription it took only from the pending set
+// dueOnly, so an overflow does not frame it (see [liveHub.fallback]).
 //
 // A changed round off the inbox grid defers each inbox subscription it
 // would replay to pending, with no fallback frame: the next grid tick
@@ -847,13 +883,15 @@ func (h *liveHub) collect(changed bool, only *roundFilter) []*replayPair {
 		c.mu.Lock()
 		for key, s := range c.subs {
 			if s.syncing {
-				s.recheck = s.recheck || changed && (only == nil || s.presenceID != "" || s.channel || s.inbox)
+				s.recheck = s.recheck || changed && (only == nil || s.presenceID != "" || s.channel || s.inbox ||
+					s.busy != "" && only.movesBusy(s.busy))
 				continue
 			}
 			if !changed && s.hash != "" {
 				continue
 			}
-			if _, ok := due[s]; only != nil && !ok && !only.selects(s) && !h.safetyDue(now, c.fp, s) {
+			take, dueOnly := h.collects(only, now, due, c.fp, s)
+			if !take {
 				continue
 			}
 			if changed && s.inbox && !now.grid {
@@ -866,7 +904,7 @@ func (h *liveHub) collect(changed bool, only *roundFilter) []*replayPair {
 				p = &replayPair{owner: c.owner, url: s.url}
 				byKey[k] = p
 			}
-			p.subs = append(p.subs, subRef{conn: c, key: key, sub: s})
+			p.subs = append(p.subs, subRef{conn: c, key: key, sub: s, dueOnly: dueOnly})
 		}
 		c.mu.Unlock()
 	}
@@ -883,14 +921,40 @@ func (h *liveHub) collect(changed bool, only *roundFilter) []*replayPair {
 	return pairs
 }
 
-// fallback handles replays a round had no room or time for: each
-// subscription is told it changed, so the client refetches. An inbox
-// subscription is not told: a change it cannot see may have chosen its
-// round, so the frame would reveal that change (see live_inbox.go). It
-// only goes into pending, and frames when a later replay moves its hash. It keeps its
-// baseline and goes into pending, so the next tick replays it and frames
-// again if the response moved past that baseline. Without that replay a
-// later change back to the baseline would send no frame.
+// collects reports whether a round with filter only takes s, of the
+// principal with share key fp, on the tick now, given the pending set due;
+// and dueOnly when a topic round takes it only because it is pending.
+func (h *liveHub) collects(
+	only *roundFilter, now inboxTick, due map[*liveSub]struct{}, fp string, s *liveSub,
+) (take, dueOnly bool) {
+	if only == nil || only.selects(s) || h.safetyDue(now, fp, s) {
+		return true, false
+	}
+	_, pending := due[s]
+	return pending, pending
+}
+
+// fallback handles replays a round of kind had no room or time for: each
+// subscription is told it changed, so the client refetches. Three are not
+// told, because a change they cannot see may have chosen the round, or
+// sized it so that the cut fell on them, and the frame would reveal that
+// change:
+//   - an inbox subscription, in any round (see live_inbox.go);
+//   - a busy list subscription in a topic round (see live_busy.go);
+//   - any subscription a topic round took only because it was pending
+//     (dueOnly). The round that cut it told it then, unless a rule here
+//     kept it quiet; one a PUT left pending for a recheck frames when its
+//     replay moves its hash.
+//
+// In a full round a busy list is told like every list: a full round takes
+// every subscription, so its fallback frame tells of no change. A
+// subscription that is not told frames when a later replay moves its hash.
+// Every subscription keeps its baseline and goes into pending, so the next
+// tick replays it and frames again if the response moved past that
+// baseline. Without that replay a later change back to the baseline would
+// send no frame. The cursor (see replayRound) moves past the pairs a round
+// replayed, so a pending pair is replayed within a bounded number of ticks
+// and is not starved.
 //
 // A presence subscription keeps its join as it was: no refresh, no leave
 // and no changed face. Leaving here would mark the face changed, and on a
@@ -901,7 +965,7 @@ func (h *liveHub) collect(changed bool, only *roundFilter) []*replayPair {
 // ceil(n/liveRoundCap) ticks of n skipped pairs. A replay whose result is
 // unchanged joins nothing new and frames nothing, so the set empties and the
 // rounds stop.
-func (h *liveHub) fallback(pairs []*replayPair) {
+func (h *liveHub) fallback(pairs []*replayPair, kind roundKind) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	for _, p := range pairs {
@@ -909,7 +973,8 @@ func (h *liveHub) fallback(pairs []*replayPair) {
 			current := h.conns[ref.conn.id] == ref.conn
 			ref.conn.mu.Lock()
 			if s := ref.conn.subs[ref.key]; current && s == ref.sub {
-				if !s.inbox {
+				quiet := s.inbox || kind == topicRound && (s.busy != "" || ref.dueOnly)
+				if !quiet {
 					ref.conn.markChanged(ref.key)
 				}
 				h.addPendingLocked(s)
@@ -945,6 +1010,7 @@ type replayResult struct {
 	topic  string          // the topic a channel route recorded, see live_topics.go
 	reader channels.Reader // the reader that route recorded with the topic
 	inbox  *inboxWake      // the wake set an inbox route recorded, see live_inbox.go
+	busy   *busyWake       // the wake a busy list read recorded, see live_busy.go
 }
 
 // presenceJoin returns the face to join and who joins it, for a presence
@@ -993,7 +1059,7 @@ func replayHash(
 	}
 	return replayResult{
 		hash: fmt.Sprintf("%d:%x", status, hw.h.Sum(nil)), status: status, ok: true, probe: *probe, topic: topic.topic,
-		reader: topic.reader, inbox: topic.inbox,
+		reader: topic.reader, inbox: topic.inbox, busy: topic.busy,
 	}
 }
 

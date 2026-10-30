@@ -1,0 +1,9 @@
+---
+id: RR-TBVK1X
+type: review-response
+title: Lost busy wake when a mark lands between Take and TakeMoved
+finding: 'internal/dataentry/live.go:685-697 takes changed, reads, durable, addressed and moved in five separate critical sections (internal/realtime/local.go Take at :285 and TakeMoved at :206), and the round condition at live.go:697 tests len(keys) but not len(moved). If a mark lands after Take() returns and before TakeMoved(), this tick gets keys=[] and moved=[k]; with nothing else pending the switch runs no round and the moved key is discarded. The wake the mark sent makes the next tick take k from changed, but moved is now empty, so the busy board is not selected and stays stale until its safety turn (12 to 14 s). The plan''s claim (step 4) that every moved key is also a changed key so len(keys)>0 already holds is false across separate locks. The inbox''s durable set has the same pre-existing hole. Fix: take all sets in one locked call (for example Subscription.TakeLive() returning a struct of keys, resync, reads, durable, addressed, moved), or at least add len(moved)>0 || len(durable)>0 to the round condition at live.go:697. Add a unit test on liveHub.run with a fakeChanges whose Take returns nothing and TakeMoved returns a key.'
+severity: significant
+resolution: 'Fixed: new Subscription.TakeLive returns realtime.LiveChanges (keys, resync, reads, durable, addressed, moved) from one critical section; channelChanges is now Wake/TakeLive/Close, and the tick starts a round when any set is non-empty (LiveChanges.Empty). Tests: realtime TestTakeLive_OneCriticalSection races marks against takes and checks every moved key comes with its changed key (fails when the lock is dropped between takes); dataentry TestLive_BusyMovedKeyAloneStartsRound feeds a tick with only a moved key and requires the board replay (fails on the old round condition).'
+status: addressed
+---

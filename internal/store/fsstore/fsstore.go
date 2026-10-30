@@ -213,8 +213,12 @@ type attachMeta struct {
 // SetSchemas (TKT-C2YVX1) is a needed exported method: a schema reload
 // changes the layout and the index under the store's write locks.
 //
-//plimsoll:max-methods=92
-//plimsoll:max-exported-methods=37
+// +1 exported / +1 method (BUG-TT73D0P): EntityIDs, the optional id listing
+// entitymanager mints ids from. It must read s.entities under s.mu, so it
+// cannot be a free function.
+//
+//plimsoll:max-methods=93
+//plimsoll:max-exported-methods=38
 type FSStore struct {
 	// rooted is the validated-key I/O surface. Every read, write,
 	// directory op, and remove that operates on files under the

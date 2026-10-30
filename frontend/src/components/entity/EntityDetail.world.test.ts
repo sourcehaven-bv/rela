@@ -3,6 +3,8 @@ import { mount, flushPromises, type VueWrapper } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import { PiniaColada } from '@pinia/colada'
 import EntityDetail from './EntityDetail.vue'
+import EntityBody from './EntityBody.vue'
+import EntityTitle from './EntityTitle.vue'
 import CommandModal from './CommandModal.vue'
 import CommentsPanel from './CommentsPanel.vue'
 import DocumentsPanel from './DocumentsPanel.vue'
@@ -614,6 +616,108 @@ describe('EntityDetail world binding', () => {
       await flushPromises()
       expect(updateEntityMock).toHaveBeenCalled()
       expect(updateEntityMock.mock.calls[0][1]).toBe('POL-1@nl')
+    })
+
+    // BUG-NSGD6OE: a toggle pending when another entity comes on screen is
+    // written to the row it was made on, and its response does not touch the
+    // row now on screen.
+    it('keeps a pending toggle on its own row when the page switches entity', async () => {
+      const contentSection = section({
+        sectionId: 'content', display: 'content', hasContent: true, content: '- [ ] a task',
+      })
+      mockRoute.query = { world: 'site-nl' }
+      const w = await mountDetail({
+        entry: writableFace({ content: '- [ ] a task' }),
+        sections: [contentSection],
+      })
+      rendersProof(w)
+      await w.find('input[type="checkbox"][data-cb-idx]').trigger('click')
+
+      const other = entry({
+        id: 'POL-2',
+        _self: '/api/v1/policys/POL-2@nl',
+        _title: 'Other Policy',
+        properties: { title: 'Other Policy' },
+        content: '- [ ] other task',
+      })
+      fetchViewMock.mockResolvedValue({
+        entry: other,
+        sections: [{ ...contentSection, content: '- [ ] other task' }],
+      })
+      updateEntityMock.mockResolvedValue({
+        id: entityId, type: entityType, properties: {}, content: '- [x] a task', _actions: {},
+      })
+      await w.setProps({ entityId: 'POL-2' })
+      await flushPromises()
+
+      expect(updateEntityMock.mock.calls.map((c) => c[1])).toEqual(['POL-1@nl'])
+      expect(w.text()).toContain('other task')
+      expect(w.find('input[type="checkbox"][data-cb-idx]').element).toHaveProperty('checked', false)
+      w.unmount()
+    })
+
+    // BUG-NSGD6OE: the body editor writes to the row it was opened on. Its
+    // last edit can arrive after the page has switched rows (the editor
+    // flushes as it closes), and must not land on the new row.
+    it('writes a body edit to the row the editor was opened on after a switch', async () => {
+      const contentSection = section({
+        sectionId: 'content', display: 'content', hasContent: true, content: 'body one',
+      })
+      mockRoute.query = { world: 'site-nl' }
+      const w = await mountDetail({ entry: writableFace({ content: 'body one' }), sections: [contentSection] })
+      rendersProof(w)
+      const body = w.findComponent(EntityBody)
+      body.vm.$emit('edit')
+
+      const other = entry({
+        id: 'POL-2',
+        _self: '/api/v1/policys/POL-2@nl',
+        _title: 'Other Policy',
+        _actions: { update: true },
+        properties: { title: 'Other Policy' },
+        content: 'body two',
+      })
+      let serveOther!: () => void
+      fetchViewMock.mockReturnValue(new Promise((resolve) => {
+        serveOther = () => resolve({ entry: other, sections: [{ ...contentSection, content: 'body two' }] })
+      }))
+      updateEntityMock.mockResolvedValue({
+        id: entityId, type: entityType, properties: {}, content: 'typed on one', _actions: {},
+      })
+      // The route changes while the editor is still open: its next edit, and
+      // the debounced save it schedules, come after the switch.
+      await w.setProps({ entityId: 'POL-2' })
+      body.vm.$emit('input', 'typed on one')
+      serveOther()
+      await flushPromises()
+      // A late emit from the editor opened on POL-1 (its flush as it closes).
+      // The editor is keyed per row, so it is gone; were it kept, the emit
+      // would still go to the row it was opened on.
+      body.vm.$emit('input', 'late on one')
+      await new Promise((r) => setTimeout(r, 900))
+      await flushPromises()
+
+      expect(updateEntityMock.mock.calls.map((c) => c[1])).toEqual(['POL-1@nl'])
+      expect(updateEntityMock.mock.calls[0]![2].content).toBe('typed on one')
+      expect(w.text()).toContain('body two')
+      expect(w.text()).not.toContain('on one')
+      w.unmount()
+    })
+
+    it('closes an open title edit when the page switches row', async () => {
+      mockRoute.query = { world: 'site-nl' }
+      const w = await mountDetail(viewResponse(writableFace()))
+      rendersProof(w)
+      const before = w.findComponent(EntityTitle)
+      fetchViewMock.mockResolvedValue(viewResponse(writableFace({
+        id: 'POL-2', _self: '/api/v1/policys/POL-2@nl', _title: 'Other Policy', properties: { title: 'Other Policy' },
+      })))
+      await w.setProps({ entityId: 'POL-2' })
+      await flushPromises()
+
+      expect(before.exists()).toBe(false)
+      expect(w.findComponent(EntityTitle).props('title')).toBe('Other Policy')
+      w.unmount()
     })
 
     it('refuses a checkbox toggle when _actions denies update', async () => {

@@ -30,7 +30,7 @@ import (
 // are the wire contract a refactor of the access layer must keep: a change in
 // any of them is either the intended fix of a recorded gap or a regression.
 //
-// Cases named after a bug (BUG-2TPO2F, BUG-C8DHGF, BUG-VUNO11)
+// Cases named after a bug (BUG-2TPO2F, BUG-VUNO11)
 // record a known gap as it is today. The fix of that bug is expected to
 // change those files.
 //
@@ -101,17 +101,11 @@ func TestGoldenParity(t *testing.T) {
 }
 
 // goldenAnonymousSlug names the one recording every request without an
-// identity shares in variant v. In header mode that answer is BUG-C8DHGF's
-// 500 (an unstamped principal), whatever the path; over the JWT gate it is
-// the refusal of a missing assertion. A fix that makes the answer depend on
-// the path, such as a public read, has to give those requests their own
-// recordings again.
-func goldenAnonymousSlug(v goldenVariant) string {
-	if v.jwt {
-		return "anonymous"
-	}
-	return "BUG-C8DHGF-anonymous"
-}
+// identity shares in a variant: the 401 for a missing identity, whatever the
+// path, in header mode (BUG-C8DHGF) and over the JWT gate alike. A fix that makes
+// the answer depend on the path, such as a public read, has to give those
+// requests their own recordings again.
+const goldenAnonymousSlug = "anonymous"
 
 // goldenInstance matches the problem-details member that echoes the request
 // path, which a shared anonymous recording cannot keep.
@@ -190,7 +184,7 @@ func (c goldenCase) who() string {
 // without an identity shares one file per variant (see goldenAnonymousSlug).
 func (c goldenCase) file() string {
 	if c.anonymous() {
-		return filepath.Join(c.variant.name, goldenAnonymousSlug(c.variant)+".golden")
+		return filepath.Join(c.variant.name, goldenAnonymousSlug+".golden")
 	}
 	who := c.who()
 	if c.shared {

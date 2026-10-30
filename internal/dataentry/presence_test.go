@@ -737,7 +737,7 @@ func TestLiveHub_UnfinishedReplayLeavesWithoutGrace(t *testing.T) {
 // framed, and the tracker sees no leave and no changed face.
 func TestLiveHub_FallbackKeepsTheJoin(t *testing.T) {
 	h, c, _ := joinedHub(t)
-	h.fallback(h.collect(true, nil))
+	h.fallback(h.collect(true, nil), fullRound)
 	if n := h.presence.Len(); n != 1 {
 		t.Fatalf("tracker holds %d entries after a fallback, want 1", n)
 	}

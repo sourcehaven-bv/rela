@@ -206,6 +206,16 @@ on network topology. Verified JWT identity fails *closed* and
 proves authenticity cryptographically. The header path is
 unchanged and still supported; it is simply the weaker of the two.
 
+**With an `acl.yaml`, `unknown` is refused.** The ACL cannot resolve
+an `unknown` caller, so every `/api/` request without a user answers
+401 `unauthenticated`. The error detail names the settings that
+supply an identity. When `acl.yaml` is loaded and neither
+`--principal-header`, `$RELA_DATAENTRY_USER` nor `--jwt-*` is set,
+`rela-server` also logs a warning at startup. For local use, set `$RELA_DATAENTRY_USER`; anywhere else,
+configure `--jwt-*`. Every caller acts as the `$RELA_DATAENTRY_USER`
+user, so `rela-server` warns when it is set on a bind beyond
+loopback.
+
 Header values are sanitized at the middleware (trim, 256-rune cap,
 control-char strip) as defense-in-depth against header-injection
 corrupting the JSONL stream.

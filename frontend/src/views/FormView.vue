@@ -8,5 +8,8 @@ defineProps<{
 </script>
 
 <template>
-  <DynamicForm :form-id="id" :entity-id="entityId" />
+  <!-- One form per form and entity. The router reuses this view when only the
+       params change; a reused form kept the previous entity's values and
+       pending edits under the new id, and saved them there (BUG-NSGD6OE). -->
+  <DynamicForm :key="`${id}/${entityId ?? ''}`" :form-id="id" :entity-id="entityId" />
 </template>

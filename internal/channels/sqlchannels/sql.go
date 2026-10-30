@@ -468,7 +468,7 @@ func (s *Store) Append(ctx context.Context, k channels.Key, nm channels.NewMessa
 		out = channels.Message{
 			Seq: r.c.LastSeq + 1, Rev: rev, Type: nm.Type, Author: nm.Author, At: nm.At, Props: nm.Props,
 			ReplyTo: nm.ReplyTo, SchemaHash: nm.SchemaHash, TriggeredBy: nm.TriggeredBy, MovedSession: moved,
-			Mentions: nm.Mentions,
+			Mentions: nm.Mentions, CreatedChannel: created,
 		}
 		rev, err = insertMessage(ctx, q, r.id, out)
 		if err != nil {

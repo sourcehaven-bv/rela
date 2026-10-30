@@ -23,10 +23,6 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
-// lastModifiedKey is the bleve internal-storage key under which we persist
-// the most recent entity mtime observed by this index.
-var lastModifiedKey = []byte("rela:last_modified")
-
 // formatKey is the bleve internal-storage key holding [indexFormat].
 var formatKey = []byte("rela:format")
 
@@ -115,7 +111,7 @@ func stampFormat(idx bleve.Index) (*Index, error) {
 // clearPage is how many documents one pass of clearDocuments deletes.
 const clearPage = 1000
 
-// clearDocuments deletes every document of idx and its LastModified stamp.
+// clearDocuments deletes every document of idx.
 func clearDocuments(idx bleve.Index) error {
 	for {
 		req := bleve.NewSearchRequest(bleve.NewMatchAllQuery())
@@ -135,7 +131,7 @@ func clearDocuments(idx bleve.Index) error {
 			return err // coverage-ignore: defensive: a delete batch on an open index only fails on an OS fault
 		}
 	}
-	return idx.DeleteInternal(lastModifiedKey)
+	return nil
 }
 
 // hasCurrentFormat reports whether idx was written in [indexFormat]. A read
@@ -148,8 +144,9 @@ func hasCurrentFormat(idx bleve.Index) bool {
 
 // New creates (or reopens) a persistent on-disk bleve index at the given
 // path. If an index already exists there it is opened and its contents
-// reused — see [Index.LastModified], which lets the caller skip a backfill
-// entirely when the store has not changed since the index was written.
+// reused; the caller decides whether to skip its backfill from a watermark
+// it stored itself (see [Index.Watermark]; appbuild's indexIsCurrent makes
+// that decision).
 // If the existing index is corrupted it is removed and recreated. If it was
 // written in another [indexFormat] it is emptied, so the caller's backfill
 // rewrites it.
@@ -262,10 +259,7 @@ func buildMapping() *mapping.IndexMappingImpl {
 // The document key is the state ref, so writing a non-default state adds
 // a sibling document instead of overwriting the default face.
 func (idx *Index) EntityPut(e *entity.Entity) error {
-	if err := idx.index.Index(docKey(e.ID, e.Face), entityToDoc(e)); err != nil {
-		return err
-	}
-	return idx.bumpLastModified(e.UpdatedAt)
+	return idx.index.Index(docKey(e.ID, e.Face), entityToDoc(e))
 }
 
 // docKey is the bleve document id for one face. It is exactly the state
@@ -273,9 +267,9 @@ func (idx *Index) EntityPut(e *entity.Entity) error {
 // two never disagree about what addresses a face.
 func docKey(id string, p entity.Face) string { return entity.FormatStateRef(id, p) }
 
-// IndexBatch indexes every entity in a single Bleve batch and bumps
-// LastModified once at the end. Use this for initial backfill where
-// N round-trips through EntityPut would be O(N) Bleve transactions.
+// IndexBatch indexes every entity in a single Bleve batch. Use this for
+// initial backfill, where N round-trips through EntityPut would be O(N)
+// Bleve transactions.
 // Each entity is one face, keyed exactly as [Index.EntityPut] keys it.
 // Returns the number of entities successfully written and the first
 // error (if any). Subsequent entities are not attempted on error.
@@ -284,7 +278,6 @@ func (idx *Index) IndexBatch(entities []*entity.Entity) (int, error) {
 		return 0, nil
 	}
 	batch := idx.index.NewBatch()
-	var latest time.Time
 	for _, e := range entities {
 		// coverage-ignore-start: defensive: batch.Index never errors on the always-marshalable bleveDoc; concrete batch
 		// has no failing-mock seam
@@ -292,9 +285,6 @@ func (idx *Index) IndexBatch(entities []*entity.Entity) (int, error) {
 			return 0, fmt.Errorf("bleveindex: batch index %s: %w", e.ID, err)
 		}
 		// coverage-ignore-end
-		if e.UpdatedAt.After(latest) {
-			latest = e.UpdatedAt
-		}
 	}
 	// coverage-ignore-start: defensive: bleve index.Batch never errors committing a valid in-memory batch; concrete
 	// index has no failing-mock
@@ -303,12 +293,6 @@ func (idx *Index) IndexBatch(entities []*entity.Entity) (int, error) {
 		return 0, fmt.Errorf("bleveindex: commit batch: %w", err)
 	}
 	// coverage-ignore-end
-	if !latest.IsZero() {
-		if err := idx.bumpLastModified(latest); err != nil {
-			return len(entities), err // coverage-ignore: defensive: bumpLastModified only errors on SetInternal, which
-			// never fails for the in-memory index
-		}
-	}
 	return len(entities), nil
 }
 
@@ -335,19 +319,14 @@ func (idx *Index) EntityDelete(id string) error {
 	if err := idx.index.Batch(batch); err != nil {
 		return fmt.Errorf("bleveindex: delete %s: %w", id, err)
 	}
-	// A delete carries no mtime from the entity; use wall clock so the
-	// timestamp still advances and consumers can observe the change.
-	return idx.bumpLastModified(time.Now())
+	return nil
 }
 
 // EntityFaceDelete removes exactly ONE face, leaving its siblings indexed.
 // See [store.FaceObserver] for why this is a separate, optional capability
 // rather than a widened EntityDelete.
 func (idx *Index) EntityFaceDelete(id string, p entity.Face) error {
-	if err := idx.index.Delete(docKey(id, p)); err != nil {
-		return err
-	}
-	return idx.bumpLastModified(time.Now())
+	return idx.index.Delete(docKey(id, p))
 }
 
 // compile-time check: the index can evict a single face.
@@ -407,15 +386,15 @@ func (idx *Index) EntityRenamed(oldID string, renamed *entity.Entity) error {
 		return fmt.Errorf("bleveindex: rename %s→%s: commit batch: %w", oldID, renamed.ID, err)
 	}
 	// coverage-ignore-end
-	return idx.bumpLastModified(renamed.UpdatedAt)
+	return nil
 }
 
 // SetWatermark stores an arbitrary named timestamp alongside the index.
 // Callers use this to record how far a bulk operation got, so a later
 // process can decide whether the index is still current — see
-// [Index.Watermark]. Unlike [Index.LastModified], the value is opaque to
-// the index: it is stored and returned verbatim, with no MAX semantics,
-// so the caller controls exactly what the timestamp means.
+// [Index.Watermark]. The value is opaque to the index: it is stored and
+// returned verbatim, so the caller controls exactly what the timestamp
+// means.
 func (idx *Index) SetWatermark(key string, t time.Time) error {
 	data, err := t.MarshalBinary()
 	if err != nil {
@@ -454,37 +433,6 @@ func (idx *Index) DocCount() (uint64, error) {
 		return 0, fmt.Errorf("bleveindex: doc count: %w", err)
 	}
 	return n, nil
-}
-
-// LastModified returns the latest mtime observed by this index. Persistent
-// indexes restore this across restarts so consumers can skip reindexing
-// when the store's LastModified hasn't advanced.
-func (idx *Index) LastModified() time.Time {
-	data, err := idx.index.GetInternal(lastModifiedKey)
-	if err != nil || len(data) == 0 {
-		return time.Time{}
-	}
-	var t time.Time
-	if err := t.UnmarshalBinary(data); err != nil {
-		return time.Time{} // coverage-ignore: defensive: data is always the output of time.MarshalBinary
-		// (bumpLastModified), so UnmarshalBinary round-trips
-	}
-	return t
-}
-
-// bumpLastModified advances the persisted timestamp if t is newer than the
-// current value. Concurrent writers race harmlessly — the monotonic MAX
-// semantics ensure the timestamp only moves forward.
-func (idx *Index) bumpLastModified(t time.Time) error {
-	if !t.After(idx.LastModified()) {
-		return nil
-	}
-	data, err := t.MarshalBinary()
-	if err != nil {
-		return err // coverage-ignore: defensive: t is always a normal entity/wall-clock time; MarshalBinary only errors
-		// on year>9999 or exotic zone offsets unreachable here (bumpLastModified is unexported)
-	}
-	return idx.index.SetInternal(lastModifiedKey, data)
 }
 
 // boostedFields defines the text fields searched per word with their
@@ -820,17 +768,11 @@ func (idx *Index) familiesCandidates(ids []string) ([]search.Candidate, error) {
 // thousands of entities.
 const familyBatch = 256
 
-// Close flushes anything still pending and releases resources held by the
-// index.
+// Close releases the index.
 //
-// The flush is load-bearing for a persistent index. Writes run with
-// unsafe_batch (see [New]), which returns as soon as a batch is applied
-// in memory rather than waiting for it to reach disk, and scorch's Close
-// stops the persister rather than draining it — so closing straight after
-// a write can drop that write. Persisting here means a clean shutdown
-// always leaves an index that matches what callers were told was indexed;
-// without it the index and its LastModified watermark can disagree, and
-// the next startup would reuse an index that silently lost its tail.
+// Writes are durable when they return: the index does not set scorch's
+// unsafe_batch, so each batch reaches disk before the call returns, and
+// Close has nothing left to flush.
 func (idx *Index) Close() error {
 	return idx.index.Close()
 }

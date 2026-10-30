@@ -61,6 +61,7 @@ func RunAll(t *testing.T, newHarness func(t *testing.T) Harness) {
 		{"ImplicitChannelOnFirstAppend", testImplicitCreate},
 		{"AppendRequireOpen", testAppendRequireOpen},
 		{"NamedChannelMustExist", testNamedMustExist},
+		{"AppendReportsCreatedChannel", testAppendReportsCreated},
 		{"GaplessSeqUnderConcurrency", testGapless},
 		{"Paging", testPaging},
 		{"PageLimitIsClamped", testPageClamp},
@@ -235,6 +236,8 @@ func testImplicitCreate(t *testing.T, h Harness) {
 
 	got, err := h.Store.Get(ctx, k, 1)
 	require.NoError(t, err)
+	require.False(t, got.CreatedChannel, "CreatedChannel is never stored")
+	got.CreatedChannel = m.CreatedChannel
 	require.Equal(t, m, got)
 	_, err = h.Store.Get(ctx, k, 2)
 	require.ErrorIs(t, err, channels.ErrNotFound)
@@ -244,6 +247,28 @@ func testImplicitCreate(t *testing.T, h Harness) {
 	require.Len(t, audit, 1)
 	require.Equal(t, channels.AuditCreate, audit[0].Op)
 	require.Equal(t, "room", audit[0].Type)
+}
+
+// testAppendReportsCreated pins [channels.Message.CreatedChannel]: the
+// first append to an implicit channel reports that it created the channel;
+// a second append, and the first append to a named channel made by
+// CreateMany, do not.
+func testAppendReportsCreated(t *testing.T, h Harness) {
+	t.Helper()
+	k := key("TKT-1", "room")
+	first := mustAppend(t, h.Store, k, text("one"))
+	require.Equal(t, int64(1), first.Seq)
+	require.True(t, first.CreatedChannel, "the first append creates the implicit channel")
+	second := mustAppend(t, h.Store, k, text("two"))
+	require.False(t, second.CreatedChannel, "a second append creates nothing")
+
+	c, err := h.Store.CreateMany(context.Background(), channels.Anchor{ID: "TKT-1"}, channels.NewChannel{
+		Type: "topic", Title: "Plan", By: Alice, At: T0,
+	})
+	require.NoError(t, err)
+	named := mustAppend(t, h.Store, c.Key, text("first"))
+	require.Equal(t, int64(1), named.Seq)
+	require.False(t, named.CreatedChannel, "CreateMany created the named channel, not the append")
 }
 
 func testNamedMustExist(t *testing.T, h Harness) {

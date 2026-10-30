@@ -56,8 +56,7 @@ function harness(snapshot: Partial<Entity> = {}, overrides: Partial<AutoSaveOpti
     _versions: versions({ properties: { title: 't-title-2', status: 't-status-2' } }),
   }))
   const autoSave = useAutoSave({
-    getEntityType: () => 'ticket',
-    getEntityId: () => 'TKT-001',
+    target: { type: 'ticket', id: 'TKT-001' },
     debounceMs: 100,
     dirtyWindowMs: 200,
     formData,
@@ -497,5 +496,74 @@ describe('useAutoSave after another user reverts to an older value of ours', () 
     expect(h.updateMock).toHaveBeenCalledTimes(3)
     expect(h.onError).toHaveBeenCalledWith(conflictMessage(), expect.anything())
     expect(h.autoSave.fieldErrors.value.status).toBe(conflictMessage())
+  })
+})
+
+// BUG-NSGD6OE: an instance holds bases and edits for ONE entity. State about
+// any other entity is refused, so the 412 merge can never fold another
+// entity's values into a write.
+describe('useAutoSave target identity', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] })
+    vi.mocked(entitiesApi.getEntity).mockReset()
+  })
+  afterEach(() => {
+    vi.useRealTimers()
+    vi.restoreAllMocks()
+  })
+
+  it('writes to the target it was built with, even if the caller mutates it later', async () => {
+    const target = { type: 'ticket', id: 'TKT-001' }
+    const h = harness({ properties: { status: 'open' } }, { target })
+    target.id = 'TKT-002'
+    h.autoSave.scheduleFieldSave('status', 'done')
+    await vi.runAllTimersAsync()
+    expect(h.updateMock.mock.calls.map((c) => c[1])).toEqual(['TKT-001'])
+  })
+
+  it('refuses a snapshot of another entity', () => {
+    const h = harness()
+    expect(() =>
+      h.autoSave.recordServerSnapshot({ id: 'TKT-002', type: 'ticket', properties: {} } as Entity)
+    ).toThrow(/TKT-002/)
+  })
+
+  it('accepts a snapshot of its own row named by a faced address', () => {
+    const h = harness({}, { target: { type: 'ticket', id: 'TKT-001@published' } })
+    expect(() =>
+      h.autoSave.recordServerSnapshot({ id: 'TKT-001', type: 'ticket', properties: {} } as Entity)
+    ).not.toThrow()
+  })
+
+  it('accepts its own faced row and refuses another face of the same entity', () => {
+    const h = harness({}, { target: { type: 'ticket', id: 'TKT-001@published' } })
+    const row = (face: string) =>
+      ({
+        id: 'TKT-001',
+        type: 'ticket',
+        properties: {},
+        _self: `/api/v1/tickets/TKT-001@${face}`,
+      }) as Entity
+    expect(() => h.autoSave.recordServerSnapshot(row('published'))).not.toThrow()
+    expect(() => h.autoSave.recordServerSnapshot(row('draft'))).toThrow(/TKT-001/)
+  })
+
+  it('fails the save, without a merged resend, when the 412 refetch names another entity', async () => {
+    const h = harness({ properties: { status: 'open' } })
+    h.updateMock.mockRejectedValueOnce(
+      conflict412({ properties: { status: { expected: 't-status-1', actual: 't-status-9' } } })
+    )
+    vi.mocked(entitiesApi.getEntity).mockResolvedValue({
+      id: 'TKT-002',
+      type: 'ticket',
+      properties: { status: 'open' },
+      _versions: versions({ properties: { status: 't-status-9' } }),
+    } as Entity)
+    h.autoSave.scheduleFieldSave('status', 'done')
+    await vi.runAllTimersAsync()
+    expect(h.updateMock).toHaveBeenCalledTimes(1)
+    expect(h.onError).toHaveBeenCalled()
+    expect(h.autoSave.status.value).toBe('error')
   })
 })

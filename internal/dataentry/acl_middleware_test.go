@@ -46,6 +46,81 @@ func TestACLMiddleware_FailLoudOnApi(t *testing.T) {
 	}
 }
 
+// TestACLMiddleware_AnonymousIsUnauthenticated pins BUG-C8DHGF: a request
+// the stamper ran on but no resolver named a user for (no proxy header, no
+// RELA_DATAENTRY_USER) is a client without credentials. It gets the 401 the
+// JWT gate and writeNoIdentity send, not a 500. The handler is still never
+// reached. TestACLMiddleware_FailLoudOnApi keeps the 500 for a ctx the
+// stamper never ran on.
+func TestACLMiddleware_AnonymousIsUnauthenticated(t *testing.T) {
+	tests := []struct {
+		name   string
+		header string // X-Remote-User value; empty sends no header
+	}{
+		{"no header", ""},
+		{"placeholder user", principal.Unknown},
+		{"header sanitized to empty", "\x01\x02"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			d := mustNewACL(t, &acl.Policy{}, newTestAppV1(t).store)
+			called := false
+			next := http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) { called = true })
+			handler := stampAuditPrincipal(attachACLRequest(next, d, false), ChainResolvers(
+				HeaderPrincipalResolver("X-Remote-User")))
+
+			req := httptest.NewRequest(http.MethodGet, "/api/v1/tickets", http.NoBody)
+			if tc.header != "" {
+				req.Header.Set("X-Remote-User", tc.header)
+			}
+			rec := httptest.NewRecorder()
+			handler.ServeHTTP(rec, req)
+
+			if rec.Code != http.StatusUnauthorized {
+				t.Errorf("API path without an identity: got %d, want 401: %s", rec.Code, rec.Body)
+			}
+			if !strings.Contains(rec.Body.String(), "unauthenticated") {
+				t.Errorf("missing unauthenticated code: %s", rec.Body)
+			}
+			// TKT-QR1VTP: the detail names the settings that supply an identity.
+			for _, want := range []string{EnvDataEntryUserVar, "--principal-header", "--jwt-*"} {
+				if !strings.Contains(rec.Body.String(), want) {
+					t.Errorf("detail does not mention %s: %s", want, rec.Body)
+				}
+			}
+			if called {
+				t.Error("next handler was called; the middleware must refuse the request")
+			}
+		})
+	}
+}
+
+// TestACLMiddleware_NamedUserUnknownToolStays500 pins the other side of
+// BUG-C8DHGF: a stamped user with an unknown tool is a stamper fault, not a
+// client without credentials, so it keeps the 500.
+func TestACLMiddleware_NamedUserUnknownToolStays500(t *testing.T) {
+	d := mustNewACL(t, &acl.Policy{}, newTestAppV1(t).store)
+	called := false
+	next := http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) { called = true })
+	handler := attachACLRequest(next, d, false)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/tickets", http.NoBody)
+	req = req.WithContext(principal.With(req.Context(),
+		principal.Principal{User: "alice", Tool: principal.Unknown}))
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Errorf("named user, unknown tool: got %d, want 500: %s", rec.Code, rec.Body)
+	}
+	if !strings.Contains(rec.Body.String(), "acl_unstamped_principal") {
+		t.Errorf("missing acl_unstamped_principal code: %s", rec.Body)
+	}
+	if called {
+		t.Error("next handler was called; the middleware must refuse the request")
+	}
+}
+
 // TestACLMiddleware_NonAPIPathsBypass pins RR-T15E: ACL configured +
 // unstamped principal must NOT take down the SPA shell or static
 // assets. Operators need the UI reachable to recover from a stamper

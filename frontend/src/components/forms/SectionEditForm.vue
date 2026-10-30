@@ -126,8 +126,7 @@ const initialSnapshot = {
 const formDataRef = computed(() => formData) as unknown as Ref<Record<string, unknown>>
 
 const autoSave = useAutoSave({
-  getEntityType: () => owner.type,
-  getEntityId: () => owner.id,
+  target: owner,
   initialServerSnapshot: initialSnapshot,
   runWrite: props.runWrite,
   disableContentChannel: true,

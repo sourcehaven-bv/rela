@@ -307,6 +307,13 @@ Autosave sends a per-field precondition (the server's `_versions` token) for
 every field it writes, and merges on a 412 (TKT-2VDVHF; API contract in
 `docs/data-entry/api-reference.md`). Rules for new code:
 
+- **An instance writes to one fixed entity.** `useAutoSave` takes a `target`
+  at construction and refuses a snapshot, refetch or response about any other
+  entity. A host that puts another row on screen builds a new instance:
+  `FormView` keys `DynamicForm` per entity, and `EntityDetail` keeps one per
+  served address. Never pass a target that is read when the save fires. A
+  form reused across a route change once sent an edit made on one entity to
+  the next, and the 412 merge then wrote it there (BUG-NSGD6OE).
 - **A merge base moves only when the local state moves with it:** when the
   form takes the server value, or when a save of that field succeeds. A base
   that runs ahead of the form lets the next save overwrite a change the user
@@ -343,11 +350,12 @@ each `SectionEditForm`; `DynamicForm` can adopt it the same way. Rules:
 
 - **Read through `session.read`, write through `session.write`.** A read
   lands (its `land` callback runs) only if the address is unchanged, no later
-  read has landed, and no write completed while it was on its way; otherwise
-  it reads again, a few times at most. Writes count per address: a write is
-  tagged with the address of the row it saves (EntityDetail: the view on
-  screen), so the drain of the entity being left does not void the reads of
-  the next one. Do not add a freshness check of your own beside it.
+  read has landed, and no write to its row completed while it was on its
+  way; otherwise it reads again, a few times at most. Writes count per key:
+  a write is tagged with the row it saves (EntityDetail: the target of each
+  autosave instance), and a read names the row its answer shows (`shows`),
+  so the drain of the entity being left does not void the reads of the next
+  one. Do not add a freshness check of your own beside it.
 - **A write that never settles blocks every later write**, so give `run` a
   timeout of its own.
 - **Live changes call `session.invalidate()`**, never a reload directly.

@@ -31,6 +31,7 @@ import { ApiError, getErrorMessage } from '@/api/errors'
 import { useEntitiesStore } from '@/stores/entities'
 import { mergeProperty, mergeRelations, mergeText } from './autoSaveMerge'
 import { t } from '@/i18n'
+import { entityRef, refBareId, refFace } from '@/utils/entityRef'
 
 // Sentinel for "unset this property" pending entries. Distinct from
 // undefined so we can tell apart "delete the key" from "set to
@@ -114,9 +115,20 @@ interface PendingEntry {
   enqueuedAt: number
 }
 
+// The entity an instance writes to. `id` is the address the PATCH names,
+// face included when the host shows one face.
+export interface AutoSaveTarget {
+  type: string
+  id: string
+}
+
 export interface AutoSaveOptions {
-  getEntityType: () => string
-  getEntityId: () => string
+  // Fixed for the instance's lifetime (BUG-NSGD6OE). Pending edits, merge
+  // bases and version tokens all belong to this one entity, so a host that
+  // starts showing another entity builds a new instance. A target read at
+  // fire time once sent an edit made on one entity to the next one the form
+  // showed, and the conflict merge then wrote it there.
+  target: AutoSaveTarget
   // Legacy single debounce. When set, applies to whichever channels
   // didn't get an explicit per-channel debounce. Defaults to 800.
   debounceMs?: number
@@ -203,6 +215,7 @@ export class AutoSaveChannelDisabledError extends Error {
 type WidgetId = `${string}-outgoing` | `${string}-incoming`
 
 export function useAutoSave(opts: AutoSaveOptions) {
+  const target: Readonly<AutoSaveTarget> = Object.freeze({ ...opts.target })
   const baseDebounceMs = opts.debounceMs ?? 800
   const fieldDebounceMs = opts.fieldDebounceMs ?? baseDebounceMs
   const contentDebounceMs = opts.contentDebounceMs ?? baseDebounceMs
@@ -339,7 +352,24 @@ export function useAutoSave(opts: AutoSaveOptions) {
     return pendingContent !== null || contentTimer !== null || queuedContent > 0
   }
 
+  // assertTarget refuses server state about any entity but the target. A
+  // base taken from another entity would make the 412 merge treat that
+  // entity's values as a concurrent edit and write over it. A faced target
+  // also refuses another face of the same entity, which is another row. A
+  // bare target accepts any face: the server picks it.
+  function assertTarget(entity: Entity, source: string) {
+    const face = refFace(target.id)
+    const sameFace =
+      face === '' || entity._self === undefined || refFace(entityRef(entity)) === face
+    if (entity.type === target.type && refBareId(entity.id) === refBareId(target.id) && sameFace)
+      return
+    throw new Error(
+      `useAutoSave: ${source} is ${entity.type}/${entity.id}, but this instance writes ${target.type}/${target.id}`
+    )
+  }
+
   function recordServerSnapshot(entity: Entity) {
+    assertTarget(entity, 'snapshot')
     for (const k of Object.keys(lastSeenServer)) delete lastSeenServer[k]
     if (entity.properties) {
       for (const [k, v] of Object.entries(entity.properties)) {
@@ -724,13 +754,8 @@ export function useAutoSave(opts: AutoSaveOptions) {
       }
       try {
         const body = pre ? { ...patch, preconditions: pre } : patch
-        const response = await entitiesStore.update(
-          opts.getEntityType(),
-          opts.getEntityId(),
-          body,
-          undefined,
-          signal
-        )
+        const response = await entitiesStore.update(target.type, target.id, body, undefined, signal)
+        assertTarget(response, 'save response')
         return {
           response,
           written: writtenBy(patch),
@@ -766,12 +791,14 @@ export function useAutoSave(opts: AutoSaveOptions) {
     const outgoing = Object.keys(patch.relations ?? {}).filter(
       (k) => !opts.inverseToCanonical.has(k)
     )
-    return getEntity(
-      opts.getEntityType(),
-      opts.getEntityId(),
+    const fresh = await getEntity(
+      target.type,
+      target.id,
       outgoing.length ? { include: outgoing.join(',') } : {},
       signal
     )
+    assertTarget(fresh, 'conflict refetch')
+    return fresh
   }
 
   function resolveConflicts(
@@ -1165,6 +1192,7 @@ export function useAutoSave(opts: AutoSaveOptions) {
   }
 
   return {
+    target,
     status: computed(() => status.value),
     lastError: computed(() => lastError.value),
     inFlightCount: computed(() => inFlightCount.value),

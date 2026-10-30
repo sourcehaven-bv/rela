@@ -6,6 +6,7 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/channels"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/realtime"
 )
 
 // Topics let a round replay only the subscriptions a change can move
@@ -20,6 +21,9 @@ import (
 // has none, so a channel change does not replay it. A full round, which
 // any graph write or lease change starts, still replays it, so a reader who
 // gains access is framed then.
+//
+// A busy list subscription learns its wake the same way, and a channel
+// move on a row of its page replays it (see live_busy.go).
 
 // Topic keys. A prefix keeps the three kinds apart in one filter set.
 const (
@@ -57,19 +61,24 @@ func channelKeyTopics(k channels.Key) []string {
 }
 
 // channelChanges is the channel change subscription the live worker reads.
-// *realtime.Subscription satisfies it: Take returns the channels that
-// changed since the last call, or resync when it lost count. TakeReads
-// returns the channels on which each reader's marker was written: such a
-// change replays only the subscriptions that show that reader's marker,
-// and that reader's inbox. TakeDurable returns the channels a stored write
-// changed, and TakeAddressed the principal keys a post or edit addressed;
-// both select inbox subscriptions (see live_inbox.go).
+// *realtime.Subscription satisfies it. TakeLive takes, in one critical
+// section, everything that changed since the last call:
+//   - Keys are the channels that changed, or Resync is set when the
+//     subscription lost count.
+//   - Reads are the channels on which each reader's marker was written:
+//     such a change replays only the subscriptions that show that reader's
+//     marker, and that reader's inbox.
+//   - Durable are the channels a stored write changed, and Addressed the
+//     principal keys a post or edit addressed; both select inbox
+//     subscriptions (see live_inbox.go).
+//   - Moved are the channels a stored write may have moved, which select
+//     busy list subscriptions (see live_busy.go).
+//
+// One call, not one per set: a mark that landed between two calls would
+// split a moved key from its changed key across two ticks.
 type channelChanges interface {
 	Wake() <-chan struct{}
-	Take() (keys []channels.Key, resync bool)
-	TakeReads() map[channels.Reader][]channels.Key
-	TakeDurable() []channels.Key
-	TakeAddressed() []string
+	TakeLive() realtime.LiveChanges
 	Close()
 }
 
@@ -95,6 +104,11 @@ type roundFilter struct {
 	durable   map[string]bool
 	types     map[string]bool
 	addressed map[string]bool
+	// moved holds, by channel type, the anchors of the channels a stored
+	// write may have moved: the id for a family channel, id@face for a face
+	// channel. It selects busy list subscriptions
+	// ([roundFilter.selectsBusy]).
+	moved map[string]map[string]bool
 }
 
 // addReads adds the topics of the channels where each reader's marker
@@ -143,6 +157,9 @@ func (f *roundFilter) selects(s *liveSub) bool {
 	if s.inbox {
 		return f.selectsInbox(s)
 	}
+	if s.busy != "" {
+		return f.selectsBusy(s)
+	}
 	if !s.channel || s.topic == "" {
 		return false
 	}
@@ -156,6 +173,8 @@ type topicProbe struct {
 	reader channels.Reader
 	// inbox is the wake set an inbox route recorded (see recordInbox).
 	inbox *inboxWake
+	// busy is the wake a busy list read recorded (see recordBusy).
+	busy *busyWake
 }
 
 type topicProbeKey struct{}
@@ -175,10 +194,11 @@ func recordTopic(ctx context.Context, topic string, reader channels.Reader) {
 }
 
 // applyTopic sets the topic of the channel subscription s, or the wake
-// set of the inbox subscription s, after a replay that ran, with result
-// res. A 200 takes what its probe recorded; any other status clears it. A
-// replay that did not finish keeps it, so the next channel change still
-// replays s. Callers hold the stream's mu.
+// set of the inbox subscription s, or the wake of the busy list
+// subscription s, after a replay that ran, with result res. A 200 takes
+// what its probe recorded; any other status clears it. A replay that did
+// not finish keeps it, so the next channel change still replays s.
+// Callers hold the stream's mu.
 func applyTopic(s *liveSub, res replayResult) {
 	if !res.ok {
 		return
@@ -187,6 +207,13 @@ func applyTopic(s *liveSub, res replayResult) {
 		s.wake = nil
 		if res.status == http.StatusOK {
 			s.wake = res.inbox
+		}
+		return
+	}
+	if s.busy != "" {
+		s.busyWake = nil
+		if res.status == http.StatusOK {
+			s.busyWake = res.busy
 		}
 		return
 	}

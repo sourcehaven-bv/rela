@@ -1,0 +1,15 @@
+request: every corpus request
+identity: none
+status: 401
+reads: 
+breadth: 
+bodies: 
+versions: 
+body:
+{
+  "type": "https://rela.dev/errors/unauthenticated",
+  "title": "Authentication required",
+  "status": 401,
+  "detail": "no user identity: local $RELA_DATAENTRY_USER, or rela-server --jwt-* or --principal-header; see docs/server-security.md",
+  "instance": "<request path>"
+}

@@ -294,7 +294,7 @@ Commands run **confined**, and this is enforced in one shared place
 |---|---|
 | No network | Linux: bubblewrap (`--unshare-all`). macOS: `sandbox-exec` (`deny network*`) |
 | Writes | only the run's own temp dir |
-| Reads (**Linux only**) | the binary and library directories, plus the paths the operator lists for the command's purpose (`RELA_SANDBOX_TRANSFORM_READ_PATHS` or `RELA_SANDBOX_SCAN_READ_PATHS`) — nothing else is present, including the project directory, `/home` and `/root`. On macOS the same lists only select which unix sockets a command may connect to |
+| Reads (**Linux only**) | the binary and library directories, plus the paths the operator lists for the command's purpose (`RELA_SANDBOX_TRANSFORM_READ_PATHS`, `RELA_SANDBOX_SCAN_READ_PATHS` or `RELA_SANDBOX_CHECK_READ_PATHS`) — nothing else is present, including the project directory, `/home` and `/root`. On macOS the same lists only select which unix sockets a command may connect to |
 | Memory / processes / file size / CPU | `RLIMIT_AS` / `NPROC` / `FSIZE` / `CPU` (Linux) |
 | No orphaned helpers | the whole process group is killed at the deadline |
 | Concurrency | a bounded pool caps simultaneous conversions |
@@ -319,6 +319,7 @@ exposed to the other:
 |---|---|---|
 | `RELA_SANDBOX_TRANSFORM_READ_PATHS` | `--sandbox-transform-read-paths` | export transforms, attachment transform steps, document commands |
 | `RELA_SANDBOX_SCAN_READ_PATHS` | `--sandbox-scan-read-paths` | attachment scans; see [attachment-security.md](attachment-security.md) |
+| `RELA_SANDBOX_CHECK_READ_PATHS` | none; `rela analyze prose` reads the variable | prose checkers; see [checkers.md](checkers.md) |
 
 Each flag defaults to its variable. The CLI (`rela render`) and rela-desktop
 read the same variables.

@@ -1375,6 +1375,17 @@ forms:
       # TKT-7K3BJF: exercised by attachments-create.spec.ts.
       - property: screenshot
       - property: evidence
+    # BUG-NSGD6OE: links to another bug's edit form, so a spec can switch
+    # entity inside the same form route.
+    side_panel:
+      traverse:
+        - from: entry
+          follow: blocks
+          collect_as: blocked
+      sections:
+        - heading: "Blocks"
+          source: blocked
+          display: list
 
   # BUG-L1DHC5: a form whose file property is REQUIRED. Kept SEPARATE from the
   # 'bug' form on purpose — adding a required field there would block every
