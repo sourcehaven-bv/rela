@@ -908,7 +908,14 @@ func TestMatchEnumEdgeCases(t *testing.T) {
 		{"wrong type bool", true, "status=draft", false, true},
 		// Unsupported operator for enum
 		{"unsupported operator less", "draft", "status<accepted", false, true},
-		{"unsupported operator regex", "draft", "status=~draft.*", false, true},
+		// Regex matches the stored value like a string (BUG: enum =~ used
+		// to error, which a search swallowed into an empty result).
+		{"regex matches", "draft", "status=~dra", true, false},
+		{"regex anchored matches", "proposed", "status=~^prop.*d$", true, false},
+		{"regex no match", "draft", "status=~^acc", false, false},
+		{"regex needs no allowed value", "accepted", "status=~cept", true, false},
+		{"empty regex matches any value", "draft", "status=~", true, false},
+		{"unsupported operator fuzzy", "draft", "status~draft", false, true},
 	}
 
 	for _, tt := range tests {
@@ -936,6 +943,36 @@ func TestMatchEnumEdgeCases(t *testing.T) {
 			}
 			if got != tt.want {
 				t.Errorf("Match = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+// TestMatchLegacyTypeRegex pins that =~ works on the legacy status and
+// priority property types, which route through matchEnumLegacy.
+func TestMatchLegacyTypeRegex(t *testing.T) {
+	mm := &metamodel.Metamodel{}
+	tests := []struct {
+		propType, value, filter string
+		want                    bool
+	}{
+		{"status", "accepted", "s=~^acc", true},
+		{"status", "draft", "s=~^acc", false},
+		{"priority", "critical", "s=~crit", true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.propType+"/"+tc.filter, func(t *testing.T) {
+			e := &entity.Entity{ID: "TEST-001", Type: "test", Properties: map[string]any{"s": tc.value}}
+			f, err := Parse(tc.filter)
+			if err != nil {
+				t.Fatalf("Parse(%q) error: %v", tc.filter, err)
+			}
+			got, err := Match(toRecord(e), f, &metamodel.PropertyDef{Type: tc.propType}, mm)
+			if err != nil {
+				t.Fatalf("Match error: %v", err)
+			}
+			if got != tc.want {
+				t.Errorf("Match = %v, want %v", got, tc.want)
 			}
 		})
 	}
@@ -977,6 +1014,16 @@ func TestMatchCustomType(t *testing.T) {
 	}
 	if got {
 		t.Error("Expected custom type value to not match")
+	}
+
+	// Regex applies to the stored value
+	f, _ = Parse("risk=~^hi")
+	got, err = Match(toRecord(entity), f, propDef, mm)
+	if err != nil {
+		t.Fatalf("Match regex error: %v", err)
+	}
+	if !got {
+		t.Error("Expected regex to match custom type value")
 	}
 
 	// Should reject invalid values
