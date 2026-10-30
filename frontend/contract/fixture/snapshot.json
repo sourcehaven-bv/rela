@@ -7,12 +7,17 @@
         "primary": "title",
         "id_type": "sequential",
         "id_prefix": "NOTE",
-        "id_prefixes": ["NOTE"],
+        "id_prefixes": [
+          "NOTE"
+        ],
         "properties": {
           "status": {
             "type": "note_status",
             "required": false,
-            "values": ["open", "done"]
+            "values": [
+              "open",
+              "done"
+            ]
           },
           "summary": {
             "type": "string",
@@ -28,7 +33,10 @@
     "relations": {},
     "types": {
       "note_status": {
-        "values": ["open", "done"],
+        "values": [
+          "open",
+          "done"
+        ],
         "default": "open"
       }
     },
@@ -107,6 +115,11 @@
                 "property": "summary"
               }
             ]
+          },
+          {
+            "heading": "Body",
+            "source": "entry",
+            "display": "content"
           }
         ]
       }

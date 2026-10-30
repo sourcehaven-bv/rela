@@ -276,7 +276,8 @@ export async function fetchView(
   entityType: string,
   entityId: string,
   world?: string,
+  signal?: AbortSignal,
 ): Promise<ViewResponse> {
   const params = world ? { world } : undefined
-  return api.get<ViewResponse>(`/_views/${entityType}/${entityId}`, params)
+  return api.get<ViewResponse>(`/_views/${entityType}/${entityId}`, params, signal)
 }

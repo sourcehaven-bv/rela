@@ -2,7 +2,7 @@
 //
 // It covers the entity-editing slice only: the schema and config snapshot,
 // entity get/list/create/update/delete, per-field `_versions` with 412
-// conflicts, an entity view's properties sections, presence, mentioned-by,
+// conflicts, an entity view's properties and body sections, presence, mentioned-by,
 // `entity:changed` events and live subscriptions. `frontend/contract/` runs the same requests
 // against a real `rela-server` on the memory store and compares the answers,
 // so this file may only change together with a passing contract run.
@@ -415,6 +415,20 @@ export class FakeServer {
     if (!config) return notImplemented('GET', `/_views/${type}/${id} without a configured view`)
     const sections = []
     for (const s of config.sections ?? []) {
+      if (s.display === 'content' && (s.source === undefined || s.source === 'entry')) {
+        // The entry's body. The wire leaves `content` out when the body is
+        // empty, and then `hasContent` is false.
+        sections.push({
+          heading: s.heading,
+          sectionId: (s.heading ?? '').toLowerCase(),
+          display: 'content',
+          isEmpty: false,
+          isGrouped: false,
+          ...(e.content !== '' ? { content: e.content } : {}),
+          hasContent: e.content !== '',
+        })
+        continue
+      }
       if (s.display !== 'properties' || (s.source !== undefined && s.source !== 'entry')) {
         return notImplemented('GET', `/_views/${type}/${id} with a ${s.display} section`)
       }

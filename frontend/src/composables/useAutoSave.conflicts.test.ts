@@ -415,3 +415,87 @@ describe('useAutoSave preconditions', () => {
     })
   })
 })
+
+// Tokens are derived from the value. Another user writing back a value this
+// client saved earlier gets the same token as that save, and must still be
+// treated as their change (BUG-04V034W review): ticked on and off by us, then
+// on again by them.
+describe('useAutoSave after another user reverts to an older value of ours', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] })
+    vi.mocked(entitiesApi.getEntity).mockReset()
+  })
+  afterEach(() => {
+    vi.useRealTimers()
+    vi.restoreAllMocks()
+  })
+
+  const entity = (over: Partial<Entity>): Entity => ({
+    id: 'TKT-001',
+    type: 'ticket',
+    properties: {},
+    ...over,
+  })
+  const bodyAt = (content: string, token: string) =>
+    entity({ content, _versions: versions({ content: token }) })
+  const statusAt = (status: string, token: string) =>
+    entity({ properties: { status }, _versions: versions({ properties: { status: token } }) })
+
+  // Saves the body A, then B; the server answers each with its token.
+  async function savedAThenB(h: ReturnType<typeof harness>) {
+    h.updateMock.mockResolvedValueOnce(bodyAt('A', 'cA'))
+    h.autoSave.scheduleContentSave('A')
+    await vi.runAllTimersAsync()
+    h.updateMock.mockResolvedValueOnce(bodyAt('B', 'cB'))
+    h.autoSave.scheduleContentSave('B')
+    await vi.runAllTimersAsync()
+    expect(bodyOf(h.updateMock, 1).preconditions).toEqual({ content: 'cA' })
+  }
+
+  it('merges a 412 on the body instead of resending over their revert', async () => {
+    const h = harness({ content: 'v0', _versions: versions({ content: 'c0' }) })
+    await savedAThenB(h)
+    // They write A back. Our next save is refused, and the body they hold
+    // carries the token of our first save.
+    h.updateMock.mockRejectedValueOnce(conflict412({ content: { expected: 'cB', actual: 'cA' } }))
+    vi.mocked(entitiesApi.getEntity).mockResolvedValue(bodyAt('A', 'cA'))
+    h.autoSave.scheduleContentSave('C')
+    await vi.runAllTimersAsync()
+
+    // base B, ours C, theirs A: the same line changed on both sides.
+    expect(h.updateMock).toHaveBeenCalledTimes(3)
+    expect(h.onError).toHaveBeenCalledWith(contentConflictMessage(), expect.anything())
+  })
+
+  it('takes a snapshot of their revert to an older body of ours', async () => {
+    const h = harness({ content: 'v0', _versions: versions({ content: 'c0' }) })
+    await savedAThenB(h)
+    h.autoSave.recordServerSnapshot(bodyAt('A', 'cA'))
+    h.autoSave.scheduleContentSave('C')
+    await vi.runAllTimersAsync()
+    expect(bodyOf(h.updateMock, 2)).toEqual({ content: 'C', preconditions: { content: 'cA' } })
+  })
+
+  it('merges a 412 on a property instead of resending over their revert', async () => {
+    const h = harness({ properties: { status: 'off' }, _versions: versions() })
+    h.updateMock.mockResolvedValueOnce(statusAt('on', 's-on'))
+    h.autoSave.scheduleFieldSave('status', 'on')
+    await vi.runAllTimersAsync()
+    h.updateMock.mockResolvedValueOnce(statusAt('off', 's-off'))
+    h.autoSave.scheduleFieldSave('status', 'off')
+    await vi.runAllTimersAsync()
+
+    // They tick it on again; we choose a third value meanwhile.
+    h.updateMock.mockRejectedValueOnce(
+      conflict412({ properties: { status: { expected: 's-off', actual: 's-on' } } })
+    )
+    vi.mocked(entitiesApi.getEntity).mockResolvedValue(statusAt('on', 's-on'))
+    h.autoSave.scheduleFieldSave('status', 'maybe')
+    await vi.runAllTimersAsync()
+
+    expect(h.updateMock).toHaveBeenCalledTimes(3)
+    expect(h.onError).toHaveBeenCalledWith(conflictMessage(), expect.anything())
+    expect(h.autoSave.fieldErrors.value.status).toBe(conflictMessage())
+  })
+})

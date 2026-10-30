@@ -181,6 +181,10 @@ export interface AutoSaveOptions {
   // The arg is optional so existing callers (`(msg) => uiStore.error(msg)`)
   // ignore it silently. Set per call site inside the composable.
   onError: (msg: string, info?: AutoSaveErrorInfo) => void
+  // Runs each save, retries included, so the page can order its reads
+  // against it (useEntitySession.write). Saves are already serialized here;
+  // without the hook a save simply runs.
+  runWrite?: <T>(send: () => Promise<T>) => Promise<T>
 }
 
 export interface AutoSaveErrorInfo {
@@ -208,6 +212,7 @@ export function useAutoSave(opts: AutoSaveOptions) {
   const contentChannelEnabled = !opts.disableContentChannel
   const relationsChannelEnabled = !opts.disableRelationsChannel
   const entitiesStore = useEntitiesStore()
+  const runWrite = opts.runWrite ?? (<T>(send: () => Promise<T>) => send())
 
   const status = ref<SaveStatus>('idle')
   const lastError = ref<string | null>(null)
@@ -229,6 +234,13 @@ export function useAutoSave(opts: AutoSaveOptions) {
   // the local state moves with it: when the form takes the server value, or
   // when a save of that field succeeds. A base that ran ahead of the form
   // would let the next save overwrite a change the user never saw.
+  //
+  // A 412 is never taken for the client's own write coming back. Tokens are
+  // derived from the value, so "the server holds a value we wrote earlier"
+  // cannot be told from "someone else wrote it back"; treating it as ours
+  // overwrote their change without a merge (BUG-04V034W review). A late read
+  // that would move a base backwards is kept out by the page's read order
+  // (useEntitySession), not here.
   const propBase: Record<string, Base<unknown>> = Object.create(null)
   let contentBase: Base<string> = { value: '', token: undefined }
   let relationsBase: Base<Record<string, string[]>> = { value: {}, token: undefined }
@@ -486,7 +498,7 @@ export function useAutoSave(opts: AutoSaveOptions) {
         if (unsets.length) patch.properties_unset = unsets
         // Bundle relations if dirty (C2: relations bundling table).
         sentRelations = attachRelations(patch)
-        const result = await sendPatch(patch, ac.signal)
+        const result = await runWrite(() => sendPatch(patch, ac.signal))
         release()
         // A relations body the conflict handling dropped was not written:
         // it stays held, and the finally block hands the bit back.
@@ -571,7 +583,7 @@ export function useAutoSave(opts: AutoSaveOptions) {
       try {
         const patch: EntityPatch = { content: value }
         sentRelations = attachRelations(patch)
-        const result = await sendPatch(patch, ac.signal)
+        const result = await runWrite(() => sendPatch(patch, ac.signal))
         release()
         // A relations body the conflict handling dropped was not written:
         // it stays held, and the finally block hands the bit back.
@@ -634,7 +646,7 @@ export function useAutoSave(opts: AutoSaveOptions) {
       setStatus('saving')
       try {
         const patch: EntityPatch = { relations: body }
-        const result = await sendPatch(patch, ac.signal)
+        const result = await runWrite(() => sendPatch(patch, ac.signal))
         if (result.sentRelations) {
           opts.onRelationsSaved?.(result.sentRelations)
           relationsSending--
