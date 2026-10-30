@@ -1,0 +1,172 @@
+{
+  "schema": {
+    "entities": {
+      "note": {
+        "label": "Note",
+        "plural": "notes",
+        "primary": "title",
+        "id_type": "sequential",
+        "id_prefix": "NOTE",
+        "id_prefixes": ["NOTE"],
+        "properties": {
+          "status": {
+            "type": "note_status",
+            "required": false,
+            "values": ["open", "done"]
+          },
+          "summary": {
+            "type": "string",
+            "required": false
+          },
+          "title": {
+            "type": "string",
+            "required": true
+          }
+        }
+      }
+    },
+    "relations": {},
+    "types": {
+      "note_status": {
+        "values": ["open", "done"],
+        "default": "open"
+      }
+    },
+    "worlds": {
+      "default": {
+        "readable": true,
+        "default": true
+      }
+    }
+  },
+  "config": {
+    "app": {
+      "name": "Fake API contract fixture",
+      "description": "",
+      "history_enabled": false
+    },
+    "styles": {
+      "note_status": {
+        "done": "badge-purple",
+        "open": "badge-blue"
+      }
+    },
+    "forms": {
+      "note": {
+        "entity": "note",
+        "title": "Note",
+        "body": true,
+        "fields": [
+          {
+            "property": "title"
+          },
+          {
+            "property": "status"
+          },
+          {
+            "property": "summary"
+          }
+        ]
+      }
+    },
+    "lists": {
+      "notes": {
+        "entity": "note",
+        "title": "Notes",
+        "columns": [
+          {
+            "property": "title"
+          },
+          {
+            "property": "status"
+          }
+        ]
+      }
+    },
+    "views": {
+      "note": {
+        "title": "Note",
+        "entry": {
+          "type": "note"
+        },
+        "traverse": null,
+        "sections": [
+          {
+            "heading": "Note",
+            "source": "entry",
+            "display": "properties",
+            "render": "input",
+            "fields": [
+              {
+                "property": "title"
+              },
+              {
+                "property": "status"
+              },
+              {
+                "property": "summary"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    "kanbans": {},
+    "navigation": null,
+    "palette": {
+      "light": {
+        "--accent-color": "#4772fb",
+        "--badge-blue": "#4772fb",
+        "--badge-gray": "#6b7280",
+        "--badge-green": "#06ce90",
+        "--badge-orange": "#f4aa83",
+        "--badge-purple": "#8b5cf6",
+        "--badge-red": "#e5484d",
+        "--badge-yellow": "#f9d975",
+        "--bg-color": "#f3f2ef",
+        "--border-color": "#d2d1cf",
+        "--card-bg": "#f7f7f5",
+        "--error-color": "#e5484d",
+        "--error-ring": "var(--error-color)",
+        "--focus-ring": "var(--accent-color)",
+        "--focus-ring-gap": "var(--bg-color)",
+        "--hover-bg": "#ecebe6",
+        "--info-color": "#4772fb",
+        "--input-bg": "#f7f7f5",
+        "--muted-text": "#666666",
+        "--sidebar-bg": "#164155",
+        "--sidebar-text": "#e8e8e8",
+        "--success-color": "#06ce90",
+        "--text-color": "#191919",
+        "--warning-color": "#f4aa83"
+      },
+      "dark": {
+        "--accent-color": "#6f93ff",
+        "--badge-blue": "#6f93ff",
+        "--badge-gray": "#8fa4b0",
+        "--badge-green": "#34d39c",
+        "--badge-orange": "#f4aa83",
+        "--badge-purple": "#c4b5fd",
+        "--badge-red": "#f87171",
+        "--badge-yellow": "#f9d975",
+        "--bg-color": "#0f1f28",
+        "--border-color": "#303d44",
+        "--card-bg": "#12252f",
+        "--error-color": "#f87171",
+        "--error-ring": "var(--error-color)",
+        "--focus-ring": "var(--accent-color)",
+        "--focus-ring-gap": "var(--bg-color)",
+        "--hover-bg": "#0b161d",
+        "--info-color": "#6f93ff",
+        "--input-bg": "#12252f",
+        "--muted-text": "#ffffff",
+        "--sidebar-bg": "#091821",
+        "--sidebar-text": "#e8e8e8",
+        "--success-color": "#34d39c",
+        "--text-color": "#ece9e0",
+        "--warning-color": "#f9d975"
+      }
+    },
+    "piles": null
+  }
+}

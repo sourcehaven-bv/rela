@@ -61,10 +61,14 @@ export function useScopeNavigation(entityId: () => string, servedAddress?: () =>
       return
     }
 
-    const id = built.scope.source === 'pile' ? (servedAddress?.() ?? entityId()) : entityId()
+    const idNow = () => (built.scope.source === 'pile' ? (servedAddress?.() ?? entityId()) : entityId())
+    const id = idNow()
 
     try {
       const pos = await getEntityPosition(id, built.scope, worldParam.value)
+      // The page moved to another entity while this was in flight; that
+      // entity's own load sets the position (TKT-7LTLHW3).
+      if (idNow() !== id) return
       scopeNav.value = {
         prev: pos.prev,
         next: pos.next,
@@ -74,7 +78,7 @@ export function useScopeNavigation(entityId: () => string, servedAddress?: () =>
       }
     } catch {
       // 404 (entity not in scope) or any error → no scope nav, same as before.
-      scopeNav.value = null
+      if (idNow() === id) scopeNav.value = null
     }
   }
 

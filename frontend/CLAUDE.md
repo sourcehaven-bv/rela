@@ -327,6 +327,53 @@ every field it writes, and merges on a 412 (TKT-2VDVHF; API contract in
   returns tokens. List-section rows are in that state today (TKT-MK9NJB), and
   so is every incoming relation list (TKT-E9WXPU).
 
+## Testing against the fake API (`src/test/fakeApi/`)
+
+`FakeServer` is an in-process fake of the data-entry API. It covers the
+entity-editing slice; the header of `server.ts` lists what it covers and what it
+does not. Install it with `fakeAdapter(server, scheduler?)` on the axios
+instance and `fakeEventSource(server)` as `EventSource`.
+
+The fake is verified. `contract/fakeVsServer.contract.test.ts` sends the same
+random request sequences to the fake and to `rela-server` on the memory store,
+and compares status, body and events. CI runs it in the E2E job; locally run
+`just contract-fake`. Rules:
+
+- **Change the fake only together with a passing contract run.** A difference
+  is a fake bug unless the server is wrong; then fix the server or file a bug,
+  and never teach the fake the bug quietly.
+- **A route the fake does not implement answers 501.** Add it to the fake and
+  to the contract generators in the same change. A route whose answer does not
+  depend on state goes in `inert.ts`, which the contract test checks too.
+- **`snapshot.json` is the schema and config the server serves** for
+  `contract/fixture/project`. After changing the fixture, regenerate it with
+  `CONTRACT_UPDATE=1 just contract-fake`.
+- **Check that a new generator can find the fault it is for.** Break the fake
+  on purpose and confirm the contract run fails. Random requests mostly miss:
+  the stale-token 412 was caught only after the generators were biased towards
+  existing entities.
+
+Use it for **property tests of request ordering** (`*.prop.test.ts`, see
+`EntityDetail.switching.prop.test.ts`). `fc.scheduler()` decides when each
+request runs and when its answer arrives, so a test can deliver the answer for
+the entity the user left after the one they moved to. That race is how
+"switch, then Edit opens the previous entity" happened (TKT-7LTLHW3). Two
+things these tests need:
+
+- **Reset the DOM in `finally` inside the property**, not only in `afterEach`.
+  The shrinker reruns the property many times in one test, and a page left
+  mounted produces false counterexamples.
+- **Measure that the commands do something.** A command that finds no button
+  or no loaded page silently does nothing, and the property passes on an empty
+  run. Count the steps that took effect before you trust a green result.
+- **Fail requests too.** The fake never fails, so give `fakeAdapter` a
+  `fault` that answers some requests with a 503 or a refusal before the fake
+  sees them. Ordering bugs hide behind "the later request fails".
+- **Pin an order that random runs rarely reach.** A race that needs a long,
+  exact sequence of steps (a reviewer found one at nine) is found only by
+  chance. Replay it with `Gate`, which runs a held step only when the test
+  names it, as the `a load and the live refresh` tests do.
+
 ## The markdown editor (Milkdown/ProseMirror)
 
 `src/components/forms/milkdown/` replaces the old EasyMDE editor. It is

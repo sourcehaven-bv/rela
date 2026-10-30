@@ -1,0 +1,37 @@
+version: '1.0'
+
+app:
+  name: 'Fake API contract fixture'
+
+forms:
+  note:
+    entity_type: note
+    title: 'Note'
+    body: true
+    fields:
+      - property: title
+      - property: status
+      - property: summary
+
+lists:
+  notes:
+    entity_type: note
+    title: 'Notes'
+    columns:
+      - property: title
+      - property: status
+
+views:
+  note:
+    title: 'Note'
+    entry:
+      type: note
+    sections:
+      - heading: 'Note'
+        source: entry
+        display: properties
+        render: input
+        fields:
+          - property: title
+          - property: status
+          - property: summary
