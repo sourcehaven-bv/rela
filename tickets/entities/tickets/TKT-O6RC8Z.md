@@ -4,8 +4,10 @@ type: ticket
 title: Server-known quiet message types (unread, inbox)
 kind: enhancement
 priority: low
-effort: s
-status: backlog
+effort: m
+started: "2026-10-30"
+completed: "2026-10-30"
+status: done
 ---
 
 ## Description

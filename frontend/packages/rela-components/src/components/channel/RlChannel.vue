@@ -33,7 +33,8 @@
  * `decisionSeq` (the message that moved the session into its current
  * state) shows them and emits `decide` with `from: 'row'`. No other row
  * does. `focusRow(seq)` puts focus on a row without scrolling, for after a
- * decision removes the button that had it.
+ * decision removes the button that had it. `jumpTo(seq)` is the reply
+ * quote's jump, also used by a message link.
  *
  * `choices` are the reply buttons of open questions, keyed by the
  * question's seq; each row shows its own and emits `choose` with the key.
@@ -447,6 +448,10 @@ function reveal(seq: number): boolean {
  */
 let jumping = false
 
+/**
+ * Reveals the held message with seq, or asks the app for older pages with
+ * `jump` and stays quiet about them until `reveal` shows the message.
+ */
 function jumpTo(seq: number) {
   if (reveal(seq)) return
   jumping = true
@@ -460,6 +465,7 @@ function loadOlder() {
 
 defineExpose({
   reveal,
+  jumpTo,
   /** Moves focus to the row with seq, without scrolling; false when it is not shown. */
   focusRow(seq: number): boolean {
     const target = log.value?.querySelector<HTMLElement>(`[data-seq="${seq}"]`)

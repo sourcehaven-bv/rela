@@ -31,15 +31,16 @@ func (f *fakeRealtime) ChannelSchema() dataentryconfig.ChannelSchema { return f.
 type roomSchema struct{ types []string }
 
 func (s roomSchema) ChannelTypeNames() []string { return s.types }
-func (roomSchema) MessageTypeNames(string) []string {
-	return []string{"text"}
-}
 
-func (roomSchema) MessageProperties(_, mt string) []dataentryconfig.ChannelProperty {
+// MessageType: every channel type has the counting message type text.
+func (roomSchema) MessageType(_, mt string) (dataentryconfig.MessageFacts, bool) {
 	if mt != "text" {
-		return nil
+		return dataentryconfig.MessageFacts{}, false
 	}
-	return []dataentryconfig.ChannelProperty{{Name: "body", Type: "markdown", Required: true}}
+	return dataentryconfig.MessageFacts{
+		Properties:   []dataentryconfig.ChannelProperty{{Name: "body", Type: "markdown", Required: true}},
+		CountsUnread: true,
+	}, true
 }
 
 // BusyFacts: every declared type has a session and attaches to tickets.

@@ -42,34 +42,25 @@ func (s realtimeChannelSchema) ChannelTypeNames() []string {
 	return out
 }
 
-func (s realtimeChannelSchema) MessageTypeNames(channelType string) []string {
+// MessageType answers the message type's properties, sorted by name, and
+// whether its messages count toward unread: a stored type without
+// `unread: false`. A signal type never counts, since it is never stored.
+func (s realtimeChannelSchema) MessageType(channelType, messageType string) (dataentryconfig.MessageFacts, bool) {
 	ct, ok := s.c.ChannelType(channelType)
 	if !ok {
-		return nil
-	}
-	out := make([]string, 0, len(ct.MessageTypes))
-	for name := range ct.MessageTypes {
-		out = append(out, name)
-	}
-	sort.Strings(out)
-	return out
-}
-
-func (s realtimeChannelSchema) MessageProperties(channelType, messageType string) []dataentryconfig.ChannelProperty {
-	ct, ok := s.c.ChannelType(channelType)
-	if !ok {
-		return nil
+		return dataentryconfig.MessageFacts{}, false
 	}
 	mt := ct.MessageTypes[messageType]
 	if mt == nil {
-		return nil
+		return dataentryconfig.MessageFacts{}, false
 	}
-	out := make([]dataentryconfig.ChannelProperty, 0, len(mt.Properties))
+	props := make([]dataentryconfig.ChannelProperty, 0, len(mt.Properties))
 	for _, p := range mt.Properties {
-		out = append(out, dataentryconfig.ChannelProperty{Name: p.Name, Type: string(p.Type), Required: p.Required})
+		props = append(props, dataentryconfig.ChannelProperty{Name: p.Name, Type: string(p.Type), Required: p.Required})
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
-	return out
+	sort.Slice(props, func(i, j int) bool { return props[i].Name < props[j].Name })
+	counts := mt.Persist == realtimecfg.PersistLog && !mt.NoUnread
+	return dataentryconfig.MessageFacts{Properties: props, CountsUnread: counts}, true
 }
 
 func (s realtimeChannelSchema) BusyFacts(channelType string) (dataentryconfig.BusyFacts, bool) {

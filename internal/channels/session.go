@@ -178,6 +178,9 @@ type ReminderPost struct {
 	Props map[string]any
 	// TriggeredBy must start with [ReminderMarker].
 	TriggeredBy string
+	// NoUnread marks a post of a type with `unread: false`;
+	// [ReminderMessage] copies it onto [Message.NoUnread].
+	NoUnread bool
 }
 
 // PrepareReminderPost refuses a post whose TriggeredBy does not start with
@@ -233,7 +236,7 @@ func DecideReminder(step *SessionStep, cur Channel, at time.Time) (post Reminder
 
 // ReminderMessage returns the message of post, which the store appends at
 // seq with rev at at: the post's type, props and TriggeredBy, with the
-// step's NoticeBy as author. Props over the caps are [ErrTooLarge]. raw is
+// step's NoticeBy as author, and its NoUnread. Props over the caps are [ErrTooLarge]. raw is
 // the props' JSON encoding.
 func ReminderMessage(
 	step *SessionStep, post ReminderPost, seq int64, at time.Time, rev int64,
@@ -244,7 +247,7 @@ func ReminderMessage(
 	}
 	return Message{
 		Seq: seq, Rev: rev, Type: post.Type, Author: step.NoticeBy, At: NormTime(at),
-		Props: props, TriggeredBy: post.TriggeredBy,
+		Props: props, TriggeredBy: post.TriggeredBy, NoUnread: post.NoUnread,
 	}, raw, nil
 }
 

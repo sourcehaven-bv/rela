@@ -61,7 +61,7 @@ func (w systemWriter) post(
 	}
 	appended, err := w.store.Append(ctx, key, channels.NewMessage{
 		Type: mt.Name, Author: systemAuthor(), At: now, Props: vp.props, TriggeredBy: triggeredBy,
-		RequireOpen: requireOpen, Session: sp.step,
+		RequireOpen: requireOpen, Session: sp.step, NoUnread: mt.NoUnread,
 	})
 	sp.logGuardFailure(ctx)
 	if isPermanent(err) {

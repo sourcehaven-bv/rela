@@ -238,7 +238,25 @@ type rawMessageType struct {
 	// DecisionButton is `decision_button:`; see [MessageType.DecisionButton].
 	// A null value decodes as absent.
 	DecisionButton *rawDecisionButton `yaml:"decision_button"`
+	// Unread is `unread:`; see [MessageType.NoUnread] and [unreadOf].
+	Unread rawUnread `yaml:"unread"`
 }
+
+// rawUnread keeps the YAML node of a message type's `unread:`, so
+// [unreadOf] can take only a YAML boolean and refuse a quoted or
+// YAML 1.1 spelling, as [confirmOf] does. The key checker refuses a value
+// that is not a single value. The node is nil when the key is absent or
+// null.
+type rawUnread struct{ node *yaml.Node }
+
+// UnmarshalYAML keeps n, with aliases followed.
+func (u *rawUnread) UnmarshalYAML(n *yaml.Node) error {
+	u.node = resolveNode(n)
+	return nil
+}
+
+// set reports whether the file gives `unread:` a value other than null.
+func (u rawUnread) set() bool { return u.node != nil && u.node.Tag != "!!null" }
 
 // rawChoices is `message_types.<mt>.choices`.
 type rawChoices struct {

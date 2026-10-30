@@ -473,6 +473,10 @@ type MessageType struct {
 	// (see [TransitionButton.Options]), so they matter on their own only
 	// for the type's button.
 	DecisionButton *ButtonOptions
+	// NoUnread is set by `unread: false`: messages of the type never count
+	// toward a reader's unread. The service copies it onto each message it
+	// appends, so a change applies from the next post.
+	NoUnread bool
 	// derived reports that In was derived from session.default_in; set
 	// only by the loader.
 	derived bool

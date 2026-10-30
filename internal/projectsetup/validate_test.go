@@ -310,9 +310,10 @@ entities:
 // type, so every busy field or column names an unknown type.
 type noChannelTypes struct{}
 
-func (noChannelTypes) ChannelTypeNames() []string                                         { return nil }
-func (noChannelTypes) MessageTypeNames(string) []string                                   { return nil }
-func (noChannelTypes) MessageProperties(string, string) []dataentryconfig.ChannelProperty { return nil }
+func (noChannelTypes) ChannelTypeNames() []string { return nil }
+func (noChannelTypes) MessageType(string, string) (dataentryconfig.MessageFacts, bool) {
+	return dataentryconfig.MessageFacts{}, false
+}
 func (noChannelTypes) BusyFacts(string) (dataentryconfig.BusyFacts, bool) {
 	return dataentryconfig.BusyFacts{}, false
 }

@@ -15,6 +15,7 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/aclstore"
+	v1 "github.com/Sourcehaven-BV/rela/internal/apiwire/v1"
 	"github.com/Sourcehaven-BV/rela/internal/channels"
 	"github.com/Sourcehaven-BV/rela/internal/channels/filechannels"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
@@ -61,6 +62,7 @@ channel_types:
       member: { from: attached }
     message_types:
       chat: { properties: { body: { type: markdown } }, post: [member] }
+      progress: { properties: { body: { type: markdown } }, post: [member], unread: false }
 `
 
 const (
@@ -275,6 +277,14 @@ func newInboxLiveEnvOn(
 	tb testing.TB, policy *acl.Policy, seed func(app *App), cs channels.Store, grid int,
 ) *inboxLiveEnv {
 	tb.Helper()
+	return newInboxLiveEnvWith(tb, policy, seed, cs, grid, liveInboxRealtime)
+}
+
+// newInboxLiveEnvWith is newInboxLiveEnvOn with realtime.yaml rt.
+func newInboxLiveEnvWith(
+	tb testing.TB, policy *acl.Policy, seed func(app *App), cs channels.Store, grid int, rt string,
+) *inboxLiveEnv {
+	tb.Helper()
 	meta := inboxTestMeta()
 	person := meta.Entities["person"]
 	person.Properties["email"] = metamodel.PropertyDef{Type: "string"}
@@ -309,7 +319,7 @@ func newInboxLiveEnvOn(
 	local, err := realtime.NewLocal(clock.now)
 	require.NoError(tb, err)
 	tb.Cleanup(local.Stop)
-	ch := newChannelServiceLocal(tb, app.Meta(), app.store, d, liveInboxRealtime, cs, local)
+	ch := newChannelServiceLocal(tb, app.Meta(), app.store, d, rt, cs, local)
 	require.NoError(tb, SetChannels(app, ch.svc))
 	require.NoError(tb, SetInboxGrid(app, grid))
 	// Every principal takes the last safety slice, so the safety replay
@@ -1037,4 +1047,69 @@ func (h *liveHub) pendingOf(user string) []*liveSub {
 		c.mu.Unlock()
 	}
 	return out
+}
+
+// TestLiveInbox_NoUnreadPostSendsNoFrame pins TKT-O6RC8Z AC 7: a post of a
+// type with `unread: false` into a room in alice's window with nothing
+// unread replays her inbox but sends no frame.
+func TestLiveInbox_NoUnreadPostSendsNoFrame(t *testing.T) {
+	env := newInboxLiveEnv(t, inboxLivePolicy())
+	seq := env.chat(t, "bob", inboxRoom1, "hello")
+	env.markRead(t, "alice", inboxRoom1, seq)
+	alice := env.inboxSubs(t, "alice")
+	env.settle(t)
+	replays := countPrincipalReplays(t, env.app.live)
+
+	env.post(t, "bob", inboxRoom1, "progress", `{"body":"step"}`)
+	env.ticks.through(t, env.ticks.nextGrid())
+	liveQuiet(t, alice)
+	require.Equal(t, 1, replays.take()["alice "+inboxPath], "the post is in her window, so it replays")
+}
+
+// TestLiveInbox_NoUnreadPostMovesLastSeq pins TKT-O6RC8Z AC 7: a post of a
+// type with `unread: false` into a room already listed under alice's
+// unread channels frames her inbox, because the row's last_seq moves; the
+// count stays 1 and the summary sends no frame.
+func TestLiveInbox_NoUnreadPostMovesLastSeq(t *testing.T) {
+	env := newInboxLiveEnv(t, inboxLivePolicy())
+	seq := env.chat(t, "bob", inboxRoom1, "hello")
+	env.markRead(t, "alice", inboxRoom1, seq)
+	env.chat(t, "bob", inboxRoom1, "unread")
+	alice := env.inboxSubs(t, "alice")
+	env.settle(t)
+
+	env.post(t, "bob", inboxRoom1, "progress", `{"body":"step"}`)
+	env.ticks.through(t, env.ticks.nextGrid())
+	requireChanged(t, alice, "inbox")
+	liveQuiet(t, alice)
+	resp, b := env.do(t, "alice", http.MethodGet, inboxPath, "", nil)
+	require.Equal(t, http.StatusOK, resp.StatusCode, "%s", b)
+	inbox := decodeAs[v1.Inbox](t, b)
+	require.Equal(t, 1, *inbox.UnreadCount)
+	require.Len(t, inbox.UnreadChannels, 1)
+	require.Equal(t, 1, inbox.UnreadChannels[0].Unread, "the count does not change")
+	require.Equal(t, seq+2, inbox.UnreadChannels[0].LastSeq, "last_seq moves to the progress post")
+}
+
+// TestLiveInbox_NoUnreadPostSummaryNoFrame pins TKT-O6RC8Z AC 7: the
+// summary subscription, the sidebar badge, sends no frame for a post of a
+// type with `unread: false`, whether the room has unread messages or not.
+func TestLiveInbox_NoUnreadPostSummaryNoFrame(t *testing.T) {
+	env := newInboxLiveEnv(t, inboxLivePolicy())
+	seq := env.chat(t, "bob", inboxRoom1, "hello")
+	env.markRead(t, "alice", inboxRoom1, seq)
+	c, conn := env.open(t, "alice")
+	env.subscribe(t, "alice", conn, liveSubEntry{"summary", inboxSummaryPath})
+	env.settle(t)
+
+	env.post(t, "bob", inboxRoom1, "progress", `{"body":"caught up"}`)
+	env.ticks.through(t, env.ticks.nextGrid())
+	liveQuiet(t, c)
+
+	env.chat(t, "bob", inboxRoom1, "unread")
+	env.ticks.through(t, env.ticks.nextGrid())
+	requireChanged(t, c, "summary")
+	env.post(t, "bob", inboxRoom1, "progress", `{"body":"after unread"}`)
+	env.ticks.through(t, env.ticks.nextGrid())
+	liveQuiet(t, c)
 }

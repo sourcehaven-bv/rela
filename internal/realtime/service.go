@@ -449,7 +449,7 @@ func (s *Service) Post(ctx context.Context, addr RawAddress, in PostInput) (Post
 	}
 	m, err := s.store.Append(c.ctx, c.key, channels.NewMessage{
 		Type: mt.Name, Author: authorOf(c.p), At: c.now, Props: vp.props, ReplyTo: in.ReplyTo, Session: sp.step,
-		MarkRead: true, Mentions: targets,
+		MarkRead: true, Mentions: targets, NoUnread: mt.NoUnread,
 	})
 	sp.logGuardFailure(c.ctx)
 	if err != nil {

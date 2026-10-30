@@ -249,3 +249,32 @@ entities:
 		t.Errorf("initial state %q reads working; the guide says it waits", st.Name)
 	}
 }
+
+// TestDocsExample_Unread pins TKT-O6RC8Z AC 11: the example under "Messages
+// that do not count as unread" in the realtime guide loads with no
+// warnings, and only ask counts as unread.
+func TestDocsExample_Unread(t *testing.T) {
+	data, err := os.ReadFile(realtimeGuide)
+	if err != nil {
+		t.Fatal(err)
+	}
+	example := yamlBlock(t, string(data), "### Messages that do not count as unread", "version: 1\nchannel_types:\n  run:")
+	meta, err := metamodel.Parse([]byte("entities:\n  ticket:\n    label: Ticket\n    id_prefix: TKT\n" +
+		"    properties:\n      title: { type: string }\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	c, err := Parse([]byte(example), meta, testPolicy(t))
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if w := c.Warnings(); len(w) != 0 {
+		t.Errorf("warnings = %v", w)
+	}
+	ct, _ := c.ChannelType("run")
+	for name, want := range map[string]bool{"ask": false, "claim": true, "resume": true, "progress": true} {
+		if got := ct.MessageTypes[name].NoUnread; got != want {
+			t.Errorf("%s.NoUnread = %v; want %v", name, got, want)
+		}
+	}
+}

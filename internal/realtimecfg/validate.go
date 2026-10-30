@@ -18,6 +18,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/predicate"
 	"github.com/Sourcehaven-BV/rela/internal/predicatefns"
 	"github.com/Sourcehaven-BV/rela/internal/realtimelimits"
+	"github.com/Sourcehaven-BV/rela/internal/yamlscalar"
 )
 
 // namePattern is the grammar of channel type, message type, role, action and
@@ -382,25 +383,13 @@ func (v *validator) messageType(key, name string, raw *rawMessageType, ct *Chann
 		Name: name, Label: orDefault(raw.Label, name),
 		Properties: map[string]Property{}, Actions: map[string]*Action{},
 	}
-	switch Persist(raw.Persist) {
-	case "", PersistLog:
-		mt.Persist = PersistLog
-		mt.Rate = v.lowerRate(key+".rate", raw.Rate, limits.LogRate)
-		if raw.TTL != "" {
-			v.add(key+".ttl", "only an ephemeral message type has a ttl")
+	v.persist(key, raw, mt, limits)
+	if raw.Unread.set() {
+		noUnread, problem := unreadOf(raw.Unread.node, mt.Persist)
+		if problem != "" {
+			v.add(key+".unread", problem)
 		}
-	case PersistEphemeral:
-		mt.Persist = PersistEphemeral
-		mt.Rate = v.lowerRate(key+".rate", raw.Rate, limits.EphemeralRate)
-		mt.TTL = v.ttl(key+".ttl", raw.TTL)
-		if raw.PromoteTo != nil {
-			v.add(key+".promote_to", "an ephemeral message is never stored, so it cannot be promoted")
-		}
-		if len(raw.Actions) > 0 {
-			v.add(key+".actions", "an ephemeral message is never stored, so it cannot carry actions")
-		}
-	default:
-		v.add(key+".persist", fmt.Sprintf("must be log or ephemeral, got %q", raw.Persist))
+		mt.NoUnread = noUnread
 	}
 
 	if len(raw.Properties) > realtimelimits.MaxMessageProperties {
@@ -446,6 +435,54 @@ func (v *validator) messageType(key, name string, raw *rawMessageType, ct *Chann
 		}
 	}
 	return mt
+}
+
+// persist checks the keys that depend on persist: rate, ttl, and those a
+// signal may not have. It sets mt.Persist, Rate and TTL. `unread:`, which
+// a signal may not have either, is checked by [unreadOf].
+func (v *validator) persist(key string, raw *rawMessageType, mt *MessageType, limits Limits) {
+	switch Persist(raw.Persist) {
+	case "", PersistLog:
+		mt.Persist = PersistLog
+		mt.Rate = v.lowerRate(key+".rate", raw.Rate, limits.LogRate)
+		if raw.TTL != "" {
+			v.add(key+".ttl", "only an ephemeral message type has a ttl")
+		}
+	case PersistEphemeral:
+		mt.Persist = PersistEphemeral
+		mt.Rate = v.lowerRate(key+".rate", raw.Rate, limits.EphemeralRate)
+		mt.TTL = v.ttl(key+".ttl", raw.TTL)
+		if raw.PromoteTo != nil {
+			v.add(key+".promote_to", "an ephemeral message is never stored, so it cannot be promoted")
+		}
+		if len(raw.Actions) > 0 {
+			v.add(key+".actions", "an ephemeral message is never stored, so it cannot carry actions")
+		}
+	default:
+		v.add(key+".persist", fmt.Sprintf("must be log or ephemeral, got %q", raw.Persist))
+	}
+}
+
+// unreadOf reads a set `unread:` on a type with the given persist. It
+// answers NoUnread, and problem says why the value is refused. Only a
+// YAML boolean is taken: a quoted or `!!str` value is text, and an
+// unquoted yes, no, on or off is refused, as for `confirm:`, so a YAML 1.1
+// spelling cannot read differently in another tool. A signal type may not
+// have the key at all.
+//
+// Nil: rejected. The caller passes a set node.
+func unreadOf(n *yaml.Node, persist Persist) (noUnread bool, problem string) {
+	if persist == PersistEphemeral {
+		return false, "a signal is never stored, so it never counts as unread"
+	}
+	if yamlscalar.PlainYAML11Bool(n) {
+		return false, fmt.Sprintf("%q is not a boolean; use true or false", strings.TrimSpace(n.Value))
+	}
+	var b bool
+	if n.Tag != "!!bool" || n.Decode(&b) != nil {
+		return false, "must be true or false"
+	}
+	return persist == PersistLog && !b, ""
 }
 
 func (v *validator) ttl(key, s string) time.Duration {
