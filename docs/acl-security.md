@@ -1429,7 +1429,10 @@ The `attachACLRequest` middleware:
   `unauthenticated`, the answer the JWT gate gives a missing
   assertion. A principal the stamper never set, or one with an
   unknown tool, is a wiring fault and gets 500
-  `acl_unstamped_principal`.
+  `acl_unstamped_principal`. When every request gets the 401, the
+  server usually has no identity source; the 401 detail and a startup
+  warning point to `$RELA_DATAENTRY_USER`, `--principal-header` and
+  `--jwt-*` (see [Server security](server-security.md)).
 - **Refuses script reads when the read gate cannot be built.** If an
   `acl.yaml` is configured but the visibility decorator fails to
   construct, script runtimes (data-entry actions, `export_render`,

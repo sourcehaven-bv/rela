@@ -36,7 +36,7 @@ func validateConfigEditing(f *serverFlags, svc *appbuild.Services, mode identity
 	case svc.ACLDeclarative() == nil:
 		// Without acl.yaml every principal holds every permission.
 		return errors.New("needs an acl.yaml that grants config:edit")
-	case mode != identityJWT && f.principalHeader == "" && envUser == "":
+	case !hasIdentitySource(mode, f, envUser):
 		return errors.New("needs an identity source (-jwt-*, -principal-header or $" +
 			dataentry.EnvDataEntryUserVar + ")")
 	case mode != identityJWT && f.principalHeader == "" && !isLoopbackHost(f.bind):

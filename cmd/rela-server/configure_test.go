@@ -264,6 +264,8 @@ func TestValidateConfigEditing(t *testing.T) {
 			wantErr: "--read-only"},
 		{name: "no acl.yaml", dir: noACL, flags: serverFlags{principalHeader: "X-User"}, wantErr: "acl.yaml"},
 		{name: "no identity", dir: withACL, wantErr: "identity source"},
+		{name: "blank env identity", dir: withACL, flags: serverFlags{bind: "127.0.0.1"}, envUser: " ",
+			wantErr: "identity source"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
