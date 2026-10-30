@@ -5,7 +5,9 @@ title: 'rela validate accepts deprecated link: true that rela-server refuses'
 kind: enhancement
 priority: medium
 effort: s
-status: backlog
+started: "2026-10-30"
+completed: "2026-10-30"
+status: done
 ---
 
 ## Description

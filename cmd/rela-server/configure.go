@@ -103,11 +103,18 @@ func (h configureHost) Validate(schema, dataEntry []byte) (*metamodel.Metamodel,
 	}
 	if deErr := projectsetup.CheckDataEntry(dataEntry, meta); deErr != nil {
 		var cve *dataentry.ConfigValidationError
-		if errors.As(deErr, &cve) {
+		// Matches *migration.Error, which this package may not import.
+		var migErr interface{ Descriptions() []string }
+		switch {
+		case errors.As(deErr, &cve):
 			for _, e := range cve.Errors {
 				problems = append(problems, "data-entry.yaml: "+e)
 			}
-		} else {
+		case errors.As(deErr, &migErr):
+			for _, d := range migErr.Descriptions() {
+				problems = append(problems, "data-entry.yaml: deprecated syntax: "+d)
+			}
+		default:
 			problems = append(problems, "data-entry.yaml: "+deErr.Error())
 		}
 	}
