@@ -659,6 +659,7 @@ channel_types:
 | `states.<name>.after` | The timers of the state, keyed by timer name. At most 8. See [Timers](#timers). |
 | `session.reminders` | Messages the session posts at a fixed interval, keyed by reminder name. At most 8. See [Reminders](#reminders). |
 | `session.on_final` | `close`: a move into any final state closes the channel. See [Outputs](#outputs). |
+| `session.default_in` | `keyed`: a message type that a transition is keyed by, and that has no `in:`, may be posted only in the states whose `on:` keys it. See "Take `in:` from the transitions" under [Sessions](#sessions). |
 | `session.run_as` | The job identity that writes the outputs of timer and trigger moves. See [Outputs](#outputs). |
 | `on.<type>.to` | The state the message moves the session to. It may be the same state: a re-entry. In a list, each entry has its own `to`, `roles`, `by`, `when` and `outputs`. |
 | `on.<type>.roles` | Only a poster holding one of these roles moves the session. Each role must be in the message type's `post`. |
@@ -749,14 +750,16 @@ Give a type that decides a session a `label:` and an `in:`. The web app
 shows the decisions you may make as buttons named by the type's label
 (the name without one), and `in:` refuses a late post in a state the type
 no longer belongs to. Without `in:`, a late post is stored and moves
-nothing.
+nothing. `session.default_in: keyed` gives every such type its `in:`
+without writing one per type (see below).
 
 - A post outside `in:` is refused with 409 `session_wrong_state`. The
   `title` names the allowed states and the current one, and `detail` names
-  the rule, such as `channel_types.plan.message_types.approve.in`. Nothing
-  is stored. The store decides under its lock, so of two posts that arrive
-  together, the second is judged against the state the first moved the
-  session to.
+  the rule, such as `channel_types.plan.message_types.approve.in`, or
+  `channel_types.plan.session.default_in` when the `in:` comes from
+  `default_in: keyed`. Nothing is stored. The store decides under its
+  lock, so of two posts that arrive together, the second is judged
+  against the state the first moved the session to.
 - `in:` narrows what rela offers: `_actions.post`, and `can_post` in
   `read_channel`. The web app's composer offers only these types. The
   session's transitions, in `read_session` and the inbox too, are already
@@ -766,17 +769,81 @@ nothing.
   judged by `edit_own` as before, so a message whose type the state no
   longer admits can still be edited.
 - A final state admits the types that list it. A stranded session admits
-  only the types without `in:`.
+  only the types without `in:`, written or taken from
+  `session.default_in`.
 - A trigger whose message type the current state does not admit posts
   nothing and is skipped. This holds for `when_closed: post` too. Unlike a
   skip for a closed channel, rela logs it as a warning that names the
-  trigger and the `in:` key, because it usually means `in:` is narrower
-  than the states the trigger fires in.
+  trigger and the rule (the type's `in:` or `session.default_in`),
+  because it usually means `in:` is narrower than the states the trigger
+  fires in.
 - Typing follows `post` roles, not states. Whoever may post a `log` type
   of the channel may type, whatever the state.
 - `in:` is new in this release. Every process that loads the project needs
   this release or later: rela-server, stdio `rela mcp`, `rela channel` and
   rela-desktop. An older one refuses the key.
+
+**Take `in:` from the transitions.** For most types that decide a session,
+the right `in:` is exactly the states whose `on:` keys the type. With
+`session.default_in: keyed` you do not write that list. The plan example
+above becomes:
+
+```yaml
+channel_types:
+  plan:
+    label: Plan review
+    attach_to: [datalek]
+    roles:
+      owner:  { label: the owner, from: entity.owner }
+      member: { from: attached }
+    message_types:
+      text:    { properties: { body: { type: markdown, required: true } }, post: [owner, member] }
+      plan:    { properties: { plan: { type: markdown, required: true } }, post: [member] }
+      approve: { properties: { note: { type: string } }, post: [owner] }
+      revise:  { properties: { feedback: { type: markdown, required: true } }, post: [owner] }
+    session:
+      initial: drafting
+      default_in: keyed
+      states:
+        drafting:
+          on:
+            plan: { to: review }
+        review:
+          waiting_for: [owner]
+          on:
+            approve: { to: approved, roles: [owner] }
+            revise:  { to: drafting, roles: [owner] }
+        approved: { final: true }
+```
+
+Plan may be posted only in drafting, Approve and Revise only in review,
+and Text in every state, as before.
+
+- A state keys a type when its `on:` has the type as a key, in any form:
+  one entry or a list, with or without `roles`, `when` or `by: trigger`.
+  Every entry counts, also one that only a trigger fires.
+- A type without `in:` that some state keys gets those states as its
+  `in:`, in the order of `session.states`.
+- A type with `in:` keeps it. The load still refuses an `in:` that misses
+  a keyed state, so an `in:` can only add states to the keyed ones.
+- A type that no transition is keyed by, such as Text, a notes type or a
+  reminder's post type, stays postable in every state.
+- A type that a transition is keyed by is no longer postable outside its
+  keyed states. This also holds for a chat type that moves the session in
+  one state. To keep such a type postable everywhere, list every state in
+  its `in:`. That list goes stale when you add a state: the new state then
+  refuses the type.
+- The derived `in:` behaves like a written one. It narrows the composer,
+  `_actions.post` and `can_post`, a post outside it is refused with 409
+  `session_wrong_state`, a stranded session refuses the type, and a
+  trigger that posts the type in another state is skipped with a warning
+  and not retried. In the PoC's run session, the `ready` trigger's `go`
+  would be skipped outside `new`.
+- The `detail` of the 409, and the trigger's warning, name
+  `session.default_in` instead of the type's `in:`.
+- Without `default_in`, nothing changes: a type without `in:` may be
+  posted in every state.
+- `default_in` is new in this release. An older process refuses the key.
 
 **Who can move a session.** Only a principal who may post the message type.
 The entry narrows that further:
@@ -1678,6 +1745,14 @@ unknown entity type "nope"`. It checks:
   final states. `in:` with no value is refused with "name the states, or
   drop in to allow every state". `states` and `from` on a message type are
   refused with a pointer to `in:`;
+- that `session.default_in` is `keyed`, or absent. Any other value is
+  refused with "default_in may only be keyed". `default_in` under a state
+  is refused with a pointer to `session.default_in`. With `default_in:
+  keyed`, the refusal of an `in:` that misses a keyed state also suggests
+  dropping the `in:`. When `default_in: keyed` gives no type an `in:`, the
+  file loads with a warning: either every type a transition is keyed by
+  already has `in:`, so drop the `in:` lists that only repeat the `on:`
+  keys, or no transition is keyed by a message type, so drop `default_in`;
 - that a channel type with `typing: true` has at least one `log` message
   type, and no message type named `typing`. `typing` must be `true` or
   `false`;
@@ -2501,7 +2576,7 @@ Every error is a problem body (`application/problem+json`) with a `type`.
 | 413 `too_large` | The message is over `message_bytes`. |
 | 422 | A `ref` names an entity that does not exist or that the caller cannot read. Both get the same body. |
 | 422 `promote_invalid` | The promoted entity or its relation fails validation, for example a `unique` property that another entity already has, or a mapped `ref` names an entity the caller cannot read. The body names properties, never entity ids. |
-| 409 | The channel is not open, the channel is not in a state the lifecycle operation starts from (`lifecycle_wrong_state`), `retention` keeps the channel (`retention_active`), a concurrent change won (`conflict`), the message was removed, `channels_per_entity` is reached, the POST tried to open a channel of a `one` type, or the configuration changed during the request. An edit or removal targets a session notice (`session_notice`), or an author's edit or delete targets a message that moved the session (`session_message`). A post of a type whose `in:` does not hold the session's state (`session_wrong_state`; `title` names the allowed states, `detail` the rule). A post whose `expect_generation` is not the session's generation (`session_moved`; `title` names the generation and state the session is at). For actions: the message already carries an action (`action_taken`), its action is pending (`action_pending`, also for an edit, a removal, a release within the release window, or an action that lost a race to a promote that started first), a release finds no pending action (`action_not_pending`), or the promoted entity already exists (`promote_conflict`). A removal of the message that moved the session, or a release of a notice's outputs mark, while the outputs still run (`outputs_pending`). |
+| 409 | The channel is not open, the channel is not in a state the lifecycle operation starts from (`lifecycle_wrong_state`), `retention` keeps the channel (`retention_active`), a concurrent change won (`conflict`), the message was removed, `channels_per_entity` is reached, the POST tried to open a channel of a `one` type, or the configuration changed during the request. An edit or removal targets a session notice (`session_notice`), or an author's edit or delete targets a message that moved the session (`session_message`). A post of a type whose `in:` does not hold the session's state (`session_wrong_state`; `title` names the allowed states, `detail` the rule: the type's `in:`, or `session.default_in` when the `in:` comes from `default_in: keyed`). A post whose `expect_generation` is not the session's generation (`session_moved`; `title` names the generation and state the session is at). For actions: the message already carries an action (`action_taken`), its action is pending (`action_pending`, also for an edit, a removal, a release within the release window, or an action that lost a race to a promote that started first), a release finds no pending action (`action_not_pending`), or the promoted entity already exists (`promote_conflict`). A removal of the message that moved the session, or a release of a notice's outputs mark, while the outputs still run (`outputs_pending`). |
 | 429 | A rate limit. `Retry-After` gives the seconds to wait, rounded up. |
 | 400 `invalid_cursor` | The inbox `cursor` is not one an inbox answer gave, or comes with `kinds` that do not hold `waiting`. |
 | 503 `inbox_too_large` | The inbox would read more than 20 000 channels. Nothing is listed; see [Inbox](#inbox). The `detail` suggests `kinds=unread,mention,reply`, which still answers. |
@@ -2603,10 +2678,11 @@ reminder, such as `reminder status-update: 2 of 48, next at
 The session line also gives the status and whom the session waits for,
 by each role's label, such as `, input_required, waiting for the incident
 lead (USR-1), waiting on you`, or `, failed (stranded)`.
-A message type with `in:` is offered only in the states it lists, so
-`actions.post` in `read_channel` and `You may post` in `rela channel read`
-change as the session moves. A post outside them answers
-`session_wrong_state` with the allowed states and the current one.
+A message type with `in:`, or one that `default_in: keyed` limits, is
+offered only in its states, so `actions.post` in `read_channel` and
+`You may post` in `rela channel read` change as the session moves. A
+post outside them answers `session_wrong_state` with the allowed states
+and the current one.
 When a post answers a request, pass the session's `generation` from
 `read_session` or `read_channel` as `expect_generation` (`rela channel
 post --expect-generation`). If the session moved on meanwhile, the post

@@ -55,6 +55,8 @@ type rawSession struct {
 	Reminders map[string]rawReminder `yaml:"reminders"`
 	// OnFinal is `session.on_final`; see [Session.OnFinal].
 	OnFinal string `yaml:"on_final"`
+	// DefaultIn is `session.default_in`: keyed or empty.
+	DefaultIn string `yaml:"default_in"`
 	// RunAs is `session.run_as`; see [Session.RunAs].
 	RunAs *string `yaml:"run_as"`
 }

@@ -295,7 +295,7 @@ func TestMessageInCheck_SkipsMissingType(t *testing.T) {
 	v := &validator{root: &root}
 	ct := &ChannelType{Name: "run", MessageTypes: map[string]*MessageType{}}
 	raw := &rawChannelType{MessageTypes: map[string]rawMessageType{"ghost": {In: []string{"planning"}}}}
-	messageInCheck{v: v, raw: raw, ct: ct}.withSession(run.Session(), nil)
+	messageInCheck{v: v, raw: raw, ct: ct}.withSession(run.Session(), nil, "")
 	if len(v.problems) != 0 || len(ct.MessageTypes) != 0 {
 		t.Errorf("problems %v, types %v; want none", v.problems, ct.MessageTypes)
 	}

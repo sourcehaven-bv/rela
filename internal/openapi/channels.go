@@ -481,7 +481,8 @@ const postMessageText = "A log message is stored and answered 201. An ephemeral 
 	"for its TTL and answered 202, without a seq. A message that moves a session along a " +
 	"transition with outputs is refused 403 session_output_denied, before anything is stored, " +
 	"when you may not write one of them; the outputs' result is on the session notice. A message type " +
-	"may be limited to some session states with in:; outside them it is not in _actions.post, and a post " +
+	"may be limited to some session states with in: or session.default_in; " +
+	"outside them it is not in _actions.post, and a post " +
 	"is refused 409 session_wrong_state, whose title names the allowed states. A post with " +
 	"expect_generation is stored only while the session is at that generation; otherwise it is refused " +
 	"409 session_moved, whose title names the expected and the current generation."

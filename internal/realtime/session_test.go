@@ -678,6 +678,54 @@ func TestPost_MessageIn(t *testing.T) {
 	}
 }
 
+// TestPost_DefaultIn pins AC 6 of TKT-S5OJ7S: over the PoC with
+// session.default_in: keyed, a post of approve while working is refused
+// 409 session_wrong_state, whose rule is session.default_in. Nothing is
+// stored and no rate token is spent.
+func TestPost_DefaultIn(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t, withYAML(pocRealtimeDefaultIn(t, "")))
+	h.pocDriveTo(t, "working")
+	o := pocOwner()
+	head, err := h.store.Store.Head(context.Background(), pocKey())
+	require.NoError(t, err)
+	bucketBefore := h.postBucket(o, "approve")
+	_, err = h.svc.Post(as(o), pocRun, PostInput{Type: "approve", Props: map[string]any{"note": "ok"}})
+	d := requireDenial(t, err, http.StatusConflict, TypeSessionWrongState)
+	require.Equal(t, "approve may be posted only while the session is in plan-review; it is in working", d.Title)
+	require.Equal(t, "channel_types.run.session.default_in", d.Rule)
+	h.requireNothingAppended(t, head.LastSeq)
+	require.Equal(t, bucketBefore, h.postBucket(o, "approve"), "a refused pre-check spent a rate token")
+}
+
+// TestReload_DefaultIn pins the reload edge case of TKT-S5OJ7S: after a
+// reload that adds or removes session.default_in, the next affordance and
+// the next post are judged by the new config. The config without the key
+// is [pocRealtimeDefaultIn] without its default_in line, so no keyed type
+// has an in:.
+func TestReload_DefaultIn(t *testing.T) {
+	t.Parallel()
+	withKey := pocRealtimeDefaultIn(t, "")
+	withoutKey := strings.Replace(withKey, "      default_in: keyed\n", "", 1)
+	require.NotEqual(t, withKey, withoutKey)
+	h := newHarness(t, withYAML(withoutKey))
+	h.pocDriveTo(t, "working")
+	o := pocOwner()
+	require.Contains(t, h.headActions(t, o, pocRun).Post, "approve", "without default_in approve is free")
+
+	h.cfg.set(Snapshot{Config: testCompiled(t, withKey)})
+	require.NotContains(t, h.headActions(t, o, pocRun).Post, "approve", "default_in added")
+	head, err := h.store.Store.Head(context.Background(), pocKey())
+	require.NoError(t, err)
+	_, err = h.svc.Post(as(o), pocRun, PostInput{Type: "approve", Props: map[string]any{"note": "ok"}})
+	d := requireDenial(t, err, http.StatusConflict, TypeSessionWrongState)
+	require.Equal(t, pocDefaultInKey, d.Rule)
+	h.requireNothingAppended(t, head.LastSeq)
+
+	h.cfg.set(Snapshot{Config: testCompiled(t, withoutKey)})
+	require.Contains(t, h.headActions(t, o, pocRun).Post, "approve", "default_in removed")
+}
+
 // strandWorking renames the PoC's working state, so a channel in working
 // is stranded.
 func strandWorking(t *testing.T, h *harness) {

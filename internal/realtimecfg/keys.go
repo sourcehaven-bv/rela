@@ -34,6 +34,7 @@ var refusedKeys = []struct {
 	{"channel_types.*.session.states.*.on.*.run_as", "run_as is set once per session type, at session.run_as"},
 	{"channel_types.*.session.states.*.on_final", "on_final belongs to the session: session.on_final: close " +
 		"closes the channel on a move into any final state"},
+	{"channel_types.*.session.states.*.default_in", "default_in belongs to the session: session.default_in: keyed"},
 	{"channel_types.*.session.states.*.after.*.run_as", "run_as is set once per session type, at session.run_as"},
 	{"channel_types.*.session.states.*.awaits", "use waiting_for: the roles whose answer the state waits for"},
 	{"channel_types.*.session.status", "status is set per state: session.states.<name>.status"},

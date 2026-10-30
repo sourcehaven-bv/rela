@@ -1,0 +1,9 @@
+---
+id: RR-2JLBKH
+type: review-response
+title: TestCheckReload_DefaultIn cannot fail on default_in
+finding: 'internal/realtimecfg/default_in_test.go:326-344 claims to pin the AC 1 reload rows, but CheckReload (internal/realtimecfg/reload.go:27-36) compares only TypeShape: anchor, cardinality and ref properties. default_in can never change its result, so all three rows only prove that both files parse, which parseClean already proves. The plan names "the test passes for the wrong reason" as a risk, and here it happens. Nothing pins the plan''s edge case either: after a reload that adds or removes default_in, the next post is judged by the new config. Fix: add a runtime reload test in internal/realtime. Build a harness over a session config with no in: and no default_in, drive it to a state, and assert that _actions.post includes a keyed type outside its state. Then h.cfg.set a snapshot of the same text with default_in: keyed, assert that the type disappears from _actions.post and that a post of it is 409 with Rule session.default_in. Swap back and assert the type returns. Keep the CheckReload rows only if they also assert something default_in can affect, or drop them.'
+severity: significant
+resolution: 'Added TestReload_DefaultIn in internal/realtime/session_test.go: a harness over the PoC with no keyed in: and no default_in, driven to working, offers approve; after h.cfg.set to the same text with default_in: keyed, approve leaves _actions.post and a post of it is 409 session_wrong_state with Rule session.default_in and nothing appended; after swapping back approve returns. TestCheckReload_DefaultIn now also asserts the In of plan (and the warning count) on the next config, and its doc says CheckReload compares only the type shape and points to TestReload_DefaultIn.'
+status: addressed
+---

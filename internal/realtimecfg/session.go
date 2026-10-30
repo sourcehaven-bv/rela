@@ -365,7 +365,7 @@ func (v *validator) session(
 	jobLoops(v.add, statesKey, s)
 	waitChecker{v}.check(statesKey, raw.States, s, ct)
 	s.runAs = writeChecker{v}.runAs(key+".run_as", raw.RunAs, s)
-	messageInCheck{v: v, raw: rawCT, ct: ct}.withSession(s, raw.States)
+	messageInCheck{v: v, raw: rawCT, ct: ct}.withSession(s, raw.States, raw.DefaultIn)
 	return s
 }
 

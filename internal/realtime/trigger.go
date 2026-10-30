@@ -1237,13 +1237,14 @@ func (r *round) postOne(ru *rule, q *effectQueue, ref string, it queued, budget 
 		slog.DebugContext(r.ctx, "realtime: trigger skipped; the channel is not open",
 			"rule", ru.name, "entity", ref)
 	case errors.Is(err, channels.ErrSessionState):
-		// Unlike a closed channel, this usually means the operator's in:
-		// is narrower than the states the trigger fires in, and the change
-		// is marked seen, so it never retries: warn, naming the rule.
+		// Unlike a closed channel, this usually means the operator's in:,
+		// authored or derived from session.default_in, is narrower than
+		// the states the trigger fires in, and the change is marked seen,
+		// so it never retries: warn, naming the rule.
 		r.rep.Skipped++
 		slog.WarnContext(r.ctx, "realtime: trigger skipped; its message type's in: does not admit the session state",
 			"rule", ru.name, "entity", ref, "message_type", ru.mt.Name,
-			"in", "channel_types."+ru.ct.Name+".message_types."+ru.mt.Name+".in", "error", err)
+			"in", ru.ct.InKey(ru.mt), "error", err)
 	case r.ctx.Err() != nil:
 		r.pushBack(q, ref, it)
 		return cost, true
