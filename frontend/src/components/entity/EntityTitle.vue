@@ -24,11 +24,17 @@ const props = defineProps<{
 }>()
 
 const emit = defineEmits<{
+  edit: []
   commit: [value: string]
 }>()
 
 const draft = ref('')
 const { t } = useI18n()
+
+function onEdit() {
+  draft.value = props.value
+  emit('edit')
+}
 
 function onCommit() {
   const next = draft.value.trim()
@@ -40,7 +46,13 @@ function onCommit() {
 
 <template>
   <h1 class="entity-title text-wrap-anywhere">
-    <RlInlineEdit v-if="editable" block :label="t('entity.titleLabel')" @edit="draft = value" @commit="onCommit">
+    <RlInlineEdit
+      v-if="editable"
+      block
+      :label="t('entity.titleLabel')"
+      @edit="onEdit"
+      @commit="onCommit"
+    >
       <template #read>{{ title }}</template>
       <template #edit>
         <input

@@ -33,6 +33,7 @@ vi.mock('vue-router', () => ({
   }),
   useRoute: () => ({ query: routeQuery, params: {}, path: '/form/ticket-form' }),
   onBeforeRouteLeave: vi.fn(),
+  onBeforeRouteUpdate: vi.fn(),
 }))
 
 vi.mock('@/api', async () => {

@@ -224,6 +224,11 @@ export class FormPage extends BasePage {
     return new URL(this.page.url()).searchParams.get("return_to");
   }
 
+  /** Follow a side-panel link to a related entity. */
+  async clickSidePanelEntity(title: string) {
+    await this.page.locator(".side-panel .entity-list-item", { hasText: title }).click();
+  }
+
   async fillField(name: string, value: string) {
     const field = this.page.locator(`#field-${name}`);
     await field.fill(value);
