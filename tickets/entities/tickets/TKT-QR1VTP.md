@@ -5,7 +5,9 @@ title: Point to RELA_DATAENTRY_USER on acl_unstamped_principal
 kind: enhancement
 priority: low
 effort: s
-status: backlog
+started: "2026-10-30"
+completed: "2026-10-30"
+status: done
 ---
 
 ## Description

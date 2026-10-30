@@ -462,7 +462,15 @@ func attachACLRequest(next http.Handler, d *acl.Declarative, jwtVerified bool) h
 			// BUG-C8DHGF: the stamper ran and no resolver named a user.
 			// The client sent no credentials, so it is told so, with the
 			// body the JWT gate and writeNoIdentity send.
-			writeV1Error(w, r, http.StatusUnauthorized, "unauthenticated", "Authentication required", "")
+			//
+			// When every request lands here, the server usually has no
+			// identity source, so the detail names the settings that supply
+			// one (TKT-QR1VTP). rela-desktop serves it too, and reads only the
+			// env var. The env var is local-only: every caller then acts as
+			// that user.
+			writeV1Error(w, r, http.StatusUnauthorized, "unauthenticated", "Authentication required",
+				"no user identity: local $RELA_DATAENTRY_USER, or rela-server --jwt-* or --principal-header; "+
+					"see docs/server-security.md")
 			return
 		case errors.Is(err, acl.ErrUnstampedPrincipal):
 			// RR-372L: Open logged the raw error; it never reaches the body.

@@ -98,6 +98,15 @@ func newServer(f *serverFlags, svc *appbuild.Services, accessLog *slog.Logger) (
 		return nil, fmt.Errorf("invalid identity configuration: %w", err)
 	}
 	s := &server{f: f, addr: net.JoinHostPort(f.bind, f.port), mode: mode, accessLog: accessLog}
+	// Startup only: the one rebuild path, a Configure save, requires acl.yaml
+	// and an identity source already (validateConfigEditing).
+	if warnUnidentifiedACL(mode, f, os.Getenv(dataentry.EnvDataEntryUserVar), svc.ACLDeclarative() != nil) {
+		slog.Warn("acl.yaml is configured but no identity source is set: "+
+			"every /api/ request will be refused with 401 unauthenticated",
+			"fix", "configure --jwt-* (or --principal-header behind an authenticating proxy), "+
+				"or set $"+dataentry.EnvDataEntryUserVar+" for local use",
+			"docs", "docs/server-security.md")
+	}
 	// One verifier for the identity gate and the webhook receiver, so the
 	// JWKS is fetched a single time (nil when JWT identity is disabled).
 	s.idv = buildIdentityVerifier(context.Background(), f)

@@ -82,6 +82,12 @@ func TestACLMiddleware_AnonymousIsUnauthenticated(t *testing.T) {
 			if !strings.Contains(rec.Body.String(), "unauthenticated") {
 				t.Errorf("missing unauthenticated code: %s", rec.Body)
 			}
+			// TKT-QR1VTP: the detail names the settings that supply an identity.
+			for _, want := range []string{EnvDataEntryUserVar, "--principal-header", "--jwt-*"} {
+				if !strings.Contains(rec.Body.String(), want) {
+					t.Errorf("detail does not mention %s: %s", want, rec.Body)
+				}
+			}
 			if called {
 				t.Error("next handler was called; the middleware must refuse the request")
 			}
