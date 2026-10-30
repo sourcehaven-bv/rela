@@ -225,7 +225,7 @@ var identityWrites = map[string]bool{
 	"analyze orphans": false, "analyze duplicates": false, "analyze unique": false, "analyze gaps": false,
 	"analyze cardinality": false, "analyze relation-order": false, "analyze relation-files": false,
 	"analyze owning": false, "analyze properties": false, "analyze validations": false,
-	"analyze states": false, "analyze all": false, "analyze schema": false, "acl audit": false,
+	"analyze states": false, "analyze prose": false, "analyze all": false, "analyze schema": false, "acl audit": false,
 	"acl who-can": false, "acl can": false, "acl can-relation": false, "acl map": false,
 	"history": false, "relation-history": false, "token status": false, "attachments": false,
 	"secrets credential-name": false, "lease list": false, "channel list": false, "channel read": false,

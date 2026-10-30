@@ -25,6 +25,7 @@ type partialMetamodel struct {
 	Description         string                           `yaml:"description"`
 	Worlds              map[string]WorldDef              `yaml:"worlds"`
 	Copies              map[string]CopyDef               `yaml:"copies"`
+	Checkers            map[string]CheckerDef            `yaml:"checkers"`
 	TaskItemConversions map[string]TaskItemConversionDef `yaml:"task_item_conversions"`
 	DefaultWorld        string                           `yaml:"default_world"`
 }
@@ -162,6 +163,10 @@ func resolveIncludes(
 	// appears, for a definition the operator can see in their file.
 	if len(partial.Copies) > 0 {
 		return nil, &IncludeHasRootFieldError{Path: includePath, Field: "copies"}
+	}
+	// `checkers:` for the same reason as `copies:`.
+	if len(partial.Checkers) > 0 {
+		return nil, &IncludeHasRootFieldError{Path: includePath, Field: "checkers"}
 	}
 	// `task_item_conversions:` for the same reason as `copies:`.
 	if len(partial.TaskItemConversions) > 0 {

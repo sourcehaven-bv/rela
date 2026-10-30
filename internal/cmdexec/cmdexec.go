@@ -23,6 +23,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"sync"
@@ -37,6 +38,7 @@ const (
 	TemplateOut = "{out}"
 
 	tempFilePerm = 0o600
+	tempDirPerm  = 0o700
 )
 
 // Runner drives external commands. A nil *Runner is not valid; use [New].
@@ -188,8 +190,119 @@ func (r *Runner) Probe(cmd []string) error {
 func (r *Runner) Run(
 	ctx context.Context, cmd []string, data []byte, wantOutput bool,
 ) (output []byte, usedOutFile bool, err error) {
+	res, err := r.run(ctx, cmd, data, wantOutput, RunSpec{}, false)
+	return res.Output, res.UsedOutFile, err
+}
+
+// RunSpec holds per-call settings for [Runner.RunWith]. The zero value runs
+// like [Runner.Run].
+type RunSpec struct {
+	// InputName is the {in} file's path relative to the run's temp dir (""
+	// means "in"): a file name, or one directory and a file name separated by
+	// "/". Some tools select behavior by path (a prose checker's per-type
+	// rules), so the path is part of the input. Each segment must match
+	// [inputNamePattern].
+	InputName string
+	// AcceptedExitCodes lists non-zero exit codes that still count as success:
+	// the output is returned and [RunResult.ExitCode] reports the code. Linters
+	// exit non-zero when they find something.
+	AcceptedExitCodes []int
+	// Timeout replaces the runner's timeout when positive. It may not exceed
+	// the runner's timeout, so a caller can only shorten the bound.
+	Timeout time.Duration
+}
+
+// RunResult is what [Runner.RunWith] returns.
+type RunResult struct {
+	Output      []byte
+	UsedOutFile bool
+	ExitCode    int
+}
+
+// inputNamePattern allowlists each segment of [RunSpec.InputName]: no leading
+// dot, no glob or shell metacharacters.
+var inputNamePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]*$`)
+
+// writeInput writes data to name under the run's temp dir, creating the one
+// directory a [RunSpec.InputName] may have.
+func writeInput(dir, name string, data []byte) error {
+	if sub := filepath.Dir(name); sub != "." {
+		if err := os.Mkdir(filepath.Join(dir, sub), tempDirPerm); err != nil {
+			return fmt.Errorf("cmdexec: create input dir: %w", err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(dir, name), data, tempFilePerm); err != nil {
+		return fmt.Errorf("cmdexec: write input temp: %w", err)
+	}
+	return nil
+}
+
+// validInputName reports whether name is one or two allowlisted segments
+// that cannot collide with the {out} file. "out" is refused as either
+// segment, without regard to case: a directory named out would take the
+// {out} path, and macOS file systems ignore case.
+func validInputName(name string) bool {
+	segs := strings.Split(name, "/")
+	if len(segs) > 2 {
+		return false
+	}
+	for _, s := range segs {
+		if !inputNamePattern.MatchString(s) || strings.Contains(s, "..") || strings.EqualFold(s, "out") {
+			return false
+		}
+	}
+	return true
+}
+
+// RunWith is [Runner.Run] with per-call settings, always returning output.
+//
+// Unlike Run, the command's working directory is the run's temp dir on every
+// platform, not rela's (often the project root), so a tool that searches
+// upward from its working directory for config finds none. The Linux sandbox
+// already does this inside its namespace; Run keeps the inherited directory
+// elsewhere because existing commands may name a program by relative path.
+func (r *Runner) RunWith(ctx context.Context, cmd []string, data []byte, spec RunSpec) (RunResult, error) {
+	return r.run(ctx, cmd, data, true, spec, true)
+}
+
+// templateArgs copies cmd with {in} and {out} replaced by paths in dir, and
+// writes data to the {in} file when the command uses one.
+func templateArgs(cmd []string, dir, inName string, data []byte) (args []string, usesIn, usesOut bool, err error) {
+	args = slices.Clone(cmd)
+	usesIn = slices.Contains(args, TemplateIn)
+	usesOut = slices.Contains(args, TemplateOut)
+	if usesIn {
+		if err := writeInput(dir, inName, data); err != nil {
+			return nil, false, false, err
+		}
+	}
+	for i, a := range args {
+		switch a {
+		case TemplateIn:
+			args[i] = filepath.Join(dir, inName)
+		case TemplateOut:
+			args[i] = filepath.Join(dir, "out")
+		}
+	}
+	return args, usesIn, usesOut, nil
+}
+
+func (r *Runner) run(
+	ctx context.Context, cmd []string, data []byte, wantOutput bool, spec RunSpec, inTempDir bool,
+) (RunResult, error) {
 	if len(cmd) == 0 {
-		return nil, false, errors.New("cmdexec: empty command")
+		return RunResult{}, errors.New("cmdexec: empty command")
+	}
+	inName := "in"
+	if spec.InputName != "" {
+		if !validInputName(spec.InputName) {
+			return RunResult{}, fmt.Errorf("cmdexec: invalid input name %q", spec.InputName)
+		}
+		inName = spec.InputName
+	}
+	timeout := r.timeout
+	if spec.Timeout > 0 && spec.Timeout < timeout {
+		timeout = spec.Timeout
 	}
 
 	// Bound aggregate concurrency before doing any work (including the timeout
@@ -199,77 +312,73 @@ func (r *Runner) Run(
 		case r.slots <- struct{}{}:
 			defer func() { <-r.slots }()
 		case <-ctx.Done():
-			return nil, false, fmt.Errorf("cmdexec: waiting for a run slot: %w", ctx.Err())
+			return RunResult{}, fmt.Errorf("cmdexec: waiting for a run slot: %w", ctx.Err())
 		}
 	}
 
-	ctx, cancel := context.WithTimeout(ctx, r.timeout)
+	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
 	dir, err := os.MkdirTemp(r.tempDir, "rela-cmdexec-")
 	if err != nil {
-		return nil, false, fmt.Errorf("cmdexec: create temp dir: %w", err)
+		return RunResult{}, fmt.Errorf("cmdexec: create temp dir: %w", err)
 	}
 	defer os.RemoveAll(dir)
 
-	args := slices.Clone(cmd)
-	usesIn := slices.Contains(args, TemplateIn)
-	usesOut := slices.Contains(args, TemplateOut)
-
-	inPath := filepath.Join(dir, "in")
+	args, usesIn, usesOut, err := templateArgs(cmd, dir, inName, data)
+	if err != nil {
+		return RunResult{}, err
+	}
 	outPath := filepath.Join(dir, "out")
-	if usesIn {
-		if werr := os.WriteFile(inPath, data, tempFilePerm); werr != nil {
-			return nil, false, fmt.Errorf("cmdexec: write input temp: %w", werr)
-		}
-	}
-	for i, a := range args {
-		switch a {
-		case TemplateIn:
-			args[i] = inPath
-		case TemplateOut:
-			args[i] = outPath
-		}
-	}
 
 	args, err = r.confine(args, dir)
 	if err != nil {
-		return nil, usesOut, err
+		return RunResult{UsedOutFile: usesOut}, err
 	}
 
 	var stdin io.Reader
 	if !usesIn {
 		stdin = bytes.NewReader(data)
 	}
-	stdout, runErr := r.execute(ctx, args, stdin)
+	workDir := ""
+	if inTempDir {
+		workDir = dir
+	}
+	stdout, exitCode, runErr := r.execute(ctx, args, stdin, workDir, timeout, spec.AcceptedExitCodes)
 	if runErr != nil {
-		return nil, usesOut, runErr
+		return RunResult{UsedOutFile: usesOut}, runErr
 	}
 
+	res := RunResult{UsedOutFile: usesOut, ExitCode: exitCode}
 	if !wantOutput {
-		return nil, usesOut, nil
+		return res, nil
 	}
 
 	if usesOut {
 		out, rerr := os.ReadFile(outPath) // outPath is runner-owned temp, not caller input
 		if rerr != nil {
-			return nil, true, fmt.Errorf("cmdexec: read output temp: %w", rerr)
+			return res, fmt.Errorf("cmdexec: read output temp: %w", rerr)
 		}
 		if int64(len(out)) > r.maxBytes {
-			return nil, true, fmt.Errorf("cmdexec: output exceeds cap (%d bytes)", r.maxBytes)
+			return res, fmt.Errorf("cmdexec: output exceeds cap (%d bytes)", r.maxBytes)
 		}
-		return out, true, nil
+		res.Output = out
+		return res, nil
 	}
 	if int64(stdout.Len()) > r.maxBytes {
-		return nil, false, fmt.Errorf("cmdexec: output exceeds cap (%d bytes)", r.maxBytes)
+		return res, fmt.Errorf("cmdexec: output exceeds cap (%d bytes)", r.maxBytes)
 	}
-	return stdout.Bytes(), false, nil
+	res.Output = stdout.Bytes()
+	return res, nil
 }
 
-// execute starts the (already-confined) command, applies resource ceilings, and
-// waits for it — killing the whole process group if the deadline passes. Returns
-// the captured stdout buffer.
-func (r *Runner) execute(ctx context.Context, args []string, stdin io.Reader) (*bytes.Buffer, error) {
+// execute starts the (already-confined) command, in dir when it is set,
+// applies resource ceilings, and waits for it — killing the whole process
+// group if the deadline passes. Returns the captured stdout buffer and the
+// exit code; a non-zero exit listed in accepted is not an error.
+func (r *Runner) execute(
+	ctx context.Context, args []string, stdin io.Reader, dir string, timeout time.Duration, accepted []int,
+) (*bytes.Buffer, int, error) {
 	// Every element of args is the sandbox wrapper, the caller-configured
 	// command (project config), or a runner-owned temp path for {in}/{out};
 	// request data arrives only on stdin or in the {in} file. The array form
@@ -277,6 +386,7 @@ func (r *Runner) execute(ctx context.Context, args []string, stdin io.Reader) (*
 	// nosemgrep: go.lang.security.audit.dangerous-exec-command.dangerous-exec-command
 	ec := exec.CommandContext(ctx, args[0], args[1:]...)
 	ec.Env = Environ()
+	ec.Dir = dir // "" inherits rela's; see RunWith
 	ec.Stdin = stdin
 	var stdout, stderr bytes.Buffer
 	// Cap stdout so a runaway command can't exhaust memory; +1 to detect over.
@@ -301,7 +411,7 @@ func (r *Runner) execute(ctx context.Context, args []string, stdin io.Reader) (*
 	ec.WaitDelay = waitDelay
 
 	if startErr := ec.Start(); startErr != nil {
-		return nil, fmt.Errorf("cmdexec: start %q: %w", args[0], startErr)
+		return nil, 0, fmt.Errorf("cmdexec: start %q: %w", args[0], startErr)
 	}
 	// Resource ceilings, applied as soon as the child has a pid. Failing to set
 	// them is fatal: an unbounded converter can exhaust the host, so kill the
@@ -309,12 +419,12 @@ func (r *Runner) execute(ctx context.Context, args []string, stdin io.Reader) (*
 	if limErr := applyRlimits(ec.Process.Pid, r.limits); limErr != nil {
 		killProcessGroup(ec)
 		_ = ec.Wait()
-		return nil, fmt.Errorf("cmdexec: apply resource limits: %w", limErr)
+		return nil, 0, fmt.Errorf("cmdexec: apply resource limits: %w", limErr)
 	}
 
 	runErr := ec.Wait()
 	if ctx.Err() == context.DeadlineExceeded {
-		return nil, fmt.Errorf("cmdexec: command timed out after %s", r.timeout)
+		return nil, 0, fmt.Errorf("cmdexec: command timed out after %s", timeout)
 	}
 	// WaitDelay fires when the child itself exited but a detached descendant kept
 	// an output pipe open past waitDelay (a pandoc PDF-engine grandchild is the
@@ -326,16 +436,20 @@ func (r *Runner) execute(ctx context.Context, args []string, stdin io.Reader) (*
 	if errors.Is(runErr, exec.ErrWaitDelay) {
 		slog.Warn("cmdexec: command left a lingering child past wait delay; "+
 			"output taken as-is", "cmd", args[0], "wait_delay", waitDelay)
-		return &stdout, nil
+		return &stdout, 0, nil
+	}
+	var exitErr *exec.ExitError
+	if errors.As(runErr, &exitErr) && exitErr.ExitCode() > 0 && slices.Contains(accepted, exitErr.ExitCode()) {
+		return &stdout, exitErr.ExitCode(), nil
 	}
 	if runErr != nil {
 		msg := strings.TrimSpace(stderr.String())
 		if msg == "" {
 			msg = runErr.Error()
 		}
-		return nil, fmt.Errorf("%w: %s", runErr, msg)
+		return nil, 0, fmt.Errorf("%w: %s", runErr, msg)
 	}
-	return &stdout, nil
+	return &stdout, 0, nil
 }
 
 // confine rewrites argv to run inside the sandbox: no network, and only this

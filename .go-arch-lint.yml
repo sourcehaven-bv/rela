@@ -86,6 +86,7 @@ components:
   attachment:       { in: internal/attachment }
   cmdexec:          { in: internal/cmdexec }
   transform:        { in: internal/transform }
+  check:            { in: internal/check }
   autocascade:      { in: internal/autocascade }
   automation:       { in: internal/automation }
   calfeed:          { in: internal/calfeed }
@@ -566,6 +567,8 @@ deps:
       - tokenstore
       - tracer
       - transform
+      # `rela analyze prose` runs the prose checkers.
+      - check
       - validator
       # The CLI address helper resolves `ID@face` through the allow-all
       # visibility.Resolver: the operator shell reads everything, but a
@@ -1065,6 +1068,13 @@ deps:
   # list renderer AND the Lua/command render override both live in dataentry and
   # are supplied to transform as Renderer implementations (see internal/transform).
   transform:
+    mayDependOn:
+      - cmdexec
+      - metamodel
+  # check: prose-check engine over the `checkers:` registry. Like transform it
+  # depends only on the safe-exec core and the schema. mcp must not import it:
+  # mcp reaches it through a consumer-side interface wired in cli.
+  check:
     mayDependOn:
       - cmdexec
       - metamodel

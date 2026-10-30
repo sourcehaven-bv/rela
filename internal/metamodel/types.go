@@ -46,6 +46,12 @@ type Metamodel struct {
 	// internal/transform.
 	Transforms map[string]TransformDef `yaml:"transforms,omitempty"`
 
+	// Checkers is the prose-check registry: named external commands (e.g.
+	// vale) run over an entity's body for spelling, grammar and style
+	// findings. Findings are advisory and never block a write. See
+	// internal/check.
+	Checkers map[string]CheckerDef `yaml:"checkers,omitempty"`
+
 	// Worlds declares named resolution functions over content states
 	// (TKT-WAV8XP, design doc §4). Keyed by world name.
 	//
