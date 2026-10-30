@@ -25,6 +25,7 @@ import {
   automationTitle,
   choiceListLabel,
   choiceListNames,
+  columnModel,
   columnTitle,
   entityTypeLabel,
   propertyModel,
@@ -496,15 +497,7 @@ function listInner(_name: string, old: TreeValue, now: TreeValue, to: string): C
     get(old, 'columns'),
     get(now, 'columns'),
     'Column',
-    (item, i) =>
-      columnTitle({
-        index: i,
-        property: str(get(item, 'property')) ?? '',
-        relation: str(get(item, 'relation')) ?? '',
-        label: str(get(item, 'label')) ?? '',
-        sortable: false,
-        link: '',
-      }),
+    (item, i) => columnTitle(columnModel(item, i)),
     () => to,
     'Order of columns',
     to
@@ -709,7 +702,12 @@ export function describeChanges(
       )
     )
     groups.push(...dashboardChanges(get(b.dataEntry, 'dashboard'), get(a.dataEntry, 'dashboard')))
-    const named = [...new Set([...keys(get(b.dataEntry, 'dashboards')), ...keys(get(a.dataEntry, 'dashboards'))])]
+    const named = [
+      ...new Set([
+        ...keys(get(b.dataEntry, 'dashboards')),
+        ...keys(get(a.dataEntry, 'dashboards')),
+      ]),
+    ]
     for (const name of named.sort()) {
       groups.push(
         ...dashboardChanges(

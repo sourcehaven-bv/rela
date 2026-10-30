@@ -1645,7 +1645,8 @@ Notes:
 ### Column Options
 
 A column shows a property value, the comma-separated titles of an entity's related entities,
-or the face each row was served in. Set exactly one of `property`, `relation` or `face`.
+the face each row was served in, or a busy indicator. Set exactly one of `property`, `relation`,
+`face` or `busy`.
 
 | Field       | Type   | Description                                                                 |
 | ----------- | ------ | --------------------------------------------------------------------------- |
@@ -1653,7 +1654,8 @@ or the face each row was served in. Set exactly one of `property`, `relation` or
 | `relation`  | string | Relation type whose targets are shown comma-separated                       |
 | `direction` | string | Relation columns only: `"outgoing"` or `"incoming"`; inferred when omitted   |
 | `face`      | bool   | Shows the label of the face each row was served in; faced types only        |
-| `label`     | string | Column header (defaults to property / relation name, or `Face`)             |
+| `busy`      | string | Channel type; shows a busy indicator while a channel of this type on the row is in a working state; lists only |
+| `label`     | string | Column header (defaults to property / relation name, `Face` or `Busy`)      |
 | `sortable`  | bool   | Column can be sorted by clicking the header                                 |
 | `link`      | string | `detail` links the cell to the entity's detail page; `document/<name>` to a document |
 
@@ -1680,6 +1682,45 @@ columns:
     direction: incoming
     label: "Implemented by"
 ```
+
+#### Busy column example
+
+A `busy` column shows when someone, such as an agent, works on the row's
+entity now. It names a channel type from `realtime.yaml`, as a
+[busy card field](#busy-cards) does on a board:
+
+```yaml
+lists:
+  tickets:
+    entity_type: ticket
+    columns:
+      - property: title
+        link: detail
+      - property: status
+      - busy: run
+        label: Agent
+```
+
+The cell shows the same indicator as a busy card: pulsing dots, the state's
+label and the time in that state, such as "Planning · 3h", and "+1" when
+more channels are busy. A row that is not busy has an empty cell. The
+header is the column's `label`, or "Busy" when it has none. The column
+stays visible when the list is narrow, as on a phone. A list export leaves
+the column out, because busy state is live and differs per reader.
+
+| Rule | Why |
+| --- | --- |
+| At most one `busy` column per list | The list asks for one channel type. |
+| Not the first column | The first column is the row title and link. |
+| `busy` stands alone: only `label` may be set beside it | It shows a channel, not a value. |
+| Not sortable | Sorting by busy state would read every channel before paging. |
+| The channel type exists, has a session with a `working` state and attaches to the list's entity type | Otherwise no row could be busy. |
+| Lists only | On a dashboard card or a view section column it is a config error. |
+
+These rules are checked by `rela validate`, when the server starts, when
+`data-entry.yaml` is reloaded and when you save in Configure. With realtime
+off the column loads with a warning and shows nothing. See the busy
+indicator section of the realtime guide for when it updates.
 
 ### Static Filters
 
@@ -4302,7 +4343,8 @@ one before the indicator. It defaults to the channel type's name; set
 These rules are checked by `rela validate`, when the server starts, and when
 you save in Configure. With realtime off the field loads with a warning and
 shows nothing. See the busy indicator section of the realtime guide for
-which states count, who sees the indicator and when it updates.
+which states count, who sees the indicator and when it updates. A list
+shows the same indicator in a [busy column](#busy-column-example).
 
 #### Properties of related entities
 

@@ -524,6 +524,8 @@ export interface Messages {
   sortDropped: (args: { title: string; position: number; count: number }) => string
   /** Announced when a held row is put back where it started. */
   sortCancelled: (args: { title: string; position: number; count: number }) => string
+  /** Announced when a move is refused; `reason` is the caller's, already localised. */
+  sortRefused: (args: { title: string; position: number; count: number; reason: string }) => string
 
   /** The kind of a change in a change list, read before its label: `Added`. */
   changeKind: (args: { kind: 'added' | 'changed' | 'removed' }) => string
@@ -838,6 +840,8 @@ export const DEFAULT_MESSAGES: Messages = {
     `${title}, picked up, ${position} of ${count}. Use the up and down arrows to move it, Enter to drop, Escape to cancel.`,
   sortDropped: ({ title, position, count }) => `${title}, dropped at ${position} of ${count}.`,
   sortCancelled: ({ title, position, count }) => `${title}, put back at ${position} of ${count}.`,
+  sortRefused: ({ title, position, count, reason }) =>
+    `${title} cannot move there. ${reason} Put back at ${position} of ${count}.`,
 
   changeKind: ({ kind }) => ({ added: 'Added', changed: 'Changed', removed: 'Removed' })[kind],
   changeBefore: () => 'from',

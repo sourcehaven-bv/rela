@@ -690,7 +690,8 @@
       "summary": "Showing {first} - {last} of {total}"
     },
     "column": {
-      "face": "Face"
+      "face": "Face",
+      "busy": "Busy"
     },
     "filter": {
       "all": "All",

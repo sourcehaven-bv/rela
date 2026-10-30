@@ -36,6 +36,7 @@ import { useWorld } from '@/composables/useWorld'
 import { actionAllowed } from '@/utils/affordancesWarning'
 import { filterStateToApiParams } from '@/utils/filters'
 import { entityRef } from '@/utils/entityRef'
+import { toBusyEntries } from '@/utils/busy'
 import { resolveUserToken } from '@/utils/userToken'
 import { useUserToken } from '@/composables/useUserToken'
 import { editFormRoute } from '@/utils/entityRoute'
@@ -767,14 +768,8 @@ function resolvedCardFields(entity: Entity): ResolvedCardField[] {
   for (const field of kanbanConfig.value?.card.fields ?? []) {
     if (field.busy) {
       // Only the asked type: the server answers for the board's one type.
-      const busy = (entity._busy ?? []).filter((b) => b.type === field.busy)
-      if (busy.length > 0) {
-        out.push({
-          field,
-          text: '',
-          busy: busy.map((b) => ({ typeLabel: b.type_label || b.type, label: b.label || b.state, since: b.since })),
-        })
-      }
+      const busy = toBusyEntries(entity._busy, field.busy)
+      if (busy.length > 0) out.push({ field, text: '', busy })
       continue
     }
     const count = cardFieldCount(entity, field)

@@ -89,9 +89,9 @@ func (h configureHost) Record(rec audit.Record) { h.current().svc.Audit().Record
 
 // Validate checks a schema and data-entry pair the way `rela validate` does,
 // the loaded acl.yaml and realtime.yaml against the new schema, and
-// data-entry.yaml's `channels:` section and kanban `busy:` card fields
-// against realtime.yaml. Building the candidate server in Prepare is the
-// complete check; this one runs on every preview.
+// data-entry.yaml's `channels:` section, kanban `busy:` card fields and
+// list `busy:` columns against realtime.yaml. Building the candidate
+// server in Prepare is the complete check; this one runs on every preview.
 func (h configureHost) Validate(schema, dataEntry []byte) (*metamodel.Metamodel, error) {
 	meta, err := metamodel.Parse(schema)
 	if err != nil {
@@ -130,8 +130,8 @@ func (h configureHost) Validate(schema, dataEntry []byte) (*metamodel.Metamodel,
 	if err != nil {
 		problems = append(problems, err.Error())
 	} else {
-		// The channels: section and busy card fields name realtime.yaml's
-		// types and properties.
+		// The channels: section, busy card fields and busy list columns
+		// name realtime.yaml's types and properties.
 		errs, _ := projectsetup.CheckChannels(dataEntry, appbuild.RealtimeChannelSchema(rt))
 		for _, e := range errs {
 			problems = append(problems, "data-entry.yaml: "+e)

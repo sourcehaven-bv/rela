@@ -76,6 +76,50 @@ export const Playground: Story = {
   },
 }
 
+/**
+ * `refuse-move` vetoes one move. Here Title must stay first: a move that
+ * would put another row above it is put back, and the list announces the
+ * caller's reason instead of the drop.
+ */
+export const RefusedMove: Story = {
+  render: () => ({
+    components: { RlSortableList },
+    setup() {
+      const items = ref(columns)
+      const move = (item: CollectionItem, to: number) => (items.value = reorder(items.value, item, to))
+      const refuseMove = (item: CollectionItem, to: number) =>
+        to === 0 || item.id === 'title' ? 'Title stays the first column.' : undefined
+      const refused = ref('')
+      return { items, move, refuseMove, refused }
+    },
+    template: `
+      <div style="max-width:360px">
+        <RlSortableList :items="items" label="List columns" :refuse-move="refuseMove" @move="move" @refuse="(_item, reason) => (refused = reason)" />
+        <p data-testid="order" style="font-size:12px; color:var(--rl-color-text-muted)">{{ items.map((i) => i.id).join(', ') }}</p>
+        <p data-testid="refused" style="font-size:12px">{{ refused }}</p>
+      </div>
+    `,
+  }),
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement)
+    const order = canvas.getByTestId('order')
+
+    canvas.getByRole('button', { name: 'Reorder Priority, 3 of 5' }).focus()
+    await userEvent.keyboard(' {Home}{Enter}')
+    await expect(order).toHaveTextContent('title, status, priority, effort, assignee')
+    await expect(canvas.getByRole('status')).toHaveTextContent(
+      'Priority cannot move there. Title stays the first column. Put back at 3 of 5.',
+    )
+    await expect(canvas.getByTestId('refused')).toHaveTextContent('Title stays the first column.')
+
+    // An allowed move still goes through.
+    canvas.getByRole('button', { name: 'Reorder Priority, 3 of 5' }).focus()
+    await userEvent.keyboard(' {ArrowUp}{Enter}')
+    await expect(order).toHaveTextContent('title, priority, status, effort, assignee')
+    await expect(canvas.getByRole('status')).toHaveTextContent('Priority, dropped at 2 of 5')
+  },
+}
+
 interface ChoiceValue extends CollectionItem {
   color: StatusColor
   isDefault?: boolean

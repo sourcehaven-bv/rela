@@ -573,12 +573,12 @@ const realtimeFile = "realtime.yaml"
 // reportRealtimeValidation loads realtime.yaml whenever the project has
 // one, compiled against the schema the earlier check loaded and acl.yaml,
 // as boot and Configure's write check do: that includes the session
-// run_as grant check. It then checks data-entry.yaml's `channels:` section
-// and kanban `busy:` card fields against it, when one exists and
-// data-entry.yaml is valid. It builds no store or index. A realtime.yaml
-// or acl.yaml that does not load is a ✗ line, so the checks after this one
-// still run. It needs a schema that loaded. It returns hasErrors, set when
-// a check failed.
+// run_as grant check. It then checks data-entry.yaml's `channels:`
+// section, kanban `busy:` card fields and list `busy:` columns against it,
+// when one exists and data-entry.yaml is valid. It builds no store or
+// index. A realtime.yaml or acl.yaml that does not load is a ✗ line, so
+// the checks after this one still run. It needs a schema that loaded. It
+// returns hasErrors, set when a check failed.
 func reportRealtimeValidation(ctx context.Context, result *projectsetup.ValidateResult, hasErrors bool) bool {
 	if result.Metamodel == nil {
 		return hasErrors

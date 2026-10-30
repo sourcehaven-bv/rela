@@ -25,10 +25,10 @@ type realtimeReloader interface {
 }
 
 // SetRealtime gives the app the realtime configuration holder whose file
-// it watches, and checks data-entry.yaml's `channels:` section and kanban
-// `busy:` card fields against it: a section or field that names what
-// realtime.yaml does not declare fails the boot, as any other invalid
-// data-entry.yaml does. Call it before StartWatching.
+// it watches, and checks data-entry.yaml's `channels:` section, kanban
+// `busy:` card fields and list `busy:` columns against it: an entry that
+// names what realtime.yaml does not declare fails the boot, as any other
+// invalid data-entry.yaml does. Call it before StartWatching.
 // A free function because App's method count is pinned (plimsoll).
 //
 // Nil: r is rejected — an app without realtime simply does not call this.
@@ -45,10 +45,10 @@ func SetRealtime(a *App, r realtimeReloader) error {
 	return nil
 }
 
-// checkChannelsPresentation checks cfg's `channels:` section and kanban
-// busy fields against the realtime config r holds now. It logs the
-// warnings and returns the errors as one error naming data-entry.yaml.
-// With r nil there is nothing to check against.
+// checkChannelsPresentation checks cfg's `channels:` section, kanban busy
+// fields and list busy columns against the realtime config r holds now.
+// It logs the warnings and returns the errors as one error naming
+// data-entry.yaml. With r nil there is nothing to check against.
 func checkChannelsPresentation(cfg *Config, r realtimeReloader) error {
 	if r == nil {
 		return nil

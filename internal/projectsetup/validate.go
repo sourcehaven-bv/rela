@@ -280,10 +280,10 @@ func fileExists(path string, fs storage.FS) (bool, error) {
 	return false, err
 }
 
-// CheckChannels checks data-entry.yaml's `channels:` section and kanban
-// `busy:` card fields against the realtime configuration schema describes
-// (nil: realtime off). A file that does not parse is left to
-// [CheckDataEntry].
+// CheckChannels checks data-entry.yaml's `channels:` section, kanban
+// `busy:` card fields and list `busy:` columns against the realtime
+// configuration schema describes (nil: realtime off). A file that does not
+// parse is left to [CheckDataEntry].
 func CheckChannels(data []byte, schema dataentryconfig.ChannelSchema) (errs, warnings []string) {
 	cfg, ok := realtimePresentation(data)
 	if !ok {
@@ -294,7 +294,8 @@ func CheckChannels(data []byte, schema dataentryconfig.ChannelSchema) (errs, war
 
 // HasRealtimePresentation reports whether data-entry.yaml content says
 // anything that must be checked against realtime.yaml: a non-empty
-// `channels:` section or a kanban card field with `busy:` (TKT-21G6JS).
+// `channels:` section, a kanban card field with `busy:` (TKT-21G6JS) or a
+// list column with `busy:` (TKT-TU3XH4).
 func HasRealtimePresentation(data []byte) bool {
 	_, ok := realtimePresentation(data)
 	return ok

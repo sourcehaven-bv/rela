@@ -96,6 +96,35 @@ func TestValidate_BusyFieldAgainstRealtime(t *testing.T) {
 	require.Contains(t, out, "channel type room declares no session")
 }
 
+// TestValidate_BusyListColumnWithoutChannels pins that `rela validate`
+// checks a list busy column against realtime.yaml in a project without a
+// channels: section and without a kanban busy field (TKT-TU3XH4).
+func TestValidate_BusyListColumnWithoutChannels(t *testing.T) {
+	root := seedProject(t)
+	check := func() (failed bool, out string) {
+		t.Helper()
+		result, err := projectsetup.Validate(context.Background(), root)
+		require.NoError(t, err)
+		result.DataEntryValid = true
+		out, _ = captureStdout(t, func() error {
+			failed = reportRealtimeValidation(context.Background(), result, false)
+			return nil
+		})
+		return failed, out
+	}
+	list := "version: \"1.0\"\nlists:\n  items:\n    entity_type: item\n" +
+		"    columns: [{ property: title }, { busy: %s }]\n"
+	writeProjectFile(t, root, "data-entry.yaml", fmt.Sprintf(list, "nope"))
+	failed, out := check()
+	require.False(t, failed, "realtime off is a warning: %s", out)
+	require.Contains(t, out, "this busy column shows nothing")
+
+	writeProjectFile(t, root, "realtime.yaml", stdioRealtimeYAML)
+	failed, out = check()
+	require.True(t, failed, out)
+	require.Contains(t, out, `list "items": column[1]: realtime.yaml declares no channel type "nope"`)
+}
+
 // TestValidate_RealtimeRunAsGrant pins that `rela validate` loads
 // realtime.yaml, and runs its session run_as grant check, when
 // data-entry.yaml has no channels: section: an ungranted run_as fails the

@@ -64,6 +64,30 @@ describe('face column', () => {
   })
 })
 
+describe('busy column', () => {
+  it('has its own key', () => {
+    expect(columnKey({ busy: 'run' })).toBe('busy')
+    expect(columnKey({ busy: 'run', label: 'Agent' })).toBe('busy')
+  })
+
+  it('reads its label, then list.column.busy, never the type name', () => {
+    expect(columnHeader({ busy: 'run', label: 'Agent' })).toBe('Agent')
+    expect(columnHeader({ busy: 'run' })).toBe('Busy')
+  })
+
+  it('is not sortable and is 160 px wide', () => {
+    const [busy] = toTableColumns([{ property: 'title' }, { busy: 'run', sortable: true }])
+    expect(busy).toMatchObject({ key: 'busy', sortable: false, width: 160 })
+    const [status] = toTableColumns([{ property: 'title' }, { property: 'status' }])
+    expect(status!.width).toBeUndefined()
+  })
+
+  it('keeps a key distinct from a face column in the same list', () => {
+    const keys = toTableColumns([{ property: 'title' }, { face: true }, { busy: 'run' }]).map((c) => c.key)
+    expect(keys).toEqual(['face', 'busy'])
+  })
+})
+
 describe('toTableColumns', () => {
   /** The first column is the title, which the library's table owns. */
   const columns: ListColumn[] = [
