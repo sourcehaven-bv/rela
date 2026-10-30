@@ -55,6 +55,8 @@ type rawSession struct {
 	Reminders map[string]rawReminder `yaml:"reminders"`
 	// OnFinal is `session.on_final`; see [Session.OnFinal].
 	OnFinal string `yaml:"on_final"`
+	// DefaultIn is `session.default_in`: keyed or empty.
+	DefaultIn string `yaml:"default_in"`
 	// RunAs is `session.run_as`; see [Session.RunAs].
 	RunAs *string `yaml:"run_as"`
 }
@@ -130,6 +132,60 @@ type rawTransition struct {
 	By      string      `yaml:"by"`
 	When    string      `yaml:"when"`
 	Outputs []rawOutput `yaml:"outputs"`
+	// Button is `button:`; see [TransitionButton]. A null value decodes
+	// as absent.
+	Button *rawButton `yaml:"button"`
+}
+
+// rawButton is `on.<type>.button`: the label of a one-click button and
+// the preset it posts.
+type rawButton struct {
+	Label string    `yaml:"label"`
+	Props rawPreset `yaml:"props"`
+	// Confirm and Style are the button options; see [ButtonOptions].
+	Confirm rawConfirm `yaml:"confirm"`
+	// Style is nil when absent or null, so `style: ""` is refused rather
+	// than read as absent.
+	Style *string `yaml:"style"`
+}
+
+// rawDecisionButton is `message_types.<type>.decision_button`: the
+// options of every decision button of the type (see [ButtonOptions]).
+type rawDecisionButton struct {
+	Confirm rawConfirm `yaml:"confirm"`
+	Style   *string    `yaml:"style"`
+}
+
+// rawConfirm keeps the YAML node of a button's `confirm:`, which is a
+// boolean or a text, so [optionsOf] can tell a quoted text from an
+// unquoted YAML 1.1 boolean spelling. The key checker refuses a value
+// that is not a single value. The node is nil when the key is absent or
+// null.
+type rawConfirm struct{ node *yaml.Node }
+
+// UnmarshalYAML keeps n, with aliases followed.
+func (c *rawConfirm) UnmarshalYAML(n *yaml.Node) error {
+	c.node = resolveNode(n)
+	return nil
+}
+
+// set reports whether the file gives `confirm:` a value other than null.
+func (c rawConfirm) set() bool { return c.node != nil && c.node.Tag != "!!null" }
+
+// rawPreset is `button.props`: one value per message property.
+type rawPreset map[string]rawPresetValue
+
+// rawPresetValue keeps the YAML node of one preset value. The value is
+// read by the declared type of its property, not by the tag yaml.v3
+// guesses, so an unquoted date stays its text (see [presetValue]). The key
+// checker refuses a value that is neither null, a single value nor a list
+// of single values.
+type rawPresetValue struct{ node *yaml.Node }
+
+// UnmarshalYAML keeps n, with aliases followed.
+func (v *rawPresetValue) UnmarshalYAML(n *yaml.Node) error {
+	v.node = resolveNode(n)
+	return nil
 }
 
 // rawOutput is one entry of a transition's `outputs:`.
@@ -179,6 +235,9 @@ type rawMessageType struct {
 	In []string `yaml:"in"`
 	// Choices is `choices:`; see [Choices].
 	Choices *rawChoices `yaml:"choices"`
+	// DecisionButton is `decision_button:`; see [MessageType.DecisionButton].
+	// A null value decodes as absent.
+	DecisionButton *rawDecisionButton `yaml:"decision_button"`
 }
 
 // rawChoices is `message_types.<mt>.choices`.

@@ -33,6 +33,9 @@ const (
 	MaxTitleRunes = 200
 	// MaxReasonRunes caps the reason given for removing a message.
 	MaxReasonRunes = 500
+	// MaxConfirmTextRunes caps the confirm text of a session decision
+	// button in realtime.yaml, counted after the text is folded.
+	MaxConfirmTextRunes = 300
 	// MaxEphemeralBytes caps the JSON encoding of one signal's properties.
 	// A signal is held in memory, so it is far smaller than a message.
 	MaxEphemeralBytes = 1 << 10

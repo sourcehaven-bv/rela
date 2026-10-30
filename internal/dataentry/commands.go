@@ -622,7 +622,7 @@ func (h *commandHandler) buildCommandInput(
 			return nil, false
 		}
 		entities := listFromStoreByTypes(r.Context(), h.services(), []string{listCfg.EntityType})
-		entities = applyFilters(entities, listCfg.Filters)
+		entities = applyFilters(entities, listCfg.Filters, filterUser(r.Context()))
 		input = h.buildListInput(listID, entities)
 	case "view":
 		viewID := r.URL.Query().Get("view_id")

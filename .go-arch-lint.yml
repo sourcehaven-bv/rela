@@ -140,6 +140,8 @@ components:
   realtimelimits:   { in: internal/realtimelimits }
   # Runes that make text show something other than what it holds.
   texthazard:       { in: internal/texthazard }
+  # The YAML 1.1 boolean spellings a config key refuses unquoted.
+  yamlscalar:       { in: internal/yamlscalar }
   # The pure three-way merge behind Lua rela.sync.merge (TKT-SM20FG): no
   # I/O, reads the metamodel only to type the synced fields.
   syncmerge:        { in: internal/syncmerge }
@@ -702,6 +704,7 @@ deps:
       - icondefs
       - ingestspec
       - metamodel
+      - yamlscalar
     canUse:
       - rrulego
       - xlanguage
@@ -1462,6 +1465,13 @@ deps:
       # principal.ValidJobIdentity: session.run_as follows the --run-as rules.
       - principal
       - realtimelimits
+      # The prop rules of a post (TKT-S9TLJJ): the load checks a button's
+      # preset with the same code the channel service runs on a post.
+      - texthazard
+      # The YAML 1.1 boolean check on a decision button's confirm text.
+      - yamlscalar
+    canUse:
+      - xnorm
   syncmerge:
     mayDependOn:
       - metamodel

@@ -180,7 +180,7 @@ func TestWhenHolds_List(t *testing.T) {
 	// len of an absent list does not evaluate, so the when: fails closed,
 	// as any comparison with an absent value does.
 	require.False(t, whenHolds(context.Background(), mt, map[string]any{}, now))
-	_, isNil := predicateValue(listProp(), "not a list").(predicate.Nil)
+	_, isNil := listProp().PredicateValue("not a list").(predicate.Nil)
 	require.True(t, isNil, "a stored value that is not a list binds as nil")
 }
 

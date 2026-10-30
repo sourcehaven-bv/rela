@@ -2,7 +2,12 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { nextTick, ref } from 'vue'
 import { ApiError } from '@/api/errors'
 import { i18n } from '@/i18n'
-import type { ChannelHead, ChannelTypeSchema, Message } from '@/types/channels'
+import type {
+  ChannelButtonOptions,
+  ChannelHead,
+  ChannelTypeSchema,
+  Message,
+} from '@/types/channels'
 import { useSessionDecisions, type DecisionChannel, type DecisionDeps } from './useSessionDecisions'
 
 const logType = (name: string, label: string, required = false) => ({
@@ -613,5 +618,322 @@ describe('useSessionDecisions choices', () => {
     expect(s.deps.ui.handle).not.toHaveBeenCalled()
     expect(s.deps.composer.select).not.toHaveBeenCalled()
     expect(s.deps.ui.focusRow).not.toHaveBeenCalled()
+  })
+})
+
+// A plan review whose decide entries carry presets (TKT-S9TLJJ): entry 0
+// approves into working, entry 1 revises into the final state accepted.
+const pct = {
+  name: 'plan',
+  message_types: [
+    {
+      name: 'decide',
+      label: 'Decide',
+      persist: 'log' as const,
+      reply: true,
+      actions: [],
+      properties: [{ name: 'decision', label: 'Decision', type: 'string', required: true }],
+    },
+  ],
+  session: ct.session,
+} as unknown as ChannelTypeSchema
+
+function presetHead(
+  generation: number,
+  reviseProps: Record<string, string> = { decision: 'revise' }
+) {
+  return {
+    channel: {
+      state: 'open',
+      session: {
+        state: 'review',
+        status: 'input_required',
+        generation,
+        entered_at: '2026-03-01T10:00:00Z',
+        transitions: [
+          {
+            message_type: 'decide',
+            to: 'working',
+            guarded: true,
+            entry: 0,
+            button: { label: 'Approve', props: { decision: 'approve' } },
+          },
+          {
+            message_type: 'decide',
+            to: 'accepted',
+            entry: 1,
+            button: { label: 'Revise', props: reviseProps },
+          },
+        ],
+      },
+    },
+    _actions: {
+      post: ['decide'],
+      transitions: ['decide'],
+      entries: [
+        { message_type: 'decide', entry: 0 },
+        { message_type: 'decide', entry: 1 },
+      ],
+    },
+  } as unknown as ChannelHead
+}
+
+function presetSetup(messages: Message[] = []) {
+  const h = ref<ChannelHead | undefined>(presetHead(4))
+  const ch = {
+    head: h,
+    messages: ref<Message[]>(messages),
+    hasNewer: ref(false),
+    actionsGeneration: ref<number | undefined>(4),
+    refreshHead: vi.fn(async () => {}),
+    refetch: vi.fn(async () => {}),
+  } as unknown as DecisionChannel
+  const deps = {
+    channelType: () => pct,
+    channelKey: () => 'a',
+    ch,
+    messageType: (n: string) => pct.message_types.find((m) => m.name === n),
+    post: vi.fn(async () => {}),
+    setPending: vi.fn(),
+    submitting: ref(false),
+    composer: {
+      editing: vi.fn(() => false),
+      discardEdit: vi.fn(),
+      endReply: vi.fn(),
+      reply: vi.fn(),
+      select: vi.fn(() => true),
+      showError: vi.fn(),
+    },
+    ui: {
+      confirm: vi.fn(async () => true),
+      toast: vi.fn(),
+      handle: vi.fn((): string | undefined => undefined),
+      focusRow: vi.fn(() => false),
+      focusHeader: vi.fn(),
+    },
+  } satisfies DecisionDeps
+  return { deps, h, d: useSessionDecisions(deps) }
+}
+
+const APPROVE = 'preset:decide:0'
+const REVISE = 'preset:decide:1'
+
+describe('useSessionDecisions presets', () => {
+  it('preset posts its props with the generation', async () => {
+    const s = presetSetup()
+    expect(s.d.decisions.value.map((v) => v.key)).toEqual([APPROVE, REVISE])
+    await s.d.onDecide(APPROVE, 'header')
+    expect(s.deps.ui.confirm).not.toHaveBeenCalled()
+    expect(s.deps.composer.select).not.toHaveBeenCalled()
+    expect(s.deps.post).toHaveBeenCalledWith('decide', { decision: 'approve' }, undefined, 4)
+  })
+
+  it('preset replies to the cause', async () => {
+    const at = '2026-03-01T10:00:00Z'
+    const s = presetSetup([
+      { seq: 2, rev: 2, type: 'plan', author: { user: 'bo' }, at, props: {} },
+      {
+        seq: 3,
+        rev: 3,
+        type: 'session',
+        author: { user: 'system', system: true },
+        triggered_by: 'session:plan',
+        at,
+        props: { from: 'drafting', to: 'review', generation: 4, cause: 2 },
+      },
+    ] as Message[])
+    await s.d.onDecide(APPROVE, 'row')
+    expect(s.deps.post).toHaveBeenCalledWith('decide', { decision: 'approve' }, 2, 4)
+  })
+
+  it('preset to a final state asks', async () => {
+    const s = presetSetup()
+    await s.d.onDecide(REVISE, 'header')
+    expect(s.deps.ui.confirm).toHaveBeenCalledWith(
+      expect.objectContaining({ title: 'Revise', confirmLabel: 'Revise', danger: false })
+    )
+    expect(s.deps.post).toHaveBeenCalledWith('decide', { decision: 'revise' }, undefined, 4)
+  })
+
+  it('confirmed preset posts what was confirmed after a reload changes its props', async () => {
+    const s = presetSetup()
+    const ok = deferred<boolean>()
+    s.deps.ui.confirm.mockReturnValue(ok.promise)
+    const done = s.d.onDecide(REVISE, 'header')
+    s.h.value = presetHead(4, { decision: 'other' })
+    await nextTick()
+    expect(s.d.decisions.value[1]?.props).toEqual({ decision: 'other' })
+    ok.resolve(true)
+    await done
+    expect(s.deps.post).toHaveBeenCalledWith('decide', { decision: 'revise' }, undefined, 4)
+  })
+
+  it('confirmed preset posts what was confirmed after a reload swaps the entries', async () => {
+    const s = presetSetup()
+    const ok = deferred<boolean>()
+    s.deps.ui.confirm.mockReturnValue(ok.promise)
+    const done = s.d.onDecide(REVISE, 'header')
+    const swapped = presetHead(4)
+    const session = swapped.channel.session!
+    const [approve, revise] = session.transitions ?? []
+    session.transitions = [
+      { ...revise!, entry: 0 },
+      { ...approve!, entry: 1 },
+    ]
+    s.h.value = swapped
+    await nextTick()
+    expect(s.d.decisions.value.find((v) => v.key === REVISE)?.props).toEqual({
+      decision: 'approve',
+    })
+    ok.resolve(true)
+    await done
+    expect(s.deps.post).toHaveBeenCalledWith('decide', { decision: 'revise' }, undefined, 4)
+  })
+
+  it('confirmed preset whose key a reload removed is stale and not sent', async () => {
+    const s = presetSetup()
+    const ok = deferred<boolean>()
+    s.deps.ui.confirm.mockReturnValue(ok.promise)
+    const done = s.d.onDecide(REVISE, 'header')
+    const next = presetHead(4)
+    next._actions.entries = [{ message_type: 'decide', entry: 0 }]
+    s.h.value = next
+    await nextTick()
+    expect(s.d.decisions.value.map((v) => v.key)).toEqual([APPROVE])
+    ok.resolve(true)
+    await done
+    expect(s.deps.ui.toast).toHaveBeenCalledWith(STALE)
+    expect(s.deps.post).not.toHaveBeenCalled()
+  })
+
+  it('stale preset', async () => {
+    const s = presetSetup()
+    s.deps.post.mockRejectedValueOnce(problem('session_wrong_state'))
+    await s.d.onDecide(APPROVE, 'header')
+    expect(s.deps.ui.toast).toHaveBeenCalledWith(STALE)
+    expect(s.deps.ch.refetch).toHaveBeenCalled()
+    expect(s.deps.composer.select).not.toHaveBeenCalled()
+  })
+
+  it('refused preset opens the composer', async () => {
+    const s = presetSetup()
+    s.deps.post.mockRejectedValueOnce(problem('invalid_message'))
+    s.deps.ui.handle.mockReturnValueOnce('decision must be one of [approve revise]')
+    await s.d.onDecide(APPROVE, 'header')
+    expect(s.deps.composer.select).toHaveBeenCalledWith('decide')
+    expect(s.deps.composer.showError).toHaveBeenCalledWith(
+      'decision must be one of [approve revise]'
+    )
+  })
+
+  it('output denied preset', async () => {
+    const s = presetSetup()
+    const err = problem('session_output_denied')
+    s.deps.post.mockRejectedValueOnce(err)
+    await s.d.onDecide(APPROVE, 'header')
+    expect(s.deps.ui.handle).toHaveBeenCalledWith(err, true)
+    expect(s.deps.composer.select).not.toHaveBeenCalled()
+  })
+
+  it('memo follows actions.entries', async () => {
+    const s = presetSetup()
+    const before = s.d.decisions.value
+    const next = presetHead(4)
+    next._actions.entries = [{ message_type: 'decide', entry: 1 }]
+    s.h.value = next
+    await nextTick()
+    expect(s.d.decisions.value).not.toBe(before)
+    expect(s.d.decisions.value.map((v) => v.key)).toEqual([REVISE])
+    const same = presetHead(4)
+    same._actions.entries = [{ message_type: 'decide', entry: 1 }]
+    const held = s.d.decisions.value
+    s.h.value = same
+    await nextTick()
+    expect(s.d.decisions.value).toBe(held)
+  })
+})
+
+/** The run type with decision_button on accept, and a cancelled state. */
+function optionsCt(options: ChannelButtonOptions): ChannelTypeSchema {
+  const out: ChannelTypeSchema = {
+    ...ct,
+    message_types: ct.message_types.map((mt) =>
+      mt.name === 'accept' ? { ...mt, decision_button: options } : mt
+    ),
+    session: {
+      ...ct.session!,
+      states: [
+        ...ct.session!.states,
+        { name: 'abandoned', label: 'Abandoned', final: true, status: 'cancelled' },
+      ],
+    },
+  }
+  return out
+}
+
+/** setup() with the options type, and accept leading to to. */
+function optionsSetup(options: ChannelButtonOptions, to: string) {
+  const s = setup()
+  const oct = optionsCt(options)
+  s.deps.channelType = () => oct
+  const h = head(4)
+  h.channel.session!.transitions = [{ message_type: 'accept', to }]
+  h._actions.transitions = ['accept']
+  s.ch.head.value = h
+  return { ...s, d: useSessionDecisions(s.deps) }
+}
+
+describe('useSessionDecisions options', () => {
+  it('authored confirm text is the dialog body', async () => {
+    const s = optionsSetup(
+      { confirm: true, confirm_text: 'This runs the tool on your machine.' },
+      'working'
+    )
+    await s.d.onDecide('accept', 'header')
+    expect(s.deps.ui.confirm).toHaveBeenCalledWith({
+      title: 'Accept',
+      message: 'This runs the tool on your machine.',
+      confirmLabel: 'Accept',
+      danger: false,
+    })
+    expect(s.deps.post).toHaveBeenCalledWith('accept', {}, undefined, 4)
+  })
+
+  it('confirm into a non-final state says it moves the session', async () => {
+    const s = optionsSetup({ confirm: true }, 'working')
+    await s.d.onDecide('accept', 'header')
+    expect(s.deps.ui.confirm).toHaveBeenCalledWith(
+      expect.objectContaining({ message: 'This moves the session to Working.' })
+    )
+  })
+
+  it('confirm into a final state keeps the end text', async () => {
+    const s = optionsSetup({ confirm: true }, 'accepted')
+    await s.d.onDecide('accept', 'header')
+    expect(s.deps.ui.confirm).toHaveBeenCalledWith(
+      expect.objectContaining({ message: 'This ends the session in Accepted. You cannot undo it.' })
+    )
+  })
+
+  it('declined authored confirm posts nothing', async () => {
+    const s = optionsSetup({ confirm: true, confirm_text: 'Sure?' }, 'working')
+    s.deps.ui.confirm.mockResolvedValue(false)
+    await s.d.onDecide('accept', 'header')
+    expect(s.deps.ui.confirm).toHaveBeenCalledOnce()
+    expect(s.deps.post).not.toHaveBeenCalled()
+  })
+
+  it('style primary into a cancelled state keeps the dialog red', async () => {
+    const s = optionsSetup({ style: 'primary' }, 'abandoned')
+    const view = s.d.decisions.value[0]
+    expect(view?.primary).toBe(true)
+    expect(view?.danger).toBeUndefined()
+    await s.d.onDecide('accept', 'header')
+    expect(s.deps.ui.confirm).toHaveBeenCalledWith(
+      expect.objectContaining({
+        message: 'This ends the session in Abandoned. You cannot undo it.',
+        danger: true,
+      })
+    )
   })
 })

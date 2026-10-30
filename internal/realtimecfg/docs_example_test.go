@@ -1,6 +1,7 @@
 package realtimecfg
 
 import (
+	"fmt"
 	"os"
 	"strings"
 	"testing"
@@ -130,6 +131,57 @@ func TestDocsExample_Branching(t *testing.T) {
 	}
 	if strings.Join(tos, ",") != "approved,drafting" {
 		t.Errorf("decide entries lead to %v; want approved, drafting", tos)
+	}
+	var labels []string
+	for _, tr := range ct.Session().Branches("review", "decide") {
+		b, ok := tr.Button()
+		if !ok {
+			t.Fatalf("entry %d has no button; the guide gives both entries one", tr.Index())
+		}
+		labels = append(labels, b.Label+"="+fmt.Sprint(b.Props()["decision"]))
+	}
+	if strings.Join(labels, ",") != "Approve=approve,Revise=revise" {
+		t.Errorf("buttons = %v; want Approve and Revise with their decisions", labels)
+	}
+	// TKT-TXZZZ2 AC 10: Approve is the primary decision; Revise keeps the
+	// derived look.
+	var styles []string
+	for _, tr := range ct.Session().Branches("review", "decide") {
+		b, _ := tr.Button()
+		styles = append(styles, string(b.Options.Style))
+	}
+	if strings.Join(styles, ",") != "primary," {
+		t.Errorf("button styles = %q; want Approve primary and Revise empty", styles)
+	}
+}
+
+// TestDocsExample_DecisionButton pins TKT-TXZZZ2 AC 10: the guide's Allow
+// and Abandon example loads with no problems and no warnings, and its
+// decision_button keys compile as the guide describes.
+func TestDocsExample_DecisionButton(t *testing.T) {
+	data, err := os.ReadFile(realtimeGuide)
+	if err != nil {
+		t.Fatal(err)
+	}
+	example := "version: 1\n" + yamlBlock(t, string(data), "## Sessions", "channel_types:\n  tool-run:")
+	c, err := Parse([]byte(example), testMeta(t), testPolicy(t))
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if w := c.Warnings(); len(w) != 0 {
+		t.Errorf("warnings = %v", w)
+	}
+	ct, _ := c.ChannelType("tool-run")
+	allow, abandon := ct.MessageTypes["allow"], ct.MessageTypes["abandon"]
+	if allow == nil || abandon == nil {
+		t.Fatal("the example lost its allow or abandon type")
+	}
+	want := ButtonOptions{Confirm: ConfirmAsk, ConfirmText: "This runs the tool on your machine."}
+	if allow.DecisionButton == nil || *allow.DecisionButton != want {
+		t.Errorf("allow decision_button = %+v; want %+v", allow.DecisionButton, want)
+	}
+	if abandon.DecisionButton == nil || *abandon.DecisionButton != (ButtonOptions{Style: ButtonStyleDanger}) {
+		t.Errorf("abandon decision_button = %+v; want style danger", abandon.DecisionButton)
 	}
 }
 

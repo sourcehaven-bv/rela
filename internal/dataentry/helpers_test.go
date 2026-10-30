@@ -140,6 +140,7 @@ func TestApplyFilters(t *testing.T) {
 	tests := []struct {
 		name    string
 		filters []FilterConfig
+		user    string
 		wantIDs []string
 	}{
 		{
@@ -171,6 +172,18 @@ func TestApplyFilters(t *testing.T) {
 			wantIDs: []string{"E-001", "E-002", "E-003"},
 		},
 		{
+			// The test rows carry no user property; status stands in for one.
+			name:    "$user resolves to the caller",
+			filters: []FilterConfig{{Property: "status", Operator: "=", Value: "$user"}},
+			user:    "open",
+			wantIDs: []string{"E-001", "E-003"},
+		},
+		{
+			name:    "$user without a caller matches nothing",
+			filters: []FilterConfig{{Property: "status", Operator: "=", Value: "$user"}},
+			wantIDs: nil,
+		},
+		{
 			name:    "nil property treated as empty string",
 			filters: []FilterConfig{{Property: "missing", Operator: "=", Value: ""}},
 			wantIDs: []string{"E-001", "E-002", "E-003"},
@@ -184,7 +197,7 @@ func TestApplyFilters(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := applyFilters(entities, tt.filters)
+			got := applyFilters(entities, tt.filters, tt.user)
 			gotIDs := make([]string, len(got))
 			for i, e := range got {
 				gotIDs[i] = e.ID
@@ -241,7 +254,7 @@ func TestApplyFiltersMultiSelect(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := applyFilters(entities, tt.filters)
+			got := applyFilters(entities, tt.filters, "")
 			gotIDs := make([]string, len(got))
 			for i, e := range got {
 				gotIDs[i] = e.ID
@@ -762,19 +775,24 @@ func TestResolveFilterVariable(t *testing.T) {
 	tests := []struct {
 		name  string
 		input string
+		user  string
 		want  string
 	}{
-		{"plain string passes through", "plain value", "plain value"},
-		{"date string passes through", "2026-04-07", "2026-04-07"},
-		{"empty string passes through", "", ""},
-		{"unknown $variable passes through", "$unknown", "$unknown"},
-		{"$today resolves", "$today", "2026-04-07"},
-		{"$tomorrow resolves", "$tomorrow", "2026-04-08"},
-		{"$yesterday resolves", "$yesterday", "2026-04-06"},
+		{"plain string passes through", "plain value", "alice", "plain value"},
+		{"date string passes through", "2026-04-07", "alice", "2026-04-07"},
+		{"empty string passes through", "", "alice", ""},
+		{"unknown $variable passes through", "$unknown", "alice", "$unknown"},
+		{"$today resolves", "$today", "alice", "2026-04-07"},
+		{"$tomorrow resolves", "$tomorrow", "alice", "2026-04-08"},
+		{"$yesterday resolves", "$yesterday", "alice", "2026-04-06"},
+		{"$user resolves to the caller", "$user", "alice", "alice"},
+		{"$user stays literal without a caller", "$user", "", "$user"},
+		{"$USER is not the token", "$USER", "alice", "$USER"},
+		{"$user inside a value is not replaced", "by $user", "alice", "by $user"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := resolveFilterVariable(tt.input)
+			got := resolveFilterVariable(tt.input, tt.user)
 			if got != tt.want {
 				t.Errorf("resolveFilterVariable(%q) = %q, want %q", tt.input, got, tt.want)
 			}
@@ -798,10 +816,11 @@ func TestResolveFilterVariablesInList(t *testing.T) {
 		{"mixed variables and literals", "$today,2026-12-31", "2026-04-07,2026-12-31"},
 		{"trims whitespace", "$today, $tomorrow", "2026-04-07,2026-04-08"},
 		{"plain list passes through", "open,closed,wip", "open,closed,wip"},
+		{"$user per member", "$user, bob", "alice,bob"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := resolveFilterVariablesInList(tt.input)
+			got := resolveFilterVariablesInList(tt.input, "alice")
 			if got != tt.want {
 				t.Errorf("got %q, want %q", got, tt.want)
 			}

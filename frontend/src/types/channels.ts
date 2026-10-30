@@ -255,6 +255,39 @@ export interface ChannelSessionTransition {
   guarded?: boolean
   /** The number of graph writes the transition makes; absent when none. */
   outputs?: number
+  /** The entry's place in its list, from 0; a single mapping is entry 0. */
+  entry?: number
+  /** The entry's one-click preset, when the file gives it a button. */
+  button?: ChannelSessionButton
+}
+
+/**
+ * How the web app draws a decision button (TKT-TXZZZ2). It does not change
+ * what a post does. `confirm` is true to ask before a one-click post, false
+ * never to ask, and absent for the derived rule (ask into a final state).
+ * `confirm_text` is the question, as written; it comes only with `confirm`
+ * true. `style` is absent for the derived look.
+ */
+export interface ChannelButtonOptions {
+  confirm?: boolean
+  confirm_text?: string
+  style?: 'default' | 'primary' | 'danger'
+}
+
+/**
+ * A one-click preset of a transition entry: the text on the button and the
+ * props a click posts, in stored form, posted as they are. Its options
+ * already hold the type's `decision_button` for each one it leaves out.
+ */
+export interface ChannelSessionButton extends ChannelButtonOptions {
+  label: string
+  props?: Record<string, MessagePropInput>
+}
+
+/** One transition entry, by message type and its place in the type's list. */
+export interface ChannelEntryRef {
+  message_type: string
+  entry: number
 }
 
 export interface ChannelTypeList {
@@ -287,6 +320,11 @@ export interface ChannelActions {
    * transition is listed because its guard is judged on the message.
    */
   transitions: string[]
+  /**
+   * The transition entries the caller's post could take now, sorted by
+   * type and entry. A button entry's preset shows only when it is listed.
+   */
+  entries?: ChannelEntryRef[]
 }
 
 export interface ChannelHead {
@@ -569,6 +607,8 @@ export interface ChannelMessageTypeSchema {
   actions: ChannelActionSchema[]
   /** Options in a list property, shown as reply buttons. */
   choices?: ChannelChoicesSchema
+  /** How the type's decision button looks; absent when the file sets none. */
+  decision_button?: ChannelButtonOptions
 }
 
 /**
@@ -692,7 +732,17 @@ export const CHANNEL_WIRE_FIELDS: Record<string, readonly string[]> = {
     'by',
     'guarded',
     'outputs',
+    'entry',
+    'button',
   ]),
+  ChannelSessionButton: wireKeys<ChannelSessionButton>()([
+    'label',
+    'props',
+    'confirm',
+    'confirm_text',
+    'style',
+  ]),
+  ChannelEntryRef: wireKeys<ChannelEntryRef>()(['message_type', 'entry']),
   ChannelTypeList: wireKeys<ChannelTypeList>()([
     'type',
     'label',
@@ -709,6 +759,7 @@ export const CHANNEL_WIRE_FIELDS: Record<string, readonly string[]> = {
     'lifecycle',
     'typing',
     'transitions',
+    'entries',
   ]),
   ChannelHead: wireKeys<ChannelHead>()(['channel', 'last', 'ephemeral', 'typing_now', '_actions']),
   TypingEntry: wireKeys<TypingEntry>()(['author', 'since']),
@@ -862,6 +913,12 @@ export const CHANNEL_WIRE_FIELDS: Record<string, readonly string[]> = {
     'properties',
     'actions',
     'choices',
+    'decision_button',
+  ]),
+  ChannelDecisionButtonSchema: wireKeys<ChannelButtonOptions>()([
+    'confirm',
+    'confirm_text',
+    'style',
   ]),
   ChannelChoicesSchema: wireKeys<ChannelChoicesSchema>()(['from', 'answer', 'into', 'other']),
   ChannelPropertySchema: wireKeys<ChannelPropertySchema>()([

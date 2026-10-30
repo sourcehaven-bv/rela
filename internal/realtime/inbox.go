@@ -855,6 +855,9 @@ func (r inboxRun) item(ct realtimecfg.ChannelType, view AnchorView, ch *channels
 			roles = append(roles, name)
 		}
 	}
+	// The inbox lists the types only; an agent reads the entries with
+	// read_session.
+	types, _ := c.sessionAffordances(c.postable())
 	return inboxItem{
 		key: ch.Key,
 		entry: InboxEntry{
@@ -866,7 +869,7 @@ func (r inboxRun) item(ct realtimecfg.ChannelType, view AnchorView, ch *channels
 			},
 			Roles:       roles,
 			Since:       sv.EnteredAt,
-			Transitions: c.fireable(c.postable()),
+			Transitions: types,
 		},
 	}, true
 }

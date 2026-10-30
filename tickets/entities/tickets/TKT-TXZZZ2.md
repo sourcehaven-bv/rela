@@ -4,8 +4,10 @@ type: ticket
 title: Authored confirm and style for session decisions
 kind: enhancement
 priority: low
-effort: s
-status: backlog
+effort: m
+started: "2026-10-30"
+completed: "2026-10-30"
+status: done
 ---
 
 ## Description

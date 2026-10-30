@@ -2,7 +2,6 @@ package realtime
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -11,8 +10,6 @@ import (
 	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/channels"
-	"github.com/Sourcehaven-BV/rela/internal/predicate"
-	"github.com/Sourcehaven-BV/rela/internal/predicatefns"
 	"github.com/Sourcehaven-BV/rela/internal/realtimecfg"
 )
 
@@ -110,6 +107,69 @@ type SessionTransitionView struct {
 	// Outputs is the number of graph outputs the transition writes. It is
 	// config, the same for every reader.
 	Outputs int `json:"outputs,omitempty"`
+	// Entry is the transition's place in its `on.<type>` list, from 0. An
+	// [EntryRef] names the transition by it. Config, the same for every
+	// reader.
+	Entry int `json:"entry"`
+	// Button is the entry's one-click button, or nil. Config, the same for
+	// every reader.
+	Button *SessionButtonView `json:"button,omitempty"`
+}
+
+// SessionButtonView is a transition entry's one-click button: a click
+// posts the entry's message type with Props, in stored form.
+type SessionButtonView struct {
+	Label string         `json:"label"`
+	Props map[string]any `json:"props"`
+	// ButtonOptionsView holds the button's options, with its type's
+	// `decision_button:` already applied.
+	ButtonOptionsView
+}
+
+// ButtonOptionsView is how the web app draws a decision button: the
+// authored `confirm:` and `style:` (see [realtimecfg.ButtonOptions]).
+// They do not change what a post does. Config, the same for every
+// reader.
+//
+// Confirm is nil when the file leaves the question to the derived rule.
+// ConfirmText is set only with Confirm true, so `confirm: false` never
+// carries a text. Style is empty when the file sets none.
+type ButtonOptionsView struct {
+	Confirm     *bool  `json:"confirm,omitempty"`
+	ConfirmText string `json:"confirm_text,omitempty"`
+	Style       string `json:"style,omitempty"`
+}
+
+// buttonOptionsView serves o.
+func buttonOptionsView(o realtimecfg.ButtonOptions) ButtonOptionsView {
+	v := ButtonOptionsView{Style: string(o.Style)}
+	switch o.Confirm {
+	case realtimecfg.ConfirmAsk:
+		ask := true
+		v.Confirm, v.ConfirmText = &ask, o.ConfirmText
+	case realtimecfg.ConfirmNever:
+		never := false
+		v.Confirm = &never
+	case realtimecfg.ConfirmDerived:
+		// Left out: the web app derives it.
+	}
+	return v
+}
+
+// decisionButtonView serves a type's `decision_button:`; nil for nil.
+func decisionButtonView(o *realtimecfg.ButtonOptions) *ButtonOptionsView {
+	if o == nil {
+		return nil
+	}
+	v := buttonOptionsView(*o)
+	return &v
+}
+
+// EntryRef names one transition entry of the current state: its message
+// type and its place in the type's list.
+type EntryRef struct {
+	MessageType string `json:"message_type"`
+	Entry       int    `json:"entry"`
 }
 
 // current is a channel's session read against the configuration.
@@ -156,10 +216,16 @@ func sessionView(ct realtimecfg.ChannelType, h *channels.Channel, degraded bool,
 	v.Label, v.Final, v.Status = st.Label, st.Final, string(st.Status)
 	v.WaitingFor, v.WaitingOnMe = waitingView(st, ct.Roles, wf)
 	for _, tr := range st.Transitions() {
-		v.Transitions = append(v.Transitions, SessionTransitionView{
+		tv := SessionTransitionView{
 			MessageType: tr.MessageType, To: tr.To, By: string(tr.By), Guarded: tr.When != nil,
-			Outputs: len(tr.Outputs()),
-		})
+			Outputs: len(tr.Outputs()), Entry: tr.Index(),
+		}
+		if b, ok := tr.Button(); ok {
+			tv.Button = &SessionButtonView{
+				Label: b.Label, Props: b.Props(), ButtonOptionsView: buttonOptionsView(b.Options),
+			}
+		}
+		v.Transitions = append(v.Transitions, tv)
 	}
 	if h != nil && !st.Final {
 		showDue := h.State == channels.StateOpen && !degraded
@@ -252,7 +318,7 @@ func (c *call) heldRoles(names []string) map[string]bool {
 
 // heldRole reports whether the caller holds the role name for update on
 // the anchor, as [call.mayPost] asks, so the client ceiling applies. Each
-// distinct role is asked once per call; the post path and [call.fireable]
+// distinct role is asked once per call; the post path and [call.sessionAffordances]
 // share the answers, so they cannot drift. An undeclared name is not held.
 //
 // A creator role read while the call holds no stored channel is answered
@@ -274,24 +340,31 @@ func (c *call) heldRole(name string) bool {
 	return held
 }
 
-// fireable lists, sorted and once each, the message types in post whose
-// post by the caller would move the session out of its current state if a
-// transition's guard holds: the channel is open, the current state is
-// declared and not final, and the caller passes the poster rule
-// ([poster.admits]) of some entry of the type, so a type with only by:
-// trigger entries is never listed. The guard is not evaluated: it reads
-// the message, which does not exist yet. It reads the session as
-// [sessionView] does. Never nil.
-func (c *call) fireable(post map[string]bool) []string {
-	out := []string{}
+// sessionAffordances answers, over the post set post, which session moves
+// the caller's post could make out of the current state. It reads the
+// session as [sessionView] does, and only while the channel is open and
+// the current state is declared and not final; otherwise both are empty.
+// The caller's roles are looked up once, so a caller with two roles is
+// judged on both. Neither is ever nil.
+//
+// types lists, sorted and once each, the message types in post with an
+// entry whose poster rule ([poster.admits]) the caller passes, so a type
+// with only by: trigger entries is never listed. A guard is not evaluated:
+// it reads the message, which does not exist yet.
+//
+// entries lists, sorted by message type and entry, each entry of a type
+// in post that the state offers the caller
+// ([realtimecfg.SessionState.Offers]): the entries their post could take.
+func (c *call) sessionAffordances(post map[string]bool) (types []string, entries []EntryRef) {
+	types, entries = []string{}, []EntryRef{}
 	s := c.ct.Session()
 	if s == nil || c.state() != channels.StateOpen {
-		return out
+		return types, entries
 	}
 	cur := currentSession(s, sessionChannel(c.head, c.now))
 	st, ok := s.State(cur.State)
 	if !ok || st.Final {
-		return out
+		return types, entries
 	}
 	trs := st.Transitions()
 	var names []string
@@ -301,13 +374,20 @@ func (c *call) fireable(post map[string]bool) []string {
 		}
 	}
 	p := poster{roles: c.heldRoles(names)}
+	holds := func(role string) bool { return p.roles[role] }
 	for _, t := range trs {
-		if post[t.MessageType] && p.admits(t) {
-			out = append(out, t.MessageType)
+		if !post[t.MessageType] {
+			continue
+		}
+		if p.admits(t) {
+			types = append(types, t.MessageType)
+		}
+		if st.Offers(t, holds) {
+			entries = append(entries, EntryRef{MessageType: t.MessageType, Entry: t.Index()})
 		}
 	}
-	slices.Sort(out)
-	return slices.Compact(out)
+	slices.Sort(types)
+	return slices.Compact(types), entries
 }
 
 // sessionChannel is the channel a call reads the session of: its head, or
@@ -401,7 +481,7 @@ func sessionWrongState(
 		Status: http.StatusConflict, Type: TypeSessionWrongState,
 		Title: fmt.Sprintf("%s may be posted only while the session is in %s; %s",
 			mt.Name, strings.Join(mt.In, ", "), where),
-		Rule: "channel_types." + ct.Name + ".message_types." + mt.Name + ".in",
+		Rule: ct.InKey(mt),
 	}
 }
 
@@ -487,10 +567,7 @@ func sessionDecider(
 	ctx context.Context, s *realtimecfg.Session, mt *realtimecfg.MessageType, props map[string]any,
 	now time.Time, p poster, failed *guardFailure, gate *outputGate,
 ) func(channels.Channel) (channels.SessionMove, bool) {
-	fields := make(map[string]predicate.Value, len(mt.Properties))
-	for name, prop := range mt.Properties {
-		fields[name] = predicateValue(prop, props[name])
-	}
+	fields := mt.PredicateFields(props)
 	return func(ch channels.Channel) (channels.SessionMove, bool) {
 		*failed = guardFailure{}
 		if ch.State != channels.StateOpen {
@@ -501,12 +578,15 @@ func sessionDecider(
 		if len(branches) == 0 {
 			return channels.SessionMove{}, false
 		}
-		reminders := reminderCounters(s, cur, ch)
+		facts := realtimecfg.GuardFacts{
+			State: cur.State, Generation: cur.Generation, EnteredAt: cur.EnteredAt,
+			Reminders: reminderCounters(s, cur, ch),
+		}
 		for _, t := range branches {
 			if !p.admits(t) {
 				continue
 			}
-			holds, err := guardHolds(ctx, t.When, fields, reminders, cur, now)
+			holds, err := realtimecfg.GuardHolds(ctx, t.When, fields, facts, now)
 			if err != nil {
 				*failed = guardFailure{t: t, state: cur.State, err: err}
 				return channels.SessionMove{}, false
@@ -521,51 +601,6 @@ func sessionDecider(
 		}
 		return channels.SessionMove{}, false
 	}
-}
-
-// guardHolds reports whether prog, a transition's `when:`, holds for the
-// message fields and the session cur, whose `session.reminders` record is
-// reminders (see [reminderCounters]). No guard holds. An evaluation error,
-// or a result that is not a boolean, does not hold: a guard fails closed.
-// err reports such a failure. A nil operand, from an absent optional
-// property, is no failure: the guard just does not hold.
-func guardHolds(
-	ctx context.Context, prog *predicate.Program, fields map[string]predicate.Value, reminders predicate.Value,
-	cur current, now time.Time,
-) (bool, error) {
-	if prog == nil {
-		return true, nil
-	}
-	b := predicate.NewBindings()
-	err := b.SetVar("message", predicate.NewRecord(fields))
-	if err == nil {
-		err = b.SetVar("session", predicate.NewRecord(map[string]predicate.Value{
-			"state":      predicate.NewString(cur.State),
-			"generation": predicate.NewInt(cur.Generation),
-			"entered_at": predicate.NewDate(cur.EnteredAt),
-			"reminders":  reminders,
-		}))
-	}
-	if err == nil {
-		err = predicatefns.Bind(b, now)
-	}
-	if err != nil {
-		return false, err
-	}
-	v, err := prog.Eval(ctx, b)
-	if errors.Is(err, predicate.ErrNilOperand) {
-		// An optional property the message leaves out: a valid config
-		// whose guard does not hold, not a failure to report.
-		return false, nil
-	}
-	if err != nil {
-		return false, err
-	}
-	got, ok := v.(predicate.Bool)
-	if !ok {
-		return false, fmt.Errorf("the guard returned %T, not a boolean", v)
-	}
-	return got.Bool(), nil
 }
 
 // postedSession is the session after a post to c's channel, as the store

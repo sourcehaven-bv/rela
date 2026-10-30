@@ -83,6 +83,9 @@ type MessageTypeDescription struct {
 	Actions []ActionDescription
 	// Choices is the type's `choices:`; nil when it has none.
 	Choices *ChoicesDescription
+	// DecisionButton is the type's `decision_button:`; nil when it has
+	// none.
+	DecisionButton *ButtonOptionsView
 }
 
 // ChoicesDescription describes `choices:` on a question type: the list
@@ -186,9 +189,10 @@ func describeMessageType(mt *realtimecfg.MessageType) MessageTypeDescription {
 	ttl, reply := messageTypeTiming(mt)
 	d := MessageTypeDescription{
 		Name: mt.Name, Label: mt.Label, Persist: string(mt.Persist), TTLSeconds: ttl, Reply: reply,
-		Properties: make([]PropertyDescription, 0, len(mt.Properties)),
-		Actions:    []ActionDescription{},
-		Choices:    describeChoices(mt.Choices),
+		Properties:     make([]PropertyDescription, 0, len(mt.Properties)),
+		Actions:        []ActionDescription{},
+		Choices:        describeChoices(mt.Choices),
+		DecisionButton: decisionButtonView(mt.DecisionButton),
 	}
 	for _, p := range mt.Properties {
 		d.Properties = append(d.Properties, PropertyDescription{

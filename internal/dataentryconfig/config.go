@@ -19,6 +19,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig/icondefs"
 	"github.com/Sourcehaven-BV/rela/internal/git"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
+	"github.com/Sourcehaven-BV/rela/internal/yamlscalar"
 )
 
 // ConfigFile is the conventional filename for data-entry configuration within a rela project.
@@ -351,22 +352,12 @@ func (c *ActionConfirm) UnmarshalYAML(value *yaml.Node) error {
 	// YAML 1.2 reads an unquoted yes/no/on/off as a string, so `confirm: yes`
 	// would silently become the dialog text "yes". Refuse it; a quoted value
 	// is taken as the text the operator meant.
-	if value.Style&(yaml.DoubleQuotedStyle|yaml.SingleQuotedStyle) == 0 && isYAML11Bool(value.Value) {
+	if yamlscalar.PlainYAML11Bool(value) {
 		return fmt.Errorf("confirm: %q is not a boolean; use true or false, or quote it to show it as text",
-			value.Value)
+			strings.TrimSpace(value.Value))
 	}
 	*c = ActionConfirm{Enabled: value.Value != "", Text: value.Value}
 	return nil
-}
-
-// isYAML11Bool reports whether s is one of the YAML 1.1 boolean spellings
-// that YAML 1.2 reads as a plain string.
-func isYAML11Bool(s string) bool {
-	switch strings.ToLower(s) {
-	case "yes", "no", "y", "n", "on", "off":
-		return true
-	}
-	return false
 }
 
 // MarshalYAML writes the same shape UnmarshalYAML reads.

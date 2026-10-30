@@ -580,6 +580,7 @@
     "_actions": {
       "delete_own": false,
       "edit_own": false,
+      "entries": [],
       "lifecycle": [],
       "post": [
         "contained",
@@ -620,6 +621,7 @@
         "status": "working",
         "transitions": [
           {
+            "entry": 0,
             "guarded": true,
             "message_type": "assessed",
             "to": "assessed"
@@ -652,6 +654,7 @@
     "_actions": {
       "delete_own": true,
       "edit_own": true,
+      "entries": [],
       "lifecycle": [
         "close"
       ],
@@ -908,6 +911,12 @@
     "_actions": {
       "delete_own": false,
       "edit_own": false,
+      "entries": [
+        {
+          "entry": 0,
+          "message_type": "note"
+        }
+      ],
       "lifecycle": [
         "close"
       ],
@@ -942,6 +951,7 @@
         "status": "working",
         "transitions": [
           {
+            "entry": 0,
             "message_type": "note",
             "outputs": 1,
             "to": "reviewed"
@@ -991,6 +1001,7 @@
         "status": "working",
         "transitions": [
           {
+            "entry": 0,
             "message_type": "note",
             "outputs": 1,
             "to": "reviewed"
@@ -1086,6 +1097,7 @@
         "status": "working",
         "transitions": [
           {
+            "entry": 0,
             "guarded": true,
             "message_type": "assessed",
             "to": "assessed"
@@ -1478,6 +1490,7 @@
     "_actions": {
       "delete_own": false,
       "edit_own": false,
+      "entries": [],
       "lifecycle": [
         "close"
       ],
@@ -1780,6 +1793,7 @@
     "_actions": {
       "delete_own": false,
       "edit_own": false,
+      "entries": [],
       "lifecycle": [],
       "post": [
         "status",

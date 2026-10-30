@@ -646,11 +646,22 @@ Each entry in `fields:` configures one property input:
 | `placeholder` | string            | Placeholder text for empty inputs                              |
 | `help`        | string            | Help text shown below the field                                |
 | `required`    | bool              | Field must be filled before submission                         |
-| `default`     | string            | Default value for new entities                                 |
+| `default`     | string            | Default value for new entities; `$user` is the signed-in user  |
 | `hidden`      | bool              | Include in form data but hide from UI                          |
 | `widget`      | string            | Input widget type (see below)                                  |
 | `span`        | int (1-12)        | Width on the layout grid; omit for full width (see below)      |
 | `transitions` | map[string]list   | Allowed state transitions for enum fields (edit forms only)    |
+
+A property field with `default: $user` opens with the signed-in user's id,
+the `user` that `GET /api/v1/_me` returns. The field stays empty when the
+server cannot identify the user. A `prop.<name>` query parameter still takes
+precedence, and the form never overwrites a value the user has typed.
+
+```yaml
+fields:
+  - property: owner
+    default: $user
+```
 
 > **Labels are authored, never derived.** When `label` is omitted the raw
 > property name is displayed — rela never converts `laatste_contact` into
@@ -1707,17 +1718,24 @@ silent lexicographic fallback.
 **Variable substitution in filter values:**
 
 Filter values starting with `$` are reserved for variables. The following
-date variables are supported:
+variables are supported:
 
-| Variable     | Resolves to                          |
-| ------------ | ------------------------------------ |
-| `$today`     | Today's date in `YYYY-MM-DD` (UTC)   |
-| `$tomorrow`  | Tomorrow's date                      |
-| `$yesterday` | Yesterday's date                     |
+| Variable     | Resolves to                                    |
+| ------------ | ---------------------------------------------- |
+| `$today`     | Today's date in `YYYY-MM-DD` (UTC)             |
+| `$tomorrow`  | Tomorrow's date                                |
+| `$yesterday` | Yesterday's date                               |
+| `$user`      | The id of the user who requests the list       |
 
-Variables are evaluated in **UTC** for predictability across server
-timezones. Variables work in single-value operators and in comma-separated
-lists (`in`, `!=`):
+Date variables are evaluated in **UTC** for predictability across server
+timezones. `$user` is resolved for each user, so one list or board shows each
+user their own rows. This holds for its sidebar counts and for the rows a
+command on the list receives. When the user cannot be identified, `$user`
+matches no user's rows. `$user` works in property filters; a relation
+filter does not resolve it.
+
+Variables work in single-value operators and in comma-separated lists (`in`,
+`!=`):
 
 ```yaml
 filters:
@@ -1730,6 +1748,11 @@ filters:
   - property: due_date
     operator: in
     value: "$yesterday,$today,$tomorrow"
+
+  # Tasks assigned to whoever looks at the list
+  - property: assignee
+    operator: "="
+    value: $user
 ```
 
 To filter for a literal value that starts with `$`, you currently cannot
@@ -3414,6 +3437,9 @@ The rules:
   `navigation: references unknown dashboard "sales" (known: ops)`.
 - `dashboard: true` without a `dashboard:` block shows an empty dashboard, as
   before.
+- An unquoted `yes`, `no`, `on`, `off`, `y` or `n` is refused, because it
+  reads as a boolean in older YAML. A block scalar (`|` or `>`) counts as
+  unquoted. Quote the value, or tag it `!!str`, to use it as a name.
 
 A named dashboard opens at `/dashboard/<name>`, and inside a space at
 `/s/<space>/dashboard/<name>`. Its sidebar entry is highlighted while it is
@@ -5714,7 +5740,7 @@ actions:
 | `set`         | map    | Property key-value pairs to set on the entity (mutually exclusive with `script`) |
 | `script`      | string | Lua script path, relative to the `actions/` directory (mutually exclusive with `set`) |
 | `params`      | map    | Static key-value parameters from config, exposed as `rela.params` (values must be strings — quote them in YAML) |
-| `confirm`     | bool or string | Show a confirmation dialog before a list, list-button or detail-page action runs (default: `false`). A string is the dialog text. The sidebar does not ask |
+| `confirm`     | bool or string | Show a confirmation dialog before a list, list-button or detail-page action runs (default: `false`). A string is the dialog text. An unquoted `yes`, `no`, `on`, `off`, `y` or `n` is refused, also in a block scalar (`\|` or `>`); quote it or tag it `!!str` to show it as text. The sidebar does not ask |
 | `available_on`| map    | Offer the action on detail pages — see [Actions on the detail page](#actions-on-the-detail-page). Requires `script` |
 | `when`        | string | Predicate that must hold for the entity. Requires `available_on` |
 | `permission`  | string | Global named permission the caller must hold to run the action from a list, a list button, the sidebar, a next-action offer or a detail page |
@@ -7145,7 +7171,7 @@ lists:
     filters:
       - property: assignee
         operator: "="
-        value: "$USER"
+        value: $user
     create_form: create_ticket
     edit_form: edit_ticket
     page_size: 25

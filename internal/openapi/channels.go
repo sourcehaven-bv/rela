@@ -95,7 +95,8 @@ func addChannelDescriptorSchema(spec *Spec) {
 		"actions": ArraySchema(labeled(map[string]*Schema{
 			"promote_to": {Type: "string", Description: "The entity type a promoting action creates"},
 		})),
-		"choices": choicesSchema(),
+		"choices":         choicesSchema(),
+		"decision_button": decisionButtonSchema(),
 	})
 	messageType.Required = append(messageType.Required, "persist", "reply", "properties", "actions")
 	channelType := labeled(map[string]*Schema{
@@ -480,7 +481,8 @@ const postMessageText = "A log message is stored and answered 201. An ephemeral 
 	"for its TTL and answered 202, without a seq. A message that moves a session along a " +
 	"transition with outputs is refused 403 session_output_denied, before anything is stored, " +
 	"when you may not write one of them; the outputs' result is on the session notice. A message type " +
-	"may be limited to some session states with in:; outside them it is not in _actions.post, and a post " +
+	"may be limited to some session states with in: or session.default_in; " +
+	"outside them it is not in _actions.post, and a post " +
 	"is refused 409 session_wrong_state, whose title names the allowed states. A post with " +
 	"expect_generation is stored only while the session is at that generation; otherwise it is refused " +
 	"409 session_moved, whose title names the expected and the current generation."
@@ -574,6 +576,39 @@ func choicesSchema() *Schema {
 	}, []string{"from", "answer", "into", "other"})
 	s.Description = "Set for a question type: its options show as reply buttons. Absent otherwise"
 	return s
+}
+
+// sessionButtonProps are the properties of a session transition's
+// button: its label, its preset and its options, with the type's
+// decision_button already applied.
+func sessionButtonProps() map[string]*Schema {
+	props := buttonOptionsProps()
+	props["label"] = StringSchema()
+	props["props"] = &Schema{Type: "object", AdditionalProperties: &Schema{}}
+	return props
+}
+
+// decisionButtonSchema is `decision_button:` on a message type, in the
+// channel schema.
+func decisionButtonSchema() *Schema {
+	s := ObjectSchema(buttonOptionsProps(), nil)
+	s.Description = "Set when the type has decision_button: how the web app draws the type's decision button. " +
+		"It does not change what a post does. Absent otherwise"
+	return s
+}
+
+// buttonOptionsProps are the options of a decision button, on a session
+// transition's button and on a message type's decision_button.
+func buttonOptionsProps() map[string]*Schema {
+	return map[string]*Schema{
+		"confirm": {Type: "boolean", Description: "true asks before a one-click post, false never asks; absent " +
+			"leaves it to the derived rule (ask into a final state)"},
+		"confirm_text": {Type: "string", Limits: Limits{MaxLength: realtimelimits.MaxConfirmTextRunes},
+			Description: "The question to show, as written. Present only with confirm true; confirm false never " +
+				"carries a text"},
+		"style": {Type: "string", Enum: []string{"default", "primary", "danger"},
+			Description: "How the button looks; absent for the derived look"},
+	}
 }
 
 // propsSchema converts a message type's props schema, which the MCP tools
@@ -793,8 +828,19 @@ func addHeadSchemas(sc map[string]*Schema) {
 			"transitions": {Type: "array", Items: str(),
 				Description: "The message types whose post by you would move the session out of its current " +
 					"state, if the transition's guard holds; a subset of post; empty, never null"},
-		}, []string{"post", "edit_own", "delete_own", "remove", "lifecycle", "typing", "transitions"}),
+			"entries": {Type: "array", Items: entryRefSchema(),
+				Description: "The rows of session.transitions your post could take, by message_type and entry, " +
+					"sorted: you may post the type now, the entry admits you, and no earlier entry takes your " +
+					"post first. A row with a button you may click is listed here; empty, never null"},
+		}, []string{"post", "edit_own", "delete_own", "remove", "lifecycle", "typing", "transitions", "entries"}),
 	}, []string{"channel", "ephemeral", "typing_now", "_actions"})
+}
+
+// entryRefSchema names one transition of the session's current state.
+func entryRefSchema() *Schema {
+	return ObjectSchema(map[string]*Schema{
+		"message_type": StringSchema(), "entry": IntegerSchema(),
+	}, []string{"message_type", "entry"})
 }
 
 // channelSessionSchema is the ChannelSession schema.
@@ -832,7 +878,13 @@ func channelSessionSchema() *Schema {
 						"only if the guard holds for it"},
 				"outputs": {Type: "integer",
 					Description: "The number of graph writes the transition makes; absent when it makes none"},
-			}, []string{"message_type", "to"}), Description: "The on: entries of the current state, sorted by " +
+				"entry": {Type: "integer",
+					Description: "The transition's place in the list of its message type, from 0"},
+				"button": {Type: "object", Description: "Set for an entry with a one-click button. A click posts " +
+					"the message type with props, as stored (an integer as a number, a list as an array, a date " +
+					"as 2006-01-02), and expect_generation. Config, the same for every reader.",
+					Properties: sessionButtonProps(), Required: []string{"label", "props"}},
+			}, []string{"message_type", "to", "entry"}), Description: "The on: entries of the current state, sorted by " +
 				"message type. A message type may lead to several states; its entries are listed in the order " +
 				"rela tries them, and the first whose poster rule and guard hold moves the session."},
 			"due_at":    dateTimeSchema(),

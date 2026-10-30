@@ -9,6 +9,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/Sourcehaven-BV/rela/internal/channels"
+	"github.com/Sourcehaven-BV/rela/internal/realtimelimits"
 )
 
 // TestNew_RejectsNil pins that New refuses every missing collaborator.
@@ -107,6 +108,16 @@ func TestPost_Validation(t *testing.T) {
 	}
 }
 
+// TestPost_PropsCapMatchesStore pins that the property cap the prop rules
+// apply, [realtimelimits.MaxMessageProperties], is the store's
+// [channels.MaxProps]. The rules moved to realtimecfg (TKT-S9TLJJ), which
+// may not import channels, so a change to one cap alone would change what
+// a post accepts.
+func TestPost_PropsCapMatchesStore(t *testing.T) {
+	t.Parallel()
+	require.Equal(t, channels.MaxProps, realtimelimits.MaxMessageProperties)
+}
+
 // TestPost_ReplyToMissing pins that a reply to a message that does not
 // exist is a 400.
 func TestPost_ReplyToMissing(t *testing.T) {
@@ -168,11 +179,12 @@ func TestHead_Affordances(t *testing.T) {
 	}{
 		{"member", user("bob"), Affordances{
 			Post:    []string{"cursor", "note", "text", "typing"},
-			EditOwn: true, DeleteOwn: true, Lifecycle: []string{}, Transitions: []string{},
+			EditOwn: true, DeleteOwn: true, Lifecycle: []string{}, Transitions: []string{}, Entries: []EntryRef{},
 		}},
 		{"owner and moderator", user("alice", "chat.moderate", "chat.post"), Affordances{
 			Post:    []string{"cursor", "note", "owner-text", "perm-text", "text", "typing"},
 			EditOwn: true, DeleteOwn: true, Remove: true, Lifecycle: []string{}, Transitions: []string{},
+			Entries: []EntryRef{},
 		}},
 	}
 	for _, tc := range tests {

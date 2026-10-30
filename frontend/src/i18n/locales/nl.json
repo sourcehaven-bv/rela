@@ -165,6 +165,7 @@
     "rateLimited": "Te veel berichten. Probeer het zo opnieuw.",
     "sessionWrongState": "Dit berichttype kan in de huidige stand van de sessie niet worden geplaatst. Kies een ander.",
     "decisionConfirmBody": "Hiermee eindigt de sessie in {state}. Dit kun je niet ongedaan maken.",
+    "decisionConfirmMoveBody": "Hiermee gaat de sessie naar {state}.",
     "decisionStale": "De sessie is verder gegaan. Kies opnieuw.",
     "choiceOther": "Ander antwoord…",
     "choiceStale": "Deze vraag is niet meer open.",

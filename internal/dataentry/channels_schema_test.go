@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -180,6 +181,53 @@ func TestChannelSchema_Session(t *testing.T) {
 	require.False(t, has, "a type without a session has no session key")
 	for _, leak := range []string{"lead", "dpo", "privacy.officer", "risk", "transitions", "escalated\":{"} {
 		require.NotContains(t, string(raw.ChannelTypes[0]["session"]), leak)
+	}
+}
+
+// TestChannelSchema_DecisionButton pins TKT-TXZZZ2 AC 5 through the real
+// handler: a message type with decision_button carries it with confirm,
+// confirm_text and style, and a type without it has no such key.
+func TestChannelSchema_DecisionButton(t *testing.T) {
+	env := newChannelEnv(t)
+	src := strings.Replace(breachRealtime,
+		"      contained: { properties: { note: { type: string } }, post: [lead, member] }\n",
+		"      contained:\n        properties: { note: { type: string } }\n        post: [lead, member]\n"+
+			"        decision_button: { confirm: \"This contains the breach.\", style: primary }\n", 1)
+	src = strings.Replace(src,
+		"      dismiss:   { properties: { reason: { type: string, required: true } }, post: [lead] }\n",
+		"      dismiss:\n        properties: { reason: { type: string, required: true } }\n        post: [lead]\n"+
+			"        decision_button: { style: danger }\n", 1)
+	env.ch.cfg.Store(env.ch.parse(t, src))
+	code, b := env.get(t, "alice", channelSchemaPath)
+	require.Equal(t, http.StatusOK, code, string(b))
+	got := decodeAs[v1.ChannelSchema](t, b)
+	byName := map[string]v1.ChannelMessageTypeSchema{}
+	for _, mt := range got.ChannelTypes[0].MessageTypes {
+		byName[mt.Name] = mt
+	}
+	yes := true
+	require.Equal(t, &v1.ChannelDecisionButtonSchema{
+		Confirm: &yes, ConfirmText: "This contains the breach.", Style: "primary",
+	}, byName["contained"].DecisionButton)
+	require.Equal(t, &v1.ChannelDecisionButtonSchema{Style: "danger"}, byName["dismiss"].DecisionButton)
+	require.Nil(t, byName["text"].DecisionButton)
+
+	var raw struct {
+		ChannelTypes []struct {
+			MessageTypes []map[string]json.RawMessage `json:"message_types"`
+		} `json:"channel_types"`
+	}
+	require.NoError(t, json.Unmarshal(b, &raw))
+	for _, mt := range raw.ChannelTypes[0].MessageTypes {
+		var name string
+		require.NoError(t, json.Unmarshal(mt["name"], &name))
+		switch name {
+		case "dismiss":
+			require.JSONEq(t, `{"style":"danger"}`, string(mt["decision_button"]))
+		case "text":
+			_, has := mt["decision_button"]
+			require.False(t, has, "a type without decision_button has the key")
+		}
 	}
 }
 

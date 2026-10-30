@@ -1190,6 +1190,37 @@ triggers:
 `)
 }
 
+// TestSessionTriggerPost_DefaultIn pins AC 7 of TKT-S5OJ7S: over the PoC
+// with session.default_in: keyed, the ready trigger's go is skipped while
+// the session is working, and the warning names session.default_in.
+func TestSessionTriggerPost_DefaultIn(t *testing.T) {
+	th := newTriggerHarness(t, pocRealtimeDefaultIn(t, `
+triggers:
+  ready:
+    entity_type: ticket
+    on: enter
+    when: "entity.status == 'ready'"
+    channel: run
+    post: { type: go, props: { note: "Moved to Ready on the board." } }
+`))
+	th.pocDriveTo(t, "working")
+	before, err := th.store.Store.Head(context.Background(), pocKey())
+	require.NoError(t, err)
+	th.src.set("ticket", "TKT-1", "", map[string]any{"status": "new"})
+	th.reconcile(t)
+	th.ticket(1, map[string]any{"status": "ready"})
+	// The test is not parallel, so no other test logs meanwhile.
+	logs := logtest.Capture(t, slog.LevelWarn)
+	rep := th.round(t)
+	require.Equal(t, 0, rep.Posted)
+	require.Equal(t, 1, rep.Skipped)
+	require.Contains(t, logs(), "level=WARN")
+	require.Contains(t, logs(), "in=channel_types.run.session.default_in")
+	after, err := th.store.Store.Head(context.Background(), pocKey())
+	require.NoError(t, err)
+	require.Equal(t, before.LastSeq, after.LastSeq, "a skipped trigger stored a message")
+}
+
 // TestSessionTriggerPost_MessageIn pins AC 6: a trigger whose message type
 // has in: is skipped while the session is elsewhere: nothing is stored and
 // Skipped counts it. In the type's state it posts and moves the session.

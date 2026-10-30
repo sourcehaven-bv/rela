@@ -3,6 +3,7 @@ package realtimecfg
 import (
 	"fmt"
 	"reflect"
+	"slices"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -33,6 +34,7 @@ var refusedKeys = []struct {
 	{"channel_types.*.session.states.*.on.*.run_as", "run_as is set once per session type, at session.run_as"},
 	{"channel_types.*.session.states.*.on_final", "on_final belongs to the session: session.on_final: close " +
 		"closes the channel on a move into any final state"},
+	{"channel_types.*.session.states.*.default_in", "default_in belongs to the session: session.default_in: keyed"},
 	{"channel_types.*.session.states.*.after.*.run_as", "run_as is set once per session type, at session.run_as"},
 	{"channel_types.*.session.states.*.awaits", "use waiting_for: the roles whose answer the state waits for"},
 	{"channel_types.*.session.status", "status is set per state: session.states.<name>.status"},
@@ -43,6 +45,10 @@ var refusedKeys = []struct {
 		"enters: set it on that state"},
 	{"channel_types.*.message_types.*.states", "use in: the session states in which the type may be posted"},
 	{"channel_types.*.message_types.*.from", "use in: the session states in which the type may be posted"},
+	{"channel_types.*.message_types.*.decision_button.label", "the type's decision button reads as the " +
+		"message type's label; for another text, add a button: to the entry"},
+	{"channel_types.*.message_types.*.decision_button.props", "the type's decision button posts no preset; " +
+		"for a preset, add a button: to the entry"},
 	{"agents", "agents are ordinary principals; restrict them with client_baselines in acl.yaml " +
 		"and match them with a principal_type role"},
 	{"channel_types.*.message_types.*.actions.*.by", "agents are ordinary principals, so an action " +
@@ -107,6 +113,16 @@ func (k *keyChecker) walk(n *yaml.Node, t reflect.Type, path string) {
 		k.branches(n, path)
 		return
 	}
+	if t == reflect.TypeFor[rawPresetValue]() {
+		k.presetValue(n, path)
+		return
+	}
+	if t == reflect.TypeFor[rawConfirm]() {
+		if n.Kind != yaml.ScalarNode {
+			k.add(path, "must be true, false or the text to show")
+		}
+		return
+	}
 	switch t.Kind() {
 	case reflect.Struct:
 		if n.Kind != yaml.MappingNode {
@@ -158,6 +174,18 @@ func (k *keyChecker) branches(n *yaml.Node, path string) {
 		}
 	default:
 		k.add(path, "must be a mapping or a list of mappings")
+	}
+}
+
+// presetValue checks one value of a button's preset: a single value or a
+// list of single values. A null was already let through by the caller.
+func (k *keyChecker) presetValue(n *yaml.Node, path string) {
+	ok := n.Kind == yaml.ScalarNode
+	if n.Kind == yaml.SequenceNode {
+		ok = !slices.ContainsFunc(n.Content, func(c *yaml.Node) bool { return resolveNode(c).Kind != yaml.ScalarNode })
+	}
+	if !ok {
+		k.add(path, "must be a single value or a list")
 	}
 }
 

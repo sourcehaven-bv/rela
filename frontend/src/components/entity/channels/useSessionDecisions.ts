@@ -12,6 +12,7 @@ import type {
 } from 'rela-components/components/channel/types'
 import { decisionPendingKey } from 'rela-components/components/channel/channelFields'
 import { problemType } from './channelErrors'
+import type { AppDecisionView } from './presetViews'
 import {
   choiceViews,
   decisionCause,
@@ -124,7 +125,7 @@ export function useSessionDecisions(d: DecisionDeps) {
 
   // The head is replaced on every frame; the views are rebuilt only when
   // what they read changes, so the buttons keep their identity.
-  const memo = computed<{ ct: ChannelTypeSchema; key: string; value: ChannelDecisionView[] }>(
+  const memo = computed<{ ct: ChannelTypeSchema; key: string; value: AppDecisionView[] }>(
     (prev) => {
       const ct = d.channelType()
       const h = d.ch.head.value
@@ -138,6 +139,7 @@ export function useSessionDecisions(d: DecisionDeps) {
         h?.channel.state,
         h?._actions.post,
         h?._actions.transitions,
+        h?._actions.entries,
         d.ch.actionsGeneration.value,
       ])
       if (prev && prev.ct === ct && prev.key === key) return prev
@@ -283,8 +285,8 @@ export function useSessionDecisions(d: DecisionDeps) {
    */
   async function onDecide(key: string, from: 'header' | 'row') {
     if (deciding.value || d.submitting.value) return
-    const view0 = find(key)
-    if (!view0) return stale()
+    const view = find(key)
+    if (!view) return stale()
     deciding.value = true
     const mine = ++click
     const channel = d.channelKey()
@@ -292,23 +294,24 @@ export function useSessionDecisions(d: DecisionDeps) {
     const cause = decisionSeq.value
     const live = () => mine === click && channel === d.channelKey()
     try {
-      if (view0.opensForm) {
-        await openForm(view0, generation, live)
+      if (view.opensForm) {
+        await openForm(view, generation, live)
         return
       }
-      let view = view0
       if (view.confirm) {
         const ok = await d.ui.confirm({
           title: view.label,
-          message: t('channels.decisionConfirmBody', { state: view.toLabel ?? view.label }),
+          message: confirmMessage(view),
           confirmLabel: view.label,
-          danger: !!view.danger,
+          // The dialog's red follows the outcome, not the button's style.
+          danger: !!(view.danger || view.outcomeDanger),
         })
         if (!ok || !live()) return
-        // UX only: the server refuses a post at another generation anyway.
-        const again = find(key)
-        if (!again) return stale()
-        view = again
+        // UX only: a state that no longer offers the key is stale; the
+        // server refuses a post at another generation anyway. The view
+        // posted is the one confirmed, not the one now under the key,
+        // which a reload that reorders entries may have changed.
+        if (!find(key)) return stale()
       }
       const replyTo = decisionReplyTo(d.ch.messages.value, cause, d.messageType(view.messageType))
       if (!(await postView(key, view, replyTo, generation, live))) return
@@ -450,6 +453,19 @@ export function useSessionDecisions(d: DecisionDeps) {
     resetDecisions,
     sendComposer,
   }
+}
+
+/**
+ * The body of a decision's confirm dialog: the authored text as written,
+ * else a translated text that says the session moves to a state that is
+ * not final, or ends in a final one.
+ */
+function confirmMessage(view: AppDecisionView): string {
+  if (view.confirmText) return view.confirmText
+  const state = view.toLabel ?? view.label
+  return view.movesOnly
+    ? t('channels.decisionConfirmMoveBody', { state })
+    : t('channels.decisionConfirmBody', { state })
 }
 
 /** A preset prop value as a request sends it: a readable ref is its id. */

@@ -245,11 +245,27 @@ type Transition struct {
 	// compile, so the load checks that judge which entries a poster can
 	// reach do not add a problem on top of the compile error.
 	guarded bool
+	// button is the compiled `button:`, or nil. Copies of the transition
+	// share it; it is never written after the load.
+	button *TransitionButton
 }
 
 // Key is the entry's key path in realtime.yaml, such as
 // `channel_types.ct.session.states.review.on.decide[1]`.
 func (t Transition) Key() string { return t.key }
+
+// Index is the entry's place in its `on.<type>` list, from 0; 0 for the
+// mapping form.
+func (t Transition) Index() int { return t.index }
+
+// Button returns the entry's one-click button. ok is false when the entry
+// has no `button:`.
+func (t Transition) Button() (TransitionButton, bool) {
+	if t.button == nil {
+		return TransitionButton{}, false
+	}
+	return *t.button, true
+}
 
 // WarnGuardOnce reports true the first time it is called for this
 // transition of this loaded configuration, and false after. A reload
@@ -338,16 +354,18 @@ func (v *validator) session(
 				outputCause{kind: causeTimer}, ct)
 		}
 		for _, mn := range sortedKeys(rs.On) {
-			if ts := (branchCompiler{v}).compile(sk+".on."+mn, mn, rs.On[mn], s, ct); len(ts) > 0 {
+			if ts := (branchCompiler{validator: v, state: st.Name, limits: limits}).
+				compile(sk+".on."+mn, mn, rs.On[mn], s, ct); len(ts) > 0 {
 				st.on[mn] = ts
 			}
 		}
 	}
+	buttonChecker{v}.states(s, ct, statesKey)
 	timerLoops(v.add, statesKey, s)
 	jobLoops(v.add, statesKey, s)
 	waitChecker{v}.check(statesKey, raw.States, s, ct)
 	s.runAs = writeChecker{v}.runAs(key+".run_as", raw.RunAs, s)
-	messageInCheck{v: v, raw: rawCT, ct: ct}.withSession(s, raw.States)
+	messageInCheck{v: v, raw: rawCT, ct: ct}.withSession(s, raw.States, raw.DefaultIn)
 	return s
 }
 

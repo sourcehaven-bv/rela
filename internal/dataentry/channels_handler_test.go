@@ -976,33 +976,51 @@ func TestChannelsHandler_NoticeOutputs(t *testing.T) {
 // TestChannelsHandler_SessionWrongState pins TKT-QYFLRH AC 4 over HTTP: a
 // type limited by in: is missing from _actions.post outside its states,
 // and a post of it is 409 session_wrong_state naming the rule. Once the
-// session is in the state, the type is offered and posts.
+// session is in the state, the type is offered and posts. With
+// session.default_in: keyed (TKT-S5OJ7S AC 6), the rule is
+// session.default_in.
 func TestChannelsHandler_SessionWrongState(t *testing.T) {
-	env := newChannelEnv(t)
-	env.ch.cfg.Store(env.ch.parse(t, strings.Replace(channelTestRealtime,
-		"      note:      { properties: { body: { type: string } }, post: [member] }\n",
-		"      note:      { properties: { body: { type: string } }, post: [member] }\n"+
-			"      closing:   { properties: { note: { type: string } }, post: [member], in: [contained] }\n", 1)))
-	actions := func() []string {
-		t.Helper()
-		code, b := env.get(t, "alice", incidentPath)
-		require.Equal(t, http.StatusOK, code, "%s", b)
-		return decodeAs[v1.ChannelHead](t, b).Actions.Post
-	}
-	require.NotContains(t, actions(), "closing")
+	t.Run("authored in names message_types.in", func(t *testing.T) {
+		env := newChannelEnv(t)
+		env.ch.cfg.Store(env.ch.parse(t, strings.Replace(channelTestRealtime,
+			"      note:      { properties: { body: { type: string } }, post: [member] }\n",
+			"      note:      { properties: { body: { type: string } }, post: [member] }\n"+
+				"      closing:   { properties: { note: { type: string } }, post: [member], in: [contained] }\n", 1)))
+		actions := func() []string {
+			t.Helper()
+			code, b := env.get(t, "alice", incidentPath)
+			require.Equal(t, http.StatusOK, code, "%s", b)
+			return decodeAs[v1.ChannelHead](t, b).Actions.Post
+		}
+		require.NotContains(t, actions(), "closing")
 
-	resp, b := env.do(t, "alice", http.MethodPost, incidentPath+"/messages", `{"type":"closing"}`, nil)
-	require.Equal(t, http.StatusConflict, resp.StatusCode, "%s", b)
-	require.Equal(t, realtime.TypeSessionWrongState, problemType(t, b))
-	p := decodeAs[v1.Error](t, b)
-	require.Equal(t, "closing may be posted only while the session is in contained; it is in detected", p.Title)
-	require.Equal(t, "channel_types.incident.message_types.closing.in", p.Detail)
+		resp, b := env.do(t, "alice", http.MethodPost, incidentPath+"/messages", `{"type":"closing"}`, nil)
+		require.Equal(t, http.StatusConflict, resp.StatusCode, "%s", b)
+		require.Equal(t, realtime.TypeSessionWrongState, problemType(t, b))
+		p := decodeAs[v1.Error](t, b)
+		require.Equal(t, "closing may be posted only while the session is in contained; it is in detected", p.Title)
+		require.Equal(t, "channel_types.incident.message_types.closing.in", p.Detail)
 
-	resp, b = env.do(t, "alice", http.MethodPost, incidentPath+"/messages", `{"type":"contained"}`, nil)
-	require.Equal(t, http.StatusCreated, resp.StatusCode, "%s", b)
-	require.Contains(t, actions(), "closing")
-	resp, b = env.do(t, "alice", http.MethodPost, incidentPath+"/messages", `{"type":"closing"}`, nil)
-	require.Equal(t, http.StatusCreated, resp.StatusCode, "%s", b)
+		resp, b = env.do(t, "alice", http.MethodPost, incidentPath+"/messages", `{"type":"contained"}`, nil)
+		require.Equal(t, http.StatusCreated, resp.StatusCode, "%s", b)
+		require.Contains(t, actions(), "closing")
+		resp, b = env.do(t, "alice", http.MethodPost, incidentPath+"/messages", `{"type":"closing"}`, nil)
+		require.Equal(t, http.StatusCreated, resp.StatusCode, "%s", b)
+	})
+	t.Run("derived in names session.default_in", func(t *testing.T) {
+		env := newChannelEnv(t)
+		env.ch.cfg.Store(env.ch.parse(t, strings.Replace(channelTestRealtime,
+			"      initial: detected\n", "      initial: detected\n      default_in: keyed\n", 1)))
+		resp, b := env.do(t, "alice", http.MethodPost, incidentPath+"/messages", `{"type":"contained"}`, nil)
+		require.Equal(t, http.StatusCreated, resp.StatusCode, "%s", b)
+
+		resp, b = env.do(t, "alice", http.MethodPost, incidentPath+"/messages", `{"type":"contained"}`, nil)
+		require.Equal(t, http.StatusConflict, resp.StatusCode, "%s", b)
+		require.Equal(t, realtime.TypeSessionWrongState, problemType(t, b))
+		p := decodeAs[v1.Error](t, b)
+		require.Equal(t, "contained may be posted only while the session is in detected; it is in contained", p.Title)
+		require.Equal(t, "channel_types.incident.session.default_in", p.Detail)
+	})
 }
 
 // TestChannelsHandler_ExpectGeneration pins TKT-T9G1AE AC 1 over HTTP: the
@@ -1040,10 +1058,57 @@ func TestChannelsHandler_ExpectGeneration(t *testing.T) {
 func TestWireChannelSession_BranchEdges(t *testing.T) {
 	got := wireChannelSession(&realtime.SessionView{State: "review", Transitions: []realtime.SessionTransitionView{
 		{MessageType: "decide", To: "working", Guarded: true, Outputs: 1},
-		{MessageType: "decide", To: "planning", Guarded: true},
+		{MessageType: "decide", To: "planning", Guarded: true, Entry: 1},
 	}})
 	require.Equal(t, []v1.ChannelSessionTransition{
 		{MessageType: "decide", To: "working", Guarded: true, Outputs: 1},
-		{MessageType: "decide", To: "planning", Guarded: true},
+		{MessageType: "decide", To: "planning", Guarded: true, Entry: 1},
 	}, got.Transitions)
+}
+
+// TestWireChannelSession_Button pins TKT-S9TLJJ AC 6 and 7 on the wire: a
+// button entry's row carries its entry, label and props, a row without a
+// button has no button key, and actions.entries is mapped and never null.
+func TestWireChannelSession_Button(t *testing.T) {
+	t.Run("button", func(t *testing.T) {
+		got := wireChannelSession(&realtime.SessionView{State: "review", Transitions: []realtime.SessionTransitionView{
+			{MessageType: "decide", To: "escalated"},
+			{MessageType: "decide", To: "planning", Entry: 1, Button: &realtime.SessionButtonView{
+				Label: "Revise", Props: map[string]any{"decision": "revise", "tags": []any{"a"}}}},
+		}})
+		require.Equal(t, []v1.ChannelSessionTransition{
+			{MessageType: "decide", To: "escalated"},
+			{MessageType: "decide", To: "planning", Entry: 1, Button: &v1.ChannelSessionButton{
+				Label: "Revise", Props: map[string]any{"decision": "revise", "tags": []any{"a"}}}},
+		}, got.Transitions)
+		b, err := json.Marshal(got.Transitions)
+		require.NoError(t, err)
+		require.JSONEq(t, `[{"message_type":"decide","to":"escalated","entry":0},`+
+			`{"message_type":"decide","to":"planning","entry":1,`+
+			`"button":{"label":"Revise","props":{"decision":"revise","tags":["a"]}}}]`, string(b))
+	})
+	t.Run("button options", func(t *testing.T) {
+		yes := true
+		got := wireChannelSession(&realtime.SessionView{State: "review", Transitions: []realtime.SessionTransitionView{
+			{MessageType: "decide", To: "planning", Button: &realtime.SessionButtonView{
+				Label: "Revise", Props: map[string]any{"decision": "revise"},
+				ButtonOptionsView: realtime.ButtonOptionsView{Confirm: &yes, ConfirmText: "Sure?", Style: "danger"}}},
+		}})
+		require.Equal(t, &v1.ChannelSessionButton{Label: "Revise", Props: map[string]any{"decision": "revise"},
+			Confirm: &yes, ConfirmText: "Sure?", Style: "danger"}, got.Transitions[0].Button)
+		b, err := json.Marshal(got.Transitions[0].Button)
+		require.NoError(t, err)
+		require.JSONEq(t, `{"label":"Revise","props":{"decision":"revise"},"confirm":true,`+
+			`"confirm_text":"Sure?","style":"danger"}`, string(b))
+	})
+	t.Run("entries", func(t *testing.T) {
+		head := wireHead(realtime.HeadView{Actions: realtime.Affordances{
+			Entries: []realtime.EntryRef{{MessageType: "decide", Entry: 1}},
+		}})
+		require.Equal(t, []v1.ChannelEntryRef{{MessageType: "decide", Entry: 1}}, head.Actions.Entries)
+		empty := wireHead(realtime.HeadView{})
+		b, err := json.Marshal(empty.Actions)
+		require.NoError(t, err)
+		require.Contains(t, string(b), `"entries":[]`)
+	})
 }

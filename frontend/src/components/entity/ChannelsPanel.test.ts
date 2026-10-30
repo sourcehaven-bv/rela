@@ -2088,3 +2088,209 @@ describe('ChannelsPanel quiet types', () => {
     expect(button.textContent).toContain('2 messages: Progress')
   })
 })
+
+describe('ChannelsPanel preset buttons', () => {
+  const logType = (
+    name: string,
+    label: string,
+    properties: ChannelTypeSchema['message_types'][number]['properties'] = [],
+    extra: Partial<ChannelTypeSchema['message_types'][number]> = {}
+  ) => ({ name, label, persist: 'log' as const, reply: true, actions: [], properties, ...extra })
+  const run: ChannelTypeSchema = {
+    ...room,
+    message_types: [
+      room.message_types[0]!,
+      logType('decide', 'Decide', [
+        { name: 'decision', label: 'Decision', type: 'string', required: true },
+        { name: 'note', label: 'Note', type: 'string' },
+      ]),
+      logType(
+        'ask',
+        'Question',
+        [
+          { name: 'note', label: 'Note', type: 'string' },
+          { name: 'options', label: 'Options', type: 'string', list: true },
+        ],
+        { choices: { from: 'options', answer: 'answer', into: 'note', other: false } }
+      ),
+      logType('answer', 'Answer', [{ name: 'note', label: 'Note', type: 'string' }]),
+    ],
+    session: {
+      label: 'Plan',
+      initial: 'review',
+      states: [
+        { name: 'review', label: 'Review', status: 'input_required' },
+        { name: 'working', label: 'Working', status: 'working' },
+        { name: 'drafting', label: 'Drafting', status: 'working' },
+      ],
+    },
+  }
+  const review = {
+    state: 'review',
+    status: 'input_required' as const,
+    generation: 4,
+    entered_at: '2026-03-01T10:00:00Z',
+    transitions: [
+      { message_type: 'answer', to: 'working', entry: 0 },
+      {
+        message_type: 'decide',
+        to: 'working',
+        guarded: true,
+        entry: 0,
+        button: { label: 'Approve', props: { decision: 'approve' } },
+      },
+      { message_type: 'decide', to: 'drafting', entry: 1 },
+    ],
+  }
+  const runHead = (): ChannelHead => {
+    const h = head({}, { last_seq: 13, rev: 13, session: review })
+    return {
+      ...h,
+      _actions: {
+        ...h._actions,
+        post: ['card', 'decide', 'answer'],
+        transitions: ['answer', 'decide'],
+        entries: [
+          { message_type: 'answer', entry: 0 },
+          { message_type: 'decide', entry: 0 },
+          { message_type: 'decide', entry: 1 },
+        ],
+      },
+    }
+  }
+  const question = msg(12, {
+    type: 'ask',
+    author: { user: 'robot' },
+    props: { note: 'Which one?', options: ['A', 'B'] },
+    _actions: [],
+  })
+  const notice = msg(13, {
+    type: 'session',
+    author: { user: 'system', system: true },
+    triggered_by: 'session:room',
+    props: { from: 'drafting', to: 'review', generation: 4, cause: 12 },
+    _actions: [],
+  })
+
+  beforeEach(() => {
+    api.getChannelSchema.mockResolvedValue({ channel_types: [run] })
+    api.getChannelHead.mockImplementation(() => Promise.resolve(runHead()))
+    api.getMessages.mockResolvedValue({
+      ...page([question, notice]),
+      channel: channel({ last_seq: 13, rev: 13, session: review }),
+      next_after_rev: 13,
+    })
+    api.postMessage.mockResolvedValue({
+      kind: 'message',
+      message: msg(14, {
+        type: 'decide',
+        props: { decision: 'approve' },
+        reply_to: 12,
+        _actions: [],
+      }),
+    })
+    useSchemaStore().channelPresentations = new Map()
+  })
+
+  const header = () => w().find('.rl-channel-session')
+  const keys = (scope: ReturnType<VueWrapper['find']>) =>
+    scope.findAll('[data-decision]').map((b) => b.attributes('data-decision'))
+
+  it('plan review shows Approve and the form button', async () => {
+    await mountPanel()
+    expect(keys(header())).toEqual(['answer', 'preset:decide:0', 'decide'])
+    expect(header().find('[data-decision="preset:decide:0"]').text()).toContain('Approve')
+    // The question's row shows its choices and the presets of other types.
+    expect(keys(messageEl(12))).toEqual(['choice:12:0', 'choice:12:1', 'preset:decide:0', 'decide'])
+  })
+
+  it('Approve posts the preset', async () => {
+    await mountPanel()
+    await header().find('[data-decision="preset:decide:0"]').trigger('click')
+    await flushPromises()
+    await flushPromises()
+    expect(api.postMessage).toHaveBeenCalledTimes(1)
+    expect(api.postMessage).toHaveBeenCalledWith(
+      expect.anything(),
+      'decide',
+      { decision: 'approve' },
+      12,
+      4
+    )
+    expect(confirm).not.toHaveBeenCalled()
+  })
+
+  it('choice click disables the presets', async () => {
+    await mountPanel()
+    let answer!: (r: PostResult) => void
+    api.postMessage.mockReturnValue(new Promise<PostResult>((r) => (answer = r)))
+    await messageEl(12).find('[data-decision="choice:12:0"]').trigger('click')
+    await flushPromises()
+    expect(header().find('[data-decision="preset:decide:0"]').attributes('disabled')).toBeDefined()
+    await header().find('[data-decision="preset:decide:0"]').trigger('click')
+    await flushPromises()
+    expect(api.postMessage).toHaveBeenCalledTimes(1)
+    answer({
+      kind: 'message',
+      message: msg(14, { type: 'answer', props: { note: 'A' }, reply_to: 12, _actions: [] }),
+    })
+    await flushPromises()
+  })
+
+  it('authored confirm asks before Allow posts', async () => {
+    const withAllow: ChannelTypeSchema = {
+      ...run,
+      message_types: [
+        ...run.message_types,
+        logType('allow', 'Allow', [], {
+          decision_button: { confirm: true, confirm_text: 'This runs the tool on your machine.' },
+        }),
+      ],
+    }
+    const allowReview = {
+      ...review,
+      transitions: [...review.transitions, { message_type: 'allow', to: 'working', entry: 0 }],
+    }
+    api.getChannelSchema.mockResolvedValue({ channel_types: [withAllow] })
+    api.getChannelHead.mockImplementation(() => {
+      const h = runHead()
+      return Promise.resolve({
+        ...h,
+        channel: { ...h.channel, session: allowReview },
+        _actions: {
+          ...h._actions,
+          post: [...h._actions.post, 'allow'],
+          transitions: [...(h._actions.transitions ?? []), 'allow'],
+          entries: [...(h._actions.entries ?? []), { message_type: 'allow', entry: 0 }],
+        },
+      })
+    })
+    api.getMessages.mockResolvedValue({
+      ...page([question, notice]),
+      channel: channel({ last_seq: 13, rev: 13, session: allowReview }),
+      next_after_rev: 13,
+    })
+    confirm.mockResolvedValue(true)
+    await mountPanel()
+    await header().find('[data-decision="allow"]').trigger('click')
+    await flushPromises()
+    await flushPromises()
+    expect(confirm).toHaveBeenCalledWith(
+      expect.objectContaining({
+        title: 'Allow',
+        message: 'This runs the tool on your machine.',
+        danger: false,
+      })
+    )
+    expect(api.postMessage).toHaveBeenCalledWith(expect.anything(), 'allow', {}, 12, 4)
+  })
+
+  it('hidden decision type keeps its presets', async () => {
+    useSchemaStore().channelPresentations = new Map([
+      ['room', { messages: { decide: { display: 'hidden' }, ask: { display: 'hidden' } } }],
+    ])
+    await mountPanel()
+    expect(keys(header())).toContain('preset:decide:0')
+    expect(messageEl(12).find('[data-decision="preset:decide:0"]').exists()).toBe(true)
+  })
+})

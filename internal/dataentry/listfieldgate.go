@@ -12,6 +12,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
 	"github.com/Sourcehaven-BV/rela/internal/filter"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
+	"github.com/Sourcehaven-BV/rela/internal/principal"
 )
 
 // List filter and sort field gate (BUG-WJSYQT).
@@ -83,6 +84,9 @@ type gatedListQuery struct {
 	//
 	// Nil: accepted — every key is a property key.
 	isRelationKey func(string) bool
+	// user is the caller's principal id that a `$user` filter value stands
+	// for; empty when the caller is not identified.
+	user string
 }
 
 // fieldVisibility is the one capability gateListQuery needs from the field
@@ -108,7 +112,17 @@ func gateListQuery(
 			}
 		}
 	}
-	return gatedListQuery{params: query, isRelationKey: isRelationKey}, nil
+	return gatedListQuery{params: query, isRelationKey: isRelationKey, user: filterUser(ctx)}, nil
+}
+
+// filterUser is the principal id a `$user` filter value resolves to, or ""
+// when ctx carries no identified caller.
+func filterUser(ctx context.Context) string {
+	user := principal.From(ctx).User
+	if user == principal.Unknown {
+		return ""
+	}
+	return user
 }
 
 // gateAppListQuery is gateListQuery with the app's field resolver and the

@@ -2525,7 +2525,7 @@
       "weight.structure": 936,
       "weight.layers": 0,
       "weight.vocabulary": 912,
-      "weight.types": 3960,
+      "weight.types": 3969,
       "weight.concepts": 7186,
       "weight.boundaries": 1512,
       "weight.data": 1297,
@@ -2589,6 +2589,28 @@
           "weight.vocabulary": [
             908,
             912
+          ]
+        }
+      },
+      {
+        "at": "2026-10-29T22:00:00Z",
+        "change": "loosen",
+        "reason": "ChannelSession wire mirror grew by the button and entry fields like SessionView, TKT-S9TLJJ",
+        "metrics": {
+          "weight.types": [
+            3960,
+            3968
+          ]
+        }
+      },
+      {
+        "at": "2026-10-30T02:00:00Z",
+        "change": "loosen",
+        "reason": "ChannelSession wire mirror grew by the button options like SessionView, TKT-TXZZZ2",
+        "metrics": {
+          "weight.types": [
+            3968,
+            3969
           ]
         }
       }

@@ -338,7 +338,7 @@ lists:
     filters:
       - property: assignee
         operator: "="
-        value: "$USER"
+        value: $user
     sort:
       - property: due_date
         direction: asc

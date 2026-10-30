@@ -460,11 +460,22 @@ type MessageType struct {
 	// Actions are the buttons on a message. Promoting a message to an
 	// entity is always an action, so its gate is explicit.
 	Actions map[string]*Action
-	// In is `in:`: the session states in which the type may be posted, in
-	// file order. Nil means every state; see [MessageType.PostableIn].
+	// In is the session states in which the type may be posted: the states
+	// as listed in `in:`, or, when derived from session.default_in, in the
+	// order of session.states. Nil means every state; see
+	// [MessageType.PostableIn] and [ChannelType.InKey].
 	In []string
 	// Choices is `choices:`, or nil.
 	Choices *Choices
+	// DecisionButton is `decision_button:`: the options of the type's
+	// decision buttons in the web app, or nil when the file sets none.
+	// The load already merged them into each preset button of the type
+	// (see [TransitionButton.Options]), so they matter on their own only
+	// for the type's button.
+	DecisionButton *ButtonOptions
+	// derived reports that In was derived from session.default_in; set
+	// only by the loader.
+	derived bool
 }
 
 // Choices is `choices:` on a message type, the question type. The web app
@@ -483,6 +494,16 @@ type Choices struct {
 	Answer string
 	Into   string
 	Other  bool
+}
+
+// InKey is the key path of the rule that decided mt.In: session.default_in
+// when the load derived it, else the type's `in:`. A MessageType built by
+// hand gets the `in:` path.
+func (ct *ChannelType) InKey(mt *MessageType) string {
+	if mt.derived {
+		return "channel_types." + ct.Name + ".session.default_in"
+	}
+	return ct.messageTypeKey(mt.Name) + ".in"
 }
 
 // PostableIn reports whether a message of type mt may be posted while the

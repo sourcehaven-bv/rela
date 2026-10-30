@@ -58,6 +58,7 @@ import type {
   ChannelTypingView,
 } from 'rela-components/components/channel/types'
 import { resolveChannelFields } from 'rela-components/components/channel/channelFields'
+import { applyOptions, endTone, presetViews, type AppDecisionView } from './presetViews'
 
 /** The longest reply excerpt, in code points. */
 export const EXCERPT_MAX = 80
@@ -363,7 +364,7 @@ export function composerTransitions(
 
 /** The head fields the decisions read. */
 export type DecisionHead = Pick<ChannelHead, 'channel'> & {
-  _actions: Pick<ChannelActions, 'post' | 'transitions'>
+  _actions: Pick<ChannelActions, 'post' | 'transitions' | 'entries'>
 }
 
 /**
@@ -380,18 +381,22 @@ export type DecisionHead = Pick<ChannelHead, 'channel'> & {
  * descriptor, and has an edge out of the current state that a person's
  * post fires.
  *
- * A decision opens the form when an edge is guarded, its edges lead to
- * several states, or the type has a required property. `toLabel` is set
- * when every edge leads to one state. A one-click decision asks first
- * (`confirm`) when its state is final, and is `danger` when that state
- * ends as cancelled or failed. A later offer, choice or authored style
- * plugs in here.
+ * Per type, the preset buttons of the caller's listed entries
+ * (`_actions.entries`) come first, in entry order (see presetViews). The
+ * type button follows only when a listed entry has no button, and is
+ * computed from those entries. It opens the form when one of them is
+ * guarded or has an earlier guarded entry, when they lead to several
+ * states, or when the type has a required property. `toLabel` is set when
+ * they lead to one state. A one-click decision asks first (`confirm`) when
+ * its state is final, and is `danger` when that state ends as cancelled or
+ * failed (endTone). The type's `decision_button` and a preset's own
+ * options override that look (applyOptions).
  */
 export function decisionViews(
   ct: ChannelTypeSchema,
   head: DecisionHead,
   actionsGeneration: number | undefined
-): ChannelDecisionView[] {
+): AppDecisionView[] {
   const s = ct.session
   const cs = head.channel.session
   if (head.channel.state !== 'open' || !s || !cs || cs.final || cs.stranded) return []
@@ -407,31 +412,43 @@ export function decisionViews(
   }
   const byName = new Map(ct.message_types.map((mt) => [mt.name, mt]))
   const stateOf = new Map(s.states.map((st) => [st.name, st]))
+  const listed = head._actions.entries && new Map<string, Set<number>>()
+  for (const e of head._actions.entries ?? []) {
+    const set = listed?.get(e.message_type)
+    if (set) set.add(e.entry)
+    else listed?.set(e.message_type, new Set([e.entry]))
+  }
   return [...new Set(head._actions.transitions ?? [])].flatMap((name) => {
     const list = edges.get(name)
     const mt = byName.get(name)
     if (!list || !mt || mt.persist !== 'log' || !post.has(name)) return []
-    const targets = [...new Set(list.map((tr) => tr.to))]
-    const finals = targets.map((to) => stateOf.get(to))
-    const view: ChannelDecisionView = { key: name, messageType: name, label: mt.label || name }
+    const { views, rest, guardedBefore } = presetViews(
+      name,
+      list,
+      listed && (listed.get(name) ?? new Set()),
+      stateOf
+    )
+    if (!rest.length) return views
+    const targets = [...new Set(rest.map((tr) => tr.to))]
+    const view: AppDecisionView = { key: name, messageType: name, label: mt.label || name }
     const [only, ...more] = targets
     if (only !== undefined && !more.length) view.toLabel = stateLabel(s, only)
     if (
       targets.length > 1 ||
-      list.some((tr) => tr.guarded) ||
+      guardedBefore ||
+      rest.some((tr) => tr.guarded) ||
       mt.properties.some((p) => p.required)
     ) {
       view.opensForm = true
     }
     // Only a one-click decision asks; a form decision asks nothing, since
     // its own Send is the confirmation. A one-click decision has one target.
-    if (!view.opensForm && view.toLabel !== undefined && finals.every((st) => st?.final)) {
-      view.confirm = true
-      if (finals.every((st) => st?.status === 'cancelled' || st?.status === 'failed')) {
-        view.danger = true
-      }
-    }
-    return [view]
+    // The type's decision_button overrides the derived look.
+    const oneClick = !view.opensForm && view.toLabel !== undefined
+    return [
+      ...views,
+      applyOptions(view, mt.decision_button, oneClick, oneClick ? endTone(targets, stateOf) : {}),
+    ]
   })
 }
 

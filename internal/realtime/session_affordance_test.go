@@ -3,6 +3,7 @@ package realtime
 import (
 	"encoding/json"
 	"fmt"
+	"regexp"
 	"slices"
 	"strings"
 	"testing"
@@ -591,21 +592,23 @@ func (h *harness) pocDriveTo(t *testing.T, state string) {
 	}
 }
 
-// TestAffordances_MessageIn pins AC 3 and AC 7: _actions.post and can_post
-// list a type with in: only while the session is in one of its states. The
-// transition and read_session columns are regression pins, not proof of a
-// filter: transitions are already limited to the current state's on:, and
-// the load check forces each such state into the type's in:.
-func TestAffordances_MessageIn(t *testing.T) {
-	t.Parallel()
-	tests := []struct {
-		name        string
-		who         *fakeAccess
-		state       string
-		setup       func(t *testing.T, h *harness)
-		post        []string
-		transitions []string
-	}{
+// messageInRow is one row of [messageInRows].
+type messageInRow struct {
+	name        string
+	who         *fakeAccess
+	state       string
+	setup       func(t *testing.T, h *harness)
+	post        []string
+	transitions []string
+}
+
+// messageInRows are the _actions rows of the PoC session, built over
+// fixture, which is [pocRealtime] or [pocRealtimeDefaultIn]: every setup
+// closure builds its config from fixture, so a row runs with the in: of
+// the fixture it was given. finishedKey is the rule key that decides the
+// in: of finished in that fixture.
+func messageInRows(fixture, finishedKey string) []messageInRow {
+	return []messageInRow{
 		{name: "owner in plan-review", who: pocOwner(), state: "plan-review",
 			post: []string{"approve", "revise", "text"}, transitions: []string{"approve", "revise"}},
 		{name: "owner in working", who: pocOwner(), state: "working", post: []string{"text"}, transitions: []string{}},
@@ -618,15 +621,19 @@ func TestAffordances_MessageIn(t *testing.T) {
 			post: []string{"go", "text"}, transitions: []string{"go"}},
 		{name: "final state admits the types that list it", who: pocOwner(), state: "done",
 			post: []string{"text", "thanks"}, transitions: []string{}},
-		{name: "stranded admits only types without in", who: pocRunner(), state: "working",
+		{name: "stranded admits only types without an effective in", who: pocRunner(), state: "working",
 			post: []string{"text"}, transitions: []string{},
 			setup: func(t *testing.T, h *harness) {
 				t.Helper()
 				// working is renamed: the channel is stranded in it.
 				y := strings.NewReplacer("        working:\n", "        busy:\n", "to: working", "to: busy",
 					"in: [planning, working]", "in: [planning, busy]", "in: [working]", "in: [busy]").
-					Replace(pocRealtime(""))
-				h.cfg.set(Snapshot{Config: testCompiled(t, y)})
+					Replace(fixture)
+				c := testCompiled(t, y)
+				ct, ok := c.ChannelType("run")
+				require.True(t, ok)
+				require.Equal(t, finishedKey, ct.InKey(ct.MessageTypes["finished"]), "the stranded config keeps its in:")
+				h.cfg.set(Snapshot{Config: c})
 			}},
 		{name: "closed channel", who: pocOwner(), state: "plan-review", post: []string{}, transitions: []string{},
 			setup: func(t *testing.T, h *harness) {
@@ -635,21 +642,50 @@ func TestAffordances_MessageIn(t *testing.T) {
 				require.NoError(t, err)
 			}},
 	}
-	for _, tc := range tests {
+}
+
+// messageInHarness builds a harness over fixture, drives it to row's
+// state, runs row's setup and returns the caller's head affordances.
+func messageInHarness(t *testing.T, fixture string, row messageInRow) (*harness, Affordances) {
+	t.Helper()
+	h := newHarness(t, withYAML(fixture))
+	h.pocDriveTo(t, row.state)
+	if row.setup != nil {
+		row.setup(t, h)
+	}
+	return h, h.headActions(t, row.who, pocRun)
+}
+
+// The rule keys of the in: of finished in [pocRealtime] and in
+// [pocRealtimeDefaultIn].
+const (
+	pocFinishedInKey = "channel_types.run.message_types.finished.in"
+	pocDefaultInKey  = "channel_types.run.session.default_in"
+)
+
+// runMessageInRows checks every row of [messageInRows] over fixture, with
+// finishedKey passed through: _actions.post, can_post in read_channel,
+// _actions.transitions and the transitions of read_session. Over a fixture
+// other than [pocRealtime], _actions.entries must also equal the entries
+// over [pocRealtime].
+func runMessageInRows(t *testing.T, fixture, finishedKey string) {
+	t.Helper()
+	ref := pocRealtime("")
+	refRows := messageInRows(ref, pocFinishedInKey)
+	for i, tc := range messageInRows(fixture, finishedKey) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			h := newPocHarness(t)
-			h.pocDriveTo(t, tc.state)
-			if tc.setup != nil {
-				tc.setup(t, h)
-			}
-			a := h.headActions(t, tc.who, pocRun)
+			h, a := messageInHarness(t, fixture, tc)
 			post := a.Post
 			if post == nil {
 				post = []string{}
 			}
 			require.Equal(t, tc.post, post)
 			require.Equal(t, tc.transitions, a.Transitions)
+			if fixture != ref {
+				_, want := messageInHarness(t, ref, refRows[i])
+				require.Equal(t, want.Entries, a.Entries, "_actions.entries")
+			}
 
 			read, err := h.svc.Read(as(tc.who), pocRun, ReadRequest{Schemas: true, Actions: true})
 			require.NoError(t, err)
@@ -670,6 +706,55 @@ func TestAffordances_MessageIn(t *testing.T) {
 			require.Equal(t, tc.transitions, sess.Transitions, "read_session transitions")
 		})
 	}
+}
+
+// TestAffordances_MessageIn pins AC 3 and AC 7: _actions.post and can_post
+// list a type with in: only while the session is in one of its states. The
+// transition and read_session columns are regression pins, not proof of a
+// filter: transitions are already limited to the current state's on:, and
+// the load check forces each such state into the type's in:.
+func TestAffordances_MessageIn(t *testing.T) {
+	t.Parallel()
+	runMessageInRows(t, pocRealtime(""), pocFinishedInKey)
+}
+
+// pocCopiedIn are the in: lines of [pocRealtime] that only repeat the on:
+// keys of their type: every transition-keyed type. progress and thanks,
+// which no transition is keyed by, keep theirs.
+var pocCopiedIn = []struct{ mt, in string }{
+	{"go", "[new]"}, {"claim", "[queued]"}, {"resume", "[queued]"}, {"plan", "[planning]"},
+	{"approve", "[plan-review]"}, {"revise", "[plan-review]"}, {"ask", "[planning, working]"},
+	{"answer", "[plan-asking, asking]"}, {"permission", "[working]"}, {"allow", "[approving]"},
+	{"deny", "[approving]"}, {"finished", "[working]"}, {"fail", "[planning, working]"},
+	{"accept", "[review]"}, {"rework", "[review]"}, {"retry", "[blocked]"}, {"abandon", "[blocked]"},
+}
+
+// pocRealtimeDefaultIn is [pocRealtime] with the 17 copied in: lines
+// removed and session.default_in: keyed added, so every transition-keyed
+// type takes its in: from the on: keys.
+func pocRealtimeDefaultIn(t *testing.T, triggers string) string {
+	t.Helper()
+	y := pocRealtime(triggers)
+	for _, c := range pocCopiedIn {
+		re := regexp.MustCompile(`(?m)^(      ` + regexp.QuoteMeta(c.mt) + `: .*post: \[\w+\]), in: ` +
+			regexp.QuoteMeta(c.in) + ` \}$`)
+		if !re.MatchString(y) {
+			t.Fatalf("pocRealtimeDefaultIn: no in: line for %s", c.mt)
+		}
+		y = re.ReplaceAllString(y, "$1 }")
+	}
+	return strings.Replace(y, "      initial: new\n", "      initial: new\n      default_in: keyed\n", 1)
+}
+
+// TestAffordances_DefaultIn pins AC 6 of TKT-S5OJ7S: over the PoC with
+// session.default_in: keyed instead of the copied in: lines, every row
+// gives the same _actions.post, can_post, _actions.transitions and
+// _actions.entries as over [pocRealtime].
+func TestAffordances_DefaultIn(t *testing.T) {
+	t.Parallel()
+	y := pocRealtimeDefaultIn(t, "")
+	require.Equal(t, 17, strings.Count(pocRealtime(""), ", in: [")-strings.Count(y, ", in: ["))
+	runMessageInRows(t, y, pocDefaultInKey)
 }
 
 // TestAffordances_MessageInInbox is a regression pin for the inbox: the
@@ -712,8 +797,8 @@ func TestSessionView_BranchEdges(t *testing.T) {
 	}
 	require.Equal(t, []SessionTransitionView{
 		{MessageType: "decide", To: "working", Guarded: true},
-		{MessageType: "decide", To: "planning", Guarded: true},
-		{MessageType: "decide", To: "done", Guarded: true},
+		{MessageType: "decide", To: "planning", Guarded: true, Entry: 1},
+		{MessageType: "decide", To: "done", Guarded: true, Entry: 2},
 	}, decide)
 	require.Equal(t, SessionTransitionView{MessageType: "ping", To: "escalated", By: "trigger"}, s.Transitions[5])
 
@@ -721,4 +806,77 @@ func TestSessionView_BranchEdges(t *testing.T) {
 	read, err := h.svc.Session(as(user("alice")), reviewCh)
 	require.NoError(t, err)
 	require.Equal(t, []string{"decide", "flag", "ping", "probe"}, read.Transitions)
+}
+
+// TestAffordances_Entries pins TKT-S9TLJJ AC 7: actions.entries lists the
+// entries the caller's post could take, judged on all the caller's roles,
+// sorted, and empty, never null, where no post moves the session.
+func TestAffordances_Entries(t *testing.T) {
+	t.Parallel()
+	d := func(entries ...int) []EntryRef {
+		out := []EntryRef{}
+		for _, e := range entries {
+			out = append(out, EntryRef{MessageType: "decide", Entry: e})
+		}
+		return out
+	}
+	anon := user("")
+	anon.p = principal.Principal{}
+	tests := []struct {
+		name  string
+		yaml  string // "": buttonRealtime()
+		addr  RawAddress
+		who   *fakeAccess
+		setup func(t *testing.T, h *harness)
+		want  []EntryRef
+	}{
+		{name: "member sees both buttons", who: user("mo", "plan.member"), want: d(3, 4)},
+		{name: "lead is shadowed by the lead-only entry", who: user("lena", "plan.lead"), want: d(1)},
+		{name: "lead and member is shadowed too", who: user("lm", "plan.lead", "plan.member"), want: d(1)},
+		{name: "reviewer loses the buttons to the reminders entry", who: user("rex", "plan.review"), want: d(0)},
+		{name: "member and reviewer loses the buttons", who: user("mr", "plan.member", "plan.review"),
+			want: d(0)},
+		{name: "auditor sees Revise and the audit entry", who: user("aud", "plan.audit"), want: d(2, 4)},
+		{name: "auditor and member loses Approve to the audit entry", who: user("am", "plan.audit", "plan.member"),
+			want: d(2, 4)},
+		{name: "caller who may not post sees none", who: user("nobody"), want: d()},
+		{name: "closed channel", who: user("mo", "plan.member"), want: d(),
+			setup: func(t *testing.T, h *harness) {
+				t.Helper()
+				h.postTo(t, user("mo", "plan.member"), planCh, "text", props("body", "hi"))
+				_, err := h.svc.Lifecycle(as(user("mo", "plan.member")), planCh, "close")
+				require.NoError(t, err)
+			}},
+		{name: "final state", who: user("mo", "plan.member"), want: d(),
+			setup: func(t *testing.T, h *harness) {
+				t.Helper()
+				h.postTo(t, user("mo", "plan.member"), planCh, "decide", props("decision", "approve"))
+			}},
+		{name: "no session", yaml: testRealtime, addr: room, who: user("alice", "chat.read", "chat.post"),
+			want: d()},
+		{name: "no identity", who: anon, want: d()},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			y, addr := tc.yaml, tc.addr
+			if y == "" {
+				y = buttonRealtime()
+			}
+			if addr == (RawAddress{}) {
+				addr = planCh
+			}
+			h := newHarness(t, withYAML(y), withOutputs(&fakeOutputs{}))
+			if tc.setup != nil {
+				tc.setup(t, h)
+			}
+			aff := h.headActions(t, tc.who, addr)
+			require.Equal(t, tc.want, aff.Entries)
+			b, err := json.Marshal(aff)
+			require.NoError(t, err)
+			if len(tc.want) == 0 {
+				require.Contains(t, string(b), `"entries":[]`)
+			}
+		})
+	}
 }

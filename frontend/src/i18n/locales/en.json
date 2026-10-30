@@ -165,6 +165,7 @@
     "rateLimited": "Too many messages. Try again shortly.",
     "sessionWrongState": "This message type cannot be posted in the session's current state. Choose another.",
     "decisionConfirmBody": "This ends the session in {state}. You cannot undo it.",
+    "decisionConfirmMoveBody": "This moves the session to {state}.",
     "decisionStale": "The session moved on. Choose again.",
     "choiceOther": "Other answer…",
     "choiceStale": "This question is no longer open.",
