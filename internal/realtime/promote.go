@@ -214,7 +214,7 @@ func (s *Service) promoteFailed(c *call, msg channels.Message, name string, err 
 			"the action stays pending until a moderator releases it",
 			"channel", c.key.String(), "seq", msg.Seq, "action", name, "error", err)
 	}
-	s.local.mark(c.key)
+	s.local.markMessage(c.key)
 	if d, ok := errors.AsType[*DenialError](err); ok {
 		return d
 	}

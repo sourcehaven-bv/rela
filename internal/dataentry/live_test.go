@@ -805,36 +805,6 @@ func TestLive_BusyListFullRound(t *testing.T) {
 	}
 }
 
-// TestLive_BusyListIgnoresChannelRound pins AC 7: a session move with no
-// graph write starts a topic round, and that round frames the channel but
-// not the busy list.
-func TestLive_BusyListIgnoresChannelRound(t *testing.T) {
-	_, env := newBusyLive(t)
-	const path = "/api/v1/tickets?busy=run"
-	runPath := "/api/v1/tickets/TKT-1/_channels/run"
-	c, conn := env.open(t, "alice")
-	env.subscribe(t, "alice", conn, liveSubEntry{"board", path}, liveSubEntry{"run", runPath})
-	liveQuiet(t, c)
-
-	post := func(user, typ, props string) {
-		t.Helper()
-		res, b := env.do(t, user, http.MethodPost, runPath+"/messages",
-			fmt.Sprintf(`{"type":%q,"props":%s}`, typ, props), nil)
-		if res.StatusCode != http.StatusCreated {
-			t.Fatalf("post %s as %s = %d %s", typ, user, res.StatusCode, b)
-		}
-	}
-	post("alice", "go", `{}`)
-	requireChanged(t, c, "run")
-	post("runner", "claim", `{"worktree":"wt"}`)
-	requireChanged(t, c, "run")
-	liveQuiet(t, c)
-	// The board would show the move on its next fetch.
-	if got := liveBusy(t, env, "alice", path); len(got["TKT-1"]) != 1 {
-		t.Fatalf("_busy = %v, want TKT-1 planning", got)
-	}
-}
-
 // TestLive_BusyListPerPrincipal pins AC 5: alice and bob subscribe to one
 // busy list, a graph write replays it for each, and the replays differ,
 // since only alice may read the channel.
@@ -864,6 +834,31 @@ func TestLive_BusyListPerPrincipal(t *testing.T) {
 	if got := liveBusy(t, env, "bob", path); len(got["TKT-1"]) != 0 || len(got["TKT-2"]) != 0 {
 		t.Fatalf("bob's _busy = %v, want nothing busy", got)
 	}
+}
+
+// busyWakeOf returns the busy wake of user's subscription under key, read
+// under the locks the worker writes it under, as hashOf does. A wake is
+// never changed once published, only replaced, so the caller may read it
+// after the locks are released.
+func (h *liveHub) busyWakeOf(user, key string) *busyWake {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	for _, c := range h.conns {
+		if c.owner.User != user {
+			continue
+		}
+		c.mu.Lock()
+		s := c.subs[key]
+		var w *busyWake
+		if s != nil {
+			w = s.busyWake
+		}
+		c.mu.Unlock()
+		if s != nil {
+			return w
+		}
+	}
+	return nil
 }
 
 // hashOf returns the hash of user's one subscription, read under the

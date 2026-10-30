@@ -838,11 +838,17 @@ func (h *harness) reviewSession(t *testing.T) *SessionView {
 // postAsTrigger posts typ into the review channel as a trigger would.
 func (h *harness) postAsTrigger(t *testing.T, typ string, p map[string]any) {
 	t.Helper()
+	h.triggerPost(t, reviewKey(), typ, p)
+}
+
+// triggerPost posts typ into the channel key as a trigger would.
+func (h *harness) triggerPost(t *testing.T, key channels.Key, typ string, p map[string]any) {
+	t.Helper()
 	snap := h.cfg.Load()
-	ct, ok := snap.Config.ChannelType("review")
+	ct, ok := snap.Config.ChannelType(key.Type)
 	require.True(t, ok)
 	w := &systemWriter{store: h.store, local: h.local, cfg: h.cfg, dueWake: h.wake}
-	_, err := w.post(context.Background(), snap, h.clock.Now(), reviewKey(), ct, ct.MessageTypes[typ], p,
+	_, err := w.post(context.Background(), snap, h.clock.Now(), key, ct, ct.MessageTypes[typ], p,
 		"trigger:test", true)
 	require.NoError(t, err)
 }
