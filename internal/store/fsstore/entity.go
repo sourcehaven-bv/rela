@@ -223,6 +223,27 @@ func (s *FSStore) HighestID(_ context.Context, prefix string) (int, error) {
 	return highest, nil
 }
 
+// EntityIDs returns the bare id of every entity in the store, once per
+// family, in index order. It reads only the in-memory index, so it costs no
+// file reads; entitymanager mints ids from it instead of loading every
+// entity on each create. Soft-deleted ids are not included; the soft-delete
+// capability lists those.
+func (s *FSStore) EntityIDs(_ context.Context) ([]string, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	seen := make(map[string]struct{}, len(s.entityOrder))
+	ids := make([]string, 0, len(s.entityOrder))
+	for _, key := range s.entityOrder {
+		id := s.entities[key].ID
+		if _, dup := seen[id]; dup {
+			continue
+		}
+		seen[id] = struct{}{}
+		ids = append(ids, id)
+	}
+	return ids, nil
+}
+
 // --- EntityWriter ---
 
 // idTaken reports whether any key of index case-folds to the same identity as
