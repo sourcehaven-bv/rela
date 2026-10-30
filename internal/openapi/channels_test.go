@@ -405,6 +405,42 @@ func TestOpenAPI_ChannelSessionButton(t *testing.T) {
 	}
 }
 
+// TestOpenAPI_ChannelButtonOptions pins TKT-TXZZZ2 AC 5: a transition's
+// button and a message type's decision_button carry confirm,
+// confirm_text and style, with the wire fields, the style enum and a
+// maxLength of realtimelimits.MaxConfirmTextRunes.
+func TestOpenAPI_ChannelButtonOptions(t *testing.T) {
+	rt := channelTestConfig(t)
+	g := New(attachmentTestMeta(), Config{Title: "T", Version: "1"})
+	g.SetRealtime(func() *realtimecfg.Compiled { return rt })
+	sc := g.Generate().Components.Schemas
+	button := sc[channelSessionRef].Properties["transitions"].Items.Properties["button"]
+	db := sc[descriptorSchema].Properties["channel_types"].Items.Properties["message_types"].Items.
+		Properties["decision_button"]
+	if db == nil {
+		t.Fatal("no message_types[].decision_button in the descriptor")
+	}
+	if got, want := schemaKeys(db), jsonNames(reflect.TypeFor[v1.ChannelDecisionButtonSchema]()); !slices.Equal(got, want) {
+		t.Errorf("decision_button properties = %v, want %v", got, want)
+	}
+	for name, s := range map[string]*Schema{"button": button, "decision_button": db} {
+		if slices.Contains(s.Required, "confirm") || slices.Contains(s.Required, "style") {
+			t.Errorf("%s requires an option", name)
+		}
+		if c := s.Properties["confirm"]; c == nil || c.Type != "boolean" {
+			t.Errorf("%s confirm = %+v, want a boolean", name, c)
+		}
+		if c := s.Properties["confirm_text"]; c == nil || c.Type != "string" ||
+			c.MaxLength != realtimelimits.MaxConfirmTextRunes {
+
+			t.Errorf("%s confirm_text = %+v, want a string of at most %d", name, c, realtimelimits.MaxConfirmTextRunes)
+		}
+		if st := s.Properties["style"]; st == nil || !slices.Equal(st.Enum, []string{"default", "primary", "danger"}) {
+			t.Errorf("%s style = %+v, want the three styles", name, st)
+		}
+	}
+}
+
 func schemaKeys(s *Schema) []string {
 	var out []string
 	for k := range s.Properties {

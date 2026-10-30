@@ -96,6 +96,9 @@ type MessageTypeView struct {
 	// options as buttons, and a click posts the answer type as a reply.
 	// Nil when the type has none.
 	Choices *ChoicesDescription `json:"choices,omitempty"`
+	// DecisionButton is the type's `decision_button:`: how the web app
+	// draws the type's decision button. Nil when the type has none.
+	DecisionButton *ButtonOptionsView `json:"decision_button,omitempty"`
 }
 
 // ReadView is a channel and one page of its messages, oldest first, or by
@@ -229,6 +232,8 @@ func (c *call) messageTypes(post map[string]bool) []MessageTypeView {
 			CanPost: post[name],
 			Props:   mt.PropsSchema(),
 			Choices: describeChoices(mt.Choices),
+			// Config, the same for every reader.
+			DecisionButton: decisionButtonView(mt.DecisionButton),
 		})
 	}
 	return out

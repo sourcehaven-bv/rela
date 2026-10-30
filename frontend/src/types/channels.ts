@@ -262,10 +262,24 @@ export interface ChannelSessionTransition {
 }
 
 /**
- * A one-click preset of a transition entry: the text on the button and the
- * props a click posts, in stored form, posted as they are.
+ * How the web app draws a decision button (TKT-TXZZZ2). It does not change
+ * what a post does. `confirm` is true to ask before a one-click post, false
+ * never to ask, and absent for the derived rule (ask into a final state).
+ * `confirm_text` is the question, as written; it comes only with `confirm`
+ * true. `style` is absent for the derived look.
  */
-export interface ChannelSessionButton {
+export interface ChannelButtonOptions {
+  confirm?: boolean
+  confirm_text?: string
+  style?: 'default' | 'primary' | 'danger'
+}
+
+/**
+ * A one-click preset of a transition entry: the text on the button and the
+ * props a click posts, in stored form, posted as they are. Its options
+ * already hold the type's `decision_button` for each one it leaves out.
+ */
+export interface ChannelSessionButton extends ChannelButtonOptions {
   label: string
   props?: Record<string, MessagePropInput>
 }
@@ -593,6 +607,8 @@ export interface ChannelMessageTypeSchema {
   actions: ChannelActionSchema[]
   /** Options in a list property, shown as reply buttons. */
   choices?: ChannelChoicesSchema
+  /** How the type's decision button looks; absent when the file sets none. */
+  decision_button?: ChannelButtonOptions
 }
 
 /**
@@ -719,7 +735,13 @@ export const CHANNEL_WIRE_FIELDS: Record<string, readonly string[]> = {
     'entry',
     'button',
   ]),
-  ChannelSessionButton: wireKeys<ChannelSessionButton>()(['label', 'props']),
+  ChannelSessionButton: wireKeys<ChannelSessionButton>()([
+    'label',
+    'props',
+    'confirm',
+    'confirm_text',
+    'style',
+  ]),
   ChannelEntryRef: wireKeys<ChannelEntryRef>()(['message_type', 'entry']),
   ChannelTypeList: wireKeys<ChannelTypeList>()([
     'type',
@@ -891,6 +913,12 @@ export const CHANNEL_WIRE_FIELDS: Record<string, readonly string[]> = {
     'properties',
     'actions',
     'choices',
+    'decision_button',
+  ]),
+  ChannelDecisionButtonSchema: wireKeys<ChannelButtonOptions>()([
+    'confirm',
+    'confirm_text',
+    'style',
   ]),
   ChannelChoicesSchema: wireKeys<ChannelChoicesSchema>()(['from', 'answer', 'into', 'other']),
   ChannelPropertySchema: wireKeys<ChannelPropertySchema>()([

@@ -159,9 +159,16 @@ type ChannelSessionTransition struct {
 // posts the entry's message type with Props, in stored form (an integer
 // as a number, a list as an array, a date as 2006-01-02), and
 // expect_generation. Config, the same for every reader.
+//
+// Confirm, ConfirmText and Style are the button's options, with its
+// type's decision_button already applied; see
+// [ChannelDecisionButtonSchema] for their meaning.
 type ChannelSessionButton struct {
-	Label string         `json:"label"`
-	Props map[string]any `json:"props"`
+	Label       string         `json:"label"`
+	Props       map[string]any `json:"props"`
+	Confirm     *bool          `json:"confirm,omitempty"`
+	ConfirmText string         `json:"confirm_text,omitempty"`
+	Style       string         `json:"style,omitempty"`
 }
 
 // ChannelEntryRef names one transition of the session's current state:
@@ -514,6 +521,20 @@ type ChannelMessageTypeSchema struct {
 	Properties []ChannelPropertySchema `json:"properties"`
 	Actions    []ChannelActionSchema   `json:"actions"`
 	Choices    *ChannelChoicesSchema   `json:"choices,omitempty"`
+	// DecisionButton is the type's decision_button, or nil.
+	DecisionButton *ChannelDecisionButtonSchema `json:"decision_button,omitempty"`
+}
+
+// ChannelDecisionButtonSchema is how the web app draws a decision button.
+// It does not change what a post does. Confirm is true to ask before a
+// one-click post, false never to ask, and absent to leave it to the
+// derived rule (ask into a final state). ConfirmText is the question,
+// shown as written; it comes only with Confirm true. Style is default,
+// primary or danger, and absent for the derived look.
+type ChannelDecisionButtonSchema struct {
+	Confirm     *bool  `json:"confirm,omitempty"`
+	ConfirmText string `json:"confirm_text,omitempty"`
+	Style       string `json:"style,omitempty"`
 }
 
 // ChannelChoicesSchema is `choices:` on a question type. The list

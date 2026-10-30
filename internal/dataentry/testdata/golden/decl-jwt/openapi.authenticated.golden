@@ -7174,6 +7174,30 @@ body:
                         ],
                         "description": "Set for a question type: its options show as reply buttons. Absent otherwise"
                       },
+                      "decision_button": {
+                        "type": "object",
+                        "properties": {
+                          "confirm": {
+                            "type": "boolean",
+                            "description": "true asks before a one-click post, false never asks; absent leaves it to the derived rule (ask into a final state)"
+                          },
+                          "confirm_text": {
+                            "type": "string",
+                            "description": "The question to show, as written. Present only with confirm true; confirm false never carries a text",
+                            "maxLength": 300
+                          },
+                          "style": {
+                            "type": "string",
+                            "enum": [
+                              "default",
+                              "primary",
+                              "danger"
+                            ],
+                            "description": "How the button looks; absent for the derived look"
+                          }
+                        },
+                        "description": "Set when the type has decision_button: how the web app draws the type's decision button. It does not change what a post does. Absent otherwise"
+                      },
                       "label": {
                         "type": "string",
                         "description": "The label from realtime.yaml, or the name when none is set; never empty"

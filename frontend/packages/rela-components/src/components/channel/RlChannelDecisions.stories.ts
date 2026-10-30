@@ -74,6 +74,21 @@ export const Danger: Story = {
   },
 }
 
+/** The primary decision of the row; the others stay secondary. */
+export const Primary: Story = {
+  args: {
+    decisions: [
+      { key: 'approve', messageType: 'decide', label: 'Approve', toLabel: 'Approved', primary: true },
+      { key: 'revise', messageType: 'decide', label: 'Revise', toLabel: 'Drafting' },
+    ],
+  },
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement)
+    await expect(canvas.getByRole('button', { name: /Approve/ })).toHaveClass('rl-button--primary')
+    await expect(canvas.getByRole('button', { name: /Revise/ })).toHaveClass('rl-button--secondary')
+  },
+}
+
 /** Many and long labels wrap in a narrow container; every button stays visible. */
 export const ManyWrapping: Story = {
   args: {

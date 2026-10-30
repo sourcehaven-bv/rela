@@ -204,7 +204,7 @@ func TestButtons_Problems(t *testing.T) {
 			k + ".label", "must be at most 100 characters"},
 		{"hazard label", entry("drafting", "button: { label: \"Go\\u202e\", "+revise+" }"), k + ".label",
 			"U+202E, which displays as something other than what it is"},
-		{"unknown key", entry("drafting", "button: { label: Go, style: danger, "+revise+" }"), k + ".style",
+		{"unknown key", entry("drafting", "button: { label: Go, tone: danger, "+revise+" }"), k + ".tone",
 			"unknown key"},
 		{"scalar button", entry("drafting", "button: Approve"), k, "must be a mapping"},
 		{"mapping value", entry("drafting", "button: { label: Go, props: { decision: { a: b } } }"),

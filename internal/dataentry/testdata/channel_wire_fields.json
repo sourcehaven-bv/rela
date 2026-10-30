@@ -41,6 +41,11 @@
     "into",
     "other"
   ],
+  "ChannelDecisionButtonSchema": [
+    "confirm",
+    "confirm_text",
+    "style"
+  ],
   "ChannelEntryRef": [
     "entry",
     "message_type"
@@ -82,6 +87,7 @@
   "ChannelMessageTypeSchema": [
     "actions",
     "choices",
+    "decision_button",
     "label",
     "name",
     "persist",
@@ -124,8 +130,11 @@
     "waiting_on_me"
   ],
   "ChannelSessionButton": [
+    "confirm",
+    "confirm_text",
     "label",
-    "props"
+    "props",
+    "style"
   ],
   "ChannelSessionReminder": [
     "count",

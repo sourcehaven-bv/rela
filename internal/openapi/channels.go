@@ -95,7 +95,8 @@ func addChannelDescriptorSchema(spec *Spec) {
 		"actions": ArraySchema(labeled(map[string]*Schema{
 			"promote_to": {Type: "string", Description: "The entity type a promoting action creates"},
 		})),
-		"choices": choicesSchema(),
+		"choices":         choicesSchema(),
+		"decision_button": decisionButtonSchema(),
 	})
 	messageType.Required = append(messageType.Required, "persist", "reply", "properties", "actions")
 	channelType := labeled(map[string]*Schema{
@@ -576,6 +577,39 @@ func choicesSchema() *Schema {
 	return s
 }
 
+// sessionButtonProps are the properties of a session transition's
+// button: its label, its preset and its options, with the type's
+// decision_button already applied.
+func sessionButtonProps() map[string]*Schema {
+	props := buttonOptionsProps()
+	props["label"] = StringSchema()
+	props["props"] = &Schema{Type: "object", AdditionalProperties: &Schema{}}
+	return props
+}
+
+// decisionButtonSchema is `decision_button:` on a message type, in the
+// channel schema.
+func decisionButtonSchema() *Schema {
+	s := ObjectSchema(buttonOptionsProps(), nil)
+	s.Description = "Set when the type has decision_button: how the web app draws the type's decision button. " +
+		"It does not change what a post does. Absent otherwise"
+	return s
+}
+
+// buttonOptionsProps are the options of a decision button, on a session
+// transition's button and on a message type's decision_button.
+func buttonOptionsProps() map[string]*Schema {
+	return map[string]*Schema{
+		"confirm": {Type: "boolean", Description: "true asks before a one-click post, false never asks; absent " +
+			"leaves it to the derived rule (ask into a final state)"},
+		"confirm_text": {Type: "string", Limits: Limits{MaxLength: realtimelimits.MaxConfirmTextRunes},
+			Description: "The question to show, as written. Present only with confirm true; confirm false never " +
+				"carries a text"},
+		"style": {Type: "string", Enum: []string{"default", "primary", "danger"},
+			Description: "How the button looks; absent for the derived look"},
+	}
+}
+
 // propsSchema converts a message type's props schema, which the MCP tools
 // publish too, to an OpenAPI schema.
 func propsSchema(ps realtimecfg.PropsSchema) *Schema {
@@ -848,10 +882,7 @@ func channelSessionSchema() *Schema {
 				"button": {Type: "object", Description: "Set for an entry with a one-click button. A click posts " +
 					"the message type with props, as stored (an integer as a number, a list as an array, a date " +
 					"as 2006-01-02), and expect_generation. Config, the same for every reader.",
-					Properties: map[string]*Schema{
-						"label": str(),
-						"props": {Type: "object", AdditionalProperties: &Schema{}},
-					}, Required: []string{"label", "props"}},
+					Properties: sessionButtonProps(), Required: []string{"label", "props"}},
 			}, []string{"message_type", "to", "entry"}), Description: "The on: entries of the current state, sorted by " +
 				"message type. A message type may lead to several states; its entries are listed in the order " +
 				"rela tries them, and the first whose poster rule and guard hold moves the session."},

@@ -233,6 +233,7 @@ client_baselines:
 | `rate` | Posts per identity, such as `10/m`. It may only lower the limit. |
 | `actions` | Buttons on a message, each gated by `roles` or a `permission`. An action may have a `promote_to`. Only for `log` messages. The names `edit`, `delete`, `remove` and `release` are reserved. See [Actions and promote](#actions-and-promote). |
 | `choices` | Reply buttons for the options in a list property. Only for `log` messages. See [Choices](#choices). |
+| `decision_button` | How the type's decision buttons look: `confirm` and `style`. Applies to the type's button and, for each key a preset does not set, to the type's preset buttons. Does not affect actions, choice buttons or the composer. Only on a `log` type in a channel type with a `session`. See "Button options" under [Sessions](#sessions). |
 
 Labels are authored, never derived: rela shows a name as written when no
 `label` is given.
@@ -832,7 +833,7 @@ channel_types:
             decide:
               - to: approved
                 when: "message.decision == 'approve'"
-                button: { label: Approve, props: { decision: approve } }
+                button: { label: Approve, props: { decision: approve }, style: primary }
                 outputs:
                   - set: { properties: { status: approved } }
               - to: drafting
@@ -844,7 +845,8 @@ Here `plan-decision` is an enum type in `schema.yaml` with the values
 `approve` and `revise`. A Decide with `approve` moves the plan to
 Approved and sets its status; any other Decide sends it back to Drafting.
 The `button:` keys give the owner an Approve and a Revise button; see
-"One-click buttons" below.
+"One-click buttons" below. `style: primary` marks Approve as the decision
+the owner is expected to make; see "Button options" below.
 
 - rela tries the entries in the order of the file. The first entry whose
   poster rule (`roles` or `by`) and `when` both hold moves the session.
@@ -936,6 +938,97 @@ the owner sees Approve and Revise instead of one Decide button.
   follow-up (TKT-53FN0L).
 - `button:` is new in this release. Every process that loads the project
   needs this release or later; an older one refuses the key.
+
+**Button options.** Two keys say how a decision button looks in the web
+app: `confirm` and `style`. Put them in an entry's `button:` for that
+preset button, or in a message type's `decision_button:` for all decision
+buttons of the type.
+
+```yaml
+channel_types:
+  tool-run:
+    label: Tool run
+    attach_to: [datalek]
+    roles:
+      owner:  { label: the owner, from: entity.owner }
+      member: { from: attached }
+    message_types:
+      text: { properties: { body: { type: markdown, required: true } }, post: [owner, member] }
+      request:
+        label: Ask to run
+        properties: { tool: { type: string, required: true } }
+        post: [member]
+        in: [working]
+      allow:
+        label: Allow
+        post: [owner]
+        in: [asking]
+        decision_button: { confirm: "This runs the tool on your machine." }
+      abandon:
+        label: Abandon
+        post: [owner]
+        in: [working, asking]
+        decision_button: { style: danger }
+    session:
+      initial: working
+      states:
+        working:
+          on:
+            request: { to: asking }
+            abandon: { to: stopped }
+        asking:
+          on:
+            allow:   { to: working }
+            abandon: { to: stopped }
+        stopped: { label: Stopped, final: true }
+```
+
+Here Allow asks before it posts, although its target is not final, and
+shows the text as the question. Abandon is red, although Stopped does not
+end as cancelled or failed.
+
+- `confirm` is `true`, `false` or a text. `true` asks before a one-click
+  post, into any state. `false` never asks, also into a final state. A
+  text asks with that text. It is 1 to 300 characters, on one line,
+  without characters that display as something else. It is shown as
+  written and not translated, like every label in `realtime.yaml`.
+  Without a text, the question says that the session ends in the state,
+  or, for a state that is not final, that the session moves to it. An
+  unquoted `yes`, `no`, `on`, `off`, `y` or `n` is refused, also in a
+  block scalar (`|` or `>`); quote it or tag it `!!str` to show it as
+  text.
+- `style` is `default`, `primary` or `danger`. `primary` draws the main
+  button of the row; give it to at most one decision per state.
+  `style: primary` on `decision_button` reaches every preset of the type
+  that sets no `style`. So when the type has several presets, put
+  `primary` on one preset rather than on the type.
+  `danger` draws the button red. `default` draws a plain button, also
+  into a state that ends as cancelled or failed.
+- Each key overrides only its own part of the derived look. Without
+  `confirm`, a one-click button still asks into a final state. Without
+  `style`, it is still red into a state that ends as cancelled or failed.
+- A preset button takes each key it does not set from its type's
+  `decision_button`. Its own value wins, so `style: default` or
+  `confirm: false` on a preset turns the type's value off for that
+  button. The confirm text goes with `confirm`, so `confirm: true` on a
+  preset shows the standard question, not the type's text; leave
+  `confirm` out to keep the type's text. `decision_button` applies to every state the type moves the
+  session out of; for a different look in one state, use a preset button.
+- `confirm` does nothing on a button that opens the composer, because
+  **Send** is the confirmation. `style` still applies to it.
+- The dialog's confirm button follows the outcome, not the style. It is
+  red when the state ends as cancelled or failed, or when the button has
+  `style: danger`. So a `primary` button into a cancelled state is not
+  red, but its dialog is.
+- The options are presentation for the web app. They do not change what
+  a post does: a post through MCP, the CLI or the HTTP API is never asked
+  anything, and the server checks it as any other.
+- `decision_button` has only `confirm` and `style`. The type's button
+  reads as the type's `label` and posts no preset, so `label` and `props`
+  are refused there.
+- These keys are new in this release. Every process that loads the
+  project needs this release or later; an older one refuses them as
+  unknown keys.
 
 **Guards.** `when` reads `message.<property>` (the posted properties, typed
 as for the message type's own `when`), `session.state`,
@@ -1638,6 +1731,21 @@ unknown entity type "nope"`. It checks:
   `when` that fails to evaluate for it, at least one poster who could see
   the button, and no two buttons of a state with the same label that one
   poster could both see;
+- that `confirm` and `style` follow the rules under "Button options" in
+  [Sessions](#sessions): a `style` of `default`, `primary` or `danger`
+  (case-sensitive), and a `confirm` that is `true`, `false` or a text of
+  1 to 300 characters on one line without display hazards. A number, a
+  mapping, a list, an empty text and an unquoted YAML 1.1 boolean such as
+  `yes` are refused;
+- that `decision_button` is a mapping with only `confirm` and `style`, on
+  a `log` type of a channel type with a `session`. rela warns when it
+  sets neither key, when no person moves a session with the type, and
+  when it sets `confirm` but the type has a required property and no
+  preset button of the type takes the `confirm`: the type's button then
+  opens the composer, where `confirm` does nothing. rela also warns about
+  a key when every entry of the type has a preset button that sets that
+  key itself: the type's button then never shows, and no preset takes
+  the key;
 - that the file has no merge key (`<<`) anywhere: write the entries out.
 
 Three more rules stop a message from revealing what `acl.yaml` hides:
@@ -1876,8 +1984,14 @@ message: only a message moves a session.
   you, where earlier releases opened the composer.
 - A one-click decision that ends the session (the entries it stands for
   lead to a final state) asks you to confirm first and names the state. The confirm
-  button is red when that state ends as cancelled or failed. No other
-  decision asks.
+  button is red when that state ends as cancelled or failed, or when the
+  button's style is `danger`. No other decision asks, unless the type's
+  `decision_button` or a preset's `button:` says otherwise; see
+  "Button options" under [Sessions](#sessions).
+- The button is red when the decision is one-click and every state it
+  leads to ends as cancelled or failed. `decision_button` can change this
+  for a one-click button, and its `style` applies also to a button that
+  opens the composer.
 - A one-click post replies to the message that moved the session, when
   that message is not itself a reply and the type allows replies.
 - The post carries `expect_generation`. If the session moved on before it
@@ -1909,8 +2023,10 @@ to write the optional `note`, pick Decide in the composer.
   decision does, and never opens the composer. It replies to the message
   that moved the session in the same way.
 - A preset to a final state asks you to confirm first. The confirm button
-  is red when that state ends as cancelled or failed. Choosing whether a
-  button asks and how it looks is planned (TKT-TXZZZ2).
+  is red when that state ends as cancelled or failed. A preset into such a
+  state is red too. The button's `confirm` and `style`, or its type's
+  `decision_button`, change this; see "Button options" under
+  [Sessions](#sessions).
 - If the server refuses the preset, for example because the file changed,
   the composer opens with the type selected and shows why.
 - Preset buttons share the in-flight lock with the decision and choice
@@ -2142,7 +2258,10 @@ property has its name, label, type, and when set `required`, `max`, the
 enum type with its `values`, and the entity types a `ref` may point to
 (`to`). A list property also has `"list": true` and `max_items`; its
 `max` limits each item. A message type with `choices` has
-`"choices": {"from", "answer", "into", "other"}`. Properties come
+`"choices": {"from", "answer", "into", "other"}`. A message type with
+`decision_button` has `"decision_button": {"confirm", "confirm_text",
+"style"}`, with the same rules as the options on a transition row's
+`button`, described below. Properties come
 required first, then by name.
 
 A process older than list properties refuses a `realtime.yaml` with
@@ -2301,7 +2420,13 @@ appears once per entry, in the order rela tries them. Each row carries
 `entry`, its place in its list from 0. A `button:` entry's row also
 carries `button`, with its `label` and its `props` in stored form: an
 integer as a number, a list as an array, a date as `2006-01-02`. A client
-posts those `props` as they are. It is the same for every reader;
+posts those `props` as they are. `button` also carries the button
+options, with the type's `decision_button` already applied: `confirm`
+(`true` or `false`, left out when neither the button nor its type sets
+it), `confirm_text` (left out without a text) and `style` (left out when
+neither sets it). `confirm_text` comes only with `"confirm": true`. They
+are how the web app draws the button and do not change what a post does.
+It is the same for every reader;
 `_actions.transitions` says which message types the caller fires, each
 once, and `_actions.entries` which entries.
 `final` and `stranded` are set when they apply.

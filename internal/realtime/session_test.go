@@ -1071,6 +1071,77 @@ func TestSessionView_Button(t *testing.T) {
 		`"props":{"decision":"revise","count":2,"tags":["a","b"]}}}`, string(b))
 }
 
+// optionsRealtime is [buttonRealtime] with button options (TKT-TXZZZ2):
+// decide's decision_button asks with a text and is danger; Approve turns
+// the question off and is primary; Revise inherits both.
+func optionsRealtime() string {
+	src := strings.Replace(buttonRealtime(), "        post: [lead, member, reviewer, auditor]\n",
+		"        post: [lead, member, reviewer, auditor]\n"+
+			"        decision_button: { confirm: \"Sure?\", style: danger }\n", 1)
+	return strings.Replace(src, "button: { label: Approve, props: { decision: approve } }",
+		"button: { label: Approve, props: { decision: approve }, confirm: false, style: primary }", 1)
+}
+
+// TestSessionView_ButtonOptions pins TKT-TXZZZ2 AC 5: a button row
+// carries its resolved options, an inherited value included;
+// confirm_text comes only with confirm true; a row without options
+// carries none.
+func TestSessionView_ButtonOptions(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t, withYAML(optionsRealtime()), withOutputs(&fakeOutputs{}))
+	s := h.readAll(t, user("mo", "plan.member"), planCh).Channel.Session
+	require.NotNil(t, s)
+	byEntry := map[int]SessionTransitionView{}
+	for _, r := range s.Transitions {
+		if r.MessageType == "decide" {
+			byEntry[r.Entry] = r
+		}
+	}
+	yes, no := true, false
+	require.Equal(t, ButtonOptionsView{Confirm: &no, Style: "primary"}, byEntry[3].Button.ButtonOptionsView)
+	require.Equal(t, ButtonOptionsView{Confirm: &yes, ConfirmText: "Sure?", Style: "danger"},
+		byEntry[4].Button.ButtonOptionsView)
+	require.Nil(t, byEntry[1].Button)
+
+	approve, err := json.Marshal(byEntry[3].Button)
+	require.NoError(t, err)
+	require.JSONEq(t, `{"label":"Approve","props":{"decision":"approve"},"confirm":false,"style":"primary"}`,
+		string(approve))
+	revise, err := json.Marshal(byEntry[4].Button)
+	require.NoError(t, err)
+	require.JSONEq(t, `{"label":"Revise","props":{"decision":"revise","count":2,"tags":["a","b"]},`+
+		`"confirm":true,"confirm_text":"Sure?","style":"danger"}`, string(revise))
+
+	plain := newHarness(t, withYAML(buttonRealtime()), withOutputs(&fakeOutputs{}))
+	for _, r := range plain.readAll(t, user("mo", "plan.member"), planCh).Channel.Session.Transitions {
+		if r.Button != nil {
+			b, err := json.Marshal(r.Button)
+			require.NoError(t, err)
+			require.NotContains(t, string(b), "confirm", "a button without options carries confirm")
+			require.NotContains(t, string(b), "style", "a button without options carries style")
+		}
+	}
+}
+
+// TestButtonOptionsView_Invariant pins that confirm_text implies confirm
+// true and that confirm false never carries a text.
+func TestButtonOptionsView_Invariant(t *testing.T) {
+	t.Parallel()
+	for _, o := range []realtimecfg.ButtonOptions{
+		{}, {Confirm: realtimecfg.ConfirmAsk}, {Confirm: realtimecfg.ConfirmAsk, ConfirmText: "x"},
+		{Confirm: realtimecfg.ConfirmNever}, {Confirm: realtimecfg.ConfirmNever, ConfirmText: "x"},
+		{Confirm: realtimecfg.ConfirmDerived, ConfirmText: "x"},
+	} {
+		v := buttonOptionsView(o)
+		if v.ConfirmText != "" {
+			require.True(t, v.Confirm != nil && *v.Confirm, "%+v: confirm_text without confirm true", o)
+		}
+		if v.Confirm != nil && !*v.Confirm {
+			require.Empty(t, v.ConfirmText, "%+v: confirm false with a text", o)
+		}
+	}
+}
+
 // TestButtons_DeciderAgrees pins TKT-S9TLJJ AC 8 against the real
 // decider: for every caller and button, on a fresh channel, a preset post
 // with expect_generation moves the session along the button's entry

@@ -113,3 +113,30 @@ func TestDescribe_ListAndChoices(t *testing.T) {
 	require.Equal(t, "string", options.Type)
 	require.Nil(t, byName["answer"].Choices)
 }
+
+// TestDescribe_DecisionButton pins TKT-TXZZZ2 AC 5: a message type with
+// decision_button carries it in Describe and in a read's message types;
+// a type without it carries nil.
+func TestDescribe_DecisionButton(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t, withYAML(optionsRealtime()), withOutputs(&fakeOutputs{}))
+	yes := true
+	want := &ButtonOptionsView{Confirm: &yes, ConfirmText: "Sure?", Style: "danger"}
+	views := h.svc.Describe()
+	require.Len(t, views, 1)
+	described := map[string]MessageTypeDescription{}
+	for _, mt := range views[0].MessageTypes {
+		described[mt.Name] = mt
+	}
+	require.Equal(t, want, described["decide"].DecisionButton)
+	require.Nil(t, described["text"].DecisionButton)
+
+	read, err := h.svc.Read(as(user("mo", "plan.member")), planCh, ReadRequest{Schemas: true})
+	require.NoError(t, err)
+	viewed := map[string]MessageTypeView{}
+	for _, mt := range read.MessageTypes {
+		viewed[mt.Name] = mt
+	}
+	require.Equal(t, want, viewed["decide"].DecisionButton)
+	require.Nil(t, viewed["text"].DecisionButton)
+}

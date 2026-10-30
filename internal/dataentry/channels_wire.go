@@ -59,7 +59,11 @@ func wireChannelSession(s *realtime.SessionView) *v1.ChannelSession {
 			MessageType: t.MessageType, To: t.To, By: t.By, Guarded: t.Guarded, Outputs: t.Outputs, Entry: t.Entry,
 		}
 		if t.Button != nil {
-			w.Button = &v1.ChannelSessionButton{Label: t.Button.Label, Props: t.Button.Props}
+			o := t.Button.ButtonOptionsView
+			w.Button = &v1.ChannelSessionButton{
+				Label: t.Button.Label, Props: t.Button.Props,
+				Confirm: o.Confirm, ConfirmText: o.ConfirmText, Style: o.Style,
+			}
 		}
 		out.Transitions = append(out.Transitions, w)
 	}

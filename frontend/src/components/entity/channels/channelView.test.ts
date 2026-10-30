@@ -1254,6 +1254,172 @@ describe('session decisions', () => {
     }
   })
 
+  describe('decisionViews options', () => {
+    type Options = NonNullable<ChannelMessageTypeSchema['decision_button']>
+    /** run with decision_button on the named message types. */
+    function withOptions(byType: Record<string, Options>): ChannelTypeSchema {
+      return {
+        ...run,
+        message_types: run.message_types.map((mt) =>
+          byType[mt.name] ? { ...mt, decision_button: byType[mt.name] } : mt
+        ),
+      }
+    }
+    /** The type button of one row of type into to, with the type's options. */
+    function typeView(name: string, to: string, options?: Options) {
+      const ct = options ? withOptions({ [name]: options }) : run
+      return decisionViews(ct, head({ transitions: [{ message_type: name, to }] }, [name]), 4)
+    }
+    const accept = { key: 'accept', messageType: 'accept', label: 'Accept' }
+
+    it('no options keep the derived rule', () => {
+      expect(typeView('accept', 'accepted')).toEqual([
+        { ...accept, toLabel: 'Accepted', confirm: true },
+      ])
+      expect(typeView('accept', 'abandoned')).toEqual([
+        { ...accept, toLabel: 'Abandoned', confirm: true, danger: true },
+      ])
+      expect(typeView('accept', 'working')).toEqual([{ ...accept, toLabel: 'Working' }])
+    })
+    it('form button into a cancelled state stays plain without options', () => {
+      expect(typeView('revise', 'abandoned')).toEqual([
+        {
+          key: 'revise',
+          messageType: 'revise',
+          label: 'Revise plan',
+          toLabel: 'Abandoned',
+          opensForm: true,
+        },
+      ])
+    })
+    it('confirm true asks into a non-final state', () => {
+      expect(typeView('accept', 'working', { confirm: true })).toEqual([
+        { ...accept, toLabel: 'Working', confirm: true, movesOnly: true },
+      ])
+    })
+    it('confirm false does not ask into a final state', () => {
+      expect(typeView('accept', 'accepted', { confirm: false })).toEqual([
+        { ...accept, toLabel: 'Accepted' },
+      ])
+      expect(typeView('accept', 'abandoned', { confirm: false })).toEqual([
+        { ...accept, toLabel: 'Abandoned', danger: true },
+      ])
+    })
+    it('confirm text is carried', () => {
+      expect(
+        typeView('accept', 'accepted', { confirm: true, confirm_text: 'Runs the tool.' })
+      ).toEqual([{ ...accept, toLabel: 'Accepted', confirm: true, confirmText: 'Runs the tool.' }])
+    })
+    it('style danger without a cancelled target', () => {
+      expect(typeView('accept', 'working', { style: 'danger' })).toEqual([
+        { ...accept, toLabel: 'Working', danger: true },
+      ])
+    })
+    it('style default drops the derived danger', () => {
+      expect(typeView('accept', 'abandoned', { style: 'default' })).toEqual([
+        { ...accept, toLabel: 'Abandoned', confirm: true, outcomeDanger: true },
+      ])
+    })
+    it('style primary', () => {
+      expect(typeView('accept', 'working', { style: 'primary' })).toEqual([
+        { ...accept, toLabel: 'Working', primary: true },
+      ])
+      expect(typeView('accept', 'abandoned', { style: 'primary' })).toEqual([
+        { ...accept, toLabel: 'Abandoned', confirm: true, primary: true, outcomeDanger: true },
+      ])
+    })
+    it("type button reads the message type's decision_button", () => {
+      const ct = withOptions({ accept: { style: 'danger' }, drop: { style: 'primary' } })
+      const h = head(
+        {
+          transitions: [
+            { message_type: 'accept', to: 'working' },
+            { message_type: 'drop', to: 'working' },
+          ],
+        },
+        ['accept', 'drop']
+      )
+      expect(decisionViews(ct, h, 4)).toEqual([
+        { ...accept, toLabel: 'Working', danger: true },
+        { key: 'drop', messageType: 'drop', label: 'Drop', toLabel: 'Working', primary: true },
+      ])
+    })
+    it('type button that opens the form keeps style and drops confirm', () => {
+      expect(typeView('revise', 'abandoned', { confirm: true, style: 'danger' })).toEqual([
+        {
+          key: 'revise',
+          messageType: 'revise',
+          label: 'Revise plan',
+          toLabel: 'Abandoned',
+          opensForm: true,
+          danger: true,
+        },
+      ])
+    })
+
+    /** A head whose accept rows are listed for the caller. */
+    function listed(rows: ChannelSessionTransition[]) {
+      const h = head({ transitions: rows }, ['accept'])
+      return {
+        ...h,
+        _actions: {
+          ...h._actions,
+          entries: rows.map((r) => ({ message_type: r.message_type, entry: r.entry ?? 0 })),
+        },
+      }
+    }
+    it('preset options do not reach the type button', () => {
+      const h = listed([
+        {
+          message_type: 'accept',
+          to: 'working',
+          entry: 0,
+          button: { label: 'Go', style: 'primary', confirm: true },
+        },
+        { message_type: 'accept', to: 'working', entry: 1 },
+      ])
+      expect(decisionViews(run, h, 4)).toEqual([
+        {
+          key: 'preset:accept:0',
+          messageType: 'accept',
+          label: 'Go',
+          props: {},
+          toLabel: 'Working',
+          confirm: true,
+          movesOnly: true,
+          primary: true,
+        },
+        { ...accept, toLabel: 'Working' },
+      ])
+    })
+    it('a preset reads the merged row options', () => {
+      // The type's decision_button is already merged into the row by the
+      // server; the preset reads only the row.
+      const ct = withOptions({ accept: { style: 'primary' } })
+      const h = listed([
+        {
+          message_type: 'accept',
+          to: 'working',
+          entry: 0,
+          button: { label: 'Go', confirm: true, confirm_text: 'Sure?', style: 'danger' },
+        },
+      ])
+      expect(decisionViews(ct, h, 4)).toEqual([
+        {
+          key: 'preset:accept:0',
+          messageType: 'accept',
+          label: 'Go',
+          props: {},
+          toLabel: 'Working',
+          confirm: true,
+          confirmText: 'Sure?',
+          movesOnly: true,
+          danger: true,
+        },
+      ])
+    })
+  })
+
   const msgAt = (seq: number, over: Partial<Message> = {}): Message => ({
     seq,
     rev: seq,
