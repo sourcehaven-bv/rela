@@ -58,7 +58,7 @@ import type {
   ChannelTypingView,
 } from 'rela-components/components/channel/types'
 import { resolveChannelFields } from 'rela-components/components/channel/channelFields'
-import { endTone, presetViews } from './presetViews'
+import { applyOptions, endTone, presetViews, type AppDecisionView } from './presetViews'
 
 /** The longest reply excerpt, in code points. */
 export const EXCERPT_MAX = 80
@@ -389,13 +389,14 @@ export type DecisionHead = Pick<ChannelHead, 'channel'> & {
  * states, or when the type has a required property. `toLabel` is set when
  * they lead to one state. A one-click decision asks first (`confirm`) when
  * its state is final, and is `danger` when that state ends as cancelled or
- * failed (endTone).
+ * failed (endTone). The type's `decision_button` and a preset's own
+ * options override that look (applyOptions).
  */
 export function decisionViews(
   ct: ChannelTypeSchema,
   head: DecisionHead,
   actionsGeneration: number | undefined
-): ChannelDecisionView[] {
+): AppDecisionView[] {
   const s = ct.session
   const cs = head.channel.session
   if (head.channel.state !== 'open' || !s || !cs || cs.final || cs.stranded) return []
@@ -429,7 +430,7 @@ export function decisionViews(
     )
     if (!rest.length) return views
     const targets = [...new Set(rest.map((tr) => tr.to))]
-    const view: ChannelDecisionView = { key: name, messageType: name, label: mt.label || name }
+    const view: AppDecisionView = { key: name, messageType: name, label: mt.label || name }
     const [only, ...more] = targets
     if (only !== undefined && !more.length) view.toLabel = stateLabel(s, only)
     if (
@@ -442,9 +443,12 @@ export function decisionViews(
     }
     // Only a one-click decision asks; a form decision asks nothing, since
     // its own Send is the confirmation. A one-click decision has one target.
-    if (!view.opensForm && view.toLabel !== undefined)
-      Object.assign(view, endTone(targets, stateOf))
-    return [...views, view]
+    // The type's decision_button overrides the derived look.
+    const oneClick = !view.opensForm && view.toLabel !== undefined
+    return [
+      ...views,
+      applyOptions(view, mt.decision_button, oneClick, oneClick ? endTone(targets, stateOf) : {}),
+    ]
   })
 }
 

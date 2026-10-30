@@ -3437,6 +3437,9 @@ The rules:
   `navigation: references unknown dashboard "sales" (known: ops)`.
 - `dashboard: true` without a `dashboard:` block shows an empty dashboard, as
   before.
+- An unquoted `yes`, `no`, `on`, `off`, `y` or `n` is refused, because it
+  reads as a boolean in older YAML. A block scalar (`|` or `>`) counts as
+  unquoted. Quote the value, or tag it `!!str`, to use it as a name.
 
 A named dashboard opens at `/dashboard/<name>`, and inside a space at
 `/s/<space>/dashboard/<name>`. Its sidebar entry is highlighted while it is
@@ -5737,7 +5740,7 @@ actions:
 | `set`         | map    | Property key-value pairs to set on the entity (mutually exclusive with `script`) |
 | `script`      | string | Lua script path, relative to the `actions/` directory (mutually exclusive with `set`) |
 | `params`      | map    | Static key-value parameters from config, exposed as `rela.params` (values must be strings — quote them in YAML) |
-| `confirm`     | bool or string | Show a confirmation dialog before a list, list-button or detail-page action runs (default: `false`). A string is the dialog text. The sidebar does not ask |
+| `confirm`     | bool or string | Show a confirmation dialog before a list, list-button or detail-page action runs (default: `false`). A string is the dialog text. An unquoted `yes`, `no`, `on`, `off`, `y` or `n` is refused, also in a block scalar (`\|` or `>`); quote it or tag it `!!str` to show it as text. The sidebar does not ask |
 | `available_on`| map    | Offer the action on detail pages — see [Actions on the detail page](#actions-on-the-detail-page). Requires `script` |
 | `when`        | string | Predicate that must hold for the entity. Requires `available_on` |
 | `permission`  | string | Global named permission the caller must hold to run the action from a list, a list button, the sidebar, a next-action offer or a detail page |

@@ -84,5 +84,10 @@ func wireMessageTypeSchema(mt realtime.MessageTypeDescription) v1.ChannelMessage
 	if c := mt.Choices; c != nil {
 		out.Choices = &v1.ChannelChoicesSchema{From: c.From, Answer: c.Answer, Into: c.Into, Other: c.Other}
 	}
+	if d := mt.DecisionButton; d != nil {
+		out.DecisionButton = &v1.ChannelDecisionButtonSchema{
+			Confirm: d.Confirm, ConfirmText: d.ConfirmText, Style: d.Style,
+		}
+	}
 	return out
 }

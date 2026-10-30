@@ -140,7 +140,35 @@ type rawTransition struct {
 type rawButton struct {
 	Label string    `yaml:"label"`
 	Props rawPreset `yaml:"props"`
+	// Confirm and Style are the button options; see [ButtonOptions].
+	Confirm rawConfirm `yaml:"confirm"`
+	// Style is nil when absent or null, so `style: ""` is refused rather
+	// than read as absent.
+	Style *string `yaml:"style"`
 }
+
+// rawDecisionButton is `message_types.<type>.decision_button`: the
+// options of every decision button of the type (see [ButtonOptions]).
+type rawDecisionButton struct {
+	Confirm rawConfirm `yaml:"confirm"`
+	Style   *string    `yaml:"style"`
+}
+
+// rawConfirm keeps the YAML node of a button's `confirm:`, which is a
+// boolean or a text, so [optionsOf] can tell a quoted text from an
+// unquoted YAML 1.1 boolean spelling. The key checker refuses a value
+// that is not a single value. The node is nil when the key is absent or
+// null.
+type rawConfirm struct{ node *yaml.Node }
+
+// UnmarshalYAML keeps n, with aliases followed.
+func (c *rawConfirm) UnmarshalYAML(n *yaml.Node) error {
+	c.node = resolveNode(n)
+	return nil
+}
+
+// set reports whether the file gives `confirm:` a value other than null.
+func (c rawConfirm) set() bool { return c.node != nil && c.node.Tag != "!!null" }
 
 // rawPreset is `button.props`: one value per message property.
 type rawPreset map[string]rawPresetValue
@@ -205,6 +233,9 @@ type rawMessageType struct {
 	In []string `yaml:"in"`
 	// Choices is `choices:`; see [Choices].
 	Choices *rawChoices `yaml:"choices"`
+	// DecisionButton is `decision_button:`; see [MessageType.DecisionButton].
+	// A null value decodes as absent.
+	DecisionButton *rawDecisionButton `yaml:"decision_button"`
 }
 
 // rawChoices is `message_types.<mt>.choices`.

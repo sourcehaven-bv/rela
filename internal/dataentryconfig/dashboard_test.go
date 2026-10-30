@@ -173,6 +173,8 @@ func TestDashboardRef_YAML(t *testing.T) {
 		{src: "dashboard: default", want: DefaultDashboard},
 		{src: `dashboard: "yes"`, want: "yes"},
 		{src: "dashboard: yes", err: "is not a boolean"},
+		{src: "dashboard: |\n  yes\n", err: `dashboard: "yes" is not a boolean`},
+		{src: "dashboard: !!str yes", want: "yes"},
 		{src: `dashboard: ""`, err: "must be true or the name"},
 		{src: "dashboard: 3", err: "must be true or the name"},
 		{src: "dashboard: [a]", err: "must be true or the name"},

@@ -121,6 +121,48 @@ type SessionTransitionView struct {
 type SessionButtonView struct {
 	Label string         `json:"label"`
 	Props map[string]any `json:"props"`
+	// ButtonOptionsView holds the button's options, with its type's
+	// `decision_button:` already applied.
+	ButtonOptionsView
+}
+
+// ButtonOptionsView is how the web app draws a decision button: the
+// authored `confirm:` and `style:` (see [realtimecfg.ButtonOptions]).
+// They do not change what a post does. Config, the same for every
+// reader.
+//
+// Confirm is nil when the file leaves the question to the derived rule.
+// ConfirmText is set only with Confirm true, so `confirm: false` never
+// carries a text. Style is empty when the file sets none.
+type ButtonOptionsView struct {
+	Confirm     *bool  `json:"confirm,omitempty"`
+	ConfirmText string `json:"confirm_text,omitempty"`
+	Style       string `json:"style,omitempty"`
+}
+
+// buttonOptionsView serves o.
+func buttonOptionsView(o realtimecfg.ButtonOptions) ButtonOptionsView {
+	v := ButtonOptionsView{Style: string(o.Style)}
+	switch o.Confirm {
+	case realtimecfg.ConfirmAsk:
+		ask := true
+		v.Confirm, v.ConfirmText = &ask, o.ConfirmText
+	case realtimecfg.ConfirmNever:
+		never := false
+		v.Confirm = &never
+	case realtimecfg.ConfirmDerived:
+		// Left out: the web app derives it.
+	}
+	return v
+}
+
+// decisionButtonView serves a type's `decision_button:`; nil for nil.
+func decisionButtonView(o *realtimecfg.ButtonOptions) *ButtonOptionsView {
+	if o == nil {
+		return nil
+	}
+	v := buttonOptionsView(*o)
+	return &v
 }
 
 // EntryRef names one transition entry of the current state: its message
@@ -179,7 +221,9 @@ func sessionView(ct realtimecfg.ChannelType, h *channels.Channel, degraded bool,
 			Outputs: len(tr.Outputs()), Entry: tr.Index(),
 		}
 		if b, ok := tr.Button(); ok {
-			tv.Button = &SessionButtonView{Label: b.Label, Props: b.Props()}
+			tv.Button = &SessionButtonView{
+				Label: b.Label, Props: b.Props(), ButtonOptionsView: buttonOptionsView(b.Options),
+			}
 		}
 		v.Transitions = append(v.Transitions, tv)
 	}

@@ -9,6 +9,8 @@ import (
 	"strings"
 
 	"gopkg.in/yaml.v3"
+
+	"github.com/Sourcehaven-BV/rela/internal/yamlscalar"
 )
 
 // DefaultDashboardName is the name that refers to the default dashboard, the
@@ -70,9 +72,9 @@ func (d *DashboardRef) UnmarshalYAML(value *yaml.Node) error {
 	}
 	// YAML 1.2 reads an unquoted yes/no/on/off as a string, so `dashboard: yes`
 	// would silently name a dashboard called "yes". Refuse it, as `confirm:` does.
-	if value.Style&(yaml.DoubleQuotedStyle|yaml.SingleQuotedStyle) == 0 && isYAML11Bool(value.Value) {
+	if yamlscalar.PlainYAML11Bool(value) {
 		return fmt.Errorf("dashboard: %q is not a boolean; use true or false, or quote it to name a dashboard",
-			value.Value)
+			strings.TrimSpace(value.Value))
 	}
 	*d = DashboardRef(value.Value)
 	return nil

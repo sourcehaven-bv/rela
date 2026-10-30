@@ -2,7 +2,12 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { nextTick, ref } from 'vue'
 import { ApiError } from '@/api/errors'
 import { i18n } from '@/i18n'
-import type { ChannelHead, ChannelTypeSchema, Message } from '@/types/channels'
+import type {
+  ChannelButtonOptions,
+  ChannelHead,
+  ChannelTypeSchema,
+  Message,
+} from '@/types/channels'
 import { useSessionDecisions, type DecisionChannel, type DecisionDeps } from './useSessionDecisions'
 
 const logType = (name: string, label: string, required = false) => ({
@@ -845,5 +850,90 @@ describe('useSessionDecisions presets', () => {
     s.h.value = same
     await nextTick()
     expect(s.d.decisions.value).toBe(held)
+  })
+})
+
+/** The run type with decision_button on accept, and a cancelled state. */
+function optionsCt(options: ChannelButtonOptions): ChannelTypeSchema {
+  const out: ChannelTypeSchema = {
+    ...ct,
+    message_types: ct.message_types.map((mt) =>
+      mt.name === 'accept' ? { ...mt, decision_button: options } : mt
+    ),
+    session: {
+      ...ct.session!,
+      states: [
+        ...ct.session!.states,
+        { name: 'abandoned', label: 'Abandoned', final: true, status: 'cancelled' },
+      ],
+    },
+  }
+  return out
+}
+
+/** setup() with the options type, and accept leading to to. */
+function optionsSetup(options: ChannelButtonOptions, to: string) {
+  const s = setup()
+  const oct = optionsCt(options)
+  s.deps.channelType = () => oct
+  const h = head(4)
+  h.channel.session!.transitions = [{ message_type: 'accept', to }]
+  h._actions.transitions = ['accept']
+  s.ch.head.value = h
+  return { ...s, d: useSessionDecisions(s.deps) }
+}
+
+describe('useSessionDecisions options', () => {
+  it('authored confirm text is the dialog body', async () => {
+    const s = optionsSetup(
+      { confirm: true, confirm_text: 'This runs the tool on your machine.' },
+      'working'
+    )
+    await s.d.onDecide('accept', 'header')
+    expect(s.deps.ui.confirm).toHaveBeenCalledWith({
+      title: 'Accept',
+      message: 'This runs the tool on your machine.',
+      confirmLabel: 'Accept',
+      danger: false,
+    })
+    expect(s.deps.post).toHaveBeenCalledWith('accept', {}, undefined, 4)
+  })
+
+  it('confirm into a non-final state says it moves the session', async () => {
+    const s = optionsSetup({ confirm: true }, 'working')
+    await s.d.onDecide('accept', 'header')
+    expect(s.deps.ui.confirm).toHaveBeenCalledWith(
+      expect.objectContaining({ message: 'This moves the session to Working.' })
+    )
+  })
+
+  it('confirm into a final state keeps the end text', async () => {
+    const s = optionsSetup({ confirm: true }, 'accepted')
+    await s.d.onDecide('accept', 'header')
+    expect(s.deps.ui.confirm).toHaveBeenCalledWith(
+      expect.objectContaining({ message: 'This ends the session in Accepted. You cannot undo it.' })
+    )
+  })
+
+  it('declined authored confirm posts nothing', async () => {
+    const s = optionsSetup({ confirm: true, confirm_text: 'Sure?' }, 'working')
+    s.deps.ui.confirm.mockResolvedValue(false)
+    await s.d.onDecide('accept', 'header')
+    expect(s.deps.ui.confirm).toHaveBeenCalledOnce()
+    expect(s.deps.post).not.toHaveBeenCalled()
+  })
+
+  it('style primary into a cancelled state keeps the dialog red', async () => {
+    const s = optionsSetup({ style: 'primary' }, 'abandoned')
+    const view = s.d.decisions.value[0]
+    expect(view?.primary).toBe(true)
+    expect(view?.danger).toBeUndefined()
+    await s.d.onDecide('accept', 'header')
+    expect(s.deps.ui.confirm).toHaveBeenCalledWith(
+      expect.objectContaining({
+        message: 'This ends the session in Abandoned. You cannot undo it.',
+        danger: true,
+      })
+    )
   })
 })

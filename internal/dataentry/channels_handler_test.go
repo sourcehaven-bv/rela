@@ -1069,6 +1069,20 @@ func TestWireChannelSession_Button(t *testing.T) {
 			`{"message_type":"decide","to":"planning","entry":1,`+
 			`"button":{"label":"Revise","props":{"decision":"revise","tags":["a"]}}}]`, string(b))
 	})
+	t.Run("button options", func(t *testing.T) {
+		yes := true
+		got := wireChannelSession(&realtime.SessionView{State: "review", Transitions: []realtime.SessionTransitionView{
+			{MessageType: "decide", To: "planning", Button: &realtime.SessionButtonView{
+				Label: "Revise", Props: map[string]any{"decision": "revise"},
+				ButtonOptionsView: realtime.ButtonOptionsView{Confirm: &yes, ConfirmText: "Sure?", Style: "danger"}}},
+		}})
+		require.Equal(t, &v1.ChannelSessionButton{Label: "Revise", Props: map[string]any{"decision": "revise"},
+			Confirm: &yes, ConfirmText: "Sure?", Style: "danger"}, got.Transitions[0].Button)
+		b, err := json.Marshal(got.Transitions[0].Button)
+		require.NoError(t, err)
+		require.JSONEq(t, `{"label":"Revise","props":{"decision":"revise"},"confirm":true,`+
+			`"confirm_text":"Sure?","style":"danger"}`, string(b))
+	})
 	t.Run("entries", func(t *testing.T) {
 		head := wireHead(realtime.HeadView{Actions: realtime.Affordances{
 			Entries: []realtime.EntryRef{{MessageType: "decide", Entry: 1}},

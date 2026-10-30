@@ -22,6 +22,9 @@
  * many lines as it needs and is never cut, because the click posts exactly
  * that text in the person's name. Choice and decision buttons share the
  * pending keys, so one click blocks both.
+ *
+ * A decision with `primary` is drawn as the primary button; every other
+ * one as a secondary button. `danger` sets the danger tone.
  */
 import { computed } from 'vue'
 import RlButton from '../common/RlButton.vue'
@@ -68,7 +71,7 @@ function hint(d: ChannelDecisionView): string {
       v-for="d in decisions"
       :key="d.key"
       size="sm"
-      variant="secondary"
+      :variant="d.primary ? 'primary' : 'secondary'"
       :icon="choice ? undefined : 'workflow'"
       :tone="d.danger ? 'danger' : 'default'"
       :loading="isPending(d)"

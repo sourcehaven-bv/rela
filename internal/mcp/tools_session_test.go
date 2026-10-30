@@ -191,6 +191,33 @@ func TestReadSession(t *testing.T) {
 			t.Errorf("carol's entries = %#v, want an empty list", carol.Entries)
 		}
 	})
+	t.Run("button carries confirm and style", func(t *testing.T) {
+		t.Parallel()
+		f := newReviewFixture(t)
+		y := strings.Replace(reviewYAML, "done: { to: finished, roles: [lead] }",
+			"done: { to: finished, roles: [lead], button: { label: Finish, props: { note: shipped }, "+
+				"style: primary } }", 1)
+		y = strings.Replace(y, "      done:    { properties: { note: { type: string } }, post: [lead] }",
+			"      done:    { properties: { note: { type: string } }, post: [lead], "+
+				"decision_button: { confirm: \"Ship it?\" } }", 1)
+		compiled, err := realtimecfg.Parse([]byte(y), f.meta, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		f.cfg.Store(compiled)
+		for _, tool := range []string{toolReadSession, toolReadChannel} {
+			text := mustCall(t, f.client(t, "alice"), tool, reviewArgs, nil)
+			if !strings.Contains(text, `"button":{"label":"Finish","props":{"note":"shipped"},`+
+				`"confirm":true,"confirm_text":"Ship it?","style":"primary"}`) {
+
+				t.Errorf("%s does not carry the resolved options: %s", tool, text)
+			}
+		}
+		text := mustCall(t, f.client(t, "alice"), toolReadChannel, reviewArgs, nil)
+		if !strings.Contains(text, `"decision_button":{"confirm":true,"confirm_text":"Ship it?"}`) {
+			t.Errorf("read_channel does not carry decision_button: %s", text)
+		}
+	})
 	t.Run("no session", func(t *testing.T) {
 		t.Parallel()
 		f := newReviewFixture(t)

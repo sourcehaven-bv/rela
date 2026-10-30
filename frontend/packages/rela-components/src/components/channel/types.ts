@@ -345,12 +345,14 @@ export interface ChannelDecisionView {
   /** The button opens the composer instead of posting. */
   opensForm?: boolean
   /**
-   * Ask before posting: the move ends the session. Only on a one-click
-   * decision, which always has `toLabel`.
+   * Ask before posting. Only on a one-click decision, which always has
+   * `toLabel`.
    */
   confirm?: boolean
-  /** Draws the button in the danger tone: the session ends cancelled or failed. */
+  /** Draws the button in the danger tone. */
   danger?: boolean
+  /** Draws the button as the primary decision of the row. */
+  primary?: boolean
 }
 
 /** An ephemeral signal, shown as one compact line while it lasts. */

@@ -12,6 +12,7 @@ import type {
 } from 'rela-components/components/channel/types'
 import { decisionPendingKey } from 'rela-components/components/channel/channelFields'
 import { problemType } from './channelErrors'
+import type { AppDecisionView } from './presetViews'
 import {
   choiceViews,
   decisionCause,
@@ -124,7 +125,7 @@ export function useSessionDecisions(d: DecisionDeps) {
 
   // The head is replaced on every frame; the views are rebuilt only when
   // what they read changes, so the buttons keep their identity.
-  const memo = computed<{ ct: ChannelTypeSchema; key: string; value: ChannelDecisionView[] }>(
+  const memo = computed<{ ct: ChannelTypeSchema; key: string; value: AppDecisionView[] }>(
     (prev) => {
       const ct = d.channelType()
       const h = d.ch.head.value
@@ -300,9 +301,10 @@ export function useSessionDecisions(d: DecisionDeps) {
       if (view.confirm) {
         const ok = await d.ui.confirm({
           title: view.label,
-          message: t('channels.decisionConfirmBody', { state: view.toLabel ?? view.label }),
+          message: confirmMessage(view),
           confirmLabel: view.label,
-          danger: !!view.danger,
+          // The dialog's red follows the outcome, not the button's style.
+          danger: !!(view.danger || view.outcomeDanger),
         })
         if (!ok || !live()) return
         // UX only: a state that no longer offers the key is stale; the
@@ -451,6 +453,19 @@ export function useSessionDecisions(d: DecisionDeps) {
     resetDecisions,
     sendComposer,
   }
+}
+
+/**
+ * The body of a decision's confirm dialog: the authored text as written,
+ * else a translated text that says the session moves to a state that is
+ * not final, or ends in a final one.
+ */
+function confirmMessage(view: AppDecisionView): string {
+  if (view.confirmText) return view.confirmText
+  const state = view.toLabel ?? view.label
+  return view.movesOnly
+    ? t('channels.decisionConfirmMoveBody', { state })
+    : t('channels.decisionConfirmBody', { state })
 }
 
 /** A preset prop value as a request sends it: a readable ref is its id. */

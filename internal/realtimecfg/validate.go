@@ -213,6 +213,7 @@ func (v *validator) channelType(name string, raw *rawChannelType, limits Limits)
 		messageInCheck{v: v, raw: raw, ct: ct}.withoutSession()
 	}
 	choiceChecker{v}.choices(raw, ct)
+	typeButtonChecker{v}.check(raw, ct)
 	return ct
 }
 

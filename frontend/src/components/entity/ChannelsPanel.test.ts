@@ -2237,6 +2237,54 @@ describe('ChannelsPanel preset buttons', () => {
     await flushPromises()
   })
 
+  it('authored confirm asks before Allow posts', async () => {
+    const withAllow: ChannelTypeSchema = {
+      ...run,
+      message_types: [
+        ...run.message_types,
+        logType('allow', 'Allow', [], {
+          decision_button: { confirm: true, confirm_text: 'This runs the tool on your machine.' },
+        }),
+      ],
+    }
+    const allowReview = {
+      ...review,
+      transitions: [...review.transitions, { message_type: 'allow', to: 'working', entry: 0 }],
+    }
+    api.getChannelSchema.mockResolvedValue({ channel_types: [withAllow] })
+    api.getChannelHead.mockImplementation(() => {
+      const h = runHead()
+      return Promise.resolve({
+        ...h,
+        channel: { ...h.channel, session: allowReview },
+        _actions: {
+          ...h._actions,
+          post: [...h._actions.post, 'allow'],
+          transitions: [...(h._actions.transitions ?? []), 'allow'],
+          entries: [...(h._actions.entries ?? []), { message_type: 'allow', entry: 0 }],
+        },
+      })
+    })
+    api.getMessages.mockResolvedValue({
+      ...page([question, notice]),
+      channel: channel({ last_seq: 13, rev: 13, session: allowReview }),
+      next_after_rev: 13,
+    })
+    confirm.mockResolvedValue(true)
+    await mountPanel()
+    await header().find('[data-decision="allow"]').trigger('click')
+    await flushPromises()
+    await flushPromises()
+    expect(confirm).toHaveBeenCalledWith(
+      expect.objectContaining({
+        title: 'Allow',
+        message: 'This runs the tool on your machine.',
+        danger: false,
+      })
+    )
+    expect(api.postMessage).toHaveBeenCalledWith(expect.anything(), 'allow', {}, 12, 4)
+  })
+
   it('hidden decision type keeps its presets', async () => {
     useSchemaStore().channelPresentations = new Map([
       ['room', { messages: { decide: { display: 'hidden' }, ask: { display: 'hidden' } } }],

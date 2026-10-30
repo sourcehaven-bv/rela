@@ -30,6 +30,11 @@ type TransitionButton struct {
 	// Label is the button's text, trimmed, without emoji style selectors
 	// and in NFC.
 	Label string
+	// Options are how the web app draws the button: its own `confirm:`
+	// and `style:`, with each one it leaves out taken from the type's
+	// `decision_button:`. The zero value leaves both to the web app's
+	// derived rule.
+	Options ButtonOptions
 	// props is the preset in stored form.
 	props map[string]any
 	// shadowing are the earlier entries that take the preset first for a
@@ -101,10 +106,11 @@ func (v buttonChecker) compile(raw *rawButton, list []Transition, j int, sc butt
 		ok = false
 	}
 	props, propsOK := v.preset(key+".props", raw.Props, sc)
-	if !ok || !propsOK {
+	opts, optsOK := optionsOf(v.validator, key, raw.Confirm, raw.Style)
+	if !ok || !propsOK || !optsOK {
 		return nil
 	}
-	b := &TransitionButton{Label: label, props: props}
+	b := &TransitionButton{Label: label, props: props, Options: opts}
 	if !v.guards(key, b, list, j, classes, sc) {
 		return nil
 	}

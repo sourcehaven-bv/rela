@@ -200,6 +200,7 @@ func TestActionConfirm_RejectsOtherShapes(t *testing.T) {
 		{"number", "1", "confirm must be a boolean or a string"},
 		{"unquoted yes", "yes", "is not a boolean"},
 		{"unquoted Off", "Off", "is not a boolean"},
+		{"block scalar yes", "|\n  yes\n", `confirm: "yes" is not a boolean`},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

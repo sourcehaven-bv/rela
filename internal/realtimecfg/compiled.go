@@ -465,6 +465,12 @@ type MessageType struct {
 	In []string
 	// Choices is `choices:`, or nil.
 	Choices *Choices
+	// DecisionButton is `decision_button:`: the options of the type's
+	// decision buttons in the web app, or nil when the file sets none.
+	// The load already merged them into each preset button of the type
+	// (see [TransitionButton.Options]), so they matter on their own only
+	// for the type's button.
+	DecisionButton *ButtonOptions
 }
 
 // Choices is `choices:` on a message type, the question type. The web app
