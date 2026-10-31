@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -84,6 +85,14 @@ func navStatusFor(
 	if len(rows) == 0 {
 		return v1.NavStatus{}, false, nil
 	}
+	// The rules redact the same rows. navStatusRows primed them already
+	// when the list has a condition.
+	rulesJudge := slices.ContainsFunc(ns.Entry.Status, func(r dataentryconfig.NavStatusRule) bool {
+		return r.Condition != ""
+	})
+	if rulesJudge && listCfg.Condition == "" {
+		ctx = primeVerdicts(ctx, a.fieldResolver, rows)
+	}
 	for i, rule := range ns.Entry.Status {
 		m := viewCondition(a.viewConditions, s, viewKindNavStatus,
 			dataentryconfig.NavStatusConditionID(ns.Key, i))
@@ -119,7 +128,8 @@ func navStatusFor(
 //
 // Rows are gated and redacted before anything is counted over them, the order
 // the root CLAUDE.md requires of an aggregate. The returned ctx carries the
-// query identity, for rule conditions that name current_user.
+// query identity, for rule conditions that name current_user, and, when the
+// list has a condition, the verdict prime of the rows.
 func navStatusRows(
 	ctx context.Context, a *App, s *Schema, listID string, listCfg dataentryconfig.List,
 ) (context.Context, []*entityPkg.Entity, error) {
@@ -146,6 +156,14 @@ func navStatusRows(
 	cond := viewCondition(a.viewConditions, s, viewKindList, listID)
 	if listCfg.Condition != "" && cond == nil {
 		return ctx, nil, fmt.Errorf("list %q: condition is not compiled", listID)
+	}
+	// A condition redacts each row before judging it, and an unprimed
+	// redaction resolves the principal's local roles with point lookups per
+	// row (TKT-YLG695, as BUG-E2W1LS was for the list). Prime only when a
+	// condition will judge every row, as listPage does; the returned ctx
+	// carries the prime to the caller.
+	if cond != nil {
+		ctx = primeVerdicts(ctx, a.fieldResolver, rows)
 	}
 	rows, err = applyViewCondition(ctx, rows, cond, a.redactedForSuggestion, a.Services().Store)
 	if err != nil {

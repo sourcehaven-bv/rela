@@ -88,6 +88,12 @@ func navItemsFor(
 		return v1.NavItemList{}, err
 	}
 
+	// Primed so the redaction below resolves local roles and grant
+	// traversals for the whole group in one batch rather than per row
+	// (TKT-YLG695). listPage primes too when the list has a condition, but
+	// over the whole population and on a ctx it does not return, so this
+	// is a second, fixed-size batch rather than a duplicate.
+	ctx = primeVerdicts(ctx, a.fieldResolver, rows)
 	red := appRedactor(a)
 	redacted := make([]*entityPkg.Entity, 0, len(rows))
 	for _, e := range rows {
