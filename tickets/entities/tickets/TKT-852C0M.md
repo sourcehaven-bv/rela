@@ -5,7 +5,9 @@ title: Trigger and reminder literals through MessageType.NormalizeProps
 kind: chore
 priority: low
 effort: s
-status: backlog
+started: "2026-10-31"
+completed: "2026-10-31"
+status: done
 ---
 
 ## Description

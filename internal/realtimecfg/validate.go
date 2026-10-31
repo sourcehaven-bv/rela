@@ -2,14 +2,14 @@ package realtimecfg
 
 import (
 	"context"
-	"encoding/json"
+	"errors"
 	"fmt"
+	"maps"
 	"regexp"
 	"slices"
 	"sort"
 	"strings"
 	"time"
-	"unicode/utf8"
 
 	"gopkg.in/yaml.v3"
 
@@ -922,9 +922,11 @@ func (v *validator) trigger(name string, raw *rawTrigger, file *rawFile, c *Comp
 			"because a signal would reach only the readers connected to the process that runs triggers", raw.Post.Type))
 		return t
 	}
-	v.literalProps(key+".post.props", raw.Post.Props, &mt, t.Props)
+	maps.Copy(t.Props, raw.Post.Props)
+	// compile builds every channel type before triggers, so cmt is never
+	// nil here; the guard is defensive.
 	if cmt := compiledMessageType(c, raw.Channel, raw.Post.Type); cmt != nil {
-		v.literalMessage(key+".post.props", cmt, t.Props, c.limits)
+		v.literalPost(key+".post.props", cmt, t.Props, c.limits)
 	}
 	if v.facesUnsafe(raw.EntityType, c, raw.Channel) {
 		v.warn(key, fmt.Sprintf("left out: %s declares faces and acl.yaml lets some readers see a face other "+
@@ -945,41 +947,79 @@ func compiledMessageType(c *Compiled, channel, name string) *MessageType {
 	return ct.MessageTypes[name]
 }
 
-// literalMessage checks the message a trigger or reminder posts as the
-// service will when it posts it: each literal within its property's max,
-// the whole within message_bytes, and the message type's `when:` holding. A
-// trigger or reminder whose message the service would refuse could never
-// post.
-func (v *validator) literalMessage(key string, mt *MessageType, lit map[string]string, limits Limits) {
-	props := make(map[string]any, len(lit))
-	for _, pn := range sortedKeys(lit) {
-		val := lit[pn]
-		props[pn] = val
-		if p, ok := mt.Properties[pn]; ok && p.Max > 0 && utf8.RuneCountInString(val) > p.Max {
-			v.add(key+"."+pn, fmt.Sprintf("is longer than the property's max of %d characters", p.Max))
-		}
-	}
-	if raw, err := json.Marshal(props); err == nil && len(raw) > limits.MessageBytes {
-		v.add(key, fmt.Sprintf("the message is over message_bytes (%d bytes)", limits.MessageBytes))
-	}
-	if mt.When == nil {
-		return
-	}
+// literalPost checks the literal props a trigger or reminder posts as
+// realtime.validateProps and whenHolds will when the service posts them,
+// so a trigger or reminder that loads can post. A type whose `when:`
+// calls today() is refused first, because no literal can fix it. Then the
+// literal policy reports every problem it finds: a value is operator text
+// with no substitution, so `{{` is refused, and it may set only a string,
+// markdown or enum property. Only when the policy passes do the props go
+// through [MessageType.NormalizeProps], which reports its first refusal,
+// and the type's `when:`, as [buttonChecker.preset] does for a preset.
+func (v *validator) literalPost(key string, mt *MessageType, lit map[string]string, limits Limits) {
 	// A when: on today() would make the file load on one day and fail on
 	// the next, so it is refused rather than evaluated at an arbitrary date.
-	if slices.Contains(mt.When.Functions(), predicatefns.FuncToday) {
+	if mt.When != nil && slices.Contains(mt.When.Functions(), predicatefns.FuncToday) {
 		v.add(key, "the when: condition of message type "+mt.Name+" calls today(), so whether this "+
 			"trigger's or reminder's message meets it would depend on the date")
 		return
 	}
-	fields := make(map[string]predicate.Value, len(mt.Properties))
-	for name := range mt.Properties {
-		fields[name] = predicate.NewNil()
-		if val, ok := lit[name]; ok {
-			fields[name] = predicate.NewString(val)
+	for pn := range lit {
+		if p, ok := mt.Properties[pn]; ok && p.Type == "" {
+			// A property's type is unknown, which refused the file at its
+			// .type key already. The rest of the check is skipped for every
+			// literal, not only this one, so the caller sees no new problem.
+			return
 		}
 	}
-	if !mt.Holds(context.Background(), fields, time.Time{}) {
+	policyOK := true
+	for _, pn := range sortedKeys(lit) {
+		p, ok := mt.Properties[pn]
+		if !ok {
+			continue // NormalizeProps refuses an undeclared property.
+		}
+		switch {
+		case strings.Contains(lit[pn], "{{"):
+			v.add(key+"."+pn, "a trigger or reminder posts literal text; {{...}} substitution is not supported")
+			policyOK = false
+		case p.List:
+			// The compiled List: a raw list: true on a type that cannot be a
+			// list compiles to false, but the file is refused at its .list key.
+			v.add(key+"."+pn, "a trigger or reminder cannot set a list property; it posts one literal value")
+			policyOK = false
+		case p.Type != PropertyString && p.Type != PropertyMarkdown && p.Type != PropertyEnum:
+			v.add(key+"."+pn, fmt.Sprintf("a trigger or reminder sets a property to literal text, so it can set "+
+				"only string, markdown or enum properties; %s has type %s", pn, p.TypeName()))
+			policyOK = false
+		}
+	}
+	if !policyOK {
+		return
+	}
+	in := make(map[string]any, len(lit))
+	for pn, val := range lit {
+		in[pn] = val
+	}
+	np, err := mt.NormalizeProps(in, limits.MessageBytes)
+	var pe *propError
+	switch {
+	case errors.Is(err, ErrTooManyProps):
+		v.add(key, fmt.Sprintf("at most %d properties", realtimelimits.MaxMessageProperties))
+		return
+	case errors.Is(err, ErrTooLarge):
+		v.add(key, fmt.Sprintf("the message is over message_bytes (%d bytes)", limits.MessageBytes))
+		return
+	case errors.As(err, &pe):
+		v.add(key+"."+pe.prop, pe.reason)
+		return
+	case err != nil:
+		v.add(key, err.Error())
+		return
+	}
+	if mt.When == nil {
+		return
+	}
+	if !mt.Holds(context.Background(), mt.PredicateFields(np.Props), time.Time{}) {
 		v.add(key, "the message does not meet the when: condition of message type "+mt.Name)
 	}
 }
@@ -998,39 +1038,6 @@ func (v *validator) facesUnsafe(entityType string, c *Compiled, channel string) 
 func (v *validator) facedAndRestricted(entityType string) bool {
 	def, ok := v.meta.GetEntityDef(entityType)
 	return ok && len(def.Faces) > 0 && facesRestricted(v.policy, entityType)
-}
-
-// literalProps checks the literal property values of a trigger or reminder
-// post against the message type and copies them into out. A value is
-// operator text: there is no substitution, so a message never carries a
-// value read from the entity.
-func (v *validator) literalProps(key string, props map[string]string, mt *rawMessageType, out map[string]string) {
-	for _, pn := range sortedKeys(props) {
-		val := props[pn]
-		pk := key + "." + pn
-		rp, ok := mt.Properties[pn]
-		switch {
-		case !ok:
-			v.add(pk, fmt.Sprintf("the message type has no property %q", pn))
-		case strings.Contains(val, "{{"):
-			v.add(pk, "a trigger or reminder posts literal text; {{...}} substitution is not supported")
-		case rp.List:
-			v.add(pk, "a trigger or reminder cannot set a list property; it posts one literal value")
-		case rp.Type == string(PropertyString) || rp.Type == string(PropertyMarkdown):
-		default:
-			if ct, isEnum := v.meta.Types[rp.Type]; isEnum && slices.Contains(ct.Values, val) {
-				break
-			}
-			v.add(pk, fmt.Sprintf("a trigger or reminder can set only string, markdown or enum properties to a literal "+
-				"value; %q is not valid for type %s", val, rp.Type))
-		}
-		out[pn] = val
-	}
-	for _, pn := range sortedKeys(mt.Properties) {
-		if _, set := props[pn]; mt.Properties[pn].Required && !set {
-			v.add(key, fmt.Sprintf("required property %q is not set", pn))
-		}
-	}
 }
 
 func orDefault(s, def string) string {

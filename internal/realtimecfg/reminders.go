@@ -241,9 +241,11 @@ func (c reminderCompiler) post(key string, raw *rawTriggerPost, r *SessionRemind
 	}
 	r.PostType = raw.Type
 	before := len(v.problems)
-	v.literalProps(key+".props", raw.Props, &rmt, r.props)
+	maps.Copy(r.props, raw.Props)
+	// The message types compile before reminders, so mt is never nil
+	// here; the guard is defensive.
 	if mt := c.ct.MessageTypes[raw.Type]; mt != nil {
-		v.literalMessage(key+".props", mt, r.props, c.limits)
+		v.literalPost(key+".props", mt, r.props, c.limits)
 	}
 	return len(v.problems) == before
 }

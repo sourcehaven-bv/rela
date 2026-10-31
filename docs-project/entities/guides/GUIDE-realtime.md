@@ -1432,7 +1432,7 @@ minutes after that, until the authority is notified.
 | `reminders.<name>.max` | The most reminders in one span, from 1 to 1000. Without it there is no cap. |
 | `reminders.<name>.label` | The reminder's name for people. Defaults to the reminder name. |
 | `reminders.<name>.post.type` | The message type the reminder posts. It must be declared, kept (not `persist: ephemeral`) and not move the session. Required. |
-| `reminders.<name>.post.props` | The literal properties of the message, as for a trigger. |
+| `reminders.<name>.post.props` | The literal properties of the message, checked as a trigger's are, see [Triggers](#triggers). |
 
 **Spans.** A span is the time the session spends inside the reminder's `in:`
 states. It starts when the session enters one of them, or when the channel
@@ -1732,11 +1732,23 @@ never a value read from it.
 | `when_closed` | `skip` (default) posts nothing while the channel is closed or archived; `post` posts anyway. |
 
 The message type must be a `log` type: a signal would reach only the
-readers connected to the process that runs triggers. rela checks the
-`props` against the message type when the file loads, including each
-property's `max`, `message_bytes` and the type's `when`. A message type
+readers connected to the process that runs triggers. A message type
 whose `when` calls `today()` cannot be a trigger's: whether the `props`
 meet it would change with the date.
+
+rela checks a trigger's or reminder's `props` when the file loads, with
+the same rules the service applies to a post: only declared properties,
+every required property set, enum values from the enum type, each
+property's `max`, `message_bytes`, and the type's `when`. A literal is
+text, so it may set only `string`, `markdown` and enum properties, and
+`{{...}}` is refused because nothing is substituted. The load checks in
+this order. A `when` that calls `today()` is reported first, because no
+`props` can fix it. Then the load reports every property that breaks the
+literal rules. Only when no property does are the service's rules
+checked, and the load reports the first one the `props` break; fix it
+and reload to see the next. The service
+checks the message again each time it posts, because the metamodel may
+have changed since the file loaded.
 
 A trigger's message has the author `system:realtime`. The API marks it
 with `author.system: true` and `triggered_by: trigger:<name>`, so a client

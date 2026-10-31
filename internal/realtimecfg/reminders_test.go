@@ -1,11 +1,14 @@
 package realtimecfg
 
 import (
+	"errors"
 	"fmt"
 	"slices"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/Sourcehaven-BV/rela/internal/realtimelimits"
 )
 
 // TestParse_SessionReminders pins AC 1: the breach-response reminder
@@ -152,15 +155,15 @@ func TestParse_SessionRemindersInvalid(t *testing.T) {
 		{"post type keys a transition", one("in: [open], every: 1h, post: { type: done }"), k + ".r.post.type",
 			"a reminder never moves the session, but a person posting done would"},
 		{"undeclared prop", one("in: [open], every: 1h, post: { type: nudge, props: { body: hi, x: y } }"),
-			k + ".r.post.props.x", `the message type has no property "x"`},
+			k + ".r.post.props.x", "message type nudge has no property of this name"},
 		{"substitution", one("in: [open], every: 1h, post: { type: nudge, props: { body: '{{entity.title}}' } }"),
 			k + ".r.post.props.body", "{{...}} substitution is not supported"},
 		{"literal on an enum not in the values", one("in: [open], every: 1h, post: { type: sev, props: { level: nope } }"),
-			k + ".r.post.props.level", "a trigger or reminder can set only string, markdown or enum properties"},
+			k + ".r.post.props.level", "must be one of"},
 		{"required prop not set", one("in: [open], every: 1h, post: { type: nudge }"), k + ".r.post.props",
-			`required property "body" is not set`},
+			`property "body" is required`},
 		{"prop over max", one("in: [open], every: 1h, post: { type: sev, props: { short: abcd } }"),
-			k + ".r.post.props.short", "longer than the property's max of 3"},
+			k + ".r.post.props.short", "must be at most 3 characters"},
 	}
 	meta, policy := testMeta(t), testPolicy(t)
 	if _, err := Parse([]byte(reminderBase(reminderStates, one("in: [open], every: 1h, "+post))), meta, policy); err != nil {
@@ -194,6 +197,69 @@ func TestParse_SessionRemindersInvalid(t *testing.T) {
 			assertProblem(t, err, k+".r.post.props", tc.reason)
 		})
 	}
+}
+
+// TestParse_ReminderLiteralPolicy pins that a reminder's literal props go
+// through the literal policy first and NormalizeProps second, each
+// problem reported once at the property it names (TKT-852C0M).
+func TestParse_ReminderLiteralPolicy(t *testing.T) {
+	const k = "channel_types.br.session.reminders.r.post.props"
+	meta, policy := testMeta(t), testPolicy(t)
+	withKinds := func(props string) string {
+		src := reminderBase(reminderStates, "\n        r: { in: [open], every: 1h, post: { type: kinds, props: { "+
+			props+" } } }")
+		return strings.Replace(src, "      typing: { persist: ephemeral, post: [member] }",
+			"      typing: { persist: ephemeral, post: [member] }\n"+
+				"      kinds:\n        post: [member]\n        properties:\n"+
+				"          n: { type: integer }\n          b: { type: boolean }\n"+
+				"          who: { type: ref, to: [risico] }\n          d: { type: date }\n"+
+				"          at: { type: datetime }\n", 1)
+	}
+	kindReason := func(prop, typ string) string {
+		return "a trigger or reminder sets a property to literal text, so it can set only string, markdown or " +
+			"enum properties; " + prop + " has type " + typ
+	}
+	cases := []struct{ name, props, prop, reason string }{
+		{"integer", "n: '3'", "n", kindReason("n", "integer")},
+		{"boolean", "b: 'true'", "b", kindReason("b", "boolean")},
+		{"ref", "who: RISK-1", "who", kindReason("who", "ref")},
+		{"date", "d: '2026-01-02'", "d", kindReason("d", "date")},
+		{"datetime", "at: '2026-01-02T10:00:00Z'", "at", kindReason("at", "datetime")},
+		{"undeclared with a placeholder", "shade: '{{x}}'", "shade", "message type kinds has no property of this name"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := Parse([]byte(withKinds(tc.props)), meta, policy)
+			assertOnlyProblemAt(t, err, k+"."+tc.prop, tc.reason)
+		})
+	}
+
+	t.Run("more literals than a message has properties", func(t *testing.T) {
+		var props strings.Builder
+		props.WriteString("body: hi")
+		for i := range realtimelimits.MaxMessageProperties {
+			fmt.Fprintf(&props, ", x%d: y", i)
+		}
+		src := reminderBase(reminderStates, "\n        r: { in: [open], every: 1h, post: { type: nudge, props: { "+
+			props.String()+" } } }")
+		_, err := Parse([]byte(src), meta, policy)
+		assertOnlyProblemAt(t, err, k, fmt.Sprintf("at most %d properties", realtimelimits.MaxMessageProperties))
+	})
+
+	t.Run("property of an unknown type", func(t *testing.T) {
+		src := strings.Replace(withKinds("odd: x"), "          d: { type: date }\n",
+			"          d: { type: date }\n          odd: { type: nosuch }\n", 1)
+		_, err := Parse([]byte(src), meta, policy)
+		assertProblem(t, err, "channel_types.br.message_types.kinds.properties.odd.type", "unknown type")
+		var cfgErr *Error
+		if errors.As(err, &cfgErr) {
+			for _, p := range cfgErr.Problems {
+				if strings.HasPrefix(p.Key, k) {
+					t.Errorf("unexpected problem at %s: %s", p.Key, p.Reason)
+				}
+			}
+		}
+	})
 }
 
 // TestParse_SessionReminderGuard pins AC 4: a guard reads a declared

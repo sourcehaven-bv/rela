@@ -52,9 +52,20 @@ func (mt *MessageType) NormalizeProps(in map[string]any, maxBytes int) (Normaliz
 	return mt.normalize(in, maxBytes, true)
 }
 
+// propError is a refusal by [MessageType.NormalizeProps] of one named
+// property. Error is the fire-time text, property name included; reason
+// is the same refusal without the name, for a load problem whose key
+// already ends in the name.
+type propError struct {
+	prop, reason, text string
+}
+
+func (e *propError) Error() string { return e.text }
+
 // normalize is [MessageType.NormalizeProps]. With requireAll false it
 // does not refuse a missing required property, so a compose button's
-// partial preset passes every other rule of a post.
+// partial preset passes every other rule of a post. An undeclared
+// property or a bad value is refused with a *propError.
 func (mt *MessageType) normalize(in map[string]any, maxBytes int, requireAll bool) (NormalizedProps, error) {
 	if len(in) > realtimelimits.MaxMessageProperties {
 		return NormalizedProps{}, fmt.Errorf("%w: a message has at most %d properties",
@@ -69,11 +80,17 @@ func (mt *MessageType) normalize(in map[string]any, maxBytes int, requireAll boo
 		}
 		p, ok := mt.Properties[name]
 		if !ok {
-			return NormalizedProps{}, fmt.Errorf("message type %s has no property %q", mt.Name, name)
+			return NormalizedProps{}, &propError{
+				prop:   name,
+				reason: fmt.Sprintf("message type %s has no property of this name", mt.Name),
+				text:   fmt.Sprintf("message type %s has no property %q", mt.Name, name),
+			}
 		}
 		v, err := p.Normalize(raw)
 		if err != nil {
-			return NormalizedProps{}, fmt.Errorf("property %q: %s", name, err.Error())
+			return NormalizedProps{}, &propError{
+				prop: name, reason: err.Error(), text: fmt.Sprintf("property %q: %s", name, err.Error()),
+			}
 		}
 		if list, isList := v.([]any); isList && len(list) == 0 {
 			continue
