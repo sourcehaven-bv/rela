@@ -4,7 +4,7 @@ import { createPinia, setActivePinia } from 'pinia'
 import RlSortableList from 'rela-components/components/data/RlSortableList.vue'
 import RlTable from 'rela-components/components/table/RlTable.vue'
 import ListView from './ListView.vue'
-import { useConfigDraftStore } from '@/stores/configDraft'
+import { useConfigDraftStore } from '@/configure/configDraft'
 import { dataEntryFixture, snapshot, toTree } from '@/configure/__tests__/fixture'
 import { get, getIn, isList } from '@/configure/tree'
 

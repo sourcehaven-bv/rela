@@ -10,7 +10,7 @@ import RlNumberField from 'rela-components/components/form/RlNumberField.vue'
 import RlSwitch from 'rela-components/components/form/RlSwitch.vue'
 import RlSegmentedControl from 'rela-components/components/data/RlSegmentedControl.vue'
 import NavEntryDetails from './NavEntryDetails.vue'
-import { useConfigDraftStore } from '@/stores/configDraft'
+import { useConfigDraftStore } from '@/configure/configDraft'
 import { lists, type NavGroupModel } from '@/configure/models'
 import { bool, get, getIn, isMap, newMap, num, remove, set, str } from '@/configure/tree'
 

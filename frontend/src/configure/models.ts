@@ -6,6 +6,7 @@
  * lists and rules. A choice list, for one, is `types.<name>` in the data
  * model plus `styles.<name>` (its colours) in the screens file.
  */
+import type { TreeMap, TreeValue } from '@/api/configure'
 import {
   bool,
   entries,
@@ -19,9 +20,7 @@ import {
   num,
   str,
   strList,
-  type TreeMap,
   type TreePath,
-  type TreeValue,
 } from './tree'
 import { builtinTypeLabel } from './names'
 

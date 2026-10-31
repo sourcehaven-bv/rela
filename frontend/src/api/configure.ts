@@ -1,6 +1,5 @@
 import { api } from './client'
 import { ApiError } from './errors'
-import type { TreeValue } from '@/configure/tree'
 
 /**
  * The Configure API (TKT-F5NGMG): the data model and the screens as trees,
@@ -10,6 +9,27 @@ import type { TreeValue } from '@/configure/tree'
  * server answers 404 when it runs without `--config-editing` and 403 when the
  * principal lacks the `config:edit` permission.
  */
+
+export type TreeScalar = string | number | boolean | null
+
+/**
+ * A YAML mapping. It arrives as `{"$m": [[key, value], ...]}` so its key
+ * order survives (a plain JSON object cannot keep it). A mapping that sits in
+ * a list also carries `"$i"`, its index in that list when the file was read.
+ * The server matches an edited item to its old self by that index, so it
+ * must travel back untouched; a new item has none.
+ */
+export interface TreeMap {
+  $m: [string, TreeValue][]
+  $i?: number
+}
+
+/**
+ * A configuration file, or a part of one, as the Configure API sends it: a
+ * plain JSON tree. The helpers that edit these trees live in
+ * `configure/tree.ts`.
+ */
+export type TreeValue = TreeScalar | TreeMap | TreeValue[]
 
 /** The two files the Configure space edits, as the server names them. */
 export type ConfigFile = 'schema.yaml' | 'data-entry.yaml'

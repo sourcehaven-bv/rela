@@ -7,10 +7,12 @@ import type {
   ConfigResult,
   ConfigSnapshot,
   ConfigValueMapping,
+  TreeMap,
+  TreeValue,
 } from '@/api/configure'
 import { relaBase } from '@/api/base'
-import { changeCount, describeChanges, type ChangeGroup } from '@/configure/changes'
-import { renameSchemaReferences, renameScreenReferences } from '@/configure/references'
+import { changeCount, describeChanges, type ChangeGroup } from './changes'
+import { renameSchemaReferences, renameScreenReferences } from './references'
 import {
   clone,
   ensureList,
@@ -29,10 +31,8 @@ import {
   remove,
   renameKey,
   set,
-  type TreeMap,
   type TreePath,
-  type TreeValue,
-} from '@/configure/tree'
+} from './tree'
 
 /**
  * The Configure space's unsaved changes (TKT-F5NGMG).

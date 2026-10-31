@@ -1,5 +1,5 @@
-import type { ConfigSnapshot } from '@/api/configure'
-import { isMap, type TreeValue } from '../tree'
+import type { ConfigSnapshot, TreeValue } from '@/api/configure'
+import { isMap } from '../tree'
 
 /**
  * Turns a plain object into the wire tree: mappings become `$m` pairs in

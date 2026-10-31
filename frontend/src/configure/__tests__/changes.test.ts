@@ -1,16 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { changeCount, describeChanges, diffList } from '../changes'
-import {
-  clone,
-  getIn,
-  isMap,
-  listAt,
-  moveItem,
-  remove,
-  renameKey,
-  set,
-  type TreeMap,
-} from '../tree'
+import type { TreeMap } from '@/api/configure'
+import { clone, getIn, isMap, listAt, moveItem, remove, renameKey, set } from '../tree'
 import { snapshot, toTree } from './fixture'
 
 function at(tree: unknown, path: (string | number)[]): TreeMap {

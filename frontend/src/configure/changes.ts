@@ -7,20 +7,8 @@
  * wording never names a file or a key path: `Property Due`, `Option Blocked`,
  * `Order of fields`.
  */
-import type { ConfigRename } from '@/api/configure'
-import {
-  entries,
-  equal,
-  get,
-  getIn,
-  isList,
-  isMap,
-  keys,
-  str,
-  strList,
-  type TreeMap,
-  type TreeValue,
-} from './tree'
+import type { ConfigRename, TreeMap, TreeValue } from '@/api/configure'
+import { entries, equal, get, getIn, isList, isMap, keys, str, strList } from './tree'
 import {
   automationTitle,
   choiceListLabel,
