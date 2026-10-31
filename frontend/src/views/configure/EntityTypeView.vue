@@ -10,7 +10,7 @@ import RlEmptyState from 'rela-components/components/feedback/RlEmptyState.vue'
 import ConfigurePage from '@/components/configure/ConfigurePage.vue'
 import PropertyDrawer from '@/components/configure/PropertyDrawer.vue'
 import EntityTypeSettings from '@/components/configure/EntityTypeSettings.vue'
-import { useConfigDraftStore } from '@/stores/configDraft'
+import { useConfigDraftStore } from '@/configure/configDraft'
 import { useConfirm } from '@/composables/useConfirm'
 import {
   entityTypeModel,

@@ -10,7 +10,7 @@ import RlCheckbox from 'rela-components/components/form/RlCheckbox.vue'
 import RlCallout from 'rela-components/components/feedback/RlCallout.vue'
 import RlText from 'rela-components/components/common/RlText.vue'
 import LockedNote from './LockedNote.vue'
-import { useConfigDraftStore } from '@/stores/configDraft'
+import { useConfigDraftStore } from '@/configure/configDraft'
 import {
   choiceListNames,
   defaultText,

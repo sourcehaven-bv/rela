@@ -10,7 +10,7 @@ import ConfigurePage from '@/components/configure/ConfigurePage.vue'
 import ConfigSplit from '@/components/configure/ConfigSplit.vue'
 import ConfigSection from '@/components/configure/ConfigSection.vue'
 import ConfigPreview from '@/components/configure/ConfigPreview.vue'
-import { useConfigDraftStore } from '@/stores/configDraft'
+import { useConfigDraftStore } from '@/configure/configDraft'
 import {
   entityTypeLabel,
   entityTypeNames,
@@ -19,7 +19,8 @@ import {
 } from '@/configure/models'
 import { configureRoute } from '@/configure/routes'
 import { isEditable } from '@/configure/paths'
-import { get, getIn, isMap, newMap, set, setOrRemove, type TreeValue } from '@/configure/tree'
+import type { TreeValue } from '@/api/configure'
+import { get, getIn, isMap, newMap, set, setOrRemove } from '@/configure/tree'
 
 /**
  * A relation, written as the sentence it produces in both directions. The

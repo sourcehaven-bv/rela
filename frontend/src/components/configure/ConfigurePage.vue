@@ -6,7 +6,7 @@ import RlButton from 'rela-components/components/common/RlButton.vue'
 import RlCallout from 'rela-components/components/feedback/RlCallout.vue'
 import RlText from 'rela-components/components/common/RlText.vue'
 import PageHeaderContent from '@/components/common/PageHeaderContent'
-import { useConfigDraftStore } from '@/stores/configDraft'
+import { useConfigDraftStore } from '@/configure/configDraft'
 import { problemsFor } from '@/configure/paths'
 
 /**

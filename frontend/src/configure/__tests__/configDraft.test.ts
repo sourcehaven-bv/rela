@@ -1,8 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
-import { draftStorageKey, useConfigDraftStore } from './configDraft'
-import { snapshot } from '@/configure/__tests__/fixture'
-import { get, getIn, keys, set, isMap, mapAt, newMap } from '@/configure/tree'
+import { draftStorageKey, useConfigDraftStore } from '../configDraft'
+import { snapshot } from './fixture'
+import { get, getIn, keys, set, isMap, mapAt, newMap } from '../tree'
 
 function fresh() {
   setActivePinia(createPinia())
