@@ -27,6 +27,8 @@ import { useDetailPanel } from '@/composables/useDetailPanel'
 import { useCreateModal } from '@/composables/useCreateModal'
 import { usePageTabScope } from '@/composables/usePageTabScope'
 import { useRelationColumns, OTHER_COLUMN } from '@/composables/useRelationColumns'
+import { useBoardFlip } from '@/composables/useBoardFlip'
+import { useWallGrouping } from '@/composables/useWallGrouping'
 import { useListReorder } from '@/composables/useListReorder'
 import { useKanbanCollapse } from '@/composables/useKanbanCollapse'
 import InlineCreateFormModal from '@/components/forms/InlineCreateFormModal.vue'
@@ -59,7 +61,10 @@ import RlButton from 'rela-components/components/common/RlButton.vue'
 import RlBoard from 'rela-components/components/board/RlBoard.vue'
 import RlSwimlaneBoard from 'rela-components/components/board/RlSwimlaneBoard.vue'
 import type { DotColor, Section, Swimlane } from 'rela-components/types'
-import type { BoardDropPosition } from 'rela-components/composables/useBoardDnd'
+import type {
+  BoardDropPosition,
+  BoardSectionDropPosition,
+} from 'rela-components/composables/useBoardDnd'
 import RlStatusRegion from 'rela-components/components/feedback/RlStatusRegion.vue'
 import { useI18n } from 'vue-i18n'
 
@@ -175,6 +180,17 @@ const relationColumns = useRelationColumns(
   computed(() => props.pageScope),
   computed(() => worldParam.value)
 )
+
+// A wall (`layout: wall`, TKT-0VBQW0H) lays the cards out as a wrapping grid.
+// Without columns it is one grid of every card (a plain wall); with
+// `columns_from` the loose cards are a pile on top, the targets are groups
+// below, and a card dropped on a loose card makes a new group.
+const isWall = computed(() => kanbanConfig.value?.layout === 'wall')
+const isPlainWall = computed(
+  () => isWall.value && !columnsFrom.value && !kanbanConfig.value?.column_property
+)
+const isGrouping = computed(() => isWall.value && !!columnsFrom.value)
+const isNotes = computed(() => kanbanConfig.value?.card.style === 'note')
 
 // A tab of an entity page narrows the board to the anchor's cards.
 const tabScope = usePageTabScope(() => props.pageScope)
@@ -298,6 +314,9 @@ const entityType = computed(() => {
   return schemaStore.getEntityType(kanbanConfig.value.entity)
 })
 
+// The one column of a plain wall.
+const WALL_COLUMN = '__wall__'
+
 const columns = computed(() => {
   if (!kanbanConfig.value) return []
 
@@ -311,8 +330,14 @@ const columns = computed(() => {
     const hasOther = entities.value.some(
       (e) => relationColumns.columnOf(e) === OTHER_COLUMN
     )
-    if (hasOther) cols.push({ value: OTHER_COLUMN, label: t('kanban.otherColumn') })
+    // On a wall, Other is the pile and always shows, as the place new cards
+    // land and ungrouped cards go back to.
+    if (hasOther || isWall.value) cols.push({ value: OTHER_COLUMN, label: t('kanban.otherColumn') })
     return cols
+  }
+
+  if (isPlainWall.value) {
+    return [{ value: WALL_COLUMN, label: kanbanConfig.value.title ?? t('kanban.boardLabelDefault') }]
   }
 
   // Use defined columns or generate from unique values
@@ -451,7 +476,9 @@ const entitiesByColumn = computed(() => {
   for (const entity of filteredEntities.value) {
     const val = columnsFrom.value
       ? relationColumns.columnOf(entity)
-      : String(entity.properties[property] || '')
+      : isPlainWall.value
+        ? WALL_COLUMN
+        : String(entity.properties[property] || '')
     if (grouped[val]) {
       grouped[val].push(entity)
     }
@@ -816,6 +843,8 @@ function canMoveCard(card: BoardCard): boolean {
 // On a board whose cards the reader may reorder, every card can be picked up:
 // moving one within its column writes the anchor's edge, not the card.
 function boardCanMove(card: BoardCard): boolean {
+  // A plain wall has nothing to change on a card; a drag can only reorder.
+  if (isPlainWall.value) return reorder.reorderable.value
   return reorder.reorderable.value || canMoveCard(card)
 }
 
@@ -849,13 +878,32 @@ async function onMove({
   const config = kanbanConfig.value
   const entity = item.entity
   if (!config) return
+  flip.flash(entity.id)
+
+  if (isPlainWall.value) {
+    if (at && at.placement !== 'onto') await reorder.onReorder(rowMove(entity, at))
+    return
+  }
 
   if (config.columns_from) {
     const target = relationColumns.targetType.value
-    // Other is where unoffered cards wait; dropping into it would mean
-    // "some status this page does not offer", which names no target.
-    if (!target || to.id === OTHER_COLUMN) return
-    if (relationColumns.columnOf(entity) !== to.id) {
+    if (!target) return
+    if (at?.placement === 'onto') {
+      if (!isGrouping.value) return
+      if (canUpdate(entity)) await wall.groupOnto(entity, at.targetId)
+      else uiStore.error(t('kanban.moveForbidden'))
+      return
+    }
+    // Other names no target. On a wall it is the pile, and a drop there takes
+    // the card out of its group; elsewhere it is where unoffered cards wait.
+    if (to.id === OTHER_COLUMN && relationColumns.columnOf(entity) !== OTHER_COLUMN) {
+      if (!isWall.value) return
+      if (!canUpdate(entity)) {
+        uiStore.error(t('kanban.moveForbidden'))
+        return
+      }
+      await wall.ungroup(entity)
+    } else if (relationColumns.columnOf(entity) !== to.id) {
       if (!canUpdate(entity)) {
         uiStore.error(t('kanban.moveForbidden'))
         return
@@ -870,7 +918,7 @@ async function onMove({
         return // reported by the mutation
       }
     }
-    if (at) await reorder.onReorder({ itemId: entity.id, ...at })
+    if (at) await reorder.onReorder(rowMove(entity, at))
     return
   }
 
@@ -900,7 +948,83 @@ async function onMove({
       return // reported by the mutation
     }
   }
-  if (at) await reorder.onReorder({ itemId: entity.id, ...at })
+  if (at && at.placement !== 'onto') await reorder.onReorder(rowMove(entity, at))
+}
+
+// A drop beside a card as the reorder takes it. `onto` never gets here: it
+// groups instead.
+function rowMove(entity: Entity, at: BoardDropPosition) {
+  return { itemId: entity.id, targetId: at.targetId, placement: at.placement === 'before' ? 'before' : 'after' } as const
+}
+
+const wall = useWallGrouping({
+  cardType: () => kanbanConfig.value?.entity,
+  relation: () => columnsFrom.value?.relation,
+  columns: relationColumns,
+  cards: () => entities.value,
+  cardTitle: getCardTitle,
+  canUpdate,
+  refresh: refreshBoard,
+})
+
+// Cards update live, groups do not; a card in a group this reader has not
+// loaded asks for the groups again.
+watch([entities, relationColumns.columns], ([cards]) => relationColumns.noticeCards(cards))
+
+// Groups move by their handle when the page's entity orders them: the
+// `offered_by` relation is orderable from the anchor's side.
+const groupsMovable = computed(() => {
+  const anchor = relationColumns.anchor.value
+  if (!isGrouping.value || !anchor) return false
+  return schemaStore.getRelationType(anchor.relation)?.orderable?.outgoing === true
+})
+
+function sectionMovable(section: Section<BoardCard>): boolean {
+  return groupsMovable.value && section.id !== OTHER_COLUMN
+}
+
+function onMoveSection(move: BoardSectionDropPosition) {
+  void wall.moveGroup(move)
+}
+
+// Escape puts the name back and leaves the field, which then saves nothing.
+function onRenameCancel(title: string, event: KeyboardEvent) {
+  const input = event.target as HTMLInputElement
+  input.value = title
+  input.blur()
+}
+
+async function onRenameGroup(groupId: string, event: Event) {
+  const input = event.target as HTMLInputElement
+  const shown = await wall.renameGroup(groupId, input.value)
+  if (shown !== undefined) input.value = shown
+}
+
+// A small tilt per loose note, stable across renders, so a pile looks like
+// notes on a wall. Notes in a group lie straight.
+function noteStyle(entity: Entity): Record<string, string> | undefined {
+  if (!isNotes.value) return undefined
+  if (isGrouping.value && relationColumns.columnOf(entity) !== OTHER_COLUMN) return undefined
+  let h = 0
+  for (const ch of entity.id) h = (h * 31 + ch.charCodeAt(0)) | 0
+  return { '--note-tilt': `${((Math.abs(h) % 7) - 3) * 0.6}deg` }
+}
+
+// Cards slide to where a move put them, new cards and groups appear, and the
+// card just dropped lights up once it lands. Only on walls and note boards:
+// a work board's cards stay still.
+const boardRef = ref<{ $el: HTMLElement }>()
+const flip = useBoardFlip(
+  computed(() => boardRef.value?.$el),
+  () => boardSections.value,
+  () => isWall.value || isNotes.value
+)
+
+// A failed or cancelled refetch is not the write's failure: the queries show
+// their own error state, and a refetch that overlaps another is cancelled by it.
+async function refreshBoard() {
+  await relationColumns.refetch()
+  await queryCache.invalidateQueries({ key: entityKeys.list(kanbanConfig.value?.entity ?? '') }).catch(() => {})
 }
 
 // cardTarget is the single source of truth for where a card goes, bound to each
@@ -1011,7 +1135,7 @@ const createModal = useCreateModal(async (entity) => {
 // from; on a page tab it is linked to the anchor as well (linkCreated above).
 // The Other column names no target, so its Add opens the plain form.
 const showColumnAdd = computed(
-  () => !!columnsFrom.value && !!kanbanConfig.value?.create_form && canCreate()
+  () => (!!columnsFrom.value || isPlainWall.value) && !!kanbanConfig.value?.create_form && canCreate()
 )
 const createPrefill = ref<{
   properties: Record<string, unknown>
@@ -1138,7 +1262,14 @@ watch(createModal.open, (open) => {
 
     <RlBoard
       v-else
+      ref="boardRef"
       class="kanban-board"
+      :class="{
+        'kanban-board--single': boardSections.length === 1,
+        'kanban-board--wall': isWall,
+        'kanban-board--grouping': isGrouping,
+        'kanban-board--notes': isNotes,
+      }"
       role="group"
       :aria-label="boardLabel"
       :sections="boardSections"
@@ -1146,21 +1277,47 @@ watch(createModal.open, (open) => {
       :show-add-section="false"
       :can-move="boardCanMove"
       :reorder="reorder.reorderable.value"
+      :group="isGrouping"
+      :sections-movable="sectionMovable"
       :selected-id="selectedEntityId ?? undefined"
-      collapsible
+      :collapsible="!isWall"
       @move="onMove"
+      @move-section="onMoveSection"
       @add="onColumnAdd"
       @collapse-section="collapseColumn"
       @expand-section="expandColumn"
     >
+          <!--
+            A plain wall is one grid and needs no heading. On a grouping wall
+            the pile says what it is, and a group's name is edited in place.
+          -->
+          <template v-if="isWall" #heading="{ section }">
+            <div v-if="!isPlainWall" class="wall-heading">
+              <span v-if="section.id === OTHER_COLUMN" class="wall-heading__pile">
+                {{ t('kanban.pile') }}
+              </span>
+              <input
+                v-else-if="wall.renamable(section.id)"
+                class="wall-heading__title"
+                :value="section.title"
+                :aria-label="t('kanban.groupName', { title: section.title })"
+                @change="onRenameGroup(section.id, $event)"
+                @keydown.enter="!$event.isComposing && ($event.target as HTMLInputElement).blur()"
+                @keydown.esc="onRenameCancel(section.title, $event)"
+              />
+              <span v-else class="wall-heading__title">{{ section.title }}</span>
+              <span class="wall-heading__count">{{ section.items.length }}</span>
+            </div>
+          </template>
           <template #card="{ item }">
             <RouterLink
               class="kanban-card"
+              :style="noteStyle(item.entity)"
               :to="cardTarget(item.entity)"
               :aria-label="item.title"
               @click.capture="onCardClick(item.entity, $event)"
             >
-              <div class="card-id">{{ item.id }}</div>
+              <div v-if="!isNotes" class="card-id">{{ item.id }}</div>
               <!--
                 Per-CARD face provenance (TKT-ILT1WD), beside the title, the same
                 place and the same component the list uses. WorldBadge renders
@@ -1199,6 +1356,125 @@ watch(createModal.open, (open) => {
 </template>
 
 <style scoped>
+
+/* A wall wraps its columns instead of scrolling sideways, so every group
+   stays in view. On a grouping wall Other is the pile across the top. */
+.kanban-board--wall {
+  flex-wrap: wrap;
+  align-content: flex-start;
+  overflow-x: hidden;
+  overflow-y: auto;
+  gap: var(--rl-space-4);
+}
+.kanban-board--wall :deep(.rl-board-column) {
+  max-height: none;
+}
+.kanban-board--wall :deep(.rl-board-column__cards) {
+  overflow: visible;
+}
+.kanban-board--grouping :deep(.rl-board-column[data-section-id='__other__']) {
+  order: -1;
+  flex-basis: 100%;
+  width: auto;
+  min-height: 140px;
+  padding: var(--rl-space-3);
+  border: 1px dashed var(--rl-color-border-strong);
+  border-radius: var(--rl-radius-lg);
+}
+.kanban-board--grouping :deep(.rl-board-column[data-section-id='__other__'] .rl-board-column__cards) {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  align-content: start;
+  gap: var(--rl-space-4);
+  min-height: 90px;
+}
+/* A group is a card of its own: a solid, tinted panel, coloured by
+   `style_from` when the board has one. */
+.kanban-board--grouping :deep(.rl-board-column:not([data-section-id='__other__'])) {
+  width: 300px;
+  padding: var(--rl-space-3);
+  border: 1px solid var(--rl-color-border);
+  border-radius: var(--rl-radius-lg);
+  background: var(--rl-section-tint, var(--rl-tag-blue-bg));
+  box-shadow: var(--rl-shadow-sm);
+}
+.kanban-board--grouping :deep(.rl-board-column--target) {
+  border-color: var(--rl-color-accent);
+}
+.wall-heading {
+  display: flex;
+  align-items: center;
+  gap: var(--rl-space-2);
+  margin-bottom: var(--rl-space-3);
+  /* Room for the column's drag handle in the corner. */
+  padding-right: var(--rl-space-6);
+}
+.wall-heading__pile {
+  flex: 1;
+  font-size: var(--font-size-sm);
+  color: var(--rl-color-text-muted);
+}
+.wall-heading__title {
+  flex: 1;
+  min-width: 0;
+  padding: 2px 6px;
+  border: 1px solid transparent;
+  border-radius: var(--rl-radius-md);
+  background: transparent;
+  color: var(--rl-color-text);
+  font: inherit;
+  font-size: var(--font-size-base);
+  font-weight: 700;
+}
+.wall-heading__title:hover { border-color: var(--rl-color-border); }
+.wall-heading__title:focus {
+  border-color: var(--rl-color-focus);
+  background: var(--rl-color-bg);
+  outline: none;
+}
+.wall-heading__count {
+  font-size: var(--font-size-sm);
+  color: var(--rl-color-text-muted);
+}
+
+/* Sticky-note cards (`card.style: note`). */
+.kanban-board--notes .kanban-card {
+  min-height: 90px;
+  border: none;
+  border-radius: 3px;
+  background: var(--rl-tag-yellow-bg);
+  color: var(--rl-color-text);
+  box-shadow: 0 3px 8px rgb(0 0 0 / 25%);
+  transform: rotate(var(--note-tilt, 0deg));
+}
+.kanban-board--notes .kanban-card:hover {
+  box-shadow: 0 5px 12px rgb(0 0 0 / 30%);
+}
+.kanban-board--notes .kanban-card .card-title {
+  color: inherit;
+  font-size: var(--font-size-base);
+  line-height: 1.35;
+  margin-bottom: 0;
+}
+/* In a group the notes lie straight (see noteStyle) and a little smaller. */
+.kanban-board--grouping :deep(.rl-board-column:not([data-section-id='__other__'])) .kanban-card {
+  min-height: 0;
+}
+.kanban-board--grouping :deep(.rl-board-column:not([data-section-id='__other__'])) .kanban-card .card-title {
+  font-size: var(--font-size-sm);
+}
+/* A board with one column uses the full width and wraps its cards. */
+.kanban-board--single :deep(.rl-board-column) {
+  flex: 1;
+  width: auto;
+}
+.kanban-board--single :deep(.rl-board-column__cards) {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  align-content: start;
+  gap: var(--rl-space-4);
+}
+
 /* The horizontal scroll belongs to the board containers, NOT this page wrapper.
    With overflow-x here, a board wider than the viewport dragged the page title,
    filter bar, truncation banner, and info regions sideways along with the

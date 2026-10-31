@@ -114,6 +114,7 @@ const CHROME_TEXT_NL: Record<ChromeTextKey, string> = {
   noMatchingCommands: 'Geen opdrachten gevonden',
   addSection: 'Sectie toevoegen',
   draggableCard: 'Versleepbare kaart',
+  moveSection: 'Sleep om te verplaatsen',
   moveRowHint: 'Verplaats deze rij met de pijltjestoetsen omhoog en omlaag',
   subtasks: 'subtaken',
   continuesAfter: 'Loopt door op de volgende dagen',

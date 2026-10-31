@@ -1038,7 +1038,14 @@
     "moveFailed": "Failed to move card",
     "moveForbidden": "You may not move this card to another column",
     "truncated": "Showing {shown} of {total} items — the board is incomplete.",
-    "loading": "Loading board..."
+    "loading": "Loading board...",
+    "pile": "Not grouped yet",
+    "groupName": "Name of {title}",
+    "groupFailed": "Could not group the cards",
+    "renameFailed": "Could not rename the group",
+    "moveGroupFailed": "Could not move the group",
+    "groupElsewhere": "This card is in a group this board does not show",
+    "groupForbidden": "You may not make a group of these cards"
   },
   "calendar": {
     "month": "Month",

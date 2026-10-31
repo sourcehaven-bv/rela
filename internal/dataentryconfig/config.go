@@ -1145,6 +1145,12 @@ type Kanban struct {
 	SwimlaneProperty string             `yaml:"swimlane_property,omitempty" json:"swimlane_property,omitempty"`
 	Swimlanes        []KanbanSwimlane   `yaml:"swimlanes,omitempty" json:"swimlanes,omitempty"`
 	Card             KanbanCard         `yaml:"card" json:"card"`
+	// Layout is "" (columns side by side) or [LayoutWall]. A wall shows the
+	// cards as a wrapping grid. Without columns it is one grid of all cards;
+	// with ColumnsFrom the cards without a target form a pile on top, the
+	// targets are groups below it, and dropping a card on a loose card
+	// creates a new target (TKT-0VBQW0H).
+	Layout string `yaml:"layout,omitempty" json:"layout,omitempty"`
 	// ColumnSummary adds one line per entry under each column heading, such
 	// as a count of the cards or the sum of an amount (TKT-SVLQQ6). Computed
 	// by the SPA over the cards the reader can see.
@@ -1173,6 +1179,12 @@ type Kanban struct {
 	// nothing and a typo showing archived records to everyone.
 	QueryScope string `yaml:"query_scope,omitempty" json:"query_scope,omitempty"`
 }
+
+// Kanban layouts and card styles; "" is the default for both.
+const (
+	LayoutWall    = "wall"
+	CardStyleNote = "note"
+)
 
 // KanbanColumnsFrom declares a board whose columns are the targets of a
 // single-valued relation on the card type.
@@ -1222,6 +1234,9 @@ type KanbanSwimlane struct {
 type KanbanCard struct {
 	Title  string            `yaml:"title" json:"title"`
 	Fields []KanbanCardField `yaml:"fields,omitempty" json:"fields,omitempty"`
+	// Style is "" (the default card) or [CardStyleNote], a sticky note
+	// without the card's id.
+	Style string `yaml:"style,omitempty" json:"style,omitempty"`
 }
 
 // Calendar defines a calendar view: entities carrying a date property laid out

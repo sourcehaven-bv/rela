@@ -223,6 +223,8 @@ var editable = map[File][]string{
 		"kanbans.*.edit_form",
 		"kanbans.*.entity_type",
 		"kanbans.*.filter_controls.[].**",
+		// How the board is drawn: columns, or a wall of cards (TKT-0VBQW0H).
+		"kanbans.*.layout",
 		"kanbans.*.filters.[].**",
 		"kanbans.*.footer",
 		"kanbans.*.header",

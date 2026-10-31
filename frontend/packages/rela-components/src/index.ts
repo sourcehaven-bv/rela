@@ -257,9 +257,15 @@ export {
   useDraggableCard,
   useDropTargetColumn,
   useDropTargetCard,
+  useDraggableSection,
   useBoardAutoScroll,
 } from './composables/useBoardDnd'
-export type { BoardDragData, BoardDropData, BoardDropPosition } from './composables/useBoardDnd'
+export type {
+  BoardDragData,
+  BoardDropData,
+  BoardDropPosition,
+  BoardSectionDropPosition,
+} from './composables/useBoardDnd'
 export { useReorderableRow, closestEdge } from './composables/useRowReorder'
 export type { RowDrop, RowEdge } from './composables/useRowReorder'
 export {

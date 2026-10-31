@@ -77,11 +77,12 @@ export function useRelationColumns(
     query: async ({ signal }) => {
       const type = targetType.value as string
       const params = worldParam.value ? { world: worldParam.value } : undefined
-      const all = (await listAllEntities(type, params, signal)).data
+      const list = await listAllEntities(type, params, signal)
+      const all = list.data
       const a = anchor.value
-      if (!a) return { targets: all, offered: undefined }
+      if (!a) return { targets: all, offered: undefined, actions: list._actions }
       const entries = await getEntityRelations(a.type, a.id, a.relation)
-      return { targets: all, offered: entries }
+      return { targets: all, offered: entries, actions: list._actions }
     },
   })
 
@@ -127,6 +128,9 @@ export function useRelationColumns(
       .map(toColumn)
   })
 
+  /** The actions the reader may take on the target type, such as `create`. */
+  const targetActions = computed(() => query.data.value?.actions)
+
   /** The column a card belongs to: its target when that is a column, else Other. */
   function columnOf(card: Entity): string {
     const rel = columnsFrom.value?.relation
@@ -134,5 +138,42 @@ export function useRelationColumns(
     return id && columns.value.some((c) => c.value === id) ? id : OTHER_COLUMN
   }
 
-  return { columns, columnOf, targetType, loading: computed(() => query.isPending.value) }
+  // Targets a card pointed at that the last read did not have, each asked
+  // for once. See `noticeCards`.
+  const asked = new Set<string>()
+
+  /**
+   * Refetches the columns when a card points at a target they do not have.
+   *
+   * The cards update live; the columns are read once. A target another
+   * reader just created would otherwise stay missing, and its cards would
+   * sit in Other until a reload. Each unknown id is asked for once, so a card
+   * that points at a target this page does not offer costs one refetch, not
+   * one per update.
+   */
+  function noticeCards(cards: Entity[]) {
+    const rel = columnsFrom.value?.relation
+    const data = query.data.value
+    if (!rel || !data) return
+    const known = new Set((data.offered ?? data.targets).map((e) => e.id))
+    let unknown = false
+    for (const card of cards) {
+      const id = card.relations?.[rel]?.[0]
+      if (!id || known.has(id) || asked.has(id)) continue
+      asked.add(id)
+      unknown = true
+    }
+    if (unknown) void query.refetch()
+  }
+
+  return {
+    columns,
+    columnOf,
+    noticeCards,
+    targetType,
+    targetActions,
+    anchor,
+    refetch: () => query.refetch(),
+    loading: computed(() => query.isPending.value),
+  }
 }

@@ -29,10 +29,17 @@
  *   drop onto a card also names that card and which side of it the dropped
  *   card lands on, and a drop inside the card's own column is reported too.
  *   Storing the order is still the caller's.
+ * - **Grouping by default.** With `group`, the middle of a card is a third
+ *   drop zone, reported as `onto`: the caller groups the two cards. Without
+ *   it, every part of a card reorders.
+ *
+ * Columns can be dragged too, by a handle, on a board that opts in with
+ * `sectionsMovable`. A column drop reports the column it landed beside.
  */
 import { onScopeDispose, readonly, ref, watch, type Ref } from 'vue'
 import { draggable, dropTargetForElements } from '@atlaskit/pragmatic-drag-and-drop/element/adapter'
 import { autoScrollForElements } from '@atlaskit/pragmatic-drag-and-drop-auto-scroll/element'
+import { setCustomNativeDragPreview } from '@atlaskit/pragmatic-drag-and-drop/utils/set-custom-native-drag-preview'
 import { closestEdge, type RowEdge } from './useRowReorder'
 
 /** Marks the payload as one of this library's, so a board ignores foreign drags. */
@@ -59,50 +66,99 @@ function isBoardDrag(data: Record<string | symbol, unknown>): boolean {
   return data[BOARD_DRAG] === true
 }
 
+/** Marks the payload of a dragged column, as opposed to a card. */
+const BOARD_SECTION = Symbol('rl-board-section')
+
+/** What a dragged column carries. */
+export interface BoardSectionDragData {
+  [BOARD_SECTION]: true
+  sectionId: string
+}
+
+function isSectionDrag(data: Record<string | symbol, unknown>): boolean {
+  return data[BOARD_SECTION] === true
+}
+
+/** Where a dragged column was dropped: before or after another column. */
+export interface BoardSectionDropPosition {
+  sectionId: string
+  targetId: string
+  placement: 'before' | 'after'
+}
+
 /** Marks a card as a drop target, as opposed to its column. */
 const BOARD_CARD = Symbol('rl-board-card')
 
 /** Where in a column a card was dropped: before or after another card. */
 export interface BoardDropPosition {
   targetId: string
-  placement: 'before' | 'after'
+  /** `onto`: dropped on the middle of the card, to group the two. */
+  placement: 'before' | 'after' | 'onto'
+}
+
+/**
+ * Which part of a card the pointer is over. In a wrapping grid the order
+ * runs left to right, so the halves are the left and right ones; in a list
+ * they are the top and bottom. With `group`, the middle half is a zone of
+ * its own and only the outer quarters reorder.
+ */
+export type CardZone = RowEdge | 'left' | 'right' | 'center'
+
+export function zoneAt(
+  input: { clientX: number; clientY: number },
+  element: HTMLElement,
+  group: boolean,
+): CardZone {
+  const rect = element.getBoundingClientRect()
+  const parent = element.parentElement
+  const horizontal = !!parent && getComputedStyle(parent).display === 'grid'
+  const at = horizontal
+    ? (input.clientX - rect.left) / rect.width
+    : (input.clientY - rect.top) / rect.height
+  if (group && at > 0.25 && at < 0.75) return 'center'
+  if (horizontal) return at < 0.5 ? 'left' : 'right'
+  return closestEdge(input.clientY, rect)
 }
 
 interface BoardCardTargetData {
   [BOARD_CARD]: true
   itemId: string
-  edge: RowEdge
+  edge: CardZone
 }
 
 /**
  * Makes one card a drop target for its siblings, on a board that reports
- * where a card lands (`reorder`). The drop itself is reported by the column,
- * which reads the card it landed on; the card only works out which half of
- * it the pointer is over, for the column and for its own drop line.
+ * where a card lands (`reorder`) or groups cards (`group`). The drop itself
+ * is reported by the column, which reads the card it landed on; the card
+ * only works out which zone of it the pointer is over, for the column and
+ * for its own drop mark.
  */
 export function useDropTargetCard(options: {
   element: Ref<HTMLElement | undefined>
   enabled: Ref<boolean>
   itemId: Ref<string>
+  /** Whether the middle of the card groups. See `group` on `RlBoard`. */
+  group?: Ref<boolean>
 }) {
-  const edge = ref<RowEdge | null>(null)
+  const edge = ref<CardZone | null>(null)
 
   watch(
     [options.element, options.enabled],
     ([element, enabled], _prev, onCleanup) => {
       if (!element || !enabled) return
-      const edgeAt = (clientY: number) => closestEdge(clientY, element.getBoundingClientRect())
-      const track = (source: { data: Record<string | symbol, unknown> }, clientY: number) => {
+      type Input = { clientX: number; clientY: number }
+      const edgeAt = (input: Input) => zoneAt(input, element, options.group?.value ?? false)
+      const track = (source: { data: Record<string | symbol, unknown> }, input: Input) => {
         const self = (source.data as unknown as BoardDragData).itemId === options.itemId.value
-        edge.value = self ? null : edgeAt(clientY)
+        edge.value = self ? null : edgeAt(input)
       }
       onCleanup(
         dropTargetForElements({
           element,
           canDrop: ({ source }) => isBoardDrag(source.data),
-          getData: ({ input }) => ({ [BOARD_CARD]: true, itemId: options.itemId.value, edge: edgeAt(input.clientY) }),
-          onDragEnter: ({ source, location }) => track(source, location.current.input.clientY),
-          onDrag: ({ source, location }) => track(source, location.current.input.clientY),
+          getData: ({ input }) => ({ [BOARD_CARD]: true, itemId: options.itemId.value, edge: edgeAt(input) }),
+          onDragEnter: ({ source, location }) => track(source, location.current.input),
+          onDrag: ({ source, location }) => track(source, location.current.input),
           onDragLeave: () => {
             edge.value = null
           },
@@ -131,7 +187,58 @@ function dropPosition(
   if (!card || card[BOARD_CARD] !== true) return undefined
   const { itemId, edge } = card as unknown as BoardCardTargetData
   if (itemId === dragged) return undefined
-  return { targetId: itemId, placement: edge === 'top' ? 'before' : 'after' }
+  return { targetId: itemId, placement: edge === 'center' ? 'onto' : edge === 'top' || edge === 'left' ? 'before' : 'after' }
+}
+
+function prefersReducedMotion(): boolean {
+  return typeof window.matchMedia === 'function' && window.matchMedia('(prefers-reduced-motion: reduce)').matches
+}
+
+/** Room around the lifted card, so its shadow and tilt are not clipped. */
+const PREVIEW_PAD = 16
+
+/**
+ * Draws the held card as lifted off the board: a copy, tilted and a little
+ * larger, with a deeper shadow. Under reduced motion the copy keeps its
+ * shape and only gains the shadow. The copy is wrapped in a shell that
+ * carries the board's classes and attributes, so the board's own (scoped)
+ * card styles still apply outside it.
+ */
+function setLiftedPreview(
+  element: HTMLElement,
+  input: { clientX: number; clientY: number },
+  nativeSetDragImage: Parameters<typeof setCustomNativeDragPreview>[0]['nativeSetDragImage'],
+) {
+  const rect = element.getBoundingClientRect()
+  setCustomNativeDragPreview({
+    nativeSetDragImage,
+    getOffset: () => ({ x: input.clientX - rect.left + PREVIEW_PAD, y: input.clientY - rect.top + PREVIEW_PAD }),
+    render: ({ container }) => {
+      const board = element.closest('.rl-board')
+      const shell = document.createElement('div')
+      // The board's class and scoped-style attributes only: a copied id,
+      // role or label would put a second landmark in the page while dragging.
+      for (const attr of board?.attributes ?? []) {
+        if (attr.name === 'class' || attr.name.startsWith('data-v-')) shell.setAttribute(attr.name, attr.value)
+      }
+      Object.assign(shell.style, {
+        display: 'block',
+        padding: `${PREVIEW_PAD}px`,
+        overflow: 'visible',
+        background: 'transparent',
+        width: 'auto',
+      })
+      const copy = element.cloneNode(true) as HTMLElement
+      copy.classList.remove('rl-board-card--dragging')
+      Object.assign(copy.style, {
+        width: `${rect.width}px`,
+        transform: prefersReducedMotion() ? 'none' : 'rotate(2.5deg) scale(1.05)',
+        boxShadow: '0 14px 28px rgb(0 0 0 / 35%)',
+      })
+      shell.appendChild(copy)
+      container.appendChild(shell)
+    },
+  })
 }
 
 /**
@@ -158,6 +265,9 @@ export function useDraggableCard(options: {
         draggable({
           element,
           getInitialData: () => ({ ...options.data.value, [BOARD_DRAG]: true }),
+          onGenerateDragPreview: ({ nativeSetDragImage, location }) => {
+            setLiftedPreview(element, location.current.input, nativeSetDragImage)
+          },
           onDragStart: () => {
             dragging.value = true
           },
@@ -196,8 +306,18 @@ export function useDropTargetColumn(options: {
   onDrop: (drag: BoardDragData, at?: BoardDropPosition) => void
   /** Whether drops report a position. See `reorder` on `RlBoard`. */
   reorder?: Ref<boolean>
+  /** Whether a drop on a card's middle reports `onto`. See `group` on `RlBoard`. */
+  group?: Ref<boolean>
+  /**
+   * Whether another column may be dropped beside this one, and what to call
+   * when it is. See `sectionsMovable` on `RlBoard`.
+   */
+  acceptsSection?: Ref<boolean>
+  onSectionDrop?: (move: BoardSectionDropPosition) => void
 }) {
   const over = ref(false)
+  /** The side a held column would land on, while one is over this column. */
+  const sectionEdge = ref<'before' | 'after' | null>(null)
 
   watch(
     options.element,
@@ -212,24 +332,55 @@ export function useDropTargetColumn(options: {
         drag.fromSectionId === options.data.value.sectionId &&
         drag.fromLaneId === options.data.value.laneId
 
+      /** Which side of this column a held column is over: left half is before. */
+      const sideOf = (source: { data: Record<string | symbol, unknown> }, input: { clientX: number }) => {
+        const drag = source.data as unknown as BoardSectionDragData
+        if (drag.sectionId === options.data.value.sectionId) return null
+        const rect = element.getBoundingClientRect()
+        return input.clientX < rect.left + rect.width / 2 ? 'before' : 'after'
+      }
+
+      /** A position counts only for what the board opted into. */
+      const positionFor = (at: BoardDropPosition | undefined) => {
+        if (!at) return undefined
+        if (at.placement === 'onto') return options.group?.value ? at : undefined
+        return options.reorder?.value ? at : undefined
+      }
+
       onCleanup(
         dropTargetForElements({
           element,
           getData: () => ({ ...options.data.value, [BOARD_DRAG]: true }),
-          canDrop: ({ source }) => !isForeign(source),
-          onDragEnter: ({ source }) => {
+          canDrop: ({ source }) =>
+            isSectionDrag(source.data) ? !!options.acceptsSection?.value : !isForeign(source),
+          onDragEnter: ({ source, location }) => {
+            if (isSectionDrag(source.data)) {
+              sectionEdge.value = sideOf(source, location.current.input)
+              return
+            }
             const drag = source.data as unknown as BoardDragData
             over.value = !isHome(drag)
           },
+          onDrag: ({ source, location }) => {
+            if (isSectionDrag(source.data)) sectionEdge.value = sideOf(source, location.current.input)
+          },
           onDragLeave: () => {
             over.value = false
+            sectionEdge.value = null
           },
           onDrop: ({ source, location }) => {
             over.value = false
+            sectionEdge.value = null
+            if (isSectionDrag(source.data)) {
+              const placement = sideOf(source, location.current.input)
+              const drag = source.data as unknown as BoardSectionDragData
+              if (placement) {
+                options.onSectionDrop?.({ sectionId: drag.sectionId, targetId: options.data.value.sectionId, placement })
+              }
+              return
+            }
             const drag = source.data as unknown as BoardDragData
-            const at = options.reorder?.value
-              ? dropPosition(location.current.dropTargets, drag.itemId)
-              : undefined
+            const at = positionFor(dropPosition(location.current.dropTargets, drag.itemId))
             if (isHome(drag) && !at) return
             options.onDrop(drag, at)
           },
@@ -241,9 +392,51 @@ export function useDropTargetColumn(options: {
 
   onScopeDispose(() => {
     over.value = false
+    sectionEdge.value = null
   })
 
-  return { over: readonly(over) }
+  return { over: readonly(over), sectionEdge: readonly(sectionEdge) }
+}
+
+/**
+ * Makes one column draggable by its handle. The column is what is dragged,
+ * so the preview shows the whole column; only a press on the handle starts
+ * the drag, so the heading's own controls keep their clicks.
+ */
+export function useDraggableSection(options: {
+  element: Ref<HTMLElement | undefined>
+  handle: Ref<HTMLElement | undefined>
+  enabled: Ref<boolean>
+  sectionId: Ref<string>
+}) {
+  const dragging = ref(false)
+
+  watch(
+    [options.element, options.handle, options.enabled],
+    ([element, handle, enabled], _prev, onCleanup) => {
+      if (!element || !handle || !enabled) return
+      onCleanup(
+        draggable({
+          element,
+          dragHandle: handle,
+          getInitialData: () => ({ sectionId: options.sectionId.value, [BOARD_SECTION]: true }),
+          onDragStart: () => {
+            dragging.value = true
+          },
+          onDrop: () => {
+            dragging.value = false
+          },
+        }),
+      )
+    },
+    { immediate: true },
+  )
+
+  onScopeDispose(() => {
+    dragging.value = false
+  })
+
+  return { dragging: readonly(dragging) }
 }
 
 /**
@@ -262,7 +455,7 @@ export function useBoardAutoScroll(element: Ref<HTMLElement | undefined>) {
       onCleanup(
         autoScrollForElements({
           element: el,
-          canScroll: ({ source }) => isBoardDrag(source.data),
+          canScroll: ({ source }) => isBoardDrag(source.data) || isSectionDrag(source.data),
         }),
       )
     },

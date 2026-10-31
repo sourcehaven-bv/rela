@@ -14,6 +14,7 @@ import {
   useBoardAutoScroll,
   type BoardDragData,
   type BoardDropPosition,
+  type BoardSectionDropPosition,
 } from '../../composables/useBoardDnd'
 import { useBoardKeyboardMove } from './useBoardKeyboardMove'
 import { useSectionToggleFocus } from './useSectionToggleFocus'
@@ -64,9 +65,23 @@ const props = withDefaults(
      * sets `collapsed` on the section, as it does for `expandSection`.
      */
     collapsible?: boolean
+    /**
+     * Whether a card dropped on the middle of another card groups the two.
+     * The drop is reported as `move` with `at.placement` `onto`; what a group
+     * is, and whether it is made, is the caller's.
+     */
+    group?: boolean
+    /**
+     * Which columns can be dragged by a handle to another place among the
+     * movable columns, answered per section. Absent, no column moves. The
+     * board reports the drop as `moveSection` and does not reorder itself.
+     */
+    sectionsMovable?: (section: Section<T>) => boolean
   }>(),
   {
     reorder: false,
+    group: false,
+    sectionsMovable: undefined,
     collapsible: false,
     showAddSection: true,
     addLabel: undefined,
@@ -89,6 +104,8 @@ const emit = defineEmits<{
    * caller's data decides whether the move happens.
    */
   move: [payload: { item: T; to: Section<T>; at?: BoardDropPosition }]
+  /** A movable column was dropped before or after another one. */
+  moveSection: [move: BoardSectionDropPosition]
 }>()
 
 const element = ref<HTMLElement>()
@@ -142,6 +159,7 @@ const {
 
 defineSlots<{
   card?: (props: { item: T; selected: boolean }) => unknown
+  heading?: (props: { section: Section<T> }) => unknown
 }>()
 </script>
 
@@ -166,15 +184,21 @@ defineSlots<{
         :keyboard-target="targetId === section.id"
         :reorder="reorder"
         :collapsible="collapsible"
+        :group="group"
+        :movable="sectionsMovable?.(section) ?? false"
         @add="emit('add', $event)"
         @select="emit('select', $event)"
         @drop="onDrop"
         @grab="grab($event, section)"
         @release="cancelMove()"
         @collapse="onCollapse"
+        @move-section="emit('moveSection', $event)"
       >
         <template v-if="$slots.card" #card="cardProps">
           <slot name="card" v-bind="cardProps" />
+        </template>
+        <template v-if="$slots.heading" #heading="headingProps">
+          <slot name="heading" v-bind="headingProps" />
         </template>
       </RlBoardColumn>
     </template>
