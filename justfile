@@ -330,6 +330,13 @@ e2e: build-server-e2e
     @echo "Running E2E tests..."
     cd e2e && npm test
 
+# Compare the SPA's fake API with rela-server on the memory store
+# (frontend/contract). Always rebuilds, so the test never runs a stale server.
+contract-fake: build-frontend
+    @mkdir -p {{build_dir}}
+    go build -tags memorybackend -o {{build_dir}}/rela-server-memory ./cmd/rela-server
+    cd frontend && RELA_CONTRACT_SERVER=../{{build_dir}}/rela-server-memory npm run contract
+
 # Run E2E tests in headed mode (visible browser)
 e2e-headed: build-server-e2e
     @echo "Running E2E tests (headed)..."

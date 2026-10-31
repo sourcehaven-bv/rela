@@ -723,6 +723,17 @@ jobs:
           cd frontend && npm run build:e2e && cd ..
           CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" -o bin/rela-server ./cmd/rela-server
           CGO_ENABLED=0 go build -tags postgres -trimpath -ldflags "-s -w" -o bin/rela-server-postgres ./cmd/rela-server
+          CGO_ENABLED=0 go build -tags memorybackend -trimpath -ldflags "-s -w" -o bin/rela-server-memory ./cmd/rela-server
+
+      # The SPA's unit tests run against a fake of the data-entry API
+      # (frontend/src/test/fakeApi). This compares the fake with the real
+      # server on the memory store, on random request sequences, so the fake
+      # cannot drift from the API it stands in for (TKT-7LTLHW3).
+      - name: Contract test (fake API vs rela-server)
+        working-directory: frontend
+        env:
+          RELA_CONTRACT_SERVER: ${{ github.workspace }}/bin/rela-server-memory
+        run: npm run contract
 
       - name: Install e2e dependencies
         working-directory: e2e

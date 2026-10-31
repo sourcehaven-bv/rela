@@ -2509,6 +2509,13 @@
       "reason": "Design: wire DTOs (apiwire, realtime) mirror domain types on purpose, as the rule against leaking storage types asks.",
       "at": "2026-10-29T18:00:00Z",
       "title": "BusyChannel (apiwire) and BusyView (realtime) share most of their fields."
+    },
+    "boundaries.unrelated_parts-4e0a0314317d": {
+      "state": "accepted",
+      "reason": "Design: src/test/fakeApi is test-only support for the SPA property tests; only *.test.ts files import it, and the exporter leaves those out.",
+      "at": "2026-10-30T07:30:00Z",
+      "title": "src holds 2 groups of files that neither refer to each other.",
+      "size": 2
     }
   },
   "labels": {},

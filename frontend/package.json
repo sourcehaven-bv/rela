@@ -20,6 +20,7 @@
     "typecheck": "vue-tsc --noEmit",
     "test": "vitest",
     "test:run": "vitest run",
+    "contract": "vitest run --config vitest.contract.config.ts",
     "stress": "tsx stress/cli.ts",
     "dupes": "jscpd src --ignore \"**/*.test.ts\" --reporters console"
   },
