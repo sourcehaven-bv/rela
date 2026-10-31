@@ -439,11 +439,11 @@ func TestParse_Invalid(t *testing.T) {
 		{"trigger prop substitution", []replace{{`summary: "Severity raised to high"`, `summary: "{{entity.title}} raised"`}},
 			"triggers.breach-escalated.post.props.summary", "substitution is not supported"},
 		{"trigger prop enum value", []replace{{"severity: high }", "severity: extreme }"}},
-			"triggers.breach-escalated.post.props.severity", `"extreme" is not valid`},
+			"triggers.breach-escalated.post.props.severity", "must be one of"},
 		{"trigger prop ref", []replace{{"severity: high }", "severity: high, affects: MEA-1 }"}},
 			"triggers.breach-escalated.post.props.affects", "only string, markdown or enum"},
 		{"trigger required prop", []replace{{`summary: "Severity raised to high", `, ""}},
-			"triggers.breach-escalated.post.props", `required property "summary"`},
+			"triggers.breach-escalated.post.props", `property "summary" is required`},
 		{"limit above built-in", []replace{{"post_rate: 20/m", "post_rate: 40/m"}}, "limits.post_rate", "may only lower"},
 		{"limit syntax", []replace{{"post_rate: 20/m", "post_rate: fast"}}, "limits.post_rate", `must look like "30/m"`},
 		{"limit burst", []replace{{"post_rate: 20/m", "post_rate: 1000/h"}}, "limits.post_rate", "in one burst"},
@@ -501,7 +501,7 @@ func TestParse_Invalid(t *testing.T) {
 			`when: "message.severity ~= '' or today() == today()"`}}, "triggers.breach-escalated.post.props", "calls today()"},
 		{"trigger prop over max", []replace{{"summary:  { type: string, required: true }",
 			"summary:  { type: string, required: true, max: 5 }"}}, "triggers.breach-escalated.post.props.summary",
-			"max of 5"},
+			"must be at most 5 characters"},
 		{"trigger prop over message_bytes", []replace{{"page_limit: 100", "page_limit: 100\n  message_bytes: 20"}},
 			"triggers.breach-escalated.post.props", "over message_bytes"},
 		{"trigger when_closed", []replace{{"channel: incident-room\n", "channel: incident-room\n    when_closed: drop\n"}},
@@ -524,6 +524,39 @@ func TestParse_Invalid(t *testing.T) {
 	}
 }
 
+// TestParse_TriggerLiteralOrder pins on the trigger caller what
+// TestParse_ReminderLiteralPolicy pins on the reminder one: a literal the
+// policy refuses is reported once, without a second NormalizeProps
+// refusal, and a when: on today() is reported even when a literal is bad
+// (TKT-852C0M).
+func TestParse_TriggerLiteralOrder(t *testing.T) {
+	const k = "triggers.breach-escalated.post.props"
+	meta, policy := testMeta(t), testPolicy(t)
+	base := golden(t)
+	edit := func(t *testing.T, src string, edits ...replace) string {
+		t.Helper()
+		for _, e := range edits {
+			if strings.Count(src, e.old) != 1 {
+				t.Fatalf("edit %q matches %d times; want exactly one", e.old, strings.Count(src, e.old))
+			}
+			src = strings.Replace(src, e.old, e.new, 1)
+		}
+		return src
+	}
+	badRef := replace{"severity: high }", "severity: high, affects: MEA-1 }"}
+
+	t.Run("ref literal reported once", func(t *testing.T) {
+		_, err := Parse([]byte(edit(t, base, badRef)), meta, policy)
+		assertOnlyProblemAt(t, err, k+".affects", "only string, markdown or enum")
+	})
+	t.Run("today() before a bad literal", func(t *testing.T) {
+		src := edit(t, base, badRef, replace{`when: "message.severity ~= ''"`,
+			`when: "message.severity ~= '' or today() == today()"`})
+		_, err := Parse([]byte(src), meta, policy)
+		assertOnlyProblemAt(t, err, k, "calls today()")
+	})
+}
+
 func assertProblem(t *testing.T, err error, key, reason string) {
 	t.Helper()
 	var cfgErr *Error
@@ -539,6 +572,25 @@ func assertProblem(t *testing.T, err error, key, reason string) {
 		}
 	}
 	t.Errorf("no problem at %q containing %q; got:\n%s", key, reason, strings.ReplaceAll(err.Error(), "; ", "\n"))
+}
+
+// assertOnlyProblemAt requires exactly one problem at key, and that its
+// reason contains reason.
+func assertOnlyProblemAt(t *testing.T, err error, key, reason string) {
+	t.Helper()
+	var cfgErr *Error
+	if !errors.As(err, &cfgErr) {
+		t.Fatalf("err = %v; want *realtimecfg.Error", err)
+	}
+	var at []string
+	for _, p := range cfgErr.Problems {
+		if p.Key == key {
+			at = append(at, p.Reason)
+		}
+	}
+	if len(at) != 1 || !strings.Contains(at[0], reason) {
+		t.Errorf("problems at %q = %q; want exactly one containing %q", key, at, reason)
+	}
 }
 
 func TestParse_InvalidYAML(t *testing.T) {
