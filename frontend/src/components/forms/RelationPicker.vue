@@ -8,7 +8,7 @@ import { entityDisplayTitleWithId } from '@/utils/entityDisplay'
 import type { FormFieldOrRelation, Entity, RelationEntry, RelationAffordance } from '@/types'
 import InlineCreateFormModal from './InlineCreateFormModal.vue'
 import { useInlineCreate } from '@/composables/useInlineCreate'
-import WorldBadge from '@/components/entity/WorldBadge.vue'
+import WorldBadge from '@/components/ui/WorldBadge.vue'
 import { DEFAULT_WORLD, useWorld } from '@/composables/useWorld'
 import {
   missingIds,

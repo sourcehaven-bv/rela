@@ -21,7 +21,7 @@ import {
 } from '@/utils/lineDiff'
 import { useVersionSelectionSync, type Side } from '@/composables/useVersionSelectionSync'
 import { isEnumPropertyDef } from '@/utils/format'
-import Badge from '@/components/common/Badge.vue'
+import Badge from '@/components/ui/Badge.vue'
 import type { Entity } from '@/types'
 
 const { t } = useI18n()

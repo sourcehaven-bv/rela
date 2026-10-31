@@ -4,7 +4,7 @@ import { useI18n } from 'vue-i18n'
 import { useSchemaStore, useEntitiesStore, useUIStore } from '@/stores'
 import { isCancelledFetch } from '@/composables/usePageData'
 import EntityTargetSelect from '@/components/common/EntityTargetSelect.vue'
-import Badge from '@/components/common/Badge.vue'
+import Badge from '@/components/ui/Badge.vue'
 import RlButton from 'rela-components/components/common/RlButton.vue'
 import RlMultiSelect from 'rela-components/components/form/RlMultiSelect.vue'
 import type {
