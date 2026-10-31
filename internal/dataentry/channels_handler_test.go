@@ -1101,6 +1101,20 @@ func TestWireChannelSession_Button(t *testing.T) {
 		require.JSONEq(t, `{"label":"Revise","props":{"decision":"revise"},"confirm":true,`+
 			`"confirm_text":"Sure?","style":"danger"}`, string(b))
 	})
+	t.Run("compose button", func(t *testing.T) {
+		// TKT-53FN0L AC 6: compose is carried; a one-click button omits it.
+		got := wireChannelSession(&realtime.SessionView{State: "review", Transitions: []realtime.SessionTransitionView{
+			{MessageType: "decide", To: "planning", Button: &realtime.SessionButtonView{
+				Label: "Revise", Props: map[string]any{"decision": "revise"}, Compose: true,
+				ButtonOptionsView: realtime.ButtonOptionsView{Style: "danger"}}},
+		}})
+		require.Equal(t, &v1.ChannelSessionButton{Label: "Revise", Props: map[string]any{"decision": "revise"},
+			Compose: true, Style: "danger"}, got.Transitions[0].Button)
+		b, err := json.Marshal(got.Transitions[0].Button)
+		require.NoError(t, err)
+		require.JSONEq(t, `{"label":"Revise","props":{"decision":"revise"},"compose":true,"style":"danger"}`,
+			string(b))
+	})
 	t.Run("entries", func(t *testing.T) {
 		head := wireHead(realtime.HeadView{Actions: realtime.Affordances{
 			Entries: []realtime.EntryRef{{MessageType: "decide", Entry: 1}},

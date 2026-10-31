@@ -276,13 +276,17 @@ export interface ChannelButtonOptions {
 }
 
 /**
- * A one-click preset of a transition entry: the text on the button and the
- * props a click posts, in stored form, posted as they are. Its options
- * already hold the type's `decision_button` for each one it leaves out.
+ * A preset of a transition entry: the text on the button and the props a
+ * click posts, in stored form, posted as they are. It is one-click unless
+ * `compose` is true: then a click opens the composer with the props fixed,
+ * and the Send adds the type's other required properties (TKT-53FN0L). Its
+ * options already hold the type's `decision_button` for each one it leaves
+ * out; a compose button never carries `confirm`.
  */
 export interface ChannelSessionButton extends ChannelButtonOptions {
   label: string
   props?: Record<string, MessagePropInput>
+  compose?: boolean
 }
 
 /** One transition entry, by message type and its place in the type's list. */
@@ -739,6 +743,7 @@ export const CHANNEL_WIRE_FIELDS: Record<string, readonly string[]> = {
   ChannelSessionButton: wireKeys<ChannelSessionButton>()([
     'label',
     'props',
+    'compose',
     'confirm',
     'confirm_text',
     'style',

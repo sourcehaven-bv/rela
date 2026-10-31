@@ -49,6 +49,13 @@ type NormalizedProps struct {
 // ([ErrTooManyProps]), and an encoding over maxBytes ([ErrTooLarge]). A
 // nil value and an empty list are an absent property.
 func (mt *MessageType) NormalizeProps(in map[string]any, maxBytes int) (NormalizedProps, error) {
+	return mt.normalize(in, maxBytes, true)
+}
+
+// normalize is [MessageType.NormalizeProps]. With requireAll false it
+// does not refuse a missing required property, so a compose button's
+// partial preset passes every other rule of a post.
+func (mt *MessageType) normalize(in map[string]any, maxBytes int, requireAll bool) (NormalizedProps, error) {
 	if len(in) > realtimelimits.MaxMessageProperties {
 		return NormalizedProps{}, fmt.Errorf("%w: a message has at most %d properties",
 			ErrTooManyProps, realtimelimits.MaxMessageProperties)
@@ -77,7 +84,7 @@ func (mt *MessageType) NormalizeProps(in map[string]any, maxBytes int) (Normaliz
 		}
 	}
 	for _, name := range sortedKeys(mt.Properties) {
-		if _, ok := out[name]; !ok && mt.Properties[name].Required {
+		if _, ok := out[name]; !ok && requireAll && mt.Properties[name].Required {
 			return NormalizedProps{}, fmt.Errorf("property %q is required", name)
 		}
 	}

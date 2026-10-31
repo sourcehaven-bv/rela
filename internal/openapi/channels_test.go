@@ -403,6 +403,13 @@ func TestOpenAPI_ChannelSessionButton(t *testing.T) {
 	if p := b.Properties["props"]; p == nil || p.Type != "object" || p.AdditionalProperties == nil {
 		t.Errorf("button props = %+v, want an object of free values", p)
 	}
+	// TKT-53FN0L AC 6: an optional compose boolean.
+	c := b.Properties["compose"]
+	if c == nil || c.Type != "boolean" || slices.Contains(b.Required, "compose") ||
+		!strings.Contains(c.Description, "opens the composer with props fixed") {
+
+		t.Errorf("button compose = %+v, want an optional boolean that says it opens the composer", c)
+	}
 }
 
 // TestOpenAPI_ChannelButtonOptions pins TKT-TXZZZ2 AC 5: a transition's

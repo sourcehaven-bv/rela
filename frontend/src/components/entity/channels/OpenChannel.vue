@@ -324,7 +324,7 @@ async function onPost(event: ChannelPostEvent) {
   clearErrors()
   submitting.value = true
   try {
-    await decisionsApi.sendComposer(event.type, converted.props, event.replyTo)
+    await decisionsApi.sendComposer(event.type, converted.props, event.replyTo, event.compose)
     composer.value?.reset(event)
     replyTo.value = null
   } catch (err) {
@@ -574,6 +574,7 @@ const pickerTypes = picker.types
           :editing="editing"
           :submitting="submitting"
           :blocked="deciding"
+          :compose="decisionsApi.composeView.value"
           :errors="fieldErrors"
           :error="formError"
           :time-zone-label="tz"
@@ -583,6 +584,7 @@ const pickerTypes = picker.types
           @cancel-edit="onCancelEdit"
           @typing="typing.onInput"
           @select="decisionsApi.onComposerSelect"
+          @cancel-compose="decisionsApi.cancelCompose"
         />
       </template>
     </RlChannel>

@@ -1242,6 +1242,69 @@ describe('session decisions', () => {
         want: [{ ...reviseView, label: 'Tag', props: { decision: 'revise', tags: ['a', 'b'] } }],
       },
       {
+        name: 'a compose preset opens the form and keeps its props',
+        head: ph(
+          [
+            {
+              ...revise,
+              button: { label: 'Revise', props: { decision: 'revise' }, compose: true },
+            },
+          ],
+          [['decide', 1]]
+        ),
+        want: [{ ...reviseView, opensForm: true, compose: true }],
+      },
+      {
+        name: 'a compose preset to a final state does not ask',
+        head: ph(
+          [
+            {
+              ...revise,
+              to: 'abandoned',
+              button: { label: 'Revise', props: { decision: 'revise' }, compose: true },
+            },
+          ],
+          [['decide', 1]]
+        ),
+        want: [{ ...reviseView, toLabel: 'Abandoned', opensForm: true, compose: true }],
+      },
+      {
+        name: 'a compose preset takes style but not confirm',
+        head: ph(
+          [
+            {
+              ...revise,
+              button: {
+                label: 'Revise',
+                props: { decision: 'revise' },
+                compose: true,
+                confirm: true,
+                style: 'danger',
+              },
+            },
+          ],
+          [['decide', 1]]
+        ),
+        want: [{ ...reviseView, opensForm: true, compose: true, danger: true }],
+      },
+      {
+        name: 'a compose preset beside a one-click one',
+        head: ph(
+          [
+            approve,
+            {
+              ...revise,
+              button: { label: 'Revise', props: { decision: 'revise' }, compose: true },
+            },
+          ],
+          [
+            ['decide', 0],
+            ['decide', 1],
+          ]
+        ),
+        want: [approveView, { ...reviseView, opensForm: true, compose: true }],
+      },
+      {
         name: 'without _actions.entries the type button stands for every entry',
         head: ph([approve, revise], undefined),
         want: [{ key: 'decide', messageType: 'decide', label: 'Decide', opensForm: true }],

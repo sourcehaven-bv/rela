@@ -3,6 +3,7 @@ package realtimecfg
 import (
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -152,6 +153,15 @@ func TestDocsExample_Branching(t *testing.T) {
 	}
 	if strings.Join(styles, ",") != "primary," {
 		t.Errorf("button styles = %q; want Approve primary and Revise empty", styles)
+	}
+	// TKT-53FN0L AC 13: Revise opens the composer; Approve is one-click.
+	var compose []string
+	for _, tr := range ct.Session().Branches("review", "decide") {
+		b, _ := tr.Button()
+		compose = append(compose, strconv.FormatBool(b.Compose))
+	}
+	if strings.Join(compose, ",") != "false,true" {
+		t.Errorf("button compose = %v; want Approve false and Revise true", compose)
 	}
 }
 

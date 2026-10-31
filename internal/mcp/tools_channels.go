@@ -280,8 +280,7 @@ func toolReadChannelDef() *mcpgo.Tool {
 			"after_rev to wait for new, edited or removed messages. A channel type with a session shows it on "+
 			"the channel: its state, generation and the message types that move it from here, and "+
 			"actions.transitions lists those your post would fire if the guard holds; a move appends "+
-			"a notice of type session. "+branchingNote+"A row of session.transitions with button is a "+
-			"one-click preset that posts its props; actions.entries lists the rows your post could take, by "+
+			"a notice of type session. "+branchingNote+presetNote+"actions.entries lists the rows your post could take, by "+
 			"message_type and entry. "+buttonOptionsNote+"A message type may be limited to some session states; outside them "+
 			"it is not in actions.post, and a post is refused with session_wrong_state, which names the "+
 			"allowed states. A state with timers lists them in timers, and due_at is when the "+
@@ -323,6 +322,11 @@ const branchingNote = "A message type may lead to several states; session.transi
 const buttonOptionsNote = "button.confirm and button.style on a transition row, and decision_button on a " +
 	"message type, are how the web app draws that decision; they do not change what a post does. "
 
+// presetNote says what a transition row's button asks of a poster.
+const presetNote = "A row of session.transitions with button is a preset. Without compose it is one-click " +
+	"and posts its props. With compose: true, post its props unchanged and add the message type's other " +
+	"required properties. "
+
 // sessionButtonOptionsNote is [buttonOptionsNote] for read_session, which
 // serves no message types.
 const sessionButtonOptionsNote = "button.confirm, button.confirm_text and button.style on a transition row " +
@@ -333,9 +337,8 @@ func toolReadSessionDef() *mcpgo.Tool {
 		withDescription("Read the session of a channel: its state, status (working, input_required, "+
 			"completed, cancelled or failed), whom it waits for in waiting_for, whether it waits for you in "+
 			"waiting_on_me, due_at, and transitions: the message types your post would move it with. "+
-			branchingNote+"A row of session.transitions with button is a one-click preset that posts its "+
-			"props; entries lists the rows your post could take, by message_type and entry. "+
-			sessionButtonOptionsNote+"It carries no rev, seq or message, so a watch on it wakes only when the "+
+			branchingNote+presetNote+"read_channel lists the message type's properties. "+
+			"entries lists the rows your post could take, by message_type and entry. "+sessionButtonOptionsNote+"It carries no rev, seq or message, so a watch on it wakes only when the "+
 			"session or your turn changes. To wait for a human: read; if status is completed, cancelled or "+
 			"failed, stop; if waiting_on_me is false, watch read_session with the returned cursor and repeat; a watch times "+
 			"out after at most 50s, so loop it. A session whose state the configuration no longer declares "+

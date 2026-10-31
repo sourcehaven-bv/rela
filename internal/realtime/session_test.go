@@ -1252,3 +1252,94 @@ func TestButtons_DeciderAgrees(t *testing.T) {
 		}
 	}
 }
+
+// composeRealtime is [buttonRealtime] with a rework type that requires
+// feedback, and a compose button on its member entry (TKT-53FN0L). An
+// earlier rework entry for auditors reads feedback, so it hides the
+// button from an auditor who is also a member.
+func composeRealtime() string {
+	src := strings.Replace(buttonRealtime(), "    lifecycle:\n",
+		"      rework:\n"+
+			"        properties:\n"+
+			"          decision: { type: plan-decision, required: true }\n"+
+			"          feedback: { type: string, required: true, max: 300 }\n"+
+			"        post: [lead, member, reviewer, auditor]\n"+
+			"    lifecycle:\n", 1)
+	return strings.Replace(src, "        nudged:    { final: true }\n",
+		"            rework:\n"+
+			"              - { to: nudged, roles: [reviewer], when: \"session.reminders.nudge > 0\" }\n"+
+			"              - { to: escalated, roles: [lead] }\n"+
+			"              - { to: audited, roles: [auditor], when: \"message.feedback == 'ok'\" }\n"+
+			"              - to: planning\n"+
+			"                roles: [member]\n"+
+			"                button: { label: Request changes, props: { decision: revise }, compose: true }\n"+
+			"                outputs: [ { set: { properties: { status: in-progress } } } ]\n"+
+			"        nudged:    { final: true }\n", 1)
+}
+
+// TestSessionView_ButtonCompose pins TKT-53FN0L AC 6: a compose button's
+// row carries compose with its given props, and never a confirm.
+func TestSessionView_ButtonCompose(t *testing.T) {
+	t.Parallel()
+	src := strings.Replace(composeRealtime(), "        post: [lead, member, reviewer, auditor]\n    lifecycle:",
+		"        post: [lead, member, reviewer, auditor]\n"+
+			"        decision_button: { confirm: \"Sure?\", style: danger }\n    lifecycle:", 1)
+	h := newHarness(t, withYAML(src), withOutputs(&fakeOutputs{}))
+	s := h.readAll(t, user("mo", "plan.member"), planCh).Channel.Session
+	require.NotNil(t, s)
+	var row *SessionTransitionView
+	for i, r := range s.Transitions {
+		if r.MessageType == "rework" && r.Entry == 3 {
+			row = &s.Transitions[i]
+		}
+	}
+	require.NotNil(t, row)
+	require.Equal(t, &SessionButtonView{Label: "Request changes", Props: map[string]any{"decision": "revise"},
+		Compose: true, ButtonOptionsView: ButtonOptionsView{Style: "danger"}}, row.Button)
+	b, err := json.Marshal(row.Button)
+	require.NoError(t, err)
+	require.JSONEq(t, `{"label":"Request changes","props":{"decision":"revise"},"compose":true,"style":"danger"}`,
+		string(b))
+}
+
+// TestButtons_DeciderAgreesCompose pins TKT-53FN0L AC 7 against the real
+// decider: for every caller, a compose button's preset posted with two
+// different feedback values takes the listed entry, or, where the button
+// is hidden, the entry that hides it. Two values with the same outcome
+// for a listed caller pin that no routing guard reads the feedback.
+func TestButtons_DeciderAgreesCompose(t *testing.T) {
+	t.Parallel()
+	long := strings.Repeat("x", 200)
+	tests := []struct {
+		who    string
+		listed bool
+		// to is where the post goes, by feedback.
+		to map[string]string
+	}{
+		{who: "member", listed: true, to: map[string]string{"ok": "planning", long: "planning"}},
+		{who: "member+reviewer", to: map[string]string{"ok": "planning", long: "planning"}},
+		{who: "lead", to: map[string]string{"ok": "escalated", long: "escalated"}},
+		{who: "lead+member", to: map[string]string{"ok": "escalated", long: "escalated"}},
+		{who: "auditor+member", to: map[string]string{"ok": "audited", long: "planning"}},
+	}
+	for _, tc := range tests {
+		for _, feedback := range []string{"ok", long} {
+			t.Run(fmt.Sprintf("%s feedback %d", tc.who, len(feedback)), func(t *testing.T) {
+				t.Parallel()
+				a := buttonPrincipals()[tc.who]
+				h := newHarness(t, withYAML(composeRealtime()), withOutputs(&fakeOutputs{}))
+				head, err := h.svc.Head(as(a), planCh)
+				require.NoError(t, err)
+				listed := slices.Contains(head.Actions.Entries, EntryRef{MessageType: "rework", Entry: 3})
+				require.Equal(t, tc.listed, listed, "entries %v", head.Actions.Entries)
+				res, err := h.svc.Post(as(a), planCh, PostInput{Type: "rework",
+					Props: map[string]any{"decision": "revise", "feedback": feedback}, ExpectGeneration: gen(0)})
+				require.NoError(t, err)
+				require.Equal(t, tc.to[feedback], res.Session.State)
+				if listed {
+					require.Equal(t, "planning", res.Session.State, "a listed compose button's Send took another entry")
+				}
+			})
+		}
+	}
+}

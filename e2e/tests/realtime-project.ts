@@ -75,6 +75,13 @@ export const DECISIONS = {
   /** Opens the form: a required Feedback. Moves Review back to Drafting. */
   reviseLabel: "Revise",
   feedbackLabel: "Feedback",
+  /**
+   * With RoomOptions.composePreset: Revise has an optional Topic, and its
+   * entry a compose preset that fixes it (TKT-53FN0L).
+   */
+  topicLabel: "Topic",
+  topicValue: "Rollback plan",
+  requestChangesLabel: "Request changes",
 } as const;
 
 /**
@@ -114,6 +121,12 @@ export interface RoomOptions {
    * combined with `session`.
    */
   decisions?: boolean;
+  /**
+   * With `decisions`: Revise gets the required Topic of DECISIONS, and its
+   * review entry the compose preset Request changes, which fixes the
+   * topic and opens the composer for the feedback.
+   */
+  composePreset?: boolean;
   /** Adds the question and answer types of CHOICES. No session. */
   choices?: boolean;
   /**
@@ -128,6 +141,9 @@ export interface RoomOptions {
 export function roomRealtimeYaml(opts: RoomOptions = {}): string {
   if ([opts.session, opts.decisions, opts.run].filter(Boolean).length > 1) {
     throw new Error("RoomOptions: session, decisions and run are exclusive");
+  }
+  if (opts.composePreset && !opts.decisions) {
+    throw new Error("RoomOptions: composePreset needs decisions");
   }
   const read = opts.leadReadsOnly ? "{ permission: channel-lead }" : "{ from: attached }";
   const contained = opts.session
@@ -160,7 +176,9 @@ export function roomRealtimeYaml(opts: RoomOptions = {}): string {
       revise:
         label: ${DECISIONS.reviseLabel}
         properties:
-          feedback: { type: string, required: true, label: ${DECISIONS.feedbackLabel} }
+          feedback: { type: string, required: true, label: ${DECISIONS.feedbackLabel} }${
+            opts.composePreset ? `\n          topic: { type: string, required: true, label: ${DECISIONS.topicLabel} }` : ""
+          }
         post: [member, lead]
         in: [review]`
     : "";
@@ -192,7 +210,12 @@ export function roomRealtimeYaml(opts: RoomOptions = {}): string {
           label: ${DECISIONS.review}
           on:
             approve: { to: approved, roles: [lead] }
-            revise: { to: drafting, roles: [lead] }
+            revise: { to: drafting, roles: [lead]${
+              opts.composePreset
+                ? `, button: { label: ${DECISIONS.requestChangesLabel}, ` +
+                  `props: { topic: ${DECISIONS.topicValue} }, compose: true }`
+                : ""
+            } }
         approved: { label: ${DECISIONS.approved}, final: true, status: completed }
 `
     : "";

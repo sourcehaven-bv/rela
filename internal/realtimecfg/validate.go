@@ -468,14 +468,27 @@ func unreadOf(n *yaml.Node, persist Persist) (noUnread bool, problem string) {
 	if persist == PersistEphemeral {
 		return false, "a signal is never stored, so it never counts as unread"
 	}
+	b, problem := strictBool(n)
+	if problem != "" {
+		return false, problem
+	}
+	return persist == PersistLog && !b, ""
+}
+
+// strictBool reads n as a YAML boolean. problem says why the value is
+// refused: an unquoted YAML 1.1 spelling such as yes or on, a quoted
+// value, or another scalar. `unread:` and `compose:` both read through it,
+// so the two keys cannot drift apart on what a boolean is.
+//
+// Nil: rejected. The caller passes a set node.
+func strictBool(n *yaml.Node) (b bool, problem string) {
 	if yamlscalar.PlainYAML11Bool(n) {
 		return false, fmt.Sprintf("%q is not a boolean; use true or false", strings.TrimSpace(n.Value))
 	}
-	var b bool
 	if n.Tag != "!!bool" || n.Decode(&b) != nil {
 		return false, "must be true or false"
 	}
-	return persist == PersistLog && !b, ""
+	return b, ""
 }
 
 func (v *validator) ttl(key, s string) time.Duration {

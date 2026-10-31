@@ -2285,6 +2285,82 @@ describe('ChannelsPanel preset buttons', () => {
     expect(api.postMessage).toHaveBeenCalledWith(expect.anything(), 'allow', {}, 12, 4)
   })
 
+  /** Makes the drafting entry a compose preset, with the messages before question. */
+  function useComposePreset(before: Message[] = []) {
+    const composeReview = {
+      ...review,
+      transitions: [
+        ...review.transitions.slice(0, 2),
+        {
+          message_type: 'decide',
+          to: 'drafting',
+          entry: 1,
+          button: { label: 'Request changes', props: { decision: 'revise' }, compose: true },
+        },
+      ],
+    }
+    api.getChannelHead.mockImplementation(() => {
+      const h = runHead()
+      return Promise.resolve({ ...h, channel: { ...h.channel, session: composeReview } })
+    })
+    api.getMessages.mockResolvedValue({
+      ...page([...before, question, notice]),
+      channel: channel({ last_seq: 13, rev: 13, session: composeReview }),
+      next_after_rev: 13,
+    })
+  }
+
+  it('a compose preset opens compose mode and posts the preset with the feedback', async () => {
+    useComposePreset()
+    await mountPanel()
+    expect(keys(header())).toEqual(['answer', 'preset:decide:0', 'preset:decide:1'])
+    await header().find('[data-decision="preset:decide:1"]').trigger('click')
+    await flushPromises()
+    await flushPromises()
+    expect(confirm).not.toHaveBeenCalled()
+    expect(api.postMessage).not.toHaveBeenCalled()
+    const strip = composerForm().find('.rl-channel-composer__compose')
+    expect(strip.text()).toContain('Request changes')
+    expect(strip.text()).toContain('Decision: revise')
+    expect(composerForm().find('[data-field="decision"]').exists()).toBe(false)
+    await composerForm().find('[data-field="note"] input').setValue('Add the rollback plan')
+    await submitComposer()
+    expect(api.postMessage).toHaveBeenCalledWith(
+      expect.anything(),
+      'decide',
+      { note: 'Add the rollback plan', decision: 'revise' },
+      undefined,
+      4
+    )
+  })
+
+  it('a compose preset that discards an edit of another type opens compose mode', async () => {
+    useComposePreset([msg(11)])
+    await mountPanel()
+    await buttonIn(messageEl(11), 'Edit').trigger('click')
+    await flushPromises()
+    expect(composerForm().attributes('aria-label')).toBe('Edit message')
+    confirm.mockResolvedValue(true)
+    await header().find('[data-decision="preset:decide:1"]').trigger('click')
+    await flushPromises()
+    await flushPromises()
+    expect(confirm).toHaveBeenCalledTimes(1)
+    expect(composerForm().attributes('aria-label')).not.toBe('Edit message')
+    const strip = composerForm().find('.rl-channel-composer__compose')
+    expect(strip.exists()).toBe(true)
+    expect(strip.text()).toContain('Request changes')
+    expect(composerForm().find('[data-field="decision"]').exists()).toBe(false)
+    await composerForm().find('[data-field="note"] input').setValue('Add the rollback plan')
+    await submitComposer()
+    expect(api.postMessage).toHaveBeenCalledWith(
+      expect.anything(),
+      'decide',
+      { note: 'Add the rollback plan', decision: 'revise' },
+      undefined,
+      4
+    )
+  })
+
   it('hidden decision type keeps its presets', async () => {
     useSchemaStore().channelPresentations = new Map([
       ['room', { messages: { decide: { display: 'hidden' }, ask: { display: 'hidden' } } }],

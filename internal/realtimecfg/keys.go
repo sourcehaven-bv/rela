@@ -53,6 +53,9 @@ var refusedKeys = []struct {
 		"message type's label; for another text, add a button: to the entry"},
 	{"channel_types.*.message_types.*.decision_button.props", "the type's decision button posts no preset; " +
 		"for a preset, add a button: to the entry"},
+	{"channel_types.*.message_types.*.decision_button.compose", "the type's decision button already opens " +
+		"the composer when a property is required; for a preset that opens it, add a button with compose: " +
+		"true to the entry"},
 	{"agents", "agents are ordinary principals; restrict them with client_baselines in acl.yaml " +
 		"and match them with a principal_type role"},
 	{"channel_types.*.message_types.*.actions.*.by", "agents are ordinary principals, so an action " +
@@ -171,6 +174,7 @@ func (k *keyChecker) walk(n *yaml.Node, t reflect.Type, path string) {
 var nodeScalars = map[reflect.Type]string{
 	reflect.TypeFor[rawConfirm](): "must be true, false or the text to show",
 	reflect.TypeFor[rawUnread]():  "must be a single value: true or false",
+	reflect.TypeFor[rawCompose](): "must be true or false",
 }
 
 // branches checks an `on.<message type>` value, which is one transition
