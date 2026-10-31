@@ -49,8 +49,9 @@ critical or significant issues.
 - [x] Test evidence documented in implementation checklist
 
 **Acceptance Status:**
-1. osv-scanner no longer reports GHSA-p458-7748-mcp3: PASS (local osv-scanner 2.7.0 run).
-2. vitest, @vitest/ui and @vitest/browser at 5.0.5 only: PASS (`npm ls`).
+1. osv-scanner reports no findings: PASS (local osv-scanner 2.7.0 run).
+2. vitest, @vitest/ui and @vitest/browser at 5.0.5 only; follow-redirects
+1.16.2, glob 14.0.3, minimatch 11.0.3: PASS (`npm ls`).
 3. Frontend typecheck, lint, tests, build and component library checks and tests: PASS.
 
 ## Documentation (enhancements only)

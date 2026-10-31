@@ -16,11 +16,13 @@ status: done
 - [x] Acceptance criteria documented with specific test scenarios
 
 **Scope:** In scope: GHSA-p458-7748-mcp3 from GitHub #1989 (`@vitest/browser`
-and `@vitest/ui` 5.0.3). Out of scope: the nested `@vitest/expect` 3.2.4 tree,
-which the advisory does not cover, and the vitest 5.1 beta.
+and `@vitest/ui` 5.0.3), and the three newer osv-scanner findings on the same
+lockfile: GHSA-mrwp-f3q8-3g9p (follow-redirects), GHSA-3g3m-2fjr-6pw4 (glob) and
+GHSA-g3hv-75wg-m249 (minimatch). Out of scope: the nested `@vitest/expect` 3.2.4
+tree, which the advisory does not cover, and the vitest 5.1 beta.
 
 **Acceptance Criteria:**
-1. osv-scanner on `frontend/package-lock.json` does not report GHSA-p458-7748-mcp3.
+1. osv-scanner on `frontend/package-lock.json` reports no findings.
 2. `npm ls vitest @vitest/ui @vitest/browser` shows 5.0.5 only.
 3. Frontend typecheck, lint, unit tests and build pass; component library checks and tests pass.
 
@@ -49,8 +51,16 @@ lockfile entries of the vitest 5 packages. The packages declare exact peer
 versions of each other, so a plain `npm install` refuses to move one alone; the
 5.0.3 lock entries are dropped and re-resolved together.
 
-Alternative rejected: an npm `overrides` entry. A direct range bump is simpler
-and needs no later cleanup.
+follow-redirects 1.16.2 is within axios's `^1.16.0`, so `npm update` moves it.
+glob and minimatch are fixed only in new majors (14.0.2 and 11.0.1), and no
+release of eslint, `@eslint/config-array`, typescript-eslint, editorconfig or
+js-beautify accepts them. They get npm `overrides` (`glob ^14.0.2`, `minimatch
+^11.0.1`). The consumers only construct `Minimatch` with `{ dot: true }` and
+call `globSync`; none use the APIs that minimatch 11 and glob 14 remove
+(`makeRe`, `regexp`, `AST`, `debug`, `matchOne`).
+
+Alternative rejected for vitest: an npm `overrides` entry. A direct range bump
+is simpler and needs no later cleanup.
 
 **Files to modify:** `frontend/package.json`,
 `frontend/packages/rela-components/package.json`, `frontend/package-lock.json`.

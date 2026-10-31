@@ -78,6 +78,8 @@
   "overrides": {
     "mermaid": {
       "katex": "^0.18.2"
-    }
+    },
+    "glob": "^14.0.2",
+    "minimatch": "^11.0.1"
   }
 }

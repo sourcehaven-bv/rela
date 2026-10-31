@@ -32,10 +32,14 @@ status: done
 - [x] ~~Edge cases manually verified~~ (N/A: none identified for a patch bump)
 
 **Verification Evidence:**
-- osv-scanner 2.7.0 on `frontend/package-lock.json`: GHSA-p458-7748-mcp3 is no
-longer reported (it is on origin/develop). Three newer advisories remain on both
-(follow-redirects GHSA-mrwp-f3q8-3g9p, glob GHSA-3g3m-2fjr-6pw4, minimatch
-GHSA-g3hv-75wg-m249); they are not in #1989 and are out of scope.
+- osv-scanner 2.7.0 on `frontend/package-lock.json`: no issues found. On
+origin/develop it reports GHSA-p458-7748-mcp3, GHSA-mrwp-f3q8-3g9p,
+GHSA-3g3m-2fjr-6pw4 and GHSA-g3hv-75wg-m249.
+- `npm ls`: follow-redirects 1.16.2, glob 14.0.3, minimatch 11.0.3 (one copy
+each). glob 14 also brings path-scurry 3.0.0 and minimatch 11 adds
+`@isaacs/nonrecursive-glob-match` 1.0.3.
+- Lint reports the same 0 errors and 184 warnings as before the minimatch
+override, so eslint's file matching is unchanged.
 - `npm ls vitest @vitest/ui @vitest/browser`: 5.0.5 only. The lockfile also
 moves dependencies that vitest 5.0.5 requires (chai 6.3.0, obug 3.0.0, tinybench
 6.2.2, tinyrainbow 3.2.0, magic-string 1.4.5).
