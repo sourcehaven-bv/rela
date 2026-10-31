@@ -111,16 +111,21 @@ type SessionTransitionView struct {
 	// [EntryRef] names the transition by it. Config, the same for every
 	// reader.
 	Entry int `json:"entry"`
-	// Button is the entry's one-click button, or nil. Config, the same for
+	// Button is the entry's preset button, or nil. Config, the same for
 	// every reader.
 	Button *SessionButtonView `json:"button,omitempty"`
 }
 
-// SessionButtonView is a transition entry's one-click button: a click
-// posts the entry's message type with Props, in stored form.
+// SessionButtonView is a transition entry's preset button. It is
+// one-click unless Compose is set: a click posts the entry's message type
+// with Props, in stored form. A compose button opens the composer with
+// Props fixed instead; its post adds the type's other required
+// properties. A compose button never carries a confirm.
 type SessionButtonView struct {
 	Label string         `json:"label"`
 	Props map[string]any `json:"props"`
+	// Compose is set when a click opens the composer instead of posting.
+	Compose bool `json:"compose,omitempty"`
 	// ButtonOptionsView holds the button's options, with its type's
 	// `decision_button:` already applied.
 	ButtonOptionsView
@@ -222,7 +227,7 @@ func sessionView(ct realtimecfg.ChannelType, h *channels.Channel, degraded bool,
 		}
 		if b, ok := tr.Button(); ok {
 			tv.Button = &SessionButtonView{
-				Label: b.Label, Props: b.Props(), ButtonOptionsView: buttonOptionsView(b.Options),
+				Label: b.Label, Props: b.Props(), Compose: b.Compose, ButtonOptionsView: buttonOptionsView(b.Options),
 			}
 		}
 		v.Transitions = append(v.Transitions, tv)

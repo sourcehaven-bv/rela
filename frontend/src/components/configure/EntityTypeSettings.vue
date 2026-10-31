@@ -7,10 +7,11 @@ import RlTextarea from 'rela-components/components/form/RlTextarea.vue'
 import RlRadioGroup from 'rela-components/components/form/RlRadioGroup.vue'
 import RlSelect from 'rela-components/components/form/RlSelect.vue'
 import RlOptionSelect from 'rela-components/components/form/RlOptionSelect.vue'
-import { useConfigDraftStore } from '@/stores/configDraft'
+import { useConfigDraftStore } from '@/configure/configDraft'
 import { entityTypeModel } from '@/configure/models'
 import { ENTITY_COLORS, entityColorName } from '@/configure/names'
-import { getIn, isMap, setOrRemove, type TreeValue } from '@/configure/tree'
+import type { TreeValue } from '@/api/configure'
+import { getIn, isMap, setOrRemove } from '@/configure/tree'
 
 /** The settings that describe an entity type itself, beside its properties. */
 const props = defineProps<{ name: string }>()

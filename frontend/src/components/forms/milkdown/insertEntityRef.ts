@@ -14,7 +14,7 @@
 import { closeHistory } from '@milkdown/kit/prose/history'
 import { TextSelection } from '@milkdown/kit/prose/state'
 import type { EditorView } from '@milkdown/kit/prose/view'
-import { isValidEntityRefId } from './entityRefId'
+import { isValidEntityRefId } from '@/utils/entityRefId'
 
 export interface EntityRefInsert {
   id: string

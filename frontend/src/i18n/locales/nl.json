@@ -1038,7 +1038,14 @@
     "moveFailed": "De kaart kon niet worden verplaatst",
     "moveForbidden": "Je mag deze kaart niet naar een andere kolom verplaatsen",
     "truncated": "{shown} van {total} items getoond. Het bord is onvolledig.",
-    "loading": "Bord laden…"
+    "loading": "Bord laden…",
+    "pile": "Nog niet gegroepeerd",
+    "groupName": "Naam van {title}",
+    "groupFailed": "De kaarten konden niet worden gegroepeerd",
+    "renameFailed": "De groep kon niet worden hernoemd",
+    "moveGroupFailed": "De groep kon niet worden verplaatst",
+    "groupElsewhere": "Deze kaart zit in een groep die dit bord niet toont",
+    "groupForbidden": "Je mag van deze kaarten geen groep maken"
   },
   "calendar": {
     "month": "Maand",

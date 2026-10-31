@@ -272,6 +272,52 @@ decisionTest.describe("session decisions", () => {
   });
 });
 
+// The decisions room where Revise is a preset that opens the composer with
+// the topic fixed (TKT-53FN0L).
+const composeDecisionTest = base.extend<ChannelFixtures>({
+  serverUrl: async ({ testProject, serverBinary }, use, testInfo) => {
+    writeRoomProject(testProject, { decisions: true, composePreset: true });
+    await serveWithPrincipalHeader(serverBinary, testProject, testInfo, use, CHANNEL_USERS.lead);
+  },
+  as: asFixture,
+});
+
+composeDecisionTest.describe("compose decisions", () => {
+  composeDecisionTest.describe.configure({ timeout: 120_000 });
+
+  composeDecisionTest("a preset that needs text opens the composer", async ({ as }) => {
+    const alice = await as(CHANNEL_USERS.lead);
+    const bob = await as(CHANNEL_USERS.member);
+    for (const p of [alice, bob]) {
+      await p.openEntity("feature", FEATURE);
+      await p.expectChannel(ROOM.label);
+      await p.expectSessionAt(DECISIONS.drafting);
+    }
+
+    await alice.selectMessageType(DECISIONS.containedLabel);
+    await alice.post("Ready for review", DECISIONS.noteLabel);
+    for (const p of [alice, bob]) await p.expectSessionAt(DECISIONS.review);
+    await alice.expectDecision(DECISIONS.requestChangesLabel, true);
+    await bob.expectDecision(DECISIONS.requestChangesLabel, false);
+
+    // The topic is fixed, so it shows in the strip and has no field; the
+    // focus goes to the empty required Feedback.
+    await alice.decide(DECISIONS.requestChangesLabel);
+    await alice.expectComposeStrip(DECISIONS.requestChangesLabel);
+    await alice.expectComposeStrip(`${DECISIONS.topicLabel}: ${DECISIONS.topicValue}`);
+    await alice.expectNoField(DECISIONS.topicLabel);
+    await alice.expectFieldFocused(DECISIONS.feedbackLabel);
+
+    // Topic is required, so the session moves only when the Send carries
+    // the preset.
+    await alice.post("Add the rollback plan", DECISIONS.feedbackLabel);
+    for (const p of [alice, bob]) {
+      await p.expectSessionAt(DECISIONS.drafting);
+      await p.expectMessage("Add the rollback plan");
+    }
+  });
+});
+
 // A room where a member asks with options and the lead answers with a
 // click (TKT-03FQPD).
 const choiceTest = base.extend<ChannelFixtures>({

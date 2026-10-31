@@ -7,7 +7,7 @@ import { storyComponent } from '../storyGeneric'
 import { boardSections } from '../../fixtures'
 import { ref } from 'vue'
 import type { Section } from '../../types'
-import type { BoardDropPosition } from '../../composables/useBoardDnd'
+import type { BoardDropPosition, BoardSectionDropPosition } from '../../composables/useBoardDnd'
 
 /* The board is generic over its item; `Task` is this library's demo row. */
 const meta: Meta<typeof RlBoard<Task>> = {
@@ -150,6 +150,60 @@ export const Reorder: StoryObj = {
           {{ moved || 'Drag a card above or below another one.' }}
         </p>
         <RlBoard :sections="sections" :can-move="canMove" reorder add-label="Add task" @move="onMove">
+          <template #card="{ item, selected }">
+            <RlTaskCard :task="item" :selected="selected" />
+          </template>
+        </RlBoard>
+      </div>
+    `,
+  }),
+}
+
+/**
+ * Grouping: with `group`, a card dropped on the middle of another reports
+ * `at.placement: 'onto'`, and an edge still reorders. With `sectionsMovable`,
+ * a column shows a handle that drags the whole column and reports
+ * `moveSection`. A wall board uses both: onto a card makes a group, and the
+ * handle reorders the groups.
+ *
+ * The board changes nothing itself; this story only reports the gestures.
+ */
+export const Grouping: StoryObj = {
+  render: () => ({
+    components: { RlBoard: storyComponent(RlBoard), RlTaskCard },
+    setup() {
+      const sections = ref<Section<Task>[]>(structuredClone(boardSections))
+      const moved = ref('')
+
+      function onMove({ item, to, at }: { item: Task; to: Section<Task>; at?: BoardDropPosition }) {
+        moved.value = at ? `${item.title} ${at.placement} ${at.targetId}` : `${item.title} → ${to.title}`
+      }
+      function onMoveSection(move: BoardSectionDropPosition) {
+        const list = sections.value
+        const from = list.findIndex((section) => section.id === move.sectionId)
+        const [section] = list.splice(from, 1)
+        const index = list.findIndex((candidate) => candidate.id === move.targetId)
+        list.splice(move.placement === 'after' ? index + 1 : index, 0, section)
+        moved.value = `${move.sectionId} ${move.placement} ${move.targetId}`
+      }
+
+      return { sections, moved, onMove, onMoveSection, canMove: () => true, movable: () => true }
+    },
+    template: `
+      <div style="display:flex; flex-direction:column; height:100%">
+        <p style="margin:0; padding:8px 24px; font: 12px system-ui; color:#666">
+          {{ moved || 'Drop a card on another, or drag a column by its handle.' }}
+        </p>
+        <RlBoard
+          :sections="sections"
+          :can-move="canMove"
+          :sections-movable="movable"
+          reorder
+          group
+          add-label="Add task"
+          @move="onMove"
+          @move-section="onMoveSection"
+        >
           <template #card="{ item, selected }">
             <RlTaskCard :task="item" :selected="selected" />
           </template>

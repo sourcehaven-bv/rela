@@ -8,9 +8,10 @@ import RlMultiSelect from 'rela-components/components/form/RlMultiSelect.vue'
 import RlSegmentedControl from 'rela-components/components/data/RlSegmentedControl.vue'
 import RlText from 'rela-components/components/common/RlText.vue'
 import ConfigSection from './ConfigSection.vue'
-import { useConfigDraftStore } from '@/stores/configDraft'
+import { useConfigDraftStore } from '@/configure/configDraft'
 import { choiceListModel, formModel, propertiesOf } from '@/configure/models'
-import { newMap, type TreeValue } from '@/configure/tree'
+import type { TreeValue } from '@/api/configure'
+import { newMap } from '@/configure/tree'
 
 /**
  * One field of a form: how it is labelled, how wide it is, and, for a

@@ -57,7 +57,8 @@ src/components/   → Reusable UI components
 | `src/components/forms/milkdown/` | The WYSIWYG markdown editor (Milkdown/ProseMirror) and everything it owns: entity-ref node, `@` completion, toolbar, write-back guard |
 | `src/app-editor/` | `<rela-editor>`, the Custom Element custom apps embed. Built as a standalone IIFE (`vite.editor.config.ts`), not part of the SPA bundle. Imports the editor's shared modules; holds only the plain-DOM toolbar and `@` menu that replace the SPA's Vue ones |
 | `src/components/lists/` | EntityList, FilterBar, Pagination |
-| `src/components/common/` | Sidebar, StatusBar, Badge, BackButton |
+| `src/components/common/` | Sidebar, StatusBar, BackButton |
+| `src/components/ui/` | Shared app-wide parts: Badge, WorldBadge, TagSelect, and the confirm, help and command-palette modals |
 | `src/composables/` | Vue composables: useKeyboardShortcuts, useEvents (SSE), useListKeyboard, useScopeNavigation, useBackTarget |
 | `src/styles/` | Shared CSS loaded from `main.ts` (e.g. `back-button.css` for the `.scope-nav-btn` class reused across EntityDetail, CustomView, and standalone BackButton) |
 | `src/types/` | TypeScript interfaces for entities, schema, and config |

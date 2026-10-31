@@ -10,7 +10,7 @@ import type { Section } from 'rela-components/types'
 import type { TableColumn } from 'rela-components/components/table/types'
 import ConfigurePage from '@/components/configure/ConfigurePage.vue'
 import NewEntityTypeDrawer from '@/components/configure/NewEntityTypeDrawer.vue'
-import { useConfigDraftStore } from '@/stores/configDraft'
+import { useConfigDraftStore } from '@/configure/configDraft'
 import { entityTypes } from '@/configure/models'
 import { configureRoute } from '@/configure/routes'
 

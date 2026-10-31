@@ -842,11 +842,11 @@
       "at": "2026-10-28T13:29:06Z",
       "title": "2 components (cli, worlds) each write their own names_sorted_type for Metamodel, a type of metamodel."
     },
-    "concepts.missing_operation-ff9bce923288": {
+    "concepts.missing_operation-3a283f815ae0": {
       "state": "accepted",
       "reason": "Debt: small helper written twice; many pairs are the alternative store backends.",
       "at": "2026-10-28T13:29:06Z",
-      "title": "2 components (web/components/configure, views) each write their own setting for TreeValue, a type of web/configure."
+      "title": "2 components (web/components/configure, views) each write their own setting for TreeValue, a type of api."
     },
     "concepts.untyped_bag-ef486fabaf61": {
       "state": "accepted",

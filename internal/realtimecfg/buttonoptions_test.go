@@ -241,6 +241,9 @@ func TestButtonOptions_Problems(t *testing.T) {
 		{"block scalar yes", "\n          confirm: |\n            yes\n", allowKey + ".confirm", `"yes" is not a boolean`},
 		{"label", "{ label: Go }", allowKey + ".label", "reads as the message type's label"},
 		{"props", "{ props: { decision: approve } }", allowKey + ".props", "posts no preset"},
+		{"compose", "{ compose: true }", allowKey + ".compose", "the type's decision button already opens the " +
+			"composer when a property is required; for a preset that opens it, add a button with compose: true " +
+			"to the entry"},
 		{"scalar", "true", allowKey, "must be a mapping"},
 	}
 	for _, tc := range shapes {
@@ -337,6 +340,66 @@ channel_types:
 		c := parseButtons(t, optionsSrc(entry("drafting", ""), "{ style: danger }", ""))
 		if w := c.Warnings(); len(w) != 0 {
 			t.Errorf("warnings = %v", w)
+		}
+	})
+}
+
+// composePreset is a decide entry into drafting with a compose button
+// whose extra keys are extra.
+func composePreset(extra string) string {
+	return entry("drafting", "button: { label: Go, compose: true, props: { decision: revise }"+extra+" }")
+}
+
+// TestButtonOptions_Compose pins TKT-53FN0L AC 5: confirm has no effect
+// on a compose button, and style does.
+func TestButtonOptions_Compose(t *testing.T) {
+	options := []struct {
+		name, extra, decide string
+		want                ButtonOptions
+	}{
+		{"own confirm is dropped", `, confirm: "Sure?"`, "", ButtonOptions{}},
+		{"own style kept", ", style: danger", "", ButtonOptions{Style: ButtonStyleDanger}},
+		{"type style inherited", "", "{ style: primary }", ButtonOptions{Style: ButtonStylePrimary}},
+		{"type confirm not inherited", "", `{ confirm: "Sure?", style: danger }`,
+			ButtonOptions{Style: ButtonStyleDanger}},
+	}
+	for _, tc := range options {
+		t.Run(tc.name, func(t *testing.T) {
+			_, decide, _, _ := parseOptions(t, optionsSrc(composePreset(tc.extra), tc.decide, ""))
+			if got := presetOptions(t, decide); got != tc.want {
+				t.Errorf("options = %+v; want %+v", got, tc.want)
+			}
+		})
+	}
+	t.Run("own confirm warns", func(t *testing.T) {
+		c := parseButtons(t, optionsSrc(composePreset(", confirm: true"), "", ""))
+		const want = "has no effect: a button with compose: true opens the composer, and Send is the confirmation"
+		if !hasWarning(c, presetKey+".confirm", want) {
+			t.Errorf("warnings = %v", c.Warnings())
+		}
+	})
+	t.Run("type confirm with only compose presets warns", func(t *testing.T) {
+		c := parseButtons(t, optionsSrc(composePreset(""), "{ confirm: true }", ""))
+		const want = "confirm has no effect: every entry of decide has a preset button that sets its own confirm " +
+			"or opens the composer"
+		w := c.Warnings()
+		if len(w) != 1 || w[0].Key != decideDB+".confirm" || w[0].Reason != want {
+			t.Errorf("warnings = %v; want only %q", w, want)
+		}
+	})
+	t.Run("type confirm with a one-click preset beside a compose preset does not warn", func(t *testing.T) {
+		c := parseButtons(t, optionsSrc(entries(
+			entry("approved", `when: "message.decision == 'approve'", button: { label: Approve, props: { decision: approve } }`),
+			composePreset("")), "{ confirm: true }", ""))
+		if w := c.Warnings(); len(w) != 0 {
+			t.Errorf("warnings = %v", w)
+		}
+	})
+	t.Run("a compose preset never uses the type's confirm beside a type button", func(t *testing.T) {
+		c := parseButtons(t, optionsSrc(entries(
+			entry("approved", `when: "message.decision == 'approve'"`), composePreset("")), "{ confirm: true }", ""))
+		if !hasWarning(c, decideDB+".confirm", "no preset button of decide uses it") {
+			t.Errorf("warnings = %v", c.Warnings())
 		}
 	})
 }

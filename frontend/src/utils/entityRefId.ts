@@ -2,8 +2,8 @@
  * The entity ID grammar, as the editor checks it.
  *
  * Its own module, free of Milkdown, so code outside the editor (the recently
- * viewed list in `utils/recentEntities.ts`) can validate an ID without pulling
- * ProseMirror into its bundle. `entityRefNode.ts` re-exports it.
+ * viewed list in `recentEntities.ts`) can validate an ID without pulling
+ * ProseMirror into its bundle. The editor's `entityRefNode.ts` re-exports it.
  */
 
 /**

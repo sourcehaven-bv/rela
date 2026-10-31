@@ -4,7 +4,7 @@ type: automated-measure
 title: 'Test: Badge resolves styles via the property''s custom-type name (property ≠ type)'
 description: 'Badge.test.ts case where the property name differs from its custom-type name (e.g. property status of type ticket-status): asserts the configured color class is applied instead of badge--gray, plus the property-name fallback for inline enums.'
 kind: test
-location: frontend/src/components/common/Badge.test.ts, frontend/src/stores/schema.test.ts
+location: frontend/src/components/ui/Badge.test.ts, frontend/src/stores/schema.test.ts
 status: active
 ---
 

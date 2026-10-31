@@ -130,6 +130,7 @@
     "waiting_on_me"
   ],
   "ChannelSessionButton": [
+    "compose",
     "confirm",
     "confirm_text",
     "label",

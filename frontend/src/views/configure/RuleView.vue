@@ -12,10 +12,10 @@ import ConfigurePage from '@/components/configure/ConfigurePage.vue'
 import ConfigSplit from '@/components/configure/ConfigSplit.vue'
 import ConfigSection from '@/components/configure/ConfigSection.vue'
 import LockedNote from '@/components/configure/LockedNote.vue'
-import { useConfigDraftStore } from '@/stores/configDraft'
+import { useConfigDraftStore } from '@/configure/configDraft'
 import { entityTypeLabel, entityTypeNames, rules, ruleTitle } from '@/configure/models'
 import { configureRoute } from '@/configure/routes'
-import type { TreeValue } from '@/configure/tree'
+import type { TreeValue } from '@/api/configure'
 
 /**
  * A rule. Conditions are expressions typed as text; there is no builder yet.

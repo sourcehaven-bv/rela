@@ -4,8 +4,10 @@ type: ticket
 title: Preset buttons that open the composer prefilled
 kind: enhancement
 priority: low
-effort: s
-status: backlog
+effort: l
+started: "2026-10-30"
+completed: "2026-10-31"
+status: done
 ---
 
 ## Description

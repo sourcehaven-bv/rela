@@ -17,19 +17,31 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/texthazard"
 )
 
-// TransitionButton is the `button:` of one `on.<type>` entry: a one-click
-// button that posts the entry's message type with the preset props. A
-// click is a normal post; the server checks it as any other.
+// TransitionButton is the `button:` of one `on.<type>` entry: a button
+// for the entry's message type with preset props. It is one of two kinds:
+//
+//   - A one-click button posts the preset. The preset sets every required
+//     property.
+//   - A compose button (`compose: true`) opens the composer with the
+//     preset fixed. The person fills in the properties the preset leaves
+//     out and presses Send.
+//
+// Either way the post is a normal post; the server checks it as any other.
 //
 // The load checks that the preset passes the prop rules of a post and the
 // type's `when:`, that the entry's own guard holds for it, and which
-// earlier entries of the list would take the click first. Those entries
+// earlier entries of the list would take the post first. Those entries
 // are recorded, so [SessionState.Offers] hides the button from every
-// caller they admit.
+// caller they admit. For a compose button, no guard that decides the
+// route may read a property the preset leaves out, so the entry a Send
+// takes is still known at load.
 type TransitionButton struct {
 	// Label is the button's text, trimmed, without emoji style selectors
 	// and in NFC.
 	Label string
+	// Compose is true for a compose button: a click opens the composer
+	// with the preset fixed instead of posting it.
+	Compose bool
 	// Options are how the web app draws the button: its own `confirm:`
 	// and `style:`, with each one it leaves out taken from the type's
 	// `decision_button:`. The zero value leaves both to the web app's
@@ -105,16 +117,37 @@ func (v buttonChecker) compile(raw *rawButton, list []Transition, j int, sc butt
 		v.add(key, problem)
 		ok = false
 	}
-	props, propsOK := v.preset(key+".props", raw.Props, sc)
+	compose, problem := composeOf(raw.Compose)
+	if problem != "" {
+		v.add(key+".compose", problem)
+		ok = false
+	}
+	props, leftOut, propsOK := v.preset(key+".props", raw.Props, compose, sc)
 	opts, optsOK := optionsOf(v.validator, key, raw.Confirm, raw.Style)
 	if !ok || !propsOK || !optsOK {
 		return nil
 	}
-	b := &TransitionButton{Label: label, props: props, Options: opts}
-	if !v.guards(key, b, list, j, classes, sc) {
+	if compose && opts.Confirm != ConfirmDerived {
+		v.warn(key+".confirm", "has no effect: a button with compose: true opens the composer, and Send is "+
+			"the confirmation")
+		opts.Confirm, opts.ConfirmText = ConfirmDerived, ""
+	}
+	b := &TransitionButton{Label: label, Compose: compose, props: props, Options: opts}
+	if !v.guards(key, b, leftOut, list, j, classes, sc) {
 		return nil
 	}
 	return b
+}
+
+// composeOf reads `compose:`: false when absent or null, else a YAML
+// boolean. problem says why the value is refused: an unquoted YAML 1.1
+// spelling such as yes or on, a quoted value, or a number.
+func composeOf(c rawCompose) (compose bool, problem string) {
+	n := c.node
+	if n == nil || n.Tag == "!!null" {
+		return false, ""
+	}
+	return strictBool(n)
 }
 
 // personClasses returns the roles a load check asks about for t's button:
@@ -138,10 +171,18 @@ func personClasses(t Transition, mt *MessageType) (classes []string, problem str
 // or markdown property: a markdown preset could mention people in the
 // clicker's name with text they never saw, and a ref names an entity
 // whose existence and visibility change behind a label.
-func (v buttonChecker) preset(key string, raw rawPreset, sc buttonScope) (map[string]any, bool) {
+//
+// A compose button may leave out a required property, unless it is a
+// list, for which the composer has no field. leftOut lists the declared
+// properties the normalized preset does not set, sorted; it is empty for
+// a one-click button, whose click posts exactly the preset. A type
+// `when:` that reads a left-out property is not checked: it refuses a
+// Send, it does not route it.
+func (v buttonChecker) preset(key string, raw rawPreset, compose bool, sc buttonScope,
+) (props map[string]any, leftOut []string, ok bool) {
 	mt := sc.mt
 	in := make(map[string]any, len(raw))
-	ok := true
+	ok = true
 	for _, name := range sortedKeys(raw) {
 		val := presetValue(mt.Properties[name], raw[name].node)
 		if p, declared := mt.Properties[name]; declared && val != nil &&
@@ -159,38 +200,104 @@ func (v buttonChecker) preset(key string, raw rawPreset, sc buttonScope) (map[st
 		in[name] = val
 	}
 	if !ok {
-		return nil, false
+		return nil, nil, false
 	}
-	np, err := mt.NormalizeProps(in, sc.limits.MessageBytes)
+	np, err := mt.normalize(in, sc.limits.MessageBytes, false)
 	switch {
 	case errors.Is(err, ErrTooManyProps):
 		v.add(key, fmt.Sprintf("at most %d properties", realtimelimits.MaxMessageProperties))
-		return nil, false
+		return nil, nil, false
 	case errors.Is(err, ErrTooLarge):
 		v.add(key, fmt.Sprintf("the preset is over message_bytes (%d bytes)", sc.limits.MessageBytes))
-		return nil, false
+		return nil, nil, false
 	case err != nil:
 		v.add(key, err.Error())
-		return nil, false
+		return nil, nil, false
 	}
 	if !v.exactInBrowser(key, np.Props) {
-		return nil, false
+		return nil, nil, false
+	}
+	leftOut, ok = v.checkLeftOut(key, mt, np.Props, compose)
+	if !ok {
+		return nil, nil, false
 	}
 	if mt.When == nil {
-		return np.Props, true
+		return np.Props, leftOut, true
 	}
 	// A when: on today() would make the file load on one day and fail on
 	// the next, as for a trigger's literal message.
 	if slices.Contains(mt.When.Functions(), predicatefns.FuncToday) {
 		v.add(key, "the when: condition of message type "+mt.Name+" calls today(), so whether this preset "+
 			"meets it would depend on the date")
-		return nil, false
+		return nil, nil, false
 	}
-	if !mt.Holds(context.Background(), mt.PredicateFields(np.Props), time.Time{}) {
+	fields := mt.PredicateFields(np.Props)
+	if readsLeftOut(mt.When, leftOut) == "" && !mt.Holds(context.Background(), fields, time.Time{}) {
 		v.add(key, "the preset does not meet the when: condition of message type "+mt.Name)
-		return nil, false
+		return nil, nil, false
 	}
-	return np.Props, true
+	return np.Props, leftOut, true
+}
+
+// checkLeftOut returns the declared properties of mt that the normalized
+// preset props does not set, sorted, and refuses a required one the
+// button may not leave out. A one-click button may leave out
+// no required property, and its left-out set is empty, because a click
+// posts exactly the preset. A compose button may leave out no required
+// list, because the composer has no field for a list.
+func (v buttonChecker) checkLeftOut(key string, mt *MessageType, props map[string]any, compose bool) ([]string, bool) {
+	var out []string
+	for _, name := range sortedKeys(mt.Properties) {
+		if _, set := props[name]; set {
+			continue
+		}
+		p := mt.Properties[name]
+		switch {
+		case p.Required && !compose && p.List:
+			v.add(key, fmt.Sprintf("property %q is required; set it in props (the composer has no field for "+
+				"a list, so compose: true cannot leave it out)", name))
+			return nil, false
+		case p.Required && !compose:
+			v.add(key, fmt.Sprintf("property %q is required; set it in props, or add compose: true so the "+
+				"person fills it in", name))
+			return nil, false
+		case p.Required && p.List:
+			v.add(key, fmt.Sprintf("property %q is required, and the composer has no field for a list; "+
+				"set it in props", name))
+			return nil, false
+		}
+		out = append(out, name)
+	}
+	if !compose {
+		return nil, true
+	}
+	return out, true
+}
+
+// readsLeftOut returns the first property of leftOut that prog reads
+// from `message`, "message" when prog uses the whole record and leftOut
+// is not empty, or "". Nil prog: accepted; it reads nothing.
+func readsLeftOut(prog *predicate.Program, leftOut []string) string {
+	if prog == nil || len(leftOut) == 0 {
+		return ""
+	}
+	if prog.UsesWhole("message") {
+		return "message"
+	}
+	for _, a := range prog.Attributes("message") {
+		if slices.Contains(leftOut, a) {
+			return a
+		}
+	}
+	return ""
+}
+
+// leftOutRead names what readsLeftOut found, for a problem text.
+func leftOutRead(name string) string {
+	if name == "message" {
+		return "reads the whole message"
+	}
+	return "reads message." + name + ", which the person fills in"
 }
 
 // maxPresetInt is the largest integer a browser's JSON number carries
@@ -252,9 +359,11 @@ func presetValue(p Property, n *yaml.Node) any {
 // guards checks the entry's own guard against the preset and records
 // which earlier entries take the click first (see [TransitionButton]).
 // It refuses a button no caller could see. It adds nothing when a guard
-// of the list failed to compile: that already has its problem.
-func (v buttonChecker) guards(key string, b *TransitionButton, list []Transition, j int, classes []string,
-	sc buttonScope,
+// of the list failed to compile: that already has its problem. leftOut
+// are the properties a compose button leaves to the person: no guard
+// that decides the route for a caller who could click may read them.
+func (v buttonChecker) guards(key string, b *TransitionButton, leftOut []string, list []Transition, j int,
+	classes []string, sc buttonScope,
 ) bool {
 	t := list[j]
 	if slices.ContainsFunc(list[:j+1], func(e Transition) bool { return e.guarded && e.When == nil }) {
@@ -265,6 +374,12 @@ func (v buttonChecker) guards(key string, b *TransitionButton, list []Transition
 		if why := undecidable(t.When); why != "" {
 			v.add(key, "the entry's when: "+why+", so whether a click moves the session along this entry is "+
 				"unknown when the file loads; a button's own guard may read only the message and session.state")
+			return false
+		}
+		if name := readsLeftOut(t.When, leftOut); name != "" {
+			v.add(key, "the entry's when: "+leftOutRead(name)+", so whether a Send moves the session along "+
+				"this entry is unknown when the file loads; set the property in props, or move the check to the "+
+				"when: of message type "+sc.mt.Name)
 			return false
 		}
 		holds, err := loadGuardHolds(t.When, fields, sc)
@@ -292,6 +407,19 @@ func (v buttonChecker) guards(key string, b *TransitionButton, list []Transition
 		}
 		if undecidable(e.When) != "" {
 			undecided = append(undecided, i)
+			continue
+		}
+		if name := readsLeftOut(e.When, leftOut); name != "" {
+			if admitsClass {
+				v.add(key, fmt.Sprintf("the when: of entry %d %s, so whether it takes a Send before this "+
+					"entry is unknown when the file loads; set the property in props, move this entry above "+
+					"entry %d, or change that entry's when or roles", i, leftOutRead(name), i))
+				ok = false
+			} else {
+				// Only a caller who also holds a role of entry i reaches
+				// it: hide the button from them.
+				undecided = append(undecided, i)
+			}
 			continue
 		}
 		holds, err := loadGuardHolds(e.When, fields, sc)

@@ -712,7 +712,7 @@ function presetSetup(messages: Message[] = []) {
       focusHeader: vi.fn(),
     },
   } satisfies DecisionDeps
-  return { deps, h, d: useSessionDecisions(deps) }
+  return { deps, ch, h, d: useSessionDecisions(deps) }
 }
 
 const APPROVE = 'preset:decide:0'
@@ -850,6 +850,211 @@ describe('useSessionDecisions presets', () => {
     s.h.value = same
     await nextTick()
     expect(s.d.decisions.value).toBe(held)
+  })
+})
+
+/** presetSetup with Revise a compose preset (TKT-53FN0L). */
+function composeSetup() {
+  const s = presetSetup()
+  const withCompose = (g: number) => {
+    const h = presetHead(g)
+    h.channel.session!.transitions![1]!.button!.compose = true
+    return h
+  }
+  s.h.value = withCompose(4)
+  return { ...s, withCompose }
+}
+
+/** The compose key the composer would report for s's current record. */
+const key = (s: { d: { composeView: { value?: { key: string } } } }) => s.d.composeView.value?.key
+
+describe('useSessionDecisions compose presets', () => {
+  it('records the compose decision before it selects the type, and neither asks nor posts', async () => {
+    const s = composeSetup()
+    let seen: unknown
+    s.deps.composer.select.mockImplementation(() => {
+      seen = s.d.composeView.value
+      return true
+    })
+    await s.d.onDecide(REVISE, 'header')
+    expect(s.deps.ui.confirm).not.toHaveBeenCalled()
+    expect(s.deps.post).not.toHaveBeenCalled()
+    expect(s.deps.composer.select).toHaveBeenCalledWith('decide')
+    const want = {
+      key: `${REVISE}#1`,
+      type: 'decide',
+      label: 'Revise',
+      toLabel: 'Accepted',
+      given: { decision: 'revise' },
+    }
+    expect(seen).toEqual(want)
+    expect(s.d.composeView.value).toEqual(want)
+  })
+
+  it('the Send adds the preset and carries the generation read at the click', async () => {
+    const s = composeSetup()
+    await s.d.onDecide(REVISE, 'header')
+    await s.d.sendComposer('decide', { decision: 'typed', note: 'why' }, undefined, key(s))
+    expect(s.deps.post).toHaveBeenCalledWith(
+      'decide',
+      { decision: 'revise', note: 'why' },
+      undefined,
+      4
+    )
+    expect(s.d.composeView.value).toBeUndefined()
+  })
+
+  it('a Send of another type carries no preset and ends compose mode', async () => {
+    const s = composeSetup()
+    await s.d.onDecide(REVISE, 'header')
+    await s.d.sendComposer('text', { body: 'hi' }, undefined)
+    expect(s.deps.post).toHaveBeenCalledWith('text', { body: 'hi' }, undefined, undefined)
+    expect(s.d.composeView.value).toBeUndefined()
+  })
+
+  it('cancel ends compose mode; the next Send is a plain post', async () => {
+    const s = composeSetup()
+    await s.d.onDecide(REVISE, 'header')
+    s.d.cancelCompose()
+    expect(s.d.composeView.value).toBeUndefined()
+    await s.d.sendComposer('decide', { decision: 'other' }, undefined, key(s))
+    expect(s.deps.post).toHaveBeenCalledWith('decide', { decision: 'other' }, undefined, undefined)
+  })
+
+  it('a Send whose compose key differs from the record carries no preset', async () => {
+    const s = composeSetup()
+    await s.d.onDecide(REVISE, 'header')
+    await s.d.sendComposer('decide', { decision: 'typed' }, undefined, 'other#9')
+    expect(s.deps.post).toHaveBeenCalledWith('decide', { decision: 'typed' }, undefined, 4)
+  })
+
+  it('a Send without a compose key carries no preset', async () => {
+    const s = composeSetup()
+    await s.d.onDecide(REVISE, 'header')
+    await s.d.sendComposer('decide', { decision: 'typed' }, undefined)
+    expect(s.deps.post).toHaveBeenCalledWith('decide', { decision: 'typed' }, undefined, 4)
+  })
+
+  it('a head frame with another generation ends compose mode with the stale toast', async () => {
+    const s = composeSetup()
+    await s.d.onDecide(REVISE, 'header')
+    expect(s.d.composeView.value).toBeDefined()
+    s.h.value = s.withCompose(5)
+    await nextTick()
+    expect(s.d.formDecision.value).toBeUndefined()
+    expect(s.d.composeView.value).toBeUndefined()
+    expect(s.deps.ui.toast).toHaveBeenCalledWith(STALE)
+  })
+
+  it('during an edit it asks first; accepted, it ends the edit and records compose', async () => {
+    const s = composeSetup()
+    s.deps.composer.editing.mockImplementation(() => true)
+    s.deps.ui.confirm.mockImplementation(async () => true)
+    await s.d.onDecide(REVISE, 'header')
+    expect(s.deps.composer.discardEdit).toHaveBeenCalledOnce()
+    expect(s.deps.composer.select).toHaveBeenCalledWith('decide')
+    expect(s.d.composeView.value?.label).toBe('Revise')
+  })
+
+  it('switching the composer to another type ends compose mode', async () => {
+    const s = composeSetup()
+    await s.d.onDecide(REVISE, 'header')
+    s.d.onComposerSelect('text')
+    expect(s.d.composeView.value).toBeUndefined()
+  })
+
+  it('a second click gives a new key and reads the generation again', async () => {
+    const s = composeSetup()
+    await s.d.onDecide(REVISE, 'header')
+    s.h.value = s.withCompose(5)
+    s.ch.actionsGeneration.value = 5
+    await nextTick()
+    expect(s.deps.ui.toast).toHaveBeenCalledWith(STALE)
+    expect(s.d.composeView.value).toBeUndefined()
+    await s.d.onDecide(REVISE, 'header')
+    expect(s.d.composeView.value?.key).toBe(`${REVISE}#2`)
+    await s.d.sendComposer('decide', {}, undefined, key(s))
+    expect(s.deps.post).toHaveBeenCalledWith('decide', { decision: 'revise' }, undefined, 5)
+  })
+
+  it('a type the composer does not offer clears the record and is stale', async () => {
+    const s = composeSetup()
+    s.deps.composer.select.mockImplementation(() => false)
+    await s.d.onDecide(REVISE, 'header')
+    expect(s.d.composeView.value).toBeUndefined()
+    expect(s.deps.ui.toast).toHaveBeenCalledWith(STALE)
+  })
+
+  it('during an edit it asks first; declined, it records nothing', async () => {
+    const s = composeSetup()
+    s.deps.composer.editing.mockImplementation(() => true)
+    s.deps.ui.confirm.mockImplementation(async () => false)
+    await s.d.onDecide(REVISE, 'header')
+    expect(s.deps.ui.confirm).toHaveBeenCalledOnce()
+    expect(s.deps.composer.discardEdit).not.toHaveBeenCalled()
+    expect(s.deps.composer.select).not.toHaveBeenCalled()
+    expect(s.d.composeView.value).toBeUndefined()
+  })
+
+  it('its Send carries a list preset as an array', async () => {
+    const s = composeSetup()
+    const h = s.withCompose(4)
+    h.channel.session!.transitions![1]!.button!.props = { decision: 'revise', tags: ['a', 'b'] }
+    s.h.value = h
+    await nextTick()
+    await s.d.onDecide(REVISE, 'header')
+    expect(s.d.composeView.value?.given).toEqual({ decision: 'revise', tags: ['a', 'b'] })
+    await s.d.sendComposer('decide', { note: 'n' }, undefined, key(s))
+    expect(s.deps.post).toHaveBeenCalledWith(
+      'decide',
+      { note: 'n', decision: 'revise', tags: ['a', 'b'] },
+      undefined,
+      4
+    )
+  })
+
+  it('button A then button B of one type carries only B’s preset', async () => {
+    const s = composeSetup()
+    const h = s.withCompose(4)
+    h.channel.session!.transitions![0]!.button = {
+      label: 'Approve',
+      props: { decision: 'approve', tags: ['x'] },
+      compose: true,
+    }
+    s.h.value = h
+    await nextTick()
+    await s.d.onDecide(APPROVE, 'header')
+    await s.d.onDecide(REVISE, 'header')
+    expect(s.d.composeView.value?.label).toBe('Revise')
+    await s.d.sendComposer('decide', {}, undefined, key(s))
+    expect(s.deps.post).toHaveBeenCalledWith('decide', { decision: 'revise' }, undefined, 4)
+  })
+
+  it('a refused Send keeps compose mode for the corrected Send', async () => {
+    const s = composeSetup()
+    await s.d.onDecide(REVISE, 'header')
+    s.deps.post.mockImplementationOnce(async () => {
+      throw problem('invalid_message')
+    })
+    await expect(s.d.sendComposer('decide', {}, undefined, key(s))).rejects.toThrow()
+    expect(s.d.composeView.value?.label).toBe('Revise')
+    await s.d.sendComposer('decide', { note: 'ok' }, undefined, key(s))
+    expect(s.deps.post).toHaveBeenLastCalledWith(
+      'decide',
+      { note: 'ok', decision: 'revise' },
+      undefined,
+      4
+    )
+  })
+
+  it('a session_moved refusal on the Send ends compose mode', async () => {
+    const s = composeSetup()
+    await s.d.onDecide(REVISE, 'header')
+    s.deps.post.mockImplementation(async () => {
+      throw problem('session_moved')
+    })
+    await expect(s.d.sendComposer('decide', {}, undefined, key(s))).rejects.toThrow()
+    expect(s.d.composeView.value).toBeUndefined()
   })
 })
 

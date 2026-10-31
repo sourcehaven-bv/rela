@@ -714,7 +714,7 @@ channel_types:
 | `on.<type>.by` | `trigger`: only a trigger's message moves the session. |
 | `on.<type>.when` | A condition the message must meet to move the session. |
 | `on.<type>.outputs` | Graph writes the move makes, as the poster, or as `run_as` for a trigger's move. At most 4. See [Outputs](#outputs). |
-| `on.<type>.button` | A one-click button for this entry: `label`, the text on the button, and `props`, the properties a click posts. A boolean preset is `true` or `false`. See "One-click buttons" under [Sessions](#sessions). |
+| `on.<type>.button` | A preset button for this entry: `label`, the text on the button, and `props`, the properties a click posts. A boolean preset is `true` or `false`. With `compose: true` (a boolean), a click opens the composer with `props` fixed instead of posting. See "One-click buttons" and "Buttons that open the composer" under [Sessions](#sessions). |
 
 **How a message moves a session.** A posted message moves the session when,
 at the moment it is stored, the channel is open, the current state has an
@@ -946,7 +946,7 @@ channel_types:
                 outputs:
                   - set: { properties: { status: approved } }
               - to: drafting
-                button: { label: Revise, props: { decision: revise } }
+                button: { label: Revise, props: { decision: revise }, compose: true }
         approved: { final: true }
 ```
 
@@ -954,7 +954,9 @@ Here `plan-decision` is an enum type in `schema.yaml` with the values
 `approve` and `revise`. A Decide with `approve` moves the plan to
 Approved and sets its status; any other Decide sends it back to Drafting.
 The `button:` keys give the owner an Approve and a Revise button; see
-"One-click buttons" below. `style: primary` marks Approve as the decision
+"One-click buttons" below. Revise has `compose: true`, so it opens the
+composer and the owner can write a note; see "Buttons that open the
+composer" below. `style: primary` marks Approve as the decision
 the owner is expected to make; see "Button options" below.
 
 - rela tries the entries in the order of the file. The first entry whose
@@ -1041,11 +1043,56 @@ the owner sees Approve and Revise instead of one Decide button.
   know it came from a button, and decides the entry as for any post. If
   the session moved since the page was read, the post is refused with
   `session_moved`.
-- A preset cannot leave a required property for the person to fill in.
-  A decision that needs text, such as a revise type that requires a
-  `feedback` property, stays in the composer; buttons that open the composer prefilled are a planned
-  follow-up (TKT-53FN0L).
+- A one-click button must set every required property. If it leaves one
+  out, rela refuses it and says to set the property or to add
+  `compose: true`.
 - `button:` is new in this release. Every process that loads the project
+  needs this release or later; an older one refuses the key.
+
+**Buttons that open the composer.** A decision that needs text, such as
+a revise type that requires a `feedback` property, cannot post with one
+click. Add `compose: true` to its button. A click then opens the composer
+with the button's `props` fixed. The person fills in the rest and presses
+**Send**.
+
+```yaml
+              - to: drafting
+                button: { label: Request changes, props: { decision: revise }, compose: true }
+```
+
+- `compose` is `true` or `false`. Without it, the button is one-click.
+  An unquoted `yes`, `no`, `on` or `off`, a quoted value and a number are
+  refused.
+- `props` may leave out any property, also a required one, except a
+  required list: the composer has no field for a list, so set it in
+  `props`. A compose button may also set every property, as an "Approve
+  with a note" button does. The properties it does set follow the rules
+  of a post, as for a one-click button. A `ref` or `markdown` property
+  stays refused.
+- The given properties are fixed. The composer shows them read-only above
+  the fields, and has no field for them. **Send** adds them to the post.
+  To choose another preset, cancel and click another button.
+- The type's `when:` must hold for the given properties. If it reads a
+  property the person fills in, rela does not check it at load: it refuses
+  a post that fails it, and the composer keeps the text.
+- No guard that decides where the post goes may read a property the
+  person fills in. So the entry's own `when` may read only the given
+  properties and `session.state`. An earlier entry whose `when` reads
+  such a property is refused when it admits a poster of the button's
+  entry; otherwise, a caller who holds one of its roles does not see the
+  button. An earlier `when` that also reads a session fact other than
+  `session.state`, or calls `today()`, is never refused: like a one-click
+  button, the compose button is hidden from a caller that entry admits.
+  This keeps the target of every **Send** known at load. The rule
+  is coarse: `message.decision == 'approve' and message.note ~= ''` above
+  a compose Revise refuses it, though `decision` alone decides it. Move
+  the compose entry above that entry, or check the person's text in the
+  type's `when:` or `max`, which refuse a post rather than send it
+  elsewhere.
+- **Send** is a normal post with `expect_generation`. The server checks
+  every required property, as for any post. If the session moved since
+  the click, the post is refused with `session_moved`.
+- `compose` is new in this release. Every process that loads the project
   needs this release or later; an older one refuses the key.
 
 **Button options.** Two keys say how a decision button looks in the web
@@ -1124,7 +1171,9 @@ end as cancelled or failed.
   `confirm` out to keep the type's text. `decision_button` applies to every state the type moves the
   session out of; for a different look in one state, use a preset button.
 - `confirm` does nothing on a button that opens the composer, because
-  **Send** is the confirmation. `style` still applies to it.
+  **Send** is the confirmation. `style` still applies to it. A compose
+  button's own `confirm` loads with a warning, and it never takes the
+  type's `confirm`.
 - The dialog's confirm button follows the outcome, not the style. It is
   red when the state ends as cancelled or failed, or when the button has
   `style: danger`. So a `primary` button into a cancelled state is not
@@ -1133,8 +1182,8 @@ end as cancelled or failed.
   a post does: a post through MCP, the CLI or the HTTP API is never asked
   anything, and the server checks it as any other.
 - `decision_button` has only `confirm` and `style`. The type's button
-  reads as the type's `label` and posts no preset, so `label` and `props`
-  are refused there.
+  reads as the type's `label` and posts no preset, so `label`, `props` and
+  `compose` are refused there.
 - These keys are new in this release. Every process that loads the
   project needs this release or later; an older one refuses them as
   unknown keys.
@@ -1847,7 +1896,10 @@ unknown entity type "nope"`. It checks:
   only `message` and `session.state` and holds for the preset, no earlier
   `when` that fails to evaluate for it, at least one poster who could see
   the button, and no two buttons of a state with the same label that one
-  poster could both see;
+  poster could both see. A button with `compose: true` may leave out a
+  required property that is not a list, and no `when` that decides where
+  its post goes may read a property it leaves out; see "Buttons that open
+  the composer" in [Sessions](#sessions);
 - that `confirm` and `style` follow the rules under "Button options" in
   [Sessions](#sessions): a `style` of `default`, `primary` or `danger`
   (case-sensitive), and a `confirm` that is `true`, `false` or a text of
@@ -2135,11 +2187,19 @@ lists those entries in `_actions.entries`, because only the server knows
 your roles. After them comes the decision button of the type, but only
 when one of those entries has no `button:`. So with every entry buttoned,
 as in the example, the owner sees Approve and Revise and no Decide button;
-to write the optional `note`, pick Decide in the composer.
+Revise opens the composer, where the owner can write the optional `note`.
 
 - A click posts the preset with `expect_generation`, as a one-click
   decision does, and never opens the composer. It replies to the message
   that moved the session in the same way.
+- A button with `compose: true` opens the composer instead, with the
+  type selected. A strip above the fields shows the button's label and
+  the given values, which you cannot change, with a **Cancel decision**
+  button. The focus goes to the first required field that is empty, else
+  to the first field. **Send** posts your fields with the given values and
+  `expect_generation`. Choosing another type, cancelling or a session
+  move ends it, as for a decision that opens the composer. On iOS, tap the
+  field once to open the keyboard.
 - A preset to a final state asks you to confirm first. The confirm button
   is red when that state ends as cancelled or failed. A preset into such a
   state is red too. The button's `confirm` and `style`, or its type's
@@ -2565,7 +2625,10 @@ appears once per entry, in the order rela tries them. Each row carries
 `entry`, its place in its list from 0. A `button:` entry's row also
 carries `button`, with its `label` and its `props` in stored form: an
 integer as a number, a list as an array, a date as `2006-01-02`. A client
-posts those `props` as they are. `button` also carries the button
+posts those `props` as they are. A button with `compose: true` carries
+`"compose": true`: post its `props` unchanged and add the message type's
+other required properties. A one-click button leaves `compose` out, and
+a compose button never carries `confirm` or `confirm_text`. `button` also carries the button
 options, with the type's `decision_button` already applied: `confirm`
 (`true` or `false`, left out when neither the button nor its type sets
 it), `confirm_text` (left out without a text) and `style` (left out when
@@ -2787,8 +2850,10 @@ let a timer move a stalled run on. There is no typing over stdio yet.
 the channel's name and state, and the message types whose post by the
 agent would move the session (`transitions`), and the entries such a post
 could take (`entries`, as `_actions.entries` under [HTTP API](#http-api)).
-A row of `session.transitions` with `button` is a one-click preset: post
-its type with its `props`. It has no rev, sequence
+A row of `session.transitions` with `button` is a preset. Without
+`compose` it is one-click: post its type with its `props`. With
+`compose: true`, post its `props` unchanged and add the message type's
+other required properties. It has no rev, sequence
 number or messages, so its answer changes only when the session moves or
 the agent's turn changes, such as after a handoff or an edit of the lead's
 property on the entity. An agent waits for its turn like this:

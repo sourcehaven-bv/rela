@@ -2,7 +2,7 @@
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import TagSelect from '@/components/ui/TagSelect.vue'
-import Badge from '@/components/common/Badge.vue'
+import Badge from '@/components/ui/Badge.vue'
 import { useSchemaStore } from '@/stores/schema'
 import type { WidgetProps } from './types'
 

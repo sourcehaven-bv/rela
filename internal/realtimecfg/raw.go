@@ -137,11 +137,14 @@ type rawTransition struct {
 	Button *rawButton `yaml:"button"`
 }
 
-// rawButton is `on.<type>.button`: the label of a one-click button and
-// the preset it posts.
+// rawButton is `on.<type>.button`: the label of a preset button and its
+// preset. Without `compose: true` a click posts the preset; with it, a
+// click opens the composer with the preset fixed.
 type rawButton struct {
 	Label string    `yaml:"label"`
 	Props rawPreset `yaml:"props"`
+	// Compose is `compose:`; see [composeOf].
+	Compose rawCompose `yaml:"compose"`
 	// Confirm and Style are the button options; see [ButtonOptions].
 	Confirm rawConfirm `yaml:"confirm"`
 	// Style is nil when absent or null, so `style: ""` is refused rather
@@ -171,6 +174,18 @@ func (c *rawConfirm) UnmarshalYAML(n *yaml.Node) error {
 
 // set reports whether the file gives `confirm:` a value other than null.
 func (c rawConfirm) set() bool { return c.node != nil && c.node.Tag != "!!null" }
+
+// rawCompose keeps the YAML node of a button's `compose:`, so [composeOf]
+// can take only a YAML boolean, as [unreadOf] does. A plain bool field
+// would take `yes` and `"yes"`. The node is nil when the key is absent or
+// null.
+type rawCompose struct{ node *yaml.Node }
+
+// UnmarshalYAML keeps n, with aliases followed.
+func (c *rawCompose) UnmarshalYAML(n *yaml.Node) error {
+	c.node = resolveNode(n)
+	return nil
+}
 
 // rawPreset is `button.props`: one value per message property.
 type rawPreset map[string]rawPresetValue

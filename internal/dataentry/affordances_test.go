@@ -205,42 +205,113 @@ func TestComputeActions_NoAuditNoise(t *testing.T) {
 	}
 }
 
-// With no policy, "" and "none" both yield the permissive Nop.
-func TestResolverFromProfile_None(t *testing.T) {
-	for _, in := range []string{"", "none"} {
-		t.Run(in, func(t *testing.T) {
-			r, err := ResolverFromProfile(in, nil, nil, nil)
-			if err != nil {
-				t.Fatalf("ResolverFromProfile(%q): %v", in, err)
+// TestResolverFromProfile_Selection pins the profile/policy matrix
+// (DR-M3 as amended by BUG-UO72G2). "none" and "demo" replace only the
+// REST resolver, so they are refused when acl.yaml declares field rules:
+// role grants or a client field ceiling, which MCP and CLI still apply.
+func TestResolverFromProfile_Selection(t *testing.T) {
+	const noGrants = `
+roles:
+  editor:
+    read: [ticket]
+    update: [ticket]
+assignments:
+  usr_alice: editor
+`
+	const roleFieldGrant = `
+roles:
+  viewer:
+    read: [ticket]
+    visible:
+      ticket:
+        - field: title
+assignments:
+  usr_alice: viewer
+`
+	const ceilingOnly = `
+roles:
+  editor:
+    read: [ticket]
+    update: [ticket]
+assignments:
+  usr_alice: editor
+client_baselines:
+  apps:
+    applies_to: [app]
+    redact:
+      ticket: [status]
+`
+	type want int
+	const (
+		wantNop want = iota
+		wantDemo
+		wantPolicy
+		wantRefused
+	)
+	cases := []struct {
+		name    string
+		profile string
+		policy  string // "" = no declarative wired
+		want    want
+	}{
+		{"empty, nil declarative", "", "", wantNop},
+		{"none, nil declarative", "none", "", wantNop},
+		{"demo, nil declarative", "demo", "", wantDemo},
+		{"empty, no grants", "", noGrants, wantNop},
+		{"none, no grants", "none", noGrants, wantNop},
+		{"demo, no grants", "demo", noGrants, wantDemo},
+		{"empty, role field grant", "", roleFieldGrant, wantPolicy},
+		{"none, role field grant", "none", roleFieldGrant, wantRefused},
+		{"demo, role field grant", "demo", roleFieldGrant, wantRefused},
+		{"empty, ceiling only", "", ceilingOnly, wantPolicy},
+		{"none, ceiling only", "none", ceilingOnly, wantRefused},
+		{"demo, ceiling only", "demo", ceilingOnly, wantRefused},
+		{"unknown, nil declarative", "not-a-real-profile", "", wantNop},
+		{"unknown, role field grant", "not-a-real-profile", roleFieldGrant, wantPolicy},
+		{"unknown, ceiling only", "not-a-real-profile", ceilingOnly, wantPolicy},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			app := newTestAppV1(t)
+			var d *acl.Declarative
+			if tc.policy != "" {
+				policy, err := acl.LoadPolicyBytes([]byte(tc.policy))
+				if err != nil {
+					t.Fatalf("LoadPolicyBytes: %v", err)
+				}
+				d = mustNewACL(t, policy, app.store)
 			}
-			if _, ok := r.(NopFieldVerdictResolver); !ok {
-				t.Fatalf("ResolverFromProfile(%q): got %T, want NopFieldVerdictResolver", in, r)
+			r, err := ResolverFromProfile(tc.profile, app.Meta(), app.store, d)
+			if tc.want != wantRefused && err != nil {
+				t.Fatalf("ResolverFromProfile: %v", err)
+			}
+			switch tc.want {
+			case wantRefused:
+				if !errors.Is(err, ErrProfileOverridesFieldRules) {
+					t.Fatalf("err = %v, want ErrProfileOverridesFieldRules", err)
+				}
+				for _, part := range []string{"RELA_AFFORDANCE_PROFILE=" + tc.profile, "acl.yaml declares field rules"} {
+					if !strings.Contains(err.Error(), part) {
+						t.Errorf("error %q does not name %q", err, part)
+					}
+				}
+				if r != nil {
+					t.Errorf("resolver = %T, want nil on error", r)
+				}
+			case wantNop:
+				if _, ok := r.(NopFieldVerdictResolver); !ok {
+					t.Fatalf("got %T, want NopFieldVerdictResolver", r)
+				}
+			case wantDemo:
+				if _, ok := r.(DemoFieldVerdictResolver); !ok {
+					t.Fatalf("got %T, want DemoFieldVerdictResolver", r)
+				}
+			case wantPolicy:
+				if _, ok := r.(*policyResolver); !ok {
+					t.Fatalf("got %T, want *policyResolver", r)
+				}
 			}
 		})
-	}
-}
-
-// "demo" is a hard override — selected even when a policy with
-// affordance grants is present (AC6).
-func TestResolverFromProfile_Demo(t *testing.T) {
-	r, err := ResolverFromProfile("demo", nil, nil, nil)
-	if err != nil {
-		t.Fatalf("ResolverFromProfile(demo): %v", err)
-	}
-	if _, ok := r.(DemoFieldVerdictResolver); !ok {
-		t.Fatalf("ResolverFromProfile(demo): got %T, want DemoFieldVerdictResolver", r)
-	}
-}
-
-func TestResolverFromProfile_Unknown_FallsBackToPolicyOrNone(t *testing.T) {
-	// Unknown values must not panic and (absent a policy) fall back to
-	// none. The warning log is observable in stderr; not captured here.
-	r, err := ResolverFromProfile("not-a-real-profile", nil, nil, nil)
-	if err != nil {
-		t.Fatalf("unknown profile: %v", err)
-	}
-	if _, ok := r.(NopFieldVerdictResolver); !ok {
-		t.Fatalf("unknown profile: got %T, want NopFieldVerdictResolver", r)
 	}
 }
 
