@@ -8,7 +8,7 @@ import type { SidePanelSection, SidePanelEntity, SidePanelAddTarget } from '@/ty
 import { buildCreateLinkQuery } from '@/utils/createLink'
 import { editFormRoute } from '@/utils/entityRoute'
 import { useWorld } from '@/composables/useWorld'
-import Badge from '@/components/common/Badge.vue'
+import Badge from '@/components/ui/Badge.vue'
 import RlAddButton from 'rela-components/components/common/RlAddButton.vue'
 import RlStatusRegion from 'rela-components/components/feedback/RlStatusRegion.vue'
 

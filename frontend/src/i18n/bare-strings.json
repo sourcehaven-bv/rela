@@ -40,7 +40,7 @@
     "src/components/entity/TextCommentPopover.vue": 1,
     "src/components/forms/RelationCards.vue": 3,
     "src/components/forms/RelationPicker.vue": 3,
-    "src/components/forms/RruleBuilder.vue": 1,
+    "src/widgets/RruleBuilder.vue": 1,
     "src/components/forms/StatusControl.vue": 1,
     "src/components/lists/AdHocFilterMenu.vue": 1,
     "src/components/lists/EntityList.vue": 3,

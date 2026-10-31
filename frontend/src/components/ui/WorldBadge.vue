@@ -27,6 +27,7 @@
 import { computed } from 'vue'
 import { useSchemaStore } from '@/stores/schema'
 import { worldText } from '@/utils/worldText'
+import { isStandIn } from '@/utils/standIn'
 import type { EntityWorld } from '@/types'
 
 const props = defineProps<{
@@ -41,12 +42,7 @@ const props = defineProps<{
 
 const schemaStore = useSchemaStore()
 
-const isSubstitute = computed(() => {
-  const w = props.world
-  if (!w) return false
-  if (w.via === 'fallback-default') return true
-  return w.via === 'chain' && (w.chain_position ?? 0) > 0
-})
+const isSubstitute = computed(() => isStandIn(props.world))
 
 const text = computed(() => {
   const w = props.world

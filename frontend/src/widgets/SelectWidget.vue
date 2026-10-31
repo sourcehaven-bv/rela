@@ -4,7 +4,7 @@ import { useI18n } from 'vue-i18n'
 import type { WidgetProps } from './types'
 import { useStringValue } from './useStringValue'
 import { useSchemaStore } from '@/stores/schema'
-import Badge from '@/components/common/Badge.vue'
+import Badge from '@/components/ui/Badge.vue'
 
 const props = defineProps<WidgetProps>()
 const { t } = useI18n()

@@ -32,6 +32,7 @@ import { useConfirm } from '@/composables/useConfirm'
 import { useSchemaStore } from '@/stores'
 import { getAllEntityRelations } from '@/api/entities'
 import { entityRef, refFace } from '@/utils/entityRef'
+import { isStandIn } from '@/utils/standIn'
 import {
   buildDuplicatePrefill,
   relationChoices,
@@ -103,12 +104,7 @@ const sourceRef = computed(() => entityRef(props.source))
 // for a face the world served only as a stand-in for its own (a fallback, or
 // a later chain entry). Copying a stand-in onto its face would skip the
 // world's step, such as publishing a copy from an editorial world.
-const copyFace = computed(() => {
-  const w = props.source._world
-  const standIn =
-    w?.via === 'fallback-default' || (w?.via === 'chain' && (w.chain_position ?? 0) > 0)
-  return standIn ? '' : refFace(sourceRef.value)
-})
+const copyFace = computed(() => (isStandIn(props.source._world) ? '' : refFace(sourceRef.value)))
 
 const typeLabel = computed(
   () => schemaStore.getEntityType(props.source.type)?.label || props.source.type
