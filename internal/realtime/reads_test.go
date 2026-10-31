@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -525,4 +526,51 @@ func TestInbox_UnreadBudget(t *testing.T) {
 			require.Zero(t, h.store.heads.Load())
 		})
 	}
+}
+
+// TestInbox_UnreadSkipsNoUnread pins that messages of a type with
+// `unread: false` leave every unread count alone (TKT-O6RC8Z AC 5): three
+// progress posts above alice's marker give 0 on the channel list, the
+// head, the mark answer and the inbox; one counting post then gives 1.
+func TestInbox_UnreadSkipsNoUnread(t *testing.T) {
+	t.Parallel()
+	yaml := strings.Replace(inboxYAML("asked"),
+		"      answer: { properties: { note: { type: string } }, post: [lead, watcher] }\n",
+		"      answer: { properties: { note: { type: string } }, post: [lead, watcher] }\n"+
+			"      progress: { properties: { body: { type: string } }, post: [member], unread: false }\n", 1)
+	h := newHarness(t, withYAML(yaml))
+	h.anchors.views = map[string]AnchorView{}
+	alice, runner := user("alice"), user("runner")
+	unreadSeed(t, h, []string{"TKT-1"})
+	for range 3 {
+		h.clock.Add(time.Second)
+		h.postTo(t, runner, caseAt("TKT-1"), "progress", props("body", "step"))
+	}
+
+	check := func(want int) {
+		t.Helper()
+		list, err := h.svc.ListAnchor(as(alice), "ticket", "TKT-1", "")
+		require.NoError(t, err)
+		var listed *ChannelRead
+		for _, tc := range list.Types {
+			for _, c := range tc.Channels {
+				if c.Type == "case" {
+					listed = c.Read
+				}
+			}
+		}
+		require.Equal(t, &ChannelRead{Seq: 1, Unread: want}, listed, "channel list")
+		head, err := h.svc.Head(as(alice), caseAt("TKT-1"))
+		require.NoError(t, err)
+		require.Equal(t, &ChannelRead{Seq: 1, Unread: want}, head.Channel.Read, "head")
+		require.Equal(t, want, markRead(t, h, alice, caseAt("TKT-1"), seqPtr(1)).Unread, "mark read")
+		got := h.inbox(t, alice, InboxRequest{})
+		require.Equal(t, want, *got.UnreadCount, "unread_count")
+		require.Len(t, got.UnreadChannels, want, "unread_channels")
+		require.Equal(t, want, got.Summary().UnreadChannels, "summary")
+	}
+	check(0)
+	h.clock.Add(time.Second)
+	h.postTo(t, runner, caseAt("TKT-1"), "chat", props("body", "ask"))
+	check(1)
 }

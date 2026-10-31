@@ -2,6 +2,11 @@ import { describe, expect, it } from 'vitest'
 import {
   automations,
   boardModel,
+  canSortColumn,
+  columnMoveAllowed,
+  columnRemoveAllowed,
+  columnSource,
+  columnTitle,
   choiceListModel,
   dashboardModel,
   dashboardPath,
@@ -136,6 +141,52 @@ describe('screen models', () => {
       path: ['navigation', 0, 'items', 1],
     })
     expect(only.groups[1].entries[0].locked).toBe(true)
+  })
+})
+
+// A busy column (TKT-TU3XH4): the page shows and keeps one that exists.
+describe('busy columns', () => {
+  const busyList = toTree({
+    lists: {
+      t: {
+        entity_type: 'ticket',
+        columns: [
+          { property: 'title' },
+          { busy: 'run' },
+          { busy: 'run', label: 'Agent' },
+          { face: true },
+          { relation: 'blocks' },
+        ],
+      },
+    },
+  })
+  const cols = listModel(busyList, 't')!.columns
+
+  it('busy column model and title', () => {
+    expect(cols[1]).toMatchObject({ busy: 'run', face: false, property: '', relation: '' })
+    expect(cols[3]).toMatchObject({ busy: '', face: true })
+    expect(columnTitle(cols[1])).toBe('run')
+    expect(columnTitle(cols[2])).toBe('Agent')
+    expect(columnTitle(cols[3])).toBe('face')
+  })
+
+  it('column source text', () => {
+    expect(cols.map(columnSource)).toEqual(['title', 'busy: run', 'busy: run', 'face', 'blocks'])
+    expect(cols.map(canSortColumn)).toEqual([true, false, false, false, false])
+  })
+
+  it('busy column cannot become first', () => {
+    const rows = listModel(
+      toTree({ lists: { t: { columns: [{ property: 'title' }, { busy: 'run' }, { property: 'status' }] } } }),
+      't'
+    )!.columns
+    expect(columnMoveAllowed(rows, 1, 0)).toBe(false)
+    expect(columnMoveAllowed(rows, 0, 2)).toBe(false)
+    expect(columnMoveAllowed(rows, 1, 2)).toBe(true)
+    expect(columnMoveAllowed(rows, 2, 0)).toBe(true)
+    expect(columnRemoveAllowed(rows, 0)).toBe(false)
+    expect(columnRemoveAllowed(rows, 1)).toBe(true)
+    expect(columnRemoveAllowed(rows, 2)).toBe(true)
   })
 })
 

@@ -953,11 +953,13 @@ type List struct {
 	GroupBy *ListGroupBy `yaml:"group_by,omitempty" json:"group_by,omitempty"`
 }
 
-// ListColumn defines a column in a list view.
-// A column references either a Property (entity property) or a Relation
-// (relation type whose target titles are shown comma-separated).
-// For relation columns, Direction controls whether to show outgoing (default)
-// or incoming edges. Use "incoming" to display entities that point to the current row.
+// ListColumn defines a column in a list view. A column is one of four
+// kinds, and sets exactly one of their keys: a Property (entity property),
+// a Relation (relation type whose target titles are shown comma-separated),
+// Face (the face each row was served in) or Busy (a channel type's busy
+// indicator). For relation columns, Direction controls whether to show
+// outgoing (default) or incoming edges. Use "incoming" to display entities
+// that point to the current row.
 type ListColumn struct {
 	Property  string    `yaml:"property" json:"property,omitempty"`
 	Relation  string    `yaml:"relation" json:"relation,omitempty"`
@@ -969,6 +971,12 @@ type ListColumn struct {
 	// "Vastgesteld" or "Concept"), for a type that declares faces. It takes
 	// neither Property nor Relation.
 	Face bool `yaml:"face" json:"face,omitempty"`
+	// Busy names a channel type (TKT-TU3XH4). The column shows a busy
+	// indicator while a channel of that type on the row is in a working
+	// state, as [KanbanCardField.Busy] does on a card. It takes no other key
+	// than Label, is never the first column, and a list has at most one.
+	// Lists only: dashboard card and view section columns refuse it.
+	Busy string `yaml:"busy" json:"busy,omitempty"`
 }
 
 // SortSpec defines a single sort criterion for a list or dashboard card.

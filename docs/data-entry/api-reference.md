@@ -98,8 +98,9 @@ itself is still readable at `/api/v1/_comments/{type}/{id}`.
 
 `GET /api/v1/{plural}` accepts `busy=<channel type>`. Each row then carries
 `_busy`, the channels of that type on the row whose session is in a state
-with status `working`. A kanban card with a `busy:` field sends it. Give one
-type; with several `busy` values only the first counts.
+with status `working`. A kanban card with a `busy:` field, or a list with a
+busy column, sends it. Give one type; with several `busy` values only the
+first counts.
 
 ```text
 GET /api/v1/tickets?busy=run

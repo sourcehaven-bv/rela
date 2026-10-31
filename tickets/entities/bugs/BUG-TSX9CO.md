@@ -20,3 +20,12 @@ mtime with coarse resolution) can record the new directory mtime without the new
 entity, and the file is then never rescanned. The machine was under heavy load
 (load average about 100) at the time. The stale index is kept at
 /tmp/fsstore-index.stale.json for inspection.
+
+## Second occurrence
+
+On 2026-10-30, about five hours later, it happened again. RR-W1YVQR was created
+by `rela create` in a batch of 13, and every later command answered "entity not
+found". The file existed, and `fsstore-index.json` did not list it. Rebuilding
+the index fixed it. The stale copy is at /tmp/fsstore-index.stale2.json. Both
+times, other rela processes (the lease renew loop and a parallel `update`) ran
+at the same moment as the create.

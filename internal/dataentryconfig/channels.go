@@ -74,16 +74,25 @@ type ChannelProperty struct {
 // supplies this from the compiled configuration.
 type ChannelSchema interface {
 	ChannelTypeNames() []string
-	MessageTypeNames(channelType string) []string
-	// MessageProperties lists the properties of a message type; nil for an
-	// unknown channel or message type.
-	MessageProperties(channelType, messageType string) []ChannelProperty
-	// BusyFacts reports what a kanban busy field needs to know of a channel
+	// MessageType reports what the check needs to know of a message type;
+	// false for an unknown channel or message type.
+	MessageType(channelType, messageType string) (MessageFacts, bool)
+	// BusyFacts reports what a busy field or column needs to know of a channel
 	// type; false for an unknown type.
 	BusyFacts(channelType string) (BusyFacts, bool)
 }
 
-// BusyFacts is what [ValidateChannels] checks a kanban `busy:` card field
+// MessageFacts is what [ValidateChannels] checks a message type's
+// presentation against.
+type MessageFacts struct {
+	// Properties lists the properties of the message type.
+	Properties []ChannelProperty
+	// CountsUnread reports whether the type's messages count toward a
+	// reader's unread: a stored type without `unread: false`.
+	CountsUnread bool
+}
+
+// BusyFacts is what [ValidateChannels] checks a `busy:` card field or column
 // against.
 type BusyFacts struct {
 	// AttachTo lists the entity types the channel type attaches to.
@@ -217,14 +226,15 @@ func channelFieldKeyErrors(prefix string, field map[string]any) []string {
 // exist, a widget must suit its property's type, and a required property
 // must not be hidden, because the composer could never send it.
 //
-// A kanban `busy:` card field (TKT-21G6JS): the channel type must exist,
-// declare a session with a working state and attach to the board's entity
-// type. A type whose
-// initial state reads working by default is a warning, because every new
-// channel of it would show busy.
+// A kanban `busy:` card field (TKT-21G6JS) or a list busy column
+// (TKT-TU3XH4): the channel type must exist, declare a session with a
+// working state and attach to the board's or the list's entity type. A
+// type whose initial state reads working by default is a warning, because
+// every new channel of it would show busy.
 //
-// With schema nil, realtime is off: a non-empty block and a busy field are
-// warnings, so a project can stage them before it turns realtime on.
+// With schema nil, realtime is off: a non-empty block, a busy field and a
+// busy column are warnings, so a project can stage them before it turns
+// realtime on.
 func ValidateChannels(cfg *Config, schema ChannelSchema) (errs, warnings []string) {
 	if !HasRealtimePresentation(cfg) {
 		return nil, nil
@@ -235,11 +245,11 @@ func ValidateChannels(cfg *Config, schema ChannelSchema) (errs, warnings []strin
 			warnings = append(warnings, "channels: realtime is off (no realtime.yaml), so this section has no effect")
 		}
 		for _, b := range busy {
-			warnings = append(warnings, b.at+": realtime is off (no realtime.yaml), so this busy field shows nothing")
+			warnings = append(warnings, b.at+": realtime is off (no realtime.yaml), so this busy "+b.noun+" shows nothing")
 		}
 		return nil, warnings
 	}
-	errs = channelBlockErrors(cfg, schema)
+	errs, warnings = checkChannelBlock(cfg, schema)
 	for _, b := range busy {
 		e, w := busyFieldErrors(b, schema)
 		errs, warnings = append(errs, e...), append(warnings, w...)
@@ -249,22 +259,26 @@ func ValidateChannels(cfg *Config, schema ChannelSchema) (errs, warnings []strin
 
 // HasRealtimePresentation reports whether cfg says anything that
 // [ValidateChannels] checks against realtime.yaml: a non-empty `channels:`
-// block or a kanban card field with `busy:` (TKT-21G6JS).
+// block, a kanban card field with `busy:` (TKT-21G6JS) or a list column
+// with `busy:` (TKT-TU3XH4).
 //
 // Nil: cfg is accepted and reports false.
 func HasRealtimePresentation(cfg *Config) bool {
 	return cfg != nil && (len(cfg.Channels) > 0 || len(busyFields(cfg)) > 0)
 }
 
-// busyField is one kanban card field with `busy:`, located for messages.
+// busyField is one kanban card field or list column with `busy:`, located
+// for messages. noun is "field" or "column", for the realtime-off warning.
 type busyField struct {
 	at          string
 	channelType string
 	entityType  string
+	noun        string
 }
 
 // busyFields lists the busy card fields of every kanban, by kanban id and
-// field index.
+// field index, then the busy columns of every list, by list id and column
+// index.
 func busyFields(cfg *Config) []busyField {
 	var out []busyField
 	for _, id := range sortedMapKeys(cfg.Kanbans) {
@@ -273,6 +287,18 @@ func busyFields(cfg *Config) []busyField {
 			if f.Busy != "" {
 				out = append(out, busyField{
 					at: fmt.Sprintf("kanban %q: card.fields[%d]", id, i), channelType: f.Busy, entityType: k.EntityType,
+					noun: "field",
+				})
+			}
+		}
+	}
+	for _, id := range sortedMapKeys(cfg.Lists) {
+		l := cfg.Lists[id]
+		for i, c := range l.Columns {
+			if c.Busy != "" {
+				out = append(out, busyField{
+					at: fmt.Sprintf("list %q: column[%d]", id, i), channelType: c.Busy, entityType: l.EntityType,
+					noun: "column",
 				})
 			}
 		}
@@ -302,28 +328,34 @@ func busyFieldErrors(b busyField, schema ChannelSchema) (errs, warnings []string
 	return nil, nil
 }
 
-// channelBlockErrors checks the `channels:` block against schema.
-func channelBlockErrors(cfg *Config, schema ChannelSchema) []string {
-	var errs []string
+// checkChannelBlock checks the `channels:` block against schema. A message
+// type with `display: hidden` that realtime.yaml still counts as unread is
+// a warning, not an error: a project may change the two files one at a
+// time.
+func checkChannelBlock(cfg *Config, schema ChannelSchema) (errs, warnings []string) {
 	ctNames := schema.ChannelTypeNames()
 	for _, ctName := range sortedMapKeys(cfg.Channels) {
 		if !slices.Contains(ctNames, ctName) {
 			errs = append(errs, fmt.Sprintf("channels.%s: realtime.yaml declares no channel type %q", ctName, ctName))
 			continue
 		}
-		mtNames := schema.MessageTypeNames(ctName)
 		ct := cfg.Channels[ctName]
 		for _, mtName := range sortedMapKeys(ct.Messages) {
 			prefix := fmt.Sprintf("channels.%s.messages.%s", ctName, mtName)
-			if !slices.Contains(mtNames, mtName) {
+			facts, ok := schema.MessageType(ctName, mtName)
+			if !ok {
 				errs = append(errs, fmt.Sprintf("%s: channel type %s declares no message type %q", prefix, ctName, mtName))
 				continue
 			}
-			props := schema.MessageProperties(ctName, mtName)
-			errs = append(errs, channelFieldErrors(prefix+".fields", mtName, ct.Messages[mtName].Fields, props)...)
+			mp := ct.Messages[mtName]
+			errs = append(errs, channelFieldErrors(prefix+".fields", mtName, mp.Fields, facts.Properties)...)
+			if mp.Display == MessageDisplayHidden && facts.CountsUnread {
+				warnings = append(warnings, fmt.Sprintf("%s.display: hidden, but realtime.yaml counts %s as unread; "+
+					"set unread: false on channel_types.%s.message_types.%s", prefix, mtName, ctName, mtName))
+			}
 		}
 	}
-	return errs
+	return errs, warnings
 }
 
 func channelFieldErrors(prefix, mtName string, fields []FormField, props []ChannelProperty) []string {

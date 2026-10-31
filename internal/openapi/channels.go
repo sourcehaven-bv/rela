@@ -641,8 +641,8 @@ func addReadSchemas(sc map[string]*Schema) {
 		Description: "Your own read marker; absent when you have none. Only the list and the head carry it"}
 	sc[channelReadSchema] = ObjectSchema(map[string]*Schema{
 		"seq": {Type: "integer", Description: "The highest seq you marked read"},
-		"unread": {Type: "integer", Description: "Messages above seq, at most 100. Removed messages and " +
-			"session notices do not count"},
+		"unread": {Type: "integer", Description: "Messages above seq, at most 100. Removed messages, " +
+			"session notices and messages of a type with unread: false do not count"},
 	}, []string{"seq", "unread"})
 	sc[channelMarkReadSchema] = ObjectSchema(map[string]*Schema{
 		"seq":    {Type: "integer", Description: "The stored marker; may be above the seq you sent"},

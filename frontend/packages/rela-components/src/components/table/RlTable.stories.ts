@@ -7,6 +7,7 @@ import type { Section, Task } from '../../types'
 import RlCheckbox from '../form/RlCheckbox.vue'
 import RlTagList from '../common/RlTagList.vue'
 import RlStatusPill from '../common/RlStatusPill.vue'
+import RlBusyIndicator, { type BusyIndicatorEntry } from '../feedback/RlBusyIndicator.vue'
 import type { ColumnVisibility, RowMove, SortClickEvent, TableColumn, TableSort } from './types'
 import { storyComponent } from '../storyGeneric'
 import { tableSections, tableColumns } from '../../fixtures'
@@ -452,6 +453,84 @@ export const CompactModes: Story = {
       </div>
     `,
   }),
+}
+
+/**
+ * A busy column, as rela's list view shows one (TKT-TU3XH4): a fixed 160 px
+ * column whose cell holds an `RlBusyIndicator`. One row is busy, one is
+ * idle and one has two busy channels, which reads as "+1". The label is cut
+ * off with an ellipsis; the time and "+1" never are.
+ *
+ * The column is `primary`, so it survives `compress`. There an idle row
+ * keeps an empty slot, as any empty primary cell does, so the indicators
+ * of the busy rows stay aligned.
+ */
+export const BusyColumn: Story = {
+  render: () => ({
+    components: { RlTable: storyComponent(RlTable), RlBusyIndicator },
+    setup() {
+      const hoursAgo = (h: number) => new Date(Date.now() - h * 3_600_000 - 60_000).toISOString()
+      const busy: Record<string, BusyIndicatorEntry[]> = {
+        b1: [{ typeLabel: 'Agent run', label: 'Planning', since: hoursAgo(3) }],
+        b2: [],
+        b3: [
+          { typeLabel: 'Agent run', label: 'Implementing the change', since: hoursAgo(26) },
+          { typeLabel: 'Agent run', label: 'Review', since: hoursAgo(1) },
+        ],
+      }
+      const sections: Section<Task>[] = [
+        {
+          id: 'tickets',
+          title: 'Tickets',
+          items: [
+            { id: 'b1', title: 'Add a busy column to lists', assignee: 'Rowdy' },
+            { id: 'b2', title: 'Write the release notes', assignee: 'Ada' },
+            { id: 'b3', title: 'Fix the grouped list columns', assignee: 'Lin' },
+          ],
+        },
+      ]
+      const columns: TableColumn[] = [
+        { key: 'assignee', header: 'Assignee', field: 'assignee', width: 128 },
+        {
+          key: 'busy',
+          header: 'Busy',
+          width: 160,
+          primary: true,
+          isEmpty: (item) => (busy[(item as Task).id] ?? []).length === 0,
+        },
+      ]
+      const entries = (item: unknown) => busy[(item as Task).id] ?? []
+      return { sections, columns, entries }
+    },
+    template: `
+      <div style="display:flex; flex-direction:column; gap:var(--rl-space-6)">
+        <div style="width:760px; border:1px solid var(--rl-color-border)">
+          <RlTable :sections="sections" :columns="columns">
+            <template #cell-busy="{ item }"><RlBusyIndicator :entries="entries(item)" /></template>
+          </RlTable>
+        </div>
+        <div style="width:420px; border:1px solid var(--rl-color-border)">
+          <RlTable :sections="sections" :columns="columns" compact="compress">
+            <template #cell-busy="{ item }"><RlBusyIndicator :entries="entries(item)" /></template>
+          </RlTable>
+        </div>
+      </div>
+    `,
+  }),
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement)
+    await expect(canvas.getAllByText('Agent run: Planning, for 3 hours')).toHaveLength(2)
+    await expect(canvas.getAllByText(/\+1/).length).toBeGreaterThan(0)
+
+    // In the compressed table the idle row keeps its busy cell as an empty
+    // slot, so the busy rows' indicators stay aligned.
+    const idle = [...canvasElement.querySelectorAll<HTMLElement>('.rl-table-row--compress')].find((row) =>
+      row.textContent?.includes('Write the release notes'),
+    )
+    const slot = idle?.querySelector<HTMLElement>('.rl-table-row__cell--empty:not(.rl-table-row__cell--secondary)')
+    await expect(slot).toBeTruthy()
+    await expect(getComputedStyle(slot!).display).not.toBe('none')
+  },
 }
 
 /**

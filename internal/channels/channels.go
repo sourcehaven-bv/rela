@@ -388,6 +388,11 @@ type Message struct {
 	// channel's session (see [SessionStep]). Nothing else sets it, and a
 	// removal clears it with the rest of the message.
 	MovedSession bool `json:"moved_session,omitempty"`
+	// NoUnread is set by the store from [NewMessage.NoUnread] or
+	// [ReminderPost.NoUnread]: the message never counts toward a reader's
+	// unread (see [Counts]). An edit keeps it; a removal clears it with the
+	// rest of the message, which [Message.Removed] already keeps out.
+	NoUnread bool `json:"no_unread,omitempty"`
 	// Mentions are the principals the message mentions, set by the store
 	// from [NewMessage.Mentions], replaced by [Store.Edit] and cleared by
 	// [Store.Remove]. The store writes one addressed row per target.
@@ -449,6 +454,9 @@ type NewMessage struct {
 	// [CheckMentions]). The store keeps them on [Message.Mentions] and
 	// writes one addressed row per target in the same step.
 	Mentions []Mention
+	// NoUnread marks a message of a type with `unread: false`; the store
+	// keeps it on [Message.NoUnread], which [Counts] reads.
+	NoUnread bool
 }
 
 // CheckAppendState refuses an append that requires an open channel to one

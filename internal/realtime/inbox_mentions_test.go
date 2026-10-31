@@ -10,6 +10,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/channels"
 )
 
@@ -214,4 +215,72 @@ func TestInbox_ReplyKindPastMentions(t *testing.T) {
 func mentionRealtimeWithoutSecret() string {
 	before, _, _ := strings.Cut(mentionRealtime, "  secret:")
 	return before
+}
+
+// noUnreadMentionRealtime is mentionRealtime with two room types that have
+// `unread: false`: progress, with a markdown body, and silent, whose ref
+// property says notify: false (TKT-O6RC8Z).
+var noUnreadMentionRealtime = strings.Replace(mentionRealtime,
+	"      about:   { properties: { on: { type: ref, to: [ticket] } }, post: [member] }\n",
+	"      about:   { properties: { on: { type: ref, to: [ticket] } }, post: [member] }\n"+
+		"      progress: { properties: { body: { type: markdown } }, post: [member], unread: false }\n"+
+		"      silent: { properties: { to: { type: ref, to: [person], notify: false } }, post: [member], "+
+		"unread: false }\n", 1)
+
+// newNoUnreadMentionHarness is newMentionHarness over
+// noUnreadMentionRealtime; mapping maps logins to persons.
+func newNoUnreadMentionHarness(t *testing.T, mapping bool) *harness {
+	t.Helper()
+	h := newMentionHarness(t, mapping)
+	var policy *acl.Policy
+	if mapping {
+		policy = personMappingPolicy()
+	}
+	h.cfg.set(Snapshot{Config: testCompiledWith(t, noUnreadMentionRealtime, policy)})
+	return h
+}
+
+// TestInbox_MentionInNoUnreadType pins that a mention in a message of a
+// type with `unread: false` still reaches the inbox with its seq, while
+// the channel's unread count stays 0; notify: false on a property still
+// keeps the mention out (TKT-O6RC8Z AC 6).
+func TestInbox_MentionInNoUnreadType(t *testing.T) {
+	t.Parallel()
+	h := newNoUnreadMentionHarness(t, false)
+	bob, alice := user("bob"), user("alice")
+	markRead(t, h, alice, room, nil)
+	v := h.post(t, bob, PostInput{Type: "progress", Props: props("body", "`@alice` look")})
+	require.NotEmpty(t, storedMentions(t, h, v.Seq))
+	got := h.inbox(t, alice, InboxRequest{})
+	require.Equal(t, 1, *got.MentionCount)
+	require.Equal(t, InboxKindMention, got.Mentions[0].Kind)
+	require.Equal(t, v.Seq, got.Mentions[0].Seq)
+	require.Equal(t, "progress", got.Mentions[0].MessageType)
+	require.Zero(t, *got.UnreadCount, "the message does not count as unread")
+
+	mapped := newNoUnreadMentionHarness(t, true)
+	poster := user("USR-3")
+	ho := mapped.post(t, poster, PostInput{Type: "handoff", Props: map[string]any{"to": "USR-7"}})
+	require.NotEmpty(t, storedMentions(t, mapped, ho.Seq), "a ref to the user type mentions")
+	s := mapped.post(t, poster, PostInput{Type: "silent", Props: map[string]any{"to": "USR-7"}})
+	require.Nil(t, storedMentions(t, mapped, s.Seq), "notify: false still keeps the mention out")
+}
+
+// TestInbox_ReplyInNoUnreadType pins that a reply of a type with `unread:
+// false` still writes the parent author's reply row (TKT-O6RC8Z AC 6).
+func TestInbox_ReplyInNoUnreadType(t *testing.T) {
+	t.Parallel()
+	h := newNoUnreadMentionHarness(t, false)
+	alice := user("alice")
+	parent := h.post(t, alice, PostInput{Type: "text", Props: props("body", "question")})
+	h.clock.Add(time.Second)
+	reply, err := h.svc.Post(as(user("bob")), room,
+		PostInput{Type: "progress", Props: props("body", "working on it"), ReplyTo: parent.Seq})
+	require.NoError(t, err)
+	got := h.inbox(t, alice, InboxRequest{})
+	require.Equal(t, 1, *got.MentionCount)
+	require.Equal(t, InboxKindReply, got.Mentions[0].Kind)
+	require.Equal(t, reply.Message.Seq, got.Mentions[0].Seq)
+	require.Equal(t, parent.Seq, got.Mentions[0].ReplyTo)
+	require.Zero(t, *got.UnreadCount, "the reply does not count as unread")
 }

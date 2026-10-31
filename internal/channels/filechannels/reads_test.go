@@ -148,6 +148,40 @@ func TestReads_TailCost(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 1, got[key].Unread)
 	require.LessOrEqual(t, cfs.read(".jsonl"), 2*tailChunk, "one unread message reads one tail chunk per scan")
+
+	t.Run("non-counting run above the marker", func(t *testing.T) {
+		t.Parallel()
+		// TKT-O6RC8Z AC 4: 2 000 messages of a type with unread: false sit
+		// above the marker in one segment, and the marker is the last seq
+		// of the previous segment. The scan reads no byte of the previous
+		// segment. The doubling tail read and the head lookup together stay
+		// within three times the run's segment.
+		const run = 2000
+		cfs := &readCountFS{FS: storage.NewOsFS(), bytes: map[string]int{}}
+		s, err := newStore(cfs, filepath.Join(t.TempDir(), "channels"), &countingLocker{}, run)
+		require.NoError(t, err)
+		for i := range run {
+			_, err = s.Append(ctx, key, msg(fmt.Sprint("read ", i)))
+			require.NoError(t, err)
+		}
+		_, _, err = s.SetRead(ctx, key, alice, run, channelstest.T0)
+		require.NoError(t, err)
+		for i := range run {
+			m := msg(fmt.Sprint("progress ", i))
+			m.NoUnread = true
+			_, err = s.Append(ctx, key, m)
+			require.NoError(t, err)
+		}
+		size, err := s.rfs.Stat(segKey(key, 1))
+		require.NoError(t, err)
+		cfs.reset()
+		got, err := s.Reads(ctx, alice, []channels.Key{key})
+		require.NoError(t, err)
+		require.Zero(t, got[key].Unread, "non-counting messages do not count")
+		require.Zero(t, cfs.read(filepath.Base(segKey(key, 0))), "no byte of the marker's segment is read")
+		require.LessOrEqual(t, cfs.read(filepath.Base(segKey(key, 1))), int(3*size.Size()),
+			"the run's segment is read a bounded number of times")
+	})
 }
 
 // readsFailFS fails every write of a reads.json.

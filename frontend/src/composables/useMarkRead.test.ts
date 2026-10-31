@@ -109,6 +109,21 @@ describe('useMarkRead', () => {
     expect(mark).not.toHaveBeenCalled()
   })
 
+  it('marks a hidden newest message', async () => {
+    // TKT-O6RC8Z AC 12: the newest held message is of a type the channel
+    // shows as hidden (claim, as in the agent-runner example). It is held,
+    // so it is marked, and the channel leaves the inbox's behind set.
+    // useMarkRead takes no presentation, so this case marks intent only: it
+    // cannot catch a change that marks up to the newest shown row, which
+    // would add an input and rewrite this case.
+    mark.mockResolvedValue(answer(3))
+    const h = host({ read: { seq: 1, unread: 0 } })
+    h.messages.value = [...msgs(1, 2), { seq: 3, rev: 3, type: 'claim' }]
+    await flushPromises()
+    expect(mark).toHaveBeenCalledWith(room, 3)
+    expect(h.takeRead).toHaveBeenCalledWith({ seq: 3, unread: 0 })
+  })
+
   it('marks a channel without a marker', async () => {
     mark.mockResolvedValue(answer(3))
     host()

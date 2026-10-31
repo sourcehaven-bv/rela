@@ -14,6 +14,7 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/channels"
+	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
 	"github.com/Sourcehaven-BV/rela/internal/realtime"
@@ -569,6 +570,54 @@ func TestLive_BusyListIgnoresMessageOnly(t *testing.T) {
 		require.Positive(t, env.replaysOf(t, got, "alice", busyRunPath1), "%s: the round ran: %v", tc.name, got)
 		require.Zero(t, env.replaysOf(t, got, "alice", board), "%s: %v", tc.name, got)
 	}
+}
+
+// TestLive_BusyListPagedWake pins AC 8 of TKT-TU3XH4: a list view's paged
+// live path records a wake with its own page's rows only. A session move on
+// a page-2 row replays it and, once the row turns busy, frames it; a move
+// on a page-1 row does not select it. Each negative step has a positive
+// control in the same round: alice's TKT-1 run channel subscription.
+func TestLive_BusyListPagedWake(t *testing.T) {
+	env := newBusyLiveEnv(t, busyPolicy(), func(app *App) {
+		for _, id := range []string{"TKT-1", "TKT-2", "TKT-3", "TKT-4"} {
+			seedEntity(app, ownedTicket(id))
+		}
+		app.State().Cfg.Lists = map[string]dataentryconfig.List{"all": {
+			EntityType: "ticket",
+			Columns:    []dataentryconfig.ListColumn{{Property: "title"}, {Busy: "run"}},
+		}}
+	}, LiveInboxGrid)
+	const page2 = "/api/v1/tickets?list_id=all&page=2&per_page=2&busy=run"
+	c := env.stream(t, "alice", liveSubEntry{"page2", page2}, liveSubEntry{"run", busyRunPath1})
+	env.ticks.step(t, 1)
+	require.Equal(t, []string{"TKT-3", "TKT-4"}, anchorsOf(env.app.live.busyWakeOf("alice", "page2")),
+		"the wake holds the page-2 rows only")
+	replays := countPrincipalReplays(t, env.app.live)
+
+	t.Log("move on a page-1 row")
+	env.postOn(t, "alice", "TKT-1", "run", "go", nil)
+	env.ticks.step(t, 1)
+	env.requireBeforeSafety(t)
+	requireChanged(t, c, "run")
+	got := replays.take()
+	require.Positive(t, env.replaysOf(t, got, "alice", busyRunPath1), "the round ran: %v", got)
+	require.Zero(t, env.replaysOf(t, got, "alice", page2), "%v", got)
+
+	t.Log("move on a page-2 row that changes nothing")
+	env.postOn(t, "alice", "TKT-3", "run", "go", nil)
+	env.ticks.step(t, 1)
+	env.requireBeforeSafety(t)
+	liveQuiet(t, c)
+	require.Equal(t, 1, env.replaysOf(t, replays.take(), "alice", page2))
+
+	t.Log("claim on a page-2 row")
+	env.postOn(t, "runner", "TKT-3", "run", "claim", map[string]any{"worktree": "wt"})
+	env.ticks.step(t, 1)
+	env.requireBeforeSafety(t)
+	requireChanged(t, c, "page2")
+	busy := liveBusy(t, env.liveEnv, "alice", page2)
+	require.Len(t, busy["TKT-3"], 1)
+	require.Empty(t, busy["TKT-4"])
 }
 
 // TestLive_BusyHiddenAnchorNoWake pins AC 6: a move on an anchor the

@@ -54,9 +54,13 @@ describe('listAllEntities', () => {
   it('follows has_more across pages and merges data and included', async () => {
     getMock
       .mockResolvedValueOnce(
-        page([makeEntity('T-1'), makeEntity('T-2')], { total: 3, page: 1, has_more: true }, {
-          included: { 'C-1': makeEntity('C-1') },
-        })
+        page(
+          [makeEntity('T-1'), makeEntity('T-2')],
+          { total: 3, page: 1, has_more: true },
+          {
+            included: { 'C-1': makeEntity('C-1') },
+          }
+        )
       )
       .mockResolvedValueOnce(
         page([makeEntity('T-3')], { total: 3, page: 2 }, { included: { 'C-2': makeEntity('C-2') } })
@@ -71,6 +75,22 @@ describe('listAllEntities', () => {
     expect(Object.keys(res.included ?? {}).sort()).toEqual(['C-1', 'C-2'])
     expect(res.meta.has_more).toBe(false)
     expect(res.meta.total).toBe(3)
+  })
+
+  // TKT-TU3XH4: a grouped list with a busy column reads every page through
+  // here, so busy and list_id must reach each page request, not just the first.
+  it('forwards busy and list_id to every page', async () => {
+    getMock
+      .mockResolvedValueOnce(page([makeEntity('T-1')], { page: 1, has_more: true }))
+      .mockResolvedValueOnce(page([makeEntity('T-2')], { page: 2, has_more: true }))
+      .mockResolvedValueOnce(page([makeEntity('T-3')], { page: 3 }))
+
+    await listAllEntities('ticket', { busy: 'run', list_id: 'tickets' })
+
+    expect(getMock).toHaveBeenCalledTimes(3)
+    for (const call of getMock.mock.calls) {
+      expect(call[1]).toMatchObject({ busy: 'run', list_id: 'tickets' })
+    }
   })
 
   it('keeps _actions from the first page', async () => {
@@ -109,7 +129,9 @@ describe('listAllEntities', () => {
     // the loop must follow meta.page + 1, not offsets derived from the
     // requested page size.
     getMock
-      .mockResolvedValueOnce(page([makeEntity('T-1')], { total: 2, page: 1, per_page: 25, has_more: true }))
+      .mockResolvedValueOnce(
+        page([makeEntity('T-1')], { total: 2, page: 1, per_page: 25, has_more: true })
+      )
       .mockResolvedValueOnce(page([makeEntity('T-2')], { total: 2, page: 2, per_page: 25 }))
 
     const res = await listAllEntities('ticket')
@@ -172,11 +194,14 @@ describe('listAllEntities', () => {
     getMock.mockImplementation(async () => {
       const first = n
       n += 3
-      return page([1, 2, 3].map((i) => makeEntity(`T-${first + i}`)), {
-        total: 20,
-        page: first / 3 + 1,
-        has_more: true,
-      })
+      return page(
+        [1, 2, 3].map((i) => makeEntity(`T-${first + i}`)),
+        {
+          total: 20,
+          page: first / 3 + 1,
+          has_more: true,
+        }
+      )
     })
 
     const res = await listAllEntities('ticket', undefined, undefined, { maxRows: 5 })

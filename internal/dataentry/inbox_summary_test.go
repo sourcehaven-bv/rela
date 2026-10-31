@@ -15,8 +15,11 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	v1 "github.com/Sourcehaven-BV/rela/internal/apiwire/v1"
 	"github.com/Sourcehaven-BV/rela/internal/channels"
+	"github.com/Sourcehaven-BV/rela/internal/channels/filechannels"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/filelock"
 	"github.com/Sourcehaven-BV/rela/internal/realtime"
+	"github.com/Sourcehaven-BV/rela/internal/storage"
 )
 
 // summary serves /api/v1/_inbox/summary?query as alice and returns what
@@ -276,4 +279,76 @@ func TestInbox_MentionMarkReadCreatesMarker(t *testing.T) {
 	rec, _ = e.get(t, http.MethodGet, "")
 	got = decodeAs[v1.Inbox](t, rec.Body.Bytes())
 	require.Equal(t, 1, *got.UnreadCount, "the marker lists the channel under unread")
+}
+
+// runRealtime is the run channel type of the agent-runner example in the
+// guides: claim, resume and progress have `unread: false`, ask counts.
+const runRealtime = `
+version: 1
+channel_types:
+  run:
+    attach_to: [ticket]
+    read: { permission: inbox.read }
+    roles:
+      member: { from: attached }
+    message_types:
+      ask:      { properties: { body: { type: markdown } }, post: [member] }
+      claim:    { properties: { worktree: { type: string } }, post: [member], unread: false }
+      resume:   { properties: { worktree: { type: string } }, post: [member], unread: false }
+      progress: { properties: { body: { type: markdown } }, post: [member], unread: false }
+`
+
+// TestInboxSummary_NoUnreadType pins TKT-O6RC8Z AC 5 over HTTP: posts of
+// types with `unread: false` above alice's marker give read.unread 0 on
+// the channel list and the head, 0 from PUT …/_read, no unread channel in
+// the inbox and 0 in the summary; one ask then gives 1 everywhere.
+func TestInboxSummary_NoUnreadType(t *testing.T) {
+	cs, err := filechannels.New(storage.NewMemFS(), "/channels", filelock.ProcessPrivate{})
+	require.NoError(t, err)
+	env := newInboxLiveEnvWith(t, inboxLivePolicy(), nil, cs, LiveInboxGrid, runRealtime)
+	const run = "/api/v1/tickets/TKT-1/_channels/run"
+	seq := env.post(t, "bob", run, "ask", `{"body":"start"}`)
+	env.markRead(t, "alice", run, seq)
+	env.post(t, "bob", run, "claim", `{"worktree":"/tmp/wt"}`)
+	for range 3 {
+		env.post(t, "bob", run, "progress", `{"body":"step"}`)
+	}
+	env.post(t, "bob", run, "resume", `{"worktree":"/tmp/wt"}`)
+
+	check := func(want int) {
+		t.Helper()
+		resp, b := env.do(t, "alice", http.MethodGet, "/api/v1/tickets/TKT-1/_channels", "", nil)
+		require.Equal(t, http.StatusOK, resp.StatusCode, "%s", b)
+		var listed *v1.ChannelRead
+		for _, tl := range decodeAs[v1.ChannelList](t, b).Types {
+			for _, c := range tl.Channels {
+				if tl.Type == "run" {
+					listed = c.Read
+				}
+			}
+		}
+		require.Equal(t, &v1.ChannelRead{Seq: seq, Unread: want}, listed, "channel list")
+
+		resp, b = env.do(t, "alice", http.MethodGet, run, "", nil)
+		require.Equal(t, http.StatusOK, resp.StatusCode, "%s", b)
+		require.Equal(t, &v1.ChannelRead{Seq: seq, Unread: want}, decodeAs[v1.ChannelHead](t, b).Channel.Read, "head")
+
+		resp, b = env.do(t, "alice", http.MethodPut, run+"/_read", fmt.Sprintf(`{"seq":%d}`, seq), nil)
+		require.Equal(t, http.StatusOK, resp.StatusCode, "%s", b)
+		require.Equal(t, want, decodeAs[v1.ChannelMarkRead](t, b).Unread, "PUT _read")
+
+		resp, b = env.do(t, "alice", http.MethodGet, inboxPath, "", nil)
+		require.Equal(t, http.StatusOK, resp.StatusCode, "%s", b)
+		inbox := decodeAs[v1.Inbox](t, b)
+		require.Equal(t, want, *inbox.UnreadCount, "unread_count")
+		require.Len(t, inbox.UnreadChannels, want, "unread_channels")
+
+		resp, b = env.do(t, "alice", http.MethodGet, inboxSummaryPath, "", nil)
+		require.Equal(t, http.StatusOK, resp.StatusCode, "%s", b)
+		require.Equal(t, want, decodeAs[v1.InboxSummary](t, b).UnreadChannels, "summary")
+	}
+	check(0)
+	env.post(t, "bob", run, "ask", `{"body":"which one?"}`)
+	env.clock.advance(time.Minute) // past the mark-read rate limit
+	check(1)
 }

@@ -5,8 +5,11 @@
  *
  * Each row links to its channel on the anchor entity's page
  * (`?channel=<type>[/<name>]`), which opens it even when it is closed or
- * archived. "Mark read" on an unread channel marks up to its last message;
- * on a mention it marks up to the mention, which also marks every earlier
+ * archived. A mention or reply row adds `&seq=<seq>`, so the page also
+ * reveals that message, even when its type is hidden or collapsed.
+ *
+ * "Mark read" on an unread channel marks up to its last message; on a
+ * mention it marks up to the mention, which also marks every earlier
  * message read and creates a marker when the channel had none.
  */
 import { computed, ref } from 'vue'
@@ -58,10 +61,11 @@ function rowKey(c: InboxChannel): string {
   return `${c.entity_type}/${c.anchor}/${channelKey(c.type, c.name)}`
 }
 
-function link(c: InboxChannel): InboxRowLink {
+function link(c: InboxChannel, seq?: number): InboxRowLink {
   const path =
     `/entity/${c.entity_type}/${encodeURIComponent(c.anchor)}` +
-    `?channel=${encodeURIComponent(channelKey(c.type, c.name))}`
+    `?channel=${encodeURIComponent(channelKey(c.type, c.name))}` +
+    (seq !== undefined ? `&seq=${seq}` : '')
   return { as: RouterLink, attrs: { to: space.href(path) } }
 }
 
@@ -105,7 +109,7 @@ const mentions = computed<InboxMentionRow[]>(() =>
     channel: channelLabel(m.channel),
     at: when(m.at),
     atIso: m.at,
-    link: link(m.channel),
+    link: link(m.channel, m.seq),
   }))
 )
 

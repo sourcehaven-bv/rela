@@ -23,6 +23,9 @@
  * names the channel as missing. useChannel has already dropped what it held
  * by then. `changed` asks the host to read the channel list again after a
  * lifecycle operation, since the list is not live while a channel is open.
+ *
+ * `revealSeq` comes from a message link (TKT-O6RC8Z): useMessageLink jumps
+ * to that message once, as a reply quote does, and `revealed` reports it.
  */
 import { computed, ref, useTemplateRef, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
@@ -65,6 +68,7 @@ import { classifyChannelError } from './channelErrors'
 import { useChannelLinks } from './useChannelLinks'
 import { useChannelPaging } from './useChannelPaging'
 import { useExpiryClock } from './useExpiryClock'
+import { useMessageLink } from './useMessageLink'
 import { usePendingKeys } from './usePendingKeys'
 import { useRefPicker } from './useRefPicker'
 import { useSessionDecisions } from './useSessionDecisions'
@@ -95,9 +99,11 @@ const props = defineProps<{
    * address names the face.
    */
   world?: string
+  /** The message a link asks to show; see the component doc. */
+  revealSeq?: number
 }>()
 
-const emit = defineEmits<{ gone: []; changed: [] }>()
+const emit = defineEmits<{ gone: []; changed: []; revealed: [] }>()
 
 const { t } = useI18n()
 const ui = useUIStore()
@@ -482,6 +488,12 @@ const { loadingOlder, onLoadOlder, onLoadNewest, onJump } = useChannelPaging(
   ch,
   (err) => handle(err, false),
   (seq) => channelView.value?.reveal(seq)
+)
+
+useMessageLink(
+  () => props.revealSeq,
+  channelView,
+  () => emit('revealed')
 )
 
 // --- Links and the ref picker -----------------------------------------------

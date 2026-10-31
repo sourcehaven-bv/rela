@@ -16,6 +16,7 @@ import { useListGrouping, type ListSection } from '@/composables/useListGrouping
 import { listEntities, listAllEntities, getErrorMessage, withSortFallback, type SortDropped } from '@/api'
 import { entityKeys } from '@/queries/entities'
 import { liveListPath } from '@/api/live'
+import { toBusyEntries } from '@/utils/busy'
 import { useLiveSubscription } from '@/composables/useLiveSubscription'
 import { beginOptimisticRemove } from '@/queries/optimisticList'
 import { filterStateToApiParams } from '@/utils/filters'
@@ -60,6 +61,9 @@ import RlEmptyState from 'rela-components/components/feedback/RlEmptyState.vue'
 import RlStatusRegion from 'rela-components/components/feedback/RlStatusRegion.vue'
 import RlKbd from 'rela-components/components/data/RlKbd.vue'
 import RlTable from 'rela-components/components/table/RlTable.vue'
+import RlBusyIndicator, {
+  type BusyIndicatorEntry,
+} from 'rela-components/components/feedback/RlBusyIndicator.vue'
 import type { SortClickEvent, TableColumn } from 'rela-components/components/table/types'
 import { listColumnOf, nameColumn, toTableColumns, toTableNameColumn } from './tableColumns'
 import { fromPageQuery } from '@/utils/pageContext'
@@ -492,6 +496,15 @@ const entityType = computed(() => {
   return schemaStore.getEntityType(listConfig.value.entity)
 })
 
+// The channel type of the list's busy column (TKT-TU3XH4), if it has one.
+// The load check allows at most one busy column per list.
+const busyType = computed(() => listConfig.value?.columns?.find((c) => c.busy)?.busy)
+
+/** The row's busy channels of the busy column's type, for the indicator. */
+function busyEntries(entity: Entity): BusyIndicatorEntry[] {
+  return busyType.value ? toBusyEntries(entity._busy, busyType.value) : []
+}
+
 // `group_by:` splits the rows into sections; see useListGrouping.
 const groupBy = computed(() => listConfig.value?.group_by)
 const grouping = useListGrouping({
@@ -616,6 +629,12 @@ const queryParams = computed((): ListParams => {
     params.world = worldParam.value
   }
 
+  // A busy column (TKT-TU3XH4) asks each row for its busy channels of the
+  // column's type. Here rather than in listBaseParams, so the sidebar
+  // flyout, which shows no busy column, does not pay for the busy read. The
+  // list query, the grouped loader and the live path all read these params.
+  if (busyType.value) params.busy = busyType.value
+
   Object.assign(params, tabScope.params.value)
 
   return params
@@ -720,8 +739,15 @@ const visibleListColumns = computed(() => {
   const columns = listConfig.value?.columns ?? []
   const grouping = groupBy.value
   if (!grouping || grouping.buckets) return columns
-  if (grouping.relation) return columns.filter((column) => column.relation !== grouping.relation)
-  return columns.filter((column) => column.property !== grouping.property)
+  // The first column is the title, which toTableColumns takes off. Keep it
+  // in place and filter only the rest: filtering it out would make the next
+  // column the title, and that column would be sliced away unseen.
+  const [title, ...rest] = columns
+  if (!title) return columns
+  const kept = grouping.relation
+    ? rest.filter((column) => column.relation !== grouping.relation)
+    : rest.filter((column) => column.property !== grouping.property)
+  return [title, ...kept]
 })
 
 /**
@@ -746,6 +772,7 @@ const tableColumns = computed<TableColumn[]>(() =>
       const listColumn = listColumnOf(column)
       if (!listColumn) return true
       const entity = item as Entity
+      if (listColumn.busy) return busyEntries(entity).length === 0
       if (isCellInaccessible(entity, listColumn)) return false
       return getFormattedCellValue(entity, listColumn) === ''
     },
@@ -755,11 +782,15 @@ const tableColumns = computed<TableColumn[]>(() =>
      *
      * An enum badge earns the space and a date does not: the badge is the
      * state you scan the list for, while the rest of the row is in the panel
-     * already. A face column is that kind of state too. Derived from the widget hint rather than from config, because
-     * `ListColumn` has no way to say it — an operator-facing `primary:` is
-     * the extensibility pass, not this one.
+     * already. A face column is that kind of state too, and so is a busy
+     * column: whether someone works on a row now is what a reader scans the
+     * list for. In the compressed layout an empty busy cell keeps its slot,
+     * as any empty primary cell does, so the badges stay aligned. Derived
+     * from the widget hint rather than from config, because `ListColumn` has
+     * no way to say it — an operator-facing `primary:` is the extensibility
+     * pass, not this one.
      */
-    primary: !!listColumnOf(column)?.face || isEnumColumn(column),
+    primary: !!listColumnOf(column)?.face || !!listColumnOf(column)?.busy || isEnumColumn(column),
   })),
 )
 
@@ -1259,8 +1290,11 @@ function faceLabel(entity: Entity): string {
 
 function getFormattedCellValue(
   entity: Entity,
-  column: { property?: string; relation?: string; direction?: 'outgoing' | 'incoming'; face?: boolean },
+  column: { property?: string; relation?: string; direction?: 'outgoing' | 'incoming'; face?: boolean; busy?: string },
 ): string {
+  // A busy cell renders an indicator, never text: no path prints the
+  // channel type name as a value.
+  if (column.busy) return ''
   // For relation columns, resolve IDs to titles using included entities.
   // Outgoing edges are serialized under the relation type; incoming edges
   // under the relation's INVERSE key (matching the backend serializer, see
@@ -1567,8 +1601,12 @@ watch(searchQuery, () => {
           value, never the plain string `column.field` would cover.
         -->
         <template #cell="{ item, column }">
+          <RlBusyIndicator
+            v-if="listColumnOf(column!)?.busy"
+            :entries="busyEntries(item as Entity)"
+          />
           <span
-            v-if="listColumnOf(column!) && isCellInaccessible(item as Entity, listColumnOf(column!)!)"
+            v-else-if="listColumnOf(column!) && isCellInaccessible(item as Entity, listColumnOf(column!)!)"
             class="inaccessible-cell"
             :title="t('list.inaccessible')"
           >🔒</span>

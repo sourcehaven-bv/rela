@@ -573,8 +573,8 @@ func TestConfigure_ChannelsAgainstRealtime(t *testing.T) {
 }
 
 // TestConfigure_BusyFieldAgainstRealtime pins that a Configure save checks
-// a kanban busy field against realtime.yaml, also without a channels:
-// section (TKT-21G6JS).
+// a kanban busy field (TKT-21G6JS) and a list busy column (TKT-TU3XH4)
+// against realtime.yaml, also without a channels: section.
 func TestConfigure_BusyFieldAgainstRealtime(t *testing.T) {
 	srv, dir := configServer(t)
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "realtime.yaml"), []byte(cfgRealtime), 0o644))
@@ -588,6 +588,14 @@ func TestConfigure_BusyFieldAgainstRealtime(t *testing.T) {
 	require.Len(t, verr.Problems, 1)
 	require.Contains(t, verr.Problems[0],
 		`data-entry.yaml: kanban "board": card.fields[0]: realtime.yaml declares no channel type "nope"`)
+
+	list := cfgDataEntry + "lists:\n  tasks:\n    entity_type: task\n" +
+		"    columns: [{ property: title }, { busy: nope }]\n"
+	_, err = host.Validate([]byte(cfgSchema), []byte(list))
+	require.ErrorAs(t, err, &verr)
+	require.Len(t, verr.Problems, 1)
+	require.Contains(t, verr.Problems[0],
+		`data-entry.yaml: list "tasks": column[1]: realtime.yaml declares no channel type "nope"`)
 }
 
 // TestConfigure_DeprecatedDataEntry pins that the Configure preview reports

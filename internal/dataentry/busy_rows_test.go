@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -17,6 +18,7 @@ import (
 	v1 "github.com/Sourcehaven-BV/rela/internal/apiwire/v1"
 	"github.com/Sourcehaven-BV/rela/internal/channels"
 	"github.com/Sourcehaven-BV/rela/internal/channels/filechannels"
+	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/filelock"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
@@ -520,4 +522,41 @@ func seedBusyPages(t *testing.T, n int) *busyEnv {
 		e.seedChannel(t, channels.Anchor{ID: fmt.Sprintf("PAGE-%d", 100+i), Face: face(i)}, "facerun", time.Now())
 	}
 	return e
+}
+
+// TestListBusy_ListIDScoped pins AC 9 of TKT-TU3XH4: a list view's request
+// carries list_id, and the list's `condition:` bounds the busy read. A row
+// the list drops is in neither the response nor the busy read's anchors.
+func TestListBusy_ListIDScoped(t *testing.T) {
+	e := newBusyEnv(t, busyPolicy(), func(app *App) {
+		seedEntity(app, ownedTicket("TKT-1"))
+		bobs := ownedTicket("TKT-2")
+		bobs.Properties["owner"] = "bob"
+		seedEntity(app, bobs)
+		app.State().Cfg.Lists = map[string]dataentryconfig.List{"mine": {
+			EntityType: "ticket",
+			Columns:    []dataentryconfig.ListColumn{{Property: "title"}, {Busy: "instant"}},
+			Condition:  "entity.owner == 'alice'",
+		}}
+	}, nil)
+	wireRealViewConditions(t, e.app)
+	e.seedChannel(t, channels.Anchor{ID: "TKT-1"}, "instant", time.Now())
+	e.seedChannel(t, channels.Anchor{ID: "TKT-2"}, "instant", time.Now())
+
+	resp, body := e.list(t, "alice", "/api/v1/tickets?list_id=mine&busy=instant")
+	got := busyOf(resp)
+	require.Len(t, got, 1, body)
+	require.Len(t, got["TKT-1"], 1)
+	require.NotContains(t, body, "TKT-2")
+	e.chans.mu.Lock()
+	anchors := slices.Clone(e.chans.anchors)
+	e.chans.mu.Unlock()
+	require.Equal(t, []channels.Anchor{{ID: "TKT-1"}}, anchors, "the busy read saw only the served row")
+
+	// Control: without list_id both rows are served and read.
+	resp, _ = e.list(t, "alice", "/api/v1/tickets?busy=instant")
+	require.Len(t, busyOf(resp), 2)
+	e.chans.mu.Lock()
+	defer e.chans.mu.Unlock()
+	require.Len(t, e.chans.anchors, 2)
 }

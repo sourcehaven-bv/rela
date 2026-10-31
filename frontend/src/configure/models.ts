@@ -512,6 +512,10 @@ export interface ColumnModel {
   label: string
   sortable: boolean
   link: string
+  /** The channel type of a busy column (TKT-TU3XH4), or ''. */
+  busy: string
+  /** Whether this is a face column. */
+  face: boolean
 }
 
 export interface ListModel {
@@ -682,7 +686,8 @@ export function relationsOfType(
   })
 }
 
-function columnModel(item: TreeMap, index: number): ColumnModel {
+/** Reads one list column of the screens tree. */
+export function columnModel(item: TreeMap, index: number): ColumnModel {
   return {
     index,
     property: str(get(item, 'property')) ?? '',
@@ -690,6 +695,8 @@ function columnModel(item: TreeMap, index: number): ColumnModel {
     label: str(get(item, 'label')) ?? '',
     sortable: bool(get(item, 'sortable')),
     link: str(get(item, 'link')) ?? '',
+    busy: str(get(item, 'busy')) ?? '',
+    face: bool(get(item, 'face')),
   }
 }
 
@@ -698,7 +705,48 @@ function columnsOf(list: TreeValue | undefined): ColumnModel[] {
 }
 
 export function columnTitle(c: ColumnModel): string {
-  return c.label || c.property || c.relation || 'column'
+  return c.label || c.property || c.relation || c.busy || (c.face ? 'face' : 'column')
+}
+
+/**
+ * What a column shows, as its source text: the property or relation, else
+ * `busy: <type>` for a busy column, else `face` for a face column.
+ */
+export function columnSource(c: ColumnModel): string {
+  if (c.property || c.relation) return c.property || c.relation
+  if (c.busy) return `busy: ${c.busy}`
+  return c.face ? 'face' : ''
+}
+
+/**
+ * Whether people can sort by the column. The list sorts only by a property,
+ * so a relation, busy or face column offers no sort; the load also refuses
+ * `sortable: true` on a busy column.
+ */
+export function canSortColumn(c: ColumnModel): boolean {
+  return !!c.property
+}
+
+/** Whether order would put a busy column first, which the load refuses. */
+function busyFirst(order: ColumnModel[]): boolean {
+  return !!order[0]?.busy
+}
+
+/**
+ * Whether moving the column at index `from` to end at index `to` keeps a
+ * busy column out of the first place, which is the row title.
+ */
+export function columnMoveAllowed(rows: ColumnModel[], from: number, to: number): boolean {
+  const order = [...rows]
+  const [moved] = order.splice(from, 1)
+  if (!moved) return false
+  order.splice(to, 0, moved)
+  return !busyFirst(order)
+}
+
+/** Whether removing the column at index keeps a busy column out of the first place. */
+export function columnRemoveAllowed(rows: ColumnModel[], index: number): boolean {
+  return !busyFirst(rows.filter((_, i) => i !== index))
 }
 
 export function listModel(dataEntry: TreeValue | undefined, name: string): ListModel | undefined {

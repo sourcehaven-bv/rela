@@ -71,6 +71,8 @@ func TestCounts(t *testing.T) {
 	require.True(t, Counts(Message{TriggeredBy: "reminder:room/x"}))
 	require.False(t, Counts(Message{Removed: &Removal{}}))
 	require.False(t, Counts(Message{TriggeredBy: SessionMarker + "room"}))
+	require.False(t, Counts(Message{NoUnread: true}), "no unread")
+	require.False(t, Counts(Message{NoUnread: true, Removed: &Removal{}}), "no unread removed")
 }
 
 func TestLifecycleAt(t *testing.T) {

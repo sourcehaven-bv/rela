@@ -170,13 +170,17 @@ type doc struct {
 	TriggeredBy  string             `json:"triggered_by,omitempty"`
 	MovedSession bool               `json:"moved_session,omitempty"`
 	Mentions     []channels.Mention `json:"mentions,omitempty"`
+	// NoUnread round-trips [channels.Message.NoUnread]. Every message
+	// UPDATE recomputes the counts column from the round-tripped doc, so a
+	// dropped field would make the row count again.
+	NoUnread bool `json:"no_unread,omitempty"`
 }
 
 func docOf(m channels.Message) string {
 	return mustJSON(doc{
 		Type: m.Type, Author: m.Author, At: m.At, Props: m.Props, EditedAt: m.EditedAt,
 		Removed: m.Removed, Action: m.Action, SchemaHash: m.SchemaHash, TriggeredBy: m.TriggeredBy,
-		MovedSession: m.MovedSession, Mentions: m.Mentions,
+		MovedSession: m.MovedSession, Mentions: m.Mentions, NoUnread: m.NoUnread,
 	})
 }
 
@@ -201,7 +205,7 @@ func scanMessage(r interface{ Scan(...any) error }) (channels.Message, error) {
 		return m, fmt.Errorf("message %d has a damaged doc: %w", m.Seq, err)
 	}
 	m.Type, m.Author, m.Props, m.SchemaHash, m.TriggeredBy = d.Type, d.Author, d.Props, d.SchemaHash, d.TriggeredBy
-	m.MovedSession, m.Mentions = d.MovedSession, d.Mentions
+	m.MovedSession, m.Mentions, m.NoUnread = d.MovedSession, d.Mentions, d.NoUnread
 	m.At, m.EditedAt = utc(d.At), utc(d.EditedAt)
 	m.Removed, m.Action = d.Removed, d.Action
 	if m.Removed != nil {
@@ -468,7 +472,7 @@ func (s *Store) Append(ctx context.Context, k channels.Key, nm channels.NewMessa
 		out = channels.Message{
 			Seq: r.c.LastSeq + 1, Rev: rev, Type: nm.Type, Author: nm.Author, At: nm.At, Props: nm.Props,
 			ReplyTo: nm.ReplyTo, SchemaHash: nm.SchemaHash, TriggeredBy: nm.TriggeredBy, MovedSession: moved,
-			Mentions: nm.Mentions, CreatedChannel: created,
+			Mentions: nm.Mentions, NoUnread: nm.NoUnread, CreatedChannel: created,
 		}
 		rev, err = insertMessage(ctx, q, r.id, out)
 		if err != nil {

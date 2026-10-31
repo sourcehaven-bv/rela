@@ -229,6 +229,13 @@ navigation:
 		{"add a calendar", de + "calendars:\n  due:\n    sources: [{entity_type: ticket, date: due}]\n", nil},
 		{"add a timeline", de + "gantts:\n  plan: {hierarchy: [contains]}\n", nil},
 		{"set a message type display", de + "channels:\n  run:\n    messages:\n      claim: {display: hidden}\n", nil},
+		{"add a busy column", strings.Replace(de, "      - property: title\n", "      - property: title\n      - busy: run\n", 1), nil},
+		{"add a busy column to a dashboard card", de + "dashboard:\n  cards:\n    - title: T\n      query: type:ticket\n" +
+			"      display: table\n      columns: [{property: title}, {busy: run}]\n",
+			[]string{"dashboard.cards.0.columns.1.busy added"}},
+		{"add a busy column to a named dashboard card", de + "dashboards:\n  ops:\n    cards:\n      - title: T\n" +
+			"        query: type:ticket\n        display: table\n        columns: [{property: title}, {busy: run}]\n",
+			[]string{"dashboards.ops.cards.0.columns.1.busy added"}},
 		{"set the app logo injection", strings.Replace(de, "  name: Tickets\n", "  name: Tickets\n  disable_custom_injection: false\n", 1), []string{"app.disable_custom_injection added"}},
 	}
 	before := treeOf(t, de)

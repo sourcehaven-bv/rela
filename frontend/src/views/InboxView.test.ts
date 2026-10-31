@@ -140,7 +140,9 @@ describe('InboxView', () => {
     const [mention] = section(w, 'mentions')
     expect(mention!.text()).toContain('bob mentioned you')
     expect(mention!.text()).toContain('Fix login')
-    expect(mention!.find('a').attributes('href')).toBe('/entity/ticket/TKT-12?channel=case%2F')
+    expect(mention!.find('a').attributes('href')).toBe(
+      '/entity/ticket/TKT-12?channel=case%2F&seq=7'
+    )
 
     const [unread] = section(w, 'unread')
     expect(unread!.text()).toContain('Planning')
@@ -148,6 +150,31 @@ describe('InboxView', () => {
       '/entity/ticket/TKT-1%40public?channel=topic%2Fn1'
     )
     expect(subs.map((s) => s.path)).toEqual(['/api/v1/_inbox'])
+  })
+
+  it('mention and reply rows link to their seq', async () => {
+    // TKT-O6RC8Z AC 9: a mention or reply row opens the channel at its
+    // message; waiting and unread rows keep their plain channel link.
+    const base = inbox()
+    api.getInbox.mockResolvedValue(
+      inbox({
+        mentions: [
+          ...base.mentions!,
+          { ...base.mentions![0]!, kind: 'reply', channel: chan({ anchor: 'TKT-13' }), seq: 8 },
+        ],
+        mention_count: 2,
+      })
+    )
+    const w = await mountView()
+    const rows = section(w, 'mentions')
+    expect(rows.map((r) => r.find('a').attributes('href'))).toEqual([
+      '/entity/ticket/TKT-12?channel=case%2F&seq=7',
+      '/entity/ticket/TKT-13?channel=case%2F&seq=8',
+    ])
+    const [waiting] = section(w, 'waiting')
+    expect(waiting!.find('a').attributes('href')).not.toContain('seq=')
+    const [unread] = section(w, 'unread')
+    expect(unread!.find('a').attributes('href')).not.toContain('seq=')
   })
 
   it('shows the empty state of each section', async () => {

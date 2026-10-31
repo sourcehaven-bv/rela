@@ -227,10 +227,52 @@ client_baselines:
 | `rate` | Posts per identity, such as `10/m`. It may only lower the limit. |
 | `actions` | Buttons on a message, each gated by `roles` or a `permission`. An action may have a `promote_to`. Only for `log` messages. The names `edit`, `delete`, `remove` and `release` are reserved. See [Actions and promote](#actions-and-promote). |
 | `choices` | Reply buttons for the options in a list property. Only for `log` messages. See [Choices](#choices). |
+| `unread` | Default `true`. `unread: false` keeps the type's messages out of every unread count and out of the inbox's unread channels. Mentions and replies in them still reach the inbox. To keep a ref property from mentioning anyone, use `notify: false` on it. Not allowed on a signal type. See [Messages that do not count as unread](#messages-that-do-not-count-as-unread). |
 | `decision_button` | How the type's decision buttons look: `confirm` and `style`. Applies to the type's button and, for each key a preset does not set, to the type's preset buttons. Does not affect actions, choice buttons or the composer. Only on a `log` type in a channel type with a `session`. See "Button options" under [Sessions](#sessions). |
 
 Labels are authored, never derived: rela shows a name as written when no
 `label` is given.
+
+### Messages that do not count as unread
+
+Some message types are written by an agent for an agent, such as a
+runner's progress notes or its claim on a worktree. Without `unread:
+false`, each of them makes the channel unread for every reader. In this
+example only `ask` counts:
+
+```yaml
+version: 1
+channel_types:
+  run:
+    attach_to: [ticket]
+    roles:
+      member: { from: attached }
+    message_types:
+      ask:
+        properties: { body: { type: markdown } }
+        post: [member]
+      claim:
+        properties: { worktree: { type: string } }
+        post: [member]
+        unread: false
+      resume:
+        properties: { worktree: { type: string } }
+        post: [member]
+        unread: false
+      progress:
+        properties: { body: { type: markdown } }
+        post: [member]
+        unread: false
+```
+
+`unread` must be `true` or `false`, unquoted. A quoted value such as
+`"false"` is refused. An unquoted `yes`, `no`, `on`, `off`, `y` or `n` is
+refused too, as for `confirm`. A message keeps the value its type had
+when it was posted, so a change applies from the next post. Messages that
+already count keep counting until you read them.
+
+To hide or fold these types in the web app as well, set `display` in
+`data-entry.yaml`; see "Quiet message types" in the data-entry guide.
 
 ### List properties
 
@@ -1962,7 +2004,8 @@ channel is archived."; neither has a composer.
 Message types that only an agent or a script needs, such as a runner's
 progress notes, can be folded into one line or hidden in the web app with
 `display` in `data-entry.yaml`. See "Quiet message types" in the
-data-entry guide.
+data-entry guide. Set `unread: false` on the same types in `realtime.yaml`,
+so they do not make the channel unread either.
 
 On a channel type with a session, a header between the title and the
 messages shows the session's label and its states, in the order the file
@@ -2154,7 +2197,8 @@ Field order, labels and widgets come from the `channels:` block of
 ## Busy indicator
 
 A board can show which cards someone works on now, such as an agent that
-plans a ticket. A card is busy while a channel on its entity has a session
+plans a ticket, and a list can show the same for its rows. A card or row is
+busy while a channel on its entity has a session
 in a state with status `working`. The indicator shows pulsing dots, the
 state's label and how long the session has been in that state, such as
 "Planning · 3h". A screen reader hears the channel type, the state and the
@@ -2163,8 +2207,9 @@ channels the card shows the one longest in its state, the likeliest to
 have stalled, and "+N". With a reduced-motion setting the dots are
 replaced by a still icon.
 
-Turn it on per board with a `busy:` card field in `data-entry.yaml`. It
-names a channel type; see the kanban section of the data-entry guide.
+Turn it on per board with a `busy:` card field in `data-entry.yaml`, or
+per list with a `busy:` column. Each names a channel type; see "Busy
+cards" and "Busy column example" in the data-entry guide.
 
 ```yaml
 kanbans:
@@ -2180,6 +2225,23 @@ kanbans:
       fields:
         - busy: run
 ```
+
+A list takes a column entry instead. It may not be the first column, which
+is the row title:
+
+```yaml
+lists:
+  tickets:
+    entity_type: ticket
+    columns:
+      - property: title
+        link: detail
+      - busy: run
+        label: Agent
+```
+
+The rest of this section says "board" and "card"; a list and its rows work
+the same way, except where "When it updates" says otherwise.
 
 **Which states count.** A state counts when its status reads `working`,
 whether you declare `status: working` or it is the default. This is the
@@ -2285,8 +2347,13 @@ process reaches the board depends on the backend:
 | PostgreSQL | Live when the transition has outputs: the server hears the entity write. Otherwise within about 14 seconds, on the board's periodic safety check. |
 | SQLite | Not possible while rela-server runs, because only one process may open the project. Agents use remote MCP, which runs inside rela-server. |
 
-A list view has no busy column yet (TKT-TU3XH4). The API answers for any
-list; see `?busy=` in the data-entry API reference.
+A list updates the same way, for the rows it watches. A paged list
+watches the page on screen. A grouped list watches its first 100 rows, as
+a board does. A list with a search term does not update live, because a
+searched list has no live subscription: its indicators keep counting
+minutes but change state only on the next refetch, such as a reload or a
+change of page or filter. The API answers for any list; see `?busy=` in
+the data-entry API reference.
 
 ## HTTP API
 
@@ -2760,8 +2827,15 @@ marker and is one of these:
 | A session notice | No |
 | A removed message | No. It stops counting as soon as it is removed |
 | A signal (`persist: ephemeral`) | No. A signal is never stored |
+| A message of a type with `unread: false` | No |
 
 An edit does not make a message unread again.
+
+`unread: false` applies to messages posted after the change: rela stores
+the choice on each message when it is posted. Each process decides from
+the configuration it has loaded, so while a new `realtime.yaml` loads, the
+web server, an MCP process and the CLI can briefly store posts of one type
+with different choices.
 
 **When a marker moves.** These move your marker:
 

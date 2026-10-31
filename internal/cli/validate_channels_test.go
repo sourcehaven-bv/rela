@@ -63,6 +63,38 @@ func TestValidate_ChannelsAgainstRealtime(t *testing.T) {
 	}, true), "an earlier failure skips the check and stays reported")
 }
 
+// TestValidate_HiddenCountsUnread pins the case "hidden type counts as
+// unread" (TKT-O6RC8Z AC 8): `rela validate` prints the warning and does
+// not fail, and `unread: false` in realtime.yaml silences it.
+func TestValidate_HiddenCountsUnread(t *testing.T) {
+	root := seedProject(t)
+	check := func() (failed bool, out string) {
+		t.Helper()
+		result, err := projectsetup.Validate(context.Background(), root)
+		require.NoError(t, err)
+		result.DataEntryValid = true
+		out, _ = captureStdout(t, func() error {
+			failed = reportRealtimeValidation(context.Background(), result, false)
+			return nil
+		})
+		return failed, out
+	}
+	const want = "channels.room.messages.text.display: hidden, but realtime.yaml counts text as unread; " +
+		"set unread: false on channel_types.room.message_types.text"
+	writeProjectFile(t, root, "data-entry.yaml",
+		"version: \"1.0\"\nchannels:\n  room:\n    messages:\n      text:\n        display: hidden\n")
+	writeProjectFile(t, root, "realtime.yaml", stdioRealtimeYAML)
+	failed, out := check()
+	require.False(t, failed, "a hidden counting type is a warning: %s", out)
+	require.Contains(t, out, want)
+
+	writeProjectFile(t, root, "realtime.yaml", strings.Replace(stdioRealtimeYAML, "        post: [member]\n",
+		"        post: [member]\n        unread: false\n", 1))
+	failed, out = check()
+	require.False(t, failed, out)
+	require.NotContains(t, out, "counts text as unread")
+}
+
 // TestValidate_BusyFieldAgainstRealtime pins that `rela validate` checks a
 // kanban busy field against realtime.yaml in a project without a channels:
 // section (TKT-21G6JS).
@@ -94,6 +126,35 @@ func TestValidate_BusyFieldAgainstRealtime(t *testing.T) {
 	failed, out = check()
 	require.True(t, failed, out)
 	require.Contains(t, out, "channel type room declares no session")
+}
+
+// TestValidate_BusyListColumnWithoutChannels pins that `rela validate`
+// checks a list busy column against realtime.yaml in a project without a
+// channels: section and without a kanban busy field (TKT-TU3XH4).
+func TestValidate_BusyListColumnWithoutChannels(t *testing.T) {
+	root := seedProject(t)
+	check := func() (failed bool, out string) {
+		t.Helper()
+		result, err := projectsetup.Validate(context.Background(), root)
+		require.NoError(t, err)
+		result.DataEntryValid = true
+		out, _ = captureStdout(t, func() error {
+			failed = reportRealtimeValidation(context.Background(), result, false)
+			return nil
+		})
+		return failed, out
+	}
+	list := "version: \"1.0\"\nlists:\n  items:\n    entity_type: item\n" +
+		"    columns: [{ property: title }, { busy: %s }]\n"
+	writeProjectFile(t, root, "data-entry.yaml", fmt.Sprintf(list, "nope"))
+	failed, out := check()
+	require.False(t, failed, "realtime off is a warning: %s", out)
+	require.Contains(t, out, "this busy column shows nothing")
+
+	writeProjectFile(t, root, "realtime.yaml", stdioRealtimeYAML)
+	failed, out = check()
+	require.True(t, failed, out)
+	require.Contains(t, out, `list "items": column[1]: realtime.yaml declares no channel type "nope"`)
 }
 
 // TestValidate_RealtimeRunAsGrant pins that `rela validate` loads

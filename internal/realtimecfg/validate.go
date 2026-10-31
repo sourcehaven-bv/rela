@@ -18,6 +18,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/predicate"
 	"github.com/Sourcehaven-BV/rela/internal/predicatefns"
 	"github.com/Sourcehaven-BV/rela/internal/realtimelimits"
+	"github.com/Sourcehaven-BV/rela/internal/yamlscalar"
 )
 
 // namePattern is the grammar of channel type, message type, role, action and
@@ -402,6 +403,13 @@ func (v *validator) messageType(key, name string, raw *rawMessageType, ct *Chann
 	default:
 		v.add(key+".persist", fmt.Sprintf("must be log or ephemeral, got %q", raw.Persist))
 	}
+	if raw.Unread.set() {
+		noUnread, problem := unreadOf(raw.Unread.node, mt.Persist)
+		if problem != "" {
+			v.add(key+".unread", problem)
+		}
+		mt.NoUnread = noUnread
+	}
 
 	if len(raw.Properties) > realtimelimits.MaxMessageProperties {
 		v.add(key+".properties", fmt.Sprintf("at most %d properties", realtimelimits.MaxMessageProperties))
@@ -446,6 +454,28 @@ func (v *validator) messageType(key, name string, raw *rawMessageType, ct *Chann
 		}
 	}
 	return mt
+}
+
+// unreadOf reads a set `unread:` on a type with the given persist. It
+// answers NoUnread, and problem says why the value is refused. Only a
+// YAML boolean is taken: a quoted or `!!str` value is text, and an
+// unquoted yes, no, on or off is refused, as for `confirm:`, so a YAML 1.1
+// spelling cannot read differently in another tool. A signal type may not
+// have the key at all.
+//
+// Nil: rejected. The caller passes a set node.
+func unreadOf(n *yaml.Node, persist Persist) (noUnread bool, problem string) {
+	if persist == PersistEphemeral {
+		return false, "a signal is never stored, so it never counts as unread"
+	}
+	if yamlscalar.PlainYAML11Bool(n) {
+		return false, fmt.Sprintf("%q is not a boolean; use true or false", strings.TrimSpace(n.Value))
+	}
+	var b bool
+	if n.Tag != "!!bool" || n.Decode(&b) != nil {
+		return false, "must be true or false"
+	}
+	return persist == PersistLog && !b, ""
 }
 
 func (v *validator) ttl(key, s string) time.Duration {

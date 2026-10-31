@@ -31,15 +31,16 @@ func (f *fakeRealtime) ChannelSchema() dataentryconfig.ChannelSchema { return f.
 type roomSchema struct{ types []string }
 
 func (s roomSchema) ChannelTypeNames() []string { return s.types }
-func (roomSchema) MessageTypeNames(string) []string {
-	return []string{"text"}
-}
 
-func (roomSchema) MessageProperties(_, mt string) []dataentryconfig.ChannelProperty {
+// MessageType: every channel type has the counting message type text.
+func (roomSchema) MessageType(_, mt string) (dataentryconfig.MessageFacts, bool) {
 	if mt != "text" {
-		return nil
+		return dataentryconfig.MessageFacts{}, false
 	}
-	return []dataentryconfig.ChannelProperty{{Name: "body", Type: "markdown", Required: true}}
+	return dataentryconfig.MessageFacts{
+		Properties:   []dataentryconfig.ChannelProperty{{Name: "body", Type: "markdown", Required: true}},
+		CountsUnread: true,
+	}, true
 }
 
 // BusyFacts: every declared type has a session and attaches to tickets.
@@ -268,6 +269,50 @@ func TestSetRealtime_ChecksBusyField(t *testing.T) {
 	}
 }
 
+// busyList is a ticket list whose second column shows the busy state of
+// channelType (TKT-TU3XH4).
+func busyList(channelType string) map[string]dataentryconfig.List {
+	return map[string]dataentryconfig.List{"tickets": {
+		EntityType: "ticket",
+		Columns:    []dataentryconfig.ListColumn{{Property: "title"}, {Busy: channelType}},
+	}}
+}
+
+// SetRealtime checks a list busy column without a channels: section and
+// without a kanban busy field (TKT-TU3XH4): it refuses an undeclared
+// channel type, and with realtime off it logs a warning and accepts the
+// config.
+func TestSetRealtime_BusyListColumn(t *testing.T) {
+	app, _ := setupReloadTestApp(t)
+	app.State().Cfg.Lists = busyList("nope")
+	err := SetRealtime(app, &fakeRealtime{schema: roomSchema{types: []string{"run"}}})
+	if err == nil || !strings.Contains(err.Error(), `list "tickets": column[1]: realtime.yaml declares no channel type "nope"`) {
+		t.Fatalf("SetRealtime = %v; want the undeclared busy type refused", err)
+	}
+
+	logs := captureWarnings(t)
+	app.State().Cfg.Lists = busyList("run")
+	if err := SetRealtime(app, &fakeRealtime{}); err != nil {
+		t.Fatalf("realtime off: %v; want a warning only", err)
+	}
+	if got := logs.String(); !strings.Contains(got, "this busy column shows nothing") {
+		t.Fatalf("logs = %s; want the realtime-off warning for the busy column", got)
+	}
+}
+
+// busyListYAML is testReloadConfigYAML with a busy column of channelType
+// added to its tickets list.
+func busyListYAML(t *testing.T, channelType string) string {
+	t.Helper()
+	const end = "      - property: title\n        label: \"Title\"\nnavigation:"
+	out := strings.Replace(testReloadConfigYAML, end,
+		"      - property: title\n        label: \"Title\"\n      - busy: "+channelType+"\nnavigation:", 1)
+	if out == testReloadConfigYAML {
+		t.Fatal("testReloadConfigYAML has no tickets list to add a busy column to")
+	}
+	return out
+}
+
 // busyKanbanYAML is a data-entry.yaml kanban block whose card shows the
 // busy state of channelType.
 func busyKanbanYAML(channelType string) string {
@@ -320,5 +365,27 @@ func TestReloadConfig_ChecksBusyField(t *testing.T) {
 	}
 	if got := app.Cfg().Kanbans["board"].Card.Fields; len(got) != 1 || got[0].Busy != "run" {
 		t.Fatalf("board card fields = %+v; want the busy field in force", got)
+	}
+
+	// A list busy column (TKT-TU3XH4) is checked the same way.
+	if ev := nextEvent(t, ch); ev.Name != "refresh" {
+		t.Fatalf("event = %s %s; want the refresh of the applied board", ev.Name, ev.Data)
+	}
+	_ = fs.WriteFile(path, []byte(busyListYAML(t, "nope")), 0o644)
+	if err := app.reloadConfig(); !errors.As(err, &ce) {
+		t.Fatalf("reloadConfig = %v; want a *configError for the list busy column", err)
+	}
+	if ev := nextEvent(t, ch); ev.Name != "config-error" || !strings.Contains(ev.Data, `column[1]`) {
+		t.Fatalf("event = %s %s", ev.Name, ev.Data)
+	}
+	if _, ok := app.Cfg().Kanbans["board"]; !ok {
+		t.Fatal("the refused list config replaced the last good config")
+	}
+	_ = fs.WriteFile(path, []byte(busyListYAML(t, "run")), 0o644)
+	if err := app.reloadConfig(); err != nil {
+		t.Fatalf("reloadConfig = %v; want the declared busy column accepted", err)
+	}
+	if got := app.Cfg().Lists["tickets"].Columns; len(got) != 2 || got[1].Busy != "run" {
+		t.Fatalf("tickets columns = %+v; want the busy column in force", got)
 	}
 }

@@ -45,7 +45,8 @@ export interface Channel {
 /**
  * Where the caller stopped reading a channel. seq is the highest message
  * seq read (0: opened, nothing read). unread counts the messages above it,
- * leaving out removed messages and session notices, and stops at 100.
+ * leaving out removed messages, session notices and messages of a type
+ * with `unread: false`, and stops at 100.
  */
 export interface ChannelRead {
   seq: number

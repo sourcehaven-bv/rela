@@ -221,6 +221,11 @@ func reminderStep(
 	listed channels.ReminderRecord, props map[string]any, now time.Time,
 ) channels.SessionStep {
 	listed = channels.NormReminder(listed)
+	// The load checks that the post type exists; the lookup stays nil-safe.
+	noUnread := false
+	if mt := ct.MessageTypes[r.PostType]; mt != nil {
+		noUnread = mt.NoUnread
+	}
 	step := channels.SessionStep{
 		Decide:     func(channels.Channel) (channels.SessionMove, bool) { return channels.SessionMove{}, false },
 		NoticeType: realtimecfg.SessionNoticeType, NoticeBy: systemAuthor(),
@@ -245,7 +250,7 @@ func reminderStep(
 		}
 		return channels.ReminderPost{
 			Name: r.Name, Record: channels.ReminderRecord{Since: rec.Since, Last: now, Count: rec.Count + 1},
-			Type: r.PostType, Props: props, TriggeredBy: reminderLabel(ct.Name, r.Name),
+			Type: r.PostType, Props: props, TriggeredBy: reminderLabel(ct.Name, r.Name), NoUnread: noUnread,
 		}, true
 	}
 	step.Due = func(next channels.Channel) channels.SessionSchedule {

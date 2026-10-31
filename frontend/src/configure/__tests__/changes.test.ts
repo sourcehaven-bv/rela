@@ -94,6 +94,28 @@ describe('describeChanges', () => {
   })
 })
 
+describe('busy column title in the review', () => {
+  // TKT-TU3XH4: an added or removed busy column is titled by its type.
+  it('titles an added and a removed busy column by its type', () => {
+    const base = snapshot()
+    const withBusy = clone(base.data_entry)
+    listAt(withBusy, ['lists', 'tickets', 'columns'])!.push(toTree({ busy: 'run' }) as never)
+    const added = describeChanges(
+      { schema: base.schema, dataEntry: base.data_entry },
+      { schema: base.schema, dataEntry: withBusy },
+      []
+    )
+    expect(added.flatMap((g) => g.items.map((i) => `${i.kind} ${i.label}`))).toEqual(['added Column run'])
+
+    const removed = describeChanges(
+      { schema: base.schema, dataEntry: withBusy },
+      { schema: base.schema, dataEntry: base.data_entry },
+      []
+    )
+    expect(removed.flatMap((g) => g.items.map((i) => `${i.kind} ${i.label}`))).toEqual(['removed Column run'])
+  })
+})
+
 describe('diffList', () => {
   it('matches items by their original index and spots a reorder', () => {
     const before = toTree([{ a: 1 }, { a: 2 }, { a: 3 }])

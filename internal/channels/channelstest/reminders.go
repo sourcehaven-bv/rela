@@ -22,6 +22,38 @@ var reminderTests = []conformanceTest{
 	{"SetSessionRemindRefusals", testSetSessionRemindRefusals},
 	{"SessionRemindersStored", testSessionRemindersStored},
 	{"SessionRemindersMoved", testSessionRemindersMoved},
+	{"ReminderNoUnread", testReminderNoUnread},
+}
+
+// testReminderNoUnread pins [channels.ReminderPost.NoUnread] (TKT-O6RC8Z):
+// a reminder posted through the session step with NoUnread is stored with
+// [channels.Message.NoUnread] and adds nothing to unread, while a counting
+// reminder adds one.
+func testReminderNoUnread(t *testing.T, h Harness) {
+	t.Helper()
+	s, ctx := h.Store, context.Background()
+	k := key("TKT-1", "room")
+	contained(t, s, k, dueAt(T0.Add(time.Hour)))
+	head, err := s.Head(ctx, k)
+	require.NoError(t, err)
+	setRead(t, s, k, readerAlice, head.LastSeq, T0)
+
+	remind := func(noUnread bool, at time.Time, n int64) {
+		t.Helper()
+		post := reminderPost(channels.ReminderRecord{Since: T0, Last: at, Count: n})
+		post.NoUnread = noUnread
+		_, serr := s.SetSession(ctx, k, at, remindStep(
+			func(channels.Channel) (channels.ReminderPost, bool) { return post, true }, dueAt(time.Time{})))
+		require.NoError(t, serr)
+	}
+	remind(true, T0.Add(time.Minute), 1)
+	got, err := s.Get(ctx, k, head.LastSeq+1)
+	require.NoError(t, err)
+	require.True(t, got.NoUnread, "the store keeps the flag")
+	require.Zero(t, reads(t, s, readerAlice, k)[k].Unread, "a non-counting reminder does not count")
+
+	remind(false, T0.Add(2*time.Minute), 2)
+	require.Equal(t, 1, reads(t, s, readerAlice, k)[k].Unread, "a counting reminder counts")
 }
 
 // reminderPost returns a post of the reminder status-update with rec.

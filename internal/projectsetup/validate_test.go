@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/migration"
 	"github.com/Sourcehaven-BV/rela/internal/projectsetup"
@@ -305,8 +306,21 @@ entities:
 	})
 }
 
-// TestCheckChannels pins that only a non-empty channels: section or a
-// kanban busy field is checked, and that realtime off makes it a warning.
+// noChannelTypes is a realtime configuration that declares no channel
+// type, so every busy field or column names an unknown type.
+type noChannelTypes struct{}
+
+func (noChannelTypes) ChannelTypeNames() []string { return nil }
+func (noChannelTypes) MessageType(string, string) (dataentryconfig.MessageFacts, bool) {
+	return dataentryconfig.MessageFacts{}, false
+}
+func (noChannelTypes) BusyFacts(string) (dataentryconfig.BusyFacts, bool) {
+	return dataentryconfig.BusyFacts{}, false
+}
+
+// TestCheckChannels pins that only a non-empty channels: section, a kanban
+// busy field or a list busy column is checked, and that realtime off makes
+// it a warning.
 func TestCheckChannels(t *testing.T) {
 	for _, data := range []string{
 		"", "version: \"1.0\"\n", "channels: {}\n", "channels: [broken",
@@ -322,6 +336,8 @@ func TestCheckChannels(t *testing.T) {
 	for _, data := range []string{
 		"channels:\n  room: {}\n",
 		"kanbans:\n  board:\n    entity_type: ticket\n    card:\n      fields: [{ busy: run }]\n",
+		// A list busy column alone (TKT-TU3XH4).
+		"lists:\n  all:\n    entity_type: ticket\n    columns: [{ property: title }, { busy: run }]\n",
 	} {
 		if !projectsetup.HasRealtimePresentation([]byte(data)) {
 			t.Fatalf("HasRealtimePresentation missed %q", data)
@@ -330,6 +346,14 @@ func TestCheckChannels(t *testing.T) {
 		if len(errs) != 0 || len(warnings) != 1 {
 			t.Fatalf("realtime off, %q: errs %v, warnings %v", data, errs, warnings)
 		}
+	}
+	// TKT-TU3XH4: a list busy column alone, with realtime on, is checked
+	// and its unknown type is an error.
+	list := "lists:\n  all:\n    entity_type: ticket\n    columns: [{ property: title }, { busy: nope }]\n"
+	errs, _ := projectsetup.CheckChannels([]byte(list), noChannelTypes{})
+	want := `list "all": column[1]: realtime.yaml declares no channel type "nope"`
+	if len(errs) != 1 || errs[0] != want {
+		t.Fatalf("CheckChannels(list) errs = %v, want [%s]", errs, want)
 	}
 }
 
