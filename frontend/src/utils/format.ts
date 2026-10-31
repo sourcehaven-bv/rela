@@ -5,7 +5,7 @@
 import { RRule } from 'rrule'
 import { TZDate } from '@date-fns/tz'
 import type { PropertyDef, EntityType } from '@/types'
-import { parseExternalRef } from '@/widgets/externalRef'
+import { parseExternalRef } from './externalRef'
 import { fileRefNames } from './fileRefs'
 import { intlLocale } from '@/i18n/locale'
 import { t } from '@/i18n'
