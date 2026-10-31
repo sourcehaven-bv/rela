@@ -98,7 +98,7 @@ func TestWorldParity_ComposedQueryBranchCarriesTheWorld(t *testing.T) {
 	p := stubProvider{res: acl.ReadQueryResult{Query: &store.GraphQuery{EntityType: "ticket", Faces: store.InWorld(store.TrivialScope())}}}
 
 	world := testWorld()
-	_, ok := listPushdown(context.Background(), p, spy, red.redact,
+	_, ok := listPushdown(context.Background(), p, spy, perRow(red.redact),
 		store.EntityQuery{Type: "ticket", Faces: store.InWorld(world)})
 	if !ok {
 		t.Fatal("pushdown declined a composable query")
@@ -136,7 +136,7 @@ func TestWorldParity_AllowAllBranchCarriesTheWorld(t *testing.T) {
 	p := stubProvider{res: acl.ReadQueryResult{AllowAll: true}}
 
 	world := testWorld()
-	_, ok := listPushdown(context.Background(), p, spy, red.redact,
+	_, ok := listPushdown(context.Background(), p, spy, perRow(red.redact),
 		store.EntityQuery{Type: "ticket", Faces: store.InWorld(world)})
 	if !ok {
 		t.Fatal("pushdown declined the AllowAll branch")
@@ -160,14 +160,14 @@ func TestWorldParity_BothBranchesAgree(t *testing.T) {
 	composedSpy := &worldCapturingSpy{}
 	red := &countingRedactor{}
 	composed := stubProvider{res: acl.ReadQueryResult{Query: &store.GraphQuery{EntityType: "ticket", Faces: store.InWorld(store.TrivialScope())}}}
-	if _, ok := listPushdown(context.Background(), composed, composedSpy, red.redact,
+	if _, ok := listPushdown(context.Background(), composed, composedSpy, perRow(red.redact),
 		store.EntityQuery{Type: "ticket", Faces: store.InWorld(world)}); !ok {
 		t.Fatal("composed branch declined")
 	}
 
 	allowSpy := &worldCapturingSpy{}
 	allow := stubProvider{res: acl.ReadQueryResult{AllowAll: true}}
-	if _, ok := listPushdown(context.Background(), allow, allowSpy, red.redact,
+	if _, ok := listPushdown(context.Background(), allow, allowSpy, perRow(red.redact),
 		store.EntityQuery{Type: "ticket", Faces: store.InWorld(world)}); !ok {
 		t.Fatal("AllowAll branch declined")
 	}
@@ -209,7 +209,7 @@ func TestWorldParity_DefaultWorldStaysDefault(t *testing.T) {
 	red := &countingRedactor{}
 	p := stubProvider{res: acl.ReadQueryResult{Query: &store.GraphQuery{EntityType: "ticket", Faces: store.InWorld(store.TrivialScope())}}}
 
-	if _, ok := listPushdown(context.Background(), p, spy, red.redact,
+	if _, ok := listPushdown(context.Background(), p, spy, perRow(red.redact),
 		store.EntityQuery{Type: "ticket", Faces: store.InWorld(store.TrivialScope())}); !ok {
 		t.Fatal("pushdown declined")
 	}

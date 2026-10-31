@@ -813,6 +813,25 @@ func (r lateGatedReader) Family(ctx context.Context, id string) (visibility.Fami
 	return fr.Family(ctx, id)
 }
 
+// headerResolver is the gated batch re-load the analyze checks use for the
+// ids they report.
+type headerResolver interface {
+	ResolveHeadersErr(ctx context.Context, refs []entity.Ref) (map[entity.Ref]visibility.ResolvedHeader, error)
+}
+
+// ResolveHeadersErr forwards to the live gated reader. Every reader
+// gatedScriptReader returns provides it; one that did not would be a wiring
+// bug, so it is refused rather than answered ungated.
+func (r lateGatedReader) ResolveHeadersErr(
+	ctx context.Context, refs []entity.Ref,
+) (map[entity.Ref]visibility.ResolvedHeader, error) {
+	hr, ok := r.reader().(headerResolver)
+	if !ok {
+		return nil, errors.New("dataentry: script reader has no ResolveHeadersErr")
+	}
+	return hr.ResolveHeadersErr(ctx, refs)
+}
+
 // EntityVersions forwards to the live gated reader, so a validation rule
 // reads history as an action does. A reader without history answers
 // store.ErrHistoryUnsupported, which the binding raises.
