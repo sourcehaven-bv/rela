@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -195,6 +196,38 @@ func TestRruleNext(t *testing.T) {
 			"2025-01-06",
 			"2025-01-20",
 		},
+		// A rule without DTSTART is anchored at the after date, so asking
+		// on an occurrence date returns the next occurrence.
+		{
+			"yearly without DTSTART, after is an occurrence",
+			"FREQ=YEARLY;BYMONTH=10;BYMONTHDAY=1",
+			"2025-10-01",
+			"2026-10-01",
+		},
+		{
+			"yearly without DTSTART, after is before the occurrence",
+			"FREQ=YEARLY;BYMONTH=10;BYMONTHDAY=1",
+			"2025-09-30",
+			"2025-10-01",
+		},
+		{
+			"DTSTART as property, after is an occurrence",
+			"FREQ=YEARLY;BYMONTH=10;BYMONTHDAY=1;DTSTART=20241001T000000Z",
+			"2025-10-01",
+			"2026-10-01",
+		},
+		{
+			"monthly on the 31st without DTSTART skips short months",
+			"FREQ=MONTHLY;BYMONTHDAY=31",
+			"2025-01-31",
+			"2025-03-31",
+		},
+		{
+			"DTSTART as separate line, after is an occurrence",
+			"DTSTART:20241001T000000Z\\nFREQ=YEARLY;BYMONTH=10;BYMONTHDAY=1",
+			"2025-10-01",
+			"2026-10-01",
+		},
 	}
 
 	for _, tt := range tests {
@@ -229,6 +262,35 @@ func TestRruleNextDefaultsToToday(t *testing.T) {
 	assert.NotEmpty(t, result)
 	// Result should be a valid date string
 	assert.Regexp(t, `^\d{4}-\d{2}-\d{2}$`, result)
+}
+
+// TestRruleNextOnTodaysOccurrence pins that a rule without DTSTART, asked
+// about today while today is an occurrence, returns the next occurrence and
+// not today. rrule-go defaults a missing DTSTART to time.Now(), which made
+// today's occurrence (at the current clock time) count as "after" midnight.
+func TestRruleNextOnTodaysOccurrence(t *testing.T) {
+	t.Parallel()
+	// rrule_next without an after date uses the local date.
+	now := time.Now()
+	today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
+	tomorrow := today.AddDate(0, 0, 1).Format(time.DateOnly)
+
+	for name, script := range map[string]string{
+		"explicit after": `rela.output(rela.rrule_next("FREQ=DAILY", "` + today.Format(time.DateOnly) + `"))`,
+		"default after":  `rela.output(rela.rrule_next("FREQ=DAILY"))`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			rt, buf := newDateTestRuntime(t)
+			defer rt.Close()
+
+			require.NoError(t, rt.RunString(script))
+
+			var result string
+			require.NoError(t, json.Unmarshal([]byte(buf.String()), &result))
+			assert.Equal(t, tomorrow, result)
+		})
+	}
 }
 
 func TestRruleNextExhausted(t *testing.T) {

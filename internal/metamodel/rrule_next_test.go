@@ -28,6 +28,12 @@ func TestNextRrule(t *testing.T) {
 			"DTSTART:20260818T000000Z\nFREQ=DAILY;INTERVAL=3",
 			"2026-08-21",
 		},
+		{
+			// An occurrence later on the after date itself is not later.
+			"DTSTART with a time of day",
+			"DTSTART:20250818T090000Z\nFREQ=YEARLY",
+			"2027-08-18",
+		},
 	}
 
 	for _, tc := range tests {
