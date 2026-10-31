@@ -330,6 +330,29 @@ every field it writes, and merges on a 412 (TKT-2VDVHF; API contract in
 - **Never write conflict markers.** An unmergeable body is reported. The editor
   then shows the other side's clean hunks with the user's lines in each
   conflicting region, so the user's next edit overwrites only those regions.
+- **A field whose save did not go through stays held** (BUG-SJURXLT):
+  refused as a conflict or failed, it keeps the user's value and its error
+  until the user edits or reverts it, or a later save of it goes through. A
+  later answer must not put the server value over it, and neither may a host
+  that reloads the entity: it keeps the fields `unsavedFields()` names on
+  screen (DynamicForm `loadEntity`, EntityDetail `applyView`).
+  `commitImmediately` reports a held field as an error, so the leave guard
+  asks before it is left behind.
+- **A body that their version already holds is rebased too.** When a 412's
+  refetch already contains the edit, nothing is written, but typing made
+  meanwhile is rebased onto their body like after a merged write.
+- **Within one save, each merge is against the version the last attempt was
+  checked against.** A second 412 that merged against the save's original
+  base would read the lines the first merge took in as a conflict.
+- **A body written in a form the editor does not show is rebased, not
+  forgotten.** When a merged body is written while the user keeps typing,
+  the next save rebases the editor text onto it (`contentRebase`); merging
+  against the old base would report a conflict with the tab's own write.
+- `useAutoSave.twoClients.prop.test.ts` runs two tabs against the fake under
+  `fc.scheduler()`, with failing, empty-412 and lost-answer faults. It checks
+  that no write overwrites a value its tab was not shown, that no tab loses
+  a value without showing it with an error, and that no conflict is
+  reported against a tab's own write.
 - **A snapshot without `_versions` saves unguarded** until its first save
   returns tokens. List-section rows are in that state today (TKT-MK9NJB), and
   so is every incoming relation list (TKT-E9WXPU).
