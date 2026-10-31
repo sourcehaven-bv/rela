@@ -233,6 +233,7 @@ export type ChromeTextKey =
   // Boards and tables
   | 'addSection'
   | 'draggableCard'
+  | 'moveSection'
   | 'moveRowHint'
   | 'subtasks'
   // Calendar
@@ -351,6 +352,7 @@ const CHROME_TEXT: Record<ChromeTextKey, string> = {
   noMatchingCommands: 'No matching commands',
   addSection: 'Add section',
   draggableCard: 'Draggable card',
+  moveSection: 'Drag to move',
   moveRowHint: 'Use the up and down arrow keys to move this row',
   subtasks: 'subtasks',
   continuesAfter: 'Continues on following days',

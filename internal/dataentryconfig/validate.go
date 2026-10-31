@@ -2308,6 +2308,31 @@ func validateKanbanColumnProperty(
 	return errs
 }
 
+// validateKanbanLayout checks the layout and card style values, and what a
+// wall cannot be combined with.
+func validateKanbanLayout(kanbanID string, kanban Kanban) []string {
+	var errs []string
+	switch kanban.Layout {
+	case "", LayoutWall:
+	default:
+		errs = append(errs, fmt.Sprintf("kanban %q: layout %q is not valid (valid: %s)", kanbanID, kanban.Layout, LayoutWall))
+	}
+	switch kanban.Card.Style {
+	case "", CardStyleNote:
+	default:
+		errs = append(errs, fmt.Sprintf(
+			"kanban %q: card.style %q is not valid (valid: %s)", kanbanID, kanban.Card.Style, CardStyleNote))
+	}
+	if kanban.Layout == LayoutWall && kanban.SwimlaneProperty != "" {
+		errs = append(errs, fmt.Sprintf("kanban %q: swimlanes are not supported with layout: wall", kanbanID))
+	}
+	// A plain wall has no columns; a list of them would be silently ignored.
+	if kanban.Layout == LayoutWall && kanban.ColumnProperty == "" && kanban.ColumnsFrom == nil && len(kanban.Columns) > 0 {
+		errs = append(errs, fmt.Sprintf("kanban %q: columns need column_property", kanbanID))
+	}
+	return errs
+}
+
 // validateKanbanColumnsFrom checks a relation-backed board (TKT-KJ3Q07).
 func validateKanbanColumnsFrom(kanbanID string, kanban Kanban, meta *metamodel.Metamodel) []string {
 	var errs []string
@@ -2393,10 +2418,14 @@ func validateKanbans(cfg *Config, meta *metamodel.Metamodel) []string {
 			continue
 		}
 
-		// Columns come from a relation or from an enum column_property.
+		errs = append(errs, validateKanbanLayout(kanbanID, kanban)...)
+
+		// Columns come from a relation or from an enum column_property. A
+		// wall may have neither: it is then one grid of all cards.
 		switch {
 		case kanban.ColumnsFrom != nil:
 			errs = append(errs, validateKanbanColumnsFrom(kanbanID, kanban, meta)...)
+		case kanban.ColumnProperty == "" && kanban.Layout == LayoutWall:
 		case kanban.ColumnProperty == "":
 			errs = append(errs, fmt.Sprintf("kanban %q: column_property is required", kanbanID))
 		default:

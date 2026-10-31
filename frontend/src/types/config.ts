@@ -483,6 +483,11 @@ export interface ViewSection {
 export interface KanbanConfig {
   entity: string
   title?: string
+  /**
+   * `wall` lays the cards out as a wrapping grid: one grid without columns,
+   * or with `columns_from` a pile of loose cards above the groups.
+   */
+  layout?: 'wall'
   /** Markdown rendered above the board. */
   header?: string
   /** Markdown rendered below the board. */
@@ -732,6 +737,8 @@ export interface KanbanCard {
   title: string
   subtitle?: string
   fields?: KanbanCardField[]
+  /** `note` draws the card as a sticky note without its id. */
+  style?: 'note'
 }
 
 export interface DashboardConfig {

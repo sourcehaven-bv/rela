@@ -28,5 +28,6 @@ export { PageTabsPage } from './page-tabs.page';
 export { SpacesPage } from './spaces.page';
 export { ConfigurePage } from './configure.page';
 export { RelationOrderPage } from './relation-order.page';
+export { KanbanWallPage } from './kanban-wall.page';
 export { PilesPage } from './piles.page';
 export { PresencePage, LeaseClient } from './presence.page';

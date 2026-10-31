@@ -36,8 +36,10 @@ const props = withDefaults(
      * `reorder` on `RlBoard`.
      */
     reorder?: boolean
+    /** Whether a card dropped on the middle of this one groups. See `group` on `RlBoard`. */
+    group?: boolean
   }>(),
-  { draggable: false, grabbed: false, reorder: false },
+  { draggable: false, grabbed: false, reorder: false, group: false },
 )
 
 const emit = defineEmits<{ grab: [item: T]; release: [] }>()
@@ -83,8 +85,9 @@ const { dragging } = useDraggableCard({
 
 const { edge } = useDropTargetCard({
   element,
-  enabled: toRef(() => props.reorder),
+  enabled: toRef(() => props.reorder || props.group),
   itemId: toRef(() => props.item.id),
+  group: toRef(() => props.group),
 })
 
 function onKeydown(event: KeyboardEvent) {
@@ -119,6 +122,7 @@ function onKeydown(event: KeyboardEvent) {
   <div
     ref="element"
     class="rl-board-card"
+    :data-item-id="item.id"
     :class="{
       'rl-board-card--draggable': draggable,
       'rl-board-card--dragging': dragging,
@@ -179,6 +183,32 @@ function onKeydown(event: KeyboardEvent) {
 }
 .rl-board-card--drop-top::before { top: -2px; }
 .rl-board-card--drop-bottom::before { bottom: -2px; }
+.rl-board-card--drop-left::before,
+.rl-board-card--drop-right::before {
+  content: '';
+  position: absolute;
+  inset-block: 0;
+  width: 3px;
+  border-radius: 1px;
+  background: var(--rl-color-accent);
+}
+.rl-board-card--drop-left::before { left: -7px; }
+.rl-board-card--drop-right::before { right: -7px; }
+.rl-board-card--drop-center {
+  outline: 2px dashed var(--rl-color-accent);
+  outline-offset: 3px;
+  transform: scale(1.06);
+  transition: transform var(--rl-duration-fast) var(--rl-ease);
+  animation: rl-card-wobble 0.6s ease-in-out infinite;
+  z-index: 1;
+}
+
+/* A drop here groups: the card leans toward the held one, so it reads as "join me". */
+@keyframes rl-card-wobble {
+  0%, 100% { transform: scale(1.06) rotate(0deg); }
+  25% { transform: scale(1.06) rotate(-1.5deg); }
+  75% { transform: scale(1.06) rotate(1.5deg); }
+}
 
 /* The keyboard equivalent of holding a card. */
 .rl-board-card--grabbed {
@@ -197,5 +227,6 @@ function onKeydown(event: KeyboardEvent) {
 
 @media (prefers-reduced-motion: reduce) {
   .rl-board-card { transition: none; }
+  .rl-board-card--drop-center { animation: none; transform: none; }
 }
 </style>
