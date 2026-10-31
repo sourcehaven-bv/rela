@@ -77,6 +77,7 @@ export type ChannelTextKey =
   | 'editMessage'
   | 'messageType'
   | 'cancelReply'
+  | 'cancelCompose'
   | 'required'
   | 'toSend'
   | 'toSave'
@@ -401,6 +402,7 @@ const CHANNEL_TEXT: Record<ChannelTextKey, string> = {
   editMessage: 'Edit message',
   messageType: 'Message type',
   cancelReply: 'Cancel reply',
+  cancelCompose: 'Cancel decision',
   required: 'Required.',
   toSend: 'to send',
   toSave: 'to save',

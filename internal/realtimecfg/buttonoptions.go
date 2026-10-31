@@ -170,15 +170,22 @@ func (v typeButtonChecker) check(raw *rawChannelType, ct *ChannelType) {
 		mt.DecisionButton = &opts
 		v.effect(key, ct.session, mt, opts)
 		for _, b := range presetButtons(ct.session, mn) {
-			b.Options = b.Options.inherit(opts)
+			from := opts
+			if b.Compose {
+				// Send is the confirmation of a button that opens the
+				// composer (TKT-TXZZZ2), so it takes only the style.
+				from.Confirm, from.ConfirmText = ConfirmDerived, ""
+			}
+			b.Options = b.Options.inherit(from)
 		}
 	}
 }
 
 // effect warns when the options of mt's decision buttons cannot show: no
 // person moves the session with mt, every entry has a preset button that
-// sets the option itself, or a confirm reaches no one-click button. It
-// runs before the merge, so a preset's Options are its own.
+// sets the option itself, or a confirm reaches no one-click button. A
+// compose button never takes the type's confirm. It runs before the
+// merge, so a preset's Options are its own.
 func (v typeButtonChecker) effect(key string, s *Session, mt *MessageType, opts ButtonOptions) {
 	clickable, typeButton := false, false
 	for _, st := range s.states {
@@ -195,21 +202,7 @@ func (v typeButtonChecker) effect(key string, s *Session, mt *MessageType, opts 
 	}
 	presets := presetButtons(s, mt.Name)
 	if !typeButton {
-		// No type button shows, so an option reaches a button only
-		// through a preset that leaves it unset.
-		ownConfirm, ownStyle := true, true
-		for _, b := range presets {
-			ownConfirm = ownConfirm && b.Options.Confirm != ConfirmDerived
-			ownStyle = ownStyle && b.Options.Style != ""
-		}
-		if opts.Confirm != ConfirmDerived && ownConfirm {
-			v.warn(key+".confirm", fmt.Sprintf("confirm has no effect: every entry of %s has a preset button "+
-				"that sets its own confirm", mt.Name))
-		}
-		if opts.Style != "" && ownStyle {
-			v.warn(key+".style", fmt.Sprintf("style has no effect: every entry of %s has a preset button "+
-				"that sets its own style", mt.Name))
-		}
+		v.presetsOnly(key, mt.Name, opts, presets)
 		return
 	}
 	if opts.Confirm == ConfirmDerived {
@@ -226,12 +219,35 @@ func (v typeButtonChecker) effect(key string, s *Session, mt *MessageType, opts 
 		return
 	}
 	for _, b := range presets {
-		if b.Options.Confirm == ConfirmDerived {
+		if !b.Compose && b.Options.Confirm == ConfirmDerived {
 			return
 		}
 	}
 	v.warn(key+".confirm", fmt.Sprintf("confirm has no effect: the type's button opens the composer because "+
 		"%s is required, and no preset button of %s uses it", required, mt.Name))
+}
+
+// presetsOnly warns for a type with no type button, where an option
+// reaches a button only through a preset that leaves it unset.
+func (v typeButtonChecker) presetsOnly(key, mn string, opts ButtonOptions, presets []*TransitionButton) {
+	ownConfirm, ownStyle, compose := true, true, false
+	for _, b := range presets {
+		ownConfirm = ownConfirm && (b.Compose || b.Options.Confirm != ConfirmDerived)
+		ownStyle = ownStyle && b.Options.Style != ""
+		compose = compose || b.Compose
+	}
+	if opts.Confirm != ConfirmDerived && ownConfirm {
+		what := "sets its own confirm"
+		if compose {
+			what = "sets its own confirm or opens the composer"
+		}
+		v.warn(key+".confirm", fmt.Sprintf("confirm has no effect: every entry of %s has a preset button "+
+			"that %s", mn, what))
+	}
+	if opts.Style != "" && ownStyle {
+		v.warn(key+".style", fmt.Sprintf("style has no effect: every entry of %s has a preset button "+
+			"that sets its own style", mn))
+	}
 }
 
 // presetButtons returns the compiled buttons of every `on.<mn>` entry of

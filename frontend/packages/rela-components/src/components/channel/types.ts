@@ -413,6 +413,28 @@ export interface ChannelGroupView {
   channels: ChannelRowView[]
 }
 
+/**
+ * A decision that opens the composer with some properties fixed, such as a
+ * preset button with `compose: true`. The app owns it, as it owns a reply:
+ * the composer shows it and emits `cancelCompose` when the user drops it.
+ */
+export interface ChannelComposeView {
+  /** Changes on every click, so a second click moves the focus again. */
+  key: string
+  /** The message type the composer selects. */
+  type: string
+  /** The button's label, shown above the fields. */
+  label: string
+  /** The label of the state a Send moves the session to. */
+  toLabel?: string
+  /**
+   * The fixed values by property name: a field value, or the items of a
+   * list. They are shown read-only, have no field, and are not in the post
+   * event; the app adds them to the post.
+   */
+  given: Record<string, ChannelFieldValue | string[]>
+}
+
 /** A new message, as the composer emits it. Values are raw; the app converts them. */
 export interface ChannelPostEvent {
   type: string
@@ -425,6 +447,11 @@ export interface ChannelPostEvent {
    */
   rendered: string[]
   replyTo?: number
+  /**
+   * The `compose.key` the composer applied when the message was sent, if
+   * any: the given properties were shown fixed and have no field.
+   */
+  compose?: string
 }
 
 /** An edit, as the composer emits it in edit mode. */

@@ -146,6 +146,26 @@ export class ChannelsPage extends BasePage {
     await expect(this.decisionIn(this.session, label)).toHaveCount(shown ? 1 : 0, { timeout });
   }
 
+  /**
+   * The composer shows the strip of a preset that opened it (TKT-53FN0L),
+   * holding `text`.
+   */
+  async expectComposeStrip(text: string, timeout = 15_000) {
+    await expect(this.composer.locator('.rl-channel-composer__compose')).toContainText(text, { timeout });
+  }
+
+  /** The composer has no field `label`; a preset fixed it. */
+  async expectNoField(label: string) {
+    await expect(this.composer.getByRole('textbox', { name: label })).toHaveCount(0);
+  }
+
+  /** The composer field `label` has the focus and is in the viewport. */
+  async expectFieldFocused(label: string, timeout = 15_000) {
+    const field = this.composer.getByRole('textbox', { name: label });
+    await expect(field).toBeFocused({ timeout });
+    await expect(field).toBeInViewport();
+  }
+
   /** Clicks the decision `label` in the session header. */
   async decide(label: string) {
     await this.decisionIn(this.session, label).click();

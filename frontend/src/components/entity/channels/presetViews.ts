@@ -41,6 +41,11 @@ export interface AppDecisionView extends ChannelDecisionView {
   movesOnly?: true
   /** An authored style dropped the derived danger; the dialog stays red. */
   outcomeDanger?: true
+  /**
+   * A preset button with `compose: true`: it opens the composer with its
+   * props fixed (TKT-53FN0L). Set with opensForm.
+   */
+  compose?: true
 }
 
 /**
@@ -117,14 +122,19 @@ export function presetViews(
       rest.push(tr)
       continue
     }
-    // A preset is one-click, and its row holds its options with the
-    // type's decision_button merged in.
+    // A preset is one-click, or opens the composer with its props fixed
+    // when it has compose. Its row holds its options with the type's
+    // decision_button merged in; on a compose preset only style applies.
     const view: AppDecisionView = {
       key: `preset:${name}:${entryOf(tr)}`,
       messageType: name,
       label: tr.button.label,
       props: { ...tr.button.props },
       toLabel: stateOf.get(tr.to)?.label ?? tr.to,
+    }
+    if (tr.button.compose) {
+      views.push(applyOptions({ ...view, opensForm: true, compose: true }, tr.button, false, {}))
+      continue
     }
     views.push(applyOptions(view, tr.button, true, endTone([tr.to], stateOf)))
   }

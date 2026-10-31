@@ -145,7 +145,7 @@ type ChannelSessionTimer struct {
 //
 // Entry is the transition's place in the list of its message type, from
 // 0; [ChannelEntryRef] names a transition by it. Button is set for an
-// entry with a one-click button.
+// entry with a preset button.
 type ChannelSessionTransition struct {
 	MessageType string                `json:"message_type"`
 	To          string                `json:"to"`
@@ -156,10 +156,13 @@ type ChannelSessionTransition struct {
 	Button      *ChannelSessionButton `json:"button,omitempty"`
 }
 
-// ChannelSessionButton is a transition entry's one-click button. A click
-// posts the entry's message type with Props, in stored form (an integer
-// as a number, a list as an array, a date as 2006-01-02), and
-// expect_generation. Config, the same for every reader.
+// ChannelSessionButton is a transition entry's preset button. It is
+// one-click unless Compose is set: a click posts the entry's message type
+// with Props, in stored form (an integer as a number, a list as an array,
+// a date as 2006-01-02), and expect_generation. A compose button opens the
+// composer with Props fixed; its post adds the type's other required
+// properties, and it never carries Confirm or ConfirmText. Config, the
+// same for every reader.
 //
 // Confirm, ConfirmText and Style are the button's options, with its
 // type's decision_button already applied; see
@@ -167,6 +170,7 @@ type ChannelSessionTransition struct {
 type ChannelSessionButton struct {
 	Label       string         `json:"label"`
 	Props       map[string]any `json:"props"`
+	Compose     bool           `json:"compose,omitempty"`
 	Confirm     *bool          `json:"confirm,omitempty"`
 	ConfirmText string         `json:"confirm_text,omitempty"`
 	Style       string         `json:"style,omitempty"`

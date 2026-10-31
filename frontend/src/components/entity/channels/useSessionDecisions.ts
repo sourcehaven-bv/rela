@@ -7,9 +7,11 @@ import type {
   MessagePropInput,
 } from '@/types/channels'
 import type {
+  ChannelComposeView,
   ChannelDecisionView,
   ChannelPropValue,
 } from 'rela-components/components/channel/types'
+import { fromPropValue } from '@/utils/channelValues'
 import { decisionPendingKey } from 'rela-components/components/channel/channelFields'
 import { problemType } from './channelErrors'
 import type { AppDecisionView } from './presetViews'
@@ -114,6 +116,17 @@ export interface DecisionDeps {
  * and none without. Other opens the composer with the answer type and the
  * reply set; in a channel with a session it records a form decision, as a
  * decision that opens the form does.
+ *
+ * A preset with `compose: true` (TKT-53FN0L) opens the form too. Its form
+ * decision also holds `compose`: the preset, fixed for the Send, and the
+ * view the composer shows (`composeView`). It is recorded before the
+ * composer selects the type, so the composer renders compose mode before
+ * it moves the focus. `sendComposer` adds the preset to the posted values
+ * when the composer reports the same compose key, so a composer that
+ * stopped applying it never has its fields overwritten.
+ * `cancelCompose` ends it, besides the rules above. A second click gives a
+ * new key, so the composer moves the focus again, and reads the generation
+ * again.
  */
 export function useSessionDecisions(d: DecisionDeps) {
   const deciding = ref(false)
@@ -121,7 +134,11 @@ export function useSessionDecisions(d: DecisionDeps) {
   let click = 0
   let heldKey: string | undefined
   /** The form decision the composer's Send answers, if any. */
-  const formDecision = ref<{ messageType: string; generation: number }>()
+  const formDecision = ref<FormDecision>()
+  /** Counts compose clicks, so each gives the composer a new key. */
+  let composeClicks = 0
+  /** The compose decision the composer shows, if any. */
+  const composeView = computed(() => formDecision.value?.compose?.view)
 
   // The head is replaced on every frame; the views are rebuilt only when
   // what they read changes, so the buttons keep their identity.
@@ -226,19 +243,29 @@ export function useSessionDecisions(d: DecisionDeps) {
 
   /**
    * Posts the composer's message, with the generation of the form decision
-   * when it is of that type. The error of a refused post is rethrown for
-   * the composer to show.
+   * when it is of that type. composeKey is the compose key the composer
+   * applied (`ChannelPostEvent.compose`); the preset is added only when it
+   * matches the record's, so a composer that rendered the given properties
+   * as fields never has the user's values overwritten. The error of a
+   * refused post is rethrown for the composer to show.
    */
   async function sendComposer(
     type: string,
     values: Record<string, MessagePropInput>,
-    replyTo: number | undefined
+    replyTo: number | undefined,
+    composeKey?: string
   ): Promise<void> {
     const f = formDecision.value
     const generation = f?.messageType === type ? f.generation : undefined
     if (generation === undefined) formDecision.value = undefined
+    // With the keys matching, the values hold only the rendered fields, so
+    // the preset overrides nothing the user typed.
+    const preset =
+      f?.messageType === type && composeKey !== undefined && f.compose?.view.key === composeKey
+        ? f.compose.preset
+        : undefined
     try {
-      await d.post(type, values, replyTo, generation)
+      await d.post(type, preset ? { ...values, ...preset } : values, replyTo, generation)
     } catch (err) {
       if (generation !== undefined && problemType(err) === 'session_moved') {
         formDecision.value = undefined
@@ -268,6 +295,11 @@ export function useSessionDecisions(d: DecisionDeps) {
   function onComposerSelect(type: string) {
     if (formDecision.value && formDecision.value.messageType !== type)
       formDecision.value = undefined
+  }
+
+  /** The user dropped the compose decision in the composer. */
+  function cancelCompose() {
+    formDecision.value = undefined
   }
 
   /** Releases the lock of a click in flight; for a channel switch. */
@@ -386,7 +418,8 @@ export function useSessionDecisions(d: DecisionDeps) {
   /**
    * A decision that opens the form: asks before it discards an edit, and
    * records the generation read at the click for the form's Send. Without
-   * a session (`generation` undefined) there is nothing to record. True
+   * a session (`generation` undefined) there is nothing to record, and a
+   * compose view is stale. True
    * when the composer shows the type. onStale tells the user when the
    * composer no longer offers the type.
    */
@@ -405,13 +438,35 @@ export function useSessionDecisions(d: DecisionDeps) {
       })
       if (!ok || !live()) return false
       d.composer.discardEdit()
+      // Let the composer restore what the edit put aside before compose
+      // mode arrives, so the restore cannot take its type away.
+      await nextTick()
+      if (!live()) return false
+    }
+    const compose = (view as AppDecisionView).compose ? composeOf(view) : undefined
+    if (compose) {
+      if (generation === undefined) {
+        // A compose Send needs a generation; without one it would post a
+        // plain form with no preset.
+        onStale()
+        return false
+      }
+      // Recorded before the composer selects the type, so it renders
+      // compose mode before it moves the focus.
+      if (d.ch.head.value?.channel.session?.generation !== generation) {
+        formDecision.value = undefined
+        stale()
+        return false
+      }
+      formDecision.value = { messageType: view.messageType, generation, compose }
     }
     if (!(await select(view.messageType))) {
+      if (compose && live()) formDecision.value = undefined
       if (live()) onStale()
       return false
     }
     if (!live()) return false
-    if (generation === undefined) return true
+    if (generation === undefined || compose) return true
     if (d.ch.head.value?.channel.session?.generation !== generation) {
       formDecision.value = undefined
       stale()
@@ -419,6 +474,25 @@ export function useSessionDecisions(d: DecisionDeps) {
     }
     formDecision.value = { messageType: view.messageType, generation }
     return true
+  }
+
+  /**
+   * The compose record of a preset view: its props in stored form for the
+   * Send, and the view the composer shows, with a new key per click.
+   */
+  function composeOf(view: ChannelDecisionView): ComposeRecord {
+    const preset = presetProps(view.props)
+    const props = d.messageType(view.messageType)?.properties ?? []
+    const given: ChannelComposeView['given'] = {}
+    for (const [name, v] of Object.entries(preset)) {
+      const p = props.find((x) => x.name === name)
+      given[name] = Array.isArray(v) ? [...v] : p ? fromPropValue(p, v) : String(v)
+    }
+    const key = `${view.key}#${++composeClicks}`
+    return {
+      preset,
+      view: { key, type: view.messageType, label: view.label, toLabel: view.toLabel, given },
+    }
   }
 
   /**
@@ -445,6 +519,8 @@ export function useSessionDecisions(d: DecisionDeps) {
     decisions,
     decisionSeq,
     rowDecisions,
+    cancelCompose,
+    composeView,
     deciding,
     formDecision,
     onChoose,
@@ -453,6 +529,21 @@ export function useSessionDecisions(d: DecisionDeps) {
     resetDecisions,
     sendComposer,
   }
+}
+
+/** A compose preset's part of a form decision (TKT-53FN0L). */
+interface ComposeRecord {
+  /** The preset in stored form, added to the Send. */
+  preset: Record<string, MessagePropInput>
+  /** What the composer shows. */
+  view: ChannelComposeView
+}
+
+/** A decision that opened the form: the type and generation its Send carries. */
+interface FormDecision {
+  messageType: string
+  generation: number
+  compose?: ComposeRecord
 }
 
 /**

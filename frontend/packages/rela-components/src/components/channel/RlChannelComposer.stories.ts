@@ -3,6 +3,7 @@ import { nextTick, ref } from 'vue'
 import { expect, fn, userEvent, waitFor, within } from 'storybook/test'
 import RlChannelComposer from './RlChannelComposer.vue'
 import type {
+  ChannelComposeView,
   ChannelEditEvent,
   ChannelEditing,
   ChannelMessageTypeDef,
@@ -857,5 +858,251 @@ export const Blocked: Story = {
     const send = canvas.getByRole('button', { name: 'Send' })
     await expect(send).toBeDisabled()
     await expect(send).not.toHaveAttribute('aria-busy')
+  },
+}
+
+/* Compose mode ----------------------------------------------------------- */
+
+const reviseTypes: ChannelMessageTypeDef[] = [
+  channelMessageTypes[0]!,
+  {
+    name: 'revise',
+    label: 'Revise',
+    persist: 'log',
+    reply: false,
+    properties: [
+      { name: 'topic', label: 'Topic', type: 'string' },
+      { name: 'feedback', label: 'Feedback', type: 'markdown', required: true },
+    ],
+    actions: [],
+  },
+]
+
+const requestChanges: ChannelComposeView = {
+  key: 'preset:revise:1#1',
+  type: 'revise',
+  label: 'Request changes',
+  toLabel: 'Drafting',
+  given: { topic: 'Rollback plan' },
+}
+
+/**
+ * A preset button with `compose: true` opens the composer on its type. A strip
+ * shows the button's label and the fixed values, which have no field; the
+ * focus goes to the empty required field. Send emits only the fields; the
+ * app adds the fixed values.
+ */
+export const ComposeMode: Story = {
+  args: {
+    messageTypes: reviseTypes,
+    postable: ['text', 'revise'],
+    presentation: undefined,
+    compose: requestChanges,
+    onCancelCompose: fn(),
+  },
+  play: async ({ args, canvasElement }) => {
+    const canvas = within(canvasElement)
+    const strip = canvasElement.querySelector('.rl-channel-composer__compose')!
+    await expect(strip).toHaveTextContent('Request changes')
+    await expect(strip).toHaveTextContent('Topic: Rollback plan')
+    // The focus move and the send button's description announce the strip;
+    // a live region inserted with its content is often not read.
+    await expect(strip.querySelector('[role="status"]')).toBeNull()
+    await expect(canvas.queryByRole('textbox', { name: /Topic/ })).toBeNull()
+    const feedback = canvas.getByRole('textbox', { name: /Feedback/ })
+    await waitFor(() => expect(feedback).toHaveFocus())
+    await expect(canvas.getByText('Sending this moves the session to Drafting.')).toBeVisible()
+    const described = submitButton(canvasElement).getAttribute('aria-describedby')!.split(' ')
+    await expect(described).toHaveLength(2)
+    await userEvent.click(canvas.getByRole('button', { name: 'Cancel decision' }))
+    await expect(args.onCancelCompose).toHaveBeenCalled()
+    await userEvent.type(feedback, 'Add the rollback plan')
+    await userEvent.click(submitButton(canvasElement))
+    await expect(args.onPost).toHaveBeenCalledWith({
+      type: 'revise',
+      values: { feedback: 'Add the rollback plan' },
+      rendered: ['feedback'],
+      replyTo: undefined,
+      compose: requestChanges.key,
+    })
+  },
+}
+
+/**
+ * The focus goes to the first required empty field, else the first field. A
+ * required boolean starts unchecked, so it is not empty and is skipped.
+ */
+export const ComposeModeFocus: Story = {
+  args: {
+    compose: {
+      key: 'preset:decision:0#1',
+      type: 'decision',
+      label: 'Decide now',
+      given: { summary: 'Notify the DPA within 72 hours.' },
+    },
+  },
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement)
+    await expect(canvas.queryByRole('textbox', { name: /Decision/ })).toBeNull()
+    const fields = [...canvasElement.querySelectorAll('[data-field]')].map((f) => f.getAttribute('data-field'))
+    await expect(fields.slice(0, 2)).toEqual(['severity', 'owner'])
+    const severity = canvasElement.querySelector('[data-field="severity"]')!
+    await waitFor(() => expect(severity.contains(document.activeElement)).toBe(true))
+    await expect(canvas.getByRole('checkbox', { name: /Notify the DPA/ })).not.toBeChecked()
+    await expect(canvasElement.querySelector('.rl-channel-composer__compose')).toHaveTextContent(
+      'Decision: Notify the DPA within 72 hours.',
+    )
+  },
+}
+
+/**
+ * Selecting another type ends compose mode: the app's `select` handler
+ * clears `compose`, as the SPA does. Back on the type, the fixed property is
+ * an empty field, and the typed feedback is kept.
+ */
+export const ComposeModeTypeSwitch: Story = {
+  args: { messageTypes: reviseTypes, postable: ['text', 'revise'], presentation: undefined },
+  render: (args) => ({
+    components: { RlChannelComposer },
+    setup() {
+      const compose = ref<ChannelComposeView | undefined>(requestChanges)
+      const onSelect = (type: string) => {
+        if (compose.value && compose.value.type !== type) compose.value = undefined
+      }
+      return { args, compose, onSelect }
+    },
+    template: `
+      <div style="max-width:640px">
+        <RlChannelComposer v-bind="args" :compose="compose" @select="onSelect" @cancel-compose="compose = undefined" />
+      </div>`,
+  }),
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement)
+    const feedback = canvas.getByRole('textbox', { name: /Feedback/ })
+    await waitFor(() => expect(feedback).toHaveFocus())
+    await userEvent.type(feedback, 'Needs work')
+    await userEvent.click(canvas.getByRole('radio', { name: 'Message' }))
+    await userEvent.click(canvas.getByRole('radio', { name: 'Revise' }))
+    await expect(canvasElement.querySelector('.rl-channel-composer__compose')).toBeNull()
+    await expect(canvas.getByRole('textbox', { name: /Topic/ })).toHaveValue('')
+    await expect(canvas.getByRole('textbox', { name: /Feedback/ })).toHaveValue('Needs work')
+  },
+}
+
+/** During an edit `compose` is ignored: the edit renders as without it. */
+export const ComposeModeDuringEdit: Story = {
+  args: {
+    messageTypes: reviseTypes,
+    postable: ['text', 'revise'],
+    presentation: undefined,
+    editing: { seq: 4, type: 'text', values: { body: 'Old text' } },
+    compose: requestChanges,
+  },
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement)
+    await expect(canvas.getByRole('form', { name: 'Edit message' })).toBeVisible()
+    await expect(canvasElement.querySelector('.rl-channel-composer__compose')).toBeNull()
+    await expect(canvas.getByRole('textbox', { name: /Message/ })).toHaveValue('Old text')
+    await expect(canvas.queryByRole('textbox', { name: /Feedback/ })).toBeNull()
+  },
+}
+
+const editEndsEditing = ref<ChannelEditing | undefined>()
+const editEndsCompose = ref<ChannelComposeView | undefined>()
+
+/**
+ * An edit of another type that ends in the same render as compose arrives,
+ * as when a compose button discards an edit: the composer reports only the
+ * compose type, so the app does not take the restored type as the user
+ * leaving compose mode, and the strip shows.
+ */
+export const ComposeModeEditEnds: Story = {
+  args: { messageTypes: reviseTypes, postable: ['text', 'revise'], presentation: undefined, onSelect: fn() },
+  render: (args) => ({
+    components: { RlChannelComposer },
+    setup() {
+      editEndsEditing.value = { seq: 4, type: 'text', values: { body: 'Old text' } }
+      editEndsCompose.value = undefined
+      return { args, editing: editEndsEditing, compose: editEndsCompose }
+    },
+    template: `
+      <div style="max-width:640px">
+        <RlChannelComposer v-bind="args" :editing="editing" :compose="compose" />
+      </div>`,
+  }),
+  play: async ({ args, canvasElement }) => {
+    const canvas = within(canvasElement)
+    await expect(canvas.getByRole('form', { name: 'Edit message' })).toBeVisible()
+    editEndsEditing.value = undefined
+    editEndsCompose.value = requestChanges
+    await nextTick()
+    await nextTick()
+    await expect(args.onSelect).toHaveBeenCalledWith('revise')
+    await expect(args.onSelect).not.toHaveBeenCalledWith('text')
+    await expect(canvasElement.querySelector('.rl-channel-composer__compose')).toHaveTextContent('Request changes')
+    await waitFor(() => expect(canvas.getByRole('textbox', { name: /Feedback/ })).toHaveFocus())
+  },
+}
+
+const reapplyEditing = ref<ChannelEditing | undefined>()
+
+/**
+ * An edit started and ended in compose mode brings compose mode back
+ * without pulling the focus into its fields.
+ */
+export const ComposeModeAfterEdit: Story = {
+  args: { messageTypes: reviseTypes, postable: ['text', 'revise'], presentation: undefined, compose: requestChanges },
+  render: (args) => ({
+    components: { RlChannelComposer },
+    setup() {
+      reapplyEditing.value = undefined
+      return { args, editing: reapplyEditing }
+    },
+    template: `
+      <div style="max-width:640px">
+        <RlChannelComposer v-bind="args" :editing="editing" />
+        <button type="button">Elsewhere</button>
+      </div>`,
+  }),
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement)
+    await waitFor(() => expect(canvas.getByRole('textbox', { name: /Feedback/ })).toHaveFocus())
+    reapplyEditing.value = { seq: 4, type: 'text', values: { body: 'Old text' } }
+    await nextTick()
+    await expect(canvasElement.querySelector('.rl-channel-composer__compose')).toBeNull()
+    const elsewhere = canvas.getByRole('button', { name: 'Elsewhere' })
+    elsewhere.focus()
+    reapplyEditing.value = undefined
+    await nextTick()
+    await nextTick()
+    await expect(canvasElement.querySelector('.rl-channel-composer__compose')).toHaveTextContent('Request changes')
+    await expect(elsewhere).toHaveFocus()
+  },
+}
+
+/** A datetime fixed value is shown in the composer's zone, not as raw input. */
+export const ComposeModeDatetime: Story = {
+  args: {
+    messageTypes: [
+      {
+        name: 'meet',
+        label: 'Meet',
+        persist: 'log',
+        reply: false,
+        properties: [
+          { name: 'at', label: 'At', type: 'datetime' },
+          { name: 'agenda', label: 'Agenda', type: 'string', required: true },
+        ],
+        actions: [],
+      },
+    ],
+    postable: ['meet'],
+    presentation: undefined,
+    compose: { key: 'preset:meet:0#1', type: 'meet', label: 'Plan a call', given: { at: '2026-11-01T09:00' } },
+  },
+  play: async ({ canvasElement }) => {
+    await expect(canvasElement.querySelector('.rl-channel-composer__compose')).toHaveTextContent(
+      'At: 2026-11-01 09:00 (Europe/Amsterdam)',
+    )
   },
 }

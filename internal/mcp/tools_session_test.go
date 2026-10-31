@@ -191,6 +191,26 @@ func TestReadSession(t *testing.T) {
 			t.Errorf("carol's entries = %#v, want an empty list", carol.Entries)
 		}
 	})
+	t.Run("session carries a compose button", func(t *testing.T) {
+		// TKT-53FN0L AC 6: a compose button's row says so, on both reads.
+		t.Parallel()
+		f := newReviewFixture(t)
+		y := strings.Replace(reviewYAML, "done: { to: finished, roles: [lead] }",
+			"done: { to: finished, roles: [lead], button: { label: Finish, compose: true } }", 1)
+		y = strings.Replace(y, "      done:    { properties: { note: { type: string } }, post: [lead] }",
+			"      done:    { properties: { note: { type: string, required: true } }, post: [lead] }", 1)
+		compiled, err := realtimecfg.Parse([]byte(y), f.meta, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		f.cfg.Store(compiled)
+		for _, tool := range []string{toolReadSession, toolReadChannel} {
+			text := mustCall(t, f.client(t, "alice"), tool, reviewArgs, nil)
+			if !strings.Contains(text, `"button":{"label":"Finish","props":{},"compose":true}`) {
+				t.Errorf("%s does not carry the compose button: %s", tool, text)
+			}
+		}
+	})
 	t.Run("button carries confirm and style", func(t *testing.T) {
 		t.Parallel()
 		f := newReviewFixture(t)

@@ -56,6 +56,24 @@
  * and focuses its first field, for a decision that opens the form; it
  * returns false, and changes nothing, during an edit or for a type that is
  * not offered.
+ *
+ * `compose` puts the composer in compose mode, for a decision that opens it
+ * with some properties fixed (a preset button with `compose: true`). The app
+ * owns it, as it owns `replyTo`. A new `compose.key` selects `compose.type`
+ * and, after the next render, focuses the first field that is required and
+ * empty, else the first field, and scrolls it into view. Each field wrapper
+ * carries `data-field`, and the focus goes to the first focusable element in
+ * it. In compose mode a strip above the fields shows the label and the fixed
+ * values, with a cancel button that emits `cancelCompose`. The fixed
+ * properties have no field, never enter the drafts and are not in the `post`
+ * event; the app adds them. The event's `compose` names the key the composer
+ * applied, so the app adds them only when the user saw them fixed. The hint
+ * names `compose.toLabel` as a definite move. An edit ignores `compose`,
+ * which applies again when the edit ends, without moving the focus. When the
+ * user selects another type, `compose` stops applying until a new key;
+ * ending it is the app's job. On iOS Safari a focus after an await
+ * does not open the keyboard: the field is focused and one tap opens it, as
+ * for `select`.
  */
 import { computed, nextTick, reactive, ref, useId, useTemplateRef, watch } from 'vue'
 import RlButton from '../common/RlButton.vue'
@@ -68,6 +86,7 @@ import RlSegmentedControl from '../data/RlSegmentedControl.vue'
 import RlChannelField from './RlChannelField.vue'
 import { codePointLength, resolveChannelFields, type ResolvedChannelField } from './channelFields'
 import type {
+  ChannelComposeView,
   ChannelComposerTransition,
   ChannelEditEvent,
   ChannelEditing,
@@ -111,6 +130,8 @@ const props = withDefaults(
     transitions?: ChannelComposerTransition[]
     /** Stops a submit without showing it as sending; see the header comment. */
     blocked?: boolean
+    /** A decision that opens the composer with fixed values; see the header comment. */
+    compose?: ChannelComposeView
   }>(),
   {
     presentation: undefined,
@@ -125,6 +146,7 @@ const props = withDefaults(
     submitShortcut: 'Ctrl+Enter',
     transitions: () => [],
     blocked: false,
+    compose: undefined,
   },
 )
 
@@ -133,6 +155,8 @@ const emit = defineEmits<{
   save: [event: ChannelEditEvent]
   cancelReply: []
   cancelEdit: []
+  /** The user dropped the `compose` decision. */
+  cancelCompose: []
   typing: []
   /** The type of the new message being written changed. */
   select: [type: string]
@@ -142,6 +166,7 @@ const messages = useMessages()
 const t = (key: ChannelTextKey) => messages.channelText({ key })
 const form = useTemplateRef<HTMLFormElement>('form')
 const hintId = useId()
+const composeId = useId()
 
 const transitionByType = computed(() => new Map(props.transitions.map((tr) => [tr.messageType, tr])))
 
@@ -178,8 +203,24 @@ const current = computed(
   () => offered.value.find((m) => m.name === selected.value) ?? offered.value[0],
 )
 
+/**
+ * The `compose.key` the user left by selecting another type: compose mode
+ * stays off for it until a new key.
+ */
+const droppedKey = ref('')
+
+/** The compose decision a new message would apply, ignoring an edit. */
+function liveCompose(): ChannelComposeView | undefined {
+  const c = props.compose
+  if (!c || c.key === droppedKey.value || !offered.value.some((m) => m.name === c.type)) return undefined
+  return c
+}
+
+// A compose decision that has not been applied yet counts as its type, so
+// an edit that ends in the same flush does not report the type the edit
+// put aside first; the app would take that as the user leaving compose.
 watch(
-  () => (props.editing ? undefined : current.value?.name),
+  () => (props.editing ? undefined : (liveCompose()?.type ?? current.value?.name)),
   (type) => {
     if (type !== undefined) emit('select', type)
   },
@@ -222,6 +263,44 @@ watch(
   { flush: 'post' },
 )
 
+/** The compose decision that applies now, or undefined. */
+const composing = computed<ChannelComposeView | undefined>(() => {
+  const c = props.compose
+  if (!c || props.editing || c.key === droppedKey.value || current.value?.name !== c.type) return undefined
+  return c
+})
+
+/** The last `compose.key` applied; see the key watcher. */
+let appliedKey = ''
+
+// A new key selects its type and moves the focus. The same key again, when
+// an edit ends, selects its type unless the user left it, and leaves the
+// focus where the edit put it.
+watch(
+  () => (props.editing || !props.compose ? '' : props.compose.key),
+  (key) => {
+    const c = props.compose
+    if (!key || !c || !offered.value.some((m) => m.name === c.type)) return
+    if (key === appliedKey) {
+      if (liveCompose()) selected.value = c.type
+      return
+    }
+    appliedKey = key
+    droppedKey.value = ''
+    selected.value = c.type
+    void nextTick(focusField)
+  },
+  { immediate: true },
+)
+
+watch(
+  () => current.value?.name,
+  (name) => {
+    const c = props.compose
+    if (c && !props.editing && name !== c.type) droppedKey.value = c.key
+  },
+)
+
 /**
  * Where the session goes if this message is sent; empty when it moves
  * nothing. A type with several targets, or with transitions of which only
@@ -229,6 +308,8 @@ watch(
  */
 const sessionHint = computed(() => {
   if (props.editing || !current.value) return ''
+  const c = composing.value
+  if (c?.toLabel) return messages.channelSessionHint({ to: c.toLabel, guarded: false })
   const tr = transitionByType.value.get(current.value.name)
   if (!tr || !tr.toLabels.length) return ''
   const [to, ...more] = tr.toLabels
@@ -237,12 +318,45 @@ const sessionHint = computed(() => {
     : messages.channelSessionHint({ to, guarded: tr.guarded })
 })
 
-const fields = computed<ResolvedChannelField[]>(() =>
-  current.value
-    ? resolveChannelFields(current.value, props.presentation?.messages?.[current.value.name]).filter(
-        (f) => !f.property.list,
-      )
-    : [],
+/** Every field the presentation shows for the current type, lists included. */
+const shown = computed<ResolvedChannelField[]>(() =>
+  current.value ? resolveChannelFields(current.value, props.presentation?.messages?.[current.value.name]) : [],
+)
+
+/** An own key of o; `in` would also find `constructor` and the like. */
+const hasOwn = (o: object, key: string) => Object.prototype.hasOwnProperty.call(o, key)
+
+/** The rendered fields: no list, and in compose mode no fixed property. */
+const fields = computed<ResolvedChannelField[]>(() => {
+  const given = composing.value?.given ?? {}
+  return shown.value.filter((f) => !f.property.list && !hasOwn(given, f.property.name))
+})
+
+/** The fixed values of compose mode as "Label: value", in field order. */
+const givenRows = computed(() => {
+  const c = composing.value
+  if (!c) return []
+  return shown.value
+    .filter((f) => hasOwn(c.given, f.property.name))
+    .map((f) => ({ name: f.property.name, text: `${f.label}: ${givenText(f, c.given[f.property.name])}` }))
+})
+
+function givenText(f: ResolvedChannelField, v: ChannelFieldValue | string[]): string {
+  if (Array.isArray(v)) return v.join(', ')
+  if (typeof v === 'boolean') return t(v ? 'yes' : 'no')
+  if (v === undefined) return ''
+  if (f.property.type === 'datetime') {
+    // The field's local input form, 2026-11-01T09:00, read as the composer's zone.
+    const at = v.replace('T', ' ')
+    return props.timeZoneLabel ? `${at} (${props.timeZoneLabel})` : at
+  }
+  const opts = f.property.enum ? props.enumOptions?.[f.property.enum] : undefined
+  return opts?.find((o) => o.value === v)?.label ?? v
+}
+
+/** The ids the send button refers to: the compose strip and the session hint. */
+const describedBy = computed(
+  () => [composing.value ? composeId : '', sessionHint.value ? hintId : ''].filter(Boolean).join(' ') || undefined,
 )
 
 type Values = Record<string, ChannelFieldValue>
@@ -297,7 +411,11 @@ watch(
       if (s.values) drafts[s.type] = s.values
       else reseed(s.type)
       refs[s.type] = s.refs ?? {}
-      if (offered.value.some((m) => m.name === s.selected)) selected.value = s.selected
+      // A compose decision that arrived during the edit, or before it,
+      // wins over the selection the edit put aside.
+      const c = liveCompose()
+      if (c) selected.value = c.type
+      else if (offered.value.some((m) => m.name === s.selected)) selected.value = s.selected
     }
     const e = props.editing
     if (!e) return
@@ -367,7 +485,13 @@ async function submit() {
   if (props.editing) {
     emit('save', { seq: props.editing.seq, type: type.name, values: out, rendered })
   } else {
-    emit('post', { type: type.name, values: out, rendered, replyTo: props.replyTo?.seq })
+    emit('post', {
+      type: type.name,
+      values: out,
+      rendered,
+      replyTo: props.replyTo?.seq,
+      compose: composing.value?.key,
+    })
   }
 }
 
@@ -402,21 +526,31 @@ function reset(posted?: ChannelPostEvent | ChannelEditEvent) {
 }
 
 /**
- * Selects `type` and, after the next render, focuses its first field. The
- * type's draft is kept. False, with nothing changed, during an edit or when
- * `type` is not offered now.
+ * Focuses a rendered field and scrolls it into view: in compose mode the
+ * first that is required and empty, else the first.
+ */
+function focusField() {
+  const list = fields.value
+  const missing = (f: ResolvedChannelField) =>
+    f.property.required && !restricted.has(f.property.name) && isEmpty(values.value[f.property.name])
+  const target = (composing.value && list.find(missing)) || list[0]
+  if (!target) return
+  const wrapper = form.value?.querySelector(`[data-field="${CSS.escape(target.property.name)}"]`)
+  const el = wrapper?.querySelector<HTMLElement>('input, textarea, select, button')
+  if (!el) return
+  el.focus()
+  el.scrollIntoView?.({ block: 'nearest' })
+}
+
+/**
+ * Selects `type` and, after the next render, focuses its first field (see
+ * `focusField`). The type's draft is kept. False, with nothing changed,
+ * during an edit or when `type` is not offered now.
  */
 function select(type: string): boolean {
   if (props.editing || !offered.value.some((m) => m.name === type)) return false
   selected.value = type
-  void nextTick(() => {
-    form.value
-      ?.querySelector<HTMLElement>(
-        '.rl-channel-composer__fields input, .rl-channel-composer__fields textarea, ' +
-          '.rl-channel-composer__fields select, .rl-channel-composer__fields button',
-      )
-      ?.focus()
-  })
+  void nextTick(focusField)
   return true
 }
 
@@ -455,6 +589,14 @@ defineExpose({
       <RlIconButton icon="x" :label="t('cancelReply')" :size="14" @click="emit('cancelReply')" />
     </div>
 
+    <div v-if="composing" class="rl-channel-composer__compose">
+      <span :id="composeId" class="rl-channel-composer__compose-text">
+        <strong>{{ composing.label }}</strong>
+        <span v-for="g in givenRows" :key="g.name" class="rl-channel-composer__given">{{ g.text }}</span>
+      </span>
+      <RlIconButton icon="x" :label="t('cancelCompose')" :size="14" @click="emit('cancelCompose')" />
+    </div>
+
     <RlBanner v-if="error" tone="danger" class="rl-channel-composer__banner">{{ error }}</RlBanner>
 
     <div class="rl-channel-composer__fields">
@@ -462,6 +604,7 @@ defineExpose({
         v-for="f in fields"
         :key="`${current.name}:${f.property.name}`"
         class="rl-channel-composer__field"
+        :data-field="f.property.name"
         :style="{ '--rl-channel-span': f.span ?? 12 }"
       >
         <RlChannelField
@@ -495,7 +638,7 @@ defineExpose({
           variant="primary"
           size="sm"
           icon="send"
-          :aria-describedby="sessionHint ? hintId : undefined"
+          :aria-describedby="describedBy"
           :loading="submitting"
           :disabled="blocked && !submitting"
           :pending-label="t(editing ? 'saving' : 'sending')"
@@ -551,6 +694,26 @@ defineExpose({
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.rl-channel-composer__compose {
+  display: flex;
+  align-items: center;
+  gap: var(--rl-space-2);
+  padding: var(--rl-space-1) var(--rl-space-1) var(--rl-space-1) var(--rl-space-3);
+  border-left: 3px solid var(--rl-color-border-strong);
+  background: var(--rl-color-bg-sunken);
+  font-size: var(--rl-font-size-xs);
+  color: var(--rl-color-text-muted);
+}
+
+.rl-channel-composer__compose-text {
+  display: flex;
+  flex: 1;
+  flex-wrap: wrap;
+  gap: var(--rl-space-1) var(--rl-space-3);
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .rl-channel-composer__fields {

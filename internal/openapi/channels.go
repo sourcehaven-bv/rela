@@ -585,6 +585,8 @@ func sessionButtonProps() map[string]*Schema {
 	props := buttonOptionsProps()
 	props["label"] = StringSchema()
 	props["props"] = &Schema{Type: "object", AdditionalProperties: &Schema{}}
+	props["compose"] = &Schema{Type: "boolean", Description: "The button opens the composer with props fixed; " +
+		"the post needs the message type's other required properties. Absent for a one-click button."}
 	return props
 }
 
@@ -880,8 +882,8 @@ func channelSessionSchema() *Schema {
 					Description: "The number of graph writes the transition makes; absent when it makes none"},
 				"entry": {Type: "integer",
 					Description: "The transition's place in the list of its message type, from 0"},
-				"button": {Type: "object", Description: "Set for an entry with a one-click button. A click posts " +
-					"the message type with props, as stored (an integer as a number, a list as an array, a date " +
+				"button": {Type: "object", Description: "Set for an entry with a preset button. Without compose, " +
+					"a click posts the message type with props, as stored (an integer as a number, a list as an array, a date " +
 					"as 2006-01-02), and expect_generation. Config, the same for every reader.",
 					Properties: sessionButtonProps(), Required: []string{"label", "props"}},
 			}, []string{"message_type", "to", "entry"}), Description: "The on: entries of the current state, sorted by " +

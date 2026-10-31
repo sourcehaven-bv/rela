@@ -2,6 +2,7 @@ package realtime
 
 import (
 	"context"
+	"maps"
 	"net/http"
 	"strings"
 	"testing"
@@ -158,6 +159,47 @@ func TestPost_ButtonPreset(t *testing.T) {
 	})
 	require.NoError(t, err)
 	require.Equal(t, "working", res.Session.State)
+	reqs := w.requests()
+	require.Len(t, reqs, 1)
+	require.Equal(t, map[string]any{"status": "in-progress"}, reqs[0].Props, "the button entry's outputs ran")
+}
+
+// TestPost_ComposePreset pins TKT-53FN0L AC 7: a compose button's Send is
+// a normal post. The preset alone is refused, because a required property
+// is missing; the preset with the person's feedback and expect_generation
+// moves the session along the button's entry and runs its outputs; at an
+// old generation it is refused session_moved.
+func TestPost_ComposePreset(t *testing.T) {
+	t.Parallel()
+	member := user("mo", "plan.member")
+	w := &fakeOutputs{}
+	h := newHarness(t, withYAML(composeRealtime()), withOutputs(w))
+	head, err := h.svc.Head(as(member), planCh)
+	require.NoError(t, err)
+	var preset map[string]any
+	for _, r := range head.Channel.Session.Transitions {
+		if r.MessageType == "rework" && r.Entry == 3 {
+			require.NotNil(t, r.Button)
+			require.True(t, r.Button.Compose)
+			preset = r.Button.Props
+		}
+	}
+	require.Equal(t, map[string]any{"decision": "revise"}, preset)
+	generation := gen(head.Channel.Session.Generation)
+
+	_, err = h.svc.Post(as(member), planCh, PostInput{Type: "rework", Props: preset, ExpectGeneration: generation})
+	d := requireDenial(t, err, http.StatusBadRequest, TypeInvalid)
+	require.Contains(t, d.Error(), `"feedback" is required`)
+
+	send := map[string]any{"feedback": "Add the rollback plan"}
+	maps.Copy(send, preset)
+	_, err = h.svc.Post(as(member), planCh, PostInput{Type: "rework", Props: send, ExpectGeneration: gen(1)})
+	requireDenial(t, err, http.StatusConflict, TypeSessionMoved)
+	require.Empty(t, w.requests(), "a refused Send wrote an output")
+
+	res, err := h.svc.Post(as(member), planCh, PostInput{Type: "rework", Props: send, ExpectGeneration: generation})
+	require.NoError(t, err)
+	require.Equal(t, "planning", res.Session.State)
 	reqs := w.requests()
 	require.Len(t, reqs, 1)
 	require.Equal(t, map[string]any{"status": "in-progress"}, reqs[0].Props, "the button entry's outputs ran")

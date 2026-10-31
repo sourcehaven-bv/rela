@@ -6,6 +6,8 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/Sourcehaven-BV/rela/internal/predicate"
 )
 
 // buttonsBase is the guide's plan review with buttons, plus a lead role,
@@ -244,8 +246,9 @@ func TestButtons_PropsProblems(t *testing.T) {
 		{"repeated item", btn("decision: revise, tags: [a, ' a']"), k, `item 2 repeats an earlier item`},
 		{"hazard item", btn("decision: revise, tags: [\"a\\u202e\"]"), k, `item 1 holds U+202E`},
 		{"too many items", btn("decision: revise, tags: [a, b, c]"), k, `must have at most 2 items`},
-		{"required left out", btn("short: ab"), k, `property "decision" is required`},
-		{"required null", btn("decision: null"), k, `property "decision" is required`},
+		{"required left out", btn("short: ab"), k,
+			`property "decision" is required; set it in props, or add compose: true so the person fills it in`},
+		{"required null", btn("decision: null"), k, `property "decision" is required; set it in props, or add compose`},
 		{"too many properties", btn(many.String() + "decision: revise"), k, "at most 32 properties"},
 		{"markdown", btn("decision: revise, note: hi"), k + ".note", "a preset cannot set a markdown property"},
 		{"ref", btn("decision: revise, about: DL-1"), k + ".about",
@@ -595,5 +598,291 @@ func TestButtons_OffersForeignEntry(t *testing.T) {
 	}
 	if drafting.Offers(review.Transitions()[1], all) {
 		t.Error("drafting offers an entry of review")
+	}
+}
+
+// composeSrc is [buttonsSrc] with a required string feedback on decide,
+// which a compose button leaves to the person.
+func composeSrc(entries string) string {
+	return strings.Replace(buttonsSrc(entries), "          note:     { type: markdown }\n",
+		"          note:     { type: markdown }\n          feedback: { type: string, required: true, max: 300 }\n", 1)
+}
+
+// requiredTags makes decide's tags list required in src.
+func requiredTags(src string) string {
+	return strings.Replace(src, "tags:     { type: string, list: true, max: 10, max_items: 2 }",
+		"tags:     { type: string, list: true, max: 10, max_items: 2, required: true }", 1)
+}
+
+// composeButton is a decide entry into to with a compose button whose
+// props are props and whose extra entry keys are extra.
+func composeButton(to, extra, props string) string {
+	if extra != "" {
+		extra += ", "
+	}
+	return entry(to, extra+"button: { label: Revise, compose: true, props: { "+props+" } }")
+}
+
+// TestButtons_Compose pins TKT-53FN0L AC 1: compose loads as a strict
+// boolean, a compose button may leave out a required property, and Props
+// returns only the given properties in stored form.
+func TestButtons_Compose(t *testing.T) {
+	loads := []struct {
+		name, src string
+		compose   bool
+		props     map[string]any
+	}{
+		{"required left out on a list entry", composeSrc(composeButton("drafting", "", "decision: revise")),
+			true, map[string]any{"decision": "revise"}},
+		{"required left out on a mapping entry", strings.Replace(composeSrc(entry("drafting", "")),
+			"            decide:\n              - { to: drafting }",
+			"            decide: { to: drafting, button: { label: Revise, props: { decision: revise }, compose: true } }",
+			1), true, map[string]any{"decision": "revise"}},
+		{"every property set", composeSrc(composeButton("drafting", "", "decision: revise, feedback: ok")),
+			true, map[string]any{"decision": "revise", "feedback": "ok"}},
+		{"empty props", composeSrc(composeButton("drafting", "", "")), true, map[string]any{}},
+		{"stored form", composeSrc(composeButton("drafting", "", "decision: revise, count: 3, urgent: true, "+
+			"tags: [ ' a ' ]")), true, map[string]any{"decision": "revise", "count": int64(3), "urgent": true,
+			"tags": []any{"a"}}},
+		{"compose null", composeSrc(entry("drafting", "button: { label: Go, compose: null, "+
+			"props: { decision: revise, feedback: ok } }")), false, map[string]any{"decision": "revise", "feedback": "ok"}},
+		{"compose false", composeSrc(entry("drafting", "button: { label: Go, compose: false, "+
+			"props: { decision: revise, feedback: ok } }")), false, map[string]any{"decision": "revise", "feedback": "ok"}},
+		{"no compose", composeSrc(entry("drafting", "button: { label: Go, props: { decision: revise, feedback: ok } }")),
+			false, map[string]any{"decision": "revise", "feedback": "ok"}},
+	}
+	for _, tc := range loads {
+		t.Run(tc.name, func(t *testing.T) {
+			b, ok := decideEntries(t, parseButtons(t, tc.src))[0].Button()
+			if !ok {
+				t.Fatal("the entry has no button")
+			}
+			if b.Compose != tc.compose {
+				t.Errorf("Compose = %v; want %v", b.Compose, tc.compose)
+			}
+			if got := b.Props(); fmt.Sprint(got) != fmt.Sprint(tc.props) {
+				t.Errorf("Props = %#v; want %#v", got, tc.props)
+			}
+		})
+	}
+	k := decideKey + "[0].button"
+	refused := []struct{ name, value, reason string }{
+		{"compose false with a required property left out", "false", `property "feedback" is required`},
+		{"unquoted yes", "yes", `"yes" is not a boolean; use true or false`},
+		{"quoted yes", `"yes"`, "must be true or false"},
+		{"unquoted on", "on", `"on" is not a boolean; use true or false`},
+		{"number", "1", "must be true or false"},
+	}
+	for _, tc := range refused {
+		t.Run(tc.name, func(t *testing.T) {
+			src := composeSrc(entry("drafting", "button: { label: Go, compose: "+tc.value+", props: { decision: revise } }"))
+			_, err := Parse([]byte(src), testMeta(t), testPolicy(t))
+			key := k + ".compose"
+			if tc.value == "false" {
+				key = k + ".props"
+			}
+			assertProblem(t, err, key, tc.reason)
+		})
+	}
+}
+
+// TestButtons_ComposeProblems pins TKT-53FN0L AC 2 and AC 3: a partial
+// preset follows the prop rules of a post for what it gives, the type's
+// when: is judged on the given properties, and a one-click button that
+// leaves out a required property names the opt-in.
+func TestButtons_ComposeProblems(t *testing.T) {
+	k := decideKey + "[0].button.props"
+	btn := func(props string) string { return composeButton("drafting", "", props) }
+	var many strings.Builder
+	for i := range 33 {
+		fmt.Fprintf(&many, "p%d: x, ", i)
+	}
+	cases := []struct{ name, src, key, reason string }{
+		{"undeclared", composeSrc(btn("decision: revise, nope: x")), k, `message type decide has no property "nope"`},
+		{"wrong type", composeSrc(btn("count: 'three'")), k, `property "count": must be a whole number`},
+		{"outside enum", composeSrc(btn("decision: maybe")), k, `property "decision": must be one of`},
+		{"over max", composeSrc(btn("short: toolong")), k, `property "short": must be at most 5 characters`},
+		{"bad list item", composeSrc(btn("tags: ['  ']")), k, `property "tags": item 1 is empty`},
+		{"over max_items", composeSrc(btn("tags: [a, b, c]")), k, `must have at most 2 items`},
+		{"too many properties", composeSrc(btn(many.String() + "decision: revise")), k, "at most 32 properties"},
+		{"over message_bytes", strings.Replace(composeSrc(btn("decision: revise")), "version: 1\n",
+			"version: 1\nlimits: { message_bytes: 10 }\n", 1), k, "the preset is over message_bytes (10 bytes)"},
+		{"markdown", composeSrc(btn("note: hi")), k + ".note", "a preset cannot set a markdown property"},
+		{"ref", composeSrc(btn("about: DL-1")), k + ".about", "a preset cannot set a ref property"},
+		{"integer over 2^53", composeSrc(btn("count: 9007199254740993")), k + ".count",
+			"a browser cannot carry a larger integer exactly"},
+		{"required list left out", requiredTags(composeSrc(btn("decision: revise"))), k,
+			`property "tags" is required, and the composer has no field for a list; set it in props`},
+		{"required list empty", requiredTags(composeSrc(btn("decision: revise, tags: []"))), k,
+			`property "tags" is required, and the composer has no field for a list`},
+		{"hint when absent", composeSrc(entry("drafting", "button: { label: Go, props: { decision: revise } }")), k,
+			`property "feedback" is required; set it in props, or add compose: true so the person fills it in`},
+		{"hint when null", composeSrc(entry("drafting", "button: { label: Go, props: { decision: revise, feedback: ~ } }")),
+			k, `property "feedback" is required; set it in props, or add compose: true`},
+		{"hint for a required list", requiredTags(composeSrc(entry("drafting",
+			"button: { label: Go, props: { decision: revise, feedback: ok, tags: [] } }"))), k,
+			`property "tags" is required; set it in props`},
+		{"prop rules before the required property", composeSrc(entry("drafting",
+			"button: { label: Go, props: { short: toolong } }")), k, `property "short": must be at most 5 characters`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := Parse([]byte(tc.src), testMeta(t), testPolicy(t))
+			assertProblem(t, err, tc.key, tc.reason)
+		})
+	}
+	t.Run("a one-click list hint does not suggest compose", func(t *testing.T) {
+		_, err := Parse([]byte(requiredTags(composeSrc(entry("drafting",
+			"button: { label: Go, props: { decision: revise, feedback: ok } }")))), testMeta(t), testPolicy(t))
+		if err == nil || strings.Contains(err.Error(), "add compose: true") {
+			t.Errorf("err = %v; want the hint without compose", err)
+		}
+	})
+	t.Run("a refused list hint never reaches the required check", func(t *testing.T) {
+		_, err := Parse([]byte(composeSrc(entry("drafting", "button: { label: Go, props: { short: toolong } }"))),
+			testMeta(t), testPolicy(t))
+		if err != nil && strings.Contains(err.Error(), "is required") {
+			t.Errorf("err = %v; the prop rules come first", err)
+		}
+	})
+	when := func(cond string) string {
+		return strings.Replace(composeSrc(btn("decision: revise")), "        post: [owner, member, lead]\n",
+			"        post: [owner, member, lead]\n        when: \""+cond+"\"\n", 1)
+	}
+	t.Run("when reads a left-out property loads", func(t *testing.T) {
+		b, _ := decideEntries(t, parseButtons(t, when("message.feedback ~= 'x'")))[0].Button()
+		if !b.Compose {
+			t.Error("the compose button did not load")
+		}
+	})
+	t.Run("when on given properties fails is refused", func(t *testing.T) {
+		_, err := Parse([]byte(when("message.decision == 'approve'")), testMeta(t), testPolicy(t))
+		assertProblem(t, err, k, "the preset does not meet the when: condition of message type decide")
+	})
+	t.Run("when calls today() is refused", func(t *testing.T) {
+		_, err := Parse([]byte(when("message.due == nil or message.due > today()")), testMeta(t), testPolicy(t))
+		assertProblem(t, err, k, "calls today(), so whether this preset meets it would depend on the date")
+	})
+}
+
+// TestButtons_ComposeGuards pins TKT-53FN0L AC 4: no guard that routes a
+// compose button's Send for a caller who could click reads a property the
+// person fills in.
+func TestButtons_ComposeGuards(t *testing.T) {
+	revise := "decision: revise"
+	isApprove := `when: "message.decision == 'approve'"`
+	approveNote := `when: "message.decision == 'approve' and message.note ~= ''"`
+	k0, k1 := decideKey+"[0].button", decideKey+"[1].button"
+
+	loads := []struct {
+		name, entries string
+		hidden        []int
+	}{
+		{"own guard on a given property holds", entries(
+			composeButton("drafting", `when: "message.decision == 'revise'"`, revise), entry("approved", "")), nil},
+		{"earlier guard on a given property that does not hold", entries(entry("approved", isApprove),
+			composeButton("drafting", "", revise)), nil},
+		{"earlier guard on a left-out property for another role", entries(
+			entry("approved", `roles: [lead], when: "message.feedback == 'ok'"`),
+			composeButton("drafting", "roles: [member]", revise)), []int{0}},
+		// The undecidable check runs first, so an earlier guard that is
+		// both undecidable and reads a left-out property hides the button
+		// from a clicker it admits rather than refusing the file.
+		{"earlier undecidable guard on a left-out property for a clicker", entries(
+			entry("approved", `roles: [lead], when: "session.reminders.ping > 2 and message.feedback ~= ''"`),
+			composeButton("drafting", "roles: [member, lead]", revise)), []int{0}},
+	}
+	for _, tc := range loads {
+		t.Run(tc.name, func(t *testing.T) {
+			var b TransitionButton
+			for _, e := range decideEntries(t, parseButtons(t, composeSrc(tc.entries))) {
+				if eb, has := e.Button(); has {
+					b = eb
+				}
+			}
+			if !b.Compose {
+				t.Fatal("the compose button did not load")
+			}
+			if !slices.Equal(b.hiddenBy(), tc.hidden) {
+				t.Errorf("hidden by %v; want %v", b.hiddenBy(), tc.hidden)
+			}
+		})
+	}
+	cases := []struct{ name, entries, key, reason string }{
+		{"own guard on a given property fails", entries(composeButton("approved", isApprove, revise),
+			entry("drafting", "")), k0, "the entry's when: does not hold for the preset"},
+		{"own guard reads a left-out property", entries(
+			composeButton("drafting", `when: "message.feedback ~= ''"`, revise), entry("approved", "")), k0,
+			"the entry's when: reads message.feedback, which the person fills in"},
+		{"own guard on a given and a left-out property", entries(
+			composeButton("drafting", `when: "message.decision == 'approve' and message.feedback ~= ''"`, revise),
+			entry("approved", "")), k0, "set the property in props, or move the check to the when: of message type decide"},
+		{"own guard reads session.reminders", entries(
+			composeButton("drafting", `when: "session.reminders.ping > 2"`, revise), entry("approved", "")), k0,
+			"the entry's when: reads session.reminders"},
+		{"earlier guard on a left-out property for a clicker", entries(
+			entry("approved", `when: "message.feedback == 'ok'"`), composeButton("drafting", "", revise)), k1,
+			"the when: of entry 0 reads message.feedback, which the person fills in"},
+		{"earlier guard that over-refuses", entries(entry("approved", approveNote),
+			composeButton("drafting", "", revise)), k1, "the when: of entry 0 reads message.note"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := Parse([]byte(composeSrc(tc.entries)), testMeta(t), testPolicy(t))
+			assertProblem(t, err, tc.key, tc.reason)
+		})
+	}
+	t.Run("a one-click button keeps today's rule", func(t *testing.T) {
+		// The same earlier guard on note does not refuse a one-click
+		// button: it posts no note, so the guard is decided at load.
+		parseButtons(t, composeSrc(entries(entry("approved", approveNote),
+			entry("drafting", "button: { label: Revise, props: { decision: revise, feedback: ok } }"))))
+	})
+}
+
+// TestReadsLeftOut_WholeMessage pins the whole-record branch. The
+// standard library has no function taking a record, so no realtime.yaml
+// guard reaches it today; a host function added later that takes the
+// message would read every left-out property.
+func TestReadsLeftOut_WholeMessage(t *testing.T) {
+	env := predicate.NewEnv()
+	if err := env.DeclareVar("message", predicate.RecordType{"feedback": predicate.StringType}); err != nil {
+		t.Fatal(err)
+	}
+	if err := env.DeclareFunc("inspect", predicate.FuncSig{
+		Params: []predicate.Type{predicate.RecordType{}}, Return: predicate.BoolType,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	prog, err := predicate.Compile(env, "inspect(message)")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := readsLeftOut(prog, []string{"feedback"}); got != "message" {
+		t.Fatalf("readsLeftOut = %q; want %q", got, "message")
+	}
+	if got := leftOutRead("message"); got != "reads the whole message" {
+		t.Errorf("leftOutRead = %q", got)
+	}
+	if got := readsLeftOut(prog, nil); got != "" {
+		t.Errorf("readsLeftOut with nothing left out = %q; want empty", got)
+	}
+}
+
+// TestButtons_ComposeOffers pins the hidden set of TKT-53FN0L AC 4: an
+// earlier guard on a left-out property for another role hides a compose
+// button from a caller with both roles.
+func TestButtons_ComposeOffers(t *testing.T) {
+	c := parseButtons(t, composeSrc(entries(
+		entry("approved", `roles: [lead], when: "message.feedback == 'ok'"`),
+		composeButton("drafting", "roles: [member]", "decision: revise"))))
+	ct, _ := c.ChannelType("plan-review")
+	st, _ := ct.Session().State("review")
+	es := decideEntries(t, c)
+	if !st.Offers(es[1], func(r string) bool { return r == "member" }) {
+		t.Error("a member is not offered the compose button")
+	}
+	if st.Offers(es[1], func(r string) bool { return r == "member" || r == "lead" }) {
+		t.Error("a member and lead is offered a compose button whose Send the lead entry may take")
 	}
 }
