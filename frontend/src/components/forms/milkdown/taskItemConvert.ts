@@ -18,7 +18,7 @@ import { Plugin, PluginKey, type EditorState, type Transaction } from '@milkdown
 import { Fragment, type Node as ProseNode } from '@milkdown/kit/prose/model'
 import { Decoration, DecorationSet, type EditorView } from '@milkdown/kit/prose/view'
 import { isTaskItem } from './taskListItem'
-import { isValidEntityRefId } from './entityRefId'
+import { isValidEntityRefId } from '@/utils/entityRefId'
 import type { EntityRefInsert } from './insertEntityRef'
 
 /** A task item, named by its position and the text the server will get. */

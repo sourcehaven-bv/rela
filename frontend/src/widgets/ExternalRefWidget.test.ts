@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { mount } from '@vue/test-utils'
 import ExternalRefWidget from './ExternalRefWidget.vue'
-import { externalRefHref, parseExternalRef } from './externalRef'
+import { externalRefHref, parseExternalRef } from '@/utils/externalRef'
 import { defaultWidgetFor } from './registry'
 import { formatCellValue } from '@/utils/format'
 import type { EntityType, PropertyDef } from '@/types'

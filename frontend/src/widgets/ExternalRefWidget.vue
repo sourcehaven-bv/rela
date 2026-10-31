@@ -5,7 +5,7 @@
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type { WidgetProps } from './types'
-import { externalRefHref, parseExternalRef } from './externalRef'
+import { externalRefHref, parseExternalRef } from '@/utils/externalRef'
 
 const props = defineProps<WidgetProps>()
 const { t } = useI18n()
