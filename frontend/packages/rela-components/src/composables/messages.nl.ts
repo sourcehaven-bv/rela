@@ -188,6 +188,7 @@ const CHANNEL_TEXT_NL: Record<ChannelTextKey, string> = {
   editMessage: 'Bericht bewerken',
   messageType: 'Soort bericht',
   cancelReply: 'Antwoord annuleren',
+  cancelCompose: 'Besluit annuleren',
   required: 'Verplicht.',
   toSend: 'om te versturen',
   toSave: 'om op te slaan',
