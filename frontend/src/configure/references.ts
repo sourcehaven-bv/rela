@@ -6,18 +6,8 @@
  * screen that shows it, and the server would refuse the save. So the draft
  * renames the references along with the property.
  */
-import {
-  entries,
-  get,
-  getIn,
-  isMap,
-  mapItems,
-  set,
-  str,
-  strList,
-  type TreeMap,
-  type TreeValue,
-} from './tree'
+import { entries, get, getIn, isMap, mapItems, set, str, strList } from './tree'
+import type { TreeMap, TreeValue } from '@/api/configure'
 
 function renameIn(item: TreeValue | undefined, key: string, from: string, to: string): void {
   if (isMap(item) && str(get(item, key)) === from) set(item, key, to)

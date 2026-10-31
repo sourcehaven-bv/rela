@@ -15,10 +15,11 @@ import ConfigSplit from '@/components/configure/ConfigSplit.vue'
 import ConfigSection from '@/components/configure/ConfigSection.vue'
 import ConfigPreview from '@/components/configure/ConfigPreview.vue'
 import LockedNote from '@/components/configure/LockedNote.vue'
-import { useConfigDraftStore } from '@/stores/configDraft'
+import { useConfigDraftStore } from '@/configure/configDraft'
 import { dashboardModel, dashboardPath, dashboards } from '@/configure/models'
 import { configureRoute } from '@/configure/routes'
-import { listAt, newMap, positionAfterMove, type TreeValue } from '@/configure/tree'
+import { listAt, newMap, positionAfterMove } from '@/configure/tree'
+import type { TreeValue } from '@/api/configure'
 
 /**
  * The dashboard: cards in order, each a count, a table or a breakdown of

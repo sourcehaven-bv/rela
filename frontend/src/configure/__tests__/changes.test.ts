@@ -1,16 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { changeCount, describeChanges, diffList } from '../changes'
-import {
-  clone,
-  getIn,
-  isMap,
-  listAt,
-  moveItem,
-  remove,
-  renameKey,
-  set,
-  type TreeMap,
-} from '../tree'
+import { clone, getIn, isMap, listAt, moveItem, remove, renameKey, set } from '../tree'
+import type { TreeMap } from '@/api/configure'
 import { snapshot, toTree } from './fixture'
 
 function at(tree: unknown, path: (string | number)[]): TreeMap {
@@ -105,14 +96,18 @@ describe('busy column title in the review', () => {
       { schema: base.schema, dataEntry: withBusy },
       []
     )
-    expect(added.flatMap((g) => g.items.map((i) => `${i.kind} ${i.label}`))).toEqual(['added Column run'])
+    expect(added.flatMap((g) => g.items.map((i) => `${i.kind} ${i.label}`))).toEqual([
+      'added Column run',
+    ])
 
     const removed = describeChanges(
       { schema: base.schema, dataEntry: withBusy },
       { schema: base.schema, dataEntry: base.data_entry },
       []
     )
-    expect(removed.flatMap((g) => g.items.map((i) => `${i.kind} ${i.label}`))).toEqual(['removed Column run'])
+    expect(removed.flatMap((g) => g.items.map((i) => `${i.kind} ${i.label}`))).toEqual([
+      'removed Column run',
+    ])
   })
 })
 

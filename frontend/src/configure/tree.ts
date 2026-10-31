@@ -1,24 +1,12 @@
 /**
- * The configuration files as the Configure API sends them: plain JSON trees.
- *
- * A YAML mapping arrives as `{"$m": [[key, value], ...]}` so its key order
- * survives (a plain JSON object cannot keep it). A mapping that sits in a
- * list also carries `"$i"`, its index in that list when the file was read.
- * The server matches an edited item to its old self by that index, so it
- * must travel back untouched; a new item has none.
+ * Helpers over the configuration trees the Configure API sends (see
+ * `TreeValue` in `@/api/configure` for the wire shape).
  *
  * The helpers here edit trees IN PLACE. The draft store clones a tree before
  * it hands it to an edit, so a screen never mutates the copy the server sent.
  */
 
-export type TreeScalar = string | number | boolean | null
-
-export interface TreeMap {
-  $m: [string, TreeValue][]
-  $i?: number
-}
-
-export type TreeValue = TreeScalar | TreeMap | TreeValue[]
+import type { TreeMap, TreeValue } from '@/api/configure'
 
 /** Path segments: a key in a mapping, or an index in a list. */
 export type TreePath = (string | number)[]

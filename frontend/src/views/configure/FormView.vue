@@ -17,10 +17,11 @@ import ConfigSplit from '@/components/configure/ConfigSplit.vue'
 import ConfigSection from '@/components/configure/ConfigSection.vue'
 import ConfigPreview from '@/components/configure/ConfigPreview.vue'
 import FieldDrawer from '@/components/configure/FieldDrawer.vue'
-import { useConfigDraftStore } from '@/stores/configDraft'
+import { useConfigDraftStore } from '@/configure/configDraft'
 import { entityTypeLabel, formModel, propertiesOf } from '@/configure/models'
 import { configureRoute } from '@/configure/routes'
-import { getIn, isMap, newMap, remove, type TreeValue } from '@/configure/tree'
+import { getIn, isMap, newMap, remove } from '@/configure/tree'
+import type { TreeValue } from '@/api/configure'
 
 /**
  * A form. Fields are a sortable list; the preview beside it is the form's

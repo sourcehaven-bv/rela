@@ -5,7 +5,7 @@ import RlText from 'rela-components/components/common/RlText.vue'
 import type { TableColumn } from 'rela-components/components/table/types'
 import ConfigurePage from '@/components/configure/ConfigurePage.vue'
 import ConfigIndex from '@/components/configure/ConfigIndex.vue'
-import { useConfigDraftStore } from '@/stores/configDraft'
+import { useConfigDraftStore } from '@/configure/configDraft'
 import { relations, relationSentence } from '@/configure/models'
 import { configureRoute } from '@/configure/routes'
 

@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
-import { useConfigDraftStore } from '@/stores/configDraft'
+import { useConfigDraftStore } from '@/configure/configDraft'
 import { useDiscardDraft } from '../useDiscardDraft'
 import { snapshot } from './fixture'
 

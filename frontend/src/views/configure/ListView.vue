@@ -23,7 +23,7 @@ import SortEditor from '@/components/configure/SortEditor.vue'
 import FilterControlsEditor from '@/components/configure/FilterControlsEditor.vue'
 import FixedFiltersEditor from '@/components/configure/FixedFiltersEditor.vue'
 import RlTextarea from 'rela-components/components/form/RlTextarea.vue'
-import { useConfigDraftStore } from '@/stores/configDraft'
+import { useConfigDraftStore } from '@/configure/configDraft'
 import { columnHeader } from '@/components/lists/tableColumns'
 import {
   type ColumnModel,
@@ -40,7 +40,8 @@ import {
   relationsOfType,
 } from '@/configure/models'
 import { configureRoute } from '@/configure/routes'
-import { getIn, isMap, keys, newMap, remove, type TreeValue } from '@/configure/tree'
+import { getIn, isMap, keys, newMap, remove } from '@/configure/tree'
+import type { TreeValue } from '@/api/configure'
 
 /**
  * A list. Columns are a sortable list with a switch for whether people can

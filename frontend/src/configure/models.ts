@@ -19,10 +19,9 @@ import {
   num,
   str,
   strList,
-  type TreeMap,
   type TreePath,
-  type TreeValue,
 } from './tree'
+import type { TreeMap, TreeValue } from '@/api/configure'
 import { builtinTypeLabel } from './names'
 
 // --- Data model ---

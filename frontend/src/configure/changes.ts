@@ -8,19 +8,8 @@
  * `Order of fields`.
  */
 import type { ConfigRename } from '@/api/configure'
-import {
-  entries,
-  equal,
-  get,
-  getIn,
-  isList,
-  isMap,
-  keys,
-  str,
-  strList,
-  type TreeMap,
-  type TreeValue,
-} from './tree'
+import { entries, equal, get, getIn, isList, isMap, keys, str, strList } from './tree'
+import type { TreeMap, TreeValue } from '@/api/configure'
 import {
   automationTitle,
   choiceListLabel,

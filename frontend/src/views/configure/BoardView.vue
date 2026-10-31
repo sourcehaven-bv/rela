@@ -16,7 +16,7 @@ import ConfigurePage from '@/components/configure/ConfigurePage.vue'
 import ConfigSplit from '@/components/configure/ConfigSplit.vue'
 import ConfigSection from '@/components/configure/ConfigSection.vue'
 import ConfigPreview from '@/components/configure/ConfigPreview.vue'
-import { useConfigDraftStore } from '@/stores/configDraft'
+import { useConfigDraftStore } from '@/configure/configDraft'
 import {
   boardModel,
   chooseCardFields,
@@ -29,7 +29,8 @@ import {
 import FilterControlsEditor from '@/components/configure/FilterControlsEditor.vue'
 import FixedFiltersEditor from '@/components/configure/FixedFiltersEditor.vue'
 import { configureRoute } from '@/configure/routes'
-import { getIn, isMap, newMap, remove, set, type TreeValue } from '@/configure/tree'
+import { getIn, isMap, newMap, remove, set } from '@/configure/tree'
+import type { TreeValue } from '@/api/configure'
 
 /**
  * A board. Without its own columns a board shows one column per option of

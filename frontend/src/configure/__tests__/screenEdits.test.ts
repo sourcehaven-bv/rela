@@ -12,7 +12,8 @@ import {
   relationsOfType,
   typedDefault,
 } from '../models'
-import { entries, getIn, isList, isMap, type TreeValue } from '../tree'
+import { entries, getIn, isList, isMap } from '../tree'
+import type { TreeValue } from '@/api/configure'
 import { toTree } from './fixture'
 
 describe('list and board settings', () => {
