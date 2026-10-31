@@ -594,3 +594,62 @@ func TestRequestStats_QueryCeiling(t *testing.T) {
 		})
 	}
 }
+
+// A request whose client went away before the handler returned is logged as
+// 499 canceled=true, whatever the handler wrote, with the written status
+// kept beside it (TKT-T2I7P2). An event stream ends that way every time and
+// is not marked. A panic stays 500.
+func TestRequestStats_AccessLogCanceled(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		path    string
+		write   int
+		panics  bool
+		want    []string
+		notWant []string
+	}{
+		{"nothing written", "/api/v1/_search", 0, false,
+			[]string{"status=499", "canceled=true"}, []string{"written_status"}},
+		{"500 written to a dead client", "/api/v1/_search", http.StatusInternalServerError, false,
+			[]string{"status=499", "canceled=true", "written_status=500"}, nil},
+		{"200 written to a dead client", "/api/v1/_search", http.StatusOK, false,
+			[]string{"status=499", "canceled=true", "written_status=200"}, nil},
+		{"event stream", "/api/v1/_events", http.StatusOK, false,
+			[]string{"status=200"}, []string{"canceled", "status=499"}},
+		{"panic", "/api/v1/_search", 0, true,
+			[]string{"status=500", "panic=true"}, []string{"status=499", "canceled"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			withLogLevel(t, slog.LevelInfo)
+			logger, buf := accessLogger()
+			ctx, cancel := context.WithCancel(context.Background())
+			h := requestStats(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				cancel()
+				if tc.write != 0 {
+					w.WriteHeader(tc.write)
+				}
+				if tc.panics {
+					panic("boom")
+				}
+			}), logger, nil, 0)
+
+			func() {
+				defer func() { _ = recover() }()
+				h.ServeHTTP(httptest.NewRecorder(),
+					httptest.NewRequest(http.MethodGet, tc.path, http.NoBody).WithContext(ctx))
+			}()
+
+			out := buf.String()
+			for _, want := range tc.want {
+				if !strings.Contains(out, want) {
+					t.Errorf("record missing %q in %q", want, out)
+				}
+			}
+			for _, not := range tc.notWant {
+				if strings.Contains(out, not) {
+					t.Errorf("record must not contain %q: %q", not, out)
+				}
+			}
+		})
+	}
+}

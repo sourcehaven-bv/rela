@@ -1,8 +1,9 @@
 import { describe, it, expect, vi } from 'vitest'
 import { createMentionMenuMachine, MIN_SEARCH_LEN } from './mentionMenuState'
+import { SEARCH_DEBOUNCE_MS } from '@/utils/searchTiming'
 
 /** Lets the debounce and an awaited search both land. */
-const settle = (): Promise<void> => new Promise((r) => setTimeout(r, 200))
+const settle = (): Promise<void> => new Promise((r) => setTimeout(r, SEARCH_DEBOUNCE_MS + 50))
 
 function machineWith(
   search: (q: string, s?: AbortSignal) => Promise<Array<{ id: string }>>,
@@ -86,7 +87,7 @@ describe('createMentionMenuMachine', () => {
       .mockImplementationOnce(async () => [{ id: 'FRESH-1' }])
     const { m } = machineWith(search)
     m.setQuery('ST')
-    await new Promise((r) => setTimeout(r, 160))
+    await new Promise((r) => setTimeout(r, SEARCH_DEBOUNCE_MS + 10))
     m.setQuery('FR')
     release!()
     await settle()
@@ -101,7 +102,7 @@ describe('createMentionMenuMachine', () => {
       return [{ id: 'LATE-1' }]
     })
     m.setQuery('LA')
-    await new Promise((r) => setTimeout(r, 160))
+    await new Promise((r) => setTimeout(r, SEARCH_DEBOUNCE_MS + 10))
     m.close()
     release!()
     await settle()

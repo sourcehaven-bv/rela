@@ -7,6 +7,7 @@ import { useSchemaStore } from '@/stores/schema'
 import { _resetModalStack, isAnyModalOpen } from '@/composables/modalStack'
 import { searchEntities } from '@/api'
 import type { Entity, ListResponse } from '@/types'
+import { SEARCH_DEBOUNCE_MS } from '@/utils/searchTiming'
 
 vi.mock('@/api', async () => {
   const actual = await vi.importActual<typeof import('@/api')>('@/api')
@@ -76,7 +77,7 @@ async function typeQuery(value: string): Promise<void> {
   input().value = value
   input().dispatchEvent(new Event('input'))
   await flushPromises()
-  vi.advanceTimersByTime(150)
+  vi.advanceTimersByTime(SEARCH_DEBOUNCE_MS)
   await flushPromises()
   await flushPromises()
 }
@@ -154,14 +155,24 @@ describe('EntityPickerModal', () => {
       searchSpy.mockResolvedValueOnce(listResponse([entity]))
       factory()
       await typeQuery('fix')
-      expect(searchSpy).toHaveBeenCalledExactlyOnceWith('fix', undefined, expect.any(AbortSignal), undefined)
+      expect(searchSpy).toHaveBeenCalledExactlyOnceWith('fix', {
+        type: undefined,
+        signal: expect.any(AbortSignal),
+        world: undefined,
+        limit: 50,
+      })
       expect(options()).toHaveLength(1)
     })
 
     it('passes a single allowed type to the search', async () => {
       factory({ types: ['person'] })
       await typeQuery('ann')
-      expect(searchSpy).toHaveBeenCalledExactlyOnceWith('ann', 'person', expect.any(AbortSignal), undefined)
+      expect(searchSpy).toHaveBeenCalledExactlyOnceWith('ann', {
+        type: 'person',
+        signal: expect.any(AbortSignal),
+        world: undefined,
+        limit: 50,
+      })
     })
 
     it('filters the answer to several allowed types', async () => {
@@ -174,7 +185,13 @@ describe('EntityPickerModal', () => {
       )
       factory({ types: ['person', 'group'] })
       await typeQuery('any')
-      expect(searchSpy).toHaveBeenCalledWith('any', undefined, expect.any(AbortSignal), undefined)
+      // No limit: the hits are filtered here, so a limit could leave none.
+      expect(searchSpy).toHaveBeenCalledWith('any', {
+        type: undefined,
+        signal: expect.any(AbortSignal),
+        world: undefined,
+        limit: undefined,
+      })
       expect(options().map((o) => o.id)).toEqual([
         'entity-picker-option-P-1',
         'entity-picker-option-G-1',
@@ -241,8 +258,8 @@ describe('EntityPickerModal', () => {
       // Resolve only when we explicitly choose to so we can observe the
       // controller being aborted while the request is in flight.
       let capturedSignal: AbortSignal | undefined
-      searchSpy.mockImplementationOnce((_q: string, _t: unknown, signal: AbortSignal) => {
-        capturedSignal = signal
+      searchSpy.mockImplementationOnce((_q: string, opts: { signal: AbortSignal }) => {
+        capturedSignal = opts.signal
         return new Promise(() => {
           // never resolves; the watcher's abort() is what we assert on
         })
@@ -263,7 +280,7 @@ describe('EntityPickerModal', () => {
       input().value = 'foo'
       input().dispatchEvent(new Event('input'))
       await flushPromises()
-      // Close BEFORE the 150ms debounce fires.
+      // Close BEFORE the debounce fires.
       await setOpen(wrapper, false)
       vi.advanceTimersByTime(500)
       await flushPromises()

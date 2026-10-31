@@ -3,6 +3,7 @@ package dataentry
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -315,5 +316,36 @@ func TestReadGateFromContext_DeniesUnderPolicyWithoutGate(t *testing.T) {
 
 	if _, nop := readGateFromContext(context.Background()).(nopReadGate); !nop {
 		t.Error("a context with no policy mark must keep the nop gate")
+	}
+}
+
+// TestACLMiddleware_CanceledWalkStaysSilent: a member-of walk that fails
+// because the client went away answers nothing and logs no warning
+// (TKT-T2I7P2). The walk failure above, on a live request, still answers
+// 500.
+func TestACLMiddleware_CanceledWalkStaysSilent(t *testing.T) {
+	appLog := withLogLevel(t, slog.LevelInfo)
+	d, err := acl.NewDeclarative(&acl.Policy{}, downMembership{}, acl.NullGraphQueryer{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	called := false
+	handler := attachACLRequest(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { called = true }), d, false)
+
+	ctx, cancel := context.WithCancel(principal.With(context.Background(),
+		principal.Principal{User: "alice", Tool: principal.ToolDataEntry}))
+	cancel()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/tickets", http.NoBody).WithContext(ctx)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if rec.Body.Len() != 0 {
+		t.Errorf("a canceled request must get no answer, got %d %s", rec.Code, rec.Body)
+	}
+	if strings.Contains(appLog.String(), "level=WARN") {
+		t.Errorf("a canceled request must not log a warning, got %q", appLog.String())
+	}
+	if called {
+		t.Error("next handler ran without a resolved identity")
 	}
 }

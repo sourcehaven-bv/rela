@@ -150,9 +150,12 @@ func TestWriteInternalError_HidesTheCause(t *testing.T) {
 				t.Errorf("log = %q, want the cause", logs.String())
 			}
 
+			// The client went away: the request context is canceled.
 			logs.Reset()
 			rec = httptest.NewRecorder()
-			write(rec, httptest.NewRequest(http.MethodGet, "/api/v1/x", http.NoBody),
+			cctx, cancel := context.WithCancel(context.Background())
+			cancel()
+			write(rec, httptest.NewRequestWithContext(cctx, http.MethodGet, "/api/v1/x", http.NoBody),
 				errors.Join(errors.New(secret), context.Canceled))
 			if rec.Body.Len() != 0 || logs.Len() != 0 {
 				t.Errorf("canceled request: body %q, log %q; want neither", rec.Body.String(), logs.String())

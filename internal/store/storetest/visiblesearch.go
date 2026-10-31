@@ -398,6 +398,17 @@ func RunFacedVisibleSearchTests(t *testing.T, vsf VisibleSearchFactory) {
 		requireFaces(t, map[string]entity.Face{"POL-1": published}, got)
 	})
 
+	// The trimmed prime with a needle long enough for the indexed shape,
+	// whose prefilter repeats the visibility clause: the term is only on the
+	// readable fallback face, which must still be found (TKT-T2I7P2).
+	t.Run("FaceAllowlistMatchesTheFallbackText", func(t *testing.T) {
+		s, _, vs := vsf(t)
+		seed(t, s)
+		scope := map[string]search.TypeScope{"policy": {AllowAll: true, Faces: []entity.Face{published}}}
+		got := collectHits(t, vs.SearchVisible(ctx(), search.Query{Text: "final", World: world}, scope))
+		requireFaces(t, map[string]entity.Face{"POL-1": published}, got)
+	})
+
 	t.Run("QueryVerdictIsPerFaceRow", func(t *testing.T) {
 		s, _, vs := vsf(t)
 		seed(t, s)
@@ -418,6 +429,72 @@ func RunFacedVisibleSearchTests(t *testing.T, vsf VisibleSearchFactory) {
 				require.Empty(t, got, "the term is only in the draft face, which the scope denies")
 			})
 		}
+	})
+
+	// A term present only on a face the world ranks below the prime is not
+	// a hit, whatever the scope admits: the search tests the prime's text,
+	// not the family's. "final" is only in POL-1's published face, and the
+	// world serves its draft. Run for a needle long enough to take an
+	// indexed prefilter and one too short for it, and through the ungated
+	// searcher too, because the backends may build these statements
+	// differently (TKT-T2I7P2).
+	// Enough faced hits to cross the pgstore conformance run's two-row
+	// keyset page, through the indexed prefilter. Every odd entity has the term only on its published face,
+	// which the world ranks below draft, so it must not appear on any page
+	// (TKT-T2I7P2).
+	t.Run("WorldHitsCrossPages", func(t *testing.T) {
+		s, searcher, vs := vsf(t)
+		want := map[string]entity.Face{}
+		for i := range 7 {
+			id := fmt.Sprintf("POL-P%d", i)
+			draftTitle, pubTitle := "gamma draft", "plain published"
+			if i%2 == 1 {
+				draftTitle, pubTitle = "plain draft", "gamma published"
+			} else {
+				want[id] = draft
+			}
+			for _, f := range []struct {
+				face  entity.Face
+				title string
+			}{{draft, draftTitle}, {published, pubTitle}} {
+				ent := entity.New(id, "policy")
+				ent.Face = f.face
+				ent.SetString("title", f.title)
+				require.NoError(t, s.CreateEntity(ctx(), ent))
+			}
+		}
+		q := search.Query{Text: "gamma", World: world}
+		gated := collectHits(t, vs.SearchVisible(ctx(), q, map[string]search.TypeScope{"policy": {AllowAll: true}}))
+		requireFaces(t, want, gated)
+		require.Len(t, gated, len(want), "a page edge duplicated or dropped a hit")
+		ungated := collectHits(t, searcher.Search(ctx(), q))
+		requireFaces(t, want, ungated)
+		require.Len(t, ungated, len(want), "a page edge duplicated or dropped a hit")
+	})
+
+	t.Run("TermOnlyOnANonPrimeFaceIsNoHit", func(t *testing.T) {
+		s, searcher, vs := vsf(t)
+		seed(t, s)
+		for _, text := range []string{"final", "fi"} {
+			for name, scope := range map[string]map[string]search.TypeScope{
+				"policyAllowAll":   {"policy": {AllowAll: true}},
+				"wildcardAllowAll": {search.WildcardType: {AllowAll: true}},
+			} {
+				t.Run(text+"/"+name, func(t *testing.T) {
+					got := collectHits(t, vs.SearchVisible(ctx(), search.Query{Text: text, World: world}, scope))
+					require.Empty(t, got)
+				})
+			}
+			t.Run(text+"/ungated", func(t *testing.T) {
+				require.Empty(t, collectHits(t, searcher.Search(ctx(), search.Query{Text: text, World: world})))
+			})
+		}
+		// Control: the prime's own text still hits, through every path.
+		got := collectHits(t, vs.SearchVisible(ctx(), search.Query{Text: "sketch", World: world},
+			map[string]search.TypeScope{"policy": {AllowAll: true}}))
+		requireFaces(t, map[string]entity.Face{"POL-1": draft}, got)
+		requireFaces(t, map[string]entity.Face{"POL-1": draft},
+			collectHits(t, searcher.Search(ctx(), search.Query{Text: "sketch", World: world})))
 	})
 
 	t.Run("EmptyTextServesTheAdmittedPrime", func(t *testing.T) {

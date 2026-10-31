@@ -9,6 +9,7 @@ import type { Entity } from '@/types'
 import { entityRefNode } from './entityRefNode'
 import { useEditorMention, type EditorMention } from './useEditorMention'
 import type { MentionTransport } from './useMentionMenu'
+import { SEARCH_DEBOUNCE_MS } from '@/utils/searchTiming'
 
 const search = vi.fn<MentionTransport['search']>()
 
@@ -98,7 +99,7 @@ function press(key: string): KeyboardEvent {
 }
 
 /** Waits out the search debounce and lets the response land. */
-const settle = () => new Promise((r) => setTimeout(r, 250))
+const settle = () => new Promise((r) => setTimeout(r, SEARCH_DEBOUNCE_MS + 100))
 
 describe('useEditorMention', () => {
   it('opens on a typed @', async () => {

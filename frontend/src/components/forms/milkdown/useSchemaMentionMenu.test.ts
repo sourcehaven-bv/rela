@@ -46,7 +46,12 @@ describe('useSchemaMentionMenu world', () => {
 
   it('reads every source in the world that heads the edited face', async () => {
     await exercise({ id: 'PAGE-1', type: 'page', face: 'en' })
-    expect(searchEntities).toHaveBeenCalledWith('abc', 'page', expect.anything(), 'site-en')
+    expect(searchEntities).toHaveBeenCalledWith('abc', {
+      type: 'page',
+      signal: expect.anything(),
+      world: 'site-en',
+      limit: 100,
+    })
     expect(listRecentlyModified).toHaveBeenCalledWith(
       ['page'],
       expect.any(Number),
@@ -61,14 +66,24 @@ describe('useSchemaMentionMenu world', () => {
 
   it('falls back to the page world for an entity without a face', async () => {
     await exercise({ id: 'PAGE-1', type: 'page', face: '' })
-    expect(searchEntities).toHaveBeenCalledWith('abc', 'page', expect.anything(), 'site-nl')
+    expect(searchEntities).toHaveBeenCalledWith('abc', {
+      type: 'page',
+      signal: expect.anything(),
+      world: 'site-nl',
+      limit: 100,
+    })
     expect(getEntity).toHaveBeenCalledWith('page', 'PAGE-1', { include: '*', world: 'site-nl' })
   })
 
   it('sends no world when the page has none', async () => {
     pageWorld.value = undefined
     await exercise(null)
-    expect(searchEntities).toHaveBeenCalledWith('abc', 'page', expect.anything(), undefined)
+    expect(searchEntities).toHaveBeenCalledWith('abc', {
+      type: 'page',
+      signal: expect.anything(),
+      world: undefined,
+      limit: 100,
+    })
     expect(getEntity).toHaveBeenCalledWith('page', 'PAGE-R', undefined)
   })
 })

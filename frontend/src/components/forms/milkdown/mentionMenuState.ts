@@ -15,6 +15,7 @@
  * remove, so shipping a smaller instance of it was not an option.
  */
 import { rankMentions } from './rankMentions'
+import { SEARCH_DEBOUNCE_MS } from '@/utils/searchTiming'
 
 /**
  * Below this length the app editor's menu prompts rather than searching.
@@ -24,7 +25,6 @@ import { rankMentions } from './rankMentions'
  * `MentionMenuOptions.shouldSearch`.
  */
 export const MIN_SEARCH_LEN = 2
-const SEARCH_DEBOUNCE_MS = 150
 const MAX_RESULTS = 20
 
 /** The menu's observable state. Plain data, so any renderer can read it. */

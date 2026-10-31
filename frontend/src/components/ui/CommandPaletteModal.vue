@@ -18,6 +18,7 @@ import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import { RouterLink, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { searchEntities } from '@/api'
+import { SEARCH_DEBOUNCE_MS } from '@/utils/searchTiming'
 import { entityDisplayTitle } from '@/utils/entityDisplay'
 import { useSchemaStore } from '@/stores'
 import { useModalStack } from '@/composables/modalStack'
@@ -28,14 +29,13 @@ import { shouldDeferToBrowser } from '@/utils/openIntent'
 import type { Entity } from '@/types'
 import RlSpinner from 'rela-components/components/common/RlSpinner.vue'
 
-// Perceptually-instant on a fast connection; tune up if the API is slow.
-const DEBOUNCE_MS = 150
+// Shared with the other search boxes; see searchTiming.ts.
+const DEBOUNCE_MS = SEARCH_DEBOUNCE_MS
 // Minimum characters before we hit /_search. 1-letter queries return
 // thousands of unrelated results in any non-trivial project.
 const MIN_QUERY_LEN = 2
-// Cap rendered options regardless of what the backend returns. Avoids OOMing
-// the browser when the user types a common letter and the backend has no
-// per_page on /_search yet.
+// Cap rendered options. Also sent as `limit`, so the server returns only
+// these rows.
 const MAX_RESULTS = 50
 
 const props = defineProps<{
@@ -103,7 +103,11 @@ async function runSearch(q: string): Promise<void> {
   abort = new AbortController()
   loading.value = true
   try {
-    const resp = await searchEntities(q, undefined, abort.signal, worldParam.value)
+    const resp = await searchEntities(q, {
+      signal: abort.signal,
+      world: worldParam.value,
+      limit: MAX_RESULTS,
+    })
     // Replace results only on success — keep stale results visible until
     // the new ones arrive, to avoid flicker.
     results.value = resp.data.slice(0, MAX_RESULTS)

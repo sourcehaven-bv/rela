@@ -479,6 +479,9 @@ func attachACLRequest(next http.Handler, d *acl.Declarative, jwtVerified bool) h
 				"Principal could not be resolved under ACL",
 				"principal stamper produced an unstamped identity; check server logs")
 			return
+		case err != nil && requestCanceled(r, err):
+			// The client went away during resolution: nobody to answer.
+			return
 		case err != nil:
 			// A store error or failed membership walk. Its text could carry
 			// internal detail, so it stays in the log.
