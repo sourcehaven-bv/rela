@@ -19,6 +19,7 @@ import {
 import { faceCandidates, mergeFamilyCandidates, offersFace, widenWorlds } from './familyCandidates'
 import { addressedEntry } from './relationsPatch'
 import { entityRef, refBareId, refFace } from '@/utils/entityRef'
+import { isStandIn } from '@/utils/standIn'
 
 // Per-edge state emitted on the incoming-changed channel after
 // TKT-GFQK unified the save path. DynamicForm wraps this into a
@@ -521,10 +522,7 @@ function showsFaceBadge(entity: Entity): boolean {
   // ambient one, so its stand-in wording would mislead. It names its face
   // instead (offWorldFace).
   if (offWorldFaces.value.has(offWorldKey(entity))) return false
-  const w = entity._world
-  if (!w) return false
-  if (w.via === 'fallback-default') return true
-  return w.via === 'chain' && (w.chain_position ?? 0) > 0
+  return isStandIn(entity._world)
 }
 
 function hasFaces(entityType: string): boolean {
