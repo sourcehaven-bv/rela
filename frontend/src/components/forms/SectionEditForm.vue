@@ -92,6 +92,9 @@ const props = defineProps<{
   onPropertyApplied: (prop: string, value: unknown, owner: { type: string; id: string }) => void
   onError: (msg: string, info?: AutoSaveErrorInfo) => void
   onVerdictFlip?: (prop: string, label: string) => void
+  // Runs each save, so the host can order its reads against the form's
+  // writes (useEntitySession.write). Without it a save simply runs.
+  runWrite?: <T>(send: () => Promise<T>) => Promise<T>
   // Called after the file widget uploads/removes an attachment so the
   // host can refresh the entity (property value + _attachments changed).
   onAttachmentChanged?: () => void
@@ -125,6 +128,7 @@ const formDataRef = computed(() => formData) as unknown as Ref<Record<string, un
 const autoSave = useAutoSave({
   target: owner,
   initialServerSnapshot: initialSnapshot,
+  runWrite: props.runWrite,
   disableContentChannel: true,
   disableRelationsChannel: true,
   formData: formDataRef,

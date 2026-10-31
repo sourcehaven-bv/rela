@@ -334,6 +334,42 @@ every field it writes, and merges on a 412 (TKT-2VDVHF; API contract in
 - **A snapshot without `_versions` saves unguarded** until its first save
   returns tokens. List-section rows are in that state today (TKT-MK9NJB), and
   so is every incoming relation list (TKT-E9WXPU).
+- **A 412 is never read as the client's own write** (BUG-04V034W). Tokens
+  are derived from the value, so a value someone else writes back to one this
+  client saved has the same token as that save; resending on it would
+  overwrite their change. A 412 always takes the merge or conflict path. A
+  late read that would move a base backwards is kept out by the read order
+  of `useEntitySession`, not by autosave.
+
+## Reads and writes of the entity on screen (`useEntitySession`)
+
+One session per entity on screen orders its reads against its writes
+(BUG-04V034W). Before it, every read decided freshness with its own guard,
+and a view read before the user's own save and answered after it reset the
+body's base. `EntityDetail` uses it, and passes `runWrite` to its own autosave and to
+each `SectionEditForm`; `DynamicForm` can adopt it the same way. Rules:
+
+- **Read through `session.read`, write through `session.write`.** A read
+  lands (its `land` callback runs) only if the address is unchanged, no later
+  read has landed, and no write to its row completed while it was on its
+  way; otherwise it reads again, a few times at most. Writes count per key:
+  a write is tagged with the row it saves (EntityDetail: the target of each
+  autosave instance), and a read names the row its answer shows (`shows`),
+  so the drain of the entity being left does not void the reads of the next
+  one. Do not add a freshness check of your own beside it.
+- **A write that never settles blocks every later write**, so give `run` a
+  timeout of its own.
+- **Live changes call `session.invalidate()`**, never a reload directly.
+  Invalidations coalesce, and the reload waits until no write is held
+  (`holdsWrites`, e.g. an autosave debounce) or on its way.
+- **A refusal still drops held content** (`onRefused`, BUG-E8XE7I) and voids
+  every read sent before it. A transient failure comes back as `failed` and
+  keeps what is on screen; a failed background reload is tried again with a
+  backoff and sets no page error.
+- `useEntitySession.prop.test.ts` explores answer orders against a tiny
+  server, with failing writes and reads that wait in `prepare`. Disabling the
+  address, superseded or write rule, or the check after `prepare`, makes it
+  fail with a counterexample.
 
 ## Testing against the fake API (`src/test/fakeApi/`)
 

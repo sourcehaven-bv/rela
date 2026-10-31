@@ -11,7 +11,6 @@ import { useEvents, type EntityEventData } from '@/composables/useEvents'
 import { useBackTarget } from '@/composables/useBackTarget'
 import { isCancelledFetch } from '@/composables/usePageData'
 import { fetchView, getCommands, getErrorMessage } from '@/api'
-import { shouldDropHeldContent } from '@/api/errors'
 import { liveViewPath } from '@/api/live'
 import { useLiveSubscription } from '@/composables/useLiveSubscription'
 import { runAction } from '@/api/actions'
@@ -23,6 +22,7 @@ import type { ViewEntity, ViewResponse, ViewSection, ViewSectionField, ViewTreeN
 import type { Entity } from '@/types'
 import { entityDisplayTitle } from '@/utils/entityDisplay'
 import { useAutoSave, type AutoSaveTarget } from '@/composables/useAutoSave'
+import { useEntitySession } from '@/composables/useEntitySession'
 import { toggleCheckboxInSource } from '@/utils/checkboxToggle'
 import type { ActionConfig, Command } from '@/types'
 import { getEditFormId } from '@/types'
@@ -251,36 +251,17 @@ const viewData = ref<ViewResponse | null>(null)
 // carry it rather than the live `worldParam`, so a link opens its target in
 // the world its title was resolved in, also while a world switch refetches.
 const viewWorld = ref<string | undefined>(undefined)
-// Every fetch of the view takes a ticket. Its answer lands only while the
-// route still names what it fetched, and only if no answer from a later fetch
-// has landed. The page keeps one instance across route changes (the full page
-// and the list's side panel both reuse it), so the answer for the entity the
-// user left can arrive after the one for the entity they moved to. Applying it
-// put the old entity back on screen, and Edit then opened that entity
-// (TKT-7LTLHW3). The order is that of answers that landed, not of requests
-// sent: a later refresh that fails must not void the load before it.
+// Every fetch of the view goes through `session` (useEntitySession, created
+// below the autosave it orders). Its answer lands only while the route still
+// names what it fetched, only if no answer from a later fetch has landed, and
+// only if no save to the row it shows completed while it was on its way. The
+// page keeps one instance across route changes (the full page and the list's
+// side panel both reuse it), so the answer for the entity the user left can
+// arrive after the one for the entity they moved to. Applying it put the old
+// entity back on screen, and Edit then opened that entity (TKT-7LTLHW3). A
+// view read before the user's own save and answered after it put the older
+// body back, and the next save failed as a conflict (BUG-04V034W).
 const viewTarget = () => `${props.entityType}/${props.entityId}/${worldParam.value ?? ''}`
-interface ViewTicket {
-  /** The route still names what this fetch asked for. */
-  sameTarget: () => boolean
-  /** The answer may still land: same target, and nothing later has landed. */
-  fresh: () => boolean
-  land: () => void
-}
-let viewIssued = 0
-let viewLanded = 0
-function viewTicket(): ViewTicket {
-  const seq = ++viewIssued
-  const target = viewTarget()
-  const sameTarget = () => target === viewTarget()
-  return {
-    sameTarget,
-    fresh: () => seq > viewLanded && sameTarget(),
-    land: () => {
-      viewLanded = Math.max(viewLanded, seq)
-    },
-  }
-}
 
 // Reordering the rows of a section table shown in relation order.
 // A move changes one section's row order and nothing else on the page, so
@@ -289,10 +270,13 @@ function viewTicket(): ViewTicket {
 const sectionReorder = useSectionReorder({
   view: viewData,
   reload: async () => {
-    const ticket = viewTicket()
     const world = worldParam.value
-    const view = await fetchView(props.entityType, props.entityId, world)
-    if (view) landView(ticket, view, world)
+    const outcome = await session.read((signal) => fetchView(props.entityType, props.entityId, world, signal), {
+      quiet: true,
+      shows: viewRow,
+      land: (view) => applyView(view, world),
+    })
+    if (outcome.kind === 'failed') throw outcome.error
   },
 })
 const loadedCommands = ref<Command[]>([])
@@ -649,6 +633,9 @@ function makeContentAutoSave(target: AutoSaveTarget): ContentAutoSave {
       if (info?.channel === 'property' && showing(target)) void loadView()
     },
     disableRelationsChannel: true,
+    // Counted against its own row, so the edits of a row being left void
+    // that row's late reads and not those of the row arriving.
+    runWrite: (send) => session.write(send, rowKey(target)),
   })
 }
 
@@ -681,6 +668,27 @@ function editAutoSave(): ContentAutoSave {
   return save
 }
 
+const autoSaveBusy = () =>
+  (contentAutoSave.value?.pendingCount.value ?? 0) > 0 ||
+  (contentAutoSave.value?.inFlightCount.value ?? 0) > 0
+// Live changes reload through the session once autosave holds and sends
+// nothing: a reload under a pending edit (a checkbox toggle in its debounce)
+// would replace the state the next edit is computed from. Both counts are
+// reactive, which the session's idle watch needs.
+const session = useEntitySession(viewTarget, {
+  holdsWrites: autoSaveBusy,
+  reload: (full) => (full ? loadView({ background: true }) : refreshView()),
+  // A refusal wins over every answer, older or newer: held content the
+  // server has refused must go (frontend/CLAUDE.md, BUG-E8XE7I).
+  onRefused: (err) => {
+    viewData.value = null
+    error.value = getErrorMessage(err, t('entity.loadFailed'))
+  },
+})
+// `loading` is read by useDelayedPending at setup, above the session, which
+// needs the autosave it orders; hence a synced copy rather than a computed.
+watch(session.loading, (now) => (loading.value = now), { flush: 'sync' })
+
 // Accepting a suggestion (TKT-S5C0K3) writes the body on the server, so it must
 // not race a pending checkbox save: that PATCH would carry the pre-accept body
 // and undo the change, or fail its version check. Pending saves are flushed
@@ -703,7 +711,9 @@ async function acceptSuggestion(c: Comment) {
     }
     const address = servedRef.value
     if (address === null) return
-    const res = await acceptComment(props.entityType, address, c.id)
+    // No timeout of its own: a request that never settles holds back every
+    // later write of the session (useEntitySession.write).
+    const res = await runSessionWrite(() => acceptComment(props.entityType, address, c.id))
     const view = viewData.value
     if (view?.entry && servedRef.value === address) {
       const nextSections = view.sections.map((s) =>
@@ -1086,66 +1096,48 @@ const presence = usePresence(() => {
 useLiveSubscription(
   'entity-detail',
   () => liveViewPath(props.entityType, props.entityId, worldParam.value),
-  () => void refreshView()
+  () => session.invalidate()
 )
 
-// A refresh waits while autosave holds or sends a change: the response would
-// replace optimistic state (a checkbox toggle in its debounce) that the next
-// edit is computed from. The deferred refresh runs once autosave is idle.
-// Both counts are reactive, which the watch below needs; isContentDirty is
-// not, and its post-save window would defer a refresh with nothing to rerun it.
-const autoSaveBusy = () =>
-  (contentAutoSave.value?.pendingCount.value ?? 0) > 0 ||
-  (contentAutoSave.value?.inFlightCount.value ?? 0) > 0
-let refreshDeferred = false
-watch(
-  () => !autoSaveBusy(),
-  (idle) => {
-    if (idle && refreshDeferred) void refreshView()
-  }
-)
-
+// A refresh: no route-load bar, failures keep what is on screen, and it does
+// not land while autosave is busy (the session reloads once it is idle).
 async function refreshView() {
-  if (autoSaveBusy()) {
-    refreshDeferred = true
-    return
-  }
-  refreshDeferred = false
-  const ticket = viewTicket()
-  try {
-    const world = worldParam.value
-    const view = await fetchView(props.entityType, props.entityId, world)
-    if (!view || !ticket.fresh()) return
-    if (autoSaveBusy()) {
-      refreshDeferred = true
-      return
-    }
-    landView(ticket, view, world)
-  } catch (err) {
-    // A refusal wins over every answer, older or newer: held content the
-    // server has refused must go (frontend/CLAUDE.md, BUG-E8XE7I).
-    if (ticket.sameTarget() && shouldDropHeldContent(err)) dropRefusedView(ticket, err)
-  }
+  const world = worldParam.value
+  await session.read((signal) => fetchView(props.entityType, props.entityId, world, signal), {
+    background: true,
+    quiet: true,
+    shows: viewRow,
+    land: (view) => applyView(view, world),
+  })
 }
 
-function dropRefusedView(ticket: ViewTicket, err: unknown) {
-  viewData.value = null
-  ticket.land()
-  error.value = getErrorMessage(err, t('entity.loadFailed'))
+// The session key of a row: writes are counted against the row they save,
+// and a read against the row its answer shows (useEntitySession, rule c).
+function rowKey(target: AutoSaveTarget): string {
+  return `${target.type}/${target.id}`
+}
+function viewRow(view: ViewResponse | null): string | undefined {
+  return view?.entry ? rowKey({ type: view.entry.type, id: entityRef(view.entry) }) : undefined
 }
 
-// Puts a fetched view on screen if the ticket is still fresh. A view of
-// another row replaces the autosave instance; the replaced one keeps writing
-// to its own row (autoSaveFor).
-function landView(ticket: ViewTicket, view: ViewResponse | null, world: string | undefined) {
-  if (!ticket.fresh()) return
+// Puts a fetched view on screen. Called by the session at the moment the read
+// lands. A view of another row replaces the autosave instance; the replaced
+// one keeps writing to its own row (autoSaveFor).
+function applyView(view: ViewResponse | null, world: string | undefined) {
   viewData.value = view
   viewWorld.value = world
-  ticket.land()
   // Seed the autosave baseline so the first toggle's no-op suppression can
   // compare against server state without waiting for the response of a
   // sentinel PATCH.
   if (view?.entry) autoSaveFor(view.entry).recordServerSnapshot(view.entry)
+}
+
+// The other writes on this page (the section forms, accepting a suggestion)
+// go through the session too. They are counted against the row on screen
+// when they are sent: the section forms show and save rows of its view.
+function runSessionWrite<T>(send: () => Promise<T>): Promise<T> {
+  const ent = entry.value
+  return session.write(send, ent ? rowKey({ type: ent.type, id: entityRef(ent) }) : viewTarget())
 }
 
 // Comments and pile scope navigation belong to the row on screen, which
@@ -1156,13 +1148,10 @@ watch(servedRef, (now, before) => {
   void loadComments()
 })
 
-// Only the latest load clears `loading`.
-let loadSeq = 0
-
-async function loadView() {
-  const load = ++loadSeq
-  const ticket = viewTicket()
-  loading.value = true
+// `background` is set for a reload after a live change: it then waits for
+// autosave like a refresh does. Only the latest load clears `loading` (the
+// session tracks it).
+async function loadView(opts: { background?: boolean } = {}) {
   error.value = null
   // Report EVERY load to the global activity bar, including the ones where
   // previous content stays on screen.
@@ -1189,46 +1178,54 @@ async function loadView() {
     // content while the selector said "published" — the API was correct and
     // the page simply never asked.
     const fetchedWorld = worldParam.value
-    const view = await fetchView(props.entityType, props.entityId, fetchedWorld)
-    // The user has moved on: what this load fetched is no longer asked for.
-    if (!ticket.sameTarget()) return
-    // An owned entity is shown as part of its owner. Redirect before
-    // rendering anything, so the page does not flash this entity's own view.
-    const owner = view?.entry?._owner
-    if (owner && props.followOwner) {
-      // Only the world carries over: a list scope from the owned entity's
-      // list would give the owner's page prev/next outside that set.
-      const world = route.query.world
-      await router.replace({
-        path: entityDetailHref(owner),
-        query: world ? { world } : {},
-        hash: `#${encodeURIComponent(props.entityId)}`,
-      })
-      return
+    let sameRow = false
+    const outcome = await session.read(
+      (signal) => fetchView(props.entityType, props.entityId, fetchedWorld, signal),
+      {
+        background: opts.background,
+        prepare: async (view) => {
+          // An owned entity is shown as part of its owner. Redirect before
+          // rendering anything, so the page does not flash this entity's own
+          // view.
+          const owner = view?.entry?._owner
+          if (owner && props.followOwner) {
+            // Only the world carries over: a list scope from the owned
+            // entity's list would give the owner's page prev/next outside
+            // that set.
+            const world = route.query.world
+            await router.replace({
+              path: entityDetailHref(owner),
+              query: world ? { world } : {},
+              hash: `#${encodeURIComponent(props.entityId)}`,
+            })
+            return false
+          }
+          return true
+        },
+        shows: viewRow,
+        land: (view) => {
+          const before = servedRef.value
+          applyView(view, fetchedWorld)
+          sameRow = servedRef.value === before
+        },
+      }
+    )
+    if (outcome.kind === 'landed') {
+      // A new row on screen reloads comments and navigation through the
+      // servedRef watch; a reload of the same row reloads them here.
+      // loadComments swallows its own failures (see its doc): a
+      // comment-service problem must not fail the entity view it decorates.
+      await Promise.all([loadCommands(), ...(sameRow ? [loadScopeNav(), loadComments()] : [])])
+    } else if (outcome.kind === 'failed') {
+      // A transient failure keeps what is on screen (frontend/CLAUDE.md), and
+      // says nothing when a later answer has already landed. A reload after
+      // a live change keeps it even then, as a refresh does: the error
+      // state would replace the page and an open editor.
+      if (isCancelledFetch(outcome.error) || !outcome.current) return
+      console.error('Failed to load entity view:', outcome.error)
+      if (!opts.background) error.value = getErrorMessage(outcome.error, t('entity.loadFailed'))
     }
-    // A refresh that started after this load may already have landed a
-    // newer answer for the same entity; then this one does not land.
-    const before = servedRef.value
-    landView(ticket, view, fetchedWorld)
-    // A new row on screen reloads comments and navigation through the
-    // servedRef watch; a reload of the same row reloads them here.
-    // loadComments swallows its own failures (see its doc): a comment-service
-    // problem must not fail the entity view it decorates.
-    const sameRow = servedRef.value === before
-    await Promise.all([loadCommands(), ...(sameRow ? [loadScopeNav(), loadComments()] : [])])
-  } catch (err) {
-    if (isCancelledFetch(err) || !ticket.sameTarget()) return
-    if (shouldDropHeldContent(err)) {
-      dropRefusedView(ticket, err)
-      return
-    }
-    // A transient failure keeps what is on screen (frontend/CLAUDE.md), and
-    // says nothing when a later answer has already landed.
-    if (!ticket.fresh()) return
-    error.value = getErrorMessage(err, t('entity.loadFailed'))
-    console.error('Failed to load entity view:', err)
   } finally {
-    if (load === loadSeq) loading.value = false
     settleRouteLoad?.()
   }
 }
@@ -2120,9 +2117,11 @@ onBeforeUnmount(() => {
 // view only through the server's entity:changed event; the view is fetched
 // imperatively, so no cache invalidation reaches it. The event names the type,
 // not the id, so any change to this type refetches. Events are coalesced: one
-// relation re-point alone sends a create and a delete. A pending content
-// autosave wins: reloading under it would replace what the reader is typing.
-// Section forms keep a pending field edit across the reload themselves.
+// relation re-point alone sends a create and a delete. The echo of this page's
+// own save arrives the same way. The session reloads once autosave holds and
+// sends nothing, so the reload cannot answer with a body older than a save it
+// overtook. Section forms keep a pending field edit across the reload
+// themselves.
 // A steady stream (an import, a script) never goes quiet for the debounce, so
 // the wait is capped: during a stream the view reloads at most once per
 // ENTITY_CHANGED_MAX_WAIT_MS rather than not at all.
@@ -2142,8 +2141,7 @@ function onEntityChanged(data: EntityEventData) {
   clearTimeout(entityChangedTimer)
   entityChangedTimer = setTimeout(() => {
     entityChangedSince = undefined
-    if ((contentAutoSave.value?.pendingCount.value ?? 0) > 0) return
-    void loadView()
+    session.invalidate(true)
   }, delay)
 }
 onMounted(() => onServerEvent('entity:changed', onEntityChanged))
@@ -2276,7 +2274,7 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
     <RlStatusRegion v-else-if="error" tone="error">
       {{ error }}
       <template #actions>
-        <RlButton variant="primary" @click="loadView">{{ t('entity.retry') }}</RlButton>
+        <RlButton variant="primary" @click="loadView()">{{ t('entity.retry') }}</RlButton>
       </template>
     </RlStatusRegion>
 
@@ -2654,10 +2652,11 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
             :attachments="entry._attachments"
             :fields="memoBuildSectionEditFields(section, entry)"
             :on-property-applied="handlePropertyApplied"
+            :run-write="runSessionWrite"
             :on-error="handleSectionEditError"
             :on-verdict-flip="handleVerdictFlip"
-            :on-attachment-changed="loadView"
-            :on-relation-changed="loadView"
+            :on-attachment-changed="() => loadView()"
+            :on-relation-changed="() => loadView()"
           >
             <template v-if="commentsEnabled" #label-affordance="{ property, index }">
               <!-- A relation row's key is not a property a comment can anchor to. -->
@@ -2863,6 +2862,7 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
                 :initial-values="ent._props ?? {}"
                 :fields="memoBuildRowEditFields(ent)"
                 :on-property-applied="handleRowPropertyApplied"
+                :run-write="runSessionWrite"
                 :on-error="handleSectionEditError"
                 :on-verdict-flip="handleVerdictFlip"
               >
@@ -2927,6 +2927,7 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
                 :initial-values="ent._props ?? {}"
                 :fields="memoBuildRowEditFields(ent)"
                 :on-property-applied="handleRowPropertyApplied"
+                :run-write="runSessionWrite"
                 :on-error="handleSectionEditError"
                 :on-verdict-flip="handleVerdictFlip"
               >

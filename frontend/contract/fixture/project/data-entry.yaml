@@ -35,3 +35,6 @@ views:
           - property: title
           - property: status
           - property: summary
+      - heading: 'Body'
+        source: entry
+        display: content

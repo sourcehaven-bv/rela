@@ -277,7 +277,7 @@ describe('EntityDetail world binding', () => {
     it('sends no world under the default world', async () => {
       const w = await mountDetail(viewResponse())
       rendersProof(w)
-      expect(fetchViewMock).toHaveBeenCalledWith(entityType, entityId, undefined)
+      expect(fetchViewMock).toHaveBeenCalledWith(entityType, entityId, undefined, expect.any(AbortSignal))
       expect(w.find('.world-banner').exists()).toBe(false)
     })
 
@@ -285,7 +285,7 @@ describe('EntityDetail world binding', () => {
       mockRoute.query = { world: 'published' }
       const w = await mountDetail(viewResponse())
       rendersProof(w)
-      expect(fetchViewMock).toHaveBeenCalledWith(entityType, entityId, 'published')
+      expect(fetchViewMock).toHaveBeenCalledWith(entityType, entityId, 'published', expect.any(AbortSignal))
       // No banner: this fixture declares no `banner:` for the world, and the
       // served row is the BARE face (no `_self` face) with `update: true`, so
       // there is nothing to announce and nothing to explain. A world no
@@ -795,7 +795,7 @@ describe('EntityDetail world binding', () => {
       expect(w.find('.world-banner').exists()).toBe(false)
       expect(button(w, 'Delete')).toBeDefined()
       // And the param is OMITTED rather than sent as the reserved name.
-      expect(fetchViewMock).toHaveBeenCalledWith(entityType, entityId, undefined)
+      expect(fetchViewMock).toHaveBeenCalledWith(entityType, entityId, undefined, expect.any(AbortSignal))
     })
 
     // REACHABILITY, not suppression (BUG-G2BASF, measure
