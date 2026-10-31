@@ -23,7 +23,6 @@ import {
   propertiesOf,
 } from '@/configure/models'
 import { configureRoute } from '@/configure/routes'
-import type { TreeValue } from '@/api/configure'
 import { newMap } from '@/configure/tree'
 
 /**
@@ -53,13 +52,9 @@ const propertyOptions = computed(() => {
   ]
 })
 
-function trigger(key: string, value: TreeValue | undefined) {
-  draft.setAt('schema', [...path.value, 'on'], key, value)
-}
+const trigger = draft.settingAt('schema', () => [...path.value, 'on'])
 
-function setting(key: string, value: TreeValue | undefined) {
-  draft.setAt('schema', path.value, key, value)
-}
+const setting = draft.settingAt('schema', () => path.value)
 
 const rows = computed(() =>
   (auto.value?.actions ?? []).map((a, i) => ({

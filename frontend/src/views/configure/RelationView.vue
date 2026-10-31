@@ -19,7 +19,6 @@ import {
 } from '@/configure/models'
 import { configureRoute } from '@/configure/routes'
 import { isEditable } from '@/configure/paths'
-import type { TreeValue } from '@/api/configure'
 import { get, getIn, isMap, newMap, set, setOrRemove } from '@/configure/tree'
 
 /**
@@ -38,9 +37,7 @@ const typeOptions = computed(() =>
   }))
 )
 
-function setting(key: string, value: TreeValue | undefined) {
-  draft.setAt('schema', path.value, key, value)
-}
+const setting = draft.settingAt('schema', () => path.value)
 
 /** The inverse is a name, or a mapping with an id and a label; keep its shape. */
 function setInverse(value: string) {

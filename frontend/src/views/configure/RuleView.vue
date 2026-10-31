@@ -15,7 +15,6 @@ import LockedNote from '@/components/configure/LockedNote.vue'
 import { useConfigDraftStore } from '@/configure/configDraft'
 import { entityTypeLabel, entityTypeNames, rules, ruleTitle } from '@/configure/models'
 import { configureRoute } from '@/configure/routes'
-import type { TreeValue } from '@/api/configure'
 
 /**
  * A rule. Conditions are expressions typed as text; there is no builder yet.
@@ -36,9 +35,7 @@ const typeOptions = computed(() =>
 )
 const locked = computed(() => rule.value?.usesScript === true)
 
-function setting(key: string, value: TreeValue | undefined) {
-  draft.setAt('schema', path.value, key, value)
-}
+const setting = draft.settingAt('schema', () => path.value)
 
 function lines(value: string): string[] | undefined {
   const list = value

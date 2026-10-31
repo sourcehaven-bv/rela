@@ -18,7 +18,6 @@ import LockedNote from '@/components/configure/LockedNote.vue'
 import { useConfigDraftStore } from '@/configure/configDraft'
 import { dashboardModel, dashboardPath, dashboards } from '@/configure/models'
 import { configureRoute } from '@/configure/routes'
-import type { TreeValue } from '@/api/configure'
 import { listAt, newMap, positionAfterMove } from '@/configure/tree'
 
 /**
@@ -65,10 +64,9 @@ const displayLabels: Record<string, string> = { matrix: 'Matrix', ratio: 'Ratio'
 const displayLabel = (value: string) =>
   displays.find((d) => d.value === value)?.label ?? displayLabels[value] ?? value
 
-function cardSetting(key: string, value: TreeValue | undefined) {
-  if (editing.value === undefined) return
-  draft.setAt('screens', [...base.value, 'cards', editing.value], key, value)
-}
+const cardSetting = draft.settingAt('screens', () =>
+  editing.value === undefined ? undefined : [...base.value, 'cards', editing.value]
+)
 
 function addCard() {
   draft.appendAt(

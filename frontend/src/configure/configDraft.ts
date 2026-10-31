@@ -323,6 +323,21 @@ export const useConfigDraftStore = defineStore('configDraft', () => {
     })
   }
 
+  /**
+   * Returns a setter bound to one mapping, for a view that edits the settings
+   * of the item it shows. `path` is read on each call, so the setter follows
+   * the route; when it gives undefined, the setter does nothing.
+   */
+  function settingAt(
+    file: 'schema' | 'screens',
+    path: () => TreePath | undefined
+  ): (key: string, value: TreeValue | undefined) => void {
+    return (key, value) => {
+      const at = path()
+      if (at) setAt(file, at, key, value)
+    }
+  }
+
   /** Moves an item of the list at `path`. */
   function moveAt(file: 'schema' | 'screens', path: TreePath, from: number, to: number): void {
     edit(file, (tree) => {
@@ -501,6 +516,7 @@ export const useConfigDraftStore = defineStore('configDraft', () => {
     load,
     edit,
     setAt,
+    settingAt,
     moveAt,
     removeAt,
     removeItemAt,

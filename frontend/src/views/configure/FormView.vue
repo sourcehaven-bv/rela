@@ -20,7 +20,6 @@ import FieldDrawer from '@/components/configure/FieldDrawer.vue'
 import { useConfigDraftStore } from '@/configure/configDraft'
 import { entityTypeLabel, formModel, propertiesOf } from '@/configure/models'
 import { configureRoute } from '@/configure/routes'
-import type { TreeValue } from '@/api/configure'
 import { getIn, isMap, newMap, remove } from '@/configure/tree'
 
 /**
@@ -69,9 +68,7 @@ function addField() {
   adding.value = ''
 }
 
-function setting(key: string, value: TreeValue | undefined) {
-  draft.setAt('screens', path.value, key, value)
-}
+const setting = draft.settingAt('screens', () => path.value)
 
 function removeForm() {
   draft.edit('screens', (tree) => {

@@ -170,6 +170,22 @@ describe('useConfigDraftStore', () => {
     ).toBe('effort')
   })
 
+  it('binds a setter to a path it reads on each call', () => {
+    const store = fresh()
+    let path: (string | number)[] | undefined = ['styles', 'priority']
+    const setting = store.settingAt('screens', () => path)
+    setting('high', 'red')
+    expect(get(getIn(store.currentDataEntry, ['styles', 'priority']), 'high')).toBe('red')
+
+    path = ['styles', 'status']
+    setting('open', 'green')
+    expect(get(getIn(store.currentDataEntry, ['styles', 'status']), 'open')).toBe('green')
+
+    path = undefined
+    setting('open', 'blue')
+    expect(get(getIn(store.currentDataEntry, ['styles', 'status']), 'open')).toBe('green')
+  })
+
   it('edits settings of list items, keeping their origin index', () => {
     const store = fresh()
     store.setAt('schema', ['validations', 0], 'severity', 'warning')

@@ -40,7 +40,6 @@ import {
   relationsOfType,
 } from '@/configure/models'
 import { configureRoute } from '@/configure/routes'
-import type { TreeValue } from '@/api/configure'
 import { getIn, isMap, keys, newMap, remove } from '@/configure/tree'
 
 /**
@@ -61,13 +60,7 @@ const rows = computed(() =>
   (list.value?.columns ?? []).map((c) => ({ ...c, id: String(c.index), title: columnTitle(c) }))
 )
 
-function setting(key: string, value: TreeValue | undefined) {
-  draft.setAt('screens', path.value, key, value)
-}
-
-function column(index: number, key: string, value: TreeValue | undefined) {
-  draft.setAt('screens', [...path.value, 'columns', index], key, value)
-}
+const setting = draft.settingAt('screens', () => path.value)
 
 /**
  * The header the list shows for a column: its label, else the same default
@@ -200,7 +193,9 @@ const previewSections = computed<Section<{ id: string; title: string }>[]>(() =>
                 :placeholder="shownHeader({ ...item, label: '' })"
                 size="sm"
                 class="column-row__label"
-                @update:model-value="column(item.index, 'label', $event)"
+                @update:model-value="
+                  draft.setAt('screens', [...path, 'columns', item.index], 'label', $event)
+                "
               />
               <RlText size="sm" tone="subtle" class="column-row__source">{{
                 columnSource(item)
@@ -209,7 +204,9 @@ const previewSections = computed<Section<{ id: string; title: string }>[]>(() =>
                 v-if="canSortColumn(item)"
                 :model-value="item.sortable"
                 label="Sortable"
-                @update:model-value="column(item.index, 'sortable', $event)"
+                @update:model-value="
+                  draft.setAt('screens', [...path, 'columns', item.index], 'sortable', $event)
+                "
               />
               <RlIconButton
                 icon="delete"

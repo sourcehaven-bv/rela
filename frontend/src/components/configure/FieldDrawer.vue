@@ -10,7 +10,6 @@ import RlText from 'rela-components/components/common/RlText.vue'
 import ConfigSection from './ConfigSection.vue'
 import { useConfigDraftStore } from '@/configure/configDraft'
 import { choiceListModel, formModel, propertiesOf } from '@/configure/models'
-import type { TreeValue } from '@/api/configure'
 import { newMap } from '@/configure/tree'
 
 /**
@@ -28,9 +27,7 @@ const field = computed(() =>
 )
 const path = computed(() => ['forms', props.form, 'fields', props.index ?? -1])
 
-function setting(key: string, value: TreeValue | undefined) {
-  draft.setAt('screens', path.value, key, value)
-}
+const setting = draft.settingAt('screens', () => path.value)
 
 const widths = [
   { value: '4', label: 'Third' },
