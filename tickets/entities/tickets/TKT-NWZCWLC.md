@@ -5,7 +5,7 @@ title: 'Push a list condition: that lowers exactly into the store (list page and
 kind: enhancement
 priority: medium
 effort: m
-status: ready
+status: backlog
 ---
 
 ## Description

@@ -5,7 +5,7 @@ title: 'SPA: recount sidebar status and items only for entity changes that can a
 kind: enhancement
 priority: medium
 effort: m
-status: ready
+status: backlog
 ---
 
 ## Description

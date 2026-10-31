@@ -5,7 +5,7 @@ title: Raise rela's default pgx pool size on the postgres backend
 kind: enhancement
 priority: medium
 effort: s
-status: ready
+status: backlog
 ---
 
 ## Description
