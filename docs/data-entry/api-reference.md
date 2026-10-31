@@ -1085,9 +1085,20 @@ Verdicts come from one of three sources, selected at server startup by the
 | Value | Behavior |
 |---|---|
 | unset / empty | **Policy-backed** when `acl.yaml` declares any affordance block (`fields:` / `visible:` / `options:` / `relations:`); otherwise permissive (both wire maps emit as `{}`). |
-| `none` | Permissive — explicit opt-out even when a policy has affordance blocks. |
-| `demo` | Hardcoded fixture against the `ticket` entity type — exercises every affordance code path for manual UI testing. Overrides the policy. |
+| `none` | Permissive — both wire maps emit as `{}`. Refused at startup when `acl.yaml` declares field rules (see below). |
+| `demo` | Hardcoded fixture against the `ticket` entity type — exercises every affordance code path for manual UI testing. Refused at startup when `acl.yaml` declares field rules (see below). |
 | any other | Unknown — logs a warning and falls back to policy / permissive. Never panics. |
+
+`none` and `demo` replace only the REST resolver. MCP and CLI reads still
+apply the policy. So `rela-server` refuses to start when either profile is
+set and `acl.yaml` declares field rules: a role `fields:`, `visible:`,
+`options:` or `relations:` block, or a `client_baselines` field ceiling
+(`visible:` / `redact:`). The error names `RELA_AFFORDANCE_PROFILE`, the
+profile value, and says that acl.yaml declares field rules. Unset the
+variable to apply the policy (BUG-UO72G2). A Configure save is refused
+for the same reason, and the running server keeps serving the old
+configuration. `rela-desktop` runs without an ACL, so the profiles keep
+working there.
 
 The policy-backed resolver compiles `when:` predicates from `acl.yaml` at
 startup and evaluates them per entity. See the [ACL security
