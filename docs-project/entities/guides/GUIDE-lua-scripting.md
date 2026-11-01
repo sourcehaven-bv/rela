@@ -1319,7 +1319,9 @@ rela.date_next_weekday("2025-01-06", "monday")  -- "2025-01-13" (not same day)
 Computes the next occurrence of an iCal RRULE (RFC 5545) after a given date. If no `after`
 date is provided, uses today. Returns `nil` if the rule has no more occurrences.
 
-Accepts both `RRULE:FREQ=...` and bare `FREQ=...` formats.
+Accepts both `RRULE:FREQ=...` and bare `FREQ=...` formats. DTSTART may be a
+`;DTSTART=` part or a separate `DTSTART:` line. A rule without DTSTART is
+anchored at the `after` date. The result is always a later date than `after`.
 
 **Important:** Rules with `INTERVAL` > 1 must include `DTSTART` to anchor the interval
 cadence. Without it, the function raises an error.

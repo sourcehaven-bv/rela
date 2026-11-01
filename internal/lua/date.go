@@ -7,7 +7,6 @@ import (
 	"strings"
 	"time"
 
-	rrule "github.com/teambition/rrule-go"
 	lua "github.com/yuin/gopher-lua"
 
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
@@ -147,39 +146,17 @@ func luaRruleNext(ls *lua.LState) int {
 		}
 	}
 
-	// Validate the RRULE using shared validation (prefix stripping, parse, INTERVAL/DTSTART).
-	if err := metamodel.ValidateRrule(rruleStr); err != nil {
-		ls.RaiseError("rrule_next: %s", err)
-		return 0
-	}
-
-	// Parse the validated rule for occurrence computation.
-	cleaned := strings.TrimPrefix(rruleStr, "RRULE:")
-	opt, err := rrule.StrToROption(cleaned)
-	if err != nil {
-		// coverage-ignore-start: defensive: ValidateRrule above already ran StrToROption on the same cleaned string; a
-		// re-parse of identical input
-		// cannot newly fail
-		ls.RaiseError("rrule_next: %s", err)
-		return 0
-		// coverage-ignore-end
-	}
-
-	rule, err := rrule.NewRRule(*opt)
-	if err != nil {
-		// coverage-ignore-start: defensive: opt came from a successful StrToROption on ValidateRrule-approved input;
-		// NewRRule cannot reject an
-		// option struct that parsed cleanly
-		ls.RaiseError("rrule_next: failed to create rule: %s", err)
-		return 0
-		// coverage-ignore-end
-	}
-
-	// Get the next occurrence strictly after the after date.
-	next := rule.After(after, false)
-	if next.IsZero() {
+	// metamodel.NextRrule anchors a rule without DTSTART at the after date.
+	// Without that anchor rrule-go uses time.Now() as DTSTART, and a rule
+	// asked about on its own occurrence date returns that same date.
+	next, err := metamodel.NextRrule(rruleStr, after)
+	if errors.Is(err, metamodel.ErrRruleExhausted) {
 		ls.Push(lua.LNil)
 		return 1
+	}
+	if err != nil {
+		ls.RaiseError("rrule_next: %s", err)
+		return 0
 	}
 
 	ls.Push(lua.LString(next.Format("2006-01-02")))
