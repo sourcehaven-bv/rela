@@ -48,7 +48,7 @@ const MIN_SAVING_VISIBLE_MS = 600
 // unchanged (someone else changed another field between the check and the
 // write). Three is enough for a few concurrent editors; beyond it the save
 // fails like any other error and the next edit tries again.
-const MAX_CONFLICT_ATTEMPTS = 3
+export const MAX_CONFLICT_ATTEMPTS = 3
 
 // Functions rather than constants, so a message is built in the language
 // shown when the conflict happens.
@@ -71,11 +71,25 @@ interface SendResult {
   // The relations body written, after any merge; undefined when the save
   // wrote none, including when the conflict handling dropped it.
   sentRelations: ModernRelationsField | undefined
+  // The body written, and the editor text it was made from; they differ when
+  // the body was merged with someone else's change. Undefined when the save
+  // wrote no body.
+  sentContent: string | undefined
+  localContent: string | undefined
+  // Their body, when it already held this save's edit and nothing was
+  // written for it.
+  absorbedContent: Base<string> | undefined
   // The content or relations written differ from the local edit, because
   // they were merged with someone else's change.
   mergedContent: boolean
   mergedRelations: boolean
   conflicts: Conflicts
+}
+
+// How a body save is merged (see sendPatch).
+interface SendBody {
+  base?: Base<string>
+  local?: string
 }
 
 // Fields a save could not write, with the bases they move to once the
@@ -258,6 +272,22 @@ export function useAutoSave(opts: AutoSaveOptions) {
   let contentBase: Base<string> = { value: '', token: undefined }
   let relationsBase: Base<Record<string, string[]>> = { value: {}, token: undefined }
 
+  // A body written in a form the editor does not show yet, because the user
+  // kept typing while it was in flight: `from` is the editor text it was made
+  // from, `merged` what the server stores, `token` its version. The next save
+  // rebases the editor text onto it, so the user's own write is not mistaken
+  // for someone else's. Cleared once the editor takes a server body.
+  let contentRebase: { from: string; merged: string; token: string | undefined } | null = null
+
+  // Fields whose last save did not go through: refused as a conflict, or
+  // failed. The form keeps the user's value on screen, with the error, until
+  // they edit or revert the field, or a later save of it goes through, so no
+  // later answer may put the server value over it while the error still
+  // shows. A snapshot keeps them, so a host that reloads must keep their
+  // values on screen (unsavedFields).
+  const unsavedProps = new Set<string>()
+  let contentUnsaved = false
+
   const pending: Record<string, PendingEntry> = Object.create(null)
   let pendingContent: { value: string; enqueuedAt: number } | null = null
   const timers: Record<string, ReturnType<typeof setTimeout>> = Object.create(null)
@@ -345,11 +375,16 @@ export function useAutoSave(opts: AutoSaveOptions) {
 
   // holds* report unsaved local state: scheduled, debouncing, or queued.
   function holdsProp(property: string): boolean {
-    return property in pending || property in timers || (queuedProps[property] ?? 0) > 0
+    return (
+      property in pending ||
+      property in timers ||
+      (queuedProps[property] ?? 0) > 0 ||
+      unsavedProps.has(property)
+    )
   }
 
   function holdsContent(): boolean {
-    return pendingContent !== null || contentTimer !== null || queuedContent > 0
+    return pendingContent !== null || contentTimer !== null || queuedContent > 0 || contentUnsaved
   }
 
   // assertTarget refuses server state about any entity but the target. A
@@ -385,7 +420,10 @@ export function useAutoSave(opts: AutoSaveOptions) {
     for (const [k, token] of Object.entries(versions?.properties ?? {})) {
       if (!holdsProp(k)) propBase[k] = { value: entity.properties?.[k], token }
     }
-    if (!holdsContent()) contentBase = { value: entity.content ?? '', token: versions?.content }
+    if (!holdsContent()) {
+      contentBase = { value: entity.content ?? '', token: versions?.content }
+      contentRebase = null
+    }
     if (!isRelationsDirty()) {
       relationsBase = { value: { ...(entity.relations ?? {}) }, token: versions?.relations }
     }
@@ -397,6 +435,7 @@ export function useAutoSave(opts: AutoSaveOptions) {
 
   function scheduleFieldSave(property: string, value: unknown) {
     if (!propertyChannelEnabled) throw new AutoSaveChannelDisabledError('property')
+    unsavedProps.delete(property)
     if (!(property in pending)) pendingCount.value++
     pending[property] = { value, enqueuedAt: Date.now() }
     if (timers[property]) clearTimeout(timers[property])
@@ -405,6 +444,7 @@ export function useAutoSave(opts: AutoSaveOptions) {
 
   function scheduleUnset(property: string) {
     if (!propertyChannelEnabled) throw new AutoSaveChannelDisabledError('property')
+    unsavedProps.delete(property)
     if (!(property in pending)) pendingCount.value++
     pending[property] = { value: UNSET, enqueuedAt: Date.now() }
     if (timers[property]) clearTimeout(timers[property])
@@ -416,6 +456,7 @@ export function useAutoSave(opts: AutoSaveOptions) {
   // toggle) and typing, where a save per pause is enough.
   function scheduleContentSave(content: string, debounceMs = contentDebounceMs) {
     if (!contentChannelEnabled) throw new AutoSaveChannelDisabledError('content')
+    contentUnsaved = false
     if (pendingContent === null) pendingCount.value++
     pendingContent = { value: content, enqueuedAt: Date.now() }
     if (contentTimer) clearTimeout(contentTimer)
@@ -561,9 +602,13 @@ export function useAutoSave(opts: AutoSaveOptions) {
         for (const key of keys) {
           const newer = pending[key]
           if (newer && newer.enqueuedAt > (enqueuedAtOf.get(key) ?? 0)) continue
+          // A newer save of the key is queued behind this one (this save
+          // still counts itself until release).
+          if ((queuedProps[key] ?? 0) > 1) continue
           nextErrors ??= { ...fieldErrors.value }
           nextErrors[key] = message
           attributed ??= key
+          unsavedProps.add(key)
         }
         if (nextErrors) {
           fieldErrors.value = nextErrors
@@ -611,9 +656,21 @@ export function useAutoSave(opts: AutoSaveOptions) {
       setStatus('saving')
       let sentRelations: ModernRelationsField | null = null
       try {
-        const patch: EntityPatch = { content: value }
+        // Rebase onto a body this instance wrote but the editor does not show
+        // yet. If that does not merge, the old base stays, and the 412 that
+        // follows takes the merge or conflict path.
+        let base: Base<string> | undefined
+        let text = value
+        if (contentRebase) {
+          const m = mergeText(contentRebase.from, value, contentRebase.merged)
+          if (m.ok) {
+            text = m.merged
+            base = { value: contentRebase.merged, token: contentRebase.token }
+          }
+        }
+        const patch: EntityPatch = { content: text }
         sentRelations = attachRelations(patch)
-        const result = await runWrite(() => sendPatch(patch, ac.signal))
+        const result = await runWrite(() => sendPatch(patch, ac.signal, { base, local: value }))
         release()
         // A relations body the conflict handling dropped was not written:
         // it stays held, and the finally block hands the bit back.
@@ -630,7 +687,8 @@ export function useAutoSave(opts: AutoSaveOptions) {
         if (!reportConflicts(result, 'content')) setStatus('saved')
       } catch (err: unknown) {
         const message = getErrorMessage(err, t('form.saveFailed'))
-        if (pendingContent === null) {
+        if (pendingContent === null && queuedContent <= 1) {
+          contentUnsaved = true
           contentError.value = message
           setStatus('error', message)
           opts.onError(message, { status: getErrorStatus(err), channel: 'content' })
@@ -705,15 +763,14 @@ export function useAutoSave(opts: AutoSaveOptions) {
   // preconditionsFor names, for each field the patch writes, the token of
   // its merge base. A field without a token (older server, or a snapshot
   // taken from a response that carries none) is sent unchecked.
-  function preconditionsFor(patch: EntityPatch): Preconditions | undefined {
+  function preconditionsFor(patch: EntityPatch, bodyBase: Base<string>): Preconditions | undefined {
     const pre: Preconditions = {}
     const keys = [...Object.keys(patch.properties ?? {}), ...(patch.properties_unset ?? [])]
     for (const k of keys) {
       const token = propBase[k]?.token
       if (token !== undefined) (pre.properties ??= {})[k] = token
     }
-    if (patch.content !== undefined && contentBase.token !== undefined)
-      pre.content = contentBase.token
+    if (patch.content !== undefined && bodyBase.token !== undefined) pre.content = bodyBase.token
     if (patch.relations && relationsBase.token !== undefined) pre.relations = relationsBase.token
     return Object.keys(pre).length ? pre : undefined
   }
@@ -731,10 +788,22 @@ export function useAutoSave(opts: AutoSaveOptions) {
    *
    * The server never retries on the client's behalf, because only the
    * client holds the base needed to merge.
+   *
+   * `body.base` replaces the body's merge base for this save (see
+   * contentRebase); `body.local` is the editor text a body save was made
+   * from.
    */
-  async function sendPatch(initial: EntityPatch, signal: AbortSignal): Promise<SendResult> {
+  async function sendPatch(
+    initial: EntityPatch,
+    signal: AbortSignal,
+    body: SendBody = {}
+  ): Promise<SendResult> {
+    let bodyBase = body.base ?? contentBase
+    const localContent = body.local
+    let absorbedContent: Base<string> | undefined
     let patch: EntityPatch = { ...initial }
-    let pre = preconditionsFor(patch)
+    let pre = preconditionsFor(patch, bodyBase)
+    let relationsBaseValue = relationsBase.value
     const conflicts: Conflicts = { props: [], content: false, relations: false, propBases: {} }
     let mergedContent = false
     let mergedRelations = false
@@ -747,6 +816,9 @@ export function useAutoSave(opts: AutoSaveOptions) {
           response: fresh,
           written: writtenBy({}),
           sentRelations: undefined,
+          sentContent: undefined,
+          localContent,
+          absorbedContent,
           mergedContent,
           mergedRelations,
           conflicts,
@@ -760,6 +832,9 @@ export function useAutoSave(opts: AutoSaveOptions) {
           response,
           written: writtenBy(patch),
           sentRelations: patch.relations,
+          sentContent: patch.content,
+          localContent,
+          absorbedContent,
           mergedContent,
           mergedRelations,
           conflicts,
@@ -770,10 +845,21 @@ export function useAutoSave(opts: AutoSaveOptions) {
         await backoff(attempt, signal)
         if (isEmptyConflicts(failed)) continue
         fresh = await fetchCurrent(patch, signal)
-        const next = resolveConflicts(patch, pre, fresh, failed, conflicts)
+        const next = resolveConflicts(
+          patch,
+          pre,
+          fresh,
+          failed,
+          conflicts,
+          bodyBase,
+          relationsBaseValue
+        )
         patch = next.patch
         pre = next.pre
         mergedContent ||= next.mergedContent
+        bodyBase = next.bodyBase
+        absorbedContent = next.absorbedContent ?? absorbedContent
+        relationsBaseValue = next.relationsBaseValue
         mergedRelations ||= next.mergedRelations
       }
     }
@@ -806,12 +892,17 @@ export function useAutoSave(opts: AutoSaveOptions) {
     pre: Preconditions,
     fresh: Entity,
     failed: FieldConflicts,
-    conflicts: Conflicts
+    conflicts: Conflicts,
+    bodyBase: Base<string>,
+    relationsBaseValue: Record<string, string[]>
   ): {
     patch: EntityPatch
     pre: Preconditions | undefined
     mergedContent: boolean
     mergedRelations: boolean
+    bodyBase: Base<string>
+    relationsBaseValue: Record<string, string[]>
+    absorbedContent: Base<string> | undefined
   } {
     const next: EntityPatch = { ...patch }
     if (patch.properties) next.properties = { ...patch.properties }
@@ -819,6 +910,9 @@ export function useAutoSave(opts: AutoSaveOptions) {
     const preProps: Record<string, string> = { ...(pre.properties ?? {}) }
     const nextPre: Preconditions = { ...pre }
     const tokens = fresh._versions
+    let nextBodyBase = bodyBase
+    let nextRelationsBase = relationsBaseValue
+    let absorbedContent: Base<string> | undefined
     let mergedContent = false
     let mergedRelations = false
 
@@ -847,16 +941,21 @@ export function useAutoSave(opts: AutoSaveOptions) {
 
     if (failed.content && next.content !== undefined) {
       const theirs = fresh.content ?? ''
-      const m = mergeText(contentBase.value, next.content, theirs)
+      const m = mergeText(bodyBase.value, next.content, theirs)
       delete next.content
       delete nextPre.content
       if (m.ok && m.merged === theirs) {
         // Their body already holds our edit: nothing to write.
         mergedContent = true
+        absorbedContent = { value: theirs, token: tokens?.content }
       } else if (m.ok && tokens) {
         mergedContent = m.merged !== patch.content
         next.content = m.merged
         nextPre.content = tokens.content
+        // The resend is checked against their body, so a further 412 in
+        // this save merges against it too; the original base would read the
+        // lines just merged in as a conflict.
+        nextBodyBase = { value: theirs, token: tokens.content }
       } else {
         // Unmergeable, or merged without a token to guard the resend.
         conflicts.content = true
@@ -868,7 +967,7 @@ export function useAutoSave(opts: AutoSaveOptions) {
     if (failed.relations && next.relations) {
       const merged = tokens
         ? mergeRelations(
-            relationsBase.value,
+            relationsBaseValue,
             next.relations,
             fresh.relations ?? {},
             (key) => opts.inverseToCanonical.has(key),
@@ -879,6 +978,8 @@ export function useAutoSave(opts: AutoSaveOptions) {
         next.relations = merged
         nextPre.relations = tokens.relations
         mergedRelations = true
+        // As for the body: a further 412 merges against their lists.
+        nextRelationsBase = { ...(fresh.relations ?? {}) }
       } else {
         delete next.relations
         delete nextPre.relations
@@ -893,6 +994,9 @@ export function useAutoSave(opts: AutoSaveOptions) {
       pre: Object.keys(nextPre).length ? nextPre : undefined,
       mergedContent,
       mergedRelations,
+      bodyBase: nextBodyBase,
+      relationsBaseValue: nextRelationsBase,
+      absorbedContent,
     }
   }
 
@@ -1014,8 +1118,12 @@ export function useAutoSave(opts: AutoSaveOptions) {
         // against their value, which the user has now been told about.
         const theirs = sent?.conflicts.propBases[k]
         if (theirs) propBase[k] = theirs
+        if (!holdsProp(k)) unsavedProps.add(k)
         return
       }
+      // A save of k went through: whatever an earlier one left held is
+      // settled.
+      if (sent?.written.props.has(k)) unsavedProps.delete(k)
       if (!versions) return
       if (applied || sent?.written.props.has(k)) {
         propBase[k] = { value, token: versions.properties[k] }
@@ -1053,11 +1161,14 @@ export function useAutoSave(opts: AutoSaveOptions) {
         moveBase(k, undefined, !holdsProp(k))
       }
     }
+    // A body save that went through settles whatever an earlier one held.
+    if (sent?.written.content && !sent.conflicts.content) contentUnsaved = false
     if (entity.content !== undefined) {
       if (!holdsContent()) {
         // Baseline always updates; apply callback skipped when the
         // content channel is disabled.
         lastSeenContent = entity.content
+        contentRebase = null
         const conflict = sent?.conflicts.contentBase
         if (conflict) {
           // The editor shows their clean hunks with our side of each
@@ -1066,14 +1177,32 @@ export function useAutoSave(opts: AutoSaveOptions) {
           if (contentChannelEnabled)
             opts.applyServerContent(sent?.conflicts.contentShown ?? entity.content)
           contentBase = conflict
+          contentUnsaved = true
         } else {
           if (contentChannelEnabled) opts.applyServerContent(entity.content)
           if (versions) contentBase = { value: entity.content, token: versions.content }
         }
-      } else if (sent?.written.content && !sent.mergedContent && versions) {
-        // The user kept typing while this save was in flight; their text
-        // derives from what was saved, so that is the base.
-        contentBase = { value: entity.content, token: versions.content }
+      } else if (sent?.written.content && versions) {
+        // The user kept typing while this save was in flight, so their text
+        // derives from what they had typed, not from the body written.
+        if (sent.localContent !== undefined && sent.sentContent !== sent.localContent) {
+          contentRebase = {
+            from: sent.localContent,
+            merged: entity.content,
+            token: versions.content,
+          }
+        } else {
+          contentBase = { value: entity.content, token: versions.content }
+          contentRebase = null
+        }
+      } else if (sent?.absorbedContent && sent.localContent !== undefined) {
+        // Their body already held this save's edit, and the user kept
+        // typing: rebase onto their body, as after a merged write.
+        contentRebase = {
+          from: sent.localContent,
+          merged: sent.absorbedContent.value,
+          token: sent.absorbedContent.token,
+        }
       }
     }
     // The form never takes relations from a response, so the base moves
@@ -1113,6 +1242,7 @@ export function useAutoSave(opts: AutoSaveOptions) {
   }
 
   function revertField(property: string) {
+    unsavedProps.delete(property)
     if (timers[property]) {
       clearTimeout(timers[property])
       delete timers[property]
@@ -1134,6 +1264,13 @@ export function useAutoSave(opts: AutoSaveOptions) {
   }
 
   function revertContent() {
+    contentUnsaved = false
+    // The server holds the body this tab wrote last, not the one before it.
+    if (contentRebase) {
+      lastSeenContent = contentRebase.merged
+      contentBase = { value: contentRebase.merged, token: contentRebase.token }
+      contentRebase = null
+    }
     if (contentTimer) {
       clearTimeout(contentTimer)
       contentTimer = null
@@ -1183,12 +1320,25 @@ export function useAutoSave(opts: AutoSaveOptions) {
         resolve({ settled: false, error: 'timeout' })
       }, timeoutMs)
       queueTail
-        .then(() => resolve({ settled: true }))
+        .then(() =>
+          // A field whose save did not go through is still unsaved: the
+          // navigation guard must ask before it is left behind.
+          resolve(
+            unsavedProps.size > 0 || contentUnsaved
+              ? { settled: true, error: lastError.value ?? t('form.saveFailed') }
+              : { settled: true }
+          )
+        )
         .catch((err: unknown) => {
           resolve({ settled: true, error: getErrorMessage(err, t('form.saveFailed')) })
         })
         .finally(() => clearTimeout(timer))
     })
+  }
+
+  // The fields whose value on screen did not reach the server.
+  function unsavedFields(): { props: string[]; content: boolean } {
+    return { props: [...unsavedProps], content: contentUnsaved }
   }
 
   return {
@@ -1215,6 +1365,7 @@ export function useAutoSave(opts: AutoSaveOptions) {
     revertContent,
     recordServerSnapshot,
     mergeServerResponse,
+    unsavedFields,
   }
 }
 
