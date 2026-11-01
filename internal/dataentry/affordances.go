@@ -1571,7 +1571,7 @@ func (svc affordanceService) computeAttachments(
 		// correctly; this map is only a UI hint. But a real backend fault
 		// (not just a missing entity) is logged so operators aren't blind to
 		// an outage that silently empties every entity's _attachments.
-		if !errors.Is(err, store.ErrNotFound) {
+		if !errors.Is(err, store.ErrNotFound) && !errors.Is(ctx.Err(), context.Canceled) {
 			slog.Warn("dataentry: list attachments for serialization failed",
 				"err", err, "entity", e.ID)
 		}
@@ -1640,7 +1640,9 @@ func (svc affordanceService) computeFaces(
 	// address that answers 404.
 	fam, ok, err := svc.family(ctx, e.Type, e.ID)
 	if err != nil {
-		slog.Warn("dataentry: reading an entity's faces failed", "id", e.ID, "err", err)
+		if !errors.Is(ctx.Err(), context.Canceled) { // a canceled request is not a fault (TKT-T2I7P2)
+			slog.Warn("dataentry: reading an entity's faces failed", "id", e.ID, "err", err)
+		}
 		return out
 	}
 	if !ok {
@@ -1736,8 +1738,10 @@ func (svc affordanceService) computeCopyOffers(
 	}
 	offers, err := svc.copies(ctx, e.Type, e.Face.String(), e.ID)
 	if err != nil {
-		slog.Warn("dataentry: computing copy offers failed; _copies omitted",
-			"entity", e.ID, "type", e.Type, "err", err)
+		if !errors.Is(ctx.Err(), context.Canceled) { // a canceled request is not a fault (TKT-T2I7P2)
+			slog.Warn("dataentry: computing copy offers failed; _copies omitted",
+				"entity", e.ID, "type", e.Type, "err", err)
+		}
 		return nil
 	}
 	out := make([]v1.CopyOffer, 0, len(offers))

@@ -6,6 +6,7 @@ import SlimSelect from 'slim-select/vue'
 import 'slim-select/styles'
 import { useSchemaStore } from '@/stores'
 import { getEntityRelations, searchEntities, getEntity, getErrorMessage } from '@/api'
+import { SEARCH_DEBOUNCE_MS } from '@/utils/searchTiming'
 import { entityDisplayTitle } from '@/utils/entityDisplay'
 import InlineCreateFormModal from './InlineCreateFormModal.vue'
 // The shared boolean widget, rather than a local `<input type="checkbox">`.
@@ -335,7 +336,7 @@ watch(searchQuery, (q) => {
     searchResults.value = []
     return
   }
-  searchTimeout = setTimeout(() => doSearch(q), 200)
+  searchTimeout = setTimeout(() => doSearch(q), SEARCH_DEBOUNCE_MS)
 })
 
 // The search rows of one type. A source that picks a face is searched in
@@ -343,12 +344,12 @@ watch(searchQuery, (q) => {
 // each row says whether the principal may create this edge from its face
 // (`linkable`), and only those faces are offered (offersFace).
 async function searchType(q: string, type: string): Promise<Entity[]> {
-  if (!picksFace(type)) return (await searchEntities(q, type)).data
+  if (!picksFace(type)) return (await searchEntities(q, { type })).data
   const ambient = world.value || schemaStore.defaultWorld || DEFAULT_WORLD
   const worlds = [ambient, ...widenWorlds(schemaStore.worlds, ambient)]
   const link = { relation: props.field.relation ?? '', direction: 'incoming' as const }
   const lists = await Promise.all(
-    worlds.map((w) => searchEntities(q, type, undefined, w, link).then((r) => r.data))
+    worlds.map((w) => searchEntities(q, { type, world: w, link }).then((r) => r.data))
   )
   return faceCandidates(lists).filter(offersFace)
 }

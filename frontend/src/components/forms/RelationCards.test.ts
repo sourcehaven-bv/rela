@@ -30,6 +30,7 @@ vi.mock('@/api', async () => {
 })
 
 import { getEntityRelations, getEntity, searchEntities } from '@/api'
+import { SEARCH_DEBOUNCE_MS } from '@/utils/searchTiming'
 
 function seedSchema() {
   const schemaStore = useSchemaStore()
@@ -182,8 +183,8 @@ describe('RelationCards affordance plumbing', () => {
     await wrapper.find('button.add-btn').trigger('click')
     const input = wrapper.find('input.search-input')
     await input.setValue('pseud')
-    // The searchQuery watcher debounces 200ms before calling doSearch.
-    await new Promise((r) => setTimeout(r, 250))
+    // The searchQuery watcher debounces SEARCH_DEBOUNCE_MS before calling doSearch.
+    await new Promise((r) => setTimeout(r, SEARCH_DEBOUNCE_MS + 50))
     await flushPromises()
 
     const row = wrapper.find('.search-result .result-title')
@@ -249,8 +250,8 @@ describe('RelationCards incoming face picking', () => {
     await flushPromises()
     await wrapper.find('button.add-btn').trigger('click')
     await wrapper.find('input.search-input').setValue('pol')
-    // The searchQuery watcher debounces 200ms before calling doSearch.
-    await new Promise((r) => setTimeout(r, 250))
+    // The searchQuery watcher debounces SEARCH_DEBOUNCE_MS before calling doSearch.
+    await new Promise((r) => setTimeout(r, SEARCH_DEBOUNCE_MS + 50))
     await flushPromises()
     return wrapper
   }
@@ -260,8 +261,8 @@ describe('RelationCards incoming face picking', () => {
     const calls = (searchEntities as ReturnType<typeof vi.fn>).mock.calls
     expect(calls.length).toBeGreaterThan(0)
     for (const call of calls) {
-      expect(call[1]).toBe('policy')
-      expect(call[4]).toEqual({ relation: 'implements', direction: 'incoming' })
+      expect(call[1].type).toBe('policy')
+      expect(call[1].link).toEqual({ relation: 'implements', direction: 'incoming' })
     }
     wrapper.unmount()
   })

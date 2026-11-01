@@ -283,23 +283,39 @@ export async function restoreEntity(type: string, id: string): Promise<void> {
  */
 export async function searchEntities(
   query: string,
-  type?: string,
-  signal?: AbortSignal,
-  world?: string,
-  link?: SearchLinkContext
+  opts: SearchOptions = {}
 ): Promise<ListResponse<Entity>> {
   const params: Record<string, string> = { q: query }
-  if (type) {
-    params.type = type
+  if (opts.type) {
+    params.type = opts.type
   }
-  if (world) {
-    params.world = world
+  if (opts.world) {
+    params.world = opts.world
   }
-  if (link) {
-    params.relation = link.relation
-    params.direction = link.direction
+  if (opts.link) {
+    params.relation = opts.link.relation
+    params.direction = opts.link.direction
   }
-  return api.get<ListResponse<Entity>>('/_search', params, signal)
+  if (opts.limit) {
+    params.limit = String(opts.limit)
+  }
+  return api.get<ListResponse<Entity>>('/_search', params, opts.signal)
+}
+
+/** Optional inputs of {@link searchEntities}. */
+export interface SearchOptions {
+  /** Only this entity type. */
+  type?: string
+  signal?: AbortSignal
+  world?: string
+  link?: SearchLinkContext
+  /**
+   * At most this many rows (1 to 100). Send it only when the caller shows
+   * the server's first rows as they are: a caller that filters or re-ranks
+   * the rows itself needs the full set. Without it the server ranks and returns
+   * up to 1000 rows, which costs more database time and a larger response.
+   */
+  limit?: number
 }
 
 /**

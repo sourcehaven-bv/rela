@@ -283,7 +283,8 @@ func TestACLSearch_ScopeErrorMapping(t *testing.T) {
 // TestACLSearch_CanceledScopeStaysSilent pins the AC7b cancel branch:
 // a context.Canceled surfacing through the visibility pipeline writes
 // NO response body on /_position?scope=search (client is gone — same
-// behavior readableSubset had before it was retired).
+// behavior readableSubset had before it was retired). The request context
+// is canceled too: it, not the error, decides (TKT-T2I7P2).
 func TestACLSearch_CanceledScopeStaysSilent(t *testing.T) {
 	app := newTestAppV1(t)
 	d := aclSearchQueryVerdictWorld(t, app)
@@ -298,7 +299,9 @@ func TestACLSearch_CanceledScopeStaysSilent(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet,
 		positionURL(t, "TKT-001", ScopeDescriptor{Source: "search", Q: "alpha"}), http.NoBody)
-	req = req.WithContext(gateCtxFor(aliceCtx(), t, d))
+	ctx, cancel := context.WithCancel(gateCtxFor(aliceCtx(), t, d))
+	cancel()
+	req = req.WithContext(ctx)
 	rec := httptest.NewRecorder()
 	app.handleV1EntityPosition(rec, req)
 

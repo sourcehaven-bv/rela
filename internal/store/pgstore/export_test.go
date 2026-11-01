@@ -9,6 +9,7 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/Sourcehaven-BV/rela/internal/search"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
@@ -173,3 +174,21 @@ func SetIteratorPageSizeForTest(t *testing.T, n int) {
 
 // ReindexMentionsForTest runs one mention reindex pass synchronously.
 func ReindexMentionsForTest(ctx context.Context, s *Store) error { return reindexMentions(ctx, s) }
+
+// BuildVisibleSearchSQLForTest exposes buildVisibleSearchSQL for the
+// search EXPLAIN test (first page, no keyset).
+func BuildVisibleSearchSQLForTest(
+	t *testing.T, q search.Query, scope map[string]search.TypeScope, titles SearchTitles, pageLimit int,
+) (sqlText string, args []any) {
+	t.Helper()
+	sqlText, args, anyVisible, err := buildVisibleSearchSQL(q, scope, titles, nil, pageLimit)
+	if err != nil || !anyVisible {
+		t.Fatalf("buildVisibleSearchSQL: visible=%v err=%v", anyVisible, err)
+	}
+	return sqlText, args
+}
+
+// BuildSearchSQLForTest exposes buildSearchSQL for the search EXPLAIN test.
+func BuildSearchSQLForTest(needle string, limit int, w store.WorldScope, titles SearchTitles) (sqlText string, args []any) {
+	return buildSearchSQL(needle, limit, w, titles)
+}

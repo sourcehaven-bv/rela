@@ -1,8 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { createMentionMenu, type MentionSearchBridge } from './relaMentionMenu'
+import { SEARCH_DEBOUNCE_MS } from '@/utils/searchTiming'
 
 /** Lets the debounce and the awaited bridge call both land. */
-const settle = (): Promise<void> => new Promise((r) => setTimeout(r, 200))
+const settle = (): Promise<void> => new Promise((r) => setTimeout(r, SEARCH_DEBOUNCE_MS + 50))
 
 function bridgeReturning(...batches: Array<Array<{ id?: unknown }>>): MentionSearchBridge {
   let i = 0
@@ -118,7 +119,7 @@ describe('createMentionMenu', () => {
     }
     const menu = make(bridge)
     menu.setQuery('ST')
-    await new Promise((r) => setTimeout(r, 160))
+    await new Promise((r) => setTimeout(r, SEARCH_DEBOUNCE_MS + 10))
     menu.setQuery('FR')
     release!()
     await settle()
@@ -135,7 +136,7 @@ describe('createMentionMenu', () => {
       }),
     })
     menu.setQuery('LA')
-    await new Promise((r) => setTimeout(r, 160))
+    await new Promise((r) => setTimeout(r, SEARCH_DEBOUNCE_MS + 10))
     menu.close()
     release!()
     await settle()

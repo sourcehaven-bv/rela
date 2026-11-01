@@ -47,7 +47,7 @@ func runFreeText(t *testing.T, vs search.VisibleSearcher, res visibility.FieldSc
 	}
 	sq := searchparser.ParseQuery("anything")
 	scope := map[string]search.TypeScope{"ticket": {AllowAll: true}}
-	_, err := q.runVisibleFreeTextSearch(context.Background(), Services{Store: memstore.New()}, sq, scope)
+	_, err := q.runVisibleFreeTextSearch(context.Background(), Services{Store: memstore.New()}, sq, scope, maxFreeTextSearchResults)
 	return err
 }
 
