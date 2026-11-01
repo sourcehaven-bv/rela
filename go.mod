@@ -14,7 +14,7 @@ require (
 	github.com/blevesearch/bleve/v2 v2.6.1
 	github.com/charmbracelet/glamour v1.0.0
 	github.com/charmbracelet/huh v1.0.0
-	github.com/chromedp/cdproto v0.158.4
+	github.com/chromedp/cdproto v0.158.6
 	github.com/chromedp/chromedp v0.21.0
 	github.com/emersion/go-ical v0.0.0-20250609112844-439c63cef608
 	github.com/emersion/go-webdav v0.7.0
