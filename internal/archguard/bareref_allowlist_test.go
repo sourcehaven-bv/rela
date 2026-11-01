@@ -11,6 +11,8 @@ package archguard
 var bareRefAllowlist = map[string]allowed{
 	"internal/dataentry/rowcontent.go": {1, "loadDefaultFaceRows: the default world's rows for " +
 		"entityReader, whose routes serve only the default world (TKT-7IZHP0)"},
+	"internal/dataentry/analyze.go": {2, "orphan ids and unnamed violation addresses passed to " +
+		"ResolveHeadersErr: world addresses, as the per-id GetAddress they replace read them (TKT-QM833U)"},
 	"internal/dataentry/gantt_handler.go": {1, "gantt root read: every source type is faceless " +
 		"(ganttHasFacedSource returns early otherwise), so the zero face is the root's only row"},
 	"internal/mcp/convert.go": {1, "outgoing edge head passed to ResolveHeaders: a world address, " +

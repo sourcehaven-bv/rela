@@ -167,10 +167,6 @@ type countingAnalyzeReader struct {
 	rows int
 }
 
-func (c *countingAnalyzeReader) GetAddress(ctx context.Context, addr string) (*entity.Entity, error) {
-	return c.analyzeReader.GetAddress(ctx, addr)
-}
-
 func (c *countingAnalyzeReader) ListEntityHeaders(
 	ctx context.Context, q store.EntityQuery,
 ) iter.Seq2[store.EntityHeader, error] {

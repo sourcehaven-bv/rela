@@ -3,6 +3,7 @@ package dataentry
 import (
 	"context"
 	"encoding/json"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"slices"
@@ -11,6 +12,7 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
@@ -201,4 +203,32 @@ func TestAnalyze_FacedTypes(t *testing.T) {
 			t.Errorf("LEAK: hidden neighbor FEAT-1 in the response")
 		}
 	})
+}
+
+// Validation violators on a faced type are re-loaded through the gated reader
+// in the reader's world (published here), as the per-id GetAddress did before
+// TKT-QM833U batched it. So a violator is reported with its world face's
+// title, and a family with no face in the world (POL-3, draft only) is not
+// reported, for any principal.
+func TestAnalyze_FacedValidationViolators(t *testing.T) {
+	rule := metamodel.ValidationRule{
+		Name: "policy-owner", Description: "A policy needs an owner",
+		EntityType: "policy", Then: []string{"owner!="},
+	}
+	for name, read := range map[string][]string{
+		"every face":     {"*", "policy@draft", "policy@published", "world:published"},
+		"published only": {"policy@published", "feature", "world:published"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			app := analyzeFaceApp(t, read)
+			app.State().Meta.Validations = []metamodel.ValidationRule{rule}
+			got, _ := analyzeIssues(t, app, "Validations")
+			if keys := slices.Sorted(maps.Keys(got)); !slices.Equal(keys, []string{"POL-1", "POL-2"}) {
+				t.Fatalf("violators = %v, want POL-1 and POL-2", keys)
+			}
+			if got["POL-2"].Title != "Two" {
+				t.Errorf("POL-2 title = %q, want its published face's", got["POL-2"].Title)
+			}
+		})
+	}
 }
