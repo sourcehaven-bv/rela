@@ -97,4 +97,40 @@ export class DashboardPage extends BasePage {
     const card = this.cards.filter({ hasText: cardTitle }).first();
     return card.locator('a[href*="/entity/"]').first().isVisible();
   }
+
+  /** A card by its exact title. */
+  card(cardTitle: string): Locator {
+    return this.cards.filter({ has: this.page.getByRole('heading', { name: cardTitle, exact: true }) });
+  }
+
+  /** The labels of a breakdown card, in display order. */
+  async expectBreakdownLabels(cardTitle: string, labels: string[]) {
+    await expect(this.card(cardTitle).locator('.breakdown-label')).toHaveText(labels);
+  }
+
+  /** The inline style of each breakdown bar, in display order. */
+  async breakdownBarStyles(cardTitle: string): Promise<string[]> {
+    const fills = this.card(cardTitle).locator('.breakdown-bar-fill');
+    return fills.evaluateAll((els) => els.map((el) => el.getAttribute('style') ?? ''));
+  }
+
+  /** The badges in a breakdown card's labels. */
+  breakdownBadges(cardTitle: string): Locator {
+    return this.card(cardTitle).locator('.breakdown-label .badge');
+  }
+
+  /** Cell `index` of the table card's row that contains `rowText`. */
+  tableCell(cardTitle: string, rowText: string, index: number): Locator {
+    return this.card(cardTitle).locator('tbody tr').filter({ hasText: rowText }).locator('td').nth(index);
+  }
+
+  /** The link in a table cell. */
+  tableCellLink(cardTitle: string, rowText: string, index: number): Locator {
+    return this.tableCell(cardTitle, rowText, index).locator('a');
+  }
+
+  /** The badge in a table cell. */
+  tableCellBadge(cardTitle: string, rowText: string, index: number): Locator {
+    return this.tableCell(cardTitle, rowText, index).locator('.badge');
+  }
 }

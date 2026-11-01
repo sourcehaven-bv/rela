@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { styleStatusColor, styleSwatch } from './styleColors'
+import { styleBarColor, styleStatusColor, styleSwatch } from './styleColors'
 
 describe('styleSwatch', () => {
   it('gives orange and yellow different dots', () => {
@@ -24,5 +24,22 @@ describe('styleSwatch', () => {
 
   it('maps a value through the style map', () => {
     expect(styleStatusColor({ hoog: 'kit-red-900' }, 'Hoog')).toBe('--rl-kit-red-900')
+  })
+})
+
+describe('styleBarColor', () => {
+  it.each([
+    ['badge-green', 'var(--rl-color-status-green)'],
+    ['badge-orange', 'var(--rl-color-status-amber)'],
+    ['badge-purple', 'var(--rl-color-accent)'],
+    ['badge-yellow', 'var(--rl-color-status-yellow)'],
+    ['kit-red-700', 'var(--rl-kit-red-700)'],
+  ])('paints %s as %s', (cls, color) => {
+    expect(styleBarColor(cls)).toBe(color)
+  })
+
+  it('gives no colour for a missing or unknown class', () => {
+    expect(styleBarColor(undefined)).toBeUndefined()
+    expect(styleBarColor('red; background: url(x)')).toBeUndefined()
   })
 })

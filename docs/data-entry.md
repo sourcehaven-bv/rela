@@ -1589,8 +1589,8 @@ lists:
         sortable: true
 
     sort:
-      property: priority
-      direction: asc
+      - property: priority
+        direction: asc
 
     create_form: create_ticket
     edit_form: edit_ticket
@@ -3199,8 +3199,8 @@ dashboard:
         - property: assignee
           label: "Assignee"
       sort:
-        property: status
-        direction: asc
+        - property: status
+          direction: asc
       limit: 10
 ```
 
@@ -3222,7 +3222,7 @@ dashboard:
 | `display`    | string | `count`, `breakdown`, `table`, `matrix` or `ratio`                          |
 | `group_by`   | string | Property to group by (`breakdown`, and optionally `ratio`)                  |
 | `columns`    | list or string | `table`: column definitions, same format as list columns. `matrix`: the property along the top |
-| `sort`       | object | Sort order (`table` mode only)                                              |
+| `sort`       | list   | Sort order (`table` mode only), the same list as a list's `sort:`           |
 | `limit`      | int    | Maximum rows to display (`table` mode only; at most 100 for a list card)    |
 | `rows`       | string | `matrix`: the property down the side                                        |
 | `tone_by`    | string | `matrix`: the enum property that colours a cell                             |
@@ -3523,13 +3523,25 @@ a named dashboard is done in `data-entry.yaml`.
 quick status indicators like "5 open tickets" or "3 overdue items".
 
 **`breakdown`** groups matching entities by a property and shows each value with a count and a
-horizontal bar. The property should be an enum or custom type so values can be styled with badge
-colors from `styles`. For example, grouping by `status` shows "open: 2, in-progress: 1, closed: 1"
-with colored bars.
+horizontal bar. When the property is an enum or custom type, each value shows as a badge with its
+authored label, and the badge and the bar take the value's colour from `styles`. A value without a
+style gets a grey badge and the accent-coloured bar. For example, grouping by `status` shows
+"Open: 2, In progress: 1, Closed: 1" with coloured bars.
+
+The groups follow the order the enum declares its values, so a breakdown by a status or a pipeline
+stage reads in that order. Values the enum does not declare come next, most frequent first, and
+entities without a value come last as "Unknown". A property that is not an enum is ordered by count,
+most frequent first. A `list:` card and a `query:` card order their groups the same way. A
+`query:` card whose rows have several entity types also orders by count, because the types may
+declare different values. A row whose grouping value is hidden from the viewer is left out, and the
+card says that some values are hidden.
 
 **`table`** shows matching entities as a compact table. It supports the same `columns` format as
 list definitions (with `property`, `label`, `sortable`, `link`), plus `sort` and `limit` to control
-ordering and row count.
+ordering and row count. Cells render as they do in a list: an enum value is a badge with its label
+and style, an integer property with `display: {currency: ...}` is an amount, and a date is formatted
+in the reader's locale. A table card with several columns usually needs `width: wide` or
+`width: full` (see [Card width](#card-width-width)).
 
 ### Query Syntax
 
@@ -7187,8 +7199,8 @@ lists:
         label: "Due"
         sortable: true
     sort:
-      property: priority
-      direction: asc
+      - property: priority
+        direction: asc
     filter_controls:
       - property: status
         widget: multi-select

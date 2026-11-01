@@ -16,6 +16,7 @@ import type {
   Entity,
 } from '@/types'
 import { ApiError } from '@/api/errors'
+import { formatAmount, formatDate } from '@/utils/format'
 
 vi.mock('vue-router', () => ({
   useRouter: () => ({ push: vi.fn() }),
@@ -581,6 +582,219 @@ describe('DashboardView', () => {
 
       const wrapper = await mountView()
       expect(wrapper.find('.cell-hidden').text()).toBe('Hidden')
+    })
+  })
+
+  // TKT-69PZ09D: breakdown and table cards render values as list cells do.
+  describe('value rendering (TKT-69PZ09D)', () => {
+    const stages = ['lead', 'contact', 'offer', 'won']
+
+    function seedDeals() {
+      const store = useSchemaStore()
+      store.entityTypes.set('deal', {
+        name: 'deal',
+        label: 'Deal',
+        properties: {
+          title: { type: 'string' },
+          stage: {
+            type: 'stage',
+            values: stages,
+            labels: { lead: 'Lead', contact: 'Eerste contact', offer: 'Offerte', won: 'Gewonnen' },
+          },
+          value: { type: 'integer', display: { currency: 'EUR' } },
+          close: { type: 'date' },
+          sector: { type: 'string' },
+        },
+      } as never)
+      store.customTypes.set('stage', { values: stages } as never)
+      store.styles = { stage: { contact: 'badge-blue', won: 'badge-green' } }
+      store.lists.set('deals', {
+        id: 'deals',
+        title: 'Deals',
+        entity: 'deal',
+        columns: [],
+      } as never)
+    }
+
+    function deal(id: string, props: Record<string, unknown>): Entity {
+      return { id, type: 'deal', properties: props } as unknown as Entity
+    }
+
+    function searchReturns(rows: Entity[]) {
+      searchEntitiesMock.mockResolvedValue({
+        data: rows,
+        meta: { total: rows.length, page: 1, per_page: 50, has_more: false },
+      })
+    }
+
+    it('shows enum labels as styled badges in declared order on a query breakdown', async () => {
+      seedDeals()
+      // Counts disagree with the declared order, so a count sort would put
+      // "won" first.
+      searchReturns([
+        deal('D-1', { stage: 'won' }),
+        deal('D-2', { stage: 'won' }),
+        deal('D-3', { stage: 'won' }),
+        deal('D-4', { stage: 'contact' }),
+        deal('D-5', { stage: 'lead' }),
+        deal('D-6', {}),
+      ])
+      seedDashboard([card({ display: 'breakdown', group_by: 'stage' })])
+
+      const wrapper = await mountView()
+
+      const labels = wrapper.findAll('.breakdown-label').map((l) => l.text())
+      expect(labels).toEqual(['Lead', 'Eerste contact', 'Gewonnen', 'Unknown'])
+      const badges = wrapper.findAll('.breakdown-label .badge')
+      expect(badges.map((b) => b.classes())).toEqual([
+        expect.arrayContaining(['badge--gray']),
+        expect.arrayContaining(['badge--blue']),
+        expect.arrayContaining(['badge--green']),
+      ])
+      const fills = wrapper.findAll('.breakdown-bar-fill').map((f) => f.attributes('style') ?? '')
+      expect(fills[0]).not.toContain('background')
+      expect(fills[1]).toContain('var(--rl-color-status-blue)')
+      expect(fills[2]).toContain('var(--rl-color-status-green)')
+      expect(fills[3]).not.toContain('background')
+    })
+
+    it('puts values outside the enum after declared ones, by count', async () => {
+      seedDeals()
+      searchReturns([
+        deal('D-1', { stage: 'legacy' }),
+        deal('D-2', { stage: 'legacy' }),
+        deal('D-3', { stage: 'old' }),
+        deal('D-4', { stage: 'won' }),
+      ])
+      seedDashboard([card({ display: 'breakdown', group_by: 'stage' })])
+
+      const wrapper = await mountView()
+
+      const labels = wrapper.findAll('.breakdown-label').map((l) => l.text())
+      expect(labels).toEqual(['Gewonnen', 'legacy', 'old'])
+      // A value the enum does not declare is a grey badge with its raw value,
+      // as a list cell shows it.
+      const badges = wrapper.findAll('.breakdown-label .badge')
+      expect(badges).toHaveLength(3)
+      expect(badges[1].classes()).toContain('badge--gray')
+    })
+
+    it('keeps a non-enum breakdown as plain text by count', async () => {
+      seedDeals()
+      searchReturns([
+        deal('D-1', { sector: 'zorg' }),
+        deal('D-2', { sector: 'onderwijs' }),
+        deal('D-3', { sector: 'onderwijs' }),
+      ])
+      seedDashboard([card({ display: 'breakdown', group_by: 'sector' })])
+
+      const wrapper = await mountView()
+
+      const labels = wrapper.findAll('.breakdown-label').map((l) => l.text())
+      expect(labels).toEqual(['onderwijs', 'zorg'])
+      expect(wrapper.find('.breakdown-label .badge').exists()).toBe(false)
+    })
+
+    it('styles a list card breakdown from its list type', async () => {
+      seedDeals()
+      seedDashboard([
+        card({
+          title: 'By stage',
+          query: undefined,
+          list: 'deals',
+          display: 'breakdown',
+          group_by: 'stage',
+        }),
+      ])
+      getDashboardCardMock.mockResolvedValue({
+        title: 'By stage',
+        display: 'breakdown',
+        list: 'deals',
+        total: 3,
+        groups: [
+          { value: 'contact', label: 'Eerste contact', count: 1, matched: 0 },
+          { value: 'won', label: 'Gewonnen', count: 2, matched: 0 },
+        ],
+      })
+
+      const wrapper = await mountView()
+
+      const badges = wrapper.findAll('.breakdown-label .badge')
+      expect(badges.map((b) => b.text())).toEqual(['Eerste contact', 'Gewonnen'])
+      expect(badges[1].classes()).toContain('badge--green')
+      expect(wrapper.findAll('.breakdown-bar-fill')[1].attributes('style')).toContain(
+        'var(--rl-color-status-green)'
+      )
+    })
+
+    const tableColumns = [
+      { property: 'title', link: 'detail' },
+      { property: 'stage' },
+      { property: 'value' },
+      { property: 'close' },
+    ]
+
+    function expectDealRow(wrapper: Awaited<ReturnType<typeof mountView>>) {
+      const cells = wrapper.findAll('tbody td')
+      expect(cells[0].find('a').attributes('data-to')).toBe('/entity/deal/D-1')
+      expect(cells[0].text()).toBe('Big deal')
+      const badge = cells[1].find('.badge')
+      expect(badge.text()).toBe('Eerste contact')
+      expect(badge.classes()).toContain('badge--blue')
+      expect(cells[2].text()).toBe(formatAmount(3500, 'EUR'))
+      expect(cells[3].text()).toBe(formatDate('2026-03-01'))
+    }
+
+    it('renders query table cells as list cells', async () => {
+      seedDeals()
+      searchReturns([
+        deal('D-1', { title: 'Big deal', stage: 'contact', value: 3500, close: '2026-03-01' }),
+      ])
+      seedDashboard([card({ display: 'table', columns: tableColumns })])
+
+      expectDealRow(await mountView())
+    })
+
+    it('renders list table cells as list cells', async () => {
+      seedDeals()
+      seedDashboard([
+        card({
+          title: 'Rows',
+          query: undefined,
+          list: 'deals',
+          display: 'table',
+          columns: tableColumns,
+        }),
+      ])
+      getDashboardCardMock.mockResolvedValue({
+        title: 'Rows',
+        display: 'table',
+        list: 'deals',
+        total: 1,
+        rows: [
+          {
+            id: 'D-1',
+            type: 'deal',
+            _title: 'Big deal',
+            properties: { title: 'Big deal', stage: 'contact', value: 3500, close: '2026-03-01' },
+          },
+        ],
+      })
+
+      expectDealRow(await mountView())
+    })
+
+    it('leaves empty cells and unknown properties as plain text', async () => {
+      seedDeals()
+      searchReturns([deal('D-1', { title: 'Bare', note: 'kept' })])
+      seedDashboard([
+        card({ display: 'table', columns: [{ property: 'stage' }, { property: 'note' }] }),
+      ])
+
+      const cells = (await mountView()).findAll('tbody td')
+      expect(cells[0].text()).toBe('')
+      expect(cells[0].find('.badge').exists()).toBe(false)
+      expect(cells[1].text()).toBe('kept')
     })
   })
 

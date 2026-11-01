@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, shallowRef, computed, watch, nextTick, onMounted, onUnmounted, type Component } from 'vue'
+import { ref, shallowRef, computed, watch, nextTick, onMounted, onUnmounted } from 'vue'
 import { RouterLink, useRoute, useRouter, type RouteLocationRaw } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { useQuery, useQueryCache } from '@pinia/colada'
@@ -29,9 +29,8 @@ import { entityDisplayTitle } from '@/utils/entityDisplay'
 import { renderMarkdown } from '@/utils/markdown'
 import { actionAllowed } from '@/utils/affordancesWarning'
 import { getCellValue, formatCellValue } from '@/utils/format'
-import { densePropertyRoutingHint, isDenseEmpty } from '@/widgets/viewRouting'
-import { defaultRegistry } from '@/widgets/registry'
-import type { DenseRoutingHint } from '@/widgets/viewRouting'
+import { isDenseEmpty } from '@/widgets/viewRouting'
+import { denseCell, denseEntry, type DenseCell, type DenseEntry } from '@/utils/denseCell'
 import type { Entity, ListMeta, ListParams, ListResponse, FilterState, PageScope } from '@/types'
 import { viewHeaderMarkdown, viewFooterMarkdown } from '@/types'
 import FilterBar from './FilterBar.vue'
@@ -1179,13 +1178,12 @@ const rowTargets = computed(() => {
 // PropertyDef and there is no relation widget, so they stay on the string
 // path in getFormattedCellValue.
 const columnWidgets = computed(() => {
-  const byProperty = new Map<string, { component: Component; hint: DenseRoutingHint }>()
+  const byProperty = new Map<string, DenseEntry>()
   const type = entityType.value
   if (!type) return byProperty
   for (const column of listConfig.value?.columns ?? []) {
     if (!column.property || byProperty.has(column.property)) continue
-    const hint = densePropertyRoutingHint(type.properties[column.property], column.property)
-    byProperty.set(column.property, { component: defaultRegistry.resolveDense(hint), hint })
+    byProperty.set(column.property, denseEntry(type.properties[column.property], column.property))
   }
   return byProperty
 })
@@ -1204,11 +1202,7 @@ function cellWidget(
   return isDenseEmpty(getCellValue(entity, column)) ? undefined : entry
 }
 
-interface ResolvedCell {
-  component: Component
-  propertyName: string
-  modelValue: unknown
-}
+type ResolvedCell = DenseCell
 
 // One resolved cell: the widget to render plus the value already shaped the
 // way that widget wants. Returns undefined when the cell must fall back to the
@@ -1243,15 +1237,7 @@ function resolveCell(
 
   const entry = cellWidget(entity, column)
   const resolved: ResolvedCell | undefined = entry
-    ? {
-        component: entry.component,
-        propertyName: entry.hint.propertyName,
-        // Passthrough widgets render String(value); everything else owns its
-        // display formatting and wants the stored value.
-        modelValue: entry.hint.preformatted
-          ? getFormattedCellValue(entity, column)
-          : getCellValue(entity, column),
-      }
+    ? denseCell(entry, getCellValue(entity, column), () => getFormattedCellValue(entity, column))
     : undefined
   perEntity.set(column, resolved)
   return resolved
