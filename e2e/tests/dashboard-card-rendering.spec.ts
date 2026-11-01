@@ -93,17 +93,21 @@ test.describe("Dashboard card value rendering", () => {
 
     // Declared order, not count order: Bezig has the most rows.
     await dashboard.expectBreakdownLabels("Bugs by status", ["Nieuw", "Bezig", "Klaar"]);
-    await expect(dashboard.card("Bugs by status").locator(".breakdown-label .badge")).toHaveCount(3);
+    await expect(dashboard.breakdownBadges("Bugs by status")).toHaveCount(3);
     const bars = await dashboard.breakdownBarStyles("Bugs by status");
     expect(bars[0]).toContain("--rl-color-status-blue");
     expect(bars[1]).toContain("--rl-color-status-amber");
     expect(bars[2]).toContain("--rl-color-status-green");
 
-    const cells = dashboard.tableRow("Bug table", "Dashdeal A").locator("td");
-    await expect(cells.nth(0).locator("a")).toHaveAttribute("href", new RegExp(`/entity/bug/${first.id}$`));
-    await expect(cells.nth(1).locator(".badge")).toHaveText("Bezig");
-    await expect(cells.nth(1).locator(".badge")).toHaveClass(/badge--orange/);
-    await expect(cells.nth(2)).toHaveText(/^€\s3\.500$/);
-    await expect(cells.nth(3)).toHaveText(/^1 mrt 2026$/);
+    const table = "Bug table";
+    const row = "Dashdeal A";
+    await expect(dashboard.tableCellLink(table, row, 0)).toHaveAttribute(
+      "href",
+      new RegExp(`/entity/bug/${first.id}$`),
+    );
+    await expect(dashboard.tableCellBadge(table, row, 1)).toHaveText("Bezig");
+    await expect(dashboard.tableCellBadge(table, row, 1)).toHaveClass(/badge--orange/);
+    await expect(dashboard.tableCell(table, row, 2)).toHaveText(/^€\s3\.500$/);
+    await expect(dashboard.tableCell(table, row, 3)).toHaveText(/^1 mrt 2026$/);
   });
 });

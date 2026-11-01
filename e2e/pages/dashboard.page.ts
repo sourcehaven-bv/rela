@@ -114,8 +114,23 @@ export class DashboardPage extends BasePage {
     return fills.evaluateAll((els) => els.map((el) => el.getAttribute('style') ?? ''));
   }
 
-  /** The cells of the table card's row whose first cell has `rowText`. */
-  tableRow(cardTitle: string, rowText: string): Locator {
-    return this.card(cardTitle).locator('tbody tr').filter({ hasText: rowText });
+  /** The badges in a breakdown card's labels. */
+  breakdownBadges(cardTitle: string): Locator {
+    return this.card(cardTitle).locator('.breakdown-label .badge');
+  }
+
+  /** Cell `index` of the table card's row that contains `rowText`. */
+  tableCell(cardTitle: string, rowText: string, index: number): Locator {
+    return this.card(cardTitle).locator('tbody tr').filter({ hasText: rowText }).locator('td').nth(index);
+  }
+
+  /** The link in a table cell. */
+  tableCellLink(cardTitle: string, rowText: string, index: number): Locator {
+    return this.tableCell(cardTitle, rowText, index).locator('a');
+  }
+
+  /** The badge in a table cell. */
+  tableCellBadge(cardTitle: string, rowText: string, index: number): Locator {
+    return this.tableCell(cardTitle, rowText, index).locator('.badge');
   }
 }
