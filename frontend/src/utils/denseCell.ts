@@ -1,5 +1,5 @@
 import type { Component } from 'vue'
-import type { EntityType } from '@/types'
+import type { EntityType, PropertyDef } from '@/types'
 import { defaultRegistry } from '@/widgets/registry'
 import {
   densePropertyRoutingHint,
@@ -18,17 +18,49 @@ export interface DenseCell {
   modelValue: unknown
 }
 
+/** The widget a dense surface renders a property with, and how it routed. */
+export interface DenseEntry {
+  component: Component
+  hint: DenseRoutingHint
+}
+
 /**
- * Resolves property cells the way a list cell does (EntityList): the widget
- * from `densePropertyRoutingHint` and `defaultRegistry.resolveDense`, and for
- * a passthrough widget the value pre-formatted by `formatCellValue` (dates,
- * `display: {currency}` amounts, booleans). So an enum cell is a badge with
- * its authored label and style, and a currency integer reads as an amount.
- *
- * The widget is resolved once per (entity type, property) and kept by the
- * resolver, because resolving walks a Map and can warn; doing that per cell
- * would repeat it for every row (RR-UD2A). Create one resolver per render
- * pass over a set of rows.
+ * The widget for a property on a dense read-only surface: a list cell, a
+ * dashboard table cell. `propertyDef` may be absent, which routes to text.
+ * Resolving walks a Map and can warn, so callers resolve once per column
+ * rather than per cell (RR-UD2A).
+ */
+export function denseEntry(propertyDef: PropertyDef | undefined, propertyName: string): DenseEntry {
+  const hint = densePropertyRoutingHint(propertyDef, propertyName)
+  return { component: defaultRegistry.resolveDense(hint), hint }
+}
+
+/**
+ * One cell: the entry's widget with the value shaped the way it wants. A
+ * passthrough widget gets `formatted()` (dates, `display: {currency}`
+ * amounts, booleans); every other widget formats itself and gets the raw
+ * value. Undefined for an empty value: widgets may draw a "no value"
+ * placeholder that cells must not show, so the cell stays plain text.
+ */
+export function denseCell(
+  entry: DenseEntry,
+  value: unknown,
+  formatted: () => string
+): DenseCell | undefined {
+  if (isDenseEmpty(value)) return undefined
+  return {
+    component: entry.component,
+    propertyName: entry.hint.propertyName,
+    modelValue: entry.hint.preformatted ? formatted() : value,
+  }
+}
+
+/**
+ * Resolves property cells for rows of any type, as a list cell does: an enum
+ * is a badge with its authored label and style, a currency integer an amount.
+ * The entry is kept per (entity type, property), so create one resolver per
+ * render pass over a set of rows. An unknown type or property gives
+ * undefined, and the caller shows plain text.
  */
 export function createDenseCellResolver(): (
   value: unknown,
@@ -36,35 +68,21 @@ export function createDenseCellResolver(): (
   entityType: EntityType | undefined,
   tz: string
 ) => DenseCell | undefined {
-  const widgets = new Map<
-    EntityType,
-    Map<string, { component: Component; hint: DenseRoutingHint }>
-  >()
+  const entries = new Map<EntityType, Map<string, DenseEntry>>()
 
   return (value, propertyName, entityType, tz) => {
-    // A cell without a known type or property stays on the plain-text path,
-    // as an empty value does: widgets may draw a "no value" placeholder that
-    // cells must not show.
-    if (!entityType || isDenseEmpty(value)) return undefined
-    const propertyDef = entityType.properties[propertyName]
-    if (!propertyDef) return undefined
-    let perType = widgets.get(entityType)
+    const propertyDef = entityType?.properties[propertyName]
+    if (!entityType || !propertyDef) return undefined
+    let perType = entries.get(entityType)
     if (!perType) {
       perType = new Map()
-      widgets.set(entityType, perType)
+      entries.set(entityType, perType)
     }
     let entry = perType.get(propertyName)
     if (!entry) {
-      const hint = densePropertyRoutingHint(propertyDef, propertyName)
-      entry = { component: defaultRegistry.resolveDense(hint), hint }
+      entry = denseEntry(propertyDef, propertyName)
       perType.set(propertyName, entry)
     }
-    return {
-      component: entry.component,
-      propertyName: entry.hint.propertyName,
-      modelValue: entry.hint.preformatted
-        ? formatCellValue(value, propertyName, entityType, tz)
-        : value,
-    }
+    return denseCell(entry, value, () => formatCellValue(value, propertyName, entityType, tz))
   }
 }

@@ -3531,7 +3531,10 @@ style gets a grey badge and the accent-coloured bar. For example, grouping by `s
 The groups follow the order the enum declares its values, so a breakdown by a status or a pipeline
 stage reads in that order. Values the enum does not declare come next, most frequent first, and
 entities without a value come last as "Unknown". A property that is not an enum is ordered by count,
-most frequent first. A `list:` card and a `query:` card order their groups the same way.
+most frequent first. A `list:` card and a `query:` card order their groups the same way. A
+`query:` card whose rows have several entity types also orders by count, because the types may
+declare different values. A row whose grouping value is hidden from the viewer is left out, and the
+card says that some values are hidden.
 
 **`table`** shows matching entities as a compact table. It supports the same `columns` format as
 list definitions (with `property`, `label`, `sortable`, `link`), plus `sort` and `limit` to control

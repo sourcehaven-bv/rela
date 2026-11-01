@@ -15,7 +15,7 @@ import {
   tableRows,
   type BreakdownItem,
   type TableRow,
-} from '@/components/dashboard/cardValues'
+} from '@/utils/dashboardCards'
 
 import type {
   Entity,
@@ -179,6 +179,8 @@ interface CardView {
   count: number
   breakdown: BreakdownItem[]
   rows: TableRow[]
+  /** Some rows hide the grouped value from this reader and are not counted. */
+  partial: boolean
   /** The server-computed value of a list card; absent for a query card. */
   value?: DashboardCardValue
   /** Where the card's link goes: its list, or the search for its query. */
@@ -259,26 +261,35 @@ const cardViews = computed<CardView[]>(() =>
         link,
         value,
         count: value?.total ?? 0,
+        partial: value?.partial ?? false,
         breakdown:
           value && card.display === 'breakdown'
             ? listBreakdown(schemaStore, card, value, t('dashboard.unknown'))
             : [],
-        rows: value && card.display === 'table' ? tableRows(schemaStore, card, valueRows(value), uiStore.effectiveTimezone) : [],
+        rows:
+          value && card.display === 'table'
+            ? tableRows(schemaStore, card, valueRows(value), uiStore.effectiveTimezone)
+            : [],
         failed: cardErrors.value.has(key),
       }
     }
     const entities = cardData.value.get(key)?.entities ?? []
+    const breakdown =
+      card.display === 'breakdown' && card.group_by
+        ? queryBreakdown(schemaStore, card.group_by, entities, t('dashboard.unknown'))
+        : { items: [], partial: false }
     return {
       link,
       failed: false,
       card,
       key,
       count: cardData.value.get(key)?.count || 0,
-      breakdown:
-        card.display === 'breakdown' && card.group_by
-          ? queryBreakdown(schemaStore, card.group_by, entities, t('dashboard.unknown'))
+      partial: breakdown.partial,
+      breakdown: breakdown.items,
+      rows:
+        card.display === 'table'
+          ? tableRows(schemaStore, card, buildRows(card, entities), uiStore.effectiveTimezone)
           : [],
-      rows: card.display === 'table' ? tableRows(schemaStore, card, buildRows(card, entities), uiStore.effectiveTimezone) : [],
     }
   })
 )
@@ -370,7 +381,7 @@ watch([() => props.name, worldParam], () => void loadData())
             {{ t('dashboard.cardFailed') }}
           </p>
 
-          <p v-else-if="view.value?.partial" class="card-partial" data-testid="card-partial">
+          <p v-else-if="view.partial" class="card-partial" data-testid="card-partial">
             {{ t('dashboard.partial') }}
           </p>
 

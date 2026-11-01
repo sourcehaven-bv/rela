@@ -27,8 +27,9 @@ export interface CardSchema {
 }
 
 /**
- * One breakdown group. `key` is the stored value ('' for rows without one);
- * `label` is what the row shows when it is not a badge.
+ * One breakdown group. `key` is the stored value ('' for rows without one).
+ * `label` is the text a non-badge row shows; a badge resolves its own label
+ * from the schema, which is the same authored label.
  */
 export interface BreakdownItem {
   key: string
@@ -52,7 +53,7 @@ export interface TableCell {
   hidden: boolean
   /** The widget for the value, as a list cell renders it; absent means text. */
   widget?: DenseCell
-  /** The formatted value, for a link, a relation or a value without a widget. */
+  /** The formatted value when there is no widget: a link, or a plain value. */
   text: string
 }
 
@@ -92,42 +93,66 @@ function compareGroups(rank: (item: BreakdownItem) => number | undefined) {
   }
 }
 
-/** A query card's breakdown, grouped here over the rows the search returned. */
+/**
+ * A property value as a group key, as the server's `axisKey` reads it: a
+ * string, a finite number or a boolean is its text; anything else, such as
+ * a list, counts as no value.
+ */
+export function groupKey(value: unknown): string {
+  if (typeof value === 'string') return value
+  if (typeof value === 'number') return Number.isFinite(value) ? String(value) : ''
+  if (typeof value === 'boolean') return String(value)
+  return ''
+}
+
+/**
+ * A query card's breakdown, grouped here over the rows the search returned.
+ * A row whose value is hidden from the reader is left out and makes the
+ * result `partial`, as the server does for a list card.
+ */
 export function queryBreakdown(
   schema: CardSchema,
   groupBy: string,
   entities: Entity[],
   unknownLabel: string
-): BreakdownItem[] {
+): { items: BreakdownItem[]; partial: boolean } {
   // Per value: its count and the type of the first row that had it. A query
   // may match several types; each value takes its label and style from its
   // own type.
   const groups = new Map<string, { count: number; type: string }>()
+  const types = new Set<string>()
+  let partial = false
   for (const entity of entities) {
-    const raw = entity.properties[groupBy]
-    const key = raw === undefined || raw === null ? '' : String(raw)
+    if (isPropertyRedacted(groupBy, entity._redacted)) {
+      partial = true
+      continue
+    }
+    const key = groupKey(entity.properties[groupBy])
+    types.add(entity.type)
     const group = groups.get(key)
     if (group) group.count++
     else groups.set(key, { count: 1, type: entity.type })
   }
 
+  // Declared order needs one enum to rank against. Rows of several types
+  // may declare different enums, so such a breakdown orders by count.
+  const [onlyType] = types.size === 1 ? types : [undefined]
+  const declared = enumValues(schema, onlyType, groupBy)
   const total = entities.length
-  const ranks = new Map<string, number | undefined>()
-  const items = [...groups].map(([key, { count, type }]): BreakdownItem => {
-    const values = enumValues(schema, type, groupBy)
-    const rank = values?.indexOf(key) ?? -1
-    ranks.set(key, rank >= 0 ? rank : undefined)
-    return {
-      key,
-      label: key ? (schema.getEnumLabel(key, groupBy, type) ?? key) : unknownLabel,
-      count,
-      percentage: total > 0 ? (count / total) * 100 : 0,
-      entityType: type,
-      badge: !!values && key !== '',
-      color: barColor(schema, type, groupBy, key),
-    }
-  })
-  return items.sort(compareGroups((item) => ranks.get(item.key)))
+  const items = [...groups].map(([key, { count, type }]): BreakdownItem => ({
+    key,
+    label: key ? (schema.getEnumLabel(key, groupBy, type) ?? key) : unknownLabel,
+    count,
+    percentage: total > 0 ? (count / total) * 100 : 0,
+    entityType: type,
+    badge: !!enumValues(schema, type, groupBy) && key !== '',
+    color: barColor(schema, type, groupBy, key),
+  }))
+  const rank = (item: BreakdownItem) => {
+    const i = declared?.indexOf(item.key) ?? -1
+    return i >= 0 ? i : undefined
+  }
+  return { items: items.sort(compareGroups(rank)), partial }
 }
 
 /**
@@ -180,13 +205,17 @@ export function tableRows(
       const property = col.property
       // A relation column has no value on the row; it stays blank, as before.
       if (!property) return { key, link, hidden: false, text: '' }
+      // A hidden value shows the marker, also in a link column, where an
+      // empty link could not be clicked anyway.
+      if (isPropertyRedacted(property, entity._redacted)) return { key, hidden: true, text: '' }
       const value = entity.properties[property]
+      const widget = link ? undefined : resolve(value, property, type, tz)
       return {
         key,
         link,
-        hidden: !link && isPropertyRedacted(property, entity._redacted),
-        widget: link ? undefined : resolve(value, property, type, tz),
-        text: type ? formatCellValue(value, property, type, tz) : String(value ?? ''),
+        hidden: false,
+        widget,
+        text: widget ? '' : type ? formatCellValue(value, property, type, tz) : String(value ?? ''),
       }
     })
     return { entity, cells }

@@ -608,7 +608,12 @@ describe('DashboardView', () => {
       } as never)
       store.customTypes.set('stage', { values: stages } as never)
       store.styles = { stage: { contact: 'badge-blue', won: 'badge-green' } }
-      store.lists.set('deals', { id: 'deals', title: 'Deals', entity: 'deal', columns: [] } as never)
+      store.lists.set('deals', {
+        id: 'deals',
+        title: 'Deals',
+        entity: 'deal',
+        columns: [],
+      } as never)
     }
 
     function deal(id: string, props: Record<string, unknown>): Entity {
@@ -693,7 +698,13 @@ describe('DashboardView', () => {
     it('styles a list card breakdown from its list type', async () => {
       seedDeals()
       seedDashboard([
-        card({ title: 'By stage', query: undefined, list: 'deals', display: 'breakdown', group_by: 'stage' }),
+        card({
+          title: 'By stage',
+          query: undefined,
+          list: 'deals',
+          display: 'breakdown',
+          group_by: 'stage',
+        }),
       ])
       getDashboardCardMock.mockResolvedValue({
         title: 'By stage',
@@ -747,7 +758,13 @@ describe('DashboardView', () => {
     it('renders list table cells as list cells', async () => {
       seedDeals()
       seedDashboard([
-        card({ title: 'Rows', query: undefined, list: 'deals', display: 'table', columns: tableColumns }),
+        card({
+          title: 'Rows',
+          query: undefined,
+          list: 'deals',
+          display: 'table',
+          columns: tableColumns,
+        }),
       ])
       getDashboardCardMock.mockResolvedValue({
         title: 'Rows',
