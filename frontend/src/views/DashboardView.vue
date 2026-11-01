@@ -1,14 +1,21 @@
 <script setup lang="ts">
 import { useI18n } from 'vue-i18n'
 import { ref, computed, onMounted, watch } from 'vue'
-import { useSchemaStore } from '@/stores'
+import { useSchemaStore, useUIStore } from '@/stores'
 import NextActionCard from '@/components/NextActionCard.vue'
 import { searchEntities, analyze, getDashboard, getDashboardCard, ApiError } from '@/api'
 import { useWorld } from '@/composables/useWorld'
-import { isPropertyRedacted } from '@/utils/affordances'
 import type { RouteLocationRaw } from 'vue-router'
 import DashboardMatrix from '@/components/dashboard/DashboardMatrix.vue'
 import DashboardRatio from '@/components/dashboard/DashboardRatio.vue'
+import Badge from '@/components/ui/Badge.vue'
+import {
+  listBreakdown,
+  queryBreakdown,
+  tableRows,
+  type BreakdownItem,
+  type TableRow,
+} from '@/components/dashboard/cardValues'
 
 import type {
   Entity,
@@ -29,6 +36,7 @@ const props = defineProps<{ name?: string }>()
 const { t } = useI18n()
 
 const schemaStore = useSchemaStore()
+const uiStore = useUIStore()
 const { worldParam } = useWorld()
 
 // The named dashboard's per-principal payload, fetched on entry since only
@@ -164,53 +172,19 @@ async function loadData() {
   }
 }
 
-type Breakdown = Array<{ key?: string; value: string; count: number; percentage: number }>
-
 /** One rendered tile: the card plus everything the template needs derived. */
 interface CardView {
   card: DashboardCardEntry
   key: string
   count: number
-  breakdown: Breakdown
-  rows: Entity[]
+  breakdown: BreakdownItem[]
+  rows: TableRow[]
   /** The server-computed value of a list card; absent for a query card. */
   value?: DashboardCardValue
   /** Where the card's link goes: its list, or the search for its query. */
   link: RouteLocationRaw
   /** True when a list card's value failed to load. */
   failed: boolean
-}
-
-function buildBreakdown(card: DashboardCardEntry, entities: Entity[]): Breakdown {
-  if (!card.group_by) return []
-
-  const groupBy = card.group_by
-  const counts: Record<string, number> = {}
-  let total = 0
-
-  for (const entity of entities) {
-    const value = String(entity.properties[groupBy] || t('dashboard.unknown'))
-    counts[value] = (counts[value] || 0) + 1
-    total++
-  }
-
-  return Object.entries(counts)
-    .map(([value, count]) => ({
-      value,
-      count,
-      percentage: total > 0 ? (count / total) * 100 : 0,
-    }))
-    .sort((a, b) => b.count - a.count)
-}
-
-/** A list card's breakdown, from the groups the server counted. */
-function valueBreakdown(value: DashboardCardValue): Breakdown {
-  return (value.groups ?? []).map((g) => ({
-    key: g.value,
-    value: g.label || t('dashboard.unknown'),
-    count: g.count,
-    percentage: value.total > 0 ? (g.count / value.total) * 100 : 0,
-  }))
 }
 
 /** A list card's table rows, shaped like the entities the template renders. */
@@ -285,8 +259,11 @@ const cardViews = computed<CardView[]>(() =>
         link,
         value,
         count: value?.total ?? 0,
-        breakdown: value && card.display === 'breakdown' ? valueBreakdown(value) : [],
-        rows: value && card.display === 'table' ? valueRows(value) : [],
+        breakdown:
+          value && card.display === 'breakdown'
+            ? listBreakdown(schemaStore, card, value, t('dashboard.unknown'))
+            : [],
+        rows: value && card.display === 'table' ? tableRows(schemaStore, card, valueRows(value), uiStore.effectiveTimezone) : [],
         failed: cardErrors.value.has(key),
       }
     }
@@ -297,8 +274,11 @@ const cardViews = computed<CardView[]>(() =>
       card,
       key,
       count: cardData.value.get(key)?.count || 0,
-      breakdown: card.display === 'breakdown' ? buildBreakdown(card, entities) : [],
-      rows: card.display === 'table' ? buildRows(card, entities) : [],
+      breakdown:
+        card.display === 'breakdown' && card.group_by
+          ? queryBreakdown(schemaStore, card.group_by, entities, t('dashboard.unknown'))
+          : [],
+      rows: card.display === 'table' ? tableRows(schemaStore, card, buildRows(card, entities), uiStore.effectiveTimezone) : [],
     }
   })
 )
@@ -315,18 +295,6 @@ function widthClass(width: DashboardCardEntry['width']): string | undefined {
 
 function getColumnLabel(col: { property?: string; label?: string }): string {
   return col.label || col.property || ''
-}
-
-function getCellValue(entity: Entity, col: { property?: string }): string {
-  if (!col.property) return ''
-  return String(entity.properties[col.property] || '')
-}
-
-function getCellLink(entity: Entity, col: { link?: string }): string | undefined {
-  if (col.link === 'detail') {
-    return `/entity/${entity.type}/${entity.id}`
-  }
-  return undefined
 }
 
 // Lifecycle
@@ -414,10 +382,24 @@ watch([() => props.name, worldParam], () => void loadData())
 
           <!-- Breakdown display -->
           <div v-else-if="view.card.display === 'breakdown'" class="card-breakdown">
-            <div v-for="item in view.breakdown" :key="item.key ?? item.value" class="breakdown-row">
-              <span class="breakdown-label">{{ item.value }}</span>
+            <div v-for="item in view.breakdown" :key="item.key" class="breakdown-row">
+              <span class="breakdown-label">
+                <Badge
+                  v-if="item.badge"
+                  :value="item.key"
+                  :property="view.card.group_by"
+                  :entity-type="item.entityType"
+                />
+                <template v-else>{{ item.label }}</template>
+              </span>
               <div class="breakdown-bar-track">
-                <div class="breakdown-bar-fill" :style="{ width: `${item.percentage}%` }" />
+                <div
+                  class="breakdown-bar-fill"
+                  :style="{
+                    width: `${item.percentage}%`,
+                    ...(item.color ? { background: item.color } : {}),
+                  }"
+                />
               </div>
               <span class="breakdown-count">{{ item.count }}</span>
             </div>
@@ -438,22 +420,27 @@ watch([() => props.name, worldParam], () => void loadData())
                 </tr>
               </thead>
               <tbody>
-                <tr v-for="entity in view.rows" :key="entity.id">
-                  <td v-for="col in view.card.columns" :key="col.property">
-                    <router-link
-                      v-if="getCellLink(entity, col)"
-                      :to="getCellLink(entity, col)!"
-                      class="cell-link"
-                    >
-                      {{ getCellValue(entity, col) }}
+                <tr v-for="row in view.rows" :key="row.entity.id">
+                  <td v-for="cell in row.cells" :key="cell.key">
+                    <router-link v-if="cell.link" :to="cell.link" class="cell-link">
+                      {{ cell.text }}
                     </router-link>
                     <span
-                      v-else-if="col.property && isPropertyRedacted(col.property, entity._redacted)"
+                      v-else-if="cell.hidden"
                       class="cell-hidden"
                       :title="t('dashboard.hiddenTitle')"
                       >{{ t('dashboard.hidden') }}</span
                     >
-                    <span v-else>{{ getCellValue(entity, col) }}</span>
+                    <component
+                      :is="cell.widget.component"
+                      v-else-if="cell.widget"
+                      :model-value="cell.widget.modelValue"
+                      mode="display"
+                      :property-name="cell.widget.propertyName"
+                      :entity-type="row.entity.type"
+                      :entity-id="row.entity.id"
+                    />
+                    <span v-else>{{ cell.text }}</span>
                   </td>
                 </tr>
               </tbody>

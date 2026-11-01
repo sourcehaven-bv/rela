@@ -97,4 +97,25 @@ export class DashboardPage extends BasePage {
     const card = this.cards.filter({ hasText: cardTitle }).first();
     return card.locator('a[href*="/entity/"]').first().isVisible();
   }
+
+  /** A card by its exact title. */
+  card(cardTitle: string): Locator {
+    return this.cards.filter({ has: this.page.getByRole('heading', { name: cardTitle, exact: true }) });
+  }
+
+  /** The labels of a breakdown card, in display order. */
+  async expectBreakdownLabels(cardTitle: string, labels: string[]) {
+    await expect(this.card(cardTitle).locator('.breakdown-label')).toHaveText(labels);
+  }
+
+  /** The inline style of each breakdown bar, in display order. */
+  async breakdownBarStyles(cardTitle: string): Promise<string[]> {
+    const fills = this.card(cardTitle).locator('.breakdown-bar-fill');
+    return fills.evaluateAll((els) => els.map((el) => el.getAttribute('style') ?? ''));
+  }
+
+  /** The cells of the table card's row whose first cell has `rowText`. */
+  tableRow(cardTitle: string, rowText: string): Locator {
+    return this.card(cardTitle).locator('tbody tr').filter({ hasText: rowText });
+  }
 }

@@ -99,4 +99,18 @@ export function styleFill(cls: string | undefined): Record<string, string> | und
   return styleSwatch(cls)?.badgeStyle
 }
 
+/**
+ * A solid CSS colour for a style class, for a mark that is not text: a
+ * dashboard breakdown bar. It is the colour the value's status dot shows, so
+ * a bar and a board column for one value agree. Undefined for a class the
+ * server cannot emit, so the caller keeps its default colour.
+ */
+export function styleBarColor(cls: string | undefined): string | undefined {
+  const status = styleSwatch(cls)?.status
+  if (!status) return undefined
+  if (status.startsWith('--rl-')) return `var(${status})`
+  // The dots paint purple with the accent, as the purple badge does.
+  return status === 'purple' ? 'var(--rl-color-accent)' : `var(--rl-color-status-${status})`
+}
+
 export type { DotColor, StatusColor }
