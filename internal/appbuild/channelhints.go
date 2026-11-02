@@ -177,7 +177,13 @@ func FollowChannels(ctx context.Context, s *Services) <-chan struct{} {
 // short-lived command's last write reaches the others, and stops the
 // sender. It runs once, from [Services.Close], on its own bounded context,
 // as closeJobQueue does.
-func (s *Services) closeChannelHints() {
+//
+// The directive below is on the declaration because contextcheck reports
+// this function at every caller of Services.Close; nolintlint does not see
+// that use and calls it unused.
+//
+//nolint:contextcheck,nolintlint // a close has no request ctx to inherit; the flush is bounded
+func closeChannelHints(s *Services) {
 	if s.realtimeLocal == nil {
 		return
 	}

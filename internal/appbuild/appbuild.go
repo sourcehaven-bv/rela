@@ -3236,11 +3236,8 @@ func closeJobQueue(q jobs.Queue) {
 func (s *Services) Close() error {
 	s.closeOnce.Do(func() {
 		// Before the endpoint is detached: the last writes of a short-lived
-		// command must reach the other processes. Called as a method value,
-		// as stopBackgroundServices is: the flush runs on its own bounded
-		// context, since a close has no request to inherit one from.
-		flush := s.closeChannelHints
-		flush()
+		// command must reach the other processes.
+		closeChannelHints(s)
 		// Shared with CloseAssembly, and guarded by its own sync.Once, so a
 		// Close following a CloseAssembly does not stop these twice.
 		s.assemblyCloseOnce.Do(s.stopBackgroundServices)

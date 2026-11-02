@@ -290,7 +290,8 @@ What you need to know to run it:
   processes" in the realtime guide. Like `rela_changed`, every session that
   LISTENs on the database receives these notifications, from every schema.
   If another tenant on the same database must not learn entity ids or
-  principal keys, give it its own database.
+  principal keys, give it its own database. TKT-147C19D tracks keeping
+  principal keys out of these notifications.
 - **Durable UI state is shared too.** The document render cache, user settings,
   the operator logo/theme and the CalDAV alias table live in the database on
   this build, not in each node's `.rela/` directory. Upload a logo on one node

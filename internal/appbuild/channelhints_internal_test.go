@@ -95,5 +95,5 @@ func TestFollowChannels_NoHints(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("a Services without hints must return a closed channel")
 	}
-	(&Services{}).closeChannelHints() // no Local: nothing to flush
+	closeChannelHints(&Services{}) // no Local: nothing to flush
 }
