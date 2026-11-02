@@ -231,6 +231,92 @@ func TestChannelSchema_DecisionButton(t *testing.T) {
 	}
 }
 
+// defaultInRealtime is [breachRealtime] with session.default_in: keyed and
+// a written in: on text. It fails the test when an edit changes nothing.
+func defaultInRealtime(t *testing.T) string {
+	t.Helper()
+	src := breachRealtime
+	for _, e := range []struct{ old, new string }{
+		{"      initial: detected\n", "      initial: detected\n      default_in: keyed\n"},
+		{"      text:      { properties: { body: { type: string, required: true } }, post: [member] }\n",
+			"      text:      { properties: { body: { type: string, required: true } }, post: [member], " +
+				"in: [detected, contained] }\n"},
+	} {
+		if strings.Count(src, e.old) != 1 {
+			t.Fatalf("defaultInRealtime: %q matches %d times; want 1", e.old, strings.Count(src, e.old))
+		}
+		src = strings.Replace(src, e.old, e.new, 1)
+	}
+	return src
+}
+
+// TestChannelSchema_In pins TKT-CPZKPB AC 3 and 4 through the real
+// handler: a type whose in: was derived from session.default_in serves in
+// and in_derived: true; a written in: serves in alone; a type no state
+// keys, and a type without a session, serve neither key. in is never an
+// empty array, and in_derived never appears without in. The body is the
+// same for principals with different roles.
+func TestChannelSchema_In(t *testing.T) {
+	env := newChannelEnv(t)
+	env.ch.cfg.Store(env.ch.parse(t, defaultInRealtime(t)))
+	code, b := env.get(t, "alice", channelSchemaPath)
+	require.Equal(t, http.StatusOK, code, string(b))
+	code, other := env.get(t, "dave", channelSchemaPath)
+	require.Equal(t, http.StatusOK, code, string(other))
+	require.Equal(t, string(b), string(other), "the body depends on the principal")
+
+	var raw struct {
+		ChannelTypes []struct {
+			Name         string                       `json:"name"`
+			MessageTypes []map[string]json.RawMessage `json:"message_types"`
+		} `json:"channel_types"`
+	}
+	require.NoError(t, json.Unmarshal(b, &raw))
+	type want struct{ in, derived string }
+	wants := map[string]want{
+		"breach-response.contained": {`["detected"]`, "true"},
+		"breach-response.dismiss":   {`["detected"]`, "true"},
+		"breach-response.escalated": {`["detected"]`, "true"},
+		"breach-response.assessed":  {`["contained"]`, "true"},
+		"breach-response.notified":  {`["assessed"]`, "true"},
+		"breach-response.text":      {`["detected","contained"]`, ""},
+		"breach-response.reminder":  {"", ""},
+		"plain.text":                {"", ""},
+	}
+	seen := 0
+	for _, ct := range raw.ChannelTypes {
+		for _, mt := range ct.MessageTypes {
+			var name string
+			require.NoError(t, json.Unmarshal(mt["name"], &name))
+			key := ct.Name + "." + name
+			in, hasIn := mt["in"]
+			derived, hasDerived := mt["in_derived"]
+			if hasIn {
+				require.NotEqual(t, "[]", string(in), "%s: in is an empty array", key)
+			}
+			if hasDerived {
+				require.True(t, hasIn, "%s: in_derived without in", key)
+			}
+			w, ok := wants[key]
+			if !ok {
+				continue
+			}
+			seen++
+			if w.in == "" {
+				require.False(t, hasIn, "%s has in", key)
+			} else {
+				require.JSONEq(t, w.in, string(in), key)
+			}
+			if w.derived == "" {
+				require.False(t, hasDerived, "%s has in_derived", key)
+			} else {
+				require.JSONEq(t, w.derived, string(derived), key)
+			}
+		}
+	}
+	require.Equal(t, len(wants), seen)
+}
+
 // TestChannelSchema_Off pins that realtime off, and channels not wired,
 // answer an empty list rather than an error.
 func TestChannelSchema_Off(t *testing.T) {

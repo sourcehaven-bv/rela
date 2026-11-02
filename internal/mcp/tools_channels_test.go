@@ -890,6 +890,92 @@ func TestPostMessage_ReturnsSessionReminders(t *testing.T) {
 	wantReminder(t, res.Session)
 }
 
+// defaultInYAML is breachYAML with session.default_in: keyed, a written
+// in: on text, and a note type that no state keys. It fails the test when
+// an edit does not match exactly once.
+func defaultInYAML(t *testing.T) string {
+	t.Helper()
+	src := breachYAML
+	for _, e := range []struct{ old, new string }{
+		{"      initial: detected\n", "      initial: detected\n      default_in: keyed\n"},
+		{"      text:      { properties: { body: { type: string } }, post: [member] }\n",
+			"      text:      { properties: { body: { type: string } }, post: [member], in: [detected] }\n" +
+				"      note:      { properties: { body: { type: string } }, post: [member] }\n"},
+	} {
+		if n := strings.Count(src, e.old); n != 1 {
+			t.Fatalf("defaultInYAML: %q matches %d times; want 1", e.old, n)
+		}
+		src = strings.Replace(src, e.old, e.new, 1)
+	}
+	return src
+}
+
+// readMessageTypes calls read_channel without a cursor, so message_types
+// is served, and returns each message type's JSON by name.
+func readMessageTypes(t *testing.T, cs *mcpgo.ClientSession, channelType string) map[string]map[string]json.RawMessage {
+	t.Helper()
+	var read struct {
+		MessageTypes []map[string]json.RawMessage `json:"message_types"`
+	}
+	mustCall(t, cs, toolReadChannel, map[string]any{"id": "REQ-001", "channel_type": channelType}, &read)
+	out := map[string]map[string]json.RawMessage{}
+	for _, mt := range read.MessageTypes {
+		var name string
+		if err := json.Unmarshal(mt["name"], &name); err != nil {
+			t.Fatal(err)
+		}
+		out[name] = mt
+	}
+	return out
+}
+
+// TestReadChannel_In pins TKT-CPZKPB AC 5: read_channel's message_types
+// serve in and in_derived: a type whose in: was derived from
+// session.default_in has both, a written in: has in alone, and a type no
+// state keys under default_in: keyed, or a type of a channel type without
+// a session, has neither.
+func TestReadChannel_In(t *testing.T) {
+	t.Parallel()
+	f := newChannelFixture(t)
+	room := readMessageTypes(t, f.client(t, "alice"), "room")
+	if len(room) == 0 {
+		t.Fatal("read_channel served no message_types for room")
+	}
+	for name, mt := range room {
+		if _, has := mt["in"]; has {
+			t.Errorf("room.%s has in", name)
+		}
+		if _, has := mt["in_derived"]; has {
+			t.Errorf("room.%s has in_derived", name)
+		}
+	}
+
+	compiled, err := realtimecfg.Parse([]byte(defaultInYAML(t)), f.meta, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.cfg.Store(compiled)
+	got := readMessageTypes(t, f.client(t, "bob"), "breach")
+	for name, want := range map[string]struct{ in, derived string }{
+		"contained": {`["detected"]`, "true"},
+		"dismiss":   {`["detected"]`, "true"},
+		"escalated": {`["detected"]`, "true"},
+		"text":      {`["detected"]`, ""},
+		"note":      {"", ""},
+	} {
+		mt, ok := got[name]
+		if !ok {
+			t.Fatalf("no message type %s", name)
+		}
+		if string(mt["in"]) != want.in {
+			t.Errorf("%s.in = %s, want %s", name, mt["in"], want.in)
+		}
+		if string(mt["in_derived"]) != want.derived {
+			t.Errorf("%s.in_derived = %s, want %q", name, mt["in_derived"], want.derived)
+		}
+	}
+}
+
 // TestReadChannel_IncludesTransitions pins AC 7: read_channel's actions
 // list the transitions the caller would fire.
 func TestReadChannel_IncludesTransitions(t *testing.T) {

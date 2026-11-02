@@ -97,6 +97,11 @@ func addChannelDescriptorSchema(spec *Spec) {
 		})),
 		"choices":         choicesSchema(),
 		"decision_button": decisionButtonSchema(),
+		"in": {Type: "array", Items: str(), Description: "The session states in which the type may be posted, " +
+			"from in: or derived from session.default_in; absent when every state allows it. The order carries " +
+			"no meaning. Explains the rule; _actions.post on the channel stays authoritative"},
+		"in_derived": {Type: "boolean", Description: "true when in was derived from session.default_in: keyed; " +
+			"absent otherwise"},
 	})
 	messageType.Required = append(messageType.Required, "persist", "reply", "properties", "actions")
 	channelType := labeled(map[string]*Schema{

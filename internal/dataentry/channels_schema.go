@@ -71,6 +71,7 @@ func wireMessageTypeSchema(mt realtime.MessageTypeDescription) v1.ChannelMessage
 		Name: mt.Name, Label: mt.Label, Persist: mt.Persist, TTLSeconds: mt.TTLSeconds, Reply: mt.Reply,
 		Properties: make([]v1.ChannelPropertySchema, 0, len(mt.Properties)),
 		Actions:    make([]v1.ChannelActionSchema, 0, len(mt.Actions)),
+		In:         mt.In, InDerived: mt.InDerived,
 	}
 	for _, p := range mt.Properties {
 		out.Properties = append(out.Properties, v1.ChannelPropertySchema{
