@@ -886,6 +886,9 @@ and Text in every state, as before.
 - Without `default_in`, nothing changes: a type without `in:` may be
   posted in every state.
 - `default_in` is new in this release. An older process refuses the key.
+- The derived list is visible: `GET /api/v1/_schema/channels` and the
+  `message_types` of the MCP tool `read_channel` serve it as `in`, with
+  `"in_derived": true`.
 
 **Who can move a session.** Only a principal who may post the message type.
 The entry narrows that further:
@@ -2472,7 +2475,11 @@ enum type with its `values`, and the entity types a `ref` may point to
 `"choices": {"from", "answer", "into", "other"}`. A message type with
 `decision_button` has `"decision_button": {"confirm", "confirm_text",
 "style"}`, with the same rules as the options on a transition row's
-`button`, described below. Properties come
+`button`, described below. A message type limited to some session states
+has `"in"` with those states, and `"in_derived": true` when they come from
+`session.default_in`. Without `in`, the type may be posted in every state.
+The order of `in` carries no meaning. Whether you may post now is in the
+channel's `_actions.post`. Properties come
 required first, then by name.
 
 A process older than list properties refuses a `realtime.yaml` with

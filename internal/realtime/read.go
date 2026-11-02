@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"maps"
+	"slices"
 	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/channels"
@@ -99,6 +100,11 @@ type MessageTypeView struct {
 	// DecisionButton is the type's `decision_button:`: how the web app
 	// draws the type's decision button. Nil when the type has none.
 	DecisionButton *ButtonOptionsView `json:"decision_button,omitempty"`
+	// In and InDerived are [realtimecfg.MessageType.In] and
+	// [realtimecfg.MessageType.InDerived]; In is a copy. CanPost stays
+	// authoritative.
+	In        []string `json:"in,omitempty"`
+	InDerived bool     `json:"in_derived,omitempty"`
 }
 
 // ReadView is a channel and one page of its messages, oldest first, or by
@@ -234,6 +240,8 @@ func (c *call) messageTypes(post map[string]bool) []MessageTypeView {
 			Choices: describeChoices(mt.Choices),
 			// Config, the same for every reader.
 			DecisionButton: decisionButtonView(mt.DecisionButton),
+			In:             slices.Clone(mt.In),
+			InDerived:      mt.InDerived(),
 		})
 	}
 	return out

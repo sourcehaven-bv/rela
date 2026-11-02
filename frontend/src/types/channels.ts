@@ -614,6 +614,10 @@ export interface ChannelMessageTypeSchema {
   choices?: ChannelChoicesSchema
   /** How the type's decision button looks; absent when the file sets none. */
   decision_button?: ChannelButtonOptions
+  /** The session states the type may be posted in; see the Go v1.ChannelMessageTypeSchema doc. */
+  in?: string[]
+  /** True when in was derived from session.default_in. */
+  in_derived?: boolean
 }
 
 /**
@@ -920,6 +924,8 @@ export const CHANNEL_WIRE_FIELDS: Record<string, readonly string[]> = {
     'actions',
     'choices',
     'decision_button',
+    'in',
+    'in_derived',
   ]),
   ChannelDecisionButtonSchema: wireKeys<ChannelButtonOptions>()([
     'confirm',

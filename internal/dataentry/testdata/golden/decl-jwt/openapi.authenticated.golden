@@ -7198,6 +7198,17 @@ body:
                         },
                         "description": "Set when the type has decision_button: how the web app draws the type's decision button. It does not change what a post does. Absent otherwise"
                       },
+                      "in": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        },
+                        "description": "The session states in which the type may be posted, from in: or derived from session.default_in; absent when every state allows it. The order carries no meaning. Explains the rule; _actions.post on the channel stays authoritative"
+                      },
+                      "in_derived": {
+                        "type": "boolean",
+                        "description": "true when in was derived from session.default_in: keyed; absent otherwise"
+                      },
                       "label": {
                         "type": "string",
                         "description": "The label from realtime.yaml, or the name when none is set; never empty"

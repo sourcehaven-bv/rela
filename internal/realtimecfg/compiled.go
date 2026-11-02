@@ -463,7 +463,8 @@ type MessageType struct {
 	// In is the session states in which the type may be posted: the states
 	// as listed in `in:`, or, when derived from session.default_in, in the
 	// order of session.states. Nil means every state; see
-	// [MessageType.PostableIn] and [ChannelType.InKey].
+	// [MessageType.PostableIn], [MessageType.InDerived] and
+	// [ChannelType.InKey].
 	In []string
 	// Choices is `choices:`, or nil.
 	Choices *Choices
@@ -477,8 +478,7 @@ type MessageType struct {
 	// toward a reader's unread. The service copies it onto each message it
 	// appends, so a change applies from the next post.
 	NoUnread bool
-	// derived reports that In was derived from session.default_in; set
-	// only by the loader.
+	// derived backs [MessageType.InDerived].
 	derived bool
 }
 
@@ -501,13 +501,20 @@ type Choices struct {
 }
 
 // InKey is the key path of the rule that decided mt.In: session.default_in
-// when the load derived it, else the type's `in:`. A MessageType built by
-// hand gets the `in:` path.
+// when the load derived it (see [MessageType.InDerived]), else the type's
+// `in:`. A MessageType built by hand gets the `in:` path.
 func (ct *ChannelType) InKey(mt *MessageType) string {
-	if mt.derived {
+	if mt.InDerived() {
 		return "channel_types." + ct.Name + ".session.default_in"
 	}
 	return ct.messageTypeKey(mt.Name) + ".in"
+}
+
+// InDerived reports that In was derived from session.default_in. It is
+// false for a written `in:`, for a type without `in:`, and for a
+// MessageType built by hand: only the loader sets it.
+func (mt *MessageType) InDerived() bool {
+	return mt.derived
 }
 
 // PostableIn reports whether a message of type mt may be posted while the

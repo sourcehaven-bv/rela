@@ -140,3 +140,63 @@ func TestDescribe_DecisionButton(t *testing.T) {
 	require.Equal(t, want, viewed["decide"].DecisionButton)
 	require.Nil(t, viewed["text"].DecisionButton)
 }
+
+// TestDescribe_In pins TKT-CPZKPB AC 2: over the PoC with
+// session.default_in: keyed, Describe and a read's message types serve the
+// same In and InDerived for a derived type (in session.states order), a
+// type with a written in: and a type no state keys. Both serve a copy: a
+// caller that changes the returned In does not change the config.
+func TestDescribe_In(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t, withYAML(pocRealtimeDefaultIn(t, "")))
+	h.pocDriveTo(t, "new")
+	type in struct {
+		in      []string
+		derived bool
+	}
+	want := map[string]in{
+		"answer":   {[]string{"plan-asking", "asking"}, true},
+		"approve":  {[]string{"plan-review"}, true},
+		"progress": {[]string{"planning", "working"}, false},
+		"thanks":   {[]string{"done"}, false},
+		"text":     {nil, false},
+	}
+	describe := func() map[string]MessageTypeDescription {
+		views := h.svc.Describe()
+		require.Len(t, views, 1)
+		out := map[string]MessageTypeDescription{}
+		for _, mt := range views[0].MessageTypes {
+			out[mt.Name] = mt
+		}
+		return out
+	}
+	read := func() map[string]MessageTypeView {
+		v, err := h.svc.Read(as(pocOwner()), pocRun, ReadRequest{Schemas: true})
+		require.NoError(t, err)
+		out := map[string]MessageTypeView{}
+		for _, mt := range v.MessageTypes {
+			out[mt.Name] = mt
+		}
+		return out
+	}
+	described, viewed := describe(), read()
+	for name, w := range want {
+		require.Equal(t, w.in, described[name].In, "Describe %s.In", name)
+		require.Equal(t, w.derived, described[name].InDerived, "Describe %s.InDerived", name)
+		require.Equal(t, w.in, viewed[name].In, "Read %s.In", name)
+		require.Equal(t, w.derived, viewed[name].InDerived, "Read %s.InDerived", name)
+	}
+	for name, mt := range described {
+		require.Equal(t, mt.In, viewed[name].In, "%s: Describe and Read disagree on In", name)
+		require.Equal(t, mt.InDerived, viewed[name].InDerived, "%s: Describe and Read disagree on InDerived", name)
+	}
+
+	described["answer"].In[0] = "x"
+	described["progress"].In[0] = "x"
+	viewed["answer"].In[0] = "x"
+	viewed["progress"].In[0] = "x"
+	require.Equal(t, want["answer"].in, describe()["answer"].In, "Describe aliases a derived In")
+	require.Equal(t, want["progress"].in, describe()["progress"].In, "Describe aliases a written In")
+	require.Equal(t, want["answer"].in, read()["answer"].In, "Read aliases a derived In")
+	require.Equal(t, want["progress"].in, read()["progress"].In, "Read aliases a written In")
+}

@@ -516,7 +516,12 @@ type ChannelLifecycleSchema struct {
 // ChannelMessageTypeSchema describes one message type. Persist is "log"
 // or "ephemeral"; TTLSeconds is set for an ephemeral type; Reply reports
 // whether a message of the type may reply to another. Properties come
-// required first, then by name. Choices is set for a question type.
+// required first, then by name. Choices is set for a question type. In
+// lists the session states in which the type may be posted (absent: every
+// state; the order carries no meaning), and InDerived is set when the
+// load derived In from session.default_in. In explains the rule; the
+// channel's _actions.post stays authoritative for whether a caller may
+// post now.
 type ChannelMessageTypeSchema struct {
 	Name       string                  `json:"name"`
 	Label      string                  `json:"label"`
@@ -528,6 +533,8 @@ type ChannelMessageTypeSchema struct {
 	Choices    *ChannelChoicesSchema   `json:"choices,omitempty"`
 	// DecisionButton is the type's decision_button, or nil.
 	DecisionButton *ChannelDecisionButtonSchema `json:"decision_button,omitempty"`
+	In             []string                     `json:"in,omitempty"`
+	InDerived      bool                         `json:"in_derived,omitempty"`
 }
 
 // ChannelDecisionButtonSchema is how the web app draws a decision button.

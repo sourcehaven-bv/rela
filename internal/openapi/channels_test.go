@@ -448,6 +448,29 @@ func TestOpenAPI_ChannelButtonOptions(t *testing.T) {
 	}
 }
 
+// TestOpenAPI_ChannelMessageTypeSchema pins TKT-CPZKPB AC 6: the
+// descriptor's message type has the keys of v1.ChannelMessageTypeSchema,
+// with in an optional array of string and in_derived an optional boolean.
+func TestOpenAPI_ChannelMessageTypeSchema(t *testing.T) {
+	rt := channelTestConfig(t)
+	g := New(attachmentTestMeta(), Config{Title: "T", Version: "1"})
+	g.SetRealtime(func() *realtimecfg.Compiled { return rt })
+	mt := g.Generate().Components.Schemas[descriptorSchema].Properties["channel_types"].Items.
+		Properties["message_types"].Items
+	if got, want := schemaKeys(mt), jsonNames(reflect.TypeFor[v1.ChannelMessageTypeSchema]()); !slices.Equal(got, want) {
+		t.Errorf("message type properties = %v, want %v", got, want)
+	}
+	if in := mt.Properties["in"]; in == nil || in.Type != "array" || in.Items == nil || in.Items.Type != "string" {
+		t.Errorf("in = %+v, want an array of string", in)
+	}
+	if d := mt.Properties["in_derived"]; d == nil || d.Type != "boolean" {
+		t.Errorf("in_derived = %+v, want a boolean", d)
+	}
+	if slices.Contains(mt.Required, "in") || slices.Contains(mt.Required, "in_derived") {
+		t.Errorf("required = %v, want in and in_derived optional", mt.Required)
+	}
+}
+
 func schemaKeys(s *Schema) []string {
 	var out []string
 	for k := range s.Properties {

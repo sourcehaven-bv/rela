@@ -193,6 +193,9 @@ func TestDefaultIn_Derive(t *testing.T) {
 				if got := ct.InKey(mt); got != wantKey {
 					t.Errorf("InKey(%s) = %q; want %q", mn, got, wantKey)
 				}
+				if got := mt.InDerived(); got != (wantKey == defaultInKey) {
+					t.Errorf("%s.InDerived() = %v; want %v", mn, got, wantKey == defaultInKey)
+				}
 			}
 		})
 	}
@@ -222,6 +225,9 @@ func TestDefaultIn_AbsentKeepsToday(t *testing.T) {
 		if got := ct.InKey(mt); got != planTypesKey+"."+mn+".in" {
 			t.Errorf("InKey(%s) = %q", mn, got)
 		}
+		if mt.InDerived() {
+			t.Errorf("%s.InDerived() = true; want false", mn)
+		}
 	}
 	if w := c.Warnings(); len(w) != 0 {
 		t.Errorf("warnings = %v", w)
@@ -229,6 +235,9 @@ func TestDefaultIn_AbsentKeepsToday(t *testing.T) {
 	hand := &MessageType{Name: "approve", In: []string{"review"}}
 	if got := ct.InKey(hand); got != planTypesKey+".approve.in" {
 		t.Errorf("InKey(hand-built) = %q", got)
+	}
+	if hand.InDerived() || (&MessageType{}).InDerived() {
+		t.Error("InDerived() of a hand-built MessageType = true; want false")
 	}
 }
 

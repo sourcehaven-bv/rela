@@ -283,7 +283,9 @@ func toolReadChannelDef() *mcpgo.Tool {
 			"a notice of type session. "+branchingNote+presetNote+"actions.entries lists the rows your post could take, by "+
 			"message_type and entry. "+buttonOptionsNote+"A message type may be limited to some session states; outside them "+
 			"it is not in actions.post, and a post is refused with session_wrong_state, which names the "+
-			"allowed states. A state with timers lists them in timers, and due_at is when the "+
+			"allowed states; message_types[].in lists them, and in_derived is true when they come from "+
+			"session.default_in (in explains the rule, actions.post and can_post decide). "+
+			"A state with timers lists them in timers, and due_at is when the "+
 			"first moves the session on its own (only on an open channel); a timer's move appends a "+
 			"session notice with a timer prop. A state with reminders lists them in reminders, each with its "+
 			"count and due_at; a reminder posts a message of its type from system:realtime with triggered_by "+
@@ -358,7 +360,8 @@ func toolPostMessage(refuseSignals bool) *mcpgo.Tool {
 		"writes the move made as you, each done or failed with a code. A failed write does not undo the " +
 		"move; you are refused before posting when you may not write one. " +
 		"A message type may be limited to some session states; outside them it is not in actions.post, " +
-		"and a post is refused with session_wrong_state, which names the allowed states. " +
+		"and a post is refused with session_wrong_state, which names the allowed states; " +
+		"read_channel's message_types[].in lists them. " +
 		"To answer a request the session waits on, pass expect_generation: the session generation from " +
 		"read_session or read_channel you decided against; when the session has moved on since, the post " +
 		"is refused with session_moved and nothing is stored, so read again and decide again. " +

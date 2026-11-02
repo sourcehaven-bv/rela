@@ -10,8 +10,10 @@ import (
 // ChannelTypeView describes a channel type of realtime.yaml to a client
 // that renders channels: its message types and their properties, the
 // labels of its operations and the remove reason rule. It carries no gate,
-// role or condition; the affordances on each channel say what a caller may
-// do. The configuration is not a secret, so it is the same for everyone.
+// role or condition, except a message type's In, which explains the
+// session state rule; the affordances on each channel (_actions.post,
+// can_post) stay authoritative for what a caller may do. The configuration
+// is not a secret, so it is the same for everyone.
 //
 // It holds plain values, not realtimecfg types, so a change to the parsed
 // configuration does not ripple into the HTTP mapping. Every Label is the
@@ -86,6 +88,10 @@ type MessageTypeDescription struct {
 	// DecisionButton is the type's `decision_button:`; nil when it has
 	// none.
 	DecisionButton *ButtonOptionsView
+	// In and InDerived are [realtimecfg.MessageType.In] and
+	// [realtimecfg.MessageType.InDerived]; In is a copy.
+	In        []string
+	InDerived bool
 }
 
 // ChoicesDescription describes `choices:` on a question type: the list
@@ -193,6 +199,8 @@ func describeMessageType(mt *realtimecfg.MessageType) MessageTypeDescription {
 		Actions:        []ActionDescription{},
 		Choices:        describeChoices(mt.Choices),
 		DecisionButton: decisionButtonView(mt.DecisionButton),
+		In:             slices.Clone(mt.In),
+		InDerived:      mt.InDerived(),
 	}
 	for _, p := range mt.Properties {
 		d.Properties = append(d.Properties, PropertyDescription{

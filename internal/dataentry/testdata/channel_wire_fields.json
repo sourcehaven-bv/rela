@@ -88,6 +88,8 @@
     "actions",
     "choices",
     "decision_button",
+    "in",
+    "in_derived",
     "label",
     "name",
     "persist",
