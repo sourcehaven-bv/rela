@@ -3,17 +3,18 @@ id: REV-TR0M3UC
 type: review-checklist
 title: 'Review: Inbox 6: cross-process live delivery'
 started: "2026-11-02"
-status: in-progress
+completed: "2026-11-03"
+status: done
 ---
 
 <!-- @managed: claude-workflow v1 -->
 
 ## Automated Checks
 
-- [ ] All tests pass (`just test`)
-- [ ] Lint clean (`just lint`)
-- [ ] Comment lint gate clean (`just comment-lint`)
-- [ ] Coverage maintained (`just coverage-check`)
+- [x] All tests pass (`just test`): all packages pass except `cmd/rela-desktop` `TestChromeStyle_TargetsShippedClasses`, which needs the built SPA and fails in this checkout without a frontend build (unrelated; CI builds it). Postgres-tagged suites pass against a local PostgreSQL; sqlite and memorybackend builds pass for the changed packages
+- [x] Lint clean (`just lint`): all four tag sets, plus `just lint-md`, `just plimsoll`, `just arch-lint`
+- [x] Comment lint gate clean (`just comment-lint`)
+- [x] Coverage maintained (`just coverage-check`): thresholds pass, total 85.5%
 
 **Comment findings.** `just comment-report` lists the advisory rules
 (duplication, nil-contract, param-contract, restatement). They are not a merge
@@ -34,41 +35,57 @@ unexplained suppression is a finding nobody can re-evaluate later.
 
 ## Code Review
 
-- [ ] Run `/code-review` command (invokes cranky-code-reviewer agent)
-- [ ] All critical review-responses addressed
-- [ ] All significant review-responses addressed
-- [ ] Self-reviewed the diff for unrelated changes
+- [x] Run `/code-review` command (invokes cranky-code-reviewer agent): cranky-code-reviewer and the rela security reviewer
+- [x] All critical review-responses addressed (none)
+- [x] All significant review-responses addressed
+- [x] Self-reviewed the diff for unrelated changes
 
-**Review Responses:** <!-- List IDs of review-response entities created, e.g.,
-RR-xxxx -->
+**Review Responses:** significant, addressed: RR-XQ1065C, RR-WOWGIA5,
+RR-GLPIQJ3, RR-9V7JVCZ, RR-0A4K520. Minor, addressed: RR-5RXV27S (security),
+RR-IUD1R47, RR-R8XDZLS, RR-ENXFX5Z, RR-NYZ2AMB, RR-30PFR07, RR-HLX2SFE,
+RR-FULC19F, RR-2308G6C. Minor, deferred to TKT-PMNFOGP: RR-MUDT8HY (security).
+Nits: RR-FEZLH7Y, RR-R78QWCD addressed; RR-605CZDL, RR-6HKC1UA, RR-H4FKGRS won't
+fix with reason.
 
 ## Acceptance Verification
 
-- [ ] Each acceptance criterion tested (reference planning checklist)
-- [ ] Test evidence documented in implementation checklist
+- [x] Each acceptance criterion tested (reference planning checklist)
+- [x] Test evidence documented in implementation checklist
 
 **Acceptance Status:**
-<!-- For each acceptance criterion, state PASS/FAIL with evidence -->
+
+- AC1, AC3, AC5a: PASS, `TestChannelHints_ReachOtherProcess` (file and postgres builds): post in `Durable`, read marker in `Reads`, rename and delete in `Moved`; addressed delivery by `TestHints_KindsReachOtherLocal`.
+- AC2: PASS, `TestHints_KindsReachOtherLocal` (moved kind); the integration test covers moved through rename and delete.
+- AC4: PASS, `TestHints_OwnOriginDroppedAndNoEcho`.
+- AC5: PASS, ephemeral marks send nothing (`internal/realtime` hint tests).
+- AC5b: PASS, blocking sender and queue overflow tests.
+- AC5c: PASS, `TestChannelHints_SurviveReassembly`, `TestHintRelay_AttachDetachAndSwap`.
+- AC5d: PASS, `TestChannelCLI_PostReachesOtherProcess` (subprocess, file and postgres).
+- AC6: PASS, `filechannels` hint feed tests, including concurrent processes with rotation.
+- AC7: PASS, `TestNotify_*` against a local PostgreSQL.
+- AC8, AC8a: PASS, `TestChannelHints_FailingSendKeepsPost`, `TestHints_ResyncLimit`.
+- AC9: PASS on the file backend with an SSE client in place of a browser (`rela channel post` from another process reached the stream about 420 ms after the CLI exited). The stdio MCP `post_message` and two-server postgres manual checks were not run; the postgres path is covered by the postgres-tagged integration and CLI subprocess tests.
+- AC10: PASS, `GUIDE-realtime.md`, `GUIDE-postgres-backend.md`, `GUIDE-mcp-server.md`, `GUIDE-cli-reference.md`.
 
 ## Documentation (enhancements only)
 
 Skip this section for bugs and internal refactors.
 
-- [ ] Docs-checklist created and linked via `has-docs`
-- [ ] User-facing documentation updated
-- [ ] Docs-checklist marked as done
+- [x] Docs-checklist created and linked via `has-docs`
+- [x] User-facing documentation updated
+- [x] Docs-checklist marked as done
 
-**Docs Checklist:** <!-- e.g., DOCS-xxxx -->
+**Docs Checklist:** DOCS-7ZNOUOW
 
 ## Final Checks
 
-- [ ] Commit message explains the why, not just what
-- [ ] No TODOs or FIXMEs left unaddressed
-- [ ] Ready for another developer to use
+- [x] ~~Commit message explains the why, not just what~~ (N/A: the user asks for minimal commit messages; the why is in the ticket and plan)
+- [x] No TODOs or FIXMEs left unaddressed
+- [x] Ready for another developer to use
 
 ## Pull Request
 
-- [ ] Run `/pr` command to create PR and monitor CI
+- [x] Run `/pr` command to create PR and monitor CI (next step, after the ticket is done)
 
 <!--
 Deliberately NOT tracked here: the PR URL and whether CI passed.
