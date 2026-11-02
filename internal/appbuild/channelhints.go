@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"slices"
 	"sync"
 	"time"
 
@@ -45,13 +46,16 @@ func hintEndpointFor(cs channels.Store, st store.Store) hintEndpoint {
 
 // hintRelay is the hint transport a [realtime.Local] keeps for its whole
 // life. A Local outlives the assemblies that share it, and each assembly
-// builds its own channel store, so each attaches its store's endpoint here;
-// the last one attached is used. Sends go to it, and the follower follows
-// it, re-following on a swap.
+// builds its own channel store, so each attaches its store's endpoint here.
+// The newest attachment still attached is used: detaching it falls back to
+// the one before, so a reload the host rejects leaves the previous
+// assembly's endpoint in use. Sends go to it, and the follower follows it,
+// re-following on a swap.
 type hintRelay struct {
-	mu  sync.Mutex
-	cur *hintAttachment
-	// swapped is closed and replaced on every attach and detach.
+	mu sync.Mutex
+	// attached are the attachments in attach order; the last is current.
+	attached []*hintAttachment
+	// swapped is closed and replaced whenever the current one changes.
 	swapped chan struct{}
 }
 
@@ -69,14 +73,13 @@ func (r *hintRelay) attach(ep hintEndpoint) *hintAttachment {
 	a := &hintAttachment{ep: ep}
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	r.cur = a
-	close(r.swapped)
-	r.swapped = make(chan struct{})
+	r.attached = append(r.attached, a)
+	r.swap()
 	return a
 }
 
-// detach removes a when it is still the relay's endpoint. A later
-// assembly's endpoint stays.
+// detach removes a. When a was current, the newest attachment left takes
+// over.
 //
 // Nil: a is accepted (nothing attached).
 func (r *hintRelay) detach(a *hintAttachment) {
@@ -85,10 +88,19 @@ func (r *hintRelay) detach(a *hintAttachment) {
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if r.cur != a {
+	i := slices.Index(r.attached, a)
+	if i < 0 {
 		return
 	}
-	r.cur = nil
+	wasCurrent := i == len(r.attached)-1
+	r.attached = slices.Delete(r.attached, i, i+1)
+	if wasCurrent {
+		r.swap()
+	}
+}
+
+// swap wakes the follower to re-follow. r.mu must be held.
+func (r *hintRelay) swap() {
 	close(r.swapped)
 	r.swapped = make(chan struct{})
 }
@@ -96,7 +108,10 @@ func (r *hintRelay) detach(a *hintAttachment) {
 func (r *hintRelay) current() (cur *hintAttachment, swapped <-chan struct{}) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	return r.cur, r.swapped
+	if n := len(r.attached); n > 0 {
+		cur = r.attached[n-1]
+	}
+	return cur, r.swapped
 }
 
 // SendHint implements [realtime.HintSender] on the current endpoint.
@@ -109,21 +124,17 @@ func (r *hintRelay) SendHint(ctx context.Context, payload []byte) error {
 }
 
 // FollowHints implements [realtime.HintSource]: it follows the current
-// endpoint until ctx ends, and re-follows after a swap, with a gap, since
-// payloads sent between the two are lost. An endpoint that cannot follow
-// is logged, and the relay waits for the next swap.
+// endpoint until ctx ends, and re-follows after a swap. Each endpoint calls
+// gap once it is positioned, which covers what was sent between the two.
+// An endpoint that cannot follow is logged, and the relay waits for the
+// next swap.
 func (r *hintRelay) FollowHints(ctx context.Context, deliver func([]byte), gap func()) error {
-	first := true
 	for {
 		cur, swapped := r.current()
 		if cur != nil {
-			if !first {
-				gap()
-			}
-			first = false
 			if err := r.followOne(ctx, cur, swapped, deliver, gap); err != nil {
-				slog.Warn("channels: channel hints unavailable; other processes' changes show at the next refetch",
-					"error", err)
+				slog.Warn("channels: channel hints unavailable until the next reload or restart; "+
+					"other processes' changes show at the next refetch", "error", err)
 			}
 		}
 		select {
@@ -173,23 +184,21 @@ func FollowChannels(ctx context.Context, s *Services) <-chan struct{} {
 	return done
 }
 
-// closeChannelHints flushes the hints s's process still has queued, so a
-// short-lived command's last write reaches the others, and stops the
-// sender. It runs once, from [Services.Close], on its own bounded context,
-// as closeJobQueue does.
-//
-// The directive below is on the declaration because contextcheck reports
-// this function at every caller of Services.Close; nolintlint does not see
-// that use and calls it unused.
-//
-//nolint:contextcheck,nolintlint // a close has no request ctx to inherit; the flush is bounded
-func closeChannelHints(s *Services) {
-	if s.realtimeLocal == nil {
-		return
+// retireChannelHints sends the hints s's process still has queued, then
+// detaches s's endpoint. It runs when an assembly retires, after its
+// writers (the job queue, the realtime worker) stopped and while its
+// endpoint is still attached, so a short-lived command's last writes reach
+// the others. The Local is shared with later assemblies and stays open; its
+// sender stops in [Services.Close].
+func retireChannelHints(s *Services) {
+	if s.realtimeLocal != nil && s.hintAttach != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), hintFlushTimeout)
+		if err := s.realtimeLocal.Flush(ctx); err != nil {
+			slog.Warn("channels: channel hints not flushed", "error", err)
+		}
+		cancel()
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), hintFlushTimeout)
-	defer cancel()
-	if err := s.realtimeLocal.Close(ctx); err != nil {
-		slog.Warn("channels: channel hints not flushed", "error", err)
+	if s.channelHints != nil {
+		s.channelHints.detach(s.hintAttach)
 	}
 }

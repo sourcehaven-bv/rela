@@ -171,7 +171,11 @@ func TestHintFeed_RotatedAwayBeforePoll(t *testing.T) {
 func TestHintFeed_FailedRenameTruncatesPastHardCap(t *testing.T) {
 	ctx := context.Background()
 	f, dir := newHintTestFeed(t)
-	f.rename = func(string, string) error { return errors.New("file in use") }
+	renames := 0
+	f.rename = func(string, string) error {
+		renames++
+		return errors.New("file in use")
+	}
 
 	// Below the hard cap a failed rename leaves the journal; the send
 	// still lands.
@@ -179,6 +183,10 @@ func TestHintFeed_FailedRenameTruncatesPastHardCap(t *testing.T) {
 	before := journalSize(t, dir)
 	require.NoError(t, f.SendHint(ctx, []byte(`kept`)))
 	require.Equal(t, before+int64(len("kept\n")), journalSize(t, dir))
+	require.Equal(t, 1, renames)
+	// The next send does not try again until the journal grew.
+	require.NoError(t, f.SendHint(ctx, []byte(`kept too`)))
+	require.Equal(t, 1, renames, "a failed rename is not retried on every send")
 
 	appendRaw(t, dir, append(bytes.Repeat([]byte("y"), hintHardCapBytes), '\n'))
 	tail, rec := newTail(f)
@@ -228,7 +236,11 @@ func TestHintFeed_FollowHintsPolls(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	go func() { done <- f.FollowHints(ctx, rec.deliver, rec.gap) }()
-	time.Sleep(20 * time.Millisecond)
+	require.Eventually(t, func() bool {
+		rec.mu.Lock()
+		defer rec.mu.Unlock()
+		return rec.gaps == 1
+	}, 5*time.Second, time.Millisecond, "the follower reports its start as a gap")
 	require.NoError(t, f.SendHint(context.Background(), []byte(`live`)))
 	require.Eventually(t, func() bool {
 		rec.mu.Lock()
@@ -249,55 +261,91 @@ func TestHintFeedHelperProcess(t *testing.T) {
 		t.Skip("helper process only")
 	}
 	parts := strings.Split(spec, "|")
-	require.Len(t, parts, 3)
+	require.Len(t, parts, 4)
 	dir, name := parts[0], parts[1]
 	n, err := strconv.Atoi(parts[2])
 	require.NoError(t, err)
+	rotateAt, err := strconv.ParseInt(parts[3], 10, 64)
+	require.NoError(t, err)
 	f, err := NewHintFeed(newDiskStore(t, dir))
 	require.NoError(t, err)
+	f.rotateAt = rotateAt
 	pad := strings.Repeat("p", 300)
 	for i := range n {
 		require.NoError(t, f.SendHint(context.Background(), fmt.Appendf(nil, "%s-%d-%s", name, i, pad)))
 	}
 }
 
+// Processes append at once, and rotate the journal often while others
+// append. No line is torn or written twice, and no line is lost except
+// with a journal that a later rotation replaced, which a follower sees as
+// a gap.
 func TestHintFeed_ConcurrentProcesses(t *testing.T) {
 	if testing.Short() {
 		t.Skip("spawns processes")
 	}
-	dir := filepath.Join(t.TempDir(), "channels")
-	const procs, each = 4, 200
-	var cmds []*exec.Cmd
-	for p := range procs {
-		cmd := exec.Command(os.Args[0], "-test.run=^TestHintFeedHelperProcess$")
-		cmd.Env = append(os.Environ(), fmt.Sprintf("%s=%s|p%d|%d", hintHelperEnv, dir, p, each))
-		var out bytes.Buffer
-		cmd.Stdout, cmd.Stderr = &out, &out
-		require.NoError(t, cmd.Start())
-		cmds = append(cmds, cmd)
-		t.Cleanup(func() {
-			if t.Failed() {
-				t.Log(out.String())
+	for _, tc := range []struct {
+		name     string
+		rotateAt int64
+	}{
+		{"one journal", hintRotateBytes},
+		{"rotating", 16 << 10},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := filepath.Join(t.TempDir(), "channels")
+			const procs, each = 4, 200
+			var cmds []*exec.Cmd
+			for p := range procs {
+				cmd := exec.Command(os.Args[0], "-test.run=^TestHintFeedHelperProcess$")
+				cmd.Env = append(os.Environ(),
+					fmt.Sprintf("%s=%s|p%d|%d|%d", hintHelperEnv, dir, p, each, tc.rotateAt))
+				var out bytes.Buffer
+				cmd.Stdout, cmd.Stderr = &out, &out
+				require.NoError(t, cmd.Start())
+				cmds = append(cmds, cmd)
+				t.Cleanup(func() {
+					if t.Failed() {
+						t.Log(out.String())
+					}
+				})
 			}
+			for _, c := range cmds {
+				require.NoError(t, c.Wait())
+			}
+			seen := map[string]bool{}
+			for _, name := range []string{hintFile, hintOldFile} {
+				readJournalLines(t, filepath.Join(dir, filepath.FromSlash(name)), seen)
+			}
+			if tc.rotateAt == hintRotateBytes {
+				require.Len(t, seen, procs*each)
+				return
+			}
+			require.NotEmpty(t, seen)
+			_, err := os.Stat(filepath.Join(dir, filepath.FromSlash(hintOldFile)))
+			require.NoError(t, err, "the journal rotated")
 		})
 	}
-	for _, c := range cmds {
-		require.NoError(t, c.Wait())
+}
+
+// readJournalLines adds the lines of the journal at path to seen, and fails
+// on a torn or repeated line. A missing file adds nothing.
+func readJournalLines(t *testing.T, path string, seen map[string]bool) {
+	t.Helper()
+	fh, err := os.Open(path)
+	if os.IsNotExist(err) {
+		return
 	}
-	fh, err := os.Open(filepath.Join(dir, filepath.FromSlash(hintFile)))
 	require.NoError(t, err)
 	defer fh.Close()
-	seen := map[string]bool{}
 	sc := bufio.NewScanner(fh)
 	sc.Buffer(make([]byte, hintMaxLine), hintMaxLine)
 	pad := strings.Repeat("p", 300)
 	for sc.Scan() {
 		line := sc.Text()
 		head, tailPad, ok := strings.Cut(line, "-"+pad)
-		require.True(t, ok && tailPad == "", "interleaved line %q", line)
+		require.True(t, ok && tailPad == "", "torn line %q", line)
 		require.False(t, seen[head], "duplicate %q", head)
 		seen[head] = true
 	}
 	require.NoError(t, sc.Err())
-	require.Len(t, seen, procs*each)
 }

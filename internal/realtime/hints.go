@@ -36,10 +36,13 @@ type HintSender interface {
 }
 
 // HintSource follows the hint payloads other processes send. FollowHints
-// calls deliver for each payload and gap when payloads may have been lost
-// (a reconnect, a rotated or truncated journal, an unusable line). Neither
-// may block for long: they run on the source's own goroutine. It returns
-// when ctx ends, or with an error when it cannot follow at all.
+// calls gap once it is positioned, so that every payload sent from then on
+// reaches deliver: what was sent before is the caller's to recheck. After
+// that it calls deliver for each payload, and gap again when payloads may
+// have been lost (a reconnect, a rotated or truncated journal, an unusable
+// line). Neither may block for long: they run on the source's own
+// goroutine. It returns when ctx ends, or with an error when it cannot
+// follow at all.
 type HintSource interface {
 	FollowHints(ctx context.Context, deliver func(payload []byte), gap func()) error
 }

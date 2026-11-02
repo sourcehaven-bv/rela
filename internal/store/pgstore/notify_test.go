@@ -147,9 +147,20 @@ func TestNotify_GapAfterReconnect(t *testing.T) {
 	cancel, err := pgstore.Listen(b, pgstore.ChannelHints, rec.deliver, gap)
 	require.NoError(t, err)
 	defer cancel()
-	notifyUntil(t, a, &rec, "before")
+	// The first gap says the registration is live: what is sent from now
+	// on arrives without a retry.
+	select {
+	case <-gapListened:
+	case <-time.After(15 * time.Second):
+		t.Fatal("no gap once the registration was live")
+	}
+	require.NoError(t, pgstore.Notify(ctx, a, pgstore.ChannelHints, []byte("before")))
+	require.Eventually(t, func() bool {
+		bodies, _ := rec.snapshot()
+		return slices.Contains(bodies, "before")
+	}, 15*time.Second, 10*time.Millisecond)
 	_, gaps := rec.snapshot()
-	require.Zero(t, gaps)
+	require.Equal(t, 1, gaps)
 
 	admin := adminConn(t)
 	_, err = admin.Exec(ctx,
@@ -164,4 +175,29 @@ func TestNotify_GapAfterReconnect(t *testing.T) {
 	}
 	require.NoError(t, pgstore.Notify(ctx, a, pgstore.ChannelHints, []byte("after")))
 	notifyUntil(t, a, &rec, "after")
+}
+
+// A payload without a schema prefix comes from no rela store, since Notify
+// always adds one. It is dropped, not taken as a gap: any session on the
+// database could otherwise make every schema resync.
+func TestNotify_DropsUnprefixedPayload(t *testing.T) {
+	schema := freshFeedSchema(t)
+	dsn := dsnForSchema(t, schema)
+	b := openWriterDSN(t, dsn)
+	var rec notifyRecorder
+	cancel, err := pgstore.Listen(b, pgstore.ChannelHints, rec.deliver, rec.gap)
+	require.NoError(t, err)
+	defer cancel()
+
+	ctx := context.Background()
+	pool, closer, err := pgstore.NewPool(ctx, dsn)
+	require.NoError(t, err)
+	defer func() { _ = closer.Close() }()
+	_, err = pool.Exec(ctx, "SELECT pg_notify($1, $2)", pgstore.ChannelHints, "forged")
+	require.NoError(t, err)
+	// A marker sent after it proves the listener read past it.
+	notifyUntil(t, b, &rec, "marker")
+	bodies, gaps := rec.snapshot()
+	require.NotContains(t, bodies, "forged")
+	require.Equal(t, 1, gaps, "only the gap that says the registration is live")
 }

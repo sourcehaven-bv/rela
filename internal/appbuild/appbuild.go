@@ -2754,15 +2754,12 @@ func assemble(
 	// connection pool too), so every error path below this point must stop it.
 	// Boot could get away without this — a failed boot exits the process — but
 	// assembly is now also a RELOAD path (TKT-NU247U): a schema that loads yet
-	// fails to assemble would otherwise leak one queue per save.
-	defer func() {
-		if retErr != nil {
-			closeJobQueue(jobQueue)
-		}
-	}()
-
+	// fails to assemble would otherwise leak one queue per save. The same
+	// holds for a new realtime Local, whose hint sender runs from the start.
+	//
 	// Before automation: add_to_pile actions push through refs.piles.
 	refs, err := buildRefHolders(base, st, overrides, aclDeclarative, fieldPol.redactor, resolvedACL)
+	defer func() { abandonFailedAssembly(base, jobQueue, refs.realtimeLocal, retErr) }()
 	if err != nil {
 		return nil, err
 	}
@@ -3194,13 +3191,25 @@ func (s *Services) stopBackgroundServices() {
 	if s.realtimeWorker != nil {
 		s.realtimeWorker.stop()
 	}
-	if s.channelHints != nil {
-		s.channelHints.detach(s.hintAttach)
-	}
 	if s.jobQueue != nil {
 		closeJobQueue(s.jobQueue)
 		s.jobQueue = nil
 	}
+	// Last: the workers above may still have written to a channel.
+	retireChannelHints(s)
+}
+
+// abandonFailedAssembly stops what a failed assembly (err set) started
+// before it failed: the job queue, and a realtime Local it made rather than
+// took from a predecessor.
+//
+// Nil: q and l are accepted (nothing to stop).
+func abandonFailedAssembly(base *SharedBase, q jobs.Queue, l *realtime.Local, err error) {
+	if err == nil {
+		return
+	}
+	closeJobQueue(q)
+	stopNewLocalOnError(base, l, err)
 }
 
 // closeJobQueue stops q within the shutdown budget. Shared by the teardown
@@ -3235,9 +3244,6 @@ func closeJobQueue(q jobs.Queue) {
 // failures are slog.Warn'd).
 func (s *Services) Close() error {
 	s.closeOnce.Do(func() {
-		// Before the endpoint is detached: the last writes of a short-lived
-		// command must reach the other processes.
-		closeChannelHints(s)
 		// Shared with CloseAssembly, and guarded by its own sync.Once, so a
 		// Close following a CloseAssembly does not stop these twice.
 		s.assemblyCloseOnce.Do(s.stopBackgroundServices)

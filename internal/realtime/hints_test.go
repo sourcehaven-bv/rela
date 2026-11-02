@@ -53,6 +53,7 @@ func (b *hintBus) FollowHints(ctx context.Context, deliver func([]byte), gap fun
 	b.followers[id] = deliver
 	b.gaps[id] = gap
 	b.mu.Unlock()
+	gap() // positioned
 	<-ctx.Done()
 	b.mu.Lock()
 	delete(b.followers, id)
@@ -592,5 +593,50 @@ func TestHints_MarkResyncReachesEverySubscriber(t *testing.T) {
 	}
 	if _, resync := plain.Take(); !resync {
 		t.Fatal("plain subscriber not resynced")
+	}
+}
+
+// slowSource reports its position only when told to.
+type slowSource struct {
+	ready     chan struct{}
+	following chan struct{}
+}
+
+func (s slowSource) FollowHints(ctx context.Context, _ func([]byte), gap func()) error {
+	close(s.following)
+	select {
+	case <-s.ready:
+		gap()
+	case <-ctx.Done():
+		return nil
+	}
+	<-ctx.Done()
+	return nil
+}
+
+// The start resync waits until the source is positioned: one made before
+// could miss a hint sent between the resync and the position.
+func TestHints_StartResyncWaitsForSource(t *testing.T) {
+	l := hintLocal(t, newHintBus())
+	sub := l.Subscribe()
+	defer sub.Close()
+	src := slowSource{ready: make(chan struct{}), following: make(chan struct{})}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- l.FollowHints(ctx, src) }()
+	defer func() {
+		cancel()
+		if err := <-done; err != nil {
+			t.Errorf("FollowHints: %v", err)
+		}
+	}()
+	<-src.following
+	if n := l.in.resyncs.Load(); n != 0 {
+		t.Fatalf("resyncs before the source is positioned = %d, want 0", n)
+	}
+	close(src.ready)
+	eventually(t, func() bool { return l.in.resyncs.Load() == 1 })
+	if c := sub.TakeLive(); !c.Resync {
+		t.Fatalf("want the start resync, got %+v", c)
 	}
 }

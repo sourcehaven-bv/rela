@@ -143,7 +143,6 @@ func (l *listener) run(ctx context.Context, conn *pgx.Conn) {
 	// re-snapshot on their own first load), not news. From here, catch-up emits
 	// only writes that land after startup — i.e. genuinely missed notifications.
 	watermark := l.primeWatermark(ctx)
-	listened := false
 
 	for {
 		if conn == nil {
@@ -163,12 +162,10 @@ func (l *listener) run(ctx context.Context, conn *pgx.Conn) {
 			continue
 		}
 		// Notify payloads sent while no LISTEN ran are lost and have no
-		// catch-up of their own: tell their handlers, now that LISTEN runs
-		// again, so what they resync cannot miss a later payload.
-		if listened {
-			l.handlers.gapAll()
-		}
-		listened = true
+		// catch-up of their own: tell their handlers, now that LISTEN runs,
+		// so what they resync cannot miss a later payload. The first LISTEN
+		// counts too: a handler registered before it waits for it.
+		l.handlers.setListening(true)
 		watermark = l.catchUp(ctx, watermark)
 
 		// Inner loop: handle live notifications, with a periodic timeout that
@@ -197,6 +194,7 @@ func (l *listener) run(ctx context.Context, conn *pgx.Conn) {
 				continue
 			}
 			if err != nil {
+				l.handlers.setListening(false)
 				dropConn(ctx, conn) // connection problem — outer loop reconnects
 				conn = nil
 				break

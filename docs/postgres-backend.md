@@ -291,7 +291,10 @@ What you need to know to run it:
   LISTENs on the database receives these notifications, from every schema.
   If another tenant on the same database must not learn entity ids or
   principal keys, give it its own database. TKT-147C19D tracks keeping
-  principal keys out of these notifications.
+  principal keys out of these notifications. The other direction holds too:
+  any session on the database can send a notification that names a schema,
+  and its processes then recheck the channels it names. Every recheck is a
+  normal read as each subscriber, so this costs load, never data.
 - **Durable UI state is shared too.** The document render cache, user settings,
   the operator logo/theme and the CalDAV alias table live in the database on
   this build, not in each node's `.rela/` directory. Upload a logo on one node

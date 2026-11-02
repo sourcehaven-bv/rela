@@ -36,8 +36,8 @@ type hintIn struct {
 // while another runs returns nil at once, so overlapping assemblies that
 // share the Local start one follower.
 //
-// It resyncs every subscriber once at start, since hints sent before it
-// ran are lost. Each payload from another origin is applied as a local
+// It resyncs every subscriber once src is positioned (src's first gap),
+// since hints sent before that are lost. Each payload from another origin is applied as a local
 // mark that is never sent again. A gap, and a resync hint, resync every
 // subscriber, at most once per 5 s.
 func (l *Local) FollowHints(ctx context.Context, src HintSource) error {
@@ -67,6 +67,8 @@ type follower struct {
 
 	lastResync time.Time
 	deferred   <-chan time.Time
+	// started is set by the first gap, the source being positioned.
+	started bool
 }
 
 // deliver hands payload to the run loop without blocking. A full inbox
@@ -93,7 +95,6 @@ func (f *follower) run(ctx context.Context, src HintSource) error {
 	defer cancel()
 	srcDone := make(chan error, 1)
 	go func() { srcDone <- src.FollowHints(ctx, f.deliver, f.markGap) }()
-	f.resync("follower start")
 	for {
 		select {
 		case <-ctx.Done():
@@ -104,9 +105,15 @@ func (f *follower) run(ctx context.Context, src HintSource) error {
 		case p := <-f.inbox:
 			f.apply(p)
 		case <-f.poke:
-			if f.gap.Swap(false) {
-				f.requestResync("gap")
+			if !f.gap.Swap(false) {
+				continue
 			}
+			if !f.started {
+				f.started = true
+				f.resync("follower start")
+				continue
+			}
+			f.requestResync("gap")
 		case <-f.deferred:
 			f.deferred = nil
 			f.resync("deferred")
@@ -168,9 +175,10 @@ func (f *follower) requestResync(reason string) {
 // resync marks every subscriber for a full recheck, counts it and logs it.
 func (f *follower) resync(reason string) {
 	f.lastResync = f.local.clock()
+	// Marked before counted: a count seen means the subscribers have it.
+	f.local.markResync()
 	n := f.local.in.resyncs.Add(1)
 	slog.Info("realtime: channel subscribers resync", "reason", reason, "count", n)
-	f.local.markResync()
 }
 
 // markResync sets the resync flag of every subscriber and wakes it: every

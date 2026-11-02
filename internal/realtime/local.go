@@ -631,14 +631,19 @@ func (l *Local) fire() {
 }
 
 // Stop stops the expiry timer for good: a later post does not arm it
-// again. Signals still expire on the next Take.
+// again. Signals still expire on the next Take. It also stops the hint
+// sender without sending what is still queued; call [Local.Flush] first
+// to send it, or use [Local.Close].
 func (l *Local) Stop() {
 	l.timerMu.Lock()
-	defer l.timerMu.Unlock()
 	l.stopped = true
 	if l.timer != nil {
 		l.timer.Stop()
 		l.timer, l.timerAt = nil, time.Time{}
+	}
+	l.timerMu.Unlock()
+	if l.out != nil {
+		l.out.halt()
 	}
 }
 
@@ -654,9 +659,11 @@ func (l *Local) dropAnchor(id string, face entity.Face) {
 // EntityRenamed moves the rate buckets of the channels of oldID to newID,
 // where the stored channels move, so a rename does not refill anyone's
 // per-channel tokens. The live signals and typing entries of oldID are
-// dropped. Those drops are not sent as hints: every process gets its own
-// rename hook, and the channels the rename moved are marked by the channel
-// alias hooks.
+// dropped. Those drops are not sent as hints: signals and typing entries
+// live in this process only, and the channels the rename moved are marked
+// by the channel alias hooks, which do send. The hook runs only in the
+// process that renamed; another process keeps its own entries under oldID
+// until they expire.
 func (l *Local) EntityRenamed(_ context.Context, oldID, newID string) error {
 	l.limiter.rekey(oldID, newID)
 	l.readLimiter.rekey(oldID, newID)

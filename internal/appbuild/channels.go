@@ -170,7 +170,7 @@ func (a *channelAliases) tombstone(
 	var moved []channels.Channel
 	file := capturing(realtime.Filer(a.rt.Load().Config, policy, at, false), &moved)
 	h, err := a.store.Tombstone(ctx, id, face, at, file)
-	if !h.IsZero() {
+	if err == nil && !h.IsZero() {
 		markChannels(a.marker, moved, "")
 	}
 	return err

@@ -2816,10 +2816,17 @@ How the notice travels depends on the backend:
 A notice can be lost, for example when a process stops right after a write,
 or when the database connection drops. A listener that notices a gap, or
 receives too many notices at once, rechecks every subscriber, at most once
-every 5 seconds. A loss it cannot notice is picked up by the polls and
+every 5 seconds. The same limit applies when another process asks for a
+full recheck, for example after it put back the channels of a delete that
+failed: such a change can take up to 5 seconds to show. A loss it cannot
+notice is picked up by the polls and
 safety checks described elsewhere in this guide, as before. A short-lived
 command such as `rela channel post` sends its last notices before it exits,
 waiting at most 3 seconds.
+
+On the file backend every process must be able to read the journal, which
+only its owner can read. Run the processes that share a project as the same
+user; a process that cannot read it logs a warning once a minute.
 
 Typing and other `ephemeral` signals are not sent: they live in one
 process. A process older than this release neither sends nor listens; it

@@ -115,6 +115,13 @@ func (o *hintOut) close(ctx context.Context) error {
 	return err
 }
 
+// halt stops the goroutine without flushing, and waits for the send in
+// progress, which hintSendTimeout bounds. Safe to call more than once.
+func (o *hintOut) halt() {
+	o.once.Do(func() { close(o.stop) })
+	<-o.done
+}
+
 // run is the sender goroutine.
 func (o *hintOut) run() {
 	defer close(o.done)
@@ -217,7 +224,8 @@ func (l *Local) Flush(ctx context.Context) error {
 }
 
 // Close flushes the hints and stops the sender. Marks after Close are not
-// sent. A Local without hints returns nil.
+// sent. A Local without hints returns nil. [Local.Stop] stops the sender
+// without the flush.
 func (l *Local) Close(ctx context.Context) error {
 	if l.out == nil {
 		return nil

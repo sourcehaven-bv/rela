@@ -26,15 +26,22 @@ func (f *fakeEndpoint) SendHint(_ context.Context, p []byte) error {
 	return nil
 }
 
-func (f *fakeEndpoint) FollowHints(ctx context.Context, deliver func([]byte), _ func()) error {
+func (f *fakeEndpoint) FollowHints(ctx context.Context, deliver func([]byte), gap func()) error {
 	if f.followErr != nil {
 		return f.followErr
 	}
 	f.following.Add(1)
 	defer f.following.Add(-1)
+	gap() // positioned
 	deliver([]byte("hello"))
 	<-ctx.Done()
 	return nil
+}
+
+func (f *fakeEndpoint) sends() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return len(f.sent)
 }
 
 func TestHintRelay_AttachDetachAndSwap(t *testing.T) {
@@ -58,20 +65,35 @@ func TestHintRelay_AttachDetachAndSwap(t *testing.T) {
 			mu.Unlock()
 		}, func() { gaps.Add(1) })
 	}()
-	require.Eventually(t, func() bool { return one.following.Load() == 1 }, 5*time.Second, time.Millisecond)
-	require.Zero(t, gaps.Load(), "the first endpoint is no gap")
+	require.Eventually(t, func() bool { return one.following.Load() == 1 && gaps.Load() == 1 },
+		5*time.Second, time.Millisecond, "the endpoint reports its start as a gap")
 
 	a2 := r.attach(two)
 	require.Eventually(t, func() bool { return two.following.Load() == 1 && one.following.Load() == 0 },
 		5*time.Second, time.Millisecond, "the follower moves to the new endpoint")
-	require.Equal(t, int32(1), gaps.Load(), "a swap is a gap")
+	require.Eventually(t, func() bool { return gaps.Load() == 2 }, 5*time.Second, time.Millisecond)
 	require.NoError(t, r.SendHint(ctx, []byte("to two")))
-	require.Len(t, two.sent, 1)
+	require.Equal(t, 1, two.sends())
 
-	r.detach(a1) // not current: no effect
-	require.NoError(t, r.SendHint(ctx, []byte("still two")))
-	r.detach(nil)
+	// Detaching the newest, as a rejected reload does, falls back to the
+	// one before.
 	r.detach(a2)
+	require.NoError(t, r.SendHint(ctx, []byte("back to one")))
+	require.Equal(t, 2, one.sends())
+	require.Eventually(t, func() bool { return one.following.Load() == 1 && two.following.Load() == 0 },
+		5*time.Second, time.Millisecond, "the follower moves back")
+
+	// Detaching one that is not current changes nothing.
+	a3 := r.attach(two)
+	require.Eventually(t, func() bool { return two.following.Load() == 1 }, 5*time.Second, time.Millisecond)
+	r.detach(a1)
+	r.detach(nil)
+	r.detach(a1) // twice: no effect
+	require.NoError(t, r.SendHint(ctx, []byte("still two")))
+	require.Equal(t, 2, two.sends())
+	require.Equal(t, int32(1), two.following.Load())
+
+	r.detach(a3)
 	require.ErrorIs(t, r.SendHint(ctx, []byte("x")), errNoHintEndpoint)
 	require.Eventually(t, func() bool { return two.following.Load() == 0 }, 5*time.Second, time.Millisecond)
 
@@ -85,7 +107,7 @@ func TestHintRelay_AttachDetachAndSwap(t *testing.T) {
 	require.NoError(t, <-done)
 	mu.Lock()
 	defer mu.Unlock()
-	require.GreaterOrEqual(t, delivered, 2)
+	require.GreaterOrEqual(t, delivered, 3)
 }
 
 func TestFollowChannels_NoHints(t *testing.T) {
@@ -95,5 +117,5 @@ func TestFollowChannels_NoHints(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("a Services without hints must return a closed channel")
 	}
-	closeChannelHints(&Services{}) // no Local: nothing to flush
+	retireChannelHints(&Services{}) // no Local: nothing to flush
 }

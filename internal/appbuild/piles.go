@@ -97,6 +97,7 @@ func buildRefHolders(
 	}
 	if h.channelAliases, err = channelAliasesFor(
 		h.channels, st, h.channelTombs, base.realtime, h.realtimeLocal); err != nil {
+		stopNewLocalOnError(base, h.realtimeLocal, err)
 		return refHolders{}, err
 	}
 	if h.dueWake = base.dueWake; h.dueWake == nil {
@@ -124,6 +125,17 @@ func sharedLocal(base *SharedBase, hints bool) (*realtime.Local, *hintRelay, err
 	relay := newHintRelay()
 	l, err := realtime.NewLocalWithHints(time.Now, relay)
 	return l, relay, err
+}
+
+// stopNewLocalOnError stops l when the assembly that made it failed (err
+// set) and l is not a predecessor's: its hint sender runs from the start,
+// and a host that retries a failing reload would leak one per attempt.
+//
+// Nil: l is accepted (nothing to stop).
+func stopNewLocalOnError(base *SharedBase, l *realtime.Local, err error) {
+	if err != nil && l != nil && l != base.realtimeLocal {
+		l.Stop()
+	}
 }
 
 // newPilesService builds the piles service over backend, with the owner check

@@ -83,9 +83,13 @@ func Notify(ctx context.Context, st store.Store, channel string, body []byte) er
 }
 
 // Listen calls deliver with the body of each notification on channel from
-// st's schema, and gap after the listener reconnected, once LISTEN runs
-// again: notifications sent while it was away are lost. Both run on the
-// listener's goroutine and must not block. cancel stops the delivery.
+// st's schema. It calls gap once the registration is live, so that every
+// notification sent from then on is delivered: at once when LISTEN already
+// runs, else when it starts. It calls gap again after the listener
+// reconnected, once LISTEN runs again: notifications sent while it was away
+// are lost. deliver and gap must not block; they run on the listener's
+// goroutine, except the first gap, which may run on the caller's. cancel
+// stops the delivery.
 func Listen(st store.Store, channel string, deliver func([]byte), gap func()) (cancel func(), err error) {
 	if chErr := checkNotifyChannel(channel); chErr != nil {
 		return nil, chErr
@@ -97,7 +101,11 @@ func Listen(st store.Store, channel string, deliver func([]byte), gap func()) (c
 	if err != nil {
 		return nil, err
 	}
-	return l.handlers.add(channel, deliver, gap), nil
+	cancel, live := l.handlers.add(channel, deliver, gap)
+	if live {
+		gap()
+	}
+	return cancel, nil
 }
 
 // notifyHandlers are the Listen registrations of one listener.
@@ -105,6 +113,19 @@ type notifyHandlers struct {
 	mu   sync.Mutex
 	next int
 	byID map[int]notifyHandler
+	// listening is whether LISTEN runs on the listener's connection.
+	listening bool
+}
+
+// setListening records whether LISTEN runs, and on its start tells every
+// handler, since payloads sent while it did not run are lost.
+func (h *notifyHandlers) setListening(on bool) {
+	h.mu.Lock()
+	h.listening = on
+	h.mu.Unlock()
+	if on {
+		h.gapAll()
+	}
 }
 
 type notifyHandler struct {
@@ -113,7 +134,9 @@ type notifyHandler struct {
 	gap     func()
 }
 
-func (h *notifyHandlers) add(channel string, deliver func([]byte), gap func()) func() {
+// add registers a handler and reports whether LISTEN already runs, so the
+// caller owes it its first gap.
+func (h *notifyHandlers) add(channel string, deliver func([]byte), gap func()) (cancel func(), live bool) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	if h.byID == nil {
@@ -129,7 +152,7 @@ func (h *notifyHandlers) add(channel string, deliver func([]byte), gap func()) f
 			delete(h.byID, id)
 			h.mu.Unlock()
 		})
-	}
+	}, h.listening
 }
 
 // matching returns the handlers of channel, or of every channel when
@@ -157,22 +180,21 @@ func (h *notifyHandlers) gapAll() {
 // the entity feed.
 func isNotifyChannel(name string) bool { return checkNotifyChannel(name) == nil }
 
-// handleNotify routes a notification on a Notify channel: one from another
-// schema is dropped, one that has no schema prefix is a gap.
+// handleNotify routes a notification on a Notify channel. One from another
+// schema is dropped. So is one without a schema prefix: [Notify] never
+// sends that, and any session on the database can, so treating it as a
+// gap would let it make every schema resync. A real loss is reported by
+// gapAll when LISTEN runs again.
 func (l *listener) handleNotify(n *pgconn.Notification) {
 	schema, body, ok := strings.Cut(n.Payload, payloadSep)
-	hs := l.handlers.matching(n.Channel)
 	if !ok {
-		slog.Debug("pgstore listener: notification without a schema prefix", "channel", n.Channel)
-		for _, h := range hs {
-			h.gap()
-		}
+		slog.Debug("pgstore listener: dropped a notification without a schema prefix", "channel", n.Channel)
 		return
 	}
 	if schema != l.schema {
 		return
 	}
-	for _, h := range hs {
+	for _, h := range l.handlers.matching(n.Channel) {
 		h.deliver([]byte(body))
 	}
 }

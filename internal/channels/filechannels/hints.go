@@ -6,8 +6,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"slices"
+	"sync/atomic"
 	"time"
 )
 
@@ -20,7 +22,10 @@ import (
 // hintRotateBytes: it is renamed to hintOldFile, and the next append starts
 // a new file. Where the rename fails (Windows, with a reader holding the
 // file open) and the journal passes hintHardCapBytes, it is truncated
-// instead. A follower sees either as a gap.
+// instead. A rename that failed is tried again only once the journal grew
+// by another hintRotateBytes, so a held file does not cost the store's lock
+// on every send. A follower sees a rotation or a truncation as a gap.
+
 // hintFileMode keeps the journal readable by its owner only.
 const hintFileMode = 0o600
 
@@ -33,6 +38,8 @@ const (
 	hintMaxLine = 8 << 10
 	// hintPoll is how often a follower looks at the journal.
 	hintPoll = 250 * time.Millisecond
+	// hintErrorLogGap is the shortest time between two logged read errors.
+	hintErrorLogGap = time.Minute
 )
 
 // HintFeed is the hint journal of a [Store]. It is a realtime.HintSender
@@ -43,6 +50,11 @@ type HintFeed struct {
 	rename func(oldKey, newKey string) error
 	// poll is how often FollowHints looks; tests shorten it.
 	poll time.Duration
+	// rotateAt is the size past which a send rotates; tests lower it.
+	rotateAt int64
+	// retryAt is the size from which a send tries again to rotate after a
+	// rename failed; zero when none failed.
+	retryAt atomic.Int64
 }
 
 // NewHintFeed returns the hint journal of s. A store on a filesystem that
@@ -57,7 +69,7 @@ func NewHintFeed(s *Store) (*HintFeed, error) {
 	if !s.rfs.SupportsStreaming() {
 		return nil, errors.New("filechannels: hint feed needs a filesystem that can append")
 	}
-	return &HintFeed{store: s, rename: s.rfs.Rename, poll: hintPoll}, nil
+	return &HintFeed{store: s, rename: s.rfs.Rename, poll: hintPoll, rotateAt: hintRotateBytes}, nil
 }
 
 // SendHint appends payload as one line. The payload must not hold a
@@ -67,7 +79,7 @@ func (f *HintFeed) SendHint(ctx context.Context, payload []byte) error {
 	if bytes.IndexByte(payload, '\n') >= 0 || len(payload)+1 > hintMaxLine {
 		return errors.New("filechannels: hint payload holds a newline or is too long")
 	}
-	if info, err := f.store.rfs.Stat(hintFile); err == nil && info.Size() > hintRotateBytes {
+	if info, err := f.store.rfs.Stat(hintFile); err == nil && f.dueForRotation(info.Size()) {
 		if err := f.rotate(ctx); err != nil {
 			return err
 		}
@@ -87,6 +99,11 @@ func (f *HintFeed) SendHint(ctx context.Context, payload []byte) error {
 	return nil
 }
 
+// dueForRotation reports whether a journal of size should be rotated now.
+func (f *HintFeed) dueForRotation(size int64) bool {
+	return size > f.rotateAt && size >= f.retryAt.Load()
+}
+
 // rotate renames the journal away under the store's lock, so two writers
 // never both rotate. When the rename fails and the journal is past the hard
 // cap, it is truncated instead.
@@ -97,17 +114,23 @@ func (f *HintFeed) rotate(ctx context.Context) error {
 	}
 	defer unlock()
 	info, err := f.store.rfs.Stat(hintFile)
-	if notExist(err) || (err == nil && info.Size() <= hintRotateBytes) {
+	if notExist(err) || (err == nil && info.Size() <= f.rotateAt) {
 		return nil // another writer rotated first
 	}
 	if err != nil {
 		return fmt.Errorf("filechannels: stat hint journal: %w", err)
 	}
 	renameErr := f.rename(hintFile, hintOldFile)
-	if renameErr == nil || info.Size() <= hintHardCapBytes {
-		// A failed rename below the hard cap is retried by the next send.
+	if renameErr == nil {
+		f.retryAt.Store(0)
 		return nil
 	}
+	if info.Size() <= hintHardCapBytes {
+		// Tried again once the journal grew, or at the hard cap.
+		f.retryAt.Store(min(info.Size()+f.rotateAt, hintHardCapBytes+1))
+		return nil
+	}
+	f.retryAt.Store(0)
 	w, err := f.store.rfs.OpenForWrite(hintFile, hintFileMode)
 	if err != nil {
 		return fmt.Errorf("filechannels: truncate hint journal after %w: %w", renameErr, err)
@@ -116,13 +139,14 @@ func (f *HintFeed) rotate(ctx context.Context) error {
 }
 
 // FollowHints polls the journal until ctx ends. It starts at the journal's
-// current end, so it reads only lines written after it started. It
-// delivers each complete line, and reports a gap when the journal was
+// current end, so it reads only lines written after it started, and calls
+// gap once it took that position (see realtime.HintSource). It delivers each complete line, and reports a gap when the journal was
 // replaced (another file, or a missing one after one was seen), shrank, or
 // holds a line it cannot use. A partial last line waits for its newline.
 func (f *HintFeed) FollowHints(ctx context.Context, deliver func([]byte), gap func()) error {
 	t := &hintTail{feed: f, deliver: deliver, gap: gap}
 	t.start()
+	gap()
 	ticker := time.NewTicker(f.poll)
 	defer ticker.Stop()
 	for {
@@ -147,12 +171,30 @@ type hintTail struct {
 	partial []byte
 	// skip drops the rest of an oversized line, up to its newline.
 	skip bool
+	// lastErrLog is when a read error was last logged.
+	lastErrLog time.Time
+}
+
+// failed logs a read error, at most once per hintErrorLogGap. The poll
+// retries; a journal this process cannot read (another user's, with mode
+// 0600) keeps failing, and the log says so.
+func (t *hintTail) failed(op string, err error) {
+	now := time.Now()
+	if !t.lastErrLog.IsZero() && now.Sub(t.lastErrLog) < hintErrorLogGap {
+		return
+	}
+	t.lastErrLog = now
+	slog.Warn("channels: cannot read the channel hint journal; other processes' changes show at the next refetch",
+		"op", op, "error", err)
 }
 
 // start takes the journal's current end as the position.
 func (t *hintTail) start() {
 	info, err := t.feed.store.rfs.Stat(hintFile)
 	if err != nil {
+		if !notExist(err) {
+			t.failed("stat", err)
+		}
 		return
 	}
 	t.info, t.off = info, info.Size()
@@ -169,7 +211,8 @@ func (t *hintTail) poll() {
 		}
 		return
 	case err != nil:
-		return // retried at the next poll
+		t.failed("stat", err) // retried at the next poll
+		return
 	}
 	if t.info != nil && (!os.SameFile(t.info, info) || info.Size() < t.off) {
 		t.reset(info)
@@ -199,6 +242,7 @@ func (t *hintTail) read(size int64) {
 	}
 	r, err := t.feed.store.rfs.Open(hintFile)
 	if err != nil {
+		t.failed("open", err)
 		return
 	}
 	defer func() { _ = r.Close() }()
@@ -209,6 +253,7 @@ func (t *hintTail) read(size int64) {
 	buf := make([]byte, size-t.off)
 	n, err := ra.ReadAt(buf, t.off)
 	if err != nil && !errors.Is(err, io.EOF) {
+		t.failed("read", err)
 		return
 	}
 	t.off += int64(n)
