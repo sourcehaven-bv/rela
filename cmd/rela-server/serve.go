@@ -296,12 +296,14 @@ func (s *server) startScheduler(g *generation) {
 	sched := scheduler.StartBackground(ctx, g.svc, bind, slog.Default())
 	leases := appbuild.WatchLeases(ctx, g.svc)
 	worker := appbuild.RunRealtimeWorker(ctx, g.svc)
+	follower := appbuild.FollowChannels(ctx, g.svc)
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
 		<-sched
 		<-leases
 		<-worker
+		<-follower
 	}()
 	g.schedDone = done
 }

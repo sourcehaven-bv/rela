@@ -67,6 +67,8 @@ type listener struct {
 	connCfg  *pgx.ConnConfig // parsed once; pgx.ConnectConfig copies it per connect
 	schema   string
 	originID string
+	// handlers are the [Listen] registrations for the Notify channels.
+	handlers notifyHandlers
 
 	cancel context.CancelFunc
 	done   chan struct{}
@@ -86,27 +88,19 @@ func listenerConnConfig(dsn string) (*pgx.ConnConfig, error) {
 	return cfg.ConnConfig, nil
 }
 
-// startListener builds and starts a listener for s against dsn. It resolves the
-// store's schema (stamped into payloads and matched on receipt), then runs the
-// loop in a goroutine. A failure to establish the initial connection is returned so the
-// caller can degrade with a warning (the store stays usable; cross-process
-// events are simply unavailable).
-func startListener(ctx context.Context, s *Store, dsn string) (*listener, error) {
+// startListener builds and starts a listener for s against dsn, for the
+// store's schema (stamped into payloads and matched on receipt; see
+// resolveSchema), then runs the loop in a goroutine. A failure to establish
+// the initial connection is returned so the caller can degrade with a
+// warning (the store stays usable; cross-process events are simply
+// unavailable).
+func startListener(ctx context.Context, s *Store, dsn, schema string) (*listener, error) {
 	connCfg, err := listenerConnConfig(dsn)
 	if err != nil {
 		return nil, err
 	}
 	conn, err := pgx.ConnectConfig(ctx, connCfg)
 	if err != nil {
-		return nil, err
-	}
-	// Resolve on the store's own pool, not this listener connection: the
-	// producer writes through the pool, so the schema stamped into payloads
-	// must be the pool's. They are the same DSN today, but tying it to the
-	// writer is what stays correct if a pool ever repoints its search_path.
-	schema, err := resolveSchema(ctx, s.db)
-	if err != nil {
-		_ = conn.Close(ctx)
 		return nil, err
 	}
 	// Enabling the producer (see Store.notify, which no-ops on an empty schema).
@@ -149,6 +143,7 @@ func (l *listener) run(ctx context.Context, conn *pgx.Conn) {
 	// re-snapshot on their own first load), not news. From here, catch-up emits
 	// only writes that land after startup — i.e. genuinely missed notifications.
 	watermark := l.primeWatermark(ctx)
+	listened := false
 
 	for {
 		if conn == nil {
@@ -167,6 +162,13 @@ func (l *listener) run(ctx context.Context, conn *pgx.Conn) {
 			conn = nil
 			continue
 		}
+		// Notify payloads sent while no LISTEN ran are lost and have no
+		// catch-up of their own: tell their handlers, now that LISTEN runs
+		// again, so what they resync cannot miss a later payload.
+		if listened {
+			l.handlers.gapAll()
+		}
+		listened = true
 		watermark = l.catchUp(ctx, watermark)
 
 		// Inner loop: handle live notifications, with a periodic timeout that
@@ -209,12 +211,17 @@ func (l *listener) run(ctx context.Context, conn *pgx.Conn) {
 	}
 }
 
-// listen issues LISTEN on the shared feed channel. The name is a compile-time
-// constant; it is quoted only because LISTEN does not accept bound parameters.
+// listen issues LISTEN on the shared feed channel and on each Notify
+// channel. The names are compile-time constants; they are quoted only
+// because LISTEN does not accept bound parameters.
 func (l *listener) listen(ctx context.Context, conn *pgx.Conn) error {
-	// nosemgrep: go.lang.security.audit.sqli.pgx-sqli.pgx-sqli
-	_, err := conn.Exec(ctx, "LISTEN "+pgQuoteIdentifier(feedChannel))
-	return err
+	for _, ch := range append([]string{feedChannel}, notifyChannels...) {
+		// nosemgrep: go.lang.security.audit.sqli.pgx-sqli.pgx-sqli
+		if _, err := conn.Exec(ctx, "LISTEN "+pgQuoteIdentifier(ch)); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // handleNotification turns one NOTIFY into a store.Event, skipping notifications
@@ -235,6 +242,12 @@ func (l *listener) listen(ctx context.Context, conn *pgx.Conn) error {
 // Neither triggers a catch-up: both are expected, correctly-formed traffic, not
 // a signal that anything was missed.
 func (l *listener) handleNotification(n *pgconn.Notification) (needCatchUp bool) {
+	// A Notify channel carries no entity change: it never reaches the
+	// entity parse below, nor its catch-up.
+	if isNotifyChannel(n.Channel) {
+		l.handleNotify(n)
+		return false
+	}
 	fe, ok := parseFeedPayload(n.Payload)
 	if !ok {
 		slog.Debug("pgstore listener: unparseable notification payload; catching up", "channel", n.Channel)

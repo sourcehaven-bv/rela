@@ -71,7 +71,7 @@ func (w systemWriter) post(
 		return false, err
 	}
 	noteDue(w.dueWake, sp.step)
-	w.local.markAs(postKind(appended), key)
+	w.local.markAs(postKind(appended), true, key)
 	moved := sp.step != nil && sp.step.Outcome != nil && sp.step.Outcome.Moved
 	return marked && moved, nil
 }

@@ -99,7 +99,7 @@ func (s *Service) Edit(ctx context.Context, addr RawAddress, seq int64, props ma
 		return MessageView{}, messageStoreError(err)
 	}
 	s.local.markAddressed(channels.MentionTargets(channels.AddedMentions(m.Mentions, got.Mentions)), c.key,
-		markKindMessage)
+		markKindMessage, true)
 	return rendererWith(c, refs).message(got), nil
 }
 

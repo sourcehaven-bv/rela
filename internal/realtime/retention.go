@@ -341,6 +341,9 @@ func (s *Sweeper) purgeDue(
 	if err := s.store.Purge(ctx, b.Handle, types, systemAuthor(), now); err != nil {
 		return false, ignoreGone(err, "purge", b.Handle)
 	}
+	// A purge changes no live channel here, but a subscriber elsewhere may
+	// still follow one of these keys.
+	s.marker.Mark(batchKeys(b.Channels)...)
 	rep.Purged++
 	return true, nil
 }

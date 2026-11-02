@@ -78,7 +78,7 @@ func (s *Service) MarkRead(ctx context.Context, addr RawAddress, seq *int64) (Ma
 	if err != nil {
 		return MarkReadResult{}, storeError(err)
 	}
-	s.local.markFor(reader, c.key)
+	s.local.markFor(reader, true, c.key)
 	return MarkReadResult{Seq: st.Seq, Unread: st.Unread, LastSeq: st.LastSeq}, nil
 }
 

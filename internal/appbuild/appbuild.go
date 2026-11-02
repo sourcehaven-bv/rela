@@ -215,6 +215,11 @@ type Services struct {
 	// realtimeLocal is the process-local state under channelService, which a
 	// re-assembly shares.
 	realtimeLocal *realtime.Local
+	// channelHints is realtimeLocal's hint relay, shared with it; nil when
+	// the backend has no hints. hintAttach is this assembly's endpoint on
+	// it, detached when the assembly closes.
+	channelHints *hintRelay
+	hintAttach   *hintAttachment
 	// dueWake is the session due-time wake under channelService and the
 	// realtime worker, which a re-assembly shares.
 	dueWake *realtime.DueWake
@@ -2107,6 +2112,9 @@ type SharedBase struct {
 	// buckets, ephemeral signals, live subscribers), reused so a schema
 	// reload resets none of them. Nil for a first assembly.
 	realtimeLocal *realtime.Local
+	// channelHints is the predecessor's hint relay, reused with
+	// realtimeLocal. Nil for a first assembly or a backend without hints.
+	channelHints *hintRelay
 	// dueWake is the predecessor's session due-time wake, reused with
 	// realtimeLocal. Nil for a first assembly.
 	dueWake *realtime.DueWake
@@ -2159,6 +2167,7 @@ func (b *SharedBase) ForReassembly(prev *Services) *SharedBase {
 	next.pileStore = prev.pileStore
 	next.leaseShared = prev.leaseShared
 	next.realtimeLocal = prev.realtimeLocal
+	next.channelHints = prev.channelHints
 	next.dueWake = prev.dueWake
 	next.storeSchema = prev.storeSchema
 	return &next
@@ -2399,10 +2408,10 @@ func buildEntityManager(
 	autoEngine *automation.Engine, cascadeRunner *autocascade.Runner,
 	readDeps lua.ReadDeps, pileWriter lua.PileWriter, versions store.VersionService, tw TransitionWiring,
 	computedSet *computed.Set, attachLocker lock.Locker, fieldGate entitymanager.FieldWriteGate,
-	channelStore channels.Store, tombs *tombstoneConfirmer, dueWake *realtime.DueWake,
+	guard guardInputs,
 ) (*entitymanager.Manager, error) {
 	// Boot refuses a realtime.yaml that would strand stored channels.
-	anchorGuard, err := channelGuardFor(base, channelStore, tombs, dueWake)
+	anchorGuard, err := channelGuardFor(base, guard)
 	if err != nil {
 		return nil, err
 	}
@@ -2784,7 +2793,7 @@ func assemble(
 		refs.channelAliases, refs.realtimeLocal)
 	mgr, err := buildEntityManager(base, st, fanout, templater,
 		resolvedACL, autoEngine, cascadeRunner, readDeps, pileWriterFor(refs.piles), versions, tw, computedSet,
-		attachLocker, fieldPol.gate, refs.channels, refs.channelTombs, refs.dueWake)
+		attachLocker, fieldPol.gate, refs.guardInputs())
 	// coverage-ignore-start: defensive: buildStateKV only errors when NewRootedFS fails on a non-empty CacheDir, which
 	// requires filepath.Abs to
 	// fail — unreachable with valid inputs (see the scupper in buildStateKV)
@@ -2895,6 +2904,9 @@ func finishAssembly(
 		return nil, err
 	}
 	s.channelService, s.realtimeLocal, s.dueWake = svc, refs.realtimeLocal, refs.dueWake
+	if s.channelHints = refs.channelHints; s.channelHints != nil && refs.hintEndpoint != nil {
+		s.hintAttach = s.channelHints.attach(refs.hintEndpoint)
+	}
 	tags, err := buildVersionTags(s)
 	if err != nil {
 		return nil, err
@@ -3182,6 +3194,9 @@ func (s *Services) stopBackgroundServices() {
 	if s.realtimeWorker != nil {
 		s.realtimeWorker.stop()
 	}
+	if s.channelHints != nil {
+		s.channelHints.detach(s.hintAttach)
+	}
 	if s.jobQueue != nil {
 		closeJobQueue(s.jobQueue)
 		s.jobQueue = nil
@@ -3220,6 +3235,12 @@ func closeJobQueue(q jobs.Queue) {
 // failures are slog.Warn'd).
 func (s *Services) Close() error {
 	s.closeOnce.Do(func() {
+		// Before the endpoint is detached: the last writes of a short-lived
+		// command must reach the other processes. Called as a method value,
+		// as stopBackgroundServices is: the flush runs on its own bounded
+		// context, since a close has no request to inherit one from.
+		flush := s.closeChannelHints
+		flush()
 		// Shared with CloseAssembly, and guarded by its own sync.Once, so a
 		// Close following a CloseAssembly does not stop these twice.
 		s.assemblyCloseOnce.Do(s.stopBackgroundServices)

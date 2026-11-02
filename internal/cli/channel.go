@@ -91,6 +91,10 @@ type channelService interface {
 // answers that channels are not enabled.
 type channelServices struct {
 	Svc channelService
+	// Follow runs the hint follower that wakes a watch for changes other
+	// processes make, until ctx ends, and returns a channel closed once it
+	// stopped. Nil: accepted; a watch then sees those changes at its poll.
+	Follow func(ctx context.Context) <-chan struct{}
 }
 
 const (

@@ -35,7 +35,7 @@ type ChannelWatchCmd struct {
 	AfterRev *int64        `name:"after-rev" help:"Report changes after this rev (default: the channel's rev at start)."`
 	Timeout  time.Duration `help:"Give up after this long, at most 1h; exit code 2." default:"30s"`
 	Follow   bool          `help:"Keep watching and print every change until interrupted; ignores --timeout."`
-	Poll     time.Duration `help:"How often to look for changes made by other processes, 1s to 60s." default:"2s"`
+	Poll     time.Duration `help:"How often to recheck for changes, 1s to 60s; other processes' changes usually arrive sooner." default:"2s"`
 	Limit    int           `help:"Messages per change, 1 to 200." default:"20"`
 }
 
@@ -56,6 +56,14 @@ func (c *ChannelWatchCmd) Run(ctx context.Context, cs *channelServices) error {
 	}
 	if err := c.check(); err != nil {
 		return err
+	}
+	if cs.Follow != nil {
+		fctx, stop := context.WithCancel(ctx)
+		followed := cs.Follow(fctx)
+		defer func() {
+			stop()
+			<-followed
+		}()
 	}
 	ticker := time.NewTicker(c.Poll)
 	defer ticker.Stop()

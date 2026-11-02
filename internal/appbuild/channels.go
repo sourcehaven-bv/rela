@@ -99,6 +99,9 @@ func ChannelsScan(s *Services) bool {
 // batches and wake the realtime worker.
 type channelAliases struct {
 	store channels.Store
+	// marker tells live subscribers, here and in other processes, about the
+	// channels the hooks move. Nil marks nothing.
+	marker channelMarker
 	// families reads the stored faces of an id, to tell a new entity from a
 	// new face of an existing one.
 	families store.EntityLister
@@ -107,12 +110,48 @@ type channelAliases struct {
 	now      func() time.Time
 }
 
+// channelMarker is what the alias hooks and the guard tell about the
+// channels they move: [realtime.Local].
+type channelMarker interface {
+	// Mark reports keys changed, with the moved kind.
+	Mark(keys ...channels.Key)
+	// MarkAll reports that any channel may have changed.
+	MarkAll()
+}
+
+// markChannels marks the keys of chs on m, and for a rename the same keys
+// under the old id too. A nil m marks nothing.
+func markChannels(m channelMarker, chs []channels.Channel, oldID string) {
+	if m == nil || len(chs) == 0 {
+		return
+	}
+	keys := make([]channels.Key, 0, 2*len(chs))
+	for _, c := range chs {
+		keys = append(keys, c.Key)
+		if oldID != "" {
+			old := c.Key
+			old.ID = oldID
+			keys = append(keys, old)
+		}
+	}
+	m.Mark(keys...)
+}
+
+// capturing wraps file so the channels it files are kept in *moved.
+func capturing(file channels.Filer, moved *[]channels.Channel) channels.Filer {
+	return func(chs []channels.Channel) (channels.Filing, error) {
+		*moved = chs
+		return file(chs)
+	}
+}
+
 // channelAliasesFor returns the alias subscriber for cs.
 //
 // Nil: returns a nil *channelAliases when cs is nil, which newAliasFanout
-// drops. st and tombs are rejected with cs; rt is accepted (realtime off).
+// drops. st and tombs are rejected with cs; rt is accepted (realtime off);
+// marker is accepted (no live subscribers to tell).
 func channelAliasesFor(
-	cs channels.Store, st store.EntityLister, tombs *tombstoneConfirmer, rt *RealtimeConfig,
+	cs channels.Store, st store.EntityLister, tombs *tombstoneConfirmer, rt *RealtimeConfig, marker channelMarker,
 ) (*channelAliases, error) {
 	if cs == nil {
 		return nil, nil //nolint:nilnil // no channel store: newAliasFanout drops a nil subscriber
@@ -120,7 +159,7 @@ func channelAliasesFor(
 	if st == nil || tombs == nil {
 		return nil, errors.New("channels: the alias hooks need an entity lister and a tombstone confirmer")
 	}
-	return &channelAliases{store: cs, families: st, tombs: tombs, rt: rt, now: time.Now}, nil
+	return &channelAliases{store: cs, marker: marker, families: st, tombs: tombs, rt: rt, now: time.Now}, nil
 }
 
 // tombstone files the channels of id@face as one confirmed batch for
@@ -128,7 +167,12 @@ func channelAliasesFor(
 func (a *channelAliases) tombstone(
 	ctx context.Context, id string, face entity.Face, at time.Time, policy channels.TombstonePolicy,
 ) error {
-	_, err := a.store.Tombstone(ctx, id, face, at, realtime.Filer(a.rt.Load().Config, policy, at, false))
+	var moved []channels.Channel
+	file := capturing(realtime.Filer(a.rt.Load().Config, policy, at, false), &moved)
+	h, err := a.store.Tombstone(ctx, id, face, at, file)
+	if !h.IsZero() {
+		markChannels(a.marker, moved, "")
+	}
 	return err
 }
 
@@ -150,6 +194,8 @@ func (a *channelAliases) EntityRenamed(ctx context.Context, oldID, newID string)
 		return err
 	}
 	at := a.now()
+	// The store does not say which channels a rekey moves: list them first.
+	moving, listErr := a.store.ListEntity(ctx, oldID)
 	err := a.store.Rekey(ctx, oldID, newID, at)
 	if errors.Is(err, channels.ErrRekeyConflict) {
 		if err = a.tombstone(ctx, newID, "", at, channels.PolicyDetach); err == nil {
@@ -159,6 +205,7 @@ func (a *channelAliases) EntityRenamed(ctx context.Context, oldID, newID string)
 	if err != nil {
 		return fmt.Errorf("channels: rename %s to %s: %w", oldID, newID, err)
 	}
+	a.markRekeyed(moving, listErr, oldID, newID)
 	// Channels left under oldID were created while the rename ran, and
 	// cannot be moved: newID now holds the renamed entity's channels, so a
 	// second Rekey would conflict.
@@ -166,6 +213,24 @@ func (a *channelAliases) EntityRenamed(ctx context.Context, oldID, newID string)
 		return fmt.Errorf("channels: sweep %s after rename: %w", oldID, err)
 	}
 	return nil
+}
+
+// markRekeyed marks the channels a rekey moved from oldID to newID, under
+// both ids. When they could not be listed, every channel is marked.
+func (a *channelAliases) markRekeyed(moving []channels.Channel, listErr error, oldID, newID string) {
+	if a.marker == nil {
+		return
+	}
+	if listErr != nil {
+		a.marker.MarkAll()
+		return
+	}
+	moved := make([]channels.Channel, len(moving))
+	for i, c := range moving {
+		c.Key.ID = newID
+		moved[i] = c
+	}
+	markChannels(a.marker, moved, oldID)
 }
 
 // EntityDeleted confirms the batches the guard filed for id, then detaches

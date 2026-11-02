@@ -58,6 +58,14 @@ type Local struct {
 	// so the supersede read and the writes of one run see every run before
 	// it.
 	outputLocks outputLocks
+
+	// origin identifies this Local's hints, so its follower drops them.
+	origin string
+	// out sends the hints of durable marks to other processes. Nil for a
+	// Local made by [NewLocal]: marks stay in this process.
+	out *hintOut
+	// in is the follower state; see [Local.FollowHints].
+	in hintIn
 }
 
 // typeRecordReader is the part of a channel store Local.storedRefs reads.
@@ -73,6 +81,23 @@ func NewLocal(clock Clock) (*Local, error) {
 	return newLocal(clock, defaultEphemeralLimits(), defaultLimitCaps())
 }
 
+// NewLocalWithHints is [NewLocal] for a backend that several processes
+// share: every durable mark is also queued as a hint for sender, which a
+// background goroutine sends. [Local.Close] flushes and stops it.
+//
+// Nil: clock and sender are rejected.
+func NewLocalWithHints(clock Clock, sender HintSender) (*Local, error) {
+	if sender == nil {
+		return nil, errNil("hint sender")
+	}
+	l, err := NewLocal(clock)
+	if err != nil {
+		return nil, err
+	}
+	l.out = newHintOut(l.origin, sender)
+	return l, nil
+}
+
 func newLocal(clock Clock, lim ephemeralLimits, caps limitCaps) (*Local, error) {
 	if clock == nil {
 		return nil, errNil("clock")
@@ -85,6 +110,7 @@ func newLocal(clock Clock, lim ephemeralLimits, caps limitCaps) (*Local, error) 
 		readLimiter: newLimiterAt(caps, realtimelimits.ReadIdentityRate),
 		subs:        map[*Subscription]struct{}{},
 		recorded:    map[string]channels.TypeRecord{},
+		origin:      newOrigin(),
 	}, nil
 }
 
@@ -364,11 +390,21 @@ func (s *Subscription) Close() {
 
 // Mark implements [ChangeMarker]: the background sweep, the timers, the
 // retention sweep and applyTransition report the channels they changed, so
-// this process's subscribers see them. The keys count as moved, as mark
-// does: a caller of Mark does not say whether it moved a session, and a
-// timer reminder that moved nothing only costs a replay that sends no
-// frame, while a move missed would leave a busy board stale.
+// subscribers here and in other processes see them. The keys count as
+// moved, as mark does: a caller of Mark does not say whether it moved a
+// session, and a timer reminder that moved nothing only costs a replay
+// that sends no frame, while a move missed would leave a busy board stale.
 func (l *Local) Mark(keys ...channels.Key) { l.mark(keys...) }
+
+// MarkAll tells every subscriber, in this process and in the others, that
+// any channel may have changed: each rechecks every channel it follows. It
+// is for a stored write whose channels the caller cannot list.
+func (l *Local) MarkAll() {
+	l.markResync()
+	if l.out != nil {
+		l.out.enqueue(hintEntry{resync: true})
+	}
+}
 
 // markKind is what a mark adds a key to, past every subscriber's change
 // set.
@@ -390,30 +426,39 @@ const (
 // It is for changes a stored write made that may move a session or a
 // lifecycle. It is the default on purpose: a write site that should have
 // used markMessage costs a replay, never a stale board.
-func (l *Local) mark(keys ...channels.Key) { l.markAs(markKindMoved, keys...) }
+func (l *Local) mark(keys ...channels.Key) { l.markAs(markKindMoved, true, keys...) }
 
 // markMessage is mark for a stored write that cannot move a session or
 // a lifecycle: the keys join the durable set, not the moved one.
-func (l *Local) markMessage(keys ...channels.Key) { l.markAs(markKindMessage, keys...) }
+func (l *Local) markMessage(keys ...channels.Key) { l.markAs(markKindMessage, true, keys...) }
 
 // markEphemeral adds keys to every subscriber's change set only: a typing
 // entry or an ephemeral signal started, ended or expired. A channel head
 // shows them; an inbox does not, so the live hub need not replay one.
-func (l *Local) markEphemeral(keys ...channels.Key) { l.markAs(markKindEphemeral, keys...) }
+func (l *Local) markEphemeral(keys ...channels.Key) { l.markAs(markKindEphemeral, true, keys...) }
 
 // markAs adds keys to every subscriber's sets that kind names, and wakes
-// each one.
-func (l *Local) markAs(kind markKind, keys ...channels.Key) {
+// each one. With send, a durable kind is also queued as a hint for the
+// other processes. A mark a hint caused passes send false, so a received
+// hint is never sent again.
+func (l *Local) markAs(kind markKind, send bool, keys ...channels.Key) {
 	l.markWhere(func(*Subscription) bool { return true }, keys, kind)
+	if send {
+		l.queueMark(kind, keys)
+	}
 }
 
 // markAddressed marks key changed for every subscriber with kind, and
 // adds targets, the principal keys a post or edit addressed, to every
-// [Local.SubscribeAddressed] subscriber.
-func (l *Local) markAddressed(targets []string, key channels.Key, kind markKind) {
-	l.markAs(kind, key)
+// [Local.SubscribeAddressed] subscriber. send is as for markAs.
+func (l *Local) markAddressed(targets []string, key channels.Key, kind markKind, send bool) {
 	if len(targets) == 0 {
+		l.markAs(kind, send, key)
 		return
+	}
+	l.markAs(kind, false, key)
+	if send && l.out != nil {
+		l.out.enqueue(hintEntry{kind: kind, keys: []channels.Key{key}, targets: slices.Clone(targets)})
 	}
 	l.subMu.Lock()
 	subs := make([]*Subscription, 0, len(l.subs))
@@ -449,10 +494,13 @@ func (l *Local) markAddressed(targets []string, key channels.Key, kind markKind)
 // markFor adds keys to the reads of every [Local.SubscribeLive]
 // subscriber, tagged with reader, and to no change set: a moved read
 // marker changes nothing another principal sees, and the live hub scopes
-// the replay to reader's own connections.
-func (l *Local) markFor(reader channels.Reader, keys ...channels.Key) {
+// the replay to reader's own connections. send is as for markAs.
+func (l *Local) markFor(reader channels.Reader, send bool, keys ...channels.Key) {
 	if reader.User == "" || len(keys) == 0 {
 		return
+	}
+	if send && l.out != nil {
+		l.out.enqueue(hintEntry{read: true, reader: reader, keys: slices.Clone(keys)})
 	}
 	l.subMu.Lock()
 	subs := make([]*Subscription, 0, len(l.subs))
@@ -606,12 +654,14 @@ func (l *Local) dropAnchor(id string, face entity.Face) {
 // EntityRenamed moves the rate buckets of the channels of oldID to newID,
 // where the stored channels move, so a rename does not refill anyone's
 // per-channel tokens. The live signals and typing entries of oldID are
-// dropped.
+// dropped. Those drops are not sent as hints: every process gets its own
+// rename hook, and the channels the rename moved are marked by the channel
+// alias hooks.
 func (l *Local) EntityRenamed(_ context.Context, oldID, newID string) error {
 	l.limiter.rekey(oldID, newID)
 	l.readLimiter.rekey(oldID, newID)
-	l.mark(l.ephemeral.dropAnchor(oldID, "")...)
-	l.mark(l.typing.dropAnchor(oldID, "")...)
+	l.markAs(markKindMoved, false, l.ephemeral.dropAnchor(oldID, "")...)
+	l.markAs(markKindMoved, false, l.typing.dropAnchor(oldID, "")...)
 	return nil
 }
 

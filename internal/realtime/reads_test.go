@@ -273,13 +273,13 @@ func TestLocal_MarkForScopesReader(t *testing.T) {
 	a := channels.Reader{User: "alice"}
 	b := channels.Reader{User: "alice", OrgID: "acme"}
 	hub, plain := l.SubscribeLive(), l.Subscribe()
-	l.markFor(a, keyOf("TKT-1"))
-	l.markFor(b, keyOf("TKT-2"))
+	l.markFor(a, true, keyOf("TKT-1"))
+	l.markFor(b, true, keyOf("TKT-2"))
 	require.Equal(t, map[channels.Reader][]channels.Key{
 		a: {keyOf("TKT-1")}, b: {keyOf("TKT-2")},
 	}, hub.TakeReads())
 	require.Empty(t, takeKeys(t, plain))
-	l.markFor(channels.Reader{}, keyOf("TKT-3"))
+	l.markFor(channels.Reader{}, true, keyOf("TKT-3"))
 	require.Nil(t, hub.TakeReads())
 	require.Empty(t, takeKeys(t, plain))
 }
@@ -296,8 +296,8 @@ func TestLocal_SubscribeLiveReads(t *testing.T) {
 	a := channels.Reader{User: "alice"}
 	b := channels.Reader{User: "bob"}
 	hub, plain := l.SubscribeLive(), l.Subscribe()
-	l.markFor(a, keyOf("TKT-1"))
-	l.markFor(b, keyOf("TKT-2"))
+	l.markFor(a, true, keyOf("TKT-1"))
+	l.markFor(b, true, keyOf("TKT-2"))
 	l.mark(keyOf("TKT-3"))
 	require.Equal(t, []channels.Key{keyOf("TKT-3")}, takeKeys(t, hub))
 	require.Equal(t, map[channels.Reader][]channels.Key{
@@ -308,7 +308,7 @@ func TestLocal_SubscribeLiveReads(t *testing.T) {
 	require.Equal(t, []channels.Key{keyOf("TKT-3")}, takeKeys(t, plain))
 
 	hub.max = 2
-	l.markFor(a, keyOf("TKT-1"), keyOf("TKT-2"), keyOf("TKT-3"))
+	l.markFor(a, true, keyOf("TKT-1"), keyOf("TKT-2"), keyOf("TKT-3"))
 	require.Nil(t, hub.TakeReads(), "an overflow drops the marks")
 	keys, resync := hub.Take()
 	require.True(t, resync)

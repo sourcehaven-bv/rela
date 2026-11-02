@@ -109,6 +109,7 @@ assignments:
 // channelProject is a project with realtime.yaml and acl.yaml, one item
 // and one doc nobody may read.
 type channelProject struct {
+	root string
 	svc  *appbuild.Services
 	item string
 	doc  string
@@ -139,7 +140,7 @@ func newChannelProjectWith(t *testing.T, realtimeYAML string) channelProject {
 	}
 	require.NoError(t, seed.Close())
 	writeProjectFile(t, root, "acl.yaml", channelCLIACL)
-	return channelProject{svc: openLeaseServices(t, root), item: ids[0], doc: ids[1]}
+	return channelProject{root: root, svc: openLeaseServices(t, root), item: ids[0], doc: ids[1]}
 }
 
 // runChannel runs a channel command as user, over the bundles of svc and

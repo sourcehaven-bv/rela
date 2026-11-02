@@ -2243,7 +2243,9 @@ so the output is safe to show in a terminal and decodes to the same text.
 exits 0. Without a change it prints `no change` and exits 2 after
 `--timeout` (at most 1 hour). With `--follow` it prints every change until you
 interrupt it, and then exits 0. Interrupting a watch without `--follow` exits
-130. Another process's change is seen within `--poll` (1 to 60 seconds). With
+130. Another process's change usually wakes the watch within half a second
+(see "Changes from other processes" in the realtime guide); `--poll` (1 to 60
+seconds) is how often it rechecks in case that notice is lost. With
 `-o json` each change is one line of JSON (JSON Lines). An error exits 1 at
 once.
 
