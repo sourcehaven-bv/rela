@@ -5,7 +5,9 @@ title: 'Serve the effective in: on message type views'
 kind: enhancement
 priority: low
 effort: s
-status: backlog
+started: "2026-10-31"
+completed: "2026-11-02"
+status: done
 ---
 
 ## Description
