@@ -139,14 +139,47 @@ func RunMentionTests(t *testing.T, f Factory) {
 				assert.Equal(t, []string{"FEAT-900"}, ids(sources(t, s, "REQ-001")))
 			})
 
-			t.Run("RenameTargetLeavesTextAlone", func(t *testing.T) {
+			t.Run("RenameTargetKeepsItsMentions", func(t *testing.T) {
 				s := open(t)
-				create(t, s, body("REQ-001", "requirement", ""))
-				create(t, s, body("FEAT-001", "feature", "`REQ-001`"))
+				create(t, s, body("REQ-001", "requirement", "Self: `REQ-001`"))
+				create(t, s, body("FEAT-001", "feature", "Needs `REQ-001` and `REQ-0010`."))
+				create(t, s, body("FEAT-002", "feature", "[`REQ-001`](http://x) only in link text"))
 				_, err := s.RenameFamily(ctx(), "REQ-001", "REQ-900")
 				require.NoError(t, err)
-				assert.Empty(t, sources(t, s, "REQ-900"), "the mention text still names the old id")
-				assert.Equal(t, []string{"FEAT-001"}, ids(sources(t, s, "REQ-001")))
+				assert.Equal(t, []string{"FEAT-001", "REQ-900"}, ids(sources(t, s, "REQ-900")))
+
+				feat, err := s.GetEntity(ctx(), entity.Ref{ID: "FEAT-001"})
+				require.NoError(t, err)
+				if _, retires := s.(store.RetiredIDs); retires {
+					assert.Equal(t, "Needs `REQ-001` and `REQ-0010`.", feat.Content,
+						"a store that retires ids leaves mention text alone")
+					return
+				}
+				assert.Equal(t, "Needs `REQ-900` and `REQ-0010`.", feat.Content)
+				self, err := s.GetEntity(ctx(), entity.Ref{ID: "REQ-900"})
+				require.NoError(t, err)
+				assert.Equal(t, "Self: `REQ-900`", self.Content)
+				link, err := s.GetEntity(ctx(), entity.Ref{ID: "FEAT-002"})
+				require.NoError(t, err)
+				assert.Equal(t, "[`REQ-001`](http://x) only in link text", link.Content)
+				assert.Empty(t, sources(t, s, "REQ-001"), "no body names the old id any more")
+			})
+
+			t.Run("RenameKeepsMentionsOnEveryFace", func(t *testing.T) {
+				s := open(t)
+				create(t, s, body("REQ-001", "requirement", ""))
+				create(t, s, faced(t, "PAGE-1", "page", "draft", "`REQ-001`"))
+				create(t, s, faced(t, "PAGE-1", "page", "published", "`REQ-001` too"))
+				_, err := s.RenameFamily(ctx(), "REQ-001", "REQ-900")
+				require.NoError(t, err)
+				assert.Equal(t, []string{"PAGE-1@draft", "PAGE-1@published"}, ids(sources(t, s, "REQ-900")))
+				draft, err := s.GetEntity(ctx(), entity.Ref{ID: "PAGE-1", Face: "draft"})
+				require.NoError(t, err)
+				want := "`REQ-900`"
+				if _, retires := s.(store.RetiredIDs); retires {
+					want = "`REQ-001`"
+				}
+				assert.Equal(t, want, draft.Content)
 			})
 
 			t.Run("SoftDeleteHidesAndUnmarkRestores", func(t *testing.T) {

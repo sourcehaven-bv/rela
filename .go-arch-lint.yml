@@ -1430,6 +1430,8 @@ deps:
       - autocascade
       - automation
       - computed
+      # The rename's mention rewrite, carried into converted rows (TKT-J6GISC3).
+      - mentions
       - metamodel
       - principal
       - statemachine

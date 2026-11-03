@@ -940,8 +940,9 @@ func (m *MemStore) renameEntity(_ context.Context, oldID, newID string) (*store.
 			Face:       renamed.Face,
 		})
 	}
+	rewritten := rewriteMentions(m, oldID, newID)
 
-	return &store.RenameResult{RelationsUpdated: relationsUpdated}, nil
+	return &store.RenameResult{RelationsUpdated: relationsUpdated, MentionsRewritten: rewritten}, nil
 }
 
 // --- RelationReader ---

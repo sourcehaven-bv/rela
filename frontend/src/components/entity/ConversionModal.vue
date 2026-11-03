@@ -3,8 +3,18 @@ import { computed, reactive, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useModalStack } from '@/composables/modalStack'
 import { useSchemaStore } from '@/stores'
-import type { ConversionOffer, Entity, PropertyDef } from '@/types'
+import type { ConversionOffer, Entity } from '@/types'
 import { convertEntity, previewConversion, type ConversionPreview } from '@/api/conversions'
+import FieldRenderer from '@/components/forms/FieldRenderer.vue'
+import MarkdownEditor from '@/components/forms/milkdown/MilkdownEditor.vue'
+import { makeRefResolver } from '@/utils/entityRefResolver'
+import { refBareId } from '@/utils/entityRef'
+import {
+  conversionFields,
+  createFormFor,
+  isEmptyValue,
+  type PropertyField,
+} from './conversionFields'
 import RlButton from 'rela-components/components/common/RlButton.vue'
 import RlButtonGroup from 'rela-components/components/common/RlButtonGroup.vue'
 import RlModal from 'rela-components/components/overlay/RlModal.vue'
@@ -37,9 +47,32 @@ watch(
   { deep: true }
 )
 const mappedFields = computed(() => new Set(props.offer.mapped_fields ?? []))
+// The target's create form decides each field's widget, label and order.
 const fields = computed(() =>
-  Object.entries(target.value?.properties ?? {}).filter(([name]) => !mappedFields.value.has(name))
+  conversionFields(
+    target.value?.properties ?? {},
+    createFormFor(schema.forms, props.offer.to),
+    mappedFields.value
+  )
 )
+// The preview names the required fields still without a value; each gets
+// its error next to its input, until the field is edited.
+const fieldErrors = ref<Record<string, string>>({})
+watch(preview, (next) => {
+  const errors: Record<string, string> = {}
+  for (const name of next?.required ?? []) errors[name] = t('form.validation.required')
+  fieldErrors.value = errors
+})
+// The optional fields open when one of them has an error, so it is seen.
+const optionalHasError = computed(() =>
+  fields.value.optional.some((field) => field.property in fieldErrors.value)
+)
+const refResolver = computed(() => makeRefResolver(props.source.mentions))
+const mentionSelf = computed(() => ({
+  id: refBareId(props.source.id),
+  type: props.source.type,
+  face: props.source._world?.face ?? '',
+}))
 const sourceFaces = computed(() => {
   const available = new Set([
     props.source._world?.face ?? '',
@@ -48,14 +81,15 @@ const sourceFaces = computed(() => {
   return Object.keys(props.offer.face_choices ?? {}).filter((face) => available.has(face))
 })
 
-function setValue(name: string, def: PropertyDef, input: string) {
-  if (def.list)
-    values[name] = input
-      .split(',')
-      .map((item) => item.trim())
-      .filter(Boolean)
-  else if (def.type === 'integer') values[name] = input === '' ? undefined : Number(input)
-  else values[name] = input
+// An emptied field is left out of the request, so it reads as not supplied.
+function setValue(field: PropertyField, value: unknown) {
+  const name = field.property
+  if (isEmptyValue(value)) delete values[name]
+  else values[name] = value
+  if (name in fieldErrors.value) {
+    const { [name]: _cleared, ...rest } = fieldErrors.value
+    fieldErrors.value = rest
+  }
 }
 
 async function submit() {
@@ -132,43 +166,40 @@ async function submit() {
       {{ t('entity.convert.newId') }} <span aria-hidden="true">*</span>
       <input v-model="targetID" required autocomplete="off" />
     </label>
-    <label v-for="[name, def] in fields" :key="name" class="convert-field">
-      {{ def.label || name }} <span v-if="def.required" aria-hidden="true">*</span>
-      <input
-        v-if="def.type === 'boolean'"
-        type="checkbox"
-        :checked="values[name] === true"
-        @change="values[name] = ($event.target as HTMLInputElement).checked"
+    <div class="convert-fields">
+      <FieldRenderer
+        v-for="field in fields.required"
+        :key="field.property"
+        :field="field"
+        :property-def="target?.properties?.[field.property]"
+        :value="values[field.property]"
+        :error="fieldErrors[field.property]"
+        :entity-type="offer.to"
+        @update="setValue(field, $event)"
       />
-      <select v-else-if="def.type === 'enum'" v-model="values[name]" :required="def.required">
-        <option value="">{{ t('entity.convert.select') }}</option>
-        <option v-for="option in def.values || []" :key="option" :value="option">
-          {{ def.labels?.[option] || option }}
-        </option>
-      </select>
-      <textarea
-        v-else-if="def.list"
-        :value="Array.isArray(values[name]) ? values[name].join(', ') : ''"
-        rows="2"
-        @input="setValue(name, def, ($event.target as HTMLTextAreaElement).value)"
-      />
-      <textarea
-        v-else-if="name === 'description'"
-        :value="String(values[name] ?? '')"
-        rows="3"
-        @input="setValue(name, def, ($event.target as HTMLTextAreaElement).value)"
-      />
-      <input
-        v-else
-        :value="String(values[name] ?? '')"
-        :type="def.type === 'date' ? 'date' : def.type === 'integer' ? 'number' : 'text'"
-        :required="def.required"
-        @input="setValue(name, def, ($event.target as HTMLInputElement).value)"
-      />
-    </label>
-    <label v-if="!offer.content_mapped" class="convert-field"
-      >{{ t('entity.convert.content') }} <textarea v-model="content" rows="7" />
-    </label>
+    </div>
+    <details v-if="fields.optional.length" class="convert-more" :open="optionalHasError">
+      <summary>{{ t('entity.convert.moreFields') }}</summary>
+      <div class="convert-fields">
+        <FieldRenderer
+          v-for="field in fields.optional"
+          :key="field.property"
+          :field="field"
+          :property-def="target?.properties?.[field.property]"
+          :value="values[field.property]"
+          :error="fieldErrors[field.property]"
+          :entity-type="offer.to"
+          @update="setValue(field, $event)"
+        />
+      </div>
+    </details>
+    <p v-if="fields.files.length" class="convert-files">
+      {{ t('entity.convert.filesLater', { list: fields.files.join(', ') }) }}
+    </p>
+    <div v-if="!offer.content_mapped" class="convert-field">
+      <span>{{ t('entity.convert.content') }}</span>
+      <MarkdownEditor v-model="content" :ref-resolver="refResolver" :mention-self="mentionSelf" />
+    </div>
     <section v-if="preview?.relations_to_drop.length" class="convert-warning" aria-live="polite">
       <strong>{{ t('entity.convert.dropsHeading') }}</strong>
       <ul>
@@ -232,8 +263,19 @@ async function submit() {
   margin-block: 0.75rem;
 }
 .convert-field input,
-.convert-field select,
-.convert-field textarea {
+.convert-field select {
   width: 100%;
+}
+.convert-fields {
+  display: grid;
+  grid-template-columns: repeat(12, minmax(0, 1fr));
+  gap: var(--space-md);
+  margin-block: var(--space-md);
+}
+.convert-fields > * {
+  grid-column: span var(--field-span, 12);
+}
+.convert-more > summary {
+  cursor: pointer;
 }
 </style>

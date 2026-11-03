@@ -104,6 +104,16 @@ type RenameResult struct {
 	OldID            string
 	NewID            string
 	RelationsUpdated int
+	// MentionsRewritten lists the bodies whose mentions of OldID the store
+	// rewrote to NewID. Only a store without retired ids rewrites text.
+	MentionsRewritten []MentionRewrite
+}
+
+// MentionRewrite names one entity row whose body a rename rewrote.
+type MentionRewrite struct {
+	ID   string
+	Type string
+	Face Face
 }
 
 // RelationOptions configure relation creation and updates.

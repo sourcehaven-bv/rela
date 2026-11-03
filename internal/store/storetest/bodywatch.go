@@ -211,6 +211,12 @@ func (b *BodyWatch) MentionSources(
 	return mentionSourcesOf(ctx, b.Store, target, after, limit)
 }
 
+// Successors forwards to the wrapped store's retired ids, counted as a call.
+func (b *BodyWatch) Successors(ctx context.Context, ids []string) (map[string]string, error) {
+	b.call("Successors")
+	return successorsOf(ctx, b.Store, ids)
+}
+
 // Unwrap returns the wrapped store, so a lookup keyed on the backend type
 // (the database handle piles and state share) still finds it; see
 // [store.Decorator].
@@ -290,4 +296,11 @@ func (v *bodyWatchView) MentionSources(
 ) ([]entity.Ref, error) {
 	v.parent.call("MentionSources")
 	return mentionSourcesOf(ctx, v.Store, target, after, limit)
+}
+
+// Successors forwards to the transaction's retired ids, counted on the
+// parent.
+func (v *bodyWatchView) Successors(ctx context.Context, ids []string) (map[string]string, error) {
+	v.parent.call("Successors")
+	return successorsOf(ctx, v.Store, ids)
 }

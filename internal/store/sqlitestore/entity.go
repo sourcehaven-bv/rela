@@ -136,17 +136,20 @@ func (s *Store) createEntityLocked(ctx context.Context, e *entity.Entity) error 
 
 	editorUser, editorTool := store.AttributionColumns(ctx)
 	o := originColumns(store.OriginFrom(ctx))
-	// The NOT EXISTS keeps a soft-deleted id held until it is purged. It sits
-	// in the INSERT itself so no mark can land between probe and write.
+	// The NOT EXISTS clauses keep a soft-deleted id held until it is purged,
+	// and a retired id or its successor held for good. They sit in the INSERT itself so no
+	// mark can land between probe and write.
 	res, err := s.write(ctx, `INSERT INTO entities (id, face, type, properties, content, updated_at,
 		                      last_edited_by_user, last_edited_by_tool,
 		                      origin_kind, origin_source, origin_source_face,
 		                      origin_source_type, origin_definition, mention_targets, search_text)
 		SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
-		WHERE NOT EXISTS (SELECT 1 FROM marked_entities WHERE lower(id) = lower(?))`,
+		WHERE NOT EXISTS (SELECT 1 FROM marked_entities WHERE lower(id) = lower(?))
+		  AND NOT EXISTS (SELECT 1 FROM retired_ids
+		                  WHERE lower(id) = lower(?) OR lower(successor) = lower(?))`,
 		e.ID, string(e.Face), e.Type, props, e.Content, sqlitedb.FormatTime(updated), editorUser, editorTool,
 		o.kind, o.source, o.sourceFace, o.sourceType, o.definition, mentionTargetsJSON(e.Content),
-		search.IndexText(e), e.ID)
+		search.IndexText(e), e.ID, e.ID, e.ID)
 	var inserted int64
 	if err == nil {
 		inserted, err = res.RowsAffected()
@@ -159,7 +162,7 @@ func (s *Store) createEntityLocked(ctx context.Context, e *entity.Entity) error 
 		return fmt.Errorf("sqlitestore: create %s: %w", e.ID, err)
 	}
 	if inserted == 0 {
-		return fmt.Errorf("sqlitestore: create %s: soft-deleted id: %w",
+		return fmt.Errorf("sqlitestore: create %s: soft-deleted or retired id: %w",
 			entity.FormatStateRef(e.ID, e.Face), store.ErrConflict)
 	}
 

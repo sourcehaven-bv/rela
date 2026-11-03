@@ -156,6 +156,11 @@ func (b *Breadth) MentionSources(
 	return mentionSourcesOf(ctx, b.Store, target, after, limit)
 }
 
+// Successors forwards to the wrapped store's retired ids, unrecorded.
+func (b *Breadth) Successors(ctx context.Context, ids []string) (map[string]string, error) {
+	return successorsOf(ctx, b.Store, ids)
+}
+
 // Unwrap returns the wrapped store, so a lookup keyed on the backend type
 // (the database handle piles and state share) still finds it; see
 // [store.Decorator].
@@ -229,4 +234,9 @@ func (v *breadthView) MentionSources(
 	ctx context.Context, target string, after entity.Ref, limit int,
 ) ([]entity.Ref, error) {
 	return mentionSourcesOf(ctx, v.Store, target, after, limit)
+}
+
+// Successors forwards to the transaction's retired ids, unrecorded.
+func (v *breadthView) Successors(ctx context.Context, ids []string) (map[string]string, error) {
+	return successorsOf(ctx, v.Store, ids)
 }
