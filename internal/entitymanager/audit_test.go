@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -1352,5 +1353,45 @@ func TestAuditAssertedBy(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// TestAudit_RenameRecordsEachRewrittenMention pins TKT-J6GISC3: a store that
+// rewrites mention text edits other bodies below the ACL, so the manager
+// writes one update record per rewritten body, attributed to the renamer.
+func TestAudit_RenameRecordsEachRewrittenMention(t *testing.T) {
+	t.Parallel()
+	mem := audit.NewMemory()
+	mgr := newManagerWithAudit(t, mem, nil)
+	ctx := context.Background()
+	for _, c := range []struct{ id, body string }{
+		{"api", "Self: `api`."},
+		{"web", "Calls `api`."},
+		{"db", "Unrelated."},
+	} {
+		e := entity.New(c.id, "component")
+		e.Content = c.body
+		if _, err := mgr.CreateEntity(ctx, e, entity.CreateOptions{ID: c.id}); err != nil {
+			t.Fatalf("CreateEntity %s: %v", c.id, err)
+		}
+	}
+
+	res, err := mgr.RenameEntity(ctx, "api", "gateway", entity.RenameOptions{})
+	if err != nil {
+		t.Fatalf("RenameEntity: %v", err)
+	}
+	if want := []entity.MentionRewrite{{ID: "gateway", Type: "component"}, {ID: "web", Type: "component"}}; !reflect.DeepEqual(res.MentionsRewritten, want) {
+		t.Errorf("MentionsRewritten = %+v, want %+v", res.MentionsRewritten, want)
+	}
+	var rewrites []audit.Record
+	for _, r := range mem.Records() {
+		if r.Op == audit.OpUpdateEntity && r.TriggeredBy == "rename:api->gateway" {
+			rewrites = append(rewrites, r)
+		}
+	}
+	if len(rewrites) != 1 || rewrites[0].Subject.ID != "web" ||
+		rewrites[0].Summary != "rewrote mentions of api to gateway" {
+
+		t.Errorf("rewrite records = %+v", rewrites)
 	}
 }

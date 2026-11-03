@@ -761,15 +761,16 @@ const (
 	// it does not move with row count — the fixture puts every ticket one
 	// level below the epic, so a per-node gate would make this grow.
 	recursiveViewBudget = 12
-	// mentioned-by: the target's address read, one index batch, ONE header
-	// read for that batch's sources, and the membership walk.
-	mentionedByBudget = 5
-	// backlinks view (TKT-HF0D5W): the entry read, one index batch, the
-	// resolver's ONE header read to gate it, the step's ONE header reload,
-	// and the edge and membership reads every view makes. Measured: 7 at 10
-	// and 50 sources. The separate MentionSources assertion pins the
+	// mentioned-by: the target's address read, the resolver's gate on the
+	// target (TKT-J6GISC3), one index batch, ONE header read for that
+	// batch's sources, and the membership walk.
+	mentionedByBudget = 6
+	// backlinks view (TKT-HF0D5W): the entry read, the resolver's gate on
+	// the target, one index batch, the resolver's ONE header read to gate
+	// it, the step's ONE header reload, and the edge and membership reads
+	// every view makes. Measured: 8 at 10 and 50 sources. The separate MentionSources assertion pins the
 	// once-per-view read.
-	mentionsViewBudget = 7
+	mentionsViewBudget = 8
 	// nested view: entry, the two traverse passes, the collection loads, the
 	// entry edges and the membership walk, plus the relation column's own
 	// reads — one ListRelations per ROW TYPE (epic and ticket) and the gated

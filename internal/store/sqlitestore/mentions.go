@@ -25,7 +25,8 @@ func mentionTargetsJSON(content string) string {
 	return string(b)
 }
 
-// MentionSources implements [store.MentionIndex]. Rows written before the
+// MentionSources implements [store.MentionIndex]. A body that names an id
+// retired into target counts, as [store.RetiredIDs] requires. Rows written before the
 // v17 rung are indexed first: sqlitestore is single-process, so a pending row
 // can only predate this binary, and indexing them here costs one partial-index
 // probe once they are done.
@@ -39,11 +40,12 @@ func (s *Store) MentionSources(
 		return nil, fmt.Errorf("sqlitestore: index mentions: %w", err)
 	}
 	rows, err := s.q().QueryContext(ctx, `
-		SELECT m.source_id, m.source_face FROM entity_mention_targets m
+		SELECT DISTINCT m.source_id, m.source_face FROM entity_mention_targets m
 		JOIN entities e ON e.id = m.source_id AND e.face = m.source_face
-		WHERE m.target = ? AND (m.source_id, m.source_face) > (?, ?)
+		WHERE m.target IN (SELECT ?1 UNION SELECT id FROM retired_ids WHERE successor = ?1)
+		  AND (m.source_id, m.source_face) > (?2, ?3)
 		ORDER BY m.source_id, m.source_face
-		LIMIT ?`, target, after.ID, string(after.Face), limit)
+		LIMIT ?4`, target, after.ID, string(after.Face), limit)
 	if err != nil {
 		return nil, err
 	}

@@ -77,10 +77,15 @@ func (s *Store) HighestID(ctx context.Context, prefix string) (int, error) {
 // The exclusive upper bound is prefix + ".", "." being the byte after "-".
 //
 // marked_entities is read too: a soft-deleted id may yet come back, so it
-// must not be minted again.
+// must not be minted again. So is retired_ids: both the ids renamed away
+// from and their successors are reserved, even after the successor is
+// deleted.
 func buildHighestIDSQL(prefix string) (sqlText string, args []any) {
 	return `SELECT id FROM entities WHERE lower(id) >= lower(?1) AND lower(id) < lower(?2)
-		UNION SELECT id FROM marked_entities WHERE lower(id) >= lower(?1) AND lower(id) < lower(?2)`,
+		UNION SELECT id FROM marked_entities WHERE lower(id) >= lower(?1) AND lower(id) < lower(?2)
+		UNION SELECT id FROM retired_ids WHERE lower(id) >= lower(?1) AND lower(id) < lower(?2)
+		UNION SELECT successor FROM retired_ids
+		      WHERE lower(successor) >= lower(?1) AND lower(successor) < lower(?2)`,
 		[]any{prefix + "-", prefix + "."}
 }
 
@@ -152,6 +157,9 @@ func (s *Store) renameLocked(
 	}
 	if taken > 0 {
 		return fmt.Errorf("sqlitestore: rename %s to %s: %w", oldID, newID, store.ErrConflict)
+	}
+	if err := retireID(ctx, s, oldID, newID); err != nil {
+		return err
 	}
 
 	if _, err := s.write(ctx, `UPDATE entities SET id = ? WHERE id = ?`, newID, oldID); err != nil {

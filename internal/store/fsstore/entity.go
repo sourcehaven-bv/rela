@@ -866,6 +866,8 @@ func (s *FSStore) renameEntity(_ context.Context, oldID, newID string) (*store.R
 	if err := storeutil.ValidateID(newID); err != nil {
 		return nil, err
 	}
+	// rewriteMentions reads the index, and building it takes s.mu itself.
+	buildMentionIndex(s)
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -979,8 +981,9 @@ func (s *FSStore) renameEntity(_ context.Context, oldID, newID string) (*store.R
 			Face:       renamed.Face,
 		})
 	}
+	rewritten := rewriteMentions(s, oldID, newID)
 
-	return &store.RenameResult{RelationsUpdated: len(toUpdate)}, nil
+	return &store.RenameResult{RelationsUpdated: len(toUpdate), MentionsRewritten: rewritten}, nil
 }
 
 // writeEntity writes an entity to disk using temp-file + rename.

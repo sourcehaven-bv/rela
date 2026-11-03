@@ -12,7 +12,7 @@ import (
 // schemaVersion is the shape of the tables this binary expects. Bump it
 // whenever schemaSQL changes shape, and append the step that carries an
 // existing database forward to [migrations].
-const schemaVersion = 31
+const schemaVersion = 32
 
 // SchemaVersion reports the table shape this binary expects, so the CLI can
 // show a real number rather than prose.
@@ -312,10 +312,17 @@ var migrations = []migration{
 		apply: sqlSteps(channelMentionsDDL),
 	},
 	{
-		// v30 → v31: the seq of the message that moved each channel's
+		// v30 → v31: the ids renames retired (TKT-J6GISC3). A new table; no
+		// backfill, because renames before it rewrote nothing and left no
+		// record of the old id.
+		to:    31,
+		apply: sqlSteps(retiredIDsDDL),
+	},
+	{
+		// v31 → v32: the seq of the message that moved each channel's
 		// session (TKT-V05706X). No backfill: a row stored before it reads
 		// 0, as a timer move does.
-		to: 31,
+		to: 32,
 		apply: func(ctx context.Context, conn *sql.Conn) error {
 			return addChannelColumns(ctx, conn, channelCauseColumns)
 		},

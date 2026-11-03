@@ -70,6 +70,10 @@ func ParseMentionCursor(cursor string) (string, error) {
 // as served to them, says nothing about target. An entity that mentions
 // itself is not its own backlink.
 //
+// target is gated too: a target w does not serve has no backlinks. On a store
+// with [store.RetiredIDs] the page also holds bodies that mention an id
+// retired into target, and that mapping is a fact about target.
+//
 // It is the only sanctioned reader of [store.MentionIndex]; an archguard
 // test keeps every other package from calling the index directly.
 func (r *Resolver) MentionedBy(
@@ -91,6 +95,13 @@ func (r *Resolver) MentionedBy(
 			return MentionPage{}, ErrBadMentionCursor
 		}
 		cursor = parsed
+	}
+	visible, err := r.ResolveIDsErr(ctx, w, []string{target})
+	if err != nil {
+		return MentionPage{}, err
+	}
+	if _, found := visible[target]; !found {
+		return MentionPage{}, nil
 	}
 	var page MentionPage
 	for scanned := 0; ; {
@@ -170,4 +181,59 @@ func groupRefs(refs []entity.Ref) (ids []string, faces map[string][]entity.Face)
 		faces[ref.ID] = append(faces[ref.ID], ref.Face)
 	}
 	return ids, faces
+}
+
+// ResolveMentions resolves the ids a body mentions, as
+// [Resolver.ResolveIDsErr] does, and follows a rename: an id a rename
+// retired (store.RetiredIDs) resolves to the entity that carries its
+// successor now, keyed by the id as written. The served header then has
+// the successor's id.
+//
+// The successor goes through the same gates as any other id, so an id
+// retired into an entity the principal cannot read is dropped like an id
+// that never existed. A loader without store.RetiredIDs resolves only the
+// ids as written.
+func (r *Resolver) ResolveMentions(
+	ctx context.Context, w World, ids []string,
+) (map[string]store.EntityHeader, error) {
+	served, err := r.ResolveIDsErr(ctx, w, ids)
+	if err != nil {
+		return nil, err
+	}
+	retired, ok := r.load.(store.RetiredIDs)
+	if !ok {
+		return served, nil
+	}
+	missing := make([]string, 0, len(ids))
+	for _, id := range ids {
+		if _, found := served[id]; !found {
+			missing = append(missing, id)
+		}
+	}
+	if len(missing) == 0 {
+		return served, nil
+	}
+	successors, err := retired.Successors(ctx, missing)
+	if err != nil {
+		return nil, err
+	}
+	if len(successors) == 0 {
+		return served, nil
+	}
+	targets := make([]string, 0, len(successors))
+	for _, to := range successors {
+		targets = append(targets, to)
+	}
+	slices.Sort(targets)
+	targets = slices.Compact(targets)
+	moved, err := r.ResolveIDsErr(ctx, w, targets)
+	if err != nil {
+		return nil, err
+	}
+	for from, to := range successors {
+		if h, found := moved[to]; found {
+			served[from] = h
+		}
+	}
+	return served, nil
 }

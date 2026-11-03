@@ -43,7 +43,8 @@ func contentHash(content string) string {
 }
 
 // MentionSources implements [store.MentionIndex]. Soft-deleted rows live in
-// marked_entities, so reading entities is already the live set.
+// marked_entities, so reading entities is already the live set. A body that
+// names an id retired into target counts, as [store.RetiredIDs] requires.
 func (s *Store) MentionSources(
 	ctx context.Context, target string, after entity.Ref, limit int,
 ) ([]entity.Ref, error) {
@@ -52,7 +53,8 @@ func (s *Store) MentionSources(
 	}
 	rows, err := s.db.Query(ctx, `
 		SELECT id, face FROM entities
-		WHERE mention_targets @> ARRAY[$1::text]
+		WHERE mention_targets && (ARRAY[$1::text] ||
+		      ARRAY(SELECT id FROM retired_ids WHERE successor = $1))
 		  AND (id, face) > ($2, $3)
 		ORDER BY id, face
 		LIMIT $4`, target, after.ID, after.Face.String(), limit)

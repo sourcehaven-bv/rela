@@ -2853,6 +2853,8 @@ type familyRename struct {
 	prevFaces     map[entity.Face]entity.Face
 	authorized    familyAuthorization
 	preRenameRels []*entity.Relation
+	// rewritten lists the other bodies the store rewrote to name newID.
+	rewritten []entity.MentionRewrite
 }
 
 // inTx is the rename's critical section. It re-authorizes the family read
@@ -2887,6 +2889,7 @@ func (r *familyRename) inTx(
 	if err != nil {
 		return nil, nil, err
 	}
+	r.rewritten = res.MentionsRewritten
 	renamed, err := familyRows(ctx, tx, r.newID)
 	if err != nil {
 		return res, nil, fmt.Errorf("rename: load renamed entity %q: %w", r.newID, err)
@@ -2939,6 +2942,12 @@ func (r *familyRename) record(ctx context.Context, renamed []*entity.Entity) {
 			rec.PrevFace, rec.HasPrevFace = source, true
 		}
 		recordVersion(ctx, m, rec, e)
+	}
+
+	for _, rw := range r.rewritten {
+		if rw.ID != newID {
+			recordMentionRewriteAudit(ctx, m, oldID, newID, rw)
+		}
 	}
 
 	// Rewrite id-keyed references for the same reason the version above carries

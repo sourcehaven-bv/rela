@@ -77,6 +77,12 @@ export const entityRefNode = $node('entityRef', () => ({
      */
     entityType: { default: null },
     /**
+     * The id the href links to, when it differs from `id`: the server
+     * resolved an id a rename retired to the entity's current id. View-only,
+     * like the title; the stored code span keeps the id as written.
+     */
+    entityId: { default: null },
+    /**
      * True when the entity is readable but its display title is redacted.
      * Mirrors the server's `Mention.inaccessible`.
      */
@@ -108,10 +114,11 @@ export const entityRefNode = $node('entityRef', () => ({
     },
   ],
   toDOM: (node) => {
-    const { id, title, entityType, inaccessible } = node.attrs as {
+    const { id, title, entityType, entityId, inaccessible } = node.attrs as {
       id: string
       title: string | null
       entityType: string | null
+      entityId: string | null
       inaccessible: boolean
     }
     // Falls back to the raw ID when no title is known: before the mentions map
@@ -126,7 +133,7 @@ export const entityRefNode = $node('entityRef', () => ({
       // A real href so the reference is a genuine link: middle-click and
       // copy-link behave as the user expects. Only set when the type is
       // known, since the href shape needs it.
-      ...(entityType ? { href: `/entity/${entityType}/${id}` } : {}),
+      ...(entityType ? { href: `/entity/${entityType}/${entityId ?? id}` } : {}),
       ...(title ? { 'data-entity-title': title } : {}),
       ...(entityType ? { 'data-entity-type': entityType } : {}),
       ...(inaccessible ? { 'data-entity-inaccessible': 'true' } : {}),

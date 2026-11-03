@@ -187,3 +187,60 @@ func saveMentionCache(s *FSStore, entries map[string]mentionEntry) {
 		slog.Warn("fsstore: could not persist the mention index", "error", err)
 	}
 }
+
+// rewriteMentions makes every live body that mentions oldID name newID
+// instead, as [store.EntityWriter.RenameFamily] requires of a store without
+// [store.RetiredIDs] (TKT-J6GISC3). The project is in version control, so
+// the edit is visible and revertible there. Like the relation re-key it runs
+// below the ACL; the entitymanager audits each rewritten row.
+//
+// It runs after the rename took effect, so it is best effort: a body it
+// cannot read or write is logged and skipped, and the rename still succeeds.
+//
+// It reads the mention index, so the caller must have built it before taking
+// s.mu. A body whose mentions exceed [mentions.MaxTargets] is found only if
+// oldID is among the indexed ones. Soft-deleted bodies are left alone. It
+// returns the rewritten rows. Caller holds s.mu.
+func rewriteMentions(s *FSStore, oldID, newID string) []entity.MentionRewrite {
+	var keys []string
+	for key, ent := range s.mentions.entries {
+		if _, live := s.entities[key]; !live {
+			continue
+		}
+		if _, found := slices.BinarySearch(ent.Targets, oldID); found {
+			keys = append(keys, key)
+		}
+	}
+	slices.Sort(keys)
+	var rewritten []entity.MentionRewrite
+	for _, key := range keys {
+		meta := s.entities[key]
+		e, err := s.loadEntityMeta(meta)
+		if err != nil {
+			slog.Warn("fsstore: rename left a mention unrewritten",
+				"old_id", oldID, "new_id", newID, "entity", key, "err", err)
+			continue
+		}
+		content, changed := mentions.Rewrite(e.Content, oldID, newID)
+		if !changed {
+			continue
+		}
+		stored := e.Clone()
+		stored.Content = content
+		stored.UpdatedAt = time.Now()
+		if err := s.writeEntity(stored); err != nil {
+			slog.Warn("fsstore: rename left a mention unrewritten",
+				"old_id", oldID, "new_id", newID, "entity", key, "err", err)
+			continue
+		}
+		rewritten = append(rewritten, entity.MentionRewrite{ID: stored.ID, Type: stored.Type, Face: stored.Face})
+		s.notifyPut(stored)
+		s.emit(store.Event{
+			Op:         store.EventEntityUpdated,
+			EntityType: stored.Type,
+			EntityID:   stored.ID,
+			Face:       stored.Face,
+		})
+	}
+	return rewritten
+}

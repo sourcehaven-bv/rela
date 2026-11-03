@@ -91,8 +91,12 @@ func TestFaceReadExplain(t *testing.T) {
 		}, "USING INDEX sqlite_autoindex_entities_1", nil},
 		{"highest id", func() (string, error) {
 			return s.ExplainHighestID(ctx, "POL")
-			// The UNION with marked_entities de-duplicates by sorting each arm.
-		}, "USING INDEX entities_id_lower_key", []string{"USE TEMP B-TREE FOR ORDER BY", "USE TEMP B-TREE FOR ORDER BY"}},
+			// The UNION with marked_entities and both retired_ids columns
+			// de-duplicates by sorting each arm; every arm is an index search.
+		}, "USING INDEX retired_ids_successor_lower_idx", []string{
+			"USE TEMP B-TREE FOR ORDER BY", "USE TEMP B-TREE FOR ORDER BY",
+			"USE TEMP B-TREE FOR ORDER BY", "USE TEMP B-TREE FOR ORDER BY",
+		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			plan, err := tc.plan()

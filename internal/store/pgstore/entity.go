@@ -209,10 +209,15 @@ func entityPageSQL(q store.EntityQuery) (sql string, args []any, err error) {
 // ".", "." being the byte after "-".
 //
 // marked_entities is read too: a soft-deleted id may yet come back, so it
-// must not be minted again.
+// must not be minted again. So is retired_ids: both the ids renamed away
+// from and their successors are reserved, even after the successor is
+// deleted.
 func buildHighestIDSQL(prefix string) (sql string, args []any) {
 	return `SELECT id FROM entities WHERE id >= $1 AND id < $2
-	        UNION SELECT id FROM marked_entities WHERE id >= $1 AND id < $2`, []any{prefix + "-", prefix + "."}
+	        UNION SELECT id FROM marked_entities WHERE id >= $1 AND id < $2
+	        UNION SELECT id FROM retired_ids WHERE id >= $1 AND id < $2
+	        UNION SELECT successor FROM retired_ids WHERE successor >= $1 AND successor < $2`,
+		[]any{prefix + "-", prefix + "."}
 }
 
 // HighestID returns the highest numeric suffix among IDs of the form
@@ -293,9 +298,15 @@ func (s *Store) CreateEntity(ctx context.Context, e *entity.Entity) error {
 	if lockErr := lockFamily(ctx, tx, e.ID); lockErr != nil {
 		return lockErr
 	}
-	// A soft-deleted id stays held until it is purged. Checked under the
-	// family lock, which MarkDeleted also takes.
+	// A soft-deleted id stays held until it is purged, and a retired id or
+	// its successor for good. Checked under the family lock, which MarkDeleted and
+	// RenameFamily also take.
 	if held, heldErr := markedIDTaken(ctx, tx, e.ID, ""); heldErr != nil {
+		return heldErr
+	} else if held {
+		return store.ErrConflict
+	}
+	if held, heldErr := retiredIDTaken(ctx, tx, e.ID); heldErr != nil {
 		return heldErr
 	} else if held {
 		return store.ErrConflict
@@ -833,6 +844,26 @@ func renameTargetFree(ctx context.Context, tx pgx.Tx, newID, oldID string) error
 	return nil
 }
 
+// prepareRename locks both ids, checks that oldID exists and newID is free,
+// and retires oldID, inside the rename's transaction.
+func prepareRename(ctx context.Context, tx pgx.Tx, oldID, newID string) error {
+	if err := lockRenamePair(ctx, tx, oldID, newID); err != nil {
+		return err
+	}
+	var exists bool
+	err := tx.QueryRow(ctx, `SELECT true FROM entities WHERE id = $1`, oldID).Scan(&exists)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return store.ErrNotFound
+	}
+	if err != nil {
+		return err
+	}
+	if err := renameTargetFree(ctx, tx, newID, oldID); err != nil {
+		return err
+	}
+	return retireID(ctx, tx, oldID, newID)
+}
+
 // RenameFamily changes an entity's ID, rewriting every relation endpoint and
 // re-keying attachments atomically. Returns store.ErrNotFound if oldID is
 // absent, store.ErrConflict if newID exists.
@@ -849,17 +880,8 @@ func (s *Store) RenameFamily(ctx context.Context, oldID, newID string) (*store.R
 	}
 	defer tx.Rollback(ctx) //nolint:errcheck // rollback after commit is a no-op
 
-	var exists bool
-	err = tx.QueryRow(ctx, `SELECT true FROM entities WHERE id = $1`, oldID).Scan(&exists)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, store.ErrNotFound
-	}
-	if err != nil {
-		return nil, err
-	}
-	err = renameTargetFree(ctx, tx, newID, oldID)
-	if err != nil {
-		return nil, err
+	if prepErr := prepareRename(ctx, tx, oldID, newID); prepErr != nil {
+		return nil, prepErr
 	}
 
 	renamedStates, renamed, err := rekeyStateFamily(ctx, tx, oldID, newID)

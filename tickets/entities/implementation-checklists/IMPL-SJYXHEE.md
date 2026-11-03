@@ -37,8 +37,9 @@ status: done
 `GetMessagesRefusals`, `GetMessagesMax` pass on file, sqlite and postgres (local
 Postgres.app, `-tags postgres`). Damaged rows: `TestGetMessages_Damaged` (file),
 `TestGetMessages_DamagedRow` (sql). sqlite plan: `TestGetMessages_UsesIndexes`.
-- Migrations: sqlite v30 to v31 (`TestMigrate_v30ToV31SessionCause`), postgres
-0038 (`TestMigration_SessionCause`).
+- Migrations: sqlite v31 to v32 (`TestMigrate_v31ToV32SessionCause`), postgres
+0039 (`TestMigration_SessionCause`); renumbered after develop took v31 and 0038
+for retired ids (TKT-J6GISC3).
 - Realtime: `TestInbox_WaitingMessage` (ask, newer messages, removed for a
 reader and for a moderator), `TestInbox_WaitingWithoutCause`,
 `TestInbox_WaitingMessageRefs`, `TestInbox_DecisionInputs`,

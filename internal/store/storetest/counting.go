@@ -28,7 +28,7 @@ import (
 // optional capabilities above, plus Unwrap for store.Decorator, so the count
 // moves with store.Store rather than with this type.
 //
-//plimsoll:max-exported-methods=24
+//plimsoll:max-exported-methods=25
 type Counting struct {
 	store.Store
 
@@ -217,6 +217,13 @@ func (c *Counting) MentionSources(
 ) ([]entity.Ref, error) {
 	c.hit("MentionSources")
 	return mentionSourcesOf(ctx, c.Store, target, after, limit)
+}
+
+// Successors forwards to the wrapped store's retired ids, counted as one
+// read.
+func (c *Counting) Successors(ctx context.Context, ids []string) (map[string]string, error) {
+	c.hit("Successors")
+	return successorsOf(ctx, c.Store, ids)
 }
 
 // Unwrap returns the wrapped store, so a lookup keyed on the backend type

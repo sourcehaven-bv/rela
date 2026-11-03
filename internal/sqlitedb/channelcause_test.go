@@ -10,19 +10,19 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/sqlitedb"
 )
 
-// TestMigrate_v30ToV31SessionCause pins the v30 to v31 rung (TKT-V05706X
-// AC 1): a version-30 file gains channels.session_cause with the shape of a
+// TestMigrate_v31ToV32SessionCause pins the v31 to v32 rung (TKT-V05706X
+// AC 1): a version-31 file gains channels.session_cause with the shape of a
 // fresh database, an existing row reads 0, and opening a second time
 // changes nothing.
-func TestMigrate_v30ToV31SessionCause(t *testing.T) {
+func TestMigrate_v31ToV32SessionCause(t *testing.T) {
 	fresh := openChannelDB(t, filepath.Join(t.TempDir(), "fresh.db"))
 	want := channelsShape(t, fresh)
 
-	path := filepath.Join(t.TempDir(), "v30.db")
+	path := filepath.Join(t.TempDir(), "v31.db")
 	raw := openChannelDB(t, path)
 	for _, stmt := range []string{
 		`ALTER TABLE channels DROP COLUMN session_cause`,
-		`PRAGMA user_version = 30`,
+		`PRAGMA user_version = 31`,
 	} {
 		_, err := raw.Exec(stmt)
 		require.NoError(t, err, stmt)
@@ -43,6 +43,6 @@ func TestMigrate_v30ToV31SessionCause(t *testing.T) {
 	require.Zero(t, cause, "no backfill")
 	var version int
 	require.NoError(t, raw.QueryRow(`PRAGMA user_version`).Scan(&version))
-	require.Equal(t, 31, version)
+	require.Equal(t, 32, version)
 	require.Equal(t, sqlitedb.SchemaVersion(), version)
 }

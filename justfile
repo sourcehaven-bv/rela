@@ -5,6 +5,10 @@ build_dir := "bin"
 # Keep these in sync with .github/workflows/ci.yml (lint and arch-lint jobs).
 golangci_lint_version := "v2.11.4"
 go_arch_lint_version := "v1.15.0"
+# Each golangci-lint run type-checks the whole module and can use GBs of RAM.
+# GOMEMLIMIT makes Go free memory sooner; --allow-serial-runners makes a second
+# run wait for the first instead of overlapping with it.
+golangci_lint := "GOMEMLIMIT=${GOMEMLIMIT:-1500MiB} golangci-lint run --allow-serial-runners"
 go_packages := "$(go list ./... | grep -v /frontend/node_modules/)"
 
 # Default recipe
@@ -411,10 +415,10 @@ fuzz-all fuzztime="25s":
 # Run Go linter on the default build and on every backend build tag, as CI does
 lint:
     @echo "Running Go linter..."
-    golangci-lint run --build-tags maildemo,mailmanual
-    golangci-lint run --build-tags sqlite
-    golangci-lint run --build-tags postgres
-    golangci-lint run --build-tags memorybackend
+    {{golangci_lint}} --build-tags maildemo,mailmanual
+    {{golangci_lint}} --build-tags sqlite
+    {{golangci_lint}} --build-tags postgres
+    {{golangci_lint}} --build-tags memorybackend
 
 # Check for known vulnerabilities (govulncheck with OSV filter)
 govulncheck:
@@ -452,10 +456,10 @@ plimsoll:
 # Run linter with auto-fix
 lint-fix:
     @echo "Running linter with auto-fix..."
-    golangci-lint run --fix --build-tags maildemo,mailmanual
-    golangci-lint run --fix --build-tags sqlite
-    golangci-lint run --fix --build-tags postgres
-    golangci-lint run --fix --build-tags memorybackend
+    {{golangci_lint}} --fix --build-tags maildemo,mailmanual
+    {{golangci_lint}} --fix --build-tags sqlite
+    {{golangci_lint}} --fix --build-tags postgres
+    {{golangci_lint}} --fix --build-tags memorybackend
 
 # Lint markdown files
 lint-md:

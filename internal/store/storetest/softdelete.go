@@ -349,17 +349,19 @@ func RunSoftDeleteTests(t *testing.T, f Factory, sf SearchFactory, attachments b
 		free   func(t *testing.T, s store.Store)
 		reuse  string
 		reType string
+		// renamedTo is where free moved reuse, when it renamed it.
+		renamedTo string
 	}{
 		{"HardDeleteOfOtherEndDropsHiddenEdge", func(t *testing.T, s store.Store) {
 			t.Helper()
 			_, err := s.DeleteFamily(ctx(), "REQ-001", true)
 			require.NoError(t, err)
-		}, "REQ-001", "requirement"},
+		}, "REQ-001", "requirement", ""},
 		{"RenameOfOtherEndDropsHiddenEdge", func(t *testing.T, s store.Store) {
 			t.Helper()
 			_, err := s.RenameFamily(ctx(), "FEAT-002", "FEAT-003")
 			require.NoError(t, err)
-		}, "FEAT-002", "feature"},
+		}, "FEAT-002", "feature", "FEAT-003"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			s := f(t)
@@ -371,7 +373,15 @@ func RunSoftDeleteTests(t *testing.T, f Factory, sf SearchFactory, attachments b
 			tc.free(t, s)
 			fresh := entity.New(tc.reuse, tc.reType)
 			fresh.SetString("title", "Reused id")
-			require.NoError(t, s.CreateEntity(ctx(), fresh), "the freed id can be taken again")
+			if _, retires := s.(store.RetiredIDs); retires && tc.renamedTo != "" {
+				// The renamed id stays reserved; only the entity itself may
+				// move back onto it, and the dropped edge stays dropped.
+				require.ErrorIs(t, s.CreateEntity(ctx(), fresh), store.ErrConflict)
+				_, err = s.RenameFamily(ctx(), tc.renamedTo, tc.reuse)
+				require.NoError(t, err)
+			} else {
+				require.NoError(t, s.CreateEntity(ctx(), fresh), "the freed id can be taken again")
+			}
 
 			res, err := sd.Unmark(ctx(), "FEAT-009")
 			require.NoError(t, err)

@@ -9,15 +9,15 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/store/pgstore"
 )
 
-// TestMigration_SessionCause pins migration 0038 (TKT-V05706X AC 1): a
-// schema at version 37 gains channels.session_cause, a row written before
+// TestMigration_SessionCause pins migration 0039 (TKT-V05706X AC 1): a
+// schema at version 38 gains channels.session_cause, a row written before
 // it reads 0, and a second run changes nothing.
 func TestMigration_SessionCause(t *testing.T) {
 	pool := newScopedPool(t) // migrated to the latest version
 	ctx := context.Background()
 	for _, stmt := range []string{
 		`ALTER TABLE channels DROP COLUMN session_cause`,
-		`UPDATE schema_version SET version = 37`,
+		`UPDATE schema_version SET version = 38`,
 	} {
 		_, err := pool.Exec(ctx, stmt)
 		require.NoError(t, err, stmt)
@@ -35,6 +35,6 @@ func TestMigration_SessionCause(t *testing.T) {
 	require.Zero(t, cause, "no backfill")
 	current, target, err := pgstore.Status(ctx, pool)
 	require.NoError(t, err)
-	require.Equal(t, 38, current)
+	require.Equal(t, 39, current)
 	require.Equal(t, target, current)
 }
