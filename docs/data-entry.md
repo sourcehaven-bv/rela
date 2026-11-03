@@ -2844,7 +2844,7 @@ fields:
 | -------------- | ----------------------------- |
 | `text`         | string                        |
 | `textarea`     | string                        |
-| `number`       | integer                       |
+| `number`       | integer, decimal              |
 | `checkbox`     | boolean                       |
 | `date`         | date                          |
 | `datetime`     | datetime                      |
@@ -3539,7 +3539,7 @@ card says that some values are hidden.
 **`table`** shows matching entities as a compact table. It supports the same `columns` format as
 list definitions (with `property`, `label`, `sortable`, `link`), plus `sort` and `limit` to control
 ordering and row count. Cells render as they do in a list: an enum value is a badge with its label
-and style, an integer property with `display: {currency: ...}` is an amount, and a date is formatted
+and style, an integer or decimal property with `display: {currency: ...}` is an amount, and a date is formatted
 in the reader's locale. A table card with several columns usually needs `width: wide` or
 `width: full` (see [Card width](#card-width-width)).
 
@@ -4223,14 +4223,19 @@ board: `value` has `display: {currency: EUR}` in `schema.yaml` (see
 | `property` | string | The property to aggregate. Required for every function except `count`, which counts the cards and takes no property. |
 | `label`    | string | Optional. Text before the value. Defaults to "Count", "Total", "Average", "Minimum" or "Maximum". |
 
-`sum` and `avg` need a single-valued `integer` property. `min` and `max`
-also accept a `date` or `datetime` property, and show the earliest or latest
+`sum` and `avg` need a single-valued `integer` or `decimal` property. `min`
+and `max` also accept a `date` or `datetime` property, and show the earliest or latest
 date. Config load checks this, and reports an unknown function, a missing
 property, or a property on `count`.
 
 A value is formatted the way the property is formatted everywhere else: a
 currency property shows as money, a date as a date. Numbers use the format
 of the reader's browser language. A whole number shows no decimals.
+
+A `decimal` property is summed exactly, without the rounding errors of binary
+numbers: 0.10 plus 0.20 is 0.30. A sum shows as many digits as the value with
+the most. An average keeps two more digits than its values, or the property's
+`scale:` when it declares one, and rounds half away from zero.
 
 The summaries cover the cards on the board: the cards the reader may see,
 after the board's filters. A card without a value adds nothing to `sum`,
@@ -4400,7 +4405,7 @@ card:
 | `show_label` | Optional. Default `true`.                                                    |
 
 The value renders as the property renders elsewhere. An enum shows as a badge
-in the colour from its `styles:` entry, an integer with
+in the colour from its `styles:` entry, an integer or decimal with
 `display: {currency: EUR}` shows as an amount, and a date is formatted. Plain
 text values are separated by commas.
 

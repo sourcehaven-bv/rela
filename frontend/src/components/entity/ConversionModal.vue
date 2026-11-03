@@ -55,6 +55,8 @@ function setValue(name: string, def: PropertyDef, input: string) {
       .map((item) => item.trim())
       .filter(Boolean)
   else if (def.type === 'integer') values[name] = input === '' ? undefined : Number(input)
+  // A decimal stays text, so "12.50" keeps its digits (TKT-DTUAG3U).
+  else if (def.type === 'decimal') values[name] = input === '' ? undefined : input
   else values[name] = input
 }
 
@@ -161,7 +163,14 @@ async function submit() {
       <input
         v-else
         :value="String(values[name] ?? '')"
-        :type="def.type === 'date' ? 'date' : def.type === 'integer' ? 'number' : 'text'"
+        :type="
+          def.type === 'date'
+            ? 'date'
+            : def.type === 'integer' || def.type === 'decimal'
+              ? 'number'
+              : 'text'
+        "
+        :step="def.type === 'decimal' ? 'any' : undefined"
         :required="def.required"
         @input="setValue(name, def, ($event.target as HTMLInputElement).value)"
       />

@@ -80,6 +80,7 @@ import RlButton from 'rela-components/components/common/RlButton.vue'
 import RlSelect from 'rela-components/components/form/RlSelect.vue'
 import RlStatusRegion from 'rela-components/components/feedback/RlStatusRegion.vue'
 import RlKbd from 'rela-components/components/data/RlKbd.vue'
+import { parseDecimal } from '@/utils/decimal'
 
 const props = defineProps<{
   formId: string
@@ -1487,6 +1488,11 @@ function validate(scopeFields?: FormFieldOrRelation[], requiredProps?: Set<strin
           next[propName] = t('form.validation.number')
           scopeValid = false
         }
+      }
+
+      if (propDef.type === 'decimal' && parseDecimal(value) === undefined) {
+        next[propName] = t('form.validation.number')
+        scopeValid = false
       }
 
       if (propDef.type === 'date' && typeof value === 'string') {

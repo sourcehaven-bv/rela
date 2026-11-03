@@ -167,7 +167,7 @@ var sectionDisplayModesRenderingFields = map[string]bool{
 var sectionFieldWidgetTypes = map[string][]string{
 	WidgetText:        {metamodel.PropertyTypeString},
 	WidgetTextarea:    {metamodel.PropertyTypeString},
-	WidgetNumber:      {metamodel.PropertyTypeInteger},
+	WidgetNumber:      {metamodel.PropertyTypeInteger, metamodel.PropertyTypeDecimal},
 	WidgetCheckbox:    {metamodel.PropertyTypeBoolean},
 	WidgetDate:        {metamodel.PropertyTypeDate},
 	WidgetDatetime:    {metamodel.PropertyTypeDatetime},

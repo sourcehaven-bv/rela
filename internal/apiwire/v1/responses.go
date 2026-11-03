@@ -725,12 +725,16 @@ type PropertyDef struct {
 	// Min and Max mirror the schema keys, whose meaning depends on Type.
 	// Nil: accepted — omitted when the schema does not set the key.
 	//
-	// On an `integer` property they are the inclusive value bounds
-	// (TKT-BRAM1A); the SPA puts them on the number input. On a `file`
+	// On an `integer` or `decimal` property they are the inclusive value
+	// bounds (TKT-BRAM1A); the SPA puts them on the number input. On a `file`
 	// property Max is the attachment cap (default 1), which the file widget
 	// reads to switch between replace-mode and multi-file add-mode.
 	Min *int `json:"min,omitempty"`
 	Max *int `json:"max,omitempty"`
+	// Scale is a `decimal` property's cap on digits after the point
+	// (TKT-DTUAG3U); the SPA sets the number input's step from it. Nil:
+	// accepted — omitted when the schema does not set it.
+	Scale *int `json:"scale,omitempty"`
 	// System names the external system of an `external_ref` property
 	// (TKT-SM20FG). The value is read-only on every interactive surface.
 	System string `json:"system,omitempty"`

@@ -287,7 +287,7 @@ function getInputType(propName: string): string {
   const def = getPropertyDef(propName)
   if (!def) return 'text'
   if (def.type === 'date') return 'date'
-  if (def.type === 'integer') return 'number'
+  if (def.type === 'integer' || def.type === 'decimal') return 'number'
   if (def.type === 'boolean') return 'checkbox'
   return 'text'
 }

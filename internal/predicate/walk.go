@@ -2,6 +2,8 @@ package predicate
 
 import (
 	"fmt"
+	"math"
+	"strconv"
 
 	"github.com/yuin/gopher-lua/ast"
 )
@@ -119,6 +121,12 @@ func coerceOneLiteral(lit node, target Type, line int) (out node, handled bool, 
 			return lit, true, cErr
 		}
 		return &constNode{v: v}, true, nil
+	case target.equalsType(DecimalType):
+		v, cErr := coerceDecimalLiteral(cn.v, line)
+		if cErr != nil {
+			return lit, true, cErr
+		}
+		return &constNode{v: v}, true, nil
 	case target.equalsType(DateType):
 		layout := ""
 		if dt, ok := target.(dateType); ok {
@@ -195,6 +203,31 @@ func coerceIntLiteral(v Value, line int) (Value, error) {
 	return NewInt(int64(n.v)), nil
 }
 
+// coerceDecimalLiteral converts a number or string literal to a Decimal.
+// A number literal is read through the shortest decimal text that names
+// its float64, which is the literal as written for every literal of up to
+// 15 significant digits. A string literal ('12.50') is read exactly. Any
+// other literal is left for the checker to reject.
+func coerceDecimalLiteral(v Value, line int) (Value, error) {
+	var text string
+	switch x := v.(type) {
+	case Number:
+		if math.IsInf(x.v, 0) || math.IsNaN(x.v) {
+			return nil, &CompileError{Line: line, Reason: fmt.Sprintf("%v cannot be a decimal", x.v)}
+		}
+		text = strconv.FormatFloat(x.v, 'f', -1, 64)
+	case String:
+		text = x.v
+	default:
+		return v, nil
+	}
+	r, ok := parseDecimalText(text)
+	if !ok {
+		return nil, &CompileError{Line: line, Reason: fmt.Sprintf("%q is not a decimal number", text)}
+	}
+	return NewDecimal(r), nil
+}
+
 // coerceDateLiteral parses a string-literal Value into a Date using the
 // field's layout (or built-in defaults when layout is empty). A
 // non-string literal is left unchanged for the checker to reject.
@@ -255,10 +288,10 @@ func checkRelational(op string, lt, rt Type, line int) error {
 func isNil(t Type) bool { return t.equalsType(NilType) }
 
 // isOrderedType reports whether a type supports ordered comparison
-// (<, <=, >, >=). Numbers, ints, dates, and strings order; bools,
+// (<, <=, >, >=). Numbers, ints, decimals, dates, and strings order; bools,
 // nil, records, and lists do not.
 func isOrderedType(t Type) bool {
-	return t.equalsType(NumberType) || t.equalsType(IntType) ||
+	return t.equalsType(NumberType) || t.equalsType(IntType) || t.equalsType(DecimalType) ||
 		t.equalsType(DateType) || t.equalsType(StringType)
 }
 
@@ -278,8 +311,13 @@ func (w *walker) walkArithmetic(e *ast.ArithmeticOpExpr) (node, error) {
 		return nil, err
 	}
 	lt, rt := lhs.resultType(), rhs.resultType()
-	if !lt.equalsType(rt) || (!lt.equalsType(IntType) && !lt.equalsType(NumberType)) {
-		return nil, &CompileError{Line: e.Line(), Reason: fmt.Sprintf("arithmetic %q requires matching int or number operands, got %s and %s", e.Operator, lt.typeName(), rt.typeName())}
+	if !lt.equalsType(rt) || (!lt.equalsType(IntType) && !lt.equalsType(NumberType) && !lt.equalsType(DecimalType)) {
+		return nil, &CompileError{Line: e.Line(), Reason: fmt.Sprintf("arithmetic %q requires matching int, decimal or number operands, got %s and %s", e.Operator, lt.typeName(), rt.typeName())}
+	}
+	if lt.equalsType(DecimalType) && e.Operator != "+" && e.Operator != "-" && e.Operator != "*" {
+		// Division can leave a value with no finite decimal form (1/3), and
+		// % and ^ have no exact decimal meaning worth the cost.
+		return nil, &CompileError{Line: e.Line(), Reason: fmt.Sprintf("operator %q is not available for decimal expressions", e.Operator)}
 	}
 	switch e.Operator {
 	case "+", "-", "*", "%":
@@ -375,7 +413,8 @@ func checkSelectable(op, side string, t Type, line int) error {
 	case t.equalsType(NilType):
 		return &CompileError{Line: line, Reason: fmt.Sprintf(
 			"'%s' cannot select nil on %s: 'c and nil or y' always yields y", op, side)}
-	case t.equalsType(StringType), t.equalsType(NumberType), t.equalsType(IntType), t.equalsType(DateType):
+	case t.equalsType(StringType), t.equalsType(NumberType), t.equalsType(IntType), t.equalsType(DecimalType),
+		t.equalsType(DateType):
 		return nil
 	case t.equalsType(BoolType):
 		return &CompileError{Line: line, Reason: fmt.Sprintf(

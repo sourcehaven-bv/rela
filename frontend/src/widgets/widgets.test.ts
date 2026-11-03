@@ -166,6 +166,49 @@ describe('NumberWidget', () => {
   })
 })
 
+// TKT-DTUAG3U: a decimal is edited and emitted as text.
+describe('NumberWidget on a decimal', () => {
+  const dec = (extra: Record<string, unknown> = {}) => ({ type: 'decimal' as const, ...extra })
+
+  it('emits the typed text, keeping trailing zeros', async () => {
+    const w = mount(NumberWidget, {
+      props: { modelValue: '1', mode: 'edit' as const, propertyName: 'price', propertyDef: dec() },
+    })
+    await w.find('input').setValue('12.50')
+    expect(w.emitted('update:modelValue')?.[0]).toEqual(['12.50'])
+  })
+
+  it('steps by the declared scale, or by any amount without one', () => {
+    const step = (def: ReturnType<typeof dec>) =>
+      mount(NumberWidget, { props: { modelValue: '', mode: 'edit' as const, propertyName: 'p', propertyDef: def } })
+        .find('input')
+        .attributes('step')
+    expect(step(dec({ scale: 2 }))).toBe('0.01')
+    expect(step(dec({ scale: 0 }))).toBe('1')
+    expect(step(dec())).toBe('any')
+  })
+
+  it('bounds the input by the declared range', () => {
+    const w = mount(NumberWidget, {
+      props: { modelValue: '2.5', mode: 'edit' as const, propertyName: 'p', propertyDef: dec({ min: 0, max: 5 }) },
+    })
+    expect(w.find('input').attributes('min')).toBe('0')
+    expect(w.find('input').attributes('max')).toBe('5')
+  })
+
+  it('shows a currency decimal as money in display mode', () => {
+    const w = mount(NumberWidget, {
+      props: {
+        modelValue: '12.5',
+        mode: 'display' as const,
+        propertyName: 'price',
+        propertyDef: dec({ display: { currency: 'EUR' } }),
+      },
+    })
+    expect(w.find('span.display-value').text()).toContain('12.50')
+  })
+})
+
 describe('CheckboxWidget', () => {
   it('reflects boolean true and string "true"', () => {
     expect((mount(CheckboxWidget, { props: { modelValue: true, mode: 'edit' as const, propertyName: '' } }).find('input').element as HTMLInputElement).checked).toBe(true)

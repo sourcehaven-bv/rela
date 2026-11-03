@@ -261,8 +261,8 @@ rela list ticket --filter "entity.status == 'ready' and entity.priority > 3"
 rela list ticket --filter "entity.status == 'done' or entity.priority > 8"
 ```
 
-Comparisons are typed by the property's declared metamodel type (integers
-compare numerically, dates instant-granularly). Host functions are
+Comparisons are typed by the property's declared metamodel type (integers and
+decimals compare numerically, dates instant-granularly). Host functions are
 available for pattern matching: `match(field, glob)`, `regex(field, re)`,
 `fuzzy(field, target)`, and `contains(list_field, value)`.
 
@@ -339,7 +339,7 @@ supports these comparison operators:
 | -------- | ------------------------------- | ----------------------------------- |
 | `=`      | Exact match (supports `*` glob) | `--where "status=draft"`            |
 | `!=`     | Not equal                       | `--where "status!=done"`            |
-| `<`      | Less than (date/integer)        | `--where "due_date<2025-03-01"`     |
+| `<`      | Less than (date/number)         | `--where "due_date<2025-03-01"`     |
 | `<=`     | Less than or equal              | `--where "priority<=2"`             |
 | `>`      | Greater than                    | `--where "risk_score>5"`            |
 | `>=`     | Greater than or equal           | `--where "valid_until>=2025-01-01"` |

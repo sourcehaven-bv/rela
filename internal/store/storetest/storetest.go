@@ -203,6 +203,7 @@ func countRelations(t *testing.T, s store.Store) int {
 // Capabilities gates optional feature tests (e.g. attachments).
 func RunAll(t *testing.T, f Factory, sf SearchFactory, vsf VisibleSearchFactory, caps Capabilities) {
 	t.Run("Entity", func(t *testing.T) { RunEntityTests(t, f) })
+	t.Run("DecimalText", func(t *testing.T) { RunDecimalTextTests(t, f) })
 	t.Run("CAS", func(t *testing.T) { RunCASTests(t, f) })
 	t.Run("Header", func(t *testing.T) { RunHeaderTests(t, f) })
 	t.Run("BulkMigrate", func(t *testing.T) { RunBulkMigrateTests(t, f) })

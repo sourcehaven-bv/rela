@@ -158,7 +158,10 @@ function denseHintKind(propertyDef: PropertyDef | undefined): DenseHintKind {
     case 'external_ref':
       return 'text'
 
+    // A decimal shares the integer kind: NumberWidget renders both, and a
+    // cell pre-formats either one (a currency, for instance).
     case 'integer':
+    case 'decimal':
       return 'integer'
 
     default:

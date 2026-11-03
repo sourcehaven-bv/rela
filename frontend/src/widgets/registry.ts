@@ -30,7 +30,7 @@ export function defaultWidgetFor(propertyDef?: PropertyDef): string {
   if (propertyDef?.type === 'boolean') return 'checkbox'
   if (propertyDef?.type === 'date') return 'date'
   if (propertyDef?.type === 'datetime') return 'datetime'
-  if (propertyDef?.type === 'integer') return 'number'
+  if (propertyDef?.type === 'integer' || propertyDef?.type === 'decimal') return 'number'
   if (propertyDef?.type === 'rrule') return 'rrule'
   if (propertyDef?.type === 'file') return 'file'
   if (propertyDef?.type === 'external_ref') return 'external-ref'
@@ -140,7 +140,7 @@ export const WIDGET_REGISTRATIONS: ReadonlyArray<{
 }> = [
   { name: 'text', component: TextWidget, supportedPropertyTypes: ['string'] },
   { name: 'textarea', component: TextareaWidget, supportedPropertyTypes: ['string'] },
-  { name: 'number', component: NumberWidget, supportedPropertyTypes: ['integer'] },
+  { name: 'number', component: NumberWidget, supportedPropertyTypes: ['integer', 'decimal'] },
   { name: 'checkbox', component: CheckboxWidget, supportedPropertyTypes: ['boolean'] },
   { name: 'date', component: DateWidget, supportedPropertyTypes: ['date'] },
   { name: 'datetime', component: DatetimeWidget, supportedPropertyTypes: ['datetime'] },

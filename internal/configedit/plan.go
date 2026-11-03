@@ -297,7 +297,7 @@ func baseType(m *metamodel.Metamodel, t string) string {
 
 func coercible(t string) bool {
 	switch t {
-	case "string", "integer", "boolean", "date", "datetime":
+	case "string", "integer", "decimal", "boolean", "date", "datetime":
 		return true
 	}
 	return false

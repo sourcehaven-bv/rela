@@ -380,6 +380,7 @@ The following names are reserved for built-in property types and cannot be used 
 - `date` - Date values
 - `datetime` - Time-bearing instants (date + time)
 - `integer` - Whole numbers
+- `decimal` - Exact decimal numbers
 - `boolean` - True/false values
 - `enum` - Inline enumeration (use `values:` directly in property definition)
 
@@ -642,6 +643,7 @@ entities:
 | `date`     | Date value (ISO 8601 by default)              | `=`, `!=`, `<`, `<=`, `>`, `>=`     |
 | `datetime` | Time-bearing instant (RFC3339, stored as UTC) | `=`, `!=`, `<`, `<=`, `>`, `>=`     |
 | `integer`  | Whole number                                  | `=`, `!=`, `<`, `<=`, `>`, `>=`     |
+| `decimal`  | Exact decimal number, such as a price (see [Decimal numbers](#decimal-numbers)) | `=`, `!=`, `<`, `<=`, `>`, `>=` |
 | `boolean`  | True or false                                 | `=`, `!=`                           |
 | `enum`     | Inline enum with `values`                     | `=`, `!=`, `=~` (regex)             |
 | `file`     | File attachment (stored under `attachments/`) | N/A                                 |
@@ -661,8 +663,9 @@ entities:
 | `list: true`     | Allow multiple values (multi-select for enum types)                                   |
 | `computed`       | Pure entity-local expression materialized on every write; the property is read-only   |
 | `rollup`         | Summary of related entities, computed on read per reader; see [Roll-up properties](#roll-up-properties) |
-| `unique: true`   | Natural key: no two entities of the type may share a non-empty value (write-time 422; find pre-existing dups with `rela analyze unique`). On a type declaring `faces:` the constraint holds **per face**: two entities may not share a value within one face, while two faces of the same entity never collide with each other. Only for string-valued properties (`string`, `date`, `datetime`, `enum`, custom types) — not `list`, and not `integer`/`boolean`/`file`. On the PostgreSQL backend this is additionally enforced by an automatically-maintained database index, so it holds even under concurrent writers ([details](postgres-backend.md#derived-schema-unique-constraints)). |
-| `min` / `max`    | For `integer` properties: the lowest and highest allowed value, inclusive (see [Integer ranges](#integer-ranges-min-and-max)) |
+| `unique: true`   | Natural key: no two entities of the type may share a non-empty value (write-time 422; find pre-existing dups with `rela analyze unique`). On a type declaring `faces:` the constraint holds **per face**: two entities may not share a value within one face, while two faces of the same entity never collide with each other. Only for string-valued properties (`string`, `date`, `datetime`, `enum`, custom types) — not `list`, and not `integer`/`decimal`/`boolean`/`file`. On the PostgreSQL backend this is additionally enforced by an automatically-maintained database index, so it holds even under concurrent writers ([details](postgres-backend.md#derived-schema-unique-constraints)). |
+| `min` / `max`    | For `integer` and `decimal` properties: the lowest and highest allowed value, inclusive (see [Integer ranges](#integer-ranges-min-and-max)) |
+| `scale`          | For `decimal` properties: the most digits allowed after the point (see [Decimal numbers](#decimal-numbers)) |
 | `max`            | For `file` properties: max attachments (default 1)                                    |
 | `accept`         | For `file` properties: narrow the MIME allowlist (e.g. `[application/pdf]`)           |
 | `scan_cmd`       | For `file` properties: the scan command (array args); configuring it enables scanning |
@@ -878,8 +881,8 @@ entities:
 | `where`     | Keep only related entities whose properties equal these values (enum, string, boolean, integer) |
 | `count`     | The number of related entities. The property must be `integer`                               |
 | `exists`    | Whether there is at least one. The property must be `boolean`                                 |
-| `min`/`max` | The lowest or highest value of an `integer` or `date` property; same type                      |
-| `sum`       | The total of an `integer` property. The property must be `integer`                            |
+| `min`/`max` | The lowest or highest value of an `integer` or `date` property; same type. Not yet `decimal`  |
+| `sum`       | The total of an `integer` property. The property must be `integer`. Not yet `decimal`         |
 | `latest_by` | With `pick`: the `pick` value of the entity with the latest `date` here                       |
 
 Declare exactly one function. `pick` must have the roll-up's declared type.
@@ -954,13 +957,77 @@ A value outside the range is an invalid value:
   (see the data-entry guide).
 
 The schema fails to load when `min` is above `max`, when `min` or `max` is set
-on a type other than `integer`, or when it is set on a `list` property. On a
-`file` property `max` keeps its own meaning, the attachment cap below, and
-`min` is refused. rela has no decimal type, so there is no range for
-fractional numbers.
+on a type other than `integer` or `decimal`, or when it is set on a `list`
+property. On a `file` property `max` keeps its own meaning, the attachment cap
+below, and `min` is refused. The bounds are whole numbers, also on a `decimal`
+property: `min: 0` works, `min: 0.5` does not load.
 
 A range is a validation rule, not part of the data shape: adding or changing
 one needs no data migration.
+
+### Decimal numbers
+
+A `decimal` property holds an exact decimal number, such as a price or a
+number of hours. Use it where `integer` is too coarse and a rounding error is
+not acceptable:
+
+```yaml
+price:
+  type: decimal
+  scale: 2      # at most two digits after the point
+  min: 0
+  display:
+    currency: EUR
+```
+
+**Stored form.** rela stores a decimal as text in plain decimal notation: an
+optional sign, digits, and optionally a point followed by digits, such as
+`12.50`, `-3` or `0.125`. The text is kept exactly as written. rela does not
+rewrite `12.50` to `12.5`, so a file you save is not changed by the next
+write. In the markdown front matter the value is quoted:
+
+```yaml
+price: "12.50"
+```
+
+An unquoted number (`price: 12.5`) is accepted too. YAML reads it as a binary
+number, so a trailing zero you typed is lost: rela reads the shortest decimal
+text for that number, `12.5`. Quote a decimal to keep its exact text.
+Exponents (`1e3`), a leading or trailing point (`.5`, `5.`), thousands
+separators and values longer than 64 characters are not decimals; validation
+reports them as invalid values.
+
+**Comparing.** Every comparison is numeric and exact: `12.50` equals `12.5`,
+and `9` sorts before `10`. This holds for `--filter`/`--where`, list filters
+and sorting on every storage backend, conditions, and validation rules. rela
+never converts a decimal to a binary floating-point number.
+
+**`scale`.** The most digits allowed after the point, from 0 to 30. A value
+with more digits is an invalid value, reported like an out-of-range value: a
+write succeeds with a warning, and `rela analyze properties` lists it. rela
+does not round a value to fit. The data-entry form steps the number input by
+the smallest digit (`0.01` for `scale: 2`).
+
+**Expressions.** In a computed property or a condition, a decimal supports
+`+`, `-`, `*` and unary `-`, and every comparison. Division is not available,
+because its result is not always a finite decimal. A decimal does not mix with
+an integer or a number literal in arithmetic: `entity.price * entity.qty` needs
+both to be decimals. A literal compared with a decimal is read as a decimal,
+so `entity.price > 9.5` and `entity.price == '0.10'` both work. A computed
+decimal is stored in its shortest form: `"12.50"` times `"3"` stores `"37.5"`.
+
+**Not yet supported.** These are planned but not built:
+
+- Roll-up `sum`, `min` and `max` over a decimal, and a roll-up `where:` on a
+  decimal. `latest_by` with a decimal `pick` works.
+- `unique: true`: `12.5` and `12.50` are the same number, and uniqueness
+  compares stored text.
+- Bounds with a fraction (`min: 0.5`).
+- A dashboard matrix card axis over a decimal.
+
+A decimal sorts and filters in rela itself rather than in the database, like
+an integer, so a list over a decimal property is not served by a derived
+index.
 
 ### File attachments and `max`
 
@@ -1058,7 +1125,13 @@ American one. A whole amount shows no decimals. The format applies wherever
 the value is shown: kanban cards and column summaries, list cells, and the
 entity page.
 
-`currency` needs a single-valued `integer` property, and an ISO 4217 code:
+A decimal shows the digits it was written with, and at least two when it has
+any, so `12.5` shows as "€ 12,50". With `scale:` it always shows that many
+digits. The amount is formatted from the stored text, not from a binary
+number, so it stays exact.
+
+`currency` needs a single-valued `integer` or `decimal` property, and an
+ISO 4217 code:
 three upper-case letters, such as `EUR` or `USD`. Config load checks both. It
 does not check the code against a list: the browser formats every
 well-formed code, and shows a code it does not know as the code itself.
