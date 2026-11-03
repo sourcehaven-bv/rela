@@ -11,8 +11,16 @@
  * "Mark read" on an unread channel marks up to its last message; on a
  * mention it marks up to the mention, which also marks every earlier
  * message read and creates a marker when the channel had none.
+ *
+ * A waiting row also shows the message that moved the session and its
+ * decisions (TKT-V05706X, InboxWaitingItem). A one-click decision posts
+ * from the row. A form decision, "Other answer" or "Open channel" opens
+ * the channel in a drawer (InboxAnswerDrawer). After a post from the row
+ * or a send in the drawer, the inbox reads itself again and the focus
+ * moves to the next waiting row, or to the waiting heading when none is
+ * left.
  */
-import { computed, ref } from 'vue'
+import { computed, nextTick, ref } from 'vue'
 import { RouterLink } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { markChannelRead } from '@/api/channels'
@@ -28,13 +36,15 @@ import PageLayout from '@/components/common/PageLayout.vue'
 import PageTitle from '@/components/common/PageTitle.vue'
 import RlInbox from 'rela-components/components/channel/RlInbox.vue'
 import RlCallout from 'rela-components/components/feedback/RlCallout.vue'
+import InboxWaitingItem from '@/components/inbox/InboxWaitingItem.vue'
+import InboxAnswerDrawer from '@/components/inbox/InboxAnswerDrawer.vue'
 import type {
   InboxMentionRow,
   InboxRowLink,
   InboxUnreadRow,
   InboxWaitingRow,
 } from 'rela-components/components/channel/types'
-import type { InboxChannel } from '@/types/channels'
+import type { ChannelStart, InboxChannel, InboxEntry } from '@/types/channels'
 
 /** The cap of the server's waiting count; `truncated` means more than this. */
 const WAITING_CAP = 20000
@@ -47,6 +57,13 @@ const ui = useUIStore()
 const tz = browserTimeZone()
 
 const { inbox, error, loading, refetch } = useInbox()
+
+/** The waiting entries by row id, for the waiting-detail slot. */
+const entries = computed(() => {
+  const out = new Map<string, InboxEntry>()
+  for (const e of inbox.value?.entries ?? []) out.set(`w:${rowKey(e.channel)}`, e)
+  return out
+})
 
 function when(value: string | undefined): string {
   if (!value) return ''
@@ -139,6 +156,92 @@ const loadError = computed(() => {
   return { message: t('inbox.loadError'), detail }
 })
 
+// --- Answering from the inbox ------------------------------------------------
+
+/**
+ * The row whose channel the drawer shows, what it starts there, and the
+ * waiting rows' order when it opened, to find the next row once it left.
+ */
+const answering = ref<{
+  id: string
+  entry: InboxEntry
+  start?: ChannelStart
+  order: string[]
+} | null>(null)
+
+function openDrawer(id: string, start?: ChannelStart) {
+  const entry = entries.value.get(id)
+  if (entry) answering.value = { id, entry, ...(start ? { start } : {}), order: waitingIds() }
+}
+
+/** The waiting row ids in their order, read from the page. */
+function waitingIds(): string[] {
+  return waiting.value.map((w) => w.id)
+}
+
+function rowElement(id: string): HTMLElement | null {
+  return document.querySelector<HTMLElement>(`[data-row-id="${CSS.escape(id)}"]`)
+}
+
+/** Focuses the row's link, or the waiting heading when id is undefined. */
+function focusRow(id: string | undefined) {
+  const row = id ? rowElement(id)?.querySelector<HTMLElement>('a') : null
+  const target = row ?? document.querySelector<HTMLElement>('[data-inbox-heading="waiting"]')
+  target?.focus()
+}
+
+/**
+ * Focuses the first row that came after `id` in `before`, else the last
+ * row, else the waiting heading.
+ */
+function focusAfter(id: string, before: string[]) {
+  const at = before.indexOf(id)
+  const after = waitingIds().filter((x) => x !== id)
+  focusRow(after.find((x) => before.indexOf(x) > at) ?? after[after.length - 1])
+}
+
+/** Reads the inbox again, then moves the focus past the answered row. */
+async function afterAnswer(id: string, before = waitingIds()) {
+  await refetch()
+  await nextTick()
+  focusAfter(id, before)
+}
+
+/**
+ * Returns the focus to the row that opened the drawer. The drawer gives it
+ * back to the button that opened it; when that is gone, the row's link
+ * takes it, and when the row has left, the next row.
+ */
+async function restoreFocus(a: { id: string; order: string[] }) {
+  await nextTick()
+  const row = rowElement(a.id)
+  if (!row) focusAfter(a.id, a.order)
+  else if (!row.contains(document.activeElement)) focusRow(a.id)
+}
+
+function onDrawerClose() {
+  const a = answering.value
+  answering.value = null
+  if (a) void restoreFocus(a)
+}
+
+function onDrawerSent() {
+  const a = answering.value
+  answering.value = null
+  if (a) void afterAnswer(a.id, a.order)
+}
+
+async function onDrawerGone() {
+  const a = answering.value
+  answering.value = null
+  await refetch()
+  if (a) await restoreFocus(a)
+}
+
+const answeringLabel = computed(() =>
+  answering.value ? channelLabel(answering.value.entry.channel) : ''
+)
+
 const busy = ref(new Set<string>())
 
 async function onMarkRead(id: string) {
@@ -181,6 +284,26 @@ async function onMarkRead(id: string) {
       :degraded="inbox.degraded"
       :busy="busy"
       @mark-read="onMarkRead"
+    >
+      <template #waiting-detail="{ row }">
+        <InboxWaitingItem
+          v-if="entries.get(row.id)"
+          :entry="entries.get(row.id)!"
+          :after-post="() => afterAnswer(row.id)"
+          :refetch="refetch"
+          @answer="(start) => openDrawer(row.id, start)"
+          @open="openDrawer(row.id)"
+        />
+      </template>
+    </RlInbox>
+    <InboxAnswerDrawer
+      :entry="answering?.entry ?? null"
+      :start="answering?.start"
+      :label="answeringLabel"
+      @close="onDrawerClose"
+      @sent="onDrawerSent"
+      @gone="onDrawerGone"
+      @changed="refetch()"
     />
   </PageLayout>
 </template>

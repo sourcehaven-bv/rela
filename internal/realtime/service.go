@@ -279,18 +279,28 @@ func (c *call) affordancesWith(post map[string]bool) Affordances {
 	}
 	a.Remove = c.moderator()
 	a.Lifecycle = c.lifecycleOps()
-	for _, name := range sortedKeys(c.ct.MessageTypes) {
-		if post[name] {
-			a.Post = append(a.Post, name)
-		}
-	}
 	if c.state() == channels.StateOpen {
 		a.EditOwn = c.editGate()
 	}
 	a.DeleteOwn = c.deleteOwnGate()
 	a.Typing = c.typingAllowed()
-	a.Transitions, a.Entries = c.sessionAffordances(post)
+	a.Post, a.Transitions, a.Entries = decisionAffordances(c, post)
 	return a
+}
+
+// decisionAffordances are the affordances a session decision is built
+// from: the types in post, sorted, and the session's transition types and
+// entries for them (see [call.sessionAffordances]). The channel head and
+// the inbox entry both take them from here, so the two cannot drift.
+func decisionAffordances(c *call, post map[string]bool) (posts, types []string, entries []EntryRef) {
+	posts = []string{}
+	for _, name := range sortedKeys(c.ct.MessageTypes) {
+		if post[name] {
+			posts = append(posts, name)
+		}
+	}
+	types, entries = c.sessionAffordances(post)
+	return posts, types, entries
 }
 
 // postable is the set of message types the caller may post here now: they

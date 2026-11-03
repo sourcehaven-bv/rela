@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { nextTick, ref } from 'vue'
+import { nextTick, ref, type Ref } from 'vue'
 import { ApiError } from '@/api/errors'
 import { i18n } from '@/i18n'
 import type {
@@ -80,6 +80,14 @@ function deferred<T>() {
   return { promise, resolve, reject }
 }
 
+/** DecisionChannel with refs a test may set. */
+type TestChannel = DecisionChannel & {
+  head: Ref<ChannelHead | null>
+  messages: Ref<Message[]>
+  hasNewer: Ref<boolean>
+  actionsGeneration: Ref<number | undefined>
+}
+
 function setup() {
   const h = ref<ChannelHead | undefined>(head(4))
   const actionsGeneration = ref<number | undefined>(4)
@@ -91,7 +99,7 @@ function setup() {
     actionsGeneration,
     refreshHead: vi.fn(async () => {}),
     refetch: vi.fn(async () => {}),
-  } as unknown as DecisionChannel
+  } as unknown as TestChannel
   const deps = {
     channelType: () => ct,
     channelKey: () => key.value,
@@ -447,7 +455,7 @@ function choiceSetup(withSession: boolean) {
     actionsGeneration: ref<number | undefined>(withSession ? 5 : undefined),
     refreshHead: vi.fn(async () => {}),
     refetch: vi.fn(async () => {}),
-  } as unknown as DecisionChannel
+  } as unknown as TestChannel
   const deps = {
     channelType: () => cct,
     channelKey: () => 'a',
@@ -687,7 +695,7 @@ function presetSetup(messages: Message[] = []) {
     actionsGeneration: ref<number | undefined>(4),
     refreshHead: vi.fn(async () => {}),
     refetch: vi.fn(async () => {}),
-  } as unknown as DecisionChannel
+  } as unknown as TestChannel
   const deps = {
     channelType: () => pct,
     channelKey: () => 'a',
@@ -1140,5 +1148,50 @@ describe('useSessionDecisions options', () => {
         danger: true,
       })
     )
+  })
+})
+
+describe('useSessionDecisions with a known cause (TKT-V05706X)', () => {
+  const question: Message = {
+    seq: 7,
+    rev: 7,
+    type: 'approve',
+    author: { user: 'runner' },
+    at: '2026-03-01T10:00:00Z',
+    props: {},
+  }
+
+  it('the cause ref names the deciding message without a notice', () => {
+    const s = setup()
+    const cause = ref<number | undefined>(7)
+    s.ch.messages.value = [question]
+    const d = useSessionDecisions({ ...s.deps, ch: { ...s.ch, cause } })
+    expect(d.decisionSeq.value).toBe(7)
+    cause.value = undefined
+    expect(d.decisionSeq.value).toBeUndefined()
+  })
+
+  it('onAnswer opens the type as a reply, recorded at the generation', async () => {
+    const s = setup()
+    expect(await s.d.onAnswer('approve', 7)).toBe(true)
+    expect(s.deps.composer.select).toHaveBeenCalledWith('approve')
+    expect(s.deps.composer.reply).toHaveBeenCalledWith(7)
+    expect(s.d.formDecision.value).toEqual({ messageType: 'approve', generation: 4 })
+    expect(s.d.deciding.value).toBe(false)
+  })
+
+  it('onAnswer does nothing while another decision runs', async () => {
+    const s = setup()
+    s.deps.submitting.value = true
+    expect(await s.d.onAnswer('approve', 7)).toBe(false)
+    expect(s.deps.composer.select).not.toHaveBeenCalled()
+  })
+
+  it('onAnswer replies to nothing when the composer refuses the type', async () => {
+    const s = setup()
+    s.deps.composer.select.mockReturnValue(false)
+    expect(await s.d.onAnswer('approve', 7)).toBe(false)
+    expect(s.deps.composer.reply).not.toHaveBeenCalled()
+    expect(s.deps.ui.toast).toHaveBeenCalledWith(STALE)
   })
 })

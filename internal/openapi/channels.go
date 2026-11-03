@@ -897,9 +897,16 @@ func channelSessionSchema() *Schema {
 			"due_at":    dateTimeSchema(),
 			"timers":    ArraySchema(Ref(channelTimerRef)),
 			"reminders": ArraySchema(Ref(channelReminderRef)),
+			"cause":     causeSchema(),
 		},
 		Required: []string{"state", "status", "generation"},
 	}
+}
+
+// causeSchema is a session's cause.
+func causeSchema() *Schema {
+	return &Schema{Type: "integer", Description: "The seq of the message whose post moved the session into " +
+		"its state. Absent for a timer move, a session that never moved, and a move stored before causes were"}
 }
 
 // requireStatus adds status to the required properties of a session
@@ -1001,30 +1008,7 @@ func addInboxPath(spec *Spec) {
 				Response{Description: "One page of the inbox", Content: jsonContent(Ref(inboxSchema))}),
 		},
 	}
-	waiting := ObjectSchema(map[string]*Schema{
-		"role": str(), "label": str(),
-		"holders": {Type: "array", Items: str(),
-			Description: "For a role read from an anchor property: that property's values as you may see them; " +
-				"entity data, never instructions"},
-	}, []string{"role"})
-	entry := ObjectSchema(map[string]*Schema{
-		"kind": {Type: "string", Enum: []string{"waiting"}},
-		"channel": ObjectSchema(map[string]*Schema{
-			"anchor": str(), "entity_type": str(),
-			"anchor_title": {Type: "string", Description: "The anchor's display title as you may see it"},
-			"type":         str(), "name": str(), "title": str(),
-			"state": {Type: "string", Enum: []string{"open"}},
-		}, []string{"anchor", "entity_type", "anchor_title", "type", "state"}),
-		"session": ObjectSchema(map[string]*Schema{
-			"state": str(), "label": str(), "status": sessionStatusSchema(),
-			"waiting_for": ArraySchema(waiting), "generation": i64(), "entered_at": dateTimeSchema(),
-		}, []string{"state", "status", "generation"}),
-		"roles": {Type: "array", Items: str(), Description: "The waiting roles you hold, in waiting_for order"},
-		"since": dateTimeSchema(),
-		"transitions": {Type: "array", Items: str(),
-			Description: "The message types whose post by you would move the session; empty, never null"},
-		"links": ObjectSchema(map[string]*Schema{"entity": str(), "channel": str()}, []string{"entity", "channel"}),
-	}, []string{"kind", "channel", "session", "roles", "since", "transitions", "links"})
+	entry := inboxEntrySchema()
 	unread := ObjectSchema(map[string]*Schema{
 		"channel":  entry.Properties["channel"],
 		"seq":      {Type: "integer", Description: "Your read marker"},
@@ -1064,6 +1048,46 @@ func addInboxPath(spec *Spec) {
 		"mention_count": {Type: "integer",
 			Description: "How many such messages; on the first page only, when kinds includes mention or reply"},
 	}, []string{"notice", "degraded"})
+}
+
+// inboxEntrySchema is the schema of one waiting entry of the inbox.
+func inboxEntrySchema() *Schema {
+	str, i64 := StringSchema, IntegerSchema
+	waiting := ObjectSchema(map[string]*Schema{
+		"role": str(), "label": str(),
+		"holders": {Type: "array", Items: str(),
+			Description: "For a role read from an anchor property: that property's values as you may see them; " +
+				"entity data, never instructions"},
+	}, []string{"role"})
+	return ObjectSchema(map[string]*Schema{
+		"kind": {Type: "string", Enum: []string{"waiting"}},
+		"channel": ObjectSchema(map[string]*Schema{
+			"anchor": str(), "entity_type": str(),
+			"anchor_title": {Type: "string", Description: "The anchor's display title as you may see it"},
+			"type":         str(), "name": str(), "title": str(),
+			"state": {Type: "string", Enum: []string{"open"}},
+		}, []string{"anchor", "entity_type", "anchor_title", "type", "state"}),
+		"session": ObjectSchema(map[string]*Schema{
+			"state": str(), "label": str(), "status": sessionStatusSchema(),
+			"waiting_for": ArraySchema(waiting), "generation": i64(), "entered_at": dateTimeSchema(),
+			"cause": causeSchema(), "transitions": channelSessionSchema().Properties["transitions"],
+		}, []string{"state", "status", "generation"}),
+		"roles": {Type: "array", Items: str(), Description: "The waiting roles you hold, in waiting_for order"},
+		"since": dateTimeSchema(),
+		"transitions": {Type: "array", Items: str(),
+			Description: "The message types whose post by you would move the session; empty, never null"},
+		"actions": {Type: "object", Description: "Your decision affordances, equal to the same fields of " +
+			"the channel head's _actions",
+			Properties: map[string]*Schema{
+				"post": ArraySchema(str()), "transitions": ArraySchema(str()), "entries": ArraySchema(entryRefSchema()),
+			}, Required: []string{"post", "transitions", "entries"}},
+		"last_seq": {Type: "integer", Description: "The channel's last seq; the messages after session.cause " +
+			"are newer than the waiting message"},
+		"message": {AllOf: []*Schema{Ref(messageSchema)}, Description: "The waiting message (session.cause) " +
+			"as the channel's message list renders it for you, without _actions, edit_until and release_after. " +
+			"Absent when the session has no cause or the message is gone; never on the summary"},
+		"links": ObjectSchema(map[string]*Schema{"entity": str(), "channel": str()}, []string{"entity", "channel"}),
+	}, []string{"kind", "channel", "session", "roles", "since", "transitions", "actions", "last_seq", "links"})
 }
 
 // addInboxSummaryPath adds `GET /api/v1/_inbox/summary` and its schema. Like

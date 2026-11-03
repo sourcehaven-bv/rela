@@ -1528,7 +1528,8 @@ what needs you across all entities:
 
 - **Waiting on you**: the sessions that wait on a role you hold, oldest
   wait first. Each row shows the entity, the channel, the session's state
-  and since when it waits.
+  and since when it waits, and the message that moved the session there
+  with its decisions (see [Answering from the inbox](#answering-from-the-inbox)).
 - **Mentions and replies**: the unread messages that mention you or reply
   to one of yours, newest first. The row shows the author and the time,
   not the message text.
@@ -1562,6 +1563,34 @@ full even when its type is quiet, and focuses it. This happens once; the
 address then drops `seq`, so clicking the same row again works. A message
 that is not in the channel's loaded pages within ten older pages is not
 shown, and nothing is reported.
+
+#### Answering from the inbox
+
+A waiting row shows the message that moved the session into its state,
+such as an agent's question or a plan, with the same decision buttons and
+choices as on the entity page. You can answer without opening the entity:
+
+- A one-click decision, such as **Approve plan**, posts at once. A
+  decision marked `confirm` asks first.
+- A question with options shows one button per option. Click one to post
+  it as the answer. Options show only while nobody has replied to the
+  question.
+- A decision that needs a form, such as **Revise plan**, and **Other
+  answer** open the channel in a drawer, with the composer ready for that
+  decision. Sending it closes the drawer.
+
+After an answer, the row leaves the inbox and focus moves to the next
+row. When the session moved on in the meantime, the page says so and
+reloads the inbox; nothing is posted.
+
+When messages followed the waiting message, the row says how many, for
+example "3 newer messages". Read them in the drawer before you decide.
+The buttons stay on the row.
+
+The row shows only the decisions you may take, as on the entity page. A
+row whose session never moved, or that moved by a timer, shows no
+message. Sessions that moved before this release show their message
+again after their next move.
 
 **Mark read** on an unread channel marks the channel read up to its
 newest message. On a mention or reply it marks the channel read up to

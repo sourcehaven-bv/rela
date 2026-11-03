@@ -129,8 +129,8 @@ func TestDecideSession_SeesChannel(t *testing.T) {
 
 func TestApplySession(t *testing.T) {
 	c := Channel{Session: Session{State: "open", Generation: 2}}
-	ApplySession(&c, SessionMove{From: "open", To: "done"}, t0)
-	require.Equal(t, Session{State: "done", Generation: 3, EnteredAt: NormTime(t0)}, c.Session)
+	ApplySession(&c, SessionMove{From: "open", To: "done"}, t0, 9)
+	require.Equal(t, Session{State: "done", Generation: 3, EnteredAt: NormTime(t0), Cause: 9}, c.Session)
 	require.Equal(t, time.UTC, c.Session.EnteredAt.Location())
 }
 

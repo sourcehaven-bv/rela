@@ -122,6 +122,10 @@ type channelsHandler struct {
 	describe channelDescriber
 	// inbox serves `GET /api/v1/_inbox` and `GET /api/v1/_inbox/summary`.
 	inbox inboxReader
+	// waitingMessages adds the waiting messages to an inbox page (see
+	// [realtime.WaitingMessages]); the summary never runs it. Nil: the
+	// page carries no messages.
+	waitingMessages func(ctx context.Context, v realtime.InboxView) (realtime.InboxView, error)
 	// busy serves `?busy=` on list rows; see [serveRowBusy].
 	busy busyReader
 }
@@ -146,7 +150,10 @@ func SetChannels(a *App, svc *realtime.Service) error {
 		changes:  func() channelChanges { return svc.SubscribeLive() },
 		describe: svc,
 		inbox:    svc,
-		busy:     busy,
+		waitingMessages: func(ctx context.Context, v realtime.InboxView) (realtime.InboxView, error) {
+			return realtime.WaitingMessages(ctx, svc, v)
+		},
+		busy: busy,
 	}
 	if st := a.State(); st != nil && st.OpenAPIGen != nil {
 		st.OpenAPIGen.SetRealtime(svc.Config)

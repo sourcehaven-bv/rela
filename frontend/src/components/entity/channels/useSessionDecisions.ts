@@ -1,9 +1,10 @@
 import { computed, nextTick, ref, watch, type Ref } from 'vue'
 import { i18n, t } from '@/i18n'
-import type { useChannel } from '@/composables/useChannel'
 import type {
+  ChannelHead,
   ChannelMessageTypeSchema,
   ChannelTypeSchema,
+  Message,
   MessagePropInput,
 } from '@/types/channels'
 import type {
@@ -23,11 +24,23 @@ import {
   rowDecisions as rowDecisionsOf,
 } from './channelView'
 
-/** The open channel's state the decisions read. */
-export type DecisionChannel = Pick<
-  ReturnType<typeof useChannel>,
-  'head' | 'messages' | 'hasNewer' | 'actionsGeneration' | 'refreshHead' | 'refetch'
->
+/**
+ * The channel state the decisions read: useChannel's, or an inbox entry's
+ * (TKT-V05706X), which holds only the waiting message.
+ */
+export interface DecisionChannel {
+  head: Readonly<Ref<ChannelHead | null>>
+  messages: Readonly<Ref<Message[]>>
+  hasNewer: Readonly<Ref<boolean>>
+  actionsGeneration: Readonly<Ref<number | undefined>>
+  refreshHead: () => Promise<unknown>
+  refetch: () => Promise<unknown>
+  /**
+   * The waiting message's seq, when the caller knows it without the
+   * notice: the inbox row. Absent: decisionCause finds it in messages.
+   */
+  cause?: Readonly<Ref<number | undefined>>
+}
 
 /** The composer, as a decision that opens the form drives it. */
 export interface DecisionComposer {
@@ -167,11 +180,11 @@ export function useSessionDecisions(d: DecisionDeps) {
   const decisions = computed(() => memo.value.value)
 
   /** The message that moved the session into its current state, when held. */
-  const decisionSeq = computed(() =>
-    decisions.value.length
-      ? decisionCause(d.ch.messages.value, d.ch.head.value?.channel.session)
-      : undefined
-  )
+  const decisionSeq = computed(() => {
+    if (!decisions.value.length) return undefined
+    if (d.ch.cause) return d.ch.cause.value
+    return decisionCause(d.ch.messages.value, d.ch.head.value?.channel.session)
+  })
 
   // The choices also read the held messages. That ref is replaced on every
   // merge, so its identity is part of the key: an answer arriving, an edit
@@ -198,10 +211,18 @@ export function useSessionDecisions(d: DecisionDeps) {
       h._actions.post,
       d.ch.actionsGeneration.value,
       d.ch.hasNewer.value,
+      d.ch.cause?.value,
       i18n.global.locale.value,
     ])
     if (prev && prev.ct === ct && prev.key === key && prev.messages === messages) return prev
-    const value = choiceViews(ct, h, d.ch.actionsGeneration.value, d.ch.hasNewer.value, messages)
+    const value = choiceViews(
+      ct,
+      h,
+      d.ch.actionsGeneration.value,
+      d.ch.hasNewer.value,
+      messages,
+      d.ch.cause?.value
+    )
     return { ct, key, messages, value }
   })
   const choices = computed(() => choicesMemo.value.value)
@@ -416,6 +437,33 @@ export function useSessionDecisions(d: DecisionDeps) {
   }
 
   /**
+   * Opens the composer with messageType as a reply to seq, recorded as a
+   * form decision at the head's generation: the answer form of a question
+   * whose choices are not built here, such as a drawer whose held page
+   * lacks the question (TKT-V05706X). True when the composer shows it.
+   */
+  async function onAnswer(messageType: string, seq: number): Promise<boolean> {
+    if (deciding.value || d.submitting.value) return false
+    deciding.value = true
+    const mine = ++click
+    const channel = d.channelKey()
+    const generation = d.ch.head.value?.channel.session?.generation
+    const live = () => mine === click && channel === d.channelKey()
+    const label = d.messageType(messageType)?.label || messageType
+    try {
+      const view = { key: `answer:${seq}`, messageType, label, opensForm: true }
+      if (!(await openForm(view, generation, live)) || !live()) return false
+      d.composer.reply(seq)
+      return true
+    } finally {
+      if (mine === click) {
+        hold(undefined)
+        deciding.value = false
+      }
+    }
+  }
+
+  /**
    * A decision that opens the form: asks before it discards an edit, and
    * records the generation read at the click for the form's Send. Without
    * a session (`generation` undefined) there is nothing to record, and a
@@ -523,6 +571,7 @@ export function useSessionDecisions(d: DecisionDeps) {
     composeView,
     deciding,
     formDecision,
+    onAnswer,
     onChoose,
     onComposerSelect,
     onDecide,

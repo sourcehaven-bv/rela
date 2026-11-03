@@ -78,6 +78,7 @@ var channelWireTypes = map[string]any{
 	"ChannelSessionStateSchema":   v1.ChannelSessionStateSchema{},
 	"Inbox":                       v1.Inbox{},
 	"InboxEntry":                  v1.InboxEntry{},
+	"InboxActions":                v1.InboxActions{},
 	"InboxChannel":                v1.InboxChannel{},
 	"InboxSession":                v1.InboxSession{},
 	"InboxLinks":                  v1.InboxLinks{},

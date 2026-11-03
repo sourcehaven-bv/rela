@@ -117,6 +117,7 @@
     "channel_types"
   ],
   "ChannelSession": [
+    "cause",
     "due_at",
     "entered_at",
     "final",
@@ -231,6 +232,11 @@
     "unread_channels",
     "unread_count"
   ],
+  "InboxActions": [
+    "entries",
+    "post",
+    "transitions"
+  ],
   "InboxChannel": [
     "anchor",
     "anchor_title",
@@ -241,9 +247,12 @@
     "type"
   ],
   "InboxEntry": [
+    "actions",
     "channel",
     "kind",
+    "last_seq",
     "links",
+    "message",
     "roles",
     "session",
     "since",
@@ -265,11 +274,13 @@
     "seq"
   ],
   "InboxSession": [
+    "cause",
     "entered_at",
     "generation",
     "label",
     "state",
     "status",
+    "transitions",
     "waiting_for"
   ],
   "InboxSummary": [

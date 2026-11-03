@@ -132,14 +132,14 @@ type Locker interface {
 // ConfirmTombstone, Tombstones, Purge and DropTypeRecord. 27 -> 29
 // (TKT-INM3AZ): SetSession and ListSessionsDue. 29 -> 30 (TKT-ZZ4PNX):
 // ListWaiting. 30 -> 33 (TKT-2B2AIA): SetRead, Reads and ListReads. 33 ->
-// 34 (TKT-6RXAC0): ListAddressed. The
+// 34 (TKT-6RXAC0): ListAddressed. 34 -> 35 (TKT-V05706X): GetMessages. The
 // exported methods are the mandated [channels.Store] interface, so this is
 // a required-interface exception rather than a ratchet target. Helpers
 // stay free functions. The total crossed 40 with the three read marker
 // methods; it is the same exception.
 //
-//plimsoll:max-exported-methods=34
-//plimsoll:max-methods=45
+//plimsoll:max-exported-methods=35
+//plimsoll:max-methods=46
 type Store struct {
 	disk
 	locker Locker
@@ -402,15 +402,11 @@ type meta struct {
 	// LastAt is the time of the newest message the channel stored, kept
 	// when that message is removed. A meta.yaml from before read markers
 	// has none; the read window then takes the time from the log.
-	LastAt  time.Time            `yaml:"last_at,omitempty"`
-	Rev     int64                `yaml:"rev"`
-	SegRev  []int64              `yaml:"seg_rev,omitempty"`
-	Pending map[int64]pendingRef `yaml:"pending,omitempty"`
-	// The session snapshot (see [channels.Session]). A meta.yaml from
-	// before sessions has none and reads as unset.
-	SessionState     string    `yaml:"session_state,omitempty"`
-	SessionGen       int64     `yaml:"session_gen,omitempty"`
-	SessionEnteredAt time.Time `yaml:"session_entered_at,omitempty"`
+	LastAt      time.Time            `yaml:"last_at,omitempty"`
+	Rev         int64                `yaml:"rev"`
+	SegRev      []int64              `yaml:"seg_rev,omitempty"`
+	Pending     map[int64]pendingRef `yaml:"pending,omitempty"`
+	sessionHead `yaml:",inline"`
 	// The session timer schedule. A meta.yaml from before timers has none:
 	// no due time and no restart anchors.
 	SessionNextDueAt time.Time            `yaml:"session_next_due_at,omitempty"`
@@ -422,6 +418,17 @@ type meta struct {
 	// a job outputs mark, written with the move in this meta.yaml. A crash
 	// before they reach the log is repaired by replayJobRecords.
 	JobRecords []jobRecord `yaml:"job_records,omitempty"`
+}
+
+// sessionHead is the session snapshot in meta.yaml (see
+// [channels.Session]), as flat keys. A meta.yaml from before sessions has
+// none and reads as unset; one from before the cause has no session_cause
+// and reads 0.
+type sessionHead struct {
+	SessionState     string    `yaml:"session_state,omitempty"`
+	SessionGen       int64     `yaml:"session_gen,omitempty"`
+	SessionEnteredAt time.Time `yaml:"session_entered_at,omitempty"`
+	SessionCause     int64     `yaml:"session_cause,omitempty"`
 }
 
 // jobRecord is one log record of a job move: its seq, its segment and the
@@ -455,6 +462,7 @@ type reminderMeta struct {
 
 func (m *meta) setSession(s channels.Session) {
 	m.SessionState, m.SessionGen, m.SessionEnteredAt = s.State, s.Generation, s.EnteredAt
+	m.SessionCause = s.Cause
 	m.SessionNextDueAt, m.SessionRestarts = s.NextDueAt, s.Restarts
 	m.SessionReminders = nil
 	if len(s.Reminders) > 0 {
@@ -530,7 +538,7 @@ func (m *meta) channel(k channels.Key) channels.Channel {
 		LastSeq:    m.LastSeq, Rev: m.Rev,
 		Session: channels.Session{
 			State: m.SessionState, Generation: m.SessionGen, EnteredAt: utc(m.SessionEnteredAt),
-			NextDueAt: utc(m.SessionNextDueAt), Restarts: m.restarts(), Reminders: m.reminders(),
+			Cause: m.SessionCause, NextDueAt: utc(m.SessionNextDueAt), Restarts: m.restarts(), Reminders: m.reminders(),
 		},
 	}
 }
@@ -564,6 +572,12 @@ func readMetaAt(d *disk, dir string, k channels.Key) (*meta, error) {
 	if data == nil {
 		return nil, fmt.Errorf("%w: channel %s", channels.ErrNotFound, k)
 	}
+	return parseMeta(data, k)
+}
+
+// parseMeta decodes the meta.yaml data of channel k. An error is damage:
+// the bytes were read.
+func parseMeta(data []byte, k channels.Key) (*meta, error) {
 	var m meta
 	if err := yaml.Unmarshal(data, &m); err != nil {
 		return nil, fmt.Errorf("filechannels: channel %s has a damaged meta.yaml: %w", k, err)
@@ -615,8 +629,14 @@ func complete(data []byte) []byte {
 	return data[:bytes.LastIndexByte(data, '\n')+1]
 }
 
-// fold folds a segment's records into its messages, ordered by seq.
+// fold folds a segment's records into its messages, ordered by seq. It
+// logs and skips each damaged record.
 func fold(data []byte, where string) []channels.Message {
+	return foldWith(data, func() { slog.Warn("filechannels: skipping a damaged record", "segment", where) })
+}
+
+// foldWith is fold, calling damaged for each damaged record it skips.
+func foldWith(data []byte, damaged func()) []channels.Message {
 	byseq := map[int64]*channels.Message{}
 	var order []int64
 	for raw := range bytes.SplitSeq(complete(data), []byte{'\n'}) {
@@ -625,7 +645,7 @@ func fold(data []byte, where string) []channels.Message {
 		}
 		var l line
 		if err := json.Unmarshal(raw, &l); err != nil {
-			slog.Warn("filechannels: skipping a damaged record", "segment", where)
+			damaged()
 			continue
 		}
 		switch l.K {

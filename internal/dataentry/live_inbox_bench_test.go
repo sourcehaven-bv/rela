@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -20,12 +22,34 @@ import (
 const (
 	benchInboxPrincipals = 20
 	benchInboxTickets    = 500 // a case and a room channel each: 1000 channels
+	// benchInboxFillEnv names the number of chat messages of about 1 KB
+	// to put before each case's ask, so the waiting message sits in a
+	// well-filled segment (TKT-V05706X AC 7). 0 by default: seeding 700
+	// per case takes over an hour on the file store. The file store reads
+	// the whole segment of each waiting message, so measure it with 700;
+	// PostgreSQL reads each by its primary key, whatever the fill.
+	benchInboxFillEnv = "RELA_BENCH_INBOX_FILL"
 )
+
+// benchInboxFill reads [benchInboxFillEnv].
+func benchInboxFill(tb testing.TB) int {
+	tb.Helper()
+	v := os.Getenv(benchInboxFillEnv)
+	if v == "" {
+		return 0
+	}
+	n, err := strconv.Atoi(v)
+	require.NoError(tb, err, "%s", benchInboxFillEnv)
+	return n
+}
 
 // BenchmarkLive_InboxRound times one full live round over 1000 channels
 // and 20 principals that each hold a summary and a default page
 // subscription. Each principal is waited on in 25 case channels, has a
 // marker with unread messages on 25 rooms and is mentioned in 25 rooms.
+// Each case holds RELA_BENCH_INBOX_FILL messages (0 by default) before its
+// ask of about 4 KB, so the page's waiting-message step reads filled
+// segments.
 // The channel store is the file store on disk, or PostgreSQL with
 // -tags postgres and RELA_TEST_DATABASE_URL set.
 //
@@ -58,9 +82,19 @@ func BenchmarkLive_InboxRound(b *testing.B) {
 		}
 	}, cs, grid)
 	ctx := context.Background()
+	filler, question, fill := strings.Repeat("f", 1000), strings.Repeat("q", 4000), benchInboxFill(b)
 	for i := range benchInboxTickets {
 		owner, next := users[i%benchInboxPrincipals], users[(i+1)%benchInboxPrincipals]
-		benchPost(b, env, next, "/api/v1/tickets/"+ticket(i)+"/_channels/case", `{"type":"ask","props":{"body":"x"}}`)
+		caseKey := channels.Key{Anchor: channels.Anchor{ID: ticket(i)}, Type: "case"}
+		for range fill {
+			_, err := env.ch.store.Append(ctx, caseKey, channels.NewMessage{
+				Type: "chat", Author: channels.Author{User: next}, At: env.clock.now(),
+				Props: map[string]any{"body": filler},
+			})
+			require.NoError(b, err)
+		}
+		benchPost(b, env, next, "/api/v1/tickets/"+ticket(i)+"/_channels/case",
+			`{"type":"ask","props":{"body":"`+question+`"}}`)
 		room := channels.Key{Anchor: channels.Anchor{ID: ticket(i)}, Type: "room"}
 		benchPost(b, env, next, "/api/v1/tickets/"+ticket(i)+"/_channels/room",
 			fmt.Sprintf(`{"type":"chat","props":{"body":"%s"}}`, "`@"+owner+"`"))

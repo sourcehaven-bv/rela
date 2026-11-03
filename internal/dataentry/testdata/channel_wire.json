@@ -482,6 +482,7 @@
       "last_seq": 4,
       "rev": 5,
       "session": {
+        "cause": 3,
         "entered_at": "2026-01-02T03:04:05Z",
         "final": true,
         "generation": 2,
@@ -604,6 +605,7 @@
       },
       "rev": 3,
       "session": {
+        "cause": 1,
         "entered_at": "2026-01-02T03:04:05Z",
         "generation": 1,
         "label": "Contained",
@@ -745,6 +747,7 @@
             },
             "rev": 2,
             "session": {
+              "cause": 1,
               "entered_at": "2026-01-02T03:04:05Z",
               "final": true,
               "generation": 1,
@@ -944,6 +947,7 @@
       },
       "rev": 2,
       "session": {
+        "cause": 1,
         "entered_at": "2026-01-02T03:04:05Z",
         "generation": 1,
         "label": "Contained",
@@ -994,6 +998,7 @@
       "last_seq": 2,
       "rev": 6,
       "session": {
+        "cause": 1,
         "entered_at": "2026-01-02T03:04:05Z",
         "generation": 1,
         "label": "Contained",
@@ -1080,6 +1085,7 @@
       "last_seq": 3,
       "rev": 3,
       "session": {
+        "cause": 1,
         "entered_at": "2026-01-02T03:04:05Z",
         "generation": 1,
         "label": "Contained",
@@ -1516,6 +1522,7 @@
       },
       "rev": 2,
       "session": {
+        "cause": 1,
         "entered_at": "2026-01-02T03:04:05Z",
         "final": true,
         "generation": 1,
@@ -1559,6 +1566,7 @@
       "last_seq": 2,
       "rev": 2,
       "session": {
+        "cause": 1,
         "entered_at": "2026-01-02T03:04:05Z",
         "final": true,
         "generation": 1,

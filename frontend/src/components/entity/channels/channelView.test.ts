@@ -1533,6 +1533,29 @@ describe('session decisions', () => {
         expect(decisionCause(tc.messages, session)).toBe(tc.want)
       })
     }
+
+    // TKT-V05706X: the stored cause wins over the notice scan, and needs
+    // no notice held.
+    const stored: { name: string; messages: Message[]; cause: number; want?: number }[] = [
+      { name: 'the stored cause, without its notice', messages: [msgAt(12)], cause: 12, want: 12 },
+      {
+        name: 'the stored cause over an older notice',
+        messages: [msgAt(8), notice(9, 4, 8), msgAt(12)],
+        cause: 12,
+        want: 12,
+      },
+      { name: 'the stored cause is not held', messages: [msgAt(8), notice(9, 4, 8)], cause: 12 },
+      {
+        name: 'the stored cause is removed',
+        messages: [msgAt(12, { removed: { kind: 'moderator', by: { user: 'bob' }, at } })],
+        cause: 12,
+      },
+    ]
+    for (const tc of stored) {
+      it(tc.name, () => {
+        expect(decisionCause(tc.messages, { generation: 4, cause: tc.cause })).toBe(tc.want)
+      })
+    }
   })
 
   describe('decisionReplyTo', () => {
@@ -1751,6 +1774,17 @@ describe('choices', () => {
       expect(keys(got)).toEqual(tc.want)
     })
   }
+
+  it('an explicit cause names the open question without a notice', () => {
+    const got = choiceViews(withSession, head({ generation: 5 }), 5, false, [q(10)], 10)
+    expect(keys(got)).toEqual([[10, ['choice:10:0', 'choice:10:1', 'choice:10:other']]])
+    expect(keys(choiceViews(withSession, head({ generation: 5 }), 5, false, [q(10)], 9))).toEqual(
+      []
+    )
+    expect(keys(choiceViews(withSession, head({ generation: 5 }), 4, false, [q(10)], 10))).toEqual(
+      []
+    )
+  })
 
   it('a view posts the answer with the option in into; other opens the form', () => {
     const [a, , other] = choiceViews(plain, head(), undefined, false, [q(1)]).get(1)!

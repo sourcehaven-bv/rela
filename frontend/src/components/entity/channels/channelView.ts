@@ -454,17 +454,23 @@ export function decisionViews(
 
 /**
  * The seq of the message that moved the session into its current state,
- * when the held page has it: the `cause` of the session notice of the
- * current generation, if that message is held and not removed. Undefined
- * at generation 0, for a timer's move (its notice has no cause), and when
- * the notice or the message is not held. One pass over the held messages,
- * newest first; no fetch.
+ * when the held page has it and it is not removed. The head's stored
+ * `session.cause` names it (TKT-V05706X). A session moved before causes
+ * were stored has none; then it is the `cause` of the session notice of
+ * the current generation. Undefined at generation 0, for a timer's move
+ * (its notice has no cause), and when the message, or for an old session
+ * the notice, is not held. One pass over the held messages, newest first;
+ * no fetch.
  */
 export function decisionCause(
   messages: readonly Message[],
-  session: Pick<ChannelSession, 'generation'> | undefined
+  session: Pick<ChannelSession, 'generation' | 'cause'> | undefined
 ): number | undefined {
   if (!session || !session.generation) return undefined
+  if (session.cause) {
+    const m = messages.find((x) => x.seq === session.cause)
+    return m && !m.removed ? m.seq : undefined
+  }
   let cause: number | undefined
   for (let i = messages.length - 1; i >= 0; i--) {
     const m = messages[i]
@@ -501,7 +507,8 @@ export type ChoiceHead = Pick<ChannelHead, 'channel'> & { _actions: Pick<Channel
  * removes a wrong answer brings the buttons back.
  *
  * In a channel with a session, only the question that moved the session
- * into its current state is open (`decisionCause`), and only while the
+ * into its current state is open (`decisionCause`, or `cause` when the
+ * caller already knows it, as the inbox row does), and only while the
  * held `_actions` were fetched at the head's generation. That proof is
  * what makes the click's `expect_generation` the question's own: a click
  * after the session moved on is refused with session_moved.
@@ -511,7 +518,8 @@ export function choiceViews(
   head: ChoiceHead,
   actionsGeneration: number | undefined,
   hasNewer: boolean,
-  messages: readonly Message[]
+  messages: readonly Message[],
+  cause?: number
 ): Map<number, ChannelDecisionView[]> {
   const out = new Map<number, ChannelDecisionView[]>()
   if (hasNewer || head.channel.state !== 'open') return out
@@ -521,8 +529,8 @@ export function choiceViews(
   if (ct.session) {
     const cs = head.channel.session
     if (!cs || actionsGeneration !== cs.generation) return out
-    const cause = decisionCause(messages, cs)
-    const m = cause === undefined ? undefined : messages.find((x) => x.seq === cause)
+    const seq = cause ?? decisionCause(messages, cs)
+    const m = seq === undefined ? undefined : messages.find((x) => x.seq === seq)
     candidates = m ? [m] : []
   }
   const answered = new Set<string>()

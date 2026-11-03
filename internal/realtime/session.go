@@ -36,6 +36,9 @@ type SessionView struct {
 	WaitingOnMe bool `json:"waiting_on_me,omitempty"`
 	// Generation counts the transitions; 0 means the session never moved.
 	Generation int64 `json:"generation"`
+	// Cause is the seq of the message whose post moved the session into
+	// its state (see [channels.Session.Cause]); 0, and left out, for none.
+	Cause int64 `json:"cause,omitempty"`
 	// EnteredAt is when the session entered its state: the time of the
 	// causing message, or for a session that never moved, the channel's
 	// created_at. It is zero, and left out, for a channel that is not
@@ -212,7 +215,7 @@ func sessionView(ct realtimecfg.ChannelType, h *channels.Channel, degraded bool,
 	cur := currentSession(s, ch)
 	v := &SessionView{
 		State: cur.State, Label: cur.State, Generation: cur.Generation, EnteredAt: cur.EnteredAt,
-		Stranded: cur.stranded, Status: string(realtimecfg.StatusFailed),
+		Cause: cur.Cause, Stranded: cur.stranded, Status: string(realtimecfg.StatusFailed),
 	}
 	st, ok := s.State(cur.State)
 	if !ok {

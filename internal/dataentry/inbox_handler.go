@@ -68,7 +68,7 @@ func (h *channelsHandler) serveInbox(w http.ResponseWriter, r *http.Request, met
 			return
 		}
 	}
-	got, ok := h.readInbox(w, r, req)
+	got, ok := h.readInbox(w, r, req, h.inboxPageFor)
 	if !ok {
 		return
 	}
@@ -93,20 +93,21 @@ func (h *channelsHandler) serveInboxSummary(w http.ResponseWriter, r *http.Reque
 	if !allowMethod(w, r, http.MethodGet) {
 		return
 	}
-	got, ok := h.readInbox(w, r, realtime.InboxRequest{})
+	got, ok := h.readInbox(w, r, realtime.InboxRequest{}, h.inboxFor)
 	if !ok {
 		return
 	}
 	writeV1JSON(w, http.StatusOK, wireInboxSummary(got.Summary()))
 }
 
-// readInbox reads the inbox for req, through the round's memo during a
-// live replay, and reports the wake set of a 200 to the replay's probe.
+// readInbox reads the inbox for req with read (inboxFor, or inboxPageFor
+// for the page), and reports the wake set of a 200 to the replay's probe.
 // It writes the refusal and reports false on an error.
 func (h *channelsHandler) readInbox(
 	w http.ResponseWriter, r *http.Request, req realtime.InboxRequest,
+	read func(context.Context, realtime.InboxRequest) (realtime.InboxView, error),
 ) (realtime.InboxView, bool) {
-	got, err := h.inboxFor(r.Context(), req)
+	got, err := read(r.Context(), req)
 	if errors.Is(err, realtime.ErrRealtimeOff) {
 		writeV1Error(w, r, http.StatusNotFound, "not_found", realtimeOffTitle, "")
 		return realtime.InboxView{}, false
@@ -192,22 +193,32 @@ func wireInboxEntry(e realtime.InboxEntry, meta *metamodel.Metamodel) v1.InboxEn
 	s := e.Session
 	ws := v1.InboxSession{
 		State: s.State, Label: s.Label, Status: s.Status, Generation: s.Generation,
-		EnteredAt: channelTime(s.EnteredAt),
+		EnteredAt: channelTime(s.EnteredAt), Cause: s.Cause, Transitions: wireSessionTransitions(s.Transitions),
 	}
 	for _, w := range s.WaitingFor {
 		ws.WaitingFor = append(ws.WaitingFor,
 			v1.ChannelSessionWaiting{Role: w.Role, Label: w.Label, Holders: w.Holders})
 	}
 	ch, links := wireInboxChannel(c, meta)
-	return v1.InboxEntry{
+	out := v1.InboxEntry{
 		Kind:        e.Kind,
 		Channel:     ch,
 		Session:     ws,
 		Roles:       nonNil(e.Roles),
 		Since:       channelTime(e.Since),
 		Transitions: nonNil(e.Transitions),
-		Links:       links,
+		Actions: v1.InboxActions{
+			Post: nonNil(e.Actions.Post), Transitions: nonNil(e.Actions.Transitions),
+			Entries: wireEntryRefs(e.Actions.Entries),
+		},
+		LastSeq: e.LastSeq,
+		Links:   links,
 	}
+	if e.Message != nil {
+		m := wireMessage(*e.Message)
+		out.Message = &m
+	}
+	return out
 }
 
 // nonNil renders a nil list as [] rather than null.
