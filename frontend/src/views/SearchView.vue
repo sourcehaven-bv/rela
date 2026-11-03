@@ -149,7 +149,7 @@ async function search() {
   loadError.value = false
 
   try {
-    const response = await searchEntities(searchQuery, undefined, undefined, worldParam.value)
+    const response = await searchEntities(searchQuery, { world: worldParam.value })
     results.value = response.data
   } catch (err) {
     console.error('Search error:', err)

@@ -18,6 +18,7 @@
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { searchEntities } from '@/api'
+import { SEARCH_DEBOUNCE_MS } from '@/utils/searchTiming'
 import { entityDisplayTitle } from '@/utils/entityDisplay'
 import { useSchemaStore } from '@/stores'
 import { useModalStack } from '@/composables/modalStack'
@@ -26,7 +27,7 @@ import { useWorld } from '@/composables/useWorld'
 import type { Entity } from '@/types'
 import RlSpinner from 'rela-components/components/common/RlSpinner.vue'
 
-const DEBOUNCE_MS = 150
+const DEBOUNCE_MS = SEARCH_DEBOUNCE_MS
 const MIN_QUERY_LEN = 2
 const MAX_RESULTS = 50
 
@@ -105,12 +106,14 @@ async function runSearch(q: string): Promise<void> {
   loading.value = true
   try {
     const types = props.types ?? []
-    const resp = await searchEntities(
-      q,
-      types.length === 1 ? types[0] : undefined,
-      abort.signal,
-      worldParam.value,
-    )
+    // With several types the hits are filtered here, so the server must
+    // return its full set: a limit would spend slots on other types.
+    const resp = await searchEntities(q, {
+      type: types.length === 1 ? types[0] : undefined,
+      signal: abort.signal,
+      world: worldParam.value,
+      limit: types.length > 1 ? undefined : MAX_RESULTS,
+    })
     const hits = types.length > 1 ? resp.data.filter((e) => types.includes(e.type)) : resp.data
     results.value = hits.slice(0, MAX_RESULTS)
     errorMsg.value = ''

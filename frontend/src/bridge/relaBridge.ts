@@ -85,7 +85,7 @@ export const BRIDGE_METHODS: Record<string, Handler> = {
   list: (p) => listEntities(str(p, 'type'), p.params as ListParams | undefined),
   get: (p) =>
     getEntity(str(p, 'type'), str(p, 'id'), p.params as { include?: string; fields?: string } | undefined),
-  search: (p) => searchEntities(str(p, 'query'), optStr(p, 'type')),
+  search: (p) => searchEntities(str(p, 'query'), { type: optStr(p, 'type') }),
   analyze: () => analyze(),
   templates: (p) => getTemplates(str(p, 'type')),
   position: (p) => getEntityPosition(str(p, 'id'), p.scope as ScopeDescriptor),

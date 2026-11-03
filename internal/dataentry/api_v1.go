@@ -1192,6 +1192,10 @@ func (a *App) handleV1GetEntity(w http.ResponseWriter, r *http.Request, typeName
 // backend error string can name tables, columns, or index paths.
 func writeListPipelineError(w http.ResponseWriter, r *http.Request, err error) {
 	switch {
+	case requestCanceled(r, err):
+		// The client went away: nobody reads the answer, and a cancel is not
+		// a fault (TKT-T2I7P2). The access log records it as 499.
+		return
 	case errors.Is(err, errBadFilter):
 		// Server-side log stays alongside the 400 (RR-6RF60V's logging
 		// intent, CONTROL-8-15): the response informs the caller, the log
@@ -1270,7 +1274,7 @@ func writeListPipelineError(w http.ResponseWriter, r *http.Request, err error) {
 // backend error string can carry table/column names or other
 // internals an API client has no business seeing.
 func writeGateError(w http.ResponseWriter, r *http.Request, err error) {
-	if errors.Is(err, context.Canceled) {
+	if requestCanceled(r, err) {
 		return
 	}
 	if writeNoIdentity(w, r, err) {
@@ -1317,6 +1321,22 @@ func writeNoIdentity(w http.ResponseWriter, r *http.Request, err error) bool {
 		"err", err, "path", r.URL.Path, "method", r.Method)
 	writeV1Error(w, r, http.StatusUnauthorized, "unauthenticated", "Authentication required", "")
 	return true
+}
+
+// requestCanceled reports whether the client went away: the request's own
+// context was canceled. Once it is, no one reads the response, so the error
+// is answered with silence and not logged.
+//
+// The request context decides, not the error. The error does not always say
+// it is a cancel (pgx reports a statement stopped by a cancel request as
+// SQLSTATE 57014, which does not wrap context.Canceled), and an error that
+// does wrap context.Canceled may come from another context, such as a
+// shared singleflight call, while this client still waits for an answer.
+//
+// A deadline (context.DeadlineExceeded) is not a cancel: the server gave
+// up, and that is still logged and answered.
+func requestCanceled(r *http.Request, _ error) bool {
+	return errors.Is(r.Context().Err(), context.Canceled)
 }
 
 // internalErrorDetail is the detail of every 500 this package answers.
@@ -1370,7 +1390,7 @@ func writeInternalJSONError(w http.ResponseWriter, r *http.Request, message stri
 // logInternalError logs the cause of a 500. It reports false when the client
 // has gone away, in which case there is no one to answer.
 func logInternalError(r *http.Request, code string, err error) bool {
-	if errors.Is(err, context.Canceled) {
+	if requestCanceled(r, err) {
 		return false
 	}
 	slog.ErrorContext(r.Context(), "dataentry: request failed",
@@ -2105,7 +2125,8 @@ func (a *App) handleV1Search(w http.ResponseWriter, r *http.Request) {
 			fmt.Sprintf("limit must be an integer between 1 and %d", maxSearchLimit), "")
 		return
 	}
-	relCtx, werr := parseSearchRelation(a.State().Meta, r.URL.Query())
+	meta := a.State().Meta
+	relCtx, werr := parseSearchRelation(meta, r.URL.Query())
 	if werr != nil {
 		writeV1Error(w, r, http.StatusBadRequest, werr.Code, werr.Detail, werr.Path)
 		return
@@ -2122,14 +2143,17 @@ func (a *App) handleV1Search(w http.ResponseWriter, r *http.Request) {
 	// other types. Only a declared type name is spliced in; any other value
 	// cannot match a row, which the exact filter below still ensures.
 	typeFilter := r.URL.Query().Get("type")
-	if _, declared := a.State().Meta.Entities[typeFilter]; declared {
+	if _, declared := meta.Entities[typeFilter]; declared {
 		query = "type:" + typeFilter + " " + query
 	}
 
 	// executeQuery is read-gated (TKT-BA8BSX): only entities the
 	// request principal may read come back, and gate/load/search
-	// failures surface instead of silently truncating.
-	entities, err := a.queries.executeQuery(r.Context(), query)
+	// failures surface instead of silently truncating. The limit lowers
+	// the relevance cap where that cannot change which rows survive the
+	// filters below (TKT-T2I7P2, see freeTextLimit).
+	entities, err := a.queries.executeQueryWith(r.Context(), query,
+		queryOptions{limit: limit, exactType: typeFilter})
 	if err != nil {
 		writeListPipelineError(w, r, err)
 		return
@@ -2165,7 +2189,6 @@ func (a *App) handleV1Search(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	meta := a.State().Meta
 	data := make([]v1.Entity, 0, len(entities))
 	pageCtx := primeVerdicts(r.Context(), a.fieldResolver, entities)
 	for _, e := range entities {
@@ -2176,7 +2199,7 @@ func (a *App) handleV1Search(w http.ResponseWriter, r *http.Request) {
 		// {ID, Title} of related entities this principal may not read.
 		// Flipping this requires per-target gating first (RR-QO01XY) —
 		// TestACLSearch_VisibleHitRelatedToHidden pins the invariant.
-		row := a.serializer.forWireRelated(pageCtx, e, nil, nil, nil, a.Meta(), plural)
+		row := a.serializer.forWireRelated(pageCtx, e, nil, nil, nil, meta, plural)
 		// Same provenance a list row carries, and nil in the default world
 		// for the same reason (see handleV1ListEntities).
 		if !worldScopeFrom(r.Context()).IsTrivial() {

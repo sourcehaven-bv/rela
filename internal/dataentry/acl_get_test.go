@@ -208,6 +208,13 @@ func TestACLGet_WriteGateErrorMapping(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			ctx := withReadGate(context.Background(), fakeGate{permitsErr: tc.err})
+			if tc.emptyResp {
+				// Silence is for a client that left: the request context
+				// decides, not the error (TKT-T2I7P2).
+				var cancel context.CancelFunc
+				ctx, cancel = context.WithCancel(ctx)
+				cancel()
+			}
 			req := httptest.NewRequest(http.MethodGet, "/api/v1/tickets/TKT-001", http.NoBody)
 			req = req.WithContext(ctx)
 			rec := httptest.NewRecorder()

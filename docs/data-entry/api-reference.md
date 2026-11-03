@@ -159,7 +159,11 @@ that caps the number of rows returned. The cap applies after the read gate, the
 `type` filter and any `sort:` clause, so it counts only rows the caller may see.
 Any other value is a `400 invalid_limit`.
 
-The limit shrinks the response, not the server's work: the query still reads
+For a free-text search with no property filter and no `sort:` clause, the
+limit also bounds the search itself: the server stops after `limit` visible
+hits instead of reading up to 1000. A `type` parameter keeps this only when
+every `type:` clause in the query names that same type. In all other cases
+the limit shrinks the response, not the server's work: the query still reads
 and sorts every matching row before the cut.
 
 ```text
