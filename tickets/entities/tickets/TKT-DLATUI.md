@@ -37,6 +37,7 @@ piles:
 - The read flag lives on the pile item (`read_at`), not in a service that tracks all entity reads. Read state is about the notification, not the entity. A global read log would write on every page view and is sensitive data about who looked at what.
 - Item fields: `read_at` (empty = unread), `actor` (person ref of who caused the push), `reason` (a key from the pile's `reasons:`). The reason label is operator config, never interpolated from entity values. Interpolating at push time would show the recipient values that field-level `visible:` redaction hides from them.
 - The actor is resolved through the reader's visibility gate. A hidden actor shows as "someone".
+- Renaming a person moves them as the actor on every item. Deleting a person clears them as the actor, so a later person with the same id is not named as the sender (RR-NEWH5VD).
 - A bump (repeat push) clears `read_at`.
 - Expiry: reads hide items past `clear_read_after` / `expire_after`, so a read never writes. The next write to the pile deletes them in the same atomic step.
 - Eviction on a full declared pile: read items go first, then the oldest. This applies to pushes by others too, because a declared pile is system-owned, not hand-collected.

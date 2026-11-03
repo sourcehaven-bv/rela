@@ -24,7 +24,7 @@ status: done
 - [x] All significant review-responses addressed
 - [x] Self-reviewed the diff for unrelated changes
 
-**Review Responses:** RR-RVJ2PH2 (minor, addressed: RenameOwner moves the actor too), RR-SDBQN6I (minor, deferred), RR-BTFCP1G (minor, deferred), RR-0CIXPZC (minor, wont-fix), RR-KCXR09W (nit, wont-fix), RR-JFZ63ZA (nit, wont-fix).
+**Review Responses:** RR-RVJ2PH2 (minor, addressed: RenameOwner moves the actor too), RR-NEWH5VD (minor, addressed: DeleteOwner clears the actor), RR-SDBQN6I (minor, deferred), RR-BTFCP1G (minor, deferred), RR-0CIXPZC (minor, wont-fix), RR-KCXR09W (nit, wont-fix), RR-JFZ63ZA (nit, wont-fix).
 
 ## Acceptance Verification
 

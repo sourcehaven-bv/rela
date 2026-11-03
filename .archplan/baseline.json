@@ -2525,7 +2525,7 @@
       "weight.structure": 936,
       "weight.layers": 0,
       "weight.vocabulary": 912,
-      "weight.types": 3977,
+      "weight.types": 4071,
       "weight.concepts": 7186,
       "weight.boundaries": 1512,
       "weight.data": 1297,
@@ -2633,6 +2633,17 @@
           "weight.types": [
             3976,
             3977
+          ]
+        }
+      },
+      {
+        "at": "2026-11-04T00:30:00Z",
+        "change": "loosen",
+        "reason": "Declared piles and notify: metamodel.PileDecl maps the schema to piles.Declared, and autocascade.PileRequest, the consumer-side mirror of piles.PushRequest, grew by Key, Reason and SkipSelf, TKT-EO2GCM, TKT-EY4W0P",
+        "metrics": {
+          "weight.types": [
+            3977,
+            4071
           ]
         }
       }
