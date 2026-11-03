@@ -194,7 +194,7 @@ func moveSession(
 	causeIdx, idx int64,
 ) (channels.Channel, channels.Message, error) {
 	after := m.channel(k)
-	channels.ApplySession(&after, move, nm.At)
+	channels.ApplySession(&after, move, nm.At, cause.Seq)
 	m.setSession(after.Session)
 	notice, _, err := channels.SessionNotice(nm.Session, cause, move, after.Session.Generation, m.bump(idx))
 	if err != nil {
@@ -1365,7 +1365,7 @@ func applySessionStep(
 	seq := committed.LastSeq + 1
 	after := committed
 	if w.moved {
-		channels.ApplySession(&after, w.move, at)
+		channels.ApplySession(&after, w.move, at, 0)
 		m.setSession(after.Session)
 		w.written, _, err = channels.TimerNotice(step, seq, at, w.move, after.Session.Generation, m.bump(idx(seq)))
 		if err != nil {

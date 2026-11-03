@@ -411,7 +411,26 @@ CREATE INDEX IF NOT EXISTS attachments_entity_idx ON attachments(entity_id);
 ` + versionSchemaSQL + `
 ` + versionTagsDDL + `
 ` + softDeleteDDL + `
+` + retiredIDsDDL + `
 ` + searchKeyDDL
+
+// retiredIDsDDL records the ids a rename retired (store.RetiredIDs,
+// TKT-J6GISC3). A retired id stays reserved, so no new entity takes it, and
+// it points at the id that replaced it, so a mention written under the old id
+// still reaches the entity. successor is always the entity's current id: a
+// rename re-points the rows that named its old id, including on a case-only
+// rename. A successor id stays reserved too, even after its entity is
+// deleted, so no unrelated entity inherits the mentions. Shared between
+// schemaSQL and the v30 to v31 rung.
+const retiredIDsDDL = `
+CREATE TABLE IF NOT EXISTS retired_ids (
+	id         TEXT NOT NULL PRIMARY KEY,
+	successor  TEXT NOT NULL,
+	retired_at TEXT NOT NULL
+) STRICT;
+CREATE UNIQUE INDEX IF NOT EXISTS retired_ids_id_lower_key ON retired_ids(lower(id));
+CREATE INDEX IF NOT EXISTS retired_ids_successor_idx ON retired_ids(successor);
+CREATE INDEX IF NOT EXISTS retired_ids_successor_lower_idx ON retired_ids(lower(successor));`
 
 // softDeleteDDL holds soft-deleted entities and their hidden relations until
 // the undo window closes (sqlitestore/softdelete.go). A marked row is MOVED
@@ -711,6 +730,8 @@ CREATE TABLE IF NOT EXISTS channels (
 	session_reminders   TEXT NOT NULL DEFAULT '',
 	created_by_user     TEXT NOT NULL DEFAULT '',
 	last_at             INTEGER NOT NULL DEFAULT 0,
+	session_cause       INTEGER NOT NULL DEFAULT 0,
+	session_previous    TEXT NOT NULL DEFAULT '',
 	UNIQUE (anchor_id, anchor_face, type, name, tomb)
 ) STRICT;
 CREATE INDEX IF NOT EXISTS channels_state_idx ON channels(tomb, state);

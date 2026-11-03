@@ -232,6 +232,7 @@ func newCLIBundles(svc *appbuild.Services) (*cliBundles, error) {
 	// Assigned only when present, for the same reason as Comments above.
 	if c := appbuild.ChannelService(svc); c != nil {
 		channels.Svc = c
+		channels.Follow = func(ctx context.Context) <-chan struct{} { return appbuild.FollowChannels(ctx, svc) }
 	}
 	return &cliBundles{
 		leases:     leases,

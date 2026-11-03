@@ -455,6 +455,12 @@ type EntityWriter interface {
 	// relation endpoint and tail that names it, atomically.
 	// Returns ErrNotFound if no face of oldID exists.
 	// Returns ErrConflict if any face of newID already exists.
+	//
+	// Afterwards a mention of oldID reaches newID (TKT-J6GISC3): a store
+	// with [RetiredIDs] records oldID as retired into newID and leaves
+	// mention text alone; a store without it rewrites every live body that
+	// mentions oldID, so the text names newID. Either way
+	// [MentionIndex.MentionSources] for newID lists those bodies.
 	RenameFamily(ctx context.Context, oldID, newID string) (*RenameResult, error)
 }
 
@@ -467,6 +473,9 @@ type DeleteResult struct {
 // RenameResult describes what was updated during an entity rename.
 type RenameResult struct {
 	RelationsUpdated int
+	// MentionsRewritten lists the live bodies a store without [RetiredIDs]
+	// rewrote, in key order. The entitymanager audits each one.
+	MentionsRewritten []entity.MentionRewrite
 }
 
 // RelationReader provides read access to relations.

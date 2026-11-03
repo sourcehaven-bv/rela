@@ -13,6 +13,7 @@ import type { RouteLocationNormalized } from 'vue-router'
 import { useSchemaStore, useEntitiesStore } from '@/stores'
 import FormView from '@/views/FormView.vue'
 import type { Entity } from '@/types'
+import { ApiError } from '@/api/errors'
 
 type UpdateGuard = (to: RouteLocationNormalized, from: RouteLocationNormalized) => unknown
 const updateGuards: UpdateGuard[] = []
@@ -185,5 +186,73 @@ describe('DynamicForm entity switch (BUG-NSGD6OE)', () => {
 
     expect(targets(update)).toEqual(['PRC-Y'])
     expect(fieldValue(wrapper, 'title')).toBe('Procedure Y')
+  })
+})
+
+// BUG-SJURXLT: a reload of the form keeps a value whose save did not go
+// through on screen, next to its error.
+describe('DynamicForm reload with an unsaved field', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    vi.restoreAllMocks()
+  })
+
+  it('keeps a failed value when a transition reloads the entity', async () => {
+    const schema = useSchemaStore()
+    schema.forms.set('procedure-form', {
+      ...FORM,
+      fields: [...FORM.fields, { property: 'state' }],
+    } as never)
+    schema.entityTypes.set('procedure', {
+      ...ENTITY_TYPE,
+      properties: { ...ENTITY_TYPE.properties, state: { type: 'string' } },
+    } as never)
+    schema.loaded = true
+    const row = (): Entity => ({
+      ...procedure('PRC-X', 'Procedure X'),
+      properties: { title: 'Procedure X', owner: 'Kim', state: 'open' },
+      _transitions: { state: [{ to: 'done', allowed: true }] },
+    })
+    const entities = useEntitiesStore()
+    vi.spyOn(entities, 'fetchEntity').mockImplementation(async () => row())
+    const update = vi.spyOn(entities, 'update')
+    update.mockRejectedValueOnce(
+      new ApiError('unavailable', { kind: 'http', status: 503, original: null })
+    )
+    const wrapper = mount(FormView, {
+      props: { id: 'procedure-form', entityId: 'PRC-X' },
+      global: {
+        stubs: {
+          RouterLink: true,
+          MarkdownEditor: true,
+          RelationPicker: true,
+          RelationCards: true,
+          AutoSaveIndicator: true,
+          SidePanel: true,
+          HelpModal: true,
+        },
+      },
+    })
+    mounted.push(wrapper)
+    await flushPromises()
+    vi.useFakeTimers()
+
+    await wrapper.find('#field-owner').setValue('Sam')
+    await vi.advanceTimersByTimeAsync(2000)
+    await flushPromises()
+
+    update.mockResolvedValueOnce({
+      ...row(),
+      properties: { ...row().properties, state: 'done' },
+      warnings: [],
+    } as Entity)
+    await wrapper.find('.status-control button').trigger('click')
+    await wrapper.find('.status-move').trigger('click')
+    await vi.advanceTimersByTimeAsync(2000)
+    await flushPromises()
+
+    expect(update).toHaveBeenCalledTimes(2)
+    expect(entities.fetchEntity).toHaveBeenCalledTimes(2)
+    expect(fieldValue(wrapper, 'owner')).toBe('Sam')
   })
 })

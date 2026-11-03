@@ -33,6 +33,7 @@ export function makeRefResolver(
     const m = mentions[id]
     if (!m) return null
     return {
+      ...(m.id ? { entityId: m.id } : {}),
       type: m.type,
       title: m.title,
       inaccessible: m.inaccessible,

@@ -77,6 +77,13 @@ func (c *countingChannels) ListAddressed(
 	return c.Store.ListAddressed(ctx, r, kind, limit)
 }
 
+func (c *countingChannels) GetMessages(
+	ctx context.Context, refs []channels.MessageRef,
+) (map[channels.MessageRef]channels.Message, error) {
+	c.hit("GetMessages")
+	return c.Store.GetMessages(ctx, refs)
+}
+
 func (c *countingChannels) Get(ctx context.Context, key channels.Key, seq int64) (channels.Message, error) {
 	c.hit("Get")
 	return c.Store.Get(ctx, key, seq)

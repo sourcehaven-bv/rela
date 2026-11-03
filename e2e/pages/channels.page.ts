@@ -95,7 +95,46 @@ export class ChannelsPage extends BasePage {
 
   /** The stepper marks `label` as the current state. */
   async expectSessionAt(label: string, timeout = 15_000) {
-    await expect(this.session.locator('[aria-current="step"]')).toContainText(label, { timeout });
+    await expect(this.session.locator('[aria-current="step"]:visible')).toContainText(label, { timeout });
+  }
+
+  /**
+   * Sets the session header's width in rem. The header is its own size
+   * container, so this picks the wide or the narrow layout without
+   * resizing the page.
+   */
+  async setSessionWidth(rem: number) {
+    await this.session.evaluate((el, w) => {
+      (el as HTMLElement).style.width = `${w}rem`;
+    }, rem);
+  }
+
+  /** The full list of states in the session header. */
+  get sessionSteps(): Locator {
+    return this.session.locator('.rl-channel-session__steps');
+  }
+
+  /** The short list of a compact session header. */
+  get sessionContext(): Locator {
+    return this.session.getByRole('list', { name: 'Session steps' });
+  }
+
+  /** The one-line summary of a folded session header. */
+  get sessionSummary(): Locator {
+    return this.session.locator('.rl-channel-session__summary');
+  }
+
+  /** The toggle that shows or hides the full list. */
+  get sessionToggle(): Locator {
+    return this.session.locator('.rl-channel-session__toggle');
+  }
+
+  /**
+   * The short list holds `items` in order, each as the text a screen reader
+   * hears: `Previous state: Drafting`, `Current state: Review`.
+   */
+  async expectSessionContext(items: string[], timeout = 15_000) {
+    await expect(this.sessionContext.locator('li .rl-visually-hidden')).toHaveText(items, { timeout });
   }
 
   /** The session's live region holds the activity line with `text`, or is empty of it. */
@@ -274,6 +313,56 @@ export class ChannelsPage extends BasePage {
       .filter({ hasText: text })
       .getByRole('link')
       .click();
+  }
+
+  // --- Answering from the inbox (TKT-V05706X) -------------------------------
+
+  /** The waiting row of the inbox that reads `text`, such as its question. */
+  private waitingRow(text: string): Locator {
+    return this.page.locator('.rl-inbox li[data-section="waiting"]').filter({ hasText: text });
+  }
+
+  /** The inbox has a waiting row reading `text`, or has none. */
+  async expectWaitingRow(text: string, shown: boolean, timeout = 15_000) {
+    await expect(this.waitingRow(text)).toHaveCount(shown ? 1 : 0, { timeout });
+  }
+
+  /** The inbox has no waiting row at all. */
+  async expectNothingWaiting(timeout = 15_000) {
+    await expect(this.page.locator('.rl-inbox li[data-section="waiting"]')).toHaveCount(0, { timeout });
+    await expect(this.page.locator('.rl-inbox')).toContainText('Nothing waits on you.');
+  }
+
+  /** Clicks the choice `label` on the waiting row reading `text`. */
+  async chooseInInbox(text: string, label: string) {
+    await this.waitingRow(text)
+      .getByRole('group', { name: 'Choices' })
+      .getByRole('button', { name: new RegExp(`^${label}(?: \\(|$)`) })
+      .click();
+  }
+
+  /** Clicks the decision `label` on the waiting row reading `text`. */
+  async decideInInbox(text: string, label: string) {
+    await this.decisionIn(this.waitingRow(text), label).click();
+  }
+
+  /** The drawer the inbox opens a channel in. */
+  private get answerDrawer(): Locator {
+    return this.page.getByRole('dialog').filter({ has: this.page.locator('.rl-channel') });
+  }
+
+  /** Writes `text` in the drawer's field `field` and sends it. */
+  async postInDrawer(text: string, field: string) {
+    const composer = this.answerDrawer.getByRole('form', { name: 'New message' });
+    const box = composer.getByRole('textbox', { name: field });
+    await expect(box).toBeVisible({ timeout: 15_000 });
+    await box.fill(text);
+    await composer.getByRole('button', { name: 'Send' }).click();
+  }
+
+  /** The inbox drawer is closed. */
+  async expectDrawerClosed(timeout = 15_000) {
+    await expect(this.answerDrawer).toHaveCount(0, { timeout });
   }
 
   /**

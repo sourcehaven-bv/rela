@@ -461,6 +461,13 @@ Some requests carry extra fields:
   was written, `status` is 500. That status is recorded, not sent: the
   connection is closed, so the client sees a reset and a proxy in front
   reports 502.
+- `canceled=true`: the client went away before the server finished, for
+  example because a search box sent a newer request. `status` is then 499,
+  the code Caddy and nginx use for a closed client connection. It is
+  recorded, not sent. If the handler had written a status anyway, that
+  status is kept as `written_status`. Search and list requests log no
+  warning for a cancel. Event streams always end this way and are never
+  marked.
 - `path_truncated=true`: the route shape was longer than 512 bytes and was cut.
   A method longer than 32 bytes is logged as `OTHER`.
 - `query=...`: the request had a query string. It is logged as its shape, so a

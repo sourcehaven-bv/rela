@@ -85,6 +85,12 @@ type Capabilities struct {
 	// [RunFamilyReplaceTests], which fails rather than skips when the
 	// capability is missing.
 	FamilyReplace bool
+
+	// RetiredIDs declares that the backend implements [store.RetiredIDs]: a
+	// rename retires the old id, which then resolves to its successor and
+	// stays reserved. Without it the backend rewrites mention text on a
+	// rename instead. [RunRetiredIDTests] checks the declaration either way.
+	RetiredIDs bool
 }
 
 func ctx() context.Context { return context.Background() }
@@ -243,6 +249,7 @@ func RunAll(t *testing.T, f Factory, sf SearchFactory, vsf VisibleSearchFactory,
 	t.Run("Tx", func(t *testing.T) { RunTxTests(t, f) })
 	t.Run("IteratorNesting", func(t *testing.T) { RunIteratorNestingTests(t, f, vsf) })
 	t.Run("Mentions", func(t *testing.T) { RunMentionTests(t, f) })
+	t.Run("RetiredIDs", func(t *testing.T) { RunRetiredIDTests(t, f, caps.RetiredIDs) })
 
 	// The transaction tier is declared, not inferred. RunTxRollbackTests used
 	// to be reachable only by calling it separately, so a backend with genuine

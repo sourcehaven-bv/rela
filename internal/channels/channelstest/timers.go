@@ -258,6 +258,7 @@ func testSetSessionFire(t *testing.T, h Harness) {
 
 	want := channels.Session{
 		State: "overdue", Generation: 2, EnteredAt: channels.NormTime(at), NextDueAt: channels.NormTime(next),
+		Previous: "contained",
 	}
 	require.Equal(t, want, got.Session)
 	require.Equal(t, before.LastSeq+1, got.LastSeq)

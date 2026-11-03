@@ -103,13 +103,65 @@ func newQueryService(app *App) *queryService {
 // pre-TKT-BA8BSX version swallowed both error classes into silently
 // truncated results.
 func (q *queryService) executeQuery(ctx context.Context, query string) ([]*entity.Entity, error) {
-	return q.executeQueryPrefiltered(ctx, query, nil)
+	return q.executeQueryWith(ctx, query, queryOptions{})
 }
 
-// executeQueryPrefiltered is executeQuery with extra store predicates ANDed
-// into the no-free-text branch's pushdown.
+// queryOptions are executeQueryWith's optional inputs. The zero value is
+// executeQuery.
+type queryOptions struct {
+	// prefilters are extra store predicates ANDed into the no-free-text
+	// branch's pushdown; see executeQueryWith.
+	prefilters []store.PropPredicate
+	// limit is how many results the caller will keep, or 0 for all. It
+	// only lowers the free-text branch's relevance cap, and only when no
+	// later pass could drop or reorder a hit inside it; see
+	// freeTextLimit. The caller still truncates.
+	limit int
+	// exactType is the one type the caller keeps afterwards (the
+	// `type` parameter of /_search), or "" for none.
+	exactType string
+}
+
+// freeTextLimit is the relevance cap for a free-text search. It is
+// maxFreeTextSearchResults unless the caller keeps only opts.limit rows AND
+// every row the search returns is one the caller keeps, in the order it
+// keeps them:
 //
-// `extra` is for a caller that will apply a FURTHER authoritative filter of
+//   - no property filter, which runs in Go after the cap;
+//   - no `sort:` clause, which reorders the capped set: sorting the top 50
+//     by relevance is not the top 50 of the sorted top 1000;
+//   - no type the caller drops: either opts.exactType is unset or the
+//     query's types are exactly it. A `type:` already in q unions with the
+//     spliced one, so its hits would take slots the exact filter then
+//     empties.
+//
+// Two drops remain after the search and are accepted: a hit deleted
+// between the search and the header read, and a face the row gate refuses
+// (visibility.SearchScoped). Both are rare; they can return fewer than
+// limit rows where the 1000 cap would have filled them.
+func freeTextLimit(sq *searchparser.SearchQuery, opts queryOptions) int {
+	if opts.limit <= 0 || opts.limit >= maxFreeTextSearchResults ||
+		len(sq.PropertyFilters) > 0 || sq.HasSort() {
+
+		return maxFreeTextSearchResults
+	}
+	if opts.exactType != "" {
+		if len(sq.EntityTypes) == 0 {
+			return maxFreeTextSearchResults
+		}
+		for _, t := range sq.EntityTypes {
+			if t != opts.exactType {
+				return maxFreeTextSearchResults
+			}
+		}
+	}
+	return opts.limit
+}
+
+// executeQueryWith is executeQuery with options: extra store predicates
+// ANDed into the no-free-text branch's pushdown, and the caller's limit.
+//
+// `opts.prefilters` is for a caller that will apply a FURTHER authoritative filter of
 // its own over the result — the next-action engine's `condition:` — and has
 // lowered the store-safe part of it (queryplan.ConditionPrefilters). The
 // contract is the same belt-and-braces one as the query's own pushdown: the
@@ -125,8 +177,8 @@ func (q *queryService) executeQuery(ctx context.Context, query string) ([]*entit
 // condition — the next-action engine — is refused a free-text query at load
 // (conditionlint) for exactly that reason, and this comment is the reminder
 // for the next one.
-func (q *queryService) executeQueryPrefiltered(
-	ctx context.Context, query string, extra []store.PropPredicate,
+func (q *queryService) executeQueryWith(
+	ctx context.Context, query string, opts queryOptions,
 ) ([]*entity.Entity, error) {
 	sq := searchparser.ParseQuery(query)
 	if sq.IsEmpty() {
@@ -155,7 +207,7 @@ func (q *queryService) executeQueryPrefiltered(
 	if sq.HasFreeText() {
 		// Hits arrive in relevance order. Scores are dropped because
 		// executeQuery never sorted by them.
-		candidates, err = q.runVisibleFreeTextSearch(ctx, svc, sq, scope)
+		candidates, err = q.runVisibleFreeTextSearch(ctx, svc, sq, scope, freeTextLimit(sq, opts))
 	} else {
 		// Push the equality filters into the store as a PRE-FILTER, cutting
 		// the rows loaded. The Go pass below still evaluates every filter,
@@ -175,7 +227,7 @@ func (q *queryService) executeQueryPrefiltered(
 		// pre-pushdown behavior — the store can only ever remove rows the Go
 		// pass would also have removed — while still winning the I/O.
 		pushed := pushdownPrefilters(sq.PropertyFilters, svc.Meta, sq.EntityTypes)
-		pushed = append(pushed, extra...)
+		pushed = append(pushed, opts.prefilters...)
 		candidates, err = visibleListByTypes(ctx, svc, sq.EntityTypes, scope, pushed)
 	}
 	if err != nil {
@@ -206,9 +258,10 @@ func (q *queryService) executeQueryPrefiltered(
 // ACL-scoped searcher. The backend-side limit is only set when no
 // property filters remain — with Go-side filters pending, truncation
 // happens in executeQuery after them, or the filter gap would re-open
-// the starvation the post-visibility limit closes.
+// the starvation the post-visibility limit closes. capN is the relevance
+// cap (see freeTextLimit).
 func (q *queryService) runVisibleFreeTextSearch(
-	ctx context.Context, svc Services, sq *searchparser.SearchQuery, scope map[string]search.TypeScope,
+	ctx context.Context, svc Services, sq *searchparser.SearchQuery, scope map[string]search.TypeScope, capN int,
 ) ([]*entity.Entity, error) {
 	parts := make([]string, 0, len(sq.FreeTextWords)+len(sq.FreeTextPhrases))
 	parts = append(parts, sq.FreeTextWords...)
@@ -217,7 +270,7 @@ func (q *queryService) runVisibleFreeTextSearch(
 	}
 	limit := 0
 	if len(sq.PropertyFilters) == 0 {
-		limit = maxFreeTextSearchResults
+		limit = capN
 	}
 	sQuery := search.Query{
 		Text:  strings.Join(parts, " "),

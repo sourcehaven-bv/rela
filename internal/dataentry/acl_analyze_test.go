@@ -253,3 +253,53 @@ func countWarnings(issues []APIIssue) int {
 	}
 	return n
 }
+
+// The validation check builds its titles from the batch re-load's redacted
+// header (TKT-QM833U), so a hidden display property falls back to the id
+// there too.
+func TestACLAnalyze_RedactsHiddenViolatorTitle(t *testing.T) {
+	app := newTestAppV1(t)
+	setTestResolver(t, app, fakeResolver{fv: FieldVerdicts{
+		Visible: map[string]bool{"title": false},
+	}})
+	app.State().Meta.Validations = []metamodel.ValidationRule{{
+		Name: "needs-status", Description: "A ticket needs a status",
+		EntityType: "ticket", Then: []string{"status!="},
+	}}
+	seedEntity(app, &entity.Entity{
+		ID: "TKT-001", Type: "ticket",
+		Properties: map[string]any{"title": "SECRET-VIOLATOR-TITLE"},
+	})
+	d := mustNewACL(t, &acl.Policy{
+		Roles:       map[string]acl.RoleDef{"viewer": {Read: []string{"ticket"}}},
+		Assignments: map[string]string{"alice": "viewer"},
+	}, app.store)
+	setTestACL(t, app, d)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/_analyze", http.NoBody)
+	req = req.WithContext(gateCtxFor(aliceCtx(), t, d))
+	rec := httptest.NewRecorder()
+	app.handleV1Analyze(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("_analyze: got %d, want 200; body=%s", rec.Code, rec.Body)
+	}
+	var result APIAnalysisResult
+	if err := json.Unmarshal(rec.Body.Bytes(), &result); err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, iss := range result.Issues {
+		if iss.CheckType == "Validations" && iss.EntityID == "TKT-001" {
+			found = true
+			if iss.Title != "TKT-001" {
+				t.Errorf("violator title = %q, want the id", iss.Title)
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("the rule did not report TKT-001: %s", rec.Body)
+	}
+	if strings.Contains(rec.Body.String(), "SECRET-VIOLATOR-TITLE") {
+		t.Errorf("LEAK: hidden display property in the response: %s", rec.Body)
+	}
+}

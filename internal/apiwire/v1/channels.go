@@ -80,6 +80,14 @@ type MarkReadRequest struct {
 // input_required state waits for. WaitingOnMe is per reader, as the
 // affordances are: set when the reader holds a waiting role on an open,
 // stored channel. EnteredAt is absent for a channel that is not stored.
+//
+// Cause is the seq of the message whose post moved the session into its
+// state. It is absent for a timer move, a session that never moved, and a
+// move stored before causes were.
+//
+// Previous is the state the session was in before it entered its state. A
+// re-entry keeps it. It is absent for a session that never left its
+// initial state, and for one that last moved before the field existed.
 type ChannelSession struct {
 	State       string                     `json:"state"`
 	Label       string                     `json:"label,omitempty"`
@@ -94,6 +102,8 @@ type ChannelSession struct {
 	DueAt       string                     `json:"due_at,omitempty"`
 	Timers      []ChannelSessionTimer      `json:"timers,omitempty"`
 	Reminders   []ChannelSessionReminder   `json:"reminders,omitempty"`
+	Cause       int64                      `json:"cause,omitempty"`
+	Previous    string                     `json:"previous,omitempty"`
 }
 
 // ChannelSessionWaiting is one role an input_required state waits for.
@@ -657,6 +667,13 @@ type InboxUnread struct {
 // Roles are the waiting roles the caller holds. Since is when the session
 // entered its state. Transitions are the message types whose post by the
 // caller would move the session.
+//
+// Actions are the caller's decision affordances, equal to the same fields
+// of the channel head's [ChannelActions]. LastSeq is the channel's last
+// seq. Message is the waiting message (the session's cause), rendered as
+// the channel's message list renders it for the caller without the
+// per-message actions; it is absent when the session has no cause or the
+// message is gone, and the inbox summary never has it.
 type InboxEntry struct {
 	Kind        string       `json:"kind"`
 	Channel     InboxChannel `json:"channel"`
@@ -664,7 +681,19 @@ type InboxEntry struct {
 	Roles       []string     `json:"roles"`
 	Since       string       `json:"since"`
 	Transitions []string     `json:"transitions"`
+	Actions     InboxActions `json:"actions"`
+	LastSeq     int64        `json:"last_seq"`
+	Message     *Message     `json:"message,omitempty"`
 	Links       InboxLinks   `json:"links"`
+}
+
+// InboxActions are the decision fields of [ChannelActions] for an inbox
+// entry: the message types the caller may post, those of them that move
+// the session, and the transition entries the caller may fire.
+type InboxActions struct {
+	Post        []string          `json:"post"`
+	Transitions []string          `json:"transitions"`
+	Entries     []ChannelEntryRef `json:"entries"`
 }
 
 // InboxChannel names the channel of an inbox entry. AnchorTitle is the
@@ -680,14 +709,17 @@ type InboxChannel struct {
 }
 
 // InboxSession is the session of an inbox entry: the part of
-// [ChannelSession] that says what it waits for.
+// [ChannelSession] that says what it waits for and how to answer it.
+// Cause and Transitions are as in [ChannelSession].
 type InboxSession struct {
-	State      string                  `json:"state"`
-	Label      string                  `json:"label,omitempty"`
-	Status     string                  `json:"status"`
-	WaitingFor []ChannelSessionWaiting `json:"waiting_for,omitempty"`
-	Generation int64                   `json:"generation"`
-	EnteredAt  string                  `json:"entered_at,omitempty"`
+	State       string                     `json:"state"`
+	Label       string                     `json:"label,omitempty"`
+	Status      string                     `json:"status"`
+	WaitingFor  []ChannelSessionWaiting    `json:"waiting_for,omitempty"`
+	Generation  int64                      `json:"generation"`
+	EnteredAt   string                     `json:"entered_at,omitempty"`
+	Cause       int64                      `json:"cause,omitempty"`
+	Transitions []ChannelSessionTransition `json:"transitions,omitempty"`
 }
 
 // InboxLinks are the API paths of an inbox entry's anchor entity and

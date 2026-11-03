@@ -7,17 +7,22 @@ import (
 	"testing"
 )
 
-// mentionIndexOwners may name store.MentionIndex: the store packages define
-// and implement it, and visibility is its one gated reader.
+// mentionIndexOwners may name store.MentionIndex and store.RetiredIDs: the
+// store packages define and implement them, and visibility is their one
+// gated reader.
 var mentionIndexOwners = []string{"internal/store/", "internal/visibility/"}
 
 // mentionIndexUses returns every reference to the raw mention index: the
-// MentionIndex type or a MentionSources call.
+// MentionIndex type or a MentionSources call, and the RetiredIDs type or a
+// Successors call, which map an id to its successor whatever the reader may
+// see.
 func mentionIndexUses(fset *token.FileSet, file *ast.File) []token.Position {
 	var found []token.Position
 	ast.Inspect(file, func(n ast.Node) bool {
 		if sel, ok := n.(*ast.SelectorExpr); ok {
-			if name := sel.Sel.Name; name == "MentionIndex" || name == "MentionSources" {
+			if name := sel.Sel.Name; name == "MentionIndex" || name == "MentionSources" ||
+				name == "RetiredIDs" || name == "Successors" {
+
 				found = append(found, fset.Position(sel.Sel.Pos()))
 			}
 		}

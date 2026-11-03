@@ -2,6 +2,7 @@ package acl
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"maps"
 	"slices"
@@ -82,7 +83,11 @@ func PrimeLocalRoles(ctx context.Context, ids []string) context.Context {
 	}
 	byID, err := batchLocalRoles(ctx, r, b, todo)
 	if err != nil {
-		slog.WarnContext(ctx, "acl: batching local roles failed; checking per entity", "entities", len(todo), "err", err)
+		// A canceled request is not a fault: the per-entity checks after it
+		// fail on the same ctx and nobody reads the answer (TKT-T2I7P2).
+		if !errors.Is(ctx.Err(), context.Canceled) {
+			slog.WarnContext(ctx, "acl: batching local roles failed; checking per entity", "entities", len(todo), "err", err)
+		}
 		return ctx
 	}
 	return context.WithValue(ctx, localRolePrimeKey{}, &localRolePrime{req: r, byID: byID, parent: parent})

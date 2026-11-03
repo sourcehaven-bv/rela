@@ -19,6 +19,14 @@ type Session struct {
 	State      string    `json:"state,omitempty"`
 	Generation int64     `json:"generation,omitempty"`
 	EnteredAt  time.Time `json:"entered_at,omitzero"`
+	// Cause is the seq of the message whose post moved the session into
+	// its current state: the waiting message. Zero: the initial state, a
+	// timer move, or a move stored before the field existed.
+	Cause int64 `json:"cause,omitempty"`
+	// Previous is the state the session was in before it entered its
+	// current one (TKT-56TPOTE). A re-entry keeps it. Empty: the session
+	// never left its initial state, or last moved before the field existed.
+	Previous string `json:"previous,omitempty"`
 	// NextDueAt is the index hint for [Store.ListSessionsDue]: the earliest
 	// due time of the current state's timers. Zero: no due time.
 	NextDueAt time.Time `json:"next_due_at,omitzero"`
@@ -408,9 +416,18 @@ func DecideSession(step *SessionStep, cur Channel) (move SessionMove, moved bool
 // ApplySession moves c's session to move.To at at: the generation rises by
 // one and the session enters the state at at. It clears the due time and
 // the restart anchors; the step's [SessionStep.Due] sets the new ones and
-// decides which anchors carry over.
-func ApplySession(c *Channel, move SessionMove, at time.Time) {
-	c.Session = Session{State: move.To, Generation: c.Session.Generation + 1, EnteredAt: NormTime(at)}
+// decides which anchors carry over. cause is the seq of the message whose
+// post made the move, or 0 for a timer move. The previous state becomes
+// move.From, except on a re-entry, which keeps it.
+func ApplySession(c *Channel, move SessionMove, at time.Time, cause int64) {
+	previous := move.From
+	if move.From == move.To {
+		previous = c.Session.Previous
+	}
+	c.Session = Session{
+		State: move.To, Generation: c.Session.Generation + 1, EnteredAt: NormTime(at), Cause: cause,
+		Previous: previous,
+	}
 }
 
 // PrepareAppendStep is [PrepareSessionStep] for [Store.Append], which also

@@ -85,6 +85,11 @@ func (o *Opener) Open(ctx context.Context, log *slog.Logger) (context.Context, *
 
 	ctx, ident, err := o.resolveIdentity(ctx, log)
 	if err != nil {
+		if errors.Is(ctx.Err(), context.Canceled) {
+			// The client went away during the membership walk. Not a fault,
+			// so not logged (TKT-T2I7P2); the caller answers no one.
+			return ctx, nil, errors.Join(ErrUnresolvedPrincipal, err, context.Canceled)
+		}
 		p := principal.From(ctx)
 		log.Warn("acl: attachACLRequest: identity resolution failed",
 			"err", err,
@@ -166,7 +171,7 @@ func (o *Opener) resolveIdentity(
 	res := o.policy.IdentityResolver()
 	p := principal.From(ctx)
 	ident, err := res.Resolve(ctx, p)
-	if errors.Is(err, acl.ErrPrincipalLookup) {
+	if errors.Is(err, acl.ErrPrincipalLookup) && ctx.Err() == nil {
 		log.Warn("acl: principal_property lookup failed; using raw principal", "err", err)
 		ident, err = res.ResolveDirect(ctx, p)
 	}

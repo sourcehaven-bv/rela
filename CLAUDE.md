@@ -505,6 +505,11 @@ unit tests run plain (`npm run test:run`).
 golangci-lint with project rules. Test files exempt from `dupl`, `funlen`, magic
 numbers. Cobra `cmd`/`args` unused parameters allowed. Line length: 120.
 
+Each golangci-lint run can use GBs of RAM. Run one at a time: use `just lint`,
+or `golangci-lint run --allow-serial-runners ./path/...` on the changed packages
+while iterating. Never pass `--allow-parallel-runners`, and never start lint
+runs in parallel shells.
+
 **God-object load lines** (`just plimsoll`, CI job "God-object lint"). The
 [plimsoll](https://github.com/sourcehaven-bv/plimsoll) linter caps three
 independent surfaces — the metric that tracks a type accreting into a god-object

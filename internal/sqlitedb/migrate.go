@@ -12,7 +12,7 @@ import (
 // schemaVersion is the shape of the tables this binary expects. Bump it
 // whenever schemaSQL changes shape, and append the step that carries an
 // existing database forward to [migrations].
-const schemaVersion = 30
+const schemaVersion = 33
 
 // SchemaVersion reports the table shape this binary expects, so the CLI can
 // show a real number rather than prose.
@@ -311,6 +311,41 @@ var migrations = []migration{
 		to:    30,
 		apply: sqlSteps(channelMentionsDDL),
 	},
+	{
+		// v30 → v31: the ids renames retired (TKT-J6GISC3). A new table; no
+		// backfill, because renames before it rewrote nothing and left no
+		// record of the old id.
+		to:    31,
+		apply: sqlSteps(retiredIDsDDL),
+	},
+	{
+		// v31 → v32: the seq of the message that moved each channel's
+		// session (TKT-V05706X). No backfill: a row stored before it reads
+		// 0, as a timer move does.
+		to: 32,
+		apply: func(ctx context.Context, conn *sql.Conn) error {
+			return addChannelColumns(ctx, conn, channelCauseColumns)
+		},
+	},
+	{
+		// v32 → v33: the state each channel's session was in before its
+		// current one (TKT-56TPOTE). No backfill: a row stored before it
+		// reads empty until its next move to another state.
+		to: 33,
+		apply: func(ctx context.Context, conn *sql.Conn) error {
+			return addChannelColumns(ctx, conn, channelPreviousColumns)
+		},
+	},
+}
+
+// channelPreviousColumns are the session previous-state column of channels.
+var channelPreviousColumns = []struct{ name, def string }{
+	{"session_previous", "TEXT NOT NULL DEFAULT ''"},
+}
+
+// channelCauseColumns are the session cause column of channels.
+var channelCauseColumns = []struct{ name, def string }{
+	{"session_cause", "INTEGER NOT NULL DEFAULT 0"},
 }
 
 // channelLastAtColumns are the last-activity column of channels.

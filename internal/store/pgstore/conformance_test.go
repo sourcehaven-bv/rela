@@ -38,6 +38,7 @@ func TestConformance(t *testing.T) {
 		// withheld until commit (DEC-8UIL0). sqlitestore does too; fsstore and
 		// memstore deliberately do not.
 		TxRollback: true,
+		RetiredIDs: true,
 		// Versioning was pgstore's alone until sqlitestore implemented it
 		// (TKT-4NU9ZD), which is what moved the contract into storetest.
 		// Declaring it here is the point of that move: the suite now states

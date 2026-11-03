@@ -18,7 +18,13 @@
   },
   "inbox": {
     "title": "Inbox",
-    "loadError": "The inbox could not be loaded."
+    "loadError": "The inbox could not be loaded.",
+    "newerMessages": "{n} newer message | {n} newer messages",
+    "newerMessagesMany": "99+ newer messages",
+    "openChannel": "Open channel",
+    "showMore": "Show more",
+    "showLess": "Show less",
+    "answerTitle": "Answer in {channel}"
   },
   "footer": {
     "settings": "Settings",
@@ -330,8 +336,9 @@
       "intro": "Convert {id} into {type}.",
       "chooseFace": "Choose destination face…",
       "newId": "New ID",
-      "select": "Select…",
       "content": "Content",
+      "filesLater": "File properties ({list}) can be set after the conversion.",
+      "moreFields": "More fields",
       "dropsHeading": "Relationships that will be removed",
       "acceptDrops": "I understand these relationships will be removed.",
       "invalidRelationsHeading": "Relationships that cannot be converted",

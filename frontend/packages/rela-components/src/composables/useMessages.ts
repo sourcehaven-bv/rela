@@ -146,6 +146,7 @@ export type ChannelTextKey =
   | 'sessionPausedArchived'
   | 'sessionShowAll'
   | 'sessionHideAll'
+  | 'sessionContext'
   // Session decisions
   | 'decisions'
   // Reply buttons of a question's options
@@ -466,6 +467,7 @@ const CHANNEL_TEXT: Record<ChannelTextKey, string> = {
   sessionPausedArchived: 'Paused while the channel is archived',
   sessionShowAll: 'Show all states',
   sessionHideAll: 'Hide the states',
+  sessionContext: 'Session steps',
   decisions: 'Decisions',
   choices: 'Choices',
 }
@@ -673,6 +675,12 @@ export interface Messages {
    * end state, or both: `Contained, next`.
    */
   channelSessionStep: (args: { label: string; next: boolean; final: boolean }) => string
+  /**
+   * The screen-reader text of a state in a compact stepper's short list:
+   * `Previous state: Detected`, `Current state: Contained`, `Next state:
+   * Risk assessed`.
+   */
+  channelSessionContextItem: (args: { role: 'previous' | 'current' | 'next'; label: string }) => string
   /**
    * Who else is typing in a channel: `Ann is typing…`, `Ann and Bo are
    * typing…`, `Ann, Bo and 1 other are typing…`. `names` holds at most two
@@ -929,6 +937,8 @@ export const DEFAULT_MESSAGES: Messages = {
   },
   channelSessionStep: ({ label, next, final }) =>
     [label, ...(next ? ['next'] : []), ...(final ? ['end state'] : [])].join(', '),
+  channelSessionContextItem: ({ role, label }) =>
+    `${{ previous: 'Previous state', current: 'Current state', next: 'Next state' }[role]}: ${label}`,
   channelTyping: ({ names, others }) => {
     if (others > 0) {
       return `${names.join(', ')} and ${others} ${others === 1 ? 'other' : 'others'} are typing…`

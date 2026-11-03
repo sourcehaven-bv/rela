@@ -1064,6 +1064,37 @@ describe('ChannelsPanel', () => {
       expect(strip.find('.rl-busy').exists()).toBe(false)
     })
 
+    // TKT-56TPOTE: data-entry.yaml channels.<type>.session.display turns
+    // into the stepper's compact prop, and the head's previous state reaches
+    // it; without the key the stepper keeps its default.
+    it('passes a compact session display and the previous state to the stepper', async () => {
+      useSchemaStore().channelPresentations = new Map([
+        ['room', { session: { display: 'compact' } }],
+      ])
+      api.getChannelSchema.mockResolvedValue({ channel_types: [sessionRoom] })
+      const h = sessionHead()
+      api.getChannelHead.mockResolvedValue({
+        ...h,
+        channel: {
+          ...h.channel,
+          session: { ...detected, state: 'contained', previous: 'detected' },
+        },
+      })
+      await mountPanel()
+      const stepper = w().findComponent(RlChannelSession)
+      expect(stepper.props('compact')).toBe(true)
+      expect(stepper.props('session')).toMatchObject({ current: 'contained', previous: 'detected' })
+      expect(w().find('.rl-channel-session--compact').exists()).toBe(true)
+    })
+
+    it('keeps the default stepper without a session display', async () => {
+      api.getChannelSchema.mockResolvedValue({ channel_types: [sessionRoom] })
+      api.getChannelHead.mockResolvedValue(sessionHead())
+      await mountPanel()
+      expect(w().findComponent(RlChannelSession).props('compact')).toBe(false)
+      expect(w().find('.rl-channel-session--compact').exists()).toBe(false)
+    })
+
     it('shows no stepper on a channel type without a session', async () => {
       await mountPanel()
       expect(w().find('.rl-channel').exists()).toBe(true)

@@ -93,6 +93,19 @@ export interface ChannelSession {
   due_at?: string
   timers?: ChannelSessionTimer[]
   reminders?: ChannelSessionReminder[]
+  /**
+   * The seq of the message whose post moved the session into its state;
+   * absent for a timer move, a session that never moved, and a move stored
+   * before causes were.
+   */
+  cause?: number
+  /**
+   * The state the session was in before it entered its state. A re-entry
+   * keeps it. Absent for a session that never left its initial state, and
+   * for one that last moved before the field existed. Stored history: it
+   * may name a state the configuration no longer declares.
+   */
+  previous?: string
 }
 
 /** A session state's status, after the MCP tasks statuses. */
@@ -170,7 +183,14 @@ export interface InboxUnread {
   links: InboxLinks
 }
 
-/** One session that waits on the caller. kind is "waiting". */
+/**
+ * One session that waits on the caller. kind is "waiting". actions are the
+ * caller's decision affordances, equal to the head's `_actions` fields of
+ * the same name. message is the waiting message (session.cause), as the
+ * message list renders it but without `_actions`, `edit_until` and
+ * `release_after`; absent when the session has no cause or the message is
+ * gone, and never on the summary. last_seq is the channel's last seq.
+ */
 export interface InboxEntry {
   kind: string
   channel: InboxChannel
@@ -178,7 +198,31 @@ export interface InboxEntry {
   roles: string[]
   since: string
   transitions: string[]
+  actions: InboxActions
+  last_seq: number
+  message?: Message
   links: InboxLinks
+}
+
+/**
+ * A decision an inbox row asks an open channel to start (TKT-V05706X):
+ * a decision or choice by its key, made at the entry's session generation.
+ * For a choice, cause is the question and answerType its answer type, for
+ * when the channel's held page cannot build the choice.
+ */
+export interface ChannelStart {
+  kind: 'decide' | 'choose'
+  key: string
+  generation: number
+  cause?: number
+  answerType?: string
+}
+
+/** The decision fields of ChannelActions for an inbox entry. */
+export interface InboxActions {
+  post: string[]
+  transitions: string[]
+  entries: ChannelEntryRef[]
 }
 
 /** The channel of an inbox entry; anchor_title is redacted for the caller. */
@@ -200,6 +244,10 @@ export interface InboxSession {
   waiting_for?: ChannelSessionWaiting[]
   generation: number
   entered_at?: string
+  /** As ChannelSession.cause. */
+  cause?: number
+  /** As ChannelSession.transitions. */
+  transitions?: ChannelSessionTransition[]
 }
 
 /**
@@ -717,6 +765,8 @@ export const CHANNEL_WIRE_FIELDS: Record<string, readonly string[]> = {
     'due_at',
     'timers',
     'reminders',
+    'cause',
+    'previous',
   ]),
   ChannelSessionWaiting: wireKeys<ChannelSessionWaiting>()(['role', 'label', 'holders']),
   ChannelSessionReminder: wireKeys<ChannelSessionReminder>()([
@@ -894,8 +944,12 @@ export const CHANNEL_WIRE_FIELDS: Record<string, readonly string[]> = {
     'roles',
     'since',
     'transitions',
+    'actions',
+    'last_seq',
+    'message',
     'links',
   ]),
+  InboxActions: wireKeys<InboxActions>()(['post', 'transitions', 'entries']),
   InboxChannel: wireKeys<InboxChannel>()([
     'anchor',
     'entity_type',
@@ -912,6 +966,8 @@ export const CHANNEL_WIRE_FIELDS: Record<string, readonly string[]> = {
     'waiting_for',
     'generation',
     'entered_at',
+    'cause',
+    'transitions',
   ]),
   InboxLinks: wireKeys<InboxLinks>()(['entity', 'channel', 'message']),
   ChannelMessageTypeSchema: wireKeys<ChannelMessageTypeSchema>()([

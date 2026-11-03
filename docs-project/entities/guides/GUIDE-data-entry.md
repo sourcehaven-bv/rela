@@ -1492,6 +1492,51 @@ A mention or reply in a quiet message still shows in the inbox. Clicking
 it opens the channel at that message and shows it in full, also when its
 type is `hidden` or `collapsed`.
 
+### Compact session header
+
+A channel type with a session shows a header with every state of the
+session. With many states, the list wraps over several rows. `display:
+compact` on the session folds the header to the states that matter now:
+
+```yaml
+channels:
+  run:
+    session:
+      display: compact
+```
+
+| Value | In the web app |
+| --- | --- |
+| `compact` | The header shows the state the session came from, the current state and the states it can move to next. **Show all states** unfolds the full list. |
+| absent or empty | The header shows the full list. On a narrow panel it folds to one line, as described in the realtime guide. |
+
+In a compact header:
+
+- The previous state is the state the session was in before it entered the
+  current one. A move into the same state again keeps it. A session that
+  has not left its first state has none, and neither has a session that
+  last moved before this release.
+- The next states are the states a transition out of the current state
+  leads to. They have a dotted outline, as in the full list. In a loop, such
+  as a review that can send the work back to drafting, the same state can be
+  both the previous state and a next state.
+- The current state keeps its tags, such as **Input required**, or its
+  outcome when the session has ended. An ended or paused session shows no
+  next states.
+- When the session is loading or stranded, the header shows the one-line
+  summary instead, such as "Stranded · triage".
+- **Show all states** unfolds the full list below and hides the short one.
+  Press it again to fold the list. The web app does not remember it.
+- On a narrow panel the compact header folds to one line, as the header
+  does without the key.
+
+A screen reader hears the short list as "Session steps", with each state
+named as the previous, current or next state.
+
+The server refuses `session.display` with any value other than `compact`,
+and any other key under `session`. A channel type without a session gets a
+warning, because the key has no effect there.
+
 ### Unread messages
 
 The channel list on an entity page shows a badge on each channel with
@@ -1528,7 +1573,8 @@ what needs you across all entities:
 
 - **Waiting on you**: the sessions that wait on a role you hold, oldest
   wait first. Each row shows the entity, the channel, the session's state
-  and since when it waits.
+  and since when it waits, and the message that moved the session there
+  with its decisions (see [Answering from the inbox](#answering-from-the-inbox)).
 - **Mentions and replies**: the unread messages that mention you or reply
   to one of yours, newest first. The row shows the author and the time,
   not the message text.
@@ -1562,6 +1608,34 @@ full even when its type is quiet, and focuses it. This happens once; the
 address then drops `seq`, so clicking the same row again works. A message
 that is not in the channel's loaded pages within ten older pages is not
 shown, and nothing is reported.
+
+#### Answering from the inbox
+
+A waiting row shows the message that moved the session into its state,
+such as an agent's question or a plan, with the same decision buttons and
+choices as on the entity page. You can answer without opening the entity:
+
+- A one-click decision, such as **Approve plan**, posts at once. A
+  decision marked `confirm` asks first.
+- A question with options shows one button per option. Click one to post
+  it as the answer. Options show only while nobody has replied to the
+  question.
+- A decision that needs a form, such as **Revise plan**, and **Other
+  answer** open the channel in a drawer, with the composer ready for that
+  decision. Sending it closes the drawer.
+
+After an answer, the row leaves the inbox and focus moves to the next
+row. When the session moved on in the meantime, the page says so and
+reloads the inbox; nothing is posted.
+
+When messages followed the waiting message, the row says how many, for
+example "3 newer messages". Read them in the drawer before you decide.
+The buttons stay on the row.
+
+The row shows only the decisions you may take, as on the entity page. A
+row whose session never moved, or that moved by a timer, shows no
+message. Sessions that moved before this release show their message
+again after their next move.
 
 **Mark read** on an unread channel marks the channel read up to its
 newest message. On a mention or reply it marks the channel read up to
@@ -3132,6 +3206,31 @@ page. It is shown by default. It is hidden when `mentioned_by_panel` is
 `false`, and when the type's view collects backlinks itself through a
 [`mentioned_by` step](#backlinks-mentioned_by).
 
+#### Mentions after a rename
+
+A rename or a type conversion that gives an entity a new id keeps the
+mentions of its old id working. How depends on the storage backend:
+
+- **Files (the default backend):** the rename rewrites every entity body
+  that mentions the old id, so the files name the new id. Each rewritten
+  body is recorded in the audit log as an update caused by the rename, and
+  shows up in version control like any other edit. The rewrite does not
+  reach:
+  - relation bodies;
+  - deleted entities;
+  - a body that mentions more ids than the mention index keeps;
+  - a mention of the old id that is added after the rename.
+
+  If a body cannot be rewritten, the rename still succeeds and the server
+  logs a warning.
+- **SQLite and PostgreSQL:** the rename leaves the bodies as they are. The
+  old id is retired: it points at the new id, and no new entity can take it.
+  A mention of the old id, written before or after the rename, links to the
+  entity and counts as one of its backlinks. The new id stays reserved too,
+  even after its entity is deleted, so an unrelated entity cannot inherit
+  those mentions. Renaming the entity back onto its old id is allowed and
+  ends the retirement.
+
 ### Duplicating an entity
 
 The entity detail page offers a **Duplicate** action for every type you may
@@ -3192,8 +3291,15 @@ commands, the header create menu and **Edit** in the row. Every other action,
 including History, Export, Duplicate, Delete and the conversions, moves into the
 "⋯" menu. The title keeps a minimum width, and button labels do not wrap.
 
-The conversion form shows mapped destination fields and any
-required fields that still need values. Its preview lists relations that will
+The conversion form asks for the destination fields the mapping does not
+fill. Each field uses the widget, label and order of the destination type's
+create form; a field that form leaves out gets the default widget for its
+property type. Required fields come first. The other fields sit under
+**More fields**, which opens when one of them has an error. A required field
+stays in the form even when the create form hides it. File properties are not
+in the form: they are set on the new entity after the conversion. When the
+mapping does not set the body, the form edits it in the same markdown editor
+as the entity form. Its preview lists relations that will
 be remapped or dropped; the user confirms before saving. The form has two
 steps: **Review** runs the preview, and when it passes the button changes to
 **Convert**, which saves. A refused preview or conversion shows its error in the

@@ -1,7 +1,18 @@
 import type { Meta, StoryObj } from '@storybook/vue3-vite'
 import { expect, fn, userEvent, within } from 'storybook/test'
 import RlInbox from './RlInbox.vue'
-import type { InboxMentionRow, InboxUnreadRow, InboxWaitingRow } from './types'
+import RlChannelDecisions from './RlChannelDecisions.vue'
+import RlChannelMessage from './RlChannelMessage.vue'
+import { DECISIONS_BLOCKED_KEY, decisionPendingKey } from './channelFields'
+import type { ChannelDecisionView, InboxMentionRow, InboxUnreadRow, InboxWaitingRow } from './types'
+import {
+  breachDecisions,
+  breachMessageTypes,
+  channelMessages,
+  questionChoices,
+  questionMessage,
+  questionMessageTypes,
+} from '../../fixtures/channels'
 
 // Sample rows shaped like the realtime mockup: an incident room, a design
 // review and an approval. Kept inline so the stories depend on nothing else.
@@ -156,5 +167,116 @@ export const Many: Story = {
   },
   play: async ({ canvasElement }) => {
     await expect(within(canvasElement).getByText('Showing 50 of 20000+')).toBeVisible()
+  },
+}
+
+/*
+ * The waiting-detail slot (TKT-V05706X): the app shows the message that
+ * moved the session, with its choices and decisions, below the row's link.
+ */
+
+interface Detail {
+  message?: typeof questionMessage
+  messageType?: (typeof questionMessageTypes)[number]
+  choices?: ChannelDecisionView[]
+  decisions?: ChannelDecisionView[]
+  pending?: ReadonlySet<string>
+}
+
+function withDetail(details: Record<string, Detail>): Story['render'] {
+  return (args) => ({
+    components: { RlInbox, RlChannelMessage, RlChannelDecisions },
+    setup: () => ({ args, details }),
+    template: `<div style="max-width:640px"><RlInbox v-bind="args">
+      <template #waiting-detail="{ row }">
+        <template v-if="details[row.id]">
+          <RlChannelMessage
+            v-if="details[row.id].message"
+            :message="details[row.id].message"
+            :message-type="details[row.id].messageType"
+            :can-reply="false"
+            :choices="details[row.id].choices"
+            :decisions="details[row.id].decisions"
+            :pending="details[row.id].pending"
+            @choose="args.onChoose"
+            @decide="args.onDecide"
+          />
+          <RlChannelDecisions
+            v-else
+            :decisions="details[row.id].decisions"
+            :pending="details[row.id].pending"
+            @decide="args.onDecide"
+          />
+        </template>
+      </template>
+    </RlInbox></div>`,
+  })
+}
+
+const breachCause = channelMessages[channelMessages.length - 1]!
+
+/** A question with choices: one click on an option answers it from the inbox. */
+export const QuestionWithChoices: Story = {
+  args: { waiting: [waiting[0]!], mentions: [], unread: [], onChoose: fn() } as never,
+  render: withDetail({
+    w1: {
+      message: questionMessage,
+      messageType: questionMessageTypes[0],
+      choices: questionChoices,
+    },
+  }),
+  play: async ({ args, canvasElement }) => {
+    const canvas = within(canvasElement)
+    const group = canvas.getByRole('group', { name: 'Choices' })
+    await expect(within(group).getAllByRole('button')).toHaveLength(4)
+    await userEvent.click(within(group).getByRole('button', { name: /SQLite/ }))
+    await expect(
+      (args as unknown as { onChoose: ReturnType<typeof fn> }).onChoose
+    ).toHaveBeenCalledWith('choice:12:1')
+  },
+}
+
+/** A plan to approve: the session's decisions show on the message that moved it. */
+export const PlanApproval: Story = {
+  args: { waiting: [waiting[1]!], mentions: [], unread: [], onDecide: fn() } as never,
+  render: withDetail({
+    w2: {
+      message: breachCause,
+      messageType: breachMessageTypes.find((t) => t.name === breachCause.type),
+      decisions: breachDecisions,
+    },
+  }),
+  play: async ({ args, canvasElement }) => {
+    const canvas = within(canvasElement)
+    await userEvent.click(canvas.getByRole('button', { name: /Contained again/ }))
+    await expect(
+      (args as unknown as { onDecide: ReturnType<typeof fn> }).onDecide
+    ).toHaveBeenCalledWith('contained')
+  },
+}
+
+/** A row whose waiting message is not known: only the decisions show. */
+export const WithoutMessage: Story = {
+  args: { waiting: [waiting[1]!], mentions: [], unread: [], onDecide: fn() } as never,
+  render: withDetail({ w2: { decisions: breachDecisions } }),
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement)
+    await expect(canvas.getByRole('group', { name: 'Decisions' })).toBeVisible()
+    await expect(canvas.getByRole('link')).toBeVisible()
+  },
+}
+
+/** A click in flight: its button works, and every other decision waits. */
+export const PendingClick: Story = {
+  args: { waiting: [waiting[1]!], mentions: [], unread: [], onDecide: fn() } as never,
+  render: withDetail({
+    w2: {
+      decisions: breachDecisions,
+      pending: new Set([decisionPendingKey('contained'), DECISIONS_BLOCKED_KEY]),
+    },
+  }),
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement)
+    await expect(canvas.getByRole('button', { name: /Dismiss/ })).toBeDisabled()
   },
 }

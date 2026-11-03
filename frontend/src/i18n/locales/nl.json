@@ -18,7 +18,13 @@
   },
   "inbox": {
     "title": "Inbox",
-    "loadError": "De inbox kon niet worden geladen."
+    "loadError": "De inbox kon niet worden geladen.",
+    "newerMessages": "{n} nieuwer bericht | {n} nieuwere berichten",
+    "newerMessagesMany": "99+ nieuwere berichten",
+    "openChannel": "Kanaal openen",
+    "showMore": "Meer tonen",
+    "showLess": "Minder tonen",
+    "answerTitle": "Antwoorden in {channel}"
   },
   "footer": {
     "settings": "Instellingen",
@@ -330,8 +336,9 @@
       "intro": "{id} omzetten naar {type}.",
       "chooseFace": "Kies een doelvariant…",
       "newId": "Nieuw ID",
-      "select": "Kiezen…",
       "content": "Inhoud",
+      "filesLater": "Bestandseigenschappen ({list}) kun je na de conversie instellen.",
+      "moreFields": "Meer velden",
       "dropsHeading": "Relaties die worden weggehaald",
       "acceptDrops": "Ik begrijp dat deze relaties worden weggehaald.",
       "invalidRelationsHeading": "Relaties die niet kunnen worden omgezet",

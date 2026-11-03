@@ -482,10 +482,12 @@
       "last_seq": 4,
       "rev": 5,
       "session": {
+        "cause": 3,
         "entered_at": "2026-01-02T03:04:05Z",
         "final": true,
         "generation": 2,
         "label": "Reviewed",
+        "previous": "contained",
         "state": "reviewed",
         "status": "completed"
       },
@@ -604,9 +606,11 @@
       },
       "rev": 3,
       "session": {
+        "cause": 1,
         "entered_at": "2026-01-02T03:04:05Z",
         "generation": 1,
         "label": "Contained",
+        "previous": "detected",
         "reminders": [
           {
             "count": 1,
@@ -745,10 +749,12 @@
             },
             "rev": 2,
             "session": {
+              "cause": 1,
               "entered_at": "2026-01-02T03:04:05Z",
               "final": true,
               "generation": 1,
               "label": "Contained",
+              "previous": "detected",
               "state": "contained",
               "status": "completed"
             },
@@ -944,9 +950,11 @@
       },
       "rev": 2,
       "session": {
+        "cause": 1,
         "entered_at": "2026-01-02T03:04:05Z",
         "generation": 1,
         "label": "Contained",
+        "previous": "detected",
         "state": "contained",
         "status": "working",
         "transitions": [
@@ -994,9 +1002,11 @@
       "last_seq": 2,
       "rev": 6,
       "session": {
+        "cause": 1,
         "entered_at": "2026-01-02T03:04:05Z",
         "generation": 1,
         "label": "Contained",
+        "previous": "detected",
         "state": "contained",
         "status": "working",
         "transitions": [
@@ -1080,9 +1090,11 @@
       "last_seq": 3,
       "rev": 3,
       "session": {
+        "cause": 1,
         "entered_at": "2026-01-02T03:04:05Z",
         "generation": 1,
         "label": "Contained",
+        "previous": "detected",
         "reminders": [
           {
             "count": 1,
@@ -1516,10 +1528,12 @@
       },
       "rev": 2,
       "session": {
+        "cause": 1,
         "entered_at": "2026-01-02T03:04:05Z",
         "final": true,
         "generation": 1,
         "label": "Contained",
+        "previous": "detected",
         "state": "contained",
         "status": "completed"
       },
@@ -1559,10 +1573,12 @@
       "last_seq": 2,
       "rev": 2,
       "session": {
+        "cause": 1,
         "entered_at": "2026-01-02T03:04:05Z",
         "final": true,
         "generation": 1,
         "label": "Contained",
+        "previous": "detected",
         "state": "contained",
         "status": "completed"
       },

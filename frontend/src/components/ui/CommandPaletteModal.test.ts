@@ -8,6 +8,7 @@ import { useSchemaStore } from '@/stores/schema'
 import { _resetModalStack, isAnyModalOpen } from '@/composables/modalStack'
 import { searchEntities } from '@/api'
 import type { Entity, ListResponse } from '@/types'
+import { SEARCH_DEBOUNCE_MS } from '@/utils/searchTiming'
 
 // Router stub — palette navigates via router.push when an entity is selected.
 
@@ -120,7 +121,7 @@ async function typeQuery(value: string): Promise<void> {
   input().value = value
   input().dispatchEvent(new Event('input'))
   await flushPromises()
-  vi.advanceTimersByTime(150)
+  vi.advanceTimersByTime(SEARCH_DEBOUNCE_MS)
   await flushPromises()
   await flushPromises()
 }
@@ -288,12 +289,16 @@ describe('CommandPaletteModal', () => {
       input().dispatchEvent(new Event('input'))
       // Drain the debounce.
       await flushPromises()
-      vi.advanceTimersByTime(150)
+      vi.advanceTimersByTime(SEARCH_DEBOUNCE_MS)
       await flushPromises()
       await flushPromises()
 
       expect(searchSpy).toHaveBeenCalledTimes(1)
-      expect(searchSpy).toHaveBeenLastCalledWith('abcd', undefined, expect.any(AbortSignal), undefined)
+      expect(searchSpy).toHaveBeenLastCalledWith('abcd', {
+        signal: expect.any(AbortSignal),
+        world: undefined,
+        limit: 50,
+      })
     })
 
     // Queries below the minimum length, or that contain only whitespace,
@@ -364,7 +369,7 @@ describe('CommandPaletteModal', () => {
       input().value = 'fix'
       input().dispatchEvent(new Event('input'))
       await flushPromises()
-      vi.advanceTimersByTime(150)
+      vi.advanceTimersByTime(SEARCH_DEBOUNCE_MS)
       await flushPromises()
 
       // Previous results still visible (no flicker).
@@ -382,10 +387,9 @@ describe('CommandPaletteModal', () => {
       searchSpy.mockImplementation(
         async (
           _q: string,
-          _t?: string,
-          signal?: AbortSignal
+          opts?: { signal?: AbortSignal }
         ): Promise<ListResponse<Entity>> => {
-          if (signal) seenSignals.push(signal)
+          if (opts?.signal) seenSignals.push(opts.signal)
           return listResponse([])
         }
       )
@@ -404,9 +408,9 @@ describe('CommandPaletteModal', () => {
       let resolveFn: (value: ListResponse<Entity>) => void = () => {}
       const seenSignals: AbortSignal[] = []
       searchSpy.mockImplementationOnce(
-        (_q: string, _t?: string, signal?: AbortSignal) =>
+        (_q: string, opts?: { signal?: AbortSignal }) =>
           new Promise<ListResponse<Entity>>((resolve) => {
-            if (signal) seenSignals.push(signal)
+            if (opts?.signal) seenSignals.push(opts.signal)
             resolveFn = resolve
           })
       )
@@ -414,7 +418,7 @@ describe('CommandPaletteModal', () => {
       input().value = 'foo'
       input().dispatchEvent(new Event('input'))
       await flushPromises()
-      vi.advanceTimersByTime(150)
+      vi.advanceTimersByTime(SEARCH_DEBOUNCE_MS)
       await flushPromises()
 
       expect(seenSignals[0].aborted).toBe(false)

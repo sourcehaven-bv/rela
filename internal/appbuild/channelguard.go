@@ -61,21 +61,34 @@ type channelGuard struct {
 	now    func() time.Time
 	// dueWake receives the due times a restore resumes; nil notes none.
 	dueWake *realtime.DueWake
+	// marker tells live subscribers about the channels the guard detaches
+	// and puts back; nil marks nothing.
+	marker channelMarker
 }
 
 var _ entitymanager.AnchorGuard = (*channelGuard)(nil)
 
-// newChannelGuard returns the guard over cs, reading the realtime config from
-// rt and handing pending batches to tombs. A restore notes the due times
-// it resumes on dueWake. A nil cs guards nothing.
+// guardInputs are the collaborators of the channel guard besides the
+// realtime config.
+type guardInputs struct {
+	store   channels.Store
+	tombs   *tombstoneConfirmer
+	dueWake *realtime.DueWake
+	marker  channelMarker
+}
+
+// newChannelGuard returns the guard over in.store, reading the realtime
+// config from rt and handing pending batches to in.tombs. A restore notes
+// the due times it resumes on in.dueWake. Detached and restored channels
+// are marked on in.marker. A nil store guards nothing.
 //
-// Nil: cs is accepted (no channel store); rt is accepted (realtime off);
-// tombs is rejected when cs is set, since a pending batch nobody confirms
-// waits for the sweep; dueWake is accepted, and a restored timer then
-// waits for the next scheduled round.
-func newChannelGuard(
-	cs channels.Store, rt *RealtimeConfig, tombs *tombstoneConfirmer, dueWake *realtime.DueWake,
-) (entitymanager.AnchorGuard, error) {
+// Nil: in.store is accepted (no channel store); rt is accepted (realtime
+// off); in.tombs is rejected when in.store is set, since a pending batch
+// nobody confirms waits for the sweep; in.dueWake is accepted, and a
+// restored timer then waits for the next scheduled round; in.marker is
+// accepted (nothing marked).
+func newChannelGuard(rt *RealtimeConfig, in guardInputs) (entitymanager.AnchorGuard, error) {
+	cs, tombs := in.store, in.tombs
 	if cs == nil {
 		return entitymanager.NopAnchorGuard{}, nil
 	}
@@ -87,20 +100,19 @@ func newChannelGuard(
 		tombs:   tombs,
 		config:  func() *realtimecfg.Compiled { return rt.Load().Config },
 		now:     time.Now,
-		dueWake: dueWake,
+		dueWake: in.dueWake,
+		marker:  in.marker,
 	}, nil
 }
 
 // channelGuardFor checks the realtime config against the channel types the
 // store has recorded (see checkChannelTypeRecords) and returns the guard
 // over cs. A mismatch fails the assembly, so the server does not start.
-func channelGuardFor(
-	base *SharedBase, cs channels.Store, tombs *tombstoneConfirmer, dueWake *realtime.DueWake,
-) (entitymanager.AnchorGuard, error) {
-	if err := checkChannelTypeRecords(context.Background(), cs, base.realtime.Load().Config); err != nil {
+func channelGuardFor(base *SharedBase, in guardInputs) (entitymanager.AnchorGuard, error) {
+	if err := checkChannelTypeRecords(context.Background(), in.store, base.realtime.Load().Config); err != nil {
 		return nil, err
 	}
-	return newChannelGuard(cs, base.realtime, tombs, dueWake)
+	return newChannelGuard(base.realtime, in)
 }
 
 // Active implements [entitymanager.AnchorGuard]: a guard over a channel
@@ -202,8 +214,12 @@ func (s *channelScope) CheckDelete(_ context.Context, d entitymanager.AnchorDele
 func (g *channelGuard) tombstone(
 	ctx context.Context, id string, face entity.Face, at time.Time, file channels.Filer,
 ) (channels.TombstoneHandle, error) {
-	h, err := g.store.Tombstone(ctx, id, face, at, file)
+	var moved []channels.Channel
+	h, err := g.store.Tombstone(ctx, id, face, at, capturing(file, &moved))
 	if err == nil || h.IsZero() {
+		if err == nil && !h.IsZero() {
+			markChannels(g.marker, moved, "")
+		}
 		return h, err
 	}
 	uctx, cancel := undoContext(ctx)
@@ -217,7 +233,9 @@ func (g *channelGuard) tombstone(
 
 // undo is the [tombstoneUndo] of the batch h.
 func (g *channelGuard) undo(h channels.TombstoneHandle) tombstoneUndo {
-	return tombstoneUndo{store: g.store, h: h, now: g.now, config: g.config, tombs: g.tombs, dueWake: g.dueWake}
+	return tombstoneUndo{
+		store: g.store, h: h, now: g.now, config: g.config, tombs: g.tombs, dueWake: g.dueWake, marker: g.marker,
+	}
 }
 
 // BeforeRename implements [entitymanager.AnchorGuard]. Channels on newID
@@ -268,6 +286,9 @@ type tombstoneUndo struct {
 	config  func() *realtimecfg.Compiled
 	tombs   *tombstoneConfirmer
 	dueWake *realtime.DueWake
+	// marker hears that the batch is back; its keys are not at hand, so
+	// every channel is marked. Nil marks nothing.
+	marker channelMarker
 }
 
 // Restore implements [entitymanager.AnchorUndo]. The confirmer forgets the
@@ -288,6 +309,9 @@ func (u tombstoneUndo) restore(ctx context.Context) error {
 		return err
 	}
 	resume.Note(u.dueWake)
+	if u.marker != nil {
+		u.marker.MarkAll()
+	}
 	return nil
 }
 

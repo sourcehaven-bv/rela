@@ -150,6 +150,9 @@ export interface Entity {
 // unknown reason as opaque and fall back to a generic tooltip, so new reasons
 // server-side never break the client.
 export interface Mention {
+  // The id the entity carries now, set only when the mention names an id a
+  // rename retired. Links go to it; the stored text keeps the old id.
+  id?: string
   type: string
   title: string
   inaccessible?: boolean

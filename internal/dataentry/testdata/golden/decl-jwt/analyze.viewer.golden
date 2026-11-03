@@ -1,9 +1,9 @@
 request: GET /api/v1/_analyze
 identity: signed assertion for viewer@example.test
 status: 200
-reads: GraphQueryHeaders=1 ListEntities=3 ListEntityHeaders=8 ListRelations=9 MatchingFaces=7
-breadth: ListEntities=3/3 ListEntityHeaders=6/8 ListRelations=30/9 MatchingFaces=33/7
-bodies: GraphQuery=0/1 ListEntities=0/3 ListEntityHeaders=0/8
+reads: GraphQueryHeaders=1 ListEntityHeaders=6 ListRelations=7 MatchingFaces=7
+breadth: ListEntityHeaders=6/6 ListRelations=30/7 MatchingFaces=33/7
+bodies: GraphQuery=0/1 ListEntityHeaders=0/6
 versions: 
 body:
 {

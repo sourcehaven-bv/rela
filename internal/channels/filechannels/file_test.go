@@ -651,3 +651,41 @@ func TestAppend_DropsDanglingPending(t *testing.T) {
 	require.NoError(t, err)
 	require.Nil(t, got.Action)
 }
+
+// TestGetMessages_Damaged pins that GetMessages skips a damaged record and
+// a channel whose meta.yaml is damaged, and answers the rest (TKT-V05706X
+// AC 2).
+func TestGetMessages_Damaged(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	dir := filepath.Join(t.TempDir(), "channels")
+	s := newDiskStore(t, dir)
+	other := channels.Key{Anchor: channels.Anchor{ID: "TKT-2"}, Type: "room"}
+	for _, k := range []channels.Key{key, key, other} {
+		_, err := s.Append(ctx, k, msg("one"))
+		require.NoError(t, err)
+	}
+	seg := filepath.Join(dir, enc("TKT-1"), none, "room", none, "log-0000.jsonl")
+	data := must(os.ReadFile(seg))
+	first := bytes.IndexByte(data, '\n')
+	require.NoError(t, os.WriteFile(seg, append([]byte("not json"), data[first:]...), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, enc("TKT-2"), none, "room", none, metaFile), []byte(":\t:"), 0o600))
+
+	got, err := s.GetMessages(ctx, []channels.MessageRef{{Key: key, Seq: 1}, {Key: key, Seq: 2}, {Key: other, Seq: 1}})
+	require.NoError(t, err)
+	require.Len(t, got, 1)
+	require.Contains(t, got, channels.MessageRef{Key: key, Seq: 2})
+}
+
+// TestGetMessages_Canceled pins that GetMessages stops at an ended ctx
+// rather than reading every named segment.
+func TestGetMessages_Canceled(t *testing.T) {
+	t.Parallel()
+	s := newDiskStore(t, filepath.Join(t.TempDir(), "channels"))
+	_, err := s.Append(context.Background(), key, msg("one"))
+	require.NoError(t, err)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, err = s.GetMessages(ctx, []channels.MessageRef{{Key: key, Seq: 1}})
+	require.ErrorIs(t, err, context.Canceled)
+}

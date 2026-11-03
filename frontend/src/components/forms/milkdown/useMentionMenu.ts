@@ -35,6 +35,10 @@ import { createStartingList, type StartingList, type StartingListSelf } from './
 import { mentionWorld } from './mentionWorld'
 import { rankMentions } from './rankMentions'
 
+// The server's maximum `limit` on /_search (maxSearchLimit in
+// internal/dataentry/api_v1.go). A larger value is answered with 400.
+const MENTION_SEARCH_LIMIT = 100
+
 /** What the highlight currently sits on. Enter means different things per kind. */
 export type MentionChoice = { kind: 'type'; name: string } | { kind: 'entity'; entity: Entity }
 
@@ -189,7 +193,11 @@ export function useSchemaMentionMenu(self: () => MentionSelf | null): MentionMen
   }
 
   const menu = useMentionMenu({
-    search: async (text, type, signal) => (await searchEntities(text, type, signal, world())).data,
+    // The menu re-ranks the rows itself and shows the best 20, so it asks
+    // for the server maximum rather than for 20: a title match the server
+    // ranks 30th can still be the menu's first row.
+    search: async (text, type, signal) =>
+      (await searchEntities(text, { type, signal, world: world(), limit: MENTION_SEARCH_LIMIT })).data,
     startingList: { load: (type) => startingListFor(world()).load(type) },
   })
 

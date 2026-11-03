@@ -62,26 +62,13 @@ func Spans(body string) []string {
 	var out []string
 	seen := make(map[string]struct{})
 	source := []byte(body)
-	doc := parser.Parser().Parse(text.NewReader(source))
-	_ = ast.Walk(doc, func(n ast.Node, entering bool) (ast.WalkStatus, error) {
-		if !entering {
-			return ast.WalkContinue, nil
-		}
-		if _, isLink := n.(*ast.Link); isLink {
-			// A span in link text already points somewhere else.
-			return ast.WalkSkipChildren, nil
-		}
-		cs, ok := n.(*ast.CodeSpan)
-		if !ok {
-			return ast.WalkContinue, nil
-		}
+	walkSpans(source, func(cs *ast.CodeSpan) {
 		if s, plain := codeSpanText(cs, source); plain {
 			if _, dup := seen[s]; !dup {
 				seen[s] = struct{}{}
 				out = append(out, s)
 			}
 		}
-		return ast.WalkSkipChildren, nil
 	})
 	return out
 }
@@ -107,6 +94,60 @@ func Index(body string) []string {
 		out = out[:MaxTargets]
 	}
 	return out
+}
+
+// Rewrite returns body with every mention of from replaced by to, and
+// whether it replaced any. It finds mentions exactly as [Spans] does, so a
+// span in link text, in a code block or across a line break is left alone,
+// and it changes only the bytes inside each span: the backticks and
+// everything around them stay as written.
+func Rewrite(body, from, to string) (string, bool) {
+	if body == "" || from == "" || from == to {
+		return body, false
+	}
+	source := []byte(body)
+	var hits []text.Segment
+	walkSpans(source, func(cs *ast.CodeSpan) {
+		s, plain := codeSpanText(cs, source)
+		if !plain || s != from {
+			return
+		}
+		if t, ok := cs.FirstChild().(*ast.Text); ok { // always: codeSpanText checked it
+			hits = append(hits, t.Segment)
+		}
+	})
+	if len(hits) == 0 {
+		return body, false
+	}
+	var out []byte
+	last := 0
+	for _, seg := range hits {
+		out = append(out, source[last:seg.Start]...)
+		out = append(out, to...)
+		last = seg.Stop
+	}
+	out = append(out, source[last:]...)
+	return string(out), true
+}
+
+// walkSpans calls fn for each code span of source that is not in link
+// text, in document order.
+func walkSpans(source []byte, fn func(*ast.CodeSpan)) {
+	doc := parser.Parser().Parse(text.NewReader(source))
+	_ = ast.Walk(doc, func(n ast.Node, entering bool) (ast.WalkStatus, error) {
+		if !entering {
+			return ast.WalkContinue, nil
+		}
+		if _, isLink := n.(*ast.Link); isLink {
+			// A span in link text already points somewhere else.
+			return ast.WalkSkipChildren, nil
+		}
+		if cs, ok := n.(*ast.CodeSpan); ok {
+			fn(cs)
+			return ast.WalkSkipChildren, nil
+		}
+		return ast.WalkContinue, nil
+	})
 }
 
 // codeSpanText returns the text of a code span. It returns plain=false

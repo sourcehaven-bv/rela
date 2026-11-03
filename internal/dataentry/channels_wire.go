@@ -48,25 +48,14 @@ func wireChannelSession(s *realtime.SessionView) *v1.ChannelSession {
 	}
 	out := &v1.ChannelSession{
 		State: s.State, Label: s.Label, Status: s.Status, WaitingOnMe: s.WaitingOnMe, Generation: s.Generation,
-		EnteredAt: channelTime(s.EnteredAt), Final: s.Final, Stranded: s.Stranded,
+		EnteredAt: channelTime(s.EnteredAt), Final: s.Final, Stranded: s.Stranded, Cause: s.Cause,
+		Previous: s.Previous,
 	}
 	for _, w := range s.WaitingFor {
 		out.WaitingFor = append(out.WaitingFor,
 			v1.ChannelSessionWaiting{Role: w.Role, Label: w.Label, Holders: w.Holders})
 	}
-	for _, t := range s.Transitions {
-		w := v1.ChannelSessionTransition{
-			MessageType: t.MessageType, To: t.To, By: t.By, Guarded: t.Guarded, Outputs: t.Outputs, Entry: t.Entry,
-		}
-		if t.Button != nil {
-			o := t.Button.ButtonOptionsView
-			w.Button = &v1.ChannelSessionButton{
-				Label: t.Button.Label, Props: t.Button.Props, Compose: t.Button.Compose,
-				Confirm: o.Confirm, ConfirmText: o.ConfirmText, Style: o.Style,
-			}
-		}
-		out.Transitions = append(out.Transitions, w)
-	}
+	out.Transitions = wireSessionTransitions(s.Transitions)
 	if s.DueAt != nil {
 		out.DueAt = channelTime(*s.DueAt)
 	}
@@ -83,6 +72,37 @@ func wireChannelSession(s *realtime.SessionView) *v1.ChannelSession {
 			w.DueAt = channelTime(*r.DueAt)
 		}
 		out.Reminders = append(out.Reminders, w)
+	}
+	return out
+}
+
+// wireSessionTransitions renders a session's transitions; nil for none.
+func wireSessionTransitions(ts []realtime.SessionTransitionView) []v1.ChannelSessionTransition {
+	if len(ts) == 0 {
+		return nil
+	}
+	out := make([]v1.ChannelSessionTransition, 0, len(ts))
+	for _, t := range ts {
+		w := v1.ChannelSessionTransition{
+			MessageType: t.MessageType, To: t.To, By: t.By, Guarded: t.Guarded, Outputs: t.Outputs, Entry: t.Entry,
+		}
+		if t.Button != nil {
+			o := t.Button.ButtonOptionsView
+			w.Button = &v1.ChannelSessionButton{
+				Label: t.Button.Label, Props: t.Button.Props, Compose: t.Button.Compose,
+				Confirm: o.Confirm, ConfirmText: o.ConfirmText, Style: o.Style,
+			}
+		}
+		out = append(out, w)
+	}
+	return out
+}
+
+// wireEntryRefs renders entry refs, [] rather than null for none.
+func wireEntryRefs(es []realtime.EntryRef) []v1.ChannelEntryRef {
+	out := make([]v1.ChannelEntryRef, 0, len(es))
+	for _, e := range es {
+		out = append(out, v1.ChannelEntryRef{MessageType: e.MessageType, Entry: e.Entry})
 	}
 	return out
 }
@@ -178,12 +198,8 @@ func wireHead(h realtime.HeadView) v1.ChannelHead {
 		Actions: v1.ChannelActions{
 			Post: h.Actions.Post, EditOwn: h.Actions.EditOwn, DeleteOwn: h.Actions.DeleteOwn,
 			Remove: h.Actions.Remove, Lifecycle: h.Actions.Lifecycle, Typing: h.Actions.Typing,
-			Transitions: h.Actions.Transitions, Entries: make([]v1.ChannelEntryRef, 0, len(h.Actions.Entries)),
+			Transitions: h.Actions.Transitions, Entries: wireEntryRefs(h.Actions.Entries),
 		},
-	}
-	for _, e := range h.Actions.Entries {
-		out.Actions.Entries = append(out.Actions.Entries,
-			v1.ChannelEntryRef{MessageType: e.MessageType, Entry: e.Entry})
 	}
 	if out.Actions.Transitions == nil {
 		out.Actions.Transitions = []string{}

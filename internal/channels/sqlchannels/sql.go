@@ -112,14 +112,14 @@ type Dialect struct {
 // ConfirmTombstone, Tombstones, Purge and DropTypeRecord. 27 -> 29
 // (TKT-INM3AZ): SetSession and ListSessionsDue. 29 -> 30 (TKT-ZZ4PNX):
 // ListWaiting. 30 -> 33 (TKT-2B2AIA): SetRead, Reads and ListReads. 33 ->
-// 34 (TKT-6RXAC0): ListAddressed. The
+// 34 (TKT-6RXAC0): ListAddressed. 34 -> 35 (TKT-V05706X): GetMessages. The
 // exported methods are the mandated [channels.Store] interface, so this is
 // a required-interface exception rather than a ratchet target. Helpers
 // stay free functions. The total crossed 40 with the three read marker
 // methods; it is the same exception.
 //
-//plimsoll:max-exported-methods=34
-//plimsoll:max-methods=44
+//plimsoll:max-exported-methods=35
+//plimsoll:max-methods=45
 type Store struct {
 	db DB
 	d  Dialect
@@ -200,6 +200,12 @@ func scanMessage(r interface{ Scan(...any) error }) (channels.Message, error) {
 	if err := r.Scan(&m.Seq, &m.Rev, &m.ReplyTo, &m.ReplyCount, &raw); err != nil {
 		return m, err
 	}
+	return decodeMessage(m, raw)
+}
+
+// decodeMessage fills m from its doc column raw. An error is damage: the
+// row was read.
+func decodeMessage(m channels.Message, raw string) (channels.Message, error) {
 	var d doc
 	if err := json.Unmarshal([]byte(raw), &d); err != nil {
 		return m, fmt.Errorf("message %d has a damaged doc: %w", m.Seq, err)
@@ -229,7 +235,7 @@ func utc(t time.Time) time.Time {
 
 const chanCols = `id, anchor_id, anchor_face, type, name, incarnation, state, title, created_by,
 	created_at, closed_at, archived_at, reopened_at, last_seq, rev, session_state, session_gen, session_entered_at,
-	session_next_due_at, session_restarts, session_reminders`
+	session_next_due_at, session_restarts, session_reminders, session_cause, session_previous`
 
 // openSinceSQL is when an open channel entered its state, as
 // [channels.Channel.StateSince] reads it.
@@ -255,7 +261,7 @@ func (e *damagedRowError) Unwrap() error { return e.err }
 func scanChannel(r interface{ Scan(...any) error }) (row, error) { return scanChannelWith(r) }
 
 // chanColCount is the number of chanCols scanChannelWith scans.
-const chanColCount = 21
+const chanColCount = 23
 
 // scanChannelWith scans the chanCols of a row, and then extra, the columns
 // a query selects after them.
@@ -268,7 +274,8 @@ func scanChannelWith(r interface{ Scan(...any) error }, extra ...any) (row, erro
 	dest := make([]any, 0, chanColCount+len(extra))
 	dest = append(dest, &out.id, &c.Key.ID, &face, &c.Key.Type, &c.Key.Name, &c.Incarnation, &c.State, &c.Title, &by,
 		&created, &closed, &archived, &reopened, &c.LastSeq, &c.Rev,
-		&c.Session.State, &c.Session.Generation, &entered, &due, &restarts, &reminders)
+		&c.Session.State, &c.Session.Generation, &entered, &due, &restarts, &reminders,
+		&c.Session.Cause, &c.Session.Previous)
 	if err := r.Scan(append(dest, extra...)...); err != nil {
 		return out, err
 	}
@@ -588,9 +595,9 @@ func bumpSession(
 	at := micros(lastAt)
 	_, err := q.Exec(ctx, `UPDATE channels SET last_seq = ?, rev = ?, session_state = ?, session_gen = ?,
 		session_entered_at = ?, session_next_due_at = ?, session_restarts = ?, session_reminders = ?,
-		last_at = CASE WHEN ? > last_at THEN ? ELSE last_at END WHERE id = ?`,
+		session_cause = ?, session_previous = ?, last_at = CASE WHEN ? > last_at THEN ? ELSE last_at END WHERE id = ?`,
 		lastSeq, rev, sess.State, sess.Generation, micros(sess.EnteredAt), micros(sess.NextDueAt),
-		encodeRestarts(sess.Restarts), encodeReminders(sess.Reminders), at, at, id)
+		encodeRestarts(sess.Restarts), encodeReminders(sess.Reminders), sess.Cause, sess.Previous, at, at, id)
 	return err
 }
 
@@ -619,7 +626,7 @@ func appendSession(
 ) (lastSeq, lastRev int64, err error) {
 	lastSeq, lastRev = out.Seq, rev
 	if moved {
-		channels.ApplySession(&r.c, move, nm.At)
+		channels.ApplySession(&r.c, move, nm.At, out.Seq)
 		notice, err := insertNotice(ctx, q, r.id, nm.Session, out, move, r.c.Session.Generation, rev+1)
 		if err != nil {
 			return 0, 0, err
@@ -1240,7 +1247,7 @@ func applySessionStep(step *channels.SessionStep, c *channels.Channel, at time.T
 		return w, err
 	}
 	if w.moved {
-		channels.ApplySession(c, w.move, at)
+		channels.ApplySession(c, w.move, at, 0)
 		w.written, _, err = channels.TimerNotice(step, c.LastSeq+1, at, w.move, c.Session.Generation, c.Rev+1)
 		return w, err
 	}

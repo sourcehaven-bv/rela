@@ -7,6 +7,7 @@ import (
 	"log/slog"
 
 	"github.com/Sourcehaven-BV/rela/internal/channels"
+	"github.com/Sourcehaven-BV/rela/internal/channels/filechannels"
 	"github.com/Sourcehaven-BV/rela/internal/channels/pgchannels"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/store/pgstore"
@@ -31,6 +32,38 @@ func storeChannelsFor(st store.Store) channels.Store {
 		panic(err)
 	}
 	return s
+}
+
+// storeHintsFor returns NOTIFY as the hint transport when cs is the
+// database channel store over st, so every rela-server process on the
+// schema hears the channel changes of the others.
+//
+// Nil: returned when st is not a pgstore, whose channels then live in this
+// process only.
+func storeHintsFor(cs channels.Store, st store.Store) hintEndpoint {
+	// The fallback in-memory store is a file store; the database one is not.
+	if _, mem := cs.(*filechannels.Store); mem || pgstore.HandleFor(st) == nil {
+		return nil
+	}
+	return pgHints{st: st}
+}
+
+// pgHints carries channel hints on the store's [pgstore.ChannelHints]
+// NOTIFY channel.
+type pgHints struct{ st store.Store }
+
+func (h pgHints) SendHint(ctx context.Context, payload []byte) error {
+	return pgstore.Notify(ctx, h.st, pgstore.ChannelHints, payload)
+}
+
+func (h pgHints) FollowHints(ctx context.Context, deliver func([]byte), gap func()) error {
+	cancel, err := pgstore.Listen(h.st, pgstore.ChannelHints, deliver, gap)
+	if err != nil {
+		return err
+	}
+	defer cancel()
+	<-ctx.Done()
+	return nil
 }
 
 // realtimeWorkerLockKey names the realtime worker lock in the database.

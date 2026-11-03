@@ -3,6 +3,8 @@ package memstore
 import (
 	"context"
 	"slices"
+	"strings"
+	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/mentions"
@@ -35,4 +37,40 @@ func (m *MemStore) MentionSources(
 		out = out[:limit]
 	}
 	return out, nil
+}
+
+// rewriteMentions makes every live body that mentions oldID name newID
+// instead, as [store.EntityWriter.RenameFamily] requires of a store without
+// [store.RetiredIDs] (TKT-J6GISC3). Like the relation re-key it runs below
+// the ACL: it replaces an id, and discloses nothing. Soft-deleted bodies are
+// left alone. It returns the rewritten rows. Caller holds m.mu.
+func rewriteMentions(m *MemStore, oldID, newID string) []entity.MentionRewrite {
+	keys := make([]string, 0)
+	for key, e := range m.entities {
+		if strings.Contains(e.Content, oldID) {
+			keys = append(keys, key)
+		}
+	}
+	slices.Sort(keys)
+	var rewritten []entity.MentionRewrite
+	for _, key := range keys {
+		e := m.entities[key]
+		content, changed := mentions.Rewrite(e.Content, oldID, newID)
+		if !changed {
+			continue
+		}
+		stored := e.Clone()
+		stored.Content = content
+		stored.UpdatedAt = time.Now()
+		m.entities[key] = stored
+		rewritten = append(rewritten, entity.MentionRewrite{ID: stored.ID, Type: stored.Type, Face: stored.Face})
+		m.notifyPut(stored)
+		m.emit(store.Event{
+			Op:         store.EventEntityUpdated,
+			EntityType: stored.Type,
+			EntityID:   stored.ID,
+			Face:       stored.Face,
+		})
+	}
+	return rewritten
 }

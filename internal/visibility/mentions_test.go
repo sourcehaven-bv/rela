@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"slices"
 	"testing"
 
@@ -14,11 +15,13 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/visibility"
 )
 
-// mentionStore seeds rows whose bodies mention REQ-1: TKT-1, TKT-2, and
-// POL-1 at its draft face only. Its published face mentions nothing.
+// mentionStore seeds REQ-1 and the rows whose bodies mention it: TKT-1,
+// TKT-2, and POL-1 at its draft face only. Its published face mentions
+// nothing.
 func mentionStore(t *testing.T) *storetest.Counting {
 	t.Helper()
 	st := memstore.New()
+	seedTarget(t, st)
 	for _, e := range []*entity.Entity{
 		{ID: "TKT-1", Type: "ticket", Content: "see `REQ-1`"},
 		{ID: "TKT-2", Type: "ticket", Content: "see `REQ-1` and `REQ-2`"},
@@ -101,6 +104,7 @@ func TestResolver_MentionedBy(t *testing.T) {
 
 func TestResolver_MentionedByPages(t *testing.T) {
 	st := memstore.New()
+	seedTarget(t, st)
 	var want []string
 	for i := range 7 {
 		id := fmt.Sprintf("TKT-%d", i)
@@ -142,7 +146,9 @@ func TestResolver_MentionedByBudget(t *testing.T) {
 	for i := range 10600 {
 		refs = append(refs, entity.Ref{ID: fmt.Sprintf("TKT-%05d", i)})
 	}
-	counting := storetest.NewCounting(fixedIndex{Store: memstore.New(), refs: refs})
+	target := memstore.New()
+	seedTarget(t, target)
+	counting := storetest.NewCounting(fixedIndex{Store: target, refs: refs})
 	r := mustResolver(t, resolverGate{}, visibility.NopRedactor{}, counting)
 	page, err := r.MentionedBy(context.Background(), visibility.WorldOf(store.TrivialScope()), "REQ-1", "", 10)
 	if err != nil {
@@ -164,6 +170,7 @@ func TestResolver_MentionedByBudget(t *testing.T) {
 // is the served id.
 func TestResolver_MentionedByPagesPastHiddenRun(t *testing.T) {
 	st := memstore.New()
+	seedTarget(t, st)
 	deny := map[string]bool{}
 	seedMention(t, st, "TKT-0000")
 	for i := 1; i < 1500; i++ {
@@ -209,6 +216,15 @@ func TestResolver_MentionedByExactPage(t *testing.T) {
 	}
 }
 
+// seedTarget creates REQ-1, the target the mention tests page: MentionedBy
+// gates its target, so a missing one has no backlinks.
+func seedTarget(t *testing.T, st store.Store) {
+	t.Helper()
+	if err := st.CreateEntity(context.Background(), &entity.Entity{ID: "REQ-1", Type: "requirement"}); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func seedMention(t *testing.T, st store.Store, id string) {
 	t.Helper()
 	if err := st.CreateEntity(context.Background(),
@@ -222,6 +238,7 @@ func seedMention(t *testing.T, st store.Store, id string) {
 // id, so it does not reveal that face.
 func TestResolver_MentionedByCursorNamesNoHiddenFace(t *testing.T) {
 	st := memstore.New()
+	seedTarget(t, st)
 	for _, e := range []*entity.Entity{
 		{ID: "POL-1", Type: "policy", Face: faceDraft, Content: "`REQ-1`"},
 		{ID: "POL-1", Type: "policy", Face: facePublished, Content: "`REQ-1`"},
@@ -341,5 +358,99 @@ func TestReaders_MentionedBy(t *testing.T) {
 	}
 	if _, err := (visibility.DenyReader{}).MentionedBy(ctx, "REQ-1", "", 10); !errors.Is(err, visibility.ErrReaderUnavailable) {
 		t.Errorf("deny reader: err = %v, want ErrReaderUnavailable", err)
+	}
+}
+
+// retiringStore adds a fixed [store.RetiredIDs] table to a memstore, which
+// keeps none itself.
+type retiringStore struct {
+	*memstore.MemStore
+	retired map[string]string
+}
+
+func (s retiringStore) Successors(_ context.Context, ids []string) (map[string]string, error) {
+	out := map[string]string{}
+	for _, id := range ids {
+		if to, ok := s.retired[id]; ok {
+			out[id] = to
+		}
+	}
+	return out, nil
+}
+
+func TestResolver_ResolveMentions(t *testing.T) {
+	st := memstore.New()
+	for _, e := range []*entity.Entity{
+		{ID: "REQ-2", Type: "requirement"},
+		{ID: "REQ-3", Type: "requirement"},
+		{ID: "SEC-1", Type: "secret"},
+	} {
+		if err := st.CreateEntity(context.Background(), e); err != nil {
+			t.Fatal(err)
+		}
+	}
+	load := retiringStore{MemStore: st, retired: map[string]string{
+		"REQ-1": "REQ-2", "OLD-1": "SEC-1", "GONE-1": "GONE-2",
+	}}
+	r := mustResolver(t, resolverGate{deny: map[string]bool{"SEC-1": true}}, visibility.NopRedactor{}, load)
+
+	got, err := r.ResolveMentions(context.Background(), visibility.WorldOf(store.TrivialScope()),
+		[]string{"REQ-1", "REQ-3", "OLD-1", "GONE-1", "NOPE-1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ids := map[string]string{}
+	for key, h := range got {
+		ids[key] = h.ID
+	}
+	want := map[string]string{"REQ-1": "REQ-2", "REQ-3": "REQ-3"}
+	if !maps.Equal(ids, want) {
+		t.Errorf("got %v, want %v (a successor the principal cannot read, or that is gone, is dropped)", ids, want)
+	}
+
+	plain := mustResolver(t, resolverGate{}, visibility.NopRedactor{}, st)
+	got, err = plain.ResolveMentions(context.Background(), visibility.WorldOf(store.TrivialScope()),
+		[]string{"REQ-1", "REQ-3"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := got["REQ-1"]; ok || len(got) != 1 {
+		t.Errorf("a store without RetiredIDs resolves only the ids as written: %v", got)
+	}
+}
+
+// TestResolver_MentionedByGatesTheTarget pins that a target the reader
+// cannot see has no backlinks. On a store with retired ids the page would
+// otherwise reveal which ids were retired into it.
+func TestResolver_MentionedByGatesTheTarget(t *testing.T) {
+	st := memstore.New()
+	for _, e := range []*entity.Entity{
+		{ID: "SEC-1", Type: "secret"},
+		{ID: "TKT-1", Type: "ticket", Content: "see `SEC-1`"},
+	} {
+		if err := st.CreateEntity(context.Background(), e); err != nil {
+			t.Fatal(err)
+		}
+	}
+	load := retiringStore{MemStore: st, retired: map[string]string{}}
+	world := visibility.WorldOf(store.TrivialScope())
+	for _, tc := range []struct {
+		name string
+		gate resolverGate
+		want []string
+	}{
+		{name: "a readable target lists its backlinks", want: []string{"TKT-1"}},
+		{name: "a hidden target has none", gate: resolverGate{deny: map[string]bool{"SEC-1": true}}, want: []string{}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := mustResolver(t, tc.gate, visibility.NopRedactor{}, load)
+			page, err := r.MentionedBy(context.Background(), world, "SEC-1", "", 10)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := pageRefs(page); !slices.Equal(got, tc.want) {
+				t.Errorf("got %v, want %v", got, tc.want)
+			}
+		})
 	}
 }

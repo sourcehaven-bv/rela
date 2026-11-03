@@ -279,18 +279,28 @@ func (c *call) affordancesWith(post map[string]bool) Affordances {
 	}
 	a.Remove = c.moderator()
 	a.Lifecycle = c.lifecycleOps()
-	for _, name := range sortedKeys(c.ct.MessageTypes) {
-		if post[name] {
-			a.Post = append(a.Post, name)
-		}
-	}
 	if c.state() == channels.StateOpen {
 		a.EditOwn = c.editGate()
 	}
 	a.DeleteOwn = c.deleteOwnGate()
 	a.Typing = c.typingAllowed()
-	a.Transitions, a.Entries = c.sessionAffordances(post)
+	a.Post, a.Transitions, a.Entries = decisionAffordances(c, post)
 	return a
+}
+
+// decisionAffordances are the affordances a session decision is built
+// from: the types in post, sorted, and the session's transition types and
+// entries for them (see [call.sessionAffordances]). The channel head and
+// the inbox entry both take them from here, so the two cannot drift.
+func decisionAffordances(c *call, post map[string]bool) (posts, types []string, entries []EntryRef) {
+	posts = []string{}
+	for _, name := range sortedKeys(c.ct.MessageTypes) {
+		if post[name] {
+			posts = append(posts, name)
+		}
+	}
+	types, entries = c.sessionAffordances(post)
+	return posts, types, entries
 }
 
 // postable is the set of message types the caller may post here now: they
@@ -523,11 +533,11 @@ func (l *Local) notePosted(c *call, m channels.Message) {
 	if m.ReplyTarget != "" {
 		addressed = append(addressed, m.ReplyTarget)
 	}
-	l.markAddressed(addressed, c.key, postKind(m))
+	l.markAddressed(addressed, c.key, postKind(m), true)
 	// The append moved the poster's marker (MarkRead), so the poster's
 	// inbox learns the channel even when it held no marker on it before.
 	if reader, ok := callReader(c); ok {
-		l.markFor(reader, c.key)
+		l.markFor(reader, true, c.key)
 	}
 }
 
@@ -789,7 +799,7 @@ func (s *Service) Create(
 	s.local.mark(ch.Key)
 	// The create wrote the creator's marker at 0 (MarkRead).
 	if reader, ok := callReader(c); ok {
-		s.local.markFor(reader, ch.Key)
+		s.local.markFor(reader, true, ch.Key)
 	}
 	return c.channelView(ch.Key, &ch), nil
 }

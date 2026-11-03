@@ -106,3 +106,21 @@ func TestClosedDatabase(t *testing.T) {
 	_, err = sqlchannels.Raw(ctx, s)
 	require.Error(t, err)
 }
+
+// TestGetMessages_DamagedRow pins that GetMessages leaves out a message
+// whose doc does not decode and answers the others (TKT-V05706X AC 2).
+func TestGetMessages_DamagedRow(t *testing.T) {
+	ctx := context.Background()
+	s, db := newStore(t)
+	k := channels.Key{Anchor: channels.Anchor{ID: "TKT-1"}, Type: "room"}
+	for range 2 {
+		_, err := s.Append(ctx, k, channels.NewMessage{Type: "text", Author: channelstest.Alice, At: channelstest.T0})
+		require.NoError(t, err)
+	}
+	_, err := db.DB().ExecContext(ctx, `UPDATE channel_messages SET doc = 'nope' WHERE seq = 1`)
+	require.NoError(t, err)
+	got, err := s.GetMessages(ctx, []channels.MessageRef{{Key: k, Seq: 1}, {Key: k, Seq: 2}})
+	require.NoError(t, err)
+	require.Len(t, got, 1)
+	require.Contains(t, got, channels.MessageRef{Key: k, Seq: 2})
+}

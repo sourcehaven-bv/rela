@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { useMentionMenu, type MentionTransport } from './useMentionMenu'
 import type { MentionTypeInfo } from './mentionPlan'
 import type { Entity } from '@/types'
+import { SEARCH_DEBOUNCE_MS } from '@/utils/searchTiming'
 
 vi.mock('@/api', () => ({
   searchEntities: vi.fn(),
@@ -27,7 +28,7 @@ const TYPES: MentionTypeInfo[] = [
 
 /** Advances past the debounce and lets pending promises settle. */
 async function settle() {
-  await vi.advanceTimersByTimeAsync(200)
+  await vi.advanceTimersByTimeAsync(SEARCH_DEBOUNCE_MS)
   await Promise.resolve()
 }
 
@@ -184,7 +185,7 @@ describe('useMentionMenu', () => {
       let resolveSlow: (v: Entity[]) => void = () => {}
       search.mockImplementationOnce(() => new Promise((r) => (resolveSlow = r)))
       m.setQuery('slow')
-      await vi.advanceTimersByTimeAsync(200)
+      await vi.advanceTimersByTimeAsync(SEARCH_DEBOUNCE_MS)
       search.mockResolvedValueOnce([ent('TKT-FAST', 'fast')])
       m.setQuery('fast')
       await settle()
@@ -198,7 +199,7 @@ describe('useMentionMenu', () => {
       let resolve: (v: Entity[]) => void = () => {}
       search.mockImplementationOnce(() => new Promise((r) => (resolve = r)))
       m.setQuery('abcd')
-      await vi.advanceTimersByTimeAsync(200)
+      await vi.advanceTimersByTimeAsync(SEARCH_DEBOUNCE_MS)
       m.close()
       resolve([ent('TKT-LATE')])
       await settle()
@@ -251,7 +252,7 @@ describe('useMentionMenu', () => {
     it('does not restart the search for an unchanged query', async () => {
       const { m, search } = setup()
       m.setQuery('abcd')
-      await vi.advanceTimersByTimeAsync(100)
+      await vi.advanceTimersByTimeAsync(SEARCH_DEBOUNCE_MS - 50)
       m.setQuery('abcd')
       await vi.advanceTimersByTimeAsync(60)
       expect(search).toHaveBeenCalledTimes(1)

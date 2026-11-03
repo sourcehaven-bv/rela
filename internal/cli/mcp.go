@@ -67,11 +67,15 @@ func (c *McpCmd) Run(identity localIdentity) error {
 	// The lease watcher lives as long as Serve: it wakes lease subscribers
 	// for claims made by other processes and for expiries. It runs on the
 	// startup assembly, whose lease backend and hub every reload shares.
+	// The channel hint follower runs beside it, on the process-local
+	// channel state every reload shares too.
 	life, stop := context.WithCancel(context.Background())
 	watched := appbuild.WatchLeases(life, svc.current())
+	followed := appbuild.FollowChannels(life, svc.current())
 	defer func() {
 		stop()
 		<-watched
+		<-followed
 	}()
 	return srv.Serve(life)
 	// coverage-ignore-end

@@ -161,6 +161,30 @@ func faceFor(id, entityType string, p entity.Face, rank int, w store.WorldScope)
 // in the draft while displaying published bytes that lack it. Selecting the
 // prime and then testing ITS text is the whole point of world-scoped search.
 //
+// # Matching faces first, as a prefilter only
+//
+// Testing the prime's text after DISTINCT ON means the LIKE cannot use the
+// trigram index: every family in the world is resolved and then scanned
+// (about 200 ms at 19k entities, whatever the needle). When the needle has
+// trigrams, a CTE first collects the candidate faces whose text matches,
+// through the index, and DISTINCT ON resolves only the entities among them
+// (textHitsJoin). That restricts by id, never by face: the prime is still
+// chosen among all candidate faces. It is a hit when its own face is among
+// the entity's matching faces, which is the outer LIKE without reading the
+// text a second time (search_text is usually TOASTed, so each read
+// decompresses it). The faces travel as an array on the joined row rather
+// than as a second `IN (SELECT ... FROM text_hits)`: under a generic plan
+// PostgreSQL estimates the CTE at a few rows and runs such a semi-join as a
+// nested loop, quadratic in the number of matches. The result is the same rows
+// in the same order (TKT-T2I7P2). A selective term drops from about 200 ms
+// to under 10 ms; a term most rows contain costs about the same as before.
+//
+// The index scan reads every face whose text contains the needle, before the
+// candidate and visibility conditions drop the ones this caller cannot read.
+// So the statement's time grows a little with matches on hidden faces. The
+// default-world shape has always behaved this way; a single hidden hit is
+// lost in the noise.
+//
 // # Lockstep
 //
 // visiblesearch.go's buildVisibleSearchSQL holds the gated and ungated
@@ -180,10 +204,21 @@ func buildSearchSQL(needle string, limit int, w store.WorldScope, titles SearchT
 			textPred("search_text") + ` AND face = ''`
 	} else {
 		rank, candidate := worldSQL(w, "", &args)
-		inner := `SELECT DISTINCT ON (id) id, face, type, search_text, properties, (` + rank + `) AS wrank` +
-			` FROM entities WHERE ` + candidate +
+		var with, hits, hitFaces, outer string
+		if trigramIndexable(needle) {
+			// See textHitsCTE.
+			with = `WITH ` + textHitsCTE + ` AS MATERIALIZED (SELECT id, face FROM entities WHERE ` +
+				textPred("search_text") + ` AND ` + candidate + `) `
+			hits = textHitsJoin
+			hitFaces = `, hit_faces`
+			outer = `p.face = ANY(p.hit_faces)`
+		} else {
+			outer = textPred("p.search_text")
+		}
+		inner := `SELECT DISTINCT ON (id) id, face, type, search_text, properties, (` + rank + `) AS wrank` + hitFaces +
+			` FROM entities` + hits + ` WHERE ` + candidate +
 			` ORDER BY id ASC, (` + rank + `) ASC, face ASC`
-		sqlText = `SELECT id, face, type, wrank FROM (` + inner + `) p WHERE ` + textPred("p.search_text")
+		sqlText = with + `SELECT id, face, type, wrank FROM (` + inner + `) p WHERE ` + outer
 	}
 
 	if needle == "" {
@@ -268,6 +303,38 @@ func (t SearchTitles) rankSQL(alias string, bind func(any) string, needle string
 // Close releases backend resources. The handle is owned by the wiring layer,
 // so there is nothing to close here.
 func (b *SearchBackend) Close() error { return nil }
+
+// textHitsCTE names the matched-ids CTE of a world-scoped search (see
+// buildSearchSQL). It cannot collide with the visibility and field-grant
+// CTEs, which are named v<i>_* and f<i>_<j>_*.
+const textHitsCTE = "text_hits"
+
+// textHitsJoin joins each candidate row to its entity's matching faces, as
+// the array hit_faces. JOIN ... USING (id) keeps a single id column, so the
+// builders' unqualified `id` and `SELECT *` stay unambiguous.
+const textHitsJoin = " JOIN (SELECT id, array_agg(face) AS hit_faces FROM " + textHitsCTE + " GROUP BY id) h USING (id)"
+
+// trigramIndexable reports whether a LIKE '%needle%' can use the trigram
+// index on search_text, which needs at least one trigram from the needle.
+// pg_trgm takes trigrams from runs of word characters; the safe, locale-free
+// rule is a run of at least 3 ASCII letters or digits. A needle that fails it
+// ("ab", "a b", "x-y") keeps the plain shape, where the index would not help
+// and the extra CTE would only add a second scan.
+func trigramIndexable(needle string) bool {
+	run := 0
+	for i := range len(needle) {
+		c := needle[i]
+		if c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' {
+			run++
+			if run >= 3 {
+				return true
+			}
+			continue
+		}
+		run = 0
+	}
+	return false
+}
 
 // escapeLike escapes LIKE wildcards so the needle matches literally. The query
 // uses ESCAPE '\'.

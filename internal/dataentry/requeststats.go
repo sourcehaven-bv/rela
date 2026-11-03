@@ -2,6 +2,7 @@ package dataentry
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"iter"
 	"log/slog"
@@ -63,6 +64,14 @@ import (
 // no handler does either today, and telling them apart would need a
 // recover that rewrites the stack net/http prints.
 //
+// A request whose client went away before the handler returned is logged
+// with status 499 ("client closed request", the code Caddy and nginx use)
+// and canceled=true, whatever the handler wrote: nobody received it, and a
+// cancel is not a server fault. If the handler did write a status it is
+// kept as written_status. A panic keeps status 500 and panic=true. Event
+// streams always end with a disconnect, so they are never marked canceled
+// (TKT-T2I7P2).
+//
 // ceiling (--query-ceiling) is the number of statements above which a
 // request is logged as a warning; zero turns the check off. See
 // [warnQueryCeiling].
@@ -90,7 +99,8 @@ func requestStats(next http.Handler, accessLog *slog.Logger, words func() routeW
 			if words != nil {
 				known = words()
 			}
-			attrs := requestAttrs(r, sw, completed, time.Since(start), known)
+			canceled := errors.Is(ctx.Err(), context.Canceled) && !isStream(r, sw)
+			attrs := requestAttrs(r, sw, requestEnd{completed: completed, canceled: canceled}, time.Since(start), known)
 			if overCeiling {
 				warnQueryCeiling(ctx, stats, ceiling, attrs)
 			}
@@ -163,17 +173,42 @@ func warnQueryCeiling(ctx context.Context, stats *store.QueryStats, ceiling int6
 // queryCeilingMsg is the message e2e/tests/fixtures.ts scans server logs for.
 const queryCeilingMsg = "request exceeded query ceiling"
 
+// statusClientClosed is the status logged for a request whose client went
+// away before the handler returned. It is never sent.
+const statusClientClosed = 499
+
+// requestEnd is how a request's handler ended: whether it returned
+// (false after a panic) and whether the client had gone away by then.
+type requestEnd struct {
+	completed bool
+	canceled  bool
+}
+
+// isStream reports whether r is a long-lived event stream, which ends by
+// the client disconnecting as a matter of course.
+func isStream(r *http.Request, sw *statsResponseWriter) bool {
+	return isSSEPath(r.URL.Path) || strings.HasPrefix(sw.Header().Get("Content-Type"), "text/event-stream")
+}
+
 func requestAttrs(
-	r *http.Request, sw *statsResponseWriter, completed bool, wall time.Duration, words routeWords,
+	r *http.Request, sw *statsResponseWriter, end requestEnd, wall time.Duration, words routeWords,
 ) []slog.Attr {
+	completed := end.completed
 	method := r.Method
 	if len(method) > maxLoggedMethod {
 		method = "OTHER"
 	}
 	path, truncated := routeShape(r.URL.EscapedPath(), words, maxLoggedPath)
 	status := sw.statusOrDefault()
-	if !completed && !sw.written {
+	written := 0
+	switch {
+	case !completed && !sw.written:
 		status = http.StatusInternalServerError
+	case completed && end.canceled:
+		if sw.written {
+			written = sw.status
+		}
+		status = statusClientClosed
 	}
 	attrs := make([]slog.Attr, 0, 8)
 	attrs = append(attrs,
@@ -192,6 +227,12 @@ func requestAttrs(
 	}
 	if !completed {
 		attrs = append(attrs, slog.Bool("panic", true))
+	}
+	if completed && end.canceled {
+		attrs = append(attrs, slog.Bool("canceled", true))
+		if written != 0 {
+			attrs = append(attrs, slog.Int("written_status", written))
+		}
 	}
 	return attrs
 }

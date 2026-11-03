@@ -5,6 +5,7 @@ package pgstore_test
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -178,6 +179,8 @@ func sqlLiteral(t *testing.T, v any) string {
 		return quote(x)
 	case entity.Face:
 		return quote(string(x))
+	case int:
+		return strconv.Itoa(x)
 	case []string:
 		quoted := make([]string, len(x))
 		for i, s := range x {

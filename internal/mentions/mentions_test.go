@@ -101,3 +101,31 @@ func TestAll(t *testing.T) {
 		})
 	}
 }
+
+func TestRewrite(t *testing.T) {
+	tests := []struct {
+		name    string
+		body    string
+		want    string
+		changed bool
+	}{
+		{name: "empty", body: "", want: "", changed: false},
+		{name: "no mention", body: "plain `OTHER-1` text", want: "plain `OTHER-1` text", changed: false},
+		{name: "one", body: "see `TKT-1`.", want: "see `NEW-9`.", changed: true},
+		{name: "several", body: "`TKT-1` and `TKT-1`\n\n- `TKT-1`", want: "`NEW-9` and `NEW-9`\n\n- `NEW-9`", changed: true},
+		{name: "double backticks keep padding", body: "a `` TKT-1 `` b", want: "a `` NEW-9 `` b", changed: true},
+		{name: "table cell", body: "| a |\n|---|\n| `TKT-1` |\n", want: "| a |\n|---|\n| `NEW-9` |\n", changed: true},
+		{name: "link text untouched", body: "[`TKT-1`](http://x)", want: "[`TKT-1`](http://x)", changed: false},
+		{name: "code block untouched", body: "```\n`TKT-1`\n```\n", want: "```\n`TKT-1`\n```\n", changed: false},
+		{name: "partial span untouched", body: "`TKT-10` `xTKT-1`", want: "`TKT-10` `xTKT-1`", changed: false},
+		{name: "plain text untouched", body: "TKT-1 `TKT-1`", want: "TKT-1 `NEW-9`", changed: true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got, changed := Rewrite(tc.body, "TKT-1", "NEW-9")
+			if got != tc.want || changed != tc.changed {
+				t.Fatalf("Rewrite(%q) = %q, %v; want %q, %v", tc.body, got, changed, tc.want, tc.changed)
+			}
+		})
+	}
+}

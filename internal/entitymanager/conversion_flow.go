@@ -4,11 +4,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/mentions"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
 	"github.com/Sourcehaven-BV/rela/internal/store"
@@ -29,6 +31,8 @@ type conversionRun struct {
 	// removed and created are the relation writes that reached the store.
 	removed, created []*entity.Relation
 	visibleDrops     int
+	// rewritten lists the bodies the rename rewrote to name newID.
+	rewritten []entity.MentionRewrite
 }
 
 // apply plans the conversion from what view holds, runs every check, and
@@ -77,14 +81,37 @@ func (r *conversionRun) apply(ctx context.Context, view store.Store) error {
 		return err
 	}
 
-	if _, err := view.RenameFamily(ctx, r.req.SourceID, newID); err != nil {
+	res, err := view.RenameFamily(ctx, r.req.SourceID, newID)
+	if err != nil {
 		return translateRenameErr(err, r.req.SourceID, newID)
 	}
-	r.newID, r.renamed = newID, true
+	r.newID, r.renamed, r.rewritten = newID, true, res.MentionsRewritten
+	keepSelfMentionRewrite(replacements, r.req.SourceID, newID, res.MentionsRewritten)
 	if err := replacer.ReplaceEntityFamily(ctx, newID, replacements); err != nil {
 		return err
 	}
 	return r.rewriteRelations(ctx, view)
+}
+
+// keepSelfMentionRewrite carries the rename's mention rewrite into the
+// replacement rows. The targets were built from the source before the rename,
+// so on a store that rewrote the source's own body the replacement would put
+// the old id back.
+func keepSelfMentionRewrite(
+	replacements []store.FamilyReplacement, oldID, newID string, rewritten []entity.MentionRewrite,
+) {
+	if !slices.ContainsFunc(rewritten, func(rw entity.MentionRewrite) bool { return rw.ID == newID }) {
+		return
+	}
+	for i, rep := range replacements {
+		content, changed := mentions.Rewrite(rep.Entity.Content, oldID, newID)
+		if !changed {
+			continue
+		}
+		e := rep.Entity.Clone()
+		e.Content = content
+		replacements[i].Entity = e
+	}
 }
 
 // checkChosenTargetID checks the caller's target id against toType without
@@ -301,6 +328,7 @@ func (r *conversionRun) record(ctx context.Context, lineage map[entity.RelationK
 	if m.deps.RelationVersionRecorder != nil {
 		rn.preRenameRels = p.kept
 	}
+	rn.rewritten = r.rewritten
 	rn.record(ctx, rows)
 	for src, dst := range p.faceMap {
 		notifyAliasesOfFaceMove(ctx, m.deps.AliasRewriter, p.def.To, newID, src, dst)

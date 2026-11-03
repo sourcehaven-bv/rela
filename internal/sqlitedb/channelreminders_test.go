@@ -62,6 +62,8 @@ func TestOpenV25Database(t *testing.T) {
 		`ALTER TABLE channels DROP COLUMN session_reminders`,
 		`ALTER TABLE channels DROP COLUMN created_by_user`,
 		`ALTER TABLE channels DROP COLUMN last_at`,
+		`ALTER TABLE channels DROP COLUMN session_previous`,
+		`ALTER TABLE channels DROP COLUMN session_cause`,
 		`PRAGMA user_version = 25`,
 	} {
 		_, err = raw.Exec(stmt)

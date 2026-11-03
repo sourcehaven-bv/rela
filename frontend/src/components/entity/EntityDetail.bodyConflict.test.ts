@@ -11,6 +11,7 @@ import { useSchemaStore } from '@/stores/schema'
 import { useUIStore } from '@/stores/ui'
 import { FakeServer, fakeAdapter, fakeEventSource, fixtureSnapshot, Gate } from '@/test/fakeApi'
 import { fieldToken } from '@/test/fakeApi/tokens'
+import type { FakeRequest, FakeResponse } from '@/test/fakeApi/server'
 import EntityView from '@/views/EntityView.vue'
 import { useEvents } from '@/composables/useEvents'
 import { resetLiveSubscriptions } from '@/composables/useLiveSubscription'
@@ -74,7 +75,8 @@ const VIEW = `GET /_views/note/${ID}`
 const PATCH = `PATCH /notes/${ID}`
 const bodyToken = (body: string) => fieldToken(ID, 'note', '\x00content', body, true)
 
-async function mountBody() {
+// `fault` answers a request in place of the server (fakeAdapter).
+async function mountBody(fault?: (req: FakeRequest) => FakeResponse | undefined) {
   const server = new FakeServer(fixtureSnapshot)
   const created = server.handle({
     method: 'POST',
@@ -94,7 +96,7 @@ async function mountBody() {
 
   const gate = new Gate()
   const scheduler = gate as unknown as fc.Scheduler
-  const fake = fakeAdapter(server, scheduler)
+  const fake = fakeAdapter(server, scheduler, { fault })
   api.getAxios().defaults.adapter = fake.adapter
   vi.stubGlobal('EventSource', fakeEventSource(server, scheduler))
   const router = createRouter({
@@ -194,5 +196,44 @@ describe('EntityDetail body inline edit, one user', () => {
       `no save carries a stale body token (v1 = ${bodyToken('v1')}, v2 = ${bodyToken('v2')})`
     ).toEqual([])
     expect(server.stored('note', ID)?.content, 'the last typing is saved').toBe('v3')
+  })
+})
+
+describe('EntityDetail body whose save failed', () => {
+  it('keeps the typed body on screen when the view is read again', async () => {
+    let failing = true
+    const { server, gate, type } = await mountBody((req) =>
+      failing && req.method === 'PATCH'
+        ? { status: 503, data: { detail: 'unavailable' } }
+        : undefined
+    )
+    await type('mine')
+    vi.advanceTimersByTime(800)
+    await flushPromises()
+    await gate.drain()
+    expect(server.stored('note', ID)?.content).toBe('v0')
+    failing = false
+
+    // Another write to the row makes the page read the view again.
+    server.handle({
+      method: 'PATCH',
+      path: `/notes/${ID}`,
+      query: {},
+      body: { properties: { title: 'Beta' } },
+    })
+    await gate.release('sse entity:changed')
+    vi.advanceTimersByTime(250)
+    await flushPromises()
+    await gate.drain()
+
+    // The editor holds its own draft while open; the page shows the body
+    // once it closes.
+    const editor = document.querySelector<HTMLTextAreaElement>('[data-testid="body-editor"]')
+    expect(editor?.value).toBe('mine')
+    editor!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+    await flushPromises()
+    expect(document.querySelector('[data-testid="body-editor"]'), 'the editor closed').toBeNull()
+    expect(document.body.textContent).toContain('mine')
+    expect(server.stored('note', ID)?.properties?.title).toBe('Beta')
   })
 })

@@ -2,15 +2,19 @@ import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
 import type { Browser } from "@playwright/test";
-import { test as base, SEED, contextsAs, serveWithPrincipalHeader } from "./fixtures";
+import { test as base, expect, SEED, contextsAs, serveWithPrincipalHeader } from "./fixtures";
 import { FACED_SEED, FACED_USERS, writeFacedProject } from "./faced-project";
 import {
   CHANNEL_USERS,
   CHOICES,
   DECISIONS,
+  INBOX,
   POLICY_ROOM,
   ROOM,
   SESSION,
+  addCompactSession,
+  addFeatureOwner,
+  setFeatureOwner,
   writePolicyRealtime,
   writeRoomProject,
   writeRoomRealtime,
@@ -318,6 +322,99 @@ composeDecisionTest.describe("compose decisions", () => {
   });
 });
 
+// The session header by width and display (TKT-56TPOTE). The header is its
+// own size container; jsdom does not evaluate container queries, so the
+// four combinations of display and width are pinned here.
+sessionTest.describe("session header layout", () => {
+  sessionTest.describe.configure({ timeout: 120_000 });
+
+  sessionTest("without a display the list shows when wide and folds when narrow", async ({ as }) => {
+    const alice = await as(CHANNEL_USERS.lead);
+    await alice.openEntity("feature", FEATURE);
+    await alice.expectChannel(ROOM.label);
+    await alice.expectSessionAt(SESSION.from);
+
+    await alice.setSessionWidth(60);
+    await expect(alice.sessionSteps).toBeVisible();
+    await expect(alice.sessionSummary).toBeHidden();
+    await expect(alice.sessionToggle).toBeHidden();
+    await expect(alice.sessionContext).toHaveCount(0);
+
+    await alice.setSessionWidth(24);
+    await expect(alice.sessionSummary).toHaveText(`Session · ${SESSION.from}`);
+    await expect(alice.sessionToggle).toBeVisible();
+    await expect(alice.sessionSteps).toBeHidden();
+    await alice.sessionToggle.click();
+    await expect(alice.sessionSteps).toBeVisible();
+    await expect(alice.sessionSteps).toHaveCSS("flex-direction", "column");
+  });
+});
+
+const compactTest = base.extend<ChannelFixtures>({
+  serverUrl: async ({ testProject, serverBinary }, use, testInfo) => {
+    writeRoomProject(testProject, { decisions: true });
+    addCompactSession(testProject);
+    await serveWithPrincipalHeader(serverBinary, testProject, testInfo, use, CHANNEL_USERS.lead);
+  },
+  as: asFixture,
+});
+
+compactTest.describe("compact session header", () => {
+  compactTest.describe.configure({ timeout: 120_000 });
+
+  compactTest("shows the previous, current and next states, and the full list on request", async ({ as }) => {
+    const alice = await as(CHANNEL_USERS.lead);
+    await alice.openEntity("feature", FEATURE);
+    await alice.expectChannel(ROOM.label);
+    await alice.setSessionWidth(60);
+
+    // A session that never moved has no previous state.
+    await alice.expectSessionContext([`Current state: ${DECISIONS.drafting}`, `Next state: ${DECISIONS.review}`]);
+    await alice.expectSessionAt(DECISIONS.drafting);
+    await expect(alice.sessionSteps).toBeHidden();
+    await expect(alice.sessionSummary).toBeHidden();
+    await expect(alice.sessionToggle).toHaveText("Show all states");
+
+    // The move stores Drafting as the previous state. Review leads back to
+    // Drafting and on to Approved, in declaration order.
+    const inReview = [
+      `Previous state: ${DECISIONS.drafting}`,
+      `Current state: ${DECISIONS.review}`,
+      `Next state: ${DECISIONS.drafting}`,
+      `Next state: ${DECISIONS.approved}`,
+    ];
+    await alice.selectMessageType(DECISIONS.containedLabel);
+    await alice.post("Ready for review", DECISIONS.noteLabel);
+    await alice.expectSessionContext(inReview);
+
+    // Unfolding shows the full list on its own row and removes the short
+    // one, so one item carries aria-current.
+    await alice.sessionToggle.click();
+    await expect(alice.sessionToggle).toHaveAttribute("aria-expanded", "true");
+    await expect(alice.sessionSteps).toBeVisible();
+    await expect(alice.sessionContext).toHaveCount(0);
+    await alice.expectSessionAt(DECISIONS.review);
+    await expect(alice.sessionSteps).toHaveCSS("flex-direction", "row");
+    await alice.sessionToggle.click();
+    await expect(alice.sessionContext).toBeVisible();
+
+    // A reload reads the previous state from the store.
+    await alice.openEntity("feature", FEATURE);
+    await alice.expectChannel(ROOM.label);
+    await alice.setSessionWidth(60);
+    await alice.expectSessionContext(inReview);
+
+    // Below 32rem the compact header folds like any other.
+    await alice.setSessionWidth(24);
+    await expect(alice.sessionContext).toBeHidden();
+    await expect(alice.sessionSummary).toHaveText(`Session · ${DECISIONS.review}`);
+    await expect(alice.sessionSteps).toBeHidden();
+    await alice.sessionToggle.click();
+    await expect(alice.sessionSteps).toBeVisible();
+    await expect(alice.sessionSteps).toHaveCSS("flex-direction", "column");
+  });
+});
+
 // A room where a member asks with options and the lead answers with a
 // click (TKT-03FQPD).
 const choiceTest = base.extend<ChannelFixtures>({
@@ -369,6 +466,74 @@ choiceTest.describe("choices", () => {
     await alice.post("Both of them", CHOICES.answerLabel);
     for (const p of [alice, bob]) await p.expectReply(second, "Both of them");
     await alice.expectChoice(second, "Ann", false);
+  });
+});
+
+// A room where a member, standing in for an agent, asks and plans, and the
+// feature's owner answers from the inbox (TKT-V05706X).
+const inboxTest = base.extend<ChannelFixtures>({
+  serverUrl: async ({ testProject, serverBinary }, use, testInfo) => {
+    writeRoomProject(testProject, { inbox: true });
+    addFeatureOwner(testProject);
+    setFeatureOwner(testProject, FEATURE, CHANNEL_USERS.lead);
+    await serveWithPrincipalHeader(serverBinary, testProject, testInfo, use, CHANNEL_USERS.lead);
+  },
+  as: asFixture,
+});
+
+inboxTest.describe("answering from the inbox", () => {
+  inboxTest.describe.configure({ timeout: 120_000 });
+
+  inboxTest("the owner answers questions and approves a plan from the inbox", async ({ as }) => {
+    const alice = await as(CHANNEL_USERS.lead);
+    const bob = await as(CHANNEL_USERS.member);
+    await bob.openEntity("feature", FEATURE);
+    await bob.expectChannel(ROOM.label);
+    await alice.openHome();
+    await alice.openInbox();
+    await alice.expectNothingWaiting();
+
+    // A question with options waits on the lead, who answers with a click.
+    const question = "When do we ship?";
+    await bob.postOverApi("features", FEATURE, ROOM.type, INBOX.askType, {
+      question,
+      [INBOX.optionsProperty]: ["Friday", "After the audit"],
+    });
+    await alice.expectWaitingRow(question, true);
+
+    // A user who cannot read the feature sees nothing waiting.
+    const dave = await as(CHANNEL_USERS.outsider);
+    await dave.openHome();
+    await dave.openInbox();
+    await dave.expectNothingWaiting();
+
+    await alice.chooseInInbox(question, "After the audit");
+    await alice.expectNothingWaiting();
+
+    // Other answer opens the channel in a drawer; the send closes it.
+    const second = "Who reviews the release notes?";
+    await bob.postOverApi("features", FEATURE, ROOM.type, INBOX.askType, {
+      question: second,
+      [INBOX.optionsProperty]: ["Ann", "Bo"],
+    });
+    await alice.expectWaitingRow(second, true);
+    await alice.chooseInInbox(second, INBOX.other);
+    await alice.postInDrawer("Both of them", INBOX.answerLabel);
+    await alice.expectDrawerClosed();
+    await alice.expectNothingWaiting();
+
+    // A plan is approved from the row. Approve ends the session, so it asks.
+    const plan = "Ship behind a flag first";
+    await bob.postOverApi("features", FEATURE, ROOM.type, INBOX.planType, { plan });
+    await alice.expectWaitingRow(plan, true);
+    await alice.decideInInbox(plan, INBOX.approveLabel);
+    await alice.confirmDialog(INBOX.approveLabel);
+    await alice.expectNothingWaiting();
+
+    // The answers are in the channel, as replies to their questions.
+    await bob.expectReply(question, "After the audit");
+    await bob.expectReply(second, "Both of them");
+    await bob.expectSessionAt(INBOX.approved);
   });
 });
 

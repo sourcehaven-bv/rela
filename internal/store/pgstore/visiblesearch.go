@@ -289,17 +289,40 @@ func buildVisibleSearchSQL(
 		withParts = append(withParts, w...)
 	}
 	columns := visibleSearchColumns + ", " + rankCol + " AS search_rank, " + grantsCol + " AS field_grants"
+	likeArg := ""
+	if q.Text != "" {
+		likeArg = b.arg(escapeLike(needle))
+	}
+	typesCond := ""
+	if len(q.Types) > 0 {
+		typesCond = " AND e.type = ANY(" + b.arg(q.Types) + ")"
+	}
+	textCond := ""
+	if q.Text != "" {
+		textCond = " AND e.search_text LIKE '%' || " + likeArg + ` || '%' ESCAPE '\'`
+	}
 	if q.World.IsTrivial() {
 		sb.WriteString("SELECT " + columns + " FROM entities e WHERE e.face = ''" + visCond)
 	} else {
 		rank, candidate := worldSQL(q.World, "e", &b.args)
+		hits := ""
+		if q.Text != "" && trigramIndexable(needle) {
+			// See textHitsCTE. The CTE repeats the candidate, visibility and
+			// type conditions so it holds only faces this statement could
+			// return; it goes after the visibility CTEs it may name. With a
+			// query scope that means each matching face runs the visibility
+			// checks twice, here and in the inner query; a cost, not a
+			// different result.
+			withParts = append(withParts, textHitsCTE+" AS MATERIALIZED (SELECT e.id, e.face FROM entities e WHERE "+
+				"e.search_text LIKE '%' || "+likeArg+` || '%' ESCAPE '\' AND `+candidate+visCond+typesCond+")")
+			hits = textHitsJoin
+			textCond = " AND e.face = ANY(e.hit_faces)"
+		}
 		sb.WriteString("SELECT " + columns + " FROM (" +
-			"SELECT DISTINCT ON (id) * FROM entities e WHERE " + candidate + visCond +
+			"SELECT DISTINCT ON (id) * FROM entities e" + hits + " WHERE " + candidate + visCond +
 			" ORDER BY id ASC, (" + rank + ") ASC, face ASC) e WHERE true")
 	}
-	if q.Text != "" {
-		sb.WriteString(" AND e.search_text LIKE '%' || " + b.arg(escapeLike(needle)) + ` || '%' ESCAPE '\'`)
-	}
+	sb.WriteString(textCond)
 	if after != nil {
 		if q.Text == "" {
 			sb.WriteString(" AND e.id > " + b.arg(after.id))
@@ -309,9 +332,7 @@ func buildVisibleSearchSQL(
 			sb.WriteString(" AND (" + rank + " < " + r + " OR (" + rank + " = " + r + " AND e.id > " + id + "))")
 		}
 	}
-	if len(q.Types) > 0 {
-		sb.WriteString(" AND e.type = ANY(" + b.arg(q.Types) + ")")
-	}
+	sb.WriteString(typesCond)
 	sb.WriteString(orderBy)
 	sb.WriteString(" LIMIT " + b.arg(pageLimit))
 	if b.err != nil {

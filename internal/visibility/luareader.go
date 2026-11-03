@@ -194,8 +194,8 @@ func (s *ScriptReader) ListEntities(
 	ctx context.Context, q store.EntityQuery,
 ) iter.Seq2[*entity.Entity, error] {
 	bound := s.bind(ctx)
-	if red, ok := s.reader.(rowRedactor); ok {
-		if seq, pushed := listPushdown(bound, s.provider, s.raw, red.RedactRow, q); pushed {
+	if red, ok := s.reader.(pushdownRedactor); ok {
+		if seq, pushed := listPushdown(bound, s.provider, s.raw, red.redactPage, q); pushed {
 			return seq
 		}
 	}
@@ -412,7 +412,7 @@ func (s *ScriptReader) ListRelationsStrict(
 // does.
 func (s *ScriptReader) CountEntities(ctx context.Context, q store.EntityQuery) (int, error) {
 	bound := s.bind(ctx)
-	if _, ok := s.reader.(rowRedactor); ok {
+	if _, ok := s.reader.(pushdownRedactor); ok {
 		if n, pushed, err := countPushdown(bound, s.provider, s.raw, q); pushed {
 			return n, err
 		}

@@ -5,7 +5,9 @@ title: 'Property test: two clients autosaving one entity'
 kind: test
 priority: high
 effort: m
-status: backlog
+started: "2026-10-31"
+completed: "2026-10-31"
+status: done
 ---
 
 ## Description
