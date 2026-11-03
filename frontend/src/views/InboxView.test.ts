@@ -28,6 +28,7 @@ vi.mock('@/composables/useLiveSubscription', () => ({
 }))
 vi.mock('@/composables/useEvents', () => ({ useEvents: () => ({ on: vi.fn() }) }))
 vi.mock('vue-router', () => ({
+  useRouter: () => ({ push: vi.fn() }),
   RouterLink: defineComponent({
     props: ['to'],
     template: '<a :href="to"><slot /></a>',
@@ -66,6 +67,8 @@ function inbox(over: Partial<Inbox> = {}): Inbox {
         roles: ['lead'],
         since: '2026-10-28T09:00:00Z',
         transitions: [],
+        actions: { post: [], transitions: [], entries: [] },
+        last_seq: 0,
         links,
       },
     ],
@@ -96,6 +99,14 @@ function inbox(over: Partial<Inbox> = {}): Inbox {
 }
 
 let wrapper: VueWrapper | undefined
+
+// The drawer, stubbed: these tests look at what the inbox does with it.
+const DrawerStub = defineComponent({
+  name: 'InboxAnswerDrawer',
+  props: ['entry', 'start', 'label'],
+  emits: ['close', 'sent', 'gone', 'changed'],
+  template: '<div class="drawer-stub" :data-open="entry ? entry.channel.anchor : \'\'" />',
+})
 
 async function mountView() {
   wrapper = mount(InboxView, { global: { plugins: [createPinia(), PiniaColada] } })
@@ -281,5 +292,140 @@ describe('InboxView', () => {
     expect(w.text()).toContain('The inbox could not be loaded.')
     expect(w.text()).toContain('Realtime is off')
     expect(section(w, 'waiting')).toHaveLength(0)
+  })
+
+  describe('answering from the inbox (TKT-V05706X)', () => {
+    function withNewer() {
+      const base = inbox()
+      const e = base.entries![0]!
+      return inbox({
+        entries: [
+          { ...e, session: { ...e.session, cause: 41 }, last_seq: 45 },
+          {
+            ...e,
+            channel: chan({ anchor: 'INC-2', entity_type: 'incident', type: 'room' }),
+          },
+        ],
+      })
+    }
+
+    async function mountWithDrawer() {
+      api.getInbox.mockResolvedValue(withNewer())
+      wrapper = mount(InboxView, {
+        global: {
+          plugins: [createPinia(), PiniaColada],
+          stubs: { InboxAnswerDrawer: DrawerStub },
+        },
+        attachTo: document.body,
+      })
+      await flushPromises()
+      return wrapper
+    }
+
+    const drawer = (w: VueWrapper) => w.find('.drawer-stub').attributes('data-open')
+
+    it('Open channel opens the drawer on the row', async () => {
+      const w = await mountWithDrawer()
+      const [row] = section(w, 'waiting')
+      expect(row!.text()).toContain('3 newer messages')
+      expect(drawer(w)).toBe('')
+      await row!
+        .findAll('button')
+        .find((b) => b.text() === 'Open channel')!
+        .trigger('click')
+      expect(drawer(w)).toBe('INC-1')
+    })
+
+    it('a send in the drawer closes it, reads the inbox and focuses the next row', async () => {
+      const w = await mountWithDrawer()
+      const [row] = section(w, 'waiting')
+      await row!
+        .findAll('button')
+        .find((b) => b.text() === 'Open channel')!
+        .trigger('click')
+      const before = api.getInbox.mock.calls.length
+      const rest = withNewer()
+      api.getInbox.mockResolvedValue({ ...rest, entries: rest.entries!.slice(1) })
+      w.findComponent(DrawerStub).vm.$emit('sent')
+      await flushPromises()
+      await flushPromises()
+      expect(drawer(w)).toBe('')
+      expect(api.getInbox.mock.calls.length).toBe(before + 1)
+      expect(section(w, 'waiting')).toHaveLength(1)
+      expect(document.activeElement).toBe(section(w, 'waiting')[0]!.find('a').element)
+    })
+
+    it('the last row answered moves the focus to the waiting heading', async () => {
+      const w = await mountWithDrawer()
+      api.getInbox.mockResolvedValue(inbox({ entries: [], count: 0 }))
+      await section(w, 'waiting')[0]!
+        .findAll('button')
+        .find((b) => b.text() === 'Open channel')!
+        .trigger('click')
+      w.findComponent(DrawerStub).vm.$emit('sent')
+      await flushPromises()
+      await flushPromises()
+      expect(section(w, 'waiting')).toHaveLength(0)
+      expect(document.activeElement?.getAttribute('data-inbox-heading')).toBe('waiting')
+    })
+
+    const openButton = (row: ReturnType<typeof section>[number]) =>
+      row.findAll('button').find((b) => b.text() === 'Open channel')!
+
+    it('closing the drawer focuses the row that opened it', async () => {
+      const w = await mountWithDrawer()
+      const row = section(w, 'waiting')[0]!
+      await openButton(row).trigger('click')
+      ;(document.activeElement as HTMLElement | null)?.blur()
+      w.findComponent(DrawerStub).vm.$emit('close')
+      await flushPromises()
+      expect(drawer(w)).toBe('')
+      expect(document.activeElement).toBe(row.find('a').element)
+    })
+
+    it('closing the drawer keeps the focus on the row button that opened it', async () => {
+      const w = await mountWithDrawer()
+      const open = openButton(section(w, 'waiting')[0]!)
+      await open.trigger('click')
+      ;(open.element as HTMLElement).focus()
+      w.findComponent(DrawerStub).vm.$emit('close')
+      await flushPromises()
+      expect(document.activeElement).toBe(open.element)
+    })
+
+    it('a row gone when the drawer closes passes the focus to the next row', async () => {
+      const w = await mountWithDrawer()
+      await openButton(section(w, 'waiting')[0]!).trigger('click')
+      const rest = withNewer()
+      api.getInbox.mockResolvedValue({ ...rest, entries: rest.entries!.slice(1) })
+      w.findComponent(DrawerStub).vm.$emit('gone')
+      await flushPromises()
+      await flushPromises()
+      expect(section(w, 'waiting')).toHaveLength(1)
+      expect(document.activeElement).toBe(section(w, 'waiting')[0]!.find('a').element)
+    })
+
+    it('the last row gone when the drawer closes focuses the waiting heading', async () => {
+      const w = await mountWithDrawer()
+      await openButton(section(w, 'waiting')[0]!).trigger('click')
+      api.getInbox.mockResolvedValue(inbox({ entries: [], count: 0 }))
+      w.findComponent(DrawerStub).vm.$emit('gone')
+      await flushPromises()
+      await flushPromises()
+      expect(document.activeElement?.getAttribute('data-inbox-heading')).toBe('waiting')
+    })
+
+    it('a channel gone in the drawer closes it and reads the inbox', async () => {
+      const w = await mountWithDrawer()
+      await section(w, 'waiting')[0]!
+        .findAll('button')
+        .find((b) => b.text() === 'Open channel')!
+        .trigger('click')
+      const before = api.getInbox.mock.calls.length
+      w.findComponent(DrawerStub).vm.$emit('gone')
+      await flushPromises()
+      expect(drawer(w)).toBe('')
+      expect(api.getInbox.mock.calls.length).toBe(before + 1)
+    })
   })
 })

@@ -248,26 +248,46 @@ func withInboxMemo(ctx context.Context) context.Context {
 }
 
 // inboxFor reads the inbox for req: through the round's memo during a
-// live replay, straight from the service otherwise. A memoized call that
-// a context error ended, while ctx is still live, is read again: the
-// replay that ran it timed out, not this one.
+// live replay, straight from the service otherwise.
 func (h *channelsHandler) inboxFor(ctx context.Context, req realtime.InboxRequest) (realtime.InboxView, error) {
+	return memoInbox(ctx, inboxRequestKey(req), func() (realtime.InboxView, error) { return h.inbox.Inbox(ctx, req) })
+}
+
+// inboxPageFor reads the inbox for req with the waiting messages (see
+// [realtime.WaitingMessages]), each step through the round's memo, so two
+// page tabs of one principal share both. Without a message step wired it
+// is [channelsHandler.inboxFor].
+func (h *channelsHandler) inboxPageFor(ctx context.Context, req realtime.InboxRequest) (realtime.InboxView, error) {
+	v, err := h.inboxFor(ctx, req)
+	if err != nil || h.waitingMessages == nil {
+		return v, err
+	}
+	return memoInbox(ctx, inboxRequestKey(req)+"\nmessages", func() (realtime.InboxView, error) {
+		return h.waitingMessages(ctx, v)
+	})
+}
+
+// memoInbox runs read through the round's memo under the caller's share
+// key and key during a live replay, and straight otherwise. A memoized
+// call that a context error ended, while ctx is still live, runs again:
+// the replay that ran it timed out, not this one.
+func memoInbox(ctx context.Context, key string, read func() (realtime.InboxView, error)) (realtime.InboxView, error) {
 	m, _ := ctx.Value(inboxMemoKey{}).(*inboxMemo)
 	if m == nil {
-		return h.inbox.Inbox(ctx, req)
+		return read()
 	}
-	key := principal.From(ctx).ShareKey() + "\n" + inboxRequestKey(req)
+	key = principal.From(ctx).ShareKey() + "\n" + key
 	m.mu.Lock()
 	call := m.calls[key]
 	if call == nil {
-		call = sync.OnceValues(func() (realtime.InboxView, error) { return h.inbox.Inbox(ctx, req) })
+		call = sync.OnceValues(read)
 		m.calls[key] = call
 	}
 	m.mu.Unlock()
 	v, err := call()
 	ctxErr := errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)
 	if ctxErr && ctx.Err() == nil {
-		return h.inbox.Inbox(ctx, req)
+		return read()
 	}
 	return v, err
 }

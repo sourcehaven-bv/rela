@@ -59,5 +59,6 @@ func TestMigrate_v29ToV30ChannelMentions(t *testing.T) {
 	require.Zero(t, rows, "no backfill")
 	var version int
 	require.NoError(t, raw.QueryRow(`PRAGMA user_version`).Scan(&version))
+	require.Equal(t, sqlitedb.SchemaVersion(), version, "latest version")
 	require.Equal(t, sqlitedb.SchemaVersion(), version)
 }

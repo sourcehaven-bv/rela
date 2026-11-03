@@ -8,9 +8,12 @@ import {
   CHANNEL_USERS,
   CHOICES,
   DECISIONS,
+  INBOX,
   POLICY_ROOM,
   ROOM,
   SESSION,
+  addFeatureOwner,
+  setFeatureOwner,
   writePolicyRealtime,
   writeRoomProject,
   writeRoomRealtime,
@@ -369,6 +372,74 @@ choiceTest.describe("choices", () => {
     await alice.post("Both of them", CHOICES.answerLabel);
     for (const p of [alice, bob]) await p.expectReply(second, "Both of them");
     await alice.expectChoice(second, "Ann", false);
+  });
+});
+
+// A room where a member, standing in for an agent, asks and plans, and the
+// feature's owner answers from the inbox (TKT-V05706X).
+const inboxTest = base.extend<ChannelFixtures>({
+  serverUrl: async ({ testProject, serverBinary }, use, testInfo) => {
+    writeRoomProject(testProject, { inbox: true });
+    addFeatureOwner(testProject);
+    setFeatureOwner(testProject, FEATURE, CHANNEL_USERS.lead);
+    await serveWithPrincipalHeader(serverBinary, testProject, testInfo, use, CHANNEL_USERS.lead);
+  },
+  as: asFixture,
+});
+
+inboxTest.describe("answering from the inbox", () => {
+  inboxTest.describe.configure({ timeout: 120_000 });
+
+  inboxTest("the owner answers questions and approves a plan from the inbox", async ({ as }) => {
+    const alice = await as(CHANNEL_USERS.lead);
+    const bob = await as(CHANNEL_USERS.member);
+    await bob.openEntity("feature", FEATURE);
+    await bob.expectChannel(ROOM.label);
+    await alice.openHome();
+    await alice.openInbox();
+    await alice.expectNothingWaiting();
+
+    // A question with options waits on the lead, who answers with a click.
+    const question = "When do we ship?";
+    await bob.postOverApi("features", FEATURE, ROOM.type, INBOX.askType, {
+      question,
+      [INBOX.optionsProperty]: ["Friday", "After the audit"],
+    });
+    await alice.expectWaitingRow(question, true);
+
+    // A user who cannot read the feature sees nothing waiting.
+    const dave = await as(CHANNEL_USERS.outsider);
+    await dave.openHome();
+    await dave.openInbox();
+    await dave.expectNothingWaiting();
+
+    await alice.chooseInInbox(question, "After the audit");
+    await alice.expectNothingWaiting();
+
+    // Other answer opens the channel in a drawer; the send closes it.
+    const second = "Who reviews the release notes?";
+    await bob.postOverApi("features", FEATURE, ROOM.type, INBOX.askType, {
+      question: second,
+      [INBOX.optionsProperty]: ["Ann", "Bo"],
+    });
+    await alice.expectWaitingRow(second, true);
+    await alice.chooseInInbox(second, INBOX.other);
+    await alice.postInDrawer("Both of them", INBOX.answerLabel);
+    await alice.expectDrawerClosed();
+    await alice.expectNothingWaiting();
+
+    // A plan is approved from the row. Approve ends the session, so it asks.
+    const plan = "Ship behind a flag first";
+    await bob.postOverApi("features", FEATURE, ROOM.type, INBOX.planType, { plan });
+    await alice.expectWaitingRow(plan, true);
+    await alice.decideInInbox(plan, INBOX.approveLabel);
+    await alice.confirmDialog(INBOX.approveLabel);
+    await alice.expectNothingWaiting();
+
+    // The answers are in the channel, as replies to their questions.
+    await bob.expectReply(question, "After the audit");
+    await bob.expectReply(second, "Both of them");
+    await bob.expectSessionAt(INBOX.approved);
   });
 });
 

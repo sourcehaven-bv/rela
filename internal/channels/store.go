@@ -255,6 +255,17 @@ type Store interface {
 	// Get returns one message.
 	Get(ctx context.Context, key Key, seq int64) (Message, error)
 
+	// GetMessages returns the named messages of live channels, keyed by
+	// ref. A removed message is its removal stub. A ref to a missing or
+	// tombstoned channel, or to a missing seq, is absent from the answer,
+	// not an error; a duplicate ref is read once. A damaged channel or
+	// message is left out and reported through the backend's
+	// [DamageWarner], as listings do. The refs are checked
+	// by [CheckGetMessages]. The database backends make two queries; the
+	// file backend reads each named channel's meta.yaml and each needed
+	// segment once.
+	GetMessages(ctx context.Context, refs []MessageRef) (map[MessageRef]Message, error)
+
 	// Messages returns one page of messages; see [Page] for the cursors.
 	Messages(ctx context.Context, key Key, page Page) ([]Message, error)
 

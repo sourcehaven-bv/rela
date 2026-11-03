@@ -26,6 +26,16 @@
  *
  * `revealSeq` comes from a message link (TKT-O6RC8Z): useMessageLink jumps
  * to that message once, as a reply quote does, and `revealed` reports it.
+ *
+ * `start` comes from an inbox row (TKT-V05706X): a decision or choice to
+ * start once the channel is shown, such as a form decision the row cannot
+ * make. It runs once per `start` object, when the head and its first
+ * page are held, the `revealSeq` jump has run, and the held `_actions`
+ * match the head's generation. A generation other than the row's means
+ * the session moved on: it says so and starts nothing. A choice the held
+ * page cannot build (the question is not held) opens its answer type as
+ * a reply to `start.cause`. `started` reports the start, and `startSent`
+ * the successful send of the form it opened.
  */
 import { computed, ref, useTemplateRef, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
@@ -40,6 +50,7 @@ import { browserTimeZone } from '@/utils/format'
 import { toEditProps, toProps } from '@/utils/channelValues'
 import {
   LIFECYCLE_DELETE,
+  type ChannelStart,
   type ChannelTypeSchema,
   type Message,
   type MessagePropInput,
@@ -52,7 +63,6 @@ import type {
   ChannelSessionView,
 } from 'rela-components/components/channel/types'
 import {
-  DECISIONS_BLOCKED_KEY,
   lifecyclePendingKey,
   messagePendingKey,
 } from 'rela-components/components/channel/channelFields'
@@ -64,7 +74,7 @@ import RlChannelDecisions from 'rela-components/components/channel/RlChannelDeci
 import RlChannelSession from 'rela-components/components/channel/RlChannelSession.vue'
 import EntityPickerModal from '@/components/forms/EntityPickerModal.vue'
 import ChannelTextDialog from './ChannelTextDialog.vue'
-import { classifyChannelError } from './channelErrors'
+import { blockedPending, handleChannelRefusal, type RefusalTarget } from './decisionGlue'
 import { useChannelLinks } from './useChannelLinks'
 import { useChannelPaging } from './useChannelPaging'
 import { useExpiryClock } from './useExpiryClock'
@@ -101,9 +111,17 @@ const props = defineProps<{
   world?: string
   /** The message a link asks to show; see the component doc. */
   revealSeq?: number
+  /** A decision to start once shown; see the component doc. */
+  start?: ChannelStart
 }>()
 
-const emit = defineEmits<{ gone: []; changed: []; revealed: [] }>()
+const emit = defineEmits<{
+  gone: []
+  changed: []
+  revealed: []
+  started: []
+  startSent: []
+}>()
 
 const { t } = useI18n()
 const ui = useUIStore()
@@ -220,20 +238,19 @@ const formError = ref<string>()
 const fieldErrors = ref<Record<string, string>>({})
 
 /** Answers a refusal; returns the message when it belongs in the form. */
-function handle(err: unknown, hasForm: boolean): string | undefined {
-  const out = classifyChannelError(err)
-  if (out.then === 'refetch') void ch.refetch()
-  else if (out.then === 'list') emit('gone')
-  else if (out.then === 'schema') {
-    void channelSchema.reload()
-    void schema.reloadChannelPresentations()
-  }
-  if (out.place === 'form' && hasForm) return out.message
-  ui.error(out.message)
-  return undefined
+function handle(err: unknown, target: RefusalTarget): string | undefined {
+  return handleChannelRefusal(err, target, {
+    refetch: () => void ch.refetch(),
+    gone: () => emit('gone'),
+    reloadSchema: () => {
+      void channelSchema.reload()
+      void schema.reloadChannelPresentations()
+    },
+    toast: (m) => ui.error(m),
+  })
 }
 
-const { pending, set: setPending, run: runPending } = usePendingKeys((err) => handle(err, false))
+const { pending, set: setPending, run: runPending } = usePendingKeys((err) => handle(err, 'toast'))
 
 // --- Composer ----------------------------------------------------------------
 
@@ -255,9 +272,7 @@ const channelView = useTemplateRef<InstanceType<typeof RlChannel>>('channelView'
  * the posting decision's own key shows it as sending.
  */
 const shownPending = computed<ReadonlySet<string>>(() =>
-  submitting.value || deciding.value
-    ? new Set([...pending.value, DECISIONS_BLOCKED_KEY])
-    : pending.value
+  submitting.value || deciding.value ? blockedPending(pending.value) : pending.value
 )
 
 const replyQuoteView = computed(() => {
@@ -288,6 +303,7 @@ watch(channelKey, () => {
   stopEditing()
   clearErrors()
   resetDecisions()
+  startedType = undefined
 })
 
 /**
@@ -323,12 +339,21 @@ async function onPost(event: ChannelPostEvent) {
   }
   clearErrors()
   submitting.value = true
+  // Read before the send, which ends the form decision.
+  const fromStart =
+    startedType !== undefined &&
+    startedType === event.type &&
+    decisionsApi.formDecision.value?.messageType === startedType
   try {
     await decisionsApi.sendComposer(event.type, converted.props, event.replyTo, event.compose)
     composer.value?.reset(event)
     replyTo.value = null
+    if (fromStart) {
+      startedType = undefined
+      emit('startSent')
+    }
   } catch (err) {
-    formError.value = handle(err, true)
+    formError.value = handle(err, 'form')
   } finally {
     submitting.value = false
   }
@@ -360,7 +385,7 @@ async function onSave(event: ChannelEditEvent) {
     await ch.edit(event.seq, converted.props)
     stopEditing()
   } catch (err) {
-    formError.value = handle(err, true)
+    formError.value = handle(err, 'form')
   } finally {
     submitting.value = false
   }
@@ -409,12 +434,85 @@ const decisionsApi = useSessionDecisions({
   ui: {
     confirm,
     toast: (m) => ui.error(m),
-    handle,
+    handle: (err, hasForm) => handle(err, hasForm ? 'form' : 'toast'),
     focusRow: (seq) => channelView.value?.focusRow(seq) ?? false,
     focusHeader: () => sessionHeader.value?.focus(),
   },
 })
 const { decisions, decisionSeq, deciding, onDecide, resetDecisions } = decisionsApi
+
+// --- A decision started from an inbox row ------------------------------------
+
+/** The `start` that ran; another object runs again. */
+let ranStart: ChannelStart | undefined
+/** The type of the form the start opened; its send emits startSent. */
+let startedType: string | undefined
+/** Whether the `revealSeq` jump has run. */
+const revealDone = ref(false)
+watch(
+  () => props.revealSeq,
+  () => (revealDone.value = false)
+)
+/**
+ * The older pages a jump is reading. The link's jumpTo emits `jump`
+ * synchronously when the message is not held, so the count is up before
+ * revealDone is set, and the start waits for those pages.
+ */
+const jumps = ref(0)
+async function onJumpTracked(seq: number) {
+  jumps.value++
+  try {
+    await onJump(seq)
+  } finally {
+    jumps.value--
+  }
+}
+
+// The started form ends without a send (another type, a stale move, a
+// cancel): a later send of the same type is not the start's.
+watch(
+  () => decisionsApi.formDecision.value,
+  (f) => {
+    if (!f) startedType = undefined
+  }
+)
+
+watch(
+  [() => props.start, ch.head, ch.messages, ch.actionsGeneration, revealDone, jumps],
+  () => void runStart(),
+  { immediate: true }
+)
+
+async function runStart() {
+  const s = props.start
+  const h = ch.head.value
+  if (!s || s === ranStart || !h) return
+  // The first page: a channel with messages holds at least one.
+  if (h.channel.last_seq > 0 && ch.messages.value.length === 0) return
+  if (props.revealSeq !== undefined && (!revealDone.value || jumps.value > 0)) return
+  const g = h.channel.session?.generation
+  if (ch.actionsGeneration.value !== g) return
+  ranStart = s
+  startedType = undefined
+  if (g !== s.generation) {
+    ui.error(t('channels.decisionStale'))
+    return
+  }
+  emit('started')
+  if (s.kind === 'decide') {
+    const view = decisions.value.find((v) => v.key === s.key)
+    await onDecide(s.key, 'row')
+    if (view?.opensForm && decisionsApi.formDecision.value) startedType = view.messageType
+    return
+  }
+  const built = [...decisionsApi.choices.value.values()].flat().find((v) => v.key === s.key)
+  if (built) {
+    await decisionsApi.onChoose(s.key)
+    if (built.opensForm && decisionsApi.formDecision.value) startedType = built.messageType
+  } else if (s.answerType && s.cause !== undefined) {
+    if (await decisionsApi.onAnswer(s.answerType, s.cause)) startedType = s.answerType
+  }
+}
 
 // --- Message and channel operations -----------------------------------------
 
@@ -446,7 +544,7 @@ async function submitRemove(reason: string) {
     await ch.remove(seq, reason || undefined)
     removing.value = null
   } catch (err) {
-    removeError.value = handle(err, true)
+    removeError.value = handle(err, 'form')
     if (removeError.value === undefined) removing.value = null
   } finally {
     removeBusy.value = false
@@ -486,14 +584,17 @@ async function onLifecycle(op: string) {
 
 const { loadingOlder, onLoadOlder, onLoadNewest, onJump } = useChannelPaging(
   ch,
-  (err) => handle(err, false),
+  (err) => handle(err, 'toast'),
   (seq) => channelView.value?.reveal(seq)
 )
 
 useMessageLink(
   () => props.revealSeq,
   channelView,
-  () => emit('revealed')
+  () => {
+    revealDone.value = true
+    emit('revealed')
+  }
 )
 
 // --- Links and the ref picker -----------------------------------------------
@@ -546,7 +647,7 @@ const pickerTypes = picker.types
       @open-ref="onOpenRef"
       @load-older="onLoadOlder"
       @load-newest="onLoadNewest"
-      @jump="onJump"
+      @jump="onJumpTracked"
       @decide="(key) => onDecide(key, 'row')"
       @choose="decisionsApi.onChoose"
     >

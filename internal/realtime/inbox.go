@@ -174,8 +174,30 @@ type InboxView struct {
 	// part of the answer on any wire; the live hub uses it to tell which
 	// moved markers can change this inbox.
 	Reader channels.Reader `json:"-"`
-	// noWaiting is set when the request left the waiting kind out.
-	noWaiting bool
+	// page is the waiting kind as [InboxView.HasWaiting] and
+	// [WaitingMessages] need it.
+	page waitingPage
+}
+
+// waitingPage is the waiting kind of an inbox page as later steps need
+// it: whether the request left the kind out, and what [WaitingMessages]
+// needs to add the waiting messages. That is, per entry of Entries and in
+// its order, how to read and render its waiting message, and the
+// configuration the entries were gated under. WaitingMessages renders
+// only under the same configuration.
+type waitingPage struct {
+	omitted bool
+	refs    []waitingRef
+	config  *realtimecfg.Compiled
+}
+
+// waitingRef is what [WaitingMessages] needs of one waiting entry: the
+// channel, the session's cause seq, and whether the caller passes the
+// channel's remove gate, which decides how a removed message renders.
+type waitingRef struct {
+	key       channels.Key
+	cause     int64
+	moderator bool
 }
 
 // InboxSummary counts what an inbox first page holds, for a badge.
@@ -203,7 +225,7 @@ func (v InboxView) Summary() InboxSummary {
 
 // HasWaiting reports whether the answer carries the waiting entries: the
 // request asked for the waiting kind.
-func (v InboxView) HasWaiting() bool { return !v.noWaiting }
+func (v InboxView) HasWaiting() bool { return !v.page.omitted }
 
 // waitingJSON are the JSON keys of the [InboxView] fields that belong to
 // the waiting kind. MarshalJSON drops only these from an answer without
@@ -214,7 +236,7 @@ var waitingJSON = []string{"entries", "count", "truncated", "next_cursor"}
 func (v InboxView) MarshalJSON() ([]byte, error) {
 	type plain InboxView
 	b, err := json.Marshal(plain(v))
-	if err != nil || !v.noWaiting {
+	if err != nil || !v.page.omitted {
 		return b, err
 	}
 	var fields map[string]json.RawMessage
@@ -265,6 +287,31 @@ type InboxEntry struct {
 	// Transitions are the message types whose post by the caller would move
 	// the session, as [SessionRead] lists them.
 	Transitions []string `json:"transitions"`
+	// Actions are the caller's decision affordances, equal to the same
+	// fields of the channel head's [Affordances].
+	Actions InboxActions `json:"-"`
+	// LastSeq is the channel's last seq, so a reader can tell how many
+	// messages followed the waiting message.
+	LastSeq int64 `json:"-"`
+	// Message is the waiting message (see [InboxSession.Cause]), rendered
+	// as the channel's message list renders it for the caller, without
+	// the per-message actions. Only [WaitingMessages] sets it; nil when
+	// the session has no cause or the message is gone.
+	Message *MessageView `json:"-"`
+}
+
+// The decision inputs of an entry (Actions, LastSeq, Message, and the
+// session's Cause and Transitions) are for the web app's inbox page only,
+// which renders them through its own wire types. They are left out of
+// this package's JSON, which MCP list_inbox and rela channel inbox
+// serve unchanged.
+
+// InboxActions are the part of [Affordances] a session decision is built
+// from: Post, Transitions and Entries, computed as the head computes them.
+type InboxActions struct {
+	Post        []string   `json:"post"`
+	Transitions []string   `json:"transitions"`
+	Entries     []EntryRef `json:"entries"`
 }
 
 // InboxChannel names the channel of an [InboxEntry]. AnchorTitle is the
@@ -289,6 +336,13 @@ type InboxSession struct {
 	WaitingFor []SessionWaitingView `json:"waiting_for,omitempty"`
 	Generation int64                `json:"generation"`
 	EnteredAt  time.Time            `json:"entered_at"`
+	// Cause is the seq of the waiting message: the message whose post
+	// moved the session into its state. 0, and left out, for a timer move,
+	// a session that never moved and a move stored before the cause was.
+	Cause int64 `json:"-"`
+	// Transitions are the session's transitions out of its state, as
+	// [SessionView.Transitions] lists them.
+	Transitions []SessionTransitionView `json:"-"`
 }
 
 // inboxCursor is the position after the last entry of a page. It positions
@@ -352,6 +406,8 @@ func decodeCursor(s string) (*inboxCursor, error) {
 type inboxItem struct {
 	entry InboxEntry
 	key   channels.Key
+	// moderator is set when the caller passes the channel's remove gate.
+	moderator bool
 }
 
 func compareItems(a, b inboxItem) int {
@@ -415,7 +471,7 @@ func (s *Service) Inbox(ctx context.Context, req InboxRequest) (InboxView, error
 	if !identity.Valid() {
 		return InboxView{}, noPrincipal()
 	}
-	view := InboxView{Notice: UntrustedNotice, noWaiting: !waiting}
+	view := InboxView{Notice: UntrustedNotice, page: waitingPage{omitted: !waiting}}
 	view.Reader, _ = callReader(c)
 	if waiting {
 		view.Entries = []InboxEntry{}
@@ -425,6 +481,7 @@ func (s *Service) Inbox(ctx context.Context, req InboxRequest) (InboxView, error
 		return view, nil
 	}
 	run := inboxRun{s: s, c: c}
+	view.page.config = c.snap.Config
 	w := c.snap.Config.Waiting()
 	view.WaitingTypes = slices.Sorted(maps.Keys(w.States))
 	got, err := run.gather(&view, kinds, cur == nil, identity.ID())
@@ -509,6 +566,9 @@ func (r inboxRun) page(view *InboxView, items []inboxItem, cur *inboxCursor, lim
 	}
 	for _, it := range items {
 		view.Entries = append(view.Entries, it.entry)
+		view.page.refs = append(view.page.refs, waitingRef{
+			key: it.key, cause: it.entry.Session.Cause, moderator: it.moderator,
+		})
 	}
 }
 
@@ -855,21 +915,21 @@ func (r inboxRun) item(ct realtimecfg.ChannelType, view AnchorView, ch *channels
 			roles = append(roles, name)
 		}
 	}
-	// The inbox lists the types only; an agent reads the entries with
-	// read_session.
-	types, _ := c.sessionAffordances(c.postable())
+	posts, types, entries := decisionAffordances(c, c.postable())
 	return inboxItem{
-		key: ch.Key,
+		key: ch.Key, moderator: c.moderator(),
 		entry: InboxEntry{
 			Kind:    InboxKindWaiting,
 			Channel: inboxChannel(*ch, view),
 			Session: InboxSession{
 				State: sv.State, Label: sv.Label, Status: sv.Status, WaitingFor: sv.WaitingFor,
-				Generation: sv.Generation, EnteredAt: sv.EnteredAt,
+				Generation: sv.Generation, EnteredAt: sv.EnteredAt, Cause: sv.Cause, Transitions: sv.Transitions,
 			},
 			Roles:       roles,
 			Since:       sv.EnteredAt,
 			Transitions: types,
+			Actions:     InboxActions{Post: posts, Transitions: types, Entries: entries},
+			LastSeq:     ch.LastSeq,
 		},
 	}, true
 }

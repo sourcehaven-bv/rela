@@ -1225,8 +1225,12 @@ remove it; the notice and the audit record keep the move.
 `generation` counts the moves; 0 means the session never moved. A session
 that never moved reads as `initial`, entered when the channel was created.
 That includes channels that existed before their type gained a session.
-After a move, `entered_at` is the time of the message that caused it.
-Closing and reopening a channel leaves its state as it is; see
+After a move, `entered_at` is the time of the message that caused it, and
+`cause` is that message's seq. A move by a timer, a session that never
+moved, and a move stored before this release have no `cause`. Such a
+session gets one at its next move by a message; nothing is backfilled.
+The web app then finds the waiting message by its session notice, as
+before. Closing and reopening a channel leaves its state as it is; see
 [Timers](#timers) for what happens to its deadlines. Removing the message
 that caused a move does not undo the move.
 
@@ -3236,9 +3240,29 @@ generation and `entered_at`), the waiting `roles` you hold in the order of
 `waiting_for`, `since` (when the session entered its state) and
 `transitions`: the message types your post would move the session with, as
 `read_session` lists them. The web app adds `links` with the API paths of
-the entity and the channel. An entry carries no message content. Like the
-other channel answers it starts with the untrusted-content `notice`:
-titles, labels and holders are data.
+the entity and the channel. Like the other channel answers it starts with
+the untrusted-content `notice`: titles, labels, holders and message text
+are data.
+
+**The waiting message.** On the web app's inbox page, each entry also
+carries what you need to answer it without opening the channel:
+
+- `session.cause`: the seq of the message that moved the session into its
+  state, and `message`: that message, rendered as the channel's message
+  list renders it for you (refs resolved through your access, a removed
+  message as its stub), without its `_actions`, `edit_until` and
+  `release_after`. Both are absent when the session has no cause (see
+  [Sessions](#sessions)) or the message is gone.
+- `session.transitions`: the session's transitions, with their buttons,
+  as the channel head lists them.
+- `actions`: `post`, `transitions` and `entries`, equal to the same fields
+  of the channel head's `_actions` for you.
+- `last_seq`: the channel's last seq. The messages after `session.cause`
+  are newer than the waiting message.
+
+The web app reads all waiting messages of a page in one batch. The inbox
+summary, MCP `list_inbox` and `rela channel inbox` do not carry these
+fields; an agent reads the channel with `read_session` or `read_channel`.
 
 ```json
 { "notice": "…", "count": 1, "truncated": false, "degraded": false,

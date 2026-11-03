@@ -650,7 +650,9 @@ The body replaces the whole set; an empty list clears it. The answer is 204.
   presence (`/api/v1/{plural}/{id}/_presence`, query `world`), the inbox
   (`/api/v1/_inbox`, query `limit` and `kinds`) or the inbox summary
   (`/api/v1/_inbox/summary`, no query; it answers the inbox's counts for a
-  badge). Any other path or query parameter
+  badge). Each waiting entry of the inbox carries its waiting `message`,
+  `session.cause`, `session.transitions`, `actions` and `last_seq`; the
+  summary carries none of them. The realtime guide describes the fields. Any other path or query parameter
   is a 400, and so is a presence path with a bare id on a type that has
   faces. Subscribing to a presence path is what makes you a viewer; see
   [Presence](#presence-_presence). The channel paths are in the realtime

@@ -8,6 +8,12 @@
  * Each section shows an empty state when it has no rows. Mention and unread
  * rows offer "Mark read", which emits `markRead` with the row id; a row id in
  * `busy` shows that button as working.
+ *
+ * The `waiting-detail` slot renders below a waiting row's link, outside it,
+ * with the row as `row`: the app puts the waiting message and its
+ * decisions there. Each waiting row carries `data-row-id`, and the waiting
+ * heading takes focus (tabindex -1), so the app can move the focus after a
+ * row it acted on leaves the list.
  */
 import { useId } from 'vue'
 import RlButton from '../common/RlButton.vue'
@@ -51,11 +57,24 @@ function unreadStatus(count: number): NavItemStatus {
     <RlCallout v-if="degraded" tone="warning">{{ messages.inboxDegraded() }}</RlCallout>
 
     <section class="rl-inbox__section" :aria-labelledby="`${idBase}-waiting`">
-      <RlHeading :id="`${idBase}-waiting`" :level="headingLevel" size="sm" weight="semibold">
+      <RlHeading
+        :id="`${idBase}-waiting`"
+        :level="headingLevel"
+        size="sm"
+        weight="semibold"
+        tabindex="-1"
+        data-inbox-heading="waiting"
+      >
         {{ messages.inboxWaitingHeading() }}
       </RlHeading>
       <ul v-if="waiting.length" class="rl-inbox__list">
-        <li v-for="row in waiting" :key="row.id" class="rl-inbox__row" data-section="waiting">
+        <li
+          v-for="row in waiting"
+          :key="row.id"
+          class="rl-inbox__row rl-inbox__row--waiting"
+          data-section="waiting"
+          :data-row-id="row.id"
+        >
           <component :is="row.link.as ?? 'a'" v-bind="row.link.attrs" class="rl-inbox__link">
             <RlIcon name="warning" :size="16" class="rl-inbox__icon rl-inbox__icon--waiting" />
             <span class="rl-inbox__main">
@@ -66,6 +85,9 @@ function unreadStatus(count: number): NavItemStatus {
             </span>
             <time class="rl-inbox__time" :datetime="row.sinceIso">{{ row.since }}</time>
           </component>
+          <div v-if="$slots['waiting-detail']" class="rl-inbox__detail">
+            <slot name="waiting-detail" :row="row" />
+          </div>
         </li>
       </ul>
       <p v-else class="rl-inbox__empty">{{ messages.inboxWaitingEmpty() }}</p>
@@ -171,6 +193,21 @@ function unreadStatus(count: number): NavItemStatus {
   align-items: center;
   gap: var(--rl-space-2);
   padding-right: var(--rl-space-2);
+}
+
+.rl-inbox__row--waiting {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0;
+  padding-right: 0;
+}
+
+.rl-inbox__detail {
+  padding: 0 var(--rl-space-3) var(--rl-space-2) calc(var(--rl-space-3) * 2 + 16px);
+}
+
+.rl-inbox__detail:empty {
+  display: none;
 }
 
 .rl-inbox__row + .rl-inbox__row {

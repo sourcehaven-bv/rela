@@ -18,7 +18,13 @@
   },
   "inbox": {
     "title": "Inbox",
-    "loadError": "The inbox could not be loaded."
+    "loadError": "The inbox could not be loaded.",
+    "newerMessages": "{n} newer message | {n} newer messages",
+    "newerMessagesMany": "99+ newer messages",
+    "openChannel": "Open channel",
+    "showMore": "Show more",
+    "showLess": "Show less",
+    "answerTitle": "Answer in {channel}"
   },
   "footer": {
     "settings": "Settings",

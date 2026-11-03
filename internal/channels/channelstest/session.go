@@ -79,7 +79,7 @@ func testSessionStep(t *testing.T, h Harness) {
 	msg := mustAppend(t, h.Store, k, stepped("move", at, step))
 	require.Equal(t, int64(2), msg.Seq)
 
-	want := channels.Session{State: "contained", Generation: 1, EnteredAt: channels.NormTime(at)}
+	want := channels.Session{State: "contained", Generation: 1, EnteredAt: channels.NormTime(at), Cause: msg.Seq}
 	head, err := h.Store.Head(ctx, k)
 	require.NoError(t, err)
 	require.Equal(t, want, head.Session)
@@ -362,8 +362,9 @@ func testSessionStateNames(t *testing.T, h Harness) {
 	mustAppend(t, h.Store, k, stepped("again", T0.Add(time.Minute), sessionStep(moveFrom("aux", "aux"))))
 	head, err := h.Store.Head(ctx, k)
 	require.NoError(t, err)
-	require.Equal(t, channels.Session{State: "aux", Generation: 2, EnteredAt: channels.NormTime(T0.Add(time.Minute))},
-		head.Session)
+	require.Equal(t, channels.Session{
+		State: "aux", Generation: 2, EnteredAt: channels.NormTime(T0.Add(time.Minute)), Cause: 3,
+	}, head.Session)
 }
 
 // testSessionReply pins a reply that moves the session: the message, its

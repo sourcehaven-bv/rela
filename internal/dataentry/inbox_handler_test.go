@@ -33,7 +33,8 @@ import (
 // and the role prime are the deployed ones.
 
 // inboxTestRealtime: case waits for a ticket's or a feature's owner or
-// watchers; threads waits for its creator. Reading either needs
+// watchers; threads waits for its creator; run waits for a ticket's owner
+// once a watcher asks. Reading either needs
 // inbox.read, which the officer-of relation confers per entity, so the
 // read check walks a relation unless the inbox primes the roles.
 const inboxTestRealtime = `
@@ -69,6 +70,29 @@ channel_types:
       states:
         asked: { waiting_for: [starter], on: { wrap: { to: done } } }
         done: { final: true }
+  run:
+    attach_to: [ticket]
+    read: { permission: inbox.read }
+    roles:
+      lead:    { from: entity.owner }
+      watcher: { from: entity.watchers }
+    message_types:
+      ask:
+        properties:
+          question: { type: markdown }
+          about:    { type: ref, to: [ticket] }
+        post: [watcher]
+      answer: { properties: { note: { type: string } }, post: [lead] }
+      nudge:  { properties: { note: { type: string } }, post: [watcher] }
+    session:
+      initial: working
+      states:
+        working: { on: { ask: { to: asking } } }
+        asking:
+          waiting_for: [lead]
+          on:
+            answer: { to: working }
+            nudge:  { to: working, roles: [watcher] }
 `
 
 // inboxTestMeta has tickets and features with an owner and watchers, and

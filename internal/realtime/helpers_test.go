@@ -582,6 +582,25 @@ type countingStore struct {
 	beforeReads func()
 	// lastAppend is the NewMessage of the latest Append call.
 	lastAppend atomic.Pointer[channels.NewMessage]
+	// gets and getMessages count Get and GetMessages calls.
+	gets, getMessages atomic.Int64
+	// getMessagesErr, when set, fails every GetMessages call.
+	getMessagesErr error
+}
+
+func (s *countingStore) Get(ctx context.Context, k channels.Key, seq int64) (channels.Message, error) {
+	s.gets.Add(1)
+	return s.Store.Get(ctx, k, seq)
+}
+
+func (s *countingStore) GetMessages(
+	ctx context.Context, refs []channels.MessageRef,
+) (map[channels.MessageRef]channels.Message, error) {
+	s.getMessages.Add(1)
+	if s.getMessagesErr != nil {
+		return nil, s.getMessagesErr
+	}
+	return s.Store.GetMessages(ctx, refs)
 }
 
 func (s *countingStore) Reads(

@@ -21,6 +21,8 @@ export const CHANNEL_USERS = {
   member: "bob@example.com",
   /** Reads the entity and the channel, but may not post. */
   watcher: "carol@example.com",
+  /** Reads no feature, so no feature's channel. */
+  outsider: "dave@example.com",
 } as const;
 
 /** The channel type on `feature`, and the labels the web app shows. */
@@ -98,6 +100,26 @@ export const CHOICES = {
   other: "Other answer…",
 } as const;
 
+/**
+ * The agent-like session on ROOM when RoomOptions.inbox is set
+ * (TKT-V05706X). A member, standing in for an agent, asks a question with
+ * options or offers a plan; either waits on the feature's owner, who answers
+ * it from the inbox. addFeatureOwner adds the `owner` property the role reads.
+ */
+export const INBOX = {
+  label: "Agent run",
+  working: "Working",
+  asking: "Asking",
+  review: "Plan review",
+  approved: "Approved",
+  askType: "ask",
+  optionsProperty: "options",
+  answerLabel: "Answer",
+  other: "Other answer…",
+  planType: "plan",
+  approveLabel: "Approve",
+} as const;
+
 /** The face-anchored channel type on the faced project's `policy`. */
 export const POLICY_ROOM = {
   type: "policy-room",
@@ -130,6 +152,12 @@ export interface RoomOptions {
   /** Adds the question and answer types of CHOICES. No session. */
   choices?: boolean;
   /**
+   * Gives the room the session of INBOX instead, with its question, answer,
+   * plan and approve types. Cannot be combined with `session`, `decisions`,
+   * `run` or `choices`.
+   */
+  inbox?: boolean;
+  /**
    * Gives the room the agent-run session of RUN instead, and an owner role
    * from the feature's `owner` property, which addBusyBoard adds to the
    * schema. Cannot be combined with `session` or `decisions`.
@@ -139,8 +167,11 @@ export interface RoomOptions {
 
 /** realtime.yaml for the feature project. */
 export function roomRealtimeYaml(opts: RoomOptions = {}): string {
-  if ([opts.session, opts.decisions, opts.run].filter(Boolean).length > 1) {
-    throw new Error("RoomOptions: session, decisions and run are exclusive");
+  if ([opts.session, opts.decisions, opts.run, opts.inbox].filter(Boolean).length > 1) {
+    throw new Error("RoomOptions: session, decisions, run and inbox are exclusive");
+  }
+  if (opts.inbox && opts.choices) {
+    throw new Error("RoomOptions: inbox brings its own question types");
   }
   if (opts.composePreset && !opts.decisions) {
     throw new Error("RoomOptions: composePreset needs decisions");
@@ -250,7 +281,56 @@ export function roomRealtimeYaml(opts: RoomOptions = {}): string {
         done: { label: ${RUN.done}, final: true }
 `
     : "";
-  const ownerRole = opts.run ? "\n      owner:  { from: entity.owner }" : "";
+  const inboxTypes = opts.inbox
+    ? `
+      ${INBOX.askType}:
+        label: Question
+        properties:
+          question: { type: string, required: true, label: Question }
+          ${INBOX.optionsProperty}: { type: string, list: true, max: 80, max_items: 4, label: Options }
+        post: [member, lead]
+        choices: { from: ${INBOX.optionsProperty}, answer: answer, into: note, other: true }
+      answer:
+        label: ${INBOX.answerLabel}
+        properties:
+          note: { type: string, required: true, label: ${INBOX.answerLabel} }
+        post: [owner]
+      ${INBOX.planType}:
+        label: Plan
+        properties:
+          plan: { type: string, required: true, label: Plan }
+        post: [member, lead]
+      approve:
+        label: ${INBOX.approveLabel}
+        properties:
+          note: { type: string, label: Note }
+        post: [owner]`
+    : "";
+  const inboxSession = opts.inbox
+    ? `    session:
+      label: ${INBOX.label}
+      initial: working
+      states:
+        working:
+          label: ${INBOX.working}
+          status: working
+          on:
+            ${INBOX.askType}: { to: asking, roles: [member] }
+            ${INBOX.planType}: { to: review, roles: [member] }
+        asking:
+          label: ${INBOX.asking}
+          waiting_for: [owner]
+          on:
+            answer: { to: working, roles: [owner] }
+        review:
+          label: ${INBOX.review}
+          waiting_for: [owner]
+          on:
+            approve: { to: approved, roles: [owner] }
+        approved: { label: ${INBOX.approved}, final: true, status: completed }
+`
+    : "";
+  const ownerRole = opts.run || opts.inbox ? "\n      owner:  { from: entity.owner }" : "";
   const session = opts.session
     ? `    session:
       label: ${SESSION.label}
@@ -279,14 +359,14 @@ channel_types:
         label: Text
         properties:
           body: { type: markdown, required: true, max: 2000, label: ${ROOM.messageLabel} }
-        post: [member, lead]${contained}${decisionTypes}${choiceTypes}${runTypes}
+        post: [member, lead]${contained}${decisionTypes}${choiceTypes}${runTypes}${inboxTypes}
     lifecycle:
       close:  { roles: [lead], label: Close }
       reopen: { roles: [lead], label: Reopen }
     message_ops:
       edit_own:   { roles: [member, lead] }
       delete_own: { roles: [member, lead] }
-${session}${decisionSession}${runSession}`;
+${session}${decisionSession}${runSession}${inboxSession}`;
 }
 
 /** acl.yaml for the feature project: everyone reads, two may post. */
@@ -303,11 +383,14 @@ export const ROOM_ACL_YAML = `roles:
     permissions: [channel-post]
   watcher:
     read: ["*"]
+  outsider:
+    read: [bug]
 
 assignments:
   ${CHANNEL_USERS.lead}: lead
   ${CHANNEL_USERS.member}: member
   ${CHANNEL_USERS.watcher}: watcher
+  ${CHANNEL_USERS.outsider}: outsider
 `;
 
 /** realtime.yaml for the faced project: one channel per policy face. */
@@ -344,11 +427,7 @@ export const BUSY_BOARD = {
  * `owner` string property to `feature` in its schema.yaml.
  */
 export function addBusyBoard(dir: string): void {
-  const schemaFile = path.join(dir, "schema.yaml");
-  const schema = fs.readFileSync(schemaFile, "utf8");
-  const feature = /^ {2}feature:\n(?: {4}.*\n)*? {4}properties:\n/m;
-  if (!feature.test(schema)) throw new Error("addBusyBoard: schema.yaml has no feature properties");
-  writeAtomic(schemaFile, schema.replace(feature, (m) => `${m}      owner:\n        type: string\n`));
+  addFeatureOwner(dir);
 
   const file = path.join(dir, "data-entry.yaml");
   const yaml = fs.readFileSync(file, "utf8");
@@ -369,6 +448,23 @@ export function addBusyBoard(dir: string): void {
 `;
   if (!/^kanbans:\n/m.test(yaml)) throw new Error("addBusyBoard: data-entry.yaml has no kanbans block");
   writeAtomic(file, yaml.replace(/^kanbans:\n/m, board));
+}
+
+/** Adds an `owner` string property to `feature` in the schema.yaml in dir. */
+export function addFeatureOwner(dir: string): void {
+  const schemaFile = path.join(dir, "schema.yaml");
+  const schema = fs.readFileSync(schemaFile, "utf8");
+  const feature = /^ {2}feature:\n(?: {4}.*\n)*? {4}properties:\n/m;
+  if (!feature.test(schema)) throw new Error("addFeatureOwner: schema.yaml has no feature properties");
+  writeAtomic(schemaFile, schema.replace(feature, (m) => `${m}      owner:\n        type: string\n`));
+}
+
+/** Sets the `owner` of the seeded feature `id` in dir, before the server starts. */
+export function setFeatureOwner(dir: string, id: string, owner: string): void {
+  const file = path.join(dir, "entities", "features", `${id}.md`);
+  const text = fs.readFileSync(file, "utf8");
+  if (!text.startsWith("---\n")) throw new Error(`setFeatureOwner: ${id} has no frontmatter`);
+  writeAtomic(file, text.replace("---\n", `---\nowner: ${owner}\n`));
 }
 
 /** Writes the feature project's realtime.yaml and acl.yaml into dir. */

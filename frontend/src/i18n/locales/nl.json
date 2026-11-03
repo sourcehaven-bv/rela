@@ -18,7 +18,13 @@
   },
   "inbox": {
     "title": "Inbox",
-    "loadError": "De inbox kon niet worden geladen."
+    "loadError": "De inbox kon niet worden geladen.",
+    "newerMessages": "{n} nieuwer bericht | {n} nieuwere berichten",
+    "newerMessagesMany": "99+ nieuwere berichten",
+    "openChannel": "Kanaal openen",
+    "showMore": "Meer tonen",
+    "showLess": "Minder tonen",
+    "answerTitle": "Antwoorden in {channel}"
   },
   "footer": {
     "settings": "Instellingen",
