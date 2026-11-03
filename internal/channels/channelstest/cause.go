@@ -70,16 +70,10 @@ func requirePrevious(t *testing.T, s channels.Store, k channels.Key, want, msg s
 	require.Equal(t, want, list[0].Session.Previous, msg+" (list)")
 }
 
-// requireMoveFacts asserts k's stored cause and previous state.
-func requireMoveFacts(t *testing.T, s channels.Store, k channels.Key, cause int64, previous, msg string) {
-	t.Helper()
-	requireCause(t, s, k, cause, msg)
-	requirePrevious(t, s, k, previous, msg)
-}
-
 // testSessionPrevious pins [channels.Session.Previous]: a session that
 // never moved has none, the first move stores the initial state, a re-entry
-// keeps it, and a later move by post or timer stores the state it left.
+// keeps it, and a later move by post or timer stores the state it left; a
+// re-entry by a timer keeps it too.
 func testSessionPrevious(t *testing.T, h Harness) {
 	t.Helper()
 	ctx := context.Background()
@@ -98,6 +92,10 @@ func testSessionPrevious(t *testing.T, h Harness) {
 		timerStep(moveFrom("overdue", "late"), "late", dueAt(time.Time{})))
 	require.NoError(t, err)
 	requirePrevious(t, h.Store, k, "overdue", "a timer move stores it too")
+	_, err = h.Store.SetSession(ctx, k, T0.Add(2*time.Hour),
+		timerStep(moveFrom("late", "late"), "late", dueAt(time.Time{})))
+	require.NoError(t, err)
+	requirePrevious(t, h.Store, k, "overdue", "a re-entry by a timer keeps it")
 }
 
 // testSessionMoveFactsKept pins that only a move changes the cause and the
@@ -108,34 +106,41 @@ func testSessionMoveFactsKept(t *testing.T, h Harness) {
 	ctx := context.Background()
 	k := key("OLD-1", "room")
 	msg := mustAppend(t, h.Store, k, stepped("move", T0, sessionStep(fromUnset())))
-	want, previous := msg.Seq, "detected"
+	want := msg.Seq
+	// kept asserts that the cause and the previous state are those of the
+	// first move; k follows the rekey below.
+	kept := func(what string) {
+		t.Helper()
+		requireCause(t, h.Store, k, want, what)
+		requirePrevious(t, h.Store, k, "detected", what)
+	}
 
 	stayStep := sessionStep(stay)
 	stayStep.Due = dueAt(T0.Add(time.Hour))
 	mustAppend(t, h.Store, k, stepped("no move", T0, stayStep))
-	requireMoveFacts(t, h.Store, k, want, previous, "a post that does not move keeps them")
+	kept("a post that does not move keeps them")
 
 	post := reminderPost(channels.ReminderRecord{Since: T0, Last: T0.Add(time.Minute), Count: 1})
 	_, err := h.Store.SetSession(ctx, k, T0.Add(time.Minute), remindStep(
 		func(channels.Channel) (channels.ReminderPost, bool) { return post, true }, dueAt(T0.Add(time.Hour))))
 	require.NoError(t, err)
-	requireMoveFacts(t, h.Store, k, want, previous, "a reminder post keeps them")
+	kept("a reminder post keeps them")
 
 	_, err = h.Store.SetLifecycle(ctx, k, channels.StateOpen,
 		channels.Transition{To: channels.StateClosed, By: Bob, At: T0.Add(2 * time.Minute)})
 	require.NoError(t, err)
-	requireMoveFacts(t, h.Store, k, want, previous, "close keeps them")
+	kept("close keeps them")
 	_, err = h.Store.SetLifecycle(ctx, k, channels.StateClosed, channels.Transition{
 		To: channels.StateOpen, By: Bob, At: T0.Add(3 * time.Minute), SessionDue: dueAt(T0.Add(time.Hour)),
 	})
 	require.NoError(t, err)
-	requireMoveFacts(t, h.Store, k, want, previous, "reopen keeps them")
+	kept("reopen keeps them")
 
 	require.NoError(t, h.Store.Rekey(ctx, "OLD-1", "NEW-1", T0.Add(4*time.Minute)))
 	k = key("NEW-1", "room")
-	requireMoveFacts(t, h.Store, k, want, previous, "rekey keeps them")
+	kept("rekey keeps them")
 
 	th := tombstone(t, h.Store, "NEW-1", "", T0.Add(5*time.Minute))
 	require.NoError(t, h.Store.Untombstone(ctx, th, T0.Add(6*time.Minute), dueAt(T0.Add(2*time.Hour))))
-	requireMoveFacts(t, h.Store, k, want, previous, "tombstone and untombstone keep them")
+	kept("tombstone and untombstone keep them")
 }

@@ -274,7 +274,8 @@ func scanChannelWith(r interface{ Scan(...any) error }, extra ...any) (row, erro
 	dest := make([]any, 0, chanColCount+len(extra))
 	dest = append(dest, &out.id, &c.Key.ID, &face, &c.Key.Type, &c.Key.Name, &c.Incarnation, &c.State, &c.Title, &by,
 		&created, &closed, &archived, &reopened, &c.LastSeq, &c.Rev,
-		&c.Session.State, &c.Session.Generation, &entered, &due, &restarts, &reminders, &c.Session.Cause, &c.Session.Previous)
+		&c.Session.State, &c.Session.Generation, &entered, &due, &restarts, &reminders,
+		&c.Session.Cause, &c.Session.Previous)
 	if err := r.Scan(append(dest, extra...)...); err != nil {
 		return out, err
 	}

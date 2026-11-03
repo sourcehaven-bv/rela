@@ -1234,14 +1234,14 @@ That includes channels that existed before their type gained a session.
 After a move, `entered_at` is the time of the message that caused it, and
 `cause` is that message's seq. A move by a timer, a session that never
 moved, and a move stored before this release have no `cause`. Such a
-session gets one at its next move by a message; nothing is backfilled.
-The web app then finds the waiting message by its session notice, as
-before. The session also stores `previous`, the state it left at its last
-move to another state. A move back into the same state keeps it. A
-session that never moved, and one that last moved before this release,
-have no `previous`; nothing is backfilled. Closing and reopening a channel leaves its state as it is; see
-[Timers](#timers) for what happens to its deadlines. Removing the message
-that caused a move does not undo the move.
+session gets one at its next move by a message; nothing is backfilled. The
+web app then finds the waiting message by its session notice, as before.
+The session also stores `previous`, the state it left at its last move to
+another state. A move back into the same state keeps it. A session that
+never moved, and one that last moved before this release, have no
+`previous`; nothing is backfilled. Closing and reopening a channel leaves
+its state as it is; see [Timers](#timers) for what happens to its
+deadlines. Removing the message that caused a move does not undo the move.
 
 **Stranded states.** A channel whose stored state the file no longer
 declares is stranded. It reads with `stranded: true`, its stored state name
@@ -2091,9 +2091,9 @@ On a channel type with a session, a header between the title and the
 messages shows the session's label and its states, in the order the file
 declares them. The current state is highlighted. The states a transition
 out of it leads to are marked with a dotted outline. The header marks no
-earlier state as done, because a session may branch and an earlier state
-in the list may never have happened. No state is a button: only a message moves a session.
-Exactly one status applies, in this order:
+earlier state as done, because a session may branch and an earlier state in
+the list may never have happened. No state is a button: only a message
+moves a session. Exactly one status applies, in this order:
 
 1. **Stranded.** The stored state is no longer declared. No state is
    highlighted, and a warning says "‹state› is no longer a state of this

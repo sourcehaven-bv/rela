@@ -95,7 +95,7 @@ export class ChannelsPage extends BasePage {
 
   /** The stepper marks `label` as the current state. */
   async expectSessionAt(label: string, timeout = 15_000) {
-    await expect(this.session.locator('[aria-current="step"]')).toContainText(label, { timeout });
+    await expect(this.session.locator('[aria-current="step"]:visible')).toContainText(label, { timeout });
   }
 
   /**

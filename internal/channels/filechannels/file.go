@@ -540,7 +540,8 @@ func (m *meta) channel(k channels.Key) channels.Channel {
 		LastSeq:    m.LastSeq, Rev: m.Rev,
 		Session: channels.Session{
 			State: m.SessionState, Generation: m.SessionGen, EnteredAt: utc(m.SessionEnteredAt),
-			Cause: m.SessionCause, Previous: m.SessionPrevious, NextDueAt: utc(m.SessionNextDueAt), Restarts: m.restarts(), Reminders: m.reminders(),
+			Cause: m.SessionCause, Previous: m.SessionPrevious, NextDueAt: utc(m.SessionNextDueAt),
+			Restarts: m.restarts(), Reminders: m.reminders(),
 		},
 	}
 }

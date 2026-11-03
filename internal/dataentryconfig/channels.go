@@ -114,7 +114,8 @@ type MessageFacts struct {
 }
 
 // BusyFacts is what [ValidateChannels] checks a `busy:` card field or column
-// against.
+// against, and a session display (`channels.<type>.session.display`) through
+// HasSession.
 type BusyFacts struct {
 	// AttachTo lists the entity types the channel type attaches to.
 	AttachTo []string

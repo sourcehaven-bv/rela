@@ -2525,7 +2525,7 @@
       "weight.structure": 936,
       "weight.layers": 0,
       "weight.vocabulary": 912,
-      "weight.types": 3976,
+      "weight.types": 3977,
       "weight.concepts": 7186,
       "weight.boundaries": 1512,
       "weight.data": 1297,
@@ -2622,6 +2622,17 @@
           "weight.types": [
             3969,
             3976
+          ]
+        }
+      },
+      {
+        "at": "2026-11-03T17:57:02Z",
+        "change": "loosen",
+        "reason": "Session wire mirror grew by previous (ChannelSession and SessionView), TKT-56TPOTE",
+        "metrics": {
+          "weight.types": [
+            3976,
+            3977
           ]
         }
       }

@@ -357,16 +357,6 @@ function contextItems(canvasElement: HTMLElement): string[] {
   )
 }
 
-/**
- * The items with aria-current that are rendered. A list with display:none
- * is outside the accessibility tree, so its item does not count.
- */
-function shownCurrent(canvasElement: HTMLElement): HTMLElement[] {
-  return [...canvasElement.querySelectorAll<HTMLElement>('li[aria-current="step"]')].filter((li) =>
-    li.checkVisibility()
-  )
-}
-
 function fullList(canvasElement: HTMLElement): HTMLElement {
   return canvasElement.querySelector<HTMLElement>('.rl-channel-session__steps')!
 }
@@ -389,7 +379,7 @@ export const Compact: Story = {
     await expect(canvas.getByText('GDPR breach response')).toBeVisible()
     await expect(canvas.getByText('Session · Risk assessed')).not.toBeVisible()
     await expect(fullList(canvasElement)).not.toBeVisible()
-    await expect(shownCurrent(canvasElement)).toHaveLength(1)
+    await expect(current(canvasElement)).toHaveLength(1)
 
     const toggle = canvas.getByRole('button', { name: 'Show all states' })
     await expect(toggle).toHaveAttribute('aria-expanded', 'false')
@@ -397,7 +387,7 @@ export const Compact: Story = {
     await expect(toggle).toHaveAttribute('aria-expanded', 'true')
     await expect(fullList(canvasElement)).toBeVisible()
     await expect(canvas.queryByRole('list', { name: 'Session steps' })).toBeNull()
-    await expect(shownCurrent(canvasElement)).toHaveLength(1)
+    await expect(current(canvasElement)).toHaveLength(1)
     await expect(canvas.getByText('Session · Risk assessed')).not.toBeVisible()
   },
 }

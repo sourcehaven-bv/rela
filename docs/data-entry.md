@@ -1511,7 +1511,9 @@ In a compact header:
   has not left its first state has none, and neither has a session that
   last moved before this release.
 - The next states are the states a transition out of the current state
-  leads to. They have a dotted outline, as in the full list.
+  leads to. They have a dotted outline, as in the full list. In a loop, such
+  as a review that can send the work back to drafting, the same state can be
+  both the previous state and a next state.
 - The current state keeps its tags, such as **Input required**, or its
   outcome when the session has ended. An ended or paused session shows no
   next states.

@@ -370,20 +370,22 @@ compactTest.describe("compact session header", () => {
 
     // A session that never moved has no previous state.
     await alice.expectSessionContext([`Current state: ${DECISIONS.drafting}`, `Next state: ${DECISIONS.review}`]);
+    await alice.expectSessionAt(DECISIONS.drafting);
     await expect(alice.sessionSteps).toBeHidden();
     await expect(alice.sessionSummary).toBeHidden();
     await expect(alice.sessionToggle).toHaveText("Show all states");
 
     // The move stores Drafting as the previous state. Review leads back to
     // Drafting and on to Approved, in declaration order.
-    await alice.selectMessageType(DECISIONS.containedLabel);
-    await alice.post("Ready for review", DECISIONS.noteLabel);
-    await alice.expectSessionContext([
+    const inReview = [
       `Previous state: ${DECISIONS.drafting}`,
       `Current state: ${DECISIONS.review}`,
       `Next state: ${DECISIONS.drafting}`,
       `Next state: ${DECISIONS.approved}`,
-    ]);
+    ];
+    await alice.selectMessageType(DECISIONS.containedLabel);
+    await alice.post("Ready for review", DECISIONS.noteLabel);
+    await alice.expectSessionContext(inReview);
 
     // Unfolding shows the full list on its own row and removes the short
     // one, so one item carries aria-current.
@@ -391,7 +393,6 @@ compactTest.describe("compact session header", () => {
     await expect(alice.sessionToggle).toHaveAttribute("aria-expanded", "true");
     await expect(alice.sessionSteps).toBeVisible();
     await expect(alice.sessionContext).toHaveCount(0);
-    // expectSessionAt fails in strict mode when two items carry aria-current.
     await alice.expectSessionAt(DECISIONS.review);
     await expect(alice.sessionSteps).toHaveCSS("flex-direction", "row");
     await alice.sessionToggle.click();
@@ -401,12 +402,7 @@ compactTest.describe("compact session header", () => {
     await alice.openEntity("feature", FEATURE);
     await alice.expectChannel(ROOM.label);
     await alice.setSessionWidth(60);
-    await alice.expectSessionContext([
-      `Previous state: ${DECISIONS.drafting}`,
-      `Current state: ${DECISIONS.review}`,
-      `Next state: ${DECISIONS.drafting}`,
-      `Next state: ${DECISIONS.approved}`,
-    ]);
+    await alice.expectSessionContext(inReview);
 
     // Below 32rem the compact header folds like any other.
     await alice.setSessionWidth(24);

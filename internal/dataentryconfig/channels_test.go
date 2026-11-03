@@ -95,14 +95,6 @@ func docsYAMLAfter(t *testing.T, heading string) string {
 	return block
 }
 
-// docsExampleSessionDisplay returns the first yaml block after the
-// "Compact session header" heading of docs/data-entry.md, so the documented
-// example stays a validated case.
-func docsExampleSessionDisplay(t *testing.T) string {
-	t.Helper()
-	return docsYAMLAfter(t, "### Compact session header")
-}
-
 // TestChannelsPresentation_Validate pins the `channels:` checks: the shape
 // checks ValidateConfig runs alone, and the realtime.yaml checks of
 // ValidateChannels.
@@ -182,7 +174,7 @@ func TestChannelsPresentation_Validate(t *testing.T) {
 			`channels.run.session: unknown key "layout" (valid keys: display)`},
 		{"session on unknown type", "channels: {hall: {session: {display: compact}}}",
 			`realtime.yaml declares no channel type "hall"`},
-		{"session docs example", docsExampleSessionDisplay(t), ""},
+		{"session docs example", docsYAMLAfter(t, "### Compact session header"), ""},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -504,5 +496,21 @@ func TestValidateChannels_HiddenCountsUnread(t *testing.T) {
 				t.Fatalf("warnings = %v; want [%s]", warnings, tc.warning)
 			}
 		})
+	}
+}
+
+// TestChannelsPresentation_SessionScalar pins that `session: compact`, the
+// value written without its `display:` key, fails the load with an error
+// that names the line and the value, rather than loading as no setting.
+func TestChannelsPresentation_SessionScalar(t *testing.T) {
+	var cfg Config
+	err := yaml.Unmarshal([]byte("channels:\n  run:\n    session: compact\n"), &cfg)
+	if err == nil {
+		t.Fatal("unmarshal accepted session: compact; want an error")
+	}
+	for _, want := range []string{"line 3", "compact"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("error %q does not contain %q", err, want)
+		}
 	}
 }

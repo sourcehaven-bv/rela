@@ -37,7 +37,8 @@
  * place of the summary: the previous state (`session.previous`, the state
  * the session left), the current state and the next states, each with
  * hidden text that names its role. The toggle shows the full list and
- * removes the short one, so one item at a time carries `aria-current`.
+ * removes the short one. While the short list is shown, only its current
+ * item carries `aria-current`; once it is removed, the full list's does.
  * Without a current state (stranded or loading) the summary shows instead.
  * Below 32rem a compact stepper folds like any other.
  *
@@ -162,6 +163,12 @@ const contextItems = computed<ContextItem[]>(() => {
   return items
 })
 const showContext = computed(() => contextItems.value.length > 0)
+/**
+ * Whether the short list is in the page. While it is, the full list's
+ * current item drops `aria-current`, so the markup, not only CSS, has one
+ * current item.
+ */
+const contextShown = computed(() => showContext.value && !expanded.value)
 
 const pausedText = computed(() =>
   t(props.session.paused === 'archived' ? 'sessionPausedArchived' : 'sessionPausedClosed'),
@@ -187,7 +194,7 @@ const pausedText = computed(() =>
 
       <p class="rl-channel-session__summary">{{ summary }}</p>
       <ol
-        v-if="showContext && !expanded"
+        v-if="contextShown"
         class="rl-channel-session__context"
         :aria-label="t('sessionContext')"
       >
@@ -250,7 +257,7 @@ const pausedText = computed(() =>
             'rl-channel-session__step--current': s.name === current,
             'rl-channel-session__step--next': s.name !== current && next.has(s.name),
           }"
-          :aria-current="s.name === current ? 'step' : undefined"
+          :aria-current="s.name === current && !contextShown ? 'step' : undefined"
         >
           <span class="rl-channel-session__bullet">
             <RlIcon v-if="s.name === current && status === 'final' && ticked" name="check" :size="10" />
@@ -338,6 +345,10 @@ const pausedText = computed(() =>
 
 .rl-channel-session__summary {
   display: none;
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  font-weight: var(--rl-font-weight-semibold);
 }
 
 .rl-channel-session__toggle {
@@ -377,10 +388,6 @@ const pausedText = computed(() =>
    where the session is. */
 .rl-channel-session--no-context .rl-channel-session__summary {
   display: block;
-  flex: 1;
-  min-width: 0;
-  margin: 0;
-  font-weight: var(--rl-font-weight-semibold);
 }
 
 .rl-channel-session__context {
@@ -506,10 +513,6 @@ const pausedText = computed(() =>
 
   .rl-channel-session__summary {
     display: block;
-    flex: 1;
-    min-width: 0;
-    margin: 0;
-    font-weight: var(--rl-font-weight-semibold);
   }
 
   .rl-channel-session__toggle {
