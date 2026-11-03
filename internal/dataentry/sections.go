@@ -294,11 +294,11 @@ type SectionData struct {
 	// It is separate from Truncated, whose contract excludes budget stops.
 	Incomplete bool
 
-	// Entry reports that the section shows the entry itself (`source:
-	// entry`), not a collection. The SPA places a channel type with
-	// `placement: above_relations` before the first section without it
-	// (TKT-VXBE16H).
-	Entry bool
+	// entry reports that the section shows the entry itself (`source:
+	// entry`), not a collection. It reaches the wire as
+	// [v1.ViewSection.Entry]. Unexported like hideEmpty: it never leaves
+	// this package except through that conversion.
+	entry bool
 
 	// hideEmpty is the section's `hide_empty:` setting. The section is
 	// dropped from the response by [omitHiddenEmpty], not here, because the
@@ -457,7 +457,7 @@ func (h *viewsHandler) buildSections(ctx context.Context, sections []ViewSection
 		}
 
 		if sec.Source == "entry" {
-			sd.Entry = true
+			sd.entry = true
 			e := result.Entry
 			entDef, _ := s.Meta.GetEntityDef(e.Type)
 

@@ -35,9 +35,9 @@ func TestSectionEntry_MarksEntrySourcedSections(t *testing.T) {
 		t.Fatalf("buildSections: got %d sections, want %d", len(out), len(want))
 	}
 	for i, sec := range out {
-		if sec.Entry != want[i] {
+		if sec.entry != want[i] {
 			t.Errorf("section %d (%s, source %s): Entry = %v, want %v",
-				i, sec.Display, sections[i].Source, sec.Entry, want[i])
+				i, sec.Display, sections[i].Source, sec.entry, want[i])
 		}
 		raw, err := json.Marshal(viewSectionToV1(sec, nil))
 		if err != nil {
