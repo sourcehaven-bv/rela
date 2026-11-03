@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { mount, flushPromises, type VueWrapper } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import { PiniaColada } from '@pinia/colada'
-import { defineComponent, h } from 'vue'
+import { defineComponent, h, onMounted } from 'vue'
 import EntityDetail from './EntityDetail.vue'
 import { useSchemaStore } from '@/stores/schema'
 import type { Entity } from '@/types'
@@ -19,16 +19,35 @@ vi.mock('@/api', async (orig) => ({
   fetchView: (...a: unknown[]) => fetchViewMock(...a),
   getCommands: async () => [],
 }))
+type Handler = (data: { type: string }) => void
+const handlers = new Set<Handler>()
+vi.mock('@/composables/useEvents', async (orig) => ({
+  ...(await orig<typeof import('@/composables/useEvents')>()),
+  useEvents: () => ({
+    on: (event: string, fn: Handler) => {
+      if (event === 'entity:changed') handlers.add(fn)
+    },
+    off: (event: string, fn: Handler) => {
+      if (event === 'entity:changed') handlers.delete(fn)
+    },
+  }),
+}))
 vi.mock('vue-router', () => ({
   useRouter: () => ({ push: vi.fn(), replace: vi.fn() }),
   useRoute: () => ({ query: {}, path: '/entity/topic/TOPIC-1', name: 'entity' }),
   RouterLink: { props: ['to'], template: '<a><slot /></a>' },
 }))
 
+/** The placement of each ChannelsPanel mounted, in order. */
+const mounts: string[] = []
+
 const ChannelsPanelStub = defineComponent({
   name: 'ChannelsPanel',
   props: { placement: { type: String, default: 'end' } },
-  setup: (props) => () => h('div', { class: 'channels-stub', 'data-placement': props.placement }),
+  setup: (props) => {
+    onMounted(() => mounts.push(props.placement))
+    return () => h('div', { class: 'channels-stub', 'data-placement': props.placement })
+  },
 })
 
 function section(sectionId: string, entry: boolean): ViewSection {
@@ -59,6 +78,8 @@ let wrapper: VueWrapper | undefined
 let pinia: ReturnType<typeof createPinia>
 
 beforeEach(() => {
+  mounts.length = 0
+  handlers.clear()
   pinia = createPinia()
   setActivePinia(pinia)
   useSchemaStore().entityTypes.set('topic', {
@@ -126,5 +147,54 @@ describe('EntityDetail channel placement', () => {
     const got = await order([section('props', true), section('subs', false)])
     expect(got.filter((x) => x === 'channels:above_relations')).toHaveLength(1)
     expect(got.filter((x) => x === 'channels:end')).toHaveLength(1)
+  })
+})
+
+describe('EntityDetail channel placement on reload', () => {
+  it('moves the above_relations block, not remounts it, when the sections change', async () => {
+    vi.useFakeTimers()
+    try {
+      const before = [section('body', true), section('subs', false)]
+      expect(await order(before)).toEqual([
+        'body',
+        'channels:above_relations',
+        'subs',
+        'channels:end',
+      ])
+      expect(mounts.sort()).toEqual(['above_relations', 'end'])
+
+      // A reload on the same entity adds a relation section before `subs`,
+      // and an entry section after the body: the block moves down one.
+      fetchViewMock.mockResolvedValue(
+        view([
+          section('body', true),
+          section('props', true),
+          section('deps', false),
+          section('subs', false),
+        ])
+      )
+      for (const fn of handlers) fn({ type: 'topic' })
+      await vi.advanceTimersByTimeAsync(2000)
+      await flushPromises()
+
+      const after = wrapper!
+        .findAll('.view-section, .channels-stub')
+        .map((el) =>
+          el.classes('channels-stub')
+            ? `channels:${el.attributes('data-placement')}`
+            : el.attributes('id')!
+        )
+      expect(after).toEqual([
+        'body',
+        'props',
+        'channels:above_relations',
+        'deps',
+        'subs',
+        'channels:end',
+      ])
+      expect(mounts).toHaveLength(2)
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })

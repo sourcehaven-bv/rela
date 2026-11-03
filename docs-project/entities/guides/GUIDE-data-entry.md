@@ -1555,9 +1555,11 @@ channels:
 | `above_relations` | The channel type sits directly before the first view section whose `source` is not `entry`. In a generated view that is after the properties and the body, before the first relation section. |
 | absent or empty | The channel type sits in the channels block at the end of the page. |
 
-- Channel types with the same placement share one block. When a page has
-  two blocks, a block with one channel type is headed with that type's
-  label; otherwise the heading is **Channels**.
+- Channel types with the same placement share one block. When the
+  channel types attached to the entity type fall in both blocks, a block
+  with one channel type is headed with that type's label; otherwise the
+  heading is **Channels**. This follows the configuration, not what the
+  reader may read.
 - In a view of your own, the block goes before the first section that does
   not show the entry itself, wherever that is. When every section shows the
   entry, the block comes after the last section.

@@ -7,8 +7,8 @@
  * With exactly one channel and nothing to create it opens that channel
  * directly. Otherwise RlEntityChannels lists them and the chosen one opens
  * below the list. One channel is open at a time, and while one is chosen
- * from the list, the list drops its live subscription (R18), so a page holds
- * one channel subscription and the entity's own; the list is read again when
+ * from the list, the list drops its live subscription (R18), so the section
+ * holds one channel subscription; the list is read again when
  * the open channel reports a lifecycle change or goes away. A channel that
  * opened directly keeps the list subscription, so a second channel created
  * meanwhile brings the list back, with the open channel still open.
@@ -30,10 +30,12 @@
  * there, and the address carries the face (R14). The page world goes on
  * entity links only.
  *
- * `types` narrows the section to some channel types: a page with a channel
- * type placed above the relations has two sections (TKT-VXBE16H). Each lists
- * and links only its own types, so a `?channel=` link for the other section's
- * type leaves this one as it is. Each section holds at most two live keys:
+ * `types` and `exclude` narrow the section to some channel types: a page with
+ * a channel type placed above the relations has two sections (TKT-VXBE16H).
+ * The upper one names its types, the lower one excludes them, so a type the
+ * held schema does not know yet still shows below. Each lists and links only
+ * its own types, so a `?channel=` link for the other section's type leaves
+ * this one as it is. Each section holds at most two live keys:
  * its list, or its list and the one channel open in single mode, or the
  * channel chosen from the list.
  */
@@ -59,6 +61,8 @@ const props = defineProps<{
   world?: string
   /** The channel types this section shows; absent, every type. */
   types?: readonly string[]
+  /** Channel types this section leaves out. */
+  exclude?: readonly string[]
   /** The heading; absent, "Channels". */
   heading?: string
 }>()
@@ -83,7 +87,7 @@ const list = useEntityChannels(anchor, {
 
 /** Whether this section shows channels of the type. */
 function shows(type: string): boolean {
-  return props.types === undefined || props.types.includes(type)
+  return (props.types === undefined || props.types.includes(type)) && !props.exclude?.includes(type)
 }
 
 const groups = computed(() =>

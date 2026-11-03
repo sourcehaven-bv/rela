@@ -2041,9 +2041,11 @@ per move, for 30 minutes after the notice; a claim holds for 90 seconds.
 
 The entity page shows a **Channels** section below the comments. It
 appears only on an entity whose type a channel type attaches to. A channel
-type with `placement: above_relations` in `data-entry.yaml` sits before the
-first relation section instead (see Channel placement in the data entry
-guide). On a type
+type with `placement: above_relations` in `data-entry.yaml` sits in a
+second block, before the first view section that does not show the entry
+itself; in a generated view that is the first relation section. A block
+that then holds one channel type is headed with its label (see Channel
+placement in the data entry guide). On a type
 with faces, the section follows the face on screen: an `anchor: face`
 channel is the channel of that face.
 

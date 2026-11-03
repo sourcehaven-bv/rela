@@ -15,9 +15,11 @@
  * makes once.
  *
  * With one block on the page the section shows every type, as before
- * placements existed. With two, each section is narrowed to its own types,
- * and a block with one type is headed with that type's label so the two are
- * told apart.
+ * placements existed. With two, the upper block shows the types placed
+ * there and the lower one every other type, including one the held channel
+ * schema does not know yet. A block with one type is then headed with that
+ * type's label so the two are told apart. "Two blocks" is decided from the
+ * types realtime.yaml attaches, not from what this reader may read.
  *
  * The section is keyed by the entity address and its types. EntityDetail
  * stays mounted when the route moves to another entity, and nothing of one
@@ -67,6 +69,17 @@ const heading = computed(() => {
   return attached.value.find((ct) => ct.name === types.value[0])?.label || undefined
 })
 
+/** The types placed above the relations, which the end block leaves out. */
+const placedAbove = computed(() =>
+  props.placement === 'end' && split.value
+    ? typesAt(
+        attached.value.map((ct) => ct.name),
+        presentation,
+        'above_relations'
+      )
+    : undefined
+)
+
 const sectionKey = computed(
   () => `${props.entityType}/${props.entityId}/${[...types.value].sort().join(',')}`
 )
@@ -86,7 +99,8 @@ watch(
     :entity-type="entityType"
     :entity-id="entityId"
     :world="world"
-    :types="split ? types : undefined"
+    :types="split && placement === 'above_relations' ? types : undefined"
+    :exclude="placedAbove"
     :heading="heading"
   />
 </template>

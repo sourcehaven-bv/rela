@@ -55,7 +55,7 @@ import type { Component } from 'vue'
 import DocumentsPanel from '@/components/entity/DocumentsPanel.vue'
 import CommentsPanel from '@/components/entity/CommentsPanel.vue'
 import ChannelsPanel from '@/components/entity/ChannelsPanel.vue'
-import { aboveRelationsIndex } from '@/components/entity/channels/channelPlacement'
+import { withAboveRelationsBlock } from '@/components/entity/channels/channelPlacement'
 import MentionedByPanel from '@/components/entity/MentionedByPanel.vue'
 import CommentIndicator from '@/components/entity/CommentIndicator.vue'
 import TextSelectionComment from '@/components/entity/TextSelectionComment.vue'
@@ -248,8 +248,8 @@ const pageState = computed<'pending' | 'loaded' | 'error'>(() => {
   return loading.value ? 'pending' : 'loaded'
 })
 const viewData = ref<ViewResponse | null>(null)
-/** Where the above_relations channels block goes among the view sections. */
-const aboveRelationsAt = computed(() => aboveRelationsIndex(viewData.value?.sections ?? []))
+/** The view sections with the above_relations channels block among them. */
+const pageItems = computed(() => withAboveRelationsBlock(viewData.value?.sections ?? []))
 // The world viewData was fetched in. Reference links in the rendered content
 // carry it rather than the live `worldParam`, so a link opens its target in
 // the world its title was resolved in, also while a world switch refetches.
@@ -2655,17 +2655,20 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
       <div v-if="viewData" class="sections">
         <!-- A channel type placed above the relations (TKT-VXBE16H) renders
              before the first section that does not show the entry, or after
-             the last section when every one does. The block renders nothing
-             when no channel type is placed there. -->
-        <template v-for="(section, sectionIndex) in viewData.sections" :key="section.sectionId">
+             the last section when every one does. The block is an item of
+             this keyed list so that it moves, not remounts, when the
+             sections change. It renders nothing when no channel type is
+             placed there. -->
+        <template v-for="{ key, section, sectionIndex } in pageItems" :key="key">
           <ChannelsPanel
-            v-if="sectionIndex === aboveRelationsAt"
+            v-if="section === null"
             placement="above_relations"
             :entity-type="entityType"
             :entity-id="entityRef(entry)"
             :world="worldParam"
           />
           <section
+            v-else
             :id="section.sectionId"
             class="view-section"
             :aria-labelledby="
@@ -3320,13 +3323,6 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
             </p>
           </section>
         </template>
-        <ChannelsPanel
-          v-if="aboveRelationsAt === viewData.sections.length"
-          placement="above_relations"
-          :entity-type="entityType"
-          :entity-id="entityRef(entry)"
-          :world="worldParam"
-        />
 
         <!-- External documents (renders only when configured for this type).
              Nested here (not a sibling of .sections) so it picks up the

@@ -1,6 +1,12 @@
 import { describe, it, expect } from 'vitest'
 import type { ChannelPresentation } from '@/types'
-import { aboveRelationsIndex, placementOf, typesAt } from './channelPlacement'
+import {
+  ABOVE_RELATIONS_KEY,
+  aboveRelationsIndex,
+  placementOf,
+  typesAt,
+  withAboveRelationsBlock,
+} from './channelPlacement'
 
 describe('placementOf', () => {
   it.each<[ChannelPresentation | undefined, string]>([
@@ -45,5 +51,26 @@ describe('aboveRelationsIndex', () => {
     ['entry: false counts as not the entry', [{ entry: true }, { entry: false }], 1],
   ])('%s', (_name, sections, want) => {
     expect(aboveRelationsIndex(sections)).toBe(want)
+  })
+})
+
+describe('withAboveRelationsBlock', () => {
+  const sec = (sectionId: string, entry = false) => ({ sectionId, entry })
+
+  it('puts the block at the index, keyed apart from the sections', () => {
+    const items = withAboveRelationsBlock([sec('props', true), sec('subs'), sec('deps')])
+    expect(items.map((i) => i.key)).toEqual(['props', ABOVE_RELATIONS_KEY, 'subs', 'deps'])
+    expect(items.map((i) => i.sectionIndex)).toEqual([0, -1, 1, 2])
+    expect(items[1]!.section).toBeNull()
+  })
+
+  it('keeps the block key when the index moves', () => {
+    const a = withAboveRelationsBlock([sec('subs')])
+    const b = withAboveRelationsBlock([sec('props', true), sec('subs')])
+    expect(a.find((i) => i.section === null)!.key).toBe(b.find((i) => i.section === null)!.key)
+  })
+
+  it('appends the block when there are no sections', () => {
+    expect(withAboveRelationsBlock([]).map((i) => i.key)).toEqual([ABOVE_RELATIONS_KEY])
   })
 })

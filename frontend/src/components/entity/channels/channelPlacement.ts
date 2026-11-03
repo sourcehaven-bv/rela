@@ -38,3 +38,36 @@ export function aboveRelationsIndex(sections: readonly { entry?: boolean }[]): n
   const i = sections.findIndex((s) => !s.entry)
   return i === -1 ? sections.length : i
 }
+
+/**
+ * The key of the above_relations block among the section keys. Section ids
+ * are slugs of `[a-z0-9-]`, so a key with a colon cannot collide with one.
+ */
+export const ABOVE_RELATIONS_KEY = 'channels:above_relations'
+
+/** One item on the page: a view section, or the above_relations block. */
+export type PageItem<S> =
+  | { key: string; section: S; sectionIndex: number }
+  | { key: typeof ABOVE_RELATIONS_KEY; section: null; sectionIndex: -1 }
+
+/**
+ * The view sections with the above_relations block among them, at
+ * [aboveRelationsIndex]. The page renders them in one keyed list, so when
+ * the sections change the block moves with its own key rather than
+ * remounting, and keeps an open channel and its draft.
+ */
+export function withAboveRelationsBlock<S extends { sectionId: string; entry?: boolean }>(
+  sections: readonly S[]
+): PageItem<S>[] {
+  const items: PageItem<S>[] = sections.map((section, sectionIndex) => ({
+    key: section.sectionId,
+    section,
+    sectionIndex,
+  }))
+  items.splice(aboveRelationsIndex(sections), 0, {
+    key: ABOVE_RELATIONS_KEY,
+    section: null,
+    sectionIndex: -1,
+  })
+  return items
+}

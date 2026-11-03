@@ -236,4 +236,50 @@ describe('ChannelsPanel placement', () => {
       '/api/v1/features/FEAT-1/_channels?state=open',
     ])
   })
+
+  it('holds at most two live keys per block with a channel chosen from a list', async () => {
+    // The end block lists two channels; choosing one drops the list key.
+    setPlacements({ run: { placement: 'above_relations' } })
+    await mountPage()
+    const live = () => subs.map((s) => s.path()).filter((p) => p !== null)
+    expect(live()).toContain('/api/v1/features/FEAT-1/_channels/run')
+    await wrapper!.find('.end .rl-entity-channels__row').trigger('click')
+    await flushPromises()
+    await flushPromises()
+    expect(live().sort()).toEqual([
+      '/api/v1/features/FEAT-1/_channels/review',
+      '/api/v1/features/FEAT-1/_channels/run',
+      '/api/v1/features/FEAT-1/_channels?state=open',
+    ])
+  })
+
+  it('follows a reload that moves a type to the other block', async () => {
+    setPlacements({ run: { placement: 'above_relations' } })
+    await mountPage()
+    expect(heading('above')).toBe('Run')
+    setPlacements({ review: { placement: 'above_relations' } })
+    await flushPromises()
+    await flushPromises()
+    expect(heading('above')).toBe('Review')
+    expect(wrapper!.find('.above').text()).not.toContain('Run')
+    expect(wrapper!.find('.end').text()).toContain('Run')
+    expect(wrapper!.find('.end').text()).not.toContain('Review')
+  })
+
+  it('shows a type the held schema does not know in the end block', async () => {
+    setPlacements({ run: { placement: 'above_relations' } })
+    api.listChannels.mockResolvedValue({
+      anchor: 'FEAT-1',
+      types: ['run', 'chat', 'fresh'].map((name) => ({
+        type: name,
+        label: name === 'fresh' ? 'Fresh' : name,
+        cardinality: 'one' as const,
+        create: false,
+        channels: [channel(name)],
+      })),
+    })
+    await mountPage()
+    expect(wrapper!.find('.end').text()).toContain('Fresh')
+    expect(wrapper!.find('.above').text()).not.toContain('Fresh')
+  })
 })

@@ -219,7 +219,8 @@ export interface ChannelPresentation {
    * before the first view section that does not show the entry; absent, it
    * sits in the channels block at the end of the page.
    */
-  placement?: string
+  // A value from a newer server reads as the default.
+  placement?: 'above_relations' | (string & {})
 }
 
 export interface RelationProperty {
