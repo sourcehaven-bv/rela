@@ -1,10 +1,22 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { mount, flushPromises } from '@vue/test-utils'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
+import { mount, flushPromises, enableAutoUnmount } from '@vue/test-utils'
+import { ref } from 'vue'
 import { createPinia, setActivePinia } from 'pinia'
 
 import DashboardView from './DashboardView.vue'
 import { useSchemaStore } from '@/stores/schema'
-import type { DashboardCard, AnalyzeResult, ListResponse, Entity } from '@/types'
+import type {
+  DashboardCardEntry,
+  DashboardCardValue,
+  DashboardResponse,
+  AnalyzeResult,
+  ListResponse,
+  Entity,
+} from '@/types'
+import { ApiError } from '@/api/errors'
+import { formatAmount, formatDate } from '@/utils/format'
 
 vi.mock('vue-router', () => ({
   useRouter: () => ({ push: vi.fn() }),
@@ -12,22 +24,43 @@ vi.mock('vue-router', () => ({
   RouterLink: { template: '<a><slot/></a>' },
 }))
 
-const searchEntitiesMock = vi.fn<() => Promise<ListResponse<Entity>>>()
-const analyzeMock = vi.fn<() => Promise<AnalyzeResult>>()
-vi.mock('@/api', () => ({
-  searchEntities: () => searchEntitiesMock(),
-  analyze: () => analyzeMock(),
+// Renders a link's target so a test can read where it goes.
+const RouterLinkStub = {
+  props: ['to'],
+  template: '<a :data-to="typeof to === \'string\' ? to : JSON.stringify(to)"><slot/></a>',
+}
+
+const world = ref<string | undefined>(undefined)
+vi.mock('@/composables/useWorld', () => ({
+  useWorld: () => ({ worldParam: world }),
 }))
 
-function card(overrides: Partial<DashboardCard> = {}): DashboardCard {
-  return { title: 'Open', query: 'type:ticket', display: 'count', ...overrides }
+const searchEntitiesMock = vi.fn<(query: string) => Promise<ListResponse<Entity>>>()
+const analyzeMock = vi.fn<() => Promise<AnalyzeResult>>()
+const getDashboardMock = vi.fn<(name?: string) => Promise<DashboardResponse>>()
+const getDashboardCardMock =
+  vi.fn<(name: string | undefined, index: number, world?: string) => Promise<DashboardCardValue>>()
+vi.mock('@/api', async () => {
+  const { ApiError } = await import('@/api/errors')
+  return {
+    searchEntities: (query: string) => searchEntitiesMock(query),
+    analyze: () => analyzeMock(),
+    getDashboard: (name?: string) => getDashboardMock(name),
+    getDashboardCard: (name: string | undefined, index: number, world?: string) =>
+      getDashboardCardMock(name, index, world),
+    ApiError,
+  }
+})
+
+function card(overrides: Partial<DashboardCardEntry> = {}): DashboardCardEntry {
+  return { title: 'Open', query: 'type:ticket', display: 'count', index: 0, ...overrides }
 }
 
 /**
  * Seeds the store as already-loaded with the given cards, standing in for the
  * `/_dashboard` fetch the store performs on load.
  */
-function seedDashboard(cards: DashboardCard[]) {
+function seedDashboard(cards: DashboardCardEntry[]) {
   const store = useSchemaStore()
   store.dashboard = { title: 'Overview', cards }
   store.loaded = true
@@ -35,10 +68,14 @@ function seedDashboard(cards: DashboardCard[]) {
 }
 
 async function mountView() {
-  const wrapper = mount(DashboardView)
+  const wrapper = mount(DashboardView, {
+    global: { stubs: { RouterLink: RouterLinkStub, 'router-link': RouterLinkStub } },
+  })
   await flushPromises()
   return wrapper
 }
+
+enableAutoUnmount(afterEach)
 
 describe('DashboardView', () => {
   beforeEach(() => {
@@ -49,6 +86,7 @@ describe('DashboardView', () => {
       meta: { total: 0, page: 1, per_page: 50, has_more: false },
     })
     analyzeMock.mockResolvedValue({ errors: 0, warnings: 0, issues: [], byCheck: {} })
+    world.value = undefined
   })
 
   // The wiring assertion this file exists for (TKT-53KICM): the view must
@@ -125,12 +163,20 @@ describe('DashboardView', () => {
   // rendering the dropped card's number — a wrong figure presented as fact.
   // The per-principal card list makes a mid-life shape change plausible.
   it('never binds one card’s data to another card’s tile', async () => {
-    const store = seedDashboard([card({ title: 'A', query: 'q-a' }), card({ title: 'B', query: 'q-b' })])
+    const store = seedDashboard([
+      card({ title: 'A', query: 'q-a' }),
+      card({ title: 'B', query: 'q-b' }),
+    ])
     searchEntitiesMock.mockImplementation(() =>
       Promise.resolve({
         data: [],
-        meta: { total: searchEntitiesMock.mock.calls.length === 1 ? 100 : 200, page: 1, per_page: 50, has_more: false },
-      }),
+        meta: {
+          total: searchEntitiesMock.mock.calls.length === 1 ? 100 : 200,
+          page: 1,
+          per_page: 50,
+          has_more: false,
+        },
+      })
     )
 
     const wrapper = await mountView()
@@ -303,6 +349,486 @@ describe('DashboardView', () => {
       await flushPromises()
 
       expect(wrapper.text()).toContain('done')
+    })
+  })
+
+  // Named dashboards (TKT-5LQNLY): a `name` fetches that dashboard from
+  // `/_dashboard?name=` instead of rendering the prefetched default one.
+  describe('named dashboard', () => {
+    it('fetches and renders the named dashboard, not the default', async () => {
+      seedDashboard([card({ title: 'Default card' })])
+      getDashboardMock.mockResolvedValue({
+        title: 'Pipeline',
+        cards: [card({ title: 'Open deals', query: 'type:deal' })],
+      })
+
+      const wrapper = mount(DashboardView, { props: { name: 'crm' } })
+      await flushPromises()
+
+      expect(getDashboardMock).toHaveBeenCalledWith('crm')
+      expect(wrapper.find('h1').text()).toBe('Pipeline')
+      expect(wrapper.findAll('.dashboard-card h3').map((h) => h.text())).toEqual(['Open deals'])
+      expect(searchEntitiesMock).toHaveBeenCalledWith('type:deal')
+      expect(wrapper.text()).not.toContain('Default card')
+    })
+
+    it('does not fetch for the default dashboard', async () => {
+      seedDashboard([card({ title: 'Open' })])
+
+      await mountView()
+
+      expect(getDashboardMock).not.toHaveBeenCalled()
+    })
+
+    it('shows a not-found state for an unknown name', async () => {
+      seedDashboard([])
+      getDashboardMock.mockRejectedValue(
+        new ApiError('Dashboard not found', { kind: 'http', status: 404, original: null })
+      )
+
+      const wrapper = mount(DashboardView, { props: { name: 'nope' } })
+      await flushPromises()
+
+      expect(wrapper.find('[data-testid="dashboard-not-found"]').exists()).toBe(true)
+      expect(wrapper.text()).toContain('nope')
+      expect(searchEntitiesMock).not.toHaveBeenCalled()
+    })
+
+    it('reloads when the name changes', async () => {
+      seedDashboard([])
+      getDashboardMock.mockImplementation((name) =>
+        Promise.resolve({ title: name === 'crm' ? 'Pipeline' : 'Ops', cards: [] })
+      )
+
+      const wrapper = mount(DashboardView, { props: { name: 'crm' } })
+      await flushPromises()
+      expect(wrapper.find('h1').text()).toBe('Pipeline')
+
+      await wrapper.setProps({ name: 'ops' })
+      await flushPromises()
+      expect(wrapper.find('h1').text()).toBe('Ops')
+    })
+
+    it('keeps the newer dashboard when an older load finishes last', async () => {
+      seedDashboard([])
+      let finishCrm: (r: DashboardResponse) => void = () => {}
+      getDashboardMock.mockImplementation((name) =>
+        name === 'crm'
+          ? new Promise((resolve) => (finishCrm = resolve))
+          : Promise.resolve({ title: 'Ops', cards: [] })
+      )
+
+      const wrapper = mount(DashboardView, { props: { name: 'crm' } })
+      await flushPromises()
+      await wrapper.setProps({ name: 'ops' })
+      await flushPromises()
+      expect(wrapper.find('h1').text()).toBe('Ops')
+
+      finishCrm({ title: 'Pipeline', cards: [] })
+      await flushPromises()
+      expect(wrapper.find('h1').text()).toBe('Ops')
+    })
+  })
+
+  describe('list cards (TKT-2SGPJZ)', () => {
+    function value(overrides: Partial<DashboardCardValue> = {}): DashboardCardValue {
+      return { title: 'Open', display: 'count', list: 'open', total: 7, ...overrides }
+    }
+
+    it('reads the value from the server instead of searching', async () => {
+      seedDashboard([card({ title: 'Open', query: undefined, list: 'open', index: 2 })])
+      getDashboardCardMock.mockResolvedValue(value())
+
+      const wrapper = await mountView()
+      expect(getDashboardCardMock).toHaveBeenCalledWith(undefined, 2, undefined)
+      expect(searchEntitiesMock).not.toHaveBeenCalled()
+      expect(wrapper.find('.count-number').text()).toBe('7')
+    })
+
+    it('drops a value computed for another card', async () => {
+      seedDashboard([card({ title: 'Open', query: undefined, list: 'open' })])
+      getDashboardCardMock.mockResolvedValue(value({ title: 'Closed', total: 99 }))
+
+      const wrapper = await mountView()
+      expect(wrapper.find('.count-number').text()).toBe('0')
+    })
+
+    it('renders a server breakdown and says when it is partial', async () => {
+      seedDashboard([
+        card({ title: 'By status', query: undefined, list: 'all', display: 'breakdown' }),
+      ])
+      getDashboardCardMock.mockResolvedValue(
+        value({
+          title: 'By status',
+          display: 'breakdown',
+          list: 'all',
+          total: 3,
+          partial: true,
+          groups: [
+            { value: 'open', label: 'Open', count: 2, matched: 0 },
+            { value: '', label: '', count: 1, matched: 0 },
+          ],
+        })
+      )
+
+      const wrapper = await mountView()
+      const labels = wrapper.findAll('.breakdown-label').map((l) => l.text())
+      expect(labels).toEqual(['Open', 'Unknown'])
+      expect(wrapper.find('[data-testid="card-partial"]').exists()).toBe(true)
+    })
+
+    it('renders a ratio', async () => {
+      seedDashboard([card({ title: 'Share', query: undefined, list: 'all', display: 'ratio' })])
+      getDashboardCardMock.mockResolvedValue(
+        value({ title: 'Share', display: 'ratio', list: 'all', total: 4, matched: 1 })
+      )
+
+      const wrapper = await mountView()
+      expect(wrapper.find('[data-testid="ratio-total"]').text()).toBe('1 / 4 (25%)')
+    })
+
+    it('renders a matrix', async () => {
+      seedDashboard([card({ title: 'Heat', query: undefined, list: 'all', display: 'matrix' })])
+      getDashboardCardMock.mockResolvedValue(
+        value({
+          title: 'Heat',
+          display: 'matrix',
+          list: 'all',
+          total: 2,
+          matrix: {
+            row_property: 'impact',
+            column_property: 'likelihood',
+            row_title: 'Impact',
+            column_title: 'Likelihood',
+            rows: [{ value: 'low', label: 'Low' }],
+            columns: [
+              { value: '1', label: '1' },
+              { value: '2', label: '2' },
+            ],
+            cells: [{ row: 'low', column: '2', count: 2, color: 'badge-red' }],
+          },
+        })
+      )
+
+      const wrapper = await mountView()
+      const cells = wrapper.findAll('[data-testid="matrix-cell"]')
+      expect(cells).toHaveLength(1)
+      expect(cells[0].attributes('aria-label')).toBe('Impact Low, Likelihood 2: 2')
+    })
+
+    it('counts in the page world, links into it and recounts when it changes', async () => {
+      world.value = 'draft'
+      seedDashboard([card({ title: 'Open', query: undefined, list: 'open', index: 1 })])
+      getDashboardCardMock.mockResolvedValue(value())
+
+      const wrapper = await mountView()
+      expect(getDashboardCardMock).toHaveBeenLastCalledWith(undefined, 1, 'draft')
+      expect(JSON.parse(wrapper.find('.card-link').attributes('data-to') ?? '')).toEqual({
+        path: '/list/open',
+        query: { world: 'draft' },
+      })
+
+      world.value = undefined
+      await flushPromises()
+      expect(getDashboardCardMock).toHaveBeenLastCalledWith(undefined, 1, undefined)
+    })
+
+    it('fails one card without blanking the dashboard', async () => {
+      seedDashboard([
+        card({ title: 'Open', query: undefined, list: 'open', index: 0 }),
+        card({ title: 'Restricted', query: undefined, list: 'secret', index: 1 }),
+      ])
+      getDashboardCardMock.mockImplementation(async (_name, index) => {
+        if (index === 1) {
+          throw new ApiError('property not visible', { kind: 'http', status: 400, original: null })
+        }
+        return value()
+      })
+      vi.spyOn(console, 'error').mockImplementation(() => {})
+
+      const wrapper = await mountView()
+      expect(wrapper.findAll('[data-testid="card-failed"]')).toHaveLength(1)
+      expect(wrapper.find('.count-number').text()).toBe('7')
+    })
+
+    it('marks a hidden table cell rather than leaving it blank', async () => {
+      seedDashboard([
+        card({
+          title: 'Rows',
+          query: undefined,
+          list: 'all',
+          display: 'table',
+          columns: [{ property: 'title' }, { property: 'owner' }],
+        }),
+      ])
+      getDashboardCardMock.mockResolvedValue(
+        value({
+          title: 'Rows',
+          display: 'table',
+          list: 'all',
+          total: 1,
+          partial: true,
+          rows: [
+            {
+              id: 'T-1',
+              type: 'ticket',
+              _title: 'One',
+              properties: { title: 'One' },
+              _redacted: ['owner'],
+            },
+          ],
+        })
+      )
+
+      const wrapper = await mountView()
+      expect(wrapper.find('.cell-hidden').text()).toBe('Hidden')
+    })
+  })
+
+  // TKT-69PZ09D: breakdown and table cards render values as list cells do.
+  describe('value rendering (TKT-69PZ09D)', () => {
+    const stages = ['lead', 'contact', 'offer', 'won']
+
+    function seedDeals() {
+      const store = useSchemaStore()
+      store.entityTypes.set('deal', {
+        name: 'deal',
+        label: 'Deal',
+        properties: {
+          title: { type: 'string' },
+          stage: {
+            type: 'stage',
+            values: stages,
+            labels: { lead: 'Lead', contact: 'Eerste contact', offer: 'Offerte', won: 'Gewonnen' },
+          },
+          value: { type: 'integer', display: { currency: 'EUR' } },
+          close: { type: 'date' },
+          sector: { type: 'string' },
+        },
+      } as never)
+      store.customTypes.set('stage', { values: stages } as never)
+      store.styles = { stage: { contact: 'badge-blue', won: 'badge-green' } }
+      store.lists.set('deals', {
+        id: 'deals',
+        title: 'Deals',
+        entity: 'deal',
+        columns: [],
+      } as never)
+    }
+
+    function deal(id: string, props: Record<string, unknown>): Entity {
+      return { id, type: 'deal', properties: props } as unknown as Entity
+    }
+
+    function searchReturns(rows: Entity[]) {
+      searchEntitiesMock.mockResolvedValue({
+        data: rows,
+        meta: { total: rows.length, page: 1, per_page: 50, has_more: false },
+      })
+    }
+
+    it('shows enum labels as styled badges in declared order on a query breakdown', async () => {
+      seedDeals()
+      // Counts disagree with the declared order, so a count sort would put
+      // "won" first.
+      searchReturns([
+        deal('D-1', { stage: 'won' }),
+        deal('D-2', { stage: 'won' }),
+        deal('D-3', { stage: 'won' }),
+        deal('D-4', { stage: 'contact' }),
+        deal('D-5', { stage: 'lead' }),
+        deal('D-6', {}),
+      ])
+      seedDashboard([card({ display: 'breakdown', group_by: 'stage' })])
+
+      const wrapper = await mountView()
+
+      const labels = wrapper.findAll('.breakdown-label').map((l) => l.text())
+      expect(labels).toEqual(['Lead', 'Eerste contact', 'Gewonnen', 'Unknown'])
+      const badges = wrapper.findAll('.breakdown-label .badge')
+      expect(badges.map((b) => b.classes())).toEqual([
+        expect.arrayContaining(['badge--gray']),
+        expect.arrayContaining(['badge--blue']),
+        expect.arrayContaining(['badge--green']),
+      ])
+      const fills = wrapper.findAll('.breakdown-bar-fill').map((f) => f.attributes('style') ?? '')
+      expect(fills[0]).not.toContain('background')
+      expect(fills[1]).toContain('var(--rl-color-status-blue)')
+      expect(fills[2]).toContain('var(--rl-color-status-green)')
+      expect(fills[3]).not.toContain('background')
+    })
+
+    it('puts values outside the enum after declared ones, by count', async () => {
+      seedDeals()
+      searchReturns([
+        deal('D-1', { stage: 'legacy' }),
+        deal('D-2', { stage: 'legacy' }),
+        deal('D-3', { stage: 'old' }),
+        deal('D-4', { stage: 'won' }),
+      ])
+      seedDashboard([card({ display: 'breakdown', group_by: 'stage' })])
+
+      const wrapper = await mountView()
+
+      const labels = wrapper.findAll('.breakdown-label').map((l) => l.text())
+      expect(labels).toEqual(['Gewonnen', 'legacy', 'old'])
+      // A value the enum does not declare is a grey badge with its raw value,
+      // as a list cell shows it.
+      const badges = wrapper.findAll('.breakdown-label .badge')
+      expect(badges).toHaveLength(3)
+      expect(badges[1].classes()).toContain('badge--gray')
+    })
+
+    it('keeps a non-enum breakdown as plain text by count', async () => {
+      seedDeals()
+      searchReturns([
+        deal('D-1', { sector: 'zorg' }),
+        deal('D-2', { sector: 'onderwijs' }),
+        deal('D-3', { sector: 'onderwijs' }),
+      ])
+      seedDashboard([card({ display: 'breakdown', group_by: 'sector' })])
+
+      const wrapper = await mountView()
+
+      const labels = wrapper.findAll('.breakdown-label').map((l) => l.text())
+      expect(labels).toEqual(['onderwijs', 'zorg'])
+      expect(wrapper.find('.breakdown-label .badge').exists()).toBe(false)
+    })
+
+    it('styles a list card breakdown from its list type', async () => {
+      seedDeals()
+      seedDashboard([
+        card({
+          title: 'By stage',
+          query: undefined,
+          list: 'deals',
+          display: 'breakdown',
+          group_by: 'stage',
+        }),
+      ])
+      getDashboardCardMock.mockResolvedValue({
+        title: 'By stage',
+        display: 'breakdown',
+        list: 'deals',
+        total: 3,
+        groups: [
+          { value: 'contact', label: 'Eerste contact', count: 1, matched: 0 },
+          { value: 'won', label: 'Gewonnen', count: 2, matched: 0 },
+        ],
+      })
+
+      const wrapper = await mountView()
+
+      const badges = wrapper.findAll('.breakdown-label .badge')
+      expect(badges.map((b) => b.text())).toEqual(['Eerste contact', 'Gewonnen'])
+      expect(badges[1].classes()).toContain('badge--green')
+      expect(wrapper.findAll('.breakdown-bar-fill')[1].attributes('style')).toContain(
+        'var(--rl-color-status-green)'
+      )
+    })
+
+    const tableColumns = [
+      { property: 'title', link: 'detail' },
+      { property: 'stage' },
+      { property: 'value' },
+      { property: 'close' },
+    ]
+
+    function expectDealRow(wrapper: Awaited<ReturnType<typeof mountView>>) {
+      const cells = wrapper.findAll('tbody td')
+      expect(cells[0].find('a').attributes('data-to')).toBe('/entity/deal/D-1')
+      expect(cells[0].text()).toBe('Big deal')
+      const badge = cells[1].find('.badge')
+      expect(badge.text()).toBe('Eerste contact')
+      expect(badge.classes()).toContain('badge--blue')
+      expect(cells[2].text()).toBe(formatAmount(3500, 'EUR'))
+      expect(cells[3].text()).toBe(formatDate('2026-03-01'))
+    }
+
+    it('renders query table cells as list cells', async () => {
+      seedDeals()
+      searchReturns([
+        deal('D-1', { title: 'Big deal', stage: 'contact', value: 3500, close: '2026-03-01' }),
+      ])
+      seedDashboard([card({ display: 'table', columns: tableColumns })])
+
+      expectDealRow(await mountView())
+    })
+
+    it('renders list table cells as list cells', async () => {
+      seedDeals()
+      seedDashboard([
+        card({
+          title: 'Rows',
+          query: undefined,
+          list: 'deals',
+          display: 'table',
+          columns: tableColumns,
+        }),
+      ])
+      getDashboardCardMock.mockResolvedValue({
+        title: 'Rows',
+        display: 'table',
+        list: 'deals',
+        total: 1,
+        rows: [
+          {
+            id: 'D-1',
+            type: 'deal',
+            _title: 'Big deal',
+            properties: { title: 'Big deal', stage: 'contact', value: 3500, close: '2026-03-01' },
+          },
+        ],
+      })
+
+      expectDealRow(await mountView())
+    })
+
+    it('leaves empty cells and unknown properties as plain text', async () => {
+      seedDeals()
+      searchReturns([deal('D-1', { title: 'Bare', note: 'kept' })])
+      seedDashboard([
+        card({ display: 'table', columns: [{ property: 'stage' }, { property: 'note' }] }),
+      ])
+
+      const cells = (await mountView()).findAll('tbody td')
+      expect(cells[0].text()).toBe('')
+      expect(cells[0].find('.badge').exists()).toBe(false)
+      expect(cells[1].text()).toBe('kept')
+    })
+  })
+
+  describe('card width (TKT-H21TYS)', () => {
+    it('gives each tile the class for its width, in config order', async () => {
+      seedDashboard([
+        card({ title: 'Plain' }),
+        card({ title: 'Normal', width: 'normal' }),
+        card({ title: 'Wide', width: 'wide' }),
+        card({ title: 'Full', width: 'full' }),
+        // Rejected by the server at load; the SPA renders it as normal.
+        card({ title: 'Odd', width: 'huge' as DashboardCardEntry['width'] }),
+      ])
+
+      const wrapper = await mountView()
+
+      const tiles = wrapper
+        .findAll('.dashboard-card')
+        .map((s) => [s.find('h3').text(), s.classes()])
+      expect(tiles).toEqual([
+        ['Plain', ['dashboard-card']],
+        ['Normal', ['dashboard-card']],
+        ['Wide', ['dashboard-card', 'dashboard-card--wide']],
+        ['Full', ['dashboard-card', 'dashboard-card--full']],
+        ['Odd', ['dashboard-card']],
+      ])
+    })
+
+    // Reading and Tab order follow the config only while the grid does not
+    // pack densely. jsdom applies no layout, so this is pinned on the source;
+    // the tile geometry is measured in e2e/tests/dashboard-card-width.spec.ts.
+    it('never packs the grid densely', () => {
+      const source = readFileSync(resolve(__dirname, 'DashboardView.vue'), 'utf8')
+      expect(source).not.toMatch(/(grid-auto-flow|grid):[^;]*\bdense\b[^;`]*;/)
     })
   })
 })

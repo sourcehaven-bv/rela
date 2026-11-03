@@ -2,6 +2,7 @@ package dataentryconfig
 
 import (
 	"fmt"
+	"maps"
 	"net"
 	"net/url"
 	"path/filepath"
@@ -10,6 +11,7 @@ import (
 	"sort"
 	"strings"
 
+	"golang.org/x/text/language"
 	"gopkg.in/yaml.v3"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
@@ -34,6 +36,7 @@ var validTopLevelKeys = map[string]bool{
 	"feeds":        true,
 	"caldav":       true,
 	"dashboard":    true,
+	"dashboards":   true,
 	"commands":     true,
 	"actions":      true,
 	"webhooks":     true,
@@ -46,6 +49,7 @@ var validTopLevelKeys = map[string]bool{
 	"next_actions":      true,
 	"account":           true,
 	"piles":             true,
+	"channels":          true,
 }
 
 // Known typos with suggestions
@@ -143,12 +147,11 @@ var sectionDisplayModesRenderingFields = map[string]bool{
 // view section field's `widget:` override (TKT-3R7RF3).
 //
 // This is an INDEPENDENT literal, deliberately not derived from
-// Metamodel.ResolveWidgetFromType (RR-Z0GGTO). That function is the table-cell
+// metamodel.ResolveWidgetFromType (RR-Z0GGTO). That function is the table-cell
 // resolver and has no `file` case — deriving from it would reject
 // `widget: file` on a `file` property, which is legal here. It also predates
-// the list/values precedence the SPA applies. Its godoc calls itself the single
-// source of truth for type→widget; on the section path that is not accurate,
-// and the two have already drifted.
+// the list/values precedence the SPA applies, and the two have already
+// drifted.
 //
 // The authority this DOES mirror is the SPA registry's supportedPropertyTypes
 // (frontend/src/widgets/registry.ts). The two are kept honest by a paired
@@ -224,8 +227,8 @@ func widgetAcceptsProperty(
 
 // widgetPropertyHasValues reports whether a property is constrained to a fixed
 // value set — either inline (`values:`) or via a custom type declared under
-// `types:` that carries values. Mirrors ResolveWidgetFromType's own membership
-// test (schema_output.go), which likewise requires len(Values) > 0 so a
+// `types:` that carries values. Mirrors the membership test in
+// metamodel.ResolveWidgetFromType, which likewise requires len(Values) > 0 so a
 // value-less custom type is not mistaken for an enum.
 func widgetPropertyHasValues(pd metamodel.PropertyDef, meta *metamodel.Metamodel) bool {
 	if len(pd.Values) > 0 {
@@ -401,6 +404,47 @@ func hasCreateForm(cfg *Config, entityType string) bool {
 	return false
 }
 
+// validateSectionHideEmpty refuses `hide_empty` (TKT-JT101B) where it contradicts the
+// rest of the section. Each refusal names the conflicting key, because the
+// alternative is a section that silently does one of the two things the
+// author wrote.
+func validateSectionHideEmpty(viewID string, i int, s ViewSection) []string {
+	if !s.HideEmpty {
+		return nil
+	}
+	var errs []string
+	// The empty message only ever shows on an empty section, which
+	// hide_empty removes. Setting both means one of them is dead.
+	if s.EmptyMessage != "" {
+		errs = append(errs, fmt.Sprintf(
+			"view %q: section[%d] sets both hide_empty and empty_message; "+
+				"a hidden section shows no message (remove one of them)",
+			viewID, i))
+	}
+	// An empty section is where a create button is most needed. Hiding it
+	// would remove the only way to add the first entity from this view.
+	if s.Create != nil {
+		errs = append(errs, fmt.Sprintf(
+			"view %q: section[%d] sets both hide_empty and create; "+
+				"hiding the empty section would also hide its create button",
+			viewID, i))
+	}
+	// A section on the entry shows the entry's own properties or body. It
+	// has no collection that could be empty. A section with no source would
+	// read a collection that never exists, so it would always hide.
+	switch s.Source {
+	case "entry":
+		errs = append(errs, fmt.Sprintf(
+			"view %q: section[%d] sets hide_empty on source: entry, which is never empty",
+			viewID, i))
+	case "":
+		errs = append(errs, fmt.Sprintf(
+			"view %q: section[%d] sets hide_empty but no source; hide_empty needs a collected source",
+			viewID, i))
+	}
+	return errs
+}
+
 // validateSectionRender checks the section-level `render:` and each field's,
 // independently of whether the section's source resolves (RR-4ICH8M).
 func validateSectionRender(viewID string, i int, s ViewSection) []string {
@@ -425,6 +469,8 @@ var validDashboardDisplayModes = map[string]bool{
 	"count":     true,
 	"table":     true,
 	"breakdown": true,
+	"matrix":    true,
+	"ratio":     true,
 }
 
 var validCommandContexts = map[string]bool{
@@ -477,12 +523,14 @@ func ValidateConfig(data []byte, cfg *Config, meta *metamodel.Metamodel) error {
 	errs = append(errs, validateDocuments(cfg)...)
 	errs = append(errs, validateFeeds(cfg, meta)...)
 	errs = append(errs, validateCalDAV(cfg, meta)...)
+	errs = append(errs, validatePaletteConfig(cfg)...)
 	errs = append(errs, validateStyles(cfg, meta)...)
 	errs = append(errs, validateNextActions(cfg, meta)...)
 	errs = append(errs, validateQueryScopes(cfg, meta)...)
 	errs = append(errs, validateNavEntities(cfg, meta)...)
 	errs = append(errs, validateAccount(data, cfg, meta)...)
 	errs = append(errs, validatePiles(data, cfg, meta)...)
+	errs = append(errs, validateChannelsShape(data, cfg)...)
 	errs = append(errs, validateCrossReferences(cfg)...)
 
 	if len(errs) > 0 {
@@ -592,6 +640,11 @@ func validateNavEntry(nav NavigationEntry, cfg *Config) []string {
 
 	errs = append(errs, validateNavOpen(nav, label)...)
 	errs = append(errs, validateNavStatus(nav, label, cfg)...)
+	if nav.Pile != "" && strings.TrimSpace(nav.Pile) != nav.Pile {
+		errs = append(errs, fmt.Sprintf(
+			"navigation: pile %q has leading or trailing spaces (pile names are trimmed, so it would never match)",
+			nav.Pile))
+	}
 
 	if nav.IsGroup() {
 		// A group is a container, not a destination — there is nothing for a
@@ -642,6 +695,9 @@ func navTargetErrors(nav NavigationEntry, cfg *Config) []string {
 		if _, ok := cfg.Gantts[nav.Gantt]; !ok {
 			errs = append(errs, fmt.Sprintf("references unknown gantt %q", nav.Gantt))
 		}
+	}
+	if e := dashboardRefError(nav.Dashboard, cfg); e != "" {
+		errs = append(errs, e)
 	}
 	if nav.Page != "" {
 		page, ok := cfg.Pages[nav.Page]
@@ -733,13 +789,14 @@ func validateNavStatus(nav NavigationEntry, label string, cfg *Config) []string 
 	return errs
 }
 
-// validateSidePanelSpans checks `span` on a form's side-panel section fields.
+// validateSidePanelSections checks a form's side-panel sections: `span` on
+// their fields, and the section keys a side panel cannot honor.
 //
 // Side panels reuse ViewSection/ViewSectionField and render through the same
 // buildSections path as a view, so a span authored there reaches the wire — but
 // no other validator descends into form.SidePanel, so it would otherwise go
 // unchecked. Nil panel is the common case and yields nothing.
-func validateSidePanelSpans(formID string, panel *SidePanelConfig) []string {
+func validateSidePanelSections(formID string, panel *SidePanelConfig) []string {
 	if panel == nil {
 		return nil
 	}
@@ -755,6 +812,15 @@ func validateSidePanelSpans(formID string, panel *SidePanelConfig) []string {
 			errs = append(errs, fmt.Sprintf(
 				"form %q: side_panel section[%d] uses display: %s, which a side panel cannot render",
 				formID, i, DisplayNested))
+		}
+		// The side-panel path never omits sections, so hide_empty would do
+		// nothing there (TKT-JT101B). It is not added because a side-panel
+		// section collected from the entry carries Add and Link buttons,
+		// which would disappear with it.
+		if sec.HideEmpty {
+			errs = append(errs, fmt.Sprintf(
+				"form %q: side_panel section[%d] sets hide_empty, which a side panel does not support",
+				formID, i))
 		}
 		for j, f := range sec.Fields {
 			errs = append(errs, validateSpan(f.Span,
@@ -817,7 +883,8 @@ func validateForms(cfg *Config, meta *metamodel.Metamodel) []string {
 		// been validated either, and fixing that is a wider behavior change
 		// (it could start rejecting configs that load today) that belongs in
 		// its own ticket rather than riding along with a layout PR.
-		errs = append(errs, validateSidePanelSpans(formID, form.SidePanel)...)
+		errs = append(errs, validateSidePanelSections(formID, form.SidePanel)...)
+		errs = append(errs, validateSidePanelMentions(formID, form.SidePanel)...)
 	}
 
 	return errs
@@ -1094,12 +1161,13 @@ func validateEntityViews(cfg *Config, meta *metamodel.Metamodel) []string {
 		}
 		errs = append(errs, validateEntityDuplicate(meta, entityType, ev.Duplicate)...)
 
-		// An entry carrying only `duplicate:` is legitimate (TKT-Z8K2FS), so
-		// the empty-detail_view refusal applies only when nothing else is
+		// An entry carrying only `duplicate:` (TKT-Z8K2FS) or only
+		// `mentioned_by_panel:` (TKT-HF0D5W) is legitimate, so the
+		// empty-detail_view refusal applies only when nothing else is
 		// declared — otherwise the error's own advice ("omit the entry") would
 		// tell an operator to delete config that is doing something.
 		if ev.DetailView == "" {
-			if ev.Duplicate == nil {
+			if ev.Duplicate == nil && ev.MentionedByPanel == nil {
 				errs = append(errs, fmt.Sprintf(
 					"entity_views[%q]: entry declares nothing (omit the entry instead)", entityType))
 			}
@@ -1176,7 +1244,13 @@ func validateLists(cfg *Config, meta *metamodel.Metamodel) []string {
 		}
 
 		// Validate columns
+		busyColumns := 0
 		for i, c := range list.Columns {
+			if c.Busy != "" {
+				errs = append(errs, checkListBusyColumn(listID, i, c, busyColumns > 0)...)
+				busyColumns++
+				continue
+			}
 			if c.Face {
 				if c.Property != "" || c.Relation != "" {
 					errs = append(errs, fmt.Sprintf(
@@ -1209,6 +1283,8 @@ func validateLists(cfg *Config, meta *metamodel.Metamodel) []string {
 		}
 
 		errs = append(errs, validateSortSpecs(fmt.Sprintf("list %q", listID), entDef, list.Sort)...)
+		errs = append(errs, rollupMisuse(fmt.Sprintf("list %q", listID), entDef, list.Columns, list.Sort,
+			list.Filters, list.FilterControls, list.GroupBy)...)
 
 		// Validate filters
 		for i, f := range list.Filters {
@@ -1691,6 +1767,14 @@ func validateViews(cfg *Config, meta *metamodel.Metamodel) []string {
 				}
 			}
 
+			if t.MentionedBy {
+				errs = append(errs, validateMentionsStep(viewID, i, t, view)...)
+				if t.CollectAs != "" {
+					collections[t.CollectAs] = "" // any type can mention the entry
+				}
+				continue
+			}
+
 			// Validate follow/follow_incoming relation
 			var relType string
 			if t.Follow != "" {
@@ -1731,6 +1815,7 @@ func validateViews(cfg *Config, meta *metamodel.Metamodel) []string {
 					"view %q: traverse[%d] cannot specify both follow and follow_incoming",
 					viewID, i))
 			}
+			errs = append(errs, validateTraverseWhere(fmt.Sprintf("view %q: traverse[%d]", viewID, i), t)...)
 
 			// Validate collect_as is specified
 			if t.CollectAs == "" {
@@ -1743,6 +1828,8 @@ func validateViews(cfg *Config, meta *metamodel.Metamodel) []string {
 				collections[t.CollectAs] = targetType
 			}
 		}
+
+		errs = append(errs, validateMentionsUsed(viewID, view)...)
 
 		// Validate sections
 		for i, s := range view.Sections {
@@ -1767,11 +1854,13 @@ func validateViews(cfg *Config, meta *metamodel.Metamodel) []string {
 			}
 
 			errs = append(errs, validateNestedSection(viewID, i, s, view, collections, meta)...)
+			errs = append(errs, validateSectionByType(viewID, i, s, view, meta)...)
 
 			// Outside the source-resolution guard below for the same reason
 			// render/widget are: an opted-in section with a bad `create:` is
 			// wrong regardless of whether its source collection resolves.
 			errs = append(errs, validateSectionCreate(viewID, i, s, view, cfg, meta)...)
+			errs = append(errs, validateSectionHideEmpty(viewID, i, s)...)
 
 			// Spans are checked unconditionally — deliberately NOT inside the
 			// `sourceType != ""` guard below, which only runs when the source
@@ -1789,6 +1878,13 @@ func validateViews(cfg *Config, meta *metamodel.Metamodel) []string {
 			// must still have it checked (RR-4ICH8M). The per-field loops below
 			// also never see the section-level value.
 			errs = append(errs, validateSectionRender(viewID, i, s)...)
+			// Busy columns are list-only (TKT-TU3XH4). Outside the source
+			// guards for the same reason as render: no metamodel is needed.
+			errs = append(errs, refuseSectionBusyColumns(viewID, i, s)...)
+
+			// Relation fields (TKT-CADCFX) need only the entry type, which is
+			// known whatever the section's source resolves to.
+			errs = append(errs, validateSectionRelationFields(viewID, i, s, view.Entry.Type, meta)...)
 
 			// Validate widget overrides (TKT-3R7RF3), outside the guard for the
 			// same reason: an unregistered widget name is checkable without the
@@ -1891,18 +1987,7 @@ func collectionTypes(view ViewConfig, name string, meta *metamodel.Metamodel) []
 	if rule == nil {
 		return nil
 	}
-	relType := rule.Follow
-	if relType == "" {
-		relType = rule.FollowIncoming
-	}
-	relDef, ok := meta.GetRelationDef(relType)
-	if !ok {
-		return nil
-	}
-	if rule.Follow != "" {
-		return relDef.To
-	}
-	return relDef.From
+	return TraverseTargetTypes(*rule, meta)
 }
 
 // validateLevelColumns checks one level's per-type column map for a nested
@@ -2121,6 +2206,12 @@ func validateNestedSection(
 				"(the children rule must start from the section's source)",
 			viewID, i, s.Children, s.Source, s.Children, child.From))
 	}
+	if child.MentionedBy {
+		errs = append(errs, fmt.Sprintf(
+			"view %q: section[%d] nests %q, which a mentioned_by step collects; "+
+				"backlinks carry no parent to nest under",
+			viewID, i, s.Children))
+	}
 	if child.Recursive {
 		errs = append(errs, fmt.Sprintf(
 			"view %q: section[%d] nests %q, which is collected recursively; "+
@@ -2191,6 +2282,128 @@ func suggestRelation(name string, meta *metamodel.Metamodel) string {
 	return ""
 }
 
+// validateKanbanColumnProperty checks that column_property is an enum of the
+// card type and that explicit columns name its values.
+func validateKanbanColumnProperty(
+	kanbanID string, kanban Kanban, entDef *metamodel.EntityDef, meta *metamodel.Metamodel,
+) []string {
+	propDef, ok := entDef.Properties[kanban.ColumnProperty]
+	if !ok {
+		return []string{fmt.Sprintf("kanban %q: column_property %q not in entity %q",
+			kanbanID, kanban.ColumnProperty, kanban.EntityType)}
+	}
+	validValues := GetValidEnumValues(propDef, meta)
+	if len(validValues) == 0 {
+		return []string{fmt.Sprintf("kanban %q: column_property %q must be an enum type",
+			kanbanID, kanban.ColumnProperty)}
+	}
+	var errs []string
+	for i, col := range kanban.Columns {
+		if !slices.Contains(validValues, col.Value) {
+			errs = append(errs, fmt.Sprintf(
+				"kanban %q: columns[%d] value %q is not valid for %q (valid: %s)",
+				kanbanID, i, col.Value, kanban.ColumnProperty, strings.Join(validValues, ", ")))
+		}
+	}
+	return errs
+}
+
+// validateKanbanLayout checks the layout and card style values, and what a
+// wall cannot be combined with.
+func validateKanbanLayout(kanbanID string, kanban Kanban) []string {
+	var errs []string
+	switch kanban.Layout {
+	case "", LayoutWall:
+	default:
+		errs = append(errs, fmt.Sprintf("kanban %q: layout %q is not valid (valid: %s)", kanbanID, kanban.Layout, LayoutWall))
+	}
+	switch kanban.Card.Style {
+	case "", CardStyleNote:
+	default:
+		errs = append(errs, fmt.Sprintf(
+			"kanban %q: card.style %q is not valid (valid: %s)", kanbanID, kanban.Card.Style, CardStyleNote))
+	}
+	if kanban.Layout == LayoutWall && kanban.SwimlaneProperty != "" {
+		errs = append(errs, fmt.Sprintf("kanban %q: swimlanes are not supported with layout: wall", kanbanID))
+	}
+	// A plain wall has no columns; a list of them would be silently ignored.
+	if kanban.Layout == LayoutWall && kanban.ColumnProperty == "" && kanban.ColumnsFrom == nil && len(kanban.Columns) > 0 {
+		errs = append(errs, fmt.Sprintf("kanban %q: columns need column_property", kanbanID))
+	}
+	return errs
+}
+
+// validateKanbanColumnsFrom checks a relation-backed board (TKT-KJ3Q07).
+func validateKanbanColumnsFrom(kanbanID string, kanban Kanban, meta *metamodel.Metamodel) []string {
+	var errs []string
+	cf := kanban.ColumnsFrom
+	if kanban.ColumnProperty != "" {
+		errs = append(errs, fmt.Sprintf("kanban %q: column_property and columns_from are mutually exclusive", kanbanID))
+	}
+	if len(kanban.Columns) > 0 {
+		errs = append(errs, fmt.Sprintf("kanban %q: columns cannot be combined with columns_from", kanbanID))
+	}
+	if kanban.SwimlaneProperty != "" {
+		errs = append(errs, fmt.Sprintf("kanban %q: swimlanes are not supported with columns_from", kanbanID))
+	}
+	prefix := fmt.Sprintf("kanban %q: columns_from", kanbanID)
+	return append(errs, validateRelationColumns(prefix, kanban.EntityType, relationColumnsSource{
+		Relation: cf.Relation, OfferedBy: cf.OfferedBy, OrderBy: cf.OrderBy, StyleFrom: cf.StyleFrom,
+	}, meta)...)
+}
+
+// relationColumnsSource is the part a kanban's `columns_from` and a list's
+// relation `group_by` share.
+type relationColumnsSource struct {
+	Relation, OfferedBy, OrderBy, StyleFrom string
+}
+
+// validateRelationColumns checks the relation that a board's columns or a
+// list's sections come from. It must be single-valued and single-target, so a
+// row sits in exactly one column and the column type is known at load time.
+// OfferedBy, when set, must point at that target type; OrderBy must be one of
+// its properties; StyleFrom must be one of its enum properties.
+func validateRelationColumns(
+	prefix, entityType string, src relationColumnsSource, meta *metamodel.Metamodel,
+) []string {
+	relation, offeredBy, orderBy := src.Relation, src.OfferedBy, src.OrderBy
+	var errs []string
+	rel, ok := meta.GetRelationDef(relation)
+	if !ok {
+		return append(errs, fmt.Sprintf("%s: relation %q is not a relation type", prefix, relation))
+	}
+	if !slices.Contains(rel.From, entityType) {
+		errs = append(errs, fmt.Sprintf("%s: relation %q does not start at %q", prefix, relation, entityType))
+	}
+	if maxOut := rel.MaxOutgoing; maxOut == nil || *maxOut != 1 {
+		errs = append(errs, fmt.Sprintf("%s: relation %q must declare max_outgoing: 1", prefix, relation))
+	}
+	if len(rel.To) != 1 {
+		return append(errs, fmt.Sprintf("%s: relation %q must have exactly one target type", prefix, relation))
+	}
+	target := rel.To[0]
+	if offeredBy != "" {
+		offered, ok := meta.GetRelationDef(offeredBy)
+		switch {
+		case !ok:
+			errs = append(errs, fmt.Sprintf("%s: offered_by %q is not a relation type", prefix, offeredBy))
+		case !slices.Contains(offered.To, target):
+			errs = append(errs, fmt.Sprintf("%s: offered_by %q does not point to %q", prefix, offeredBy, target))
+		}
+	}
+	if orderBy != "" {
+		if targetDef, ok := meta.GetEntityDef(target); ok {
+			if _, has := targetDef.Properties[orderBy]; !has {
+				errs = append(errs, fmt.Sprintf("%s: order_by %q is not a property of %q", prefix, orderBy, target))
+			}
+		}
+	}
+	if src.StyleFrom != "" {
+		errs = append(errs, validateStyleFrom(prefix, src.StyleFrom, rel.To, meta)...)
+	}
+	return errs
+}
+
 // validateKanbans validates kanban board definitions.
 //
 //nolint:gocognit,gocyclo,funlen // linear validation dispatcher: one independent config-vs-metamodel check per branch; splitting would scatter the rule set without lowering real complexity.
@@ -2205,37 +2418,18 @@ func validateKanbans(cfg *Config, meta *metamodel.Metamodel) []string {
 			continue
 		}
 
-		// Validate column_property exists and is enum type
-		if kanban.ColumnProperty == "" { //nolint:nestif // nested guards each check a distinct optional field of the kanban config.
+		errs = append(errs, validateKanbanLayout(kanbanID, kanban)...)
+
+		// Columns come from a relation or from an enum column_property. A
+		// wall may have neither: it is then one grid of all cards.
+		switch {
+		case kanban.ColumnsFrom != nil:
+			errs = append(errs, validateKanbanColumnsFrom(kanbanID, kanban, meta)...)
+		case kanban.ColumnProperty == "" && kanban.Layout == LayoutWall:
+		case kanban.ColumnProperty == "":
 			errs = append(errs, fmt.Sprintf("kanban %q: column_property is required", kanbanID))
-		} else {
-			propDef, ok := entDef.Properties[kanban.ColumnProperty]
-			if !ok {
-				errs = append(errs, fmt.Sprintf(
-					"kanban %q: column_property %q not in entity %q",
-					kanbanID, kanban.ColumnProperty, kanban.EntityType))
-			} else {
-				// Check if it's an enum type
-				validValues := GetValidEnumValues(propDef, meta)
-				if len(validValues) == 0 {
-					errs = append(errs, fmt.Sprintf(
-						"kanban %q: column_property %q must be an enum type",
-						kanbanID, kanban.ColumnProperty))
-				} else {
-					// Validate column values if specified
-					validSet := make(map[string]bool)
-					for _, v := range validValues {
-						validSet[v] = true
-					}
-					for i, col := range kanban.Columns {
-						if !validSet[col.Value] {
-							errs = append(errs, fmt.Sprintf(
-								"kanban %q: columns[%d] value %q is not valid for %q (valid: %s)",
-								kanbanID, i, col.Value, kanban.ColumnProperty, strings.Join(validValues, ", ")))
-						}
-					}
-				}
-			}
+		default:
+			errs = append(errs, validateKanbanColumnProperty(kanbanID, kanban, entDef, meta)...)
 		}
 
 		// Icon names are checked unconditionally — deliberately NOT inside the
@@ -2292,8 +2486,17 @@ func validateKanbans(cfg *Config, meta *metamodel.Metamodel) []string {
 		}
 
 		// Validate card fields
+		busySeen := false
 		for i, f := range kanban.Card.Fields {
 			errs = append(errs, checkCardFieldCounts(kanbanID, i, f, kanban.EntityType, meta)...)
+			if f.Busy != "" {
+				if busySeen {
+					errs = append(errs, fmt.Sprintf(
+						"kanban %q: card.fields[%d]: a card has at most one busy field", kanbanID, i))
+				}
+				busySeen = true
+				continue
+			}
 			if f.Comments {
 				continue
 			}
@@ -2303,9 +2506,9 @@ func validateKanbans(cfg *Config, meta *metamodel.Metamodel) []string {
 						"kanban %q: card.fields[%d] references unknown relation %q",
 						kanbanID, i, f.Relation))
 				}
-				errs = append(errs, CheckAmbiguousDirection(
-					fmt.Sprintf("kanban %q: card.fields[%d]", kanbanID, i),
-					kanban.EntityType, f.Relation, f.Direction, meta)...)
+				at := fmt.Sprintf("kanban %q: card.fields[%d]", kanbanID, i)
+				errs = append(errs, CheckAmbiguousDirection(at, kanban.EntityType, f.Relation, f.Direction, meta)...)
+				errs = append(errs, checkCardFieldRelatedProperty(at, f, kanban.EntityType, meta)...)
 				continue
 			}
 			if f.Property != "" && f.Property != "title" && f.Property != "id" {
@@ -2317,6 +2520,8 @@ func validateKanbans(cfg *Config, meta *metamodel.Metamodel) []string {
 			}
 		}
 
+		errs = append(errs, validateKanbanColumnSummary(kanbanID, kanban, entDef)...)
+
 		// `condition:` is accepted on the struct (shared with lists) but the
 		// board does not evaluate it yet — it still filters client-side. A
 		// key that validates and then does nothing is precisely the silent
@@ -2327,6 +2532,17 @@ func validateKanbans(cfg *Config, meta *metamodel.Metamodel) []string {
 				"kanban %q: condition is not supported on a kanban yet "+
 					"(the board filters client-side); use it on a list, or filters: here",
 				kanbanID))
+		}
+
+		errs = append(errs, rollupMisuse(fmt.Sprintf("kanban %q", kanbanID), entDef, nil, nil,
+			kanban.Filters, kanban.FilterControls, nil)...)
+		for _, kp := range [][2]string{
+			{"column_property", kanban.ColumnProperty}, {"swimlane_property", kanban.SwimlaneProperty},
+		} {
+			if isRollup(entDef, kp[1]) {
+				errs = append(errs, fmt.Sprintf("kanban %q: %s %q is a roll-up; a board cannot "+
+					"group on a value computed when a card is read", kanbanID, kp[0], kp[1]))
+			}
 		}
 
 		// Validate filter properties
@@ -2391,46 +2607,80 @@ func validateKanbans(cfg *Config, meta *metamodel.Metamodel) []string {
 	return errs
 }
 
-// validateDashboard validates dashboard configuration.
-func validateDashboard(cfg *Config, _ *metamodel.Metamodel) []string {
+// validateDashboard validates the default dashboard and every named one.
+// An error names the dashboard: `dashboard:` for the default one,
+// `dashboards[<name>]:` for a named one.
+func validateDashboard(cfg *Config, meta *metamodel.Metamodel) []string {
 	var errs []string
 
-	if cfg.Dashboard == nil {
-		return errs
+	for _, name := range slices.Sorted(maps.Keys(cfg.Dashboards)) {
+		switch {
+		case name == DefaultDashboardName:
+			errs = append(errs, fmt.Sprintf(
+				"dashboards: the name %q is reserved for the default dashboard; "+
+					"configure it under the top-level dashboard: key instead", name))
+		case !urlSegmentPattern.MatchString(name):
+			errs = append(errs, fmt.Sprintf(
+				"dashboards: name %q is invalid (lowercase letter first, then up to 31 of a-z, 0-9, _ or -)",
+				name))
+		}
 	}
 
-	for i, card := range cfg.Dashboard.Cards {
+	for _, d := range cfg.AllDashboards() {
+		prefix := "dashboard"
+		if d.Name != "" {
+			prefix = fmt.Sprintf("dashboards[%s]", d.Name)
+		}
+		errs = append(errs, validateDashboardCards(prefix, d.Config.Cards)...)
+		for i, card := range d.Config.Cards {
+			errs = append(errs, validateDashboardCardSource(cfg, meta, prefix, i, card)...)
+		}
+	}
+
+	return errs
+}
+
+// validateDashboardCards validates the cards of one dashboard. prefix names
+// the dashboard in each message.
+func validateDashboardCards(prefix string, cards []DashboardCard) []string {
+	var errs []string
+	for i, card := range cards {
 		// Validate display mode
 		if !validDashboardDisplayModes[card.Display] {
 			errs = append(errs, fmt.Sprintf(
-				"dashboard: card[%d] %q has invalid display mode %q (valid: %s)",
-				i, card.Title, card.Display, joinMapKeys(validDashboardDisplayModes)))
+				"%s: card[%d] %q has invalid display mode %q (valid: %s)",
+				prefix, i, card.Title, card.Display, joinMapKeys(validDashboardDisplayModes)))
+		}
+		errs = append(errs, validateDashboardCardWidth(prefix, i, card)...)
+		// Busy columns are list-only (TKT-TU3XH4). Every card is checked
+		// here, whatever its source or display.
+		for j, c := range card.Columns {
+			errs = append(errs, refuseListOnlyColumn(fmt.Sprintf("%s: card[%d] %q column[%d]", prefix, i, card.Title, j), c)...)
 		}
 
 		// Validate sort directions
 		for j, s := range card.Sort {
 			if !validSortDirections[s.Direction] {
 				errs = append(errs, fmt.Sprintf(
-					"dashboard: card[%d] %q sort[%d] has invalid direction %q (valid: asc, desc)",
-					i, card.Title, j, s.Direction))
+					"%s: card[%d] %q sort[%d] has invalid direction %q (valid: asc, desc)",
+					prefix, i, card.Title, j, s.Direction))
 			}
 		}
 
 		// For breakdown display, group_by should be specified
 		if card.Display == "breakdown" && card.GroupBy == "" {
 			errs = append(errs, fmt.Sprintf(
-				"dashboard: card[%d] %q uses breakdown display but has no group_by",
-				i, card.Title))
+				"%s: card[%d] %q uses breakdown display but has no group_by",
+				prefix, i, card.Title))
 		}
 
 		// For table display, columns should be specified
 		if card.Display == "table" && len(card.Columns) == 0 {
 			errs = append(errs, fmt.Sprintf(
-				"dashboard: card[%d] %q uses table display but has no columns",
-				i, card.Title))
+				"%s: card[%d] %q uses table display but has no columns",
+				prefix, i, card.Title))
 		}
 	}
-
 	return errs
 }
 
@@ -2563,6 +2813,43 @@ func validateActions(cfg *Config, meta *metamodel.Metamodel) []string {
 		}
 	}
 
+	for listID, list := range cfg.Lists {
+		errs = append(errs, validateToolbarActions(listID, list, cfg)...)
+	}
+
+	return errs
+}
+
+// validateToolbarActions checks a list's `toolbar_actions:`. Each id must name
+// an action that can run without a row: a script action (a `set:` has no
+// entity to set on) that is not entity-bound, with a label for the button.
+// These are the rules a navigation `action:` follows, plus the two the button
+// needs to be usable.
+func validateToolbarActions(listID string, list List, cfg *Config) []string {
+	var errs []string
+	where := fmt.Sprintf("list %q toolbar_actions", listID)
+	seen := make(map[string]bool, len(list.ToolbarActions))
+	for _, actionID := range list.ToolbarActions {
+		if seen[actionID] {
+			errs = append(errs, fmt.Sprintf("%s: action %q is listed twice", where, actionID))
+			continue
+		}
+		seen[actionID] = true
+		action, ok := cfg.Actions[actionID]
+		switch {
+		case !ok:
+			errs = append(errs, fmt.Sprintf("%s: references unknown action %q", where, actionID))
+		case action.AvailableOn != nil:
+			errs = append(errs, entityBoundActionRefError(where, actionID))
+		case action.Script == "":
+			errs = append(errs, fmt.Sprintf(
+				"%s: action %q has no script (a toolbar action runs without a selected row, "+
+					"so a set: action has nothing to set)", where, actionID))
+		case action.Label == "":
+			errs = append(errs, fmt.Sprintf(
+				"%s: action %q needs a label to show on the button", where, actionID))
+		}
+	}
 	return errs
 }
 
@@ -2634,27 +2921,38 @@ func validateCommands(cfg *Config, meta *metamodel.Metamodel) []string {
 				cmdID, cmd.Context, joinMapKeys(validCommandContexts)))
 		}
 		if cmd.AvailableOn != nil {
-			for _, v := range cmd.AvailableOn.Views {
-				if _, ok := cfg.Views[v]; !ok {
-					errs = append(errs, fmt.Sprintf(
-						"command %q: available_on references unknown view %q", cmdID, v))
-				}
-			}
-			for _, l := range cmd.AvailableOn.Lists {
-				if _, ok := cfg.Lists[l]; !ok {
-					errs = append(errs, fmt.Sprintf(
-						"command %q: available_on references unknown list %q", cmdID, l))
-				}
-			}
-			for _, et := range cmd.AvailableOn.EntityTypes {
-				if _, ok := meta.GetEntityDef(et); !ok {
-					errs = append(errs, fmt.Sprintf(
-						"command %q: available_on references unknown entity type %q", cmdID, et))
-				}
-			}
+			errs = append(errs, validateCommandScope(cmdID, *cmd.AvailableOn, cfg, meta)...)
 		}
 	}
 
+	return errs
+}
+
+// validateCommandScope checks that every view, list, entity type and
+// dashboard a command's `available_on:` names exists.
+func validateCommandScope(cmdID string, scope CommandScope, cfg *Config, meta *metamodel.Metamodel) []string {
+	var errs []string
+	for _, v := range scope.Views {
+		if _, ok := cfg.Views[v]; !ok {
+			errs = append(errs, fmt.Sprintf(
+				"command %q: available_on references unknown view %q", cmdID, v))
+		}
+	}
+	for _, l := range scope.Lists {
+		if _, ok := cfg.Lists[l]; !ok {
+			errs = append(errs, fmt.Sprintf(
+				"command %q: available_on references unknown list %q", cmdID, l))
+		}
+	}
+	for _, et := range scope.EntityTypes {
+		if _, ok := meta.GetEntityDef(et); !ok {
+			errs = append(errs, fmt.Sprintf(
+				"command %q: available_on references unknown entity type %q", cmdID, et))
+		}
+	}
+	if e := dashboardRefError(scope.Dashboard, cfg); e != "" {
+		errs = append(errs, fmt.Sprintf("command %q: available_on %s", cmdID, e))
+	}
 	return errs
 }
 
@@ -2674,7 +2972,43 @@ func validateCommands(cfg *Config, meta *metamodel.Metamodel) []string {
 // operator can use TLS.
 func validateApp(cfg *Config, meta *metamodel.Metamodel) []string {
 	errs := validateDefaultWorldAlias(cfg.App.DefaultWorld, meta)
+	errs = append(errs, validateAppLanguage(cfg.App.Language)...)
 	return append(errs, validatePlantUMLURL(cfg.App.PlantUMLServerURL)...)
+}
+
+// SupportedUILanguages lists the base languages the web app has a message
+// file for, one per frontend/src/i18n/locales/<lang>.json.
+// TestSupportedUILanguagesMatchLocaleFiles keeps the two in step.
+var SupportedUILanguages = []string{"en", "nl"}
+
+// validateAppLanguage checks app.language: a well-formed BCP 47 tag whose
+// base language has a message file. A typo would otherwise fall through to
+// the browser language and look like the setting does nothing.
+//
+// The tag must already be in canonical form apart from case, and carry no
+// extension or private-use part. language.Parse is lenient where the SPA is
+// not: it reads `nl_NL` as nl-NL, while the browser's Intl.getCanonicalLocales
+// rejects it, so the SPA would drop the setting. An extension such as
+// `-u-ca-buddhist` would change the calendar used to format every date.
+func validateAppLanguage(tag string) []string {
+	if tag == "" {
+		return nil
+	}
+	parsed, err := language.Parse(tag)
+	if err != nil || !strings.EqualFold(parsed.String(), tag) {
+		return []string{fmt.Sprintf("app.language: %q is not a valid BCP 47 language tag", tag)}
+	}
+	lower := strings.ToLower(tag)
+	if len(parsed.Extensions()) > 0 || strings.HasPrefix(lower, "x-") || strings.Contains(lower, "-x-") {
+		return []string{fmt.Sprintf("app.language: %q has an extension or private-use part; "+
+			"use a language with an optional script and region, such as nl or nl-BE", tag)}
+	}
+	base, _ := parsed.Base()
+	if !slices.Contains(SupportedUILanguages, base.String()) {
+		return []string{fmt.Sprintf("app.language: %q has no interface translation; supported languages: %s",
+			tag, strings.Join(SupportedUILanguages, ", "))}
+	}
+	return nil
 }
 
 // validateDefaultWorldAlias checks app.default_world, the deprecated alias of
@@ -2878,6 +3212,14 @@ func validateDocuments(cfg *Config) []string {
 // validateStyles validates style definitions reference valid metamodel types.
 func validateStyles(cfg *Config, meta *metamodel.Metamodel) []string {
 	var errs []string
+
+	for _, typeName := range sortedMapKeys(cfg.Styles) {
+		for _, val := range sortedMapKeys(cfg.Styles[typeName]) {
+			if _, err := ParseColor(cfg.Styles[typeName][val], cfg.OperatorColors()); err != nil {
+				errs = append(errs, fmt.Sprintf("styles.%s.%s: %v", typeName, val, err))
+			}
+		}
+	}
 
 	for typeName := range cfg.Styles {
 		// Check if it's a custom type in metamodel
@@ -3115,11 +3457,81 @@ func checkQueryScopeRef(
 		kind, id, scope, entityType, strings.Join(declared, ", "), metamodel.AllQueryScopeName)}
 }
 
+// validateSectionRelationFields checks `relation:` fields (TKT-CADCFX). A
+// relation field stands for the entry's outgoing edges, so it is valid only in
+// an entry properties section, on a relation the entry type can start.
+func validateSectionRelationFields(
+	viewID string, i int, s ViewSection, entryType string, meta *metamodel.Metamodel,
+) []string {
+	var errs []string
+	for j, f := range s.Fields {
+		if f.Relation == "" {
+			continue
+		}
+		prefix := fmt.Sprintf("view %q: section[%d] field[%d]", viewID, i, j)
+		if f.Property != "" {
+			errs = append(errs, prefix+" sets both property and relation; set one")
+			continue
+		}
+		if s.Source != "entry" || s.Display != "properties" {
+			errs = append(errs,
+				prefix+": a relation field is only valid in a section with source: entry and display: properties")
+			continue
+		}
+		if f.Widget != "" {
+			errs = append(errs, prefix+": widget does not apply to a relation field")
+		}
+		def, ok := meta.GetRelationDef(f.Relation)
+		if !ok {
+			errs = append(errs, fmt.Sprintf("%s references unknown relation %q", prefix, f.Relation))
+			continue
+		}
+		if !slices.Contains(def.From, entryType) {
+			errs = append(errs, fmt.Sprintf(
+				"%s: relation %q does not start at entity type %q", prefix, f.Relation, entryType))
+		}
+		if f.StyleFrom != "" {
+			errs = append(errs, validateStyleFrom(prefix, f.StyleFrom, def.To, meta)...)
+		}
+	}
+	for j, f := range s.Fields {
+		if f.StyleFrom != "" && f.Relation == "" {
+			errs = append(errs, fmt.Sprintf(
+				"view %q: section[%d] field[%d]: style_from applies only to a relation field", viewID, i, j))
+		}
+	}
+	return errs
+}
+
+// validateStyleFrom checks that every target type of a relation field has
+// styleFrom as an enum property, so each target can be colored.
+func validateStyleFrom(prefix, styleFrom string, targets []string, meta *metamodel.Metamodel) []string {
+	var errs []string
+	for _, t := range targets {
+		def, ok := meta.GetEntityDef(t)
+		if !ok {
+			continue
+		}
+		pd, ok := def.Properties[styleFrom]
+		if !ok {
+			errs = append(errs, fmt.Sprintf("%s: style_from %q is not a property of %q", prefix, styleFrom, t))
+			continue
+		}
+		if len(pd.Values) == 0 && len(meta.Types[pd.Type].Values) == 0 {
+			errs = append(errs, fmt.Sprintf(
+				"%s: style_from %q on %q is not an enum property", prefix, styleFrom, t))
+		}
+	}
+	return errs
+}
+
 // cardDisplayCount is the one accepted card field `display:` value.
 const cardDisplayCount = "count"
 
-// checkCardFieldCounts validates the two count shapes of a kanban card field:
-// `display: count` on a relation, and `comments: true` on its own.
+// checkCardFieldCounts validates the shapes of a kanban card field that
+// stand for a served extra rather than a property: `display: count` on a
+// relation, and `comments: true` and `busy: <channel type>` on their own.
+// [ValidateChannels] checks the busy channel type against realtime.yaml.
 func checkCardFieldCounts(
 	kanbanID string, i int, f KanbanCardField, entityType string, meta *metamodel.Metamodel,
 ) []string {
@@ -3141,13 +3553,18 @@ func checkCardFieldCounts(
 			errs = append(errs, fmt.Sprintf("%s: comments are not enabled for entity type %q", at, entityType))
 		}
 	}
+	if f.Busy != "" && (f.Property != "" || f.Relation != "" || f.Comments || f.Display != "") {
+		errs = append(errs, at+": busy cannot be combined with property, relation, comments or display")
+	}
 	return errs
 }
 
-// refuseCardCounts rejects the kanban-only count shapes on the other surfaces
-// that share [KanbanCardField]. Calendar chips and gantt tooltips are not
-// served counts, so accepting the keys there would load and render nothing.
-func refuseCardCounts(prefix string, f KanbanCardField) []string {
+// refuseKanbanOnlyFields rejects the kanban-only card field shapes on the
+// other surfaces that share [KanbanCardField]: the count shapes, the busy
+// indicator and a related property (relation plus property). Calendar chips
+// and gantt tooltips are not served counts, busy state or related entities,
+// so accepting the keys there would load and render nothing.
+func refuseKanbanOnlyFields(prefix string, f KanbanCardField) []string {
 	var errs []string
 	if f.Display != "" {
 		errs = append(errs, prefix+": display is only supported on kanban card fields")
@@ -3155,5 +3572,17 @@ func refuseCardCounts(prefix string, f KanbanCardField) []string {
 	if f.Comments {
 		errs = append(errs, prefix+": comments is only supported on kanban card fields")
 	}
+	if f.Busy != "" {
+		errs = append(errs, prefix+": busy is only supported on kanban card fields")
+	}
+	if f.Relation != "" && f.Property != "" {
+		errs = append(errs, prefix+": a related property (relation with property) is only supported on kanban card fields")
+	}
 	return errs
+}
+
+// isRelatedProperty reports whether f is the kanban-only related-property
+// shape, which [refuseKanbanOnlyFields] has already reported.
+func (f KanbanCardField) isRelatedProperty() bool {
+	return f.Relation != "" && f.Property != ""
 }

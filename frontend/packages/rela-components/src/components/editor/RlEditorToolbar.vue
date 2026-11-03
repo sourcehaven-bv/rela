@@ -14,6 +14,9 @@
  */
 import RlBlockIcon from './RlBlockIcon.vue'
 import type { EditorCommand } from './editorCommands'
+import { useMessages } from '../../composables/useMessages'
+
+const messages = useMessages()
 
 const props = withDefaults(
   defineProps<{
@@ -54,13 +57,18 @@ function onActivate(cmd: EditorCommand): void {
   emit('run', cmd)
 }
 
+function labelFor(cmd: EditorCommand): string {
+  return messages.editorCommand({ id: cmd.id, label: cmd.label })
+}
+
 function titleFor(cmd: EditorCommand): string {
-  return props.unavailableIds.has(cmd.id) ? `${cmd.label} (not available here)` : cmd.label
+  const label = labelFor(cmd)
+  return props.unavailableIds.has(cmd.id) ? messages.commandUnavailable({ label }) : label
 }
 </script>
 
 <template>
-  <div class="rl-editor-toolbar" role="toolbar" aria-label="Formatting">
+  <div class="rl-editor-toolbar" role="toolbar" :aria-label="messages.chromeText({ key: 'formatting' })">
     <div v-if="props.inlineCommands.length" class="rl-editor-toolbar__group">
       <button
         v-for="cmd in props.inlineCommands"
@@ -72,7 +80,7 @@ function titleFor(cmd: EditorCommand): string {
           'is-unavailable': props.unavailableIds.has(cmd.id),
         }"
         :title="titleFor(cmd)"
-        :aria-label="cmd.label"
+        :aria-label="labelFor(cmd)"
         :aria-pressed="props.activeIds.has(cmd.id)"
         :aria-disabled="props.unavailableIds.has(cmd.id)"
         @mousedown.prevent
@@ -99,7 +107,7 @@ function titleFor(cmd: EditorCommand): string {
           'is-unavailable': props.unavailableIds.has(cmd.id),
         }"
         :title="titleFor(cmd)"
-        :aria-label="cmd.label"
+        :aria-label="labelFor(cmd)"
         :aria-pressed="props.activeIds.has(cmd.id)"
         :aria-disabled="props.unavailableIds.has(cmd.id)"
         @mousedown.prevent
@@ -115,7 +123,7 @@ function titleFor(cmd: EditorCommand): string {
     <template v-if="props.showTableGroup && props.tableCommands.length">
       <span class="rl-editor-toolbar__divider" role="separator" />
 
-      <div class="rl-editor-toolbar__group" aria-label="Table">
+      <div class="rl-editor-toolbar__group" :aria-label="messages.chromeText({ key: 'table' })">
         <button
           v-for="cmd in props.tableCommands"
           :key="cmd.id"
@@ -123,7 +131,7 @@ function titleFor(cmd: EditorCommand): string {
           class="rl-editor-toolbar__button"
           :class="{ 'is-unavailable': props.unavailableIds.has(cmd.id) }"
           :title="titleFor(cmd)"
-          :aria-label="cmd.label"
+          :aria-label="labelFor(cmd)"
           :aria-disabled="props.unavailableIds.has(cmd.id)"
           @mousedown.prevent
           @click="onActivate(cmd)"

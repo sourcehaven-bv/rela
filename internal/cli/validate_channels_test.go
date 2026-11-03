@@ -1,0 +1,203 @@
+package cli
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"strings"
+	"testing"
+
+	"github.com/stretchr/testify/require"
+
+	"github.com/Sourcehaven-BV/rela/internal/projectsetup"
+)
+
+// TestValidate_ChannelsAgainstRealtime pins the `rela validate` check of
+// data-entry.yaml's channels: section against realtime.yaml, and that a
+// realtime.yaml that does not load is a failed check, not an abort.
+func TestValidate_ChannelsAgainstRealtime(t *testing.T) {
+	root := seedProject(t)
+	check := func() bool {
+		t.Helper()
+		result, err := projectsetup.Validate(context.Background(), root)
+		require.NoError(t, err)
+		require.NotNil(t, result.Metamodel)
+		result.DataEntryValid = true
+		return reportRealtimeValidation(context.Background(), result, false)
+	}
+	// No channels: section: nothing to check.
+	writeProjectFile(t, root, "data-entry.yaml", "version: \"1.0\"\n")
+	require.False(t, check())
+
+	section := "version: \"1.0\"\nchannels:\n  room:\n    messages:\n      text:\n        fields: [{ property: %s }]\n"
+	writeProjectFile(t, root, "data-entry.yaml", fmt.Sprintf(section, "body"))
+	require.False(t, check(), "realtime off is a warning")
+
+	writeProjectFile(t, root, "realtime.yaml", stdioRealtimeYAML)
+	require.False(t, check())
+
+	writeProjectFile(t, root, "data-entry.yaml", fmt.Sprintf(section, "nope"))
+	require.True(t, check())
+
+	writeProjectFile(t, root, "data-entry.yaml", fmt.Sprintf(section, "body"))
+	writeProjectFile(t, root, "realtime.yaml", "version: 1\nchannel_types: {room: {bogus: 1}}\n")
+	require.True(t, check(), "a broken realtime.yaml is a failed check")
+
+	// TKT-QYFLRH AC 2: in: on a type without a session fails the check
+	// and prints the problem at its key.
+	writeProjectFile(t, root, "realtime.yaml", strings.Replace(stdioRealtimeYAML, "        post: [member]\n",
+		"        post: [member]\n        in: [open]\n", 1))
+	out, err := captureStdout(t, func() error {
+		if check() {
+			return errors.New("failed")
+		}
+		return nil
+	})
+	require.Error(t, err)
+	require.Contains(t, out, "✗")
+	require.Contains(t, out, "channel_types.room.message_types.text.in: in names session states; "+
+		"this channel type has no session")
+
+	require.True(t, reportRealtimeValidation(context.Background(), &projectsetup.ValidateResult{
+		ProjectRoot: root, DataEntryValid: true,
+	}, true), "an earlier failure skips the check and stays reported")
+}
+
+// TestValidate_HiddenCountsUnread pins the case "hidden type counts as
+// unread" (TKT-O6RC8Z AC 8): `rela validate` prints the warning and does
+// not fail, and `unread: false` in realtime.yaml silences it.
+func TestValidate_HiddenCountsUnread(t *testing.T) {
+	root := seedProject(t)
+	check := func() (failed bool, out string) {
+		t.Helper()
+		result, err := projectsetup.Validate(context.Background(), root)
+		require.NoError(t, err)
+		result.DataEntryValid = true
+		out, _ = captureStdout(t, func() error {
+			failed = reportRealtimeValidation(context.Background(), result, false)
+			return nil
+		})
+		return failed, out
+	}
+	const want = "channels.room.messages.text.display: hidden, but realtime.yaml counts text as unread; " +
+		"set unread: false on channel_types.room.message_types.text"
+	writeProjectFile(t, root, "data-entry.yaml",
+		"version: \"1.0\"\nchannels:\n  room:\n    messages:\n      text:\n        display: hidden\n")
+	writeProjectFile(t, root, "realtime.yaml", stdioRealtimeYAML)
+	failed, out := check()
+	require.False(t, failed, "a hidden counting type is a warning: %s", out)
+	require.Contains(t, out, want)
+
+	writeProjectFile(t, root, "realtime.yaml", strings.Replace(stdioRealtimeYAML, "        post: [member]\n",
+		"        post: [member]\n        unread: false\n", 1))
+	failed, out = check()
+	require.False(t, failed, out)
+	require.NotContains(t, out, "counts text as unread")
+}
+
+// TestValidate_BusyFieldAgainstRealtime pins that `rela validate` checks a
+// kanban busy field against realtime.yaml in a project without a channels:
+// section (TKT-21G6JS).
+func TestValidate_BusyFieldAgainstRealtime(t *testing.T) {
+	root := seedProject(t)
+	check := func() (failed bool, out string) {
+		t.Helper()
+		result, err := projectsetup.Validate(context.Background(), root)
+		require.NoError(t, err)
+		result.DataEntryValid = true
+		out, _ = captureStdout(t, func() error {
+			failed = reportRealtimeValidation(context.Background(), result, false)
+			return nil
+		})
+		return failed, out
+	}
+	board := "version: \"1.0\"\nkanbans:\n  board:\n    entity_type: item\n    card:\n      fields: [{ busy: %s }]\n"
+	writeProjectFile(t, root, "data-entry.yaml", fmt.Sprintf(board, "nope"))
+	failed, out := check()
+	require.False(t, failed, "realtime off is a warning: %s", out)
+	require.Contains(t, out, "this busy field shows nothing")
+
+	writeProjectFile(t, root, "realtime.yaml", stdioRealtimeYAML)
+	failed, out = check()
+	require.True(t, failed, out)
+	require.Contains(t, out, `realtime.yaml declares no channel type "nope"`)
+
+	writeProjectFile(t, root, "data-entry.yaml", fmt.Sprintf(board, "room"))
+	failed, out = check()
+	require.True(t, failed, out)
+	require.Contains(t, out, "channel type room declares no session")
+}
+
+// TestValidate_BusyListColumnWithoutChannels pins that `rela validate`
+// checks a list busy column against realtime.yaml in a project without a
+// channels: section and without a kanban busy field (TKT-TU3XH4).
+func TestValidate_BusyListColumnWithoutChannels(t *testing.T) {
+	root := seedProject(t)
+	check := func() (failed bool, out string) {
+		t.Helper()
+		result, err := projectsetup.Validate(context.Background(), root)
+		require.NoError(t, err)
+		result.DataEntryValid = true
+		out, _ = captureStdout(t, func() error {
+			failed = reportRealtimeValidation(context.Background(), result, false)
+			return nil
+		})
+		return failed, out
+	}
+	list := "version: \"1.0\"\nlists:\n  items:\n    entity_type: item\n" +
+		"    columns: [{ property: title }, { busy: %s }]\n"
+	writeProjectFile(t, root, "data-entry.yaml", fmt.Sprintf(list, "nope"))
+	failed, out := check()
+	require.False(t, failed, "realtime off is a warning: %s", out)
+	require.Contains(t, out, "this busy column shows nothing")
+
+	writeProjectFile(t, root, "realtime.yaml", stdioRealtimeYAML)
+	failed, out = check()
+	require.True(t, failed, out)
+	require.Contains(t, out, `list "items": column[1]: realtime.yaml declares no channel type "nope"`)
+}
+
+// TestValidate_RealtimeRunAsGrant pins that `rela validate` loads
+// realtime.yaml, and runs its session run_as grant check, when
+// data-entry.yaml has no channels: section: an ungranted run_as fails the
+// command, and granting it passes.
+func TestValidate_RealtimeRunAsGrant(t *testing.T) {
+	root := seedProject(t)
+	prev := projectPath
+	projectPath = root
+	t.Cleanup(func() { projectPath = prev })
+	writeProjectFile(t, root, "realtime.yaml", `version: 1
+channel_types:
+  watch:
+    attach_to: [item]
+    roles:
+      member: { from: attached }
+    message_types:
+      text: { properties: { body: { type: string } }, post: [member] }
+    session:
+      initial: waiting
+      run_as: system:bot
+      states:
+        waiting:
+          after:
+            soon:
+              period: 1m
+              to: done
+              outputs:
+                - set: { properties: { title: late } }
+        done: { final: true }
+`)
+	run := func() (string, error) {
+		return captureStdout(t, func() error { return (&ValidateCmd{}).Run(context.Background()) })
+	}
+	writeProjectFile(t, root, "acl.yaml", "roles:\n  bot: { read: [item] }\nassignments: { system:bot: bot }\n")
+	out, err := run()
+	require.Error(t, err)
+	require.Contains(t, out, "system:bot cannot update item")
+
+	writeProjectFile(t, root, "acl.yaml", "roles:\n  bot: { read: [item], update: [item] }\n"+
+		"assignments: { system:bot: bot }\n")
+	out, err = run()
+	require.NoError(t, err, out)
+	require.Contains(t, out, "✓ realtime.yaml is valid")
+}

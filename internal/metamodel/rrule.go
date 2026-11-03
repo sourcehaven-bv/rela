@@ -36,8 +36,8 @@ func ValidateRrule(s string) error {
 // schedule from an operator typo.
 var ErrRruleExhausted = errors.New("rrule exhausted")
 
-// NextRrule returns the first occurrence of s strictly after `after`,
-// truncated to UTC midnight.
+// NextRrule returns the first occurrence of s on a later UTC date than
+// `after`, truncated to UTC midnight.
 //
 // It lives here, beside [ValidateRrule], so RRULE mechanics stay in one
 // package: callers get validation and occurrence-stepping with identical
@@ -69,7 +69,9 @@ func NextRrule(s string, after time.Time) (time.Time, error) {
 		return time.Time{}, fmt.Errorf("invalid RRULE: %w", err)
 	}
 
-	next := rule.After(day, false)
+	// The first occurrence on or after the next midnight, so the result is
+	// a later date even when DTSTART carries a time of day.
+	next := rule.After(day.AddDate(0, 0, 1), true)
 	if next.IsZero() {
 		return time.Time{}, fmt.Errorf("%w: %q has no occurrence after %s",
 			ErrRruleExhausted, s, day.Format(time.DateOnly))

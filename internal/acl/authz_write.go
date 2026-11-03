@@ -24,7 +24,7 @@ func (r *Request) authorizeWrite(ctx context.Context, req WriteRequest) Decision
 	case EntitySubject:
 		return r.authorizeEntityWrite(ctx, req.Op, s)
 	case RelationSubject:
-		return r.authorizeRelationWrite(ctx, req.Op, s)
+		return r.authorizeRelationWrite(req.Op, s)
 	default:
 		// Sealed sum (incl. nil Subject): unreachable from any well-formed
 		// caller. Panic so a missing case or a forgotten Subject surfaces
@@ -40,17 +40,16 @@ func (r *Request) authorizeEntityWrite(ctx context.Context, op Op, s EntitySubje
 	if s.id != "" {
 		attrs = r.computeForEntity(ctx, s.id)
 	} else {
-		attrs = r.Globals(ctx).Attributions
+		attrs = r.Globals().Attributions
 	}
 	if s.family {
-		return r.decideFamily(attrs, op, s.typ)
+		return r.decideFamily(attrs, op, s.typ, s.convertTo)
 	}
 	return r.decideFromAttrs(attrs, op, s.typ, s.face, "no role grants %s on type %q")
 }
 
 // decideFamily decides op on every face of an entity of type target from
-// the roles in attrs. Only rename has a family-level grant; any other op is
-// denied, because no grant list could authorize it at this level.
+// the roles in attrs. Rename and conversion have dedicated family grants.
 //
 // The local roles in attrs are conferred through identity-scoped relations
 // only (Policy.validateIdentityStructure refuses a content-scoped conferring
@@ -60,26 +59,51 @@ func (r *Request) authorizeEntityWrite(ctx context.Context, op Op, s EntitySubje
 //
 // The reason names the type and never a face: the decision does not depend
 // on which faces exist, and a denial must not suggest that it did.
-func (r *Request) decideFamily(attrs []RoleAttribution, op Op, target string) Decision {
+func (r *Request) decideFamily(attrs []RoleAttribution, op Op, target, convertTo string) Decision {
 	if deny := r.ceilingDenial(attrs, op, target); deny != nil {
 		return *deny
 	}
-	if op == OpRename {
+	if op == OpConvert {
+		if deny := r.conversionCeilingDenial(attrs, target, convertTo); deny != nil {
+			return *deny
+		}
+	}
+	if op == OpRename || op == OpConvert {
 		for _, a := range attrs {
 			role, ok := r.roleFor(a.Role)
-			if ok && grantsFamilyRename(role, target) {
-				return Decision{Allow: true, RuleKind: "role-grant", RuleID: a.Role, Attributions: attrs}
+			if !ok {
+				continue
+			}
+			switch op {
+			case OpRename:
+				if grantsFamilyRename(role, target) {
+					return Decision{Allow: true, RuleKind: "role-grant", RuleID: a.Role, Attributions: attrs}
+				}
+			case OpConvert:
+				if grantsFamilyConvert(role, target) {
+					return Decision{Allow: true, RuleKind: "role-grant", RuleID: a.Role, Attributions: attrs}
+				}
+			case OpCreate, OpUpdate, OpDelete:
+				continue
 			}
 		}
 	}
 	return Decision{
-		Allow:    false,
-		RuleKind: "role-grant",
-		RuleID:   "-",
-		Reason: fmt.Sprintf("no role grants %s on every face of type %q (a type with faces is renamed "+
-			"through a `rename:` grant)", op, target),
+		Allow:        false,
+		RuleKind:     "role-grant",
+		RuleID:       "-",
+		Reason:       fmt.Sprintf("no role grants %s on every face of type %q", op, target),
 		Attributions: attrs,
 	}
+}
+
+func grantsFamilyConvert(role RoleDef, target string) bool {
+	for _, entry := range role.Convert {
+		if entry == "*" || entry == target {
+			return true
+		}
+	}
+	return false
 }
 
 // grantsFamilyRename reports whether role's `rename:` list covers target.
@@ -94,10 +118,10 @@ func grantsFamilyRename(role RoleDef, target string) bool {
 	return false
 }
 
-func (r *Request) authorizeRelationWrite(ctx context.Context, op Op, s RelationSubject) Decision {
+func (r *Request) authorizeRelationWrite(op Op, s RelationSubject) Decision {
 	// Delegate-X gate for role-relation writes.
 	if rr, ok := r.d.policy.RoleRelations[s.Type]; ok && rr.RequiresPermission != "" {
-		if !r.holdsPermission(ctx, rr.RequiresPermission) {
+		if !r.holdsPermission(rr.RequiresPermission) {
 			return Decision{
 				Allow:    false,
 				RuleKind: "delegate-permission",
@@ -115,7 +139,7 @@ func (r *Request) authorizeRelationWrite(ctx context.Context, op Op, s RelationS
 	// Globals only, never computeForEntity: sourcing this from locally-conferred
 	// roles would let a role conferred ON an entity authorize edges FROM it,
 	// which is the delegate-X inversion in a different dress.
-	attrs := r.Globals(ctx).Attributions
+	attrs := r.Globals().Attributions
 
 	// The ceiling is checked before any grant, exactly as on the entity path —
 	// see ceilingDenial for why roleFor alone is not enough. Note it keys on
@@ -255,9 +279,8 @@ func (r *Request) decideFromAttrs(
 	}
 	for _, a := range attrs {
 		role, ok := r.roleFor(a.Role)
-		// coverage-ignore: defensive: attrs come from computeGlobals/computeForEntity which already skip roles not
-		// defined in policy.Roles, so
-		// ok is always true here
+		// coverage-ignore: defensive: attrs come from Declarative.globalRoles/computeForEntity, which already skip
+		// roles not defined in policy.Roles, so ok is always true here
 		if !ok {
 			continue
 		}
@@ -302,6 +325,36 @@ func (r *Request) ceilingDenial(attrs []RoleAttribution, op Op, target string) *
 		Reason: fmt.Sprintf(
 			"client baseline %q does not permit %s on %q for principal type %q",
 			r.ceiling.name, op, target, r.principal.PrincipalType()),
+		Attributions: attrs,
+	}
+}
+
+// conversionCeilingDenial applies the client ceiling to the destination of a
+// conversion. A conversion creates an entity of type convertTo, so a ceiling
+// that withholds create on that type must also withhold the conversion;
+// otherwise `convert:` would be a way around it. The check uses the ceiling's
+// create axis through [compiledCeiling.permitsVerb], so it adds no new deny
+// primitive. Without an active ceiling it never denies. Under one, a request
+// that does not name its destination is refused, because the ceiling cannot
+// be checked.
+func (r *Request) conversionCeilingDenial(attrs []RoleAttribution, source, convertTo string) *Decision {
+	if !r.ceiling.active {
+		return nil
+	}
+	if convertTo != "" && r.ceiling.permitsVerb(OpCreate, convertTo) {
+		return nil
+	}
+	reason := fmt.Sprintf("client baseline %q does not permit create on %q, the destination of a conversion "+
+		"from %q, for principal type %q", r.ceiling.name, convertTo, source, r.principal.PrincipalType())
+	if convertTo == "" {
+		reason = fmt.Sprintf("client baseline %q applies, and a conversion from %q must name its destination type",
+			r.ceiling.name, source)
+	}
+	return &Decision{
+		Allow:        false,
+		RuleKind:     "client-ceiling",
+		RuleID:       r.ceiling.name,
+		Reason:       reason,
 		Attributions: attrs,
 	}
 }

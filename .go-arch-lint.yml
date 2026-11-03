@@ -10,6 +10,7 @@ exclude:
   - internal/entitymanager/entitymanagertest
   - internal/tracer/tracertest
   - internal/visibility/visibilitytest
+  - internal/acl/acltest
   - internal/state/statetest
   - internal/lock/locktest
   - internal/tokenstore/tokenstoretest
@@ -18,6 +19,8 @@ exclude:
   - internal/userstate/userstatetest
   - internal/comments/commentstest
   - internal/piles/pilestest
+  - internal/lease/leasetest
+  - internal/channels/channelstest
   - internal/schedulerstate/schedulerstatetest
   - frontend
   - e2e
@@ -83,11 +86,35 @@ components:
   attachment:       { in: internal/attachment }
   cmdexec:          { in: internal/cmdexec }
   transform:        { in: internal/transform }
+  check:            { in: internal/check }
   autocascade:      { in: internal/autocascade }
   automation:       { in: internal/automation }
   calfeed:          { in: internal/calfeed }
+  # Numbers store change events and answers "which types changed since this
+  # resume token" (TKT-3A1200). An UNGATED base source like store: it holds no
+  # entity ids, and only consumers that gate per principal may import it.
+  changefeed:       { in: internal/changefeed }
   classification:   { in: internal/classification }
   mailrender:       { in: internal/mailrender }
+  # HTML <-> markdown for sync connectors (TKT-LAMZ8F). A leaf like mailrender.
+  htmlmd:           { in: internal/htmlmd }
+  # Hardened XML decoding (stdlib only) and the feed parser on top of it. Both
+  # are pure leaves: rela.xml / rela.feed in Lua and the feed importer share
+  # them, so every caller decodes untrusted XML under the same limits.
+  safexml:          { in: internal/safexml }
+  feed:             { in: internal/feed }
+  # The find / create / then mapping that turns an inbound record into entity
+  # writes. ingestspec is the leaf of types that config packages embed; ingest
+  # runs it on the write path. Webhooks and feed subscriptions share both.
+  ingestspec:       { in: internal/ingestspec }
+  ingest:           { in: internal/ingest }
+  # Feed subscriptions (TKT-RUO1GY): polls a feed and imports its items
+  # through ingest. The scheduler runs it.
+  subscription:     { in: internal/subscription }
+  # Which entity ids a markdown body mentions (TKT-Q6AKUN). A leaf: every store
+  # backend indexes with it and the data-entry renderer links with it, so the
+  # backlink index and the rendered links agree on what counts as a mention.
+  mentions:         { in: internal/mentions }
   mailtemplate:     { in: internal/mailtemplate }
   caldavalias:      { in: internal/caldavalias }
   conflict:         { in: internal/conflict }
@@ -108,10 +135,19 @@ components:
   templating:       { in: internal/templating }
   predicate:        { in: internal/predicate }
   predicatefns:     { in: internal/predicatefns }
+  # realtime.yaml loader (TKT-EYCIKU) and the built-in realtime caps it and
+  # the channel service share.
+  realtimecfg:      { in: internal/realtimecfg }
+  realtimelimits:   { in: internal/realtimelimits }
+  # Runes that make text show something other than what it holds.
+  texthazard:       { in: internal/texthazard }
+  # The YAML 1.1 boolean spellings a config key refuses unquoted.
+  yamlscalar:       { in: internal/yamlscalar }
   # The pure three-way merge behind Lua rela.sync.merge (TKT-SM20FG): no
   # I/O, reads the metamodel only to type the synced fields.
   syncmerge:        { in: internal/syncmerge }
   relresolve:       { in: internal/relresolve }
+  rollup:           { in: internal/rollup }
   statemachine:     { in: internal/statemachine }
   tracer:           { in: internal/tracer }
   validation:       { in: internal/validation }
@@ -154,6 +190,20 @@ components:
   piles:            { in: internal/piles }
   kvpiles:          { in: internal/piles/kvpiles }
   pgpiles:          { in: internal/piles/pgpiles }
+  filelock:         { in: internal/filelock }
+  lease:            { in: internal/lease }
+  kvlease:          { in: internal/lease/kvlease }
+  pglease:          { in: internal/lease/pglease }
+  # Realtime channels (TKT-DD8B6I): message logs anchored to an entity.
+  channels:         { in: internal/channels }
+  realtime:         { in: internal/realtime }
+  filechannels:     { in: internal/channels/filechannels }
+  sqlchannels:      { in: internal/channels/sqlchannels }
+  sqlitechannels:   { in: internal/channels/sqlitechannels }
+  pgchannels:       { in: internal/channels/pgchannels }
+  # In-memory presence tracker (TKT-MHXH87). A leaf: it reads no clock and
+  # imports nothing of rela; the live hub keys and drives it.
+  presence:         { in: internal/presence }
   schedulerstate:   { in: internal/schedulerstate }
   kvschedstate:     { in: internal/schedulerstate/kvstate }
   pgschedstate:     { in: internal/schedulerstate/pgschedstate }
@@ -188,6 +238,11 @@ components:
 
   # Infrastructure
   acl:              { in: internal/acl }
+  # The data-entry access service (TKT-WFS778): ACL mode decisions and the
+  # per-request lifecycle today; the read gate, gated reader, write
+  # authorization and affordance verdicts move here in later steps.
+  access:           { in: internal/access }
+  aclstore:         { in: internal/aclstore }
   aclaudit:         { in: internal/aclaudit }
   aclmap:           { in: internal/aclmap }
   affordances:      { in: internal/affordances }
@@ -266,10 +321,14 @@ vendors:
   # quoted-printable, multipart — which is the part that is easy to get subtly
   # wrong. Granted only to mail.
   gomail:      { in: github.com/wneessen/go-mail }
-  # HTML sanitize + CSS inline for mail bodies. Both granted only to
-  # mailrender; the ORDER they run in is a security property documented on that
-  # package (sanitize the untrusted fragment, inline last).
+  # HTML sanitize + CSS inline for mail bodies, granted to mailrender; the
+  # ORDER they run in is a security property documented on that package
+  # (sanitize the untrusted fragment, inline last). htmlmd also sanitizes with
+  # bluemonday, in both conversion directions.
   bluemonday:  { in: github.com/microcosm-cc/bluemonday }
+  htmltomarkdown:
+    in:
+      - github.com/JohannesKaufmann/html-to-markdown/v2/**
   douceur:
     in:
       - github.com/aymerick/douceur
@@ -305,6 +364,10 @@ vendors:
   singleflight: { in: golang.org/x/sync/singleflight }
   semaphore:   { in: golang.org/x/sync/semaphore }
   ximage:      { in: [golang.org/x/image, golang.org/x/image/**] }
+  # BCP 47 parsing for `app.language` in data-entry.yaml (TKT-ZL1QAO).
+  xlanguage:   { in: golang.org/x/text/language }
+  # NFC check of a login mention (TKT-6RXAC0).
+  xnorm:       { in: golang.org/x/text/unicode/norm }
   http2:
     in:
       - golang.org/x/net/http2
@@ -435,6 +498,7 @@ deps:
   cli:
     mayDependOn:
       - acl
+      - aclstore
       - aclaudit
       - aclmap
       # `rela acl audit` evaluates field visibility per role for the
@@ -462,6 +526,9 @@ deps:
       - entitymanager
       - filter
       - importer
+      # `rela lease` (TKT-B610IP) speaks its request, lease and error types;
+      # the access checks stay in lease.Service.
+      - lease
       - lua
       - markdown
       - mcp
@@ -480,6 +547,10 @@ deps:
       - project
       - projectsetup
       - queryplan
+      # `rela channel` (TKT-76G6M7) speaks the channel service's views and
+      # errors; the access checks stay in realtime.Service.
+      - realtime
+      - rollup
       - renametype
       - scheduler
       - schema
@@ -500,6 +571,8 @@ deps:
       - tokenstore
       - tracer
       - transform
+      # `rela analyze prose` runs the prose checkers.
+      - check
       - validator
       # The CLI address helper resolves `ID@face` through the allow-all
       # visibility.Resolver: the operator shell reads everything, but a
@@ -525,12 +598,15 @@ deps:
       - dataentryconfig
   dataentry:
     mayDependOn:
+      - mentions
+      - rollup
       - rootfs
       # The next-action engine and its per-user state. dataentry supplies the
       # ACL-gated CandidateFunc; it does NOT choose a userstate backend —
       # that is a wiring-site decision, like the store backend.
       - nextaction
       - userstate
+      - access
       - acl
       - affordances
       - apiwire
@@ -538,6 +614,7 @@ deps:
       - audit
       - calfeed
       - caldavalias
+      - changefeed
       - canonical
       # The commentary layer (TKT-FIO205). dataentry owns the HTTP surface and
       # the ACL gating; it does NOT choose a comment backend — like userstate
@@ -547,11 +624,23 @@ deps:
       # The piles service (TKT-K3RJLH). Like comments, only the domain
       # package: the backend (kvpiles/pgpiles) is the wiring site's choice.
       - piles
+      # Leases (TKT-4YPG4Q): the routes speak lease's request, lease and
+      # error types. The backend (kvlease/pglease) is the wiring site's choice.
+      - lease
+      # Presence over live views (TKT-MHXH87): the live hub owns a tracker.
+      - presence
+      # Channels (TKT-ZU7P13): the routes speak the channel service's views
+      # and errors, and the live hub reads its channel keys. The store
+      # backend is the wiring site's choice.
+      - realtime
+      - channels
+      - realtimelimits
       - cmdexec
       - config
       - conflict
       - dataentryconfig
       - entitymanager
+      - ingest
       - filter
       - principal
       - git
@@ -616,9 +705,12 @@ deps:
       - filter
       - git
       - icondefs
+      - ingestspec
       - metamodel
+      - yamlscalar
     canUse:
       - rrulego
+      - xlanguage
   # conditionlint reuses the predicate parser to sanity-check wizard-form
   # condition expressions at author time. It sits above dataentryconfig so the
   # config package stays free of the predicate dependency.
@@ -654,6 +746,9 @@ deps:
   mcp:
     mayDependOn:
       - rootfs
+      # affordances: convert_entity names a field-gate refusal
+      # (FieldWriteError) the way the conversion endpoint does.
+      - affordances
       # acl + attachment: the attachment tools (TKT-R6U15C) authorize an
       # `update` before any bytes are stored, and drive attachment.Service,
       # the write policy the CLI and web upload paths share.
@@ -668,11 +763,19 @@ deps:
       - dataentryconfig
       - entitymanager
       - filter
+      # lease: the lease tools (TKT-27XVYS) speak its request, lease and
+      # error types; the access checks stay in lease.Service.
+      - lease
       - principal
       - lua
       - metamodel
       - predicate
       - predicatefns
+      # realtime + realtimecfg: the channel tools (TKT-76G6M7) speak the
+      # channel service's request, view and error types, and the props
+      # schema its views carry. They never touch the channel store.
+      - realtime
+      - realtimecfg
       - relresolve
       - schema
       - script
@@ -690,6 +793,11 @@ deps:
   openapi:
     mayDependOn:
       - metamodel
+      # The channel paths (TKT-ZU7P13) describe the loaded realtime.yaml,
+      # which the server hands over as a loader of the compiled config.
+      - realtimecfg
+      # The release window the channel paths quote.
+      - realtimelimits
 
   # Application services
   app:
@@ -706,7 +814,14 @@ deps:
   # any tag, so both backends' deps must be allow-listed here.
   appbuild:
     mayDependOn:
+      # aclstore: the store adapters handed to acl.NewDeclarative.
+      - aclstore
+      - rollup
       - rootfs
+      # Loads realtime.yaml at boot and holds the compiled config.
+      - realtimecfg
+      # Builds the channel service over the channel store.
+      - realtime
       # hostconfig.Dir: the default source of secrets and AI/mail settings.
       - hostconfig
       # The sqlite recipe OPENS the database and hands the same handle to both
@@ -751,6 +866,19 @@ deps:
       - piles
       - kvpiles
       - pgpiles
+      # Advisory leases: the root picks the backend the same way as piles
+      # and builds the service over the gated reader (TKT-EIC19E).
+      - lease
+      - kvlease
+      - pglease
+      # Realtime channels: the sqlite recipe supplies its backend, postgres
+      # finds the pool through the store, and the rest use the file backend.
+      - channels
+      - filechannels
+      - pgchannels
+      - sqlitechannels
+      # The cross-process lock for kvpiles and kvlease over the on-disk cache KV.
+      - filelock
       - datamigration
       # The migration-state backends, selected here for the same reason as the
       # comment backends: the recipe owns the handle each one needs, and the
@@ -787,6 +915,9 @@ deps:
       - dataentryconfig
       - nextaction
       - acl
+      # The channel service's access adapter asks access.ModeOf whether the
+      # instance refuses writes. access is a leaf (acl, principal).
+      - access
       # appbuild constructs the affordance resolver so the field write gate
       # and the two gated-read bundles can share ONE instance (TKT-0XL8MF).
       # Safe as a dependency edge: affordances is a near-leaf (acl, entity,
@@ -868,6 +999,10 @@ deps:
       # comments: only for WithComments, the optional collaborator a
       # commenting-enabled test supplies (BUG-6OZBP9).
       - comments
+      # channels + realtime: only for WithChannels, the channel store and
+      # realtime config a channel test supplies (TKT-ZU7P13).
+      - channels
+      - realtime
       - config
       - entity
       - entitymanager
@@ -896,8 +1031,12 @@ deps:
       - metamodel
       - migration
       - project
+      - rollup
       - scheduler
       - storage
+      - subscription
+      # The scheduler's loader reads through a config.Loader.
+      - config
       # `rela validate` checks connections.yaml (TKT-01KZSO).
       - tokenstore
       # `rela validate` must check the pointer grammar too. The loader
@@ -937,6 +1076,13 @@ deps:
     mayDependOn:
       - cmdexec
       - metamodel
+  # check: prose-check engine over the `checkers:` registry. Like transform it
+  # depends only on the safe-exec core and the schema. mcp must not import it:
+  # mcp reaches it through a consumer-side interface wired in cli.
+  check:
+    mayDependOn:
+      - cmdexec
+      - metamodel
   # Pure-Go, in-process image normalize (decode/orient/re-encode). A leaf: no
   # domain imports, only the image codecs and a concurrency semaphore.
   imgproc:
@@ -959,6 +1105,40 @@ deps:
       - goldmark
       - bluemonday
       - douceur
+  feed:
+    mayDependOn:
+      - safexml
+  subscription:
+    mayDependOn:
+      - entitymanager
+      - feed
+      - htmlmd
+      - ingest
+      - ingestspec
+      - metamodel
+      - safexml
+      - secrets
+      - state
+  # Mapping.Validate checks types and properties against the schema.
+  ingestspec:
+    mayDependOn:
+      - metamodel
+  ingest:
+    mayDependOn:
+      - entity
+      - entitymanager
+      - ingestspec
+      - markdown
+      - store
+  htmlmd:
+    canUse:
+      - goldmark
+      - bluemonday
+      - htmltomarkdown
+      - nethtml
+  mentions:
+    canUse:
+      - goldmark
   # Project declarations assemble renderer models from an injected visible
   # reader. SMTP and app wiring remain outside this package.
   mailtemplate:
@@ -1007,6 +1187,17 @@ deps:
       - entity
       - principal
       - store
+  access:
+    mayDependOn:
+      - acl
+      - principal
+  # Store-backed implementations of acl.Graph and acl.PrincipalLookup. It
+  # does not import acl: the interfaces are acl's, the store dependency is
+  # this package's, so acl itself names no concrete store.
+  aclstore:
+    mayDependOn:
+      - entity
+      - store
   aclaudit:
     mayDependOn:
       - acl
@@ -1026,6 +1217,14 @@ deps:
       - predicatefns
       - principal
       - statemachine
+      # SearchFieldScope compiles `visible:` grants into store predicates:
+      # queryplan decides exact lowering, relresolve resolves related() hops,
+      # and the result is a search.FieldScope (search never imports
+      # affordances, so there is no cycle).
+      - queryplan
+      - relresolve
+      - search
+      - store
   # Read-side ACL enforcement seam (DEC-ZBI39P): visibility wrappers over
   # the ungated pure readers. tracer is needed for the decorator's
   # interface/result types; store for the script reader's query types
@@ -1039,6 +1238,8 @@ deps:
       - affordances
       - entity
       - principal
+      # visibility.Rollups computes roll-up columns under the reader's gate.
+      - rollup
       # visibility.Searcher gates search hits for identity-bearing consumers
       # (remote MCP, Lua), the pattern search.VisibleSearcher started.
       - search
@@ -1078,6 +1279,7 @@ deps:
   docs:
     mayDependOn:
       - acl
+      - aclstore
       - entity
       - lua
       # worlds: shows{world=...} compiles a declared world NAME to the
@@ -1109,6 +1311,13 @@ deps:
     mayDependOn:
       - appbuild
       - dataentry
+      # entitymanager: builds the Converter the remote MCP conversion
+      # tools run over the field-gated manager.
+      - entitymanager
+      # The remote MCP server mounted on the data-entry router.
+      - mcp
+      - mcpwire
+      - principal
   # MCP tool groups over appbuild services, shared by the stdio and remote
   # servers. Separate from appbuild because mcp's tests import appbuild.
   mcpwire:
@@ -1169,7 +1378,9 @@ deps:
       - store
     canUse:
       # The lua: migration step runs a sandboxed pure transform on a bare
-      # gopher-lua state (no rela.* bindings) — see luastep.go.
+      # gopher-lua state. Its only rela.* bindings are two raw store reads
+      # (get_entity, get_relations); no internal/lua runtime — see
+      # luastep.go and luareads.go.
       - gopherlua
   # Migration-state backends (TKT-XCJ0Y2). Same shape as the comments
   # backends: one implementation per storage tier, each selected by the
@@ -1253,6 +1464,24 @@ deps:
       - predicate
       - filter
       - metamodel
+  # realtime.yaml consumes the schema and acl.yaml; neither knows it exists.
+  # GUARD: metamodel and acl must never list realtimecfg.
+  realtimecfg:
+    mayDependOn:
+      - acl
+      - metamodel
+      - predicate
+      - predicatefns
+      # principal.ValidJobIdentity: session.run_as follows the --run-as rules.
+      - principal
+      - realtimelimits
+      # The prop rules of a post (TKT-S9TLJJ): the load checks a button's
+      # preset with the same code the channel service runs on a post.
+      - texthazard
+      # The YAML 1.1 boolean check on a decision button's confirm text.
+      - yamlscalar
+    canUse:
+      - xnorm
   syncmerge:
     mayDependOn:
       - metamodel
@@ -1261,6 +1490,14 @@ deps:
   relresolve:
     mayDependOn:
       - acl
+      - metamodel
+      - predicate
+      - predicatefns
+      - store
+  # Compiles schema `rollup:` properties (TKT-6I2OPG). The gated computation
+  # is visibility's; the aggregate is the store's.
+  rollup:
+    mayDependOn:
       - metamodel
       - predicate
       - predicatefns
@@ -1298,6 +1535,8 @@ deps:
       - validationgraph
 
   # Core domain
+  # GUARD: never realtimecfg. realtime.yaml refers to the schema, never the
+  # reverse (TKT-EYCIKU).
   metamodel:
     mayDependOn:
       - migration
@@ -1392,21 +1631,102 @@ deps:
       - entity
       - principal
   # The single-process backend: one JSON document in the node-local state KV.
+  # The cross-process lock is a filelock.Locker the wiring site supplies.
   kvpiles:
     mayDependOn:
       - entity
       - piles
       - state
-    canUse:
-      # x/sys for flock/LockFileEx: the lock file that keeps several
-      # processes over one cache directory from losing each other's writes.
-      - xsys
   # The postgres backend takes the store's pool as an injected handle, like
   # pgcomments, so it has no reason to know a store exists.
   pgpiles:
     mayDependOn:
       - entity
       - piles
+    canUse:
+      - pgx
+  # The cross-process lock file shared by the cache-directory KV backends
+  # (kvpiles, kvlease). x/sys for flock/LockFileEx.
+  filelock:
+    canUse:
+      - xsys
+  # Advisory entity leases (TKT-6QC5EL). The domain package holds value
+  # types, errors, the Store contract and the Service (TKT-EIC19E), which
+  # checks access through consumer-side interfaces: entity for refs, acl for
+  # the write request, principal for the holder, store for ErrNotFound. It
+  # does not import visibility; the wiring site adapts the gated reader.
+  # The single-process backend keeps one document in the node-local state KV.
+  lease:
+    mayDependOn:
+      - acl
+      - entity
+      - principal
+      - store
+  kvlease:
+    mayDependOn:
+      - lease
+      - state
+  # The postgres backend takes the store's pool as an injected handle, like
+  # pgpiles.
+  pglease:
+    mayDependOn:
+      - lease
+    canUse:
+      - pgx
+  # Realtime channels (TKT-DD8B6I). The domain package holds value types,
+  # validation and the Store contract; entity is for faces and refs. No
+  # channels package depends on store: a channel is not graph content, and
+  # the backends take an injected handle from the composition root, like
+  # the comment backends.
+  channels:
+    mayDependOn:
+      - entity
+      # A leaf: the reply rule refuses rela's own identities and unknown.
+      - principal
+  # The channel service (TKT-ZU7P13): authorization, validation, rate limits
+  # and ephemeral signals over the channel store. Every gate comes in through
+  # a consumer-side interface appbuild implements, so it lists neither acl,
+  # store nor visibility. The trigger engine (TKT-R0Z2G4) posts through the
+  # channel store alone: this list keeps lua, automation and entitymanager
+  # out of its reach, so a trigger can never run a script or write the graph.
+  realtime:
+    mayDependOn:
+      - channels
+      - entity
+      # The one code-span parser, shared with the entity mention index.
+      - mentions
+      - metamodel
+      - predicate
+      - predicatefns
+      - principal
+      - realtimecfg
+      - realtimelimits
+      - texthazard
+    canUse:
+      - xnorm
+  # The file backend: one directory per channel through the storage seam,
+  # with a YAML head and JSON-lines log segments.
+  filechannels:
+    mayDependOn:
+      - channels
+      - entity
+      - storage
+    canUse:
+      - yaml
+  # The SQL implementation shared by both database backends, over a narrow
+  # querier interface so it imports no driver.
+  sqlchannels:
+    mayDependOn:
+      - channels
+      - entity
+  # The adapters supply the handle and the dialect. sqlitechannels imports no
+  # driver either: the sqlite recipe hands it the open *sql.DB.
+  sqlitechannels:
+    mayDependOn:
+      - sqlchannels
+  pgchannels:
+    mayDependOn:
+      - sqlchannels
     canUse:
       - pgx
   memcomments:
@@ -1492,6 +1812,11 @@ deps:
       # deps at all, and `go list -deps` confirms it imports nothing internal),
       # so this arrow cannot close a cycle. lua still must not depend on mail.
       - mailrender
+      # rela.md.from_html / to_html (TKT-LAMZ8F); a leaf, no cycle possible.
+      - htmlmd
+      # rela.xml / rela.feed (TKT-6KN0AC); pure leaves, no cycle possible.
+      - safexml
+      - feed
       - metamodel
       - principal
       - search
@@ -1521,6 +1846,11 @@ deps:
       - audit
       - jobs
       - config
+      # Subscription tasks: the poll, its ingest deps and the raw store
+      # for ingest's write-prep re-read.
+      - ingest
+      - store
+      - subscription
       - lua
       - metamodel
       - filter
@@ -1576,8 +1906,12 @@ deps:
   store:
     mayDependOn:
       - metamodel
+  changefeed:
+    mayDependOn:
+      - store
   fsstore:
     mayDependOn:
+      - mentions
       - cache
       - frontmatter
       - graphquerynaive
@@ -1585,8 +1919,12 @@ deps:
       - storage
       - store
       - storeutil
+    canUse:
+      # One read per file version when concurrent lists hash an attachment.
+      - singleflight
   memstore:
     mayDependOn:
+      - mentions
       - graphquerynaive
       - store
       - storeutil
@@ -1597,6 +1935,7 @@ deps:
       - store
   pgstore:
     mayDependOn:
+      - mentions
       # The postgres build carries its own next-action state backend: it is the
       # only one safe for a multi-process deployment, and it rides the pool
       # this package already owns rather than opening a second one.
@@ -1611,6 +1950,7 @@ deps:
       - pgx
   sqlitestore:
     mayDependOn:
+      - mentions
       # Still narrower than pgstore: no userstate. This backend keeps the
       # filesystem KV on purpose (TKT-L1A3PH), and each further entry should
       # have to justify widening this list.

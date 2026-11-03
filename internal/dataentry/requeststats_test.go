@@ -17,6 +17,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/Sourcehaven-BV/rela/internal/store"
+	"github.com/Sourcehaven-BV/rela/internal/testutil/logtest"
 )
 
 // withLogLevel installs a default slog logger at the given level writing to
@@ -24,9 +25,7 @@ import (
 func withLogLevel(t *testing.T, level slog.Level) *bytes.Buffer {
 	t.Helper()
 	var buf bytes.Buffer
-	prev := slog.Default()
-	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: level})))
-	t.Cleanup(func() { slog.SetDefault(prev) })
+	logtest.SetDefault(t, slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: level}))
 	return &buf
 }
 
@@ -51,7 +50,7 @@ func countingHandler(t *testing.T, wantStats bool) http.Handler {
 
 func TestRequestStats_DebugEmitsHeaderAndLog(t *testing.T) {
 	buf := withLogLevel(t, slog.LevelDebug)
-	h := requestStats(countingHandler(t, true), nil, ticketsWords)
+	h := requestStats(countingHandler(t, true), nil, ticketsWords, 0)
 
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/tickets?page=2", http.NoBody))
@@ -72,7 +71,7 @@ func TestRequestStats_DebugEmitsHeaderAndLog(t *testing.T) {
 
 func TestRequestStats_InfoIsPassThrough(t *testing.T) {
 	buf := withLogLevel(t, slog.LevelInfo)
-	h := requestStats(countingHandler(t, false), nil, nil)
+	h := requestStats(countingHandler(t, false), nil, nil, 0)
 
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/tickets", http.NoBody))
@@ -97,7 +96,7 @@ func accessLogger() (*slog.Logger, *bytes.Buffer) {
 func TestRequestStats_AccessLogAtInfoWithoutHeader(t *testing.T) {
 	appLog := withLogLevel(t, slog.LevelInfo)
 	logger, buf := accessLogger()
-	h := requestStats(countingHandler(t, true), logger, ticketsWords)
+	h := requestStats(countingHandler(t, true), logger, ticketsWords, 0)
 
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/tickets?token=secret", http.NoBody))
@@ -124,7 +123,7 @@ func TestRequestStats_AccessLogAtInfoWithoutHeader(t *testing.T) {
 func TestRequestStats_AccessLogIgnoresQuiet(t *testing.T) {
 	withLogLevel(t, slog.LevelWarn)
 	logger, buf := accessLogger()
-	h := requestStats(countingHandler(t, true), logger, nil)
+	h := requestStats(countingHandler(t, true), logger, nil, 0)
 
 	h.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/api/v1/tickets", http.NoBody))
 
@@ -139,7 +138,7 @@ func TestRequestStats_AccessLogIgnoresQuiet(t *testing.T) {
 func TestRequestStats_AccessLogUnderDebugLogsToBoth(t *testing.T) {
 	appLog := withLogLevel(t, slog.LevelDebug)
 	logger, buf := accessLogger()
-	h := requestStats(countingHandler(t, true), logger, nil)
+	h := requestStats(countingHandler(t, true), logger, nil, 0)
 
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/tickets", http.NoBody))
@@ -176,7 +175,7 @@ func TestRequestStats_AccessLogRecordsPanic(t *testing.T) {
 					w.WriteHeader(tc.write)
 				}
 				panic("boom")
-			}), logger, nil)
+			}), logger, nil, 0)
 
 			func() {
 				defer func() {
@@ -204,7 +203,7 @@ func TestRequestStats_AccessLogRecordsPanic(t *testing.T) {
 func TestRequestStats_AccessLogTruncatesLongPath(t *testing.T) {
 	withLogLevel(t, slog.LevelInfo)
 	logger, buf := accessLogger()
-	h := requestStats(countingHandler(t, true), logger, nil)
+	h := requestStats(countingHandler(t, true), logger, nil, 0)
 
 	long := "/api/v1/" + strings.Repeat("a/", maxLoggedPath)
 	h.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, long, http.NoBody))
@@ -236,7 +235,7 @@ func TestTruncateUTF8_KeepsRunesWhole(t *testing.T) {
 func TestRequestStats_AccessLogCapsMethod(t *testing.T) {
 	withLogLevel(t, slog.LevelInfo)
 	logger, buf := accessLogger()
-	h := requestStats(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}), logger, nil)
+	h := requestStats(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}), logger, nil, 0)
 
 	r := httptest.NewRequest(http.MethodGet, "/api/v1/tickets", http.NoBody)
 	r.Method = strings.Repeat("X", maxLoggedMethod+1)
@@ -254,7 +253,7 @@ func TestRequestStats_InformationalStatusIsNotFinal(t *testing.T) {
 	h := requestStats(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusEarlyHints)
 		w.WriteHeader(http.StatusAccepted)
-	}), logger, nil)
+	}), logger, nil, 0)
 
 	h.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/api/v1/tickets", http.NoBody))
 
@@ -270,7 +269,7 @@ func TestRequestStats_AccessLogSSE(t *testing.T) {
 	logger, buf := accessLogger()
 	h := requestStats(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.(http.Flusher).Flush()
-	}), logger, nil)
+	}), logger, nil, 0)
 
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/_events", http.NoBody))
@@ -294,7 +293,7 @@ func TestRequestStats_SSEGetsNoHeaderButFlushes(t *testing.T) {
 		_, _ = w.Write([]byte("data: x\n\n"))
 		f.Flush()
 		flushed = true
-	}), nil, nil)
+	}), nil, nil, 0)
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/_events", http.NoBody))
 	if !flushed {
@@ -313,7 +312,7 @@ func TestRequestStats_ImplicitWriteHeaderStillStamps(t *testing.T) {
 	h := requestStats(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		store.QueryStatsFrom(r.Context()).Record(time.Millisecond)
 		_, _ = w.Write([]byte("body without explicit WriteHeader"))
-	}), nil, nil)
+	}), nil, nil, 0)
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/_schema", http.NoBody))
 	if got, want := rec.Header().Get("Server-Timing"), `db;dur=1.0;desc="1 queries"`; got != want {
@@ -502,5 +501,155 @@ func TestRouteWordCache_FollowsSnapshot(t *testing.T) {
 	current = &Schema{Meta: meta, Cfg: &Config{Views: map[string]ViewConfig{"ticket_detail": {}}}}
 	if w := c.words(); !w["ticket_detail"] {
 		t.Errorf("new snapshot not picked up: %v", w)
+	}
+}
+
+// The query shape names the list, include and world of a request and masks
+// everything that is data (BUG-E2W1LS).
+func TestQueryShape(t *testing.T) {
+	words := routeWords{"all_taken": true, "actueel": true, "status": true, "bestaat_uit": true, "titel": true}
+	cases := []struct{ name, raw, want string }{
+		{"list variant", "per_page=100&include=%2A&list_id=all_taken&page=1&world=actueel",
+			"include=*&list_id=all_taken&page=1&per_page=100&world=actueel"},
+		{"search text masked", "q=ziekmelding+jan", "q=*"},
+		{"search text masked even when a word", "q=status", "q=*"},
+		{"filter value masked", "filter%5Bstatus%5D%5Bne%5D=gereed", "filter[status][ne]=*"},
+		{"unknown filter property", "filter%5Bsecret%5D=x", "filter[*][eq]=*"},
+		{"unknown key and token", "token=abc123&access_token=s3cr3t", "*=*&*=*"},
+		{"entity id value", "relation=TASK-1", "relation=*"},
+		{"nested include and sort", "include=bestaat_uit.titel&sort=-titel", "include=bestaat_uit.titel&sort=-titel"},
+		{"bare key", "include_content", "include_content"},
+		{"number under an unknown key", "pin=4821&phone=0612345678", "*=*&*=*"},
+		{"number under a non-paging key", "relation=42", "relation=*"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := queryShape(tc.raw, words, maxLoggedPath); got != tc.want {
+				t.Errorf("queryShape(%q) = %q, want %q", tc.raw, got, tc.want)
+			}
+		})
+	}
+}
+
+// A request past the ceiling is logged at Warn with the statement it
+// repeated most, even at Info and without an access log; one at the ceiling,
+// and an event stream past it, are not (BUG-E2W1LS).
+func TestRequestStats_QueryCeiling(t *testing.T) {
+	repeat := func(n int, contentType string) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			stats := store.QueryStatsFrom(r.Context())
+			if stats == nil {
+				t.Fatal("a ceiling must attach stats")
+			}
+			for range n {
+				stats.RecordStatement("SELECT 1\n  FROM relations WHERE id = $1", time.Microsecond)
+			}
+			stats.RecordStatement("SELECT 2", time.Microsecond)
+			if contentType != "" {
+				w.Header().Set("Content-Type", contentType)
+			}
+			w.WriteHeader(http.StatusOK)
+		})
+	}
+	cases := []struct {
+		name        string
+		repeats     int
+		path        string
+		contentType string
+		wantWarn    bool
+	}{
+		{"past the ceiling", 10, "/api/v1/tickets?include=*", "", true},
+		{"at the ceiling", 9, "/api/v1/tickets", "", false},
+		{"event stream", 50, "/api/v1/_events", "", false},
+		{"command stream", 50, "/api/v1/_commands/x", "text/event-stream", false},
+	}
+	t.Run("a write is exempt", func(t *testing.T) {
+		buf := withLogLevel(t, slog.LevelInfo)
+		h := requestStats(repeat(50, ""), nil, ticketsWords, 10)
+		h.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodPost, "/api/v1/tickets", http.NoBody))
+		if strings.Contains(buf.String(), queryCeilingMsg) {
+			t.Errorf("a POST was held to the read ceiling:\n%s", buf)
+		}
+	})
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			buf := withLogLevel(t, slog.LevelInfo)
+			h := requestStats(repeat(tc.repeats, tc.contentType), nil, ticketsWords, 10)
+			h.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, tc.path, http.NoBody))
+			out := buf.String()
+			if got := strings.Contains(out, queryCeilingMsg); got != tc.wantWarn {
+				t.Fatalf("warned = %v, want %v; log:\n%s", got, tc.wantWarn, out)
+			}
+			if !tc.wantWarn {
+				return
+			}
+			for _, want := range []string{
+				"level=WARN", "queries=11", "ceiling=10", `query="include=*"`,
+				`top_statement="SELECT 1 FROM relations WHERE id = $1"`, "top_statement_count=10",
+			} {
+				if !strings.Contains(out, want) {
+					t.Errorf("log lacks %s:\n%s", want, out)
+				}
+			}
+		})
+	}
+}
+
+// A request whose client went away before the handler returned is logged as
+// 499 canceled=true, whatever the handler wrote, with the written status
+// kept beside it (TKT-T2I7P2). An event stream ends that way every time and
+// is not marked. A panic stays 500.
+func TestRequestStats_AccessLogCanceled(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		path    string
+		write   int
+		panics  bool
+		want    []string
+		notWant []string
+	}{
+		{"nothing written", "/api/v1/_search", 0, false,
+			[]string{"status=499", "canceled=true"}, []string{"written_status"}},
+		{"500 written to a dead client", "/api/v1/_search", http.StatusInternalServerError, false,
+			[]string{"status=499", "canceled=true", "written_status=500"}, nil},
+		{"200 written to a dead client", "/api/v1/_search", http.StatusOK, false,
+			[]string{"status=499", "canceled=true", "written_status=200"}, nil},
+		{"event stream", "/api/v1/_events", http.StatusOK, false,
+			[]string{"status=200"}, []string{"canceled", "status=499"}},
+		{"panic", "/api/v1/_search", 0, true,
+			[]string{"status=500", "panic=true"}, []string{"status=499", "canceled"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			withLogLevel(t, slog.LevelInfo)
+			logger, buf := accessLogger()
+			ctx, cancel := context.WithCancel(context.Background())
+			h := requestStats(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				cancel()
+				if tc.write != 0 {
+					w.WriteHeader(tc.write)
+				}
+				if tc.panics {
+					panic("boom")
+				}
+			}), logger, nil, 0)
+
+			func() {
+				defer func() { _ = recover() }()
+				h.ServeHTTP(httptest.NewRecorder(),
+					httptest.NewRequest(http.MethodGet, tc.path, http.NoBody).WithContext(ctx))
+			}()
+
+			out := buf.String()
+			for _, want := range tc.want {
+				if !strings.Contains(out, want) {
+					t.Errorf("record missing %q in %q", want, out)
+				}
+			}
+			for _, not := range tc.notWant {
+				if strings.Contains(out, not) {
+					t.Errorf("record must not contain %q: %q", not, out)
+				}
+			}
+		})
 	}
 }

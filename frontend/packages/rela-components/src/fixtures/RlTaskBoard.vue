@@ -9,7 +9,7 @@
 import type { Section, Task } from '../types'
 import RlBoard from '../components/board/RlBoard.vue'
 import RlTaskCard from '../components/board/RlTaskCard.vue'
-import type { BoardDropPosition } from '../composables/useBoardDnd'
+import type { BoardDropPosition, BoardSectionDropPosition } from '../composables/useBoardDnd'
 
 withDefaults(
   defineProps<{
@@ -22,10 +22,14 @@ withDefaults(
     emptyDescription?: string
     reorder?: boolean
     collapsible?: boolean
+    group?: boolean
+    sectionsMovable?: (section: Section<Task>) => boolean
   }>(),
   {
     reorder: false,
     collapsible: false,
+    group: false,
+    sectionsMovable: undefined,
     showAddSection: true,
     showAdd: true,
     canMove: undefined,
@@ -41,6 +45,7 @@ const emit = defineEmits<{
   collapseSection: [section: Section<Task>]
   addSection: []
   move: [payload: { item: Task; to: Section<Task>; at?: BoardDropPosition }]
+  moveSection: [move: BoardSectionDropPosition]
 }>()
 </script>
 
@@ -55,6 +60,8 @@ const emit = defineEmits<{
     :empty-description="emptyDescription"
     :reorder="reorder"
     :collapsible="collapsible"
+    :group="group"
+    :sections-movable="sectionsMovable"
     add-label="Add task"
     @add="emit('add', $event)"
     @select="emit('select', $event)"
@@ -62,6 +69,7 @@ const emit = defineEmits<{
     @collapse-section="emit('collapseSection', $event)"
     @add-section="emit('addSection')"
     @move="emit('move', $event)"
+    @move-section="emit('moveSection', $event)"
   >
     <template #card="{ item, selected }">
       <RlTaskCard :task="item" :selected="selected" @click="emit('select', item)" />

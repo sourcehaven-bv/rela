@@ -1,0 +1,15 @@
+request: GET /api/v1/tickets/TKT-1/relations/implements/POL-1
+identity: header admin@example.test
+status: 200
+header ETag: 3b23f561915a7578e7aaf3feb8a9c1acff21d6e102e82da0945345923816d32d
+reads: GetRelation=1 GraphQueryHeaders=1 ListEntities=1 ListEntityHeaders=2 ListRelations=1
+breadth: ListEntities=1/1 ListEntityHeaders=2/2 ListRelations=0/1
+bodies: GraphQuery=0/1 ListEntities=1/1 ListEntityHeaders=0/2
+versions: 
+body:
+{
+  "from": "TKT-1",
+  "type": "implements",
+  "to": "POL-1",
+  "_redacted": []
+}

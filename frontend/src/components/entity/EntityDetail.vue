@@ -1,14 +1,18 @@
 <script setup lang="ts">
-import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue'
+import { ref, shallowRef, computed, watch, onMounted, onBeforeUnmount } from 'vue'
+import { I18nT, useI18n } from 'vue-i18n'
 import { RouterLink, useRoute, useRouter, type RouteLocationRaw } from 'vue-router'
 import RlButton from 'rela-components/components/common/RlButton.vue'
 import RlIconButton from 'rela-components/components/common/RlIconButton.vue'
 import RlKbd from 'rela-components/components/data/RlKbd.vue'
 import { useSchemaStore, useUIStore } from '@/stores'
 import { useScopeNavigation } from '@/composables'
+import { useEvents, type EntityEventData } from '@/composables/useEvents'
 import { useBackTarget } from '@/composables/useBackTarget'
 import { isCancelledFetch } from '@/composables/usePageData'
 import { fetchView, getCommands, getErrorMessage } from '@/api'
+import { liveViewPath } from '@/api/live'
+import { useLiveSubscription } from '@/composables/useLiveSubscription'
 import { runAction } from '@/api/actions'
 import { useActionFeedback } from '@/composables/useActionFeedback'
 import { useWorld, worldQuery, DEFAULT_WORLD } from '@/composables/useWorld'
@@ -17,7 +21,8 @@ import { worldText, type WorldTextVars } from '@/utils/worldText'
 import type { ViewEntity, ViewResponse, ViewSection, ViewSectionField, ViewTreeNode } from '@/api'
 import type { Entity } from '@/types'
 import { entityDisplayTitle } from '@/utils/entityDisplay'
-import { useAutoSave } from '@/composables/useAutoSave'
+import { useAutoSave, type AutoSaveTarget } from '@/composables/useAutoSave'
+import { useEntitySession } from '@/composables/useEntitySession'
 import { toggleCheckboxInSource } from '@/utils/checkboxToggle'
 import type { ActionConfig, Command } from '@/types'
 import { getEditFormId } from '@/types'
@@ -43,11 +48,14 @@ import type { PropertyItem } from '@/components/common/PropertyDisplay.vue'
 import { ChevronRight } from 'lucide-vue-next'
 import { defaultRegistry } from '@/widgets/registry'
 import { isDenseEmpty, viewFieldRoutingHint } from '@/widgets/viewRouting'
+import { formatDisplayNumber } from '@/utils/format'
 import type { WidgetRoutingHint } from '@/widgets/types'
 import type { PropertyDef } from '@/types'
 import type { Component } from 'vue'
 import DocumentsPanel from '@/components/entity/DocumentsPanel.vue'
 import CommentsPanel from '@/components/entity/CommentsPanel.vue'
+import ChannelsPanel from '@/components/entity/ChannelsPanel.vue'
+import MentionedByPanel from '@/components/entity/MentionedByPanel.vue'
 import CommentIndicator from '@/components/entity/CommentIndicator.vue'
 import TextSelectionComment from '@/components/entity/TextSelectionComment.vue'
 import TextCommentPopover from '@/components/entity/TextCommentPopover.vue'
@@ -66,17 +74,23 @@ import { buildCreateLinkQuery } from '@/utils/createLink'
 import type { ViewSectionCreate, ViewSectionCreateTarget } from '@/api/views'
 import { entityExportUrl, getTransforms, type TransformInfo } from '@/api/transforms'
 import CopyMenu from '@/components/entity/CopyMenu.vue'
+import ConversionModal from '@/components/entity/ConversionModal.vue'
+import ConversionMenu from '@/components/entity/ConversionMenu.vue'
+import { useActionsFit } from '@/composables/useActionsFit'
 import FaceMenu from '@/components/entity/FaceMenu.vue'
 import EntityActionsMenu from '@/components/entity/EntityActionsMenu.vue'
 import type { EntityAction } from '@/components/entity/entityActions'
 import DuplicateModal from '@/components/entity/DuplicateModal.vue'
-import WorldBadge from '@/components/entity/WorldBadge.vue'
+import WorldBadge from '@/components/ui/WorldBadge.vue'
 import WorldBanner from '@/components/common/WorldBanner.vue'
 import { invokeCopy } from '@/api/copies'
-import type { CopyOffer, Face } from '@/types'
+import type { CopyOffer, ConversionOffer, Face } from '@/types'
 import SectionEditForm, { type SectionEditField } from '@/components/forms/SectionEditForm.vue'
 import AutoSaveIndicator from '@/components/forms/AutoSaveIndicator.vue'
 import EntityTitle from './EntityTitle.vue'
+import PresenceAvatars from './PresenceAvatars.vue'
+import LeaseBadge from '@/components/common/LeaseBadge.vue'
+import { usePresence } from '@/composables/usePresence'
 import EntityBody from './EntityBody.vue'
 import RelatedSectionRows from './RelatedSectionRows.vue'
 import { isFieldWritable, isPropertyRedacted } from '@/utils/affordances'
@@ -140,6 +154,7 @@ const router = useRouter()
 const route = useRoute()
 const schemaStore = useSchemaStore()
 const uiStore = useUIStore()
+const { t } = useI18n()
 const { confirm } = useConfirm()
 // The world is read from the URL, the same source EntityList reads, so a
 // detail page reached from a world-bound list stays in that world and a
@@ -232,6 +247,22 @@ const pageState = computed<'pending' | 'loaded' | 'error'>(() => {
   return loading.value ? 'pending' : 'loaded'
 })
 const viewData = ref<ViewResponse | null>(null)
+// The world viewData was fetched in. Reference links in the rendered content
+// carry it rather than the live `worldParam`, so a link opens its target in
+// the world its title was resolved in, also while a world switch refetches.
+const viewWorld = ref<string | undefined>(undefined)
+// Every fetch of the view goes through `session` (useEntitySession, created
+// below the autosave it orders). Its answer lands only while the route still
+// names what it fetched, only if no answer from a later fetch has landed, and
+// only if no save to the row it shows completed while it was on its way. The
+// page keeps one instance across route changes (the full page and the list's
+// side panel both reuse it), so the answer for the entity the user left can
+// arrive after the one for the entity they moved to. Applying it put the old
+// entity back on screen, and Edit then opened that entity (TKT-7LTLHW3). A
+// view read before the user's own save and answered after it put the older
+// body back, and the next save failed as a conflict (BUG-04V034W).
+const viewTarget = () => `${props.entityType}/${props.entityId}/${worldParam.value ?? ''}`
+
 // Reordering the rows of a section table shown in relation order.
 // A move changes one section's row order and nothing else on the page, so
 // the reload after it fetches the view alone, without the route-load bar or
@@ -239,8 +270,16 @@ const viewData = ref<ViewResponse | null>(null)
 const sectionReorder = useSectionReorder({
   view: viewData,
   reload: async () => {
-    const view = await fetchView(props.entityType, props.entityId, worldParam.value)
-    if (view) viewData.value = view
+    const world = worldParam.value
+    const outcome = await session.read(
+      (signal) => fetchView(props.entityType, props.entityId, world, signal),
+      {
+        quiet: true,
+        shows: viewRow,
+        land: (view) => applyView(view, world),
+      }
+    )
+    if (outcome.kind === 'failed') throw outcome.error
   },
 })
 const loadedCommands = ref<Command[]>([])
@@ -372,7 +411,7 @@ const showDuplicateModal = ref(false)
 
 function handleDuplicated(created: { id: string; type: string; _self?: string }) {
   showDuplicateModal.value = false
-  uiStore.showToast('success', `Created ${created.id}`)
+  uiStore.showToast('success', t('entity.created', { id: created.id }))
   // The face written, so a duplicated draft lands on the draft.
   void router.push(`/entity/${created.type}/${entityRef(created)}`)
 }
@@ -446,13 +485,15 @@ async function loadComments() {
   const address = servedRef.value
   if (!commentsEnabled.value || address === null) return
   try {
-    comments.value = await listComments(props.entityType, address)
+    const list = await listComments(props.entityType, address)
+    // The thread of an entity the page has left must not land on the next.
+    if (servedRef.value === address) comments.value = list
   } catch {
     // A failure here means "cannot read the target, or commenting is off" —
     // the server makes those indistinguishable on purpose. Either way there is
     // no thread to show, and the page's primary content must still render, so
     // this degrades to "no comments" rather than surfacing an error.
-    comments.value = []
+    if (servedRef.value === address) comments.value = []
   }
 }
 
@@ -504,6 +545,7 @@ const renderedEntryContent = computed(() => {
   return renderMarkdown(source, {
     refResolver: refResolver.value,
     interactive: true,
+    world: viewWorld.value,
   })
 })
 
@@ -536,75 +578,121 @@ watch(
   { immediate: true }
 )
 
-// Content-only useAutoSave instance. EntityDetail does not own a form
-// surface, so the property and relations channels are disabled —
-// scheduleFieldSave/scheduleRelationsChange would throw if called. The
-// content channel debounces at 100ms so rapid checkbox clicks coalesce
-// into one PATCH while still feeling instant; the e2e suite tolerates
-// up to 2s for the UI poll and 5s for the server poll.
+// Content-only useAutoSave instances. EntityDetail does not own a form
+// surface, so the relations channel is disabled. The content channel
+// debounces at 100ms so rapid checkbox clicks coalesce into one PATCH while
+// still feeling instant; the e2e suite tolerates up to 2s for the UI poll and
+// 5s for the server poll.
 //
-// contentRef is a computed mirror of viewData.entry.content; the
-// composable only reads its shape (never writes), so a read-only
-// computed is sufficient. Property/relations callbacks are no-ops to
-// satisfy AutoSaveOptions's required surface; they are unreachable
-// because their channels are disabled and mergeServerResponse skips
-// them.
-const entryContent = computed(() => entry.value?.content ?? '')
-const entryProperties = computed<Record<string, unknown>>(() => entry.value?.properties ?? {})
-// When the route changes mid-debounce, the watch pins the previous
-// entity identity here so the in-flight flush PATCHes the entity the
-// user actually clicked, not the one they just navigated to.
-const pinEntityForFlush = ref<{ type: string; id: string } | null>(null)
-// A save can only be scheduled by editing a loaded entry, so a missing
-// address here is a bug. Throwing fails that save visibly; a fallback id
-// would PATCH a row the page is not showing.
-function requireServedRef(): string {
-  const address = servedRef.value
-  if (address === null) throw new Error('entity address requested before the entry loaded')
-  return address
+// One instance per served address, built when an entry loads (BUG-NSGD6OE).
+// An instance writes only to its own target, so a route or world change that
+// puts another row on screen cannot send the previous row's pending edit to
+// the new one: the previous instance keeps saving to the previous row, and
+// its server responses stop touching the view once that row is gone.
+type ContentAutoSave = ReturnType<typeof useAutoSave>
+const contentAutoSave = shallowRef<ContentAutoSave | null>(null)
+
+// Whether the row on screen is the one `target` names.
+function showing(target: AutoSaveTarget): boolean {
+  const ent = entry.value
+  return (
+    ent !== undefined && ent !== null && ent.type === target.type && servedRef.value === target.id
+  )
 }
-const contentAutoSave = useAutoSave({
-  getEntityType: () => pinEntityForFlush.value?.type ?? props.entityType,
-  // The row's ADDRESS, face included: a checkbox toggled on the published
-  // face must land on the published face. The pin holds an address too.
-  getEntityId: () => pinEntityForFlush.value?.id ?? requireServedRef(),
-  contentDebounceMs: 100,
-  formData: entryProperties as unknown as import('vue').Ref<Record<string, unknown>>,
-  contentRef: entryContent as unknown as import('vue').Ref<string>,
-  inverseToCanonical: new Map(),
-  buildRelationsBody: () => null,
-  applyServerProperty: (prop, value) => {
-    const view = viewData.value
-    if (!view?.entry) return
-    const pinned = pinEntityForFlush.value
-    if (pinned && (view.entry.id !== pinned.id || view.entry.type !== pinned.type)) return
-    const properties = { ...view.entry.properties }
-    if (value === undefined) delete properties[prop]
-    else properties[prop] = value
-    viewData.value = { ...view, entry: { ...view.entry, properties } }
+
+function makeContentAutoSave(target: AutoSaveTarget): ContentAutoSave {
+  // The composable only reads these. Another row's state is not this
+  // instance's form, so it reads as empty once its row has left the screen.
+  // From then on its server responses still move its bases but no longer
+  // reach the view, so a replaced instance must not take new edits: returning
+  // to its row builds a fresh one.
+  const formData = computed(() => (showing(target) ? (entry.value?.properties ?? {}) : {}))
+  const contentRef = computed(() => (showing(target) ? (entry.value?.content ?? '') : ''))
+  return useAutoSave({
+    target,
+    contentDebounceMs: 100,
+    formData: formData as unknown as import('vue').Ref<Record<string, unknown>>,
+    contentRef: contentRef as unknown as import('vue').Ref<string>,
+    inverseToCanonical: new Map(),
+    buildRelationsBody: () => null,
+    applyServerProperty: (prop, value) => {
+      const view = viewData.value
+      if (!view?.entry || !showing(target)) return
+      const properties = { ...view.entry.properties }
+      if (value === undefined) delete properties[prop]
+      else properties[prop] = value
+      viewData.value = { ...view, entry: { ...view.entry, properties } }
+    },
+    applyServerContent: (next) => {
+      const view = viewData.value
+      if (!view?.entry || !showing(target)) return
+      const nextSections = view.sections.map((s) =>
+        isEntryContentSection(s) ? { ...s, content: next } : s
+      )
+      viewData.value = { ...view, entry: { ...view.entry, content: next }, sections: nextSections }
+    },
+    onError: (msg, info) => {
+      uiStore.error(msg)
+      // A refused title leaves the optimistic heading on screen; reload so the
+      // page shows what the server holds.
+      if (info?.channel === 'property' && showing(target)) void loadView()
+    },
+    disableRelationsChannel: true,
+    // Counted against its own row, so the edits of a row being left void
+    // that row's late reads and not those of the row arriving.
+    runWrite: (send) => session.write(send, rowKey(target)),
+  })
+}
+
+// The instance for `ent`, replacing the current one when `ent` is another
+// row. The replaced instance is flushed; it still writes to its own row.
+function autoSaveFor(ent: Entity): ContentAutoSave {
+  const target = { type: ent.type, id: entityRef(ent) }
+  const current = contentAutoSave.value
+  if (current && current.target.type === target.type && current.target.id === target.id) {
+    return current
+  }
+  void current?.commitImmediately()
+  // Built after an await, outside setup. The composable registers no watchers
+  // or hooks, so a replaced instance needs no teardown and is collected once
+  // its last save settles.
+  const next = makeContentAutoSave(target)
+  contentAutoSave.value = next
+  return next
+}
+
+// The instance an edit on screen goes to. An edit needs a loaded entry, and
+// loading one builds its instance, so a missing or mismatched instance is a
+// bug. Throwing fails that edit visibly; any other instance would write a row
+// the page is not showing.
+function editAutoSave(): ContentAutoSave {
+  const save = contentAutoSave.value
+  if (!save || !showing(save.target)) {
+    throw new Error('EntityDetail: no autosave instance for the entry on screen')
+  }
+  return save
+}
+
+const autoSaveBusy = () =>
+  (contentAutoSave.value?.pendingCount.value ?? 0) > 0 ||
+  (contentAutoSave.value?.inFlightCount.value ?? 0) > 0
+// Live changes reload through the session once autosave holds and sends
+// nothing: a reload under a pending edit (a checkbox toggle in its debounce)
+// would replace the state the next edit is computed from. Both counts are
+// reactive, which the session's idle watch needs.
+const session = useEntitySession(viewTarget, {
+  holdsWrites: autoSaveBusy,
+  reload: (full) => (full ? loadView({ background: true }) : refreshView()),
+  // A refusal wins over every answer, older or newer: held content the
+  // server has refused must go (frontend/CLAUDE.md, BUG-E8XE7I).
+  onRefused: (err) => {
+    viewData.value = null
+    error.value = getErrorMessage(err, t('entity.loadFailed'))
   },
-  applyServerContent: (next) => {
-    const view = viewData.value
-    if (!view || !view.entry) return
-    // If the route changed mid-flush, the previous entity's PATCH may
-    // resolve after the new entity's loadView; reject the apply by
-    // entity-identity rather than splice stale content into the new
-    // view.
-    const pinned = pinEntityForFlush.value
-    if (pinned && (view.entry.id !== pinned.id || view.entry.type !== pinned.type)) return
-    const nextSections = view.sections.map((s) =>
-      isEntryContentSection(s) ? { ...s, content: next } : s
-    )
-    viewData.value = { ...view, entry: { ...view.entry, content: next }, sections: nextSections }
-  },
-  onError: (msg, info) => {
-    uiStore.error(msg)
-    // A refused title leaves the optimistic heading on screen; reload so the
-    // page shows what the server holds.
-    if (info?.channel === 'property') void loadView()
-  },
-  disableRelationsChannel: true,
 })
+// `loading` is read by useDelayedPending at setup, above the session, which
+// needs the autosave it orders; hence a synced copy rather than a computed.
+watch(session.loading, (now) => (loading.value = now), { flush: 'sync' })
 
 // Accepting a suggestion (TKT-S5C0K3) writes the body on the server, so it must
 // not race a pending checkbox save: that PATCH would carry the pre-accept body
@@ -612,7 +700,7 @@ const contentAutoSave = useAutoSave({
 // first, and toggles are refused while the accept is in flight.
 const accepting = ref(false)
 const canAccept = computed(
-  () => canUpdate.value && !accepting.value && contentAutoSave.status.value !== 'saving'
+  () => canUpdate.value && !accepting.value && contentAutoSave.value?.status.value !== 'saving'
 )
 
 async function acceptSuggestion(c: Comment) {
@@ -621,29 +709,45 @@ async function acceptSuggestion(c: Comment) {
   try {
     // A save that timed out may still land on the server after the accept and
     // overwrite it with the pre-accept body, so an unsettled flush aborts.
-    const flushed = await contentAutoSave.commitImmediately()
-    if (!flushed.settled || flushed.error) {
-      uiStore.error('Could not save pending changes; the suggestion was not applied')
+    const flushed = await contentAutoSave.value?.commitImmediately()
+    if (flushed && (!flushed.settled || flushed.error)) {
+      uiStore.error(t('entity.suggestion.flushFailed'))
       return
     }
     const address = servedRef.value
     if (address === null) return
-    const res = await acceptComment(props.entityType, address, c.id)
+    // No timeout of its own: a request that never settles holds back every
+    // later write of the session (useEntitySession.write).
+    const res = await runSessionWrite(() => acceptComment(props.entityType, address, c.id))
     const view = viewData.value
-    if (view?.entry) {
+    if (view?.entry && servedRef.value === address) {
       const nextSections = view.sections.map((s) =>
         isEntryContentSection(s) ? { ...s, content: res.content } : s
       )
-      viewData.value = { ...view, entry: { ...view.entry, content: res.content }, sections: nextSections }
+      viewData.value = {
+        ...view,
+        entry: { ...view.entry, content: res.content },
+        sections: nextSections,
+      }
     }
     if (res.warnings && res.warnings.length > 0) {
       const codes = [...new Set(res.warnings.map((w) => w.code))].join(', ')
-      uiStore.warning(`Suggestion applied with ${res.warnings.length} warning(s): ${codes}`)
+      uiStore.warning(
+        t(
+          'entity.suggestion.appliedWithWarnings',
+          { n: res.warnings.length, codes },
+          res.warnings.length
+        )
+      )
     }
     closeTextComment()
     await loadView()
   } catch (err) {
-    uiStore.error(`Failed to accept suggestion: ${getErrorMessage(err, 'unknown error')}`)
+    uiStore.error(
+      t('entity.suggestion.acceptFailed', {
+        detail: getErrorMessage(err, t('entity.unknownError')),
+      })
+    )
     await loadComments()
   } finally {
     accepting.value = false
@@ -673,35 +777,57 @@ const canEditBody = computed(() => canUpdate.value && !isInaccessible.value)
 // A pause in typing, not a keystroke, is worth a save.
 const BODY_SAVE_DEBOUNCE_MS = 800
 
+// An open editor writes to the row it was opened on, taken when the edit
+// starts. Choosing the instance when the editor emits would send an edit that
+// outlives a route change to the row that replaced it (BUG-NSGD6OE).
+let bodySave: ContentAutoSave | null = null
+let titleEdit: { save: ContentAutoSave; prop: string } | null = null
+
+function onBodyEdit() {
+  bodySave = editAutoSave()
+}
+
 function onBodyInput(next: string) {
+  const save = bodySave ?? editAutoSave()
   const view = viewData.value
-  if (!view?.entry) return
   // Mirrored into the view at once so the read view is current on leaving.
-  const sections = view.sections.map((s) =>
-    isEntryContentSection(s) ? { ...s, content: next } : s
-  )
-  viewData.value = { ...view, entry: { ...view.entry, content: next }, sections }
-  contentAutoSave.scheduleContentSave(next, BODY_SAVE_DEBOUNCE_MS)
+  if (view?.entry && showing(save.target)) {
+    const sections = view.sections.map((s) =>
+      isEntryContentSection(s) ? { ...s, content: next } : s
+    )
+    viewData.value = { ...view, entry: { ...view.entry, content: next }, sections }
+  }
+  save.scheduleContentSave(next, BODY_SAVE_DEBOUNCE_MS)
 }
 
 function onBodyDone() {
-  void contentAutoSave.commitImmediately()
+  void (bodySave ?? contentAutoSave.value)?.commitImmediately()
+  bodySave = null
+}
+
+function onTitleEdit() {
+  const prop = titleProperty.value
+  titleEdit = prop ? { save: editAutoSave(), prop } : null
 }
 
 function saveTitle(value: string) {
-  const prop = titleProperty.value
+  const edit = titleEdit
+  titleEdit = null
+  if (!edit) return
+  const { save, prop } = edit
   const view = viewData.value
-  if (!prop || !view?.entry) return
   // Optimistic: the heading changes as the control closes. `_title` falls
   // back to the ID when empty, as the server derives it.
-  const properties = { ...view.entry.properties, [prop]: value }
-  viewData.value = {
-    ...view,
-    entry: { ...view.entry, properties, _title: value || view.entry.id },
+  if (view?.entry && showing(save.target)) {
+    const properties = { ...view.entry.properties, [prop]: value }
+    viewData.value = {
+      ...view,
+      entry: { ...view.entry, properties, _title: value || view.entry.id },
+    }
   }
-  if (value === '') contentAutoSave.scheduleUnset(prop)
-  else contentAutoSave.scheduleFieldSave(prop, value)
-  void contentAutoSave.commitImmediately()
+  if (value === '') save.scheduleUnset(prop)
+  else save.scheduleFieldSave(prop, value)
+  void save.commitImmediately()
 }
 
 function contentClick(event: MouseEvent) {
@@ -806,13 +932,15 @@ function handleCheckboxToggle(index: number) {
   // address). Checkboxes render inside markdown and cannot be hidden by a
   // `v-if` the way a button can, so the affordance gate lives at the handler.
   if (!canUpdate.value) {
-    uiStore.warning('Update not permitted for this entity')
+    uiStore.warning(t('entity.updateNotPermitted'))
     return
   }
   if (accepting.value) {
-    uiStore.warning('Applying a suggestion; try again in a moment')
+    uiStore.warning(t('entity.suggestion.applyingBusy'))
     return
   }
+  // Taken before the view changes, so a refusal leaves the box as it was.
+  const save = editAutoSave()
   let newContent: string
   try {
     newContent = toggleCheckboxInSource(current.content || '', index)
@@ -821,8 +949,8 @@ function handleCheckboxToggle(index: number) {
     // checkboxToggle.ts — `*`, `+`, ordered-list checkboxes parse as
     // task items in marked but are rejected here). Surface the thrown
     // detail so users know which line of the source the click missed.
-    const detail = getErrorMessage(err, 'unknown error')
-    uiStore.error(`Failed to toggle checkbox: ${detail}`)
+    const detail = getErrorMessage(err, t('entity.unknownError'))
+    uiStore.error(t('entity.checkboxToggleFailed', { detail }))
     console.error(err)
     return
   }
@@ -835,7 +963,7 @@ function handleCheckboxToggle(index: number) {
     isEntryContentSection(s) ? { ...s, content: newContent } : s
   )
   viewData.value = { ...view, entry: { ...current, content: newContent }, sections: nextSections }
-  contentAutoSave.scheduleContentSave(newContent)
+  save.scheduleContentSave(newContent)
 }
 
 // Keyboard shortcuts
@@ -847,7 +975,7 @@ function handleKeydown(e: KeyboardEvent) {
   if (e.key === 'e' || e.key === 'E') {
     e.preventDefault()
     if (!canUpdate.value) {
-      uiStore.warning('Edit not permitted for this entity')
+      uiStore.warning(t('entity.editNotPermitted'))
       return
     }
     editEntity()
@@ -855,7 +983,7 @@ function handleKeydown(e: KeyboardEvent) {
   if ((e.key === 'Delete' || e.key === 'Backspace') && entry.value) {
     e.preventDefault()
     if (!canDelete.value) {
-      uiStore.warning('Delete not permitted for this entity')
+      uiStore.warning(t('entity.deleteNotPermitted'))
       return
     }
     void requestDelete()
@@ -873,7 +1001,6 @@ function handleKeydown(e: KeyboardEvent) {
     router.push(backTarget.value.to)
   }
 }
-
 
 // Commands — separate fetch, abortable to survive rapid navigation
 // (BUG-6C3V: a stale fetch resolving against an unmounted component).
@@ -928,11 +1055,11 @@ async function runDetailAction(action: DetailAction, ev?: Event) {
   const triggerEl = ev?.currentTarget instanceof HTMLElement ? ev.currentTarget : null
   if (config.confirm) {
     const ok = await confirm({
-      title: `${label}?`,
+      title: t('entity.action.confirmTitle', { label }),
       message:
         typeof config.confirm === 'string'
           ? config.confirm
-          : `Run ${label} on this entity?`,
+          : t('entity.action.confirmRun', { label }),
       confirmLabel: label,
     })
     if (!ok) return
@@ -944,7 +1071,7 @@ async function runDetailAction(action: DetailAction, ev?: Event) {
   detailActionBusy.value = true
   try {
     const res = await runAction(id, address)
-    reportResult(res, `${label}: done`)
+    reportResult(res, t('entity.action.done', { label }))
     if (res?.redirect) {
       router.push(res.redirect)
       return
@@ -959,8 +1086,107 @@ async function runDetailAction(action: DetailAction, ev?: Event) {
   }
 }
 
-async function loadView() {
-  loading.value = true
+// Live view (TKT-HJ5Z9Y): the server says when this principal's view
+// response changed, including through related entities and access changes.
+// The refetch is background revalidation, so it shows no indicator; a refusal
+// drops the held view, any other failure keeps it.
+// Presence (TKT-MHXH87): the subscription inside usePresence is what lists
+// this user as a viewer of the face on screen. Presence is per face, so on a
+// type with faces it waits for the served address to name one; the server
+// refuses a bare id there, and that refusal would fail the page's whole
+// subscription set. An unknown type (schema not loaded yet) is not ready
+// either: without it the page cannot tell whether the type has faces.
+const presence = usePresence(() => {
+  const addr = servedRef.value
+  const def = typeDef.value
+  if (!addr || !def) return null
+  const faced = Object.keys(def.faces ?? {}).length > 0
+  if (faced && !refFace(addr)) return null
+  // No world: the server refuses a non-default one on _presence
+  // (world_unsupported), and the address already names the face.
+  return { type: props.entityType, address: addr }
+})
+
+useLiveSubscription(
+  'entity-detail',
+  () => liveViewPath(props.entityType, props.entityId, worldParam.value),
+  () => session.invalidate()
+)
+
+// A refresh: no route-load bar, failures keep what is on screen, and it does
+// not land while autosave is busy (the session reloads once it is idle).
+async function refreshView() {
+  const world = worldParam.value
+  await session.read((signal) => fetchView(props.entityType, props.entityId, world, signal), {
+    background: true,
+    quiet: true,
+    shows: viewRow,
+    land: (view) => applyView(view, world),
+  })
+}
+
+// The session key of a row: writes are counted against the row they save,
+// and a read against the row its answer shows (useEntitySession, rule c).
+function rowKey(target: AutoSaveTarget): string {
+  return `${target.type}/${target.id}`
+}
+function viewRow(view: ViewResponse | null): string | undefined {
+  return view?.entry ? rowKey({ type: view.entry.type, id: entityRef(view.entry) }) : undefined
+}
+
+// Puts a fetched view on screen. Called by the session at the moment the read
+// lands. A view of another row replaces the autosave instance; the replaced
+// one keeps writing to its own row (autoSaveFor).
+function applyView(view: ViewResponse | null, world: string | undefined) {
+  // A body whose save did not go through stays on screen, next to its
+  // error, when its row is read again: autosave keeps it held.
+  const shown = viewData.value?.entry
+  const save = contentAutoSave.value
+  const row = viewRow(view)
+  if (
+    view?.entry &&
+    shown &&
+    save &&
+    row === viewRow(viewData.value) &&
+    row === rowKey(save.target)
+  ) {
+    if (save.unsavedFields().content) {
+      const content = shown.content
+      view = {
+        ...view,
+        entry: { ...view.entry, content },
+        sections: view.sections.map((s) => (isEntryContentSection(s) ? { ...s, content } : s)),
+      }
+    }
+  }
+  viewData.value = view
+  viewWorld.value = world
+  // Seed the autosave baseline so the first toggle's no-op suppression can
+  // compare against server state without waiting for the response of a
+  // sentinel PATCH.
+  if (view?.entry) autoSaveFor(view.entry).recordServerSnapshot(view.entry)
+}
+
+// The other writes on this page (the section forms, accepting a suggestion)
+// go through the session too. They are counted against the row on screen
+// when they are sent: the section forms show and save rows of its view.
+function runSessionWrite<T>(send: () => Promise<T>): Promise<T> {
+  const ent = entry.value
+  return session.write(send, ent ? rowKey({ type: ent.type, id: entityRef(ent) }) : viewTarget())
+}
+
+// Comments and pile scope navigation belong to the row on screen, which
+// changes when a view lands, not when the route does.
+watch(servedRef, (now, before) => {
+  if (now === null || now === before) return
+  void loadScopeNav()
+  void loadComments()
+})
+
+// `background` is set for a reload after a live change: it then waits for
+// autosave like a refresh does. Only the latest load clears `loading` (the
+// session tracks it).
+async function loadView(opts: { background?: boolean } = {}) {
   error.value = null
   // Report EVERY load to the global activity bar, including the ones where
   // previous content stays on screen.
@@ -986,37 +1212,55 @@ async function loadView() {
     // neighbour (TKT-WRLDAPI item 4b). Without it this page rendered draft
     // content while the selector said "published" — the API was correct and
     // the page simply never asked.
-    const view = await fetchView(props.entityType, props.entityId, worldParam.value)
-    // An owned entity is shown as part of its owner. Redirect before
-    // rendering anything, so the page does not flash this entity's own view.
-    const owner = view?.entry?._owner
-    if (owner && props.followOwner) {
-      // Only the world carries over: a list scope from the owned entity's
-      // list would give the owner's page prev/next outside that set.
-      const world = route.query.world
-      await router.replace({
-        path: entityDetailHref(owner),
-        query: world ? { world } : {},
-        hash: `#${encodeURIComponent(props.entityId)}`,
-      })
-      return
+    const fetchedWorld = worldParam.value
+    let sameRow = false
+    const outcome = await session.read(
+      (signal) => fetchView(props.entityType, props.entityId, fetchedWorld, signal),
+      {
+        background: opts.background,
+        prepare: async (view) => {
+          // An owned entity is shown as part of its owner. Redirect before
+          // rendering anything, so the page does not flash this entity's own
+          // view.
+          const owner = view?.entry?._owner
+          if (owner && props.followOwner) {
+            // Only the world carries over: a list scope from the owned
+            // entity's list would give the owner's page prev/next outside
+            // that set.
+            const world = route.query.world
+            await router.replace({
+              path: entityDetailHref(owner),
+              query: world ? { world } : {},
+              hash: `#${encodeURIComponent(props.entityId)}`,
+            })
+            return false
+          }
+          return true
+        },
+        shows: viewRow,
+        land: (view) => {
+          const before = servedRef.value
+          applyView(view, fetchedWorld)
+          sameRow = servedRef.value === before
+        },
+      }
+    )
+    if (outcome.kind === 'landed') {
+      // A new row on screen reloads comments and navigation through the
+      // servedRef watch; a reload of the same row reloads them here.
+      // loadComments swallows its own failures (see its doc): a
+      // comment-service problem must not fail the entity view it decorates.
+      await Promise.all([loadCommands(), ...(sameRow ? [loadScopeNav(), loadComments()] : [])])
+    } else if (outcome.kind === 'failed') {
+      // A transient failure keeps what is on screen (frontend/CLAUDE.md), and
+      // says nothing when a later answer has already landed. A reload after
+      // a live change keeps it even then, as a refresh does: the error
+      // state would replace the page and an open editor.
+      if (isCancelledFetch(outcome.error) || !outcome.current) return
+      console.error('Failed to load entity view:', outcome.error)
+      if (!opts.background) error.value = getErrorMessage(outcome.error, t('entity.loadFailed'))
     }
-    viewData.value = view
-    if (viewData.value?.entry) {
-      // Seed the autosave baseline so the first toggle's no-op
-      // suppression can compare against server state without waiting
-      // for the response of a sentinel PATCH.
-      contentAutoSave.recordServerSnapshot(viewData.value.entry)
-    }
-    // loadComments swallows its own failures (see its doc): a comment-service
-    // problem must not fail the entity view it decorates.
-    await Promise.all([loadCommands(), loadScopeNav(), loadComments()])
-  } catch (err) {
-    if (isCancelledFetch(err)) return
-    error.value = getErrorMessage(err, 'Failed to load entity')
-    console.error('Failed to load entity view:', err)
   } finally {
-    loading.value = false
     settleRouteLoad?.()
   }
 }
@@ -1034,7 +1278,7 @@ function editEntity() {
   // entities; bail out client-side so the Edit shortcut is also a no-op.
   if (isInaccessible.value) return
   if (!editFormId.value) {
-    uiStore.error('No edit form configured for this entity type')
+    uiStore.error(t('entity.noEditForm'))
     return
   }
   const address = servedRef.value
@@ -1053,7 +1297,9 @@ function anchorId(sectionId: string, id: string): string | undefined {
 // owned entities along. Said in the confirm without a count, which would
 // need a read.
 const ownsEntities = computed(() =>
-  [...schemaStore.relationTypes.values()].some((rt) => rt.owning && rt.from.includes(props.entityType)),
+  [...schemaStore.relationTypes.values()].some(
+    (rt) => rt.owning && rt.from.includes(props.entityType)
+  )
 )
 
 async function requestDelete() {
@@ -1065,14 +1311,13 @@ async function requestDelete() {
   // reverse.
   const face = servedFace.value
   const ok = await confirm({
-    title: face ? 'Delete Face?' : 'Delete Entity?',
+    title: face ? t('entity.delete.faceTitle') : t('entity.delete.title'),
     message: face
-      ? `Are you sure you want to delete the ${faceLabel(face)} face of '${bareEntityId.value}'? ` +
-        'Its other faces are kept. This action cannot be undone.'
-      : `Are you sure you want to delete '${bareEntityId.value}'? ` +
-        (ownsEntities.value ? 'The entities it owns are deleted with it. ' : '') +
-        'This action cannot be undone.',
-    confirmLabel: 'Delete',
+      ? t('entity.delete.faceMessage', { face: faceLabel(face), id: bareEntityId.value })
+      : ownsEntities.value
+        ? t('entity.delete.messageOwning', { id: bareEntityId.value })
+        : t('entity.delete.message', { id: bareEntityId.value }),
+    confirmLabel: t('common.delete'),
     danger: true,
     onConfirm: withConfirmError(
       async () => {
@@ -1082,12 +1327,12 @@ async function requestDelete() {
         const entitiesStore = useEntitiesStore()
         await entitiesStore.remove(props.entityType, address)
       },
-      'Failed to delete entity',
+      t('entity.delete.failed'),
       uiStore
     ),
   })
   if (!ok) return
-  uiStore.success('Entity deleted successfully')
+  uiStore.success(t('entity.delete.done'))
   router.push(backTargetAfterDelete())
 }
 
@@ -1107,6 +1352,26 @@ async function requestDelete() {
 // from `[]` (none declared), but this page renders nothing for both, so the
 // distinction is collapsed HERE, once, rather than carried into every reader.
 const copyOffers = computed<CopyOffer[]>(() => entry.value?._copies ?? [])
+const conversionOffers = computed<ConversionOffer[]>(
+  () => entry.value?._conversions?.filter((o) => o.allowed) ?? []
+)
+// The body editor's task-item recipes, and the entity they convert from.
+const taskItemSource = computed(() =>
+  entry.value ? { id: entry.value.id, face: entry.value._world?.face ?? '' } : undefined
+)
+const conversionOffer = ref<ConversionOffer | null>(null)
+
+function conversionDone(id: string, face: string) {
+  const offer = conversionOffer.value
+  conversionOffer.value = null
+  if (offer) {
+    uiStore.success(t('entity.convertedTo', { type: offer.to }))
+    router.push({
+      path: `/entity/${offer.to}/${id}${face ? `@${face}` : ''}`,
+      query: { ...route.query },
+    })
+  }
+}
 
 // Faces render on EVERY screen, world-bound or not — a reader wants the way
 // back to the draft, an author wants to see what readers see, and the
@@ -1148,7 +1413,7 @@ async function runCopy(offer: CopyOffer) {
   // the page can be showing a different entity by the time the invoke
   // resolves. Without this the success toast names a face on the entity the
   // user has already left, and `loadView()` fires a second, pointless fetch
-  // for the one they are now on. Same shape as `pinEntityForFlush` below.
+  // for the one they are now on.
   const subject = bareEntityId.value
   const label = offer.label || offer.name
   copyBusy.value = true
@@ -1177,7 +1442,7 @@ async function runCopy(offer: CopyOffer) {
     // (a permission revoked between render and click). Report it plainly, and
     // name the subject if the user has since navigated away — an unqualified
     // "Copy failed" beside an unrelated entity reads as that entity failing.
-    const detail = getErrorMessage(err, 'Copy failed')
+    const detail = getErrorMessage(err, t('entity.copyFailed'))
     uiStore.error(bareEntityId.value === subject ? detail : `${subject}: ${detail}`)
   } finally {
     copyBusy.value = false
@@ -1407,12 +1672,19 @@ const actions = computed<EntityAction[]>(() => {
   }
   if (editTarget.value) {
     const to = editTarget.value
-    out.push({ id: 'edit', label: 'Edit', group: 'edit', icon: 'edit', shortcut: 'E', run: () => void router.push(to) })
+    out.push({
+      id: 'edit',
+      label: t('common.edit'),
+      group: 'edit',
+      icon: 'edit',
+      shortcut: 'E',
+      run: () => void router.push(to),
+    })
   }
   for (const f of faceOptions.value ?? []) {
     out.push({
       id: `face:${f.face}`,
-      label: `View ${f.label || f.face || 'default'}`,
+      label: t('entity.viewFace', { face: f.label || f.face || t('entity.defaultFace') }),
       group: 'view',
       icon: 'layers',
       run: () => goToFace(f),
@@ -1420,28 +1692,49 @@ const actions = computed<EntityAction[]>(() => {
   }
   if (showHistory.value && historyTarget.value) {
     const to = historyTarget.value
-    out.push({ id: 'history', label: 'History', group: 'view', icon: 'history', run: () => void router.push(to) })
+    out.push({
+      id: 'history',
+      label: t('entity.history'),
+      group: 'view',
+      icon: 'history',
+      run: () => void router.push(to),
+    })
   }
   const exportAddress = servedRef.value
-  for (const t of exportFormats.value) {
+  for (const format of exportFormats.value) {
     if (exportAddress === null) break
     out.push({
-      id: `export:${t.name}`,
-      label: `Export as ${t.name}`,
+      id: `export:${format.name}`,
+      label: t('entity.exportAs', { format: format.name }),
       group: 'export',
       icon: 'download',
       // What is on screen (BUG-PLZDPR): the served face, in the page's world.
-      href: entityExportUrl(props.entityType, exportAddress, t.name, worldParam.value),
+      href: entityExportUrl(props.entityType, exportAddress, format.name, worldParam.value),
     })
   }
   out.push(...pileActions.actions.value)
+  for (const offer of conversionOffers.value) {
+    out.push({
+      id: `convert:${offer.name}`,
+      label: offer.label || offer.name,
+      group: 'manage',
+      icon: 'refresh',
+      run: () => (conversionOffer.value = offer),
+    })
+  }
   if (canDuplicate.value) {
-    out.push({ id: 'duplicate', label: 'Duplicate', group: 'manage', icon: 'copy', run: () => (showDuplicateModal.value = true) })
+    out.push({
+      id: 'duplicate',
+      label: t('entity.duplicateAction'),
+      group: 'manage',
+      icon: 'copy',
+      run: () => (showDuplicateModal.value = true),
+    })
   }
   if (canDelete.value) {
     out.push({
       id: 'delete',
-      label: 'Delete',
+      label: t('common.delete'),
       group: 'danger',
       icon: 'delete',
       tone: 'danger',
@@ -1453,7 +1746,24 @@ const actions = computed<EntityAction[]>(() => {
 })
 
 // On a phone, Edit and Delete keep their own buttons; the rest is overflow.
-const overflowActions = computed(() => actions.value.filter((a) => a.id !== 'edit' && a.id !== 'delete'))
+const overflowActions = computed(() =>
+  actions.value.filter((a) => a.id !== 'edit' && a.id !== 'delete')
+)
+
+/*
+ * When the desktop row does not fit beside the title, it keeps the commands
+ * (the primary actions), the header create menu and Edit, and moves the rest
+ * into the same "⋯" menu the phone layout uses.
+ */
+const headerEl = ref<HTMLElement | null>(null)
+const headerInfoEl = ref<HTMLElement | null>(null)
+const headerActionsEl = ref<HTMLElement | null>(null)
+const { compact: compactActions } = useActionsFit(headerEl, headerInfoEl, headerActionsEl, () =>
+  actions.value.map((a) => a.id).join('|')
+)
+const compactOverflowActions = computed(() =>
+  actions.value.filter((a) => a.id !== 'edit' && !a.id.startsWith('command:'))
+)
 
 watch(actions, (list) => emit('actions', list), { immediate: true })
 
@@ -1541,6 +1851,7 @@ function getPropertyDef(entityType: string, propertyName: string): PropertyDef |
 // display section would show last-loadView's string forever. Same bug class
 // as RR-FC1C, same fix.
 function entryDisplayValue(field: ViewSectionField): unknown {
+  if (field.relation) return (field.targets ?? []).map((t) => t.title)
   const props = entry.value?.properties
   if (field.property && props && field.property in props) {
     return props[field.property]
@@ -1560,7 +1871,9 @@ function mapFieldsToProperties(fields: ViewSectionField[] | undefined): Property
     // PropertyDisplay's `name` is used as a vue list key; favor the raw
     // property name when available and fall back to a slugged label so
     // older shapes still render.
-    const name = field.property ?? field.label.toLowerCase().replace(/\s+/g, '_')
+    const name = field.relation
+      ? `relation:${field.relation}`
+      : (field.property ?? field.label.toLowerCase().replace(/\s+/g, '_'))
     const def = entryType && field.property ? getPropertyDef(entryType, field.property) : undefined
     return {
       name,
@@ -1573,6 +1886,9 @@ function mapFieldsToProperties(fields: ViewSectionField[] | undefined): Property
       inaccessibleReason: field.property ? inaccessibleByName.value.get(field.property) : undefined,
       attachments: field.property ? entry.value?._attachments?.[field.property] : undefined,
       max: def?.max,
+      relation: field.relation
+        ? { name: field.relation, targets: field.targets ?? [], styleFrom: field.styleFrom }
+        : undefined,
     }
   })
 }
@@ -1686,7 +2002,7 @@ function handleSectionEditError(msg: string, info?: AutoSaveErrorInfo) {
 }
 
 function handleVerdictFlip(_prop: string, label: string) {
-  uiStore.warning(`Permission changed — your unsaved edit to '${label}' was discarded`)
+  uiStore.warning(t('entity.permissionChangedDiscarded', { label }))
 }
 
 // ─── Per-row inline edit on cards/list sections (TKT-IHC7C) ──────────────
@@ -1726,9 +2042,13 @@ function memoBuildRowEditFields(ent: ViewEntity): SectionEditField[] {
 // stale-string-mirror bug where a verdict flips writable→display and
 // the cell shows last-loadView's display string instead of the
 // post-edit value (RR-FC1C).
+//
+// A row renders through the text widget, so a property with a display
+// format, such as a currency, is formatted here (TKT-SVLQQ6).
 function rowDisplayValue(ent: ViewEntity, field: ViewSectionField): unknown {
   if (field.property && ent._props && field.property in ent._props) {
-    return ent._props[field.property]
+    const raw = ent._props[field.property]
+    return formatDisplayNumber(raw, getPropertyDef(ent.type, field.property)) ?? raw
   }
   return field.values ?? []
 }
@@ -1849,52 +2169,54 @@ onBeforeUnmount(() => {
   // doesn't silently drop the user's click. commitImmediately returns
   // a promise; we don't await it because Vue's onBeforeUnmount is
   // synchronous — the FIFO chain will run to completion regardless.
-  void contentAutoSave.commitImmediately()
+  void contentAutoSave.value?.commitImmediately()
 })
 
+// A write from elsewhere (a board move, another tab, a script) reaches this
+// view only through the server's entity:changed event; the view is fetched
+// imperatively, so no cache invalidation reaches it. The event names the type,
+// not the id, so any change to this type refetches. Events are coalesced: one
+// relation re-point alone sends a create and a delete. The echo of this page's
+// own save arrives the same way. The session reloads once autosave holds and
+// sends nothing, so the reload cannot answer with a body older than a save it
+// overtook. Section forms keep a pending field edit across the reload
+// themselves.
+// A steady stream (an import, a script) never goes quiet for the debounce, so
+// the wait is capped: during a stream the view reloads at most once per
+// ENTITY_CHANGED_MAX_WAIT_MS rather than not at all.
+const ENTITY_CHANGED_DEBOUNCE_MS = 250
+const ENTITY_CHANGED_MAX_WAIT_MS = 1000
+const { on: onServerEvent, off: offServerEvent } = useEvents()
+let entityChangedTimer: ReturnType<typeof setTimeout> | undefined
+let entityChangedSince: number | undefined
+function onEntityChanged(data: EntityEventData) {
+  if (data.type && data.type !== props.entityType) return
+  const now = Date.now()
+  entityChangedSince ??= now
+  const delay = Math.max(
+    0,
+    Math.min(ENTITY_CHANGED_DEBOUNCE_MS, entityChangedSince + ENTITY_CHANGED_MAX_WAIT_MS - now)
+  )
+  clearTimeout(entityChangedTimer)
+  entityChangedTimer = setTimeout(() => {
+    entityChangedSince = undefined
+    session.invalidate(true)
+  }, delay)
+}
+onMounted(() => onServerEvent('entity:changed', onEntityChanged))
+onBeforeUnmount(() => {
+  offServerEvent('entity:changed', onEntityChanged)
+  clearTimeout(entityChangedTimer)
+})
 
-// Switching WORLD reloads the view, but is deliberately NOT folded into the
-// entity watcher below.
-//
-// That watcher flushes pending autosaves against the PREVIOUS entity's
-// identity before loading the next one. A world change is the SAME entity seen
-// through a different world, so there is no previous identity to pin and no
-// cross-entity flush to arrange — running that machinery would capture the
-// current entity as its own "previous" and commit a flush nobody asked for.
-//
-// What a world change does need is a refetch, because the face being displayed
-// changes even though the id does not.
+// A route or world change puts another row on screen. Pending edits are
+// flushed first, to the row they were made on: each instance keeps its own
+// target, so the flush cannot reach the row loaded next. A world change can
+// show another face of the same entity, which is another row.
 watch(
-  () => worldParam.value,
+  () => [props.entityType, props.entityId, worldParam.value],
   () => {
-    loadView()
-  }
-)
-
-// Watch for route changes
-watch(
-  () => [props.entityType, props.entityId],
-  (_next, prev) => {
-    // Flush pending toggles for the previous entity before loading the
-    // next one. The composable reads entity identity from
-    // getEntityType/getEntityId at fire time, which would resolve to
-    // the new entity by the time the FIFO chain runs — so we capture
-    // the previous identity for the duration of the flush via a
-    // one-shot override before triggering commit.
-    // The pin is the previous entry's served address, face included, read
-    // before loadView replaces the entry. With no entry loaded there is
-    // nothing to flush.
-    const [prevType] = prev
-    const prevAddress = servedRef.value
-    if (prevAddress === null) {
-      loadView()
-      return
-    }
-    const fireWith = { type: prevType, id: prevAddress }
-    pinEntityForFlush.value = fireWith
-    void contentAutoSave.commitImmediately().finally(() => {
-      if (pinEntityForFlush.value === fireWith) pinEntityForFlush.value = null
-    })
+    void contentAutoSave.value?.commitImmediately()
     loadView()
   }
 )
@@ -1980,7 +2302,7 @@ async function onCreated(created: Entity) {
   // only `entities` reported "missing" for every table and nested section and
   // fired the toast even when the row was plainly on screen.
   if (!viewData.value?.sections.some((sec) => sectionContainsEntity(sec, created.id))) {
-    uiStore.success(`Created ${created.id}.`)
+    uiStore.success(t('entity.createdNotShown', { id: created.id }))
   }
 }
 
@@ -1997,21 +2319,17 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
 </script>
 
 <template>
-  <div
-    class="entity-detail"
-    :data-testid="`page-state-${pageState}`"
-    :style="stickyOffsetStyle"
-  >
+  <div class="entity-detail" :data-testid="`page-state-${pageState}`" :style="stickyOffsetStyle">
     <!-- Deliberately empty while loading below the threshold: no spinner,
          no reserved block, no layout spring. The ActivityBar carries the
          navigation case; this only paints for a slow cold load. -->
-    <RlStatusRegion v-if="showBlockLoader">Loading…</RlStatusRegion>
+    <RlStatusRegion v-if="showBlockLoader">{{ t('common.loading') }}</RlStatusRegion>
     <div v-else-if="loading && !entry" class="entity-detail-placeholder" />
 
     <RlStatusRegion v-else-if="error" tone="error">
       {{ error }}
       <template #actions>
-        <RlButton variant="primary" @click="loadView">Retry</RlButton>
+        <RlButton variant="primary" @click="loadView()">{{ t('entity.retry') }}</RlButton>
       </template>
     </RlStatusRegion>
 
@@ -2039,9 +2357,11 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
             size="sm"
             icon="arrow-left"
           >
-            Prev <RlKbd keys="P" />
+            {{ t('entity.prev') }} <RlKbd keys="P" />
           </RlButton>
-          <RlButton v-else variant="secondary" size="sm" icon="arrow-left" disabled>Prev</RlButton>
+          <RlButton v-else variant="secondary" size="sm" icon="arrow-left" disabled>{{
+            t('entity.prev')
+          }}</RlButton>
           <span class="scope-nav-progress">[{{ scopeNav.current }}/{{ scopeNav.total }}]</span>
           <span class="scope-nav-label">{{ scopeNav.label }}</span>
           <RlButton
@@ -2051,9 +2371,9 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
             variant="secondary"
             size="sm"
           >
-            Next <RlKbd keys="N" />
+            {{ t('common.next') }} <RlKbd keys="N" />
           </RlButton>
-          <RlButton v-else variant="secondary" size="sm" disabled>Next</RlButton>
+          <RlButton v-else variant="secondary" size="sm" disabled>{{ t('common.next') }}</RlButton>
           <RlButton
             v-if="pileActions.scopePileId.value"
             variant="secondary"
@@ -2062,7 +2382,7 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
             data-testid="remove-from-pile"
             @click="pileActions.removeFromScopePile()"
           >
-            Remove from pile
+            {{ t('entity.removeFromPile') }}
           </RlButton>
         </template>
       </div>
@@ -2124,22 +2444,37 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
         <span v-for="(note, i) in bannerNotes" :key="i" class="banner-note">{{ note }}</span>
       </WorldBanner>
 
-      <header class="detail-header">
-        <div class="header-info">
+      <header ref="headerEl" class="detail-header">
+        <div ref="headerInfoEl" class="header-info">
           <span class="entity-type-badge">{{ typeDef?.label || entityType }}</span>
           <RouterLink v-if="ownerHref" :to="ownerHref" class="owner-link">
-            Part of {{ viewData?.entry?._owner?.title }}
+            {{ t('entity.partOf', { title: viewData?.entry?._owner?.title }) }}
           </RouterLink>
+          <!-- Keyed per row: a route change closes an open edit. -->
           <EntityTitle
+            :key="servedRef ?? ''"
             :title="entryTitle"
             :value="titleValue"
             :editable="!!titleProperty"
             :required="!!(titleProperty && typeDef?.properties[titleProperty]?.required)"
+            @edit="onTitleEdit"
             @commit="saveTitle"
           />
+          <div
+            v-if="entry?._lease || presence.viewers.value.length || presence.more.value"
+            class="header-presence"
+          >
+            <PresenceAvatars :viewers="presence.viewers.value" :more="presence.more.value" />
+            <LeaseBadge :lease="entry?._lease" />
+          </div>
         </div>
         <!-- Desktop actions -->
-        <div v-if="!props.hideActions" class="header-actions desktop-actions">
+        <div
+          v-if="!props.hideActions"
+          ref="headerActionsEl"
+          class="header-actions desktop-actions"
+          :class="{ 'desktop-actions--compact': compactActions }"
+        >
           <RlButton
             v-for="cmd in commands"
             :key="cmd.id"
@@ -2148,22 +2483,25 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
           >
             {{ cmd.label }}
           </RlButton>
-          <RlButton
-            v-for="a in detailActions"
-            :key="`action-${a.id}`"
-            variant="secondary"
-            :disabled="detailActionBusy"
-            @click="runDetailAction(a, $event)"
-          >
-            {{ a.label }}
-          </RlButton>
-          <FaceMenu :faces="faceOptions" @select="goToFace" />
-          <!--
+          <template v-if="!compactActions">
+            <RlButton
+              v-for="a in detailActions"
+              :key="`action-${a.id}`"
+              variant="secondary"
+              :disabled="detailActionBusy"
+              @click="runDetailAction(a, $event)"
+            >
+              {{ a.label }}
+            </RlButton>
+            <FaceMenu :faces="faceOptions" @select="goToFace" />
+            <!--
             Copy affordances (RULING 9). Renders nothing when no offer is
             allowed — a denied copy is ABSENT, not disabled — and nothing under
             a world, where copyOffers is empty; see its comment for why.
           -->
-          <CopyMenu :offers="copyOffers" :busy="copyBusy" @invoke="runCopy" />
+            <CopyMenu :offers="copyOffers" :busy="copyBusy" @invoke="runCopy" />
+            <ConversionMenu :offers="conversionOffers" @choose="conversionOffer = $event" />
+          </template>
           <!--
             The page-header create menu: sections that opted into
             `create.in: [header]`. The server assembles and dedupes it, so this
@@ -2174,11 +2512,11 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
             v-for="hc in viewData?.create ?? []"
             :key="hc.relation"
             :create="hc"
-            :menu-label="hc.heading || 'New'"
+            :menu-label="hc.heading || t('common.new')"
             @select="startCreate"
           />
           <RlButton v-if="editTarget" :as="RouterLink" :to="editTarget" variant="secondary">
-            Edit
+            {{ t('common.edit') }}
             <template #trailing><RlKbd keys="E" /></template>
           </RlButton>
           <!--
@@ -2189,39 +2527,51 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
             not have. The mobile block below gates on the SAME flag; both sites
             must, which is the trap this header just walked into three times.
           -->
-          <RlButton v-if="showHistory && historyTarget" :as="RouterLink" :to="historyTarget" variant="secondary">
-            History
-          </RlButton>
-          <!--
+          <template v-if="!compactActions">
+            <RlButton
+              v-if="showHistory && historyTarget"
+              :as="RouterLink"
+              :to="historyTarget"
+              variant="secondary"
+            >
+              {{ t('entity.history') }}
+            </RlButton>
+            <!--
             Exports what is on screen (BUG-PLZDPR): the served face's address,
             and the page's world, in which the export resolves the entry's links.
           -->
-          <ExportMenu :url-for="exportUrlFor(entityRef(entry))" />
-          <AddToPileMenu :addresses="() => (entry ? [entityRef(entry)] : [])" size="md" new-label="Add to new pile…" />
-          <!--
+            <ExportMenu :url-for="exportUrlFor(entityRef(entry))" />
+            <AddToPileMenu
+              :addresses="() => (entry ? [entityRef(entry)] : [])"
+              size="md"
+              :new-label="t('entity.addToNewPile')"
+            />
+            <!--
             Duplicate. Gated on `inline_create` rather than `_actions` (there is
             no `create` key on an entity response); the action list gates on the
             SAME computed.
           -->
-          <RlButton v-if="canDuplicate" variant="secondary" @click="showDuplicateModal = true">
-            Duplicate
-          </RlButton>
-          <RlButton v-if="canDelete" variant="secondary" tone="danger" @click="requestDelete">
-            Delete
-            <template #trailing><RlKbd keys="Del" /></template>
-          </RlButton>
+            <RlButton v-if="canDuplicate" variant="secondary" @click="showDuplicateModal = true">
+              {{ t('entity.duplicateAction') }}
+            </RlButton>
+            <RlButton v-if="canDelete" variant="secondary" tone="danger" @click="requestDelete">
+              {{ t('common.delete') }}
+              <template #trailing><RlKbd keys="Del" /></template>
+            </RlButton>
+          </template>
+          <EntityActionsMenu v-else :actions="compactOverflowActions" class="desktop-overflow" />
         </div>
 
         <!-- Mobile actions: Edit primary, delete icon, overflow menu for commands -->
         <div v-if="!props.hideActions" class="header-actions mobile-actions">
           <RlButton v-if="editTarget" :as="RouterLink" :to="editTarget" variant="secondary">
-            Edit
+            {{ t('common.edit') }}
           </RlButton>
           <RlIconButton
             v-if="canDelete"
             class="mobile-delete-btn"
             icon="delete"
-            label="Delete"
+            :label="t('common.delete')"
             tone="danger"
             @click="requestDelete"
           />
@@ -2251,6 +2601,13 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
         @close="showDuplicateModal = false"
         @created="handleDuplicated"
       />
+      <ConversionModal
+        v-if="conversionOffer && entry"
+        :source="entry"
+        :offer="conversionOffer"
+        @close="conversionOffer = null"
+        @converted="conversionDone"
+      />
       <NewPileDialog
         v-if="pileActions.newPileOpen.value"
         :items="[entityRef(entry)]"
@@ -2263,16 +2620,17 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
       <aside v-if="isInaccessible" class="inaccessible-banner">
         <span class="inaccessible-banner-icon" aria-hidden="true">🔒</span>
         <div>
-          <strong>This entity is git-crypt encrypted.</strong>
+          <strong>{{ t('entity.gitCrypt.title') }}</strong>
           <p>
-            The file is stored as ciphertext and cannot be read with the current configuration. Run
-            <code>git-crypt unlock</code>
-            in the project root to decrypt it, then reload this page.
+            <I18nT keypath="entity.gitCrypt.body" tag="span">
+              <template #command><code>git-crypt unlock</code></template>
+            </I18nT>
+            {{ ' ' }}
             <a
               href="https://github.com/AGWA/git-crypt#readme"
               target="_blank"
               rel="noopener noreferrer"
-              >Learn more about git-crypt.</a
+              >{{ t('entity.gitCrypt.learnMore') }}</a
             >
           </p>
         </div>
@@ -2331,13 +2689,13 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
             </h2>
             <SectionCreateButton
               :create="section.create"
-              :menu-label="'New'"
+              :menu-label="t('common.new')"
               @select="startCreate"
             />
           </div>
 
           <div v-if="section.isEmpty" class="section-empty">
-            {{ section.emptyMessage || 'No items' }}
+            {{ section.emptyMessage || t('entity.noItems') }}
           </div>
 
           <!--
@@ -2363,12 +2721,16 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
             :attachments="entry._attachments"
             :fields="memoBuildSectionEditFields(section, entry)"
             :on-property-applied="handlePropertyApplied"
+            :run-write="runSessionWrite"
             :on-error="handleSectionEditError"
             :on-verdict-flip="handleVerdictFlip"
-            :on-attachment-changed="loadView"
+            :on-attachment-changed="() => loadView()"
+            :on-relation-changed="() => loadView()"
           >
             <template v-if="commentsEnabled" #label-affordance="{ property, index }">
+              <!-- A relation row's key is not a property a comment can anchor to. -->
               <CommentIndicator
+                v-if="!property.startsWith('relation:')"
                 :entity-type="entityType"
                 :entity-id="entityRef(entry)"
                 :anchor="{ kind: 'property', ref: property }"
@@ -2408,9 +2770,13 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
           -->
           <EntityBody
             v-else-if="section === entryContentSection"
+            :key="servedRef ?? ''"
             :content="entryContentSection.content || ''"
             :editable="canEditBody"
             :ref-resolver="refResolver"
+            :source="taskItemSource"
+            :task-item-conversions="entry?._task_item_conversions"
+            @edit="onBodyEdit"
             @input="onBodyInput"
             @done="onBodyDone"
           >
@@ -2475,7 +2841,7 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
           >
             <div
               class="markdown-content md-body"
-              v-html="renderMarkdown(section.content || '', refResolver)"
+              v-html="renderMarkdown(section.content || '', { refResolver, world: viewWorld })"
             />
           </div>
 
@@ -2516,7 +2882,7 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
               <div
                 v-if="ent.hasContent"
                 class="markdown-content md-body"
-                v-html="renderMarkdown(ent.content || '', refResolver)"
+                v-html="renderMarkdown(ent.content || '', { refResolver, world: viewWorld })"
               />
             </article>
           </div>
@@ -2551,7 +2917,7 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
                 <button
                   v-if="ent.editFormId"
                   class="edit-btn"
-                  title="Edit"
+                  :title="t('common.edit')"
                   @click.stop="navigateToEdit(ent.editFormId, ent)"
                 >
                   &times;
@@ -2565,6 +2931,7 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
                 :initial-values="ent._props ?? {}"
                 :fields="memoBuildRowEditFields(ent)"
                 :on-property-applied="handleRowPropertyApplied"
+                :run-write="runSessionWrite"
                 :on-error="handleSectionEditError"
                 :on-verdict-flip="handleVerdictFlip"
               >
@@ -2629,6 +2996,7 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
                 :initial-values="ent._props ?? {}"
                 :fields="memoBuildRowEditFields(ent)"
                 :on-property-applied="handleRowPropertyApplied"
+                :run-write="runSessionWrite"
                 :on-error="handleSectionEditError"
                 :on-verdict-flip="handleVerdictFlip"
               >
@@ -2672,19 +3040,30 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
 
           <div v-else-if="section.display === 'table'" class="table-wrapper">
             <template v-if="section.isGrouped && section.groups?.length">
-              <div v-for="group in section.groups" :key="group.groupName" class="table-group">
+              <div
+                v-for="group in section.groups"
+                :key="group.entityType || group.groupName"
+                class="table-group"
+              >
                 <h3 class="group-heading">{{ group.groupName }}</h3>
                 <table class="data-table">
                   <thead>
                     <tr>
-                      <th v-for="col in section.columns" :key="col.property || col.relation">
+                      <th
+                        v-for="col in group.columns ?? section.columns"
+                        :key="col.property || col.relation"
+                      >
                         {{ col.label || col.property || col.relation }}
                       </th>
                       <th class="actions-col" />
                     </tr>
                   </thead>
                   <tbody>
-                    <tr v-for="row in group.rows" :id="anchorId(section.sectionId, row.entityId)" :key="row.entityId">
+                    <tr
+                      v-for="row in group.rows"
+                      :id="anchorId(section.sectionId, row.entityId)"
+                      :key="row.entityId"
+                    >
                       <td v-for="(cell, idx) in row.cells" :key="idx">
                         <a
                           v-if="cell.link"
@@ -2702,15 +3081,16 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
                         >
                           <ViewTableCell
                             :values="cell.values"
-                            :property="section.columns?.[idx]?.property"
+                            :property="(group.columns ?? section.columns)?.[idx]?.property"
                             :entity-type="row.entityType"
                           />
                         </a>
                         <template v-else>
                           <ViewTableCell
                             :values="cell.values"
-                            :property="section.columns?.[idx]?.property"
+                            :property="(group.columns ?? section.columns)?.[idx]?.property"
                             :entity-type="row.entityType"
+                            :entity-id="entityRef({ id: row.entityId, _self: row._self })"
                           />
                         </template>
                       </td>
@@ -2718,7 +3098,7 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
                         <button
                           v-if="row.editFormId"
                           class="icon-btn"
-                          title="Edit"
+                          :title="t('common.edit')"
                           @click="
                             navigateToEdit(row.editFormId, { id: row.entityId, _self: row._self })
                           "
@@ -2735,7 +3115,9 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
             <table v-else class="data-table">
               <thead>
                 <tr>
-                  <th v-if="sectionReorder.movable(section)" class="order-col"><span class="rl-visually-hidden">Order</span></th>
+                  <th v-if="sectionReorder.movable(section)" class="order-col">
+                    <span class="rl-visually-hidden">{{ t('entity.order') }}</span>
+                  </th>
                   <th v-for="col in section.columns" :key="col.property || col.relation">
                     {{ col.label || col.property || col.relation }}
                   </th>
@@ -2753,7 +3135,15 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
                   v-for="row in section.rows"
                   :id="anchorId(section.sectionId, row.entityId)"
                   :key="row.entityId"
-                  v-bind="sectionReorder.movable(section) ? { rowId: row.entityId, title: sectionRowLabel(row), group: `section-${sectionIndex}` } : {}"
+                  v-bind="
+                    sectionReorder.movable(section)
+                      ? {
+                          rowId: row.entityId,
+                          title: sectionRowLabel(row),
+                          group: `section-${sectionIndex}`,
+                        }
+                      : {}
+                  "
                   @reorder="(move: RowMove) => sectionReorder.onReorder(sectionIndex, move)"
                 >
                   <td v-for="(cell, idx) in row.cells" :key="idx">
@@ -2782,6 +3172,7 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
                         :values="cell.values"
                         :property="section.columns?.[idx]?.property"
                         :entity-type="row.entityType"
+                        :entity-id="entityRef({ id: row.entityId, _self: row._self })"
                       />
                     </template>
                   </td>
@@ -2789,7 +3180,7 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
                     <button
                       v-if="row.editFormId"
                       class="icon-btn"
-                      title="Edit"
+                      :title="t('common.edit')"
                       @click="
                         navigateToEdit(row.editFormId, { id: row.entityId, _self: row._self })
                       "
@@ -2800,7 +3191,9 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
                 </component>
               </tbody>
             </table>
-            <span v-if="sectionReorder.movable(section)" class="rl-visually-hidden" role="status">{{ sectionReorder.statusOf(sectionIndex) }}</span>
+            <span v-if="sectionReorder.movable(section)" class="rl-visually-hidden" role="status">{{
+              sectionReorder.statusOf(sectionIndex)
+            }}</span>
           </div>
 
           <!-- display: nested — a two-level parent→child tree.
@@ -2812,7 +3205,7 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
                reads as complete, which is the whole reason the flag exists. -->
           <div v-else-if="section.display === 'nested'" class="nested-tree-wrap">
             <p v-if="section.truncated" class="nested-truncated">
-              Some rows were not shown because this section hit its size limit.
+              {{ t('entity.nestedTruncated') }}
             </p>
             <div class="nested-tree">
               <!-- Open by default: a collapsed tree hides the thing the section
@@ -2886,16 +3279,27 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
                     </span>
                   </div>
                 </div>
-                <div v-else class="nested-children nested-empty">No items</div>
+                <div v-else class="nested-children nested-empty">{{ t('entity.noItems') }}</div>
 
                 <!-- The server withheld children; say so rather than letting the
                      list read as complete. -->
                 <div v-if="node.hasMoreChildren" class="nested-children nested-more">
-                  Showing {{ node.children?.length ?? 0 }} of {{ node.childCount }}
+                  {{
+                    t('entity.showingChildren', {
+                      shown: node.children?.length ?? 0,
+                      total: node.childCount,
+                    })
+                  }}
                 </div>
               </details>
             </div>
           </div>
+
+          <!-- A backlinks collection the server could not fill completely
+               (TKT-HF0D5W). Without the note the list reads as complete. -->
+          <p v-if="section.incomplete" class="section-incomplete">
+            {{ t('entity.sectionIncomplete') }}
+          </p>
         </section>
 
         <!-- External documents (renders only when configured for this type).
@@ -2903,6 +3307,16 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
              container's flex `gap` for free instead of duplicating that
              spacing via its own margin. -->
         <DocumentsPanel :entity-type="entityType" :entity-id="entityRef(entry)" />
+
+        <!-- Backlinks: entities whose body mentions this one. Self-gating:
+             renders nothing while nothing the reader can see mentions it.
+             Left out when the view shows backlinks itself or the operator
+             turned it off; the server decides (hideMentionedByPanel). -->
+        <MentionedByPanel
+          v-if="!viewData.hideMentionedByPanel"
+          :entity-type="entityType"
+          :entity-id="entityRef(entry)"
+        />
 
         <!-- Comment thread. Self-gating: renders nothing unless the schema
              marks this type commentable, so a project with no `comments:`
@@ -2915,6 +3329,14 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
           :can-accept="canAccept"
           @changed="onCommentsChanged"
           @accept="acceptSuggestion"
+        />
+
+        <!-- Channels (TKT-91BK6F). Self-gating: renders nothing unless
+             realtime.yaml attaches a channel type to this entity type. -->
+        <ChannelsPanel
+          :entity-type="entityType"
+          :entity-id="entityRef(entry)"
+          :world="worldParam"
         />
       </div>
 
@@ -2949,10 +3371,10 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
     </template>
 
     <RlStatusRegion v-else tone="error">
-      {{ entityType }} "{{ entityId }}" could not be found.
+      {{ t('entity.notFound', { type: entityType, id: entityId }) }}
       <template #actions>
         <RlButton :as="RouterLink" :to="backTargetAfterDelete()" variant="secondary">
-          Back to list
+          {{ t('entity.backToList') }}
         </RlButton>
       </template>
     </RlStatusRegion>
@@ -3076,6 +3498,9 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
 /* Header */
 .detail-header {
   display: flex;
+  /* The last resort when even the compact row does not fit: the actions
+     move below the title instead of squeezing it. */
+  flex-wrap: wrap;
   align-items: flex-start;
   justify-content: space-between;
   gap: var(--space-lg);
@@ -3088,7 +3513,9 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
   gap: var(--space-sm);
   /* Takes the row, so the title keeps its width when it swaps to a control. */
   flex: 1;
-  min-width: 0;
+  /* The title never gets narrower than this beside the actions.
+     useActionsFit reads this value to decide when the row collapses. */
+  min-width: min(16rem, 100%);
 }
 
 .entity-type-badge {
@@ -3098,6 +3525,18 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
   text-transform: uppercase;
   letter-spacing: 0.5px;
   color: var(--rl-color-text-muted);
+}
+
+.header-presence {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-sm);
+  min-width: 0;
+}
+
+.header-presence .lease-badge {
+  margin-left: 0;
 }
 
 .header-info h1 {
@@ -3110,6 +3549,13 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
 .header-actions {
   display: flex;
   gap: var(--space-sm);
+}
+
+/* The row keeps its natural width; useActionsFit collapses it instead. */
+.desktop-actions {
+  flex: none;
+  flex-wrap: nowrap;
+  white-space: nowrap;
 }
 
 /* Mobile-responsive header. .desktop-actions and .mobile-actions are
@@ -3441,7 +3887,8 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
 }
 
 /* display: nested — parent rows that expand to their children. */
-.nested-truncated {
+.nested-truncated,
+.section-incomplete {
   margin: 0 0 8px;
   font-size: var(--font-size-sm);
   color: var(--rl-color-text);

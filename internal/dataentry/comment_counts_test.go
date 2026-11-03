@@ -107,7 +107,7 @@ func TestCommentCounts_ListRows(t *testing.T) {
 				entity.RelationKey{From: "alice", Type: "owned-by", To: "TKT-001"}, nil)
 			require.NoError(t, err)
 			d := mustNewACL(t, tc.policy, app.store)
-			app.acl = d
+			setTestACL(t, app, d)
 
 			resp, rec := listEntitiesAs(principalCtx("alice"), t, app, d, "ticket", "tickets", tc.query)
 			require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
@@ -132,7 +132,7 @@ func TestCommentCounts_AbsentWhenNotServed(t *testing.T) {
 		app := commentCountsApp(t)
 		app.SetComments(nil)
 		d := mustNewACL(t, policy, app.store)
-		app.acl = d
+		setTestACL(t, app, d)
 		resp, rec := listEntitiesAs(principalCtx("alice"), t, app, d, "ticket", "tickets", "comment_counts=1")
 		require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 		require.Equal(t, map[string]*int{"TKT-001": nil, "TKT-002": nil}, commentCountsByID(resp))
@@ -144,7 +144,7 @@ func TestCommentCounts_AbsentWhenNotServed(t *testing.T) {
 		require.NoError(t, err)
 		app.SetComments(svc)
 		d := mustNewACL(t, policy, app.store)
-		app.acl = d
+		setTestACL(t, app, d)
 		resp, rec := listEntitiesAs(principalCtx("alice"), t, app, d, "ticket", "tickets", "comment_counts=1")
 		require.Equal(t, http.StatusOK, rec.Code, "a failed count must not fail the list: %s", rec.Body)
 		require.Equal(t, map[string]*int{"TKT-001": nil, "TKT-002": nil}, commentCountsByID(resp))
@@ -154,7 +154,7 @@ func TestCommentCounts_AbsentWhenNotServed(t *testing.T) {
 		app := commentCountsApp(t)
 		app.State().Meta.Comments = &metamodel.CommentsConfig{Enabled: true, On: []string{"feature"}}
 		d := mustNewACL(t, policy, app.store)
-		app.acl = d
+		setTestACL(t, app, d)
 		resp, rec := listEntitiesAs(principalCtx("alice"), t, app, d, "ticket", "tickets", "comment_counts=1")
 		require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 		require.Equal(t, map[string]*int{"TKT-001": nil, "TKT-002": nil}, commentCountsByID(resp))
@@ -221,7 +221,7 @@ func TestQueryBudget_CommentCountsAreOneCallPerPage(t *testing.T) {
 			}},
 			Assignments: map[string]string{"T1": "editor"},
 		}, app.store)
-		app.acl = d
+		setTestACL(t, app, d)
 		counting.Reset()
 
 		resp, rec := listEntitiesAs(ctx, t, app, d, "ticket", "tickets", "per_page=100&comment_counts=1")

@@ -44,6 +44,8 @@ var errPilesBodyTooLarge = errors.New("request body too large")
 // world; a hidden item is absent from every answer, counts included.
 //
 // Pile names are user content: they are never logged.
+//
+//archplan:auth=required
 func (h *pilesHandler) handleV1Piles(w http.ResponseWriter, r *http.Request) {
 	if h.svc == nil {
 		writeV1Error(w, r, http.StatusNotFound, "not_found", "Not found", "")

@@ -5,7 +5,7 @@ import RlTextField from 'rela-components/components/form/RlTextField.vue'
 import RlButton from 'rela-components/components/common/RlButton.vue'
 import RlIconButton from 'rela-components/components/common/RlIconButton.vue'
 import RlText from 'rela-components/components/common/RlText.vue'
-import { useConfigDraftStore } from '@/stores/configDraft'
+import { useConfigDraftStore } from '@/configure/configDraft'
 import type { FilterControlModel } from '@/configure/models'
 import { ensureList, ensurePath, isMap, newMap, setOrRemove, type TreePath } from '@/configure/tree'
 

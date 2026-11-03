@@ -88,11 +88,12 @@ func (e *Engine) runDocumentScript(
 	}
 	defer runtime.Close()
 
-	// RunFileContent (not RunString) so the Lua VM receives the script path
-	// as the chunkname — that lands in the message handler's frame captures
-	// and lets ScriptError.Source populate from the right file.
+	// The cache namespace stays the scripts/-relative path; the chunk name is
+	// project-relative so frames name the file ScriptError.Source reads.
+	runtime.SetScriptPath(path)
+	runtime.SetArgs(nil)
 	//nolint:contextcheck // ctx threaded via WithContext above
-	if runErr := runtime.RunFileContent(path, []byte(scriptCode), nil); runErr != nil {
+	if runErr := runtime.RunChunk(scriptCode, projectPath(scriptsDir, path)); runErr != nil {
 		return wrapScriptError(lua.SurfaceDocument, scriptsDir, path, subject,
 			runtime.ErrorFrames(), nil, runErr, deps.SourceFS(ctx))
 	}

@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
+	"github.com/Sourcehaven-BV/rela/internal/aclstore"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
 )
@@ -15,9 +16,9 @@ import (
 // End-to-end: a verified assertion drives an authorization decision and lands
 // in the audit log (TKT-RP3X3Q).
 //
-// Unit tests on the resolver and on acl.computeGlobals both pass even when a
+// Unit tests on the resolver and on acl.Declarative.globalRoles both pass even when a
 // field is silently DROPPED between them — and there is a real dropper in the
-// path: resolvePrincipalEntity rebuilds the Principal field by field, so a
+// path: access.Opener.Open rebuilds the Principal field by field, so a
 // plain composite literal there loses org and roles while every unit test
 // stays green. These tests run the whole chain: HTTP request → resolver →
 // principal_property re-stamp → ACL decision → audit record.
@@ -31,7 +32,7 @@ func e2eAssertionApp(t *testing.T, id AssertedIdentity, policy *acl.Policy) *App
 		ID: "TKT-001", Type: "ticket", Properties: map[string]any{"title": "T1"},
 	})
 
-	app.acl = mustNewACL(t, policy, app.store)
+	setTestACL(t, app, mustNewACL(t, policy, app.store))
 
 	v := stubVerifier{
 		validToken: "good",
@@ -137,7 +138,7 @@ func TestE2E_AssertedClaimsReachTheWritePath(t *testing.T) {
 
 func TestE2E_ClaimsSurvivePrincipalPropertyReStamp(t *testing.T) {
 	// The specific regression this file exists for. With principal_property
-	// enabled AND a matching entity, resolvePrincipalEntity rebuilds the
+	// enabled AND a matching entity, access.Opener.Open rebuilds the
 	// Principal — replacing User with the entity ID. Everything it does not
 	// explicitly carry over is lost, silently.
 	app := newTestAppV1(t)
@@ -158,13 +159,13 @@ func TestE2E_ClaimsSurvivePrincipalPropertyReStamp(t *testing.T) {
 			}},
 			AssertedRoles: map[string]acl.RoleList{"admin": {"editor"}},
 		},
-		acl.NewStoreGraph(app.store), app.store,
-		acl.WithPrincipalLookup(acl.NewStorePrincipalLookup(app.store)),
+		aclstore.MustNewGraph(app.store), app.store,
+		acl.WithPrincipalLookup(aclstore.MustNewPrincipalLookup(app.store)),
 	)
 	if err != nil {
 		t.Fatalf("NewDeclarative: %v", err)
 	}
-	app.acl = d
+	setTestACL(t, app, d)
 
 	// Drive the resolver + the ACL middleware, which is where the re-stamp runs,
 	// and capture the principal the downstream handler would see.
@@ -191,7 +192,7 @@ func TestE2E_ClaimsSurvivePrincipalPropertyReStamp(t *testing.T) {
 	}
 	// ...and the assertion claims survived it.
 	if want := []string{"admin"}; !slices.Equal(got.Roles(), want) {
-		t.Errorf("Roles = %v, want %v — resolvePrincipalEntity dropped the claims "+
+		t.Errorf("Roles = %v, want %v — principal resolution dropped the claims "+
 			"when it rebuilt the Principal", got.Roles(), want)
 	}
 	if got.OrgID() != "org_acme" {
@@ -232,13 +233,13 @@ func TestE2E_UnmatchedPrincipalStillCarriesClaims(t *testing.T) {
 			Roles:             map[string]acl.RoleDef{"viewer": {Read: []string{"ticket"}}},
 			AssertedRoles:     map[string]acl.RoleList{"admin": {"viewer"}},
 		},
-		acl.NewStoreGraph(app.store), app.store,
-		acl.WithPrincipalLookup(acl.NewStorePrincipalLookup(app.store)),
+		aclstore.MustNewGraph(app.store), app.store,
+		acl.WithPrincipalLookup(aclstore.MustNewPrincipalLookup(app.store)),
 	)
 	if err != nil {
 		t.Fatalf("NewDeclarative: %v", err)
 	}
-	app.acl = d
+	setTestACL(t, app, d)
 
 	v := stubVerifier{
 		validToken: "good",
@@ -264,10 +265,10 @@ func TestE2E_HeaderModeUnaffected(t *testing.T) {
 	seedEntity(app, &entity.Entity{
 		ID: "TKT-001", Type: "ticket", Properties: map[string]any{"title": "T1"},
 	})
-	app.acl = mustNewACL(t, &acl.Policy{
+	setTestACL(t, app, mustNewACL(t, &acl.Policy{
 		Roles:       map[string]acl.RoleDef{"viewer": {Read: []string{"ticket"}}},
 		Assignments: map[string]string{"alice": "viewer"},
-	}, app.store)
+	}, app.store))
 	app.SetPrincipalResolver(ChainResolvers(HeaderPrincipalResolver("X-Forwarded-User")))
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/tickets/TKT-001", http.NoBody)

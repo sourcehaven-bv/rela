@@ -1,0 +1,9 @@
+request: POST /api/command/dump_ids?list_id=tickets
+identity: header editor@example.test
+status: 403
+reads: 
+breadth: 
+bodies: 
+versions: 
+body:
+not permitted to run this command

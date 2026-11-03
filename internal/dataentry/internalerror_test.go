@@ -17,6 +17,7 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
+	"github.com/Sourcehaven-BV/rela/internal/testutil/logtest"
 )
 
 // TestNoInternalErrorDetail is the guard for GitHub #1774: no 500 in this
@@ -32,8 +33,8 @@ import (
 // callers pass the error as a separate argument.
 func TestNoInternalErrorDetail(t *testing.T) {
 	exemptFuncs := map[string]bool{
-		"writeInternalErrorDetail": true, // the one place a 500 detail is a parameter
-		"writeInternalJSONError":   true, // appends internalErrorDetail to a caller literal
+		"writeInternalProblem":   true, // the one place a 500 detail is a parameter
+		"writeInternalJSONError": true, // appends internalErrorDetail to a caller literal
 	}
 	files, err := filepath.Glob("*.go")
 	if err != nil {
@@ -134,9 +135,7 @@ func TestWriteInternalError_HidesTheCause(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			var logs bytes.Buffer
-			prev := slog.Default()
-			slog.SetDefault(slog.New(slog.NewTextHandler(&logs, nil)))
-			t.Cleanup(func() { slog.SetDefault(prev) })
+			logtest.SetDefault(t, slog.NewTextHandler(&logs, nil))
 
 			rec := httptest.NewRecorder()
 			write(rec, httptest.NewRequest(http.MethodGet, "/api/v1/x", http.NoBody), errors.New(secret))
@@ -151,9 +150,12 @@ func TestWriteInternalError_HidesTheCause(t *testing.T) {
 				t.Errorf("log = %q, want the cause", logs.String())
 			}
 
+			// The client went away: the request context is canceled.
 			logs.Reset()
 			rec = httptest.NewRecorder()
-			write(rec, httptest.NewRequest(http.MethodGet, "/api/v1/x", http.NoBody),
+			cctx, cancel := context.WithCancel(context.Background())
+			cancel()
+			write(rec, httptest.NewRequestWithContext(cctx, http.MethodGet, "/api/v1/x", http.NoBody),
 				errors.Join(errors.New(secret), context.Canceled))
 			if rec.Body.Len() != 0 || logs.Len() != 0 {
 				t.Errorf("canceled request: body %q, log %q; want neither", rec.Body.String(), logs.String())

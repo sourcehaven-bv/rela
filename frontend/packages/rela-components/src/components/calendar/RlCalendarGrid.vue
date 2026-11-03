@@ -16,6 +16,9 @@ import type { CalendarDay, CalendarView } from './calendarGrid'
 import { dayKey, daysBetween, isSameMonth, sameDay, weekdayLabels } from './calendarGrid'
 import type { CalendarDragPayload, CalendarEvent } from './types'
 import RlCalendarEventChip from './RlCalendarEventChip.vue'
+import { useMessages } from '../../composables/useMessages'
+
+const messages = useMessages()
 
 const props = withDefaults(
   defineProps<{
@@ -152,7 +155,7 @@ function onDrop(day: CalendarDay, native: DragEvent) {
       @drop="onDrop(day, $event)"
     >
       <div class="rl-calendar-grid__day-number">
-        <span v-if="isToday(day)" class="rl-visually-hidden">Today, </span>{{ day.day }}
+        <span v-if="isToday(day)" class="rl-visually-hidden">{{ messages.chromeText({ key: 'today' }) }}, </span>{{ day.day }}
       </div>
 
       <div class="rl-calendar-grid__events">
@@ -173,7 +176,7 @@ function onDrop(day: CalendarDay, native: DragEvent) {
           class="rl-calendar-grid__more rl-focus-ring"
           @click="emit('expand', day)"
         >
-          +{{ hiddenCount(day) }} more
+          {{ messages.moreCount({ count: hiddenCount(day) }) }}
         </button>
       </div>
     </div>

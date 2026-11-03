@@ -24,6 +24,9 @@ const (
 	TemplatesDir         = "templates"
 	EntityTemplatesDir   = "entities"
 	RelationTemplatesDir = "relations"
+	// AttachmentsDir holds the file tier's attachment bytes. Not modeled
+	// into Context: only the fsstore wiring and `rela gc` need it.
+	AttachmentsDir = "attachments"
 	// AppsDir holds custom data-entry apps (apps/<id>/index.html). Like
 	// templates/, it lives on the filesystem in every storage backend and is
 	// not modeled into Context (loaded traversal-resistant where needed).
@@ -241,7 +244,7 @@ func (c *Context) EntityFilePathWithPlural(plural, id string) string {
 //
 //   - entity IDs go through entity.ValidateID at creation time
 //   - relation types come from the metamodel and are checked by
-//     metamodel.ValidateRelation before any write reaches this code path
+//     metamodel.Validator.ValidateRelation before any write reaches this code path
 //
 // This function deliberately does NOT defensively reject malformed inputs:
 // turning a programming-error panic into a returned error here would force

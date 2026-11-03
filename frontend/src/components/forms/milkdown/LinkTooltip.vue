@@ -17,10 +17,14 @@
  * without it the selection collapses before the action runs, and the panel is
  * about the link the selection is in.
  */
+import { useI18n } from 'vue-i18n'
+
 defineProps<{
   /** The link's current target, displayed and never linkified. */
   href: string
 }>()
+
+const { t } = useI18n()
 
 const emit = defineEmits<{
   edit: []
@@ -29,27 +33,27 @@ const emit = defineEmits<{
 </script>
 
 <template>
-  <div class="link-tooltip" role="group" aria-label="Link">
+  <div class="link-tooltip" role="group" :aria-label="t('editor.command.link')">
     <span class="link-tooltip-href" :title="href">{{ href }}</span>
     <button
       type="button"
       class="link-tooltip-button"
-      title="Edit link"
-      aria-label="Edit link"
+      :title="t('editor.link.edit')"
+      :aria-label="t('editor.link.edit')"
       @mousedown.prevent
       @click="emit('edit')"
     >
-      Edit
+      {{ t('common.edit') }}
     </button>
     <button
       type="button"
       class="link-tooltip-button"
-      title="Remove link"
-      aria-label="Remove link"
+      :title="t('editor.toolbar.removeLink')"
+      :aria-label="t('editor.toolbar.removeLink')"
       @mousedown.prevent
       @click="emit('unlink')"
     >
-      Remove
+      {{ t('common.remove') }}
     </button>
   </div>
 </template>

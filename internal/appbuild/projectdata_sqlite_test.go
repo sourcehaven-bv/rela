@@ -138,7 +138,7 @@ func withDatabase(t *testing.T, root string, fn func(store.Store)) {
 		t.Fatal(err)
 	}
 	defer func() { _ = db.Close() }()
-	st, err := sqlitestore.New(db)
+	st, err := sqlitestore.New(context.Background(), db)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -306,6 +306,30 @@ func TestExportMarkdownData_RefusesExistingDataDirs(t *testing.T) {
 				t.Fatalf("export wrote into %s: %v", out, entries)
 			}
 		})
+	}
+}
+
+// An entity of a type the schema does not declare would be written into a
+// directory the next open does not scan, so the export refuses it before
+// writing anything (TKT-C2YVX1).
+func TestExportMarkdownData_RefusesUndeclaredType(t *testing.T) {
+	root := writeDataProject(t)
+	if _, err := importData(t, root, false, audit.NewMemory()); err != nil {
+		t.Fatal(err)
+	}
+	withDatabase(t, root, func(st store.Store) {
+		if err := st.CreateEntity(context.Background(), entity.New("MEMO-1", "memo")); err != nil {
+			t.Fatal(err)
+		}
+	})
+
+	out := filepath.Join(t.TempDir(), "out")
+	_, err := appbuild.ExportMarkdownData(context.Background(), osFS(), projectAt(t, root), out)
+	if err == nil || !strings.Contains(err.Error(), `"memo"`) {
+		t.Fatalf("err = %v, want a refusal naming the undeclared type", err)
+	}
+	if _, statErr := os.Stat(out); !errors.Is(statErr, fs.ErrNotExist) {
+		t.Fatalf("export wrote %s before refusing (stat: %v)", out, statErr)
 	}
 }
 

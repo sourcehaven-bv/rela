@@ -106,6 +106,8 @@ func (s *ganttSpan) union(o ganttSpan) {
 // not a secret). ?root= is an ENTITY id, so a hidden, missing, or
 // out-of-scope root all get the uniform entity 404 — indistinguishable by
 // contract.
+//
+//archplan:auth=required
 func (h *ganttHandler) handleV1Gantt(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		writeV1Error(w, r, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed", "")

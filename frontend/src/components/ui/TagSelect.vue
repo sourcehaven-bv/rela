@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
+import { useI18n } from 'vue-i18n'
 import SlimSelect from 'slim-select/vue'
 import 'slim-select/styles'
 
@@ -28,6 +29,8 @@ const emit = defineEmits<{
   'update:modelValue': [value: string[]]
 }>()
 
+const { t } = useI18n()
+
 const data = computed(() =>
   props.options.map((opt) => ({
     // Display label (falls back to the value); value stays the raw identity.
@@ -40,10 +43,14 @@ const data = computed(() =>
 )
 
 const settings = computed(() => ({
-  placeholderText: props.placeholder || 'Select...',
+  placeholderText: props.placeholder || t('shell.tagSelect.placeholder'),
   closeOnSelect: false,
   showSearch: true,
-  searchPlaceholder: 'Search...',
+  searchPlaceholder: t('shell.tagSelect.search'),
+  searchText: t('shell.tagSelect.noResults'),
+  searchingText: t('shell.tagSelect.searching'),
+  // slim-select fills in {number} itself.
+  maxValuesMessage: t('shell.tagSelect.selected', { number: '{number}' }),
   allowDeselect: true,
 }))
 

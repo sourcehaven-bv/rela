@@ -209,6 +209,24 @@ describe('markdown', () => {
         expect(result).toContain('Data Entry Web UI')
       })
 
+      it('carries the page world on the link so the target opens in it', () => {
+        const resolver = makeResolver({
+          'POL-1': { type: 'policy', title: 'Access policy' },
+        })
+        const result = renderMarkdown('see `POL-1`', { refResolver: resolver, world: 'draft review' })
+        expect(result).toContain('href="/entity/policy/POL-1?world=draft%20review"')
+      })
+
+      it('adds no world query when the page has none', () => {
+        const resolver = makeResolver({
+          'POL-1': { type: 'policy', title: 'Access policy' },
+        })
+        for (const world of [undefined, '']) {
+          const result = renderMarkdown('see `POL-1`', { refResolver: resolver, world })
+          expect(result).toContain('href="/entity/policy/POL-1"')
+        }
+      })
+
       it('leaves unknown-ID code spans as <code>', () => {
         const resolver = makeResolver({})
         const result = renderMarkdown('`TKT-NOPE` is unknown', resolver)

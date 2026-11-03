@@ -154,7 +154,7 @@ func (g *Gate) Evaluate(ctx context.Context, meta *metamodel.Metamodel) (*Verdic
 	if meta == nil {
 		return nil, errors.New("datamigration: Evaluate: metamodel is required")
 	}
-	live := meta.ShapeProjection()
+	live := metamodel.NewShapeProjection(meta)
 	liveHash := live.Hash()
 	now := g.now().UTC()
 

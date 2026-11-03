@@ -36,6 +36,7 @@ func newVersionManager(t *testing.T) (*entitymanager.Manager, *fakeRecorder) {
 		Transitions:     statemachine.EmptySet(),
 		FieldGate:       entitymanager.AllowAllFieldGate{},
 		VersionRecorder: rec,
+		AnchorGuard:     entitymanager.NopAnchorGuard{},
 	})
 	if err != nil {
 		t.Fatalf("entitymanager.New: %v", err)

@@ -72,6 +72,9 @@ import {
   isInTable,
 } from './tableCommands'
 import RlEditorToolbar from './RlEditorToolbar.vue'
+import { useMessages } from '../../composables/useMessages'
+
+const messages = useMessages()
 
 const props = withDefaults(
   defineProps<{
@@ -112,7 +115,7 @@ const props = withDefaults(
   }>(),
   {
     modelValue: '',
-    placeholder: 'Write something...',
+    placeholder: undefined,
     hideToolbar: false,
     plugins: () => [],
     stringifyOptions: undefined,
@@ -476,7 +479,7 @@ onBeforeUnmount(() => {
              `aria-hidden` because ProseMirror's own textbox role already names
              the field; a screen reader announcing both would read it twice. -->
         <div v-if="showPlaceholder" class="rl-markdown-editor__placeholder" aria-hidden="true">
-          {{ props.placeholder }}
+          {{ props.placeholder ?? messages.chromeText({ key: 'writeSomething' }) }}
         </div>
       </div>
     </div>

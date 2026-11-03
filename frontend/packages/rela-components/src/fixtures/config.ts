@@ -167,13 +167,24 @@ export const ticketStatusValues: ChoiceValueRow[] = [
   { id: 'blocked', title: 'Blocked', color: 'red', inUse: 3 },
 ]
 
-export const colorOptions: TagColor[] = ['grey', 'blue', 'green', 'amber', 'red', 'purple']
+export const colorOptions: TagColor[] = [
+  'grey',
+  'blue',
+  'green',
+  'amber',
+  'yellow',
+  'teal',
+  'red',
+  'purple',
+]
 
 export const colorLabels: Record<TagColor, string> = {
   grey: 'Grey',
   blue: 'Blue',
   green: 'Green',
   amber: 'Amber',
+  yellow: 'Yellow',
+  teal: 'Teal',
   red: 'Red',
   purple: 'Purple',
 }

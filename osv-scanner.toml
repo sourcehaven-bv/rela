@@ -1,0 +1,13 @@
+# osv-scanner ignores for the scheduled security scan
+# (.github/workflows/security-scan.yml). Each entry needs a reason; revisit
+# it when the advisory or the dependency graph changes.
+
+# golang.org/x/crypto/openpgp is deprecated and unsafe. The advisory covers
+# every version of x/crypto, so no fix will ever exist. rela never imports
+# x/crypto/openpgp under any build tag (go-git uses the
+# github.com/ProtonMail/go-crypto fork), and govulncheck reports the
+# advisory as not called. osv-scanner flags it only because x/crypto is in
+# go.mod. Tracking: https://github.com/sourcehaven-bv/rela/issues/1924
+[[IgnoredVulns]]
+id = "GO-2026-5932"
+reason = "x/crypto/openpgp is never imported; no fixed version exists"

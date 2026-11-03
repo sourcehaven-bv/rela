@@ -48,7 +48,7 @@ func TestLuaWiring_ScriptReadsAreACLBound(t *testing.T) {
 		Roles:       map[string]acl.RoleDef{"viewer": {Read: []string{"ticket"}}},
 		Assignments: map[string]string{"alice": "viewer"},
 	}, app.store)
-	app.acl = d
+	setTestACL(t, app, d)
 
 	out := runScriptAsAlice(t, app, d, `
 rela.output("ticket=" .. tostring(rela.get_entity("TKT-001") ~= nil))
@@ -78,7 +78,7 @@ func TestLuaWiring_ScriptTraversalIsACLBound(t *testing.T) {
 		Roles:       map[string]acl.RoleDef{"viewer": {Read: []string{"ticket"}}},
 		Assignments: map[string]string{"alice": "viewer"},
 	}, app.store)
-	app.acl = d
+	setTestACL(t, app, d)
 
 	out := runScriptAsAlice(t, app, d, `
 local function walk(n, acc)
@@ -120,7 +120,7 @@ func TestLuaWiring_NoRawReadHandleOnWriterDeps(t *testing.T) {
 		Roles:       map[string]acl.RoleDef{"viewer": {Read: []string{"ticket"}}},
 		Assignments: map[string]string{"alice": "viewer"},
 	}, app.store)
-	app.acl = d
+	setTestACL(t, app, d)
 
 	deps := app.luaWriteDeps()
 	if deps.VisibleReader == nil {

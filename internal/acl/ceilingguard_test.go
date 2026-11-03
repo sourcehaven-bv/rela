@@ -48,8 +48,9 @@ var declarationCheck = regexp.MustCompile(`_,\s*(ok|defined|hasEveryone)\s*:?=`)
 // Keep this list tiny. A function that HAS a principal and reports its access
 // belongs on Request and must clamp (grantingAttributions does).
 var policyWideReporters = map[string]bool{
-	"EveryoneGrants": true,
-	"AssertedGrants": true,
+	"EveryoneGrants":            true,
+	"AssertedGrants":            true,
+	"EveryoneOpenedFieldBlocks": true,
 }
 
 // enclosingFunc scans backwards for the nearest `func` declaration, so a
@@ -149,9 +150,9 @@ client_baselines:
 
 	t.Run("attenuated client", func(t *testing.T) {
 		t.Parallel()
-		req, err := d.ForPrincipal(verifiedClient("svc", "app"))
+		req, err := d.ForIdentity(identityFor(t.Context(), t, d, verifiedClient("svc", "app")))
 		if err != nil {
-			t.Fatalf("ForPrincipal: %v", err)
+			t.Fatalf("ForIdentity: %v", err)
 		}
 		role, ok := req.roleFor("admin")
 		if !ok {
@@ -180,9 +181,9 @@ client_baselines:
 
 	t.Run("interactive user is untouched", func(t *testing.T) {
 		t.Parallel()
-		req, err := d.ForPrincipal(verifiedClient("alice", "user"))
+		req, err := d.ForIdentity(identityFor(t.Context(), t, d, verifiedClient("alice", "user")))
 		if err != nil {
-			t.Fatalf("ForPrincipal: %v", err)
+			t.Fatalf("ForIdentity: %v", err)
 		}
 		role, ok := req.roleFor("admin")
 		if !ok {
@@ -238,7 +239,7 @@ client_baselines:
 	}
 	ctx := context.Background()
 
-	unrestricted, err := d.ForPrincipal(verifiedClient("alice", "user"))
+	unrestricted, err := d.ForIdentity(identityFor(t.Context(), t, d, verifiedClient("alice", "user")))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -249,7 +250,7 @@ client_baselines:
 		t.Fatal("precondition: alice should hold establish for the entity")
 	}
 
-	client, err := d.ForPrincipal(verifiedClient("alice", "app"))
+	client, err := d.ForIdentity(identityFor(t.Context(), t, d, verifiedClient("alice", "app")))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -259,6 +260,62 @@ client_baselines:
 	if client.HoldsPermissionForEntity(ctx, "TKT-1", "establish") {
 		t.Error("entity-scoped HoldsPermissionForEntity ignored deny_permissions — " +
 			"a restricted client could perform a guarded transition")
+	}
+}
+
+// TestCeilingPermitsVerb pins the exported ceiling check to the ceiling
+// alone: it ignores the roles and the rows (a principal with no write grant
+// is still admitted when no ceiling applies), it narrows like permitsVerb,
+// and it refuses an op it does not map to a ceiling axis.
+func TestCeilingPermitsVerb(t *testing.T) {
+	t.Parallel()
+	p := mustPolicy(t, `
+roles:
+  reader:
+    read: ["*"]
+assignments:
+  alice: reader
+client_baselines:
+  apps:
+    applies_to: [app]
+    read: ["*"]
+    deny_write: [ticket]
+`)
+	d, err := NewDeclarative(p, NullGraph{}, NullGraphQueryer{})
+	if err != nil {
+		t.Fatalf("NewDeclarative: %v", err)
+	}
+	user, err := OpenRequest(t.Context(), d, verifiedClient("alice", "user"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	app, err := OpenRequest(t.Context(), d, verifiedClient("alice", "app"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	tests := []struct {
+		name string
+		req  *Request
+		op   Op
+		typ  string
+		want bool
+	}{
+		{"no ceiling admits an update the roles do not grant", user, OpUpdate, "ticket", true},
+		{"no ceiling admits create", user, OpCreate, "ticket", true},
+		{"ceiling denies update on a denied type", app, OpUpdate, "ticket", false},
+		{"ceiling denies delete on a denied type", app, OpDelete, "ticket", false},
+		{"ceiling denies rename on a denied type", app, OpRename, "ticket", false},
+		{"ceiling admits update on another type", app, OpUpdate, "doc", true},
+		{"unhandled op is refused without a ceiling", user, Op("read"), "ticket", false},
+		{"unhandled op is refused under a ceiling", app, Op(""), "doc", false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if got := CeilingPermitsVerb(tc.req, tc.op, tc.typ); got != tc.want {
+				t.Errorf("CeilingPermitsVerb(%q, %q) = %v, want %v", tc.op, tc.typ, got, tc.want)
+			}
+		})
 	}
 }
 

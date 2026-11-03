@@ -2,8 +2,15 @@ import { describe, expect, it } from 'vitest'
 import {
   automations,
   boardModel,
+  canSortColumn,
+  columnMoveAllowed,
+  columnRemoveAllowed,
+  columnSource,
+  columnTitle,
   choiceListModel,
   dashboardModel,
+  dashboardPath,
+  dashboards,
   entityTypeLabel,
   entityTypeModel,
   formModel,
@@ -79,6 +86,47 @@ describe('screen models', () => {
     expect(dashboardModel(dataEntry).cards.map((c) => c.restricted)).toEqual([false, true])
   })
 
+  // A `list:` card (TKT-2SGPJZ) is shown but not edited in Configure.
+  it('marks a list card', () => {
+    const cards = dashboardModel(
+      toTree({
+        dashboard: {
+          cards: [
+            { title: 'Q', query: 'type:ticket' },
+            { title: 'L', list: 'open', display: 'matrix' },
+          ],
+        },
+      })
+    ).cards
+    expect(cards.map((c) => [c.list, c.display])).toEqual([
+      ['', 'count'],
+      ['open', 'matrix'],
+    ])
+  })
+
+  // Named dashboards (TKT-5LQNLY) sit under `dashboards.<name>`.
+  it('reads named dashboards beside the default one', () => {
+    const withNamed = toTree({
+      ...dataEntryFixture,
+      dashboards: {
+        ops: { title: 'Operations', cards: [] },
+        crm: { title: 'Pipeline', cards: [{ title: 'Open deals', query: 'type:deal', display: 'count' }] },
+      },
+    })
+    expect(dashboards(withNamed)).toEqual([
+      { name: '', title: 'Default' },
+      { name: 'crm', title: 'Pipeline' },
+      { name: 'ops', title: 'Operations' },
+    ])
+    expect(dashboardModel(withNamed, 'crm')).toMatchObject({
+      title: 'Pipeline',
+      cards: [{ title: 'Open deals', query: 'type:deal' }],
+    })
+    expect(dashboardModel(withNamed).cards.map((c) => c.title)).toEqual(['Open', 'Secret'])
+    expect(dashboardPath()).toEqual(['dashboard'])
+    expect(dashboardPath('crm')).toEqual(['dashboards', 'crm'])
+  })
+
   it('groups navigation and locks gated entries', () => {
     const [only] = spaces(dataEntry)
     expect(only.index).toBe(-1)
@@ -93,6 +141,52 @@ describe('screen models', () => {
       path: ['navigation', 0, 'items', 1],
     })
     expect(only.groups[1].entries[0].locked).toBe(true)
+  })
+})
+
+// A busy column (TKT-TU3XH4): the page shows and keeps one that exists.
+describe('busy columns', () => {
+  const busyList = toTree({
+    lists: {
+      t: {
+        entity_type: 'ticket',
+        columns: [
+          { property: 'title' },
+          { busy: 'run' },
+          { busy: 'run', label: 'Agent' },
+          { face: true },
+          { relation: 'blocks' },
+        ],
+      },
+    },
+  })
+  const cols = listModel(busyList, 't')!.columns
+
+  it('busy column model and title', () => {
+    expect(cols[1]).toMatchObject({ busy: 'run', face: false, property: '', relation: '' })
+    expect(cols[3]).toMatchObject({ busy: '', face: true })
+    expect(columnTitle(cols[1])).toBe('run')
+    expect(columnTitle(cols[2])).toBe('Agent')
+    expect(columnTitle(cols[3])).toBe('face')
+  })
+
+  it('column source text', () => {
+    expect(cols.map(columnSource)).toEqual(['title', 'busy: run', 'busy: run', 'face', 'blocks'])
+    expect(cols.map(canSortColumn)).toEqual([true, false, false, false, false])
+  })
+
+  it('busy column cannot become first', () => {
+    const rows = listModel(
+      toTree({ lists: { t: { columns: [{ property: 'title' }, { busy: 'run' }, { property: 'status' }] } } }),
+      't'
+    )!.columns
+    expect(columnMoveAllowed(rows, 1, 0)).toBe(false)
+    expect(columnMoveAllowed(rows, 0, 2)).toBe(false)
+    expect(columnMoveAllowed(rows, 1, 2)).toBe(true)
+    expect(columnMoveAllowed(rows, 2, 0)).toBe(true)
+    expect(columnRemoveAllowed(rows, 0)).toBe(false)
+    expect(columnRemoveAllowed(rows, 1)).toBe(true)
+    expect(columnRemoveAllowed(rows, 2)).toBe(true)
   })
 })
 

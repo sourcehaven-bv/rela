@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Sourcehaven-BV/rela/internal/access"
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/affordances"
 	v1 "github.com/Sourcehaven-BV/rela/internal/apiwire/v1"
@@ -16,38 +17,6 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/principal"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
-
-// revealIsPrivileged reports whether taking the reveal arm actually constitutes
-// a privileged disclosure worth auditing, which is only true under a configured
-// policy.
-//
-// Without this the audit row is worse than useless. Under NopACL and
-// ReadOnlyACL no middleware attaches a read gate, so readGateFromContext hands
-// back nopReadGate, whose HoldsPermission returns true for EVERY permission
-// (readgate.go:135, the RR-CWWJGW shape). Every history read would therefore
-// take the reveal arm — but with no policy configured nothing is redacted, so
-// those reads reveal nothing. Recording them would bury the real reveals under
-// noise in every unconfigured deployment, and would train an operator who later
-// configures a policy to ignore exactly the row this exists to surface.
-//
-// A closed switch on the ACL IMPLEMENTATION, matching permitsGatedUIElement:
-// asking the read gate here is precisely the fail-open mistake being avoided,
-// since the gate is the thing that cannot answer. Value and pointer forms are
-// both matched because these types' methods have value receivers. An
-// implementation nobody taught this about audits (the default arm) — the
-// conservative direction for a log, where a spurious row is recoverable and a
-// missing one is not.
-func revealIsPrivileged(aclImpl acl.ACL) bool {
-	switch aclImpl.(type) {
-	case nil:
-		// Wired without an ACL: same "no policy" case as NopACL.
-		return false
-	case acl.NopACL, *acl.NopACL, acl.ReadOnlyACL, *acl.ReadOnlyACL:
-		return false
-	default:
-		return true
-	}
-}
 
 // recordHistoryReveal emits the audit row for a history read that overrode
 // redaction via acl.PermHistoryReadRedacted (TKT-LVSPSB / issue #1238).
@@ -72,6 +41,7 @@ func recordHistoryReveal(ctx context.Context, sink audit.Audit, entityType, enti
 		Subject:     &audit.Subject{Kind: "entity", Type: entityType, ID: entityID},
 		Principal:   principal.From(ctx),
 		TriggeredBy: audit.TriggeredByFrom(ctx),
+		AssertedBy:  audit.AssertedByFrom(ctx),
 		Summary:     "history_reveal=true version=" + strconv.Itoa(version),
 	})
 }
@@ -181,12 +151,17 @@ func historyMethodAllowed(w http.ResponseWriter, r *http.Request, restore bool) 
 
 // serveHistoryTimeline writes the version metadata list (oldest first).
 //
+// The lineage can reach back past a rename or conversion to versions of
+// another type or face. Those are dropped: the row gate ran for this type
+// and face only, so their metadata would be served under the wrong grant,
+// as their snapshots would (serveHistoryVersion refuses them too). The
+// conversion's own version stays, and its prev_id and prev_face say where
+// the lineage came from.
+//
 // deleted marks a face with no live row, whose history was opened on the
 // global history permission. Such a timeline is served only when it is
-// non-empty and every version is of the URL type: an empty one would tell a
-// permission holder "no such lineage" apart from the 404 of a hidden live
-// face, and a mismatched one would open another type's lineage under this
-// type's face grant.
+// non-empty after that filter: an empty one would tell a permission holder
+// "no such lineage" apart from the 404 of a hidden live face.
 func serveHistoryTimeline(
 	w http.ResponseWriter, r *http.Request, reader store.HistoryReader,
 	typeName string, subjectRef entityPkg.Ref, deleted bool,
@@ -199,7 +174,8 @@ func serveHistoryTimeline(
 		writeGateError(w, r, err)
 		return
 	}
-	if deleted && !lineageOfType(metas, typeName) {
+	metas = versionsAt(metas, typeName, face)
+	if deleted && len(metas) == 0 {
 		writeV1Error(w, r, http.StatusNotFound, "not_found", entityNotFoundTitle, "")
 		return
 	}
@@ -218,6 +194,9 @@ func serveHistoryTimeline(
 		}
 		if m.PrevID != "" {
 			row["prev_id"] = m.PrevID
+			if m.PrevFace != m.Face {
+				row["prev_face"] = m.PrevFace.String()
+			}
 		}
 		if m.TriggeredBy != "" {
 			row["triggered_by"] = m.TriggeredBy
@@ -252,18 +231,15 @@ func serveHistoryTimeline(
 	writeV1JSON(w, http.StatusOK, body)
 }
 
-// lineageOfType reports whether metas is non-empty and every version is of
-// typeName.
-func lineageOfType(metas []store.VersionMeta, typeName string) bool {
-	if len(metas) == 0 {
-		return false
-	}
+// versionsAt returns the versions of metas that are of typeName at face.
+func versionsAt(metas []store.VersionMeta, typeName string, face entityPkg.Face) []store.VersionMeta {
+	out := make([]store.VersionMeta, 0, len(metas))
 	for _, m := range metas {
-		if m.Type != typeName {
-			return false
+		if m.Type == typeName && m.Face == face {
+			out = append(out, m)
 		}
 	}
-	return true
+	return out
 }
 
 // serveHistoryVersion writes one version's full snapshot, redacted through the
@@ -338,8 +314,9 @@ func serveHistoryVersion(a *App,
 		// ordinary redacted read discloses nothing the permission governs, and
 		// under no policy this arm is reached by every reader with nothing
 		// redacted to reveal. Both would bury the real reveals this record
-		// exists to surface. See audit.OpHistoryReveal and revealIsPrivileged.
-		if revealIsPrivileged(a.acl) {
+		// exists to surface. See audit.OpHistoryReveal and
+		// access.Mode.RevealIsPrivileged.
+		if access.ModeOf(a.acl).RevealIsPrivileged() {
 			recordHistoryReveal(ctx, a.auditSink, snap.Type, entityID, snap.Version)
 		}
 	} else {

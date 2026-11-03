@@ -1,0 +1,379 @@
+package appbuild
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"log/slog"
+	"time"
+
+	"github.com/Sourcehaven-BV/rela/internal/channels"
+	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
+	"github.com/Sourcehaven-BV/rela/internal/realtime"
+	"github.com/Sourcehaven-BV/rela/internal/realtimecfg"
+)
+
+// channelGuard is the [entitymanager.AnchorGuard] over the channel store. It
+// reads each channel type's `on_entity_delete` from the realtime config the
+// holder serves:
+//
+//   - block refuses the delete with [*entitymanager.AnchorBlockedError]
+//     before anything is written;
+//   - detach and delete both tombstone the channels before the delete's
+//     transaction, and a failed delete restores them. The batch records the
+//     policy and the time retention may erase it: at once for a delete
+//     type, after the type's detached retention otherwise. The store
+//     computes both from the channels it moves (see [realtime.Filer]);
+//   - a channel whose type the config does not declare, or a project without
+//     realtime.yaml, is detached: the config can no longer say otherwise.
+//
+// The batch is filed as pending: retention leaves it alone until the
+// post-commit delete hook confirms it (see [tombstoneConfirmer]), so a
+// delete that fails after the tombstone never loses its channels. A soft
+// delete tombstones nothing; it only runs CheckDelete. Its purge later goes
+// through BeforeDelete like any delete.
+//
+// In degraded mode the holder serves the last good config, so the rules that
+// held when the channels were written still apply. One delete operation reads
+// the config once, in Scope, and judges every entity it removes under it.
+//
+// The block rule is checked twice: in Scope over the listed channels, and
+// again inside the tombstone over the channels the store moves, so a
+// blocking channel created between the two refuses the delete. A channel
+// created after the tombstone, while the delete's transaction runs, is
+// swept up by the post-commit alias hook as a detach.
+//
+// The guard sees only deletes made through the manager. The channels of an
+// entity deleted outside it (a file removed by hand or by git, or a write
+// to the database that bypasses rela) stay live, and nothing detaches them.
+// They are unreachable all the same: every channel request reads the anchor
+// entity first, and a missing anchor gets the uniform 404. A create at the
+// id through any process's manager tombstones them, through the
+// EntityCreated alias hook on the shared channel store (see
+// [channelAliases.EntityCreated]), so a new entity never inherits them. An
+// entity that comes back outside the manager, as a git checkout or stash
+// puts a file back, gets them back unchanged.
+type channelGuard struct {
+	store  channels.Store
+	tombs  *tombstoneConfirmer
+	config func() *realtimecfg.Compiled
+	now    func() time.Time
+	// dueWake receives the due times a restore resumes; nil notes none.
+	dueWake *realtime.DueWake
+	// marker tells live subscribers about the channels the guard detaches
+	// and puts back; nil marks nothing.
+	marker channelMarker
+}
+
+var _ entitymanager.AnchorGuard = (*channelGuard)(nil)
+
+// guardInputs are the collaborators of the channel guard besides the
+// realtime config.
+type guardInputs struct {
+	store   channels.Store
+	tombs   *tombstoneConfirmer
+	dueWake *realtime.DueWake
+	marker  channelMarker
+}
+
+// newChannelGuard returns the guard over in.store, reading the realtime
+// config from rt and handing pending batches to in.tombs. A restore notes
+// the due times it resumes on in.dueWake. Detached and restored channels
+// are marked on in.marker. A nil store guards nothing.
+//
+// Nil: in.store is accepted (no channel store); rt is accepted (realtime
+// off); in.tombs is rejected when in.store is set, since a pending batch
+// nobody confirms waits for the sweep; in.dueWake is accepted, and a
+// restored timer then waits for the next scheduled round; in.marker is
+// accepted (nothing marked).
+func newChannelGuard(rt *RealtimeConfig, in guardInputs) (entitymanager.AnchorGuard, error) {
+	cs, tombs := in.store, in.tombs
+	if cs == nil {
+		return entitymanager.NopAnchorGuard{}, nil
+	}
+	if tombs == nil {
+		return nil, errors.New("channels: the guard needs a tombstone confirmer")
+	}
+	return &channelGuard{
+		store:   cs,
+		tombs:   tombs,
+		config:  func() *realtimecfg.Compiled { return rt.Load().Config },
+		now:     time.Now,
+		dueWake: in.dueWake,
+		marker:  in.marker,
+	}, nil
+}
+
+// channelGuardFor checks the realtime config against the channel types the
+// store has recorded (see checkChannelTypeRecords) and returns the guard
+// over cs. A mismatch fails the assembly, so the server does not start.
+func channelGuardFor(base *SharedBase, in guardInputs) (entitymanager.AnchorGuard, error) {
+	if err := checkChannelTypeRecords(context.Background(), in.store, base.realtime.Load().Config); err != nil {
+		return nil, err
+	}
+	return newChannelGuard(base.realtime, in)
+}
+
+// Active implements [entitymanager.AnchorGuard]: a guard over a channel
+// store can always act.
+func (g *channelGuard) Active() bool { return true }
+
+// Scope implements [entitymanager.AnchorGuard]. It lists the channels of
+// each id once and loads the config once; the scope's calls reuse both. The
+// error does not name an id, since ids may include entities the caller did
+// not address.
+func (g *channelGuard) Scope(ctx context.Context, ids []string) (entitymanager.AnchorScope, error) {
+	lists := make(map[string][]channels.Channel, len(ids))
+	for _, id := range ids {
+		list, err := g.store.ListEntity(ctx, id)
+		if err != nil {
+			return nil, fmt.Errorf("channels: list channels before delete: %w", err)
+		}
+		if len(list) > 0 {
+			lists[id] = list
+		}
+	}
+	if len(lists) == 0 {
+		return nil, nil //nolint:nilnil // no channels: the interface's "nothing to guard"
+	}
+	return &channelScope{guard: g, cfg: g.config(), lists: lists}, nil
+}
+
+// channelScope is one delete operation's [entitymanager.AnchorScope]: the
+// config it is judged under and the channels Scope listed.
+type channelScope struct {
+	guard *channelGuard
+	cfg   *realtimecfg.Compiled
+	lists map[string][]channels.Channel
+}
+
+// BeforeDelete implements [entitymanager.AnchorScope].
+func (s *channelScope) BeforeDelete(
+	ctx context.Context, d entitymanager.AnchorDelete,
+) (entitymanager.AnchorUndo, error) {
+	list := s.lists[d.ID]
+	if len(list) == 0 {
+		return nil, nil //nolint:nilnil // no channels: nothing to undo
+	}
+	if blocked := blocking(s.cfg, list, d); blocked != "" {
+		if !d.Purge {
+			return nil, &entitymanager.AnchorBlockedError{ChannelType: blocked}
+		}
+		slog.Warn("channels: purging a soft-deleted entity whose channel type blocks deletes; "+
+			"detaching its channels", "id", d.ID, "channel_type", blocked)
+	}
+	face := d.Face
+	if d.Detach {
+		face = ""
+	} else if !hasFaceChannel(list, face) {
+		return nil, nil //nolint:nilnil // the face has no channels: nothing to undo
+	}
+	g := s.guard
+	at := g.now()
+	h, err := g.tombstone(ctx, d.ID, face, at, s.deleteFiler(d, at))
+	var blocked *entitymanager.AnchorBlockedError
+	if errors.As(err, &blocked) {
+		return nil, blocked
+	}
+	if err != nil {
+		return nil, fmt.Errorf("channels: detach %s before delete: %w", entity.FormatStateRef(d.ID, face), err)
+	}
+	if h.IsZero() {
+		return nil, nil //nolint:nilnil // nothing was tombstoned: nothing to undo
+	}
+	g.tombs.add(h)
+	return g.undo(h), nil
+}
+
+// deleteFiler files the batch of d pending, under the delete policy. It
+// checks the block rule again over the channels the store actually moves:
+// a channel of a blocking type created after Scope listed the entity
+// refuses the delete, and the store moves nothing.
+func (s *channelScope) deleteFiler(d entitymanager.AnchorDelete, at time.Time) channels.Filer {
+	file := realtime.Filer(s.cfg, channels.PolicyDelete, at, true)
+	return func(moved []channels.Channel) (channels.Filing, error) {
+		if blocked := blocking(s.cfg, moved, d); blocked != "" && !d.Purge {
+			return channels.Filing{}, &entitymanager.AnchorBlockedError{ChannelType: blocked}
+		}
+		return file(moved)
+	}
+}
+
+// CheckDelete implements [entitymanager.AnchorScope].
+func (s *channelScope) CheckDelete(_ context.Context, d entitymanager.AnchorDelete) error {
+	if blocked := blocking(s.cfg, s.lists[d.ID], d); blocked != "" {
+		return &entitymanager.AnchorBlockedError{ChannelType: blocked}
+	}
+	return nil
+}
+
+// tombstone tombstones id@face. A store can fail after moving part of the
+// batch and still return its handle; that part is put back before the error
+// is returned, so a failed detach leaves nothing detached.
+func (g *channelGuard) tombstone(
+	ctx context.Context, id string, face entity.Face, at time.Time, file channels.Filer,
+) (channels.TombstoneHandle, error) {
+	var moved []channels.Channel
+	h, err := g.store.Tombstone(ctx, id, face, at, capturing(file, &moved))
+	if err == nil || h.IsZero() {
+		if err == nil && !h.IsZero() {
+			markChannels(g.marker, moved, "")
+		}
+		return h, err
+	}
+	uctx, cancel := undoContext(ctx)
+	defer cancel()
+	if uErr := g.undo(h).restore(uctx); uErr != nil {
+		slog.Error("channels: cannot restore a detach that failed part way",
+			"tombstone", h.String(), "error", uErr)
+	}
+	return channels.TombstoneHandle{}, err
+}
+
+// undo is the [tombstoneUndo] of the batch h.
+func (g *channelGuard) undo(h channels.TombstoneHandle) tombstoneUndo {
+	return tombstoneUndo{
+		store: g.store, h: h, now: g.now, config: g.config, tombs: g.tombs, dueWake: g.dueWake, marker: g.marker,
+	}
+}
+
+// BeforeRename implements [entitymanager.AnchorGuard]. Channels on newID
+// belong to an earlier entity with that id; once free confirms the id can be
+// taken, they are detached, so the renamed entity does not inherit them. The
+// undo puts them back when the rename then fails.
+//
+// The batch is filed pending, like a delete's, so the undo can still put it
+// back and retention cannot erase it first. The post-commit rename hook
+// confirms it (see [channelAliases.EntityRenamed]). If the process stops
+// between the commit and that hook, the sweep finds the batch pending on an
+// existing id and puts it back after the orphan grace. The
+// renamed entity's own channels are then still under the old id, as the
+// hook never moved them; that loss is documented on EntityRenamed.
+func (g *channelGuard) BeforeRename(
+	ctx context.Context, newID string, free func(context.Context) error,
+) (entitymanager.AnchorUndo, error) {
+	list, err := g.store.ListEntity(ctx, newID)
+	if err != nil {
+		return nil, fmt.Errorf("channels: list %s before rename: %w", newID, err)
+	}
+	if len(list) == 0 {
+		return nil, nil //nolint:nilnil // no channels: nothing to undo
+	}
+	if freeErr := free(ctx); freeErr != nil {
+		return nil, freeErr
+	}
+	at := g.now()
+	h, err := g.tombstone(ctx, newID, "", at, realtime.Filer(g.config(), channels.PolicyDetach, at, true))
+	if err != nil {
+		return nil, fmt.Errorf("channels: clear %s before rename: %w", newID, err)
+	}
+	if h.IsZero() {
+		return nil, nil //nolint:nilnil // nothing was tombstoned: nothing to undo
+	}
+	g.tombs.add(h)
+	return g.undo(h), nil
+}
+
+// tombstoneUndo is the [entitymanager.AnchorUndo] of one pending tombstone
+// batch.
+type tombstoneUndo struct {
+	store channels.Store
+	h     channels.TombstoneHandle
+	now   func() time.Time
+	// config is the realtime configuration the restored sessions resume
+	// under (see [realtime.ResumeSchedule]).
+	config  func() *realtimecfg.Compiled
+	tombs   *tombstoneConfirmer
+	dueWake *realtime.DueWake
+	// marker hears that the batch is back; its keys are not at hand, so
+	// every channel is marked. Nil marks nothing.
+	marker channelMarker
+}
+
+// Restore implements [entitymanager.AnchorUndo]. The confirmer forgets the
+// batch whether or not the restore works: the write failed, so no commit
+// hook will confirm it, and a batch left pending is put back by the sweep.
+func (u tombstoneUndo) Restore(ctx context.Context) error {
+	u.tombs.drop(u.h)
+	return u.restore(ctx)
+}
+
+// restore puts the batch back, resuming its open sessions (see
+// [realtime.ResumeSchedule]), and notes the earliest resumed due time on
+// the wake, so a timer that is due soon fires then.
+func (u tombstoneUndo) restore(ctx context.Context) error {
+	at := u.now()
+	resume := realtime.NewResumption(u.config(), at)
+	if err := u.store.Untombstone(ctx, u.h, at, resume.Schedule); err != nil {
+		return err
+	}
+	resume.Note(u.dueWake)
+	if u.marker != nil {
+		u.marker.MarkAll()
+	}
+	return nil
+}
+
+// String implements [entitymanager.AnchorUndo]: the handle's text form,
+// which [channels.ParseTombstoneHandle] reads back.
+func (u tombstoneUndo) String() string { return u.h.String() }
+
+// channelUndoWait bounds the restore of a failed detach.
+const channelUndoWait = 30 * time.Second
+
+// undoContext is the context a restore runs on. The restore repairs a write
+// that already failed, so the request's cancellation must not reach it.
+func undoContext(ctx context.Context) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.WithoutCancel(ctx), channelUndoWait)
+}
+
+// blocking returns the type of the first channel in list that d removes and
+// whose type blocks deletes under cfg, or "" when none does. A whole-entity
+// delete removes every channel. A face delete removes the face's own
+// channels, and counts the entity's family channels when d.Block says the
+// caller's last face goes.
+//
+// Nil: cfg is accepted and means realtime is off, so nothing blocks.
+func blocking(cfg *realtimecfg.Compiled, list []channels.Channel, d entitymanager.AnchorDelete) string {
+	if cfg == nil {
+		return ""
+	}
+	for _, c := range list {
+		counts := d.Face == "" || c.Key.Face == d.Face || (c.Key.Face == "" && d.Block)
+		if !counts {
+			continue
+		}
+		if ct, ok := cfg.ChannelType(c.Key.Type); ok && ct.OnEntityDelete == realtimecfg.OnDeleteBlock {
+			return c.Key.Type
+		}
+	}
+	return ""
+}
+
+// hasFaceChannel reports whether list holds a channel anchored to face.
+func hasFaceChannel(list []channels.Channel, face entity.Face) bool {
+	for _, c := range list {
+		if c.Key.Face == face {
+			return true
+		}
+	}
+	return false
+}
+
+// checkChannelTypeRecords refuses, at boot, a realtime config that does not
+// fit the channel types the store has already written channels for: a
+// changed anchor or cardinality would strand them, since they are keyed by
+// both, and a recorded ref declared as another property type would show
+// stored entity ids as plain text. It reads the records once and reports
+// in the format a refused reload uses (see [RealtimeConfig.Reload]). Only
+// recorded types are compared, and nothing is written; the channel service
+// records a type on its first channel write.
+//
+// Nil: cs is accepted (no channel store); cfg is accepted (realtime off).
+func checkChannelTypeRecords(ctx context.Context, cs typeRecordReader, cfg *realtimecfg.Compiled) error {
+	if cfg == nil || cs == nil {
+		return nil
+	}
+	return checkRecords(ctx, cs, cfg)
+}

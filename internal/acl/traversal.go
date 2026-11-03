@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"reflect"
 	"slices"
+	"strings"
 
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
@@ -180,6 +181,8 @@ func lowerTraversal(
 // which are the rows of their world. Evaluated under an AllFaces or AtFaces
 // query instead, the hop would match when ANY face of the endpoint passes the
 // gate, and so could grant through a face the request's world never serves.
+//
+//archplan:guard=authz reason="gates each hop of a relation traversal"
 func (r *Request) GateTraversal(
 	ctx context.Context, candidateType string, world store.WorldScope, hop TraversalHop,
 ) (*store.RelationPredicate, error) {
@@ -313,6 +316,11 @@ func foldsIntoEndpoint(q store.GraphQuery) bool {
 //     whole dimension in as soon as a role declaresVisible): everything the
 //     role does not name is hidden, with no `when:` string anywhere to find.
 //
+// Another role a reader holds can reopen such a field, because field
+// verdicts are the union over the reader's roles (BUG-Y5UF3K). That does not
+// weaken either case: a reader who holds only the restricting role still has
+// the field hidden, so "some reader cannot see it" stays true.
+//
 // Case 2 is the likelier spelling — an operator writes `visible: [name,
 // title]` intending `salary` to be hidden — and it is the one a
 // `when:`-only check silently misses, returning "filterable" for exactly the
@@ -326,6 +334,12 @@ func foldsIntoEndpoint(q store.GraphQuery) bool {
 // the SCHEMA, reported identically to everyone, which is also what lets it be
 // a load-time error rather than a request-time one. It is NOT a substitute
 // for the per-principal ceiling check; see [Request.GateTraversal].
+//
+// That argument is about a condition compiled once and shared by every
+// principal. A list filter or sort that one principal sends is different: it
+// may be judged per principal (affordances.PolicyResolver.FieldVisibleOnEveryRow),
+// because that answer depends only on the policy and the caller's own roles,
+// which the caller already knows, and never on a row.
 func (p *Policy) ConditionallyVisible(entityType, property string) bool {
 	if p == nil {
 		return false
@@ -351,6 +365,55 @@ func (p *Policy) ConditionallyVisible(entityType, property string) bool {
 		}
 	}
 	return false
+}
+
+// FieldRestricted reports whether the policy may hide property of
+// entityType from some reader, by a role or by a client ceiling. It is
+// broader than [Policy.ConditionallyVisible] in two ways, for callers that
+// turn a value into something every reader of another surface sees (a
+// realtime trigger's message, a channel role decided by the value):
+//
+//   - any role declaring `visible:` for the type, or one of its faces
+//     (type@face), or every type ("*"), restricts every property of the
+//     type, listed or not: a listed property is still a gated one;
+//   - a client baseline's closed-world `visible:` that leaves the property
+//     out, or a `redact:` that names it, restricts it too.
+//
+// Like ConditionallyVisible the answer is policy-wide and
+// principal-independent, so a refusal built on it is a load-time property
+// of the configuration.
+//
+// Nil: accepted, restricts nothing (no acl.yaml).
+func (p *Policy) FieldRestricted(entityType, property string) bool {
+	if p == nil {
+		return false
+	}
+	for _, role := range p.Roles {
+		for key := range role.Visible {
+			if grantKeyApplies(key, entityType) {
+				return true
+			}
+		}
+	}
+	for _, b := range p.ClientBaselines {
+		for key, fields := range b.Visible {
+			if grantKeyApplies(key, entityType) && !slices.Contains(fields, property) {
+				return true
+			}
+		}
+		for key, fields := range b.Redact {
+			if grantKeyApplies(key, entityType) && slices.Contains(fields, property) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// grantKeyApplies reports whether an acl.yaml grant key names entityType:
+// the type itself, one of its faces (type@face), or every type.
+func grantKeyApplies(key, entityType string) bool {
+	return key == entityType || key == "*" || strings.HasPrefix(key, entityType+"@")
 }
 
 // ceilingHidesField reports whether a compiled field ceiling withholds

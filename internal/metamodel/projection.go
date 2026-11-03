@@ -63,11 +63,11 @@ type PropertyProjection struct {
 	Values []string `json:"values,omitempty"`
 }
 
-// RenderProjection returns the render-relevant projection of the metamodel.
+// NewRenderProjection returns the render-relevant projection of m.
 // The result is deterministic: map iteration is never observed (all output is
 // keyed maps and the hash sorts keys), so two calls on an equal metamodel
 // produce an equal projection and hash.
-func (m *Metamodel) RenderProjection() RenderProjection {
+func NewRenderProjection(m *Metamodel) RenderProjection {
 	proj := RenderProjection{
 		Entities: make(map[string]EntityProjection, len(m.Entities)),
 		Types:    make(map[string][]string, len(m.Types)),

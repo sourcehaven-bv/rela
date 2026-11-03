@@ -5,6 +5,7 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/Sourcehaven-BV/rela/internal/aclstore"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
 	"github.com/Sourcehaven-BV/rela/internal/store"
@@ -26,18 +27,18 @@ func gateFixture(t *testing.T, p *Policy) (*Declarative, context.Context) {
 			t.Fatal(err)
 		}
 	}
-	d, err := NewDeclarative(p, NewStoreGraph(st), st)
+	d, err := NewDeclarative(p, aclstore.MustNewGraph(st), st)
 	if err != nil {
 		t.Fatalf("NewDeclarative: %v", err)
 	}
 	return d, ctx
 }
 
-func requestFor(t *testing.T, d *Declarative, user string) *Request {
+func requestFor(ctx context.Context, t *testing.T, d *Declarative, user string) *Request {
 	t.Helper()
-	req, err := d.ForPrincipal(principal.Principal{User: user, Tool: principal.ToolDataEntry})
+	req, err := d.ForIdentity(identityFor(ctx, t, d, principal.Principal{User: user, Tool: principal.ToolDataEntry}))
 	if err != nil {
-		t.Fatalf("ForPrincipal: %v", err)
+		t.Fatalf("ForIdentity: %v", err)
 	}
 	return req
 }
@@ -52,7 +53,7 @@ func TestGateTraversal_DeniedWhenTargetTypeUnreadable(t *testing.T) {
 		Roles:       map[string]RoleDef{"reader": {Read: []string{"ticket"}}},
 		Assignments: map[string]string{"bob": "reader"},
 	})
-	_, err := requestFor(t, d, "bob").GateTraversal(ctx, "ticket", store.TrivialScope(), TraversalHop{
+	_, err := requestFor(ctx, t, d, "bob").GateTraversal(ctx, "ticket", store.TrivialScope(), TraversalHop{
 		RelationTypes: []string{"caused-by"},
 		EntityType:    "concept",
 		Props: []store.PropPredicate{
@@ -70,7 +71,7 @@ func TestGateTraversal_AllowsReadableTargetAndKeepsTheFilter(t *testing.T) {
 		Roles:       map[string]RoleDef{"reader": {Read: []string{"ticket", "concept"}}},
 		Assignments: map[string]string{"alice": "reader"},
 	})
-	got, err := requestFor(t, d, "alice").GateTraversal(ctx, "ticket", store.TrivialScope(), TraversalHop{
+	got, err := requestFor(ctx, t, d, "alice").GateTraversal(ctx, "ticket", store.TrivialScope(), TraversalHop{
 		RelationTypes: []string{"caused-by"},
 		EntityType:    "concept",
 		Props: []store.PropPredicate{
@@ -114,7 +115,7 @@ func TestGateTraversal_RefusesConditionallyVisibleProperty(t *testing.T) {
 		Assignments: map[string]string{"alice": "reader"},
 	}
 	d, ctx := gateFixture(t, p)
-	_, err := requestFor(t, d, "alice").GateTraversal(ctx, "ticket", store.TrivialScope(), TraversalHop{
+	_, err := requestFor(ctx, t, d, "alice").GateTraversal(ctx, "ticket", store.TrivialScope(), TraversalHop{
 		EntityType: "concept",
 		Props: []store.PropPredicate{
 			{Property: "salary", Op: store.PropEqual, Value: "100000", Scalar: true},
@@ -128,7 +129,7 @@ func TestGateTraversal_RefusesConditionallyVisibleProperty(t *testing.T) {
 	// the rule targets conditional grants, not the `visible:` key itself.
 	p.Roles["reader"].Visible["concept"] = append(
 		p.Roles["reader"].Visible["concept"], FieldGrant{Field: "status"})
-	if _, err := requestFor(t, d, "alice").GateTraversal(ctx, "ticket", store.TrivialScope(), TraversalHop{
+	if _, err := requestFor(ctx, t, d, "alice").GateTraversal(ctx, "ticket", store.TrivialScope(), TraversalHop{
 		EntityType: "concept",
 		Props:      []store.PropPredicate{{Property: "status", Op: store.PropEqual, Value: "open"}},
 	}); err != nil {
@@ -143,7 +144,7 @@ func TestGateTraversal_RequiresAnEntityType(t *testing.T) {
 		Roles:       map[string]RoleDef{"reader": {Read: []string{"ticket", "concept"}}},
 		Assignments: map[string]string{"alice": "reader"},
 	})
-	if _, err := requestFor(t, d, "alice").GateTraversal(ctx, "ticket", store.TrivialScope(), TraversalHop{
+	if _, err := requestFor(ctx, t, d, "alice").GateTraversal(ctx, "ticket", store.TrivialScope(), TraversalHop{
 		RelationTypes: []string{"caused-by"},
 	}); err == nil {
 		t.Fatal("a typeless hop must be refused")
@@ -158,7 +159,7 @@ func TestGateTraversal_GatesEveryHopOfAChain(t *testing.T) {
 		Roles:       map[string]RoleDef{"reader": {Read: []string{"ticket", "concept"}}},
 		Assignments: map[string]string{"alice": "reader"},
 	})
-	_, err := requestFor(t, d, "alice").GateTraversal(ctx, "ticket", store.TrivialScope(), TraversalHop{
+	_, err := requestFor(ctx, t, d, "alice").GateTraversal(ctx, "ticket", store.TrivialScope(), TraversalHop{
 		RelationTypes: []string{"caused-by"},
 		EntityType:    "concept",
 		Next: &TraversalHop{
@@ -182,7 +183,7 @@ func TestGateTraversal_RefusedWhenReadIsFaceRestricted(t *testing.T) {
 		},
 		Assignments: map[string]string{"alice": "reader"},
 	})
-	if _, err := requestFor(t, d, "alice").GateTraversal(ctx, "ticket", store.TrivialScope(), TraversalHop{
+	if _, err := requestFor(ctx, t, d, "alice").GateTraversal(ctx, "ticket", store.TrivialScope(), TraversalHop{
 		EntityType: "concept",
 	}); !errors.Is(err, ErrTraversalUnsupported) {
 		t.Fatalf("a face-restricted read must refuse traversal, got err=%v", err)
@@ -227,6 +228,46 @@ func TestConditionallyVisible(t *testing.T) {
 	}
 }
 
+func TestFieldRestricted(t *testing.T) {
+	var nilPolicy *Policy
+	if nilPolicy.FieldRestricted("page", "title") {
+		t.Fatal("a nil policy restricted a field")
+	}
+	p := &Policy{
+		Roles: map[string]RoleDef{
+			"a": {Visible: map[string][]FieldGrant{"page@draft": {{Field: "title"}}}},
+		},
+		ClientBaselines: map[string]ClientBaseline{
+			"apps": {AppliesTo: []string{"app"}, Restriction: Restriction{
+				Visible: map[string][]string{"incident": {"title"}},
+				Redact:  map[string][]string{"datalek": {"notes"}},
+			}},
+		},
+	}
+	for _, tc := range []struct {
+		name, typ, prop string
+		want            bool
+	}{
+		{"listed under a face key of a role's visible:", "page", "title", true},
+		{"unlisted under a role's visible:", "page", "owner", true},
+		{"listed in a baseline's closed world", "incident", "title", false},
+		{"left out of a baseline's closed world", "incident", "owner", true},
+		{"named by a baseline's redact:", "datalek", "notes", true},
+		{"not named by a baseline's redact:", "datalek", "owner", false},
+		{"a type nothing gates", "risico", "owner", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := p.FieldRestricted(tc.typ, tc.prop); got != tc.want {
+				t.Fatalf("FieldRestricted(%s, %s) = %v; want %v", tc.typ, tc.prop, got, tc.want)
+			}
+		})
+	}
+	wild := &Policy{Roles: map[string]RoleDef{"w": {Visible: map[string][]FieldGrant{"*": {{Field: "title"}}}}}}
+	if !wild.FieldRestricted("risico", "title") {
+		t.Error(`a role's visible: on "*" restricts every type`)
+	}
+}
+
 // The gate must not write into the caller's Props backing array.
 //
 // Today readQuery never populates Query.Props (it constrains rows through
@@ -252,7 +293,7 @@ func TestGateTraversal_DoesNotAliasCallerProps(t *testing.T) {
 	})
 	hop := TraversalHop{RelationTypes: []string{"caused-by"}, EntityType: "concept", Props: props}
 
-	got, err := requestFor(t, d, "alice").GateTraversal(ctx, "ticket", store.TrivialScope(), hop)
+	got, err := requestFor(ctx, t, d, "alice").GateTraversal(ctx, "ticket", store.TrivialScope(), hop)
 	if err != nil {
 		t.Fatalf("gate: %v", err)
 	}
@@ -292,10 +333,10 @@ func TestGateTraversal_RefusesFieldHiddenByTheClientCeiling(t *testing.T) {
 	}
 	d, ctx := gateFixture(t, p)
 
-	attenuated, err := d.ForPrincipal(principal.VerifiedFrom("alice", principal.ToolDataEntry,
-		principal.Claims{PrincipalType: "app"}))
+	attenuated, err := d.ForIdentity(identityFor(t.Context(), t, d, principal.VerifiedFrom("alice", principal.ToolDataEntry,
+		principal.Claims{PrincipalType: "app"})))
 	if err != nil {
-		t.Fatalf("ForPrincipal: %v", err)
+		t.Fatalf("ForIdentity: %v", err)
 	}
 
 	hop := TraversalHop{
@@ -311,7 +352,7 @@ func TestGateTraversal_RefusesFieldHiddenByTheClientCeiling(t *testing.T) {
 
 	// The same hop through the UNATTENUATED user is allowed: the ceiling is
 	// what refuses, not the property itself.
-	if _, err := requestFor(t, d, "alice").GateTraversal(ctx, "ticket", store.TrivialScope(), hop); err != nil {
+	if _, err := requestFor(ctx, t, d, "alice").GateTraversal(ctx, "ticket", store.TrivialScope(), hop); err != nil {
 		t.Fatalf("the unattenuated user must still filter on it: %v", err)
 	}
 }
@@ -394,7 +435,7 @@ func TestGateTraversal_ChainPlacesEachHopByDirection(t *testing.T) {
 		Assignments: map[string]string{"alice": "reader"},
 	})
 	// concept <-requires- feature <-implements- ticket
-	got, err := requestFor(t, d, "alice").GateTraversal(ctx, "ticket", store.TrivialScope(), TraversalHop{
+	got, err := requestFor(ctx, t, d, "alice").GateTraversal(ctx, "ticket", store.TrivialScope(), TraversalHop{
 		RelationTypes: []string{"requires"}, Incoming: true, EntityType: "feature",
 		Next: &TraversalHop{RelationTypes: []string{"implements"}, Incoming: true, EntityType: "ticket"},
 	})
@@ -411,7 +452,7 @@ func TestGateTraversal_ChainPlacesEachHopByDirection(t *testing.T) {
 // inbound slot must be refused, and must never overwrite that gate.
 func TestGateTraversal_ChainedIncomingHopCollidingWithTheReadGateIsRefused(t *testing.T) {
 	d, ctx := gateFixture(t, relationGrantedConcepts(false))
-	req := requestFor(t, d, "bob")
+	req := requestFor(ctx, t, d, "bob")
 	_, err := req.GateTraversal(ctx, "ticket", store.TrivialScope(), TraversalHop{
 		RelationTypes: []string{"requires"}, EntityType: "concept",
 		Next: &TraversalHop{RelationTypes: []string{"about"}, Incoming: true, EntityType: "ticket"},
@@ -436,7 +477,7 @@ func TestGateTraversal_ChainedIncomingHopCollidingWithTheReadGateIsRefused(t *te
 // dropped, which would widen it.
 func TestGateTraversal_InheritedReadIsRefusedOnASingleHop(t *testing.T) {
 	d, ctx := gateFixture(t, relationGrantedConcepts(true))
-	_, err := requestFor(t, d, "bob").GateTraversal(ctx, "ticket", store.TrivialScope(), TraversalHop{
+	_, err := requestFor(ctx, t, d, "bob").GateTraversal(ctx, "ticket", store.TrivialScope(), TraversalHop{
 		RelationTypes: []string{"requires"}, EntityType: "concept",
 	})
 	if !errors.Is(err, ErrTraversalUnsupported) {
@@ -463,7 +504,7 @@ func TestGateTraversal_OutgoingFromFaceRestrictedCandidateIsRefused(t *testing.T
 		},
 		Assignments: map[string]string{"alice": "reader"},
 	})
-	req := requestFor(t, d, "alice")
+	req := requestFor(ctx, t, d, "alice")
 	hop := TraversalHop{RelationTypes: []string{"caused-by"}, EntityType: "concept"}
 	if _, err := req.GateTraversal(ctx, "ticket", store.TrivialScope(), hop); !errors.Is(err, ErrTraversalUnsupported) {
 		t.Fatalf("outgoing hop from a face-restricted candidate: want ErrTraversalUnsupported, got %v", err)
@@ -507,7 +548,7 @@ func TestTraversal_EndpointIDs(t *testing.T) {
 		Assignments: map[string]string{"alice": "reader"},
 	})
 	gated := func(hop TraversalHop) (*store.RelationPredicate, error) {
-		return requestFor(t, d, "alice").GateTraversal(ctx, "ticket", store.TrivialScope(), hop)
+		return requestFor(ctx, t, d, "alice").GateTraversal(ctx, "ticket", store.TrivialScope(), hop)
 	}
 	for _, lower := range []struct {
 		name string
@@ -569,7 +610,7 @@ func TestTraversal_EndpointIDs(t *testing.T) {
 		Roles:       map[string]RoleDef{"reader": {Read: []string{"ticket"}}},
 		Assignments: map[string]string{"bob": "reader"},
 	})
-	_, err := requestFor(t, d2, "bob").GateTraversal(ctx2, "ticket", store.TrivialScope(), TraversalHop{
+	_, err := requestFor(ctx2, t, d2, "bob").GateTraversal(ctx2, "ticket", store.TrivialScope(), TraversalHop{
 		RelationTypes: []string{"owns"}, Incoming: true, EntityType: "user", EndpointIDs: []string{"bob"},
 	})
 	if !errors.Is(err, ErrTraversalDenied) {

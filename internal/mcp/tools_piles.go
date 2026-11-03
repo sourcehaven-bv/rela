@@ -185,6 +185,7 @@ type pileItemJSON struct {
 	Face    string `json:"face,omitempty"`
 	Title   string `json:"title,omitempty"`
 	Address string `json:"address"`
+	URL     string `json:"url,omitempty"`
 }
 
 type pileJSON struct {
@@ -250,14 +251,14 @@ func (h pileHandler) handleShow(ctx context.Context, args toolRequest) *mcpgo.Ca
 		if !ok || !rh.Served() {
 			continue
 		}
-		out.Items = append(out.Items, h.item(ref, rh))
+		out.Items = append(out.Items, h.item(ctx, ref, rh))
 	}
 	out.Count = len(out.Items)
 	return pileJSONResult(out)
 }
 
 // item is the wire form of one readable pile item.
-func (h pileHandler) item(ref entity.Ref, rh visibility.ResolvedHeader) pileItemJSON {
+func (h pileHandler) item(ctx context.Context, ref entity.Ref, rh visibility.ResolvedHeader) pileItemJSON {
 	hd := rh.Header
 	return pileItemJSON{
 		ID:      hd.ID,
@@ -265,6 +266,7 @@ func (h pileHandler) item(ref entity.Ref, rh visibility.ResolvedHeader) pileItem
 		Face:    hd.Face.String(),
 		Title:   titleOrEmpty(hd.ID, h.deps.Meta.DisplayTitle(hd.ID, hd.Type, hd.Properties)),
 		Address: ref.String(),
+		URL:     entityURL(ctx, hd.Type, entity.Ref{ID: hd.ID, Face: hd.Face}),
 	}
 }
 

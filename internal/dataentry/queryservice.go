@@ -13,6 +13,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/search"
 	"github.com/Sourcehaven-BV/rela/internal/search/searchparser"
 	"github.com/Sourcehaven-BV/rela/internal/store"
+	"github.com/Sourcehaven-BV/rela/internal/visibility"
 )
 
 // queryService owns the search-query pipeline: the `/_search` and
@@ -27,9 +28,9 @@ import (
 // App for the same closures.
 //
 // Collaborator rationale differs from the sibling handlers in one respect
-// that is load-bearing. The ACL-scoped searcher and the affordance service
+// that is load-bearing. The ACL-scoped searcher and the field resolver
 // are held as CLOSURES rather than values, because tests reassign
-// `app.visibleSearcher` (see rebindVisibleSearcher) and `app.affordances`
+// `app.visibleSearcher` (see rebindVisibleSearcher) and `app.fieldResolver`
 // after construction; a captured value would silently keep the searcher from
 // construction time and a test injecting a recording/denying searcher would
 // exercise the wrong one.
@@ -52,10 +53,11 @@ type queryService struct {
 	// visibleSearcher is the ACL-scoped search seam. Late-bound: tests
 	// reassign App.visibleSearcher after construction.
 	visibleSearcher func() search.VisibleSearcher
-	// affordances supplies the per-hit field-verdict source used to drop
-	// hits that matched only a `visible:`-hidden property. Late-bound for
-	// the same reason as visibleSearcher.
-	affordances func() affordanceService
+	// fields supplies each type's search field scope, so a hit that matched
+	// only a `visible:`-hidden property is dropped. It is the App's field
+	// resolver ([FieldVerdictResolver.SearchFieldScope]), late-bound for the
+	// same reason as visibleSearcher.
+	fields func() visibility.FieldScoper
 }
 
 // newQueryService wires the leaf over the App's current collaborators.
@@ -65,7 +67,7 @@ func newQueryService(app *App) *queryService {
 		schema:          app.State,
 		services:        app.Services,
 		visibleSearcher: func() search.VisibleSearcher { return app.visibleSearcher },
-		affordances:     func() affordanceService { return app.affordances },
+		fields:          func() visibility.FieldScoper { return app.fieldResolver },
 	}
 }
 
@@ -101,13 +103,65 @@ func newQueryService(app *App) *queryService {
 // pre-TKT-BA8BSX version swallowed both error classes into silently
 // truncated results.
 func (q *queryService) executeQuery(ctx context.Context, query string) ([]*entity.Entity, error) {
-	return q.executeQueryPrefiltered(ctx, query, nil)
+	return q.executeQueryWith(ctx, query, queryOptions{})
 }
 
-// executeQueryPrefiltered is executeQuery with extra store predicates ANDed
-// into the no-free-text branch's pushdown.
+// queryOptions are executeQueryWith's optional inputs. The zero value is
+// executeQuery.
+type queryOptions struct {
+	// prefilters are extra store predicates ANDed into the no-free-text
+	// branch's pushdown; see executeQueryWith.
+	prefilters []store.PropPredicate
+	// limit is how many results the caller will keep, or 0 for all. It
+	// only lowers the free-text branch's relevance cap, and only when no
+	// later pass could drop or reorder a hit inside it; see
+	// freeTextLimit. The caller still truncates.
+	limit int
+	// exactType is the one type the caller keeps afterwards (the
+	// `type` parameter of /_search), or "" for none.
+	exactType string
+}
+
+// freeTextLimit is the relevance cap for a free-text search. It is
+// maxFreeTextSearchResults unless the caller keeps only opts.limit rows AND
+// every row the search returns is one the caller keeps, in the order it
+// keeps them:
 //
-// `extra` is for a caller that will apply a FURTHER authoritative filter of
+//   - no property filter, which runs in Go after the cap;
+//   - no `sort:` clause, which reorders the capped set: sorting the top 50
+//     by relevance is not the top 50 of the sorted top 1000;
+//   - no type the caller drops: either opts.exactType is unset or the
+//     query's types are exactly it. A `type:` already in q unions with the
+//     spliced one, so its hits would take slots the exact filter then
+//     empties.
+//
+// Two drops remain after the search and are accepted: a hit deleted
+// between the search and the header read, and a face the row gate refuses
+// (visibility.SearchScoped). Both are rare; they can return fewer than
+// limit rows where the 1000 cap would have filled them.
+func freeTextLimit(sq *searchparser.SearchQuery, opts queryOptions) int {
+	if opts.limit <= 0 || opts.limit >= maxFreeTextSearchResults ||
+		len(sq.PropertyFilters) > 0 || sq.HasSort() {
+
+		return maxFreeTextSearchResults
+	}
+	if opts.exactType != "" {
+		if len(sq.EntityTypes) == 0 {
+			return maxFreeTextSearchResults
+		}
+		for _, t := range sq.EntityTypes {
+			if t != opts.exactType {
+				return maxFreeTextSearchResults
+			}
+		}
+	}
+	return opts.limit
+}
+
+// executeQueryWith is executeQuery with options: extra store predicates
+// ANDed into the no-free-text branch's pushdown, and the caller's limit.
+//
+// `opts.prefilters` is for a caller that will apply a FURTHER authoritative filter of
 // its own over the result — the next-action engine's `condition:` — and has
 // lowered the store-safe part of it (queryplan.ConditionPrefilters). The
 // contract is the same belt-and-braces one as the query's own pushdown: the
@@ -123,8 +177,8 @@ func (q *queryService) executeQuery(ctx context.Context, query string) ([]*entit
 // condition — the next-action engine — is refused a free-text query at load
 // (conditionlint) for exactly that reason, and this comment is the reminder
 // for the next one.
-func (q *queryService) executeQueryPrefiltered(
-	ctx context.Context, query string, extra []store.PropPredicate,
+func (q *queryService) executeQueryWith(
+	ctx context.Context, query string, opts queryOptions,
 ) ([]*entity.Entity, error) {
 	sq := searchparser.ParseQuery(query)
 	if sq.IsEmpty() {
@@ -153,7 +207,7 @@ func (q *queryService) executeQueryPrefiltered(
 	if sq.HasFreeText() {
 		// Hits arrive in relevance order. Scores are dropped because
 		// executeQuery never sorted by them.
-		candidates, err = q.runVisibleFreeTextSearch(ctx, svc, sq, scope)
+		candidates, err = q.runVisibleFreeTextSearch(ctx, svc, sq, scope, freeTextLimit(sq, opts))
 	} else {
 		// Push the equality filters into the store as a PRE-FILTER, cutting
 		// the rows loaded. The Go pass below still evaluates every filter,
@@ -173,7 +227,7 @@ func (q *queryService) executeQueryPrefiltered(
 		// pre-pushdown behavior — the store can only ever remove rows the Go
 		// pass would also have removed — while still winning the I/O.
 		pushed := pushdownPrefilters(sq.PropertyFilters, svc.Meta, sq.EntityTypes)
-		pushed = append(pushed, extra...)
+		pushed = append(pushed, opts.prefilters...)
 		candidates, err = visibleListByTypes(ctx, svc, sq.EntityTypes, scope, pushed)
 	}
 	if err != nil {
@@ -204,9 +258,10 @@ func (q *queryService) executeQueryPrefiltered(
 // ACL-scoped searcher. The backend-side limit is only set when no
 // property filters remain — with Go-side filters pending, truncation
 // happens in executeQuery after them, or the filter gap would re-open
-// the starvation the post-visibility limit closes.
+// the starvation the post-visibility limit closes. capN is the relevance
+// cap (see freeTextLimit).
 func (q *queryService) runVisibleFreeTextSearch(
-	ctx context.Context, svc Services, sq *searchparser.SearchQuery, scope map[string]search.TypeScope,
+	ctx context.Context, svc Services, sq *searchparser.SearchQuery, scope map[string]search.TypeScope, capN int,
 ) ([]*entity.Entity, error) {
 	parts := make([]string, 0, len(sq.FreeTextWords)+len(sq.FreeTextPhrases))
 	parts = append(parts, sq.FreeTextWords...)
@@ -215,7 +270,7 @@ func (q *queryService) runVisibleFreeTextSearch(
 	}
 	limit := 0
 	if len(sq.PropertyFilters) == 0 {
-		limit = maxFreeTextSearchResults
+		limit = capN
 	}
 	sQuery := search.Query{
 		Text:  strings.Join(parts, " "),
@@ -223,8 +278,15 @@ func (q *queryService) runVisibleFreeTextSearch(
 		Limit: limit,
 		World: worldScopeFrom(ctx),
 	}
+	// The one gated search path ([visibility.SearchScoped]): the field scope
+	// and the face check are added there, as for every other gated search.
 	var hits []search.Hit
-	for hit, err := range searchVisibleHits(ctx, q.visibleSearcher(), q.affordances(), sQuery, scope) {
+	var types []string
+	if svc.Meta != nil {
+		types = svc.Meta.EntityTypes()
+	}
+	stream := visibility.SearchScoped(ctx, q.visibleSearcher(), ctxRowGate{}, q.fields(), sQuery, scope, types)
+	for hit, err := range stream {
 		if err != nil {
 			if errors.Is(err, search.ErrScope) {
 				return nil, fmt.Errorf("%w: %w", errACLListQuery, err)
@@ -301,7 +363,14 @@ func (q *queryService) freeTextIDsForType(
 		return freeTextIDsForTypeResult{IDs: nil, HasFilter: true}, nil
 	}
 
-	ids, err := freeTextIDs(ctx, q.services(), sq, worldScopeFrom(ctx), maxFreeTextSearchResults)
+	// The list rows are gated already; the search is scoped the same way
+	// so it can drop a hit that matched a hidden field only.
+	scope := readGateFromContext(ctx).SearchScope(ctx, sq.EntityTypes)
+	if len(scope) == 0 {
+		return freeTextIDsForTypeResult{IDs: map[string]struct{}{}, HasFilter: true}, nil
+	}
+	ids, err := freeTextIDs(ctx, q.visibleSearcher(), q.fields(), sq, scope,
+		worldScopeFrom(ctx), maxFreeTextSearchResults)
 	if err != nil {
 		return freeTextIDsForTypeResult{}, err
 	}

@@ -16,7 +16,9 @@
  */
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import { RouterLink, useRouter } from 'vue-router'
+import { useI18n } from 'vue-i18n'
 import { searchEntities } from '@/api'
+import { SEARCH_DEBOUNCE_MS } from '@/utils/searchTiming'
 import { entityDisplayTitle } from '@/utils/entityDisplay'
 import { useSchemaStore } from '@/stores'
 import { useModalStack } from '@/composables/modalStack'
@@ -27,14 +29,13 @@ import { shouldDeferToBrowser } from '@/utils/openIntent'
 import type { Entity } from '@/types'
 import RlSpinner from 'rela-components/components/common/RlSpinner.vue'
 
-// Perceptually-instant on a fast connection; tune up if the API is slow.
-const DEBOUNCE_MS = 150
+// Shared with the other search boxes; see searchTiming.ts.
+const DEBOUNCE_MS = SEARCH_DEBOUNCE_MS
 // Minimum characters before we hit /_search. 1-letter queries return
 // thousands of unrelated results in any non-trivial project.
 const MIN_QUERY_LEN = 2
-// Cap rendered options regardless of what the backend returns. Avoids OOMing
-// the browser when the user types a common letter and the backend has no
-// per_page on /_search yet.
+// Cap rendered options. Also sent as `limit`, so the server returns only
+// these rows.
 const MAX_RESULTS = 50
 
 const props = defineProps<{
@@ -45,6 +46,7 @@ const emit = defineEmits<{
   close: []
 }>()
 
+const { t } = useI18n()
 const router = useRouter()
 const schemaStore = useSchemaStore()
 
@@ -101,7 +103,11 @@ async function runSearch(q: string): Promise<void> {
   abort = new AbortController()
   loading.value = true
   try {
-    const resp = await searchEntities(q, undefined, abort.signal, worldParam.value)
+    const resp = await searchEntities(q, {
+      signal: abort.signal,
+      world: worldParam.value,
+      limit: MAX_RESULTS,
+    })
     // Replace results only on success — keep stale results visible until
     // the new ones arrive, to avoid flicker.
     results.value = resp.data.slice(0, MAX_RESULTS)
@@ -109,7 +115,7 @@ async function runSearch(q: string): Promise<void> {
     highlightedIndex.value = 0
   } catch (err: unknown) {
     if (isCancelledFetch(err)) return
-    errorMsg.value = 'Search failed'
+    errorMsg.value = t('palette.failed')
   } finally {
     loading.value = false
   }
@@ -156,7 +162,7 @@ function entityLabel(entity: Entity): string {
 }
 
 function entityTypeLabel(type: string): string {
-  if (!type) return 'Unknown'
+  if (!type) return t('palette.unknownType')
   return schemaStore.entityTypes.get(type)?.label || type
 }
 
@@ -258,7 +264,7 @@ const showNoMatches = computed(
       class="cmdk-overlay"
       role="dialog"
       aria-modal="true"
-      aria-label="Quick jump"
+      :aria-label="t('palette.label')"
       @click="handleOverlayClick"
       @keydown="handleKeydown"
     >
@@ -269,7 +275,7 @@ const showNoMatches = computed(
             v-model="query"
             type="text"
             class="cmdk-input"
-            placeholder="Type to search entities…"
+            :placeholder="t('palette.placeholder')"
             autocomplete="off"
             spellcheck="false"
             role="combobox"
@@ -286,9 +292,9 @@ const showNoMatches = computed(
           <RlSpinner v-if="loading" class="cmdk-spinner" :size="16" aria-hidden="true" />
         </div>
 
-        <div v-if="showEmptyHint" class="cmdk-hint">Type to search entities</div>
+        <div v-if="showEmptyHint" class="cmdk-hint">{{ t('palette.hint') }}</div>
         <div v-else-if="errorMsg" class="cmdk-hint cmdk-error">{{ errorMsg }}</div>
-        <div v-else-if="showNoMatches" class="cmdk-hint">No matches</div>
+        <div v-else-if="showNoMatches" class="cmdk-hint">{{ t('palette.noMatches') }}</div>
 
         <ul
           v-if="results.length > 0"
@@ -321,7 +327,7 @@ const showNoMatches = computed(
               <span class="cmdk-type">{{ entityTypeLabel(entity.type) }}</span>
               <span class="cmdk-title"
                 >{{ entityLabel(entity)
-                }}<span v-if="entity._owner" class="cmdk-owner">in {{ entity._owner.title }}</span></span
+                }}<span v-if="entity._owner" class="cmdk-owner">{{ t('palette.inOwner', { title: entity._owner.title }) }}</span></span
               >
               <span class="cmdk-id">{{ entity.id }}</span>
             </RouterLink>

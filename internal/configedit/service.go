@@ -662,10 +662,11 @@ func (s *Service) audit(ctx context.Context, cur *current, saved, p *prepared, o
 		fmt.Fprintf(&b, "; refused paths: %s", strings.Join(p.refused, ", "))
 	}
 	s.deps.Audit.Record(audit.Record{
-		Time:      s.now().UTC(),
-		Op:        audit.OpConfigEdit,
-		Principal: principal.From(ctx),
-		Summary:   b.String(),
+		Time:       s.now().UTC(),
+		Op:         audit.OpConfigEdit,
+		Principal:  principal.From(ctx),
+		AssertedBy: audit.AssertedByFrom(ctx),
+		Summary:    b.String(),
 	})
 }
 

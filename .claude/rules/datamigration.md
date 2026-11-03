@@ -98,9 +98,8 @@ paths:
   copies what an fsstore over the source READ, then walks the source files
   and accounts for every one (copied, listed with a reason, or an error),
   because fsstore skips what it cannot read without a word. The source is
-  opened through `storage.ReadOnlyFS` with the fsstore index cache off, so the
-  import cannot write to it. The target judges: any row the database refuses
-  fails the whole run. `db load --data` runs as ONE `store.Tx`, and the state,
+  opened through `storage.ReadOnlyFS`, so the import cannot write to it. The
+  target judges: any row the database refuses fails the whole run. `db load --data` runs as ONE `store.Tx`, and the state,
   comment and migration stores write on that transaction's connection
   (`sqlitestore.TxConn`), so a failed import leaves nothing behind and can
   simply be re-run; it refuses a database holding entities unless `--force`,

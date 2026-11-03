@@ -17,6 +17,7 @@
  * disambiguate something with one option.
  */
 import { computed, ref, onBeforeUnmount } from 'vue'
+import { useI18n } from 'vue-i18n'
 import type { ViewSectionCreate, ViewSectionCreateTarget } from '@/api/views'
 import RlButton from 'rela-components/components/common/RlButton.vue'
 import RlIcon from 'rela-components/components/common/RlIcon.vue'
@@ -31,6 +32,7 @@ const emit = defineEmits<{
   select: [create: ViewSectionCreate, target: ViewSectionCreateTarget]
 }>()
 
+const { t } = useI18n()
 const open = ref(false)
 const root = ref<HTMLElement | null>(null)
 
@@ -78,7 +80,7 @@ onBeforeUnmount(() => document.removeEventListener('click', onDocumentClick, tru
         aria-haspopup="menu"
         @click="toggle"
       >
-        {{ menuLabel || 'New' }}
+        {{ menuLabel || t('common.new') }}
         <template #trailing>
           <RlIcon name="chevron-down" :size="14" aria-hidden="true" />
         </template>

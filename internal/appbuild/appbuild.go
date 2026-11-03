@@ -34,11 +34,13 @@ import (
 	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
+	"github.com/Sourcehaven-BV/rela/internal/aclstore"
 	"github.com/Sourcehaven-BV/rela/internal/affordances"
 	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/autocascade"
 	"github.com/Sourcehaven-BV/rela/internal/automation"
 	"github.com/Sourcehaven-BV/rela/internal/caldavalias"
+	"github.com/Sourcehaven-BV/rela/internal/channels"
 	"github.com/Sourcehaven-BV/rela/internal/comments"
 	"github.com/Sourcehaven-BV/rela/internal/computed"
 	"github.com/Sourcehaven-BV/rela/internal/config"
@@ -48,12 +50,15 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
 	"github.com/Sourcehaven-BV/rela/internal/hostconfig"
 	"github.com/Sourcehaven-BV/rela/internal/jobs"
+	"github.com/Sourcehaven-BV/rela/internal/lease"
 	"github.com/Sourcehaven-BV/rela/internal/lock"
 	"github.com/Sourcehaven-BV/rela/internal/lua"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/piles"
 	"github.com/Sourcehaven-BV/rela/internal/project"
+	"github.com/Sourcehaven-BV/rela/internal/realtime"
 	"github.com/Sourcehaven-BV/rela/internal/relresolve"
+	"github.com/Sourcehaven-BV/rela/internal/rollup"
 	"github.com/Sourcehaven-BV/rela/internal/rootfs"
 	"github.com/Sourcehaven-BV/rela/internal/schedulerstate"
 	"github.com/Sourcehaven-BV/rela/internal/schedulerstate/kvstate"
@@ -188,6 +193,43 @@ type Services struct {
 	// pileStore is the backend under piles, which a re-assembly shares (see
 	// [SharedBase.ForReassembly]).
 	pileStore piles.Store
+	// leases is the advisory lease service (see [Leases]), built per
+	// assembly like piles. Nil only for a NewFromCollaborators build.
+	leases *lease.Service
+	// leaseShared is the backend and hub under leases, which a re-assembly
+	// shares. The backend is closed by Close, not by CloseAssembly.
+	leaseShared leaseShared
+	// storeSchema applies a reloaded metamodel to store (see
+	// [RefreshStoreSchema]). A re-assembly reuses it.
+	//
+	// Nil: accepted — a store that keeps any type needs none.
+	storeSchema storeSchemaRefresher
+	// channels is the realtime channel store (see [Channels]). Stateless
+	// over its backend, so every assembly builds its own.
+	channels channels.Store
+	// channelService is the channel service over channels (see
+	// [ChannelService]), built per assembly so its access checks follow the
+	// current ACL. Nil for a NewFromCollaborators build without
+	// Collaborators.Channels.
+	channelService *realtime.Service
+	// realtimeLocal is the process-local state under channelService, which a
+	// re-assembly shares.
+	realtimeLocal *realtime.Local
+	// channelHints is realtimeLocal's hint relay, shared with it; nil when
+	// the backend has no hints. hintAttach is this assembly's endpoint on
+	// it, detached when the assembly closes.
+	channelHints *hintRelay
+	hintAttach   *hintAttachment
+	// dueWake is the session due-time wake under channelService and the
+	// realtime worker, which a re-assembly shares.
+	dueWake *realtime.DueWake
+	// realtimeRecordsStop stops the realtime holder from checking reloads
+	// against this assembly's channel store. Per-assembled.
+	realtimeRecordsStop func()
+	// realtimeWorker is the realtime background worker, built only for a
+	// long-running process (WithBackgroundAutomationJobs). The host starts
+	// it with RunRealtimeWorker; Close stops it. Per-assembled.
+	realtimeWorker *realtimeWorker
 	// comments is the commentary layer (internal/comments). Nil when the
 	// metamodel declares no `comments:` block — the feature then does not
 	// exist, and the data-entry app serves no comment routes.
@@ -203,6 +245,8 @@ type Services struct {
 	aclDeclarative *acl.Declarative
 	aclPolicy      *acl.Policy
 	audit          audit.Audit
+	// realtime is the base's realtime.yaml holder; see [Realtime].
+	realtime *RealtimeConfig
 	// mailStop drains and stops the mail worker. Per-assembled like gcStop,
 	// and bounded by the outbox's drain timeout so it cannot hang shutdown.
 	mailStop func()
@@ -221,7 +265,7 @@ type Services struct {
 	// stopped in stopBackgroundServices, so Close and CloseAssembly stop the
 	// sweep their own Assemble started and no sibling's.
 	versionSweep versionSweep
-	// fieldRedactor applies field-level `visible:` policy to the unattended
+	// fieldReads applies field-level `visible:` policy to the unattended
 	// and identity-bearing read paths (TKT-425426). Never nil after
 	// construction: [visibility.NopRedactor] when no policy declares
 	// affordance grants, so the no-policy path stays byte-identical.
@@ -231,11 +275,15 @@ type Services struct {
 	// must be fully built before it is shared — [affordances.PolicyResolver.WithMachines]
 	// is the one mutator on an otherwise-immutable value and is safe only
 	// during single-threaded wiring. Constructing here, once, preserves that.
-	fieldRedactor visibility.FieldRedactor
+	fieldReads fieldReadPolicy
 
 	// versionTags is the version tag writer (TKT-VO6VG9), built in
 	// finishAssembly over entityManager. See [VersionTags].
 	versionTags *entitymanager.VersionTags
+
+	// attachRender backs rela.attach_render for the scripts these services
+	// run (TKT-1TS55R), built in finishAssembly. See [SetAttachRenderer].
+	attachRender *attachRenderHolder
 
 	// tokens is the connector token broker, or why there is none
 	// (TKT-01KZSO). See [Tokens].
@@ -535,7 +583,7 @@ func (s *Services) luaReadDepsFor(redactor visibility.FieldRedactor) lua.ReadDep
 func scriptEntityReader(
 	st store.Store, d *acl.Declarative, redactor visibility.FieldRedactor, w worlds.Compiled,
 ) lua.EntityReader {
-	reader, _ := scriptReads(st, d, redactor, w)
+	reader, _, _ := scriptReads(st, d, redactor, w)
 	return reader
 }
 
@@ -553,6 +601,7 @@ type scriptEntityReaderFamily interface {
 	ListRelationsStrict(ctx context.Context, q store.RelationQuery) iter.Seq2[*entity.Relation, error]
 	CountEntities(ctx context.Context, q store.EntityQuery) (int, error)
 	CountRelations(ctx context.Context, q store.RelationQuery) (int, error)
+	MentionedBy(ctx context.Context, target, after string, limit int) (visibility.MentionPage, error)
 }
 
 // scriptReads returns the principal-bound script reader and the traversal gate
@@ -560,38 +609,50 @@ type scriptEntityReaderFamily interface {
 // [relresolve.Ungated], policy reads get the ctx principal's gate, and a
 // refused reader gets a gate that refuses too. Deriving both in one place is
 // what keeps a validation rule's traversal from seeing more than its reads.
+// The holder lookup realtime's inbox uses comes from the same place, on the
+// same tier, for the same reason.
 // w supplies the face order ([familiesOption]), so a Family lists faces in
 // declaration order on every tier, and the default world bare ids resolve in.
 func scriptReads(
 	st store.Store, d *acl.Declarative, redactor visibility.FieldRedactor, w worlds.Compiled,
-) (scriptReader scriptEntityReaderFamily, traversalGate relresolve.Gate) {
+) (scriptReader scriptEntityReaderFamily, traversalGate relresolve.Gate, holders *visibility.HolderLookup) {
 	if d == nil {
 		// Named, not bare: this is the NopACL path and the single largest
 		// ungated read surface in the tree, so it must show up in
 		// `grep -rn visibility.Unrestricted` like every other one
 		// (TKT-1WV50C).
-		return unrestrictedReader(st, w), relresolve.Ungated
+		unrestricted, err := visibility.NewUnrestrictedHolderLookup(st)
+		if err != nil {
+			slog.Error("appbuild: holder lookup unavailable; holder reads REFUSED", "err", err)
+			unrestricted = visibility.NewRefusingHolderLookup()
+		}
+		return unrestrictedReader(st, w), relresolve.Ungated, unrestricted
 	}
 	if redactor == nil {
 		redactor = visibility.NopRedactor{}
 	}
+	refused := visibility.NewRefusingHolderLookup()
 	gate, err := visibility.NewDeclarativeGate(d, w.DefaultWorld())
 	if err != nil {
 		slog.Error("appbuild: ACL gate unavailable; script reads REFUSED", "err", err)
-		return visibility.DenyReader{}, refuseTraversal
+		return visibility.DenyReader{}, refuseTraversal, refused
 	}
 	reader, err := visibility.NewPolicyReader(gate, redactor, st, familiesOption(w))
 	if err != nil {
 		slog.Error("appbuild: policy reader unavailable; script reads REFUSED", "err", err)
-		return visibility.DenyReader{}, refuseTraversal
+		return visibility.DenyReader{}, refuseTraversal, refused
 	}
 	sr, err := visibility.NewScriptReader(reader, st, gate)
 	if err != nil {
 		slog.Error("appbuild: script reader unavailable; script reads REFUSED", "err", err)
-		return visibility.DenyReader{}, refuseTraversal
+		return visibility.DenyReader{}, refuseTraversal, refused
 	}
-	return sr.WithWorld(visibility.WorldOf(w.DefaultWorld())).WithHistory(versionServiceFor(st)).
-		WithVersionTags(versionTagReaderFor(st)), gate.GateTraversal
+	sr = sr.WithWorld(visibility.WorldOf(w.DefaultWorld()))
+	holders, err = visibility.NewHolderLookup(sr)
+	if err != nil { // coverage-ignore: invariant: sr was built just above
+		holders = refused
+	}
+	return sr.WithHistory(versionServiceFor(st), versionTagReaderFor(st)), gate.GateTraversal, holders
 }
 
 // refuseTraversal pairs with [visibility.DenyReader]: reads are refused, so
@@ -665,6 +726,7 @@ func (s *Services) LuaWriteDeps() lua.WriteDeps {
 		PileWriter:    pileWriterFor(s.piles),
 		VersionTags:   ScriptVersionTags(s),
 		OAuth:         ScriptOAuth(s),
+		AttachRender:  s.attachRender,
 	}
 }
 
@@ -680,6 +742,7 @@ func (s *Services) luaWriteDepsFor(redactor visibility.FieldRedactor) lua.WriteD
 		PileWriter:    pileWriterFor(s.piles),
 		VersionTags:   ScriptVersionTags(s),
 		OAuth:         ScriptOAuth(s),
+		AttachRender:  s.attachRender,
 	}
 }
 
@@ -696,7 +759,7 @@ func (s *Services) luaWriteDepsFor(redactor visibility.FieldRedactor) lua.WriteD
 // Field write grants apply too: writes go through the [entitymanager.FieldGated]
 // handle, so a job cannot set a property its identity may not.
 func (s *Services) ScheduledLuaWriteDeps() lua.WriteDeps {
-	deps := s.luaWriteDepsFor(s.fieldRedactor)
+	deps := s.luaWriteDepsFor(s.fieldReads)
 	deps.EntityManager = FieldGatedEntityManager(s)
 	return deps
 }
@@ -740,14 +803,14 @@ func (s *Services) ScheduledLuaWriteDeps() lua.WriteDeps {
 // visibility.PolicyReader implements only FilterRelations, so a surviving edge
 // still carries all of its meta.
 func (s *Services) GatedReads() GatedReadBundle {
-	reader, gate := scriptReads(s.store, s.aclDeclarative, s.fieldRedactor, s.worlds)
-	tr := scriptTracer(s.tracer, s.store, s.aclDeclarative, s.fieldRedactor, s.worlds)
+	reader, gate, _ := scriptReads(s.store, s.aclDeclarative, s.fieldReads, s.worlds)
+	tr := scriptTracer(s.tracer, s.store, s.aclDeclarative, s.fieldReads, s.worlds)
 
 	deps := s.LuaReadDeps()
 	deps.VisibleReader = reader
 	deps.Tracer = tr
 	deps.Searcher = gatedSearcher(
-		s.searcher, s.visibleSearcher, s.aclDeclarative, s.fieldRedactor, s.meta, s.worlds.DefaultWorld(),
+		s.searcher, s.visibleSearcher, s.aclDeclarative, s.fieldReads, s.meta, s.worlds.DefaultWorld(),
 	)
 
 	b, err := relresolve.NewStoreBinder(s.meta, gate, s.store)
@@ -763,7 +826,64 @@ func (s *Services) GatedReads() GatedReadBundle {
 		Searcher:   deps.Searcher,
 		Traversals: b,
 		LuaReads:   deps,
+		Rebind:     rebindFor(s.aclDeclarative),
+		Rollups:    gatedRollups(s),
 	}
+}
+
+// gatedRollups returns the roll-up reader of [Services.GatedReads]: related
+// rows under the ctx principal's read query, fields under the same
+// `visible:` scope the reader redacts with. Without a policy every row and
+// field counts. A construction failure computes no roll-ups rather than
+// ungated ones.
+func gatedRollups(s *Services) *visibility.Rollups {
+	set, err := rollup.Compile(s.meta)
+	if err != nil { // coverage-ignore: assembly already compiled the same metamodel
+		slog.Error("appbuild: roll-ups unavailable", "err", err)
+		return nil
+	}
+	var rows visibility.ReadQueryProvider = visibility.AllowAllReadQueries{}
+	if s.aclDeclarative != nil {
+		gate, gErr := visibility.NewDeclarativeGate(s.aclDeclarative, s.worlds.DefaultWorld())
+		if gErr != nil {
+			slog.Error("appbuild: ACL gate unavailable; roll-ups REFUSED", "err", gErr)
+			return nil
+		}
+		rows = gate
+	}
+	var fields visibility.FieldScoper = visibility.NopRedactor{}
+	if s.fieldReads != nil {
+		fields = s.fieldReads
+	}
+	r, err := visibility.NewRollups(set, s.store, rows, fields)
+	if err != nil { // coverage-ignore: invariant: every argument is non-nil here
+		slog.Error("appbuild: roll-ups unavailable", "err", err)
+		return nil
+	}
+	return r
+}
+
+// compileDerived compiles the computed properties of meta and checks its
+// roll-ups. Read surfaces compile their own roll-up set from the same
+// metamodel; this is the load-time check, so a bad roll-up fails the boot.
+func compileDerived(meta *metamodel.Metamodel) (*computed.Set, error) {
+	set, err := computed.Compile(meta)
+	if err != nil {
+		return nil, fmt.Errorf("compile computed properties: %w", err)
+	}
+	if _, rErr := rollup.Compile(meta); rErr != nil {
+		return nil, fmt.Errorf("compile roll-up properties: %w", rErr)
+	}
+	return set, nil
+}
+
+// rebindFor returns the [GatedReadBundle.Rebind] for policy d: without a
+// policy it returns ctx unchanged, with one it replaces any attached
+// [acl.Request] by a fresh one for the ctx principal.
+//
+// Nil: accepted — a nil d means no policy is configured.
+func rebindFor(d *acl.Declarative) func(context.Context) (context.Context, error) {
+	return identityBinderFor(d)
 }
 
 // GatedReadBundle is the result of [Services.GatedReads]: the read handles an
@@ -786,6 +906,16 @@ type GatedReadBundle struct {
 	// searcher. It grants no capabilities and holds no elevated handle; a
 	// writer runtime pairs it with an EntityManager.
 	LuaReads lua.ReadDeps
+
+	// Rebind returns ctx with read access resolved again for its principal:
+	// an [acl.Request] attached upstream caches the principal's roles for
+	// its lifetime, so a consumer that reads repeatedly over one long call
+	// (the MCP watch tool) calls Rebind before each round of reads.
+	Rebind func(context.Context) (context.Context, error)
+
+	// Rollups computes roll-up properties under the same gate as Reader
+	// (TKT-6I2OPG). Nil: accepted; a nil reader computes none.
+	Rollups *visibility.Rollups
 }
 
 // gatedSearcher returns the search handle for an identity-bearing consumer.
@@ -794,13 +924,10 @@ type GatedReadBundle struct {
 // degrading to raw hits (RR-GKCZO5).
 func gatedSearcher(
 	raw search.Searcher, vs search.VisibleSearcher, d *acl.Declarative,
-	redactor visibility.FieldRedactor, meta *metamodel.Metamodel, world store.WorldScope,
+	fields visibility.FieldScoper, meta *metamodel.Metamodel, world store.WorldScope,
 ) search.Searcher {
 	if d == nil {
 		return raw
-	}
-	if redactor == nil {
-		redactor = visibility.NopRedactor{}
 	}
 	gate, err := visibility.NewDeclarativeGate(d, world)
 	if err != nil {
@@ -811,7 +938,7 @@ func gatedSearcher(
 	for name := range meta.Entities {
 		types = append(types, name)
 	}
-	gs, err := visibility.NewSearcher(vs, gate, redactor, types)
+	gs, err := visibility.NewSearcher(vs, gate, fields, types)
 	if err != nil {
 		slog.Error("appbuild: gated searcher unavailable; search REFUSED", "err", err)
 		return visibility.DenySearcher{}
@@ -844,6 +971,9 @@ type GatedGraphReader interface {
 	ListRelationsStrict(ctx context.Context, q store.RelationQuery) iter.Seq2[*entity.Relation, error]
 	CountEntities(ctx context.Context, q store.EntityQuery) (int, error)
 	CountRelations(ctx context.Context, q store.RelationQuery) (int, error)
+	// MentionedBy pages the readable entities whose body mentions target
+	// ([visibility.Resolver.MentionedBy]).
+	MentionedBy(ctx context.Context, target, after string, limit int) (visibility.MentionPage, error)
 }
 
 // gatedGraphReader composes the ACL-gated row reader with the raw store for
@@ -920,6 +1050,12 @@ func (g gatedGraphReader) ListEntityHeaders(
 	ctx context.Context, q store.EntityQuery,
 ) iter.Seq2[store.EntityHeader, error] {
 	return store.ListEntityHeaders(ctx, g.rows, q)
+}
+
+func (g gatedGraphReader) MentionedBy(
+	ctx context.Context, target, after string, limit int,
+) (visibility.MentionPage, error) {
+	return g.rows.MentionedBy(ctx, target, after, limit)
 }
 
 func (g gatedGraphReader) ListRelationsStrict(
@@ -1030,6 +1166,42 @@ type Collaborators struct {
 	// Nil: accepted — commenting disabled, as in production when the
 	// metamodel declares no comments.
 	Comments *comments.Service
+
+	// Channels makes [ChannelService] return a channel service built the
+	// way assembly builds it, over the channel store and realtime config
+	// it names.
+	// Nil: accepted — no channel service, as without a channel store.
+	Channels *ChannelCollaborators
+}
+
+// ChannelCollaborators are the inputs of the channel service a Services
+// built by [NewFromCollaborators] offers. Both fields are required.
+type ChannelCollaborators struct {
+	Store  channels.Store
+	Config realtime.ConfigSource
+	// Local is the process-local channel state. Nil: a new one on the
+	// real clock.
+	Local *realtime.Local
+	// Outputs writes session outputs. Nil: accepted — collaborators carry
+	// no entity manager, so no session output is written.
+	Outputs realtime.OutputWriter
+}
+
+// collaboratorVisibleSearcher returns c.VisibleSearcher, or one derived
+// from c.Searcher and c.Store when it is unset.
+func collaboratorVisibleSearcher(c Collaborators) (search.VisibleSearcher, error) {
+	if c.VisibleSearcher != nil {
+		return c.VisibleSearcher, nil
+	}
+	v, err := search.NewVisible(c.Searcher, c.Store)
+	// coverage-ignore-start: defensive: NewVisible only errors on nil Searcher/Store or a Store that isn't an
+	// EntityReader; NewFromCollaborators validates c.Searcher/c.Store non-nil first and every store.Store is an
+	// EntityReader
+	if err != nil {
+		return nil, fmt.Errorf("appbuild.NewFromCollaborators: derive VisibleSearcher: %w", err)
+	}
+	// coverage-ignore-end
+	return v, nil
 }
 
 // NewFromCollaborators assembles a [Services] from pre-built
@@ -1089,17 +1261,9 @@ func NewFromCollaborators(c Collaborators) (*Services, error) {
 	if c.Declarative != nil {
 		aclPolicy = c.Declarative.Policy()
 	}
-	visible := c.VisibleSearcher
-	if visible == nil {
-		v, err := search.NewVisible(c.Searcher, c.Store)
-		// coverage-ignore-start: defensive: NewVisible only errors on nil Searcher/Store or a Store that isn't an
-		// EntityReader; c.Searcher/c.Store
-		// are validated non-nil above and every store.Store is an EntityReader
-		if err != nil {
-			return nil, fmt.Errorf("appbuild.NewFromCollaborators: derive VisibleSearcher: %w", err)
-		}
-		// coverage-ignore-end
-		visible = v
+	visible, err := collaboratorVisibleSearcher(c)
+	if err != nil {
+		return nil, err
 	}
 	// Compile worlds from the supplied metamodel so this construction path
 	// offers the same world surface as the base-assembly path. A failure
@@ -1109,7 +1273,11 @@ func NewFromCollaborators(c Collaborators) (*Services, error) {
 	if err != nil {
 		return nil, fmt.Errorf("appbuild.NewFromCollaborators: compile worlds: %w", err)
 	}
-	fieldRedactor, err := buildFieldRedactor(c.Meta, c.Store, c.Declarative)
+	fields, err := buildFieldPolicy(c.Meta, c.Store, c.Declarative)
+	if err != nil {
+		return nil, fmt.Errorf("appbuild.NewFromCollaborators: %w", err)
+	}
+	refs, err := collaboratorRefHolders(c, fields.redactor, compiledWorlds)
 	if err != nil {
 		return nil, fmt.Errorf("appbuild.NewFromCollaborators: %w", err)
 	}
@@ -1138,12 +1306,90 @@ func NewFromCollaborators(c Collaborators) (*Services, error) {
 		aclDeclarative: c.Declarative,
 		aclPolicy:      aclPolicy,
 		audit:          c.Audit,
-		fieldRedactor:  fieldRedactor,
+		fieldReads:     fields.redactor,
 		comments:       c.Comments,
+		piles:          refs.piles,
+		leases:         refs.leases,
+		leaseShared:    refs.leaseShared,
+		caldavAliases:  refs.aliases,
+		channels:       refs.channels,
+		channelService: refs.channelService,
+		realtimeLocal:  refs.realtimeLocal,
+		dueWake:        refs.dueWake,
+		attachRender:   &attachRenderHolder{},
 	}, nil
 }
 
-// buildFieldRedactor constructs the field-level `visible:` redactor shared by
+// collaboratorRefs are the services [NewFromCollaborators] builds itself.
+type collaboratorRefs struct {
+	piles          *piles.Service
+	aliases        *caldavalias.Service
+	leases         *lease.Service
+	leaseShared    leaseShared
+	channels       channels.Store
+	channelService *realtime.Service
+	realtimeLocal  *realtime.Local
+	dueWake        *realtime.DueWake
+}
+
+// collaboratorRefHolders builds the piles service, the CalDAV alias table,
+// the lease service and, when c.Channels is set, the channel service the way
+// assembly builds them, so a Services assembled from collaborators offers
+// them as a deployment's does.
+func collaboratorRefHolders(
+	c Collaborators, redactor visibility.FieldRedactor, w worlds.Compiled,
+) (collaboratorRefs, error) {
+	var refs collaboratorRefs
+	pileStore, err := pileBackend(c.FS, c.Paths, c.Store)
+	if err != nil {
+		return refs, fmt.Errorf("piles backend: %w", err)
+	}
+	if refs.piles, err = newPilesService(pileStore, c.Declarative, redactor, c.Store, w); err != nil {
+		return refs, fmt.Errorf("piles: %w", err)
+	}
+	if _, refs.aliases, err = buildStateAndAliases(c.FS, c.Paths, c.StateKV); err != nil {
+		return refs, fmt.Errorf("caldav aliases: %w", err)
+	}
+	refs.leases, refs.leaseShared, err = buildLeases(
+		c.FS, c.Paths, w, c.Store, leaseShared{}, c.Declarative, redactor, c.ACL)
+	if err != nil {
+		return refs, fmt.Errorf("leases: %w", err)
+	}
+	if ch := c.Channels; ch != nil {
+		if ch.Store == nil || ch.Config == nil {
+			return refs, errors.New("channels: Store and Config are required")
+		}
+		refs.channels = ch.Store
+		refs.dueWake = realtime.NewDueWake()
+		var outputs realtime.OutputWriter = realtime.NoOutputs{}
+		if ch.Outputs != nil {
+			outputs = ch.Outputs
+		}
+		refs.channelService, refs.realtimeLocal, err = newRealtimeService(realtimeInputs{
+			meta: c.Meta, worlds: w, config: ch.Config, store: c.Store, channels: ch.Store, local: ch.Local,
+			dueWake:     refs.dueWake,
+			declarative: c.Declarative, redactor: redactor, writes: c.ACL,
+			// Collaborators carry no entity manager, so nothing promotes.
+			promoter: realtime.NoPromoter{}, outputs: outputs,
+		})
+		if err != nil {
+			return refs, fmt.Errorf("channels: %w", err)
+		}
+	}
+	return refs, nil
+}
+
+// fieldReadPolicy is the field-level read policy as appbuild hands it out:
+// per-entity redaction for the readers, and its search form for the gated
+// searcher. Both answer from the same `visible:` grants, so one value serves
+// both and they cannot drift. [visibility.PolicyRedactor] and
+// [visibility.NopRedactor] implement it.
+type fieldReadPolicy interface {
+	visibility.FieldRedactor
+	visibility.FieldScoper
+}
+
+// buildFieldPolicy constructs the field-level `visible:` policy shared by
 // every appbuild-wired read path (TKT-0XL8MF). Before this existed, appbuild
 // could not build an affordance resolver at all, so the unattended and
 // identity-bearing paths were ROW-gated only and every property of a readable
@@ -1165,7 +1411,7 @@ func NewFromCollaborators(c Collaborators) (*Services, error) {
 // for the write gate.
 func buildFieldRedactor(
 	meta *metamodel.Metamodel, st store.Store, d *acl.Declarative,
-) (visibility.FieldRedactor, error) {
+) (fieldReadPolicy, error) {
 	fp, err := buildFieldPolicy(meta, st, d)
 	if err != nil {
 		return nil, err
@@ -1176,7 +1422,7 @@ func buildFieldRedactor(
 // fieldPolicy is the field-level half of acl.yaml: the read-side redactor
 // and the write-side gate, both answered by one resolver.
 type fieldPolicy struct {
-	redactor visibility.FieldRedactor
+	redactor fieldReadPolicy
 	gate     entitymanager.FieldWriteGate
 }
 
@@ -1284,6 +1530,11 @@ type options struct {
 	// [WithTokenStore]. Nil means a sealed store on the database backends
 	// and none elsewhere.
 	tokenStore func(HostConfig) (tokenstore.Store, error)
+
+	// realtimeFallback is the predecessor whose realtime config a schema
+	// reload keeps when realtime.yaml no longer loads; see
+	// [WithRealtimeFallback].
+	realtimeFallback *Services
 }
 
 // WithBackgroundAutomationJobs runs `background: true` automation actions
@@ -1493,7 +1744,7 @@ func buildACL(policy *acl.Policy, st store.Store) (acl.ACL, *acl.Declarative, er
 	}
 	// Schema-dependent validation already ran in prepare (validateResolvedPolicy).
 	warnUngatedMembership(policy)
-	// `st` is passed twice: once via NewStoreGraph (the Graph
+	// `st` is passed twice: once via aclstore.NewGraph (the Graph
 	// adapter the resolver uses for member-of / ancestor walks), and
 	// once as the GraphQueryer (executes MatchingFaces for
 	// Request.PermitsRead / ReadableFacesMany). The store.Store
@@ -1505,11 +1756,18 @@ func buildACL(policy *acl.Policy, st store.Store) (acl.ACL, *acl.Declarative, er
 	// WithPrincipalLookup supplies the store-backed resolver for the
 	// `principal_property` substitution; NewDeclarative requires it iff
 	// the policy enables that lookup (else it is an inert dependency).
-	d, err := acl.NewDeclarative(policy, acl.NewStoreGraph(st), st,
-		acl.WithPrincipalLookup(acl.NewStorePrincipalLookup(st)))
-	// coverage-ignore-start: defensive: NewDeclarative only errors on nil policy/graph/queryer or a missing principal
-	// lookup; policy is non-nil
-	// (guarded above), graph and queryer are non-nil (NewStoreGraph(st)/st), and WithPrincipalLookup is always supplied
+	// coverage-ignore-start: defensive: the adapters only reject a nil store, and NewDeclarative only errors on nil
+	// policy/graph/queryer or a missing principal lookup; policy is non-nil (guarded above), st is the assembled
+	// store, and WithPrincipalLookup is always supplied
+	graph, err := aclstore.NewGraph(st)
+	if err != nil {
+		return nil, nil, fmt.Errorf("appbuild: build acl graph: %w", err)
+	}
+	lookup, err := aclstore.NewPrincipalLookup(st)
+	if err != nil {
+		return nil, nil, fmt.Errorf("appbuild: build principal lookup: %w", err)
+	}
+	d, err := acl.NewDeclarative(policy, graph, st, acl.WithPrincipalLookup(lookup))
 	if err != nil {
 		return nil, nil, fmt.Errorf("appbuild: build acl.Declarative: %w", err)
 	}
@@ -1833,6 +2091,10 @@ type SharedBase struct {
 	// conns is the parsed connections.yaml (TKT-01KZSO), empty when the
 	// file is absent. Parsed here so an invalid file fails the boot.
 	conns tokenstore.Connections
+	// realtime is the compiled realtime.yaml holder, loaded here so an
+	// invalid file fails the boot. It is shared by every Services assembled
+	// from this base, like meta: it derives from config files only.
+	realtime *RealtimeConfig
 	// reassembly marks a base built to re-assemble against an ALREADY-OPEN
 	// store, so [assemble] skips the store-open-only steps. Set by
 	// [SharedBase.ForReassembly]; false for a base that will open its own store.
@@ -1843,6 +2105,23 @@ type SharedBase struct {
 	// pileStore is the predecessor's piles backend, reused by a re-assembly
 	// for the same reason as attachLocker. Nil for a first assembly.
 	pileStore piles.Store
+	// leaseShared is the predecessor's lease backend and hub, reused for the
+	// same reason. Empty for a first assembly.
+	leaseShared leaseShared
+	// realtimeLocal is the predecessor's process-local channel state (rate
+	// buckets, ephemeral signals, live subscribers), reused so a schema
+	// reload resets none of them. Nil for a first assembly.
+	realtimeLocal *realtime.Local
+	// channelHints is the predecessor's hint relay, reused with
+	// realtimeLocal. Nil for a first assembly or a backend without hints.
+	channelHints *hintRelay
+	// dueWake is the predecessor's session due-time wake, reused with
+	// realtimeLocal. Nil for a first assembly.
+	dueWake *realtime.DueWake
+	// storeSchema is the predecessor's store schema refresher, reused
+	// because a re-assembly runs against the same store. Nil for a first
+	// assembly, and for a store that needs none.
+	storeSchema storeSchemaRefresher
 }
 
 // attachmentLocker is the predecessor's attachment lock on a re-assembly,
@@ -1873,9 +2152,12 @@ func (b *SharedBase) IsReassembly() bool { return b.reassembly }
 // its attachment lock: an in-memory lock only excludes holders of the same
 // instance, so a fresh one would let an upload under the old schema race a
 // face delete under the new one.
-// It reuses the piles backend for the same reason: the KV piles backend
-// serializes writers with an in-process mutex. The piles SERVICE is rebuilt,
-// so its owner check follows the reloaded ACL.
+// It reuses the piles and lease backends for the same reason: the KV
+// backends serialize writers with an in-process mutex. The piles and lease
+// SERVICES are rebuilt, so their access checks follow the reloaded ACL.
+// It carries prev's store schema refresher too: the caller applies the new
+// schema to the store with [RefreshStoreSchema] once the successor is in
+// force.
 //
 // Nil: rejected by use — prev is dereferenced.
 func (b *SharedBase) ForReassembly(prev *Services) *SharedBase {
@@ -1883,6 +2165,11 @@ func (b *SharedBase) ForReassembly(prev *Services) *SharedBase {
 	next.reassembly = true
 	next.attachLocker = prev.attachLocker
 	next.pileStore = prev.pileStore
+	next.leaseShared = prev.leaseShared
+	next.realtimeLocal = prev.realtimeLocal
+	next.channelHints = prev.channelHints
+	next.dueWake = prev.dueWake
+	next.storeSchema = prev.storeSchema
 	return &next
 }
 
@@ -2006,6 +2293,7 @@ func prepare(cfg Config, opts []Option) (*SharedBase, error) {
 		return nil, fmt.Errorf("compile query scopes: %w", err)
 	}
 	warnQueryScopes(&compiledScopes, meta, aclPolicy)
+	warnEveryoneOpensFieldBlocks(meta, aclPolicy)
 	if problems := QueryScopeTraversalFieldErrors(&compiledScopes, meta, aclPolicy); len(problems) > 0 {
 		return nil, fmt.Errorf("compile query scopes: %s", strings.Join(problems, "; "))
 	}
@@ -2017,9 +2305,15 @@ func prepare(cfg Config, opts []Option) (*SharedBase, error) {
 		return nil, err
 	}
 
+	// An invalid realtime.yaml fails the boot too, as data-entry.yaml does.
+	rt, err := newRealtimeConfig(cfg, &o, aclPolicy, meta)
+	if err != nil {
+		return nil, err
+	}
+
 	return &SharedBase{
 		cfg: cfg, opts: o, acl: resolvedACL, aclPolicy: aclPolicy,
-		meta: meta, worlds: compiledWorlds, conns: conns,
+		meta: meta, worlds: compiledWorlds, conns: conns, realtime: rt,
 	}, nil
 }
 
@@ -2040,6 +2334,13 @@ func validateResolvedPolicy(injected acl.ACL, loaded *acl.Policy, meta *metamode
 	}
 	if err := ValidateACLPolicy(policy, meta); err != nil {
 		return fmt.Errorf("appbuild: acl.yaml does not match the schema: %w", err)
+	}
+	for _, rel := range acl.RoleRelationsNoMemberHolds(policy, metamodelView{meta}) {
+		slog.Warn("appbuild: ACL role relation can never confer its role: no principal or group "+
+			"can be its source, so it never matches (is it declared against the relation's direction?)",
+			"relation", rel,
+			"fix", fmt.Sprintf("remove role_relations.%s, or point it at a relation whose source is a user or group", rel),
+			"docs", "docs/acl-security.md")
 	}
 	return nil
 }
@@ -2107,7 +2408,13 @@ func buildEntityManager(
 	autoEngine *automation.Engine, cascadeRunner *autocascade.Runner,
 	readDeps lua.ReadDeps, pileWriter lua.PileWriter, versions store.VersionService, tw TransitionWiring,
 	computedSet *computed.Set, attachLocker lock.Locker, fieldGate entitymanager.FieldWriteGate,
+	guard guardInputs,
 ) (*entitymanager.Manager, error) {
+	// Boot refuses a realtime.yaml that would strand stored channels.
+	anchorGuard, err := channelGuardFor(base, guard)
+	if err != nil {
+		return nil, err
+	}
 	mgr, err := entitymanager.New(entitymanager.Deps{
 		AliasRewriter: aliases,
 		Store:         st,
@@ -2144,6 +2451,7 @@ func buildEntityManager(
 		// from this manager (entitymanager.AttachmentsOf), so the copy
 		// engine, face deletes and uploads exclude each other.
 		AttachmentLocker: attachLocker,
+		AnchorGuard:      anchorGuard,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("build entitymanager: %w", err)
@@ -2220,14 +2528,18 @@ func startBackgroundServices(
 	}
 }
 
-// resolveACLAndRedactor resolves the ACL and derives the field redactor that
-// depends on it. They are returned together because the redactor is a function
+// resolveACLAndFieldPolicy resolves the ACL and derives the field policy that
+// depends on it. They are returned together because the policy is a function
 // of the resolved Declarative: splitting them invites a caller that has one
 // without the other, which is precisely the state that left three read paths
 // ungated (TKT-BUYEW1).
-func resolveACLAndRedactor(
+func resolveACLAndFieldPolicy(
 	base *SharedBase, st store.Store,
 ) (acl.ACL, *acl.Declarative, fieldPolicy, error) {
+	if base.acl == nil {
+		c, err := compileDeclarative(base.aclPolicy, base.meta, st)
+		return c.acl, c.declarative, c.fields, err
+	}
 	resolvedACL, aclDeclarative, err := resolveACL(base, st)
 	if err != nil {
 		return nil, nil, fieldPolicy{}, err
@@ -2237,6 +2549,35 @@ func resolveACLAndRedactor(
 		return nil, nil, fieldPolicy{}, err
 	}
 	return resolvedACL, aclDeclarative, fp, nil
+}
+
+// compiledPolicy is acl.yaml compiled against one store: the write ACL, the
+// declarative evaluator behind it, and the field policy.
+type compiledPolicy struct {
+	acl         acl.ACL
+	declarative *acl.Declarative
+	fields      fieldPolicy
+}
+
+// compileDeclarative checks policy against meta and compiles it over st.
+// It is the one compile sequence for acl.yaml: assembly and
+// [PolicyChannelService] both use it, so a gate added here holds for both.
+// A nil policy compiles to NopACL with permissive field rules. A policy
+// that does not validate or compile is an error, never a permissive
+// fallback.
+func compileDeclarative(policy *acl.Policy, meta *metamodel.Metamodel, st store.Store) (compiledPolicy, error) {
+	if err := validateResolvedPolicy(nil, policy, meta); err != nil {
+		return compiledPolicy{}, err
+	}
+	a, d, err := buildACL(policy, st)
+	if err != nil {
+		return compiledPolicy{}, err
+	}
+	fp, err := buildFieldPolicy(meta, st, d)
+	if err != nil {
+		return compiledPolicy{}, err
+	}
+	return compiledPolicy{acl: a, declarative: d, fields: fp}, nil
 }
 
 // cascadeReadDeps builds the static lua.ReadDeps backing automation cascades.
@@ -2304,6 +2645,12 @@ type backendOverrides struct {
 	// memory and desktop tiers.
 	commentStore comments.Store
 
+	// channelStore replaces the file channel store. Supplied by the sqlite
+	// recipe so channels travel with rela.db, for the reason comments do.
+	// Postgres needs no override: storeChannelsFor finds the pool through
+	// the store, which also serves a multi-tenant assembly.
+	channelStore channels.Store
+
 	// schedulerState replaces the state.KV-backed scheduler run-state
 	// (BUG-TKL08E). Supplied by the postgres recipe, whose job queue is
 	// durable and shared: a run queued by one process may execute on
@@ -2311,6 +2658,21 @@ type backendOverrides struct {
 	// kvstate over the state store, which is right for every tier whose
 	// queue is in-process.
 	schedulerState schedulerstate.Store
+
+	// storeSchema applies a reloaded metamodel to the store the recipe
+	// opened. Supplied by the fs recipe, whose store refuses writes of
+	// undeclared types; nil for the database recipes, whose stores keep
+	// any type.
+	storeSchema storeSchemaRefresher
+}
+
+// storeSchemaFor returns the refresher an assembly carries: the
+// recipe's on a first assembly, the predecessor's on a re-assembly.
+func (o backendOverrides) storeSchemaFor(base *SharedBase) storeSchemaRefresher {
+	if o.storeSchema != nil {
+		return o.storeSchema
+	}
+	return base.storeSchema
 }
 
 // tracerAndTemplater builds the tracer over st, titling nodes in world, and
@@ -2347,7 +2709,7 @@ func assemble(
 	}
 
 	warnUndeclaredFaces(st, base.meta, base.cfg.Paths.Root)
-	resolvedACL, aclDeclarative, fieldPol, err := resolveACLAndRedactor(base, st)
+	resolvedACL, aclDeclarative, fieldPol, err := resolveACLAndFieldPolicy(base, st)
 	if err != nil {
 		return nil, err
 	}
@@ -2361,9 +2723,9 @@ func assemble(
 	if err != nil {
 		return nil, fmt.Errorf("compile transitions: %w", err)
 	}
-	computedSet, err := computed.Compile(base.meta)
+	computedSet, err := compileDerived(base.meta)
 	if err != nil {
-		return nil, fmt.Errorf("compile computed properties: %w", err)
+		return nil, err
 	}
 
 	versions, sweep, err := versioningFor(st, base.meta)
@@ -2392,15 +2754,12 @@ func assemble(
 	// connection pool too), so every error path below this point must stop it.
 	// Boot could get away without this — a failed boot exits the process — but
 	// assembly is now also a RELOAD path (TKT-NU247U): a schema that loads yet
-	// fails to assemble would otherwise leak one queue per save.
-	defer func() {
-		if retErr != nil {
-			closeJobQueue(jobQueue)
-		}
-	}()
-
+	// fails to assemble would otherwise leak one queue per save. The same
+	// holds for a new realtime Local, whose hint sender runs from the start.
+	//
 	// Before automation: add_to_pile actions push through refs.piles.
-	refs, err := buildRefHolders(base, st, overrides.commentStore, aclDeclarative, fieldPol.redactor)
+	refs, err := buildRefHolders(base, st, overrides, aclDeclarative, fieldPol.redactor, resolvedACL)
+	defer func() { abandonFailedAssembly(base, jobQueue, refs.realtimeLocal, retErr) }()
 	if err != nil {
 		return nil, err
 	}
@@ -2427,9 +2786,11 @@ func assemble(
 	// Upstream's parameter order (readDeps after cascadeRunner) with the
 	// comment fanout wrapping the alias rewriter.
 	attachLocker := base.attachmentLocker(st)
-	mgr, err := buildEntityManager(base, st, newAliasFanout(aliases, refs.comments, refs.piles, autoJobs), templater,
+	fanout := newAliasFanout(aliases, refs.comments, refs.piles, refs.leases, autoJobs,
+		refs.channelAliases, refs.realtimeLocal)
+	mgr, err := buildEntityManager(base, st, fanout, templater,
 		resolvedACL, autoEngine, cascadeRunner, readDeps, pileWriterFor(refs.piles), versions, tw, computedSet,
-		attachLocker, fieldPol.gate)
+		attachLocker, fieldPol.gate, refs.guardInputs())
 	// coverage-ignore-start: defensive: buildStateKV only errors when NewRootedFS fails on a non-empty CacheDir, which
 	// requires filepath.Abs to
 	// fail — unreachable with valid inputs (see the scupper in buildStateKV)
@@ -2473,7 +2834,7 @@ func assemble(
 	assembled := newServices(
 		base, st, background, searcher, visible, searchCloser, mgr, tr, val,
 		templater, cfgLoader, stateKV, migState, jobQueue, aliases, refs.comments, versions,
-		resolvedACL, aclDeclarative, fieldPol.redactor, schedState,
+		resolvedACL, aclDeclarative, fieldPol.redactor, schedState, overrides.storeSchemaFor(base),
 	)
 	assembled.tokens = buildTokens(context.Background(), base, st, backendKV, readDeps.Host, attachLocker)
 	return finishAssembly(assembled, attachLocker, autoJobs, autoEngine, refs, sweep)
@@ -2531,12 +2892,35 @@ func finishAssembly(
 ) (*Services, error) {
 	s.attachLocker = attachLocker
 	s.piles, s.pileStore = refs.piles, refs.pileStore
+	s.leases, s.leaseShared = refs.leases, refs.leaseShared
+	s.channels = refs.channels
+	// The channel service promotes through the entity manager, so it is
+	// built once the manager exists.
+	svc, err := buildRealtimeService(s.base, s.store, refs, s.entityManager, s.aclDeclarative, s.fieldReads, s.acl)
+	if err != nil {
+		return nil, err
+	}
+	s.channelService, s.realtimeLocal, s.dueWake = svc, refs.realtimeLocal, refs.dueWake
+	if s.channelHints = refs.channelHints; s.channelHints != nil && refs.hintEndpoint != nil {
+		s.hintAttach = s.channelHints.attach(refs.hintEndpoint)
+	}
 	tags, err := buildVersionTags(s)
 	if err != nil {
 		return nil, err
 	}
 	s.versionTags = tags
-	if err := autoJobs.bind(servicesJobRunner{s}, engine); err != nil {
+	s.attachRender = &attachRenderHolder{}
+	if bindErr := autoJobs.bind(servicesJobRunner{s}, engine); bindErr != nil {
+		return nil, bindErr
+	}
+	// Built, not started: the host starts it (see RunRealtimeWorker). Its
+	// outputs runner writes through the manager the channel service uses.
+	outputs, err := newManagerOutputs(
+		s.entityManager, s.store, s.meta, txChannelsFor(s.store, refs.channels), s.aclDeclarative)
+	if err != nil {
+		return nil, err
+	}
+	if s.realtimeWorker, err = buildRealtimeWorker(s.base, s.store, s.stateKV, refs, outputs); err != nil {
 		return nil, err
 	}
 	// Last, so a failed assembly never leaves a sweep goroutine running.
@@ -2544,6 +2928,7 @@ func finishAssembly(
 		s.versionSweep = sweep
 		sweep.Start()
 	}
+	s.realtimeRecordsStop = s.realtime.watchTypeRecords(refs.channels)
 	return s, nil
 }
 
@@ -2586,7 +2971,7 @@ func newServices(
 	templater templating.Templater, cfgLoader config.Loader, stateKV state.KV,
 	migState datamigration.StateStore, jobQueue jobs.Queue, aliases *caldavalias.Service, commentSvc *comments.Service,
 	versions store.VersionService, resolvedACL acl.ACL, aclDeclarative *acl.Declarative,
-	fieldRedactor visibility.FieldRedactor, schedState schedulerstate.Store,
+	fieldReads fieldReadPolicy, schedState schedulerstate.Store, storeSchema storeSchemaRefresher,
 ) *Services {
 	cfg := base.cfg
 	return &Services{
@@ -2622,8 +3007,10 @@ func newServices(
 		acl:                resolvedACL,
 		aclDeclarative:     aclDeclarative,
 		aclPolicy:          base.aclPolicy,
+		realtime:           base.realtime,
 		audit:              cfg.Audit,
-		fieldRedactor:      fieldRedactor,
+		fieldReads:         fieldReads,
+		storeSchema:        storeSchema,
 	}
 }
 
@@ -2645,6 +3032,8 @@ func (r versionRecorder) RecordVersion(ctx context.Context, v entitymanager.Vers
 		Face:          v.Face,
 		Op:            v.Op,
 		PrevID:        v.PrevID,
+		PrevFace:      v.PrevFace,
+		HasPrevFace:   v.HasPrevFace,
 		Type:          v.Type,
 		Content:       v.Content,
 		Properties:    v.Properties,
@@ -2673,9 +3062,10 @@ func versionRecorderFor(vs store.VersionService) entitymanager.VersionRecorder {
 }
 
 // relationVersionRecorder adapts a store.RelationVersionWriter to the
-// entitymanager's consumer-side RelationVersionRecorder. RecordID is left 0 so
-// the store resolves the surrogate lineage id from the composite key at write
-// time (correct for the synchronous pre-delete / post-rename capture) — the
+// entitymanager's consumer-side RelationVersionRecorder. RecordID is passed on;
+// when it is 0 the store resolves the surrogate lineage id from the composite
+// key at write time (correct for the synchronous pre-delete / post-rename
+// capture) — the
 // key includes FromFace, so a state-tailed edge resolves to its OWN lineage
 // rather than the default tail's (TKT-JAROC3).
 type relationVersionRecorder struct {
@@ -2690,6 +3080,7 @@ func (r relationVersionRecorder) RecordRelationVersion(
 	ctx context.Context, v entitymanager.RelationVersionRecord,
 ) error {
 	return r.w.WriteRelationVersion(ctx, store.RelationVersionInput{
+		RecordID:      v.RecordID,
 		Key:           entity.RelationKey{From: v.From, FromFace: v.FromFace, Type: v.Type, To: v.To},
 		Op:            v.Op,
 		PrevFrom:      v.PrevFrom,
@@ -2702,6 +3093,18 @@ func (r relationVersionRecorder) RecordRelationVersion(
 		PrincipalTool: v.PrincipalTool,
 		TriggeredBy:   v.TriggeredBy,
 	})
+}
+
+// RelationRecordID satisfies entitymanager.RelationLineageReader through the
+// version store's own accessor, when it has one (pgstore and sqlitestore do).
+func (r relationVersionRecorder) RelationRecordID(ctx context.Context, k entity.RelationKey) (int64, error) {
+	ids, ok := r.w.(interface {
+		RelationRecordID(ctx context.Context, k entity.RelationKey) (int64, error)
+	})
+	if !ok {
+		return 0, nil
+	}
+	return ids.RelationRecordID(ctx, k)
 }
 
 // coverage-ignore-end
@@ -2781,10 +3184,32 @@ func (s *Services) stopBackgroundServices() {
 		s.versionSweep.Stop()
 		s.versionSweep = nil
 	}
+	if s.realtimeRecordsStop != nil {
+		s.realtimeRecordsStop()
+		s.realtimeRecordsStop = nil
+	}
+	if s.realtimeWorker != nil {
+		s.realtimeWorker.stop()
+	}
 	if s.jobQueue != nil {
 		closeJobQueue(s.jobQueue)
 		s.jobQueue = nil
 	}
+	// Last: the workers above may still have written to a channel.
+	retireChannelHints(s)
+}
+
+// abandonFailedAssembly stops what a failed assembly (err set) started
+// before it failed: the job queue, and a realtime Local it made rather than
+// took from a predecessor.
+//
+// Nil: q and l are accepted (nothing to stop).
+func abandonFailedAssembly(base *SharedBase, q jobs.Queue, l *realtime.Local, err error) {
+	if err == nil {
+		return
+	}
+	closeJobQueue(q)
+	stopNewLocalOnError(base, l, err)
 }
 
 // closeJobQueue stops q within the shutdown budget. Shared by the teardown
@@ -2843,6 +3268,13 @@ func (s *Services) Close() error {
 		if s.searchCloser != nil {
 			_ = s.searchCloser.Close()
 			s.searchCloser = nil
+		}
+		// Neither backend fails on close; pglease leaves the pool to its owner.
+		if s.leaseShared.store != nil {
+			_ = s.leaseShared.store.Close()
+		}
+		if s.realtimeLocal != nil {
+			s.realtimeLocal.Stop()
 		}
 	})
 	return s.closeErr

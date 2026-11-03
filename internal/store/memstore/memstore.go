@@ -83,8 +83,15 @@ import (
 // optional store.SoftDeleteProvider capability, found by type assertion. The
 // capability's methods live on softDeleter, not here.
 //
-//plimsoll:max-methods=49
-//plimsoll:max-exported-methods=31
+// +1 exported / +1 method (TKT-Q6AKUN): MentionSources, the optional
+// store.MentionIndex capability. Its helpers are free functions in mentions.go.
+//
+// +1 exported (entity conversion): ReplaceEntityFamily is required by
+// store.FamilyReplacer so a type change can replace all rows of one entity
+// family under the same store transaction.
+//
+//plimsoll:max-methods=51
+//plimsoll:max-exported-methods=33
 type MemStore struct {
 	// txMu serializes an open Tx against ordinary writers: Tx holds it
 	// for the whole callback, every exported write method takes it
@@ -111,6 +118,7 @@ type attachment struct {
 	property string
 	fileName string
 	data     []byte
+	sha256   string
 }
 
 // New creates a new in-memory store.
@@ -1176,6 +1184,7 @@ func (m *MemStore) attachFile(_ context.Context, entityID, property, fileName st
 		property: property,
 		fileName: fileName,
 		data:     data,
+		sha256:   store.HashAttachment(data),
 	}
 	return nil
 }
@@ -1219,6 +1228,7 @@ func (m *MemStore) ListFamilyAttachments(_ context.Context, entityID string) ([]
 				Property: a.property,
 				FileName: a.fileName,
 				Size:     int64(len(a.data)),
+				SHA256:   a.sha256,
 			})
 		}
 	}

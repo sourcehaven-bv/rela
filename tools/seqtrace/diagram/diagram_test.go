@@ -66,6 +66,21 @@ func TestRender(t *testing.T) {
 	}
 }
 
+func TestRenderKeep(t *testing.T) {
+	roots, err := Read(strings.NewReader(trace))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var b strings.Builder
+	if _, err := render(&b, roots[0], Options{Keep: regexp.MustCompile(`^helper$`)}); err != nil {
+		t.Fatal(err)
+	}
+	got := b.String()
+	if !strings.Contains(got, "dataentry->>+dataentry: helper") {
+		t.Errorf("kept same-package call not drawn:\n%s", got)
+	}
+}
+
 func TestRenderValues(t *testing.T) {
 	roots, err := Read(strings.NewReader(trace))
 	if err != nil {
@@ -117,6 +132,37 @@ func TestCapLabel(t *testing.T) {
 	}
 	if capLabel("short") != "short" {
 		t.Error("short label changed")
+	}
+}
+
+func TestOutcome(t *testing.T) {
+	const refused = `{"e":"c","id":1,"g":1,"pkg":"internal/dataentry","fn":"handle","t":0}
+{"e":"c","id":2,"p":1,"g":1,"pkg":"internal/acl","fn":"(*Request).PermitsRead","t":1}
+{"e":"r","id":2,"t":2,"rv":["false","nil"]}
+{"e":"c","id":3,"p":1,"g":1,"pkg":"internal/store","fn":"Get","t":3}
+{"e":"r","id":3,"t":4,"rv":["nil","err: not found"]}
+{"e":"c","id":4,"p":1,"g":1,"pkg":"internal/search","fn":"List","t":5}
+{"e":"r","id":4,"t":6,"rv":["[]string len=0","nil"]}
+{"e":"c","id":5,"p":1,"g":1,"pkg":"internal/dataentry","fn":"(*statsResponseWriter).WriteHeader","t":7,"a":["code=404"]}
+{"e":"r","id":5,"t":8}
+{"e":"r","id":1,"t":9}`
+	roots, err := Read(strings.NewReader(refused))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Outcomes are kinds, not values, so they are kept with values off.
+	d := Build(roots[0], Options{})
+	if d.Root.Outcome != "status:404" {
+		t.Errorf("root outcome = %q, want status:404", d.Root.Outcome)
+	}
+	want := map[string]string{"(*Request).PermitsRead": "false", "Get": "error", "List": ""}
+	if len(d.Root.Children) != len(want) {
+		t.Fatalf("children: %+v", d.Root.Children)
+	}
+	for _, s := range d.Root.Children {
+		if s.Outcome != want[s.Fn] {
+			t.Errorf("%s outcome = %q, want %q", s.Fn, s.Outcome, want[s.Fn])
+		}
 	}
 }
 

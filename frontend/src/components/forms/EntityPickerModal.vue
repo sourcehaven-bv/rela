@@ -16,7 +16,9 @@
  * (RR-WMG2).
  */
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { searchEntities } from '@/api'
+import { SEARCH_DEBOUNCE_MS } from '@/utils/searchTiming'
 import { entityDisplayTitle } from '@/utils/entityDisplay'
 import { useSchemaStore } from '@/stores'
 import { useModalStack } from '@/composables/modalStack'
@@ -25,17 +27,25 @@ import { useWorld } from '@/composables/useWorld'
 import type { Entity } from '@/types'
 import RlSpinner from 'rela-components/components/common/RlSpinner.vue'
 
-const DEBOUNCE_MS = 150
+const DEBOUNCE_MS = SEARCH_DEBOUNCE_MS
 const MIN_QUERY_LEN = 2
 const MAX_RESULTS = 50
 
 const props = defineProps<{
   open: boolean
+  /**
+   * Limits the results to these entity types. A single type is passed to
+   * the search; several are filtered from its answer.
+   */
+  types?: readonly string[]
+  /** The dialog's accessible name. */
+  label?: string
 }>()
 
 const emit = defineEmits<{
   close: []
-  select: [id: string]
+  /** The chosen entity's id, and the entity for a caller that needs more. */
+  select: [id: string, entity: Entity]
 }>()
 
 const schemaStore = useSchemaStore()
@@ -89,13 +99,23 @@ watch(query, (q) => {
 })
 
 const { worldParam } = useWorld()
+const { t } = useI18n()
 
 async function runSearch(q: string): Promise<void> {
   abort = new AbortController()
   loading.value = true
   try {
-    const resp = await searchEntities(q, undefined, abort.signal, worldParam.value)
-    results.value = resp.data.slice(0, MAX_RESULTS)
+    const types = props.types ?? []
+    // With several types the hits are filtered here, so the server must
+    // return its full set: a limit would spend slots on other types.
+    const resp = await searchEntities(q, {
+      type: types.length === 1 ? types[0] : undefined,
+      signal: abort.signal,
+      world: worldParam.value,
+      limit: types.length > 1 ? undefined : MAX_RESULTS,
+    })
+    const hits = types.length > 1 ? resp.data.filter((e) => types.includes(e.type)) : resp.data
+    results.value = hits.slice(0, MAX_RESULTS)
     errorMsg.value = ''
     highlightedIndex.value = 0
     // Reset scroll to the new top result. Without this, if the previous
@@ -105,7 +125,7 @@ async function runSearch(q: string): Promise<void> {
     scrollHighlightedIntoView()
   } catch (err: unknown) {
     if (isCancelledFetch(err)) return
-    errorMsg.value = 'Search failed'
+    errorMsg.value = t('editor.mention.searchFailed')
   } finally {
     loading.value = false
   }
@@ -146,13 +166,13 @@ function entityLabel(entity: Entity): string {
 }
 
 function entityTypeLabel(type: string): string {
-  if (!type) return 'Unknown'
+  if (!type) return t('form.picker.unknownType')
   return schemaStore.entityTypes.get(type)?.label || type
 }
 
 function selectEntity(entity: Entity): void {
   if (!entity?.id) return
-  emit('select', entity.id)
+  emit('select', entity.id, entity)
   emit('close')
 }
 
@@ -230,7 +250,7 @@ const showNoMatches = computed(
       class="entity-picker-overlay"
       role="dialog"
       aria-modal="true"
-      aria-label="Insert entity reference"
+      :aria-label="label ?? t('editor.toolbar.insertEntityRef')"
       @click="handleOverlayClick"
       @keydown="handleKeydown"
     >
@@ -241,7 +261,7 @@ const showNoMatches = computed(
             v-model="query"
             type="text"
             class="entity-picker-input"
-            placeholder="Type to search entities…"
+            :placeholder="t('form.picker.placeholder')"
             autocomplete="off"
             spellcheck="false"
             role="combobox"
@@ -258,9 +278,11 @@ const showNoMatches = computed(
           <RlSpinner v-if="loading" class="entity-picker-spinner" :size="16" aria-hidden="true" />
         </div>
 
-        <div v-if="showEmptyHint" class="entity-picker-hint">Type to search entities</div>
+        <div v-if="showEmptyHint" class="entity-picker-hint">{{ t('form.picker.hint') }}</div>
         <div v-else-if="errorMsg" class="entity-picker-hint entity-picker-error">{{ errorMsg }}</div>
-        <div v-else-if="showNoMatches" class="entity-picker-hint">No matches</div>
+        <div v-else-if="showNoMatches" class="entity-picker-hint">
+          {{ t('editor.mention.noMatches') }}
+        </div>
 
         <ul
           v-if="results.length > 0"

@@ -23,6 +23,9 @@ import RlIcon from '../common/RlIcon.vue'
 import RlKbd from '../data/RlKbd.vue'
 import RlEmptyState from '../feedback/RlEmptyState.vue'
 import type { IconName } from '../common/icons'
+import { useMessages } from '../../composables/useMessages'
+
+const messages = useMessages()
 
 export interface Command {
   id: string
@@ -54,12 +57,14 @@ const props = withDefaults(
     title?: string
   }>(),
   {
-    placeholder: 'Type a command or search',
+    placeholder: undefined,
     filter: true,
-    emptyLabel: 'No matching commands',
-    title: 'Command palette',
+    emptyLabel: undefined,
+    title: undefined,
   },
 )
+
+const titleText = computed(() => props.title ?? messages.chromeText({ key: 'commandPalette' }))
 
 const emit = defineEmits<{
   'update:open': [value: boolean]
@@ -175,7 +180,7 @@ function onKeydown(event: KeyboardEvent) {
 <template>
   <RlModal
     :open="open"
-    :title="title"
+    :title="titleText"
     title-hidden
     align="top"
     size="md"
@@ -195,7 +200,7 @@ function onKeydown(event: KeyboardEvent) {
           type="text"
           class="rl-command-palette__input"
           role="combobox"
-          :placeholder="placeholder"
+          :placeholder="placeholder ?? messages.chromeText({ key: 'commandPlaceholder' })"
           :aria-expanded="matches.length > 0"
           aria-controls="rl-command-palette-list"
           aria-autocomplete="list"
@@ -210,7 +215,7 @@ function onKeydown(event: KeyboardEvent) {
         ref="listRef"
         class="rl-command-palette__list"
         role="listbox"
-        :aria-label="title"
+        :aria-label="titleText"
       >
         <template v-for="group in groups" :key="group.name ?? '_'">
           <p v-if="group.name" class="rl-command-palette__group" aria-hidden="true">
@@ -248,7 +253,12 @@ function onKeydown(event: KeyboardEvent) {
         </template>
       </div>
 
-      <RlEmptyState v-else icon="search" :title="emptyLabel" class="rl-command-palette__empty" />
+      <RlEmptyState
+        v-else
+        icon="search"
+        :title="emptyLabel ?? messages.chromeText({ key: 'noMatchingCommands' })"
+        class="rl-command-palette__empty"
+      />
     </div>
   </RlModal>
 </template>

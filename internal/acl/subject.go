@@ -76,6 +76,10 @@ type EntitySubject struct {
 	// family marks a subject that names the WHOLE FAMILY of a faced type
 	// rather than one face; see [NewFamilySubject].
 	family bool
+
+	// convertTo is the destination type of a conversion; see
+	// [NewConversionSubject]. Empty on every other subject.
+	convertTo string
 }
 
 // NewFamilySubject builds a subject for an operation on every face of an
@@ -88,6 +92,16 @@ type EntitySubject struct {
 // grant (`rename: [type]`); a face-named write grant never satisfies it.
 func NewFamilySubject(typ, id string) EntitySubject {
 	return EntitySubject{typ: typ, id: id, family: true}
+}
+
+// NewConversionSubject builds the family subject for converting entity id
+// from type typ to type to. It is authorized like [NewFamilySubject], by the
+// `convert:` grant on typ. The destination matters only to a client ceiling:
+// a conversion creates an entity of type to, so the ceiling must permit
+// create on it. A convert request without a destination is refused under an
+// active ceiling.
+func NewConversionSubject(typ, id, to string) EntitySubject {
+	return EntitySubject{typ: typ, id: id, family: true, convertTo: to}
 }
 
 // NewEntitySubject builds an entity write subject that names its face.
@@ -136,6 +150,9 @@ func (s EntitySubject) Face() entity.Face { return s.face }
 // Family reports whether the subject names every face of a faced entity
 // ([NewFamilySubject]) rather than one face.
 func (s EntitySubject) Family() bool { return s.family }
+
+// ConvertTo is the destination type of a conversion subject, or empty.
+func (s EntitySubject) ConvertTo() string { return s.convertTo }
 
 func (EntitySubject) isSubject() {} // coverage-ignore: sealing marker: never called at runtime; exists only so
 // EntitySubject satisfies the sealed Subject interface (compiler-checked), so no test can reach it without an

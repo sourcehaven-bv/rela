@@ -165,10 +165,10 @@ func taskProperties(t *testing.T, schema *configedit.Map) *configedit.Map {
 
 func TestConfigure_Gate(t *testing.T) {
 	srv, _ := configServer(t)
-	// No user: the ACL middleware refuses the unresolved principal before
-	// the Configure gate runs.
+	// No user: the ACL middleware answers 401 before the Configure gate
+	// runs (BUG-C8DHGF).
 	for user, want := range map[string]int{
-		"bob": http.StatusForbidden, "": http.StatusInternalServerError, "ada": http.StatusOK,
+		"bob": http.StatusForbidden, "": http.StatusUnauthorized, "ada": http.StatusOK,
 	} {
 		rec := call(t, srv, user, http.MethodGet, dataentry.ConfigurePath, nil)
 		require.Equal(t, want, rec.Code, "user %q: %s", user, rec.Body.String())
@@ -264,6 +264,8 @@ func TestValidateConfigEditing(t *testing.T) {
 			wantErr: "--read-only"},
 		{name: "no acl.yaml", dir: noACL, flags: serverFlags{principalHeader: "X-User"}, wantErr: "acl.yaml"},
 		{name: "no identity", dir: withACL, wantErr: "identity source"},
+		{name: "blank env identity", dir: withACL, flags: serverFlags{bind: "127.0.0.1"}, envUser: " ",
+			wantErr: "identity source"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -505,4 +507,108 @@ func TestConfigure_PrepareRefusesSyncWithoutHistory(t *testing.T) {
 	require.Contains(t, verr.Problems[0], "task.basecamp")
 	require.Contains(t, verr.Problems[0], "version history")
 	require.Same(t, first, srv.cur.Load())
+}
+
+// cfgRealtime reads task.state, so a schema that drops the status enum or the
+// property breaks it.
+const cfgRealtime = `version: 1
+channel_types:
+  room:
+    attach_to: [task]
+    roles:
+      member: { from: attached }
+    message_types:
+      note:
+        properties: { state: { type: status } }
+        post: [member]
+`
+
+// TestConfigure_RealtimeAgainstCandidateSchema pins that the Configure save
+// validates realtime.yaml against the candidate schema: a schema that breaks
+// it is refused at preview and save with a problem naming realtime.yaml, and
+// the rebuild refuses it too, so the old generation keeps serving.
+func TestConfigure_RealtimeAgainstCandidateSchema(t *testing.T) {
+	srv, dir := configServer(t)
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "realtime.yaml"), []byte(cfgRealtime), 0o644))
+
+	broken := strings.Replace(cfgSchema, "types:\n  status:\n    values: [open, doing, done]\n", "", 1)
+	broken = strings.Replace(broken, "      state:\n        type: status\n", "", 1)
+	require.NotEqual(t, cfgSchema, broken)
+
+	_, err := configureHost{s: srv}.Validate([]byte(broken), []byte(cfgDataEntry))
+	var verr *configedit.ValidationError
+	require.ErrorAs(t, err, &verr)
+	require.Len(t, verr.Problems, 1)
+	require.Contains(t, verr.Problems[0], "realtime.yaml: channel_types.room.message_types.note.properties.state.type")
+
+	_, err = configureHost{s: srv}.Validate([]byte(cfgSchema), []byte(cfgDataEntry))
+	require.NoError(t, err)
+
+	first := srv.cur.Load()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "schema.yaml"), []byte(broken), 0o644))
+	cand, err := configureHost{s: srv}.Prepare(context.Background())
+	require.Nil(t, cand)
+	require.ErrorAs(t, err, &verr)
+	require.Contains(t, verr.Problems[0], "realtime.yaml")
+	require.Same(t, first, srv.cur.Load())
+}
+
+// TestConfigure_ChannelsAgainstRealtime pins that the Configure preview
+// checks data-entry.yaml's channels: section against realtime.yaml.
+func TestConfigure_ChannelsAgainstRealtime(t *testing.T) {
+	srv, dir := configServer(t)
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "realtime.yaml"), []byte(cfgRealtime), 0o644))
+	host := configureHost{s: srv}
+
+	ok := cfgDataEntry + "channels:\n  room:\n    messages:\n      note:\n        fields: [{ property: state }]\n"
+	_, err := host.Validate([]byte(cfgSchema), []byte(ok))
+	require.NoError(t, err)
+
+	bad := cfgDataEntry + "channels:\n  room:\n    messages:\n      note:\n        fields: [{ property: nope }]\n"
+	_, err = host.Validate([]byte(cfgSchema), []byte(bad))
+	var verr *configedit.ValidationError
+	require.ErrorAs(t, err, &verr)
+	require.Len(t, verr.Problems, 1)
+	require.Contains(t, verr.Problems[0], `data-entry.yaml: channels.room.messages.note.fields[0]: message type note declares no property "nope"`)
+}
+
+// TestConfigure_BusyFieldAgainstRealtime pins that a Configure save checks
+// a kanban busy field (TKT-21G6JS) and a list busy column (TKT-TU3XH4)
+// against realtime.yaml, also without a channels: section.
+func TestConfigure_BusyFieldAgainstRealtime(t *testing.T) {
+	srv, dir := configServer(t)
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "realtime.yaml"), []byte(cfgRealtime), 0o644))
+	host := configureHost{s: srv}
+
+	bad := cfgDataEntry + "kanbans:\n  board:\n    entity_type: task\n    column_property: state\n" +
+		"    card:\n      fields: [{ busy: nope }]\n"
+	_, err := host.Validate([]byte(cfgSchema), []byte(bad))
+	var verr *configedit.ValidationError
+	require.ErrorAs(t, err, &verr)
+	require.Len(t, verr.Problems, 1)
+	require.Contains(t, verr.Problems[0],
+		`data-entry.yaml: kanban "board": card.fields[0]: realtime.yaml declares no channel type "nope"`)
+
+	list := cfgDataEntry + "lists:\n  tasks:\n    entity_type: task\n" +
+		"    columns: [{ property: title }, { busy: nope }]\n"
+	_, err = host.Validate([]byte(cfgSchema), []byte(list))
+	require.ErrorAs(t, err, &verr)
+	require.Len(t, verr.Problems, 1)
+	require.Contains(t, verr.Problems[0],
+		`data-entry.yaml: list "tasks": column[1]: realtime.yaml declares no channel type "nope"`)
+}
+
+// TestConfigure_DeprecatedDataEntry pins that the Configure preview reports
+// deprecated data-entry.yaml syntax as one problem per detection. It names
+// the fix rather than `rela migrate`, which rewrites files on disk and cannot
+// change an edit that is not saved yet (TKT-BDKE4K).
+func TestConfigure_DeprecatedDataEntry(t *testing.T) {
+	srv, _ := configServer(t)
+	bad := cfgDataEntry + "lists:\n  tasks:\n    entity_type: task\n    columns:\n      - property: title\n        link: true\n"
+	_, err := configureHost{s: srv}.Validate([]byte(cfgSchema), []byte(bad))
+	var verr *configedit.ValidationError
+	require.ErrorAs(t, err, &verr)
+	require.Len(t, verr.Problems, 1)
+	require.Equal(t, "data-entry.yaml: deprecated syntax: Convert link: true to link: detail in data-entry.yaml",
+		verr.Problems[0])
 }

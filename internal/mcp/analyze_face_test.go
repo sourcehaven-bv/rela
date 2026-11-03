@@ -10,8 +10,9 @@ import (
 	"testing"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
+	"github.com/Sourcehaven-BV/rela/internal/acl/acltest"
+	"github.com/Sourcehaven-BV/rela/internal/aclstore"
 	"github.com/Sourcehaven-BV/rela/internal/appbuild/appbuildtest"
-	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/lua"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
@@ -61,7 +62,7 @@ func facedGatedServer(t *testing.T, read []string, extra ...*entity.Entity) (*Se
 	d, err := acl.NewDeclarative(&acl.Policy{
 		Roles:       map[string]acl.RoleDef{"reader": {Read: read}},
 		Assignments: map[string]string{"alice": "reader"},
-	}, acl.NewStoreGraph(st), st)
+	}, aclstore.MustNewGraph(st), st)
 	if err != nil {
 		t.Fatalf("acl.NewDeclarative: %v", err)
 	}
@@ -71,21 +72,20 @@ func facedGatedServer(t *testing.T, read []string, extra ...*entity.Entity) (*Se
 	srv := &Server{logger: slog.New(slog.DiscardHandler)}
 	setDeps(srv, Deps{
 		Store:         reads.Reader,
-		Traversals:    reads.Traversals,
+		Related:       RelatedReads{Traversals: reads.Traversals},
 		Meta:          meta,
 		Tracer:        reads.Tracer,
 		Searcher:      reads.Searcher,
 		Validator:     reads.Validator,
 		EntityManager: svc.EntityManager(),
 		Config:        svc.Config(),
-		LuaWriteDeps:  lua.WriteDeps{ReadDeps: reads.LuaReads, EntityManager: svc.EntityManager()},
+		Lua:           LuaDeps{WriteDeps: lua.WriteDeps{ReadDeps: reads.LuaReads, EntityManager: svc.EntityManager()}, ProjectRoot: t.TempDir()},
 		Watcher:       nopWatcher{},
-		ProjectRoot:   t.TempDir(),
-		Attachments:   testAttachmentDeps(t, svc, meta, audit.Nop{}),
+		Attachments:   testAttachmentDeps(t, svc, meta),
 		World:         store.TrivialScope(),
 		Families:      store.TrivialScope(),
 	})
-	return srv, principal.With(ctx, principal.Principal{User: "alice", Tool: principal.ToolMCP})
+	return srv, acltest.Bind(principal.With(ctx, principal.Principal{User: "alice", Tool: principal.ToolMCP}), t, d)
 }
 
 var (

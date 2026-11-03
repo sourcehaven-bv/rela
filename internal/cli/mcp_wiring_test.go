@@ -57,16 +57,22 @@ relations: {}
 // need a store to exist.
 func mcpServicesForTest(t *testing.T, root string) (*mcpServices, error) {
 	t.Helper()
+	return mcpServicesRunAs(t, root, "")
+}
+
+// mcpServicesRunAs is mcpServicesForTest for a `--run-as` identity.
+func mcpServicesRunAs(t *testing.T, root, runAs string) (*mcpServices, error) {
+	t.Helper()
 	for k, v := range backendtest.Env(t) {
 		t.Setenv(k, v)
 	}
-	return newMCPServices(root)
+	return newMCPServices(root, runAs)
 }
 
 func TestNewMCPServices_NoProject(t *testing.T) {
 	dir := t.TempDir() // empty — no metamodel.yaml
 
-	_, err := newMCPServices(dir)
+	_, err := newMCPServices(dir, "")
 	require.Error(t, err)
 	assert.ErrorIs(t, err, relaerrors.ErrNoProject,
 		"missing metamodel.yaml must surface as ErrNoProject so runMCPServer can emit the user-friendly message")
@@ -80,7 +86,7 @@ func TestNewMCPServices_BadMetamodel(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(root, "metamodel.yaml"),
 		[]byte("entities: this-is-not-a-map\nrelations: {}\n"), 0o644))
 
-	_, err := newMCPServices(root)
+	_, err := newMCPServices(root, "")
 	require.Error(t, err)
 	// Real diagnostic must propagate, not be flattened to ErrNoProject.
 	assert.NotErrorIs(t, err, relaerrors.ErrNoProject,
@@ -102,9 +108,10 @@ func TestNewMCPServices_Succeeds(t *testing.T) {
 	assert.NotNil(t, deps.Validator)
 	assert.NotNil(t, deps.EntityManager)
 	assert.NotNil(t, deps.Config)
-	assert.NotNil(t, deps.LuaCache)
+	assert.NotNil(t, deps.Lua.Cache)
 	assert.NotNil(t, deps.Watcher)
-	assert.NotEmpty(t, deps.ProjectRoot)
+	assert.NotEmpty(t, deps.Lua.ProjectRoot)
+	assert.NotNil(t, deps.Leases, "an assembled project has a lease service")
 }
 
 func TestNewMCPServices_WritesReachSearchIndex(t *testing.T) {
@@ -242,7 +249,7 @@ func TestMCPServices_ReloadPicksUpNewType(t *testing.T) {
 
 	writeSchema(t, root, schemaWithRisk)
 
-	deps, err := svc.reload()
+	deps, err := reloadDeps(svc)
 	require.NoError(t, err)
 
 	_, ok := deps.Meta.GetEntityDef("risk")
@@ -274,7 +281,7 @@ func TestMCPServices_ReloadReusesStoreAndSearcher(t *testing.T) {
 	}))
 
 	writeSchema(t, root, schemaWithRisk)
-	deps, err := svc.reload()
+	deps, err := reloadDeps(svc)
 	require.NoError(t, err)
 
 	assert.Same(t, before, svc.svc.Store(), "reload must reuse the open store, not reopen it")
@@ -307,12 +314,44 @@ func TestMCPServices_ReloadBadSchemaKeepsPrevious(t *testing.T) {
 
 	writeSchema(t, root, "entities: this-is-not-a-map\nrelations: {}\n")
 
-	_, err = svc.reload()
+	_, err = reloadDeps(svc)
 	require.Error(t, err, "an unparseable schema must be reported, not adopted")
 
 	assert.Same(t, good, svc.svc, "a failed reload must leave the previous services in place")
 	_, ok := svc.Deps().Meta.GetEntityDef("item")
 	assert.True(t, ok, "previous metamodel must still be serving after a failed reload")
+}
+
+// reloadDeps reloads svc and returns the bundle it published.
+func reloadDeps(svc *mcpServices) (relamcp.Deps, error) {
+	var got relamcp.Deps
+	err := svc.reload(func(d relamcp.Deps) error {
+		got = d
+		return nil
+	})
+	return got, err
+}
+
+// TestMCPServices_ReloadRejectedKeepsPrevious pins the publish order: a
+// bundle the server rejects leaves the previous assembly current, and the
+// successor is retired, so MCP never serves an assembly that was closed.
+func TestMCPServices_ReloadRejectedKeepsPrevious(t *testing.T) {
+	root := seedProject(t)
+	svc, err := mcpServicesForTest(t, root)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = svc.Close() })
+
+	good := svc.svc
+	writeSchema(t, root, schemaWithRisk)
+	err = svc.reload(func(relamcp.Deps) error { return errors.New("rejected") })
+	require.ErrorContains(t, err, "rejected")
+	assert.Same(t, good, svc.svc, "a rejected bundle must leave the previous services current")
+
+	// The previous assembly still serves: its job queue and workers run.
+	_, err = svc.Deps().EntityManager.CreateEntity(context.Background(),
+		&entity.Entity{Type: "item", Properties: map[string]any{"title": "after a rejected reload"}},
+		entity.CreateOptions{})
+	assert.NoError(t, err, "the previous services must still accept writes")
 }
 
 // TestMCPServices_CloseAfterReloadIsClean covers the shutdown sequence a
@@ -325,7 +364,7 @@ func TestMCPServices_CloseAfterReloadIsClean(t *testing.T) {
 	require.NoError(t, err)
 
 	writeSchema(t, root, schemaWithRisk)
-	_, err = svc.reload()
+	_, err = reloadDeps(svc)
 	require.NoError(t, err)
 
 	require.NotSame(t, svc.origin, svc.svc, "reload should have produced a successor assembly")
@@ -374,7 +413,7 @@ func TestMCPServices_ReloadAfterCloseIsRefused(t *testing.T) {
 
 	writeSchema(t, root, schemaWithRisk)
 
-	_, err = svc.reload()
+	_, err = reloadDeps(svc)
 	require.Error(t, err, "reload after Close must be refused, not serviced")
 	assert.Same(t, svc.origin, svc.svc,
 		"a refused reload must not swap in a new assembly built on a closed store")
@@ -398,7 +437,7 @@ func TestMCPServices_WatchSchemaAfterCloseDoesNotResurrect(t *testing.T) {
 
 	// Whatever the watcher does now, it must not leave a live successor.
 	writeSchema(t, root, schemaWithRisk)
-	_, err = svc.reload()
+	_, err = reloadDeps(svc)
 	require.Error(t, err)
 	assert.Same(t, svc.origin, svc.svc)
 }

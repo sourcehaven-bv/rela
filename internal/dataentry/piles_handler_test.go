@@ -14,6 +14,7 @@ import (
 	v1 "github.com/Sourcehaven-BV/rela/internal/apiwire/v1"
 	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/filelock"
 	"github.com/Sourcehaven-BV/rela/internal/lua"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/piles"
@@ -35,7 +36,7 @@ func newPilesService(t *testing.T) *piles.Service {
 	if err != nil {
 		t.Fatal(err)
 	}
-	st, err := kvpiles.New(state.NewFSKV(rfs), kvpiles.ProcessPrivate{})
+	st, err := kvpiles.New(state.NewFSKV(rfs), filelock.ProcessPrivate{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -609,3 +610,40 @@ func (stubScriptPiles) FindPile(context.Context, string) (lua.PileSummary, error
 func (stubScriptPiles) PushToPile(context.Context, lua.PilePush) (int, error) { return 0, nil }
 
 func (stubScriptPiles) RemoveFromPile(context.Context, string, []entity.Ref) error { return nil }
+
+// A pile write runs through attachWorld, which refuses `?world=` on every
+// write. The SPA therefore writes without a world, naming each face in the
+// address, and a face the default world hides must still be accepted
+// (BUG-5NP70I). doPile binds a world on the context directly and so cannot
+// see the middleware at all.
+func TestPiles_WriteThroughWorldMiddleware(t *testing.T) {
+	app, d := newPilesApp(t)
+	serve := func(method, path, body string) *httptest.ResponseRecorder {
+		t.Helper()
+		ctx := pileContext(t, pileCall{user: "alice", d: d})
+		req := httptest.NewRequest(method, path, strings.NewReader(body)).WithContext(ctx)
+		rec := httptest.NewRecorder()
+		attachWorld(http.HandlerFunc(app.piles.handleV1Piles), app).ServeHTTP(rec, req)
+		return rec
+	}
+
+	rec := serve(http.MethodPost, pilesPath+"?world=published", `{"name":"Refused"}`)
+	if rec.Code != http.StatusUnprocessableEntity || !strings.Contains(rec.Body.String(), "world_read_only") {
+		t.Fatalf("create with ?world=: %d %s", rec.Code, rec.Body)
+	}
+
+	rec = serve(http.MethodPost, pilesPath, `{"name":"Drafts","items":["POL-1@draft"]}`)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("create without a world: %d %s", rec.Code, rec.Body)
+	}
+	p := decodePile(t, rec)
+
+	rec = serve(http.MethodPost, pilesPath+"/"+p.ID+"/items", `{"items":["FEAT-1"]}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("add without a world: %d %s", rec.Code, rec.Body)
+	}
+	got := decodePile(t, doPile(t, app, pileCall{user: "alice", d: d, method: http.MethodGet, path: pilesPath + "/" + p.ID}))
+	if strings.Join(addresses(got), ",") != "FEAT-1,POL-1@draft" {
+		t.Fatalf("items = %v", addresses(got))
+	}
+}

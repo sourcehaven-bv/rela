@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
+	"github.com/Sourcehaven-BV/rela/internal/aclstore"
 	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
@@ -30,8 +31,11 @@ roles:
     create: [requirement]
     update: [requirement]
     delete: [requirement]
+  reader:
+    read: [requirement]
 assignments:
   alice: editor
+  bob: reader
 client_baselines:
   apps:
     applies_to: [app]
@@ -50,7 +54,7 @@ func ceilingManager(t *testing.T) (mgr *entitymanager.Manager, seededID string) 
 		t.Fatalf("LoadPolicyBytes: %v", err)
 	}
 	st := memstore.New()
-	decl, err := acl.NewDeclarative(policy, acl.NewStoreGraph(st), st)
+	decl, err := acl.NewDeclarative(policy, aclstore.MustNewGraph(st), st)
 	if err != nil {
 		t.Fatalf("NewDeclarative: %v", err)
 	}
@@ -73,6 +77,7 @@ func ceilingManager(t *testing.T) (mgr *entitymanager.Manager, seededID string) 
 		// what New requires of a policy-backed Deps (#1437).
 		CopyReadGate:   entitymanager.AllowAllCopyReadGate{},
 		CopyVisibility: allowAllCopyVisibility(t, st),
+		AnchorGuard:    entitymanager.NopAnchorGuard{},
 	})
 	if err != nil {
 		t.Fatalf("entitymanager.New: %v", err)
@@ -105,7 +110,7 @@ func TestCeiling_DenyWriteBlocksTheWrite(t *testing.T) {
 	t.Parallel()
 	mgr, id := ceilingManager(t)
 
-	err := updateTitle(ctxAsClient("app", nil), t, mgr, id, "edited by the app")
+	err := updateTitle(entitymanager.BindAs(ctxAsClient("app", nil), t, mgr), t, mgr, id, "edited by the app")
 	if err == nil {
 		t.Fatal("update succeeded under deny_write: [\"*\"]")
 	}
@@ -135,7 +140,7 @@ func TestCeiling_InteractiveUserWritesFine(t *testing.T) {
 	t.Parallel()
 	mgr, id := ceilingManager(t)
 
-	if err := updateTitle(ctxAsClient("user", nil), t, mgr, id, "edited by alice"); err != nil {
+	if err := updateTitle(entitymanager.BindAs(ctxAsClient("user", nil), t, mgr), t, mgr, id, "edited by alice"); err != nil {
 		t.Fatalf("interactive user was attenuated: %v", err)
 	}
 }
@@ -145,7 +150,7 @@ func TestCeiling_ScopeReopensTheWrite(t *testing.T) {
 	t.Parallel()
 	mgr, id := ceilingManager(t)
 
-	ctx := ctxAsClient("app", []string{"rela.req.write"})
+	ctx := entitymanager.BindAs(ctxAsClient("app", []string{"rela.req.write"}), t, mgr)
 	if err := updateTitle(ctx, t, mgr, id, "edited via scope"); err != nil {
 		t.Fatalf("rela.req.write did not re-open update: %v", err)
 	}
@@ -163,12 +168,15 @@ func TestCeiling_NeverGrantsPastTheUser(t *testing.T) {
 	t.Parallel()
 	mgr, id := ceilingManager(t)
 
-	// bob holds no assignment at all, but presents the write scope.
+	// bob may read but holds no write grant, and presents the write scope.
+	// Without the read grant the write would fail as not found instead
+	// (TKT-NXRFDU), which is not what this test is about.
 	ctx := principal.With(context.Background(), principal.VerifiedFrom(
 		"bob", principal.ToolDataEntry, principal.Claims{
 			PrincipalType: "app",
 			Scopes:        []string{"rela.req.write"},
 		}))
+	ctx = entitymanager.BindAs(ctx, t, mgr)
 
 	if err := updateTitle(ctx, t, mgr, id, "edited by bob"); !errors.Is(err, acl.ErrForbidden) {
 		t.Errorf("error = %v, want ErrForbidden — a scope must not grant past the acting user", err)

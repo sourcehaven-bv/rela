@@ -201,6 +201,24 @@ func (b *BodyWatch) GraphQueryHeaders(
 	return store.GraphQueryHeaders(ctx, b.Store, q)
 }
 
+// MentionSources forwards to the wrapped store's mention index, counted as a
+// call and never as a body: it returns refs only. Declared so the recorder
+// does not hide the capability.
+func (b *BodyWatch) MentionSources(
+	ctx context.Context, target string, after entity.Ref, limit int,
+) ([]entity.Ref, error) {
+	b.call("MentionSources")
+	return mentionSourcesOf(ctx, b.Store, target, after, limit)
+}
+
+// Unwrap returns the wrapped store, so a lookup keyed on the backend type
+// (the database handle piles and state share) still finds it; see
+// [store.Decorator].
+func (b *BodyWatch) Unwrap() store.Store { return b.Store }
+
+// SoftDelete forwards the wrapped store's soft-delete capability.
+func (b *BodyWatch) SoftDelete() store.SoftDeleter { return forwardedSoftDeleter(b.Store) }
+
 // Tx forwards the transaction, wrapping the view so reads inside it count.
 func (b *BodyWatch) Tx(ctx context.Context, fn func(store.Store) error) error {
 	return b.Store.Tx(ctx, func(view store.Store) error {
@@ -259,4 +277,17 @@ func (v *bodyWatchView) GraphQueryHeaders(
 ) iter.Seq2[store.EntityHeader, error] {
 	v.parent.call("GraphQueryHeaders")
 	return store.GraphQueryHeaders(ctx, v.Store, q)
+}
+
+// SoftDelete forwards the transaction view's soft-delete capability, so a
+// soft delete inside the transaction joins it.
+func (v *bodyWatchView) SoftDelete() store.SoftDeleter { return forwardedSoftDeleter(v.Store) }
+
+// MentionSources forwards to the transaction's mention index, counted on the
+// parent as [BodyWatch.MentionSources] counts it.
+func (v *bodyWatchView) MentionSources(
+	ctx context.Context, target string, after entity.Ref, limit int,
+) ([]entity.Ref, error) {
+	v.parent.call("MentionSources")
+	return mentionSourcesOf(ctx, v.Store, target, after, limit)
 }

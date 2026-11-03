@@ -39,7 +39,11 @@ dataentry (*writeHandler).handleV1UpdateEntity(w=*http.response, r=*http.Request
 
 A child is indented under its caller. `->` gives the results, `N×` a loop,
 and `~go`, `~ctx` or `~closure` a call on another goroutine. `steps.json`
-holds the same trees for `seqtrace diff`.
+holds the same trees for `seqtrace diff`. A call that refused also has an
+`outcome` there: `error` when it returned a non-nil error, `false` when it
+returned false, and `status:<code>` on the root when the response was a 4xx.
+The archplan exporter reads these, and the archplan security detectors use
+them to see which requests were refused.
 
 ## Postgres and ACL demo
 
@@ -61,15 +65,18 @@ diagrams in your browser. It runs these steps:
    resolves roles through the graph and redacts salaries.
 5. Starts the server with identity from a reverse-proxy header
    (`-principal-header X-Forwarded-User`).
-6. Sends ten requests as alice (manager), bob (editor) and carol (reader):
+6. Sends eleven requests as alice (manager), bob (editor) and carol (reader):
    reads, a hidden read, a list, a search, updates, a state transition, a
-   denied update, a create and a delete.
+   denied update, a denied create, a create and a delete.
 7. Stops the server and postgres, and writes one diagram per request to
    `.ignored/seqtrace-demo/diagrams/`.
 
 The scenarios are the `req` lines in `tools/seqtrace/demo/run.sh`. The
 environment variables at the top of that script set the ports and the data
-size.
+size. `SEQTRACE_SUITE=routes` adds one request per route family: reads as the
+reader, writes the reader may not make, requests without an identity header,
+and the routes outside `/api/`. Their traces show the identity and access
+checks on each route, which the archplan security detectors read.
 
 ## Comparing two versions
 
@@ -108,6 +115,48 @@ from `dataentry` straight to a store, for example, may be a path around the
 
 The demo uses header identity, not JWT. JWT identity needs the proxy's key
 set served over HTTPS, which a local run does not have.
+
+## Tracing the SPA
+
+`just seqtrace-e2e [SPECS...]` runs e2e specs against a traced server and
+draws each API request the SPA sent, from the Vue component down to the
+store:
+
+```text
+web main.ts
+  web/stores Proxy.load
+    web/api getSchema
+      ~http dataentry (*App).handleV1Schema(w=*http.response, r=*http.Request{Span:grgjxo-1})
+        worlds Compiled.Lookup(name="default") -> store.WorldScope, true
+        ...
+```
+
+It works in four steps:
+
+1. The SPA is built unminified with source maps (`RELA_SEQTRACE=1`, see
+   `frontend/vite.config.ts`), and the server with the trace overlay.
+2. The e2e fixtures (`e2e/tests/seqtrace.ts`) inject `browser/recorder.js`
+   into every page. For each same-origin `/api/` request it keeps the
+   method, the path and the JavaScript stack, and sends a span id in the
+   `X-Seqtrace-Span` header. It keeps no bodies, query strings or headers.
+3. The server records the span id in the request's argument summary
+   (`*http.Request{Span:...}`). Each spawned server writes its own trace
+   file.
+4. `seqtrace stitch` maps each stack frame through the source maps to a
+   file under `frontend/src`, and puts the server's call tree under the
+   innermost SPA module. An SPA participant is `web/` plus the folder under
+   `src`. The output has the same pages and `steps.json` as
+   `seqtrace diagram`.
+
+Only pages from the `appPage` fixture are recorded. Most specs run without
+an `acl.yaml`, so their server traces pass no ACL guard. The fixture records
+whether each server had one, and `stitch` marks scenarios from a server
+without one `"guards": "off"`. archplan's security checks then use them for
+structure but not as evidence about authorization.
+
+A request whose stack shows no SPA frame starts at the HTTP hop. V8 keeps
+async frames only across native `await`, so a request a library sends
+from its own callback can lose them.
 
 ## How it works
 
@@ -155,6 +204,19 @@ that calls three functions per entity shows those three calls once. When the
 repeats differ only in values, they still fold, and the loop shows `…` in
 place of the values. Pass `-values=false` to
 draw names only.
+
+## Loops over iterators
+
+In a `for ... range` loop over an iterator, the iterator calls the loop body
+through its `yield` function. Go therefore runs the body inside the
+iterator. seqtrace undoes this. A call in the loop body has as its parent
+the function that contains the loop, not the iterator. Calls the iterator
+makes itself, such as its database query, stay under the iterator.
+
+This works for any function with a parameter named `yield` of type
+`func(...) bool`. That covers helpers that receive `yield` and iterators
+that wrap other iterators. A callback with another name is a real call
+from the callee and is drawn as one.
 
 ## Linking work across goroutines
 

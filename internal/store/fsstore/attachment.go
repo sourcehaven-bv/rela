@@ -2,14 +2,14 @@ package fsstore
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
+	"fmt"
 	"io"
 	"maps"
 	"os"
 	"path"
 
+	"github.com/Sourcehaven-BV/rela/internal/storage"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/store/storeutil"
 )
@@ -24,12 +24,6 @@ import (
 // If an attachment already exists at this (entityID, property) under a
 // different filename, the old file is removed first (1:1 ownership per
 // property).
-// attachTempPrefix marks an in-progress attachment temp file. A real
-// stored attachment name can never start with a dot (store.NormalizeFileName
-// trims leading dots), so this prefix is collision-proof; the index loader
-// skips files carrying it.
-const attachTempPrefix = ".rela-attach-tmp-"
-
 // attachmentKey is the per-file index key: (entityID, property, fileName).
 func attachmentKey(entityID, property, fileName string) string {
 	return entityID + "/" + property + "/" + fileName
@@ -69,18 +63,16 @@ func (s *FSStore) attachFile(_ context.Context, entityID, property, fileName str
 	// file — the old bytes and index entry stay intact until the new bytes
 	// are fully written.
 	//
-	// The temp name carries a leading-dot prefix (attachTempPrefix). A stored
-	// attachment name can never start with a dot — store.NormalizeFileName
-	// trims leading dots — so this marker can never collide with a real
-	// upload, and the index loader skips it by that prefix. (A plain ".new"
-	// suffix would clash with a legitimate upload literally named "x.new".)
-	// The rest is a fixed-length digest of the name, not the name itself, so
-	// a name at the 255-byte limit still has a temp name that fits.
-	sum := sha256.Sum256([]byte(fileName))
-	tmpKey := path.Join(dirKey, attachTempPrefix+hex.EncodeToString(sum[:8]))
+	// The temp name comes from storage.AttachTempName: a leading-dot prefix
+	// no real upload can carry, so the index loader can skip it (a plain
+	// ".new" suffix would clash with an upload literally named "x.new"),
+	// and a random part, so two processes uploading the same name never
+	// share a temp file.
+	tmpKey := path.Join(dirKey, storage.AttachTempName())
 	// Backstop size guard: cap reads at MaxAttachmentBytes so no caller can
 	// write an unbounded attachment (the API layer also caps at ingress).
-	n, err := s.writeAttachment(tmpKey, storeutil.LimitAttachmentReader(r))
+	hasher := store.NewAttachmentHasher()
+	n, err := s.writeAttachment(tmpKey, io.TeeReader(storeutil.LimitAttachmentReader(r), hasher))
 	if err != nil {
 		_ = s.rooted.Remove(tmpKey) // remove the failed partial; old file intact
 		return err
@@ -90,12 +82,19 @@ func (s *FSStore) attachFile(_ context.Context, entityID, property, fileName str
 		return err
 	}
 
-	s.attachments[key] = attachMeta{
+	meta := attachMeta{
 		entityID: entityID,
 		property: property,
 		fileName: fileName,
 		size:     n,
+		sha256:   hasher.Sum(),
 	}
+	// The stat pins the hash to this file version. Without it the next list
+	// hashes the file once more, which is correct, only slower.
+	if info, statErr := s.rooted.Stat(fileKey); statErr == nil {
+		meta.modTime = info.ModTime()
+	}
+	s.attachments[key] = meta
 	return nil
 }
 
@@ -160,26 +159,119 @@ func (s *FSStore) deleteAttachment(_ context.Context, entityID, property, fileNa
 	return nil
 }
 
-func (s *FSStore) ListFamilyAttachments(_ context.Context, entityID string) ([]store.AttachmentInfo, error) {
+// ListFamilyAttachments lists the family's attachments. Each file is
+// stat'ed; one whose size or mtime differs from the index, or that has no
+// hash yet, is read and hashed now, and the index is updated. A file
+// changed on disk behind the store (a checkout of another revision)
+// therefore reports the hash of its current bytes.
+//
+// A hash is read once per file version: concurrent lists share one read
+// (singleflight on the file and its stat), and a cancelled ctx stops it.
+func (s *FSStore) ListFamilyAttachments(ctx context.Context, entityID string) ([]store.AttachmentInfo, error) {
 	s.mu.RLock()
-	defer s.mu.RUnlock()
-
 	if s.familySize(entityID) == 0 {
+		s.mu.RUnlock()
 		return nil, store.ErrNotFound
 	}
-
-	var result []store.AttachmentInfo
+	var metas []attachMeta
 	for _, a := range s.attachments {
 		if a.entityID == entityID {
-			result = append(result, store.AttachmentInfo{
-				EntityID: a.entityID,
-				Property: a.property,
-				FileName: a.fileName,
-				Size:     a.size,
-			})
+			metas = append(metas, a)
 		}
 	}
+	s.mu.RUnlock()
+
+	result := make([]store.AttachmentInfo, 0, len(metas))
+	for _, a := range metas {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		a = s.refreshAttachmentHash(ctx, a)
+		result = append(result, store.AttachmentInfo{
+			EntityID: a.entityID,
+			Property: a.property,
+			FileName: a.fileName,
+			Size:     a.size,
+			SHA256:   a.sha256,
+		})
+	}
 	return result, nil
+}
+
+// refreshAttachmentHash returns a with size, mtime and hash matching the
+// file on disk, hashing it when the stat changed or no hash is known. The
+// read happens outside s.mu; the index entry is updated afterwards unless
+// a write replaced it in the meantime. A file that cannot be read keeps
+// its indexed size and reports no hash rather than failing the list.
+func (s *FSStore) refreshAttachmentHash(ctx context.Context, a attachMeta) attachMeta {
+	fileKey := path.Join(s.attachKey, a.entityID, a.property, a.fileName)
+	info, err := s.rooted.Stat(fileKey)
+	if err != nil {
+		a.sha256 = ""
+		return a
+	}
+	if a.sha256 != "" && info.Size() == a.size && info.ModTime().Equal(a.modTime) {
+		return a
+	}
+	flightKey := fmt.Sprintf("%s\x00%d\x00%d", fileKey, info.Size(), info.ModTime().UnixNano())
+	v, err, _ := s.hashFlight.Do(flightKey, func() (any, error) {
+		return hashAttachmentFile(ctx, s.rooted, fileKey)
+	})
+	if err != nil {
+		a.sha256 = ""
+		return a
+	}
+	h, ok := v.(fileHash)
+	if !ok {
+		a.sha256 = ""
+		return a
+	}
+	fresh := a
+	fresh.size, fresh.modTime, fresh.sha256 = h.size, info.ModTime(), h.sum
+
+	key := attachmentKey(a.entityID, a.property, a.fileName)
+	s.mu.Lock()
+	if cur, ok := s.attachments[key]; ok && cur == a {
+		s.attachments[key] = fresh
+	}
+	s.mu.Unlock()
+	return fresh
+}
+
+// fileHash is the SHA-256 and length of one attachment file.
+type fileHash struct {
+	sum  string
+	size int64
+}
+
+// hashAttachmentFile reads the file at key and hashes it. The read stops
+// when ctx is cancelled. A package function rather than an FSStore method:
+// FSStore is at its plimsoll method cap.
+func hashAttachmentFile(ctx context.Context, rooted *storage.RootedFS, key string) (fileHash, error) {
+	f, err := rooted.Open(key)
+	if err != nil {
+		return fileHash{}, err
+	}
+	defer func() { _ = f.Close() }()
+	h := store.NewAttachmentHasher()
+	n, err := io.Copy(h, ctxReader{ctx: ctx, r: f})
+	if err != nil {
+		return fileHash{}, err
+	}
+	return fileHash{sum: h.Sum(), size: n}, nil
+}
+
+// ctxReader stops a copy once its context is cancelled.
+type ctxReader struct {
+	ctx context.Context //nolint:containedctx // scoped to one io.Copy call
+	r   io.Reader
+}
+
+func (c ctxReader) Read(p []byte) (int, error) {
+	if err := c.ctx.Err(); err != nil {
+		return 0, err
+	}
+	return c.r.Read(p)
 }
 
 // removeAttachmentDir removes `<attachKey>/<entityID>/` and every

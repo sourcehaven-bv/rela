@@ -1,0 +1,24 @@
+user_entity_type: risico
+roles:
+  officer:
+    read: ["*"]
+    update: [datalek]
+    permissions: [privacy.officer, incident.decide, records.delete]
+  handler:
+    read: [datalek]
+    update: [datalek]
+  breach-bot:
+    read: [datalek]
+    update: [datalek]
+  auditor:
+    read: ["*"]
+    visible:
+      risico: [{field: title}]
+assignments:
+  system:breach-bot: breach-bot
+  USR-1: handler
+client_baselines:
+  apps:
+    applies_to: [app]
+    redact:
+      datalek: [notes]

@@ -54,6 +54,16 @@ type viewResult struct {
 	//
 	// Nil: accepted — no collection qualifies.
 	EntryEdges map[string]entryEdges
+
+	// Incomplete names the collections a `mentioned_by` step could not fill
+	// completely: more matching sources exist than the step collects, or the
+	// backlink scan stopped early (TKT-HF0D5W). It is computed after the row
+	// gate, so it says nothing about sources the principal cannot read
+	// beyond the accepted scan-budget signal (docs/acl-security.md).
+	Incomplete map[string]bool
+
+	// filter applies the traverse steps' `where:` and `condition:`.
+	filter *traverseFilter
 }
 
 // entryEdges is one collection's entry edges and the relation they are of.
@@ -164,10 +174,26 @@ func (h *viewsHandler) executeViewBodies(
 		return nil, err
 	}
 
+	filter, err := newTraverseFilter(h, view)
+	if err != nil {
+		return nil, err
+	}
 	result := &viewResult{
 		Entry:       entry,
 		Collections: map[string][]*entity.Entity{"entry": {entry}},
 		World:       w,
+		filter:      filter,
+	}
+
+	// Backlink steps first, and once: they read only the entry, so the
+	// fixpoint passes below would repeat the same index scan for nothing.
+	for _, rule := range view.Traverse {
+		if !rule.MentionedBy {
+			continue
+		}
+		if err := h.collectBacklinks(ctx, rule, result, w); err != nil {
+			return nil, err
+		}
 	}
 
 	// Multi-pass traversal (up to 10 passes until stable)
@@ -175,12 +201,15 @@ func (h *viewsHandler) executeViewBodies(
 	for range maxPasses {
 		before := countViewEntities(result.Collections)
 		for _, rule := range view.Traverse {
-			h.applyViewTraverse(ctx, rule, result, w)
+			if err := h.applyViewTraverse(ctx, rule, result, w); err != nil {
+				return nil, err
+			}
 		}
 		if countViewEntities(result.Collections) == before {
 			break
 		}
 	}
+	result.propagateIncomplete(view.Traverse)
 
 	// Remove internal "entry" collection
 	delete(result.Collections, "entry")
@@ -207,6 +236,16 @@ func (h *viewsHandler) executeViewBodies(
 		result.Collections[name] = h.viewReader.Filter(ctx, entities)
 	}
 	h.loadViewBodies(ctx, result, w, bodies)
+
+	// Roll-ups after the gate, on the served rows only, one batch per type
+	// across the entry and every collection (TKT-6I2OPG).
+	served := []*entity.Entity{result.Entry}
+	groups := [][]*entity.Entity{served}
+	for _, entities := range result.Collections {
+		groups = append(groups, entities)
+	}
+	h.rollups.addToEntities(ctx, w.scope, groups...)
+	result.Entry = served[0]
 
 	return result, nil
 }
@@ -260,7 +299,10 @@ func (h *viewsHandler) loadViewBodies(ctx context.Context, result *viewResult, w
 
 func (h *viewsHandler) applyViewTraverse(
 	ctx context.Context, rule ViewTraverse, result *viewResult, w viewWorld,
-) {
+) error {
+	if rule.MentionedBy {
+		return nil // collected once by collectBacklinks, before the fixpoint loop
+	}
 	// Gather source entities
 	var sources []*entity.Entity
 	if rule.From == "*" {
@@ -327,25 +369,18 @@ func (h *viewsHandler) applyViewTraverse(
 	// again by the recursive walk's depth — materially worse than the per-row
 	// cost item 4 documented as known. Batching here is a design choice made up
 	// front rather than an optimisation deferred (see the PR body).
-	found := h.loadViewEntities(ctx, foundIDs, w)
+	found, _ := h.loadViewEntities(ctx, foundIDs, w) // a fault is logged; the step keeps what loaded
 
-	// Apply where filter if specified.
+	// Apply the step's where: and condition: filters.
 	//
 	// RULING 16: this runs against the RESOLVED FACES, because `found` now
 	// holds whatever face the world selected. A `where:` filtering on draft
 	// values while the page renders published content would contradict its own
 	// page. filterEntities itself needed no change — it reads e.Properties off
 	// whatever it is handed, so feeding it faces makes it filter faces.
-	if rule.Where != "" {
-		filtered, err := h.filterEntities(found, rule.Where)
-		if err == nil {
-			found = filtered
-		}
-		// On error, continue with unfiltered results (silent failure for
-		// robustness). This SILENTLY WIDENS a construct whose job is to narrow
-		// — tracked as BUG-WHEREWIDE, decided (RULING 17) to become a load-time
-		// error. Deliberately not fixed here: it predates worlds and deserves
-		// its own change rather than riding along in a world PR.
+	found, err := result.filter.narrow(ctx, rule, found)
+	if err != nil {
+		return err
 	}
 
 	// Deduplicate into collection
@@ -369,12 +404,13 @@ func (h *viewsHandler) applyViewTraverse(
 	//
 	// Load-bearing: executeView runs every rule up to 10 times (the fixpoint
 	// loop), so appending unconditionally would list each child once per pass
-	// and render duplicate rows. Only edges whose child SURVIVED `where:`
-	// filtering are recorded, so a filtered-out child cannot reappear as a
-	// nested row.
+	// and render duplicate rows. Only edges whose child SURVIVED `where:` and
+	// `condition:` filtering are recorded, so a filtered-out child cannot
+	// reappear as a nested row.
 	if len(byParent) > 0 {
 		mergeViewParents(result, rule.CollectAs, byParent, kept)
 	}
+	return nil
 }
 
 // mergeViewParents records parent→child edges for one rule application,
@@ -694,13 +730,12 @@ func countViewEntities(collections map[string][]*entity.Entity) int {
 
 // filterEntities filters entities based on a where expression.
 // Supports the "type" pseudo-property to filter by entity type.
-func (h *viewsHandler) filterEntities(entities []*entity.Entity, whereExpr string) ([]*entity.Entity, error) {
+func filterEntities(s *Schema, entities []*entity.Entity, whereExpr string) ([]*entity.Entity, error) {
 	f, err := filter.Parse(whereExpr)
 	if err != nil {
 		return nil, fmt.Errorf("invalid where expression: %w", err)
 	}
 
-	s := h.schema()
 	var result []*entity.Entity
 	for _, e := range entities {
 		// Special handling for "type" pseudo-property

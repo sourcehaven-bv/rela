@@ -1,9 +1,11 @@
 package dataentry
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	v1 "github.com/Sourcehaven-BV/rela/internal/apiwire/v1"
@@ -12,6 +14,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/openapi"
 	"github.com/Sourcehaven-BV/rela/internal/project"
+	"github.com/Sourcehaven-BV/rela/internal/search"
 	"github.com/Sourcehaven-BV/rela/internal/storage"
 )
 
@@ -26,7 +29,8 @@ func incomingRelMeta() *metamodel.Metamodel {
 				Plural:   "persoons",
 				IDPrefix: "PERS",
 				Properties: map[string]metamodel.PropertyDef{
-					"title": {Type: "string", Required: true},
+					"title":   {Type: "string", Required: true},
+					"segment": {Type: "string"},
 				},
 			},
 			"taak": {
@@ -34,7 +38,8 @@ func incomingRelMeta() *metamodel.Metamodel {
 				Plural:   "taaks",
 				IDPrefix: "TASK",
 				Properties: map[string]metamodel.PropertyDef{
-					"title": {Type: "string", Required: true},
+					"title":   {Type: "string", Required: true},
+					"segment": {Type: "string"},
 				},
 			},
 		},
@@ -92,6 +97,7 @@ func newIncomingRelApp(t *testing.T, entities []*entity.Entity, relations []*ent
 	seedFromFixture(svc.Store(), f)
 
 	app := &App{fieldResolver: NopFieldVerdictResolver{}}
+	app.live = testLiveHub(app)
 	rebindApp(app, fs, ctx, svc)
 	app.schema.Publish(&Schema{
 		Cfg:        cfg,
@@ -255,4 +261,74 @@ func TestListOutgoingRelationsByteIdentical(t *testing.T) {
 	if string(got) != want {
 		t.Fatalf("outgoing relations map = %s, want %s", got, want)
 	}
+}
+
+// TestListIncludeIncomingPeer_StripsHiddenProperty pins the read path a kanban
+// card's related-property field relies on (TKT-8Z2LT3): the board fetches with
+// `include=*` and reads the property off the incoming peer in `included`. A
+// property the reader may not see must be absent there, so the card shows
+// nothing for it, while a visible property of the same peer still arrives.
+func TestListIncludeIncomingPeer_StripsHiddenProperty(t *testing.T) {
+	const (
+		taakID = "TASK-SEG"
+		persID = "PERS-SEG"
+	)
+	entities := []*entity.Entity{
+		{ID: taakID, Type: "taak", Properties: map[string]any{"title": "Deal", "segment": "row-segment"}},
+		{ID: persID, Type: "persoon", Properties: map[string]any{
+			"title": "Ziekenhuis", "segment": "secret-segment",
+		}},
+	}
+	rels := []*entity.Relation{entity.NewRelation(persID, "verantwoordelijk_voor", taakID)}
+	app := newIncomingRelApp(t, entities, rels)
+	// Hidden on the peer's type only. The board row's type declares a visible
+	// segment too, so redacting the peer with the row type's rules would leak.
+	app.fieldResolver = fieldsByTypeResolver{"persoon": {Visible: map[string]bool{"segment": false}}}
+
+	w := doRequest(t, app, http.MethodGet, "/api/v1/taaks?include=*")
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body: %s", w.Code, w.Body.String())
+	}
+	if strings.Contains(w.Body.String(), "secret-segment") {
+		t.Fatalf("hidden property value reached the wire: %s", w.Body.String())
+	}
+	resp := decodeListWithIncludes(t, w)
+	inc, ok := resp.Included[persID]
+	if !ok {
+		t.Fatalf("included map missing incoming peer %s; included=%v", persID, resp.Included)
+	}
+	if _, present := inc.Properties["segment"]; present {
+		t.Errorf("included[%s] carries hidden property segment: %v", persID, inc.Properties)
+	}
+	if inc.Properties["title"] != "Ziekenhuis" {
+		t.Errorf("included[%s].title = %v, want the visible value", persID, inc.Properties["title"])
+	}
+	if row := findRow(t, resp.Data, taakID); row.Properties["segment"] != "row-segment" {
+		t.Errorf("row segment = %v, want the value visible on its own type", row.Properties["segment"])
+	}
+}
+
+// fieldsByTypeResolver returns field verdicts per entity type, so a test can
+// hide a property on one type and leave the same name visible on another.
+// Relation verdicts are empty.
+type fieldsByTypeResolver map[string]FieldVerdicts
+
+func (fieldsByTypeResolver) SearchFieldScope(context.Context, string) (*search.FieldScope, error) {
+	return nil, errNoSearchForm
+}
+
+func (r fieldsByTypeResolver) FieldVerdicts(_ context.Context, e *entity.Entity) FieldVerdicts {
+	return r[e.Type]
+}
+
+func (fieldsByTypeResolver) RelationVerdicts(context.Context, *entity.Entity) RelationVerdicts {
+	return RelationVerdicts{}
+}
+
+func (fieldsByTypeResolver) UnconditionalRelationVerdicts(context.Context, *entity.Entity) RelationVerdicts {
+	return RelationVerdicts{}
+}
+
+func (r fieldsByTypeResolver) FieldVisibleOnEveryRow(_ context.Context, entityType, property string) bool {
+	return r[entityType].IsVisible(property)
 }

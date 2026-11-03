@@ -224,6 +224,11 @@ export class FormPage extends BasePage {
     return new URL(this.page.url()).searchParams.get("return_to");
   }
 
+  /** Follow a side-panel link to a related entity. */
+  async clickSidePanelEntity(title: string) {
+    await this.page.locator(".side-panel .entity-list-item", { hasText: title }).click();
+  }
+
   async fillField(name: string, value: string) {
     const field = this.page.locator(`#field-${name}`);
     await field.fill(value);
@@ -844,6 +849,19 @@ export class FormPage extends BasePage {
     return this.proseMirror.locator("li[data-item-type='task']");
   }
 
+  /** The convert buttons on task items (TKT-3IBLIP), in document order. */
+  get editorTaskItemConvertButtons(): Locator {
+    return this.proseMirror.locator("button.task-item-convert");
+  }
+
+  /** Presses a recipe in the task-item conversion dialog. */
+  async chooseTaskItemConversion(label: string) {
+    await this.page
+      .locator(".task-item-dialog")
+      .getByRole("button", { name: label, exact: true })
+      .click();
+  }
+
   /** The checkboxes inside those items.
    *
    *  Deliberately `input[type=checkbox]` rather than the `data-checked`
@@ -948,24 +966,26 @@ export class FormPage extends BasePage {
     return this.page.locator(".template-selector");
   }
 
-  get templatePills(): Locator {
-    return this.page.locator(".template-pill");
-  }
-
-  async templatePillCount(): Promise<number> {
-    return this.templatePills.count();
+  /** The template dropdown, found by its accessible label. */
+  get templateSelect(): Locator {
+    return this.templateSelector.getByLabel("Template");
   }
 
   async templateSelectorVisible(): Promise<boolean> {
     return this.templateSelector.isVisible().catch(() => false);
   }
 
-  async clickTemplatePill(index: number) {
-    await this.templatePills.nth(index).click();
+  /** The visible labels of the template options, in order. */
+  async templateOptionLabels(): Promise<string[]> {
+    return this.templateSelect.locator("option").allTextContents();
   }
 
-  async expectTemplatePillActive(index: number) {
-    await expect(this.templatePills.nth(index)).toHaveClass(/active/);
+  async selectTemplate(label: string) {
+    await this.templateSelect.selectOption({ label });
+  }
+
+  async expectTemplateSelected(label: string) {
+    await expect(this.templateSelect.locator("option:checked")).toHaveText(label);
   }
 
   // --- Relation picker (non-cards widget) ---

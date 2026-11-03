@@ -22,6 +22,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/autocascade"
 	"github.com/Sourcehaven-BV/rela/internal/automation"
+	"github.com/Sourcehaven-BV/rela/internal/channels"
 	"github.com/Sourcehaven-BV/rela/internal/comments"
 	"github.com/Sourcehaven-BV/rela/internal/config"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
@@ -30,6 +31,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/lua"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/project"
+	"github.com/Sourcehaven-BV/rela/internal/realtime"
 	"github.com/Sourcehaven-BV/rela/internal/relresolve"
 	"github.com/Sourcehaven-BV/rela/internal/script"
 	"github.com/Sourcehaven-BV/rela/internal/search"
@@ -55,9 +57,25 @@ type testConfig struct {
 	acl         acl.ACL
 	declarative *acl.Declarative
 	comments    *comments.Service
+	channels    *appbuild.ChannelCollaborators
+	outputs     realtime.OutputWriter
 }
 
 // auditOrNop is the configured audit sink, or [audit.Nop] when none was set.
+// defaultPaths gives c an in-memory FS and paths when it has none.
+func (c *testConfig) defaultPaths() {
+	if c.fs == nil || c.paths == nil {
+		c.fs, c.paths = defaultMemFS()
+	} else if c.paths.CacheDir == "" {
+		// Caller-supplied Paths without CacheDir is a common test
+		// oversight; default it to <root>/.rela so the fixture's
+		// state.KV setup still works. Production project.Discover
+		// always sets this. The path doesn't have to exist on the
+		// FS yet — state.NewFSKV creates it lazily on first write.
+		c.paths.CacheDir = c.paths.Root + "/.rela"
+	}
+}
+
 func (c *testConfig) auditOrNop() audit.Audit {
 	if c.audit == nil {
 		return audit.Nop{}
@@ -133,6 +151,41 @@ func WithComments(svc *comments.Service) Option {
 	return func(c *testConfig) { c.comments = svc }
 }
 
+// WithChannels makes the bundle offer a channel service over cs, with cfg
+// as its realtime configuration, built by the production constructor:
+// [appbuild.ChannelService] returns it, and Close stops it. Its anchor and
+// ref reads go through the gated reader the bundle's ACL builds, so a test
+// sees what a deployment with the same ACL sees.
+func WithChannels(cs channels.Store, cfg realtime.ConfigSource) Option {
+	return WithChannelsLocal(cs, cfg, nil)
+}
+
+// WithChannelsLocal is [WithChannels] over the process-local state local,
+// such as one on a test clock. Nil: a new one on the
+// real clock.
+func WithChannelsLocal(cs channels.Store, cfg realtime.ConfigSource, local *realtime.Local) Option {
+	return func(c *testConfig) {
+		c.channels = &appbuild.ChannelCollaborators{Store: cs, Config: cfg, Local: local}
+	}
+}
+
+// WithChannelOutputs makes the channel service of [WithChannels] write
+// session outputs through w. Without it, no output is written.
+func WithChannelOutputs(w realtime.OutputWriter) Option {
+	return func(c *testConfig) { c.outputs = w }
+}
+
+// channelsWithOutputs is ch with the output writer of [WithChannelOutputs],
+// or ch itself when either is nil.
+func channelsWithOutputs(ch *appbuild.ChannelCollaborators, w realtime.OutputWriter) *appbuild.ChannelCollaborators {
+	if ch == nil || w == nil {
+		return ch
+	}
+	out := *ch
+	out.Outputs = w
+	return &out
+}
+
 // WithDeclarative wires the concrete *acl.Declarative as both the ACL
 // (write authz path) and the resolver (affordance path). The fixture
 // fails fast if d is nil — that's a setup bug, not "I want NopACL"
@@ -167,16 +220,7 @@ func New(meta *metamodel.Metamodel, opts ...Option) *appbuild.Services {
 	for _, opt := range opts {
 		opt(cfg)
 	}
-	if cfg.fs == nil || cfg.paths == nil {
-		cfg.fs, cfg.paths = defaultMemFS()
-	} else if cfg.paths.CacheDir == "" {
-		// Caller-supplied Paths without CacheDir is a common test
-		// oversight; default it to <root>/.rela so the fixture's
-		// state.KV setup still works. Production project.Discover
-		// always sets this. The path doesn't have to exist on the
-		// FS yet — state.NewFSKV creates it lazily on first write.
-		cfg.paths.CacheDir = cfg.paths.Root + "/.rela"
-	}
+	cfg.defaultPaths()
 
 	searchBackend := newSearchBackend()
 	st := resolveStore(cfg.store, searchBackend)
@@ -251,6 +295,7 @@ func New(meta *metamodel.Metamodel, opts ...Option) *appbuild.Services {
 		CopyReadGate:     tw.ReadGate,
 		CopyVisibility:   tw.Visibility,
 		AttachmentLocker: lock.For(st),
+		AnchorGuard:      entitymanager.NopAnchorGuard{},
 	})
 	if err != nil {
 		panic(fmt.Sprintf("appbuildtest.New: build entitymanager: %v", err))
@@ -275,6 +320,7 @@ func New(meta *metamodel.Metamodel, opts ...Option) *appbuild.Services {
 		panic(fmt.Sprintf("appbuildtest.New: build validator: %v", err))
 	}
 
+	cfg.channels = channelsWithOutputs(cfg.channels, cfg.outputs)
 	svc, err := appbuild.NewFromCollaborators(appbuild.Collaborators{
 		FS:            cfg.fs,
 		Paths:         cfg.paths,
@@ -293,6 +339,7 @@ func New(meta *metamodel.Metamodel, opts ...Option) *appbuild.Services {
 		Declarative:   cfg.declarative,
 		Audit:         auditSink,
 		Comments:      cfg.comments,
+		Channels:      cfg.channels,
 	})
 	if err != nil {
 		panic(fmt.Sprintf("appbuildtest.New: assemble services: %v", err))

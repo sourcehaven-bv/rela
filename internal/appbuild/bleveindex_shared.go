@@ -175,13 +175,10 @@ func backfillBleveInto(ctx context.Context, idx entityBatchIndexer, st store.Sto
 // store knows about, so the backfill can be skipped entirely.
 //
 // The comparison is against the watermark [markIndexBackfilled] stamped at
-// the end of the last backfill, NOT against [bleveindex.Index.LastModified].
-// The two measure different clocks: LastModified tracks entity.UpdatedAt
-// (set in memory before the write), while the store reports the newest
-// file mtime on disk (set when that write lands). The store's value is
-// therefore always a few milliseconds ahead, and comparing the two would
-// report "stale" on an index that is in fact perfectly current — which is
-// exactly what happened before this was stamped explicitly.
+// the end of the last backfill, a store mtime, so both sides use the same
+// clock. Comparing the store's file mtimes against entity.UpdatedAt (set in
+// memory before the write lands) reported "stale" on a current index, which
+// is why the watermark is stamped explicitly.
 //
 // This is a startup optimization, so it fails closed: any error, a missing
 // or zero watermark, or an empty index means "reindex". A stale index that
@@ -206,9 +203,7 @@ func indexIsCurrent(ctx context.Context, idx *bleveindex.Index, st store.Store) 
 	return err == nil && count > 0
 }
 
-// backfillWatermarkKey names the stored store-mtime watermark. It is
-// namespaced separately from the index's own LastModified so the two
-// clocks (see [indexIsCurrent]) can never be confused for one another.
+// backfillWatermarkKey names the stored store-mtime watermark.
 const backfillWatermarkKey = "rela:backfill_store_mtime"
 
 // markIndexBackfilled records the store mtime that the just-completed

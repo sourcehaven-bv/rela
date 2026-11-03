@@ -2,10 +2,21 @@ package entitymanager
 
 import (
 	"context"
+	"testing"
 
+	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/autocascade"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/store"
 )
+
+// WithStore returns a handle on m's deps that writes to st. Test-only: it
+// lets an external test put a failing store under a built Manager.
+func WithStore(m *Manager, st store.Store) *Manager {
+	d := m.deps
+	d.Store = st
+	return &Manager{deps: d}
+}
 
 // CascadeHostDelete runs the delete an automation's if_exists: replace
 // performs, through the cascade host m would hand the runner. Test-only: it
@@ -13,6 +24,12 @@ import (
 // runner itself cannot reach because a cascade cannot create a faced entity.
 func CascadeHostDelete(ctx context.Context, m *Manager, id string, cascade bool) error {
 	return (&cascadeHost{deps: m.deps}).DeleteEntity(ctx, "", id, cascade)
+}
+
+// CascadeHostWriteRelation writes r through the cascade host m would hand
+// the runner, as an automation's create_relation does.
+func CascadeHostWriteRelation(ctx context.Context, m *Manager, r *entity.Relation) error {
+	return (&cascadeHost{deps: m.deps}).WriteRelation(ctx, r)
 }
 
 // CascadeHostCreate runs a cascade's create_entity through the cascade host.
@@ -31,4 +48,22 @@ func WriteAutomationProperties(
 	ctx context.Context, m *Manager, created *entity.Entity, set map[string]string,
 ) (*entity.Entity, error) {
 	return writeAutomationProperties(ctx, m.deps, created, set, nil)
+}
+
+// BindAs runs the request edge for ctx against m's ACL: it resolves the
+// stamped principal and attaches its request scope, as a transport does
+// before it calls the manager. Test-only.
+func BindAs(ctx context.Context, tb testing.TB, m *Manager) context.Context {
+	tb.Helper()
+	a := m.deps.ACL
+	// A test decorator around the real policy names it, so the identity is
+	// bound against the Declarative the decorator forwards to.
+	if w, ok := a.(interface{ Declarative() *acl.Declarative }); ok {
+		a = w.Declarative()
+	}
+	out, err := acl.BindRequest(ctx, a)
+	if err != nil {
+		tb.Fatalf("acl.BindRequest: %v", err)
+	}
+	return out
 }

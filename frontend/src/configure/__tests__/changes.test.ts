@@ -1,16 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { changeCount, describeChanges, diffList } from '../changes'
-import {
-  clone,
-  getIn,
-  isMap,
-  listAt,
-  moveItem,
-  remove,
-  renameKey,
-  set,
-  type TreeMap,
-} from '../tree'
+import type { TreeMap } from '@/api/configure'
+import { clone, getIn, isMap, listAt, moveItem, remove, renameKey, set } from '../tree'
 import { snapshot, toTree } from './fixture'
 
 function at(tree: unknown, path: (string | number)[]): TreeMap {
@@ -65,6 +56,22 @@ describe('describeChanges', () => {
     expect(changeCount(groups)).toBe(6)
   })
 
+  // Named dashboards (TKT-5LQNLY) get a group each, linked to their screen.
+  it('groups the changes to a named dashboard under its name', () => {
+    const before = toTree({ dashboards: { crm: { title: 'Pipeline', cards: [] } } })
+    const after = clone(before)
+    set(at(after, ['dashboards', 'crm']), 'title', 'Deals')
+
+    const groups = describeChanges(
+      { schema: base.schema, dataEntry: before },
+      { schema: base.schema, dataEntry: after },
+      []
+    )
+
+    expect(groups.map((g) => g.title)).toEqual(['Dashboard: crm'])
+    expect(groups[0].items[0].to).toBe('/configure/dashboard?name=crm')
+  })
+
   it('never shows the configuration format', () => {
     const schema = clone(base.schema)
     set(at(schema, ['entities', 'ticket', 'properties', 'effort']), 'required', true)
@@ -75,6 +82,28 @@ describe('describeChanges', () => {
     )
     const text = JSON.stringify(groups)
     expect(text).not.toMatch(/\$m|\$i|yaml|properties\./)
+  })
+})
+
+describe('busy column title in the review', () => {
+  // TKT-TU3XH4: an added or removed busy column is titled by its type.
+  it('titles an added and a removed busy column by its type', () => {
+    const base = snapshot()
+    const withBusy = clone(base.data_entry)
+    listAt(withBusy, ['lists', 'tickets', 'columns'])!.push(toTree({ busy: 'run' }) as never)
+    const added = describeChanges(
+      { schema: base.schema, dataEntry: base.data_entry },
+      { schema: base.schema, dataEntry: withBusy },
+      []
+    )
+    expect(added.flatMap((g) => g.items.map((i) => `${i.kind} ${i.label}`))).toEqual(['added Column run'])
+
+    const removed = describeChanges(
+      { schema: base.schema, dataEntry: withBusy },
+      { schema: base.schema, dataEntry: base.data_entry },
+      []
+    )
+    expect(removed.flatMap((g) => g.items.map((i) => `${i.kind} ${i.label}`))).toEqual(['removed Column run'])
   })
 })
 

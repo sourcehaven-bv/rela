@@ -1,0 +1,13 @@
+request: PATCH /api/v1/tickets/TKT-1/relations/implements/POL-1
+identity: header editor@example.test
+status: 200
+reads: GetRelation=2 GraphQueryHeaders=1 ListEntities=1 ListEntityHeaders=4 ListRelations=1
+breadth: ListEntities=1/1 ListEntityHeaders=4/4 ListRelations=0/1
+bodies: GraphQuery=0/1 ListEntities=1/1 ListEntityHeaders=0/4
+versions: 
+body:
+{
+  "from": "TKT-1",
+  "to": "POL-1",
+  "type": "implements"
+}

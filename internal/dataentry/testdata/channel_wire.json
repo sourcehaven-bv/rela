@@ -1,0 +1,1824 @@
+{
+  "choices_messages": {
+    "channel": {
+      "anchor": "TKT-1",
+      "created_at": "2026-01-02T03:04:05Z",
+      "created_by": {
+        "tool": "data-entry",
+        "user": "alice"
+      },
+      "last_seq": 6,
+      "rev": 9,
+      "state": "open",
+      "type": "room"
+    },
+    "has_more": false,
+    "messages": [
+      {
+        "_actions": [
+          "ack",
+          "delete",
+          "edit"
+        ],
+        "at": "2026-01-02T03:04:05Z",
+        "author": {
+          "tool": "data-entry",
+          "user": "alice"
+        },
+        "edit_until": "2026-01-02T03:04:05Z",
+        "props": {
+          "body": "hello"
+        },
+        "rev": 1,
+        "seq": 1,
+        "type": "text"
+      },
+      {
+        "_actions": [
+          "ack"
+        ],
+        "at": "2026-01-02T03:04:05Z",
+        "author": {
+          "tool": "data-entry",
+          "user": "dave"
+        },
+        "props": {
+          "about": {
+            "restricted": true
+          },
+          "body": "see"
+        },
+        "rev": 2,
+        "seq": 2,
+        "type": "text"
+      },
+      {
+        "_actions": [
+          "delete",
+          "edit"
+        ],
+        "action": {
+          "at": "2026-01-02T03:04:05Z",
+          "name": "ack",
+          "status": "done"
+        },
+        "at": "2026-01-02T03:04:05Z",
+        "author": {
+          "tool": "data-entry",
+          "user": "alice"
+        },
+        "edit_until": "2026-01-02T03:04:05Z",
+        "props": {
+          "body": "acked"
+        },
+        "rev": 4,
+        "seq": 3,
+        "type": "text"
+      },
+      {
+        "action": {
+          "at": "2026-01-02T03:04:05Z",
+          "name": "ack",
+          "status": "pending"
+        },
+        "at": "2026-01-02T03:04:05Z",
+        "author": {
+          "tool": "data-entry",
+          "user": "alice"
+        },
+        "props": {
+          "body": "pending"
+        },
+        "release_after": "2026-01-02T03:04:05Z",
+        "rev": 6,
+        "seq": 4,
+        "type": "text"
+      },
+      {
+        "removed": {
+          "at": "2026-01-02T03:04:05Z",
+          "kind": "author"
+        },
+        "rev": 8,
+        "seq": 5
+      },
+      {
+        "_actions": [
+          "ack",
+          "delete",
+          "edit"
+        ],
+        "at": "2026-01-02T03:04:05Z",
+        "author": {
+          "tool": "data-entry",
+          "user": "alice"
+        },
+        "edit_until": "2026-01-02T03:04:05Z",
+        "props": {
+          "body": "Which?",
+          "options": [
+            "A",
+            "B"
+          ]
+        },
+        "rev": 9,
+        "seq": 6,
+        "type": "text"
+      }
+    ],
+    "next_after_rev": 9,
+    "next_before": 1
+  },
+  "choices_schema": {
+    "channel_types": [
+      {
+        "anchor": "family",
+        "attach_to": [
+          "ticket"
+        ],
+        "cardinality": "one",
+        "label": "briefing",
+        "lifecycle": [],
+        "message_types": [
+          {
+            "actions": [],
+            "label": "note",
+            "name": "note",
+            "persist": "log",
+            "properties": [
+              {
+                "label": "body",
+                "name": "body",
+                "type": "string"
+              }
+            ],
+            "reply": true
+          }
+        ],
+        "name": "briefing",
+        "remove_reason_required": false,
+        "typing": true
+      },
+      {
+        "anchor": "family",
+        "attach_to": [
+          "ticket",
+          "feature"
+        ],
+        "cardinality": "one",
+        "label": "chat",
+        "lifecycle": [
+          {
+            "label": "close",
+            "name": "close"
+          }
+        ],
+        "message_types": [
+          {
+            "actions": [],
+            "label": "notice",
+            "name": "notice",
+            "persist": "log",
+            "properties": [
+              {
+                "label": "body",
+                "name": "body",
+                "type": "string"
+              }
+            ],
+            "reply": true
+          },
+          {
+            "actions": [],
+            "label": "status",
+            "name": "status",
+            "persist": "ephemeral",
+            "properties": [],
+            "reply": false,
+            "ttl_seconds": 30
+          },
+          {
+            "actions": [],
+            "label": "text",
+            "name": "text",
+            "persist": "log",
+            "properties": [
+              {
+                "label": "body",
+                "name": "body",
+                "required": true,
+                "type": "string"
+              }
+            ],
+            "reply": true
+          }
+        ],
+        "name": "chat",
+        "remove_reason_required": false,
+        "typing": true
+      },
+      {
+        "anchor": "family",
+        "attach_to": [
+          "ticket"
+        ],
+        "cardinality": "one",
+        "label": "incident",
+        "lifecycle": [
+          {
+            "label": "close",
+            "name": "close"
+          }
+        ],
+        "message_types": [
+          {
+            "actions": [],
+            "label": "contained",
+            "name": "contained",
+            "persist": "log",
+            "properties": [
+              {
+                "label": "note",
+                "name": "note",
+                "type": "string"
+              }
+            ],
+            "reply": true
+          },
+          {
+            "actions": [],
+            "label": "note",
+            "name": "note",
+            "persist": "log",
+            "properties": [
+              {
+                "label": "body",
+                "name": "body",
+                "type": "string"
+              }
+            ],
+            "reply": true
+          }
+        ],
+        "name": "incident",
+        "remove_reason_required": false,
+        "session": {
+          "initial": "detected",
+          "label": "incident",
+          "states": [
+            {
+              "label": "Detected",
+              "name": "detected",
+              "status": "working"
+            },
+            {
+              "final": true,
+              "label": "Contained",
+              "name": "contained",
+              "status": "completed"
+            }
+          ]
+        },
+        "typing": false
+      },
+      {
+        "anchor": "family",
+        "attach_to": [
+          "ticket",
+          "feature"
+        ],
+        "cardinality": "one",
+        "label": "Room",
+        "lifecycle": [
+          {
+            "label": "close",
+            "name": "close"
+          },
+          {
+            "label": "reopen",
+            "name": "reopen"
+          },
+          {
+            "label": "delete",
+            "name": "delete"
+          }
+        ],
+        "message_types": [
+          {
+            "actions": [],
+            "label": "announce",
+            "name": "announce",
+            "persist": "log",
+            "properties": [
+              {
+                "label": "body",
+                "name": "body",
+                "type": "string"
+              }
+            ],
+            "reply": true
+          },
+          {
+            "actions": [
+              {
+                "label": "accept",
+                "name": "accept",
+                "promote_to": "ticket"
+              },
+              {
+                "label": "ack",
+                "name": "ack"
+              }
+            ],
+            "choices": {
+              "answer": "announce",
+              "from": "options",
+              "into": "body",
+              "other": true
+            },
+            "label": "text",
+            "name": "text",
+            "persist": "log",
+            "properties": [
+              {
+                "label": "body",
+                "name": "body",
+                "required": true,
+                "type": "string"
+              },
+              {
+                "label": "about",
+                "name": "about",
+                "to": [
+                  "ticket",
+                  "feature"
+                ],
+                "type": "ref"
+              },
+              {
+                "label": "options",
+                "list": true,
+                "max": 80,
+                "max_items": 4,
+                "name": "options",
+                "type": "string"
+              }
+            ],
+            "reply": true
+          },
+          {
+            "actions": [],
+            "label": "typing",
+            "name": "typing",
+            "persist": "ephemeral",
+            "properties": [],
+            "reply": false,
+            "ttl_seconds": 5
+          }
+        ],
+        "name": "room",
+        "remove_reason_required": false,
+        "typing": false
+      },
+      {
+        "anchor": "family",
+        "attach_to": [
+          "ticket"
+        ],
+        "cardinality": "one",
+        "label": "secret",
+        "lifecycle": [],
+        "message_types": [
+          {
+            "actions": [],
+            "label": "text",
+            "name": "text",
+            "persist": "log",
+            "properties": [
+              {
+                "label": "body",
+                "name": "body",
+                "type": "string"
+              }
+            ],
+            "reply": true
+          }
+        ],
+        "name": "secret",
+        "remove_reason_required": false,
+        "typing": false
+      },
+      {
+        "anchor": "family",
+        "attach_to": [
+          "ticket"
+        ],
+        "cardinality": "many",
+        "label": "threads",
+        "lifecycle": [
+          {
+            "label": "delete",
+            "name": "delete"
+          }
+        ],
+        "message_types": [
+          {
+            "actions": [],
+            "label": "text",
+            "name": "text",
+            "persist": "log",
+            "properties": [
+              {
+                "label": "body",
+                "name": "body",
+                "type": "string"
+              }
+            ],
+            "reply": true
+          }
+        ],
+        "name": "threads",
+        "remove_reason_required": false,
+        "typing": false
+      },
+      {
+        "anchor": "family",
+        "attach_to": [
+          "ticket"
+        ],
+        "cardinality": "many",
+        "label": "topics",
+        "lifecycle": [],
+        "message_types": [
+          {
+            "actions": [],
+            "label": "text",
+            "name": "text",
+            "persist": "log",
+            "properties": [
+              {
+                "label": "body",
+                "name": "body",
+                "type": "string"
+              }
+            ],
+            "reply": true
+          }
+        ],
+        "name": "topics",
+        "remove_reason_required": false,
+        "typing": false
+      }
+    ]
+  },
+  "failed_outputs_messages": {
+    "channel": {
+      "anchor": "TKT-1",
+      "created_at": "2026-01-02T03:04:05Z",
+      "created_by": {
+        "tool": "data-entry",
+        "user": "alice"
+      },
+      "last_seq": 4,
+      "rev": 5,
+      "session": {
+        "entered_at": "2026-01-02T03:04:05Z",
+        "final": true,
+        "generation": 2,
+        "label": "Reviewed",
+        "state": "reviewed",
+        "status": "completed"
+      },
+      "state": "open",
+      "type": "incident"
+    },
+    "has_more": false,
+    "messages": [
+      {
+        "at": "2026-01-02T03:04:05Z",
+        "author": {
+          "tool": "data-entry",
+          "user": "alice"
+        },
+        "rev": 1,
+        "seq": 1,
+        "type": "contained"
+      },
+      {
+        "at": "2026-01-02T03:04:05Z",
+        "author": {
+          "principal_type": "system",
+          "system": true,
+          "tool": "realtime",
+          "user": "system:realtime"
+        },
+        "props": {
+          "cause": 1,
+          "from": "detected",
+          "generation": 1,
+          "to": "contained"
+        },
+        "rev": 2,
+        "seq": 2,
+        "triggered_by": "session:incident",
+        "type": "session"
+      },
+      {
+        "at": "2026-01-02T03:04:05Z",
+        "author": {
+          "tool": "data-entry",
+          "user": "alice"
+        },
+        "props": {
+          "body": "done"
+        },
+        "rev": 3,
+        "seq": 3,
+        "type": "note"
+      },
+      {
+        "at": "2026-01-02T03:04:05Z",
+        "author": {
+          "principal_type": "system",
+          "system": true,
+          "tool": "realtime",
+          "user": "system:realtime"
+        },
+        "outputs": {
+          "results": [
+            {
+              "code": "invalid",
+              "kind": "set",
+              "props": [
+                "status"
+              ],
+              "status": "failed"
+            }
+          ],
+          "status": "failed",
+          "writer": {
+            "tool": "data-entry",
+            "user": "alice"
+          }
+        },
+        "props": {
+          "cause": 3,
+          "from": "contained",
+          "generation": 2,
+          "to": "reviewed"
+        },
+        "rev": 5,
+        "seq": 4,
+        "triggered_by": "session:incident",
+        "type": "session"
+      }
+    ],
+    "next_after_rev": 5,
+    "next_before": 1
+  },
+  "guarded_head": {
+    "_actions": {
+      "delete_own": false,
+      "edit_own": false,
+      "entries": [],
+      "lifecycle": [],
+      "post": [
+        "contained",
+        "text"
+      ],
+      "remove": false,
+      "transitions": [],
+      "typing": false
+    },
+    "channel": {
+      "anchor": "TKT-1",
+      "created_at": "2026-01-02T03:04:05Z",
+      "created_by": {
+        "tool": "data-entry",
+        "user": "alice"
+      },
+      "last_seq": 3,
+      "read": {
+        "seq": 2,
+        "unread": 1
+      },
+      "rev": 3,
+      "session": {
+        "entered_at": "2026-01-02T03:04:05Z",
+        "generation": 1,
+        "label": "Contained",
+        "reminders": [
+          {
+            "count": 1,
+            "due_at": "2026-01-02T03:04:05Z",
+            "every": "30m",
+            "label": "Status update",
+            "max": 48,
+            "name": "status-update"
+          }
+        ],
+        "state": "contained",
+        "status": "working",
+        "transitions": [
+          {
+            "entry": 0,
+            "guarded": true,
+            "message_type": "assessed",
+            "to": "assessed"
+          }
+        ]
+      },
+      "state": "open",
+      "type": "breach-response"
+    },
+    "ephemeral": [],
+    "last": {
+      "at": "2026-01-02T03:04:05Z",
+      "author": {
+        "principal_type": "system",
+        "system": true,
+        "tool": "realtime",
+        "user": "system:realtime"
+      },
+      "props": {
+        "body": "Post a status update"
+      },
+      "rev": 3,
+      "seq": 3,
+      "triggered_by": "reminder:breach-response/status-update",
+      "type": "reminder"
+    },
+    "typing_now": []
+  },
+  "head": {
+    "_actions": {
+      "delete_own": true,
+      "edit_own": true,
+      "entries": [],
+      "lifecycle": [
+        "close"
+      ],
+      "post": [
+        "text",
+        "typing"
+      ],
+      "remove": false,
+      "transitions": [],
+      "typing": false
+    },
+    "channel": {
+      "anchor": "TKT-1",
+      "created_at": "2026-01-02T03:04:05Z",
+      "created_by": {
+        "tool": "data-entry",
+        "user": "alice"
+      },
+      "last_seq": 5,
+      "read": {
+        "seq": 5,
+        "unread": 0
+      },
+      "rev": 8,
+      "state": "open",
+      "type": "room"
+    },
+    "ephemeral": [
+      {
+        "at": "2026-01-02T03:04:05Z",
+        "author": {
+          "tool": "data-entry",
+          "user": "alice"
+        },
+        "expires_at": "2026-01-02T03:04:05Z",
+        "id": "signal-id",
+        "type": "typing"
+      }
+    ],
+    "last": {
+      "removed": {
+        "at": "2026-01-02T03:04:05Z",
+        "kind": "author"
+      },
+      "rev": 8,
+      "seq": 5
+    },
+    "typing_now": []
+  },
+  "inbox_summary": {
+    "degraded": false,
+    "mentions": 0,
+    "unread_channels": 0,
+    "waiting": 0,
+    "waiting_truncated": false
+  },
+  "list": {
+    "anchor": "TKT-1",
+    "types": [
+      {
+        "cardinality": "one",
+        "channels": [],
+        "create": false,
+        "label": "briefing",
+        "type": "briefing"
+      },
+      {
+        "cardinality": "one",
+        "channels": [],
+        "create": false,
+        "label": "chat",
+        "type": "chat"
+      },
+      {
+        "cardinality": "one",
+        "channels": [
+          {
+            "anchor": "TKT-1",
+            "created_at": "2026-01-02T03:04:05Z",
+            "created_by": {
+              "tool": "data-entry",
+              "user": "alice"
+            },
+            "last_seq": 2,
+            "read": {
+              "seq": 2,
+              "unread": 0
+            },
+            "rev": 2,
+            "session": {
+              "entered_at": "2026-01-02T03:04:05Z",
+              "final": true,
+              "generation": 1,
+              "label": "Contained",
+              "state": "contained",
+              "status": "completed"
+            },
+            "state": "open",
+            "type": "incident"
+          }
+        ],
+        "create": false,
+        "label": "incident",
+        "type": "incident"
+      },
+      {
+        "cardinality": "one",
+        "channels": [
+          {
+            "anchor": "TKT-1",
+            "created_at": "2026-01-02T03:04:05Z",
+            "created_by": {
+              "tool": "data-entry",
+              "user": "alice"
+            },
+            "last_seq": 5,
+            "read": {
+              "seq": 5,
+              "unread": 0
+            },
+            "rev": 8,
+            "state": "open",
+            "type": "room"
+          }
+        ],
+        "create": false,
+        "label": "Room",
+        "type": "room"
+      },
+      {
+        "cardinality": "many",
+        "channels": [],
+        "create": true,
+        "label": "threads",
+        "type": "threads"
+      },
+      {
+        "cardinality": "many",
+        "channels": [],
+        "create": false,
+        "label": "topics",
+        "type": "topics"
+      }
+    ]
+  },
+  "messages": {
+    "channel": {
+      "anchor": "TKT-1",
+      "created_at": "2026-01-02T03:04:05Z",
+      "created_by": {
+        "tool": "data-entry",
+        "user": "alice"
+      },
+      "last_seq": 5,
+      "rev": 8,
+      "state": "open",
+      "type": "room"
+    },
+    "has_more": false,
+    "messages": [
+      {
+        "_actions": [
+          "ack",
+          "delete",
+          "edit"
+        ],
+        "at": "2026-01-02T03:04:05Z",
+        "author": {
+          "tool": "data-entry",
+          "user": "alice"
+        },
+        "edit_until": "2026-01-02T03:04:05Z",
+        "props": {
+          "body": "hello"
+        },
+        "rev": 1,
+        "seq": 1,
+        "type": "text"
+      },
+      {
+        "_actions": [
+          "ack"
+        ],
+        "at": "2026-01-02T03:04:05Z",
+        "author": {
+          "tool": "data-entry",
+          "user": "dave"
+        },
+        "props": {
+          "about": {
+            "restricted": true
+          },
+          "body": "see"
+        },
+        "rev": 2,
+        "seq": 2,
+        "type": "text"
+      },
+      {
+        "_actions": [
+          "delete",
+          "edit"
+        ],
+        "action": {
+          "at": "2026-01-02T03:04:05Z",
+          "name": "ack",
+          "status": "done"
+        },
+        "at": "2026-01-02T03:04:05Z",
+        "author": {
+          "tool": "data-entry",
+          "user": "alice"
+        },
+        "edit_until": "2026-01-02T03:04:05Z",
+        "props": {
+          "body": "acked"
+        },
+        "rev": 4,
+        "seq": 3,
+        "type": "text"
+      },
+      {
+        "action": {
+          "at": "2026-01-02T03:04:05Z",
+          "name": "ack",
+          "status": "pending"
+        },
+        "at": "2026-01-02T03:04:05Z",
+        "author": {
+          "tool": "data-entry",
+          "user": "alice"
+        },
+        "props": {
+          "body": "pending"
+        },
+        "release_after": "2026-01-02T03:04:05Z",
+        "rev": 6,
+        "seq": 4,
+        "type": "text"
+      },
+      {
+        "removed": {
+          "at": "2026-01-02T03:04:05Z",
+          "kind": "author"
+        },
+        "rev": 8,
+        "seq": 5
+      }
+    ],
+    "next_after_rev": 8,
+    "next_before": 1
+  },
+  "outputs_head": {
+    "_actions": {
+      "delete_own": false,
+      "edit_own": false,
+      "entries": [
+        {
+          "entry": 0,
+          "message_type": "note"
+        }
+      ],
+      "lifecycle": [
+        "close"
+      ],
+      "post": [
+        "contained",
+        "note"
+      ],
+      "remove": false,
+      "transitions": [
+        "note"
+      ],
+      "typing": false
+    },
+    "channel": {
+      "anchor": "TKT-1",
+      "created_at": "2026-01-02T03:04:05Z",
+      "created_by": {
+        "tool": "data-entry",
+        "user": "alice"
+      },
+      "last_seq": 2,
+      "read": {
+        "seq": 2,
+        "unread": 0
+      },
+      "rev": 2,
+      "session": {
+        "entered_at": "2026-01-02T03:04:05Z",
+        "generation": 1,
+        "label": "Contained",
+        "state": "contained",
+        "status": "working",
+        "transitions": [
+          {
+            "entry": 0,
+            "message_type": "note",
+            "outputs": 1,
+            "to": "reviewed"
+          }
+        ]
+      },
+      "state": "open",
+      "type": "incident"
+    },
+    "ephemeral": [],
+    "last": {
+      "at": "2026-01-02T03:04:05Z",
+      "author": {
+        "principal_type": "system",
+        "system": true,
+        "tool": "realtime",
+        "user": "system:realtime"
+      },
+      "props": {
+        "cause": 1,
+        "from": "detected",
+        "generation": 1,
+        "to": "contained"
+      },
+      "rev": 2,
+      "seq": 2,
+      "triggered_by": "session:incident",
+      "type": "session"
+    },
+    "typing_now": []
+  },
+  "outputs_messages": {
+    "channel": {
+      "anchor": "TKT-2",
+      "created_at": "2026-01-02T03:04:05Z",
+      "created_by": {
+        "tool": "data-entry",
+        "user": "alice"
+      },
+      "last_seq": 2,
+      "rev": 6,
+      "session": {
+        "entered_at": "2026-01-02T03:04:05Z",
+        "generation": 1,
+        "label": "Contained",
+        "state": "contained",
+        "status": "working",
+        "transitions": [
+          {
+            "entry": 0,
+            "message_type": "note",
+            "outputs": 1,
+            "to": "reviewed"
+          }
+        ]
+      },
+      "state": "open",
+      "type": "incident"
+    },
+    "has_more": false,
+    "messages": [
+      {
+        "at": "2026-01-02T03:04:05Z",
+        "author": {
+          "tool": "data-entry",
+          "user": "alice"
+        },
+        "rev": 1,
+        "seq": 1,
+        "type": "contained"
+      },
+      {
+        "at": "2026-01-02T03:04:05Z",
+        "author": {
+          "principal_type": "system",
+          "system": true,
+          "tool": "realtime",
+          "user": "system:realtime"
+        },
+        "outputs": {
+          "results": [
+            {
+              "kind": "set",
+              "props": [
+                "status"
+              ],
+              "status": "done"
+            },
+            {
+              "entity": {
+                "restricted": true
+              },
+              "kind": "create",
+              "status": "done"
+            }
+          ],
+          "status": "done",
+          "writer": {
+            "tool": "data-entry",
+            "user": "alice"
+          }
+        },
+        "props": {
+          "cause": 1,
+          "from": "detected",
+          "generation": 1,
+          "to": "contained"
+        },
+        "rev": 6,
+        "seq": 2,
+        "triggered_by": "session:incident",
+        "type": "session"
+      }
+    ],
+    "next_after_rev": 6,
+    "next_before": 1
+  },
+  "reminder_messages": {
+    "channel": {
+      "anchor": "TKT-1",
+      "created_at": "2026-01-02T03:04:05Z",
+      "created_by": {
+        "tool": "data-entry",
+        "user": "alice"
+      },
+      "last_seq": 3,
+      "rev": 3,
+      "session": {
+        "entered_at": "2026-01-02T03:04:05Z",
+        "generation": 1,
+        "label": "Contained",
+        "reminders": [
+          {
+            "count": 1,
+            "due_at": "2026-01-02T03:04:05Z",
+            "every": "30m",
+            "label": "Status update",
+            "max": 48,
+            "name": "status-update"
+          }
+        ],
+        "state": "contained",
+        "status": "working",
+        "transitions": [
+          {
+            "entry": 0,
+            "guarded": true,
+            "message_type": "assessed",
+            "to": "assessed"
+          }
+        ]
+      },
+      "state": "open",
+      "type": "breach-response"
+    },
+    "has_more": false,
+    "messages": [
+      {
+        "at": "2026-01-02T03:04:05Z",
+        "author": {
+          "tool": "data-entry",
+          "user": "alice"
+        },
+        "rev": 1,
+        "seq": 1,
+        "type": "contained"
+      },
+      {
+        "at": "2026-01-02T03:04:05Z",
+        "author": {
+          "principal_type": "system",
+          "system": true,
+          "tool": "realtime",
+          "user": "system:realtime"
+        },
+        "props": {
+          "cause": 1,
+          "from": "detected",
+          "generation": 1,
+          "to": "contained"
+        },
+        "rev": 2,
+        "seq": 2,
+        "triggered_by": "session:breach-response",
+        "type": "session"
+      },
+      {
+        "at": "2026-01-02T03:04:05Z",
+        "author": {
+          "principal_type": "system",
+          "system": true,
+          "tool": "realtime",
+          "user": "system:realtime"
+        },
+        "props": {
+          "body": "Post a status update"
+        },
+        "rev": 3,
+        "seq": 3,
+        "triggered_by": "reminder:breach-response/status-update",
+        "type": "reminder"
+      }
+    ],
+    "next_after_rev": 3,
+    "next_before": 1
+  },
+  "schema": {
+    "channel_types": [
+      {
+        "anchor": "family",
+        "attach_to": [
+          "ticket"
+        ],
+        "cardinality": "one",
+        "label": "briefing",
+        "lifecycle": [],
+        "message_types": [
+          {
+            "actions": [],
+            "label": "note",
+            "name": "note",
+            "persist": "log",
+            "properties": [
+              {
+                "label": "body",
+                "name": "body",
+                "type": "string"
+              }
+            ],
+            "reply": true
+          }
+        ],
+        "name": "briefing",
+        "remove_reason_required": false,
+        "typing": true
+      },
+      {
+        "anchor": "family",
+        "attach_to": [
+          "ticket",
+          "feature"
+        ],
+        "cardinality": "one",
+        "label": "chat",
+        "lifecycle": [
+          {
+            "label": "close",
+            "name": "close"
+          }
+        ],
+        "message_types": [
+          {
+            "actions": [],
+            "label": "notice",
+            "name": "notice",
+            "persist": "log",
+            "properties": [
+              {
+                "label": "body",
+                "name": "body",
+                "type": "string"
+              }
+            ],
+            "reply": true
+          },
+          {
+            "actions": [],
+            "label": "status",
+            "name": "status",
+            "persist": "ephemeral",
+            "properties": [],
+            "reply": false,
+            "ttl_seconds": 30
+          },
+          {
+            "actions": [],
+            "label": "text",
+            "name": "text",
+            "persist": "log",
+            "properties": [
+              {
+                "label": "body",
+                "name": "body",
+                "required": true,
+                "type": "string"
+              }
+            ],
+            "reply": true
+          }
+        ],
+        "name": "chat",
+        "remove_reason_required": false,
+        "typing": true
+      },
+      {
+        "anchor": "family",
+        "attach_to": [
+          "ticket"
+        ],
+        "cardinality": "one",
+        "label": "incident",
+        "lifecycle": [
+          {
+            "label": "close",
+            "name": "close"
+          }
+        ],
+        "message_types": [
+          {
+            "actions": [],
+            "label": "contained",
+            "name": "contained",
+            "persist": "log",
+            "properties": [
+              {
+                "label": "note",
+                "name": "note",
+                "type": "string"
+              }
+            ],
+            "reply": true
+          },
+          {
+            "actions": [],
+            "label": "note",
+            "name": "note",
+            "persist": "log",
+            "properties": [
+              {
+                "label": "body",
+                "name": "body",
+                "type": "string"
+              }
+            ],
+            "reply": true
+          }
+        ],
+        "name": "incident",
+        "remove_reason_required": false,
+        "session": {
+          "initial": "detected",
+          "label": "incident",
+          "states": [
+            {
+              "label": "Detected",
+              "name": "detected",
+              "status": "working"
+            },
+            {
+              "final": true,
+              "label": "Contained",
+              "name": "contained",
+              "status": "completed"
+            }
+          ]
+        },
+        "typing": false
+      },
+      {
+        "anchor": "family",
+        "attach_to": [
+          "ticket",
+          "feature"
+        ],
+        "cardinality": "one",
+        "label": "Room",
+        "lifecycle": [
+          {
+            "label": "close",
+            "name": "close"
+          },
+          {
+            "label": "reopen",
+            "name": "reopen"
+          },
+          {
+            "label": "delete",
+            "name": "delete"
+          }
+        ],
+        "message_types": [
+          {
+            "actions": [],
+            "label": "announce",
+            "name": "announce",
+            "persist": "log",
+            "properties": [
+              {
+                "label": "body",
+                "name": "body",
+                "type": "string"
+              }
+            ],
+            "reply": true
+          },
+          {
+            "actions": [
+              {
+                "label": "accept",
+                "name": "accept",
+                "promote_to": "ticket"
+              },
+              {
+                "label": "ack",
+                "name": "ack"
+              }
+            ],
+            "label": "text",
+            "name": "text",
+            "persist": "log",
+            "properties": [
+              {
+                "label": "body",
+                "name": "body",
+                "required": true,
+                "type": "string"
+              },
+              {
+                "label": "about",
+                "name": "about",
+                "to": [
+                  "ticket",
+                  "feature"
+                ],
+                "type": "ref"
+              }
+            ],
+            "reply": true
+          },
+          {
+            "actions": [],
+            "label": "typing",
+            "name": "typing",
+            "persist": "ephemeral",
+            "properties": [],
+            "reply": false,
+            "ttl_seconds": 5
+          }
+        ],
+        "name": "room",
+        "remove_reason_required": false,
+        "typing": false
+      },
+      {
+        "anchor": "family",
+        "attach_to": [
+          "ticket"
+        ],
+        "cardinality": "one",
+        "label": "secret",
+        "lifecycle": [],
+        "message_types": [
+          {
+            "actions": [],
+            "label": "text",
+            "name": "text",
+            "persist": "log",
+            "properties": [
+              {
+                "label": "body",
+                "name": "body",
+                "type": "string"
+              }
+            ],
+            "reply": true
+          }
+        ],
+        "name": "secret",
+        "remove_reason_required": false,
+        "typing": false
+      },
+      {
+        "anchor": "family",
+        "attach_to": [
+          "ticket"
+        ],
+        "cardinality": "many",
+        "label": "threads",
+        "lifecycle": [
+          {
+            "label": "delete",
+            "name": "delete"
+          }
+        ],
+        "message_types": [
+          {
+            "actions": [],
+            "label": "text",
+            "name": "text",
+            "persist": "log",
+            "properties": [
+              {
+                "label": "body",
+                "name": "body",
+                "type": "string"
+              }
+            ],
+            "reply": true
+          }
+        ],
+        "name": "threads",
+        "remove_reason_required": false,
+        "typing": false
+      },
+      {
+        "anchor": "family",
+        "attach_to": [
+          "ticket"
+        ],
+        "cardinality": "many",
+        "label": "topics",
+        "lifecycle": [],
+        "message_types": [
+          {
+            "actions": [],
+            "label": "text",
+            "name": "text",
+            "persist": "log",
+            "properties": [
+              {
+                "label": "body",
+                "name": "body",
+                "type": "string"
+              }
+            ],
+            "reply": true
+          }
+        ],
+        "name": "topics",
+        "remove_reason_required": false,
+        "typing": false
+      }
+    ]
+  },
+  "session_head": {
+    "_actions": {
+      "delete_own": false,
+      "edit_own": false,
+      "entries": [],
+      "lifecycle": [
+        "close"
+      ],
+      "post": [
+        "contained",
+        "note"
+      ],
+      "remove": false,
+      "transitions": [],
+      "typing": false
+    },
+    "channel": {
+      "anchor": "TKT-1",
+      "created_at": "2026-01-02T03:04:05Z",
+      "created_by": {
+        "tool": "data-entry",
+        "user": "alice"
+      },
+      "last_seq": 2,
+      "read": {
+        "seq": 2,
+        "unread": 0
+      },
+      "rev": 2,
+      "session": {
+        "entered_at": "2026-01-02T03:04:05Z",
+        "final": true,
+        "generation": 1,
+        "label": "Contained",
+        "state": "contained",
+        "status": "completed"
+      },
+      "state": "open",
+      "type": "incident"
+    },
+    "ephemeral": [],
+    "last": {
+      "at": "2026-01-02T03:04:05Z",
+      "author": {
+        "principal_type": "system",
+        "system": true,
+        "tool": "realtime",
+        "user": "system:realtime"
+      },
+      "props": {
+        "cause": 1,
+        "from": "detected",
+        "generation": 1,
+        "to": "contained"
+      },
+      "rev": 2,
+      "seq": 2,
+      "triggered_by": "session:incident",
+      "type": "session"
+    },
+    "typing_now": []
+  },
+  "session_messages": {
+    "channel": {
+      "anchor": "TKT-1",
+      "created_at": "2026-01-02T03:04:05Z",
+      "created_by": {
+        "tool": "data-entry",
+        "user": "alice"
+      },
+      "last_seq": 2,
+      "rev": 2,
+      "session": {
+        "entered_at": "2026-01-02T03:04:05Z",
+        "final": true,
+        "generation": 1,
+        "label": "Contained",
+        "state": "contained",
+        "status": "completed"
+      },
+      "state": "open",
+      "type": "incident"
+    },
+    "has_more": false,
+    "messages": [
+      {
+        "at": "2026-01-02T03:04:05Z",
+        "author": {
+          "tool": "data-entry",
+          "user": "alice"
+        },
+        "rev": 1,
+        "seq": 1,
+        "type": "contained"
+      },
+      {
+        "at": "2026-01-02T03:04:05Z",
+        "author": {
+          "principal_type": "system",
+          "system": true,
+          "tool": "realtime",
+          "user": "system:realtime"
+        },
+        "props": {
+          "cause": 1,
+          "from": "detected",
+          "generation": 1,
+          "to": "contained"
+        },
+        "rev": 2,
+        "seq": 2,
+        "triggered_by": "session:incident",
+        "type": "session"
+      }
+    ],
+    "next_after_rev": 2,
+    "next_before": 1
+  },
+  "session_schema": {
+    "channel_types": [
+      {
+        "anchor": "family",
+        "attach_to": [
+          "ticket"
+        ],
+        "cardinality": "one",
+        "label": "Breach response",
+        "lifecycle": [],
+        "message_types": [
+          {
+            "actions": [],
+            "label": "assessed",
+            "name": "assessed",
+            "persist": "log",
+            "properties": [
+              {
+                "label": "risk",
+                "name": "risk",
+                "required": true,
+                "type": "string"
+              }
+            ],
+            "reply": true
+          },
+          {
+            "actions": [],
+            "label": "contained",
+            "name": "contained",
+            "persist": "log",
+            "properties": [
+              {
+                "label": "note",
+                "name": "note",
+                "type": "string"
+              }
+            ],
+            "reply": true
+          },
+          {
+            "actions": [],
+            "label": "dismiss",
+            "name": "dismiss",
+            "persist": "log",
+            "properties": [
+              {
+                "label": "reason",
+                "name": "reason",
+                "required": true,
+                "type": "string"
+              }
+            ],
+            "reply": true
+          },
+          {
+            "actions": [],
+            "label": "escalated",
+            "name": "escalated",
+            "persist": "log",
+            "properties": [
+              {
+                "label": "note",
+                "name": "note",
+                "type": "string"
+              }
+            ],
+            "reply": true
+          },
+          {
+            "actions": [],
+            "label": "notified",
+            "name": "notified",
+            "persist": "log",
+            "properties": [
+              {
+                "label": "reference",
+                "name": "reference",
+                "required": true,
+                "type": "string"
+              }
+            ],
+            "reply": true
+          },
+          {
+            "actions": [],
+            "label": "reminder",
+            "name": "reminder",
+            "persist": "log",
+            "properties": [
+              {
+                "label": "body",
+                "name": "body",
+                "required": true,
+                "type": "string"
+              }
+            ],
+            "reply": true
+          },
+          {
+            "actions": [],
+            "label": "text",
+            "name": "text",
+            "persist": "log",
+            "properties": [
+              {
+                "label": "body",
+                "name": "body",
+                "required": true,
+                "type": "string"
+              }
+            ],
+            "reply": true
+          }
+        ],
+        "name": "breach-response",
+        "remove_reason_required": false,
+        "session": {
+          "initial": "detected",
+          "label": "GDPR breach response",
+          "states": [
+            {
+              "label": "Detected",
+              "name": "detected",
+              "status": "working"
+            },
+            {
+              "label": "Contained",
+              "name": "contained",
+              "status": "working"
+            },
+            {
+              "label": "Risk assessed",
+              "name": "assessed",
+              "status": "working"
+            },
+            {
+              "final": true,
+              "label": "AP notified",
+              "name": "notified",
+              "status": "completed"
+            },
+            {
+              "final": true,
+              "label": "Dismissed",
+              "name": "dismissed",
+              "status": "completed"
+            }
+          ]
+        },
+        "typing": false
+      },
+      {
+        "anchor": "family",
+        "attach_to": [
+          "ticket"
+        ],
+        "cardinality": "one",
+        "label": "plain",
+        "lifecycle": [],
+        "message_types": [
+          {
+            "actions": [],
+            "label": "text",
+            "name": "text",
+            "persist": "log",
+            "properties": [
+              {
+                "label": "body",
+                "name": "body",
+                "type": "string"
+              }
+            ],
+            "reply": true
+          }
+        ],
+        "name": "plain",
+        "remove_reason_required": false,
+        "typing": false
+      }
+    ]
+  },
+  "typing_accepted": {
+    "ttl_seconds": 6
+  },
+  "typing_head": {
+    "_actions": {
+      "delete_own": false,
+      "edit_own": false,
+      "entries": [],
+      "lifecycle": [],
+      "post": [
+        "status",
+        "text"
+      ],
+      "remove": false,
+      "transitions": [],
+      "typing": true
+    },
+    "channel": {
+      "anchor": "TKT-1",
+      "last_seq": 0,
+      "rev": 0,
+      "state": "open",
+      "type": "chat"
+    },
+    "ephemeral": [],
+    "typing_now": [
+      {
+        "author": {
+          "tool": "data-entry",
+          "user": "bob"
+        },
+        "since": "2026-01-02T03:04:05Z"
+      }
+    ]
+  }
+}

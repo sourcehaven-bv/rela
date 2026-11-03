@@ -330,7 +330,7 @@ func TestResolvingSteps_CoversEveryMigrationDeltaKind(t *testing.T) {
 // The generator must draft a migrate_face step for a faces_introduced delta
 // rather than the do-nothing file that caused BUG-TMGWIN.
 func TestGenerate_DraftsMigrateFaceForFacesIntroduced(t *testing.T) {
-	draft, err := Generate(metaV1().ShapeProjection(), facedV1().ShapeProjection(), "adopt faces", testNow())
+	draft, err := Generate(metamodel.NewShapeProjection(metaV1()), metamodel.NewShapeProjection(facedV1()), "adopt faces", testNow())
 	if err != nil {
 		t.Fatalf("Generate: %v", err)
 	}
@@ -360,7 +360,7 @@ func TestGenerate_DraftsMigrateFaceForFacesIntroduced(t *testing.T) {
 // operator has to make a real choice before anything runs. This is the
 // generator's half of the BUG-TMGWIN fix.
 func TestGenerate_FaceDraftDoesNotApplyUnedited(t *testing.T) {
-	draft, err := Generate(metaV1().ShapeProjection(), facedV1().ShapeProjection(), "adopt faces", testNow())
+	draft, err := Generate(metamodel.NewShapeProjection(metaV1()), metamodel.NewShapeProjection(facedV1()), "adopt faces", testNow())
 	if err != nil {
 		t.Fatalf("Generate: %v", err)
 	}
@@ -381,7 +381,7 @@ func TestGenerate_FaceDraftWithoutEnumExplainsItself(t *testing.T) {
 	pdef.Faces = map[string]metamodel.FaceDef{"draft": {}, "published": {}}
 	toMeta.Entities["person"] = pdef
 
-	draft, err := Generate(metaV1().ShapeProjection(), toMeta.ShapeProjection(), "adopt faces", testNow())
+	draft, err := Generate(metamodel.NewShapeProjection(metaV1()), metamodel.NewShapeProjection(toMeta), "adopt faces", testNow())
 	if err != nil {
 		t.Fatalf("Generate: %v", err)
 	}

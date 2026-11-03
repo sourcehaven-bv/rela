@@ -1,8 +1,12 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import { useI18n } from 'vue-i18n'
 import { navigationPending } from '@/router'
 import { useSchemaStore, useUIStore } from '@/stores'
+import { provideMessages } from 'rela-components/composables/useMessages'
+import { localeMessages } from 'rela-components/composables/localeMessages'
+import { resolvedLanguage, setProjectLanguage } from '@/i18n'
 import { getErrorMessage } from '@/api'
 import {
   useKeyboardShortcuts,
@@ -50,6 +54,7 @@ import RlIconButton from 'rela-components/components/common/RlIconButton.vue'
 // Gate 2 — route name: forms always have a Cancel that navigates back, so
 // even a "top-level" form (linked from the sidebar with no back-target
 // query) should hide the hamburger.
+const { t } = useI18n()
 const route = useRoute()
 const backTarget = useBackTarget()
 const NON_TOP_LEVEL_ROUTES = new Set(['form-create', 'form-edit'])
@@ -75,6 +80,15 @@ const showHamburger = computed(
 )
 
 const schemaStore = useSchemaStore()
+
+// The library's own strings follow the interface language (TKT-ZL1QAO),
+// and the project default from app.language feeds the resolution.
+provideMessages(localeMessages(() => resolvedLanguage.value.language))
+watch(
+  () => schemaStore.app?.language,
+  (language) => setProjectLanguage(language),
+  { immediate: true }
+)
 const uiStore = useUIStore()
 // The Configure space has its own sidebar and no space create menu.
 const configuring = computed(() => isConfigurePath(route.path))
@@ -140,7 +154,7 @@ onMounted(async () => {
   try {
     await schemaStore.load()
   } catch (err) {
-    error.value = getErrorMessage(err, 'Failed to load application')
+    error.value = getErrorMessage(err, t('shell.loadFailed'))
     uiStore.error(error.value)
   } finally {
     loading.value = false
@@ -216,14 +230,14 @@ watch(
     there is no parent pane for it to fill.
   -->
   <div v-if="loading" class="boot-screen">
-    <RlStatusRegion>Loading...</RlStatusRegion>
+    <RlStatusRegion>{{ t('shell.loading') }}</RlStatusRegion>
   </div>
 
   <div v-else-if="error" class="boot-screen">
     <RlStatusRegion tone="error">
       {{ error }}
       <template #actions>
-        <RlButton variant="primary" @click="schemaStore.reload()">Retry</RlButton>
+        <RlButton variant="primary" @click="schemaStore.reload()">{{ t('shell.retry') }}</RlButton>
       </template>
     </RlStatusRegion>
   </div>
@@ -306,10 +320,10 @@ watch(
         the drawer covers.
       -->
       <RlIconButton
-        v-if="showHamburger"
+        v-if="showHamburger && !navOpen"
         class="mobile-menu-btn"
         icon="menu"
-        label="Toggle navigation"
+        :label="t('shell.toggleNav')"
         :aria-expanded="navOpen"
         aria-controls="main-sidebar"
         @click="navOpen = !navOpen"
@@ -450,6 +464,10 @@ body {
   display: var(--rl-nav-toggle-display, none);
   align-items: center;
   justify-content: center;
+  align-self: flex-start;
+  flex: 0 0 44px;
+  width: 44px;
+  height: 44px;
   /* Sticky, not fixed: the button scrolls with its pane's padding box and
      stays put as the content moves under it. Fixed would pin it to the
      viewport, where it would sit over the drawer the shell slides in. */
@@ -479,6 +497,17 @@ body {
     /* Extra bottom padding so the last card's rounded corners aren't flush
        against the screen edge. */
     padding-bottom: 24px;
+  }
+
+  /* A sticky topbar has its own safe-area and top spacing. Keep the shell's
+     60px reservation only on pages without one; otherwise the sticky bar
+     starts a full header-slot below the viewport edge. */
+  .app-layout .rl-app-shell__main:has(.mobile-topbar, .page-layout__sticky) {
+    padding-top: 0;
+  }
+
+  .app-layout .rl-app-shell__main:has(.mobile-topbar, .page-layout__sticky) > .mobile-menu-btn {
+    margin-bottom: -44px;
   }
 
   /* Hide keyboard shortcut hints on mobile: a touch device has no keys to

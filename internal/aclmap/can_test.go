@@ -5,6 +5,8 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/Sourcehaven-BV/rela/internal/acl/acltest"
+
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/aclmap"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
@@ -137,9 +139,9 @@ func TestCan_MatchesRuntime(t *testing.T) {
 	verbs := []acl.Verb{acl.VerbRead, acl.VerbUpdate, acl.VerbDelete}
 
 	for _, prin := range principalsUnderTest {
-		req, err := w.decl.ForPrincipal(principal.Principal{User: prin, Tool: principal.ToolCLI})
+		req, err := w.decl.ForIdentity(acltest.IdentityFor(t.Context(), t, w.decl, principal.Principal{User: prin, Tool: principal.ToolCLI}))
 		if err != nil {
-			t.Fatalf("ForPrincipal %s: %v", prin, err)
+			t.Fatalf("ForIdentity %s: %v", prin, err)
 		}
 		for _, e := range entities {
 			for _, verb := range verbs {

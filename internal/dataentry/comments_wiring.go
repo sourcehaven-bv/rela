@@ -3,10 +3,9 @@ package dataentry
 import (
 	"context"
 	"errors"
-	"fmt"
 	"net/http"
-	"strings"
 
+	"github.com/Sourcehaven-BV/rela/internal/access"
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/comments"
@@ -99,16 +98,29 @@ func (h *commentsHandler) commentPolicy() metamodel.CommentPolicy {
 // relation TO THE COMMENTED-ON ENTITY is honored, not just a global grant. That
 // is what lets "the assignee may comment on their own ticket" be expressed
 // without any special case here.
-type commentPermissionGate struct{ policyActive bool }
+//
+// active reports whether a declarative policy is configured; without one the
+// gate is inert. policy is that policy. Nil policy while active: accepted —
+// a typed-nil policy is a wiring bug, and the gate denies.
+type commentPermissionGate struct {
+	policy *acl.Declarative
+	active bool
+}
 
 func (g commentPermissionGate) HoldsPermission(ctx context.Context, subjectID, permission string) bool {
-	req := acl.FromContext(ctx)
-	if req == nil {
-		// Mirrors the statemachine transition guard (appbuild/transitions.go):
-		// inert when no policy exists at all, fail CLOSED when one does but the
-		// Request is missing — a served path that lost its middleware must not
-		// silently open commenting.
-		return !g.policyActive
+	if !g.active {
+		return true
+	}
+	if g.policy == nil {
+		return false
+	}
+	// Mirrors the statemachine transition guard (appbuild/transitions.go):
+	// inert when no policy exists at all, fail CLOSED when one does but the
+	// Request is missing or bound to another principal — a served path that
+	// lost its middleware must not silently open commenting.
+	req, err := g.policy.RequestFrom(ctx)
+	if err != nil {
+		return false
 	}
 	return req.HoldsPermissionForEntity(ctx, subjectID, permission)
 }
@@ -133,25 +145,26 @@ func (commentReadGate) CanRead(ctx context.Context, entityType, entityID string)
 // request-scoped itself, but the gates it holds read the ACL from ctx, and a
 // cached authorizer would invite someone to give it request state later.
 func (h *commentsHandler) commentAuthorizer() *comments.Authorizer {
-	active := h.aclPolicyActive()
-	return comments.NewAuthorizer(commentPermissionGate{policyActive: active}, commentReadGate{}, active)
+	policy, active := h.aclPolicy()
+	return comments.NewAuthorizer(commentPermissionGate{policy: policy, active: active}, commentReadGate{}, active)
 }
 
-// aclPolicyActive reports whether per-principal comment permissions are
-// enforced.
+// aclPolicy returns the declarative policy, and whether per-principal comment
+// permissions are enforced.
 //
-// True only for a declarative policy — the deployment that actually has roles
-// and permissions to evaluate. [acl.NopACL] and [acl.ReadOnlyACL] both leave
-// this false: neither carries a role model, so demanding `comment:read` under
+// Active only for a declarative policy — the deployment that actually has roles
+// and permissions to evaluate. A typed-nil policy is active with a nil policy,
+// so the gate fails closed on that wiring bug. [acl.NopACL] and
+// [acl.ReadOnlyACL] both leave it inactive: neither carries a role model, so demanding `comment:read` under
 // them would deny every request rather than authorize anything.
 //
 // ReadOnlyACL's write refusal is enforced separately by
 // commentWritesPermitted, NOT by pretending it is a permission policy:
 // it is a process-wide switch, and conflating the two made read-only instances
 // refuse comment READS as well.
-func (h *commentsHandler) aclPolicyActive() bool {
-	_, ok := h.acl().(*acl.Declarative)
-	return ok
+func (h *commentsHandler) aclPolicy() (policy *acl.Declarative, active bool) {
+	policy, _ = h.acl().(*acl.Declarative)
+	return policy, access.ModeOf(h.acl()).PolicyConfigured()
 }
 
 // commentWritesPermitted reports whether this instance accepts comment writes
@@ -161,12 +174,7 @@ func (h *commentsHandler) aclPolicyActive() bool {
 // process-wide refusal, not a permission a principal could hold: no grant in
 // any acl.yaml should make a read-only instance writable.
 func (h *commentsHandler) commentWritesPermitted() bool {
-	switch h.acl().(type) {
-	case acl.ReadOnlyACL, *acl.ReadOnlyACL:
-		return false
-	default:
-		return true
-	}
+	return !access.ModeOf(h.acl()).RefusesWrites()
 }
 
 // anchorContext is what a read needs to decide how each anchor currently
@@ -219,48 +227,13 @@ func (h *commentsHandler) liveAnchors(target comments.Target, ent *entity.Entity
 	return anchorContext{properties: refs, body: comments.NewBody(ent.Content), loaded: true}
 }
 
-// buildTextAnchor derives a text anchor's descriptors from the entity's own
-// body, given the quote the client selected.
-//
-// The client supplies only the quote; everything else (prefix, suffix,
-// sentence, heading, paragraph index) is computed here. That asymmetry is
-// deliberate and is the security-relevant part: descriptors sourced from the
-// request could describe context that does not exist in the entity, so a later
-// resolve would land on text the commenter never selected.
-//
-// WHICH occurrence was meant is decided by the surrounding rendered text the
-// client sends alongside the quote. That context is untrusted in the sense that
-// it only selects among real occurrences — it can never introduce a location,
-// because the quote must still be found in the body. Without it a repeated
-// quote resolves to the first occurrence, which is how a comment on "Geordend"
-// ended up highlighting "Ongeordend".
-//
-// ent is the row the request gate resolved through the visibility wrapper, so
-// a principal can only anchor to text it may already read, and only within the
-// face the thread belongs to.
+// buildTextAnchor builds a text anchor in ent's body with
+// [comments.BuildTextAnchor]. ent is the row the request gate resolved
+// through the visibility wrapper, so a principal can only anchor to text it
+// may already read, and only within the face the thread belongs to.
 func buildTextAnchor(ent *entity.Entity, quote, prefix, suffix string) (*comments.TextAnchor, error) {
-	quote = strings.TrimSpace(quote)
-	if len([]rune(quote)) < comments.MinQuoteRunes {
-		return nil, fmt.Errorf("selected text must be at least %d characters", comments.MinQuoteRunes)
-	}
-	if len(quote) > comments.MaxQuoteBytes {
-		return nil, fmt.Errorf("selected text exceeds %d bytes", comments.MaxQuoteBytes)
-	}
-
 	if ent == nil {
 		return nil, errors.New("could not read the entity body")
 	}
-
-	// The quote came from RENDERED markdown, so it is display text: no list
-	// markers, no backticks, blocks joined by newlines. Matching it against the
-	// source with a plain substring search fails for any selection crossing a
-	// bullet or a code span — FindRenderedQuote maps through the AST instead.
-	start, end, ok := comments.FindRenderedQuote(ent.Content, quote, prefix, suffix)
-	if !ok {
-		// Either a stale tab (the body changed between render and submit) or a
-		// selection that genuinely spans nothing locatable.
-		return nil, errors.New("the selected text was not found in the current body")
-	}
-
-	return comments.NewTextAnchor(ent.Content, start, end)
+	return comments.BuildTextAnchor(ent.Content, quote, prefix, suffix)
 }

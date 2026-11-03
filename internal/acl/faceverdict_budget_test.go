@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"testing"
 
+	"github.com/Sourcehaven-BV/rela/internal/aclstore"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
 	"github.com/Sourcehaven-BV/rela/internal/store/memstore"
@@ -42,11 +43,11 @@ func TestReadableFacesMany_OneQueryPerBatch(t *testing.T) {
 			d, err := NewDeclarative(&Policy{
 				Roles:         map[string]RoleDef{"reviewer": {Read: []string{"policy@published"}}},
 				RoleRelations: map[string]RoleRelationDef{"reviews": {Confers: "reviewer"}},
-			}, NewStoreGraph(base), st)
+			}, aclstore.MustNewGraph(base), st)
 			if err != nil {
 				t.Fatal(err)
 			}
-			req, err := d.ForPrincipal(principal.Principal{User: "alice", Tool: principal.ToolDataEntry})
+			req, err := d.ForIdentity(identityFor(t.Context(), t, d, principal.Principal{User: "alice", Tool: principal.ToolDataEntry}))
 			if err != nil {
 				t.Fatal(err)
 			}

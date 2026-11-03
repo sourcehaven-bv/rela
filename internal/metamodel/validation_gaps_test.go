@@ -14,10 +14,10 @@ func TestValidatePropertyValue_IntegerRejectsFractional(t *testing.T) {
 	meta := &Metamodel{}
 	propDef := &PropertyDef{Type: PropertyTypeInteger}
 
-	if err := meta.ValidatePropertyValue("count", propDef, 3.5); err == nil {
+	if err := NewValidator(meta).ValidatePropertyValue("count", propDef, 3.5); err == nil {
 		t.Error("expected error for fractional float 3.5 on an integer property")
 	}
-	if err := meta.ValidatePropertyValue("count", propDef, 3.0); err != nil {
+	if err := NewValidator(meta).ValidatePropertyValue("count", propDef, 3.0); err != nil {
 		t.Errorf("integral float 3.0 should be accepted, got: %v", err)
 	}
 }

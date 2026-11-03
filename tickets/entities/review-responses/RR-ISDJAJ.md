@@ -1,0 +1,9 @@
+---
+id: RR-ISDJAJ
+type: review-response
+title: Trigger-before-close ordering breaks when the trigger post is deferred
+finding: "internal/realtime/trigger.go:1271 waitsForTrigger only looks at the trigger's live queue (queuedRefs). postOne (trigger.go:1194-1201) moves a trigger post that is in cooldown or waiting for a retry out of the queue into t.lead.deferred. waitsForTrigger then returns false and the auto rule closes the channel. The deferred post later fails with ErrNotOpen and, with the default when_closed: skip, is dropped as Skipped. docs/realtime.md:300-301 promises the opposite: \"A trigger into the same channel type that fires on the same change posts first\".\tTrigger `status-note` (on: change, when: \"entity.status ~= ''\", channel room) posts at t0 when doing->review. At t0+30s review->done: status-note is in its 1-minute cooldown and is deferred, room.close.auto enters and closes the room, and at t0+60s the \"status: done\" note is skipped. A transient Append failure on the trigger post has the same effect: the round stops, the next round pops the auto item first and closes the room.\tIn waitsForTrigger, also hold the auto rule back when a trigger into the same channel type has this entity in cooldown (lastPost[o.id+\"\\x00\"+ref] within TriggerCooldown) or in failures with a future next. Alternatively check t.lead.deferred[typ][id] whenever any trigger on that type targets ru.ct. Add a behavioural test: trigger in cooldown plus auto enter in the same round, and assert the trigger body lands before the close."
+severity: significant
+resolution: waitsForTrigger now also holds the auto rule back while a trigger into the same channel type and entity type has this entity deferred under its cooldown or a pending retry, until that time. Behavioural tests TestAuto_WaitsForTriggerInCooldown and TestAuto_WaitsForTriggerRetry go through RunRound; both fail without the fix.
+status: addressed
+---

@@ -88,7 +88,7 @@ func TestGatedReads_ValidatorTraversalUsesCallerGate(t *testing.T) {
 		Severity: "error",
 	}
 
-	raw, err := svc.Validator().CheckRule(bobCtx(principal.ToolCLI), rule)
+	raw, err := svc.Validator().CheckRule(bobCtx(t, svc, principal.ToolCLI), rule)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -96,7 +96,7 @@ func TestGatedReads_ValidatorTraversalUsesCallerGate(t *testing.T) {
 		t.Fatalf("system validator violations = %v, want [T-2]", raw)
 	}
 
-	gated, err := svc.GatedReads().Validator.CheckRule(bobCtx(principal.ToolMCP), rule)
+	gated, err := svc.GatedReads().Validator.CheckRule(bobCtx(t, svc, principal.ToolMCP), rule)
 	if err != nil {
 		t.Fatal(err)
 	}

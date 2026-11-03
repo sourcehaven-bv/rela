@@ -56,7 +56,7 @@ func TestViewCondition_RelatedUsesReaderGate(t *testing.T) {
 		Roles:       map[string]acl.RoleDef{"reader": {Read: []string{"ticket"}}},
 		Assignments: map[string]string{"T1": "reader"},
 	}, app.store)
-	app.acl = d
+	setTestACL(t, app, d)
 	resp, rec := listEntitiesAs(ctx, t, app, d, "ticket", "tickets", "per_page=100&list_id=tickets")
 	if rec.Code != http.StatusOK {
 		t.Fatalf("list: %d %s", rec.Code, rec.Body)
@@ -79,17 +79,17 @@ func TestViewCondition_RelatedWithTraversingGrantIsSizeIndependent(t *testing.T)
 				Read: []string{"*"},
 				Visible: map[string][]acl.FieldGrant{"ticket": {
 					{Field: "title"},
-					{Field: "status", When: "not related(entity, 'implements', { title = 'Feature 2' })"},
+					{Field: "status", When: "related(entity, 'implements', { title = 'Feature 2' })"},
 				}},
 			}},
 			Assignments: map[string]string{"T1": "editor"},
 		}, app.store)
-		app.acl = d
+		setTestACL(t, app, d)
 		res, err := ResolverFromProfile("", app.Meta(), app.store, d)
 		if err != nil {
 			t.Fatal(err)
 		}
-		app.fieldResolver = res
+		setTestResolver(t, app, res)
 		counting.Reset()
 		resp, rec := listEntitiesAs(ctx, t, app, d, "ticket", "tickets", "per_page=100&list_id=tickets")
 		if rec.Code != http.StatusOK || len(resp.Data) != n/5 {
@@ -116,7 +116,7 @@ func TestViewCondition_RelatedUnsupportedFailsRequest(t *testing.T) {
 		},
 		Assignments: map[string]string{"T1": "reader"},
 	}, app.store)
-	app.acl = d
+	setTestACL(t, app, d)
 	resp, rec := listEntitiesAs(ctx, t, app, d, "ticket", "tickets", "per_page=100&list_id=tickets")
 	if rec.Code < 400 || len(resp.Data) != 0 {
 		t.Fatalf("status = %d with %d rows, want a 4xx/5xx and no rows", rec.Code, len(resp.Data))

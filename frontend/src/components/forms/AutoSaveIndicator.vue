@@ -1,11 +1,14 @@
 <script setup lang="ts">
 import { computed } from 'vue'
+import { useI18n } from 'vue-i18n'
 import type { SaveStatus } from '@/composables/useAutoSave'
 
 const props = defineProps<{
   status: SaveStatus
   error?: string | null
 }>()
+
+const { t } = useI18n()
 
 // Hidden-until-needed ambient indicator: glyph swaps with state, and the
 // wrapper is only opaque while something is happening.
@@ -20,13 +23,13 @@ const tooltip = computed(() => {
   if (props.error) return props.error
   switch (props.status) {
     case 'saving':
-      return 'Saving…'
+      return t('common.saving')
     case 'saved':
-      return 'Saved'
+      return t('common.saved')
     case 'error':
-      return 'Save failed'
+      return t('form.saveFailed')
     default:
-      return 'All changes saved'
+      return t('form.allChangesSaved')
   }
 })
 
@@ -49,12 +52,12 @@ const visible = computed(() => props.error != null || props.status !== 'idle')
 // so the live region has nothing to announce on mount or when settling back
 // to idle; only saving/saved/error produce a message.
 const announcement = computed(() => {
-  if (props.error != null || props.status === 'error') return 'Save failed'
+  if (props.error != null || props.status === 'error') return t('form.saveFailed')
   switch (props.status) {
     case 'saving':
-      return 'Saving…'
+      return t('common.saving')
     case 'saved':
-      return 'Saved'
+      return t('common.saved')
     default:
       return ''
   }

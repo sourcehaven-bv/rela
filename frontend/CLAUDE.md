@@ -57,7 +57,8 @@ src/components/   → Reusable UI components
 | `src/components/forms/milkdown/` | The WYSIWYG markdown editor (Milkdown/ProseMirror) and everything it owns: entity-ref node, `@` completion, toolbar, write-back guard |
 | `src/app-editor/` | `<rela-editor>`, the Custom Element custom apps embed. Built as a standalone IIFE (`vite.editor.config.ts`), not part of the SPA bundle. Imports the editor's shared modules; holds only the plain-DOM toolbar and `@` menu that replace the SPA's Vue ones |
 | `src/components/lists/` | EntityList, FilterBar, Pagination |
-| `src/components/common/` | Sidebar, StatusBar, Badge, BackButton |
+| `src/components/common/` | Sidebar, StatusBar, BackButton |
+| `src/components/ui/` | Shared app-wide parts: Badge, WorldBadge, TagSelect, and the confirm, help and command-palette modals |
 | `src/composables/` | Vue composables: useKeyboardShortcuts, useEvents (SSE), useListKeyboard, useScopeNavigation, useBackTarget |
 | `src/styles/` | Shared CSS loaded from `main.ts` (e.g. `back-button.css` for the `.scope-nav-btn` class reused across EntityDetail, CustomView, and standalone BackButton) |
 | `src/types/` | TypeScript interfaces for entities, schema, and config |
@@ -91,9 +92,13 @@ reusing the detail-view routing in a cell has already caused regressions
   puts list first because the *edit* side needs a tag picker whatever the type;
   on the display side that erases the formatter (a list-valued rrule rendered as
   an em-dash). Non-enum lists route to preformatted text.
-- **`boolean` → text and `file` → text in cells**, deliberately: booleans stay
-  Cmd-F searchable, and FileWidget's `<img>` previews would be one network
-  request per cell.
+- **`boolean` → text in cells**, deliberately: booleans stay Cmd-F
+  searchable.
+- **`file` → `FileCellWidget`, never `FileWidget`, in cells**: names and
+  download links only, because FileWidget's `<img>` previews would be one
+  network request per cell. The `file` hint kind resolves to a dense-only
+  component that is not a registered widget, so it is not a valid `widget:`
+  override.
 - **Resolve per column/field, not per cell** — `resolve()` walks a Map and can
   `console.warn`, which at 200 rows is 200 warnings per render. See
   `PropertyDisplay.vue`'s precomputed `rows` (RR-UD2A) for the pattern.
@@ -127,9 +132,52 @@ resolve to `data-entry.yaml` configuration from the backend.
 ESLint flat config with:
 
 - Vue 3 recommended + TypeScript
-- `vue/no-v-html: warn` (XSS risk)
+- `vue/no-v-html: warn` (XSS risk). Channel message markdown is untrusted
+  (any reader with a post role writes it): render it with
+  `renderMessageMarkdown`, never `renderMarkdown`, which allows images and
+  more HTML. The channel components insert the result as it is.
 - `max-lines: 500` warning for Vue files (catches god components)
 - Relaxed rules for test files (`no-explicit-any`, `no-non-null-assertion` allowed)
+
+## Interface text and languages (vue-i18n)
+
+The SPA's own text is translated; operator text from the configuration
+(type labels, list titles, navigation groups) is not, because the operator
+already wrote it in their language (TKT-ZL1QAO). Rules for new code:
+
+- **Write interface text as `t('area.key')`**, with the key in both
+  `src/i18n/locales/en.json` and `nl.json`. In a component use
+  `const { t } = useI18n()`; outside setup (stores, label helpers) import `t`
+  from `@/i18n`. Call it at render or inside a computed, never at module load,
+  or the text will not follow a language switch. Text stored as a string
+  (a toast, a store's `lastError`) keeps the language it was made in; that is
+  accepted, because it is short-lived.
+- **The language can change once after the first paint.** `app.language`
+  arrives with the schema, so until it loads the shell follows the browser.
+  This is accepted rather than holding the whole UI back on the config
+  request.
+- **Write keys literally.** `guards.test.ts` finds unused keys by their text, so
+  `` t(`language.${code}`) `` reads as unused. Map values to keys with a literal
+  record (see `LanguageSetting.vue`).
+- **Bare template strings are ratcheted.** ESLint's
+  `vue/no-bare-strings-in-template` fails in any file not listed in
+  `src/i18n/bare-strings.json`. A listed file is held to its recorded count in
+  both directions: when you convert strings, lower the count, and delete the
+  entry at zero. Never raise a count to get a change through.
+- **The rule cannot see a literal inside a binding**
+  (`:title="busy ? 'Saving' : 'Save'"`, `{{ label || 'Other' }}`). Convert those
+  by hand and look for them in review.
+- **Dates and numbers follow the interface language.** Pass `intlLocale()` from
+  `@/i18n/locale` to every `toLocale*String` and `new Intl.*Format`; a call without
+  a locale argument fails lint. `utils/format.ts` already does this.
+- **API errors:** `getErrorMessage` maps a problem `type` code to a translated
+  message only when the interface is not English; in English the server's more
+  specific message stays. Map only a code whose meaning is fixed: `conflict`
+  and `forbidden` are left out because their server text carries the reason.
+- **rela-components stays free of vue-i18n.** Library text goes through
+  `useMessages`; the library ships its own Dutch set (`messages.nl.ts`, typed as
+  the full `Messages`, so a missing key fails to compile). `App.vue` provides
+  `localeMessages(...)`, which reads the language on every call.
 
 ## Pending and loading indicators
 
@@ -260,6 +308,13 @@ Autosave sends a per-field precondition (the server's `_versions` token) for
 every field it writes, and merges on a 412 (TKT-2VDVHF; API contract in
 `docs/data-entry/api-reference.md`). Rules for new code:
 
+- **An instance writes to one fixed entity.** `useAutoSave` takes a `target`
+  at construction and refuses a snapshot, refetch or response about any other
+  entity. A host that puts another row on screen builds a new instance:
+  `FormView` keys `DynamicForm` per entity, and `EntityDetail` keeps one per
+  served address. Never pass a target that is read when the save fires. A
+  form reused across a route change once sent an edit made on one entity to
+  the next, and the 412 merge then wrote it there (BUG-NSGD6OE).
 - **A merge base moves only when the local state moves with it:** when the
   form takes the server value, or when a save of that field succeeds. A base
   that runs ahead of the form lets the next save overwrite a change the user
@@ -276,9 +331,115 @@ every field it writes, and merges on a 412 (TKT-2VDVHF; API contract in
 - **Never write conflict markers.** An unmergeable body is reported. The editor
   then shows the other side's clean hunks with the user's lines in each
   conflicting region, so the user's next edit overwrites only those regions.
+- **A field whose save did not go through stays held** (BUG-SJURXLT):
+  refused as a conflict or failed, it keeps the user's value and its error
+  until the user edits or reverts it, or a later save of it goes through. A
+  later answer must not put the server value over it, and neither may a host
+  that reloads the entity: it keeps the fields `unsavedFields()` names on
+  screen (DynamicForm `loadEntity`, EntityDetail `applyView`).
+  `commitImmediately` reports a held field as an error, so the leave guard
+  asks before it is left behind.
+- **A body that their version already holds is rebased too.** When a 412's
+  refetch already contains the edit, nothing is written, but typing made
+  meanwhile is rebased onto their body like after a merged write.
+- **Within one save, each merge is against the version the last attempt was
+  checked against.** A second 412 that merged against the save's original
+  base would read the lines the first merge took in as a conflict.
+- **A body written in a form the editor does not show is rebased, not
+  forgotten.** When a merged body is written while the user keeps typing,
+  the next save rebases the editor text onto it (`contentRebase`); merging
+  against the old base would report a conflict with the tab's own write.
+- `useAutoSave.twoClients.prop.test.ts` runs two tabs against the fake under
+  `fc.scheduler()`, with failing, empty-412 and lost-answer faults. It checks
+  that no write overwrites a value its tab was not shown, that no tab loses
+  a value without showing it with an error, and that no conflict is
+  reported against a tab's own write.
 - **A snapshot without `_versions` saves unguarded** until its first save
   returns tokens. List-section rows are in that state today (TKT-MK9NJB), and
   so is every incoming relation list (TKT-E9WXPU).
+- **A 412 is never read as the client's own write** (BUG-04V034W). Tokens
+  are derived from the value, so a value someone else writes back to one this
+  client saved has the same token as that save; resending on it would
+  overwrite their change. A 412 always takes the merge or conflict path. A
+  late read that would move a base backwards is kept out by the read order
+  of `useEntitySession`, not by autosave.
+
+## Reads and writes of the entity on screen (`useEntitySession`)
+
+One session per entity on screen orders its reads against its writes
+(BUG-04V034W). Before it, every read decided freshness with its own guard,
+and a view read before the user's own save and answered after it reset the
+body's base. `EntityDetail` uses it, and passes `runWrite` to its own autosave and to
+each `SectionEditForm`; `DynamicForm` can adopt it the same way. Rules:
+
+- **Read through `session.read`, write through `session.write`.** A read
+  lands (its `land` callback runs) only if the address is unchanged, no later
+  read has landed, and no write to its row completed while it was on its
+  way; otherwise it reads again, a few times at most. Writes count per key:
+  a write is tagged with the row it saves (EntityDetail: the target of each
+  autosave instance), and a read names the row its answer shows (`shows`),
+  so the drain of the entity being left does not void the reads of the next
+  one. Do not add a freshness check of your own beside it.
+- **A write that never settles blocks every later write**, so give `run` a
+  timeout of its own.
+- **Live changes call `session.invalidate()`**, never a reload directly.
+  Invalidations coalesce, and the reload waits until no write is held
+  (`holdsWrites`, e.g. an autosave debounce) or on its way.
+- **A refusal still drops held content** (`onRefused`, BUG-E8XE7I) and voids
+  every read sent before it. A transient failure comes back as `failed` and
+  keeps what is on screen; a failed background reload is tried again with a
+  backoff and sets no page error.
+- `useEntitySession.prop.test.ts` explores answer orders against a tiny
+  server, with failing writes and reads that wait in `prepare`. Disabling the
+  address, superseded or write rule, or the check after `prepare`, makes it
+  fail with a counterexample.
+
+## Testing against the fake API (`src/test/fakeApi/`)
+
+`FakeServer` is an in-process fake of the data-entry API. It covers the
+entity-editing slice; the header of `server.ts` lists what it covers and what it
+does not. Install it with `fakeAdapter(server, scheduler?)` on the axios
+instance and `fakeEventSource(server)` as `EventSource`.
+
+The fake is verified. `contract/fakeVsServer.contract.test.ts` sends the same
+random request sequences to the fake and to `rela-server` on the memory store,
+and compares status, body and events. CI runs it in the E2E job; locally run
+`just contract-fake`. Rules:
+
+- **Change the fake only together with a passing contract run.** A difference
+  is a fake bug unless the server is wrong; then fix the server or file a bug,
+  and never teach the fake the bug quietly.
+- **A route the fake does not implement answers 501.** Add it to the fake and
+  to the contract generators in the same change. A route whose answer does not
+  depend on state goes in `inert.ts`, which the contract test checks too.
+- **`snapshot.json` is the schema and config the server serves** for
+  `contract/fixture/project`. After changing the fixture, regenerate it with
+  `CONTRACT_UPDATE=1 just contract-fake`.
+- **Check that a new generator can find the fault it is for.** Break the fake
+  on purpose and confirm the contract run fails. Random requests mostly miss:
+  the stale-token 412 was caught only after the generators were biased towards
+  existing entities.
+
+Use it for **property tests of request ordering** (`*.prop.test.ts`, see
+`EntityDetail.switching.prop.test.ts`). `fc.scheduler()` decides when each
+request runs and when its answer arrives, so a test can deliver the answer for
+the entity the user left after the one they moved to. That race is how
+"switch, then Edit opens the previous entity" happened (TKT-7LTLHW3). Two
+things these tests need:
+
+- **Reset the DOM in `finally` inside the property**, not only in `afterEach`.
+  The shrinker reruns the property many times in one test, and a page left
+  mounted produces false counterexamples.
+- **Measure that the commands do something.** A command that finds no button
+  or no loaded page silently does nothing, and the property passes on an empty
+  run. Count the steps that took effect before you trust a green result.
+- **Fail requests too.** The fake never fails, so give `fakeAdapter` a
+  `fault` that answers some requests with a 503 or a refusal before the fake
+  sees them. Ordering bugs hide behind "the later request fails".
+- **Pin an order that random runs rarely reach.** A race that needs a long,
+  exact sequence of steps (a reviewer found one at nine) is found only by
+  chance. Replay it with `Gate`, which runs a held step only when the test
+  names it, as the `a load and the live refresh` tests do.
 
 ## The markdown editor (Milkdown/ProseMirror)
 
@@ -315,7 +476,8 @@ edit. Getting this wrong writes a diff for an entity someone only opened.
 code span becomes an `entityRef` node whose `id` is serialized and whose
 `title`/`entityType`/`inaccessible` are view-only and never reach the markdown.
 Titles come SOLELY from the server's per-principal `mentions` map (BUG-R9EHKV,
-`collectMentions` → `visibility.Reader.Filter`). Do not look a title up from
+`collectMentions` → `visibility.Resolver.ResolveIDsErr`, in the request's
+world). Do not look a title up from
 the graph, the entity store, or a cache: an entity the principal cannot read
 must produce no mention at all, and a redacted title must fall back to the ID.
 

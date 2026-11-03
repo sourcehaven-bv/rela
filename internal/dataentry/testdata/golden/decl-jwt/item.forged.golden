@@ -1,0 +1,14 @@
+request: GET /api/v1/tickets/TKT-1
+identity: assertion unsigned:viewer@example.test
+status: 401
+reads: 
+breadth: 
+bodies: 
+versions: 
+body:
+{
+  "type": "https://rela.dev/errors/unauthenticated",
+  "title": "Authentication required",
+  "status": 401,
+  "instance": "/api/v1/tickets/TKT-1"
+}

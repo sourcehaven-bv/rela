@@ -11,6 +11,9 @@ import { computed } from 'vue'
 import RlIcon from '../common/RlIcon.vue'
 import RlSpinner from '../common/RlSpinner.vue'
 import RlText from '../common/RlText.vue'
+import { useMessages } from '../../composables/useMessages'
+
+const messages = useMessages()
 
 const props = withDefaults(
   defineProps<{
@@ -18,11 +21,16 @@ const props = withDefaults(
     /** Shown in the error state, such as `Offline. Retrying.` */
     errorText?: string
   }>(),
-  { errorText: 'Could not save' },
+  { errorText: undefined },
 )
 
 const label = computed(() =>
-  ({ idle: '', saving: 'Saving', saved: 'Saved', error: props.errorText })[props.state],
+  ({
+    idle: '',
+    saving: messages.chromeText({ key: 'saving' }),
+    saved: messages.chromeText({ key: 'saved' }),
+    error: props.errorText ?? messages.chromeText({ key: 'couldNotSave' }),
+  })[props.state],
 )
 </script>
 
@@ -33,7 +41,7 @@ const label = computed(() =>
     :class="`rl-autosave--${state}`"
     :role="state === 'error' ? 'alert' : 'status'"
   >
-    <RlSpinner v-if="state === 'saving'" :size="13" label="Saving" />
+    <RlSpinner v-if="state === 'saving'" :size="13" :label="messages.chromeText({ key: 'saving' })" />
     <RlIcon v-else-if="state === 'saved'" name="done" :size="14" aria-hidden="true" />
     <RlIcon v-else name="alert" :size="14" aria-hidden="true" />
     <RlText size="sm" tone="muted">{{ label }}</RlText>

@@ -2,7 +2,8 @@ package pgstore
 
 import "github.com/Sourcehaven-BV/rela/internal/store"
 
-// HandleFor returns st's database handle, or nil if st is not a pgstore.
+// HandleFor returns st's database handle, or nil if st is not a pgstore. A
+// pgstore behind [store.Decorator] layers counts as one.
 //
 // It is for services that keep their own tables in the tenant's schema but are
 // not store concerns (internal/piles/pgpiles), so the composition root can hand
@@ -13,7 +14,7 @@ import "github.com/Sourcehaven-BV/rela/internal/store"
 // A package function rather than a method on [Store], for the reason
 // [StateStoreFor] gives.
 func HandleFor(st store.Store) DBTX {
-	s, ok := st.(*Store)
+	s, ok := store.Innermost(st).(*Store)
 	if !ok {
 		return nil
 	}

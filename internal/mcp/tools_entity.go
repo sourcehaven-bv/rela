@@ -12,6 +12,7 @@ import (
 	mcpgo "github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/natsort"
 	"github.com/Sourcehaven-BV/rela/internal/predicate"
@@ -25,7 +26,7 @@ import (
 func (s *Server) handleListEntities(
 	ctx context.Context, request *mcpgo.CallToolRequest,
 ) (*mcpgo.CallToolResult, error) {
-	snap := s.state.current()
+	snap := snapshotFor(ctx, s)
 	args := newToolRequest(request)
 	typeArg := args.GetString("type", "")
 	filterExpr := strings.TrimSpace(args.GetString("filter", ""))
@@ -52,7 +53,7 @@ func (s *Server) handleListEntities(
 		if q.Type == "" {
 			return errorResult("filter requires type"), nil
 		}
-		compiled, err := compileListFilter(d.Meta, q.Type, filterExpr, d.Traversals != nil)
+		compiled, err := compileListFilter(d.Meta, q.Type, filterExpr, d.Related.Traversals != nil)
 		if err != nil {
 			return errorResult(err.Error()), nil
 		}
@@ -80,7 +81,7 @@ func (s *Server) handleListEntities(
 	entities = applyPagination(entities, offset, limit)
 	summaries := make([]entitySummary, len(entities))
 	for i, e := range entities {
-		summaries[i] = convertStoreEntitySummary(d.Meta, e)
+		summaries[i] = convertStoreEntitySummary(ctx, d.Meta, e)
 	}
 	text, err := marshalJSON(struct {
 		Total    int             `json:"total"`
@@ -121,12 +122,12 @@ func filterEntities(
 	ctx context.Context, d Deps, prog *predicate.Program, entityType string, entities []*entity.Entity,
 ) ([]*entity.Entity, error) {
 	traversalFor := func(string) predicate.TraversalFunc { return nil }
-	if d.Traversals != nil {
+	if d.Related.Traversals != nil {
 		ids := make([]string, len(entities))
 		for i, e := range entities {
 			ids[i] = e.ID
 		}
-		bound, err := d.Traversals.Bind(ctx, entityType, ids, prog)
+		bound, err := d.Related.Traversals.Bind(ctx, entityType, ids, prog)
 		if err != nil {
 			return nil, err
 		}
@@ -150,7 +151,7 @@ func filterEntities(
 func (s *Server) handleShowEntity(
 	ctx context.Context, request *mcpgo.CallToolRequest,
 ) (*mcpgo.CallToolResult, error) {
-	snap := s.state.current()
+	snap := snapshotFor(ctx, s)
 	args := newToolRequest(request)
 	id, err := args.RequireString("id")
 	if err != nil {
@@ -159,7 +160,7 @@ func (s *Server) handleShowEntity(
 	id = trimID(id)
 
 	d := snap.deps
-	ctx, _, refused := selectWorld(ctx, d, args)
+	ctx, world, refused := selectWorld(ctx, d, args)
 	if refused != nil {
 		return refused, nil
 	}
@@ -170,7 +171,12 @@ func (s *Server) handleShowEntity(
 
 	view := entityView{relations: true, content: args.GetBool("content", true)}
 	ej := buildEntityJSON(ctx, e, d.Store, d.Meta, view)
+	ej.Properties = withRollups(ctx, d, e, world)
 	ej.OtherFaces = otherFaces(ctx, d.Store, d.Meta, e)
+	if mErr := addMentionedBy(ctx, d.Store, d.Meta, &ej); mErr != nil {
+		return errorResult(fmt.Sprintf("read backlinks of %s: %v", e.ID, mErr)), nil
+	}
+	ej.Lease = entityLease(ctx, d.Leases, e.ID)
 	text, err := marshalJSON(ej)
 	if err != nil {
 		return errorResult(err.Error()), nil
@@ -178,10 +184,31 @@ func (s *Server) handleShowEntity(
 	return textResult(text), nil
 }
 
+// showMentionLimit caps the backlinks show_entity lists.
+const showMentionLimit = 50
+
+// addMentionedBy fills ej's backlinks: the first page of entities whose body
+// mentions it, through the caller's gated reader.
+func addMentionedBy(ctx context.Context, st GraphReader, meta *metamodel.Metamodel, ej *entityJSON) error {
+	page, err := st.MentionedBy(ctx, ej.ID, "", showMentionLimit)
+	if errors.Is(err, visibility.ErrMentionsUnsupported) { // coverage-ignore: every store backend keeps the index
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	for _, h := range page.Items {
+		src := &entity.Entity{ID: h.ID, Type: h.Type, Face: h.Face, Properties: h.Properties}
+		ej.MentionedBy = append(ej.MentionedBy, convertStoreEntitySummary(ctx, meta, src))
+	}
+	ej.MentionedByTruncated = page.Next != "" || page.Truncated
+	return nil
+}
+
 func (s *Server) handleSearchEntities(
 	ctx context.Context, request *mcpgo.CallToolRequest,
 ) (*mcpgo.CallToolResult, error) {
-	snap := s.state.current()
+	snap := snapshotFor(ctx, s)
 	args := newToolRequest(request)
 	query, err := args.RequireString("query")
 	if err != nil {
@@ -253,7 +280,7 @@ func hydrateHits(
 		if !ok {
 			continue
 		}
-		summaries = append(summaries, convertStoreEntitySummary(meta, e))
+		summaries = append(summaries, convertStoreEntitySummary(ctx, meta, e))
 	}
 	return summaries, nil
 }
@@ -261,7 +288,7 @@ func hydrateHits(
 func (s *Server) handleCreateEntity(
 	ctx context.Context, request *mcpgo.CallToolRequest,
 ) (*mcpgo.CallToolResult, error) {
-	snap := s.state.current()
+	snap := snapshotFor(ctx, s)
 	args := newToolRequest(request)
 	typeName, err := args.RequireString("type")
 	if err != nil {
@@ -317,7 +344,7 @@ func (s *Server) handleCreateEntity(
 func (s *Server) handleUpdateEntity(
 	ctx context.Context, request *mcpgo.CallToolRequest,
 ) (*mcpgo.CallToolResult, error) {
-	snap := s.state.current()
+	snap := snapshotFor(ctx, s)
 	args := newToolRequest(request)
 	id, err := args.RequireString("id")
 	if err != nil {
@@ -425,7 +452,7 @@ func prefixWarnings(warnings []entity.Warning) string {
 func (s *Server) handleDeleteEntity(
 	ctx context.Context, request *mcpgo.CallToolRequest,
 ) (*mcpgo.CallToolResult, error) {
-	snap := s.state.current()
+	snap := snapshotFor(ctx, s)
 	args := newToolRequest(request)
 	id, err := args.RequireString("id")
 	if err != nil {
@@ -477,7 +504,7 @@ func (s *Server) handleDeleteEntity(
 		_, delErr = snap.deps.EntityManager.DeleteEntityFace(ctx, ref.ID, ref.Face, cascade)
 	}
 	if delErr != nil {
-		return errorResult(delErr.Error()), nil
+		return writeErrorResult(delErr), nil
 	}
 
 	msg := "Deleted " + id
@@ -493,7 +520,7 @@ func (s *Server) handleDeleteEntity(
 func (s *Server) handleRenameEntity(
 	ctx context.Context, request *mcpgo.CallToolRequest,
 ) (*mcpgo.CallToolResult, error) {
-	snap := s.state.current()
+	snap := snapshotFor(ctx, s)
 	args := newToolRequest(request)
 	oldID, err := args.RequireString("id")
 	if err != nil {
@@ -525,7 +552,7 @@ func (s *Server) handleRenameEntity(
 	result, renameErr := snap.deps.EntityManager.RenameEntity(
 		ctx, oldID, newID, entity.RenameOptions{DryRun: dryRun})
 	if renameErr != nil {
-		return errorResult(renameErr.Error()), nil
+		return writeErrorResult(renameErr), nil
 	}
 
 	verb := "Renamed"
@@ -534,6 +561,22 @@ func (s *Server) handleRenameEntity(
 	}
 	return textResult(
 		fmt.Sprintf("%s: %s → %s (%d relations updated)", verb, result.OldID, result.NewID, result.RelationsUpdated)), nil
+}
+
+// writeErrorResult is the error result of a refused delete or rename. A
+// channel guard refusal is a conflict, the MCP form of the 409 the HTTP API
+// returns, and says which channel type to resolve; every other error is
+// passed through as text.
+func writeErrorResult(err error) *mcpgo.CallToolResult {
+	if blocked, ok := errors.AsType[*entitymanager.AnchorBlockedError](err); ok {
+		return errorResult(fmt.Sprintf("conflict: a %s channel is attached to this entity, and its type "+
+			"sets on_entity_delete: block; close or remove the channel first", blocked.ChannelType))
+	}
+	if errors.Is(err, entitymanager.ErrConcurrentChange) {
+		return errorResult("conflict: the entity changed while the request ran; nothing was written, retry: " +
+			err.Error())
+	}
+	return errorResult(err.Error())
 }
 
 // visibleRelationCount counts id's relations through st. On the gated store

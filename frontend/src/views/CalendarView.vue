@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { intlLocale } from '@/i18n/locale'
 /**
  * Month/week calendar over date-bearing entities.
  *
@@ -57,12 +58,15 @@ import {
 import RlButton from 'rela-components/components/common/RlButton.vue'
 import RlIconButton from 'rela-components/components/common/RlIconButton.vue'
 import RlSegmentedControl from 'rela-components/components/data/RlSegmentedControl.vue'
+import { I18nT, useI18n } from 'vue-i18n'
 
 const props = defineProps<{ id: string }>()
 
 const router = useRouter()
 const schemaStore = useSchemaStore()
 const uiStore = useUIStore()
+const { t } = useI18n()
+const sourceName = (i: number) => config.value?.sources?.[i]?.label || config.value?.sources?.[i]?.entity
 const { worldParam } = useWorld()
 const queryCache = useQueryCache()
 
@@ -85,10 +89,10 @@ const view = computed<ViewKind>({
 // rather than letting an arbitrary string reach the URL. `view`'s getter
 // already validates what it reads, so a bad value could only round-trip as
 // the default -- but it would still be written to the query string.
-const viewOptions = [
-  { value: 'month', label: 'Month' },
-  { value: 'week', label: 'Week' },
-]
+const viewOptions = computed(() => [
+  { value: 'month', label: t('calendar.month') },
+  { value: 'week', label: t('calendar.week') },
+])
 const viewChoice = computed<string>({
   get: () => view.value,
   set: (v) => {
@@ -242,6 +246,13 @@ const initialLoad = ref(true)
 /** A refetch is in flight. Drives a subtle busy hint, never a blanked grid. */
 const refreshing = ref(false)
 const loadError = ref('')
+/**
+ * Sources whose own read failed while others loaded, by index. One source
+ * refused (say, a date property the reader cannot see on every row, which
+ * the server answers with 400 property_not_visible) must not blank the
+ * sources that did load, so each failure is reported next to the grid.
+ */
+const sourceErrors = ref<{ index: number; message: string }[]>([])
 
 // pageState mirrors DynamicForm's `form-state-*` contract: a stable signal
 // that this screen has finished resolving, so a screenshot{} capture can wait
@@ -276,6 +287,7 @@ async function refetchGrid() {
   // load followed by a switch to a calendar with no sources leaves the error
   // banner up and (since the template gates the grid on it) hides the grid.
   loadError.value = ''
+  sourceErrors.value = []
 
   if (!queries.length) {
     fetched.value = []
@@ -286,7 +298,7 @@ async function refetchGrid() {
   }
   refreshing.value = true
   try {
-    const results = await Promise.all(
+    const settled = await Promise.allSettled(
       queries.map(async ({ source, params }): Promise<SourceResult> => {
         const res = await listAllEntities(source.entity, params, controller.signal)
         // Publish into the cache entry the optimistic write and SSE
@@ -300,12 +312,24 @@ async function refetchGrid() {
       })
     )
     // A superseded fetch must not publish: its window is no longer on screen.
-    if (generation !== refetchGeneration) return
-    fetched.value = results
+    if (generation !== refetchGeneration || controller.signal.aborted) return
+    const failures = settled.flatMap((r, index) =>
+      r.status === 'rejected'
+        ? [{ index, message: getErrorMessage(r.reason, t('calendar.sourceLoadFailed')) }]
+        : []
+    )
+    if (failures.length === settled.length) {
+      // Nothing loaded: one error for the calendar, as before.
+      throw (settled[0] as PromiseRejectedResult).reason
+    }
+    fetched.value = settled.map((r) =>
+      r.status === 'fulfilled' ? r.value : { entities: [], included: {}, truncated: false }
+    )
+    sourceErrors.value = failures
   } catch (err) {
     // An abort is this component superseding itself, not a failure to report.
     if (generation !== refetchGeneration || controller.signal.aborted) return
-    loadError.value = getErrorMessage(err, 'Failed to load calendar')
+    loadError.value = getErrorMessage(err, t('calendar.loadFailed'))
   } finally {
     if (generation === refetchGeneration) {
       initialLoad.value = false
@@ -332,8 +356,11 @@ const sourceData = computed<CalendarSourceData[]>(() =>
   }))
 )
 
-const allEvents = useCalendarEvents(config, sourceData, timezone, (rel) =>
-  schemaStore.getInverseName(rel) ?? ''
+const allEvents = useCalendarEvents(
+  config,
+  sourceData,
+  timezone,
+  (rel) => schemaStore.getInverseName(rel) ?? ''
 )
 
 /**
@@ -398,14 +425,14 @@ const footerHtml = computed(() => renderMarkdown(viewFooterMarkdown(config.value
 const periodLabel = computed(() => {
   const a = anchor.value
   if (view.value === 'month') {
-    return new Date(a.year, a.month - 1, 1).toLocaleDateString(undefined, {
+    return new Date(a.year, a.month - 1, 1).toLocaleDateString(intlLocale(), {
       month: 'long',
       year: 'numeric',
     })
   }
   const week = days.value
   const fmt = (d: CalendarDay) =>
-    new Date(d.year, d.month - 1, d.day).toLocaleDateString(undefined, {
+    new Date(d.year, d.month - 1, d.day).toLocaleDateString(intlLocale(), {
       month: 'short',
       day: 'numeric',
     })
@@ -413,9 +440,11 @@ const periodLabel = computed(() => {
 })
 
 const weekdayLabels = computed(() =>
-  days.value.slice(0, 7).map((d) =>
-    new Date(d.year, d.month - 1, d.day).toLocaleDateString(undefined, { weekday: 'short' })
-  )
+  days.value
+    .slice(0, 7)
+    .map((d) =>
+      new Date(d.year, d.month - 1, d.day).toLocaleDateString(intlLocale(), { weekday: 'short' })
+    )
 )
 
 function go(delta: number) {
@@ -494,16 +523,14 @@ const { mutate: reschedule } = useMutation({
     // To the event's ADDRESS, face included — see utils/entityRef.
     updateEntity(event.entityType, entityRef(event.entity), { properties: updates }),
   onMutate({ event, updates }) {
-    return beginOptimistic(
-      queryCache,
-      entityKeys.list(event.entityType),
-      event.entity.id,
-      (e) => ({ ...e, properties: { ...e.properties, ...updates } })
-    )
+    return beginOptimistic(queryCache, entityKeys.list(event.entityType), event.entity.id, (e) => ({
+      ...e,
+      properties: { ...e.properties, ...updates },
+    }))
   },
   onError(err, _vars, context) {
     rollbackOptimistic(queryCache, context)
-    uiStore.error(getErrorMessage(err, 'Failed to move event'))
+    uiStore.error(getErrorMessage(err, t('calendar.moveFailed')))
   },
   async onSettled(_d, _e, _v, context) {
     // settleOptimistic invalidates the list key the grid's entries descend
@@ -599,29 +626,25 @@ function onDragEnd() {
           icon="plus"
           @click="createNew"
         >
-          New
+          {{ t('common.new') }}
         </RlButton>
       </div>
     </header>
 
     <div class="calendar-toolbar">
       <div class="calendar-nav">
-        <RlIconButton icon="chevron-left" label="Previous period" @click="go(-1)" />
-        <RlButton variant="secondary" @click="goToday">Today</RlButton>
-        <RlIconButton icon="chevron-right" label="Next period" @click="go(1)" />
+        <RlIconButton icon="chevron-left" :label="t('calendar.previousPeriod')" @click="go(-1)" />
+        <RlButton variant="secondary" @click="goToday">{{ t('calendar.today') }}</RlButton>
+        <RlIconButton icon="chevron-right" :label="t('calendar.nextPeriod')" @click="go(1)" />
         <span class="calendar-period">{{ periodLabel }}</span>
         <!-- A quiet hint, not a spinner over the grid: the previous period
              stays readable while the next one loads. -->
         <span v-if="refreshing && !initialLoad" class="calendar-refreshing" aria-live="polite">
-          updating…
+          {{ t('calendar.updating') }}
         </span>
       </div>
       <div class="calendar-views">
-        <RlSegmentedControl
-          v-model="viewChoice"
-          label="Calendar range"
-          :options="viewOptions"
-        />
+        <RlSegmentedControl v-model="viewChoice" :label="t('calendar.range')" :options="viewOptions" />
       </div>
     </div>
 
@@ -635,14 +658,22 @@ function onDragEnd() {
     />
 
     <div v-if="truncated" class="truncation-banner truncation-banner--cap" role="alert">
-      Some events are not shown — this period returned more entities than the calendar can load.
+      {{ t('calendar.truncated') }}
     </div>
     <div v-if="longEventWarning" class="truncation-banner truncation-banner--span" role="alert">
-      Some long events may not be shown; increase <code>max_span</code> for this calendar's sources.
+      <I18nT keypath="calendar.longEvents" tag="span"><template #setting><code>max_span</code></template></I18nT>
     </div>
 
+    <RlStatusRegion
+      v-for="failure in loadError ? [] : sourceErrors"
+      :key="failure.index"
+      tone="error"
+      data-testid="calendar-source-error"
+    >
+      {{ t('calendar.sourceError', { source: sourceName(failure.index), message: failure.message }) }}
+    </RlStatusRegion>
     <RlStatusRegion v-if="loadError" tone="error">{{ loadError }}</RlStatusRegion>
-    <RlStatusRegion v-else-if="initialLoad">Loading…</RlStatusRegion>
+    <RlStatusRegion v-else-if="initialLoad">{{ t('common.loading') }}</RlStatusRegion>
 
     <CalendarGrid
       v-else
@@ -668,9 +699,9 @@ function onDragEnd() {
            period is empty when they switched every source off is misleading,
            and leaves them without the hint that the legend is the way back. -->
       <template v-if="allEvents.length">
-        All sources are hidden — use the legend above to show them again.
+        {{ t('calendar.allHidden') }}
       </template>
-      <template v-else>No events in this period.</template>
+      <template v-else>{{ t('calendar.empty') }}</template>
     </p>
 
     <!-- eslint-disable-next-line vue/no-v-html -- sanitized by renderMarkdown -->

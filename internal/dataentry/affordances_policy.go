@@ -5,6 +5,7 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/affordances"
 	entityPkg "github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/search"
 	"github.com/Sourcehaven-BV/rela/internal/statemachine"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
@@ -29,7 +30,19 @@ func (p *policyResolver) PrimeTraversals(ctx context.Context, rows []*entityPkg.
 // FieldVerdicts maps affordances field verdicts onto the wire-shape
 // type, carrying the deny attribution through unchanged.
 func (p *policyResolver) FieldVerdicts(ctx context.Context, e *entityPkg.Entity) FieldVerdicts {
-	v := p.inner.FieldVerdicts(ctx, e)
+	return fieldVerdictsWire(p.inner.FieldVerdicts(ctx, e))
+}
+
+// CreateFieldVerdicts maps [affordances.PolicyResolver.CreateFieldVerdicts]
+// like FieldVerdicts, making policyResolver satisfy
+// [createFieldVerdictResolver].
+func (p *policyResolver) CreateFieldVerdicts(ctx context.Context, e *entityPkg.Entity) FieldVerdicts {
+	return fieldVerdictsWire(p.inner.CreateFieldVerdicts(ctx, e))
+}
+
+// fieldVerdictsWire maps affordances field verdicts onto the wire-shape type,
+// carrying the deny attribution through unchanged.
+func fieldVerdictsWire(v affordances.FieldVerdicts) FieldVerdicts {
 	return FieldVerdicts{
 		Writable:    v.Writable,
 		Visible:     v.Visible,
@@ -49,6 +62,17 @@ func (p *policyResolver) RelationVerdicts(ctx context.Context, e *entityPkg.Enti
 // RelationVerdicts.
 func (p *policyResolver) UnconditionalRelationVerdicts(ctx context.Context, e *entityPkg.Entity) RelationVerdicts {
 	return relationVerdictsWire(p.inner.UnconditionalRelationVerdicts(ctx, e))
+}
+
+// FieldVisibleOnEveryRow delegates to
+// [affordances.PolicyResolver.FieldVisibleOnEveryRow].
+func (p *policyResolver) FieldVisibleOnEveryRow(ctx context.Context, entityType, property string) bool {
+	return p.inner.FieldVisibleOnEveryRow(ctx, entityType, property)
+}
+
+// SearchFieldScope delegates to [affordances.PolicyResolver.SearchFieldScope].
+func (p *policyResolver) SearchFieldScope(ctx context.Context, entityType string) (*search.FieldScope, error) {
+	return p.inner.SearchFieldScope(ctx, entityType)
 }
 
 // relationVerdictsWire maps affordances relation verdicts onto the wire

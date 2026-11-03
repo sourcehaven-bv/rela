@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
+	"github.com/Sourcehaven-BV/rela/internal/aclstore"
 	"github.com/Sourcehaven-BV/rela/internal/affordances"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
@@ -46,6 +47,7 @@ func BenchmarkVerdicts(b *testing.B) {
 	policy, err := acl.LoadPolicyBytes([]byte(`
 roles:
   editor:
+    read: [ticket]
     create: [ticket]
     update: [ticket]
     delete: [ticket]
@@ -93,7 +95,7 @@ assignments:
 		}
 	}
 
-	declarative, err := acl.NewDeclarative(policy, acl.NewStoreGraph(ms), ms)
+	declarative, err := acl.NewDeclarative(policy, aclstore.MustNewGraph(ms), ms)
 	if err != nil {
 		b.Fatal(err)
 	}

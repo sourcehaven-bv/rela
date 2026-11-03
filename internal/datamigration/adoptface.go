@@ -203,7 +203,7 @@ func Adopt(ctx context.Context, deps AdoptDeps, req AdoptRequest) (*AdoptResult,
 	if err := plan.apply(ctx, deps.Store, deps.Comments, scopes); err != nil {
 		return res, err
 	}
-	auditAdopt(deps.Audit, p, req, res.Affected)
+	auditAdopt(ctx, deps.Audit, p, req, res.Affected)
 	return res, nil
 }
 
@@ -239,15 +239,16 @@ func validateAdopt(meta *metamodel.Metamodel, req AdoptRequest) error {
 }
 
 // auditAdopt records the repair: names and counts, never content.
-func auditAdopt(sink audit.Audit, p principal.Principal, req AdoptRequest, affected int) {
+func auditAdopt(ctx context.Context, sink audit.Audit, p principal.Principal, req AdoptRequest, affected int) {
 	pairs := make([]string, 0, len(req.Mapping))
 	for _, k := range slices.Sorted(maps.Keys(req.Mapping)) {
 		pairs = append(pairs, k+"="+req.Mapping[k])
 	}
 	sink.Record(audit.Record{
-		Time:      time.Now().UTC(),
-		Op:        audit.OpDataAdoptFace,
-		Principal: p,
+		Time:       time.Now().UTC(),
+		Op:         audit.OpDataAdoptFace,
+		Principal:  p,
+		AssertedBy: audit.AssertedByFrom(ctx),
 		Summary: fmt.Sprintf("adopted %d stranded row(s) of %s onto faces by %s (%s)",
 			affected, req.Entity, req.Property, strings.Join(pairs, ", ")),
 	})

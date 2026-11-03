@@ -31,6 +31,10 @@ relations:
   # Relation definitions
 ```
 
+Other root-only keys include `transforms:` (export formats, see
+[transforms.md](transforms.md)) and `checkers:` (prose checkers, see
+[checkers.md](checkers.md)).
+
 ## Including Partial Metamodels
 
 For larger projects, you can split your metamodel across multiple files using the
@@ -639,10 +643,10 @@ entities:
 | `datetime` | Time-bearing instant (RFC3339, stored as UTC) | `=`, `!=`, `<`, `<=`, `>`, `>=`     |
 | `integer`  | Whole number                                  | `=`, `!=`, `<`, `<=`, `>`, `>=`     |
 | `boolean`  | True or false                                 | `=`, `!=`                           |
-| `enum`     | Inline enum with `values`                     | `=`, `!=`                           |
+| `enum`     | Inline enum with `values`                     | `=`, `!=`, `=~` (regex)             |
 | `file`     | File attachment (stored under `attachments/`) | N/A                                 |
 | `external_ref` | Link to the entity's counterpart in another system (see [External refs](#external-refs)) | N/A |
-| `<custom>` | Reference to a type defined in `types:`       | `=`, `!=`                           |
+| `<custom>` | Reference to a type defined in `types:`       | `=`, `!=`, `=~` (regex)             |
 
 ### Property Options
 
@@ -653,9 +657,12 @@ entities:
 | `default`        | Default value for the property                                                        |
 | `format`         | Date format (Go layout string, e.g., `2006-01-02`)                                    |
 | `description`    | Documentation for the property                                                        |
+| `display`        | How the value is shown for reading, such as `{currency: EUR}` (see [Display formats](#display-formats)) |
 | `list: true`     | Allow multiple values (multi-select for enum types)                                   |
 | `computed`       | Pure entity-local expression materialized on every write; the property is read-only   |
+| `rollup`         | Summary of related entities, computed on read per reader; see [Roll-up properties](#roll-up-properties) |
 | `unique: true`   | Natural key: no two entities of the type may share a non-empty value (write-time 422; find pre-existing dups with `rela analyze unique`). On a type declaring `faces:` the constraint holds **per face**: two entities may not share a value within one face, while two faces of the same entity never collide with each other. Only for string-valued properties (`string`, `date`, `datetime`, `enum`, custom types) — not `list`, and not `integer`/`boolean`/`file`. On the PostgreSQL backend this is additionally enforced by an automatically-maintained database index, so it holds even under concurrent writers ([details](postgres-backend.md#derived-schema-unique-constraints)). |
+| `min` / `max`    | For `integer` properties: the lowest and highest allowed value, inclusive (see [Integer ranges](#integer-ranges-min-and-max)) |
 | `max`            | For `file` properties: max attachments (default 1)                                    |
 | `accept`         | For `file` properties: narrow the MIME allowlist (e.g. `[application/pdf]`)           |
 | `scan_cmd`       | For `file` properties: the scan command (array args); configuring it enables scanning |
@@ -836,6 +843,125 @@ that may be hidden from a reader by field ACL. Treat the computed property's own
 visibility as a disclosure decision: a broadly visible derived value can reveal
 information about a more restricted source field.
 
+### Roll-up properties
+
+A roll-up property summarizes the entities related to an entity, such as how
+many valid pieces of evidence a control has, or the result of its latest test.
+rela computes the value each time the entity is read, with the reader's access.
+The value is never stored.
+
+```yaml
+types:
+  testresultaat:
+    values: [geslaagd, gefaald]
+
+entities:
+  maatregel:
+    properties:
+      bewijs_aantal:
+        type: integer
+        rollup: { via: evidencedBy, count: true, where: { status: geldig } }
+      laatste_testresultaat:
+        type: testresultaat
+        rollup: { via: testedBy, pick: resultaat, latest_by: datum }
+  risico:
+    properties:
+      open_behandelplannen:
+        type: integer
+        rollup: { via: treatedBy, count: true, where: { afgerond: "false" } }
+```
+
+| Key         | Meaning                                                                                       |
+| ----------- | --------------------------------------------------------------------------------------------- |
+| `via`       | One relation. Its name walks from → to; its `inverse` walks to → from, as in `related()`      |
+| `type`      | The related type, when the relation's far side names several                                  |
+| `where`     | Keep only related entities whose properties equal these values (enum, string, boolean, integer) |
+| `count`     | The number of related entities. The property must be `integer`                               |
+| `exists`    | Whether there is at least one. The property must be `boolean`                                 |
+| `min`/`max` | The lowest or highest value of an `integer` or `date` property; same type                      |
+| `sum`       | The total of an `integer` property. The property must be `integer`                            |
+| `latest_by` | With `pick`: the `pick` value of the entity with the latest `date` here                       |
+
+Declare exactly one function. `pick` must have the roll-up's declared type.
+A roll-up follows one relation, and cannot read another roll-up. It cannot be
+`required`, `list`, `unique`, `computed`, have a `default`, or be a file. The
+schema fails to load when a roll-up names an unknown relation or property, or
+when a type does not match. `min`, `max` and `latest_by` take a `date` only in
+the default `YYYY-MM-DD` format, and no `datetime`: rela orders these values as
+text, and only that date format sorts as text in time order.
+
+**How a roll-up differs from a computed property.**
+
+| | Computed | Roll-up |
+| --- | --- | --- |
+| Reads | The entity's own properties | Properties of related entities |
+| When | On every write, then stored | On every read, never stored |
+| Access | One value for every reader | Per reader: it counts only what the reader may read |
+| Filter, sort, group | Yes, like any stored property | No |
+| Conditions and automations | Yes | No: a condition that names one fails to load |
+
+**Access.** A related entity the reader cannot read is never counted. A related
+entity whose `where`, `latest_by`, `min`, `max` or `sum` property is hidden from
+the reader by a `visible:` grant is left out, as if it did not match. When the
+`pick` property of the latest entity is hidden, the roll-up has no value; rela
+does not fall back to an older entity. Two readers can therefore see different
+values for the same entity.
+
+**Where the value appears.** The entity API (`GET /api/v1/{type}/{id}`, and the
+responses of create and update), the entity detail page, view sections, and the
+MCP `show_entity` tool. A list row carries roll-ups only when asked, because
+each roll-up costs one store query per page: send `rollups=1` for every roll-up,
+or `list_id` naming a configured list, which then carries the roll-ups shown as
+its columns. A list cannot filter, sort or group on a roll-up; the request
+answers `400 invalid_filter`, and a `data-entry.yaml` that tries fails to load.
+
+**Writes.** Setting or unsetting a roll-up through the CLI, MCP, Lua or the
+data-entry API is refused. A whole-entity update that sends back the value it
+read is accepted; the value is not stored. A value already in the markdown
+file under a roll-up name (written by hand) is replaced by the computed value
+on the surfaces above; Lua scripts and search still see the stored value.
+
+**Caching.** The entity's `ETag` covers its stored content, not its roll-ups. A
+change to a related entity changes the roll-up without changing the `ETag`, so
+a `GET` on a type with roll-ups never answers `304 Not Modified`. `If-Match`
+keeps working.
+
+### Integer ranges (`min` and `max`)
+
+An `integer` property can declare the lowest and highest value it allows.
+Both bounds are inclusive, and you can set one without the other:
+
+```yaml
+impact:
+  type: integer
+  label: Impact
+  min: 1
+  max: 5
+```
+
+A value outside the range is an invalid value:
+
+- A write through the API, MCP or the CLI still succeeds, with a
+  `property_value_invalid` warning that names the range. A hand-edited file
+  can hold such a value too, so rela warns rather than refuses.
+- `rela analyze properties` and `rela validate` report every stored value
+  outside the range.
+- The data-entry form sets `min` and `max` on the number input, so its
+  stepper stays in range. It does not stop you saving a value outside it.
+- `/api/v1/_schema` and the MCP `schema` tool carry `min` and `max` on the
+  property.
+- A dashboard matrix card over the property shows the whole range as its axis
+  (see the data-entry guide).
+
+The schema fails to load when `min` is above `max`, when `min` or `max` is set
+on a type other than `integer`, or when it is set on a `list` property. On a
+`file` property `max` keeps its own meaning, the attachment cap below, and
+`min` is refused. rela has no decimal type, so there is no range for
+fractional numbers.
+
+A range is a validation rule, not part of the data shape: adding or changing
+one needs no data migration.
+
 ### File attachments and `max`
 
 A `file` property holds an attachment. By default it holds **one** file
@@ -853,6 +979,13 @@ data-entry UI shows a multi-file picker (add up to `max`, remove
 individually), and uploading a file whose name already exists auto-suffixes
 it (`report.pdf` → `report (1).pdf`). `max` must be `>= 1` and only applies
 to `file` properties.
+
+In a list column and a `display: table` view column, a `file` property shows
+the file name with a paperclip, linked to the download, not the stored path.
+Several files show as "N files", which opens to the list of linked names. A
+long name is cut off with an ellipsis; hover it for the full name. A column
+that links to the row (`link:`) and a card field show the names without
+download links.
 
 ### Attachment security: scanning, allowlist & transforms
 
@@ -905,6 +1038,33 @@ Common formats:
 | European | `01/02/2025` | `02/01/2006`           |
 | US       | `02/01/2025` | `01/02/2006`           |
 | Long     | `1 Feb 2025` | `2 Jan 2006`           |
+
+### Display formats
+
+`display:` says how the web interface shows a property's value for reading.
+It does not change the stored value, and form inputs stay plain numbers.
+Today there is one format, `currency`:
+
+```yaml
+properties:
+  value:
+    type: integer
+    display:
+      currency: EUR
+```
+
+The value 3500 then shows as "€ 3.500" in a Dutch browser and "€3,500" in an
+American one. A whole amount shows no decimals. The format applies wherever
+the value is shown: kanban cards and column summaries, list cells, and the
+entity page.
+
+`currency` needs a single-valued `integer` property, and an ISO 4217 code:
+three upper-case letters, such as `EUR` or `USD`. Config load checks both. It
+does not check the code against a list: the browser formats every
+well-formed code, and shows a code it does not know as the code itself.
+
+`display` is a map so that more formats can join later, such as a
+percentage or a unit.
 
 ### Datetime Properties
 
@@ -1001,9 +1161,9 @@ Relations define how entity types can be connected:
 | `inverse`      | Inverse relation definition (string or object)  |
 | `symmetric`    | `true` if relation is bidirectional             |
 | `min_outgoing` | Minimum outgoing relations per from-side entity |
-| `max_outgoing` | Maximum outgoing relations per from-side entity |
+| `max_outgoing` | Maximum outgoing relations per from-side entity; new edges over it are refused (see Concepts) |
 | `min_incoming` | Minimum incoming relations per to-side entity   |
-| `max_incoming` | Maximum incoming relations per to-side entity   |
+| `max_incoming` | Maximum incoming relations per to-side entity; new edges over it are refused (see Concepts) |
 | `scope`        | `identity` (default) or `content` — what the relation attaches to under content states (see below) |
 | `owning`       | `true` if the source owns the target, which is then shown as part of it (see below) |
 
@@ -1794,6 +1954,7 @@ copies:
 | `on_success.message` | The confirmation the web app shows after the copy. Placeholders as for world messages; `{face}` is the face written. Falls back to the label. |
 | `on_success.landing` | Where the web app goes afterwards: `written` (the face written, the default), `stay` (reload in place), `{world: <name>}` or `{face: <name>}`. |
 | `fields` | `all` to copy every declared property, or a map from target property to source expression using the `{{...}}` interpolation grammar. A copy between different types requires an explicit map. |
+| `keep` | With `fields: all`, a list of target properties the copy never writes: each keeps the target face's value, or stays unset on a new face. |
 | `relations` | A map from relation type to `merge` (add the edges the target lacks) or `replace` (swap the target face's edges of that type). Only `scope: content` relation types can be listed. An omitted type is not copied. |
 | `guard.permission` | The ACL permission a caller must hold on the source entity. **Required** whenever `to` names a face. |
 
@@ -1808,6 +1969,8 @@ The loader refuses a copy definition that:
   definition would open the face to anyone who can name the copy;
 - names a face or type that the schema does not declare;
 - copies no fields, or declares both `fields: all` and a field map;
+- declares `keep:` without `fields: all`, or keeps a property the target
+  type does not declare;
 - uses `fields: all` on a copy into a different entity. That copy reads
   through the caller's visibility, so copying every field would write a
   redacted entity;
@@ -1823,6 +1986,201 @@ A copy runs as one store transaction and is audited after it commits. The
 PostgreSQL backend rolls back a failed copy. On the filesystem and in-memory
 backends the transaction is a write lock only, so a failure part-way through
 can leave a partially written target face.
+
+### Declaring entity conversions
+
+`conversions:` declares administrator-approved entity type changes. A user
+invokes only a conversion name; the client cannot submit its own mapping.
+Each destination property is mapped explicitly from the source entity with
+the `{{source.property}}` interpolation syntax. `source` means the entity
+being converted; it is the input to the mapping. For example,
+`{{source.title}}` reads the old note's title and writes it to the task's
+`title`. `{{new.title}}` is also accepted for compatibility with copy
+definitions, but `source` names the conversion input more clearly. Unmapped
+source properties are not carried forward. Every relation type incident to
+the source must be mapped to a destination relation type or explicitly
+dropped. Because `drop` is the keyword for a dropped relation, a schema that
+declares conversions cannot also declare a relation type named `drop`.
+
+```yaml
+conversions:
+  note-to-task:
+    from: note
+    to: task
+    label: Convert to task
+    fields:
+      title: "{{source.title}}"
+      description: "{{source.body}}"
+    relations:
+      related-to: related-to
+      mentions: drop
+```
+
+When both types are faceless, their implicit, unnamed rows map to each other
+and `faces:` can be omitted. This row is stored under the bare entity ID. It is
+not a wildcard or a missing mapping. A type that declares `faces:` has only
+named rows such as `POL-1@draft`; it has no empty-name face. If either type has
+faces, declare a mapping for every source face. Use `""` as the source or
+target name when mapping the implicit face.
+
+Required destination fields not produced by the mapping are entered in the
+conversion form. Before saving, Rela previews required fields and the effects
+of relation mappings. The user confirms any configured relation drops.
+
+A faced conversion names its face coordinates explicitly. For example, the
+operator maps both policy faces to the target type and gives users a choice
+when converting a draft:
+
+```yaml
+entities:
+  policy:
+    label: Policy
+    faces:
+      draft: {label: Draft}
+      published: {label: Published}
+    properties: {title: {type: string}}
+  controlled-document:
+    label: Controlled document
+    faces:
+      working: {label: Working}
+      approved: {label: Approved}
+    properties: {title: {type: string}}
+conversions:
+  policy-to-controlled-document:
+    from: policy
+    to: controlled-document
+    fields:
+      title: "{{source.title}}"
+    faces:
+      draft: [working, approved]
+      published: [approved]
+```
+
+The user chooses `working` or `approved` for a draft source. The published
+face maps directly to `approved`, since it has one configured choice. The
+conversion moves the family rows, face-scoped relations, comments and history
+lineage to the selected target faces; old entity links still resolve through
+the alias.
+
+The ACL role's `convert:` grant is separate from `rename:` and is matched
+against the source type. Conversion rekeys the entity family and reuses rename
+aliases and history lineage, so old entity links continue to resolve. See
+[Converting an entity](data-entry.md#converting-an-entity) for the form and
+preview behavior.
+
+A conversion has these limits and effects:
+
+- **Read access.** The caller must be able to read every face of the entity
+  and every source field the mapping uses. A redacted field or a hidden face
+  refuses the conversion instead of copying a value the caller cannot see.
+- **Dropped relations.** Removing a relation needs the same `delete:` grant on
+  the source type and face that deleting the relation needs. A relation the
+  caller cannot see is still dropped or remapped, but it is never named in the
+  preview or the error. Each removed or created relation gets an audit record.
+- **Validation first.** Field validation, `unique:` properties and relation
+  cardinality are checked before the first write.
+- **No target automations.** Automations on the destination type do not run
+  for a conversion. The conversion writes exactly the mapped values.
+- **Atomicity.** On postgres and SQLite the conversion is one transaction, and
+  a failure rolls everything back. The filesystem and memory stores cannot roll
+  back. If a later step fails after the rename, the rename, its audit record
+  and the aliases are still recorded, so the log matches what was stored.
+
+### Declaring task-item conversions
+
+`task_item_conversions:` declares recipes that turn a task item in an entity's
+body into a new, linked entity. A task item is a line such as
+`- [ ] Write the migration`. In the body editor, each task item gets a button
+that runs the recipe, like "Convert to issue" on GitHub. A type can have no
+recipes, one, or several; with several, the user picks one.
+
+```yaml
+task_item_conversions:
+  subtask:
+    from: ticket
+    to: task
+    label: Convert to task
+    item: remove
+    relation: {type: has-subtask, as: to}
+    fields:
+      title: "{{item.text}}"
+      project: "{{source.project}}"
+```
+
+| Key | Meaning |
+| --- | --- |
+| `from` | The type whose body holds the task item. |
+| `to` | The type of the new entity. |
+| `label` | The button and menu text. Required. |
+| `relation.type` | The relation that links the two entities. |
+| `relation.as` | The end the new entity takes: `to` makes the source the relation's `from`; `from` makes the new entity the `from`. |
+| `face` | The face to create the new entity at. Required when `to` declares faces, and refused when it does not. |
+| `item` | What the editor does with the item afterwards. `link` (the default) replaces the item's plain text with a reference to the new entity; links, references and images on the line stay after it. `remove` deletes the item and moves its nested items up one level. |
+| `fields` | The new entity's properties. At least one is required. |
+
+A field value is literal text with two kinds of placeholder:
+
+- `{{item.text}}` is the text of the item's own line, without the checkbox and
+  without nested items. References in the line become their IDs, and runs of
+  whitespace become one space.
+- `{{source.<property>}}` is a property of the source entity.
+
+Any other `{{...}}` is a load error. The item text fills its placeholders after
+the source values and is never read for placeholders itself, so
+`{{source.secret}}` typed into a task item stays literal text.
+
+A required property of `to` that the recipe does not map is asked for in a
+dialog before the entity is created. The request may not set a property the
+recipe maps.
+
+`item: remove` keeps the item when removing it would lose something the new
+entity does not hold: a second paragraph or a code block in the item, or a
+link, image or other inline content on its line. The editor then links the
+item instead. References on the line do not count, because they become IDs in
+the item text.
+
+A recipe is refused when the schema loads if the conversion could never
+create its entity:
+
+- `to` uses `id_type: manual`. The conversion has no ID to give it.
+- `to` has a required `file` or `external_ref` property. Neither can come from
+  a template or the required-fields dialog. A `file` property cannot be mapped
+  either.
+- A field's value cannot have the property's type. A lone
+  `{{source.<property>}}` copies the stored value as it is. Any other template
+  makes text, which fits a string or `rrule` property, or an enum when it is
+  plain text naming one of the enum's values. Text never fills a list, a
+  number, a boolean or a date.
+- No field uses `{{item.text}}`, so the item's text would be lost.
+
+A task-item conversion has these checks and effects:
+
+- **Permissions.** The caller needs every right that creating the entity and
+  the relation by hand needs: `create` on `to`, the relation's `create`, and any
+  relation `when:` rule. The caller also needs `update` on the source, because
+  the conversion is offered as an edit of its body. A source the caller cannot
+  read answers as not found.
+- **Read access.** Every `{{source.<property>}}` must be readable by the caller.
+  A property the caller may not read refuses the conversion, whether or not it
+  holds a value, rather than copying a value the caller cannot see. Fields filled from the item text pass the field write
+  gate like any typed value.
+- **Item text.** The text must be non-empty, at most 1000 characters and valid
+  UTF-8, with no line breaks, control characters or text-direction controls.
+- **Validation first.** Field validation, `unique:` properties and relation
+  cardinality are checked before the first write. On every backend, a failed
+  check leaves nothing behind.
+- **Automations run.** Unlike a type conversion, this is an ordinary create,
+  so the target type's `on: create` automations run.
+- **The body is the editor's job.** The server creates the entity and the
+  relation in one request and does not change the source body. The editor
+  rewrites the item, and the body saves like any other edit. If the item
+  changed while the request ran, the editor leaves it as it is and reports the
+  new entity's ID.
+- **Create forms.** The button appears only when the entity already exists,
+  because the relation needs a source.
+
+Checking a task item's box does not change the new entity's status, and the
+box does not follow the entity.
 
 ### Checking stored states
 
@@ -2064,7 +2422,12 @@ rela list control --where "status=implemented" --where "applicability=applicable
 | `<=`     | Less than or equal          | `date`, `datetime`, `integer` |
 | `>`      | Greater than                | `date`, `datetime`, `integer` |
 | `>=`     | Greater than or equal       | `date`, `datetime`, `integer` |
-| `=~`     | Regex match                 | `string`          |
+| `=~`     | Regex match                 | `string`, `enum`, `<custom>` |
+
+`=~` matches any part of the value and is case-sensitive: `niveau=~hoog`
+also matches `zeer_hoog`. Anchor the pattern (`^hoog$`) for a whole value. On
+an enum, a pattern is not checked against the allowed values, so a misspelled
+pattern matches nothing instead of reporting an error.
 
 ### Error Handling
 
@@ -2304,7 +2667,7 @@ Validation rules support all the same operators as `--where` filters:
 | `<=`     | `deadline<=2025-12-31` | Less than or equal                                |
 | `>`      | `priority>low`         | Greater than                                      |
 | `>=`     | `created>=2025-01-01`  | Greater than or equal                             |
-| `=~`     | `title=~^ADR-\\d+`     | Regex match (strings)                             |
+| `=~`     | `title=~^ADR-\\d+`     | Regex match (strings and enums)                   |
 
 ### Content Validation
 

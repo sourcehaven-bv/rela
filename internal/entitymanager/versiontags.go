@@ -223,6 +223,14 @@ func (v *VersionTags) prepare(
 	if err != nil {
 		return nil, principal.Principal{}, fmt.Errorf("entitymanager: read %s: %w", ref, err)
 	}
+	// A row the caller cannot read is refused like the miss above, before the
+	// check and the ACL, so neither confirms it exists.
+	if rErr := requireReadableRow(ctx, faceGateOf(v.m), ref.ID, []*entity.Entity{e}); rErr != nil {
+		if errors.Is(rErr, ErrEntityNotFound) {
+			return nil, principal.Principal{}, newEntityNotFound(ref.String())
+		}
+		return nil, principal.Principal{}, rErr
+	}
 	if check != nil {
 		if err := check(e); err != nil {
 			return nil, principal.Principal{}, err
@@ -254,7 +262,7 @@ func (v *VersionTags) authorizeTag(ctx context.Context, e *entity.Entity, name s
 		Reason:   fmt.Sprintf("tag %q requires permission %q on %q", name.String(), perm, e.ID),
 	}
 	if !isAffordanceProbe(ctx) {
-		v.m.recordDeniedWrite(ctx, decision, req)
+		v.m.deps.Audit.Record(deniedWriteRecord(ctx, decision, req))
 	}
 	return &acl.ForbiddenError{Decision: decision}
 }
@@ -270,6 +278,7 @@ func (v *VersionTags) record(ctx context.Context, op string, e *entity.Entity, s
 		Subject:     &audit.Subject{Kind: "entity", Type: e.Type, ID: e.ID},
 		Principal:   principal.From(ctx),
 		TriggeredBy: audit.TriggeredByFrom(ctx),
+		AssertedBy:  audit.AssertedByFrom(ctx),
 		Summary:     summary,
 	})
 }

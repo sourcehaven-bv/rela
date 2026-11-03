@@ -9,6 +9,7 @@
  * moves nothing itself; it reports the move.
  */
 import { computed, nextTick, ref } from 'vue'
+import { useI18n } from 'vue-i18n'
 import type { RowMove } from 'rela-components/components/table/types'
 import { useReorderableRow } from 'rela-components/composables/useRowReorder'
 
@@ -21,6 +22,7 @@ const props = defineProps<{
 }>()
 
 const emit = defineEmits<{ reorder: [move: RowMove] }>()
+const { t } = useI18n()
 
 const rowEl = ref<HTMLElement>()
 const handleEl = ref<HTMLElement>()
@@ -54,8 +56,8 @@ function onHandleKey(event: KeyboardEvent) {
         ref="handleEl"
         type="button"
         class="ordered-row__handle"
-        :aria-label="`Move ${title}`"
-        aria-description="Use the up and down arrow keys to move this row"
+        :aria-label="t('entity.reorder.move', { title })"
+        :aria-description="t('entity.reorder.hint')"
         @keydown="onHandleKey"
       >
         <svg viewBox="0 0 10 16" width="10" height="16" fill="currentColor" aria-hidden="true">

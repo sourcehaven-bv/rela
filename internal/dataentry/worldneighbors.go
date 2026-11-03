@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
+	"slices"
 	"strings"
 
 	entityPkg "github.com/Sourcehaven-BV/rela/internal/entity"
@@ -96,10 +98,9 @@ type worldNeighbors struct {
 // package functions (resolveWorld, attachWorld, worldCapablePath, and this),
 // which is the discipline recorded on the App type doc.
 //
-// Not calling this is a valid state: relations then behave as they did before
-// TKT-WRLDAPI item 4 — present under the default world, absent under any
-// other. That is safe but incomplete, which is why the composition root wires
-// it whenever it calls [NewApp].
+// The composition root must call this whenever it calls [NewApp]. Without it
+// every per-entity edge read fails closed ([servedFaceEdges]), so entity
+// responses error rather than serve ungated neighbors.
 //
 // classes classifies a relation type as content- or identity-scoped; it is
 // supplied by the wiring site because the dispatch it feeds
@@ -345,32 +346,22 @@ func headOnWire(id string, heads map[string]*entityPkg.Entity, visible map[strin
 // returned row was stored at, which Neighbors uses as the content-edge tail.
 //
 // Via is filled for completeness and is NOT consulted by Neighbors — it
-// labels provenance for callers that render a badge. It is computed by the
-// same total mapping [worldProvenance] uses, so a Resolved built here and a
-// `_world` block on the same response cannot disagree.
+// labels provenance for callers that render a badge. It is the typed rule
+// [store.WorldScope.RuleAt] returns, the same lookup [worldProvenance]
+// stringifies for the wire, so a Resolved built here and a `_world` block on
+// the same response cannot disagree.
 //
 // Found is true unconditionally: this is only ever called with a face the
 // store actually returned. A world that excluded the entity produces no
 // entity at all, and the handler has already rendered a 404 by then.
 func resolvedFromStoreFace(ctx context.Context, e *entityPkg.Entity) worldreader.Resolved {
+	via, _ := worldScopeFrom(ctx).RuleAt(e.Type, e.Face)
 	return worldreader.Resolved{
 		Entity: e,
 		Face:   e.Face,
-		Via:    ruleFromName(resolutionRule(worldScopeFrom(ctx), e.Type, e.Face)),
+		Via:    via,
 		Found:  true,
 	}
-}
-
-// ruleFromName maps the wire vocabulary back to [worldreader.Rule].
-//
-// The two vocabularies are deliberately the same strings (see the
-// resolutionRule constants in world.go), so this is a lookup rather than a
-// translation. RuleUnscoped is the default arm because it is the rule for a
-// type the world applies no resolution to — the same direction
-// resolutionRule takes for an unknown type, and the one that keeps a
-// faceless project unchanged.
-func ruleFromName(name string) worldreader.Rule {
-	return store.ParseResolutionRule(name)
 }
 
 // worldOutgoingForEntity resolves one entity's OUTGOING links under the
@@ -422,11 +413,10 @@ func worldOutgoingForEntity(
 //
 // # The edge queries are batched too
 //
-// [worldreader.RelationReader.NeighborsForPage] issues one identity-tail
-// query for the page plus one content-tail query per DISTINCT face on the
-// page (store.RelationQuery.EntityIDs, TKT-1U8XYN). A 50-row page at two faces
-// is therefore three relation queries, not a hundred, while each row still
-// receives exactly the edges its own resolved face carries.
+// [worldreader.RelationReader.NeighborsForPage] issues ONE relation query
+// for the page (store.RelationQuery.EntityIDs, TKT-1U8XYN), not one per row,
+// while each row still receives exactly the edges its own resolved face
+// carries.
 //
 // Rows are matched to their edges positionally, so the returned slices are
 // index-aligned with entities — a row with no links keeps a nil entry rather
@@ -445,8 +435,8 @@ func worldNeighborsForPage(
 	}
 
 	// Pass 1: each row's edges, under that row's own resolved face — batched
-	// into one identity query plus one content query per distinct face on the
-	// page (TKT-1U8XYN), with the same per-row result the per-row calls gave.
+	// into one relation query for the page (TKT-1U8XYN), with the same per-row
+	// result the per-row calls gave.
 	rows := make([]worldreader.Resolved, len(entities))
 	for i, e := range entities {
 		rows[i] = resolvedFromStoreFace(ctx, e)
@@ -502,10 +492,16 @@ func worldNeighborsForPage(
 }
 
 // includeCandidates collects the neighbor entities an `?include=` expression
-// names, resolved through the request's world.
+// names for a whole set of rows, resolved through the request's world.
 //
-// Returns the candidates (UNGATED — the caller gates them) and the nested
-// include expression to recurse with per candidate id.
+// Returns the candidates (UNGATED — the caller gates them) in row order, then
+// edge order, and the nested include expressions to recurse with.
+//
+// The rows are resolved as ONE batch (TASK-550RD): a list page with
+// `include=*` used to call this once per row, which cost an edge read, a head
+// resolution and a gate pass per row — thousands of queries for a few hundred
+// rows. A single entity is a batch of one, so the GET and the list share the
+// rule.
 //
 // Two collection paths, chosen by world, sharing one expression parser:
 //
@@ -521,17 +517,54 @@ func worldNeighborsForPage(
 // filtered one but not the other would break it again from the other side.
 func includeCandidates(
 	ctx context.Context, reader entityReader, wn *worldNeighbors,
-	e *entityPkg.Entity, includes string,
-) (candidates []*entityPkg.Entity, nestedFor map[string]string, err error) {
+	rows []*entityPkg.Entity, includes string,
+) (candidates []*entityPkg.Entity, nested []includeNest, err error) {
 	wanted, all := parseIncludeSpec(includes)
 	if wn == nil {
 		// Unwired deployment only — no content states exist, so the bare-id
 		// reader cannot merge faces. See [servedFaceEdges] for why this is a
-		// wiring-shaped fallback rather than a per-request branch.
-		candidates, nestedFor = defaultWorldCandidates(ctx, reader, e, wanted, all)
-		return candidates, nestedFor, nil
+		// wiring-shaped fallback rather than a per-request branch. It stays
+		// per row: production always wires the world seam.
+		var nests includeNests
+		for _, e := range rows {
+			c, nestedFor := defaultWorldCandidates(ctx, reader, e, wanted, all)
+			candidates = append(candidates, c...)
+			nests.addRow(nestedFor)
+		}
+		return candidates, nests.list, nil
 	}
-	return worldCandidates(ctx, wn, e, wanted, all)
+	return worldCandidates(ctx, wn, rows, wanted, all)
+}
+
+// includeNest is one nested include to resolve: the remaining expression
+// for the candidate with this id ("implements.requires" leaves "requires"
+// against each implements target).
+type includeNest struct {
+	id, expr string
+}
+
+// includeNests collects the distinct (id, expr) pairs of a batch. Within one
+// row the last relation naming a target wins, as the per-row loop did; across
+// rows each row's choice is kept, since each row used to recurse on its own.
+type includeNests struct {
+	list []includeNest
+	seen map[includeNest]struct{}
+}
+
+// addRow adds one row's nested expressions in a stable order.
+func (n *includeNests) addRow(nestedFor map[string]string) {
+	ids := slices.Sorted(maps.Keys(nestedFor))
+	for _, id := range ids {
+		k := includeNest{id: id, expr: nestedFor[id]}
+		if _, dup := n.seen[k]; dup {
+			continue
+		}
+		if n.seen == nil {
+			n.seen = make(map[includeNest]struct{})
+		}
+		n.seen[k] = struct{}{}
+		n.list = append(n.list, k)
+	}
 }
 
 // defaultWorldCandidates collects include peers through the ungated, BARE-ID
@@ -608,45 +641,100 @@ func defaultWorldCandidates(
 // both reach the same verdict from the same resolution, rather than one being
 // filtered and the other not (the RR-HJV8CP invariant, now spanning the world
 // filter as well as the ACL one).
+//
+// The rows share ONE batched edge read ([worldreader.RelationReader.NeighborsForPage])
+// and ONE head resolution over the union of their neighbors, so the cost does
+// not grow with the number of rows. Each row still sees exactly what
+// [worldNeighbors.worldScopedNeighbors] gave it alone: its own edges, its own
+// face for a self-edge, and the world's face for every other head.
 func worldCandidates(
-	ctx context.Context, wn *worldNeighbors, e *entityPkg.Entity,
+	ctx context.Context, wn *worldNeighbors, rows []*entityPkg.Entity,
 	wanted map[string]string, all bool,
-) (candidates []*entityPkg.Entity, nestedFor map[string]string, err error) {
-	nestedFor = make(map[string]string)
-	if wn == nil {
-		return nil, nestedFor, nil
+) (candidates []*entityPkg.Entity, nested []includeNest, err error) {
+	if wn == nil || len(rows) == 0 {
+		return nil, nil, nil
 	}
 	dir := store.DirectionOutgoing
 	if all {
 		dir = store.DirectionBoth
 	}
-	edges, heads, err := wn.worldScopedNeighbors(
-		ctx, resolvedFromStoreFace(ctx, e), dir)
-	if err != nil {
-		return nil, nil, err
+	resolved := make([]worldreader.Resolved, len(rows))
+	for i, e := range rows {
+		resolved[i] = resolvedFromStoreFace(ctx, e)
 	}
+	edgesByRow, err := wn.relations.NeighborsForPage(ctx, resolved, dir)
+	if err != nil {
+		return nil, nil, fmt.Errorf("world-scoped include neighbors: %w", err)
+	}
+	var heads map[string]*entityPkg.Entity
+	if headIDs := pageHeadIDs(rows, edgesByRow); len(headIDs) > 0 {
+		if heads, err = wn.resolveHeads(ctx, headIDs); err != nil {
+			return nil, nil, err
+		}
+	}
+	var nests includeNests
+	for i, e := range rows {
+		rowCands, nestedFor := wn.rowCandidates(e, edgesByRow[i], heads, wanted, all)
+		candidates = append(candidates, rowCands...)
+		nests.addRow(nestedFor)
+	}
+	return candidates, nests.list, nil
+}
+
+// pageHeadIDs returns the union of the rows' neighbor ids, in first-seen
+// order.
+func pageHeadIDs(rows []*entityPkg.Entity, edgesByRow [][]*entityPkg.Relation) []string {
+	var headIDs []string
+	seen := make(map[string]struct{})
+	for i, e := range rows {
+		for _, id := range headIDsOf(edgesByRow[i], e.ID) {
+			if _, dup := seen[id]; !dup {
+				seen[id] = struct{}{}
+				headIDs = append(headIDs, id)
+			}
+		}
+	}
+	return headIDs
+}
+
+// rowCandidates is one row's share of [worldCandidates]: its include
+// candidates, and the nested include expression of each candidate id.
+func (wn *worldNeighbors) rowCandidates(
+	e *entityPkg.Entity, edges []*entityPkg.Relation, heads map[string]*entityPkg.Entity,
+	wanted map[string]string, all bool,
+) (candidates []*entityPkg.Entity, nestedFor map[string]string) {
+	// The row's OWN face answers for its own id (a self-edge), as
+	// worldScopedNeighbors seeds it; every other id is the world's head.
+	headOf := func(id string) (*entityPkg.Entity, bool) {
+		if id == e.ID {
+			return e, true
+		}
+		h, ok := heads[id]
+		return h, ok
+	}
+	nestedFor = make(map[string]string)
 	for _, edge := range edges {
-		nested, want := wanted[edge.Type]
+		expr, want := wanted[edge.Type]
 		if !all && !want {
 			continue
 		}
-		head, resolved := heads[peerOf(edge, e.ID)]
-		if !resolved {
+		head, ok := headOf(peerOf(edge, e.ID))
+		if !ok {
 			// No face in this world — not a candidate. Same verdict
 			// worldEdgesForWire reaches for the relations map.
 			continue
 		}
 		// The face that owns a content-scoped edge must be the one served
 		// for its source, as in worldEdgesForWire (BUG-ISJHML).
-		if src, ok := heads[edge.From]; !ok || !wn.relations.Owns(edge, src.Face) {
+		if src, ok := headOf(edge.From); !ok || !wn.relations.Owns(edge, src.Face) {
 			continue
 		}
 		candidates = append(candidates, head)
-		if nested != "" {
-			nestedFor[head.ID] = nested
+		if expr != "" {
+			nestedFor[head.ID] = expr
 		}
 	}
-	return candidates, nestedFor, nil
+	return candidates, nestedFor
 }
 
 // peerOf returns the endpoint of edge that is not selfID, or "" when the edge
@@ -746,23 +834,50 @@ func worldBoundRelations(ctx context.Context) bool {
 	return !worldFromContext(ctx).ranksNothing()
 }
 
-// etagEdges returns the outgoing edges a cache validator must hash for e
-// under world w.
+// faceEdgeReader is the one gated read of the outgoing edges of the face an
+// entity is ([servedFaceEdges]), bound to the App's neighbor wiring. Every
+// response that serves one entity reads its edges through it: the GET, the
+// create, update, attachment and restore responses, the view entry, and the
+// ETag an If-Match is checked against. They cannot drift apart because
+// there is one binding.
 //
-// It mirrors the branch App.handleV1GetEntity takes for the response body,
-// because a validator computed from a different edge set than the body
-// describes a different document — which is the whole failure mode an ETag
-// exists to prevent.
+// neighbors is late-bound because [SetWorldNeighbors] runs after NewApp
+// builds the handlers that hold this value. A captured pointer would keep
+// the nil it held at construction.
+//
+// The zero value fails closed: with no neighbor wiring every read is an
+// error, never an ungated read.
+type faceEdgeReader struct {
+	neighbors func() *worldNeighbors
+}
+
+// faceEdgesOf binds the face-edge read to a's neighbor wiring.
+func faceEdgesOf(a *App) faceEdgeReader {
+	return faceEdgeReader{neighbors: func() *worldNeighbors { return a.worldNeighbors }}
+}
+
+// read returns e's served-face edges and the neighbor ids the caller may
+// see. See [servedFaceEdges].
+func (f faceEdgeReader) read(
+	ctx context.Context, e *entityPkg.Entity,
+) ([]*entityPkg.Relation, map[string]bool, error) {
+	var wn *worldNeighbors
+	if f.neighbors != nil {
+		wn = f.neighbors()
+	}
+	return servedFaceEdges(ctx, wn, e)
+}
+
+// edges is [faceEdgeReader.read] without the neighbor set, for a caller
+// that hashes or renders the edges only.
 //
 // Errors are RETURNED, not swallowed. The tempting shortcut is to treat a
 // resolution fault as "no edges", but the hash of an edge-less entity is a
 // perfectly valid validator for a real document state, so a fault would mint
 // a validator that a later If-None-Match matches against a body that does have
-// edges. The caller folds a sentinel instead. See the call site.
-func etagEdges(
-	ctx context.Context, reader entityReader, wn *worldNeighbors, e *entityPkg.Entity,
-) ([]*entityPkg.Relation, error) {
-	edges, _, err := servedFaceEdges(ctx, reader, wn, e)
+// edges. The ETag caller folds a sentinel instead (see etagUnresolved).
+func (f faceEdgeReader) edges(ctx context.Context, e *entityPkg.Entity) ([]*entityPkg.Relation, error) {
+	edges, _, err := f.read(ctx, e)
 	return edges, err
 }
 
@@ -804,30 +919,27 @@ func etagEdges(
 // identity-vs-content dispatch rather than growing a second, subtly
 // different copy on the default path.
 //
-// # The one surviving fallback
+// # No fallback
 //
-// wn is nil only in a deployment that never called [SetWorldNeighbors]. Such
-// a build has no content states wired at all, so a bare-id query cannot
-// merge faces and the pre-worlds reader remains exactly right. That is a
-// wiring-shaped fallback, not a per-request one.
+// wn is nil only when the composition root never called
+// [SetWorldNeighbors]. That is a wiring error, and it fails closed: a raw
+// bare-id read here would return edges with no neighbor gate, and every
+// caller serializes the result, so the response would name neighbors the
+// caller cannot read (BUG-J01V0Q).
 //
-// Returns the edges plus the gated neighbor-id set (nil on the unwired
-// path, where the caller's pre-existing gating applies unchanged).
+// Returns the edges plus the gated neighbor-id set.
 func servedFaceEdges(
-	ctx context.Context, reader entityReader, wn *worldNeighbors, e *entityPkg.Entity,
+	ctx context.Context, wn *worldNeighbors, e *entityPkg.Entity,
 ) (outgoing []*entityPkg.Relation, visible map[string]bool, err error) {
 	if wn == nil {
-		if !worldScopeFrom(ctx).IsTrivial() {
-			// A world-bound request on a build with no neighbor wiring: the
-			// bare-id read would return the UNION of every face's edges
-			// beside a world-resolved entry — the mixed-face response this
-			// whole file exists to prevent. Nothing is the honest answer.
-			return nil, nil, nil
-		}
-		return reader.outgoingRelations(ctx, e.ID), nil, nil
+		return nil, nil, errNeighborsUnwired
 	}
 	return worldOutgoingForEntity(ctx, wn, e)
 }
+
+// errNeighborsUnwired reports an App whose neighbor gate was never wired
+// ([SetWorldNeighbors]); see [servedFaceEdges].
+var errNeighborsUnwired = errors.New("dataentry: neighbor gate not wired (SetWorldNeighbors)")
 
 // servedFacePageEdges is [servedFaceEdges] for a whole list page: each row's
 // edges come from THAT ROW'S OWN FACE, in every world including the default
@@ -840,10 +952,10 @@ func servedFaceEdges(
 // The returned slices are index-aligned with entities: a row with no links
 // keeps a nil entry rather than shifting its neighbors onto another row.
 //
-// The nil-wn arm is the same wiring-shaped fallback [servedFaceEdges]
-// documents — a deployment with no content states, where a bare-id query
-// cannot merge faces. It gates the page's neighbor ids in ONE type-batched
-// pass (RR-HJV8CP + RR-FRK1) rather than per row: a neighbor id may appear in
+// The nil-wn arm serves an App whose neighbor wiring is missing. Unlike
+// [servedFaceEdges] it need not fail closed, because it gates the neighbors
+// itself: it reads by bare id and gates the page's neighbor ids in ONE
+// type-batched pass (RR-HJV8CP + RR-FRK1) rather than per row. A neighbor id may appear in
 // a row's relations map only if its entity is visible to the caller, so
 // `relations` and the visibility-filtered `included` map can never disagree.
 // Outgoing targets and incoming sources are gated together — an entity's

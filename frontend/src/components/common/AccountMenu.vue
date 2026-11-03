@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { useRouter } from 'vue-router'
+import { useI18n } from 'vue-i18n'
 import RlMenu from 'rela-components/components/overlay/RlMenu.vue'
 import RlMenuItem from 'rela-components/components/overlay/RlMenuItem.vue'
 import RlMenuSection from 'rela-components/components/overlay/RlMenuSection.vue'
@@ -25,6 +26,7 @@ import { shouldDeferToBrowser } from '@/utils/openIntent'
  * identity in it says nothing.
  */
 const router = useRouter()
+const { t } = useI18n()
 const space = useSpaceStore()
 
 const { data: me } = useMe()
@@ -86,14 +88,14 @@ const hasProxyRows = computed(() => !!(links.value.account || links.value.switch
     <RlMenuSection :label="name" :lines="lines" />
     <template v-if="profileHref || hasProxyRows">
       <RlMenuSeparator />
-      <RlMenuItem v-if="profileHref" icon="user" :href="profileHref" @click="openProfile">Profile</RlMenuItem>
-      <RlMenuItem v-if="links.account" icon="settings" :href="links.account">Account</RlMenuItem>
-      <RlMenuItem v-if="links.switch_org" icon="organization" :href="links.switch_org">Switch org</RlMenuItem>
-      <RlMenuItem v-if="links.admin" icon="shield" :href="links.admin">Admin</RlMenuItem>
+      <RlMenuItem v-if="profileHref" icon="user" :href="profileHref" @click="openProfile">{{ t('account.profile') }}</RlMenuItem>
+      <RlMenuItem v-if="links.account" icon="settings" :href="links.account">{{ t('account.account') }}</RlMenuItem>
+      <RlMenuItem v-if="links.switch_org" icon="organization" :href="links.switch_org">{{ t('account.switchOrg') }}</RlMenuItem>
+      <RlMenuItem v-if="links.admin" icon="shield" :href="links.admin">{{ t('account.admin') }}</RlMenuItem>
     </template>
     <template v-if="links.sign_out">
       <RlMenuSeparator />
-      <RlMenuItem icon="sign-out" :href="links.sign_out">Sign out</RlMenuItem>
+      <RlMenuItem icon="sign-out" :href="links.sign_out">{{ t('account.signOut') }}</RlMenuItem>
     </template>
   </RlMenu>
 </template>

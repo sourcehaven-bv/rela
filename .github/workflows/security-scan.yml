@@ -1,0 +1,169 @@
+name: Scheduled security scan
+
+# Weekly secret scanning (gitleaks), SAST (semgrep) and SCA (osv-scanner).
+#
+# Scheduled, not on pull_request: a finding in code that is already merged
+# is not a defect of the PR in flight, so it must not block it (same
+# reasoning as security.yml). The run itself is the record; no findings
+# means no noise.
+#
+# Where results go. This repo is public, so issues, job logs and artifacts
+# are public too. Details (file, line, rule) therefore go to code scanning
+# via SARIF, which only users with write access can see. The tracking issue
+# per tool ("Security scan: <tool> findings") carries counts and links only,
+# except for osv-scanner, whose advisories are public anyway. The issue is
+# updated by later runs and closed by the first clean run.
+#
+# Dependency fix PRs come from Dependabot security updates (enabled on the
+# repo) and, for Go, from the auto-update in security.yml.
+#
+# False positives:
+#   gitleaks     .gitleaksignore (fingerprints)
+#   semgrep      `nosemgrep` comment, or SEMGREP_EXCLUDE_RULES below
+#   osv-scanner  osv-scanner.toml ([[IgnoredVulns]] with reason)
+
+on:
+  schedule:
+    - cron: "0 7 * * 1" # Mondays 07:00 UTC, after the fuzz sweep
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+  security-events: write
+
+env:
+  GITLEAKS_VERSION: "8.30.1"
+  SEMGREP_VERSION: "1.181.0"
+  OSV_SCANNER_VERSION: "2.7.0"
+  # Space-separated semgrep rule ids to skip, for rules that are wrong for
+  # this codebase as a whole. Prefer `nosemgrep` on the line otherwise.
+  SEMGREP_EXCLUDE_RULES: ""
+
+jobs:
+  scan:
+    name: Scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0 # gitleaks scans the full history
+          persist-credentials: false
+
+      - name: Install scanners
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/bin" && cd "$RUNNER_TEMP/bin"
+          gh release download "v$GITLEAKS_VERSION" -R gitleaks/gitleaks \
+            -p "gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz" \
+            -p "gitleaks_${GITLEAKS_VERSION}_checksums.txt"
+          grep " gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz\$" "gitleaks_${GITLEAKS_VERSION}_checksums.txt" | sha256sum -c -
+          tar xzf "gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz" gitleaks
+          gh release download "v$OSV_SCANNER_VERSION" -R google/osv-scanner \
+            -p osv-scanner_linux_amd64 -p osv-scanner_SHA256SUMS
+          grep " osv-scanner_linux_amd64\$" osv-scanner_SHA256SUMS | sha256sum -c -
+          mv osv-scanner_linux_amd64 osv-scanner && chmod +x osv-scanner
+          pipx install "semgrep==$SEMGREP_VERSION"
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+
+      - name: gitleaks (secrets, full history)
+        run: |
+          gitleaks git --redact --no-banner --exit-code 0 \
+            --report-format sarif --report-path gitleaks.sarif .
+
+      - name: semgrep (SAST, p/default, severity ERROR)
+        run: |
+          excludes=()
+          for rule in $SEMGREP_EXCLUDE_RULES; do excludes+=(--exclude-rule "$rule"); done
+          semgrep scan --config p/default --severity ERROR --metrics off \
+            --quiet --sarif --output semgrep.sarif "${excludes[@]}" .
+
+      - name: osv-scanner (SCA)
+        run: |
+          # Exit 1 means vulnerabilities found; counted from the SARIF below.
+          osv-scanner scan source -r --format sarif --output-file osv-scanner.sarif . || [ $? -eq 1 ]
+          osv-scanner scan source -r --format markdown --output-file osv-scanner.md . || [ $? -eq 1 ]
+
+      - name: Upload gitleaks to code scanning
+        if: always() && hashFiles('gitleaks.sarif') != ''
+        uses: github/codeql-action/upload-sarif@v4
+        with:
+          sarif_file: gitleaks.sarif
+          category: gitleaks
+
+      - name: Upload semgrep to code scanning
+        if: always() && hashFiles('semgrep.sarif') != ''
+        uses: github/codeql-action/upload-sarif@v4
+        with:
+          sarif_file: semgrep.sarif
+          category: semgrep
+
+      - name: Upload osv-scanner to code scanning
+        if: always() && hashFiles('osv-scanner.sarif') != ''
+        uses: github/codeql-action/upload-sarif@v4
+        with:
+          sarif_file: osv-scanner.sarif
+          category: osv-scanner
+
+      - name: Open, update or close tracking issues
+        run: |
+          set -euo pipefail
+          run_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+          alerts_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/security/code-scanning"
+          gh label create security --color B60205 --description "Security-related issue" --force >/dev/null
+          gh label create automated --color EDEDED --description "Filed by an automated job" --force >/dev/null
+
+          report() {
+            local tool=$1 sarif=$2 details=${3:-}
+            local title="Security scan: $tool findings"
+            local count body existing previous
+            # Results silenced in code (e.g. `nosemgrep`) stay in the SARIF
+            # with a non-empty `suppressions` array; do not count them.
+            count=$(jq '[.runs[].results[] | select((.suppressions // []) | length == 0)] | length' "$sarif")
+            echo "$tool: $count finding(s)" | tee -a "$GITHUB_STEP_SUMMARY"
+            existing=$(gh issue list --state open --label security --search "\"$title\" in:title" \
+              --json number,title --jq "map(select(.title == \"$title\")) | .[0].number // empty")
+
+            if [ "$count" -eq 0 ]; then
+              if [ -n "$existing" ]; then
+                gh issue close "$existing" --comment "No $tool findings in $run_url. Closing."
+              fi
+              return
+            fi
+
+            body="<!-- count:$count -->
+          The scheduled security scan found **$count** $tool finding(s).
+
+          - Run: $run_url
+          - Details (write access needed): $alerts_url
+
+          Triage each finding: fix it, or mark it as a false positive (see the header of \`.github/workflows/security-scan.yml\`). This issue is updated by later runs and closed by the first clean run.${details:+
+
+          $details}"
+
+            if [ -z "$existing" ]; then
+              gh issue create --title "$title" --label security,automated --body "$body"
+              return
+            fi
+            previous=$(gh issue view "$existing" --json body --jq '.body' | sed -n 's/^<!-- count:\([0-9]*\) -->$/\1/p')
+            gh issue edit "$existing" --body "$body"
+            if [ "$previous" != "$count" ]; then
+              gh issue comment "$existing" --body "Findings changed from ${previous:-?} to $count in $run_url."
+            fi
+          }
+
+          report gitleaks gitleaks.sarif
+          report semgrep semgrep.sarif
+          osv_details=""
+          if [ -f osv-scanner.md ]; then
+            osv_details="<details><summary>osv-scanner output</summary>
+
+          $(head -c 50000 osv-scanner.md)
+
+          </details>"
+          fi
+          report osv-scanner osv-scanner.sarif "$osv_details"

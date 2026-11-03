@@ -34,23 +34,40 @@ var ErrOwningRule = errors.New("owning rule")
 // Importer, data migrations and hand-edited files are operator-trusted and do
 // not pass here, so readers must still tolerate irregular ownership.
 func CheckOwningEdge(ctx context.Context, meta *metamodel.Metamodel, st store.Store, key entity.RelationKey) error {
+	return checkOwningEdgeLeaving(ctx, meta, st, key, nil)
+}
+
+// checkOwningEdgeLeaving is [CheckOwningEdge] for a create that replaces the
+// edges in leaving, which are not counted (TKT-65LVAK): re-pointing an owned
+// entity to another owner does not give it a second one.
+func checkOwningEdgeLeaving(
+	ctx context.Context, meta *metamodel.Metamodel, st store.Store, key entity.RelationKey,
+	leaving map[entity.RelationKey]bool,
+) error {
 	if !metamodel.IsOwning(meta, key.Type) {
 		return nil
 	}
 	if key.From == key.To {
 		return fmt.Errorf("%w: %s cannot own itself", ErrOwningRule, key.From)
 	}
-	identical := func(rel *entity.Relation) bool { return rel.From == key.From && rel.Type == key.Type }
+	gone := func(rel *entity.Relation) bool { return leaving[rel.Identity()] }
+	identical := func(rel *entity.Relation) bool {
+		return (rel.From == key.From && rel.Type == key.Type) || gone(rel)
+	}
 	checks := []struct {
 		id   string
 		dir  store.Direction
 		skip func(*entity.Relation) bool
 	}{
 		{key.To, store.DirectionIncoming, identical}, // To already has an owner
-		{key.From, store.DirectionIncoming, nil},     // From is itself owned
-		{key.To, store.DirectionOutgoing, nil},       // To owns something
+		{key.From, store.DirectionIncoming, gone},    // From is itself owned
+		{key.To, store.DirectionOutgoing, gone},      // To owns something
 	}
 	for _, c := range checks {
+		// A blank end is an entity not written yet, which has no edges.
+		if c.id == "" {
+			continue
+		}
 		n, err := countOwningEdges(ctx, meta, st, c.id, c.dir, c.skip)
 		if err != nil {
 			return err
@@ -266,12 +283,12 @@ func recordOwnedDeletes(ctx context.Context, m *Manager, owner string, owned []o
 			continue
 		}
 		for _, e := range o.res.DeletedEntities {
-			m.recordEntityVersion(ownedCtx, store.VersionOpDelete, e, "")
+			m.recordDeleteVersion(ownedCtx, e)
 		}
 		for _, rel := range append(append([]*entity.Relation{}, o.capture.incoming...), o.capture.outgoing...) {
 			if k := relationKey(rel); !versioned[k] {
 				versioned[k] = true
-				m.recordRelationVersion(ownedCtx, store.VersionOpDelete, rel, "", "", tb)
+				m.recordRelationVersion(ownedCtx, store.VersionOpDelete, rel, 0, "", "", tb)
 			}
 		}
 		for _, rel := range o.res.DeletedRelations {

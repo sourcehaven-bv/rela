@@ -23,6 +23,11 @@ type EntityLinks struct {
 }
 
 // Entity is the JSON representation of an entity for API v1.
+//
+// Conversion offers are part of the per-entity affordances the detail page
+// needs, so they remain top-level alongside the other `_` metadata.
+//
+//plimsoll:max-fields=21
 type Entity struct {
 	EntityLinks
 	ID           string              `json:"id"`
@@ -35,7 +40,7 @@ type Entity struct {
 	Actions      map[string]bool     `json:"_actions,omitempty"`
 	Inaccessible []InaccessibleField `json:"inaccessible,omitempty"`
 	EditState
-	RowCounts
+	Activity
 	// Redacted names the properties withheld from `Properties` by
 	// field-level ACL (`visible:`) on THIS response (DEC-T0XIWQ). It is the
 	// field-level sibling of Inaccessible, which says the same thing
@@ -146,6 +151,9 @@ type Entity struct {
 	// copy capability wired at all, so a wiring gap never reads as "this face
 	// declares no copies".
 	Copies *[]CopyOffer `json:"_copies,omitempty"`
+	// Conversions are operator-declared type changes. Allowed is advisory;
+	// the conversion endpoint rechecks the dedicated convert ACL.
+	Conversions *[]ConversionOffer `json:"_conversions,omitempty"`
 	// Faces lists the OTHER content states this entity actually has, so a
 	// draft can link to its published face and vice versa.
 	//
@@ -173,15 +181,38 @@ type Entity struct {
 	Warnings []Warning `json:"warnings,omitempty"`
 }
 
-// RowCounts groups derived counts a collection row carries on request. It is
-// embedded in [Entity] for the same reason as [EditState]: the fields serialize
-// flat, and Entity's own field count stays under the plimsoll cap.
-type RowCounts struct {
+// Activity groups what people are doing around an entity, computed per
+// request: its comment count, its lease and its busy channels. It is
+// embedded in [Entity] for the same reason as [EditState]: the fields
+// serialize flat, and Entity's own field count stays under the plimsoll
+// cap.
+type Activity struct {
 	// CommentCount is the number of comments on this row's face, present only
 	// when the list request asked for it (`?comment_counts=1`), commenting is
 	// enabled for the type, and the principal holds `comment:read` across the
 	// project. Absent means "not served", never zero comments; zero is 0.
 	CommentCount *int `json:"_comment_count,omitempty"`
+	// Lease is the live advisory lease on the entity. It is set only on the
+	// single-entity GET and on list rows, after the read gate, and is absent
+	// when nobody holds the entity.
+	Lease *EntityLease `json:"_lease,omitempty"`
+	// Busy lists the row's busy channels of the type the list request named
+	// (`?busy=<channel type>`): channels whose session is in a state with
+	// status working, which the caller may read. Nil is absent ("not
+	// served"); an empty slice is `[]` ("none busy that you may see").
+	Busy []BusyChannel `json:"_busy,omitzero"`
+}
+
+// BusyChannel is one busy channel of a list row. Since is when the session
+// entered its state, in RFC 3339; a client computes the time in the state
+// from it.
+type BusyChannel struct {
+	Type      string `json:"type"`
+	TypeLabel string `json:"type_label,omitempty"`
+	Name      string `json:"name,omitempty"`
+	State     string `json:"state"`
+	Label     string `json:"label,omitempty"`
+	Since     string `json:"since"`
 }
 
 // EditState groups the per-entity fields an edit surface needs and a read
@@ -213,6 +244,11 @@ type EditState struct {
 	// single-entity GET and PATCH responses and on a view's entry, nil
 	// elsewhere.
 	Versions *FieldVersions `json:"_versions,omitempty"`
+	// TaskItemConversions lists the recipes that turn a task item in this
+	// entity's body into a new linked entity. Allowed is advisory; the
+	// endpoint checks again. Present on per-entity responses when the
+	// capability is wired, nil on list rows.
+	TaskItemConversions *[]TaskItemConversionOffer `json:"_task_item_conversions,omitempty"`
 }
 
 // FieldVersions holds one version token per field of an entity. A token is
@@ -295,12 +331,14 @@ type Transition struct {
 // per-file download/delete URL. Href is the download URL for the bytes (an
 // ACL-gated endpoint that inherits the owning entity's read permission).
 // ContentType is inferred from the filename — the store does not persist
-// it on every backend.
+// it on every backend. SHA256 is the lowercase hex SHA-256 of the stored
+// bytes; it is omitted only when the backend could not read them.
 type Attachment struct {
 	ID          string `json:"id"`
 	FileName    string `json:"filename"`
 	Size        int64  `json:"size"`
 	ContentType string `json:"contentType"`
+	SHA256      string `json:"sha256,omitempty"`
 	Href        string `json:"href"`
 }
 
@@ -684,13 +722,27 @@ type PropertyDef struct {
 	Labels      map[string]string `json:"labels,omitempty"` // Display labels keyed by value; value stays the wire identity
 	Description string            `json:"description,omitempty"`
 	List        bool              `json:"list,omitempty"`
-	// Max is the attachment cap for a `file` property (default 1). The SPA's
-	// file widget reads it to switch between replace-mode and multi-file
-	// add-mode. Omitted unless set above 1.
-	Max int `json:"max,omitempty"`
+	// Min and Max mirror the schema keys, whose meaning depends on Type.
+	// Nil: accepted — omitted when the schema does not set the key.
+	//
+	// On an `integer` property they are the inclusive value bounds
+	// (TKT-BRAM1A); the SPA puts them on the number input. On a `file`
+	// property Max is the attachment cap (default 1), which the file widget
+	// reads to switch between replace-mode and multi-file add-mode.
+	Min *int `json:"min,omitempty"`
+	Max *int `json:"max,omitempty"`
 	// System names the external system of an `external_ref` property
 	// (TKT-SM20FG). The value is read-only on every interactive surface.
 	System string `json:"system,omitempty"`
+	// Display is the property's display format, such as a currency
+	// (TKT-SVLQQ6). The SPA applies it wherever it renders the value for
+	// reading; inputs stay plain. Omitted when unset.
+	Display *PropertyDisplay `json:"display,omitempty"`
+}
+
+// PropertyDisplay is the wire form of metamodel.PropertyDisplay.
+type PropertyDisplay struct {
+	Currency string `json:"currency,omitempty"`
 }
 
 // RelationType is the JSON representation of a relation type.
@@ -740,6 +792,11 @@ type CustomType struct {
 }
 
 // Config is the JSON representation of the UI config.
+//
+// It mirrors the top-level keys of data-entry.yaml, so a new key raises the
+// pin by one; `channels` (TKT-91BK6F) is the most recent.
+//
+//plimsoll:max-fields=22
 type Config struct {
 	App AppConfig `json:"app"`
 	// AboutDescription is the deployment description shown by the SPA's global
@@ -748,23 +805,28 @@ type Config struct {
 	// AppConfig.Description (which SettingsView renders as a plain one-liner) so
 	// a multi-paragraph markdown metamodel description doesn't leak into that
 	// view. Empty → the About button is hidden.
-	AboutDescription string                                      `json:"about_description,omitempty"`
-	Styles           map[string]map[string]string                `json:"styles"`
-	Forms            map[string]dataentryconfig.Form             `json:"forms"`
-	Lists            map[string]dataentryconfig.List             `json:"lists"`
-	Views            map[string]dataentryconfig.ViewConfig       `json:"views"`
-	EntityViews      map[string]dataentryconfig.EntityViewConfig `json:"entity_views,omitempty"`
-	Kanbans          map[string]dataentryconfig.Kanban           `json:"kanbans"`
-	Calendars        map[string]dataentryconfig.Calendar         `json:"calendars,omitempty"`
-	Gantts           map[string]dataentryconfig.Gantt            `json:"gantts,omitempty"`
-	Dashboard        *dataentryconfig.DashboardConfig            `json:"dashboard,omitempty"`
-	Actions          map[string]dataentryconfig.Action           `json:"actions,omitempty"`
-	Navigation       []dataentryconfig.NavigationEntry           `json:"navigation"`
-	Spaces           []dataentryconfig.Space                     `json:"spaces,omitempty"`
-	Pages            map[string]dataentryconfig.Page             `json:"pages,omitempty"`
-	Documents        map[string]dataentryconfig.DocumentConfig   `json:"documents,omitempty"`
-	Apps             map[string]App                              `json:"apps,omitempty"`
-	Palette          *dataentryconfig.ResolvedPalette            `json:"palette,omitempty"`
+	AboutDescription string                          `json:"about_description,omitempty"`
+	Styles           map[string]map[string]string    `json:"styles"`
+	Forms            map[string]dataentryconfig.Form `json:"forms"`
+	// Channels is the data-entry.yaml `channels:` block: the field order,
+	// labels and widgets of each channel message type, keyed by channel
+	// type. The structure comes from `GET /api/v1/_schema/channels`.
+	Channels    map[string]dataentryconfig.ChannelPresentation `json:"channels,omitempty"`
+	Lists       map[string]dataentryconfig.List                `json:"lists"`
+	Views       map[string]dataentryconfig.ViewConfig          `json:"views"`
+	EntityViews map[string]dataentryconfig.EntityViewConfig    `json:"entity_views,omitempty"`
+	Kanbans     map[string]dataentryconfig.Kanban              `json:"kanbans"`
+	Calendars   map[string]dataentryconfig.Calendar            `json:"calendars,omitempty"`
+	Gantts      map[string]dataentryconfig.Gantt               `json:"gantts,omitempty"`
+	Dashboard   *dataentryconfig.DashboardConfig               `json:"dashboard,omitempty"`
+	Dashboards  map[string]dataentryconfig.DashboardConfig     `json:"dashboards,omitempty"`
+	Actions     map[string]dataentryconfig.Action              `json:"actions,omitempty"`
+	Navigation  []dataentryconfig.NavigationEntry              `json:"navigation"`
+	Spaces      []dataentryconfig.Space                        `json:"spaces,omitempty"`
+	Pages       map[string]dataentryconfig.Page                `json:"pages,omitempty"`
+	Documents   map[string]dataentryconfig.DocumentConfig      `json:"documents,omitempty"`
+	Apps        map[string]App                                 `json:"apps,omitempty"`
+	Palette     *dataentryconfig.ResolvedPalette               `json:"palette,omitempty"`
 
 	// NextActionBands is the operator's ordered priority vocabulary, so the
 	// SPA can label a suggestion's band ("Someone is waiting") rather than
@@ -798,6 +860,10 @@ type App struct {
 type AppConfig struct {
 	Name        string `json:"name"`
 	Description string `json:"description"`
+	// Language is the project's default interface language (app.language),
+	// a BCP 47 tag, or empty to follow the browser. The SPA uses it when
+	// the user has chosen no language of their own.
+	Language string `json:"language,omitempty"`
 	// PlantUMLServerURL is the configured PlantUML server base URL, or empty
 	// when PlantUML rendering is disabled. The SPA treats a non-empty value as
 	// the on switch for ```plantuml diagram rendering.
@@ -847,6 +913,17 @@ type Error struct {
 	// bare id offers: the faces of the entity the caller may read, in
 	// declaration order. A client retries with one of them.
 	Faces []string `json:"faces,omitempty"`
+	// Use and Property are set on a 400 property_not_visible (BUG-WJSYQT):
+	// Use is how the list request used the property ("filter" or "sort"),
+	// and Property names it. A client may drop a refused sort and read
+	// again; a refused filter must stand, because dropping it widens the
+	// list.
+	Use      string `json:"use,omitempty"`
+	Property string `json:"property,omitempty"`
+	// EntityID is set on a 500 conversion_incomplete: it names the entity a
+	// conversion created before a later step failed, so a client can point
+	// at it instead of converting again into a duplicate.
+	EntityID string `json:"entity_id,omitempty"`
 }
 
 // FieldError represents a validation error on a specific field.
@@ -904,6 +981,23 @@ type SectionField struct {
 	Span         int      `json:"span,omitempty"`
 	Render       string   `json:"render,omitempty"`
 	Widget       string   `json:"widget,omitempty"`
+	// Relation names the relation a relation field shows (TKT-CADCFX); then
+	// Property is empty and Targets holds the entry's readable targets.
+	Relation string               `json:"relation,omitempty"`
+	Targets  []SectionFieldTarget `json:"targets,omitempty"`
+	// StyleFrom is the target property whose enum styles color each target.
+	StyleFrom string `json:"styleFrom,omitempty"`
+}
+
+// SectionFieldTarget is one target of a relation field: an entity the
+// principal may read, with its display title.
+type SectionFieldTarget struct {
+	ID    string `json:"id"`
+	Title string `json:"title"`
+	// Style is the target's value of the field's `style_from` property, an
+	// enum value the SPA colors with that enum's `styles`. Empty when the
+	// field sets no style_from or the target has no (readable) value.
+	Style string `json:"style,omitempty"`
 }
 
 // SidePanelEntity represents an entity in a side panel section.
@@ -948,6 +1042,11 @@ type SidebarItem struct {
 	// this payload stays free of per-principal data beyond the permission
 	// filter.
 	Entities *SidebarEntities `json:"entities,omitempty"`
+
+	// Pile is set on a `pile:` entry: the name of the principal's pile the
+	// row opens. Href stays empty. The SPA matches the name against the
+	// principal's piles, so this payload carries no per-principal data.
+	Pile string `json:"pile,omitempty"`
 
 	// Flyout is set when the entry opens its view in a panel that slides out
 	// of the sidebar instead of navigating. Href still names the full page,
@@ -1121,9 +1220,100 @@ type NavItem struct {
 // one with an empty `cards:`, and one where every card was filtered all
 // serialize as `[]`, so the SPA has a single "render what you got" path.
 type DashboardResponse struct {
-	Title       string                          `json:"title,omitempty"`
-	Description string                          `json:"description,omitempty"`
-	Cards       []dataentryconfig.DashboardCard `json:"cards"`
+	Title       string               `json:"title,omitempty"`
+	Description string               `json:"description,omitempty"`
+	Cards       []DashboardCardEntry `json:"cards"`
+}
+
+// DashboardCardEntry is one card of a DashboardResponse: its config plus its
+// position in the dashboard's `cards:`, which addresses it on
+// /api/v1/_dashboard/card. The index is the config position, so it skips the
+// cards this principal is not shown.
+type DashboardCardEntry struct {
+	dataentryconfig.DashboardCard
+	Index int `json:"index"`
+}
+
+// DashboardCardValue is the server-computed value of one `list:` dashboard
+// card (TKT-2SGPJZ), from GET /api/v1/_dashboard/card.
+//
+// Title, Display and List echo the card the value was computed for. The
+// SPA compares them with the card it asked for and drops a mismatch, which
+// a config reload between the two requests can cause.
+type DashboardCardValue struct {
+	Title   string `json:"title"`
+	Display string `json:"display"`
+	List    string `json:"list"`
+	// Total counts the list's rows this principal sees.
+	Total int `json:"total"`
+	// Matched counts the rows a ratio card's `match:` scope admits.
+	Matched int `json:"matched,omitempty"`
+	// Groups is a breakdown, or a ratio's per-group counts, in display
+	// order: declared order for an enum, else most rows first.
+	Groups []DashboardGroup `json:"groups,omitempty"`
+	// Rows is a table card's first rows.
+	Rows []DashboardRow `json:"rows,omitempty"`
+	// Matrix is a matrix card's cells.
+	Matrix *DashboardMatrix `json:"matrix,omitempty"`
+	// Partial is true when a value the card groups, colors or shows was
+	// hidden from this principal on at least one row. That row still counts
+	// in Total.
+	Partial bool `json:"partial,omitempty"`
+}
+
+// DashboardGroup is one value of a breakdown or ratio group_by. An empty
+// Value collects the rows without one.
+type DashboardGroup struct {
+	Value   string `json:"value"`
+	Label   string `json:"label"`
+	Count   int    `json:"count"`
+	Matched int    `json:"matched"`
+}
+
+// DashboardRow is one row of a table card: the card's column properties as
+// this principal may read them.
+type DashboardRow struct {
+	ID         string         `json:"id"`
+	Type       string         `json:"type"`
+	Title      string         `json:"_title"`
+	Properties map[string]any `json:"properties"`
+	// Redacted names the column properties hidden from this principal.
+	Redacted []string `json:"_redacted,omitempty"`
+}
+
+// DashboardMatrix is a matrix card: its axes in display order and its
+// non-empty cells.
+type DashboardMatrix struct {
+	RowProperty    string `json:"row_property"`
+	ColumnProperty string `json:"column_property"`
+	// RowTitle and ColumnTitle name the axes: the card's `rows_label:` and
+	// `columns_label:`, else the property's label, else its name.
+	RowTitle    string               `json:"row_title"`
+	ColumnTitle string               `json:"column_title"`
+	Rows        []DashboardAxisValue `json:"rows"`
+	Columns     []DashboardAxisValue `json:"columns"`
+	Cells       []DashboardCell      `json:"cells"`
+	// Unplaced counts rows with no place on an axis: no value, a value
+	// outside an enum or outside an integer's declared range, or a value
+	// on an integer axis that is not a whole number.
+	Unplaced int `json:"unplaced,omitempty"`
+	// Truncated is true when an integer axis had more values than are shown.
+	Truncated bool `json:"truncated,omitempty"`
+}
+
+// DashboardAxisValue is one row or column of a matrix.
+type DashboardAxisValue struct {
+	Value string `json:"value"`
+	Label string `json:"label"`
+}
+
+// DashboardCell is one non-empty matrix cell. Color is a style class (as in
+// the `/_config` style map), or empty for a neutral cell.
+type DashboardCell struct {
+	Row    string `json:"row"`
+	Column string `json:"column"`
+	Count  int    `json:"count"`
+	Color  string `json:"color,omitempty"`
 }
 
 // SidebarResponse contains the sidebar data with app info and navigation.
@@ -1269,7 +1459,10 @@ type TemplateRelation struct {
 // spans (see collectMentions). The SPA's markdown renderer consumes this
 // map to rewrite those code spans into titled in-app links. Mirrors the
 // Lua-side `rela.md.entity_refs` shape (TKT-LXYHQ) for SPA consumers
-// that don't go through the Lua document path.
+// that don't go through the Lua document path. Each ID resolves in the
+// request's world (`?world=`, else the default world), to the face that
+// world serves among the faces the caller may read; the title is that
+// face's.
 //
 // Wire stability: `mentions` is part of the public v1 API. The set of
 // `inaccessible_reason` values may grow as new locking mechanisms are
@@ -1304,6 +1497,13 @@ type ViewResponse struct {
 	// re-deriving which section maps to which relation. Omitted when no section
 	// opted in — which is every view that predates this field.
 	Create []ViewSectionCreate `json:"create,omitempty"`
+
+	// HideMentionedByPanel tells the page to leave out the built-in
+	// "Mentioned by" panel (TKT-HF0D5W): the view collects backlinks itself
+	// through a `mentioned_by` traverse step, or
+	// `entity_views.<type>.mentioned_by_panel` is false. Decided by the server
+	// from the view it executed, so the SPA does not re-derive view selection.
+	HideMentionedByPanel bool `json:"hideMentionedByPanel,omitempty"`
 }
 
 // ViewSection represents a section with resolved data.
@@ -1335,6 +1535,12 @@ type ViewSection struct {
 	// the preview cap sets both. This flag exists for what HasMoreChildren
 	// cannot express — a parent dropped entirely has no row to signal on.
 	Truncated bool `json:"truncated,omitempty"`
+	// Incomplete reports that a flat section's backlinks collection holds
+	// only part of the matching sources (TKT-HF0D5W): more exist than a
+	// `mentioned_by` step collects, or the backlink scan stopped at its
+	// budget. The scan-budget case is the signal docs/acl-security.md
+	// accepts for the mentioned-by endpoint.
+	Incomplete bool `json:"incomplete,omitempty"`
 
 	// RelationOrder is set when the section's rows are the entry's targets
 	// over one orderable relation, shown in relation order; see
@@ -1520,6 +1726,12 @@ type ViewGroup struct {
 	GroupName string       `json:"groupName"`
 	Rows      []ViewRow    `json:"rows,omitempty"`
 	Entities  []ViewEntity `json:"entities,omitempty"`
+	// EntityType and Columns are set on the per-type groups of a
+	// `columns_by_type` table (TKT-HF0D5W). Rows' cells are positional over
+	// Columns. Both are omitted on a `group_by` group, whose rows use the
+	// section's columns.
+	EntityType string       `json:"entityType,omitempty"`
+	Columns    []ViewColumn `json:"columns,omitempty"`
 }
 
 // ViewAddInfo describes an add button configuration. Despite the "View"
@@ -1613,6 +1825,29 @@ type Mention struct {
 	InaccessibleReason string `json:"inaccessible_reason,omitempty"`
 }
 
+// MentionedByResponse is GET /api/v1/{plural}/{id}/mentioned-by
+// (TKT-Q6AKUN): the entities whose body mentions the addressed one, one page
+// at a time, in id order.
+type MentionedByResponse struct {
+	Items []MentionSource `json:"items"`
+	// NextCursor is passed back as ?cursor= for the following page: the id
+	// of the last item. Absent when there is none. A page may be short and
+	// still carry one: the server bounds the work one request does.
+	NextCursor string `json:"next_cursor,omitempty"`
+	// Truncated reports that the server stopped scanning with nothing more
+	// to show, so further sources may exist that no cursor reaches.
+	Truncated bool `json:"truncated,omitempty"`
+}
+
+// MentionSource is one entity that mentions the addressed one, at the face
+// the request's world serves. Title and the inaccessible flags follow
+// [Mention].
+type MentionSource struct {
+	ID   string `json:"id"`
+	Face string `json:"face,omitempty"`
+	Mention
+}
+
 // Face is one content state an entity has, other than the one being served.
 // See [Entity.Faces] for why it carries no readability flag.
 type Face struct {
@@ -1672,6 +1907,47 @@ type CopyOffer struct {
 	// in which case the client shows the copy's label and lands on the face
 	// written. Mirrors metamodel.CopyOnSuccess.
 	OnSuccess *CopyOnSuccess `json:"onSuccess,omitempty"`
+}
+
+// ConversionOffer describes an operator-declared conversion from this entity.
+type ConversionOffer struct {
+	Name          string              `json:"name"`
+	Label         string              `json:"label"`
+	To            string              `json:"to"`
+	Allowed       bool                `json:"allowed"`
+	Reason        string              `json:"reason,omitempty"`
+	MappedFields  []string            `json:"mapped_fields,omitempty"`
+	ContentMapped bool                `json:"content_mapped,omitempty"`
+	FaceChoices   map[string][]string `json:"face_choices,omitempty"`
+}
+
+// ConversionResult reports the identity created by a type conversion.
+type ConversionResult struct {
+	Definition       string `json:"definition"`
+	OldID            string `json:"old_id"`
+	EntityID         string `json:"entity_id"`
+	Face             string `json:"face"`
+	RelationsDropped int    `json:"relations_dropped"`
+}
+
+// ConversionPreview reports the mapping consequences before conversion.
+type ConversionPreview struct {
+	TargetType       string   `json:"target_type"`
+	Required         []string `json:"required"`
+	RequiredFaces    []string `json:"required_faces,omitempty"`
+	RelationsToDrop  []string `json:"relations_to_drop"`
+	InvalidRelations []string `json:"invalid_relations"`
+	TargetFaces      []string `json:"target_faces"`
+	InvalidFaces     []string `json:"invalid_faces,omitempty"`
+	// Moves says where each source face's comments and version history go.
+	// Readers of the target face can see them after the conversion.
+	Moves []ConversionMove `json:"moves"`
+}
+
+// ConversionMove is one source face and the target face it becomes.
+type ConversionMove struct {
+	SourceFace string `json:"source_face"`
+	TargetFace string `json:"target_face"`
 }
 
 // CopyOnSuccess is the operator's follow-through for a successful copy.
@@ -1774,3 +2050,35 @@ type GanttBreach struct {
 
 // IsZero lets omitzero keep an empty breach off the wire.
 func (b GanttBreach) IsZero() bool { return !b.Before && !b.After }
+
+// TaskItemConversionOffer is one task-item recipe offered from an entity.
+// Item is what the editor does with the item afterwards: `link` or `remove`.
+type TaskItemConversionOffer struct {
+	Name    string `json:"name"`
+	Label   string `json:"label"`
+	To      string `json:"to"`
+	Item    string `json:"item"`
+	Allowed bool   `json:"allowed"`
+	Reason  string `json:"reason,omitempty"`
+}
+
+// TaskItemConversionPreview names the required target fields a task-item
+// recipe leaves empty.
+type TaskItemConversionPreview struct {
+	TargetType string   `json:"target_type"`
+	Required   []string `json:"required"`
+}
+
+// TaskItemConversionResult identifies the entity a task-item conversion
+// created, so the editor can link or remove the item.
+type TaskItemConversionResult struct {
+	Definition string `json:"definition"`
+	EntityID   string `json:"entity_id"`
+	EntityType string `json:"entity_type"`
+	Face       string `json:"face,omitempty"`
+	Title      string `json:"title"`
+	Item       string `json:"item"`
+	// Warnings are the create's soft conditions, and a failure of a step
+	// after the commit. The entity exists either way.
+	Warnings []Warning `json:"warnings,omitempty"`
+}

@@ -4,8 +4,7 @@
 // # Contract
 //
 // The source project is never modified: it is read through a read-only
-// filesystem, fsstore ignores its index cache, and no database is opened in
-// it. Everything is built in a staging directory beside the target and
+// filesystem and no database is opened in it. Everything is built in a staging directory beside the target and
 // renamed into place only after the data has been written. Any failure removes
 // the staging directory, so a run either produces a complete target or
 // nothing.
@@ -104,6 +103,9 @@ type Options struct {
 	// Principal is the operator running the import. Its user, or
 	// "system:fs-import" when empty, is stamped on every row.
 	Principal principal.Principal
+	// AssertedBy is the OS user who asserted Principal with `--run-as`;
+	// empty otherwise. It goes into the run's audit record.
+	AssertedBy string
 	// Progress, when set, receives one line per phase.
 	Progress io.Writer
 }
@@ -292,10 +294,11 @@ func (r *run) recordAudit() error {
 	}
 	now := time.Now().UTC()
 	sink.Record(audit.Record{
-		Time:      now,
-		Op:        audit.OpFSImport,
-		Principal: p,
-		Summary:   r.rep.summary(),
+		Time:       now,
+		Op:         audit.OpFSImport,
+		Principal:  p,
+		AssertedBy: r.opts.AssertedBy,
+		Summary:    r.rep.summary(),
 	})
 	if !auditHasImport(dir, now) {
 		return errors.New("the audit record of the import could not be written")

@@ -56,7 +56,7 @@ compose them do not.
 | `RlLockedField`     | `common/InaccessibleField.vue` (35 l) | The lock affordance when a value is unreadable, through permissions or encryption                     | none                              |
 | `RlFieldRenderer`   | `forms/FieldRenderer.vue`             | Routes a schema field to the right widget                                                             | none                              |
 | `RlDynamicForm`     | `forms/DynamicForm.vue`               | Schema-driven form assembly                                                                           | none                              |
-| `RlRruleBuilder`    | `forms/RruleBuilder.vue` (443 l)      | Recurrence-rule builder                                                                               | none                              |
+| `RlRruleBuilder`    | `widgets/RruleBuilder.vue` (443 l) | Recurrence-rule builder                                                                               | none                              |
 | `RlStatusControl`   | `forms/StatusControl.vue` (197 l)     | Status picker offering only the reachable transitions, not every enum value                           | `RlStatusPill`, display only      |
 
 ## 4. Comments and collaboration
@@ -152,7 +152,7 @@ omission.
 
 | Component                                                                                                          | Source                           | Note                                                                                                                    |
 | ------------------------------------------------------------------------------------------------------------------ | -------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
-| `FaceMenu`, `CopyMenu`, `WorldBadge`, `WorldBanner`                                                                | `entity/`, `common/`             | Tied to the faces and worlds model. The generic shapes underneath are `RlMenu` and `RlBanner`, both of which exist here |
+| `FaceMenu`, `CopyMenu`, `WorldBadge`, `WorldBanner`                                                                | `entity/`, `ui/`, `common/`      | Tied to the faces and worlds model. The generic shapes underneath are `RlMenu` and `RlBanner`, both of which exist here |
 | `ExportMenu`, `DuplicateModal`, `CommandModal`, `InlineCreateFormModal`, `EntityPickerModal`, `EntityPreviewModal` | `entity/`, `forms/`, `calendar/` | Instances over `RlModal`. Adopt the patterns, not the components                                                        |
 | `ScriptErrorDialog`, `ScriptErrorPanel`                                                                            | `common/`                        | Lua script error surfacing, deployment-specific                                                                         |
 | `NextActionCard`, `NextActionOffers`                                                                               | `components/`                    | Suggestion prominence tiers. The tier system itself may be worth generalising                                           |

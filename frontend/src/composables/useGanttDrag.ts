@@ -14,6 +14,7 @@
  * its children and is never a drag target.
  */
 import { onBeforeUnmount, ref } from 'vue'
+import { t } from '@/i18n'
 import { ApiError, getEntity, getErrorMessage, updateEntity, type GanttNode } from '@/api'
 import type { Entity } from '@/types/entity'
 import { isFieldWritable, isPropertyRedacted } from '@/utils/affordances'
@@ -340,14 +341,14 @@ export function useGanttDrag(deps: GanttDragDeps) {
       if (!alive) return
       if (!canDrag(entity, dates)) {
         setVerdict(addr, false)
-        deps.error(`You can no longer change the dates of ${name}.`)
+        deps.error(t('gantt.drag.noLongerAllowed', { name }))
         return
       }
       // The versions only guard the moment between this read and the
       // write. A date that moved since the chart loaded is a conflict too,
       // or the delta would land on a value the user never saw.
       if (edges.some((x) => storedDay(entity.properties[x.prop]) !== x.from)) {
-        deps.error(`${name} was changed by someone else. The chart now shows its current dates.`)
+        deps.error(t('gantt.drag.changedElsewhere', { name }))
         return
       }
       const properties: Record<string, string> = {}
@@ -366,12 +367,12 @@ export function useGanttDrag(deps: GanttDragDeps) {
       })
       if (alive && res.warnings?.length) {
         deps.warning(
-          `${name} was rescheduled with warnings: ${res.warnings.map((w) => w.detail).join('; ')}`
+          t('gantt.drag.warnings', { name, warnings: res.warnings.map((w) => w.detail).join('; ') })
         )
       }
     } catch (err) {
       if (err instanceof ApiError && err.status === 403) setVerdict(addr, false)
-      if (alive) deps.error(`Could not reschedule ${name}: ${getErrorMessage(err)}`)
+      if (alive) deps.error(t('gantt.drag.failed', { name, error: getErrorMessage(err) }))
     } finally {
       // Keep the preview until the chart shows the server's dates, written
       // or not, so the bar does not jump back and forth. Verdicts stay, so

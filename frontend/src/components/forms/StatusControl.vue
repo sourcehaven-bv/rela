@@ -18,7 +18,7 @@
 import { computed, ref, onMounted, onBeforeUnmount } from 'vue'
 import type { TransitionOption } from '@/types'
 import { useSchemaStore } from '@/stores/schema'
-import Badge from '@/components/common/Badge.vue'
+import Badge from '@/components/ui/Badge.vue'
 
 const props = defineProps<{
   // Current value of the state-machine field (the entity's present state).

@@ -6,12 +6,26 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/Sourcehaven-BV/rela/internal/appbuild"
 	"github.com/Sourcehaven-BV/rela/internal/mcpwire"
 
 	relaerrors "github.com/Sourcehaven-BV/rela/internal/errors"
 	relamcp "github.com/Sourcehaven-BV/rela/internal/mcp"
-	"github.com/Sourcehaven-BV/rela/internal/principal"
 )
+
+// openMCPServices opens the project for `rela mcp` and warns when acl.yaml
+// assigns the identity no role.
+func openMCPServices(startDir string, identity localIdentity) (*mcpServices, error) {
+	svc, err := newMCPServices(startDir, identity.runAs())
+	if err != nil {
+		if errors.Is(err, relaerrors.ErrNoProject) {
+			return nil, errors.New("no project found: run 'rela init' to create one")
+		}
+		return nil, fmt.Errorf("mcp startup: %w", err)
+	}
+	warnUnassignedUser(svc.current(), identity.Principal.User)
+	return svc, nil
+}
 
 // McpCmd starts the MCP (Model Context Protocol) server on stdio.
 //
@@ -19,7 +33,7 @@ import (
 type McpCmd struct{}
 
 // Run dispatches `rela mcp`.
-func (c *McpCmd) Run() error {
+func (c *McpCmd) Run(identity localIdentity) error {
 	// coverage-ignore-start: external-tool: starts the MCP stdio server (blocking Serve loop over os.Stdin/os.Stdout);
 	// requires a real project +
 	// stdio transport
@@ -28,21 +42,15 @@ func (c *McpCmd) Run() error {
 		startDir = os.Getenv("RELA_PROJECT")
 	}
 
-	svc, err := newMCPServices(startDir)
+	svc, err := openMCPServices(startDir, identity)
 	if err != nil {
-		if errors.Is(err, relaerrors.ErrNoProject) {
-			return errors.New("no project found: run 'rela init' to create one")
-		}
-		return fmt.Errorf("mcp startup: %w", err)
+		return err
 	}
 	defer svc.Close()
 
-	mcpPrincipal := principal.Principal{
-		User: principal.SystemUser(),
-		Tool: principal.ToolMCP,
-	}
 	srv, srvErr := relamcp.NewServer(svc.Deps(), Version,
-		relamcp.WithPrincipal(mcpPrincipal), relamcp.WithLuaTools(),
+		relamcp.WithPrincipal(identity.Principal), relamcp.WithAssertedBy(identity.AssertedBy),
+		relamcp.WithLuaTools(),
 		// Bound to the startup piles service. A schema reload shares its
 		// backend (ForReassembly) and rebuilds only the owner check, which
 		// under the MCP server's NopACL never has person mapping to change.
@@ -56,6 +64,19 @@ func (c *McpCmd) Run() error {
 	// schema it booted with.
 	svc.watchSchema(srv)
 
-	return srv.Serve(context.Background())
+	// The lease watcher lives as long as Serve: it wakes lease subscribers
+	// for claims made by other processes and for expiries. It runs on the
+	// startup assembly, whose lease backend and hub every reload shares.
+	// The channel hint follower runs beside it, on the process-local
+	// channel state every reload shares too.
+	life, stop := context.WithCancel(context.Background())
+	watched := appbuild.WatchLeases(life, svc.current())
+	followed := appbuild.FollowChannels(life, svc.current())
+	defer func() {
+		stop()
+		<-watched
+		<-followed
+	}()
+	return srv.Serve(life)
 	// coverage-ignore-end
 }

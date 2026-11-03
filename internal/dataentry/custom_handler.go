@@ -31,6 +31,8 @@ import (
 // conditional requests, Range and correct HEAD semantics in one call. Before
 // this, a 200KB webfont re-transferred in full on every navigation and a
 // non-GET method still received a body.
+//
+//archplan:auth=none reason="operator assets the SPA shell loads before login"
 func (c *customAssets) serveAsset(w http.ResponseWriter, r *http.Request) {
 	entry := strings.TrimPrefix(r.URL.Path, customURLPrefix)
 

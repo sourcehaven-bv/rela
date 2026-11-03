@@ -1,6 +1,9 @@
 <script setup lang="ts">
 /** Section label above a group of sidebar items, with an optional add control and menu. */
 import RlIconButton from '../common/RlIconButton.vue'
+import { useMessages } from '../../composables/useMessages'
+
+const messages = useMessages()
 
 defineProps<{ label: string; showMenu?: boolean; addLabel?: string }>()
 defineEmits<{ menu: []; add: [] }>()
@@ -20,7 +23,7 @@ defineEmits<{ menu: []; add: [] }>()
     <RlIconButton
       v-if="showMenu"
       icon="ellipsis"
-      :label="`${label} options`"
+      :label="messages.groupOptions({ label })"
       :size="16"
       @click="$emit('menu')"
     />

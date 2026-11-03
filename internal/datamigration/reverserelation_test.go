@@ -294,7 +294,7 @@ func TestReverseRelation_ValidateRefusals(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			step := &reverseRelationStep{Type: "assigned-to"}
-			err := step.Validate(tc.from().ShapeProjection(), tc.to().ShapeProjection())
+			err := step.Validate(metamodel.NewShapeProjection(tc.from()), metamodel.NewShapeProjection(tc.to()))
 			if err == nil {
 				t.Fatal("expected a refusal")
 			}
@@ -331,7 +331,7 @@ func TestReverseRelation_FileMustCarryTheStep(t *testing.T) {
 // The generator must draft the step live, not the old "no declarative step can
 // fix this" comment.
 func TestReverseRelation_GeneratorDraftsTheStep(t *testing.T) {
-	out, err := Generate(metaV1().ShapeProjection(), reversedMeta().ShapeProjection(), "reverse", testNow())
+	out, err := Generate(metamodel.NewShapeProjection(metaV1()), metamodel.NewShapeProjection(reversedMeta()), "reverse", testNow())
 	if err != nil {
 		t.Fatalf("Generate: %v", err)
 	}
@@ -364,7 +364,7 @@ func TestReverseRelation_WarnsWhenCardinalityWasNotSwapped(t *testing.T) {
 	r2.MaxOutgoing = &one // left behind: should have become MaxIncoming
 	to.Relations["assigned-to"] = r2
 
-	out, err := Generate(from.ShapeProjection(), to.ShapeProjection(), "reverse", testNow())
+	out, err := Generate(metamodel.NewShapeProjection(from), metamodel.NewShapeProjection(to), "reverse", testNow())
 	if err != nil {
 		t.Fatalf("Generate: %v", err)
 	}
@@ -385,7 +385,7 @@ func TestReverseRelation_WarnsWhenCardinalityWasNotSwapped(t *testing.T) {
 
 // One delta, not two narrowings — the noise the ticket exists to remove.
 func TestReverseRelation_SwapIsOneDelta(t *testing.T) {
-	report := metamodel.CompareShapes(metaV1().ShapeProjection(), reversedMeta().ShapeProjection())
+	report := metamodel.CompareShapes(metamodel.NewShapeProjection(metaV1()), metamodel.NewShapeProjection(reversedMeta()))
 	kinds := map[string]int{}
 	for _, d := range report.Deltas {
 		kinds[d.Kind]++

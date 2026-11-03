@@ -47,20 +47,20 @@ Every record is one line of JSON:
 | `time`        | UTC timestamp                                                        |
 | `op`          | See the op list below |
 | `subject`     | The thing acted on (see "Subject shape" below)                       |
-| `before` / `after` | For `rename-entity` only — the identity diff                   |
+| `before` / `after` | For rename and conversion — the identity diff                  |
 | `principal.user` | The OS user (from `$USER`) that initiated the operation           |
-| `principal.tool` | `cli`, `mcp`, `data-entry`, `scheduler`, or `desktop`             |
+| `principal.tool` | `cli`, `mcp`, `data-entry`, `scheduler`, `desktop`, or `realtime` |
 | `principal.raw_user` | Optional. The pre-resolution identifier, when `principal_property` substituted a graph entity ID into `user` |
 | `principal.org_id` / `principal.org_slug` | Optional. The tenant from a verified identity assertion. **Attribution only — see the warning below** |
 | `principal.roles` | Optional. The `roles` claim from a verified identity assertion |
-| `triggered_by` | Optional. Engine-initiated writes carry `automation:<name>`, `schedule:<task-name>`, or `cascade:delete-entity:<id>` |
+| `triggered_by` | Optional. Engine-initiated writes carry `automation:<name>`, `schedule:<task-name>`, `session:<channel>/<from>-><to>#<generation>/<index>`, or `cascade:delete-entity:<id>` |
 | `summary`     | One-line human-readable summary; for updates names *which* properties changed but never their values (secret-leak defense) |
 
 ### Operations
 
 | `op` | Meaning |
 |------|---------|
-| `create-entity`, `update-entity`, `delete-entity`, `rename-entity` | Entity writes |
+| `create-entity`, `update-entity`, `delete-entity`, `rename-entity`, `convert-entity` | Entity writes, including type conversion |
 | `restore-entity`, `purge-deleted-entity` | Undo of a web-app delete, and the final removal once the undo window has passed. See "Undoable deletes" below |
 | `create-relation`, `update-relation`, `delete-relation` | Relation writes |
 | `denied-write` | A write the ACL refused, or an upload the attachment policy refused. Subject names the would-be target; the summary carries the rule that fired |
@@ -68,6 +68,16 @@ Every record is one line of JSON:
 | `acl-query` | An effective-access query (`rela acl who-can`) — who asked, when, and about which entity. **The answer is deliberately not recorded**: it is a list of principals and their access routes, so logging it would duplicate the disclosure rather than record it |
 | `purge-version` | An operator hard-delete of version history for compliance redaction. Never contains the purged content |
 | `data-migration`, `data-gc` | Schema-driven data migration and garbage collection |
+
+### Conversion records
+
+A conversion writes one `convert-entity` record per face. Its `before` and
+`after` name the old and new id, type and face. Each relation the conversion
+removes gets a `delete-relation` record, and each relation it creates gets a
+`create-relation` record. Both carry `triggered_by: convert-entity:<old>-><new>`.
+This includes relations the caller cannot see. On the filesystem and memory
+stores, which cannot roll back, these records are still written when a later
+step fails after the rename.
 
 ### `denied-write` records
 
@@ -100,8 +110,9 @@ For relation writes the `subject` carries `relation_type` instead of
 
 - **Entity ops:** `{"kind":"entity", "type":..., "id":...}`
 - **Relation ops:** `{"kind":"relation", "relation_type":..., "from_id":..., "to_id":...}`
-- **Rename:** `subject` is absent from the JSON; `before` and `after`
-  carry the entity identity diff.
+- **Rename and conversion:** `subject` is absent from the JSON; `before` and
+  `after` carry the old and new entity identities. A conversion preserves the
+  entity's history lineage under its new id.
 
 ## Principal — who's "behind" a write
 
@@ -118,6 +129,7 @@ startup and stamps it on every audit record. If `$USER` is unset,
 | `data-entry`  | A request to the data-entry HTTP server                  |
 | `scheduler`   | The background scheduler running a Lua task              |
 | `desktop`     | The rela-desktop Wails app                               |
+| `realtime`    | A session output: a graph write a channel session makes as the person whose message moved it |
 
 ### `data-entry` user attribution
 
@@ -196,6 +208,13 @@ When a write is caused by an automation cascade or scheduler task,
   means "the schema did not say which rule this was" — not that
   something went wrong.
 - `schedule:<task-name>` — a scheduler-driven Lua task.
+- `session:<channel>/<from>-><to>#<generation>/<index>` — output
+  `<index>` (from 0) of a channel session's move from `<from>` to `<to>`,
+  such as `session:DL-1/breach-response/assessed->notified#3/0`.
+  `<channel>` is the channel key: the anchor, the channel type and, for a
+  named channel, its name. The record's `principal.user` is the person
+  whose message moved the session, with `principal.tool` `realtime` (see
+  the realtime guide).
 - `cascade:delete-entity:<id>` — a relation deleted as a side effect
   of `delete-entity` with `cascade=true`.
 - `restore-entity:<id>` — a relation brought back by `restore-entity`.

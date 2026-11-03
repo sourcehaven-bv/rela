@@ -45,6 +45,7 @@ func fileRuleDeps(t *testing.T) entitymanager.Deps {
 		Transitions:      statemachine.EmptySet(),
 		FieldGate:        entitymanager.AllowAllFieldGate{},
 		AttachmentLocker: lock.NewMemoryLocker(),
+		AnchorGuard:      entitymanager.NopAnchorGuard{},
 	}
 }
 

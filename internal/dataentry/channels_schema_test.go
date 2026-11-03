@@ -1,0 +1,360 @@
+package dataentry
+
+import (
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+
+	"github.com/stretchr/testify/require"
+
+	v1 "github.com/Sourcehaven-BV/rela/internal/apiwire/v1"
+	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
+)
+
+const channelSchemaPath = "/api/v1/_schema/channels"
+
+// TestChannelSchema_Lists pins the descriptor's shape: every channel type
+// sorted, labels, lifecycle in order, properties required first, actions
+// with their promote target.
+func TestChannelSchema_Lists(t *testing.T) {
+	env := newChannelEnv(t)
+	code, b := env.get(t, "alice", channelSchemaPath)
+	require.Equal(t, http.StatusOK, code, string(b))
+	got := decodeAs[v1.ChannelSchema](t, b)
+	var names []string
+	for _, ct := range got.ChannelTypes {
+		names = append(names, ct.Name)
+	}
+	require.Equal(t, []string{"briefing", "chat", "incident", "room", "secret", "threads", "topics"}, names)
+
+	room := got.ChannelTypes[3]
+	require.False(t, room.Typing)
+	require.Equal(t, "Room", room.Label)
+	require.Equal(t, []string{"ticket", "feature"}, room.AttachTo)
+	require.Equal(t, "one", room.Cardinality)
+	require.Equal(t, []v1.ChannelLifecycleSchema{
+		{Name: "close", Label: "close"}, {Name: "reopen", Label: "reopen"}, {Name: "delete", Label: "delete"},
+	}, room.Lifecycle)
+	require.False(t, room.RemoveReasonRequired)
+	text := room.MessageTypes[1]
+	require.Equal(t, "text", text.Name)
+	require.True(t, text.Reply)
+	require.Equal(t, []v1.ChannelPropertySchema{
+		{Name: "body", Label: "body", Type: "string", Required: true},
+		{Name: "about", Label: "about", Type: "ref", To: []string{"ticket", "feature"}},
+	}, text.Properties)
+	require.Equal(t, []v1.ChannelActionSchema{
+		{Name: "accept", Label: "accept", PromoteTo: "ticket"}, {Name: "ack", Label: "ack"},
+	}, text.Actions)
+	typing := room.MessageTypes[2]
+	require.Equal(t, "ephemeral", typing.Persist)
+	require.Equal(t, 5, typing.TTLSeconds)
+	require.NotNil(t, typing.Properties)
+}
+
+// TestChannelSchema_Typing pins AC 5: a type with typing: true says so,
+// and typing is not one of its message types, so the composer never lists
+// it.
+func TestChannelSchema_Typing(t *testing.T) {
+	env := newChannelEnv(t)
+	code, b := env.get(t, "alice", channelSchemaPath)
+	require.Equal(t, http.StatusOK, code, string(b))
+	got := decodeAs[v1.ChannelSchema](t, b)
+	chat := got.ChannelTypes[1]
+	require.Equal(t, "chat", chat.Name)
+	require.True(t, chat.Typing)
+	var names []string
+	for _, mt := range chat.MessageTypes {
+		names = append(names, mt.Name)
+	}
+	require.Equal(t, []string{"notice", "status", "text"}, names)
+
+	code, b = env.get(t, "alice", chatPath)
+	require.Equal(t, http.StatusOK, code, string(b))
+	head := decodeAs[v1.ChannelHead](t, b)
+	require.Equal(t, []string{"status", "text"}, head.Actions.Post)
+	require.True(t, head.Actions.Typing)
+}
+
+// TestChannelSchema_SameForEveryPrincipal pins that the descriptor does not
+// depend on who asks: the configuration is not a secret. The breach
+// configuration adds a session with roles on its transitions.
+func TestChannelSchema_SameForEveryPrincipal(t *testing.T) {
+	for _, yaml := range []string{channelTestRealtime, breachRealtime} {
+		env := newChannelEnv(t)
+		env.ch.cfg.Store(env.ch.parse(t, yaml))
+		_, want := env.get(t, "alice", channelSchemaPath)
+		require.Contains(t, string(want), `"session":`)
+		for _, user := range []string{"bob", "carol", "dave", "nobody"} {
+			code, b := env.get(t, user, channelSchemaPath)
+			require.Equal(t, http.StatusOK, code, user)
+			require.JSONEq(t, string(want), string(b), user)
+		}
+	}
+}
+
+// breachRealtime is the breach-response example of docs/realtime.md on
+// tickets, and plain, a type without a session.
+const breachRealtime = `
+version: 1
+channel_types:
+  breach-response:
+    label: Breach response
+    attach_to: [ticket]
+    read: { from: attached }
+    roles:
+      lead:   { from: entity.status }
+      member: { from: attached }
+      dpo:    { permission: privacy.officer }
+    message_types:
+      text:      { properties: { body: { type: string, required: true } }, post: [member] }
+      contained: { properties: { note: { type: string } }, post: [lead, member] }
+      assessed:  { properties: { risk: { type: string, required: true } }, post: [lead, dpo] }
+      notified:  { properties: { reference: { type: string, required: true } }, post: [dpo] }
+      dismiss:   { properties: { reason: { type: string, required: true } }, post: [lead] }
+      escalated: { properties: { note: { type: string } }, post: [lead] }
+      reminder:  { properties: { body: { type: string, required: true } }, post: [lead] }
+    session:
+      label: GDPR breach response
+      initial: detected
+      states:
+        detected:
+          label: Detected
+          on:
+            contained: { to: contained, roles: [lead] }
+            dismiss:   { to: dismissed }
+            escalated: { to: contained, by: trigger }
+        contained:
+          label: Contained
+          on:
+            assessed: { to: assessed, when: "message.risk ~= 'none'" }
+        assessed:
+          label: Risk assessed
+          on:
+            notified: { to: notified }
+        notified:  { label: AP notified, final: true }
+        dismissed: { label: Dismissed, final: true }
+      reminders:
+        status-update:
+          label: Status update
+          in: [detected, contained, assessed]
+          every: 30m
+          first: 10m
+          max: 48
+          post: { type: reminder, props: { body: "Post a status update" } }
+  plain:
+    attach_to: [ticket]
+    read: { from: attached }
+    roles:
+      member: { from: attached }
+    message_types:
+      text: { properties: { body: { type: string } }, post: [member] }
+`
+
+// TestChannelSchema_Session pins AC 2: a session type carries its label,
+// initial state and ordered states, and no role, permission, guard or
+// transition; a type without a session has no session key.
+func TestChannelSchema_Session(t *testing.T) {
+	env := newChannelEnv(t)
+	env.ch.cfg.Store(env.ch.parse(t, breachRealtime))
+	code, b := env.get(t, "alice", channelSchemaPath)
+	require.Equal(t, http.StatusOK, code, string(b))
+	var raw struct {
+		ChannelTypes []map[string]json.RawMessage `json:"channel_types"`
+	}
+	require.NoError(t, json.Unmarshal(b, &raw))
+	require.Len(t, raw.ChannelTypes, 2)
+	require.JSONEq(t, `{
+		"label": "GDPR breach response",
+		"initial": "detected",
+		"states": [
+			{ "name": "detected", "label": "Detected", "status": "working" },
+			{ "name": "contained", "label": "Contained", "status": "working" },
+			{ "name": "assessed", "label": "Risk assessed", "status": "working" },
+			{ "name": "notified", "label": "AP notified", "final": true, "status": "completed" },
+			{ "name": "dismissed", "label": "Dismissed", "final": true, "status": "completed" }
+		]
+	}`, string(raw.ChannelTypes[0]["session"]))
+	_, has := raw.ChannelTypes[1]["session"]
+	require.False(t, has, "a type without a session has no session key")
+	for _, leak := range []string{"lead", "dpo", "privacy.officer", "risk", "transitions", "escalated\":{"} {
+		require.NotContains(t, string(raw.ChannelTypes[0]["session"]), leak)
+	}
+}
+
+// TestChannelSchema_DecisionButton pins TKT-TXZZZ2 AC 5 through the real
+// handler: a message type with decision_button carries it with confirm,
+// confirm_text and style, and a type without it has no such key.
+func TestChannelSchema_DecisionButton(t *testing.T) {
+	env := newChannelEnv(t)
+	src := strings.Replace(breachRealtime,
+		"      contained: { properties: { note: { type: string } }, post: [lead, member] }\n",
+		"      contained:\n        properties: { note: { type: string } }\n        post: [lead, member]\n"+
+			"        decision_button: { confirm: \"This contains the breach.\", style: primary }\n", 1)
+	src = strings.Replace(src,
+		"      dismiss:   { properties: { reason: { type: string, required: true } }, post: [lead] }\n",
+		"      dismiss:\n        properties: { reason: { type: string, required: true } }\n        post: [lead]\n"+
+			"        decision_button: { style: danger }\n", 1)
+	env.ch.cfg.Store(env.ch.parse(t, src))
+	code, b := env.get(t, "alice", channelSchemaPath)
+	require.Equal(t, http.StatusOK, code, string(b))
+	got := decodeAs[v1.ChannelSchema](t, b)
+	byName := map[string]v1.ChannelMessageTypeSchema{}
+	for _, mt := range got.ChannelTypes[0].MessageTypes {
+		byName[mt.Name] = mt
+	}
+	yes := true
+	require.Equal(t, &v1.ChannelDecisionButtonSchema{
+		Confirm: &yes, ConfirmText: "This contains the breach.", Style: "primary",
+	}, byName["contained"].DecisionButton)
+	require.Equal(t, &v1.ChannelDecisionButtonSchema{Style: "danger"}, byName["dismiss"].DecisionButton)
+	require.Nil(t, byName["text"].DecisionButton)
+
+	var raw struct {
+		ChannelTypes []struct {
+			MessageTypes []map[string]json.RawMessage `json:"message_types"`
+		} `json:"channel_types"`
+	}
+	require.NoError(t, json.Unmarshal(b, &raw))
+	for _, mt := range raw.ChannelTypes[0].MessageTypes {
+		var name string
+		require.NoError(t, json.Unmarshal(mt["name"], &name))
+		switch name {
+		case "dismiss":
+			require.JSONEq(t, `{"style":"danger"}`, string(mt["decision_button"]))
+		case "text":
+			_, has := mt["decision_button"]
+			require.False(t, has, "a type without decision_button has the key")
+		}
+	}
+}
+
+// defaultInRealtime is [breachRealtime] with session.default_in: keyed and
+// a written in: on text. It fails the test when an edit changes nothing.
+func defaultInRealtime(t *testing.T) string {
+	t.Helper()
+	src := breachRealtime
+	for _, e := range []struct{ old, new string }{
+		{"      initial: detected\n", "      initial: detected\n      default_in: keyed\n"},
+		{"      text:      { properties: { body: { type: string, required: true } }, post: [member] }\n",
+			"      text:      { properties: { body: { type: string, required: true } }, post: [member], " +
+				"in: [detected, contained] }\n"},
+	} {
+		if strings.Count(src, e.old) != 1 {
+			t.Fatalf("defaultInRealtime: %q matches %d times; want 1", e.old, strings.Count(src, e.old))
+		}
+		src = strings.Replace(src, e.old, e.new, 1)
+	}
+	return src
+}
+
+// TestChannelSchema_In pins TKT-CPZKPB AC 3 and 4 through the real
+// handler: a type whose in: was derived from session.default_in serves in
+// and in_derived: true; a written in: serves in alone; a type no state
+// keys, and a type without a session, serve neither key. in is never an
+// empty array, and in_derived never appears without in. The body is the
+// same for principals with different roles.
+func TestChannelSchema_In(t *testing.T) {
+	env := newChannelEnv(t)
+	env.ch.cfg.Store(env.ch.parse(t, defaultInRealtime(t)))
+	code, b := env.get(t, "alice", channelSchemaPath)
+	require.Equal(t, http.StatusOK, code, string(b))
+	code, other := env.get(t, "dave", channelSchemaPath)
+	require.Equal(t, http.StatusOK, code, string(other))
+	require.Equal(t, string(b), string(other), "the body depends on the principal")
+
+	var raw struct {
+		ChannelTypes []struct {
+			Name         string                       `json:"name"`
+			MessageTypes []map[string]json.RawMessage `json:"message_types"`
+		} `json:"channel_types"`
+	}
+	require.NoError(t, json.Unmarshal(b, &raw))
+	type want struct{ in, derived string }
+	wants := map[string]want{
+		"breach-response.contained": {`["detected"]`, "true"},
+		"breach-response.dismiss":   {`["detected"]`, "true"},
+		"breach-response.escalated": {`["detected"]`, "true"},
+		"breach-response.assessed":  {`["contained"]`, "true"},
+		"breach-response.notified":  {`["assessed"]`, "true"},
+		"breach-response.text":      {`["detected","contained"]`, ""},
+		"breach-response.reminder":  {"", ""},
+		"plain.text":                {"", ""},
+	}
+	seen := 0
+	for _, ct := range raw.ChannelTypes {
+		for _, mt := range ct.MessageTypes {
+			var name string
+			require.NoError(t, json.Unmarshal(mt["name"], &name))
+			key := ct.Name + "." + name
+			in, hasIn := mt["in"]
+			derived, hasDerived := mt["in_derived"]
+			if hasIn {
+				require.NotEqual(t, "[]", string(in), "%s: in is an empty array", key)
+			}
+			if hasDerived {
+				require.True(t, hasIn, "%s: in_derived without in", key)
+			}
+			w, ok := wants[key]
+			if !ok {
+				continue
+			}
+			seen++
+			if w.in == "" {
+				require.False(t, hasIn, "%s has in", key)
+			} else {
+				require.JSONEq(t, w.in, string(in), key)
+			}
+			if w.derived == "" {
+				require.False(t, hasDerived, "%s has in_derived", key)
+			} else {
+				require.JSONEq(t, w.derived, string(derived), key)
+			}
+		}
+	}
+	require.Equal(t, len(wants), seen)
+}
+
+// TestChannelSchema_Off pins that realtime off, and channels not wired,
+// answer an empty list rather than an error.
+func TestChannelSchema_Off(t *testing.T) {
+	off := newChannelEnv(t)
+	off.ch.cfg.Store(nil)
+	plain := newLiveEnv(t, func(app *App) { seedEntity(app, ticket1("one")) })
+	for _, env := range []*liveEnv{off.liveEnv, plain} {
+		code, b := env.get(t, "alice", channelSchemaPath)
+		require.Equal(t, http.StatusOK, code)
+		require.JSONEq(t, `{"channel_types":[]}`, string(b))
+	}
+	resp, _ := plain.do(t, "alice", http.MethodPost, channelSchemaPath, "", nil)
+	require.Equal(t, http.StatusMethodNotAllowed, resp.StatusCode)
+}
+
+// TestConfig_ServesChannels pins that the `channels:` block reaches the
+// SPA in `_config`, next to forms, in field order, with a message type's
+// `display:` (TKT-03DMXH).
+func TestConfig_ServesChannels(t *testing.T) {
+	app := newTestAppV1(t)
+	app.State().Cfg.Channels = map[string]dataentryconfig.ChannelPresentation{"room": {
+		Messages: map[string]dataentryconfig.MessagePresentation{
+			"text": {Fields: []dataentryconfig.FormField{
+				{Property: "body", Label: "Message", Widget: dataentryconfig.WidgetTextarea},
+				{Property: "about", Span: 6},
+			}},
+			"claim": {Display: dataentryconfig.MessageDisplayHidden},
+		},
+	}}
+	rec := httptest.NewRecorder()
+	app.handleV1Config(rec, httptest.NewRequest(http.MethodGet, "/api/v1/_config", http.NoBody))
+	require.Equal(t, http.StatusOK, rec.Code)
+	var raw struct {
+		Channels json.RawMessage `json:"channels"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &raw))
+	require.JSONEq(t, `{"room":{"messages":{"text":{"fields":[
+		{"property":"body","label":"Message","widget":"textarea"},
+		{"property":"about","span":6}]},
+		"claim":{"display":"hidden"}}}}`, string(raw.Channels))
+}

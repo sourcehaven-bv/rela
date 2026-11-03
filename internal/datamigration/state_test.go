@@ -4,11 +4,13 @@ import (
 	"errors"
 	"testing"
 	"time"
+
+	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 )
 
 func TestState_WithApplied(t *testing.T) {
 	now := time.Date(2026, 9, 19, 14, 30, 22, 0, time.UTC)
-	proj := metaV1().ShapeProjection()
+	proj := metamodel.NewShapeProjection(metaV1())
 
 	s, err := (*State)(nil).WithApplied("20260919143022-first.yaml", proj, now)
 	if err != nil {
@@ -39,7 +41,7 @@ func TestState_WithApplied(t *testing.T) {
 // the same name twice must not make the record claim two runs.
 func TestState_WithApplied_IsIdempotentPerName(t *testing.T) {
 	now := time.Date(2026, 9, 19, 14, 30, 22, 0, time.UTC)
-	proj := metaV1().ShapeProjection()
+	proj := metamodel.NewShapeProjection(metaV1())
 
 	s, err := (*State)(nil).WithApplied("20260919143022-first.yaml", proj, now)
 	if err != nil {
@@ -68,7 +70,7 @@ func TestState_HasAppliedAndNames_NilSafe(t *testing.T) {
 }
 
 func TestValidateState(t *testing.T) {
-	proj := metaV1().ShapeProjection()
+	proj := metamodel.NewShapeProjection(metaV1())
 	good, err := NewState(proj, []AppliedEntry{{Name: "20260919143022-ok.yaml"}}, time.Now())
 	if err != nil {
 		t.Fatalf("NewState: %v", err)
@@ -123,7 +125,7 @@ func TestValidateState(t *testing.T) {
 // re-hashed to identify the shape, so any re-encoding would make an unchanged
 // store look changed.
 func TestState_ProjectionRoundTripsWithStableHash(t *testing.T) {
-	proj := metaV1().ShapeProjection()
+	proj := metamodel.NewShapeProjection(metaV1())
 	s, err := NewState(proj, nil, time.Now())
 	if err != nil {
 		t.Fatalf("NewState: %v", err)

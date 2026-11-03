@@ -12,9 +12,11 @@ import type { Entity, ListResponse } from '@/types'
 // updateEntity from '@/api/entities'. Mock both, mirroring EntityList.test.ts.
 const listAllEntitiesMock = vi.fn()
 const updateEntityMock = vi.fn()
+const getMeMock = vi.fn()
 vi.mock('@/api', async (orig) => ({
   ...(await orig<typeof import('@/api')>()),
   listAllEntities: (...args: unknown[]) => listAllEntitiesMock(...args),
+  getMe: () => getMeMock(),
 }))
 vi.mock('@/api/entities', async (orig) => ({
   ...(await orig<typeof import('@/api/entities')>()),
@@ -78,7 +80,10 @@ function seedSchema(
   } as never)
 }
 
-function seedBoard(entities: Entity[], included: Record<string, Entity> = {}): ListResponse<Entity> {
+function seedBoard(
+  entities: Entity[],
+  included: Record<string, Entity> = {}
+): ListResponse<Entity> {
   const response: ListResponse<Entity> = {
     data: entities,
     meta: { total: entities.length, page: 1, per_page: 25, has_more: false },
@@ -349,9 +354,14 @@ describe('KanbanView card fields with unset values', () => {
 // viewFooterMarkdown) and the .view-info styles with EntityList.
 describe('KanbanView info regions (header/footer)', () => {
   it('renders header markdown above the board', async () => {
-    const wrapper = await mountBoard([], [makeTicket('T-1')], {}, {
-      header: 'Cards move **left to right**.',
-    })
+    const wrapper = await mountBoard(
+      [],
+      [makeTicket('T-1')],
+      {},
+      {
+        header: 'Cards move **left to right**.',
+      }
+    )
 
     const header = wrapper.find('.view-info--top')
     expect(header.exists()).toBe(true)
@@ -360,9 +370,14 @@ describe('KanbanView info regions (header/footer)', () => {
   })
 
   it('renders footer markdown below the board', async () => {
-    const wrapper = await mountBoard([], [makeTicket('T-1')], {}, {
-      footer: 'See the [runbook](https://example.test/runbook).',
-    })
+    const wrapper = await mountBoard(
+      [],
+      [makeTicket('T-1')],
+      {},
+      {
+        footer: 'See the [runbook](https://example.test/runbook).',
+      }
+    )
 
     const footer = wrapper.find('.view-info--bottom')
     expect(footer.exists()).toBe(true)
@@ -371,12 +386,17 @@ describe('KanbanView info regions (header/footer)', () => {
   })
 
   it('routes admin markdown through the sanitizer before v-html', async () => {
-    const wrapper = await mountBoard([], [makeTicket('T-1')], {}, {
-      // Two separate payloads on purpose — see the note below. The header
-      // proves markdown is processed; the footer proves scripts are stripped.
-      header: '**bold**',
-      footer: '<script>alert(3)</script>',
-    })
+    const wrapper = await mountBoard(
+      [],
+      [makeTicket('T-1')],
+      {},
+      {
+        // Two separate payloads on purpose — see the note below. The header
+        // proves markdown is processed; the footer proves scripts are stripped.
+        header: '**bold**',
+        footer: '<script>alert(3)</script>',
+      }
+    )
 
     // What this proves: renderMarkdown (marked + DOMPurify) is actually IN the
     // path between data-entry.yaml and v-html — the markdown was processed
@@ -412,10 +432,15 @@ describe('KanbanView info regions (header/footer)', () => {
   })
 
   it('treats whitespace-only header/footer as unset', async () => {
-    const wrapper = await mountBoard([], [makeTicket('T-1')], {}, {
-      header: '   \n',
-      footer: '\t',
-    })
+    const wrapper = await mountBoard(
+      [],
+      [makeTicket('T-1')],
+      {},
+      {
+        header: '   \n',
+        footer: '\t',
+      }
+    )
 
     expect(wrapper.find('.view-info--top').exists()).toBe(false)
     expect(wrapper.find('.view-info--bottom').exists()).toBe(false)
@@ -426,9 +451,14 @@ describe('KanbanView info regions (header/footer)', () => {
     // AC6: the footer must not live inside .kanban-board, which owns the
     // horizontal scroll — otherwise it scrolls off-screen on a wide board.
     // jsdom does not lay out, so this asserts containment structurally.
-    const wrapper = await mountBoard([], [makeTicket('T-1')], {}, {
-      footer: 'stays put',
-    })
+    const wrapper = await mountBoard(
+      [],
+      [makeTicket('T-1')],
+      {},
+      {
+        footer: 'stays put',
+      }
+    )
 
     expect(wrapper.find('.kanban-board .view-info--bottom').exists()).toBe(false)
     expect(wrapper.find('.view-info--bottom').exists()).toBe(true)
@@ -461,12 +491,17 @@ describe('KanbanView info regions (header/footer)', () => {
 // further and drop the column. These tests fail if it ever does.
 describe('KanbanView empty columns', () => {
   it('renders a column with no cards, with a zero count', async () => {
-    const wrapper = await mountBoard([], [], {}, {
-      columns: [
-        { value: 'todo', label: 'Todo' },
-        { value: 'done', label: 'Done' },
-      ],
-    })
+    const wrapper = await mountBoard(
+      [],
+      [],
+      {},
+      {
+        columns: [
+          { value: 'todo', label: 'Todo' },
+          { value: 'done', label: 'Done' },
+        ],
+      }
+    )
 
     const columns = wrapper.findAll('.rl-board-column')
     expect(columns).toHaveLength(2)
@@ -476,12 +511,17 @@ describe('KanbanView empty columns', () => {
 
   it('accepts a move onto an empty column, moving the card into that state', async () => {
     const ticket = makeTicket('T-1')
-    const wrapper = await mountBoard([], [ticket], {}, {
-      columns: [
-        { value: 'todo', label: 'Todo' },
-        { value: 'done', label: 'Done' },
-      ],
-    })
+    const wrapper = await mountBoard(
+      [],
+      [ticket],
+      {},
+      {
+        columns: [
+          { value: 'todo', label: 'Todo' },
+          { value: 'done', label: 'Done' },
+        ],
+      }
+    )
 
     // The drag itself is the library board's; it reports the drop as `move`.
     const board = wrapper.findComponent({ name: 'RlBoard' })
@@ -498,17 +538,22 @@ describe('KanbanView empty columns', () => {
   it('writes both the column and the lane when a swimlane move changes both', async () => {
     const ticket = makeTicket('T-1')
     ticket.properties.team = 'alpha'
-    const wrapper = await mountBoard([], [ticket], {}, {
-      columns: [
-        { value: 'todo', label: 'Todo' },
-        { value: 'done', label: 'Done' },
-      ],
-      swimlane_property: 'team',
-      swimlanes: [
-        { value: 'alpha', label: 'Alpha' },
-        { value: 'beta', label: 'Beta' },
-      ],
-    })
+    const wrapper = await mountBoard(
+      [],
+      [ticket],
+      {},
+      {
+        columns: [
+          { value: 'todo', label: 'Todo' },
+          { value: 'done', label: 'Done' },
+        ],
+        swimlane_property: 'team',
+        swimlanes: [
+          { value: 'alpha', label: 'Alpha' },
+          { value: 'beta', label: 'Beta' },
+        ],
+      }
+    )
 
     const board = wrapper.findComponent({ name: 'RlSwimlaneBoard' })
     const [alpha, beta] = board.props('lanes') as { sections: { items: unknown[] }[] }[]
@@ -547,7 +592,9 @@ describe('KanbanView empty columns', () => {
       widenStatusEnum()
       await flushPromises()
 
-      const headings = wrapper.findAll('.rl-board-column .rl-section-heading .rl-heading').map((h) => h.text())
+      const headings = wrapper
+        .findAll('.rl-board-column .rl-section-heading .rl-heading')
+        .map((h) => h.text())
       expect(headings).toEqual(['todo', 'doing', 'done'])
       wrapper.unmount()
     })
@@ -562,9 +609,52 @@ describe('KanbanView empty columns', () => {
       widenStatusEnum()
       await flushPromises()
 
-      const headings = wrapper.findAll('.rl-board-column .rl-section-heading .rl-heading').map((h) => h.text())
+      const headings = wrapper
+        .findAll('.rl-board-column .rl-section-heading .rl-heading')
+        .map((h) => h.text())
       expect(headings).toEqual(['todo', 'doing', 'done'])
       wrapper.unmount()
     })
+  })
+})
+
+// TKT-YJSRBZ: a board applies its static `filters:` in the browser, so it
+// resolves `$user` itself, from /_me.
+describe('KanbanView $user filter', () => {
+  const owned = (id: string, owner: string): Entity => {
+    const e = makeTicket(id)
+    e.properties.owner = owner
+    return e
+  }
+  const mine = { filters: [{ property: 'owner', operator: '=', value: '$user' }] }
+  const cardIds = (wrapper: Awaited<ReturnType<typeof mountBoard>>) =>
+    wrapper.findAll('.kanban-card .card-id').map((n) => n.text())
+
+  it('shows the signed-in user their own cards', async () => {
+    getMeMock.mockResolvedValue({ user: 'alice' })
+    const wrapper = await mountBoard([], [owned('T-1', 'alice'), owned('T-2', 'bob')], {}, mine)
+    expect(cardIds(wrapper)).toEqual(['T-1'])
+  })
+
+  it.each([
+    ['answers unknown', () => getMeMock.mockResolvedValue({ user: 'unknown' })],
+    ['fails', () => getMeMock.mockRejectedValue(new Error('offline'))],
+  ])('shows no card when /_me %s', async (_name, arrange) => {
+    arrange()
+    const wrapper = await mountBoard([], [owned('T-1', 'alice'), owned('T-3', '$user')], {}, mine)
+    expect(cardIds(wrapper)).toEqual([])
+  })
+
+  it('does not ask /_me when no filter uses $user', async () => {
+    getMeMock.mockReset()
+    await mountBoard(
+      [],
+      [owned('T-1', 'alice')],
+      {},
+      {
+        filters: [{ property: 'owner', operator: '=', value: 'alice' }],
+      }
+    )
+    expect(getMeMock).not.toHaveBeenCalled()
   })
 })

@@ -1,16 +1,24 @@
 import {
   test as base,
+  type Browser,
+  type BrowserContext,
   type Page,
   type APIRequestContext,
+  type TestInfo,
 } from "@playwright/test";
 import { spawn, type ChildProcess, execFileSync } from "child_process";
 import * as path from "path";
 import * as fs from "fs";
 import * as os from "os";
 import * as net from "net";
+import { installSeqtraceRecorder, saveSeqtraceRecords, seqtraceServerEnv } from "./seqtrace";
 
 const PROJECT_ROOT = path.resolve(__dirname, "../..");
-const SERVER_BINARY = path.join(PROJECT_ROOT, "bin", "rela-server");
+// RELA_E2E_SERVER_BINARY runs the suite against another build, such as the
+// call-traced server of `just seqtrace-e2e`.
+const SERVER_BINARY = process.env.RELA_E2E_SERVER_BINARY
+  ? path.resolve(process.env.RELA_E2E_SERVER_BINARY)
+  : path.join(PROJECT_ROOT, "bin", "rela-server");
 // The PostgreSQL-backed server (go build -tags postgres ./cmd/rela-server). Used
 // only by the opt-in `postgresTest` fixture for specs that exercise pgstore-only
 // features (relation/entity content history). Built to a distinct path so it
@@ -312,13 +320,14 @@ async function findFreePort(): Promise<number> {
 async function waitForServer(
   url: string,
   origin: string,
+  headers: Record<string, string> = {},
   timeout = 30000,
 ): Promise<void> {
   const start = Date.now();
   const probeUrl = `${url}/api/v1/_config`;
   while (Date.now() - start < timeout) {
     try {
-      const r = await fetch(probeUrl, { headers: { Origin: origin } });
+      const r = await fetch(probeUrl, { headers: { ...headers, Origin: origin } });
       if (r.ok) return;
     } catch {
       // not ready
@@ -445,11 +454,19 @@ function createTestProject(): string {
  *  discarded. A spawn failure is also an 'error' EVENT, not a throw; with no
  *  listener Node re-raises it as an unhandled error out of band, which is how
  *  a failed startup came to be reported as a bare, and entirely misleading,
- *  `spawn ... ENOENT`. (BUG-YJEIFH) */
+ *  `spawn ... ENOENT`. (BUG-YJEIFH)
+ *
+ *  A key set to `undefined` in extraEnv is removed from the child's
+ *  environment, so a spec can unset a variable the runner's shell exports.
+ *  `args` are appended to the server's flags. `probeHeaders` go on the
+ *  readiness probe: a server with an acl.yaml and `-principal-header`
+ *  answers an anonymous request with an error, so the probe names a user. */
 export async function spawnServer(
   serverBinary: string,
   cwd: string,
   extraEnv: NodeJS.ProcessEnv = {},
+  args: string[] = [],
+  probeHeaders: Record<string, string> = {},
 ): Promise<{ proc: ChildProcess; url: string; logs: () => string }> {
   const attempts = 3;
   let lastErr: unknown;
@@ -461,7 +478,10 @@ export async function spawnServer(
     // clean exit (the server's SIGTERM handler drains and exits gracefully).
     // Give each spawned server its own GOCOVERDIR subdir so parallel workers
     // never share a partial write; `go tool covdata` merges them afterwards.
-    const spawnEnv: NodeJS.ProcessEnv = { ...process.env, ...extraEnv };
+    const spawnEnv: NodeJS.ProcessEnv = { ...process.env, ...seqtraceServerEnv(cwd), ...extraEnv };
+    for (const [k, v] of Object.entries(extraEnv)) {
+      if (v === undefined) delete spawnEnv[k];
+    }
     const coverRoot = process.env.RELA_E2E_COVERDIR;
     if (coverRoot) {
       const covDir = path.join(coverRoot, `srv-${port}-${Date.now()}`);
@@ -470,7 +490,7 @@ export async function spawnServer(
     }
     const proc: ChildProcess = spawn(
       serverBinary,
-      ["-port", String(port), "-allowed-origin", url],
+      ["-port", String(port), "-allowed-origin", url, ...args],
       { cwd, env: spawnEnv, stdio: ["ignore", "pipe", "pipe"] },
     );
     let stdout = "";
@@ -498,7 +518,7 @@ export async function spawnServer(
     died.catch(() => {});
 
     try {
-      await Promise.race([waitForServer(url, url), died]);
+      await Promise.race([waitForServer(url, url, probeHeaders), died]);
       return {
         proc,
         url,
@@ -512,6 +532,55 @@ export async function spawnServer(
   throw new Error(
     `Failed to start rela-server after ${attempts} attempts: ${String(lastErr)}`,
   );
+}
+
+/** The proxy header the multi-user specs name their principal in. */
+export const PRINCIPAL_HEADER = "X-Forwarded-User";
+
+/** Runs a server in `dir` that takes the principal from PRINCIPAL_HEADER, for
+ *  specs where several users act at once (presence, channels). It runs
+ *  without $RELA_DATAENTRY_USER, which would win over the header. With an
+ *  acl.yaml the readiness probe needs a user, so pass `probeUser`. The
+ *  server log is attached when the test fails. */
+export async function serveWithPrincipalHeader(
+  serverBinary: string,
+  dir: string,
+  testInfo: TestInfo,
+  use: (url: string) => Promise<void>,
+  probeUser?: string,
+): Promise<void> {
+  const { proc, url, logs } = await spawnServer(
+    serverBinary,
+    dir,
+    { RELA_DATAENTRY_USER: undefined },
+    ["-principal-header", PRINCIPAL_HEADER],
+    probeUser ? { [PRINCIPAL_HEADER]: probeUser } : {},
+  );
+  try {
+    await use(url);
+  } finally {
+    if (testInfo.status !== testInfo.expectedStatus) {
+      await testInfo.attach("rela-server.log", { body: logs(), contentType: "text/plain" });
+    }
+    await waitForExit(proc);
+  }
+}
+
+/** Browser contexts that each act as one user through PRINCIPAL_HEADER.
+ *  `as` opens a page as `user`; `close` closes every context it made. */
+export function contextsAs(browser: Browser, serverUrl: string) {
+  const contexts: BrowserContext[] = [];
+  return {
+    as: async (user: string): Promise<Page> => {
+      const ctx = await browser.newContext({
+        baseURL: serverUrl,
+        extraHTTPHeaders: { [PRINCIPAL_HEADER]: user },
+      });
+      contexts.push(ctx);
+      return ctx.newPage();
+    },
+    close: () => Promise.all(contexts.map((c) => c.close().catch(() => {}))),
+  };
 }
 
 export const test = base.extend<TestFixtures, WorkerFixtures>({
@@ -560,13 +629,17 @@ export const test = base.extend<TestFixtures, WorkerFixtures>({
         });
       }
       await waitForExit(proc);
+      failOnQueryCeiling(logs());
     }
   },
 
   appPage: async ({ browser, serverUrl }, use, testInfo) => {
-    const context = await browser.newContext({
-      extraHTTPHeaders: { Origin: serverUrl },
-    });
+    // No context-wide Origin header: Chromium fails every sub-resource request
+    // of the sandboxed custom-app iframe (origin "null") with
+    // ERR_INVALID_ARGUMENT when one is forced. Writes through page.request set
+    // Origin per call instead.
+    const context = await browser.newContext();
+    const seqtraceRecords = await installSeqtraceRecorder(context);
     const page = await context.newPage();
 
     // Self-contained-binary guard (TKT-ZDRS): rela-server embeds the SPA via
@@ -609,6 +682,7 @@ export const test = base.extend<TestFixtures, WorkerFixtures>({
 
     await page.goto(`${serverUrl}/`);
     await use(page);
+    saveSeqtraceRecords(seqtraceRecords, testInfo);
     await context.close();
 
     if (vueErrors.length > 0) {
@@ -674,8 +748,7 @@ export const test = base.extend<TestFixtures, WorkerFixtures>({
     async function call(method: string, apiPath: string, data?: unknown) {
       const options: Record<string, unknown> = {
         method,
-        // Redundant because the context already carries Origin, but keeps
-        // the intent visible for readers auditing a test's API calls.
+        // The CSRF guard rejects a cookie-bearing write without Origin.
         headers: { Origin: serverUrl },
       };
       if (data !== undefined) options.data = data;
@@ -874,9 +947,28 @@ export const postgresTest = test.extend<
         });
       }
       await waitForExit(proc);
+      failOnQueryCeiling(logs());
     }
   },
 });
+
+/** The message rela-server logs for a request over its --query-ceiling
+ *  (internal/dataentry/requeststats.go, queryCeilingMsg). */
+const QUERY_CEILING_MSG = "request exceeded query ceiling";
+
+/** Fails the test when the server logged a request over its query ceiling.
+ *  That warning means some request shape the test drove runs one statement
+ *  per row; the Go budget tests cover the shapes they know, this catches the
+ *  rest (BUG-E2W1LS). Only database backends count statements, so it bites
+ *  on the postgres specs. */
+function failOnQueryCeiling(logs: string): void {
+  const hits = logs.split("\n").filter((l) => l.includes(QUERY_CEILING_MSG));
+  if (hits.length > 0) {
+    throw new Error(
+      `rela-server logged ${hits.length} request(s) over the query ceiling:\n${hits.join("\n")}`,
+    );
+  }
+}
 
 export { expect } from "@playwright/test";
 
@@ -960,6 +1052,12 @@ entities:
       evidence:
         type: file
         max: 3
+      # kanban-summary.spec.ts: an amount for the bug-pipeline board's column
+      # summary and card, shown as money. No seed bug sets it.
+      estimate:
+        type: integer
+        display:
+          currency: EUR
 
   # BUG-L1DHC5: a dedicated type whose file property is REQUIRED. Separate from
   # 'bug' on purpose — a required property on a shared type makes every other
@@ -1117,6 +1215,37 @@ relations:
     to: [task]
     inverse: grouped_in
 
+# Task-item conversions (TKT-3IBLIP), on bug only so the checkbox specs on
+# features see no convert button. Two recipes, so the editor offers a choice.
+task_item_conversions:
+  bug-fix:
+    from: bug
+    to: task
+    label: Convert to fix task
+    item: remove
+    relation: {type: fixes, as: from}
+    fields:
+      title: "{{item.text}}"
+  bug-fix-link:
+    from: bug
+    to: task
+    label: Convert to linked task
+    relation: {type: fixes, as: from}
+    fields:
+      title: "{{item.text}}"
+
+# A schema conversion on module only, so other entity pages show no convert
+# button (conversion-review.spec.ts).
+conversions:
+  module-to-feature:
+    from: module
+    to: feature
+    label: Convert to feature
+    fields:
+      title: "{{source.name}}"
+    relations:
+      groups: drop
+
 # Commenting (TKT-FIO205). Enabled for every type so the comment specs can use
 # whichever seed entity is convenient; the ACL is untouched, so the default
 # no-policy deployment applies and every principal may comment.
@@ -1246,6 +1375,17 @@ forms:
       # TKT-7K3BJF: exercised by attachments-create.spec.ts.
       - property: screenshot
       - property: evidence
+    # BUG-NSGD6OE: links to another bug's edit form, so a spec can switch
+    # entity inside the same form route.
+    side_panel:
+      traverse:
+        - from: entry
+          follow: blocks
+          collect_as: blocked
+      sections:
+        - heading: "Blocks"
+          source: blocked
+          display: list
 
   # BUG-L1DHC5: a form whose file property is REQUIRED. Kept SEPARATE from the
   # 'bug' form on purpose — adding a required field there would block every
@@ -1580,6 +1720,16 @@ views:
         display: list
         create: {}
 
+# kanban-summary.spec.ts: board column colours come from these. Every value is
+# listed, because an explicit entry replaces the colours rela would otherwise
+# assign to the type, and a value left out would lose its colour in every spec.
+styles:
+  feature_status:
+    draft: blue
+    approved: purple
+    in_progress: orange
+    done: green
+
 kanbans:
   feature-board:
     entity_type: feature
@@ -1648,6 +1798,74 @@ kanbans:
       - value: critical
     card:
       title: title
+
+  # kanban-summary.spec.ts (TKT-SVLQQ6): column colours from styles:, column
+  # summaries and a currency card field. Not in the sidebar, so it changes no
+  # navigation count. Swimlane-free: column_summary refuses swimlanes.
+  bug-pipeline:
+    entity_type: bug
+    title: "Bug Pipeline"
+    column_property: status
+    columns:
+      - value: draft
+        label: New
+      - value: in_progress
+        label: In Progress
+        collapsed: true
+      - value: done
+        label: Fixed
+    column_summary:
+      - function: count
+        label: Bugs
+      - function: sum
+        property: estimate
+        label: Totaal
+      - function: max
+        property: estimate
+        label: Grootste
+    card:
+      title: title
+      fields:
+        - property: estimate
+          show_label: false
+
+  # kanban-related-property.spec.ts (TKT-8Z2LT3): card fields that show a
+  # property of the related entities. Not in the sidebar, so they change no
+  # navigation count. The feature board reads the status of the tasks that
+  # implement it (incoming); the task board reads the estimate of the bugs it
+  # fixes (outgoing), a currency property.
+  feature-task-status:
+    entity_type: feature
+    title: "Feature Task Status"
+    column_property: status
+    columns:
+      - value: draft
+        label: Draft
+      - value: approved
+        label: Approved
+    card:
+      title: title
+      fields:
+        - relation: implements
+          direction: incoming
+          property: status
+          show_label: false
+  task-bug-estimate:
+    entity_type: task
+    title: "Task Bug Estimate"
+    column_property: status
+    columns:
+      - value: draft
+        label: Draft
+      - value: in_progress
+        label: In Progress
+    card:
+      title: title
+      fields:
+        - relation: fixes
+          direction: outgoing
+          property: estimate
+          label: Fix value
 
   # kanban-card-counts.spec.ts: count card fields. Not in the sidebar, so it
   # changes no navigation count. FEAT-001 is implemented by TASK-001 (seed).
@@ -1987,9 +2205,9 @@ to: FEAT-001
 
 /**
  * Feature-entity templates. The Vue form picks these up via GET
- * /api/v1/_templates/feature and renders one pill per template; clicking a
- * pill pre-fills the form. Two variants let the template-pill test assert
- * active-state switching. (The base `feature.md` is picked up as a default.)
+ * /api/v1/_templates/feature and lists them in a template dropdown; choosing
+ * one pre-fills the form. Two variants make the dropdown appear and let the
+ * template test assert switching. (The base `feature.md` is the default.)
  */
 const SEED_TEMPLATES: Record<string, string> = {
   "templates/entities/feature.md": `---

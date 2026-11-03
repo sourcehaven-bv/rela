@@ -37,9 +37,9 @@ type RelationDirectionMigration struct {
 	meta MetamodelProvider
 }
 
-// SetMetamodel implements MetamodelAware.
-func (m *RelationDirectionMigration) SetMetamodel(meta MetamodelProvider) {
-	m.meta = meta
+// WithMetamodel implements MetamodelAware.
+func (m *RelationDirectionMigration) WithMetamodel(meta MetamodelProvider) Migration {
+	return &RelationDirectionMigration{meta: meta}
 }
 
 func (m *RelationDirectionMigration) Name() string {

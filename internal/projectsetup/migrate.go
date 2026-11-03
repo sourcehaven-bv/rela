@@ -83,10 +83,22 @@ func DetectMigrationsWithFS(startDir string, fs storage.FS) ([]MigrateDetection,
 	return detectMigrationsIn(ctx, fs)
 }
 
+// loadMigrationMetamodel loads the metamodel for context-aware migrations. A
+// load error is ignored because the schema may itself need migrating; the
+// result is then a nil interface, so the migrations take their no-metamodel
+// path. Returning the *Metamodel itself would hand them a non-nil interface
+// around a nil pointer.
+func loadMigrationMetamodel(ctx *project.Context, fs storage.FS) migration.MetamodelProvider {
+	mm, _, _ := metamodel.LoadWithoutMigrationCheck(ctx.SchemaPath, fs)
+	if mm == nil {
+		return nil
+	}
+	return migrationSchema{meta: mm}
+}
+
 // detectMigrationsIn is the shared body, taking an already-discovered project.
 func detectMigrationsIn(ctx *project.Context, fs storage.FS) ([]MigrateDetection, error) {
-	// Load metamodel for context-aware migrations (ignore errors - may need migration itself)
-	mm, _, _ := metamodel.LoadWithoutMigrationCheck(ctx.SchemaPath, fs)
+	mm := loadMigrationMetamodel(ctx, fs)
 
 	files := getMigrateFiles(ctx)
 	var detections []MigrateDetection
@@ -139,8 +151,7 @@ func MigrateWithFS(startDir string, fs storage.FS) (*MigrateResult, error) {
 		return nil, err
 	}
 
-	// Load metamodel for context-aware migrations (ignore errors - may need migration itself)
-	mm, _, _ := metamodel.LoadWithoutMigrationCheck(ctx.SchemaPath, fs)
+	mm := loadMigrationMetamodel(ctx, fs)
 
 	files := getMigrateFiles(ctx)
 	result := &MigrateResult{

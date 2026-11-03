@@ -26,9 +26,14 @@
 //	     │  caller    │ ─────────────────────────────────┐
 //	     └────────────┘                                  │
 //	                                                     ▼
-//	┌───────────────────┐    ForPrincipal(p)      ┌─────────────┐
+//	┌───────────────────┐  IdentityResolver.Resolve(ctx, p)
+//	│  request edge     │ ───────────────────────▶ Identity
+//	│  (HTTP, MCP, CLI) │                          (principal + member-of closure)
+//	└───────────────────┘                                │
+//	                                                     │ ForIdentity
+//	┌───────────────────┐                         ┌──────▼──────┐
 //	│  *Declarative     │ ───────────────────────▶│  *Request   │
-//	│  (policy + graph) │                         │  (per-call) │
+//	│  (policy + graph) │      WithRequest(ctx)   │  (per-call) │
 //	└───────────────────┘                         └──────┬──────┘
 //	                                                     │
 //	                                                     │ AuthorizeWrite
@@ -40,18 +45,21 @@
 //	                                          │ Attributions       │
 //	                                          └────────────────────┘
 //
-// A [*Request] is per-call, not goroutine-safe, and amortizes one
-// member-of walk across every per-entity probe in the same logical
-// operation. [WithRequest]/[FromContext] thread it through call chains
-// so the same Request is reused by downstream resolvers (e.g. the
-// affordance resolver in a list response) instead of each call
-// re-walking the graph.
+// Identity resolution is an explicit step at the request edge. The edge
+// resolves the principal once (the `principal_property` lookup and the
+// member-of walk), opens a [*Request] with [Declarative.ForIdentity], and
+// attaches it with [WithRequest]. A Request is per-call and not
+// goroutine-safe. Its global roles are a pure function of the [Identity]
+// and the policy. Downstream evaluation reads it with
+// [Declarative.RequestFrom] and fails closed when it is absent; nothing
+// below the edge resolves a principal.
 package acl
 
 import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 )
 
 // ACL gates writes. Implementations decide whether a [WriteRequest]
@@ -82,11 +90,32 @@ type Op string
 // Op constants — stable wire contract; surfaces in audit summaries and
 // HTTP 403 bodies.
 const (
-	OpCreate Op = "create"
-	OpUpdate Op = "update"
-	OpDelete Op = "delete"
-	OpRename Op = "rename"
+	OpCreate  Op = "create"
+	OpUpdate  Op = "update"
+	OpDelete  Op = "delete"
+	OpRename  Op = "rename"
+	OpConvert Op = "convert"
 )
+
+// ops is every write Op, in the order [Ops] returns them.
+var ops = [...]Op{OpCreate, OpUpdate, OpDelete, OpRename, OpConvert}
+
+// Ops returns every write Op, as a fresh slice the caller may keep. [Verbs] is
+// built from it, so a new Op is also a new [Verb] for every consumer that
+// enumerates the verbs.
+func Ops() []Op {
+	return slices.Clone(ops[:])
+}
+
+// Valid reports whether o is one of [Ops].
+func (o Op) Valid() bool {
+	for _, known := range ops {
+		if o == known {
+			return true
+		}
+	}
+	return false
+}
 
 // Decision is the ACL's answer plus enough context to debug a deny.
 // Every deny names the rule that fired (RuleKind + RuleID) — opaque
@@ -120,6 +149,14 @@ type Decision struct {
 	// delegate-permission gate) or when the implementation is one of
 	// the constant deciders ([NopACL], [ReadOnlyACL]).
 	Attributions []RoleAttribution
+
+	// Cause is the sentinel behind a deny that no rule decided: the
+	// operation had no usable [Request] ([ErrNoIdentity],
+	// [ErrIdentityMismatch], [ErrForeignIdentity]). [ForbiddenError]
+	// unwraps to it, so an HTTP edge can tell "not authenticated" or "wiring
+	// fault" from a policy deny with [errors.Is]. Nil for every rule-based
+	// decision.
+	Cause error
 }
 
 // ErrForbidden is the sentinel that [ForbiddenError] reports via
@@ -144,4 +181,10 @@ func (e *ForbiddenError) Error() string {
 // error type.
 func (e *ForbiddenError) Is(target error) bool {
 	return target == ErrForbidden
+}
+
+// Unwrap returns [Decision.Cause], so `errors.Is(err, acl.ErrNoIdentity)`
+// holds for a write denied because no identity was bound.
+func (e *ForbiddenError) Unwrap() error {
+	return e.Decision.Cause
 }

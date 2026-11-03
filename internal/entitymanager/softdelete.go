@@ -76,9 +76,16 @@ func SoftDeleteEntity(ctx context.Context, m *Manager, id string) (*entity.Delet
 	if len(family) == 0 {
 		return nil, fmt.Errorf("%w: %s", ErrEntityNotFound, id)
 	}
+	if rErr := requireReadableRow(ctx, faceGateOf(m), id, family); rErr != nil {
+		return nil, rErr
+	}
 	authorized := make(familyAuthorization, len(family))
 	if aclErr := m.authorizeFamily(ctx, acl.OpDelete, id, family, authorized); aclErr != nil {
 		return nil, aclErr
+	}
+	// The rows stay restorable, so the channels stay; only a block refuses.
+	if gErr := checkSoftDelete(ctx, m, id); gErr != nil {
+		return nil, gErr
 	}
 
 	// Collect, authorize and mark under one serialization, for the reason
@@ -345,7 +352,9 @@ func restoreInTx(ctx context.Context, m *Manager, tx store.Store, id string, don
 	}
 
 	// Owned entities first: the owning edges are hidden with the owner, and
-	// Unmark brings an edge back only when its other end is live.
+	// Unmark brings an edge back only when its other end is live. Unbounded:
+	// the edges coming back are grandfathered data, so no max_outgoing /
+	// max_incoming is checked (TKT-65LVAK).
 	for _, o := range owned {
 		r, uErr := sd.SoftDelete().Unmark(ctx, o.ID)
 		if uErr != nil {
@@ -495,7 +504,21 @@ func PurgeSoftDeleted(ctx context.Context, m *Manager, cutoff time.Time) (int, e
 		if !me.DeletedAt.Before(cutoff) {
 			break // oldest first, so the rest are newer
 		}
+		// The purge removes the rows for good, so the channels go now.
+		undo, gErr := guardPurge(ctx, m, me.ID)
+		if gErr != nil {
+			errs = append(errs, fmt.Errorf("purge %s: %w", me.ID, gErr))
+			continue
+		}
 		res, pErr := sd.SoftDelete().PurgeMarked(ctx, me.ID)
+		if pErr != nil {
+			// The entity is still marked, or was restored meanwhile: either
+			// way its channels belong with it. One another purge removed
+			// meanwhile keeps them detached.
+			undo.restore(ctx, func(ctx context.Context, id string, _ entity.Face) bool {
+				return !errors.Is(pErr, store.ErrNotFound) || familyStillStored(ctx, m.deps.Store, id)
+			}, nil)
+		}
 		if errors.Is(pErr, store.ErrNotFound) {
 			continue // restored or purged meanwhile
 		}
@@ -518,12 +541,12 @@ func recordPurge(ctx context.Context, m *Manager, id string, res *store.DeleteRe
 	// One delete version per face, as DeleteEntity records.
 	head := res.DeletedEntities[0]
 	for _, e := range res.DeletedEntities {
-		m.recordEntityVersion(ctx, store.VersionOpDelete, e, "")
+		m.recordDeleteVersion(ctx, e)
 	}
 	m.notifyAliasesOfDelete(ctx, id)
 	cascadeTB := "cascade:delete-entity:" + id
 	for _, rel := range res.DeletedRelations {
-		m.recordRelationVersion(ctx, store.VersionOpDelete, rel, "", "", cascadeTB)
+		m.recordRelationVersion(ctx, store.VersionOpDelete, rel, 0, "", "", cascadeTB)
 	}
 	m.recordEntityAudit(ctx, audit.OpPurgeDeletedEntity, head,
 		fmt.Sprintf("purged after soft delete (%d relations)", len(res.DeletedRelations)))

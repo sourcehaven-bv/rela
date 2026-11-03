@@ -1,0 +1,9 @@
+---
+id: RR-1E1VDD
+type: review-response
+title: Watcher writes a cross-type stray file into the mention index and the marked family before the ownership check
+finding: 'internal/store/fsstore/watcher.go reconcileEntityPath calls noteMentions(s, e) and watchMarkedEntity(...) before the new ''known && !s.ownPath(path, existing)'' check. The earlier dirType/stemID check does not catch this case: entities/risks/REQ-1.md with frontmatter type: risk, id: REQ-1 passes it, while REQ-1 is a requirement stored at entities/requirements/REQ-1.md. Live case: the stray''s body replaces REQ-1''s entry in s.mentions.entries (keyed by state key only), so MentionSources returns wrong backlinks for the live requirement, and removing the stray does not restore them (handleEntityRemoval returns on !ownPath). Soft-deleted case: watchMarkedEntity replaces the family''s type-requirement meta for that face with a type-risk meta, so Unmark restores the risk file as REQ-1 and the real requirement file drops out of the index; deleting the stray then removes the face from the family (the removal branch''s ownPath check uses the stray''s own directory type, so it passes) and Unmark never brings REQ-1 back. Fix: decide ownership before any side effect. For a key that is live, require ownPath(path, existing). For a marked family, require the face''s existing meta type to equal e.Type, and apply the same check in the !known removal branch. Call noteMentions and echoes.Recorded only after these checks pass. Add a watcher test for a same-id file under another declared type, covering a live id and a marked id.'
+severity: significant
+resolution: idOwnedElsewhere runs before any side effect on create, update and removal, so a cross-type stray same-id file is skipped with a warning; TestExternalStrayCopyLeavesIndexedEntity covers the live and soft-deleted cases and fails without the fix.
+status: addressed
+---

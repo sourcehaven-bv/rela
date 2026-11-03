@@ -111,7 +111,7 @@ func TestMCPComments_ReadOnly(t *testing.T) {
 	ctx := mcpCtx(t, "alice@example.com", nil)
 	created, err := ops.AddComment(ctx, "TKT-001", comments.AddInput{Kind: comments.AnchorProperty, Ref: "status", Body: "x"})
 	require.NoError(t, err)
-	app.acl = acl.ReadOnlyACL{}
+	setTestACL(t, app, acl.ReadOnlyACL{})
 
 	_, err = ops.AddComment(ctx, "TKT-001", comments.AddInput{Kind: comments.AnchorProperty, Ref: "status", Body: "x"})
 	require.Contains(t, requireOpCode(t, err, "forbidden").Title, "read-only")
@@ -357,7 +357,7 @@ func TestCommentFailure_OpError(t *testing.T) {
 	cause := errors.New("open /srv/project/.rela/comments/TKT-001.yaml: permission denied")
 	for _, tc := range []struct {
 		name string
-		fail *commentFailure
+		fail *opFailure
 		code string
 	}{
 		{"gate", failGate(cause), "acl_query_failed"},

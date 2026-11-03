@@ -193,37 +193,59 @@ func (er entityReader) incomingRelations(ctx context.Context, id string) []*enti
 // entities; a row with no edges keeps a nil entry. An edge between two page
 // rows appears in both rows' slices, once each — the same result the former
 // per-row outgoing+incoming pair produced (TKT-1U8XYN).
+//
+// A store error is logged and truncates the result, like
+// [entityReader.outgoingRelations]; use [entityReader.pageRelationsDir] to
+// receive it.
 func (er entityReader) pageRelations(
 	ctx context.Context, entities []*entity.Entity,
 ) (outgoing, incoming [][]*entity.Relation) {
+	outgoing, incoming, err := er.pageRelationsDir(ctx, entities, store.DirectionBoth)
+	if err != nil {
+		slog.Warn("dataentry: entityReader: listing page relations failed; result truncated",
+			"rows", len(entities), "err", err)
+	}
+	return outgoing, incoming
+}
+
+// pageRelationsDir is [entityReader.pageRelations] for one direction, and
+// returns the store error instead of logging it. With
+// [store.DirectionOutgoing] only outgoing is filled, with
+// [store.DirectionIncoming] only incoming; both slices are always
+// index-aligned with entities. On error the slices hold the edges read
+// before the failure.
+//
+// Rows that share an id each receive that id's edges.
+func (er entityReader) pageRelationsDir(
+	ctx context.Context, entities []*entity.Entity, dir store.Direction,
+) (outgoing, incoming [][]*entity.Relation, err error) {
 	outgoing = make([][]*entity.Relation, len(entities))
 	incoming = make([][]*entity.Relation, len(entities))
 	if len(entities) == 0 {
-		return outgoing, incoming
+		return outgoing, incoming, nil
 	}
-	rowIdx := make(map[string]int, len(entities))
+	rowIdx := make(map[string][]int, len(entities))
 	ids := make([]string, 0, len(entities))
 	for i, e := range entities {
-		if _, dup := rowIdx[e.ID]; dup {
-			continue
+		if _, seen := rowIdx[e.ID]; !seen {
+			ids = append(ids, e.ID)
 		}
-		rowIdx[e.ID] = i
-		ids = append(ids, e.ID)
+		rowIdx[e.ID] = append(rowIdx[e.ID], i)
 	}
-	rels, err := listRelationsCtx(ctx, er.store, store.RelationQuery{EntityIDs: ids, Direction: store.DirectionBoth})
-	if err != nil {
-		slog.Warn("dataentry: entityReader: listing page relations failed; result truncated",
-			"rows", len(ids), "err", err)
-	}
+	rels, err := listRelationsCtx(ctx, er.store, store.RelationQuery{EntityIDs: ids, Direction: dir})
 	for _, r := range rels {
-		if i, ok := rowIdx[r.From]; ok {
-			outgoing[i] = append(outgoing[i], r)
+		if dir != store.DirectionIncoming {
+			for _, i := range rowIdx[r.From] {
+				outgoing[i] = append(outgoing[i], r)
+			}
 		}
-		if i, ok := rowIdx[r.To]; ok {
-			incoming[i] = append(incoming[i], r)
+		if dir != store.DirectionOutgoing {
+			for _, i := range rowIdx[r.To] {
+				incoming[i] = append(incoming[i], r)
+			}
 		}
 	}
-	return outgoing, incoming
+	return outgoing, incoming, err
 }
 
 func (er entityReader) relations(ctx context.Context, id string, dir store.Direction) []*entity.Relation {

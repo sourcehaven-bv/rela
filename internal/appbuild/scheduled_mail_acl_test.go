@@ -1,7 +1,6 @@
 package appbuild
 
 import (
-	"bytes"
 	"context"
 	"log/slog"
 	"testing"
@@ -10,6 +9,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
+	"github.com/Sourcehaven-BV/rela/internal/aclstore"
 	"github.com/Sourcehaven-BV/rela/internal/affordances"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/mail"
@@ -17,6 +17,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/principal"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/store/memstore"
+	"github.com/Sourcehaven-BV/rela/internal/testutil/logtest"
 	"github.com/Sourcehaven-BV/rela/internal/visibility"
 )
 
@@ -92,11 +93,11 @@ assignments:
   dana: lead
 `
 
-func mustScheduledMailACL(t *testing.T, st store.Store, meta *metamodel.Metamodel) (*acl.Declarative, visibility.FieldRedactor) {
+func mustScheduledMailACL(t *testing.T, st store.Store, meta *metamodel.Metamodel) (*acl.Declarative, fieldReadPolicy) {
 	t.Helper()
 	var p acl.Policy
 	require.NoError(t, yaml.Unmarshal([]byte(scheduledMailACL), &p))
-	d, err := acl.NewDeclarative(&p, acl.NewStoreGraph(st), st)
+	d, err := acl.NewDeclarative(&p, aclstore.MustNewGraph(st), st)
 	require.NoError(t, err)
 	resolver, err := affordances.New(meta, aclRelationLookup{st}, d)
 	require.NoError(t, err)
@@ -138,7 +139,7 @@ func TestRunScheduledTemplate_RedactsPerRecipientACL(t *testing.T) {
 	svc := &Services{
 		store: st, meta: meta,
 		aclDeclarative: d,
-		fieldRedactor:  redact,
+		fieldReads:     redact,
 		cfgLoader: staticConfig{"mail-templates.yaml": []byte(`mail_templates:
   digest:
     subject: Daily digest
@@ -158,7 +159,7 @@ func TestRunScheduledTemplate_RedactsPerRecipientACL(t *testing.T) {
 	send := func(t *testing.T, user string) mail.Message {
 		t.Helper()
 		pctx := principal.With(ctx, principal.Principal{User: user, Tool: principal.ToolScheduler})
-		require.NoError(t, svc.RunScheduledTemplate(pctx, "digest", user))
+		require.NoError(t, svc.RunScheduledTemplate(bindForTest(pctx, t, svc), "digest", user))
 		msgs := sender.Messages()
 		require.NotEmpty(t, msgs)
 		return msgs[len(msgs)-1]
@@ -231,7 +232,7 @@ assignments:
 `
 	var p acl.Policy
 	require.NoError(t, yaml.Unmarshal([]byte(policyYAML), &p))
-	d, err := acl.NewDeclarative(&p, acl.NewStoreGraph(st), st)
+	d, err := acl.NewDeclarative(&p, aclstore.MustNewGraph(st), st)
 	require.NoError(t, err)
 	resolver, err := affordances.New(meta, aclRelationLookup{st}, d)
 	require.NoError(t, err)
@@ -242,7 +243,7 @@ assignments:
 	svc := &Services{
 		store: st, meta: meta,
 		aclDeclarative: d,
-		fieldRedactor:  redact,
+		fieldReads:     redact,
 		cfgLoader: staticConfig{"mail-templates.yaml": []byte(`mail_templates:
   digest:
     subject: Daily digest
@@ -260,7 +261,7 @@ assignments:
 	}
 
 	pctx := principal.With(ctx, principal.Principal{User: "carol", Tool: principal.ToolScheduler})
-	require.NoError(t, svc.RunScheduledTemplate(pctx, "digest", "carol"))
+	require.NoError(t, svc.RunScheduledTemplate(bindForTest(pctx, t, svc), "digest", "carol"))
 	msgs := sender.Messages()
 	require.Len(t, msgs, 1)
 
@@ -326,7 +327,7 @@ func TestRunScheduledTemplate_RequireVisibleContent(t *testing.T) {
 		return &Services{
 			store: st, meta: meta,
 			aclDeclarative: d,
-			fieldRedactor:  redact,
+			fieldReads:     redact,
 			cfgLoader: staticConfig{"mail-templates.yaml": []byte(templates), "schedules.yaml": []byte(`tasks:
   - name: digest
     template: digest
@@ -340,7 +341,7 @@ func TestRunScheduledTemplate_RequireVisibleContent(t *testing.T) {
 	run := func(t *testing.T, svc *Services, user string) {
 		t.Helper()
 		pctx := principal.With(t.Context(), principal.Principal{User: user, Tool: principal.ToolScheduler})
-		require.NoError(t, svc.RunScheduledTemplate(pctx, "digest", user))
+		require.NoError(t, svc.RunScheduledTemplate(bindForTest(pctx, t, svc), "digest", user))
 	}
 
 	t.Run("fully hidden is suppressed when opted in", func(t *testing.T) {
@@ -424,7 +425,7 @@ assignments:
 `
 	var p acl.Policy
 	require.NoError(t, yaml.Unmarshal([]byte(partialPolicy), &p))
-	d, err := acl.NewDeclarative(&p, acl.NewStoreGraph(st), st)
+	d, err := acl.NewDeclarative(&p, aclstore.MustNewGraph(st), st)
 	require.NoError(t, err)
 	resolver, err := affordances.New(meta, aclRelationLookup{st}, d)
 	require.NoError(t, err)
@@ -435,7 +436,7 @@ assignments:
 	svc := &Services{
 		store: st, meta: meta,
 		aclDeclarative: d,
-		fieldRedactor:  redact,
+		fieldReads:     redact,
 		cfgLoader: staticConfig{"mail-templates.yaml": []byte(`mail_templates:
   digest:
     subject: Daily digest
@@ -456,7 +457,7 @@ assignments:
 	}
 
 	pctx := principal.With(ctx, principal.Principal{User: "dana", Tool: principal.ToolScheduler})
-	require.NoError(t, svc.RunScheduledTemplate(pctx, "digest", "dana"))
+	require.NoError(t, svc.RunScheduledTemplate(bindForTest(pctx, t, svc), "digest", "dana"))
 	msgs := sender.Messages()
 	require.Len(t, msgs, 1, "one empty section must not suppress a message the other section fills")
 	require.Contains(t, string(msgs[0].Text), "Quarterly review")
@@ -494,7 +495,7 @@ func TestRunScheduledTemplate_SuppressionLogDoesNotDiscloseHiddenContent(t *test
 	svc := &Services{
 		store: st, meta: meta,
 		aclDeclarative: d,
-		fieldRedactor:  redact,
+		fieldReads:     redact,
 		cfgLoader: staticConfig{"mail-templates.yaml": []byte(`mail_templates:
   digest:
     subject: Daily digest
@@ -512,16 +513,13 @@ func TestRunScheduledTemplate_SuppressionLogDoesNotDiscloseHiddenContent(t *test
 		mail: &mailRuntime{config: &mail.Config{BaseURL: "https://rela.example"}, sender: sender},
 	}
 
-	var logged bytes.Buffer
-	restore := slog.Default()
-	slog.SetDefault(slog.New(slog.NewTextHandler(&logged, &slog.HandlerOptions{Level: slog.LevelDebug})))
-	t.Cleanup(func() { slog.SetDefault(restore) })
+	logged := logtest.Capture(t, slog.LevelDebug)
 
 	pctx := principal.With(ctx, principal.Principal{User: "alice", Tool: principal.ToolScheduler})
-	require.NoError(t, svc.RunScheduledTemplate(pctx, "digest", "alice"))
+	require.NoError(t, svc.RunScheduledTemplate(bindForTest(pctx, t, svc), "digest", "alice"))
 	require.Empty(t, sender.Messages(), "precondition: this run must have been suppressed")
 
-	out := logged.String()
+	out := logged()
 	// The positive half: without it, the absence assertions below would pass
 	// against a build that logged nothing at all.
 	require.Contains(t, out, "no visible content", "the operator needs to know a send was skipped")
@@ -534,4 +532,15 @@ func TestRunScheduledTemplate_SuppressionLogDoesNotDiscloseHiddenContent(t *test
 		"the redacted field value must not reach the log")
 	require.NotContains(t, out, "T-1",
 		"even the hidden entity's ID must not reach the log")
+}
+
+// bindForTest runs the request edge for ctx against svc's ACL, as the
+// scheduler's task context does before it renders a recipient's mail.
+func bindForTest(ctx context.Context, tb testing.TB, svc *Services) context.Context {
+	tb.Helper()
+	out, err := MustIdentityBinder(svc)(ctx)
+	if err != nil {
+		tb.Fatalf("IdentityBinder: %v", err)
+	}
+	return out
 }

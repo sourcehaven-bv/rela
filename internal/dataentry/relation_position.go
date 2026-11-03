@@ -101,7 +101,7 @@ func writeRelationPosition(w http.ResponseWriter, r *http.Request, h *writeHandl
 	switch {
 	case err == nil:
 		w.WriteHeader(http.StatusNoContent)
-	case writeForbiddenIfACLDenied(w, err):
+	case writeForbiddenIfACLDenied(w, r, err):
 	case errors.Is(err, entitymanager.ErrOrderRefNotSibling):
 		writeV1Error(w, r, http.StatusNotFound, "not_found", entityNotFoundTitle, "")
 	case errors.Is(err, entitymanager.ErrInvalidOrderPosition):

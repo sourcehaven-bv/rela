@@ -22,9 +22,9 @@
  * distinction is what the behaviour rests on.
  */
 import { $node } from '@milkdown/kit/utils'
-import { isValidEntityRefId } from './entityRefId'
+import { isValidEntityRefId } from '@/utils/entityRefId'
 
-export { isValidEntityRefId } from './entityRefId'
+export { isValidEntityRefId } from '@/utils/entityRefId'
 
 /**
  * Decides whether a code span is an entity reference.

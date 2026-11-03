@@ -1,0 +1,8 @@
+request: GET /api/v1/_documents/report/_export?transform=copy
+identity: header stranger@example.test
+status: 200
+reads: GraphQuery=1 GraphQueryHeaders=1 ListRelations=1
+breadth: ListRelations=0/1
+bodies: GraphQuery=0/2
+versions: 
+body:

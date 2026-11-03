@@ -197,81 +197,6 @@ func TestDeleteFace_LastFacePartialCascade_ReportsWhatWasRemoved(t *testing.T) {
 	require.NoError(t, err, "the face survives a failed delete")
 }
 
-// --- Orphaned temp file cleanup ---
-
-func TestRecovery_OrphanedEntityTempFile(t *testing.T) {
-	fs := storage.NewMemFS()
-	ctx := context.Background()
-
-	// Create an entity normally.
-	s1 := openStore(t, fs)
-	require.NoError(t, s1.CreateEntity(ctx, entity.New("REQ-1", "requirement")))
-	require.NoError(t, s1.Close())
-
-	// Simulate a crash that left a .new temp file behind.
-	require.NoError(t, fs.WriteFile("/entities/requirements/REQ-2.md.new", []byte("partial write"), 0644))
-
-	// Reopen — the temp file should be cleaned up.
-	s2 := openStore(t, fs)
-	defer s2.Close()
-
-	_, err := fs.ReadFile("/entities/requirements/REQ-2.md.new")
-	assert.True(t, isNotExist(err), "orphaned .new file should be cleaned up on startup")
-
-	// Original entity still accessible.
-	_, err = s2.GetEntity(ctx, entity.Ref{ID: "REQ-1"})
-	require.NoError(t, err)
-}
-
-func TestRecovery_OrphanedRelationTempFile(t *testing.T) {
-	fs := storage.NewMemFS()
-
-	s1 := openStore(t, fs)
-	require.NoError(t, s1.Close())
-
-	// Simulate orphaned relation temp file.
-	require.NoError(t, fs.MkdirAll("/relations", 0755))
-	require.NoError(t, fs.WriteFile("/relations/A--rel--B.md.new", []byte("partial"), 0644))
-
-	s2 := openStore(t, fs)
-	defer s2.Close()
-
-	_, err := fs.ReadFile("/relations/A--rel--B.md.new")
-	assert.True(t, isNotExist(err), "orphaned relation .new file should be cleaned up")
-}
-
-// SafeFS writes via <path>.tmp → rename, so a crash between write and
-// rename leaves a sibling .tmp file. The historical sweep only removed
-// .new orphans; .tmp orphans would accumulate forever.
-func TestRecovery_OrphanedSafeFSTempFile(t *testing.T) {
-	fs := storage.NewMemFS()
-	ctx := context.Background()
-
-	s1 := openStore(t, fs)
-	require.NoError(t, s1.CreateEntity(ctx, entity.New("REQ-1", "requirement")))
-	require.NoError(t, s1.Close())
-
-	// Simulate a SafeFS crash: path.tmp left in place of the rename target.
-	require.NoError(t, fs.WriteFile("/entities/requirements/REQ-2.md.tmp", []byte("partial write"), 0644))
-	require.NoError(t, fs.MkdirAll("/relations", 0755))
-	require.NoError(t, fs.WriteFile("/relations/A--rel--B.md.tmp", []byte("partial"), 0644))
-
-	s2 := openStore(t, fs)
-	defer s2.Close()
-
-	for _, p := range []string{
-		"/entities/requirements/REQ-2.md.tmp",
-		"/relations/A--rel--B.md.tmp",
-	} {
-		_, err := fs.ReadFile(p)
-		assert.Truef(t, isNotExist(err), "orphaned %s should be cleaned up on startup", p)
-	}
-
-	// Pre-existing entity still accessible.
-	_, err := s2.GetEntity(ctx, entity.Ref{ID: "REQ-1"})
-	require.NoError(t, err)
-}
-
 // --- Crash mid-create: file on disk but index not updated ---
 
 func TestRecovery_EntityFileWithoutIndex(t *testing.T) {
@@ -461,21 +386,20 @@ func TestRecovery_SearchIndexRebuilt(t *testing.T) {
 	assert.Equal(t, "REQ-2", results[0].ID)
 }
 
-// --- Index rebuilt after crash (stale index) ---
+// --- File changed on disk between runs ---
 
-func TestRecovery_IndexAfterCrashMidUpdate(t *testing.T) {
+func TestRecovery_ExternalEditBetweenRunsIsRead(t *testing.T) {
 	fs := storage.NewMemFS()
 	ctx := context.Background()
 
-	// Create entity and close (flushes cache).
+	// Create entity and close.
 	s1 := openStore(t, fs)
 	e := entity.New("T-1", "ticket")
 	e.Properties["status"] = "open"
 	require.NoError(t, s1.CreateEntity(ctx, e))
 	require.NoError(t, s1.Close())
 
-	// Simulate: entity was updated on disk (e.g., by the store writing the file)
-	// but the property cache was not flushed before crash.
+	// Simulate: the file changed on disk while no store was open.
 	require.NoError(t, fs.WriteFile("/entities/tickets/T-1.md", []byte(`---
 id: T-1
 type: ticket
@@ -483,54 +407,13 @@ status: closed
 ---
 `), 0644))
 
-	// Reopen — cache is stale (mtime newer than cache), should rebuild.
+	// Reopen: the new content must be read.
 	s2 := openStore(t, fs)
 	defer s2.Close()
 
 	got, err := s2.GetEntity(ctx, entity.Ref{ID: "T-1"})
 	require.NoError(t, err)
 	assert.Equal(t, "closed", got.Properties["status"])
-}
-
-// --- Multiple temp files from repeated crash-restart cycles ---
-
-func TestRecovery_MultipleTempFiles(t *testing.T) {
-	fs := storage.NewMemFS()
-
-	s1 := openStore(t, fs)
-	require.NoError(t, s1.Close())
-
-	// Simulate multiple crashed writes leaving temp files.
-	require.NoError(t, fs.MkdirAll("/entities/requirements", 0755))
-	require.NoError(t, fs.WriteFile("/entities/requirements/REQ-1.md.new", []byte("crash 1"), 0644))
-	require.NoError(t, fs.WriteFile("/entities/requirements/REQ-2.md.new", []byte("crash 2"), 0644))
-	require.NoError(t, fs.MkdirAll("/relations", 0755))
-	require.NoError(t, fs.WriteFile("/relations/A--rel--B.md.new", []byte("crash 3"), 0644))
-
-	// Also write a valid entity to ensure it's not removed.
-	require.NoError(t, fs.WriteFile("/entities/requirements/REQ-3.md", []byte(`---
-id: REQ-3
-type: requirement
----
-`), 0644))
-
-	s2 := openStore(t, fs)
-	defer s2.Close()
-
-	// Temp files cleaned up.
-	for _, path := range []string{
-		"/entities/requirements/REQ-1.md.new",
-		"/entities/requirements/REQ-2.md.new",
-		"/relations/A--rel--B.md.new",
-	} {
-		_, err := fs.ReadFile(path)
-		assert.True(t, isNotExist(err), "temp file %s should be cleaned up", path)
-	}
-
-	// Valid entity untouched.
-	ctx := context.Background()
-	_, err := s2.GetEntity(ctx, entity.Ref{ID: "REQ-3"})
-	require.NoError(t, err)
 }
 
 // --- Attachment file exists but entity deleted ---
@@ -574,13 +457,6 @@ func collectSearch(t *testing.T, searcher search.Searcher, q search.Query) []sea
 		results = append(results, hit)
 	}
 	return results
-}
-
-func isNotExist(err error) bool {
-	if err == nil {
-		return false
-	}
-	return strings.Contains(err.Error(), "not exist") || strings.Contains(err.Error(), "no such file")
 }
 
 // TestDeleteEntity_AttachmentDirFailure_StillSucceeds pins that a failure to

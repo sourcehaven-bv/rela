@@ -5,19 +5,18 @@ import (
 	"slices"
 	"sort"
 	"strings"
+
+	"github.com/Sourcehaven-BV/rela/internal/principal"
 )
 
-// computeGlobals walks the configured membership relation (default
-// `member-of`, see [Policy.MembershipRelation]) from the principal and
-// unions in Assignments[m] for every member m, plus any roles mapped from
-// the principal's verified assertion claims, plus the "everyone" role if
-// declared.
+// globalRoles computes the global role set of a principal whose membership
+// closure is already resolved (see [IdentityResolver]). It unions
+// Assignments[m] for every member m, the roles mapped from the principal's
+// verified assertion claims, and the "everyone" role if declared.
 //
-// Called once per Request via Globals(); the result is cached for the
-// lifetime of the Request.
-func (r *Request) computeGlobals(ctx context.Context) GlobalRoles {
-	members := r.walkMembers(ctx)
-
+// It is a pure function of its arguments and the policy: no graph traffic.
+// [Declarative.ForIdentity] calls it once per Request.
+func (d *Declarative) globalRoles(p principal.Principal, members []string) GlobalRoles {
 	var attrs []RoleAttribution
 	seen := map[attrKey]bool{}
 	add := func(role string, source Source) {
@@ -29,7 +28,7 @@ func (r *Request) computeGlobals(ctx context.Context) GlobalRoles {
 		attrs = append(attrs, RoleAttribution{Role: role, Source: source})
 	}
 
-	policy := r.d.policy
+	policy := d.policy
 	for _, m := range members {
 		role, ok := policy.Assignments[m]
 		if !ok {
@@ -38,7 +37,7 @@ func (r *Request) computeGlobals(ctx context.Context) GlobalRoles {
 		if _, defined := policy.Roles[role]; !defined {
 			continue
 		}
-		if m == r.principal.User {
+		if m == p.User {
 			add(role, Source{Kind: SourceGlobal})
 		} else {
 			add(role, Source{Kind: SourceGroup, Group: m})
@@ -54,7 +53,7 @@ func (r *Request) computeGlobals(ctx context.Context) GlobalRoles {
 	// rela role the deployment did not choose to grant. Matching is exact
 	// after TrimSpace (Validate rejects blank keys); an undeclared target
 	// role is dropped silently, matching the Assignments guard above.
-	for _, claim := range r.principal.Roles() {
+	for _, claim := range p.Roles() {
 		claim = strings.TrimSpace(claim)
 		for _, role := range policy.AssertedRoles[claim] {
 			if _, defined := policy.Roles[role]; !defined {
@@ -66,44 +65,7 @@ func (r *Request) computeGlobals(ctx context.Context) GlobalRoles {
 	if _, ok := policy.Roles[EveryoneRole]; ok {
 		add(EveryoneRole, Source{Kind: SourceGlobal})
 	}
-	return GlobalRoles{Attributions: attrs, Members: members}
-}
-
-// walkMembers returns {principal.User} ∪ the transitive closure over
-// the configured membership relation (default `member-of`, see
-// [Policy.MembershipRelation]).
-// Visited-set primary; depthCap as backstop. Errors from the graph
-// abort the surrounding walk — under-counting members is safer than
-// over-granting, but a partial-data principal-resolution is worse
-// than failing loud.
-func (r *Request) walkMembers(ctx context.Context) []string {
-	user := r.principal.User
-	if user == "" {
-		return nil
-	}
-	visited := map[string]bool{user: true}
-	order := []string{user}
-	frontier := []string{user}
-	for depth := 0; depth < depthCap && len(frontier) > 0; depth++ {
-		var next []string
-		for _, n := range frontier {
-			tos, err := r.d.graph.OutgoingRelations(ctx, n, r.d.policy.EffectiveMembershipRelation())
-			if err != nil {
-				// Abort the walk loud rather than silently undercount.
-				return order
-			}
-			for _, to := range tos {
-				if visited[to] {
-					continue
-				}
-				visited[to] = true
-				order = append(order, to)
-				next = append(next, to)
-			}
-		}
-		frontier = next
-	}
-	return order
+	return GlobalRoles{Attributions: attrs, Members: slices.Clone(members)}
 }
 
 // computeForEntity computes the per-entity attribution set: cached
@@ -111,13 +73,14 @@ func (r *Request) walkMembers(ctx context.Context) []string {
 // member to the entity, and when inherit_roles_through is configured,
 // per-ancestor probes).
 //
-// The resolver runs two independent graph walks and crosses them
-// against the policy's role-relations:
+// The membership closure comes from the [Identity] the Request was opened
+// with; only the ancestor walk runs here. The two are crossed against the
+// policy's role-relations:
 //
 //	principal.User                            target entity
 //	     │                                          │
 //	     │ member-of                                │ inherit_roles_through
-//	     ▼ (walkMembers, depth-capped)              ▼ (ancestors, depth-capped)
+//	     ▼ (resolved Identity, see identity.go)     ▼ (ancestors, depth-capped)
 //	┌─────────┐                                ┌─────────┐
 //	│ Members │                                │ Chain   │  (entity + ancestors)
 //	│  set M  │                                │  C      │
@@ -138,48 +101,84 @@ func (r *Request) walkMembers(ctx context.Context) []string {
 // abort the surrounding loop — under-attribution is safer than
 // over-granting.
 func (r *Request) computeForEntity(ctx context.Context, entityID string) []RoleAttribution {
-	globals := r.Globals(ctx)
-	out := append([]RoleAttribution(nil), globals.Attributions...)
-	seen := map[attrKey]bool{}
-	for _, a := range out {
-		seen[attrKey(a)] = true
+	globals := r.Globals()
+	if local, ok := primedLocalRoles(ctx, r, entityID); ok {
+		return mergeAttributions(globals.Attributions, local)
 	}
-	add := func(role string, source Source) {
-		k := attrKey{Role: role, Source: source}
-		if seen[k] {
-			return
-		}
-		seen[k] = true
-		out = append(out, RoleAttribution{Role: role, Source: source})
-	}
-
 	chain := r.ancestors(ctx, entityID)
+	local := r.localRoles(entityID, chain, globals.Members, func(member, relType, target string) bool {
+		return r.d.graph.HasEdge(ctx, member, relType, target)
+	})
+	return mergeAttributions(globals.Attributions, local)
+}
+
+// localRoles returns the roles conferred on the principal for entityID by
+// role-relation edges from a member to an entity on chain (entityID first,
+// then its inherit_roles_through ancestors), deduplicated, in the resolver's
+// deterministic order. hasEdge answers one (member, relType, target) probe;
+// the per-entity path asks the graph, a primed page asks the edges it loaded
+// in one batch ([PrimeLocalRoles]), and both share this walk so they cannot
+// disagree about which roles an edge confers or in what order.
+func (r *Request) localRoles(
+	entityID string, chain, members []string, hasEdge func(member, relType, target string) bool,
+) []RoleAttribution {
 	policy := r.d.policy
+	var out []RoleAttribution
+	seen := map[attrKey]bool{}
 	// RR-MBK0: iterate role-relation types in sorted order so the local-
 	// role attributions land in deterministic order — Decision.Attributions
 	// otherwise reflects Go's randomized map iteration, making
 	// formatDeniedSummary output non-reproducible.
+	for _, relType := range r.conferringRelations() {
+		role := policy.RoleRelations[relType].Confers
+		for _, member := range members {
+			for _, target := range chain {
+				if !hasEdge(member, relType, target) {
+					continue
+				}
+				src := buildLocalSource(member, r.principal.User, target, entityID, relType)
+				a := RoleAttribution{Role: role, Source: src}
+				if k := attrKey(a); !seen[k] {
+					seen[k] = true
+					out = append(out, a)
+				}
+			}
+		}
+	}
+	return out
+}
+
+// conferringRelations returns, sorted, the role-relation types whose
+// conferred role the policy defines: the only ones the local-role walk
+// probes.
+func (r *Request) conferringRelations() []string {
+	policy := r.d.policy
 	relTypes := make([]string, 0, len(policy.RoleRelations))
-	for relType := range policy.RoleRelations {
+	for relType, def := range policy.RoleRelations {
+		if def.Confers == "" {
+			continue
+		}
+		if _, defined := policy.Roles[def.Confers]; !defined {
+			continue
+		}
 		relTypes = append(relTypes, relType)
 	}
 	sort.Strings(relTypes)
-	for _, relType := range relTypes {
-		def := policy.RoleRelations[relType]
-		role := def.Confers
-		if role == "" {
-			continue
-		}
-		if _, defined := policy.Roles[role]; !defined {
-			continue
-		}
-		for _, member := range globals.Members {
-			for _, target := range chain {
-				if !r.d.graph.HasEdge(ctx, member, relType, target) {
-					continue
-				}
-				add(role, buildLocalSource(member, r.principal.User, target, entityID, relType))
-			}
+	return relTypes
+}
+
+// mergeAttributions appends local to globals, dropping any (role, source)
+// pair already present. globals is not modified.
+func mergeAttributions(globals, local []RoleAttribution) []RoleAttribution {
+	out := append([]RoleAttribution(nil), globals...)
+	seen := make(map[attrKey]bool, len(out))
+	for _, a := range out {
+		seen[attrKey(a)] = true
+	}
+	for _, a := range local {
+		if k := attrKey(a); !seen[k] {
+			seen[k] = true
+			out = append(out, a)
 		}
 	}
 	return out
@@ -241,8 +240,10 @@ func (r *Request) ancestors(ctx context.Context, entityID string) []string {
 // the write-side delegate-X gate — e.g. the data-entry history read path
 // gating deleted-entity history on [PermHistoryRead]. Permissions are
 // global-only by design (see [holdsPermission]).
-func (r *Request) HoldsPermission(ctx context.Context, perm string) bool {
-	return r.holdsPermission(ctx, perm)
+//
+//archplan:guard=authz reason="checks a config-declared permission"
+func (r *Request) HoldsPermission(_ context.Context, perm string) bool {
+	return r.holdsPermission(perm)
 }
 
 // HoldsPermissionForEntity reports whether the principal holds the given named
@@ -257,6 +258,8 @@ func (r *Request) HoldsPermission(ctx context.Context, perm string) bool {
 // the guard permission is a coarse capability noun (e.g. "establish"), and the
 // per-subject scope comes from whether a role-relation confers the granting
 // role for this entity — resolved here, not baked into the permission.
+//
+//archplan:guard=authz reason="checks a config-declared permission"
 func (r *Request) HoldsPermissionForEntity(ctx context.Context, entityID, perm string) bool {
 	return r.grantsPermission(r.computeForEntity(ctx, entityID), perm)
 }
@@ -264,8 +267,8 @@ func (r *Request) HoldsPermissionForEntity(ctx context.Context, entityID, perm s
 // holdsPermission reports whether any role in the principal's global
 // role set grants the given permission. Used by the delegate-X gate
 // on role-relation writes; permissions are global-only by design.
-func (r *Request) holdsPermission(ctx context.Context, perm string) bool {
-	return r.grantsPermission(r.Globals(ctx).Attributions, perm)
+func (r *Request) holdsPermission(perm string) bool {
+	return r.grantsPermission(r.Globals().Attributions, perm)
 }
 
 // grantsPermission reports whether any role in attrs grants perm.

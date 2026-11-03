@@ -5,13 +5,13 @@ import RlTextField from 'rela-components/components/form/RlTextField.vue'
 import RlButton from 'rela-components/components/common/RlButton.vue'
 import RlIconButton from 'rela-components/components/common/RlIconButton.vue'
 import RlText from 'rela-components/components/common/RlText.vue'
-import { useConfigDraftStore } from '@/stores/configDraft'
+import { useConfigDraftStore } from '@/configure/configDraft'
 import type { FixedFilterModel } from '@/configure/models'
 import { newMap, type TreePath } from '@/configure/tree'
 
 /**
  * The `filters:` of a list or board: conditions every record it shows must
- * meet. People cannot turn these off. `$USER` as a value means the person
+ * meet. People cannot turn these off. `$user` as a value means the person
  * looking at the list.
  */
 const props = defineProps<{

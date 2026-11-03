@@ -5,6 +5,8 @@ import (
 	"sort"
 	"testing"
 
+	"github.com/Sourcehaven-BV/rela/internal/acl/acltest"
+
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/aclmap"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
@@ -156,9 +158,9 @@ func TestMapPrincipal_MatchesRuntime(t *testing.T) {
 
 	for _, prin := range principalsUnderTest {
 		res := mapAll(t, w, prin)
-		req, err := w.decl.ForPrincipal(principal.Principal{User: prin, Tool: principal.ToolCLI})
+		req, err := w.decl.ForIdentity(acltest.IdentityFor(t.Context(), t, w.decl, principal.Principal{User: prin, Tool: principal.ToolCLI}))
 		if err != nil {
-			t.Fatalf("ForPrincipal %s: %v", prin, err)
+			t.Fatalf("ForIdentity %s: %v", prin, err)
 		}
 		for _, e := range entities {
 			for _, verb := range verbs {
@@ -200,9 +202,9 @@ func assertClassification(
 ) {
 	t.Helper()
 	ctx := context.Background()
-	req, err := w.decl.ForPrincipal(principal.Principal{User: prin, Tool: principal.ToolCLI})
+	req, err := w.decl.ForIdentity(acltest.IdentityFor(t.Context(), t, w.decl, principal.Principal{User: prin, Tool: principal.ToolCLI}))
 	if err != nil {
-		t.Fatalf("ForPrincipal: %v", err)
+		t.Fatalf("ForIdentity: %v", err)
 	}
 	// Is there a sibling of this type the runtime denies this verb on?
 	entitySpecific := false
@@ -259,20 +261,9 @@ func runtimeVerdict(ctx context.Context, t *testing.T, req *acl.Request, verb ac
 		}
 		return ok
 	}
-	var op acl.Op
-	switch verb {
-	case acl.VerbUpdate:
-		op = acl.OpUpdate
-	case acl.VerbDelete:
-		op = acl.OpDelete
-	case acl.VerbCreate:
-		op = acl.OpCreate
-	case acl.VerbRead:
-		// handled above; unreachable here.
-		return false
-	}
+	// Every write verb is the Op of the same name.
 	d := req.AuthorizeWrite(ctx, acl.WriteRequest{
-		Op:      op,
+		Op:      acl.Op(verb),
 		Subject: acl.NewFacelessEntitySubject(typ, id),
 	})
 	return d.Allow

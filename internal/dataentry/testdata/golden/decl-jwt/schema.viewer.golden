@@ -1,0 +1,187 @@
+request: GET /api/v1/_schema
+identity: signed assertion for viewer@example.test
+status: 200
+reads: GraphQueryHeaders=1 ListRelations=1
+breadth: ListRelations=0/1
+bodies: GraphQuery=0/1
+versions: 
+body:
+{
+  "entities": {
+    "person": {
+      "label": "Person",
+      "plural": "persons",
+      "primary": "title",
+      "id_type": "manual",
+      "id_prefix": "PERS",
+      "id_prefixes": [
+        "PERS"
+      ],
+      "properties": {
+        "email": {
+          "type": "string",
+          "required": true
+        },
+        "title": {
+          "type": "string",
+          "required": true
+        }
+      }
+    },
+    "policy": {
+      "label": "Policy",
+      "plural": "policies",
+      "primary": "title",
+      "id_type": "manual",
+      "id_prefix": "POL",
+      "id_prefixes": [
+        "POL"
+      ],
+      "properties": {
+        "stage": {
+          "type": "policy_stage",
+          "required": false,
+          "values": [
+            "to-do",
+            "done"
+          ]
+        },
+        "title": {
+          "type": "string",
+          "required": true
+        }
+      },
+      "faces": {
+        "draft": {
+          "label": "Draft"
+        },
+        "published": {
+          "label": "Published"
+        }
+      }
+    },
+    "ticket": {
+      "label": "Ticket",
+      "plural": "tickets",
+      "primary": "title",
+      "id_type": "sequential",
+      "id_prefix": "TKT",
+      "id_prefixes": [
+        "TKT"
+      ],
+      "properties": {
+        "budget": {
+          "type": "string",
+          "required": false
+        },
+        "closed_on": {
+          "type": "datetime",
+          "required": false
+        },
+        "due": {
+          "type": "date",
+          "required": false
+        },
+        "note": {
+          "type": "string",
+          "required": false
+        },
+        "screenshot": {
+          "type": "file",
+          "required": false
+        },
+        "secret": {
+          "type": "string",
+          "required": false
+        },
+        "start": {
+          "type": "date",
+          "required": false
+        },
+        "status": {
+          "type": "ticket_status",
+          "required": false,
+          "values": [
+            "open",
+            "closed",
+            "archived"
+          ]
+        },
+        "title": {
+          "type": "string",
+          "required": true
+        }
+      },
+      "commentable": true
+    }
+  },
+  "relations": {
+    "contains": {
+      "label": "",
+      "description": "Work breakdown, walked by the gantt.",
+      "from": [
+        "ticket"
+      ],
+      "to": [
+        "ticket"
+      ]
+    },
+    "implements": {
+      "label": "",
+      "description": "A ticket implements a policy.",
+      "from": [
+        "ticket"
+      ],
+      "to": [
+        "policy"
+      ]
+    },
+    "watches": {
+      "label": "",
+      "description": "A person watches a ticket. Confers the watcher role on it.",
+      "from": [
+        "person"
+      ],
+      "to": [
+        "ticket"
+      ]
+    }
+  },
+  "types": {
+    "policy_stage": {
+      "values": [
+        "to-do",
+        "done"
+      ]
+    },
+    "ticket_status": {
+      "values": [
+        "open",
+        "closed",
+        "archived"
+      ]
+    }
+  },
+  "worlds": {
+    "editorial": {
+      "select": [
+        "draft",
+        "published"
+      ],
+      "otherwise": "default",
+      "readable": false
+    },
+    "published": {
+      "select": [
+        "published"
+      ],
+      "otherwise": "default",
+      "readable": true,
+      "default": true
+    }
+  },
+  "world_order": [
+    "published",
+    "editorial"
+  ]
+}

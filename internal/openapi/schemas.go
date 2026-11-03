@@ -29,6 +29,7 @@ func (g *Generator) buildEntitySchema(typeName string, def metamodel.EntityDef) 
 	props["content"] = &Schema{Type: "string", Description: "Markdown body content"}
 	props["_self"] = &Schema{Type: "string", Format: "uri-reference", Description: "Self link"}
 	props["_owner"] = ownerSchema()
+	props["_lease"] = leaseSchema()
 	props["_title"] = &Schema{Type: "string", Description: "Display title, resolved from the type's display property"}
 	props["_redacted"] = &Schema{
 		Type: "array", Items: StringSchema(),
@@ -46,10 +47,12 @@ func (g *Generator) buildEntitySchema(typeName string, def metamodel.EntityDef) 
 		props[name] = &Schema{Type: "object", Description: desc}
 	}
 	for name, desc := range map[string]string{
-		"_copies":      "Copy definitions offered from this face (promote, translate)",
-		"_faces":       "The other faces of this entity the reader may see",
-		"inaccessible": "Properties that exist but whose value cannot be read (locked content)",
-		"warnings":     "Soft validation findings from the write that produced this response",
+		"_copies":                "Copy definitions offered from this face (promote, translate)",
+		"_conversions":           "Operator-declared entity type conversions offered from this entity",
+		"_task_item_conversions": "Recipes that turn a task item in this entity's body into a linked entity",
+		"_faces":                 "The other faces of this entity the reader may see",
+		"inaccessible":           "Properties that exist but whose value cannot be read (locked content)",
+		"warnings":               "Soft validation findings from the write that produced this response",
 	} {
 		props[name] = &Schema{Type: "array", Items: &Schema{Type: "object"}, Description: desc}
 	}
@@ -385,6 +388,10 @@ func (g *Generator) addCommonSchemas(spec *Spec) {
 			"detail":   {Type: "string", Description: "Detailed explanation"},
 			"instance": {Type: "string", Description: "URI reference to the specific occurrence"},
 			"errors":   ArraySchema(Ref("FieldError")),
+			"entity_id": {
+				Type:        "string",
+				Description: "On a 500 conversion_incomplete: the entity the conversion created before a later step failed",
+			},
 			"conflicts": {
 				Type:        "object",
 				Description: "On a 412: the fields whose stored version differs from the precondition",
@@ -502,6 +509,7 @@ func (g *Generator) addCommonSchemas(spec *Spec) {
 			"calendars":  {Type: "object"},
 			"gantts":     {Type: "object"},
 			"dashboard":  {Type: "object"},
+			"dashboards": {Type: "object"},
 			"navigation": {Type: "array"},
 			"documents":  {Type: "object"},
 		},

@@ -295,7 +295,7 @@ func TestRoleAttributionAsMapKey(t *testing.T) {
 	t.Parallel()
 	// attrKey is a struct, comparable by value. Confirm that two
 	// attributions with the same (Role, Source) collide and two with
-	// any difference do not — the dedup logic in computeGlobals /
+	// any difference do not — the dedup logic in Declarative.globalRoles /
 	// computeForEntity depends on this.
 	a := attrKey{Role: "editor", Source: Source{Kind: SourceGroup, Group: "eng"}}
 	b := attrKey{Role: "editor", Source: Source{Kind: SourceGroup, Group: "eng"}}

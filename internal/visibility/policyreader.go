@@ -198,7 +198,9 @@ func (r *PolicyReader) permittedFaces(ctx context.Context, byType map[string][]s
 // if body-level redaction ever becomes policy-expressible
 // (entity.InaccessibleFieldContent exists as the reserved marker), this
 // is the spot that must learn about it, or the seam silently leaks
-// bodies (RR-J6022V).
+// bodies (RR-J6022V). [Resolver.MentionedBy] must learn about it too: the
+// mention index is derived from bodies, so a source whose body is hidden
+// would still be listed as mentioning its target.
 func (r *PolicyReader) redacted(ctx context.Context, e *entity.Entity) *entity.Entity {
 	return Redact(ctx, r.redact, e)
 }

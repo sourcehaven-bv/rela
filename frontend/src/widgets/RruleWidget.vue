@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import RruleBuilder from '@/components/forms/RruleBuilder.vue'
+import RruleBuilder from './RruleBuilder.vue'
 import type { WidgetProps } from './types'
 import { useStringValue } from './useStringValue'
 import { formatValue } from '@/utils/format'

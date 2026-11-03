@@ -15,6 +15,7 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
 	entityPkg "github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/ingest"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
@@ -806,9 +807,9 @@ func TestWebhookRoutes_BusyIsRetryable(t *testing.T) {
 // TestWebhookPayloadInterpolate_FlattensEveryValue tests the flattening SEAM
 // directly, rather than through a route.
 //
-// The whole guarantee rests on one flattenToLine call inside interpolate, and
-// every other test that covers it drives the full router under a name about
-// append_section. Deleting that call should fail a test that names the thing
+// The whole guarantee rests on the ingest.FlattenToLine call in
+// ingest.Interpolate, and every other test here that covers it drives the full
+// router under a name about append_section. Deleting that call should fail a test that names the thing
 // that broke, so a later refactor cannot quietly remove it.
 //
 // It also pins the asymmetry across EVERY producer-controlled namespace, not
@@ -843,7 +844,7 @@ func TestWebhookPayloadInterpolate_FlattensEveryValue(t *testing.T) {
 		{"no recursive interpolation", "- {{body.brace}}", "- {{body.nl}}"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := payload.interpolate(tc.tmpl); got != tc.want {
+			if got := ingest.Interpolate(tc.tmpl, payload.Resolve); got != tc.want {
 				t.Errorf("interpolate(%q) = %q, want %q", tc.tmpl, got, tc.want)
 			}
 		})
@@ -851,7 +852,7 @@ func TestWebhookPayloadInterpolate_FlattensEveryValue(t *testing.T) {
 
 	// A composite value is JSON-encoded, so its newline is already escaped and
 	// no raw newline reaches the document.
-	if got := payload.interpolate("- {{body.nested}}"); strings.Contains(got, "\n") {
+	if got := ingest.Interpolate("- {{body.nested}}", payload.Resolve); strings.Contains(got, "\n") {
 		t.Errorf("composite value carried a raw newline: %q", got)
 	}
 }
@@ -868,7 +869,7 @@ func TestWebhookPayloadInterpolate_ValueCannotForgeAHeading(t *testing.T) {
 		now:  time.Unix(0, 0).UTC(),
 	}
 
-	got := payload.interpolate("- {{body.evil}}")
+	got := ingest.Interpolate("- {{body.evil}}", payload.Resolve)
 	for line := range strings.SplitSeq(got, "\n") {
 		if strings.HasPrefix(strings.TrimSpace(line), "#") {
 			t.Errorf("value forged a heading line: %q", got)

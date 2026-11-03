@@ -8,6 +8,9 @@
  */
 import { computed } from 'vue'
 import RlAvatar from './RlAvatar.vue'
+import { useMessages } from '../../composables/useMessages'
+
+const messages = useMessages()
 
 const props = withDefaults(
   defineProps<{
@@ -16,7 +19,7 @@ const props = withDefaults(
     size?: 'xs' | 'sm' | 'md' | 'lg'
     label?: string
   }>(),
-  { max: 3, size: 'sm', label: 'Assigned to' },
+  { max: 3, size: 'sm', label: undefined },
 )
 
 const shown = computed(() => props.people.slice(0, props.max))
@@ -24,7 +27,7 @@ const overflow = computed(() => Math.max(0, props.people.length - props.max))
 
 const description = computed(() => {
   const names = props.people.map((person) => person.name)
-  return `${props.label}: ${names.join(', ')}`
+  return `${props.label ?? messages.chromeText({ key: 'assignedTo' })}: ${names.join(', ')}`
 })
 </script>
 

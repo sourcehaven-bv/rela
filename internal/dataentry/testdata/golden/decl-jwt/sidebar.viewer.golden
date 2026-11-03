@@ -1,0 +1,63 @@
+request: GET /api/v1/_sidebar
+identity: signed assertion for viewer@example.test
+status: 200
+reads: GraphQueryHeaders=1 ListRelations=1
+breadth: ListRelations=0/1
+bodies: GraphQuery=0/1
+versions: 
+body:
+{
+  "app": {
+    "name": "Golden parity",
+    "description": "",
+    "history_enabled": false
+  },
+  "navigation": [
+    {
+      "items": [
+        {
+          "label": "Tickets",
+          "href": "/list/tickets",
+          "icon": "list"
+        },
+        {
+          "label": "Open tickets",
+          "href": "/list/open_tickets",
+          "icon": "list"
+        },
+        {
+          "label": "Policies",
+          "href": "/list/policies",
+          "icon": "list"
+        },
+        {
+          "label": "People",
+          "href": "/list/people",
+          "icon": "list"
+        },
+        {
+          "label": "Plan",
+          "href": "/gantt/plan",
+          "icon": "gantt"
+        },
+        {
+          "label": "Report",
+          "href": "/document/report",
+          "icon": "document"
+        },
+        {
+          "label": "Elevated report",
+          "href": "/document/elevated_report",
+          "icon": "document"
+        },
+        {
+          "label": "Dashboard",
+          "href": "/",
+          "icon": "dashboard"
+        }
+      ]
+    }
+  ],
+  "piles_available": true,
+  "piles": null
+}

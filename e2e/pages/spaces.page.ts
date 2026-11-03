@@ -23,6 +23,11 @@ export class SpacesPage extends BasePage {
     return this.page.getByRole("menuitem");
   }
 
+  /** The separators of the open Create menu. */
+  get menuSeparators(): Locator {
+    return this.page.getByRole("menu").getByRole("separator");
+  }
+
   /**
    * Create an entity through the Create menu: pick `item`, fill the title in
    * the create dialog and save. Returns the new id once the entity's own page

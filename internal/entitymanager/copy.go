@@ -229,14 +229,6 @@ func (ce *copyEngine) copyState(ctx context.Context, req CopyRequest) (*CopyResu
 		return nil, err
 	}
 
-	tx, ok := ce.m.deps.Store.(store.Transactor)
-	if !ok {
-		// Every backend implements Transactor; a store that does not is a
-		// wiring error, and running the copy unsynchronized would be worse
-		// than refusing it.
-		return nil, errors.New("entitymanager: store does not support transactions")
-	}
-
 	// Provenance is attached AFTER planning, so it scopes exactly the writes
 	// this copy performs and nothing the planner read. The store stamps it on
 	// the target row; the version sweep copies it onto the version it later
@@ -252,7 +244,7 @@ func (ce *copyEngine) copyState(ctx context.Context, req CopyRequest) (*CopyResu
 		ctx, plan.name, plan.sourceID, plan.from.Type, string(plan.sourceTail))
 
 	var result CopyResult
-	if err := tx.Tx(writeCtx, func(view store.Store) error {
+	if err := ce.m.deps.Store.Tx(writeCtx, func(view store.Store) error {
 		txCtx := store.ContextInTx(writeCtx)
 		res, cerr := applyCopy(txCtx, ce.m.deps.Meta, view, plan)
 		if cerr != nil {
@@ -266,6 +258,9 @@ func (ce *copyEngine) copyState(ctx context.Context, req CopyRequest) (*CopyResu
 
 	// AFTER the commit — see the godoc.
 	ce.recordCopyAudit(ctx, plan, result)
+	if result.Created && result.Entity != nil {
+		notifyAliasesOfCreate(ctx, ce.m.deps.AliasRewriter, result.Entity.ID, result.Entity.Face)
+	}
 
 	// Still under the lock taken above: names the target face no longer
 	// references lose their bytes when no other face references them.
@@ -418,6 +413,10 @@ func (ce *copyEngine) planCopy(
 // the row exists (the earlier order) let a create-only principal overwrite
 // any entity by naming it as the target.
 //
+// A stored target the caller cannot read is refused as an id that is already
+// taken, the answer a plain create with that id gets. Its type is not
+// compared, so the refusal does not disclose it.
+//
 // Reading "does the target exist" must not fold a backend failure into "no":
 // a transient read error would otherwise become a CreateEntity over a live
 // face — a silent full overwrite whose audit record cheerfully says
@@ -426,6 +425,15 @@ func (ce *copyEngine) probeCopyTarget(ctx context.Context, plan *copyPlan) error
 	existing, err := ce.m.deps.Store.GetEntity(ctx, entity.Ref{ID: plan.targetID, Face: plan.targetTail})
 	switch {
 	case err == nil:
+		if gate := faceGateOf(ce.m); gate != nil {
+			readable, rErr := gate.PermitsReadFace(ctx, existing.Type, existing.ID, existing.Face)
+			if rErr != nil {
+				return fmt.Errorf("entitymanager: copy %q: read gate on target: %w", plan.name, rErr)
+			}
+			if !readable {
+				return fmt.Errorf("%w: %s", ErrEntityAlreadyExists, plan.targetID)
+			}
+		}
 		if existing.Type != plan.to.Type {
 			return fmt.Errorf("%w: %s is %q, definition targets %q",
 				ErrCopyTargetTypeMismatch, plan.targetID, existing.Type, plan.to.Type)
@@ -453,6 +461,10 @@ func (ce *copyEngine) readCopySource(
 		if err != nil {
 			return nil, fmt.Errorf("%w: %s", ErrCopySourceMissing, plan.sourceID)
 		}
+		// Raw for the fields, gated for existence (see requireReadableSource).
+		if err := ce.requireReadableSource(ctx, plan); err != nil {
+			return nil, err
+		}
 		return e, nil
 	}
 
@@ -476,6 +488,24 @@ func (ce *copyEngine) readCopySource(
 		return nil, fmt.Errorf("%w: %s", ErrCopySourceMissing, plan.sourceID)
 	}
 	return e, nil
+}
+
+// requireReadableSource reports [ErrCopySourceMissing] for a source face the
+// caller cannot read. It runs before the target probe, so no later refusal
+// tells a hidden source apart from an absent one. authorizeCopy repeats this
+// check; it stays as the guard of record.
+func (ce *copyEngine) requireReadableSource(ctx context.Context, plan *copyPlan) error {
+	if ce.m.deps.CopyReadGate == nil {
+		return nil
+	}
+	permitted, err := ce.m.deps.CopyReadGate.PermitsReadFace(ctx, plan.from.Type, plan.sourceID, plan.sourceTail)
+	if err != nil {
+		return err
+	}
+	if !permitted {
+		return fmt.Errorf("%w: %s", ErrCopySourceMissing, plan.sourceID)
+	}
+	return nil
 }
 
 // authorizeCopy authorizes the copy.
@@ -653,13 +683,14 @@ func (ce *copyEngine) buildCopyTarget(
 			delete(target.Properties, field)
 		}
 	}
+	keepTargetValues(plan, target, plan.def.Keep)
 	if err := ce.confineFileValues(plan, src, target); err != nil {
 		return err
 	}
 	keepTargetExternalRefs(ce.m.deps.Meta, plan, target)
 
 	hard, _ := partitionValidationErrors(
-		ce.m.deps.Meta.ValidateEntity(target.ID, target.Type, target.Properties))
+		metamodel.NewValidator(ce.m.deps.Meta).ValidateEntity(target.ID, target.Type, target.Properties))
 	if len(hard) > 0 {
 		return newValidationError(hard)
 	}
@@ -679,7 +710,14 @@ func (ce *copyEngine) buildCopyTarget(
 // the (system, id) unique check or, across faces, give a second face a
 // mapping only a sync connector may write.
 func keepTargetExternalRefs(meta *metamodel.Metamodel, plan *copyPlan, target *entity.Entity) {
-	for _, prop := range metamodel.ExternalRefPropertyNames(meta, target.Type) {
+	keepTargetValues(plan, target, metamodel.ExternalRefPropertyNames(meta, target.Type))
+}
+
+// keepTargetValues gives each of props the value the existing target holds,
+// or removes it when the target holds none or does not exist yet. A copy
+// therefore never writes these properties.
+func keepTargetValues(plan *copyPlan, target *entity.Entity, props []string) {
+	for _, prop := range props {
 		delete(target.Properties, prop)
 		if plan.existing != nil {
 			if v, ok := plan.existing.Properties[prop]; ok {
@@ -704,8 +742,17 @@ func keepTargetExternalRefs(meta *metamodel.Metamodel, plan *copyPlan, target *e
 //   - Cross entity: bytes are keyed per entity, so a copied name would point
 //     at the target's bytes, not the source's. File properties keep the
 //     target's own value.
+//
+// A property under `keep:` is skipped: it already holds the target's own
+// value (keepTargetValues), so its references stay the target face's and the
+// bytes they name stay referenced. The skip is required, not an
+// optimization: the check below would refuse the target's own references
+// because the source face does not hold them.
 func (ce *copyEngine) confineFileValues(plan *copyPlan, src, target *entity.Entity) error {
 	for _, prop := range metamodel.FileProperties(ce.m.deps.Meta, target.Type) {
+		if slices.Contains(plan.def.Keep, prop) {
+			continue
+		}
 		if _, mapped := plan.def.Fields[prop]; plan.def.IsSameEntity() && !plan.def.AllFields && !mapped {
 			continue
 		}
@@ -899,6 +946,7 @@ func (ce *copyEngine) recordCopyAudit(ctx context.Context, plan *copyPlan, res C
 		},
 		Principal:   p,
 		TriggeredBy: audit.TriggeredByFrom(ctx),
+		AssertedBy:  audit.AssertedByFrom(ctx),
 		Summary: fmt.Sprintf(
 			"copy %q: %s -> %s (created=%t)",
 			plan.name, copyFaceLabel(plan.sourceID, plan.from),
@@ -921,6 +969,8 @@ func copyFaceLabel(id string, t metamodel.CopyTarget) string {
 // relation type as creatable by the affordance gate, which this package
 // cannot see. A surface acting for a principal invokes copies through
 // [CopyAffordances] instead, which carries the full [CopyEdgeGate].
+//
+//archplan:guard=authz reason="gates the source read, the copy guard and the target create"
 func (m *Manager) CopyState(ctx context.Context, req CopyRequest) (*CopyResult, error) {
 	return (&copyEngine{m: m, edges: ungatedCopyEdges{}}).copyState(ctx, req)
 }

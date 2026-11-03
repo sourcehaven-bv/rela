@@ -3,6 +3,14 @@ import { useQueryCache } from '@pinia/colada'
 import { useGitStore, useEntitiesStore, useUIStore } from '@/stores'
 import { entityKeys } from '@/queries/entities'
 import { isConfigSaveInFlight } from '@/configure/saveGate'
+import { t } from '@/i18n'
+import {
+  setLiveConnection,
+  clearLiveConnection,
+  handleLiveChanged,
+  setLiveReconnect,
+} from './useLiveSubscription'
+import { invalidateWhenVisible, refetchJitter, runWhenVisible } from './visibleRefetch'
 
 export type SSEEventType = 'refresh' | 'git' | 'git:status' | 'entity:changed'
 
@@ -21,12 +29,29 @@ export interface EntityEventData {
 }
 
 /**
- * Payload of a `config-error` SSE event: a data-entry.yaml reload was rejected
- * and the server keeps serving the previous config (TKT-IMBOK).
+ * Payload of a `config-error` SSE event: a reload of `file` was rejected and
+ * the server keeps serving its previous version (TKT-IMBOK). `applied` names
+ * a file the same reload did put in force: realtime.yaml was applied, and
+ * data-entry.yaml then did not load against it.
  */
 export interface ConfigErrorData {
   file: string
   error: string
+  applied?: string
+}
+
+/** The toast text for a config-error frame. */
+export function configErrorMessage(data: Partial<ConfigErrorData>): string {
+  const error = typeof data.error === 'string' ? data.error : ''
+  const file = typeof data.file === 'string' ? data.file : ''
+  const detail = error ? ` ${file ? `${file}: ${error}` : error}` : ''
+  if (typeof data.applied === 'string' && data.applied) {
+    const message = file
+      ? t('shell.configAppliedFile', { applied: data.applied, file })
+      : t('shell.configApplied', { applied: data.applied })
+    return `${message}${detail}`
+  }
+  return `${t('shell.configNotReloaded')}${detail}`
 }
 
 export interface SSEConnectionState {
@@ -51,6 +76,10 @@ const connectionState = ref<SSEConnectionState>({
 let eventSource: EventSource | null = null
 let reconnectTimer: ReturnType<typeof setTimeout> | null = null
 let reconnectAttempts = 0
+// The resume token from the most recent event that carried one. Sent on
+// reconnect so the server replays the types that changed while the stream
+// was down (TKT-3A1200). It is opaque: never parse it.
+let lastEventId = ''
 const MAX_RECONNECT_DELAY = 30000 // 30 seconds max
 const BASE_RECONNECT_DELAY = 1000 // 1 second base
 
@@ -65,12 +94,15 @@ const eventHandlers: Map<SSEEventType, Set<EventHandler>> = new Map()
  *
  * Events:
  * - refresh: Files changed, full reload needed
- * - config-error: A config reload was rejected (data: {file, error}); the
- *   previous config is still in use, so the page state stays valid.
+ * - config-error: A config reload was rejected (data: {file, error,
+ *   applied?}); the previous version of file is still in use, so the page
+ *   state stays valid. applied names a file the same reload put in force.
  * - git / git:status: Git status changed
  * - entity:changed: Entities of a type changed (data: {type}); create, update,
  *   and delete all collapse to this — the client invalidates by type and
  *   re-fetches active views through the gated endpoints (TKT-POT9GQ).
+ * - ready / ping: carry a resume token only. refresh is also sent in place of
+ *   ready, with data {"reason":"resync"}, when the server cannot resume.
  */
 export function useEvents() {
   const gitStore = useGitStore()
@@ -109,7 +141,11 @@ export function useEvents() {
     }
 
     try {
-      eventSource = new EventSource(apiUrl('/api/v1/_events'))
+      // The browser resends Last-Event-ID only on its own reconnect, and this
+      // composable builds a new EventSource instead, so the token goes in the
+      // query.
+      const query = lastEventId ? `?last_event_id=${encodeURIComponent(lastEventId)}` : ''
+      eventSource = new EventSource(apiUrl('/api/v1/_events') + query)
 
       eventSource.onopen = () => {
         reconnectAttempts = 0
@@ -129,15 +165,40 @@ export function useEvents() {
       }
       /* v8 ignore stop */
 
+      // ready moves the resume position and names the stream for live views;
+      // ping only moves the resume position.
+      eventSource.addEventListener('ready', (event: MessageEvent) => {
+        rememberEventId(event)
+        takeConnectionId(event)
+      })
+      eventSource.addEventListener('ping', rememberEventId)
+
+      // A subscribed GET's response changed (TKT-HJ5Z9Y). The data names
+      // the page's own key and nothing else.
+      eventSource.addEventListener('live:changed', (event: MessageEvent) => {
+        try {
+          const data = JSON.parse(event.data) as { key?: unknown }
+          // A hidden tab refetches when it is shown again, not now.
+          if (typeof data.key === 'string') {
+            const key = data.key
+            runWhenVisible(`live:${key}`, () => handleLiveChanged(key))
+          }
+        } catch {
+          console.warn('Failed to parse live:changed event data')
+        }
+      })
+
       // Handle refresh event (full reload)
-      eventSource.addEventListener('refresh', () => {
+      eventSource.addEventListener('refresh', (event: MessageEvent) => {
+        rememberEventId(event)
+        takeConnectionId(event)
         // Invalidate all caches and refetch. invalidateAll() serves the
         // legacy entities-store TTL cache; the query-cache invalidation
         // marks every entity query stale and background-refetches the
         // active ones (FEAT-XY2D1L).
         entitiesStore.invalidateAll()
-        queryCache.invalidateQueries({ key: entityKeys.root }).catch(() => {})
-        gitStore.fetchStatus().catch(() => {})
+        invalidateWhenVisible(queryCache, { key: entityKeys.root }).catch(() => {})
+        runWhenVisible('git-status', () => gitStore.fetchStatus().catch(() => {}))
         // Also sent when data-entry.yaml reloads, so components holding
         // config-derived state (the sidebar) can refetch it. No type: the
         // event is not about one.
@@ -147,18 +208,13 @@ export function useEvents() {
       // A rejected config reload. Nothing to invalidate: the server kept the
       // previous config, so tell the user why their edit did not apply.
       eventSource.addEventListener('config-error', (event: MessageEvent) => {
-        let detail = ''
+        let data: Partial<ConfigErrorData> = {}
         try {
-          const data = JSON.parse(event.data) as Partial<ConfigErrorData>
-          if (typeof data.error === 'string') {
-            detail = typeof data.file === 'string' ? `${data.file}: ${data.error}` : data.error
-          }
+          data = JSON.parse(event.data) as Partial<ConfigErrorData>
         } catch {
           console.warn('Failed to parse config-error event data')
         }
-        uiStore.error(
-          `Configuration not reloaded; the previous version is still in use.${detail ? ` ${detail}` : ''}`
-        )
+        uiStore.error(configErrorMessage(data))
       })
 
       // A Configure save switched the configuration (TKT-F5NGMG). The server
@@ -173,11 +229,11 @@ export function useEvents() {
 
       // Handle git events
       eventSource.addEventListener('git', () => {
-        gitStore.fetchStatus().catch(() => {})
+        runWhenVisible('git-status', () => gitStore.fetchStatus().catch(() => {}))
       })
 
       eventSource.addEventListener('git:status', () => {
-        gitStore.fetchStatus().catch(() => {})
+        runWhenVisible('git-status', () => gitStore.fetchStatus().catch(() => {}))
       })
 
       // Handle the type-scoped entity-change event. Create/update/delete
@@ -187,15 +243,14 @@ export function useEvents() {
       // through the gated REST endpoints, so the absence of an id is the
       // security boundary, not a limitation (TKT-POT9GQ).
       eventSource.addEventListener('entity:changed', (event: MessageEvent) => {
+        rememberEventId(event)
         try {
           const data = JSON.parse(event.data) as EntityEventData
           // Legacy TTL cache (unmigrated views) is all-or-nothing.
           entitiesStore.invalidateAll()
-          queryCache
-            .invalidateQueries({
-              key: data.type ? entityKeys.type(data.type) : entityKeys.root,
-            })
-            .catch(() => {})
+          invalidateWhenVisible(queryCache, {
+            key: data.type ? entityKeys.type(data.type) : entityKeys.root,
+          }).catch(() => {})
           eventHandlers.get('entity:changed')?.forEach((handler) => handler(data))
         } catch {
           console.warn('Failed to parse entity:changed event data')
@@ -211,7 +266,24 @@ export function useEvents() {
     } /* v8 ignore stop */
   }
 
+  // A frame without an `id:` reports the previous id, and a new EventSource
+  // starts with an empty one, so only a non-empty id replaces the stored one.
+  function rememberEventId(event: MessageEvent) {
+    if (event.lastEventId) lastEventId = event.lastEventId
+  }
+
+  // A resync refresh is sent in place of ready, so both may carry the id.
+  function takeConnectionId(event: MessageEvent) {
+    try {
+      const data = JSON.parse(event.data) as { conn?: unknown }
+      if (typeof data.conn === 'string' && data.conn) setLiveConnection(data.conn)
+    } catch {
+      // refresh from a config reload carries no JSON object
+    }
+  }
+
   function disconnect() {
+    clearLiveConnection()
     if (eventSource) {
       eventSource.close()
       eventSource = null
@@ -227,7 +299,9 @@ export function useEvents() {
     if (reconnectTimer) return // Already scheduled
 
     reconnectAttempts++
-    const delay = getReconnectDelay()
+    // Jitter, so tabs that lost the stream together (a laptop waking) do
+    // not reconnect, and resync, in the same second (TASK-550RD).
+    const delay = getReconnectDelay() + refetchJitter()
 
     connectionState.value = {
       connected: false,
@@ -244,6 +318,11 @@ export function useEvents() {
 
   // Track handlers registered by this component instance for cleanup
   const localHandlers: Array<{ type: SSEEventType; handler: EventHandler }> = []
+
+  setLiveReconnect(() => {
+    disconnect()
+    connect()
+  })
 
   // Lifecycle management
   onMounted(() => {

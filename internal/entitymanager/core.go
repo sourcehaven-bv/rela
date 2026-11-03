@@ -122,6 +122,13 @@ func createCore(
 	}
 }
 
+// entityStoreWriteError is a [createCoreOnce] failure of the store write
+// that is not a refusal of the entity: the store itself failed.
+type entityStoreWriteError struct{ err error }
+
+func (e entityStoreWriteError) Error() string { return "write entity: " + e.err.Error() }
+func (e entityStoreWriteError) Unwrap() error { return e.err }
+
 // idMintAttempts bounds [createCore]'s retry on a generated-ID collision.
 // Each loss means another create of the same type committed in between.
 // With the doubling spread, 10 rounds absorb a burst far larger than the
@@ -180,7 +187,7 @@ func createCoreOnce(
 		if errors.Is(err, store.ErrConflict) {
 			return nil, nil, fmt.Errorf("%w: %s", ErrEntityAlreadyExists, e.ID)
 		}
-		return nil, nil, fmt.Errorf("write entity: %w", err)
+		return nil, nil, entityStoreWriteError{err}
 	}
 
 	return e, warnings, nil
@@ -246,7 +253,7 @@ func buildCandidateEntity(
 	// (required-missing, type mismatch, invalid enum, malformed value)
 	// ride along on the result as warnings.
 	var warnings []entity.Warning
-	if errs := deps.Meta.ValidateEntity(e.ID, e.Type, e.Properties); len(errs) > 0 {
+	if errs := metamodel.NewValidator(deps.Meta).ValidateEntity(e.ID, e.Type, e.Properties); len(errs) > 0 {
 		hard, soft := partitionValidationErrors(errs)
 		if len(hard) > 0 {
 			return nil, nil, newValidationError(hard)
@@ -291,6 +298,15 @@ func generateID(ctx context.Context, deps Deps, entityType, prefix string, sprea
 	return entity.GenerateNextID(existingIDs, prefix), nil
 }
 
+// entityIDLister is the optional store capability [collectAllIDs] prefers:
+// the bare id of every entity, every face included, without loading the
+// entities. fsstore answers it from its in-memory index; without it, every
+// generated id read every entity file, so a script creating N entities did
+// N² file reads (BUG-TT73D0P).
+type entityIDLister interface {
+	EntityIDs(ctx context.Context) ([]string, error)
+}
+
 // collectAllIDs returns every entity ID currently in the store.
 // A partial scan must not feed ID generation: a truncated list can hide
 // a high-numbered existing ID, so the generator would mint one that
@@ -298,7 +314,11 @@ func generateID(ctx context.Context, deps Deps, entityType, prefix string, sprea
 // ErrEntityAlreadyExists (a create never overwrites), so a truncated
 // scan would surface as a spurious conflict rather than data loss — but
 // fail loudly here regardless, so the generator is never fed bad data.
-// AllFaces, then deduped by bare id. Without it the scan sees only
+//
+// A store with [entityIDLister] answers from its index; its result is
+// deduped again, so an implementation may list a family more than once.
+// The fallback scan uses AllFaces, then dedupes by bare id. Without
+// AllFaces the scan sees only
 // zero-coordinate rows, which a type declaring faces has none of — so the
 // generator saw an EMPTY id set for such a type and minted the same id for
 // every entity of it (BUG-HC6I2T). Counting a family once is what the query
@@ -307,15 +327,28 @@ func generateID(ctx context.Context, deps Deps, entityType, prefix string, sprea
 func collectAllIDs(ctx context.Context, st store.Store) ([]string, error) {
 	seen := make(map[string]struct{})
 	ids := make([]string, 0)
-	for e, err := range st.ListEntities(ctx, store.EntityQuery{Faces: store.AllFaces()}) {
+	if lister, ok := st.(entityIDLister); ok {
+		listed, err := lister.EntityIDs(ctx)
 		if err != nil {
 			return nil, err
 		}
-		if _, dup := seen[e.ID]; dup {
-			continue
+		for _, id := range listed {
+			if _, dup := seen[id]; !dup {
+				seen[id] = struct{}{}
+				ids = append(ids, id)
+			}
 		}
-		seen[e.ID] = struct{}{}
-		ids = append(ids, e.ID)
+	} else {
+		for e, err := range st.ListEntities(ctx, store.EntityQuery{Faces: store.AllFaces()}) {
+			if err != nil {
+				return nil, err
+			}
+			if _, dup := seen[e.ID]; dup {
+				continue
+			}
+			seen[e.ID] = struct{}{}
+			ids = append(ids, e.ID)
+		}
 	}
 	// A soft-deleted id is still taken: the store refuses to create it until
 	// the purge, so the generator must not hand it out.
@@ -552,6 +585,41 @@ type entityFamily struct {
 	id    string
 	typ   string
 	faces []entity.Face
+}
+
+// lookupFamilies reads the families of ids in one header query, keyed by id.
+// An id with no stored row has no entry.
+func lookupFamilies(ctx context.Context, st store.EntityLister, ids []string) (map[string]entityFamily, error) {
+	out := make(map[string]entityFamily, len(ids))
+	if len(ids) == 0 {
+		return out, nil
+	}
+	want := make(map[string]bool, len(ids))
+	for _, id := range ids {
+		want[id] = true
+	}
+	q := store.EntityQuery{IDs: ids, Faces: store.AllFaces()}
+	for h, err := range store.ListEntityHeaders(ctx, st, q) {
+		if err != nil {
+			return nil, err
+		}
+		// A backend may match ids case-insensitively; a family is the exact id.
+		if !want[h.ID] {
+			continue
+		}
+		fam := out[h.ID]
+		fam.id = h.ID
+		if fam.typ == "" {
+			fam.typ = h.Type
+		}
+		fam.faces = append(fam.faces, h.Face)
+		out[h.ID] = fam
+	}
+	for id, fam := range out {
+		slices.Sort(fam.faces)
+		out[id] = fam
+	}
+	return out, nil
 }
 
 // lookupFamily reads the family of the entity ref names, from headers only.

@@ -55,6 +55,7 @@ func RunVersionTagTests(t *testing.T, f Factory, sweepNow func(t *testing.T, s s
 	t.Run("Lifecycle", h.runLifecycleTests)
 	t.Run("Guards", h.runGuardTests)
 	t.Run("Purge", h.runPurgeTagTests)
+	t.Run("TaggedEntities", h.runTaggedEntitiesTests)
 }
 
 type tagHarness struct {

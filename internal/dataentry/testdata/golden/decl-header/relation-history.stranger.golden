@@ -1,0 +1,14 @@
+request: GET /api/v1/_relation_history/ticket/TKT-1/implements/POL-1
+identity: header stranger@example.test
+status: 404
+reads: GraphQueryHeaders=1 ListEntityHeaders=2 ListRelations=1 MatchingFaces=1
+breadth: ListEntityHeaders=2/2 ListRelations=0/1 MatchingFaces=1/1
+bodies: GraphQuery=0/1 ListEntityHeaders=0/2
+versions: 
+body:
+{
+  "type": "https://rela.dev/errors/not_found",
+  "title": "Entity not found",
+  "status": 404,
+  "instance": "/api/v1/_relation_history/ticket/TKT-1/implements/POL-1"
+}

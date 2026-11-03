@@ -20,12 +20,12 @@ func TestNavEntryIcon(t *testing.T) {
 	}{
 		{
 			"derived from kind when unset",
-			dataentryconfig.NavigationEntry{Label: "Dash", Dashboard: true},
+			dataentryconfig.NavigationEntry{Label: "Dash", Dashboard: dataentryconfig.DefaultDashboard},
 			"dashboard",
 		},
 		{
 			"authored icon overrides the derived one",
-			dataentryconfig.NavigationEntry{Label: "Dash", Dashboard: true, Icon: "inbox"},
+			dataentryconfig.NavigationEntry{Label: "Dash", Dashboard: dataentryconfig.DefaultDashboard, Icon: "inbox"},
 			"inbox",
 		},
 		{

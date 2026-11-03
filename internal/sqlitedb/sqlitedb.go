@@ -153,6 +153,35 @@ func (c *DB) init(ctx context.Context) error {
 	if _, err := c.db.ExecContext(ctx, contentHashDDL); err != nil {
 		return fmt.Errorf("sqlitedb: create content_hash triggers and indexes: %w", err)
 	}
+	// After the ladder rather than in schemaSQL: mentionsDDL indexes and
+	// triggers on entities.mention_targets, which a pre-v17 table gains only
+	// in the v17 rung. Every statement is IF NOT EXISTS, so this is a no-op on
+	// a database that already has it.
+	if _, err := c.db.ExecContext(ctx, mentionsDDL); err != nil {
+		return fmt.Errorf("sqlitedb: create mention index: %w", err)
+	}
+	// After the ladder for the same reason: searchDDL reads
+	// entities.search_text, which a pre-v22 table gains in the v22 rung.
+	if _, err := c.db.ExecContext(ctx, searchDDL); err != nil {
+		return fmt.Errorf("sqlitedb: create search index: %w", err)
+	}
+	// After the ladder for the same reason: channelTimersDDL indexes
+	// channels.session_next_due_at, which a pre-v25 table gains in the v25
+	// rung.
+	if _, err := c.db.ExecContext(ctx, channelTimersDDL); err != nil {
+		return fmt.Errorf("sqlitedb: create session due index: %w", err)
+	}
+	// After the ladder for the same reason: channelCreatorDDL indexes
+	// channels.created_by_user, which a pre-v27 table gains in the v27
+	// rung.
+	if _, err := c.db.ExecContext(ctx, channelCreatorDDL); err != nil {
+		return fmt.Errorf("sqlitedb: create channel creator index: %w", err)
+	}
+	// After the ladder for the same reason: channelReadsIndexDDL indexes
+	// channel_messages.counts, which a pre-v28 table gains in the v28 rung.
+	if _, err := c.db.ExecContext(ctx, channelReadsIndexDDL); err != nil {
+		return fmt.Errorf("sqlitedb: create channel read indexes: %w", err)
+	}
 	return nil
 }
 
@@ -265,8 +294,6 @@ func dsn(opts Options) string {
 // silent no-op against an existing table of a different shape — carrying an
 // older database forward is migrate.go's job, and every change here needs a
 // matching step there.
-//
-//nolint:gosec // G202: joins constant DDL only; no input reaches it
 var schemaSQL = `
 CREATE TABLE IF NOT EXISTS entities (
 	id          TEXT NOT NULL,
@@ -304,6 +331,14 @@ CREATE TABLE IF NOT EXISTS entities (
 	-- this row; NULL means not known. See contentHashDDL. Added to older
 	-- databases by the v14 rung.
 	content_hash       TEXT,
+	-- mention_targets is the JSON array of entity ids the body mentions
+	-- (TKT-Q6AKUN), written by the store with the body. NULL means not
+	-- indexed yet; see mentionsDDL. Added to older databases by the v17 rung.
+	mention_targets    TEXT,
+	-- search_text is the lowered text the search index matches
+	-- (search.IndexText), written by the store with the row. NULL means not
+	-- indexed yet; see searchDDL. Added to older databases by the v22 rung.
+	search_text        TEXT,
 	PRIMARY KEY (id, face)
 ) STRICT;
 ` + entitiesTypeIDFaceIndexDDL + `
@@ -364,17 +399,19 @@ CREATE TABLE IF NOT EXISTS attachments (
 	data       BLOB NOT NULL,
 	size       INTEGER NOT NULL,
 	updated_at TEXT NOT NULL,
+	sha256     TEXT NOT NULL DEFAULT '',
 	PRIMARY KEY (entity_id, property, file_name)
 ) STRICT;
 CREATE INDEX IF NOT EXISTS attachments_entity_idx ON attachments(entity_id);
 ` + projectFilesDDL + `
 ` + stateKVDDL + `
 ` + commentsDDL + `
+` + channelsDDL + `
 ` + migrationStateDDL + `
 ` + versionSchemaSQL + `
 ` + versionTagsDDL + `
 ` + softDeleteDDL + `
-` + searchDDL
+` + searchKeyDDL
 
 // softDeleteDDL holds soft-deleted entities and their hidden relations until
 // the undo window closes (sqlitestore/softdelete.go). A marked row is MOVED
@@ -403,6 +440,8 @@ CREATE TABLE IF NOT EXISTS marked_entities (
 	origin_source_type TEXT,
 	origin_definition  TEXT,
 	content_hash       TEXT,
+	mention_targets    TEXT,
+	search_text        TEXT,
 	deleted_at  TEXT NOT NULL,
 	deleted_by  TEXT NOT NULL DEFAULT '',
 	PRIMARY KEY (id, face)
@@ -641,16 +680,204 @@ CREATE TABLE IF NOT EXISTS comments (
 -- breaking ties), as an index range scan rather than a sort.
 CREATE INDEX IF NOT EXISTS comments_thread_idx ON comments(target_key, created_at, id);`
 
+// channelsDDL holds the realtime channels of internal/channels/sqlchannels;
+// that package doc describes the tables. Like comments they live in the
+// database so a copied rela.db carries them, and there is no foreign key to
+// entities: the channel service owns their rename and delete lifecycle.
+// Shared between schemaSQL and the v17 to v18 rung.
+const channelsDDL = `
+CREATE TABLE IF NOT EXISTS channels (
+	id          INTEGER PRIMARY KEY,
+	anchor_id   TEXT NOT NULL,
+	anchor_face TEXT NOT NULL DEFAULT '',
+	type        TEXT NOT NULL,
+	name        TEXT NOT NULL DEFAULT '',
+	tomb        TEXT NOT NULL DEFAULT '',
+	incarnation TEXT NOT NULL DEFAULT '',
+	state       TEXT NOT NULL,
+	title       TEXT NOT NULL DEFAULT '',
+	created_by  TEXT NOT NULL,
+	created_at  INTEGER NOT NULL,
+	closed_at   INTEGER NOT NULL DEFAULT 0,
+	archived_at INTEGER NOT NULL DEFAULT 0,
+	reopened_at INTEGER NOT NULL DEFAULT 0,
+	last_seq    INTEGER NOT NULL DEFAULT 0,
+	rev         INTEGER NOT NULL DEFAULT 0,
+	session_state      TEXT NOT NULL DEFAULT '',
+	session_gen        INTEGER NOT NULL DEFAULT 0,
+	session_entered_at INTEGER NOT NULL DEFAULT 0,
+	session_next_due_at INTEGER NOT NULL DEFAULT 0,
+	session_restarts    TEXT NOT NULL DEFAULT '',
+	session_reminders   TEXT NOT NULL DEFAULT '',
+	created_by_user     TEXT NOT NULL DEFAULT '',
+	last_at             INTEGER NOT NULL DEFAULT 0,
+	UNIQUE (anchor_id, anchor_face, type, name, tomb)
+) STRICT;
+CREATE INDEX IF NOT EXISTS channels_state_idx ON channels(tomb, state);
+
+CREATE TABLE IF NOT EXISTS channel_messages (
+	channel_id  INTEGER NOT NULL REFERENCES channels(id) ON DELETE CASCADE,
+	seq         INTEGER NOT NULL,
+	rev         INTEGER NOT NULL,
+	reply_to    INTEGER NOT NULL DEFAULT 0,
+	reply_count INTEGER NOT NULL DEFAULT 0,
+	pending_at  INTEGER NOT NULL DEFAULT 0,
+	doc         TEXT NOT NULL,
+	counts      INTEGER NOT NULL DEFAULT 1,
+	PRIMARY KEY (channel_id, seq)
+) STRICT;
+CREATE INDEX IF NOT EXISTS channel_messages_rev_idx ON channel_messages(channel_id, rev);
+CREATE INDEX IF NOT EXISTS channel_messages_pending_idx ON channel_messages(pending_at) WHERE pending_at > 0;
+
+CREATE TABLE IF NOT EXISTS channel_audit (
+	id        INTEGER PRIMARY KEY,
+	anchor_id TEXT NOT NULL,
+	tomb      TEXT NOT NULL DEFAULT '',
+	record    TEXT NOT NULL
+) STRICT;
+CREATE INDEX IF NOT EXISTS channel_audit_anchor_idx ON channel_audit(anchor_id, tomb, id);
+-- A cardinality of '' is a type recorded before v21, when only the anchor
+-- mode was kept. The v20 to v21 rung adds the column with the same default,
+-- so a fresh and an upgraded table have the same shape.
+CREATE TABLE IF NOT EXISTS channel_types (
+	type        TEXT PRIMARY KEY,
+	anchor_mode TEXT NOT NULL,
+	cardinality TEXT NOT NULL DEFAULT ''
+) STRICT;` + channelTypeRefsDDL + channelRetentionDDL + channelReadsDDL + channelMentionsDDL
+
+// channelTypeRefsDDL holds the ref properties recorded for each channel
+// type (see channels.TypeRecord). Shared between channelsDDL and the v19 to
+// v20 rung.
+const channelTypeRefsDDL = `
+CREATE TABLE IF NOT EXISTS channel_type_refs (
+	type TEXT NOT NULL,
+	ref  TEXT NOT NULL,
+	PRIMARY KEY (type, ref)
+) STRICT;`
+
+// channelTimersDDL is the index the realtime timer loop lists due sessions
+// through (channels.Store.ListSessionsDue): one range per channel type, with
+// the lifecycle state in the key so closed channels are skipped by the scan.
+// It is partial, so the index holds only sessions with a due time. pgstore
+// migration 0032 has the same shape. It runs after the ladder, as
+// mentionsDDL does, because it names a column the v25 rung adds.
+const channelTimersDDL = `
+CREATE INDEX IF NOT EXISTS channels_session_due_idx ON channels(type, state, session_next_due_at)
+	WHERE session_next_due_at > 0 AND tomb = '';`
+
+// channelCreatorDDL is the index the inbox lists the channels a user
+// created through (channels.Store.ListWaiting): one range per user,
+// channel type and channel state. It is partial, so rows without a creator
+// user are left out. The state column makes it the best match for the
+// creator statement, whose type and state filter channels_type_state_idx
+// would serve as well. pgstore migration 0034 has the same shape. It runs after the ladder, as
+// channelTimersDDL does, because it names a column the v27 rung adds.
+const channelCreatorDDL = `
+CREATE INDEX IF NOT EXISTS channels_creator_idx ON channels(created_by_user, type, state)
+	WHERE tomb = '' AND created_by_user <> '';`
+
+// channelReadsDDL holds the read markers of channels.Store.SetRead: one
+// row per channel and reader (user and organization), the highest seq read
+// and when it moved, in microseconds. pgstore migration 0035 has the same
+// shape. Shared between channelsDDL and the v27 to v28 rung.
+const channelReadsDDL = `
+CREATE TABLE IF NOT EXISTS channel_reads (
+	channel_id  INTEGER NOT NULL REFERENCES channels(id) ON DELETE CASCADE,
+	reader_user TEXT NOT NULL,
+	reader_org  TEXT NOT NULL DEFAULT '',
+	seq         INTEGER NOT NULL DEFAULT 0,
+	at          INTEGER NOT NULL DEFAULT 0,
+	PRIMARY KEY (channel_id, reader_user, reader_org)
+) STRICT;`
+
+// channelReadsIndexDDL holds the indexes of read markers:
+// channel_messages_counts_idx makes an unread count a range of at most
+// channels.UnreadCap entries, and channel_reads_reader_idx finds one
+// reader's markers for channels.Store.ListReads. pgstore migration 0035
+// has the same shape. It runs after the ladder, as channelCreatorDDL does,
+// because it names columns the v28 rung adds.
+const channelReadsIndexDDL = `
+CREATE INDEX IF NOT EXISTS channel_messages_counts_idx ON channel_messages(channel_id, seq) WHERE counts = 1;
+CREATE INDEX IF NOT EXISTS channel_reads_reader_idx ON channel_reads(reader_user, reader_org);`
+
+// channelMentionsDDL holds the addressed rows of channels.Store.Append:
+// one row per (channel, seq, target, kind), with the message's author and
+// type copied so channels.Store.ListAddressed decodes no message.
+// channel_mentions_target_idx serves the newest-first scan of one target;
+// channel_mentions_kind_idx serves that scan for one kind;
+// channel_mentions_cap_idx serves the per-target cap in one channel. No
+// rung adds a column it names, so the indexes sit here too. pgstore
+// migration 0037 has the same shape. Shared between channelsDDL and the
+// v29 to v30 rung.
+const channelMentionsDDL = `
+CREATE TABLE IF NOT EXISTS channel_mentions (
+	channel_id  INTEGER NOT NULL REFERENCES channels(id) ON DELETE CASCADE,
+	seq         INTEGER NOT NULL,
+	target      TEXT    NOT NULL,
+	kind        TEXT    NOT NULL CHECK (kind IN ('mention', 'reply')),
+	at          INTEGER NOT NULL,
+	author_user TEXT    NOT NULL,
+	author_tool TEXT    NOT NULL DEFAULT '',
+	author_org  TEXT    NOT NULL DEFAULT '',
+	author_type TEXT    NOT NULL DEFAULT '',
+	msg_type    TEXT    NOT NULL,
+	reply_to    INTEGER NOT NULL DEFAULT 0,
+	PRIMARY KEY (channel_id, seq, target, kind)
+) STRICT;
+CREATE INDEX IF NOT EXISTS channel_mentions_target_idx
+	ON channel_mentions(target, at DESC, channel_id DESC, seq DESC);
+CREATE INDEX IF NOT EXISTS channel_mentions_kind_idx
+	ON channel_mentions(target, kind, at DESC, channel_id DESC, seq DESC);
+CREATE INDEX IF NOT EXISTS channel_mentions_cap_idx ON channel_mentions(channel_id, target, seq);`
+
+// searchKeyDDL is the key table of the search index; see searchDDL. It is in
+// schemaSQL because it depends on no column a rung adds.
+const searchKeyDDL = `
+CREATE TABLE IF NOT EXISTS entity_search_key (
+	key  INTEGER PRIMARY KEY,
+	id   TEXT NOT NULL,
+	face TEXT NOT NULL,
+	UNIQUE (id, face)
+) STRICT;`
+
+// channelRetentionDDL holds what each tombstoned batch of channels recorded
+// when it was filed (channels.Filing), and the indexes retention reads
+// through: due_at for the purge poll, and (type, state, tomb) for the close
+// and archive sweeps and the type-record drop. pgstore migration 0030 has
+// the same shape. Shared between channelsDDL and the v22 to v23 rung.
+const channelRetentionDDL = `
+CREATE TABLE IF NOT EXISTS channel_tombstones (
+	anchor_id   TEXT NOT NULL,
+	tomb        TEXT NOT NULL,
+	anchor_face TEXT NOT NULL DEFAULT '',
+	policy      TEXT NOT NULL DEFAULT '',
+	purge_after INTEGER NOT NULL DEFAULT 0,
+	type_after  TEXT NOT NULL DEFAULT '',
+	due_at      INTEGER NOT NULL DEFAULT 0,
+	pending     INTEGER NOT NULL DEFAULT 0,
+	PRIMARY KEY (anchor_id, tomb)
+) STRICT;
+CREATE INDEX IF NOT EXISTS channel_tombstones_due_idx ON channel_tombstones(pending, due_at);
+CREATE INDEX IF NOT EXISTS channels_type_state_idx ON channels(type, state, tomb);`
+
 // searchDDL is the full-text search index (DEC-10Z731): an FTS5 table with
-// the trigram tokenizer, which answers case-insensitive substring queries as
-// pgstore's LIKE over its trigram index does.
+// the trigram tokenizer, which answers substring queries as pgstore's LIKE
+// over its trigram index does.
+//
+// The indexed text is entities.search_text, which the store writes in Go with
+// every row (search.IndexText, the same text as pgstore's search_text): the
+// id, the string-valued top-level properties and the body, lowered by Go. The
+// tokenizer is case_sensitive, and the needle is lowered by Go too, so the
+// index matches exactly when search.MatchTextFields finds a field
+// (BUG-YG126C). A tokenizer that folds case itself folds differently from Go
+// (U+0528 and U+0130, for example), so a row could match through a hidden
+// field while the Go judgement credited a visible one. A NULL search_text is
+// a row the store has not indexed yet; it is not in the index until the
+// store's reindex pass fills it in.
 //
 // Triggers keep the index in step inside the writing transaction. That makes
 // it as current as the table on every write path (store writes, renames, soft
 // delete, purge, bulk import) with no observer and no rebuild after a crash.
-// The indexed text is pgstore's search_text: the id, the string-valued
-// top-level properties and the body. The tokenizer folds case, so none of it
-// is lowercased here.
 //
 // An index row is not keyed by the entities rowid (RR-44YDTU). entities is
 // keyed by (id, face) and has no INTEGER PRIMARY KEY, so its rowid is not
@@ -666,51 +893,75 @@ CREATE INDEX IF NOT EXISTS comments_thread_idx ON comments(target_key, created_a
 // so neither fails on a row it finds already there: a key freed by a delete
 // can be reused, and an INSERT OR REPLACE on entities removes the old row
 // without firing the delete trigger.
-var searchDDL = `
-CREATE TABLE IF NOT EXISTS entity_search_key (
-	key  INTEGER PRIMARY KEY,
-	id   TEXT NOT NULL,
-	face TEXT NOT NULL,
-	UNIQUE (id, face)
-) STRICT;
-CREATE VIRTUAL TABLE IF NOT EXISTS entity_search USING fts5(body, tokenize = 'trigram');
+//
+// It runs after the ladder, as mentionsDDL does, because it reads
+// entities.search_text, which a pre-v22 table gains only in the v22 rung.
+//
+//nolint:gosec // G202: joins constant DDL only; no input reaches it
+var searchDDL = searchKeyDDL + `
+CREATE VIRTUAL TABLE IF NOT EXISTS entity_search USING fts5(body, tokenize = 'trigram case_sensitive 1');
+CREATE INDEX IF NOT EXISTS entities_search_pending_idx ON entities(id, face) WHERE search_text IS NULL;
 CREATE TRIGGER IF NOT EXISTS entity_search_insert AFTER INSERT ON entities BEGIN
 	INSERT OR IGNORE INTO entity_search_key(id, face) VALUES (NEW.id, NEW.face);
-	INSERT OR REPLACE INTO entity_search(rowid, body) VALUES (` + searchKey("NEW") + `, ` + searchBody("NEW") + `);
+	INSERT OR REPLACE INTO entity_search(rowid, body) VALUES (` + searchKeyOf("NEW") + `, coalesce(NEW.search_text, ''));
 END;
-CREATE TRIGGER IF NOT EXISTS entity_search_update AFTER UPDATE OF id, face, properties, content ON entities BEGIN
+CREATE TRIGGER IF NOT EXISTS entity_search_update AFTER UPDATE OF id, face, search_text ON entities BEGIN
 	UPDATE entity_search_key SET id = NEW.id, face = NEW.face WHERE id = OLD.id AND face = OLD.face;
 	INSERT OR IGNORE INTO entity_search_key(id, face) VALUES (NEW.id, NEW.face);
-	INSERT OR REPLACE INTO entity_search(rowid, body) VALUES (` + searchKey("NEW") + `, ` + searchBody("NEW") + `);
+	INSERT OR REPLACE INTO entity_search(rowid, body) VALUES (` + searchKeyOf("NEW") + `, coalesce(NEW.search_text, ''));
 END;
 CREATE TRIGGER IF NOT EXISTS entity_search_delete AFTER DELETE ON entities BEGIN
-	DELETE FROM entity_search WHERE rowid = ` + searchKey("OLD") + `;
+	DELETE FROM entity_search WHERE rowid = ` + searchKeyOf("OLD") + `;
 	DELETE FROM entity_search_key WHERE id = OLD.id AND face = OLD.face;
 END;`
 
-// searchKey is the SQL for the index key of the entities row named row.
-func searchKey(row string) string {
+// searchKeyOf is the SQL for the index key of the entities row named row.
+// The DDL constants call it at package init, so its argument is a literal.
+func searchKeyOf(row string) string {
 	return `(SELECT key FROM entity_search_key WHERE id = ` + row + `.id AND face = ` + row + `.face)`
 }
 
-// searchBody is the SQL for the indexed text of the entities row named row.
-func searchBody(row string) string {
-	return row + `.id || char(10) || coalesce((SELECT group_concat(value, char(10)) FROM json_each(` + row +
-		`.properties) WHERE type = 'text'), '') || char(10) || ` + row + `.content`
-}
+// mentionsDDL is the backlink index (TKT-Q6AKUN). The store writes each row's
+// targets into entities.mention_targets as a JSON array, computed in Go with
+// the body; the triggers fan that array out into entity_mention_targets
+// inside the writing transaction, as the search triggers do for entity_search.
+//
+// An index row names its source by (id, face), not by the entities rowid,
+// which VACUUM may renumber (see searchDDL). A rename or a new face moves the
+// entries with the row. Every trigger first drops the entries of the row it
+// writes: an INSERT OR REPLACE on entities removes the old row without firing
+// the delete trigger, so its entries would otherwise outlive it.
+var mentionsDDL = `
+CREATE TABLE IF NOT EXISTS entity_mention_targets (
+	target      TEXT NOT NULL,
+	source_id   TEXT NOT NULL,
+	source_face TEXT NOT NULL,
+	PRIMARY KEY (target, source_id, source_face)
+) STRICT, WITHOUT ROWID;
+CREATE INDEX IF NOT EXISTS entity_mention_targets_source_idx ON entity_mention_targets(source_id, source_face);
+-- The store's reindex pass reads this to find rows written before v17.
+CREATE INDEX IF NOT EXISTS entities_mentions_pending_idx ON entities(id, face) WHERE mention_targets IS NULL;
+CREATE TRIGGER IF NOT EXISTS entity_mentions_insert AFTER INSERT ON entities BEGIN
+	DELETE FROM entity_mention_targets WHERE source_id = NEW.id AND source_face = NEW.face;
+	INSERT OR IGNORE INTO entity_mention_targets(target, source_id, source_face)
+		SELECT value, NEW.id, NEW.face FROM json_each(NEW.mention_targets);
+END;
+CREATE TRIGGER IF NOT EXISTS entity_mentions_update AFTER UPDATE OF id, face, mention_targets ON entities BEGIN
+	DELETE FROM entity_mention_targets WHERE source_id = OLD.id AND source_face = OLD.face;
+	DELETE FROM entity_mention_targets WHERE source_id = NEW.id AND source_face = NEW.face;
+	INSERT OR IGNORE INTO entity_mention_targets(target, source_id, source_face)
+		SELECT value, NEW.id, NEW.face FROM json_each(NEW.mention_targets);
+END;
+CREATE TRIGGER IF NOT EXISTS entity_mentions_delete AFTER DELETE ON entities BEGIN
+	DELETE FROM entity_mention_targets WHERE source_id = OLD.id AND source_face = OLD.face;
+END;`
 
-// rebuildSearchSQL refills the search index and its keys from the entities
-// table. It replaces everything both tables held, so a re-run is harmless.
-var rebuildSearchSQL = `DELETE FROM entity_search;
-DELETE FROM entity_search_key;
-INSERT INTO entity_search_key(id, face) SELECT id, face FROM entities;
-INSERT INTO entity_search(rowid, body) SELECT k.key, ` + searchBody("e") + `
-	FROM entities e JOIN entity_search_key k ON k.id = e.id AND k.face = e.face;`
-
-// dropRowidSearchSQL removes the v12 index, whose rows were keyed by the
-// entities rowid. The triggers go with it: they share the new triggers'
+// dropSearchSQL removes the search index and its triggers, keeping the key
+// table. The v13 rung ran it to drop the rowid-keyed v12 index, and the v22
+// rung to drop the case-folding index; searchDDL then creates the current one
+// after the ladder. The triggers must go too: they share the new triggers'
 // names, so CREATE TRIGGER IF NOT EXISTS would otherwise keep the old ones.
-const dropRowidSearchSQL = `DROP TRIGGER IF EXISTS entity_search_insert;
+const dropSearchSQL = `DROP TRIGGER IF EXISTS entity_search_insert;
 DROP TRIGGER IF EXISTS entity_search_update;
 DROP TRIGGER IF EXISTS entity_search_delete;
 DROP TABLE IF EXISTS entity_search;`

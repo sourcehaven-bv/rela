@@ -185,9 +185,10 @@ func validateOperatorForType(op Operator, propDef *metamodel.PropertyDef, m *met
 		}
 
 	default:
-		// Enum types (including custom types) support: =, !=
+		// Enum types (including custom types) support: =, !=, =~ (regex).
+		// An enum value is stored as a string, so a regex applies to it.
 		if isEnum {
-			if op != OpEqual && op != OpNotEqual {
+			if op != OpEqual && op != OpNotEqual && op != OpRegex {
 				return fmt.Errorf("operator %q not supported for enum property", op)
 			}
 		}
@@ -368,6 +369,16 @@ func matchEnum(val any, filter *Filter, allowedValues []string) (bool, error) {
 	s, ok := val.(string)
 	if !ok {
 		return false, fmt.Errorf("expected string value for enum, got %T", val)
+	}
+
+	// A regex is a pattern, not a value, so it skips the allowed-value
+	// check below. A misspelled pattern therefore matches nothing rather
+	// than erroring the way a misspelled `=` value does.
+	if filter.Operator == OpRegex {
+		if filter.Regex == nil {
+			return false, errors.New("regex pattern not compiled")
+		}
+		return filter.Regex.MatchString(s), nil
 	}
 
 	// Special case: allow empty string for = and != operators

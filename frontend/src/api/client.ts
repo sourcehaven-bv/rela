@@ -49,6 +49,11 @@ class ApiClient {
     return response.data
   }
 
+  async put<T>(url: string, data: unknown): Promise<T> {
+    const response: AxiosResponse<T> = await this.client.put(url, data)
+    return response.data
+  }
+
   async delete(url: string): Promise<void> {
     await this.client.delete(url)
   }

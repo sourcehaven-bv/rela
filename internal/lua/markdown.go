@@ -18,6 +18,7 @@ import (
 	lua "github.com/yuin/gopher-lua"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/htmlmd"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
@@ -168,7 +169,36 @@ func (r *Runtime) registerMarkdownModule(rela *lua.LTable) {
 	r.L.SetField(md, "resolve_refs", r.L.NewFunction(m.luaMdResolveRefs))
 	r.L.SetField(md, "entity_refs", r.L.NewFunction(er.luaMdEntityRefs))
 
+	// Rich-text conversion for sync connectors (TKT-LAMZ8F).
+	r.L.SetField(md, "from_html", r.L.NewFunction(luaMdFromHTML))
+	r.L.SetField(md, "to_html", r.L.NewFunction(luaMdToHTML))
+
 	r.L.SetField(rela, "md", md)
+}
+
+// luaMdFromHTML converts untrusted HTML to markdown; see [htmlmd.FromHTML].
+// Usage: md, lossy = rela.md.from_html(html)
+func luaMdFromHTML(ls *lua.LState) int {
+	return pushConverted(ls, "from_html", htmlmd.FromHTML)
+}
+
+// luaMdToHTML renders markdown as sanitized HTML; see [htmlmd.ToHTML].
+// Usage: html, lossy = rela.md.to_html(md)
+func luaMdToHTML(ls *lua.LState) int {
+	return pushConverted(ls, "to_html", htmlmd.ToHTML)
+}
+
+// pushConverted runs one htmlmd conversion on argument 1 and pushes the text
+// and the lossy flag. A failure, such as an oversized or too deeply nested
+// input, raises.
+func pushConverted(ls *lua.LState, name string, conv func(string) (string, bool, error)) int {
+	out, lossy, err := conv(ls.CheckString(1))
+	if err != nil {
+		ls.RaiseError("rela.md.%s: %v", name, err)
+	}
+	ls.Push(lua.LString(out))
+	ls.Push(lua.LBool(lossy))
+	return 2
 }
 
 // --- Inline node constructors ---
@@ -1404,6 +1434,12 @@ func (c *mdASTConverter) extractRawContent(n ast.Node, source []byte) string {
 		if lines.Len() > 0 {
 			start := lines.At(0).Start
 			end := lines.At(lines.Len() - 1).Stop
+			// goldmark keeps the closing line of a multi-line HTML block
+			// (e.g. the one with `-->`) out of Lines(); without it the
+			// block re-renders unterminated.
+			if hb, ok := n.(*ast.HTMLBlock); ok && hb.HasClosure() {
+				end = hb.ClosureLine.Stop
+			}
 			return string(source[start:end])
 		}
 	}

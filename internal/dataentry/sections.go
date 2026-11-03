@@ -3,6 +3,7 @@ package dataentry
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"slices"
 	"strings"
 	"time"
@@ -106,6 +107,11 @@ type SectionFieldData struct {
 	// SPA's job (its registry owns the type→widget default), and the server
 	// has already rejected a name/type mismatch at config load (TKT-3R7RF3).
 	Widget string
+	// Relation and Targets describe a relation field (TKT-CADCFX); see
+	// [resolveRelationFields].
+	Relation  string
+	Targets   []v1.SectionFieldTarget
+	StyleFrom string
 }
 
 // buildSectionFieldData resolves one configured field against an entity.
@@ -133,6 +139,17 @@ func buildSectionFieldData(
 	label := f.Label
 	if label == "" {
 		label = f.Property
+	}
+	if f.Relation != "" {
+		// The targets and the relation's own label are filled in by
+		// resolveRelationFields, which has the store and the metamodel.
+		return SectionFieldData{
+			Relation:  f.Relation,
+			StyleFrom: f.StyleFrom,
+			Label:     f.Label,
+			Span:      int(f.Span),
+			Render:    resolveFieldRender(sectionRender, f.Render),
+		}
 	}
 	return SectionFieldData{
 		Property:     f.Property,
@@ -205,6 +222,12 @@ type GroupData struct {
 	GroupName string
 	Rows      []SectionRowData
 	Entities  []SectionEntityData
+	// EntityType and Columns are set on the per-type groups of a
+	// `columns_by_type` table (TKT-HF0D5W): the group's rows are all of
+	// EntityType and its cells are positional over Columns. Both are empty
+	// on a `group_by` group, whose rows share the section's columns.
+	EntityType string
+	Columns    []ListColumn
 }
 
 // SectionAddInfo describes an "Add" button on a side-panel section.
@@ -246,7 +269,6 @@ type SectionData struct {
 	IsGrouped    bool
 	EmptyMessage string
 	IsEmpty      bool
-	Link         string // section-level link configuration (currently unused in templates)
 	Content      string
 	HasContent   bool
 	AddInfo      *SectionAddInfo
@@ -266,6 +288,17 @@ type SectionData struct {
 	// emitted somewhere in Tree. See [viewsHandler.buildNestedTree] for why it
 	// is not merely "the budget ran out".
 	Truncated bool
+
+	// Incomplete reports that the section's backlinks collection holds only
+	// part of the matching sources (TKT-HF0D5W, [viewResult.Incomplete]).
+	// It is separate from Truncated, whose contract excludes budget stops.
+	Incomplete bool
+
+	// hideEmpty is the section's `hide_empty:` setting. The section is
+	// dropped from the response by [omitHiddenEmpty], not here, because the
+	// affordance resolvers index sections in step with the view config.
+	// Unexported: it never leaves this package.
+	hideEmpty bool
 }
 
 // SectionTreeNode is one row of a `display: nested` section: an entity plus
@@ -337,9 +370,73 @@ func rowSelfHref(m *metamodel.Metamodel, e *entity.Entity) string {
 	return selfHref(def.GetPlural(e.Type), e)
 }
 
+// buildTableSection fills a `display: table` section: flat rows, rows grouped
+// by `group_by`, or one group per entity type for `columns_by_type`.
+func (h *viewsHandler) buildTableSection(
+	ctx context.Context, s *Schema, sec ViewSection, entities []*entity.Entity, sd *SectionData,
+) {
+	sd.Columns = sec.Columns
+	if sec.ColumnsByType != nil {
+		sd.IsGrouped = true
+		for _, g := range groupByType(entities) {
+			cols := columnsFor(sec, g.entityType)
+			relValues := h.resolveRelationColumns(ctx, s, cols, g.entities)
+			gd := GroupData{GroupName: g.entityType, EntityType: g.entityType, Columns: cols}
+			if def, ok := s.Meta.GetEntityDef(g.entityType); ok && (def.Label != "" || def.LabelPlural != "") {
+				gd.GroupName = def.GetLabelPlural()
+			}
+			for _, e := range g.entities {
+				gd.Rows = append(gd.Rows, buildSectionRow(s, cols, e, relValues))
+			}
+			sd.Groups = append(sd.Groups, gd)
+		}
+		return
+	}
+	// Relation columns are resolved for the WHOLE section up front —
+	// one relation query per (column, row type) and one header batch
+	// for every target — instead of one relation query plus one
+	// entity load per row per column (TKT-1U8XYN).
+	relValues := h.resolveRelationColumns(ctx, s, sec.Columns, entities)
+	buildRow := func(e *entity.Entity) SectionRowData {
+		return buildSectionRow(s, sec.Columns, e, relValues)
+	}
+	if sec.GroupBy == "" {
+		for _, e := range entities {
+			sd.Rows = append(sd.Rows, buildRow(e))
+		}
+		return
+	}
+	sd.IsGrouped = true
+	groups := map[string][]*entity.Entity{}
+	var groupOrder []string
+	for _, e := range entities {
+		prop := strings.TrimPrefix(sec.GroupBy, "properties.")
+		groupKey := "(none)"
+		if v := e.Properties[prop]; v != nil {
+			groupKey = fmt.Sprintf("%v", v)
+		}
+		if _, seen := groups[groupKey]; !seen {
+			groupOrder = append(groupOrder, groupKey)
+		}
+		groups[groupKey] = append(groups[groupKey], e)
+	}
+	for _, gName := range groupOrder {
+		gd := GroupData{GroupName: gName}
+		// Grouping preserves the section's order within each
+		// group. Only re-sort by id when the author declared
+		// no `sort:` — otherwise this would discard the order
+		// they asked for, one group at a time.
+		if len(sec.Sort) == 0 {
+			sortStoreEntitiesByID(groups[gName])
+		}
+		for _, e := range groups[gName] {
+			gd.Rows = append(gd.Rows, buildRow(e))
+		}
+		sd.Groups = append(sd.Groups, gd)
+	}
+}
+
 // buildSections builds template-ready section data from view sections and a view result.
-//
-//nolint:gocognit // builds each section by its declared source and display mode; the branches are the distinct section kinds, not shared logic to extract.
 func (h *viewsHandler) buildSections(ctx context.Context, sections []ViewSection, result *viewResult) []SectionData {
 	s := h.schema()
 	out := make([]SectionData, 0, len(sections))
@@ -350,10 +447,10 @@ func (h *viewsHandler) buildSections(ctx context.Context, sections []ViewSection
 			SectionID:    slugify(sec.Heading),
 			Display:      sec.Display,
 			EmptyMessage: sec.EmptyMessage,
-			Link:         sec.Link,
+			hideEmpty:    sec.HideEmpty,
 		}
 
-		if sec.Source == "entry" { //nolint:nestif // entry-source sections branch by display mode and property shape; the nesting is the per-mode build, not extractable logic.
+		if sec.Source == "entry" {
 			e := result.Entry
 			entDef, _ := s.Meta.GetEntityDef(e.Type)
 
@@ -362,6 +459,7 @@ func (h *viewsHandler) buildSections(ctx context.Context, sections []ViewSection
 				for _, f := range sec.Fields {
 					sd.Fields = append(sd.Fields, buildSectionFieldData(f, e, entDef, sec.Render))
 				}
+				resolveRelationFields(ctx, h, s, sd.Fields, e)
 			case "content":
 				sd.Content = e.Content
 				sd.HasContent = e.Content != ""
@@ -375,64 +473,23 @@ func (h *viewsHandler) buildSections(ctx context.Context, sections []ViewSection
 			// flat mode honors it rather than each arm remembering to.
 			entities, sd.RelationOrder = sortSectionRows(ctx, h, sec, result, entities, s.Meta)
 			sd.IsEmpty = len(entities) == 0
+			sd.Incomplete = result.Incomplete[sec.Source]
 			ctx = primeVerdicts(ctx, h.affordances.resolver(), entities)
 
 			switch sec.Display {
 			case "properties", "list", dataentryconfig.DisplayRelated:
 				for _, e := range entities {
 					eDef, _ := s.Meta.GetEntityDef(e.Type)
-					sed := h.buildSectionEntityData(ctx, e, sec.Fields, eDef, sec.Render, result.World)
+					sed := h.buildSectionEntityData(ctx, e, fieldsFor(sec, e.Type), eDef, sec.Render, result.World)
 					sd.Entities = append(sd.Entities, sed)
 				}
 			case "table":
-				sd.Columns = sec.Columns
-				// Relation columns are resolved for the WHOLE section up front —
-				// one relation query per (column, row type) and one header batch
-				// for every target — instead of one relation query plus one
-				// entity load per row per column (TKT-1U8XYN).
-				relValues := h.resolveRelationColumns(ctx, s, sec.Columns, entities)
-				buildRow := func(e *entity.Entity) SectionRowData {
-					return h.buildSectionRow(s, sec.Columns, e, relValues)
-				}
-				if sec.GroupBy != "" {
-					sd.IsGrouped = true
-					groups := map[string][]*entity.Entity{}
-					var groupOrder []string
-					for _, e := range entities {
-						prop := strings.TrimPrefix(sec.GroupBy, "properties.")
-						groupKey := "(none)"
-						if v := e.Properties[prop]; v != nil {
-							groupKey = fmt.Sprintf("%v", v)
-						}
-						if _, seen := groups[groupKey]; !seen {
-							groupOrder = append(groupOrder, groupKey)
-						}
-						groups[groupKey] = append(groups[groupKey], e)
-					}
-					for _, gName := range groupOrder {
-						gd := GroupData{GroupName: gName}
-						// Grouping preserves the section's order within each
-						// group. Only re-sort by id when the author declared
-						// no `sort:` — otherwise this would discard the order
-						// they asked for, one group at a time.
-						if len(sec.Sort) == 0 {
-							sortStoreEntitiesByID(groups[gName])
-						}
-						for _, e := range groups[gName] {
-							gd.Rows = append(gd.Rows, buildRow(e))
-						}
-						sd.Groups = append(sd.Groups, gd)
-					}
-				} else {
-					for _, e := range entities {
-						sd.Rows = append(sd.Rows, buildRow(e))
-					}
-				}
+				h.buildTableSection(ctx, s, sec, entities, &sd)
 
 			case "content", "cards":
 				for _, e := range entities {
 					eDef, _ := s.Meta.GetEntityDef(e.Type)
-					sed := h.buildSectionEntityData(ctx, e, sec.Fields, eDef, sec.Render, result.World)
+					sed := h.buildSectionEntityData(ctx, e, fieldsFor(sec, e.Type), eDef, sec.Render, result.World)
 					sed.Content = e.Content
 					sed.HasContent = e.Content != ""
 					sd.Entities = append(sd.Entities, sed)
@@ -446,6 +503,24 @@ func (h *viewsHandler) buildSections(ctx context.Context, sections []ViewSection
 		out = append(out, sd)
 	}
 
+	return out
+}
+
+// omitHiddenEmpty drops the sections that opted into `hide_empty` and have
+// no rows (TKT-JT101B). Call it after every resolver that indexes sections in step with
+// the view config (resolveSectionCreate), because it breaks that alignment.
+//
+// An Incomplete section stays: its collection, or one it was traversed from,
+// holds only part of the matching sources, so "empty" is not known to be
+// true.
+func omitHiddenEmpty(sections []SectionData) []SectionData {
+	out := sections[:0:0]
+	for _, sec := range sections {
+		if sec.hideEmpty && sec.IsEmpty && !sec.Incomplete {
+			continue
+		}
+		out = append(out, sec)
+	}
 	return out
 }
 
@@ -472,6 +547,7 @@ func (h *viewsHandler) executeSidePanel(
 	// executeView caller along with it.
 	result, err := h.executeView(ctx, viewCfg, entityID, defaultViewWorld())
 	if err != nil {
+		slog.Warn("dataentry: side panel traversal failed; panel left empty", "entity", entityID, "err", err)
 		return nil
 	}
 
@@ -538,6 +614,58 @@ func (h *viewsHandler) resolveSectionButtonsWithTraverse(
 				}
 			}
 			break
+		}
+	}
+}
+
+// resolveRelationFields fills each relation field of an entry properties
+// section (TKT-CADCFX) with the entry's targets of that relation and, when
+// the author set no label, the relation's label.
+//
+// The targets go through the same read as a relation column: edges owned by
+// the entry's face, then the principal's read gate on the targets, so a
+// target the principal may not read is left out rather than shown by id.
+func resolveRelationFields(
+	ctx context.Context, h *viewsHandler, s *Schema, fields []SectionFieldData, e *entity.Entity,
+) {
+	columns := make([]dataentryconfig.ListColumn, len(fields))
+	has := false
+	for i, f := range fields {
+		if f.Relation == "" {
+			continue
+		}
+		has = true
+		columns[i] = dataentryconfig.ListColumn{Relation: f.Relation}
+		if f.Label == "" {
+			fields[i].Label = f.Relation
+			if def, ok := s.Meta.GetRelationDef(f.Relation); ok && def.Label != "" {
+				fields[i].Label = def.Label
+			}
+		}
+	}
+	if !has {
+		return
+	}
+	svc := h.services()
+	targets, ids := h.relationColumnTargets(ctx, svc, s, columns, []*entity.Entity{e})
+	if len(ids) == 0 {
+		return
+	}
+	headers := visibleHeaders(ctx, h.viewReader, svc, ids)
+	for i, f := range fields {
+		for _, id := range targets[e.ID][i] {
+			hd, ok := headers[id]
+			if !ok {
+				continue
+			}
+			t := v1.SectionFieldTarget{ID: id, Title: svc.Meta.DisplayTitle(hd.ID, hd.Type, hd.Properties)}
+			// Headers are redacted, so a hidden style property is simply absent.
+			if f.StyleFrom != "" {
+				if v, ok := hd.Properties[f.StyleFrom].(string); ok {
+					t.Style = v
+				}
+			}
+			fields[i].Targets = append(fields[i].Targets, t)
 		}
 	}
 }

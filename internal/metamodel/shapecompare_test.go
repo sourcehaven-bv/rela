@@ -12,8 +12,8 @@ func hasDelta(r ShapeReport, kind string, tier ShapeTier) bool {
 }
 
 func TestCompareShapes_IdenticalIsEmpty(t *testing.T) {
-	from := shapeFixture().ShapeProjection()
-	to := shapeFixture().ShapeProjection()
+	from := NewShapeProjection(shapeFixture())
+	to := NewShapeProjection(shapeFixture())
 	r := CompareShapes(from, to)
 	if len(r.Deltas) != 0 {
 		t.Fatalf("identical shapes produced deltas: %+v", r.Deltas)
@@ -253,10 +253,10 @@ func TestCompareShapes_Classification(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			from := shapeFixture().ShapeProjection()
+			from := NewShapeProjection(shapeFixture())
 			m := shapeFixture()
 			tc.mutate(m)
-			to := m.ShapeProjection()
+			to := NewShapeProjection(m)
 
 			r := CompareShapes(from, to)
 			if !hasDelta(r, tc.kind, tc.tier) {
@@ -267,13 +267,13 @@ func TestCompareShapes_Classification(t *testing.T) {
 }
 
 func TestCompareShapes_PossiblePropertyRename(t *testing.T) {
-	from := shapeFixture().ShapeProjection()
+	from := NewShapeProjection(shapeFixture())
 	m := shapeFixture()
 	// Delete "status" (type status) and add "state" with the same shape.
 	p := m.Entities["task"].Properties["status"]
 	delete(m.Entities["task"].Properties, "status")
 	m.Entities["task"].Properties["state"] = p
-	to := m.ShapeProjection()
+	to := NewShapeProjection(m)
 
 	r := CompareShapes(from, to)
 	if !hasDelta(r, "possible_property_rename", TierDrift) {
@@ -286,12 +286,12 @@ func TestCompareShapes_PossiblePropertyRename(t *testing.T) {
 }
 
 func TestCompareShapes_PossibleEntityTypeRename(t *testing.T) {
-	from := shapeFixture().ShapeProjection()
+	from := NewShapeProjection(shapeFixture())
 	m := shapeFixture()
 	def := m.Entities["person"]
 	delete(m.Entities, "person")
 	m.Entities["contact"] = def
-	to := m.ShapeProjection()
+	to := NewShapeProjection(m)
 
 	r := CompareShapes(from, to)
 	if !hasDelta(r, "possible_entity_type_rename", TierDrift) {

@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/project"
@@ -270,6 +271,30 @@ func TestBuildStyleMap(t *testing.T) {
 		}
 	})
 
+	t.Run("kit shades, new hues and operator colors", func(t *testing.T) {
+		cfg := &Config{
+			Palette: &PaletteConfig{Colors: map[string]dataentryconfig.OperatorColor{
+				"risk-critical": {Light: "#7a0010"},
+			}},
+			Styles: map[string]map[string]string{
+				"risk": {
+					"a": "red/700", "b": "gray/50", "c": "teal", "d": "grey",
+					"e": "risk-critical", "f": "yellow", "g": "red/750", "h": "unknown-op",
+				},
+			},
+		}
+		sm, _ := buildStyleMap(cfg, &metamodel.Metamodel{Types: map[string]metamodel.CustomType{}})
+		want := map[string]string{
+			"a": "kit-red-700", "b": "kit-grey-50", "c": "badge-teal", "d": "badge-gray",
+			"e": "custom-risk-critical", "f": "badge-yellow", "g": "badge-gray", "h": "badge-gray",
+		}
+		for value, class := range want {
+			if sm["risk"][value] != class {
+				t.Errorf("%s: got %q, want %q", value, sm["risk"][value], class)
+			}
+		}
+	})
+
 	t.Run("auto-assigned for custom types", func(t *testing.T) {
 		cfg := &Config{}
 		meta := &metamodel.Metamodel{
@@ -415,7 +440,7 @@ func TestFirstNavTarget(t *testing.T) {
 	t.Run("flat items returns first", func(t *testing.T) {
 		nav := []NavigationEntry{
 			{Label: "Tickets", List: "tickets"},
-			{Label: "Dashboard", Dashboard: true},
+			{Label: "Dashboard", Dashboard: dataentryconfig.DefaultDashboard},
 		}
 		target := firstNavTarget(nav)
 		if target == nil {
@@ -447,13 +472,13 @@ func TestFirstNavTarget(t *testing.T) {
 	t.Run("empty group skipped", func(t *testing.T) {
 		nav := []NavigationEntry{
 			{Group: "Empty", Items: []NavigationEntry{}},
-			{Label: "Dashboard", Dashboard: true},
+			{Label: "Dashboard", Dashboard: dataentryconfig.DefaultDashboard},
 		}
 		target := firstNavTarget(nav)
 		if target == nil {
 			t.Fatal("expected non-nil target")
 		}
-		if !target.Dashboard {
+		if !target.Dashboard.IsDefault() {
 			t.Error("expected dashboard target")
 		}
 	})

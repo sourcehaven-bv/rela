@@ -3,8 +3,8 @@ package fsstore_test
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"io"
+	"maps"
 	"strings"
 	"testing"
 
@@ -15,13 +15,20 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/storage"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/store/fsstore"
+	"github.com/Sourcehaven-BV/rela/internal/store/storetest"
 )
 
 // defaultTestSchemas covers the entity types used across fsstore_test
-// files. fsstore.New rejects an empty Schemas map, so every test that
-// constructs a store needs something here. Adding a new type? Add it
-// here once.
-var defaultTestSchemas = map[string]store.EntityTypeSchema{
+// files. fsstore.New rejects an empty Schemas map and refuses writes of
+// undeclared types, so every test that constructs a store needs its types
+// here. The conformance harness's types come from storetest.EntityTypes,
+// so a new harness test cannot drift from this map; a type only fsstore's
+// own tests use goes in fsstoreTestSchemas.
+var defaultTestSchemas = buildTestSchemas()
+
+// fsstoreTestSchemas are the types fsstore's own tests use, with the
+// property order those tests check.
+var fsstoreTestSchemas = map[string]store.EntityTypeSchema{
 	"requirement": {Plural: "requirements", PropertyOrder: []string{"title", "status", "description"}},
 	"solution":    {Plural: "solutions", PropertyOrder: []string{"title", "status"}},
 	"artifact":    {Plural: "artifacts", PropertyOrder: []string{"title", "status"}},
@@ -29,6 +36,16 @@ var defaultTestSchemas = map[string]store.EntityTypeSchema{
 	"thing":       {Plural: "things", PropertyOrder: []string{"title"}},
 	"ticket":      {Plural: "tickets", PropertyOrder: []string{"title", "status"}},
 	"decision":    {Plural: "decisions", PropertyOrder: []string{"title", "status"}},
+	"feature":     {Plural: "features", PropertyOrder: []string{"title"}},
+}
+
+func buildTestSchemas() map[string]store.EntityTypeSchema {
+	out := make(map[string]store.EntityTypeSchema)
+	for _, typ := range storetest.EntityTypes() {
+		out[typ] = store.EntityTypeSchema{Plural: typ + "s"}
+	}
+	maps.Copy(out, fsstoreTestSchemas)
+	return out
 }
 
 // newConfig builds an fsstore Config for the given in-memory FS
@@ -381,45 +398,34 @@ func TestPersistence_RenameSurvivedReopen(t *testing.T) {
 	assert.Equal(t, "REQ-NEW", rel.To)
 }
 
-// TestPersistence_IgnoreIndexCache pins that IgnoreIndexCache scans the
-// directories instead of trusting a cache whose mtimes still match, and that
-// closing such a store does not rewrite the cache.
-func TestPersistence_IgnoreIndexCache(t *testing.T) {
+// TestPersistence_AttachmentHashAfterReopen: a file present when the store
+// opens has no hash in the index (opening only stats); the first list
+// hashes it. A file changed on disk behind the store reports the hash of
+// its new bytes (TKT-1TS55R).
+func TestPersistence_AttachmentHashAfterReopen(t *testing.T) {
 	fs := storage.NewMemFS()
 	ctx := context.Background()
 
 	s1 := openStore(t, fs)
-	for _, id := range []string{"REQ-1", "REQ-2"} {
-		e := entity.New(id, "requirement")
-		e.Properties["status"] = "open"
-		require.NoError(t, s1.CreateEntity(ctx, e))
-	}
+	require.NoError(t, s1.CreateEntity(ctx, entity.New("DOC-1", "document")))
+	require.NoError(t, s1.AttachFamilyFile(ctx, "DOC-1", "spec", "a.txt", strings.NewReader("abc")))
 	require.NoError(t, s1.Close())
 
-	// Make the cache lie: drop REQ-2 but keep the directory mtimes.
-	raw, err := fs.ReadFile("/.rela/fsstore-index.json")
-	require.NoError(t, err)
-	var cache map[string]any
-	require.NoError(t, json.Unmarshal(raw, &cache))
-	delete(cache["entities"].(map[string]any), "REQ-2")
-	stale, err := json.Marshal(cache)
-	require.NoError(t, err)
-	require.NoError(t, fs.WriteFile("/.rela/fsstore-index.json", stale, 0o644))
+	s2 := openStore(t, fs)
+	defer s2.Close()
+	hash := func() (string, int64) {
+		t.Helper()
+		infos, err := s2.ListFamilyAttachments(ctx, "DOC-1")
+		require.NoError(t, err)
+		require.Len(t, infos, 1)
+		return infos[0].SHA256, infos[0].Size
+	}
+	sum, size := hash()
+	assert.Equal(t, store.HashAttachment([]byte("abc")), sum)
+	assert.Equal(t, int64(3), size)
 
-	trusting := openStore(t, fs)
-	_, err = trusting.GetEntity(ctx, entity.Ref{ID: "REQ-2"})
-	require.ErrorIs(t, err, store.ErrNotFound, "precondition: the default open trusts the stale cache")
-	trusting.StopWatching()
-
-	cfg := newConfig(fs)
-	cfg.IgnoreIndexCache = true
-	scanning, err := fsstore.New(cfg)
-	require.NoError(t, err)
-	_, err = scanning.GetEntity(ctx, entity.Ref{ID: "REQ-2"})
-	require.NoError(t, err)
-	require.NoError(t, scanning.Close())
-
-	after, err := fs.ReadFile("/.rela/fsstore-index.json")
-	require.NoError(t, err)
-	assert.Equal(t, string(stale), string(after), "IgnoreIndexCache must not rewrite the cache")
+	require.NoError(t, fs.WriteFileExternal("/attachments/DOC-1/spec/a.txt", []byte("abcdef"), 0o644))
+	sum, size = hash()
+	assert.Equal(t, store.HashAttachment([]byte("abcdef")), sum, "a file changed on disk is hashed again")
+	assert.Equal(t, int64(6), size)
 }

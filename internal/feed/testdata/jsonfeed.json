@@ -1,0 +1,15 @@
+{
+  "version": "https://jsonfeed.org/version/1.1",
+  "title": "JSON feed",
+  "home_page_url": "https://example.org/",
+  "description": "Desc",
+  "items": [
+    {"id": "1", "url": "https://example.org/j1", "title": "J1",
+     "content_html": "<p>html</p>", "content_text": "ignored",
+     "summary": "a < b", "date_published": "2026-10-13T10:00:00+02:00",
+     "authors": [{"name": "Eve"}], "tags": ["x", " ", "y"]},
+    {"id": 42, "title": "Numeric id", "content_text": "plain & simple",
+     "author": {"name": "Old Style"}},
+    {"title": "No id", "url": "https://example.org/j3"}
+  ]
+}

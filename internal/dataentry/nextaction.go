@@ -306,7 +306,7 @@ func (a *App) nextActionOptions() nextaction.OptionFunc {
 func (a *App) queryCandidates(
 	ctx context.Context, query string, prefilters []store.PropPredicate,
 ) ([]nextaction.Candidate, error) {
-	entities, err := a.queries.executeQueryPrefiltered(ctx, query, prefilters)
+	entities, err := a.queries.executeQueryWith(ctx, query, queryOptions{prefilters: prefilters})
 	if err != nil {
 		return nil, fmt.Errorf("next-action query %q: %w", query, err)
 	}

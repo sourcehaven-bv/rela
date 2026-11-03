@@ -10,6 +10,8 @@ tags:
 status: backlog
 ---
 
+> **Scope reduced, 2026-10-11:** TKT-356XUF deleted the schema_output.go getters, made schema_json.go take `*EntityDef`/`*RelationDef` directly, and removed both plimsoll directives (Metamodel 11, EntityDef 17 exported). The SchemaOutput/EntityOutput views are no longer needed. What remains is the dead-method deletion below (`IsSequentialID`, `HasPattern`, `HasContent`; `GetLabelPlural` now has callers).
+
 Sub-ticket of [[TKT-N0IKN9]]. Follows the migration SchemaAdapter ticket. Clears
 BOTH metamodel offenders: `Metamodel` (types.go:22) and `EntityDef`
 (types.go:278). The model to copy is `AttachmentPolicy`

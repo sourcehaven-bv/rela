@@ -9,17 +9,10 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// Metamodel represents the full metamodel configuration
-//
-// TODO(TKT-N0IKN9): 30 exported methods, over the 20 exported-method line.
-// This is the schema accessor — wide read-API by nature — but a ratchet
-// candidate: group the type/relation/property lookups behind focused accessors
-// (the attachment-scan accessors moved behind [AttachmentPolicy] this way).
-//
-// 32nd exported method is ShapeProjection (TKT-0C57FS), the data-shape
-// sibling of RenderProjection.
-//
-//plimsoll:max-exported-methods=32
+// Metamodel is the decoded schema.yaml plus lookups by name ([Metamodel.GetEntityDef],
+// [Metamodel.GetRelationDef] and their kin). Validation lives on [Validator],
+// and the projections are built by [NewRenderProjection] and
+// [NewShapeProjection].
 type Metamodel struct {
 	Version   string `yaml:"version"`
 	Namespace string `yaml:"namespace"`
@@ -53,6 +46,12 @@ type Metamodel struct {
 	// internal/transform.
 	Transforms map[string]TransformDef `yaml:"transforms,omitempty"`
 
+	// Checkers is the prose-check registry: named external commands (e.g.
+	// vale) run over an entity's body for spelling, grammar and style
+	// findings. Findings are advisory and never block a write. See
+	// internal/check.
+	Checkers map[string]CheckerDef `yaml:"checkers,omitempty"`
+
 	// Worlds declares named resolution functions over content states
 	// (TKT-WAV8XP, design doc §4). Keyed by world name.
 	//
@@ -76,10 +75,34 @@ type Metamodel struct {
 	// BY NAME and can never submit its own mapping.
 	Copies map[string]CopyDef `yaml:"copies,omitempty"`
 
+	// Conversions declares the operator-authored transformations that may
+	// change an entity's type while retaining its identity lineage. Requests
+	// invoke a conversion by name and cannot supply their own mapping.
+	Conversions map[string]ConversionDef `yaml:"conversions,omitempty"`
+
+	// TaskItemConversions declares the recipes that turn a markdown task item
+	// in an entity body into a new, linked entity. See [TaskItemConversionDef];
+	// a request invokes one by name and cannot supply its own mapping.
+	TaskItemConversions map[string]TaskItemConversionDef `yaml:"task_item_conversions,omitempty"`
+
 	// Computed lookups (not from YAML)
 	aliasMap      map[string]string // alias -> canonical name
 	inverseOwners map[string]string // inverse name -> owning canonical relation name
 	worldOrder    []string          // world names in YAML order; see [WorldOrderOf]
+}
+
+// ConversionDef is an operator-declared transformation from one entity type
+// to another. `fields` maps destination properties to the existing copy
+// interpolation syntax. Relation values name the destination relation type
+// or `drop`; `faces` maps each source face to one or more destination faces.
+type ConversionDef struct {
+	From      string              `yaml:"from"`
+	To        string              `yaml:"to"`
+	Label     string              `yaml:"label,omitempty"`
+	Fields    map[string]string   `yaml:"fields,omitempty"`
+	Content   string              `yaml:"content,omitempty"`
+	Relations map[string]string   `yaml:"relations,omitempty"`
+	Faces     map[string][]string `yaml:"faces,omitempty"`
 }
 
 // InverseOwner returns the canonical relation type that declares the
@@ -290,15 +313,6 @@ type TransitionDef struct {
 }
 
 // EntityDef defines an entity type in the metamodel
-//
-// TODO(TKT-N0IKN9): 24 exported methods, over the 20 exported-method line.
-// Schema value type; ratchet candidate alongside Metamodel. DisplayProperties
-// (TKT-NJTBQX) is the 24th — it reports the property set backing the display
-// title so the ACL locked-title guard can gate on templated display_property
-// (see internal/dataentry mentions); ratchet back down when this type is
-// decomposed.
-//
-//plimsoll:max-exported-methods=24
 type EntityDef struct {
 	Label         string                 `yaml:"label"`
 	LabelPlural   string                 `yaml:"label_plural,omitempty"`
@@ -764,7 +778,11 @@ type PropertySchema interface {
 	HasContent() bool
 }
 
-// PropertyDef defines a property on an entity or relation
+// PropertyDef defines a property on an entity or relation. Each exported
+// field is one key of a property in schema.yaml, so a new option raises the
+// pin by one; `min` (TKT-BRAM1A) is the most recent.
+//
+//plimsoll:max-fields=21
 type PropertyDef struct {
 	Label       string            `yaml:"label,omitempty"`
 	Type        string            `yaml:"type"`
@@ -780,6 +798,10 @@ type PropertyDef struct {
 	// materialized but never caller-authored. Entity-local dependencies are
 	// inferred from the compiled expression.
 	Computed string `yaml:"computed,omitempty" json:"Computed,omitempty"`
+	// Rollup makes the property a read-only aggregate over related entities
+	// (TKT-6I2OPG). Its value is computed when the entity is read, with the
+	// reader's access, and is never stored. Nil means an ordinary property.
+	Rollup *RollupDef `yaml:"rollup,omitempty" json:"Rollup,omitempty"`
 	// Unique constrains the property to a natural key: no two entities of
 	// the same type may carry the same non-empty value. Enforced at write
 	// time by the entitymanager (a colliding create/update is rejected as
@@ -799,12 +821,19 @@ type PropertyDef struct {
 	// `principal_property` gate, which requires the referenced property to
 	// be unique (and non-list).
 	Unique bool `yaml:"unique,omitempty"`
-	// Max caps how many attachments a `file`-type property may hold.
-	// Zero/unset means 1 (the default, single-attachment). When > 1 the
-	// property holds a list of attachment paths and the data-entry UI
-	// switches from replace-mode to multi-file add-mode. Only meaningful
-	// for `type: file`.
-	Max int `yaml:"max,omitempty"`
+	// Min and Max mean different things by type. Nil: accepted — unset.
+	//
+	// On an `integer` property they bound the value, inclusive. A value
+	// outside the range is an invalid value: a write warns and `analyze
+	// properties` reports it (TKT-BRAM1A). They are pointers so that a
+	// bound of 0 is expressible.
+	//
+	// On a `file` property Max caps how many attachments it may hold
+	// (read it through [PropertyDef.FileMax]): unset or 0 means 1, and above 1
+	// the property holds a list of paths and the data-entry UI switches
+	// to multi-file add-mode. Min does not apply to a file.
+	Min *int `yaml:"min,omitempty" json:"Min,omitempty"`
+	Max *int `yaml:"max,omitempty" json:"Max,omitempty"`
 
 	// Accept narrows the MIME allowlist for this `file` property to these
 	// sniffed MIME types (e.g. ["application/pdf"]). Empty means inherit the
@@ -836,6 +865,20 @@ type PropertyDef struct {
 	// A long-running host refuses to start when a sync ref exists without
 	// version history, because the merge base is a version tag.
 	Sync bool `yaml:"sync,omitempty"`
+
+	// Display says how the SPA renders the value for reading (TKT-SVLQQ6).
+	// It never changes the stored value or the input, which stays a plain
+	// number. Nil means the default rendering.
+	Display *PropertyDisplay `yaml:"display,omitempty"`
+}
+
+// PropertyDisplay is a property's display format. It is a map so that more
+// formats can join later (a percentage, a unit such as hours) without new
+// syntax; at most one format applies to a property.
+type PropertyDisplay struct {
+	// Currency renders an integer property as an amount of money in the
+	// reader's locale, such as "€ 3.500" for EUR in Dutch. An ISO 4217 code.
+	Currency string `yaml:"currency,omitempty" json:"currency,omitempty"`
 }
 
 // TransformStep is one entry in a `transform:` pipeline. A step is EITHER an
@@ -939,6 +982,14 @@ type CopyDef struct {
 	// gate, so a whole-entity replace would write a REDACTED entity, which
 	// is the read-modify-write failure the codebase forbids everywhere.
 	AllFields bool `yaml:"-"`
+
+	// Keep names target properties a `fields: all` copy leaves as the target
+	// face holds them (TKT-2Z2IA6): the copy never writes them, so a value
+	// only the target has survives, and a target without one stays without
+	// one. A kept file property keeps the target's own references, so its
+	// bytes stay referenced. Refused at load without `fields: all`, because a
+	// field mapping already leaves every unmapped property alone.
+	Keep []string `yaml:"keep,omitempty"`
 
 	// Relations maps a relation type to `merge` (add missing) or `replace`
 	// (swap the target face's edges of that type). An omitted type is not
@@ -1086,6 +1137,7 @@ func (c *CopyDef) UnmarshalYAML(unmarshal func(any) error) error {
 		To        string            `yaml:"to"`
 		Label     string            `yaml:"label,omitempty"`
 		Fields    any               `yaml:"fields,omitempty"`
+		Keep      []string          `yaml:"keep,omitempty"`
 		Relations map[string]string `yaml:"relations,omitempty"`
 		Guard     CopyGuard         `yaml:"guard,omitempty"`
 		OnSuccess CopyOnSuccess     `yaml:"on_success,omitempty"`
@@ -1095,7 +1147,7 @@ func (c *CopyDef) UnmarshalYAML(unmarshal func(any) error) error {
 		return err
 	}
 	c.From, c.To, c.Label, c.Relations, c.Guard = r.From, r.To, r.Label, r.Relations, r.Guard
-	c.OnSuccess = r.OnSuccess
+	c.OnSuccess, c.Keep = r.OnSuccess, r.Keep
 	switch f := r.Fields.(type) {
 	case nil:
 	case string:
@@ -1124,10 +1176,16 @@ type TransformDef struct {
 // Max when set (>0), otherwise 1. Callers should use this rather than
 // reading Max directly so the unset-means-one default lives in one place.
 func (p PropertyDef) FileMax() int {
-	if p.Max > 0 {
-		return p.Max
+	if p.Max != nil && *p.Max > 0 {
+		return *p.Max
 	}
 	return 1
+}
+
+// InRange reports whether n lies within the property's declared Min and
+// Max, inclusive. An unset bound does not constrain.
+func (p PropertyDef) InRange(n int64) bool {
+	return (p.Min == nil || n >= int64(*p.Min)) && (p.Max == nil || n <= int64(*p.Max))
 }
 
 // Built-in property types

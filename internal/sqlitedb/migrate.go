@@ -12,7 +12,7 @@ import (
 // schemaVersion is the shape of the tables this binary expects. Bump it
 // whenever schemaSQL changes shape, and append the step that carries an
 // existing database forward to [migrations].
-const schemaVersion = 16
+const schemaVersion = 30
 
 // SchemaVersion reports the table shape this binary expects, so the CLI can
 // show a real number rather than prose.
@@ -27,6 +27,17 @@ type migration struct {
 	// carries the version bump, so a failure rolls the whole step back rather
 	// than leaving a half-migrated shape stamped as complete.
 	apply func(context.Context, *sql.Conn) error
+}
+
+func chain(steps ...func(context.Context, *sql.Conn) error) func(context.Context, *sql.Conn) error {
+	return func(ctx context.Context, conn *sql.Conn) error {
+		for _, step := range steps {
+			if err := step(ctx, conn); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
 }
 
 // sqlSteps adapts plain statements to [migration.apply].
@@ -152,20 +163,18 @@ var migrations = []migration{
 	},
 	{
 		// v11 → v12: the FTS5 search index (DEC-10Z731). schemaSQL has
-		// already created the table and its triggers. The v13 rung fills
-		// it, so this rung only moves the stamp.
+		// already created its key table; the index itself is created after
+		// the ladder in its v22 shape, so this rung only moves the stamp.
 		to:    12,
-		apply: sqlSteps(searchDDL),
+		apply: sqlSteps(searchKeyDDL),
 	},
 	{
 		// v12 → v13: key the search index by entity_search_key rather than
-		// by the entities rowid, which VACUUM may renumber (RR-44YDTU).
-		// schemaSQL has created the key table, but on a v12 database it
-		// kept the old triggers, which share the new ones' names. The rung
-		// drops the old index and triggers, recreates them and refills the
-		// index. A re-run after a crash repeats the same full refill.
+		// by the entities rowid, which VACUUM may renumber (RR-44YDTU). The
+		// rung drops the v12 index and triggers; the index is created after
+		// the ladder and filled by the store, as for v22.
 		to:    13,
-		apply: sqlSteps(dropRowidSearchSQL, searchDDL, rebuildSearchSQL),
+		apply: sqlSteps(dropSearchSQL),
 	},
 	{
 		// v13 → v14: the content hash on live rows, which the version sweep
@@ -191,6 +200,277 @@ var migrations = []migration{
 		to:    16,
 		apply: sqlSteps(versionTagsDDL),
 	},
+	{
+		// v16 → v17: the backlink column (TKT-Q6AKUN). init creates the
+		// index and triggers after the ladder. Existing rows keep a NULL
+		// mention_targets; sqlitestore fills them in Go, because extracting
+		// mentions needs a markdown parser this package does not have.
+		to:    17,
+		apply: addColumns(mentionColumns),
+	},
+	{
+		// v17 → v18: realtime channels (TKT-DD8B6I). Pure CREATE IF NOT
+		// EXISTS, a no-op where schemaSQL already made the tables.
+		to:    18,
+		apply: sqlSteps(channelsDDL),
+	},
+	{
+		// v18 → v19: let rename history follow a conversion across face names.
+		to: 19,
+		apply: chain(
+			addColumns([]addedColumn{{"entity_versions", "prev_face"}}),
+			sqlSteps(
+				`UPDATE entity_versions SET prev_face = face WHERE op = 'rename' AND prev_id IS NOT NULL`,
+				`DROP INDEX entity_versions_prev_id_idx`,
+				`CREATE INDEX entity_versions_prev_id_idx ON entity_versions (prev_id, (COALESCE(prev_face, face))) WHERE prev_id IS NOT NULL`,
+			),
+		),
+	},
+	{
+		// v19 → v20: the ref properties of each channel type's record
+		// (TKT-ZU7P13). Pure CREATE IF NOT EXISTS.
+		to:    20,
+		apply: sqlSteps(channelTypeRefsDDL),
+	},
+	{
+		// v20 → v21: the cardinality of each recorded channel type
+		// (BUG-DQLE0K). Existing rows take '', which the channel store
+		// reads as "recorded before cardinality was kept".
+		to:    21,
+		apply: addChannelTypeCardinality,
+	},
+	{
+		// v21 → v22: the search index matches Go-lowered text
+		// (BUG-YG126C). The rung adds search_text and drops the index that
+		// folded case itself; init creates the new one after the ladder.
+		// Every row gets a NULL search_text, so it is out of the index until
+		// sqlitestore's reindex pass fills it in Go. The rung sets that
+		// NULL itself rather than trusting the new column's default, so a
+		// re-run after a crash, with the index dropped, reindexes every row.
+		to: 22,
+		apply: func(ctx context.Context, conn *sql.Conn) error {
+			if err := addColumns(searchTextColumns)(ctx, conn); err != nil {
+				return err
+			}
+			return sqlSteps(dropSearchSQL, `UPDATE entities SET search_text = NULL`)(ctx, conn)
+		},
+	},
+	{
+		// v22 → v23: what each tombstoned channel batch recorded, and the
+		// indexes retention reads through, and the reopen time of each
+		// channel (TKT-964SIS).
+		to:    23,
+		apply: addChannelRetention,
+	},
+	{
+		// v23 → v24: the session snapshot of each channel (TKT-Y6NJ6U).
+		to:    24,
+		apply: addChannelSessionColumns,
+	},
+	{
+		// v24 → v25: the session timer schedule of each channel
+		// (TKT-INM3AZ). The due index is created after the ladder (see
+		// channelTimersDDL).
+		to: 25,
+		apply: func(ctx context.Context, conn *sql.Conn) error {
+			return addChannelColumns(ctx, conn, channelTimerColumns)
+		},
+	},
+	{
+		// v25 → v26: the session reminder records of each channel
+		// (TKT-36Z6X3). Reminders share the due index, so nothing runs
+		// after the ladder.
+		to: 26,
+		apply: func(ctx context.Context, conn *sql.Conn) error {
+			return addChannelColumns(ctx, conn, channelReminderColumns)
+		},
+	},
+	{
+		// v26 → v27: the creator's user of each channel, for the inbox
+		// (TKT-ZZ4PNX). The creator index is created after the ladder (see
+		// channelCreatorDDL).
+		to:    27,
+		apply: addChannelCreator,
+	},
+	{
+		// v27 → v28: read markers, the counts column of each message and
+		// the last activity of each channel (TKT-2B2AIA). The indexes are
+		// created after the ladder (see channelReadsIndexDDL).
+		to:    28,
+		apply: addChannelReads,
+	},
+	{
+		// v28 → v29: the SHA-256 of each attachment (TKT-1TS55R).
+		to:    29,
+		apply: addAttachmentSHA256,
+	},
+	{
+		// v29 → v30: the addressed rows of principal mentions and replies
+		// (TKT-6RXAC0). A new table and its indexes; no backfill, because
+		// messages stored before it were written under no mention rule.
+		to:    30,
+		apply: sqlSteps(channelMentionsDDL),
+	},
+}
+
+// channelLastAtColumns are the last-activity column of channels.
+var channelLastAtColumns = []struct{ name, def string }{
+	{"last_at", "INTEGER NOT NULL DEFAULT 0"},
+}
+
+// messageCountsColumns are the counts column of channel_messages.
+var messageCountsColumns = []struct{ name, def string }{
+	{"counts", "INTEGER NOT NULL DEFAULT 1"},
+}
+
+// addChannelReads is the v27 to v28 rung. It creates channel_reads, adds
+// channel_messages.counts and sets it to 0 on removed messages and session
+// notices (channels.Counts), and adds channels.last_at, set to the latest
+// lifecycle time of each channel until its next message or lifecycle move. A doc that is not
+// valid JSON, or holds a NUL escape, keeps 1: it counts, which shows one
+// extra unread at worst and never hides a message. The 'session:' literal
+// is channels.SessionMarker (TestChannelReadsMigrations_SessionMarker).
+// Only rows still at their default are written, so running it again
+// changes nothing.
+func addChannelReads(ctx context.Context, conn *sql.Conn) error {
+	if err := sqlSteps(channelReadsDDL)(ctx, conn); err != nil {
+		return err
+	}
+	if err := addTableColumns(ctx, conn, "channel_messages", messageCountsColumns); err != nil {
+		return err
+	}
+	if err := addChannelColumns(ctx, conn, channelLastAtColumns); err != nil {
+		return err
+	}
+	return sqlSteps(
+		`UPDATE channel_messages SET counts = 0
+		WHERE counts = 1 AND json_valid(doc) AND instr(doc, '\u0000') = 0
+		AND (json_type(doc, '$.removed') IS NOT NULL
+			OR substr(json_extract(doc, '$.triggered_by'), 1, 8) = 'session:')`,
+		`UPDATE channels SET last_at = max(created_at, closed_at, archived_at, reopened_at) WHERE last_at = 0`,
+	)(ctx, conn)
+}
+
+// channelCreatorColumns are the creator column of channels.
+var channelCreatorColumns = []struct{ name, def string }{
+	{"created_by_user", "TEXT NOT NULL DEFAULT ''"},
+}
+
+// addChannelCreator is the v26 to v27 rung: it adds created_by_user and
+// fills it from the user of the created_by JSON. A row whose created_by
+// is not valid JSON, or holds a NUL escape, keeps the empty string: its creator gets no
+// creator entry, and nobody else does either. Only rows still empty are
+// written, so running it again changes nothing.
+func addChannelCreator(ctx context.Context, conn *sql.Conn) error {
+	if err := addChannelColumns(ctx, conn, channelCreatorColumns); err != nil {
+		return err
+	}
+	return sqlSteps(`UPDATE channels SET created_by_user = COALESCE(json_extract(created_by, '$.user'), '')
+		WHERE created_by_user = '' AND json_valid(created_by) AND instr(created_by, '\u0000') = 0
+		AND json_type(created_by, '$.user') = 'text'`)(ctx, conn)
+}
+
+// addChannelRetention is the v22 to v23 rung: channelRetentionDDL, and
+// channels.reopened_at when it is missing. channelsDDL already has the
+// column, so a database that took the v17 to v18 rung from this release
+// has it.
+func addChannelRetention(ctx context.Context, conn *sql.Conn) error {
+	var n int
+	if err := conn.QueryRowContext(ctx,
+		`SELECT count(*) FROM pragma_table_info('channels') WHERE name = 'reopened_at'`,
+	).Scan(&n); err != nil {
+		return fmt.Errorf("probe channels.reopened_at: %w", err)
+	}
+	if n == 0 {
+		if _, err := conn.ExecContext(ctx,
+			`ALTER TABLE channels ADD COLUMN reopened_at INTEGER NOT NULL DEFAULT 0`); err != nil {
+			return fmt.Errorf("add channels.reopened_at: %w", err)
+		}
+	}
+	return sqlSteps(channelRetentionDDL)(ctx, conn)
+}
+
+// channelSessionColumns are the session columns of channels, with the
+// definition each is added with.
+var channelSessionColumns = []struct{ name, def string }{
+	{"session_state", "TEXT NOT NULL DEFAULT ''"},
+	{"session_gen", "INTEGER NOT NULL DEFAULT 0"},
+	{"session_entered_at", "INTEGER NOT NULL DEFAULT 0"},
+}
+
+// channelTimerColumns are the session timer columns of channels.
+var channelTimerColumns = []struct{ name, def string }{
+	{"session_next_due_at", "INTEGER NOT NULL DEFAULT 0"},
+	{"session_restarts", "TEXT NOT NULL DEFAULT ''"},
+}
+
+// channelReminderColumns are the session reminder columns of channels.
+var channelReminderColumns = []struct{ name, def string }{
+	{"session_reminders", "TEXT NOT NULL DEFAULT ''"},
+}
+
+// addChannelSessionColumns is the v23 to v24 rung. It probes each column
+// like [addChannelRetention] and adds the missing ones, so running it again
+// is harmless.
+func addChannelSessionColumns(ctx context.Context, conn *sql.Conn) error {
+	return addChannelColumns(ctx, conn, channelSessionColumns)
+}
+
+// addChannelColumns adds each of cols that channels lacks.
+func addChannelColumns(ctx context.Context, conn *sql.Conn, cols []struct{ name, def string }) error {
+	return addTableColumns(ctx, conn, "channels", cols)
+}
+
+// addTableColumns adds each of cols that table lacks. table and the
+// column definitions come from this file, never from input.
+func addTableColumns(ctx context.Context, conn *sql.Conn, table string, cols []struct{ name, def string }) error {
+	for _, col := range cols {
+		var n int
+		if err := conn.QueryRowContext(ctx,
+			`SELECT count(*) FROM pragma_table_info(?) WHERE name = ?`, table, col.name,
+		).Scan(&n); err != nil {
+			return fmt.Errorf("probe %s.%s: %w", table, col.name, err)
+		}
+		if n > 0 {
+			continue
+		}
+		if _, err := conn.ExecContext(ctx,
+			"ALTER TABLE "+table+" ADD COLUMN "+col.name+" "+col.def); err != nil {
+			return fmt.Errorf("add %s.%s: %w", table, col.name, err)
+		}
+	}
+	return nil
+}
+
+// addChannelTypeCardinality adds channel_types.cardinality when it is
+// missing. It probes like [addColumns], for the same reasons, but is separate
+// because this column is NOT NULL with a default rather than nullable.
+func addChannelTypeCardinality(ctx context.Context, conn *sql.Conn) error {
+	var n int
+	if err := conn.QueryRowContext(ctx,
+		`SELECT count(*) FROM pragma_table_info('channel_types') WHERE name = 'cardinality'`,
+	).Scan(&n); err != nil {
+		return fmt.Errorf("probe channel_types.cardinality: %w", err)
+	}
+	if n > 0 {
+		return nil
+	}
+	if _, err := conn.ExecContext(ctx,
+		`ALTER TABLE channel_types ADD COLUMN cardinality TEXT NOT NULL DEFAULT ''`); err != nil {
+		return fmt.Errorf("add channel_types.cardinality: %w", err)
+	}
+	return nil
+}
+
+// searchTextColumns are the search text columns, on the live and the marked
+// table.
+var searchTextColumns = []addedColumn{
+	{"entities", "search_text"}, {"marked_entities", "search_text"},
+}
+
+// mentionColumns are the backlink columns, on the live and the marked table.
+var mentionColumns = []addedColumn{
+	{"entities", "mention_targets"}, {"marked_entities", "mention_targets"},
 }
 
 // clearContentHashSQL marks every live row's hash as not known.

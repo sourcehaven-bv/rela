@@ -29,7 +29,9 @@ export const configureRoute = {
   list: (name: string) => `${CONFIGURE_PREFIX}/lists/${seg(name)}`,
   boards: () => `${CONFIGURE_PREFIX}/boards`,
   board: (name: string) => `${CONFIGURE_PREFIX}/boards/${seg(name)}`,
-  dashboard: () => `${CONFIGURE_PREFIX}/dashboard`,
+  /** The default dashboard, or a named one under `dashboards:` (TKT-5LQNLY). */
+  dashboard: (name?: string) =>
+    name ? `${CONFIGURE_PREFIX}/dashboard?name=${seg(name)}` : `${CONFIGURE_PREFIX}/dashboard`,
 }
 
 export function isConfigurePath(path: string): boolean {

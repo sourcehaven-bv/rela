@@ -14,6 +14,7 @@ import type {
   RelationPosition,
 } from '@/types'
 import { warnIfMissingActions } from '@/utils/affordancesWarning'
+import { ApiError } from './errors'
 
 // Type → URL-path-segment (plural) registry. The API layer is a pure HTTP
 // boundary; it must not import a Pinia store (the producer/consumer
@@ -56,6 +57,53 @@ export async function listEntities(
   const res = await api.get<ListResponse<Entity>>(path, params as Record<string, unknown>, signal)
   warnIfMissingActions(res, path)
   return res
+}
+
+/**
+ * True for the 400 a list read gets when it filters or sorts on a property
+ * the reader cannot see on every row (BUG-WJSYQT). The server refuses rather
+ * than computing over the hidden value.
+ */
+export function isPropertyNotVisible(err: unknown): err is ApiError {
+  return (
+    err instanceof ApiError &&
+    err.status === 400 &&
+    !!err.problem?.type.endsWith('/property_not_visible')
+  )
+}
+
+/** A list read whose sort the server refused, read again without it. */
+export interface SortDropped {
+  /** The `sort` param the server refused, as sent. */
+  sort: string
+  /** The server's explanation, naming the property. */
+  reason: string
+}
+
+/**
+ * Runs a list read; when the server refuses its sort because the reader
+ * cannot see a sorted property, reads again once without the sort and
+ * reports what was dropped.
+ *
+ * A configured list's `default_sort` and `group_by` reach the server as its
+ * sort, so without this one hidden property in the list's config would turn
+ * the whole list into an error for that reader. Dropping a sort only changes
+ * the order. A refused FILTER is not dropped: that would widen the list past
+ * what it is configured to show, so the error stands. The problem body says
+ * which use was refused, so only a refused sort is retried.
+ */
+export async function withSortFallback<T>(
+  params: ListParams,
+  read: (params: ListParams) => Promise<ListResponse<T>>
+): Promise<ListResponse<T> & { sortDropped?: SortDropped }> {
+  try {
+    return await read(params)
+  } catch (err) {
+    if (!params.sort || !isPropertyNotVisible(err) || err.problem?.use !== 'sort') throw err
+    const { sort, ...unsorted } = params
+    const res = await read(unsorted)
+    return { ...res, sortDropped: { sort, reason: err.message } }
+  }
 }
 
 // listAllEntities pages: a runaway guard, not a working limit. 50 pages at
@@ -235,23 +283,39 @@ export async function restoreEntity(type: string, id: string): Promise<void> {
  */
 export async function searchEntities(
   query: string,
-  type?: string,
-  signal?: AbortSignal,
-  world?: string,
-  link?: SearchLinkContext
+  opts: SearchOptions = {}
 ): Promise<ListResponse<Entity>> {
   const params: Record<string, string> = { q: query }
-  if (type) {
-    params.type = type
+  if (opts.type) {
+    params.type = opts.type
   }
-  if (world) {
-    params.world = world
+  if (opts.world) {
+    params.world = opts.world
   }
-  if (link) {
-    params.relation = link.relation
-    params.direction = link.direction
+  if (opts.link) {
+    params.relation = opts.link.relation
+    params.direction = opts.link.direction
   }
-  return api.get<ListResponse<Entity>>('/_search', params, signal)
+  if (opts.limit) {
+    params.limit = String(opts.limit)
+  }
+  return api.get<ListResponse<Entity>>('/_search', params, opts.signal)
+}
+
+/** Optional inputs of {@link searchEntities}. */
+export interface SearchOptions {
+  /** Only this entity type. */
+  type?: string
+  signal?: AbortSignal
+  world?: string
+  link?: SearchLinkContext
+  /**
+   * At most this many rows (1 to 100). Send it only when the caller shows
+   * the server's first rows as they are: a caller that filters or re-ranks
+   * the rows itself needs the full set. Without it the server ranks and returns
+   * up to 1000 rows, which costs more database time and a larger response.
+   */
+  limit?: number
 }
 
 /**

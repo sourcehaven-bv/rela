@@ -8,6 +8,9 @@ Declared under `webhooks:`; **the hook id is the URL segment**, so
 `webhooks: { icinga-alert: ... }` serves `POST /hooks/icinga-alert`. There is no
 `path:` key.
 
+The same mapping vocabulary drives [feed subscriptions](feed-subscriptions.md),
+which poll an RSS, Atom or JSON Feed instead of receiving a request.
+
 **When this vocabulary is not enough**, a
 [request-scoped action](data-entry.md#request-scoped-actions) is the escape
 hatch: an odd payload shape, a response a third party needs in a specific form,
@@ -305,6 +308,11 @@ that could emit a newline could emit `## Heading`, which would become a SIBLING
 of the section it was appended to, so every later delivery would land above it
 and the document would silently reshape itself.
 
+A value is not otherwise escaped: `**bold**` or a link in `{{body.note}}` renders
+as markdown. The producer is authenticated by the proxy and may send markdown on
+purpose. [Feed subscriptions](feed-subscriptions.md), whose source is untrusted,
+escape their text values instead.
+
 The shape you write in `content:` is not touched. It is your document; a heading
 level that collides with the surrounding structure is yours to get wrong, the
 same as any other line you put in a template.
@@ -364,3 +372,143 @@ The `system:` prefix is deliberate. A hook is granted its write rights in
 `principal.IsReserved` protects. Reserving it stops a caller asserting
 `system:webhook:my-hook` through `-principal-header` on the ordinary API and
 inheriting the hook's grants.
+
+### Capping hooks with a client baseline
+
+Every delivery has the principal type `webhook`. A client baseline that lists
+`webhook` in `applies_to` therefore caps every hook in the project, on top of
+the role each hook gets in `assignments:`:
+
+```yaml
+roles:
+  icinga-webhook:
+    read: [incident]
+    create: [incident]
+    update: [incident]
+
+assignments:
+  system:webhook:icinga-alert: icinga-webhook
+  system:webhook:icinga-recovery: icinga-webhook
+
+client_baselines:
+  hooks:
+    applies_to: [webhook]
+    read: [incident]
+    create: [incident]
+    update: [incident]
+    deny_delete: ["*"]
+    deny_permissions: ["*"]
+```
+
+The baseline also removes grants from the `everyone` role and from asserted
+roles, so a hook cannot pick up access that a later role change gives to every
+user. Without a `webhook` baseline a hook has its role's full access, as
+before. `rela acl audit` reports that case as `A15-webhook-uncapped`.
+
+All hooks share one type. The baseline is the upper bound for the class of
+hooks. To give one hook less access than another, give it its own role in
+`assignments:`; each hook already has its own identity.
+
+A delivery fails when its own write falls outside the ceiling, and nothing is
+written. Keep `read` on the find type: when the hook cannot read the type, the
+find never matches and every delivery creates a new entity.
+
+The ceiling covers:
+
+- the hook's own find, create and update;
+- inline Lua automation actions fired by the hook's write. They run as the
+  hook. When one is refused, the hook's write stands and the server log shows
+  `ingest: automations failed after write`.
+
+The ceiling does not cover:
+
+- declarative automation actions (`set:`, `create_entity:`,
+  `create_relation:`). These are system writes for every caller and no ACL
+  checks them;
+- `background: true` actions. They run as `run_as` or `system:automation`;
+- Lua scripts with `allow_acl_bypass`;
+- transition guards that need a permission the baseline denies. These fail
+  closed, so a transition the hook triggers is refused.
+
+### Checking a hook's access in CI
+
+`rela acl map --webhook <id>` shows what a hook may do after the ceiling. You
+do not name the principal type. The report lists each type and verb, the named
+permissions held and the relation types the hook may write. It also checks
+that the hook's mapping is possible: read on the find type, create on the
+create type and update where the hook sets properties. It also reports a match
+property that the client ceiling hides (`redact:`, or left out of `visible:`).
+The find cannot compare a hidden field, so it never matches: a hook with
+`create_if_missing` creates a new entity on every delivery, and a hook without
+it never updates anything.
+
+`--expect <file>` compares the access with a file and prints the differences:
+
+```yaml
+# ci/acl/icinga-alert.yaml
+types:
+  incident: [read, create, update]
+permissions: []
+relations:
+  affects:
+    create: [incident]
+    update: [incident]
+```
+
+```console
+$ rela acl map --webhook icinga-alert --expect ci/acl/icinga-alert.yaml
+Effective access for webhook icinga-alert (system:webhook:icinga-alert) — verbs: read, create, update, delete
+  as client type "webhook" — client baseline "hooks" is applied below.
+      incident
+          create (all incident): role icinga-webhook [global]
+          read (all incident): role icinga-webhook [global]
+          update (all incident): role icinga-webhook [global]
+  permissions: none
+  relation writes:
+      affects: create from incident; update from incident
+  webhook mapping needs:
+      read incident: held
+      create incident: held
+Expectations ci/acl/icinga-alert.yaml: access matches.
+```
+
+If the file listed only `incident: [read, create]` and no relations, the last
+lines would show the drift and the command would exit with code 1:
+
+```console
+Expectations ci/acl/icinga-alert.yaml: 3 difference(s). + held but not expected, - expected but not held.
+  + types.incident: update (role icinga-webhook [global])
+  + relations.affects: create from incident
+  + relations.affects: update from incident
+```
+
+The file format:
+
+- `types` maps a type to its verbs: `read`, `create`, `update`, `delete`.
+  `verb:some` means the verb is held on some entities only. `type@face` names
+  one face of a faced type.
+- `permissions` lists named permissions.
+- `relations` maps a relation type to `create`, `update` or `delete`, each
+  with the source types it may be written from.
+- A section you leave out expects nothing.
+
+The comparison does not cover:
+
+- `rename` grants;
+- field-level access (`visible:`, `redact:`);
+- face grants from a role held on one entity only;
+- relation writes from one face of a source type, for a relation with
+  `scope: content`.
+
+Check those in the policy file.
+
+Exit codes:
+
+| Code | Meaning |
+| ---- | ------- |
+| 0 | The access matches the file and the mapping check passes. |
+| 1 | The access differs from the file, the mapping check fails (also without `--expect`), or the command failed (for example an unknown hook id or an invalid file). |
+
+`--expect` also works with `--principal`, for any user or service identity.
+Add `rela acl audit --fail-on=medium` to the same CI job so a removed baseline
+fails the build.

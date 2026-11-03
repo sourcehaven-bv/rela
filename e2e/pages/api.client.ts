@@ -7,6 +7,7 @@ export class ApiClient {
   async createEntity(plural: string, properties: Record<string, unknown>): Promise<{ id: string }> {
     const resp = await this.page.request.post(`${this.serverUrl}/api/v1/${plural}`, {
       data: { properties },
+      headers: { Origin: this.serverUrl },
     });
     expect(resp.ok(), `POST /api/v1/${plural} failed: ${resp.status()}`).toBeTruthy();
     const entity = await resp.json();
@@ -17,7 +18,7 @@ export class ApiClient {
   async createRelation(fromPlural: string, fromId: string, relation: string, toId: string): Promise<void> {
     const resp = await this.page.request.post(
       `${this.serverUrl}/api/v1/${fromPlural}/${fromId}/relations/${relation}`,
-      { data: { id: toId } },
+      { data: { id: toId }, headers: { Origin: this.serverUrl } },
     );
     expect(resp.ok(), `create relation ${relation} failed: ${resp.status()}`).toBeTruthy();
   }

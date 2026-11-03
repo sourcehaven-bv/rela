@@ -67,7 +67,10 @@ func warnQueryScopes(compiled *scopes.Compiled, meta *metamodel.Metamodel, polic
 // particular principal's roles do — it runs at load, where there is no
 // principal. A role nobody currently holds still counts: an unassigned role
 // is a misconfiguration to fix, not a reason to stay quiet until someone is
-// assigned to it.
+// assigned to it. For the same reason it ignores that another role can reopen
+// the property: field verdicts are the union over a reader's roles
+// (BUG-Y5UF3K), but a reader who holds only the hiding role still has it
+// hidden.
 //
 // Returns one message per (scope, property) conflict, sorted.
 //

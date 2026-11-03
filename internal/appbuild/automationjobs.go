@@ -17,7 +17,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/autocascade"
 	"github.com/Sourcehaven-BV/rela/internal/automation"
@@ -602,14 +601,7 @@ type servicesJobRunner struct{ s *Services }
 func (r servicesJobRunner) ScheduledLuaWriteDeps() lua.WriteDeps { return r.s.ScheduledLuaWriteDeps() }
 
 func (r servicesJobRunner) BindIdentity(ctx context.Context) (context.Context, error) {
-	if r.s.aclDeclarative == nil {
-		return ctx, nil
-	}
-	req, err := r.s.aclDeclarative.ForPrincipal(principal.From(ctx))
-	if err != nil {
-		return nil, err
-	}
-	return acl.WithRequest(ctx, req), nil
+	return identityBinderFor(r.s.aclDeclarative)(ctx)
 }
 
 func (r servicesJobRunner) ExecuteFile(ctx context.Context, path string, deps lua.WriteDeps, e *entity.Entity) error {

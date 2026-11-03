@@ -10,7 +10,7 @@ import (
 // GcCmd garbage-collects orphaned files (e.g. interrupted-write temp files).
 type GcCmd struct {
 	DryRun    bool `name:"dry-run" help:"Show what would be removed without actually removing."`
-	TempFiles bool `name:"temp-files" help:"Clean up orphaned .new files from interrupted transactions."`
+	TempFiles bool `name:"temp-files" help:"Clean up stale temp files left by interrupted writes in entities/, relations/ and attachments/."`
 }
 
 // Run dispatches `rela gc`.

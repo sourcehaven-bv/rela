@@ -105,9 +105,9 @@ func TestRelationOrder_ScopedTab(t *testing.T) {
 // not movable.
 func TestRelationOrder_NotMovableWhenFieldReadOnly(t *testing.T) {
 	app := newOrderedTabApp(t, metamodel.OrderableOutgoing)
-	app.fieldResolver = fakeResolver{rv: RelationVerdicts{Types: map[string]RelationVerdict{
+	setTestResolver(t, app, fakeResolver{rv: RelationVerdicts{Types: map[string]RelationVerdict{
 		"has-step": {Creatable: true, Removable: true, Fields: map[string]bool{metamodel.OrderPropertyOut: false}},
-	}}}
+	}}})
 	resp, rec := listUngated(t, app, "steps", "step", orderedTabQuery())
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 	require.NotNil(t, resp.Meta.RelationOrder)
@@ -127,7 +127,7 @@ func (hiddenOrderResolver) RelationFieldVerdicts(
 // hidden order field is not applied at all.
 func TestRelationOrder_HiddenOrderFieldIsNotApplied(t *testing.T) {
 	app := newOrderedTabApp(t, metamodel.OrderableOutgoing)
-	app.fieldResolver = hiddenOrderResolver{}
+	setTestResolver(t, app, hiddenOrderResolver{})
 	resp, rec := listUngated(t, app, "steps", "step", orderedTabQuery())
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 	require.Nil(t, resp.Meta.RelationOrder)

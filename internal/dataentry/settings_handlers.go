@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 
+	"github.com/Sourcehaven-BV/rela/internal/access"
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
 )
@@ -93,10 +94,15 @@ func writeJSONError(w http.ResponseWriter, status int, message string) {
 // invoke this *before* falling back to the generic 500 path. The check is
 // cheap (an errors.As type assertion) and centralizing the 403 body shape
 // here keeps the wire contract identical across all handlers.
-func writeForbiddenIfACLDenied(w http.ResponseWriter, err error) bool {
+//
+// A deny that no rule decided is not a 403; see [writeIdentityFaultDeny].
+func writeForbiddenIfACLDenied(w http.ResponseWriter, r *http.Request, err error) bool {
 	var fe *acl.ForbiddenError
 	if !errors.As(err, &fe) {
 		return false
+	}
+	if writeIdentityFaultDeny(w, r, fe) {
+		return true
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusForbidden)
@@ -107,6 +113,30 @@ func writeForbiddenIfACLDenied(w http.ResponseWriter, err error) bool {
 		"reason":    fe.Decision.Reason,
 	})
 	return true
+}
+
+// writeIdentityFaultDeny answers a deny that no rule decided, and reports
+// whether it wrote a response. Every handler that maps an
+// [acl.ForbiddenError] calls it before writing its own 403;
+// TestForbiddenMappersHandleIdentityFaults enforces that.
+//
+// It judges [acl.Decision.Cause] only, never the rest of the error chain:
+//
+//   - [acl.ErrNoIdentity]: the write found no bound identity. The answer is
+//     the 401 from [writeNoIdentity].
+//   - [acl.ErrIdentityMismatch] or [acl.ErrForeignIdentity]: the server
+//     attached a Request for another principal or policy. That is a server
+//     fault, so the answer is a 500.
+func writeIdentityFaultDeny(w http.ResponseWriter, r *http.Request, fe *acl.ForbiddenError) bool {
+	cause := fe.Decision.Cause
+	switch {
+	case errors.Is(cause, acl.ErrNoIdentity):
+		return writeNoIdentity(w, r, cause)
+	case errors.Is(cause, acl.ErrIdentityMismatch), errors.Is(cause, acl.ErrForeignIdentity):
+		writeInternalError(w, r, "acl_identity_mismatch", "ACL request identity mismatch", fe)
+		return true
+	}
+	return false
 }
 
 // --- Settings API ---
@@ -287,10 +317,35 @@ func (h *appearanceHandler) handleAPIGetSettings(w http.ResponseWriter, r *http.
 	writeJSON(w, data)
 }
 
+// refuseSettingsEdit answers 403 and returns true when the request's
+// principal may not save the settings page. Everything that page saves (the
+// create-form defaults, the palette, the logo, an imported theme) is one
+// value shared by every principal, so under a policy a save needs
+// [acl.PermSettingsEdit], and a read-only instance never saves. The 403 names
+// the permission, and action says what was refused, for example "Saving the
+// palette". Call it before the body is read.
+//
+//archplan:guard=authz reason="checks the settings:edit permission; read-only refuses"
+func (h *appearanceHandler) refuseSettingsEdit(w http.ResponseWriter, r *http.Request, action string) bool {
+	ctx := r.Context()
+	if access.ModeOf(h.acl()).PermitsProjectWrite(ctx, readGateFromContext(ctx), acl.PermSettingsEdit) {
+		return false
+	}
+	writeV1Error(w, r, http.StatusForbidden, "forbidden", "Forbidden",
+		action+" needs the "+acl.PermSettingsEdit+" permission.")
+	return true
+}
+
 // handleAPISaveSettings saves the user defaults from JSON input. The
 // settingsService persists and republishes atomically so concurrent readers
-// see a coherent snapshot.
+// see a coherent snapshot. A caller without [acl.PermSettingsEdit] gets a 403
+// (see [appearanceHandler.refuseSettingsEdit]).
+//
+//archplan:auth=authz
 func (h *appearanceHandler) handleAPISaveSettings(w http.ResponseWriter, r *http.Request) {
+	if h.refuseSettingsEdit(w, r, "Saving the default values") {
+		return
+	}
 	var input APIUserDefaults
 	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
 		writeJSONError(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
@@ -343,8 +398,14 @@ func (h *appearanceHandler) handleAPIGetPalette(w http.ResponseWriter, _ *http.R
 	writeJSON(w, p)
 }
 
-// handleAPISavePalette validates and saves the user palette.
+// handleAPISavePalette validates and saves the user palette. A caller
+// without [acl.PermSettingsEdit] gets a 403.
+//
+//archplan:auth=authz
 func (h *appearanceHandler) handleAPISavePalette(w http.ResponseWriter, r *http.Request) {
+	if h.refuseSettingsEdit(w, r, "Saving the palette") {
+		return
+	}
 	var input dataentryconfig.PaletteConfig
 	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
 		writeJSONError(w, http.StatusBadRequest, "invalid JSON: "+err.Error())

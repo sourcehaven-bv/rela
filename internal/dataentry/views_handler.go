@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/Sourcehaven-BV/rela/internal/access"
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	v1 "github.com/Sourcehaven-BV/rela/internal/apiwire/v1"
 	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
@@ -62,15 +63,20 @@ type viewsHandler struct {
 	// holds one: tests reassign app.acl AFTER construction, so a captured
 	// value would go stale and the filter would consult the wrong policy.
 	aclImpl func() acl.ACL
-	// faceEdges reads the entry's edges from the FACE being served, via
-	// [servedFaceEdges]. A closure for the same staleness reason aclImpl is
-	// one, and more sharply: [SetWorldNeighbors] runs AFTER this handler is
-	// constructed, so a captured worldNeighbors would be the nil it held at
-	// construction time and every view would silently take the bare-id arm —
-	// the exact face-merging bug this seam exists to close.
-	faceEdges func(
-		ctx context.Context, e *entityPkg.Entity,
-	) ([]*entityPkg.Relation, error)
+	// faceEdges reads the entry's edges from the FACE being served. It is
+	// the App's one gated face-edge read ([faceEdgeReader]), late-bound
+	// because [SetWorldNeighbors] runs after this handler is constructed.
+	faceEdges faceEdgeReader
+	// viewConditions returns the compiler behind a traverse step's
+	// `condition:`. A closure because SetViewConditions runs after this
+	// handler is constructed. Nil: a view with a traverse condition fails.
+	viewConditions func() ViewConditionFunc
+	// leases fills the entry's `_lease`. Nil until [SetLeases] installs it,
+	// and nil means leases are not wired.
+	leases *leasesHandler
+	// rollups adds the roll-up properties (TKT-6I2OPG) of the entry and of
+	// every section row.
+	rollups rollupSource
 }
 
 // currentACL resolves the active ACL, or nil when the handler was constructed
@@ -107,6 +113,8 @@ func (h *viewsHandler) sidePanelEntry(
 }
 
 // handleV1SidePanel handles GET /api/v1/_sidepanel/{formId}/{entityId}.
+//
+//archplan:auth=required
 func (h *viewsHandler) handleV1SidePanel(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		writeV1Error(w, r, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed", "")
@@ -226,6 +234,8 @@ func (h *viewsHandler) handleV1SidePanel(w http.ResponseWriter, r *http.Request)
 // With `spaces:` configured, `?space=<id>` picks the space whose navigation
 // and Create menu are served (resolveSpace). Without it the response is the
 // top-level navigation and carries no space fields.
+//
+//archplan:auth=required
 func (h *viewsHandler) handleV1Sidebar(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		writeV1Error(w, r, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed", "")
@@ -537,7 +547,7 @@ func sidebarPages(
 }
 
 // pageTabView returns the kind of view a tab shows and the id of that view
-// ("" for the dashboard). The kinds are the SPA's route names for the
+// ("" for the default dashboard, the name for a named one). The kinds are the SPA's route names for the
 // standalone views.
 func pageTabView(tab dataentryconfig.PageTab) (kind, target string) {
 	switch {
@@ -552,7 +562,7 @@ func pageTabView(tab dataentryconfig.PageTab) (kind, target string) {
 	case tab.Document != "":
 		return "document", tab.Document
 	default:
-		return "dashboard", ""
+		return "dashboard", tab.Dashboard.Name()
 	}
 }
 
@@ -602,73 +612,10 @@ func sidebarItemFor(
 // deliberately (root CLAUDE.md, "The configuration is not a secret; the data
 // is"). The goal is only to keep things a user cannot act on out of their way.
 //
-// Policy, keyed on the configured ACL implementation, mirroring
-// authorizeCommand (DEC-EIHQSU):
-//
-//   - No `permission:` → show. The overwhelmingly common case, short-circuited
-//     before any ACL work so an unconfigured menu costs nothing.
-//   - [acl.NopACL] and [acl.ReadOnlyACL] → show. NEITHER carries a policy, so
-//     there is no permission model to consult and no principal who could be
-//     shown to hold anything: "no policy configured ⇒ no restrictions", the
-//     same posture the read gate takes. See the read-only note below.
-//   - [*acl.Declarative] → the principal must hold the permission.
-//   - anything else → hide.
-//
-// Read-only deserves its own paragraph, because the obvious arm is wrong in
-// two different ways and this predicate is a copy target.
-//
-// It is tempting to mirror authorizeCommand, which denies everything under
-// ReadOnlyACL. That is right for commands — they SHELL OUT, a write-shaped act
-// — but [acl.ReadOnlyACL] only implements AuthorizeWrite; it restricts no
-// reads whatsoever. The gated elements are overwhelmingly read surfaces (list,
-// kanban, dashboard, search, dashboard cards), and hiding them would remove
-// things an observe-only principal can use perfectly well. It would also hide
-// them from EVERYONE, since ReadOnlyACL has no identity to check — so
-// `permission:` would silently
-// change meaning from "hide from non-holders" to "hide from all" based on a
-// process-wide flag about writes. An operator in post-incident forensic mode
-// (a documented ReadOnlyACL use case) would lose exactly the audit-log entry
-// they came for.
-//
-// The hazard the deny arm was reaching for is real but belongs elsewhere: under
-// ReadOnlyACL no middleware attaches a read gate, so readGateFromContext hands
-// back nopReadGate, whose HoldsPermission returns true unconditionally
-// (RR-CWWJGW). Falling THROUGH to the gate would therefore show gated entries
-// while looking like it had checked something. The explicit arm above is what
-// prevents that: the answer is the same, but it is reached deliberately rather
-// than by an accident that would keep working if the gate's behavior changed.
-//
-// The switch is closed by construction: an ACL implementation nobody taught
-// this function about hides gated entries rather than showing them. Both value
-// and face forms of the nop/read-only types are matched, because their
-// AuthorizeWrite has a value receiver — matching only the value form would
-// drop a `&acl.ReadOnlyACL{}` into the default arm.
+// The decision per ACL mode, including why read-only shows gated elements, is
+// [access.Mode.PermitsGatedUIElement].
 func permitsGatedUIElement(ctx context.Context, aclImpl acl.ACL, permission string) bool {
-	if permission == "" {
-		return true
-	}
-	// A nil ACL means the handler was wired without one. Hide, for the same
-	// fail-closed reason authorizeCommand denies.
-	if aclImpl == nil {
-		return false
-	}
-
-	switch a := aclImpl.(type) {
-	// Grouped deliberately: both mean "no policy is configured", so neither
-	// can answer whether a principal holds a permission. See the read-only
-	// paragraph above before splitting these apart.
-	case acl.NopACL, *acl.NopACL, acl.ReadOnlyACL, *acl.ReadOnlyACL:
-		return true
-
-	case *acl.Declarative:
-		if a == nil {
-			return false // misconfigured policy must not fail open
-		}
-		return readGateFromContext(ctx).HoldsPermission(ctx, permission)
-
-	default:
-		return false
-	}
+	return access.ModeOf(aclImpl).PermitsGatedUIElement(ctx, readGateFromContext(ctx), permission)
 }
 
 // setNavStatusKey names an entry that declares `status:` rules, so the SPA
@@ -784,8 +731,11 @@ func navEntryToSidebarItem(entry dataentryconfig.NavigationEntry, meta *metamode
 	case entry.Gantt != "":
 		item.Href = "/gantt/" + entry.Gantt
 		item.Icon = derived.Gantt
-	case entry.Dashboard:
+	case entry.Dashboard.IsDefault():
 		item.Href = "/"
+		item.Icon = derived.Dashboard
+	case entry.Dashboard.IsSet():
+		item.Href = "/dashboard/" + entry.Dashboard.Name()
 		item.Icon = derived.Dashboard
 	case entry.Search:
 		item.Href = "/search"
@@ -811,6 +761,13 @@ func navEntryToSidebarItem(entry dataentryconfig.NavigationEntry, meta *metamode
 			Sort:       dataentryconfig.SortParam(dataentryconfig.EffectiveNavSort(entry, meta)),
 		}
 		item.Icon = derived.Entity
+	case entry.Pile != "":
+		// Href stays empty — the SPA opens the pile in the flyout.
+		item.Pile = entry.Pile
+		item.Icon = derived.Pile
+		if item.Label == "" {
+			item.Label = entry.Pile
+		}
 	case entry.Action != "":
 		item.Action = entry.Action
 		// Href stays empty — frontend renders this as a button.
@@ -857,7 +814,7 @@ func navEntryToSidebarItem(entry dataentryconfig.NavigationEntry, meta *metamode
 // metamodel (see buildDefaultViewConfig) and executed through the same
 // pipeline so the response shape is identical.
 //
-//nolint:gocognit,funlen // routes the views sub-API over method and path shape; each branch is a distinct view endpoint, not shared logic to factor out.
+//archplan:auth=required
 func (h *viewsHandler) handleV1Views(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		writeV1Error(w, r, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed", "")
@@ -950,6 +907,11 @@ func (h *viewsHandler) handleV1Views(w http.ResponseWriter, r *http.Request) {
 	// an ungated link-existing affordance the view path must not carry.
 	h.resolveSectionCreate(r.Context(), viewCfg, sections, result.Entry)
 
+	// After resolveSectionCreate, which indexes sections in step with the
+	// view config. Before ownerRows and the header create menu, so a hidden
+	// section contributes nothing.
+	sections = omitHiddenEmpty(sections)
+
 	// Build response
 	entityDef := s.Meta.Entities[result.Entry.Type]
 	plural := entityDef.GetPlural(result.Entry.Type)
@@ -966,7 +928,7 @@ func (h *viewsHandler) handleV1Views(w http.ResponseWriter, r *http.Request) {
 	//
 	// One face-scoped read answers both: the entry knows its own face, so
 	// its edges are well-defined whether or not a world was named.
-	entryRels, werr := h.faceEdges(r.Context(), result.Entry)
+	entryRels, werr := h.faceEdges.edges(r.Context(), result.Entry)
 	if werr != nil {
 		// A neighbor-resolution fault is an infrastructure failure, not an
 		// empty link set — the same posture the entity GET takes (RR-4TFZNL).
@@ -985,6 +947,9 @@ func (h *viewsHandler) handleV1Views(w http.ResponseWriter, r *http.Request) {
 		Create:   sectionCreateMenuToV1(headerCreateMenu(sections)),
 	}
 	resp.Entry.Owner = owner[result.Entry.ID]
+	// The serializer strips every roll-up name; the entry's computed values
+	// ride on result.Entry (executeViewBodies).
+	copyRollups(h.schema().Meta, result.Entry, resp.Entry.Properties)
 	// The entity page autosaves the entry's body and properties, so the
 	// entry carries their version tokens (TKT-2VDVHF). It has no relations
 	// token: the entry is serialized without the face-scoped neighbor filter
@@ -992,98 +957,19 @@ func (h *viewsHandler) handleV1Views(w http.ResponseWriter, r *http.Request) {
 	// relations.
 	resp.Entry.Versions = fieldVersionsOf(&resp.Entry, h.schema().Meta)
 	resp.Entry.Versions.Relations = ""
+	// The advisory lease on the entry, after the version tokens so it moves
+	// none of them. Only the entry gets one: it is the entity the row gate
+	// above admitted, and the page shows its claim badge. Section rows do
+	// not.
+	resp.Entry.Lease = h.leases.entityLease(r.Context(), result.Entry.ID)
 
 	for _, sec := range sections {
-		v1Sec := v1.ViewSection{
-			Heading:      sec.Heading,
-			SectionID:    sec.SectionID,
-			Display:      sec.Display,
-			IsEmpty:      sec.IsEmpty,
-			EmptyMessage: sec.EmptyMessage,
-			IsGrouped:    sec.IsGrouped,
-			Content:      sec.Content,
-			HasContent:   sec.HasContent,
-			// Already wire-shaped; nil for a section not in relation order.
-			RelationOrder: sec.RelationOrder,
-		}
-
-		// The opt-in create affordance. Nil for every section that did not
-		// declare `create:`, which keeps the response byte-identical there.
-		v1Sec.Create = sectionCreateToV1(sec.CreateInfo)
-
-		// Convert fields
-		for _, f := range sec.Fields {
-			v1Sec.Fields = append(v1Sec.Fields, v1.SectionField(f))
-		}
-
-		// Convert entities
-		for _, e := range sec.Entities {
-			v1e := sectionEntityToV1(e)
-			if sec.Display == dataentryconfig.DisplayRelated {
-				v1e.Owner = owner[e.ID]
-			}
-			v1Sec.Entities = append(v1Sec.Entities, v1e)
-		}
-
-		// Convert columns
-		for _, col := range sec.Columns {
-			v1Sec.Columns = append(v1Sec.Columns, v1.ViewColumn{
-				Property: col.Property,
-				Label:    col.Label,
-				Relation: col.Relation,
-				Link:     col.Link,
-			})
-		}
-
-		// Convert rows
-		for _, row := range sec.Rows {
-			v1Row := v1.ViewRow{
-				EntityID:   row.EntityID,
-				EntityType: row.EntityType,
-				EditFormID: row.EditFormID,
-				Content:    row.Content,
-				Self:       row.Self,
-			}
-			for _, cell := range row.Cells {
-				v1Row.Cells = append(v1Row.Cells, v1.ViewCell(cell))
-			}
-			v1Sec.Rows = append(v1Sec.Rows, v1Row)
-		}
-
-		// Convert groups
-		for _, grp := range sec.Groups {
-			v1Grp := v1.ViewGroup{
-				GroupName: grp.GroupName,
-			}
-			for _, row := range grp.Rows {
-				v1Row := v1.ViewRow{
-					EntityID:   row.EntityID,
-					EntityType: row.EntityType,
-					EditFormID: row.EditFormID,
-					Content:    row.Content,
-				}
-				for _, cell := range row.Cells {
-					v1Row.Cells = append(v1Row.Cells, v1.ViewCell(cell))
-				}
-				v1Grp.Rows = append(v1Grp.Rows, v1Row)
-			}
-			for _, e := range grp.Entities {
-				v1Grp.Entities = append(v1Grp.Entities, sectionEntityToV1(e))
-			}
-			v1Sec.Groups = append(v1Sec.Groups, v1Grp)
-		}
-
-		// Convert the nested tree
-		v1Sec.Truncated = sec.Truncated
-		for _, node := range sec.Tree {
-			v1Sec.Tree = append(v1Sec.Tree, sectionTreeNodeToV1(node))
-		}
-
-		resp.Sections = append(resp.Sections, v1Sec)
+		resp.Sections = append(resp.Sections, viewSectionToV1(sec, owner))
 	}
 
 	resp.Mentions = collectMentions(
-		r.Context(), h.store, h.viewReader, s.Meta, viewContentBlobs(result.Entry, sections)...)
+		r.Context(), h.viewReader, s.Meta, viewContentBlobs(result.Entry, sections)...)
+	resp.HideMentionedByPanel = hideMentionedByPanel(s.Cfg, viewCfg)
 
 	writeV1JSON(w, http.StatusOK, resp)
 }
@@ -1103,6 +989,121 @@ func ownerRows(entry *entityPkg.Entity, sections []SectionData) []*entityPkg.Ent
 		}
 	}
 	return rows
+}
+
+// viewSectionToV1 converts one built section to its wire form. owner holds
+// the resolved owners of the rows of `related` sections (see [ownerRows]).
+func viewSectionToV1(sec SectionData, owner map[string]*v1.EntityOwner) v1.ViewSection {
+	v1Sec := v1.ViewSection{
+		Heading:      sec.Heading,
+		SectionID:    sec.SectionID,
+		Display:      sec.Display,
+		IsEmpty:      sec.IsEmpty,
+		EmptyMessage: sec.EmptyMessage,
+		IsGrouped:    sec.IsGrouped,
+		Content:      sec.Content,
+		HasContent:   sec.HasContent,
+		// Already wire-shaped; nil for a section not in relation order.
+		RelationOrder: sec.RelationOrder,
+	}
+
+	// The opt-in create affordance. Nil for every section that did not
+	// declare `create:`, which keeps the response byte-identical there.
+	v1Sec.Create = sectionCreateToV1(sec.CreateInfo)
+
+	// Convert fields
+	for _, f := range sec.Fields {
+		v1Sec.Fields = append(v1Sec.Fields, v1.SectionField(f))
+	}
+
+	// Convert entities
+	for _, e := range sec.Entities {
+		v1e := sectionEntityToV1(e)
+		if sec.Display == dataentryconfig.DisplayRelated {
+			v1e.Owner = owner[e.ID]
+		}
+		v1Sec.Entities = append(v1Sec.Entities, v1e)
+	}
+
+	v1Sec.Columns = viewColumnsToV1(sec.Columns)
+	for _, row := range sec.Rows {
+		v1Sec.Rows = append(v1Sec.Rows, viewRowToV1(row))
+	}
+
+	// Convert groups
+	for _, grp := range sec.Groups {
+		v1Grp := v1.ViewGroup{
+			GroupName:  grp.GroupName,
+			EntityType: grp.EntityType,
+			Columns:    viewColumnsToV1(grp.Columns),
+		}
+		for _, row := range grp.Rows {
+			v1Grp.Rows = append(v1Grp.Rows, viewRowToV1(row))
+		}
+		for _, e := range grp.Entities {
+			v1Grp.Entities = append(v1Grp.Entities, sectionEntityToV1(e))
+		}
+		v1Sec.Groups = append(v1Sec.Groups, v1Grp)
+	}
+
+	// Convert the nested tree
+	v1Sec.Truncated = sec.Truncated
+	v1Sec.Incomplete = sec.Incomplete
+	for _, node := range sec.Tree {
+		v1Sec.Tree = append(v1Sec.Tree, sectionTreeNodeToV1(node))
+	}
+
+	return v1Sec
+}
+
+// viewColumnsToV1 converts section columns to their wire form. Nil in,
+// nil out, so a section without columns omits the key.
+func viewColumnsToV1(cols []ListColumn) []v1.ViewColumn {
+	if cols == nil {
+		return nil
+	}
+	out := make([]v1.ViewColumn, 0, len(cols))
+	for _, col := range cols {
+		out = append(out, v1.ViewColumn{
+			Property: col.Property,
+			Label:    col.Label,
+			Relation: col.Relation,
+			Link:     col.Link,
+		})
+	}
+	return out
+}
+
+// viewRowToV1 converts one table row. Flat and grouped rows share it, so a
+// grouped row carries `_self` too (a faced row needs it for edit links).
+func viewRowToV1(row SectionRowData) v1.ViewRow {
+	v1Row := v1.ViewRow{
+		EntityID:   row.EntityID,
+		EntityType: row.EntityType,
+		EditFormID: row.EditFormID,
+		Content:    row.Content,
+		Self:       row.Self,
+	}
+	for _, cell := range row.Cells {
+		v1Row.Cells = append(v1Row.Cells, v1.ViewCell(cell))
+	}
+	return v1Row
+}
+
+// hideMentionedByPanel reports whether the entity page leaves out the
+// built-in "Mentioned by" panel for an entry of view's type (TKT-HF0D5W).
+func hideMentionedByPanel(cfg *Config, view ViewConfig) bool {
+	if cfg != nil {
+		if ev, ok := cfg.EntityViews[view.Entry.Type]; ok && ev.MentionedByPanel != nil && !*ev.MentionedByPanel {
+			return true
+		}
+	}
+	for _, t := range view.Traverse {
+		if t.MentionedBy {
+			return true
+		}
+	}
+	return false
 }
 
 // viewContentBlobs gathers every markdown body that will be rendered by
@@ -1208,17 +1209,22 @@ func (h *viewsHandler) inlineCreateForms(ctx context.Context) map[string]string 
 // createAuthorizer returns whether the principal may create an entity of a
 // type.
 //
-// The middleware attaches a per-request scope; fall back to the unscoped
-// path when one is absent (tests and any non-HTTP caller), which is
-// correct-but-slower rather than a different answer.
+// Under a declarative policy it looks up the Request the middleware attached
+// once and asks it per type. Otherwise, or when no usable Request is attached,
+// it asks the ACL itself; a declarative ACL then fails closed, because
+// [acl.Declarative.AuthorizeWrite] denies a ctx without a Request.
 func (h *viewsHandler) createAuthorizer(ctx context.Context) func(entityType string) bool {
-	scope := acl.FromContext(ctx)
+	a := h.currentACL()
+	var scope *acl.Request
+	if d, ok := a.(*acl.Declarative); ok && d != nil {
+		scope, _ = d.RequestFrom(ctx)
+	}
 	return func(entityType string) bool {
 		req := translateVerb("create", entityType, "", "")
 		if scope != nil {
 			return scope.AuthorizeWrite(ctx, req).Allow
 		}
-		return h.currentACL().AuthorizeWrite(ctx, req).Allow
+		return a.AuthorizeWrite(ctx, req).Allow
 	}
 }
 
@@ -1396,13 +1402,22 @@ type idResolver interface {
 // a readable face. Otherwise the world picks the row first and the gate
 // checks that row's face.
 func (h *viewsHandler) visibleTitles(ctx context.Context, svc Services, ids []string) map[string]string {
-	if r, ok := h.viewReader.(idResolver); ok {
-		served := r.ResolveIDs(ctx, worldFromContext(ctx).visibility(), ids)
-		titles := make(map[string]string, len(served))
-		for id, hd := range served {
-			titles[id] = svc.Meta.DisplayTitle(hd.ID, hd.Type, hd.Properties)
-		}
-		return titles
+	served := visibleHeaders(ctx, h.viewReader, svc, ids)
+	titles := make(map[string]string, len(served))
+	for id, hd := range served {
+		titles[id] = svc.Meta.DisplayTitle(hd.ID, hd.Type, hd.Properties)
+	}
+	return titles
+}
+
+// visibleHeaders is [viewsHandler.visibleTitles] returning the redacted
+// headers, read through vr, for a caller that needs more of the target than
+// its title.
+func visibleHeaders(
+	ctx context.Context, vr visibility.Reader, svc Services, ids []string,
+) map[string]store.EntityHeader {
+	if r, ok := vr.(idResolver); ok {
+		return r.ResolveIDs(ctx, worldFromContext(ctx).visibility(), ids)
 	}
 	sel := store.InWorld(worldScopeFrom(ctx))
 	var headers []store.EntityHeader
@@ -1410,12 +1425,12 @@ func (h *viewsHandler) visibleTitles(ctx context.Context, svc Services, ids []st
 		if err != nil {
 			slog.Warn("dataentry: view section relation titles dropped; header read failed",
 				"targets", len(ids), "err", err)
-			return map[string]string{}
+			return map[string]store.EntityHeader{}
 		}
 		headers = append(headers, hd)
 	}
 	var visible []store.EntityHeader
-	if hf, ok := h.viewReader.(visibility.HeaderFilterer); ok {
+	if hf, ok := vr.(visibility.HeaderFilterer); ok {
 		visible = hf.FilterHeaders(ctx, headers)
 	} else {
 		// No header capability: gate the same batch as whole entities.
@@ -1424,17 +1439,17 @@ func (h *viewsHandler) visibleTitles(ctx context.Context, svc Services, ids []st
 			if err != nil {
 				slog.Warn("dataentry: view section relation titles dropped; entity read failed",
 					"targets", len(ids), "err", err)
-				return map[string]string{}
+				return map[string]store.EntityHeader{}
 			}
 			ents = append(ents, e)
 		}
-		for _, e := range h.viewReader.Filter(ctx, ents) {
+		for _, e := range vr.Filter(ctx, ents) {
 			visible = append(visible, store.HeaderOf(e))
 		}
 	}
-	titles := make(map[string]string, len(visible))
+	out := make(map[string]store.EntityHeader, len(visible))
 	for _, hd := range visible {
-		titles[hd.ID] = svc.Meta.DisplayTitle(hd.ID, hd.Type, hd.Properties)
+		out[hd.ID] = hd
 	}
-	return titles
+	return out
 }

@@ -51,7 +51,7 @@ func TestACLSearch_TypeLevelGrant(t *testing.T) {
 		Roles:       map[string]acl.RoleDef{"viewer": {Read: []string{"ticket"}}},
 		Assignments: map[string]string{"alice": "viewer"},
 	}, app.store)
-	app.acl = d
+	setTestACL(t, app, d)
 
 	resp, rec := searchAs(aliceCtx(), t, app, d, "alpha")
 	if rec.Code != http.StatusOK {
@@ -97,7 +97,7 @@ func TestACLSearch_RoleRelationInheritance(t *testing.T) {
 		},
 		InheritRolesThrough: []string{"belongs-to"},
 	}, app.store)
-	app.acl = d
+	setTestACL(t, app, d)
 
 	resp, rec := searchAs(aliceCtx(), t, app, d, "alpha")
 	if rec.Code != http.StatusOK {
@@ -131,7 +131,7 @@ func TestACLSearch_VisibleHitRelatedToHidden(t *testing.T) {
 		Roles:       map[string]acl.RoleDef{"viewer": {Read: []string{"ticket"}}},
 		Assignments: map[string]string{"alice": "viewer"},
 	}, app.store)
-	app.acl = d
+	setTestACL(t, app, d)
 
 	resp, rec := searchAs(aliceCtx(), t, app, d, "alpha")
 	if rec.Code != http.StatusOK {
@@ -163,7 +163,7 @@ func TestACLSearch_DenyAllShortCircuit(t *testing.T) {
 		Roles:       map[string]acl.RoleDef{"viewer": {Read: []string{"ticket"}}},
 		Assignments: map[string]string{"alice": "viewer"},
 	}, app.store)
-	app.acl = d
+	setTestACL(t, app, d)
 
 	// bob: no roles → empty scope → short-circuit before the backend.
 	_, rec := searchAs(principalCtx("bob"), t, app, d, "anything")
@@ -234,7 +234,7 @@ func aclSearchQueryVerdictWorld(t *testing.T, app *App) *acl.Declarative {
 		},
 		InheritRolesThrough: []string{"belongs-to"},
 	}, app.store)
-	app.acl = d
+	setTestACL(t, app, d)
 	return d
 }
 
@@ -283,7 +283,8 @@ func TestACLSearch_ScopeErrorMapping(t *testing.T) {
 // TestACLSearch_CanceledScopeStaysSilent pins the AC7b cancel branch:
 // a context.Canceled surfacing through the visibility pipeline writes
 // NO response body on /_position?scope=search (client is gone — same
-// behavior readableSubset had before it was retired).
+// behavior readableSubset had before it was retired). The request context
+// is canceled too: it, not the error, decides (TKT-T2I7P2).
 func TestACLSearch_CanceledScopeStaysSilent(t *testing.T) {
 	app := newTestAppV1(t)
 	d := aclSearchQueryVerdictWorld(t, app)
@@ -298,7 +299,9 @@ func TestACLSearch_CanceledScopeStaysSilent(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet,
 		positionURL(t, "TKT-001", ScopeDescriptor{Source: "search", Q: "alpha"}), http.NoBody)
-	req = req.WithContext(gateCtxFor(aliceCtx(), t, d))
+	ctx, cancel := context.WithCancel(gateCtxFor(aliceCtx(), t, d))
+	cancel()
+	req = req.WithContext(ctx)
 	rec := httptest.NewRecorder()
 	app.handleV1EntityPosition(rec, req)
 

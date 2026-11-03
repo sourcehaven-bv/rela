@@ -137,7 +137,9 @@ type Claims struct {
 
 // VerifiedFrom constructs a Principal carrying claims from a verified identity
 // assertion. Callers MUST have validated the assertion's signature before
-// calling this — see the type doc for why that is load-bearing.
+// calling this — see the type doc for why that is load-bearing. The one
+// exception is an identity rela mints itself from no request input, such as
+// [Webhook].
 //
 // Slice claims are defensively copied so a later mutation of the caller's slice
 // cannot retroactively change an authorization decision.
@@ -225,7 +227,30 @@ func (p Principal) Roles() []string {
 // [Principal.Roles] it can only ever REMOVE capability, never add it, so an
 // unrecognized value is not a security event: no baseline matches and the
 // principal keeps exactly its acting user's grants.
-func (p Principal) PrincipalType() string { return p.principalType }
+//
+// A user named `system:webhook:<id>` is always of type [TypeWebhook], whatever
+// the claims say. The name is the identity of a declarative webhook, and every
+// path that acts as it must meet the same ceiling: the delivery itself, a
+// scheduler `run_as`, and the `rela acl` reports that build the principal from
+// its name. Deriving the type here means none of them can forget to stamp it.
+// The override only ever narrows, because a type selects a baseline and a
+// baseline only removes capability.
+func (p Principal) PrincipalType() string {
+	if IsWebhookUser(p.User) {
+		return TypeWebhook
+	}
+	return p.principalType
+}
+
+// IsWebhookUser reports whether user names a declarative webhook delivery,
+// `system:webhook:<id>` with a non-empty id.
+func IsWebhookUser(user string) bool {
+	id, ok := strings.CutPrefix(user, webhookUserPrefix)
+	return ok && id != ""
+}
+
+// webhookUserPrefix is the [Principal.User] prefix of a webhook delivery.
+const webhookUserPrefix = ReservedPrefix + "webhook:"
 
 // Scopes returns the verified `scope` claim, split on whitespace. Empty for
 // every non-assertion entry point.
@@ -412,7 +437,36 @@ const (
 	// script (TKT-2Q4UFI); paired with [UserAutomation] unless the action
 	// declares `run_as`.
 	ToolAutomationJob = "automation-job"
+	// ToolRealtime attributes the channel writes of the realtime background
+	// worker: automatic close and archive, and the retention purge. Paired
+	// with [UserRealtime].
+	ToolRealtime = "realtime"
 )
+
+// TypeWebhook is the [Principal.PrincipalType] of a declarative webhook
+// delivery (`POST /hooks/<id>`). An acl.yaml baseline with
+// `applies_to: [webhook]` caps every hook; a policy without one leaves the
+// hooks as they were, because a type no baseline matches is unrestricted.
+//
+// One type for every hook, not one per hook: the hook identity
+// (`system:webhook:<id>`) already lets acl.yaml give each hook its own role,
+// and `applies_to` sets must be disjoint, so per-hook types would need one
+// baseline per hook to say what one baseline says now.
+const TypeWebhook = "webhook"
+
+// Webhook returns the principal a declarative webhook delivery runs as:
+// `system:webhook:<hookID>`, tool [ToolWebhookReceiver], principal type
+// [TypeWebhook].
+//
+// [Principal.PrincipalType] derives the type from the name, so the explicit
+// claim here changes no decision. It is set so that the audit log, which
+// records the claim, shows the type too. [VerifiedFrom] is used although no
+// assertion was verified: rela builds this identity itself and no request
+// input reaches it.
+func Webhook(hookID string) Principal {
+	return VerifiedFrom(webhookUserPrefix+hookID, ToolWebhookReceiver,
+		Claims{PrincipalType: TypeWebhook})
+}
 
 // UserScheduler is the default [Principal.User] for scheduled tasks that
 // declare no `run_as` — a FIXED identity, deliberately not the OS user.
@@ -454,6 +508,75 @@ const UserProvisioner = "system:provisioner"
 // action names another identity with `run_as`.
 const UserAutomation = "system:automation"
 
+// UserRealtime is the fixed [Principal.User] of the realtime background
+// worker. Its writes go to the channel store and its audit trail, not to the
+// graph, so it needs no role in acl.yaml. Paired with [ToolRealtime].
+const UserRealtime = "system:realtime"
+
+// UserMail is the [Principal.User] of the mail send script: the identity a
+// delivery's audit names when rela, not a person, sent the message.
+const UserMail = "system:mail"
+
+// UserFSImport is the [Principal.User] that `rela db import-fs` credits the
+// rows it copies to when the source names no editor.
+const UserFSImport = "system:fs-import"
+
+// UserGCSweep is the [Principal.User] of the data GC sweep, which deletes
+// rows no migration owns any more.
+const UserGCSweep = "system:gc-sweep"
+
+// UserPerfSeed is the [Principal.User] of `rela dev seed`, so the generated
+// rows can be found and removed.
+const UserPerfSeed = "system:perf-seed"
+
+// SubscriptionUserPrefix is the [Principal.User] prefix of a scheduled
+// subscription run, `system:subscription:<name>`.
+const SubscriptionUserPrefix = ReservedPrefix + "subscription:"
+
+// relaUsers are rela's own identities, by exact name. A new one is declared
+// as a constant above and listed here, so [IsRelaIdentity] refuses it to
+// self-asserted callers from the start.
+var relaUsers = map[string]bool{
+	UserScheduler: true, UserProvisioner: true, UserAutomation: true, UserRealtime: true,
+	UserMail: true, UserFSImport: true, UserGCSweep: true, UserPerfSeed: true,
+}
+
+// relaUserPrefixes are the families of rela's own identities.
+var relaUserPrefixes = []string{webhookUserPrefix, SubscriptionUserPrefix}
+
+// IsRelaIdentity reports whether user is one of rela's own identities: a
+// name an in-process entry point acts as. Nothing a person or job asserts,
+// such as the local CLI's `--run-as`, may borrow one, because its writes
+// would then pass for rela's own.
+func IsRelaIdentity(user string) bool {
+	if relaUsers[user] {
+		return true
+	}
+	for _, p := range relaUserPrefixes {
+		if strings.HasPrefix(user, p) {
+			return true
+		}
+	}
+	return false
+}
+
+// ValidSystemName reports whether name may follow [ReservedPrefix] in a
+// self-asserted identity: one or more segments separated by ':', each in the
+// [ValidIntegrationName] grammar. Plain lowercase ASCII rules out invisible
+// format characters and look-alike letters, so a name cannot display as one
+// of rela's own while differing from it.
+func ValidSystemName(name string) bool {
+	if name == "" {
+		return false
+	}
+	for seg := range strings.SplitSeq(name, ":") {
+		if !ValidIntegrationName(seg) {
+			return false
+		}
+	}
+	return true
+}
+
 // ReservedPrefix namespaces the [Principal.User] values that only rela's own
 // in-process entry points may assert. [UserScheduler] and [UserProvisioner] are
 // its current members. [IntegrationPrefix] is the second reserved namespace.
@@ -479,10 +602,9 @@ const IntegrationPrefix = "integration:"
 // IsReserved reports whether user names an internal identity under
 // [ReservedPrefix] or [IntegrationPrefix].
 //
-// The comments service also refuses a reserved author, so neither a
-// `system:` job nor an `integration:` connector can write a comment. A
-// connector that needs to tell people something writes a property, such
-// as the Basecamp example's `sync_conflict`.
+// The comments service refuses a `system:` author. It accepts an
+// `integration:` one ([comments.ValidAuthor]), which only stdio `rela mcp
+// --run-as` can stamp, since request paths refuse the namespace.
 //
 // **Request-path entry points MUST reject a reserved user.** These names are
 // grantable in acl.yaml — the DEC-O59WM4 migration binds [UserScheduler] to a
@@ -551,6 +673,25 @@ var windowsReservedName = map[string]bool{
 	"lpt6": true, "lpt7": true, "lpt8": true, "lpt9": true,
 }
 
+// RunAsEnv is the environment variable behind the local CLI's `--run-as`
+// flag. It names a self-asserted identity, which only a local process may
+// use: see [RefuseRunAsEnv].
+const RunAsEnv = "RELA_RUN_AS"
+
+// RefuseRunAsEnv answers an error when [RunAsEnv] is set. rela-server and
+// rela-desktop call it at startup: they take identity from a verified login
+// or the desktop user, and an operator who exports RELA_RUN_AS for the CLI
+// must not believe the server now runs as that identity.
+//
+// Nil: not accepted; a nil lookup panics. The caller passes os.LookupEnv.
+func RefuseRunAsEnv(lookup func(string) (string, bool)) error {
+	if v, ok := lookup(RunAsEnv); ok && v != "" {
+		return fmt.Errorf("%s is set to %q; it applies to the local rela CLI only. "+
+			"Unset it to start the server", RunAsEnv, v)
+	}
+	return nil
+}
+
 // ValidateRunAs checks a `run_as` identity from operator-authored config.
 // The scheduler and background automation actions both call it, so the two
 // accept the same names.
@@ -580,6 +721,28 @@ func ValidateRunAs(runAs string, allowSystem func(string) bool) error {
 		return fmt.Errorf("invalid run_as %q: the %q identities are rela's own", runAs, ReservedPrefix)
 	}
 	return nil
+}
+
+// ValidJobIdentity checks that name is a job identity an operator may grant
+// and run work as: a `system:` name in the [ValidSystemName] grammar that is
+// not one of rela's own ([IsRelaIdentity]), or an `integration:` name in the
+// [ValidIntegrationName] grammar. A person's name and [Unknown] are refused,
+// so a job cannot write as a human. The local CLI's `--run-as` and a
+// realtime session's `run_as` both call it, so the two accept the same
+// names.
+//
+// The grammar check comes before the registry lookup, so the lookup compares
+// plain ASCII and a look-alike of a rela name cannot slip past it.
+func ValidJobIdentity(name string) error {
+	if !strings.HasPrefix(name, ReservedPrefix) && !strings.HasPrefix(name, IntegrationPrefix) {
+		return fmt.Errorf("%q is not a job identity; name a %q or %q identity", name, ReservedPrefix,
+			IntegrationPrefix)
+	}
+	if rest, ok := strings.CutPrefix(name, ReservedPrefix); ok && !ValidSystemName(rest) {
+		return fmt.Errorf("%q: a system: name is segments of lowercase letters, digits, '_' or '-', "+
+			"separated by ':'", name)
+	}
+	return ValidateRunAs(name, func(n string) bool { return !IsRelaIdentity(n) })
 }
 
 // trimReservedNoise strips the leading characters that carry no identity but

@@ -98,6 +98,17 @@ const (
 	// named permission, and a client ceiling never passes it on (see
 	// [permissionCeiling.permits]).
 	PermConfigEdit = "config:edit"
+
+	// PermGitSync permits committing the project's pending changes and
+	// pushing them to the git remote from the data-entry app. A sync commits
+	// every change in the working tree, not only the caller's own, so it is a
+	// project-wide capability rather than an entity verb.
+	PermGitSync = "git:sync"
+
+	// PermSettingsEdit permits saving the create-form defaults on the
+	// data-entry settings page. One set of defaults serves every principal,
+	// so changing it changes what everyone's new entities start with.
+	PermSettingsEdit = "settings:edit"
 )
 
 // mutatingCommentPerms are the comment permissions that require a covering
@@ -127,7 +138,7 @@ func BuiltinPermissions() []string {
 		PermCommentRead, PermCommentAdd,
 		PermCommentUpdateOwn, PermCommentUpdateAny,
 		PermCommentDeleteOwn, PermCommentDeleteAny,
-		PermConfigEdit,
+		PermConfigEdit, PermGitSync, PermSettingsEdit,
 	}
 }
 
@@ -338,8 +349,9 @@ func (p *Policy) PrincipalPropertyLookupEnabled() bool {
 // be silently inert (TKT-M60ZF5 / issue #1274):
 //
 //   - the mode is "reject";
-//   - a JWT gate is wired — reject keys on identity having come from the
-//     fail-closed gate, and without one every principal looks unverified;
+//   - verifiedIdentity is true: the caller wired a fail-closed identity gate
+//     (a JWT gate in the data-entry server). Reject keys on identity having
+//     come from that gate, and without one every principal looks unverified;
 //   - the principal_property lookup is enabled — with it disabled the resolver
 //     never attempts a match, so "unmatched" is not a thing that can be
 //     observed rather than something that is always true.
@@ -353,10 +365,10 @@ func (p *Policy) PrincipalPropertyLookupEnabled() bool {
 // Note LoadPolicy rejects "reject" without the lookup, but NewDeclarative does
 // NOT call Validate — so any construction path that skips LoadPolicy can hold a
 // policy in exactly that state. That is why this is checked rather than assumed.
-func (p *Policy) RejectEffective(jwtWired bool) bool {
+func (p *Policy) RejectEffective(verifiedIdentity bool) bool {
 	return p != nil &&
 		p.effectiveUnmatchedPrincipal() == UnmatchedReject &&
-		jwtWired &&
+		verifiedIdentity &&
 		p.principalPropertyLookupEnabled()
 }
 
@@ -449,12 +461,18 @@ func (p *Policy) MembershipSelfPromotionOpen() bool {
 //
 // Affordance grants (Fields / Visible / Options / Relations) drive
 // the data-entry _fields / _relations wire shape via the
-// affordances resolver. Each is keyed by entity type and is
-// opt-in per type: a type that appears as a key is closed-world for
-// that affordance dimension (only listed fields/options/relations
-// are granted); a type absent from the map defaults permissive.
-// A present-but-empty list (`fields: {ticket: []}`) is closed-world
-// deny-all for that type, distinct from an absent or null value.
+// affordances resolver. Each is keyed by entity type. Within one role a
+// type that appears as a key is closed-world for that dimension: only the
+// listed fields/options/relations are granted. A present-but-empty list
+// (`fields: {ticket: []}`) grants none, distinct from an absent or null
+// value.
+//
+// Across roles the grants are a union (BUG-Y5UF3K): a field or option is
+// allowed when any role that applies to the row allows it. A role with no
+// block for the type grants every field of it when it holds the
+// dimension's verb on the type (read for Visible, update or create for
+// Fields and Options), so adding a role never narrows what another role
+// grants. affordances.PolicyResolver.FieldVerdicts applies this.
 type RoleDef struct {
 	// Description is optional operator-facing prose describing what this
 	// role is for, in plain language. Like [Policy.Description] it is
@@ -466,6 +484,9 @@ type RoleDef struct {
 	Create []string `yaml:"create"`
 	Update []string `yaml:"update"`
 	Delete []string `yaml:"delete"`
+	// Convert is the dedicated type-conversion grant. Entries name source
+	// entity types; destination types remain bounded by schema conversions.
+	Convert []string `yaml:"convert"`
 
 	// Rename lists the types whose WHOLE FAMILY this role may rename. A
 	// rename re-keys every face of an entity, including faces the caller
@@ -518,7 +539,7 @@ type RoleDef struct {
 // Exported so the aclaudit linter shares this definition rather than
 // keeping its own copy; its A2/A3 checks reference the same notion.
 func (r RoleDef) IsPrivileged() bool {
-	return len(r.Create) > 0 || len(r.Update) > 0 || len(r.Delete) > 0 || len(r.Rename) > 0 ||
+	return len(r.Create) > 0 || len(r.Update) > 0 || len(r.Delete) > 0 || len(r.Rename) > 0 || len(r.Convert) > 0 ||
 		len(r.Permissions) > 0
 }
 
@@ -549,6 +570,8 @@ func grantsVerb(role RoleDef, op Op, target string) bool {
 	switch op {
 	case OpCreate:
 		list = role.Create
+	case OpConvert:
+		list = role.Convert
 	case OpUpdate, OpRename:
 		list = role.Update
 	case OpDelete:
@@ -832,16 +855,28 @@ func (p *Policy) relationPermissionFor(relType string, op Op) (string, bool) {
 	return g.permissionFor(op)
 }
 
-// HasAffordanceGrants reports whether any role in the policy declares
-// at least one of the affordance grant blocks (fields / visible /
-// options / relations). The resolver-selection logic in the entry
-// points uses this to decide between the policy-backed resolver and
-// the permissive default: a policy that only carries write/read
-// grants has no affordances to compute, so it falls through to the
-// Nop resolver and the wire stays byte-identical to no-policy.
+// HasAffordanceGrants reports whether the policy has any field-level
+// affordance to compute: a role that declares at least one of the
+// affordance grant blocks (fields / visible / options / relations), or a
+// client baseline that declares a field ceiling (visible / redact).
+//
+// The resolver-selection logic in the entry points uses this to decide
+// between the policy-backed resolver and the permissive default: a policy
+// that only carries write/read grants has no affordances to compute, so it
+// falls through to the Nop resolver and the wire stays byte-identical to
+// no-policy. A field ceiling counts because only the policy-backed resolver
+// applies it; leaving it out made a ceiling-only policy redact nothing
+// (BUG-KJ5D18). A type key with an empty list counts too, because the key
+// alone closes the type under `visible:`. A scope grant does not count: it
+// only re-opens what a baseline closed.
 func (p *Policy) HasAffordanceGrants() bool {
 	for _, role := range p.Roles {
 		if roleHasAffordanceGrants(role) {
+			return true
+		}
+	}
+	for _, b := range p.ClientBaselines {
+		if len(b.Visible) > 0 || len(b.Redact) > 0 {
 			return true
 		}
 	}
@@ -1208,7 +1243,7 @@ func (g RelationWriteGrant) validate(relType string) error {
 //
 //   - InheritRolesThrough entries must be non-empty and non-whitespace.
 //     A blank entry would expand ancestor sets through every relation
-//     type (StoreGraph treats RelationQuery.Type=="" as "all relations"),
+//     type (aclstore.Graph treats RelationQuery.Type=="" as "all relations"),
 //     silently turning a typo into a containment widening.
 //
 //   - RoleRelations keys must be non-empty and non-whitespace, for the
@@ -1271,7 +1306,7 @@ func (p *Policy) validateUnmatchedPrincipal() error {
 	}
 	// reject and provision key off the principal_property lookup: "unmatched"
 	// only has meaning when the resolver maps an identifier to a user entity.
-	// Without the lookup enabled, ResolvePrincipal returns no-match for EVERY
+	// Without the lookup enabled, IdentityResolver.ResolvePrincipal returns no-match for EVERY
 	// request, so every principal would look unmatched — a foot-gun that would
 	// reject (or provision for) everyone. Fail loud at load rather than mis-gate
 	// at runtime.
@@ -1390,7 +1425,7 @@ func validateVerbReadCoverage(name string, role RoleDef) error {
 	for _, verb := range []struct {
 		name  string
 		types []string
-	}{{"update", role.Update}, {"delete", role.Delete}, {"rename", role.Rename}} {
+	}{{"update", role.Update}, {"delete", role.Delete}, {"rename", role.Rename}, {"convert", role.Convert}} {
 		for _, t := range verb.types {
 			// Compare on the TYPE half. A state-shaped grant
 			// (`update: ["policy@draft"]`) still requires read coverage of

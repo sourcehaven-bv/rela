@@ -12,6 +12,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/Sourcehaven-BV/rela/internal/appbuild"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/piles"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
@@ -30,8 +31,9 @@ assignments:
   system:provisioner: admin
 `
 
-func systemCtx(user string) context.Context {
-	return principal.With(context.Background(), principal.Principal{User: user, Tool: principal.ToolScheduler})
+func systemCtx(tb testing.TB, svc *appbuild.Services, user string) context.Context {
+	tb.Helper()
+	return boundAs(tb, svc, principal.Principal{User: user, Tool: principal.ToolScheduler})
 }
 
 // A push to another user checks the owner through the PUSHER's read gate, so
@@ -67,19 +69,18 @@ relations: {}
 	defer svc.Close()
 	push := piles.PushRequest{Owner: "P-1", Pile: "Inbox", Create: true, Refs: []entity.Ref{{ID: "T-1"}}}
 
-	_, err = svc.Piles().Push(systemCtx(principal.UserScheduler), push)
+	_, err = svc.Piles().Push(systemCtx(t, svc, principal.UserScheduler), push)
 	require.ErrorIs(t, err, piles.ErrUnknownOwner, "the scheduler cannot read P-1, so to it P-1 does not exist")
 
 	missing := push
 	missing.Owner = "P-404"
-	_, err = svc.Piles().Push(systemCtx(principal.UserProvisioner), missing)
+	_, err = svc.Piles().Push(systemCtx(t, svc, principal.UserProvisioner), missing)
 	require.ErrorIs(t, err, piles.ErrUnknownOwner)
 
-	_, err = svc.Piles().Push(systemCtx(principal.UserProvisioner), push)
+	_, err = svc.Piles().Push(systemCtx(t, svc, principal.UserProvisioner), push)
 	require.NoError(t, err, "a pusher that can read P-1 may push to P-1")
 
-	owner := principal.With(context.Background(),
-		principal.Principal{User: "P-1", RawUser: "p1@example.com", Tool: principal.ToolCLI})
+	owner := boundAs(t, svc, principal.Principal{User: "P-1", RawUser: "p1@example.com", Tool: principal.ToolCLI})
 	got, err := svc.Piles().ByName(owner, "Inbox")
 	require.NoError(t, err)
 	require.Len(t, got.Items, 1)
@@ -138,10 +139,9 @@ automations:
 	svc, err := appbuildOnDisk(t, root)
 	require.NoError(t, err)
 	defer svc.Close()
-	admin := systemCtx(principal.UserProvisioner)
+	admin := systemCtx(t, svc, principal.UserProvisioner)
 	ownerCtx := func(id string) context.Context {
-		return principal.With(context.Background(),
-			principal.Principal{User: id, RawUser: "p1@example.com", Tool: principal.ToolCLI})
+		return boundAs(t, svc, principal.Principal{User: id, RawUser: "p1@example.com", Tool: principal.ToolCLI})
 	}
 	inbox := func(owner string) []entity.Ref {
 		t.Helper()

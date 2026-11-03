@@ -58,6 +58,10 @@ func (denyAllFieldGate) CheckFieldWrite(context.Context, *entity.Entity, map[str
 	return errors.New("field write denied")
 }
 
+func (denyAllFieldGate) CheckCreateFieldWrite(context.Context, *entity.Entity, map[string]any) error {
+	return errors.New("field write denied")
+}
+
 var alice = principal.Principal{User: "alice", Tool: principal.ToolCLI}
 
 func taggerCtx() context.Context {
@@ -251,6 +255,7 @@ func TestVersionTags_NoFieldWrite(t *testing.T) {
 	mgr, err := entitymanager.New(entitymanager.Deps{
 		Store: cs, Meta: parseMeta(t), Templater: nopTemplater{}, Audit: audit.Nop{},
 		ACL: acl.NopACL{}, Transitions: statemachine.EmptySet(), FieldGate: denyAllFieldGate{},
+		AnchorGuard: entitymanager.NopAnchorGuard{},
 	})
 	if err != nil {
 		t.Fatalf("entitymanager.New: %v", err)
@@ -408,6 +413,7 @@ func TestManager_TxCallbacksMarkContext(t *testing.T) {
 	mgr, err := entitymanager.New(entitymanager.Deps{
 		Store: cs, Meta: parseMeta(t), Templater: nopTemplater{}, Audit: audit.Nop{},
 		ACL: acl.NopACL{}, Transitions: statemachine.EmptySet(), FieldGate: entitymanager.AllowAllFieldGate{},
+		AnchorGuard: entitymanager.NopAnchorGuard{},
 	})
 	if err != nil {
 		t.Fatalf("entitymanager.New: %v", err)
@@ -629,5 +635,27 @@ func TestVersionTags_ExpectOnHiddenEntity(t *testing.T) {
 	}
 	if _, err := vt.TagCurrent(taggerCtx(), entity.Ref{ID: "DEC-001"}, mustTagName(t, "reviewed"), "tok", nil); err == nil {
 		t.Error("TagCurrent with expect and no view: want error")
+	}
+}
+
+// A tag write on a row the caller cannot read answers like one on a missing
+// row and records no denial (TKT-NXRFDU).
+func TestVersionTags_HiddenRowReadsAsMissing(t *testing.T) {
+	t.Parallel()
+	sink := audit.NewMemory()
+	mgr, cs := newManagerWithACL(t, hideOneACL{hidden: "DEC-001"}, sink)
+	seedEntity(t, cs, "decision", "A decision")
+	vt, err := entitymanager.NewVersionTags(mgr, &fakeTagger{}, &fakeTagGuard{})
+	if err != nil {
+		t.Fatalf("NewVersionTags: %v", err)
+	}
+	for _, id := range []string{"DEC-001", "DEC-404"} {
+		_, err := vt.TagVersion(taggerCtx(), entity.Ref{ID: id}, mustTagName(t, "reviewed"), 1)
+		if !errors.Is(err, entitymanager.ErrEntityNotFound) {
+			t.Errorf("TagVersion on %s = %v, want entity not found", id, err)
+		}
+	}
+	if n := countOps(sink.Records(), audit.OpDeniedWrite); n != 0 {
+		t.Errorf("denied-write rows = %d, want 0", n)
 	}
 }

@@ -130,6 +130,33 @@ describe('useScopeNavigation', () => {
       })
     })
 
+    // The page keeps one instance across entity switches, so a position
+    // asked for the entity the user left can answer after the one they
+    // moved to (TKT-7LTLHW3).
+    it.each([
+      ['an answer', (p: { resolve: (v: EntityPosition) => void }) =>
+        p.resolve({ prev: null, next: { id: 'TASK-002', type: 'task' }, current: 1, total: 3 })],
+      ['a failure', (p: { reject: (e: Error) => void }) => p.reject(new Error('not_in_scope'))],
+    ] as const)('ignores %s for the entity the page has left', async (_name, settle) => {
+      mockRouteQuery.value = { from: 'tasks' }
+      mockSchemaStore.getList.mockReturnValue({ entity: 'task', title: 'Tasks' })
+      let late!: { resolve: (v: EntityPosition) => void; reject: (e: Error) => void }
+      mockGetEntityPosition.mockImplementationOnce(
+        () => new Promise<EntityPosition>((resolve, reject) => (late = { resolve, reject }))
+      )
+      mockPositionForList(['TASK-001', 'TASK-002', 'TASK-003'])
+      let id = 'TASK-001'
+      const { scopeNav, loadScopeNav } = useScopeNavigation(() => id)
+
+      const left = loadScopeNav()
+      id = 'TASK-003'
+      await loadScopeNav()
+      settle(late as never)
+      await left
+
+      expect(scopeNav.value?.current).toBe(3)
+    })
+
     it('sets prev to null for first item', async () => {
       mockRouteQuery.value = { from: 'tasks' }
       mockSchemaStore.getList.mockReturnValue({ entity: 'task', title: 'Tasks' })

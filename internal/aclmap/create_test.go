@@ -4,6 +4,8 @@ import (
 	"context"
 	"testing"
 
+	"github.com/Sourcehaven-BV/rela/internal/acl/acltest"
+
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
 )
@@ -53,9 +55,9 @@ func TestCreate_MatchesRuntime(t *testing.T) {
 	ctx := context.Background()
 
 	for _, prin := range []string{"PERS-GLOBAL", "PERS-EDGE"} {
-		req, rErr := w.decl.ForPrincipal(principal.Principal{User: prin, Tool: principal.ToolCLI})
+		req, rErr := w.decl.ForIdentity(acltest.IdentityFor(t.Context(), t, w.decl, principal.Principal{User: prin, Tool: principal.ToolCLI}))
 		if rErr != nil {
-			t.Fatalf("ForPrincipal %s: %v", prin, rErr)
+			t.Fatalf("ForIdentity %s: %v", prin, rErr)
 		}
 		res, cErr := w.eng.Can(ctx, prin, acl.VerbCreate, "INC-A")
 		if cErr != nil {

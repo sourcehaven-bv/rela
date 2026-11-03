@@ -30,7 +30,7 @@ func TestValidateSpaces(t *testing.T) {
 			sp.Home = &NavigationEntry{List: "tickets"}
 			sp.Create = []string{"ticket", "category"}
 		}), nil, ""},
-		{"home is a dashboard", space(func(sp *Space) { sp.Home = &NavigationEntry{Dashboard: true} }), nil, ""},
+		{"home is a dashboard", space(func(sp *Space) { sp.Home = &NavigationEntry{Dashboard: DefaultDashboard} }), nil, ""},
 		{"missing id", space(func(sp *Space) { sp.ID = "" }), nil, "spaces[0]: id is required"},
 		{"id with uppercase", space(func(sp *Space) { sp.ID = "Crm" }), nil, `spaces[0]: invalid id "Crm"`},
 		{"id starting with a digit", space(func(sp *Space) { sp.ID = "1crm" }), nil, `spaces[0]: invalid id "1crm"`},
@@ -205,7 +205,7 @@ func TestNavStatusEntries_SpaceKeys(t *testing.T) {
 	status := []NavStatusRule{{Tone: "new", Label: "x"}}
 	cfg := &Config{Spaces: []Space{
 		{ID: "crm", Navigation: []NavigationEntry{
-			{Label: "Home", Dashboard: true},
+			{Label: "Home", Dashboard: DefaultDashboard},
 			{Label: "Top", List: "a", Status: status},
 			{Group: "Work", Items: []NavigationEntry{
 				{Label: "Plain", List: "b"},

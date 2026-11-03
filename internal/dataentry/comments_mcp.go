@@ -23,7 +23,7 @@ type MCPComments struct {
 // is the stored row's, read only when some face of the entity is readable,
 // so an unreadable entity and an absent one answer alike. An address the
 // route would refuse as a path is refused before any storage read.
-func (c MCPComments) address(ctx context.Context, address string) (commentAddress, *commentFailure) {
+func (c MCPComments) address(ctx context.Context, address string) (commentAddress, *opFailure) {
 	parsed, err := entity.ParseAddress(address)
 	if err != nil || !isSafeStateRefSegment(address) {
 		return commentAddress{}, failEntityNotFound()

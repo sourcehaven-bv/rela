@@ -35,6 +35,7 @@ func BenchmarkValidateCreate(b *testing.B) {
 		ACL:         acl.NopACL{},
 		Transitions: statemachine.EmptySet(),
 		FieldGate:   entitymanager.AllowAllFieldGate{},
+		AnchorGuard: entitymanager.NopAnchorGuard{},
 	})
 	if err != nil {
 		b.Fatal(err)
@@ -82,6 +83,7 @@ func TestValidateCreate_AllocCeiling(t *testing.T) {
 		ACL:         acl.NopACL{},
 		Transitions: statemachine.EmptySet(),
 		FieldGate:   entitymanager.AllowAllFieldGate{},
+		AnchorGuard: entitymanager.NopAnchorGuard{},
 	})
 	if err != nil {
 		t.Fatal(err)

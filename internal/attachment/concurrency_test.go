@@ -96,7 +96,7 @@ func TestService_ConcurrentAppendsRespectCap(t *testing.T) {
 	if err := f.st.CreateEntity(context.Background(), e); err != nil {
 		t.Fatalf("create entity: %v", err)
 	}
-	def := metamodel.PropertyDef{Type: metamodel.PropertyTypeFile, Max: 3}
+	def := metamodel.PropertyDef{Type: metamodel.PropertyTypeFile, Max: new(3)}
 
 	ok := 0
 	for i, err := range raceUploads(t, f, e, def, "gallery", 8) {

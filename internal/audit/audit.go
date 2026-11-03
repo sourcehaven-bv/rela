@@ -26,6 +26,7 @@ const (
 	OpUpdateEntity   = "update-entity"
 	OpDeleteEntity   = "delete-entity"
 	OpRenameEntity   = "rename-entity"
+	OpConvertEntity  = "convert-entity"
 	OpCreateRelation = "create-relation"
 	OpUpdateRelation = "update-relation"
 	OpDeleteRelation = "delete-relation"
@@ -138,6 +139,15 @@ const (
 	// entity; Summary is `tag="<name>"`. Isolate with
 	// `op == "version-untag"`.
 	OpUntagVersion = "version-untag"
+
+	// OpAttachRender records a rendered document or list attached to a file
+	// property by rela.attach_render (TKT-1TS55R). Subject names the entity;
+	// Summary carries the property, the stored file name, its SHA-256, size
+	// and what was rendered. The property write itself is recorded as usual
+	// by the entitymanager; this record is the one that ties the stored
+	// bytes to their source, and it is append-only, unlike the stored hash.
+	// Isolate with `op == "attach-render"`.
+	OpAttachRender = "attach-render"
 
 	// OpCopyState records one invocation of a declared COPY DEFINITION —
 	// a mapped write of one entity content state (face) into another
@@ -255,7 +265,11 @@ type Record struct {
 	After       *Subject            `json:"after,omitempty"`
 	Principal   principal.Principal `json:"principal"`
 	TriggeredBy string              `json:"triggered_by,omitempty"`
-	Summary     string              `json:"summary,omitempty"`
+	// AssertedBy is the OS user who asserted Principal with `--run-as`
+	// (see [WithAssertedBy]); empty for a principal that was not
+	// self-asserted.
+	AssertedBy string `json:"asserted_by,omitempty"`
+	Summary    string `json:"summary,omitempty"`
 }
 
 // Audit is the package's published sink shape — not a consumer-side

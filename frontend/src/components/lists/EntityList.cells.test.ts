@@ -289,7 +289,7 @@ describe('EntityList cell rendering via widgets', () => {
         properties: { a: 'v', b: '2026-01-01', c: 'x' },
       }))
     )
-    const spy = vi.spyOn(defaultRegistry, 'resolveFromHint')
+    const spy = vi.spyOn(defaultRegistry, 'resolveDense')
     const wrapper = await mountList()
     expect(wrapper.findAll('.rl-table-row').length).toBe(50)
     expect(spy).toHaveBeenCalledTimes(3)

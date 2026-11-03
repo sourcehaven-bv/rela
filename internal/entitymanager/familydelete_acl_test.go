@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
+	"github.com/Sourcehaven-BV/rela/internal/aclstore"
 	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
@@ -76,6 +77,10 @@ func (a *deniedFaceACL) AuthorizeWrite(ctx context.Context, req acl.WriteRequest
 	return d
 }
 
+// Declarative names the wrapped policy, so a test binds the request identity
+// against it (see entitymanager.BindAs).
+func (a *deniedFaceACL) Declarative() *acl.Declarative { return a.inner.(*acl.Declarative) }
+
 // PermitsReadFace forwards the read gate of the real policy, so the manager
 // finds the same optional capability it finds on [acl.Declarative].
 func (a *deniedFaceACL) PermitsReadFace(
@@ -108,7 +113,7 @@ func newFacedPolicyFixture(
 	if err != nil {
 		t.Fatalf("load policy: %v", err)
 	}
-	d, err := acl.NewDeclarative(p, acl.NewStoreGraph(st), st)
+	d, err := acl.NewDeclarative(p, aclstore.MustNewGraph(st), st)
 	if err != nil {
 		t.Fatalf("NewDeclarative: %v", err)
 	}
@@ -126,6 +131,7 @@ func newFacedPolicyFixture(
 		CopyReadGate:    entitymanager.AllowAllCopyReadGate{},
 		CopyVisibility:  allowAllCopyVisibility(t, st),
 		VersionRecorder: rec,
+		AnchorGuard:     anchorGuardOf(b),
 	})
 	if err != nil {
 		t.Fatalf("entitymanager.New: %v", err)
@@ -201,12 +207,12 @@ func (f familyDeleteFixture) assertLogMatchesStore(t *testing.T) {
 // single face anyFaceOf returned, which let a draft-only principal delete
 // the published face.
 func TestFamilyDelete_DeniedUnlessEveryFaceIsDeletable(t *testing.T) {
-	for _, b := range concBackends {
+	for _, b := range deleteACLBackends() {
 		for _, user := range []string{"drafter", "publisher"} {
 			t.Run(b.name+"/"+user, func(t *testing.T) {
 				f := newFamilyDeleteFixture(t, b, nil, bothFaces...)
 
-				_, err := f.mgr.DeleteEntity(asUser(user), "POL-1", false)
+				_, err := f.mgr.DeleteEntity(entitymanager.BindAs(asUser(user), t, f.mgr), "POL-1", false)
 
 				var forbidden *acl.ForbiddenError
 				if !errors.As(err, &forbidden) {
@@ -246,11 +252,11 @@ func TestFamilyDelete_DeniedUnlessEveryFaceIsDeletable(t *testing.T) {
 // With delete on every face, the family delete removes both faces and leaves
 // one version capture and one audit record per removed face.
 func TestFamilyDelete_EveryFaceCapturedAndAudited(t *testing.T) {
-	for _, b := range concBackends {
+	for _, b := range deleteACLBackends() {
 		t.Run(b.name, func(t *testing.T) {
 			f := newFamilyDeleteFixture(t, b, nil, bothFaces...)
 
-			res, err := f.mgr.DeleteEntity(asUser("admin"), "POL-1", false)
+			res, err := f.mgr.DeleteEntity(entitymanager.BindAs(asUser("admin"), t, f.mgr), "POL-1", false)
 			if err != nil {
 				t.Fatalf("DeleteEntity as admin: %v", err)
 			}
@@ -346,7 +352,7 @@ func (tx *faceInjectingTx) DeleteFamily(
 // before the family delete may stand. A backend that rolls back leaves
 // nothing to record; one that cannot records exactly what it removed.
 func TestFamilyDelete_FaceAddedDuringDeleteIsAuthorized(t *testing.T) {
-	for _, b := range concBackends {
+	for _, b := range deleteACLBackends() {
 		for _, tc := range []struct {
 			name string
 			at   injectAt
@@ -360,7 +366,7 @@ func TestFamilyDelete_FaceAddedDuringDeleteIsAuthorized(t *testing.T) {
 				}
 				f := newFamilyDeleteFixture(t, b, wrap, "draft")
 
-				_, err := f.mgr.DeleteEntity(asUser("drafter"), "POL-1", false)
+				_, err := f.mgr.DeleteEntity(entitymanager.BindAs(asUser("drafter"), t, f.mgr), "POL-1", false)
 
 				var forbidden *acl.ForbiddenError
 				if !errors.As(err, &forbidden) {

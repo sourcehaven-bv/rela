@@ -1,0 +1,9 @@
+request: GET /api/v1/tickets/TKT-1/_attachments/screenshot/shot.txt
+identity: signed assertion for stranger@example.test
+status: 200
+reads: GetRelation=1 GraphQueryHeaders=1 ListEntities=1 ListRelations=1
+breadth: ListEntities=1/1 ListRelations=0/1
+bodies: GraphQuery=0/1 ListEntities=1/1
+versions: 
+body:
+shot bytes

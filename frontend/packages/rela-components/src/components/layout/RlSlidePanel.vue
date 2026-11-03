@@ -15,6 +15,9 @@
 import { computed } from 'vue'
 import RlHeading from '../common/RlHeading.vue'
 import RlIconButton from '../common/RlIconButton.vue'
+import { useMessages } from '../../composables/useMessages'
+
+const messages = useMessages()
 
 const props = withDefaults(
   defineProps<{
@@ -65,7 +68,7 @@ const style = computed(() => ({ left: props.offset }))
       <RlIconButton
         v-if="closable"
         icon="x"
-        label="Close panel"
+        :label="messages.chromeText({ key: 'closePanel' })"
         class="rl-slide-panel__close"
         @click="emit('close')"
       />

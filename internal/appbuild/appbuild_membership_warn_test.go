@@ -1,12 +1,11 @@
 package appbuild_test
 
 import (
-	"bytes"
-	"io"
 	"log/slog"
 	"strings"
-	"sync"
 	"testing"
+
+	"github.com/Sourcehaven-BV/rela/internal/testutil/logtest"
 )
 
 // ungatedWarningFragment is the load-bearing fragment of the membership
@@ -16,41 +15,15 @@ import (
 // negative tests into vacuous passes.
 const ungatedWarningFragment = "membership relation is NOT gated"
 
-// captureWarnings redirects the default slog logger into a buffer for the
-// duration of the test and returns an accessor for what was logged.
+// captureWarnings captures warnings from the default slog logger for the
+// rest of the test.
 //
-// Callers must NOT use t.Parallel(): slog.SetDefault mutates process-global
-// state, so two parallel service builds would race on the logger and bleed
-// log lines across tests — which would let a quiet-case assertion pass (or
-// fail) on another test's output. Writes and reads are mutex-serialized
-// because appbuild starts background goroutines (store watcher) that can
-// log after New returns; bytes.Buffer is not safe for concurrent use.
+// Callers must NOT use t.Parallel(): two parallel service builds would bleed
+// log lines across tests, which would let a quiet-case assertion pass (or
+// fail) on another test's output.
 func captureWarnings(t *testing.T) func() string {
 	t.Helper()
-	var mu sync.Mutex
-	var buf bytes.Buffer
-	prev := slog.Default()
-	t.Cleanup(func() { slog.SetDefault(prev) })
-	slog.SetDefault(slog.New(slog.NewTextHandler(
-		&lockedWriter{mu: &mu, w: &buf}, &slog.HandlerOptions{Level: slog.LevelWarn})))
-	return func() string {
-		mu.Lock()
-		defer mu.Unlock()
-		return buf.String()
-	}
-}
-
-// lockedWriter serializes writes to the underlying writer with the same
-// mutex captureWarnings reads under.
-type lockedWriter struct {
-	mu *sync.Mutex
-	w  io.Writer
-}
-
-func (l *lockedWriter) Write(p []byte) (int, error) {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	return l.w.Write(p)
+	return logtest.Capture(t, slog.LevelWarn)
 }
 
 // TKT-T31NKT: a policy whose assignments confer a privileged role while the

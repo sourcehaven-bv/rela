@@ -134,16 +134,21 @@ func insertVersion(ctx context.Context, q querier, in store.VersionInput, conten
 	if in.Op == store.VersionOpRename && in.PrevID != "" {
 		prev = &in.PrevID
 	}
+	var prevFace *string
+	if in.Op == store.VersionOpRename && in.PrevID != "" && in.HasPrevFace {
+		face := string(in.PrevFace)
+		prevFace = &face
+	}
 	o := originColumns(in.Origin)
 	const ins = `
 		INSERT INTO entity_versions
-		    (entity_id, face, op, prev_id, type, content, properties, content_hash,
+		    (entity_id, face, op, prev_id, prev_face, type, content, properties, content_hash,
 		     schema_hash, principal_user, principal_tool, triggered_by,
 		     origin_kind, origin_source, origin_source_face, origin_source_type,
 		     origin_definition, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 	res, err := q.ExecContext(ctx, ins,
-		in.EntityID, string(in.Face), string(in.Op), prev, in.Type, in.Content,
+		in.EntityID, string(in.Face), string(in.Op), prev, prevFace, in.Type, in.Content,
 		props, contentHash, in.SchemaHash,
 		in.PrincipalUser, in.PrincipalTool, in.TriggeredBy,
 		o.kind, o.source, o.sourceFace, o.sourceType, o.definition,
@@ -234,9 +239,9 @@ func scanOrigin(c originCols) store.Origin {
 
 // --- Lineage --------------------------------------------------------------
 
-// lineageCTE is the recursive term producing (entity_id, lo, hi) rows: each is
-// one segment of the queried id's history, fenced to the vseq window in which
-// that id actually belonged to THIS entity.
+// lineageCTE is the recursive term producing (entity_id, face, lo, hi) rows:
+// each is one segment of the queried coordinate's history, fenced to the vseq
+// window in which that id/face belonged to THIS entity.
 //
 // The fencing is the whole point, and a flat `WHERE entity_id = ?` is the bug
 // it exists to prevent. Ids can be renamed away and later reused, so the same
@@ -246,42 +251,42 @@ func scanOrigin(c originCols) store.Origin {
 // (everything at or before that belonged to someone else), hi is the rename
 // that moved it INTO the current lineage (exclusive; NULL = still current).
 //
-// Parameters: ?1 = entity id, ?2 = face. The face scopes every subselect —
-// without it one face's rename would set another face's fence.
+// Ordinary renames keep a face coordinate; conversions may change it and
+// carry the predecessor coordinate in prev_face. NULL means a legacy rename
+// kept the same face.
 //
 // Ported from pgstore and verified against SQLite before use, including the
 // id-reuse case: an A→B→C chain with a second, unrelated entity later created
 // as 'A' returns exactly the first A's rows and excludes the reused one.
 const lineageCTE = `
-	WITH RECURSIVE lin(entity_id, lo, hi) AS (
-	    SELECT CAST(? AS TEXT),
+	WITH RECURSIVE lin(entity_id, face, lo, hi) AS (
+	    SELECT CAST(? AS TEXT), CAST(? AS TEXT),
 	           COALESCE((SELECT max(vseq) FROM entity_versions
-	                     WHERE prev_id = ? AND op = 'rename' AND face = CAST(? AS TEXT)), 0),
+	                     WHERE prev_id = ? AND op = 'rename'
+	                       AND COALESCE(prev_face, face) = CAST(? AS TEXT)), 0),
 	           CAST(NULL AS INTEGER)
 	    UNION
-	    SELECT r.prev_id,
+	    SELECT r.prev_id, COALESCE(r.prev_face, r.face),
 	           COALESCE((SELECT max(vseq) FROM entity_versions
 	                     WHERE prev_id = r.prev_id AND op = 'rename' AND vseq < r.vseq
-	                       AND face = CAST(? AS TEXT)), 0),
+	                       AND COALESCE(prev_face, face) = COALESCE(r.prev_face, r.face)), 0),
 	           r.vseq
 	    FROM lin
 	    JOIN entity_versions r
 	      ON r.entity_id = lin.entity_id
-	     AND r.face = CAST(? AS TEXT)
+	     AND r.face = lin.face
 	     AND r.op = 'rename'
 	     AND r.prev_id IS NOT NULL
 	     AND (lin.hi IS NULL OR r.vseq < lin.hi)
 	)`
 
-// lineageArgs returns the CTE's leading bind values. lineageCTE references the
-// id twice and the face three times; passing them positionally at every call
-// site is how a query silently ends up fencing on the wrong face.
+// lineageArgs returns the CTE's leading bind values in their SQL order.
 func lineageArgs(id string, face entity.Face) []any {
 	f := string(face)
 	// Full-slice expression: callers append their own trailing binds to this,
 	// and capping the capacity makes the copy unconditional rather than
 	// conditional on this function continuing to return a fresh literal.
-	args := []any{id, id, f, f, f}
+	args := []any{id, f, id, f}
 	return args[:len(args):len(args)]
 }
 
@@ -296,7 +301,7 @@ func lineageArgs(id string, face entity.Face) []any {
 // are not interchangeable there).
 const lineageJoin = `
 		JOIN lin ON lin.entity_id = ev.entity_id
-		        AND ev.face = CAST(? AS TEXT)
+		        AND ev.face = lin.face
 		        AND ev.vseq > lin.lo
 		        AND (lin.hi IS NULL OR ev.vseq < lin.hi)`
 
@@ -331,7 +336,7 @@ func listLineage(ctx context.Context, q querier, ref entity.Ref) ([]storeutil.Li
 	// GetVersion). A row matched by two segments gets the smaller fence;
 	// DISTINCT over (vseq, hi) would return it twice with different fences.
 	sel := lineageCTE + `
-		SELECT ev.vseq, ev.op, ev.prev_id, ev.type, ev.content_hash, ev.schema_hash,
+		SELECT ev.vseq, ev.op, ev.prev_id, ev.prev_face, ev.type, ev.content_hash, ev.schema_hash,
 		       ev.principal_user, ev.principal_tool, ev.triggered_by, ev.face,
 		       ev.origin_kind, ev.origin_source, ev.origin_source_face,
 		       ev.origin_source_type, ev.origin_definition,
@@ -340,7 +345,7 @@ func listLineage(ctx context.Context, q querier, ref entity.Ref) ([]storeutil.Li
 		GROUP BY ev.vseq
 		ORDER BY ev.vseq ASC`
 
-	args := append(lineageArgs(id, p), string(p))
+	args := lineageArgs(id, p)
 	rows, err := q.QueryContext(ctx, sel, args...)
 	if err != nil {
 		return nil, fmt.Errorf("sqlitestore: list versions for %s: %w", id, err)
@@ -402,7 +407,7 @@ func (v *VersionStore) GetVersion(
 		return nil, store.ErrNotFound
 	}
 	sel := lineageCTE + `
-		SELECT ev.op, ev.prev_id, ev.type, ev.content_hash, ev.schema_hash,
+		SELECT ev.op, ev.prev_id, ev.prev_face, ev.type, ev.content_hash, ev.schema_hash,
 		       ev.principal_user, ev.principal_tool, ev.triggered_by, ev.face,
 		       ev.origin_kind, ev.origin_source, ev.origin_source_face,
 		       ev.origin_source_type, ev.origin_definition,
@@ -423,20 +428,21 @@ func (v *VersionStore) GetVersion(
 	// what the doc means. vseq is the primary key, so each group holds exactly
 	// one row and the bare columns are unambiguous.
 
-	args := append(lineageArgs(id, p), string(p), version-1)
+	args := append(lineageArgs(id, p), version-1)
 	row := v.db.QueryRowContext(ctx, sel, args...)
 
 	var (
-		snap    store.VersionSnapshot
-		op      string
-		prev    *string
-		face    string
-		props   string
-		oc      originCols
-		created string
+		snap     store.VersionSnapshot
+		op       string
+		prev     *string
+		prevFace *string
+		face     string
+		props    string
+		oc       originCols
+		created  string
 	)
 	scanArgs := make([]any, 0, 13+originColumnCount)
-	scanArgs = append(scanArgs, &op, &prev, &snap.Type, &snap.ContentHash, &snap.SchemaHash,
+	scanArgs = append(scanArgs, &op, &prev, &prevFace, &snap.Type, &snap.ContentHash, &snap.SchemaHash,
 		&snap.PrincipalUser, &snap.PrincipalTool, &snap.TriggeredBy, &face)
 	scanArgs = append(scanArgs, oc.scanTargets()...)
 	scanArgs = append(scanArgs, &created, &snap.Content, &props, &snap.Projection)
@@ -456,6 +462,12 @@ func (v *VersionStore) GetVersion(
 	if prev != nil {
 		snap.PrevID = *prev
 	}
+	if prevFace != nil {
+		snap.PrevFace = entity.Face(*prevFace)
+		snap.HasPrevFace = true
+	} else if prev != nil {
+		snap.PrevFace = snap.Face
+	}
 	if snap.CreatedAt, err = parseTime(created); err != nil {
 		return nil, fmt.Errorf("sqlitestore: parse version created_at for %s: %w", id, err)
 	}
@@ -469,17 +481,18 @@ func (v *VersionStore) GetVersion(
 // row's entity id and its segment's upper fence (NULL for the head).
 func scanLineageRow(row scanner) (storeutil.LineageRow, error) {
 	var (
-		r       storeutil.LineageRow
-		op      string
-		prev    *string
-		face    string
-		oc      originCols
-		created string
-		hi      *int64
+		r        storeutil.LineageRow
+		op       string
+		prev     *string
+		prevFace *string
+		face     string
+		oc       originCols
+		created  string
+		hi       *int64
 	)
 	m := &r.Meta
 	scanArgs := make([]any, 0, 13+originColumnCount)
-	scanArgs = append(scanArgs, &r.Vseq, &op, &prev, &m.Type, &m.ContentHash, &m.SchemaHash,
+	scanArgs = append(scanArgs, &r.Vseq, &op, &prev, &prevFace, &m.Type, &m.ContentHash, &m.SchemaHash,
 		&m.PrincipalUser, &m.PrincipalTool, &m.TriggeredBy, &face)
 	scanArgs = append(scanArgs, oc.scanTargets()...)
 	scanArgs = append(scanArgs, &created, &r.EntityID, &hi)
@@ -491,6 +504,12 @@ func scanLineageRow(row scanner) (storeutil.LineageRow, error) {
 	m.Origin = scanOrigin(oc)
 	if prev != nil {
 		m.PrevID = *prev
+	}
+	if prevFace != nil {
+		m.PrevFace = entity.Face(*prevFace)
+		m.HasPrevFace = true
+	} else if prev != nil {
+		m.PrevFace = m.Face
 	}
 	if hi != nil {
 		r.Hi = *hi

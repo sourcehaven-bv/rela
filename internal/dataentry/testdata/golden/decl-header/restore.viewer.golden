@@ -1,0 +1,14 @@
+request: POST /api/v1/_history/ticket/TKT-3/1/restore
+identity: header viewer@example.test
+status: 403
+reads: GetRelation=1 GraphQueryHeaders=1 ListEntities=1 ListRelations=1 MatchingFaces=2
+breadth: ListEntities=1/1 ListRelations=0/1 MatchingFaces=2/2
+bodies: GraphQuery=0/1 ListEntities=0/1
+versions: GetVersion=1
+body:
+{
+  "error": "forbidden",
+  "reason": "field \"budget\" is not visible",
+  "rule_id": "field-affordance:hidden:budget",
+  "rule_kind": "affordance"
+}

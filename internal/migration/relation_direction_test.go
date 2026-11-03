@@ -20,8 +20,7 @@ func directionTestMetamodel() *mockMetamodel {
 
 func applyDirectionMigration(t *testing.T, input string) (string, bool) {
 	t.Helper()
-	m := &RelationDirectionMigration{}
-	m.SetMetamodel(directionTestMetamodel())
+	m := &RelationDirectionMigration{meta: directionTestMetamodel()}
 
 	var doc yaml.Node
 	if err := yaml.Unmarshal([]byte(input), &doc); err != nil {

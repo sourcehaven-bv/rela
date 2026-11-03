@@ -118,7 +118,7 @@ func newMemoryQueue(t *testing.T) jobs.Queue {
 func realQueueScheduler(t *testing.T, q jobs.Queue, task TaskConfig) (*Scheduler, *mockWorkspace) {
 	t.Helper()
 	ws := &queueWorkspace{mockWorkspace: newMockWorkspace(t), q: q}
-	s, err := NewWithQueue(&Config{Tasks: []TaskConfig{task}}, script.NewEngine(), ws, discardLogger())
+	s, err := NewWithQueue(&Config{Tasks: []TaskConfig{task}}, script.NewEngine(), ws, ws.bind, discardLogger())
 	require.NoError(t, err)
 	return s, ws.mockWorkspace
 }

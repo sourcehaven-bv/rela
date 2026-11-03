@@ -148,6 +148,22 @@ func (b *Breadth) ListEntityHeaders(ctx context.Context, q store.EntityQuery) it
 	return store.ListEntityHeaders(ctx, b.Store, q)
 }
 
+// MentionSources forwards to the wrapped store's mention index, unrecorded:
+// it takes no id batch. Declared so the recorder does not hide the capability.
+func (b *Breadth) MentionSources(
+	ctx context.Context, target string, after entity.Ref, limit int,
+) ([]entity.Ref, error) {
+	return mentionSourcesOf(ctx, b.Store, target, after, limit)
+}
+
+// Unwrap returns the wrapped store, so a lookup keyed on the backend type
+// (the database handle piles and state share) still finds it; see
+// [store.Decorator].
+func (b *Breadth) Unwrap() store.Store { return b.Store }
+
+// SoftDelete forwards the wrapped store's soft-delete capability.
+func (b *Breadth) SoftDelete() store.SoftDeleter { return forwardedSoftDeleter(b.Store) }
+
 // Tx forwards the transaction, wrapping the view so reads inside it record
 // against this recorder.
 //
@@ -155,7 +171,7 @@ func (b *Breadth) ListEntityHeaders(ctx context.Context, q store.EntityQuery) it
 // Breadth sharing its maps: a fresh struct would carry a fresh zero-value
 // mutex, so it would lock its own lock while writing the parent's maps, which
 // synchronizes nothing. The race detector runs in CI and would eventually say
-// so. [Counting.Tx] has that shape; do not copy it here.
+// so.
 func (b *Breadth) Tx(ctx context.Context, fn func(store.Store) error) error {
 	return b.Store.Tx(ctx, func(view store.Store) error {
 		return fn(&breadthView{parent: b, Store: view})
@@ -201,4 +217,16 @@ func (v *breadthView) MatchingFaces(
 func (v *breadthView) ListEntityHeaders(ctx context.Context, q store.EntityQuery) iter.Seq2[store.EntityHeader, error] {
 	v.parent.record("ListEntityHeaders", len(q.IDs))
 	return store.ListEntityHeaders(ctx, v.Store, q)
+}
+
+// SoftDelete forwards the transaction view's soft-delete capability, so a
+// soft delete inside the transaction joins it.
+func (v *breadthView) SoftDelete() store.SoftDeleter { return forwardedSoftDeleter(v.Store) }
+
+// MentionSources forwards to the transaction's mention index, unrecorded, as
+// [Breadth.MentionSources] does.
+func (v *breadthView) MentionSources(
+	ctx context.Context, target string, after entity.Ref, limit int,
+) ([]entity.Ref, error) {
+	return mentionSourcesOf(ctx, v.Store, target, after, limit)
 }

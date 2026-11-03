@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/Sourcehaven-BV/rela/internal/principal"
+	"github.com/Sourcehaven-BV/rela/internal/testutil/logtest"
 )
 
 // Reserved-principal rejection at the API boundary (TKT-9PCL7D).
@@ -258,10 +259,8 @@ func TestRequireVerifiedJWT_ReservedSubjectLogsSecurityWarn(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var buf bytes.Buffer
-			prev := slog.Default()
-			slog.SetDefault(slog.New(slog.NewJSONHandler(&buf,
-				&slog.HandlerOptions{Level: slog.LevelDebug})))
-			t.Cleanup(func() { slog.SetDefault(prev) })
+			logtest.SetDefault(t, slog.NewJSONHandler(&buf,
+				&slog.HandlerOptions{Level: slog.LevelDebug}))
 
 			cfg := JWTGateConfig{
 				Verifier:   gateVerifier{validToken: "good.jwt.token", subject: tc.subject},
@@ -294,9 +293,7 @@ func TestRequireVerifiedJWT_ReservedSubjectLogsSecurityWarn(t *testing.T) {
 // make the security signal meaningless.
 func TestRequireVerifiedJWT_UnusableSubjectStillLogsInfo(t *testing.T) {
 	var buf bytes.Buffer
-	prev := slog.Default()
-	slog.SetDefault(slog.New(slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
-	t.Cleanup(func() { slog.SetDefault(prev) })
+	logtest.SetDefault(t, slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
 
 	const header = "X-Auth-Assertion"
 	cfg := JWTGateConfig{
@@ -447,9 +444,7 @@ func TestVerifiedPrincipal_RejectsReserved(t *testing.T) {
 // remote address — both attacker-supplied or already-known, no secret material.
 func TestReservedPrincipalRejection_IsLogged(t *testing.T) {
 	var buf bytes.Buffer
-	prev := slog.Default()
-	slog.SetDefault(slog.New(slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
-	t.Cleanup(func() { slog.SetDefault(prev) })
+	logtest.SetDefault(t, slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
 
 	const header = "X-Remote-User"
 	h := stampAuditPrincipal(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {

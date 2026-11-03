@@ -11,6 +11,7 @@ import {
 } from '@/api/entities'
 import type { Entity, CreateEntity, ListParams, ListMeta, ListResponse } from '@/types'
 import { getErrorMessage } from '@/api/errors'
+import { t } from '@/i18n'
 import { useGitStore } from './git'
 
 // The shape every list read returns, named once rather than restated inline on
@@ -240,7 +241,7 @@ export const useEntitiesStore = defineStore('entities', () => {
       })
       return entity
     } catch (err) {
-      const message = getErrorMessage(err, 'Failed to fetch entity')
+      const message = getErrorMessage(err, t('shell.fetchEntityFailed'))
       errors.value.set(key, message)
       throw err
     } finally {

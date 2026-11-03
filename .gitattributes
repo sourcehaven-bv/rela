@@ -3,3 +3,7 @@
 # Git's default eol normalisation would rewrite them to LF on checkout, silently
 # invalidating what they exist to prove.
 *.ics -text
+
+# Golden wire-parity recordings (internal/dataentry/testdata/golden) are compared
+# byte for byte, and the feed recordings carry iCalendar CRLF line endings.
+*.golden -text

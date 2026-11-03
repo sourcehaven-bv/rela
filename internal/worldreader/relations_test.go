@@ -44,20 +44,23 @@ type contentTypes map[string]bool
 func (c contentTypes) IsContentScoped(relType string) bool { return c[relType] }
 
 // TestNeighbors_FallbackTrap_ZeroFaceIsNotNil is the Q4 fallback trap
-// (RR-CGRV0X follow-through 1), and it is the reason the dispatch issues
-// two queries instead of one.
+// (RR-CGRV0X follow-through 1).
 //
 // When a prime is reached by `otherwise: default` — or by rule 1 — its
-// face IS the zero Face. As a store.RelationQuery.FromFace
-// VALUE the zero face does NOT mean "unfiltered": it means
-// default-tail-ONLY, a strictly different filter from nil. The two are
-// indistinguishable in a debugger (both print as the empty face),
-// so the invariant has to be pinned on the QUERY, not on the results.
+// face IS the zero Face. Compared as a VALUE, the zero face does NOT mean
+// "unfiltered": it means default-tail-ONLY. Neighbors therefore queries with
+// a NIL tail and applies the face only to outgoing content edges.
 //
 // Getting this wrong in the identity direction hides an entity's role and
 // containment edges; getting it wrong in the content direction shows a
-// non-prime state's edges.
+// non-prime state's edges. Both are asserted on the RESULT, with a fixture
+// whose identity edge sits at a non-default tail, so neither mistake can
+// pass on a fixture of default-tail edges only.
 func TestNeighbors_FallbackTrap_ZeroFaceIsNotNil(t *testing.T) {
+	draft := face(t, "draft")
+	identityAtDraft := &entity.Relation{From: "PAGE-1", FromFace: draft, Type: "owned-by", To: "USER-1"}
+	contentAtDefault := &entity.Relation{From: "PAGE-1", Type: "mentions", To: "PAGE-2"}
+	contentAtDraft := &entity.Relation{From: "PAGE-1", FromFace: draft, Type: "mentions", To: "PAGE-3"}
 	for _, tc := range []struct {
 		name string
 		res  worldreader.Resolved
@@ -81,59 +84,54 @@ func TestNeighbors_FallbackTrap_ZeroFaceIsNotNil(t *testing.T) {
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			lister := &recordingLister{}
-			rr, err := worldreader.NewRelationReader(lister, contentTypes{})
+			lister := &recordingLister{rels: []*entity.Relation{identityAtDraft, contentAtDefault, contentAtDraft}}
+			rr, err := worldreader.NewRelationReader(lister, contentTypes{"mentions": true})
 			require.NoError(t, err)
 
-			_, err = rr.Neighbors(context.Background(), tc.res, store.DirectionOutgoing)
+			got, err := rr.Neighbors(context.Background(), tc.res, store.DirectionOutgoing)
 			require.NoError(t, err)
-			require.Len(t, lister.queries, 2, "one identity query + one content query")
-
-			identityQ, contentQ := lister.queries[0], lister.queries[1]
-
-			assert.Nil(t, identityQ.FromFace,
-				"identity edges must query with a NIL tail: a face-to-zero would "+
+			require.Len(t, lister.queries, 1, "one query serves every scope class")
+			assert.Nil(t, lister.queries[0].FromFace,
+				"the query must carry a NIL tail: a face-to-zero would "+
 					"filter to default-tail edges only and hide identity edges")
 
-			require.NotNil(t, contentQ.FromFace,
-				"content edges must query with the prime's face BY VALUE, not nil")
-			assert.Equal(t, entity.Face(""), *contentQ.FromFace,
-				"the fallback prime's face is the zero face, and it must be "+
-					"passed as a value so the filter means default-tail-only")
+			assert.Equal(t, []*entity.Relation{identityAtDraft, contentAtDefault}, got,
+				"identity edges at every tail; content edges only at the zero "+
+					"face, which here means default-tail-only")
 		})
 	}
 }
 
-// TestNeighbors_ContentQueryUsesThePrimesFace pins the non-fallback
-// half: when the prime is a real chain coordinate, content edges are
+// TestNeighbors_ContentEdgesUseThePrimesFace pins the non-fallback half:
+// when the prime is a real chain coordinate, outgoing content edges are
 // scoped to THAT state while identity edges stay unfiltered.
-func TestNeighbors_ContentQueryUsesThePrimesFace(t *testing.T) {
-	lister := &recordingLister{}
-	rr, err := worldreader.NewRelationReader(lister, contentTypes{})
+func TestNeighbors_ContentEdgesUseThePrimesFace(t *testing.T) {
+	published := face(t, "published")
+	identity := &entity.Relation{From: "PAGE-1", Type: "owned-by", To: "USER-1"}
+	atPublished := &entity.Relation{From: "PAGE-1", FromFace: published, Type: "mentions", To: "PAGE-2"}
+	atDefault := &entity.Relation{From: "PAGE-1", Type: "mentions", To: "PAGE-3"}
+	lister := &recordingLister{rels: []*entity.Relation{identity, atPublished, atDefault}}
+	rr, err := worldreader.NewRelationReader(lister, contentTypes{"mentions": true})
 	require.NoError(t, err)
 
 	res := worldreader.Resolved{
 		Entity: entity.New("PAGE-1", "page"),
-		Face:   entity.Face("published"),
+		Face:   published,
 		Via:    worldreader.RuleChain,
 		Found:  true,
 	}
-	_, err = rr.Neighbors(context.Background(), res, store.DirectionOutgoing)
+	got, err := rr.Neighbors(context.Background(), res, store.DirectionOutgoing)
 	require.NoError(t, err)
-	require.Len(t, lister.queries, 2)
-
-	assert.Nil(t, lister.queries[0].FromFace, "identity tail stays nil for every prime")
-	require.NotNil(t, lister.queries[1].FromFace)
-	assert.Equal(t, entity.Face("published"), *lister.queries[1].FromFace)
+	require.Len(t, lister.queries, 1)
+	assert.Nil(t, lister.queries[0].FromFace, "the tail is applied to rows, not to the query")
+	assert.Equal(t, []*entity.Relation{identity, atPublished}, got)
 }
 
-// TestNeighbors_MergesByScopeClass pins that each edge is kept under the
-// query whose scope class matches its type. Both queries over-return —
-// the nil-tail query also matches content edges — so a naive union would
-// duplicate every identity edge and leak non-prime content edges.
+// TestNeighbors_MergesByScopeClass pins that each edge is kept once, under
+// the scope class of its type, identity edges first.
 func TestNeighbors_MergesByScopeClass(t *testing.T) {
 	identityRel := &entity.Relation{From: "PAGE-1", Type: "owned-by", To: "USER-1"}
-	contentRel := &entity.Relation{From: "PAGE-1", Type: "mentions", To: "PAGE-2"}
+	contentRel := &entity.Relation{From: "PAGE-1", FromFace: "published", Type: "mentions", To: "PAGE-2"}
 	lister := &recordingLister{rels: []*entity.Relation{identityRel, contentRel}}
 
 	rr, err := worldreader.NewRelationReader(lister, contentTypes{"mentions": true})
@@ -149,9 +147,9 @@ func TestNeighbors_MergesByScopeClass(t *testing.T) {
 	require.NoError(t, err)
 
 	// Each edge appears exactly once, under its own class.
-	require.Len(t, got, 2, "each edge kept once, no duplicates from the two queries")
-	assert.Equal(t, "owned-by", got[0].Type, "identity edge from the nil-tail query")
-	assert.Equal(t, "mentions", got[1].Type, "content edge from the face query")
+	require.Len(t, got, 2, "each edge kept once, under its own class")
+	assert.Equal(t, "owned-by", got[0].Type, "identity edges first")
+	assert.Equal(t, "mentions", got[1].Type, "then outgoing content edges")
 }
 
 // TestNeighbors_ExcludedEntityHasNoEdges: an entity the world excludes has
@@ -175,9 +173,8 @@ func TestNeighbors_ExcludedEntityHasNoEdges(t *testing.T) {
 // TestNeighbors_DirectionBothMatchesEitherEndpoint pins the endpoint
 // selection. DirectionBoth is the ZERO value of store.Direction, so
 // setting From alone would silently narrow every unspecified query to
-// outgoing-only — a wrong-by-default failure. The identity query matches
-// either endpoint; the content edges are read as one outgoing and one
-// incoming query, because their tails are filtered differently.
+// outgoing-only — a wrong-by-default failure. The one query matches either
+// endpoint; the content tails are filtered on the rows.
 func TestNeighbors_DirectionBothMatchesEitherEndpoint(t *testing.T) {
 	lister := &recordingLister{}
 	rr, err := worldreader.NewRelationReader(lister, contentTypes{})
@@ -186,14 +183,12 @@ func TestNeighbors_DirectionBothMatchesEitherEndpoint(t *testing.T) {
 	res := worldreader.Resolved{Entity: entity.New("PAGE-1", "page"), Found: true}
 	_, err = rr.Neighbors(context.Background(), res, store.DirectionBoth)
 	require.NoError(t, err)
-	require.Len(t, lister.queries, 3)
+	require.Len(t, lister.queries, 1)
 
-	assert.Equal(t, "PAGE-1", lister.queries[0].EntityID, "identity: either endpoint")
+	assert.Equal(t, "PAGE-1", lister.queries[0].EntityID, "either endpoint")
 	assert.Empty(t, lister.queries[0].From, "From alone would narrow both to outgoing-only")
-	assert.Equal(t, "PAGE-1", lister.queries[1].From, "content: the entity as source")
-	assert.Equal(t, store.DirectionOutgoing, lister.queries[1].Direction)
-	assert.Equal(t, "PAGE-1", lister.queries[2].To, "content: the entity as target")
-	assert.Equal(t, store.DirectionIncoming, lister.queries[2].Direction)
+	assert.Equal(t, store.DirectionBoth, lister.queries[0].Direction)
+	assert.Nil(t, lister.queries[0].FromFace)
 }
 
 // TestNeighbors_IncomingContentTailIsTheSources pins BUG-ISJHML at the

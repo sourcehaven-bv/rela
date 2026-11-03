@@ -21,6 +21,7 @@ import type { Entity } from '@/types'
 const push = vi.fn()
 const replace = vi.fn()
 const onBeforeRouteLeave = vi.fn()
+const onBeforeRouteUpdate = vi.fn()
 
 vi.mock('vue-router', () => ({
   useRouter: () => ({ push, replace, back: vi.fn() }),
@@ -32,6 +33,7 @@ vi.mock('vue-router', () => ({
     path: '/form/ticket-form',
   }),
   onBeforeRouteLeave: (...args: unknown[]) => onBeforeRouteLeave(...args),
+  onBeforeRouteUpdate: (...args: unknown[]) => onBeforeRouteUpdate(...args),
 }))
 
 // Create mode issues real network calls the edit-mode suite never reaches:
@@ -201,12 +203,14 @@ describe('DynamicForm — embedded mode', () => {
     mountCreate({ embedded: true })
 
     expect(onBeforeRouteLeave).not.toHaveBeenCalled()
+    expect(onBeforeRouteUpdate).not.toHaveBeenCalled()
   })
 
   it('registers a route guard when not embedded', async () => {
     await mountCreate()
 
     expect(onBeforeRouteLeave).toHaveBeenCalled()
+    expect(onBeforeRouteUpdate).toHaveBeenCalled()
   })
 
   it('does not register the document Cmd+Enter listener when embedded', async () => {

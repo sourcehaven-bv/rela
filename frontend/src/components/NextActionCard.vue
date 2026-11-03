@@ -11,9 +11,11 @@
  * system, and a placeholder would turn that quiet into noise on every page.
  */
 import { onMounted, watch } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { useNextAction } from '@/composables/useNextAction'
 import NextActionOffers from './NextActionOffers.vue'
 
+const { t } = useI18n()
 const { suggestion, bandLabel, prominence, isPageLevel, loadOnce, markShown } = useNextAction()
 
 onMounted(loadOnce)
@@ -39,7 +41,7 @@ watch(
     :data-prominence="prominence"
     :data-source="suggestion.source"
     :data-entity-id="suggestion.entity_id"
-    aria-label="Suggested next action"
+    :aria-label="t('footer.suggestedNextAction')"
   >
     <!--
       Tier-1 operator hook (docs/customisation.md). Inert unless custom.js

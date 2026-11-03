@@ -42,7 +42,7 @@ func testPages() map[string]dataentryconfig.Page {
 	return map[string]dataentryconfig.Page{
 		"tickets": {Label: "Tickets", Tabs: []dataentryconfig.PageTab{
 			{ID: "table", Label: "Table", List: "all"},
-			{ID: "home", Label: "Home", Dashboard: true, Permission: "admin:read"},
+			{ID: "home", Label: "Home", Dashboard: dataentryconfig.DefaultDashboard, Permission: "admin:read"},
 		}},
 		"admin": {Label: "Admin", Icon: "folder", Tabs: []dataentryconfig.PageTab{
 			{ID: "all", Label: "All", List: "all", Permission: "admin:read"},
@@ -58,7 +58,7 @@ func TestPages_Sidebar(t *testing.T) {
 			{Label: "Admin work", Page: "admin"},
 		})
 	d := mustNewACL(t, gatedNavPolicy(), app.store)
-	app.acl = d
+	setTestACL(t, app, d)
 
 	t.Run("holder", func(t *testing.T) {
 		resp, _ := sidebarFor(gateCtxFor(principalCtx("alice"), t, d), t, app, "")
@@ -120,7 +120,7 @@ func TestPages_ConfigUnfiltered(t *testing.T) {
 	app := newTestAppV1(t)
 	installPagesConfig(app, map[string]dataentryconfig.List{"all": {EntityType: "ticket"}}, testPages(), nil)
 	d := mustNewACL(t, gatedNavPolicy(), app.store)
-	app.acl = d
+	setTestACL(t, app, d)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/_config", http.NoBody).
 		WithContext(gateCtxFor(principalCtx("bob"), t, d))

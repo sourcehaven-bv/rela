@@ -1,6 +1,8 @@
 // Package openapi provides OpenAPI 3.1 spec generation from rela metamodels.
 package openapi
 
+import "encoding/json"
+
 // Spec represents an OpenAPI 3.1 specification.
 type Spec struct {
 	OpenAPI    string              `json:"openapi"`
@@ -122,6 +124,10 @@ type Schema struct {
 	Properties           map[string]*Schema `json:"properties,omitempty"`
 	Required             []string           `json:"required,omitempty"`
 	AdditionalProperties *Schema            `json:"additionalProperties,omitempty"`
+	// Closed marks an object that admits no property beyond Properties.
+	// It renders as `additionalProperties: false` and wins over
+	// AdditionalProperties.
+	Closed bool `json:"-"`
 
 	// Array items
 	Items *Schema `json:"items,omitempty"`
@@ -130,6 +136,9 @@ type Schema struct {
 	AllOf []*Schema `json:"allOf,omitempty"`
 	OneOf []*Schema `json:"oneOf,omitempty"`
 	AnyOf []*Schema `json:"anyOf,omitempty"`
+	// Not admits what its schema refuses. `{"not": {}}` admits nothing: as
+	// additionalProperties it closes an object, like JSON Schema's `false`.
+	Not *Schema `json:"not,omitempty"`
 
 	// Metadata
 	Title       string `json:"title,omitempty"`
@@ -138,9 +147,36 @@ type Schema struct {
 	// ReadOnly marks a value the API serves but refuses on write.
 	ReadOnly bool `json:"readOnly,omitempty"`
 
+	// Limits are the value constraints. They render inline.
+	Limits
+}
+
+// Limits are the value constraints of a [Schema]: numeric bounds, the
+// length of a string and the size of an array.
+type Limits struct {
 	// Numeric constraints
 	Minimum *float64 `json:"minimum,omitempty"`
 	Maximum *float64 `json:"maximum,omitempty"`
+
+	// String constraints
+	MaxLength int `json:"maxLength,omitempty"`
+
+	// Array constraints
+	MaxItems    int  `json:"maxItems,omitempty"`
+	UniqueItems bool `json:"uniqueItems,omitempty"`
+}
+
+// MarshalJSON renders s, with `additionalProperties: false` when s is
+// [Schema.Closed].
+func (s Schema) MarshalJSON() ([]byte, error) {
+	type plain Schema
+	if !s.Closed {
+		return json.Marshal(plain(s))
+	}
+	return json.Marshal(struct {
+		plain
+		AdditionalProperties bool `json:"additionalProperties"`
+	}{plain: plain(s)})
 }
 
 // Ref creates a schema reference to a component.

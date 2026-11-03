@@ -18,7 +18,7 @@ import (
 func (s *Server) handleListRelations(
 	ctx context.Context, request *mcpgo.CallToolRequest,
 ) (*mcpgo.CallToolResult, error) {
-	snap := s.state.current()
+	snap := snapshotFor(ctx, s)
 	args := newToolRequest(request)
 	relType := strings.TrimSpace(args.GetString("type", ""))
 	from := trimID(args.GetString("from", ""))
@@ -60,7 +60,7 @@ func (s *Server) handleListRelations(
 func (s *Server) handleCreateRelation(
 	ctx context.Context, request *mcpgo.CallToolRequest,
 ) (*mcpgo.CallToolResult, error) {
-	snap := s.state.current()
+	snap := snapshotFor(ctx, s)
 	args := newToolRequest(request)
 	fromID, err := args.RequireString("from")
 	if err != nil {
@@ -116,7 +116,7 @@ func (s *Server) handleCreateRelation(
 func (s *Server) handleDeleteRelation(
 	ctx context.Context, request *mcpgo.CallToolRequest,
 ) (*mcpgo.CallToolResult, error) {
-	snap := s.state.current()
+	snap := snapshotFor(ctx, s)
 	args := newToolRequest(request)
 	fromID, err := args.RequireString("from")
 	if err != nil {

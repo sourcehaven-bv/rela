@@ -40,7 +40,7 @@ func sqliteVersions(t *testing.T) (store.Store, store.VersionService) {
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = db.Close() })
 
-	st, err := sqlitestore.New(db)
+	st, err := sqlitestore.New(context.Background(), db)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = st.Close() })
 

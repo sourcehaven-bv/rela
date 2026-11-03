@@ -43,7 +43,7 @@ func openWithDB(t *testing.T, path string, opts ...sqlitestore.Option) (*sqlites
 	}
 	t.Cleanup(func() { _ = db.Close() })
 
-	s, err := sqlitestore.New(db, opts...)
+	s, err := sqlitestore.New(context.Background(), db, opts...)
 	if err != nil {
 		t.Fatalf("new store: %v", err)
 	}
@@ -86,7 +86,8 @@ func visibleSearchFactory(t *testing.T) (store.Store, search.Searcher, search.Vi
 // contract out of pgstore's own tests and into storetest.
 func TestConformance(t *testing.T) {
 	storetest.RunAll(t, factory, searchFactory, visibleSearchFactory, storetest.Capabilities{
-		SoftDelete: true,
+		SoftDelete:    true,
+		FamilyReplace: true,
 		Observers: func(t *testing.T, obs ...store.EntityObserver) store.Store {
 			t.Helper()
 			opts := make([]sqlitestore.Option, 0, len(obs))
@@ -147,7 +148,7 @@ func fuzzFactory() storetest.FuzzFactory {
 		if err != nil {
 			panic(err)
 		}
-		s, err := sqlitestore.New(db)
+		s, err := sqlitestore.New(context.Background(), db)
 		if err != nil {
 			_ = db.Close()
 			panic(err)

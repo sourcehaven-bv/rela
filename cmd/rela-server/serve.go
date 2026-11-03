@@ -98,6 +98,15 @@ func newServer(f *serverFlags, svc *appbuild.Services, accessLog *slog.Logger) (
 		return nil, fmt.Errorf("invalid identity configuration: %w", err)
 	}
 	s := &server{f: f, addr: net.JoinHostPort(f.bind, f.port), mode: mode, accessLog: accessLog}
+	// Startup only: the one rebuild path, a Configure save, requires acl.yaml
+	// and an identity source already (validateConfigEditing).
+	if warnUnidentifiedACL(mode, f, os.Getenv(dataentry.EnvDataEntryUserVar), svc.ACLDeclarative() != nil) {
+		slog.Warn("acl.yaml is configured but no identity source is set: "+
+			"every /api/ request will be refused with 401 unauthenticated",
+			"fix", "configure --jwt-* (or --principal-header behind an authenticating proxy), "+
+				"or set $"+dataentry.EnvDataEntryUserVar+" for local use",
+			"docs", "docs/server-security.md")
+	}
 	// One verifier for the identity gate and the webhook receiver, so the
 	// JWKS is fetched a single time (nil when JWT identity is disabled).
 	s.idv = buildIdentityVerifier(context.Background(), f)
@@ -211,7 +220,8 @@ func (s *server) build(svc *appbuild.Services) (*generation, error) {
 	if err := app.StartWatching(); err != nil {
 		slog.Warn("file watcher not started", "error", err)
 	}
-	return &generation{svc: svc, app: app, handler: app.NewRouter(dataentry.WithAccessLog(s.accessLog))}, nil
+	return &generation{svc: svc, app: app, handler: app.NewRouter(
+		dataentry.WithAccessLog(s.accessLog), dataentry.WithQueryCeiling(s.f.queryCeiling))}, nil
 }
 
 // buildApp builds the data-entry app over svc with the process's identity,
@@ -265,18 +275,37 @@ func (s *server) buildApp(svc *appbuild.Services) (*dataentry.App, error) {
 	return app, nil
 }
 
-// startScheduler starts g's background scheduler, unless it is running or g
-// is held.
+// startScheduler starts g's background scheduler, its lease watcher and its
+// realtime worker, unless they are running or g is held. All share one stop
+// and one done, so a pause, a resume and a retirement hand them over
+// together.
 func (s *server) startScheduler(g *generation) {
 	g.schedMu.Lock()
 	defer g.schedMu.Unlock()
 	if g.held || g.schedStop != nil {
 		return
 	}
+	bind, err := appbuild.IdentityBinder(g.svc)
+	if err != nil {
+		slog.Error("scheduler not started", "err", err)
+		return
+	}
 	ctx, cancel := context.WithCancel(context.Background())
 	g.schedStop = cancel
 	// *appbuild.Services satisfies scheduler.WorkspaceProvider structurally.
-	g.schedDone = scheduler.StartBackground(ctx, g.svc, slog.Default())
+	sched := scheduler.StartBackground(ctx, g.svc, bind, slog.Default())
+	leases := appbuild.WatchLeases(ctx, g.svc)
+	worker := appbuild.RunRealtimeWorker(ctx, g.svc)
+	follower := appbuild.FollowChannels(ctx, g.svc)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		<-sched
+		<-leases
+		<-worker
+		<-follower
+	}()
+	g.schedDone = done
 }
 
 // haltScheduler stops g's scheduler, waits for it, and holds g so it is not
@@ -333,9 +362,5 @@ func (s *server) retire(old, next *generation) {
 	}
 	if err := old.svc.Close(); err != nil && !errors.Is(err, context.Canceled) {
 		slog.Warn("closing the replaced configuration", "error", err)
-	}
-	// The old store saved its index on close, missing what next wrote.
-	if err := appbuild.DropStoreIndex(old.svc); err != nil {
-		slog.Warn("removing the replaced configuration's store index", "error", err)
 	}
 }

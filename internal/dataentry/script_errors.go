@@ -44,6 +44,10 @@ type ScriptIdentity struct {
 type ScriptErrorLua struct {
 	Message string `json:"message"`
 	Line    int    `json:"line,omitempty"`
+	// File is the file Line is in when it is not the script's own path: a
+	// lib/ module the script required. Project files are config, not data,
+	// so it survives gating like Line.
+	File string `json:"file,omitempty"`
 }
 
 // allowFullScriptDetail asks the App's security layer whether r is
@@ -88,6 +92,7 @@ func buildScriptErrorEnvelope(se *lua.ScriptError, fullDetail bool, correlationI
 		Lua: ScriptErrorLua{
 			Message: se.LuaMessage,
 			Line:    se.LuaLine,
+			File:    se.LuaPath,
 		},
 	}
 	if fullDetail {

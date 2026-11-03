@@ -18,6 +18,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/Sourcehaven-BV/rela/internal/appbuild"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/predicatefns"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
@@ -80,8 +81,11 @@ func writeRedactionProject(t *testing.T) string {
 // are required: acl rejects a half-stamped principal and the row gate then
 // fails closed, which would make a redaction test pass for the wrong reason
 // (nothing returned at all).
-func bobCtx(tool string) context.Context {
-	return principal.With(context.Background(), principal.Principal{User: "bob", Tool: tool})
+//
+// The identity is bound against svc's ACL, as the request edge does.
+func bobCtx(tb testing.TB, svc *appbuild.Services, tool string) context.Context {
+	tb.Helper()
+	return boundAs(tb, svc, principal.Principal{User: "bob", Tool: tool})
 }
 
 // TestGatedReads_RedactsHiddenField closes the field-level half of the
@@ -99,7 +103,7 @@ func TestGatedReads_RedactsHiddenField(t *testing.T) {
 	}
 	defer svc.Close()
 
-	got, err := svc.GatedReads().Reader.Resolve(bobCtx(principal.ToolMCP), "PERS-1")
+	got, err := svc.GatedReads().Reader.Resolve(bobCtx(t, svc, principal.ToolMCP), "PERS-1")
 	if err != nil {
 		t.Fatalf("GetEntity: %v", err)
 	}
@@ -132,7 +136,7 @@ func TestScheduledLuaWriteDeps_RedactsHiddenField(t *testing.T) {
 	if deps.VisibleReader == nil {
 		t.Fatal("ScheduledLuaWriteDeps has no VisibleReader")
 	}
-	got, err := deps.VisibleReader.GetAddress(bobCtx(principal.ToolScheduler), "PERS-1")
+	got, err := deps.VisibleReader.GetAddress(bobCtx(t, svc, principal.ToolScheduler), "PERS-1")
 	if err != nil {
 		t.Fatalf("GetAddress: %v", err)
 	}
@@ -149,7 +153,7 @@ func TestScheduledLuaWriteDeps_RedactsHiddenField(t *testing.T) {
 }
 
 // TestNoPolicy_RedactorHidesNothing pins the byte-parity path. A project with
-// no acl.yaml must behave exactly as it did pre-ACL; if buildFieldRedactor
+// no acl.yaml must behave exactly as it did pre-ACL; if buildFieldPolicy
 // returned a policy-backed redactor (or nil) here instead of NopRedactor, this
 // would regress silently for every existing project.
 func TestNoPolicy_RedactorHidesNothing(t *testing.T) {
@@ -172,7 +176,7 @@ func TestNoPolicy_RedactorHidesNothing(t *testing.T) {
 	}
 	defer svc.Close()
 
-	got, err := svc.GatedReads().Reader.Resolve(bobCtx(principal.ToolMCP), "PERS-1")
+	got, err := svc.GatedReads().Reader.Resolve(bobCtx(t, svc, principal.ToolMCP), "PERS-1")
 	if err != nil {
 		t.Fatalf("GetEntity: %v", err)
 	}
@@ -186,7 +190,7 @@ func TestNoPolicy_RedactorHidesNothing(t *testing.T) {
 }
 
 // TestPolicyWithoutAffordanceGrants_HidesNothing covers the third
-// buildFieldRedactor branch: an acl.yaml that gates ROWS but declares no
+// buildFieldPolicy branch: an acl.yaml that gates ROWS but declares no
 // `visible:` grants. HasAffordanceGrants is false there, so the redactor must
 // be NopRedactor — not a policy-backed one that hides nothing by accident, and
 // not an error. Row-only policies are a normal, common configuration.
@@ -215,7 +219,7 @@ assignments:
 	}
 	defer svc.Close()
 
-	got, err := svc.GatedReads().Reader.Resolve(bobCtx(principal.ToolMCP), "PERS-1")
+	got, err := svc.GatedReads().Reader.Resolve(bobCtx(t, svc, principal.ToolMCP), "PERS-1")
 	if err != nil {
 		t.Fatalf("GetEntity: %v", err)
 	}
@@ -243,7 +247,7 @@ func TestGatedReads_RedactsOnListPath(t *testing.T) {
 
 	seen := 0
 	for e, err := range svc.GatedReads().Reader.ListEntities(
-		bobCtx(principal.ToolMCP), store.EntityQuery{Type: "person", Faces: store.InWorld(store.TrivialScope())},
+		bobCtx(t, svc, principal.ToolMCP), store.EntityQuery{Type: "person", Faces: store.InWorld(store.TrivialScope())},
 	) {
 		if err != nil {
 			t.Fatalf("ListEntities: %v", err)
@@ -359,7 +363,7 @@ assignments:
 	}
 	defer svc.Close()
 
-	ctx := bobCtx(principal.ToolDataEntry)
+	ctx := bobCtx(t, svc, principal.ToolDataEntry)
 	res, err := svc.EntityManager().PatchEntity(ctx, "TKT-1", entity.Patch{
 		Properties: map[string]any{"title": "New"},
 	})
@@ -416,7 +420,7 @@ func TestGatedReads_SearchDropsHiddenFieldMatch(t *testing.T) {
 	if _, ok := s.(*visibility.Searcher); !ok {
 		t.Fatalf("GatedReads().Searcher = %T, want *visibility.Searcher", s)
 	}
-	ctx := bobCtx(principal.ToolMCP)
+	ctx := bobCtx(t, svc, principal.ToolMCP)
 	if got := searchIDs(ctx, t, s, "Alice"); len(got) != 1 || got[0] != "PERS-1" {
 		t.Errorf("search on a visible value = %v, want [PERS-1]", got)
 	}
@@ -490,7 +494,7 @@ relations:
 	defer svc.Close()
 
 	ev := predicatefns.NewEvaluator(svc.Meta())
-	ctx := bobCtx(principal.ToolMCP)
+	ctx := bobCtx(t, svc, principal.ToolMCP)
 	bind := func(expr string) (bool, error) {
 		t.Helper()
 		prog, err := ev.Compile("team", expr)

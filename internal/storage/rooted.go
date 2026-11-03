@@ -235,6 +235,24 @@ func (r *RootedFS) OpenForWrite(key string, perm os.FileMode) (io.WriteCloser, e
 	return r.vfs.OpenForWrite(full, perm)
 }
 
+// OpenForAppend opens key for appending, creating parent directories and
+// the file if needed. Each Write lands at the end of the file, so a crash
+// mid-write can leave a torn final record but never damages earlier ones.
+// The returned WriteCloser wraps the underlying os.File, which also offers
+// Sync. Like OpenForWrite it is available only when
+// [RootedFS.SupportsStreaming] reports true; a MemFS-backed caller reads
+// and rewrites instead.
+func (r *RootedFS) OpenForAppend(key string, perm os.FileMode) (io.WriteCloser, error) {
+	full, err := r.resolve(key)
+	if err != nil {
+		return nil, err
+	}
+	if err := r.vfs.MkdirAll(r.parent(full), 0o755); err != nil {
+		return nil, err
+	}
+	return r.vfs.OpenForAppend(full, perm)
+}
+
 // AbsPath resolves key to its absolute filesystem path. Used by
 // integration points that must hand an absolute path to code outside
 // the rooted abstraction — notably the fsnotify watcher, which takes

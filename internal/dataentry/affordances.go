@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/affordances"
+	"github.com/Sourcehaven-BV/rela/internal/search"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	v1 "github.com/Sourcehaven-BV/rela/internal/apiwire/v1"
@@ -163,7 +164,9 @@ type affordanceService struct {
 	// when the entity manager does not expose the capability, in which case
 	// `_copies` is omitted rather than sent empty — see computeCopyOffers.
 	// Wired by wireCopies, in production and in the test rebind alike.
-	copies copyOffersFunc
+	copies      copyOffersFunc
+	conversions func(ctx context.Context, entityType, id string) []entitymanager.ConversionOffer
+	taskItems   func(ctx context.Context, source *entityPkg.Entity) []entitymanager.TaskItemOffer
 	// planEdges is edgeReader.plan: the edge writes one relation wrapper
 	// asks for, which this service authorizes one by one.
 	planEdges edgePlanner
@@ -268,6 +271,21 @@ type FieldVerdictResolver interface {
 	// not allow. A write gate judges a face the caller cannot read by it;
 	// see [affordanceService.relationSources].
 	UnconditionalRelationVerdicts(ctx context.Context, e *entityPkg.Entity) RelationVerdicts
+	// FieldVisibleOnEveryRow reports whether the principal on ctx sees
+	// property on every row of entityType. A list may filter and sort only
+	// on such a property; see gateListQuery.
+	//
+	// It is a required method, not an optional capability found by type
+	// assertion, because the answer must come from the resolver that redacts:
+	// a resolver missing it would otherwise default to "visible" and reopen
+	// the hidden-value oracle (BUG-WJSYQT).
+	FieldVisibleOnEveryRow(ctx context.Context, entityType, property string) bool
+	// SearchFieldScope is the search form of FieldVerdicts: what the
+	// resolver hides on an entity read, compiled for a search over
+	// entityType. Required for the same reason as FieldVisibleOnEveryRow:
+	// a resolver that hides fields must never pair with a search that
+	// hides nothing. A nil scope means nothing is hidden.
+	SearchFieldScope(ctx context.Context, entityType string) (*search.FieldScope, error)
 }
 
 // traversalPrimer is the OPTIONAL capability of a [FieldVerdictResolver]
@@ -279,10 +297,23 @@ type traversalPrimer interface {
 }
 
 // primeVerdicts primes res for a page of rows so serializing the page costs
-// one store query per grant traversal, not one per row. Serializing on the
-// unprimed ctx is still correct, only slower.
+// one store query per grant traversal, not one per row. It also primes the
+// rows' local roles ([acl.PrimeLocalRoles]), which every `_actions` verb and
+// field verdict of a row consults (BUG-E2W1LS). Serializing on the unprimed
+// ctx is still correct, only slower.
+//
+// Read paths only: the local-role prime is a snapshot, and a write made on
+// the returned ctx would not be reflected in it.
 func primeVerdicts(ctx context.Context, res FieldVerdictResolver, rows []*entityPkg.Entity) context.Context {
-	if p, ok := res.(traversalPrimer); ok && len(rows) > 0 {
+	if len(rows) == 0 {
+		return ctx
+	}
+	ids := make([]string, len(rows))
+	for i, e := range rows {
+		ids[i] = e.ID
+	}
+	ctx = acl.PrimeLocalRoles(ctx, ids)
+	if p, ok := res.(traversalPrimer); ok {
 		return p.PrimeTraversals(ctx, rows)
 	}
 	return ctx
@@ -356,11 +387,39 @@ type FieldVerdicts struct {
 // policy-derived verdict. Computed properties are materialized for display but
 // can never be authored, regardless of ACL role; nor can external refs.
 func (svc affordanceService) fieldVerdicts(ctx context.Context, e *entityPkg.Entity) FieldVerdicts {
-	v := svc.resolver().FieldVerdicts(ctx, e)
+	return withSchemaReadOnly(svc.meta(), e, svc.resolver().FieldVerdicts(ctx, e))
+}
+
+// createFieldVerdictResolver is the OPTIONAL capability of a
+// [FieldVerdictResolver] whose verdicts depend on the operation: on a create,
+// a role without a `fields:` or `options:` block qualifies by holding create
+// rather than update (BUG-Y5UF3K). Only the policy-backed resolver has it;
+// the Nop and Demo resolvers answer a create like any other write.
+type createFieldVerdictResolver interface {
+	CreateFieldVerdicts(ctx context.Context, e *entityPkg.Entity) FieldVerdicts
+}
+
+// createFieldVerdicts is [affordanceService.fieldVerdicts] for creating e. Every
+// create surface asks it: the create gate, the create dry-run form and a
+// history recreate.
+func createFieldVerdicts(
+	ctx context.Context, res FieldVerdictResolver, meta *metamodel.Metamodel, e *entityPkg.Entity,
+) FieldVerdicts {
+	if creator, ok := res.(createFieldVerdictResolver); ok {
+		return withSchemaReadOnly(meta, e, creator.CreateFieldVerdicts(ctx, e))
+	}
+	return withSchemaReadOnly(meta, e, res.FieldVerdicts(ctx, e))
+}
+
+// withSchemaReadOnly marks the fields of e's type that no principal may author
+// read-only on top of v: computed properties, roll-ups and external refs.
+//
+// Nil: e accepted (v returned unchanged).
+func withSchemaReadOnly(meta *metamodel.Metamodel, e *entityPkg.Entity, v FieldVerdicts) FieldVerdicts {
 	if e == nil {
 		return v
 	}
-	def, ok := svc.meta().GetEntityDef(e.Type)
+	def, ok := meta.GetEntityDef(e.Type)
 	if !ok {
 		return v
 	}
@@ -371,7 +430,7 @@ func (svc affordanceService) fieldVerdicts(ctx context.Context, e *entityPkg.Ent
 	for name, pd := range def.Properties {
 		// An external ref is written only by scripts, migrations and
 		// imports (TKT-SM20FG); the write path refuses it from here.
-		if pd.Computed != "" || pd.Type == metamodel.PropertyTypeExternalRef {
+		if pd.Computed != "" || pd.Rollup != nil || pd.Type == metamodel.PropertyTypeExternalRef {
 			v.Writable[name] = false
 		}
 	}
@@ -479,8 +538,25 @@ func (svc affordanceService) validateFieldWrite(
 	if e == nil {
 		return nil
 	}
-	v := svc.fieldVerdicts(ctx, e)
-	d := affordances.CheckFieldWrite(affordances.FieldVerdicts(v), affordances.DeclaredProperties(svc.meta(), e.Type),
+	return checkFieldWrite(svc.meta(), e, svc.fieldVerdicts(ctx, e), setKeys, unsetKeys)
+}
+
+// validateCreateFieldWrite is validateFieldWrite for a create of e, judged
+// against createFieldVerdicts.
+func (svc affordanceService) validateCreateFieldWrite(
+	ctx context.Context, e *entityPkg.Entity, setKeys map[string]any,
+) *AffordanceDenialError {
+	if e == nil {
+		return nil
+	}
+	return checkFieldWrite(svc.meta(), e, createFieldVerdicts(ctx, svc.resolver(), svc.meta(), e), setKeys, nil)
+}
+
+// checkFieldWrite applies the shared field-write check to verdicts v of e.
+func checkFieldWrite(
+	meta *metamodel.Metamodel, e *entityPkg.Entity, v FieldVerdicts, setKeys map[string]any, unsetKeys []string,
+) *AffordanceDenialError {
+	d := affordances.CheckFieldWrite(affordances.FieldVerdicts(v), affordances.DeclaredProperties(meta, e.Type),
 		setKeys, unsetKeys)
 	if d == nil {
 		return nil
@@ -546,6 +622,7 @@ func (a *App) denyAffordance(
 		Subject:     subject,
 		Principal:   principal.From(ctx),
 		TriggeredBy: audit.TriggeredByFrom(ctx),
+		AssertedBy:  audit.AssertedByFrom(ctx),
 		Summary:     summary,
 	})
 	writeAffordanceDenialError(w, denial)
@@ -1031,16 +1108,6 @@ func (v FieldVerdicts) IsOptionAllowed(name, opt string) bool {
 // phrase the check in the negative form.
 func (v FieldVerdicts) isHidden(name string) bool { return !v.IsVisible(name) }
 
-// hidesAnyField reports whether the active resolver can ever hide a property.
-// The Nop resolver returns empty verdicts for every entity, so field-level
-// redaction is a provable no-op under it; a policy-backed resolver may hide.
-// Search uses this to decide whether the property-level filter needs to run at
-// all (and thus whether a non-provenance searcher is acceptable).
-func (svc affordanceService) hidesAnyField() bool {
-	_, isNop := svc.resolver().(NopFieldVerdictResolver)
-	return !isNop
-}
-
 // hiddenProperties returns the set of property names that should be
 // stripped from v1.Entity.Properties before serialization. Caller uses
 // this to enforce the omit-on-hidden invariant.
@@ -1451,6 +1518,12 @@ func (svc affordanceService) attachEntityAffordances(ctx context.Context, e *ent
 	if offers := svc.computeCopyOffers(ctx, e); offers != nil {
 		result.Copies = &offers
 	}
+	if offers := computeConversionOffers(ctx, svc, e); offers != nil {
+		result.Conversions = &offers
+	}
+	if offers := computeTaskItemOffers(ctx, svc, e); offers != nil {
+		result.TaskItemConversions = &offers
+	}
 	if detail := svc.computeDetailActions(ctx, e); detail != nil {
 		if result.Actions == nil {
 			result.Actions = make(map[string]bool, len(detail))
@@ -1498,7 +1571,7 @@ func (svc affordanceService) computeAttachments(
 		// correctly; this map is only a UI hint. But a real backend fault
 		// (not just a missing entity) is logged so operators aren't blind to
 		// an outage that silently empties every entity's _attachments.
-		if !errors.Is(err, store.ErrNotFound) {
+		if !errors.Is(err, store.ErrNotFound) && !errors.Is(ctx.Err(), context.Canceled) {
 			slog.Warn("dataentry: list attachments for serialization failed",
 				"err", err, "entity", e.ID)
 		}
@@ -1516,6 +1589,7 @@ func (svc affordanceService) computeAttachments(
 			FileName:    info.FileName,
 			Size:        info.Size,
 			ContentType: contentTypeForFilename(info.FileName),
+			SHA256:      info.SHA256,
 			Href:        selfHref + "/_attachments/" + info.Property + "/" + url.PathEscape(info.FileName),
 		})
 	}
@@ -1566,7 +1640,9 @@ func (svc affordanceService) computeFaces(
 	// address that answers 404.
 	fam, ok, err := svc.family(ctx, e.Type, e.ID)
 	if err != nil {
-		slog.Warn("dataentry: reading an entity's faces failed", "id", e.ID, "err", err)
+		if !errors.Is(ctx.Err(), context.Canceled) { // a canceled request is not a fault (TKT-T2I7P2)
+			slog.Warn("dataentry: reading an entity's faces failed", "id", e.ID, "err", err)
+		}
 		return out
 	}
 	if !ok {
@@ -1662,8 +1738,10 @@ func (svc affordanceService) computeCopyOffers(
 	}
 	offers, err := svc.copies(ctx, e.Type, e.Face.String(), e.ID)
 	if err != nil {
-		slog.Warn("dataentry: computing copy offers failed; _copies omitted",
-			"entity", e.ID, "type", e.Type, "err", err)
+		if !errors.Is(ctx.Err(), context.Canceled) { // a canceled request is not a fault (TKT-T2I7P2)
+			slog.Warn("dataentry: computing copy offers failed; _copies omitted",
+				"entity", e.ID, "type", e.Type, "err", err)
+		}
 		return nil
 	}
 	out := make([]v1.CopyOffer, 0, len(offers))
@@ -1675,6 +1753,48 @@ func (svc affordanceService) computeCopyOffers(
 			Allowed:    o.Allowed,
 			Reason:     o.Reason,
 			OnSuccess:  copyOnSuccessWire(o.OnSuccess),
+		})
+	}
+	return out
+}
+
+func computeConversionOffers(ctx context.Context, svc affordanceService, e *entityPkg.Entity) []v1.ConversionOffer {
+	if svc.conversions == nil || e == nil {
+		return nil
+	}
+	offers := svc.conversions(ctx, e.Type, e.ID)
+	out := make([]v1.ConversionOffer, 0, len(offers))
+	for _, o := range offers {
+		out = append(out, v1.ConversionOffer{
+			Name:          o.Name,
+			Label:         o.Label,
+			To:            o.To,
+			Allowed:       o.Allowed,
+			Reason:        o.Reason,
+			MappedFields:  o.MappedFields,
+			ContentMapped: o.ContentMapped,
+			FaceChoices:   o.FaceChoices,
+		})
+	}
+	return out
+}
+
+// computeTaskItemOffers lists the task-item recipes whose source is e's type.
+// Nil when the capability is not wired or no recipe starts from e's type.
+func computeTaskItemOffers(
+	ctx context.Context, svc affordanceService, e *entityPkg.Entity,
+) []v1.TaskItemConversionOffer {
+	if svc.taskItems == nil || e == nil {
+		return nil
+	}
+	offers := svc.taskItems(ctx, e)
+	if len(offers) == 0 {
+		return nil
+	}
+	out := make([]v1.TaskItemConversionOffer, 0, len(offers))
+	for _, o := range offers {
+		out = append(out, v1.TaskItemConversionOffer{
+			Name: o.Name, Label: o.Label, To: o.To, Item: o.Item, Allowed: o.Allowed, Reason: o.Reason,
 		})
 	}
 	return out

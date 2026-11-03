@@ -2,6 +2,7 @@ package dataentry
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -11,6 +12,7 @@ import (
 	entityPkg "github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/relresolve"
+	"github.com/Sourcehaven-BV/rela/internal/search"
 	"github.com/Sourcehaven-BV/rela/internal/statemachine"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
@@ -23,7 +25,9 @@ import (
 //
 // The env var RELA_AFFORDANCE_PROFILE selects the override at startup.
 // cmd/rela-server and cmd/rela-desktop parse the var and pass the
-// resolver into NewApp; tests pass the resolver directly.
+// resolver into NewApp; tests pass the resolver directly. Neither
+// profile may be set when acl.yaml declares field rules (BUG-UO72G2):
+// see [ResolverFromProfile].
 type AffordanceProfile string
 
 const (
@@ -31,28 +35,57 @@ const (
 	AffordanceProfileDemo AffordanceProfile = "demo"
 )
 
+// ErrProfileOverridesFieldRules is returned by [ResolverFromProfile] when
+// RELA_AFFORDANCE_PROFILE is "none" or "demo" and acl.yaml declares field
+// rules.
+var ErrProfileOverridesFieldRules = errors.New("acl.yaml declares field rules")
+
 // ResolverFromProfile returns the [FieldVerdictResolver] for the given
-// profile, policy, and metamodel. Selection order (DR-M3):
+// profile, policy, and metamodel. Selection order (DR-M3, amended by
+// BUG-UO72G2):
 //
-//  1. profile == "demo" → [DemoFieldVerdictResolver] (hard override,
-//     for dev / e2e fixtures even when a policy is present).
-//  2. profile == "none" → [NopFieldVerdictResolver] (hard opt-out).
-//  3. profile == "" and the policy declares any affordance grants →
+//  1. profile == "demo" or "none" and the policy declares any affordance
+//     grants ([acl.Policy.HasAffordanceGrants]: role fields:, visible:,
+//     options: or relations:, or a client_baselines field ceiling) →
+//     an error wrapping [ErrProfileOverridesFieldRules]. The profile only
+//     replaces the REST resolver; MCP and CLI reads still apply the
+//     policy, so applying it would drop the field rules on REST alone.
+//  2. profile == "demo" → [DemoFieldVerdictResolver] (dev / e2e fixture).
+//  3. profile == "none" → [NopFieldVerdictResolver] (opt-out).
+//  4. profile == "" and the policy declares any affordance grants →
 //     the policy-backed resolver.
-//  4. otherwise → [NopFieldVerdictResolver].
+//  5. otherwise → [NopFieldVerdictResolver].
 //
-// An unknown profile logs a warning and falls back to step 3/4. A
+// An unknown profile logs a warning and falls back to step 4/5. A
 // policy-backed resolver whose predicates fail to compile returns an
-// error — the caller fails startup loudly (DR-M4), matching the
-// acl.yaml hard-fail posture for genuinely broken config.
+// error. In both error cases the caller fails startup loudly (DR-M4),
+// matching the acl.yaml hard-fail posture for genuinely broken config.
 func ResolverFromProfile(
 	profile string, meta *metamodel.Metamodel, st store.Store,
 	declarative *acl.Declarative,
 ) (FieldVerdictResolver, error) {
+	// No declarative wired → NopACL or constant-decider ACL → no
+	// affordance grants to compute. Declarative is the single source
+	// for the policy (RR-WTLD); reading it through any other channel
+	// invites mismatched-pair bugs.
+	hasGrants := false
+	if declarative != nil {
+		if policy := declarative.Policy(); policy != nil {
+			hasGrants = policy.HasAffordanceGrants()
+		}
+	}
+
 	switch AffordanceProfile(profile) {
-	case AffordanceProfileDemo:
-		return DemoFieldVerdictResolver{}, nil
-	case AffordanceProfileNone:
+	case AffordanceProfileDemo, AffordanceProfileNone:
+		if hasGrants {
+			return nil, fmt.Errorf(
+				"dataentry: %w: RELA_AFFORDANCE_PROFILE=%s would drop them on REST "+
+					"while MCP and CLI still apply them; unset RELA_AFFORDANCE_PROFILE",
+				ErrProfileOverridesFieldRules, profile)
+		}
+		if AffordanceProfile(profile) == AffordanceProfileDemo {
+			return DemoFieldVerdictResolver{}, nil
+		}
 		return NopFieldVerdictResolver{}, nil
 	case "":
 		// fall through to policy-based selection
@@ -62,15 +95,7 @@ func ResolverFromProfile(
 			"allowed", []string{string(AffordanceProfileNone), string(AffordanceProfileDemo)})
 	}
 
-	// No declarative wired → NopACL or constant-decider ACL → no
-	// affordance grants to compute. Declarative is the single source
-	// for the policy (RR-WTLD); reading it through any other channel
-	// invites mismatched-pair bugs.
-	if declarative == nil {
-		return NopFieldVerdictResolver{}, nil
-	}
-	policy := declarative.Policy()
-	if policy == nil || !policy.HasAffordanceGrants() {
+	if !hasGrants {
 		return NopFieldVerdictResolver{}, nil
 	}
 	// One raw binder answers related() in both ACL `when:` grants and
@@ -147,6 +172,16 @@ func (NopFieldVerdictResolver) RelationVerdicts(context.Context, *entityPkg.Enti
 // UnconditionalRelationVerdicts always returns the zero value.
 func (NopFieldVerdictResolver) UnconditionalRelationVerdicts(context.Context, *entityPkg.Entity) RelationVerdicts {
 	return RelationVerdicts{}
+}
+
+// FieldVisibleOnEveryRow is always true: this resolver hides nothing.
+func (NopFieldVerdictResolver) FieldVisibleOnEveryRow(context.Context, string, string) bool {
+	return true
+}
+
+// SearchFieldScope is nil: this resolver hides nothing.
+func (NopFieldVerdictResolver) SearchFieldScope(context.Context, string) (*search.FieldScope, error) {
+	return nil, nil //nolint:nilnil // nil scope is the documented "nothing hidden"
 }
 
 // DemoFieldVerdictResolver applies a fixed fixture against the
@@ -227,4 +262,18 @@ func (d DemoFieldVerdictResolver) UnconditionalRelationVerdicts(
 	ctx context.Context, e *entityPkg.Entity,
 ) RelationVerdicts {
 	return d.RelationVerdicts(ctx, e)
+}
+
+// FieldVisibleOnEveryRow is false for the one field the fixture hides,
+// ticket.priority, whose verdict depends on the type only.
+func (DemoFieldVerdictResolver) FieldVisibleOnEveryRow(_ context.Context, entityType, property string) bool {
+	return entityType != "ticket" || property != "priority"
+}
+
+// SearchFieldScope hides priority on every ticket, as FieldVerdicts does.
+func (DemoFieldVerdictResolver) SearchFieldScope(_ context.Context, entityType string) (*search.FieldScope, error) {
+	if entityType != "ticket" {
+		return nil, nil //nolint:nilnil // nil scope is the documented "nothing hidden"
+	}
+	return &search.FieldScope{Gated: []string{"priority"}}, nil
 }

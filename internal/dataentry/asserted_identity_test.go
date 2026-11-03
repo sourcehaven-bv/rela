@@ -182,7 +182,7 @@ func TestNonJWTResolvers_CannotSetAssertedClaims(t *testing.T) {
 }
 
 func TestNonJWTResolvers_ResolvePrincipalEntityIsTheOnlyOtherVerifiedCaller(t *testing.T) {
-	// resolvePrincipalEntity legitimately calls principal.Verified — it rebuilds
+	// access.Opener.Open legitimately rebuilds the principal — it rebuilds
 	// the Principal when principal_property substitutes a graph entity ID. That
 	// makes it the one non-resolver path that can carry roles, so it is worth
 	// pinning that it only ever PROPAGATES claims it was given, never invents
@@ -194,7 +194,7 @@ func TestNonJWTResolvers_ResolvePrincipalEntityIsTheOnlyOtherVerifiedCaller(t *t
 	if len(plain.Roles()) != 0 {
 		t.Fatal("precondition: a plain Principal already has roles")
 	}
-	// The shape resolvePrincipalEntity builds when the incoming principal has
+	// The shape principal resolution (access.Opener.Open) builds when the incoming principal has
 	// no claims: Verified with the resolved ID and whatever the original had.
 	p := principal.Verified("PERS-alice", plain.Tool, plain.OrgID(), plain.OrgSlug(), plain.Roles())
 	if len(p.Roles()) != 0 {

@@ -82,7 +82,7 @@ func RunIteratorNestingTests(t *testing.T, f Factory, vsf VisibleSearchFactory) 
 }
 
 func isSearchCase(name string) bool {
-	return name == "SearchVisible" || name == "SearchVisibleFields"
+	return name == "SearchVisible" || name == "SearchVisibleFieldScope"
 }
 
 func nestingCases() []iterCase {
@@ -116,17 +116,16 @@ func nestingCases() []iterCase {
 		{"SearchVisible", func(ctx context.Context, _ store.Store, vs search.VisibleSearcher, _ func(string) error) iter.Seq2[string, error] {
 			return idSeq(vs.SearchVisible(ctx, search.Query{Text: "nesting", World: store.TrivialScope()}, scope), byHit)
 		}},
-		{"SearchVisibleFields", func(ctx context.Context, _ store.Store, vs search.VisibleSearcher, nested func(string) error) iter.Seq2[string, error] {
-			fvs, ok := vs.(search.FieldVisibleSearcher)
-			if !ok { // unreachable: nestingStore skips such searchers
-				return func(yield func(string, error) bool) { yield("", errors.New("no field-level filter")) }
-			}
-			// The hidden-fields callback is caller code too: it computes
-			// field verdicts, which make store calls of their own.
-			hidden := func(_ context.Context, h search.Hit, _ *entity.Entity) (map[string]struct{}, error) {
-				return nil, nested(h.ID)
-			}
-			return idSeq(fvs.SearchVisibleFields(ctx, search.Query{Text: "nesting", World: store.TrivialScope()}, scope, hidden), byHit)
+		{"SearchVisibleFieldScope", func(ctx context.Context, _ store.Store, vs search.VisibleSearcher, _ func(string) error) iter.Seq2[string, error] {
+			// A field scope with a conditional grant: the generic searcher
+			// reads rows and answers the condition between pages.
+			fields := map[string]search.TypeScope{"feature": {AllowAll: true, Fields: &search.FieldScope{
+				Gated: []string{"title"},
+				Grants: []search.FieldGrant{{Fields: []string{"title"}, When: &store.GraphQuery{
+					Props: []store.PropPredicate{{Property: "title", Op: store.PropNotEqual, Value: ""}},
+				}}},
+			}}}
+			return idSeq(vs.SearchVisible(ctx, search.Query{Text: "nesting", World: store.TrivialScope()}, fields), byHit)
 		}},
 	}
 }
@@ -147,9 +146,6 @@ func nestingStore(
 			t.Skip("no VisibleSearchFactory")
 		}
 		s, _, vs = vsf(t)
-		if _, ok := vs.(search.FieldVisibleSearcher); !ok && name == "SearchVisibleFields" {
-			t.Skip("visible searcher has no field-level filter")
-		}
 	default:
 		s = f(t)
 	}

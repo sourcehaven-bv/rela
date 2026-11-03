@@ -55,7 +55,7 @@ const items = computed<Array<number | 'gap'>>(() => {
 </script>
 
 <template>
-  <nav class="rl-pagination" aria-label="Pagination">
+  <nav class="rl-pagination" :aria-label="messages.chromeText({ key: 'pagination' })">
     <RlText v-if="summary" size="sm" tone="muted" class="rl-pagination__summary">
       {{ summary }}
     </RlText>
@@ -66,7 +66,7 @@ const items = computed<Array<number | 'gap'>>(() => {
           type="button"
           class="rl-pagination__button"
           :disabled="disabled || page <= 1"
-          aria-label="Previous page"
+          :aria-label="messages.chromeText({ key: 'previousPage' })"
           @click="$emit('update:page', page - 1)"
         >
           <RlIcon name="chevron-right" :size="16" class="rl-pagination__prev" aria-hidden="true" />
@@ -95,7 +95,7 @@ const items = computed<Array<number | 'gap'>>(() => {
           type="button"
           class="rl-pagination__button"
           :disabled="disabled || page >= pageCount"
-          aria-label="Next page"
+          :aria-label="messages.chromeText({ key: 'nextPage' })"
           @click="$emit('update:page', page + 1)"
         >
           <RlIcon name="chevron-right" :size="16" aria-hidden="true" />

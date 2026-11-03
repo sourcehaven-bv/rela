@@ -5,6 +5,7 @@ import { PiniaColada } from '@pinia/colada'
 import { createRouter, createWebHistory, type Router } from 'vue-router'
 import Sidebar from './Sidebar.vue'
 import { _setEntityPluralForTest } from '@/api/entities'
+import { ApiError } from '@/api/errors'
 import type { Entity, ListResponse, SidebarData } from '@/types'
 
 const getSidebarMock = vi.fn()
@@ -94,6 +95,38 @@ describe('Sidebar / entities entries', () => {
     expect(links(w)).toEqual(expect.arrayContaining(['Title PRJ-1', 'Title PRJ-2']))
     const first = w.findAll('a').find((a) => a.text().includes('Title PRJ-1'))
     expect(first!.attributes('href')).toContain('PRJ-1')
+  })
+
+  // BUG-WJSYQT: an entry sorted on a property this reader cannot see on every
+  // row is refused with 400 property_not_visible. The rows are still the
+  // entry's rows, so they are read again unsorted instead of vanishing.
+  it('reads an entry again unsorted when its sort is refused', async () => {
+    getSidebarMock.mockResolvedValue(
+      sidebar([
+        {
+          group: 'Projects',
+          items: [{ label: '', entities: { type: 'project', sort: 'secret' } }],
+        },
+      ])
+    )
+    const refused = new ApiError('property not visible', {
+      kind: 'http',
+      status: 400,
+      problem: {
+        type: 'https://rela.dev/errors/property_not_visible',
+        title: 'Cannot filter or sort on this property',
+        status: 400,
+        use: 'sort',
+        property: 'secret',
+      },
+      original: null,
+    })
+    listEntitiesMock.mockRejectedValueOnce(refused).mockResolvedValueOnce(rows(['PRJ-1']))
+    const w = await mountSidebar()
+
+    expect(links(w)).toContain('Title PRJ-1')
+    expect(listEntitiesMock).toHaveBeenCalledTimes(2)
+    expect(listEntitiesMock.mock.calls[1][1]).not.toHaveProperty('sort')
   })
 
   it('hides a group whose only entries matched nothing', async () => {

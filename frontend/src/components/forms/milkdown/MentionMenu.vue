@@ -12,6 +12,7 @@
  * before the click resolves.
  */
 import { computed, useId, type DeepReadonly } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { entityDisplayTitle } from '@/utils/entityDisplay'
 import type { Entity } from '@/types'
 import type { MentionMenuState } from './useMentionMenu'
@@ -37,6 +38,8 @@ const emit = defineEmits<{
   pick: [index: number]
   hover: [index: number]
 }>()
+
+const { t } = useI18n()
 
 function titleOf(item: DeepReadonly<Entity>): string {
   return entityDisplayTitle(item) || item.id
@@ -90,10 +93,13 @@ const entityNote = computed(() => {
   if (s.items.length > 0) return ''
   // One letter matching no type: nothing is searched yet, but an empty box
   // would look broken.
-  if (!s.searches) return s.typeItems.length === 0 ? 'Type to search' : ''
-  if (s.pending) return 'Searching…'
-  if (s.errorMsg) return s.errorMsg
-  return s.starting ? 'Type to search' : 'No matches'
+  if (!s.searches) return s.typeItems.length === 0 ? t('editor.mention.typeToSearch') : ''
+  if (s.pending) return t('editor.mention.searching')
+  // `errorMsg` is set by the shared state module, which `<rela-editor>` also
+  // runs without vue-i18n; its only failure is a failed search, so the SPA
+  // shows that in the interface language.
+  if (s.errorMsg) return t('editor.mention.searchFailed')
+  return s.starting ? t('editor.mention.typeToSearch') : t('editor.mention.noMatches')
 })
 
 /** Section order, as the plan decided; the DOM follows it so reading order does too. */
@@ -109,7 +115,7 @@ const compactTypes = computed(() => !props.state.typesFirst && props.state.items
   <div
     class="mention-menu"
     role="listbox"
-    aria-label="Entity reference suggestions"
+    :aria-label="t('editor.mention.suggestions')"
     :aria-activedescendant="activeOptionId"
     @mousedown.prevent
   >
@@ -118,7 +124,9 @@ const compactTypes = computed(() => !props.state.typesFirst && props.state.items
          shows only while nothing follows the colon, where Backspace unscopes. -->
     <div v-if="props.state.scopeType" class="mention-menu-chip-row">
       <span class="mention-menu-chip">{{ props.state.scopeType }}</span>
-      <span v-if="props.state.starting" class="mention-menu-chip-hint">Backspace to clear</span>
+      <span v-if="props.state.starting" class="mention-menu-chip-hint">{{
+        t('editor.mention.backspaceToClear')
+      }}</span>
     </div>
 
     <template v-for="section in sections" :key="section">
@@ -131,7 +139,7 @@ const compactTypes = computed(() => !props.state.typesFirst && props.state.items
           :id="`${uid}-entities-label`"
           class="mention-menu-section"
         >
-          Entities
+          {{ t('editor.mention.entities') }}
         </div>
         <div
           v-if="entityNote"
@@ -145,7 +153,7 @@ const compactTypes = computed(() => !props.state.typesFirst && props.state.items
           class="mention-menu-list"
           role="group"
           :aria-labelledby="props.state.typeItems.length > 0 ? `${uid}-entities-label` : undefined"
-          :aria-label="props.state.typeItems.length > 0 ? undefined : 'Entities'"
+          :aria-label="props.state.typeItems.length > 0 ? undefined : t('editor.mention.entities')"
           data-section="entities"
         >
           <li
@@ -175,7 +183,9 @@ const compactTypes = computed(() => !props.state.typesFirst && props.state.items
         v-else-if="section === 'types' && props.state.typeItems.length > 0"
         class="mention-menu-block"
       >
-        <div :id="`${uid}-types-label`" class="mention-menu-section">Types</div>
+        <div :id="`${uid}-types-label`" class="mention-menu-section">
+          {{ t('editor.mention.types') }}
+        </div>
         <ul
           class="mention-menu-list"
           :class="{ 'is-compact': compactTypes }"
@@ -195,7 +205,7 @@ const compactTypes = computed(() => !props.state.typesFirst && props.state.items
             @mousemove="emit('hover', typeOffset + idx)"
           >
             <span class="mention-menu-title">{{ name }}</span>
-            <span v-if="!compactTypes" class="mention-menu-id">type</span>
+            <span v-if="!compactTypes" class="mention-menu-id">{{ t('editor.mention.type') }}</span>
           </li>
         </ul>
       </div>

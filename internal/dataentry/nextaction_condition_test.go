@@ -283,7 +283,7 @@ func TestNextAction_HiddenPropertyMakesCurrentUserConditionFalse(t *testing.T) {
 		Roles:       map[string]acl.RoleDef{"viewer": {Read: []string{"ticket"}}},
 		Assignments: map[string]string{"alice": "viewer"},
 	}, app.store)
-	app.acl = d
+	setTestACL(t, app, d)
 	withNextActions(t, app, oneBand, map[string]dataentryconfig.NextActionSource{
 		"s": {Band: "b", Query: "type:ticket", Condition: "is_current_user(entity.assignee)", Suggest: "{id}"},
 	})
@@ -297,7 +297,7 @@ func TestNextAction_HiddenPropertyMakesCurrentUserConditionFalse(t *testing.T) {
 
 	// Hide the assignee: the pre-filter still selects the row, the Go pass
 	// does not.
-	app.fieldResolver = fakeResolver{fv: FieldVerdicts{Visible: map[string]bool{"assignee": false}}}
+	setTestResolver(t, app, fakeResolver{fv: FieldVerdicts{Visible: map[string]bool{"assignee": false}}})
 	resp, status = getNextAction(ctx, t, app)
 	require.Equal(t, http.StatusOK, status)
 	require.Nil(t, resp.Suggestion, "a hidden property must not satisfy a per-user condition")

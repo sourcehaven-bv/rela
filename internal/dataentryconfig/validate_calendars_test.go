@@ -241,11 +241,25 @@ func TestValidateCalendars_Invalid(t *testing.T) {
 			want: "display is only supported on kanban card fields",
 		},
 		{
+			name: "event field related property",
+			cal: withShell(func(c *Calendar) {
+				c.Event = CalendarEvent{Fields: []KanbanCardField{{Relation: "nope", Property: "title"}}}
+			}),
+			want: "event.fields[0]: a related property (relation with property) is only supported on kanban card fields",
+		},
+		{
 			name: "event field comment count",
 			cal: withShell(func(c *Calendar) {
 				c.Event = CalendarEvent{Fields: []KanbanCardField{{Comments: true}}}
 			}),
 			want: "comments is only supported on kanban card fields",
+		},
+		{
+			name: "event field busy",
+			cal: withShell(func(c *Calendar) {
+				c.Event = CalendarEvent{Fields: []KanbanCardField{{Busy: "run"}}}
+			}),
+			want: "event.fields[0]: busy is only supported on kanban card fields",
 		},
 	}
 

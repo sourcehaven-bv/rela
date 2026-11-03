@@ -20,6 +20,9 @@ type Info struct {
 	FileName    string
 	ContentType string
 	Size        int64
+	// SHA256 is the lowercase hex SHA-256 of the stored bytes; see
+	// [store.AttachmentInfo.SHA256].
+	SHA256 string
 }
 
 // Result is the outcome of [Service.Attach] and [Service.WriteAttachment].
@@ -30,6 +33,12 @@ type Result struct {
 	// Entity is the post-write entity as stored, unredacted. A caller that
 	// serves it must apply its own read-side redaction.
 	Entity *entity.Entity
+
+	// Size and SHA256 describe the bytes handed to the store, after any
+	// processor rewrote them. SHA256 is lowercase hex, the form
+	// [store.AttachmentInfo.SHA256] reports for the same file.
+	Size   int64
+	SHA256 string
 }
 
 // Stamper is the write surface the attachment service needs: recording an

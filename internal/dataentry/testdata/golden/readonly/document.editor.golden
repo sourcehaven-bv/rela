@@ -1,0 +1,13 @@
+request: GET /api/v1/_documents/report
+identity: header editor@example.test
+status: 200
+reads: ListEntities=1
+breadth: ListEntities=0/1
+bodies: ListEntities=4/1
+versions: 
+body:
+{
+  "html": "\u003cul\u003e\n\u003cli\u003eTKT-1 Alpha\u003c/li\u003e\n\u003cli\u003eTKT-2 Bravo\u003c/li\u003e\n\u003cli\u003eTKT-3 Charlie\u003c/li\u003e\n\u003cli\u003eTKT-4 Delta\u003c/li\u003e\n\u003cli\u003eTKT-5 Echo\u003c/li\u003e\n\u003cli\u003eTKT-6 Foxtrot\u003c/li\u003e\n\u003c/ul\u003e\n",
+  "cached": false,
+  "entity_ids": []
+}

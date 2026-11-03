@@ -3,6 +3,8 @@ import { mount, flushPromises, type VueWrapper } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import { PiniaColada } from '@pinia/colada'
 import EntityDetail from './EntityDetail.vue'
+import EntityBody from './EntityBody.vue'
+import EntityTitle from './EntityTitle.vue'
 import CommandModal from './CommandModal.vue'
 import CommentsPanel from './CommentsPanel.vue'
 import DocumentsPanel from './DocumentsPanel.vue'
@@ -275,7 +277,7 @@ describe('EntityDetail world binding', () => {
     it('sends no world under the default world', async () => {
       const w = await mountDetail(viewResponse())
       rendersProof(w)
-      expect(fetchViewMock).toHaveBeenCalledWith(entityType, entityId, undefined)
+      expect(fetchViewMock).toHaveBeenCalledWith(entityType, entityId, undefined, expect.any(AbortSignal))
       expect(w.find('.world-banner').exists()).toBe(false)
     })
 
@@ -283,12 +285,32 @@ describe('EntityDetail world binding', () => {
       mockRoute.query = { world: 'published' }
       const w = await mountDetail(viewResponse())
       rendersProof(w)
-      expect(fetchViewMock).toHaveBeenCalledWith(entityType, entityId, 'published')
+      expect(fetchViewMock).toHaveBeenCalledWith(entityType, entityId, 'published', expect.any(AbortSignal))
       // No banner: this fixture declares no `banner:` for the world, and the
       // served row is the BARE face (no `_self` face) with `update: true`, so
       // there is nothing to announce and nothing to explain. A world no
       // longer makes a page read-only; only a grant does.
       expect(w.find('.world-banner').exists()).toBe(false)
+    })
+
+    // A reference in the body is resolved in the request's world, so its link
+    // must open the target in that world, not in the default one.
+    it.each([
+      [{ world: 'published' }, '/entity/policy/POL-2?world=published'],
+      [{}, '/entity/policy/POL-2'],
+    ])('links a body reference in the world of the request (%o)', async (query, href) => {
+      mockRoute.query = query
+      const w = await mountDetail({
+        ...viewResponse(),
+        sections: [section({
+          sectionId: 'content', display: 'content', hasContent: true, content: 'See `POL-2`.',
+        })],
+        mentions: { 'POL-2': { type: 'policy', title: 'Second policy' } },
+      })
+      rendersProof(w)
+      const link = w.findAll('a').find((a) => a.text() === 'Second policy')
+      expect(link?.attributes('href')).toBe(href)
+      w.unmount()
     })
 
     it('renders the operator announcement alone when the world declares one', async () => {
@@ -596,6 +618,108 @@ describe('EntityDetail world binding', () => {
       expect(updateEntityMock.mock.calls[0][1]).toBe('POL-1@nl')
     })
 
+    // BUG-NSGD6OE: a toggle pending when another entity comes on screen is
+    // written to the row it was made on, and its response does not touch the
+    // row now on screen.
+    it('keeps a pending toggle on its own row when the page switches entity', async () => {
+      const contentSection = section({
+        sectionId: 'content', display: 'content', hasContent: true, content: '- [ ] a task',
+      })
+      mockRoute.query = { world: 'site-nl' }
+      const w = await mountDetail({
+        entry: writableFace({ content: '- [ ] a task' }),
+        sections: [contentSection],
+      })
+      rendersProof(w)
+      await w.find('input[type="checkbox"][data-cb-idx]').trigger('click')
+
+      const other = entry({
+        id: 'POL-2',
+        _self: '/api/v1/policys/POL-2@nl',
+        _title: 'Other Policy',
+        properties: { title: 'Other Policy' },
+        content: '- [ ] other task',
+      })
+      fetchViewMock.mockResolvedValue({
+        entry: other,
+        sections: [{ ...contentSection, content: '- [ ] other task' }],
+      })
+      updateEntityMock.mockResolvedValue({
+        id: entityId, type: entityType, properties: {}, content: '- [x] a task', _actions: {},
+      })
+      await w.setProps({ entityId: 'POL-2' })
+      await flushPromises()
+
+      expect(updateEntityMock.mock.calls.map((c) => c[1])).toEqual(['POL-1@nl'])
+      expect(w.text()).toContain('other task')
+      expect(w.find('input[type="checkbox"][data-cb-idx]').element).toHaveProperty('checked', false)
+      w.unmount()
+    })
+
+    // BUG-NSGD6OE: the body editor writes to the row it was opened on. Its
+    // last edit can arrive after the page has switched rows (the editor
+    // flushes as it closes), and must not land on the new row.
+    it('writes a body edit to the row the editor was opened on after a switch', async () => {
+      const contentSection = section({
+        sectionId: 'content', display: 'content', hasContent: true, content: 'body one',
+      })
+      mockRoute.query = { world: 'site-nl' }
+      const w = await mountDetail({ entry: writableFace({ content: 'body one' }), sections: [contentSection] })
+      rendersProof(w)
+      const body = w.findComponent(EntityBody)
+      body.vm.$emit('edit')
+
+      const other = entry({
+        id: 'POL-2',
+        _self: '/api/v1/policys/POL-2@nl',
+        _title: 'Other Policy',
+        _actions: { update: true },
+        properties: { title: 'Other Policy' },
+        content: 'body two',
+      })
+      let serveOther!: () => void
+      fetchViewMock.mockReturnValue(new Promise((resolve) => {
+        serveOther = () => resolve({ entry: other, sections: [{ ...contentSection, content: 'body two' }] })
+      }))
+      updateEntityMock.mockResolvedValue({
+        id: entityId, type: entityType, properties: {}, content: 'typed on one', _actions: {},
+      })
+      // The route changes while the editor is still open: its next edit, and
+      // the debounced save it schedules, come after the switch.
+      await w.setProps({ entityId: 'POL-2' })
+      body.vm.$emit('input', 'typed on one')
+      serveOther()
+      await flushPromises()
+      // A late emit from the editor opened on POL-1 (its flush as it closes).
+      // The editor is keyed per row, so it is gone; were it kept, the emit
+      // would still go to the row it was opened on.
+      body.vm.$emit('input', 'late on one')
+      await new Promise((r) => setTimeout(r, 900))
+      await flushPromises()
+
+      expect(updateEntityMock.mock.calls.map((c) => c[1])).toEqual(['POL-1@nl'])
+      expect(updateEntityMock.mock.calls[0]![2].content).toBe('typed on one')
+      expect(w.text()).toContain('body two')
+      expect(w.text()).not.toContain('on one')
+      w.unmount()
+    })
+
+    it('closes an open title edit when the page switches row', async () => {
+      mockRoute.query = { world: 'site-nl' }
+      const w = await mountDetail(viewResponse(writableFace()))
+      rendersProof(w)
+      const before = w.findComponent(EntityTitle)
+      fetchViewMock.mockResolvedValue(viewResponse(writableFace({
+        id: 'POL-2', _self: '/api/v1/policys/POL-2@nl', _title: 'Other Policy', properties: { title: 'Other Policy' },
+      })))
+      await w.setProps({ entityId: 'POL-2' })
+      await flushPromises()
+
+      expect(before.exists()).toBe(false)
+      expect(w.findComponent(EntityTitle).props('title')).toBe('Other Policy')
+      w.unmount()
+    })
+
     it('refuses a checkbox toggle when _actions denies update', async () => {
       const contentSection = section({
         sectionId: 'content', display: 'content', hasContent: true, content: '- [ ] a task',
@@ -671,7 +795,7 @@ describe('EntityDetail world binding', () => {
       expect(w.find('.world-banner').exists()).toBe(false)
       expect(button(w, 'Delete')).toBeDefined()
       // And the param is OMITTED rather than sent as the reserved name.
-      expect(fetchViewMock).toHaveBeenCalledWith(entityType, entityId, undefined)
+      expect(fetchViewMock).toHaveBeenCalledWith(entityType, entityId, undefined, expect.any(AbortSignal))
     })
 
     // REACHABILITY, not suppression (BUG-G2BASF, measure

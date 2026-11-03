@@ -108,7 +108,8 @@ func (s *Store) ListFamilyAttachments(ctx context.Context, entityID string) ([]s
 	// content_type is always '' here — it is never written (see AttachFamilyFile); the
 	// service layer derives content type from the file name. Selected for
 	// forward-compatibility only.
-	const q = `SELECT entity_id, property, file_name, content_type, octet_length(bytes)
+	// sha256 is a generated column (migration 0036).
+	const q = `SELECT entity_id, property, file_name, content_type, octet_length(bytes), sha256
 	           FROM attachments WHERE entity_id = $1 ORDER BY property ASC, file_name ASC`
 	rows, err := s.db.Query(ctx, q, entityID)
 	if err != nil {
@@ -119,7 +120,9 @@ func (s *Store) ListFamilyAttachments(ctx context.Context, entityID string) ([]s
 	var result []store.AttachmentInfo
 	for rows.Next() {
 		var info store.AttachmentInfo
-		if err := rows.Scan(&info.EntityID, &info.Property, &info.FileName, &info.ContentType, &info.Size); err != nil {
+		if err := rows.Scan(
+			&info.EntityID, &info.Property, &info.FileName, &info.ContentType, &info.Size, &info.SHA256,
+		); err != nil {
 			return nil, err
 		}
 		result = append(result, info)

@@ -1,6 +1,9 @@
 package storage
 
 import (
+	"errors"
+	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 )
@@ -41,7 +44,7 @@ func (s *SafeFS) OnPostWrite(obs WriteObserver) (remove func()) {
 }
 
 // WriteFile writes data to path atomically:
-//  1. Writes to path + ".tmp" in the same directory
+//  1. Writes to a new temp file in the same directory (see [TempPath])
 //  2. Fsyncs the temp file
 //  3. Renames temp file to final path (atomic on POSIX)
 //  4. Fsyncs the parent directory
@@ -50,6 +53,12 @@ func (s *SafeFS) OnPostWrite(obs WriteObserver) (remove func()) {
 // Steps 1-4 are performed even when no observer is installed. Step 5
 // is skipped if the rename fails — a failed write leaves no durable
 // bytes to observe.
+//
+// Each call uses its own temp file, so concurrent writers of one path,
+// in this process or another, never write into each other's temp file:
+// the file at path is always one writer's complete bytes. The temp file
+// is created with O_EXCL and perm, so the umask applies as for any new
+// file and a planted symlink at the temp name is not followed.
 func (s *SafeFS) WriteFile(path string, data []byte, perm os.FileMode) error {
 	dir := filepath.Dir(path)
 
@@ -58,10 +67,8 @@ func (s *SafeFS) WriteFile(path string, data []byte, perm os.FileMode) error {
 		return err
 	}
 
-	tmpPath := path + ".tmp"
-
 	// Create and write temp file using os directly for fsync support
-	f, err := os.OpenFile(tmpPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, perm)
+	f, tmpPath, err := createTemp(path, perm)
 	if err != nil {
 		return err
 	}
@@ -108,6 +115,27 @@ func (s *SafeFS) WriteFile(path string, data []byte, perm os.FileMode) error {
 	s.hook.fire(path, data)
 
 	return nil
+}
+
+// tempCreateAttempts bounds the retries when a temp name already exists.
+// With 64 random bits a clash with another writer is practically
+// impossible; the bound stops a loop if a file system reports ErrExist
+// for every name.
+const tempCreateAttempts = 5
+
+// createTemp creates a new temp file for an atomic write of path and
+// returns it with its name.
+func createTemp(path string, perm os.FileMode) (*os.File, string, error) {
+	for range tempCreateAttempts {
+		tmpPath := TempPath(path)
+		f, err := os.OpenFile(tmpPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, perm)
+		if !errors.Is(err, fs.ErrExist) {
+			return f, tmpPath, err
+		}
+	}
+	// coverage-ignore-start: os-fs-event: reached only after repeated clashes of 64 random bits
+	return nil, "", fmt.Errorf("create temp file for %s: %w", path, fs.ErrExist)
+	// coverage-ignore-end
 }
 
 // syncDir fsyncs a directory to ensure metadata (renames) are persisted.

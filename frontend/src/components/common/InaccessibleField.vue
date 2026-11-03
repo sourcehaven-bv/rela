@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
+import { useI18n } from 'vue-i18n'
 
 // InaccessibleField renders the lock affordance when a property's value
 // is unreadable -- most commonly because the entity is git-crypt
@@ -11,19 +12,21 @@ const props = defineProps<{
   reason?: string
 }>()
 
+const { t } = useI18n()
+
 const tooltip = computed(() => {
   if (props.reason === 'git-crypt') {
-    return 'git-crypt encrypted (run `git-crypt unlock` to read)'
+    return t('shell.inaccessible.gitCrypt')
   }
   if (props.reason) {
-    return `inaccessible (${props.reason})`
+    return t('shell.inaccessible.reason', { reason: props.reason })
   }
-  return 'inaccessible'
+  return t('shell.inaccessible.label')
 })
 </script>
 
 <template>
-  <span class="property-inaccessible" :title="tooltip">🔒 inaccessible</span>
+  <span class="property-inaccessible" :title="tooltip">🔒 {{ t('shell.inaccessible.label') }}</span>
 </template>
 
 <style scoped>

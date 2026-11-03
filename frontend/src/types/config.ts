@@ -1,4 +1,5 @@
 import type { StatusColor } from 'rela-components/types'
+import type { ChannelMessageDisplay } from 'rela-components/components/channel/types'
 import type { SortSpec } from './schema'
 import type { ScriptError } from './scriptError'
 
@@ -15,6 +16,12 @@ export interface Config {
   styles?: Record<string, Record<string, string>>
   palette?: ResolvedPalette
   forms: Record<string, FormConfig>
+  /**
+   * How the channel composer and messages present the message types of
+   * realtime.yaml, keyed by channel type (TKT-91BK6F). Absent without a
+   * `channels:` section.
+   */
+  channels?: Record<string, ChannelPresentation>
   lists: Record<string, ListConfig>
   views: Record<string, ViewConfig>
   /**
@@ -28,6 +35,8 @@ export interface Config {
   calendars?: Record<string, CalendarConfig>
   gantts?: Record<string, GanttConfig>
   dashboard?: DashboardConfig
+  /** Named dashboards (TKT-5LQNLY), reached at `/dashboard/<name>`. */
+  dashboards?: Record<string, DashboardConfig>
   actions?: Record<string, ActionConfig>
   navigation: NavigationEntry[]
   /** Tabbed screens keyed by page id (TKT-ITQ0HL). Absent without `pages:`. */
@@ -94,6 +103,11 @@ export interface AppConfig {
    * client-side casing transform.
    */
   plantuml_server_url?: string
+  /**
+   * The project's default interface language (`app.language`), a BCP 47
+   * tag, or absent to follow the browser. A user's own choice wins over it.
+   */
+  language?: string
   // The world a request lands in when the URL names none. '' / absent means
   // the raw default faces. Presentation only — the read grant is re-checked
   // per request, so this changes which face a bare URL resolves to, not who
@@ -180,6 +194,21 @@ export interface FormField {
    * span, so an author learns the model once.
    */
   span?: number
+}
+
+/**
+ * A channel message field: the [FormField] keys a composer has behaviour
+ * for. The server refuses every other key at load.
+ */
+export type ChannelField = Pick<
+  FormField,
+  'property' | 'label' | 'placeholder' | 'help' | 'widget' | 'span' | 'hidden'
+>
+
+/** One `channels.<channel type>` entry of data-entry.yaml. */
+export interface ChannelPresentation {
+  /** Keyed by message type. */
+  messages?: Record<string, { fields?: ChannelField[]; display?: ChannelMessageDisplay }>
 }
 
 export interface RelationProperty {
@@ -288,6 +317,12 @@ export interface ListConfig {
   edit_form?: string
   page_size?: number
   actions?: string[]
+  /**
+   * Actions offered as header buttons that run without a selected row. A
+   * button shows only when the list response's `_actions` carries
+   * `action:<id>: true`; the permission behind it is not served here.
+   */
+  toolbar_actions?: string[]
   /** Splits the list into sections. Absent means a flat, paged list. */
   group_by?: ListGroupBy
 }
@@ -300,7 +335,16 @@ export type DateBucket = 'overdue' | 'today' | 'tomorrow' | 'next_7_days' | 'lat
  * `max_rows` already defaulted, so the SPA holds no copy of the default.
  */
 export interface ListGroupBy {
-  property: string
+  /** The property to group on. Absent when grouping on `relation`. */
+  property?: string
+  /** Groups on a single-valued relation: one section per target (TKT-JO8PN3). */
+  relation?: string
+  /** Relation from the page anchor that selects and orders the sections. */
+  offered_by?: string
+  /** Target property that orders the sections when there is no anchor. */
+  order_by?: string
+  /** Enum property of the target that colours each section through `styles:`. */
+  style_from?: string
   /** Restyles enum values. Every declared value still gets a section. */
   groups?: ListGroup[]
   /** Sorts a date property into relative sections. Exclusive with `groups`. */
@@ -381,6 +425,12 @@ export interface ListColumn {
   direction?: 'outgoing' | 'incoming'
   /** Shows the face each row was served in, by its label. */
   face?: boolean
+  /**
+   * A channel type: the column shows a busy indicator while a channel of
+   * this type on the row works (TKT-TU3XH4). Lists only, never the first
+   * column, and at most one per list.
+   */
+  busy?: string
   label?: string
   sortable?: boolean
   link?: string
@@ -433,6 +483,11 @@ export interface ViewSection {
 export interface KanbanConfig {
   entity: string
   title?: string
+  /**
+   * `wall` lays the cards out as a wrapping grid: one grid without columns,
+   * or with `columns_from` a pile of loose cards above the groups.
+   */
+  layout?: 'wall'
   /** Markdown rendered above the board. */
   header?: string
   /** Markdown rendered below the board. */
@@ -443,15 +498,46 @@ export interface KanbanConfig {
   // which types alone cannot guarantee at runtime.
   column_property: string
   columns?: KanbanColumn[]
+  /** Columns from a single-valued relation instead of an enum (TKT-KJ3Q07). */
+  columns_from?: KanbanColumnsFrom
   swimlane_property?: string
   swimlanes?: KanbanSwimlane[]
   card: KanbanCard
+  /** Lines under each column heading, such as a count or a sum (TKT-SVLQQ6). */
+  column_summary?: Summary[]
   edit_form?: string
   create_form?: string
   filters?: Array<{ property: string; operator: string; value: string }>
   filter_controls?: FilterControl[]
   /** Named query scope; see the field of the same name on ListConfig. */
   query_scope?: string
+}
+
+/** The aggregate a {@link Summary} computes. */
+export type SummaryFunction = 'count' | 'sum' | 'avg' | 'min' | 'max'
+
+/**
+ * One aggregate over a set of entities (TKT-SVLQQ6). Mirrors the Go
+ * `dataentryconfig.Summary`. The kanban column header is its first user; list
+ * footers, group_by headers and dashboard cards are meant to share it. The
+ * server validates it: count takes no property, sum and avg need a
+ * single-valued integer, min and max also accept a date or datetime.
+ */
+export interface Summary {
+  function: SummaryFunction
+  property?: string
+  /** Text before the value; the function's name when unset. */
+  label?: string
+}
+
+export interface KanbanColumnsFrom {
+  relation: string
+  /** Relation from the page anchor that selects and orders the columns. */
+  offered_by?: string
+  /** Target property that orders the columns when there is no anchor. */
+  order_by?: string
+  /** Enum property of the target that colours each column through `styles:`. */
+  style_from?: string
 }
 
 export interface KanbanColumn {
@@ -483,6 +569,10 @@ export interface KanbanSwimlane {
  * config rather than two spellings of it.
  */
 export interface KanbanCardField {
+  /**
+   * The property to show. With `relation` set it names a property of the
+   * related entities, shown instead of their titles (TKT-8Z2LT3; kanban only).
+   */
   property?: string
   relation?: string
   direction?: 'outgoing' | 'incoming'
@@ -490,9 +580,15 @@ export interface KanbanCardField {
   display?: 'count'
   /** Shows the number of comments on the card's entity. Stands alone. */
   comments?: boolean
+  /**
+   * Shows a busy indicator while a channel of this type on the card's
+   * entity has its session in a state with status `working`. Names a
+   * channel type from realtime.yaml. Stands alone.
+   */
+  busy?: string
   /** Overrides the displayed name; derived from property/relation when unset. */
   label?: string
-  /** Renders the label before the value. Defaults to true when unset. */
+  /** Renders the label before the value. Defaults to true when unset, and to false for a busy field. */
   show_label?: boolean
 }
 
@@ -518,13 +614,18 @@ export function cardFieldLabel(
 ): string {
   if (field.label) return field.label
   if (field.comments) return 'comments'
-  if (field.relation) return relationLabel?.(field.relation) || field.relation
+  if (field.busy) return field.busy
+  // A related property is labeled by the property: that is the value shown.
+  if (field.relation && !field.property) return relationLabel?.(field.relation) || field.relation
   return field.property || ''
 }
 
 /** Whether a field's label renders. Unset means true: an unlabelled ambiguous
  * value is worse than a redundant label. */
 export function cardFieldLabelShown(field: KanbanCardField): boolean {
+  // A busy field's indicator names its channel type to a screen reader, so
+  // a default label would say the type twice. It shows only when asked.
+  if (field.busy) return field.show_label === true
   return field.show_label !== false
 }
 
@@ -636,6 +737,8 @@ export interface KanbanCard {
   title: string
   subtitle?: string
   fields?: KanbanCardField[]
+  /** `note` draws the card as a sticky note without its id. */
+  style?: 'note'
 }
 
 export interface DashboardConfig {
@@ -646,12 +749,40 @@ export interface DashboardConfig {
 
 export interface DashboardCard {
   title: string
-  query: string
-  display: 'count' | 'breakdown' | 'table'
+  /**
+   * A `lists:` entry (TKT-2SGPJZ). The card shows the list's rows, and the
+   * server computes its value at `/_dashboard/card`. Exactly one of `list`
+   * and `query` is set.
+   */
+  list?: string
+  /** A search query the SPA runs through `/_search`. */
+  query?: string
+  display: 'count' | 'breakdown' | 'table' | 'matrix' | 'ratio'
   group_by?: string
+  /** A matrix card's row property. */
+  rows?: string
+  /** A matrix card's column property (`columns: <property>` in YAML). */
+  matrix_columns?: string
+  /** A matrix card's colour property; its last declared value is the most severe. */
+  tone_by?: string
+  /** A matrix card's colour per tone_by value: a tone or a palette colour. */
+  colors?: Record<string, string>
+  /** A matrix card's axis titles. The server resolves them into the card value. */
+  rows_label?: string
+  columns_label?: string
+  /** A matrix card's axis order. The server applies it to the card value. */
+  rows_order?: 'asc' | 'desc'
+  columns_order?: 'asc' | 'desc'
+  /** A ratio card's query scope on the list's type. */
+  match?: string
   columns?: Array<{ property?: string; relation?: string; label?: string; link?: string }>
   sort?: Array<{ property: string; direction: 'asc' | 'desc' }>
   limit?: number
+  /**
+   * How much of the dashboard row the tile takes (TKT-H21TYS). Unset means
+   * `normal`, one cell. The server rejects any other value at config load.
+   */
+  width?: 'normal' | 'wide' | 'full'
   /**
    * Optional ACL permission gating this card's visibility (TKT-53KICM).
    *
@@ -674,7 +805,75 @@ export interface DashboardCard {
 export interface DashboardResponse {
   title?: string
   description?: string
-  cards: DashboardCard[]
+  cards: DashboardCardEntry[]
+}
+
+/**
+ * A card as `/_dashboard` serves it: its config plus its position in the
+ * dashboard's `cards:`, which addresses it on `/_dashboard/card`.
+ */
+export interface DashboardCardEntry extends DashboardCard {
+  index: number
+}
+
+/** One group of a breakdown or ratio. An empty value collects unset rows. */
+export interface DashboardGroup {
+  value: string
+  label: string
+  count: number
+  matched: number
+}
+
+/** One row of a table card: its column properties as the reader may see them. */
+export interface DashboardRow {
+  id: string
+  type: string
+  _title: string
+  properties: Record<string, unknown>
+  _redacted?: string[]
+}
+
+export interface DashboardAxisValue {
+  value: string
+  label: string
+}
+
+/** One non-empty matrix cell. `color` is a style class, or absent for neutral. */
+export interface DashboardCell {
+  row: string
+  column: string
+  count: number
+  color?: string
+}
+
+export interface DashboardMatrix {
+  row_property: string
+  column_property: string
+  /** The axis titles: the card's rows_label/columns_label, else the property label or name. */
+  row_title: string
+  column_title: string
+  rows: DashboardAxisValue[]
+  columns: DashboardAxisValue[]
+  cells: DashboardCell[]
+  unplaced?: number
+  truncated?: boolean
+}
+
+/**
+ * The server-computed value of one `list:` card (`/_dashboard/card`).
+ * `title`, `display` and `list` echo the card it was computed for.
+ * `partial` says a value it groups, colours or shows was hidden on some row.
+ */
+export interface DashboardCardValue {
+  title: string
+  display: DashboardCard['display']
+  list: string
+  total: number
+  matched?: number
+  groups?: DashboardGroup[]
+  rows?: DashboardRow[]
+  matrix?: DashboardMatrix
+  partial?: boolean
 }
 
 /**
@@ -810,7 +1009,8 @@ export interface NavigationEntry {
   // Direct item fields
   label?: string
   list?: string
-  dashboard?: boolean
+  /** `true` for the default dashboard, or the name of one under `dashboards:`. */
+  dashboard?: boolean | string
   kanban?: string
   calendar?: string
   search?: boolean
@@ -859,6 +1059,9 @@ export interface SidebarItem {
    * neither icon nor label is invisible but still clickable. */
   derivedIcon?: string
   action?: string
+  /** Set on a `pile:` entry: the name of the user's own pile the row opens
+   * in the flyout. `href` is empty. */
+  pile?: string
   /** Set on an `entities:` entry (TKT-PEKL8L): the list query whose rows
    * become one link each. `label` and `href` are empty on such an item; the
    * rows supply both. */
@@ -972,7 +1175,8 @@ export interface PageConfig {
     kanban?: string
     calendar?: string
     gantt?: string
-    dashboard?: boolean
+    /** `true` for the default dashboard, or the name of one under `dashboards:`. */
+    dashboard?: boolean | string
     document?: string
     scope?: { root?: boolean; relation?: string; direction?: 'outgoing' | 'incoming' }
   }>
@@ -987,7 +1191,7 @@ export interface SidebarPageTab {
   label: string
   icon?: string
   view: PageTabView
-  /** The id of the view the tab shows. Absent for the dashboard. */
+  /** The id of the view the tab shows: the name of a named dashboard, absent for the default one. */
   target?: string
   /**
    * How a tab of an entity page narrows to the page's entity: `relation`

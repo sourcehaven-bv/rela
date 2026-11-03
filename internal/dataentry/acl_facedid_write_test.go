@@ -103,7 +103,7 @@ func TestFacedIDWrite_AuthorizesTheFaceItWrites(t *testing.T) {
 				appbuildtest.WithStore(st), appbuildtest.WithDeclarative(d))
 			app := newAppFromParts(&Config{}, nil, newFixture())
 			rebindApp(app, fs, paths, svc)
-			app.acl = d
+			setTestACL(t, app, d)
 			app.schema.Publish(&Schema{Cfg: &Config{}, Meta: meta})
 
 			bobCtx := principal.With(ctx, principal.Principal{
@@ -185,7 +185,7 @@ func TestFacedIDWrite_ExplicitFaceGrantStillWorks(t *testing.T) {
 		appbuildtest.WithStore(st), appbuildtest.WithDeclarative(d))
 	app := newAppFromParts(&Config{}, nil, newFixture())
 	rebindApp(app, fs, paths, svc)
-	app.acl = d
+	setTestACL(t, app, d)
 	app.schema.Publish(&Schema{Cfg: &Config{}, Meta: meta})
 
 	patCtx := principal.With(ctx, principal.Principal{

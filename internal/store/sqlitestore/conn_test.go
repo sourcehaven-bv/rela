@@ -49,7 +49,7 @@ func TestOpenReadThenNew(t *testing.T) {
 	}
 
 	// Stage 2: the store is built on that same connection and works normally.
-	st, err := sqlitestore.New(db)
+	st, err := sqlitestore.New(context.Background(), db)
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -75,7 +75,7 @@ func TestOpenReadThenNew(t *testing.T) {
 // are rejected up front rather than deferred to a nil-pointer panic on the
 // first query.
 func TestNewRejectsNilDB(t *testing.T) {
-	st, err := sqlitestore.New(nil)
+	st, err := sqlitestore.New(context.Background(), nil)
 	if err == nil {
 		t.Fatal("New(nil) should be rejected")
 	}
@@ -91,7 +91,7 @@ func TestTxConn(t *testing.T) {
 		t.Fatalf("Open: %v", err)
 	}
 	defer func() { _ = db.Close() }()
-	s, err := sqlitestore.New(db)
+	s, err := sqlitestore.New(context.Background(), db)
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}

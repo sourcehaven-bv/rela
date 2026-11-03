@@ -87,13 +87,26 @@ func Open(ctx context.Context, db DBTX, dsn string, opts ...Option) (store.Store
 	// never starves query traffic. A failure to start is non-fatal: the store
 	// and its in-process (local) events still work; only cross-process events
 	// are unavailable. This mirrors the "search index unavailable" degradation.
-	l, err := startListener(ctx, st, dsn)
+	//
+	// The schema is resolved on the store's own pool, apart from the
+	// listener connection: the producer writes through the pool, so the
+	// schema stamped into payloads must be the pool's.
+	schema, err := resolveSchema(ctx, st.db)
+	var l *listener
+	if err == nil {
+		l, err = startListener(ctx, st, dsn, schema)
+	}
 	if err != nil {
 		slog.Warn("pgstore: cross-process change feed unavailable; "+
 			"writes from other processes won't be observed live", "error", err)
 	} else {
 		st.listener = l
 	}
+
+	// Backfill and heal the mention index in the background (TKT-Q6AKUN): a
+	// first pass over a large table must not delay startup, and until a row is
+	// indexed it is merely not listed as a backlink.
+	st.mentionReindex = startMentionReindexer(ctx, st)
 
 	return st, search.New(st, backend), nil
 }

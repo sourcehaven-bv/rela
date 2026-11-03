@@ -1,0 +1,12 @@
+request: POST /api/v1/_conflicts/resolve
+identity: header admin@example.test
+status: 200
+reads: GetRelation=1 GraphQueryHeaders=1 ListRelations=1
+breadth: ListRelations=0/1
+bodies: GraphQuery=0/1
+versions: 
+body:
+{
+  "path": "entities/ticket/TKT-4.md",
+  "success": true
+}

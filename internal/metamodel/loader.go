@@ -15,20 +15,23 @@ import (
 
 // validTopLevelKeys are the recognized top-level keys in a metamodel YAML file.
 var validTopLevelKeys = map[string]bool{
-	"version":     true,
-	"namespace":   true,
-	"description": true,
-	"types":       true,
-	"entities":    true,
-	"relations":   true,
-	"validations": true,
-	"automations": true,
-	"includes":    true,
-	"attachments": true,
-	"transforms":  true,
-	"worlds":      true,
-	"copies":      true,
-	"comments":    true,
+	"version":               true,
+	"namespace":             true,
+	"description":           true,
+	"types":                 true,
+	"entities":              true,
+	"relations":             true,
+	"validations":           true,
+	"automations":           true,
+	"includes":              true,
+	"attachments":           true,
+	"transforms":            true,
+	"checkers":              true,
+	"worlds":                true,
+	"copies":                true,
+	"conversions":           true,
+	"task_item_conversions": true,
+	"comments":              true,
 	// default_world names the world a request uses when it names none
 	// (TKT-7IZHP0).
 	"default_world": true,
@@ -281,8 +284,11 @@ func validate(m *Metamodel) error {
 	validationErrors = append(validationErrors, validateRelationScope(m)...)
 	validationErrors = append(validationErrors, validateRelationOwning(m)...)
 	validationErrors = append(validationErrors, validateTransforms(m)...)
+	validationErrors = append(validationErrors, validateCheckers(m)...)
 	validationErrors = append(validationErrors, validateAttachments(m)...)
 	validationErrors = append(validationErrors, validateCopies(m)...)
+	validationErrors = append(validationErrors, validateConversions(m)...)
+	validationErrors = append(validationErrors, validateTaskItemConversions(m)...)
 	validationErrors = append(validationErrors, validateWorlds(m)...)
 	validationErrors = append(validationErrors, validateDefaultWorld(m)...)
 	validationErrors = append(validationErrors, validateDeclOrder(m)...)
@@ -377,6 +383,11 @@ func validateEntitySemantics(m *Metamodel) []string {
 					"so a type name carrying one makes those grants ambiguous", name))
 		}
 
+		// The plural names the type's directory under entities/ (and its URL
+		// segment), so it must be one plain directory name. Checked here so a
+		// schema or Configure save fails validation before a store sees it.
+		errs = append(errs, validatePluralSegment(name, def)...)
+
 		if def.Label == "" {
 			errs = append(errs, fmt.Sprintf("entity %q: missing 'label'", name))
 		}
@@ -400,6 +411,46 @@ func validateEntitySemantics(m *Metamodel) []string {
 		errs = append(errs, validateDisplayProperty(name, def)...)
 	}
 
+	return append(errs, validateUniquePlurals(m)...)
+}
+
+// validatePluralSegment rejects a plural that cannot serve as one
+// directory name under entities/, such as "../relations". The message
+// says whether the author wrote the plural or it came from the type name,
+// because in the second case there is no plural: line to fix.
+func validatePluralSegment(name string, def EntityDef) []string {
+	plural := def.GetPlural(name)
+	err := storage.ValidateDirSegment(plural)
+	if err == nil {
+		return nil
+	}
+	if def.Plural != "" {
+		return []string{fmt.Sprintf("entity %q: plural %q is not a usable directory name: %v", name, plural, err)}
+	}
+	return []string{fmt.Sprintf(
+		"entity %q: the plural %q derived from the type name is not a usable directory name: %v; set plural: explicitly",
+		name, plural, err)}
+}
+
+// validateUniquePlurals rejects two entity types with the same plural,
+// compared without case. Both would store their files in one directory
+// (the default macOS and Windows filesystems ignore case), and a markdown
+// project would read every file in it back as one of the two types.
+func validateUniquePlurals(m *Metamodel) []string {
+	var errs []string
+	owner := map[string]string{}
+	for _, name := range sortedKeys(m.Entities) {
+		def := m.Entities[name]
+		plural := def.GetPlural(name)
+		folded := strings.ToLower(plural)
+		if other, ok := owner[folded]; ok {
+			errs = append(errs, fmt.Sprintf(
+				"entity %q: plural %q is also the plural of entity %q (case is ignored); each type needs its own",
+				name, plural, other))
+			continue
+		}
+		owner[folded] = name
+	}
 	return errs
 }
 
@@ -1206,9 +1257,52 @@ func validatePropertyDef(
 			schemaName, propName, propDef.Type))
 	}
 	errs = append(errs, validateComputedProperty(schemaName, propName, propDef, allowComputed)...)
+	errs = append(errs, validateRollupShape(schemaName, propName, propDef, allowComputed)...)
 	errs = append(errs, validateFilePropertyOptions(schemaName, propName, propDef)...)
+	errs = append(errs, validateRangeOptions(schemaName, propName, propDef)...)
 	errs = append(errs, validateExternalRefOptions(schemaName, propName, propDef, allowComputed)...)
+	errs = append(errs, validatePropertyDisplay(schemaName, propName, propDef)...)
 	return errs
+}
+
+// validatePropertyDisplay checks the `display:` format of a property
+// (TKT-SVLQQ6). Currency needs a single-valued integer property, since rela
+// has no decimal type, and a code shaped like ISO 4217. It checks the shape,
+// not a list of codes: the browser formats every well-formed code (an
+// unknown one shows as the code itself), so a list would only reject codes
+// it does not know yet.
+func validatePropertyDisplay(schemaName, propName string, propDef PropertyDef) []string {
+	d := propDef.Display
+	if d == nil {
+		return nil
+	}
+	at := fmt.Sprintf("%s: property %q: display", schemaName, propName)
+	if d.Currency == "" {
+		return []string{at + " names no format; use currency"}
+	}
+	var errs []string
+	if !isCurrencyCode(d.Currency) {
+		errs = append(errs, fmt.Sprintf(
+			"%s: currency %q is not an ISO 4217 code (three upper-case letters, such as EUR)", at, d.Currency))
+	}
+	if propDef.Type != PropertyTypeInteger {
+		errs = append(errs, fmt.Sprintf("%s: currency needs an integer property, not %q", at, propDef.Type))
+	} else if propDef.List {
+		errs = append(errs, at+": currency is not supported on a list property")
+	}
+	return errs
+}
+
+func isCurrencyCode(s string) bool {
+	if len(s) != 3 {
+		return false
+	}
+	for i := range len(s) {
+		if s[i] < 'A' || s[i] > 'Z' {
+			return false
+		}
+	}
+	return true
 }
 
 func validateComputedProperty(schemaName, propName string, propDef PropertyDef, allowComputed bool) []string {
@@ -1249,22 +1343,21 @@ func isStringValuedType(typeName string) bool {
 }
 
 // validateFilePropertyOptions checks the attachment-only property options
-// (`max`, `accept`, `scan`, `scan_cmd`, `transform`): `max` must be >= 1, and
-// none of these may appear on a non-`file` property.
+// (`max` as a count, `accept`, `scan`, `scan_cmd`, `transform`). A negative
+// `max` is refused; 0 and unset both mean one file ([PropertyDef.FileMax]).
+// None of these may appear on a non-`file` property. `max` on an integer is a
+// value bound instead; validateRangeOptions checks it.
 func validateFilePropertyOptions(schemaName, propName string, propDef PropertyDef) []string {
 	var errs []string
-	if propDef.Max < 0 {
-		errs = append(errs, fmt.Sprintf(
-			"%s: property %q has max %d; must be >= 1", schemaName, propName, propDef.Max))
-	}
 	if propDef.Type == PropertyTypeFile {
+		if propDef.Max != nil && *propDef.Max < 0 {
+			errs = append(errs, fmt.Sprintf(
+				"%s: property %q has max %d; must be >= 1", schemaName, propName, *propDef.Max))
+		}
 		errs = append(errs, validateTransformSteps(schemaName, propName, propDef.Transform)...)
 		return errs
 	}
 	// Below here the property is NOT a file: none of the attachment options apply.
-	if propDef.Max != 0 {
-		errs = append(errs, fileOnlyOptionErr(schemaName, propName, "max", propDef.Type))
-	}
 	if len(propDef.Accept) > 0 {
 		errs = append(errs, fileOnlyOptionErr(schemaName, propName, "accept", propDef.Type))
 	}
@@ -1275,6 +1368,36 @@ func validateFilePropertyOptions(schemaName, propName string, propDef PropertyDe
 		errs = append(errs, fileOnlyOptionErr(schemaName, propName, "scan_cmd/transform", propDef.Type))
 	}
 	return errs
+}
+
+// validateRangeOptions checks `min` and `max` as value bounds (TKT-BRAM1A).
+// They apply to a single-valued integer property only, and min may not
+// exceed max. `max` on a file is the attachment cap and is checked by
+// validateFilePropertyOptions.
+func validateRangeOptions(schemaName, propName string, propDef PropertyDef) []string {
+	if propDef.Min == nil && propDef.Max == nil {
+		return nil
+	}
+	if propDef.Type == PropertyTypeFile {
+		if propDef.Min != nil {
+			return []string{fmt.Sprintf("%s: property %q sets \"min\" but is type \"file\"; "+
+				"min applies to type \"integer\" only", schemaName, propName)}
+		}
+		return nil
+	}
+	if propDef.Type != PropertyTypeInteger {
+		return []string{fmt.Sprintf("%s: property %q sets min or max but is type %q; "+
+			"min and max apply to type \"integer\" (and max to \"file\")", schemaName, propName, propDef.Type)}
+	}
+	if propDef.List {
+		return []string{fmt.Sprintf("%s: property %q: min and max are not supported on a list property",
+			schemaName, propName)}
+	}
+	if propDef.Min != nil && propDef.Max != nil && *propDef.Min > *propDef.Max {
+		return []string{fmt.Sprintf("%s: property %q has min %d above max %d",
+			schemaName, propName, *propDef.Min, *propDef.Max)}
+	}
+	return nil
 }
 
 // validImageReencodeTargets is the allowlist of native re-encode output

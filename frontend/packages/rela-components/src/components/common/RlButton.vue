@@ -4,11 +4,14 @@
  * `tone` carries the meaning, so a destructive action can be either a solid
  * Delete button or a quiet text-only one without needing its own variant.
  */
-import { computed, type Component } from 'vue'
+import { computed, useSlots, type Component } from 'vue'
 import RlIcon from './RlIcon.vue'
 import RlSpinner from './RlSpinner.vue'
 import type { IconName } from './icons'
 import { useDelayedPending } from '../../composables/useDelayedPending'
+import { useMessages } from '../../composables/useMessages'
+
+const messages = useMessages()
 
 const props = withDefaults(
   defineProps<{
@@ -59,7 +62,7 @@ const props = withDefaults(
     tone: 'default',
     size: 'md',
     loading: false,
-    loadingLabel: 'Working',
+    loadingLabel: undefined,
     disabled: false,
     block: false,
     type: 'button',
@@ -100,12 +103,22 @@ const showSpinner = computed(() =>
  * A spinner appearing beside a label would widen the button mid-action, which
  * is the same reflow the stacked labels prevent. So a button that swaps its
  * label holds the spinner's slot open from the start, rather than adding a flex
- * child when the swap happens. Not needed when an icon is already present: the
- * spinner replaces it in a box that is already the right size.
+ * child when the swap happens. The slot sits beside the PENDING label, inside
+ * the stacked cell, so it shares that label's hidden box at rest: an idle
+ * button stays centred instead of carrying an empty slot on its left
+ * (BUG-5NP70I). Not needed when an icon is already present: the spinner
+ * replaces it in a box that is already the right size.
  */
+const slots = useSlots()
+
 const reservesSpinner = computed(
-  () => !!props.pendingLabel && !props.icon,
+  () => !!props.pendingLabel && !props.icon && !slots.icon,
 )
+
+const spinnerSlotStyle = computed(() => ({
+  width: `${iconSize[props.size]}px`,
+  height: `${iconSize[props.size]}px`,
+}))
 
 /*
  * `aria-disabled` while loading rather than native `disabled`, because native
@@ -171,18 +184,19 @@ function onKeydown(event: KeyboardEvent) {
     @keydown="isButton ? onKeydown($event) : undefined"
   >
     <!--
-      The spinner's slot, held open for the whole action when a label swap is in
-      play so the button does not widen when the spinner arrives.
+      A label swap with no label to stack beside keeps the spinner's slot here,
+      held open for the whole action so the button does not widen when the
+      spinner arrives. With a label, the slot rides in the pending label below.
     -->
     <span
-      v-if="reservesSpinner"
+      v-if="reservesSpinner && !$slots.default"
       class="rl-button__spinner-slot"
-      :style="{ width: `${iconSize[size]}px`, height: `${iconSize[size]}px` }"
+      :style="spinnerSlotStyle"
     >
-      <RlSpinner v-if="showSpinner" :size="iconSize[size]" :label="loadingLabel" />
+      <RlSpinner v-if="showSpinner" :size="iconSize[size]" :label="loadingLabel ?? messages.chromeText({ key: 'working' })" />
     </span>
-    <template v-else>
-      <RlSpinner v-if="showSpinner" :size="iconSize[size]" :label="loadingLabel" />
+    <template v-else-if="!reservesSpinner">
+      <RlSpinner v-if="showSpinner" :size="iconSize[size]" :label="loadingLabel ?? messages.chromeText({ key: 'working' })" />
       <slot v-else name="icon">
         <RlIcon v-if="icon" :name="icon" :size="iconSize[size]" />
       </slot>
@@ -201,7 +215,13 @@ function onKeydown(event: KeyboardEvent) {
       <span class="rl-button__label" :class="{ 'rl-button__label--hidden': showPendingLabel }">
         <slot />
       </span>
-      <span class="rl-button__label" :class="{ 'rl-button__label--hidden': !showPendingLabel }">
+      <span
+        class="rl-button__label rl-button__label--pending"
+        :class="{ 'rl-button__label--hidden': !showPendingLabel }"
+      >
+        <span v-if="reservesSpinner" class="rl-button__spinner-slot" :style="spinnerSlotStyle">
+          <RlSpinner v-if="showSpinner" :size="iconSize[size]" :label="loadingLabel ?? messages.chromeText({ key: 'working' })" />
+        </span>
         {{ pendingLabel }}
       </span>
     </span>
@@ -233,6 +253,9 @@ function onKeydown(event: KeyboardEvent) {
   cursor: pointer;
   /* A link root brings an underline the button shape does not want. */
   text-decoration: none;
+  /* A label stays on one line. A wrapped label makes a tall button and a
+     ragged row; a row that is too narrow is the container's to solve. */
+  white-space: nowrap;
   transition: background-color var(--rl-duration-fast) var(--rl-ease), color var(--rl-duration-fast) var(--rl-ease), box-shadow var(--rl-duration-fast) var(--rl-ease);
 }
 
@@ -267,6 +290,13 @@ function onKeydown(event: KeyboardEvent) {
 .rl-button__labels .rl-button__label {
   grid-area: 1 / 1;
   white-space: nowrap;
+}
+
+/* The spinner's slot and the pending text, spaced like an icon and a label. */
+.rl-button__label--pending {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--rl-space-2);
 }
 
 /* `visibility`, not `display`: the hidden label must keep its box or the width
@@ -357,6 +387,19 @@ function onKeydown(event: KeyboardEvent) {
 }
 .rl-button--tone-danger.rl-button--subtle:hover:not(:disabled) {
   background: var(--rl-color-danger-bg-hover);
+}
+
+/*
+ * A toggle that is on (`aria-pressed="true"`) takes the selected fill and an
+ * accent edge in every variant, so a sighted user sees the state a screen
+ * reader announces. The edge carries the state at 3:1; the fill alone is too
+ * light to. Hover keeps the pressed look.
+ */
+.rl-button[aria-pressed='true'],
+.rl-button[aria-pressed='true']:hover:not(:disabled) {
+  box-shadow: inset 0 0 0 1px var(--rl-color-accent);
+  background: var(--rl-color-bg-selected);
+  color: var(--rl-color-text);
 }
 
 .rl-button:focus-visible {

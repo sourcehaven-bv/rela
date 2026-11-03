@@ -68,6 +68,20 @@ The policy fails to load at all, so this stops the server rather than
 only the linter — which is the point: an un-gated membership relation
 should not boot.
 
+### A conferring relation points from the member
+
+A `role_relations` entry with `confers:` gives a role to the source of the
+edge, on the target. The resolver looks for an edge from the principal, or
+one of its groups, to the entity. An entry whose relation runs the other way,
+for example `toegewezen_aan` from an asset to a person, never matches. It
+still costs a lookup per member for every entity checked. When
+`user_entity_type` is set, rela logs a warning at load for an entry whose
+declared source types include no user or group type:
+
+```text
+level=WARN msg="appbuild: ACL role relation can never confer its role: ..." relation=toegewezen_aan
+```
+
 Per-verb relation permissions do exist — as `relation_grants:`, covered
 in [GUIDE-acl-overview]. They apply only to relation types that do
 **not** confer a role; naming a gated `role_relations:` type there is
@@ -305,9 +319,39 @@ Global roles count, and so do local roles. A local role is conferred through a
 belongs to the whole entity and may grant a rename of it. A client ceiling
 narrows `rename:` as it narrows `update:`.
 
+**Converting.** A type conversion changes the entity type and id prefix, so it
+uses its own `convert:` grant. Grant it on the source type:
+
+```yaml
+editor:
+  read: [note]
+  convert: [note]
+```
+
+The conversion definition must allow the source and destination pair.
+`convert:` is checked against the source entity type and does not imply
+`rename:` or `update:`. As with rename, the caller must be able to read the
+source entity.
+
+A client ceiling bounds a conversion on both ends. On the source type it must
+permit `update` and `delete`, because the source stops existing as that type.
+On the destination type it must permit `create`, because the conversion creates
+an entity of that type. A ceiling that withholds any of these withholds the
+conversion, so `convert:` cannot be used to get around it.
+
 A caller with the grant who can read no face of the entity gets the same
 not-found response as for an entity that does not exist. Without the grant the
 answer is a `403` that names the type, whatever faces exist.
+
+**Converting a task item.** A
+[task-item conversion](metamodel.md#declaring-task-item-conversions) has no
+grant of its own. It creates an entity and a relation, so it needs exactly what
+doing both by hand needs: `create` on the target type, the relation's `create`,
+and any relation `when:` rule. It also needs `update` on the source, because it
+is offered as an edit of the source body. That last check keeps the button off
+read-only pages; it adds no protection, since the other rights reach the same
+result by hand. The recipe's `{{source.<property>}}` values must be readable by
+the caller, and a field filled from the item text passes the field write gate.
 
 **Identity-scoped relations.** An identity-scoped relation from a faced entity
 belongs to the whole entity. Writing one needs the verb on every face the type
@@ -633,7 +677,9 @@ Pratique that window is **up to 9 minutes** (`AssertionTTL`). rela has
 no revocation channel — there is nothing to "push" a revocation to. If
 your incident response depends on cutting access faster than the token
 lifetime, you must restart or otherwise intervene at the proxy; do not
-assume revoking in the IdP takes effect immediately downstream.
+assume revoking in the IdP takes effect immediately downstream. Event
+streams follow the same bound: the server ends a stream when the assertion
+that opened it expires.
 
 ### `org_id` is recorded, not enforced
 
@@ -715,9 +761,18 @@ fails to restrict, and nobody files a bug about access they still have.
 - `B8` / `B9` — a ceiling naming an entity type or field the metamodel
   does not declare. A typo in a *denial* is worse than in a grant: it
   silently fails to protect.
+- `A15-webhook-uncapped` — `data-entry.yaml` declares webhooks and no
+  baseline lists `webhook` in `applies_to`, so every hook has its role's
+  full access. A15 and A11 together cover the webhook case: A15 reports a
+  missing baseline, A11 reports one that narrows nothing. A project with
+  webhooks and no `webhook` baseline gets this finding after an upgrade,
+  so `rela acl audit --fail-on=medium` fails in CI until the baseline is
+  added.
 
 Run `rela acl map --principal <user> --as <type>` to see what a client
-actually gets, rather than inferring it from the policy file.
+actually gets, rather than inferring it from the policy file. For a
+webhook, run `rela acl map --webhook <id>`; see
+[Webhooks](webhooks.md#acl).
 
 ### `deny_worlds` selects a lens; it does not guard content
 
@@ -809,14 +864,14 @@ principal's verdict for that type is not `DenyAll` (AllowAll or a
 relation-scoped Query both deliver). The type verdict is resolved once
 per connection and cached. A relation write (member-of / role-relation /
 containment edge — the types that can change a principal's read scope)
-re-derives a **fresh** read gate for the connection: a new `acl.Request`
-whose member-of closure is walked against the current graph, so a
-principal who gains or loses a group membership mid-connection starts or
-stops receiving a type's nudges without reconnecting. (The connection's
-original request memoizes its membership closure for its lifetime; the
-re-derive is what keeps the verdict honest — without it, only the
-per-entity inbound query would refresh, not the principal's own group
-membership.) Both the re-derive and the nudges are coalesced into one
+re-derives a **fresh** read gate for the connection. It resolves the
+principal again into a new `acl.Identity`, which walks the member-of
+closure against the current graph, and opens a new `acl.Request` from
+it. A principal who gains or loses a group membership mid-connection
+therefore starts or stops receiving a type's nudges without
+reconnecting. (An identity holds its membership closure for its
+lifetime. Without the re-derive, only the per-entity inbound query
+would refresh, not the principal's own group membership.) Both the re-derive and the nudges are coalesced into one
 flush window, so a bulk relation import triggers one membership re-walk
 per connection, not one per edge.
 
@@ -829,6 +884,73 @@ fully-denied principal receives nothing for that type. (The richer
 per-id / opaque-cache-id and snapshot-versioned-ACL designs were
 considered and rejected as over-engineered for a staleness signal —
 see the TKT-POT9GQ design record and IDEA-CQMKMD.)
+
+**Resume tokens carry no count (TKT-3A1200).** Frames carry an `id:`
+resume token, and a reconnecting client receives one frame per readable
+type that changed since its token. The token is the position in an
+in-process change counter, encrypted with AES-GCM under a key made per
+process, so a client cannot read how many writes happened between two of its
+tokens, including writes to types it cannot see. The change feed behind it
+keeps only the last position per entity type, not an event history. As a
+result, whether a resume works depends only on whether the token is valid,
+never on how many writes happened, and a slow reader never falls behind and
+gets a different frame. A write to a hidden type produces no frame and does
+not change when frames are sent. A relation write, visible or not, can make
+a readable frame arrive earlier, within one 200 ms flush window, because it
+starts that window to re-derive the gate. This is a coarse signal that some
+relation changed; it names no entity and no type, and the earlier code had it
+too. A token is not bound to a principal:
+it grants nothing, and every resumed change is gated for the principal of the
+new connection, whose read gate is built from current membership.
+
+**Live views reveal what polling the GET would (TKT-HJ5Z9Y).** A
+`live:changed` frame is sent only when the subscribing principal's own
+response to a subscribed GET changed. The server finds that out by replaying
+the GET as that principal through the production handlers and the same
+`attachWorld` and `attachACLRequest` wrappers, so a hidden entity, a redacted
+field or a denied world shape the hash exactly as they shape the response.
+The frame carries only the client's own key. Checks run on a fixed 500 ms
+clock rather than on a window opened by the first change, so a write to a type
+the principal cannot read does not move when a frame arrives. The one
+exception is overload: a round with more pairs than its cap, or that runs past
+its time budget, frames the pairs it skipped without checking them, and any
+change starts a round. Under overload, a hidden write can therefore cause a
+frame for an unchanged response. That reveals at most that something was
+written in that 500 ms tick, never what or where. This holds only while a response is a pure function of the data
+the principal may read; `internal/dataentry/live_test.go` pins it for every
+subscribable shape, and a replay that is not byte-identical to the real GET
+fails `TestLive_ReplayMatchesGet`.
+
+The replay starts from the principal as the transport stamped it, before
+`principal_property` resolution, and is resolved again on every replay, so
+membership and access changes apply at once. The verified claims (roles,
+scopes, organization) are those from when the stream opened. Behind the JWT
+gate, the server ends the stream when the assertion that opened it expires
+(TKT-5I6REX), so those claims are used no longer than the token is valid. The
+client reconnects, the proxy supplies a fresh assertion, and the stream resumes
+from its last event id; the SPA subscribes its live views again. Without the
+JWT gate (trusted header, desktop) there is no expiry, and a stream lasts until
+it closes. Subscriptions are bound to the identity that opened
+the stream: another identity, or the same one with different claims, cannot
+change them.
+
+**The MCP `watch` tool follows the same rules (TKT-FMS8BS).** It replays
+`show_entity`, `list_entities` and `list_relations` as the caller through the
+gated reader, and reports only the indices of the caller's own targets whose
+result changed. Checks run on a fixed 500 ms clock. Each check opens a fresh
+`acl.Request` for the caller, and world grants are checked against it, so a
+revoked membership or world grant applies at the next check rather than at
+the end of the call. Unlike live views, the check starts from the principal
+after `principal_property` resolution: a change to which user entity the
+caller maps to applies from the next call. Every check, and so every wait,
+ends at the call's timeout; a write the caller cannot read can start a check
+but cannot delay the answer past the timeout. `search_entities` cannot be
+watched: its ranking uses term statistics over the whole index, hidden
+documents included, so a hidden write can reorder visible hits. Polling search
+exposes that too; `watch` would turn it into a timed signal. The cursor holds
+digests keyed with a per-process secret and bound to the principal, so a
+cursor copied from a log cannot be used to test guesses about a result. A
+watch runs for at most 50 s on the principal it was authenticated as.
 
 **Audit isolation.** The stream deliberately does NOT carry audit
 records, principal identity, or attribution chains. A denied write
@@ -908,6 +1030,99 @@ verb. The 403 path is reserved for **visible-but-write-denied** — a
 principal who can read the type but not write to that specific
 record. That 403 still carries `rule_kind` / `rule_id` for
 operator debugging.
+
+### Writes need read access to the row
+
+The entity manager applies the same rule, so it also holds for writes
+that do not come through HTTP: the remote MCP, Lua scripts and actions,
+webhooks, scheduled tasks, automation jobs and CalDAV.
+
+- An update, patch, delete, soft delete, rename or version tag of a row
+  the caller cannot read fails as not found, before the write is
+  authorized. A whole-entity delete or rename passes this check when the
+  caller can read at least one face, and then needs the grant on every
+  face; a hidden face can therefore still change its answer (TKT-Z47F27).
+- A relation create, update or delete fails as not found when the caller
+  cannot see the edge. The head needs a readable face. The tail needs a
+  readable face, or the named face when the edge is tailed at one. A
+  source the caller cannot see is treated as missing before the write is
+  authorized, so the authorization answers as it does for a missing
+  source.
+- A copy from a source face the caller cannot read fails as not found. A
+  copy onto a stored target the caller cannot read is refused as an id
+  that is already taken. The refusal does not name the target's type.
+- A CalDAV `PUT` to a to-do the caller can no longer read gets the same
+  `404` as a `PUT` to a deleted one, and a CalDAV `DELETE` of one gets the
+  same `404` as for an unknown href.
+- An update that makes the row unreadable to the writer afterwards is
+  allowed.
+
+Writes without a read policy are exempt: a project without `acl.yaml`,
+`rela.bypass_acl`, automation cascades, and the writers that go to the
+store directly (data migrations, import, normalize).
+
+### The `rela` CLI gates writes, not reads
+
+The CLI acts as the operating-system user: the principal is `$USER` (or
+`$USERNAME`), used directly as the graph identity. There is no
+`principal_property` lookup, so `USER=PERS-alice` acts as `PERS-alice`.
+
+- **Reads are not gated.** `rela list`, `rela show`, `rela trace` and the
+  other read commands read the store directly. They return every entity
+  and every property value, whatever the principal's roles. A principal
+  with no role at all sees the same output as an admin.
+- **Writes are gated.** `rela create`, `update`, `delete`, `link` and the
+  other write commands go through the entity manager under the
+  principal's roles, so the rules above apply: a row the principal cannot
+  read is reported as not found, and a missing grant is a `forbidden`
+  error. Field write grants (`fields:`, `options:`) are not
+  checked; see "Field write grants on MCP and scheduled scripts".
+- If `$USER` is empty, the principal cannot be resolved. The CLI logs a
+  warning and every gated write is denied; reads still return everything.
+
+`rela channel` and `rela lease` are the exception: they go through their
+services, which apply `acl.yaml` to reads as well as writes.
+
+**`--run-as`.** `--run-as NAME` or `RELA_RUN_AS=NAME` makes the CLI and
+stdio `rela mcp` act as a job identity instead of `$USER`:
+
+- Only `system:` and `integration:` names are accepted, in lowercase ASCII
+  letters, digits, `-`, `_` and (for `system:`) `:`. A person's name is
+  refused, so the flag cannot impersonate a human. The charset rules out
+  invisible format characters and look-alike letters. rela's own identities
+  are refused, so a message cannot pass for a trigger post, a scheduled task
+  or a mail delivery. `principal.IsRelaIdentity` holds the list.
+- A `$USER` in the `system:` or `integration:` namespace, in any letter
+  case, is refused, so a job identity can only enter through `--run-as`,
+  with these checks. A `$USER` with an invisible character is refused too.
+  `$USER` is otherwise free-form, so a name spelled with look-alike letters
+  from another script can still display like a job identity; ACL grants
+  match the exact name, so it gains no access.
+- The identity carries no principal type and no roles. Only `acl.yaml`
+  `assignments` (or a user entity) give it access.
+- The OS user who asserted it is recorded as `asserted_by` in every graph
+  audit record of the command. It is the account of the process's user id,
+  not `$USER`, so the environment cannot name someone else. A uid with no
+  account is recorded as `uid:N`. The cgo-free Linux binaries read
+  `/etc/passwd` for this, so an account that only a directory service
+  (LDAP, SSSD) knows is also recorded as `uid:N`. Version history
+  records user and tool only. Channel posts, edits, removals and creation
+  keep no record of the OS user; their author is the job identity.
+- A command that acts as no one refuses the `--run-as` flag and ignores
+  `RELA_RUN_AS`.
+- `rela scheduler` refuses the flag, and `rela-server` and `rela-desktop`
+  refuse to start while `RELA_RUN_AS` is set: their identity comes from a
+  verified login or the desktop user.
+
+The name is self-asserted, so it is attribution, not authentication. It
+keeps an honest agent inside the roles the project gave it; it does not stop
+a local user, who can name any job identity or edit `acl.yaml`.
+
+This is deliberate. Whoever runs the CLI can read and edit the project's
+data files, or connect to its database, directly, so read gating there
+would not protect anything. Do not rely on `acl.yaml` to keep data from
+someone with shell access to the project. Give such users access through
+`rela-server` instead.
 
 ### Invariants downstream maintainers MUST preserve
 
@@ -1006,11 +1221,13 @@ Key properties:
   cases on every backend.
 - **Two implementations, one contract.** The fs/memory builds wrap
   the regular searcher in a generic filter (`search.NewVisible`,
-  batched `MatchingIDs` probes — in-process, cheap). The postgres
+  batched `MatchingFaces` probes — in-process, cheap). The postgres
   build composes visibility into the search SQL itself
   (`pgstore.SearchVisible`): hidden rows never leave the database,
   the `LIMIT` is post-visibility, and there is no hidden-ROW work to
-  measure through timing.
+  measure through timing. The `visible:` grant checks of a
+  field-scoped search also run in that SQL; only the judgement of
+  which fields matched stays in Go.
 - **That last point is about rows, not fields.** Entity-level
   filtering is pushed into the query, so a hidden row costs nothing
   observable. Property-level `visible:` redaction is different: it
@@ -1139,6 +1356,14 @@ whole `dashboard:` block, `permission:` values included, to everyone.
 `/api/v1/_dashboard` is the per-principal view; `_config` is the config. Do not
 collapse them.
 
+**List buttons work the same way.** A list's `toolbar_actions:` button is
+offered through the list response's `_actions` (`action:<id>`) only to
+principals who hold the action's `permission:`. That is placement, not
+protection: `POST /api/v1/_action/<id>` checks the permission again on every
+run, exactly as for a sidebar action, and the script's writes stay bounded by
+the caller's own ACL. The key reveals only a verdict about config, which is
+not secret; it carries no entity data.
+
 **Nav status counts are per principal and live apart from the sidebar.**
 A `status:` rule on a nav entry puts a count next to it. A count is about
 data, so it is served by `/api/v1/_nav_status` and never by `_sidebar`,
@@ -1156,6 +1381,14 @@ rows are gated, each row is redacted before its title is taken, and
 `truncated` is computed after that filtering. A letter badge taken from a
 related entity appears only when the principal may read that entity and its
 title. The response is `no-store`.
+
+**Backlinks are gated per source.** The "Mentioned by" panel and a view's
+`mentioned_by` step list only the sources the principal may read, each at
+the face the world serves. Their `truncated` and `incomplete` flags have one
+accepted exception: the index scan reads at most 10,000 entries, unreadable
+ones included, so a flag can be set when more than 10,000 sources you cannot
+read mention the entity. Short of that, the flags say only that more readable
+sources exist.
 
 The same holds for the rest of the app's configuration.
 `/api/v1/_config` serves lists, views, kanbans, documents and
@@ -1187,13 +1420,19 @@ The `attachACLRequest` middleware:
   500 on `/api/v1/...` but lets the UI keep rendering. Otherwise
   operators would be locked out of the very surface they need to
   diagnose the misconfig from.
-- **Fails loud inside `/api/`.** When ACL is configured and the
-  principal stamper produces an unstamped principal, the middleware
-  returns 500 with `acl_unstamped_principal` rather than silently
-  proceeding with no `acl.Request` attached. Silent fall-through
-  was a fail-open path — every read became AllowAll because the
-  read handlers couldn't tell "no ACL" from "ACL but no
-  principal."
+- **Fails closed inside `/api/`.** When ACL is configured and no
+  `acl.Request` can be attached, the request is refused rather than
+  proceeding without one. Silent fall-through was a fail-open path:
+  every read became AllowAll because the read handlers couldn't tell
+  "no ACL" from "ACL but no principal." A request no resolver named a
+  user for (no proxy header, no `RELA_DATAENTRY_USER`) gets 401
+  `unauthenticated`, the answer the JWT gate gives a missing
+  assertion. A principal the stamper never set, or one with an
+  unknown tool, is a wiring fault and gets 500
+  `acl_unstamped_principal`. When every request gets the 401, the
+  server usually has no identity source; the 401 detail and a startup
+  warning point to `$RELA_DATAENTRY_USER`, `--principal-header` and
+  `--jwt-*` (see [Server security](server-security.md)).
 - **Refuses script reads when the read gate cannot be built.** If an
   `acl.yaml` is configured but the visibility decorator fails to
   construct, script runtimes (data-entry actions, `export_render`,
@@ -1270,20 +1509,78 @@ write form. When the hidden field is the entity's display property, the
 through the title. See [GUIDE-acl-overview] for how `visible:` grants
 are written.
 
+**Roles combine by union.** A field is visible when any role the principal
+holds on the row allows it. A role with a `visible:` block for the type
+allows what the block grants. A role without one allows every field when it
+reads the row's type and face, and nothing when it does not (BUG-Y5UF3K).
+The same rule holds for `fields:` and `options:` with `update` (or `create`
+on a create) as the verb. So a role conferred by an edge, such as a
+`watches` edge conferring `watcher`, never hides a field from a principal
+whose other roles show it. A principal whose only grant on the type is the
+conferred role still gets exactly that role's block. The client ceiling is
+applied after the union and only removes. See [GUIDE-acl-overview] for the
+full rule.
+
+**Upgrading.** Before this rule, holding a role with a block narrowed every
+other role the principal held on that type. A policy that relied on that,
+for example a `watcher` block meant to hide fields from an `editor` who also
+watches the ticket, now shows those fields. Give the wider role its own
+block if it should see less. An `everyone` role that holds a block's verb on
+a face of the type, without a block of its own, now opens that block on that
+face: `read` opens `visible:`, `update` and `create` open `fields:` and
+`options:`. `rela acl audit` reports it as `A14-everyone-opens-field-block`
+(high), naming the faces, and rela logs the same as a warning when it
+loads `acl.yaml`.
+
 **Search cannot be a hidden-field oracle.** Redacting the response body
 is not enough on its own: the full-text index still contains a hidden
 property's text, so a query that matched *only* that property would
 otherwise return the entity as a hit and confirm the value by its mere
 presence (search a candidate postcode against a hidden address field →
-guess oracle). `/_search` closes this at the `VisibleSearcher` seam: each
-backend reports which fields a query matched (bleve with its own analyzer,
-Postgres by re-matching the candidate rows per field, the linear backend
-by substring), and a hit is **dropped** when every field it matched is one
-the principal may not see. A hit that also matched a *visible* field — or
-the id or content, which are never property-gated — still surfaces, with
-the hidden property redacted from its body. The property-level conformance
-suite (`storetest.RunVisibleFieldSearchTests`) pins this across all
-backends.
+guess oracle). `/_search` closes this inside the search itself. For each
+entity type, the request's `visible:` grants are compiled once into a
+field allowlist: which properties are gated, and which of them each grant
+shows on which rows. A grant's `when:`, and the role relation that confers a
+local role, become store predicates. The allowlist follows the role union:
+a role without a `visible:` block for the type shows every property on the
+rows it applies to and reads. The search backend applies the
+allowlist to every candidate row, so the result limit counts only hits that
+survive. Each backend checks a page of hits in one batch. On PostgreSQL the
+search query itself reports which grants hold on each row. Nothing calls back
+into the ACL per hit.
+
+A hit is **dropped** when every field it matched is one the principal may
+not see. A hit that also matched a *visible* field, or the id or content
+(which are never property-gated), still surfaces, with the hidden property
+redacted from its body. A property the metamodel does not declare is never
+gated. The suite `storetest.RunFieldScopeSearchTests` pins this on every
+backend, including a comparison with the Go matcher on generated data.
+
+Every backend decides which fields matched in Go, with the same case folding
+the search index was written with. PostgreSQL's `lower()` folds some
+characters differently: it turns 'İ' into "i" plus a combining dot, where Go
+turns it into "i". A match judged with `lower()` could count a visible field
+that the search did not actually match on, and so return a hit whose only
+real match was hidden. Bleve reports the fields its own fuzzy and wildcard
+rules matched, and never a field they did not.
+
+**A `visible:` condition must be answerable by a store query.** Because
+search applies `visible:` inside the store query, every `when:` in a role's
+`visible:` block must lower exactly to store predicates. The policy fails to
+load otherwise, and the error names the role, the type, the index and the
+field. A condition may be an AND of:
+
+- property equalities: `entity.status == 'open'`,
+  `entity.assignee == current_user.id`, `is_current_user(entity.assignee)`;
+- `related(...)` terms.
+
+Refused in `visible:`: `or`, `not`, ordered comparisons, `~=`,
+`has_role`, `has_global_role`, `has_relation`, `count_relations` and
+`has_current_user`. To show a field to whoever holds a role on the entity,
+confer that role with `role_relations` and give the role its own
+`visible:` block; local roles are honored exactly. The rule applies to
+entity `visible:` only. `fields:`, `options:` and relation-meta `visible:`
+keep the full predicate vocabulary.
 
 **Relation meta is redacted the same way.** A relation carries its own
 property map (`meta`), and a role's `relations:` grant can add a `visible:`
@@ -1313,7 +1610,9 @@ too — a caller cannot smuggle a secret past the closed-world by using an
 undeclared property name. Relations have no display-title channel, so there
 is no `_title` fallback to worry about; the redaction is a straight
 value-omission from `meta`. A relation type with no `visible:` block emits
-its meta unchanged (permissive default).
+its meta unchanged (permissive default). Roles combine by union here too:
+a role with no meta `visible:` list for the relation shows every meta key
+when it reads the source row's type and face.
 
 ## Field write grants on MCP and scheduled scripts
 
@@ -1343,10 +1642,12 @@ Row grants apply on all of these.
 
 **Upgrading.** A scheduled task now fails to write a property its principal
 may not write. Grant the task's principal (`system:scheduler`, or its
-`run_as` user) the field, or move the write into an automation. Field lists
-are closed: once any role the principal holds lists fields for a type, a
-field none of them names is read-only. So name the field in a `fields:`
-block of one of the principal's roles.
+`run_as` user) the field, or move the write into an automation. A field is
+writable when any role the principal holds allows it: a role with a
+`fields:` block for the type allows the fields it names, and a role without
+one allows every field if it may update the type. So either name the field
+in a `fields:` block of one of the principal's roles, or give the principal
+a role that may update the type and has no `fields:` block for it.
 
 ## `related(...)` in a grant's `when:`
 
@@ -1388,6 +1689,352 @@ A relation or property the path names that does not exist is a startup error.
 See [Where `related(...)` works](metamodel.md#where-related-works) for the
 other surfaces and how each counts hidden entities.
 
+## Leases
+
+A lease is an advisory claim on an entity: "this user or agent is working on
+it until this time". Leases are served over the data-entry API
+(`POST /api/v1/{plural}/{id}/_lease`, `/api/v1/_leases`) and over MCP
+(`claim_entity`). They never block a write. The ACL decides who may see and
+take them.
+
+- **A claim needs read access, then update access.** The read check comes
+  first. An entity the caller cannot read gets the same 404 as one that does
+  not exist, with the same body as the entity GET, so a claim is not an
+  existence oracle. A caller who can read but not update gets 403, and the 403
+  names no holder. A renew checks both again; a caller who lost access loses
+  the lease.
+- **Hidden means nonexistent.** `_lease` is added after the read gate, on the
+  entity GET, on list rows and on a view's entry only. A row the caller cannot read never shows
+  a lease, and a lease on a hidden entity sends no live-view frame.
+- **The status is outside `visible:`.** The holder's free-text `status` is not
+  a property, so field redaction does not apply to it. Every principal who can
+  read the entity sees the status together with the holder's user name. Holders
+  should not write anything there that a reader of the entity may not see.
+- **The cap of 32 live leases is per principal, not per session.** A
+  principal is a user and a tool, such as the data-entry app or MCP. So all of
+  one user's browser tabs share one cap, and all agents running as that user
+  over MCP share another. An agent that needs its own budget should run as its
+  own user. A label tells agents apart, but does not split the cap.
+- **Server clocks must agree.** With more than one `rela-server` process,
+  each process decides expiry with its own clock. Keep the clocks well within
+  30 seconds of each other, the shortest lease, or a lease can expire early
+  on one server.
+- **The lease id is a secret.** Only the claim answer carries it. It never
+  appears in a GET, a list, a live-view frame or a log line, and the request
+  log never records request bodies.
+- **Scripts and agents may call the lease routes without a browser origin.**
+  `/api/v1/_leases` (renew, release, list) is exempt from the same-origin
+  check for a request with no cookie, no `Origin` and no `Sec-Fetch-*`
+  header, as the data routes and the claim route are. A cross-site page
+  gains nothing from it: renew and release act only on the lease named by
+  the secret lease id in the body, and the list returns only the caller's
+  own leases, which a cross-site page cannot read. A request with a cookie
+  and a foreign origin is still refused.
+
+## Presence
+
+Presence shows who has an entity open (TKT-MHXH87). A client joins by
+subscribing to `/api/v1/{plural}/{id}/_presence` on the live event stream;
+`GET` on that path lists the other viewers. The data lives in memory on one
+server process and is gone when the server restarts or reloads its
+configuration.
+
+- **The disclosure is accepted.** Anyone who can read an entity on a face
+  learns which users have that face open now, or had it open in the last 15
+  seconds, and since when. There is no history beyond those 15 seconds.
+- **A plain `GET` is a one-way view.** It lists the viewers without adding the
+  caller, so a reader can watch who opens an entity without being seen. This
+  is part of the accepted disclosure: it shows no more than a viewer list
+  that includes the reader would.
+- **Presence is keyed by the resolved face.** Two readers of different faces
+  of one entity do not see each other, so a reader of a published face never
+  learns who has the draft open. On a type with faces, a bare id is a 422
+  `face_required`, as for a write, and only after the read gate admitted the
+  entity.
+- **Hidden means nonexistent.** The `GET` resolves the entity through the
+  same gate as the entity `GET`, so a hidden, absent or wrong-plural entity,
+  or a malformed address, gets the same 404 body. A subscription that gets a
+  404 is not recorded, and a presence change on an entity it cannot read
+  never sends it a frame: the server re-checks only the subscriptions on the
+  face whose viewers changed.
+- **The stream's principal is fixed for the connection.** A viewer is shown
+  with the identity that opened the stream, as every live-view frame is
+  computed for it (see "Live views reveal what polling the GET would").
+  Presence makes this existing property visible to other readers; it adds no
+  new access.
+- **Revocation takes effect when that subscription is next checked.** A
+  change to membership or access re-checks every subscription. A viewer who
+  lost read access gets a 404 on that check and leaves at once, with no grace
+  period. A check that does not finish in time also removes the viewer at
+  once; the next successful check adds them back. Under load a round checks
+  at most 256 subscriptions and skips the rest. A skipped subscription keeps
+  its place in the list until its check runs. Its check is queued for the
+  next tick of the 500 ms clock, with no further write needed, and each tick
+  checks up to 256 queued subscriptions. With no other change, n skipped
+  subscriptions are all checked within ceil(n/256) ticks, and the list
+  reflects a revocation one tick after its check.
+- **The anonymous principal never joins.** All unauthenticated callers share
+  it, so it would name nobody.
+
+## Realtime channel routes
+
+The channel routes under `/api/v1/{plural}/{id}/_channels` (TKT-ZU7P13)
+follow the row-level rule. The channel roles themselves are described in
+the realtime guide.
+
+- **Hidden means nonexistent.** A hidden entity, a missing one, an entity of
+  another type than the collection, and realtime being off all get the same
+  404 body as the entity `GET`. The channel service resolves the entity
+  through the gated reader before it reads any channel.
+- **A ref is not an existence oracle.** A post whose `ref` property names a
+  hidden entity gets the same 422 as one naming a missing entity. A page
+  serves a ref the reader cannot read as `{"restricted": true}`, without its
+  id.
+- **A 403 names the rule.** Its `detail` is the `realtime.yaml` path of the
+  gate that refused, such as `channel_types.room.read`. That file is
+  configuration, which is not a secret. The 403 comes only after the entity
+  read passed.
+- **Live frames come from the replay, not the client.** A subscription to a
+  channel head or a channel list takes its topic only from a successful
+  replay of its own `GET`, and loses it on any other answer. A message on a
+  channel the subscriber cannot read therefore never re-checks that
+  subscription, and sends no frame. A reader who loses access gets one frame,
+  and none after that. On that frame the `GET` answers 404 when the entity is
+  no longer readable, or 403 `read_denied` when the entity stays readable but
+  the channel's `read:` rule no longer admits the reader. A graph write and a
+  reload of `realtime.yaml` both re-check every subscription, so a revoked
+  reader gets that frame when the change lands, not at the channel's next
+  message, whose time it would otherwise learn.
+- **Message pages are not live.** A frame only says the head changed; the
+  client fetches the messages through the same gated `GET` as any other
+  read.
+
+## The inbox
+
+The inbox (`GET /api/v1/_inbox`, MCP `list_inbox`, `rela channel inbox`,
+TKT-ZZ4PNX) lists the sessions that wait on the caller. It is an aggregate
+over many entities, so it follows the rule that gates before it folds.
+
+- **Gate and redact before counting.** The holder query reads only rows
+  the caller may read, at the faces and in the world the caller may read,
+  and redacts each row before it tests the role property. A property that
+  `visible:` hides from the caller therefore matches nobody, as in
+  `read_session`. The anchors are read again through the gated, redacted
+  header batch, and each channel's `read:` rule is checked before an entry
+  is kept.
+- **Every derived value is post-gate.** `count`, `truncated` and
+  `next_cursor` are computed on the gated list. `truncated` is set only
+  when the caller holds a waiting role on more than 20 000 entities they
+  can read, so hidden rows never set it.
+- **A cursor only positions.** It names a position, never an entry to
+  serve, so a cursor from another principal or naming a hidden entity
+  serves nothing hidden.
+- **The row ceiling counts channels the caller may not see.** When more
+  than 20 000 candidate channels match, the inbox answers
+  `inbox_too_large` instead of a partial list. The count is taken before
+  the channel `read:` rule and the creator's org are checked, and, for a
+  creator role, before the anchor's row gate. So it can include channels
+  the caller cannot see. What that discloses depends on who controls the
+  other candidates:
+  - A caller who creates about 20 000 waiting channels of their own can
+    bring the count to just under the ceiling. The answer then shows how
+    many hidden candidates there are, and it changes when a hidden channel
+    enters or leaves a waiting state. It never shows which entity or
+    channel that is, and never a property value.
+  - A user who may create channels in a waiting state on entities where a
+    co-worker holds a waiting role can push the co-worker's inbox to a
+    lasting `inbox_too_large` with channels the co-worker cannot read. That
+    is an availability risk, not a disclosure. Closing those channels ends
+    it.
+
+  Both need about 20 000 channel creations, so rela accepts them. A cap per
+  entity would not fix this: it would drop channels from an inbox without
+  saying so. The same signal can end an MCP `watch` on `list_inbox` after a
+  hidden write. A distinct code keeps the fault diagnosable; a generic 500
+  would hide nothing, because the failure itself is the signal.
+- **No cache across principals.** Each call computes the inbox for its
+  caller, and a `watch` digest is keyed to the caller. The live hub
+  shares one inbox computation between the summary and the first page of
+  one principal, for one replay round only. The key is the principal and
+  the request, so it is never shared across principals or rounds.
+- **The summary is the gated first page.** `GET /api/v1/_inbox/summary`
+  (TKT-9YRRM5) answers the counts of the inbox's default first page and
+  nothing else. It reads the same gated, redacted answer, so a hidden row
+  changes none of its counts.
+- **Live frames follow the replay rule, on a fixed clock.** An inbox
+  subscription gets a frame only when the replay of its `GET`, as the
+  subscriber, answers a different hash. What the hub listens to for a
+  subscription (its wake set: the principal key, the reader, the channel
+  types with a waiting state, and the channels of the gated answer) comes
+  only from a 200 replay, never from the client. A change on a channel the
+  subscriber cannot read can trigger a replay, but that replay answers the
+  same hash, so it sends no frame. Inbox replays run only on grid ticks: the
+  first tick of every 2 seconds of wall-clock time (4 seconds with the
+  file channel store), the same ticks for every subscription. The slot
+  of a tick comes from its time, not from how many ticks ran, so a slow
+  round that a hidden change caused does not shift later grid ticks. The
+  spacing is fixed at wiring from the channel store, never per request or
+  per principal. A change waits in pending for the next grid tick and
+  gets no frame of its own. So a hidden change can neither delay nor
+  advance the start of the round that frames a visible change, and the
+  time of a frame does not reveal the time of a hidden write.
+- **The grid fixes when a round starts, not when its frames leave.**
+  Frames go out after the whole round, and a hidden change can add
+  replays to it (a hidden write in a channel of a waiting type replays
+  every inbox with that type). So a subscriber who triggers a visible
+  change every grid tick and times the frame can see a longer round.
+  That is the same channel as the full round any hidden entity edit
+  starts, and rela accepts it.
+- **Overflow defers, it does not frame.** An inbox subscription that a
+  round has no room (256 replays) or time (10 seconds) for goes into
+  pending with no refetch frame, unlike other live paths. Its round may
+  have been chosen by a change the subscriber cannot see, so a refetch
+  frame would tell them one happened. It frames only when a later replay
+  answers a different hash.
+- **The safety replay is staggered by principal, not by change.** Every
+  inbox subscription with a wake set is replayed once per safety period,
+  14 seconds (12 with the file channel store), whatever changed. Each
+  principal has a fixed slice from a hash of its identity, so which
+  grid tick replays it never depends on a change.
+
+## Read markers
+
+A read marker records how far one reader has read one channel (TKT-2B2AIA).
+Unread counts are derived from it. The realtime guide describes both.
+
+- **Markers are private.** The store reads and writes markers only for the
+  reader the request is bound to. The reader comes from the principal,
+  never from the request. No route, tool or count shows another reader's
+  marker or the time it moved.
+- **Gate before count.** The channel list and the head fill `read` only
+  for channels the caller passed the read gates for. The inbox gates every
+  channel it considers for unread messages first: the anchor's row gate,
+  redaction, face and world, and the channel's `read:` rule. Only then does
+  it count. A hidden channel has no `read`, is not in `unread_channels`,
+  and does not change `unread_count`. The answer is the same as for a
+  project without those channels and markers. The counts are computed per
+  caller and never cached across principals.
+- **A mark on a hidden channel writes nothing.** `PUT .../_read` and
+  `mark_read` answer what the head `GET` answers, and store nothing.
+  A mark needs read access only.
+- **A mark wakes only its own reader.** A moved marker sends a live frame
+  only to the same reader's subscriptions. Other principals get no frame
+  and no replay, so a mark does not tell them when someone read a channel.
+- **The window is cut before the gate.** The inbox looks at no more than
+  500 of a caller's markers, chosen before the read gates run. A hidden
+  channel on which the caller still holds a marker can take one of those
+  slots. With more than 500 markers, a caller could then notice that a
+  visible channel drops out, and infer that a channel they once read still
+  exists or is active. This needs the caller to have read that channel
+  before. It shows no content, no property value and no entity id, so rela
+  accepts it. A detached channel never takes a slot.
+- **Markers are personal data.** A marker records when a named user read a
+  channel. The operator holds it, and it stays until the channel is deleted
+  or purged, also after the user entity is deleted. rela has no command
+  yet to erase one reader's markers.
+- **A reused user id takes over the markers.** A marker belongs to a user
+  id and organization. A new principal with the id or login of a deleted
+  user sees that user's markers on the channels it can read: which
+  channels the previous user read, and how far. Content stays gated. Do
+  not reuse ids or logins without erasing the markers first; erasure on
+  user deletion is planned in TKT-6V8K8I.
+- **Marks are rate limited apart from posts.** A client cannot flood the
+  store with marks, and marks cannot use up the same user's posts.
+
+## Mentions and replies
+
+A message can address a person or an agent by a mention, and a reply
+addresses the author of its parent (TKT-6RXAC0). rela stores one row per
+addressed principal, and the inbox lists the unread ones. The realtime
+guide describes the syntax and the limits.
+
+- **No feedback to the poster.** A person the poster cannot read is not
+  a target. The post resolves each candidate id through the poster's own
+  gate, so a hidden person, a missing entity and an entity of another type
+  give the same answer. A readable person who can read the channel and one
+  who cannot also give the same answer. The poster never learns whether a
+  target will see the mention. The limit of 10 targets on a post counts
+  only targets the poster can see. On an edit it also counts a kept target
+  the editor can no longer see; the editor wrote that id while it was
+  visible, so this reveals nothing new.
+- **A hidden target is absent from rendered mentions.** A message's
+  `mentions` list leaves out a person the reader cannot read: no id, no
+  kind, and the span renders as code. The API never tells a reader that an
+  id they cannot read is a user entity.
+- **Gate at read time, before counting.** A target need not be able to
+  read the channel when the message is posted. The inbox gates each row
+  when it is read, with the same checks as unread channels: the anchor's
+  row gate and redaction, the anchor's face, the channel's `read:` rule
+  (named, permission and creator roles), and whether the configuration
+  still declares the channel type. Only then does it count.
+  `mention_count` is taken after the gate. The answer is the same as for a
+  project without the hidden rows. It is computed per caller and never
+  cached across principals.
+- **Rows are private.** The store lists only rows whose target is the
+  caller's own principal key, taken from the bound principal, never from
+  the request. An inbox entry carries no message text.
+- **The window is cut before the gate.** The inbox looks at the caller's
+  2000 newest rows before the gates run, so a hidden row can take a slot.
+  With more than 2000 rows, a caller could notice that a visible old entry
+  drops out, and infer that some hidden mention or reply exists. This
+  needs someone to have addressed the caller. It shows no channel, no
+  content and no author, so rela accepts this one-bit channel, as it does
+  for the read marker window.
+- **Eviction never removes another poster's unread row.** A target keeps
+  at most 200 rows per channel. To make room, rela removes the oldest read
+  row, else the same poster's oldest unread row, else it skips the new
+  row. A flood by one poster therefore cannot erase another poster's
+  unread mention. The cost is that a target with 200 unread rows from
+  others in one channel gets no new rows there until they read.
+- **The wake reaches only the target's own watch.** A post or edit that
+  addresses a principal wakes only MCP watches bound to that principal
+  key. The replay is gated, and a watch reports a change only when the
+  gated answer changes. A mention in a hidden channel therefore causes no
+  visible event and no timing signal for anyone else.
+- **Mention text can carry prompt injection.** Anyone who may post can
+  put text in front of an agent by mentioning its job identity. The text
+  reaches the agent only through `read_channel`, under the
+  untrusted-content `notice`. A policy that limits who may mention an
+  agent is planned.
+- **Rows are personal data.** A row records that one principal addressed
+  another in a channel. It is shown only to the target, and only while the
+  target may read the channel. It goes with the message or the channel.
+  Rows are channel-store state outside the graph: no audit record, no
+  version and no search.
+
+## Session `run_as` identities
+
+A session in `realtime.yaml` may name a job identity in `session.run_as`,
+such as `system:breach-bot`. The outputs of its timer and trigger moves
+write as that identity, with tool `realtime`. The realtime guide describes
+the key; this section covers what it means for `acl.yaml`.
+
+- **It gets only what `acl.yaml` names.** The identity's roles are its
+  `assignments` entry and the `everyone` role. A role conferred by a
+  relation (`role_relations`) or by an asserted claim
+  (`asserted_role_assignments`) never applies to it: no request carries it.
+- **It cannot pass for rela.** The name follows the `--run-as` rules, and
+  rela's own identities (`system:realtime`, `system:scheduler`,
+  `system:provisioner` and the others in `principal.IsRelaIdentity`) are
+  refused. A trigger post therefore never writes with `system:realtime`.
+- **Grants are checked when the file loads.** rela refuses a
+  `realtime.yaml` whose `run_as` lacks a grant its outputs need: update,
+  create, field, option or relation grants. The check runs everywhere the
+  file loads, so a reload or an `acl.yaml` change cannot slip an ungranted
+  identity in; a hot reload keeps the previous configuration instead.
+- **Grants are checked again at the write.** The write path authorizes the
+  identity against `acl.yaml` as it is then, with field grants and their
+  `when:`. A grant removed after the load makes the output fail.
+- **A changed `run_as` writes nothing.** A pending write records the
+  identity in force at the move. If the file names another identity when
+  the write runs, the outputs fail `run_as_changed`.
+- **Templates cannot launder untrusted text.** The outputs of these moves
+  cannot read `channel.title` or `message.author`, and a timer's cannot
+  read `message.*`. The values they write are literals from the file, a
+  trigger's literal props, or session and time values.
+- **The audit log names it.** Each write is recorded with `run_as` as the
+  user and the session's `triggered_by`.
+
 ## What still leaks (deferred)
 
 - **`/api/v1/_position` per-id semantics** — `_position` is gated on
@@ -1401,7 +2048,8 @@ other surfaces and how each counts hidden entities.
   own treatment).
 - **Local stdio MCP (`rela mcp`)** applies no ACL. It has no
   authentication, so there is no principal to gate for; it runs with the
-  operator's own file access, like the CLI. The **remote** MCP endpoint
+  operator's own file access. Unlike the CLI, it does not gate writes
+  either (see "The `rela` CLI gates writes, not reads"). The **remote** MCP endpoint
   (`rela-server -mcp`) is JWT-authenticated and gated (TKT-4QSZ8Y): entity
   and relation reads, `search_entities`, trace and resources all read
   through `GatedReads`. Search drops hits that matched only hidden
@@ -1445,6 +2093,22 @@ other surfaces and how each counts hidden entities.
   - deleting an owner that owns an entity the caller may not delete fails
     with a 403, on every write path. The denial names the owned entity's type
     but not its id. Nothing is deleted.
+  - a delete refused because a realtime channel of a type with
+    `on_entity_delete: block` is attached fails with a 409 that names the
+    channel type (TKT-ZU7P13). That shows a channel of that type exists on
+    an entity the caller may delete, and nothing more. The type name is
+    config, which is not a secret. The check runs after every refusal the
+    delete itself would give, so a caller who may not delete never sees the
+    409. A face delete counts the whole-entity channels only when the
+    caller's last readable face goes, so a hidden face never changes the
+    answer. A whole-family delete always counts them. That keeps the
+    hidden-face property only because every surface resolves a bare id
+    through `visibility.Resolver.WriteTarget` before it deletes; the
+    data-entry API refuses a bare id on a faced type as `face_required`. A
+    new delete surface that skipped that step would let a channel on a face
+    the caller cannot read decide the 409. A block on an entity the delete
+    removes through `owning` names the type only, never the owned
+    entity's id.
 - **Markdown body (`content`) is not field-redacted, on any read path.**
   `visible:` is a **property-values** guard: it omits hidden *property* and
   *relation-meta* values from the wire. It makes no claim over the markdown
@@ -1499,6 +2163,11 @@ is read-gated on the same principles as everything else:
   alone does not. When other faces of the entity still exist, the caller must
   also be able to read one of them, as for any read of a live entity. A
   deleted face with no recorded history is the same 404.
+- **Listing by version tag** (`rela.tagged_entities` in Lua) applies the same
+  two rules per row: a live entity is listed when the script may read it, and
+  a deleted one only under `history:read` with the face rule above. A row
+  that fails is left out, so the list does not reveal that a hidden entity
+  was tagged.
 
 ### Historical field redaction fails closed (`history:read-redacted`)
 
@@ -1521,7 +2190,18 @@ too come from the live graph and would otherwise let a role conferred *after*
 capture reveal a field. To keep that reduction from silently defaulting to
 all-visible, a type that any role gates with `visible:` gets a **type-level
 closed-world** in history: every field not affirmatively granted visible by a
-globally-held role is hidden. The rule, stated as an invariant:
+globally-held role is hidden.
+
+A global role **without** a `visible:` block for the type is such an
+affirmative grant, of every field, when it reads the snapshot's type and face
+(BUG-Y5UF3K). That is what the same role shows on a live read, and it depends
+only on the reader's assignments, never on the subject's graph. History uses
+a subset of the reader's live roles and the union only grows with roles, so
+this rule never makes a historical version show a reader more than a live read
+of the same row would. The face is the one the snapshot records: a role that reads only
+`policy@published` shows nothing of a draft snapshot, or of one recorded
+without a face. A reader whose only grant on the type was a conferred role
+still sees no field. The rule, stated as an invariant:
 
 > A historical version shows a field only if today's `visible:` policy
 > affirmatively grants it against inputs that can be safely evaluated. Every
@@ -1817,6 +2497,89 @@ remove an entity type, property, relation or choice option that `acl.yaml`
 mentions. Settings that control access stay locked: a transition `guard`, and
 `permission:` on navigation entries, spaces and dashboard cards. Change those
 in the files directly.
+
+## Git sync (`git:sync`)
+
+`git:sync` is a built-in global permission. It lets a principal use the sync
+button of the data-entry app (`POST /api/v1/_git/sync`). A sync commits every
+pending change in `entities/` and `relations/`, not only the caller's own,
+merges the remote and pushes.
+
+Grant it to a role by name:
+
+```yaml
+# acl.yaml
+roles:
+  maintainer:
+    permissions: [git:sync]
+```
+
+Without the permission the sync gets 403, and the response names `git:sync`.
+
+- **Without an `acl.yaml`** every principal may sync, as every principal may
+  already write every entity.
+- **With `--read-only`** nobody may sync, whatever `acl.yaml` grants.
+
+A client ceiling passes `git:sync` on to a client acting for a user unless
+the ceiling narrows permissions. Only `config:edit` is never delegated.
+
+`GET /api/v1/_git/status` stays open to every signed-in principal. Its
+`can_sync` field says whether a sync would be accepted. It lists the paths of
+conflicting files only to a principal who may sync; everyone else sees only
+that a conflict exists.
+
+Resolving a merge conflict is part of a sync, so the conflict routes need
+`git:sync` too:
+
+- `GET /api/v1/_conflicts` lists the conflicting files.
+- `GET /api/v1/_conflicts/{path}` shows both sides of one file.
+- `POST /api/v1/_conflicts/resolve` writes the resolution. It also needs
+  `update` on the entity, as an ordinary edit does.
+
+Without `git:sync` these routes answer 403, and the response names the
+permission. The app hides its "Resolve conflicts" link from such a principal.
+
+The conflict routes are not row-gated. A holder of `git:sync` sees the paths
+and the unredacted values of conflicting entities they may not read. Merge
+conflicts arise only on file storage, which runs locally; the postgres and
+sqlite backends have none. Grant `git:sync` only to principals who may see
+every entity file.
+
+**Upgrading.** With an `acl.yaml`, nobody may sync after the upgrade until
+you grant `git:sync` to the roles that used the sync button or resolved merge
+conflicts.
+
+## Saving the settings page (`settings:edit`)
+
+`settings:edit` is a built-in global permission. It lets a principal save
+what the data-entry settings page saves. Each of these is one value shared by
+every principal:
+
+- the default values that everyone's create forms start with
+  (`PUT` or `POST /api/v1/_settings`);
+- the color palette (`PUT` or `POST /api/v1/_palette`);
+- the logo (`PUT`, `POST` or `DELETE /api/v1/_theme/logo`);
+- a theme import, which saves the logo it carries
+  (`POST /api/v1/_theme/import`).
+
+Grant it to a role by name:
+
+```yaml
+# acl.yaml
+roles:
+  admin:
+    permissions: [settings:edit]
+```
+
+- **With an `acl.yaml`,** only a holder may save. Anyone else gets 403, and
+  the response names `settings:edit`. Reading the settings, the palette and
+  the logo, and exporting a theme, stay open to every signed-in principal.
+- **Without an `acl.yaml`,** every principal may save, as before the
+  permission existed.
+- **A read-only instance** (`--read-only`) refuses every save.
+
+**Upgrading.** With an `acl.yaml`, nobody may save the settings page after
+the upgrade until you grant `settings:edit` to the roles that used it.
 
 ## Where to read next
 

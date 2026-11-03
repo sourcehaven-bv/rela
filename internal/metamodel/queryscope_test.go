@@ -207,11 +207,11 @@ entities:
 	if err != nil {
 		t.Fatalf("Parse with scopes: %v", err)
 	}
-	if a, b := without.ShapeProjection().Hash(), with.ShapeProjection().Hash(); a != b {
+	if a, b := NewShapeProjection(without).Hash(), NewShapeProjection(with).Hash(); a != b {
 		t.Errorf("declaring a query scope changed the shape hash (%s -> %s); "+
 			"a scope alters no stored data and must not demand a migration", a, b)
 	}
-	if a, b := without.RenderProjection().Hash(), with.RenderProjection().Hash(); a != b {
+	if a, b := NewRenderProjection(without).Hash(), NewRenderProjection(with).Hash(); a != b {
 		t.Errorf("declaring a query scope changed the render hash (%s -> %s); "+
 			"version rendering does not depend on scopes", a, b)
 	}

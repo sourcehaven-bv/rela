@@ -21,7 +21,7 @@ var knownACLImplementations = map[string]string{
 	"ReadOnlyACL": "deny-all writes; rela-server --read-only",
 	"Declarative": "the only implementation compiled from an operator's acl.yaml",
 	// Request satisfies the interface but is NOT a deployment-wide policy: it
-	// is a per-principal scope obtained from Declarative.ForPrincipal and
+	// is a per-principal scope obtained from Declarative.ForIdentity and
 	// threaded on the context, never assigned to entitymanager.Deps.ACL. It is
 	// listed so the scan stays honest about what it found; the is-policy-active
 	// sites are unaffected by it.

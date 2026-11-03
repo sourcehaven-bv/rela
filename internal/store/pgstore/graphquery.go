@@ -223,23 +223,32 @@ func buildMatchingFacesSQL(q store.GraphQuery, ids []string) (sqlText string, ar
 // Props and Narrowing. Filtering the faces on those first would let a
 // lower-ranked face answer for an entity whose prime fails the filter.
 func buildPredicateParts(b *sqlBuilder, q store.GraphQuery, typeArg string) (with, pre, post []string) {
+	return buildPredicatePartsPrefixed(b, "", q, typeArg)
+}
+
+// buildPredicatePartsPrefixed is [buildPredicateParts] with every CTE name
+// prefixed, so several queries' predicates can share one statement (the
+// field grants of a visible search).
+func buildPredicatePartsPrefixed(
+	b *sqlBuilder, prefix string, q store.GraphQuery, typeArg string,
+) (with, pre, post []string) {
 	if q.HasInbound != nil {
-		w, ex := buildPredicateSQL(b, "in", *q.HasInbound, typeArg, store.DirectionIncoming, q.Faces)
+		w, ex := buildPredicateSQL(b, prefix+"in", *q.HasInbound, typeArg, store.DirectionIncoming, q.Faces)
 		with = append(with, w...)
 		pre = append(pre, existsCond(ex, q.HasInbound.Negate))
 	}
 	if q.HasOutbound != nil {
-		w, ex := buildPredicateSQL(b, "out", *q.HasOutbound, typeArg, store.DirectionOutgoing, q.Faces)
+		w, ex := buildPredicateSQL(b, prefix+"out", *q.HasOutbound, typeArg, store.DirectionOutgoing, q.Faces)
 		with = append(with, w...)
 		pre = append(pre, existsCond(ex, q.HasOutbound.Negate))
 	}
 	for i, rel := range q.Related {
-		w, ex := buildPredicateSQL(b, relatedPrefix(i), rel.Pred, typeArg, relatedDirection(rel), q.Faces)
+		w, ex := buildPredicateSQL(b, prefix+relatedPrefix(i), rel.Pred, typeArg, relatedDirection(rel), q.Faces)
 		with = append(with, w...)
 		pre = append(pre, existsCond(ex, rel.Pred.Negate))
 	}
 	if len(q.Any) > 0 {
-		w, cond := buildAnySQL(b, "any", q.Any, typeArg, q.Faces)
+		w, cond := buildAnySQL(b, prefix+"any", q.Any, typeArg, q.Faces)
 		with = append(with, w...)
 		pre = append(pre, cond)
 	}

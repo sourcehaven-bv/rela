@@ -223,6 +223,27 @@ func (s *FSStore) HighestID(_ context.Context, prefix string) (int, error) {
 	return highest, nil
 }
 
+// EntityIDs returns the bare id of every entity in the store, once per
+// family, in index order. It reads only the in-memory index, so it costs no
+// file reads; entitymanager mints ids from it instead of loading every
+// entity on each create. Soft-deleted ids are not included; the soft-delete
+// capability lists those.
+func (s *FSStore) EntityIDs(_ context.Context) ([]string, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	seen := make(map[string]struct{}, len(s.entityOrder))
+	ids := make([]string, 0, len(s.entityOrder))
+	for _, key := range s.entityOrder {
+		id := s.entities[key].ID
+		if _, dup := seen[id]; dup {
+			continue
+		}
+		seen[id] = struct{}{}
+		ids = append(ids, id)
+	}
+	return ids, nil
+}
+
 // --- EntityWriter ---
 
 // idTaken reports whether any key of index case-folds to the same identity as
@@ -285,6 +306,11 @@ func (s *FSStore) createEntity(_ context.Context, e *entity.Entity) error {
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
+	// Under mu, so SetSchemas cannot change the answer before the write.
+	if !s.layout.declared(e.Type) {
+		return errUnknownType(e.Type)
+	}
 
 	key := stateKey(e.ID, e.Face)
 	// A soft-deleted id stays held until it is purged, for every face.
@@ -357,6 +383,12 @@ func (s *FSStore) updateEntityIf(
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
+	// Before any file is written or removed: an update that changes the
+	// type to an undeclared one must leave the old file in place.
+	if !s.layout.declared(e.Type) {
+		return "", errUnknownType(e.Type)
+	}
 
 	key := stateKey(e.ID, e.Face)
 	meta, exists := s.entities[key]
@@ -952,6 +984,11 @@ func (s *FSStore) renameEntity(_ context.Context, oldID, newID string) (*store.R
 }
 
 // writeEntity writes an entity to disk using temp-file + rename.
+// Caller must hold s.mu.
 func (s *FSStore) writeEntity(e *entity.Entity) error {
-	return s.codec.writeEntityFile(e)
+	if err := s.codec.writeEntityFile(e); err != nil {
+		return err
+	}
+	noteMentions(s, e)
+	return nil
 }

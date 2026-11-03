@@ -76,6 +76,43 @@ func TestVerifyAssertion_ProjectsAllClaims(t *testing.T) {
 	}
 }
 
+// The expiry reaches the caller so the data-entry gate can end an event
+// stream when the token stops being accepted (TKT-5I6REX).
+func TestVerifyAssertion_ProjectsExpiry(t *testing.T) {
+	v, mint, srv := testIssuer(t)
+	defer srv.Close()
+
+	exp := time.Now().Add(42 * time.Minute).Truncate(time.Second)
+	got, err := v.VerifyAssertion(context.Background(),
+		mint(assertionClaims(map[string]any{"exp": exp.Unix()})))
+	if err != nil {
+		t.Fatalf("VerifyAssertion: %v", err)
+	}
+	if !got.ExpiresAt.Equal(exp.Add(assertionLeeway)) {
+		t.Errorf("ExpiresAt = %v, want %v", got.ExpiresAt, exp.Add(assertionLeeway))
+	}
+}
+
+// ExpiresAt includes the leeway the parser accepts, so a token inside the
+// leeway verifies and reports an expiry still in the future.
+func TestVerifyAssertion_ExpiryIncludesLeeway(t *testing.T) {
+	v, mint, srv := testIssuer(t)
+	defer srv.Close()
+	const leeway = time.Minute
+	v.leeway = leeway
+	v.opts = assertionParserOptions(v.cfg, leeway)
+
+	exp := time.Now().Add(-10 * time.Second).Truncate(time.Second)
+	got, err := v.VerifyAssertion(context.Background(),
+		mint(assertionClaims(map[string]any{"exp": exp.Unix()})))
+	if err != nil {
+		t.Fatalf("VerifyAssertion inside the leeway: %v", err)
+	}
+	if !got.ExpiresAt.Equal(exp.Add(leeway)) {
+		t.Errorf("ExpiresAt = %v, want exp + leeway = %v", got.ExpiresAt, exp.Add(leeway))
+	}
+}
+
 func TestVerifyAssertion_AbsentClaimsAreNotAnError(t *testing.T) {
 	v, mint, srv := testIssuer(t)
 	defer srv.Close()

@@ -95,7 +95,7 @@ export function useCalendarEvents(
         if (!schema.properties?.[field.property]) continue
         const hint = densePropertyRoutingHint(schema.properties[field.property], field.property)
         perProperty.set(field.property, {
-          component: defaultRegistry.resolveFromHint(hint),
+          component: defaultRegistry.resolveDense(hint),
           propertyName: hint.propertyName,
           preformatted: hint.preformatted,
         })

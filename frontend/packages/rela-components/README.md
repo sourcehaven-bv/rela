@@ -40,6 +40,8 @@ src/components/
                         swimlane board, swimlane, swimlane column
   table/                table, section, row
   task/                 task detail, detail panel, fields, comments
+  channel/              channel, message, composer, author, ref
+                        chip, entity channel list
   doc/                  doc editor, doc toolbar
   form/                 field shell, text field, textarea, number field,
                         select, option select, multi select, checkbox,
@@ -916,6 +918,12 @@ act is the mistake they exist to prevent.
 `RlSkeleton` is preferred over a spinner where the shape of the content is
 known, since it reserves the space and stops the page jumping.
 
+`RlBusyIndicator` is not a pending state of the user's own act. It shows
+that someone else, such as an agent, works on an item now: pulsing dots, the
+state and the time in it. It is not a live region, because a board shows
+many of them at once. The time moves on each minute through
+`useMinuteClock`, whose one timer every indicator on the page shares.
+
 ### History and activity
 
 `RlTimeline` is what happened to something: an activity feed, an audit trail, the
@@ -961,6 +969,79 @@ inside a modal may have no toast host above it. A failed copy reports through
 `copy-error` and does not claim success: the clipboard is absent rather than
 merely refusing outside a secure context, and a block that said "Copied" while
 copying nothing is the worst outcome.
+
+### Channels
+
+The `channel/` components show a channel: a log of typed messages that hangs
+off an entity. `RlChannel` holds the header, the lifecycle controls, the log and
+the ephemeral signals, and takes the composer in its `composer` slot.
+`RlChannelMessage` draws one message, `RlChannelComposer` writes or edits one,
+and `RlEntityChannels` lists the channels on an entity by type.
+`RlChannelSession` shows a channel's session as a stepper; the app mounts it in
+`RlChannel`'s `session` slot, between the header and the log.
+
+They are presentational like everything else here, with three consequences
+worth knowing.
+
+- **Rights arrive as data.** The composer offers only the `postable` types, the
+  header only the `allowedLifecycle` operations, and a message only the
+  operations and actions in its own `actions`. A control the user may not use is
+  not rendered, rather than disabled.
+- **Markdown arrives rendered.** A message's `html` holds the markdown
+  properties as HTML the app has already rendered and sanitized. The components
+  insert it as it is and never render or clean markdown, so the app's sanitizer
+  is the only one. Every other string, including property values, titles and
+  removal reasons, renders as text. The stories pass a text-only stand-in
+  (`storyHtml`), not a second sanitizer.
+- **Values leave raw.** The composer emits each field as typed (`string`,
+  `boolean` or a ref's id) and checks only `required` and `max` (in code points,
+  as the server counts). An integer is the text the user typed, and an
+  unchecked optional box is absent rather than `false`. Converting dates, times
+  and integers is the app's, and so is clearing the composer: pass the `post`
+  event to its exposed `reset(event)` once the post landed. An edit needs no
+  reset; clearing `editing` ends it and brings back the draft it put aside.
+- **Edits keep what the user cannot see.** `editing.restricted` names the ref
+  properties holding a ref the user may not read. They show the restricted
+  placeholder with a Replace button, count as filled, and stay out of the event's
+  `values` and `rendered` unless replaced, so the app sends them as unrendered
+  and the server keeps them.
+- **The server decides what moves a session.** The composer's `transitions`
+  lists the message types whose post would move the session, as the app read
+  them from the caller's `_actions.transitions`. The composer lists those types
+  first and names the target state. It selects a type that moves nothing by
+  default, so a plain message does not move the session by accident; only when
+  every offered type is a transition does it select the first, and the hint
+  says the session will move. The stepper has no
+  buttons, and it marks no earlier state as done: the server keeps only the
+  current state. A session notice (`notice` on a message) renders as one line
+  without controls.
+
+Field order, labels, help, placeholders, widgets and spans come from the
+`presentation` (data-entry.yaml `channels:`), resolved by
+`resolveChannelFields`, so the composer and the property list under a message
+use the same order. A restricted ref renders as "Restricted reference" with no
+id, type, title or link; `ChannelRestrictedRef` has no `id` field to read.
+
+The fixed captions (Send, Cancel, Load older messages and so on) come through
+the message seam as `channelText`, one lookup by key, so a localised app
+translates them in one table. Text built around a value is one function per
+sentence, so a locale controls its word order and punctuation: `channelTooLong`,
+`channelNewMessages`, and for sessions `channelNewNotices`, `channelSessionSummary`,
+`channelSessionStep`, `channelSessionHint` and `channelSessionOptionHint`.
+`channelNewMessages` never counts session notices; when notices arrive,
+`channelNewNotices` is announced and receives its text for the other messages.
+`RlChannel` and `RlEntityChannels` take a `headingLevel` to fit
+the host page's outline.
+
+The comment components are not reused for messages. `RlCommentThread` rows
+hold one plain-text body and edit it in place with a single textarea, and
+`RlCommentComposerBox` is one textarea too. A channel message has typed
+properties, app-rendered HTML, reply quotes and actions, and an edit reopens
+the full composer, so sharing the row or the box would mean adding branches to
+both for a case neither has. The channel components share the primitives
+instead: `RlButton` and its pending label, `RlButtonGroup`, `RlKbd`, the form
+fields and `RlFieldShell`, with the comment components' Ctrl+Enter
+convention.
 
 ### Messages
 

@@ -31,20 +31,28 @@ const (
 	// scanner may touch, such as the clamd socket: a converter that could
 	// connect to it could stop the daemon or probe files it can read.
 	PurposeScan
+	// PurposeCheck is for prose checkers (spelling, grammar, style) run over
+	// entity bodies. Their list holds the checkers' own config, such as Vale
+	// styles, which the operator installs outside the project.
+	PurposeCheck
 
 	purposeCount
 )
 
 // String names the purpose for logs.
 func (p Purpose) String() string {
-	if p == PurposeScan {
+	switch p {
+	case PurposeScan:
 		return "scan"
+	case PurposeCheck:
+		return "check"
+	default:
+		return "transform"
 	}
-	return "transform"
 }
 
-// EnvSandboxTransformReadPaths and EnvSandboxScanReadPaths name the environment
-// variables holding the operator's read-only sandbox paths per [Purpose]: each
+// EnvSandboxTransformReadPaths, EnvSandboxScanReadPaths and
+// EnvSandboxCheckReadPaths name the environment variables holding the operator's read-only sandbox paths per [Purpose]: each
 // a list separated like PATH (":" on Unix). Every binary that runs commands
 // applies them (rela-server via its --sandbox-*-read-paths flags, which default
 // to them; the CLI and rela-desktop via [ApplyHostEnv]), so a command is
@@ -52,14 +60,19 @@ func (p Purpose) String() string {
 const (
 	EnvSandboxTransformReadPaths = "RELA_SANDBOX_TRANSFORM_READ_PATHS"
 	EnvSandboxScanReadPaths      = "RELA_SANDBOX_SCAN_READ_PATHS"
+	EnvSandboxCheckReadPaths     = "RELA_SANDBOX_CHECK_READ_PATHS"
 )
 
 // EnvVar names the environment variable holding this purpose's read paths.
 func (p Purpose) EnvVar() string {
-	if p == PurposeScan {
+	switch p {
+	case PurposeScan:
 		return EnvSandboxScanReadPaths
+	case PurposeCheck:
+		return EnvSandboxCheckReadPaths
+	default:
+		return EnvSandboxTransformReadPaths
 	}
-	return EnvSandboxTransformReadPaths
 }
 
 // readPathsSetting names where the operator sets p's read paths, for warnings:

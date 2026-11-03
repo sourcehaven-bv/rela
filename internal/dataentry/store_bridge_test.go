@@ -2,22 +2,38 @@ package dataentry
 
 import (
 	"context"
+	"slices"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/Sourcehaven-BV/rela/internal/changefeed"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/store/memstore"
 )
 
-// sseWaitTimeout bounds how long waitForSSE blocks. Generous enough for the
-// cross-process pg path (a LISTEN/NOTIFY round-trip) and trivial for memstore.
+// sseWaitTimeout bounds how long waitForEntityChange blocks. Generous enough
+// for the cross-process pg path (a LISTEN/NOTIFY round-trip) and trivial for
+// memstore.
 const sseWaitTimeout = 5 * time.Second
 
-// waitForEntityChange reads from the broker channel until it finds an
-// entity-change event for the given type, or fails after sseWaitTimeout.
+// bridgeApp returns an App on st with its change feed started, as
+// StartWatching starts it.
+func bridgeApp(t *testing.T, st store.Store) *App {
+	t.Helper()
+	feed, err := changefeed.New()
+	require.NoError(t, err)
+	a := &App{store: st, broker: newEventBroker(), feed: feed}
+	a.live = testLiveHub(a)
+	a.startStoreEventBridge()
+	t.Cleanup(a.StopWatching)
+	return a
+}
+
+// waitForEntityChange takes from sub until a batch reports a change to
+// entityType, or fails after sseWaitTimeout. It returns that batch.
 //
 // entityType looks constant to the default-build linter — every caller in this
 // file passes "ticket" — but the postgres-tagged bridge test passes "feature".
@@ -28,118 +44,94 @@ const sseWaitTimeout = 5 * time.Second
 // linters, whichever one the current build actually raises.
 //
 //nolint:unparam,nolintlint // entityType varies in the postgres-tagged caller; see above
-func waitForEntityChange(t *testing.T, ch <-chan sseEvent, entityType string) sseEvent {
+func waitForEntityChange(t *testing.T, sub *changefeed.Subscription, entityType string) changefeed.Batch {
 	t.Helper()
 	deadline := time.After(sseWaitTimeout)
 	for {
 		select {
-		case ev := <-ch:
-			if ev.EntityType == entityType {
-				return ev
+		case <-sub.Wake():
+			if b := sub.Take(); slices.Contains(b.Types, entityType) {
+				return b
 			}
 		case <-deadline:
 			t.Fatalf("timed out waiting for entity change %q", entityType)
-			return sseEvent{}
+			return changefeed.Batch{}
 		}
 	}
 }
 
-// TestStoreEventBridgeMapsEntityEvents verifies the store-event -> SSE bridge
-// surfaces entity create/update/delete as type-scoped change signals (no id,
+// TestStoreEventBridgeMapsEntityEvents verifies the store-event -> change feed
+// bridge surfaces entity create/update/delete as type-scoped changes (no id,
 // no op — all three collapse to "type T changed", TKT-POT9GQ). Uses a memstore
 // so the test is backend-agnostic and needs no DB — the bridge consumes the
 // standard store.Watcher every backend delivers through.
 func TestStoreEventBridgeMapsEntityEvents(t *testing.T) {
 	st := memstore.New()
-	a := &App{store: st, broker: newEventBroker()}
-	a.startStoreEventBridge()
-	t.Cleanup(a.StopWatching)
-
-	ch := a.broker.subscribe()
-	defer a.broker.unsubscribe(ch)
+	a := bridgeApp(t, st)
+	sub := a.feed.Subscribe("")
+	defer sub.Close()
 
 	ctx := context.Background()
-
-	// Create, update, delete all surface as an entity change of the type,
-	// carrying no id.
 	require.NoError(t, st.CreateEntity(ctx, entity.New("TKT-1", "ticket")))
-	ev := waitForEntityChange(t, ch, "ticket")
-	require.Empty(t, ev.Data, "entity change must carry no pre-rendered data/id")
+	waitForEntityChange(t, sub, "ticket")
 
 	upd := entity.New("TKT-1", "ticket")
 	upd.SetString("title", "changed")
 	require.NoError(t, st.UpdateEntity(ctx, upd))
-	waitForEntityChange(t, ch, "ticket")
+	waitForEntityChange(t, sub, "ticket")
 
 	_, err := st.DeleteFamily(ctx, "TKT-1", false)
 	require.NoError(t, err)
-	waitForEntityChange(t, ch, "ticket")
+	waitForEntityChange(t, sub, "ticket")
 }
 
 // TestStoreEventBridgeRelationSignalsVerdictInvalidation verifies relation
-// writes produce a RelationChange marker (which clears cached per-connection
-// read verdicts, RR-K2WKEJ) but NEVER a wire-bound entity change — relations
-// are still not part of the browser live feed.
+// writes are reported as a relation change (which clears cached
+// per-connection read verdicts, RR-K2WKEJ) and never as an entity type —
+// relations are still not part of the browser live feed.
 func TestStoreEventBridgeRelationSignalsVerdictInvalidation(t *testing.T) {
 	st := memstore.New()
-	a := &App{store: st, broker: newEventBroker()}
-	a.startStoreEventBridge()
-	t.Cleanup(a.StopWatching)
-
-	ch := a.broker.subscribe()
-	defer a.broker.unsubscribe(ch)
-
+	a := bridgeApp(t, st)
 	ctx := context.Background()
 	require.NoError(t, st.CreateEntity(ctx, entity.New("A", "ticket")))
 	require.NoError(t, st.CreateEntity(ctx, entity.New("B", "ticket")))
-	waitForEntityChange(t, ch, "ticket")
-	waitForEntityChange(t, ch, "ticket")
 
+	sub := a.feed.Subscribe("")
+	defer sub.Close()
 	_, err := st.CreateRelation(ctx, entity.RelationKey{From: "A", Type: "depends_on", To: "B"}, nil)
 	require.NoError(t, err)
 
-	// A relation write produces a RelationChange marker, never an
-	// EntityType wire frame.
+	// The creates may still be in flight, so take until the relation shows;
+	// no batch may ever report it as an entity type.
 	deadline := time.After(sseWaitTimeout)
 	for {
 		select {
-		case ev := <-ch:
-			require.True(t, ev.RelationChange, "relation write must produce a RelationChange marker, got %+v", ev)
-			require.Empty(t, ev.EntityType, "relation change must not carry an entity type")
-			return
+		case <-sub.Wake():
+			b := sub.Take()
+			require.NotContains(t, b.Types, "depends_on", "relation change must not carry an entity type")
+			if b.Relation {
+				return
+			}
 		case <-deadline:
-			t.Fatal("timed out waiting for the relation-change marker")
+			t.Fatal("timed out waiting for the relation change")
 		}
 	}
 }
 
-// TestStoreEventBridgeLocalWriteSingleBroadcast guards the de-dup: a single
-// entity write produces exactly ONE broker event (the bridge is the sole
-// source now that the inline handler broadcasts were removed).
-func TestStoreEventBridgeLocalWriteSingleBroadcast(t *testing.T) {
+// TestStoreEventBridgeLocalWriteCountedOnce guards the de-dup: a single
+// entity write reaches the feed once (the bridge is the sole source; the
+// write handlers do not broadcast).
+func TestStoreEventBridgeLocalWriteCountedOnce(t *testing.T) {
 	st := memstore.New()
-	a := &App{store: st, broker: newEventBroker()}
-	a.startStoreEventBridge()
-	t.Cleanup(a.StopWatching)
-
-	ch := a.broker.subscribe()
-	defer a.broker.unsubscribe(ch)
+	a := bridgeApp(t, st)
+	sub := a.feed.Subscribe("")
+	defer sub.Close()
 
 	require.NoError(t, st.CreateEntity(context.Background(), entity.New("TKT-1", "ticket")))
-
-	count := 0
-	deadline := time.After(800 * time.Millisecond)
-	for {
-		select {
-		case ev := <-ch:
-			if ev.EntityType == "ticket" {
-				count++
-			}
-		case <-deadline:
-			require.Equal(t, 1, count, "a local write must broadcast exactly once")
-			return
-		}
-	}
+	b := waitForEntityChange(t, sub, "ticket")
+	require.Equal(t, sub.Start()+1, b.Seq, "a local write must be counted exactly once")
+	time.Sleep(100 * time.Millisecond)
+	require.Equal(t, b.Seq, sub.Take().Seq, "no second event may follow the write")
 }
 
 // compile-time guard that memstore satisfies the store.Store the bridge needs.

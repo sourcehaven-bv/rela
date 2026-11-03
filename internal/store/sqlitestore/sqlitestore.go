@@ -39,6 +39,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"sync"
 	"time"
 
@@ -134,8 +135,18 @@ func parseTime(s string) (time.Time, error) { return time.Parse(time.RFC3339Nano
 // +1 exported / +1 method: SoftDelete, the optional store.SoftDeleteProvider
 // accessor. The work lives on softDeleter and free functions in softdelete.go.
 //
-//plimsoll:max-methods=53
-//plimsoll:max-exported-methods=35
+// +1 exported / +1 method (TKT-Q6AKUN): MentionSources, the optional
+// store.MentionIndex capability. Its helpers are free functions in mentions.go.
+//
+// +1 exported (entity conversion): ReplaceEntityFamily is required by
+// store.FamilyReplacer so a type change can replace all rows of one entity
+// family under the same store transaction.
+//
+// +1 exported / +1 method (TKT-6I2OPG): Rollup, the optional store.Rollupper
+// capability. Its SQL builder is free functions in rollup.go.
+//
+//plimsoll:max-methods=56
+//plimsoll:max-exported-methods=38
 type Store struct {
 	db *sql.DB
 
@@ -203,9 +214,12 @@ type pendingEvents struct {
 // It also mirrors pgstore, whose New likewise takes an injected pool that the
 // wiring site owns and closes.
 //
+// ctx bounds the search-text backfill New runs for rows written before the
+// v22 rung; see reindexSearchText.
+//
 // Nil: rejected — a nil database is a wiring mistake, and failing here beats a
 // panic on the first query.
-func New(db *sqlitedb.DB, options ...Option) (*Store, error) {
+func New(ctx context.Context, db *sqlitedb.DB, options ...Option) (*Store, error) {
 	if db == nil {
 		return nil, errors.New("sqlitestore: nil database")
 	}
@@ -215,6 +229,9 @@ func New(db *sqlitedb.DB, options ...Option) (*Store, error) {
 	}
 	for _, opt := range options {
 		opt(s)
+	}
+	if err := reindexSearchText(ctx, s); err != nil {
+		return nil, fmt.Errorf("sqlitestore: index search text: %w", err)
 	}
 	return s, nil
 }

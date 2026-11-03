@@ -446,7 +446,7 @@ func TestV1ListRelationFilterACL(t *testing.T) {
 		Roles:       map[string]acl.RoleDef{"viewer": {Read: []string{"taak", "project"}}},
 		Assignments: map[string]string{"alice": "viewer"},
 	}, app.store)
-	app.acl = d
+	setTestACL(t, app, d)
 
 	listAs := func(t *testing.T, query url.Values) []string {
 		t.Helper()

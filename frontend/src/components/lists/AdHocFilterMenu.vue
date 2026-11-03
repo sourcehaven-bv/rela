@@ -17,6 +17,7 @@
  * duplicate.
  */
 import { ref, computed, nextTick, onMounted, onBeforeUnmount, watch } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { useSchemaStore } from '@/stores'
 import type { EntityType, PropertyDef } from '@/types'
 import RlButton from 'rela-components/components/common/RlButton.vue'
@@ -51,7 +52,6 @@ const props = withDefaults(
   }>(),
   {
     lockedProperties: () => new Set<string>(),
-    buttonLabel: '+ Filter',
     buttonHotkey: 'F',
   }
 )
@@ -60,7 +60,14 @@ const emit = defineEmits<{
   apply: [property: string, value: string]
 }>()
 
+const { t } = useI18n()
 const schemaStore = useSchemaStore()
+
+// Literal keys, so the unused-key check can see them.
+const CATEGORY_LABELS = {
+  type: 'list.adhoc.category.type',
+  property: 'list.adhoc.category.property',
+} as const
 
 const open = ref(false)
 const search = ref('')
@@ -76,7 +83,7 @@ const allOptions = computed((): FilterOption[] => {
   const seen = new Set<string>()
 
   if (props.mode === 'search') {
-    out.push({ category: 'type', property: 'type', label: 'Entity Type' })
+    out.push({ category: 'type', property: 'type', label: t('list.adhoc.entityType') })
     for (const [, typeDef] of schemaStore.entityTypes) {
       for (const [name, def] of Object.entries(typeDef.properties)) {
         if (seen.has(name)) continue
@@ -261,7 +268,7 @@ defineExpose({ open: openMenu, close })
 <template>
   <div ref="containerRef" class="adhoc-filter-menu">
     <RlButton variant="secondary" class="filter-btn" @click.stop="toggle">
-      {{ buttonLabel }}
+      {{ buttonLabel ?? t('list.adhoc.button') }}
       <template v-if="buttonHotkey" #trailing><RlKbd :keys="buttonHotkey" /></template>
     </RlButton>
 
@@ -271,7 +278,7 @@ defineExpose({ open: openMenu, close })
           ref="searchInputRef"
           v-model="search"
           type="text"
-          placeholder="Search properties..."
+          :placeholder="t('list.adhoc.searchProperties')"
           class="filter-search"
           @keydown="handleKeydown"
         />
@@ -284,10 +291,10 @@ defineExpose({ open: openMenu, close })
             @click="pickProperty(option)"
             @mouseenter="menuIndex = index"
           >
-            <span class="option-category">{{ option.category }}</span>
+            <span class="option-category">{{ t(CATEGORY_LABELS[option.category]) }}</span>
             <span class="option-label">{{ option.label }}</span>
           </div>
-          <div v-if="filteredOptions.length === 0" class="filter-empty">No matching properties</div>
+          <div v-if="filteredOptions.length === 0" class="filter-empty">{{ t('list.adhoc.noMatches') }}</div>
         </div>
       </template>
 
@@ -314,7 +321,7 @@ defineExpose({ open: openMenu, close })
           <input
             v-model="valueInput"
             type="text"
-            placeholder="Enter value..."
+            :placeholder="t('list.adhoc.enterValue')"
             class="filter-search"
             @keydown.enter="commit(valueInput)"
           />
@@ -324,7 +331,7 @@ defineExpose({ open: openMenu, close })
             :disabled="!valueInput"
             @click="commit(valueInput)"
           >
-            Apply
+            {{ t('common.apply') }}
           </RlButton>
         </div>
       </template>

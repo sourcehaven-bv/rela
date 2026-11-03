@@ -3,12 +3,15 @@ package visibility
 import (
 	"context"
 	"errors"
+	"fmt"
 	"slices"
 	"testing"
 
+	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/store/memstore"
+	"github.com/Sourcehaven-BV/rela/internal/store/storetest"
 )
 
 // TestResolver_WriteTarget pins TKT-7IZHP0 §6: a bare id names the one face
@@ -95,6 +98,84 @@ func TestResolver_WriteTarget(t *testing.T) {
 			case !ok || got != tc.want:
 				t.Fatalf("got (%v, %v), want %v", got, ok, tc.want)
 			}
+
+			// WriteRow answers what WriteTarget followed by Ref answers.
+			row, rowOK, rowErr := r.WriteRow(ctx, tc.world, tc.typ, tc.addr)
+			switch {
+			case tc.ambiguous != nil:
+				if !errors.As(rowErr, &amb) || !slices.Equal(amb.Faces, tc.ambiguous) {
+					t.Fatalf("WriteRow err = %v, want ambiguous over %q", rowErr, tc.ambiguous)
+				}
+			case rowErr != nil:
+				t.Fatalf("WriteRow err = %v", rowErr)
+			case tc.miss:
+				if rowOK {
+					t.Fatalf("WriteRow got %v, want a miss", row.Entity.Ref())
+				}
+			case !rowOK || row.Entity.Ref() != tc.want:
+				t.Fatalf("WriteRow got (%v, %v), want %v", row.Entity, rowOK, tc.want)
+			}
 		})
 	}
+}
+
+// TestResolver_WriteRowBudget pins that a write's edge read is one gate pass
+// and one load: no header read when the target face is there, whatever the
+// number of other faces. WriteTarget followed by Ref cost a header read, a
+// load and two gate passes.
+func TestResolver_WriteRowBudget(t *testing.T) {
+	t.Parallel()
+	for _, n := range []int{10, 50} {
+		ctx := context.Background()
+		base := memstore.New()
+		if err := base.CreateEntity(ctx, &entity.Entity{ID: "TKT-1", Type: "ticket"}); err != nil {
+			t.Fatal(err)
+		}
+		for i := range n {
+			if err := base.CreateEntity(ctx, &entity.Entity{
+				ID: "POL-1", Type: "policy", Face: entity.Face(fmt.Sprintf("f%03d", i)),
+			}); err != nil {
+				t.Fatal(err)
+			}
+		}
+		st := storetest.NewCounting(base)
+		gate := &countingGate{}
+		r, err := NewResolver(gate, NopRedactor{}, st)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, addr := range []entity.Address{
+			entity.BareAddress("TKT-1"),
+			entity.AddressOf(entity.Ref{ID: "POL-1", Face: "f001"}),
+		} {
+			st.Reset()
+			gate.passes = 0
+			if _, ok, err := r.WriteRow(ctx, WorldOf(store.TrivialScope()), typeOf(addr), addr); err != nil || !ok {
+				t.Fatalf("n=%d %v: WriteRow = (%v, %v)", n, addr, ok, err)
+			}
+			if calls := st.Calls(); st.Reads() != 1 || calls["GetEntity"] != 1 {
+				t.Errorf("n=%d %v: reads = %s, want exactly one GetEntity", n, addr, st)
+			}
+			if gate.passes != 1 {
+				t.Errorf("n=%d %v: gate passes = %d, want 1", n, addr, gate.passes)
+			}
+		}
+	}
+}
+
+func typeOf(addr entity.Address) string {
+	if addr.ID() == "TKT-1" {
+		return "ticket"
+	}
+	return "policy"
+}
+
+// countingGate permits everything and counts row-gate passes.
+type countingGate struct{ passes int }
+
+func (g *countingGate) PermitsRead(context.Context, string, string) (bool, error) { return true, nil }
+
+func (g *countingGate) ReadableFacesMany(context.Context, string, []string) (acl.FaceVerdicts, error) {
+	g.passes++
+	return acl.UniformVerdicts(acl.AllFacesVerdict()), nil
 }

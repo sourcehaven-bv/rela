@@ -370,6 +370,36 @@ func TestRootedFS_OpenForWrite_WritesAndReadsBack(t *testing.T) {
 	}
 }
 
+func TestRootedFS_OpenForAppend(t *testing.T) {
+	dir := t.TempDir()
+	rfs, err := NewRootedFS(NewOsFS(), dir)
+	if err != nil {
+		t.Fatalf("NewRootedFS: %v", err)
+	}
+	for _, chunk := range []string{"one\n", "two\n"} {
+		wc, openErr := rfs.OpenForAppend("sub/log.jsonl", 0o644)
+		if openErr != nil {
+			t.Fatalf("OpenForAppend: %v", openErr)
+		}
+		if _, writeErr := wc.Write([]byte(chunk)); writeErr != nil {
+			t.Fatalf("Write: %v", writeErr)
+		}
+		if closeErr := wc.Close(); closeErr != nil {
+			t.Fatalf("Close: %v", closeErr)
+		}
+	}
+	got, err := rfs.ReadFile("sub/log.jsonl")
+	if err != nil {
+		t.Fatalf("ReadFile: %v", err)
+	}
+	if string(got) != "one\ntwo\n" {
+		t.Fatalf("got %q, want both chunks in order", got)
+	}
+	if _, appendErr := rfs.OpenForAppend("../escape", 0o644); appendErr == nil {
+		t.Fatal("expected error for bad key")
+	}
+}
+
 func TestRootedFS_OpenForWrite_RejectsBadKey(t *testing.T) {
 	// Bad-key rejection happens in resolve, before os.OpenFile is reached,
 	// so MemFS is fine here.

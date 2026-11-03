@@ -13,6 +13,9 @@ import { computed, nextTick, ref } from 'vue'
 import type { RowMove, TableColumn, TableCompact } from './types'
 import RlCheckbox from '../form/RlCheckbox.vue'
 import { useReorderableRow } from '../../composables/useRowReorder'
+import { useMessages } from '../../composables/useMessages'
+
+const messages = useMessages()
 
 const props = withDefaults(
   defineProps<{
@@ -173,8 +176,8 @@ function asText(value: unknown): string | undefined {
         ref="handleEl"
         type="button"
         class="rl-table-row__handle"
-        :aria-label="`Move ${item.title}`"
-        aria-description="Use the up and down arrow keys to move this row"
+        :aria-label="messages.moveRow({ title: item.title })"
+        :aria-description="messages.chromeText({ key: 'moveRowHint' })"
         @keydown="onHandleKey"
       >
         <svg viewBox="0 0 10 16" width="10" height="16" fill="currentColor" aria-hidden="true">
@@ -194,7 +197,7 @@ function asText(value: unknown): string | undefined {
         v-if="selectable"
         class="rl-table-row__check"
         :model-value="checked"
-        :label="`Select ${item.title}`"
+        :label="messages.selectItem({ title: item.title })"
         label-hidden
         @update:model-value="emit('toggle', item)"
       />

@@ -123,6 +123,13 @@ export interface WorldMessages {
   stand_in?: string
 }
 
+// A property's display format. Only currency exists today; more formats may
+// join, and at most one applies.
+export interface PropertyDisplay {
+  // ISO 4217 code: the integer renders as money in the reader's locale.
+  currency?: string
+}
+
 export interface PropertyDef {
   label?: string
   type:
@@ -144,11 +151,16 @@ export interface PropertyDef {
   description?: string
   format?: string
   list?: boolean
-  // For `file` properties: maximum attachments (default 1). Above 1 the
-  // property holds several files and the widget switches to add-mode.
+  // For `integer` properties: the inclusive value bounds, if declared.
+  // For `file` properties: `max` is the maximum attachments (default 1).
+  // Above 1 the property holds several files and the widget switches to
+  // add-mode.
+  min?: number
   max?: number
   // For `external_ref` properties: the external system the ref points into.
   system?: string
+  // How the value renders for reading (TKT-SVLQQ6). Inputs stay plain.
+  display?: PropertyDisplay
 }
 
 export interface RelationType {

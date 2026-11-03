@@ -73,6 +73,8 @@ func scratchBackend(ctx context.Context, _ string) ([]appbuild.Option, func(), e
 		_ = admin.Close(ctx)
 		return nil, func() {}, err
 	}
+	// DDL takes no bind parameters; schema is minted hex and quoted.
+	// nosemgrep: go.lang.security.audit.sqli.pgx-sqli.pgx-sqli
 	if _, err = admin.Exec(ctx, "CREATE SCHEMA "+quoteIdent(schema)); err != nil {
 		_ = admin.Close(ctx)
 		return nil, func() {}, fmt.Errorf("create scratch schema %s: %w", schema, err)
@@ -83,6 +85,7 @@ func scratchBackend(ctx context.Context, _ string) ([]appbuild.Option, func(), e
 		// done. Bounded so a hung DROP cannot block Close forever.
 		bg, cancel := context.WithTimeout(context.WithoutCancel(ctx), scratchDropTimeout)
 		defer cancel()
+		// nosemgrep: go.lang.security.audit.sqli.pgx-sqli.pgx-sqli
 		if _, derr := admin.Exec(bg, "DROP SCHEMA "+quoteIdent(schema)+" CASCADE"); derr != nil {
 			// Worth reporting rather than swallowing: a surviving scratch
 			// schema is clutter in the operator's database that nothing else

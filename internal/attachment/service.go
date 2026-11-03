@@ -236,7 +236,7 @@ func (s *Service) WriteAttachment(
 	if err != nil {
 		return nil, err
 	}
-	spool, err := spoolAttachment(r)
+	spool, spooled, err := spoolAttachment(r)
 	if err != nil {
 		return nil, err
 	}
@@ -297,7 +297,10 @@ func (s *Service) WriteAttachment(
 	}
 	s.dropUnreferenced(ctx, e.ID, propName, dropped, refs.others)
 
-	return &Result{Path: fresh.Entry, FileName: fileName, Entity: res.Entity}, nil
+	return &Result{
+		Path: fresh.Entry, FileName: fileName, Entity: res.Entity,
+		Size: spooled.size, SHA256: spooled.sha256,
+	}, nil
 }
 
 // maxKeyAttempts bounds the draws for a storage key no other file of the
@@ -440,17 +443,19 @@ func (s *Service) lockProperty(ctx context.Context, entityID, propName string) (
 
 // spoolAttachment copies r to a temporary file and rewinds it. The copy is
 // capped at [store.MaxAttachmentBytes], the same limit every store enforces.
-func spoolAttachment(r io.Reader) (*os.File, error) {
+func spoolAttachment(r io.Reader) (*os.File, spooledBytes, error) {
 	f, err := os.CreateTemp("", "rela-attachment-*")
 	if err != nil {
-		return nil, fmt.Errorf("spool attachment: %w", err)
+		return nil, spooledBytes{}, fmt.Errorf("spool attachment: %w", err)
 	}
-	fail := func(err error) (*os.File, error) {
+	fail := func(err error) (*os.File, spooledBytes, error) {
 		_ = f.Close()
 		_ = os.Remove(f.Name())
-		return nil, err
+		return nil, spooledBytes{}, err
 	}
-	if _, err := io.Copy(f, store.CapAttachmentReader(r, store.MaxAttachmentBytes)); err != nil {
+	hasher := store.NewAttachmentHasher()
+	n, err := io.Copy(io.MultiWriter(f, hasher), store.CapAttachmentReader(r, store.MaxAttachmentBytes))
+	if err != nil {
 		if errors.Is(err, store.ErrAttachmentTooLarge) {
 			return fail(fmt.Errorf("store attachment: %w", err))
 		}
@@ -459,7 +464,14 @@ func spoolAttachment(r io.Reader) (*os.File, error) {
 	if _, err := f.Seek(0, io.SeekStart); err != nil {
 		return fail(fmt.Errorf("spool attachment: %w", err))
 	}
-	return f, nil
+	return f, spooledBytes{size: n, sha256: hasher.Sum()}, nil
+}
+
+// spooledBytes describes the bytes a spool holds, which are exactly the bytes
+// handed to the store.
+type spooledBytes struct {
+	size   int64
+	sha256 string
 }
 
 // DeleteAttachment removes one file from the face's property, shared with
@@ -707,6 +719,7 @@ func (s *Service) ListFace(ctx context.Context, e *entity.Entity) ([]Info, error
 			FileName:    f.info.FileName,
 			ContentType: contentTypeForName(f.info.FileName),
 			Size:        f.info.Size,
+			SHA256:      f.info.SHA256,
 		})
 	}
 	return infos, nil

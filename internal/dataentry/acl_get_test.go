@@ -9,7 +9,10 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Sourcehaven-BV/rela/internal/acl/acltest"
+
 	"github.com/Sourcehaven-BV/rela/internal/acl"
+	"github.com/Sourcehaven-BV/rela/internal/aclstore"
 	v1 "github.com/Sourcehaven-BV/rela/internal/apiwire/v1"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
@@ -31,7 +34,7 @@ func TestACLGet_TypeLevelReadGrant(t *testing.T) {
 		Roles:       map[string]acl.RoleDef{"viewer": {Read: []string{"ticket"}}},
 		Assignments: map[string]string{"alice": "viewer"},
 	}, app.store)
-	app.acl = d
+	setTestACL(t, app, d)
 	ctx := aliceCtx()
 
 	// Visible.
@@ -103,7 +106,7 @@ func TestACLGet_ETagSuppressedOnDeny(t *testing.T) {
 		},
 		Assignments: map[string]string{"alice": "viewer-tickets", "bob": "viewer-empty"},
 	}, app.store)
-	app.acl = d
+	setTestACL(t, app, d)
 
 	// Alice gets a valid response with an ETag.
 	aliceRec := getEntityAs(aliceCtx(), t, app, d, "ticket", "tickets", "TKT-001", "")
@@ -141,7 +144,7 @@ func TestACLGet_IncludeFilter(t *testing.T) {
 		Roles:       map[string]acl.RoleDef{"viewer": {Read: []string{"ticket"}}},
 		Assignments: map[string]string{"alice": "viewer"},
 	}, app.store)
-	app.acl = d
+	setTestACL(t, app, d)
 
 	rec := getEntityAs(aliceCtx(), t, app, d, "ticket", "tickets", "TKT-001", "include=*")
 	if rec.Code != http.StatusOK {
@@ -205,6 +208,13 @@ func TestACLGet_WriteGateErrorMapping(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			ctx := withReadGate(context.Background(), fakeGate{permitsErr: tc.err})
+			if tc.emptyResp {
+				// Silence is for a client that left: the request context
+				// decides, not the error (TKT-T2I7P2).
+				var cancel context.CancelFunc
+				ctx, cancel = context.WithCancel(ctx)
+				cancel()
+			}
 			req := httptest.NewRequest(http.MethodGet, "/api/v1/tickets/TKT-001", http.NoBody)
 			req = req.WithContext(ctx)
 			rec := httptest.NewRecorder()
@@ -303,7 +313,7 @@ func aliceCtx() context.Context { return principalCtx("alice") }
 // is explicit.
 func mustNewACL(t *testing.T, p *acl.Policy, st store.Store) *acl.Declarative {
 	t.Helper()
-	d, err := acl.NewDeclarative(p, acl.NewStoreGraph(st), st)
+	d, err := acl.NewDeclarative(p, aclstore.MustNewGraph(st), st)
 	if err != nil {
 		t.Fatalf("acl.NewDeclarative: %v", err)
 	}
@@ -315,9 +325,9 @@ func mustNewACL(t *testing.T, p *acl.Policy, st store.Store) *acl.Declarative {
 // middleware so they need this explicit setup.
 func gateCtxFor(ctx context.Context, t *testing.T, d *acl.Declarative) context.Context {
 	t.Helper()
-	req, err := d.ForPrincipal(principal.From(ctx))
+	req, err := d.ForIdentity(acltest.IdentityFor(t.Context(), t, d, principal.From(ctx)))
 	if err != nil {
-		t.Fatalf("ForPrincipal: %v", err)
+		t.Fatalf("ForIdentity: %v", err)
 	}
 	ctx = acl.WithRequest(ctx, req)
 	return withReadGate(ctx, aclReadGate{req: req})

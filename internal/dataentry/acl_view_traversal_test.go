@@ -109,7 +109,7 @@ func recursiveLinksView() ViewConfig {
 func TestACLViewTraversal_HiddenIntermediaryBlocksReachability(t *testing.T) {
 	app := traversalLeakApp()
 	d := mustNewACL(t, ticketReaderPolicy(), app.store)
-	app.acl = d
+	setTestACL(t, app, d)
 
 	ctx := gateCtxFor(aliceCtx(), t, d)
 	result, err := app.views.executeView(ctx, recursiveLinksView(), "TKT-ENTRY", defaultViewWorld())
@@ -160,7 +160,7 @@ func TestACLViewTraversal_NopACLReturnsFullChain(t *testing.T) {
 func TestACLViewTraversal_WhereCannotProbeHiddenProperty(t *testing.T) {
 	app := traversalLeakApp()
 	d := mustNewACL(t, ticketReaderPolicy(), app.store)
-	app.acl = d
+	setTestACL(t, app, d)
 
 	view := ViewConfig{
 		Entry: ViewEntry{Type: "ticket"},
@@ -196,7 +196,7 @@ func TestACLViewTraversal_EntryGateBlocksHiddenEntry(t *testing.T) {
 		Roles:       map[string]acl.RoleDef{"viewer": {Read: []string{"secret"}}},
 		Assignments: map[string]string{"alice": "viewer"},
 	}, app.store)
-	app.acl = d
+	setTestACL(t, app, d)
 
 	ctx := gateCtxFor(aliceCtx(), t, d)
 	// executeView entry type must match; use a secret-typed view whose entry is
@@ -228,7 +228,7 @@ func TestACLViewTraversal_ViewsAPIDoesNotLeakReachableDescendant(t *testing.T) {
 	app := newAppFromParts(cfg, meta, traversalLeakFixture(meta))
 
 	d := mustNewACL(t, ticketReaderPolicy(), app.store)
-	app.acl = d
+	setTestACL(t, app, d)
 
 	rec := viewsAs(aliceCtx(), t, app, d, "ticket", "TKT-ENTRY")
 	if rec.Code != http.StatusOK {
@@ -256,7 +256,7 @@ func TestACLViewTraversal_SidePanelDoesNotLeakReachableDescendant(t *testing.T) 
 	}
 
 	d := mustNewACL(t, ticketReaderPolicy(), app.store)
-	app.acl = d
+	setTestACL(t, app, d)
 
 	rec := sidePanelAs(aliceCtx(), t, app, d, "TKT-ENTRY")
 	if rec.Code != http.StatusOK {
@@ -337,7 +337,7 @@ func TestACLViewTraversal_SourceGateMatchesLoaderResolution(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			ctx := context.Background()
 			gated := app.views.readableViewIDs(ctx, ids, tc.world)
-			loaded := collectIDs(app.views.loadViewEntities(ctx, ids, tc.world))
+			loaded := collectIDs(loaded(ctx, t, app, ids, tc.world))
 			if !slices.Equal(gated, loaded) {
 				t.Errorf("source gate and loader disagree about which rows exist:\n"+
 					"  gate   = %v\n  loader = %v\n"+
@@ -370,7 +370,7 @@ func TestACLViewTraversal_FrontierAppliesFaceGate(t *testing.T) {
 		Roles:       map[string]acl.RoleDef{"viewer": {Read: []string{"policy@published", "note"}}},
 		Assignments: map[string]string{"alice": "viewer"},
 	}, app.store)
-	app.acl = d
+	setTestACL(t, app, d)
 	ctx := gateCtxFor(aliceCtx(), t, d)
 
 	draftWorld := viewWorld{name: "draftworld", scope: store.NewWorldScope(
@@ -408,7 +408,17 @@ func TestACLViewTraversal_FrontierAppliesFaceGate(t *testing.T) {
 			"policy@published must not traverse THROUGH a draft-only entity", got)
 	}
 	// The loader agrees, which is the invariant the gate must preserve.
-	if got := collectIDs(app.views.loadViewEntities(ctx, ids, draftWorld)); len(got) != 0 {
+	if got := collectIDs(loaded(ctx, t, app, ids, draftWorld)); len(got) != 0 {
 		t.Errorf("loader admitted a face-denied node: %v", got)
 	}
+}
+
+// loaded calls loadViewEntities and fails the test on a fault.
+func loaded(ctx context.Context, t *testing.T, app *App, ids []string, w viewWorld) []*entity.Entity {
+	t.Helper()
+	out, err := app.views.loadViewEntities(ctx, ids, w)
+	if err != nil {
+		t.Fatalf("loadViewEntities: %v", err)
+	}
+	return out
 }

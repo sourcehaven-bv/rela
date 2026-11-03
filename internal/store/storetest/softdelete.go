@@ -400,7 +400,7 @@ func RunSoftDeleteTests(t *testing.T, f Factory, sf SearchFactory, attachments b
 		require.NoError(t, err)
 		rc := store.WithRevealed(ctx(), "FEAT-009")
 
-		// The two reads acl.StoreGraph makes see the marked entity's edges.
+		// The two reads aclstore.Graph makes see the marked entity's edges.
 		_, err = s.GetRelation(rc, entity.RelationKey{From: "FEAT-009", Type: "implements", To: "REQ-001"})
 		require.NoError(t, err, "GetRelation from the revealed entity")
 		_, err = s.GetRelation(rc, entity.RelationKey{From: "FEAT-002", Type: "depends-on", To: "FEAT-009"})

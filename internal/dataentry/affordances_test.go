@@ -3,8 +3,12 @@ package dataentry
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
+
+	"github.com/Sourcehaven-BV/rela/internal/acl/acltest"
+	"github.com/Sourcehaven-BV/rela/internal/search"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	v1 "github.com/Sourcehaven-BV/rela/internal/apiwire/v1"
@@ -63,7 +67,7 @@ func TestTranslateVerb_UnknownPanics(t *testing.T) {
 // AC1: read-only principal sees all per-item verbs as false.
 func TestComputeActions_ReadOnly(t *testing.T) {
 	app := newTestAppV1(t)
-	app.acl = acl.ReadOnlyACL{}
+	setTestACL(t, app, acl.ReadOnlyACL{})
 
 	e := &entity.Entity{ID: "TKT-001", Type: "ticket"}
 	got := app.affordances.computeActions(t.Context(), e)
@@ -117,7 +121,7 @@ func TestComputeActions_NopACL(t *testing.T) {
 // AC4: collection-scope verb computed under ReadOnlyACL is false.
 func TestComputeCollectionActions_ReadOnly(t *testing.T) {
 	app := newTestAppV1(t)
-	app.acl = acl.ReadOnlyACL{}
+	setTestACL(t, app, acl.ReadOnlyACL{})
 
 	got := app.affordances.computeCollectionActions(t.Context(), "ticket")
 	if got["create"] {
@@ -146,14 +150,14 @@ func TestComputeActions_MixedTypeDeclarative(t *testing.T) {
 	if err != nil {
 		t.Fatalf("acl.NewDeclarative: %v", err)
 	}
-	app.acl = d
+	setTestACL(t, app, d)
 
 	// Declarative looks up the principal by Principal.User against
 	// Assignments. Stamp a matching User on ctx.
-	ctx := principal.With(t.Context(), principal.Principal{
+	ctx := acltest.Bind(principal.With(t.Context(), principal.Principal{
 		User: "test-user",
 		Tool: principal.ToolDataEntry,
-	})
+	}), t, app.acl)
 
 	ticket := &entity.Entity{ID: "TKT-001", Type: "ticket"}
 	got := app.affordances.computeActions(ctx, ticket)
@@ -201,42 +205,113 @@ func TestComputeActions_NoAuditNoise(t *testing.T) {
 	}
 }
 
-// With no policy, "" and "none" both yield the permissive Nop.
-func TestResolverFromProfile_None(t *testing.T) {
-	for _, in := range []string{"", "none"} {
-		t.Run(in, func(t *testing.T) {
-			r, err := ResolverFromProfile(in, nil, nil, nil)
-			if err != nil {
-				t.Fatalf("ResolverFromProfile(%q): %v", in, err)
+// TestResolverFromProfile_Selection pins the profile/policy matrix
+// (DR-M3 as amended by BUG-UO72G2). "none" and "demo" replace only the
+// REST resolver, so they are refused when acl.yaml declares field rules:
+// role grants or a client field ceiling, which MCP and CLI still apply.
+func TestResolverFromProfile_Selection(t *testing.T) {
+	const noGrants = `
+roles:
+  editor:
+    read: [ticket]
+    update: [ticket]
+assignments:
+  usr_alice: editor
+`
+	const roleFieldGrant = `
+roles:
+  viewer:
+    read: [ticket]
+    visible:
+      ticket:
+        - field: title
+assignments:
+  usr_alice: viewer
+`
+	const ceilingOnly = `
+roles:
+  editor:
+    read: [ticket]
+    update: [ticket]
+assignments:
+  usr_alice: editor
+client_baselines:
+  apps:
+    applies_to: [app]
+    redact:
+      ticket: [status]
+`
+	type want int
+	const (
+		wantNop want = iota
+		wantDemo
+		wantPolicy
+		wantRefused
+	)
+	cases := []struct {
+		name    string
+		profile string
+		policy  string // "" = no declarative wired
+		want    want
+	}{
+		{"empty, nil declarative", "", "", wantNop},
+		{"none, nil declarative", "none", "", wantNop},
+		{"demo, nil declarative", "demo", "", wantDemo},
+		{"empty, no grants", "", noGrants, wantNop},
+		{"none, no grants", "none", noGrants, wantNop},
+		{"demo, no grants", "demo", noGrants, wantDemo},
+		{"empty, role field grant", "", roleFieldGrant, wantPolicy},
+		{"none, role field grant", "none", roleFieldGrant, wantRefused},
+		{"demo, role field grant", "demo", roleFieldGrant, wantRefused},
+		{"empty, ceiling only", "", ceilingOnly, wantPolicy},
+		{"none, ceiling only", "none", ceilingOnly, wantRefused},
+		{"demo, ceiling only", "demo", ceilingOnly, wantRefused},
+		{"unknown, nil declarative", "not-a-real-profile", "", wantNop},
+		{"unknown, role field grant", "not-a-real-profile", roleFieldGrant, wantPolicy},
+		{"unknown, ceiling only", "not-a-real-profile", ceilingOnly, wantPolicy},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			app := newTestAppV1(t)
+			var d *acl.Declarative
+			if tc.policy != "" {
+				policy, err := acl.LoadPolicyBytes([]byte(tc.policy))
+				if err != nil {
+					t.Fatalf("LoadPolicyBytes: %v", err)
+				}
+				d = mustNewACL(t, policy, app.store)
 			}
-			if _, ok := r.(NopFieldVerdictResolver); !ok {
-				t.Fatalf("ResolverFromProfile(%q): got %T, want NopFieldVerdictResolver", in, r)
+			r, err := ResolverFromProfile(tc.profile, app.Meta(), app.store, d)
+			if tc.want != wantRefused && err != nil {
+				t.Fatalf("ResolverFromProfile: %v", err)
+			}
+			switch tc.want {
+			case wantRefused:
+				if !errors.Is(err, ErrProfileOverridesFieldRules) {
+					t.Fatalf("err = %v, want ErrProfileOverridesFieldRules", err)
+				}
+				for _, part := range []string{"RELA_AFFORDANCE_PROFILE=" + tc.profile, "acl.yaml declares field rules"} {
+					if !strings.Contains(err.Error(), part) {
+						t.Errorf("error %q does not name %q", err, part)
+					}
+				}
+				if r != nil {
+					t.Errorf("resolver = %T, want nil on error", r)
+				}
+			case wantNop:
+				if _, ok := r.(NopFieldVerdictResolver); !ok {
+					t.Fatalf("got %T, want NopFieldVerdictResolver", r)
+				}
+			case wantDemo:
+				if _, ok := r.(DemoFieldVerdictResolver); !ok {
+					t.Fatalf("got %T, want DemoFieldVerdictResolver", r)
+				}
+			case wantPolicy:
+				if _, ok := r.(*policyResolver); !ok {
+					t.Fatalf("got %T, want *policyResolver", r)
+				}
 			}
 		})
-	}
-}
-
-// "demo" is a hard override — selected even when a policy with
-// affordance grants is present (AC6).
-func TestResolverFromProfile_Demo(t *testing.T) {
-	r, err := ResolverFromProfile("demo", nil, nil, nil)
-	if err != nil {
-		t.Fatalf("ResolverFromProfile(demo): %v", err)
-	}
-	if _, ok := r.(DemoFieldVerdictResolver); !ok {
-		t.Fatalf("ResolverFromProfile(demo): got %T, want DemoFieldVerdictResolver", r)
-	}
-}
-
-func TestResolverFromProfile_Unknown_FallsBackToPolicyOrNone(t *testing.T) {
-	// Unknown values must not panic and (absent a policy) fall back to
-	// none. The warning log is observable in stderr; not captured here.
-	r, err := ResolverFromProfile("not-a-real-profile", nil, nil, nil)
-	if err != nil {
-		t.Fatalf("unknown profile: %v", err)
-	}
-	if _, ok := r.(NopFieldVerdictResolver); !ok {
-		t.Fatalf("unknown profile: got %T, want NopFieldVerdictResolver", r)
 	}
 }
 
@@ -347,6 +422,15 @@ type fakeResolver struct {
 	rv RelationVerdicts
 }
 
+// errNoSearchForm is the search form of a test resolver that has none. It
+// refuses every search, so a stub that hides fields cannot pair with a
+// search that hides nothing.
+var errNoSearchForm = errors.New("test resolver has no search field scope")
+
+func (fakeResolver) SearchFieldScope(context.Context, string) (*search.FieldScope, error) {
+	return nil, errNoSearchForm
+}
+
 func (f fakeResolver) FieldVerdicts(context.Context, *entity.Entity) FieldVerdicts {
 	return f.fv
 }
@@ -355,6 +439,11 @@ func (f fakeResolver) RelationVerdicts(context.Context, *entity.Entity) Relation
 }
 func (f fakeResolver) UnconditionalRelationVerdicts(context.Context, *entity.Entity) RelationVerdicts {
 	return f.rv
+}
+
+// FieldVisibleOnEveryRow follows the fixed verdicts, which hold for every row.
+func (f fakeResolver) FieldVisibleOnEveryRow(_ context.Context, _, property string) bool {
+	return f.fv.IsVisible(property)
 }
 
 // byTypeResolver returns different verdicts depending on the entity
@@ -376,6 +465,11 @@ func (r byTypeResolver) RelationVerdicts(_ context.Context, e *entity.Entity) Re
 }
 func (r byTypeResolver) UnconditionalRelationVerdicts(ctx context.Context, e *entity.Entity) RelationVerdicts {
 	return r.RelationVerdicts(ctx, e)
+}
+func (r byTypeResolver) FieldVisibleOnEveryRow(context.Context, string, string) bool { return true }
+
+func (byTypeResolver) SearchFieldScope(context.Context, string) (*search.FieldScope, error) {
+	return nil, errNoSearchForm
 }
 
 // affordanceServiceWithResolver builds a bare affordanceService over a fixed
@@ -860,5 +954,61 @@ func TestDomainRedactedNotOnWire(t *testing.T) {
 	}
 	if strings.Contains(string(blob), "DOMAIN-SIDE-LEAK") {
 		t.Errorf("domain Redacted field reached the wire: %s", blob)
+	}
+}
+
+// createVerdictResolver answers update and create differently, standing in for
+// a policy where a role without a `fields:` block may create but not update.
+type createVerdictResolver struct {
+	NopFieldVerdictResolver
+	update, create FieldVerdicts
+}
+
+func (r createVerdictResolver) FieldVerdicts(context.Context, *entity.Entity) FieldVerdicts {
+	return r.update
+}
+
+func (r createVerdictResolver) CreateFieldVerdicts(context.Context, *entity.Entity) FieldVerdicts {
+	return r.create
+}
+
+// TestCreateFieldVerdicts_RoutesToCreateCapability (BUG-Y5UF3K): every create
+// surface judges fields by the create verdicts when the resolver has them, and
+// falls back to the update verdicts when it does not. The schema-intrinsic
+// read-only overlay applies to both.
+func TestCreateFieldVerdicts_RoutesToCreateCapability(t *testing.T) {
+	meta := &metamodel.Metamodel{Entities: map[string]metamodel.EntityDef{
+		"ticket": {Properties: map[string]metamodel.PropertyDef{
+			"secret": {Type: metamodel.PropertyTypeString},
+			"score":  {Type: metamodel.PropertyTypeInteger, Computed: "1"},
+		}},
+	}}
+	updateOnly := FieldVerdicts{Writable: map[string]bool{"secret": false}}
+	tests := []struct {
+		name          string
+		resolver      FieldVerdictResolver
+		secretAllowed bool
+	}{
+		{"resolver with create verdicts", createVerdictResolver{update: updateOnly}, true},
+		{"resolver without create verdicts", fakeResolver{fv: updateOnly}, false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			svc := affordanceService{
+				resolver: func() FieldVerdictResolver { return tc.resolver },
+				meta:     func() *metamodel.Metamodel { return meta },
+			}
+			e := &entity.Entity{Type: "ticket"}
+			denial := svc.validateCreateFieldWrite(context.Background(), e, map[string]any{"secret": "s"})
+			if (denial == nil) != tc.secretAllowed {
+				t.Errorf("secret create denial = %+v, want allowed=%v", denial, tc.secretAllowed)
+			}
+			if svc.validateCreateFieldWrite(context.Background(), e, map[string]any{"score": 1}) == nil {
+				t.Error("computed field writable on create")
+			}
+			if svc.validateFieldWrite(context.Background(), e, map[string]any{"secret": "s"}, nil) == nil {
+				t.Error("update must keep judging by the update verdicts")
+			}
+		})
 	}
 }

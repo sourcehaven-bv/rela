@@ -17,6 +17,7 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	v1 "github.com/Sourcehaven-BV/rela/internal/apiwire/v1"
+	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
 	"github.com/Sourcehaven-BV/rela/internal/store/memstore"
@@ -59,7 +60,7 @@ func TestResolveCommands(t *testing.T) {
 			Script:  "echo hi",
 			Context: "global",
 			AvailableOn: &CommandScope{
-				Dashboard: true,
+				Dashboard: dataentryconfig.DefaultDashboard,
 			},
 		},
 		"unscoped-entity": {

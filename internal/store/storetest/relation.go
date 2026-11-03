@@ -2,6 +2,7 @@ package storetest
 
 import (
 	"fmt"
+	"slices"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -279,6 +280,42 @@ func RunRelationTests(t *testing.T, f Factory) {
 	// A batch far larger than any backend's bind-parameter budget must still
 	// be ONE correct answer: a gantt subtree or a wide page can hand a store
 	// tens of thousands of ids (TKT-U9DYW4).
+	// PeerIDs filters the endpoint Direction does not select, so with
+	// EntityIDs it returns exactly the edges between the two id sets.
+	t.Run("ListPeerIDsFiltersTheOtherEndpoint", func(t *testing.T) {
+		s := f(t)
+		for _, id := range []string{"A", "B", "C", "D"} {
+			require.NoError(t, s.CreateEntity(ctx(), entity.New(id, "node")))
+		}
+		for _, r := range [][2]string{{"A", "B"}, {"A", "C"}, {"D", "B"}, {"D", "C"}} {
+			_, err := s.CreateRelation(ctx(), entity.RelationKey{From: r[0], Type: "links", To: r[1]}, nil)
+			require.NoError(t, err)
+		}
+		keys := func(q store.RelationQuery) []string {
+			var out []string
+			for r, err := range s.ListRelations(ctx(), q) {
+				require.NoError(t, err)
+				out = append(out, r.From+">"+r.To)
+			}
+			slices.Sort(out)
+			return out
+		}
+		require.Equal(t, []string{"A>B"}, keys(store.RelationQuery{
+			EntityIDs: []string{"A"}, PeerIDs: []string{"B"}, Direction: store.DirectionOutgoing}))
+		require.Equal(t, []string{"A>B", "A>C"}, keys(store.RelationQuery{
+			EntityIDs: []string{"B", "C"}, PeerIDs: []string{"A"}, Direction: store.DirectionIncoming}))
+		require.Equal(t, []string{"A>C", "D>C"}, keys(store.RelationQuery{
+			PeerIDs: []string{"C"}, Direction: store.DirectionOutgoing}))
+		require.Equal(t, []string{"A>B", "D>B"}, keys(store.RelationQuery{
+			PeerIDs: []string{"B"}, Direction: store.DirectionBoth}))
+		require.Empty(t, keys(store.RelationQuery{PeerIDs: []string{}, Direction: store.DirectionOutgoing}),
+			"empty PeerIDs must match nothing")
+		c, err := s.CountRelations(ctx(), store.RelationQuery{
+			EntityIDs: []string{"A", "D"}, PeerIDs: []string{"C"}, Direction: store.DirectionOutgoing})
+		require.NoError(t, err)
+		require.Equal(t, 2, c)
+	})
+
 	t.Run("ListEntityIDsLargeBatch", func(t *testing.T) {
 		s := f(t)
 		for _, id := range []string{"A", "B"} {

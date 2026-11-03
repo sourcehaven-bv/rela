@@ -63,6 +63,11 @@ type entityMutator interface {
 	// type. The zero tail is the implicit-tail edge, so this also covers
 	// every identity-scoped and faceless removal.
 	DeleteRelation(ctx context.Context, key entityPkg.RelationKey) error
+	// ReplaceRelations creates and deletes edges in one transaction
+	// (TKT-65LVAK). See entitymanager.Manager.ReplaceRelations.
+	ReplaceRelations(
+		ctx context.Context, creates []entitymanager.RelationCreate, removes []entityPkg.RelationKey,
+	) ([]*entityPkg.Relation, error)
 
 	// PatchEntity is how the webhook pipeline writes: it names only the
 	// properties a hook actually sets, so a property the hook does not mention
@@ -72,6 +77,28 @@ type entityMutator interface {
 	PatchEntity(
 		ctx context.Context, id string, patch entityPkg.Patch,
 	) (*entityPkg.UpdateResult, error)
+
+	// AuthorizeUpdate is the manager's own update check, read gate first,
+	// X	// through the grant it returns. See entitymanager.Manager.AuthorizeUpdate.
+	AuthorizeUpdate(ctx context.Context, row *entityPkg.Entity) (entitymanager.UpdateGrant, error)
+
+	// PatchGranted is PatchEntity for the row grant names, without asking
+	// the ACL again. See entitymanager.UpdateGrant.PatchEntity.
+	PatchGranted(
+		ctx context.Context, grant entitymanager.UpdateGrant, id string, patch entityPkg.Patch,
+	) (*entityPkg.UpdateResult, error)
+}
+
+// grantedManager is the production [entityMutator]: the manager, plus the
+// granted write as a method, so tests can wrap it like any other write.
+type grantedManager struct{ *entitymanager.Manager }
+
+// PatchGranted writes through the grant. The grant names its own manager,
+// which in production is the embedded one.
+func (grantedManager) PatchGranted(
+	ctx context.Context, grant entitymanager.UpdateGrant, id string, patch entityPkg.Patch,
+) (*entityPkg.UpdateResult, error) {
+	return grant.PatchEntity(ctx, id, patch)
 }
 
 // writeHandler owns the data-entry write nucleus: the entity/relation CRUD
@@ -97,7 +124,10 @@ type entityMutator interface {
 // the attachment service. A process-wide mutex could not provide it anyway
 // once several rela-server processes share one database.
 type writeHandler struct {
-	schema  func() *Schema
+	schema func() *Schema
+	// rollups adds the roll-up properties (TKT-6I2OPG) to a written row's
+	// response, as the GET serves them.
+	rollups rollupSource
 	store   store.Store
 	manager entityMutator
 	// softDeletes backs the Undo toast; nil when the store cannot
@@ -127,6 +157,11 @@ type writeHandler struct {
 	// (TKT-01KZSO), kept out of luaDeps for the same reason as versionTags.
 	// Nil, or returning nil: rela.oauth reports not_configured.
 	oauth func() lua.OAuthTokens
+	// attachRender backs rela.attach_render in an action script
+	// (TKT-1TS55R), kept out of luaDeps for the same reason as versionTags:
+	// a document render must not render and attach another. Nil, or
+	// returning nil: the binding is absent.
+	attachRender func() lua.AttachRenderer
 
 	// visible is the read path's resolver. Every addressed write resolves its
 	// row through it first, so a row the caller may not read, at any face, is
@@ -138,11 +173,11 @@ type writeHandler struct {
 		ctx context.Context, w http.ResponseWriter, target *entityPkg.Entity, denial AffordanceDenialError,
 	)
 	computeETag func(ctx context.Context, e *entityPkg.Entity) string
-	// faceEdges is [servedFaceEdges] bound to the App's neighbor wiring: the
-	// outgoing edges of the face an entity IS, with the neighbor ids the
-	// caller may see. The write path answers with the row it wrote, so it
-	// owes the row's own edges, not the bare id's union of every face's.
-	faceEdges func(ctx context.Context, e *entityPkg.Entity) ([]*entityPkg.Relation, map[string]bool, error)
+	// faceEdges is the App's gated face-edge read: the outgoing edges of the
+	// face an entity IS, with the neighbor ids the caller may see. The write
+	// path answers with the row it wrote, so it owes the row's own edges, not
+	// the bare id's union of every face's.
+	faceEdges faceEdgeReader
 	// readVisible is [visibleReader.addressRef]: the GET's gated read,
 	// for re-reading a row after a write whose outcome may have hidden it.
 	readVisible func(ctx context.Context, typeName string, ref entityPkg.Ref) (*entityPkg.Entity, bool, error)
@@ -403,6 +438,7 @@ func (h *writeHandler) writeCreateRelations(
 	return warnings, true
 }
 
+//archplan:auth=authz
 func (h *writeHandler) handleV1CreateEntity(w http.ResponseWriter, r *http.Request, typeName, plural string) {
 	r = h.withProvision(r)
 
@@ -433,7 +469,10 @@ func (h *writeHandler) handleV1CreateEntity(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	entityDef, defOK := h.schema().Meta.Entities[typeName]
+	// One schema snapshot for the whole request, so a reload cannot change
+	// the metamodel between the type check and the response.
+	s := h.schema()
+	entityDef, defOK := s.Meta.Entities[typeName]
 	if !defOK {
 		writeV1Error(w, r, http.StatusNotFound, "not_found", "Entity type not found", typeName)
 		return
@@ -457,8 +496,10 @@ func (h *writeHandler) handleV1CreateEntity(w http.ResponseWriter, r *http.Reque
 	// unpersisted entity, which is the safe direction; only global-role
 	// grants apply at create. Collection-level create authorization is
 	// enforced separately inside CreateEntity (acl.OpCreate).
-	candidate := &entityPkg.Entity{Type: typeName, Properties: req.Properties}
-	if denial := h.affordances.validateFieldWrite(r.Context(), candidate, req.Properties, nil); denial != nil {
+	// The candidate carries the face being created: a role's create grant
+	// may name one face only (`type@face`), and field verdicts follow it.
+	candidate := &entityPkg.Entity{Type: typeName, Face: createOpts.Face, Properties: req.Properties}
+	if denial := h.affordances.validateCreateFieldWrite(r.Context(), candidate, req.Properties); denial != nil {
 		h.denyAfford(r.Context(), w, candidate, *denial)
 		return
 	}
@@ -481,16 +522,24 @@ func (h *writeHandler) handleV1CreateEntity(w http.ResponseWriter, r *http.Reque
 		createOpts,
 	)
 	if err != nil {
-		if writeForbiddenIfACLDenied(w, err) {
-			return
-		}
-		// A face error is about the ADDRESS, not the payload, so it gets its
-		// own code: a client that omitted the face must add one, which is a
-		// different fix from a property that failed validation.
-		if errors.Is(err, entitymanager.ErrFaceRequired) || errors.Is(err, entitymanager.ErrFaceNotDeclared) {
+		// The class comes from the classifier the channel promote uses too,
+		// so a new kind of refusal is classified once for both.
+		switch entitymanager.ClassifyCreateError(err) {
+		case entitymanager.CreateErrForbidden:
+			if writeForbiddenIfACLDenied(w, r, err) {
+				return
+			}
+		case entitymanager.CreateErrFace:
+			// A face error is about the ADDRESS, not the payload, so it gets
+			// its own code: a client that omitted the face must add one,
+			// which is a different fix from a property that failed
+			// validation.
 			writeV1Error(w, r, http.StatusUnprocessableEntity, "face_required", err.Error(), "/face")
 			return
+		case entitymanager.CreateErrUnknown, entitymanager.CreateErrConflict, entitymanager.CreateErrInvalid:
 		}
+		// Every other class, including a field-grant or guard refusal and
+		// an unknown error, answers 422 as this route always has.
 		writeV1Error(w, r, http.StatusUnprocessableEntity, "validation_failed", "Validation failed", err.Error())
 		return
 	}
@@ -501,10 +550,18 @@ func (h *writeHandler) handleV1CreateEntity(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	// The created face's own edges, not every face's (BUG-ISJHML).
-	meta := h.schema().Meta
-	rels := edgesOwnedBy(meta, h.reader.outgoingRelations(r.Context(), created.ID), created.Face)
-	result := h.serializer.forWire(r.Context(), created, rels, meta, plural)
+	// The created face's own edges, read through the same face-scoped,
+	// neighbor-gated seam the GET uses (BUG-ISJHML). A raw read here would
+	// name a neighbor the caller cannot see, such as one an on-create
+	// automation linked.
+	rels, visibleNeighbors, rerr := h.faceEdges.read(r.Context(), created)
+	if rerr != nil {
+		writeGateError(w, r, rerr)
+		return
+	}
+	result := h.serializer.forWireScoped(r.Context(), created, rels, visibleNeighbors, s.Meta, plural)
+	h.rollups.add(r.Context(), created.Type, []rollupRow{{ref: created.Ref(), props: result.Properties}},
+		worldScopeFrom(r.Context()), nil)
 	if len(relWarnings) > 0 {
 		result.Warnings = append(result.Warnings, relWarnings...)
 	}
@@ -544,6 +601,8 @@ func (h *writeHandler) handleV1CreateEntity(w http.ResponseWriter, r *http.Reque
 // Scope: fields + options + relations + soft warnings. Relation edges
 // are not staged (a candidate has no real ID); relation affordances
 // reflect the per-type verdict only.
+//
+//archplan:auth=authz
 func (h *writeHandler) handleV1DryRunCreate(w http.ResponseWriter, r *http.Request, typeName, plural string) {
 	s := h.schema()
 
@@ -654,6 +713,14 @@ func (h *writeHandler) handleV1DryRunCreate(w http.ResponseWriter, r *http.Reque
 	// A create ENTERS the machine at its initial state; it is not a transition.
 	// Lock every state-machine field to its entry value so the create form
 	// renders it read-only at the initial state (BUG-X1C7S / TKT-3G93B8).
+	// The form describes a create, so its `_fields` come from the create
+	// verdicts: forWire computed them for an update of an existing row, and a
+	// role that may create the type but not update it writes on create every
+	// field it would be refused on a later PATCH (BUG-Y5UF3K). Visibility is
+	// the same for both, so the redaction forWire applied stands.
+	createFields := computeFieldAffordancesFrom(createFieldVerdicts(
+		r.Context(), h.serializer.affordances.resolver(), h.serializer.affordances.meta(), candidate))
+	result.FieldAffordances = &createFields
 	h.serializer.affordances.applyCreateLock(r.Context(), &result, candidate)
 	if idWarning != nil {
 		result.Warnings = append(result.Warnings, *idWarning)
@@ -688,7 +755,7 @@ func (h *writeHandler) handleV1DryRunCreate(w http.ResponseWriter, r *http.Reque
 // breaks that chain — a retry loop silently becomes unreachable and every
 // loser gets a 500.
 func writePatchError(w http.ResponseWriter, r *http.Request, err error) {
-	if writeForbiddenIfACLDenied(w, err) {
+	if writeForbiddenIfACLDenied(w, r, err) {
 		return
 	}
 	var conflict *store.VersionConflictError
@@ -705,17 +772,34 @@ func writePatchError(w http.ResponseWriter, r *http.Request, err error) {
 	writeV1Error(w, r, http.StatusUnprocessableEntity, "validation_failed", "Validation failed", err.Error())
 }
 
+// writeEarlyUpdateError answers an error from the PATCH's early
+// [entityMutator.AuthorizeUpdate]. A row the manager's read gate refuses is
+// the uniform 404 the resolver read gives, so the early check cannot tell a
+// hidden row from a missing one. A denial is the write's 403. Anything else
+// is a failed gate query.
+func writeEarlyUpdateError(w http.ResponseWriter, r *http.Request, err error) {
+	if writeForbiddenIfACLDenied(w, r, err) {
+		return
+	}
+	if errors.Is(err, entitymanager.ErrEntityNotFound) {
+		writeV1Error(w, r, http.StatusNotFound, "not_found", entityNotFoundTitle, "")
+		return
+	}
+	writeGateError(w, r, err)
+}
+
 // currentVersions returns the field tokens of e as this caller sees it: the
 // same face-scoped edges and redaction the GET applies.
 func (h *writeHandler) currentVersions(
 	ctx context.Context, e *entityPkg.Entity, plural string,
 ) (*v1.FieldVersions, error) {
-	rels, visible, err := h.faceEdges(ctx, e)
+	rels, visible, err := h.faceEdges.read(ctx, e)
 	if err != nil {
 		return nil, err
 	}
-	view := h.serializer.forWireScoped(ctx, e, rels, visible, h.schema().Meta, plural)
-	return fieldVersionsOf(&view, h.schema().Meta), nil
+	meta := h.schema().Meta
+	view := h.serializer.forWireScoped(ctx, e, rels, visible, meta, plural)
+	return fieldVersionsOf(&view, meta), nil
 }
 
 // visibleStored re-reads the row at ref through the GET's row and face
@@ -824,6 +908,7 @@ func writeFieldConflict(
 }
 
 //nolint:gocognit,funlen // update handler threads the validation-policy classes (400/422/200-with-warnings) through each field; the branches are the documented write-policy cases, not extractable shared logic.
+//archplan:auth=authz
 func (h *writeHandler) handleV1UpdateEntity(w http.ResponseWriter, r *http.Request, typeName, plural, entityID string) {
 	r = h.withProvision(r)
 
@@ -835,9 +920,10 @@ func (h *writeHandler) handleV1UpdateEntity(w http.ResponseWriter, r *http.Reque
 	// bare id edits the one face the default world admits and the caller
 	// may read, else 422 `face_required` (TKT-7IZHP0 §6).
 	//
-	// The resolver read runs BEFORE body parse, If-Match and IsLocked (RR-FGUZ,
-	// RR-NGMI), so "exists but hidden" and "denied face" answer the same 404 as
-	// "absent". A 400, 403, 412 or 422 here would be an existence oracle.
+	// The resolver read runs BEFORE body parse, authorization, If-Match and
+	// IsLocked (RR-FGUZ, RR-NGMI), so "exists but hidden" and "denied face"
+	// answer the same 404 as "absent". A 400, 403, 412 or 422 here would be an
+	// existence oracle.
 	entity, found := writeTargetOr404(w, r, h.visible, typeName, entityID)
 	if !found {
 		return
@@ -851,17 +937,6 @@ func (h *writeHandler) handleV1UpdateEntity(w http.ResponseWriter, r *http.Reque
 		writeV1Error(w, r, http.StatusUnprocessableEntity, "encrypted_inaccessible",
 			"Cannot edit an inaccessible entity", "File is git-crypt encrypted; run `git-crypt unlock` first.")
 		return
-	}
-
-	// Check If-Match for optimistic locking
-	ifMatch := r.Header.Get("If-Match")
-	if ifMatch != "" {
-		currentETag := h.computeETag(r.Context(), entity)
-		if ifMatch != currentETag {
-			writeV1Error(w, r, http.StatusPreconditionFailed, "precondition_failed",
-				"Entity has been modified", "ETag mismatch")
-			return
-		}
 	}
 
 	var req struct {
@@ -883,6 +958,33 @@ func (h *writeHandler) handleV1UpdateEntity(w http.ResponseWriter, r *http.Reque
 		}
 		writeV1Error(w, r, http.StatusBadRequest, "invalid_json", "Invalid JSON body", err.Error())
 		return
+	}
+
+	// Authorize the entity write before any further work, so a denied
+	// caller does not cost an ETag, affordance verdicts and relation
+	// validation first. The patch below writes through the grant this
+	// returns, so the update is authorized once, here. It runs after the
+	// resolver read, so a hidden entity is still the uniform 404, never a
+	// 403. A relations-only PATCH is not an entity update: its edges are
+	// authorized one by one by the manager.
+	entityChanged := req.Properties != nil || len(req.PropertiesUnset) > 0 || req.Content != nil
+	var grant entitymanager.UpdateGrant
+	if entityChanged {
+		g, err := h.manager.AuthorizeUpdate(r.Context(), entity)
+		if err != nil {
+			writeEarlyUpdateError(w, r, err)
+			return
+		}
+		grant = g
+	}
+
+	// Check If-Match for optimistic locking
+	if ifMatch := r.Header.Get("If-Match"); ifMatch != "" {
+		if ifMatch != h.computeETag(r.Context(), entity) {
+			writeV1Error(w, r, http.StatusPreconditionFailed, "precondition_failed",
+				"Entity has been modified", "ETag mismatch")
+			return
+		}
 	}
 
 	// Affordance parity (TKT-G7N5): reject writes that conflict with
@@ -960,7 +1062,6 @@ func (h *writeHandler) handleV1UpdateEntity(w http.ResponseWriter, r *http.Reque
 			}
 		}
 	}
-	entityChanged := req.Properties != nil || len(req.PropertiesUnset) > 0 || req.Content != nil
 	if entityChanged {
 		// PatchEntity + ExpectedVersion, NOT a read-modify-write into
 		// UpdateEntity (TKT-34XS2R). Two things change:
@@ -988,7 +1089,7 @@ func (h *writeHandler) handleV1UpdateEntity(w http.ResponseWriter, r *http.Reque
 		// default face — so a write to POL-1@published would be authorized
 		// (and applied) against POL-1's default state instead.
 		stateRef := entityPkg.FormatStateRef(entity.ID, entity.Face)
-		updateResult, err := h.manager.PatchEntity(r.Context(), stateRef, patch)
+		updateResult, err := h.manager.PatchGranted(r.Context(), grant, stateRef, patch)
 		if err != nil {
 			if req.Preconditions != nil && h.writeLostRace(w, r, err, req.Preconditions, typeName, ref, plural) {
 				return
@@ -1027,7 +1128,7 @@ func (h *writeHandler) handleV1UpdateEntity(w http.ResponseWriter, r *http.Reque
 	// answer with the draft's links beside it — the mixed-face response the
 	// seam exists to prevent, on a body the SPA feeds straight back into its
 	// relation editor.
-	rels, visibleNeighbors, rerr := h.faceEdges(r.Context(), entity)
+	rels, visibleNeighbors, rerr := h.faceEdges.read(r.Context(), entity)
 	if rerr != nil {
 		writeGateError(w, r, rerr)
 		return
@@ -1043,15 +1144,21 @@ func (h *writeHandler) handleV1UpdateEntity(w http.ResponseWriter, r *http.Reque
 	if !versioned {
 		served = entity
 	}
-	result := h.serializer.forWireScoped(r.Context(), served, rels, visibleNeighbors, h.schema().Meta, plural)
+	result := h.serializer.forWireScoped(r.Context(), served, rels, visibleNeighbors, s.Meta, plural)
 	if len(warnings) > 0 {
 		result.Warnings = warnings
 	}
 	if versioned {
-		result.Versions = fieldVersionsOf(&result, h.schema().Meta)
+		result.Versions = fieldVersionsOf(&result, s.Meta)
 	}
-	newETag := h.computeETag(r.Context(), served)
-	w.Header().Set("ETag", newETag)
+	h.rollups.add(r.Context(), served.Type, []rollupRow{{ref: served.Ref(), props: result.Properties}},
+		worldScopeFrom(r.Context()), nil)
+	// The validator hashes the edges the body carries, read once above. A
+	// second read here would rebuild the edge set and its gate pass, and
+	// could describe a different edge set than the body it validates.
+	// servedETag leaves out the fields this caller cannot see, so the ETag
+	// equals the one a GET returns and the caller's next If-Match matches.
+	w.Header().Set("ETag", servedETag(r.Context(), h.affordances, served, rels))
 
 	// SSE broadcast is driven by the store-event bridge: an entity update only
 	// fires EventEntityUpdated when the store's entity row actually changed,
@@ -1062,6 +1169,7 @@ func (h *writeHandler) handleV1UpdateEntity(w http.ResponseWriter, r *http.Reque
 	writeV1JSON(w, http.StatusOK, result)
 }
 
+//archplan:auth=authz
 func (h *writeHandler) handleV1DeleteEntity(w http.ResponseWriter, r *http.Request, typeName, _, entityID string) {
 	r = h.withProvision(r)
 
@@ -1087,7 +1195,26 @@ func (h *writeHandler) handleV1DeleteEntity(w http.ResponseWriter, r *http.Reque
 		_, err = h.manager.DeleteEntityFace(r.Context(), ref.ID, ref.Face, true)
 	}
 	if err != nil {
-		if writeForbiddenIfACLDenied(w, err) {
+		if writeForbiddenIfACLDenied(w, r, err) {
+			return
+		}
+		// A channel type with `on_entity_delete: block` refused it. The type
+		// is config, and the caller may delete the entity, so naming it is
+		// the accepted one-bit signal (docs/acl-security.md).
+		var blocked *entitymanager.AnchorBlockedError
+		if errors.As(err, &blocked) {
+			writeV1Error(w, r, http.StatusConflict, "channel_blocks_delete",
+				"A channel attached to this entity blocks its deletion",
+				"channel type "+blocked.ChannelType+" has on_entity_delete: block")
+			return
+		}
+		// The entity's faces or owned entities changed while the channel
+		// guard ran. Nothing was deleted, and the same request can succeed.
+		// The manager authorizes before it reports this, so a caller who
+		// would be refused never sees it.
+		if errors.Is(err, entitymanager.ErrConcurrentChange) {
+			writeV1Error(w, r, http.StatusConflict, "conflict", "Entity is being modified concurrently",
+				"retry the delete")
 			return
 		}
 		// Another request deleted it between the read above and this write.
@@ -1251,7 +1378,7 @@ func (h *writeHandler) writeRelationsValidationError(w http.ResponseWriter, r *h
 // under this one maps to 409; everything else is a 500 whose detail names
 // the relation, op and target, with the cause in the server log.
 func (h *writeHandler) writeRelationsApplyError(w http.ResponseWriter, r *http.Request, err error) {
-	if writeForbiddenIfACLDenied(w, err) {
+	if writeForbiddenIfACLDenied(w, r, err) {
 		return
 	}
 	detail := reconcileDetail(err)
@@ -1272,6 +1399,7 @@ func (h *writeHandler) writeRelationsApplyError(w http.ResponseWriter, r *http.R
 		detail+internalErrorDetail, err)
 }
 
+//archplan:auth=authz
 func (h *writeHandler) handleV1CreateRelation(
 	w http.ResponseWriter, r *http.Request, typeName, addr, relType string,
 ) {
@@ -1363,7 +1491,7 @@ func (h *writeHandler) handleV1CreateRelation(
 		entityPkg.RelationOptions{Properties: req.Meta},
 	)
 	if err != nil {
-		if writeForbiddenIfACLDenied(w, err) {
+		if writeForbiddenIfACLDenied(w, r, err) || writeCardinalityIfExceeded(w, r, err) {
 			return
 		}
 		writeV1Error(w, r, http.StatusUnprocessableEntity, "relation_failed", "Failed to create relation", err.Error())
@@ -1373,6 +1501,20 @@ func (h *writeHandler) handleV1CreateRelation(
 	w.WriteHeader(http.StatusCreated)
 }
 
+// writeCardinalityIfExceeded answers a create the relation's max_outgoing or
+// max_incoming refused (TKT-65LVAK) with 422 cardinality_exceeded, and
+// reports whether it did.
+func writeCardinalityIfExceeded(w http.ResponseWriter, r *http.Request, err error) bool {
+	var ce *entitymanager.CardinalityError
+	if !errors.As(err, &ce) {
+		return false
+	}
+	writeV1Error(w, r, http.StatusUnprocessableEntity, "cardinality_exceeded",
+		"Relation cardinality exceeded", ce.Error())
+	return true
+}
+
+//archplan:auth=authz
 func (h *writeHandler) handleV1UpdateRelation(
 	w http.ResponseWriter, r *http.Request, typeName, addr, relType, targetID string,
 ) {
@@ -1458,7 +1600,7 @@ func (h *writeHandler) handleV1UpdateRelation(
 		entityPkg.RelationKey{From: from, FromFace: tail, Type: relType, To: to},
 		entityPkg.RelationOptions{Properties: req.Meta})
 	if err != nil {
-		if writeForbiddenIfACLDenied(w, err) {
+		if writeForbiddenIfACLDenied(w, r, err) {
 			return
 		}
 		writeV1Error(w, r, http.StatusNotFound, "relation_not_found", "Relation not found", err.Error())
@@ -1477,6 +1619,7 @@ func (h *writeHandler) handleV1UpdateRelation(
 	writeV1JSON(w, http.StatusOK, result)
 }
 
+//archplan:auth=authz
 func (h *writeHandler) handleV1DeleteRelation(
 	w http.ResponseWriter, r *http.Request, typeName, addr, relType, targetID string,
 ) {
@@ -1523,7 +1666,7 @@ func (h *writeHandler) handleV1DeleteRelation(
 
 	if err := h.manager.DeleteRelation(r.Context(),
 		entityPkg.RelationKey{From: from, FromFace: tail, Type: relType, To: to}); err != nil {
-		if writeForbiddenIfACLDenied(w, err) {
+		if writeForbiddenIfACLDenied(w, r, err) {
 			return
 		}
 		writeV1Error(w, r, http.StatusNotFound, "relation_not_found", "Relation not found", err.Error())
@@ -1533,6 +1676,7 @@ func (h *writeHandler) handleV1DeleteRelation(
 	w.WriteHeader(http.StatusNoContent)
 }
 
+//archplan:auth=authz
 func (h *writeHandler) handleV1CloneEntity(
 	w http.ResponseWriter, r *http.Request, typeName, addr string,
 ) {
@@ -1569,7 +1713,7 @@ func (h *writeHandler) handleV1CloneEntity(
 		entityPkg.CreateOptions{Face: entity.Face},
 	)
 	if err != nil {
-		if writeForbiddenIfACLDenied(w, err) {
+		if writeForbiddenIfACLDenied(w, r, err) {
 			return
 		}
 		// The clone is a create, so it fails validation like one: a
@@ -1592,8 +1736,19 @@ func (h *writeHandler) handleV1CloneEntity(
 	writeV1JSON(w, http.StatusCreated, result)
 }
 
-// handleV1ConflictResolve applies a conflict resolution.
+// handleV1ConflictResolve applies a conflict resolution. It needs git:sync
+// and then the write check of [writeHandler.authorizeConflictResolve].
+//
+//archplan:auth=authz reason="requires git:sync, then re-authorizes the write"
 func (h *writeHandler) handleV1ConflictResolve(w http.ResponseWriter, r *http.Request) {
+	// Resolving a conflict is part of a sync, so it needs git:sync like the
+	// list and the detail, before the body is read. The gate deliberately
+	// runs on the unprovisioned request, as handleGitSync does; keep the two
+	// in step. The write check in authorizeConflictResolve still runs on top.
+	if !permitsGitSync(h.acl(), r) {
+		writeGitSyncForbidden(w, r, "Resolving a merge conflict")
+		return
+	}
 	var req v1.ConflictResolveRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeV1Error(w, r, http.StatusBadRequest, "invalid_request", "Invalid JSON", err.Error())
@@ -1660,7 +1815,7 @@ func (h *writeHandler) handleV1ConflictResolve(w http.ResponseWriter, r *http.Re
 			"The conflict cannot be resolved automatically", "Resolve it by editing the file")
 		return
 	}
-	if !h.authorizeConflictResolve(r.Context(), w, resolvedEntity, resolvedRelation) {
+	if !h.authorizeConflictResolve(w, r, resolvedEntity, resolvedRelation) {
 		return
 	}
 	if err := conflict.ValidateResolved(resolvedEntity, st.Meta); err != nil {
@@ -1688,9 +1843,12 @@ func (h *writeHandler) handleV1ConflictResolve(w http.ResponseWriter, r *http.Re
 // fallback the manager uses). A deny records a `denied-write` audit
 // row and writes the standard 403 body; returns true when the write
 // may proceed.
+//
+//archplan:guard=authz reason="conflict resolution bypasses entitymanager, so it re-authorizes the write here"
 func (h *writeHandler) authorizeConflictResolve(
-	ctx context.Context, w http.ResponseWriter, e *entityPkg.Entity, rel *entityPkg.Relation,
+	w http.ResponseWriter, r *http.Request, e *entityPkg.Entity, rel *entityPkg.Relation,
 ) bool {
+	ctx := r.Context()
 	var aclReq acl.WriteRequest
 	if rel != nil {
 		// Write authorization needs the real type whether or not the caller
@@ -1713,10 +1871,11 @@ func (h *writeHandler) authorizeConflictResolve(
 		Subject:     conflictAuditSubject(e, rel),
 		Principal:   principal.From(ctx),
 		TriggeredBy: audit.TriggeredByFrom(ctx),
+		AssertedBy:  audit.AssertedByFrom(ctx),
 		Summary: fmt.Sprintf("denied: %s (rule_kind=%s rule_id=%s op=conflict-resolve)",
 			decision.Reason, decision.RuleKind, decision.RuleID),
 	})
-	writeForbiddenIfACLDenied(w, &acl.ForbiddenError{Decision: decision})
+	writeForbiddenIfACLDenied(w, r, &acl.ForbiddenError{Decision: decision})
 	return false
 }
 
@@ -1736,6 +1895,7 @@ func (h *writeHandler) recordConflictResolveAudit(
 		Subject:     conflictAuditSubject(e, rel),
 		Principal:   principal.From(ctx),
 		TriggeredBy: audit.TriggeredByFrom(ctx),
+		AssertedBy:  audit.AssertedByFrom(ctx),
 		Summary:     "resolved git conflict in " + relPath,
 	})
 }

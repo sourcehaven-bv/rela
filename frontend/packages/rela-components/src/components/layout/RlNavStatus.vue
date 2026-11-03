@@ -141,7 +141,7 @@ const count = computed(() => {
     width: 7px;
     height: 7px;
     /* Rings the dot in the sidebar's own background so it reads as on top. */
-    box-shadow: 0 0 0 2px var(--rl-color-bg-sunken);
+    box-shadow: 0 0 0 2px var(--rl-color-sidebar-bg);
   }
 }
 </style>

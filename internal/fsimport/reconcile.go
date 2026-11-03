@@ -11,11 +11,8 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/frontmatter"
+	"github.com/Sourcehaven-BV/rela/internal/storage"
 )
-
-// attachTempPrefix marks fsstore's in-progress attachment files
-// (fsstore.attachTempPrefix).
-const attachTempPrefix = ".rela-attach-tmp-"
 
 // reconcileFiles walks the source's data folders and accounts for every
 // file: it was imported, it is listed as not copied with a reason, or it is an
@@ -215,7 +212,7 @@ func (w *fileWalk) attachments() error {
 		switch {
 		case len(parts) != 3:
 			w.rep.skip(p, "not an attachment path (attachments/ID/PROPERTY/FILE)")
-		case strings.HasPrefix(parts[2], attachTempPrefix):
+		case storage.IsAttachTempName(parts[2]):
 			w.rep.skip(p, "unfinished upload")
 		case w.imported.attach[rel]:
 		case w.pending[parts[0]]:

@@ -200,6 +200,9 @@ func (p *Policy) validateStateGrants() error {
 		if err := validateRenameGrants(name, role.Rename); err != nil {
 			return err
 		}
+		if err := validateConvertGrants(name, role.Convert); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -217,6 +220,15 @@ func validateRenameGrants(role string, list []string) error {
 		return fmt.Errorf("roles.%s: rename: %q names the face %q; a rename moves every face "+
 			"of an entity, so a rename grant names the type alone: %q",
 			role, entry, face, typeName)
+	}
+	return nil
+}
+
+func validateConvertGrants(role string, list []string) error {
+	for _, entry := range list {
+		if strings.Contains(entry, entity.StateRefSeparator) {
+			return fmt.Errorf("roles.%s: convert: %q names a face; conversion moves the entity family, so a convert grant names the source type alone", role, entry)
+		}
 	}
 	return nil
 }
@@ -277,6 +289,15 @@ func GrantsVerbOnState(role RoleDef, op Op, target string, p entity.Face) bool {
 	switch op {
 	case OpCreate:
 		list = role.Create
+	case OpConvert:
+		if p.IsImplicit() {
+			for _, entry := range role.Convert {
+				if entry == "*" || entry == target {
+					return true
+				}
+			}
+		}
+		return false
 	case OpUpdate:
 		list = role.Update
 	case OpRename:

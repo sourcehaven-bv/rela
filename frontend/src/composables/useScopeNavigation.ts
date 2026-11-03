@@ -10,6 +10,7 @@ import { tabIsRelationOrdered } from '@/utils/relationOrder'
 import { listPiles } from '@/api/piles'
 import { knownPileName, rememberPileNames } from '@/composables/pileNames'
 import { useWorld } from '@/composables/useWorld'
+import { t } from '@/i18n'
 
 export interface ScopeNav {
   // Neighbours carry their type, not just id, so navigation builds the correct
@@ -60,10 +61,14 @@ export function useScopeNavigation(entityId: () => string, servedAddress?: () =>
       return
     }
 
-    const id = built.scope.source === 'pile' ? (servedAddress?.() ?? entityId()) : entityId()
+    const idNow = () => (built.scope.source === 'pile' ? (servedAddress?.() ?? entityId()) : entityId())
+    const id = idNow()
 
     try {
       const pos = await getEntityPosition(id, built.scope, worldParam.value)
+      // The page moved to another entity while this was in flight; that
+      // entity's own load sets the position (TKT-7LTLHW3).
+      if (idNow() !== id) return
       scopeNav.value = {
         prev: pos.prev,
         next: pos.next,
@@ -73,7 +78,7 @@ export function useScopeNavigation(entityId: () => string, servedAddress?: () =>
       }
     } catch {
       // 404 (entity not in scope) or any error → no scope nav, same as before.
-      scopeNav.value = null
+      if (idNow() === id) scopeNav.value = null
     }
   }
 
@@ -87,7 +92,7 @@ export function useScopeNavigation(entityId: () => string, servedAddress?: () =>
     const scope: ScopeDescriptor = { source: 'search', q }
     const type = route.query.type as string | undefined
     if (type) scope.type = type
-    return { scope, label: `Search: ${q}` }
+    return { scope, label: t('search.scopeLabel', { q }) }
   }
 
   // buildPileScope walks one of the user's piles. The descriptor carries the
@@ -107,7 +112,7 @@ export function useScopeNavigation(entityId: () => string, servedAddress?: () =>
         // name only costs the label.
       }
     }
-    return { scope: { source: 'pile', pile }, label: name ?? 'Pile' }
+    return { scope: { source: 'pile', pile }, label: name ?? t('list.scope.pile') }
   }
 
   // buildListScope reconstructs the scope EntityList rendered: list-config

@@ -53,7 +53,7 @@ type ScriptReader struct {
 	history store.HistoryReader
 
 	// tags serves VersionByTag; nil means none (see
-	// [ScriptReader.WithVersionTags]).
+	// [ScriptReader.WithHistory]).
 	tags VersionTagReader
 }
 
@@ -169,6 +169,15 @@ func (s *ScriptReader) ResolveHeadersErr(
 	return s.res.ResolveHeadersErr(s.bind(ctx), worldIn(ctx, s.world), refs)
 }
 
+// MentionedBy pages the entities whose body mentions target that the caller
+// may read, gated and redacted, in the reader's world. See
+// [Resolver.MentionedBy].
+func (s *ScriptReader) MentionedBy(
+	ctx context.Context, target, after string, limit int,
+) (MentionPage, error) {
+	return s.res.MentionedBy(s.bind(ctx), worldIn(ctx, s.world), target, after, limit)
+}
+
 // ListEntities yields only the entities the caller may read, redacted.
 //
 // Prefers ACL PUSHDOWN: when the gate can compose the caller's scope as a
@@ -185,8 +194,8 @@ func (s *ScriptReader) ListEntities(
 	ctx context.Context, q store.EntityQuery,
 ) iter.Seq2[*entity.Entity, error] {
 	bound := s.bind(ctx)
-	if red, ok := s.reader.(rowRedactor); ok {
-		if seq, pushed := listPushdown(bound, s.provider, s.raw, red.RedactRow, q); pushed {
+	if red, ok := s.reader.(pushdownRedactor); ok {
+		if seq, pushed := listPushdown(bound, s.provider, s.raw, red.redactPage, q); pushed {
 			return seq
 		}
 	}
@@ -403,7 +412,7 @@ func (s *ScriptReader) ListRelationsStrict(
 // does.
 func (s *ScriptReader) CountEntities(ctx context.Context, q store.EntityQuery) (int, error) {
 	bound := s.bind(ctx)
-	if _, ok := s.reader.(rowRedactor); ok {
+	if _, ok := s.reader.(pushdownRedactor); ok {
 		if n, pushed, err := countPushdown(bound, s.provider, s.raw, q); pushed {
 			return n, err
 		}

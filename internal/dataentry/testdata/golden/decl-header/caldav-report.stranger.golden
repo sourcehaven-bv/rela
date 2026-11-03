@@ -1,0 +1,10 @@
+request: REPORT /api/v1/_caldav/principal/calendars/tickets/
+identity: header stranger@example.test
+status: 207
+reads: GraphQueryHeaders=2 ListRelations=1
+breadth: ListRelations=0/1
+bodies: GraphQuery=0/2
+versions: 
+body:
+<?xml version="1.0" encoding="UTF-8"?>
+<multistatus xmlns="DAV:"></multistatus>

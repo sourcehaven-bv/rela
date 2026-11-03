@@ -7,6 +7,7 @@ import { useSchemaStore } from '@/stores/schema'
 import { _resetModalStack, isAnyModalOpen } from '@/composables/modalStack'
 import { searchEntities } from '@/api'
 import type { Entity, ListResponse } from '@/types'
+import { SEARCH_DEBOUNCE_MS } from '@/utils/searchTiming'
 
 vi.mock('@/api', async () => {
   const actual = await vi.importActual<typeof import('@/api')>('@/api')
@@ -44,7 +45,7 @@ function seedSchema() {
   } as never)
 }
 
-function factory(props: { open?: boolean } = {}): VueWrapper {
+function factory(props: { open?: boolean; types?: string[] } = {}): VueWrapper {
   return mount(EntityPickerModal, {
     props: { open: true, ...props },
     attachTo: document.body,
@@ -76,7 +77,7 @@ async function typeQuery(value: string): Promise<void> {
   input().value = value
   input().dispatchEvent(new Event('input'))
   await flushPromises()
-  vi.advanceTimersByTime(150)
+  vi.advanceTimersByTime(SEARCH_DEBOUNCE_MS)
   await flushPromises()
   await flushPromises()
 }
@@ -154,8 +155,47 @@ describe('EntityPickerModal', () => {
       searchSpy.mockResolvedValueOnce(listResponse([entity]))
       factory()
       await typeQuery('fix')
-      expect(searchSpy).toHaveBeenCalledExactlyOnceWith('fix', undefined, expect.any(AbortSignal), undefined)
+      expect(searchSpy).toHaveBeenCalledExactlyOnceWith('fix', {
+        type: undefined,
+        signal: expect.any(AbortSignal),
+        world: undefined,
+        limit: 50,
+      })
       expect(options()).toHaveLength(1)
+    })
+
+    it('passes a single allowed type to the search', async () => {
+      factory({ types: ['person'] })
+      await typeQuery('ann')
+      expect(searchSpy).toHaveBeenCalledExactlyOnceWith('ann', {
+        type: 'person',
+        signal: expect.any(AbortSignal),
+        world: undefined,
+        limit: 50,
+      })
+    })
+
+    it('filters the answer to several allowed types', async () => {
+      searchSpy.mockResolvedValueOnce(
+        listResponse([
+          makeEntity({ id: 'P-1', type: 'person' }),
+          makeEntity({ id: 'T-1', type: 'ticket' }),
+          makeEntity({ id: 'G-1', type: 'group' }),
+        ])
+      )
+      factory({ types: ['person', 'group'] })
+      await typeQuery('any')
+      // No limit: the hits are filtered here, so a limit could leave none.
+      expect(searchSpy).toHaveBeenCalledWith('any', {
+        type: undefined,
+        signal: expect.any(AbortSignal),
+        world: undefined,
+        limit: undefined,
+      })
+      expect(options().map((o) => o.id)).toEqual([
+        'entity-picker-option-P-1',
+        'entity-picker-option-G-1',
+      ])
     })
   })
 
@@ -169,7 +209,7 @@ describe('EntityPickerModal', () => {
       options()[0].click()
       await flushPromises()
 
-      expect(wrapper.emitted('select')).toEqual([[entity.id]])
+      expect(wrapper.emitted('select')).toEqual([[entity.id, entity]])
       expect(wrapper.emitted('close')).toHaveLength(1)
       wrapper.unmount()
     })
@@ -186,7 +226,7 @@ describe('EntityPickerModal', () => {
       pressKey('Enter')
       await flushPromises()
 
-      expect(wrapper.emitted('select')).toEqual([[e2.id]])
+      expect(wrapper.emitted('select')).toEqual([[e2.id, e2]])
       wrapper.unmount()
     })
 
@@ -218,8 +258,8 @@ describe('EntityPickerModal', () => {
       // Resolve only when we explicitly choose to so we can observe the
       // controller being aborted while the request is in flight.
       let capturedSignal: AbortSignal | undefined
-      searchSpy.mockImplementationOnce((_q: string, _t: unknown, signal: AbortSignal) => {
-        capturedSignal = signal
+      searchSpy.mockImplementationOnce((_q: string, opts: { signal: AbortSignal }) => {
+        capturedSignal = opts.signal
         return new Promise(() => {
           // never resolves; the watcher's abort() is what we assert on
         })
@@ -240,7 +280,7 @@ describe('EntityPickerModal', () => {
       input().value = 'foo'
       input().dispatchEvent(new Event('input'))
       await flushPromises()
-      // Close BEFORE the 150ms debounce fires.
+      // Close BEFORE the debounce fires.
       await setOpen(wrapper, false)
       vi.advanceTimersByTime(500)
       await flushPromises()

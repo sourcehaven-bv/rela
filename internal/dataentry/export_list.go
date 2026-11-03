@@ -4,12 +4,14 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strings"
 
 	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
 	entityPkg "github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/lua"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
+	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/transform"
 	"github.com/Sourcehaven-BV/rela/internal/visibility"
 )
@@ -29,23 +31,38 @@ var listExportCap = 5000
 // visibility gate the on-screen list applies — so a hidden neighbor never leaks
 // into the export (RR-T3PDHN). The set is capped at [listExportCap]; past the
 // cap the table is truncated with a visible notice.
+//
+//archplan:auth=required
 func (h *exportHandler) handleV1ExportList(w http.ResponseWriter, r *http.Request, typeName string) {
 	if r.Method != http.MethodGet {
 		writeV1Error(w, r, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed", "")
 		return
 	}
-	ctx := r.Context()
-	query := r.URL.Query()
-
 	name, reg, ok := h.resolveTransform(w, r)
 	if !ok {
 		return
 	}
+	renderer, err := h.listExportRenderer(r.Context(), typeName, r.URL.Query())
+	if err != nil {
+		writeListPipelineError(w, r, err)
+		return
+	}
+	h.convertAndWrite(w, r, reg, name, renderer, typeName+"-list", "type", typeName)
+}
 
+// listExportRenderer is the list export pipeline without the response: the
+// WHOLE ACL-scoped, filtered and conditioned set of typeName for query,
+// field-redacted, capped, and wrapped in the list's renderer. The export
+// route and rela.attach_render share it. An error is one
+// [writeListPipelineError] answers.
+func (h *exportHandler) listExportRenderer(
+	ctx context.Context, typeName string, query map[string][]string,
+) (transform.Renderer, error) {
+	q := url.Values(query)
 	// Resolve the effective list ONCE and derive both the columns and the
 	// render override from it — see resolveEffectiveList for why these must
 	// not be looked up independently.
-	effListID, effList, haveList := h.resolveEffectiveList(query.Get("list"), typeName)
+	effListID, effList, haveList := h.resolveEffectiveList(q.Get("list"), typeName)
 	columns := listColumnsOf(effList, haveList)
 
 	// The WHOLE ACL-scoped, filtered, sorted set — pre-pagination. Reuses the
@@ -55,8 +72,7 @@ func (h *exportHandler) handleV1ExportList(w http.ResponseWriter, r *http.Reques
 	// layer above this shared path.
 	entities, err := h.scopedEntities(ctx, typeName, query)
 	if err != nil {
-		writeListPipelineError(w, r, err)
-		return
+		return nil, err
 	}
 	// The list's `condition:` is applied in listPage, ABOVE the shared read
 	// path above, so it has to be applied here too — otherwise the export
@@ -72,13 +88,11 @@ func (h *exportHandler) handleV1ExportList(w http.ResponseWriter, r *http.Reques
 		// Without this the export 500s on exactly the per-user views the
 		// condition syntax exists to express.
 		if ctx, err = h.bindConditionIdentity(ctx, typeName, query); err != nil {
-			writeListPipelineError(w, r, err)
-			return
+			return nil, err
 		}
 		ctx = visibility.PrimeTraversals(ctx, h.redactor, entities)
 		if entities, err = applyViewCondition(ctx, entities, cond, h.redactForCondition, h.store); err != nil {
-			writeListPipelineError(w, r, err)
-			return
+			return nil, err
 		}
 	}
 	// Field-redact every row through the visibility seam before any cell is
@@ -112,15 +126,14 @@ func (h *exportHandler) handleV1ExportList(w http.ResponseWriter, r *http.Reques
 		// away. See the loadBodies field for why the failure it fixes is
 		// silent rather than loud.
 		if err := h.loadBodies(ctx, entities); err != nil {
-			writeListPipelineError(w, r, fmt.Errorf("%w: %w", errListLoad, err))
-			return
+			return nil, fmt.Errorf("%w: %w", errListLoad, err)
 		}
 		renderer = h.listOverrideRenderer(listOverride{
 			listID: effListID, script: effList.ExportRender, typeName: typeName,
 			rows: entities, total: total, query: query,
 		})
 	}
-	h.convertAndWrite(w, r, reg, name, renderer, typeName+"-list", "type", typeName)
+	return renderer, nil
 }
 
 // listOverride is what rendering a list THROUGH A SCRIPT needs: which list,
@@ -288,7 +301,16 @@ func (h *exportHandler) resolveEffectiveList(
 // different list than the render override — see resolveEffectiveList.
 func listColumnsOf(l dataentryconfig.List, haveList bool) []dataentryconfig.ListColumn {
 	if haveList && len(l.Columns) > 0 {
-		return l.Columns
+		// A busy column (TKT-TU3XH4) is live, per-principal channel state,
+		// not a document value, so the export leaves it out. It is never
+		// column 0, so the title column always stays.
+		cols := make([]dataentryconfig.ListColumn, 0, len(l.Columns))
+		for _, c := range l.Columns {
+			if c.Busy == "" {
+				cols = append(cols, c)
+			}
+		}
+		return cols
 	}
 	return []dataentryconfig.ListColumn{
 		{Property: "id", Label: "ID"},
@@ -305,7 +327,10 @@ func (h *exportHandler) listTableRenderer(
 ) transform.Renderer {
 	return transform.RendererFunc(func(ctx context.Context) ([]byte, error) {
 		meta := h.meta()
-		rels := h.resolveListRelations(ctx, meta, entities, columns)
+		rels, err := h.resolveListRelations(ctx, meta, entities, columns)
+		if err != nil {
+			return nil, err
+		}
 
 		var b strings.Builder
 
@@ -359,12 +384,13 @@ type cellPeers struct {
 }
 
 // resolveListRelations resolves every relation column's neighbor titles for the
-// whole set of exported rows in one pass: it loads each row's edges once, gathers
-// ALL neighbor IDs across every row, runs a SINGLE batched visibility gate, loads
-// each visible neighbor once, then assembles per-row/per-column visible titles.
+// whole set of exported rows in one pass: it loads every row's edges in one
+// query, gathers ALL neighbor IDs across every row, runs a SINGLE batched
+// visibility gate, loads each visible neighbor once, then assembles
+// per-row/per-column visible titles.
 func (h *exportHandler) resolveListRelations(
 	ctx context.Context, meta *metamodel.Metamodel, entities []*entityPkg.Entity, columns []dataentryconfig.ListColumn,
-) listRelationTitles {
+) (listRelationTitles, error) {
 	out := listRelationTitles{}
 
 	relCols := make([]dataentryconfig.ListColumn, 0, len(columns))
@@ -374,12 +400,15 @@ func (h *exportHandler) resolveListRelations(
 		}
 	}
 	if len(relCols) == 0 {
-		return out
+		return out, nil
 	}
 
-	perCell, allPeerIDs := h.gatherListPeers(ctx, entities, relCols)
+	perCell, allPeerIDs, err := h.gatherListPeers(ctx, entities, relCols)
+	if err != nil {
+		return nil, err
+	}
 	if len(perCell) == 0 {
-		return out
+		return out, nil
 	}
 
 	// ONE batched visibility gate for the whole export, and ONE row load for
@@ -402,17 +431,23 @@ func (h *exportHandler) resolveListRelations(
 		}
 		out[pc.rowID][pc.colKey] = titles
 	}
-	return out
+	return out, nil
 }
 
-// gatherListPeers loads each row's edges ONCE and returns, per (row, relation
-// column), the ordered peer IDs, plus the flat list of every peer ID (for the
-// single batched visibility gate). Only the directions some column actually
-// uses are fetched — an all-outgoing column set skips the incoming lookup for
-// every row.
+// gatherListPeers returns, per (row, relation column), the ordered peer IDs,
+// plus the flat list of every peer ID (for the single batched visibility
+// gate).
+//
+// The edges of every row come from ONE store query, not one per row
+// (TKT-VEIMO3), and only in the directions some column uses. A cell lists
+// its neighbors in the store's relation order: every backend sorts relations
+// by key whatever the filter, so batching does not reorder a cell.
+//
+// A store error fails the export rather than rendering a table that looks
+// complete but lacks edges (the RR-4TFZNL reasoning of the entity export).
 func (h *exportHandler) gatherListPeers(
 	ctx context.Context, entities []*entityPkg.Entity, relCols []dataentryconfig.ListColumn,
-) (perCell []cellPeers, allPeerIDs []string) {
+) (perCell []cellPeers, allPeerIDs []string, err error) {
 	needIn, needOut := false, false
 	for _, c := range relCols {
 		if c.Direction == dataentryconfig.DirectionIncoming {
@@ -421,15 +456,26 @@ func (h *exportHandler) gatherListPeers(
 			needOut = true
 		}
 	}
+	dir := store.DirectionBoth
+	switch {
+	case !needIn:
+		dir = store.DirectionOutgoing
+	case !needOut:
+		dir = store.DirectionIncoming
+	}
+	outByRow, inByRow, err := h.reader.pageRelationsDir(ctx, entities, dir)
+	if err != nil {
+		return nil, nil, fmt.Errorf("list export: reading relation columns: %w", err)
+	}
 	meta := h.meta()
-	for _, e := range entities {
-		var outgoing, incoming []*entityPkg.Relation
+	for i, e := range entities {
 		// Only the edges this row's face owns (BUG-ISJHML).
+		var outgoing, incoming []*entityPkg.Relation
 		if needOut {
-			outgoing = edgesOwnedBy(meta, h.reader.outgoingRelations(ctx, e.ID), e.Face)
+			outgoing = edgesOwnedBy(meta, outByRow[i], e.Face)
 		}
 		if needIn {
-			incoming = incomingOwnedAtZero(meta, h.reader.incomingRelations(ctx, e.ID), e)
+			incoming = incomingOwnedAtZero(meta, inByRow[i], e)
 		}
 		for _, c := range relCols {
 			inbound := c.Direction == dataentryconfig.DirectionIncoming
@@ -445,7 +491,7 @@ func (h *exportHandler) gatherListPeers(
 			allPeerIDs = append(allPeerIDs, peers...)
 		}
 	}
-	return perCell, allPeerIDs
+	return perCell, allPeerIDs, nil
 }
 
 // relationPeers extracts the peer IDs of edges of relType from rels in the given
@@ -573,8 +619,8 @@ func (h *exportHandler) listCondition(listID string) ViewConditionMatcher {
 func (h *exportHandler) bindConditionIdentity(
 	ctx context.Context, typeName string, query map[string][]string,
 ) (context.Context, error) {
-	if h.bindIdentity == nil {
+	if h.stampQueryIdentity == nil {
 		return ctx, nil
 	}
-	return h.bindIdentity(ctx, typeName, query)
+	return h.stampQueryIdentity(ctx, typeName, query)
 }

@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
+	"github.com/Sourcehaven-BV/rela/internal/aclstore"
 	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
@@ -92,6 +93,13 @@ type faceEdgeFixture struct {
 // edges POL-1@draft implements CTL-1 and POL-1@published implements CTL-2.
 func newFaceEdgeFixture(t *testing.T, b concBackend) faceEdgeFixture {
 	t.Helper()
+	return newFaceEdgeFixtureWith(t, b, anchorGuardOf(b))
+}
+
+// newFaceEdgeFixtureWith is newFaceEdgeFixture with guard as the manager's
+// anchor guard.
+func newFaceEdgeFixtureWith(t *testing.T, b concBackend, guard entitymanager.AnchorGuard) faceEdgeFixture {
+	t.Helper()
 	st := b.open(t)
 	meta, err := metamodel.Parse([]byte(faceEdgeMetaYAML))
 	if err != nil {
@@ -101,7 +109,7 @@ func newFaceEdgeFixture(t *testing.T, b concBackend) faceEdgeFixture {
 	if err != nil {
 		t.Fatalf("load policy: %v", err)
 	}
-	d, err := acl.NewDeclarative(p, acl.NewStoreGraph(st), st)
+	d, err := acl.NewDeclarative(p, aclstore.MustNewGraph(st), st)
 	if err != nil {
 		t.Fatalf("NewDeclarative: %v", err)
 	}
@@ -113,6 +121,7 @@ func newFaceEdgeFixture(t *testing.T, b concBackend) faceEdgeFixture {
 		CopyReadGate:    entitymanager.AllowAllCopyReadGate{},
 		CopyVisibility:  allowAllCopyVisibility(t, st),
 		VersionRecorder: &fakeRecorder{},
+		AnchorGuard:     guard,
 	})
 	if err != nil {
 		t.Fatalf("entitymanager.New: %v", err)
@@ -165,11 +174,11 @@ func (f faceEdgeFixture) deleteRecords() int {
 // (BUG-58BL9I). Before the fix the source was read at the zero face, which a
 // faced type does not store, so the check saw type "" and refused.
 func TestDeleteEntityFace_ContentEdgeAuthorizedByItsTail(t *testing.T) {
-	for _, b := range concBackends {
+	for _, b := range deleteACLBackends() {
 		t.Run(b.name, func(t *testing.T) {
 			f := newFaceEdgeFixture(t, b)
 
-			res, err := f.mgr.DeleteEntityFace(asUser("drafter"), "POL-1", "draft", true)
+			res, err := f.mgr.DeleteEntityFace(entitymanager.BindAs(asUser("drafter"), t, f.mgr), "POL-1", "draft", true)
 			if err != nil {
 				t.Fatalf("DeleteEntityFace POL-1@draft as drafter: %v", err)
 			}
@@ -192,11 +201,11 @@ func TestDeleteEntityFace_ContentEdgeAuthorizedByItsTail(t *testing.T) {
 // A principal allowed to delete the face but not its edges is refused before
 // anything is written, and the refusal names the relation, not type "".
 func TestDeleteEntityFace_ContentEdgeDeniedWritesNothing(t *testing.T) {
-	for _, b := range concBackends {
+	for _, b := range deleteACLBackends() {
 		t.Run(b.name, func(t *testing.T) {
 			f := newFaceEdgeFixture(t, b)
 
-			_, err := f.mgr.DeleteEntityFace(asUser("gated-drafter"), "POL-1", "draft", true)
+			_, err := f.mgr.DeleteEntityFace(entitymanager.BindAs(asUser("gated-drafter"), t, f.mgr), "POL-1", "draft", true)
 
 			var forbidden *acl.ForbiddenError
 			if !errors.As(err, &forbidden) {
@@ -223,10 +232,10 @@ func TestDeleteEntityFace_ContentEdgeDeniedWritesNothing(t *testing.T) {
 // cascade check: each content edge is authorized at its own tail face, and a
 // faceless source resolves as before.
 func TestDelete_CascadeResolvesEdgeSourceType(t *testing.T) {
-	for _, b := range concBackends {
+	for _, b := range deleteACLBackends() {
 		t.Run(b.name+"/family", func(t *testing.T) {
 			f := newFaceEdgeFixture(t, b)
-			res, err := f.mgr.DeleteEntity(asUser("admin"), "POL-1", true)
+			res, err := f.mgr.DeleteEntity(entitymanager.BindAs(asUser("admin"), t, f.mgr), "POL-1", true)
 			if err != nil {
 				t.Fatalf("family DeleteEntity POL-1 as admin: %v", err)
 			}
@@ -237,7 +246,7 @@ func TestDelete_CascadeResolvesEdgeSourceType(t *testing.T) {
 		})
 		t.Run(b.name+"/faceless-target", func(t *testing.T) {
 			f := newFaceEdgeFixture(t, b)
-			res, err := f.mgr.DeleteEntity(asUser("admin"), "CTL-1", true)
+			res, err := f.mgr.DeleteEntity(entitymanager.BindAs(asUser("admin"), t, f.mgr), "CTL-1", true)
 			if err != nil {
 				t.Fatalf("DeleteEntity CTL-1 as admin: %v", err)
 			}
@@ -252,7 +261,7 @@ func TestDelete_CascadeResolvesEdgeSourceType(t *testing.T) {
 // there, and a source with no rows at all still fails closed. Each case
 // deletes a faceless control whose one incoming edge has that source.
 func TestDelete_CascadeSourceFallback(t *testing.T) {
-	for _, b := range concBackends {
+	for _, b := range deleteACLBackends() {
 		for _, tc := range []struct {
 			name      string
 			seed      func(t *testing.T, st store.Store)
@@ -291,7 +300,7 @@ func TestDelete_CascadeSourceFallback(t *testing.T) {
 					t.Skipf("%s refuses the seed edge: %v", b.name, err)
 				}
 
-				_, err := f.mgr.DeleteEntity(asUser("admin"), ctl.ID, true)
+				_, err := f.mgr.DeleteEntity(entitymanager.BindAs(asUser("admin"), t, f.mgr), ctl.ID, true)
 
 				var forbidden *acl.ForbiddenError
 				switch {
@@ -338,13 +347,14 @@ func TestDeleteEntityFace_SourceReadErrorAborts(t *testing.T) {
 	mgr, err := entitymanager.New(entitymanager.Deps{
 		Store: failingTailStore{f.st}, Meta: meta, Templater: nopTemplater{}, Audit: f.aud,
 		ACL: acl.NopACL{}, Transitions: statemachine.EmptySet(),
-		FieldGate: entitymanager.AllowAllFieldGate{},
+		FieldGate:   entitymanager.AllowAllFieldGate{},
+		AnchorGuard: entitymanager.NopAnchorGuard{},
 	})
 	if err != nil {
 		t.Fatalf("entitymanager.New: %v", err)
 	}
 
-	_, err = mgr.DeleteEntityFace(asUser("drafter"), "POL-1", "draft", true)
+	_, err = mgr.DeleteEntityFace(entitymanager.BindAs(asUser("drafter"), t, mgr), "POL-1", "draft", true)
 
 	if !errors.Is(err, errTailRead) {
 		t.Fatalf("DeleteEntityFace = %v, want the tail read error", err)

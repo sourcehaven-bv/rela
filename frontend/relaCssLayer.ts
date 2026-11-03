@@ -198,9 +198,18 @@ function splitPaletteAtRule(node: AtRule): { palette: AtRule; rest: AtRule | nul
  * Returns `null` when the source is already layered.
  */
 export function wrapCss(source: string): string | null {
-  if (source.includes(`@layer ${RELA_LAYER}`)) return null
-
+  // Ask the parsed tree, not the text: an unminified build keeps comments
+  // that mention the layer by name. Only an `@layer rela { ... }` block
+  // counts; an order statement such as `@layer base, rela;` layers nothing.
   const root = postcss.parse(source)
+  const layered = root.some(
+    (node) =>
+      node.type === 'atrule' &&
+      node.name.toLowerCase() === 'layer' &&
+      node.nodes !== undefined &&
+      node.params.trim() === RELA_LAYER
+  )
+  if (layered) return null
   const prelude: AtRule[] = []
   const tokens: (Rule | AtRule)[] = []
   const layer = postcss.atRule({ name: 'layer', params: RELA_LAYER })

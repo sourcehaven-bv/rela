@@ -79,7 +79,7 @@ type revealKey struct{}
 //
 // It exists for one caller. Restoring an entity must be authorized against the
 // same local roles that authorized deleting it, and the ACL resolves those roles
-// from the entity's own relations (acl.StoreGraph reads exactly these two
+// from the entity's own relations (aclstore.Graph reads exactly these two
 // methods). Without the reveal those relations are hidden, so a restore would be
 // judged without the grants the delete was judged with.
 //

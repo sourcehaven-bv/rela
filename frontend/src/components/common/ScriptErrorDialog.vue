@@ -20,6 +20,7 @@
  *    so shortcuts keep firing underneath. Both must be called.
  */
 import { computed } from 'vue'
+import { useI18n } from 'vue-i18n'
 
 import { useScriptErrorStore } from '../../stores/scriptError'
 import { useModalStack } from '@/composables/modalStack'
@@ -27,6 +28,7 @@ import RlModal from 'rela-components/components/overlay/RlModal.vue'
 
 import ScriptErrorPanel from './ScriptErrorPanel.vue'
 
+const { t } = useI18n()
 const store = useScriptErrorStore()
 
 const open = computed(() => store.current !== null)
@@ -37,7 +39,7 @@ useModalStack(open)
 <template>
   <RlModal
     :open="open"
-    title="Script error"
+    :title="t('scriptError.title')"
     role="alertdialog"
     size="lg"
     @close="store.dismiss()"

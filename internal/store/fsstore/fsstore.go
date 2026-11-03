@@ -11,7 +11,9 @@
 //
 // All state is protected by a single [sync.RWMutex]. Write methods acquire
 // mu.Lock; read methods acquire mu.RLock. File I/O happens under the lock
-// to ensure index consistency with the filesystem.
+// to ensure index consistency with the filesystem. The entity-type
+// schemas are the one exception: they are published through an atomic
+// pointer, and [FSStore.SetSchemas] replaces them under the write locks.
 //
 // Event emission is called under mu.Lock. Subscribers receive events on
 // buffered channels via non-blocking sends.
@@ -24,9 +26,11 @@ import (
 	"os"
 	"path"
 	"slices"
-	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
+
+	"golang.org/x/sync/singleflight"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/storage"
@@ -64,21 +68,19 @@ type Config struct {
 	EntitiesKey    string
 	RelationsKey   string
 	AttachmentsKey string
-	CacheKey       string // for fsstore-index.json
-	// IgnoreIndexCache scans the entity and relation directories on open
-	// instead of trusting fsstore-index.json. The cache is trusted when the
-	// directory mtimes match, which a copied or hand-edited tree can satisfy
-	// while its files differ; a caller that must see exactly what is on disk
-	// (`rela db import-fs`) sets this. The cache is then neither read nor
-	// written; CacheKey still locates the pending-deletes list.
-	IgnoreIndexCache bool
+	CacheKey       string // for pending-deletes.json and mentions-index.json
 	// Schemas maps every entity type the metamodel declares to its
 	// storage-relevant configuration (plural directory name + property
 	// order). fsstore relies on this map being complete: directories
 	// whose plural does not resolve to a known type are skipped at scan
 	// time, and inaccessible-entity shells use the schema's
 	// PropertyOrder to enumerate fields. Empty maps are rejected by
-	// [New].
+	// [New]. An empty Plural means "<type>s". Every plural must be one
+	// plain directory name, unique across types.
+	//
+	// Writes of a type the map does not declare are refused, because
+	// the scan on the next open would not find the file.
+	// [FSStore.SetSchemas] replaces the map on a schema reload.
 	//
 	// In production this is built by app.buildSchemas from the loaded
 	// metamodel.
@@ -130,11 +132,19 @@ func (rm relationMeta) key() string {
 }
 
 // attachMeta tracks attachment metadata in memory.
+//
+// sha256 describes the file as it was when size and modTime were read. A
+// file this store did not write (present at open, or changed on disk
+// since) gets its hash on the first list that finds the stat changed or
+// the hash missing; see [FSStore.ListFamilyAttachments]. Index load stays
+// stat-only so opening a store never reads attachment bytes.
 type attachMeta struct {
 	entityID string
 	property string
 	fileName string
 	size     int64
+	modTime  time.Time
+	sha256   string
 }
 
 // FSStore is a filesystem-backed store implementation.
@@ -193,8 +203,22 @@ type attachMeta struct {
 // now take an entity.RelationKey that carries the tail.
 // +1 exported (soft delete): the SoftDelete accessor.
 //
-//plimsoll:max-methods=90
-//plimsoll:max-exported-methods=34
+// +1 exported / +1 method (TKT-Q6AKUN): MentionSources, the optional
+// store.MentionIndex capability. Its helpers are free functions in mentions.go.
+//
+// +1 exported (entity conversion): ReplaceEntityFamily is required by
+// store.FamilyReplacer so a type change can replace all rows of one entity
+// family under the same store transaction.
+//
+// SetSchemas (TKT-C2YVX1) is a needed exported method: a schema reload
+// changes the layout and the index under the store's write locks.
+//
+// +1 exported / +1 method (BUG-TT73D0P): EntityIDs, the optional id listing
+// entitymanager mints ids from. It must read s.entities under s.mu, so it
+// cannot be a free function.
+//
+//plimsoll:max-methods=93
+//plimsoll:max-exported-methods=38
 type FSStore struct {
 	// rooted is the validated-key I/O surface. Every read, write,
 	// directory op, and remove that operates on files under the
@@ -212,7 +236,8 @@ type FSStore struct {
 	streamingSupported bool
 
 	// layout resolves file keys, plural directory names, and property
-	// order from the immutable path/key/schema configuration.
+	// order from the path/key/schema configuration. Its schemas change
+	// only through SetSchemas.
 	layout fileLayout
 
 	// codec reads and writes entity/relation markdown files (including
@@ -220,9 +245,8 @@ type FSStore struct {
 	codec mdCodec
 
 	// Keys (root-relative forward-slash) for the non-layout subtrees.
-	attachKey        string
-	cacheKey         string
-	ignoreIndexCache bool
+	attachKey string
+	cacheKey  string
 
 	// txMu serializes an open Tx against ordinary writers: Tx holds it
 	// for the whole callback, every exported write method takes it
@@ -237,9 +261,15 @@ type FSStore struct {
 	relations     map[string]relationMeta // key (from--type--to) → meta
 	relationOrder []string
 	attachments   map[string]attachMeta // "entityID/property" → meta
+	// hashFlight shares one read between lists that hash the same file
+	// version at once (see ListFamilyAttachments).
+	hashFlight singleflight.Group
 	// marked holds the soft-deleted families, out of the index above (see
 	// softdelete.go). Nil until the first mark.
 	marked map[string]*fsMarked
+	// mentions is the backlink index (see mentions.go). Empty until the
+	// first MentionSources call builds it.
+	mentions mentionIndex
 
 	// observers notified synchronously on entity writes
 	observers []store.EntityObserver
@@ -298,21 +328,18 @@ func New(cfg Config) (*FSStore, error) {
 	if cfg.RelationsKey == "" {
 		return nil, errors.New("fsstore: Config.RelationsKey must not be empty")
 	}
-	// Schemas must be populated from the loaded metamodel. Without it,
-	// fsstore cannot map plural directory names back to entity types
-	// reliably, and inaccessible-entity shells (for git-crypt encrypted
-	// files) cannot enumerate their schema-declared properties. An
-	// empty map always indicates a bootstrap-ordering bug.
-	if len(cfg.Schemas) == 0 {
-		return nil, errors.New("fsstore: Config.Schemas must be populated from the metamodel; an empty map indicates a bootstrap-ordering bug")
+	schemas, err := normalizeSchemas(cfg.Schemas)
+	if err != nil {
+		return nil, err
 	}
 
 	layout := fileLayout{
 		entitiesKey:  cfg.EntitiesKey,
 		relationsKey: cfg.RelationsKey,
-		schemas:      cfg.Schemas,
+		schemas:      new(atomic.Pointer[schemaSet]),
 		rooted:       cfg.Rooted,
 	}
+	layout.schemas.Store(&schemaSet{declared: schemas})
 
 	s := &FSStore{
 		rooted:             cfg.Rooted,
@@ -322,7 +349,6 @@ func New(cfg Config) (*FSStore, error) {
 		codec:              mdCodec{rooted: cfg.Rooted, layout: layout},
 		attachKey:          cfg.AttachmentsKey,
 		cacheKey:           cfg.CacheKey,
-		ignoreIndexCache:   cfg.IgnoreIndexCache,
 		observers:          cfg.Observers,
 		entities:           make(map[string]entityMeta),
 		relations:          make(map[string]relationMeta),
@@ -411,21 +437,28 @@ func (s *FSStore) loadAttachmentsIndex() {
 
 // loadPropertyAttachments indexes every attachment file under one
 // entity/property directory. A property may hold multiple files; each is
-// keyed by (entityID, property, fileName). Leftover temp files from an
-// interrupted write (attachTempPrefix) are skipped — that marker can't
-// collide with a real attachment name (which never starts with a dot).
+// keyed by (entityID, property, fileName). Uploads in progress
+// ([storage.IsAttachTempName]) are never indexed; a stale one is the
+// leftover of a crash and is removed, by the same rule as
+// cleanupTempFiles. A fresh one may be another process's upload, so it
+// is left alone.
 // Must be called with s.mu held.
 func (s *FSStore) loadPropertyAttachments(entityID, prop string) {
-	fileEntries, err := s.rooted.ReadDir(path.Join(s.attachKey, entityID, prop))
+	dirKey := path.Join(s.attachKey, entityID, prop)
+	fileEntries, err := s.rooted.ReadDir(dirKey)
 	if err != nil {
 		return
 	}
+	now := time.Now()
 	for _, fileEntry := range fileEntries {
 		if fileEntry.IsDir() {
 			continue
 		}
 		name := fileEntry.Name()
-		if strings.HasPrefix(name, attachTempPrefix) {
+		if storage.IsAttachTempName(name) {
+			if info, infoErr := fileEntry.Info(); infoErr == nil && storage.IsStaleTemp(info.ModTime(), now) {
+				_ = s.rooted.Remove(path.Join(dirKey, name))
+			}
 			continue
 		}
 		info, err := fileEntry.Info()
@@ -441,6 +474,7 @@ func (s *FSStore) loadPropertyAttachments(entityID, prop string) {
 			property: prop,
 			fileName: name,
 			size:     info.Size(),
+			modTime:  info.ModTime(),
 		}
 	}
 }
@@ -514,11 +548,12 @@ func (s *FSStore) notifyRenamed(oldID string, renamed *entity.Entity) {
 }
 
 // cleanupTempFiles removes orphaned temp files left by interrupted
-// writes. Two suffixes are swept: ".new" (legacy direct fsstore
-// atomic-write) and ".tmp" (SafeFS atomic-write). Both are produced by
-// writeFile → rename paths and are never expected to survive a normal
-// process shutdown.
+// writes: names [storage.IsTempName] recognizes whose mtime is stale
+// ([storage.IsStaleTemp]). A fresh temp file may belong to another
+// process that shares the project and is between its write and its
+// rename, so it is left alone; a later open removes it once it is old.
 func (s *FSStore) cleanupTempFiles() {
+	now := time.Now()
 	for _, dirKey := range []string{s.layout.entitiesKey, s.layout.relationsKey} {
 		// coverage-ignore-start: unreachable: cleanupTempFiles runs only from New, which rejects empty
 		// EntitiesKey/RelationsKey before this loop
@@ -531,7 +566,10 @@ func (s *FSStore) cleanupTempFiles() {
 			if err != nil || d.IsDir() {
 				return nil //nolint:nilerr // walker continuation on error is intentional
 			}
-			if strings.HasSuffix(p, ".new") || strings.HasSuffix(p, ".tmp") {
+			if !storage.IsTempName(p) {
+				return nil
+			}
+			if info, infoErr := d.Info(); infoErr == nil && storage.IsStaleTemp(info.ModTime(), now) {
 				toRemove = append(toRemove, p)
 			}
 			return nil
@@ -549,9 +587,9 @@ func (s *FSStore) cleanupTempFiles() {
 // uses (storeutil.SortedInsertFunc / SortedRemoveFunc with
 // storeutil.CompareStateKeys).
 //
-// The index CONSTRUCTION paths must use the same comparator as the
-// mutation paths or the slice is sorted one way and binary-searched
-// another: SortedRemoveFunc then misses a key that is present and
+// The index construction path (scanEntityDirs) must use the same
+// comparator as the mutation paths or the slice is sorted one way and
+// binary-searched another: SortedRemoveFunc then misses a key that is present and
 // panics, on the ordinary default-world delete path after any process
 // restart. Plain sortStrings is wrong here because '@' (0x40) sorts
 // after the digits (0x30-0x39), so PAGE-10's family lands inside

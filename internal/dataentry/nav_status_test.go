@@ -63,7 +63,7 @@ func TestNavStatus_FirstMatchWinsAndZeroIsOmitted(t *testing.T) {
 	installNavStatusConfig(app,
 		map[string]dataentryconfig.List{"all": {EntityType: "ticket"}},
 		[]dataentryconfig.NavigationEntry{
-			{Label: "Home", Dashboard: true},
+			{Label: "Home", Dashboard: dataentryconfig.DefaultDashboard},
 			{Group: "Work", Items: []dataentryconfig.NavigationEntry{
 				{Label: "All", List: "all", Status: []dataentryconfig.NavStatusRule{
 					rule("error", "{count} blocked", "entity.status == 'blocked'"),
@@ -139,6 +139,22 @@ func TestNavStatus_CountsTheListsOwnRows(t *testing.T) {
 	}), "scope, static filter and list condition must all apply")
 }
 
+// A list's static `$user` filter counts the caller's own rows (TKT-YJSRBZ):
+// the sidebar count runs the list's filters through the list path, so the
+// token resolves per principal there too.
+func TestNavStatus_UserTokenCountsPerCaller(t *testing.T) {
+	app := newScopeTestApp(t)
+	wireRealViewConditions(t, app)
+	installNavStatusConfig(app,
+		map[string]dataentryconfig.List{"mine": {EntityType: "taak", QueryScope: "all",
+			Filters: []dataentryconfig.FilterConfig{{Property: "toegewezen_aan", Operator: "=", Value: "$user"}}}},
+		[]dataentryconfig.NavigationEntry{
+			{Label: "Mine", List: "mine", Status: []dataentryconfig.NavStatusRule{rule("new", "{count}", "")}},
+		})
+	require.Equal(t, 2, navStatusAs(principalCtx("alice"), t, app)["0"].Count)
+	require.Equal(t, 1, navStatusAs(principalCtx("bob"), t, app)["0"].Count)
+}
+
 // Rows the principal may not read are not counted: the count is taken after
 // the ACL row gate, never over the raw store.
 func TestNavStatus_CountsOnlyReadableRows(t *testing.T) {
@@ -158,7 +174,7 @@ func TestNavStatus_CountsOnlyReadableRows(t *testing.T) {
 		RoleRelations:       map[string]acl.RoleRelationDef{"editor-of": {Confers: "editor"}},
 		InheritRolesThrough: []string{"belongs-to"},
 	}, app.store)
-	app.acl = d
+	setTestACL(t, app, d)
 
 	installNavStatusConfig(app,
 		map[string]dataentryconfig.List{"all": {EntityType: "ticket"}},
@@ -177,7 +193,7 @@ func TestNavStatus_PermissionGatedEntryIsOmitted(t *testing.T) {
 	wireRealViewConditions(t, app)
 	seedEntity(app, &entity.Entity{ID: "TKT-1", Type: "ticket", Properties: map[string]any{"title": "T"}})
 	d := mustNewACL(t, gatedNavPolicy(), app.store)
-	app.acl = d
+	setTestACL(t, app, d)
 
 	installNavStatusConfig(app,
 		map[string]dataentryconfig.List{"all": {EntityType: "ticket"}},

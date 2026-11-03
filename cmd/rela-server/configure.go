@@ -36,7 +36,7 @@ func validateConfigEditing(f *serverFlags, svc *appbuild.Services, mode identity
 	case svc.ACLDeclarative() == nil:
 		// Without acl.yaml every principal holds every permission.
 		return errors.New("needs an acl.yaml that grants config:edit")
-	case mode != identityJWT && f.principalHeader == "" && envUser == "":
+	case !hasIdentitySource(mode, f, envUser):
 		return errors.New("needs an identity source (-jwt-*, -principal-header or $" +
 			dataentry.EnvDataEntryUserVar + ")")
 	case mode != identityJWT && f.principalHeader == "" && !isLoopbackHost(f.bind):
@@ -88,7 +88,9 @@ func (h configureHost) current() *generation { return h.s.cur.Load() }
 func (h configureHost) Record(rec audit.Record) { h.current().svc.Audit().Record(rec) }
 
 // Validate checks a schema and data-entry pair the way `rela validate` does,
-// and the loaded acl.yaml against the new schema. Building the candidate
+// the loaded acl.yaml and realtime.yaml against the new schema, and
+// data-entry.yaml's `channels:` section, kanban `busy:` card fields and
+// list `busy:` columns against realtime.yaml. Building the candidate
 // server in Prepare is the complete check; this one runs on every preview.
 func (h configureHost) Validate(schema, dataEntry []byte) (*metamodel.Metamodel, error) {
 	meta, err := metamodel.Parse(schema)
@@ -99,19 +101,40 @@ func (h configureHost) Validate(schema, dataEntry []byte) (*metamodel.Metamodel,
 	for _, p := range appbuild.CheckSchemaCompiles(meta, h.current().svc.Store()) {
 		problems = append(problems, "schema.yaml: "+p)
 	}
-	if err := projectsetup.CheckDataEntry(dataEntry, meta); err != nil {
+	if deErr := projectsetup.CheckDataEntry(dataEntry, meta); deErr != nil {
 		var cve *dataentry.ConfigValidationError
-		if errors.As(err, &cve) {
+		// Matches *migration.Error, which this package may not import.
+		var migErr interface{ Descriptions() []string }
+		switch {
+		case errors.As(deErr, &cve):
 			for _, e := range cve.Errors {
 				problems = append(problems, "data-entry.yaml: "+e)
 			}
-		} else {
-			problems = append(problems, "data-entry.yaml: "+err.Error())
+		case errors.As(deErr, &migErr):
+			for _, d := range migErr.Descriptions() {
+				problems = append(problems, "data-entry.yaml: deprecated syntax: "+d)
+			}
+		default:
+			problems = append(problems, "data-entry.yaml: "+deErr.Error())
 		}
 	}
-	if policy := h.current().svc.ACLPolicy(); policy != nil {
-		if err := appbuild.ValidateACLPolicy(policy, meta); err != nil {
-			problems = append(problems, "acl.yaml: "+err.Error())
+	svc := h.current().svc
+	if policy := svc.ACLPolicy(); policy != nil {
+		if aclErr := appbuild.ValidateACLPolicy(policy, meta); aclErr != nil {
+			problems = append(problems, "acl.yaml: "+aclErr.Error())
+		}
+	}
+	// realtime.yaml names schema types, properties and enums, so a schema
+	// change can break it. Its own error text starts with the file name.
+	rt, err := appbuild.LoadRealtime(context.Background(), svc.Config(), meta, svc.ACLPolicy())
+	if err != nil {
+		problems = append(problems, err.Error())
+	} else {
+		// The channels: section, busy card fields and busy list columns
+		// name realtime.yaml's types and properties.
+		errs, _ := projectsetup.CheckChannels(dataEntry, appbuild.RealtimeChannelSchema(rt))
+		for _, e := range errs {
+			problems = append(problems, "data-entry.yaml: "+e)
 		}
 	}
 	if len(problems) > 0 {
@@ -370,7 +393,7 @@ func pendingPlan(ctx context.Context, svc *appbuild.Services) ([]*datamigration.
 	if err != nil {
 		return nil, nil, err
 	}
-	plan, err := datamigration.Resolve(stored, st.AppliedNames(), svc.Meta().ShapeProjection(), files)
+	plan, err := datamigration.Resolve(stored, st.AppliedNames(), metamodel.NewShapeProjection(svc.Meta()), files)
 	if err != nil {
 		return nil, nil, err
 	}

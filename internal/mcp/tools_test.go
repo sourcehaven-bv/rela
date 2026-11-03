@@ -241,7 +241,7 @@ func TestHandleListEntities_RelatedRefusedWithoutBinder(t *testing.T) {
 	t.Parallel()
 	meta, st := makeTestFixture(t)
 	deps := newTestDeps(t, meta, st)
-	deps.Traversals = nil
+	deps.Related.Traversals = nil
 	s := &Server{logger: slog.New(slog.DiscardHandler)}
 	setDeps(s, deps)
 
@@ -330,6 +330,36 @@ func TestHandleShowEntity(t *testing.T) {
 	}
 	if !strings.Contains(text, "title") {
 		t.Error("expected result to contain title property")
+	}
+}
+
+// TestHandleShowEntity_MentionedBy pins the backlinks block: an entity whose
+// body names REQ-001 as an `id` code span is listed under mentioned_by.
+func TestHandleShowEntity_MentionedBy(t *testing.T) {
+	t.Parallel()
+	s, st := makeTestServerWithStore(t)
+	ctx := context.Background()
+	src, err := st.GetEntity(ctx, entity.Ref{ID: "DEC-001"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	src.Content = "Settles `REQ-001`."
+	if err = st.UpdateEntity(ctx, src); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := s.handleShowEntity(ctx, makeToolRequest(map[string]any{"id": "REQ-001"}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got entityJSON
+	if err := json.Unmarshal([]byte(getResultText(t, result)), &got); err != nil {
+		t.Fatal(err)
+	}
+	if len(got.MentionedBy) != 1 || got.MentionedBy[0].ID != "DEC-001" || got.MentionedBy[0].Type != "decision" ||
+		got.MentionedByTruncated {
+
+		t.Errorf("mentioned_by = %+v (truncated %v), want DEC-001", got.MentionedBy, got.MentionedByTruncated)
 	}
 }
 
@@ -1236,11 +1266,11 @@ func TestServerInstructions(t *testing.T) {
 	meta := &metamodel.Metamodel{Entities: map[string]metamodel.EntityDef{
 		"ticket10": {}, "ticket2": {}, "bug": {},
 	}}
-	got := serverInstructions(meta)
+	got := serverInstructions(meta, false)
 	if !strings.Contains(got, "Entity types: bug, ticket2, ticket10.") {
 		t.Errorf("types missing or not in natural order: %s", got)
 	}
-	if empty := serverInstructions(&metamodel.Metamodel{}); strings.Contains(empty, "Entity types") {
+	if empty := serverInstructions(&metamodel.Metamodel{}, false); strings.Contains(empty, "Entity types") {
 		t.Errorf("empty metamodel should list no types: %s", empty)
 	}
 }

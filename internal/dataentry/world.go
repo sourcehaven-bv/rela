@@ -427,12 +427,26 @@ func worldCapablePath(path string) bool {
 	if isWorldCapablePilesPath(trimmed) {
 		return true
 	}
+	// The SEVENTH, named exactly: one dashboard card's value (TKT-2SGPJZ).
+	// A `list:` card is the list's rows, read through the list pipeline,
+	// which takes the world from ctx like the list endpoint itself. Refusing
+	// the world would count a card in the default world while its click-
+	// through list opens in the page's world.
+	if trimmed == "_dashboard/card" {
+		return true
+	}
 	if strings.HasPrefix(trimmed, "_") {
 		return false
 	}
 	// The one entity sub-resource admitted, named exactly: the entity
 	// export (BUG-PLZDPR). See [isWorldCapableEntityExportPath].
 	if isWorldCapableEntityExportPath(trimmed) {
+		return true
+	}
+	// And the backlinks of one entity (TKT-Q6AKUN), for the same reason: the
+	// detail page lists them, so they must be read in the page's world. See
+	// [isWorldCapableMentionedByPath].
+	if isWorldCapableMentionedByPath(trimmed) {
 		return true
 	}
 	// `{plural}` or `{plural}/{id}` only. A third segment is a
@@ -561,6 +575,17 @@ func isWorldCapableEntityExportPath(trimmed string) bool {
 	parts := strings.Split(trimmed, "/")
 	return len(parts) == 3 && parts[0] != "" && parts[1] != "" &&
 		!strings.HasPrefix(parts[1], "_") && parts[2] == "_export"
+}
+
+// isWorldCapableMentionedByPath matches `{plural}/{id}/mentioned-by`. The
+// addressed entity is read with readAddressedOr404 and every source through
+// visibility.Resolver.MentionedBy, both in the world on ctx, so a source is
+// listed at the face the page's world serves. Refused, a world-bound page
+// would list backlinks computed in the default world.
+func isWorldCapableMentionedByPath(trimmed string) bool {
+	parts := strings.Split(trimmed, "/")
+	return len(parts) == 3 && parts[0] != "" && parts[1] != "" &&
+		!strings.HasPrefix(parts[1], "_") && parts[2] == "mentioned-by"
 }
 
 // isWorldCapableHistoryPath matches `_history/{type}/{id}` and
@@ -755,21 +780,15 @@ var (
 	ruleFallbackDefault = store.ResolutionFallbackDefault.String()
 )
 
-// resolutionRule names the rule that produced a face stored at p, for an
-// entity of entityType, under scope. See [worldProvenance] for why this is a
-// total mapping rather than a walk.
+// resolutionRuleAt names the rule that produced a face stored at p, for an
+// entity of entityType, under scope, plus the chain POSITION of the served
+// coordinate — the rank the world got, not merely that it got something. See
+// [worldProvenance] for why this is a total mapping rather than a walk.
 //
 // entityType MUST be canonical: [store.WorldScope] is keyed on canonical
 // names only, and an alias reaching For() reads as an unknown type, which is
 // rule 1. The route resolves the type by iterating the metamodel's own keys,
 // so every caller on this path is canonical by construction.
-func resolutionRule(scope store.WorldScope, entityType string, p entity.Face) string {
-	rule, _ := resolutionRuleAt(scope, entityType, p)
-	return rule
-}
-
-// resolutionRuleAt is [resolutionRule] plus the chain POSITION of the served
-// coordinate — the rank the world got, not merely that it got something.
 //
 // The position is non-nil only for rule 2; the other rules did not resolve
 // through the chain, so there is no rank to report and a zero would read as

@@ -20,7 +20,8 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/dataentry"
 )
 
-// Services wires app to the services in svc: CalDAV aliases, comments, piles,
+// Services wires app to the services in svc: CalDAV aliases, comments, piles, leases,
+// the realtime.yaml holder,
 // the worlds' relation scopes, version tags, next-action user state, and the
 // predicate compilers behind next-action sources, list and kanban
 // `condition:`, and `query_scopes:`.
@@ -39,6 +40,35 @@ func Services(app *dataentry.App, svc *appbuild.Services) error {
 			return fmt.Errorf("wire piles: %w", err)
 		}
 	}
+	// Without a lease service the lease routes 404 and no response carries
+	// `_lease`.
+	if l := appbuild.Leases(svc); l != nil {
+		if err := dataentry.SetLeases(app, l); err != nil {
+			return fmt.Errorf("wire leases: %w", err)
+		}
+	}
+
+	// The realtime holder is absent only for a Services built from
+	// collaborators; realtime.yaml is then not watched.
+	if r := appbuild.Realtime(svc); r != nil {
+		if err := dataentry.SetRealtime(app, r); err != nil {
+			return fmt.Errorf("wire realtime config: %w", err)
+		}
+	}
+	// Without a channel service the channel routes answer the entity 404
+	// and the OpenAPI document has no channel paths.
+	if c := appbuild.ChannelService(svc); c != nil {
+		if err := dataentry.SetChannels(app, c); err != nil {
+			return fmt.Errorf("wire channels: %w", err)
+		}
+		grid := dataentry.LiveInboxGrid
+		if appbuild.ChannelsScan(svc) {
+			grid = dataentry.LiveInboxGridScan
+		}
+		if err := dataentry.SetInboxGrid(app, grid); err != nil {
+			return fmt.Errorf("wire inbox grid: %w", err)
+		}
+	}
 
 	// The worlds themselves are a NewApp argument; this resolves their links.
 	// A surface that can select a world but not resolve its links renders
@@ -50,6 +80,16 @@ func Services(app *dataentry.App, svc *appbuild.Services) error {
 	// Version tags for action scripts (TKT-VO6VG9).
 	dataentry.SetVersionTags(app, appbuild.ScriptVersionTags(svc), appbuild.VersionTagReader(svc))
 	dataentry.SetOAuthTokens(app, appbuild.ScriptOAuth(svc))
+
+	// rela.attach_render for schedules and background automations
+	// (TKT-1TS55R); action scripts get it from the app itself.
+	renderer, err := dataentry.AttachRenderer(app)
+	if err != nil {
+		return fmt.Errorf("wire attach_render: %w", err)
+	}
+	if err := appbuild.SetAttachRenderer(svc, renderer); err != nil {
+		return fmt.Errorf("wire attach_render: %w", err)
+	}
 
 	if err := app.SetUserState(svc.UserState()); err != nil {
 		return fmt.Errorf("wire next-action state: %w", err)

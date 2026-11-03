@@ -25,6 +25,7 @@ func newRecreateManager(t *testing.T, st store.Store, sink audit.Audit) *entitym
 		ACL:         acl.NopACL{},
 		Transitions: statemachine.EmptySet(),
 		FieldGate:   entitymanager.AllowAllFieldGate{},
+		AnchorGuard: entitymanager.NopAnchorGuard{},
 	})
 	if err != nil {
 		t.Fatalf("entitymanager.New: %v", err)
@@ -259,6 +260,7 @@ func TestRecreateEntity_ACLDenied(t *testing.T) {
 	mgr, err := entitymanager.New(entitymanager.Deps{
 		FieldGate: entitymanager.AllowAllFieldGate{},
 		Store:     st, Meta: parseMeta(t), Templater: nopTemplater{}, Audit: audit.Nop{}, ACL: acl.ReadOnlyACL{}, Transitions: statemachine.EmptySet(),
+		AnchorGuard: entitymanager.NopAnchorGuard{},
 	})
 	if err != nil {
 		t.Fatalf("New: %v", err)

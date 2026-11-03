@@ -8,22 +8,26 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
-// Graph is the narrow contract the resolver needs from the store.
+// Graph is the narrow contract [Declarative] needs from the store.
 // Declared at the consumer per CLAUDE.md's "interfaces at the call
 // site" rule; the wiring site (appbuild) supplies a store-backed
 // implementation.
 //
-// Two operations:
+// The evaluator uses it only for per-subject probes:
 //
 //   - HasEdge reports whether a specific edge fromID --relType--> toID
 //     exists. Used in per-entity local-role probes.
 //   - OutgoingRelations returns the toIDs reachable from `fromID` via
-//     edges of `relType`. Used in transitive walks (member-of for
-//     groups, inherit_roles_through for containment).
+//     edges of `relType`. Used for the inherit_roles_through ancestor
+//     walk and for world grants conferred through a relation.
 //
-// Both methods are read-only and snapshot-coherent for the duration
-// of one Request; cross-request consistency is not guaranteed (and is
-// not load-bearing — see the TKT-SVXL "Trust boundary" section).
+// The membership walk is not an evaluator probe. It runs once per
+// operation in the [IdentityResolver], which sees this value only as a
+// [MembershipReader].
+//
+// Both methods are read-only. Cross-request consistency is not
+// guaranteed (and is not load-bearing — see the TKT-SVXL "Trust
+// boundary" section).
 //
 // TKT-SVXL note: an earlier iteration of this interface returned a
 // `[]string` slice with no error. The architect review flagged that
@@ -31,7 +35,7 @@ import (
 // (members disappearing = grants disappearing). The current signature
 // adds an explicit error return; consumers propagate or abort.
 //
-// Production wiring uses [StoreGraph] (a store.Store adapter). Tests
+// Production wiring uses aclstore.Graph (a store adapter). Tests
 // that need a real graph use the same adapter over a memstore; tests
 // that only exercise the legacy-Subject AuthorizeWrite path can use
 // [NullGraph] — it answers "no edges" for every probe.
@@ -51,6 +55,14 @@ type Graph interface {
 	OutgoingRelations(ctx context.Context, from, relType string) ([]string, error)
 }
 
+// PrincipalLookup resolves a raw principal string to entity ids by a
+// natural-key property (`principal_property` on `user_entity_type`).
+// Returned ids are in store order; the caller treats more than one match
+// as an ambiguous key. The wiring site supplies aclstore.PrincipalLookup.
+type PrincipalLookup interface {
+	LookupEntityByProperty(ctx context.Context, entityType, property, value string) ([]string, error)
+}
+
 // NullGraph implements [Graph] with no edges. Intended for tests that
 // construct a [*Declarative] but don't exercise group expansion,
 // containment, or local-role probes — typically tests of the legacy
@@ -58,7 +70,7 @@ type Graph interface {
 // shape instead of the [Subject] sum.
 //
 // Production wiring never uses NullGraph; it always supplies a real
-// store-backed [StoreGraph].
+// store-backed aclstore.Graph.
 type NullGraph struct{}
 
 // HasEdge always returns false.

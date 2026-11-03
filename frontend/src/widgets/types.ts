@@ -64,8 +64,11 @@ export interface WidgetProps<T = unknown> {
   // when none. The file widget renders download links / previews from it.
   // Ignored by non-file widgets.
   attachments?: AttachmentInfo[]
-  // The property's attachment cap (metamodel `max`, default 1). Drives the
-  // file widget's mode: replace at 1, add-up-to-max above.
+  // The property's metamodel `max`. Only the file widget reads it, as the
+  // attachment cap (default 1): replace at 1, add-up-to-max above. On an
+  // integer `max` is the highest allowed value instead, which NumberWidget
+  // reads from `propertyDef` (TKT-BRAM1A); callers pass this prop for every
+  // type, so a non-file widget must not read it.
   max?: number
   // Owning entity type. Two consumers: the file widget builds the
   // upload/delete URL from it, and the enum widgets pass it as the
@@ -107,6 +110,14 @@ export type WidgetHintKind =
   | 'integer'
   | 'rrule'
 
+// DenseHintKind adds the kinds only a dense, read-only surface may route to.
+// They resolve to display-only components, so they are kept out of
+// WidgetHintKind, which edit-capable callers (SectionEditForm) also resolve.
+//
+// 'file': a file value as names and download links, never FileWidget's
+// <img> previews (one request per image per cell).
+export type DenseHintKind = WidgetHintKind | 'file'
+
 export interface WidgetRoutingHint {
   kind: WidgetHintKind
   // The field's wire-level property binding -- forwarded to widgets as
@@ -131,4 +142,7 @@ export interface WidgetRegistry {
   // schema entry. Hint is explicit; no schema lookup is involved
   // (RR-UD2B / RR-UD2A).
   resolveFromHint(hint: WidgetRoutingHint): Component
+  // Dense-surface resolution (list/table cells, card fields). Adds the
+  // display-only kinds of DenseHintKind on top of resolveFromHint.
+  resolveDense(hint: { kind: DenseHintKind; propertyName: string }): Component
 }

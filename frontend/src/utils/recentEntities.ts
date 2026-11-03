@@ -10,7 +10,7 @@
  * person looked at is not something to share with the other users of a
  * project.
  */
-import { isValidEntityRefId } from '@/components/forms/milkdown/entityRefId'
+import { isValidEntityRefId } from './entityRefId'
 
 export interface RecentEntity {
   id: string

@@ -72,10 +72,26 @@ func (h hideProps) HiddenProperties(context.Context, *entity.Entity) map[string]
 	return out
 }
 
+// SearchFieldScope implements [visibility.FieldScoper]: the named
+// properties are gated with no grant.
+func (h hideProps) SearchFieldScope(context.Context, string) (*search.FieldScope, error) {
+	if len(h) == 0 {
+		return nil, nil //nolint:nilnil // nothing hidden
+	}
+	return &search.FieldScope{Gated: slices.Clone(h)}, nil
+}
+
+// failingFields fails every field-scope compile.
+type failingFields struct{ err error }
+
+func (f failingFields) SearchFieldScope(context.Context, string) (*search.FieldScope, error) {
+	return nil, f.err
+}
+
 var allowAll = acl.ReadQueryResult{AllowAll: true}
 
 // newLinearVisible seeds a memstore with a linear index and returns the
-// generic FieldVisibleSearcher over it.
+// generic VisibleSearcher over it.
 func newLinearVisible(t *testing.T, ents ...*entity.Entity) search.VisibleSearcher {
 	t.Helper()
 	ls := search.NewLinearSearch()
@@ -193,24 +209,23 @@ func TestSearcher_Gating(t *testing.T) {
 	}
 }
 
-// stubSearcher returns canned hits and records the query it was given.
+// stubSearcher returns canned hits and records the query and scope it was
+// given.
 type stubSearcher struct {
-	hits []search.Hit
-	err  error
-	got  *search.Query
+	hits     []search.Hit
+	err      error
+	got      *search.Query
+	gotScope *map[string]search.TypeScope
 }
 
 func (s stubSearcher) SearchVisible(
-	ctx context.Context, q search.Query, scope map[string]search.TypeScope,
-) iter.Seq2[search.Hit, error] {
-	return s.SearchVisibleFields(ctx, q, scope, nil)
-}
-
-func (s stubSearcher) SearchVisibleFields(
-	_ context.Context, q search.Query, _ map[string]search.TypeScope, _ search.HiddenFieldsFunc,
+	_ context.Context, q search.Query, scope map[string]search.TypeScope,
 ) iter.Seq2[search.Hit, error] {
 	if s.got != nil {
 		*s.got = q
+	}
+	if s.gotScope != nil {
+		*s.gotScope = scope
 	}
 	return func(yield func(search.Hit, error) bool) {
 		if s.err != nil {
@@ -302,16 +317,6 @@ func TestSearcher_FailsClosed(t *testing.T) {
 	}
 }
 
-// entityOnlySearcher is a VisibleSearcher that cannot filter hidden-field
-// matches.
-type entityOnlySearcher struct{}
-
-func (entityOnlySearcher) SearchVisible(
-	context.Context, search.Query, map[string]search.TypeScope,
-) iter.Seq2[search.Hit, error] {
-	return func(func(search.Hit, error) bool) {}
-}
-
 func TestNewSearcher_Rejects(t *testing.T) {
 	vs := stubSearcher{}
 	scoper := fakeScoper{}
@@ -319,16 +324,15 @@ func TestNewSearcher_Rejects(t *testing.T) {
 		name   string
 		vs     search.VisibleSearcher
 		scoper visibility.SearchScoper
-		redact visibility.FieldRedactor
+		fields visibility.FieldScoper
 	}{
 		{"nil searcher", nil, scoper, hideProps(nil)},
 		{"nil scoper", vs, nil, hideProps(nil)},
-		{"nil redactor", vs, scoper, nil},
-		{"searcher without field filtering", entityOnlySearcher{}, scoper, hideProps(nil)},
+		{"nil field scoper", vs, scoper, nil},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			if _, err := visibility.NewSearcher(tc.vs, tc.scoper, tc.redact, nil); err == nil {
+			if _, err := visibility.NewSearcher(tc.vs, tc.scoper, tc.fields, nil); err == nil {
 				t.Error("NewSearcher accepted it")
 			}
 		})
@@ -351,6 +355,99 @@ func TestSearcher_RefusesFiltersAndSort(t *testing.T) {
 		hits, err := collect(t, s.Search(context.Background(), q))
 		if !errors.Is(err, search.ErrScope) || len(hits) != 0 {
 			t.Errorf("%s: hits=%v err=%v, want a refusal", name, ids(hits), err)
+		}
+	}
+}
+
+// TestSearchScoped_FieldScopes pins how the shared gated path hands the field
+// policy to the backend: every named type gets its scope, a wildcard entry
+// (the no-policy shape) gets none but each known type under it gets its own
+// entry with the wildcard's verdict, and a compile failure stops the search
+// before the backend runs.
+func TestSearchScoped_FieldScopes(t *testing.T) {
+	q := search.Query{Text: "x", World: store.TrivialScope()}
+	gate := fakeScoper{reads: map[string]acl.ReadQueryResult{"ticket": allowAll}}
+
+	var got map[string]search.TypeScope
+	stub := stubSearcher{hits: []search.Hit{{ID: "TKT-1", Type: "ticket"}}, gotScope: &got}
+	scope := map[string]search.TypeScope{"ticket": {AllowAll: true}, search.WildcardType: {AllowAll: true}}
+	_, err := collect(t, visibility.SearchScoped(context.Background(), stub, gate, hideProps{"secret"}, q, scope,
+		[]string{"ticket", "memo"}))
+	if err != nil {
+		t.Fatalf("SearchScoped: %v", err)
+	}
+	if fs := got["ticket"].Fields; fs == nil || !slices.Equal(fs.Gated, []string{"secret"}) {
+		t.Errorf("ticket field scope = %+v, want secret gated", fs)
+	}
+	if got[search.WildcardType].Fields != nil {
+		t.Error("the wildcard entry carries a field scope; ValidateScope refuses that")
+	}
+	if scope["ticket"].Fields != nil {
+		t.Error("SearchScoped mutated the caller's scope map")
+	}
+	if memo := got["memo"]; !memo.AllowAll || memo.Fields == nil || !slices.Equal(memo.Fields.Gated, []string{"secret"}) {
+		t.Errorf("memo entry under the wildcard = %+v, want the wildcard verdict with secret gated", memo)
+	}
+	if _, ok := scope["memo"]; ok {
+		t.Error("SearchScoped added an entry to the caller's scope map")
+	}
+
+	boom := errors.New("boom")
+	failing := stubSearcher{hits: []search.Hit{{ID: "TKT-1", Type: "ticket"}}, gotScope: &got}
+	got = nil
+	hits, err := collect(t, visibility.SearchScoped(context.Background(), failing, gate, failingFields{boom}, q,
+		map[string]search.TypeScope{"ticket": {AllowAll: true}}, nil))
+	served := got != nil
+	if !errors.Is(err, boom) || !errors.Is(err, search.ErrScope) || len(hits) != 0 || served {
+		t.Errorf("hits=%v err=%v served=%v, want ErrScope before the backend runs", ids(hits), err, served)
+	}
+}
+
+// TestSearchScoped_KeepsCallerFieldScope pins that a field scope the caller
+// set is never widened: kept when the policy hides nothing for the type, and
+// refused when the policy has a scope of its own.
+func TestSearchScoped_KeepsCallerFieldScope(t *testing.T) {
+	q := search.Query{Text: "x", World: store.TrivialScope()}
+	gate := fakeScoper{reads: map[string]acl.ReadQueryResult{"ticket": allowAll}}
+	callerScope := &search.FieldScope{Gated: []string{"code"}}
+	scope := map[string]search.TypeScope{"ticket": {AllowAll: true, Fields: callerScope}}
+
+	var got map[string]search.TypeScope
+	stub := stubSearcher{hits: []search.Hit{{ID: "TKT-1", Type: "ticket"}}, gotScope: &got}
+	if _, err := collect(t, visibility.SearchScoped(context.Background(), stub, gate, hideProps{}, q, scope,
+		[]string{"ticket"})); err != nil {
+		t.Fatalf("SearchScoped: %v", err)
+	}
+	if got["ticket"].Fields != callerScope {
+		t.Errorf("ticket field scope = %+v, want the caller's scope kept", got["ticket"].Fields)
+	}
+
+	got = nil
+	_, err := collect(t, visibility.SearchScoped(context.Background(), stub, gate, hideProps{"secret"}, q, scope,
+		[]string{"ticket"}))
+	if !errors.Is(err, search.ErrScope) || got != nil {
+		t.Errorf("err=%v served=%v, want ErrScope before the backend runs", err, got != nil)
+	}
+}
+
+// TestSearcher_HiddenFieldMatchDroppedEndToEnd runs the policy searcher over
+// the generic backend: the field scope reaches the backend and a match on a
+// hidden property only is dropped, while a title match on the same entity
+// survives.
+func TestSearcher_HiddenFieldMatchDroppedEndToEnd(t *testing.T) {
+	vs := newLinearVisible(t, ent("PERS-1", "person", map[string]any{"title": "Alice", "salary": "zebra99"}))
+	s, err := visibility.NewSearcher(vs, fakeScoper{reads: map[string]acl.ReadQueryResult{"person": allowAll}},
+		hideProps{"salary"}, []string{"person"})
+	if err != nil {
+		t.Fatalf("NewSearcher: %v", err)
+	}
+	for text, want := range map[string][]string{"zebra99": {}, "alice": {"PERS-1"}} {
+		hits, err := collect(t, s.Search(context.Background(), search.Query{Text: text, World: store.TrivialScope()}))
+		if err != nil {
+			t.Fatalf("%s: %v", text, err)
+		}
+		if got := ids(hits); !slices.Equal(got, want) {
+			t.Errorf("%s: hits = %v, want %v", text, got, want)
 		}
 	}
 }

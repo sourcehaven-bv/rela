@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"path"
 	"strings"
 
 	"github.com/Sourcehaven-BV/rela/internal/storage"
@@ -127,6 +128,7 @@ func (v *ValidatedKV) Get(ctx context.Context, key string) ([]byte, error) {
 	return v.inner.Get(ctx, key)
 }
 
+//archplan:sink=write reason="project-wide UI state (settings, palette, logo)"
 func (v *ValidatedKV) Put(ctx context.Context, key string, data []byte) error {
 	if err := ValidateKey(key); err != nil {
 		return err
@@ -134,6 +136,7 @@ func (v *ValidatedKV) Put(ctx context.Context, key string, data []byte) error {
 	return v.inner.Put(ctx, key, data)
 }
 
+//archplan:sink=write reason="project-wide UI state (settings, palette, logo)"
 func (v *ValidatedKV) Delete(ctx context.Context, key string) error {
 	if err := ValidateKey(key); err != nil {
 		return err
@@ -160,8 +163,27 @@ func (s *FSKV) Get(_ context.Context, key string) ([]byte, error) {
 	return s.fs.ReadFile(key)
 }
 
+// privateFile and privateDir are the modes [FSKV.Put] creates with.
+const (
+	privateFile = 0o600
+	privateDir  = 0o700
+)
+
+// Put writes the value readable by the owner only (0600): state holds
+// per-user data such as leases, piles and settings. A key with a directory
+// part creates that directory 0700 when it is missing. The root directory is
+// the caller's, so its mode is left alone.
 func (s *FSKV) Put(_ context.Context, key string, data []byte) error {
-	return s.fs.WriteFile(key, data, 0o644)
+	// Checked before the directory is made, so a refused key creates nothing.
+	if err := ValidateKey(key); err != nil {
+		return err
+	}
+	if dir := path.Dir(key); dir != "." {
+		if err := s.fs.MkdirAll(dir, privateDir); err != nil {
+			return err
+		}
+	}
+	return s.fs.WriteFile(key, data, privateFile)
 }
 
 func (s *FSKV) Delete(_ context.Context, key string) error {

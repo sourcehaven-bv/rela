@@ -63,7 +63,7 @@ const props = withDefaults(
     min: 180,
     max: 480,
     side: 'start',
-    label: 'Resize panel',
+    label: undefined,
     step: 16,
     pageStep: 64,
     disabled: false,
@@ -187,7 +187,7 @@ const valueText = computed(() => messages.resizerValue({ pixels: props.modelValu
     :class="{ 'rl-resizer--dragging': dragging, 'rl-resizer--disabled': disabled }"
     role="separator"
     :tabindex="disabled ? undefined : 0"
-    :aria-label="label"
+    :aria-label="label ?? messages.chromeText({ key: 'resizePanel' })"
     aria-orientation="vertical"
     :aria-valuenow="modelValue"
     :aria-valuemin="min"

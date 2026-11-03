@@ -1,5 +1,8 @@
 <script setup lang="ts">
 import type { Task } from '../../types'
+import { useMessages } from '../../composables/useMessages'
+
+const messages = useMessages()
 
 withDefaults(defineProps<{ task: Task; highlight?: boolean }>(), { highlight: false })
 const emit = defineEmits<{ click: [task: Task] }>()
@@ -12,10 +15,10 @@ const emit = defineEmits<{ click: [task: Task] }>()
     </button>
     <span class="rl-subtask-row__meta" :class="{ 'rl-subtask-row__meta--highlight': highlight }">
       <span v-if="task.dueDate">
-        <span class="rl-visually-hidden">Due </span>{{ task.dueDate }}
+        <span class="rl-visually-hidden">{{ messages.chromeText({ key: 'due' }) }} </span>{{ task.dueDate }}
       </span>
       <span v-if="task.assignee">
-        <span class="rl-visually-hidden">Assigned to </span>{{ task.assignee }}
+        <span class="rl-visually-hidden">{{ messages.chromeText({ key: 'assignedTo' }) }} </span>{{ task.assignee }}
       </span>
     </span>
   </div>

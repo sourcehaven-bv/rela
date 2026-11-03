@@ -1,0 +1,9 @@
+---
+id: RR-AEMTCB
+type: review-response
+title: Second pre-gate cut (500 rows) lets uncleared hidden rows hide other posters' unread mentions
+finding: 'internal/realtime/inbox.go:684 asks ListAddressed for channels.MaxAddressedWindow (500) rows, and internal/channels/sqlchannels/addressed.go:31 (LIMIT ?) plus the file tier cut apply that limit to unread rows BEFORE the gate in inboxRun.mentions (inbox.go:699). docs/acl-security.md and AC 11 name only the 2000-row scan as the accepted pre-gate cut. Rows in a channel the target cannot read are permanent: MarkRead goes through s.open (read gate, internal/realtime/reads.go:51-75), so the target can never move a marker there, and Evict (internal/channels/addressed.go:230) never treats those rows as read. Scenario: poster A can read channels C1..C3 on an anchor the target cannot read and posts about 500 messages that mention the target (200 per channel, within the per-target cap and the post rate). Every older unread mention of the target from other posters, in channels the target can read, drops out of the window, mention_count falls to the visible remainder, and the target cannot clear A''s rows to get them back. Only newer mentions are still shown. Nothing is erased, but the "hidden rows change nothing" property fails at 500 hidden unread rows, not 2000, and the target cannot recover. Fix: document the 500 cut beside the 2000 scan in docs/acl-security.md and docs/realtime.md, and either gate before cutting to 500 (take up to MaxAddressedScan rows, gate them, then cut to MaxInboxMentions and count) or make rows on channels the target cannot read evictable first in Evict, so a hidden flood cannot pin the window.'
+severity: minor
+resolution: The 500-row window is removed; the inbox gates every unread row of the 2000-row scan before counting or cutting. TestInbox_MentionsGateBeforeCut; GUIDE-realtime updated.
+status: addressed
+---

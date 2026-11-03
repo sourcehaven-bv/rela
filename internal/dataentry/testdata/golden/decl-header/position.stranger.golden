@@ -1,0 +1,14 @@
+request: GET /api/v1/_position?id=TKT-3&scope=%7B%22source%22%3A%22list%22%2C%22type%22%3A%22ticket%22%7D
+identity: header stranger@example.test
+status: 404
+reads: GraphQueryHeaders=2 ListRelations=1
+breadth: ListRelations=0/1
+bodies: GraphQuery=0/2
+versions: 
+body:
+{
+  "type": "https://rela.dev/errors/not_in_scope",
+  "title": "Entity not found in scope",
+  "status": 404,
+  "instance": "/api/v1/_position"
+}

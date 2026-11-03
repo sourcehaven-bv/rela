@@ -53,8 +53,8 @@ const props = withDefaults(
     labelHidden: false,
     disabled: false,
     withTime: false,
-    startLabel: 'From',
-    endLabel: 'To',
+    startLabel: undefined,
+    endLabel: undefined,
   },
 )
 
@@ -101,7 +101,9 @@ function update(part: keyof DateRange, value: string) {
         :aria-label="label"
       >
         <div class="rl-date-range__end">
-          <label class="rl-visually-hidden" :for="`${group}-start`">{{ startLabel }}</label>
+          <label class="rl-visually-hidden" :for="`${group}-start`">{{
+            startLabel ?? messages.chromeText({ key: 'from' })
+          }}</label>
           <input
             :id="`${group}-start`"
             class="rl-control rl-date-range__input"
@@ -125,7 +127,9 @@ function update(part: keyof DateRange, value: string) {
         <span class="rl-date-range__separator" aria-hidden="true">–</span>
 
         <div class="rl-date-range__end">
-          <label class="rl-visually-hidden" :for="`${group}-end`">{{ endLabel }}</label>
+          <label class="rl-visually-hidden" :for="`${group}-end`">{{
+            endLabel ?? messages.chromeText({ key: 'to' })
+          }}</label>
           <input
             :id="`${group}-end`"
             class="rl-control rl-date-range__input"

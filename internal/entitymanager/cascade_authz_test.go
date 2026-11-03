@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
+	"github.com/Sourcehaven-BV/rela/internal/aclstore"
 	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
@@ -42,11 +43,17 @@ assignments:
 
 func cascadeManager(t *testing.T, st store.Store) *entitymanager.Manager {
 	t.Helper()
+	return cascadeManagerWith(t, st, entitymanager.NopAnchorGuard{})
+}
+
+// cascadeManagerWith is cascadeManager with guard as the anchor guard.
+func cascadeManagerWith(t *testing.T, st store.Store, guard entitymanager.AnchorGuard) *entitymanager.Manager {
+	t.Helper()
 	p, err := acl.LoadPolicyBytes([]byte(cascadePolicy))
 	if err != nil {
 		t.Fatalf("load policy: %v", err)
 	}
-	d, err := acl.NewDeclarative(p, acl.NewStoreGraph(st), st)
+	d, err := acl.NewDeclarative(p, aclstore.MustNewGraph(st), st)
 	if err != nil {
 		t.Fatalf("NewDeclarative: %v", err)
 	}
@@ -62,6 +69,7 @@ func cascadeManager(t *testing.T, st store.Store) *entitymanager.Manager {
 		// what New requires of a policy-backed Deps (#1437).
 		CopyReadGate:   entitymanager.AllowAllCopyReadGate{},
 		CopyVisibility: allowAllCopyVisibility(t, st),
+		AnchorGuard:    guard,
 	})
 	if err != nil {
 		t.Fatalf("entitymanager.New: %v", err)
@@ -97,11 +105,21 @@ func seedCascadeGraph(t *testing.T, st store.Store) {
 // principal holds no delete grant on.
 func TestCascadeDelete_DeniedWhenRelationNotDeletable(t *testing.T) {
 	t.Parallel()
+	for _, g := range deleteGuards {
+		t.Run(g.name, func(t *testing.T) {
+			t.Parallel()
+			testCascadeDeniedWhenRelationNotDeletable(t, g.guard())
+		})
+	}
+}
+
+func testCascadeDeniedWhenRelationNotDeletable(t *testing.T, guard entitymanager.AnchorGuard) {
+	t.Helper()
 	st := memstore.New()
 	seedCascadeGraph(t, st)
-	mgr := cascadeManager(t, st)
+	mgr := cascadeManagerWith(t, st, guard)
 
-	_, err := mgr.DeleteEntity(asUser("alice"), "REQ-1", true)
+	_, err := mgr.DeleteEntity(entitymanager.BindAs(asUser("alice"), t, mgr), "REQ-1", true)
 	if err == nil {
 		t.Fatal("cascade succeeded; alice holds delete on requirement but not on " +
 			"decision, the source of the incident addresses edge")
@@ -129,20 +147,48 @@ func TestCascadeDelete_DeniedWhenRelationNotDeletable(t *testing.T) {
 // place this held, a regression would ship on the default build.
 func TestCascadeDelete_DeniedLeavesEverythingIntact(t *testing.T) {
 	t.Parallel()
+	for _, g := range deleteGuards {
+		t.Run(g.name, func(t *testing.T) {
+			t.Parallel()
+			st := memstore.New()
+			seedCascadeGraph(t, st)
+			mgr := cascadeManagerWith(t, st, g.guard())
+
+			if _, err := mgr.DeleteEntity(entitymanager.BindAs(asUser("alice"), t, mgr), "REQ-1", true); err == nil {
+				t.Fatal("expected denial")
+			}
+
+			ctx := context.Background()
+			if _, err := st.GetEntity(ctx, entity.Ref{ID: "REQ-1"}); err != nil {
+				t.Errorf("REQ-1 was deleted despite the denial: %v", err)
+			}
+			if _, err := st.GetRelation(ctx, entity.RelationKey{From: "DEC-1", Type: "addresses", To: "REQ-1"}); err != nil {
+				t.Errorf("the addresses edge was deleted despite the denial: %v", err)
+			}
+		})
+	}
+}
+
+// A caller the cascade denies never learns of a blocking channel: the
+// guard's pre-pass gives the transaction's refusal first.
+func TestCascadeDelete_DenialComesBeforeTheBlock(t *testing.T) {
+	t.Parallel()
 	st := memstore.New()
 	seedCascadeGraph(t, st)
-	mgr := cascadeManager(t, st)
+	g := &fakeGuard{blockWhole: true}
+	mgr := cascadeManagerWith(t, st, g)
 
-	if _, err := mgr.DeleteEntity(asUser("alice"), "REQ-1", true); err == nil {
-		t.Fatal("expected denial")
+	_, err := mgr.DeleteEntity(entitymanager.BindAs(asUser("alice"), t, mgr), "REQ-1", true)
+	var forbidden *acl.ForbiddenError
+	if !errors.As(err, &forbidden) {
+		t.Fatalf("err = %v, want *acl.ForbiddenError", err)
 	}
-
-	ctx := context.Background()
-	if _, err := st.GetEntity(ctx, entity.Ref{ID: "REQ-1"}); err != nil {
-		t.Errorf("REQ-1 was deleted despite the denial: %v", err)
+	var blocked *entitymanager.AnchorBlockedError
+	if errors.As(err, &blocked) {
+		t.Errorf("a denied caller saw the block: %v", err)
 	}
-	if _, err := st.GetRelation(ctx, entity.RelationKey{From: "DEC-1", Type: "addresses", To: "REQ-1"}); err != nil {
-		t.Errorf("the addresses edge was deleted despite the denial: %v", err)
+	if len(g.deletes) != 0 {
+		t.Errorf("the guard ran for a denied delete: %v", g.deletes)
 	}
 }
 
@@ -150,19 +196,24 @@ func TestCascadeDelete_DeniedLeavesEverythingIntact(t *testing.T) {
 // the gate must not break the legitimate case.
 func TestCascadeDelete_AllowedWhenEveryRelationIsDeletable(t *testing.T) {
 	t.Parallel()
-	st := memstore.New()
-	seedCascadeGraph(t, st)
-	mgr := cascadeManager(t, st)
+	for _, g := range deleteGuards {
+		t.Run(g.name, func(t *testing.T) {
+			t.Parallel()
+			st := memstore.New()
+			seedCascadeGraph(t, st)
+			mgr := cascadeManagerWith(t, st, g.guard())
 
-	res, err := mgr.DeleteEntity(asUser("root"), "REQ-1", true)
-	if err != nil {
-		t.Fatalf("root holds delete on everything: %v", err)
-	}
-	if len(res.DeletedRelations) != 1 {
-		t.Errorf("DeletedRelations = %d, want 1", len(res.DeletedRelations))
-	}
-	if _, gErr := st.GetEntity(context.Background(), entity.Ref{ID: "REQ-1"}); gErr == nil {
-		t.Error("REQ-1 still exists after an allowed cascade")
+			res, err := mgr.DeleteEntity(entitymanager.BindAs(asUser("root"), t, mgr), "REQ-1", true)
+			if err != nil {
+				t.Fatalf("root holds delete on everything: %v", err)
+			}
+			if len(res.DeletedRelations) != 1 {
+				t.Errorf("DeletedRelations = %d, want 1", len(res.DeletedRelations))
+			}
+			if _, gErr := st.GetEntity(context.Background(), entity.Ref{ID: "REQ-1"}); gErr == nil {
+				t.Error("REQ-1 still exists after an allowed cascade")
+			}
+		})
 	}
 }
 
@@ -171,14 +222,19 @@ func TestCascadeDelete_AllowedWhenEveryRelationIsDeletable(t *testing.T) {
 // not suddenly require relation grants.
 func TestCascadeDelete_NoRelationsNeedsNoRelationGrant(t *testing.T) {
 	t.Parallel()
-	st := memstore.New()
-	if err := st.CreateEntity(context.Background(), entity.New("REQ-9", "requirement")); err != nil {
-		t.Fatalf("seed: %v", err)
-	}
-	mgr := cascadeManager(t, st)
+	for _, g := range deleteGuards {
+		t.Run(g.name, func(t *testing.T) {
+			t.Parallel()
+			st := memstore.New()
+			if err := st.CreateEntity(context.Background(), entity.New("REQ-9", "requirement")); err != nil {
+				t.Fatalf("seed: %v", err)
+			}
+			mgr := cascadeManagerWith(t, st, g.guard())
 
-	if _, err := mgr.DeleteEntity(asUser("alice"), "REQ-9", true); err != nil {
-		t.Fatalf("alice holds delete on requirement and there are no edges: %v", err)
+			if _, err := mgr.DeleteEntity(entitymanager.BindAs(asUser("alice"), t, mgr), "REQ-9", true); err != nil {
+				t.Fatalf("alice holds delete on requirement and there are no edges: %v", err)
+			}
+		})
 	}
 }
 
@@ -276,7 +332,7 @@ func TestCascadeDelete_ConcurrentWriterCannotEnterTheWindow(t *testing.T) {
 	}()
 
 	// alice may delete requirement and there are no edges yet, so this succeeds.
-	if _, err := mgr.DeleteEntity(asUser("alice"), "REQ-1", true); err != nil {
+	if _, err := mgr.DeleteEntity(entitymanager.BindAs(asUser("alice"), t, mgr), "REQ-1", true); err != nil {
 		t.Fatalf("delete: %v", err)
 	}
 

@@ -100,7 +100,7 @@ func traversalScopePolicy(t *testing.T, app *App) *acl.Declarative {
 		RoleRelations: map[string]acl.RoleRelationDef{"editor-of": {Confers: "editor"}},
 		Assignments:   map[string]string{"alice": "all", "bob": "features", "carol": "features"},
 	}, app.store)
-	app.acl = d
+	setTestACL(t, app, d)
 	return d
 }
 

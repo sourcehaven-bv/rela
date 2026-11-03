@@ -4,12 +4,16 @@ import (
 	"context"
 	stderrors "errors"
 	"fmt"
+	"io/fs"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 
+	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/analysis"
 	"github.com/Sourcehaven-BV/rela/internal/appbuild"
+	"github.com/Sourcehaven-BV/rela/internal/config"
 	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
 	"github.com/Sourcehaven-BV/rela/internal/errors"
 	"github.com/Sourcehaven-BV/rela/internal/lua"
@@ -17,6 +21,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/projectsetup"
 	"github.com/Sourcehaven-BV/rela/internal/schema"
 	"github.com/Sourcehaven-BV/rela/internal/script"
+	"github.com/Sourcehaven-BV/rela/internal/storage"
 )
 
 // metamodelAccessor is the narrow consumer-side interface validate
@@ -66,7 +71,7 @@ func (c *ValidateCmd) Run(ctx context.Context) error {
 		startDir = os.Getenv("RELA_PROJECT")
 	}
 
-	result, err := projectsetup.Validate(startDir)
+	result, err := projectsetup.Validate(ctx, startDir)
 	if err != nil {
 		return err
 	}
@@ -82,12 +87,13 @@ func (c *ValidateCmd) Run(ctx context.Context) error {
 		fmt.Println("  ✓ schema is valid")
 	}
 	hasErrors = reportDataEntryValidation(result, hasErrors)
+	hasErrors = reportRealtimeValidation(ctx, result, hasErrors)
 	for _, item := range []struct {
 		name string
 		err  error
 	}{
 		{"mail templates", result.MailTemplatesError}, {"schedules", result.SchedulesError},
-		{"connections", result.ConnectionsError},
+		{"connections", result.ConnectionsError}, {"subscriptions", result.SubscriptionsError},
 	} {
 		if item.err != nil {
 			fmt.Printf("  ✗ %s: %v\n", item.name, item.err)
@@ -104,7 +110,12 @@ func (c *ValidateCmd) Run(ctx context.Context) error {
 			return fmt.Errorf("validate scheduled mail recipients: %w", discoverErr)
 		}
 		defer mailSvc.Close()
-		if validateErr := mailSvc.ValidateScheduledMailRecipients(ctx); validateErr != nil {
+		bind, bindErr := appbuild.IdentityBinder(mailSvc)
+		if bindErr != nil {
+			return bindErr
+		}
+		mailCtx := appbuild.BindOrWarn(ctx, bind)
+		if validateErr := mailSvc.ValidateScheduledMailRecipients(mailCtx); validateErr != nil {
 			fmt.Printf("  ✗ scheduled mail recipients: %v\n", validateErr)
 			hasErrors = true
 		} else if !quiet {
@@ -133,6 +144,11 @@ func (c *ValidateCmd) Run(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("failed to initialize project services: %w", err)
 	}
+	bind, err := appbuild.IdentityBinder(checkSvc)
+	if err != nil {
+		return err
+	}
+	ctx = appbuild.BindOrWarn(ctx, bind)
 	checkAnalysis, err := analysis.New(analysis.Deps{
 		Store:       checkSvc.Store(),
 		Meta:        checkSvc.Meta(),
@@ -549,6 +565,73 @@ func parseValidationFilter(filterStr string, meta metamodelAccessor) (analysis.V
 		return analysis.ValidationFilter{}, fmt.Errorf("unknown validation rule: %s", filterStr)
 	}
 	return analysis.ValidationFilter{RuleName: filterStr}, nil
+}
+
+// realtimeFile is the realtime configuration's file name.
+const realtimeFile = "realtime.yaml"
+
+// reportRealtimeValidation loads realtime.yaml whenever the project has
+// one, compiled against the schema the earlier check loaded and acl.yaml,
+// as boot and Configure's write check do: that includes the session
+// run_as grant check. It then checks data-entry.yaml's `channels:`
+// section, kanban `busy:` card fields and list `busy:` columns against it,
+// when one exists and data-entry.yaml is valid. It builds no store or
+// index. A realtime.yaml or acl.yaml that does not load is a ✗ line, so
+// the checks after this one still run. It needs a schema that loaded. It
+// returns hasErrors, set when a check failed.
+func reportRealtimeValidation(ctx context.Context, result *projectsetup.ValidateResult, hasErrors bool) bool {
+	if result.Metamodel == nil {
+		return hasErrors
+	}
+	root := result.ProjectRoot
+	var channelsData []byte
+	if result.DataEntryValid {
+		// #nosec G703 -- path is <discovered project root>/data-entry.yaml,
+		// which the data-entry check above has already read.
+		data, err := os.ReadFile(filepath.Join(root, dataentryconfig.ConfigFile))
+		// An unreadable file was already reported by the data-entry check.
+		if err == nil && projectsetup.HasRealtimePresentation(data) {
+			channelsData = data
+		}
+	}
+	// #nosec G703 -- path is <discovered project root>/realtime.yaml.
+	if _, err := os.Stat(filepath.Join(root, realtimeFile)); err != nil && channelsData == nil {
+		return hasErrors
+	}
+	if !quiet {
+		fmt.Printf("Validating %s...\n", realtimeFile)
+	}
+	policy, err := acl.LoadPolicy(filepath.Join(root, "acl.yaml"))
+	if err != nil && !stderrors.Is(err, fs.ErrNotExist) {
+		fmt.Printf("  ✗ %s: acl.yaml: %v\n", realtimeFile, err)
+		return true
+	}
+	loader := config.NewFSLoader(storage.NewSafeFS(storage.NewOsFS()), root)
+	rt, err := appbuild.LoadRealtime(ctx, loader, result.Metamodel, policy)
+	if err != nil {
+		fmt.Printf("  ✗ %v\n", err)
+		return true
+	}
+	for _, w := range rt.Warnings() {
+		fmt.Printf("  ⚠ %s: %s: %s\n", realtimeFile, w.Key, w.Reason)
+	}
+	if rt != nil && !quiet {
+		fmt.Printf("  ✓ %s is valid\n", realtimeFile)
+	}
+	if channelsData == nil {
+		return hasErrors
+	}
+	errs, warnings := projectsetup.CheckChannels(channelsData, appbuild.RealtimeChannelSchema(rt))
+	for _, w := range warnings {
+		fmt.Printf("  ⚠ %s\n", w)
+	}
+	for _, e := range errs {
+		fmt.Printf("  ✗ %s: %s\n", dataentryconfig.ConfigFile, e)
+	}
+	if len(errs) == 0 && !quiet {
+		fmt.Println("  ✓ channels presentation matches realtime.yaml")
+	}
+	return hasErrors || len(errs) > 0
 }
 
 func reportDataEntryValidation(result *projectsetup.ValidateResult, hasErrors bool) bool {

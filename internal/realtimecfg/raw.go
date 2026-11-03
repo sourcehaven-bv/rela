@@ -1,0 +1,370 @@
+package realtimecfg
+
+// The raw* types mirror realtime.yaml key for key. Every value that needs
+// parsing (durations, rates, enums) is read as a string and checked by the
+// validator, so a decode error is only ever a shape mismatch.
+//
+// The key checker walks these types by reflection to name unknown keys, so a
+// field added here is a key the file accepts.
+
+import (
+	"errors"
+
+	"gopkg.in/yaml.v3"
+)
+
+type rawFile struct {
+	Version      int                       `yaml:"version"`
+	Limits       *rawLimits                `yaml:"limits"`
+	ChannelTypes map[string]rawChannelType `yaml:"channel_types"`
+	Triggers     map[string]rawTrigger     `yaml:"triggers"`
+}
+
+type rawLimits struct {
+	PostRate          string `yaml:"post_rate"`
+	SignalRate        string `yaml:"signal_rate"`
+	MessageBytes      *int   `yaml:"message_bytes"`
+	ChannelsPerEntity *int   `yaml:"channels_per_entity"`
+	PageLimit         *int   `yaml:"page_limit"`
+}
+
+type rawChannelType struct {
+	Label             string                    `yaml:"label"`
+	AttachTo          []string                  `yaml:"attach_to"`
+	Anchor            string                    `yaml:"anchor"`
+	Cardinality       string                    `yaml:"cardinality"`
+	Create            *rawCreate                `yaml:"create"`
+	Read              *rawRole                  `yaml:"read"`
+	Roles             map[string]rawRole        `yaml:"roles"`
+	MessageTypes      map[string]rawMessageType `yaml:"message_types"`
+	Lifecycle         *rawLifecycle             `yaml:"lifecycle"`
+	MessageOps        *rawMessageOps            `yaml:"message_ops"`
+	OnEntityDelete    string                    `yaml:"on_entity_delete"`
+	DetachedRetention string                    `yaml:"detached_retention"`
+	Session           *rawSession               `yaml:"session"`
+	Typing            bool                      `yaml:"typing"`
+}
+
+// rawSession is `channel_types.<name>.session`. A Go map loses the order
+// of states, so [Parse] reads it from the YAML node (see mappingKeys).
+type rawSession struct {
+	Label   string                     `yaml:"label"`
+	Initial string                     `yaml:"initial"`
+	States  map[string]rawSessionState `yaml:"states"`
+	// Reminders is `session.reminders`; see [SessionReminder].
+	Reminders map[string]rawReminder `yaml:"reminders"`
+	// OnFinal is `session.on_final`; see [Session.OnFinal].
+	OnFinal string `yaml:"on_final"`
+	// DefaultIn is `session.default_in`: keyed or empty.
+	DefaultIn string `yaml:"default_in"`
+	// RunAs is `session.run_as`; see [Session.RunAs].
+	RunAs *string `yaml:"run_as"`
+}
+
+// rawReminder is one `session.reminders.<name>` entry.
+type rawReminder struct {
+	Label string          `yaml:"label"`
+	In    []string        `yaml:"in"`
+	Every string          `yaml:"every"`
+	First string          `yaml:"first"`
+	Max   *int            `yaml:"max"`
+	Post  *rawTriggerPost `yaml:"post"`
+}
+
+type rawSessionState struct {
+	Label string                     `yaml:"label"`
+	Final bool                       `yaml:"final"`
+	On    map[string]rawBranches     `yaml:"on"`
+	After map[string]rawSessionTimer `yaml:"after"`
+	// Status is `status`; nil when absent, so `status: ""` is refused
+	// rather than read as the default. See [SessionStatus].
+	Status *string `yaml:"status"`
+	// WaitingFor is `waiting_for`; see [SessionState.WaitingFor].
+	WaitingFor []string `yaml:"waiting_for"`
+}
+
+// rawSessionTimer is one `after.<name>` entry of a session state.
+type rawSessionTimer struct {
+	Period  string      `yaml:"period"`
+	Since   string      `yaml:"since"`
+	To      string      `yaml:"to"`
+	Label   string      `yaml:"label"`
+	Outputs []rawOutput `yaml:"outputs"`
+}
+
+// rawBranches is one `on.<message type>` value: a single mapping, which is
+// one entry, or a list of entries tried in file order. list records which
+// form the file used, so problems inside a list entry name its index. A
+// null value is not decoded (yaml.v3 leaves the zero value) and compiles
+// as one empty mapping entry.
+type rawBranches struct {
+	entries []rawTransition
+	list    bool
+}
+
+// UnmarshalYAML decodes a mapping as one entry and a sequence entry by
+// entry. The key checker runs first and names unknown keys and a value of
+// another shape by key path; the error here only stops the decode.
+func (b *rawBranches) UnmarshalYAML(n *yaml.Node) error {
+	switch n.Kind {
+	case yaml.MappingNode:
+		var t rawTransition
+		if err := n.Decode(&t); err != nil {
+			return err
+		}
+		*b = rawBranches{entries: []rawTransition{t}}
+		return nil
+	case yaml.SequenceNode:
+		var ts []rawTransition
+		if err := n.Decode(&ts); err != nil {
+			return err
+		}
+		*b = rawBranches{entries: ts, list: true}
+		return nil
+	default:
+		return errors.New("a transition must be a mapping or a list of mappings")
+	}
+}
+
+type rawTransition struct {
+	To      string      `yaml:"to"`
+	Roles   []string    `yaml:"roles"`
+	By      string      `yaml:"by"`
+	When    string      `yaml:"when"`
+	Outputs []rawOutput `yaml:"outputs"`
+	// Button is `button:`; see [TransitionButton]. A null value decodes
+	// as absent.
+	Button *rawButton `yaml:"button"`
+}
+
+// rawButton is `on.<type>.button`: the label of a preset button and its
+// preset. Without `compose: true` a click posts the preset; with it, a
+// click opens the composer with the preset fixed.
+type rawButton struct {
+	Label string    `yaml:"label"`
+	Props rawPreset `yaml:"props"`
+	// Compose is `compose:`; see [composeOf].
+	Compose rawCompose `yaml:"compose"`
+	// Confirm and Style are the button options; see [ButtonOptions].
+	Confirm rawConfirm `yaml:"confirm"`
+	// Style is nil when absent or null, so `style: ""` is refused rather
+	// than read as absent.
+	Style *string `yaml:"style"`
+}
+
+// rawDecisionButton is `message_types.<type>.decision_button`: the
+// options of every decision button of the type (see [ButtonOptions]).
+type rawDecisionButton struct {
+	Confirm rawConfirm `yaml:"confirm"`
+	Style   *string    `yaml:"style"`
+}
+
+// rawConfirm keeps the YAML node of a button's `confirm:`, which is a
+// boolean or a text, so [optionsOf] can tell a quoted text from an
+// unquoted YAML 1.1 boolean spelling. The key checker refuses a value
+// that is not a single value. The node is nil when the key is absent or
+// null.
+type rawConfirm struct{ node *yaml.Node }
+
+// UnmarshalYAML keeps n, with aliases followed.
+func (c *rawConfirm) UnmarshalYAML(n *yaml.Node) error {
+	c.node = resolveNode(n)
+	return nil
+}
+
+// set reports whether the file gives `confirm:` a value other than null.
+func (c rawConfirm) set() bool { return c.node != nil && c.node.Tag != "!!null" }
+
+// rawCompose keeps the YAML node of a button's `compose:`, so [composeOf]
+// can take only a YAML boolean, as [unreadOf] does. A plain bool field
+// would take `yes` and `"yes"`. The node is nil when the key is absent or
+// null.
+type rawCompose struct{ node *yaml.Node }
+
+// UnmarshalYAML keeps n, with aliases followed.
+func (c *rawCompose) UnmarshalYAML(n *yaml.Node) error {
+	c.node = resolveNode(n)
+	return nil
+}
+
+// rawPreset is `button.props`: one value per message property.
+type rawPreset map[string]rawPresetValue
+
+// rawPresetValue keeps the YAML node of one preset value. The value is
+// read by the declared type of its property, not by the tag yaml.v3
+// guesses, so an unquoted date stays its text (see [presetValue]). The key
+// checker refuses a value that is neither null, a single value nor a list
+// of single values.
+type rawPresetValue struct{ node *yaml.Node }
+
+// UnmarshalYAML keeps n, with aliases followed.
+func (v *rawPresetValue) UnmarshalYAML(n *yaml.Node) error {
+	v.node = resolveNode(n)
+	return nil
+}
+
+// rawOutput is one entry of a transition's `outputs:`.
+type rawOutput struct {
+	Set    *rawSetOutput    `yaml:"set"`
+	Create *rawCreateOutput `yaml:"create"`
+}
+
+type rawSetOutput struct {
+	Face       string         `yaml:"face"`
+	Properties map[string]any `yaml:"properties"`
+}
+
+type rawCreateOutput struct {
+	Type       string         `yaml:"type"`
+	Face       string         `yaml:"face"`
+	Properties map[string]any `yaml:"properties"`
+	Relate     *rawRelate     `yaml:"relate"`
+}
+
+type rawCreate struct {
+	Label string   `yaml:"label"`
+	Roles []string `yaml:"roles"`
+}
+
+type rawRole struct {
+	Label         string `yaml:"label"`
+	From          string `yaml:"from"`
+	Permission    string `yaml:"permission"`
+	PrincipalType string `yaml:"principal_type"`
+	Creator       bool   `yaml:"creator"`
+}
+
+type rawMessageType struct {
+	Label      string                 `yaml:"label"`
+	Persist    string                 `yaml:"persist"`
+	TTL        string                 `yaml:"ttl"`
+	Rate       string                 `yaml:"rate"`
+	Properties map[string]rawProperty `yaml:"properties"`
+	When       string                 `yaml:"when"`
+	Post       []string               `yaml:"post"`
+	PromoteTo  *rawPromote            `yaml:"promote_to"`
+	Actions    map[string]rawAction   `yaml:"actions"`
+	// In is decoded for the key check only: yaml.v3 leaves it nil both for
+	// an absent key and for a null value, so [messageInCheck.withSession]
+	// reads presence from the YAML node.
+	In []string `yaml:"in"`
+	// Choices is `choices:`; see [Choices].
+	Choices *rawChoices `yaml:"choices"`
+	// DecisionButton is `decision_button:`; see [MessageType.DecisionButton].
+	// A null value decodes as absent.
+	DecisionButton *rawDecisionButton `yaml:"decision_button"`
+	// Unread is `unread:`; see [MessageType.NoUnread] and [unreadOf].
+	Unread rawUnread `yaml:"unread"`
+}
+
+// rawUnread keeps the YAML node of a message type's `unread:`, so
+// [unreadOf] can take only a YAML boolean and refuse a quoted or
+// YAML 1.1 spelling, as [confirmOf] does. The key checker refuses a value
+// that is not a single value. The node is nil when the key is absent or
+// null.
+type rawUnread struct{ node *yaml.Node }
+
+// UnmarshalYAML keeps n, with aliases followed.
+func (u *rawUnread) UnmarshalYAML(n *yaml.Node) error {
+	u.node = resolveNode(n)
+	return nil
+}
+
+// set reports whether the file gives `unread:` a value other than null.
+func (u rawUnread) set() bool { return u.node != nil && u.node.Tag != "!!null" }
+
+// rawChoices is `message_types.<mt>.choices`.
+type rawChoices struct {
+	From   string `yaml:"from"`
+	Answer string `yaml:"answer"`
+	Into   string `yaml:"into"`
+	Other  bool   `yaml:"other"`
+}
+
+type rawProperty struct {
+	Label    string   `yaml:"label"`
+	Type     string   `yaml:"type"`
+	Required bool     `yaml:"required"`
+	Max      *int     `yaml:"max"`
+	To       []string `yaml:"to"`
+	Notify   *bool    `yaml:"notify"`
+	List     bool     `yaml:"list"`
+	MaxItems *int     `yaml:"max_items"`
+}
+
+type rawPromote struct {
+	Type   string            `yaml:"type"`
+	Face   string            `yaml:"face"`
+	Map    map[string]string `yaml:"map"`
+	Relate *rawRelate        `yaml:"relate"`
+}
+
+type rawRelate struct {
+	Type string `yaml:"type"`
+}
+
+type rawAction struct {
+	Label      string      `yaml:"label"`
+	Permission string      `yaml:"permission"`
+	Roles      []string    `yaml:"roles"`
+	Denied     string      `yaml:"denied"`
+	PromoteTo  *rawPromote `yaml:"promote_to"`
+}
+
+type rawLifecycle struct {
+	Close   *rawLifecycleOp `yaml:"close"`
+	Reopen  *rawLifecycleOp `yaml:"reopen"`
+	Archive *rawLifecycleOp `yaml:"archive"`
+	Delete  *rawLifecycleOp `yaml:"delete"`
+}
+
+type rawLifecycleOp struct {
+	Label      string   `yaml:"label"`
+	Roles      []string `yaml:"roles"`
+	Permission string   `yaml:"permission"`
+	Condition  string   `yaml:"condition"`
+	Denied     string   `yaml:"denied"`
+	From       string   `yaml:"from"`
+	Auto       *rawAuto `yaml:"auto"`
+	Retention  string   `yaml:"retention"`
+}
+
+type rawAuto struct {
+	When  string `yaml:"when"`
+	After string `yaml:"after"`
+}
+
+type rawMessageOps struct {
+	EditOwn   *rawEditOwn   `yaml:"edit_own"`
+	DeleteOwn *rawDeleteOwn `yaml:"delete_own"`
+	Remove    *rawRemove    `yaml:"remove"`
+}
+
+type rawEditOwn struct {
+	Roles  []string `yaml:"roles"`
+	Within string   `yaml:"within"`
+}
+
+type rawDeleteOwn struct {
+	Roles []string `yaml:"roles"`
+	From  string   `yaml:"from"`
+}
+
+type rawRemove struct {
+	Roles          []string `yaml:"roles"`
+	ReasonRequired bool     `yaml:"reason_required"`
+}
+
+type rawTrigger struct {
+	EntityType string         `yaml:"entity_type"`
+	On         string         `yaml:"on"`
+	When       string         `yaml:"when"`
+	Channel    string         `yaml:"channel"`
+	WhenClosed string         `yaml:"when_closed"`
+	Post       rawTriggerPost `yaml:"post"`
+}
+
+type rawTriggerPost struct {
+	Type  string            `yaml:"type"`
+	Props map[string]string `yaml:"props"`
+}

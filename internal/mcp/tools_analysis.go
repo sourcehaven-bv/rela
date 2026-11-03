@@ -80,7 +80,7 @@ func findingsResult(check string, count int, results any) *mcpgo.CallToolResult 
 func (s *Server) handleAnalyzeOrphans(
 	ctx context.Context, request *mcpgo.CallToolRequest,
 ) (*mcpgo.CallToolResult, error) {
-	snap := s.state.current()
+	snap := snapshotFor(ctx, s)
 	args := newToolRequest(request)
 	entityType := args.GetString("type", "")
 
@@ -124,13 +124,14 @@ func orphanSummaries(
 
 	out := make([]orphanSummary, 0, len(found))
 	for _, o := range found {
-		sum := orphanSummary{ID: o.ID, Type: o.Type, Faces: o.Faces}
+		sum := orphanSummary{ID: o.ID, Type: o.Type, URL: familyURL(ctx, o.Type, o.ID), Faces: o.Faces}
 		// A faced family has no title until its world serves a face
 		// (TKT-7IZHP0); it is reported by id and faces.
 		if h, ok := served[entity.Ref{ID: o.ID}]; ok && h.Served() {
 			e := &entity.Entity{ID: o.ID, Type: h.Header.Type, Face: h.Header.Face, Properties: h.Header.Properties}
 			sum.Title = displayTitle(meta, e)
 			sum.Status = e.Status()
+			sum.URL = entityURL(ctx, e.Type, e.Ref())
 		}
 		out = append(out, sum)
 	}
@@ -149,6 +150,7 @@ type orphanSummary struct {
 	Type   string        `json:"type"`
 	Title  string        `json:"title,omitempty"`
 	Status string        `json:"status,omitempty"`
+	URL    string        `json:"url,omitempty"`
 	Faces  []entity.Face `json:"faces,omitempty"`
 }
 
@@ -222,7 +224,7 @@ type cardinalityViolation struct {
 func (s *Server) handleAnalyzeCardinality(
 	ctx context.Context, _ *mcpgo.CallToolRequest,
 ) (*mcpgo.CallToolResult, error) {
-	snap := s.state.current()
+	snap := snapshotFor(ctx, s)
 	// One snapshot for the whole operation (CLAUDE.md "capture state once"):
 	// ReloadDeps republishes the bundle atomically on a schema.yaml edit, so
 	// two separate deps() loads could pair a new store with an old metamodel.
@@ -269,7 +271,7 @@ type uniqueViolation struct {
 func (s *Server) handleAnalyzeUnique(
 	ctx context.Context, _ *mcpgo.CallToolRequest,
 ) (*mcpgo.CallToolResult, error) {
-	snap := s.state.current()
+	snap := snapshotFor(ctx, s)
 	violations := make([]uniqueViolation, 0)
 
 	type faceValue struct {
@@ -319,7 +321,7 @@ func (s *Server) handleAnalyzeUnique(
 func (s *Server) handleAnalyzeProperties(
 	ctx context.Context, _ *mcpgo.CallToolRequest,
 ) (*mcpgo.CallToolResult, error) {
-	snap := s.state.current()
+	snap := snapshotFor(ctx, s)
 	type entityErrors struct {
 		EntityID   string      `json:"entity_id"`
 		EntityType string      `json:"entity_type"`
@@ -339,11 +341,12 @@ func (s *Server) handleAnalyzeProperties(
 
 	// Validate entity properties, every face: each holds its own values, and
 	// a faced type has no default row (BUG-95W7MV).
+	metaValidator := metamodel.NewValidator(meta)
 	for e, err := range st.ListEntities(ctx, store.EntityQuery{Faces: store.AllFaces()}) {
 		if err != nil {
 			break
 		}
-		errs := meta.ValidateEntity(e.ID, e.Type, e.Properties)
+		errs := metaValidator.ValidateEntity(e.ID, e.Type, e.Properties)
 		if len(errs) > 0 {
 			errStrings := make([]string, len(errs))
 			for i, ve := range errs {
@@ -403,7 +406,7 @@ func (s *Server) handleAnalyzeProperties(
 func (s *Server) handleAnalyzeValidations(
 	ctx context.Context, _ *mcpgo.CallToolRequest,
 ) (*mcpgo.CallToolResult, error) {
-	snap := s.state.current()
+	snap := snapshotFor(ctx, s)
 	rules := snap.deps.Meta.Validations
 	if len(rules) == 0 {
 		return textResult("No custom validation rules defined in metamodel"), nil
@@ -466,7 +469,7 @@ func (s *Server) handleAnalyzeValidations(
 func (s *Server) handleAnalyzeSchema(
 	ctx context.Context, request *mcpgo.CallToolRequest,
 ) (*mcpgo.CallToolResult, error) {
-	snap := s.state.current()
+	snap := snapshotFor(ctx, s)
 	args := newToolRequest(request)
 	threshold := args.GetInt("threshold", 0)
 
@@ -490,7 +493,7 @@ func (s *Server) handleAnalyzeSchema(
 
 // loadDataEntryConfig loads data-entry.yaml if it exists.
 func (s *Server) loadDataEntryConfig(ctx context.Context) *dataentryconfig.Config {
-	data, err := s.deps().Config.Load(ctx, dataentryconfig.ConfigFile)
+	data, err := snapshotFor(ctx, s).deps.Config.Load(ctx, dataentryconfig.ConfigFile)
 	if err != nil {
 		return nil
 	}

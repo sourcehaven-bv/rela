@@ -108,7 +108,7 @@ func TestFamilyRename_DeniedWithoutTheFamilyGrant(t *testing.T) {
 			t.Run(b.name+"/"+user, func(t *testing.T) {
 				f := newFacedPolicyFixture(t, b, nil, familyRenamePolicy, bothFaces...)
 
-				_, err := f.mgr.RenameEntity(asUser(user), "POL-1", "POL-2", entity.RenameOptions{})
+				_, err := f.mgr.RenameEntity(entitymanager.BindAs(asUser(user), t, f.mgr), "POL-1", "POL-2", entity.RenameOptions{})
 
 				var forbidden *acl.ForbiddenError
 				if !errors.As(err, &forbidden) {
@@ -165,7 +165,7 @@ func TestFamilyRename_HiddenFaceIsNoOracle(t *testing.T) {
 				outcomes := map[string]string{}
 				for _, seeded := range [][]entity.Face{{"published"}, bothFaces} {
 					f := newFacedPolicyFixture(t, b, nil, familyRenamePolicy, seeded...)
-					res, err := f.mgr.RenameEntity(asUser(user), "POL-1", "POL-2", entity.RenameOptions{})
+					res, err := f.mgr.RenameEntity(entitymanager.BindAs(asUser(user), t, f.mgr), "POL-1", "POL-2", entity.RenameOptions{})
 					outcomes[fmt.Sprint(seeded)] = renameOutcome(res, err)
 					if err == nil {
 						if got := f.facesAt(t, "POL-2"); !slices.Equal(got, seeded) {
@@ -192,11 +192,11 @@ func TestFamilyRename_NoReadableFaceIsNotFound(t *testing.T) {
 		t.Run(b.name, func(t *testing.T) {
 			f := newFacedPolicyFixture(t, b, nil, familyRenamePolicy, "draft")
 
-			_, err := f.mgr.RenameEntity(asUser("blindrenamer"), "POL-1", "POL-2", entity.RenameOptions{})
+			_, err := f.mgr.RenameEntity(entitymanager.BindAs(asUser("blindrenamer"), t, f.mgr), "POL-1", "POL-2", entity.RenameOptions{})
 			if !errors.Is(err, entitymanager.ErrEntityNotFound) {
 				t.Fatalf("rename of an unreadable entity = %v, want ErrEntityNotFound", err)
 			}
-			_, missing := f.mgr.RenameEntity(asUser("blindrenamer"), "POL-9", "POL-2", entity.RenameOptions{})
+			_, missing := f.mgr.RenameEntity(entitymanager.BindAs(asUser("blindrenamer"), t, f.mgr), "POL-9", "POL-2", entity.RenameOptions{})
 			if err.Error() != strings.ReplaceAll(missing.Error(), "POL-9", "POL-1") {
 				t.Errorf("unreadable = %q, missing = %q; want the same message", err, missing)
 			}
@@ -219,10 +219,10 @@ func TestFamilyRename_DryRun(t *testing.T) {
 			dry := entity.RenameOptions{DryRun: true}
 
 			var forbidden *acl.ForbiddenError
-			if _, err := f.mgr.RenameEntity(asUser("editor"), "POL-1", "POL-2", dry); !errors.As(err, &forbidden) {
+			if _, err := f.mgr.RenameEntity(entitymanager.BindAs(asUser("editor"), t, f.mgr), "POL-1", "POL-2", dry); !errors.As(err, &forbidden) {
 				t.Errorf("dry-run rename as editor = %v, want *acl.ForbiddenError", err)
 			}
-			res, err := f.mgr.RenameEntity(asUser("renamer"), "POL-1", "POL-2", dry)
+			res, err := f.mgr.RenameEntity(entitymanager.BindAs(asUser("renamer"), t, f.mgr), "POL-1", "POL-2", dry)
 			if err != nil {
 				t.Fatalf("dry-run rename as renamer: %v", err)
 			}
@@ -241,12 +241,12 @@ func TestFamilyRename_DryRun(t *testing.T) {
 			// run must agree: another entity's id in other case conflicts, the
 			// entity's own id in other case does not.
 			for _, target := range []string{"POL-3", "pol-3"} {
-				_, err = f.mgr.RenameEntity(asUser("renamer"), "POL-1", target, dry)
+				_, err = f.mgr.RenameEntity(entitymanager.BindAs(asUser("renamer"), t, f.mgr), "POL-1", target, dry)
 				if !errors.Is(err, entitymanager.ErrEntityAlreadyExists) {
 					t.Errorf("dry-run rename onto %s = %v, want ErrEntityAlreadyExists", target, err)
 				}
 			}
-			if _, err = f.mgr.RenameEntity(asUser("renamer"), "POL-1", "Pol-1", dry); err != nil {
+			if _, err = f.mgr.RenameEntity(entitymanager.BindAs(asUser("renamer"), t, f.mgr), "POL-1", "Pol-1", dry); err != nil {
 				t.Errorf("dry-run case-only rename: %v", err)
 			}
 		})
@@ -259,7 +259,7 @@ func TestFamilyRename_CaseOnly(t *testing.T) {
 		t.Run(b.name, func(t *testing.T) {
 			f := newFacedPolicyFixture(t, b, nil, familyRenamePolicy, bothFaces...)
 
-			if _, err := f.mgr.RenameEntity(asUser("renamer"), "POL-1", "Pol-1", entity.RenameOptions{}); err != nil {
+			if _, err := f.mgr.RenameEntity(entitymanager.BindAs(asUser("renamer"), t, f.mgr), "POL-1", "Pol-1", entity.RenameOptions{}); err != nil {
 				t.Fatalf("case-only rename: %v", err)
 			}
 			if got := f.facesAt(t, "Pol-1"); !slices.Equal(got, bothFaces) {
@@ -276,7 +276,7 @@ func TestFamilyRename_NotFound(t *testing.T) {
 		t.Run(b.name, func(t *testing.T) {
 			f := newFacedPolicyFixture(t, b, nil, familyRenamePolicy)
 
-			_, err := f.mgr.RenameEntity(asUser("drafter"), "POL-1", "POL-2", entity.RenameOptions{})
+			_, err := f.mgr.RenameEntity(entitymanager.BindAs(asUser("drafter"), t, f.mgr), "POL-1", "POL-2", entity.RenameOptions{})
 			if !errors.Is(err, entitymanager.ErrEntityNotFound) {
 				t.Fatalf("rename of a missing entity = %v, want ErrEntityNotFound", err)
 			}
@@ -294,7 +294,7 @@ func TestFamilyRename_EveryFaceCapturedAndAudited(t *testing.T) {
 		t.Run(b.name, func(t *testing.T) {
 			f := newFacedPolicyFixture(t, b, nil, familyRenamePolicy, bothFaces...)
 
-			if _, err := f.mgr.RenameEntity(asUser("renamer"), "POL-1", "POL-2", entity.RenameOptions{}); err != nil {
+			if _, err := f.mgr.RenameEntity(entitymanager.BindAs(asUser("renamer"), t, f.mgr), "POL-1", "POL-2", entity.RenameOptions{}); err != nil {
 				t.Fatalf("RenameEntity as renamer: %v", err)
 			}
 			if got := f.facesAt(t, "POL-1"); len(got) != 0 {
@@ -346,7 +346,7 @@ func TestFamilyRename_FaceAddedDuringRename(t *testing.T) {
 					}
 					f := newFacedPolicyFixture(t, b, wrap, familyRenamePolicy, "draft")
 
-					_, err := f.mgr.RenameEntity(asUser(user), "POL-1", "POL-2", entity.RenameOptions{})
+					_, err := f.mgr.RenameEntity(entitymanager.BindAs(asUser(user), t, f.mgr), "POL-1", "POL-2", entity.RenameOptions{})
 
 					var forbidden *acl.ForbiddenError
 					if denied := errors.As(err, &forbidden); denied != (user == "drafter") {

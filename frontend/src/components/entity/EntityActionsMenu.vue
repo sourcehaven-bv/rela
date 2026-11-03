@@ -4,6 +4,7 @@
  * for where the list comes from.
  */
 import { computed } from 'vue'
+import { useI18n } from 'vue-i18n'
 import RlMenu from 'rela-components/components/overlay/RlMenu.vue'
 import RlMenuItem from 'rela-components/components/overlay/RlMenuItem.vue'
 import RlMenuSeparator from 'rela-components/components/overlay/RlMenuSeparator.vue'
@@ -16,10 +17,11 @@ const props = withDefaults(
     label?: string
     align?: 'start' | 'end'
   }>(),
-  { label: 'More actions', align: 'end' }
+  { label: undefined, align: 'end' }
 )
 
 const sections = computed(() => groupEntityActions(props.actions))
+const { t } = useI18n()
 </script>
 
 <template>
@@ -27,7 +29,7 @@ const sections = computed(() => groupEntityActions(props.actions))
     <template #trigger="{ toggle, attrs }">
       <RlIconButton
         icon="ellipsis"
-        :label="label"
+        :label="label ?? t('common.moreActions')"
         data-testid="entity-actions-menu"
         v-bind="attrs"
         @click="toggle"

@@ -4,6 +4,10 @@ import (
 	"context"
 	"testing"
 
+	"github.com/Sourcehaven-BV/rela/internal/acl"
+	"github.com/Sourcehaven-BV/rela/internal/acl/acltest"
+	"github.com/Sourcehaven-BV/rela/internal/principal"
+
 	"github.com/Sourcehaven-BV/rela/internal/store/memstore"
 	"github.com/Sourcehaven-BV/rela/internal/visibility"
 )
@@ -24,8 +28,16 @@ import (
 func TestCopyWiringIsNotInert(t *testing.T) {
 	t.Parallel()
 
+	d, err := acl.NewDeclarative(&acl.Policy{
+		Roles:       map[string]acl.RoleDef{"reader": {Read: []string{"page"}}},
+		Assignments: map[string]string{"alice": "reader"},
+	}, acl.NullGraph{}, acl.NullGraphQueryer{})
+	if err != nil {
+		t.Fatalf("NewDeclarative: %v", err)
+	}
+
 	// Policy active, no Request on ctx -> must deny / report absent.
-	gate := copyReadGate{policyActive: true}
+	gate := copyReadGate{policy: d}
 	if ok, err := gate.PermitsReadFace(context.Background(), "page", "PAGE-1", ""); ok || err != nil {
 		t.Errorf("with a policy active and no acl.Request on the context, the "+
 			"read gate must FAIL CLOSED: a served path that lost its "+
@@ -33,7 +45,7 @@ func TestCopyWiringIsNotInert(t *testing.T) {
 			"read; got ok=%v err=%v", ok, err)
 	}
 
-	vis := copyVisibility{st: memstore.New(), redact: visibility.NopRedactor{}, policyActive: true}
+	vis := copyVisibility{st: memstore.New(), redact: visibility.NopRedactor{}, policy: d}
 	if _, found, err := vis.Get(context.Background(), "page", "PAGE-1", ""); found || err != nil {
 		t.Errorf("same for the visibility gate: absent rather than ungated, "+
 			"indistinguishable from a genuine miss; got found=%v err=%v", found, err)
@@ -41,8 +53,23 @@ func TestCopyWiringIsNotInert(t *testing.T) {
 
 	// No policy at all -> inert, permits. Every other read on such a
 	// deployment is raw too, so gating this one would be theater.
-	inert := copyReadGate{policyActive: false}
+	inert := copyReadGate{}
 	if ok, err := inert.PermitsReadFace(context.Background(), "page", "PAGE-1", ""); !ok || err != nil {
 		t.Errorf("with no policy configured the gate is inert; got ok=%v err=%v", ok, err)
+	}
+
+	// Policy active and a Request attached, but for another principal than
+	// the one on ctx -> the adapters fail closed, as the write gate does.
+	alice := principal.Principal{User: "alice", Tool: principal.ToolCLI}
+	aliceCtx := acltest.Bind(principal.With(t.Context(), alice), t, d)
+	if ok, err := gate.PermitsReadFace(aliceCtx, "page", "PAGE-1", ""); !ok || err != nil {
+		t.Fatalf("alice holds a read grant; got ok=%v err=%v", ok, err)
+	}
+	mallory := principal.With(aliceCtx, principal.Principal{User: "mallory", Tool: principal.ToolCLI})
+	if ok, err := gate.PermitsReadFace(mallory, "page", "PAGE-1", ""); ok || err != nil {
+		t.Errorf("a Request bound to another principal must fail closed; got ok=%v err=%v", ok, err)
+	}
+	if (transitionGuard{policy: d}).HoldsPermission(mallory, "PAGE-1", "anything") {
+		t.Error("the transition guard must fail closed on a Request bound to another principal")
 	}
 }

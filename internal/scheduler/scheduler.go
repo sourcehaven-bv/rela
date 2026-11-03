@@ -33,8 +33,10 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"os"
 	"strconv"
+	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
@@ -43,11 +45,13 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/config"
 	"github.com/Sourcehaven-BV/rela/internal/jobs"
 	"github.com/Sourcehaven-BV/rela/internal/lua"
+	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
 	"github.com/Sourcehaven-BV/rela/internal/project"
 	"github.com/Sourcehaven-BV/rela/internal/schedulerstate"
 	"github.com/Sourcehaven-BV/rela/internal/script"
 	"github.com/Sourcehaven-BV/rela/internal/state"
+	"github.com/Sourcehaven-BV/rela/internal/subscription"
 )
 
 // tickInterval is how often the scheduler wakes to check for due tasks.
@@ -141,43 +145,50 @@ type WorkspaceProvider interface {
 	ScheduledLuaWriteDeps() lua.WriteDeps
 }
 
-// StartBackground starts the scheduler in a background goroutine if
-// schedules.yaml exists. It is a no-op if the file is missing. The scheduler
-// runs until ctx is cancelled. Errors are logged, not returned.
+// IdentityBinder is the request-edge step the wiring supplies: it resolves
+// the principal stamped on ctx and attaches its ACL request scope. It is the
+// same shape every transport takes (see appbuild.IdentityBinder). The
+// scheduler calls it once per task run, after stamping the task's principal
+// (see Scheduler.taskContext); reads and writes below fail closed without
+// it. The scheduler may not import internal/acl, so it takes the step as a
+// function rather than computing it.
+type IdentityBinder = func(ctx context.Context) (context.Context, error)
+
+// StartBackground starts the scheduler in a background goroutine, with
+// WatchConfig on, so it runs even before schedules.yaml or subscriptions.yaml
+// declares a task, and picks up a file added or fixed later. It runs until
+// ctx is cancelled. Errors are logged, not returned.
 //
 // The returned channel closes when the scheduler has stopped (at once when it
-// never started), so a caller that replaces the services it runs against can
-// wait for it before closing them.
+// could not be built), so a caller that replaces the services it runs against
+// must wait for it before closing them.
 func StartBackground(
 	ctx context.Context,
 	ws WorkspaceProvider,
+	bind IdentityBinder,
 	logger *slog.Logger,
 ) <-chan struct{} {
 	done := make(chan struct{})
-	data, err := ws.Config().Load(ctx, ConfigFile)
-	if err != nil {
-		// No schedules.yaml — nothing to do.
-		close(done)
-		return done
+	cfg, loadErr := LoadWorkspaceConfig(ctx, ws)
+	switch {
+	case cfg == nil:
+		// Start with no tasks: WatchConfig applies the file once it is fixed.
+		logger.Error("invalid scheduler config; no tasks until it loads", "error", loadErr)
+		cfg = &Config{}
+	case loadErr != nil:
+		logger.Error("subscriptions not started", "error", loadErr)
 	}
 
-	cfg, err := ParseConfig(data)
-	if err != nil {
-		logger.Error("invalid schedules.yaml, scheduler not started", "error", err)
-		close(done)
-		return done
-	}
-
-	if len(cfg.Tasks) == 0 {
-		close(done)
-		return done
-	}
-
-	s, err := NewWithQueue(cfg, script.NewEngine(), ws, logger)
+	s, err := NewWithQueue(cfg, script.NewEngine(), ws, bind, logger)
 	if err != nil {
 		logger.Error("scheduler not started", "error", err)
 		close(done)
 		return done
+	}
+	s.WatchConfig()
+	if loadErr != nil {
+		// Logged above; the first reload reports it again only if it changed.
+		s.reloadErr = loadErr.Error()
 	}
 
 	go func() {
@@ -191,6 +202,22 @@ func StartBackground(
 		}
 	}()
 	return done
+}
+
+// metaProvider is the capability that gives [LoadConfig] its schema.
+// Type-asserted for the same reason as [jobQueueProvider].
+type metaProvider interface {
+	Meta() *metamodel.Metamodel
+}
+
+// LoadWorkspaceConfig is [LoadConfig] over the workspace's config and
+// schema, for the entry points that hold a [WorkspaceProvider].
+func LoadWorkspaceConfig(ctx context.Context, ws WorkspaceProvider) (*Config, error) {
+	var meta *metamodel.Metamodel
+	if mp, ok := ws.(metaProvider); ok {
+		meta = mp.Meta()
+	}
+	return LoadConfig(ctx, ws.Config(), meta)
 }
 
 // jobQueueProvider is the capability a WorkspaceProvider must carry to hand the
@@ -233,9 +260,9 @@ func attachQueue(s *Scheduler, ws WorkspaceProvider) error {
 // is called. Returning an error here means a caller cannot accidentally start a
 // scheduler that will fail every task.
 func NewWithQueue(
-	cfg *Config, engine *script.Engine, ws WorkspaceProvider, logger *slog.Logger,
+	cfg *Config, engine *script.Engine, ws WorkspaceProvider, bind IdentityBinder, logger *slog.Logger,
 ) (*Scheduler, error) {
-	s, err := New(cfg, engine, ws, logger)
+	s, err := New(cfg, engine, ws, bind, logger)
 	if err != nil {
 		return nil, err
 	}
@@ -267,18 +294,36 @@ func stampTaskAuditContext(ctx context.Context, taskName, runAs string) context.
 	if user == "" {
 		user = principal.UserScheduler
 	}
+	return stampContext(ctx, user, "schedule:"+taskName)
+}
+
+// stampContext stamps user as the scheduler's principal and triggeredBy as
+// the audit trigger.
+func stampContext(ctx context.Context, user, triggeredBy string) context.Context {
 	out := principal.With(ctx, principal.Principal{
 		User: user,
 		Tool: principal.ToolScheduler,
 	})
-	return audit.WithTriggeredBy(out, "schedule:"+taskName)
+	return audit.WithTriggeredBy(out, triggeredBy)
 }
 
 // Scheduler decides which tasks are due and hands them to the job queue.
 type Scheduler struct {
-	config *Config
+	// config is the task list. It is published atomically because
+	// WatchConfig replaces it from the tick while job handlers read it;
+	// every operation loads it once.
+	config atomic.Pointer[Config]
+
+	// reload reads the config files again. Nil, the default, keeps the
+	// config the scheduler was built with; see WatchConfig.
+	reload func(ctx context.Context) (*Config, error)
+	// reloadErr is the last reload error logged, so a broken file is
+	// reported once rather than every tick. Only the tick touches it.
+	reloadErr string
+
 	engine *script.Engine
 	ws     WorkspaceProvider
+	bind   IdentityBinder
 	runs   schedulerstate.Store
 	logger *slog.Logger
 	now    func() time.Time // for testing
@@ -292,6 +337,14 @@ type Scheduler struct {
 	// run's outcome, so a test must keep it. When nil, the real engine runs.
 	engineRunner func(ctx context.Context, task TaskConfig) error
 
+	// subscriptionRunner overrides the poll of a subscription for testing,
+	// keeping the job handler around it, like engineRunner.
+	subscriptionRunner func(ctx context.Context, name string, sub subscription.Subscription) error
+
+	// subscriptionTransport carries subscription fetches. Nil means
+	// http.DefaultTransport; tests point it at an httptest server.
+	subscriptionTransport http.RoundTripper
+
 	// queue is where script execution happens. REQUIRED: there is no inline
 	// path, so a scheduler without one cannot run anything. Set by UseQueue at
 	// wiring time — see jobs.go.
@@ -300,20 +353,33 @@ type Scheduler struct {
 	// lastPrune is when the tick last pruned run-state. Only the scheduler
 	// goroutine touches it.
 	lastPrune time.Time
-
-	// pruneAge is how long an idle task's record is kept; see pruneAgeFor.
+	// pruneAge is the largest prune age used so far; see maybePrune. Only
+	// the tick touches it.
 	pruneAge time.Duration
+}
+
+// taskContext is the scheduler's request edge: it stamps the task's
+// principal (see stampTaskAuditContext) and resolves it once into the ACL
+// request scope every read and write of the run evaluates against.
+func (s *Scheduler) taskContext(ctx context.Context, taskName, runAs string) (context.Context, error) {
+	out, err := s.bind(stampTaskAuditContext(ctx, taskName, runAs))
+	if err != nil {
+		return ctx, fmt.Errorf("scheduler: resolve identity for task %q: %w", taskName, err)
+	}
+	return out, nil
 }
 
 // New creates a Scheduler.
 //
-// Nil: rejected — cfg, engine, ws, logger and ws.SchedulerState() are all
-// required. A scheduler without run-state would treat every task as due on
-// every tick.
+// Nil: rejected — cfg, engine, ws, bind, logger and ws.SchedulerState() are
+// all required. A scheduler without run-state would treat every task as due
+// on every tick, and one without bind would run every task without an
+// identity, so every gated read and write would deny.
 func New(
 	cfg *Config,
 	engine *script.Engine,
 	ws WorkspaceProvider,
+	bind IdentityBinder,
 	logger *slog.Logger,
 ) (*Scheduler, error) {
 	switch {
@@ -323,6 +389,8 @@ func New(
 		return nil, errors.New("scheduler: script engine must not be nil")
 	case ws == nil:
 		return nil, errors.New("scheduler: workspace must not be nil")
+	case bind == nil:
+		return nil, errors.New("scheduler: identity binder must not be nil")
 	case logger == nil:
 		return nil, errors.New("scheduler: logger must not be nil")
 	}
@@ -330,16 +398,17 @@ func New(
 	if runs == nil {
 		return nil, errors.New("scheduler: the workspace provides no run-state store")
 	}
-	return &Scheduler{
-		config:   cfg,
-		engine:   engine,
-		ws:       ws,
-		runs:     runs,
-		logger:   logger,
-		now:      time.Now,
-		node:     nodeID(),
-		pruneAge: pruneAgeFor(cfg.Tasks),
-	}, nil
+	s := &Scheduler{
+		engine: engine,
+		ws:     ws,
+		bind:   bind,
+		runs:   runs,
+		logger: logger,
+		now:    time.Now,
+		node:   nodeID(),
+	}
+	s.config.Store(cfg)
+	return s, nil
 }
 
 // nodeID names this process: host and pid.
@@ -353,7 +422,8 @@ func nodeID() string {
 
 // Run starts the scheduler and blocks until ctx is cancelled.
 func (s *Scheduler) Run(ctx context.Context) error {
-	if len(s.config.Tasks) == 0 {
+	cfg := s.config.Load()
+	if len(cfg.Tasks) == 0 && s.reload == nil {
 		s.logger.Info("no tasks configured, waiting for shutdown")
 		<-ctx.Done()
 		return nil
@@ -361,14 +431,18 @@ func (s *Scheduler) Run(ctx context.Context) error {
 
 	s.importLegacyState(ctx)
 
-	for _, t := range s.config.Tasks {
+	for _, t := range cfg.Tasks {
+		if t.Subscription != nil {
+			s.logger.Info("scheduled subscription", "task", t.Name, "every", t.Every)
+			continue
+		}
 		s.logger.Info("scheduled task", "task", t.Name, "every", t.Every, "script", t.Script)
 	}
 
 	// Run due tasks immediately (handles first-ever and missed runs).
 	s.tick(ctx)
 
-	s.logger.Info("scheduler started", "tasks", len(s.config.Tasks), "node", s.node)
+	s.logger.Info("scheduler started", "tasks", len(cfg.Tasks), "node", s.node)
 
 	ticker := time.NewTicker(tickInterval)
 	defer ticker.Stop()
@@ -387,6 +461,8 @@ func (s *Scheduler) Run(ctx context.Context) error {
 // tick abandons lost runs, then queues a run for every due task. It never
 // waits for a run, so one slow or lost run cannot delay any other task.
 func (s *Scheduler) tick(ctx context.Context) {
+	s.reloadConfig(ctx)
+	cfg := s.config.Load()
 	now := s.now()
 
 	reaped, err := s.runs.Reap(ctx, now, retryDelay)
@@ -403,8 +479,8 @@ func (s *Scheduler) tick(ctx context.Context) {
 			"retry_at", fin.NextRetry)
 	}
 
-	names := make([]string, 0, len(s.config.Tasks))
-	for _, task := range s.config.Tasks {
+	names := make([]string, 0, len(cfg.Tasks))
+	for _, task := range cfg.Tasks {
 		names = append(names, task.Name)
 	}
 	states, err := s.runs.Load(ctx, names)
@@ -415,7 +491,7 @@ func (s *Scheduler) tick(ctx context.Context) {
 		return
 	}
 
-	for _, task := range s.config.Tasks {
+	for _, task := range cfg.Tasks {
 		if ctx.Err() != nil {
 			return
 		}
@@ -438,7 +514,7 @@ func (s *Scheduler) tick(ctx context.Context) {
 		s.queueRun(ctx, task, ts.Version, reason, now)
 	}
 
-	s.maybePrune(ctx, now)
+	s.maybePrune(ctx, cfg, now)
 }
 
 // dueReason reports whether task is due at now, and why.
@@ -512,19 +588,26 @@ func (s *Scheduler) queueRun(ctx context.Context, task TaskConfig, version int64
 }
 
 // maybePrune drops old run-state at most once per pruneInterval.
-func (s *Scheduler) maybePrune(ctx context.Context, now time.Time) {
-	if now.Sub(s.lastPrune) < pruneInterval {
+//
+// Prune covers the whole run-state store, not just this config, so it is
+// skipped while the config is incomplete: with no tasks, or while a file
+// fails to load. The age never shrinks below the largest one this process
+// has used, so commenting out a monthly task does not drop its record.
+func (s *Scheduler) maybePrune(ctx context.Context, cfg *Config, now time.Time) {
+	if len(cfg.Tasks) == 0 || s.reloadErr != "" || now.Sub(s.lastPrune) < pruneInterval {
 		return
 	}
 	s.lastPrune = now
-	removed, err := s.runs.Prune(ctx, now.Add(-s.pruneAge))
+	s.pruneAge = max(s.pruneAge, pruneAgeFor(cfg.Tasks))
+	cutoff := now.Add(-s.pruneAge)
+	removed, err := s.runs.Prune(ctx, cutoff)
 	if err != nil {
 		s.logger.Warn("scheduler: could not prune run-state", "error", err)
 		return
 	}
 	if len(removed) > 0 {
 		s.logger.Info("pruned run-state for tasks idle since the cut-off",
-			"tasks", removed, "cutoff", now.Add(-s.pruneAge))
+			"tasks", removed, "cutoff", cutoff)
 	}
 }
 

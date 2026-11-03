@@ -1,5 +1,5 @@
 import { useConfigureSnapshot } from '@/queries/configure'
-import { useConfigDraftStore } from '@/stores/configDraft'
+import { useConfigDraftStore } from './configDraft'
 
 /**
  * Drops every unsaved change and fetches the configuration again, so a new

@@ -29,6 +29,8 @@ export interface ScriptIdentity {
 export interface ScriptErrorLua {
   message: string
   line?: number
+  /** File `line` is in when it is not `script.path` (a required lib/ module). */
+  file?: string
 }
 
 export interface SourceLine {

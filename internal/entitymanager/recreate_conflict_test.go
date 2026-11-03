@@ -75,7 +75,8 @@ func TestRecreateEntity_SiblingFaceOfAnotherTypeIsRefused(t *testing.T) {
 	mgr, err := entitymanager.New(entitymanager.Deps{
 		Store: st, Meta: meta, Templater: nopTemplater{}, Audit: audit.Nop{},
 		ACL: acl.NopACL{}, Transitions: statemachine.EmptySet(),
-		FieldGate: entitymanager.AllowAllFieldGate{},
+		FieldGate:   entitymanager.AllowAllFieldGate{},
+		AnchorGuard: entitymanager.NopAnchorGuard{},
 	})
 	if err != nil {
 		t.Fatalf("entitymanager.New: %v", err)
@@ -162,6 +163,7 @@ func TestRecreateEntity_CreateConflict_RejectsAndDoesNotClobber(t *testing.T) {
 	mgr, err := entitymanager.New(entitymanager.Deps{
 		FieldGate: entitymanager.AllowAllFieldGate{},
 		Store:     st, Meta: meta, Templater: nopTemplater{}, Audit: audit.Nop{}, ACL: acl.NopACL{}, Transitions: statemachine.EmptySet(),
+		AnchorGuard: entitymanager.NopAnchorGuard{},
 	})
 	if err != nil {
 		t.Fatalf("entitymanager.New: %v", err)
@@ -211,6 +213,7 @@ func TestRecreateEntity_SameTypeCreateConflict_NoClobber(t *testing.T) {
 	mgr, err := entitymanager.New(entitymanager.Deps{
 		FieldGate: entitymanager.AllowAllFieldGate{},
 		Store:     st, Meta: meta, Templater: nopTemplater{}, Audit: audit.Nop{}, ACL: acl.NopACL{}, Transitions: statemachine.EmptySet(),
+		AnchorGuard: entitymanager.NopAnchorGuard{},
 	})
 	if err != nil {
 		t.Fatalf("entitymanager.New: %v", err)

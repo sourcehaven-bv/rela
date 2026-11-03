@@ -27,10 +27,15 @@ import (
 func TestSSE_DoesNotFlowAuditEvents(t *testing.T) {
 	app := buildAppWithACLAndAudit(t, acl.ReadOnlyACL{}, nil)
 
-	// Subscribe to the broker BEFORE attempting the write so we see
-	// any event that fires as a consequence.
+	// Subscribe to the broker and the change feed BEFORE attempting the
+	// write so we see any event that fires as a consequence. The feed is
+	// started on the real store, as StartWatching does.
 	ch := app.broker.subscribe()
 	defer app.broker.unsubscribe(ch)
+	app.startStoreEventBridge()
+	t.Cleanup(app.StopWatching)
+	sub := app.feed.Subscribe("")
+	defer sub.Close()
 
 	ctx := principal.With(context.Background(), principal.Principal{
 		User: "alice",
@@ -58,36 +63,40 @@ func TestSSE_DoesNotFlowAuditEvents(t *testing.T) {
 		// triggered by the deny would be a regression — denies
 		// must be invisible to SSE subscribers.
 		t.Fatalf("unexpected SSE event after denied write: %+v", ev)
+	case <-sub.Wake():
+		t.Fatalf("change feed woke after denied write: %+v", sub.Take())
 	case <-time.After(100 * time.Millisecond):
 		// Expected: zero events.
 	}
 }
 
-// TestSSE_BroadcastEntityChange_CarriesTypeOnly pins the broker-level
-// shape of an entity change: it carries the entity TYPE and nothing
+// TestSSE_FeedCarriesTypeOnly pins the shape of an entity change as it
+// leaves the store: the change feed reports the entity TYPE and nothing
 // else — no id, no audit attribution. Per-type granularity is the
 // security boundary (TKT-POT9GQ): the wire never carries an entity id,
 // so the feed cannot be a per-entity existence oracle. The handler
 // (runSSELoop) gates the type per-connection before rendering it.
-func TestSSE_BroadcastEntityChange_CarriesTypeOnly(t *testing.T) {
+func TestSSE_FeedCarriesTypeOnly(t *testing.T) {
 	app := buildAppWithACLAndAudit(t, acl.NopACL{}, nil)
+	app.startStoreEventBridge()
+	t.Cleanup(app.StopWatching)
+	sub := app.feed.Subscribe("")
+	defer sub.Close()
 
-	ch := app.broker.subscribe()
-	defer app.broker.unsubscribe(ch)
-
-	app.broker.broadcastEntityChange("ticket")
+	ctx := principal.With(context.Background(), principal.Principal{User: "alice", Tool: principal.ToolDataEntry})
+	if _, err := app.entityManager.CreateEntity(ctx, &entity.Entity{
+		ID: "TKT-FEED", Type: "ticket", Properties: map[string]any{"title": "t"},
+	}, entity.CreateOptions{}); err != nil {
+		t.Fatal(err)
+	}
 
 	select {
-	case ev := <-ch:
-		if ev.EntityType != "ticket" {
-			t.Errorf("EntityType = %q, want ticket", ev.EntityType)
-		}
-		// No id, no name, no pre-rendered data on an entity change —
-		// the handler synthesizes the {type}-only frame after gating.
-		if ev.Name != "" || ev.Data != "" {
-			t.Errorf("entity change carried wire data Name=%q Data=%q; want both empty", ev.Name, ev.Data)
-		}
+	case <-sub.Wake():
 	case <-time.After(time.Second):
-		t.Fatal("no SSE event received within 1s")
+		t.Fatal("change feed did not wake within 1s")
+	}
+	got := sub.Take()
+	if len(got.Types) != 1 || got.Types[0] != "ticket" {
+		t.Fatalf("Take = %+v, want exactly [ticket]", got)
 	}
 }

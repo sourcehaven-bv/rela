@@ -122,7 +122,7 @@ type RelationView struct {
 // MetamodelReader is the narrow consumer-side view of the metamodel the Tier-B
 // checks need. The concrete implementation (an adapter over
 // *metamodel.Metamodel) is supplied by the caller; defining the interface here
-// keeps aclaudit free of a metamodel import and bounded to the 3 lookups it
+// keeps aclaudit free of a metamodel import and bounded to the lookups it
 // actually uses (rather than the whole, plimsoll-fat Metamodel surface).
 //
 // A nil MetamodelReader is valid: [Audit] then runs only the Tier-A
@@ -151,6 +151,9 @@ type MetamodelReader interface {
 	// HasFace reports whether entity type t declares the content state
 	// named face.
 	HasFace(t, face string) bool
+	// Faces returns the content states entity type t declares, or nil for
+	// a faceless or undeclared type.
+	Faces(t string) []string
 }
 
 // PermissionConsumer reports permissions referenced OUTSIDE acl.yaml. The
@@ -201,6 +204,7 @@ func Audit(p *acl.Policy, meta MetamodelReader, perms PermissionConsumer) []Find
 	}
 	var f []Finding
 	f = append(f, tierA(p, perms)...)
+	f = append(f, checkEveryoneOpensBlocks(p, meta)...) // A14
 	if meta != nil {
 		f = append(f, tierB(p, meta)...)
 	}
@@ -292,17 +296,18 @@ func splitStateGrant(entry string) (typeName, face string, isState bool) {
 // verbLists returns the grant lists of a role for iteration.
 func verbLists(r acl.RoleDef) map[string][]string {
 	return map[string][]string{
-		"create": r.Create,
-		"update": r.Update,
-		"delete": r.Delete,
-		"rename": r.Rename,
-		"read":   r.Read,
+		"create":  r.Create,
+		"update":  r.Update,
+		"delete":  r.Delete,
+		"rename":  r.Rename,
+		"convert": r.Convert,
+		"read":    r.Read,
 	}
 }
 
 // hasWildcardWrite reports whether a role grants "*" on any write verb.
 func hasWildcardWrite(r acl.RoleDef) bool {
-	for _, list := range [][]string{r.Create, r.Update, r.Delete, r.Rename} {
+	for _, list := range [][]string{r.Create, r.Update, r.Delete, r.Rename, r.Convert} {
 		if slices.Contains(list, "*") {
 			return true
 		}
@@ -311,8 +316,9 @@ func hasWildcardWrite(r acl.RoleDef) bool {
 }
 
 // affordanceTypeKeys returns the entity-type keys across all affordance maps
-// of a role (fields/visible/options/relations). These keys are entity types
-// with no wildcard, so they can be checked against the schema directly
+// of a role (fields/visible/options/relations). A key is an entity type or,
+// in fields: and options:, `type@face`; it has no wildcard, so it can be
+// checked against the schema directly once the face is stripped
 // (RR-TZ2S3G).
 func affordanceTypeKeys(r acl.RoleDef) []string {
 	seen := map[string]bool{}

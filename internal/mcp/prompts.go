@@ -101,12 +101,12 @@ func (h promptHandler) handleAnalyzeTraceabilityPrompt(
 
 	var traceFromText, traceToText string
 	if traceFrom != nil {
-		traceFromText, _ = convertTraceResult(traceFrom, h.meta)
+		traceFromText, _ = convertTraceResult(ctx, traceFrom, h.meta)
 	} else {
 		traceFromText = "No downstream dependencies"
 	}
 	if traceTo != nil {
-		traceToText, _ = convertTraceResult(traceTo, h.meta)
+		traceToText, _ = convertTraceResult(ctx, traceTo, h.meta)
 	} else {
 		traceToText = "No upstream dependencies"
 	}
@@ -220,7 +220,7 @@ func (h promptHandler) handleSummarizeProjectPrompt(
 		def, _ := meta.GetEntityDef(t)
 		label := t
 		if def != nil {
-			label = def.GetLabel()
+			label = def.Label
 		}
 		fmt.Fprintf(&entityCounts, "- %s: %d\n", label, count)
 	}
@@ -270,7 +270,7 @@ Please provide:
 4. Recommendations for improving the project's traceability`,
 		totalEntities, totalRelations, orphanCount,
 		entityCounts.String(), relCounts.String(),
-		meta.GetVersion(), meta.GetNamespace(),
+		meta.Version, meta.Namespace,
 		len(entityTypes), len(relTypes))
 
 	return &mcpgo.GetPromptResult{
@@ -312,7 +312,7 @@ func (h promptHandler) handleReviewEntityPrompt(
 	}
 
 	// Run validations for this entity
-	errs := meta.ValidateEntity(entity.ID, entity.Type, entity.Properties)
+	errs := metamodel.NewValidator(meta).ValidateEntity(entity.ID, entity.Type, entity.Properties)
 	var validationText string
 	if len(errs) == 0 {
 		validationText = "All validations passed"

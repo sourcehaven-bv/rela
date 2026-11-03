@@ -80,9 +80,9 @@ function saveEdit(comment: AnchoredComment) {
         <span
           v-if="comment.detached"
           class="rl-comment-thread__detached"
-          title="What this comment points at no longer exists"
+          :title="messages.chromeText({ key: 'detachedComment' })"
         >
-          detached
+          {{ messages.chromeText({ key: 'detached' }) }}
         </span>
         <span class="rl-comment-thread__author">{{ comment.author }}</span>
         <span class="rl-comment-thread__timestamp">{{ comment.timestamp }}</span>
@@ -93,12 +93,12 @@ function saveEdit(comment: AnchoredComment) {
           v-model="draft"
           class="rl-comment-thread__input"
           rows="3"
-          aria-label="Edit comment"
+          :aria-label="messages.chromeText({ key: 'editComment' })"
           @keydown.escape="cancelEdit"
         />
         <RlButtonGroup align="start" class="rl-comment-thread__actions">
-          <RlButton variant="ghost" size="sm" @click="cancelEdit">Cancel</RlButton>
-          <RlButton variant="primary" size="sm" @click="saveEdit(comment)">Save</RlButton>
+          <RlButton variant="ghost" size="sm" @click="cancelEdit">{{ messages.chromeText({ key: 'cancel' }) }}</RlButton>
+          <RlButton variant="primary" size="sm" @click="saveEdit(comment)">{{ messages.chromeText({ key: 'save' }) }}</RlButton>
         </RlButtonGroup>
       </template>
 
@@ -115,10 +115,10 @@ function saveEdit(comment: AnchoredComment) {
             size="sm"
             @click="$emit('toggleResolved', comment.id)"
           >
-            {{ comment.resolved ? 'Reopen' : 'Resolve' }}
+            {{ messages.chromeText({ key: comment.resolved ? 'reopen' : 'resolve' }) }}
           </RlButton>
           <RlButton v-if="comment.editable" variant="ghost" size="sm" @click="startEdit(comment)">
-            Edit
+            {{ messages.chromeText({ key: 'edit' }) }}
           </RlButton>
           <RlButton
             v-if="comment.deletable"
@@ -127,7 +127,7 @@ function saveEdit(comment: AnchoredComment) {
             tone="danger"
             @click="$emit('remove', comment.id)"
           >
-            Delete
+            {{ messages.chromeText({ key: 'delete' }) }}
           </RlButton>
         </RlButtonGroup>
       </template>

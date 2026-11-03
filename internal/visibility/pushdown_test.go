@@ -6,7 +6,10 @@ import (
 	"iter"
 	"testing"
 
+	"github.com/Sourcehaven-BV/rela/internal/acl/acltest"
+
 	"github.com/Sourcehaven-BV/rela/internal/acl"
+	"github.com/Sourcehaven-BV/rela/internal/aclstore"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
 	"github.com/Sourcehaven-BV/rela/internal/store"
@@ -110,7 +113,7 @@ func TestListPushdown_QueryBranchUsesGraphQuery(t *testing.T) {
 	red := &countingRedactor{}
 	p := stubProvider{res: acl.ReadQueryResult{Query: &store.GraphQuery{EntityType: "ticket", Faces: store.InWorld(store.TrivialScope())}}}
 
-	seq, ok := listPushdown(context.Background(), p, spy, red.redact, store.EntityQuery{Type: "ticket", Faces: store.InWorld(store.TrivialScope())})
+	seq, ok := listPushdown(context.Background(), p, spy, perRow(red.redact), store.EntityQuery{Type: "ticket", Faces: store.InWorld(store.TrivialScope())})
 	if !ok {
 		t.Fatal("pushdown declined a composable query")
 	}
@@ -150,7 +153,7 @@ func TestListPushdown_RedactsOnEveryBranch(t *testing.T) {
 			spy := seededSpy()
 			red := &countingRedactor{}
 			seq, ok := listPushdown(
-				context.Background(), stubProvider{res: tc.res}, spy, red.redact,
+				context.Background(), stubProvider{res: tc.res}, spy, perRow(red.redact),
 				store.EntityQuery{Type: "ticket", Faces: store.InWorld(store.TrivialScope())})
 			if !ok {
 				t.Fatal("pushdown declined")
@@ -180,7 +183,7 @@ func TestListPushdown_DenyAllYieldsNothingWithoutTouchingTheStore(t *testing.T) 
 	red := &countingRedactor{}
 	seq, ok := listPushdown(
 		context.Background(), stubProvider{res: acl.ReadQueryResult{DenyAll: true}},
-		spy, red.redact, store.EntityQuery{Type: "ticket", Faces: store.InWorld(store.TrivialScope())})
+		spy, perRow(red.redact), store.EntityQuery{Type: "ticket", Faces: store.InWorld(store.TrivialScope())})
 	if !ok {
 		t.Fatal("pushdown declined DenyAll")
 	}
@@ -207,7 +210,7 @@ func TestListPushdown_ScopeErrorFailsClosed(t *testing.T) {
 	red := &countingRedactor{}
 	boom := errors.New("gate down")
 	seq, ok := listPushdown(
-		context.Background(), stubProvider{err: boom}, spy, red.redact,
+		context.Background(), stubProvider{err: boom}, spy, perRow(red.redact),
 		store.EntityQuery{Type: "ticket", Faces: store.InWorld(store.TrivialScope())})
 	if !ok {
 		t.Fatal("a scope error must be reported, not silently declined to the fallback")
@@ -233,18 +236,18 @@ func TestListPushdown_DeclinesWhenNotApplicable(t *testing.T) {
 	q := store.EntityQuery{Type: "ticket", Faces: store.InWorld(store.TrivialScope())}
 	allow := stubProvider{res: acl.ReadQueryResult{AllowAll: true}}
 
-	if _, ok := listPushdown(context.Background(), nil, seededSpy(), red.redact, q); ok {
+	if _, ok := listPushdown(context.Background(), nil, seededSpy(), perRow(red.redact), q); ok {
 		t.Error("pushdown ran without a provider")
 	}
 	if _, ok := listPushdown(
-		context.Background(), allow, seededSpy(), red.redact, store.EntityQuery{Faces: store.InWorld(store.TrivialScope())},
+		context.Background(), allow, seededSpy(), perRow(red.redact), store.EntityQuery{Faces: store.InWorld(store.TrivialScope())},
 	); ok {
 		t.Error("pushdown ran for a type-less query; the ACL scope is composed per type")
 	}
 	// Zero ReadQueryResult — neither allow, deny, nor query. Unrepresentable;
 	// must fall back rather than guess.
 	if _, ok := listPushdown(
-		context.Background(), stubProvider{}, seededSpy(), red.redact, q,
+		context.Background(), stubProvider{}, seededSpy(), perRow(red.redact), q,
 	); ok {
 		t.Error("pushdown accepted a zero ReadQueryResult instead of falling back")
 	}
@@ -278,11 +281,11 @@ func TestListPushdown_AllFacesScopedPrincipalGetsGrantedFaceRowsOnly(t *testing.
 	d, err := acl.NewDeclarative(&acl.Policy{
 		Roles:         map[string]acl.RoleDef{"reviewer": {Read: []string{"policy@published"}}},
 		RoleRelations: map[string]acl.RoleRelationDef{"reviews": {Confers: "reviewer"}},
-	}, acl.NewStoreGraph(st), st)
+	}, aclstore.MustNewGraph(st), st)
 	if err != nil {
 		t.Fatal(err)
 	}
-	req, err := d.ForPrincipal(principal.Principal{User: "alice", Tool: principal.ToolDataEntry})
+	req, err := d.ForIdentity(acltest.IdentityFor(t.Context(), t, d, principal.Principal{User: "alice", Tool: principal.ToolDataEntry}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -291,7 +294,7 @@ func TestListPushdown_AllFacesScopedPrincipalGetsGrantedFaceRowsOnly(t *testing.
 		t.Fatalf("want a scoped verdict, got %+v", rqr)
 	}
 	identity := func(_ context.Context, e *entity.Entity) *entity.Entity { return e }
-	seq, ok := listPushdown(ctx, stubProvider{res: rqr}, st, identity,
+	seq, ok := listPushdown(ctx, stubProvider{res: rqr}, st, perRow(identity),
 		store.EntityQuery{Type: "policy", Faces: store.AllFaces()})
 	if !ok {
 		t.Fatal("pushdown declined a composable query")
@@ -359,7 +362,7 @@ func assertCountMatchesList(t *testing.T, st store.Store) {
 		},
 		Assignments:   map[string]string{"bob": "readers", "carol": "publishedreaders"},
 		RoleRelations: map[string]acl.RoleRelationDef{"reviews": {Confers: "reviewer"}},
-	}, acl.NewStoreGraph(st), st)
+	}, aclstore.MustNewGraph(st), st)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -388,14 +391,11 @@ func assertCountMatchesList(t *testing.T, st store.Store) {
 	} {
 		t.Run(tc.user+"/"+tc.world, func(t *testing.T) {
 			t.Parallel()
-			req, err := d.ForPrincipal(principal.Principal{User: tc.user, Tool: principal.ToolDataEntry})
-			if err != nil {
-				t.Fatal(err)
-			}
+			req := acltest.RequestFor(ctx, t, d, principal.Principal{User: tc.user, Tool: principal.ToolDataEntry})
 			p := stubProvider{res: req.ReadQuery(ctx, "policy")}
 			q := store.EntityQuery{Type: "policy", Faces: tc.faces}
 
-			seq, ok := listPushdown(ctx, p, st, identity, q)
+			seq, ok := listPushdown(ctx, p, st, perRow(identity), q)
 			if !ok {
 				t.Fatal("list pushdown declined a composable query")
 			}

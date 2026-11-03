@@ -33,6 +33,9 @@ import RlIcon from '../common/RlIcon.vue'
 import RlButton from '../common/RlButton.vue'
 import RlCommentComposerBox from './RlCommentComposerBox.vue'
 import type { NewComment } from './types'
+import { useMessages } from '../../composables/useMessages'
+
+const messages = useMessages()
 
 const props = withDefaults(
   defineProps<{
@@ -253,7 +256,7 @@ defineExpose({ reset })
       :disabled="checking"
       @click="startComposing"
     >
-      {{ checking ? 'Checking...' : 'Comment' }}
+      {{ messages.chromeText({ key: checking ? 'checking' : 'commentAction' }) }}
     </RlButton>
 
     <div v-else class="rl-text-selection-comment__panel">

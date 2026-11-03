@@ -183,7 +183,7 @@ func (r typeResolver) validatePropertyNames(entityType string, properties map[st
 			unknown = append(unknown, propName)
 			continue
 		}
-		if def.Computed != "" {
+		if def.Computed != "" || def.Rollup != nil {
 			computed = append(computed, propName)
 			continue
 		}
@@ -210,7 +210,7 @@ func (r typeResolver) validatePropertyNames(entityType string, properties map[st
 	if len(computed) > 0 {
 		slices.Sort(computed)
 		return errorResult(fmt.Sprintf(
-			"computed properties are read-only for %s: %s",
+			"computed and roll-up properties are read-only for %s: %s",
 			entityType, strings.Join(computed, ", ")))
 	}
 

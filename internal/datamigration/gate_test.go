@@ -67,7 +67,7 @@ func TestGate_BootstrapAdoptsBaseline(t *testing.T) {
 	if v.Status != StatusBootstrapped {
 		t.Fatalf("status = %s, want bootstrapped", v.Status)
 	}
-	if got := storedHash(t, ms); got != metaV1().ShapeProjection().Hash() {
+	if got := storedHash(t, ms); got != metamodel.NewShapeProjection(metaV1()).Hash() {
 		t.Fatalf("baseline not recorded on bootstrap: %q", got)
 	}
 	if g.Verdict() != v {
@@ -110,7 +110,7 @@ func TestGate_EvaluateDoesNotPersist(t *testing.T) {
 	if err := g.Persist(t.Context(), v); err != nil {
 		t.Fatalf("Persist: %v", err)
 	}
-	if got := storedHash(t, ms); got != metaV1().ShapeProjection().Hash() {
+	if got := storedHash(t, ms); got != metamodel.NewShapeProjection(metaV1()).Hash() {
 		t.Fatalf("Persist did not record the verdict's adoption, got %q", got)
 	}
 }
@@ -133,7 +133,7 @@ func TestGate_AdditiveAdoptsSilently(t *testing.T) {
 	if v := evalPersist(t, g, m2); v.Status != StatusAdopted {
 		t.Fatalf("status = %v, want adopted", v.Status)
 	}
-	if storedHash(t, ms) != m2.ShapeProjection().Hash() {
+	if storedHash(t, ms) != metamodel.NewShapeProjection(m2).Hash() {
 		t.Fatalf("recorded shape not advanced on additive adoption")
 	}
 	// Additive-only: nothing entered the GC ledger.
@@ -166,7 +166,7 @@ func TestGate_NeedsMigrationDoesNotAdopt(t *testing.T) {
 	kv := newFakeKV()
 	g, ms := newTestGate(t, kv)
 	evalPersist(t, g, metaV1())
-	oldHash := metaV1().ShapeProjection().Hash()
+	oldHash := metamodel.NewShapeProjection(metaV1()).Hash()
 
 	v := evalPersist(t, g, metaV2())
 	if v.Status != StatusNeedsMigration {
@@ -218,7 +218,7 @@ func TestGate_PersistDeclinesWhenTheRecordMoved(t *testing.T) {
 	}
 
 	// A concurrent runner records a migration and moves the shape.
-	concurrent, err := (&State{}).WithApplied("20260919143022-concurrent.yaml", metaV2().ShapeProjection(), now())
+	concurrent, err := (&State{}).WithApplied("20260919143022-concurrent.yaml", metamodel.NewShapeProjection(metaV2()), now())
 	if err != nil {
 		t.Fatalf("WithApplied: %v", err)
 	}

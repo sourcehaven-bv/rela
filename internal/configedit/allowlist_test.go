@@ -228,7 +228,64 @@ navigation:
 		{"add a view with export_render", de + "views:\n  t: {title: T, export_render: x.lua}\n", []string{"views.t.export_render added"}},
 		{"add a calendar", de + "calendars:\n  due:\n    sources: [{entity_type: ticket, date: due}]\n", nil},
 		{"add a timeline", de + "gantts:\n  plan: {hierarchy: [contains]}\n", nil},
+		{"set a message type display", de + "channels:\n  run:\n    messages:\n      claim: {display: hidden}\n", nil},
+		{"add a busy column", strings.Replace(de, "      - property: title\n", "      - property: title\n      - busy: run\n", 1), nil},
+		{"add a busy column to a dashboard card", de + "dashboard:\n  cards:\n    - title: T\n      query: type:ticket\n" +
+			"      display: table\n      columns: [{property: title}, {busy: run}]\n",
+			[]string{"dashboard.cards.0.columns.1.busy added"}},
+		{"add a busy column to a named dashboard card", de + "dashboards:\n  ops:\n    cards:\n      - title: T\n" +
+			"        query: type:ticket\n        display: table\n        columns: [{property: title}, {busy: run}]\n",
+			[]string{"dashboards.ops.cards.0.columns.1.busy added"}},
 		{"set the app logo injection", strings.Replace(de, "  name: Tickets\n", "  name: Tickets\n  disable_custom_injection: false\n", 1), []string{"app.disable_custom_injection added"}},
+	}
+	before := treeOf(t, de)
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			var got []string
+			for _, v := range CheckEdit(DataEntryFile, before, treeOf(t, tc.edit)) {
+				got = append(got, v.Path+" "+v.Change)
+			}
+			if strings.Join(got, "\n") != strings.Join(tc.want, "\n") {
+				t.Fatalf("got %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+// A named dashboard (TKT-5LQNLY) is edited like the default one: its title
+// and cards are editable, and a card's permission is locked and protective.
+func TestCheckEdit_NamedDashboards(t *testing.T) {
+	const de = `dashboards:
+  crm:
+    title: Pipeline
+    cards:
+      - title: Open
+        query: type:deal
+        display: count
+      - title: Margins
+        query: type:deal
+        display: count
+        permission: sales:read
+`
+	tests := []struct {
+		name string
+		edit string
+		want []string
+	}{
+		{"retitle the dashboard", strings.Replace(de, "title: Pipeline", "title: Deals", 1), nil},
+		{"edit a card query", strings.Replace(de, "query: type:deal\n        display: count\n      - title: Margins",
+			"query: type:lead\n        display: count\n      - title: Margins", 1), nil},
+		{"add a card", de + "      - title: Won\n        query: type:deal\n        display: count\n", nil},
+		{"change a card permission", strings.Replace(de, "sales:read", "everyone", 1),
+			[]string{"dashboards.crm.cards.1.permission changed"}},
+		{"remove a card permission", strings.Replace(de, "        permission: sales:read\n", "", 1),
+			[]string{"dashboards.crm.cards.1.permission removed"}},
+		{"add a card permission", strings.Replace(de, "      - title: Open\n        query: type:deal\n        display: count\n",
+			"      - title: Open\n        query: type:deal\n        display: count\n        permission: x\n", 1),
+			[]string{"dashboards.crm.cards.0.permission added"}},
+		{"remove the gated card", strings.Replace(de,
+			"      - title: Margins\n        query: type:deal\n        display: count\n        permission: sales:read\n", "", 1),
+			[]string{"dashboards.crm.cards.1 removed"}},
 	}
 	before := treeOf(t, de)
 	for _, tc := range tests {
@@ -265,5 +322,19 @@ func TestChangedPaths(t *testing.T) {
 	got := strings.Join(changedPaths(before, after, nil), " ")
 	if want := "a.b a.c e d"; got != want {
 		t.Fatalf("got %q, want %q", got, want)
+	}
+}
+
+// TestCheckEdit_RealtimeLocked pins that realtime.yaml is locked for the
+// Configure space: the allowlist has no editable key for it, so any change
+// is refused. Its roles and triggers decide who reads and posts into
+// channels, which is not a browser edit.
+func TestCheckEdit_RealtimeLocked(t *testing.T) {
+	const realtime = File("realtime.yaml")
+	before := treeOf(t, "version: 1\n")
+	after := treeOf(t, "version: 1\nchannel_types:\n  room:\n    attach_to: [ticket]\n")
+	got := CheckEdit(realtime, before, after)
+	if len(got) != 1 || got[0].File != realtime || got[0].Path != "channel_types.room.attach_to" || got[0].Change != "added" {
+		t.Fatalf("CheckEdit(realtime.yaml) = %+v; want the added attach_to refused", got)
 	}
 }

@@ -1,0 +1,14 @@
+request: POST /api/v1/tickets/
+identity: header viewer@example.test
+status: 403
+reads: GraphQueryHeaders=1 ListRelations=1
+breadth: ListRelations=0/1
+bodies: GraphQuery=0/1
+versions: 
+body:
+{
+  "error": "forbidden",
+  "reason": "no role grants create on type \"ticket\"",
+  "rule_id": "-",
+  "rule_kind": "role-grant"
+}

@@ -54,11 +54,11 @@ func TestV1SchemaEndpoint(t *testing.T) {
 	}
 	// The `docs` file property has max:3 — the schema must surface it so the
 	// SPA's file widget knows to use multi-file (add) mode, not replace mode.
-	if got := ticket.Properties["docs"].Max; got != 3 {
-		t.Errorf("docs.max = %d, want 3 (multi-file widget depends on this)", got)
+	if got := ticket.Properties["docs"].Max; got == nil || *got != 3 {
+		t.Errorf("docs.max = %v, want 3 (multi-file widget depends on this)", got)
 	}
-	if got := ticket.Properties["screenshot"].Max; got != 0 {
-		t.Errorf("screenshot.max = %d, want 0 (single-file, omitted)", got)
+	if got := ticket.Properties["screenshot"].Max; got != nil {
+		t.Errorf("screenshot.max = %d, want unset (single-file, omitted)", *got)
 	}
 }
 
@@ -491,6 +491,7 @@ func TestV1ListEntitiesSearchQuery(t *testing.T) {
 			{ID: "TKT-001", Type: "ticket"},
 			{ID: "TKT-003", Type: "ticket"},
 		}}
+		rebindVisibleSearcher(t, app)
 
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/tickets?q=ticket&sort=title", http.NoBody)
 		rec := httptest.NewRecorder()
@@ -516,6 +517,7 @@ func TestV1ListEntitiesSearchQuery(t *testing.T) {
 		app := newTestAppV1(t)
 		seedEntity(app, &entity.Entity{ID: "TKT-001", Type: "ticket", Properties: map[string]any{"title": "A"}})
 		app.searcher = &fakeSearcher{hits: nil}
+		rebindVisibleSearcher(t, app)
 
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/tickets?q=needle", http.NoBody)
 		rec := httptest.NewRecorder()
@@ -541,6 +543,7 @@ func TestV1ListEntitiesSearchQuery(t *testing.T) {
 			{ID: "TKT-001", Type: "ticket"},
 			{ID: "TKT-002", Type: "ticket"},
 		}}
+		rebindVisibleSearcher(t, app)
 
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/tickets?q=ticket&filter[status]=open", http.NoBody)
 		rec := httptest.NewRecorder()
@@ -561,6 +564,7 @@ func TestV1ListEntitiesSearchQuery(t *testing.T) {
 		// test can prove the searcher was never called.
 		fake := &fakeSearcher{hits: nil}
 		app.searcher = fake
+		rebindVisibleSearcher(t, app)
 
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/tickets?q=%20%20", http.NoBody)
 		rec := httptest.NewRecorder()
@@ -591,6 +595,7 @@ func TestV1ListEntitiesSearchQuery(t *testing.T) {
 		seedEntity(app, &entity.Entity{ID: "TKT-002", Type: "ticket", Properties: map[string]any{"title": "B"}})
 		fake := &fakeSearcher{hits: []search.Hit{{ID: "TKT-999", Type: "ticket"}}}
 		app.searcher = fake
+		rebindVisibleSearcher(t, app)
 
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/tickets?q=type%3Afoo", http.NoBody)
 		rec := httptest.NewRecorder()
@@ -612,6 +617,7 @@ func TestV1ListEntitiesSearchQuery(t *testing.T) {
 		seedEntity(app, &entity.Entity{ID: "TKT-001", Type: "ticket", Properties: map[string]any{"title": "Hit"}})
 		fake := &fakeSearcher{hits: []search.Hit{{ID: "TKT-001", Type: "ticket"}}}
 		app.searcher = fake
+		rebindVisibleSearcher(t, app)
 
 		// Query says `type:feature` but we're listing tickets — the helper
 		// must overwrite the type to the list's type.
@@ -628,6 +634,7 @@ func TestV1ListEntitiesSearchQuery(t *testing.T) {
 		app := newTestAppV1(t)
 		seedEntity(app, &entity.Entity{ID: "TKT-001", Type: "ticket", Properties: map[string]any{"title": "A"}})
 		app.searcher = &fakeSearcher{err: errors.New("index unavailable")}
+		rebindVisibleSearcher(t, app)
 
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/tickets?q=anything", http.NoBody)
 		rec := httptest.NewRecorder()
@@ -649,6 +656,7 @@ func TestV1ListEntitiesSearchQuery(t *testing.T) {
 			}
 		}
 		app.searcher = &fakeSearcher{hits: hits}
+		rebindVisibleSearcher(t, app)
 
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/tickets?q=hit&page=2&per_page=3", http.NoBody)
 		rec := httptest.NewRecorder()
@@ -674,6 +682,7 @@ func TestV1ListEntitiesSearchQuery(t *testing.T) {
 		seedEntity(app, &entity.Entity{ID: "TKT-001", Type: "ticket", Properties: map[string]any{"title": "Hit"}})
 		fake := &fakeSearcher{hits: []search.Hit{{ID: "TKT-001", Type: "ticket"}}}
 		app.searcher = fake
+		rebindVisibleSearcher(t, app)
 
 		req := httptest.NewRequest(http.MethodGet, `/api/v1/tickets?q=%22exact+phrase%22`, http.NoBody)
 		rec := httptest.NewRecorder()
@@ -2015,7 +2024,7 @@ func TestV1SidebarWithNavigation(t *testing.T) {
 			Items: []dataentryconfig.NavigationEntry{
 				{Label: "Tickets", List: "tickets"},
 				{Label: "Kanban", Kanban: "board"},
-				{Label: "Dashboard", Dashboard: true},
+				{Label: "Dashboard", Dashboard: dataentryconfig.DefaultDashboard},
 				{Label: "Search", Search: true},
 				{Label: "Settings", Settings: true},
 			},
@@ -2225,11 +2234,11 @@ func TestV1SchemaTypesSpecific(t *testing.T) {
 	// This endpoint shares toV1PropertyDef with /_schema, so it must surface
 	// the same fields — in particular `max` for file properties (the multi-
 	// file widget depends on it) so the two schema endpoints can't drift.
-	if got := entityType.Properties["docs"].Max; got != 3 {
-		t.Errorf("docs.max = %d, want 3 (file widget multi-file mode)", got)
+	if got := entityType.Properties["docs"].Max; got == nil || *got != 3 {
+		t.Errorf("docs.max = %v, want 3 (file widget multi-file mode)", got)
 	}
-	if got := entityType.Properties["screenshot"].Max; got != 0 {
-		t.Errorf("screenshot.max = %d, want 0 (single-file, omitted)", got)
+	if got := entityType.Properties["screenshot"].Max; got != nil {
+		t.Errorf("screenshot.max = %d, want unset (single-file, omitted)", *got)
 	}
 }
 
@@ -2785,12 +2794,14 @@ func newTestAppV1(t *testing.T) *App {
 					// fixture file properties accept text/plain; a dedicated
 					// test exercises the default-safe allowlist rejection path.
 					"screenshot": {Type: "file", Accept: []string{"text/plain"}},
-					"docs":       {Type: "file", Max: 3, Accept: []string{"text/plain"}},
+					"docs":       {Type: "file", Max: new(3), Accept: []string{"text/plain"}},
+					// A bounded integer (TKT-BRAM1A).
+					"points": {Type: "integer", Min: new(1), Max: new(5)},
 				},
 				// PropertyOrder is populated at YAML-load time in
 				// production; set it explicitly here so tests exercise
 				// the same code paths the runtime hits.
-				PropertyOrder: []string{"title", "status", "screenshot", "docs"},
+				PropertyOrder: []string{"title", "status", "screenshot", "docs", "points"},
 			},
 			"feature": {
 				Label:    "Feature",
@@ -4285,7 +4296,7 @@ func TestV1Views_MentionsAbsentWhenNoRefs(t *testing.T) {
 // properties are omitted.
 func TestV1Affordance_PerEntityGet_NoneProfile(t *testing.T) {
 	app := newTestAppV1(t)
-	app.fieldResolver = NopFieldVerdictResolver{}
+	setTestResolver(t, app, NopFieldVerdictResolver{})
 
 	seedEntity(app, &entity.Entity{
 		ID:   "TKT-001",
@@ -4358,9 +4369,9 @@ func TestV1Affordance_PerEntityGet_NoneProfile(t *testing.T) {
 // tell the three cases apart without inferring anything from absence.
 func TestV1Affordance_PerEntityGet_RedactedNamesHiddenFields(t *testing.T) {
 	app := newTestAppV1(t)
-	app.fieldResolver = fakeResolver{
+	setTestResolver(t, app, fakeResolver{
 		fv: FieldVerdicts{Visible: map[string]bool{"title": false}},
-	}
+	})
 	// `status` is stored; `title` is stored but hidden; the ticket type's other
 	// declared properties are simply unset — the BUG-MLT9DE case.
 	seedEntity(app, &entity.Entity{
@@ -4418,7 +4429,7 @@ func TestV1Affordance_PerEntityGet_RedactedNamesHiddenFields(t *testing.T) {
 // ambiguity the field exists to remove.
 func TestV1Affordance_PerEntityGet_RedactedEmptyWhenNothingHidden(t *testing.T) {
 	app := newTestAppV1(t)
-	app.fieldResolver = NopFieldVerdictResolver{}
+	setTestResolver(t, app, NopFieldVerdictResolver{})
 	seedEntity(app, &entity.Entity{
 		ID:         "TKT-001",
 		Type:       "ticket",
@@ -4452,7 +4463,7 @@ func TestV1Affordance_PerEntityGet_DemoFixture(t *testing.T) {
 	// option-filter on `status`. The newTestAppV1 metamodel declares
 	// `title` and `status` on ticket; we add `priority` to the entity
 	// via the seed.
-	app.fieldResolver = fakeResolver{
+	setTestResolver(t, app, fakeResolver{
 		fv: FieldVerdicts{
 			Writable: map[string]bool{"status": false},
 			Visible:  map[string]bool{"priority": false},
@@ -4464,7 +4475,7 @@ func TestV1Affordance_PerEntityGet_DemoFixture(t *testing.T) {
 				"blocks":     {Creatable: false, Removable: true},
 			},
 		},
-	}
+	})
 
 	seedEntity(app, &entity.Entity{
 		ID:   "TKT-002",
@@ -4553,11 +4564,11 @@ func TestV1Affordance_PatchEcho_StripsHidden(t *testing.T) {
 	app := newTestAppV1(t)
 	app.broker = newEventBroker()
 	bindRepo(app, t.TempDir())
-	app.fieldResolver = fakeResolver{
+	setTestResolver(t, app, fakeResolver{
 		fv: FieldVerdicts{
 			Visible: map[string]bool{"title": false}, // hide the title field
 		},
-	}
+	})
 	seedEntity(app, &entity.Entity{
 		ID:         "TKT-001",
 		Type:       "ticket",
@@ -4606,11 +4617,11 @@ func TestV1Affordance_Includes_StripHidden(t *testing.T) {
 	app := newTestAppV1(t)
 	app.broker = newEventBroker()
 	bindRepo(app, t.TempDir())
-	app.fieldResolver = fakeResolver{
+	setTestResolver(t, app, fakeResolver{
 		fv: FieldVerdicts{
 			Visible: map[string]bool{"title": false}, // hide title on every entity
 		},
-	}
+	})
 	seedEntity(app, &entity.Entity{
 		ID:         "TKT-001",
 		Type:       "ticket",
@@ -4646,11 +4657,11 @@ func TestV1Affordance_CollectionList_StripHidden(t *testing.T) {
 	app := newTestAppV1(t)
 	app.broker = newEventBroker()
 	bindRepo(app, t.TempDir())
-	app.fieldResolver = fakeResolver{
+	setTestResolver(t, app, fakeResolver{
 		fv: FieldVerdicts{
 			Visible: map[string]bool{"title": false},
 		},
-	}
+	})
 	seedEntity(app, &entity.Entity{
 		ID:         "TKT-001",
 		Type:       "ticket",
@@ -4677,10 +4688,10 @@ func seedDemoTicketForPatch(t *testing.T) *App {
 	app := newTestAppV1(t)
 	app.broker = newEventBroker()
 	bindRepo(app, t.TempDir())
-	app.fieldResolver = newVerdicts().
+	setTestResolver(t, app, newVerdicts().
 		ReadOnly("status").
 		EnumDeny("title", "forbidden-title").
-		Build()
+		Build())
 	seedEntity(app, &entity.Entity{
 		ID:   "TKT-001",
 		Type: "ticket",
@@ -4698,11 +4709,11 @@ func TestV1Affordance_PatchHiddenAndUnknownField_SameShape(t *testing.T) {
 	app := newTestAppV1(t)
 	app.broker = newEventBroker()
 	bindRepo(app, t.TempDir())
-	app.fieldResolver = fakeResolver{
+	setTestResolver(t, app, fakeResolver{
 		fv: FieldVerdicts{
 			Visible: map[string]bool{"title": false}, // hide a declared field
 		},
-	}
+	})
 	seedEntity(app, &entity.Entity{
 		ID:         "TKT-001",
 		Type:       "ticket",
@@ -4791,11 +4802,11 @@ func TestV1Affordance_PatchReadOnlyField_Forbidden(t *testing.T) {
 func TestV1Affordance_AffordanceDenial_EmitsAudit(t *testing.T) {
 	sink := audit.NewMemory()
 	app := buildAppWithACLAndAudit(t, acl.NopACL{}, sink)
-	app.fieldResolver = fakeResolver{
+	setTestResolver(t, app, fakeResolver{
 		fv: FieldVerdicts{
 			Writable: map[string]bool{"status": false},
 		},
-	}
+	})
 	seedEntity(app, &entity.Entity{
 		ID:         "TKT-001",
 		Type:       "ticket",
@@ -4862,13 +4873,13 @@ func TestV1Affordance_PatchFilteredListEnum_Forbidden(t *testing.T) {
 	app := newTestAppV1(t)
 	app.broker = newEventBroker()
 	bindRepo(app, t.TempDir())
-	app.fieldResolver = fakeResolver{
+	setTestResolver(t, app, fakeResolver{
 		fv: FieldVerdicts{
 			Options: map[string]map[string]bool{
 				"tags": {"forbidden-tag": false},
 			},
 		},
-	}
+	})
 	seedEntity(app, &entity.Entity{
 		ID:         "TKT-001",
 		Type:       "ticket",
@@ -4917,7 +4928,7 @@ func TestHandleV1CreateEntity_FieldAffordances(t *testing.T) {
 		app := newTestAppV1(t)
 		app.broker = newEventBroker()
 		bindRepo(app, t.TempDir())
-		app.fieldResolver = newVerdicts().Hidden("title").Build()
+		setTestResolver(t, app, newVerdicts().Hidden("title").Build())
 
 		code, body := createTicketRaw(t, app, `{"properties":{"title":"new"}}`)
 		if code != http.StatusForbidden {
@@ -4932,7 +4943,7 @@ func TestHandleV1CreateEntity_FieldAffordances(t *testing.T) {
 		app := newTestAppV1(t)
 		app.broker = newEventBroker()
 		bindRepo(app, t.TempDir())
-		app.fieldResolver = NopFieldVerdictResolver{}
+		setTestResolver(t, app, NopFieldVerdictResolver{})
 
 		code, body := createTicketRaw(t, app, `{"properties":{"bogus_field":"v"}}`)
 		if code != http.StatusForbidden {
@@ -4947,7 +4958,7 @@ func TestHandleV1CreateEntity_FieldAffordances(t *testing.T) {
 		app := newTestAppV1(t)
 		app.broker = newEventBroker()
 		bindRepo(app, t.TempDir())
-		app.fieldResolver = newVerdicts().ReadOnly("status").Build()
+		setTestResolver(t, app, newVerdicts().ReadOnly("status").Build())
 
 		code, body := createTicketRaw(t, app, `{"properties":{"title":"ok","status":"open"}}`)
 		if code != http.StatusForbidden {
@@ -4962,7 +4973,7 @@ func TestHandleV1CreateEntity_FieldAffordances(t *testing.T) {
 		app := newTestAppV1(t)
 		app.broker = newEventBroker()
 		bindRepo(app, t.TempDir())
-		app.fieldResolver = newVerdicts().EnumDeny("title", "forbidden-title").Build()
+		setTestResolver(t, app, newVerdicts().EnumDeny("title", "forbidden-title").Build())
 
 		code, body := createTicketRaw(t, app, `{"properties":{"title":"forbidden-title"}}`)
 		if code != http.StatusForbidden {
@@ -4977,7 +4988,7 @@ func TestHandleV1CreateEntity_FieldAffordances(t *testing.T) {
 		app := newTestAppV1(t)
 		app.broker = newEventBroker()
 		bindRepo(app, t.TempDir())
-		app.fieldResolver = newVerdicts().ReadOnly("status").Build()
+		setTestResolver(t, app, newVerdicts().ReadOnly("status").Build())
 
 		// `title` is writable; `status` is omitted, so the read-only gate
 		// never fires. The create must succeed end-to-end.
@@ -4996,7 +5007,7 @@ func TestHandleV1CreateEntity_FieldAffordances(t *testing.T) {
 func TestHandleV1CreateEntity_AffordanceDenial_EmitsAudit(t *testing.T) {
 	sink := audit.NewMemory()
 	app := buildAppWithACLAndAudit(t, acl.NopACL{}, sink)
-	app.fieldResolver = newVerdicts().ReadOnly("status").Build()
+	setTestResolver(t, app, newVerdicts().ReadOnly("status").Build())
 
 	code, body := createTicketRaw(t, app, `{"properties":{"title":"ok","status":"open"}}`)
 	if code != http.StatusForbidden {
@@ -5053,7 +5064,7 @@ func TestHandleV1DryRunCreate_Affordances(t *testing.T) {
 		app := newTestAppV1(t)
 		app.broker = newEventBroker()
 		bindRepo(app, t.TempDir())
-		app.fieldResolver = newVerdicts().ReadOnly("status").Build()
+		setTestResolver(t, app, newVerdicts().ReadOnly("status").Build())
 
 		code, rec := dryRunCreateRaw(t, app, `{"properties":{"title":"x"}}`)
 		if code != http.StatusOK {
@@ -5076,7 +5087,7 @@ func TestHandleV1DryRunCreate_Affordances(t *testing.T) {
 		app := newTestAppV1(t)
 		app.broker = newEventBroker()
 		bindRepo(app, t.TempDir())
-		app.fieldResolver = newVerdicts().Hidden("status").Build()
+		setTestResolver(t, app, newVerdicts().Hidden("status").Build())
 
 		code, rec := dryRunCreateRaw(t, app, `{"properties":{"title":"x"}}`)
 		if code != http.StatusOK {
@@ -5101,7 +5112,7 @@ func TestHandleV1DryRunCreate_Affordances(t *testing.T) {
 		app := newTestAppV1(t)
 		app.broker = newEventBroker()
 		bindRepo(app, t.TempDir())
-		app.fieldResolver = newVerdicts().EnumDeny("status", "done").Build()
+		setTestResolver(t, app, newVerdicts().EnumDeny("status", "done").Build())
 
 		code, rec := dryRunCreateRaw(t, app, `{"properties":{"title":"x"}}`)
 		if code != http.StatusOK {
@@ -5121,7 +5132,7 @@ func TestHandleV1DryRunCreate_Affordances(t *testing.T) {
 func TestHandleV1DryRunCreate_PersistsNothing(t *testing.T) {
 	sink := audit.NewMemory()
 	app := buildAppWithACLAndAudit(t, acl.NopACL{}, sink)
-	app.fieldResolver = newVerdicts().ReadOnly("status").Build()
+	setTestResolver(t, app, newVerdicts().ReadOnly("status").Build())
 
 	before := countStoreEntities(t, app)
 
@@ -5189,7 +5200,7 @@ func TestHandleV1DryRunCreate_ResponseIncludesAllVisibleDeclaredProps(t *testing
 	app.broker = newEventBroker()
 	bindRepo(app, t.TempDir())
 	// Hide one field; the rest should all appear in `properties`.
-	app.fieldResolver = newVerdicts().Hidden("status").Build()
+	setTestResolver(t, app, newVerdicts().Hidden("status").Build())
 
 	code, rec := dryRunCreateRaw(t, app, `{"properties":{}}`)
 	if code != http.StatusOK {
@@ -5253,7 +5264,7 @@ func seedTicketWithRelationVerdicts(t *testing.T, rv RelationVerdicts) *App {
 	app := newTestAppV1(t)
 	app.broker = newEventBroker()
 	bindRepo(app, t.TempDir())
-	app.fieldResolver = fakeResolver{rv: rv}
+	setTestResolver(t, app, fakeResolver{rv: rv})
 	seedEntity(app, &entity.Entity{
 		ID:         "TKT-001",
 		Type:       "ticket",
@@ -5346,7 +5357,7 @@ func TestV1Affordance_PerRelationCreate_IncomingResolvesAgainstSource(t *testing
 	app := newTestAppV1(t)
 	app.broker = newEventBroker()
 	bindRepo(app, t.TempDir())
-	app.fieldResolver = byTypeResolver{
+	setTestResolver(t, app, byTypeResolver{
 		rvByType: map[string]RelationVerdicts{
 			"ticket": {
 				Types: map[string]RelationVerdict{
@@ -5355,7 +5366,7 @@ func TestV1Affordance_PerRelationCreate_IncomingResolvesAgainstSource(t *testing
 			},
 			// concept verdict: implicit defaults (everything permitted).
 		},
-	}
+	})
 	// The test metamodel doesn't declare `affects`, but the demo
 	// metamodel does. We seed both ticket + concept entities; the
 	// relation create path doesn't validate against the metamodel
@@ -5492,7 +5503,7 @@ func TestV1Affordance_CollectionGet_NoFieldVerdicts(t *testing.T) {
 	app := newTestAppV1(t)
 	app.broker = newEventBroker()
 	bindRepo(app, t.TempDir())
-	app.fieldResolver = DemoFieldVerdictResolver{}
+	setTestResolver(t, app, DemoFieldVerdictResolver{})
 
 	seedEntity(app, &entity.Entity{
 		ID:         "TKT-001",

@@ -14,6 +14,7 @@
  */
 import { ref, watch, computed, nextTick, onBeforeUnmount } from 'vue'
 import { useModalStack } from '@/composables/modalStack'
+import { useI18n } from 'vue-i18n'
 import { normalizeLinkUrl } from './linkUrl'
 import RlButton from 'rela-components/components/common/RlButton.vue'
 
@@ -49,10 +50,17 @@ const textRef = ref<HTMLInputElement | null>(null)
 const dialogRef = ref<HTMLElement | null>(null)
 const previouslyFocused = ref<HTMLElement | null>(null)
 
+const { t } = useI18n()
+
+/** An example address: the same in every language, so not a message. */
+const EXAMPLE_URL = 'https://example.com'
+
 useModalStack(computed(() => props.open))
 
-const title = computed(() => (props.editing ? 'Edit link' : 'Insert link'))
-const submitLabel = computed(() => (props.editing ? 'Save' : 'Insert'))
+const title = computed(() => (props.editing ? t('editor.link.edit') : t('editor.link.insert')))
+const submitLabel = computed(() =>
+  props.editing ? t('common.save') : t('editor.link.insertButton')
+)
 
 // Watches the seed values ALONGSIDE `open`, not `open` alone.
 //
@@ -98,7 +106,7 @@ function onSubmit(): void {
 
   const text = props.needsText ? textInput.value.trim() : (props.initialText ?? '')
   if (props.needsText && !text) {
-    error.value = 'Enter the text to show for this link.'
+    error.value = t('editor.link.textRequired')
     void nextTick(() => textRef.value?.focus())
     return
   }
@@ -171,7 +179,7 @@ function onOverlayClick(event: MouseEvent): void {
 
         <form class="link-dialog-form" @submit.prevent="onSubmit">
           <label v-if="props.needsText" class="link-dialog-field">
-            <span class="link-dialog-label">Text</span>
+            <span class="link-dialog-label">{{ t('editor.link.text') }}</span>
             <input
               ref="textRef"
               v-model="textInput"
@@ -183,14 +191,14 @@ function onOverlayClick(event: MouseEvent): void {
           </label>
 
           <label class="link-dialog-field">
-            <span class="link-dialog-label">Address</span>
+            <span class="link-dialog-label">{{ t('editor.link.address') }}</span>
             <input
               ref="urlRef"
               v-model="urlInput"
               type="text"
               class="link-dialog-input"
               :class="{ 'has-error': error }"
-              placeholder="https://example.com"
+              :placeholder="EXAMPLE_URL"
               autocomplete="off"
               spellcheck="false"
               :aria-invalid="Boolean(error)"
@@ -211,7 +219,9 @@ function onOverlayClick(event: MouseEvent): void {
           </p>
 
           <div class="link-dialog-actions">
-            <RlButton type="button" variant="secondary" @click="emit('close')">Cancel</RlButton>
+            <RlButton type="button" variant="secondary" @click="emit('close')">{{
+              t('common.cancel')
+            }}</RlButton>
             <RlButton type="submit" variant="primary">{{ submitLabel }}</RlButton>
           </div>
         </form>

@@ -15,6 +15,7 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/config/configsql"
+	"github.com/Sourcehaven-BV/rela/internal/lua"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
 	"github.com/Sourcehaven-BV/rela/internal/project"
@@ -28,8 +29,10 @@ var configRootFiles = []string{
 	"desktop.yaml",
 	"acl.yaml",
 	"schedules.yaml",
+	"subscriptions.yaml",
 	"mail-templates.yaml",
 	"classification.yaml",
+	"realtime.yaml",
 }
 
 // configDirs are the project directories a database carries, recursively.
@@ -38,7 +41,7 @@ var configRootFiles = []string{
 // it is the filesystem tier's migration record, and the database keeps its
 // own (TKT-XCJ0Y2), so it is skipped.
 var configDirs = []string{
-	"scripts", "actions", "validations", "migrations", "templates", "custom", "apps",
+	"scripts", "lib", "actions", "validations", "migrations", "templates", "custom", "apps",
 }
 
 // skippedConfigFiles are paths under configDirs that are state, not config.
@@ -119,7 +122,8 @@ func CollectProjectConfig(fsys storage.FS, dir string) (map[string][]byte, error
 	return files, nil
 }
 
-// collectConfigDir adds every regular, non-hidden file under dir/sub.
+// collectConfigDir adds every regular, non-hidden file under dir/sub; under
+// lib/ only the .lua files.
 func collectConfigDir(fsys storage.FS, dir, sub string, add func(string) error) error {
 	root := filepath.Join(dir, sub)
 	if info, err := os.Lstat(root); errors.Is(err, os.ErrNotExist) {
@@ -140,6 +144,10 @@ func collectConfigDir(fsys storage.FS, dir, sub string, add func(string) error) 
 			return nil
 		}
 		if d.IsDir() {
+			return nil
+		}
+		// lib/ is a common directory name; only its Lua modules are config.
+		if sub == lua.ModuleDir && !strings.HasSuffix(d.Name(), ".lua") {
 			return nil
 		}
 		return add(path) // refuses anything but a regular file
@@ -316,10 +324,11 @@ func recordConfigImport(ctx context.Context, opts ConfigImportOptions, count int
 		summary = fmt.Sprintf("config import from %s FAILED, nothing written: %s", source, err)
 	}
 	opts.Audit.Record(audit.Record{
-		Time:      time.Now().UTC(),
-		Op:        audit.OpConfigImport,
-		Principal: principal.From(ctx),
-		Summary:   summary,
+		Time:       time.Now().UTC(),
+		Op:         audit.OpConfigImport,
+		Principal:  principal.From(ctx),
+		AssertedBy: audit.AssertedByFrom(ctx),
+		Summary:    summary,
 	})
 }
 

@@ -45,6 +45,12 @@ func TestProvisionSeam_EveryWriteHandlerUsesWithProvision(t *testing.T) {
 	receivers := map[string]bool{"writeHandler": true, "attachmentHandler": true, "commentsHandler": true}
 	// Write routes whose names do not start with "handle".
 	otherWrites := map[string]bool{"commentAccept": true}
+	// Handlers that provision inside a shared operation instead, so the
+	// remote MCP tools run the same seam (TKT-NW9QSN). The operation is
+	// checked below.
+	delegated := map[string]struct{ call, file, recv string }{
+		"handleV1Action": {call: "run", file: "actions_ops.go", recv: "actionOps"},
+	}
 
 	fset := token.NewFileSet()
 	seen := 0
@@ -72,6 +78,9 @@ func TestProvisionSeam_EveryWriteHandlerUsesWithProvision(t *testing.T) {
 			if _, skip := notWrites[fn.Name.Name]; skip {
 				continue
 			}
+			if op, ok := delegated[fn.Name.Name]; ok && callsMethod(fn.Body, op.call) {
+				continue
+			}
 			if !callsMethod(fn.Body, "withProvision") {
 				t.Errorf("%s: %s.%s does not call withProvision; a write handler that skips it "+
 					"lets an unmatched principal bypass unmatched_principal: provision",
@@ -82,6 +91,34 @@ func TestProvisionSeam_EveryWriteHandlerUsesWithProvision(t *testing.T) {
 	if seen == 0 {
 		t.Fatal("found no handler methods; the file list or receiver names are stale")
 	}
+
+	for handler, op := range delegated {
+		if !opProvisions(t, fset, op.file, op.recv, op.call) {
+			t.Errorf("%s delegates to %s.%s, which does not call provision", handler, op.recv, op.call)
+		}
+	}
+}
+
+// opProvisions reports whether method name on recv in file calls the
+// provision seam: withProvision, or the provision func it wraps.
+func opProvisions(t *testing.T, fset *token.FileSet, file, recv, name string) bool {
+	t.Helper()
+	f, err := parser.ParseFile(fset, file, nil, 0)
+	if err != nil {
+		t.Fatalf("parse %s: %v", file, err)
+	}
+	for _, decl := range f.Decls {
+		fn, ok := decl.(*ast.FuncDecl)
+		if !ok || fn.Recv == nil || fn.Name.Name != name {
+			continue
+		}
+		if id, ok := fn.Recv.List[0].Type.(*ast.Ident); !ok || id.Name != recv {
+			continue
+		}
+		return callsMethod(fn.Body, "withProvision") || callsMethod(fn.Body, "provision")
+	}
+	t.Fatalf("%s: no method %s.%s", file, recv, name)
+	return false
 }
 
 // callsMethod reports whether body contains a call to a method named name.

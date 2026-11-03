@@ -356,7 +356,7 @@ func TestGantt_ACLRollupExcludesHiddenChild(t *testing.T) {
 		Roles:       map[string]acl.RoleDef{"viewer": {Read: []string{"project"}}},
 		Assignments: map[string]string{"alice": "viewer"},
 	}, app.store)
-	app.acl = d
+	setTestACL(t, app, d)
 
 	resp := decodeGantt(t, ganttGet(gateCtxFor(aliceCtx(), t, d), app, "plan"))
 	root := resp.Roots[0]
@@ -384,9 +384,9 @@ func ganttBody(t *testing.T, r v1.GanttResponse) string {
 // fold, not after it.
 func TestGantt_FieldHiddenDateExcludedFromFold(t *testing.T) {
 	app := newGanttTestApp(t)
-	app.fieldResolver = fakeResolver{fv: FieldVerdicts{
+	setTestResolver(t, app, fakeResolver{fv: FieldVerdicts{
 		Visible: map[string]bool{"end": false}, // epic's end date is secret
-	}}
+	}})
 	seedProject(app, "PRJ-A", "Root", nil)
 	seedProject(app, "PRJ-B", "Child", map[string]any{
 		"planned_start": "2026-01-10", "planned_end": "2026-03-01"})
@@ -431,7 +431,7 @@ func TestGantt_TruncatedIsPostFilter(t *testing.T) {
 		Roles:       map[string]acl.RoleDef{"viewer": {Read: []string{"project"}}},
 		Assignments: map[string]string{"alice": "viewer"},
 	}, app.store)
-	app.acl = d
+	setTestACL(t, app, d)
 	resp := decodeGantt(t, ganttGet(gateCtxFor(aliceCtx(), t, d), app, "plan"))
 	if resp.Truncated {
 		t.Errorf("ORACLE: truncated=true for a principal whose visible tree fits the cap")
@@ -450,7 +450,7 @@ func TestGantt_DrillRootUniform404(t *testing.T) {
 		Roles:       map[string]acl.RoleDef{"viewer": {Read: []string{"project"}}},
 		Assignments: map[string]string{"alice": "viewer"},
 	}, app.store)
-	app.acl = d
+	setTestACL(t, app, d)
 	ctx := gateCtxFor(aliceCtx(), t, d)
 
 	hidden := ganttGet(ctx, app, "plan?root=EPIC-H")
@@ -546,9 +546,9 @@ func TestGantt_WhereOnHiddenPropertyMatchesNothing(t *testing.T) {
 			Where: []string{"planned_end>=2026-01-01"},
 		}
 	})
-	app.fieldResolver = fakeResolver{fv: FieldVerdicts{
+	setTestResolver(t, app, fakeResolver{fv: FieldVerdicts{
 		Visible: map[string]bool{"planned_end": false},
-	}}
+	}})
 	seedProject(app, "PRJ-A", "Root", map[string]any{
 		"planned_start": "2026-01-01", "planned_end": "2026-03-01"})
 
@@ -873,9 +873,9 @@ func TestGantt_TooltipProps(t *testing.T) {
 	}
 
 	// Hide the property: the key must vanish, not blank out.
-	app.fieldResolver = fakeResolver{fv: FieldVerdicts{
+	setTestResolver(t, app, fakeResolver{fv: FieldVerdicts{
 		Visible: map[string]bool{"status": false},
-	}}
+	}})
 	resp = decodeGantt(t, ganttGet(context.Background(), app, "plan"))
 	if _, present := resp.Roots[0].Props["status"]; present {
 		t.Errorf("LEAK: hidden property shipped in tooltip props: %v", resp.Roots[0].Props)
@@ -950,7 +950,7 @@ func TestSidebar_GanttHiddenWithoutPermission(t *testing.T) {
 		Roles:       map[string]acl.RoleDef{"viewer": {Read: []string{"project"}}},
 		Assignments: map[string]string{"alice": "viewer"},
 	}, app.store)
-	app.acl = d
+	setTestACL(t, app, d)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/_sidebar", http.NoBody)
 	req = req.WithContext(gateCtxFor(aliceCtx(), t, d))
@@ -1182,7 +1182,7 @@ func TestGantt_CycleMarkNeverRevealsHiddenTopology(t *testing.T) {
 		Roles:       map[string]acl.RoleDef{"viewer": {Read: []string{"project"}}},
 		Assignments: map[string]string{"alice": "viewer"},
 	}, app.store)
-	app.acl = d
+	setTestACL(t, app, d)
 
 	resp := decodeGantt(t, ganttGet(gateCtxFor(aliceCtx(), t, d), app, "plan"))
 	body := ganttBody(t, resp)
@@ -1335,7 +1335,7 @@ func TestGantt_SubtreeDrillMultiParentErrorIsSubtreeScoped(t *testing.T) {
 			Roles:       map[string]acl.RoleDef{"viewer": {Read: []string{"project"}}},
 			Assignments: map[string]string{"alice": "viewer"},
 		}, app.store)
-		app.acl = d
+		setTestACL(t, app, d)
 		rec := ganttGet(gateCtxFor(aliceCtx(), t, d), app, "plan?root=PRJ-T")
 		if rec.Code != http.StatusOK {
 			t.Fatalf("ORACLE: a hidden parent must not make the drill fail: got %d; body=%s", rec.Code, rec.Body)
@@ -1377,7 +1377,7 @@ func TestGantt_SubtreeDrillOutsideParentGating(t *testing.T) {
 			Roles:       map[string]acl.RoleDef{"viewer": {Read: []string{"project"}}},
 			Assignments: map[string]string{"alice": "viewer"},
 		}, app.store)
-		app.acl = d
+		setTestACL(t, app, d)
 		got := assertDrillMatchesFull(gateCtxFor(aliceCtx(), t, d), t, app)
 		if len(got.Children) != 1 || got.Children[0].ID != "PRJ-KID" {
 			t.Errorf("with EPIC-X hidden PRJ-KID belongs to PRJ-ROOT: %+v", got.Children)

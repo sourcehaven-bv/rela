@@ -277,6 +277,10 @@ func (c compiledCeiling) clamp(role RoleDef) RoleDef {
 	// A rename is a modification: the ceiling's update axis bounds it, as
 	// permitsVerb does for OpRename.
 	role.Rename = filterTypes(role.Rename, c.update)
+	// A conversion modifies the source and ends it as that type, so the
+	// update and delete axes both bound it, as permitsVerb does for
+	// OpConvert. The destination is checked per request, in decideFamily.
+	role.Convert = filterTypes(filterTypes(role.Convert, c.update), c.del)
 	role.Delete = filterTypes(role.Delete, c.del)
 	role.Worlds = filterWorlds(role.Worlds, c.worlds)
 	role.Permissions = filterPermissions(role.Permissions, c.permissions)
@@ -313,8 +317,14 @@ func filterWorlds(roleWorlds []string, w verbCeiling) []string {
 // of `allow: [ticket]` must become `[ticket]`, NOT stay `["*"]` — otherwise the
 // ceiling would be silently ignored, which is the fail-open direction. So when
 // the role holds a wildcard and the ceiling has a closed allowlist, the
-// ceiling's list becomes the result: it is by construction a subset of "every
-// type".
+// ceiling's list replaces the wildcard: it is by construction a subset of
+// "every type".
+//
+// The ceiling's list replaces the wildcard only, not the role's other entries.
+// On a write "*" covers each type's default face and no named face, so a face
+// grant next to it (`["*", "page@draft"]`) grants something the wildcard does
+// not. It stays when the ceiling permits its type, as it would without the
+// wildcard (BUG-0A2KPC).
 //
 // A wildcard under a pure DENY ceiling is different: a plain list cannot spell
 // "everything except person", and expanding it would reintroduce exactly the
@@ -325,13 +335,20 @@ func filterTypes(roleTypes []string, v verbCeiling) []string {
 	if !v.narrows() || len(roleTypes) == 0 {
 		return roleTypes
 	}
-	if v.allow != nil && slices.Contains(roleTypes, "*") {
-		// "everything" ∩ "exactly these" = "exactly these".
-		return slices.Clone(v.allow)
-	}
 	out := make([]string, 0, len(roleTypes))
+	collapse := v.allow != nil && slices.Contains(roleTypes, "*")
+	if collapse {
+		// "everything" ∩ "exactly these" = "exactly these".
+		out = append(out, v.allow...)
+	}
 	for _, t := range roleTypes {
+		if slices.Contains(out, t) {
+			continue
+		}
 		if t == "*" {
+			if collapse {
+				continue // replaced by the allowlist above
+			}
 			// Wildcard under a pure denial: keep it. The denial is enforced by
 			// permitsVerb, which every predicate consults after the role lists
 			// have been checked — a plain list cannot express "all except X".
@@ -344,7 +361,7 @@ func filterTypes(roleTypes []string, v verbCeiling) []string {
 		// state grant entirely, because "page@draft" never equals "page".
 		//
 		// That failure had an inversion in it worth remembering: the
-		// wildcard branch above returns early, so `update: ["*"]` KEPT the
+		// wildcard branch above returned early then, so `update: ["*"]` KEPT the
 		// state grant while the narrower `update: ["page"]` destroyed it —
 		// a grant surviving the broad ceiling and dying under the specific
 		// one. And the resulting denial named the ROLE, not the ceiling,
@@ -398,6 +415,8 @@ func (c compiledCeiling) permitsVerb(op Op, target string) bool {
 		return c.create.permits(target)
 	case OpUpdate, OpRename:
 		return c.update.permits(target)
+	case OpConvert:
+		return c.update.permits(target) && c.del.permits(target)
 	case OpDelete:
 		return c.del.permits(target)
 	default:
@@ -466,6 +485,20 @@ type FieldCeiling struct {
 // Constrains reports whether this ceiling hides anything for the type.
 func (f FieldCeiling) Constrains() bool {
 	return f.Visible != nil || len(f.Redact) > 0
+}
+
+// Hides reports whether this ceiling withholds property: a `redact:` entry
+// names it, or a `visible:` allowlist does not.
+func (f FieldCeiling) Hides(property string) bool {
+	return ceilingHidesField(f, property)
+}
+
+// CeilingBaseline returns the name of the client baseline r's principal is
+// subject to, or "" when no baseline matches and the principal is
+// unrestricted. A function rather than a method: [Request] is at its plimsoll
+// method load line.
+func CeilingBaseline(r *Request) string {
+	return r.ceiling.name
 }
 
 // FieldCeilingFor returns the field ceiling this request's principal is subject

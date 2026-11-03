@@ -7,6 +7,7 @@
  * budget exists to prevent. It owns no state: days, events and the ACL
  * predicate are all passed in, and every interaction is re-emitted upward.
  */
+import { useI18n } from 'vue-i18n'
 import CalendarEventChip from './CalendarEventChip.vue'
 import type { CalendarEvent } from '@/composables/useCalendarEvents'
 import type { Entity } from '@/types'
@@ -36,6 +37,8 @@ defineEmits<{
   (e: 'dragover', native: DragEvent): void
   (e: 'drop', native: DragEvent, day: CalendarDay): void
 }>()
+
+const { t } = useI18n()
 </script>
 
 <template>
@@ -74,7 +77,7 @@ defineEmits<{
             class="calendar-more"
             @click="$emit('expand', day)"
           >
-            +{{ hiddenCount(day) }} more
+            {{ t('calendar.more', { n: hiddenCount(day) }) }}
           </button>
         </div>
       </div>

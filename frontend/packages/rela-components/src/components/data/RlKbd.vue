@@ -7,6 +7,9 @@
  * carries meaning: `+` is held together, `then` is pressed in sequence.
  */
 import { computed } from 'vue'
+import { useMessages } from '../../composables/useMessages'
+
+const messages = useMessages()
 
 const props = withDefaults(
   defineProps<{
@@ -24,13 +27,19 @@ const parts = computed(() => props.keys.split(props.separator).map((part) => par
  * The separator is read out, so "G then D" is announced as three tokens
  * rather than as the single unpronounceable string "GthenD".
  */
-const spoken = computed(() => parts.value.join(` ${props.separator} `))
+const separatorText = computed(() => {
+  if (props.separator === 'then') return messages.chromeText({ key: 'keyThen' })
+  if (props.separator === 'or') return messages.chromeText({ key: 'keyOr' })
+  return props.separator
+})
+
+const spoken = computed(() => parts.value.join(` ${separatorText.value} `))
 </script>
 
 <template>
   <span class="rl-kbd" :class="`rl-kbd--${size}`" role="img" :aria-label="spoken">
     <template v-for="(part, index) in parts" :key="`${part}-${index}`">
-      <span v-if="index > 0" class="rl-kbd__separator" aria-hidden="true">{{ separator }}</span>
+      <span v-if="index > 0" class="rl-kbd__separator" aria-hidden="true">{{ separatorText }}</span>
       <kbd class="rl-kbd__key" aria-hidden="true">{{ part }}</kbd>
     </template>
   </span>

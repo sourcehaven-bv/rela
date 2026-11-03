@@ -7,8 +7,10 @@ priority: medium
 effort: s
 tags:
     - tech-debt
-status: backlog
+status: wont-fix
 ---
+
+> **Closed (wont-fix), 2026-10-11:** done by TKT-356XUF in a different place. An adapter inside internal/migration is an import cycle (internal/metamodel imports internal/migration), so the adapter is `projectsetup.migrationSchema` at the only wiring site. `IsEnumType` is deleted.
 
 Sub-ticket of [[TKT-N0IKN9]] — the `metamodel.Metamodel` exported-surface
 offender (32 exported methods, line is 20; directive at

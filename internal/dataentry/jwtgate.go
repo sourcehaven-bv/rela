@@ -1,6 +1,7 @@
 package dataentry
 
 import (
+	"context"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -185,8 +186,33 @@ func requireVerifiedJWT(next http.Handler, cfg JWTGateConfig) http.Handler {
 		}
 
 		g.noteRecovery(r)
-		next.ServeHTTP(w, r.WithContext(principal.With(r.Context(), p)))
+		ctx := withCredentialExpiry(principal.With(r.Context(), p), id.ExpiresAt)
+		next.ServeHTTP(w, r.WithContext(ctx))
 	})
+}
+
+// credentialExpiryKey is the context key for the moment the request's
+// verified credential stops being valid. It is unexported, so only the gate
+// can set it and a request cannot extend its own stream.
+type credentialExpiryKey struct{}
+
+// withCredentialExpiry records when the request's credential expires. It is
+// kept apart from [principal.Principal] on purpose: a refreshed token with a
+// later expiry is the same identity, and the principal's equality, share key
+// and JSON form must not see the difference.
+func withCredentialExpiry(ctx context.Context, t time.Time) context.Context {
+	return context.WithValue(ctx, credentialExpiryKey{}, t)
+}
+
+// credentialExpiry returns the expiry the gate recorded. It returns false
+// when the request has none (any auth mode other than the JWT gate) and when
+// the recorded expiry is zero, which means no expiry is known.
+func credentialExpiry(ctx context.Context) (time.Time, bool) {
+	t, ok := ctx.Value(credentialExpiryKey{}).(time.Time)
+	if !ok || t.IsZero() {
+		return time.Time{}, false
+	}
+	return t, true
 }
 
 // logFailure records a verification failure at a level matching who must act:

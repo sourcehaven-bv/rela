@@ -32,6 +32,7 @@ type AnalyzeCmd struct {
 	Properties    AnalyzePropertiesCmd    `cmd:"" help:"Validate entity property values against metamodel."`
 	Validations   AnalyzeValidationsCmd   `cmd:"" help:"Run custom validation rules from metamodel."`
 	States        AnalyzeStatesCmd        `cmd:"" help:"Find content-state integrity issues (undeclared faces, rows stranded at the bare id)."`
+	Prose         AnalyzeProseCmd         `cmd:"" help:"Run the prose checkers marked analyze: true over entity bodies."`
 	All           AnalyzeAllCmd           `cmd:"" help:"Run all analyses."`
 	Schema        AnalyzeSchemaCmd        `cmd:"" help:"Analyze metamodel schema usage."`
 }
@@ -756,7 +757,9 @@ func renderValidationErrors(scriptErrors []*lua.ScriptError, loadErrors []analys
 }
 
 // AnalyzeAllCmd runs all analyses.
-type AnalyzeAllCmd struct{}
+type AnalyzeAllCmd struct {
+	Prose bool `help:"Also run the prose checkers marked analyze: true (one process per entity, so off by default)."`
+}
 
 // Run dispatches `rela analyze all`.
 func (c *AnalyzeAllCmd) Run(ctx context.Context, svc *readServices, analyzer *analysis.Service) error {
@@ -774,17 +777,46 @@ func (c *AnalyzeAllCmd) Run(ctx context.Context, svc *readServices, analyzer *an
 	if !analysis.IsIncompleteScan(scanErr) {
 		scanErr = nil
 	}
+	var prose *proseReport
+	if c.Prose {
+		report, proseErr := collectProse(ctx, svc, "")
+		if proseErr != nil {
+			return proseErr
+		}
+		prose = &report
+	}
 	if out.Format == "json" {
-		if jsonErr := writeAnalyzeAllJSON(summary); jsonErr != nil {
+		if jsonErr := writeAnalyzeAllJSON(summary, prose); jsonErr != nil {
 			return jsonErr
 		}
-		return reportPartialScan(scanErr)
+		return firstErr(reportPartialScan(scanErr), proseErr(prose))
 	}
-	writeAnalyzeAllSummary(svc, summary)
+	writeAnalyzeAllSummary(svc, summary, prose)
 	if sectionErr := runAnalyzeAllSections(ctx, svc, analyzer, *opts); sectionErr != nil {
 		return sectionErr
 	}
-	return reportPartialScan(scanErr)
+	if prose != nil {
+		out.WriteMessage("")
+		out.WriteSectionHeader("Prose Checks")
+		writeProseText(*prose)
+	}
+	return firstErr(reportPartialScan(scanErr), proseErr(prose))
+}
+
+func proseErr(r *proseReport) error {
+	if r == nil {
+		return nil
+	}
+	return r.err()
+}
+
+func firstErr(errs ...error) error {
+	for _, err := range errs {
+		if err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 type allAnalysisSummary struct {
@@ -799,9 +831,16 @@ type allAnalysisSummary struct {
 	ValidationWarnings     int `json:"validation_warnings"`
 	ValidationScriptErrors int `json:"validation_script_errors"`
 	ValidationLoadErrors   int `json:"validation_load_errors"`
+	// Prose counts prose findings plus failed checker runs; present only
+	// with --prose.
+	Prose *int `json:"prose,omitempty"`
+	// ProseEntities lists the entities with prose findings or failed
+	// checker runs, so CI can tell which run failed; present only with
+	// --prose.
+	ProseEntities []proseEntity `json:"prose_entities,omitempty"`
 }
 
-func writeAnalyzeAllJSON(summary *analysis.Summary) error {
+func writeAnalyzeAllJSON(summary *analysis.Summary, prose *proseReport) error {
 	jsonSummary := allAnalysisSummary{
 		Orphans:                summary.Orphans,
 		Cardinality:            summary.Cardinality,
@@ -815,28 +854,37 @@ func writeAnalyzeAllJSON(summary *analysis.Summary) error {
 		ValidationScriptErrors: summary.ValidationScriptErrors,
 		ValidationLoadErrors:   summary.ValidationLoadErrors,
 	}
+	// Prose findings are advisory: they count as warnings. A failed checker
+	// run is an error, as the command's exit code is.
+	proseCount := 0
+	if prose != nil {
+		proseCount = prose.Findings + prose.Errors
+		jsonSummary.Prose = &proseCount
+		jsonSummary.ProseEntities = prose.Entities
+	}
 	validationFailures := summary.ValidationScriptErrors + summary.ValidationLoadErrors
 	totalIssues := summary.Orphans + summary.Cardinality + summary.States + summary.Duplicates +
 		summary.UniqueViolations + summary.Gaps + summary.PropertyErrors +
 		summary.ValidationErrors + validationFailures
 	status := "success"
 	message := "All analyses passed"
-	if summary.ValidationErrors > 0 || summary.PropertyErrors > 0 || validationFailures > 0 {
+	proseFailed := prose != nil && prose.Errors > 0
+	if summary.ValidationErrors > 0 || summary.PropertyErrors > 0 || validationFailures > 0 || proseFailed {
 		status = "error"
 		message = fmt.Sprintf("Found %d issues requiring attention", totalIssues)
-	} else if totalIssues > 0 || summary.ValidationWarnings > 0 {
+	} else if totalIssues > 0 || summary.ValidationWarnings > 0 || proseCount > 0 {
 		status = "warning"
-		message = fmt.Sprintf("Found %d issues and %d warnings", totalIssues, summary.ValidationWarnings)
+		message = fmt.Sprintf("Found %d issues and %d warnings", totalIssues, summary.ValidationWarnings+proseCount)
 	}
 	return out.WriteAnalysisResult(output.AnalysisResult{
 		Status:  status,
 		Message: message,
-		Count:   totalIssues + summary.ValidationWarnings,
+		Count:   totalIssues + summary.ValidationWarnings + proseCount,
 		Details: jsonSummary,
 	})
 }
 
-func writeAnalyzeAllSummary(svc *readServices, summary *analysis.Summary) {
+func writeAnalyzeAllSummary(svc *readServices, summary *analysis.Summary, prose *proseReport) {
 	summaryItems := []string{
 		fmt.Sprintf("Orphans: %d", summary.Orphans),
 		fmt.Sprintf("Cardinality: %d", summary.Cardinality),
@@ -858,6 +906,9 @@ func writeAnalyzeAllSummary(svc *readServices, summary *analysis.Summary) {
 			summaryItems = append(summaryItems,
 				fmt.Sprintf("Validation Load Errors: %d", summary.ValidationLoadErrors))
 		}
+	}
+	if prose != nil {
+		summaryItems = append(summaryItems, fmt.Sprintf("Prose: %d", prose.Findings+prose.Errors))
 	}
 	out.WriteSummaryBox(summaryItems)
 	out.WriteMessage("")

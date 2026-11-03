@@ -5,7 +5,7 @@ title: Integration sync with external systems via Lua connectors
 summary: 'Infrastructure for 3-way sync between rela entities and external systems: external refs, ACL-enforced field ownership, history-based merge and Lua connectors'
 description: Infrastructure so an entity can be synced with its counterpart in an external system. The link is an external-ref property, ownership is enforced by ACL field grants, the 3-way merge uses store history, and each integration is a Lua connector run by automations, the scheduler and webhooks. Alternative to the twins proposal (mellelieuwes/rela#1).
 priority: medium
-status: proposed
+status: implemented
 ---
 
 ## Problem

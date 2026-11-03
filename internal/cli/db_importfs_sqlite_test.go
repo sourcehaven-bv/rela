@@ -174,25 +174,34 @@ func treeBytes(t *testing.T, root string) map[string]string {
 // project may have; whoever adds it must say whether the import copies it.
 func TestDBImportFS_SQLiteTablesAreAccounted(t *testing.T) {
 	accounted := map[string]string{
-		"entities":          "copied",
-		"relations":         "copied",
-		"attachments":       "copied",
-		"comments":          "copied",
-		"state_kv":          "copied",
-		"migration_state":   "copied",
-		"entity_versions":   "history starts at the import (git history is not imported)",
-		"relation_versions": "history starts at the import",
-		"schema_versions":   "history starts at the import",
-		"version_tags":      "history starts at the import, and a tag names a version row",
-		"rel_record_seq":    "sequence for relation versions",
-		"marked_entities":   "soft deletes; pending deletes are not copied",
-		"marked_relations":  "soft deletes; pending deletes are not copied",
-		"project_files":     "config stays on disk, which wins over a copy in the database",
+		"entities":           "copied",
+		"relations":          "copied",
+		"attachments":        "copied",
+		"comments":           "copied",
+		"state_kv":           "copied",
+		"migration_state":    "copied",
+		"entity_versions":    "history starts at the import (git history is not imported)",
+		"relation_versions":  "history starts at the import",
+		"schema_versions":    "history starts at the import",
+		"version_tags":       "history starts at the import, and a tag names a version row",
+		"rel_record_seq":     "sequence for relation versions",
+		"marked_entities":    "soft deletes; pending deletes are not copied",
+		"marked_relations":   "soft deletes; pending deletes are not copied",
+		"project_files":      "config stays on disk, which wins over a copy in the database",
+		"channels":           "not copied yet: fs channels live in .rela/channels (TKT-DD8B6I)",
+		"channel_messages":   "not copied yet: fs channels live in .rela/channels (TKT-DD8B6I)",
+		"channel_audit":      "not copied yet: fs channels live in .rela/channels (TKT-DD8B6I)",
+		"channel_tombstones": "not copied yet: fs channels live in .rela/channels (TKT-DD8B6I)",
+		"channel_reads":      "not copied yet: fs channels live in .rela/channels (TKT-DD8B6I)",
+		"channel_mentions":   "not copied yet: fs channels live in .rela/channels (TKT-DD8B6I)",
+		"channel_types":      "not copied yet: recorded again when the server first starts on the database",
+		"channel_type_refs":  "not copied yet: recorded again when the server first starts on the database",
 	}
-	// The full-text index and FTS5's shadow tables are filled by triggers on
-	// entities, so the entity copy fills them.
+	// The full-text index, FTS5's shadow tables and the backlink fan-out are
+	// filled by triggers on entities, so the entity copy fills them.
 	for _, name := range []string{"entity_search", "entity_search_config", "entity_search_content",
-		"entity_search_data", "entity_search_docsize", "entity_search_idx", "entity_search_key"} {
+		"entity_search_data", "entity_search_docsize", "entity_search_idx", "entity_search_key",
+		"entity_mention_targets"} {
 		accounted[name] = "derived from entities by trigger"
 	}
 	data, err := appbuild.OpenSQLiteData(context.Background(), filepath.Join(t.TempDir(), "x.db"))

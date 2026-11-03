@@ -107,10 +107,10 @@ type RelationShape struct {
 	Properties map[string]PropertyShape `json:"properties,omitempty"`
 }
 
-// ShapeProjection returns the data-shape projection of the metamodel.
+// NewShapeProjection returns the data-shape projection of m.
 // The result is deterministic: all output is keyed maps plus slices copied
 // in declaration order, and the hash sorts every map key.
-func (m *Metamodel) ShapeProjection() ShapeProjection {
+func NewShapeProjection(m *Metamodel) ShapeProjection {
 	proj := ShapeProjection{
 		Entities:  make(map[string]EntityShape, len(m.Entities)),
 		Relations: make(map[string]RelationShape, len(m.Relations)),

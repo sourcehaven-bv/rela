@@ -73,7 +73,7 @@ func facedHistoryApp(t *testing.T, policy func(st store.Store) *acl.Declarative)
 	)
 	app := newAppFromParts(&Config{}, nil, newFixture())
 	rebindApp(app, fs, paths, svc)
-	app.acl = d
+	setTestACL(t, app, d)
 	app.schema.Publish(&Schema{Cfg: &Config{}, Meta: meta})
 	app.versions = facedHistory()
 	return app, d

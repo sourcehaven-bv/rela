@@ -72,7 +72,7 @@ func (h traceHandler) handleTrace(
 		return textResult(emptyMsg), nil
 	}
 
-	text, err := convertTraceResult(result, h.meta)
+	text, err := convertTraceResult(ctx, result, h.meta)
 	if err != nil {
 		return errorResult(err.Error()), nil
 	}
@@ -115,13 +115,14 @@ func (h traceHandler) handleFindPath(
 
 	// A path is a handful of steps, so one gated read per step is cheap. It
 	// also keeps the title honest: a step read through h.store carries only
-	// the properties the caller may see.
-	text, err := convertPathSteps(path, func(step tracer.PathStep) string {
+	// the properties the caller may see, and the url names the face the
+	// read resolved.
+	text, err := convertPathSteps(path, func(step tracer.PathStep) (title, url string) {
 		e, getErr := st.Resolve(ctx, step.ID)
 		if getErr != nil {
-			return ""
+			return "", ""
 		}
-		return displayTitle(h.meta, e)
+		return displayTitle(h.meta, e), entityURL(ctx, e.Type, e.Ref())
 	})
 	if err != nil {
 		return errorResult(err.Error()), nil

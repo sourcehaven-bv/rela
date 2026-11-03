@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"io"
 	"strings"
-	"unicode"
 
 	"github.com/Sourcehaven-BV/rela/internal/fsimport"
 )
@@ -91,14 +90,4 @@ func printImportFindings(w io.Writer, rep *fsimport.Report) {
 			p("  - %s", wn)
 		}
 	}
-}
-
-// printable replaces control characters with U+FFFD.
-func printable(s string) string {
-	return strings.Map(func(r rune) rune {
-		if unicode.IsControl(r) {
-			return unicode.ReplacementChar
-		}
-		return r
-	}, s)
 }

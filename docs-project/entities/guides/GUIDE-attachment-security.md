@@ -565,7 +565,8 @@ contract:
   and transforms are write-time gates. Tightening policy does not re-scan or
   re-strip attachments already stored. (A bulk rescan tool may come later.)
 - **Every ingress gets the same policy.** The web upload form, the CLI
-  (`rela attach`) and the MCP `attach_file` tool all run the same processor.
+  (`rela attach`), the MCP `attach_file` tool and the Lua binding
+  `rela.attach_render` all run the same processor.
   The remote MCP endpoint reads the live schema, so a policy change reaches it
   when it reaches the web form. Over stdio, `rela mcp` has no command runner, so
   a property with a `scan_cmd` or command transform rejects MCP uploads.
@@ -575,3 +576,17 @@ contract:
   property stop working when the scanner is down — that is the intended safety
   behavior. Set `scan: off` on a property where availability matters more than
   the guarantee.
+- **Every stored file has a SHA-256 hash.** The attachment listing in the
+  API, the entity form and the MCP `list_attachments` tool show the SHA-256
+  hash of the stored bytes, after any transform. The listing hash describes
+  the bytes stored now; it is not a record of what was attached. A file
+  attached with `rela.attach_render` also gets an `attach-render` audit
+  record with the hash, the size and the document or list it was rendered
+  from. To show that such a file has not changed, compare the listing hash
+  with the hash in that audit record.
+- **On the filesystem backend the hash is cached.** The server hashes each
+  file once and keeps the result while the file's size and modification
+  time stay the same. A file replaced on disk with one of the same size
+  and modification time (for example by `rsync -t` or a backup restore)
+  keeps the old hash until the server restarts. Download the file and hash
+  it yourself when the answer matters.

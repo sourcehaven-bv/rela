@@ -22,6 +22,7 @@ import { entityDetailHref } from '@/utils/entityRoute'
 import type { NavEntitiesLookup } from '@/composables/useNavEntities'
 import type { PileSummary } from '@/api/piles'
 import { pileIcon } from '@/components/piles/pileIcon'
+import { t } from '@/i18n'
 
 /**
  * The stable identifier for a nav row.
@@ -36,6 +37,7 @@ import { pileIcon } from '@/components/piles/pileIcon'
  */
 export function navId(item: SidebarItem): string {
   if (item.action) return `action:${item.action}`
+  if (item.pile) return pileNameNavId(item.pile)
   if (item.href) return `href:${item.href}`
   return 'item:unnamed'
 }
@@ -57,7 +59,7 @@ export function navId(item: SidebarItem): string {
  * relying on a `v-else-if` to imply it.
  */
 export function isNavigable(item: SidebarItem): boolean {
-  return Boolean(item.action) || Boolean(item.href)
+  return Boolean(item.action) || Boolean(item.pile) || Boolean(item.href)
 }
 
 /**
@@ -81,7 +83,9 @@ export function toNavGroups(
     // thing always present to key an unlabelled group on.
     id: group.group ? `group:${group.group}` : `group:${index}`,
     label: group.group,
-    ...(group.items_create ? { addLabel: `New ${group.items_create.label}` } : {}),
+    ...(group.items_create
+      ? { addLabel: t('nav.newItem', { label: group.items_create.label }) }
+      : {}),
     // A malformed entry is dropped rather than rendered inert: a row that
     // looks like a link and goes nowhere is worse than an absent one.
     items: group.items
@@ -126,7 +130,10 @@ function toNavItem(
     // its own allowlist; rela's registry does the same. Either way the string
     // selects a glyph, never a component.
     icon: item.icon,
-    ...(item.action ? { as: 'button' as const } : { as: routerLink, attrs: { to: item.href } }),
+    ...(item.action || item.pile
+      ? { as: 'button' as const }
+      : { as: routerLink, attrs: { to: item.href } }),
+    ...(item.pile ? { opensFlyout: true } : {}),
     // Still a link to the list's page, so a modified click opens it in a new
     // tab; only the plain click is taken over.
     ...(item.flyout && onFlyoutClick
@@ -196,7 +203,7 @@ export function expandGeneratedItems(
       ...(entry.initial ? { initial: entry.initial } : {}),
     }))
     if (list.truncated && group.items_list) {
-      items.push({ label: 'Show all', href: `/list/${group.items_list}`, icon: 'list' })
+      items.push({ label: t('nav.showAll'), href: `/list/${group.items_list}`, icon: 'list' })
     }
     out.push({ ...group, items })
   }
@@ -211,7 +218,10 @@ export function expandGeneratedItems(
  * whether nothing matched or the rows have not loaded: a heading over nothing
  * reads as a fault.
  */
-export function expandEntityEntries(groups: SidebarGroup[], lookup: NavEntitiesLookup): SidebarGroup[] {
+export function expandEntityEntries(
+  groups: SidebarGroup[],
+  lookup: NavEntitiesLookup
+): SidebarGroup[] {
   const out: SidebarGroup[] = []
   for (const group of groups) {
     if (!group.items.some((item) => item.entities)) {
@@ -261,6 +271,30 @@ export const PILES_GROUP_ID = 'group:piles'
 /** The id prefix of a pile's sidebar row; the rest is the pile id. */
 export const PILE_NAV_PREFIX = 'pile:'
 
+/** The id prefix of a `pile:` entry's row; the rest is the pile's name. */
+export const PILE_NAME_NAV_PREFIX = 'pile-name:'
+
+/**
+ * The row id of a `pile:` entry. Keyed on the name, since the pile may not
+ * exist yet and a name is all the config holds.
+ */
+export function pileNameNavId(name: string): string {
+  return `${PILE_NAME_NAV_PREFIX}${name}`
+}
+
+/** The pile a `pile:` entry names, if the user has it. Names ignore case. */
+export function pileNamed(piles: readonly PileSummary[], name: string): PileSummary | undefined {
+  const wanted = name.toLowerCase()
+  return piles.find((p) => p.name.toLowerCase() === wanted)
+}
+
+/** The count marker a pile row shows; none for an empty pile. */
+export function pileStatus(count: number): NavItemStatus | undefined {
+  return count > 0
+    ? { tone: 'info', label: t('piles.itemCount', { n: count }, count), count }
+    : undefined
+}
+
 /** The sidebar row id of a pile, shared by the sidebar and the flyout. */
 export function pileNavId(id: string): string {
   return `${PILE_NAV_PREFIX}${id}`
@@ -277,17 +311,15 @@ export function pileNavId(id: string): string {
 export function pilesNavGroup(piles: readonly PileSummary[]): NavGroup {
   return {
     id: PILES_GROUP_ID,
-    label: 'Piles',
-    addLabel: 'New pile',
+    label: t('nav.piles'),
+    addLabel: t('nav.newPile'),
     items: piles.map((p) => ({
       id: pileNavId(p.id),
       label: p.name,
       icon: pileIcon(p.icon),
       as: 'button' as const,
       opensFlyout: true,
-      ...(p.count > 0
-        ? { status: { tone: 'info' as const, label: `${p.count} item${p.count === 1 ? '' : 's'}`, count: p.count } }
-        : {}),
+      ...(p.count > 0 ? { status: pileStatus(p.count) } : {}),
     })),
   }
 }

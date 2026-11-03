@@ -50,7 +50,7 @@ func (c *ListCmd) Run(ctx context.Context, svc *readServices) error {
 		out.WriteMessage("No entities found")
 		return nil
 	}
-	return out.WriteEntitiesWithSummary(entities)
+	return out.WriteEntitiesWithSummary(withRollups(ctx, svc, entities))
 }
 
 // resolveListType resolves the listed type and returns the query listing it
@@ -245,6 +245,10 @@ func applyListSort(
 	propDef, ok := entityDef.Properties[sortKey]
 	if !ok {
 		return fmt.Errorf("unknown property %q for entity type %q", sortKey, entityTypeName)
+	}
+	if propDef.Rollup != nil {
+		return fmt.Errorf("cannot sort on %q of %q: it is a roll-up, computed when the row is read",
+			sortKey, entityTypeName)
 	}
 	filter.Sort(entities, storeEntityRecord, sortKey, &propDef, meta, desc)
 	return nil

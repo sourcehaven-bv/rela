@@ -37,21 +37,21 @@ func baseMetamodel() *Metamodel {
 func TestRenderProjectionHash_Deterministic(t *testing.T) {
 	m1 := baseMetamodel()
 	m2 := baseMetamodel()
-	h1 := m1.RenderProjection().Hash()
-	h2 := m2.RenderProjection().Hash()
+	h1 := NewRenderProjection(m1).Hash()
+	h2 := NewRenderProjection(m2).Hash()
 	if h1 != h2 {
 		t.Fatalf("hash not deterministic across equal metamodels: %s != %s", h1, h2)
 	}
 	// Recomputing on the same metamodel is stable (guards against map-order leakage).
 	for i := range 20 {
-		if got := m1.RenderProjection().Hash(); got != h1 {
+		if got := NewRenderProjection(m1).Hash(); got != h1 {
 			t.Fatalf("hash unstable on recompute %d: %s != %s", i, got, h1)
 		}
 	}
 }
 
 func TestRenderProjectionHash_StableAcrossChurnyEdits(t *testing.T) {
-	base := baseMetamodel().RenderProjection().Hash()
+	base := NewRenderProjection(baseMetamodel()).Hash()
 
 	tests := []struct {
 		name   string
@@ -93,7 +93,7 @@ func TestRenderProjectionHash_StableAcrossChurnyEdits(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			m := baseMetamodel()
 			tc.mutate(m)
-			if got := m.RenderProjection().Hash(); got != base {
+			if got := NewRenderProjection(m).Hash(); got != base {
 				t.Errorf("churny edit %q changed the projection hash (want stable):\n base=%s\n got =%s", tc.name, base, got)
 			}
 		})
@@ -101,7 +101,7 @@ func TestRenderProjectionHash_StableAcrossChurnyEdits(t *testing.T) {
 }
 
 func TestRenderProjectionHash_ChangesOnRenderRelevantEdits(t *testing.T) {
-	base := baseMetamodel().RenderProjection().Hash()
+	base := NewRenderProjection(baseMetamodel()).Hash()
 
 	tests := []struct {
 		name   string
@@ -163,7 +163,7 @@ func TestRenderProjectionHash_ChangesOnRenderRelevantEdits(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			m := baseMetamodel()
 			tc.mutate(m)
-			if got := m.RenderProjection().Hash(); got == base {
+			if got := NewRenderProjection(m).Hash(); got == base {
 				t.Errorf("render-relevant edit %q did not change the projection hash", tc.name)
 			}
 		})
@@ -179,7 +179,7 @@ func TestRenderProjectionHash_InlineEnumValues(t *testing.T) {
 	p.Values = []string{"a", "b"}
 	d.Properties["body"] = p
 	m.Entities["note"] = d
-	withValues := m.RenderProjection().Hash()
+	withValues := NewRenderProjection(m).Hash()
 
 	m2 := baseMetamodel()
 	d2 := m2.Entities["note"]
@@ -187,7 +187,7 @@ func TestRenderProjectionHash_InlineEnumValues(t *testing.T) {
 	p2.Values = []string{"a", "b", "c"}
 	d2.Properties["body"] = p2
 	m2.Entities["note"] = d2
-	if withValues == m2.RenderProjection().Hash() {
+	if withValues == NewRenderProjection(m2).Hash() {
 		t.Fatal("inline enum values are not reflected in the projection hash")
 	}
 }

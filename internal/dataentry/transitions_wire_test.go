@@ -10,6 +10,7 @@ import (
 
 	v1 "github.com/Sourcehaven-BV/rela/internal/apiwire/v1"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/search"
 	"github.com/Sourcehaven-BV/rela/internal/statemachine"
 )
 
@@ -21,6 +22,10 @@ type fakeTransitionResolver struct {
 	verdicts map[string][]statemachine.TransitionVerdict
 	entries  map[string]string
 	hidden   map[string]bool // field name → hidden (Visible=false)
+}
+
+func (fakeTransitionResolver) SearchFieldScope(context.Context, string) (*search.FieldScope, error) {
+	return nil, errNoSearchForm
 }
 
 func (f fakeTransitionResolver) FieldVerdicts(context.Context, *entity.Entity) FieldVerdicts {
@@ -40,6 +45,11 @@ func (f fakeTransitionResolver) RelationVerdicts(context.Context, *entity.Entity
 
 func (f fakeTransitionResolver) UnconditionalRelationVerdicts(context.Context, *entity.Entity) RelationVerdicts {
 	return RelationVerdicts{}
+}
+
+func (f fakeTransitionResolver) FieldVisibleOnEveryRow(_ context.Context, _, property string) bool {
+	_, hidden := f.hidden[property]
+	return !hidden
 }
 
 func (f fakeTransitionResolver) TransitionVerdicts(
@@ -80,14 +90,14 @@ func getEntityV1(t *testing.T, app *App, id string) v1.Entity {
 // guard, allowed, reason).
 func TestTransitionsWire_GETCarriesTransitions(t *testing.T) {
 	app := newTestAppV1(t)
-	app.fieldResolver = fakeTransitionResolver{
+	setTestResolver(t, app, fakeTransitionResolver{
 		verdicts: map[string][]statemachine.TransitionVerdict{
 			"status": {
 				{To: "doing", Label: "Start progress", Allowed: true, Reason: statemachine.VerdictAllowed},
 				{To: "done", Label: "Complete", Guard: "close", Allowed: false, Reason: statemachine.VerdictGuard},
 			},
 		},
-	}
+	})
 	seedEntity(app, &entity.Entity{
 		ID:         "TKT-001",
 		Type:       "ticket",
@@ -139,11 +149,11 @@ func TestTransitionsWire_AbsentWithoutTransitionResolver(t *testing.T) {
 // back to a full enum select that would offer illegal moves (TKT-3G93B8).
 func TestTransitionsWire_TerminalStateKeyPresent(t *testing.T) {
 	app := newTestAppV1(t)
-	app.fieldResolver = fakeTransitionResolver{
+	setTestResolver(t, app, fakeTransitionResolver{
 		verdicts: map[string][]statemachine.TransitionVerdict{
 			"status": {}, // terminal: key present, no moves
 		},
-	}
+	})
 	seedEntity(app, &entity.Entity{
 		ID:         "TKT-004",
 		Type:       "ticket",
@@ -168,12 +178,12 @@ func TestTransitionsWire_TerminalStateKeyPresent(t *testing.T) {
 // current value, so emitting it would defeat the hidden-field strip.
 func TestTransitionsWire_HiddenMachineFieldOmitted(t *testing.T) {
 	app := newTestAppV1(t)
-	app.fieldResolver = fakeTransitionResolver{
+	setTestResolver(t, app, fakeTransitionResolver{
 		verdicts: map[string][]statemachine.TransitionVerdict{
 			"status": {{To: "doing", Label: "Start progress", Allowed: true}},
 		},
 		hidden: map[string]bool{"status": true},
-	}
+	})
 	seedEntity(app, &entity.Entity{
 		ID:         "TKT-003",
 		Type:       "ticket",
@@ -198,10 +208,10 @@ func TestTransitionsWire_HiddenMachineFieldOmitted(t *testing.T) {
 // create form, whose visible-field set derives from the response property keys).
 func TestTransitionsWire_CreateLockSkipsHiddenField(t *testing.T) {
 	app := newTestAppV1(t)
-	app.fieldResolver = fakeTransitionResolver{
+	setTestResolver(t, app, fakeTransitionResolver{
 		entries: map[string]string{"status": "todo"},
 		hidden:  map[string]bool{"status": true},
-	}
+	})
 
 	body := `{"properties":{"title":"new ticket"}}`
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/tickets?dry_run=true", strings.NewReader(body))
@@ -225,7 +235,7 @@ func TestTransitionsWire_CreateLockSkipsHiddenField(t *testing.T) {
 // carries no `_transitions` (a create is an entry, not a move).
 func TestTransitionsWire_CreateLocksMachineField(t *testing.T) {
 	app := newTestAppV1(t)
-	app.fieldResolver = fakeTransitionResolver{
+	setTestResolver(t, app, fakeTransitionResolver{
 		// On a create candidate the resolver would still report transitions
 		// from the seeded value; applyCreateLock must strip them for the
 		// locked field.
@@ -233,7 +243,7 @@ func TestTransitionsWire_CreateLocksMachineField(t *testing.T) {
 			"status": {{To: "doing", Label: "Start progress", Allowed: true}},
 		},
 		entries: map[string]string{"status": "todo"},
-	}
+	})
 
 	body := `{"properties":{"title":"new ticket","status":"doing"}}`
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/tickets?dry_run=true", strings.NewReader(body))

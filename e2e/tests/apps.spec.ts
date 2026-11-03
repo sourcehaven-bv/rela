@@ -59,9 +59,8 @@ test.describe('Custom apps (sandboxed-iframe bridge)', () => {
     serverUrl,
   }) => {
     // The host page makes same-origin calls; a forged cross-origin POST must be
-    // rejected by requireSameOrigin. page.request shares the context's default
-    // Origin header (the server's own origin), so override it with a foreign
-    // Origin to simulate a malicious cross-site caller.
+    // rejected by requireSameOrigin. Send a foreign Origin to simulate a
+    // malicious cross-site caller.
     const resp = await appPage.request.post(
       `${serverUrl}/api/v1/features/${SEED.features.authentication}/relations/blocks`,
       {

@@ -28,7 +28,7 @@ func facedAttachmentApp(t *testing.T, policy func(st store.Store) *acl.Declarati
 	app := facedTicketApp(t)
 	seedDeclaredFaceTicket(context.Background(), t, app)
 	d := policy(app.store)
-	app.acl = d
+	setTestACL(t, app, d)
 	return app, d
 }
 

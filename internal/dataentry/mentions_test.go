@@ -194,7 +194,7 @@ func TestCollectMentions(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			got := collectMentions(context.Background(), st, mustAllowAll(t, st), meta, tc.contents...)
+			got := collectMentions(context.Background(), mustAllowAll(t, st), meta, tc.contents...)
 			assertMentionsEqual(t, tc.want, got)
 		})
 	}
@@ -210,7 +210,7 @@ func TestCollectMentions_SelfReference(t *testing.T) {
 		t.Fatalf("seed self: %v", err)
 	}
 
-	got := collectMentions(context.Background(), st, mustAllowAll(t, st), meta, "see `TKT-SELF` for the recursion")
+	got := collectMentions(context.Background(), mustAllowAll(t, st), meta, "see `TKT-SELF` for the recursion")
 	want := map[string]v1.Mention{
 		"TKT-SELF": {Type: self.Type, Title: self.Title()},
 	}
@@ -231,7 +231,7 @@ func TestCollectMentions_ContextCancellationStops(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	got := collectMentions(ctx, st, mustAllowAll(t, st), meta, "`TKT-CTX`")
+	got := collectMentions(ctx, mustAllowAll(t, st), meta, "`TKT-CTX`")
 	if got != nil {
 		t.Errorf("expected nil on cancelled context, got %+v", got)
 	}
@@ -249,7 +249,7 @@ func TestCollectMentions_StoreErrorDegradesToNoMentions(t *testing.T) {
 		good: mustEntity("TKT-OK", "ticket", "Resolves fine"),
 	}
 
-	got := collectMentions(context.Background(), flaky, mustAllowAll(t, flaky), meta, "`TKT-FAIL` then `TKT-OK`")
+	got := collectMentions(context.Background(), mustAllowAll(t, flaky), meta, "`TKT-FAIL` then `TKT-OK`")
 	if got != nil {
 		t.Errorf("a failed batch read must yield no mentions, got %+v", got)
 	}
@@ -275,7 +275,7 @@ func TestCollectMentions_ConcurrentScanIsSafe(t *testing.T) {
 	for i := range n {
 		go func(idx int) {
 			defer wg.Done()
-			results[idx] = collectMentions(context.Background(), st, vis, meta, "ref to `TKT-CONC`")
+			results[idx] = collectMentions(context.Background(), vis, meta, "ref to `TKT-CONC`")
 		}(i)
 	}
 	wg.Wait()

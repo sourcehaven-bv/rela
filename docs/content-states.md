@@ -549,6 +549,26 @@ target is dropped. For a promote that is the point — publishing the whole
 document is the operation. Carry any target-only property on the source face,
 or map fields explicitly instead.
 
+To keep a property that only the target face holds, name it under `keep:`.
+A typical case is a signed document attached to the published face:
+
+```yaml
+copies:
+  publish:
+    from: policy@draft
+    to: policy@published
+    fields: all
+    keep: [signed_copy]
+    guard:
+      permission: publish-policy
+```
+
+The copy never writes a kept property. It keeps the value the target face
+holds, and a new target face starts without it. A kept file property keeps
+the target face's own files, so republishing does not remove them. `keep:`
+needs `fields: all`, because a field map already leaves every property it does
+not name alone, and each name must be a property the target type declares.
+
 The following table lists the keys a copy accepts:
 
 | Key | Meaning |
@@ -558,6 +578,7 @@ The following table lists the keys a copy accepts:
 | `label` | Display text for the action. Plain text, no interpolation. |
 | `on_success` | Optional. `message:` is the confirmation the web app shows (default: the copy's label; `{face}` names the face written); `landing:` is where it goes afterwards: `written` (default), `stay`, `{world: name}` or `{face: name}`. |
 | `fields` | `all` to copy every property, or a map of target property to source expression. A copy between different types requires an explicit map. |
+| `keep` | With `fields: all`, a list of target properties the copy leaves as the target face holds them. |
 | `relations` | A map of relation type to `merge` (add missing edges) or `replace` (swap the target face's edges). Only `scope: content` relation types can be listed. An omitted type is not copied. |
 | `guard.permission` | The permission required on the source entity. **Required** whenever `to` names a face. On a copy between two faces of one entity it replaces the ordinary `update`/`create` check. |
 

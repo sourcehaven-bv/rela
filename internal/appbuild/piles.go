@@ -5,12 +5,17 @@ import (
 	"log/slog"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
+	"github.com/Sourcehaven-BV/rela/internal/channels"
 	"github.com/Sourcehaven-BV/rela/internal/comments"
+	"github.com/Sourcehaven-BV/rela/internal/filelock"
+	"github.com/Sourcehaven-BV/rela/internal/lease"
 	"github.com/Sourcehaven-BV/rela/internal/piles"
 	"github.com/Sourcehaven-BV/rela/internal/piles/kvpiles"
 	"github.com/Sourcehaven-BV/rela/internal/project"
+	"github.com/Sourcehaven-BV/rela/internal/realtime"
 	"github.com/Sourcehaven-BV/rela/internal/state"
 	"github.com/Sourcehaven-BV/rela/internal/storage"
 	"github.com/Sourcehaven-BV/rela/internal/store"
@@ -18,16 +23,37 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/worlds"
 )
 
-// refHolders are the services that hold references by entity id, plus the
-// piles backend, which a re-assembly shares.
+// refHolders are the services and stores that hold references by entity
+// id, plus the piles and lease backends, which a re-assembly shares.
 type refHolders struct {
-	comments  *comments.Service
-	piles     *piles.Service
-	pileStore piles.Store
+	comments    *comments.Service
+	piles       *piles.Service
+	pileStore   piles.Store
+	leases      *lease.Service
+	leaseShared leaseShared
+	channels    channels.Store
+	// realtimeLocal is the process-local state of the channel service,
+	// which finishAssembly builds once the entity manager exists; see
+	// buildRealtimeService.
+	realtimeLocal *realtime.Local
+	// dueWake carries the session due times the channel services and the
+	// trigger engine store to the realtime worker's timer loop. Like
+	// realtimeLocal it is made once and shared by re-assemblies.
+	dueWake *realtime.DueWake
+	// channelTombs connects the channel guard's pending tombstones to the
+	// post-commit delete hooks and the realtime worker.
+	channelTombs *tombstoneConfirmer
+	// channelAliases are the channel store's post-commit alias hooks.
+	channelAliases *channelAliases
+	// channelHints is the hint relay realtimeLocal sends through, shared
+	// like realtimeLocal; nil when the backend has no hints. hintEndpoint
+	// is this assembly's endpoint on it, which finishAssembly attaches.
+	channelHints *hintRelay
+	hintEndpoint hintEndpoint
 }
 
-// buildRefHolders builds the two services that hold references by entity id:
-// comments and piles. Both ride the AliasRewriter hook rather than
+// buildRefHolders builds the services that hold references by entity id:
+// comments, piles, leases and channels. All ride the AliasRewriter hook rather than
 // store.EntityObserver for the reason that hook documents: stores fire the
 // observer with the error discarded, which is fine for a rebuildable search
 // index but not for records that exist only in these services' own stores.
@@ -35,12 +61,12 @@ type refHolders struct {
 // The piles service is built per assembly, so its owner check follows the
 // current ACL; its backend comes from the predecessor on a re-assembly.
 func buildRefHolders(
-	base *SharedBase, st store.Store, commentStore comments.Store,
-	d *acl.Declarative, redactor visibility.FieldRedactor,
+	base *SharedBase, st store.Store, overrides backendOverrides,
+	d *acl.Declarative, redactor visibility.FieldRedactor, writes acl.ACL,
 ) (refHolders, error) {
 	var h refHolders
 	var err error
-	if h.comments, err = buildComments(base.cfg.FS, base.cfg.Paths, base.meta, commentStore); err != nil {
+	if h.comments, err = buildComments(base.cfg.FS, base.cfg.Paths, base.meta, overrides.commentStore); err != nil {
 		return refHolders{}, err
 	}
 	if h.pileStore = base.pileStore; h.pileStore == nil {
@@ -48,14 +74,80 @@ func buildRefHolders(
 			return refHolders{}, err
 		}
 	}
-	h.piles, err = piles.NewService(h.pileStore, piles.Options{
-		OwnerExists: pileOwnerExists(d, redactor, st, base.worlds),
-		PersonType:  pilePersonType(d),
-	})
-	if err != nil {
+	if h.piles, err = newPilesService(h.pileStore, d, redactor, st, base.worlds); err != nil {
 		return refHolders{}, err
 	}
+	if h.leases, h.leaseShared, err = buildLeases(
+		base.cfg.FS, base.cfg.Paths, base.worlds, st, base.leaseShared, d, redactor, writes); err != nil {
+		return refHolders{}, err
+	}
+	if h.channels, err = buildChannels(base.cfg.FS, base.cfg.Paths, st, overrides.channelStore); err != nil {
+		return refHolders{}, err
+	}
+	if h.channelTombs, err = newTombstoneConfirmer(h.channels); err != nil {
+		return refHolders{}, err
+	}
+	// The channel service needs the entity manager, which needs these
+	// holders, so assembly builds it later (see buildRealtimeService). Its
+	// process-local state is made here: the alias fanout and the alias
+	// hooks need it.
+	h.hintEndpoint = hintEndpointFor(h.channels, st)
+	if h.realtimeLocal, h.channelHints, err = sharedLocal(base, h.hintEndpoint != nil); err != nil {
+		return refHolders{}, err
+	}
+	if h.channelAliases, err = channelAliasesFor(
+		h.channels, st, h.channelTombs, base.realtime, h.realtimeLocal); err != nil {
+		stopNewLocalOnError(base, h.realtimeLocal, err)
+		return refHolders{}, err
+	}
+	if h.dueWake = base.dueWake; h.dueWake == nil {
+		h.dueWake = realtime.NewDueWake()
+	}
 	return h, nil
+}
+
+// guardInputs are the channel guard's collaborators among h.
+func (h refHolders) guardInputs() guardInputs {
+	return guardInputs{store: h.channels, tombs: h.channelTombs, dueWake: h.dueWake, marker: h.realtimeLocal}
+}
+
+// sharedLocal returns the predecessor's process-local channel state and
+// hint relay, or new ones for a first assembly. A backend with hints gets a
+// Local that sends them through a new relay.
+func sharedLocal(base *SharedBase, hints bool) (*realtime.Local, *hintRelay, error) {
+	if base.realtimeLocal != nil {
+		return base.realtimeLocal, base.channelHints, nil
+	}
+	if !hints {
+		l, err := realtime.NewLocal(time.Now)
+		return l, nil, err
+	}
+	relay := newHintRelay()
+	l, err := realtime.NewLocalWithHints(time.Now, relay)
+	return l, relay, err
+}
+
+// stopNewLocalOnError stops l when the assembly that made it failed (err
+// set) and l is not a predecessor's: its hint sender runs from the start,
+// and a host that retries a failing reload would leak one per attempt.
+//
+// Nil: l is accepted (nothing to stop).
+func stopNewLocalOnError(base *SharedBase, l *realtime.Local, err error) {
+	if err != nil && l != nil && l != base.realtimeLocal {
+		l.Stop()
+	}
+}
+
+// newPilesService builds the piles service over backend, with the owner check
+// and person type of the current ACL. Assembly and [NewFromCollaborators]
+// both build it here.
+func newPilesService(
+	backend piles.Store, d *acl.Declarative, redactor visibility.FieldRedactor, st store.Store, w worlds.Compiled,
+) (*piles.Service, error) {
+	return piles.NewService(backend, piles.Options{
+		OwnerExists: pileOwnerExists(d, redactor, st, w),
+		PersonType:  pilePersonType(d),
+	})
 }
 
 // pileBackend returns the piles backend for st: the store's own (see
@@ -85,7 +177,7 @@ func pileBackend(fs storage.FS, paths *project.Context, st store.Store) (piles.S
 
 // pilesLockFile is the lock file next to the piles document in the cache
 // directory. Every process that opens the project locks it (see
-// [kvpiles.FileLocker]).
+// [filelock.Locker]).
 const pilesLockFile = "piles.lock"
 
 // pilesLocker returns the cross-process lock for the cache-directory KV over
@@ -95,9 +187,9 @@ const pilesLockFile = "piles.lock"
 // scripts and the scheduler.
 func pilesLocker(fs storage.FS, cacheDir string) (kvpiles.Locker, error) {
 	if _, mem := fs.(*storage.MemFS); mem {
-		return kvpiles.ProcessPrivate{}, nil
+		return filelock.ProcessPrivate{}, nil
 	}
-	return kvpiles.NewFileLocker(filepath.Join(cacheDir, pilesLockFile))
+	return filelock.New(filepath.Join(cacheDir, pilesLockFile))
 }
 
 // pilePersonType is the ACL's person type when person mapping is configured
@@ -119,7 +211,7 @@ func pilePersonType(d *acl.Declarative) string {
 // so lasts for the process only. It is the fallback where the no-op KV would
 // otherwise accept every write and keep none, as newUserState does.
 func memoryPiles() piles.Store {
-	s, err := kvpiles.New(memoryKV(), kvpiles.ProcessPrivate{})
+	s, err := kvpiles.New(memoryKV(), filelock.ProcessPrivate{})
 	if err != nil { // coverage-ignore: unreachable: both arguments are non-nil
 		panic(err)
 	}

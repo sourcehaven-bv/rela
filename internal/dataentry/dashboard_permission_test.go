@@ -87,9 +87,9 @@ func TestDashboardPermission_UngatedCardsAlwaysShown(t *testing.T) {
 		set  func()
 		ctx  func() context.Context
 	}{
-		{"NopACL", func() { app.acl = acl.NopACL{} }, t.Context},
-		{"holder", func() { app.acl = d }, func() context.Context { return gateCtxFor(aliceCtx(), t, d) }},
-		{"non-holder", func() { app.acl = d }, func() context.Context {
+		{"NopACL", func() { setTestACL(t, app, acl.NopACL{}) }, t.Context},
+		{"holder", func() { setTestACL(t, app, d) }, func() context.Context { return gateCtxFor(aliceCtx(), t, d) }},
+		{"non-holder", func() { setTestACL(t, app, d) }, func() context.Context {
 			return gateCtxFor(principalCtx("bob"), t, d)
 		}},
 	}
@@ -111,7 +111,7 @@ func TestDashboardPermission_HolderSeesGatedCard(t *testing.T) {
 	app := newTestAppV1(t)
 	installGatedDashboardConfig(app)
 	d := mustNewACL(t, gatedNavPolicy(), app.store)
-	app.acl = d
+	setTestACL(t, app, d)
 
 	titles := dashboardTitles(gateCtxFor(aliceCtx(), t, d), t, app)
 	if !slices.Contains(titles, "Audit") {
@@ -126,7 +126,7 @@ func TestDashboardPermission_NonHolderFiltered(t *testing.T) {
 	app := newTestAppV1(t)
 	installGatedDashboardConfig(app)
 	d := mustNewACL(t, gatedNavPolicy(), app.store)
-	app.acl = d
+	setTestACL(t, app, d)
 
 	titles := dashboardTitles(gateCtxFor(principalCtx("bob"), t, d), t, app)
 	if slices.Contains(titles, "Audit") {
@@ -152,7 +152,7 @@ func TestDashboardPermission_NopACLShowsEverything(t *testing.T) {
 		{"face form", &acl.NopACL{}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			app.acl = tc.impl
+			setTestACL(t, app, tc.impl)
 			if titles := dashboardTitles(t.Context(), t, app); !slices.Contains(titles, "Audit") {
 				t.Errorf("under NopACL a gated card must be shown, got %v", titles)
 			}
@@ -178,7 +178,7 @@ func TestDashboardPermission_ReadOnlyShowsEverything(t *testing.T) {
 		{"face form", &acl.ReadOnlyACL{}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			app.acl = tc.impl
+			setTestACL(t, app, tc.impl)
 			if titles := dashboardTitles(t.Context(), t, app); !slices.Contains(titles, "Audit") {
 				t.Errorf("under ReadOnlyACL a gated card must be shown, got %v", titles)
 			}
@@ -198,7 +198,7 @@ func TestDashboardPermission_ReadOnlyShowsEverything(t *testing.T) {
 func TestDashboardPermission_ReadOnlyArmIsExplicit(t *testing.T) {
 	app := newTestAppV1(t)
 	installGatedDashboardConfig(app)
-	app.acl = acl.ReadOnlyACL{}
+	setTestACL(t, app, acl.ReadOnlyACL{})
 
 	ctx := withReadGate(t.Context(), permGate{perms: map[string]bool{}})
 
@@ -232,7 +232,7 @@ type unknownACL struct{ acl.ACL }
 func TestDashboardPermission_UnknownACLHides(t *testing.T) {
 	app := newTestAppV1(t)
 	installGatedDashboardConfig(app)
-	app.acl = unknownACL{}
+	setTestACL(t, app, unknownACL{})
 
 	titles := dashboardTitles(t.Context(), t, app)
 	if slices.Contains(titles, "Audit") {
@@ -270,7 +270,7 @@ func TestDashboardPermission_FilterIsPresentationOnly(t *testing.T) {
 		},
 		Assignments: map[string]string{"bob": "viewer", "carol": "auditor"},
 	}, app.store)
-	app.acl = d
+	setTestACL(t, app, d)
 
 	// The query the hidden card carries, run through the real search endpoint.
 	rowsFor := func(t *testing.T, ctx context.Context) int {
@@ -323,7 +323,7 @@ func TestDashboardPermission_ConfigUnfiltered(t *testing.T) {
 	app := newTestAppV1(t)
 	installGatedDashboardConfig(app)
 	d := mustNewACL(t, gatedNavPolicy(), app.store)
-	app.acl = d
+	setTestACL(t, app, d)
 
 	bodyFor := func(t *testing.T, ctx context.Context) string {
 		t.Helper()
@@ -375,7 +375,7 @@ func TestDashboardPermission_EmptyCardsIsAlways200(t *testing.T) {
 			// the "every card filtered" case pass by coincidence rather than
 			// because this principal genuinely lacks the permission.
 			d := mustNewACL(t, gatedNavPolicy(), app.store)
-			app.acl = d
+			setTestACL(t, app, d)
 
 			body := dashboardBody(gateCtxFor(principalCtx("bob"), t, d), t, app)
 			if !strings.Contains(body, `"cards":[]`) {

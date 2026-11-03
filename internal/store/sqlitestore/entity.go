@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/search"
 	"github.com/Sourcehaven-BV/rela/internal/sqlitedb"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/store/storeutil"
@@ -21,6 +22,8 @@ const getEntitySQL = `SELECT ` + entityColumns + ` FROM entities WHERE id = ? AN
 
 // GetEntity returns the face row ref addresses, or store.ErrNotFound. A
 // missing face is ErrNotFound even when sibling faces of the same id exist.
+//
+//archplan:sink=read
 func (s *Store) GetEntity(ctx context.Context, ref entity.Ref) (*entity.Entity, error) {
 	if !storeutil.Addressable(ref) {
 		return nil, fmt.Errorf("sqlitestore: get %s: %w", ref, store.ErrNotFound)
@@ -81,6 +84,8 @@ func (s *Store) CountEntities(ctx context.Context, q store.EntityQuery) (int, er
 // in a transaction — without one a concurrent family delete could commit
 // between probe and insert and materialize a headless state. A default-face
 // create needs no probe and takes the plain path.
+//
+//archplan:sink=write
 func (s *Store) CreateEntity(ctx context.Context, e *entity.Entity) error {
 	if err := storeutil.ValidateID(e.ID); err != nil {
 		return fmt.Errorf("sqlitestore: create: %w", err)
@@ -136,11 +141,12 @@ func (s *Store) createEntityLocked(ctx context.Context, e *entity.Entity) error 
 	res, err := s.write(ctx, `INSERT INTO entities (id, face, type, properties, content, updated_at,
 		                      last_edited_by_user, last_edited_by_tool,
 		                      origin_kind, origin_source, origin_source_face,
-		                      origin_source_type, origin_definition)
-		SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+		                      origin_source_type, origin_definition, mention_targets, search_text)
+		SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
 		WHERE NOT EXISTS (SELECT 1 FROM marked_entities WHERE lower(id) = lower(?))`,
 		e.ID, string(e.Face), e.Type, props, e.Content, sqlitedb.FormatTime(updated), editorUser, editorTool,
-		o.kind, o.source, o.sourceFace, o.sourceType, o.definition, e.ID)
+		o.kind, o.source, o.sourceFace, o.sourceType, o.definition, mentionTargetsJSON(e.Content),
+		search.IndexText(e), e.ID)
 	var inserted int64
 	if err == nil {
 		inserted, err = res.RowsAffected()
@@ -164,6 +170,7 @@ func (s *Store) createEntityLocked(ctx context.Context, e *entity.Entity) error 
 	return nil
 }
 
+//archplan:sink=write
 func (s *Store) UpdateEntity(ctx context.Context, e *entity.Entity) error {
 	// Row-family invariant: a non-default state cannot be re-typed away from
 	// its family (TKT-DOFYR1, design doc §6). The default face carries the
@@ -198,10 +205,11 @@ func (s *Store) UpdateEntity(ctx context.Context, e *entity.Entity) error {
 	res, err := s.write(ctx, `UPDATE entities SET type = ?, properties = ?, content = ?, updated_at = ?,
 		    last_edited_by_user = ?, last_edited_by_tool = ?,
 		    origin_kind = ?, origin_source = ?, origin_source_face = ?,
-		    origin_source_type = ?, origin_definition = ?
+		    origin_source_type = ?, origin_definition = ?, mention_targets = ?, search_text = ?
 		WHERE id = ? AND face = ?`,
 		e.Type, props, e.Content, sqlitedb.FormatTime(updated), editorUser, editorTool,
-		o.kind, o.source, o.sourceFace, o.sourceType, o.definition, e.ID, string(e.Face))
+		o.kind, o.source, o.sourceFace, o.sourceType, o.definition, mentionTargetsJSON(e.Content), search.IndexText(e),
+		e.ID, string(e.Face))
 	if err != nil {
 		return fmt.Errorf("sqlitestore: update %s: %w", e.ID, err)
 	}
@@ -239,6 +247,8 @@ func (s *Store) UpdateEntity(ctx context.Context, e *entity.Entity) error {
 // exclusive sidecar lock on open), so the cross-process case pgstore must
 // handle cannot arise here. The CAS is still load-bearing for concurrent
 // goroutines within the one permitted process.
+//
+//archplan:sink=write
 func (s *Store) UpdateEntityIf(
 	ctx context.Context, e *entity.Entity, cond store.UpdateCondition,
 ) (store.EntityVersion, error) {
@@ -288,6 +298,8 @@ func (s *Store) UpdateEntityIf(
 //
 // Nesting is safe: a call from inside an existing Tx joins it rather than
 // opening a second one.
+//
+//archplan:sink=write
 func (s *Store) DeleteFamily(ctx context.Context, id string, cascade bool) (*store.DeleteResult, error) {
 	var result *store.DeleteResult
 	err := s.Tx(ctx, func(tx store.Store) error {
@@ -392,6 +404,8 @@ func (s *Store) deleteEntityLocked(
 //
 // Transacted for the same reason DeleteFamily is: it issues several statements
 // plus a check-then-act on the sibling count.
+//
+//archplan:sink=write
 func (s *Store) DeleteFace(ctx context.Context, ref entity.Ref) (*store.DeleteResult, error) {
 	if !storeutil.Addressable(ref) {
 		return nil, fmt.Errorf("sqlitestore: delete %s: %w", ref, store.ErrNotFound)

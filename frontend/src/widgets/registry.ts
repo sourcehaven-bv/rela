@@ -1,6 +1,12 @@
 import type { Component } from 'vue'
 import type { PropertyDef } from '@/types'
-import type { WidgetEntry, WidgetRegistry, WidgetRoutingHint, WidgetHintKind } from './types'
+import type {
+  DenseHintKind,
+  WidgetEntry,
+  WidgetRegistry,
+  WidgetRoutingHint,
+  WidgetHintKind,
+} from './types'
 import TextWidget from './TextWidget.vue'
 import TextareaWidget from './TextareaWidget.vue'
 import NumberWidget from './NumberWidget.vue'
@@ -11,6 +17,7 @@ import SelectWidget from './SelectWidget.vue'
 import MultiSelectWidget from './MultiSelectWidget.vue'
 import RruleWidget from './RruleWidget.vue'
 import FileWidget from './FileWidget.vue'
+import FileCellWidget from './FileCellWidget.vue'
 import ExternalRefWidget from './ExternalRefWidget.vue'
 
 // defaultWidgetFor reproduces FieldRenderer's historical dispatch order
@@ -45,8 +52,25 @@ const hintKindToWidgetName: Record<WidgetHintKind, string> = {
   rrule: 'rrule',
 }
 
+// Hint kinds served by a dense-only component. These are NOT registered
+// widgets: a registered name is a valid `widget:` override in data-entry.yaml
+// and must match the Go validator's table (TKT-3R7RF3). A dense component has
+// no edit mode, so it must not be selectable there.
+const DENSE_HINT_WIDGETS: Record<Exclude<DenseHintKind, WidgetHintKind>, Component> = {
+  file: FileCellWidget,
+}
+
 export function defineWidgetRegistry(): WidgetRegistry {
   const entries = new Map<string, WidgetEntry>()
+
+  function resolveFromHint(hint: WidgetRoutingHint): Component {
+    const name = hintKindToWidgetName[hint.kind]
+    const entry = entries.get(name) ?? entries.get('text')
+    if (!entry) {
+      throw new Error('[widget-registry] no widget could be resolved (text widget missing)')
+    }
+    return entry.component
+  }
 
   return {
     register(name, entry) {
@@ -92,13 +116,11 @@ export function defineWidgetRegistry(): WidgetRegistry {
       return entry.component
     },
 
-    resolveFromHint(hint: WidgetRoutingHint) {
-      const name = hintKindToWidgetName[hint.kind]
-      const entry = entries.get(name) ?? entries.get('text')
-      if (!entry) {
-        throw new Error('[widget-registry] no widget could be resolved (text widget missing)')
-      }
-      return entry.component
+    resolveFromHint,
+
+    resolveDense(hint) {
+      if (hint.kind === 'file') return DENSE_HINT_WIDGETS.file
+      return resolveFromHint({ kind: hint.kind, propertyName: hint.propertyName })
     },
   }
 }

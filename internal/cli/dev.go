@@ -60,7 +60,7 @@ func (c *DevSeedCmd) Run(ctx context.Context, write *writeServices) error {
 	p := principal.From(ctx)
 	user := p.User
 	if user == "" {
-		user = principal.ReservedPrefix + seedTool
+		user = principal.UserPerfSeed
 	}
 	ctx = store.WithAttribution(ctx, store.Attribution{User: user, Tool: seedTool})
 
@@ -89,10 +89,11 @@ func (c *DevSeedCmd) Run(ctx context.Context, write *writeServices) error {
 	}
 	if write.Audit != nil {
 		write.Audit.Record(audit.Record{
-			Time:      time.Now().UTC(),
-			Op:        audit.OpPerfSeed,
-			Principal: p,
-			Summary:   summary,
+			Time:       time.Now().UTC(),
+			Op:         audit.OpPerfSeed,
+			Principal:  p,
+			AssertedBy: audit.AssertedByFrom(ctx),
+			Summary:    summary,
 		})
 	}
 	if err != nil {

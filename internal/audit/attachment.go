@@ -28,6 +28,7 @@ func AttachmentWriteDenied(ctx context.Context, entityType, entityID, reason, ru
 		Subject:     &Subject{Kind: "entity", Type: entityType, ID: entityID},
 		Principal:   principal.From(ctx),
 		TriggeredBy: TriggeredByFrom(ctx),
+		AssertedBy:  AssertedByFrom(ctx),
 		Summary: fmt.Sprintf("denied: %s (rule_kind=%s rule_id=%s op=attachment-write)",
 			reason, ruleKind, ruleID),
 	}
@@ -45,7 +46,26 @@ func AttachmentRejected(ctx context.Context, entityType, entityID, property, fil
 		Subject:     &Subject{Kind: "entity", Type: entityType, ID: entityID},
 		Principal:   principal.From(ctx),
 		TriggeredBy: TriggeredByFrom(ctx),
+		AssertedBy:  AssertedByFrom(ctx),
 		Summary: fmt.Sprintf("rejected upload %q to property %q: %s (op=attachment-write)",
 			fileName, property, reason),
+	}
+}
+
+// AttachRendered returns the [OpAttachRender] record for a file
+// rela.attach_render stored. source names what was rendered, such as
+// `document="audit-report" entry="AUD-1" format="pdf"`.
+func AttachRendered(
+	ctx context.Context, entityType, entityID, property, fileName, sha256 string, size int64, source string,
+) Record {
+	return Record{
+		Time:        time.Now().UTC(),
+		Op:          OpAttachRender,
+		Subject:     &Subject{Kind: "entity", Type: entityType, ID: entityID},
+		Principal:   principal.From(ctx),
+		TriggeredBy: TriggeredByFrom(ctx),
+		AssertedBy:  AssertedByFrom(ctx),
+		Summary: fmt.Sprintf("property=%q file=%q sha256=%s size=%d %s",
+			property, fileName, sha256, size, source),
 	}
 }

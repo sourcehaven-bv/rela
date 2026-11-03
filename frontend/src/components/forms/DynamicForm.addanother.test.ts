@@ -76,6 +76,7 @@ vi.mock('vue-router', () => ({
   useRouter: () => ({ push, replace, back: vi.fn() }),
   useRoute: () => ({ query: routeQuery, params: {}, path: '/form/task-form' }),
   onBeforeRouteLeave: vi.fn(),
+  onBeforeRouteUpdate: vi.fn(),
 }))
 
 const getTemplates = vi.fn()

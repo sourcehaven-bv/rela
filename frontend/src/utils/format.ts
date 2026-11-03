@@ -5,7 +5,10 @@
 import { RRule } from 'rrule'
 import { TZDate } from '@date-fns/tz'
 import type { PropertyDef, EntityType } from '@/types'
-import { parseExternalRef } from '@/widgets/externalRef'
+import { parseExternalRef } from './externalRef'
+import { fileRefNames } from './fileRefs'
+import { intlLocale } from '@/i18n/locale'
+import { t } from '@/i18n'
 
 export const DATE_FORMAT_OPTIONS: Intl.DateTimeFormatOptions = {
   year: 'numeric',
@@ -38,7 +41,75 @@ export function parseDate(value: string): Date {
 export function formatDate(value: string, locale?: string): string | null {
   const date = parseDate(value)
   if (isNaN(date.getTime())) return null
-  return date.toLocaleDateString(locale, DATE_FORMAT_OPTIONS)
+  return date.toLocaleDateString(locale ?? intlLocale(), DATE_FORMAT_OPTIONS)
+}
+
+/**
+ * An amount in the reader's locale, as money when `currency` (an ISO 4217
+ * code such as EUR) is given: 3500 with EUR reads "€ 3.500" in nl-NL. A
+ * whole number shows no decimals; any other shows two.
+ *
+ * `locale` defaults to the interface locale (`intlLocale`), as every
+ * formatter here does. Tests pass one.
+ */
+export function formatAmount(value: number, currency?: string, locale?: string): string {
+  return amountFormatter(Number.isInteger(value) ? 0 : 2, currency, locale ?? intlLocale()).format(
+    value
+  )
+}
+
+// Building an Intl.NumberFormat is the expensive part, and a board formats an
+// amount per card on every render, so formatters are kept per shape.
+const amountFormatters = new Map<string, Intl.NumberFormat>()
+
+function amountFormatter(
+  digits: number,
+  currency: string | undefined,
+  locale: string
+): Intl.NumberFormat {
+  const key = `${locale}|${currency ?? ''}|${digits}`
+  let f = amountFormatters.get(key)
+  if (!f) {
+    f = new Intl.NumberFormat(locale, {
+      ...(currency ? { style: 'currency', currency } : {}),
+      minimumFractionDigits: digits,
+      maximumFractionDigits: digits,
+    })
+    amountFormatters.set(key, f)
+  }
+  return f
+}
+
+const DECIMAL_RE = /^-?\d+(\.\d+)?$/
+
+/**
+ * A stored property value as a number, or undefined when it is not one.
+ * Integer properties arrive as JSON numbers. A plain decimal string such as
+ * "42" is accepted too, so a value written by hand into a Markdown file still
+ * counts; hex, exponent and padded forms are not.
+ */
+export function numericValue(value: unknown): number | undefined {
+  if (typeof value === 'number') return Number.isFinite(value) ? value : undefined
+  if (typeof value === 'string' && DECIMAL_RE.test(value)) return Number(value)
+  return undefined
+}
+
+/**
+ * A property value in the property's display format, or undefined when the
+ * property has none or the value is not a number. Today the only format is
+ * `display: {currency}` on an integer property (TKT-SVLQQ6), so 3500 reads
+ * "€ 3.500" for EUR in nl-NL. Every surface that renders a value for reading
+ * goes through this; inputs stay plain numbers.
+ */
+export function formatDisplayNumber(
+  value: unknown,
+  propDef: PropertyDef | undefined,
+  locale?: string
+): string | undefined {
+  const currency = propDef?.display?.currency
+  if (!currency || propDef?.type !== 'integer') return undefined
+  const n = numericValue(value)
+  return n === undefined ? undefined : formatAmount(n, currency, locale)
 }
 
 const DATETIME_FORMAT_OPTIONS: Intl.DateTimeFormatOptions = {
@@ -124,7 +195,7 @@ export function formatDatetime(value: string, tz: string, locale?: string): stri
   const date = NAIVE_DATETIME_RE.test(value) ? new TZDate(value, tz) : new Date(value)
   if (isNaN(date.getTime())) return null
   try {
-    return date.toLocaleString(locale, { ...DATETIME_FORMAT_OPTIONS, timeZone: tz })
+    return date.toLocaleString(locale ?? intlLocale(), { ...DATETIME_FORMAT_OPTIONS, timeZone: tz })
   } catch {
     // Defensive: toLocaleString throws RangeError on an invalid tz. The tz
     // is validated upstream today, but degrade gracefully like formatDate.
@@ -153,7 +224,7 @@ export function formatValue(value: unknown, type?: string, tz: string = browserT
   }
 
   if (type === 'boolean') {
-    return value ? 'Yes' : 'No'
+    return value ? t('common.yes') : t('common.no')
   }
 
   if (type === 'external_ref') {
@@ -208,7 +279,7 @@ export function formatCellValue(
       // A view table cell carries the server's string form, where "false" is
       // truthy; read it as the boolean it spells.
       const b = typeof value === 'string' ? value === 'true' : Boolean(value)
-      return b ? 'Yes' : 'No'
+      return b ? t('common.yes') : t('common.no')
     }
     if (propDef?.type === 'rrule') {
       const single = Array.isArray(value) ? value[0] : value
@@ -217,6 +288,12 @@ export function formatCellValue(
     if (propDef?.type === 'external_ref') {
       return parseExternalRef(value)?.id ?? ''
     }
+    // A file value is a storage path; a cell shows the file's name.
+    if (propDef?.type === 'file') {
+      return fileRefNames(value).join(', ')
+    }
+    const amount = formatDisplayNumber(value, propDef)
+    if (amount !== undefined) return amount
   }
 
   if (Array.isArray(value)) {

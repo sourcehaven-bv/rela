@@ -25,12 +25,18 @@ import (
 //     operators flip to Debug only when diagnosing a plan or an unexpected
 //     query count.
 //
-// When neither applies — production with Debug off and no stats on the
-// context — TraceQueryStart returns the context unchanged, so the per-query
-// overhead is one context lookup and one level check, no allocation. That
-// is why the tracer can be attached unconditionally: the earlier design
-// attached it only when Debug was on at Open time, which made stats
+// When neither applies (Debug off and no stats on the context, as with
+// --query-ceiling=0 and no access log) TraceQueryStart returns the context
+// unchanged, so the per-query overhead is one context lookup and one level
+// check, no allocation. With stats it allocates one small value per
+// statement, which a database round trip dwarfs. The earlier design attached
+// the tracer only when Debug was on at Open time, which made stats
 // impossible and froze the logging decision at startup.
+//
+// The statement text goes to [store.QueryStats.RecordStatement] so a
+// request over its query ceiling can name the statement it repeated. pgx
+// hands over the parameterised SQL; bound values stay in data.Args, which
+// only the Debug log reads.
 //
 // Transactions are covered too: a [Store.Tx] view runs on a pgx.Tx from the
 // same pool, and pgx traces BEGIN/COMMIT and every statement inside through
@@ -59,8 +65,8 @@ func (queryTracer) TraceQueryStart(
 		return ctx
 	}
 	v := &tracerCtxVal{start: time.Now(), stats: stats, debug: debug}
+	v.sql = data.SQL
 	if debug {
-		v.sql = data.SQL
 		v.args = data.Args
 	}
 	return context.WithValue(ctx, tracerCtxKey{}, v)
@@ -77,7 +83,7 @@ func (queryTracer) TraceQueryEnd(ctx context.Context, _ *pgx.Conn, data pgx.Trac
 	}
 	elapsed := time.Since(v.start)
 	if v.stats != nil {
-		v.stats.Record(elapsed)
+		v.stats.RecordStatement(v.sql, elapsed)
 	}
 	if !v.debug {
 		return

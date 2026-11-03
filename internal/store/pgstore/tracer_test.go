@@ -14,6 +14,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/Sourcehaven-BV/rela/internal/store"
+	"github.com/Sourcehaven-BV/rela/internal/testutil/logtest"
 )
 
 // TestQueryTracer_LogsAtDebugLevel exercises the tracer directly (without
@@ -39,7 +40,7 @@ func TestQueryTracer_LogsAtDebugLevel(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			var buf bytes.Buffer
 			h := slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: tc.level})
-			t.Cleanup(swapDefaultLogger(slog.New(h)))
+			logtest.SetDefault(t, h)
 
 			tr := queryTracer{}
 			base := context.Background()
@@ -71,7 +72,7 @@ func TestQueryTracer_LogsAtDebugLevel(t *testing.T) {
 func TestQueryTracer_RecordsIntoContextStats(t *testing.T) {
 	var buf bytes.Buffer
 	h := slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelInfo})
-	t.Cleanup(swapDefaultLogger(slog.New(h)))
+	logtest.SetDefault(t, h)
 
 	tr := queryTracer{}
 	ctx, stats := store.WithQueryStats(context.Background())
@@ -84,13 +85,4 @@ func TestQueryTracer_RecordsIntoContextStats(t *testing.T) {
 	}
 	require.Greater(t, stats.Duration(), time.Duration(0))
 	require.Empty(t, buf.String(), "accounting must not log at Info")
-}
-
-// swapDefaultLogger replaces slog.Default and returns a closer that
-// restores the previous default. Lets each test isolate its slog
-// output without polluting siblings.
-func swapDefaultLogger(l *slog.Logger) func() {
-	prev := slog.Default()
-	slog.SetDefault(l)
-	return func() { slog.SetDefault(prev) }
 }

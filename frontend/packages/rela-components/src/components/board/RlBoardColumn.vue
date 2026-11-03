@@ -15,10 +15,15 @@ import RlHeading from '../common/RlHeading.vue'
 import RlBoardCard from './RlBoardCard.vue'
 import RlEmptyState from '../feedback/RlEmptyState.vue'
 import {
+  useDraggableSection,
   useDropTargetColumn,
   type BoardDragData,
   type BoardDropPosition,
+  type BoardSectionDropPosition,
 } from '../../composables/useBoardDnd'
+import { useMessages } from '../../composables/useMessages'
+
+const messages = useMessages()
 
 const props = withDefaults(
   defineProps<{
@@ -56,9 +61,18 @@ const props = withDefaults(
     reorder?: boolean
     /** Whether the heading offers a control that collapses the column. */
     collapsible?: boolean
+    /** Whether a card dropped on another card's middle groups. See `RlBoard`. */
+    group?: boolean
+    /**
+     * Whether this column can be dragged by its handle, and other movable
+     * columns dropped beside it. See `sectionsMovable` on `RlBoard`.
+     */
+    movable?: boolean
   }>(),
   {
     collapsible: false,
+    group: false,
+    movable: false,
     reorder: false,
     showAdd: true,
     canMove: undefined,
@@ -76,19 +90,44 @@ const emit = defineEmits<{
   grab: [item: T]
   release: []
   collapse: [section: Section<T>]
+  moveSection: [move: BoardSectionDropPosition]
 }>()
 
-defineSlots<{
+const slots = defineSlots<{
   card?: (props: { item: T; selected: boolean }) => unknown
+  heading?: (props: { section: Section<T> }) => unknown
 }>()
 
 const element = ref<HTMLElement>()
+const handle = ref<HTMLElement>()
 
-const { over } = useDropTargetColumn({
+const { over, sectionEdge } = useDropTargetColumn({
   element,
   data: computed(() => ({ sectionId: props.section.id })),
   onDrop: (drag, at) => emit('drop', { drag, section: props.section, at }),
   reorder: computed(() => props.reorder),
+  group: computed(() => props.group),
+  acceptsSection: computed(() => props.movable),
+  onSectionDrop: (move) => emit('moveSection', move),
+})
+
+const { dragging: sectionDragging } = useDraggableSection({
+  element,
+  handle,
+  enabled: computed(() => props.movable),
+  sectionId: computed(() => props.section.id),
+})
+
+/*
+ * The section's colour as a custom property, for a consumer that tints the
+ * whole column rather than only the heading's dot. A named colour maps to
+ * its tag background; a palette property is used as it is.
+ */
+const tint = computed(() => {
+  const color = props.section.color
+  if (!color) return undefined
+  if (color.startsWith('--rl-')) return `var(${color})`
+  return `var(--rl-tag-${color}-bg)`
 })
 
 /** Whether the column is lit as a place the held card could land. */
@@ -111,10 +150,29 @@ function onRelease() {
   <section
     ref="element"
     class="rl-board-column"
-    :class="{ 'rl-board-column--target': target }"
+    :class="{
+      'rl-board-column--target': target,
+      'rl-board-column--dragging': sectionDragging,
+      [`rl-board-column--drop-${sectionEdge}`]: sectionEdge !== null,
+    }"
+    :style="tint ? { '--rl-section-tint': tint } : undefined"
     :data-section-id="section.id"
   >
+    <!-- Moving a column is mouse only, so the handle stays out of the tab order. -->
+    <button
+      v-if="movable"
+      ref="handle"
+      type="button"
+      tabindex="-1"
+      class="rl-board-column__handle"
+      :aria-label="messages.chromeText({ key: 'moveSection' })"
+      :title="messages.chromeText({ key: 'moveSection' })"
+    >
+      <span aria-hidden="true">⠿</span>
+    </button>
+    <slot name="heading" :section="section" />
     <RlSectionHeading
+      v-if="!slots.heading"
       class="rl-board-column__heading"
       :title="section.title"
       :color="section.color"
@@ -123,6 +181,9 @@ function onRelease() {
       :collapsible="collapsible"
       @collapse="emit('collapse', section)"
     />
+    <div v-if="section.summary?.length" class="rl-board-column__summary">
+      <p v-for="(line, i) in section.summary" :key="i">{{ line }}</p>
+    </div>
 
     <div class="rl-board-column__cards">
       <template v-for="item in section.items" :key="item.id">
@@ -138,6 +199,7 @@ function onRelease() {
           :draggable="canMove?.(item) ?? false"
           :grabbed="item.id === grabbedId"
           :reorder="reorder"
+          :group="group"
           @grab="onGrab"
           @release="onRelease"
         >
@@ -179,7 +241,7 @@ function onRelease() {
     <RlAddButton
       v-if="showAdd"
       class="rl-board-column__add"
-      :label="addLabel ?? 'Add'"
+      :label="addLabel ?? messages.chromeText({ key: 'add' })"
       @click="emit('add', section)"
     />
   </section>
@@ -216,6 +278,17 @@ function onRelease() {
 
 .rl-board-column__heading { padding: 0 var(--rl-space-1) var(--rl-space-3); }
 
+/* Pulls up under the heading, so the heading's gap sits below the line. */
+.rl-board-column__summary {
+  margin: calc(var(--rl-space-2) * -1) 0 var(--rl-space-3);
+  padding: 0 var(--rl-space-1);
+  font-size: var(--rl-font-size-sm);
+  color: var(--rl-color-text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.rl-board-column__summary p { margin: 0; }
+
 /*
  * The column a held card would land in. Drawn as a tinted, outlined well
  * behind the whole column rather than as a line between two cards, because
@@ -242,6 +315,7 @@ function onRelease() {
 
 /* The cards stay above the well. */
 .rl-board-column__heading,
+.rl-board-column__summary,
 .rl-board-column__cards,
 .rl-board-column__add {
   position: relative;
@@ -251,6 +325,40 @@ function onRelease() {
 @media (prefers-reduced-motion: reduce) {
   .rl-board-column::before { transition: none; }
 }
+
+/* The handle a movable column is dragged by, in the heading's top corner. */
+.rl-board-column__handle {
+  position: absolute;
+  top: 0;
+  right: 0;
+  z-index: 2;
+  padding: 2px 4px;
+  border: none;
+  border-radius: var(--rl-radius-md);
+  background: none;
+  color: var(--rl-color-text-muted);
+  font-size: var(--rl-font-size-md);
+  line-height: 1;
+  cursor: grab;
+}
+.rl-board-column__handle:hover { background: var(--rl-color-bg-hover); color: var(--rl-color-text); }
+.rl-board-column__handle:focus-visible { outline: 2px solid var(--rl-color-focus); }
+
+.rl-board-column--dragging { opacity: 0.4; }
+
+/* Where a held column will land: a line beside this column. */
+.rl-board-column--drop-before::after,
+.rl-board-column--drop-after::after {
+  content: '';
+  position: absolute;
+  inset-block: 0;
+  width: 3px;
+  border-radius: 1px;
+  background: var(--rl-color-accent);
+  pointer-events: none;
+}
+.rl-board-column--drop-before::after { left: calc(var(--rl-space-3) * -1); }
+.rl-board-column--drop-after::after { right: calc(var(--rl-space-3) * -1); }
 
 /* The title-only fallback card, used when no `card` slot is given. */
 .rl-board-column__card {

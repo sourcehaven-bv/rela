@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { RouterLink } from 'vue-router'
+import { useI18n } from 'vue-i18n'
 import RlBackButton from 'rela-components/components/layout/RlBackButton.vue'
 import { useSchemaStore } from '@/stores'
 import { usePageStore } from '@/stores/pages'
@@ -14,6 +15,7 @@ const props = defineProps<{
 // stays generic — see TKT-JIEKC RR-RV4LA. When the hint carries a list id
 // and schemaStore knows the list, we name it; otherwise the generic "Back"
 // falls through. The arrow is the button's icon, so the label omits it.
+const { t } = useI18n()
 const schemaStore = useSchemaStore()
 const pageStore = usePageStore()
 const label = computed(() => {
@@ -26,7 +28,7 @@ const label = computed(() => {
     const title = pageStore.pages[hint.id]?.label
     if (title) return title
   }
-  return 'Back'
+  return t('common.back')
 })
 
 </script>

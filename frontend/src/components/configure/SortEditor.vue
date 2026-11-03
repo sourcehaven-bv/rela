@@ -4,7 +4,7 @@ import RlSelect from 'rela-components/components/form/RlSelect.vue'
 import RlButton from 'rela-components/components/common/RlButton.vue'
 import RlIconButton from 'rela-components/components/common/RlIconButton.vue'
 import RlText from 'rela-components/components/common/RlText.vue'
-import { useConfigDraftStore } from '@/stores/configDraft'
+import { useConfigDraftStore } from '@/configure/configDraft'
 import type { SortKeyModel } from '@/configure/models'
 import { newMap, type TreePath } from '@/configure/tree'
 

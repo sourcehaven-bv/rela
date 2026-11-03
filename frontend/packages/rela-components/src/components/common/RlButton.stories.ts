@@ -1,4 +1,5 @@
 import { ref } from 'vue'
+import { expect, userEvent, within } from 'storybook/test'
 import type { Meta, StoryObj } from '@storybook/vue3-vite'
 import RlButton from './RlButton.vue'
 import RlButtonGroup from './RlButtonGroup.vue'
@@ -180,6 +181,51 @@ export const Pending: Story = {
       </div>
     `,
   }),
+  // An idle button is centred: the spinner's reserved slot rides in the hidden
+  // pending label, not beside the visible one (BUG-5NP70I).
+  play: async ({ canvasElement }) => {
+    const button = within(canvasElement).getByRole('button', { name: 'Save' })
+    const label = within(button).getByText('Save')
+    const outer = button.getBoundingClientRect()
+    const inner = label.getBoundingClientRect()
+    const left = inner.left - outer.left
+    const right = outer.right - inner.right
+    await expect(Math.abs(left - right)).toBeLessThanOrEqual(1)
+  },
+}
+
+/**
+ * A toggle passes `aria-pressed`. When it is on, the button takes the
+ * selected fill and an accent edge in every variant, so the state is visible
+ * and not only announced.
+ */
+export const Toggle: Story = {
+  render: () => ({
+    components: { RlButton },
+    setup: () => ({ on: ref(false) }),
+    template: `
+      <div style="${row}">
+        <RlButton variant="ghost" size="sm" :aria-pressed="on" @click="on = !on">Show all messages</RlButton>
+        <RlButton variant="secondary" aria-pressed="true">Secondary, on</RlButton>
+        <RlButton variant="subtle" aria-pressed="true">Subtle, on</RlButton>
+      </div>
+    `,
+  }),
+  play: async ({ canvasElement }) => {
+    const button = within(canvasElement).getByRole('button', { name: 'Show all messages' })
+    const look = () => {
+      const s = getComputedStyle(button)
+      return `${s.backgroundColor} ${s.boxShadow}`
+    }
+    const off = look()
+    await expect(getComputedStyle(button).boxShadow).toBe('none')
+    await userEvent.click(button)
+    await expect(button).toHaveAttribute('aria-pressed', 'true')
+    await expect(look()).not.toBe(off)
+    await expect(getComputedStyle(button).boxShadow).toContain('inset')
+    await userEvent.click(button)
+    await expect(button).toHaveAttribute('aria-pressed', 'false')
+  },
 }
 
 /**
@@ -202,4 +248,29 @@ export const AsLink: Story = {
       </div>
     `,
   }),
+}
+
+/*
+ * A long label in a row that is too narrow stays on one line. The row
+ * overflows instead, and the page decides what to collapse.
+ */
+export const LongLabelInNarrowRow: Story = {
+  render: () => ({
+    components: { RlButton },
+    template: `
+      <div style="display:flex; gap:8px; width:160px">
+        <RlButton variant="secondary">Omzetten naar verantwoordelijkheidsgebied</RlButton>
+        <RlButton variant="secondary">Edit</RlButton>
+      </div>
+    `,
+  }),
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement)
+    const long = canvas.getByRole('button', { name: /Omzetten/ })
+    const short = canvas.getByRole('button', { name: 'Edit' })
+    // The button's height is fixed, so compare the labels: a wrapped label
+    // is taller than its box.
+    const label = (b: HTMLElement) => b.querySelector('.rl-button__label')!.getBoundingClientRect().height
+    await expect(label(long)).toBe(label(short))
+  },
 }

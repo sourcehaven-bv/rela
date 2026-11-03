@@ -8,47 +8,62 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 )
 
-// Verb is a read-or-write access verb the who-can query asks about. It
-// widens [Op] (create/update/delete/rename) with read, which has no Op
-// because the write path never authorizes reads — the read path is
-// Request.readQuery. VerbRead routes through the read machinery;
-// every other verb routes through the per-verb write grant.
+// Verb is a read-or-write access verb. The who-can query asks about one,
+// and so does the affordance resolver when it decides what a role without a
+// field block contributes ([Request.RoleGrantsVerbOnFace]).
+//
+// A Verb is an [Op] or read. Read has no Op because the write path never
+// authorizes reads; the read path is Request.readQuery. Every write verb is
+// the Op of the same name, so the verb set follows [Ops] and a new write Op
+// cannot be left out of the reports that enumerate [Verbs].
 type Verb string
 
-// Verb constants. VerbRead maps to the read path; the rest map 1:1 to
-// the write [Op] of the same name.
+// VerbRead is the one verb that is not an [Op].
+const VerbRead Verb = "read"
+
+// The write verbs, one per [Op].
 const (
-	VerbRead   Verb = "read"
-	VerbCreate Verb = "create"
-	VerbUpdate Verb = "update"
-	VerbDelete Verb = "delete"
+	VerbCreate  = Verb(OpCreate)
+	VerbUpdate  = Verb(OpUpdate)
+	VerbDelete  = Verb(OpDelete)
+	VerbRename  = Verb(OpRename)
+	VerbConvert = Verb(OpConvert)
 )
+
+// Verbs returns [VerbRead] followed by one verb per [Ops] entry, in that
+// order.
+func Verbs() []Verb {
+	ops := Ops()
+	out := make([]Verb, 0, len(ops)+1)
+	out = append(out, VerbRead)
+	for _, op := range ops {
+		out = append(out, Verb(op))
+	}
+	return out
+}
 
 // Valid reports whether v is one of the known verbs. Unknown verbs must
 // be rejected rather than defaulted — a fail-closed access tool never
 // silently treats a garbage verb as "read".
+//
+// [VerbRename] is valid, but the grant helpers that answer reports
+// (AccessRoutes, EveryoneGrants, AssertedGrants) read it from the `update:`
+// list, which is wrong in both directions. aclmap keeps rename out of its
+// reports until TKT-4APGVF fixes them; a new caller must do the same.
 func (v Verb) Valid() bool {
-	switch v {
-	case VerbRead, VerbCreate, VerbUpdate, VerbDelete:
-		return true
-	default:
-		return false
-	}
+	return v == VerbRead || Op(v).Valid()
 }
 
 // op maps a write Verb to its [Op]. VerbRead has no Op (read never goes
-// through the write path) and returns ("", false).
+// through the write path) and returns ("", false), as does an unknown verb.
 func (v Verb) op() (Op, bool) {
-	switch v {
-	case VerbCreate:
-		return OpCreate, true
-	case VerbUpdate:
-		return OpUpdate, true
-	case VerbDelete:
-		return OpDelete, true
-	default:
+	if v == VerbRead {
 		return "", false
 	}
+	if op := Op(v); op.Valid() {
+		return op, true
+	}
+	return "", false
 }
 
 // EveryoneGrant reports how a policy grants a verb to *every* principal
@@ -127,6 +142,44 @@ func (d *Declarative) AssertedGrants(verb Verb, entityType string) []AssertedGra
 	return out
 }
 
+// ClampedEveryoneGrants is [Declarative.EveryoneGrants] for r's principal: the client ceiling applies first, then the everyone role as
+// roleFor narrows it. A report about one principal's effective access asks
+// this one. The policy-wide answer would show an everyone grant that a
+// `client_baselines:` entry removes, so a restricted client (a webhook, an
+// app) would appear to hold it.
+//
+// It and [ClampedAssertedGrants] are functions rather than [Request] methods
+// because Request is at its plimsoll method load line.
+func ClampedEveryoneGrants(r *Request, verb Verb, entityType string) EveryoneGrant {
+	if !r.ceilingPermitsVerb(verb, entityType) {
+		return EveryoneGrant{}
+	}
+	role, ok := r.roleFor(EveryoneRole)
+	if !ok {
+		return EveryoneGrant{}
+	}
+	return grantForRole(role, verb, entityType)
+}
+
+// ClampedAssertedGrants is [Declarative.AssertedGrants] for r's principal,
+// with the client ceiling applied the same way as in [ClampedEveryoneGrants].
+func ClampedAssertedGrants(r *Request, verb Verb, entityType string) []AssertedGrant {
+	if !r.ceilingPermitsVerb(verb, entityType) {
+		return nil
+	}
+	var out []AssertedGrant
+	for _, g := range r.d.AssertedGrants(verb, entityType) {
+		role, ok := r.roleFor(g.Role)
+		if !ok {
+			continue
+		}
+		if clamped := grantForRole(role, verb, entityType); clamped.Granted {
+			out = append(out, AssertedGrant{Claim: g.Claim, Role: g.Role, Wildcard: clamped.Wildcard})
+		}
+	}
+	return out
+}
+
 // grantForRole reports whether one role grants verb on entityType and
 // whether the match came from a "*" wildcard. It is the single place
 // the verb→field mapping lives, shared by EveryoneGrants and
@@ -143,6 +196,8 @@ func grantForRole(role RoleDef, verb Verb, entityType string) EveryoneGrant {
 		switch op {
 		case OpCreate:
 			list = role.Create
+		case OpConvert:
+			list = role.Convert
 		case OpUpdate, OpRename:
 			list = role.Update
 		case OpDelete:

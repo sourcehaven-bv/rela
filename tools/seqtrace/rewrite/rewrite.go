@@ -19,6 +19,13 @@
 //
 // A function literal that is the operand of a go statement gets the literal
 // rewrite with goStmt set, so it always adopts its creator.
+//
+// A function with a `yield func(...) bool` parameter is an iterator. Its
+// prologue also wraps yield, so calls made by the consumer's loop body are
+// attributed to the consumer rather than to the iterator:
+//
+//	{ seqtrace__y := yield; yield = func(seqtrace__y0 T) bool {
+//	    defer rt.Suspend(f).Resume(); return seqtrace__y(seqtrace__y0) } }
 package rewrite
 
 import (
@@ -41,6 +48,7 @@ const (
 	frameVar  = "seqtrace__f"
 	creatorVr = "seqtrace__c"
 	resultVar = "seqtrace__r"
+	yieldVar  = "seqtrace__y"
 )
 
 // File returns src with tracing injected. pkg is the label recorded for every
@@ -137,7 +145,54 @@ func (r *rewriter) prologue(body *ast.BlockStmt, enter string, typ *ast.FuncType
 	if name := r.ctxParam(typ); name != "" {
 		text += fmt.Sprintf(" %s = %s.Ctx(%s);", name, frameVar, name)
 	}
+	text += r.yieldWrapper(typ)
 	r.add(body.Lbrace+1, text)
+}
+
+// yieldWrapper returns the statement that wraps a `yield func(...) bool`
+// parameter, or "" when typ has none. A variadic yield is left alone.
+func (r *rewriter) yieldWrapper(typ *ast.FuncType) string {
+	for _, field := range fieldsOf(typ.Params) {
+		ft, ok := field.Type.(*ast.FuncType)
+		if !ok || !returnsBool(ft) || hasTag(ft) {
+			continue
+		}
+		for _, n := range field.Names {
+			if n.Name != "yield" {
+				continue
+			}
+			var params, args []string
+			for _, p := range fieldsOf(ft.Params) {
+				if _, variadic := p.Type.(*ast.Ellipsis); variadic {
+					return ""
+				}
+				for range max(len(p.Names), 1) {
+					name := fmt.Sprintf("%s%d", yieldVar, len(args))
+					params = append(params, name+" "+r.exprText(p.Type))
+					args = append(args, name)
+				}
+			}
+			return fmt.Sprintf(
+				" { %s := yield; yield = func(%s) bool { defer %s.Suspend(%s).Resume(); return %s(%s) } };",
+				yieldVar, strings.Join(params, ", "), rtName, frameVar, yieldVar, strings.Join(args, ", "))
+		}
+	}
+	return ""
+}
+
+func returnsBool(ft *ast.FuncType) bool {
+	if ft.Results == nil || len(ft.Results.List) != 1 || len(ft.Results.List[0].Names) > 1 {
+		return false
+	}
+	id, ok := ft.Results.List[0].Type.(*ast.Ident)
+	return ok && id.Name == "bool"
+}
+
+// exprText prints a type expression on one line.
+func (r *rewriter) exprText(e ast.Expr) string {
+	var buf bytes.Buffer
+	_ = printer.Fprint(&buf, token.NewFileSet(), e)
+	return strings.Join(strings.Fields(buf.String()), " ")
 }
 
 // walk rewrites function literals and go statements under n. outer names

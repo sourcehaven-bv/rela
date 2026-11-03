@@ -40,10 +40,10 @@ type QueryScopeResolver interface {
 		match func(context.Context, store.GraphQuery, []string) (map[string]bool, error),
 	) ([]store.EntityHeader, error)
 
-	// BindRequest stamps request-scoped evaluation state — today the
+	// StampQueryIdentity stamps request-scoped evaluation state — today the
 	// identity `current_user` resolves to — onto ctx ONCE per request,
 	// before any row is evaluated. Mirrors NextActionRequestScope.
-	BindRequest(ctx context.Context) (context.Context, error)
+	StampQueryIdentity(ctx context.Context) (context.Context, error)
 }
 
 // QueryScopeResolverFunc builds a [QueryScopeResolver] for the current config
@@ -123,10 +123,10 @@ func viewQueryScope(
 		// here is what made `is_current_user(...)` in a condition fail with
 		// ErrNoCurrentUser on an unscoped list. Scope stays nil, so every
 		// "is there a scope" check still reads this as unscoped.
-		return resolvedQueryScope{Bind: resolver.BindRequest}, nil
+		return resolvedQueryScope{Bind: resolver.StampQueryIdentity}, nil
 	}
 	resolved = resolvedQueryScope{
-		Scope: scope, Props: props, Filter: resolver.Filter, Bind: resolver.BindRequest,
+		Scope: scope, Props: props, Filter: resolver.Filter, Bind: resolver.StampQueryIdentity,
 	}
 	if l, ok := resolver.(queryScopeLowerer); ok {
 		resolved.Lower = l.Lower
@@ -279,7 +279,7 @@ func AdaptQueryScopes[R interface {
 		ctx context.Context, scope any, entityType string,
 		gate func(context.Context, string, acl.TraversalHop) (*store.RelationPredicate, error),
 	) (frag store.GraphQuery, empty, ok bool)
-	BindRequest(ctx context.Context) (context.Context, error)
+	StampQueryIdentity(ctx context.Context) (context.Context, error)
 }](build func(*dataentryconfig.Config, *metamodel.Metamodel) (R, []string)) QueryScopeResolverFunc {
 	return func(cfg *dataentryconfig.Config, meta *metamodel.Metamodel) (QueryScopeResolver, []string) {
 		r, problems := build(cfg, meta)
@@ -309,7 +309,7 @@ type adaptedQueryScopes[R interface {
 		ctx context.Context, scope any, entityType string,
 		gate func(context.Context, string, acl.TraversalHop) (*store.RelationPredicate, error),
 	) (frag store.GraphQuery, empty, ok bool)
-	BindRequest(ctx context.Context) (context.Context, error)
+	StampQueryIdentity(ctx context.Context) (context.Context, error)
 }] struct{ r R }
 
 func (a adaptedQueryScopes[R]) Resolve(
@@ -333,6 +333,6 @@ func (a adaptedQueryScopes[R]) Lower(
 	return a.r.Lower(ctx, scope, entityType, gate)
 }
 
-func (a adaptedQueryScopes[R]) BindRequest(ctx context.Context) (context.Context, error) {
-	return a.r.BindRequest(ctx)
+func (a adaptedQueryScopes[R]) StampQueryIdentity(ctx context.Context) (context.Context, error) {
+	return a.r.StampQueryIdentity(ctx)
 }

@@ -316,11 +316,12 @@ func TestCommandAuthorizationHasNoACLTypeSwitch(t *testing.T) {
 // TestCommandTestsDriveAuthorizerNotACL is the RR-CWBZVT guard. Command-auth
 // tests must set app.commands.authz directly, never reassign app.acl expecting
 // command authorization to follow — the authorizer is fixed at wiring, so an
-// `app.acl =` in these tests would silently exercise the wrong impl and a
-// security canary (e.g. read-only-denied) could pass vacuously.
+// `app.acl =` or `setTestACL(` in these tests would silently exercise the
+// wrong impl and a security canary (e.g. read-only-denied) could pass
+// vacuously.
 func TestCommandTestsDriveAuthorizerNotACL(t *testing.T) {
 	body := mustReadPkgFile(t, "commands_test.go")
-	if strings.Contains(body, "app.acl =") {
+	if strings.Contains(body, "app.acl =") || strings.Contains(body, "setTestACL(") {
 		t.Errorf("commands_test.go reassigns app.acl — command-auth tests must set " +
 			"app.commands.authz directly (RR-CWBZVT). Reassigning app.acl exercises the wrong " +
 			"authorizer because it is chosen once at the wiring seam, not re-derived per request.")
@@ -338,4 +339,40 @@ func mustReadPkgFile(t *testing.T, name string) string {
 		t.Fatalf("read %s: %v", name, err)
 	}
 	return string(body)
+}
+
+// TestLeaseAttachPointsStayThree guards where `_lease` is set (TKT-4YPG4Q,
+// TKT-MHXH87). It may ride only the single-entity GET (api_v1.go), list rows
+// (serveRowLeases in leases_handler.go) and a view's entry
+// (views_handler.go): each sets it on an entity the caller has just read
+// through the row gate, from one lease read. Other surfaces (view sections,
+// history, includes, live frames) do not carry it, so a fourth `.Lease =`
+// assignment is the moment to ask whether that surface gates its rows first
+// and keeps the cost at one lease read per page.
+func TestLeaseAttachPointsStayThree(t *testing.T) {
+	const needle = ".Lease ="
+	allowed := map[string]int{"api_v1.go": 1, "leases_handler.go": 1, "views_handler.go": 1}
+
+	root, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		t.Fatalf("readdir: %v", err)
+	}
+	for _, e := range entries {
+		base := e.Name()
+		if e.IsDir() || !strings.HasSuffix(base, ".go") || strings.HasSuffix(base, "_test.go") {
+			continue
+		}
+		body, err := os.ReadFile(filepath.Join(root, base))
+		if err != nil {
+			t.Fatalf("read %s: %v", base, err)
+		}
+		if got, want := strings.Count(string(body), needle), allowed[base]; got != want {
+			t.Errorf("%s has %d %q assignments, want %d: `_lease` is set only on the entity GET, "+
+				"in serveRowLeases and on a view's entry", base, got, needle, want)
+		}
+	}
 }

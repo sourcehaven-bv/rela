@@ -5,6 +5,7 @@ import { getNavItems, type NavItemList } from '@/api'
 import { shouldDropHeldContent } from '@/api/errors'
 import { useEvents } from '@/composables/useEvents'
 import { useSpaceStore } from '@/stores/space'
+import { cancelWhenVisible, runWhenVisible } from './visibleRefetch'
 
 /** How long a burst of entity changes is left to settle before refetching. */
 const EVENT_DEBOUNCE_MS = 1000
@@ -41,12 +42,15 @@ export function useNavItems(enabled: Ref<boolean>) {
 
   watch(() => route.path, refetch)
 
+  // A hidden tab refetches once, when it is shown again.
+  const refetchKey = Symbol('nav-items')
   let timer: ReturnType<typeof setTimeout> | null = null
   on('entity:changed', () => {
     if (timer) clearTimeout(timer)
-    timer = setTimeout(refetch, EVENT_DEBOUNCE_MS)
+    timer = setTimeout(() => runWhenVisible(refetchKey, refetch), EVENT_DEBOUNCE_MS)
   })
   onBeforeUnmount(() => {
+    cancelWhenVisible(refetchKey)
     if (timer) clearTimeout(timer)
   })
 

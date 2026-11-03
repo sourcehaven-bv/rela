@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Sourcehaven-BV/rela/internal/acl/acltest"
+
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
@@ -237,9 +239,9 @@ func permitsWorldFor(t *testing.T, p *acl.Policy, world string) bool {
 	if err != nil {
 		t.Fatalf("NewDeclarative: %v", err)
 	}
-	req, err := d.ForPrincipal(principal.Principal{User: "alice", Tool: "test"})
+	req, err := d.ForIdentity(acltest.IdentityFor(t.Context(), t, d, principal.Principal{User: "alice", Tool: "test"}))
 	if err != nil {
-		t.Fatalf("ForPrincipal: %v", err)
+		t.Fatalf("ForIdentity: %v", err)
 	}
 	ok, err := req.PermitsWorld(context.Background(), world)
 	if err != nil {
@@ -322,10 +324,10 @@ func TestPermitsWorld_CeilingOverridesRoleGrant(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewDeclarative: %v", err)
 	}
-	req, err := d.ForPrincipal(principal.VerifiedFrom("alice", "test",
-		principal.Claims{PrincipalType: "app"}))
+	req, err := d.ForIdentity(acltest.IdentityFor(t.Context(), t, d, principal.VerifiedFrom("alice", "test",
+		principal.Claims{PrincipalType: "app"})))
 	if err != nil {
-		t.Fatalf("ForPrincipal: %v", err)
+		t.Fatalf("ForIdentity: %v", err)
 	}
 	ctx := context.Background()
 	for _, tc := range []struct {

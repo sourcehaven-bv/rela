@@ -20,12 +20,12 @@ import (
 
 // The comment operations, separated from their HTTP routes (TKT-QIQO1W) so the
 // remote MCP tools run the same gates. Each operation takes a ctx and returns
-// a [commentFailure] instead of writing a response; the route writes the
+// an [opFailure] instead of writing a response; the route writes the
 // failure with the writer it always used, and [MCPComments] renders it as a
 // [comments.OpError].
 
-// commentFailure is a refused comment operation.
-type commentFailure struct {
+// opFailure is a refused comment operation or action run (TKT-NW9QSN).
+type opFailure struct {
 	status int
 	code   string
 	title  string
@@ -37,13 +37,15 @@ type commentFailure struct {
 	cause error
 	// warn logs cause at Warn rather than Error, as writeGateError does.
 	warn bool
+	// correlationID matches a failed action run to its log line.
+	correlationID string
 	// write answers the failure on HTTP, for the failures this package has a
 	// dedicated writer for. Nil means writeV1Error with the fields above.
 	write func(w http.ResponseWriter, r *http.Request)
 }
 
 // writeHTTP answers f on the HTTP API.
-func (f *commentFailure) writeHTTP(w http.ResponseWriter, r *http.Request) {
+func (f *opFailure) writeHTTP(w http.ResponseWriter, r *http.Request) {
 	if f.write != nil {
 		f.write(w, r)
 		return
@@ -54,38 +56,57 @@ func (f *commentFailure) writeHTTP(w http.ResponseWriter, r *http.Request) {
 // opError describes f to a transport other than HTTP. A cancelled request
 // returns the context error itself; an internal failure is logged here, as
 // the HTTP writers log it.
-func (f *commentFailure) opError(ctx context.Context) error {
+func (f *opFailure) opError(ctx context.Context) error {
 	if errors.Is(f.cause, context.Canceled) {
 		return f.cause
 	}
+	f.logInternal(ctx, "comments: operation failed")
+	return &comments.OpError{Code: f.code, Title: f.title, Detail: f.detail, Faces: f.faces}
+}
+
+// logInternal logs the cause of an internal failure, as the HTTP writers do.
+func (f *opFailure) logInternal(ctx context.Context, msg string) {
 	if f.status >= http.StatusInternalServerError && f.cause != nil {
 		level := slog.LevelError
 		if f.warn {
 			level = slog.LevelWarn
 		}
-		slog.Log(ctx, level, "comments: operation failed", "code", f.code, "err", f.cause)
+		slog.Log(ctx, level, msg, "code", f.code, "err", f.cause)
 	}
-	return &comments.OpError{Code: f.code, Title: f.title, Detail: f.detail, Faces: f.faces}
 }
 
-func failV1(status int, code, title string) *commentFailure {
-	return &commentFailure{status: status, code: code, title: title}
+func failV1(status int, code, title string) *opFailure {
+	return &opFailure{status: status, code: code, title: title}
 }
 
-func failEntityNotFound() *commentFailure {
+func failEntityNotFound() *opFailure {
 	return failV1(http.StatusNotFound, "not_found", entityNotFoundTitle)
 }
 
-func failForbidden(title string) *commentFailure {
+func failForbidden(title string) *opFailure {
 	return failV1(http.StatusForbidden, "forbidden", title)
 }
 
+// failNoIdentity is the failure writeNoIdentity answers: the operation found
+// no bound identity. It reports false when err is not [acl.ErrNoIdentity].
+func failNoIdentity(err error) (*opFailure, bool) {
+	if !errors.Is(err, acl.ErrNoIdentity) {
+		return nil, false
+	}
+	f := failV1(http.StatusUnauthorized, "unauthenticated", "Authentication required")
+	f.write = func(w http.ResponseWriter, r *http.Request) { writeNoIdentity(w, r, err) }
+	return f, true
+}
+
 // failGate is the failure writeGateError answers.
-func failGate(err error) *commentFailure {
+func failGate(err error) *opFailure {
+	if f, ok := failNoIdentity(err); ok {
+		return f
+	}
 	// Built in two steps, here and in failInternal: TestNoInternalErrorDetail
 	// requires every field of a literal naming a 500 to be a constant, and
 	// the detail, the only field a caller sees, is.
-	f := &commentFailure{status: http.StatusInternalServerError, detail: internalErrorDetail}
+	f := &opFailure{status: http.StatusInternalServerError, detail: internalErrorDetail}
 	f.code, f.title, f.cause, f.warn = "acl_query_failed", "ACL read-permission check failed", err, true
 	f.write = func(w http.ResponseWriter, r *http.Request) { writeGateError(w, r, err) }
 	if errors.Is(err, context.DeadlineExceeded) {
@@ -96,7 +117,7 @@ func failGate(err error) *commentFailure {
 }
 
 // failWriteTarget is the failure writeWriteTargetError answers.
-func failWriteTarget(err error) *commentFailure {
+func failWriteTarget(err error) *opFailure {
 	var amb *visibility.AmbiguousAddressError
 	switch {
 	case errors.As(err, &amb):
@@ -104,7 +125,7 @@ func failWriteTarget(err error) *commentFailure {
 		for i, face := range amb.Faces {
 			faces[i] = entity.FormatStateRef(amb.ID, face)
 		}
-		return &commentFailure{
+		return &opFailure{
 			status: http.StatusUnprocessableEntity, code: "face_required", title: "Address one face",
 			detail: amb.Error(), faces: faces,
 			write: func(w http.ResponseWriter, r *http.Request) { writeFaceRequired(w, r, amb) },
@@ -117,26 +138,40 @@ func failWriteTarget(err error) *commentFailure {
 }
 
 // failInternal is the `comments_failed` failure writeInternalError answers.
-func failInternal(title string, err error) *commentFailure {
+func failInternal(title string, err error) *opFailure {
 	const code = "comments_failed"
-	f := &commentFailure{status: http.StatusInternalServerError, detail: internalErrorDetail}
+	if f, ok := failNoIdentity(err); ok {
+		return f
+	}
+	f := &opFailure{status: http.StatusInternalServerError, detail: internalErrorDetail}
 	f.code, f.title, f.cause = code, title, err
 	f.write = func(w http.ResponseWriter, r *http.Request) { writeInternalError(w, r, code, title, err) }
 	return f
 }
 
 // failACLDenied is the failure writeForbiddenIfACLDenied answers.
-func failACLDenied(fe *acl.ForbiddenError) *commentFailure {
-	return &commentFailure{
+func failACLDenied(fe *acl.ForbiddenError) *opFailure {
+	// Judged on Decision.Cause, as writeIdentityFaultDeny does.
+	cause := fe.Decision.Cause
+	if f, ok := failNoIdentity(cause); ok {
+		return f
+	}
+	if errors.Is(cause, acl.ErrIdentityMismatch) || errors.Is(cause, acl.ErrForeignIdentity) {
+		f := failInternal("ACL request identity mismatch", fe)
+		f.code = "acl_identity_mismatch"
+		f.write = func(w http.ResponseWriter, r *http.Request) { writeForbiddenIfACLDenied(w, r, fe) }
+		return f
+	}
+	return &opFailure{
 		status: http.StatusForbidden, code: "forbidden", title: "Denied by the access policy",
 		detail: fmt.Sprintf("%s (rule_kind=%s rule_id=%s)", fe.Decision.Reason, fe.Decision.RuleKind, fe.Decision.RuleID),
-		write:  func(w http.ResponseWriter, _ *http.Request) { writeForbiddenIfACLDenied(w, fe) },
+		write:  func(w http.ResponseWriter, r *http.Request) { writeForbiddenIfACLDenied(w, r, fe) },
 	}
 }
 
 // failPatch is the failure writePatchError answers. Another transport sends
 // no If-Match, so a version conflict is the plain `conflict`.
-func failPatch(err error) *commentFailure {
+func failPatch(err error) *opFailure {
 	write := func(w http.ResponseWriter, r *http.Request) { writePatchError(w, r, err) }
 	var fe *acl.ForbiddenError
 	if errors.As(err, &fe) {
@@ -146,12 +181,12 @@ func failPatch(err error) *commentFailure {
 	}
 	var conflict *store.VersionConflictError
 	if errors.As(err, &conflict) {
-		return &commentFailure{
+		return &opFailure{
 			status: http.StatusConflict, code: "conflict", title: "Entity is being modified concurrently",
 			detail: "retry the request", write: write,
 		}
 	}
-	return &commentFailure{
+	return &opFailure{
 		status: http.StatusUnprocessableEntity, code: "validation_failed", title: "Validation failed",
 		detail: err.Error(), write: write,
 	}
@@ -162,31 +197,26 @@ func failPatch(err error) *commentFailure {
 // Validation failures are 400s (malformed wire format, per DEC-HWZHA's first
 // class) and everything unrecognized is a 500 with no detail — a storage error
 // message can carry a path, and a path is not the caller's business.
-func failComment(err error) *commentFailure {
-	switch {
-	case errors.Is(err, comments.ErrNotFound):
-		return failV1(http.StatusNotFound, "not_found", "Comment not found")
-	case errors.Is(err, comments.ErrEmptyBody),
-		errors.Is(err, comments.ErrBodyTooLong),
-		errors.Is(err, comments.ErrBodyControlChars),
-		errors.Is(err, comments.ErrInvalidAnchor),
-		errors.Is(err, comments.ErrInvalidReplacement):
-		return failV1(http.StatusBadRequest, "invalid_comment", err.Error())
-	case errors.Is(err, comments.ErrTooManyComments):
-		return failV1(http.StatusConflict, "too_many_comments", err.Error())
-	case errors.Is(err, comments.ErrUnknownAuthor):
-		// The caller is authenticated enough to reach here but has no
-		// resolvable identity to attribute the comment to.
-		return failForbidden("Comments require an identified author")
-	default:
+func failComment(err error) *opFailure {
+	refusal := comments.Refusal(err)
+	if refusal == nil {
 		return failInternal("Could not save the comment", err)
 	}
+	return failV1(commentRefusalStatus[refusal.Code], refusal.Code, refusal.Title)
+}
+
+// commentRefusalStatus is the HTTP status of each [comments.Refusal] code.
+var commentRefusalStatus = map[string]int{
+	comments.CodeNotFound:        http.StatusNotFound,
+	comments.CodeInvalidComment:  http.StatusBadRequest,
+	comments.CodeTooManyComments: http.StatusConflict,
+	comments.CodeForbidden:       http.StatusForbidden,
 }
 
 // commentEnabled refuses a target type the metamodel does not enable
 // comments for. Commentability is metamodel config, not a secret: an operator
 // debugging a missing comment box needs to be told the type is not enabled.
-func (h *commentsHandler) commentEnabled(typeName string) *commentFailure {
+func (h *commentsHandler) commentEnabled(typeName string) *opFailure {
 	if !h.commentPolicy().Commentable(typeName) {
 		return failV1(http.StatusBadRequest, "comments_not_enabled",
 			"Comments are not enabled for this entity type")
@@ -201,7 +231,7 @@ func (h *commentsHandler) commentEnabled(typeName string) *commentFailure {
 // satisfiable by any permission in any acl.yaml. Comments bypass the
 // entitymanager, so ReadOnlyACL's blanket write deny never sees them — this is
 // where that guarantee is kept for the commentary layer.
-func (h *commentsHandler) readOnlyFailure() *commentFailure {
+func (h *commentsHandler) readOnlyFailure() *opFailure {
 	if h.commentWritesPermitted() {
 		return nil
 	}
@@ -223,9 +253,11 @@ func (h *commentsHandler) readOnlyFailure() *commentFailure {
 // gate admitted. Re-reading it by id would lose the face: the thread is keyed
 // by (id, face), and a bare-id read returns whichever face the world selects,
 // which is how a draft comment came to be anchored in the published body.
+//
+//archplan:guard=authz reason="row gate: an unreadable or absent target is the same 404"
 func (h *commentsHandler) readTarget(
 	ctx context.Context, addr commentAddress,
-) (comments.Target, *entity.Entity, *commentFailure) {
+) (comments.Target, *entity.Entity, *opFailure) {
 	target := comments.Target{Type: addr.typeName, ID: addr.ref.ID, Face: addr.ref.Face}
 	// The resolver also checks the stored type against the route's, so a
 	// type mismatch is the same miss as an absent id (ruling 9.2).
@@ -251,12 +283,14 @@ func (h *commentsHandler) readTarget(
 // A thread is stored per face, so a write must land on the face the caller
 // names, never on the face a world ranks first. A named face is used as
 // given, subject to the read gate. A bare id resolves through
-// [visibility.Resolver.WriteTarget]: it names the implicit face of a faceless
+// [visibility.Resolver.WriteRow]: it names the implicit face of a faceless
 // type, and on a faced type it is a 422 `face_required` listing the readable
 // faces. Misses fail with the same uniform 404 as the read gate.
+//
+//archplan:guard=authz reason="row gate for a write: the target face must be named and readable"
 func (h *commentsHandler) writeTarget(
 	ctx context.Context, addr commentAddress,
-) (comments.Target, *entity.Entity, *commentFailure) {
+) (comments.Target, *entity.Entity, *opFailure) {
 	ent, err := h.visibleReader.writeTarget(ctx, addr.typeName, addr.ref.String())
 	if err != nil {
 		return comments.Target{Type: addr.typeName}, nil, failWriteTarget(err)
@@ -271,19 +305,32 @@ type listedComment struct {
 	anchor anchorWire
 }
 
-// listOp reads a target's thread as the ctx principal sees it.
-func (h *commentsHandler) listOp(ctx context.Context, addr commentAddress) ([]listedComment, *commentFailure) {
-	auth := h.commentAuthorizer()
-
-	// Read floor first: a caller who cannot read the target — or a target that
-	// does not exist — gets the same 404, so comments never confirm existence.
+// listGate authorizes reading a target's thread.
+//
+// Read floor first: a caller who cannot read the target, or a target that
+// does not exist, gets the same 404, so comments never confirm existence.
+//
+//archplan:guard=authz reason="checks comment:read on a target the caller may read"
+func (h *commentsHandler) listGate(
+	ctx context.Context, addr commentAddress,
+) (comments.Target, *entity.Entity, *opFailure) {
 	target, ent, fail := h.readTarget(ctx, addr)
+	if fail != nil {
+		return target, nil, fail
+	}
+	if !h.commentAuthorizer().CanRead(ctx, target) {
+		return target, nil, failForbidden("Reading comments requires the comment:read permission")
+	}
+	return target, ent, nil
+}
+
+// listOp reads a target's thread as the ctx principal sees it.
+func (h *commentsHandler) listOp(ctx context.Context, addr commentAddress) ([]listedComment, *opFailure) {
+	target, ent, fail := h.listGate(ctx, addr)
 	if fail != nil {
 		return nil, fail
 	}
-	if !auth.CanRead(ctx, target) {
-		return nil, failForbidden("Reading comments requires the comment:read permission")
-	}
+	auth := h.commentAuthorizer()
 
 	list, err := h.svc.List(ctx, target)
 	if err != nil {
@@ -308,7 +355,7 @@ func (h *commentsHandler) listOp(ctx context.Context, addr commentAddress) ([]li
 // addGate authorizes adding a comment, before the request body is read.
 func (h *commentsHandler) addGate(
 	ctx context.Context, addr commentAddress,
-) (comments.Target, *entity.Entity, *commentFailure) {
+) (comments.Target, *entity.Entity, *opFailure) {
 	if fail := h.readOnlyFailure(); fail != nil {
 		return comments.Target{}, nil, fail
 	}
@@ -317,9 +364,11 @@ func (h *commentsHandler) addGate(
 
 // addTargetGate is [commentsHandler.addGate] without the read-only refusal,
 // for the resolve check, which writes nothing.
+//
+//archplan:guard=authz reason="checks comment:add on a target the caller may read"
 func (h *commentsHandler) addTargetGate(
 	ctx context.Context, addr commentAddress,
-) (comments.Target, *entity.Entity, *commentFailure) {
+) (comments.Target, *entity.Entity, *opFailure) {
 	target, ent, fail := h.writeTarget(ctx, addr)
 	if fail != nil {
 		return target, nil, fail
@@ -333,14 +382,18 @@ func (h *commentsHandler) addTargetGate(
 // addOp adds a comment to a target [commentsHandler.addGate] admitted.
 func (h *commentsHandler) addOp(
 	ctx context.Context, target comments.Target, ent *entity.Entity, in comments.AddInput,
-) (comments.Comment, *commentFailure) {
-	anchor := comments.Anchor{Kind: in.Kind, Ref: in.Ref, Replacement: in.Replacement}
-	if anchor.Kind == comments.AnchorText {
-		text, err := buildTextAnchor(ent, in.Quote, in.QuotePrefix, in.QuoteSuffix)
-		if err != nil {
-			return comments.Comment{}, failV1(http.StatusBadRequest, "invalid_comment", err.Error())
-		}
-		anchor.Text = text
+) (comments.Comment, *opFailure) {
+	if ent == nil && in.Kind == comments.AnchorText {
+		return comments.Comment{}, failV1(http.StatusBadRequest, comments.CodeInvalidComment,
+			"could not read the entity body")
+	}
+	var content string
+	if ent != nil {
+		content = ent.Content
+	}
+	anchor, err := in.Anchor(content)
+	if err != nil {
+		return comments.Comment{}, failComment(err)
 	}
 	created, err := h.svc.Add(ctx, target, comments.AddRequest{Anchor: anchor, Body: in.Body})
 	if err != nil {
@@ -364,9 +417,11 @@ const (
 // property of the stored record: "may I edit this?" cannot be answered without
 // knowing who wrote it. A missing comment is a 404 rather than a 403, since by
 // this point the caller has proven it can read the target.
+//
+//archplan:guard=authz reason="checks comment:update or comment:delete against the stored author"
 func (h *commentsHandler) mutationGate(
 	ctx context.Context, addr commentAddress, commentID string, kind mutationKind,
-) (comments.Target, comments.Comment, *commentFailure) {
+) (comments.Target, comments.Comment, *opFailure) {
 	if fail := h.readOnlyFailure(); fail != nil {
 		return comments.Target{}, comments.Comment{}, fail
 	}
@@ -403,7 +458,7 @@ func (h *commentsHandler) mutationGate(
 func (h *commentsHandler) updateOp(
 	ctx context.Context, target comments.Target, existing comments.Comment, commentID string,
 	body *string, resolved *bool,
-) *commentFailure {
+) *opFailure {
 	newBody := existing.Body
 	if body != nil {
 		newBody = *body
@@ -419,7 +474,7 @@ func (h *commentsHandler) updateOp(
 }
 
 // deleteOp removes a comment.
-func (h *commentsHandler) deleteOp(ctx context.Context, addr commentAddress, commentID string) *commentFailure {
+func (h *commentsHandler) deleteOp(ctx context.Context, addr commentAddress, commentID string) *opFailure {
 	target, _, fail := h.mutationGate(ctx, addr, commentID, mutationDelete)
 	if fail != nil {
 		return fail
@@ -432,7 +487,7 @@ func (h *commentsHandler) deleteOp(ctx context.Context, addr commentAddress, com
 
 // authorizeBodyWrite pre-checks the `update` write an accept will perform,
 // recording a denial the way the attachment handler does.
-func (h *commentsHandler) authorizeBodyWrite(ctx context.Context, e *entity.Entity) *commentFailure {
+func (h *commentsHandler) authorizeBodyWrite(ctx context.Context, e *entity.Entity) *opFailure {
 	decision := h.acl().AuthorizeWrite(ctx, translateVerb("update", e.Type, e.ID, e.Face))
 	if decision.Allow {
 		return nil
@@ -443,6 +498,7 @@ func (h *commentsHandler) authorizeBodyWrite(ctx context.Context, e *entity.Enti
 		Subject:     &audit.Subject{Kind: "entity", Type: e.Type, ID: e.ID},
 		Principal:   principal.From(ctx),
 		TriggeredBy: audit.TriggeredByFrom(ctx),
+		AssertedBy:  audit.AssertedByFrom(ctx),
 		Summary: fmt.Sprintf("denied: %s (rule_kind=%s rule_id=%s op=accept-suggestion)",
 			decision.Reason, decision.RuleKind, decision.RuleID),
 	})
@@ -453,7 +509,7 @@ func (h *commentsHandler) authorizeBodyWrite(ctx context.Context, e *entity.Enti
 // comment exists, is readable, suggests a replacement and is still open.
 func (h *commentsHandler) openSuggestion(
 	ctx context.Context, target comments.Target, commentID string,
-) (comments.Comment, *commentFailure) {
+) (comments.Comment, *opFailure) {
 	// Before the lookup, so a principal without comment:read cannot tell an
 	// existing comment id (403) from an unknown one (404).
 	if !h.commentAuthorizer().CanRead(ctx, target) {
@@ -509,7 +565,7 @@ func (h *commentsHandler) openSuggestion(
 // fails the patch instead of being overwritten.
 func (h *commentsHandler) acceptOp(
 	ctx context.Context, addr commentAddress, commentID string,
-) (comments.Accepted, *commentFailure) {
+) (comments.Accepted, *opFailure) {
 	target, visible, fail := h.writeTarget(ctx, addr)
 	if fail != nil {
 		return comments.Accepted{}, fail

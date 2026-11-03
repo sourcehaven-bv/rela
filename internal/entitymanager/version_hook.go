@@ -6,6 +6,7 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
@@ -25,7 +26,7 @@ import (
 type VersionRecorder interface {
 	// RecordVersion persists one entity version. proj is the render-schema
 	// projection JSON the snapshot was taken under and projHash its content
-	// hash (from metamodel.RenderProjection().Hash()).
+	// hash (from metamodel.NewRenderProjection(meta).Hash()).
 	RecordVersion(ctx context.Context, v VersionRecord) error
 }
 
@@ -36,9 +37,14 @@ type VersionRecord struct {
 	EntityID string
 	// Face is the content state (face) this record captures; zero is the
 	// default face (TKT-C1XUA8).
-	Face          entity.Face
-	Op            store.VersionOp
-	PrevID        string // rename only: the entity's former id
+	Face   entity.Face
+	Op     store.VersionOp
+	PrevID string // rename only: the entity's former id
+	// PrevFace is the face a conversion moved this row from. It counts only
+	// when HasPrevFace is set, because the zero face is a real face; the pair
+	// mirrors store.VersionInput.
+	PrevFace      entity.Face
+	HasPrevFace   bool
 	Type          string
 	Content       string
 	Properties    map[string]any
@@ -49,20 +55,27 @@ type VersionRecord struct {
 	TriggeredBy   string
 }
 
-// recordEntityVersion builds a VersionRecord from the entity's current state
-// and dispatches it to the recorder. No-op when no recorder is wired (fs/mem
-// builds). Attribution is read from ctx exactly like audit — never from a
+// recordDeleteVersion captures e's pre-delete state as a delete version.
+func (m *Manager) recordDeleteVersion(ctx context.Context, e *entity.Entity) {
+	recordVersion(ctx, m, VersionRecord{Op: store.VersionOpDelete}, e)
+}
+
+// recordVersion fills rec from e's current state and dispatches it to the
+// recorder; the caller sets only the op and the lineage fields (PrevID,
+// PrevFace, HasPrevFace). No-op when no recorder is wired (fs/mem builds).
+// Attribution is read from ctx exactly like audit — never from a
 // caller-supplied field — so a version row cannot carry a forged principal.
 // Failure is logged, never propagated: versioning must not block a write.
-func (m *Manager) recordEntityVersion(ctx context.Context, op store.VersionOp, e *entity.Entity, prevID string) {
+func recordVersion(ctx context.Context, m *Manager, rec VersionRecord, e *entity.Entity) {
 	if m.deps.VersionRecorder == nil {
 		return
 	}
+	op := rec.Op
 	// PER-STATE (TKT-C1XUA8): the Step-1 skip is gone. entity_versions now
 	// keys (entity_id, face, vseq), so a state capture gets its own
 	// lineage instead of interleaving with the family's other faces, and
 	// the face travels on the record below.
-	proj := m.deps.Meta.RenderProjection()
+	proj := metamodel.NewRenderProjection(m.deps.Meta)
 	projJSON, err := proj.JSON()
 	// Never fail the write over versioning — log and skip this capture.
 	if err != nil { // coverage-ignore-start: defensive: RenderProjection.JSON is json.Marshal
@@ -72,20 +85,11 @@ func (m *Manager) recordEntityVersion(ctx context.Context, op store.VersionOp, e
 		return
 	} // coverage-ignore-end
 	p := principal.From(ctx)
-	rec := VersionRecord{
-		EntityID:      e.ID,
-		Face:          e.Face,
-		Op:            op,
-		PrevID:        prevID,
-		Type:          e.Type,
-		Content:       e.Content,
-		Properties:    e.Properties,
-		SchemaHash:    proj.Hash(),
-		Projection:    projJSON,
-		PrincipalUser: p.User,
-		PrincipalTool: p.Tool,
-		TriggeredBy:   audit.TriggeredByFrom(ctx),
-	}
+	rec.EntityID, rec.Face, rec.Type = e.ID, e.Face, e.Type
+	rec.Content, rec.Properties = e.Content, e.Properties
+	rec.SchemaHash, rec.Projection = proj.Hash(), projJSON
+	rec.PrincipalUser, rec.PrincipalTool = p.User, p.Tool
+	rec.TriggeredBy = audit.TriggeredByFrom(ctx)
 	if err := m.deps.VersionRecorder.RecordVersion(ctx, rec); err != nil {
 		slog.Error("version.record_failed", "op", op, "id", e.ID, "error", err)
 	}
@@ -129,15 +133,23 @@ type RelationVersionRecord struct {
 	PrincipalUser string
 	PrincipalTool string
 	TriggeredBy   string
+
+	// RecordID is the edge's surrogate lineage id, read while its row still
+	// existed. Zero asks the store to resolve it from the key, which is only
+	// right while the row exists ([RelationLineageReader]).
+	RecordID int64
 }
 
 // recordRelationVersion builds a RelationVersionRecord from a relation's state
 // and dispatches it. No-op when no recorder is wired. Attribution is read from
 // ctx (never a caller-supplied field). triggeredBy overrides the ctx-derived
 // value when non-empty (a cascade delete attributes each relation to the entity
-// delete that triggered it). Failure is logged, never propagated.
+// delete that triggered it). recordID is the lineage id read earlier, for a
+// capture made after the row is gone (ReplaceRelations); zero lets the store
+// resolve it from the key. Failure is logged, never propagated.
 func (m *Manager) recordRelationVersion(
-	ctx context.Context, op store.VersionOp, r *entity.Relation, prevFrom, prevTo, triggeredBy string,
+	ctx context.Context, op store.VersionOp, r *entity.Relation, recordID int64,
+	prevFrom, prevTo, triggeredBy string,
 ) {
 	if m.deps.RelationVersionRecorder == nil {
 		return
@@ -148,7 +160,7 @@ func (m *Manager) recordRelationVersion(
 	// default tail's. Before this, a faced capture had to be dropped — a
 	// triple with no face names the default tail, so filing it would have
 	// interleaved two edges' histories.
-	proj := m.deps.Meta.RenderProjection()
+	proj := metamodel.NewRenderProjection(m.deps.Meta)
 	projJSON, err := proj.JSON()
 	if err != nil { // coverage-ignore-start: defensive: RenderProjection.JSON is json.Marshal over only
 		// strings/bools/slices/maps, which cannot error (see projection.go); no seam to inject a failing projection
@@ -176,6 +188,7 @@ func (m *Manager) recordRelationVersion(
 		PrincipalUser: p.User,
 		PrincipalTool: p.Tool,
 		TriggeredBy:   tb,
+		RecordID:      recordID,
 	}
 	if err := m.deps.RelationVersionRecorder.RecordRelationVersion(ctx, rec); err != nil {
 		slog.Error("relation_version.record_failed",

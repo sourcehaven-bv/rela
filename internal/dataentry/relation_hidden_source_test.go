@@ -190,7 +190,7 @@ func policyGrantsApp(t *testing.T, read []string, grants []acl.RelationGrant, dr
 	if err != nil {
 		t.Fatal(err)
 	}
-	app.fieldResolver = &policyResolver{inner: resolver}
+	setTestResolver(t, app, &policyResolver{inner: resolver})
 	return app, d
 }
 

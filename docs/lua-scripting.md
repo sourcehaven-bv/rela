@@ -49,17 +49,96 @@ messages remain accurate.
 
 ### Script Location
 
-Scripts executed via `lua_run` must be in the `scripts/` directory:
+Scripts executed via `lua_run` must be in the `scripts/` directory. Code that
+several scripts share goes in `lib/`, as modules (see
+[Sharing code between scripts](#sharing-code-between-scripts)):
 
 ```text
 project/
 ├── scripts/
-│   ├── report.lua
-│   └── utils/
-│       └── helpers.lua
+│   └── report.lua
+├── lib/
+│   └── fmt/
+│       └── date.lua      -- require("fmt.date")
 ├── entities/
 └── schema.yaml
 ```
+
+## Sharing code between scripts
+
+Put shared code in a module under the project's `lib/` directory, and load it
+with `require`. Any script can use it: actions, documents and export
+renders, automations (`lua:` and `lua_file:`), scheduled tasks, validation
+rules, flows, `rela script` and the MCP `lua_run`/`lua_eval` tools.
+
+A module is a Lua file that returns a value, usually a table of functions:
+
+```lua
+-- lib/fmt/date.lua
+local M = {}
+
+function M.iso(y, m, d)
+  return string.format("%04d-%02d-%02d", y, m, d)
+end
+
+return M
+```
+
+```lua
+-- actions/stamp.lua
+local date = require("fmt.date")
+return { message = "Stamped " .. date.iso(2026, 10, 14) }
+```
+
+**Names.** A module name is one or more dot-separated segments of lower-case
+letters, digits and underscores. Each dot is a directory:
+`require("fmt.date")` loads `lib/fmt/date.lua`. Any other name raises an
+error. The first segment may not be a built-in name (`rela`, `http`, `ai`,
+`crypto`, `mail`, `string`, `table`, `math`, `coroutine`, `os`, `io`,
+`debug`, `package`, `channel`, `utf8`, `bit32`). `require("string")`,
+`require("table")`, `require("math")` and `require("coroutine")` return the
+standard library.
+
+**Loading.** A module runs the first time a script requires it. Later calls
+in the same run return the same value without running it again. If the
+module returns nothing, `require` returns `true`. Every run starts fresh, so
+an edited module takes effect on the next run, as an edited script does. A
+module whose loading fails is not cached; requiring it again tries again. A
+module that requires itself, directly or through other modules, raises
+`require cycle: a -> b -> a`.
+
+**What a module can do.** A module runs with the permissions of the script
+that required it. In a validation rule, which cannot write, a module cannot
+write either. `http` and `ai` exist in a module only when the calling script
+was granted them. A module shares the script's global variables, so declare
+your variables `local` and return what callers need. In a script with
+`allow_acl_bypass:`, a module can also call `rela.bypass_acl`, so review the
+modules such a script requires as part of the script.
+
+**Rules for module code:**
+
+- Do not read per-call globals such as `entity` at the top level of a module.
+  A validation rule loads a module once and then runs it for every entity, so
+  the top level would only ever see the first entity. Pass the entity to a
+  function instead: `require("rules.status").draft(entity)`.
+- Do not yield (`coroutine.yield`, `rela.flow.emit`) at the top level of a
+  module. Doing so raises an error. Yield from a function the module returns.
+- `rela.cache` inside a module uses the cache of the script that required it.
+  In inline code, which has no cache, `rela.cache` raises an error as it
+  would in the inline code itself.
+
+**Errors.** An error inside a module names the module file and line, for
+example `lib/fmt/date.lua:3: bad argument`. The error panel in the data-entry
+app shows that line of the module.
+
+**Where modules are not available.** Data migration steps cannot use
+`require`: re-running a migration must give the same result as the first
+run, and a module may have changed since. Mail transport scripts
+(`.rela/mail.yaml`) and the docs build run without project files, so
+`require` of a module raises an error there.
+
+On the SQLite build, `rela db load` stores the `.lua` files under `lib/` in
+`rela.db` with the other scripts. Other files in `lib/` are not stored.
 
 ## Interactive Flows
 
@@ -362,6 +441,7 @@ rela.get_relations(e.id)               -- NOT a filter: a bare id is not a
 | `rela.version_token(addr)` | A token for the entity's current state | string or nil |
 | `rela.tag_version(addr, name, opts?)` | Tag a version | number, or nil and `"conflict"` |
 | `rela.untag_version(addr, name)` | Delete a tag | boolean |
+| `rela.tagged_entities(name, opts?)` | The entities with a version tagged `name`, deleted ones included | table (array) |
 
 Version history exists on the SQLite and PostgreSQL backends. On any other
 backend both functions raise `version history is not supported on this storage
@@ -436,6 +516,62 @@ scheduled scripts, background automation actions and MCP scripts. They are
 absent in a synchronous automation, and a tag write inside a store
 transaction is refused (`ErrTagInTx`). Tag from a background action or a
 scheduled script.
+
+#### Baseline and compare
+
+`rela.tagged_entities(name, opts)` lists every entity with a version tagged
+`name`. Use it to freeze a set of entities under one tag, such as a baseline
+for an audit, and later compare the set with the current state.
+`opts.type = "<type>"` keeps one entity type. Each row has:
+
+- `id`, `face` and `addr` (`ID` or `ID@face`): where the entity lives now. A
+  renamed entity is listed under its new id.
+- `type`: the type now, or the type of the tagged version for a deleted entity.
+- `version`: the number of the tagged version, as `rela.version_by_tag` and
+  `rela.history` number it. It is `0` in one rare case: the entity was deleted
+  and a later entity took its id and was renamed away, so the tagged version
+  is no longer in the history listed under that id.
+- `deleted`: true when the entity was deleted after it was tagged.
+
+```lua
+-- Freeze: tag the current state of every maatregel.
+for _, m in ipairs(rela.list_entities("maatregel")) do
+  rela.tag_version(m.id, "baseline/audit-2026")
+end
+
+-- Compare: what changed since the baseline?
+for _, r in ipairs(rela.tagged_entities("baseline/audit-2026", {type = "maatregel"})) do
+  if r.deleted then
+    rela.output(r.id .. ": deleted")
+  else
+    local base = rela.version_by_tag(r.addr, "baseline/audit-2026")
+    local now = rela.get_entity(r.addr)
+    if base and base.properties.status ~= now.properties.status then
+      rela.output(r.id .. ": " .. tostring(base.properties.status) .. " -> " .. tostring(now.properties.status))
+    end
+  end
+end
+```
+
+An entity created after the baseline has no tag, so compare the tagged list
+with `rela.list_entities` to find new entities.
+
+The list follows the history read rules. A live entity is listed when the
+script may read it now. A deleted entity is listed only when the principal
+holds the `history:read` permission and no face restriction in the
+principal's grants for that type hides the face of the row. A deleted entity
+has no current properties, so the conditions of a read grant cannot be checked
+against it; the permission stands in for them. This is the rule the history
+endpoint of the data-entry API applies. When other faces of the id are
+still live, they must be of the same type and the principal must be able to
+read one of them. Every other row is left out, so a hidden entity looks like one
+that was never tagged. `rela.version_by_tag` reads live entities only, so a
+deleted row gives the id and type but not the content.
+
+The list costs one store query for the tags and one read check per entity
+type, whatever the number of rows. The list is not paged: it holds one row
+per tagged entity face, so keep tag names specific to one baseline. On a backend without version history it
+raises `version history is not supported on this storage backend`.
 
 ### Mutation Functions
 
@@ -551,6 +687,98 @@ local ok, e, warnings = pcall(rela.update_entity, "TKT-001", {title = ""})
 -- ok=true, e is the entity, warnings is the validation findings.
 ```
 
+### Attach a rendered document: `rela.attach_render`
+
+`rela.attach_render` renders a document or a list, converts it with a
+[transform](export.md), and stores the result on a `file` property. Use it
+to keep a dated PDF of a report on the entity it is about, such as an audit:
+
+```lua
+local att, err = rela.attach_render{
+  entity   = entity.id,       -- the entity that gets the file
+  property = "report",        -- a `file` property of that entity
+  document = "audit_report",  -- a configured document, or
+  -- list  = "open_findings", -- a configured list (give exactly one)
+  entry    = entity.id,       -- the entry of an entity-anchored document
+  format   = "pdf",           -- a registered transform, or "md"
+  filename = "audit-report",  -- the extension is added when missing
+}
+if not att then
+  return { message = "Report not attached: " .. err, message_type = "error" }
+end
+return { message = "Attached " .. att.name .. " (sha256 " .. att.sha256 .. ")" }
+```
+
+On success it returns a table `{name, size, sha256, mime}`. `sha256` is the
+SHA-256 hash of the stored bytes, the same value the attachment listing
+shows. On a refusal or a failure it returns `nil` and a message. A wrong
+argument, such as an unknown option, a missing `filename`, or both
+`document` and `list`, raises an error.
+
+The options:
+
+- `document` names a document from `data-entry.yaml`. An entity-anchored
+  document needs `entry`; a standalone document must not have one. Only
+  `script:` documents render. A `command:` document and an elevated document
+  (`allow_acl_bypass`) are refused.
+- `list` names a list from `data-entry.yaml`. It renders the table the list
+  export renders: the list's columns, filters, `condition:`, sort and query
+  scope.
+- `format` names a transform from `transforms:` in `schema.yaml`, or `md`
+  for the markdown itself. The conversion runs in the same confined runner
+  as an export.
+- `filename` gets the format's extension when it has none. An extension
+  that does not fit the format is refused, so `report.txt` with `format =
+  "pdf"` fails. A suffix that names no known type, as in `audit-v1.2`,
+  counts as part of the name. A format whose type has no known extension
+  gets `.bin`. Which extensions are known comes from the server's MIME
+  table, which can differ between hosts.
+
+The call acts as the script's principal and has no elevated mode:
+
+- The render reads what the principal can read. Rows the principal cannot
+  see are not in the file, exactly as in an export.
+- A document with `permission:` needs that permission.
+- The attachment is written like an upload of the same bytes. The principal
+  needs `update` on the entity and may change the property. The property's
+  `accept:`, `max:` and the attachment scanner apply. On a property with
+  `max: 1` the new file replaces the old one.
+- The audit log gets one `attach-render` record with the file name, size,
+  hash and the document or list it came from, next to the record of the
+  write itself.
+- `rela.bypass_acl` does not widen it.
+
+Which principal that is depends on where the script runs. In an action it
+is the user who ran the action. In a background automation it is the
+action's `run_as` identity, and in a schedule the task's identity. The
+user whose save triggered an automation is not the principal. The audit
+record names that user in `triggered_by`, as
+`automation-job:<name>;by=<user>`.
+
+The file can be downloaded by everyone who can read the target entity.
+That audience may be wider than the principal that rendered it. A broad
+`run_as` identity therefore renders rows the triggering user may not see
+and stores them where that user can read them. Give an automation that
+calls `rela.attach_render` a `run_as` whose reads match the entity's
+readers.
+
+The render and conversion run inside the script and count against the
+script's timeout. A render that is still running at the timeout is
+cancelled, and nothing is stored. Conversions share one bounded pool with
+exports, so a busy server can make the call wait.
+
+`rela.attach_render` exists in action scripts. In `rela-server` and the
+desktop app it also exists in scheduled scripts and background automation
+actions. In other runtimes, such as `rela scheduler`, `rela script` or MCP over stdio, it
+returns `nil` and `"attach_render is not available in this runtime"`. It
+is absent in a synchronous automation, in a document render and in a
+validation rule.
+
+An automation that attaches on update fires again for its own write,
+because attaching a file updates the entity. Guard it with a `when:` that
+the write does not keep true, such as a status change, or run it from an
+action or a schedule instead.
+
 ### Pile Functions
 
 A pile is a personal, named stack of entities. The `rela.piles` functions
@@ -644,6 +872,26 @@ The result also has `base_unknown` (no base given), `complete` (`theirs`
 reported every field in `fields`) and `retag` (nothing to do, but the tag
 should move to the current state). `retag` is true only for a complete
 report.
+
+**Rich text.** When the other system stores bodies as HTML, convert them
+with `rela.md.from_html(html)` on the way in and `rela.md.to_html(markdown)`
+on the way out. Both return the converted text and a boolean `lossy`. Both
+sanitize with the same allowlist: paragraphs, headings, bold, italic,
+strikethrough, lists, code, quotes, tables, rules and `http`, `https` and
+`mailto` links. Other elements, such as images and attachments, are dropped
+and their text kept, and `lossy` is true. Colors and other styling are
+dropped without setting `lossy`.
+
+`from_html` returns markdown that converts back to itself: the text does not
+change again on the next round trip, so a merge settles. To get there it may
+normalize the text once. Two adjacent lists become one list, and bold inside
+a word next to punctuation becomes literal asterisks. The other system may
+also store the HTML in its own form; the next pull then writes that form
+into rela once. Do not push a body when `lossy` is true for the other
+system's current HTML: the push would delete what rela could not represent.
+The Basecamp example records such a body as a conflict instead. Either
+function raises on input over 1 MiB or HTML nested too deeply to parse; call
+it with `pcall` when one bad body must not stop a whole run.
 
 Values compare by meaning for the property type: `3` and `"3"` are the same
 integer, a date ignores a midnight time, a list ignores order, and a body
@@ -915,6 +1163,10 @@ should read that closure before it ships. The value says which *kind* of
 scrutiny — is this reading data the principal cannot see, or writing past their
 permissions? That is why it is not sliced by verb.
 
+The code to read includes every `lib/` module the script requires, directly or
+through other modules. A module can call `rela.bypass_acl` too, so a change to
+a shared module changes what an elevated script does.
+
 > **Migrating from the boolean.** `allow_acl_bypass: true` used to mean reads
 > and writes. It is now **refused at load** with an error naming the
 > replacement; run `rela migrate` to rewrite it to `read+write`. The boolean is
@@ -1061,7 +1313,9 @@ rela.date_next_weekday("2025-01-06", "monday")  -- "2025-01-13" (not same day)
 Computes the next occurrence of an iCal RRULE (RFC 5545) after a given date. If no `after`
 date is provided, uses today. Returns `nil` if the rule has no more occurrences.
 
-Accepts both `RRULE:FREQ=...` and bare `FREQ=...` formats.
+Accepts both `RRULE:FREQ=...` and bare `FREQ=...` formats. DTSTART may be a
+`;DTSTART=` part or a separate `DTSTART:` line. A rule without DTSTART is
+anchored at the `after` date. The result is always a later date than `after`.
 
 **Important:** Rules with `INTERVAL` > 1 must include `DTSTART` to anchor the interval
 cadence. Without it, the function raises an error.
@@ -1545,6 +1799,103 @@ error-handling branches work unchanged.
 - **Decoded JSON deeper than 64 levels** is truncated with the sentinel
   string `"<max-depth>"` to prevent stack overflow from a hostile
   response.
+
+### XML Functions
+
+The `rela.xml` module decodes XML into plain tables. It is available in
+every script, because it does no I/O.
+
+| Function | Description | Returns |
+|----------|-------------|---------|
+| `rela.xml.decode(string)` | XML string → node table | (node, nil) or (nil, err_table) |
+| `rela.xml.find(node, name[, ns])` | First child element named `name` | node or nil |
+| `rela.xml.find_all(node, name[, ns])` | All child elements named `name` | list of nodes |
+| `rela.xml.text(node)` | All text inside `node`, children included | string |
+
+A node table has these fields. Empty fields are left out.
+
+| Field | Content |
+|-------|---------|
+| `name` | Element name without prefix |
+| `ns` | Namespace URI, not the prefix |
+| `attrs` | Attribute values by name. An attribute with a namespace is keyed `"{uri}name"`. Namespace declarations (`xmlns`) are not included. |
+| `children` | List of child element nodes |
+| `text` | Text before the first child element |
+| `tail` | Text after this element, before its next sibling |
+
+`text` and `tail` together keep mixed content such as `two <b>bold</b>
+tail` in order. Use `rela.xml.text(node)` when you only want the string.
+
+```lua
+local resp = assert(http.request({url = "https://example.org/status.xml"}))
+local root, err = rela.xml.decode(resp.body)
+if err then
+    print("bad XML: " .. err.message)
+    return
+end
+for _, svc in ipairs(rela.xml.find_all(root, "service")) do
+    print(svc.attrs.name .. ": " .. rela.xml.text(svc))
+end
+```
+
+#### XML Safety Limits
+
+`rela.xml.decode` is built for untrusted input:
+
+- It never processes a DTD and never loads an external entity, so XXE
+  and "billion laughs" attacks fail. A `<!DOCTYPE>` is skipped. Using an
+  entity declared there is an error.
+- The standard XML entities and the HTML entities (`&nbsp;` and so on)
+  are recognised.
+- Input is refused above 10 MiB, 64 levels of nesting, 100 000 elements
+  or 64 attributes on one element.
+- Only UTF-8, US-ASCII, ISO-8859-1 and windows-1252 are accepted.
+  ISO-8859-1 is read as windows-1252, as browsers do.
+
+A refused or malformed document returns `(nil, err_table)` with
+`kind="bad_response"`. When a limit refused it, `err.limit` names the
+limit: `"bytes"`, `"depth"`, `"elements"`, `"attributes"` or `"charset"`.
+`rela.feed.parse` adds `"items"` for a feed with more than 10 000 items.
+
+### Feed Functions
+
+`rela.feed.parse(string)` reads an RSS 2.0, RSS 1.0, Atom or JSON Feed
+document and returns one shape for all four. XML feeds go through the
+same limits as `rela.xml.decode`.
+
+```lua
+local resp = assert(http.request({url = "https://example.org/feed.atom"}))
+local feed, err = rela.feed.parse(resp.body)
+if err then
+    print("feed error: " .. err.message)
+    return
+end
+for _, item in ipairs(feed.items) do
+    if item.id then
+        print(item.id .. " " .. item.title)
+    end
+end
+```
+
+The feed table has `format` (`"rss"`, `"rdf"`, `"atom"` or `"json"`),
+`title`, `link`, `description` and `items`. Each item has these fields:
+
+| Field | Content |
+|-------|---------|
+| `id` | The feed's own id (`guid`, Atom `id`, JSON `id`), else the link. `nil` when the item has neither. |
+| `title`, `link` | Strings, `""` when absent |
+| `summary`, `content` | HTML strings, `""` when absent. Plain text is escaped, so both are always HTML. |
+| `published`, `updated` | RFC 3339 times in UTC, or `nil` when absent or not readable |
+| `published_raw`, `updated_raw` | The date text as the feed wrote it |
+| `authors`, `categories` | Lists of strings |
+
+`summary` and `content` come from the feed, so treat them as untrusted
+HTML. Convert them with `rela.md.from_html` before you store them.
+
+A date without a time zone is read as UTC. Numeric offsets and the zone
+names from RFC 822 (`GMT`, `UT`, `EST`, `PDT` and so on) are understood.
+A date with any other zone name is treated as unreadable, so `published`
+is `nil` and only `published_raw` is set.
 
 ### Context
 
@@ -2255,6 +2606,13 @@ What the walker visits and what it skips:
 | `text`, `raw_html`, `autolink`, breaks | left untouched |
 | inside `code_block` or `raw` block | left untouched (parser doesn't emit code-span inlines there) |
 
+#### `rela.md.from_html(html)` and `rela.md.to_html(markdown)`
+
+Convert rich text between HTML and markdown, for sync connectors. Each
+returns the converted text and a boolean that is true when something was
+dropped. See "Rich text" under [Sync connectors](#sync-connectors) for what
+they keep.
+
 ## Entity Structure
 
 Entities returned by query functions have this structure:
@@ -2514,6 +2872,8 @@ separately.
 - `table` - Table operations
 - `math` - Mathematical functions
 - `coroutine` - Coroutine support
+- `require` - Loads modules from the project's `lib/` directory only (see
+  [Sharing code between scripts](#sharing-code-between-scripts))
 - Base functions: `print`, `pairs`, `ipairs`, `type`, `tostring`, `tonumber`, `error`, `pcall`,
   `assert`, `select`, `next`, `unpack`
 
@@ -2523,6 +2883,8 @@ separately.
 - `os` - No system commands
 - `debug` - No runtime introspection
 - `load`, `loadfile`, `dofile`, `loadstring` - No dynamic code loading
+- `package`, `module` - No module search paths; `require` reads only `lib/`.
+  A symlink in `lib/` that points outside `lib/` is refused.
 - `rawget`, `rawset`, `getmetatable`, `setmetatable` - No metatable manipulation
 
 ### AI / Network Access

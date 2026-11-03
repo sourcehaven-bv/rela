@@ -166,8 +166,14 @@ var toolCalls = map[string]struct {
 	// outcome (the dispatch and decode still succeeded).
 	wantErr bool
 }{
-	"list_entities":   {args: `{"type":"requirement","filter":"entity.status == 'accepted'","limit":2}`},
-	"show_entity":     {args: `{"id":"REQ-001"}`},
+	"list_entities": {args: `{"type":"requirement","filter":"entity.status == 'accepted'","limit":2}`},
+	"show_entity":   {args: `{"id":"REQ-001"}`},
+	// The lease calls are the deterministic ones: a successful claim
+	// returns a fresh lease id and time-based token.
+	"claim_entity":    {args: `{"id":"REQ-404","ttl_seconds":60}`, wantErr: true},
+	"renew_lease":     {args: `{"lease_id":"00000000000000000000000000000000","status":"x"}`, wantErr: true},
+	"release_lease":   {args: `{"lease_id":"00000000000000000000000000000000"}`},
+	"list_leases":     {args: `{}`},
 	"search_entities": {args: `{"query":"requirement","limit":5}`},
 	"list_worlds":     {args: `{}`},
 	"create_entity":   {args: `{"type":"requirement","properties":{"title":"Created via dispatch"}}`},
@@ -199,6 +205,10 @@ var toolCalls = map[string]struct {
 	// The write comment tools are not registered on this stdio-shaped
 	// server; tools_comments_test.go drives them.
 	"list_comments": {args: `{"id":"REQ-001"}`},
+	// A successful watch returns a cursor keyed per process, which no golden
+	// can pin; the refusal of a non-watchable tool is stable.
+	// tools_watch_test.go covers the behavior.
+	"watch": {args: `{"targets":[{"tool":"search_entities","args":{"query":"x"}}]}`, wantErr: true},
 }
 
 // TestDispatch_AnalyzeEveryCheck drives every analyze check through a real
@@ -303,10 +313,17 @@ func TestNewServer_LuaToolsAreOptIn(t *testing.T) {
 	}
 
 	noLua := newTestDeps(t, meta, st)
-	noLua.LuaWriteDeps = lua.WriteDeps{}
+	noLua.Lua.WriteDeps = lua.WriteDeps{}
 	if _, err := NewServer(noLua, "test",
 		WithPrincipal(principal.Principal{User: "tester", Tool: principal.ToolMCP}), WithLuaTools()); err == nil {
-		t.Error("NewServer accepted WithLuaTools without LuaWriteDeps")
+		t.Error("NewServer accepted WithLuaTools without Lua.WriteDeps")
+	}
+
+	noRoot := newTestDeps(t, meta, st)
+	noRoot.Lua.ProjectRoot = ""
+	if _, err := NewServer(noRoot, "test",
+		WithPrincipal(principal.Principal{User: "tester", Tool: principal.ToolMCP}), WithLuaTools()); err == nil {
+		t.Error("NewServer accepted WithLuaTools without Lua.ProjectRoot")
 	}
 }
 

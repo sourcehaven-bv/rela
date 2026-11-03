@@ -157,11 +157,16 @@ type RelationOptions struct {
 // down (1) in the full order, so a client showing one page of it needs no
 // neighbor it cannot see.
 //
-// Among, when not nil, names the edges the caller may see. The move then
-// reads and writes only those edges: a step skips the others, the new
-// value comes from visible neighbors, and a densify renumbers only visible
-// edges. So a move neither reveals nor rewrites an edge the caller cannot
-// see. Nil means every edge, for a caller with no read gate.
+// The move reads and writes only the siblings the caller can read: the
+// write path drops every edge whose other endpoint (the source on the
+// incoming side, the target on the outgoing one) the caller's read gate
+// refuses. A step skips the others, the new value comes from readable
+// neighbors, a densify renumbers only readable edges, and a Before or After
+// naming an unreadable sibling fails as one naming no sibling. So a move
+// neither reveals nor rewrites an edge the caller cannot see.
+//
+// Among, when not nil, narrows the siblings further, to the edges it names.
+// Nil: accepted, and safe for a gated caller — every readable sibling.
 type OrderPosition struct {
 	Before   string
 	After    string

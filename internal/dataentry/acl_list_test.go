@@ -32,7 +32,7 @@ func TestACLList_TypeLevelReadGrant(t *testing.T) {
 		Roles:       map[string]acl.RoleDef{"viewer": {Read: []string{"ticket"}}},
 		Assignments: map[string]string{"alice": "viewer"},
 	}, app.store)
-	app.acl = d
+	setTestACL(t, app, d)
 
 	resp, rec := listEntitiesAs(aliceCtx(), t, app, d, "ticket", "tickets", "")
 	if rec.Code != http.StatusOK {
@@ -72,7 +72,7 @@ func TestACLList_RoleRelationInheritance(t *testing.T) {
 		},
 		InheritRolesThrough: []string{"belongs-to"},
 	}, app.store)
-	app.acl = d
+	setTestACL(t, app, d)
 
 	resp, rec := listEntitiesAs(aliceCtx(), t, app, d, "ticket", "tickets", "")
 	if rec.Code != http.StatusOK {
@@ -114,7 +114,7 @@ func TestACLList_PaginationLeakSurfaces(t *testing.T) {
 		},
 		InheritRolesThrough: []string{"belongs-to"},
 	}, app.store)
-	app.acl = d
+	setTestACL(t, app, d)
 
 	resp, rec := listEntitiesAs(aliceCtx(), t, app, d, "ticket", "tickets", "per_page=3&page=2")
 	if rec.Code != http.StatusOK {
@@ -174,7 +174,7 @@ func TestACLList_DenyAllShape(t *testing.T) {
 		Roles:       map[string]acl.RoleDef{"viewer": {Read: []string{"feature"}}},
 		Assignments: map[string]string{"mallory": "viewer"},
 	}, app.store)
-	app.acl = d
+	setTestACL(t, app, d)
 
 	resp, rec := listEntitiesAs(principalCtx("mallory"), t, app, d, "ticket", "tickets", "")
 	if rec.Code != http.StatusOK {
@@ -201,12 +201,13 @@ func TestACLList_DenyAllSearchShortCircuit(t *testing.T) {
 
 	var calls []string
 	app.searcher = recordingSearcher{log: &calls}
+	rebindVisibleSearcher(t, app)
 
 	d := mustNewACL(t, &acl.Policy{
 		Roles:       map[string]acl.RoleDef{"viewer": {Read: []string{"feature"}}},
 		Assignments: map[string]string{"mallory": "viewer"},
 	}, app.store)
-	app.acl = d
+	setTestACL(t, app, d)
 
 	resp, rec := listEntitiesAs(principalCtx("mallory"), t, app, d, "ticket", "tickets", "q=alpha")
 	if rec.Code != http.StatusOK {
@@ -236,6 +237,7 @@ func TestACLList_SearchAfterACLOrdering(t *testing.T) {
 	var calls []string
 	app.store = orderRecordingStore{Store: app.store, log: &calls}
 	app.searcher = recordingSearcher{log: &calls, hits: []string{"TKT-001"}}
+	rebindVisibleSearcher(t, app)
 
 	d := mustNewACL(t, &acl.Policy{
 		Roles: map[string]acl.RoleDef{"editor": {Read: []string{"ticket"}}},
@@ -244,7 +246,7 @@ func TestACLList_SearchAfterACLOrdering(t *testing.T) {
 		},
 		InheritRolesThrough: []string{"belongs-to"},
 	}, app.store)
-	app.acl = d
+	setTestACL(t, app, d)
 
 	resp, rec := listEntitiesAs(aliceCtx(), t, app, d, "ticket", "tickets", "q=alpha")
 	if rec.Code != http.StatusOK {
@@ -290,7 +292,7 @@ func TestACLList_QueryErrorMapping(t *testing.T) {
 			"editor-of": {Confers: "editor"},
 		},
 	}, app.store)
-	app.acl = d
+	setTestACL(t, app, d)
 
 	// The gate context is built from the REAL store (so the ACL
 	// resolver works), then the app's store is swapped for a failing
@@ -333,7 +335,7 @@ func TestACLPosition_SearchScopeGated(t *testing.T) {
 		Roles:       map[string]acl.RoleDef{"viewer": {Read: []string{"ticket"}}},
 		Assignments: map[string]string{"alice": "viewer"},
 	}, app.store)
-	app.acl = d
+	setTestACL(t, app, d)
 
 	scope := url.QueryEscape(`{"source":"search","q":"alpha"}`)
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/_position?id=TKT-001&scope="+scope, http.NoBody)
@@ -453,16 +455,27 @@ func listEntitiesAs(ctx context.Context, t *testing.T, app *App, d *acl.Declarat
 // recordingSearcher logs every Search call and yields the configured
 // hits. Used to pin the DenyAll short-circuit (zero calls) and the
 // search-after-ACL ordering.
+// recordingSearcher logs each Search call. Its hits are ticket ids: the
+// ACL-scoped wrapper keeps a hit only for a type the scope admits.
 type recordingSearcher struct {
 	log  *[]string
 	hits []string
 }
 
-func (s recordingSearcher) Search(context.Context, search.Query) iter.Seq2[search.Hit, error] {
+func (s recordingSearcher) Search(_ context.Context, q search.Query) iter.Seq2[search.Hit, error] {
 	*s.log = append(*s.log, "search")
 	return func(yield func(search.Hit, error) bool) {
+		hits := make([]search.Hit, 0, len(s.hits))
 		for _, id := range s.hits {
-			if !yield(search.Hit{ID: id}, nil) {
+			hits = append(hits, search.Hit{ID: id, Type: "ticket"})
+		}
+		admitted, err := admitHits(q, hits)
+		if err != nil {
+			yield(search.Hit{}, err)
+			return
+		}
+		for _, h := range admitted {
+			if !yield(h, nil) {
 				return
 			}
 		}

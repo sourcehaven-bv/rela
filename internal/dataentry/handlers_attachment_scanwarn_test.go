@@ -12,6 +12,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/cmdexec"
 	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
+	"github.com/Sourcehaven-BV/rela/internal/testutil/logtest"
 )
 
 // stubReporter is a sandboxReporter with a fixed verdict, so both branches of
@@ -28,9 +29,7 @@ func (s stubReporter) SandboxErr() error { return s.err }
 func captureWarn(t *testing.T, fn func()) string {
 	t.Helper()
 	var buf bytes.Buffer
-	prev := slog.Default()
-	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn})))
-	defer slog.SetDefault(prev)
+	logtest.SetDefault(t, slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn}))
 	fn()
 	return buf.String()
 }

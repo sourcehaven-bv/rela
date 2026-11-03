@@ -32,7 +32,7 @@ assignments:
 	}
 	// Edge carries note (granted) + secret (not granted) → secret hidden, note visible.
 	keys := []string{"note", "secret"}
-	hidden := r.RelationFieldVerdicts(ctxAs("alice"), ticket("T-1", nil), "has-planning", keys)
+	hidden := r.RelationFieldVerdicts(ctxFor(t, r, "alice"), ticket("T-1", nil), "has-planning", keys)
 	if v, ok := hidden["secret"]; !ok || v {
 		t.Errorf("secret should be closed-world denied (hidden), got ok=%v v=%v", ok, v)
 	}
@@ -61,7 +61,7 @@ assignments:
 		t.Fatalf("New: %v", err)
 	}
 	// Only a write-side `fields:` block exists, no `visible:` → nothing denied.
-	hidden := r.RelationFieldVerdicts(ctxAs("alice"), ticket("T-1", nil), "has-planning",
+	hidden := r.RelationFieldVerdicts(ctxFor(t, r, "alice"), ticket("T-1", nil), "has-planning",
 		[]string{"note", "secret"})
 	for k, v := range hidden {
 		if !v {
@@ -94,14 +94,14 @@ assignments:
 	keys := []string{"note"}
 
 	// status=open → note visible.
-	hidden := r.RelationFieldVerdicts(ctxAs("alice"),
+	hidden := r.RelationFieldVerdicts(ctxFor(t, r, "alice"),
 		ticket("T-1", map[string]any{"status": "open"}), "has-planning", keys)
 	if v, ok := hidden["note"]; ok && !v {
 		t.Errorf("status=open: note should be visible, got hidden")
 	}
 
 	// status=done → note hidden (predicate false; closed-world denies it).
-	hidden = r.RelationFieldVerdicts(ctxAs("alice"),
+	hidden = r.RelationFieldVerdicts(ctxFor(t, r, "alice"),
 		ticket("T-1", map[string]any{"status": "done"}), "has-planning", keys)
 	if v, ok := hidden["note"]; !ok || v {
 		t.Errorf("status=done: note must be hidden, got ok=%v v=%v", ok, v)
@@ -134,13 +134,13 @@ assignments:
 	keys := []string{"note"}
 
 	// auditor matches → note visible.
-	hidden := r.RelationFieldVerdicts(ctxAs("auditor"), ticket("T-1", nil), "has-planning", keys)
+	hidden := r.RelationFieldVerdicts(ctxFor(t, r, "auditor"), ticket("T-1", nil), "has-planning", keys)
 	if v, ok := hidden["note"]; ok && !v {
 		t.Errorf("auditor: note should be visible, got hidden")
 	}
 
 	// bob does not match → note hidden.
-	hidden = r.RelationFieldVerdicts(ctxAs("bob"), ticket("T-1", nil), "has-planning", keys)
+	hidden = r.RelationFieldVerdicts(ctxFor(t, r, "bob"), ticket("T-1", nil), "has-planning", keys)
 	if v, ok := hidden["note"]; !ok || v {
 		t.Errorf("bob: note should be hidden, got ok=%v v=%v", ok, v)
 	}
@@ -168,7 +168,7 @@ assignments:
 	}
 	// undeclared_secret is not in the metamodel's relation properties, but it is
 	// present on the edge and not granted → must be hidden.
-	hidden := r.RelationFieldVerdicts(ctxAs("alice"), ticket("T-1", nil), "has-planning",
+	hidden := r.RelationFieldVerdicts(ctxFor(t, r, "alice"), ticket("T-1", nil), "has-planning",
 		[]string{"note", "undeclared_secret"})
 	if v, ok := hidden["undeclared_secret"]; !ok || v {
 		t.Errorf("free-form ungranted key must be hidden, got ok=%v v=%v", ok, v)

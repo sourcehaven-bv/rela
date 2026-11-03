@@ -1,18 +1,22 @@
 package projectsetup_test
 
 import (
+	"context"
 	"fmt"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
+	"github.com/Sourcehaven-BV/rela/internal/metamodel"
+	"github.com/Sourcehaven-BV/rela/internal/migration"
 	"github.com/Sourcehaven-BV/rela/internal/projectsetup"
 	"github.com/Sourcehaven-BV/rela/internal/storage"
 )
 
 func TestValidateWithFS_NoProject(t *testing.T) {
 	fs := storage.NewMemFS()
-	_, err := projectsetup.ValidateWithFS("/missing", fs)
+	_, err := projectsetup.ValidateWithFS(context.Background(), "/missing", fs)
 	if err == nil {
 		t.Fatal("expected error for missing project, got nil")
 	}
@@ -49,7 +53,7 @@ func TestValidateWithFS_ValidatesScheduledMailReferences(t *testing.T) {
     every: day
     for_each: {entity_type: person}
 `)
-	result, err := projectsetup.ValidateWithFS(root, fs)
+	result, err := projectsetup.ValidateWithFS(context.Background(), root, fs)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -76,7 +80,7 @@ entities:
 	if err := fs.WriteFile(filepath.Join(root, "schema.yaml"), []byte(schema), 0o644); err != nil {
 		t.Fatalf("write schema: %v", err)
 	}
-	result, err := projectsetup.ValidateWithFS(root, fs)
+	result, err := projectsetup.ValidateWithFS(context.Background(), root, fs)
 	if err != nil {
 		t.Fatalf("ValidateWithFS: %v", err)
 	}
@@ -92,7 +96,7 @@ func TestValidateWithFS_ValidProject(t *testing.T) {
 		t.Fatalf("init: %v", err)
 	}
 
-	result, err := projectsetup.ValidateWithFS(root, fs)
+	result, err := projectsetup.ValidateWithFS(context.Background(), root, fs)
 	if err != nil {
 		t.Fatalf("ValidateWithFS: %v", err)
 	}
@@ -144,7 +148,7 @@ func TestValidateWithFS_Connections(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			result, err := projectsetup.ValidateWithFS(root, fs)
+			result, err := projectsetup.ValidateWithFS(context.Background(), root, fs)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -156,6 +160,48 @@ func TestValidateWithFS_Connections(t *testing.T) {
 			}
 			if result.ConnectionsError == nil || !strings.Contains(result.ConnectionsError.Error(), tc.wantErr) {
 				t.Fatalf("ConnectionsError = %v, want one naming %q", result.ConnectionsError, tc.wantErr)
+			}
+		})
+	}
+}
+
+func TestValidateWithFS_Subscriptions(t *testing.T) {
+	t.Parallel()
+	const valid = `subscriptions:
+  news:
+    url: https://example.com/feed.xml
+    every: 1h
+    find: {type: requirement, match: [title], values: {title: "{{item.title}}"}}
+    create_if_missing: {}
+`
+	for _, tc := range []struct{ name, body, wantErr string }{
+		{name: "absent"},
+		{name: "valid", body: valid},
+		{name: "unknown type", body: strings.Replace(valid, "requirement", "post", 1), wantErr: `"post"`},
+		{name: "every too short", body: strings.Replace(valid, "1h", "1m", 1), wantErr: "minimum"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			fs := storage.NewMemFS()
+			root := "/proj"
+			if _, err := projectsetup.InitializeWithFS(root, fs); err != nil {
+				t.Fatal(err)
+			}
+			if tc.body != "" {
+				if err := fs.WriteFile(filepath.Join(root, "subscriptions.yaml"), []byte(tc.body), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			result, err := projectsetup.ValidateWithFS(context.Background(), root, fs)
+			if err != nil {
+				t.Fatal(err)
+			}
+			got := result.SubscriptionsError
+			if tc.wantErr == "" && got != nil {
+				t.Fatalf("SubscriptionsError = %v, want nil", got)
+			}
+			if tc.wantErr != "" && (got == nil || !strings.Contains(got.Error(), tc.wantErr)) {
+				t.Fatalf("SubscriptionsError = %v, want one naming %q", got, tc.wantErr)
 			}
 		})
 	}
@@ -173,6 +219,7 @@ func TestValidateResult_HasErrors(t *testing.T) {
 		{"mail err", projectsetup.ValidateResult{MailTemplatesError: errExample}, true},
 		{"schedules err", projectsetup.ValidateResult{SchedulesError: errExample}, true},
 		{"connections err", projectsetup.ValidateResult{ConnectionsError: errExample}, true},
+		{"subscriptions err", projectsetup.ValidateResult{SubscriptionsError: errExample}, true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -226,7 +273,7 @@ entities:
 		if err := fs.WriteFile(root+"/schema.yaml", []byte(body), 0o644); err != nil {
 			t.Fatalf("write schema: %v", err)
 		}
-		result, err := projectsetup.ValidateWithFS(root, fs)
+		result, err := projectsetup.ValidateWithFS(context.Background(), root, fs)
 		if err != nil {
 			t.Fatalf("ValidateWithFS: %v", err)
 		}
@@ -257,4 +304,125 @@ entities:
 			t.Errorf("error must name the offending face, got: %v", result.MetamodelError)
 		}
 	})
+}
+
+// noChannelTypes is a realtime configuration that declares no channel
+// type, so every busy field or column names an unknown type.
+type noChannelTypes struct{}
+
+func (noChannelTypes) ChannelTypeNames() []string { return nil }
+func (noChannelTypes) MessageType(string, string) (dataentryconfig.MessageFacts, bool) {
+	return dataentryconfig.MessageFacts{}, false
+}
+func (noChannelTypes) BusyFacts(string) (dataentryconfig.BusyFacts, bool) {
+	return dataentryconfig.BusyFacts{}, false
+}
+
+// TestCheckChannels pins that only a non-empty channels: section, a kanban
+// busy field or a list busy column is checked, and that realtime off makes
+// it a warning.
+func TestCheckChannels(t *testing.T) {
+	for _, data := range []string{
+		"", "version: \"1.0\"\n", "channels: {}\n", "channels: [broken",
+		"kanbans:\n  board:\n    card:\n      fields: [{ property: title }]\n",
+	} {
+		if projectsetup.HasRealtimePresentation([]byte(data)) {
+			t.Errorf("HasRealtimePresentation(%q) = true", data)
+		}
+		if errs, warnings := projectsetup.CheckChannels([]byte(data), nil); errs != nil || warnings != nil {
+			t.Errorf("CheckChannels(%q) = %v, %v", data, errs, warnings)
+		}
+	}
+	for _, data := range []string{
+		"channels:\n  room: {}\n",
+		"kanbans:\n  board:\n    entity_type: ticket\n    card:\n      fields: [{ busy: run }]\n",
+		// A list busy column alone (TKT-TU3XH4).
+		"lists:\n  all:\n    entity_type: ticket\n    columns: [{ property: title }, { busy: run }]\n",
+	} {
+		if !projectsetup.HasRealtimePresentation([]byte(data)) {
+			t.Fatalf("HasRealtimePresentation missed %q", data)
+		}
+		errs, warnings := projectsetup.CheckChannels([]byte(data), nil)
+		if len(errs) != 0 || len(warnings) != 1 {
+			t.Fatalf("realtime off, %q: errs %v, warnings %v", data, errs, warnings)
+		}
+	}
+	// TKT-TU3XH4: a list busy column alone, with realtime on, is checked
+	// and its unknown type is an error.
+	list := "lists:\n  all:\n    entity_type: ticket\n    columns: [{ property: title }, { busy: nope }]\n"
+	errs, _ := projectsetup.CheckChannels([]byte(list), noChannelTypes{})
+	want := `list "all": column[1]: realtime.yaml declares no channel type "nope"`
+	if len(errs) != 1 || errs[0] != want {
+		t.Fatalf("CheckChannels(list) errs = %v, want [%s]", errs, want)
+	}
+}
+
+// rela validate refuses data-entry.yaml syntax that rela-server refuses at
+// load, and reports it as the same migration error (TKT-BDKE4K).
+func TestValidateWithFS_DeprecatedDataEntry(t *testing.T) {
+	t.Parallel()
+	const list = "lists:\n  persons:\n    entity_type: person\n    columns:\n      - property: name\n        link: %s\n"
+	tests := []struct {
+		name       string
+		dataEntry  string
+		deprecated bool
+	}{
+		{"list column link true", fmt.Sprintf(list, "true"), true},
+		{"view section link true", "views:\n  overview:\n    sections:\n      - source: self\n        link: true\n", true},
+		{"list column link detail", fmt.Sprintf(list, "detail"), false},
+	}
+	// A view section with link: detail may still be invalid for other reasons;
+	// it only must not count as deprecated.
+	t.Run("view section link detail", func(t *testing.T) {
+		t.Parallel()
+		mm, err := metamodel.Parse([]byte("entities:\n  person:\n    label: Person\n    id_type: manual\n    properties:\n      name: {type: string}\n"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		err = projectsetup.CheckDataEntry([]byte("views:\n  overview:\n    sections:\n      - source: self\n        link: detail\n"), mm)
+		if migration.IsMigrationError(err) {
+			t.Errorf("link: detail reported as deprecated: %v", err)
+		}
+	})
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			fs := storage.NewMemFS()
+			root := "/proj"
+			if _, err := projectsetup.InitializeWithFS(root, fs); err != nil {
+				t.Fatal(err)
+			}
+			write := func(name, body string) {
+				t.Helper()
+				if err := fs.WriteFile(filepath.Join(root, name), []byte(body), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			write("schema.yaml", "entities:\n  person:\n    label: Person\n    id_type: manual\n"+
+				"    properties:\n      name: {type: string}\n")
+			write("data-entry.yaml", tc.dataEntry)
+
+			result, err := projectsetup.ValidateWithFS(context.Background(), root, fs)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !tc.deprecated {
+				if result.HasErrors() || !result.DataEntryValid {
+					t.Fatalf("want valid, got data-entry error %v", result.DataEntryError)
+				}
+				return
+			}
+			if !migration.IsMigrationError(result.DataEntryError) {
+				t.Fatalf("DataEntryError = %v, want a migration error", result.DataEntryError)
+			}
+			for _, want := range []string{"link: detail", "rela migrate"} {
+				if !strings.Contains(result.DataEntryError.Error(), want) {
+					t.Errorf("error %q does not contain %q", result.DataEntryError, want)
+				}
+			}
+			if !result.HasErrors() || result.DataEntryValid {
+				t.Errorf("HasErrors() = %v, DataEntryValid = %v; want true, false", result.HasErrors(), result.DataEntryValid)
+			}
+		})
+	}
 }

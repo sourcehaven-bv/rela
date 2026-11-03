@@ -2,7 +2,6 @@ package aclmap
 
 import (
 	"context"
-	"fmt"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 )
@@ -48,8 +47,8 @@ type CanResult struct {
 // "yes" when everyone can, even if that principal holds no personal
 // route.
 func (e *Engine) Can(ctx context.Context, rawPrincipal string, verb acl.Verb, entityID string) (*CanResult, error) {
-	if !verb.Valid() {
-		return nil, fmt.Errorf("aclmap: unknown verb %q", verb)
+	if err := checkReportable(verb); err != nil {
+		return nil, err
 	}
 
 	entityID, entityType, err := e.entityTarget(ctx, entityID)

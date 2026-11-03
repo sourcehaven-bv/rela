@@ -5,6 +5,8 @@ import { useQuery, useMutation, useQueryCache } from '@pinia/colada'
 import { useEntitiesStore, useSchemaStore, useUIStore } from '@/stores'
 import { listAllEntities, getErrorMessage } from '@/api'
 import { entityKeys } from '@/queries/entities'
+import { liveListPath } from '@/api/live'
+import { useLiveSubscription } from '@/composables/useLiveSubscription'
 import { beginOptimistic, rollbackOptimistic, settleOptimistic } from '@/queries/optimisticList'
 import type {
   Entity,
@@ -24,6 +26,9 @@ import EntityDetailPanel from '@/components/entity/EntityDetailPanel.vue'
 import { useDetailPanel } from '@/composables/useDetailPanel'
 import { useCreateModal } from '@/composables/useCreateModal'
 import { usePageTabScope } from '@/composables/usePageTabScope'
+import { useRelationColumns, OTHER_COLUMN } from '@/composables/useRelationColumns'
+import { useBoardFlip } from '@/composables/useBoardFlip'
+import { useWallGrouping } from '@/composables/useWallGrouping'
 import { useListReorder } from '@/composables/useListReorder'
 import { useKanbanCollapse } from '@/composables/useKanbanCollapse'
 import InlineCreateFormModal from '@/components/forms/InlineCreateFormModal.vue'
@@ -33,6 +38,9 @@ import { useWorld } from '@/composables/useWorld'
 import { actionAllowed } from '@/utils/affordancesWarning'
 import { filterStateToApiParams } from '@/utils/filters'
 import { entityRef } from '@/utils/entityRef'
+import { toBusyEntries } from '@/utils/busy'
+import { resolveUserToken } from '@/utils/userToken'
+import { useUserToken } from '@/composables/useUserToken'
 import { editFormRoute } from '@/utils/entityRoute'
 import { fromPageQuery } from '@/utils/pageContext'
 import { worldText } from '@/utils/worldText'
@@ -40,17 +48,25 @@ import { entityDisplayTitle } from '@/utils/entityDisplay'
 import { renderMarkdown } from '@/utils/markdown'
 import { hasIcon, resolveIcon } from '@/utils/icons'
 import { formatCellValue } from '@/utils/format'
+import { formatSummary } from '@/utils/summary'
+import { styleStatusColor } from '@/utils/styleColors'
 import { densePropertyRoutingHint } from '@/widgets/viewRouting'
 import CardFieldList, { type ResolvedCardField } from '@/components/common/CardFieldList.vue'
-import WorldBadge from '@/components/entity/WorldBadge.vue'
+import { useRelatedCardValues } from '@/composables/useRelatedCardValues'
+import WorldBadge from '@/components/ui/WorldBadge.vue'
+import LeaseBadge from '@/components/common/LeaseBadge.vue'
 import { defaultRegistry } from '@/widgets/registry'
 import type { DenseRoutingHint } from '@/widgets/viewRouting'
 import RlButton from 'rela-components/components/common/RlButton.vue'
 import RlBoard from 'rela-components/components/board/RlBoard.vue'
 import RlSwimlaneBoard from 'rela-components/components/board/RlSwimlaneBoard.vue'
-import type { Section, Swimlane } from 'rela-components/types'
-import type { BoardDropPosition } from 'rela-components/composables/useBoardDnd'
+import type { DotColor, Section, Swimlane } from 'rela-components/types'
+import type {
+  BoardDropPosition,
+  BoardSectionDropPosition,
+} from 'rela-components/composables/useBoardDnd'
 import RlStatusRegion from 'rela-components/components/feedback/RlStatusRegion.vue'
+import { useI18n } from 'vue-i18n'
 
 const props = defineProps<{
   id: string
@@ -62,6 +78,7 @@ const router = useRouter()
 const route = useRoute()
 const schemaStore = useSchemaStore()
 const uiStore = useUIStore()
+const { t } = useI18n()
 const queryCache = useQueryCache()
 
 // Back affordance — renders when ?return_to= or ?from= is present.
@@ -138,16 +155,42 @@ const { filters, writeToQuery } = useUrlFilterSync({
 
 // Cards may render relation targets by ID; when any card field references a
 // relation we must ask the server to embed the related entities (?include=*)
-// so we can resolve those IDs to titles. Property-only boards fetch without
-// includes, exactly as before.
+// so we can resolve those IDs to titles, or read a property of the related
+// entities (TKT-8Z2LT3). Property-only boards fetch without includes, exactly
+// as before.
 // A `display: count` relation field needs no titles: it counts the ids the
 // `relations` map already carries.
 const hasRelationFields = computed(
-  () => kanbanConfig.value?.card.fields?.some((f) => !!f.relation && f.display !== 'count') ?? false
+  () =>
+    !!kanbanConfig.value?.columns_from ||
+    (kanbanConfig.value?.card.fields?.some((f) => !!f.relation && f.display !== 'count') ?? false)
 )
 const hasCommentCounts = computed(
   () => kanbanConfig.value?.card.fields?.some((f) => f.comments) ?? false
 )
+// The channel type a busy card field shows, from the first field that names
+// one. Validation allows at most one per card.
+const busyType = computed(() => kanbanConfig.value?.card.fields?.find((f) => f.busy)?.busy)
+
+// A relation-backed board (`columns_from`) takes its columns from the
+// targets of a single-valued relation instead of an enum (TKT-KJ3Q07).
+const columnsFrom = computed(() => kanbanConfig.value?.columns_from)
+const relationColumns = useRelationColumns(
+  columnsFrom,
+  computed(() => props.pageScope),
+  computed(() => worldParam.value)
+)
+
+// A wall (`layout: wall`, TKT-0VBQW0H) lays the cards out as a wrapping grid.
+// Without columns it is one grid of every card (a plain wall); with
+// `columns_from` the loose cards are a pile on top, the targets are groups
+// below, and a card dropped on a loose card makes a new group.
+const isWall = computed(() => kanbanConfig.value?.layout === 'wall')
+const isPlainWall = computed(
+  () => isWall.value && !columnsFrom.value && !kanbanConfig.value?.column_property
+)
+const isGrouping = computed(() => isWall.value && !!columnsFrom.value)
+const isNotes = computed(() => kanbanConfig.value?.card.style === 'note')
 
 // A tab of an entity page narrows the board to the anchor's cards.
 const tabScope = usePageTabScope(() => props.pageScope)
@@ -167,6 +210,7 @@ const boardParams = computed<ListParams | undefined>(() => {
   const params: ListParams = {}
   if (hasRelationFields.value) params.include = '*'
   if (hasCommentCounts.value) params.comment_counts = true
+  if (busyType.value) params.busy = busyType.value
   if (worldParam.value) params.world = worldParam.value
   // See the same attachment in EntityList: the board's configured scope has to
   // travel on the request, since the endpoint is keyed by type.
@@ -205,6 +249,33 @@ const boardQuery = useQuery({
   placeholderData: (prev) => (heldBoardId === props.id ? prev : undefined),
 })
 
+// Live view (TKT-HJ5Z9Y). A board reads every page, but a subscription names
+// one GET, so it watches the first 100 cards, as a grouped list does. That
+// is what carries a claim or release (`_lease`), which changes no entity and
+// so sends no `entity:changed`; cards past the first 100 still refresh on
+// entity changes.
+//
+// Opening a board therefore loads it twice. The query loads it once; then,
+// when the server accepts the subscription PUT, useLiveSubscription runs the
+// invalidate below once as the baseline refetch, and every page loads again.
+// The double load is accepted. The server takes its baseline when it accepts
+// the PUT, and the API contract asks the client to refetch at that moment: a
+// claim landing between the board's own fetch and the baseline would
+// otherwise never show.
+useLiveSubscription(
+  'kanban-board',
+  () => {
+    const config = kanbanConfig.value
+    if (!config) return null
+    return liveListPath(config.entity, { ...boardParams.value, page: 1, per_page: 100 })
+  },
+  () =>
+    void queryCache.invalidateQueries({
+      key: entityKeys.listParams(kanbanConfig.value?.entity ?? '', boardParams.value),
+      exact: true,
+    })
+)
+
 const entities = computed(() => boardQuery.data.value?.data ?? [])
 const includedEntities = computed<Record<string, Entity>>(
   () => boardQuery.data.value?.included ?? {}
@@ -221,7 +292,7 @@ const totalCount = computed(() => boardQuery.data.value?.meta.total ?? 0)
 const loadError = computed(() => {
   const err = boardQuery.error.value
   if (!err) return null
-  return getErrorMessage(err, 'Failed to load board')
+  return getErrorMessage(err, t('kanban.loadFailed'))
 })
 
 // pageState mirrors DynamicForm's `form-state-*` contract: a stable signal
@@ -243,8 +314,31 @@ const entityType = computed(() => {
   return schemaStore.getEntityType(kanbanConfig.value.entity)
 })
 
+// The one column of a plain wall.
+const WALL_COLUMN = '__wall__'
+
 const columns = computed(() => {
   if (!kanbanConfig.value) return []
+
+  // Relation-backed: the targets, then an Other column for cards whose
+  // target is not offered here, shown only when a card lands in it.
+  if (columnsFrom.value) {
+    const cols: KanbanColumn[] = relationColumns.columns.value.map((c) => ({
+      value: c.value,
+      label: c.label,
+    }))
+    const hasOther = entities.value.some(
+      (e) => relationColumns.columnOf(e) === OTHER_COLUMN
+    )
+    // On a wall, Other is the pile and always shows, as the place new cards
+    // land and ungrouped cards go back to.
+    if (hasOther || isWall.value) cols.push({ value: OTHER_COLUMN, label: t('kanban.otherColumn') })
+    return cols
+  }
+
+  if (isPlainWall.value) {
+    return [{ value: WALL_COLUMN, label: kanbanConfig.value.title ?? t('kanban.boardLabelDefault') }]
+  }
 
   // Use defined columns or generate from unique values
   if (kanbanConfig.value.columns?.length) {
@@ -281,20 +375,25 @@ const columns = computed(() => {
   return Array.from(values).map((v): KanbanColumn => ({ value: v, label: v }))
 })
 
+const signedInUser = useUserToken(() => (kanbanConfig.value?.filters ?? []).map((f) => f.value))
+
 const filteredEntities = computed(() => {
   let result = [...entities.value]
 
-  // Apply kanban config filters
+  // Apply kanban config filters. A `$user` value is the signed-in user;
+  // until /_me names one, it matches no card.
   if (kanbanConfig.value?.filters) {
     for (const filter of kanbanConfig.value.filters) {
+      const target = resolveUserToken(filter.value, signedInUser.value)
       result = result.filter((entity) => {
+        if (target === undefined) return false
         const val = String(entity.properties[filter.property] || '')
         switch (filter.operator) {
           case '=':
           case '==':
-            return val === filter.value
+            return val === target
           case '!=':
-            return val !== filter.value
+            return val !== target
           default:
             return true
         }
@@ -343,7 +442,11 @@ const hasSwimmlanes = computed(() => swimlanes.value.length > 0)
 
 // Accessible name for the board region. The columns are sections inside it, so
 // the group needs its own name to be distinguishable from the rest of the page.
-const boardLabel = computed(() => `${kanbanConfig.value?.title || 'Kanban'} board`)
+const boardLabel = computed(() =>
+  kanbanConfig.value?.title
+    ? t('kanban.boardLabel', { title: kanbanConfig.value.title })
+    : t('kanban.boardLabelDefault')
+)
 
 // Column header text. An explicit kanban-config column label wins; otherwise
 // fall back to the enum's display label for the grouping value, then the raw
@@ -351,6 +454,7 @@ const boardLabel = computed(() => `${kanbanConfig.value?.title || 'Kanban'} boar
 // via Badge). `column.label` defaults to the value for auto-generated columns
 // (see the columns computed), so treat label===value as "no explicit label".
 function columnTitle(column: { value: string; label?: string }): string {
+  if (columnsFrom.value) return column.label ?? column.value
   if (column.label && column.label !== column.value) return column.label
   const property = kanbanConfig.value?.column_property
   const entityTypeName = kanbanConfig.value?.entity
@@ -370,7 +474,11 @@ const entitiesByColumn = computed(() => {
   }
 
   for (const entity of filteredEntities.value) {
-    const val = String(entity.properties[property] || '')
+    const val = columnsFrom.value
+      ? relationColumns.columnOf(entity)
+      : isPlainWall.value
+        ? WALL_COLUMN
+        : String(entity.properties[property] || '')
     if (grouped[val]) {
       grouped[val].push(entity)
     }
@@ -423,6 +531,43 @@ function iconFor(name?: string) {
   return hasIcon(name) ? resolveIcon(name) : undefined
 }
 
+// A relation-backed column's colour, from its target's `style_from` value.
+const relationColumnColors = computed(() => {
+  const colors = new Map<string, DotColor>()
+  for (const c of relationColumns.columns.value) if (c.color) colors.set(c.value, c.color)
+  return colors
+})
+
+// An enum column's colour, from the app `styles:` entry for its value, the
+// colour the value's badge shows. A value with no style has none.
+const enumColumnStyles = computed(() => {
+  const config = kanbanConfig.value
+  if (!config || columnsFrom.value) return undefined
+  return schemaStore.stylesForProperty(config.column_property, config.entity)
+})
+
+function columnColor(value: string): DotColor | undefined {
+  if (columnsFrom.value) return relationColumnColors.value.get(value)
+  return styleStatusColor(enumColumnStyles.value, value)
+}
+
+// The lines under each column heading for `column_summary:` (TKT-SVLQQ6),
+// one per entry. Computed here because the board already holds every card,
+// and only the cards the server served to this reader, so a summary shows
+// nothing the cards do not. The server refuses the key on a swimlane board.
+function columnSummary(items: Entity[]): string[] | undefined {
+  const specs = kanbanConfig.value?.column_summary
+  if (!specs?.length || hasSwimmlanes.value) return undefined
+  return specs.map((spec) =>
+    formatSummary(
+      spec,
+      items,
+      spec.property ? entityType.value?.properties[spec.property] : undefined,
+      uiStore.effectiveTimezone
+    )
+  )
+}
+
 // Folded columns, remembered per board. Only declared columns carry a config
 // default; an inferred column starts open.
 const columnCollapse = useKanbanCollapse(
@@ -431,13 +576,18 @@ const columnCollapse = useKanbanCollapse(
 )
 
 const boardSections = computed((): Section<BoardCard>[] =>
-  columns.value.map((column) => ({
-    id: column.value,
-    title: columnTitle(column),
-    icon: iconFor(column.icon),
-    collapsed: columnCollapse.isCollapsed(column.value),
-    items: (entitiesByColumn.value[column.value] ?? []).map(toCard),
-  }))
+  columns.value.map((column) => {
+    const items = entitiesByColumn.value[column.value] ?? []
+    return {
+      id: column.value,
+      title: columnTitle(column),
+      icon: iconFor(column.icon),
+      color: columnColor(column.value),
+      collapsed: columnCollapse.isCollapsed(column.value),
+      summary: columnSummary(items),
+      items: items.map(toCard),
+    }
+  })
 )
 
 function sectionId(section: string | Section<BoardCard>): string {
@@ -481,31 +631,42 @@ function toggleLane(lane: Swimlane<BoardCard>) {
 interface MoveCardVars {
   entity: Entity
   updates: Record<string, string>
+  /** Relation-backed board: the card's single edge is re-pointed at `target`. */
+  relation?: { name: string; target: { type: string; id: string } }
 }
 
 const entitiesStore = useEntitiesStore()
 
 const { mutateAsync: moveCard } = useMutation({
-  mutation: ({ entity, updates }: MoveCardVars) => {
+  mutation: ({ entity, updates, relation }: MoveCardVars) => {
     const config = kanbanConfig.value
     if (!config) throw new Error(`unknown kanban view: ${props.id}`)
+    // A full linkage (`data`) replaces the edge set in one PATCH, so the card
+    // leaves its old column as it enters the new one.
+    if (relation) {
+      return entitiesStore.update(config.entity, entityRef(entity), {
+        relations: { [relation.name]: { data: [relation.target] } },
+      })
+    }
     // To the card's ADDRESS, face included — see utils/entityRef. Through the
     // entities store so the edit form, which reads its cache, sees the move
     // without waiting for the SSE invalidation.
     return entitiesStore.update(config.entity, entityRef(entity), { properties: updates })
   },
-  onMutate({ entity, updates }: MoveCardVars) {
+  onMutate({ entity, updates, relation }: MoveCardVars) {
     return beginOptimistic(
       queryCache,
       entityKeys.list(kanbanConfig.value?.entity ?? ''),
       entity.id,
-      (e) => ({ ...e, properties: { ...e.properties, ...updates } })
+      relation
+        ? (e) => ({ ...e, relations: { ...e.relations, [relation.name]: [relation.target.id] } })
+        : (e) => ({ ...e, properties: { ...e.properties, ...updates } })
     )
   },
   onError(err, _vars, context) {
     rollbackOptimistic(queryCache, context)
     console.error('Failed to update entity:', err)
-    uiStore.error(getErrorMessage(err, 'Failed to move card'))
+    uiStore.error(getErrorMessage(err, t('kanban.moveFailed')))
   },
   async onSettled(_data, _err, _vars, context) {
     await settleOptimistic(queryCache, context)
@@ -533,7 +694,7 @@ function relationCardKey(field: KanbanCardField): string {
 }
 
 function getCardFieldValue(entity: Entity, field: KanbanCardField): string {
-  if (field.relation) {
+  if (field.relation && !field.property) {
     const ids = entity.relations?.[relationCardKey(field)] || []
     return ids
       .map((id) => {
@@ -584,6 +745,14 @@ function getCardFieldStoredValue(entity: Entity, field: KanbanCardField): unknow
   return entity.properties[field.property]
 }
 
+// Related-property fields (TKT-8Z2LT3): the property of each related entity,
+// read from the gated include block. See useRelatedCardValues.
+const { relatedCardValues } = useRelatedCardValues({
+  fields: () => kanbanConfig.value?.card.fields ?? [],
+  included: () => includedEntities.value,
+  relationKey: relationCardKey,
+})
+
 // Widget resolution for property card-fields, computed once per configured
 // field rather than per card (RR-UD2A). Relation fields are absent on
 // purpose: they have no PropertyDef and no relation widget, so they keep the
@@ -595,7 +764,7 @@ const cardFieldWidgets = computed(() => {
   for (const field of kanbanConfig.value?.card.fields ?? []) {
     if (!field.property || field.relation || byProperty.has(field.property)) continue
     const hint = densePropertyRoutingHint(type.properties[field.property], field.property)
-    byProperty.set(field.property, { component: defaultRegistry.resolveFromHint(hint), hint })
+    byProperty.set(field.property, { component: defaultRegistry.resolveDense(hint), hint })
   }
   return byProperty
 })
@@ -624,10 +793,23 @@ function resolvedCardFields(entity: Entity): ResolvedCardField[] {
   const out: ResolvedCardField[] = []
 
   for (const field of kanbanConfig.value?.card.fields ?? []) {
+    if (field.busy) {
+      // Only the asked type: the server answers for the board's one type.
+      const busy = toBusyEntries(entity._busy, field.busy)
+      if (busy.length > 0) out.push({ field, text: '', busy })
+      continue
+    }
     const count = cardFieldCount(entity, field)
     if (count !== undefined) {
       // Zero renders nothing, like any empty card field.
       if (count.value > 0) out.push({ field, text: String(count.value), count })
+      continue
+    }
+    if (field.relation && field.property) {
+      const values = relatedCardValues(entity, field)
+      if (values.length > 0) {
+        out.push({ field, text: values.map((v) => v.text).join(', '), values })
+      }
       continue
     }
     const text = getCardFieldValue(entity, field)
@@ -661,6 +843,8 @@ function canMoveCard(card: BoardCard): boolean {
 // On a board whose cards the reader may reorder, every card can be picked up:
 // moving one within its column writes the anchor's edge, not the card.
 function boardCanMove(card: BoardCard): boolean {
+  // A plain wall has nothing to change on a card; a drag can only reorder.
+  if (isPlainWall.value) return reorder.reorderable.value
   return reorder.reorderable.value || canMoveCard(card)
 }
 
@@ -694,6 +878,49 @@ async function onMove({
   const config = kanbanConfig.value
   const entity = item.entity
   if (!config) return
+  flip.flash(entity.id)
+
+  if (isPlainWall.value) {
+    if (at && at.placement !== 'onto') await reorder.onReorder(rowMove(entity, at))
+    return
+  }
+
+  if (config.columns_from) {
+    const target = relationColumns.targetType.value
+    if (!target) return
+    if (at?.placement === 'onto') {
+      if (!isGrouping.value) return
+      if (canUpdate(entity)) await wall.groupOnto(entity, at.targetId)
+      else uiStore.error(t('kanban.moveForbidden'))
+      return
+    }
+    // Other names no target. On a wall it is the pile, and a drop there takes
+    // the card out of its group; elsewhere it is where unoffered cards wait.
+    if (to.id === OTHER_COLUMN && relationColumns.columnOf(entity) !== OTHER_COLUMN) {
+      if (!isWall.value) return
+      if (!canUpdate(entity)) {
+        uiStore.error(t('kanban.moveForbidden'))
+        return
+      }
+      await wall.ungroup(entity)
+    } else if (relationColumns.columnOf(entity) !== to.id) {
+      if (!canUpdate(entity)) {
+        uiStore.error(t('kanban.moveForbidden'))
+        return
+      }
+      try {
+        await moveCard({
+          entity,
+          updates: {},
+          relation: { name: config.columns_from.relation, target: { type: target, id: to.id } },
+        })
+      } catch {
+        return // reported by the mutation
+      }
+    }
+    if (at) await reorder.onReorder(rowMove(entity, at))
+    return
+  }
 
   const colProp = config.column_property
   const swimProp = config.swimlane_property
@@ -712,7 +939,7 @@ async function onMove({
     // picked up, to move it within its column; a drop into another column
     // would change the card itself, so it is refused out loud.
     if (!canUpdate(entity)) {
-      uiStore.error('You may not move this card to another column')
+      uiStore.error(t('kanban.moveForbidden'))
       return
     }
     try {
@@ -721,7 +948,83 @@ async function onMove({
       return // reported by the mutation
     }
   }
-  if (at) await reorder.onReorder({ itemId: entity.id, ...at })
+  if (at && at.placement !== 'onto') await reorder.onReorder(rowMove(entity, at))
+}
+
+// A drop beside a card as the reorder takes it. `onto` never gets here: it
+// groups instead.
+function rowMove(entity: Entity, at: BoardDropPosition) {
+  return { itemId: entity.id, targetId: at.targetId, placement: at.placement === 'before' ? 'before' : 'after' } as const
+}
+
+const wall = useWallGrouping({
+  cardType: () => kanbanConfig.value?.entity,
+  relation: () => columnsFrom.value?.relation,
+  columns: relationColumns,
+  cards: () => entities.value,
+  cardTitle: getCardTitle,
+  canUpdate,
+  refresh: refreshBoard,
+})
+
+// Cards update live, groups do not; a card in a group this reader has not
+// loaded asks for the groups again.
+watch([entities, relationColumns.columns], ([cards]) => relationColumns.noticeCards(cards))
+
+// Groups move by their handle when the page's entity orders them: the
+// `offered_by` relation is orderable from the anchor's side.
+const groupsMovable = computed(() => {
+  const anchor = relationColumns.anchor.value
+  if (!isGrouping.value || !anchor) return false
+  return schemaStore.getRelationType(anchor.relation)?.orderable?.outgoing === true
+})
+
+function sectionMovable(section: Section<BoardCard>): boolean {
+  return groupsMovable.value && section.id !== OTHER_COLUMN
+}
+
+function onMoveSection(move: BoardSectionDropPosition) {
+  void wall.moveGroup(move)
+}
+
+// Escape puts the name back and leaves the field, which then saves nothing.
+function onRenameCancel(title: string, event: KeyboardEvent) {
+  const input = event.target as HTMLInputElement
+  input.value = title
+  input.blur()
+}
+
+async function onRenameGroup(groupId: string, event: Event) {
+  const input = event.target as HTMLInputElement
+  const shown = await wall.renameGroup(groupId, input.value)
+  if (shown !== undefined) input.value = shown
+}
+
+// A small tilt per loose note, stable across renders, so a pile looks like
+// notes on a wall. Notes in a group lie straight.
+function noteStyle(entity: Entity): Record<string, string> | undefined {
+  if (!isNotes.value) return undefined
+  if (isGrouping.value && relationColumns.columnOf(entity) !== OTHER_COLUMN) return undefined
+  let h = 0
+  for (const ch of entity.id) h = (h * 31 + ch.charCodeAt(0)) | 0
+  return { '--note-tilt': `${((Math.abs(h) % 7) - 3) * 0.6}deg` }
+}
+
+// Cards slide to where a move put them, new cards and groups appear, and the
+// card just dropped lights up once it lands. Only on walls and note boards:
+// a work board's cards stay still.
+const boardRef = ref<{ $el: HTMLElement }>()
+const flip = useBoardFlip(
+  computed(() => boardRef.value?.$el),
+  () => boardSections.value,
+  () => isWall.value || isNotes.value
+)
+
+// A failed or cancelled refetch is not the write's failure: the queries show
+// their own error state, and a refetch that overlaps another is cancelled by it.
+async function refreshBoard() {
+  await relationColumns.refetch()
+  await queryCache.invalidateQueries({ key: entityKeys.list(kanbanConfig.value?.entity ?? '') }).catch(() => {})
 }
 
 // cardTarget is the single source of truth for where a card goes, bound to each
@@ -827,6 +1130,31 @@ const createModal = useCreateModal(async (entity) => {
   refreshAfterCreate()
 })
 
+// A relation-backed board offers Add in each column. The new card starts with
+// an edge to the column's target, so it lands in the column it was added
+// from; on a page tab it is linked to the anchor as well (linkCreated above).
+// The Other column names no target, so its Add opens the plain form.
+const showColumnAdd = computed(
+  () => (!!columnsFrom.value || isPlainWall.value) && !!kanbanConfig.value?.create_form && canCreate()
+)
+const createPrefill = ref<{
+  properties: Record<string, unknown>
+  relations?: Record<string, { id: string; type: string }[]>
+}>()
+function onColumnAdd(section: Section<BoardCard>) {
+  const relation = columnsFrom.value?.relation
+  const target = relationColumns.targetType.value
+  createPrefill.value =
+    relation && target && section.id !== OTHER_COLUMN
+      ? { properties: {}, relations: { [relation]: [{ id: section.id, type: target }] } }
+      : undefined
+  createModal.show()
+}
+// A column's prefill belongs to the one dialog it opened; New opens without.
+watch(createModal.open, (open) => {
+  if (!open) createPrefill.value = undefined
+})
+
 // No lifecycle plumbing: the query fetches on mount, re-keys when
 // props.id switches boards, and refetches in the background when
 // useEvents invalidates ['entities', <type>] on SSE entity events.
@@ -844,7 +1172,7 @@ const createModal = useCreateModal(async (entity) => {
           icon="plus"
           @click="createModal.show"
         >
-          New
+          {{ t('common.new') }}
         </RlButton>
       </template>
     </PageHeaderContent>
@@ -882,10 +1210,10 @@ const createModal = useCreateModal(async (entity) => {
     <div v-if="headerHtml" class="view-info view-info--top" v-html="headerHtml"/>
 
     <div v-if="truncated" class="truncation-banner" role="alert">
-      Showing {{ entities.length }} of {{ totalCount }} items — the board is incomplete.
+      {{ t('kanban.truncated', { shown: entities.length, total: totalCount }) }}
     </div>
 
-    <RlStatusRegion v-if="loading">Loading board...</RlStatusRegion>
+    <RlStatusRegion v-if="loading">{{ t('kanban.loading') }}</RlStatusRegion>
 
     <RlStatusRegion v-else-if="loadError" tone="error">{{ loadError }}</RlStatusRegion>
 
@@ -922,7 +1250,7 @@ const createModal = useCreateModal(async (entity) => {
                 only for a substitute, so an ordinary board shows nothing.
               -->
               <div class="card-title text-wrap-anywhere">
-                {{ item.title }}<WorldBadge :world="item.entity._world" :entity-type="item.entity.type" />
+                {{ item.title }}<WorldBadge :world="item.entity._world" :entity-type="item.entity.type" /><LeaseBadge :lease="item.entity._lease" />
               </div>
               <CardFieldList
                 :fields="resolvedCardFields(item.entity)"
@@ -934,35 +1262,69 @@ const createModal = useCreateModal(async (entity) => {
 
     <RlBoard
       v-else
+      ref="boardRef"
       class="kanban-board"
+      :class="{
+        'kanban-board--single': boardSections.length === 1,
+        'kanban-board--wall': isWall,
+        'kanban-board--grouping': isGrouping,
+        'kanban-board--notes': isNotes,
+      }"
       role="group"
       :aria-label="boardLabel"
       :sections="boardSections"
-      :show-add="false"
+      :show-add="showColumnAdd"
       :show-add-section="false"
       :can-move="boardCanMove"
       :reorder="reorder.reorderable.value"
+      :group="isGrouping"
+      :sections-movable="sectionMovable"
       :selected-id="selectedEntityId ?? undefined"
-      collapsible
+      :collapsible="!isWall"
       @move="onMove"
+      @move-section="onMoveSection"
+      @add="onColumnAdd"
       @collapse-section="collapseColumn"
       @expand-section="expandColumn"
     >
+          <!--
+            A plain wall is one grid and needs no heading. On a grouping wall
+            the pile says what it is, and a group's name is edited in place.
+          -->
+          <template v-if="isWall" #heading="{ section }">
+            <div v-if="!isPlainWall" class="wall-heading">
+              <span v-if="section.id === OTHER_COLUMN" class="wall-heading__pile">
+                {{ t('kanban.pile') }}
+              </span>
+              <input
+                v-else-if="wall.renamable(section.id)"
+                class="wall-heading__title"
+                :value="section.title"
+                :aria-label="t('kanban.groupName', { title: section.title })"
+                @change="onRenameGroup(section.id, $event)"
+                @keydown.enter="!$event.isComposing && ($event.target as HTMLInputElement).blur()"
+                @keydown.esc="onRenameCancel(section.title, $event)"
+              />
+              <span v-else class="wall-heading__title">{{ section.title }}</span>
+              <span class="wall-heading__count">{{ section.items.length }}</span>
+            </div>
+          </template>
           <template #card="{ item }">
             <RouterLink
               class="kanban-card"
+              :style="noteStyle(item.entity)"
               :to="cardTarget(item.entity)"
               :aria-label="item.title"
               @click.capture="onCardClick(item.entity, $event)"
             >
-              <div class="card-id">{{ item.id }}</div>
+              <div v-if="!isNotes" class="card-id">{{ item.id }}</div>
               <!--
                 Per-CARD face provenance (TKT-ILT1WD), beside the title, the same
                 place and the same component the list uses. WorldBadge renders
                 only for a substitute, so an ordinary board shows nothing.
               -->
               <div class="card-title text-wrap-anywhere">
-                {{ item.title }}<WorldBadge :world="item.entity._world" :entity-type="item.entity.type" />
+                {{ item.title }}<WorldBadge :world="item.entity._world" :entity-type="item.entity.type" /><LeaseBadge :lease="item.entity._lease" />
               </div>
               <CardFieldList
                 :fields="resolvedCardFields(item.entity)"
@@ -984,7 +1346,8 @@ const createModal = useCreateModal(async (entity) => {
       :form-id="kanbanConfig.create_form"
       :entity-type="kanbanConfig.entity"
       :world="worldParam"
-      add-another
+      :prefill="createPrefill"
+      :add-another="!createPrefill"
       @close="createModal.close"
       @created="createModal.created"
       @created-another="createModal.createdAnother"
@@ -993,6 +1356,125 @@ const createModal = useCreateModal(async (entity) => {
 </template>
 
 <style scoped>
+
+/* A wall wraps its columns instead of scrolling sideways, so every group
+   stays in view. On a grouping wall Other is the pile across the top. */
+.kanban-board--wall {
+  flex-wrap: wrap;
+  align-content: flex-start;
+  overflow-x: hidden;
+  overflow-y: auto;
+  gap: var(--rl-space-4);
+}
+.kanban-board--wall :deep(.rl-board-column) {
+  max-height: none;
+}
+.kanban-board--wall :deep(.rl-board-column__cards) {
+  overflow: visible;
+}
+.kanban-board--grouping :deep(.rl-board-column[data-section-id='__other__']) {
+  order: -1;
+  flex-basis: 100%;
+  width: auto;
+  min-height: 140px;
+  padding: var(--rl-space-3);
+  border: 1px dashed var(--rl-color-border-strong);
+  border-radius: var(--rl-radius-lg);
+}
+.kanban-board--grouping :deep(.rl-board-column[data-section-id='__other__'] .rl-board-column__cards) {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  align-content: start;
+  gap: var(--rl-space-4);
+  min-height: 90px;
+}
+/* A group is a card of its own: a solid, tinted panel, coloured by
+   `style_from` when the board has one. */
+.kanban-board--grouping :deep(.rl-board-column:not([data-section-id='__other__'])) {
+  width: 300px;
+  padding: var(--rl-space-3);
+  border: 1px solid var(--rl-color-border);
+  border-radius: var(--rl-radius-lg);
+  background: var(--rl-section-tint, var(--rl-tag-blue-bg));
+  box-shadow: var(--rl-shadow-sm);
+}
+.kanban-board--grouping :deep(.rl-board-column--target) {
+  border-color: var(--rl-color-accent);
+}
+.wall-heading {
+  display: flex;
+  align-items: center;
+  gap: var(--rl-space-2);
+  margin-bottom: var(--rl-space-3);
+  /* Room for the column's drag handle in the corner. */
+  padding-right: var(--rl-space-6);
+}
+.wall-heading__pile {
+  flex: 1;
+  font-size: var(--font-size-sm);
+  color: var(--rl-color-text-muted);
+}
+.wall-heading__title {
+  flex: 1;
+  min-width: 0;
+  padding: 2px 6px;
+  border: 1px solid transparent;
+  border-radius: var(--rl-radius-md);
+  background: transparent;
+  color: var(--rl-color-text);
+  font: inherit;
+  font-size: var(--font-size-base);
+  font-weight: 700;
+}
+.wall-heading__title:hover { border-color: var(--rl-color-border); }
+.wall-heading__title:focus {
+  border-color: var(--rl-color-focus);
+  background: var(--rl-color-bg);
+  outline: none;
+}
+.wall-heading__count {
+  font-size: var(--font-size-sm);
+  color: var(--rl-color-text-muted);
+}
+
+/* Sticky-note cards (`card.style: note`). */
+.kanban-board--notes .kanban-card {
+  min-height: 90px;
+  border: none;
+  border-radius: 3px;
+  background: var(--rl-tag-yellow-bg);
+  color: var(--rl-color-text);
+  box-shadow: 0 3px 8px rgb(0 0 0 / 25%);
+  transform: rotate(var(--note-tilt, 0deg));
+}
+.kanban-board--notes .kanban-card:hover {
+  box-shadow: 0 5px 12px rgb(0 0 0 / 30%);
+}
+.kanban-board--notes .kanban-card .card-title {
+  color: inherit;
+  font-size: var(--font-size-base);
+  line-height: 1.35;
+  margin-bottom: 0;
+}
+/* In a group the notes lie straight (see noteStyle) and a little smaller. */
+.kanban-board--grouping :deep(.rl-board-column:not([data-section-id='__other__'])) .kanban-card {
+  min-height: 0;
+}
+.kanban-board--grouping :deep(.rl-board-column:not([data-section-id='__other__'])) .kanban-card .card-title {
+  font-size: var(--font-size-sm);
+}
+/* A board with one column uses the full width and wraps its cards. */
+.kanban-board--single :deep(.rl-board-column) {
+  flex: 1;
+  width: auto;
+}
+.kanban-board--single :deep(.rl-board-column__cards) {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  align-content: start;
+  gap: var(--rl-space-4);
+}
+
 /* The horizontal scroll belongs to the board containers, NOT this page wrapper.
    With overflow-x here, a board wider than the viewport dragged the page title,
    filter bar, truncation banner, and info regions sideways along with the

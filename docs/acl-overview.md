@@ -26,15 +26,17 @@ graph TD
     end
 
     Policy -->|NewDeclarative| Declarative
-    Graph -->|NewStoreGraph| Declarative
+    Graph -->|aclstore.NewGraph| Declarative
 
     subgraph PerRequest [Per HTTP request]
         Middleware[attachACLRequest middleware]
-        Request["*acl.Request<br/>(per-call scope<br/>caches member-of walk)"]
+        Identity["acl.Identity<br/>(principal + member-of closure)"]
+        Request["*acl.Request<br/>(per-call scope<br/>roles from the Identity)"]
         Resolver{Resolver}
     end
 
-    Middleware -->|d.ForPrincipal p| Request
+    Middleware -->|IdentityResolver.Resolve p| Identity
+    Identity -->|d.ForIdentity| Request
     Declarative -.references.-> Middleware
 
     subgraph WriteCall [Per write call]
@@ -72,17 +74,17 @@ sequenceDiagram
 
     SPA->>Router: PATCH /api/v1/tickets/TKT-001
     Router->>Mid: handler chain
-    Mid->>D: d.ForPrincipal(principal.From(ctx))
-    D-->>Mid: *Request (member-of not yet walked)
+    Mid->>Graph: IdentityResolver.Resolve(principal.From(ctx))<br/>OutgoingRelations(user, "member-of"), once
+    Graph-->>Mid: members closure (acl.Identity)
+    Mid->>D: d.ForIdentity(identity)
+    D-->>Mid: *Request (global roles computed, no graph read)
     Mid->>Router: ctx = acl.WithRequest(ctx, req)
     Router->>EM: UpdateEntity(ctx, e, opts)
     EM->>D: AuthorizeWrite({Op: Update, Subject: EntitySubject{TKT-001}})
 
     rect rgb(240, 248, 255)
-        note right of D: Per-request scope —<br/>walks happen once.
+        note right of D: Per-request scope.<br/>The member-of walk already ran at the edge.
         D->>Res: Request.ForEntity(ctx, "ticket", "TKT-001")
-        Res->>Graph: OutgoingRelations(user, "member-of")<br/>(cached after first call)
-        Graph-->>Res: members closure
         Res->>Graph: OutgoingRelations(entity, inherit_roles_through)
         Graph-->>Res: ancestor chain
         Res->>Graph: HasEdge(member, rel-type, target)<br/>for each (member, target) ∈ members × chain
@@ -99,6 +101,17 @@ sequenceDiagram
 The single `Request` is what makes the per-list response viable: a
 list of 50 tickets reuses one member-of walk and one ancestor chain
 per ticket, instead of re-walking 50× from scratch.
+
+Identity resolution is an explicit step at the request edge. Each
+transport (data-entry, MCP, the scheduler, the CLI, Lua) resolves the
+principal once with `IdentityResolver`, calls `Declarative.ForIdentity`,
+and attaches the `Request` with `acl.WithRequest`. Nothing caches an
+identity across requests, so a membership change applies on the next
+request. Code below the edge reads the attached `Request`. If there is
+none, it fails closed: affordances deny every field and relation, and
+the visibility gate returns `acl.ErrNoIdentity`. The evaluator never
+walks membership itself; `TestEvaluatorDoesNotResolveIdentity` in
+`internal/acl` enforces this.
 
 ## A worked acl.yaml
 
@@ -160,6 +173,63 @@ the resolver walks exactly that relation, so if you name a type that doesn't
 exist — or one your data doesn't populate — the walk finds no edges and group
 roles silently never resolve. There's no separate "is this a real relation"
 check; the relation simply has to be there.
+
+## How field blocks combine across roles
+
+A role's `fields:`, `visible:` and `options:` blocks narrow what that role
+gives for one entity type. A principal often holds several roles on the same
+row: a global role from `assignments:`, a group role, and a role conferred by
+an edge such as `watches`. The result is the **union** of what each role
+gives, per dimension:
+
+- A role with a block gives what the block grants on this row.
+- A role without a block gives the whole dimension, if it holds the
+  dimension's verb on the row's type and face. The verb is `read` for
+  `visible:`, `update` for `fields:` and `options:`, and `create` for
+  `fields:` and `options:` when the row is being created.
+- A role that holds neither gives nothing.
+
+So gaining a role never removes a field. In the example above, a member of
+`triage-team` who is also an `editor` may write every ticket field: the
+editor's `update: [ticket]` covers them all, and the triager's block cannot
+take that away. A member who is only a triager may write `status` alone.
+
+Face-qualified grants count only on their face: a role with
+`read: ["policy@published"]` and no `visible:` block shows every field of a
+published policy and nothing of a draft. A client ceiling is applied after
+the union and can only remove.
+
+### A field block for one face
+
+A `fields:` or `options:` block may be keyed `type@face` instead of `type`.
+Such a block applies only on rows of that face. This lets a role write one
+field of a published face while the rest of that face stays read-only:
+
+```yaml
+roles:
+  signer:
+    read: [ticket]
+    update: [ticket@draft, ticket@published]
+    fields:
+      ticket@published: [signed_copy]   # on the published face, only this field
+```
+
+A `signer` may change every field of a draft, and on the published face may
+only attach or remove `signed_copy`. When a role has both a `ticket` block and
+a `ticket@published` block, a published row gets the union of the two. On a
+face that no block of the role names, the role has no block, so the rules
+above apply.
+
+The key must name a declared face of a type that declares `faces:`, or the
+policy fails to load. `visible:` and `relations:` blocks accept only a bare
+type key.
+
+The `everyone` role takes part like any other role. If it holds `read` on a
+face of a type and has no `visible:` block for that type, every other role's
+`visible:` block restricts nobody on that face. The same holds for `update`
+or `create` and the `fields:` and `options:` blocks. `rela acl audit` reports
+this as `A14-everyone-opens-field-block`, and rela logs it as a warning
+when it loads `acl.yaml`.
 
 ## Scoping a grant to a content state
 
@@ -581,6 +651,26 @@ deployment and a proxy that models no principal type all work with no
 special-casing. `rela acl audit` reports a baseline that covers
 nothing, since that is a policy gap rather than a runtime error.
 
+rela sets one `principal_type` itself: a webhook delivery
+(`system:webhook:<id>`) has the type `webhook`. A baseline with
+`applies_to: [webhook]` caps every hook in the project:
+
+```yaml
+client_baselines:
+  hooks:
+    applies_to: [webhook]
+    read: [incident]
+    create: [incident]
+    update: [incident]
+    deny_delete: ["*"]
+    deny_permissions: ["*"]
+```
+
+There is one type for all hooks, not one per hook. The ceiling is the
+upper bound for the class. Each hook already has its own identity, so give
+a hook that needs less access its own role in `assignments:`. See
+[Webhooks](webhooks.md#acl) for what the ceiling covers.
+
 ### Two spellings, per type
 
 Each axis takes either an allowlist or a denylist — never both for the
@@ -638,7 +728,9 @@ must never reach a client class, do not write a scope grant naming it.
 
 - **`principal_type` and `scope` come only from a verified assertion.**
   The same trust boundary as asserted roles, enforced by the type
-  system. See GUIDE-acl-security.
+  system. See GUIDE-acl-security. The one exception is `webhook`, which
+  rela derives from the reserved `system:webhook:` name. No caller can
+  assert that name, and a claim cannot change the type it derives.
 - **stdio MCP is not covered.** It has no authentication at all, so
   there is no verified claim to key on. The remote endpoint
   (`rela-server -mcp`) carries a verified JWT, so a ceiling applies
@@ -660,7 +752,7 @@ To see what a client actually gets, ask:
 ```console
 $ rela acl map --principal alice --as app --scope rela.tickets.write
 Effective access for alice — verbs: read, create, update, delete
-  as client type "app" with scopes rela.tickets.write — the client_baselines ceiling is applied below.
+  as client type "app" with scopes rela.tickets.write — client baseline "apps" is applied below.
       person
           read (all person): role hr [global]
       ticket

@@ -128,6 +128,37 @@ func TestValidateCopies(t *testing.T) {
 			wantErr: "declares no property \"nosuchfield\"",
 		},
 		{
+			name: "keep beside fields: all",
+			def: CopyDef{
+				From: "page@draft", To: "page@published", Guard: guarded,
+				AllFields: true, Keep: []string{"status"},
+			},
+		},
+		{
+			name: "keep needs fields: all",
+			def: CopyDef{
+				From: "page@draft", To: "page@published", Guard: guarded,
+				Fields: map[string]string{"title": "{{source.title}}"}, Keep: []string{"status"},
+			},
+			wantErr: "`keep` needs `fields: all`",
+		},
+		{
+			name: "keep names an undeclared property",
+			def: CopyDef{
+				From: "page@draft", To: "page@published", Guard: guarded,
+				AllFields: true, Keep: []string{"nosuchfield"},
+			},
+			wantErr: "keep: entity type \"page\" declares no property \"nosuchfield\"",
+		},
+		{
+			name: "keep lists a name twice",
+			def: CopyDef{
+				From: "page@draft", To: "page@published", Guard: guarded,
+				AllFields: true, Keep: []string{"status", "status"},
+			},
+			wantErr: "keep: \"status\" is listed twice",
+		},
+		{
 			name: "invalid relation mode",
 			def: CopyDef{
 				From: "page@draft", To: "page@published", AllFields: true, Guard: guarded,

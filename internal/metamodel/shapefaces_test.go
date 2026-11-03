@@ -12,7 +12,7 @@ func shapeWithFaces(t *testing.T, doc string) ShapeProjection {
 	if err != nil {
 		t.Fatalf("Parse: %v", err)
 	}
-	return m.ShapeProjection()
+	return NewShapeProjection(m)
 }
 
 func TestShapeProjection_FaceRenameMovesTheHash(t *testing.T) {

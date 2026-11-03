@@ -8,6 +8,8 @@ import (
 	"testing"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
+	"github.com/Sourcehaven-BV/rela/internal/aclstore"
+	"github.com/Sourcehaven-BV/rela/internal/testutil/logtest"
 )
 
 // `unmatched_principal: reject` only takes effect when a JWT gate is wired:
@@ -55,9 +57,7 @@ func (w *lockedWriter) String() string {
 func captureWarnings(t *testing.T) *lockedWriter {
 	t.Helper()
 	w := &lockedWriter{}
-	prev := slog.Default()
-	slog.SetDefault(slog.New(slog.NewJSONHandler(w, &slog.HandlerOptions{Level: slog.LevelDebug})))
-	t.Cleanup(func() { slog.SetDefault(prev) })
+	logtest.SetDefault(t, slog.NewJSONHandler(w, &slog.HandlerOptions{Level: slog.LevelDebug}))
 	return w
 }
 
@@ -156,12 +156,12 @@ func newRejectApp(t *testing.T) *App {
 		UserEntityType:     "person",
 		PrincipalProperty:  "email",
 		UnmatchedPrincipal: acl.UnmatchedReject,
-	}, acl.NewStoreGraph(app.store), app.store,
-		acl.WithPrincipalLookup(acl.NewStorePrincipalLookup(app.store)))
+	}, aclstore.MustNewGraph(app.store), app.store,
+		acl.WithPrincipalLookup(aclstore.MustNewPrincipalLookup(app.store)))
 	if err != nil {
 		t.Fatalf("acl.NewDeclarative: %v", err)
 	}
-	app.acl = d
+	setTestACL(t, app, d)
 	return app
 }
 
@@ -234,7 +234,7 @@ func TestUnmatchedReject_WarnsWhenLookupDisabled(t *testing.T) {
 func TestUnmatchedReject_TypedNilDeclarativeDoesNotPanic(t *testing.T) {
 	app := newTestAppV1(t)
 	var d *acl.Declarative
-	app.acl = d // typed nil: non-nil interface, nil pointer
+	setTestACL(t, app, d) // typed nil: non-nil interface, nil pointer
 
 	defer func() {
 		if r := recover(); r != nil {

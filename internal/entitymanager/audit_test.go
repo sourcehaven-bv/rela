@@ -35,6 +35,7 @@ func newManagerWithAudit(
 		ACL:         acl.NopACL{},
 		Transitions: statemachine.EmptySet(),
 		FieldGate:   entitymanager.AllowAllFieldGate{},
+		AnchorGuard: entitymanager.NopAnchorGuard{},
 	}
 	if automations != nil {
 		engine := automation.NewEngine(automations)
@@ -1174,6 +1175,7 @@ func TestAudit_PartialCascadeDelete_AuditsWhatWasRemoved(t *testing.T) {
 		ACL:         acl.NopACL{},
 		Transitions: statemachine.EmptySet(),
 		FieldGate:   entitymanager.AllowAllFieldGate{},
+		AnchorGuard: entitymanager.NopAnchorGuard{},
 	})
 	if err != nil {
 		t.Fatalf("entitymanager.New: %v", err)
@@ -1273,6 +1275,7 @@ func TestAudit_PartialCascadeDelete_ReplacePathAlsoAudits(t *testing.T) {
 		FieldGate:   entitymanager.AllowAllFieldGate{},
 		Automations: engine,
 		Cascade:     runner,
+		AnchorGuard: entitymanager.NopAnchorGuard{},
 	})
 	if err != nil {
 		t.Fatalf("entitymanager.New: %v", err)
@@ -1303,5 +1306,51 @@ func TestAudit_PartialCascadeDelete_ReplacePathAlsoAudits(t *testing.T) {
 	}
 	if entityRecords != 0 {
 		t.Errorf("want NO delete-entity record — the superseded entity survived — got %d", entityRecords)
+	}
+}
+
+// TestAuditAssertedBy pins that the OS user behind a `--run-as` principal
+// reaches every graph audit record of the write, cascaded ones included,
+// and that a write without one records no asserted_by.
+func TestAuditAssertedBy(t *testing.T) {
+	t.Parallel()
+	autos := []automation.Automation{{
+		Name: "spawn-checklist",
+		On:   automation.Trigger{Entity: []string{"requirement"}, Created: true},
+		Do: []automation.Action{{
+			CreateEntity: &automation.CreateEntityAction{Type: "checklist", Relation: "has-checklist"},
+		}},
+	}}
+	for _, tc := range []struct {
+		name     string
+		asserted string
+	}{
+		{name: "asserted", asserted: "alice"},
+		{name: "not asserted"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			mem := audit.NewMemory()
+			mgr := newManagerWithAudit(t, mem, autos)
+			ctx := ctxWithPrincipal("system:ci", principal.ToolCLI)
+			if tc.asserted != "" {
+				ctx = audit.WithAssertedBy(ctx, tc.asserted)
+			}
+			if _, err := mgr.CreateEntity(ctx, entity.New("", "requirement"), entity.CreateOptions{}); err != nil {
+				t.Fatalf("CreateEntity: %v", err)
+			}
+			records := mem.Records()
+			if len(records) < 3 {
+				t.Fatalf("want the write and its two cascaded records, got %d", len(records))
+			}
+			for _, r := range records {
+				if r.AssertedBy != tc.asserted {
+					t.Errorf("op=%s: want AssertedBy=%q, got %q", r.Op, tc.asserted, r.AssertedBy)
+				}
+				if r.Principal.User != "system:ci" {
+					t.Errorf("op=%s: want principal system:ci, got %q", r.Op, r.Principal.User)
+				}
+			}
+		})
 	}
 }

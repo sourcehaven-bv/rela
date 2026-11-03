@@ -41,6 +41,7 @@ func (s *Store) SoftDelete() store.SoftDeleter { return softDeleter{s: s} }
 
 type softDeleter struct{ s *Store }
 
+//archplan:sink=write
 func (d softDeleter) MarkDeleted(ctx context.Context, id, by string) (*store.DeleteResult, error) {
 	s := d.s
 	tx, err := s.db.Begin(ctx)

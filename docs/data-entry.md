@@ -111,6 +111,43 @@ and on each of its relations. The caller must
 also be able to read the entity, or be the user who deleted it; anyone else
 gets the same `404` as for an ID that was never deleted.
 
+### Who else is viewing
+
+An entity page shows a round avatar in its header for each other person who
+has the same entity open. Each avatar names the person and the tool they use,
+for example `bob@example.com (data-entry)`. A mouse user sees that name as a
+tooltip; a screen reader announces the whole group, with every person and
+tool. An agent connected over MCP carries a small sparkles mark and is
+announced with its tool. The header shows at most five avatars, and a `+N`
+counts the rest.
+
+- You never see yourself, from any tool.
+- Every place that shows an entity's page counts as viewing it: the entity
+  page itself, and previews such as the calendar preview, the flyout and the
+  side panel.
+- A person who closes the page stays listed for about 15 seconds.
+- Presence is per content state. On a type with faces, people looking at
+  another face are not shown.
+- Anyone who can read an entity can see who has it open. Nobody else can.
+- Presence needs a signed-in user. Visitors without an identity are never
+  listed.
+
+### Claims
+
+A claim says that a person or an agent is working on an entity. Claims do not
+block edits; they tell others to pick other work. A claim is made through the
+API (`POST /api/v1/{plural}/{id}/_lease`) or the MCP tool `claim_entity`.
+
+While an entity is claimed, its page, its list rows and its kanban cards show
+a badge such as **Claimed by `bob@example.com` (triage)**. The part in brackets
+is the label the claim gave, or the tool when it gave none. The status note
+the claimer wrote is in the badge's tooltip for a mouse user, and a screen
+reader reads it with the badge.
+
+The badge appears and disappears without a reload. On a kanban board this
+holds for the first 100 cards; cards further down update on the next change
+to the entity or when you reload the page.
+
 ## Quick Start
 
 ### 1. Create data-entry.yaml
@@ -145,7 +182,7 @@ lists:
       - property: title
         label: "Title"
         sortable: true
-        link: true
+        link: detail
       - property: status
         label: "Status"
         sortable: true
@@ -193,6 +230,12 @@ forms:                     # Create/edit form definitions
     entity_type: task
     ...
 
+channels:                  # Optional: how channel messages are presented
+  channel_type:
+    messages:
+      message_type:
+        fields: [...]
+
 lists:                     # List view definitions
   list_name:
     entity_type: task
@@ -210,6 +253,11 @@ dashboard:                 # Optional overview page
     - title: "Open"
       query: "type:task status:open"
       display: count
+
+dashboards:                # Optional named dashboards, same shape
+  sales:
+    title: "Pipeline"
+    cards: [...]
 
 kanbans:                   # Kanban board views
   board_name:
@@ -268,6 +316,37 @@ app:
 | `name`        | Application title in the header  |
 | `description` | Subtitle shown below the title   |
 | `default_world` | Deprecated alias for the schema's `default_world:`; must name the same world. See [Worlds in the web app and API](#worlds-in-the-web-app-and-api) |
+
+### Interface language
+
+The web app's menus, buttons and messages are available in English and Dutch.
+Set `language` to choose the default for everyone who opens the app:
+
+```yaml
+app:
+  name: "Support Tickets"
+  language: nl
+```
+
+| Field      | Description                                                                  |
+| ---------- | ---------------------------------------------------------------------------- |
+| `language` | A BCP 47 language tag such as `nl` or `nl-BE`. Supported languages: `en`, `nl`. |
+
+The app picks the language in this order:
+
+1. the user's own choice under **Settings > Language**, kept in that browser;
+2. `app.language`;
+3. the browser's preferred languages, first supported one wins;
+4. English.
+
+The language also decides how dates and numbers are written. A region in the
+tag (`nl-BE`) is used for that formatting. A tag that is not valid BCP 47, or
+names a language without a translation, fails the config check.
+
+Text you write in the configuration, such as entity type labels, list and form
+titles and navigation groups, is shown as you wrote it. It is not translated.
+The Configure space and the Settings page are not translated yet and stay in
+English.
 
 ### PlantUML diagrams
 
@@ -375,7 +454,89 @@ The key is the custom type name (as defined in `schema.yaml` under `types:`). Ea
 to a color name. These colors are applied everywhere that enum value appears: list cells, badges,
 and form select options.
 
-**Available colors:** `red`, `orange`, `yellow`, `green`, `blue`, `purple`, `gray`.
+### Color names
+
+A color name takes one of three forms:
+
+| Form | Example | Meaning |
+| ---- | ------- | ------- |
+| Hue | `red` | The hue's badge color, a light tint with readable text. |
+| Hue and shade | `red/700` | One exact shade from the Atlas UI kit. |
+| Your own name | `risk-critical` | A color you define under `palette.colors`. |
+
+The hues are `grey` (also written `gray`), `red`, `orange`, `yellow`, `green`,
+`teal`, `blue` and `purple`. `orange` and `yellow` are two different colors.
+
+Every hue except `purple` has the shades `50`, `100`, `200`, `300`, `400`,
+`500`, `600`, `700`, `800` and `900`. `50` is the lightest and `900` the
+darkest. A shaded badge fills with that shade, and rela picks black, white or
+dark grey text so that the text meets WCAG AA (4.5:1) on it. A kanban column
+or list group heading uses the shade for its dot.
+
+In dark mode the shades mirror: `red/900` shows what `red/50` shows in light
+mode, `red/800` what `red/100` shows, and so on. So a value that stands out in
+light mode stands out in dark mode too. To pick a different dark color for one
+shade, set it under `palette.dark.colors`:
+
+```yaml
+palette:
+  dark:
+    colors:
+      red/700: '#ff8a80'
+```
+
+A user's own palette with a `dark:` block replaces the project's `dark:`
+block as a whole, including these overrides.
+
+Your own colors go under `palette.colors`. Give each a `light` color and,
+optionally, a `dark` one; without `dark`, dark mode uses the light color.
+rela picks the text color automatically, in each theme:
+
+```yaml
+palette:
+  colors:
+    risk-critical: {light: '#7a0010', dark: '#ff6b6b'}
+    brand: {light: '#0f6e5c'}
+
+styles:
+  risk_level:
+    critical: risk-critical
+    high: red/700
+    medium: orange
+    low: teal/300
+```
+
+A name under `palette.colors` uses lower-case letters, digits and hyphens, and
+starts with a letter. It cannot be a hue, `gray`, or one of the tones
+`success`, `warning`, `error`, `info` and `new`. Colors are written as `#rgb`
+or `#rrggbb`; transparency is not allowed, because rela could not then promise
+readable text.
+
+The app refuses to load a configuration that uses an unknown color name, an
+unknown shade (such as `red/750` or `purple/500`), or an invalid hex color.
+The error names the style entry, so you can find it.
+
+### Palette
+
+The built-in colors follow the Atlas UI kit, using the shades that meet WCAG
+AA. To change what the hue colors look like, set a `palette:` block. `accent` colors
+buttons, links and selection. Each entry under `badges` colors the badges and
+kanban column dots of that style color:
+
+```yaml
+palette:
+  accent: '#0f6e5c'
+  badges:
+    green: '#1a7f37'
+    orange: '#9a4400'
+```
+
+Only the values you set change; everything else keeps the built-in look.
+`purple` is drawn with the accent. `badges` changes the hue colors only;
+a shade such as `red/700` keeps its kit value. These values apply to the light theme. For
+dark mode, set them under `dark:`; without that, dark mode keeps its built-in
+colors. Text drawn in these colors must stay readable, so check each one against
+WCAG AA (4.5:1 for text on a white background).
 
 For customisation beyond palette and theme — arbitrary CSS, JavaScript and
 assets against rela's own UI, from a `custom/` directory in your project — see
@@ -479,11 +640,22 @@ Each entry in `fields:` configures one property input:
 | `placeholder` | string            | Placeholder text for empty inputs                              |
 | `help`        | string            | Help text shown below the field                                |
 | `required`    | bool              | Field must be filled before submission                         |
-| `default`     | string            | Default value for new entities                                 |
+| `default`     | string            | Default value for new entities; `$user` is the signed-in user  |
 | `hidden`      | bool              | Include in form data but hide from UI                          |
 | `widget`      | string            | Input widget type (see below)                                  |
 | `span`        | int (1-12)        | Width on the layout grid; omit for full width (see below)      |
 | `transitions` | map[string]list   | Allowed state transitions for enum fields (edit forms only)    |
+
+A property field with `default: $user` opens with the signed-in user's id,
+the `user` that `GET /api/v1/_me` returns. The field stays empty when the
+server cannot identify the user. A `prop.<name>` query parameter still takes
+precedence, and the form never overwrites a value the user has typed.
+
+```yaml
+fields:
+  - property: owner
+    default: $user
+```
 
 > **Labels are authored, never derived.** When `label` is omitted the raw
 > property name is displayed — rela never converts `laatste_contact` into
@@ -575,6 +747,11 @@ A reference is stored as a plain code span — `` `TKT-007` `` — and displays 
 the entity's title, so the file stays readable outside rela and the title
 cannot go stale. Titles you see are the ones you are permitted to see: a
 reference to an entity your ACL role cannot read stays as the bare ID.
+
+A reference names an entity, not a face. For a type with faces it resolves in
+the world you are reading in, like any bare ID: the reference shows the title
+of the face that world serves among the faces you may read, and the link opens
+the entity in that same world.
 
 ### File Properties on Forms
 
@@ -859,7 +1036,7 @@ The same rule applies to **every** surface that takes a `direction:`:
 | --- | --- |
 | form relations (including wizard steps) | the form's `entity_type` |
 | list columns and `filter_controls` | the list's `entity_type` |
-| kanban `card.fields` and `filter_controls` | the kanban's `entity_type` |
+| kanban `card.fields` and `filter_controls` | the kanban's `entity_type` (a card field's `property` with a `relation` names a property of the related type) |
 | `caldav.dynamic.<name>` | the collection's `entity_type` (the **member**, not `driver_type` — the edge runs member→driver) |
 
 > **Upgrading.** `direction` used to default to `outgoing` whenever it was
@@ -1123,6 +1300,269 @@ Notes:
   request, so the entity is never briefly left in a state the user did not
   approve.
 
+## Channels
+
+The `channels:` block says how the web app presents the messages of the
+channel types in `realtime.yaml`: the order of the fields in the composer
+and under a message, their labels, and their widgets. `realtime.yaml` stays
+the source of the structure, such as property types and which properties
+are required. This block only presents it, as `forms:` does for entities.
+
+The block is optional. Without it, the composer lists the required
+properties first and then the others by name, and labels each with the
+property's `label` from `realtime.yaml`.
+
+```yaml
+channels:
+  incident-room:                 # a channel type in realtime.yaml
+    messages:
+      status-update:             # a message type of that channel type
+        fields:
+          - property: summary
+            label: What changed
+            placeholder: One line
+          - property: severity
+            widget: select
+            span: 6
+      text:
+        fields:
+          - property: body
+            label: Message
+            widget: textarea
+```
+
+`fields` is a list, in the order the composer shows the fields. A property
+you do not list follows the listed ones, required first and then by name.
+Each entry takes these keys of a form field (see Field Options):
+
+| Key | Meaning |
+| --- | --- |
+| `property` | A property of the message type. Required. |
+| `label` | The label. Without it, the property's `label` in `realtime.yaml` is used. |
+| `placeholder` | Placeholder text for an empty input. |
+| `help` | Help text below the field. |
+| `widget` | `text`, `textarea`, `number`, `checkbox`, `date`, `datetime` or `select`. It must suit the property type: `text` for `string`, `textarea` for `string` or `markdown`, `number` for `integer`, `checkbox` for `boolean`, `date` for `date`, `datetime` for `datetime`, and `select` for an enum. A `ref` property takes no widget; it always gets an entity picker. |
+| `span` | Width on the 12-column grid, 1 to 12. Omit it for full width. |
+| `hidden` | Leaves the field out of the composer. When the author edits a message, the field keeps its stored value. |
+
+Labels are authored, never derived, as everywhere else in this file.
+
+An edit sends every property of the message, not only the ones the
+composer shows. A `hidden` field, or a value a trigger set, is sent back
+as stored, so editing a message never erases it. A `ref` the author can no
+longer read is left out of the edit, and the server keeps it as stored.
+
+The server refuses the file when the block:
+
+- names a channel type, message type or property that `realtime.yaml` does
+  not declare;
+- uses a form field key a composer has no behaviour for: `required`,
+  `required_when`, `visible_when`, `transitions`, `default`,
+  `keep_on_add_another` or `clear_when_hidden`. `required` comes from
+  `realtime.yaml`;
+- hides a required property, because the composer could then never send
+  it;
+- lists a property twice, or gives a widget that does not suit the
+  property type;
+- gives a message type a `display` other than `collapsed` or `hidden`.
+
+Without `realtime.yaml`, realtime is off and the block has no effect. The
+server then logs a warning instead of refusing the file, so you can add the
+block before you turn realtime on.
+
+The two files are checked against each other whenever either changes. A
+`data-entry.yaml` reload that breaks the block is refused. After a
+`realtime.yaml` reload, the server reads `data-entry.yaml` from disk again
+and checks it against the new file. If that check fails, the new
+`realtime.yaml` is still applied, because realtime itself is valid, the
+previous `data-entry.yaml` keeps working, and open browsers get a
+`config-error` event that names `data-entry.yaml` and says `realtime.yaml`
+was applied. `rela validate` and the Configure space run the same check.
+
+The block is served in `GET /api/v1/_config` as `channels`, next to `forms`.
+The structure the composer needs, such as property types and labels, comes
+from `GET /api/v1/_schema/channels` (see the realtime guide). A page that
+shows channels reads both again on a `refresh` event, so a change to
+either file reaches it without a page reload.
+
+### Quiet message types
+
+Some message types are only for an agent or a script. An agent runner, for
+example, posts `claim` and `resume` with a worktree path, and `progress`
+with a status note, often many in a row. People do not need to read them
+between the messages that ask for a decision. `display` on a message type
+tones such a type down in the web app:
+
+```yaml
+channels:
+  run:
+    messages:
+      claim:
+        display: hidden
+      resume:
+        display: hidden
+      progress:
+        display: collapsed
+        fields:
+          - property: body
+            label: Status
+```
+
+| Value | In the web app |
+| --- | --- |
+| `collapsed` | A run of these messages becomes one line, such as "3 messages: Progress". Click it to show the messages in place, below the line. Click it again to fold them. |
+| `hidden` | The messages are not shown. |
+| absent or empty | The messages are shown in full, as without the key. |
+
+A run is a sequence of adjacent messages of quiet types, that is, types
+with `collapsed` or `hidden`. A hidden message does not end a run, and it
+stays hidden when you expand the run. Any other message, or a session
+notice, ends a run. A removed message between two messages of a run joins
+the run: it counts in the line, and shows as a removed message when you
+expand the run. In a run without a collapsed message, a removed message
+stays a row of its own.
+
+When a channel type has a quiet type, the channel header shows a **Show
+all messages** button. Press it to show every message in full; press it
+again to go back. The web app does not remember it: each time you open a
+channel, quiet types are quiet again.
+
+Some messages of a quiet type are always shown in full, so that you never
+miss something you must act on or asked for:
+
+- the message that moved the session, when it carries the decision
+  buttons;
+- a question with choice buttons;
+- a message with an action you may run, such as **Record as decision**;
+- a message a reply quotes, after you click the quote. If it is folded,
+  its run expands.
+
+Such a message stays shown until you leave the channel, also after you
+decide or answer.
+
+A screen reader announces a new message only when it is shown in full. A
+new message that is hidden or folded is not announced. When it is shown in
+full later, because its choice buttons or decision buttons arrive, it is
+announced then. An ephemeral signal
+of a quiet type, `collapsed` or `hidden`, is not shown in the signal area
+until you press **Show all messages**. When every loaded message is
+hidden, the log says so, and points to **Show all messages**.
+
+Use `display` only on message types that people cannot post and that do
+not mention or reply to people. A person who posts a message of a hidden
+type does not see it either.
+
+`display: hidden` on a message type is not the same as `hidden: true` on a
+field. A hidden field is left out of the composer. A hidden message type is
+still sent to the browser, and **Show all messages** shows it.
+
+`display` is a display option, not access control. Everyone who may read
+the channel can still read every message: through the HTTP API, over MCP
+with `read_channel`, with `rela channel read`, and in the web app with
+**Show all messages**. To keep messages from a person, use the channel's
+`read` rule in `realtime.yaml`.
+
+`display` does not change unread counts. The server decides what counts
+from `realtime.yaml`, so pair each quiet type with `unread: false` there.
+Then the badge agrees with what you see: a channel does not show
+"5 unread" when you see one folded line.
+
+```yaml
+# realtime.yaml
+channel_types:
+  run:
+    message_types:
+      progress:
+        properties: { body: { type: markdown } }
+        post: [member]
+        unread: false
+```
+
+When a type is `hidden` here but still counts as unread in
+`realtime.yaml`, rela warns at load, on a reload of either file and in
+`rela validate`. The warning names the type; it does not stop the app.
+
+A mention or reply in a quiet message still shows in the inbox. Clicking
+it opens the channel at that message and shows it in full, also when its
+type is `hidden` or `collapsed`.
+
+### Unread messages
+
+The channel list on an entity page shows a badge on each channel with
+unread messages. The badge gives their number, or "99+" above 99. A screen
+reader reads it as, for example, "3 unread". A channel you never opened or
+posted in has no badge.
+
+Opening a channel marks it read up to its newest message, while the
+browser tab is visible. Newer messages that arrive while the channel is
+open are marked read too. A hidden tab marks nothing until you return to
+it. A failed mark is not shown to you. The realtime guide describes read
+markers and which messages count as unread.
+
+### Mentions in messages
+
+A message can mention a person or an agent with a code span, such as
+`` `USR-7` `` or `` `integration:triage-bot` ``. The app shows each
+mention the server lists for the message as a chip:
+
+- A person you may read becomes a link to their entity. The link shows the
+  title the server sends, and the id as a tooltip.
+- A job identity or a login becomes a chip with its text.
+- A person you cannot read stays plain code.
+
+A code span inside a link or a code block stays as it is. The composer has
+no `@` picker yet, so type the mention as a code span. The realtime guide
+describes which form names a person in your project.
+
+### Inbox
+
+When `realtime.yaml` declares at least one channel type, the sidebar shows
+an **Inbox** item under **Search**. It opens the inbox page, which lists
+what needs you across all entities:
+
+- **Waiting on you**: the sessions that wait on a role you hold, oldest
+  wait first. Each row shows the entity, the channel, the session's state
+  and since when it waits.
+- **Mentions and replies**: the unread messages that mention you or reply
+  to one of yours, newest first. The row shows the author and the time,
+  not the message text.
+- **Unread channels**: the channels you opened or posted in that have new
+  messages, newest activity first.
+
+The page shows the first 50 waiting sessions. With more, it says, for
+example, "Showing 50 of 120".
+
+The Inbox item has a badge:
+
+| You have | The badge shows |
+| --- | --- |
+| Sessions that wait on you | The number of waiting sessions plus mentions and replies, in the warning colour |
+| Only mentions or replies | Their number |
+| Only unread channels | A dot without a number |
+| Nothing | No badge |
+
+The badge and the page update without a reload, within about 2 seconds
+of a change in the server, or 4 seconds when channels are stored in files. A post made outside the web app, for example
+with `rela channel post` or an agent over stdio `rela mcp`, can take up to
+15 seconds to show. When realtime is off, or you are not signed in as a
+person, the item is not shown.
+
+Click a row to open its channel on the entity page. This works for closed
+and archived channels too: the channel list then switches to **All**
+channels. The link adds `?channel=<type>` or `?channel=<type>/<name>` to
+the entity page, so you can bookmark or share it. A mention or reply row
+also adds `&seq=<n>`: the page then scrolls to that message, shows it in
+full even when its type is quiet, and focuses it. This happens once; the
+address then drops `seq`, so clicking the same row again works. A message
+that is not in the channel's loaded pages within ten older pages is not
+shown, and nothing is reported.
+
+**Mark read** on an unread channel marks the channel read up to its
+newest message. On a mention or reply it marks the channel read up to
+that message, so earlier messages in that channel are marked read too. If
+you never opened that channel, this starts tracking it, so later messages
+show it under **Unread channels**.
+
 ## Lists
 
 Lists display entities in a sortable, filterable table with optional create/edit actions.
@@ -1140,7 +1580,7 @@ lists:
       - property: title
         label: "Title"
         sortable: true
-        link: true
+        link: detail
       - property: status
         label: "Status"
         sortable: true
@@ -1149,8 +1589,8 @@ lists:
         sortable: true
 
     sort:
-      property: priority
-      direction: asc
+      - property: priority
+        direction: asc
 
     create_form: create_ticket
     edit_form: edit_ticket
@@ -1183,6 +1623,7 @@ lists:
 | `edit_form`       | string | Form name for the row edit action                           |
 | `page_size`       | int    | Rows per page (default: 25)                                 |
 | `actions`         | list   | Action IDs available as keyboard shortcuts on selected rows |
+| `toolbar_actions` | list   | Action IDs shown as buttons next to "New"; they run without a selected row (see [Buttons on a list](#buttons-on-a-list-toolbar_actions)) |
 | `export_render`   | string | Lua script under `scripts/` that renders this list for export instead of the built-in column table (see View Export & Transforms) |
 
 #### Header and footer info regions
@@ -1221,7 +1662,8 @@ Notes:
 ### Column Options
 
 A column shows a property value, the comma-separated titles of an entity's related entities,
-or the face each row was served in. Set exactly one of `property`, `relation` or `face`.
+the face each row was served in, or a busy indicator. Set exactly one of `property`, `relation`,
+`face` or `busy`.
 
 | Field       | Type   | Description                                                                 |
 | ----------- | ------ | --------------------------------------------------------------------------- |
@@ -1229,9 +1671,10 @@ or the face each row was served in. Set exactly one of `property`, `relation` or
 | `relation`  | string | Relation type whose targets are shown comma-separated                       |
 | `direction` | string | Relation columns only: `"outgoing"` or `"incoming"`; inferred when omitted   |
 | `face`      | bool   | Shows the label of the face each row was served in; faced types only        |
-| `label`     | string | Column header (defaults to property / relation name, or `Face`)             |
+| `busy`      | string | Channel type; shows a busy indicator while a channel of this type on the row is in a working state; lists only |
+| `label`     | string | Column header (defaults to property / relation name, `Face` or `Busy`)      |
 | `sortable`  | bool   | Column can be sorted by clicking the header                                 |
-| `link`      | bool   | Cell value links to the entity's detail page                                |
+| `link`      | string | `detail` links the cell to the entity's detail page; `document/<name>` to a document |
 
 **Face column example** — on a list of a type with `concept` and `vastgesteld` faces, show
 which one the world serves for each row:
@@ -1251,11 +1694,50 @@ default world a row has no face, so the cell is empty.
 ```yaml
 columns:
   - property: title
-    link: true
+    link: detail
   - relation: implements
     direction: incoming
     label: "Implemented by"
 ```
+
+#### Busy column example
+
+A `busy` column shows when someone, such as an agent, works on the row's
+entity now. It names a channel type from `realtime.yaml`, as a
+[busy card field](#busy-cards) does on a board:
+
+```yaml
+lists:
+  tickets:
+    entity_type: ticket
+    columns:
+      - property: title
+        link: detail
+      - property: status
+      - busy: run
+        label: Agent
+```
+
+The cell shows the same indicator as a busy card: pulsing dots, the state's
+label and the time in that state, such as "Planning · 3h", and "+1" when
+more channels are busy. A row that is not busy has an empty cell. The
+header is the column's `label`, or "Busy" when it has none. The column
+stays visible when the list is narrow, as on a phone. A list export leaves
+the column out, because busy state is live and differs per reader.
+
+| Rule | Why |
+| --- | --- |
+| At most one `busy` column per list | The list asks for one channel type. |
+| Not the first column | The first column is the row title and link. |
+| `busy` stands alone: only `label` may be set beside it | It shows a channel, not a value. |
+| Not sortable | Sorting by busy state would read every channel before paging. |
+| The channel type exists, has a session with a `working` state and attaches to the list's entity type | Otherwise no row could be busy. |
+| Lists only | On a dashboard card or a view section column it is a config error. |
+
+These rules are checked by `rela validate`, when the server starts, when
+`data-entry.yaml` is reloaded and when you save in Configure. With realtime
+off the column loads with a warning and shows nothing. See the busy
+indicator section of the realtime guide for when it updates.
 
 ### Static Filters
 
@@ -1294,17 +1776,24 @@ silent lexicographic fallback.
 **Variable substitution in filter values:**
 
 Filter values starting with `$` are reserved for variables. The following
-date variables are supported:
+variables are supported:
 
-| Variable     | Resolves to                          |
-| ------------ | ------------------------------------ |
-| `$today`     | Today's date in `YYYY-MM-DD` (UTC)   |
-| `$tomorrow`  | Tomorrow's date                      |
-| `$yesterday` | Yesterday's date                     |
+| Variable     | Resolves to                                    |
+| ------------ | ---------------------------------------------- |
+| `$today`     | Today's date in `YYYY-MM-DD` (UTC)             |
+| `$tomorrow`  | Tomorrow's date                                |
+| `$yesterday` | Yesterday's date                               |
+| `$user`      | The id of the user who requests the list       |
 
-Variables are evaluated in **UTC** for predictability across server
-timezones. Variables work in single-value operators and in comma-separated
-lists (`in`, `!=`):
+Date variables are evaluated in **UTC** for predictability across server
+timezones. `$user` is resolved for each user, so one list or board shows each
+user their own rows. This holds for its sidebar counts and for the rows a
+command on the list receives. When the user cannot be identified, `$user`
+matches no user's rows. `$user` works in property filters; a relation
+filter does not resolve it.
+
+Variables work in single-value operators and in comma-separated lists (`in`,
+`!=`):
 
 ```yaml
 filters:
@@ -1317,6 +1806,11 @@ filters:
   - property: due_date
     operator: in
     value: "$yesterday,$today,$tomorrow"
+
+  # Tasks assigned to whoever looks at the list
+  - property: assignee
+    operator: "="
+    value: $user
 ```
 
 To filter for a literal value that starts with `$`, you currently cannot
@@ -1687,7 +2181,7 @@ lists:
 | Key        | Type   | Description |
 |------------|--------|-------------|
 | `property` | string | The property to group by. Required. It must be a single value, not a `list: true` property. |
-| `groups`   | list   | Optional. Per value: `value` (required, must be one of the enum's values), `label`, and `color` (`green`, `amber`, `red`, `grey` or `blue`). Needs an enum property. |
+| `groups`   | list   | Optional. Per value: `value` (required, must be one of the enum's values), `label`, and `color` (`green`, `amber`, `red`, `grey`, `blue` or `purple`). Needs an enum property. |
 | `buckets`  | string | `relative` groups a date by how far away it is. See [Date buckets](#date-buckets). |
 | `labels`   | map    | Section titles for the date buckets. Only with `buckets`. |
 | `max_rows` | int    | How many rows the list loads, from 1 to 2000. Default 500. |
@@ -1811,7 +2305,7 @@ views:
         columns:
           - property: title
             label: "Title"
-            link: true
+            link: detail
           - property: status
             label: "Status"
         empty_message: "No blocked tickets"
@@ -1887,6 +2381,45 @@ traverse:
 | `recursive`       | bool   | Follow the relation transitively                   |
 | `max_depth`       | int    | Maximum recursion depth                            |
 | `where`           | string | Filter expression to select matching entities      |
+| `condition`       | string | Predicate expression, ANDed with `where` (see below) |
+| `mentioned_by`    | bool   | Collect the entities whose body mentions the entry (see below) |
+
+#### Backlinks: `mentioned_by`
+
+A `mentioned_by` step collects the entities whose markdown body mentions the
+entry as a code span holding its id, such as `` `FEAT-001` ``. These are the
+same backlinks the built-in "Mentioned by" panel lists. The step lets you place
+them in a section of your own and choose how they look.
+
+```yaml
+traverse:
+  - from: entry
+    mentioned_by: true
+    collect_as: mentions
+    where: "status != done"   # optional
+```
+
+- The step takes `from: entry` only. It cannot be combined with `follow`,
+  `follow_incoming`, `recursive` or `max_depth`, and it needs a `collect_as`
+  no other step uses.
+- It collects at most 200 sources, in id order. `where:` filters while the
+  step collects, so the 200 are matching sources. A `condition:` does the
+  same.
+- When more matching sources exist, or the backlink index scan reaches its
+  limit, the section shows a note that only part of the list is shown. A
+  section `sort:` orders the collected sources; it does not pick which 200
+  are collected.
+- Sources you may not read are never collected, and each source appears at
+  the face the world serves.
+- Any type can mention the entry, so the collection can hold several types.
+  Use `fields_by_type` or `columns_by_type` on the section to give each type
+  its own fields or columns (see [Per-type fields and columns](#per-type-fields-and-columns)).
+- A view that collects backlinks hides the built-in "Mentioned by" panel on
+  that type's page, so the backlinks are not shown twice. A `mentioned_by`
+  collection that no section shows is a load error.
+- Side panels do not support `mentioned_by`.
+- A command with `kind: view` receives the same collection, so a script sees
+  at most 200 backlinks.
 
 #### Where Clause Syntax
 
@@ -1921,13 +2454,61 @@ filtering on draft values would contradict itself, so the filter follows the
 page. Filters on the `type` pseudo-property are unaffected, because an entity's
 type is the same on every face.
 
-If a where clause is invalid or a property doesn't exist, the filter is silently
-skipped and all entities are returned (fail-open for robustness).
+A `where:` that does not parse is a load error, so `rela validate` and the
+server refuse it. A `where:` on a property the entity's type does not declare
+matches nothing for that entity.
 
-> **Note:** that fail-open behaviour is a known defect, not a design goal — a
-> mistyped `where:` silently *widens* a clause whose purpose is to narrow. It is
-> tracked as BUG-WHEREWIDE and will become a load-time error, so a bad `where:`
-> is refused when the config parses rather than ignored at render time.
+#### Traverse conditions (`condition:`)
+
+A `where:` holds one clause. When a step needs `and`, `or`, `not` or grouping,
+use `condition:`. It is a predicate expression in the same language as a
+list's [`condition:`](#conditions-condition), evaluated for every entity the
+step collects and ANDed with `where:`.
+
+`entity.type` is the entity's type and `entity.id` its id, so one step can
+select by type and by property at once:
+
+```yaml
+traverse:
+  # Only the finished tasks.
+  - from: entry
+    follow: bestaat_uit
+    collect_as: afgerond
+    condition: "entity.type == 'taak' and entity.status == 'gereed'"
+
+  # The unfinished tasks, and every sub-project.
+  - from: entry
+    follow: bestaat_uit
+    collect_as: lopend
+    condition: >-
+      entity.type == 'project'
+      or (entity.type == 'taak' and entity.status ~= 'gereed')
+```
+
+- The condition is compiled at load for every type the step can collect: the
+  `to:` types of a `follow:` relation, the `from:` types of a
+  `follow_incoming:` relation, and every type for `mentioned_by`. A `where:`
+  on `type` runs first and narrows that set. If the condition does not
+  compile for one of the types, `rela validate` and the server refuse the
+  config and name the view, the step and the type.
+- A property that another collected type declares, but this entity's type
+  does not, reads as `nil`. So `entity.status == 'gereed'` is false for a type
+  without a status, and `entity.status ~= 'gereed'` is true. Note the
+  difference with `where:`, which leaves out an entity whose type lacks the
+  property.
+- On such a property only `==` and `~=` compile. A comparison such as
+  `entity.vervaldatum < today()` could only fail for a type without the
+  property, so it is a load error. Narrow the types first with
+  `where: "type = taak"`.
+- A property no collected type declares is a load error.
+- The language is Lua, as in a list `condition:`: not-equal is `~=`, strings
+  take quotes, and `and`/`or`/`not` are words. The `where:` spelling
+  `status = gereed` is refused.
+- The condition reads only the fields the reader may see. A hidden field
+  reads as `nil`. Like `where:`, it reads the face the world resolved.
+- `related(...)` is not available in a traverse condition. The step runs up to
+  ten times while the view collects, and each run would cost a store query.
+- Side panels do not support `condition:`; use `where:` there.
 
 ### Sections
 
@@ -1953,7 +2534,7 @@ sections:
     columns:
       - property: title
         label: "Title"
-        link: true
+        link: detail
       - property: status
         label: "Status"
     empty_message: "No related items found"
@@ -1970,12 +2551,15 @@ sections:
 | `children`      | string | Collection to nest under each row (`nested` mode; required) |
 | `parent_columns`| map    | `nested` mode: columns for the source level, keyed by entity type |
 | `child_columns` | map    | `nested` mode: columns for the child level, keyed by entity type |
+| `fields_by_type`| map    | Per-type `fields`, keyed by entity type (`list`, `cards`, `content`, `properties`) |
+| `columns_by_type`| map   | Per-type `columns`, keyed by entity type (`table`) |
 | `sort`          | list   | Sort keys for a flat section (`list`, `table`, `cards`) |
 | `parent_sort`   | list   | `nested` mode: sort keys for the source level            |
 | `child_sort`    | list   | `nested` mode: sort keys for the child level             |
 | `group_by`      | string | Property to group entities by                           |
 | `empty_message` | string | Text shown when the collection is empty                 |
-| `link`          | bool   | Link entity titles to their detail pages                |
+| `hide_empty`    | bool   | Leave the section out when the collection is empty (see below) |
+| `link`          | string | `detail` links entity titles to their detail pages      |
 | `create`        | map    | Offer a "create related entity" button (see below)      |
 
 Each entry under `fields:` takes:
@@ -1983,10 +2567,100 @@ Each entry under `fields:` takes:
 | Field      | Type   | Description                                                  |
 | ---------- | ------ | ------------------------------------------------------------ |
 | `property` | string | Property name                                                |
-| `label`    | string | Display label (defaults to the raw property name)            |
+| `relation` | string | Relation to show as a field, instead of `property` (see below) |
+| `style_from` | string | Relation fields only: enum property of the target that colours each target (see below) |
+| `label`    | string | Display label (defaults to the raw property name, or the relation's label) |
 | `span`     | int    | Width on the 12-column grid (1-12; omit for full width)      |
 | `render`   | string | `display` or `input`; overrides the section's `render`        |
 | `widget`   | string | Which widget renders this property (see Widget Overrides)    |
+
+#### Relation fields
+
+A `relation:` field shows the entry's outgoing edges of that relation as a
+field among the properties, instead of a section of its own. It shows the
+target titles. With `render: input`, a menu lists the candidates:
+
+- On a relation with `max_outgoing: 1`, picking a target replaces the current
+  one in one write.
+- On any other relation, each pick adds or removes that target.
+
+```yaml
+sections:
+  - heading: Details
+    source: entry
+    display: properties
+    render: input
+    fields:
+      - relation: has_status
+        label: Status
+        span: 6
+      - property: deadline
+        span: 6
+```
+
+With `style_from: <property>`, each target shows as a badge with the target's
+title, coloured by that property's value under `styles:`. The property must be
+an enum on every target type. For example, statuses with a `categorie` enum:
+
+```yaml
+styles:
+  statuscategorie:
+    actief: blue
+    gereed: green
+
+# in the view section
+fields:
+  - relation: heeft_status
+    label: Status
+    style_from: categorie
+```
+
+A relation field is valid only in a `source: entry` section with
+`display: properties`, on a relation that starts at the entry type. Set
+`property` or `relation`, not both. `widget` does not apply. Targets the
+reader may not read are left out.
+
+### Per-type fields and columns
+
+A collection can hold several entity types: the sources of a `mentioned_by`
+step, or a relation with several `to:` types. One `fields:` or `columns:` list
+then fits poorly, because each type has its own properties. `fields_by_type`
+and `columns_by_type` give each type its own list:
+
+```yaml
+sections:
+  - heading: Mentioned by
+    source: mentions
+    display: table
+    columns_by_type:
+      ticket:
+        - {property: title, link: detail}
+        - {property: status}
+      decision:
+        - {property: title, link: detail}
+        - {property: date}
+    columns:                      # every other type
+      - {property: title, link: detail}
+
+  - heading: Mentioned by (cards)
+    source: mentions
+    display: cards
+    fields_by_type:
+      ticket: [{property: status}, {property: priority}]
+```
+
+- A row uses its own type's list. A type absent from the map uses `fields:` or
+  `columns:`.
+- A `columns_by_type` table shows one group per type, ordered by type name,
+  each with its own header. It cannot be combined with `group_by`. It needs a
+  `columns:` fallback unless the map covers every type the collection can hold;
+  for a `mentioned_by` collection that is every type in the schema.
+- Load errors: a key that is not an entity type, or a type the collection can
+  never hold; a property the keyed type does not declare; an empty list; a
+  fallback property that none of the remaining types declares; the key on the
+  wrong display mode or on `source: entry`.
+- `display: nested` keeps its own per-level keys, `parent_columns` and
+  `child_columns`.
 
 ### Creating related entities from a section
 
@@ -2057,6 +2731,13 @@ form's own default template.
 | ---------- | ---- | ------------------------------------------------------ |
 | `template` | str  | Template variant to preselect (`templates/entities/<type>--<variant>.md`) |
 
+A create form for a type with more than one template shows a **Template**
+dropdown, and `template` sets its starting choice. The dropdown names each
+variant after its file name, with `-` and `_` shown as spaces:
+`task--corrective_action.md` appears as "Corrective action". The base
+`<type>.md`, if there is one, appears as "Default". Switching templates after
+you have entered values asks first, because the new template replaces them.
+
 When `in:` includes `header`, the section also contributes an entry to a menu at
 the top of the page. That menu is the union of the sections that opted in. It is
 deduped by relation, so two sections over one relation produce a single entry.
@@ -2066,6 +2747,42 @@ from a `recursive:` traverse rule, or from a rule that starts at another
 collection rather than `entry`, has no single entity to link the new one to;
 declaring `create:` on one is refused at config load rather than silently
 producing no button.
+
+### Hiding empty sections
+
+An empty section normally stays on the page and shows its `empty_message`, or
+"No items". Set `hide_empty: true` to leave the whole section out instead,
+heading included, when its collection has no rows. Use it for a section that
+only matters on some entities:
+
+```yaml
+sections:
+  - heading: Corrective action for
+    source: subjects
+    display: list
+    hide_empty: true
+```
+
+The section also drops out of the jump bar. It comes back the next time the
+page loads with a row in the collection.
+
+The server decides, after access control: a section whose rows you may not
+read is empty for you, and hides for you. A collection that rela could only
+partly fill is not known to be empty, so its section stays. That is a
+`mentioned_by` collection that hit its limit, or a collection traversed from
+one.
+
+`hide_empty` is refused at config load in these cases:
+
+- **With `empty_message`.** A hidden section shows no message, so one of the
+  two keys would have no effect.
+- **With `create:`.** An empty section is where the create button is most
+  needed. Hiding it would remove the button exactly then.
+- **With `source: entry`.** A section on the entry shows its properties or its
+  body. It has no collection that can be empty.
+- **Without `source:`.** The section has no collection to check.
+- **In a form's `side_panel`.** The side panel does not support it. Its
+  sections carry Add and Link buttons, which would disappear with the section.
 
 ### Field Render Modes
 
@@ -2335,9 +3052,15 @@ entity_views:
 | ------------- | ------- | ----------------------------------------------------------------- |
 | `detail_view` | string  | View name (must reference a key under `views:`) used for entities of this type |
 | `duplicate`   | mapping | Narrows what a duplicate of this type copies — see below |
+| `mentioned_by_panel` | bool | `false` hides the built-in "Mentioned by" panel on this type's page |
 
-An entry may carry either field or both. An entry that declares neither is a
+An entry may carry any of these fields. An entry that declares none is a
 load error, since it configures nothing.
+
+The "Mentioned by" panel lists the entities whose body mentions the one on the
+page. It is shown by default. It is hidden when `mentioned_by_panel` is
+`false`, and when the type's view collects backlinks itself through a
+[`mentioned_by` step](#backlinks-mentioned_by).
 
 ### Duplicating an entity
 
@@ -2387,6 +3110,36 @@ incoming ones ("something else points at me") are offered but not preselected.
 Only relations whose other end you may read are listed, so the counts shown are
 per-viewer and may be lower than the raw graph.
 
+### Using a conversion in the web app
+
+When the schema declares a conversion for the entity's type and the caller has
+the source type's `convert:` ACL grant, the detail page offers the configured
+conversion. One allowed conversion is a button with its label. Several are one
+**Convert** menu that lists each conversion.
+
+When the header actions do not fit beside the title, the page keeps the
+commands, the header create menu and **Edit** in the row. Every other action,
+including History, Export, Duplicate, Delete and the conversions, moves into the
+"⋯" menu. The title keeps a minimum width, and button labels do not wrap.
+
+The conversion form shows mapped destination fields and any
+required fields that still need values. Its preview lists relations that will
+be remapped or dropped; the user confirms before saving. The form has two
+steps: **Review** runs the preview, and when it passes the button changes to
+**Convert**, which saves. A refused preview or conversion shows its error in the
+form, which stays open. The client selects a
+configured conversion by name and cannot supply its own field or relation map.
+
+The conversion changes the entity type and id, while preserving comments,
+history lineage and aliases for old links. It reuses the rename history and
+reference rewriting behavior. See [conversion definitions](metamodel.md#declaring-entity-conversions)
+for the operator mapping syntax and face limitations.
+
+After the preview passes, the form shows where each face's comments go. Comments
+and history move with the entity, so everyone who can read the new type and
+face can read those comments. The history timeline of the new entity lists only
+versions of its new type and face; the conversion version names the old id.
+
 ### How navigation resolves
 
 For each clickable entity reference, the SPA picks the destination URL using
@@ -2412,10 +3165,11 @@ conflict by hand and run `rela migrate` again.
 
 ## Dashboard
 
-The dashboard is an optional overview page that displays a grid of query-driven cards. Each card
-runs a search query against your entities and renders the results as a count, a property breakdown,
-or a mini-table. The query syntax is the same as the search page: `type:`, `prop:`, `status:`,
-and free text.
+The dashboard is an optional overview page that displays a grid of cards. A card takes its rows
+from a configured [list](#lists) (`list:`) or from a search query (`query:`), and renders them as a
+count, a property breakdown, a mini-table, a matrix or a ratio. Matrix and ratio cards need
+`list:`. The query syntax is the same as the search page: `type:`, `prop:`, `status:`, and free
+text.
 
 ### Basic Dashboard
 
@@ -2439,14 +3193,14 @@ dashboard:
       columns:
         - property: title
           label: "Title"
-          link: true
+          link: detail
         - property: status
           label: "Status"
         - property: assignee
           label: "Assignee"
       sort:
-        property: status
-        direction: asc
+        - property: status
+          direction: asc
       limit: 10
 ```
 
@@ -2460,16 +3214,197 @@ dashboard:
 
 ### Card Options
 
-| Field     | Type   | Description                                                        |
-| --------- | ------ | ------------------------------------------------------------------ |
-| `title`   | string | Card heading                                                       |
-| `query`   | string | Search query (same syntax as the search page)                      |
-| `display` | string | Display mode: `"count"`, `"breakdown"`, or `"table"`               |
-| `group_by`| string | Property to group by (`breakdown` mode only)                       |
-| `columns` | list   | Column definitions (`table` mode only, same format as list columns) |
-| `sort`    | object | Sort order (`table` mode only)                                     |
-| `limit`   | int    | Maximum rows to display (`table` mode only)                        |
-| `permission` | string | Hide this card from principals who do not hold the named ACL permission |
+| Field        | Type   | Description                                                                 |
+| ------------ | ------ | --------------------------------------------------------------------------- |
+| `title`      | string | Card heading                                                                |
+| `list`       | string | A list under `lists:` that supplies the rows. Set `list` or `query`, not both |
+| `query`      | string | Search query (same syntax as the search page)                               |
+| `display`    | string | `count`, `breakdown`, `table`, `matrix` or `ratio`                          |
+| `group_by`   | string | Property to group by (`breakdown`, and optionally `ratio`)                  |
+| `columns`    | list or string | `table`: column definitions, same format as list columns. `matrix`: the property along the top |
+| `sort`       | list   | Sort order (`table` mode only), the same list as a list's `sort:`           |
+| `limit`      | int    | Maximum rows to display (`table` mode only; at most 100 for a list card)    |
+| `rows`       | string | `matrix`: the property down the side                                        |
+| `tone_by`    | string | `matrix`: the enum property that colours a cell                             |
+| `colors`     | map    | `matrix`: a colour per `tone_by` value                                      |
+| `rows_label` / `columns_label` | string | `matrix`: the axis title; default the property's label, else its name |
+| `rows_order` / `columns_order` | string | `matrix`: `asc` (default) or `desc`                         |
+| `match`      | string | `ratio`: the query scope on the list's type that counts as matched          |
+| `width`      | string | `normal` (default), `wide` or `full`: how much of the row the card takes    |
+| `permission` | string | Hide this card from principals who do not hold the named ACL permission     |
+
+### Cards from a list (`list:`)
+
+A card with `list:` counts the rows of that list, exactly as the list page
+shows them to the person viewing the dashboard. It inherits the list's entity
+type, `filters:`, `condition:`, `query_scope:` and world. The card's link
+opens the list, and a page opened in a [world](#worlds-in-the-web-app-and-api) counts in that world.
+
+```yaml
+lists:
+  open-risks:
+    entity_type: risk
+    filters:
+      - property: status
+        value: open
+
+dashboard:
+  cards:
+    - title: "Open risks"
+      list: open-risks
+      display: count
+    - title: "By priority"
+      list: open-risks
+      display: breakdown
+      group_by: priority
+```
+
+The server computes a list card. It reads only the rows the viewer may read,
+hides property values the viewer may not see, and only then counts. A row whose
+grouping value is hidden from the viewer is left out of that grouping, and the
+card says that some values are hidden. The value is computed for each request
+and is never shared between users. The SPA fetches it from
+`/api/v1/_dashboard/card?name=<dashboard>&card=<index>`, where `index` is the
+card's position in the dashboard's `cards:` list.
+
+`group_by:` must name a single-valued property. A table card's `columns:` and
+`sort:` must name properties of the list's type, and its `limit:` is at most
+100. If one card fails to load, for example because its list filters on a
+property hidden from the viewer, only that tile says so.
+
+A card with `query:` works as before: the browser runs the query on the search
+page's API and counts the results.
+
+### Matrix cards (`display: matrix`)
+
+A matrix counts the list's rows by two properties: `rows:` down the side and
+`columns:` along the top. Each property must be a single-valued enum or an
+integer. A risk heat map is the typical use:
+
+```yaml
+dashboard:
+  cards:
+    - title: "Risk heat map"
+      list: open-risks
+      display: matrix
+      rows: impact
+      rows_order: desc
+      columns: likelihood
+      columns_label: Likelihood
+      tone_by: rating
+      colors:
+        low: success
+        medium: orange/500
+        high: error
+```
+
+- An enum axis shows every declared value, in declared order, even when no row
+  has it.
+- An integer axis with a [declared range](metamodel.md#integer-ranges-min-and-max)
+  (`min:` and `max:` in the schema) shows every value in that range, even when
+  no row has it. A range wider than 50 values is a configuration error.
+- An integer axis without a declared range shows every whole number from the
+  lowest to the highest value that occurs, so there are no gaps in the grid.
+  With only `min:` or only `max:` declared, that end is the bound and the other
+  end follows the rows.
+- If that span is wider than 50 values, for example because of one outlier,
+  the axis shows only the values that occur. It shows at most 50 of them,
+  starting from the end shown first, and the card says when values are left
+  out.
+- A row is not placed in a cell when it has no value for an axis, a value the
+  enum does not declare, a value outside the declared range, or a value on an
+  integer axis that is not a whole number. The card shows how many rows that
+  is.
+- The card shows a title for each axis: the column title above the column
+  values and the row title beside the row values. A title is the property's
+  `label:` in the schema, else its name. `rows_label:` and `columns_label:`
+  override it.
+- `rows_order: desc` and `columns_order: desc` reverse an axis. For an integer
+  the highest value comes first; for an enum the last declared value does. Use
+  `rows_order: desc` to put the highest impact at the top of a risk matrix.
+  The default is `asc`.
+- The grid grows with the card, up to about 72 pixels per column, so a wide
+  card shows larger cells.
+- `tone_by` names an enum property. A cell takes the colour of the most severe
+  `tone_by` value among its rows. The last declared value is the most severe.
+- `colors` maps a `tone_by` value to a tone (`success`, `warning`, `error`,
+  `info`, `new`) or to a [palette colour](#color-names) such as `red/700`. A value
+  that `colors` does not name takes its colour from `styles:`. A value with
+  neither leaves the cell neutral.
+- Without `tone_by`, a cell is shaded by its count.
+- Empty cells stay neutral. Clicking a cell opens the list filtered on both
+  values.
+- A row whose `tone_by` value is hidden from the viewer still counts, but does
+  not colour its cell.
+
+### Ratio cards (`display: ratio`)
+
+A ratio shows how many of the list's rows a [query scope](metamodel.md#query-scopes)
+admits, as `matched / total (pct)`. `match:` names the scope on the list's
+entity type; `all` is refused, because it would always read 100%. Add
+`group_by:` to show the ratio for each value of a property.
+
+```yaml
+dashboard:
+  cards:
+    - title: "Controls with evidence"
+      list: controls
+      display: ratio
+      match: has-evidence
+      group_by: status
+```
+
+### Card width (`width`)
+
+Every card takes one cell of the dashboard grid. A matrix, a table with
+several columns or a long breakdown can take more room with `width:`:
+
+| Value    | Width                                                          |
+| -------- | -------------------------------------------------------------- |
+| `normal` | One cell. This is the default.                                 |
+| `wide`   | Two columns. On a grid with fewer columns, the whole row.      |
+| `full`   | The whole row.                                                 |
+
+```yaml
+dashboard:
+  cards:
+    - title: "Risk heat map"
+      list: open-risks
+      display: matrix
+      rows: impact
+      columns: likelihood
+      width: wide
+    - title: "Open risks"
+      list: open-risks
+      display: table
+      columns:
+        - property: title
+        - property: owner
+        - property: due
+      width: full
+```
+
+`width` works on list cards and query cards alike. Any other value, such as a
+column count (`width: 2`), fails config load.
+
+The number of columns follows the width of the screen, so `width` names a size
+rather than a column count. On a phone (a screen 480 pixels wide or less),
+every card takes the whole row, whatever its `width`. Cards have no height
+setting: a card grows to fit its content, and the cards in one row share the
+height of the tallest.
+
+Cards appear in the order of `cards:`, which is also the order a keyboard and a
+screen reader follow. The grid does not move a later card up to fill a hole. A
+`wide` card that does not fit at the end of a row starts the next row and
+leaves one cell empty, and a `full` card always starts a new row. To avoid
+holes, put wide cards at the start of a row, for example first, or after a
+number of normal cards that fills a row.
+
+### Editing list cards in Configure
+
+The Configure space edits query cards only. Write `list:`, matrix and ratio
+cards in `data-entry.yaml`. The Configure space does not edit `width` either;
+editing a card there keeps the width it has.
 
 ### Hiding cards a user cannot use (`permission`)
 
@@ -2492,7 +3427,7 @@ dashboard:
 ```
 
 **This is a UX filter, not an access control.** Card data already flows through
-the ACL-scoped search path, so a principal who cannot read the matching
+the ACL-scoped search and list paths, so a principal who cannot read the matching
 entities already sees a card reading `0` or an empty table — `permission:`
 just stops rendering that useless tile. Hiding a card grants and revokes
 nothing: its query typed into the search page returns exactly the rows it
@@ -2514,19 +3449,99 @@ same one shown when no cards are configured at all.
 > roles in `acl.yaml` first. This applies equally to `permission:` on
 > commands, documents, and navigation entries.
 
+### Named dashboards (`dashboards`)
+
+A project can have more dashboards than the default one. Each space can then
+open on its own, for example a sales pipeline in a CRM space. Declare them
+under `dashboards:`, keyed by name. Each entry has the same fields as
+`dashboard:`, cards and `permission:` included:
+
+```yaml
+dashboard:                 # the default dashboard, at /dashboard
+  title: "Overview"
+  cards: [...]
+
+dashboards:
+  sales:                   # at /dashboard/sales
+    title: "Pipeline"
+    cards:
+      - title: "Open deals"
+        query: "type:deal status:open"
+        display: count
+```
+
+Open a named dashboard by writing its name where `dashboard: true` is
+accepted: a [navigation entry](#navigation), a [page tab](#pages), a space
+[`home:`](#spaces) and a command's [`available_on:`](#visibility-rules-available_on).
+
+```yaml
+spaces:
+  - id: crm
+    label: CRM
+    home: { dashboard: sales }
+    navigation:
+      - label: Pipeline
+        dashboard: sales
+```
+
+The rules:
+
+- `dashboard:` and `dashboards:` can be used together. `dashboard:` stays the
+  default dashboard, and `dashboard: true` keeps opening it.
+- The name `default` is reserved. `dashboards:` may not declare it, and
+  `dashboard: default` means the same as `dashboard: true`.
+- A name starts with a lowercase letter, followed by up to 31 lowercase
+  letters, digits, `_` or `-`. It is part of the URL.
+- A name that `dashboards:` does not declare is a config error, for example
+  `navigation: references unknown dashboard "sales" (known: ops)`.
+- `dashboard: true` without a `dashboard:` block shows an empty dashboard, as
+  before.
+- An unquoted `yes`, `no`, `on`, `off`, `y` or `n` is refused, because it
+  reads as a boolean in older YAML. A block scalar (`|` or `>`) counts as
+  unquoted. Quote the value, or tag it `!!str`, to use it as a name.
+
+A named dashboard opens at `/dashboard/<name>`, and inside a space at
+`/s/<space>/dashboard/<name>`. Its sidebar entry is highlighted while it is
+open. The API serves it at `/api/v1/_dashboard?name=<name>`; without `name`
+the default dashboard is served. An unknown name returns 404 with the error
+type `dashboard_not_found`, and the page shows "Dashboard not found".
+
+A command's `available_on: { dashboard: ... }` scope applies to the commands
+API, `/api/v1/_commands?page_type=dashboard&qualifier=<name>`. A command
+with `dashboard: sales` matches only the `sales` dashboard, and one with
+`dashboard: true` only the default dashboard (an empty qualifier, or
+`default`). Unscoped `global` commands match every dashboard. The dashboard
+page itself does not list commands.
+
+In the Configure space, the Dashboard screen edits the default dashboard and
+every named one; pick a dashboard at the top of the screen. Adding or renaming
+a named dashboard is done in `data-entry.yaml`.
+
 ### Display Modes
 
 **`count`** shows a single large number — the count of entities matching the query. Use this for
 quick status indicators like "5 open tickets" or "3 overdue items".
 
 **`breakdown`** groups matching entities by a property and shows each value with a count and a
-horizontal bar. The property should be an enum or custom type so values can be styled with badge
-colors from `styles`. For example, grouping by `status` shows "open: 2, in-progress: 1, closed: 1"
-with colored bars.
+horizontal bar. When the property is an enum or custom type, each value shows as a badge with its
+authored label, and the badge and the bar take the value's colour from `styles`. A value without a
+style gets a grey badge and the accent-coloured bar. For example, grouping by `status` shows
+"Open: 2, In progress: 1, Closed: 1" with coloured bars.
+
+The groups follow the order the enum declares its values, so a breakdown by a status or a pipeline
+stage reads in that order. Values the enum does not declare come next, most frequent first, and
+entities without a value come last as "Unknown". A property that is not an enum is ordered by count,
+most frequent first. A `list:` card and a `query:` card order their groups the same way. A
+`query:` card whose rows have several entity types also orders by count, because the types may
+declare different values. A row whose grouping value is hidden from the viewer is left out, and the
+card says that some values are hidden.
 
 **`table`** shows matching entities as a compact table. It supports the same `columns` format as
 list definitions (with `property`, `label`, `sortable`, `link`), plus `sort` and `limit` to control
-ordering and row count.
+ordering and row count. Cells render as they do in a list: an enum value is a badge with its label
+and style, an integer property with `display: {currency: ...}` is an amount, and a date is formatted
+in the reader's locale. A table card with several columns usually needs `width: wide` or
+`width: full` (see [Card width](#card-width-width)).
 
 ### Query Syntax
 
@@ -2550,8 +3565,8 @@ Cards use the same search query syntax available on the search page:
 Multiple terms are combined with AND logic. For example,
 `type:ticket status:open prop:priority=critical` matches tickets that are both open and critical.
 
-Every card includes a link icon that opens the same query on the search page for further
-exploration.
+Every query card includes a link icon that opens the same query on the search page for further
+exploration. A list card's link opens its list.
 
 ## Next actions
 
@@ -2990,10 +4005,12 @@ kanbans:
 | `header`           | string | Markdown rendered above the board (info/help; see below)   |
 | `footer`           | string | Markdown rendered below the board                          |
 | `column_property`  | string | Property to group by for columns (must be enum/custom type)|
+| `columns_from`     | object | Columns from a relation's targets instead of an enum (see below) |
 | `columns`          | list   | Explicit column definitions (`value`, `label`, `icon`, `collapsed`) |
 | `swimlane_property`| string | Property to group by for swimlanes (optional)              |
 | `swimlanes`        | list   | Explicit swimlane definitions (`value`, `label`, `icon`)   |
 | `card`             | object | Card display configuration                                 |
+| `column_summary`   | list   | Aggregate lines under each column heading (see below)      |
 | `edit_form`        | string | Form name for editing cards (click to open)                |
 | `create_form`      | string | Form name for the "New" button                             |
 | `filters`          | list   | Static filters (same as lists)                             |
@@ -3089,6 +4106,57 @@ kanbans:
 
 Entities with column property values not in the explicit list are hidden from the board.
 
+Each column heading has a coloured dot in the same colour as the value's
+badge. For a custom type with a [`styles:`](#styles) entry, that is the
+colour the entry gives the value. A custom type without a `styles:` entry
+gets colours from rela automatically, so its columns are coloured too. A
+value that has no colour, such as one left out of a `styles:` entry, keeps
+the neutral grey dot.
+
+### Columns from a relation (`columns_from`)
+
+`columns_from` takes the columns from the targets of a relation instead of
+from an enum. Each target, such as a status entity, is one column:
+
+```yaml
+kanbans:
+  initiative_board:
+    entity_type: task
+    columns_from:
+      relation: has_status
+      offered_by: offers_status
+      order_by: rank
+      style_from: category
+    card:
+      title: title
+    create_form: task
+```
+
+| Key          | Type   | Description |
+|--------------|--------|-------------|
+| `relation`   | string | Required. A relation from the card type with `max_outgoing: 1` and exactly one target type. |
+| `offered_by` | string | Optional. A relation from the page's entity to the same target type. On a page tab, the columns are the targets the page's entity offers, in that relation's order. |
+| `order_by`   | string | Optional. A property of the target type that orders the columns when there is no `offered_by` or no page. Ties sort by title. |
+| `style_from` | string | Optional. An enum property of the target type. Each column heading takes its color from its target's value, through the app `styles:`, the same way a relation field's `style_from` colors its badge. |
+
+`columns_from` cannot be combined with `column_property`, `columns` or
+swimlanes. A card whose target is not one of the columns goes in an
+**Other** column, shown only when a card needs it.
+
+Dragging a card to another column replaces its edge with one to the new
+column's target, in a single write. A card cannot be dropped on **Other**.
+
+With a `create_form`, each column has an **Add** button. A card created from
+it starts with an edge to that column's target, so it lands in the column it
+was added from. On a page tab, the card is also linked to the page's entity,
+as with **New**. **Add** on the **Other** column opens the form without a
+target. **Create & add another** is not offered from a column, for the same
+reason as from a list section.
+
+A list can group on a relation the same way: `group_by` takes `relation`,
+`offered_by`, `order_by` and `style_from` with the same meaning, one section
+per target.
+
 ### Collapsing columns
 
 Every column heading has a collapse button. A collapsed column shrinks to a
@@ -3119,6 +4187,69 @@ the board remembers that choice. Columns inferred from the enum have no config
 default, so they start expanded.
 
 You cannot drop a card onto a collapsed column. Expand it first.
+
+### Column summaries
+
+`column_summary` shows lines under each column heading, one per entry, such
+as the number of deals and their total value in each stage of a sales
+pipeline:
+
+```yaml
+kanbans:
+  pipeline:
+    entity_type: opportunity
+    column_property: stage
+    column_summary:
+      - function: count
+        label: Deals
+      - function: sum
+        property: value
+        label: Totaal
+    card:
+      title: title
+      fields:
+        - property: value
+          show_label: false
+```
+
+With two cards worth 3500 and 8000, the column shows "Deals: 2" and
+"Totaal: € 11.500". The euro sign comes from the property, not from the
+board: `value` has `display: {currency: EUR}` in `schema.yaml` (see
+[Display formats](metamodel.md#display-formats)).
+
+| Key        | Type   | Description |
+|------------|--------|-------------|
+| `function` | string | Required. `count`, `sum`, `avg` (average), `min` or `max`. |
+| `property` | string | The property to aggregate. Required for every function except `count`, which counts the cards and takes no property. |
+| `label`    | string | Optional. Text before the value. Defaults to "Count", "Total", "Average", "Minimum" or "Maximum". |
+
+`sum` and `avg` need a single-valued `integer` property. `min` and `max`
+also accept a `date` or `datetime` property, and show the earliest or latest
+date. Config load checks this, and reports an unknown function, a missing
+property, or a property on `count`.
+
+A value is formatted the way the property is formatted everywhere else: a
+currency property shows as money, a date as a date. Numbers use the format
+of the reader's browser language. A whole number shows no decimals.
+
+The summaries cover the cards on the board: the cards the reader may see,
+after the board's filters. A card without a value adds nothing to `sum`,
+`avg`, `min` or `max`. An empty column shows 0 for `count` and `sum`, and
+"–" for `avg`, `min` and `max`, because those have no value. A collapsed
+column shows its summaries on one line on its narrow strip.
+
+If the property is hidden from the reader on some cards (with `visible:` in
+`acl.yaml`), those values are left out. The line then ends in "(partial)",
+so the reader knows the value does not cover the whole column. `count` is
+never partial: it counts the cards the reader sees.
+
+`column_summary` cannot be used on a board with swimlanes. A swimlane board
+has a heading per column in every lane, so there is no single place for the
+summaries. Config load reports it as an error.
+
+The entry shape (`function`, `property`, `label`) is meant to be shared. List
+footers, `group_by` headers and dashboard cards may adopt it later with the
+same syntax.
 
 ### Swimlanes
 
@@ -3165,6 +4296,11 @@ card:
 
 Card fields use the same styling as lists — enum values are displayed with colors from `styles`.
 
+A card field for a property with a display format, such as
+`display: {currency: EUR}`, shows the value in that format, such as
+"€ 3.500" in a Dutch browser. See
+[Display formats](metamodel.md#display-formats).
+
 #### Counts on cards
 
 Two kinds of card field show a number with an icon instead of a value. They sit
@@ -3199,6 +4335,93 @@ entity.
 
 `display` and `comments` are kanban-only: on a calendar or gantt field they are
 a config error.
+
+#### Busy cards
+
+A `busy` card field shows when someone, such as an agent, works on the
+card's entity now. It names a channel type from `realtime.yaml`. The card is
+busy while a channel of that type on the entity has its session in a state
+with status `working`:
+
+```yaml
+card:
+  title: title
+  fields:
+    - busy: run
+```
+
+The card shows pulsing dots, the state's label and the time in that state,
+such as "Planning · 3h". The time moves on each minute while the board is
+open. With several busy channels it shows the one longest in its state and
+"+1". A screen reader hears the type, the state and the time of each, such
+as "Agent run: Planning, for 3 hours". A card that is not busy shows
+nothing.
+
+A busy field shows no label by default, because the indicator already
+names the channel type to a screen reader. Set `show_label: true` to show
+one before the indicator. It defaults to the channel type's name; set
+`label` to change it.
+
+| Rule | Why |
+| --- | --- |
+| At most one `busy` field per card | The board asks for one channel type. |
+| `busy` stands alone: no `property`, `relation`, `comments` or `display` | It shows a channel, not a value. |
+| The channel type exists, has a session with a `working` state and attaches to the board's entity type | Otherwise no card could be busy. |
+| Kanban only | On a calendar or gantt field it is a config error. |
+
+These rules are checked by `rela validate`, when the server starts, and when
+you save in Configure. With realtime off the field loads with a warning and
+shows nothing. See the busy indicator section of the realtime guide for
+which states count, who sees the indicator and when it updates. A list
+shows the same indicator in a [busy column](#busy-column-example).
+
+#### Properties of related entities
+
+A card field with both `relation` and `property` shows that property of the
+related entities instead of their titles. For example, a sales pipeline of
+opportunities can show the segment of the linked organisation:
+
+```yaml
+card:
+  title: title
+  fields:
+    - relation: heeft_opportunity   # organisatie -> opportunity
+      direction: incoming
+      property: segment             # a property of organisatie
+      show_label: false
+```
+
+| Key          | Description                                                                  |
+| ------------ | ---------------------------------------------------------------------------- |
+| `relation`   | The relation to follow.                                                      |
+| `direction`  | `outgoing` or `incoming`. Inferred like any card relation field.             |
+| `property`   | A property of the entity types at the other end of the relation.             |
+| `label`      | Optional. Defaults to the property name.                                     |
+| `show_label` | Optional. Default `true`.                                                    |
+
+The value renders as the property renders elsewhere. An enum shows as a badge
+in the colour from its `styles:` entry, an integer with
+`display: {currency: EUR}` shows as an amount, and a date is formatted. Plain
+text values are separated by commas.
+
+A card with several related entities shows each distinct value once, in the
+order of the relations. A list property adds each of its elements. A card with
+no related entity, or none with a value, shows nothing for the field.
+
+Access control applies. A related entity the reader cannot see adds nothing,
+and neither does a property hidden from the reader by a `visible:` rule.
+
+The board checks the field when the configuration loads:
+
+- The board's entity type must be on the starting side of the relation: a
+  `from` type for `outgoing`, a `to` type for `incoming`.
+- `property` must exist on every entity type at the other end of the relation.
+  The error names each type that lacks it.
+- `display: count` cannot be combined with `property`.
+
+This is kanban-only for now: on a calendar or gantt field it is a config error.
+It reads one relation step. Sorting or filtering by a related property is not
+supported.
 
 ### Drag and Drop
 
@@ -3304,18 +4527,38 @@ navigation:
 | `label`     | string | Menu item text                                                 |
 | `list`      | string | List name to navigate to (mutually exclusive with other types) |
 | `kanban`    | string | Kanban board name to navigate to                               |
-| `dashboard` | bool   | Link to the dashboard page                                     |
+| `dashboard` | bool or string | `true` links the default dashboard; a name links a [named dashboard](#named-dashboards-dashboards) |
 | `graph`     | bool   | Link to the graph explorer                                     |
 | `document`  | string | Standalone document to open (see [Standalone documents](#standalone-documents)) |
 | `page`      | string | Page to open, with its views as tabs (see [Pages](#pages)) |
 | `search`    | bool   | Link to the search page                                        |
 | `settings`  | bool   | Link to the settings page                                      |
 | `action`    | string | Action ID to trigger when clicked (renders as a sidebar button)|
+| `pile`      | string | Name of the user's own pile to open in the flyout (see [A pile in the sidebar](#a-pile-in-the-sidebar)) |
 | `entities`  | string | Entity type whose entities are listed as links; only inside a group (see [Entity lists in a group](#entity-lists-in-a-group)) |
 | `icon`      | string | Icon name; overrides the icon derived from the entry type (see below) |
 | `permission`| string | Hide this entry from users who lack the named ACL permission (see below) |
 | `open`      | string | `page` (default) navigates; `flyout` slides the list out of the sidebar (see below) |
 | `status`    | list   | Up to three rules that mark the entry with a count (see below) |
+
+#### A pile in the sidebar
+
+`pile:` puts one of the user's own [piles](#piles) in the navigation, for
+example a Notifications pile that automations fill:
+
+```yaml
+navigation:
+  - label: 'Notifications'
+    icon: bell
+    pile: Notifications
+```
+
+- The row opens the pile in the flyout and shows its item count.
+- Each user gets their own pile of that name. It is created the first time the
+  user opens the row, if no automation has made it already. Names ignore case.
+- The pile is no longer listed in the Piles group, so it does not appear twice.
+- Without `label`, the row shows the pile name. Without `icon`, it shows the
+  `layers` glyph.
 
 #### Opening a list as a flyout
 
@@ -4017,6 +5260,7 @@ error in a space names it, for example
 
 **`home:`** names one destination, written like a navigation entry:
 `{ list: tasks }`, `{ kanban: board }`, `{ page: tickets }`, `{ dashboard: true }`,
+`{ dashboard: sales }` (a [named dashboard](#named-dashboards-dashboards)),
 `{ search: true }` and so on. It cannot be a group or an action, and it does not take `status:`,
 `open:` or `permission:`. Without `home:`, the space opens on the first entry
 in its navigation that the user can see and that opens a page, so actions are
@@ -4024,7 +5268,28 @@ skipped. With no such entry, it opens on the dashboard.
 
 **`create:`** lists entity types that must exist in the schema. The Create menu
 offers a type only when the user may create it and a create form exists for
-it, the same rule as inline creation from a relation field.
+it, the same rule as inline creation from a relation field. On an entity page
+the menu offers fewer types; see [Entity pages](#entity-pages).
+
+The menu lists the types in `create:` order, except that the types the page
+shows come first. A separator divides them from the rest, which keep their
+order. Which types a page shows:
+
+| Page                       | Types that come first                   |
+| -------------------------- | --------------------------------------- |
+| List                       | The list's entity type                  |
+| Kanban board               | The board's entity type                 |
+| Calendar                   | The entity types of its sources         |
+| Gantt                      | The entity types of its sources         |
+| Page tab                   | The types of the view the tab shows     |
+| Any other page             | None: the menu keeps `create:` order    |
+
+When a page shows several types, they come first in `create:` order, not in
+the view's own order. A type the space does not create is not added. On an
+[entity page](#entity-pages) (a page with `entity_type:`) the menu first
+narrows to the types it can link, then orders them by the open tab. The
+entity view (`/entity/<type>/<id>`) and documents keep `create:` order. There
+is no setting for this.
 
 **`permission:`** keeps a space out of the switcher of a user who does not hold
 the permission. It works like `permission:` on a navigation entry. It is a
@@ -4127,7 +5392,7 @@ Each tab names exactly one view:
 | `icon`       | no       | An [icon name](#icon-names) shown before the label |
 | `permission` | no       | Hide the tab from users who lack this ACL permission |
 | `list`, `kanban`, `calendar`, `gantt`, `document` | one of | The view the tab shows, by name |
-| `dashboard`  | one of   | `true` shows the dashboard |
+| `dashboard`  | one of   | `true` shows the default dashboard; a name shows a [named dashboard](#named-dashboards-dashboards) |
 | `scope`      | on an entity page | How the tab narrows its view to the page's entity. See [Entity pages](#entity-pages) |
 
 ### Entity pages
@@ -4233,6 +5498,15 @@ The relation for a created type is chosen as follows:
 The relation is chosen when the create dialog opens. Each item made with
 "Create & add another" is linked too.
 
+On an entity page, the Create menu offers only the types it can link by these
+rules. A type for which no link is made is left out, so the offer can change
+from tab to tab. A type the page links over two different relations is also
+left out, unless the open tab has one of them. To create it, open such a tab,
+or create it outside the entity page. When no type can be linked, the Create
+button is hidden, as it is in a space without `create:`. Until the page's
+entity has loaded, the button is shown as busy and does not open. Outside an
+entity page the menu offers every type of the space.
+
 An entity page is not a navigation destination: a `page:` entry or a space's
 `home:` that names one is a config error. It opens from an entity, by URL.
 
@@ -4317,7 +5591,7 @@ has `scope`: `"relation"` with the `relation` and the resolved `direction`, or
 `"root"`. `links` lists, per entity type, the relation a new item of that type
 is linked over. A list or board tab has at most one entry. A timeline tab has
 one per hierarchy relation and child type. A tab without links leaves it out. The Create menu reads these to link a new
-item:
+item, and to choose which types it offers once the page's entity has loaded:
 
 ```json
 {
@@ -4538,10 +5812,10 @@ actions:
 | `set`         | map    | Property key-value pairs to set on the entity (mutually exclusive with `script`) |
 | `script`      | string | Lua script path, relative to the `actions/` directory (mutually exclusive with `set`) |
 | `params`      | map    | Static key-value parameters from config, exposed as `rela.params` (values must be strings — quote them in YAML) |
-| `confirm`     | bool or string | Show a confirmation dialog before a list or detail-page action runs (default: `false`). A string is the dialog text. The sidebar does not ask |
+| `confirm`     | bool or string | Show a confirmation dialog before a list, list-button or detail-page action runs (default: `false`). A string is the dialog text. An unquoted `yes`, `no`, `on`, `off`, `y` or `n` is refused, also in a block scalar (`\|` or `>`); quote it or tag it `!!str` to show it as text. The sidebar does not ask |
 | `available_on`| map    | Offer the action on detail pages — see [Actions on the detail page](#actions-on-the-detail-page). Requires `script` |
 | `when`        | string | Predicate that must hold for the entity. Requires `available_on` |
-| `permission`  | string | Global named permission the caller must hold to run the action from a list, the sidebar, a next-action offer or a detail page |
+| `permission`  | string | Global named permission the caller must hold to run the action from a list, a list button, the sidebar, a next-action offer or a detail page |
 | `request`     | map    | Opt into request-scoped execution — see [Request-scoped actions](#request-scoped-actions). Requires `script` |
 | `capabilities`| map    | Ambient capability grant (`http`, `ai`, `write_file`, named `secrets`). Omitting it grants none |
 
@@ -4564,7 +5838,7 @@ lists:
     title: "All Tickets"
     columns:
       - property: title
-        link: true
+        link: detail
       - property: status
     actions: [resolve-ticket, close-ticket]
 ```
@@ -4584,6 +5858,55 @@ navigation:
 
 When clicked, the action executes. If the action script returns a `redirect`, the UI navigates
 to that path. If it returns a `message`, a toast notification is shown.
+
+### Buttons on a list (`toolbar_actions`)
+
+`toolbar_actions` on a list shows actions as buttons in the list's header, next to the "New"
+button. Use it for an action that does not work on a selected row, such as one that creates a
+new entity from a script:
+
+```yaml
+actions:
+  vvt-nieuw:
+    label: "Nieuwe VvT"
+    script: periodiek/vvt_nieuw.lua
+    permission: "documenten:genereren"
+    confirm: "Een nieuwe VvT aanmaken?"
+
+lists:
+  all_documenten:
+    entity_type: document
+    title: "Documenten"
+    columns:
+      - property: title
+        link: detail
+    toolbar_actions: [vvt-nieuw]
+```
+
+A list button runs the action exactly as a [navigation entry](#using-actions-in-navigation)
+does. The script gets no `entity`. If the script returns a `redirect`, the UI navigates there.
+If it returns a `message`, a toast is shown. Otherwise the list reloads, so a new entity the
+script created appears. Unlike the sidebar, a list button asks for confirmation when the action
+has `confirm`.
+
+A button appears only for users who hold the action's `permission:`. This decides where the
+button appears; it is not the access control. `POST /api/v1/_action/<id>` checks the permission
+again on every run, and the script's writes are checked against the user's own ACL. With no
+`acl.yaml`, or under `--read-only`, every user holds every permission, so the button is shown to
+everyone.
+
+Each ID in `toolbar_actions` must name an action that:
+
+- exists;
+- has a `script` (a `set` action has no row to change);
+- has no `available_on` (an action with `available_on` runs only against an entity on its detail
+  page);
+- has a `label`, which is the button text.
+
+An unknown ID, an action that breaks one of these rules, or an ID listed twice is a config error.
+`key` is not used: a list button has no keyboard shortcut.
+
+The same action may appear in `toolbar_actions`, in navigation and in `piles.actions`.
 
 ### Actions on the detail page
 
@@ -4673,6 +5996,22 @@ rewrites the body while a form is open would conflict with the form's autosave.
 **Timeout.** Like every action, the script has 5 seconds. The action holds the
 global write lock while it runs, so other writes wait. Keep regeneration within
 that limit, for example by reading only what the document needs.
+
+### Running actions from an MCP client
+
+The remote MCP server (see [mcp-server.md](mcp-server.md#action-tools)) offers
+two tools for actions. `list_actions` lists the actions the caller may run;
+with an entity `id` it lists the actions the entity's detail page offers.
+`run_action` runs one. It runs the same checks as
+`POST /api/v1/_action/{id}`: `permission`, `available_on`, `when` and the read
+gate on the entity. A refusal names the same error code as the HTTP answer.
+
+An action with `confirm` runs only when the call passes `confirm: true`. Without
+it, the tool returns the confirmation question, so the agent can ask the user
+first. A request body (`request`) is accepted only by an action whose `request`
+block sets `body: true`, within the same size limit. A script error shows the
+script path, line, message and correlation id, never the source or captured
+output.
 
 ### Lua Action Scripts
 
@@ -5587,7 +6926,8 @@ available_on:
   views: [ticket_report]      # Only on specific views
   lists: [all_tickets]         # Only on specific lists
   entity_types: [ticket]       # Only for specific entity types
-  dashboard: true              # Only on the dashboard (global context)
+  dashboard: true              # Only on the default dashboard (global context)
+                               # or a name: only on that named dashboard
 ```
 
 A command appears if **any** condition matches.
@@ -5846,7 +7186,7 @@ lists:
       - property: title
         label: "Title"
         sortable: true
-        link: true
+        link: detail
       - property: status
         label: "Status"
         sortable: true
@@ -5859,8 +7199,8 @@ lists:
         label: "Due"
         sortable: true
     sort:
-      property: priority
-      direction: asc
+      - property: priority
+        direction: asc
     filter_controls:
       - property: status
         widget: multi-select
@@ -5876,7 +7216,7 @@ lists:
     title: "Open Tickets"
     columns:
       - property: title
-        link: true
+        link: detail
         sortable: true
       - property: priority
         sortable: true
@@ -5894,7 +7234,7 @@ lists:
     title: "My Tickets"
     columns:
       - property: title
-        link: true
+        link: detail
         sortable: true
       - property: status
         sortable: true
@@ -5903,7 +7243,7 @@ lists:
     filters:
       - property: assignee
         operator: "="
-        value: "$USER"
+        value: $user
     create_form: create_ticket
     edit_form: edit_ticket
     page_size: 25
@@ -5967,7 +7307,7 @@ dashboard:
       columns:
         - property: title
           label: "Title"
-          link: true
+          link: detail
         - property: assignee
           label: "Assignee"
       limit: 5
@@ -7297,6 +8637,96 @@ a `403` naming it. A source the caller may not read produces the same `404` as
 a source that does not exist. Any other refusal, such as an unknown definition
 or a cross-entity copy without a `target_id`, is a `422`.
 
+### Converting an entity
+
+The entity response carries `_conversions` offers, including the target type
+and whether the caller may invoke each configured conversion. The web app
+shows a form for an allowed offer. Before saving, it posts to the conversion's
+`/preflight` endpoint, which reports required target properties, relation
+mapping effects, and relations that will be dropped. Dropped relations require
+explicit confirmation.
+
+```bash
+curl -s -X POST http://localhost:8080/api/v1/_conversions/note-to-task/preflight \
+  -H 'Content-Type: application/json' \
+  -d '{"source_id":"NOTE-1"}'
+
+curl -s -X POST http://localhost:8080/api/v1/_conversions/note-to-task \
+  -H 'Content-Type: application/json' \
+  -d '{"source_id":"NOTE-1","properties":{"title":"Follow up"}}'
+```
+
+The server applies the operator's mapping, rechecks the `convert:` ACL, and
+returns the new id. Rename aliases keep old id links resolving, and the rename
+history hook records the old id as the predecessor. A relation the mapping
+cannot preserve is reported before the entity changes.
+
+The preflight response also carries `moves`: one `{source_face, target_face}`
+pair per face, saying where its comments and history go.
+
+| Situation | Response |
+| --- | --- |
+| No `convert:` grant on a readable source | `403` |
+| Removing a relation the caller may not delete | `403` |
+| Supplying a value for a field the caller may not write | `403` |
+| Source not found, or no face of it is readable | `404` |
+| Target id already taken | `409` |
+| A face or a mapped field is unreadable, a required value is missing, a `unique:` value is taken, or the plan is otherwise invalid | `422` |
+
+### Converting a task item
+
+The entity response carries `_task_item_conversions`: one offer per
+[task-item recipe](metamodel.md#declaring-task-item-conversions) declared for
+the entity's type, with `name`, `label`, the target type `to`, the `item` mode
+(`link` or `remove`), and whether the caller may run it (`allowed`, with a
+`reason` when not). The field is absent when the type has no recipes. The body
+editor shows a convert button on each task item when at least one offer is
+allowed. Create forms do not show it.
+
+The button posts the item's text to the recipe's `/preflight` endpoint, which
+lists the required target properties the recipe leaves empty. If there are
+any, the editor asks for them. Unlike a form create, the conversion refuses a
+required property left empty instead of saving it with a warning, because the
+preflight has already asked for it. The editor then posts to the recipe:
+
+```bash
+curl -s -X POST http://localhost:8080/api/v1/_task_item_conversions/subtask/preflight \
+  -H 'Content-Type: application/json' \
+  -d '{"source_id":"TKT-1","text":"Write the migration"}'
+
+curl -s -X POST http://localhost:8080/api/v1/_task_item_conversions/subtask \
+  -H 'Content-Type: application/json' \
+  -d '{"source_id":"TKT-1","text":"Write the migration","properties":{"owner":"bob"}}'
+```
+
+The request body takes `source_id`, `source_face` (required for a faced
+source), `text` (the item's line) and `properties` (values for the required
+fields only). The response names the new entity: `entity_id`, `entity_type`,
+`face` for a faced target, `title`, the `item` mode, and any `warnings`.
+`title` comes from the
+same per-principal lookup as reference titles, so it is empty when the caller
+may not read the new entity's title. The editor then links or removes the item,
+and the body saves as an ordinary edit.
+
+`warnings` holds the create's soft validation findings, as on any create. It
+also holds `follow_up_failed` when the entity and relation were saved but a
+step after the save, such as an automation, failed. The entity exists in both
+cases, so the editor still updates the item.
+
+| Situation | Response |
+| --- | --- |
+| No `create` on the target type, no relation create, or no `update` on the source | `403` |
+| A relation `when:` rule refuses the edge | `403` |
+| A `{{source.<property>}}` the caller may not read, or a field the caller may not write | `403` |
+| Unknown recipe, or a source that is missing or unreadable | `404` |
+| The schema reloaded and the recipe changed | `409 schema_changed` |
+| A copied source value changed during the request | `409` |
+| Empty, too long or malformed item text, a missing required value, a value for a mapped field, or a missing `source_face` | `422 conversion_failed` |
+| A field fails validation or a `unique:` value is taken | `422 validation_failed` |
+| A state the target may not start in, or an ownership rule the edge breaks | `422 conversion_failed` |
+| The relation is at its `max_outgoing` or `max_incoming` limit | `422 cardinality_exceeded` |
+| The entity was saved but the relation was not, on a backend that cannot roll back | `500 conversion_incomplete`, naming the new entity's ID in `entity_id`. The editor links the item to it, so a second press does not make a duplicate. |
+
 ### Responses and errors
 
 | Situation | Response |
@@ -7585,7 +9015,7 @@ This version has no screen for migration history.
 2. **Create before edit** - Define a create form with sensible defaults and hidden fields (like
    `status: open`). Then define an edit form with transitions and all fields visible.
 
-3. **Use `link: true`** on the primary column (usually `title` or `name`) so users can click
+3. **Use `link: detail`** on the primary column (usually `title` or `name`) so users can click
    through to entity details.
 
 4. **Filter strategically** - Use static filters for focused views (e.g., "Open Tickets") and

@@ -41,7 +41,7 @@ func configuredACLApp(t *testing.T) *App {
 		Roles:       map[string]acl.RoleDef{"viewer": {Read: []string{"ticket"}}},
 		Assignments: map[string]string{"alice": "viewer"},
 	}, app.store)
-	app.acl = d
+	setTestACL(t, app, d)
 	return app
 }
 
@@ -126,7 +126,7 @@ func TestScriptReadSeam_PolicylessProjectStaysUnrestricted(t *testing.T) {
 	app := newTestAppV1(t)
 	seedEntity(app, &entity.Entity{ID: "TKT-001", Type: "ticket",
 		Properties: map[string]any{"title": "Readable"}})
-	app.acl = acl.NopACL{}
+	setTestACL(t, app, acl.NopACL{})
 
 	reader := app.scriptReader(nil)
 	if _, isDeny := reader.(visibility.DenyReader); isDeny {

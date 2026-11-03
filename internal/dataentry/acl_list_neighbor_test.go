@@ -64,7 +64,7 @@ func TestACLList_HiddenNeighborExcludedFromRelations(t *testing.T) {
 		},
 		InheritRolesThrough: []string{"belongs-to"},
 	}, app.store)
-	app.acl = d
+	setTestACL(t, app, d)
 
 	t.Run("outgoing target hidden is excluded, visible kept", func(t *testing.T) {
 		resp, rec := listEntitiesAs(aliceCtx(), t, app, d, "ticket", "tickets", "")

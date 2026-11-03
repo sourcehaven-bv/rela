@@ -14,7 +14,7 @@ import RlEmptyState from 'rela-components/components/feedback/RlEmptyState.vue'
 import ConfigurePage from '@/components/configure/ConfigurePage.vue'
 import ConfigSection from '@/components/configure/ConfigSection.vue'
 import LockedNote from '@/components/configure/LockedNote.vue'
-import { useConfigDraftStore } from '@/stores/configDraft'
+import { useConfigDraftStore } from '@/configure/configDraft'
 import {
   automations,
   automationTitle,
@@ -23,7 +23,8 @@ import {
   propertiesOf,
 } from '@/configure/models'
 import { configureRoute } from '@/configure/routes'
-import { newMap, type TreeValue } from '@/configure/tree'
+import type { TreeValue } from '@/api/configure'
+import { newMap } from '@/configure/tree'
 
 /**
  * An automation: one trigger, then actions in the order they run. One that

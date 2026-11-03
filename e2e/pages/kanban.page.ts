@@ -22,6 +22,26 @@ export class KanbanPage extends BasePage {
     return this.cards.filter({ hasText: cardTitle }).locator('.rl-meta-item').filter({ hasText: label });
   }
 
+  /** The busy indicator on a card (TKT-21G6JS). */
+  cardBusy(cardTitle: string): Locator {
+    return this.cards.filter({ hasText: cardTitle }).locator('.rl-busy');
+  }
+
+  /**
+   * The card shows the busy indicator. `text` matches what a sighted user
+   * sees; `name` is what a screen reader hears, from the hidden text.
+   */
+  async expectCardBusy(cardTitle: string, text: RegExp, name: RegExp) {
+    const busy = this.cardBusy(cardTitle);
+    await expect(busy.locator('.rl-busy__text')).toHaveText(text);
+    await expect(busy.locator('.rl-visually-hidden')).toHaveText(name);
+  }
+
+  async expectNoCardBusy(cardTitle: string) {
+    await expect(this.cards.filter({ hasText: cardTitle })).toBeVisible();
+    await expect(this.cardBusy(cardTitle)).toHaveCount(0);
+  }
+
   async expectCardMetaCount(cardTitle: string, label: string, count: number) {
     await expect(this.cardMetaCount(cardTitle, label)).toHaveText(new RegExp(`^${count}\\s`));
   }
@@ -207,9 +227,14 @@ export class KanbanPage extends BasePage {
     await this.collapsedRail(name).click();
   }
 
-  /** A collapsed column's rail, which is its expand button. */
+  /**
+   * A collapsed column's rail, which is its expand button. Its label follows
+   * the interface language, so a spec that pins a Dutch browser locale gets
+   * the Dutch label (TKT-ZL1QAO).
+   */
   collapsedRail(name: string): Locator {
-    return this.page.getByRole('button', { name: `Expand ${name}`, exact: true });
+    const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    return this.page.getByRole('button', { name: new RegExp(`^(Expand ${escaped}|${escaped} uitklappen)$`) });
   }
 
   /** Drag a card onto a collapsed column's rail with the real pointer. */
@@ -225,6 +250,44 @@ export class KanbanPage extends BasePage {
   async expectColumnExpanded(name: string) {
     await expect(this.collapsedRail(name)).toHaveCount(0);
     await expect(this.page.getByRole('button', { name: `Collapse ${name}`, exact: true })).toBeVisible();
+  }
+
+  /** The lines under a column heading, from its `column_summary`. */
+  async expectColumnSummary(columnName: string, lines: RegExp[]) {
+    await expect(this.getColumn(columnName).locator('.rl-board-column__summary p')).toHaveText(lines);
+  }
+
+  /** The same lines, joined, on a collapsed column's rail. */
+  async expectCollapsedColumnSummary(columnName: string, text: RegExp) {
+    await expect(this.collapsedRail(columnName).locator('.rl-board-column-collapsed__summary')).toHaveText(text);
+  }
+
+  /** The colour of a column heading's status dot (StatusColor name). */
+  async expectColumnColor(columnName: string, color: string) {
+    await expect(this.getColumn(columnName).locator('.rl-section-heading .rl-status-dot')).toHaveClass(
+      new RegExp(`rl-status-dot--${color}\\b`),
+    );
+  }
+
+  /** The text of a card's field lines. */
+  async expectCardFieldText(cardTitle: string, text: RegExp) {
+    await expect(this.cards.filter({ hasText: cardTitle }).locator('.card-field')).toHaveText(text);
+  }
+
+  /** The enum badges on a card's field lines, in order, with their colours
+   * (the badge--<colour> class of each). */
+  async expectCardBadges(cardTitle: string, badges: Array<{ text: string; color: string }>) {
+    const found = this.cards.filter({ hasText: cardTitle }).locator('.card-field .badge');
+    await expect(found).toHaveText(badges.map((b) => b.text));
+    for (const [i, b] of badges.entries()) {
+      await expect(found.nth(i)).toHaveClass(new RegExp(`\\bbadge--${b.color}\\b`));
+    }
+  }
+
+  /** A card shows no field lines at all. */
+  async expectNoCardFields(cardTitle: string) {
+    await expect(this.cards.filter({ hasText: cardTitle })).toBeVisible();
+    await expect(this.cards.filter({ hasText: cardTitle }).locator('.card-field')).toHaveCount(0);
   }
 
   async expectEmptyColumn(columnName: string) {

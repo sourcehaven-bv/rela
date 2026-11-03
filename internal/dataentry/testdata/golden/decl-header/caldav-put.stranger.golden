@@ -1,0 +1,9 @@
+request: PUT /api/v1/_caldav/principal/calendars/tickets/ticket--TKT-3@rela.ics
+identity: header stranger@example.test
+status: 404
+reads: GetEntity=1 GraphQueryHeaders=1 ListEntityHeaders=2 ListRelations=1 MatchingFaces=3
+breadth: ListEntityHeaders=2/2 ListRelations=0/1 MatchingFaces=3/3
+bodies: GetEntity=0/1 GraphQuery=0/1 ListEntityHeaders=0/2
+versions: 
+body:
+404 Not Found: caldav: no such to-do

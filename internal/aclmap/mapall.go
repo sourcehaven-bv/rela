@@ -155,7 +155,7 @@ func stripEveryoneBaseline(pr *MapPrincipalResult) {
 				ta.Baseline[verb] = filtered
 			}
 		}
-		if len(ta.Baseline) > 0 || len(ta.Exceptions) > 0 {
+		if len(ta.Baseline) > 0 || len(ta.Exceptions) > 0 || len(ta.Faces) > 0 {
 			kept = append(kept, ta)
 		}
 	}

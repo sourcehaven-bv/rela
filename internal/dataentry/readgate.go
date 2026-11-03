@@ -219,19 +219,77 @@ func withReadGate(ctx context.Context, g readGate) context.Context {
 	return context.WithValue(ctx, readGateCtxKey{}, g)
 }
 
-// readGateFromContext returns the gate attached via withReadGate, or
-// nopReadGate when none is present. Handlers MUST go through this
-// helper (not direct ctx.Value lookups) so the nil-handling stays in
-// one place — a handler that forgets to nil-check would silently
-// become permits-all on a misconfigured chain (the fail-open shape
-// RR-875A flagged on attachACLRequest).
+// aclEnforcedCtxKey marks a request served under a Declarative policy.
+type aclEnforcedCtxKey struct{}
+
+// withACLEnforced marks ctx as served under a Declarative policy, so a read
+// with no gate attached is denied rather than allowed. attachACLRequest sets
+// it on every request, including the routes outside /api/ it attaches no
+// gate to.
+func withACLEnforced(ctx context.Context) context.Context {
+	return context.WithValue(ctx, aclEnforcedCtxKey{}, true)
+}
+
+// readGateFromContext returns the gate attached via withReadGate. With none
+// attached it returns denyReadGate when ctx was marked by withACLEnforced,
+// and nopReadGate otherwise: allow-all is only for the wiring with no policy.
+// Handlers MUST go through this helper (not direct ctx.Value lookups) so the
+// nil-handling stays in one place (the fail-open shape RR-875A flagged on
+// attachACLRequest).
 func readGateFromContext(ctx context.Context) readGate {
 	if ctx == nil {
 		return nopReadGate{}
 	}
 	g, ok := ctx.Value(readGateCtxKey{}).(readGate)
-	if !ok || g == nil {
-		return nopReadGate{}
+	if ok && g != nil {
+		return g
 	}
-	return g
+	if enforced, _ := ctx.Value(aclEnforcedCtxKey{}).(bool); enforced {
+		return denyReadGate{}
+	}
+	return nopReadGate{}
 }
+
+// attachBoundReadGate attaches the read gate of the Request already bound on
+// ctx by acl.BindRequest. A route outside /api/ (the webhooks) binds its own
+// identity, since attachACLRequest does not run for it, and calls this so its
+// reads are gated by that identity rather than denied. Without a Declarative
+// policy it returns ctx unchanged.
+func attachBoundReadGate(ctx context.Context, a acl.ACL) (context.Context, error) {
+	d, ok := a.(*acl.Declarative)
+	if !ok || d == nil {
+		return ctx, nil
+	}
+	req, err := d.RequestFrom(ctx)
+	if err != nil {
+		return ctx, err
+	}
+	gate, err := newACLReadGate(req)
+	if err != nil {
+		return ctx, err
+	}
+	return withReadGate(ctx, gate), nil
+}
+
+// denyReadGate refuses every read. It is the gate of a request served under a
+// Declarative policy that reached a read without a gate attached: a wiring
+// fault, which fails closed rather than open.
+type denyReadGate struct{}
+
+func (denyReadGate) PermitsRead(context.Context, string, string) (bool, error) { return false, nil }
+
+func (denyReadGate) ReadableFacesMany(context.Context, string, []string) (acl.FaceVerdicts, error) {
+	return acl.UniformVerdicts(acl.NoFacesVerdict()), nil
+}
+
+func (denyReadGate) ReadQuery(context.Context, string) acl.ReadQueryResult {
+	return acl.ReadQueryResult{DenyAll: true}
+}
+
+func (denyReadGate) SearchScope(context.Context, []string) map[string]search.TypeScope {
+	return map[string]search.TypeScope{}
+}
+
+func (denyReadGate) HoldsPermission(context.Context, string) bool { return false }
+
+func (denyReadGate) PermitsWorld(context.Context, string) (bool, error) { return false, nil }

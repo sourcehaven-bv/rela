@@ -1,7 +1,6 @@
 package acl
 
 import (
-	"context"
 	"testing"
 
 	"github.com/Sourcehaven-BV/rela/internal/principal"
@@ -19,12 +18,12 @@ import (
 // bypass, not a narrowing.
 //
 // The test constructs a Request DIRECTLY rather than going through
-// ForPrincipal, because ForPrincipal rejects the unstamped principal
+// identity resolution, because identity resolution rejects the unstamped principal
 // that produces an empty member set (walkMembers returns nil for
 // User == ""). That upstream rejection is what keeps this unreachable
 // in production today — and is exactly why the invariant needs pinning
 // here: a future anonymous-read mode, or a system principal that skips
-// ForPrincipal, would otherwise open every row with no test going red.
+// identity resolution, would otherwise open every row with no test going red.
 func TestReadQuery_FailsClosedOnEmptyMemberSet(t *testing.T) {
 	t.Parallel()
 
@@ -44,7 +43,7 @@ func TestReadQuery_FailsClosedOnEmptyMemberSet(t *testing.T) {
 
 	req := &Request{d: d, principal: principal.Principal{}} // unstamped → no members
 
-	got := req.readQuery(context.Background(), "document")
+	got := req.readQuery("document")
 
 	if !got.DenyAll {
 		t.Errorf("readQuery with an empty member set: DenyAll = false, want true\n"+

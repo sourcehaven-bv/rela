@@ -1,10 +1,12 @@
 // Command demo exercises every way seqtrace links a call to a parent on
-// another goroutine. rewrite_test.go instruments it through an overlay,
-// runs it and checks the recorded parents.
+// another goroutine, and how loop bodies over iterators are attributed.
+// rewrite_test.go instruments it through an overlay, runs it and checks the
+// recorded parents.
 package main
 
 import (
 	"context"
+	"iter"
 	"sync"
 
 	"github.com/Sourcehaven-BV/rela/tools/seqtrace"
@@ -22,6 +24,8 @@ func main() {
 }
 
 func run(ctx context.Context) {
+	iterate()
+
 	var wg sync.WaitGroup
 
 	// go statement with a named function: Spawn, claimed by name.
@@ -49,6 +53,62 @@ func run(ctx context.Context) {
 	<-done
 	wg.Wait()
 }
+
+// iterate ranges over iterators. Calls in a loop body belong to the
+// function with the loop, even though the iterator's yield runs them.
+func iterate() {
+	for range nums() {
+		bodySimple()
+	}
+	for range viaHelper() {
+		bodyHelper()
+	}
+	for range adapt(nums()) {
+		bodyAdapter()
+	}
+	for range nums() {
+		break
+	}
+	afterBreak()
+}
+
+// nums yields 1, 2 and 3, then calls producerTail unless stopped early.
+func nums() iter.Seq[int] {
+	return func(yield func(int) bool) {
+		for i := 1; i <= 3; i++ {
+			if !yield(i) {
+				producerTail()
+				return
+			}
+		}
+	}
+}
+
+// viaHelper hands yield to a helper that calls it.
+func viaHelper() iter.Seq[int] {
+	return func(yield func(int) bool) { emit(yield) }
+}
+
+func emit(yield func(int) bool) { yield(1) }
+
+// adapt yields from inside its own range loop over seq.
+func adapt(seq iter.Seq[int]) iter.Seq[int] {
+	return func(yield func(int) bool) {
+		for v := range seq {
+			adapterBody()
+			if !yield(v) {
+				return
+			}
+		}
+	}
+}
+
+func bodySimple()   {}
+func bodyHelper()   {}
+func bodyAdapter()  {}
+func adapterBody()  {}
+func afterBreak()   {}
+func producerTail() {}
 
 func spawned(wg *sync.WaitGroup) {
 	defer wg.Done()

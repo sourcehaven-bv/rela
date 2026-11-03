@@ -1,0 +1,20 @@
+version: '1.0'
+
+types:
+  note_status:
+    values: [open, done]
+    default: open
+
+entities:
+  note:
+    label: Note
+    id_type: sequential
+    id_prefix: NOTE
+    properties:
+      title:
+        type: string
+        required: true
+      status:
+        type: note_status
+      summary:
+        type: string

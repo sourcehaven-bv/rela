@@ -704,6 +704,37 @@ func TestMdRoundTrip(t *testing.T) {
 	}
 }
 
+func TestMdRoundTripHTMLComment(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name  string
+		input string
+	}{
+		{name: "single line", input: "<!-- kort -->\n"},
+		{name: "multi line", input: "<!-- regel een\nregel twee -->\n"},
+		{name: "closer on own line", input: "<!-- toelichting\n-->\n\nTekst.\n"},
+		{
+			// Checklist-comment uit het atlas-taaktemplate (TASK-ZF91U):
+			// lege regel en een lijstregel vlak voor de `-->`.
+			name:  "list line before closer",
+			input: "## Checklist\n\n<!-- Voeg stappen toe.\n\nbijvoorbeeld:\n- [x] ~~Klaar~~ (naar TASK-XXXX) -->\n\n- [ ] Complete PDCA-cyclus doorlopen\n",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			rt := newMdTestRuntime(t)
+			defer rt.Close()
+			code := fmt.Sprintf(`return rela.md.render(rela.md.parse(%q))`, tt.input)
+			require.NoError(t, rt.RunString(code))
+			assert.Equal(t, tt.input, lua.LVAsString(rt.L.Get(-1)))
+			rt.L.Pop(1)
+		})
+	}
+}
+
 func TestMdShiftHeaders(t *testing.T) {
 	t.Parallel()
 
@@ -2189,4 +2220,36 @@ func TestTitleSlug(t *testing.T) {
 			assert.Equal(t, tc.want, titleSlug(tc.in))
 		})
 	}
+}
+
+// TestMdHTMLConversion checks the rela.md.from_html / to_html bindings; the
+// conversion itself is tested in internal/htmlmd.
+func TestMdHTMLConversion(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name, code, want string
+	}{
+		{"from_html", `return (rela.md.from_html("<div>a <strong>b</strong></div>"))`, "a **b**"},
+		{"to_html", `return (rela.md.to_html("a **b**"))`, "<p>a <strong>b</strong></p>"},
+		{"round trip", `return (rela.md.from_html((rela.md.to_html("- x\n- y"))))`, "- x\n- y"},
+		{"lossy from_html", `local _, l = rela.md.from_html("<img src=x>a"); return tostring(l)`, "true"},
+		{"lossless to_html", `local _, l = rela.md.to_html("a"); return tostring(l)`, "false"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			rt := newMdTestRuntime(t)
+			defer rt.Close()
+			require.NoError(t, rt.RunString(tt.code))
+			assert.Equal(t, tt.want, lua.LVAsString(rt.L.Get(-1)))
+		})
+	}
+
+	t.Run("argument required", func(t *testing.T) {
+		t.Parallel()
+		rt := newMdTestRuntime(t)
+		defer rt.Close()
+		require.Error(t, rt.RunString(`return rela.md.to_html()`))
+	})
 }

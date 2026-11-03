@@ -1,0 +1,28 @@
+{
+  "/tmp/rela-cmdexec-1/procedure.md": [
+    {
+      "Action": {"Name": "", "Params": null},
+      "Suggestions": [],
+      "Span": [16, 21],
+      "Check": "ISMS-Vaag.Absoluut",
+      "Description": "",
+      "Link": "",
+      "Message": "'altijd' is een absolute claim.",
+      "Severity": "warning",
+      "Match": "altijd",
+      "Line": 1
+    },
+    {
+      "Action": {"Name": "replace", "Params": ["moet"]},
+      "Suggestions": ["moet"],
+      "Span": [5, 14],
+      "Check": "ISMS-Vaag.Verplichting",
+      "Description": "",
+      "Link": "https://example.org/verplichting",
+      "Message": "Gebruik 'moet' in plaats van 'zou moeten'.",
+      "Severity": "error",
+      "Match": "zou moeten",
+      "Line": 2
+    }
+  ]
+}

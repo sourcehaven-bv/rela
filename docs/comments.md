@@ -309,8 +309,13 @@ The MCP server offers the same operations as tools: `list_comments`,
 `add_comment`, `update_comment`, `delete_comment` and
 `accept_comment_suggestion`. On the remote server (`rela-server -mcp`) they
 call the HTTP routes' own operations, so the permissions, face rules and error
-codes are identical. Stdio `rela mcp` offers only `list_comments`. See
-[mcp-server.md](mcp-server.md#comment-tools).
+codes are identical. Stdio `rela mcp` offers `list_comments`, and
+`add_comment` when it runs as a job identity (`--run-as integration:<name>`).
+See [mcp-server.md](mcp-server.md#comment-tools).
+
+A job identity is a name the local user chose, not a verified account. So
+`rela mcp` logs each comment it adds with the OS user who asserted the
+identity. A `system:` identity cannot comment.
 
 ## What comments deliberately do not do
 

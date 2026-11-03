@@ -32,6 +32,7 @@ import RlDetailField from 'rela-components/components/task/RlDetailField.vue'
 import TextareaWidget from '@/widgets/TextareaWidget.vue'
 import AutoSaveIndicator from './AutoSaveIndicator.vue'
 import InlinePropertyValue from './InlinePropertyValue.vue'
+import InlineRelationValue, { type RelationTarget } from './InlineRelationValue.vue'
 
 // Discriminated union: each field resolves its widget via either the
 // real schema entry (form-side) or a routing hint (view-side). Exactly
@@ -60,7 +61,11 @@ export type SectionEditField = {
   // the ARM decides whether it is honoured, not the presence of the field.
   widget?: string
 } & (
-  { kind: 'schema'; propertyDef: PropertyDef } | { kind: 'hint'; routingHint: WidgetRoutingHint }
+  | { kind: 'schema'; propertyDef: PropertyDef }
+  | { kind: 'hint'; routingHint: WidgetRoutingHint }
+  // A relation field (TKT-CADCFX). `property` is then `relation:<name>`, a row
+  // key only: InlineRelationValue saves the edges itself, outside autosave.
+  | { kind: 'relation'; relation: string; targets: RelationTarget[]; styleFrom?: string }
 )
 
 const props = defineProps<{
@@ -87,9 +92,14 @@ const props = defineProps<{
   onPropertyApplied: (prop: string, value: unknown, owner: { type: string; id: string }) => void
   onError: (msg: string, info?: AutoSaveErrorInfo) => void
   onVerdictFlip?: (prop: string, label: string) => void
+  // Runs each save, so the host can order its reads against the form's
+  // writes (useEntitySession.write). Without it a save simply runs.
+  runWrite?: <T>(send: () => Promise<T>) => Promise<T>
   // Called after the file widget uploads/removes an attachment so the
   // host can refresh the entity (property value + _attachments changed).
   onAttachmentChanged?: () => void
+  // A relation field changed its edges; the host reloads (TKT-CADCFX).
+  onRelationChanged?: () => void
 }>()
 
 // Owner identity is frozen for the instance's lifetime. When the host
@@ -116,9 +126,9 @@ const initialSnapshot = {
 const formDataRef = computed(() => formData) as unknown as Ref<Record<string, unknown>>
 
 const autoSave = useAutoSave({
-  getEntityType: () => owner.type,
-  getEntityId: () => owner.id,
+  target: owner,
   initialServerSnapshot: initialSnapshot,
+  runWrite: props.runWrite,
   disableContentChannel: true,
   disableRelationsChannel: true,
   formData: formDataRef,
@@ -174,7 +184,9 @@ const widgetRows = computed<WidgetRow[]>(() =>
     const widget =
       field.kind === 'schema'
         ? defaultRegistry.resolve(field.widget, field.propertyDef)
-        : defaultRegistry.resolveFromHint(field.routingHint)
+        : field.kind === 'relation'
+          ? InlineRelationValue
+          : defaultRegistry.resolveFromHint(field.routingHint)
     return {
       field,
       widget,
@@ -332,7 +344,20 @@ defineExpose({
           <slot name="label-affordance" :property="row.field.property" :index="index" />
         </template>
         <template #value>
+          <InlineRelationValue
+            v-if="row.field.kind === 'relation'"
+            :entity-type="entityType"
+            :entity-id="entityId"
+            :relation="row.field.relation"
+            :label="row.field.label"
+            :targets="row.field.targets"
+            :style-from="row.field.styleFrom"
+            :writable="row.writable"
+            @changed="onRelationChanged?.()"
+            @error="(msg: string) => onError(msg)"
+          />
           <InlinePropertyValue
+            v-else
             :property="row.field.property"
             :label="row.field.label"
             :widget="row.widget"

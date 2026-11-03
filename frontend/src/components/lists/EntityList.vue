@@ -1,18 +1,23 @@
 <script setup lang="ts">
-import { ref, shallowRef, computed, watch, nextTick, onMounted, onUnmounted, type Component } from 'vue'
+import { ref, shallowRef, computed, watch, nextTick, onMounted, onUnmounted } from 'vue'
 import { RouterLink, useRoute, useRouter, type RouteLocationRaw } from 'vue-router'
+import { useI18n } from 'vue-i18n'
 import { useQuery, useQueryCache } from '@pinia/colada'
 import { useSchemaStore, useUIStore } from '@/stores'
 import { useListKeyboard } from '@/composables/useListKeyboard'
 import { useListSelection } from '@/composables/useListSelection'
 import { useListActions } from '@/composables/useListActions'
+import { useToolbarActions } from '@/composables/useToolbarActions'
 import { useListReorder } from '@/composables/useListReorder'
 import { useUrlFilterSync } from '@/composables/useUrlFilterSync'
 import { useWorld } from '@/composables/useWorld'
 import { useCreateTarget } from '@/composables/useCreateTarget'
 import { useListGrouping, type ListSection } from '@/composables/useListGrouping'
-import { listEntities, listAllEntities, getErrorMessage } from '@/api'
+import { listEntities, listAllEntities, getErrorMessage, withSortFallback, type SortDropped } from '@/api'
 import { entityKeys } from '@/queries/entities'
+import { liveListPath } from '@/api/live'
+import { toBusyEntries } from '@/utils/busy'
+import { useLiveSubscription } from '@/composables/useLiveSubscription'
 import { beginOptimisticRemove } from '@/queries/optimisticList'
 import { filterStateToApiParams } from '@/utils/filters'
 import { defaultSortParam, groupedSort, listBaseParams, sortParam } from '@/utils/listParams'
@@ -24,9 +29,8 @@ import { entityDisplayTitle } from '@/utils/entityDisplay'
 import { renderMarkdown } from '@/utils/markdown'
 import { actionAllowed } from '@/utils/affordancesWarning'
 import { getCellValue, formatCellValue } from '@/utils/format'
-import { densePropertyRoutingHint, isDenseEmpty } from '@/widgets/viewRouting'
-import { defaultRegistry } from '@/widgets/registry'
-import type { DenseRoutingHint } from '@/widgets/viewRouting'
+import { isDenseEmpty } from '@/widgets/viewRouting'
+import { denseCell, denseEntry, type DenseCell, type DenseEntry } from '@/utils/denseCell'
 import type { Entity, ListMeta, ListParams, ListResponse, FilterState, PageScope } from '@/types'
 import { viewHeaderMarkdown, viewFooterMarkdown } from '@/types'
 import FilterBar from './FilterBar.vue'
@@ -40,7 +44,8 @@ import PageHeaderContent from '@/components/common/PageHeaderContent'
 import InlineCreateFormModal from '@/components/forms/InlineCreateFormModal.vue'
 import { useCreateModal } from '@/composables/useCreateModal'
 import { usePageTabScope } from '@/composables/usePageTabScope'
-import WorldBadge from '@/components/entity/WorldBadge.vue'
+import WorldBadge from '@/components/ui/WorldBadge.vue'
+import LeaseBadge from '@/components/common/LeaseBadge.vue'
 import WorldBanner from '@/components/common/WorldBanner.vue'
 import { listExportUrl } from '@/api/transforms'
 import { useBackTarget } from '@/composables/useBackTarget'
@@ -55,6 +60,9 @@ import RlEmptyState from 'rela-components/components/feedback/RlEmptyState.vue'
 import RlStatusRegion from 'rela-components/components/feedback/RlStatusRegion.vue'
 import RlKbd from 'rela-components/components/data/RlKbd.vue'
 import RlTable from 'rela-components/components/table/RlTable.vue'
+import RlBusyIndicator, {
+  type BusyIndicatorEntry,
+} from 'rela-components/components/feedback/RlBusyIndicator.vue'
 import type { SortClickEvent, TableColumn } from 'rela-components/components/table/types'
 import { listColumnOf, nameColumn, toTableColumns, toTableNameColumn } from './tableColumns'
 import { fromPageQuery } from '@/utils/pageContext'
@@ -70,6 +78,7 @@ const router = useRouter()
 const schemaStore = useSchemaStore()
 const uiStore = useUIStore()
 const { confirm } = useConfirm()
+const { t } = useI18n()
 
 // Back affordance — renders when ?return_to= or ?from= is present. See TKT-JIEKC.
 const backTarget = useBackTarget()
@@ -116,7 +125,7 @@ onUnmounted(() => { mobileQuery?.removeEventListener('change', onMediaChange) })
 const page = ref(1)
 const queryCache = useQueryCache()
 
-type ListQuery = ReturnType<typeof useQuery<ListResponse<Entity>>>
+type ListQuery = ReturnType<typeof useQuery<ListResponse<Entity> & { sortDropped?: SortDropped }>>
 const listQueryRef = shallowRef<ListQuery>()
 
 const entities = computed<Entity[]>(() => listQueryRef.value?.data.value?.data ?? [])
@@ -154,8 +163,11 @@ const pageState = computed<'pending' | 'loaded' | 'error'>(() => {
 })
 const loadError = computed(() => {
   const err = listQueryRef.value?.error.value
-  return err ? getErrorMessage(err, 'Failed to load entities') : null
+  return err ? getErrorMessage(err, t('list.loadFailed')) : null
 })
+// Set when the server refused the list's sort because the reader cannot see
+// a sorted property, and the rows were read again unsorted.
+const sortDropped = computed(() => listQueryRef.value?.data.value?.sortDropped)
 const includedEntities = computed<Record<string, Entity>>(
   () => listQueryRef.value?.data.value?.included ?? {}
 )
@@ -177,9 +189,15 @@ function canCreate(): boolean {
 // The table's own Add button, below the rows: the same dialog as New, and
 // hidden under the same gate. In a grouped list each section has one, and the
 // new row starts with that section's value so it lands where it was added.
-const createPrefill = ref<{ properties: Record<string, unknown> }>()
-function onTableAdd(section: ListSection | { prefill?: undefined }) {
-  createPrefill.value = section.prefill ? { properties: section.prefill } : undefined
+const createPrefill = ref<{
+  properties: Record<string, unknown>
+  relations?: Record<string, { id: string; type: string }[]>
+}>()
+function onTableAdd(section: ListSection | { prefill?: undefined; prefillRelations?: undefined }) {
+  createPrefill.value =
+    section.prefill || section.prefillRelations
+      ? { properties: section.prefill ?? {}, relations: section.prefillRelations }
+      : undefined
   createModal.show()
 }
 // From `_actions` alone, under every world. The server computes the map for
@@ -263,7 +281,7 @@ useDeleteKey({
 const entityNoun = computed(() => {
   const type = listConfig.value?.entity ?? ''
   const def = schemaStore.getEntityType(type)
-  const singular = def?.label || type || 'item'
+  const singular = def?.label || type || t('list.item')
   return { singular, plural: def?.label_plural || def?.plural || undefined }
 })
 
@@ -290,6 +308,12 @@ const { resolvedActions, processing: actionProcessing, executeAction, triggerAct
   },
 })
 
+// `toolbar_actions:` buttons in the header. They run without a selection;
+// shown only when the list response offers `action:<id>`.
+const toolbar = useToolbarActions(listIdRef, collectionActions, () => {
+  void queryCache.invalidateQueries({ key: entityKeys.list(listConfig.value?.entity ?? '') })
+})
+
 // Bulk action confirm. We don't pass executeAction as onConfirm because it
 // uses Promise.allSettled internally and never throws — partial failures
 // surface via uiStore.error and the script-error dialog. Wrapping it in
@@ -305,7 +329,7 @@ async function requestActionConfirm(
     message:
       typeof action.confirm === 'string'
         ? action.confirm
-        : `Apply ${action.label} to ${selectedIds.value.size} selected entities?`,
+        : t('list.actionConfirm', { label: action.label, n: selectedIds.value.size }),
     confirmLabel: action.label,
   })
   if (!ok) return
@@ -471,6 +495,15 @@ const entityType = computed(() => {
   return schemaStore.getEntityType(listConfig.value.entity)
 })
 
+// The channel type of the list's busy column (TKT-TU3XH4), if it has one.
+// The load check allows at most one busy column per list.
+const busyType = computed(() => listConfig.value?.columns?.find((c) => c.busy)?.busy)
+
+/** The row's busy channels of the busy column's type, for the indicator. */
+function busyEntries(entity: Entity): BusyIndicatorEntry[] {
+  return busyType.value ? toBusyEntries(entity._busy, busyType.value) : []
+}
+
 // `group_by:` splits the rows into sections; see useListGrouping.
 const groupBy = computed(() => listConfig.value?.group_by)
 const grouping = useListGrouping({
@@ -479,6 +512,8 @@ const grouping = useListGrouping({
   entityType: () => entityType.value,
   response: () => listQueryRef.value?.data.value,
   filterParams: () => queryParams.value as Record<string, unknown>,
+  pageScope: () => props.pageScope,
+  worldParam: () => worldParam.value,
 })
 
 // listExportUrlFor builds the export URL for the current list view + chosen
@@ -593,6 +628,12 @@ const queryParams = computed((): ListParams => {
     params.world = worldParam.value
   }
 
+  // A busy column (TKT-TU3XH4) asks each row for its busy channels of the
+  // column's type. Here rather than in listBaseParams, so the sidebar
+  // flyout, which shows no busy column, does not pay for the busy read. The
+  // list query, the grouped loader and the live path all read these params.
+  if (busyType.value) params.busy = busyType.value
+
   Object.assign(params, tabScope.params.value)
 
   return params
@@ -623,15 +664,30 @@ const listQuery = useQuery({
   query: ({ signal }) => {
     const config = listConfig.value
     if (!config) throw new Error(`unknown list: ${props.listId}`)
-    if (config.group_by) {
-      return listAllEntities(config.entity, queryParams.value, signal, { maxRows: config.group_by.max_rows })
-    }
-    return listEntities(config.entity, queryParams.value)
+    const groupBy = config.group_by
+    return withSortFallback(queryParams.value, (params) =>
+      groupBy
+        ? listAllEntities(config.entity, params, signal, { maxRows: groupBy.max_rows })
+        : listEntities(config.entity, params)
+    )
   },
   enabled: () => !!listConfig.value,
   placeholderData: (prev) => prev,
 })
 listQueryRef.value = listQuery
+// Live view (TKT-HJ5Z9Y): entity:changed already refetches on a write to the
+// list's own type; this also catches what that misses, such as a related
+// column or an access change. A grouped list subscribes its first page.
+useLiveSubscription(
+  'entity-list',
+  () => {
+    const config = listConfig.value
+    if (!config) return null
+    const params = config.group_by ? { ...queryParams.value, page: 1, per_page: 100 } : queryParams.value
+    return liveListPath(config.entity, params)
+  },
+  () => void queryCache.invalidateQueries({ key: listKey.value, exact: true })
+)
 watch(
   () => listQuery.data.value,
   (res) => {
@@ -682,7 +738,15 @@ const visibleListColumns = computed(() => {
   const columns = listConfig.value?.columns ?? []
   const grouping = groupBy.value
   if (!grouping || grouping.buckets) return columns
-  return columns.filter((column) => column.property !== grouping.property)
+  // The first column is the title, which toTableColumns takes off. Keep it
+  // in place and filter only the rest: filtering it out would make the next
+  // column the title, and that column would be sliced away unseen.
+  const [title, ...rest] = columns
+  if (!title) return columns
+  const kept = grouping.relation
+    ? rest.filter((column) => column.relation !== grouping.relation)
+    : rest.filter((column) => column.property !== grouping.property)
+  return [title, ...kept]
 })
 
 /**
@@ -707,6 +771,7 @@ const tableColumns = computed<TableColumn[]>(() =>
       const listColumn = listColumnOf(column)
       if (!listColumn) return true
       const entity = item as Entity
+      if (listColumn.busy) return busyEntries(entity).length === 0
       if (isCellInaccessible(entity, listColumn)) return false
       return getFormattedCellValue(entity, listColumn) === ''
     },
@@ -716,11 +781,15 @@ const tableColumns = computed<TableColumn[]>(() =>
      *
      * An enum badge earns the space and a date does not: the badge is the
      * state you scan the list for, while the rest of the row is in the panel
-     * already. A face column is that kind of state too. Derived from the widget hint rather than from config, because
-     * `ListColumn` has no way to say it — an operator-facing `primary:` is
-     * the extensibility pass, not this one.
+     * already. A face column is that kind of state too, and so is a busy
+     * column: whether someone works on a row now is what a reader scans the
+     * list for. In the compressed layout an empty busy cell keeps its slot,
+     * as any empty primary cell does, so the badges stay aligned. Derived
+     * from the widget hint rather than from config, because `ListColumn` has
+     * no way to say it — an operator-facing `primary:` is the extensibility
+     * pass, not this one.
      */
-    primary: !!listColumnOf(column)?.face || isEnumColumn(column),
+    primary: !!listColumnOf(column)?.face || !!listColumnOf(column)?.busy || isEnumColumn(column),
   })),
 )
 
@@ -1109,13 +1178,12 @@ const rowTargets = computed(() => {
 // PropertyDef and there is no relation widget, so they stay on the string
 // path in getFormattedCellValue.
 const columnWidgets = computed(() => {
-  const byProperty = new Map<string, { component: Component; hint: DenseRoutingHint }>()
+  const byProperty = new Map<string, DenseEntry>()
   const type = entityType.value
   if (!type) return byProperty
   for (const column of listConfig.value?.columns ?? []) {
     if (!column.property || byProperty.has(column.property)) continue
-    const hint = densePropertyRoutingHint(type.properties[column.property], column.property)
-    byProperty.set(column.property, { component: defaultRegistry.resolveFromHint(hint), hint })
+    byProperty.set(column.property, denseEntry(type.properties[column.property], column.property))
   }
   return byProperty
 })
@@ -1134,11 +1202,7 @@ function cellWidget(
   return isDenseEmpty(getCellValue(entity, column)) ? undefined : entry
 }
 
-interface ResolvedCell {
-  component: Component
-  propertyName: string
-  modelValue: unknown
-}
+type ResolvedCell = DenseCell
 
 // One resolved cell: the widget to render plus the value already shaped the
 // way that widget wants. Returns undefined when the cell must fall back to the
@@ -1173,15 +1237,7 @@ function resolveCell(
 
   const entry = cellWidget(entity, column)
   const resolved: ResolvedCell | undefined = entry
-    ? {
-        component: entry.component,
-        propertyName: entry.hint.propertyName,
-        // Passthrough widgets render String(value); everything else owns its
-        // display formatting and wants the stored value.
-        modelValue: entry.hint.preformatted
-          ? getFormattedCellValue(entity, column)
-          : getCellValue(entity, column),
-      }
+    ? denseCell(entry, getCellValue(entity, column), () => getFormattedCellValue(entity, column))
     : undefined
   perEntity.set(column, resolved)
   return resolved
@@ -1220,8 +1276,11 @@ function faceLabel(entity: Entity): string {
 
 function getFormattedCellValue(
   entity: Entity,
-  column: { property?: string; relation?: string; direction?: 'outgoing' | 'incoming'; face?: boolean },
+  column: { property?: string; relation?: string; direction?: 'outgoing' | 'incoming'; face?: boolean; busy?: string },
 ): string {
+  // A busy cell renders an indicator, never text: no path prints the
+  // channel type name as a value.
+  if (column.busy) return ''
   // For relation columns, resolve IDs to titles using included entities.
   // Outgoing edges are serialized under the relation type; incoming edges
   // under the relation's INVERSE key (matching the backend serializer, see
@@ -1299,6 +1358,16 @@ watch(searchQuery, () => {
         <BackButton v-if="backTarget" :target="backTarget" />
         <ExportMenu :url-for="listExportUrlFor" />
         <RlButton
+          v-for="a in toolbar.buttons.value"
+          :key="`toolbar-action-${a.id}`"
+          variant="secondary"
+          :disabled="toolbar.busy.value"
+          data-testid="toolbar-action"
+          @click="toolbar.run(a, $event)"
+        >
+          {{ a.label }}
+        </RlButton>
+        <RlButton
           v-if="createFormTarget && canCreate()"
           :as="RouterLink"
           :to="createFormTarget"
@@ -1306,7 +1375,7 @@ watch(searchQuery, () => {
           icon="plus"
           @click.capture="createModal.onClick"
         >
-          New
+          {{ t('common.new') }}
           <template #trailing><RlKbd keys="N" /></template>
         </RlButton>
       </template>
@@ -1323,7 +1392,7 @@ watch(searchQuery, () => {
         <SearchBox
           ref="searchBoxRef"
           :model-value="searchQuery"
-          :placeholder="`Search ${listConfig.entity}s...`"
+          :placeholder="t('list.searchEntities', { entity: listConfig.entity })"
           @update:model-value="handleSearchUpdate"
         />
         <AdHocFilterMenu
@@ -1366,7 +1435,7 @@ watch(searchQuery, () => {
         <button
           type="button"
           class="chip-remove"
-          :title="`Remove ${chip.property} filter`"
+          :title="t('list.removeFilter', { property: chip.property })"
           @click="removeAdHocFilter(chip.property)"
         >
           &times;
@@ -1392,13 +1461,20 @@ watch(searchQuery, () => {
         tone="warning"
         data-testid="group-truncated"
       >
-        Showing the first {{ entities.length }} of {{ grouping.total.value }} rows. Filter the list to see the rest.
+        {{ t('list.groupTruncated', { shown: entities.length, total: grouping.total.value }) }}
       </RlBanner>
-      <RlStatusRegion v-if="loading">Loading...</RlStatusRegion>
+      <RlBanner
+        v-if="sortDropped && !loading && !loadError"
+        tone="info"
+        data-testid="sort-dropped"
+      >
+        {{ t('list.sortDropped', { reason: sortDropped.reason }) }}
+      </RlBanner>
+      <RlStatusRegion v-if="loading">{{ t('list.loading') }}</RlStatusRegion>
 
       <div v-else-if="loadError" class="empty-state load-error">
         <p>{{ loadError }}</p>
-        <RlButton variant="secondary" @click="listQuery.refetch()">Retry</RlButton>
+        <RlButton variant="secondary" @click="listQuery.refetch()">{{ t('list.retry') }}</RlButton>
       </div>
 
       <!--
@@ -1412,13 +1488,13 @@ watch(searchQuery, () => {
         :icon="searchQuery ? 'search' : 'inbox'"
         :title="
           searchQuery
-            ? `No matches for \u201c${searchQuery}\u201d.`
-            : `No ${listConfig.entity}s found.`
+            ? t('list.noMatches', { query: searchQuery })
+            : t('list.noEntities', { entity: listConfig.entity })
         "
       >
         <template #actions>
           <RlButton v-if="searchQuery" variant="secondary" @click="handleSearchUpdate('')">
-            Clear search
+            {{ t('list.clearSearch') }}
           </RlButton>
           <RlButton
             v-else-if="createFormTarget && canCreate()"
@@ -1427,7 +1503,7 @@ watch(searchQuery, () => {
             variant="secondary"
             @click.capture="createModal.onClick"
           >
-            Create one
+            {{ t('list.createOne') }}
           </RlButton>
         </template>
       </RlEmptyState>
@@ -1472,7 +1548,7 @@ watch(searchQuery, () => {
           Two stretched overlays would fight, which is why this slot exists.
         -->
         <template #name="{ item }">
-          <span v-if="titleColumn && isCellInaccessible(item as Entity, titleColumn)" class="inaccessible-cell" title="inaccessible">🔒</span>
+          <span v-if="titleColumn && isCellInaccessible(item as Entity, titleColumn)" class="inaccessible-cell" :title="t('list.inaccessible')">🔒</span>
           <RouterLink
             v-else-if="rowTargets.get(item.id)"
             :to="rowTargets.get(item.id)!"
@@ -1501,6 +1577,8 @@ watch(searchQuery, () => {
         -->
         <template #meta="{ item }">
           <WorldBadge :world="(item as Entity)._world" :entity-type="(item as Entity).type" />
+          <!-- Who holds a claim on the row (TKT-4YPG4Q); absent when nobody does. -->
+          <LeaseBadge :lease="(item as Entity)._lease" />
         </template>
 
         <!--
@@ -1509,10 +1587,14 @@ watch(searchQuery, () => {
           value, never the plain string `column.field` would cover.
         -->
         <template #cell="{ item, column }">
+          <RlBusyIndicator
+            v-if="listColumnOf(column!)?.busy"
+            :entries="busyEntries(item as Entity)"
+          />
           <span
-            v-if="listColumnOf(column!) && isCellInaccessible(item as Entity, listColumnOf(column!)!)"
+            v-else-if="listColumnOf(column!) && isCellInaccessible(item as Entity, listColumnOf(column!)!)"
             class="inaccessible-cell"
-            title="inaccessible"
+            :title="t('list.inaccessible')"
           >🔒</span>
           <span v-else class="list-cell">
             <component
@@ -1522,6 +1604,7 @@ watch(searchQuery, () => {
               :mode="'display'"
               :property-name="resolveCell(item as Entity, listColumnOf(column!)!)!.propertyName"
               :entity-type="listConfig.entity"
+              :entity-id="entityRef(item as Entity)"
             />
             <template v-else>{{ listColumnOf(column!) ? getFormattedCellValue(item as Entity, listColumnOf(column!)!) : '' }}</template>
           </span>
@@ -1573,7 +1656,7 @@ watch(searchQuery, () => {
             data-testid="bulk-delete"
             @click="deleteSelected"
           >
-            Delete
+            {{ t('common.delete') }}
           </RlButton>
           <AddToPileMenu
             :addresses="selectedAddresses"
@@ -1614,7 +1697,7 @@ watch(searchQuery, () => {
   </div>
 
   <RlStatusRegion v-else tone="error">
-    The list "{{ listId }}" does not exist in the configuration.
+    {{ t('list.unknownList', { id: listId }) }}
   </RlStatusRegion>
 </template>
 

@@ -1,12 +1,16 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
 import { useRouter } from 'vue-router'
+import { useI18n } from 'vue-i18n'
 import RlMenu from 'rela-components/components/overlay/RlMenu.vue'
 import RlMenuItem from 'rela-components/components/overlay/RlMenuItem.vue'
+import RlMenuSeparator from 'rela-components/components/overlay/RlMenuSeparator.vue'
 import RlButton from 'rela-components/components/common/RlButton.vue'
 import RlIcon from 'rela-components/components/common/RlIcon.vue'
 import InlineCreateFormModal from '@/components/forms/InlineCreateFormModal.vue'
 import { usePageCreateLink, type AnchorLink } from '@/composables/usePageTabScope'
+import { leadWith, useViewEntityTypes } from '@/composables/useViewEntityTypes'
+import { usePageStore } from '@/stores/pages'
 import { useSpaceStore } from '@/stores/space'
 import type { Entity, SidebarCreate } from '@/types'
 
@@ -21,14 +25,37 @@ import type { Entity, SidebarCreate } from '@/types'
  * On an entity page the new entity is first linked to the page's entity, as
  * New in a tab links it, so it belongs to the page it was created from. The
  * link is awaited before the entity opens, so its page shows the relation.
+ * There the menu offers only the types it can link; when it can link none,
+ * the button is hidden, as it is for a space without `create:`. While the
+ * page's entity loads, the links are not known yet: the button stays in
+ * place but is busy and inert, so the header does not shift and keyboard
+ * focus is not lost.
+ *
+ * On a list, board, calendar or gantt, on its own route or in a page tab,
+ * the types the view shows come first, so the likely choice is the top row.
+ * The other types follow in config order, after a separator.
  */
+const { t } = useI18n()
 const space = useSpaceStore()
+const pages = usePageStore()
 const router = useRouter()
 const pageLink = usePageCreateLink()
+
+const viewTypes = useViewEntityTypes()
+
+const rows = computed(() => leadWith(pageLink.offered(space.create), viewTypes.value))
+const hasRows = computed(() => rows.value.lead.length > 0 || rows.value.rest.length > 0)
 
 const creating = ref<SidebarCreate | null>(null)
 /* Fixed when the dialog opens: the dialog outlives a navigation to another page. */
 const linkTo = ref<AnchorLink>()
+
+/* While busy the trigger keeps its ARIA state but not the arrow keys that open the menu. */
+function triggerAttrs<A extends { onKeydown: unknown }>(attrs: A) {
+  if (!pages.opening) return attrs
+  const { onKeydown: _, ...rest } = attrs
+  return rest
+}
 
 function open(row: SidebarCreate) {
   linkTo.value = pageLink.target(row.type)
@@ -47,15 +74,27 @@ function onCreatedAnother(entity: Entity) {
 </script>
 
 <template>
+  <!-- The dialog sits outside the menu's v-if: it stays open when a navigation empties the menu. -->
   <template v-if="space.create.length">
-    <RlMenu align="end">
+    <RlMenu v-if="hasRows || pages.opening" align="end">
       <template #trigger="{ toggle, attrs }">
-        <RlButton variant="primary" data-testid="space-create" v-bind="attrs" @click="toggle">
-          Create
+        <RlButton
+          variant="primary"
+          data-testid="space-create"
+          v-bind="triggerAttrs(attrs)"
+          :loading="pages.opening"
+          :loading-label="t('shell.loadingLabel')"
+          @click="toggle"
+        >
+          {{ t('common.create') }}
           <template #trailing><RlIcon name="chevron-down" :size="12" /></template>
         </RlButton>
       </template>
-      <RlMenuItem v-for="row in space.create" :key="row.type" @click="open(row)">
+      <RlMenuItem v-for="row in rows.lead" :key="row.type" @click="open(row)">
+        {{ row.label }}
+      </RlMenuItem>
+      <RlMenuSeparator v-if="rows.lead.length && rows.rest.length" />
+      <RlMenuItem v-for="row in rows.rest" :key="row.type" @click="open(row)">
         {{ row.label }}
       </RlMenuItem>
     </RlMenu>

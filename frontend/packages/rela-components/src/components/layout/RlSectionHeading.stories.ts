@@ -6,7 +6,7 @@ const meta: Meta<typeof RlSectionHeading> = {
   component: RlSectionHeading,
   parameters: { layout: 'padded' },
   argTypes: {
-    color: { control: { type: 'select' }, options: ['green', 'amber', 'red', 'grey', 'blue'] },
+    color: { control: { type: 'select' }, options: ['green', 'amber', 'red', 'grey', 'blue', 'purple'] },
     size: { control: { type: 'inline-radio' }, options: ['sm', 'md'] },
     level: { control: { type: 'select' }, options: [1, 2, 3, 4, 5, 6] },
   },

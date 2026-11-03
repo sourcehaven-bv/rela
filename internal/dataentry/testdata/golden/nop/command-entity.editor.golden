@@ -1,0 +1,14 @@
+request: POST /api/command/entity_ids?entity_id=TKT-1
+identity: header editor@example.test
+status: 200
+reads: ListEntities=1 ListEntityHeaders=2 ListRelations=1
+breadth: ListEntities=1/1 ListEntityHeaders=6/2 ListRelations=0/1
+bodies: ListEntities=1/1 ListEntityHeaders=0/2
+versions: 
+body:
+event: log
+data: {"type":"log","text":"{\"context\":\"entity\",\"entity\":{\"id\":\"TKT-1\",\"type\":\"ticket\",\"properties\":{\"budget\":\"alpha-budget\",\"due\":\"2025-01-17\",\"note\":\"alpha-note\",\"screenshot\":\"attachments/TKT-1/screenshot/shot.txt\",\"secret\":\"alpha-secret\",\"start\":\"2025-01-06\",\"status\":\"open\",\"title\":\"Alpha\"},\"content\":\"Alpha body.\",\"updated_at\":\"<now>\"},\"relations\":[{\"from\":\"PERS-viewer\",\"relation\":\"watches\",\"to\":\"TKT-1\",\"updated_at\":\"<now>\"},{\"from\":\"TKT-1\",\"relation\":\"contains\",\"to\":\"TKT-2\",\"updated_at\":\"<now>\"},{\"from\":\"TKT-1\",\"relation\":\"contains\",\"to\":\"TKT-4\",\"updated_at\":\"<now>\"},{\"from\":\"TKT-1\",\"relation\":\"implements\",\"to\":\"POL-1\",\"updated_at\":\"<now>\"}],\"project\":{\"root\":\"\u003cproject\u003e\",\"metamodel\":\".\"}}"}
+
+event: done
+data: {"success":true}
+

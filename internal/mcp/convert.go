@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"sort"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
@@ -20,14 +21,24 @@ type entityJSON struct {
 	Type string `json:"type"`
 	// Face names the face served, omitted for the implicit face.
 	// `ID@face` addresses this exact row in show_entity and update_entity.
-	Face       string         `json:"face,omitempty"`
-	Title      string         `json:"title,omitempty"`
+	Face  string `json:"face,omitempty"`
+	Title string `json:"title,omitempty"`
+	// URL is the entity's page in the web app; see [entityURL].
+	URL        string         `json:"url,omitempty"`
 	Properties map[string]any `json:"properties,omitempty"`
 	Content    string         `json:"content,omitempty"`
 	Relations  *relationsJSON `json:"relations,omitempty"`
 	// OtherFaces lists the entity's other faces the caller may read, on
 	// show_entity only. Omitted when there are none.
 	OtherFaces []faceJSON `json:"other_faces,omitempty"`
+	// MentionedBy lists the entities whose body mentions this one, on
+	// show_entity only (TKT-Q6AKUN). MentionedByTruncated says the list
+	// stops at the cap.
+	MentionedBy          []entitySummary `json:"mentioned_by,omitempty"`
+	MentionedByTruncated bool            `json:"mentioned_by_truncated,omitempty"`
+	// Lease is the live lease on the entity, on show_entity only. Omitted
+	// when the entity is not held or leases are not wired.
+	Lease *leaseJSON `json:"lease,omitempty"`
 }
 
 // faceJSON names another face of an entity and the address that reads it.
@@ -49,6 +60,7 @@ type relationsJSON struct {
 type relationTargetJSON struct {
 	ID    string `json:"id"`
 	Title string `json:"title,omitempty"`
+	URL   string `json:"url,omitempty"`
 }
 
 // relationJSON represents a relation for JSON output.
@@ -70,6 +82,7 @@ type traceNodeJSON struct {
 	ID       string           `json:"id"`
 	Type     string           `json:"type"`
 	Title    string           `json:"title,omitempty"`
+	URL      string           `json:"url,omitempty"`
 	Faces    []entity.Face    `json:"faces,omitempty"`
 	Relation string           `json:"relation,omitempty"`
 	Incoming bool             `json:"incoming,omitempty"`
@@ -81,6 +94,7 @@ type pathStepJSON struct {
 	ID       string        `json:"id"`
 	Type     string        `json:"type"`
 	Title    string        `json:"title,omitempty"`
+	URL      string        `json:"url,omitempty"`
 	Faces    []entity.Face `json:"faces,omitempty"`
 	Relation string        `json:"relation,omitempty"`
 }
@@ -109,7 +123,13 @@ func buildEntityJSON(
 		Type:       e.Type,
 		Face:       e.Face.String(),
 		Title:      derivedTitle(meta, e),
+		URL:        entityURL(ctx, e.Type, e.Ref()),
 		Properties: e.Properties,
+	}
+	if names := meta.RollupNames(e.Type); len(names) > 0 {
+		// Never a stored value under a roll-up name; show_entity adds the
+		// computed ones.
+		ej.Properties = visibility.MergeRollups(maps.Clone(e.Properties), names, nil)
 	}
 	if view.content {
 		ej.Content = e.Content
@@ -164,15 +184,17 @@ type entitySummary struct {
 	Face   string `json:"face,omitempty"`
 	Title  string `json:"title,omitempty"`
 	Status string `json:"status,omitempty"`
+	URL    string `json:"url,omitempty"`
 }
 
 // convertStoreEntitySummary returns the summary form of e.
-func convertStoreEntitySummary(meta *metamodel.Metamodel, e *entity.Entity) entitySummary {
+func convertStoreEntitySummary(ctx context.Context, meta *metamodel.Metamodel, e *entity.Entity) entitySummary {
 	summary := entitySummary{
 		ID:     e.ID,
 		Type:   e.Type,
 		Title:  displayTitle(meta, e),
 		Status: e.Status(),
+		URL:    entityURL(ctx, e.Type, e.Ref()),
 	}
 	if !e.Face.IsImplicit() {
 		summary.Face = e.Face.String()
@@ -240,12 +262,12 @@ func buildStoreRelations(
 		Incoming: make(map[string][]relationTargetJSON),
 	}
 	for _, ed := range out {
-		if t, ok := neighbor(meta, ed.ref, resolved[ed.ref]); ok {
+		if t, ok := neighbor(ctx, meta, ed.ref, resolved[ed.ref]); ok {
 			rels.Outgoing[ed.typ] = append(rels.Outgoing[ed.typ], t)
 		}
 	}
 	for _, ed := range in {
-		if t, ok := neighbor(meta, ed.ref, resolved[ed.ref]); ok {
+		if t, ok := neighbor(ctx, meta, ed.ref, resolved[ed.ref]); ok {
 			rels.Incoming[ed.typ] = append(rels.Incoming[ed.typ], t)
 		}
 	}
@@ -272,13 +294,15 @@ func buildStoreRelations(
 // face the world resolves the bare id to; a faced neighbor has none in the
 // default world until TKT-7IZHP0, and is listed by id alone.
 func neighbor(
-	meta *metamodel.Metamodel, ref entity.Ref, res visibility.ResolvedHeader,
+	ctx context.Context, meta *metamodel.Metamodel, ref entity.Ref, res visibility.ResolvedHeader,
 ) (relationTargetJSON, bool) {
 	addr := ref.String()
 	if res.Served() {
 		h := res.Header
 		title := titleOrEmpty(h.ID, meta.DisplayTitle(h.ID, h.Type, h.Properties))
-		return relationTargetJSON{ID: addr, Title: title}, true
+		// The url names the served face, the one the title comes from.
+		url := entityURL(ctx, h.Type, entity.Ref{ID: h.ID, Face: h.Face})
+		return relationTargetJSON{ID: addr, Title: title, URL: url}, true
 	}
 	if !ref.Face.IsImplicit() || !res.Family {
 		return relationTargetJSON{}, false
@@ -300,8 +324,8 @@ func convertStoreRelation(r *entity.Relation) (string, error) {
 }
 
 // convertTraceResult converts a tracer.TraceResult to JSON string.
-func convertTraceResult(tr *tracer.TraceResult, meta *metamodel.Metamodel) (string, error) {
-	node := convertTraceNode(tr, meta)
+func convertTraceResult(ctx context.Context, tr *tracer.TraceResult, meta *metamodel.Metamodel) (string, error) {
+	node := convertTraceNode(ctx, tr, meta)
 	return marshalJSON(node)
 }
 
@@ -309,7 +333,7 @@ func convertTraceResult(tr *tracer.TraceResult, meta *metamodel.Metamodel) (stri
 // the tracer carries. Under a networked wiring those properties have already
 // been redacted by the visibility tracer decorator, so the title cannot
 // reveal a hidden field.
-func convertTraceNode(tr *tracer.TraceResult, meta *metamodel.Metamodel) *traceNodeJSON {
+func convertTraceNode(ctx context.Context, tr *tracer.TraceResult, meta *metamodel.Metamodel) *traceNodeJSON {
 	if tr == nil {
 		return nil
 	}
@@ -317,26 +341,29 @@ func convertTraceNode(tr *tracer.TraceResult, meta *metamodel.Metamodel) *traceN
 		ID:       tr.ID,
 		Type:     tr.Type,
 		Title:    titleOrEmpty(tr.ID, meta.DisplayTitle(tr.ID, tr.Type, tr.Properties)),
+		URL:      familyURL(ctx, tr.Type, tr.ID),
 		Faces:    tr.Faces,
 		Relation: tr.Relation,
 		Incoming: tr.Incoming,
 	}
 	for _, child := range tr.Children {
-		node.Children = append(node.Children, convertTraceNode(child, meta))
+		node.Children = append(node.Children, convertTraceNode(ctx, child, meta))
 	}
 	return node
 }
 
-// convertPathSteps converts a tracer.PathStep slice to a JSON string. title
-// resolves a step's display title; a path carries no properties, so the
-// caller looks each step up through its gated reader.
-func convertPathSteps(steps []tracer.PathStep, title func(tracer.PathStep) string) (string, error) {
+// convertPathSteps converts a tracer.PathStep slice to a JSON string. view
+// returns a step's display title and url; a path carries no properties or
+// faces, so the caller looks each step up through its gated reader.
+func convertPathSteps(steps []tracer.PathStep, view func(tracer.PathStep) (title, url string)) (string, error) {
 	result := make([]pathStepJSON, len(steps))
 	for i, s := range steps {
+		title, url := view(s)
 		result[i] = pathStepJSON{
 			ID:       s.ID,
 			Type:     s.Type,
-			Title:    title(s),
+			Title:    title,
+			URL:      url,
 			Faces:    s.Faces,
 			Relation: s.Relation,
 		}

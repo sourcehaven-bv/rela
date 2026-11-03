@@ -1,0 +1,32 @@
+request: GET /api/v1/_piles
+identity: header outsider@example.test
+status: 200
+reads: GraphQueryHeaders=1 ListEntityHeaders=1 ListRelations=1 MatchingFaces=1
+breadth: ListEntityHeaders=2/1 ListRelations=0/1 MatchingFaces=2/1
+bodies: GraphQuery=0/1 ListEntityHeaders=0/1
+versions: 
+body:
+{
+  "piles": [
+    {
+      "id": "PIL-GOLDD",
+      "name": "Reading",
+      "icon": "",
+      "count": 0,
+      "created": "2025-03-01T09:00:00Z",
+      "updated": "2025-03-01T09:00:00Z"
+    }
+  ],
+  "icons": [
+    "layers",
+    "star",
+    "flag",
+    "bookmark",
+    "inbox",
+    "folder",
+    "tag",
+    "heart",
+    "clock",
+    "target"
+  ]
+}

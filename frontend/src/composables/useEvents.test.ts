@@ -25,7 +25,7 @@ vi.mock('@/stores', () => ({
 // instance the composable connected to and drive server-sent events
 // through its _emit helper.
 interface EmittingSource {
-  _emit: (type: string, data?: string) => void
+  _emit: (type: string, data?: string, lastEventId?: string) => void
 }
 const BaseEventSource = globalThis.EventSource as unknown as new (url: string) => EventSource
 let lastSource: EmittingSource | null = null
@@ -194,7 +194,7 @@ describe('useEvents', () => {
       lastSource!._emit('entity:changed', JSON.stringify({ type: 'ticket' }))
 
       expect(mockEntitiesInvalidateAll).toHaveBeenCalledTimes(1)
-      expect(spy).toHaveBeenCalledWith({ key: ['entities', 'ticket'] })
+      expect(spy).toHaveBeenCalledWith({ key: ['entities', 'ticket'] }, true)
     })
 
     it('invalidates per type across successive entity:changed events', async () => {
@@ -205,9 +205,25 @@ describe('useEvents', () => {
       lastSource!._emit('entity:changed', JSON.stringify({ type: 'risk' }))
       lastSource!._emit('entity:changed', JSON.stringify({ type: 'measure' }))
 
-      expect(spy).toHaveBeenCalledWith({ key: ['entities', 'risk'] })
-      expect(spy).toHaveBeenCalledWith({ key: ['entities', 'measure'] })
+      expect(spy).toHaveBeenCalledWith({ key: ['entities', 'risk'] }, true)
+      expect(spy).toHaveBeenCalledWith({ key: ['entities', 'measure'] }, true)
       expect(mockEntitiesInvalidateAll).toHaveBeenCalledTimes(2)
+    })
+
+    it('only marks queries stale while the tab is hidden (TASK-550RD)', async () => {
+      const queryCache = useQueryCache()
+      const spy = vi.spyOn(queryCache, 'invalidateQueries')
+      await mountConnected()
+      const visibility = vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('hidden')
+      try {
+        lastSource!._emit('entity:changed', JSON.stringify({ type: 'ticket' }))
+        lastSource!._emit('refresh')
+      } finally {
+        visibility.mockRestore()
+      }
+
+      expect(spy).toHaveBeenCalledWith({ key: ['entities', 'ticket'] }, false)
+      expect(spy).toHaveBeenCalledWith({ key: ['entities'] }, false)
     })
 
     it('invalidates every entity query on refresh', async () => {
@@ -218,7 +234,7 @@ describe('useEvents', () => {
       lastSource!._emit('refresh')
 
       expect(mockEntitiesInvalidateAll).toHaveBeenCalledTimes(1)
-      expect(spy).toHaveBeenCalledWith({ key: ['entities'] })
+      expect(spy).toHaveBeenCalledWith({ key: ['entities'] }, true)
       expect(mockGitFetchStatus).toHaveBeenCalled()
     })
 
@@ -254,6 +270,26 @@ describe('useEvents', () => {
       expect(mockEntitiesInvalidateAll).not.toHaveBeenCalled()
     })
 
+    it('says which file was applied when a realtime.yaml reload leaves data-entry.yaml behind', async () => {
+      await mountConnected()
+
+      lastSource!._emit(
+        'config-error',
+        JSON.stringify({
+          file: 'data-entry.yaml',
+          applied: 'realtime.yaml',
+          error: 'channels.room: realtime.yaml declares no channel type "room"',
+        })
+      )
+
+      const text = mockUIError.mock.calls[0][0] as string
+      expect(text).toContain(
+        'realtime.yaml was applied, but data-entry.yaml does not load against it'
+      )
+      expect(text).toContain('the previous data-entry.yaml is still in use')
+      expect(text).not.toContain('Configuration not reloaded')
+    })
+
     it('still reports a config-error whose payload does not parse', async () => {
       await mountConnected()
 
@@ -262,6 +298,47 @@ describe('useEvents', () => {
       expect(mockUIError).toHaveBeenCalledWith(
         'Configuration not reloaded; the previous version is still in use.'
       )
+    })
+  })
+
+  describe('resume token (TKT-3A1200)', () => {
+    function sourceUrl() {
+      return (lastSource as unknown as { url: string }).url
+    }
+
+    async function reconnect(vm: TestVm) {
+      vm.disconnect()
+      vm.connect()
+      await vi.runAllTimersAsync()
+    }
+
+    it('sends the last event id on reconnect', async () => {
+      const { vm } = await mountConnected()
+      lastSource!._emit('ready', '{}', 'tok-ready')
+      lastSource!._emit('entity:changed', JSON.stringify({ type: 'ticket' }), 'tok-change')
+
+      await reconnect(vm)
+
+      expect(sourceUrl()).toContain('?last_event_id=tok-change')
+    })
+
+    it('keeps the stored id when an event carries none', async () => {
+      const { vm } = await mountConnected()
+      lastSource!._emit('ping', '{}', 'tok-ping')
+      lastSource!._emit('refresh', 'refresh', '')
+
+      await reconnect(vm)
+
+      expect(sourceUrl()).toContain('?last_event_id=tok-ping')
+    })
+
+    it('escapes the token in the query', async () => {
+      const { vm } = await mountConnected()
+      lastSource!._emit('ready', '{}', 'a&b=c')
+
+      await reconnect(vm)
+
+      expect(sourceUrl()).toContain('?last_event_id=a%26b%3Dc')
     })
   })
 

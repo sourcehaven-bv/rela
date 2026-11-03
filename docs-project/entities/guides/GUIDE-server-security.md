@@ -206,6 +206,16 @@ on network topology. Verified JWT identity fails *closed* and
 proves authenticity cryptographically. The header path is
 unchanged and still supported; it is simply the weaker of the two.
 
+**With an `acl.yaml`, `unknown` is refused.** The ACL cannot resolve
+an `unknown` caller, so every `/api/` request without a user answers
+401 `unauthenticated`. The error detail names the settings that
+supply an identity. When `acl.yaml` is loaded and neither
+`--principal-header`, `$RELA_DATAENTRY_USER` nor `--jwt-*` is set,
+`rela-server` also logs a warning at startup. For local use, set `$RELA_DATAENTRY_USER`; anywhere else,
+configure `--jwt-*`. Every caller acts as the `$RELA_DATAENTRY_USER`
+user, so `rela-server` warns when it is set on a bind beyond
+loopback.
+
 Header values are sanitized at the middleware (trim, 256-rune cap,
 control-char strip) as defense-in-depth against header-injection
 corrupting the JSONL stream.
@@ -266,10 +276,12 @@ naming `integration:basecamp` is refused exactly like one naming
 `system:scheduler`, from every source in the table above. Only `run_as` in
 `schedules.yaml` and `schema.yaml` can reach it.
 
-A reserved identity cannot author comments either: the comment service
-refuses a `system:` or `integration:` author. A connector that needs to
-report something to people writes a property instead, such as the
-Basecamp example's `sync_conflict`.
+The comment service refuses a `system:` author. It accepts an
+`integration:` author, but no request reaches the server as one, so on the
+server that rule changes nothing. Only stdio `rela mcp --run-as` can write
+such a comment, for example from a coding agent; there the name is a label
+the local user chose. A connector that needs to report something to people
+writes a property, such as the Basecamp example's `sync_conflict`.
 
 > **Upgrade note.** If your IdP issues subjects that begin with
 > `integration:`, those users can no longer authenticate either. The log
@@ -449,8 +461,18 @@ Some requests carry extra fields:
   was written, `status` is 500. That status is recorded, not sent: the
   connection is closed, so the client sees a reset and a proxy in front
   reports 502.
+- `canceled=true`: the client went away before the server finished, for
+  example because a search box sent a newer request. `status` is then 499,
+  the code Caddy and nginx use for a closed client connection. It is
+  recorded, not sent. If the handler had written a status anyway, that
+  status is kept as `written_status`. Search and list requests log no
+  warning for a cancel. Event streams always end this way and are never
+  marked.
 - `path_truncated=true`: the route shape was longer than 512 bytes and was cut.
   A method longer than 32 bytes is logged as `OTHER`.
+- `query=...`: the request had a query string. It is logged as its shape, so a
+  slow request can be traced to the list or view that sent it, for example
+  `query="include=*&list_id=all_taken&page=1&per_page=100&world=actueel"`.
 
 The event streams (`/api/events`, `/api/v1/_events`) log one line when the
 stream closes. Their `wall_ms` is how long the tab kept the stream open,
@@ -465,14 +487,42 @@ What it records and what it leaves out:
   `*`, including entity IDs and attachment file names.
   `/api/v1/tickets/TKT-1/_attachments/screenshot/ziekmelding.pdf` is logged
   as `/api/v1/tickets/*/_attachments/screenshot/*`. An ID or file name that
-  is identical to one of those words is kept as is. Query strings are left
-  out because they can carry tokens.
+  is identical to one of those words is kept as is.
+- The query string is logged as a shape with the same rule. Keys are sorted.
+  A key is kept when rela reads it or it is a configured name; any other key
+  becomes `*`. A value is kept only when it is a paging number, `*`, or a list
+  of configured names (a list id, a world, an include path, a sort). Search
+  text (`q`), filter values, cursors, anchors and any other number are always
+  `*`, and so is any value that could be a token.
 - The application log is a separate stream. Its warnings for failed
   attachment writes and blocked requests use a coarser shape that also masks
   type names. Other error lines there can still contain the full path.
 - No user, IP address, or request body.
 - No SQL. `--verbose` is not a substitute: it also logs every SQL
   statement with its bound arguments.
+
+## Query ceiling (`--query-ceiling`)
+
+A GET or HEAD request that runs more database statements than
+`--query-ceiling` (default 500) is logged as a warning in the application log,
+whether or not the access log is on. The record is one line; it is wrapped
+here for reading:
+
+```text
+level=WARN msg="request exceeded query ceiling" method=GET path=/api/v1/taken
+  status=200 wall_ms=3400 queries=7416 db_ms=2900
+  query="include=*&list_id=all_taken&per_page=100&world=actueel" ceiling=500
+  top_statement="SELECT ... FROM relations WHERE from_id = $1 AND type = $2 AND to_id = $3"
+  top_statement_count=1800
+```
+
+`top_statement` is the statement the request ran most often, as
+parameterised SQL. It names the lookup that runs once per row. It holds no
+bound values. Writes are exempt, because an import or a command may run many
+statements once. Event streams are exempt, because their count covers the
+whole time a tab kept the stream open. Only the database backends count
+statements, so the file backend never logs this. `--query-ceiling=0` turns
+the check off. The end-to-end tests fail when the server logs this warning.
 
 The query count is safe here but not in a response. The access log never
 sets the `Server-Timing` header that `--verbose` adds. A per-response

@@ -158,6 +158,22 @@ func buildRelationQueryFrom(q store.RelationQuery, cursorKey string) (sqlText st
 			args = append(args, ids, ids)
 		}
 	}
+	if q.PeerIDs != nil {
+		// The other endpoint; see store.RelationQuery.PeerIDs.
+		peers := jsonIDs(q.PeerIDs)
+		const in = "(SELECT value FROM json_each(?))"
+		switch q.Direction {
+		case store.DirectionOutgoing:
+			conds = append(conds, "to_id IN "+in)
+			args = append(args, peers)
+		case store.DirectionIncoming:
+			conds = append(conds, "from_id IN "+in)
+			args = append(args, peers)
+		default:
+			conds = append(conds, "(from_id IN "+in+" OR to_id IN "+in+")")
+			args = append(args, peers, peers)
+		}
+	}
 
 	sqlText = `SELECT ` + relationColumns + ` FROM relations`
 	if len(conds) > 0 {
@@ -173,6 +189,7 @@ const relationColumns = "from_id, from_face, rel_type, to_id, properties, conten
 
 // --- RelationWriter -------------------------------------------------------
 
+//archplan:sink=write
 func (s *Store) CreateRelation(
 	ctx context.Context, k entity.RelationKey, data *store.RelationData,
 ) (*entity.Relation, error) {
@@ -245,6 +262,8 @@ func (s *Store) CreateRelation(
 //
 // The tail is part of a relation's identity, so addressing the wrong one
 // writes the caller's properties onto a DIFFERENT edge rather than failing.
+//
+//archplan:sink=write
 func (s *Store) UpdateRelation(
 	ctx context.Context, k entity.RelationKey, data store.RelationData,
 ) (*entity.Relation, error) {
@@ -279,6 +298,8 @@ func (s *Store) UpdateRelation(
 //
 // The tail is part of a relation's identity, so addressing the wrong one
 // deletes a DIFFERENT edge rather than failing.
+//
+//archplan:sink=write
 func (s *Store) DeleteRelation(ctx context.Context, k entity.RelationKey) error {
 	res, err := s.write(ctx,
 		`DELETE FROM relations WHERE from_id = ? AND from_face = ? AND rel_type = ? AND to_id = ?`,

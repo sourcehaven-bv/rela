@@ -2,6 +2,7 @@ import { Marked, type Tokens } from 'marked'
 import mermaid from 'mermaid'
 import DOMPurify from 'dompurify'
 import { relaBase } from '@/api/base'
+import { ENTITY_ADDRESS } from './entityAddress'
 
 // Initialize mermaid with strict security
 mermaid.initialize({
@@ -54,6 +55,12 @@ export interface RenderMarkdownOptions {
    * views aren't misled into thinking inert checkboxes are clickable.
    */
   interactive?: boolean
+  /**
+   * The world the page was read in, as sent to the API's `?world=`. When set,
+   * entity-reference links carry it, so the target opens in the same world
+   * the server resolved the reference in. Undefined: links carry no world.
+   */
+  world?: string
 }
 
 export function renderMarkdown(
@@ -101,7 +108,9 @@ export function renderMarkdown(
         return `<input data-cb-idx="${idx}" type="checkbox"${checkedAttr}> `
       },
     },
-    walkTokens: refResolver ? (token) => rewriteEntityRefToken(token, refResolver) : undefined,
+    walkTokens: refResolver
+      ? (token) => rewriteEntityRefToken(token, refResolver, options.world)
+      : undefined,
   })
 
   const rawHtml = instance.parse(content) as string
@@ -240,7 +249,10 @@ function squashWhitespace(text: string): string {
 // the eventual HTML escaping under marked's control: link text flows
 // through marked's text-renderer (which HTML-escapes) so a malicious entity
 // title cannot break out of the `<a>` element.
-function rewriteEntityRefToken(token: unknown, resolve: EntityRefResolver): void {
+//
+// The href names the bare id, never a face: the target page resolves it in
+// its world, which `world` keeps equal to the world of this page.
+function rewriteEntityRefToken(token: unknown, resolve: EntityRefResolver, world?: string): void {
   if (!isCodespanToken(token)) return
   let hit: EntityRef | null
   try {
@@ -258,7 +270,8 @@ function rewriteEntityRefToken(token: unknown, resolve: EntityRefResolver): void
   const visibleTitle = hit.title || (hit.inaccessible ? token.text : '')
   if (!visibleTitle) return
 
-  const href = relaBase() + `entity/${hit.type}/${token.text}`
+  const query = world ? `?world=${encodeURIComponent(world)}` : ''
+  const href = relaBase() + `entity/${hit.type}/${token.text}${query}`
   // Inaccessible targets get a trailing lock affordance; keep the
   // readable title when one was supplied (the lock only conveys "the
   // underlying file is encrypted") and only fall back to the bare ID
@@ -306,6 +319,185 @@ function inaccessibleTooltipFor(reason: string | undefined): string {
 // route through the exact same line-parser. A divergence between the two
 // would silently mis-align the (n/m) widget with which line a click toggles.
 export { checkboxStats as getCheckboxStats } from './checkboxToggle'
+
+/** A ref the message itself resolved and the reader may open. */
+export interface MessageRefLink {
+  /** The entity id, `ID` or `ID@face`, exactly as the server sent it. */
+  id: string
+  type: string
+  title?: string
+}
+
+/**
+ * A mention the server listed for the message. text is the code span text
+ * to match. A user carries ref, the entity the link opens; a job or a
+ * login carries none and shows as a chip.
+ */
+export interface MessageMentionLink {
+  text: string
+  kind: 'user' | 'job' | 'login'
+  ref?: MessageRefLink
+}
+
+export interface RenderMessageMarkdownOptions {
+  /**
+   * The readable refs of the message (its RefProp values). A code span whose
+   * whole text is one of these ids becomes an in-app link; nothing else is
+   * looked up.
+   */
+  refs?: readonly MessageRefLink[]
+  /**
+   * The people and agents the message mentions, as the server listed them.
+   * A code span whose whole text is a mention's text becomes an in-app link
+   * (a user) or a mention chip (a job or a login).
+   */
+  mentions?: readonly MessageMentionLink[]
+  /** The page world, carried on the in-app links. */
+  world?: string
+}
+
+// The only markup a channel message may produce (TKT-91BK6F R2). Nothing in
+// this list can load a remote resource or restyle the app: no img, media,
+// iframe, form, svg, style or class.
+const MESSAGE_TAGS = [
+  'p',
+  'br',
+  'strong',
+  'em',
+  'del',
+  'code',
+  'pre',
+  'blockquote',
+  'ul',
+  'ol',
+  'li',
+  'a',
+  'h1',
+  'h2',
+  'h3',
+  'h4',
+  'h5',
+  'h6',
+  'hr',
+  'table',
+  'thead',
+  'tbody',
+  'tr',
+  'th',
+  'td',
+]
+
+// Links keep only these schemes. A relative or protocol-relative href fails
+// the anchor, so an author cannot point an in-app looking link anywhere.
+const MESSAGE_URI = /^(?:https?|mailto):/i
+
+// A dedicated instance: its hook must not touch renderMarkdown's output.
+const messagePurifier = DOMPurify(window)
+messagePurifier.addHook('afterSanitizeAttributes', (node) => {
+  if (node.nodeName !== 'A') return
+  const el = node as Element
+  const href = el.getAttribute('href')
+  if (href !== null && !MESSAGE_URI.test(href.trim())) el.removeAttribute('href')
+  el.setAttribute('rel', 'noopener noreferrer nofollow')
+  el.setAttribute('target', '_blank')
+})
+
+// What a ref link may be built from. The server sent these values; checking
+// their shape keeps a malformed one from reaching an href at all.
+const REF_ID = ENTITY_ADDRESS
+const REF_TYPE = /^[A-Za-z][A-Za-z0-9_-]*$/
+
+/**
+ * Renders the markdown of a channel message (TKT-91BK6F).
+ *
+ * Stricter than renderMarkdown: messages come from any member, so the
+ * output keeps only MESSAGE_TAGS with `href` and `title`, links keep only
+ * http, https and mailto and open in a new tab with
+ * `rel="noopener noreferrer nofollow"`, and there are no images, diagrams,
+ * checkboxes or comment marks.
+ *
+ * After sanitizing, a code span whose whole text is the id of one of
+ * `refs` becomes an in-app link to that entity, built with DOM APIs from
+ * the id, its type and the page world only. A code span whose whole text
+ * is the text of one of `mentions` becomes the same link for a user, or a
+ * `<span class="mention">` holding the text for a job or a login.
+ */
+export function renderMessageMarkdown(
+  content: string,
+  options: RenderMessageMarkdownOptions = {}
+): string {
+  if (!content) return ''
+  const rawHtml = new Marked({ gfm: true, breaks: true }).parse(content) as string
+  const clean = messagePurifier.sanitize(rawHtml, {
+    ALLOWED_TAGS: MESSAGE_TAGS,
+    ALLOWED_ATTR: ['href', 'title'],
+    ALLOWED_URI_REGEXP: MESSAGE_URI,
+    ALLOW_DATA_ATTR: false,
+    ALLOW_ARIA_ATTR: false,
+    SANITIZE_NAMED_PROPS: true,
+  })
+  return wrapTablesForScroll(linkMessageRefs(clean, options))
+}
+
+// What a code span turns into: an entity link, or a mention chip.
+type CodeSpanTarget = { link: MessageRefLink } | { chip: string }
+
+// codeSpanTargets maps code span text to its replacement. Refs and user
+// mentions must pass the same shape check before they reach an href; a
+// ref wins over a mention with the same text.
+function codeSpanTargets(options: RenderMessageMarkdownOptions): Map<string, CodeSpanTarget> {
+  const targets = new Map<string, CodeSpanTarget>()
+  const linkable = (r: MessageRefLink | undefined): r is MessageRefLink =>
+    !!r && REF_ID.test(r.id) && REF_TYPE.test(r.type)
+  for (const r of options.refs ?? []) {
+    if (linkable(r)) targets.set(r.id, { link: r })
+  }
+  for (const m of options.mentions ?? []) {
+    if (!m.text || targets.has(m.text)) continue
+    if (m.kind === 'user') {
+      if (linkable(m.ref)) targets.set(m.text, { link: m.ref })
+    } else if (m.kind === 'job' || m.kind === 'login') {
+      targets.set(m.text, { chip: m.text })
+    }
+  }
+  return targets
+}
+
+// linkMessageRefs turns ref and mention code spans into in-app links and
+// mention chips. html is the sanitized output of renderMessageMarkdown; a
+// <template> parses it inertly. Every new node is built with DOM APIs and
+// its text set with textContent, so no server value is parsed as markup.
+function linkMessageRefs(html: string, options: RenderMessageMarkdownOptions): string {
+  const targets = codeSpanTargets(options)
+  if (targets.size === 0 || !html.includes('<code')) return html
+
+  const template = document.createElement('template')
+  // nosemgrep: dom-innerhtml-assignment
+  template.innerHTML = html
+  let changed = false
+  for (const code of template.content.querySelectorAll('code')) {
+    if (code.closest('pre, a')) continue
+    const target = targets.get(code.textContent ?? '')
+    if (!target) continue
+    if ('chip' in target) {
+      const span = document.createElement('span')
+      span.className = 'mention'
+      span.textContent = target.chip
+      code.replaceWith(span)
+    } else {
+      const ref = target.link
+      const query = options.world ? `?world=${encodeURIComponent(options.world)}` : ''
+      const a = document.createElement('a')
+      a.setAttribute('href', `${relaBase()}entity/${ref.type}/${ref.id}${query}`)
+      a.className = 'entity-ref'
+      a.textContent = ref.title || ref.id
+      if (ref.title) a.setAttribute('title', ref.id)
+      code.replaceWith(a)
+    }
+    changed = true
+  }
+  return changed ? template.innerHTML : html
+}
 
 // Sanitizer instance dedicated to mermaid output. It carries the label-lifting
 // hook below, which must not run for renderMarkdown's ordinary HTML, so it

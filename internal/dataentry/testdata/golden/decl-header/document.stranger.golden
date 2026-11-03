@@ -1,0 +1,13 @@
+request: GET /api/v1/_documents/report
+identity: header stranger@example.test
+status: 200
+reads: GraphQuery=1 GraphQueryHeaders=1 ListRelations=1
+breadth: ListRelations=0/1
+bodies: GraphQuery=0/2
+versions: 
+body:
+{
+  "html": "",
+  "cached": false,
+  "entity_ids": []
+}

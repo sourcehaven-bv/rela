@@ -132,7 +132,7 @@ func newDetailActionApp(t *testing.T, actions map[string]dataentryconfig.Action)
 		appbuildtest.WithDeclarative(decl), appbuildtest.WithAudit(mem))
 	app := newAppFromParts(&Config{}, nil, newFixture())
 	rebindApp(app, fs, paths, svc)
-	app.acl = decl
+	setTestACL(t, app, decl)
 	app.schema.Publish(&Schema{Cfg: &Config{Actions: actions}, Meta: meta})
 	if err := app.SetViewConditions(AdaptViewConditions(appbuild.ViewConditions)); err != nil {
 		t.Fatal(err)
@@ -276,7 +276,7 @@ func TestDetailAction_UnreadableEntityIsNotFound(t *testing.T) {
 		Roles:       map[string]acl.RoleDef{"permonly": {Permissions: []string{"documents:regenerate"}}},
 		Assignments: map[string]string{"mallory": "permonly"},
 	}, d.store)
-	d.app.acl = d.decl
+	setTestACL(t, d.app, d.decl)
 
 	var first string
 	for _, body := range []string{
@@ -308,7 +308,7 @@ func TestDetailAction_WhenSeesOnlyVisibleFields(t *testing.T) {
 	a := regenerateSoA()
 	a.When = "entity.owner == 'SECRET-OWNER'"
 	d := newDetailActionApp(t, map[string]dataentryconfig.Action{"regenerate-soa": a})
-	d.app.fieldResolver = fakeResolver{fv: FieldVerdicts{Visible: map[string]bool{"owner": false}}}
+	setTestResolver(t, d.app, fakeResolver{fv: FieldVerdicts{Visible: map[string]bool{"owner": false}}})
 
 	if d.offered(t, "alice", "document", "documents", "DOC-1@concept") {
 		t.Error("offered on a when that reads a hidden field")

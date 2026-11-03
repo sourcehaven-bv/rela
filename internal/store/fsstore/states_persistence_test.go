@@ -60,11 +60,10 @@ func TestStatePersistence_FamilySurvivesReopen(t *testing.T) {
 	}
 }
 
-// TestStatePersistence_StateWriteFreshensCache pins that an external
-// edit to a STATE file invalidates the persisted index freshness check:
-// newestEntityFileMtime must stat the state file, not the default file
-// (the review-found staleness).
-func TestStatePersistence_StateWriteFreshensCache(t *testing.T) {
+// TestStatePersistence_StateWriteMovesLastModified pins that a write to a
+// STATE file moves LastModified forward: newestEntityFileMtime must stat
+// the state file, not the default file.
+func TestStatePersistence_StateWriteMovesLastModified(t *testing.T) {
 	fs := storage.NewMemFS()
 	ctx := context.Background()
 

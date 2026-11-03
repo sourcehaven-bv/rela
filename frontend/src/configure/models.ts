@@ -6,6 +6,7 @@
  * lists and rules. A choice list, for one, is `types.<name>` in the data
  * model plus `styles.<name>` (its colours) in the screens file.
  */
+import type { TreeMap, TreeValue } from '@/api/configure'
 import {
   bool,
   entries,
@@ -19,9 +20,7 @@ import {
   num,
   str,
   strList,
-  type TreeMap,
   type TreePath,
-  type TreeValue,
 } from './tree'
 import { builtinTypeLabel } from './names'
 
@@ -512,6 +511,10 @@ export interface ColumnModel {
   label: string
   sortable: boolean
   link: string
+  /** The channel type of a busy column (TKT-TU3XH4), or ''. */
+  busy: string
+  /** Whether this is a face column. */
+  face: boolean
 }
 
 export interface ListModel {
@@ -682,7 +685,8 @@ export function relationsOfType(
   })
 }
 
-function columnModel(item: TreeMap, index: number): ColumnModel {
+/** Reads one list column of the screens tree. */
+export function columnModel(item: TreeMap, index: number): ColumnModel {
   return {
     index,
     property: str(get(item, 'property')) ?? '',
@@ -690,6 +694,8 @@ function columnModel(item: TreeMap, index: number): ColumnModel {
     label: str(get(item, 'label')) ?? '',
     sortable: bool(get(item, 'sortable')),
     link: str(get(item, 'link')) ?? '',
+    busy: str(get(item, 'busy')) ?? '',
+    face: bool(get(item, 'face')),
   }
 }
 
@@ -698,7 +704,48 @@ function columnsOf(list: TreeValue | undefined): ColumnModel[] {
 }
 
 export function columnTitle(c: ColumnModel): string {
-  return c.label || c.property || c.relation || 'column'
+  return c.label || c.property || c.relation || c.busy || (c.face ? 'face' : 'column')
+}
+
+/**
+ * What a column shows, as its source text: the property or relation, else
+ * `busy: <type>` for a busy column, else `face` for a face column.
+ */
+export function columnSource(c: ColumnModel): string {
+  if (c.property || c.relation) return c.property || c.relation
+  if (c.busy) return `busy: ${c.busy}`
+  return c.face ? 'face' : ''
+}
+
+/**
+ * Whether people can sort by the column. The list sorts only by a property,
+ * so a relation, busy or face column offers no sort; the load also refuses
+ * `sortable: true` on a busy column.
+ */
+export function canSortColumn(c: ColumnModel): boolean {
+  return !!c.property
+}
+
+/** Whether order would put a busy column first, which the load refuses. */
+function busyFirst(order: ColumnModel[]): boolean {
+  return !!order[0]?.busy
+}
+
+/**
+ * Whether moving the column at index `from` to end at index `to` keeps a
+ * busy column out of the first place, which is the row title.
+ */
+export function columnMoveAllowed(rows: ColumnModel[], from: number, to: number): boolean {
+  const order = [...rows]
+  const [moved] = order.splice(from, 1)
+  if (!moved) return false
+  order.splice(to, 0, moved)
+  return !busyFirst(order)
+}
+
+/** Whether removing the column at index keeps a busy column out of the first place. */
+export function columnRemoveAllowed(rows: ColumnModel[], index: number): boolean {
+  return !busyFirst(rows.filter((_, i) => i !== index))
 }
 
 export function listModel(dataEntry: TreeValue | undefined, name: string): ListModel | undefined {
@@ -785,10 +832,34 @@ export interface CardModel {
   limit?: number
   /** Only some people see it: shown, never edited here. */
   restricted: boolean
+  /**
+   * The list a `list:` card counts (TKT-2SGPJZ); empty for a query card.
+   * List cards are written in the project's files and only shown here.
+   */
+  list: string
 }
 
-export function dashboardModel(dataEntry: TreeValue | undefined) {
-  const dash = get(dataEntry, 'dashboard')
+/**
+ * Where a dashboard sits in the screens tree: the default one under
+ * `dashboard`, a named one under `dashboards.<name>` (TKT-5LQNLY).
+ */
+export function dashboardPath(name?: string): TreePath {
+  return name ? ['dashboards', name] : ['dashboard']
+}
+
+/** The dashboards a project declares: the default one first, then the named ones. */
+export function dashboards(dataEntry: TreeValue | undefined): { name: string; title: string }[] {
+  const named = get(dataEntry, 'dashboards')
+  return [
+    { name: '', title: str(get(get(dataEntry, 'dashboard'), 'title')) || 'Default' },
+    ...keys(named)
+      .sort()
+      .map((name) => ({ name, title: str(get(get(named, name), 'title')) || name })),
+  ]
+}
+
+export function dashboardModel(dataEntry: TreeValue | undefined, name?: string) {
+  const dash = getIn(dataEntry, dashboardPath(name))
   const cards = get(dash, 'cards')
   return {
     title: str(get(dash, 'title')) ?? '',
@@ -805,6 +876,7 @@ export function dashboardModel(dataEntry: TreeValue | undefined) {
                   groupBy: str(get(c, 'group_by')) ?? '',
                   limit: num(get(c, 'limit')),
                   restricted: get(c, 'permission') !== undefined,
+                  list: str(get(c, 'list')) ?? '',
                 },
               ]
             : []

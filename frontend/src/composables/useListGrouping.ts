@@ -20,16 +20,18 @@
  * row needs it.
  */
 import { computed, onScopeDispose, ref, watch } from 'vue'
-import type { StatusColor } from 'rela-components/types'
+import { useRelationColumns, OTHER_COLUMN } from '@/composables/useRelationColumns'
+import type { DotColor } from 'rela-components/types'
 import { useUIStore } from '@/stores'
 import { formatCellValue } from '@/utils/format'
-import { BUCKET_ORDER, DEFAULT_BUCKET_LABELS, bucketDate, bucketOf } from '@/utils/dateBuckets'
-import type { DateBucket, Entity, EntityType, ListGroupBy, ListResponse } from '@/types'
+import { BUCKET_ORDER, bucketDate, bucketOf, defaultBucketLabel } from '@/utils/dateBuckets'
+import { t } from '@/i18n'
+import type { DateBucket, Entity, EntityType, ListGroupBy, ListResponse, PageScope } from '@/types'
 
 export interface ListSection {
   id: string
   title: string
-  color?: StatusColor
+  color?: DotColor
   /** True when the reader closed this section; see `useListGrouping`. */
   collapsed?: boolean
   /**
@@ -38,6 +40,8 @@ export interface ListSection {
    * section no single value describes: "(none)", or a bucket spanning days.
    */
   prefill?: Record<string, unknown>
+  /** Edges a row added from this section starts with (relation grouping). */
+  prefillRelations?: Record<string, { id: string; type: string }[]>
   /**
    * The bucket this section holds, for a bucketed list. Lets a caller format
    * a row for its bucket without deciding the bucket a second time.
@@ -86,7 +90,6 @@ export function filtersAdmit(
 }
 
 const NONE_ID = 'none'
-const NONE_TITLE = '(none)'
 
 function isEmptyValue(value: unknown): boolean {
   return value === undefined || value === null || value === ''
@@ -99,7 +102,7 @@ export function groupRows(
   entityType: EntityType | undefined,
   options: GroupOptions
 ): ListSection[] {
-  const property = groupBy.property
+  const property = groupBy.property ?? ''
   const def = entityType?.properties[property]
   if (groupBy.buckets) return bucketSections(rows, groupBy, options, def?.type === 'date')
 
@@ -118,7 +121,7 @@ export function groupRows(
     })
   }
 
-  const none: ListSection = { id: NONE_ID, title: NONE_TITLE, items: [] }
+  const none: ListSection = { id: NONE_ID, title: t('list.group.none'), items: [] }
   for (const row of rows) {
     const value = row.properties[property]
     if (isEmptyValue(value)) {
@@ -166,7 +169,7 @@ function bucketSections(
   const { now, tz } = options
   const byBucket = new Map<DateBucket, Entity[]>()
   for (const row of rows) {
-    const bucket = bucketOf(row.properties[groupBy.property], now, tz, isDate)
+    const bucket = bucketOf(row.properties[groupBy.property ?? ''], now, tz, isDate)
     const items = byBucket.get(bucket) ?? []
     items.push(row)
     byBucket.set(bucket, items)
@@ -178,11 +181,11 @@ function bucketSections(
     return [
       {
         id: `bucket:${bucket}`,
-        title: groupBy.labels?.[bucket] || DEFAULT_BUCKET_LABELS[bucket],
+        title: groupBy.labels?.[bucket] || defaultBucketLabel(bucket),
         // Overdue is the one bucket that asks for action; the rest are only
         // a when.
         color: bucket === 'overdue' ? 'red' : undefined,
-        prefill: date ? { [groupBy.property]: date } : undefined,
+        prefill: date && groupBy.property ? { [groupBy.property]: date } : undefined,
         bucket,
         items,
       },
@@ -226,6 +229,9 @@ export function useListGrouping(options: {
   /** The `filter[...]` params the rows were read with; see GroupOptions. */
   filterParams?: () => Record<string, unknown>
   includeEmpty?: boolean
+  /** The page tab the list sits in; picks the sections for `offered_by`. */
+  pageScope?: () => PageScope | undefined
+  worldParam?: () => string | undefined
 }) {
   const uiStore = useUIStore()
   const now = ref(new Date())
@@ -241,10 +247,51 @@ export function useListGrouping(options: {
 
   const grouped = computed(() => options.groupBy() !== undefined)
 
+  // Grouping on a relation: the sections are the relation's targets, the
+  // same ones a relation-backed board shows as columns.
+  const relationColumns = useRelationColumns(
+    computed(() => (options.groupBy()?.relation ? options.groupBy() : undefined)),
+    computed(() => options.pageScope?.()),
+    computed(() => options.worldParam?.())
+  )
+
+  function relationSections(groupBy: ListGroupBy, rows: Entity[]): ListSection[] {
+    const relation = groupBy.relation as string
+    const targetType = relationColumns.targetType.value ?? ''
+    const byId = new Map<string, ListSection>(
+      relationColumns.columns.value.map((c) => [
+        c.value,
+        {
+          id: `rel:${c.value}`,
+          title: c.label,
+          color: c.color,
+          prefillRelations: { [relation]: [{ id: c.value, type: targetType }] },
+          items: [],
+        },
+      ])
+    )
+    const other: ListSection = { id: `rel:${OTHER_COLUMN}`, title: t('list.group.other'), items: [] }
+    for (const row of rows) {
+      const column = relationColumns.columnOf(row)
+      ;(byId.get(column) ?? other).items.push(row)
+    }
+    const sections = [...byId.values()].filter(
+      (s) => s.items.length > 0 || (options.includeEmpty ?? true)
+    )
+    if (other.items.length > 0) sections.push(other)
+    return sections
+  }
+
   const sections = computed<ListSection[]>(() => {
     const groupBy = options.groupBy()
     if (!groupBy) return []
     const rows = options.response()?.data ?? []
+    if (groupBy.relation) {
+      return relationSections(groupBy, rows).map((section) => ({
+        ...section,
+        collapsed: collapsed.value.has(section.id),
+      }))
+    }
     return groupRows(rows, groupBy, options.entityType(), {
       now: now.value,
       tz: uiStore.effectiveTimezone,

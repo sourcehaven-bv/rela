@@ -14,6 +14,8 @@
  */
 import { computed, ref, watch } from 'vue'
 import { RouterLink } from 'vue-router'
+import { useI18n } from 'vue-i18n'
+import { intlLocale } from '@/i18n/locale'
 import { usePile, usePiles } from '@/composables/usePiles'
 import { useActionFanout } from '@/composables/useListActions'
 import { useConfirm } from '@/composables/useConfirm'
@@ -39,6 +41,7 @@ import RlEmptyState from 'rela-components/components/feedback/RlEmptyState.vue'
 
 const props = defineProps<{ pileId: string }>()
 
+const { t } = useI18n()
 const schemaStore = useSchemaStore()
 const uiStore = useUIStore()
 const piles = usePiles()
@@ -99,7 +102,9 @@ const targets = computed(() =>
   ticked.value.size ? items.value.filter((i) => ticked.value.has(i.address)) : items.value
 )
 const targetLabel = computed(() =>
-  ticked.value.size ? `Run on ${ticked.value.size} selected` : `Run on all ${items.value.length}`
+  ticked.value.size
+    ? t('piles.panel.runOnSelected', { n: ticked.value.size })
+    : t('piles.panel.runOnAll', { n: items.value.length })
 )
 
 const pileActions = computed(() => {
@@ -136,8 +141,12 @@ async function runAction(id: string, config: ActionConfig, event?: MouseEvent) {
       message:
         typeof config.confirm === 'string'
           ? config.confirm
-          : `Run ${config.label || id} on ${runOn.length} item${runOn.length === 1 ? '' : 's'}?`,
-      confirmLabel: 'Run',
+          : t(
+              'piles.panel.runConfirm',
+              { action: config.label || id, n: runOn.length },
+              runOn.length
+            ),
+      confirmLabel: t('piles.panel.run'),
     })
     if (!ok) return
   }
@@ -158,9 +167,9 @@ async function copyIds() {
   const text = items.value.map((i) => i.address).join('\n')
   try {
     await navigator.clipboard.writeText(text)
-    uiStore.success(`Copied ${items.value.length} ID${items.value.length === 1 ? '' : 's'}`)
+    uiStore.success(t('piles.panel.copied', { n: items.value.length }, items.value.length))
   } catch {
-    uiStore.error('Could not copy to the clipboard')
+    uiStore.error(t('piles.panel.copyFailed'))
   }
 }
 
@@ -168,9 +177,9 @@ async function deletePile() {
   const p = pile.value
   if (!p) return
   const ok = await confirm({
-    title: 'Delete pile',
-    message: `Delete the pile ${p.name}? The entities on it are not affected.`,
-    confirmLabel: 'Delete',
+    title: t('piles.panel.delete'),
+    message: t('piles.panel.deleteMessage', { name: p.name }),
+    confirmLabel: t('common.delete'),
     danger: true,
   })
   if (ok) await piles.remove(p)
@@ -188,7 +197,7 @@ const renaming = ref(false)
       size="sm"
       class="pile-panel__note"
     >
-      Loading…
+      {{ t('common.loading') }}
     </RlText>
     <RlText
       v-else-if="query.error.value && !pile"
@@ -197,15 +206,15 @@ const renaming = ref(false)
       size="sm"
       class="pile-panel__note"
     >
-      This pile could not be loaded.
+      {{ t('piles.panel.loadFailed') }}
     </RlText>
 
     <template v-else-if="pile">
       <!-- Nothing ticked: the pile as a whole. Ticked rows: act on those. -->
       <div v-if="!ticked.size" class="pile-panel__head">
-        <RlText tone="subtle" size="sm"
-          >{{ items.length }} item{{ items.length === 1 ? '' : 's' }}</RlText
-        >
+        <RlText tone="subtle" size="sm">{{
+          t('piles.itemCount', { n: items.length }, items.length)
+        }}</RlText>
         <div class="pile-panel__head-actions">
           <ExportMenu
             v-if="items.length"
@@ -222,14 +231,25 @@ const renaming = ref(false)
             icon="play"
             data-testid="pile-step-through"
           >
-            Step through
+            {{ t('piles.panel.stepThrough') }}
           </RlButton>
           <RlMenu>
             <template #trigger="{ toggle, attrs }">
-              <RlIconButton icon="ellipsis" label="Pile actions" v-bind="attrs" @click="toggle" />
+              <RlIconButton
+                icon="ellipsis"
+                :label="t('piles.panel.actions')"
+                v-bind="attrs"
+                @click="toggle"
+              />
             </template>
             <template v-if="pileActions.length">
-              <RlMenuSection :label="`Actions · ${targetLabel.toLowerCase()}`" />
+              <RlMenuSection
+                :label="
+                  t('piles.panel.actionsFor', {
+                    target: targetLabel.toLocaleLowerCase(intlLocale()),
+                  })
+                "
+              />
               <RlMenuItem
                 v-for="a in pileActions"
                 :key="a.id"
@@ -241,26 +261,28 @@ const renaming = ref(false)
               </RlMenuItem>
               <RlMenuSeparator />
             </template>
-            <RlMenuItem icon="edit" data-testid="pile-rename" @click="renaming = true"
-              >Rename</RlMenuItem
-            >
-            <RlMenuItem icon="copy" :disabled="!items.length" @click="copyIds">Copy IDs</RlMenuItem>
+            <RlMenuItem icon="edit" data-testid="pile-rename" @click="renaming = true">{{
+              t('piles.panel.rename')
+            }}</RlMenuItem>
+            <RlMenuItem icon="copy" :disabled="!items.length" @click="copyIds">{{
+              t('piles.panel.copyIds')
+            }}</RlMenuItem>
             <RlMenuSeparator />
             <RlMenuItem icon="trash-2" tone="danger" data-testid="pile-delete" @click="deletePile">
-              Delete pile
+              {{ t('piles.panel.delete') }}
             </RlMenuItem>
           </RlMenu>
         </div>
       </div>
       <div v-else class="pile-panel__head">
-        <RlText size="sm" weight="medium" data-testid="pile-ticked"
-          >{{ ticked.size }} selected</RlText
-        >
+        <RlText size="sm" weight="medium" data-testid="pile-ticked">{{
+          t('piles.panel.selected', { n: ticked.size })
+        }}</RlText>
         <div class="pile-panel__head-actions">
           <RlMenu v-if="pileActions.length">
             <template #trigger="{ toggle, attrs }">
               <RlButton size="sm" icon="play" v-bind="attrs" @click="toggle">
-                Run action
+                {{ t('piles.panel.runAction') }}
                 <template #trailing
                   ><RlIcon name="chevron-down" :size="14" aria-hidden="true"
                 /></template>
@@ -284,17 +306,17 @@ const renaming = ref(false)
             data-testid="pile-remove"
             @click="removeTicked"
           >
-            Remove {{ ticked.size }}
+            {{ t('piles.panel.removeN', { n: ticked.size }) }}
           </RlButton>
-          <RlIconButton icon="x" label="Clear selection" @click="clearTicked" />
+          <RlIconButton icon="x" :label="t('piles.panel.clearSelection')" @click="clearTicked" />
         </div>
       </div>
 
       <RlEmptyState
         v-if="!items.length"
         icon="layers"
-        title="This pile is empty"
-        description="Select rows in a list and choose Add to pile, or use Add to pile on a search or an entity page."
+        :title="t('piles.panel.empty')"
+        :description="t('piles.panel.emptyHint')"
         size="sm"
       />
       <section v-for="g in groups" :key="g.type" class="pile-panel__group" data-testid="pile-group">

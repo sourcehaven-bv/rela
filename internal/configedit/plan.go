@@ -125,7 +125,7 @@ func planMigration(
 	}
 
 	p.problems = append(p.problems, relationValueProblems(before, after)...)
-	shapeDeltas := metamodel.CompareShapes(before.ShapeProjection(), after.ShapeProjection())
+	shapeDeltas := metamodel.CompareShapes(metamodel.NewShapeProjection(before), metamodel.NewShapeProjection(after))
 	for _, d := range shapeDeltas.ByTier(metamodel.TierMigration) {
 		if strings.HasPrefix(d.Kind, "relation_") || strings.HasPrefix(d.Kind, "faces_") {
 			p.problems = append(p.problems, Problem{
@@ -310,8 +310,8 @@ func buildMigration(
 ) (*datamigration.Draft, error) {
 	return datamigration.Build(datamigration.Spec{
 		Description: title,
-		From:        before.ShapeProjection(),
-		To:          after.ShapeProjection(),
+		From:        metamodel.NewShapeProjection(before),
+		To:          metamodel.NewShapeProjection(after),
 		Steps:       plan.spec,
 	}, now)
 }

@@ -37,6 +37,8 @@ func (m fakeMetamodel) HasFace(t, face string) bool {
 	return slices.Contains(m.faces[t], face)
 }
 
+func (m fakeMetamodel) Faces(t string) []string { return m.faces[t] }
+
 func (m fakeMetamodel) GetRelation(name string) (RelationView, bool) {
 	from, ok := m.relations[name]
 	if !ok {
@@ -204,6 +206,141 @@ func TestAudit_A3_EveryoneReadOnly_NoFinding(t *testing.T) {
 	}}
 	if got := Audit(p, nil, allPerms{}); hasRule(got, "A3-everyone-privileged") {
 		t.Errorf("read-only everyone must not flag A3, got %+v", got)
+	}
+}
+
+// TestAudit_A14_EveryoneOpensFieldBlock: field verdicts are the union of every
+// role on the row (BUG-Y5UF3K), so an everyone role that holds a block's verb
+// on some face and declares no block of its own makes the block restrict
+// nobody there. The verb is the dimension's own, and the faces are the
+// declared ones.
+func TestAudit_A14_EveryoneOpensFieldBlock(t *testing.T) {
+	t.Parallel()
+	block := map[string][]acl.FieldGrant{"ticket": {{Field: "title"}}}
+	policyBlock := map[string][]acl.FieldGrant{"policy": {{Field: "title"}}}
+	meta := fakeMetamodel{faces: map[string][]string{"policy": {"draft", "published"}}}
+	tests := []struct {
+		name     string
+		everyone acl.RoleDef
+		watcher  acl.RoleDef
+		subjects []string
+	}{
+		{
+			name:     "everyone reads every type",
+			everyone: acl.RoleDef{Read: []string{"*"}},
+			watcher:  acl.RoleDef{Read: []string{"ticket"}, Visible: block},
+			subjects: []string{"watcher.visible.ticket (read)"},
+		},
+		{
+			name:     "everyone reads one face",
+			everyone: acl.RoleDef{Read: []string{"policy@published"}},
+			watcher:  acl.RoleDef{Read: []string{"policy"}, Visible: policyBlock},
+			subjects: []string{"watcher.visible.policy (read)"},
+		},
+		{
+			name:     "everyone updates the type",
+			everyone: acl.RoleDef{Read: []string{"ticket"}, Update: []string{"ticket"}},
+			watcher: acl.RoleDef{Read: []string{"ticket"}, Update: []string{"ticket"}, Fields: block,
+				Options: map[string][]acl.OptionGrant{"ticket": {{Field: "status", Option: "open"}}}},
+			subjects: []string{"watcher.fields.ticket (update)", "watcher.options.ticket (update)"},
+		},
+		{
+			name:     "a create grant opens a fields block on create only",
+			everyone: acl.RoleDef{Create: []string{"ticket"}},
+			watcher:  acl.RoleDef{Read: []string{"ticket"}, Update: []string{"ticket"}, Fields: block},
+			subjects: []string{"watcher.fields.ticket (create)"},
+		},
+		{
+			name:     "a wildcard update covers no named face",
+			everyone: acl.RoleDef{Read: []string{"*"}, Update: []string{"*"}},
+			watcher:  acl.RoleDef{Read: []string{"policy"}, Update: []string{"policy"}, Fields: policyBlock},
+		},
+		{
+			name:     "everyone declares its own block",
+			everyone: acl.RoleDef{Read: []string{"*"}, Visible: block},
+			watcher:  acl.RoleDef{Read: []string{"ticket"}, Visible: block},
+		},
+		{
+			name:     "everyone reads another type",
+			everyone: acl.RoleDef{Read: []string{"person"}},
+			watcher:  acl.RoleDef{Read: []string{"ticket"}, Visible: block},
+		},
+		{
+			name:     "a read grant does not open a fields block",
+			everyone: acl.RoleDef{Read: []string{"*"}},
+			watcher:  acl.RoleDef{Read: []string{"ticket"}, Update: []string{"ticket"}, Fields: block},
+		},
+		{
+			name:     "a face block is opened on its face",
+			everyone: acl.RoleDef{Read: []string{"policy"}, Update: []string{"policy@published"}},
+			watcher: acl.RoleDef{Read: []string{"policy"}, Update: []string{"policy@published"},
+				Fields: map[string][]acl.FieldGrant{"policy@published": {{Field: "title"}}}},
+			subjects: []string{"watcher.fields.policy@published (update)"},
+		},
+		{
+			name:     "a face block is not opened by a grant on another face",
+			everyone: acl.RoleDef{Read: []string{"policy"}, Update: []string{"policy@draft"}},
+			watcher: acl.RoleDef{Read: []string{"policy"}, Update: []string{"policy@published"},
+				Fields: map[string][]acl.FieldGrant{"policy@published": {{Field: "title"}}}},
+		},
+		{
+			name: "everyone's face block covers that face only",
+			everyone: acl.RoleDef{Read: []string{"policy"}, Update: []string{"policy@draft", "policy@published"},
+				Fields: map[string][]acl.FieldGrant{"policy@draft": {{Field: "title"}}}},
+			watcher:  acl.RoleDef{Read: []string{"policy"}, Update: []string{"policy@draft"}, Fields: policyBlock},
+			subjects: []string{"watcher.fields.policy (update)"},
+		},
+		{
+			name:     "a type block and a face block opened on the face are reported once",
+			everyone: acl.RoleDef{Read: []string{"policy"}, Update: []string{"policy@published"}},
+			watcher: acl.RoleDef{Read: []string{"policy"}, Update: []string{"policy@published"},
+				Fields: map[string][]acl.FieldGrant{
+					"policy":           {{Field: "status"}},
+					"policy@published": {{Field: "title"}},
+				}},
+			subjects: []string{"watcher.fields.policy@published (update)"},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			p := &acl.Policy{Roles: map[string]acl.RoleDef{acl.EveryoneRole: tc.everyone, "watcher": tc.watcher}}
+			var subjects []string
+			for _, f := range Audit(p, meta, allPerms{}) {
+				if f.Rule != "A14-everyone-opens-field-block" {
+					continue
+				}
+				if f.Severity != High {
+					t.Errorf("A14 severity = %v, want high", f.Severity)
+				}
+				subjects = append(subjects, f.Subject)
+			}
+			if !slices.Equal(subjects, tc.subjects) {
+				t.Errorf("A14 subjects = %v, want %v", subjects, tc.subjects)
+			}
+		})
+	}
+}
+
+// TestAudit_A14_DetailNamesTheFaces: a block opened on some faces says which.
+func TestAudit_A14_DetailNamesTheFaces(t *testing.T) {
+	t.Parallel()
+	p := &acl.Policy{Roles: map[string]acl.RoleDef{
+		acl.EveryoneRole: {Read: []string{"policy@published"}},
+		"watcher": {Read: []string{"policy"},
+			Visible: map[string][]acl.FieldGrant{"policy": {{Field: "title"}}}},
+	}}
+	meta := fakeMetamodel{faces: map[string][]string{"policy": {"draft", "published"}}}
+	var details []string
+	for _, f := range Audit(p, meta, allPerms{}) {
+		if f.Rule == "A14-everyone-opens-field-block" {
+			details = append(details, f.Detail)
+		}
+	}
+	namesOnlyPublished := len(details) == 1 && strings.Contains(details[0], "on faces published") &&
+		!strings.Contains(details[0], "draft")
+	if !namesOnlyPublished {
+		t.Errorf("A14 details = %q, want one naming only the published face", details)
 	}
 }
 
@@ -489,6 +626,74 @@ func TestAudit_B4_UndeclaredField(t *testing.T) {
 	}}
 	if got := Audit(p, meta, allPerms{}); !hasRule(got, "B4-undeclared-field") {
 		t.Fatalf("expected B4, got %+v", got)
+	}
+}
+
+// TestAudit_B4B5_FaceKeys: a type@face block key is checked against its
+// type, for fields and for options (TKT-RSVJKS).
+func TestAudit_B4B5_FaceKeys(t *testing.T) {
+	t.Parallel()
+	meta := fakeMetamodel{
+		types:  map[string]bool{"policy": true},
+		faces:  map[string][]string{"policy": {"draft", "published"}},
+		fields: map[string]map[string][]string{"policy": {"status": {"open", "done"}, "title": nil}},
+	}
+	tests := []struct {
+		name string
+		role acl.RoleDef
+		rule string
+	}{
+		{
+			name: "undeclared field",
+			role: acl.RoleDef{Fields: map[string][]acl.FieldGrant{"policy@draft": {{Field: "stutus"}}}},
+			rule: "B4-undeclared-field",
+		},
+		{
+			name: "undeclared option",
+			role: acl.RoleDef{Options: map[string][]acl.OptionGrant{
+				"policy@draft": {{Field: "status", Option: "closed"}},
+			}},
+			rule: "B5-undeclared-option",
+		},
+		{
+			name: "declared field and option",
+			role: acl.RoleDef{
+				Fields:  map[string][]acl.FieldGrant{"policy@draft": {{Field: "title"}}},
+				Options: map[string][]acl.OptionGrant{"policy@draft": {{Field: "status", Option: "open"}}},
+			},
+		},
+		{
+			name: "fields key names an undeclared face",
+			role: acl.RoleDef{Fields: map[string][]acl.FieldGrant{"policy@drfat": {{Field: "title"}}}},
+			rule: "B11-undeclared-face",
+		},
+		{
+			name: "options key names an undeclared face",
+			role: acl.RoleDef{Options: map[string][]acl.OptionGrant{
+				"policy@drfat": {{Field: "status", Option: "open"}},
+			}},
+			rule: "B11-undeclared-face",
+		},
+		{
+			name: "visible block refuses a face key",
+			role: acl.RoleDef{Visible: map[string][]acl.FieldGrant{"policy@draft": {{Field: "title"}}}},
+			rule: "B11-undeclared-face",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			tc.role.Read = []string{"policy"}
+			p := &acl.Policy{Roles: map[string]acl.RoleDef{"clerk": tc.role}}
+			got := Audit(p, meta, allPerms{})
+			for _, rule := range []string{
+				"B1-undeclared-type", "B4-undeclared-field", "B5-undeclared-option", "B11-undeclared-face",
+			} {
+				if want := rule == tc.rule; hasRule(got, rule) != want {
+					t.Errorf("%s reported = %v, want %v (findings %+v)", rule, !want, want, got)
+				}
+			}
+		})
 	}
 }
 

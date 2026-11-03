@@ -31,6 +31,7 @@
  */
 import { computed } from 'vue'
 import { RouterLink } from 'vue-router'
+import { useI18n } from 'vue-i18n'
 import { useModalStack } from '@/composables/modalStack'
 import { shouldDeferToBrowser } from '@/utils/openIntent'
 import { editFormRoute } from '@/utils/entityRoute'
@@ -48,6 +49,7 @@ const props = defineProps<{
 }>()
 
 const emit = defineEmits<{ (e: 'close'): void }>()
+const { t } = useI18n()
 
 // RlModal owns the scrim, the Tab trap, the scroll lock, Escape and the focus
 // restore. rela's modal stack is a SEPARATE registry that gates global
@@ -79,7 +81,7 @@ function onNavigate(event: MouseEvent) {
 <template>
   <RlModal
     :open="open"
-    title="Entity preview"
+    :title="t('calendar.preview.title')"
     title-hidden
     size="lg"
     panel-class="entity-preview-panel"
@@ -98,7 +100,7 @@ function onNavigate(event: MouseEvent) {
     <template #actions>
       <div class="entity-preview-actions">
         <RlButton :as="RouterLink" variant="secondary" :to="fullPageTarget" @click="onNavigate">
-          Open full page
+          {{ t('calendar.preview.openFullPage') }}
         </RlButton>
         <RlButton
           v-if="editFormTarget"
@@ -107,7 +109,7 @@ function onNavigate(event: MouseEvent) {
           :to="editFormTarget"
           @click="onNavigate"
         >
-          Edit
+          {{ t('common.edit') }}
         </RlButton>
       </div>
     </template>

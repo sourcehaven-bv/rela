@@ -42,7 +42,7 @@ func TestRunScheduledTemplateSendsRenderedRecipientMessage(t *testing.T) {
 	}}
 	sender := mail.NewMemorySender(4)
 	svc := &Services{
-		store: st, meta: meta, fieldRedactor: visibility.NopRedactor{},
+		store: st, meta: meta, fieldReads: visibility.NopRedactor{},
 		cfgLoader: staticConfig{"mail-templates.yaml": []byte(`mail_templates:
   digest:
     subject: Daily digest

@@ -10,7 +10,9 @@ import (
 )
 
 // MetamodelProvider provides metamodel data for context-aware migrations.
-// This interface is satisfied by *metamodel.Metamodel.
+// This package cannot import internal/metamodel, which imports it, so the
+// wiring site supplies an adapter over the loaded metamodel
+// (projectsetup.migrationSchema).
 type MetamodelProvider interface {
 	// GetPropertyType returns the type of a property for an entity type (empty if not found).
 	GetPropertyType(entityType, property string) string
@@ -20,8 +22,6 @@ type MetamodelProvider interface {
 	GetPropertyDefault(entityType, property string) string
 	// GetTypeDefault returns the default value for a custom type.
 	GetTypeDefault(typeName string) string
-	// IsEnumType returns whether a type is an enum-like type (has values).
-	IsEnumType(typeName string) bool
 	// GetRelationLabel returns the label for a relation (empty if not found).
 	GetRelationLabel(relation string) string
 	// GetRelationFrom returns the "from" entity types for a relation.
@@ -63,14 +63,17 @@ type Migration interface {
 }
 
 // MetamodelAware is an optional interface for migrations that need access to the
-// metamodel for context-aware detection and transformation. Migrations implementing
-// this interface will receive the metamodel when processing data-entry.yaml files.
+// metamodel for context-aware detection and transformation.
 type MetamodelAware interface {
 	Migration
 
-	// SetMetamodel provides the metamodel to the migration.
-	// Called by the runner before Detect/Apply for data-entry migrations.
-	SetMetamodel(meta MetamodelProvider)
+	// WithMetamodel returns a copy of the migration bound to meta. The runner
+	// calls it on every run, so the registered instance is never mutated: a
+	// metamodel from one run cannot leak into a later run, and concurrent runs
+	// do not share state.
+	//
+	// Nil: accepted — the copy takes the migration's no-metamodel path.
+	WithMetamodel(meta MetamodelProvider) Migration
 }
 
 // registry holds all registered migrations in order of application.

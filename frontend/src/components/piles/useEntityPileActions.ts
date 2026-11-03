@@ -4,6 +4,7 @@ import { usePiles } from '@/composables/usePiles'
 import { knownPileName } from '@/composables/pileNames'
 import type { EntityAction } from '@/components/entity/entityActions'
 import { pileIcon } from './pileIcon'
+import { t } from '@/i18n'
 
 /**
  * The pile entries of an entity page's action list (TKT-K3RJLH): add the row
@@ -31,7 +32,7 @@ export function useEntityPileActions(address: () => string | null, onRemoved: ()
     const addr = address()
     if (!id || !addr) return
     const listed = piles.piles.value.find((p) => p.id === id)
-    const pile = listed ?? { id, name: knownPileName(id) ?? 'the pile' }
+    const pile = listed ?? { id, name: knownPileName(id) ?? t('piles.thePile') }
     if (await piles.removeItems(pile, [addr])) onRemoved()
   }
 
@@ -40,14 +41,14 @@ export function useEntityPileActions(address: () => string | null, onRemoved: ()
     if (!piles.available.value || addr === null) return []
     const out: EntityAction[] = piles.piles.value.map((p) => ({
       id: `pile:${p.id}`,
-      label: `Add to ${p.name}`,
+      label: t('piles.addTo', { name: p.name }),
       group: 'manage',
       icon: pileIcon(p.icon),
       run: () => void piles.addItems(p, [addr]),
     }))
     out.push({
       id: 'pile:new',
-      label: 'Add to new pile…',
+      label: t('piles.addToNew'),
       group: 'manage',
       icon: 'plus',
       run: () => (newPileOpen.value = true),
@@ -55,7 +56,7 @@ export function useEntityPileActions(address: () => string | null, onRemoved: ()
     if (scopePileId.value) {
       out.push({
         id: 'pile:remove',
-        label: 'Remove from pile',
+        label: t('piles.removeFromPile'),
         group: 'manage',
         icon: 'remove',
         run: () => void removeFromScopePile(),

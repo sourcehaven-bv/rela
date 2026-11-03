@@ -14,6 +14,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/filter"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
+	"github.com/Sourcehaven-BV/rela/internal/subscription"
 
 	"gopkg.in/yaml.v3"
 )
@@ -67,6 +68,11 @@ type TaskConfig struct {
 	// one per matching entity. Its selected entity supplies the execution
 	// principal, so ForEach and RunAs are mutually exclusive.
 	ForEach *ForEachConfig `yaml:"for_each,omitempty"`
+
+	// Subscription marks a task that polls a feed from subscriptions.yaml
+	// instead of running a script. Never read from schedules.yaml: only
+	// [AddSubscriptions] sets it.
+	Subscription *subscription.Subscription `yaml:"-"`
 }
 
 // ForEachConfig selects the entities a scheduled task runs as.

@@ -341,6 +341,25 @@ func writePropertyDetail(meta *metamodel.Metamodel, propName string, prop metamo
 	if prop.Format != "" {
 		out.WriteMessage("    Format: %s", prop.Format)
 	}
+	if r := propertyRange(prop); r != "" {
+		out.WriteMessage("    Range: %s", r)
+	}
+}
+
+// propertyRange renders an integer's declared bounds, or "" without any.
+func propertyRange(prop metamodel.PropertyDef) string {
+	if prop.Type != metamodel.PropertyTypeInteger {
+		return ""
+	}
+	switch {
+	case prop.Min != nil && prop.Max != nil:
+		return fmt.Sprintf("%d to %d", *prop.Min, *prop.Max)
+	case prop.Min != nil:
+		return fmt.Sprintf("at least %d", *prop.Min)
+	case prop.Max != nil:
+		return fmt.Sprintf("at most %d", *prop.Max)
+	}
+	return ""
 }
 
 func writeEntityRelations(meta *metamodel.Metamodel, resolved string) {

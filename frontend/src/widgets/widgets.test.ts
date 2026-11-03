@@ -100,6 +100,70 @@ describe('NumberWidget', () => {
     await w.find('input').setValue('')
     expect(w.emitted('update:modelValue')?.[0]).toEqual([''])
   })
+
+  // TKT-BRAM1A: an integer's declared range bounds the input.
+  it('puts an integer range on the input', () => {
+    const w = mount(NumberWidget, {
+      props: {
+        modelValue: 3,
+        mode: 'edit' as const,
+        propertyName: 'impact',
+        propertyDef: { type: 'integer' as const, min: 0, max: 5 },
+      },
+    })
+    expect(w.find('input').attributes('min')).toBe('0')
+    expect(w.find('input').attributes('max')).toBe('5')
+  })
+
+  // A native bound on an out-of-range value would block the form's submit,
+  // turning the server's warning into a refusal.
+  it('drops the bounds while the value is out of range', () => {
+    const w = mount(NumberWidget, {
+      props: {
+        modelValue: 7,
+        mode: 'edit' as const,
+        propertyName: 'impact',
+        propertyDef: { type: 'integer' as const, min: 1, max: 5 },
+      },
+    })
+    const input = w.find('input').element as HTMLInputElement
+    expect(input.hasAttribute('max')).toBe(false)
+    expect(input.validity.valid).toBe(true)
+  })
+
+  it('leaves the input unbounded without a range', () => {
+    const w = mount(NumberWidget, {
+      props: { modelValue: 3, mode: 'edit' as const, propertyName: 'n', propertyDef: { type: 'integer' as const } },
+    })
+    expect(w.find('input').attributes('min')).toBeUndefined()
+    expect(w.find('input').attributes('max')).toBeUndefined()
+  })
+
+  // TKT-SVLQQ6: `display: {currency}` formats the value for reading only.
+  const eur = { type: 'integer' as const, display: { currency: 'EUR' } }
+  const plain = (s: string) => s.replace(/\u00a0/g, ' ')
+
+  it('shows a currency property as money in display mode', () => {
+    const w = mount(NumberWidget, {
+      props: { modelValue: 3500, mode: 'display' as const, propertyName: 'value', propertyDef: eur },
+    })
+    expect(plain(w.find('span.display-value').text())).toMatch(/3,500/)
+    expect(w.find('span.display-value').text()).toContain('€')
+  })
+
+  it('keeps the input a plain number in edit mode', () => {
+    const w = mount(NumberWidget, {
+      props: { modelValue: 3500, mode: 'edit' as const, propertyName: 'value', propertyDef: eur },
+    })
+    expect((w.find('input').element as HTMLInputElement).value).toBe('3500')
+  })
+
+  it('shows a plain number without a display format', () => {
+    const w = mount(NumberWidget, {
+      props: { modelValue: 3500, mode: 'display' as const, propertyName: 'value', propertyDef: { type: 'integer' as const } },
+    })
+    expect(w.find('span.display-value').text()).toBe('3500')
+  })
 })
 
 describe('CheckboxWidget', () => {

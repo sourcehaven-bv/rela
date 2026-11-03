@@ -1,4 +1,8 @@
 <script setup lang="ts">
+import { useMessages } from '../../composables/useMessages'
+
+const messages = useMessages()
+
 withDefaults(
   defineProps<{
     title?: string
@@ -9,8 +13,8 @@ withDefaults(
   {
     title: '',
     body: '',
-    titlePlaceholder: 'Give your doc a title...',
-    bodyPlaceholder: 'Click here to start writing',
+    titlePlaceholder: undefined,
+    bodyPlaceholder: undefined,
   },
 )
 
@@ -33,16 +37,16 @@ function onInput(event: Event, field: 'title' | 'body') {
       class="rl-doc-editor__title"
       rows="1"
       :value="title"
-      :placeholder="titlePlaceholder"
-      :aria-label="titlePlaceholder"
+      :placeholder="titlePlaceholder ?? messages.chromeText({ key: 'docTitlePlaceholder' })"
+      :aria-label="titlePlaceholder ?? messages.chromeText({ key: 'docTitlePlaceholder' })"
       @input="onInput($event, 'title')"
     />
     <textarea
       class="rl-doc-editor__body"
       rows="1"
       :value="body"
-      :placeholder="bodyPlaceholder"
-      :aria-label="bodyPlaceholder"
+      :placeholder="bodyPlaceholder ?? messages.chromeText({ key: 'docBodyPlaceholder' })"
+      :aria-label="bodyPlaceholder ?? messages.chromeText({ key: 'docBodyPlaceholder' })"
       @input="onInput($event, 'body')"
     />
   </div>

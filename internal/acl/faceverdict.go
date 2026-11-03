@@ -108,8 +108,10 @@ func (vs FaceVerdicts) For(id string) FaceVerdict {
 //
 // Existence is not verified: a global grant answers for ids that do not
 // exist. Callers that need existence read the row afterwards.
+//
+//archplan:guard=authz reason="row gate for a batch of ids, per face"
 func (r *Request) ReadableFacesMany(ctx context.Context, entityType string, ids []string) (FaceVerdicts, error) {
-	return r.readableFacesMany(ctx, r.readQuery(ctx, entityType), ids)
+	return r.readableFacesMany(ctx, r.readQuery(entityType), ids)
 }
 
 // readableFacesMany is [Request.ReadableFacesMany] for a composed scope.

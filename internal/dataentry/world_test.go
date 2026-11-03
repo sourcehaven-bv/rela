@@ -13,6 +13,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Sourcehaven-BV/rela/internal/acl/acltest"
+
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
@@ -75,6 +77,9 @@ func TestWorldCapablePath(t *testing.T) {
 		{"/api/v1/tickets/TKT-1/_export", true,
 			"entity export resolves through the world like the entity GET (BUG-PLZDPR)"},
 		{"/api/v1/tickets/_export", false, "the LIST export is not world-scoped"},
+		{"/api/v1/tickets/TKT-1/mentioned-by", true,
+			"backlinks are read through the world like the entity GET (TKT-Q6AKUN)"},
+		{"/api/v1/tickets/_x/mentioned-by", false, "an underscore id segment is a route, not an entity"},
 		{"/api/v1/tickets/_x/_export", false, "an underscore id segment is a route, not an entity"},
 		{"/api/v1/_search", true,
 			"cross-type search takes the world on every executeQuery branch (BUG-SMPOZB)"},
@@ -184,7 +189,7 @@ func TestDeniedWorldIsByteIdenticalToAnEmptyWorld(t *testing.T) {
 		Roles:       map[string]acl.RoleDef{"viewer": {Read: []string{"ticket"}}},
 		Assignments: map[string]string{"alice": "viewer"},
 	}, app.store)
-	app.acl = d
+	setTestACL(t, app, d)
 
 	// (a) A world the principal MAY read, which happens to hold nothing.
 	empty := listUnderWorld(t, app, worldHandle{name: "published",
@@ -347,8 +352,9 @@ func TestWorldHandleIsConstructedOnce(t *testing.T) {
 // resolveWorld would consult nopReadGate, whose PermitsWorld returns true,
 // and every world would be permitted regardless of policy.
 //
-// This scans the router source for the two wrap calls and asserts
-// attachWorld is wrapped FIRST. Per the wrap-order note in router.go, the
+// This scans responseGates in the router source, the one place both wraps
+// happen for NewRouter and for live-view replays, and asserts attachWorld is
+// wrapped FIRST. Per the wrap-order note in router.go, the
 // LAST wrap is the OUTERMOST, so wrapping attachWorld first makes it the
 // INNERMOST of the pair and therefore the LATER to run.
 func TestGrantCheckPrecedesResolverConstruction(t *testing.T) {
@@ -358,8 +364,19 @@ func TestGrantCheckPrecedesResolverConstruction(t *testing.T) {
 		t.Fatalf("read router.go: %v", err)
 	}
 	body := string(src)
-	world := strings.Index(body, "handler = attachWorld(")
-	aclWrap := strings.Index(body, "handler = attachACLRequest(")
+	if !strings.Contains(body, "handler = responseGates(handler, a)") {
+		t.Fatal("NewRouter no longer wraps through responseGates — update this guard rather than deleting it")
+	}
+	start := strings.Index(body, "func responseGates(")
+	if start < 0 {
+		t.Fatal("responseGates not found — update this guard rather than deleting it")
+	}
+	body = body[start:]
+	if end := strings.Index(body, "\n}\n"); end >= 0 {
+		body = body[:end]
+	}
+	world := strings.Index(body, "h = attachWorld(")
+	aclWrap := strings.Index(body, "h = attachACLRequest(")
 	if world < 0 || aclWrap < 0 {
 		t.Fatalf("could not find both wrap sites (attachWorld=%d attachACL=%d) — "+
 			"if these were renamed, update this guard rather than deleting it",
@@ -456,6 +473,10 @@ func TestWorldCapableRoutesDoNotUseUngatedReader(t *testing.T) {
 		// `_piles` (TKT-K3RJLH). Reads items through the pile resolver in
 		// the request's world, never through the entity reader.
 		"handleV1Piles": true,
+		// `{plural}/{id}/mentioned-by` (TKT-Q6AKUN). Reads the target through
+		// readAddressedOr404 and the sources through the view reader's
+		// resolver, both in the world on ctx.
+		"handleV1MentionedBy": true,
 	}
 
 	entries, err := os.ReadDir(".")
@@ -774,7 +795,7 @@ func TestWorldListGetParity_ACLGatedPrincipal(t *testing.T) {
 			"owned-by": {Confers: "viewer"},
 		},
 	}, app.store)
-	app.acl = d
+	setTestACL(t, app, d)
 
 	// The conferring edges run FROM alice (readQuery composes HasInbound with
 	// the principal as the endpoint): alice owns both tickets, so both are in her
@@ -788,9 +809,9 @@ func TestWorldListGetParity_ACLGatedPrincipal(t *testing.T) {
 	scope := store.NewWorldScope(map[string]store.TypeResolution{
 		"ticket": {Chain: []entity.Face{published}, Fallback: store.FallbackExclude},
 	})
-	req, rerr := d.ForPrincipal(principal.Principal{User: "alice", Tool: principal.ToolDataEntry})
+	req, rerr := d.ForIdentity(acltest.IdentityFor(t.Context(), t, d, principal.Principal{User: "alice", Tool: principal.ToolDataEntry}))
 	if rerr != nil {
-		t.Fatalf("ForPrincipal: %v", rerr)
+		t.Fatalf("ForIdentity: %v", rerr)
 	}
 	gate, gerr := newACLReadGate(req)
 	if gerr != nil {
@@ -941,10 +962,10 @@ func TestWorldGrantCheckThroughTheRealRouter(t *testing.T) {
 	})
 	// A policy granting read on ticket but NO world grant, so `published`
 	// is denied.
-	app.acl = mustNewACL(t, &acl.Policy{
+	setTestACL(t, app, mustNewACL(t, &acl.Policy{
 		Roles:       map[string]acl.RoleDef{"viewer": {Read: []string{"ticket"}}},
 		Assignments: map[string]string{"alice": "viewer"},
-	}, app.store)
+	}, app.store))
 	app.setWorlds(stubWorlds{
 		names:          map[string]bool{"published": true},
 		resolveDefault: true,
@@ -1185,10 +1206,10 @@ func appForWorldGrant(t *testing.T, granted bool) *App {
 	if granted {
 		role.Worlds = []string{"published"}
 	}
-	app.acl = mustNewACL(t, &acl.Policy{
+	setTestACL(t, app, mustNewACL(t, &acl.Policy{
 		Roles:       map[string]acl.RoleDef{"viewer": role},
 		Assignments: map[string]string{"alice": "viewer"},
-	}, app.store)
+	}, app.store))
 	app.setWorlds(stubWorlds{
 		names:          map[string]bool{"published": true},
 		resolveDefault: true,

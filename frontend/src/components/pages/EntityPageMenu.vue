@@ -10,6 +10,7 @@
 import RlMenu from 'rela-components/components/overlay/RlMenu.vue'
 import RlMenuItem from 'rela-components/components/overlay/RlMenuItem.vue'
 import RlIconButton from 'rela-components/components/common/RlIconButton.vue'
+import { useI18n } from 'vue-i18n'
 
 defineProps<{
   /** The entity's type label, for the menu's accessible name. */
@@ -22,6 +23,8 @@ const emit = defineEmits<{
   open: []
   delete: []
 }>()
+
+const { t } = useI18n()
 </script>
 
 <template>
@@ -29,16 +32,16 @@ const emit = defineEmits<{
     <template #trigger="{ toggle, attrs }">
       <RlIconButton
         icon="ellipsis"
-        :label="`${typeLabel} options`"
+        :label="t('page.menu.options', { type: typeLabel })"
         data-testid="entity-page-menu"
         v-bind="attrs"
         @click="toggle"
       />
     </template>
-    <RlMenuItem icon="panel" @click="emit('details')">Details</RlMenuItem>
-    <RlMenuItem icon="external" @click="emit('open')">Open full page</RlMenuItem>
+    <RlMenuItem icon="panel" @click="emit('details')">{{ t('page.menu.details') }}</RlMenuItem>
+    <RlMenuItem icon="external" @click="emit('open')">{{ t('page.menu.openFullPage') }}</RlMenuItem>
     <RlMenuItem v-if="canDelete" icon="delete" tone="danger" @click="emit('delete')">
-      Delete
+      {{ t('common.delete') }}
     </RlMenuItem>
   </RlMenu>
 </template>

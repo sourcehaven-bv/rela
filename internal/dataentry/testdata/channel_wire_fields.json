@@ -1,0 +1,362 @@
+{
+  "Channel": [
+    "anchor",
+    "archived_at",
+    "closed_at",
+    "created_at",
+    "created_by",
+    "last_seq",
+    "name",
+    "read",
+    "rev",
+    "session",
+    "state",
+    "title",
+    "type"
+  ],
+  "ChannelActionSchema": [
+    "label",
+    "name",
+    "promote_to"
+  ],
+  "ChannelActions": [
+    "delete_own",
+    "edit_own",
+    "entries",
+    "lifecycle",
+    "post",
+    "remove",
+    "transitions",
+    "typing"
+  ],
+  "ChannelAuthor": [
+    "principal_type",
+    "system",
+    "tool",
+    "user"
+  ],
+  "ChannelChoicesSchema": [
+    "answer",
+    "from",
+    "into",
+    "other"
+  ],
+  "ChannelDecisionButtonSchema": [
+    "confirm",
+    "confirm_text",
+    "style"
+  ],
+  "ChannelEntryRef": [
+    "entry",
+    "message_type"
+  ],
+  "ChannelHead": [
+    "_actions",
+    "channel",
+    "ephemeral",
+    "last",
+    "typing_now"
+  ],
+  "ChannelLifecycleSchema": [
+    "label",
+    "name"
+  ],
+  "ChannelList": [
+    "anchor",
+    "types"
+  ],
+  "ChannelMarkRead": [
+    "last_seq",
+    "seq",
+    "unread"
+  ],
+  "ChannelMessageOutputResult": [
+    "code",
+    "entity",
+    "face",
+    "kind",
+    "props",
+    "status",
+    "warnings"
+  ],
+  "ChannelMessageOutputs": [
+    "results",
+    "status",
+    "writer"
+  ],
+  "ChannelMessageTypeSchema": [
+    "actions",
+    "choices",
+    "decision_button",
+    "in",
+    "in_derived",
+    "label",
+    "name",
+    "persist",
+    "properties",
+    "reply",
+    "ttl_seconds"
+  ],
+  "ChannelPropertySchema": [
+    "enum",
+    "label",
+    "list",
+    "max",
+    "max_items",
+    "name",
+    "required",
+    "to",
+    "type",
+    "values"
+  ],
+  "ChannelRead": [
+    "seq",
+    "unread"
+  ],
+  "ChannelSchema": [
+    "channel_types"
+  ],
+  "ChannelSession": [
+    "due_at",
+    "entered_at",
+    "final",
+    "generation",
+    "label",
+    "reminders",
+    "state",
+    "status",
+    "stranded",
+    "timers",
+    "transitions",
+    "waiting_for",
+    "waiting_on_me"
+  ],
+  "ChannelSessionButton": [
+    "compose",
+    "confirm",
+    "confirm_text",
+    "label",
+    "props",
+    "style"
+  ],
+  "ChannelSessionReminder": [
+    "count",
+    "due_at",
+    "every",
+    "label",
+    "max",
+    "name"
+  ],
+  "ChannelSessionSchema": [
+    "initial",
+    "label",
+    "states"
+  ],
+  "ChannelSessionStateSchema": [
+    "final",
+    "label",
+    "name",
+    "status",
+    "waiting_for"
+  ],
+  "ChannelSessionTimer": [
+    "due_at",
+    "label",
+    "name",
+    "outputs",
+    "since",
+    "to"
+  ],
+  "ChannelSessionTransition": [
+    "button",
+    "by",
+    "entry",
+    "guarded",
+    "message_type",
+    "outputs",
+    "to"
+  ],
+  "ChannelSessionWaiting": [
+    "holders",
+    "label",
+    "role"
+  ],
+  "ChannelTypeList": [
+    "cardinality",
+    "channels",
+    "create",
+    "label",
+    "type"
+  ],
+  "ChannelTypeSchema": [
+    "anchor",
+    "attach_to",
+    "cardinality",
+    "create_label",
+    "label",
+    "lifecycle",
+    "message_types",
+    "name",
+    "remove_reason_required",
+    "session",
+    "typing"
+  ],
+  "CreateChannelRequest": [
+    "title"
+  ],
+  "EditMessageRequest": [
+    "props"
+  ],
+  "EphemeralAccepted": [
+    "expires_at",
+    "id"
+  ],
+  "EphemeralMessage": [
+    "at",
+    "author",
+    "expires_at",
+    "id",
+    "props",
+    "type"
+  ],
+  "Inbox": [
+    "count",
+    "degraded",
+    "entries",
+    "mention_count",
+    "mentions",
+    "next_cursor",
+    "notice",
+    "truncated",
+    "unread_channels",
+    "unread_count"
+  ],
+  "InboxChannel": [
+    "anchor",
+    "anchor_title",
+    "entity_type",
+    "name",
+    "state",
+    "title",
+    "type"
+  ],
+  "InboxEntry": [
+    "channel",
+    "kind",
+    "links",
+    "roles",
+    "session",
+    "since",
+    "transitions"
+  ],
+  "InboxLinks": [
+    "channel",
+    "entity",
+    "message"
+  ],
+  "InboxMention": [
+    "at",
+    "author",
+    "channel",
+    "kind",
+    "links",
+    "message_type",
+    "reply_to",
+    "seq"
+  ],
+  "InboxSession": [
+    "entered_at",
+    "generation",
+    "label",
+    "state",
+    "status",
+    "waiting_for"
+  ],
+  "InboxSummary": [
+    "degraded",
+    "mentions",
+    "unread_channels",
+    "waiting",
+    "waiting_truncated"
+  ],
+  "InboxUnread": [
+    "channel",
+    "last_seq",
+    "links",
+    "seq",
+    "unread"
+  ],
+  "MarkReadRequest": [
+    "seq"
+  ],
+  "Message": [
+    "_actions",
+    "action",
+    "at",
+    "author",
+    "edit_until",
+    "edited_at",
+    "mentions",
+    "outputs",
+    "props",
+    "release_after",
+    "removed",
+    "reply_count",
+    "reply_to",
+    "rev",
+    "seq",
+    "triggered_by",
+    "type"
+  ],
+  "MessageAction": [
+    "at",
+    "name",
+    "promoted",
+    "status"
+  ],
+  "MessageActionResponse": [
+    "message",
+    "warnings"
+  ],
+  "MessageMention": [
+    "kind",
+    "ref",
+    "text"
+  ],
+  "MessagePage": [
+    "channel",
+    "has_more",
+    "messages",
+    "next_after",
+    "next_after_rev",
+    "next_before"
+  ],
+  "MessageRemoval": [
+    "at",
+    "by",
+    "kind",
+    "reason"
+  ],
+  "PostMessageRequest": [
+    "expect_generation",
+    "props",
+    "reply_to",
+    "type"
+  ],
+  "RefProp": [
+    "id",
+    "restricted",
+    "title",
+    "type"
+  ],
+  "RemoveMessageRequest": [
+    "reason"
+  ],
+  "TypingAccepted": [
+    "ttl_seconds"
+  ],
+  "TypingEntry": [
+    "author",
+    "since"
+  ]
+}

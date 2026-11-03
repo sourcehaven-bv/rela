@@ -86,6 +86,9 @@ func (s *Scheduler) UseQueue(q jobs.Client) error {
 	if err := q.Register(ChildKind, s.runChildJob); err != nil {
 		return fmt.Errorf("scheduler: register child handler: %w", err)
 	}
+	if err := q.Register(SubscriptionKind, s.runSubscriptionJob); err != nil {
+		return fmt.Errorf("scheduler: register subscription handler: %w", err)
+	}
 	s.queue = q
 	return nil
 }
@@ -106,6 +109,9 @@ func (s *Scheduler) UseQueue(q jobs.Client) error {
 // It also returns the run's occurrence: the calendar slot a for_each run
 // serves, or "" for a plain task.
 func (s *Scheduler) jobFor(task TaskConfig, runID string, now time.Time) (jobs.Job, string, error) {
+	if task.Subscription != nil {
+		return subscriptionJob(task, runID), "", nil
+	}
 	if task.ForEach != nil {
 		occurrence, ok := task.Every.Occurrence(now)
 		if !ok {
@@ -173,9 +179,12 @@ func (s *Scheduler) runTaskJob(ctx context.Context, job jobs.Job) error {
 		// Unrunnable, and no retry would make a script path appear.
 		err = fmt.Errorf("scheduler: job %q carries no script", name)
 	} else {
-		err = s.runEngine(stampTaskAuditContext(ctx, name, runAs), TaskConfig{
-			Name: name, Script: script, RunAs: runAs, Capabilities: capabilitiesFromPayload(job.Payload),
-		})
+		var taskCtx context.Context
+		if taskCtx, err = s.taskContext(ctx, name, runAs); err == nil {
+			err = s.runEngine(taskCtx, TaskConfig{
+				Name: name, Script: script, RunAs: runAs, Capabilities: capabilitiesFromPayload(job.Payload),
+			})
+		}
 	}
 	s.finish(ctx, run, err)
 	return err

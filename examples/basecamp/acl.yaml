@@ -2,10 +2,17 @@
 # `run_as` grants nothing by itself; this role is what the connector may do.
 roles:
   basecamp-connector:
-    read: [todo]
-    create: [todo]
-    update: [todo]
-    # Moves the sync/basecamp version tags.
-    permissions: ["tag:sync"]
+    read: [todo, todolist, project]
+    create: [todo, todolist, project]
+    update: [todo, todolist, project]
+    # Moves the sync/basecamp version tags, and relinks a to-do or list
+    # that moved in Basecamp without being allowed to delete either.
+    permissions: ["tag:sync", basecamp-links]
+# The links follow Basecamp, so the connector replaces them.
+relation_grants:
+  in-list:
+    permission: basecamp-links
+  in-project:
+    permission: basecamp-links
 assignments:
   integration:basecamp: basecamp-connector

@@ -2,6 +2,7 @@ package dataentryconfig
 
 import (
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
@@ -362,7 +363,7 @@ func TestValidateWebhooks_ForbiddenHeaderFamilies(t *testing.T) {
 // carry an authenticated identity.
 func TestForbidWebhookHeader_RegistersDeploymentPrincipalHeader(t *testing.T) {
 	const custom = "X-Pratique-User"
-	t.Cleanup(func() { delete(extraForbiddenWebhookHeaders, strings.ToLower(custom)) })
+	t.Cleanup(func() { unforbidWebhookHeader(custom) })
 
 	before := validateWebhooks(&Config{Webhooks: map[string]Webhook{
 		"h": {Headers: []string{custom}, CreateIfMissing: &WebhookCreate{Type: "incident"}},
@@ -379,6 +380,40 @@ func TestForbidWebhookHeader_RegistersDeploymentPrincipalHeader(t *testing.T) {
 	if len(after) == 0 {
 		t.Errorf("%q was accepted after ForbidWebhookHeader registered it", custom)
 	}
+}
+
+// TestForbidWebhookHeader_ConcurrentWithLookup pins that registering and
+// looking up names from several goroutines is safe: a process that builds
+// several apps at once registers each app's principal header.
+func TestForbidWebhookHeader_ConcurrentWithLookup(t *testing.T) {
+	names := []string{"X-Concurrent-A", "X-Concurrent-B", "X-Concurrent-C", "X-Concurrent-D"}
+	t.Cleanup(func() {
+		for _, name := range names {
+			unforbidWebhookHeader(name)
+		}
+	})
+	var wg sync.WaitGroup
+	for _, name := range names {
+		wg.Go(func() {
+			for range 100 {
+				ForbidWebhookHeader(name)
+				_ = isForbiddenWebhookHeader(names[0])
+			}
+		})
+	}
+	wg.Wait()
+	for _, name := range names {
+		if !isForbiddenWebhookHeader(name) {
+			t.Errorf("%s is not forbidden after registration", name)
+		}
+	}
+}
+
+// unforbidWebhookHeader undoes a test's ForbidWebhookHeader.
+func unforbidWebhookHeader(name string) {
+	extraForbiddenWebhookHeadersMu.Lock()
+	delete(extraForbiddenWebhookHeaders, strings.ToLower(name))
+	extraForbiddenWebhookHeadersMu.Unlock()
 }
 
 // TestValidateWebhooks_FindFace pins find.face (TKT-7IZHP0 §6): a faced find

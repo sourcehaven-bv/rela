@@ -35,6 +35,13 @@ jobs:
         with:
           go-version-file: go.mod
 
+      # The build gate runs `go build ./...`, which includes rela-desktop.
+      # It links Wails v3, whose Linux build needs GTK4 + WebKitGTK headers.
+      - name: Install Wails Linux dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgtk-4-dev libwebkitgtk-6.0-dev
+
       - name: Run all fuzz targets
         run: FUZZTIME=25s scripts/fuzz-all.sh
 

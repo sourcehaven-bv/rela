@@ -358,12 +358,13 @@ func TestNew_RejectsNil(t *testing.T) {
 	cfg := &Config{}
 	engine := script.NewEngine()
 	for name, build := range map[string]func() (*Scheduler, error){
-		"config":    func() (*Scheduler, error) { return New(nil, engine, ws, discardLogger()) },
-		"engine":    func() (*Scheduler, error) { return New(cfg, nil, ws, discardLogger()) },
-		"workspace": func() (*Scheduler, error) { return New(cfg, engine, nil, discardLogger()) },
-		"logger":    func() (*Scheduler, error) { return New(cfg, engine, ws, nil) },
+		"config":    func() (*Scheduler, error) { return New(nil, engine, ws, ws.bind, discardLogger()) },
+		"engine":    func() (*Scheduler, error) { return New(cfg, nil, ws, ws.bind, discardLogger()) },
+		"workspace": func() (*Scheduler, error) { return New(cfg, engine, nil, ws.bind, discardLogger()) },
+		"binder":    func() (*Scheduler, error) { return New(cfg, engine, ws, nil, discardLogger()) },
+		"logger":    func() (*Scheduler, error) { return New(cfg, engine, ws, ws.bind, nil) },
 		"run-state": func() (*Scheduler, error) {
-			return New(cfg, engine, &noRunState{mockWorkspace: ws}, discardLogger())
+			return New(cfg, engine, &noRunState{mockWorkspace: ws}, ws.bind, discardLogger())
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -391,7 +392,7 @@ func TestStartBackground_NoOps(t *testing.T) {
 			if file != nil {
 				ws.files["project:"+ConfigFile] = file
 			}
-			StartBackground(t.Context(), ws, discardLogger())
+			StartBackground(t.Context(), ws, ws.bind, discardLogger())
 		})
 	}
 }
@@ -413,7 +414,7 @@ func TestStartBackground_UsesQueue(t *testing.T) {
 	ws := &queueWorkspace{mockWorkspace: newMockWorkspace(t), q: q}
 	ws.files["project:"+ConfigFile] = []byte("tasks:\n  - name: t\n    script: t.lua\n    every: 1h\n")
 
-	StartBackground(t.Context(), ws, discardLogger())
+	StartBackground(t.Context(), ws, ws.bind, discardLogger())
 
 	require.Eventually(t, func() bool { return len(q.jobs()) == 1 }, 5*time.Second, 20*time.Millisecond,
 		"StartBackground must attach the job queue and queue the first-ever run")
@@ -423,7 +424,7 @@ func TestStartBackground_UsesQueue(t *testing.T) {
 // points must use: a scheduler without a queue would fail every task.
 func TestNewWithQueue_RejectsProviderWithoutQueue(t *testing.T) {
 	t.Parallel()
-	_, err := NewWithQueue(&Config{}, script.NewEngine(), newMockWorkspace(t), discardLogger())
+	_, err := NewWithQueue(&Config{}, script.NewEngine(), newMockWorkspace(t), testBinder(nil), discardLogger())
 	require.Error(t, err)
 }
 
@@ -431,7 +432,7 @@ func TestNewWithQueue_AttachesQueue(t *testing.T) {
 	t.Parallel()
 	q := newFakeQueue()
 	s, err := NewWithQueue(&Config{}, script.NewEngine(),
-		&queueWorkspace{mockWorkspace: newMockWorkspace(t), q: q}, discardLogger())
+		&queueWorkspace{mockWorkspace: newMockWorkspace(t), q: q}, testBinder(nil), discardLogger())
 	require.NoError(t, err)
 	require.NotNil(t, s)
 	require.Contains(t, q.handlers, TaskKind)

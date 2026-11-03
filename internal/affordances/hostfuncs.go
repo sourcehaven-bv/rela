@@ -22,7 +22,7 @@ var errArgType = errors.New("affordances: host function argument type mismatch")
 // can't ask about a different user or entity than the one in scope.
 //
 // Source of truth is bc.entityRoles, computed by the resolver via
-// acl.Declarative.ForPrincipal(...).ForEntity(...) before the
+// the request scope on ctx (acl.Request.ForEntity) before the
 // bindingContext is built (RR-JRPZ). This is the same set the outer
 // resolver uses to select which roles' grants apply to this entity;
 // keeping the predicate aligned eliminates the verdict/authz split

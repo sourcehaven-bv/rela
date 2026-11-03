@@ -25,8 +25,8 @@ func wantCommentCounts(query map[string][]string) bool {
 }
 
 // serveListRowExtras fills the per-page values a list row carries beyond its
-// entity: the owner always, the comment count on request. It reports false
-// after writing the error response.
+// entity: the owner and the lease always, the comment count and the busy
+// channels on request. It reports false after writing the error response.
 func serveListRowExtras(
 	w http.ResponseWriter, r *http.Request, a *App, query map[string][]string,
 	rows []*entityPkg.Entity, data []v1.Entity,
@@ -36,6 +36,13 @@ func serveListRowExtras(
 	}
 	if wantCommentCounts(query) {
 		a.comments.serveCommentCounts(r.Context(), rows, data)
+	}
+	if typ := wantBusy(query); typ != "" {
+		serveRowBusy(r.Context(), channelsBusy(a.channels), typ, rows, data)
+	}
+	a.leases.serveRowLeases(r.Context(), rows, data)
+	if want := listRollups(query, a.Cfg()); want != nil {
+		serveRowRollups(r.Context(), newRollupSource(a), rows, data, want)
 	}
 	return true
 }
@@ -84,11 +91,15 @@ func (h *commentsHandler) serveCommentCounts(ctx context.Context, rows []*entity
 // so this is too; with one but no request ACL on ctx it fails closed, as
 // [commentPermissionGate] does.
 func (h *commentsHandler) readsCommentsEverywhere(ctx context.Context) bool {
-	if !h.aclPolicyActive() {
+	policy, active := h.aclPolicy()
+	if !active {
 		return true
 	}
-	req := acl.FromContext(ctx)
-	if req == nil {
+	if policy == nil {
+		return false
+	}
+	req, err := policy.RequestFrom(ctx)
+	if err != nil {
 		return false
 	}
 	return req.HoldsPermission(ctx, acl.PermCommentRead)

@@ -4,7 +4,10 @@ import (
 	"context"
 	"testing"
 
+	"github.com/Sourcehaven-BV/rela/internal/acl/acltest"
+
 	"github.com/Sourcehaven-BV/rela/internal/acl"
+	"github.com/Sourcehaven-BV/rela/internal/aclstore"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
 	"github.com/Sourcehaven-BV/rela/internal/store/memstore"
@@ -37,15 +40,15 @@ func TestPermitsWorld_ConferredRoleOpensTheWorldGlobally(t *testing.T) {
 	if err := p.Validate(); err != nil {
 		t.Fatalf("policy must load: %v", err)
 	}
-	d, err := acl.NewDeclarative(p, acl.NewStoreGraph(st), st)
+	d, err := acl.NewDeclarative(p, aclstore.MustNewGraph(st), st)
 	if err != nil {
 		t.Fatalf("NewDeclarative: %v", err)
 	}
 	permits := func(user string) bool {
 		t.Helper()
-		req, err := d.ForPrincipal(principal.Principal{User: user, Tool: principal.ToolDataEntry})
+		req, err := d.ForIdentity(acltest.IdentityFor(ctx, t, d, principal.Principal{User: user, Tool: principal.ToolDataEntry}))
 		if err != nil {
-			t.Fatalf("ForPrincipal: %v", err)
+			t.Fatalf("ForIdentity: %v", err)
 		}
 		ok, err := req.PermitsWorld(ctx, "published")
 		if err != nil {

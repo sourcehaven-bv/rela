@@ -2,6 +2,9 @@
 import { ref } from 'vue'
 import RlButton from '../common/RlButton.vue'
 import RlButtonGroup from '../common/RlButtonGroup.vue'
+import { useMessages } from '../../composables/useMessages'
+
+const messages = useMessages()
 
 withDefaults(
   defineProps<{
@@ -13,10 +16,10 @@ withDefaults(
     submitting?: boolean
   }>(),
   {
-    placeholder: 'Add a comment...',
-    label: 'Add a comment',
-    submitLabel: 'Comment',
-    cancelLabel: 'Cancel',
+    placeholder: undefined,
+    label: undefined,
+    submitLabel: undefined,
+    cancelLabel: undefined,
     submitting: false,
   },
 )
@@ -43,23 +46,25 @@ function cancel() {
       v-model="body"
       class="rl-comment-composer__input"
       rows="1"
-      :placeholder="placeholder"
-      :aria-label="label"
+      :placeholder="placeholder ?? messages.chromeText({ key: 'addCommentPlaceholder' })"
+      :aria-label="label ?? messages.chromeText({ key: 'addCommentLabel' })"
       @keydown.enter.exact.prevent="submit"
       @keydown.escape="cancel"
     />
 
     <!-- The actions stay out of the way until there is something to act on. -->
     <RlButtonGroup v-if="body.trim()" class="rl-comment-composer__actions">
-      <RlButton variant="ghost" size="sm" @click="cancel">{{ cancelLabel }}</RlButton>
+      <RlButton variant="ghost" size="sm" @click="cancel">{{
+        cancelLabel ?? messages.chromeText({ key: 'cancel' })
+      }}</RlButton>
       <RlButton
         variant="primary"
         size="sm"
         type="submit"
         :loading="submitting"
-        loading-label="Posting comment"
+        :loading-label="messages.chromeText({ key: 'postingComment' })"
       >
-        {{ submitLabel }}
+        {{ submitLabel ?? messages.chromeText({ key: 'commentAction' }) }}
       </RlButton>
     </RlButtonGroup>
   </form>

@@ -11,8 +11,11 @@
  * only the printed hint is missing (reported to the library).
  */
 import { computed } from 'vue'
+import { useI18n } from 'vue-i18n'
 import RlPagination from 'rela-components/components/data/RlPagination.vue'
 import type { ListMeta } from '@/types'
+
+const { t } = useI18n()
 
 const props = defineProps<{
   meta: ListMeta
@@ -27,7 +30,7 @@ const pageCount = computed(() => Math.ceil(props.meta.total / props.meta.per_pag
 const summary = computed(() => {
   const first = (props.meta.page - 1) * props.meta.per_page + 1
   const last = Math.min(props.meta.page * props.meta.per_page, props.meta.total)
-  return `Showing ${first} - ${last} of ${props.meta.total}`
+  return t('list.pagination.summary', { first, last, total: props.meta.total })
 })
 
 function onPage(page: number) {

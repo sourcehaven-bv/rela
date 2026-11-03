@@ -94,7 +94,11 @@ if [[ -n $REF ]]; then
     git -C "$REPO" rev-parse --verify --quiet "$REF^{commit}" >/dev/null || die "unknown git ref: $REF"
     rm -rf "$SRC"
     mkdir -p "$SRC"
-    git -C "$REPO" archive --format=tar "$REF" | tar -x -C "$SRC"
+    # Through a file, not a pipe: bsdtar stops reading at the end-of-archive
+    # marker, so git archive gets SIGPIPE and pipefail aborts the script.
+    git -C "$REPO" archive --format=tar -o "$WORK/src.tar" "$REF"
+    tar -x -f "$WORK/src.tar" -C "$SRC"
+    rm -f "$WORK/src.tar"
     rsync -a --delete "$REPO/tools/seqtrace/" "$SRC/tools/seqtrace/"
 else
     step "Copying the checkout to $SRC"
@@ -140,6 +144,30 @@ psql "create schema $SCHEMA" >/dev/null
 step "Seeding the perf project at scale $SCALE"
 rm -rf "$WORK/project"
 cp -R "$SRC/prototypes/perf/project" "$WORK/project"
+if [[ ${SEQTRACE_SUITE:-} == routes ]]; then
+    # The perf project has no command, action or transform. The routes suite
+    # needs one of each, so their permission gates run in the trace.
+    cat >>"$WORK/project/data-entry.yaml" <<'YAML'
+commands:
+  seqtrace-echo:
+    label: "Echo"
+    script: "cat >/dev/null; echo done"
+    context: global
+    permission: publish-policy
+actions:
+  seqtrace-touch:
+    label: "Touch"
+    permission: publish-policy
+    set:
+      priority: low
+YAML
+    cat >>"$WORK/project/schema.yaml" <<'YAML'
+transforms:
+  txt:
+    command: ["cp", "{in}", "{out}"]
+    produces: text/plain
+YAML
+fi
 RELA_DATABASE_URL="$DSN" "$WORK/rela" --project "$WORK/project" dev seed --scale "$SCALE"
 
 pick() { psql "select id from $SCHEMA.entities where $1 order by id limit 1"; }
@@ -175,12 +203,15 @@ step "Sending scenarios"
 mkdir -p "$WORK/responses"
 n=0
 # req NAME USER METHOD PATH [BODY]: one request, recorded as one diagram.
+# USER - sends no identity header.
 req() {
     local name=$1 user=$2 method=$3 path=$4 body=${5:-}
     n=$((n + 1))
     echo "$name" >>"$WORK/names.txt"
-    local args=(-s -o "$WORK/responses/$(printf %02d $n).json" -w '%{http_code}' -X "$method"
-        -H "X-Forwarded-User: $user" -H "Origin: $BASE")
+    local args=(-s -o "$WORK/responses/$(printf %02d $n).json" -w '%{http_code}' -X "$method" -H "Origin: $BASE")
+    # REQ_MAX_TIME ends a streaming response (SSE) after that many seconds.
+    [[ -n ${REQ_MAX_TIME:-} ]] && args+=(--max-time "$REQ_MAX_TIME")
+    [[ $user != - ]] && args+=(-H "X-Forwarded-User: $user")
     [[ -n "$body" ]] && args+=(-H 'Content-Type: application/json' -d "$body")
     local code
     code=$(curl "${args[@]}" "$BASE$path") || true
@@ -201,9 +232,74 @@ req "search as editor" "$BOB" GET "/api/v1/_search?q=$WORD"
 req "update task priority as editor" "$BOB" PATCH "/api/v1/tasks/$TASK" '{"properties":{"priority":"critical"}}'
 req "start task (state transition) as editor" "$BOB" PATCH "/api/v1/tasks/$TASK" '{"properties":{"status":"doing"}}'
 req "update task as reader, denied" "$CAROL" PATCH "/api/v1/tasks/$TASK" '{"properties":{"priority":"low"}}'
+req "create task as reader, denied" "$CAROL" POST "/api/v1/tasks" \
+    '{"id":"TSK-SEQTRACE-DENIED","properties":{"title":"Denied task","status":"todo","priority":"low"}}'
 req "create task as editor" "$BOB" POST "/api/v1/tasks" \
     '{"id":"TSK-SEQTRACE","properties":{"title":"Traced task","status":"todo","priority":"low"}}'
 req "delete task as editor" "$BOB" DELETE "/api/v1/tasks/TSK-SEQTRACE"
+
+# SEQTRACE_SUITE=routes adds one request per route family, so a trace shows
+# the identity and access checks on each: reads as the reader, writes the
+# reader may not make, requests without an identity header, and the routes
+# outside /api/. The labels say what should happen ("denied"); the trace
+# shows what did. It runs against the throwaway demo database.
+if [[ ${SEQTRACE_SUITE:-} == routes ]]; then
+    for p in _me _schema _config _sidebar _nav_status _nav_items _dashboard _conflicts _commands _transforms \
+        _piles _settings _palette _theme/export _git/status _copies _leases _openapi.json _feeds/ _documents/ \
+        _templates/ _views/ _apps/ _next_action "_comments/tasks/$TASK" "_history/tasks/$TASK"; do
+        req "route GET /api/v1/$p as reader" "$CAROL" GET "/api/v1/$p"
+    done
+    req "route GET /api/help/task as reader" "$CAROL" GET "/api/help/task"
+    req "route GET /api/v1/_configure as reader" "$CAROL" GET "/api/v1/_configure"
+    req "route PUT /api/v1/_settings as reader, denied" "$CAROL" PUT "/api/v1/_settings" '{}'
+    req "route POST /api/v1/_git/sync as reader, denied" "$CAROL" POST "/api/v1/_git/sync" '{}'
+    req "route POST /api/command/x as reader, denied" "$CAROL" POST "/api/command/x" '{}'
+    req "route DELETE task as reader, denied" "$CAROL" DELETE "/api/v1/tasks/$TASK"
+    req "route GET task without identity" - GET "/api/v1/tasks/$TASK"
+    req "route GET /api/v1/_me without identity" - GET "/api/v1/_me"
+    req "route PATCH task without identity" - PATCH "/api/v1/tasks/$TASK" '{"properties":{"priority":"low"}}'
+    # Entity sub-resources and writes, as the reader and, where the reader is
+    # refused, as a role that may.
+    rel="/api/v1/tasks/$TASK/relations/assigned-to"
+    req "route GET task relations as reader" "$CAROL" GET "/api/v1/tasks/$TASK/relations"
+    req "route POST relation as reader, denied" "$CAROL" POST "$rel" "{\"id\":\"$PERSON\"}"
+    req "route POST relation as editor" "$BOB" POST "$rel" "{\"id\":\"$PERSON\"}"
+    req "route PATCH relation as reader, denied" "$CAROL" PATCH "$rel/$PERSON" '{"meta":{}}'
+    req "route DELETE relation as reader, denied" "$CAROL" DELETE "$rel/$PERSON"
+    req "route DELETE relation as editor" "$BOB" DELETE "$rel/$PERSON"
+    req "route POST clone task as reader, denied" "$CAROL" POST "/api/v1/tasks/$TASK/_actions/clone" '{}'
+    req "route POST restore task as reader, denied" "$CAROL" POST "/api/v1/tasks/$TASK/restore" '{}'
+    req "route POST dry-run create as reader" "$CAROL" POST "/api/v1/tasks?dry_run=true" \
+        '{"properties":{"title":"Dry run","status":"todo","priority":"low"}}'
+    req "route GET export task as reader" "$CAROL" GET "/api/v1/tasks/$TASK/_export?transform=txt"
+    req "route GET export risk as reader, hidden" "$CAROL" GET "/api/v1/risks/$RISK/_export?transform=txt"
+    req "route GET export task list as reader" "$CAROL" GET "/api/v1/tasks/_export?transform=txt"
+    req "route POST lease as reader, denied" "$CAROL" POST "/api/v1/tasks/$TASK/_lease" '{}'
+    req "route POST lease as editor" "$BOB" POST "/api/v1/tasks/$TASK/_lease" '{}'
+    req "route GET attachment as reader" "$CAROL" GET "/api/v1/tasks/$TASK/_attachments/file/x.txt"
+    req "route PUT attachment as reader, denied" "$CAROL" PUT "/api/v1/tasks/$TASK/_attachments/file" '{}'
+    req "route DELETE attachment as reader, denied" "$CAROL" DELETE "/api/v1/tasks/$TASK/_attachments/file/x.txt"
+    req "route GET gantt as reader" "$CAROL" GET "/api/v1/_gantts/delivery"
+    req "route GET analyze as reader" "$CAROL" GET "/api/v1/_analyze"
+    req "route POST conflict resolve as reader, denied" "$CAROL" POST "/api/v1/_conflicts/resolve" '{}'
+    req "route POST action as reader, denied" "$CAROL" POST "/api/v1/_action/seqtrace-touch" "{\"entity_id\":\"$TASK\"}"
+    req "route POST action as manager" "$ALICE" POST "/api/v1/_action/seqtrace-touch" "{\"entity_id\":\"$TASK\"}"
+    req "route POST entity action as reader, denied" "$CAROL" POST "/api/v1/tasks/$TASK/_actions/seqtrace-touch" '{}'
+    req "route POST entity action as manager" "$ALICE" POST "/api/v1/tasks/$TASK/_actions/seqtrace-touch" '{}'
+    req "route POST command as reader, denied" "$CAROL" POST "/api/command/seqtrace-echo" '{}'
+    req "route POST command as manager" "$ALICE" POST "/api/command/seqtrace-echo" '{}'
+    req "route POST command cancel as reader" "$CAROL" POST "/api/command-cancel/x" '{}'
+    req "route GET command file as reader" "$CAROL" GET "/api/command-file/x"
+    REQ_MAX_TIME=1 req "route GET /api/v1/_events as reader" "$CAROL" GET "/api/v1/_events"
+    # Project-wide appearance: the reader should be refused.
+    req "route PUT /api/v1/_palette as reader, denied" "$CAROL" PUT "/api/v1/_palette" '{}'
+    req "route PUT /api/v1/_theme/logo as reader, denied" "$CAROL" PUT "/api/v1/_theme/logo" '{}'
+    req "route DELETE /api/v1/_theme/logo as reader, denied" "$CAROL" DELETE "/api/v1/_theme/logo"
+    req "route POST /api/v1/_theme/import as reader, denied" "$CAROL" POST "/api/v1/_theme/import" '{}'
+    req "route GET / (SPA shell)" - GET "/"
+    req "route GET /_custom/custom.css" - GET "/_custom/custom.css"
+    req "route GET /static/missing" - GET "/static/missing"
+fi
 
 sleep 1 # the runtime flushes every 250 ms
 kill -0 "$SERVER_PID" 2>/dev/null || { cat "$WORK/server.log" >&2; die "server exited during the scenarios"; }
@@ -213,8 +309,11 @@ SERVER_PID=""
 
 step "Drawing diagrams"
 rm -rf "$OUT/diagrams"
+# Draw the declared guards even inside the handler's package, so archplan sees
+# every request that passes one.
+keep=$(tools/seqtrace/guards.sh)
 go run ./tools/seqtrace/cmd/seqtrace diagram -in "$WORK/trace.jsonl" -out "$OUT/diagrams" \
-    -names "$WORK/names.txt" -min 0
+    -names "$WORK/names.txt" -min 0 ${keep:+-keep "$keep"}
 echo "Responses are in $WORK/responses, the server log in $WORK/server.log."
 if [[ "${SEQTRACE_OPEN:-1}" != 0 ]] && command -v open >/dev/null; then
     open "$OUT/diagrams/index.html"

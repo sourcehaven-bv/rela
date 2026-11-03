@@ -136,7 +136,7 @@ func facedAppWith(
 	app := newAppFromParts(&Config{}, nil, newFixture())
 	rebindApp(app, fs, paths, svc)
 	if decl != nil {
-		app.acl = decl
+		setTestACL(t, app, decl)
 	}
 	app.schema.Publish(&Schema{Cfg: cfg, Meta: meta})
 	app.setWorlds(fixedWorlds{scope: world})
@@ -581,7 +581,7 @@ func TestFacedAddress_DeniedWorldStillBlocks(t *testing.T) {
 			Assignments: map[string]string{"alice": "reader"},
 		}, st)
 	})
-	app.acl = d
+	setTestACL(t, app, d)
 	// The router is what binds the world handle, so these go through it; its
 	// stamper replaces the ctx principal, so identity arrives the way
 	// production supplies it.

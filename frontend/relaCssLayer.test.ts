@@ -45,6 +45,16 @@ describe('wrapCss', () => {
     expect(wrapCss(`@layer ${RELA_LAYER} {.a{color:red}}`)).toBeNull()
   })
 
+  it('wraps input whose comments mention the layer (unminified build)', () => {
+    expect(wrapCss(`/* stays inside \`@layer ${RELA_LAYER}\` */ .a{color:red}`)).toMatch(
+      /^@layer rela;/
+    )
+  })
+
+  it('wraps input whose only mention of the layer is an order statement', () => {
+    expect(wrapCss(`@layer base, ${RELA_LAYER}; .a{color:red}`)).toMatch(/@layer rela\s*\{/)
+  })
+
   it('wraps empty input so the invariant holds for every emitted stylesheet', () => {
     expect(wrapCss('')).toContain(`@layer ${RELA_LAYER}`)
   })

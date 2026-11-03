@@ -1,0 +1,14 @@
+request: POST /api/v1/_history/ticket/TKT-3/1/restore
+identity: header editor@example.test
+status: 403
+reads: GetRelation=1 GraphQueryHeaders=1 ListEntities=1 ListRelations=1
+breadth: ListEntities=1/1 ListRelations=0/1
+bodies: GraphQuery=0/1 ListEntities=0/1
+versions: GetVersion=1
+body:
+{
+  "error": "forbidden",
+  "reason": "field \"note\" is not writable",
+  "rule_id": "field-affordance:read-only:note",
+  "rule_kind": "affordance"
+}

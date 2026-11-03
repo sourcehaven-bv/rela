@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/search"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
@@ -105,4 +106,61 @@ func TestBuildVisibleSearchSQL_Shape(t *testing.T) {
 			}
 		}
 	})
+}
+
+// TestAdmits_FoldsLikeSearchText pins the field judgement without a
+// database. PostgreSQL's lower() folds 'İ' to "i" plus U+0307, Go's to "i".
+// The needle "i̇" is in the visible title only under PostgreSQL's fold
+// and in the hidden code under both, so a match judged with lower() would
+// reveal the hidden code. The Go judgement uses the fold search_text was
+// written with and drops the row.
+func TestAdmits_FoldsLikeSearchText(t *testing.T) {
+	fs := &search.FieldScope{Gated: []string{"code", "title"}, Grants: []search.FieldGrant{{Fields: []string{"title"}}}}
+	e := entity.New("TKT-I", "ticket")
+	e.SetString("title", "İstanbul")
+	e.SetString("code", "xi̇x")
+	if admits(fs, visibleRow{e: e}, "i̇") {
+		t.Error("a needle only the hidden code holds under the search fold was admitted")
+	}
+	if !admits(fs, visibleRow{e: e}, "istanbul") {
+		t.Error("a needle in the visible title was dropped")
+	}
+	// A conditional grant the statement did not report as holding hides.
+	fs.Grants = append(fs.Grants, search.FieldGrant{Fields: []string{"code"}, When: &store.GraphQuery{}})
+	if admits(fs, visibleRow{e: e, grants: []bool{true}}, "xi̇x") {
+		t.Error("a grant missing from the row's verdicts was treated as holding")
+	}
+	if !admits(fs, visibleRow{e: e, grants: []bool{true, true}}, "xi̇x") {
+		t.Error("a grant reported as holding did not show its field")
+	}
+}
+
+// TestBuildVisibleSearchSQL_TwoFieldScopedTypes: two field-scoped types in
+// one statement get distinct grant CTE prefixes, so their relation
+// conditions cannot collide. The inherited holder is the shape that renders
+// a CTE.
+func TestBuildVisibleSearchSQL_TwoFieldScopedTypes(t *testing.T) {
+	held := store.RelationPredicate{
+		Endpoints: []string{"carol"}, OfTypes: []string{"owner-of"},
+		EntityInheritThrough: []string{"belongs-to"}, EntityDepth: 10,
+	}
+	fs := func() *search.FieldScope {
+		return &search.FieldScope{Gated: []string{"code"}, Grants: []search.FieldGrant{{
+			Fields: []string{"code"},
+			When:   &store.GraphQuery{Related: []store.DirectedRelation{{Incoming: true, Pred: held}}},
+		}}}
+	}
+	scope := map[string]search.TypeScope{
+		"memo":   {AllowAll: true, Fields: fs()},
+		"ticket": {AllowAll: true, Fields: fs()},
+	}
+	sqlText, _, ok, _ := buildVisibleSearchSQL(search.Query{Text: "x", World: store.TrivialScope()}, scope, nil, nil, 1)
+	if !ok {
+		t.Fatal("expected a query")
+	}
+	for _, prefix := range []string{"f0_0_", "f1_0_"} {
+		if !strings.Contains(sqlText, prefix) {
+			t.Errorf("expected grant CTE prefix %s in SQL: %s", prefix, sqlText)
+		}
+	}
 }

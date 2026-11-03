@@ -2,7 +2,14 @@ import { describe, it, expect } from 'vitest'
 import { RouterLink } from 'vue-router'
 import type { SidebarGroup } from '@/types'
 import type { NavItemList } from '@/api/navItems'
-import { activeNavId, expandGeneratedItems, navId, pilesNavGroup, toNavGroups } from './sidebarNav'
+import {
+  activeNavId,
+  expandGeneratedItems,
+  navId,
+  pileNamed,
+  pilesNavGroup,
+  toNavGroups,
+} from './sidebarNav'
 
 /**
  * The nav id is the thing here that fails silently when it is wrong.
@@ -87,6 +94,17 @@ describe('toNavGroups', () => {
 
     expect(action.as).toBe('button')
     expect(action.attrs).toBeUndefined()
+  })
+
+  it('renders a pile entry as a flyout button keyed on the pile name', () => {
+    const [group] = toNavGroups(
+      [{ items: [{ label: 'Notifications', pile: 'Notifications' }] }],
+      RouterLink
+    )
+    const [pile] = group.items
+    expect(pile.id).toBe('pile-name:Notifications')
+    expect(pile.as).toBe('button')
+    expect(pile.opensFlyout).toBe(true)
   })
 
   it('carries the icon name through', () => {
@@ -183,6 +201,46 @@ describe('activeNavId', () => {
   it('never matches an action row, which has no target', () => {
     const actions = toNavGroups([{ items: [{ label: 'Sync', action: 'sync' }] }], RouterLink)
     expect(activeNavId(actions, '/sync')).toBeUndefined()
+  })
+  // Named dashboards (TKT-5LQNLY) link at /dashboard/<name>, plain or under a
+  // space prefix, and each lights only its own row.
+  describe('named dashboards', () => {
+    const dashboards = toNavGroups(
+      [
+        {
+          items: [
+            { label: 'Home', href: '/' },
+            { label: 'Pipeline', href: '/dashboard/crm' },
+            { label: 'Ops', href: '/dashboard/ops' },
+          ],
+        },
+      ],
+      RouterLink
+    )
+    const spaced = toNavGroups(
+      [
+        {
+          items: [
+            { label: 'Home', href: '/s/crm' },
+            { label: 'Pipeline', href: '/s/crm/dashboard/crm' },
+          ],
+        },
+      ],
+      RouterLink
+    )
+
+    it('highlights the named dashboard on its own route', () => {
+      expect(activeNavId(dashboards, '/dashboard/crm')).toBe('href:/dashboard/crm')
+      expect(activeNavId(dashboards, '/dashboard/ops')).toBe('href:/dashboard/ops')
+    })
+
+    it('does not highlight a dashboard whose name is a prefix of another', () => {
+      expect(activeNavId(dashboards, '/dashboard/crm2')).toBeUndefined()
+    })
+
+    it('highlights the named dashboard under a space prefix', () => {
+      expect(activeNavId(spaced, '/s/crm/dashboard/crm')).toBe('href:/s/crm/dashboard/crm')
+    })
   })
 })
 
@@ -295,7 +353,9 @@ describe('expandGeneratedItems', () => {
 
   it('keeps an empty generated group that offers a create, with its add label', () => {
     const offer = { type: 'topic', label: 'Topic', form: 'create_topic' }
-    const groups = expandGeneratedItems([{ ...topics, items_create: offer }], () => ({ entries: [] }))
+    const groups = expandGeneratedItems([{ ...topics, items_create: offer }], () => ({
+      entries: [],
+    }))
     expect(groups).toHaveLength(1)
     expect(groups[0].items).toEqual([])
     const [nav] = toNavGroups(groups, RouterLink)
@@ -340,7 +400,14 @@ describe('expandGeneratedItems', () => {
 })
 
 describe('pilesNavGroup', () => {
-  const pile = (id: string, count: number, icon = 'star') => ({ id, name: id, icon, count, created: '', updated: '' })
+  const pile = (id: string, count: number, icon = 'star') => ({
+    id,
+    name: id,
+    icon,
+    count,
+    created: '',
+    updated: '',
+  })
 
   it('lists each pile as a flyout button with its count', () => {
     const group = pilesNavGroup([pile('PIL-1', 3), pile('PIL-2', 0, 'not-an-icon')])
@@ -351,5 +418,15 @@ describe('pilesNavGroup', () => {
     // An empty pile shows no count, and an unknown icon falls back.
     expect(group.items[1].status).toBeUndefined()
     expect(group.items[1].icon).toBe('layers')
+  })
+})
+
+describe('pileNamed', () => {
+  it('matches a pile name ignoring case, like the server', () => {
+    const piles = [
+      { id: 'p1', name: 'notifications', icon: '', count: 2, created: '', updated: '' },
+    ]
+    expect(pileNamed(piles, 'Notifications')?.id).toBe('p1')
+    expect(pileNamed(piles, 'Other')).toBeUndefined()
   })
 })

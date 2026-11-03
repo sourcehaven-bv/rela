@@ -47,11 +47,11 @@ func (f faceEdgeFixture) inboundCovers(t *testing.T) int {
 // a family-delete cascade: a principal who may delete the face but not the
 // inbound edge is refused, and nothing is written.
 func TestDeleteEntityFace_LastFaceAuthorizesInboundEdges(t *testing.T) {
-	for _, b := range concBackends {
+	for _, b := range deleteACLBackends() {
 		t.Run(b.name, func(t *testing.T) {
 			f := lastFaceFixture(t, b)
 
-			_, err := f.mgr.DeleteEntityFace(asUser("drafter"), "POL-1", "draft", true)
+			_, err := f.mgr.DeleteEntityFace(entitymanager.BindAs(asUser("drafter"), t, f.mgr), "POL-1", "draft", true)
 			var forbidden *acl.ForbiddenError
 			if !errors.As(err, &forbidden) {
 				t.Fatalf("DeleteEntityFace as drafter = %v, want *acl.ForbiddenError for the inbound edge", err)
@@ -70,11 +70,11 @@ func TestDeleteEntityFace_LastFaceAuthorizesInboundEdges(t *testing.T) {
 }
 
 func TestDeleteEntityFace_LastFaceRemovesInboundEdges(t *testing.T) {
-	for _, b := range concBackends {
+	for _, b := range deleteACLBackends() {
 		t.Run(b.name, func(t *testing.T) {
 			f := lastFaceFixture(t, b)
 
-			res, err := f.mgr.DeleteEntityFace(asUser("admin"), "POL-1", "draft", true)
+			res, err := f.mgr.DeleteEntityFace(entitymanager.BindAs(asUser("admin"), t, f.mgr), "POL-1", "draft", true)
 			if err != nil {
 				t.Fatalf("DeleteEntityFace as admin: %v", err)
 			}
@@ -100,7 +100,7 @@ func TestDeleteEntityFace_LastFaceRemovesInboundEdges(t *testing.T) {
 // A face that is not the last leaves inbound edges alone: they name the
 // entity, which survives.
 func TestDeleteEntityFace_NotLastKeepsInboundEdges(t *testing.T) {
-	for _, b := range concBackends {
+	for _, b := range deleteACLBackends() {
 		t.Run(b.name, func(t *testing.T) {
 			f := newFaceEdgeFixture(t, b)
 			if _, err := f.st.CreateRelation(context.Background(), entity.RelationKey{From: "CTL-2", Type: "covers", To: "POL-1"}, nil); err != nil {
@@ -108,7 +108,7 @@ func TestDeleteEntityFace_NotLastKeepsInboundEdges(t *testing.T) {
 			}
 			// drafter cannot delete a covers edge, so success also shows the
 			// inbound edge was not part of the authorized cascade.
-			if _, err := f.mgr.DeleteEntityFace(asUser("drafter"), "POL-1", "draft", true); err != nil {
+			if _, err := f.mgr.DeleteEntityFace(entitymanager.BindAs(asUser("drafter"), t, f.mgr), "POL-1", "draft", true); err != nil {
 				t.Fatalf("DeleteEntityFace as drafter: %v", err)
 			}
 			if n := f.inboundCovers(t); n != 1 {
@@ -121,10 +121,10 @@ func TestDeleteEntityFace_NotLastKeepsInboundEdges(t *testing.T) {
 // Without cascade, the last face with edges is refused like a family delete,
 // and nothing is written.
 func TestDeleteEntityFace_LastFaceNeedsCascade(t *testing.T) {
-	for _, b := range concBackends {
+	for _, b := range deleteACLBackends() {
 		t.Run(b.name, func(t *testing.T) {
 			f := lastFaceFixture(t, b)
-			_, err := f.mgr.DeleteEntityFace(asUser("admin"), "POL-1", "draft", false)
+			_, err := f.mgr.DeleteEntityFace(entitymanager.BindAs(asUser("admin"), t, f.mgr), "POL-1", "draft", false)
 			if !errors.Is(err, entitymanager.ErrHasRelations) {
 				t.Fatalf("DeleteEntityFace without cascade = %v, want ErrHasRelations", err)
 			}
@@ -140,10 +140,10 @@ func TestDeleteEntityFace_LastFaceNeedsCascade(t *testing.T) {
 
 // A face that is not the last takes its own edges without cascade.
 func TestDeleteEntityFace_NotLastIgnoresCascade(t *testing.T) {
-	for _, b := range concBackends {
+	for _, b := range deleteACLBackends() {
 		t.Run(b.name, func(t *testing.T) {
 			f := newFaceEdgeFixture(t, b)
-			if _, err := f.mgr.DeleteEntityFace(asUser("drafter"), "POL-1", "draft", false); err != nil {
+			if _, err := f.mgr.DeleteEntityFace(entitymanager.BindAs(asUser("drafter"), t, f.mgr), "POL-1", "draft", false); err != nil {
 				t.Fatalf("DeleteEntityFace without cascade: %v", err)
 			}
 		})
@@ -158,7 +158,7 @@ func TestDeleteEntityFace_NotLastIgnoresCascade(t *testing.T) {
 // keeps the entity, so the hidden face, its edge and the inbound edge
 // survive.
 func TestDeleteEntityFace_HiddenSiblingIsNoOracle(t *testing.T) {
-	for _, b := range concBackends {
+	for _, b := range deleteACLBackends() {
 		for _, tc := range []struct {
 			name    string
 			user    string
@@ -181,7 +181,7 @@ func TestDeleteEntityFace_HiddenSiblingIsNoOracle(t *testing.T) {
 							t.Fatalf("seed POL-1@published: %v", err)
 						}
 					}
-					_, err := f.mgr.DeleteEntityFace(asUser(tc.user), "POL-1", "draft", tc.cascade)
+					_, err := f.mgr.DeleteEntityFace(entitymanager.BindAs(asUser(tc.user), t, f.mgr), "POL-1", "draft", tc.cascade)
 					if !tc.want(err) {
 						t.Fatalf("hidden=%v: DeleteEntityFace as %s = %v", hidden, tc.user, err)
 					}

@@ -1,0 +1,9 @@
+---
+id: RR-SKLQW6
+type: review-response
+title: 'The motivating runner scenario stays unfixed: the PoC posts from another process'
+finding: AC 4 is phrased as "the runner posts claim", and alternative 2 justifies the moved set by the runner's frequent posts. But the agent-runner PoC posts through stdio `rela mcp --run-as integration:runner`, a separate process, on the default fs backend (rela-agent-runner-poc/runner/rela.ts:1-34, README.md:109-116, demo.sh:12). Those writes never reach rela-server's Local, so after this ticket the PoC board still shows a non-output claim only on reload, and TKT-YK30D1 will not help either because it covers postgres only. The plan lists cross-process as out of scope (Scope out, step 8) but does not say that this leaves the case the ticket exists for unfixed. Change the plan in one of two ways. (a) Add a staggered safety replay for busy subscriptions that have a wake. Reuse the inbox safety slices (h.safetyDue in collect, live.go:856; live_inbox.go:50-56). It is fixed-clock and keyed by principal, so it adds no oracle, and it frames only when the hash moves. It bounds cross-process staleness to about 14 s on every backend at one list replay per board per period. (b) Or reword the Problem, AC 4 and the docs so that they say plainly that in-process moves are covered and the PoC is not, and record the gap on TKT-YK30D1 for non-postgres backends.
+severity: significant
+resolution: 'Adopted option (a): busy subscriptions with a wake join the inbox safety replay through safetyDue, bounding cross-process staleness to 12 s on files and 14 s on a database with no oracle and about one list replay per open board per period (Approach step 7, AC 12). Problem, scope, step 10 and the docs now say plainly that in-process moves wake within a tick and the PoC is covered by the safety replay.'
+status: addressed
+---

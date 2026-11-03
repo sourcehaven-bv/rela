@@ -4,10 +4,16 @@
 //	rela.version_token(addr)             -> compare-and-set token of the current row | nil
 //	rela.tag_version(addr, name [, opts]) -> version number | nil, "conflict"
 //	rela.untag_version(addr, name)       -> true | false when the tag is absent
+//	rela.tagged_entities(name [, opts])  -> array of {id, face, addr, type, version, deleted}
 //
 // opts is {expect = token} to tag the current state only while it is still
 // the one token names, or {version = n} to tag version n. Without opts the
 // current state is tagged unconditionally.
+//
+// rela.tagged_entities (TKT-7LRUPB) lists every entity with a version tagged
+// name, entities deleted since included; opts is {type = "<type>"}. A deleted
+// entity is listed only to a caller who may read deleted history (see
+// visibility.ScriptReader.TaggedEntities).
 //
 // The reads go through the runtime's VisibleReader, so a hidden entity reads
 // as missing. The writes resolve the address through the same reader
@@ -57,6 +63,14 @@ type TaggedVersionReader interface {
 	VersionByTag(ctx context.Context, addr string, name store.VersionTagName) (*entity.Entity, store.VersionMeta, error)
 }
 
+// TaggedEntityLister is the part of a script read surface that lists the
+// entities carrying a version tag (TKT-7LRUPB). visibility.ScriptReader and
+// visibility.UnrestrictedReader satisfy it. Optional: without it
+// rela.tagged_entities raises as for a backend without history.
+type TaggedEntityLister interface {
+	TaggedEntities(ctx context.Context, name store.VersionTagName, entityType string) ([]store.TaggedEntity, error)
+}
+
 // conflictResult is the second return value of rela.tag_version when the
 // expected token no longer matches the current row.
 const conflictResult = "conflict"
@@ -70,6 +84,85 @@ func registerVersionTagReadBindings(r *Runtime, rela *lua.LTable) {
 	vb := versionTagBindings{r: r}
 	r.L.SetField(rela, "version_by_tag", r.L.NewFunction(vb.luaVersionByTag))
 	r.L.SetField(rela, "version_token", r.L.NewFunction(vb.luaVersionToken))
+	r.L.SetField(rela, "tagged_entities", r.L.NewFunction(vb.luaTaggedEntities))
+}
+
+// taggedRowFields is the number of fields of a rela.tagged_entities row.
+const taggedRowFields = 6
+
+// luaTaggedEntities lists the entities with a version tagged name, deleted
+// ones included, as the reader lets the caller see them. The optional second
+// argument is {type = "<entity type>"}.
+func (vb versionTagBindings) luaTaggedEntities(ls *lua.LState) int {
+	const binding = "rela.tagged_entities"
+	name, ok := checkTagName(ls, 1, binding)
+	if !ok {
+		return 0
+	}
+	entityType, ok := checkTaggedOpts(ls, binding)
+	if !ok {
+		return 0
+	}
+	rd, ok := vb.r.reader(ls, binding)
+	if !ok {
+		return 0
+	}
+	tl, ok := rd.(TaggedEntityLister)
+	if !ok {
+		ls.RaiseError("%s: %s", binding, store.ErrHistoryUnsupported)
+		return 0
+	}
+	rows, err := tl.TaggedEntities(vb.r.callerCtx(), name, entityType)
+	if err != nil {
+		historyAnswer(ls, binding, err)
+		return 0
+	}
+	out := ls.CreateTable(len(rows), 0)
+	for _, row := range rows {
+		t := ls.CreateTable(0, taggedRowFields)
+		t.RawSetString("id", lua.LString(row.Ref.ID))
+		t.RawSetString("face", lua.LString(string(row.Ref.Face)))
+		t.RawSetString("addr", lua.LString(row.Ref.String()))
+		t.RawSetString("type", lua.LString(row.Type))
+		t.RawSetString("version", lua.LNumber(row.Version))
+		t.RawSetString("deleted", lua.LBool(row.Deleted))
+		out.Append(t)
+	}
+	ls.Push(out)
+	return 1
+}
+
+// checkTaggedOpts parses rela.tagged_entities' optional second argument and
+// returns its type filter, raising on a malformed table.
+func checkTaggedOpts(ls *lua.LState, binding string) (string, bool) {
+	if ls.GetTop() < 2 || ls.Get(2) == lua.LNil {
+		return "", true
+	}
+	t := ls.CheckTable(2)
+	var (
+		entityType string
+		bad        string
+	)
+	t.ForEach(func(k, v lua.LValue) {
+		if bad != "" {
+			return
+		}
+		if k.String() != "type" {
+			bad = "unknown option " + k.String()
+			return
+		}
+		s, ok := v.(lua.LString)
+		if !ok || s == "" {
+			bad = "type must be a non-empty string"
+			return
+		}
+		entityType = string(s)
+	})
+	if bad != "" {
+		ls.RaiseError("%s: %s", binding, bad)
+		return "", false
+	}
+	return entityType, true
 }
 
 // registerVersionTagWriteBindings installs rela.tag_version and

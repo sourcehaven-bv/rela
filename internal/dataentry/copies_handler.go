@@ -157,6 +157,8 @@ func (g copyEdgeGate) relationOpAllowed(
 // rather than requiring it to construct a separate lookup key. An earlier
 // revision shipped a `GET /_copies`; it was removed because a second endpoint
 // for one affordance is the odd shape, not the norm.
+//
+//archplan:auth=authz
 func (h *copiesHandler) handleV1Copies(w http.ResponseWriter, r *http.Request) {
 	rest := strings.Trim(strings.TrimPrefix(r.URL.Path, "/api/v1/_copies"), "/")
 	switch {
@@ -265,6 +267,9 @@ func (h *copiesHandler) invoke(w http.ResponseWriter, r *http.Request, name stri
 func writeCopyError(w http.ResponseWriter, r *http.Request, err error) {
 	var forbidden *acl.ForbiddenError
 	if errors.As(err, &forbidden) {
+		if writeIdentityFaultDeny(w, r, forbidden) {
+			return
+		}
 		writeV1Error(w, r, http.StatusForbidden, "forbidden",
 			"Not permitted", forbidden.Decision.Reason)
 		return
@@ -276,6 +281,13 @@ func writeCopyError(w http.ResponseWriter, r *http.Request, err error) {
 		// and a more helpful status here would reopen that.
 		writeV1Error(w, r, http.StatusNotFound, "not_found",
 			entityNotFoundTitle, "")
+		return
+	}
+	if errors.Is(err, entitymanager.ErrEntityAlreadyExists) {
+		// A target id that is taken by a row the caller cannot read. The
+		// answer is the one a create with that id gets, and names no type.
+		writeV1Error(w, r, http.StatusConflict, "conflict",
+			"Copy could not be applied", "the target id is already taken")
 		return
 	}
 	// Request-shape refusals the kernel names with a sentinel: coherent

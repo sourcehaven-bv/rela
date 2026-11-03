@@ -78,6 +78,13 @@ schema, so every rela-server process on that schema sees the same piles and
 another tenant sees none of them. They are not graph content: they are not
 audited, versioned or searched.
 
+Migration 35 adds read markers for channels. It reads every stored
+channel message once and builds an index on that table, while it holds a
+lock that blocks reads and writes of channel messages until the migration
+commits. The pause grows with the number of channel messages. Plan a
+maintenance window, or run `rela db migrate` as a deploy step, when that
+table is large.
+
 ### Applying migrations explicitly
 
 If you would rather apply the schema as a separate, controlled step
@@ -276,6 +283,18 @@ What you need to know to run it:
   not read are discarded on arrival.
 - Live updates cover **entity** create/update/delete. Relation and attachment
   edits are reflected on the next page load rather than pushed live.
+- **Channel changes travel on a second channel**, `rela_channels`, over the
+  same connection. Each notification names only the channels that changed
+  (entity ids and channel types) and, for a mention or a read marker, the
+  principal keys involved; never message text. See "Changes from other
+  processes" in the realtime guide. Like `rela_changed`, every session that
+  LISTENs on the database receives these notifications, from every schema.
+  If another tenant on the same database must not learn entity ids or
+  principal keys, give it its own database. TKT-147C19D tracks keeping
+  principal keys out of these notifications. The other direction holds too:
+  any session on the database can send a notification that names a schema,
+  and its processes then recheck the channels it names. Every recheck is a
+  normal read as each subscriber, so this costs load, never data.
 - **Durable UI state is shared too.** The document render cache, user settings,
   the operator logo/theme and the CalDAV alias table live in the database on
   this build, not in each node's `.rela/` directory. Upload a logo on one node

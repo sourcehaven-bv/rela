@@ -133,7 +133,7 @@ func (g *GC) Tick(ctx context.Context, apply bool) (*GCResult, error) {
 		defer release()
 	}
 
-	live := g.deps.Meta().ShapeProjection()
+	live := metamodel.NewShapeProjection(g.deps.Meta())
 	ledger, err := LoadLedger(ctx, g.deps.State)
 	if err != nil {
 		return nil, err
@@ -150,7 +150,7 @@ func (g *GC) Tick(ctx context.Context, apply bool) (*GCResult, error) {
 		p := principal.From(ctx)
 		user := p.User
 		if user == "" {
-			user = "system:" + gcTool
+			user = principal.UserGCSweep
 		}
 		ctx = store.WithAttribution(ctx, store.Attribution{User: user, Tool: gcTool})
 	}
@@ -255,7 +255,7 @@ func (g *GC) newCapturer() *capturer {
 		return nil
 	}
 	meta := g.deps.Meta()
-	proj := meta.RenderProjection()
+	proj := metamodel.NewRenderProjection(meta)
 	projJSON, err := proj.JSON()
 	if err != nil {
 		return nil
@@ -264,7 +264,7 @@ func (g *GC) newCapturer() *capturer {
 		w:           g.deps.Versions,
 		schemaHash:  proj.Hash(),
 		projection:  projJSON,
-		user:        "system:" + gcTool,
+		user:        principal.UserGCSweep,
 		tool:        gcTool,
 		triggeredBy: gcTool,
 	}
@@ -278,10 +278,11 @@ func (g *GC) auditTick(ctx context.Context, res *GCResult) {
 		total += d.Affected
 	}
 	g.deps.Audit.Record(audit.Record{
-		Time:      g.now().UTC(),
-		Op:        audit.OpDataGC,
-		Principal: principal.From(ctx),
-		Summary:   fmt.Sprintf("gc removed %d records for expired drift: %s", total, strings.Join(parts, ", ")),
+		Time:       g.now().UTC(),
+		Op:         audit.OpDataGC,
+		Principal:  principal.From(ctx),
+		AssertedBy: audit.AssertedByFrom(ctx),
+		Summary:    fmt.Sprintf("gc removed %d records for expired drift: %s", total, strings.Join(parts, ", ")),
 	})
 }
 
@@ -298,7 +299,7 @@ func (g *GC) Scan(ctx context.Context) (added []string, err error) {
 	}
 	defer release()
 
-	live := g.deps.Meta().ShapeProjection()
+	live := metamodel.NewShapeProjection(g.deps.Meta())
 	ledger, err := LoadLedger(ctx, g.deps.State)
 	if err != nil {
 		return nil, err

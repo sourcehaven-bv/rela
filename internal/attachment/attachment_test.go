@@ -102,6 +102,7 @@ func setupAttachmentService(t *testing.T) attachmentFixture {
 		FieldGate:   entitymanager.AllowAllFieldGate{},
 
 		AttachmentLocker: lock.NewMemoryLocker(),
+		AnchorGuard:      entitymanager.NopAnchorGuard{},
 	})
 	if err != nil {
 		t.Fatalf("entitymanager.New: %v", err)
@@ -281,6 +282,29 @@ func (f *failingReader) Read(p []byte) (int, error) {
 // TestService_ReplaceFailureKeepsExisting pins RR-N96YV0: at max==1, if the
 // new AttachFile fails, the existing attachment must survive (attach-first,
 // then delete-old ordering — not delete-then-attach).
+// The Result reports the size and SHA-256 of the bytes handed to the store,
+// so a caller can record what was attached without reading it back.
+func TestService_WriteAttachment_ReportsSizeAndHash(t *testing.T) {
+	f := setupAttachmentService(t)
+	ctx := context.Background()
+	e := entity.New("T-1", "ticket")
+	if err := f.st.CreateEntity(ctx, e); err != nil {
+		t.Fatal(err)
+	}
+	payload := "pretend pdf bytes"
+	def := metamodel.PropertyDef{Type: metamodel.PropertyTypeFile}
+	res, err := f.svc.WriteAttachment(ctx, e, def, "spec", "ok.pdf", strings.NewReader(payload))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := store.HashAttachment([]byte(payload)); res.SHA256 != want {
+		t.Errorf("SHA256 = %q, want %q", res.SHA256, want)
+	}
+	if res.Size != int64(len(payload)) {
+		t.Errorf("Size = %d, want %d", res.Size, len(payload))
+	}
+}
+
 func TestService_ReplaceFailureKeepsExisting(t *testing.T) {
 	f := setupAttachmentService(t)
 	ctx := context.Background()
@@ -327,7 +351,7 @@ func TestService_MultiAppendAndCap(t *testing.T) {
 	if err := f.st.CreateEntity(ctx, e); err != nil {
 		t.Fatalf("create entity: %v", err)
 	}
-	def := metamodel.PropertyDef{Type: metamodel.PropertyTypeFile, Max: 3}
+	def := metamodel.PropertyDef{Type: metamodel.PropertyTypeFile, Max: new(3)}
 
 	for _, n := range []string{"a.pdf", "b.pdf", "c.pdf"} {
 		if _, err := f.svc.WriteAttachment(ctx, e, def, "gallery", n, strings.NewReader(n)); err != nil {
@@ -347,7 +371,7 @@ func TestService_DetachFile(t *testing.T) {
 	if err := f.st.CreateEntity(ctx, e); err != nil {
 		t.Fatalf("create entity: %v", err)
 	}
-	gallery := metamodel.PropertyDef{Type: metamodel.PropertyTypeFile, Max: 3}
+	gallery := metamodel.PropertyDef{Type: metamodel.PropertyTypeFile, Max: new(3)}
 
 	// Unnamed on an empty property: nothing to pick.
 	if _, err := f.svc.DetachFile(ctx, e, gallery, "gallery", ""); err == nil {
@@ -453,7 +477,7 @@ func TestService_DeleteAbsentFileDoesNotWrite(t *testing.T) {
 	}
 	for _, def := range []metamodel.PropertyDef{
 		{Type: metamodel.PropertyTypeFile},
-		{Type: metamodel.PropertyTypeFile, Max: 3},
+		{Type: metamodel.PropertyTypeFile, Max: new(3)},
 	} {
 		if _, err := svc.DetachFile(ctx, e, def, "gallery", "gone.pdf"); err != nil {
 			t.Fatalf("detach absent file: %v", err)

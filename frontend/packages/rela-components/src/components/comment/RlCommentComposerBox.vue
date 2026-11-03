@@ -11,6 +11,9 @@ import { ref, useTemplateRef } from 'vue'
 import RlButton from '../common/RlButton.vue'
 import RlButtonGroup from '../common/RlButtonGroup.vue'
 import RlKbd from '../data/RlKbd.vue'
+import { useMessages } from '../../composables/useMessages'
+
+const messages = useMessages()
 
 withDefaults(
   defineProps<{
@@ -23,8 +26,8 @@ withDefaults(
     submitShortcut?: string
   }>(),
   {
-    placeholder: 'Add a comment...',
-    submitLabel: 'Comment',
+    placeholder: undefined,
+    submitLabel: undefined,
     cancellable: false,
     submitting: false,
     submitShortcut: 'Ctrl+Enter',
@@ -61,27 +64,27 @@ defineExpose({ focus: () => input.value?.focus() })
       v-model="body"
       class="rl-comment-composer-box__input"
       rows="3"
-      :placeholder="placeholder"
-      aria-label="Comment body"
+      :placeholder="placeholder ?? messages.chromeText({ key: 'addCommentPlaceholder' })"
+      :aria-label="messages.chromeText({ key: 'commentBody' })"
       @keydown.meta.enter.prevent="submit"
       @keydown.ctrl.enter.prevent="submit"
     />
 
     <div class="rl-comment-composer-box__actions">
       <span class="rl-comment-composer-box__hint">
-        <RlKbd :keys="submitShortcut" size="sm" /> to post
+        <RlKbd :keys="submitShortcut" size="sm" /> {{ messages.chromeText({ key: 'toPost' }) }}
       </span>
       <RlButtonGroup>
-        <RlButton v-if="cancellable" variant="ghost" size="sm" @click="cancel">Cancel</RlButton>
+        <RlButton v-if="cancellable" variant="ghost" size="sm" @click="cancel">{{ messages.chromeText({ key: 'cancel' }) }}</RlButton>
         <RlButton
           variant="primary"
           size="sm"
           type="submit"
           :disabled="!body.trim() || submitting"
           :loading="submitting"
-          loading-label="Posting comment"
+          :loading-label="messages.chromeText({ key: 'postingComment' })"
         >
-          {{ submitLabel }}
+          {{ submitLabel ?? messages.chromeText({ key: 'commentAction' }) }}
         </RlButton>
       </RlButtonGroup>
     </div>

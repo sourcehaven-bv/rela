@@ -11,6 +11,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/appbuild/appbuildtest"
 	"github.com/Sourcehaven-BV/rela/internal/attachment"
 	"github.com/Sourcehaven-BV/rela/internal/audit"
+	"github.com/Sourcehaven-BV/rela/internal/changefeed"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
 	"github.com/Sourcehaven-BV/rela/internal/lua"
@@ -137,6 +138,12 @@ func rebindApp(app *App, fs storage.FS, paths *project.Context, svc *appbuild.Se
 	}
 	app.visibleReader = visible
 	app.reader = entityReader{store: svc.Store()}
+	// Wire the neighbor gate as the composition root does; the edge reads
+	// fail closed without it.
+	if err = SetWorldNeighbors(app, svc.Store(), appbuild.RelationScopes(svc)); err != nil {
+		panic(err.Error())
+	}
+	app.faceEdges = faceEdgesOf(app)
 	app.entityManager = svc.EntityManager()
 	app.recreator = entitymanager.Recreator{M: svc.EntityManager()}
 	app.searcher = svc.Searcher()
@@ -188,15 +195,19 @@ func rebindApp(app *App, fs storage.FS, paths *project.Context, svc *appbuild.Se
 				}
 			})
 	}
-	// The copy surface is wired through the SAME helper production uses, so
-	// `_copies` rides test-app entity responses exactly as it does in NewApp.
-	// The construction only errors on a nil service, which a real manager
-	// cannot produce — same clean-boot swallow as the logo/palette stores.
-	copyOffers, copiesHandler, _ := wireCopies(svc.EntityManager(), copyEdgeGate{
-		affordances: func() affordanceService { return app.affordances },
-		visible:     app.visibleReader,
-	})
-	app.copies = copiesHandler
+	// The copy and conversion surfaces are wired through the SAME helper
+	// production uses, so their offers ride test-app entity responses exactly
+	// as they do in NewApp. Without a manager there is nothing to wire; the
+	// helper only errors on a nil collaborator, which a real manager cannot
+	// produce — same clean-boot swallow as the logo/palette stores.
+	var ts typeChanges
+	if em := svc.EntityManager(); em != nil {
+		ts, _ = wireTypeChanges(em, copyEdgeGate{
+			affordances: func() affordanceService { return app.affordances },
+			visible:     app.visibleReader,
+		}, app.State, viewMention(app))
+	}
+	app.copies, app.conversions, app.taskItems = ts.copies, ts.conversions, ts.taskItems
 	app.affordances = affordanceService{
 		acl:          func() acl.ACL { return app.acl },
 		resolver:     func() FieldVerdictResolver { return app.fieldResolver },
@@ -211,7 +222,9 @@ func rebindApp(app *App, fs storage.FS, paths *project.Context, svc *appbuild.Se
 			reader:  app.reader,
 			visible: app.visibleReader,
 		}.plan,
-		copies:           copyOffers,
+		copies:           ts.copyOffers,
+		conversions:      ts.conversionOffers,
+		taskItems:        ts.taskItemOffers,
 		schema:           app.State,
 		actionConditions: func() ViewConditionFunc { return app.viewConditions },
 	}
@@ -268,6 +281,7 @@ func rebindApp(app *App, fs storage.FS, paths *project.Context, svc *appbuild.Se
 		acl:         func() acl.ACL { return app.acl },
 		audit:       func() audit.Audit { return app.auditSink },
 		fields:      func() FieldVerdictResolver { return app.fieldResolver },
+		faceEdges:   app.faceEdges,
 		affordances: app.affordances,
 		visible:     app.visibleReader,
 		owner:       app.attachmentOwner,
@@ -301,7 +315,8 @@ func rebindApp(app *App, fs storage.FS, paths *project.Context, svc *appbuild.Se
 	app.write = &writeHandler{
 		schema:      app.State,
 		store:       svc.Store(),
-		manager:     svc.EntityManager(),
+		rollups:     newRollupSource(app),
+		manager:     grantedManager{svc.EntityManager()},
 		softDeletes: softDeletesFor(svc.EntityManager()),
 		reader:      app.reader,
 		serializer:  app.serializer,
@@ -311,9 +326,7 @@ func rebindApp(app *App, fs storage.FS, paths *project.Context, svc *appbuild.Se
 		visible:     app.visibleReader,
 		denyAfford:  app.denyAffordance,
 		computeETag: app.computeEntityETag,
-		faceEdges: func(ctx context.Context, e *entity.Entity) ([]*entity.Relation, map[string]bool, error) {
-			return servedFaceEdges(ctx, app.reader, app.worldNeighbors, e)
-		},
+		faceEdges:   app.faceEdges,
 		readVisible: func(ctx context.Context, typeName string, ref entity.Ref) (*entity.Entity, bool, error) {
 			return app.visibleReader.addressRef(ctx, typeName, ref)
 		},
@@ -325,6 +338,7 @@ func rebindApp(app *App, fs storage.FS, paths *project.Context, svc *appbuild.Se
 		engine:           func() *script.Engine { return app.scriptEngine },
 		luaDeps:          app.luaWriteDeps,
 		versionTags:      func() lua.VersionTagWriter { return app.versionTags.writer },
+		attachRender:     func() lua.AttachRenderer { return actionAttachRenderer(app) },
 		fullScriptDetail: app.allowFullScriptDetail,
 		paths:            paths,
 		provision:        newProvisionSeam(app),
@@ -333,12 +347,11 @@ func rebindApp(app *App, fs storage.FS, paths *project.Context, svc *appbuild.Se
 
 // rebindVisibleSearcher re-derives the generic visible-search wrapper
 // over the app's CURRENT searcher+store pair. Tests that inject a fake
-// via `app.searcher = ...` and exercise an executeQuery consumer
-// (/_search, _position search scope) must call this afterwards —
-// executeQuery routes through app.visibleSearcher (TKT-BA8BSX), which
-// otherwise still wraps the searcher from construction time. Tests
-// that only hit the list pipeline (?q= on list endpoints) don't need
-// it: that path reads app.searcher directly.
+// via `app.searcher = ...` and exercise a search consumer (/_search,
+// _position search scope, or ?q= on a list endpoint) must call this
+// afterwards. Each routes through app.visibleSearcher (TKT-BA8BSX, and
+// for the list since BUG-WJSYQT), which otherwise still wraps the
+// searcher from construction time.
 func rebindVisibleSearcher(t *testing.T, app *App) {
 	t.Helper()
 	v, err := search.NewVisible(app.searcher, app.store)
@@ -386,7 +399,10 @@ func newAppFromParts(cfg *Config, meta *metamodel.Metamodel, f *fixture, opts ..
 		scriptEngine:  script.NewEngine(),
 		fieldResolver: NopFieldVerdictResolver{},
 		auditSink:     audit.Nop{},
+		feed:          testFeed(),
+		sseTiming:     defaultSSETimings,
 	}
+	app.live = testLiveHub(app)
 	if meta != nil {
 		// Use an in-memory FS + project context so the workspace's
 		// templater has paths it can dereference. Without this,
@@ -443,6 +459,20 @@ func doRequest(t *testing.T, app *App, method, path string) *httptest.ResponseRe
 	return w
 }
 
+// testFeed returns an unstarted change feed, as NewApp builds one.
+// testLiveHub is the live-view hub NewApp would build for app.
+func testLiveHub(app *App) *liveHub {
+	return newLiveHub(func() *metamodel.Metamodel { return app.State().Meta })
+}
+
+func testFeed() *changefeed.Bus {
+	feed, err := changefeed.New()
+	if err != nil {
+		panic(err)
+	}
+	return feed
+}
+
 // newHandlerTestApp builds an App for handler tests.
 func newHandlerTestApp(t *testing.T) *App {
 	t.Helper()
@@ -492,7 +522,8 @@ func newHandlerTestApp(t *testing.T) *App {
 	// NewApp (which rejects a nil resolver). Without it, any handler that
 	// serializes entities for the wire panics — caught by the router walk
 	// test driving _search through the full router (TKT-TLQ94B).
-	app := &App{fieldResolver: NopFieldVerdictResolver{}}
+	app := &App{fieldResolver: NopFieldVerdictResolver{}, feed: testFeed(), sseTiming: defaultSSETimings}
+	app.live = testLiveHub(app)
 	rebindApp(app, fs, ctx, svc)
 	// Make sure kv hits the real filesystem through state.KV, matching production.
 	kvRoot, err := storage.NewRootedFS(fs, ctx.CacheDir)

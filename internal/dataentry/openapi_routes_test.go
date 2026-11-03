@@ -105,7 +105,7 @@ func TestOpenAPI_EveryOperationReachesAHandler(t *testing.T) {
 func TestOpenAPI_EntitySchemaCoversWireFields(t *testing.T) {
 	app := newTestAppV1(t)
 	d := writeACL(t, app)
-	app.acl = d
+	setTestACL(t, app, d)
 	seedEntity(app, &entity.Entity{ID: "TKT-001", Type: "ticket", Properties: map[string]any{"title": "T1"}})
 	if rec := putAttachmentAs(aliceCtx(), t, app, d, "TKT-001", "screenshot", "shot.txt", []byte("x")); rec.Code != 200 {
 		t.Fatalf("seed attachment: %d %s", rec.Code, rec.Body)

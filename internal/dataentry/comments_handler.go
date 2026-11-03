@@ -41,6 +41,8 @@ const commentsPathPrefix = "/api/v1/_comments/"
 // With no `comments:` block the service is nil and every route 404s, so a
 // project that never enables commenting is indistinguishable from one built
 // before the feature existed.
+//
+//archplan:auth=authz
 func (h *commentsHandler) handleV1Comments(w http.ResponseWriter, r *http.Request) {
 	if h.svc == nil {
 		// Not a capability gap worth explaining (unlike version history, which

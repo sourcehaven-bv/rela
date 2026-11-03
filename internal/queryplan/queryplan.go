@@ -285,8 +285,8 @@ type staticQuery struct{ query, condition string }
 // staticQueries collects every query shape the config declares statically.
 func staticQueries(cfg *dataentryconfig.Config) []staticQuery {
 	var queries []staticQuery
-	if cfg.Dashboard != nil {
-		for _, card := range cfg.Dashboard.Cards {
+	for _, dash := range cfg.AllDashboards() {
+		for _, card := range dash.Config.Cards {
 			queries = append(queries, staticQuery{query: card.Query})
 		}
 	}

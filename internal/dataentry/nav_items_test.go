@@ -69,7 +69,7 @@ func seedGatedTickets(t *testing.T, app *App) *acl.Declarative {
 		RoleRelations:       map[string]acl.RoleRelationDef{"editor-of": {Confers: "editor"}},
 		InheritRolesThrough: []string{"belongs-to"},
 	}, app.store)
-	app.acl = d
+	setTestACL(t, app, d)
 	return d
 }
 
@@ -125,7 +125,7 @@ func TestNavItems_TruncatedIsPostFilter(t *testing.T) {
 	require.Len(t, items["0"].Entries, 2)
 	require.False(t, items["0"].Truncated, "a hidden row must not show up as a truncation")
 
-	app.acl = acl.NopACL{}
+	setTestACL(t, app, acl.NopACL{})
 	items, _ = navItemsAs(principalCtx("alice"), t, app)
 	require.Len(t, items["0"].Entries, 2)
 	require.True(t, items["0"].Truncated)
@@ -136,14 +136,14 @@ func TestNavItems_TruncatedIsPostFilter(t *testing.T) {
 func TestNavItems_RedactedTitleDoesNotLeak(t *testing.T) {
 	app := newTestAppV1(t)
 	wireRealViewConditions(t, app)
-	app.fieldResolver = fakeResolver{fv: FieldVerdicts{Visible: map[string]bool{"title": false}}}
+	setTestResolver(t, app, fakeResolver{fv: FieldVerdicts{Visible: map[string]bool{"title": false}}})
 	seedEntity(app, &entity.Entity{ID: "TKT-001", Type: "ticket",
 		Properties: map[string]any{"title": "SECRET-TITLE", "status": "open"}})
 	d := mustNewACL(t, &acl.Policy{
 		Roles:       map[string]acl.RoleDef{"viewer": {Read: []string{"ticket"}}},
 		Assignments: map[string]string{"alice": "viewer"},
 	}, app.store)
-	app.acl = d
+	setTestACL(t, app, d)
 	installNavItemsGroup(app, dataentryconfig.List{EntityType: "ticket"}, dataentryconfig.NavItemsFrom{
 		Initial: &dataentryconfig.NavItemsInitial{Property: "title"},
 	})
@@ -188,7 +188,7 @@ func TestNavItems_RelationInitial(t *testing.T) {
 		},
 		Assignments: map[string]string{"alice": "full", "bob": "tickets"},
 	}, app.store)
-	app.acl = d
+	setTestACL(t, app, d)
 	installNavItemsGroup(app, dataentryconfig.List{EntityType: "ticket"}, dataentryconfig.NavItemsFrom{
 		Initial: &dataentryconfig.NavItemsInitial{Relation: "implements"},
 	})
@@ -209,7 +209,7 @@ func TestNavItems_RelationInitial(t *testing.T) {
 func TestNavItems_RelationInitialRedactsTheNeighbour(t *testing.T) {
 	app := newTestAppV1(t)
 	wireRealViewConditions(t, app)
-	app.fieldResolver = fakeResolver{fv: FieldVerdicts{Visible: map[string]bool{"title": false}}}
+	setTestResolver(t, app, fakeResolver{fv: FieldVerdicts{Visible: map[string]bool{"title": false}}})
 	seedEntity(app, &entity.Entity{ID: "TKT-001", Type: "ticket", Properties: map[string]any{"title": "One"}})
 	seedEntity(app, &entity.Entity{ID: "FEAT-1", Type: "feature", Properties: map[string]any{"title": "Quiet"}})
 	seedRelation(app, entity.NewRelation("TKT-001", "implements", "FEAT-1"))
@@ -267,7 +267,7 @@ func TestNavItems_CreateOffer(t *testing.T) {
 		},
 		Assignments: map[string]string{"alice": "author", "carol": "reader"},
 	}, app.store)
-	app.acl = d
+	setTestACL(t, app, d)
 
 	cases := []struct {
 		user string
@@ -283,4 +283,40 @@ func TestNavItems_CreateOffer(t *testing.T) {
 			require.Equal(t, tc.want, resp.Navigation[0].ItemsCreate)
 		})
 	}
+}
+
+// A generated group over a list that groups or sorts on a property the reader
+// cannot see on every row keeps its entries, unsorted, rather than vanishing
+// (BUG-WJSYQT). A refused filter still drops the group: dropping the filter
+// would widen it.
+func TestNavItems_RefusedSortIsDroppedRefusedFilterStands(t *testing.T) {
+	app := newTestAppV1(t)
+	wireRealViewConditions(t, app)
+	setTestResolver(t, app, fakeResolver{fv: FieldVerdicts{Visible: map[string]bool{"status": false}}})
+	for _, tk := range []struct{ id, status string }{{"TKT-1", "open"}, {"TKT-2", "done"}} {
+		seedEntity(app, &entity.Entity{ID: tk.id, Type: "ticket",
+			Properties: map[string]any{"title": "T " + tk.id, "status": tk.status}})
+	}
+
+	for _, tc := range []struct {
+		name string
+		list dataentryconfig.List
+	}{
+		{"group_by", dataentryconfig.List{EntityType: "ticket", GroupBy: &dataentryconfig.ListGroupBy{Property: "status"}}},
+		{"sort", dataentryconfig.List{EntityType: "ticket", Sort: []dataentryconfig.SortSpec{{Property: "status"}}}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			installNavItemsGroup(app, tc.list, dataentryconfig.NavItemsFrom{})
+			items, body := navItemsAs(principalCtx("alice"), t, app)
+			require.ElementsMatch(t, []string{"TKT-1", "TKT-2"}, entryIDs(items["0"]))
+			require.NotContains(t, body, "done")
+		})
+	}
+
+	installNavItemsGroup(app, dataentryconfig.List{
+		EntityType: "ticket",
+		Filters:    []dataentryconfig.FilterConfig{{Property: "status", Operator: "=", Value: "open"}},
+	}, dataentryconfig.NavItemsFrom{})
+	items, _ := navItemsAs(principalCtx("alice"), t, app)
+	require.NotContains(t, items, "0", "a refused filter must not be dropped")
 }

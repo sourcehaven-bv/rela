@@ -58,6 +58,12 @@ func Compile(meta *metamodel.Metamodel, opts ...Option) (*Set, error) {
 			if _, ok := set.machines[pd.Type]; !ok {
 				continue
 			}
+			// A roll-up borrows the type to describe a value read from a
+			// related entity. It is never written, so there is no lifecycle
+			// to enforce (TKT-6I2OPG).
+			if pd.Rollup != nil {
+				continue
+			}
 			// A state machine is a single-valued lifecycle; a list-typed
 			// property has no single "current value" to transition (Enforce
 			// reads it via GetString, which would flatten the list to a

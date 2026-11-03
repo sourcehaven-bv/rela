@@ -142,13 +142,13 @@ func (r *QueryScopeResolver) Filter(
 	return out, nil
 }
 
-// BindRequest stamps the query identity onto ctx once per request, so a scope
+// StampQueryIdentity stamps the query identity onto ctx once per request, so a scope
 // using `current_user` evaluates against the caller.
 //
 // Reuses nextActionRequestScope: the identity semantics are identical, and
 // two derivations that could disagree about who the caller is would be worse
 // than one shared with a different feature.
-func (r *QueryScopeResolver) BindRequest(ctx context.Context) (context.Context, error) {
+func (r *QueryScopeResolver) StampQueryIdentity(ctx context.Context) (context.Context, error) {
 	return nextActionRequestScope(ctx)
 }
 
@@ -165,7 +165,7 @@ func (r *QueryScopeResolver) BindRequest(ctx context.Context) (context.Context, 
 //
 // Every traversal is gated here, per request, by the caller's gate; nothing
 // is cached on the resolver, which is shared across principals. The identity
-// comes from ctx, which BindRequest has stamped.
+// comes from ctx, which StampQueryIdentity has stamped.
 func (r *QueryScopeResolver) Lower(
 	ctx context.Context, scope any, entityType string,
 	gate func(context.Context, string, acl.TraversalHop) (*store.RelationPredicate, error),

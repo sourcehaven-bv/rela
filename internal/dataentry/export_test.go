@@ -13,6 +13,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
+	"github.com/Sourcehaven-BV/rela/internal/aclstore"
 	"github.com/Sourcehaven-BV/rela/internal/affordances"
 	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
@@ -144,7 +145,7 @@ func TestExport_Entity_VisibleReturnsBytesAndHeaders(t *testing.T) {
 		Roles:       map[string]acl.RoleDef{"admin": {Read: []string{"ticket", "feature"}}},
 		Assignments: map[string]string{"alice": "admin"},
 	}, app.store)
-	app.acl = d
+	setTestACL(t, app, d)
 	ctx := gateCtxFor(aliceCtx(), t, d)
 
 	rec := exportEntity(ctx, app, "ticket", "TKT-001", "copy")
@@ -191,7 +192,7 @@ func TestExport_Entity_DeniedReturns404NoBytes(t *testing.T) {
 		Roles:       map[string]acl.RoleDef{"viewer": {Read: []string{"feature"}}},
 		Assignments: map[string]string{"alice": "viewer"},
 	}, app.store)
-	app.acl = d
+	setTestACL(t, app, d)
 	ctx := gateCtxFor(aliceCtx(), t, d)
 
 	rec := exportEntity(ctx, app, "ticket", "TKT-001", "copy")
@@ -211,7 +212,7 @@ func TestExport_Entity_UnknownTransform(t *testing.T) {
 		Roles:       map[string]acl.RoleDef{"admin": {Read: []string{"ticket"}}},
 		Assignments: map[string]string{"alice": "admin"},
 	}, app.store)
-	app.acl = d
+	setTestACL(t, app, d)
 	ctx := gateCtxFor(aliceCtx(), t, d)
 
 	rec := exportEntity(ctx, app, "ticket", "TKT-001", "nope")
@@ -271,7 +272,7 @@ func TestExport_Entity_RenderOverride(t *testing.T) {
 		Roles:       map[string]acl.RoleDef{"admin": {Read: []string{"ticket"}}},
 		Assignments: map[string]string{"alice": "admin"},
 	}, app.store)
-	app.acl = d
+	setTestACL(t, app, d)
 	ctx := gateCtxFor(aliceCtx(), t, d)
 
 	rec := exportEntity(ctx, app, "ticket", "TKT-001", "copy")
@@ -301,7 +302,7 @@ func TestExport_Entity_NoOverrideUsesBuiltin(t *testing.T) {
 		Roles:       map[string]acl.RoleDef{"admin": {Read: []string{"feature"}}},
 		Assignments: map[string]string{"alice": "admin"},
 	}, app.store)
-	app.acl = d
+	setTestACL(t, app, d)
 	ctx := gateCtxFor(aliceCtx(), t, d)
 
 	rec := exportEntity(ctx, app, "feature", "FEAT-001", "copy")
@@ -328,7 +329,7 @@ func TestExport_Entity_RenderOverride_DeniedIs404(t *testing.T) {
 		Roles:       map[string]acl.RoleDef{"viewer": {Read: []string{"feature"}}},
 		Assignments: map[string]string{"alice": "viewer"},
 	}, app.store)
-	app.acl = d
+	setTestACL(t, app, d)
 	ctx := gateCtxFor(aliceCtx(), t, d)
 
 	rec := exportEntity(ctx, app, "ticket", "TKT-001", "copy")
@@ -365,7 +366,7 @@ func TestExport_List_WholeScopedSetAsTable(t *testing.T) {
 		Roles:       map[string]acl.RoleDef{"admin": {Read: []string{"ticket", "feature"}}},
 		Assignments: map[string]string{"alice": "admin"},
 	}, app.store)
-	app.acl = d
+	setTestACL(t, app, d)
 	ctx := gateCtxFor(aliceCtx(), t, d)
 
 	rec := exportList(ctx, app)
@@ -404,7 +405,7 @@ func TestExport_List_SharedNeighborResolvedOnce(t *testing.T) {
 		Roles:       map[string]acl.RoleDef{"admin": {Read: []string{"ticket", "feature"}}},
 		Assignments: map[string]string{"alice": "admin"},
 	}, app.store)
-	app.acl = d
+	setTestACL(t, app, d)
 	ctx := gateCtxFor(aliceCtx(), t, d)
 
 	body := exportList(ctx, app).Body.String()
@@ -426,7 +427,7 @@ func TestExport_List_HiddenNeighborExcluded(t *testing.T) {
 		Roles:       map[string]acl.RoleDef{"viewer": {Read: []string{"ticket"}}},
 		Assignments: map[string]string{"alice": "viewer"},
 	}, app.store)
-	app.acl = d
+	setTestACL(t, app, d)
 	ctx := gateCtxFor(aliceCtx(), t, d)
 
 	rec := exportList(ctx, app)
@@ -445,7 +446,7 @@ func TestExport_List_TruncationNotice(t *testing.T) {
 		Roles:       map[string]acl.RoleDef{"admin": {Read: []string{"ticket"}}},
 		Assignments: map[string]string{"alice": "admin"},
 	}, app.store)
-	app.acl = d
+	setTestACL(t, app, d)
 	ctx := gateCtxFor(aliceCtx(), t, d)
 
 	for i := range 3 {
@@ -490,7 +491,7 @@ func withFieldPolicy(t *testing.T, app *App, aclYAML string) context.Context {
 	if err := yaml.Unmarshal([]byte(aclYAML), &policy); err != nil {
 		t.Fatalf("unmarshal acl.yaml: %v", err)
 	}
-	d, err := acl.NewDeclarative(&policy, acl.NewStoreGraph(app.store), app.store)
+	d, err := acl.NewDeclarative(&policy, aclstore.MustNewGraph(app.store), app.store)
 	if err != nil {
 		t.Fatalf("acl.NewDeclarative: %v", err)
 	}
@@ -498,7 +499,7 @@ func withFieldPolicy(t *testing.T, app *App, aclYAML string) context.Context {
 	if err != nil {
 		t.Fatalf("affordances.New: %v", err)
 	}
-	app.acl = d
+	setTestACL(t, app, d)
 	app.fieldResolver = &policyResolver{inner: resolver}
 	return gateCtxFor(aliceCtx(), t, d)
 }

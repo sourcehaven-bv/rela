@@ -12,6 +12,7 @@ import (
 	v1 "github.com/Sourcehaven-BV/rela/internal/apiwire/v1"
 	"github.com/Sourcehaven-BV/rela/internal/appbuild/appbuildtest"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
 	"github.com/Sourcehaven-BV/rela/internal/project"
 	"github.com/Sourcehaven-BV/rela/internal/storage"
 	"github.com/Sourcehaven-BV/rela/internal/store"
@@ -147,7 +148,7 @@ func decodeFieldProblem(t *testing.T, rec *httptest.ResponseRecorder) v1.Error {
 
 func TestV1GetEntity_Versions(t *testing.T) {
 	app := newTestAppV1(t)
-	app.fieldResolver = fakeResolver{fv: FieldVerdicts{Visible: map[string]bool{"title": false}}}
+	setTestResolver(t, app, fakeResolver{fv: FieldVerdicts{Visible: map[string]bool{"title": false}}})
 	seedEntity(app, &entity.Entity{
 		ID: "TKT-001", Type: "ticket", Content: "body",
 		Properties: map[string]any{"title": "secret", "status": "open"},
@@ -309,7 +310,7 @@ func TestV1UpdateEntity_Preconditions(t *testing.T) {
 // answer is the same whatever token is sent.
 func TestV1UpdateEntity_PreconditionOnHiddenFieldIsNotAnOracle(t *testing.T) {
 	app := newTestAppV1(t)
-	app.fieldResolver = fakeResolver{fv: FieldVerdicts{Visible: map[string]bool{"title": false}}}
+	setTestResolver(t, app, fakeResolver{fv: FieldVerdicts{Visible: map[string]bool{"title": false}}})
 	seedEntity(app, &entity.Entity{ID: "TKT-001", Type: "ticket", Properties: map[string]any{"title": "secret"}})
 
 	codes := map[int]bool{}
@@ -340,6 +341,13 @@ func (m racingMutator) PatchEntity(
 ) (*entity.UpdateResult, error) {
 	m.race()
 	return m.entityMutator.PatchEntity(ctx, id, p)
+}
+
+func (m racingMutator) PatchGranted(
+	ctx context.Context, g entitymanager.UpdateGrant, id string, p entity.Patch,
+) (*entity.UpdateResult, error) {
+	m.race()
+	return m.entityMutator.PatchGranted(ctx, g, id, p)
 }
 
 func TestV1UpdateEntity_LostRaceReturnsFreshTokens(t *testing.T) {
@@ -461,6 +469,14 @@ func (m hidingMutator) PatchEntity(
 	ctx context.Context, id string, p entity.Patch,
 ) (*entity.UpdateResult, error) {
 	res, err := m.entityMutator.PatchEntity(ctx, id, p)
+	*m.hidden = true
+	return res, err
+}
+
+func (m hidingMutator) PatchGranted(
+	ctx context.Context, g entitymanager.UpdateGrant, id string, p entity.Patch,
+) (*entity.UpdateResult, error) {
+	res, err := m.entityMutator.PatchGranted(ctx, g, id, p)
 	*m.hidden = true
 	return res, err
 }

@@ -1,0 +1,14 @@
+request: POST /api/v1/tickets/TKT-1/_actions/clone
+identity: header viewer@example.test
+status: 403
+reads: GraphQueryHeaders=1 ListEntities=1 ListRelations=1 MatchingFaces=1
+breadth: ListEntities=1/1 ListRelations=0/1 MatchingFaces=1/1
+bodies: GraphQuery=0/1 ListEntities=1/1
+versions: 
+body:
+{
+  "error": "forbidden",
+  "reason": "no role grants create on type \"ticket\"",
+  "rule_id": "-",
+  "rule_kind": "role-grant"
+}

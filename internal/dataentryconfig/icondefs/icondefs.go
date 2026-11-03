@@ -102,7 +102,7 @@ var spaChromeNames = map[string]string{
 // name them instead of repeating string literals, which is what makes the
 // rename a compile error on the Go side too.
 var DerivedNames = struct {
-	Dashboard, List, Kanban, Calendar, Gantt, Search, Settings, Document, Action, Entity string
+	Dashboard, List, Kanban, Calendar, Gantt, Search, Settings, Document, Action, Entity, Pile string
 }{
 	Dashboard: "dashboard",
 	List:      "list",
@@ -120,6 +120,9 @@ var DerivedNames = struct {
 	// Entity is the glyph on each link an `entities:` entry lists: a single
 	// record, distinct from the document glyph a standalone document uses.
 	Entity: "file",
+	// Pile is the glyph on a `pile:` entry, the same stack the Piles group
+	// draws for a pile with no icon of its own.
+	Pile: "layers",
 }
 
 // IsChrome reports whether the SPA or the server references this name outside
@@ -140,7 +143,9 @@ func SPAExport(name string) string { return spaChromeNames[name] }
 // derivedList returns the server-derived glyph names.
 func derivedList() []string {
 	d := DerivedNames
-	return []string{d.Dashboard, d.List, d.Kanban, d.Calendar, d.Search, d.Settings, d.Document, d.Action, d.Entity}
+	return []string{
+		d.Dashboard, d.List, d.Kanban, d.Calendar, d.Search, d.Settings, d.Document, d.Action, d.Entity, d.Pile,
+	}
 }
 
 // All returns the icon set in documentation order.

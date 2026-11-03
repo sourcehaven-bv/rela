@@ -32,6 +32,11 @@ export interface Entity {
   // with `comment_counts`, and only when the reader holds comment:read across
   // the project (TKT-WA25G2). Absent means not served, never zero.
   _comment_count?: number
+  // The busy channels of the type a list asked for with `?busy=<type>`:
+  // channels whose session is in a state with status `working`. Present
+  // as `[]` when none is busy; absent when the list did not ask or the
+  // server could not answer for the type.
+  _busy?: BusyChannel[]
   // Present only on rows of a `/_search` or list read made with a relation
   // context (`relation` + `direction=incoming`): whether the principal may
   // create that relation from this row's face. The server computes it with the gates the
@@ -96,12 +101,21 @@ export interface Entity {
   // (internal/dataentry/sections.go is the single call site), so a detail page
   // wanting entry provenance reads it from the entity GET.
   _world?: EntityWorld
+  // The advisory claim on this entity, while someone holds one (TKT-4YPG4Q).
+  // Present on the single-entity GET, list rows and a view's `entry`; absent
+  // when nobody holds the entity. Set after the read gate, so a row the
+  // caller cannot read never carries one.
+  _lease?: EntityLease
   // Declared copies offered for this face (TKT-WRLDAPI item 5). Rides the
   // entity response alongside `_actions` rather than a separate endpoint.
   // `[]` is a real answer ("this face offers no copies"); absent means the
   // server computed none (no copy service wired). Both render nothing, but
   // only `[]` means the question was asked.
   _copies?: CopyOffer[]
+  _conversions?: ConversionOffer[]
+  // Recipes that turn a task item in this entity's body into a new linked
+  // entity. Present on per-entity responses; `allowed` is advisory.
+  _task_item_conversions?: TaskItemConversionOffer[]
   // Other content states this entity has. See Face.
   _faces?: Face[]
   inaccessible?: InaccessibleField[]
@@ -227,6 +241,32 @@ export interface EntityWorld {
   chain_position?: number
 }
 
+// EntityLease is who holds an advisory claim on an entity (TKT-4YPG4Q).
+// `status` is free text the holder wrote: render it as text, never as HTML.
+export interface EntityLease {
+  user: string
+  tool: string
+  label?: string
+  /** RFC 3339. */
+  since: string
+  status?: string
+}
+
+// PresenceViewer is one other person with the entity's face open
+// (TKT-MHXH87). `since` is RFC 3339 UTC in whole seconds.
+export interface PresenceViewer {
+  user: string
+  tool: string
+  since: string
+}
+
+// PresenceResponse is `GET /{plural}/{id}/_presence`: at most 20 viewers,
+// oldest first, and `more` counting the rest. The caller is never listed.
+export interface PresenceResponse {
+  viewers: PresenceViewer[]
+  more: number
+}
+
 // Face is one content state this entity HAS, other than the one being served.
 // Mirrors v1.Face.
 //
@@ -280,6 +320,28 @@ export interface CopyOffer {
   onSuccess?: CopyOnSuccess
 }
 
+export interface ConversionOffer {
+  name: string
+  label: string
+  to: string
+  allowed: boolean
+  reason?: string
+  mapped_fields?: string[]
+  content_mapped?: boolean
+  face_choices?: Record<string, string[]>
+}
+
+export interface TaskItemConversionOffer {
+  name: string
+  label: string
+  to: string
+  // What the editor does with the item afterwards: replace its text with a
+  // reference to the new entity, or delete it.
+  item: 'link' | 'remove'
+  allowed: boolean
+  reason?: string
+}
+
 export interface CopyOnSuccess {
   message?: string
   landing: { mode: 'written' | 'stay' | 'world' | 'face'; world?: string; face?: string }
@@ -290,12 +352,14 @@ export interface CopyOnSuccess {
 // property (its normalized name) and is used to build the per-file
 // download/delete URL. `href` is the ACL-gated download URL (inherits the
 // entity's read permission). `contentType` is inferred from the filename
-// by the backend.
+// by the backend. `sha256` is the lowercase hex SHA-256 of the stored bytes;
+// absent only when the backend could not read them.
 export interface AttachmentInfo {
   id: string
   filename: string
   size: number
   contentType: string
+  sha256?: string
   href: string
 }
 
@@ -430,6 +494,20 @@ export interface RelationOrder {
  */
 export type RelationPosition = { before: string } | { after: string } | { step: -1 | 1 }
 
+/**
+ * One busy channel of a list row. `since` is when the session entered its
+ * state, as an RFC 3339 time; the browser computes the time in the state.
+ * `type_label` and `label` are absent when the configuration gives none.
+ */
+export interface BusyChannel {
+  type: string
+  type_label?: string
+  name?: string
+  state: string
+  label?: string
+  since: string
+}
+
 export interface ListParams {
   page?: number
   per_page?: number
@@ -440,6 +518,9 @@ export interface ListParams {
   // Asks each row to carry `_comment_count`. Off unless a kanban card shows
   // a comment count.
   comment_counts?: boolean
+  // Asks each row to carry `_busy` for this channel type. Set when a kanban
+  // card has a `busy:` field or a list has a busy column.
+  busy?: string
   // world selects which FACE of each entity is served, and which entities
   // appear at all — an entity with no face in the requested world is omitted
   // entirely, because existence in a world IS the publication bit.
@@ -485,6 +566,8 @@ export interface ListParams {
    */
   relation?: string
   direction?: 'incoming'
+  /** The search box's free-text query. A live subscription cannot carry it. */
+  q?: string
   [key: `filter[${string}]`]: string | undefined
 }
 

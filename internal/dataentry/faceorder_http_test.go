@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	v1 "github.com/Sourcehaven-BV/rela/internal/apiwire/v1"
+	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/store"
@@ -56,5 +57,22 @@ entities:
 	}
 	if got := resp.Entry.Properties["title"]; got != "PUBLISHED TEXT" {
 		t.Errorf("world-absent entry title = %v, want the first DECLARED face's %q", got, "PUBLISHED TEXT")
+	}
+	if resp.HideMentionedByPanel {
+		t.Error("world-absent page hides the Mentioned by panel without an entity_views switch")
+	}
+
+	// The operator's switch holds on the world-absent page too (TKT-HF0D5W).
+	off := false
+	if app.Cfg().EntityViews == nil {
+		app.Cfg().EntityViews = map[string]dataentryconfig.EntityViewConfig{}
+	}
+	app.Cfg().EntityViews["policy"] = dataentryconfig.EntityViewConfig{MentionedByPanel: &off}
+	rec = viewRecord(t, app, "/api/v1/_views/policy/POL-1")
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if !resp.WorldAbsent || !resp.HideMentionedByPanel {
+		t.Errorf("worldAbsent=%v hideMentionedByPanel=%v, want both true", resp.WorldAbsent, resp.HideMentionedByPanel)
 	}
 }

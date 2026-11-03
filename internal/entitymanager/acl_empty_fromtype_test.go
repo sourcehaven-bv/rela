@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
+	"github.com/Sourcehaven-BV/rela/internal/aclstore"
 	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
@@ -189,9 +190,12 @@ func createRelationAllowed(t *testing.T, createGrants []string, seedSource bool)
 	}
 
 	d, err := acl.NewDeclarative(&acl.Policy{
-		Roles:       map[string]acl.RoleDef{"writer": {Create: createGrants}},
+		// Read on every type, so a present source is readable: a source the
+		// caller cannot read is refused as absent (TKT-NXRFDU), which is not
+		// what this test is about.
+		Roles:       map[string]acl.RoleDef{"writer": {Read: []string{"*"}, Create: createGrants}},
 		Assignments: map[string]string{"alice": "writer"},
-	}, acl.NewStoreGraph(st), st)
+	}, aclstore.MustNewGraph(st), st)
 	if err != nil {
 		t.Fatalf("acl.NewDeclarative: %v", err)
 	}
@@ -208,12 +212,13 @@ func createRelationAllowed(t *testing.T, createGrants []string, seedSource bool)
 		// what New requires of a policy-backed Deps (#1437).
 		CopyReadGate:   entitymanager.AllowAllCopyReadGate{},
 		CopyVisibility: allowAllCopyVisibility(t, st),
+		AnchorGuard:    entitymanager.NopAnchorGuard{},
 	})
 	if err != nil {
 		t.Fatalf("entitymanager.New: %v", err)
 	}
 
-	ctx := principal.With(bg, principal.Principal{User: "alice", Tool: principal.ToolDataEntry})
+	ctx := entitymanager.BindAs(principal.With(bg, principal.Principal{User: "alice", Tool: principal.ToolDataEntry}), t, mgr)
 	_, wErr := mgr.CreateRelation(ctx, entity.RelationKey{From: "DEC-001", Type: "addresses", To: "REQ-001"}, entity.RelationOptions{})
 
 	// A ForbiddenError means the gate refused. Anything else — including the

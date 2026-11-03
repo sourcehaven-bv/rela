@@ -83,7 +83,7 @@ func TestAttachment_AllowedReturnsBytes(t *testing.T) {
 	seedAttachment(t, app, "TKT-001", "shot.png", []byte("\x89PNGfakebytes"))
 
 	d := nopACL(t, app)
-	app.acl = d
+	setTestACL(t, app, d)
 
 	rec := getAttachmentAs(aliceCtx(), t, app, d, "ticket", "tickets", "TKT-001", "screenshot", "shot.png")
 	if rec.Code != http.StatusOK {
@@ -115,7 +115,7 @@ func TestAttachment_DeniedIsNotFound(t *testing.T) {
 	// feature has no file property in the fixture, but the gate fires
 	// before that ever matters — the point is the deny path.
 	d := nopACL(t, app)
-	app.acl = d
+	setTestACL(t, app, d)
 
 	// alice has no read on feature → denied.
 	rec := getAttachmentAs(aliceCtx(), t, app, d, "feature", "features", "FEAT-001", "logo", "x.png")
@@ -147,7 +147,7 @@ func TestAttachment_UnknownOrNonFileProperty(t *testing.T) {
 	app := newTestAppV1(t)
 	seedEntity(app, &entity.Entity{ID: "TKT-001", Type: "ticket", Properties: map[string]any{"title": "T1"}})
 	d := nopACL(t, app)
-	app.acl = d
+	setTestACL(t, app, d)
 
 	for _, prop := range []string{"title" /* string, not file */, "nope" /* undeclared */} {
 		rec := getAttachmentAs(aliceCtx(), t, app, d, "ticket", "tickets", "TKT-001", prop, "x.png")
@@ -164,7 +164,7 @@ func TestAttachment_MethodNotAllowed(t *testing.T) {
 	app := newTestAppV1(t)
 	seedEntity(app, &entity.Entity{ID: "TKT-001", Type: "ticket", Properties: map[string]any{"title": "T1"}})
 	d := nopACL(t, app)
-	app.acl = d
+	setTestACL(t, app, d)
 
 	req := httptest.NewRequest(http.MethodPatch, "/api/v1/tickets/TKT-001/_attachments/screenshot", http.NoBody)
 	req = req.WithContext(gateCtxFor(aliceCtx(), t, d))
@@ -189,7 +189,7 @@ func TestAttachment_ResolvesByCurrentIDAfterRename(t *testing.T) {
 	}
 
 	d := nopACL(t, app)
-	app.acl = d
+	setTestACL(t, app, d)
 
 	// New id serves the bytes.
 	rec := getAttachmentAs(aliceCtx(), t, app, d, "ticket", "tickets", "TKT-999", "screenshot", "shot.png")
@@ -260,7 +260,7 @@ func TestAttachment_DeceptiveExtensionServesTypeFromName(t *testing.T) {
 	seedAttachment(t, app, "TKT-001", "evil.png", []byte("<script>alert(1)</script>"))
 
 	d := nopACL(t, app)
-	app.acl = d
+	setTestACL(t, app, d)
 
 	rec := getAttachmentAs(aliceCtx(), t, app, d, "ticket", "tickets", "TKT-001", "screenshot", "evil.png")
 	if rec.Code != http.StatusOK {
@@ -288,7 +288,7 @@ func TestAttachment_SvgIsSandboxed(t *testing.T) {
 		[]byte(`<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>`))
 
 	d := nopACL(t, app)
-	app.acl = d
+	setTestACL(t, app, d)
 
 	rec := getAttachmentAs(aliceCtx(), t, app, d, "ticket", "tickets", "TKT-001", "screenshot", "pic.svg")
 	if rec.Code != http.StatusOK {
@@ -312,7 +312,7 @@ func TestAttachment_DenyBodyMatchesGate(t *testing.T) {
 	app := newTestAppV1(t)
 	seedEntity(app, &entity.Entity{ID: "FEAT-001", Type: "feature", Properties: map[string]any{"title": "F1"}})
 	d := nopACL(t, app)
-	app.acl = d
+	setTestACL(t, app, d)
 
 	attRec := getAttachmentAs(aliceCtx(), t, app, d, "feature", "features", "FEAT-001", "logo", "x.png")
 	gateRec := getEntityAs(aliceCtx(), t, app, d, "feature", "features", "FEAT-001", "")
@@ -356,9 +356,9 @@ func TestAttachment_HiddenPropertyNotLeaked(t *testing.T) {
 	seedEntity(app, &entity.Entity{ID: "TKT-001", Type: "ticket", Properties: map[string]any{"title": "T1"}})
 	seedAttachment(t, app, "TKT-001", "secret.png", []byte("classified"))
 	d := nopACL(t, app)
-	app.acl = d
+	setTestACL(t, app, d)
 	// Hide the `screenshot` file property for everyone.
-	app.fieldResolver = fakeResolver{fv: FieldVerdicts{Visible: map[string]bool{"screenshot": false}}}
+	setTestResolver(t, app, fakeResolver{fv: FieldVerdicts{Visible: map[string]bool{"screenshot": false}}})
 
 	// _attachments omits the hidden property entirely.
 	result := app.serializer.forWire(context.Background(), mustGet(t, app, "TKT-001"), app.reader.outgoingRelations(context.Background(), "TKT-001"), app.Meta(), "tickets")

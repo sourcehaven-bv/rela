@@ -92,7 +92,7 @@ func (c *HistoryPurgeCmd) Run(ctx context.Context, svc *writeServices) error {
 	if err := commitRefused(final, target); err != nil {
 		return err
 	}
-	auditPurge(svc.Audit, p, audit.Subject{Kind: "entity", ID: ref.ID}, ref.Face, final, c.Reason)
+	auditPurge(ctx, svc.Audit, p, audit.Subject{Kind: "entity", ID: ref.ID}, ref.Face, final, c.Reason)
 	out.WriteSuccess("Purged %d version row(s) for %s. This is irreversible.", final.Purged, target)
 	if final.TombstoneWritten {
 		out.WriteInfo("Wrote a purge tombstone (a live row still held the content); the sweep will not re-capture it.")
@@ -184,7 +184,7 @@ func (c *RelationHistoryPurgeCmd) Run(ctx context.Context, svc *writeServices) e
 	if err := commitRefused(final, key); err != nil {
 		return err
 	}
-	auditPurge(svc.Audit, p, audit.Subject{
+	auditPurge(ctx, svc.Audit, p, audit.Subject{
 		Kind: "relation", RelationType: c.Type, FromID: from, ToID: c.To,
 	}, fromFace, final, c.Reason)
 	out.WriteSuccess("Purged %d version row(s) for %s. This is irreversible.", final.Purged, key)
@@ -308,7 +308,7 @@ func confirmPurge(target string) bool {
 // face is the purged lineage's face (for a relation, its source face); the
 // audit subject has no face field, so a non-zero one is named in the summary.
 func auditPurge(
-	sink audit.Audit, p principal.Principal, subj audit.Subject, face entity.Face,
+	ctx context.Context, sink audit.Audit, p principal.Principal, subj audit.Subject, face entity.Face,
 	res *store.PurgeResult, reason string,
 ) {
 	// Summarize the targeted vseqs compactly (count + range), not an enumeration.
@@ -327,10 +327,11 @@ func auditPurge(
 		summary += fmt.Sprintf(" tags_deleted=%d", len(res.TaggedTargets))
 	}
 	sink.Record(audit.Record{
-		Time:      time.Now().UTC(),
-		Op:        audit.OpPurgeVersion,
-		Subject:   &subj,
-		Principal: p,
-		Summary:   summary,
+		Time:       time.Now().UTC(),
+		Op:         audit.OpPurgeVersion,
+		Subject:    &subj,
+		Principal:  p,
+		AssertedBy: audit.AssertedByFrom(ctx),
+		Summary:    summary,
 	})
 }

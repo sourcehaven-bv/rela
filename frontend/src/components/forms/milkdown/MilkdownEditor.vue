@@ -19,6 +19,7 @@
  *    from the graph itself.
  */
 import { ref, onMounted, onBeforeUnmount, watch, shallowRef, computed, nextTick } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { Editor, rootCtx, defaultValueCtx, editorViewOptionsCtx } from '@milkdown/kit/core'
 import { gfm } from '@milkdown/kit/preset/gfm'
 import { history } from '@milkdown/kit/plugin/history'
@@ -43,6 +44,8 @@ import { RELA_COMMONMARK, RELA_OUTPUT_NODES, configureRelaSerializer } from './e
 import { entityRefNode } from './entityRefNode'
 import { insertEntityRefAtCursor } from './insertEntityRef'
 import { taskList } from './taskListItem'
+import type { TaskItemTarget } from './taskItemConvert'
+import { useTaskItemConvert } from './useTaskItemConvert'
 import {
   entityRefResolutionPlugin,
   buildResolutionTransaction,
@@ -96,11 +99,27 @@ const props = defineProps<{
    * starts from its related entities and never offers it to itself.
    */
   mentionSelf?: MentionSelf
+  /**
+   * Label of the convert button on each task item, or absent for none. The
+   * host sets it when the entity offers task-item conversions and handles
+   * `taskItemConvert`.
+   */
+  taskItemConvertLabel?: string
 }>()
+
+const { t } = useI18n()
 
 const emit = defineEmits<{
   'update:modelValue': [value: string]
+  taskItemConvert: [target: TaskItemTarget, anchor: HTMLElement]
 }>()
+
+const taskItems = useTaskItemConvert({
+  label: () => props.taskItemConvertLabel,
+  onConvert: (target, anchor) => emit('taskItemConvert', target, anchor),
+  currentView,
+  flush: flushNow,
+})
 
 const editorRoot = ref<HTMLElement | null>(null)
 const menuRoot = ref<HTMLElement | null>(null)
@@ -370,7 +389,7 @@ function onLinkSubmit(payload: { url: string; text: string; strippedParams: bool
   // Silently changing what someone typed is worse than refusing it, so say so
   // when a mailto's parameters were dropped.
   if (payload.strippedParams) {
-    uiStore.showToast('info', 'Email parameters were removed from the link.')
+    uiStore.showToast('info', t('editor.link.paramsRemoved'))
   }
 }
 
@@ -538,6 +557,7 @@ onMounted(async () => {
     .use(RELA_OUTPUT_NODES)
     // After `gfm`: it contributes the `checked` attribute this renders.
     .use(taskList)
+    .use(taskItems.plugin)
     .use(entityRefResolutionPlugin(resolverHandle))
     // After the presets, so its `handlePaste` is offered the event before
     // theirs. It declines everything that is not a bare URL over a selection,
@@ -668,6 +688,20 @@ function serialize(): string {
   }
 }
 
+/** See `flush` below. */
+function flushNow(): void {
+  const markdown = serialize()
+  const decision = decideEmit(markdown, originalValue, settledValue, dirty, lastEmitted)
+  if (decision.action === 'report-drift') {
+    reportDrift()
+    return
+  }
+  if (decision.action === 'emit') {
+    lastEmitted = decision.value
+    emit('update:modelValue', decision.value)
+  }
+}
+
 defineExpose({
   /**
    * Pushes any pending change to the parent immediately.
@@ -681,18 +715,7 @@ defineExpose({
    * Runs the same decision as the listener, so a flush cannot bypass the
    * write-back guard.
    */
-  flush: () => {
-    const markdown = serialize()
-    const decision = decideEmit(markdown, originalValue, settledValue, dirty, lastEmitted)
-    if (decision.action === 'report-drift') {
-      reportDrift()
-      return
-    }
-    if (decision.action === 'emit') {
-      lastEmitted = decision.value
-      emit('update:modelValue', decision.value)
-    }
-  },
+  flush: () => flushNow(),
   /**
    * The markdown to save, with round-trip churn suppressed.
    *
@@ -701,6 +724,8 @@ defineExpose({
    * a verdict-level assertion is what pins the churn/drift distinction.
    */
   guardedValue: () => guardWriteBack(originalValue, serialize(), dirty),
+  // Task-item conversions; see useTaskItemConvert.
+  ...taskItems.exposed,
   /**
    * The live ProseMirror view, for tests only.
    *
@@ -766,7 +791,7 @@ onBeforeUnmount(() => {
              `aria-hidden` because ProseMirror's own textbox role already names
              the field; a screen reader announcing both would read it twice. -->
         <div v-if="showPlaceholder" class="milkdown-placeholder" aria-hidden="true">
-          {{ props.placeholder || 'Write, or type @ to link an entity' }}
+          {{ props.placeholder || t('editor.placeholder') }}
         </div>
       </div>
     </div>

@@ -1,0 +1,10 @@
+request: GET /api/v1/tickets/_export?transform=copy
+identity: header outsider@example.test
+status: 200
+reads: GraphQueryHeaders=2 ListRelations=1
+breadth: ListRelations=0/1
+bodies: GraphQuery=0/2
+versions: 
+body:
+| title | status | secret | Policies | Watchers |
+| --- | --- | --- | --- | --- |

@@ -164,9 +164,9 @@ func TestNavigationIconValidation(t *testing.T) {
 		nav     NavigationEntry
 		wantErr string
 	}{
-		{"no icon is fine", NavigationEntry{Label: "Tickets", Dashboard: true}, ""},
-		{"known icon on an item", NavigationEntry{Label: "Inbox", Dashboard: true, Icon: "inbox"}, ""},
-		{"none on an item", NavigationEntry{Label: "Plain", Dashboard: true, Icon: NoIcon}, ""},
+		{"no icon is fine", NavigationEntry{Label: "Tickets", Dashboard: DefaultDashboard}, ""},
+		{"known icon on an item", NavigationEntry{Label: "Inbox", Dashboard: DefaultDashboard, Icon: "inbox"}, ""},
+		{"none on an item", NavigationEntry{Label: "Plain", Dashboard: DefaultDashboard, Icon: NoIcon}, ""},
 		{
 			// An action entry derives no icon, so `none` asks to suppress
 			// something that was never there. Harmless, and rejecting it would
@@ -176,7 +176,7 @@ func TestNavigationIconValidation(t *testing.T) {
 			NavigationEntry{Label: "Run", Action: "sync", Icon: NoIcon},
 			"",
 		},
-		{"unknown icon is rejected", NavigationEntry{Label: "Inbox", Dashboard: true, Icon: "nope"}, "unknown icon"},
+		{"unknown icon is rejected", NavigationEntry{Label: "Inbox", Dashboard: DefaultDashboard, Icon: "nope"}, "unknown icon"},
 		{
 			"icon on a group is rejected",
 			NavigationEntry{Group: "Tickets", Icon: "inbox"},

@@ -1,0 +1,10 @@
+---
+id: RR-LUTMB7
+type: review-response
+title: $USER bypasses the --run-as refusals and the asserted_by marker; asserted_by is itself read from $USER
+finding: 'internal/cli/identity.go newLocalIdentity/assertingUser and principal.SystemUser. Without --run-as the identity is $USER taken verbatim, with no reserved-name check, so `USER=system:realtime rela channel post X <type> -P body=...` (or the same env for stdio `rela mcp`) acts as system:realtime: it skips refusedRunAs, prints no stderr notice and stamps no asserted_by, so the graph audit and the channel show a post indistinguishable from rela''s own trigger posts. `USER=system:scheduler` likewise inherits the DEC-O59WM4 read-all grant in acl.yaml with no marker. With --run-as, assertingUser takes $USER/$USERNAME/$LOGNAME first, so `USER=alice rela --run-as system:ci update ...` records asserted_by=alice, framing a person, or asserted_by=system:realtime. This defeats decisions 12/13 (refuse rela''s own identities, record who asserted). Fix: in newLocalIdentity''s no-run-as branch reject principal.IsReserved(SystemUser()) with a message pointing to --run-as (so a reserved name can only enter through validateRunAs and always carries asserted_by); derive asserted_by from the uid (os/user.Current, falling back to uid:N), not from environment variables; add tests for USER=system:realtime and for USER spoofing asserted_by.'
+severity: significant
+resolution: 'A $USER in the system: or integration: namespace is refused with a pointer to --run-as. asserted_by comes from os/user.Current (uid lookup), falling back to uid:N; no environment variable is read. Tests for USER=system:realtime (unit and subprocess) and for a spoofed USER not reaching asserted_by.'
+reason: 'A $USER in the system: or integration: namespace is refused with a pointer to --run-as. asserted_by comes from os/user.Current (uid lookup), falling back to uid:N; no environment variable is read. Tests for USER=system:realtime (unit and subprocess) and for a spoofed USER not reaching asserted_by.'
+status: addressed
+---

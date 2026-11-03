@@ -49,7 +49,7 @@ are not on disk.
 Only config files are stored: the schema and its includes, the root config
 files (`data-entry.yaml`, `acl.yaml`, `schedules.yaml`, ...) and the files
 under `scripts/`, `actions/`, `validations/`, `migrations/`, `templates/`,
-`custom/` and `apps/`. Hidden files are never stored, so `.rela/secrets.yaml`
+`custom/` and `apps/`, and the `.lua` modules under `lib/`. Hidden files are never stored, so `.rela/secrets.yaml`
 stays on the machine. `rela db load` refuses a symlink anywhere in that set,
 and `rela db dump` refuses to write any other name.
 

@@ -137,9 +137,7 @@ function setup(opts: SetupOptions = {}) {
     max_events_per_day: opts.maxEventsPerDay ?? 4,
     edit_form: opts.editForm,
     event: opts.event,
-    sources: opts.sources ?? [
-      { entity: 'task', date: 'due', summary: 'title', max_span: 31 },
-    ],
+    sources: opts.sources ?? [{ entity: 'task', date: 'due', summary: 'title', max_span: 31 }],
   } as never)
 
   _setEntityPluralForTest('task', 'tasks')
@@ -310,7 +308,9 @@ describe('CalendarView navigation', () => {
 
   it('widens the lower bound only for a source that declares an end date', async () => {
     setup({
-      sources: [{ entity: 'task', date: 'due', end_date: 'due_end', summary: 'title', max_span: 31 }],
+      sources: [
+        { entity: 'task', date: 'due', end_date: 'due_end', summary: 'title', max_span: 31 },
+      ],
       responses: { task: [] },
       query: { view: 'week' },
     })
@@ -506,8 +506,22 @@ describe('CalendarView same-type sources', () => {
     listAllEntitiesMock.mockClear()
     const wrapper = setup({
       sources: [
-        { entity: 'task', date: 'due', summary: 'title', color: 'blue', max_span: 31, where: ['status = todo'] },
-        { entity: 'task', date: 'due', summary: 'title', color: 'red', max_span: 31, where: ['status = done'] },
+        {
+          entity: 'task',
+          date: 'due',
+          summary: 'title',
+          color: 'blue',
+          max_span: 31,
+          where: ['status = todo'],
+        },
+        {
+          entity: 'task',
+          date: 'due',
+          summary: 'title',
+          color: 'red',
+          max_span: 31,
+          where: ['status = done'],
+        },
       ],
       responses: { task: [] },
     })
@@ -575,7 +589,13 @@ describe('CalendarView where clauses', () => {
   it('maps comparison operators to their API names', async () => {
     setup({
       sources: [
-        { entity: 'task', date: 'due', summary: 'title', max_span: 31, where: ['due >= 2026-01-01'] },
+        {
+          entity: 'task',
+          date: 'due',
+          summary: 'title',
+          max_span: 31,
+          where: ['due >= 2026-01-01'],
+        },
       ],
       responses: { task: [] },
     })
@@ -917,7 +937,9 @@ describe('CalendarView event ordering', () => {
     // actually holds events.
     const cell = wrapper
       .findAll('.calendar-day')
-      .find((c) => c.find('.calendar-day-number').text() === '27' && c.find('.calendar-chip').exists())
+      .find(
+        (c) => c.find('.calendar-day-number').text() === '27' && c.find('.calendar-chip').exists()
+      )
     const titles = cell!.findAll('.calendar-chip-title').map((n) => n.text())
     // 00:30 sorts before 08:00, both on the 27th in Amsterdam.
     expect(titles).toEqual(['Meeting M-crosses', 'Meeting M-morning'])
@@ -940,5 +962,41 @@ describe('CalendarView under a world', () => {
     await flushPromises()
     const params = listAllEntitiesMock.mock.calls[0][1] as Record<string, string>
     expect(params.world).toBeUndefined()
+  })
+})
+
+describe('CalendarView per-source failures', () => {
+  const twoSources = [
+    { entity: 'task', date: 'due', summary: 'title', max_span: 31 },
+    { entity: 'meeting', label: 'Meetings', date: 'starts_at', summary: 'name', max_span: 31 },
+  ]
+
+  // The server refuses a date filter on a property the reader cannot see on
+  // every row (BUG-WJSYQT). That one source must not blank the others.
+  it('renders the sources that loaded and reports the one that was refused', async () => {
+    const wrapper = setup({ sources: twoSources, responses: { task: [task('T-1', '2026-08-22')] } })
+    listAllEntitiesMock.mockImplementation((type: string) =>
+      type === 'meeting'
+        ? Promise.reject(new Error('cannot filter on "starts_at" of "meeting"'))
+        : Promise.resolve(listResponse([task('T-1', '2026-08-22')]))
+    )
+    routeQuery.value = { ...routeQuery.value, date: '2026-08-21' }
+    await flushPromises()
+
+    expect(wrapper.findAll('.calendar-chip')).toHaveLength(1)
+    const errors = wrapper.findAll('[data-testid="calendar-source-error"]')
+    expect(errors).toHaveLength(1)
+    expect(errors[0].text()).toContain('Meetings')
+    expect(errors[0].text()).toContain('starts_at')
+  })
+
+  it('shows one calendar error when every source fails', async () => {
+    const wrapper = setup({ sources: twoSources })
+    listAllEntitiesMock.mockImplementation(() => Promise.reject(new Error('boom')))
+    routeQuery.value = { ...routeQuery.value, date: '2026-08-21' }
+    await flushPromises()
+
+    expect(wrapper.findAll('[data-testid="calendar-source-error"]')).toHaveLength(0)
+    expect(wrapper.text()).toContain('boom')
   })
 })

@@ -162,6 +162,16 @@ func (d ReadDeps) projectFiles() ProjectFiles {
 	return d.Files
 }
 
+// moduleFiles returns the source require reads lib/ from, or nil when the
+// runtime has no project. rootfs.New("") would resolve against the working
+// directory, so an empty ProjectRoot must not fall back to it.
+func (d ReadDeps) moduleFiles() ProjectFiles {
+	if d.Files == nil && d.ProjectRoot == "" {
+		return nil
+	}
+	return d.projectFiles()
+}
+
 // ReadScript returns the source of the Lua script at name under the project
 // directory dir (scripts, actions or validations).
 //
@@ -383,6 +393,16 @@ type WriteDeps struct {
 	// memory backends have no token store, and the synchronous automation
 	// cascade and document renders never get one.
 	OAuth OAuthTokens
+
+	// AttachRender backs rela.attach_render (TKT-1TS55R). It always acts as
+	// the ctx principal, so the bypass_acl handle does not carry it.
+	//
+	// Nil: accepted, and the binding is then absent. Set it only where a
+	// principal deliberately runs a script: data-entry actions, schedules and
+	// background automations. The synchronous automation cascade, document
+	// renders and export_render leave it nil, because a render there would
+	// run inside another write or render.
+	AttachRender AttachRenderer
 }
 
 // ElevationRecorder receives a notification when a rela.bypass_acl closure

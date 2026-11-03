@@ -16,9 +16,10 @@ import (
 // coverage-ignore: scheduler command - long-running process
 type SchedulerCmd struct{}
 
-// Run dispatches `rela scheduler`. The WorkspaceProvider is supplied at
-// the kong wiring site (appbuild.Services implements it structurally).
-func (c *SchedulerCmd) Run(ctx context.Context, ws scheduler.WorkspaceProvider) error {
+// Run dispatches `rela scheduler`. The WorkspaceProvider and the identity
+// binder are supplied at the kong wiring site (appbuild.Services implements
+// the provider structurally).
+func (c *SchedulerCmd) Run(ctx context.Context, ws scheduler.WorkspaceProvider, bind scheduler.IdentityBinder) error {
 	// coverage-ignore-start: main-or-wiring: constructs and runs the long-running scheduler loop; the CLI test harness
 	// supplies no
 	// scheduler.WorkspaceProvider fixture
@@ -31,23 +32,26 @@ func (c *SchedulerCmd) Run(ctx context.Context, ws scheduler.WorkspaceProvider) 
 	if err := appbuild.RequireSyncBackend(svc); err != nil {
 		return err
 	}
-	data, err := ws.Config().Load(ctx, scheduler.ConfigFile)
+	cfg, err := scheduler.LoadWorkspaceConfig(ctx, ws)
 	if err != nil {
-		return fmt.Errorf("cannot read %s: %w", scheduler.ConfigFile, err)
-	}
-	cfg, err := scheduler.ParseConfig(data)
-	if err != nil {
+		// Unlike the server, the command refuses to start: an operator
+		// running it is watching, and a half-started scheduler would hide
+		// the broken file behind the tasks that did start.
 		return err
+	}
+	if len(cfg.Tasks) == 0 {
+		return fmt.Errorf("no tasks: neither %s nor subscriptions.yaml declares one", scheduler.ConfigFile)
 	}
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
 		Level: slog.LevelInfo,
 	}))
 	// NewWithQueue, not New: script execution happens on the job queue, so a
 	// scheduler built without one starts cleanly and then fails every task.
-	s, err := scheduler.NewWithQueue(cfg, script.NewEngine(), ws, logger)
+	s, err := scheduler.NewWithQueue(cfg, script.NewEngine(), ws, bind, logger)
 	if err != nil {
 		return err
 	}
+	s.WatchConfig()
 	return s.Run(ctx)
 	// coverage-ignore-end
 }

@@ -189,3 +189,42 @@ func TestShowFaceAddress(t *testing.T) {
 		t.Errorf("the default face's outgoing edge leaked into the draft's: %s", result)
 	}
 }
+
+// TestShowEntityMentionedBy covers the backlinks block: a body that names
+// the shown entity as an `id` code span is listed in both formats.
+func TestShowEntityMentionedBy(t *testing.T) {
+	meta := metamodel.DefaultMetamodel()
+	seeder := newStoreSeeder(meta)
+	seeder.addEntity(testutil.EntityFor(meta, "requirement").ID("REQ-001"))
+	seeder.addEntity(testutil.EntityFor(meta, "decision").ID("DEC-001").
+		With("title", "Pick a store").WithContent("Answers `REQ-001`."))
+	seeder.addEntity(testutil.EntityFor(meta, "decision").ID("DEC-002").WithContent("Unrelated."))
+	svc := seeder.build(t).read
+
+	buf := withOutput(t, output.FormatTable)
+	if err := (&ShowCmd{ID: "REQ-001"}).Run(context.Background(), svc); err != nil {
+		t.Fatalf("show: %v", err)
+	}
+	text := buf.String()
+	if !strings.Contains(text, "Mentioned by:") || !strings.Contains(text, "DEC-001") ||
+		!strings.Contains(text, "Pick a store") || strings.Contains(text, "DEC-002") {
+
+		t.Errorf("table output lacks the backlink block: %s", text)
+	}
+
+	buf = withOutput(t, output.FormatJSON)
+	if err := (&ShowCmd{ID: "REQ-001"}).Run(context.Background(), svc); err != nil {
+		t.Fatalf("show: %v", err)
+	}
+	var result struct {
+		MentionedBy []output.MentionSource `json:"mentioned_by"`
+		Truncated   bool                   `json:"mentioned_by_truncated"`
+	}
+	if err := json.Unmarshal(buf.Bytes(), &result); err != nil {
+		t.Fatal(err)
+	}
+	want := []output.MentionSource{{ID: "DEC-001", Type: "decision", Title: "Pick a store"}}
+	if len(result.MentionedBy) != 1 || result.MentionedBy[0] != want[0] || result.Truncated {
+		t.Errorf("mentioned_by = %+v (truncated %v), want %+v", result.MentionedBy, result.Truncated, want)
+	}
+}

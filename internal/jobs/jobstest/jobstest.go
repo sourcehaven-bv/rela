@@ -15,6 +15,7 @@ import (
 	"slices"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -95,6 +96,7 @@ func RunAll(t *testing.T, newQueue NewQueue) {
 	t.Run("EmptyKindRejected", func(t *testing.T) { testEmptyKindRejected(t, newQueue) })
 	t.Run("DuplicateRegistrationRejected", func(t *testing.T) { testDuplicateRegistration(t, newQueue) })
 	t.Run("EnqueueAfterCloseRejected", func(t *testing.T) { testEnqueueAfterClose(t, newQueue) })
+	t.Run("CloseWaitsForRunningHandlers", func(t *testing.T) { testCloseWaitsForRunningHandlers(t, newQueue) })
 	t.Run("ConcurrentEnqueueLosesNothing", func(t *testing.T) { testConcurrentEnqueue(t, newQueue) })
 	t.Run("PayloadRoundTrips", func(t *testing.T) { testPayloadRoundTrips(t, newQueue) })
 	t.Run("IdempotencyKeyCollapsesPending", func(t *testing.T) { testIdempotencyCollapses(t, newQueue) })
@@ -410,6 +412,42 @@ func testEnqueueAfterClose(t *testing.T, newQueue NewQueue) {
 
 	// Close is idempotent.
 	require.NoError(t, q.Close(context.Background()))
+}
+
+// testCloseWaitsForRunningHandlers pins that Close returns only after every
+// running handler has returned. The composition root closes the queue before
+// the store (appbuild's Services.Close), so a handler that outlives Close
+// would run against a closed store and log after its owner has shut down
+// (BUG-FLON0Z).
+// closeOutlivesCancel is how long the handler in
+// testCloseWaitsForRunningHandlers keeps running after its cancel.
+const closeOutlivesCancel = 1500 * time.Millisecond
+
+func testCloseWaitsForRunningHandlers(t *testing.T, newQueue NewQueue) {
+	t.Helper()
+	started := make(chan struct{})
+	var returned atomic.Bool
+	q := startQueue(t, newQueue(t), "slow", func(ctx context.Context, _ jobs.Job) error {
+		close(started)
+		<-ctx.Done()
+		// Still busy after the cancel, as a handler finishing a write is.
+		// Longer than neoq's 1s cancel grace, after which the postgres
+		// backend's Shutdown stops waiting.
+		time.Sleep(closeOutlivesCancel)
+		returned.Store(true)
+		return ctx.Err()
+	})
+	require.NoError(t, q.Enqueue(context.Background(), jobs.Job{Kind: "slow", Retry: jobs.RetryNever}))
+	select {
+	case <-started:
+	case <-time.After(settleTimeout):
+		t.Fatal("timed out waiting for handler to run")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), settleTimeout)
+	defer cancel()
+	require.NoError(t, q.Close(ctx))
+	require.True(t, returned.Load(), "Close returned while a handler was still running")
 }
 
 func testConcurrentEnqueue(t *testing.T, newQueue NewQueue) {

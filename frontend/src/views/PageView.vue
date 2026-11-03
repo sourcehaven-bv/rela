@@ -19,7 +19,9 @@
  */
 import { computed, defineAsyncComponent, onBeforeUnmount, watchEffect, type Component } from 'vue'
 import { RouterLink, useRouter } from 'vue-router'
-import { useQuery } from '@pinia/colada'
+import { useI18n } from 'vue-i18n'
+import { intlLocale } from '@/i18n/locale'
+import { useQuery, useQueryCache } from '@pinia/colada'
 import RlEmptyState from 'rela-components/components/feedback/RlEmptyState.vue'
 import { isIconName } from 'rela-components/components/common/icons'
 import type { ViewTab } from 'rela-components/components/layout/RlViewTabs.vue'
@@ -27,12 +29,14 @@ import { usePageFrame } from '@/composables/usePageHeader'
 import { useEntityPageEditing } from '@/composables/useEntityPageEditing'
 import { getEntity } from '@/api/entities'
 import { shouldDropHeldContent } from '@/api/errors'
+import { liveEntityPath } from '@/api/live'
+import { useLiveSubscription } from '@/composables/useLiveSubscription'
 import { entityKeys } from '@/queries/entities'
 import { usePageStore } from '@/stores/pages'
 import { useSpaceStore } from '@/stores/space'
 import { entityDisplayTitle } from '@/utils/entityDisplay'
 import { entityRef } from '@/utils/entityRef'
-import { pageTabPath } from '@/utils/pageContext'
+import { pageTabPath, routeTabId } from '@/utils/pageContext'
 import type { PageTabView, SidebarPageTab } from '@/types'
 
 const props = defineProps<{
@@ -43,6 +47,7 @@ const props = defineProps<{
 }>()
 
 const router = useRouter()
+const { t } = useI18n()
 const pageStore = usePageStore()
 const spaceStore = useSpaceStore()
 const frame = usePageFrame()
@@ -80,7 +85,7 @@ const anchorType = computed(() => pageConfig.value?.entity_type)
  * two-segment route puts the entity where a plain page has its tab.
  */
 const anchorId = computed(() => (anchorType.value ? (props.entity ?? props.tab) : undefined))
-const tabId = computed(() => (anchorType.value && !props.entity ? undefined : props.tab))
+const tabId = computed(() => routeTabId(pageConfig.value, props))
 const activeTab = computed(() => tabs.value.find((t) => t.id === tabId.value))
 
 function tabHref(id: string): string {
@@ -110,6 +115,19 @@ const anchorQuery = useQuery({
   query: () => getEntity(anchorType.value as string, anchorId.value as string),
   enabled: () => !!anchorType.value && !!anchorId.value,
 })
+const queryCache = useQueryCache()
+// Live view (TKT-HJ5Z9Y) of the anchor, for changes entity:changed misses,
+// such as losing access to it.
+useLiveSubscription(
+  'page-anchor',
+  () =>
+    anchorType.value && anchorId.value ? liveEntityPath(anchorType.value, anchorId.value) : null,
+  () =>
+    void queryCache.invalidateQueries({
+      key: entityKeys.detail(anchorType.value ?? '', anchorId.value ?? ''),
+      exact: true,
+    })
+)
 const anchorGone = computed(() => shouldDropHeldContent(anchorQuery.error.value))
 const anchor = computed(() => (anchorGone.value ? undefined : anchorQuery.data.value))
 
@@ -172,7 +190,7 @@ watchEffect(() => {
 const viewProps = computed((): Record<string, unknown> => {
   const tab = activeTab.value
   if (!tab?.target) return {}
-  const key = tab.view === 'document' ? 'name' : 'id'
+  const key = tab.view === 'document' || tab.view === 'dashboard' ? 'name' : 'id'
   const out: Record<string, unknown> = { [key]: tab.target }
   if (anchorId.value && tab.scope === 'relation') {
     out.pageScope = {
@@ -193,17 +211,21 @@ const anchorMissing = computed(() => !!anchorType.value && (!anchorId.value || a
 /*
  * The tab on screen, published for the space's Create menu, which sits
  * outside the page and links a new row to the anchor. Only once the anchor
- * has loaded: a link names the face on screen.
+ * has loaded: a link names the face on screen. Until then `opening` tells
+ * the menu an entity page is on its way.
  */
 watchEffect(() => {
   const tab = activeTab.value
-  pageStore.current =
+  const current =
     anchorId.value && anchor.value && tab
       ? { page: props.page, tab: tab.id, entity: anchorId.value, ref: entityRef(anchor.value) }
       : undefined
+  pageStore.current = current
+  pageStore.opening = !!anchorId.value && !current && !anchorGone.value
 })
 onBeforeUnmount(() => {
   pageStore.current = undefined
+  pageStore.opening = false
 })
 </script>
 
@@ -212,11 +234,14 @@ onBeforeUnmount(() => {
     <RlEmptyState
       v-if="pageStore.loaded && pageConfig && anchorMissing"
       icon="warning"
-      title="Not found"
+      :title="t('page.notFound')"
       :description="
         anchorId
-          ? `There is no ${pageConfig.label.toLowerCase()} “${anchorId}”, or you cannot open it.`
-          : `Open a ${pageConfig.label.toLowerCase()} to see this page.`
+          ? t('page.anchorMissing', {
+              type: pageConfig.label.toLocaleLowerCase(intlLocale()),
+              id: anchorId,
+            })
+          : t('page.anchorNone', { type: pageConfig.label.toLocaleLowerCase(intlLocale()) })
       "
     />
     <component
@@ -228,13 +253,13 @@ onBeforeUnmount(() => {
     <RlEmptyState
       v-else-if="pageStore.loaded && !pageConfig"
       icon="warning"
-      title="Page not found"
-      :description="`There is no page “${page}” in the configuration.`"
+      :title="t('page.pageNotFound')"
+      :description="t('page.pageNotConfigured', { page })"
     />
     <RlEmptyState
       v-else-if="pageStore.loaded && tabs.length === 0"
-      title="Nothing to show"
-      description="This page has no views you can open."
+      :title="t('page.nothingToShow')"
+      :description="t('page.noViews')"
     />
   </div>
 </template>

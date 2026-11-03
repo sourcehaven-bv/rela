@@ -93,7 +93,7 @@ func TestSoftDelete_RestoreReadGate(t *testing.T) {
 		},
 		Assignments: map[string]string{"bob": "none", "carol": "reader", "alice": "none"},
 	}, app.store)
-	app.acl = d
+	setTestACL(t, app, d)
 	restoreAs := func(user, id string) *httptest.ResponseRecorder {
 		ctx := gateCtxFor(softDeleteUser(user), t, d)
 		return serveAs(ctx, app, http.MethodPost, "/api/v1/tickets/"+id+"/restore")

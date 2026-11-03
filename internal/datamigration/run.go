@@ -182,7 +182,7 @@ func (r *Runner) Run(ctx context.Context, plan []*File, apply bool) (*RunResult,
 			if err := r.advanceMarker(ctx, f); err != nil {
 				return res, err
 			}
-			r.auditFile(p, f, fr)
+			r.auditFile(ctx, p, f, fr)
 		}
 	}
 
@@ -211,15 +211,16 @@ func (r *Runner) advanceMarker(ctx context.Context, f *File) error {
 
 // auditFile emits the per-file audit record: names, hashes and counts —
 // never content (history-purge convention).
-func (r *Runner) auditFile(p principal.Principal, f *File, fr FileResult) {
+func (r *Runner) auditFile(ctx context.Context, p principal.Principal, f *File, fr FileResult) {
 	total := 0
 	for _, s := range fr.Steps {
 		total += s.Affected
 	}
 	r.deps.Audit.Record(audit.Record{
-		Time:      r.now().UTC(),
-		Op:        audit.OpDataMigration,
-		Principal: p,
+		Time:       r.now().UTC(),
+		Op:         audit.OpDataMigration,
+		Principal:  p,
+		AssertedBy: audit.AssertedByFrom(ctx),
 		Summary: fmt.Sprintf("data migration %s applied: %d steps, %d records changed",
 			f.Name, len(fr.Steps), total),
 	})
@@ -240,6 +241,15 @@ type Exec struct {
 // forEachEntity runs fn over every entity of typ (collect-then-write, the
 // normalize.go pattern: never mutate while iterating). Entities fn reports
 // changed are written back in Tx batches; in dry-run they are only counted.
+//
+// # Every fn call finishes before the first write
+//
+// The lua step's graph reads (rela.get_entity, rela.get_relations) rely on
+// this order. Because nothing of the step is stored until fn has seen every
+// entity, every read inside the step sees the store as it was before the
+// step, whatever order the rows come in. Writing as the loop goes would make
+// one entity's answer depend on whether another was patched first.
+// TestLuaReads_SeePreStepStateInEitherOrder pins it.
 //
 // # Every content state, not just the bare row
 //
@@ -363,7 +373,7 @@ func newCapturer(v VersionCapture, meta *metamodel.Metamodel, tool, triggeredBy 
 	if v == nil {
 		return nil
 	}
-	proj := meta.RenderProjection()
+	proj := metamodel.NewRenderProjection(meta)
 	projJSON, err := proj.JSON()
 	if err != nil {
 		slog.Error("datamigration.capture_projection_marshal_failed", "error", err)

@@ -12,6 +12,7 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/aclmap"
+	"github.com/Sourcehaven-BV/rela/internal/aclstore"
 	"github.com/Sourcehaven-BV/rela/internal/appbuild"
 	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
@@ -44,7 +45,7 @@ import (
 // answer reflects data-entry-transport access — CLI/MCP/scheduler writes
 // authorize against the raw principal. See internal/acl/declarative.go.
 type ACLWhoCanCmd struct {
-	Verb   string `arg:"" help:"Access verb to check: read|create|update|delete." enum:"read,create,update,delete"`
+	Verb   string `arg:"" help:"Access verb to check: read|create|update|delete|convert." enum:"read,create,update,delete,convert"`
 	Entity string `arg:"" help:"Entity ID to report access for (e.g. INC-042). The report is per entity, so a faced entity takes its bare id, not ID@face."`
 }
 
@@ -171,19 +172,43 @@ var errNoACLPolicy = stderrors.New("aclmap: no acl.yaml")
 // (via errors.Is) when the project has no policy so the caller can print
 // its own friendly message.
 func buildACLEngine(svc *readServices) (*aclmap.Engine, error) {
+	engine, _, err := buildACLEngineWithPolicy(svc)
+	return engine, err
+}
+
+// buildACLEngineWithPolicy is [buildACLEngine] that also returns the loaded
+// policy, for a report that needs the policy's own vocabulary (the
+// permission names its roles grant).
+func buildACLEngineWithPolicy(svc *readServices) (*aclmap.Engine, *acl.Policy, error) {
 	policyPath := filepath.Join(svc.Paths.Root, "acl.yaml")
 	policy, err := acl.LoadPolicy(policyPath)
 	if err != nil {
 		if stderrors.Is(err, os.ErrNotExist) {
-			return nil, errNoACLPolicy
+			return nil, nil, errNoACLPolicy
 		}
-		return nil, fmt.Errorf("load acl.yaml: %w", err)
+		return nil, nil, fmt.Errorf("load acl.yaml: %w", err)
 	}
 	if vErr := appbuild.ValidateACLPolicy(policy, svc.Meta); vErr != nil {
-		return nil, fmt.Errorf("acl.yaml invalid for this project: %w", vErr)
+		return nil, nil, fmt.Errorf("acl.yaml invalid for this project: %w", vErr)
 	}
-	decl, err := acl.NewDeclarative(policy, acl.NewStoreGraph(svc.Store), svc.Store,
-		acl.WithPrincipalLookup(acl.NewStorePrincipalLookup(svc.Store)))
+	engine, err := newACLEngine(svc, policy)
+	if err != nil {
+		return nil, nil, err
+	}
+	return engine, policy, nil
+}
+
+// newACLEngine wires an aclmap.Engine over the store for a validated policy.
+func newACLEngine(svc *readServices, policy *acl.Policy) (*aclmap.Engine, error) {
+	graph, err := aclstore.NewGraph(svc.Store)
+	if err != nil {
+		return nil, fmt.Errorf("build ACL resolver: %w", err)
+	}
+	lookup, err := aclstore.NewPrincipalLookup(svc.Store)
+	if err != nil {
+		return nil, fmt.Errorf("build ACL resolver: %w", err)
+	}
+	decl, err := acl.NewDeclarative(policy, graph, svc.Store, acl.WithPrincipalLookup(lookup))
 	if err != nil {
 		return nil, fmt.Errorf("build ACL resolver: %w", err)
 	}
@@ -210,10 +235,11 @@ func recordACLQuery(ctx context.Context, sink audit.Audit, verb, entityID string
 		return
 	}
 	sink.Record(audit.Record{
-		Time:      time.Now().UTC(),
-		Op:        audit.OpACLQuery,
-		Subject:   &audit.Subject{Kind: "entity", ID: entityID},
-		Principal: principal.From(ctx),
-		Summary:   "who-can " + verb,
+		Time:       time.Now().UTC(),
+		Op:         audit.OpACLQuery,
+		Subject:    &audit.Subject{Kind: "entity", ID: entityID},
+		Principal:  principal.From(ctx),
+		AssertedBy: audit.AssertedByFrom(ctx),
+		Summary:    "who-can " + verb,
 	})
 }

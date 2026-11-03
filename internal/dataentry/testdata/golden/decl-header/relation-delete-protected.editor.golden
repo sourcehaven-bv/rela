@@ -1,0 +1,14 @@
+request: DELETE /api/v1/tickets/TKT-1/relations/implements/POL-1
+identity: header editor@example.test
+status: 403
+reads: GetRelation=1 GraphQueryHeaders=1 ListEntities=1 ListEntityHeaders=2 ListRelations=1
+breadth: ListEntities=1/1 ListEntityHeaders=2/2 ListRelations=0/1
+bodies: GraphQuery=0/1 ListEntities=1/1 ListEntityHeaders=0/2
+versions: 
+body:
+{
+  "error": "forbidden",
+  "reason": "relation \"implements\" is not removable",
+  "rule_id": "relation-affordance:not-removable:implements",
+  "rule_kind": "affordance"
+}

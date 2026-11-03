@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
 	"sort"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
@@ -69,8 +70,8 @@ type PolicyResolver struct {
 	// across grants of that type.
 	envs map[string]*predicate.Env
 
-	// grants is indexed by (role, entityType) → compiled grant blocks.
-	grants map[grantKey]*compiledGrants
+	// grants is indexed by (role, entityType, face) → compiled grant blocks.
+	grants grantIndex
 
 	// typesWithVisible records entity types for which ANY role declares a
 	// `visible:` block. Under the historical marker ([WithHistoricalSubject])
@@ -87,9 +88,39 @@ type PolicyResolver struct {
 	traversalProgs map[string][]*predicate.Program
 }
 
+// grantKey names the compiled grants of one block key of one role. face is
+// empty for a key that names the type alone, which applies on every face of
+// the type. A `type@face` key (accepted in `fields:` and `options:` only)
+// sets face, and its grants apply on rows of that face only.
 type grantKey struct {
 	role       string
 	entityType string
+	face       entity.Face
+}
+
+// grantIndex holds the compiled blocks of every role, by block key.
+type grantIndex map[grantKey]*compiledGrants
+
+// typeGrants returns the grants role declares under the bare entityType key,
+// or nil.
+func (g grantIndex) typeGrants(role, entityType string) *compiledGrants {
+	return g[grantKey{role: role, entityType: entityType}]
+}
+
+// rowGrants returns the grants of role that apply to a row of e's type and
+// face: the bare type key, then the key naming e's face. Within one role the
+// two are a union, as roles are across the row (BUG-Y5UF3K).
+func (g grantIndex) rowGrants(role string, e *entity.Entity) []*compiledGrants {
+	out := make([]*compiledGrants, 0, 2)
+	if cg := g.typeGrants(role, e.Type); cg != nil {
+		out = append(out, cg)
+	}
+	if e.Face != "" {
+		if cg := g[grantKey{role: role, entityType: e.Type, face: e.Face}]; cg != nil {
+			out = append(out, cg)
+		}
+	}
+	return out
 }
 
 // compiledGrants is the per-(role, type) bundle of compiled grants. A
@@ -150,7 +181,7 @@ func New(
 		lookup:           lookup,
 		declarative:      declarative,
 		envs:             map[string]*predicate.Env{},
-		grants:           map[grantKey]*compiledGrants{},
+		grants:           grantIndex{},
 		typesWithVisible: map[string]bool{},
 		traversalProgs:   map[string][]*predicate.Program{},
 	}
@@ -239,8 +270,7 @@ func (r *PolicyResolver) env(entityType string) (*predicate.Env, error) {
 // grants. Returns the collected compile errors (path-prefixed).
 func (r *PolicyResolver) compileRole(roleName string, role acl.RoleDef) []error {
 	var errs []error
-	get := func(entityType string) *compiledGrants {
-		k := grantKey{roleName, entityType}
+	get := func(k grantKey) *compiledGrants {
 		g := r.grants[k]
 		if g == nil {
 			g = &compiledGrants{}
@@ -249,27 +279,47 @@ func (r *PolicyResolver) compileRole(roleName string, role acl.RoleDef) []error 
 		return g
 	}
 
-	for et, grants := range role.Fields {
-		g := get(et)
+	for key, grants := range role.Fields {
+		bk, err := r.parseBlockKey(roleName, "fields", key, true)
+		if err != nil {
+			errs = append(errs, err)
+			continue
+		}
+		g := get(bk.grantKey(roleName))
 		g.declaredFields = true
-		errs = append(errs, r.compileFieldBlock(roleName, et, "fields", grants, &g.fields)...)
+		errs = append(errs, r.compileFieldBlock(roleName, bk, "fields", grants, &g.fields)...)
 	}
-	for et, grants := range role.Visible {
-		g := get(et)
+	for key, grants := range role.Visible {
+		bk, err := r.parseBlockKey(roleName, blockVisible, key, false)
+		if err != nil {
+			errs = append(errs, err)
+			continue
+		}
+		g := get(bk.grantKey(roleName))
 		g.declaredVisible = true
-		r.typesWithVisible[et] = true
-		errs = append(errs, r.compileFieldBlock(roleName, et, "visible", grants, &g.visible)...)
+		r.typesWithVisible[bk.entityType] = true
+		errs = append(errs, r.compileFieldBlock(roleName, bk, blockVisible, grants, &g.visible)...)
 	}
-	for et, grants := range role.Options {
-		g := get(et)
+	for key, grants := range role.Options {
+		bk, err := r.parseBlockKey(roleName, "options", key, true)
+		if err != nil {
+			errs = append(errs, err)
+			continue
+		}
+		g := get(bk.grantKey(roleName))
 		g.declaredOptions = true
-		errs = append(errs, r.compileOptionBlock(roleName, et, grants, &g.options)...)
+		errs = append(errs, r.compileOptionBlock(roleName, bk, grants, &g.options)...)
 	}
-	for et, grants := range role.Relations {
-		g := get(et)
+	for key, grants := range role.Relations {
+		bk, err := r.parseBlockKey(roleName, "relations", key, false)
+		if err != nil {
+			errs = append(errs, err)
+			continue
+		}
+		g := get(bk.grantKey(roleName))
 		g.declaredRelations = true
 		for i, rg := range grants {
-			errs = append(errs, r.compileRelationGrant(g, roleName, et, i, rg)...)
+			errs = append(errs, r.compileRelationGrant(g, roleName, bk.entityType, i, rg)...)
 		}
 	}
 	return errs
@@ -279,18 +329,25 @@ func (r *PolicyResolver) compileRole(roleName string, role acl.RoleDef) []error 
 // appending compiled grants to out. block is the YAML key for error
 // paths ("fields" or "visible").
 func (r *PolicyResolver) compileFieldBlock(
-	roleName, entityType, block string, grants []acl.FieldGrant, out *[]compiledFieldGrant,
+	roleName string, bk blockKey, block string, grants []acl.FieldGrant, out *[]compiledFieldGrant,
 ) []error {
 	var errs []error
+	entityType := bk.entityType
 	for i, fg := range grants {
-		if verr := r.validateField(roleName, entityType, block, i, fg.Field); verr != nil {
+		if verr := r.validateField(roleName, bk, block, i, fg.Field); verr != nil {
 			errs = append(errs, verr)
 			continue
 		}
-		prog, err := r.compile(roleName, entityType, block, i, fg.When)
+		prog, err := r.compile(roleName, bk.key, entityType, block, i, fg.When)
 		if err != nil {
 			errs = append(errs, err)
 			continue
+		}
+		if block == blockVisible {
+			if err := requireLowerable(r.meta, roleName, entityType, i, fg.Field, prog); err != nil {
+				errs = append(errs, err)
+				continue
+			}
 		}
 		*out = append(*out, compiledFieldGrant{field: fg.Field, program: prog})
 	}
@@ -298,15 +355,15 @@ func (r *PolicyResolver) compileFieldBlock(
 }
 
 func (r *PolicyResolver) compileOptionBlock(
-	roleName, entityType string, grants []acl.OptionGrant, out *[]compiledOptionGrant,
+	roleName string, bk blockKey, grants []acl.OptionGrant, out *[]compiledOptionGrant,
 ) []error {
 	var errs []error
 	for i, og := range grants {
-		if verr := r.validateOption(roleName, entityType, i, og.Field, og.Option); verr != nil {
+		if verr := r.validateOption(roleName, bk, i, og.Field, og.Option); verr != nil {
 			errs = append(errs, verr)
 			continue
 		}
-		prog, err := r.compile(roleName, entityType, "options", i, og.When)
+		prog, err := r.compile(roleName, bk.key, bk.entityType, "options", i, og.When)
 		if err != nil {
 			errs = append(errs, err)
 			continue
@@ -325,7 +382,7 @@ func (r *PolicyResolver) compileRelationGrant(
 		// none of its dimensions can meaningfully gate anything.
 		return append(errs, verr)
 	}
-	prog, err := r.compile(roleName, entityType, "relations", i, rg.When)
+	prog, err := r.compile(roleName, entityType, entityType, "relations", i, rg.When)
 	if err != nil {
 		errs = append(errs, err)
 	}
@@ -337,7 +394,7 @@ func (r *PolicyResolver) compileRelationGrant(
 	}
 	metaFailed := false
 	for j, fg := range rg.Fields {
-		fprog, ferr := r.compile(roleName, entityType,
+		fprog, ferr := r.compile(roleName, entityType, entityType,
 			fmt.Sprintf("relations[%d].fields", i), j, fg.When)
 		if ferr != nil {
 			errs = append(errs, ferr)
@@ -347,7 +404,7 @@ func (r *PolicyResolver) compileRelationGrant(
 		cr.fields = append(cr.fields, compiledFieldGrant{field: fg.Field, program: fprog})
 	}
 	for j, fg := range rg.Visible {
-		fprog, ferr := r.compile(roleName, entityType,
+		fprog, ferr := r.compile(roleName, entityType, entityType,
 			fmt.Sprintf("relations[%d].visible", i), j, fg.When)
 		if ferr != nil {
 			errs = append(errs, ferr)
@@ -368,13 +425,16 @@ func (r *PolicyResolver) compileRelationGrant(
 	return errs
 }
 
-// compile compiles one grant predicate. An empty `when` yields a nil
+// compile compiles one grant predicate against entityType's env. key is the
+// block key as written, for error paths. An empty `when` yields a nil
 // program, which the evaluator (passes) treats as an unconditional
 // grant — nil is the intended sentinel here, not an error-absent
 // invalid value.
 //
 //nolint:nilnil // nil program is the documented "unconditional" sentinel
-func (r *PolicyResolver) compile(roleName, entityType, block string, idx int, when string) (*predicate.Program, error) {
+func (r *PolicyResolver) compile(
+	roleName, key, entityType, block string, idx int, when string,
+) (*predicate.Program, error) {
 	if when == "" {
 		return nil, nil
 	}
@@ -382,7 +442,7 @@ func (r *PolicyResolver) compile(roleName, entityType, block string, idx int, wh
 	if err != nil {
 		// coverage-ignore: defensive: r.env only errors when buildEnv errors, which cannot happen (constant env
 		// declarations); unreachable
-		return nil, fmt.Errorf("roles.%s.%s.%s[%d]: %w", roleName, block, entityType, idx, err)
+		return nil, fmt.Errorf("roles.%s.%s.%s[%d]: %w", roleName, block, key, idx, err)
 	}
 	prog, err := predicate.Compile(env, when)
 	if err == nil && len(prog.Traversals()) > 0 {
@@ -396,18 +456,43 @@ func (r *PolicyResolver) compile(roleName, entityType, block string, idx int, wh
 		if err == nil {
 			r.traversalProgs[entityType] = append(r.traversalProgs[entityType], prog)
 			warnConditionallyVisible(r.meta, r.policy, entityType,
-				fmt.Sprintf("acl.yaml roles.%s.%s.%s[%d]", roleName, block, entityType, idx), prog)
+				fmt.Sprintf("acl.yaml roles.%s.%s.%s[%d]", roleName, block, key, idx), prog)
 		}
 	}
 	if err != nil {
-		return nil, fmt.Errorf("roles.%s.%s.%s[%d].when: %w", roleName, block, entityType, idx, err)
+		return nil, fmt.Errorf("roles.%s.%s.%s[%d].when: %w", roleName, block, key, idx, err)
 	}
 	return prog, nil
 }
 
 // FieldVerdicts computes the sparse field-level verdicts for e against
-// the principal carried on ctx.
+// the principal carried on ctx, for reading e and for updating it.
+//
+// Every role that applies to e contributes a set per dimension, and a field
+// or option is allowed when any contribution holds it (BUG-Y5UF3K). A role
+// with a block for e's type contributes what the block grants on e. A role
+// without one contributes every declared field (or option) when it holds the
+// dimension's verb on e's type and face: read for visibility, update for
+// writability and options. The client ceiling then removes fields.
 func (r *PolicyResolver) FieldVerdicts(ctx context.Context, e *entity.Entity) FieldVerdicts {
+	return r.fieldVerdicts(ctx, e, acl.VerbUpdate)
+}
+
+// CreateFieldVerdicts is [PolicyResolver.FieldVerdicts] for creating e: a role
+// without a `fields:` or `options:` block qualifies by holding create on e's
+// type and face rather than update. A create gate asks this, so a role that may
+// create a type and writes every field of it on create keeps doing so when the
+// principal also holds a role with a `fields:` block. Asking update here would
+// narrow it; asking "create or update" in FieldVerdicts instead would let a
+// create-only role open every field on an update the other role authorizes.
+func (r *PolicyResolver) CreateFieldVerdicts(ctx context.Context, e *entity.Entity) FieldVerdicts {
+	return r.fieldVerdicts(ctx, e, acl.VerbCreate)
+}
+
+// fieldVerdicts computes the field verdicts for e. writeVerb is the verb a
+// role without a `fields:` or `options:` block must hold to contribute every
+// field or option: update for an existing row, create for a new one.
+func (r *PolicyResolver) fieldVerdicts(ctx context.Context, e *entity.Entity, writeVerb acl.Verb) FieldVerdicts {
 	out := FieldVerdicts{}
 	if e == nil || r.policy == nil {
 		return out
@@ -420,54 +505,127 @@ func (r *PolicyResolver) FieldVerdicts(ctx context.Context, e *entity.Entity) Fi
 	// Historical type-level closed-world (TKT-73C6B2): when serializing a
 	// snapshot of a type that ANY role gates with `visible:`, force the visible
 	// dimension to opt in up front. Ordinarily the `visible:` closed-world is
-	// role-scoped — it bites only for roles the reader holds that declare a
+	// role-scoped: it bites only for roles the reader holds that declare a
 	// block, so a reader with no such role sees all fields and is protected only
 	// by the row-level read gate. For history that is not enough: the reader's
 	// live roles are reduced to globals-only (resolveViaDeclarative), which can
 	// drop the very role that declared the block, and the reduced set would
-	// otherwise default to all-visible — leaking a field that was redacted at
+	// otherwise default to all-visible, leaking a field that was redacted at
 	// write time. Opting in here means every field not affirmatively granted
-	// visible by a globally-held role is hidden. Deliberately stricter than a
-	// live read; a holder of acl.PermHistoryReadRedacted bypasses redaction
-	// entirely at the handler.
+	// visible by a globally-held role is hidden.
+	//
+	// A global role that declares no `visible:` block but reads the snapshot's
+	// type and face is such an affirmative grant, of every field (BUG-Y5UF3K).
+	// It is how that role answers on every live read, and it depends only on
+	// the reader's assignments, never on the subject's live graph. History
+	// roles are a subset of live roles and the union only grows with roles, so
+	// history stays no wider than a live read by the same reader. Still
+	// stricter than live; a holder of acl.PermHistoryReadRedacted bypasses
+	// redaction entirely at the handler.
 	if IsHistoricalSubject(ctx) && r.typesWithVisible[e.Type] {
-		visible.optIn("hidden")
+		visible.optIn(kindHidden)
 	}
 
-	bc, roles := r.bindingFor(ctx, e)
+	req, err := r.requestFor(ctx)
+	if err != nil {
+		return r.denyAllFields(e.Type)
+	}
+	fieldUniverse := r.declaredFields(e.Type)
+	enumValues := r.enumOptions(e.Type)
+
+	bc, roles := r.bindingFor(ctx, req, e)
 	if bc != nil {
+		var blockless blocklessRoles
 		for _, role := range roles {
-			g := r.grants[grantKey{role, e.Type}]
-			if g == nil {
-				continue
-			}
-			if g.declaredFields {
-				r.applyFieldGrants(ctx, bc, role, "read-only", g.fields, writable)
-			}
-			if g.declaredVisible {
-				r.applyFieldGrants(ctx, bc, role, "hidden", g.visible, visible)
-			}
-			if g.declaredOptions {
-				r.applyOptionGrants(ctx, bc, role, g.options, options)
-			}
+			blockless.add(role, r.applyRoleBlocks(ctx, bc, role, writable, visible, options))
 		}
+		blockless.contribute(bc, writeVerb, fieldUniverse, enumValues, writable, visible, options)
 	}
 
 	// Client attenuation, field axis (TKT-IAC8TX). Applied AFTER every role
 	// grant because a ceiling only ever removes: whatever the roles allowed,
 	// this can subtract from, and nothing here can add. Applied BEFORE the
 	// universe is resolved so a `visible:` ceiling gets the same closed-world
-	// treatment a role-declared block does — which is what makes a property
+	// treatment a role-declared block does, which is what makes a property
 	// added to the metamodel later hidden from a restricted client by default.
-	r.applyClientCeiling(ctx, e.Type, visible)
+	r.applyClientCeiling(req, e.Type, visible)
 
-	fieldUniverse := r.declaredFields(e.Type)
 	out.Writable, out.Attribution = writable.deny(fieldUniverse, out.Attribution)
-	visMap, attr := visible.deny(fieldUniverse, out.Attribution)
-	out.Visible = visMap
-	out.Attribution = attr
-	out.Options, out.Attribution = options.deny(r.enumOptions(e.Type), out.Attribution)
+	out.Visible, out.Attribution = visible.deny(fieldUniverse, out.Attribution)
+	out.Options, out.Attribution = options.deny(enumValues, out.Attribution)
 	return out
+}
+
+// blocklessRoles lists, per dimension, the roles on a row that declare no
+// block for the row's type in that dimension.
+type blocklessRoles struct {
+	fields, visible, options []string
+}
+
+// add records role under every dimension declared reports false for.
+func (b *blocklessRoles) add(role string, declared declaredBlocks) {
+	if !declared.fields {
+		b.fields = append(b.fields, role)
+	}
+	if !declared.visible {
+		b.visible = append(b.visible, role)
+	}
+	if !declared.options {
+		b.options = append(b.options, role)
+	}
+}
+
+// contribute adds what each block-less role gives: every field (or option)
+// of a dimension whose verb the role holds on the row. Only a dimension some
+// block closed on this row is visited: elsewhere nothing is denied and the
+// contribution would change nothing, so the verb is not asked.
+func (b *blocklessRoles) contribute(
+	bc *bindingContext, writeVerb acl.Verb, fieldUniverse []string, enumValues map[string][]string,
+	writable, visible *dimension, options *optionDimension,
+) {
+	holdsWrite := bc.verbMemo(writeVerb)
+	if writable.optedIn && slices.ContainsFunc(b.fields, holdsWrite) {
+		writable.allowAll(fieldUniverse)
+	}
+	holdsRead := func(role string) bool { return bc.roleHoldsVerb(role, acl.VerbRead) }
+	if visible.optedIn && slices.ContainsFunc(b.visible, holdsRead) {
+		visible.allowAll(fieldUniverse)
+	}
+	if len(options.optedInFields) > 0 && slices.ContainsFunc(b.options, holdsWrite) {
+		options.allowAll(enumValues)
+	}
+}
+
+// declaredBlocks reports which field blocks a role declares for a type.
+type declaredBlocks struct {
+	fields, visible, options bool
+}
+
+// applyRoleBlocks folds the blocks role declares for the row's type and face
+// into the dimensions and reports which it declared. A role with a block
+// contributes what the block grants on the row; what a role without one
+// contributes is decided after every role is folded (see fieldVerdicts). A
+// `type@face` block counts on rows of its face only, beside the bare type
+// block (see grantIndex.rowGrants).
+func (r *PolicyResolver) applyRoleBlocks(
+	ctx context.Context, bc *bindingContext, role string, writable, visible *dimension, options *optionDimension,
+) declaredBlocks {
+	var declared declaredBlocks
+	for _, g := range r.grants.rowGrants(role, bc.entity) {
+		if g.declaredFields {
+			r.applyFieldGrants(ctx, bc, role, "read-only", g.fields, writable)
+			declared.fields = true
+		}
+		if g.declaredVisible {
+			r.applyFieldGrants(ctx, bc, role, kindHidden, g.visible, visible)
+			declared.visible = true
+		}
+		if g.declaredOptions {
+			r.applyOptionGrants(ctx, bc, role, g.options, options)
+			declared.options = true
+		}
+	}
+	return declared
 }
 
 // declaredFields returns the metamodel-declared property names for an
@@ -532,14 +690,18 @@ func (r *PolicyResolver) relationVerdicts(ctx context.Context, e *entity.Entity,
 	if e == nil || r.policy == nil {
 		return out
 	}
-	bc, roles := r.bindingFor(ctx, e)
+	req, err := r.requestFor(ctx)
+	if err != nil {
+		return r.denyAllRelations()
+	}
+	bc, roles := r.bindingFor(ctx, req, e)
 	if bc == nil {
 		return out
 	}
 
 	acc := newRelationAccumulator()
 	for _, role := range roles {
-		g := r.grants[grantKey{role, e.Type}]
+		g := r.grants.typeGrants(role, e.Type)
 		if g == nil || !g.declaredRelations {
 			continue
 		}
@@ -592,25 +754,29 @@ func (r *PolicyResolver) RelationFieldVerdicts(
 	}
 
 	visible := newDimension()
-	bc, roles := r.bindingFor(ctx, from)
+	req, err := r.requestFor(ctx)
+	if err != nil {
+		// No identity: hide every meta value on the edge.
+		visible.optIn(kindHidden)
+		denied, _ := visible.deny(metaKeys, nil)
+		return denied
+	}
+	bc, roles := r.bindingFor(ctx, req, from)
 	if bc != nil {
+		var blockless []string
 		for _, role := range roles {
-			g := r.grants[grantKey{role, from.Type}]
-			if g == nil || !g.declaredRelations {
-				continue
+			if !r.applyRelationVisible(ctx, bc, role, relType, visible) {
+				blockless = append(blockless, role)
 			}
-			for _, rg := range g.relations {
-				if rg.relation != relType || len(rg.visible) == 0 {
-					continue
-				}
-				visible.optIn("hidden")
-				grantPassed := r.passes(ctx, bc, rg.program, role)
-				for _, fg := range rg.visible {
-					if grantPassed && r.passes(ctx, bc, fg.program, role) {
-						visible.allow(fg.field)
-					} else {
-						visible.observeDeny(fg.field, role)
-					}
+		}
+		// Role union (BUG-Y5UF3K), as in FieldVerdicts: a role that declares
+		// no meta `visible:` list for relType shows every meta key on the edge
+		// when it reads the source's type and face, so holding it never hides
+		// a key another role restricts.
+		if visible.optedIn {
+			for _, role := range blockless {
+				if bc.roleHoldsVerb(role, acl.VerbRead) {
+					visible.allowAll(metaKeys)
 				}
 			}
 		}
@@ -618,6 +784,35 @@ func (r *PolicyResolver) RelationFieldVerdicts(
 
 	denied, _ := visible.deny(metaKeys, nil)
 	return denied
+}
+
+// applyRelationVisible folds role's meta `visible:` grants for relType into
+// visible and reports whether the role declares any. A meta key is allowed
+// when both the relation grant's `when:` and the key's own `when:` pass.
+func (r *PolicyResolver) applyRelationVisible(
+	ctx context.Context, bc *bindingContext, role, relType string, visible *dimension,
+) bool {
+	g := r.grants.typeGrants(role, bc.entity.Type)
+	if g == nil || !g.declaredRelations {
+		return false
+	}
+	declared := false
+	for _, rg := range g.relations {
+		if rg.relation != relType || len(rg.visible) == 0 {
+			continue
+		}
+		declared = true
+		visible.optIn(kindHidden)
+		grantPassed := r.passes(ctx, bc, rg.program, role)
+		for _, fg := range rg.visible {
+			if grantPassed && r.passes(ctx, bc, fg.program, role) {
+				visible.allow(fg.field)
+			} else {
+				visible.observeDeny(fg.field, role)
+			}
+		}
+	}
+	return declared
 }
 
 // TransitionVerdicts resolves, per state-machine-typed property on e, the
@@ -662,13 +857,13 @@ func (r *PolicyResolver) TransitionVerdicts(
 
 // transitionGuard adapts the resolver's ACL into the subject-aware
 // [statemachine.Guard] the transition resolver needs, bound to the ctx
-// principal. It resolves via the per-request [acl.Request] on ctx when present
-// (reusing the list-handler scope), else opens one for the principal. Answers
+// principal. It evaluates with the per-operation [acl.Request] the request edge
+// attached to ctx; with none attached the guard holds no permission. Answers
 // via [acl.Request.HoldsPermissionForEntity] so ownership-relation-conferred
 // permissions are honored (the same subject-aware resolution the write-path
 // guard uses).
 //
-// This guard fails CLOSED unconditionally: an unstamped/unresolvable principal
+// This guard fails CLOSED unconditionally: a ctx without a resolved identity
 // holds no permission, so guarded transitions read as not-performable. Unlike
 // the write-path guard (appbuild.transitionGuard), it has NO "no policy → inert
 // allow" tier — because it is only ever wired under an active policy
@@ -678,13 +873,9 @@ func (r *PolicyResolver) TransitionVerdicts(
 // would be shown zero performable transitions even where a write would succeed
 // inert. If such a caller is ever needed, add the policy-active tier here first.
 func (r *PolicyResolver) transitionGuard(ctx context.Context) statemachine.Guard {
-	req := acl.FromContext(ctx)
-	if req == nil {
-		var err error
-		req, err = r.declarative.ForPrincipal(principal.From(ctx))
-		if err != nil {
-			req = nil // unstamped principal → holds no guarded permission
-		}
+	req, err := r.requestFor(ctx)
+	if err != nil {
+		return requestGuard{} // no resolved identity → holds no guarded permission
 	}
 	return requestGuard{req: req}
 }
@@ -706,12 +897,14 @@ func (g requestGuard) HoldsPermission(ctx context.Context, subjectID, permission
 // and builds the binding context shared across grant evaluations for
 // this call. Returns nil bc when no policy roles apply.
 //
-// Role resolution flows through [acl.Declarative.ForPrincipal] /
-// Request.ForEntity, which includes group expansion and containment
-// inheritance.
-func (r *PolicyResolver) bindingFor(ctx context.Context, e *entity.Entity) (bc *bindingContext, roles []string) {
+// Role resolution flows through the operation's [acl.Request]
+// (Request.Globals / Request.ForEntity), which carries group expansion
+// and adds containment inheritance.
+func (r *PolicyResolver) bindingFor(
+	ctx context.Context, req *acl.Request, e *entity.Entity,
+) (bc *bindingContext, roles []string) {
 	p := principal.From(ctx)
-	global, roles := r.resolveViaDeclarative(ctx, p, e)
+	global, roles := r.resolveViaDeclarative(ctx, req, e)
 	if len(roles) == 0 {
 		return nil, nil
 	}
@@ -727,6 +920,7 @@ func (r *PolicyResolver) bindingFor(ctx context.Context, e *entity.Entity) (bc *
 		lookup:      r.lookup,
 		userID:      p.User,
 		resolver:    r,
+		roleGrants:  req,
 	}
 	bc.userFuncs = predicatefns.CurrentUserBindings(bc.identity())
 	return bc, roles
@@ -750,31 +944,10 @@ func (r *PolicyResolver) bindingFor(ctx context.Context, e *entity.Entity) (bc *
 // A denial attributed to the ceiling names the baseline rather than a role, so
 // an operator debugging a hidden field can tell "no role grants this" apart
 // from "this client is attenuated".
-func (r *PolicyResolver) applyClientCeiling(ctx context.Context, entityType string, visible *dimension) {
-	// Reuse the per-request scope when one is attached, else open a fresh
-	// Request — mirroring resolveViaDeclarative below.
-	//
-	// The fallback is load-bearing, not defensive. Returning early here (the
-	// original shape) made the ceiling depend on upstream wiring: role
-	// resolution opened its own Request and the ceiling did not, so on a ctx
-	// carrying a principal but no Request the roles applied and the
-	// attenuation silently did NOT. That is the fail-open direction — a
-	// restricted client keeping its user's full field visibility — and it is
-	// invisible, because nothing errors and the roles still resolve.
-	// visibility.PolicyRedactor forwards whatever ctx it is handed and binds
-	// nothing itself, so the guarantee must live here.
-	req := acl.FromContext(ctx)
-	if req == nil {
-		var err error
-		req, err = r.declarative.ForPrincipal(principal.From(ctx))
-		if err != nil {
-			// Unstamped: no verified principal_type, so no baseline can match.
-			// A ceiling only ever narrows, so there is nothing to narrow toward
-			// and returning is correct — unlike the stamped-but-unbound case
-			// above, which this recovers.
-			return
-		}
-	}
+func (r *PolicyResolver) applyClientCeiling(req *acl.Request, entityType string, visible *dimension) {
+	// req is the same Request the roles were resolved from, so the roles and
+	// the ceiling cannot come from different scopes. FieldVerdicts fails
+	// closed before reaching here when no Request is attached.
 	fc := req.FieldCeilingFor(entityType)
 	if !fc.Constrains() {
 		return
@@ -793,47 +966,14 @@ func (r *PolicyResolver) applyClientCeiling(ctx context.Context, entityType stri
 }
 
 // resolveViaDeclarative resolves the effective role set for
-// (principal, entity) via acl.Declarative. When ForPrincipal succeeds,
-// attribution flows from the resolver (group expansion, containment
-// inheritance, local roles). When it errors (the unstamped-principal
-// case), the policy's `everyone` role still applies — by design
-// `everyone` is held implicitly by every principal, authenticated or
-// not (see [acl.EveryoneRole] doc). Without this fallback, anonymous
-// read/visible grants would silently degrade to "no role at all" on
-// the unstamped path.
+// (principal, entity) from the operation's [acl.Request]: its global
+// roles plus, for a live subject, the local and inherited roles
+// reachable from the entity.
 func (r *PolicyResolver) resolveViaDeclarative(
-	ctx context.Context, p principal.Principal, e *entity.Entity,
+	ctx context.Context, req *acl.Request, e *entity.Entity,
 ) (global map[string]bool, roles []string) {
 	global = map[string]bool{}
-	if r.policy == nil {
-		// coverage-ignore-start: defensive: both entry points (FieldVerdicts/RelationVerdicts) short-circuit on
-		// r.policy==nil before reaching
-		// bindingFor, so resolveViaDeclarative is never called with a nil policy today
-		// Defensive: FieldVerdicts / RelationVerdicts already short-circuit
-		// when policy is nil, but bindingFor is now the sole entry point
-		// and a future caller without that guard would otherwise panic on
-		// r.policy.Roles below.
-		return global, nil
-		// coverage-ignore-end
-	}
-	// RR-JJYW: reuse the per-request Request scope when one is attached
-	// to ctx (list handlers do this). Falls back to opening a fresh
-	// Request per call when none is attached — back-compat for single-
-	// entity handlers and tests.
-	req := acl.FromContext(ctx)
-	if req == nil {
-		var err error
-		req, err = r.declarative.ForPrincipal(p)
-		if err != nil {
-			// Unstamped principal: only `everyone` (if declared) applies.
-			if _, ok := r.policy.Roles[acl.EveryoneRole]; ok {
-				global[acl.EveryoneRole] = true
-				roles = []string{acl.EveryoneRole}
-			}
-			return global, roles
-		}
-	}
-	gr := req.Globals(ctx)
+	gr := req.Globals()
 	for _, a := range gr.Attributions {
 		global[a.Role] = true
 	}
@@ -871,6 +1011,14 @@ func (r *PolicyResolver) resolveViaDeclarative(
 	return global, roles
 }
 
+// roleVerbGrants answers whether a role that applies to a row grants a verb
+// on the row's type and face. FieldVerdicts asks it of a role that declares
+// no block for the type (BUG-Y5UF3K). [*acl.Request] satisfies it with the
+// client ceiling applied.
+type roleVerbGrants interface {
+	RoleGrantsVerbOnFace(role string, verb acl.Verb, entityType string, face entity.Face) bool
+}
+
 // passes reports whether a grant's predicate evaluates true. A nil
 // program is unconditional (true). A predicate runtime error fails
 // closed (false) with a slog.Warn for operator visibility (DR-S5). The
@@ -888,9 +1036,8 @@ func (r *PolicyResolver) passes(
 	// id", and `entity.owner == current_user.id` against an owner that is
 	// itself empty would otherwise GRANT. Refuse the grant — the direction
 	// every other identity gap in this codebase takes — rather than
-	// evaluate it against a placeholder. Only the `everyone` role can bring
-	// an unidentified caller here at all (resolveViaDeclarative), so this
-	// costs an anonymous-readable workspace exactly its per-user clauses.
+	// evaluate it against a placeholder. A caller with no bound Request
+	// fails closed before reaching here (requestFor), so this is a backstop.
 	if bc.identity() == "" && predicatefns.RequiresCurrentUser(prog) {
 		return false
 	}
@@ -990,6 +1137,53 @@ func (r *PolicyResolver) metaFieldResults(
 	out := make(map[string]bool, len(rg.fields))
 	for _, fg := range rg.fields {
 		out[fg.field] = grantPassed && r.passes(ctx, bc, fg.program, role)
+	}
+	return out
+}
+
+// requestFor returns the per-operation [acl.Request] the request edge
+// attached to ctx. It never resolves the principal itself; a missing or
+// mismatched Request is an error and the callers fail closed.
+func (r *PolicyResolver) requestFor(ctx context.Context) (*acl.Request, error) {
+	req, err := r.declarative.RequestFrom(ctx)
+	if err != nil {
+		slog.WarnContext(ctx, "affordances: no resolved identity on context; denying", "err", err)
+		return nil, err
+	}
+	return req, nil
+}
+
+// kindNoIdentity attributes the denials produced when no identity is
+// attached to the context.
+const kindNoIdentity = "no-identity"
+
+// denyAllFields is the fail-closed FieldVerdicts: every declared field is
+// read-only and hidden, and every enum option is denied.
+func (r *PolicyResolver) denyAllFields(entityType string) FieldVerdicts {
+	universe := r.declaredFields(entityType)
+	writable, visible := newDimension(), newDimension()
+	writable.optIn(kindNoIdentity)
+	visible.optIn(kindNoIdentity)
+	options := newOptionDimension()
+	enums := r.enumOptions(entityType)
+	for field := range enums {
+		options.optIn(field)
+	}
+	var out FieldVerdicts
+	out.Writable, out.Attribution = writable.deny(universe, out.Attribution)
+	out.Visible, out.Attribution = visible.deny(universe, out.Attribution)
+	out.Options, out.Attribution = options.deny(enums, out.Attribution)
+	return out
+}
+
+// denyAllRelations is the fail-closed RelationVerdicts: every relation
+// type in the metamodel is neither creatable nor removable.
+func (r *PolicyResolver) denyAllRelations() RelationVerdicts {
+	out := RelationVerdicts{Types: make(map[string]RelationVerdict, len(r.meta.Relations))}
+	for relType := range r.meta.Relations {
+		out.Types[relType] = RelationVerdict{
+			Attribution: map[string]string{"create": kindNoIdentity, "remove": kindNoIdentity},
+		}
 	}
 	return out
 }

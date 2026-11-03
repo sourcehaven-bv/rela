@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, toRef } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { useModalStack } from '@/composables/modalStack'
 // RlModal brings Escape, the focus trap, focus restore and the scroll lock,
 // none of which this dialog had — it even listed "Esc  Close modal" in its own
@@ -10,6 +11,8 @@ import RlKbd from 'rela-components/components/data/RlKbd.vue'
 const props = defineProps<{
   open: boolean
 }>()
+
+const { t } = useI18n()
 
 // rela's separate registry, which is what stops the global shortcut handler
 // acting while this is up. Notably absent before: pressing "?" over the
@@ -39,53 +42,53 @@ const mod = computed(() => (isMac.value ? '\u2318' : 'Ctrl'))
 
 const shortcuts = computed(() => [
   {
-    group: 'Global',
+    group: t('shortcuts.group.global'),
     items: [
-      { keys: '?', description: 'Show keyboard shortcuts' },
-      { keys: '/', description: 'Focus search' },
-      { keys: `${mod.value} + K`, description: 'Quick jump' },
-      { keys: 'Esc', description: 'Close modal / cancel' },
+      { keys: '?', description: t('shortcuts.showShortcuts') },
+      { keys: '/', description: t('shortcuts.focusSearch') },
+      { keys: `${mod.value} + K`, description: t('shortcuts.quickJump') },
+      { keys: 'Esc', description: t('shortcuts.closeModal') },
     ],
   },
   {
-    group: 'Navigation',
+    group: t('shortcuts.group.navigation'),
     items: [
-      { keys: 'G then D', description: 'Go to Dashboard' },
-      { keys: 'G then G', description: 'Go to Graph' },
-      { keys: 'G then S', description: 'Go to Search' },
-      { keys: 'G then A', description: 'Go to Analyze' },
+      { keys: 'G then D', description: t('shortcuts.goDashboard') },
+      { keys: 'G then G', description: t('shortcuts.goGraph') },
+      { keys: 'G then S', description: t('shortcuts.goSearch') },
+      { keys: 'G then A', description: t('shortcuts.goAnalyze') },
     ],
   },
   {
-    group: 'List View',
+    group: t('shortcuts.group.listView'),
     items: [
-      { keys: 'J or \u2193', description: 'Move selection down' },
-      { keys: 'K or \u2191', description: 'Move selection up' },
-      { keys: 'Enter or O', description: 'Open selected entity' },
-      { keys: 'E', description: 'Edit selected entity' },
-      { keys: 'N', description: 'Create new entity' },
-      { keys: 'Del or Backspace', description: 'Delete selected entity' },
+      { keys: 'J or \u2193', description: t('shortcuts.moveDown') },
+      { keys: 'K or \u2191', description: t('shortcuts.moveUp') },
+      { keys: 'Enter or O', description: t('shortcuts.openSelected') },
+      { keys: 'E', description: t('shortcuts.editSelected') },
+      { keys: 'N', description: t('shortcuts.createNew') },
+      { keys: 'Del or Backspace', description: t('shortcuts.deleteSelected') },
     ],
   },
   {
-    group: 'Entity Detail',
+    group: t('shortcuts.group.entityDetail'),
     items: [
-      { keys: 'E', description: 'Edit entity' },
-      { keys: 'Del or Backspace', description: 'Delete entity' },
+      { keys: 'E', description: t('shortcuts.editEntity') },
+      { keys: 'Del or Backspace', description: t('shortcuts.deleteEntity') },
     ],
   },
   {
-    group: 'Form / Editor',
+    group: t('shortcuts.group.formEditor'),
     items: [
-      { keys: `${mod.value} + Enter`, description: 'Save / submit' },
-      { keys: 'Esc', description: 'Cancel and go back' },
+      { keys: `${mod.value} + Enter`, description: t('shortcuts.submit') },
+      { keys: 'Esc', description: t('shortcuts.cancelBack') },
     ],
   },
 ])
 </script>
 
 <template>
-  <RlModal :open="open" title="Keyboard Shortcuts" size="lg" @close="emit('close')">
+  <RlModal :open="open" :title="t('shortcuts.title')" size="lg" @close="emit('close')">
     <div class="shortcuts-body">
       <div v-for="section in shortcuts" :key="section.group" class="shortcuts-group">
         <h4>{{ section.group }}</h4>

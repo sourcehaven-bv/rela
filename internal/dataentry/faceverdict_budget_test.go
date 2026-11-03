@@ -39,7 +39,7 @@ func TestQueryBudget_ScopedVerdictListPageIsSizeIndependent(t *testing.T) {
 			Assignments:   map[string]string{"T1": "viewer"},
 			RoleRelations: map[string]acl.RoleRelationDef{"watches": {Confers: "watcher"}},
 		}, app.store)
-		app.acl = d
+		setTestACL(t, app, d)
 		counting.Reset()
 
 		resp, rec := listEntitiesAs(ctx, t, app, d, "ticket", "tickets", "per_page=100")

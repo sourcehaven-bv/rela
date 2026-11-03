@@ -34,6 +34,9 @@ type attachmentHandler struct {
 	acl        func() acl.ACL
 	audit      func() audit.Audit
 	fields     func() FieldVerdictResolver
+	// faceEdges is the App's gated face-edge read, the same seam the entity
+	// GET serves its edges through.
+	faceEdges faceEdgeReader
 	// affordances applies the `fields:` write check, the same one PATCH and
 	// PUT apply.
 	affordances affordanceService

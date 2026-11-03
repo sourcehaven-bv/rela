@@ -54,7 +54,7 @@ func TestStampTaskAuditContext_EmptyRunAsIsFixedIdentity(t *testing.T) {
 // TestStampTaskAuditContext_NoUserEnvStillStamped covers the deployment
 // that motivated the fixed identity: a systemd unit typically has no
 // $USER, so SystemUser() returned the literal "unknown" — which
-// acl.Declarative.ForPrincipal REJECTS as an unstamped principal
+// acl.IdentityResolver REJECTS as an unstamped principal
 // (ErrUnstampedPrincipal). Scheduled tasks then failed outright rather
 // than merely being scoped. The fixed identity is never "unknown".
 func TestStampTaskAuditContext_NoUserEnvStillStamped(t *testing.T) {
@@ -67,6 +67,6 @@ func TestStampTaskAuditContext_NoUserEnvStillStamped(t *testing.T) {
 		t.Errorf("Principal.User = %q, want %q", p.User, principal.UserScheduler)
 	}
 	if p.User == "unknown" || p.User == "" {
-		t.Error("principal is unstamped; acl.ForPrincipal would reject it")
+		t.Error("principal is unstamped; acl.IdentityResolver would reject it")
 	}
 }

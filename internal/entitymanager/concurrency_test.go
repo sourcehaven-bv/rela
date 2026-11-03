@@ -74,6 +74,9 @@ relations:
 type concBackend struct {
 	name string
 	open func(t *testing.T) store.Store
+	// guarded makes the delete fixtures wire a pass-through anchor guard
+	// (see deleteACLBackends).
+	guarded bool
 }
 
 var concBackends = []concBackend{
@@ -90,10 +93,15 @@ func openConcFSStore(t *testing.T) store.Store {
 		FS: fs, Rooted: rooted,
 		EntitiesKey: "entities", RelationsKey: "relations",
 		AttachmentsKey: "attachments", CacheKey: ".rela",
+		// Every type the tests over concBackends write: fsstore refuses
+		// an undeclared one.
 		Schemas: map[string]store.EntityTypeSchema{
-			"note":   {Plural: "notes"},
-			"person": {Plural: "persons"},
-			"policy": {Plural: "policies"},
+			"checklist": {Plural: "checklists"},
+			"control":   {Plural: "controls"},
+			"note":      {Plural: "notes"},
+			"person":    {Plural: "persons"},
+			"policy":    {Plural: "policies"},
+			"risk":      {Plural: "risks"},
 		},
 	})
 	require.NoError(t, err)
@@ -113,6 +121,7 @@ func concurrencyManager(t *testing.T, st store.Store) *entitymanager.Manager {
 		ACL:         acl.NopACL{},
 		Transitions: statemachine.EmptySet(),
 		FieldGate:   entitymanager.AllowAllFieldGate{},
+		AnchorGuard: entitymanager.NopAnchorGuard{},
 	})
 	require.NoError(t, err)
 	return mgr
@@ -346,6 +355,7 @@ func TestConcurrency_PostAutomationRewriteKeepsInterleavedWrite(t *testing.T) {
 		FieldGate:   entitymanager.AllowAllFieldGate{},
 		Automations: engine,
 		Cascade:     runner,
+		AnchorGuard: entitymanager.NopAnchorGuard{},
 	})
 	require.NoError(t, err)
 

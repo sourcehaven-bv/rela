@@ -17,7 +17,9 @@ export function sortParam(specs: SortSpec[]): string {
  * rows the first key has already tied.
  */
 export function groupedSort(groupBy: ListGroupBy | undefined, specs: SortSpec[]): SortSpec[] {
-  if (!groupBy) return specs
+  // A relation-grouped list is split on the client from the relation; there
+  // is no property for the server to sort the sections by.
+  if (!groupBy?.property) return specs
   return [
     { property: groupBy.property, direction: 'asc' },
     ...specs.filter((s) => s.property !== groupBy.property),

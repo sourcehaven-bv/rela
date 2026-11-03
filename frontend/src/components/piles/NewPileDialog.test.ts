@@ -113,10 +113,11 @@ describe('NewPileDialog', () => {
     nameInput().form!.dispatchEvent(new Event('submit', { cancelable: true }))
     await flushPromises()
 
-    expect(api.createPile).toHaveBeenCalledWith(
-      { name: 'Friday', icon: 'layers', items: ['TKT-1', 'POL-1@draft'] },
-      undefined
-    )
+    expect(api.createPile).toHaveBeenCalledWith({
+      name: 'Friday',
+      icon: 'layers',
+      items: ['TKT-1', 'POL-1@draft'],
+    })
     expect(wrapper.emitted('saved')?.[0]).toEqual([created])
     expect(wrapper.emitted('close')).toBeTruthy()
   })
@@ -148,11 +149,7 @@ describe('NewPileDialog', () => {
     nameInput().form!.dispatchEvent(new Event('submit', { cancelable: true }))
     await flushPromises()
 
-    expect(api.updatePile).toHaveBeenCalledWith(
-      created.id,
-      { name: 'Monday', icon: 'star' },
-      undefined
-    )
+    expect(api.updatePile).toHaveBeenCalledWith(created.id, { name: 'Monday', icon: 'star' })
     expect(api.createPile).not.toHaveBeenCalled()
     expect(wrapper.emitted('close')).toBeTruthy()
   })

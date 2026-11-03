@@ -13,7 +13,7 @@ func TestValidatePages(t *testing.T) {
 	pages := func(mut func(*Page)) map[string]Page {
 		p := Page{Label: "Tickets", Tabs: []PageTab{
 			{ID: "table", Label: "Table", List: "tickets"},
-			{ID: "home", Label: "Home", Dashboard: true},
+			{ID: "home", Label: "Home", Dashboard: DefaultDashboard},
 		}}
 		if mut != nil {
 			mut(&p)
@@ -54,7 +54,7 @@ func TestValidatePages(t *testing.T) {
 			`pages[tickets].tabs[table]: unknown icon "nope"`},
 		{"tab names no view", pages(tab(func(t *PageTab) { t.List = "" })), nil, nil,
 			"pages[tickets].tabs[table]: names no view"},
-		{"tab names two views", pages(tab(func(t *PageTab) { t.Dashboard = true })), nil, nil,
+		{"tab names two views", pages(tab(func(t *PageTab) { t.Dashboard = DefaultDashboard })), nil, nil,
 			"pages[tickets].tabs[table]: names more than one view"},
 		{"unknown list", pages(tab(func(t *PageTab) { t.List = "nope" })), nil, nil,
 			`pages[tickets].tabs[table]: references unknown list "nope"`},
@@ -217,7 +217,7 @@ func TestValidateEntityPages(t *testing.T) {
 			{ID: "a", Label: "A", List: "tickets", Scope: &PageTabScope{Relation: "blocks"}},
 		}}}, nil, "pages[tk].tabs[a]: scope needs an explicit `direction:`"},
 		{"dashboard tab", page(func(p *Page) {
-			p.Tabs = append(p.Tabs, PageTab{ID: "home", Label: "Home", Dashboard: true})
+			p.Tabs = append(p.Tabs, PageTab{ID: "home", Label: "Home", Dashboard: DefaultDashboard})
 		}), nil, "pages[cat].tabs[home]: an entity page can only show list, kanban and gantt tabs"},
 		{"document tab", page(func(p *Page) {
 			p.Tabs = append(p.Tabs, PageTab{ID: "doc", Label: "Doc", Document: "report"})

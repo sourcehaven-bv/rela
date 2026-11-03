@@ -16,6 +16,9 @@ import {
 } from '../../composables/useOverlayStack'
 import RlHeading from '../common/RlHeading.vue'
 import RlIconButton from '../common/RlIconButton.vue'
+import { useMessages } from '../../composables/useMessages'
+
+const messages = useMessages()
 
 const props = withDefaults(
   defineProps<{
@@ -85,7 +88,7 @@ watch(
           <RlHeading v-if="!titleHidden" :level="2" size="md">{{ title }}</RlHeading>
           <RlIconButton
             icon="x"
-            label="Close panel"
+            :label="messages.chromeText({ key: 'closePanel' })"
             class="rl-drawer__close"
             @click="emit('close')"
           />

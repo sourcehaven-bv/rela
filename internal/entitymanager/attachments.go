@@ -218,7 +218,7 @@ func (a Attachments) StampAttachments(
 	}
 	p := entity.Patch{Properties: map[string]any{prop: value}}
 	return patchWithRetry(ctx, true, func(pin bool) (*entity.UpdateResult, error) {
-		return a.m.patchEntityOnce(withStoreAttribution(ctx), ref.String(), p, pin, prop, nil)
+		return a.m.patchEntityOnce(withStoreAttribution(ctx), ref.String(), p, pin, prop, patchPre{})
 	})
 }
 

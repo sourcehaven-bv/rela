@@ -2,6 +2,7 @@ package dataentry
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io/fs"
 	"log/slog"
@@ -9,7 +10,9 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 
+	"github.com/Sourcehaven-BV/rela/internal/access"
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
 )
@@ -63,6 +66,10 @@ type routerConfig struct {
 	// for why it never adds a header.
 	accessLog *slog.Logger
 
+	// queryCeiling is the per-request statement count past which a request
+	// is logged as a warning; zero is off. See warnQueryCeiling.
+	queryCeiling int64
+
 	// spaFS, when non-nil, replaces the embedded SPA build. Tests only: the
 	// CI Test job does not build the frontend, so without it `/` answers 404
 	// and a client that reads the discovery Link header only on a 2xx (as
@@ -78,6 +85,12 @@ func withSPAFS(fsys fs.FS) RouterOption {
 // WithAccessLog sends the per-request access log to l; nil turns it off.
 func WithAccessLog(l *slog.Logger) RouterOption {
 	return func(c *routerConfig) { c.accessLog = l }
+}
+
+// WithQueryCeiling logs a warning for every request that runs more than n
+// store statements; zero or less turns the check off.
+func WithQueryCeiling(n int64) RouterOption {
+	return func(c *routerConfig) { c.queryCeiling = n }
 }
 
 // NewRouter returns an http.Handler with all data entry routes registered.
@@ -133,6 +146,9 @@ func (a *App) NewRouter(opts ...RouterOption) http.Handler {
 
 	// REST API v1 - main API for Vue SPA
 	a.registerAPIV1Routes(inner)
+	// Live-view subscriptions for a stream (TKT-HJ5Z9Y). On `inner`, so the
+	// origin, CSRF and JWT checks apply like any other write.
+	inner.HandleFunc("/api/v1/_events/", a.live.handlePut)
 
 	// Remote MCP (TKT-BDG8U9) — opt-in, absent unless SetRemoteMCP enabled it.
 	registerMCPRoute(inner, a.mcpHandler)
@@ -236,8 +252,8 @@ func (a *App) NewRouter(opts ...RouterOption) http.Handler {
 	//      stamps before ACL reads.
 	// Reversed order silently fails every /api/ request with 500
 	// `acl_unstamped_principal` when ACL is configured, because the
-	// principal is still the unstamped default at the time
-	// ForPrincipal is called.
+	// principal is still the unstamped default at the time the
+	// identity is resolved.
 	//
 	// World selection must run AFTER the read gate is on the context, because
 	// its grant check consults readGateFromContext. Per the wrap-order note
@@ -253,7 +269,10 @@ func (a *App) NewRouter(opts ...RouterOption) http.Handler {
 	// grant check happens before a resolver is constructed" STRUCTURAL: a
 	// handler cannot observe a non-default world on its context without the
 	// check having already passed, and cannot opt out of it.
-	handler = attachWorld(handler, a)
+	//
+	// responseGates applies this wrapper and attachACLRequest below, and
+	// liveReplayChain applies the same function to live-view replays. Add
+	// any wrapper that changes what a GET returns there, not here.
 
 	// Non-Declarative ACLs (NopACL, ReadOnlyACL) are deliberately outside this
 	// block, warning included. Neither can enforce `unmatched_principal` at all
@@ -275,8 +294,14 @@ func (a *App) NewRouter(opts ...RouterOption) http.Handler {
 		// fires. If a future refactor reorders these, that invariant breaks
 		// quietly; keep SetJWTGate ahead of NewRouter.
 		warnUnmatchedRejectWithoutJWTGate(d.Policy(), a.jwtGate != nil)
-		handler = attachACLRequest(handler, d, a.jwtGate != nil)
 	}
+	handler = responseGates(handler, a)
+	replay := liveReplayChain(a)
+	a.live.replay.Store(&replay)
+	// Runs after the JWT gate and before attachACLRequest resolves the
+	// principal, so live-view replays start from the same identity a real
+	// request does.
+	handler = stashReplayPrincipal(handler)
 	// The JWT gate wraps BETWEEN attachACLRequest and stampAuditPrincipal, so at
 	// request time it runs after the stamper and before ACL. This ordering is
 	// load-bearing and the obvious alternative is wrong:
@@ -302,7 +327,7 @@ func (a *App) NewRouter(opts ...RouterOption) http.Handler {
 	// Outermost of all: per-request query accounting must wrap the whole
 	// chain so the principal resolution and ACL compilation above (which
 	// read the store) are counted with the handler, not missed.
-	handler = requestStats(handler, cfg.accessLog, (&routeWordCache{schema: a.State}).words)
+	handler = requestStats(handler, cfg.accessLog, (&routeWordCache{schema: a.State}).words, cfg.queryCeiling)
 	return handler
 }
 
@@ -341,15 +366,15 @@ func (a *App) NewRouter(opts ...RouterOption) http.Handler {
 // Note this also gives the "SetJWTGate MUST run before NewRouter" ordering
 // invariant a runtime voice: a future refactor that reorders them makes this
 // warning fire, where previously it failed silently.
-func warnUnmatchedRejectWithoutJWTGate(p *acl.Policy, jwtWired bool) {
+func warnUnmatchedRejectWithoutJWTGate(p *acl.Policy, verifiedIdentity bool) {
 	if p == nil || p.EffectiveUnmatchedPrincipal() != acl.UnmatchedReject {
 		return
 	}
-	if p.RejectEffective(jwtWired) {
+	if p.RejectEffective(verifiedIdentity) {
 		return
 	}
 	switch {
-	case !jwtWired:
+	case !verifiedIdentity:
 		slog.Warn("acl: unmatched_principal: reject is configured but no JWT gate is wired; " +
 			"the setting has NO effect and unmatched principals are treated as anonymous. " +
 			"Wire a JWT gate (SetJWTGate before NewRouter), or remove the key to make the " +
@@ -374,125 +399,101 @@ func isAPIPath(p string) bool {
 	return strings.HasPrefix(p, "/api/") || p == "/api"
 }
 
-// attachACLRequest opens an acl.Request for the principal stamped on
-// ctx (by stampAuditPrincipal above) and attaches it via both
-// [acl.WithRequest] and [withReadGate], so downstream affordance +
-// read-gate consumers reuse the one member-of walk per HTTP request
-// (RR-JJYW). Wired only when the ACL is a *acl.Declarative — NopACL /
-// ReadOnlyACL paths don't open Requests.
+// isUnnamedStamp reports whether ctx carries a principal [stampAuditPrincipal]
+// stamped without a user: no resolver named one (no proxy header, no
+// RELA_DATAENTRY_USER). That is a request without credentials, a client
+// error. A proxy that sends the placeholder value "unknown" lands here too.
 //
-// **Scope (RR-T15E).** Only `/api/` requests pay the cost — and only
-// `/api/` requests fail loud on misconfiguration. The SPA shell at
-// `/` and static assets at `/static/` MUST stay reachable even when
-// ACL is configured and the principal stamper has a bug; otherwise a
-// misconfigured stamper renders the UI as a raw JSON 500 and locks
-// operators out of the very surface they need to recover from it.
+// A ctx the stamper never ran on does not match, and neither does a named
+// user with an unknown tool. Both are wiring faults and keep their 500.
 //
-// **Fail-loud (RR-875A).** Inside `/api/` an
-// [acl.ErrUnstampedPrincipal] returns 500 with a structured error
-// rather than silently proceeding with no Request attached. The
-// earlier silent fall-through turned ACL into fail-open under a
-// stamper misconfig.
+// This is not an access predicate: it says nothing about
+// Identity.UnmatchedVerified or any grant. Its one use picks the status code
+// of a refusal. That 401 carries no WWW-Authenticate header, like the JWT
+// gate and writeNoIdentity: header mode has no scheme a client could answer.
+func isUnnamedStamp(ctx context.Context) bool {
+	p, ok := principal.Stamped(ctx)
+	return ok && (p.User == "" || p.User == principal.Unknown)
+}
+
+// attachACLRequest opens the request's ACL state through [access.Opener.Open]
+// for the principal stamped on ctx (by stampAuditPrincipal above) and attaches
+// the read gate built from it, so downstream affordance and read-gate
+// consumers reuse the one member-of walk per HTTP request (RR-JJYW). Wired
+// only when the ACL is a *acl.Declarative; NopACL and ReadOnlyACL do not open
+// requests.
 //
-// RR-8ZGO: respect a Request already attached by an upstream handler
-// (chiefly tests that wrap the handler with their own
-// acl.WithRequest). The middleware is at the outer edge of the
-// production chain so this guard rarely fires in production, but it
-// makes the test composition story safer.
+// **Scope (RR-T15E).** Only `/api/` requests pay the cost, and only `/api/`
+// requests fail loud on misconfiguration. The SPA shell at `/` and static
+// assets at `/static/` must stay reachable even when the principal stamper has
+// a bug; otherwise a misconfigured stamper renders the UI as a raw JSON 500 and
+// locks operators out of the surface they need to recover from it.
+//
+// **Fail-loud (RR-875A).** Inside `/api/` a failure to open refuses the
+// request rather than proceeding with no request attached, which would make
+// ACL fail open. A request without a user ([isUnnamedStamp]) gets 401; every
+// other failure gets 500 with a structured error.
+//
+// RR-8ZGO, RR-E703: a request already attached upstream (chiefly by tests) is
+// reused after a principal check, and still gets its read gate here.
 func attachACLRequest(next http.Handler, d *acl.Declarative, jwtVerified bool) http.Handler {
+	opener, oerr := access.NewOpener(d, jwtVerified)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if !isAPIPath(r.URL.Path) {
-			next.ServeHTTP(w, r)
+			next.ServeHTTP(w, r.WithContext(withACLEnforced(r.Context())))
 			return
 		}
-		ctx := r.Context()
-		// RR-E703: if an upstream layer already stamped a Request, also
-		// attach the matching readGate before forwarding. Without this,
-		// every read becomes AllowAll for the upstream-only caller —
-		// silent fail-open.
-		if existing := acl.FromContext(ctx); existing != nil {
-			// SIG-2: verify the existing Request's principal matches
-			// the ctx principal. A mismatch is a wiring bug (an
-			// upstream layer attached a Request from a different
-			// identity); under that condition the gate would run
-			// against the wrong policy with no loud signal.
+		if oerr != nil {
+			slog.Warn("acl: attachACLRequest: no opener", "err", oerr, "path", r.URL.Path)
+			writeV1Error(w, r, http.StatusInternalServerError,
+				"acl_internal", "ACL gate construction failed", "check server logs")
+			return
+		}
+		log := slog.With("path", r.URL.Path, "method", r.Method)
+		ctx, req, err := opener.Open(r.Context(), log)
+		switch {
+		case errors.Is(err, access.ErrPrincipalMismatch):
+			writeV1Error(w, r, http.StatusInternalServerError,
+				"acl_principal_mismatch",
+				"Upstream ACL request principal does not match context principal",
+				"check server logs")
+			return
+		case errors.Is(err, acl.ErrUnstampedPrincipal) && isUnnamedStamp(r.Context()):
+			// BUG-C8DHGF: the stamper ran and no resolver named a user.
+			// The client sent no credentials, so it is told so, with the
+			// body the JWT gate and writeNoIdentity send.
 			//
-			// Note: principal_property resolution (resolvePrincipalEntity
-			// below) has NOT run on this branch — it only applies when we
-			// open a fresh Request. So both sides here are the raw,
-			// pre-resolution principal and match in production (nothing
-			// upstream resolves). If a future upstream layer ever attaches
-			// a Request built from a *resolved* principal while ctx still
-			// holds the raw one, this correctly 500s as a genuine mismatch.
-			ctxPrin := principal.From(ctx)
-			if !existing.Principal().Equal(ctxPrin) {
-				slog.Warn("acl: attachACLRequest: existing Request principal mismatch",
-					"path", r.URL.Path,
-					"method", r.Method,
-					"ctx_user", ctxPrin.User,
-					"ctx_tool", ctxPrin.Tool,
-					"req_user", existing.Principal().User,
-					"req_tool", existing.Principal().Tool)
-				writeV1Error(w, r, http.StatusInternalServerError,
-					"acl_principal_mismatch",
-					"Upstream ACL request principal does not match context principal",
-					"check server logs")
-				return
-			}
-			gate, gerr := newACLReadGate(existing)
-			// coverage-ignore-start: defensive: newACLReadGate only errors on a nil Request, but existing is non-nil in
-			// this branch
-			if gerr != nil {
-				slog.Warn("acl: attachACLRequest: newACLReadGate failed (existing)",
-					"err", gerr, "path", r.URL.Path)
-				writeV1Error(w, r, http.StatusInternalServerError,
-					"acl_internal", "ACL gate construction failed", "check server logs")
-				return
-			}
-			// coverage-ignore-end
-			ctx = withReadGate(ctx, gate)
-			next.ServeHTTP(w, r.WithContext(ctx))
+			// When every request lands here, the server usually has no
+			// identity source, so the detail names the settings that supply
+			// one (TKT-QR1VTP). rela-desktop serves it too, and reads only the
+			// env var. The env var is local-only: every caller then acts as
+			// that user.
+			writeV1Error(w, r, http.StatusUnauthorized, "unauthenticated", "Authentication required",
+				"no user identity: local $RELA_DATAENTRY_USER, or rela-server --jwt-* or --principal-header; "+
+					"see docs/server-security.md")
 			return
-		}
-		// Resolve the raw principal to a user entity via the policy's
-		// `principal_property` lookup (a no-op unless both policy keys are
-		// set). On a single match we re-stamp ctx with the resolved ID so
-		// BOTH the ACL walk below and the audit writer (which re-reads
-		// principal.From(ctx)) attribute the write to the real entity while
-		// preserving the raw header value in RawUser. Any non-match /
-		// ambiguous / errored lookup keeps the raw principal (fail-open to
-		// pre-feature behavior) — see acl.Declarative.ResolvePrincipal.
-		ctx = resolvePrincipalEntity(ctx, d, r, jwtVerified)
-
-		req, err := d.ForPrincipal(principal.From(ctx))
-		if err != nil {
-			// RR-372L: log the raw error server-side; never emit it
-			// in the response body. ForPrincipal's contract leaves
-			// room for future enhancements (LDAP errors, internal
-			// identifiers) that would otherwise become attacker-
-			// readable here.
-			p := principal.From(ctx)
-			slog.Warn("acl: attachACLRequest: ForPrincipal failed",
-				"err", err,
-				"path", r.URL.Path,
-				"method", r.Method,
-				"user", p.User,
-				"tool", p.Tool)
+		case errors.Is(err, acl.ErrUnstampedPrincipal):
+			// RR-372L: Open logged the raw error; it never reaches the body.
 			writeV1Error(w, r, http.StatusInternalServerError,
 				"acl_unstamped_principal",
 				"Principal could not be resolved under ACL",
 				"principal stamper produced an unstamped identity; check server logs")
 			return
+		case err != nil && requestCanceled(r, err):
+			// The client went away during resolution: nobody to answer.
+			return
+		case err != nil:
+			// A store error or failed membership walk. Its text could carry
+			// internal detail, so it stays in the log.
+			writeV1Error(w, r, http.StatusInternalServerError,
+				"acl_identity_unresolved",
+				"Principal could not be resolved under ACL",
+				"identity resolution failed; check server logs")
+			return
 		}
 		gate, gerr := newACLReadGate(req)
-		// coverage-ignore-start: defensive: ForPrincipal returned non-nil err above on any failure mode, so req is non-
-		// nil and newACLReadGate cannot
-		// error
+		// coverage-ignore-start: defensive: Open returns a non-nil Request whenever its error is nil
 		if gerr != nil {
-			// Unreachable: ForPrincipal returned non-nil err above on
-			// any failure mode; req here is non-nil. Defense in depth
-			// — if a future change to ForPrincipal lets a nil through,
-			// fail-loud rather than silently fall-open.
 			slog.Warn("acl: attachACLRequest: newACLReadGate failed",
 				"err", gerr, "path", r.URL.Path)
 			writeV1Error(w, r, http.StatusInternalServerError,
@@ -500,64 +501,8 @@ func attachACLRequest(next http.Handler, d *acl.Declarative, jwtVerified bool) h
 			return
 		}
 		// coverage-ignore-end
-		ctx = acl.WithRequest(ctx, req)
-		ctx = withReadGate(ctx, gate)
-		next.ServeHTTP(w, r.WithContext(ctx))
+		next.ServeHTTP(w, r.WithContext(withReadGate(withACLEnforced(ctx), gate)))
 	})
-}
-
-// resolvePrincipalEntity applies the ACL policy's `principal_property`
-// lookup to the ctx principal. When the policy has the lookup enabled and
-// the raw principal resolves to exactly one user entity, it returns a ctx
-// carrying a principal whose User is the entity ID and whose RawUser is
-// the original identifier (so the audit log records both). In every other
-// case — lookup disabled, no match, ambiguous match, or backend error —
-// it returns ctx unchanged so the write falls back to the raw principal
-// (pre-feature behavior); ambiguity and errors are logged, a plain
-// no-match is not (a principal absent from the graph is expected, e.g. a
-// break-glass identity assigned by raw UPN).
-// jwtVerified reports whether identity came from a verified-JWT assertion (the
-// gate is installed). Combined with a genuine no-match while the lookup is
-// enabled, it lets the caller mark the request unmatched-verified so
-// `unmatched_principal: reject` can deny its writes — see [acl.WithUnmatchedVerified].
-func resolvePrincipalEntity(
-	ctx context.Context, d *acl.Declarative, r *http.Request, jwtVerified bool,
-) context.Context {
-	p := principal.From(ctx)
-	id, err := d.ResolvePrincipal(ctx, p.User)
-	if err != nil {
-		slog.Warn("acl: principal_property lookup failed; using raw principal",
-			"path", r.URL.Path, "method", r.Method, "err", err)
-		return ctx
-	}
-	if id == "" || id == p.User {
-		// No entity resolved. If identity is a verified JWT and the lookup was
-		// actually enabled (id=="" from a disabled lookup is not a "no-match",
-		// it's "not attempted"), mark the request so the write path can enforce
-		// `unmatched_principal: reject`. The mark is inert unless the policy
-		// opts in.
-		if jwtVerified && id == "" && d.Policy().PrincipalPropertyLookupEnabled() {
-			ctx = acl.WithUnmatchedVerified(ctx)
-		}
-		return ctx
-	}
-	// Rebuild via VerifiedFrom so the assertion claims survive the substitution.
-	// A plain composite literal here would silently drop org, roles, email and the
-	// attenuation claims — the resolved principal would keep its identity but
-	// lose every asserted grant AND its ceiling. Losing the ceiling is the
-	// dangerous direction: it would silently WIDEN a restricted client to its
-	// acting user's full grants. Pinned by TestResolvePrincipalEntity_*.
-	out := principal.VerifiedFrom(id, p.Tool, principal.Claims{
-		OrgID:         p.OrgID(),
-		OrgSlug:       p.OrgSlug(),
-		OrgName:       p.OrgName(),
-		Roles:         p.Roles(),
-		PrincipalType: p.PrincipalType(),
-		Scopes:        p.Scopes(),
-		Email:         p.Email(),
-	})
-	out.RawUser = p.User
-	return principal.With(ctx, out)
 }
 
 // PrincipalResolver maps an incoming HTTP request to the audit
@@ -665,6 +610,10 @@ type AssertedIdentity struct {
 	// Principal so lazy provisioning (TKT-ANUJDS) can stamp it on a stub user
 	// entity; nothing in the ACL evaluates it.
 	Email string
+
+	// ExpiresAt is when the verifier stops accepting the assertion; see
+	// withCredentialExpiry. Zero means no expiry is known.
+	ExpiresAt time.Time
 }
 
 // assertionVerifier verifies a signed assertion and projects the org/role
@@ -683,6 +632,8 @@ type assertionVerifier interface {
 // failure so a chain falls through to the next source — under a header chain
 // that is an auth downgrade, which is why cmd/rela-server no longer wires it.
 // Retained for callers embedding dataentry with their own chain semantics.
+// Event streams opened through it do not end when the token expires, because
+// only the gate records the expiry (TKT-5I6REX).
 //
 // JWTPrincipalResolver reads a signed identity assertion from headerName,
 // verifies it (ES256 against the proxy's JWKS, via v), and stamps the verified
@@ -1070,4 +1021,29 @@ func spaHandler(fsys fs.FS) http.Handler {
 
 		fileServer.ServeHTTP(w, r)
 	})
+}
+
+// responseGates wraps h in the middleware that decides what a GET returns:
+// attachACLRequest outermost, then attachWorld, so at request time the ACL
+// request exists before the world check reads it. NewRouter and
+// liveReplayChain both call it, so a live-view replay passes the same gates
+// as the GET it stands for.
+func responseGates(h http.Handler, a *App) http.Handler {
+	h = attachWorld(h, a)
+	if d, ok := a.acl.(*acl.Declarative); ok && d != nil {
+		h = attachACLRequest(h, d, a.jwtGate != nil)
+	}
+	return h
+}
+
+// liveReplayChain is the handler a live-view replay runs through
+// (TKT-HJ5Z9Y): the v1 API routes on their own mux, so a replay cannot reach
+// the event stream, webhooks or the SPA, wrapped in responseGates. The
+// transport checks (host, origin, CSRF, request stats) are left out: they
+// judge the browser request, which the stream already passed, and do not
+// change a response body.
+func liveReplayChain(a *App) http.Handler {
+	api := http.NewServeMux()
+	a.registerAPIV1Routes(api)
+	return responseGates(api, a)
 }

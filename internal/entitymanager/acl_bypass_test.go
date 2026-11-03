@@ -138,6 +138,7 @@ func TestManager_Elevated_DoesNotLeakIntoNestedCascade(t *testing.T) {
 		Automations:  engine,
 		Cascade:      runner,
 		ScriptRunner: scripts,
+		AnchorGuard:  entitymanager.NopAnchorGuard{},
 	})
 	if err != nil {
 		t.Fatalf("entitymanager.New: %v", err)

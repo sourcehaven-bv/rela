@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Sourcehaven-BV/rela/internal/acl/acltest"
+
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
@@ -322,10 +324,10 @@ func TestSectionCreate_GatedByCreatePermission(t *testing.T) {
 				}},
 				Assignments: map[string]string{"bob": "r"},
 			}, app.store)
-			app.acl = d
+			setTestACL(t, app, d)
 
-			ctx := principal.With(context.Background(),
-				principal.Principal{User: "bob", Tool: principal.ToolDataEntry})
+			ctx := acltest.Bind(principal.With(context.Background(),
+				principal.Principal{User: "bob", Tool: principal.ToolDataEntry}), t, app.acl)
 			body := fetchView(ctx, t, app)
 
 			got := body.Sections[0].Create != nil
@@ -378,7 +380,7 @@ func TestSectionCreate_ACLImplementationArms(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			app := seedCreateView(t, createViewOptions{create: &dataentryconfig.SectionCreate{}})
-			app.acl = tc.impl
+			setTestACL(t, app, tc.impl)
 
 			body := fetchView(context.Background(), t, app)
 
@@ -425,7 +427,7 @@ func TestSectionCreate_CarriesNoBitAboutHiddenRows(t *testing.T) {
 	} {
 		app := seedCreateView(t, createViewOptions{create: &dataentryconfig.SectionCreate{}})
 		d := mustNewACL(t, policy(read), app.store)
-		app.acl = d
+		setTestACL(t, app, d)
 		// gateCtxFor, not a bare principal ctx: the ROW gate is what filters
 		// neighbors, and a handler test bypasses the middleware that attaches
 		// it. Without this the rows are unfiltered and the invariance below

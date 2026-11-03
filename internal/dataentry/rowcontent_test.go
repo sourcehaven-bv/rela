@@ -24,7 +24,7 @@ func rowContentApp(t *testing.T) (*App, *acl.Declarative) {
 		Roles:       map[string]acl.RoleDef{"viewer": {Read: []string{"*"}}},
 		Assignments: map[string]string{"alice": "viewer"},
 	}, app.store)
-	app.acl = d
+	setTestACL(t, app, d)
 	return app, d
 }
 

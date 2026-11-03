@@ -112,5 +112,5 @@ func importUser(p principal.Principal) string {
 	if p.User != "" {
 		return p.User
 	}
-	return principal.ReservedPrefix + Tool
+	return principal.UserFSImport
 }

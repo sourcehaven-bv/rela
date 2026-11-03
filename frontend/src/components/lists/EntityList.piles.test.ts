@@ -124,7 +124,7 @@ describe('EntityList: Add to pile', () => {
     item.click()
     await flushPromises()
 
-    expect(piles.addPileItems).toHaveBeenCalledWith(friday.id, ['POL-1@draft', 'POL-3'], undefined)
+    expect(piles.addPileItems).toHaveBeenCalledWith(friday.id, ['POL-1@draft', 'POL-3'])
     // The selection is spent.
     expect((box('POL-1').element as HTMLInputElement).checked).toBe(false)
     expect((box('POL-3').element as HTMLInputElement).checked).toBe(false)

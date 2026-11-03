@@ -223,13 +223,22 @@ func equalsCond(b *sqlBuilder, alias, path, value string) string {
 // faces before a world ranks them, post tests the prime (BUG-2SKLD3). seed
 // selects the ids an entity-inheritance closure starts from.
 func buildPredicateParts(b *sqlBuilder, q store.GraphQuery, seed string) (with, pre, post []string) {
+	return buildPredicatePartsPrefixed(b, "", q, seed)
+}
+
+// buildPredicatePartsPrefixed is [buildPredicateParts] with every CTE name
+// prefixed, so several queries' predicates can share one statement (the
+// row conditions of a roll-up), as pgstore's does.
+func buildPredicatePartsPrefixed(
+	b *sqlBuilder, prefix string, q store.GraphQuery, seed string,
+) (with, pre, post []string) {
 	if q.HasInbound != nil {
-		w, ex := buildPredicateSQL(b, "in", *q.HasInbound, seed, store.DirectionIncoming, q.Faces)
+		w, ex := buildPredicateSQL(b, prefix+"in", *q.HasInbound, seed, store.DirectionIncoming, q.Faces)
 		with = append(with, w...)
 		pre = append(pre, existsCond(ex, q.HasInbound.Negate))
 	}
 	if q.HasOutbound != nil {
-		w, ex := buildPredicateSQL(b, "out", *q.HasOutbound, seed, store.DirectionOutgoing, q.Faces)
+		w, ex := buildPredicateSQL(b, prefix+"out", *q.HasOutbound, seed, store.DirectionOutgoing, q.Faces)
 		with = append(with, w...)
 		pre = append(pre, existsCond(ex, q.HasOutbound.Negate))
 	}
@@ -238,12 +247,12 @@ func buildPredicateParts(b *sqlBuilder, q store.GraphQuery, seed string) (with, 
 		if rel.Incoming {
 			dir = store.DirectionIncoming
 		}
-		w, ex := buildPredicateSQL(b, "rel"+strconv.Itoa(i), rel.Pred, seed, dir, q.Faces)
+		w, ex := buildPredicateSQL(b, prefix+"rel"+strconv.Itoa(i), rel.Pred, seed, dir, q.Faces)
 		with = append(with, w...)
 		pre = append(pre, existsCond(ex, rel.Pred.Negate))
 	}
 	if len(q.Any) > 0 {
-		w, cond := buildAnySQL(b, "any", q.Any, seed, q.Faces)
+		w, cond := buildAnySQL(b, prefix+"any", q.Any, seed, q.Faces)
 		with = append(with, w...)
 		pre = append(pre, cond)
 	}

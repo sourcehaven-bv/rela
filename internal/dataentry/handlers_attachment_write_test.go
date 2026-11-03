@@ -97,7 +97,7 @@ func TestAttachmentUpload_MIMERejected(t *testing.T) {
 	app := newTestAppV1(t)
 	seedEntity(app, &entity.Entity{ID: "TKT-001", Type: "ticket", Properties: map[string]any{"title": "T1"}})
 	d := writeACL(t, app)
-	app.acl = d
+	setTestACL(t, app, d)
 
 	svg := []byte(`<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>`)
 	rec := putAttachmentAs(aliceCtx(), t, app, d, "TKT-001", "screenshot", "evil.svg", svg)
@@ -117,7 +117,7 @@ func TestAttachmentUpload_RoundTrips(t *testing.T) {
 	app := newTestAppV1(t)
 	seedEntity(app, &entity.Entity{ID: "TKT-001", Type: "ticket", Properties: map[string]any{"title": "T1"}})
 	d := writeACL(t, app)
-	app.acl = d
+	setTestACL(t, app, d)
 
 	rec := putAttachmentAs(aliceCtx(), t, app, d, "TKT-001", "screenshot", "shot.txt", []byte("PNGDATA"))
 	if rec.Code != http.StatusOK {
@@ -144,7 +144,7 @@ func TestAttachmentUpload_Replaces(t *testing.T) {
 	app := newTestAppV1(t)
 	seedEntity(app, &entity.Entity{ID: "TKT-001", Type: "ticket", Properties: map[string]any{"title": "T1"}})
 	d := writeACL(t, app)
-	app.acl = d
+	setTestACL(t, app, d)
 
 	putAttachmentAs(aliceCtx(), t, app, d, "TKT-001", "screenshot", "a.txt", []byte("first"))
 	putAttachmentAs(aliceCtx(), t, app, d, "TKT-001", "screenshot", "b.txt", []byte("second"))
@@ -161,7 +161,7 @@ func TestAttachmentDelete_RemovesBytesAndProperty(t *testing.T) {
 	app := newTestAppV1(t)
 	seedEntity(app, &entity.Entity{ID: "TKT-001", Type: "ticket", Properties: map[string]any{"title": "T1"}})
 	d := writeACL(t, app)
-	app.acl = d
+	setTestACL(t, app, d)
 	putAttachmentAs(aliceCtx(), t, app, d, "TKT-001", "screenshot", "a.txt", []byte("data"))
 
 	del := deleteAttachmentAs(aliceCtx(), t, app, d, "TKT-001", "screenshot", "a.txt")
@@ -185,7 +185,7 @@ func TestAttachmentWrite_DeniedBeforeBytes(t *testing.T) {
 	app := newTestAppV1(t)
 	seedEntity(app, &entity.Entity{ID: "TKT-001", Type: "ticket", Properties: map[string]any{"title": "T1"}})
 	d := writeACL(t, app)
-	app.acl = d
+	setTestACL(t, app, d)
 
 	// bob can't read ticket → upload 404s at the read gate (no existence
 	// leak, no bytes).
@@ -200,7 +200,7 @@ func TestAttachmentWrite_DeniedBeforeBytes(t *testing.T) {
 		Roles:       map[string]acl.RoleDef{"reader": {Read: []string{"ticket"}}},
 		Assignments: map[string]string{"carol": "reader"},
 	}, app.store)
-	app.acl = d2
+	setTestACL(t, app, d2)
 	carol := principal.With(context.Background(), principal.Principal{User: "carol", Tool: principal.ToolDataEntry})
 	rec = putAttachmentAs(carol, t, app, d2, "TKT-001", "screenshot", "x.txt", []byte("data"))
 	if rec.Code != http.StatusForbidden {
@@ -208,7 +208,7 @@ func TestAttachmentWrite_DeniedBeforeBytes(t *testing.T) {
 	}
 
 	// No bytes were written by either denied attempt.
-	app.acl = d
+	setTestACL(t, app, d)
 	get := getAttachmentAs(aliceCtx(), t, app, d, "ticket", "tickets", "TKT-001", "screenshot", "x.txt")
 	if get.Code != http.StatusNotFound {
 		t.Errorf("a denied upload must not write bytes; GET got %d, want 404", get.Code)
@@ -223,7 +223,7 @@ func TestAttachmentUpload_TooLarge(t *testing.T) {
 	// Tighten the cap via config so the test stays small.
 	app.State().Cfg.App.MaxAttachmentBytes = 8
 	d := writeACL(t, app)
-	app.acl = d
+	setTestACL(t, app, d)
 
 	rec := putAttachmentAs(aliceCtx(), t, app, d, "TKT-001", "screenshot", "big.bin", []byte("waytoolarge"))
 	if rec.Code != http.StatusRequestEntityTooLarge {
@@ -242,7 +242,7 @@ func TestAttachmentUpload_MissingFieldOrBadProperty(t *testing.T) {
 	app := newTestAppV1(t)
 	seedEntity(app, &entity.Entity{ID: "TKT-001", Type: "ticket", Properties: map[string]any{"title": "T1"}})
 	d := writeACL(t, app)
-	app.acl = d
+	setTestACL(t, app, d)
 
 	// Wrong form field name → 400.
 	var buf bytes.Buffer
@@ -295,7 +295,7 @@ func TestAttachmentDelete_IdempotentWhenNoAttachment(t *testing.T) {
 	app := newTestAppV1(t)
 	seedEntity(app, &entity.Entity{ID: "TKT-001", Type: "ticket", Properties: map[string]any{"title": "T1"}})
 	d := writeACL(t, app)
-	app.acl = d
+	setTestACL(t, app, d)
 
 	del := deleteAttachmentAs(aliceCtx(), t, app, d, "TKT-001", "screenshot", "gone.png")
 	if del.Code != http.StatusNoContent {
@@ -313,7 +313,7 @@ func TestAttachmentUpload_ReplaceOversizeKeepsExisting(t *testing.T) {
 	app := newTestAppV1(t)
 	seedEntity(app, &entity.Entity{ID: "TKT-001", Type: "ticket", Properties: map[string]any{"title": "T1"}})
 	d := writeACL(t, app)
-	app.acl = d
+	setTestACL(t, app, d)
 
 	// Upload a valid file, then attempt an oversize replace (cap tightened).
 	putAttachmentAs(aliceCtx(), t, app, d, "TKT-001", "screenshot", "ok.txt", []byte("good"))
@@ -350,7 +350,7 @@ func TestAttachmentUpload_MultiAppendsUpToMax(t *testing.T) {
 	app := newTestAppV1(t)
 	seedEntity(app, &entity.Entity{ID: "TKT-001", Type: "ticket", Properties: map[string]any{"title": "T1"}})
 	d := writeACL(t, app)
-	app.acl = d
+	setTestACL(t, app, d)
 
 	for _, name := range []string{"a.txt", "b.txt", "c.txt"} {
 		rec := putAttachmentAs(aliceCtx(), t, app, d, "TKT-001", "docs", name, []byte(name))
@@ -385,7 +385,7 @@ func TestAttachmentUpload_MultiAutoSuffix(t *testing.T) {
 	app := newTestAppV1(t)
 	seedEntity(app, &entity.Entity{ID: "TKT-001", Type: "ticket", Properties: map[string]any{"title": "T1"}})
 	d := writeACL(t, app)
-	app.acl = d
+	setTestACL(t, app, d)
 
 	putAttachmentAs(aliceCtx(), t, app, d, "TKT-001", "docs", "report.txt", []byte("one"))
 	putAttachmentAs(aliceCtx(), t, app, d, "TKT-001", "docs", "report.txt", []byte("two"))
@@ -406,7 +406,7 @@ func TestAttachmentDelete_MultiLeavesSiblings(t *testing.T) {
 	app := newTestAppV1(t)
 	seedEntity(app, &entity.Entity{ID: "TKT-001", Type: "ticket", Properties: map[string]any{"title": "T1"}})
 	d := writeACL(t, app)
-	app.acl = d
+	setTestACL(t, app, d)
 
 	putAttachmentAs(aliceCtx(), t, app, d, "TKT-001", "docs", "a.txt", []byte("a"))
 	putAttachmentAs(aliceCtx(), t, app, d, "TKT-001", "docs", "b.txt", []byte("b"))
@@ -475,7 +475,7 @@ func newAttachmentApp(t *testing.T, metaYAML string) (*App, *acl.Declarative) {
 	}
 	app := newAppFromParts(cfg, meta, newFixture())
 	d := writeACL(t, app)
-	app.acl = d
+	setTestACL(t, app, d)
 	seedEntity(app, &entity.Entity{ID: "TKT-001", Type: "ticket", Properties: map[string]any{"title": "T1"}})
 	return app, d
 }
@@ -640,7 +640,7 @@ func TestAttachmentUpload_FullUploadBudgetIs503(t *testing.T) {
 	app := newTestAppV1(t)
 	seedEntity(app, &entity.Entity{ID: "TKT-001", Type: "ticket", Properties: map[string]any{"title": "T1"}})
 	d := writeACL(t, app)
-	app.acl = d
+	setTestACL(t, app, d)
 	for range attachment.DefaultMaxUploads {
 		release, ok := app.attachments.uploads.TryAcquire()
 		if !ok {
@@ -668,13 +668,13 @@ func TestAttachmentWrite_HonorsReadOnlyField(t *testing.T) {
 	app := newTestAppV1(t)
 	seedEntity(app, &entity.Entity{ID: "TKT-001", Type: "ticket", Properties: map[string]any{"title": "T1"}})
 	d := writeACL(t, app)
-	app.acl = d
+	setTestACL(t, app, d)
 	if rec := putAttachmentAs(aliceCtx(), t, app, d, "TKT-001", "screenshot", "a.txt", []byte("data")); rec.Code != http.StatusOK {
 		t.Fatalf("seed upload: got %d; body=%s", rec.Code, rec.Body)
 	}
 	sink := audit.NewMemory()
 	app.auditSink = sink
-	app.fieldResolver = newVerdicts().ReadOnly("screenshot").Build()
+	setTestResolver(t, app, newVerdicts().ReadOnly("screenshot").Build())
 
 	for name, rec := range map[string]*httptest.ResponseRecorder{
 		"upload": putAttachmentAs(aliceCtx(), t, app, d, "TKT-001", "screenshot", "b.txt", []byte("other")),
@@ -702,7 +702,7 @@ func TestAttachmentWrite_HonorsReadOnlyField(t *testing.T) {
 
 	// A field that is hidden as well stays a 404: the field check must not
 	// answer before the visibility check does.
-	app.fieldResolver = newVerdicts().Hidden("screenshot").ReadOnly("screenshot").Build()
+	setTestResolver(t, app, newVerdicts().Hidden("screenshot").ReadOnly("screenshot").Build())
 	if rec := putAttachmentAs(aliceCtx(), t, app, d, "TKT-001", "screenshot", "c.txt", []byte("x")); rec.Code != http.StatusNotFound {
 		t.Errorf("upload to a hidden read-only field: got %d, want 404", rec.Code)
 	}

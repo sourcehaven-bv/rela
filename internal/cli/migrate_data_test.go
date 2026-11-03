@@ -54,7 +54,7 @@ func writeMigration(t *testing.T, root, name string, meta *metamodel.Metamodel, 
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatalf("mkdir migrations: %v", err)
 	}
-	proj, err := meta.ShapeProjection().JSON()
+	proj, err := metamodel.NewShapeProjection(meta).JSON()
 	if err != nil {
 		t.Fatalf("projection JSON: %v", err)
 	}
@@ -74,11 +74,11 @@ func writeMigrationShapes(t *testing.T, root, name string, from, to *metamodel.M
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatalf("mkdir migrations: %v", err)
 	}
-	fromJSON, err := from.ShapeProjection().JSON()
+	fromJSON, err := metamodel.NewShapeProjection(from).JSON()
 	if err != nil {
 		t.Fatalf("projection JSON: %v", err)
 	}
-	toJSON, err := to.ShapeProjection().JSON()
+	toJSON, err := metamodel.NewShapeProjection(to).JSON()
 	if err != nil {
 		t.Fatalf("projection JSON: %v", err)
 	}

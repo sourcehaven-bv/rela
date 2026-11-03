@@ -39,6 +39,7 @@ export interface VersionMeta {
   created_at: string
   principal: { user: string; tool: string }
   prev_id?: string
+  prev_face?: string
   triggered_by?: string
   /**
    * Provenance for a mechanism-produced write. Absent for a direct edit — see

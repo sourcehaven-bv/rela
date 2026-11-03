@@ -10,6 +10,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
+	"github.com/Sourcehaven-BV/rela/internal/lease"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/visibility"
@@ -31,37 +32,41 @@ func newTestDeps(t *testing.T, meta *metamodel.Metamodel, st store.Store) Deps {
 	svc := appbuildtest.New(meta, appbuildtest.WithStore(st))
 	t.Cleanup(func() { _ = svc.Close() })
 
-	return Deps{
+	deps := Deps{
 		Store:         svc.GatedReads().Reader,
-		Traversals:    svc.GatedReads().Traversals,
+		Related:       RelatedReads{Traversals: svc.GatedReads().Traversals},
 		Meta:          meta,
 		Tracer:        svc.Tracer(),
 		Searcher:      svc.Searcher(),
 		Validator:     svc.Validator(),
 		EntityManager: svc.EntityManager(),
 		Config:        svc.Config(),
-		LuaWriteDeps:  svc.LuaWriteDeps(),
-		Watcher:       nopWatcher{},
-		// Note: this real empty dir (what lua_run walks) is
-		// intentionally distinct from LuaWriteDeps' ProjectRoot, which
+		// Note: Lua.ProjectRoot, the real empty dir lua_run walks, is
+		// intentionally distinct from Lua.WriteDeps' ProjectRoot, which
 		// points at the fixture's in-memory /project. No current test
 		// resolves a Lua write relative to that root; align the two if
 		// one ever does.
-		ProjectRoot: t.TempDir(),
-		Attachments: testAttachmentDeps(t, svc, meta, audit.Nop{}),
+		Lua:         LuaDeps{WriteDeps: svc.LuaWriteDeps(), ProjectRoot: t.TempDir()},
+		Watcher:     nopWatcher{},
+		Watch:       WatchDeps{Changes: st, Rebind: svc.GatedReads().Rebind},
+		Attachments: testAttachmentDeps(t, svc, meta),
 		World:       store.TrivialScope(),
 		Families:    store.TrivialScope(),
 		// Read only, as stdio `rela mcp` wires it: list_comments without the
 		// write tools.
-		Comments: &fakeComments{},
+		Comments: CommentDeps{Reader: &fakeComments{}},
+		Leases:   newTestLeases(t, svc.GatedReads().Reader, svc.ACL(), lease.SystemClock{}),
 	}
+	// As the wiring does: a nil reader stays a nil interface.
+	if r := svc.GatedReads().Rollups; r != nil {
+		deps.Related.Rollups = r
+	}
+	return deps
 }
 
 // testAttachmentDeps wires the attachment tools over svc the way `rela mcp`
-// does (no command runner, store backstop limit), with sink as the audit log.
-func testAttachmentDeps(
-	t *testing.T, svc *appbuild.Services, meta *metamodel.Metamodel, sink audit.Audit,
-) AttachmentDeps {
+// does (no command runner, store backstop limit), with no audit log.
+func testAttachmentDeps(t *testing.T, svc *appbuild.Services, meta *metamodel.Metamodel) AttachmentDeps {
 	t.Helper()
 	owner, err := entitymanager.AttachmentsOf(svc.EntityManager())
 	if err != nil {
@@ -75,7 +80,7 @@ func testAttachmentDeps(
 		Snapshot:   func() (AttachmentSnapshot, error) { return snap, nil },
 		Uploads:    attachment.NewLimiter(attachment.DefaultMaxUploads),
 		Authorizer: svc.ACL(),
-		Audit:      sink,
+		Audit:      audit.Nop{},
 	}
 }
 

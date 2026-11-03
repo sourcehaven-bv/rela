@@ -5,6 +5,8 @@ import (
 	"slices"
 	"testing"
 
+	"github.com/Sourcehaven-BV/rela/internal/acl/acltest"
+
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	v1 "github.com/Sourcehaven-BV/rela/internal/apiwire/v1"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
@@ -322,9 +324,9 @@ func TestWorldNeighbors_DeniedPrimeFallsThrough(t *testing.T) {
 		Roles:       map[string]acl.RoleDef{"viewer": {Read: []string{"ticket", "feature@published"}}},
 		Assignments: map[string]string{"alice": "viewer"},
 	}, app.store)
-	req, rerr := d.ForPrincipal(principal.Principal{User: "alice", Tool: principal.ToolDataEntry})
+	req, rerr := d.ForIdentity(acltest.IdentityFor(t.Context(), t, d, principal.Principal{User: "alice", Tool: principal.ToolDataEntry}))
 	if rerr != nil {
-		t.Fatalf("ForPrincipal: %v", rerr)
+		t.Fatalf("ForIdentity: %v", rerr)
 	}
 	gate, gerr := newACLReadGate(req)
 	if gerr != nil {
@@ -357,7 +359,7 @@ func TestWorldNeighbors_DeniedPrimeFallsThrough(t *testing.T) {
 	}
 
 	// The included head is the published face, never the denied draft.
-	cands, _, err := worldCandidates(wctx, app.worldNeighbors, face, map[string]string{"implements": ""}, false)
+	cands, _, err := worldCandidates(wctx, app.worldNeighbors, []*entity.Entity{face}, map[string]string{"implements": ""}, false)
 	if err != nil {
 		t.Fatalf("worldCandidates: %v", err)
 	}
@@ -411,7 +413,7 @@ func TestWorldNeighbors_IncludeAgreesWithRelations(t *testing.T) {
 		t.Fatalf("worldOutgoingForEntity: %v", err)
 	}
 	wire := app.serializer.forWireScoped(wctx, face, outgoing, visible, app.Meta(), "tickets")
-	included := app.resolveV1Includes(wctx, face, "*")
+	included := app.resolveV1Includes(wctx, []*entity.Entity{face}, "*")
 
 	for _, ids := range wire.Relations {
 		for _, id := range ids {
@@ -463,7 +465,7 @@ func TestWorldNeighbors_DefaultWorldUnchanged(t *testing.T) {
 	if got := wire.Relations["implements"]; len(got) != 1 || got[0] != "FEAT-1" {
 		t.Errorf("the default world must carry relations exactly as before; got %v", got)
 	}
-	if included := app.resolveV1Includes(ctx, e, "*"); len(included) != 1 {
+	if included := app.resolveV1Includes(ctx, []*entity.Entity{e}, "*"); len(included) != 1 {
 		t.Errorf("the default world's include block is unchanged; got %d entries", len(included))
 	}
 }
@@ -612,29 +614,6 @@ func TestResolvedFromStoreFace_CarriesFace(t *testing.T) {
 	}
 }
 
-// TestRuleFromName_MatchesWireVocabulary pins that the two vocabularies stay
-// in step. They are separate constants in separate packages, so nothing but a
-// test stops them drifting — and a drift would mislabel provenance rather
-// than fail, which is the quiet kind.
-func TestRuleFromName_MatchesWireVocabulary(t *testing.T) {
-	t.Parallel()
-	cases := map[string]worldreader.Rule{
-		ruleUnscoped:        worldreader.RuleUnscoped,
-		ruleChain:           worldreader.RuleChain,
-		ruleFallbackDefault: worldreader.RuleFallbackDefault,
-	}
-	for name, want := range cases {
-		if got := ruleFromName(name); got != want {
-			t.Errorf("ruleFromName(%q) = %v, want %v", name, got, want)
-		}
-		if want.String() != name {
-			t.Errorf("worldreader.Rule %v stringifies as %q but the wire "+
-				"constant is %q — the two vocabularies must match",
-				want, want.String(), name)
-		}
-	}
-}
-
 // TestIncludeTrailingDot_MatchesPreRefactorOutput pins the one place this
 // refactor diverges from the loop it replaced.
 //
@@ -662,8 +641,8 @@ func TestIncludeTrailingDot_MatchesPreRefactorOutput(t *testing.T) {
 		t.Fatalf("get: found=%v err=%v", found, err)
 	}
 
-	plain := app.resolveV1Includes(ctx, e, "implements")
-	dotted := app.resolveV1Includes(ctx, e, "implements.")
+	plain := app.resolveV1Includes(ctx, []*entity.Entity{e}, "implements")
+	dotted := app.resolveV1Includes(ctx, []*entity.Entity{e}, "implements.")
 	if len(plain) != len(dotted) {
 		t.Fatalf("a trailing dot must not change the included set: "+
 			"plain=%d dotted=%d", len(plain), len(dotted))
@@ -853,7 +832,7 @@ func TestWorldNeighbors_SelfEdgeSurvives(t *testing.T) {
 	}
 
 	// And the include block must agree with the relations map.
-	included := app.resolveV1Includes(wctx, face, "*")
+	included := app.resolveV1Includes(wctx, []*entity.Entity{face}, "*")
 	if _, ok := included["TKT-1"]; !ok {
 		t.Error("include=* must resolve the self-edge peer, or `included` and " +
 			"`relations` disagree (the RR-HJV8CP invariant)")
@@ -915,7 +894,7 @@ func TestIncludeSpec_DefaultWorldParityWithPreRefactor(t *testing.T) {
 		// than read off the source: [FEAT-1 TKT-2]. The ".implements" clause
 		// is the later duplicate, so it wins and the recursion follows
 		// implements from TKT-2, yielding FEAT-1.
-		got := ids(app.resolveV1Includes(ctx, entry, "blocks.blocks,blocks.implements"))
+		got := ids(app.resolveV1Includes(ctx, []*entity.Entity{entry}, "blocks.blocks,blocks.implements"))
 		want := []string{"FEAT-1", "TKT-2"}
 		if !slices.Equal(got, want) {
 			t.Errorf("include=blocks.blocks,blocks.implements = %v, want %v "+
@@ -926,13 +905,13 @@ func TestIncludeSpec_DefaultWorldParityWithPreRefactor(t *testing.T) {
 	t.Run("padded star does not expand", func(t *testing.T) {
 		// Pre-refactor output: empty. `includes == "*"` was a RAW comparison,
 		// so " * " took the named branch and matched no relation type.
-		if got := ids(app.resolveV1Includes(ctx, entry, " * ")); len(got) != 0 {
+		if got := ids(app.resolveV1Includes(ctx, []*entity.Entity{entry}, " * ")); len(got) != 0 {
 			t.Errorf("include=%q must not expand — trimming it into the star "+
 				"form widens the default world on a stray space; got %v", " * ", got)
 		}
 		// The unpadded form still works, so the test above is not passing
 		// because expansion is broken generally.
-		if got := ids(app.resolveV1Includes(ctx, entry, "*")); len(got) == 0 {
+		if got := ids(app.resolveV1Includes(ctx, []*entity.Entity{entry}, "*")); len(got) == 0 {
 			t.Error("precondition: the bare star must still expand")
 		}
 	})
@@ -968,9 +947,9 @@ func TestWorldETag_ResolutionFaultDoesNotForgeAValidValidator(t *testing.T) {
 	}
 
 	// The validator for a genuinely edge-less entity.
-	edgeless := entityETagWithEdges(face, nil)
+	edgeless := servedETag(wctx, app.affordances, face, nil)
 	// The validator produced when edges could not be resolved.
-	faulted := etagUnresolved(wctx, face)
+	faulted := etagUnresolved(wctx, app.affordances, face)
 
 	if edgeless == faulted {
 		t.Error("a resolution fault must not produce the SAME validator as a " +
@@ -999,8 +978,8 @@ func TestWorldETag_UsesTheEdgesItIsGiven(t *testing.T) {
 		t.Fatalf("get: found=%v err=%v", found, err)
 	}
 
-	none := entityETagWithEdges(e, nil)
-	one := entityETagWithEdges(e, []*entity.Relation{
+	none := entityETagWithEdges(e, nil, nil)
+	one := entityETagWithEdges(e, nil, []*entity.Relation{
 		{From: "TKT-1", Type: "implements", To: "FEAT-1"},
 	})
 	if none == one {
@@ -1069,7 +1048,7 @@ func TestDefaultWorld_ContentEdgesAreFaceScoped(t *testing.T) {
 		t.Fatalf("the default world must serve the DEFAULT face; got face %q", face.Face)
 	}
 
-	outgoing, _, err := servedFaceEdges(dctx, app.reader, app.worldNeighbors, face)
+	outgoing, _, err := app.faceEdges.read(dctx, face)
 	if err != nil {
 		t.Fatalf("servedFaceEdges: %v", err)
 	}
@@ -1119,7 +1098,7 @@ func TestDefaultWorld_IdentityEdgesAreFaceIndependent(t *testing.T) {
 	if err != nil || !found {
 		t.Fatalf("resolve entry: found=%v err=%v", found, err)
 	}
-	outgoing, _, err := servedFaceEdges(dctx, app.reader, app.worldNeighbors, face)
+	outgoing, _, err := app.faceEdges.read(dctx, face)
 	if err != nil {
 		t.Fatalf("servedFaceEdges: %v", err)
 	}

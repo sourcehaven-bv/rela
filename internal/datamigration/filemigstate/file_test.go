@@ -171,5 +171,5 @@ func fixtureProjection(t *testing.T) metamodel.ShapeProjection {
 			}},
 		},
 	}
-	return m.ShapeProjection()
+	return metamodel.NewShapeProjection(m)
 }

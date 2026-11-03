@@ -27,7 +27,7 @@ import (
 //
 // Mounted under /api/ deliberately: attachACLRequest and requireVerifiedJWT are
 // both gated on isAPIPath, so a sibling prefix would get NO acl.Request, NO
-// read gate (readGateFromContext returns a permit-all nopReadGate) and NO JWT
+// read gate (readGateFromContext would deny every read) and NO JWT
 // gate — the very gate that carries the upstream identity assertion. This is a
 // security requirement, not a URL preference.
 const caldavPathPrefix = "/api/v1/_caldav/"

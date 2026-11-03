@@ -27,7 +27,7 @@ const SPACES_YAML = `spaces:
     label: "Support"
     home:
       list: bugs
-    create: [bug, task]
+    create: [task, bug]
     navigation:
       - label: "Bugs"
         list: bugs
@@ -80,10 +80,28 @@ test.describe("Spaces", () => {
     await expect(appPage).toHaveURL(/\/s\/product\/list\/bugs$/);
   });
 
-  test("the Create menu offers the space's types", async ({ appPage, serverUrl }) => {
+  // The features list shows a type the space does not create, so nothing
+  // moves. Search and the dashboard have no page header, so no Create menu.
+  test("the Create menu offers the space's types in config order", async ({ appPage, serverUrl }) => {
     const spaces = new SpacesPage(appPage);
-    await appPage.goto(`${serverUrl}/s/support/list/bugs`);
+    await appPage.goto(`${serverUrl}/s/support/list/features`);
     await spaces.openCreateMenu();
-    await expect(spaces.menuItems).toHaveText([/Bug/, /Task/]);
+    await expect(spaces.menuItems).toHaveText([/Task/, /Bug/]);
+    await expect(spaces.menuSeparators).toHaveCount(0);
   });
+
+  // TKT-DSVLOQ: the type the page shows comes first.
+  for (const [route, order] of [
+    ["list/tasks", [/Task/, /Bug/]],
+    ["list/bugs", [/Bug/, /Task/]],
+    ["kanban/bug-board", [/Bug/, /Task/]],
+  ] as const) {
+    test(`the Create menu on ${route} leads with its type`, async ({ appPage, serverUrl }) => {
+      const spaces = new SpacesPage(appPage);
+      await appPage.goto(`${serverUrl}/s/support/${route}`);
+      await spaces.openCreateMenu();
+      await expect(spaces.menuItems).toHaveText([...order]);
+      await expect(spaces.menuSeparators).toHaveCount(1);
+    });
+  }
 });

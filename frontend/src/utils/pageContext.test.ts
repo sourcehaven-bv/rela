@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import type { RouteLocationNormalizedLoaded } from 'vue-router'
-import { currentPageTab, fromPageQuery, pageTabPath, readFromPage } from './pageContext'
+import { currentPageTab, fromPageQuery, pageTabPath, readFromPage, routeTabId } from './pageContext'
 
 function route(name: string, params: Record<string, string>): RouteLocationNormalizedLoaded {
   return { name, params } as unknown as RouteLocationNormalizedLoaded
@@ -41,5 +41,21 @@ describe('pageContext', () => {
     expect(fromPageQuery(r)).toEqual({ from_page: 'topic/TOP-1/board' })
     expect(readFromPage({ from_page: 'topic/TOP-1/board' })).toEqual({ page: 'topic', entity: 'TOP-1', tab: 'board' })
     expect(fromPageQuery(route('entity-page', { page: 'topic', entity: '', tab: 'board' }))).toEqual({})
+  })
+})
+
+describe('routeTabId', () => {
+  const entityPage = { entity_type: 'org' }
+
+  it('is the tab segment on a plain page', () => {
+    expect(routeTabId({}, { tab: 'board' })).toBe('board')
+  })
+
+  it('is the tab segment on an entity page with an entity', () => {
+    expect(routeTabId(entityPage, { entity: 'ORG-1', tab: 'board' })).toBe('board')
+  })
+
+  it('is none on the two-segment entity page route', () => {
+    expect(routeTabId(entityPage, { tab: 'ORG-1' })).toBeUndefined()
   })
 })

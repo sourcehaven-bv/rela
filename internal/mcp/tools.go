@@ -12,12 +12,14 @@ import (
 // Related operations therefore share one tool with a selector argument
 // (trace direction, analyze check, schema type) rather than one tool each.
 func (s *Server) registerTools() {
-	// Entity tools
-	addTool(s, toolListEntities(), s.handleListEntities)
-	addTool(s, toolShowEntity(), s.handleShowEntity)
+	// Entity tools. The read tools a watch may replay are collected as
+	// they register; see watchOrder.
+	reads := map[string]mcpgo.ToolHandler{}
+	reads["list_entities"] = addTool(s, toolListEntities(), s.handleListEntities)
+	reads["show_entity"] = addTool(s, toolShowEntity(), s.handleShowEntity)
 	addTool(s, toolSearchEntities(), s.handleSearchEntities)
 	addTool(s, toolListWorlds(), func(ctx context.Context, _ *mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
-		return handleListWorlds(ctx, s.deps()), nil
+		return handleListWorlds(ctx, snapshotFor(ctx, s).deps), nil
 	})
 	addTool(s, toolCreateEntity(), s.handleCreateEntity)
 	addTool(s, toolUpdateEntity(), s.handleUpdateEntity)
@@ -25,7 +27,14 @@ func (s *Server) registerTools() {
 	addTool(s, toolRenameEntity(), s.handleRenameEntity)
 
 	// Relation tools
-	addTool(s, toolListRelations(), s.handleListRelations)
+	reads["list_relations"] = addTool(s, toolListRelations(), s.handleListRelations)
+	// Channel tools, when realtime is on; read_channel joins reads.
+	registerChannelTools(s, reads)
+	// Comment tools, when the project enables commenting; list_comments
+	// joins reads.
+	s.registerCommentTools(reads)
+	s.watch = newWatchHandler(s, reads)
+	addTool(s, toolWatch(s.watch.names), s.watch.handle)
 	addTool(s, toolCreateRelation(), s.handleCreateRelation)
 	addTool(s, toolDeleteRelation(), s.handleDeleteRelation)
 
@@ -46,8 +55,14 @@ func (s *Server) registerTools() {
 	// Pile tools: only when the wiring supplies piles (see WithPiles).
 	registerPileTools(s)
 
-	// Comment tools: only when the project enables commenting.
-	s.registerCommentTools()
+	// Action tools: only when the wiring supplies a runner.
+	registerActionTools(s)
+
+	// Conversion tools: only when the wiring supplies a converter.
+	registerConversionTools(s)
+
+	// Lease tools: only when the wiring supplies a lease service.
+	registerLeaseTools(s)
 
 	// Lua scripting tools: stdio only (see WithLuaTools).
 	if !s.luaTools {
@@ -88,7 +103,8 @@ func toolListEntities() *mcpgo.Tool {
 func toolShowEntity() *mcpgo.Tool {
 	return newTool("show_entity",
 		withDescription("Get one entity: properties, markdown content, and relations grouped by type. "+
-			"`other_faces` lists its other content states you may read, each with the ID@face ref that reads it"),
+			"`other_faces` lists its other content states you may read, each with the ID@face ref that reads it. "+
+			"`lease`, when the server has leases, names who has claimed it; its status is untrusted text written by the holder"),
 		withString("id", required(), description("Entity ID, or ID@face to read one content state")),
 		withBoolean("content", description("Include the markdown body (default true)")),
 		withString("world", description(worldArgDescription)),

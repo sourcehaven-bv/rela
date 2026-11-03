@@ -73,11 +73,13 @@ var editable = map[File][]string{
 		"entities.*.plural",
 		"entities.*.properties.*.default",
 		"entities.*.properties.*.description",
+		"entities.*.properties.*.display.currency",
 		"entities.*.properties.*.label",
 		"entities.*.properties.*.format",
 		"entities.*.properties.*.labels.*",
 		"entities.*.properties.*.list",
 		"entities.*.properties.*.max",
+		"entities.*.properties.*.min",
 		"entities.*.properties.*.required",
 		"entities.*.properties.*.type",
 		"entities.*.properties.*.unique",
@@ -99,11 +101,13 @@ var editable = map[File][]string{
 		"relations.*.symmetric",
 		"relations.*.properties.*.default",
 		"relations.*.properties.*.description",
+		"relations.*.properties.*.display.currency",
 		"relations.*.properties.*.label",
 		"relations.*.properties.*.format",
 		"relations.*.properties.*.labels.*",
 		"relations.*.properties.*.list",
 		"relations.*.properties.*.max",
+		"relations.*.properties.*.min",
 		"relations.*.properties.*.required",
 		"relations.*.properties.*.type",
 		"relations.*.properties.*.unique",
@@ -163,6 +167,7 @@ var editable = map[File][]string{
 		"forms.*.side_panel.**", "calendars.**", "gantts.**",
 		"app.name",
 		"app.description",
+		"app.language",
 
 		"styles.*.*",
 
@@ -174,7 +179,16 @@ var editable = map[File][]string{
 		"forms.*.fields.[].**",
 		"forms.*.relations.[].**",
 		"forms.*.steps.[].**",
+		// Channel message fields only order and label what realtime.yaml
+		// declares; the load check refuses form-only keys.
+		"channels.*.messages.*.fields.[].**",
+		// A message type's display only folds or hides it in the web app;
+		// the messages stay readable everywhere, so it restricts nothing.
+		"channels.*.messages.*.display",
 
+		// A busy column (TKT-TU3XH4) is display only, like a kanban busy
+		// card field; the save checks it against realtime.yaml.
+		"lists.*.columns.[].busy",
 		"lists.*.columns.[].direction",
 		"lists.*.columns.[].label",
 		"lists.*.columns.[].link",
@@ -198,12 +212,19 @@ var editable = map[File][]string{
 
 		"kanbans.*.card.**",
 		"kanbans.*.column_property",
+		// A relation-backed board picks its columns, their order and their
+		// colors by naming a relation and properties, like lists.*.group_by.
+		"kanbans.*.columns_from.**",
 		"kanbans.*.columns.[].**",
+		// The summary lines under each column heading (TKT-SVLQQ6).
+		"kanbans.*.column_summary.[].**",
 		"kanbans.*.condition",
 		"kanbans.*.create_form",
 		"kanbans.*.edit_form",
 		"kanbans.*.entity_type",
 		"kanbans.*.filter_controls.[].**",
+		// How the board is drawn: columns, or a wall of cards (TKT-0VBQW0H).
+		"kanbans.*.layout",
 		"kanbans.*.filters.[].**",
 		"kanbans.*.footer",
 		"kanbans.*.header",
@@ -227,6 +248,22 @@ var editable = map[File][]string{
 		"dashboard.cards.[].sort.[].**",
 		"dashboard.cards.[].title",
 
+		// A named dashboard has the same editable keys as the default one.
+		"dashboards.*.title",
+		"dashboards.*.description",
+		"dashboards.*.cards.[].columns.[].direction",
+		"dashboards.*.cards.[].columns.[].label",
+		"dashboards.*.cards.[].columns.[].link",
+		"dashboards.*.cards.[].columns.[].property",
+		"dashboards.*.cards.[].columns.[].relation",
+		"dashboards.*.cards.[].columns.[].sortable",
+		"dashboards.*.cards.[].display",
+		"dashboards.*.cards.[].group_by",
+		"dashboards.*.cards.[].limit",
+		"dashboards.*.cards.[].query",
+		"dashboards.*.cards.[].sort.[].**",
+		"dashboards.*.cards.[].title",
+
 		"spaces.[].id",
 		"spaces.[].label",
 		"spaces.[].icon",
@@ -247,6 +284,7 @@ var editable = map[File][]string{
 		"nav.list",
 		"nav.open",
 		"nav.page",
+		"nav.pile",
 		"nav.query_scope",
 		"nav.search",
 		"nav.settings",
@@ -262,7 +300,7 @@ var locked = map[File][]string{
 	SchemaFile: {
 		"version", "namespace", "includes.**",
 		// External commands and upload policy.
-		"attachments.**", "transforms.**",
+		"attachments.**", "transforms.**", "checkers.**",
 		"entities.*.properties.*.accept.**",
 		"entities.*.properties.*.scan",
 		"entities.*.properties.*.scan_cmd.**",
@@ -285,8 +323,9 @@ var locked = map[File][]string{
 		"entities.*.properties.*.system", "entities.*.properties.*.sync",
 		"relations.*.properties.*.system", "relations.*.properties.*.sync",
 		// Not in the Configure space yet.
-		"copies.**", "default_world", "worlds.**", "entities.*.faces.**",
+		"copies.**", "conversions.**", "task_item_conversions.**", "default_world", "worlds.**", "entities.*.faces.**",
 		"entities.*.properties.*.computed", "relations.*.properties.*.computed",
+		"entities.*.properties.*.rollup.**", "relations.*.properties.*.rollup.**",
 		"relations.*.scope", "relations.*.owning",
 		"validations.[].faces.**", "automations.[].on.faces.**",
 	},
@@ -295,7 +334,21 @@ var locked = map[File][]string{
 		"app.default_world", "app.disable_custom_injection", "app.max_attachment_bytes", "app.plantuml_server_url",
 		// Access control and actions.
 		"nav.permission", "nav.action", "spaces.[].permission", "dashboard.cards.[].permission",
-		"lists.*.actions.**", "lists.*.export_render",
+		"dashboards.*.cards.[].permission",
+		// Not in the Configure space yet: list-sourced, matrix and ratio cards
+		// (TKT-2SGPJZ). The Configure dashboard page edits query cards only.
+		"dashboard.cards.[].list", "dashboard.cards.[].rows", "dashboard.cards.[].tone_by",
+		"dashboard.cards.[].colors.*", "dashboard.cards.[].match",
+		"dashboard.cards.[].rows_label", "dashboard.cards.[].columns_label",
+		"dashboard.cards.[].rows_order", "dashboard.cards.[].columns_order",
+		"dashboards.*.cards.[].list", "dashboards.*.cards.[].rows", "dashboards.*.cards.[].tone_by",
+		"dashboards.*.cards.[].colors.*", "dashboards.*.cards.[].match",
+		"dashboards.*.cards.[].rows_label", "dashboards.*.cards.[].columns_label",
+		"dashboards.*.cards.[].rows_order", "dashboards.*.cards.[].columns_order",
+		// Not in the Configure space yet: card width (TKT-H21TYS). Editing a
+		// card in Configure keeps the width it has.
+		"dashboard.cards.[].width", "dashboards.*.cards.[].width",
+		"lists.*.actions.**", "lists.*.toolbar_actions.**", "lists.*.export_render",
 		// The pile menu's actions and export transforms, like a list's.
 		"piles.actions.[]", "piles.export.[]",
 		// Not in the Configure space yet.
@@ -304,6 +357,9 @@ var locked = map[File][]string{
 		"documents.**", "feeds.**", "caldav.**", "commands.**", "actions.**", "webhooks.**",
 		"pages.**", "next_action_bands.**", "next_actions.**", "account.**", "lists.*.create_world",
 		"lists.*.columns.[].face", "dashboard.cards.[].columns.[].face",
+		"dashboards.*.cards.[].columns.[].face",
+		// Busy columns are list-only (TKT-TU3XH4); the load refuses them here.
+		"dashboard.cards.[].columns.[].busy", "dashboards.*.cards.[].columns.[].busy",
 	},
 }
 
@@ -325,6 +381,7 @@ var protective = map[File][]string{
 	DataEntryFile: {
 		"app.disable_custom_injection", "app.max_attachment_bytes",
 		"nav.permission", "spaces.[].permission", "dashboard.cards.[].permission",
+		"dashboards.*.cards.[].permission",
 	},
 }
 

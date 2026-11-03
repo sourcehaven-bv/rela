@@ -51,7 +51,7 @@ const props = withDefaults(
      */
     pendingLabel?: string
   }>(),
-  { tone: 'pending', size: 'md', pendingLabel: 'Loading' },
+  { tone: 'pending', size: 'md', pendingLabel: undefined },
 )
 
 const toneIcons = { error: 'alert', info: 'info' } as const

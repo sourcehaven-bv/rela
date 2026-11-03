@@ -2,6 +2,7 @@ package projectsetup_test
 
 import (
 	"bytes"
+	"context"
 	"path/filepath"
 	"testing"
 
@@ -73,7 +74,7 @@ relations:
 
 	// Precondition: the project is valid before migrating. If this fails the
 	// test fixture is wrong, not the migration.
-	before, err := projectsetup.ValidateWithFS(root, fs)
+	before, err := projectsetup.ValidateWithFS(context.Background(), root, fs)
 	if err != nil {
 		t.Fatalf("validate before: %v", err)
 	}
@@ -86,7 +87,7 @@ relations:
 		t.Fatalf("migrate: %v", migrateErr)
 	}
 
-	after, err := projectsetup.ValidateWithFS(root, fs)
+	after, err := projectsetup.ValidateWithFS(context.Background(), root, fs)
 	if err != nil {
 		t.Fatalf("validate after: %v", err)
 	}

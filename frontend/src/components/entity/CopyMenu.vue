@@ -26,6 +26,7 @@
  * them it is not a choice.
  */
 import { computed } from 'vue'
+import { useI18n } from 'vue-i18n'
 import type { CopyOffer } from '@/types'
 import RlButton from 'rela-components/components/common/RlButton.vue'
 import RlIcon from 'rela-components/components/common/RlIcon.vue'
@@ -39,6 +40,7 @@ const props = defineProps<{
 }>()
 
 const emit = defineEmits<{ invoke: [offer: CopyOffer] }>()
+const { t } = useI18n()
 
 
 // Absent `_copies` (server computed no offers) and `[]` (this face genuinely
@@ -79,7 +81,7 @@ function choose(o: CopyOffer) {
   <RlMenu v-else-if="allowed.length > 1" class="copy-menu">
     <template #trigger="{ toggle, attrs }">
       <RlButton variant="secondary" :disabled="busy" v-bind="attrs" @click="toggle">
-        Copy to
+        {{ t('entity.copyTo') }}
         <template #trailing>
           <RlIcon name="chevron-down" :size="14" aria-hidden="true" />
         </template>

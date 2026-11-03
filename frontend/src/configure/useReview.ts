@@ -7,7 +7,7 @@ import {
   type ConfigProblem,
 } from '@/api/configure'
 import { ApiError, getErrorMessage } from '@/api/errors'
-import { useConfigDraftStore } from '@/stores/configDraft'
+import { useConfigDraftStore } from './configDraft'
 import {
   beginConfigSave,
   endConfigSave,

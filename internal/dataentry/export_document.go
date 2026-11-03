@@ -42,20 +42,33 @@ type resolvedDocument struct {
 	entryID string
 }
 
-// resolveStandaloneDocument runs the full gate chain for a standalone document
-// and returns its render config. On any denial it has already written the
-// response and returns ok=false.
-//
-// This exists so the render and export paths cannot drift. The gates are
-// ORDERED and the order is load-bearing; two copies of an ordered security
-// chain is how one copy quietly loses a gate.
+// resolveStandaloneDocument runs [standaloneDocumentGates] and writes the
+// response for a denial. On any denial it returns ok=false.
 func resolveStandaloneDocument(
 	a *App, w http.ResponseWriter, r *http.Request, docName string,
 ) (resolvedDocument, bool) {
-	if docName == "" {
-		writeV1Error(w, r, http.StatusBadRequest, "invalid_path",
-			"Path must be /_documents/{docName} or /_documents/{docName}/{entityId}", "")
+	resolved, err := standaloneDocumentGates(r.Context(), a, a.State(), docName)
+	if err != nil {
+		writeRequestDenial(w, r, err)
 		return resolvedDocument{}, false
+	}
+	return resolved, true
+}
+
+// standaloneDocumentGates runs the full gate chain for a standalone document
+// and returns its render config. A denial is a [*denialError]; the render
+// route and rela.attach_render both run this one chain.
+//
+// This exists so the render and export paths cannot drift. The gates are
+// ORDERED and the order is load-bearing; two copies of an ordered security
+// chain is how one copy quietly loses a gate. s is the caller's snapshot,
+// so the gates read the config the caller resolved everything else from.
+func standaloneDocumentGates(
+	ctx context.Context, a *App, s *Schema, docName string,
+) (resolvedDocument, error) {
+	if docName == "" {
+		return resolvedDocument{}, deny(http.StatusBadRequest, "invalid_path",
+			"Path must be /_documents/{docName} or /_documents/{docName}/{entityId}")
 	}
 
 	// Validated even though a standalone render writes no cache file today:
@@ -63,41 +76,51 @@ func resolveStandaloneDocument(
 	// nothing. Keeping it means a future cache keyed on docName cannot
 	// reintroduce a traversal.
 	if !isSafePathSegment(docName) {
-		writeV1Error(w, r, http.StatusBadRequest, "invalid_path", "Path segment contains forbidden characters", "")
-		return resolvedDocument{}, false
+		return resolvedDocument{}, deny(http.StatusBadRequest, "invalid_path", "Path segment contains forbidden characters")
 	}
 
-	docCfg, ok := a.State().Cfg.Documents[docName]
+	docCfg, ok := s.Cfg.Documents[docName]
 	if !ok {
-		writeV1Error(w, r, http.StatusNotFound, "document_not_found", "Document config not found", "")
-		return resolvedDocument{}, false
+		return resolvedDocument{}, deny(http.StatusNotFound, "document_not_found", "Document config not found")
 	}
 
 	// The mirror of the standalone rejection in handleV1Documents: an
 	// entity-anchored document needs an entry id this shape cannot supply.
 	// Rejecting beats rendering it against a guessed or empty entity.
 	if !docCfg.IsStandalone() {
-		writeV1Error(w, r, http.StatusBadRequest, "document_kind_mismatch",
-			documentKindMismatchAnchored(docName, docCfg), "")
-		return resolvedDocument{}, false
+		return resolvedDocument{}, deny(http.StatusBadRequest, "document_kind_mismatch",
+			documentKindMismatchAnchored(docName, docCfg))
 	}
 
 	// Gate BEFORE rendering — see gateDocumentPermission. Both gates apply:
 	// the permission check, and (for an elevated document) the closed switch
 	// on the ACL implementation that the read gate alone cannot provide.
-	if !gateDocumentPermission(w, r, docName, docCfg) {
-		return resolvedDocument{}, false
+	if err := gateDocumentPermission(ctx, docName, docCfg); err != nil {
+		return resolvedDocument{}, err
 	}
-	if !gateElevatedDocument(w, r, a.acl, docName, docCfg) {
-		return resolvedDocument{}, false
+	if err := gateElevatedDocument(ctx, a.acl, docName, docCfg); err != nil {
+		return resolvedDocument{}, err
 	}
 
-	return resolvedDocument{cfg: a.toDocumentRenderConfig(docName, &docCfg)}, true
+	return resolvedDocument{cfg: a.toDocumentRenderConfig(docName, &docCfg)}, nil
 }
 
-// resolveAnchoredDocument runs the full gate chain for an entity-anchored
-// document and returns its render config plus the entry entity ID. On any
-// denial it has already written the response and returns ok=false.
+// resolveAnchoredDocument runs [anchoredDocumentGates] and writes the
+// response for a denial. On any denial it returns ok=false.
+func resolveAnchoredDocument(
+	a *App, w http.ResponseWriter, r *http.Request, docName, entityID string,
+) (resolvedDocument, bool) {
+	resolved, err := anchoredDocumentGates(r.Context(), a, a.State(), docName, entityID)
+	if err != nil {
+		writeRequestDenial(w, r, err)
+		return resolvedDocument{}, false
+	}
+	return resolved, true
+}
+
+// anchoredDocumentGates runs the full gate chain for an entity-anchored
+// document and returns its render config plus the entry entity ID. A denial
+// is a [*denialError] or a gate error.
 //
 // Gate ORDER is the whole point of this function, and two orderings are
 // load-bearing:
@@ -119,9 +142,9 @@ func resolveStandaloneDocument(
 // used today: reads skipped for script: documents, writes only for
 // principal-independent command: renders. A per-principal caller reading that
 // cache would reintroduce RR-2QSGLU.
-func resolveAnchoredDocument(
-	a *App, w http.ResponseWriter, r *http.Request, docName, entityID string,
-) (resolvedDocument, bool) {
+func anchoredDocumentGates(
+	ctx context.Context, a *App, s *Schema, docName, entityID string,
+) (resolvedDocument, error) {
 	// Both segments flow into the on-disk document cache filename
 	// (document.go GetCached/doRender). Reject anything that could escape the
 	// cache directory before any filesystem work happens.
@@ -143,23 +166,20 @@ func resolveAnchoredDocument(
 	// leading underscore, which is exactly the case this route must not serve.
 	ref, refErr := entity.ParseRef(entityID)
 	if !isSafePathSegment(docName) || !isSafeStateRefSegment(entityID) || refErr != nil {
-		writeV1Error(w, r, http.StatusBadRequest, "invalid_path", "Path segment contains forbidden characters", "")
-		return resolvedDocument{}, false
+		return resolvedDocument{}, deny(http.StatusBadRequest, "invalid_path", "Path segment contains forbidden characters")
 	}
 
-	docCfg, ok := a.State().Cfg.Documents[docName]
+	docCfg, ok := s.Cfg.Documents[docName]
 	if !ok {
-		writeV1Error(w, r, http.StatusNotFound, "document_not_found", "Document config not found", "")
-		return resolvedDocument{}, false
+		return resolvedDocument{}, deny(http.StatusNotFound, "document_not_found", "Document config not found")
 	}
 
 	// A standalone document has no entry entity, so an entity-anchored
 	// request for one is a category error, not a document to render against
 	// the supplied id. Reject rather than silently ignoring the id.
 	if docCfg.IsStandalone() {
-		writeV1Error(w, r, http.StatusBadRequest, "document_kind_mismatch",
-			documentKindMismatchStandalone(docName), "")
-		return resolvedDocument{}, false
+		return resolvedDocument{}, deny(http.StatusBadRequest, "document_kind_mismatch",
+			documentKindMismatchStandalone(docName))
 	}
 
 	// ACL gates (TKT-C0R07J), FIRST — see the ordering note in the doc
@@ -181,33 +201,31 @@ func resolveAnchoredDocument(
 	// An absent id still runs the gates, against the document's type, so a
 	// miss costs at least what a denial does and the response time does not
 	// tell a hidden id from an absent one (RR-NGMI).
-	typ := a.visibleReader.storedType(r.Context(), ref.ID)
+	typ := a.visibleReader.storedType(ctx, ref.ID)
 	if typ == "" {
 		typ = docCfg.EntityType
 	}
-	ent, found, gateErr := a.visibleReader.addressRef(r.Context(), typ, ref)
+	ent, found, gateErr := a.visibleReader.addressRef(ctx, typ, ref)
 	if gateErr != nil {
-		writeGateError(w, r, gateErr)
-		return resolvedDocument{}, false
+		return resolvedDocument{}, gateErr
 	}
 	if !found {
-		writeV1Error(w, r, http.StatusNotFound, "not_found", entityNotFoundTitle, "")
-		return resolvedDocument{}, false
+		return resolvedDocument{}, deny(http.StatusNotFound, "not_found", entityNotFoundTitle)
 	}
 
 	// A doc-level `permission:` applies IN ADDITION to the per-entity gate
 	// above — it narrows, never widens (a holder still needs to pass the
 	// entity read gate).
-	if !gateDocumentPermission(w, r, docName, docCfg) {
-		return resolvedDocument{}, false
+	if err := gateDocumentPermission(ctx, docName, docCfg); err != nil {
+		return resolvedDocument{}, err
 	}
 
 	// An entity-anchored document may also be elevated (TKT-Y3JVFK), in which
 	// case BOTH this and the per-entity gate above must pass. The entity gate
 	// governs the entry entity; elevation governs what the script may read
 	// BEYOND it, so neither subsumes the other.
-	if !gateElevatedDocument(w, r, a.acl, docName, docCfg) {
-		return resolvedDocument{}, false
+	if err := gateElevatedDocument(ctx, a.acl, docName, docCfg); err != nil {
+		return resolvedDocument{}, err
 	}
 
 	// Enforce the doc's entity_type: a release-notes script authored for
@@ -218,9 +236,8 @@ func resolveAnchoredDocument(
 	// The row has cleared the gates against its own type above, so naming
 	// that type here discloses nothing the caller may not read.
 	if ent.Type != docCfg.EntityType {
-		writeV1Error(w, r, http.StatusBadRequest, "entity_type_mismatch",
-			documentTypeMismatch(docName, docCfg.EntityType, entityID, ent.Type), "")
-		return resolvedDocument{}, false
+		return resolvedDocument{}, deny(http.StatusBadRequest, "entity_type_mismatch",
+			documentTypeMismatch(docName, docCfg.EntityType, entityID, ent.Type))
 	}
 
 	// The render is keyed on the address of the row the gates cleared, so the
@@ -229,7 +246,7 @@ func resolveAnchoredDocument(
 	// This address is also what a script sees as rela.document.entry_id. For a
 	// faceless type it is the bare id, exactly as before; for a faced row it is
 	// `ID@face`, which no bare-id request could render until BUG-8J3LSB.
-	return resolvedDocument{cfg: a.toDocumentRenderConfig(docName, &docCfg), entryID: ent.Ref().String()}, true
+	return resolvedDocument{cfg: a.toDocumentRenderConfig(docName, &docCfg), entryID: ent.Ref().String()}, nil
 }
 
 // handleV1ExportDocument serves the document export routes:

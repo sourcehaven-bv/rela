@@ -12,6 +12,9 @@
  * like `RlCommentComposer` with its border and background.
  */
 import RlIconButton from '../common/RlIconButton.vue'
+import { useMessages } from '../../composables/useMessages'
+
+const messages = useMessages()
 
 withDefaults(
   defineProps<{
@@ -46,34 +49,54 @@ defineEmits<{
 
 <template>
   <section class="rl-detail-panel" :class="`rl-detail-panel--${variant}`">
-    <header class="rl-detail-panel__toolbar" aria-label="Task actions">
+    <header class="rl-detail-panel__toolbar" :aria-label="messages.chromeText({ key: 'taskActions' })">
       <slot name="leading" />
 
       <template v-if="showNavigation">
         <RlIconButton
           class="rl-detail-panel__nav"
           icon="chevron-down"
-          label="Previous"
+          :label="messages.chromeText({ key: 'previous' })"
           @click="$emit('previous')"
         />
         <RlIconButton
           class="rl-detail-panel__nav"
           icon="chevron-up"
-          label="Next"
+          :label="messages.chromeText({ key: 'next' })"
           @click="$emit('next')"
         />
       </template>
 
       <div class="rl-detail-panel__toolbar-end">
         <slot name="toolbar" />
-        <RlIconButton v-if="showLink" icon="link" label="Copy link" @click="$emit('copyLink')" />
-        <RlIconButton v-if="showAttach" icon="paperclip" label="Attach file" @click="$emit('attach')" />
-        <RlIconButton v-if="showExpand" icon="maximize-2" label="Expand" @click="$emit('expand')" />
+        <RlIconButton
+          v-if="showLink"
+          icon="link"
+          :label="messages.chromeText({ key: 'copyLink' })"
+          @click="$emit('copyLink')"
+        />
+        <RlIconButton
+          v-if="showAttach"
+          icon="paperclip"
+          :label="messages.chromeText({ key: 'attachFile' })"
+          @click="$emit('attach')"
+        />
+        <RlIconButton
+          v-if="showExpand"
+          icon="maximize-2"
+          :label="messages.chromeText({ key: 'expand' })"
+          @click="$emit('expand')"
+        />
         <!-- A host with a real menu puts its trigger here, in the button's place. -->
         <slot name="menu">
-          <RlIconButton icon="ellipsis" label="More options" @click="$emit('menu')" />
+          <RlIconButton icon="ellipsis" :label="messages.chromeText({ key: 'moreOptions' })" @click="$emit('menu')" />
         </slot>
-        <RlIconButton v-if="showClose" icon="x" label="Close panel" @click="$emit('close')" />
+        <RlIconButton
+          v-if="showClose"
+          icon="x"
+          :label="messages.chromeText({ key: 'closePanel' })"
+          @click="$emit('close')"
+        />
       </div>
     </header>
 

@@ -10,6 +10,7 @@
  * and for one the principal may not write. Both read as a plain heading.
  */
 import { ref } from 'vue'
+import { useI18n } from 'vue-i18n'
 import RlInlineEdit from 'rela-components/components/common/RlInlineEdit.vue'
 
 const props = defineProps<{
@@ -23,10 +24,17 @@ const props = defineProps<{
 }>()
 
 const emit = defineEmits<{
+  edit: []
   commit: [value: string]
 }>()
 
 const draft = ref('')
+const { t } = useI18n()
+
+function onEdit() {
+  draft.value = props.value
+  emit('edit')
+}
 
 function onCommit() {
   const next = draft.value.trim()
@@ -38,14 +46,20 @@ function onCommit() {
 
 <template>
   <h1 class="entity-title text-wrap-anywhere">
-    <RlInlineEdit v-if="editable" block label="Title" @edit="draft = value" @commit="onCommit">
+    <RlInlineEdit
+      v-if="editable"
+      block
+      :label="t('entity.titleLabel')"
+      @edit="onEdit"
+      @commit="onCommit"
+    >
       <template #read>{{ title }}</template>
       <template #edit>
         <input
           v-model="draft"
           type="text"
           class="rl-control entity-title-input"
-          aria-label="Title"
+          :aria-label="t('entity.titleLabel')"
         />
       </template>
     </RlInlineEdit>

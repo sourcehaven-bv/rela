@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
+	"github.com/Sourcehaven-BV/rela/internal/testutil/logtest"
 )
 
 // AC2.1: empty file decodes to a zero Policy.
@@ -102,9 +103,7 @@ also_unknown:
 	path := writeTempPolicy(t, yaml)
 
 	var buf bytes.Buffer
-	prev := slog.Default()
-	t.Cleanup(func() { slog.SetDefault(prev) })
-	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn})))
+	logtest.SetDefault(t, slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn}))
 
 	p, err := acl.LoadPolicy(path)
 	if err != nil {
@@ -266,6 +265,36 @@ roles:
 	}
 }
 
+// A client field ceiling is applied only by the policy-backed resolver, so it
+// counts as an affordance grant even when no role declares a field block
+// (BUG-KJ5D18). A ceiling on another axis, or a scope grant alone, does not.
+func TestPolicy_HasAffordanceGrants_ClientFieldCeiling(t *testing.T) {
+	t.Parallel()
+	const roles = "roles:\n  viewer:\n    read: [\"*\"]\n"
+	for _, tc := range []struct {
+		name string
+		yaml string
+		want bool
+	}{
+		{"baseline redact", "client_baselines:\n  apps:\n    applies_to: [app]\n    redact:\n      ticket: [title]\n", true},
+		{"baseline visible", "client_baselines:\n  apps:\n    applies_to: [app]\n    visible:\n      ticket: [title]\n", true},
+		{"baseline visible empty list", "client_baselines:\n  apps:\n    applies_to: [app]\n    visible:\n      ticket: []\n", true},
+		{"baseline row axis only", "client_baselines:\n  apps:\n    applies_to: [app]\n    deny_read: [ticket]\n", false},
+		{"scope grant only", "scope_grants:\n  tickets:read:\n    visible:\n      ticket: [title]\n", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			p, err := acl.LoadPolicy(writeTempPolicy(t, roles+tc.yaml))
+			if err != nil {
+				t.Fatalf("LoadPolicy: %v", err)
+			}
+			if got := p.HasAffordanceGrants(); got != tc.want {
+				t.Errorf("HasAffordanceGrants() = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
 // The per-type affordance block's opt-in signal is the PRESENCE of
 // the type key in the map, regardless of whether its value is an
 // explicit empty list or a null. yaml.v3 decodes both `ticket: []`
@@ -358,7 +387,7 @@ func TestLoadPolicy_RelationGrant_CreateRemoveFaces(t *testing.T) {
 }
 
 // RR-NIGK: a blank entry in inherit_roles_through is rejected at load.
-// A blank entry would otherwise reach StoreGraph with an empty
+// A blank entry would otherwise reach aclstore.Graph with an empty
 // RelationQuery.Type meaning "all relations" — silently widening
 // containment to every relation type in the workspace.
 func TestLoadPolicy_BlankInheritRolesThrough_Rejected(t *testing.T) {

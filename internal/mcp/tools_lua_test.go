@@ -92,11 +92,11 @@ func TestHandleLuaRun_ListsScriptsWithoutPath(t *testing.T) {
 	t.Parallel()
 	meta, st := makeTestFixture(t)
 	deps := newTestDeps(t, meta, st)
-	if err := os.MkdirAll(filepath.Join(deps.ProjectRoot, "scripts", "reports"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(deps.Lua.ProjectRoot, "scripts", "reports"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	for _, name := range []string{"reports/weekly.lua", "notes.txt"} {
-		if err := os.WriteFile(filepath.Join(deps.ProjectRoot, "scripts", name), []byte("return 1"), 0o600); err != nil {
+		if err := os.WriteFile(filepath.Join(deps.Lua.ProjectRoot, "scripts", name), []byte("return 1"), 0o600); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -110,5 +110,54 @@ func TestHandleLuaRun_ListsScriptsWithoutPath(t *testing.T) {
 	text := getResultText(t, result)
 	if result.IsError || !strings.Contains(text, filepath.Join("reports", "weekly.lua")) || strings.Contains(text, "notes.txt") {
 		t.Errorf("want only the .lua script listed, got: %s", text)
+	}
+}
+
+// TestHandleLua_ErrorInModule pins that lua_run and lua_eval both report a
+// failure inside a lib/ module with the module's line and source excerpt.
+func TestHandleLua_ErrorInModule(t *testing.T) {
+	t.Parallel()
+	meta, st := makeTestFixture(t)
+	deps := newTestDeps(t, meta, st)
+	// Read scripts and modules from the temp project on disk.
+	deps.Lua.WriteDeps.ProjectRoot = deps.Lua.ProjectRoot
+	deps.Lua.WriteDeps.Files = nil
+	files := map[string]string{
+		"lib/fail.lua":  "local M = {}\nfunction M.run()\n  error(\"inside module\")\nend\nreturn M\n",
+		"scripts/s.lua": "local m = require(\"fail\")\nm.run()\n",
+	}
+	for name, body := range files {
+		p := filepath.Join(deps.Lua.ProjectRoot, filepath.FromSlash(name))
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	s := &Server{}
+	setDeps(s, deps)
+	h := group(s, selLua)
+
+	run, err := h.handleLuaRun(context.Background(), luaCallToolReq(map[string]any{"path": "s.lua"}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	eval, err := h.handleLuaEval(context.Background(), luaCallToolReq(map[string]any{"code": `require("fail").run()`}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, result := range map[string]*mcpgo.CallToolResult{"lua_run": run, "lua_eval": eval} {
+		se := decodeScriptError(t, result)
+		if se.LuaPath != "lib/fail.lua" || se.LuaLine != 3 {
+			t.Errorf("%s: LuaPath:LuaLine = %s:%d, want lib/fail.lua:3", name, se.LuaPath, se.LuaLine)
+		}
+		found := false
+		for _, l := range se.Source {
+			found = found || (l.Highlight && strings.Contains(l.Text, "inside module"))
+		}
+		if !found {
+			t.Errorf("%s: source = %+v, want the module line highlighted", name, se.Source)
+		}
 	}
 }

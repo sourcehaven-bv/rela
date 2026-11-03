@@ -1,0 +1,35 @@
+request: GET /api/v1/_history/ticket/TKT-1/1
+identity: header admin@example.test
+status: 200
+reads: GetRelation=2 GraphQueryHeaders=1 ListEntities=1 ListRelations=1
+breadth: ListEntities=1/1 ListRelations=0/1
+bodies: GraphQuery=0/1 ListEntities=1/1
+versions: GetVersion=1
+body:
+{
+  "created_at": "2025-03-01T10:00:00Z",
+  "entity": {
+    "_self": "/api/v1/tickets/TKT-1",
+    "id": "TKT-1",
+    "type": "ticket",
+    "_title": "Alpha",
+    "properties": {
+      "secret": "first-secret",
+      "status": "open",
+      "title": "Alpha"
+    },
+    "content": "Alpha body.",
+    "_actions": {
+      "delete": true,
+      "rename": false,
+      "update": true
+    }
+  },
+  "id": "TKT-1",
+  "op": "create",
+  "principal": {
+    "tool": "",
+    "user": "admin@example.test"
+  },
+  "version": 1
+}

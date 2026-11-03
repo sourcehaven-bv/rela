@@ -27,6 +27,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/cmdexec"
 	"github.com/Sourcehaven-BV/rela/internal/dataentry"
 	"github.com/Sourcehaven-BV/rela/internal/jwtauth"
+	"github.com/Sourcehaven-BV/rela/internal/principal"
 	"github.com/Sourcehaven-BV/rela/internal/script"
 )
 
@@ -47,6 +48,7 @@ type serverFlags struct {
 	verbose           bool
 	quiet             bool
 	accessLog         string
+	queryCeiling      int64
 	debugPprof        string
 	principalHeader   string
 	readOnly          bool
@@ -123,8 +125,11 @@ func parseFlags() *serverFlags {
 	flag.BoolVar(&f.verbose, "verbose", false, "Verbose (debug) logging")
 	flag.BoolVar(&f.quiet, "quiet", false, "Quiet (warn-only) logging")
 	flag.StringVar(&f.accessLog, "access-log", "",
-		"Log one line per request: =stderr, or =syslog (tag "+accessLogTag+"). Fields: method, path (no query string), "+
-			"status, wall_ms, queries, db_ms. Independent of --verbose/--quiet; unlike --verbose it logs no SQL.")
+		"Log one line per request: =stderr, or =syslog (tag "+accessLogTag+"). Fields: method, path and query "+
+			"(as shapes: ids and data masked), status, wall_ms, queries, db_ms. Independent of --verbose/--quiet; unlike --verbose it logs no SQL.")
+	flag.Int64Var(&f.queryCeiling, "query-ceiling", dataentry.DefaultQueryCeiling,
+		"Log a warning for a GET request that runs more than this many database statements, naming the "+
+			"statement it repeated most. 0 turns it off. Only database backends count statements.")
 	flag.StringVar(&f.debugPprof, "debug-pprof", "",
 		"If set, serve net/http/pprof on this loopback address (e.g. 127.0.0.1:6060). "+
 			"Diagnostic only. Refuses to bind to non-loopback addresses.")
@@ -346,6 +351,20 @@ func validateIdentityFlags(f *serverFlags, envUser string) (identityMode, error)
 	return identityJWT, nil
 }
 
+// hasIdentitySource reports whether a request can carry a user identity: JWT
+// identity, a principal header, or $RELA_DATAENTRY_USER. The env resolver
+// trims the value, so a blank one counts as unset.
+func hasIdentitySource(mode identityMode, f *serverFlags, envUser string) bool {
+	return mode == identityJWT || f.principalHeader != "" || strings.TrimSpace(envUser) != ""
+}
+
+// warnUnidentifiedACL reports whether the server would refuse every /api/
+// request with 401 unauthenticated: ACL is configured, but there is no
+// identity source, so every caller is "unknown" (TKT-QR1VTP).
+func warnUnidentifiedACL(mode identityMode, f *serverFlags, envUser string, hasACL bool) bool {
+	return hasACL && !hasIdentitySource(mode, f, envUser)
+}
+
 // wirePrincipalResolvers installs the identity source on the app, per mode.
 //
 // identityHeader keeps the legacy chain: $RELA_DATAENTRY_USER, then the plain
@@ -475,6 +494,15 @@ func (a assertionVerifierAdapter) VerifyAssertion(
 	if err != nil {
 		return dataentry.AssertedIdentity{}, err
 	}
+	return assertedIdentity(c), nil
+}
+
+// coverage-ignore-end
+
+// assertedIdentity copies every verified claim into the gate's shape. It is
+// split from the adapter so a test can check that no field is forgotten
+// without a live JWKS.
+func assertedIdentity(c jwtauth.AssertionClaims) dataentry.AssertedIdentity {
 	return dataentry.AssertedIdentity{
 		Subject:       c.Subject,
 		OrgID:         c.OrgID,
@@ -484,10 +512,9 @@ func (a assertionVerifierAdapter) VerifyAssertion(
 		PrincipalType: c.PrincipalType,
 		Scopes:        c.Scopes,
 		Email:         c.Email,
-	}, nil
+		ExpiresAt:     c.ExpiresAt,
+	}
 }
-
-// coverage-ignore-end
 
 // webhookVerifierAdapter bridges the concrete jwtauth.WebhookVerifier to the
 // dataentry receiver's expected shape, translating jwtauth.WebhookClaims into
@@ -512,6 +539,10 @@ func main() {
 	f := parseFlags()
 
 	configureLogging(f.verbose, f.quiet)
+	if err := principal.RefuseRunAsEnv(os.LookupEnv); err != nil {
+		slog.Error("refusing to start", "error", err)
+		os.Exit(1)
+	}
 	accessLog := openAccessLog(f.accessLog)
 
 	if err := dataentry.CheckEmbeddedSPA(); err != nil {
@@ -567,6 +598,15 @@ func main() {
 				"only safe if a reverse proxy strips + replaces the header. "+
 				"See docs/server-security.md.",
 				"bind", f.bind, "header", f.principalHeader)
+		}
+		if strings.TrimSpace(os.Getenv(dataentry.EnvDataEntryUserVar)) != "" {
+			// The 401 unauthenticated hint offers the env var for local
+			// use (TKT-QR1VTP). Beyond loopback it makes every caller that
+			// one user, so say so here too.
+			slog.Warn("$"+dataentry.EnvDataEntryUserVar+" set on non-loopback bind: "+
+				"every client that reaches this server acts as that user. "+
+				"Use --jwt-* instead. See docs/server-security.md.",
+				"bind", f.bind)
 		}
 		if shouldWarnNoACL(svc.ACL(), f.readOnly) {
 			// Non-loopback bind without `acl.yaml` and without

@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref } from 'vue'
+import { useI18n } from 'vue-i18n'
 import type { Command } from '@/types'
 import { useModalStack } from '@/composables/modalStack'
 import { getErrorMessage } from '@/api'
@@ -24,15 +25,18 @@ const showModal = ref(false)
 useModalStack(showModal)
 const activeCommand = ref<Command | null>(null)
 const running = ref(false)
-const output = ref<Array<{ type: 'text' | 'file'; text?: string; token?: string; label?: string }>>([])
+const output = ref<Array<{ type: 'text' | 'file'; text?: string; token?: string; label?: string }>>(
+  []
+)
 const success = ref<boolean | null>(null)
 
 const { confirm } = useConfirm()
+const { t } = useI18n()
 
 async function runCommand(cmd: Command) {
   if (cmd.confirm) {
     const ok = await confirm({
-      title: `${cmd.label}?`,
+      title: t('entity.action.confirmTitle', { label: cmd.label }),
       message: cmd.confirm,
       confirmLabel: cmd.label,
     })
@@ -89,7 +93,12 @@ async function runCommand(cmd: Command) {
       running.value = false
     }
   } catch (err) {
-    output.value.push({ type: 'text', text: `Error: ${getErrorMessage(err, 'Connection failed')}` })
+    output.value.push({
+      type: 'text',
+      text: t('entity.command.error', {
+        detail: getErrorMessage(err, t('entity.command.connectionFailed')),
+      }),
+    })
     success.value = false
     running.value = false
   }
@@ -111,11 +120,16 @@ function processSSEEvent(eventType: string, rawData: string) {
         output.value.push({
           type: 'file',
           token: data.token,
-          label: data.label || 'File',
+          label: data.label || t('entity.command.file'),
         })
         break
       case 'error':
-        output.value.push({ type: 'text', text: `Error: ${data.text || 'Command error'}` })
+        output.value.push({
+          type: 'text',
+          text: t('entity.command.error', {
+            detail: data.text || t('entity.command.commandError'),
+          }),
+        })
         success.value = false
         running.value = false
         break
@@ -147,19 +161,23 @@ defineExpose({ runCommand })
 <template>
   <RlModal
     :open="showModal"
-    :title="activeCommand?.label ?? 'Command'"
+    :title="activeCommand?.label ?? t('entity.command.title')"
     size="lg"
     :persistent="running"
     @close="close"
   >
     <div class="command-status-row">
-      <span v-if="running" class="command-status running">Running...</span>
-      <span v-else-if="success === true" class="command-status success">Completed</span>
-      <span v-else-if="success === false" class="command-status error">Failed</span>
+      <span v-if="running" class="command-status running">{{ t('entity.command.running') }}</span>
+      <span v-else-if="success === true" class="command-status success">{{
+        t('entity.command.completed')
+      }}</span>
+      <span v-else-if="success === false" class="command-status error">{{
+        t('entity.command.failed')
+      }}</span>
     </div>
     <div class="command-output">
       <template v-if="output.length === 0">
-        <div class="output-line">Starting...</div>
+        <div class="output-line">{{ t('entity.command.starting') }}</div>
       </template>
       <template v-for="(item, idx) in output" :key="idx">
         <div v-if="item.type === 'text'" class="output-line">{{ item.text }}</div>
@@ -171,7 +189,8 @@ defineExpose({ runCommand })
             class="file-btn"
             :href="downloadUrl(item.token)"
             :download="item.label"
-          >Download</a>
+            >{{ t('entity.command.download') }}</a
+          >
         </div>
       </template>
     </div>
@@ -179,7 +198,7 @@ defineExpose({ runCommand })
     <template #actions>
       <div class="command-actions">
         <RlButton variant="secondary" :disabled="running" @click="close">
-          Close
+          {{ t('common.close') }}
         </RlButton>
       </div>
     </template>

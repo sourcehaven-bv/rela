@@ -10,7 +10,7 @@ const meta: Meta<typeof RlPageHeader> = {
   component: RlPageHeader,
   parameters: { layout: 'fullscreen' },
   argTypes: {
-    statusColor: { control: { type: 'select' }, options: ['green', 'amber', 'red', 'grey', 'blue'] },
+    statusColor: { control: { type: 'select' }, options: ['green', 'amber', 'red', 'grey', 'blue', 'purple'] },
     starred: { control: 'boolean' },
     showStar: { control: 'boolean' },
     showMenu: { control: 'boolean' },

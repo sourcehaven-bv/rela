@@ -4,6 +4,7 @@ import { getSchema, getConfig } from '@/api/schema'
 import { getDashboard } from '@/api/dashboard'
 import { registerEntityPlurals } from '@/api/entities'
 import { getErrorMessage } from '@/api/errors'
+import { t } from '@/i18n'
 import type {
   EntityType,
   PropertyDef,
@@ -11,6 +12,7 @@ import type {
   CustomType,
   WorldInfo,
   FormConfig,
+  ChannelPresentation,
   ListConfig,
   ViewConfig,
   EntityViewConfig,
@@ -48,6 +50,8 @@ export const useSchemaStore = defineStore('schema', () => {
   // than shipping one that can only 501.
   const historyEnabled = ref<boolean>(false)
   const forms = ref<Map<string, FormConfig>>(new Map())
+  /** data-entry.yaml `channels:`, keyed by channel type (TKT-91BK6F). */
+  const channelPresentations = ref<Map<string, ChannelPresentation>>(new Map())
   const lists = ref<Map<string, ListConfig>>(new Map())
   const views = ref<Map<string, ViewConfig>>(new Map())
   // Keyed by entity TYPE, unlike `views` which is keyed by view id.
@@ -317,6 +321,15 @@ export const useSchemaStore = defineStore('schema', () => {
     )
   }
 
+  // The property def that carries a display format (TKT-SVLQQ6), for a
+  // display surface that has a property name but no def, such as a view row.
+  function displayDefForProperty(
+    property: string,
+    entityType?: string | EntityType,
+  ): PropertyDef | undefined {
+    return scanPropertyDefs(property, entityType, (def) => (def?.display ? def : undefined))
+  }
+
   // Resolve the badge style map (value → badge class) for a property. The
   // server keys `styles` by CUSTOM-TYPE name (buildStyleMap; validateStyles
   // rejects other keys), so resolve the property to its custom type first.
@@ -433,6 +446,7 @@ export const useSchemaStore = defineStore('schema', () => {
       aboutDescription.value = configData.about_description || ''
       styles.value = configData.styles || {}
       forms.value = new Map(Object.entries(configData.forms || {}))
+      channelPresentations.value = new Map(Object.entries(configData.channels || {}))
       lists.value = new Map(Object.entries(configData.lists || {}))
       views.value = new Map(Object.entries(configData.views || {}))
       entityViews.value = new Map(Object.entries(configData.entity_views || {}))
@@ -462,7 +476,7 @@ export const useSchemaStore = defineStore('schema', () => {
 
       loaded.value = true
     } catch (err) {
-      error.value = getErrorMessage(err, 'Failed to load schema')
+      error.value = getErrorMessage(err, t('shell.loadSchemaFailed'))
       throw err
     } finally {
       loading.value = false
@@ -472,6 +486,21 @@ export const useSchemaStore = defineStore('schema', () => {
   async function reload() {
     loaded.value = false
     await load()
+  }
+
+  /**
+   * Re-reads the `channels:` presentation from `/_config` on its own, for
+   * a page that shows channels: a `refresh` (data-entry.yaml or
+   * realtime.yaml changed) reaches the channel descriptor, and this keeps
+   * the presentation in step with it. A failed read keeps what is held.
+   */
+  async function reloadChannelPresentations(): Promise<void> {
+    try {
+      const configData = await getConfig()
+      channelPresentations.value = new Map(Object.entries(configData.channels || {}))
+    } catch {
+      // Keep the presentation held; the next refresh tries again.
+    }
   }
 
   function setLogoUrl(url: string | null) {
@@ -514,6 +543,8 @@ export const useSchemaStore = defineStore('schema', () => {
     worlds,
     worldOrder,
     forms,
+    channelPresentations,
+    reloadChannelPresentations,
     lists,
     views,
     entityViews,
@@ -558,6 +589,7 @@ export const useSchemaStore = defineStore('schema', () => {
     getGantt,
     getAction,
     getEnumLabel,
+    displayDefForProperty,
     enumValuesForProperty,
     resolveOptionLabels,
     stylesForProperty,

@@ -1,0 +1,21 @@
+request: POST /api/v1/_action/close
+identity: header editor@example.test
+status: 422
+reads: GetEntity=1 GetRelation=3 GraphQueryHeaders=1 ListEntities=1 ListEntityHeaders=3 ListRelations=1
+breadth: ListEntities=1/1 ListEntityHeaders=3/3 ListRelations=0/1
+bodies: GetEntity=0/1 GraphQuery=0/1 ListEntities=0/1 ListEntityHeaders=0/3
+versions: 
+body:
+{
+  "error": "script_error",
+  <minted>,
+  "script": {
+    "surface": "action",
+    "path": "actions/close.lua",
+    "entity_id": "TKT-3"
+  },
+  "lua": {
+    "message": "update entity error: forbidden: transition guard denied: status \"open\"→\"closed\" requires permission \"close-ticket\" (rule_kind=transition-guard rule_id=close-ticket)",
+    "line": 1
+  }
+}

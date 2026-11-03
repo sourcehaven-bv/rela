@@ -2,6 +2,7 @@ package aclaudit
 
 import (
 	"fmt"
+	"maps"
 	"slices"
 	"sort"
 	"strings"
@@ -23,6 +24,7 @@ func tierB(p *acl.Policy, m MetamodelReader) []Finding {
 	f = append(f, checkCeilingsAgainstMetamodel(p, m)...) // B8 / B9
 	f = append(f, checkUndeclaredWorlds(p, m)...)         // B10
 	f = append(f, checkUndeclaredFaces(p, m)...)          // B11
+	f = append(f, checkFaceBlockKeys(p, m)...)            // B11 (block keys)
 	return f
 }
 
@@ -225,6 +227,57 @@ func checkUndeclaredFaces(p *acl.Policy, m MetamodelReader) []Finding {
 	return f
 }
 
+// B11 for affordance block keys: a `fields:` or `options:` key `type@face`
+// whose face the type does not declare, and any `type@face` key in a
+// `visible:` or `relations:` block. The resolver refuses both at load
+// (affordances.New), so the server would not start; the audit reports them
+// so a CI gate does not pass a policy that cannot boot. Keys of an undeclared
+// type are left to B1.
+func checkFaceBlockKeys(p *acl.Policy, m MetamodelReader) []Finding {
+	var f []Finding
+	for _, name := range sortedRoleNames(p) {
+		role := p.Roles[name]
+		blocks := []struct {
+			block string
+			keys  []string
+			faced bool
+		}{
+			{"fields", slices.Sorted(maps.Keys(role.Fields)), true},
+			{"options", slices.Sorted(maps.Keys(role.Options)), true},
+			{"visible", slices.Sorted(maps.Keys(role.Visible)), false},
+			{"relations", slices.Sorted(maps.Keys(role.Relations)), false},
+		}
+		for _, b := range blocks {
+			for _, key := range b.keys {
+				typeName, face, isState := splitStateGrant(key)
+				if !isState || !m.HasEntityType(typeName) {
+					continue
+				}
+				switch {
+				case !b.faced:
+					f = append(f, Finding{
+						Rule: "B11-undeclared-face", Severity: High, Subject: name,
+						Detail: fmt.Sprintf("role %q has a %s: block keyed %q; only fields: and "+
+							"options: blocks accept a type@face key, so the policy does not load",
+							name, b.block, key),
+						Fix: fmt.Sprintf("key the %s: block by the entity type %q", b.block, typeName),
+					})
+				case !m.HasFace(typeName, face):
+					f = append(f, Finding{
+						Rule: "B11-undeclared-face", Severity: High, Subject: name,
+						Detail: fmt.Sprintf("role %q has a %s: block keyed %q but entity type %q "+
+							"declares no content state %q, so the policy does not load",
+							name, b.block, key, typeName, face),
+						Fix: fmt.Sprintf("fix the face in the key (check for a typo), or key the "+
+							"block by %q to cover every face", typeName),
+					})
+				}
+			}
+		}
+	}
+	return f
+}
+
 // B1 — a create/update/delete/read grant or an affordance-map key names an
 // entity type the metamodel doesn't declare: the grant silently matches
 // nothing. The "*" wildcard is skipped (it's not a type).
@@ -346,11 +399,13 @@ func checkUndeclaredFields(p *acl.Policy, m MetamodelReader) []Finding {
 			grants map[string][]acl.FieldGrant
 		}{{"fields", role.Fields}, {"visible", role.Visible}} {
 			for _, t := range sortedKeysFieldGrant(block.grants) {
-				if !m.HasEntityType(t) {
+				// A type@face key (TKT-RSVJKS) names the type before the "@".
+				typ := grantEntityType(t)
+				if !m.HasEntityType(typ) {
 					continue // B1 reports the undeclared type; don't double-flag fields
 				}
 				for _, g := range block.grants[t] {
-					if g.Field == "" || m.HasField(t, g.Field) {
+					if g.Field == "" || m.HasField(typ, g.Field) {
 						continue
 					}
 					f = append(f, Finding{
@@ -373,7 +428,8 @@ func checkUndeclaredOptions(p *acl.Policy, m MetamodelReader) []Finding {
 	for _, name := range sortedRoleNames(p) {
 		role := p.Roles[name]
 		for _, t := range sortedKeysOptionGrant(role.Options) {
-			if !m.HasEntityType(t) {
+			typ := grantEntityType(t)
+			if !m.HasEntityType(typ) {
 				continue
 			}
 			for _, g := range role.Options[t] {
@@ -382,7 +438,7 @@ func checkUndeclaredOptions(p *acl.Policy, m MetamodelReader) []Finding {
 				}
 				// Distinguish "field doesn't exist" (a typo) from "field exists
 				// but isn't an enum" — the operator needs the right diagnosis.
-				if !m.HasField(t, g.Field) {
+				if !m.HasField(typ, g.Field) {
 					f = append(f, Finding{
 						Rule: "B4-undeclared-field", Severity: Medium, Subject: name,
 						Detail: fmt.Sprintf("role %q options grant on %q names field %q which the type does "+
@@ -391,7 +447,7 @@ func checkUndeclaredOptions(p *acl.Policy, m MetamodelReader) []Finding {
 					})
 					continue
 				}
-				opts, isEnum := m.EnumOptions(t, g.Field)
+				opts, isEnum := m.EnumOptions(typ, g.Field)
 				if !isEnum {
 					f = append(f, Finding{
 						Rule: "B5-options-non-enum", Severity: Medium, Subject: name,

@@ -55,6 +55,7 @@ export { default as RlProgressBar } from './components/feedback/RlProgressBar.vu
 export { default as RlActivityBar } from './components/feedback/RlActivityBar.vue'
 export { default as RlTimeline } from './components/feedback/RlTimeline.vue'
 export { default as RlAutoSaveIndicator } from './components/feedback/RlAutoSaveIndicator.vue'
+export { default as RlBusyIndicator } from './components/feedback/RlBusyIndicator.vue'
 export { useToasts } from './components/feedback/useToasts'
 
 export { default as RlSearchBox } from './components/data/RlSearchBox.vue'
@@ -124,6 +125,26 @@ export { default as RlCommentComposerBox } from './components/comment/RlCommentC
 export { default as RlTextSelectionComment } from './components/comment/RlTextSelectionComment.vue'
 export { default as RlBlockCommentOverlay } from './components/comment/RlBlockCommentOverlay.vue'
 
+export { default as RlChannel } from './components/channel/RlChannel.vue'
+export { default as RlChannelMessage } from './components/channel/RlChannelMessage.vue'
+export { default as RlChannelComposer } from './components/channel/RlChannelComposer.vue'
+export { default as RlChannelSession } from './components/channel/RlChannelSession.vue'
+export { default as RlChannelDecisions } from './components/channel/RlChannelDecisions.vue'
+export { default as RlChannelAuthor } from './components/channel/RlChannelAuthor.vue'
+export { default as RlEntityChannels } from './components/channel/RlEntityChannels.vue'
+export { default as RlRefChip } from './components/channel/RlRefChip.vue'
+export { default as RlInbox } from './components/channel/RlInbox.vue'
+export {
+  resolveChannelFields,
+  codePointLength,
+  messagePendingKey,
+  lifecyclePendingKey,
+  decisionPendingKey,
+  anyDecisionPending,
+  DECISIONS_BLOCKED_KEY,
+} from './components/channel/channelFields'
+export type { ResolvedChannelField } from './components/channel/channelFields'
+
 export { default as RlCalendarGrid } from './components/calendar/RlCalendarGrid.vue'
 export { default as RlCalendarEventChip } from './components/calendar/RlCalendarEventChip.vue'
 export { default as RlCalendarLegend } from './components/calendar/RlCalendarLegend.vue'
@@ -167,6 +188,7 @@ export type { DateRange } from './components/form/RlDateRangeField.vue'
 export type { MessageTone, ToastAction, ToastMessage } from './components/feedback/types'
 export type { TimelineEntry, TimelineGroup } from './components/feedback/timeline'
 export type { ProgressSegment } from './components/feedback/RlProgressBar.vue'
+export type { BusyIndicatorEntry } from './components/feedback/RlBusyIndicator.vue'
 export type { SegmentOption } from './components/data/RlSegmentedControl.vue'
 export type { ThemeChoice } from './components/layout/RlThemeToggle.vue'
 export type {
@@ -176,6 +198,7 @@ export type {
   CommentAnchorOption,
   NewComment,
 } from './components/comment/types'
+export type * from './components/channel/types'
 export type { CommentableBlock } from './components/comment/RlBlockCommentOverlay.vue'
 export type { EditorCommand, ActiveProbe } from './components/editor/editorCommands'
 export type { IconPart } from './components/editor/editorIcons'
@@ -213,7 +236,17 @@ export {
   FOCUSABLE_SELECTOR,
 } from './composables/useOverlayStack'
 export { provideMessages, useMessages, DEFAULT_MESSAGES } from './composables/useMessages'
-export type { Messages, CountArgs } from './composables/useMessages'
+export type {
+  Messages,
+  CountArgs,
+  ChannelTextKey,
+  ChromeTextKey,
+  BusyDuration,
+  BusyNameEntry,
+} from './composables/useMessages'
+export { NL_MESSAGES } from './composables/messages.nl'
+export { LOCALE_MESSAGES, localeMessages } from './composables/localeMessages'
+export type { MessagesLanguage } from './composables/localeMessages'
 export {
   useDelayedPending,
   PENDING_DELAY_MS,
@@ -224,9 +257,15 @@ export {
   useDraggableCard,
   useDropTargetColumn,
   useDropTargetCard,
+  useDraggableSection,
   useBoardAutoScroll,
 } from './composables/useBoardDnd'
-export type { BoardDragData, BoardDropData, BoardDropPosition } from './composables/useBoardDnd'
+export type {
+  BoardDragData,
+  BoardDropData,
+  BoardDropPosition,
+  BoardSectionDropPosition,
+} from './composables/useBoardDnd'
 export { useReorderableRow, closestEdge } from './composables/useRowReorder'
 export type { RowDrop, RowEdge } from './composables/useRowReorder'
 export {

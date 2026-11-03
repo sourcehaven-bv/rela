@@ -304,7 +304,7 @@ func TestNextAction_CountIsReadGatedByDefault(t *testing.T) {
 		Roles:       map[string]acl.RoleDef{"viewer": {Read: []string{"ticket"}}},
 		Assignments: map[string]string{"alice": "viewer"},
 	}, app.store)
-	app.acl = d
+	setTestACL(t, app, d)
 
 	withNextActions(t, app,
 		[]dataentryconfig.NextActionBand{{ID: "blocking"}},
@@ -332,7 +332,7 @@ func TestNextAction_CountUngatedIsOptIn(t *testing.T) {
 		Roles:       map[string]acl.RoleDef{"viewer": {Read: []string{"ticket"}}},
 		Assignments: map[string]string{"alice": "viewer"},
 	}, app.store)
-	app.acl = d
+	setTestACL(t, app, d)
 
 	withNextActions(t, app,
 		[]dataentryconfig.NextActionBand{{ID: "blocking"}},
@@ -564,9 +564,9 @@ func TestQueryPushdown_PreservesTypedSemantics(t *testing.T) {
 // property names.
 func TestNextAction_RedactsHiddenPropertiesInMessage(t *testing.T) {
 	app := newTestAppV1(t)
-	app.fieldResolver = fakeResolver{fv: FieldVerdicts{
+	setTestResolver(t, app, fakeResolver{fv: FieldVerdicts{
 		Visible: map[string]bool{"title": false},
-	}}
+	}})
 	seedEntity(app, &entity.Entity{
 		ID: "TKT-001", Type: "ticket",
 		Properties: map[string]any{"title": "SECRET-TITLE", "status": "open"},
@@ -575,7 +575,7 @@ func TestNextAction_RedactsHiddenPropertiesInMessage(t *testing.T) {
 		Roles:       map[string]acl.RoleDef{"viewer": {Read: []string{"ticket"}}},
 		Assignments: map[string]string{"alice": "viewer"},
 	}, app.store)
-	app.acl = d
+	setTestACL(t, app, d)
 
 	withNextActions(t, app,
 		[]dataentryconfig.NextActionBand{{ID: "stalled"}},
@@ -597,9 +597,9 @@ func TestNextAction_RedactsHiddenPropertiesInMessage(t *testing.T) {
 // value — the redaction must happen before it, not instead of it.
 func TestNextAction_RedactsHiddenPropertiesInPickOptions(t *testing.T) {
 	app := newTestAppV1(t)
-	app.fieldResolver = fakeResolver{fv: FieldVerdicts{
+	setTestResolver(t, app, fakeResolver{fv: FieldVerdicts{
 		Visible: map[string]bool{"title": false},
-	}}
+	}})
 	seedEntity(app, &entity.Entity{
 		ID: "TKT-001", Type: "ticket",
 		Properties: map[string]any{"title": "SECRET-OPTION", "status": "open"},
@@ -608,7 +608,7 @@ func TestNextAction_RedactsHiddenPropertiesInPickOptions(t *testing.T) {
 		Roles:       map[string]acl.RoleDef{"viewer": {Read: []string{"ticket"}}},
 		Assignments: map[string]string{"alice": "viewer"},
 	}, app.store)
-	app.acl = d
+	setTestACL(t, app, d)
 
 	withNextActions(t, app,
 		[]dataentryconfig.NextActionBand{{ID: "stalled"}},

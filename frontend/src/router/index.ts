@@ -24,6 +24,13 @@ const routes: RouteRecordRaw[] = [
     component: () => import('@/views/DashboardView.vue'),
   },
   {
+    // A named dashboard under `dashboards:` (TKT-5LQNLY).
+    path: '/dashboard/:name',
+    name: 'named-dashboard',
+    component: () => import('@/views/DashboardView.vue'),
+    props: true,
+  },
+  {
     path: '/list/:id',
     name: 'list',
     component: () => import('@/views/ListView.vue'),
@@ -81,6 +88,11 @@ const routes: RouteRecordRaw[] = [
     path: '/search',
     name: 'search',
     component: () => import('@/views/SearchView.vue'),
+  },
+  {
+    path: '/inbox',
+    name: 'inbox',
+    component: () => import('@/views/InboxView.vue'),
   },
   {
     path: '/analyze',

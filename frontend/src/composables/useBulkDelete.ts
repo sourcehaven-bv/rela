@@ -1,5 +1,6 @@
 import { ref, onMounted, onBeforeUnmount } from 'vue'
 import { useUIStore } from '@/stores'
+import { t } from '@/i18n'
 import { deleteEntity, restoreEntity, getErrorMessage, ApiError } from '@/api'
 import { isTextEntryFocused } from '@/utils/dom'
 import { isAnyModalOpen } from './modalStack'
@@ -38,20 +39,20 @@ export const UNDO_TOAST_MS = 10000
 const NAMED_LIMIT = 5
 
 function countLabel(count: number, noun: BulkDeleteNoun): string {
-  const word = count === 1 ? noun.singular : noun.plural || `${noun.singular}s`
-  return `${count} ${word}`
+  const word = count === 1 ? noun.singular : noun.plural || t('list.bulkDelete.pluralFallback', { noun: noun.singular })
+  return t('list.bulkDelete.count', { n: count, noun: word })
 }
 
 function nameIds(ids: string[]): string {
   if (ids.length <= NAMED_LIMIT) return ids.join(', ')
-  return `${ids.slice(0, NAMED_LIMIT).join(', ')} and ${ids.length - NAMED_LIMIT} more`
+  return t('list.bulkDelete.andMore', { ids: ids.slice(0, NAMED_LIMIT).join(', '), n: ids.length - NAMED_LIMIT })
 }
 
 function restoreErrorMessage(err: unknown): string {
   // A 404 means the server no longer holds the entity for restoring: the
   // grace period has passed, or the server has no soft delete at all.
-  if (err instanceof ApiError && err.status === 404) return 'it can no longer be restored'
-  return getErrorMessage(err, 'restore failed')
+  if (err instanceof ApiError && err.status === 404) return t('list.bulkDelete.restoreGone')
+  return getErrorMessage(err, t('list.bulkDelete.restoreFailed'))
 }
 
 /**
@@ -66,7 +67,7 @@ export function useBulkDelete(options: UseBulkDeleteOptions) {
   const deleting = ref(false)
 
   async function restoreMany(targets: DeleteTarget[]) {
-    const results = await Promise.allSettled(targets.map((t) => restoreEntity(t.type, t.ref)))
+    const results = await Promise.allSettled(targets.map((target) => restoreEntity(target.type, target.ref)))
     const failed: string[] = []
     let firstError: unknown
     results.forEach((r, i) => {
@@ -79,10 +80,10 @@ export function useBulkDelete(options: UseBulkDeleteOptions) {
 
     const restoredCount = targets.length - failed.length
     if (restoredCount > 0) {
-      uiStore.success(`Restored ${countLabel(restoredCount, options.noun())}`)
+      uiStore.success(t('list.bulkDelete.restored', { items: countLabel(restoredCount, options.noun()) }))
     }
     if (failed.length > 0) {
-      uiStore.error(`Could not restore ${nameIds(failed)}: ${restoreErrorMessage(firstError)}`)
+      uiStore.error(t('list.bulkDelete.restoreError', { ids: nameIds(failed), reason: restoreErrorMessage(firstError) }))
     }
   }
 
@@ -90,8 +91,8 @@ export function useBulkDelete(options: UseBulkDeleteOptions) {
     if (targets.length === 0 || deleting.value) return
     deleting.value = true
     try {
-      options.onStart?.(targets.map((t) => t.id))
-      const results = await Promise.allSettled(targets.map((t) => deleteEntity(t.type, t.ref)))
+      options.onStart?.(targets.map((target) => target.id))
+      const results = await Promise.allSettled(targets.map((target) => deleteEntity(target.type, target.ref)))
 
       const deleted: DeleteTarget[] = []
       const failed: string[] = []
@@ -106,16 +107,21 @@ export function useBulkDelete(options: UseBulkDeleteOptions) {
       })
 
       await options.refresh()
-      await options.onSettled({ deleted: deleted.map((t) => t.id), failed })
+      await options.onSettled({ deleted: deleted.map((target) => target.id), failed })
 
       if (deleted.length > 0) {
-        uiStore.showToast('success', `Deleted ${countLabel(deleted.length, options.noun())}`, UNDO_TOAST_MS, {
-          label: 'Undo',
+        uiStore.showToast('success', t('list.bulkDelete.deleted', { items: countLabel(deleted.length, options.noun()) }), UNDO_TOAST_MS, {
+          label: t('common.undo'),
           onAction: () => void restoreMany(deleted),
         })
       }
       if (failed.length > 0) {
-        uiStore.error(`Could not delete ${nameIds(failed)}: ${getErrorMessage(firstError, 'delete failed')}`)
+        uiStore.error(
+          t('list.bulkDelete.deleteError', {
+            ids: nameIds(failed),
+            reason: getErrorMessage(firstError, t('list.bulkDelete.deleteFailed')),
+          }),
+        )
       }
     } finally {
       deleting.value = false

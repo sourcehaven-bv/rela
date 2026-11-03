@@ -94,6 +94,64 @@ example through an ownership relation) is checked per entity, which would cost
 one ACL walk per row. Such a principal gets no counts on list rows; the thread
 itself is still readable at `/api/v1/_comments/{type}/{id}`.
 
+## Busy channels on list rows
+
+`GET /api/v1/{plural}` accepts `busy=<channel type>`. Each row then carries
+`_busy`, the channels of that type on the row whose session is in a state
+with status `working`. A kanban card with a `busy:` field, or a list with a
+busy column, sends it. Give one type; with several `busy` values only the
+first counts.
+
+```text
+GET /api/v1/tickets?busy=run
+```
+
+```json
+{
+  "id": "TKT-1",
+  "_busy": [
+    {
+      "type": "run",
+      "type_label": "Agent run",
+      "state": "planning",
+      "label": "Planning",
+      "since": "2026-10-29T09:12:03.123Z"
+    }
+  ]
+}
+```
+
+`since` is when the session entered the state, in RFC 3339. The client
+computes the time in the state from it, so the row does not change as time
+passes. `type_label` and `label` are left out when the configuration gives
+none, and `name` when the channel has none. Entries are sorted by `since`,
+oldest first, then by channel name, so the first entry is the one longest
+in its state. A channel is listed only when the principal may read the
+row's entity and the channel type's `read` role admits them.
+
+`_busy` is `[]` when no channel of the type is busy on the row. It is
+absent when the request did not ask, or when the server cannot answer for
+the type: realtime is off, the configuration is degraded, the type is
+unknown or has no session or no working state, no row is of a type it
+attaches to, or the request has no principal. A store error is logged, and
+the rows are served without `_busy`.
+
+The whole page costs one channel-store query, one read of the channels'
+entities and one role check, whatever the number of rows. A list path in a
+[live subscription](#live-views) may carry `busy`. The server repeats it
+after an entity change, so the hash follows `_busy` too. It also repeats it
+when a channel of the busy type, on a row of the page, moves its session,
+is created, closed, reopened, archived or deleted (TKT-W5ZSYJ). A message
+that moves no session, an edit, a removal or a typing signal does not
+repeat it. A move made in another process is caught by a periodic safety
+check, within about 12 seconds with the file channel store and 14 seconds
+with a database. Only the rows of the subscribed page are watched, so a
+kanban card past the first 100 refreshes on the next entity change or
+reload. A list whose page is empty, or whose `_busy` the server could not
+answer for a reason above other than a store error, is not repeated on
+channel changes or by the safety check, only after an entity change or a
+reload. See the busy indicator section of the realtime guide.
+
 ## Limiting search results
 
 `GET /api/v1/_search` accepts an optional `limit` (an integer from 1 to 100)
@@ -101,7 +159,11 @@ that caps the number of rows returned. The cap applies after the read gate, the
 `type` filter and any `sort:` clause, so it counts only rows the caller may see.
 Any other value is a `400 invalid_limit`.
 
-The limit shrinks the response, not the server's work: the query still reads
+For a free-text search with no property filter and no `sort:` clause, the
+limit also bounds the search itself: the server stops after `limit` visible
+hits instead of reading up to 1000. A `type` parameter keeps this only when
+every `type:` clause in the query names that same type. In all other cases
+the limit shrinks the response, not the server's work: the query still reads
 and sorts every matching row before the cut.
 
 ```text
@@ -506,19 +568,212 @@ The `title` is the owner's display title as this principal may read it.
 
 ## SSE events
 
-A successful PATCH that performs writes broadcasts:
+`GET /api/v1/_events` is a stream of staleness signals, not an event log. A
+write produces at most one `entity:changed` frame per entity type, with data
+`{"type": "<type>"}` and no entity id. The frame arrives after the write is
+stored, whichever process made it. A connection only receives types its
+principal may read. Writes that change nothing, and writes rejected with
+400, 403 or 422, produce no frame. Relation writes produce no
+`entity:changed` frame of their own. For changes that a per-type signal
+misses, such as a related entity or an access change, use
+[live views](#live-views).
 
-- One `entity:updated` event for the PATCHed entity, ONLY when entity properties or content actually changed
-- One `relation:created` / `relation:updated` / `relation:deleted` event per actual relation write (none on a no-op)
-- No events on 400/422 (handler returns before broadcast)
+Frames:
 
-A relations-only PATCH that produces all no-ops emits zero events.
+| Event            | Data                         | `id:` | Meaning                                              |
+| ---------------- | ---------------------------- | ----- | ---------------------------------------------------- |
+| `ready`          | `{"conn": "<id>"}`           | yes   | First frame; the stream starts at this position      |
+| `refresh`        | `{"reason":"resync", "conn": "<id>"}` | yes | First frame instead of `ready`: re-fetch everything |
+| `entity:changed` | `{"type": "<type>"}`         | last  | Entities of the type changed; re-fetch them          |
+| `live:changed`   | `{"key": "<key>"}`           | no    | A subscribed GET's response changed; re-fetch it     |
+| `ping`           | `{}`                         | yes   | Sent every 25 seconds                                |
+| `refresh`        | `refresh`                    | no    | Files changed; re-fetch everything                   |
+| `config-error`   | `{"file": ..., "error": ...}` | no   | A `data-entry.yaml` reload was rejected              |
+| `config-changed` | `config-changed`             | no    | A Configure save replaced the server; reload the page |
+| `git`, `git:status` | `git`, `{}`               | no    | Git status changed                                   |
+
+`conn` names the stream for [live views](#live-views). The legacy
+`GET /api/events` stream sends `ready` with `{}` and no live views.
+
+Changes within 200 ms are coalesced. In a burst, only the last
+`entity:changed` frame carries an `id:`.
+
+**Resuming.** The `id:` is an opaque resume token. To reconnect without
+missing changes, send the last token you received in the `Last-Event-ID`
+header or the `last_event_id` query parameter (the header wins when both are
+present). The server then sends one `entity:changed` frame for every readable
+type that changed since that token, however long the client was away. A
+token the server cannot use (malformed, from another server process, or from
+before a restart) yields a first frame of `refresh` with
+`{"reason":"resync"}`; the client must then re-fetch everything it shows.
+Tokens are encrypted, carry no authority, and do not reveal how many changes
+happened between them (TKT-3A1200).
+
+Resume covers every change the server received from its store. Under extreme
+write bursts the store can drop change notifications; a change lost that way
+is missed by live streams and by resume alike.
+
+### Live views
+
+A client can ask the stream to tell it when a specific GET response changes
+for it (TKT-HJ5Z9Y). After each change, the server repeats every subscribed
+GET as the subscribing user, through the same handlers and access checks as a
+real request, and compares a hash of the status and body with the previous
+one. When the hash moves, the stream sends `live:changed` with the client's
+own key. The frame carries nothing else; the client re-fetches the GET.
+
+This covers what `entity:changed` cannot: a view that shows related entities,
+a list column from another type, and gaining or losing access. A GET that
+starts returning 404 is a change.
+
+Set a stream's subscriptions with:
+
+```http
+PUT /api/v1/_events/{conn}/subscriptions
+Content-Type: application/json
+
+{"subscriptions": [
+  {"key": "detail", "path": "/api/v1/tickets/TKT-1"},
+  {"key": "list", "path": "/api/v1/tickets?per_page=25&filter[status]=open"},
+  {"key": "view", "path": "/api/v1/_views/ticket/TKT-1?world=published"}
+]}
+```
+
+The body replaces the whole set; an empty list clears it. The answer is 204.
+
+- `key` is the client's label: 1 to 64 characters of letters, digits and
+  `_ : . -`, unique within the request.
+- `path` is one of six GETs: an entity
+  (`/api/v1/{plural}/{id}`, query `include`, `fields`, `world`), a list
+  (`/api/v1/{plural}`, the list query parameters including `filter[...]`),
+  a view (`/api/v1/_views/{type}/{id}`, query `world`), an entity's
+  presence (`/api/v1/{plural}/{id}/_presence`, query `world`), the inbox
+  (`/api/v1/_inbox`, query `limit` and `kinds`) or the inbox summary
+  (`/api/v1/_inbox/summary`, no query; it answers the inbox's counts for a
+  badge). Any other path or query parameter
+  is a 400, and so is a presence path with a bare id on a type that has
+  faces. Subscribing to a presence path is what makes you a viewer; see
+  [Presence](#presence-_presence). The channel paths are in the realtime
+  guide.
+- An inbox path takes each key at most once, and no `cursor`: only the
+  first page is live. A bad `limit` or `kinds` value is a 400, as on the
+  GET. Equal requests are one subscription: the server sorts `kinds` and
+  drops repeats, and writes `limit` without leading zeros. Inbox
+  subscriptions are checked at most every 2 seconds (4 seconds with the
+  file channel store), and every 14 seconds (12) whether or not anything
+  changed; the realtime guide says what wakes
+  them.
+- A list path cannot carry the free-text `q`: its hits are gated after a
+  capped search over every entity, so a hidden write could change the visible
+  result and a frame would signal that write.
+- A stream holds at most 16 subscriptions (400 above that), and one user at
+  most 64 across all their streams (429). Unauthenticated callers all share
+  one identity, so for them only the per-stream limit applies.
+- The PUT reads each new subscription once, as the baseline, before it
+  answers 204. Re-fetch once after the 204: that response is at least as new
+  as the baseline, so any later change is reported. If the baseline read does
+  not finish in time, a later check takes it and sends a frame.
+- `{conn}` is the id from `ready`. An unknown id, a closed stream and another
+  user's stream all give 404: wait for the next `ready`. A stream opened with
+  different credentials (for example, other roles) gives 409
+  `stream_principal_stale`: reconnect the stream.
+
+Checks run in rounds on a fixed 500 ms clock, when anything changed since the
+last round. Each distinct (user, path) pair is checked once per round however
+many streams subscribe to it. A round checks at most 256 pairs and starts no
+check after 10 seconds. The pairs it skips get a `live:changed` frame without
+a check, so the client re-fetches. The next round starts where the last one
+stopped, so every pair is checked in turn. A skipped pair is also checked on
+the next tick, even when nothing else changed. There are three
+exceptions, which get no frame when a round skips them and are checked on
+a later tick instead:
+
+- An inbox path never gets a frame without a check, in any round.
+- A list with `busy` gets none in a round that is not a full re-check: a
+  round started by channel changes, presence changes, the periodic safety
+  check or the retry of skipped pairs. In a full re-check (after an entity
+  change, a lease change or a reload) it gets the frame like any list.
+- A pair that a round that is not a full re-check checks only because an
+  earlier round skipped it gets none. It already had its frame when it was
+  first skipped.
+
+A change can land while a PUT takes its baseline. The round skips that
+subscription, and checks it on the first tick after the PUT stored the
+baseline. A frame then comes only if the response differs from the
+baseline.
+
+When only presence changed, the round checks only the presence subscriptions
+on the faces whose viewers changed, on the same clock. It has the same limits
+and its own rotation. When nothing else changed, the skipped pairs and the
+subscriptions whose baseline missed a change are checked in this round.
+
+## Presence (`_presence`)
+
+Presence lists who else has an entity open (TKT-MHXH87).
+
+```http
+GET /api/v1/{plural}/{id}/_presence
+```
+
+```json
+{"viewers": [{"user": "bob@example.com", "tool": "data-entry", "since": "2026-10-12T10:00:00Z"}], "more": 3}
+```
+
+- `viewers` lists at most 20 viewers, oldest `since` first, then by `user`.
+  `more` counts the viewers past those 20 and is always present.
+- `since` is RFC 3339 UTC in whole seconds: when the viewer opened the entity.
+- Several tabs of one user and tool are one viewer. You are never listed, from
+  any tool.
+- Presence is per face. `{id}` is an address that resolves as a write's
+  does: on a type with faces it must name one (`ID@face`), and a bare id is a
+  422 `face_required` listing the faces you can read. On a type without
+  faces, use the bare id. Viewers of another face are not listed.
+- A hidden, absent or wrong-plural entity, a malformed address, and an entity
+  hidden in the `world` you name all get the entity GET's 404. The 422 comes
+  only for an entity you can read. A method other than GET is a 405. The
+  response is not cached (`no-store`).
+
+**Joining.** This GET never adds you. You become a viewer by subscribing to
+the same path on the live event stream (see [Live views](#live-views)), while
+the server's check of that subscription answers 200:
+
+- You join on the PUT's baseline read. Other subscribers get `live:changed`
+  within two ticks of the 500 ms clock, and a `GET` lists you from the next
+  tick on.
+- Closing the stream or dropping the subscription keeps you listed for 15
+  seconds. Subscribing again within that time keeps your `since`.
+- A check that answers 404, for example after you lost read access, removes
+  you at once. A check that does not finish in time also removes you at once,
+  and the next successful check adds you back with a new `since`.
+- A check that a round skips under load changes nothing: you stay listed
+  with your `since`. The skipped check runs in a presence round on the next
+  tick, without waiting for another change. Each round checks at most 256
+  pairs, so with no other change n skipped pairs are all checked within
+  ceil(n/256) ticks; revocation takes effect then, and a `GET` reflects it
+  one tick later. A check that comes back unchanged sends nothing.
+- Unauthenticated callers are never listed.
+- A user is listed on at most 64 entities at a time, the 15-second tail
+  included, and a server lists at most 4096 viewers in all. Past either limit
+  you are not listed, and each change in that face's viewers tries again.
+- A subscription that is not listed, because it is unauthenticated or over a
+  limit, still gets `live:changed` when the viewers of its face change.
+
+Presence lives in the memory of one server process. A restart or a
+configuration reload clears it, and clients reconnect and join again.
 
 ## ETag / If-Match
 
 The handler honors `If-Match: <etag>` for optimistic concurrency control.
-The ETag is computed against the entity's current `properties + content`.
-Mismatch → 412 Precondition Failed.
+The ETag is computed against the entity's current `properties + content`
+and its outgoing edges. Mismatch → 412 Precondition Failed. It does not
+cover `_lease`; see [Leases](#leases-_lease-_leases) for why the GET never
+answers 304 when the server has leases.
+
+The ETag covers only what the caller may see. Properties hidden from the
+caller by a `visible:` grant are left out of the hash. So a GET, the
+`If-Match` check and the PATCH response give one caller the same ETag for
+the same row, and a change to a hidden value does not change it. Hashing
+hidden values would let a caller test guesses for them offline.
 
 The precondition is re-checked by the store, atomically with the write
 (TKT-34XS2R). Previously the compare and the write were separate steps made
@@ -600,6 +855,26 @@ field that cannot be merged is reported to the user and not written. For a
 body, the editor then shows the other side's text with the user's lines in
 each conflicting region, so the user's next edit overwrites only those
 regions.
+
+## Check order
+
+The handler runs its checks in a fixed order:
+
+1. Resolve the entity. A hidden or missing entity returns 404.
+2. Refuse a locked entity, then parse the body (400 on bad JSON).
+3. If the body changes properties or content, ask the entity manager
+   whether the caller may update the entity (`Manager.AuthorizeUpdate`). This
+   is the manager's own write check, so the 403 and its one `denied-write`
+   audit row are the ones the write itself would produce. The write then
+   reuses this decision and does not ask again. Nothing else runs
+   first: no ETag, no field verdicts, no edge reads.
+4. Check `If-Match` (412), then the field and relation verdicts (403), then
+   the per-field `preconditions` (400 or 412), then write.
+
+So a caller who may not update the entity gets 403 even when its `If-Match`
+is stale. A caller who may write a field but may not update the entity gets
+the entity-level 403, not the field one. A body that only changes relations skips step 3. Each edge is
+authorized on its own when it is written.
 
 ## MCP and Lua content semantics
 
@@ -696,6 +971,22 @@ rules before the script runs:
 | 404 | `entity_not_found` | No `entity_id`, or the entity does not exist or the caller may not read it at that face |
 | 403 | `action_not_available` | Type, face or `when` does not match |
 | 409 | `config_reloaded` | The configuration was reloaded while the request waited; retry |
+
+### List-button actions (`action:<id>` on a list response)
+
+A list response's `_actions` map may carry `action:<id>` keys too: one per
+action in the [`toolbar_actions`](../data-entry.md#buttons-on-a-list-toolbar_actions)
+of a list over that entity type whose `permission:` the principal holds. Like
+the detail-page keys, they are only ever `true`, and absence means "not
+offered". The endpoint is keyed by entity type, so the map covers every list
+over the type; the SPA renders only the IDs in the list on screen.
+
+```json
+"_actions": { "create": true, "action:vvt-nieuw": true }
+```
+
+The SPA runs such an action with `POST /api/v1/_action/<id>` and no body. That
+request checks the permission again (`403 permission_required`).
 
 ### Always present
 
@@ -798,9 +1089,20 @@ Verdicts come from one of three sources, selected at server startup by the
 | Value | Behavior |
 |---|---|
 | unset / empty | **Policy-backed** when `acl.yaml` declares any affordance block (`fields:` / `visible:` / `options:` / `relations:`); otherwise permissive (both wire maps emit as `{}`). |
-| `none` | Permissive — explicit opt-out even when a policy has affordance blocks. |
-| `demo` | Hardcoded fixture against the `ticket` entity type — exercises every affordance code path for manual UI testing. Overrides the policy. |
+| `none` | Permissive — both wire maps emit as `{}`. Refused at startup when `acl.yaml` declares field rules (see below). |
+| `demo` | Hardcoded fixture against the `ticket` entity type — exercises every affordance code path for manual UI testing. Refused at startup when `acl.yaml` declares field rules (see below). |
 | any other | Unknown — logs a warning and falls back to policy / permissive. Never panics. |
+
+`none` and `demo` replace only the REST resolver. MCP and CLI reads still
+apply the policy. So `rela-server` refuses to start when either profile is
+set and `acl.yaml` declares field rules: a role `fields:`, `visible:`,
+`options:` or `relations:` block, or a `client_baselines` field ceiling
+(`visible:` / `redact:`). The error names `RELA_AFFORDANCE_PROFILE`, the
+profile value, and says that acl.yaml declares field rules. Unset the
+variable to apply the policy (BUG-UO72G2). A Configure save is refused
+for the same reason, and the running server keeps serving the old
+configuration. `rela-desktop` runs without an ACL, so the profiles keep
+working there.
 
 The policy-backed resolver compiles `when:` predicates from `acl.yaml` at
 startup and evaluates them per entity. See the [ACL security
@@ -1094,6 +1396,61 @@ for an ID that never existed.
 
 ---
 
+## Backlinks: GET /api/v1/{plural}/{id}/mentioned-by
+
+Lists the entities whose body mentions `{id}` as a code span holding the bare
+ID, such as `` `TKT-007` ``. Code spans in fenced or indented code blocks and
+inside link text do not count, and neither do relation bodies.
+
+| Query    | Meaning |
+| -------- | ------- |
+| `limit`  | Page size, 1 to 200. Default 50. |
+| `cursor` | The `next_cursor` of the previous page. |
+| `world`  | The world to read in, as on the entity GET. |
+
+```json
+{
+  "items": [
+    { "id": "TKT-001", "type": "ticket", "title": "Pick a store" },
+    { "id": "DOC-4", "face": "draft", "type": "document", "title": "Design" }
+  ],
+  "next_cursor": "DOC-4"
+}
+```
+
+Items are ordered by ID. `next_cursor` is the ID of the last item, and it is
+absent on the last page. Keep paging until `next_cursor` is absent.
+
+The server reads at most 10,000 index entries per request. Sources you may not
+read count toward that limit. If the limit is reached, the response has
+`"truncated": true` and no `next_cursor`, and further sources are not listed.
+Only a target mentioned by more than 10,000 entities you cannot read can reach
+the limit.
+
+Each source passes the same read gate as a list row, carries the title you may
+see, and appears at the face the world serves. A source whose served face does
+not itself mention `{id}` is left out. A hidden or missing `{id}` gets the same
+404 as the entity GET. A bad `limit` or `cursor` is a 400.
+
+### Backlinks in a view
+
+A view can collect backlinks with a `mentioned_by` traverse step and show them
+in a section of its own (see the data-entry guide). The `_views` response then
+carries three extra fields:
+
+| Field | Where | Meaning |
+| ----- | ----- | ------- |
+| `hideMentionedByPanel` | response | `true` when the page should leave out the built-in panel: the view collects backlinks, or `entity_views.<type>.mentioned_by_panel` is `false`. Omitted otherwise. |
+| `incomplete` | section | `true` when the section's backlinks collection holds only part of the matching sources. Omitted otherwise. |
+| `entityType`, `columns` | `groups[]` | Set on each group of a `columns_by_type` table. The group's rows are of `entityType`, and their cells are positional over the group's `columns`. |
+
+`incomplete` is set when more than 200 readable sources match, or when the
+backlink scan reaches its 10,000-entry limit. The second case is the same
+accepted signal as `truncated` above. `incomplete` differs from a nested
+section's `truncated`, which is never set by a budget.
+
+---
+
 ## Data-entry API: GET /api/v1/_apps/{id}/{path}
 
 Serves a custom app's files for embedding in a sandboxed iframe. See the
@@ -1177,6 +1534,7 @@ clone), absent on list rows.
     "screenshot": [
       { "id": "shot.png", "filename": "shot.png", "size": 20480,
         "contentType": "image/png",
+        "sha256": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
         "href": "/api/v1/tickets/TKT-001/_attachments/screenshot/shot.png" }
     ],
     "docs": [
@@ -1194,7 +1552,9 @@ clone), absent on list rows.
 `id` is the file's identifier within the property (its normalized file
 name) — used to build the per-file download/delete URL. `contentType` is
 inferred from the filename extension (the store does not persist it on
-every backend). `size` is in bytes. The `properties` value is a scalar
+every backend). `size` is in bytes. `sha256` is the lowercase hex SHA-256
+hash of the stored bytes; it is left out only when the server could not read
+the file to hash it. The `properties` value is a scalar
 path for a single-cap property and a list of paths for a multi-cap one;
 treat both as opaque and use `_attachments` instead.
 
@@ -1400,3 +1760,115 @@ write that works now keeps working when a second face is published.
 other fields. In a pile scope, `id` may be an `ID@face` address, and `prev` and
 `next` carry an `address`. The SPA links pile items as
 `/entity/<type>/<address>?from=pile&pile=<id>`.
+
+## Leases (`_lease`, `/_leases`)
+
+A lease is an advisory claim that says "this person or agent is working on this
+entity until this time" (TKT-4YPG4Q). Leases do not block writes. They tell
+other people and agents that someone is busy, so they can pick other work. The
+same leases are served over MCP (`claim_entity`, `renew_lease`,
+`release_lease`, `list_leases`).
+
+A lease covers the whole entity: every face of it. It lasts 15 minutes unless
+the claim names another duration (30 to 3600 seconds). The holder renews it
+before it expires, or releases it when done.
+
+### Routes
+
+| Method | Path | Body | Success |
+| --- | --- | --- | --- |
+| POST | `/{plural}/{id}/_lease` | `{ttl_seconds?, label?, status?}` | 201 `{lease_id, token, expires_at}` |
+| POST | `/_leases/renew` | `{lease_id, ttl_seconds?, status?}` | 200 `{token, expires_at, status?}` |
+| POST | `/_leases/release` | `{lease_id}` | 204 |
+| GET | `/_leases` | | 200 `{data: [{id, since, expires_at, status?, label?}]}` |
+
+- `{id}` is an address: `ID`, or `ID@face` for a type with faces. The lease
+  covers every face either way.
+- `label` tells apart agents that run as the same user: up to 32 letters,
+  digits, `_`, `.` or `-`.
+- `status` is a short note of at most 140 characters, without control
+  characters. Everyone who can read the entity sees it. On renew, an absent
+  `status` keeps the current one and `""` clears it.
+- `lease_id` is the secret that renews and releases the lease. The claim
+  answer is the only response that carries it. Keep it out of URLs and logs.
+- `token` is a fencing token that grows with every claim. A renew keeps it.
+- `expires_at` and `since` are RFC 3339 times.
+- `GET /_leases` lists the caller's own live leases, oldest first, on entities
+  the caller can read now. It never carries a lease id.
+
+Every lease route accepts a request without a browser origin and without a
+cookie, so a script or agent can claim, renew and release over HTTP. A request
+that carries a cookie needs a same-origin `Origin`, as on the other routes.
+Renew and release need the secret `lease_id`, and the list returns only your
+own leases, so a cross-site page gains nothing from them. The routes are in
+the OpenAPI spec.
+
+### Who may claim
+
+A claim needs read access to the entity and then update access to the face
+the address names. The order matters:
+
+- An entity the caller cannot read gets the same 404 as one that does not
+  exist, with the same body as `GET /{plural}/{id}`. So does an entity of
+  another type than `{plural}`, and a server without leases.
+- A caller who can read but not update gets 403. The body names no holder.
+  When `_actions.update` is `false` on the entity, a claim is refused.
+- A bare id of a type with faces gets 422 `face_required`, as a `PATCH` does.
+
+A renew checks read and update access again. When the caller lost either, the
+lease is released and the renew answers `lease_lost`.
+
+### `_lease` on responses
+
+The single-entity GET, every list row and the `entry` of a view
+(`/api/v1/_views/{type}/{id}`) carry `_lease` while someone holds the entity:
+
+```ts
+interface EntityLease {
+  user: string
+  tool: string
+  label?: string
+  since: string   // RFC 3339
+  status?: string // free text the holder wrote; show it as text, never as HTML
+}
+```
+
+`_lease` is absent when nobody holds the entity. It is set after the read
+gate, so a row the caller cannot read never shows one. No other response
+carries it: not view sections, includes, history or search.
+
+`_lease` has no expiry, so a plain renew changes no response. A live
+subscription gets `live:changed` when a lease is claimed, released or expires,
+and when its status changes.
+
+A list page reads the leases of all its rows at once, so `_lease` costs the
+same at any page size.
+
+### ETag
+
+The ETag does not cover `_lease`, so a claim does not make the holder's
+`If-Match` fail. When the server has leases, the entity GET never answers 304:
+a copy cached before a claim or a release would show the wrong lease. The ETag
+is still sent, and a claim or release does not change it.
+
+### Errors
+
+Errors are `application/problem+json` documents. The last segment of `type`
+names the error.
+
+| Status | Error | When |
+| --- | --- | --- |
+| 400 | `invalid_request` | bad JSON, an unknown field, data after the JSON object, a malformed `lease_id`, a bad label or status, `ttl_seconds` out of range |
+| 403 | `forbidden` | read access without update access (the write path's 403 body) |
+| 403 | `no_principal` | no signed-in user |
+| 404 | `not_found` | the entity does not exist, cannot be read, or is of another type |
+| 409 | `lease_held` | someone holds the entity; the body adds `holder {user, tool, label?}`, `since`, `expires_at` and `status?` |
+| 409 | `lease_lost` | renew of a lease that expired, was released, belongs to someone else, or whose entity was deleted or became unreadable |
+| 409 | `lease_limit` | the caller holds 32 live leases as this user through this tool (data-entry or MCP); every session and agent of that user through the same tool shares the cap |
+| 413 | `body_too_large` | the body is over 4 KiB |
+| 422 | `face_required` | a bare id of a type with faces |
+| 503 | `lease_store_full` | the server holds 2048 live leases; `Retry-After: 30` |
+
+A claim on an entity you already hold is `lease_held` naming you: renew
+instead. Release answers 204 whether or not the lease existed, so it says
+nothing about other people's leases.

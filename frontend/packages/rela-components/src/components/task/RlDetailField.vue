@@ -317,6 +317,9 @@ function commit() {
 
 @media (max-width: 767px) {
   .rl-detail-field { align-items: flex-start; }
-  .rl-detail-field__label { flex-basis: 96px; }
+  /* Keep common Dutch labels such as "beschrijving" on one line. The old
+     96px column wrapped them into two lines on a phone, while leaving ample
+     horizontal space unused beside the value. */
+  .rl-detail-field__label { flex-basis: 120px; }
 }
 </style>

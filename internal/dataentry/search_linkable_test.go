@@ -232,7 +232,7 @@ func TestSearch_LinkableMatchesTheWrite(t *testing.T) {
 				return mustNewACL(t, &p, st)
 			})
 			if tc.resolver != nil {
-				app.fieldResolver = tc.resolver
+				setTestResolver(t, app, tc.resolver)
 			}
 
 			got := readLinkable(t, app, d, "cites", linkableReads["search"])
@@ -345,9 +345,9 @@ func TestSearch_IdentityLinkableIgnoresHiddenFaces(t *testing.T) {
 					}, st)
 				})
 				var seen []entity.Face
-				app.fieldResolver = rowRecorder{seen: &seen, fakeResolver: fakeResolver{rv: RelationVerdicts{
+				setTestResolver(t, app, rowRecorder{seen: &seen, fakeResolver: fakeResolver{rv: RelationVerdicts{
 					Types: map[string]RelationVerdict{"implements": {Creatable: true, Removable: true}},
-				}}}
+				}}})
 
 				req := asAlice(t, d, httptest.NewRequestWithContext(t.Context(), http.MethodGet,
 					linkableReads["search"].url+"&relation=implements&direction=incoming", http.NoBody))

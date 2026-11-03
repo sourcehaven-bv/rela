@@ -20,6 +20,7 @@
  */
 import type { ListColumn } from '@/types/config'
 import type { TableColumn } from 'rela-components/components/table/types'
+import { t } from '@/i18n'
 
 /**
  * The stable identifier for a column, naming both the column and its
@@ -32,6 +33,8 @@ import type { TableColumn } from 'rela-components/components/table/types'
  */
 export function columnKey(column: ListColumn): string {
   if (column.face) return 'face'
+  // A list has at most one busy column (load-checked), so the key is fixed.
+  if (column.busy) return 'busy'
   if (column.property) return `prop:${column.property}`
   if (column.relation) {
     // Outgoing is the default in ListColumn, so spell it rather than leaving
@@ -47,8 +50,19 @@ export function columnKey(column: ListColumn): string {
 
 /** The header text a column shows, falling back the way rela's table did. */
 export function columnHeader(column: ListColumn): string {
-  return column.label || column.property || column.relation || (column.face ? 'Face' : '')
+  const own = column.label || column.property || column.relation
+  if (own) return own
+  if (column.face) return t('list.column.face')
+  // A busy column's header is never the raw channel type name, which reads
+  // like an identifier; each cell's accessible name carries the type label.
+  return column.busy ? t('list.column.busy') : ''
 }
+
+/**
+ * The fixed width of a busy column: the dots, a short state label, the time
+ * and "+1" ("Planning · 3h +1"). A longer label is cut off with an ellipsis.
+ */
+export const BUSY_COLUMN_WIDTH = 160
 
 /**
  * Converts rela's list columns to the library's, dropping the FIRST column.
@@ -83,6 +97,7 @@ export function toTableColumns(columns: ListColumn[]): TableColumn[] {
       // inaccessible cell and a provenance badge. `field` covers only a
       // plain string or number, which is the one case rela does not have.
       sortable: column.sortable !== false && !!column.property,
+      ...(column.busy ? { width: BUSY_COLUMN_WIDTH } : {}),
       // `meta` carries the originating config so a cell slot can render from
       // the same object the rest of EntityList already reasons about,
       // instead of looking it back up by key. Namespaced by the library

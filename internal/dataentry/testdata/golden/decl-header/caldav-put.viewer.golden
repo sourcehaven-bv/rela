@@ -1,0 +1,9 @@
+request: PUT /api/v1/_caldav/principal/calendars/tickets/ticket--TKT-3@rela.ics
+identity: header viewer@example.test
+status: 201
+header Location: /api/v1/_caldav/principal/calendars/tickets/ticket--TKT-3@rela.ics
+reads: GetEntity=1 GetRelation=2 GraphQueryHeaders=1 ListEntities=1 ListEntityHeaders=1 ListRelations=1 MatchingFaces=4
+breadth: ListEntities=1/1 ListEntityHeaders=1/1 ListRelations=0/1 MatchingFaces=4/4
+bodies: GetEntity=0/1 GraphQuery=0/1 ListEntities=0/1 ListEntityHeaders=0/1
+versions: 
+body:

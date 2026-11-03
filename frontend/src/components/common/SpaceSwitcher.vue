@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { useRouter } from 'vue-router'
+import { useI18n } from 'vue-i18n'
 import RlMenu from 'rela-components/components/overlay/RlMenu.vue'
 import RlMenuItem from 'rela-components/components/overlay/RlMenuItem.vue'
 import RlMenuSeparator from 'rela-components/components/overlay/RlMenuSeparator.vue'
@@ -27,13 +28,14 @@ import type { SidebarSpace } from '@/types'
  */
 const props = defineProps<{ appName: string; configuring?: boolean }>()
 
+const { t } = useI18n()
 const space = useSpaceStore()
 const router = useRouter()
 const { data: me } = useMe()
 
 const canConfigure = computed(() => me.value?.can_configure === true)
 const name = computed(() =>
-  props.configuring ? 'Configure' : space.currentSpace?.label || props.appName
+  props.configuring ? t('switcher.configure') : space.currentSpace?.label || props.appName
 )
 const hasMenu = computed(() => space.spaces.length > 1 || canConfigure.value || props.configuring)
 const configureHome = configureRoute.home()
@@ -95,7 +97,7 @@ function go(path: string, event: MouseEvent) {
         :href="hrefOf(configureHome)"
         :current="configuring"
         @click="(e: MouseEvent) => go(configureHome, e)"
-      >Configure</RlMenuItem>
+      >{{ t('switcher.configure') }}</RlMenuItem>
     </template>
   </RlMenu>
   <RlWorkspaceSwitcher v-else :name="name" :menu="false">

@@ -31,6 +31,20 @@ override:
   # place the pointer grammar is enforced (TKT-WAV8XP).
   - path: ^internal/worlds$
     threshold: 85
+  # The resume token hides write counts from SSE clients, and the change feed
+  # decides what a reconnecting client is told it missed (TKT-3A1200).
+  - path: ^internal/changefeed$
+    threshold: 90
+  # Presence (TKT-MHXH87): its caps keep one identity from filling the
+  # tracker, and its sweep decides when a viewer leaves; ~99% today.
+  - path: ^internal/presence$
+    threshold: 90
+  # Channels (TKT-DD8B6I) hold message content that exists nowhere else, and
+  # the erasure guarantees live in these packages.
+  - path: ^internal/channels$
+    threshold: 88
+  - path: ^internal/channels/(filechannels|sqlchannels|sqlitechannels)$
+    threshold: 80
   # Outbound mail (TKT-332QZY). Both are security-relevant — mailrender is
   # the sanitize/inline pipeline whose ORDER is a security property, and mail
   # owns header-injection validation — so they are pinned above the default
@@ -38,6 +52,22 @@ override:
   - path: ^internal/mailrender$
     threshold: 85
   - path: ^internal/mail$
+    threshold: 85
+  # Sanitizes rich text that sync connectors read from other systems
+  # (TKT-LAMZ8F); pinned for the same reason as mailrender.
+  - path: ^internal/htmlmd$
+    threshold: 80
+
+  # realtime.yaml loader (TKT-EYCIKU): its load-time checks are what keep a
+  # trigger or role from disclosing a hidden field, so pinned above the
+  # default floor (~95% today). The caps package is tiny and fully covered.
+  - path: ^internal/realtimecfg$
+    threshold: 90
+  - path: ^internal/realtimelimits$
+    threshold: 95
+  # The channel service (TKT-ZU7P13) decides who may read and write a
+  # channel, so it is pinned above the default floor (~90% today).
+  - path: ^internal/realtime$
     threshold: 85
 
   # Data classification overlay (TKT-8UCV32): a parser and a file rewriter
@@ -92,6 +122,10 @@ override:
     threshold: 55
   - path: ^internal/dataentryconfig$
     threshold: 70
+  - path: ^internal/ingest$
+    threshold: 90 # the webhook and feed write path, including the per-value flattening guard
+  - path: ^internal/subscription$
+    threshold: 85 # feed polling: untrusted content, redirects and dedupe state
   - path: ^internal/lua$
     threshold: 80
   - path: ^internal/imgproc$
@@ -105,6 +139,7 @@ exclude:
     - ^tools/seqtrace/cmd      # diagnostic CLI entry point
     - ^internal/testutil       # test helpers
     - ^internal/tracer/tracertest # test helper (tracer.New for fixtures)
+    - ^internal/acl/acltest # test helper (binds a Request for a principal)
     - ^internal/store/storetest # shared conformance test kit (exercised via backends)
     - ^internal/visibility/visibilitytest # shared conformance test kit (exercised via visibility + future wirings)
     - ^internal/state/statetest # shared conformance test kit (exercised via FSKV + pgstore's StateKV)
@@ -115,12 +150,16 @@ exclude:
     - ^internal/userstate/userstatetest # shared conformance test kit (exercised via mem/kv/pgstore backends)
     - ^internal/comments/commentstest # shared conformance test kit (exercised via the file + memory backends)
     - ^internal/piles/pilestest # shared conformance test kit (exercised via the kv + pg backends)
+    - ^internal/lease/leasetest # shared conformance test kit (exercised via the kv + pg backends)
+    - ^internal/channels/channelstest # shared conformance test kit (exercised via the file, sqlite and pg backends)
     - ^internal/datamigration/migstatetest # shared conformance test kit (exercised via the file/memory/sqlite/pg backends)
     - ^internal/tokenstore/tokenstoretest # shared conformance test kit (exercised via Sealed over FSKV, sqlite and pg state stores, and the desktop keychain store)
     - ^internal/appbuild/backendtest # build-tagged test backend supplier; the postgres half only compiles under -tags postgres
     - ^internal/store/pgstore  # covered by the dedicated postgres CI job (needs a live DB; skipped without RELA_TEST_DATABASE_URL)
     - ^internal/comments/pgcomments # same live-DB gate as pgstore: reads 3% when the suite skips, ~76% in the postgres CI job
     - ^internal/piles/pgpiles # same live-DB gate as pgstore: reads ~0% when the suite skips
+    - ^internal/lease/pglease # same live-DB gate as pgstore: reads ~0% when the suite skips
+    - ^internal/channels/pgchannels # same live-DB gate as pgstore: reads ~10% when the suite skips; the SQL itself is sqlchannels, covered via SQLite
     - ^internal/datamigration/pgmigstate # same live-DB gate as pgstore: reads 8% when the suite skips, ~77% in the postgres CI job
     - ^internal/schedulerstate/pgschedstate # same live-DB gate as pgstore: reads 1% when the suite skips, ~83% with a live DB
     - ^internal/entitymanager/entitymanagertest # shared test doubles (PanicOnUse etc.), exercised via consumers

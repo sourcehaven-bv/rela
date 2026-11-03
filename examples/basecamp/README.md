@@ -1,14 +1,17 @@
 # Basecamp to-do sync
 
-This example keeps rela `todo` entities and the to-dos of one Basecamp 4
-to-do list in step, in both directions. It uses the sync API described in
-the Lua scripting guide ("Sync connectors") and `rela.oauth` for the access
-token.
+This example keeps rela `todo` entities and every Basecamp 4 to-do the
+account can see in step, in both directions. It also mirrors the Basecamp
+projects and to-do lists as `project` and `todolist` entities, and links
+each todo to its list and each list to its project. It uses the sync API
+described in the Lua scripting guide ("Sync connectors"), `rela.md` to
+convert between Basecamp's HTML and rela's markdown, and `rela.oauth` for
+the access token.
 
 | File               | Goes to                      | What it does                                         |
 | ------------------ | ---------------------------- | ---------------------------------------------------- |
 | `basecamp.lua`     | `scripts/basecamp.lua`       | The connector: pulls when scheduled, pushes on save. |
-| `schema.yaml`      | merge into `schema.yaml`     | The `todo` type and the push automation.             |
+| `schema.yaml`      | merge into `schema.yaml`     | The types, the links and the push automation.        |
 | `schedules.yaml`   | merge into `schedules.yaml`  | The pull, every 5 minutes.                           |
 | `acl.yaml`         | merge into `acl.yaml`        | What the connector identity may do.                  |
 | `connections.yaml` | `connections.yaml`           | How rela refreshes the Basecamp token.               |
@@ -16,7 +19,7 @@ token.
 
 One script does both directions because a rela script cannot load another
 file. When the global `entity` is set (the automation), it pushes that todo.
-Otherwise (the schedule), it pulls the whole list.
+Otherwise (the schedule), it pulls everything.
 
 ## Where it runs
 
@@ -52,7 +55,7 @@ push is late, not gone.
    basecamp_client_id: ...
    basecamp_client_secret: ...
    basecamp_account_id: "1234567"
-   basecamp_todolist_id: "7654321"
+   basecamp_todolist_id: "7654321"   # optional; see "New todos" below
    ```
 
    `openssl rand -base64 32` makes a `token_key`. Keep a copy: tokens sealed
@@ -85,12 +88,51 @@ push is late, not gone.
 ## How it behaves
 
 - **Identity.** Both directions run as `integration:basecamp`. That name
-  holds only the `basecamp-connector` role from `acl.yaml`, so the connector
-  can read and write todos and move the `sync/basecamp` tags, and nothing
-  else. No person can sign in under an `integration:` name.
-- **First sync.** A to-do in Basecamp becomes a todo in rela with a
-  `basecamp` reference. A todo created in rela becomes a Basecamp to-do on
-  its first save.
+  holds only the `basecamp-connector` role from `acl.yaml`. It can read,
+  create and update todos, to-do lists and projects, replace the `in-list`
+  and `in-project` links, and move the `sync/basecamp` tags. It cannot
+  delete anything. No person can sign in under an `integration:` name.
+- **Names.** The example adds types named `project` and `todolist`. If your
+  schema already has a `project`, rename the example's type in
+  `schema.yaml`, `acl.yaml` and `basecamp.lua`.
+- **Who may link.** A person puts a todo in a list by adding an `in-list`
+  link, which needs `update` on `todo`. Removing or replacing a link needs
+  the `basecamp-links` permission (or `delete` on `todo`); grant it to the
+  people who sort todos into lists.
+- **What is pulled.** Every active to-do and to-do list in every project
+  the account can see, read through Basecamp's recordings listing. A to-do
+  becomes a todo with a `basecamp` reference, linked with `in-list` to its
+  list. A list becomes a `todolist`, linked with `in-project` to a
+  `project`. Archived and trashed projects are not read.
+- **Projects and lists belong to Basecamp.** The pull creates and renames
+  them, and relinks a to-do that moved to another list. A title or link
+  changed in rela is overwritten on the next pull. Nothing is pushed for
+  them. A list or project that disappears from Basecamp stays in rela. If
+  a person deletes a mirror in rela, the pull cannot recreate it while it
+  is in the trash; it reports that, and leaves that list's todos
+  unlinked.
+- **To-do list groups.** Basecamp reports a group inside a list as a list
+  of its own, so it becomes its own `todolist`, linked to the project.
+- **New todos.** A todo created in rela becomes a Basecamp to-do on its
+  first save. It goes to the list its `in-list` link names, or else to
+  `basecamp_todolist_id`. With neither, the todo gets a `sync_conflict`
+  asking for a list; add the link and save it again.
+- **Bodies.** Basecamp stores a to-do's description as HTML; rela stores
+  markdown. The connector converts both ways with `rela.md.from_html` and
+  `rela.md.to_html`. Lists, headings, emphasis, code, quotes, tables and
+  links survive; colors do not. The first pull after a body changes may
+  rewrite it once into the form both sides agree on.
+- **Bodies rela cannot hold.** Attachments, mentions and images in a
+  Basecamp description are dropped from the rela copy. To keep them in
+  Basecamp, a local edit to such a body is not pushed: the todo gets a
+  `sync_conflict` starting with `body:`. Edit that body in Basecamp, or undo
+  the local edit. The same holds the other way for a rela body with an image
+  or raw HTML. While the note is there, nothing of that todo is pushed, not
+  even a title or date change; changes from Basecamp still come in.
+- **Upgrading from the one-list version.** Bodies used to be stored as
+  Basecamp's HTML. The first pull rewrites each into markdown and drops any
+  attachments from the rela copy; Basecamp keeps them. A todo with an
+  unsynced local body edit at that moment gets a conflict note.
 - **Edits.** Each side's change since the last agreed state is carried to
   the other. A save that changed no synced field makes no request to
   Basecamp at all.
@@ -102,12 +144,15 @@ push is late, not gone.
   queue retries a failed push, it never creates a second to-do. If marking
   the new to-do complete failed, the next pull reports `done` as a
   conflict; complete it in Basecamp to clear it.
-- **Deleted, archived or moved to-dos.** A todo whose Basecamp to-do is no
-  longer in the list gets a `sync_conflict` starting with `vanished:`. The
-  connector never deletes anything. The `basecamp` reference URL ends in
-  `#todolist-<id>`, naming the list the to-do was synced from. Only todos
-  of the configured list are checked, so pointing `basecamp_todolist_id`
-  at another list does not mark the old list's todos as vanished.
+- **Deleted or archived to-dos.** A todo whose Basecamp to-do is no longer
+  listed gets a `sync_conflict` starting with `vanished:`. This includes the
+  to-dos of a project that was archived. The connector never deletes
+  anything. A to-do trashed while a pull is reading the listing can make
+  another one look vanished for that one run; the next pull clears it.
+- **Cost.** A pull reads every page of two listings: to-do lists and
+  to-dos. Unchanged pages come back as cheap 304s, except the last page of
+  each listing. A to-do whose Basecamp copy and rela copy are both unchanged
+  since the last pull is skipped without a merge.
 - **Fields rela does not own.** A Basecamp update replaces the whole to-do,
   so the push reads it first and sends back the assignees, completion
   subscribers and start date unchanged.

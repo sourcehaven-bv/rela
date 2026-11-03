@@ -1,0 +1,22 @@
+request: GET /api/v1/_position?id=TKT-3&scope=%7B%22source%22%3A%22list%22%2C%22type%22%3A%22ticket%22%7D
+identity: header admin@example.test
+status: 200
+reads: GraphQueryHeaders=2 ListRelations=1
+breadth: ListRelations=0/1
+bodies: GraphQuery=4/2
+versions: 
+body:
+{
+  "prev": {
+    "id": "TKT-2",
+    "type": "ticket",
+    "address": "TKT-2"
+  },
+  "next": {
+    "id": "TKT-4",
+    "type": "ticket",
+    "address": "TKT-4"
+  },
+  "current": 3,
+  "total": 6
+}

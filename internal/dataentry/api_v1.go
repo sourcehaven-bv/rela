@@ -27,6 +27,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/project"
 	"github.com/Sourcehaven-BV/rela/internal/store"
+	"github.com/Sourcehaven-BV/rela/internal/visibility"
 )
 
 // --- API v1 Types ---
@@ -80,8 +81,12 @@ func toV1PropertyDef(meta *metamodel.Metamodel, propDef metamodel.PropertyDef) v
 		Default:     propDef.Default,
 		Description: propDef.Description,
 		List:        propDef.List,
+		Min:         propDef.Min,
 		Max:         propDef.Max,
 		System:      propDef.System,
+	}
+	if d := propDef.Display; d != nil {
+		pd.Display = &v1.PropertyDisplay{Currency: d.Currency}
 	}
 	// Labels mirror Values: a property naming a custom type inherits that
 	// type's values and labels; an inline `labels` map on a custom-typed
@@ -151,6 +156,9 @@ func (a *App) registerAPIV1Routes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/v1/_nav_status", func(w http.ResponseWriter, r *http.Request) { handleV1NavStatus(a, w, r) })
 	mux.HandleFunc("/api/v1/_nav_items", func(w http.ResponseWriter, r *http.Request) { handleV1NavItems(a, w, r) })
 	mux.HandleFunc("/api/v1/_dashboard", a.views.handleV1Dashboard)
+	mux.HandleFunc("/api/v1/_dashboard/card", func(w http.ResponseWriter, r *http.Request) {
+		handleV1DashboardCard(a, w, r)
+	})
 	mux.HandleFunc("/api/v1/_conflicts", a.handleV1Conflicts)
 	mux.HandleFunc("/api/v1/_conflicts/", a.handleV1ConflictRoutes)
 	mux.HandleFunc("/api/v1/_documents/", a.handleV1Documents)
@@ -163,9 +171,23 @@ func (a *App) registerAPIV1Routes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/v1/_comments/", a.comments.handleV1Comments)
 	mux.HandleFunc("/api/v1/_piles", a.piles.handleV1Piles)
 	mux.HandleFunc("/api/v1/_piles/", a.piles.handleV1Piles)
+	mux.HandleFunc(inboxPath, func(w http.ResponseWriter, r *http.Request) {
+		a.channels.serveInbox(w, r, a.State().Meta)
+	})
+	mux.HandleFunc(inboxSummaryPath, func(w http.ResponseWriter, r *http.Request) {
+		a.channels.serveInboxSummary(w, r)
+	})
+	mux.HandleFunc(leasesPath, a.leases.handleV1Leases)
+	mux.HandleFunc(leasesPath+"/", a.leases.handleV1Leases)
 	mux.HandleFunc("/api/v1/_templates/", a.handleV1Templates)
 	mux.HandleFunc("/api/v1/_views/", a.views.handleV1Views)
 	a.registerCopyRoutes(mux)
+	if a.conversions != nil {
+		mux.HandleFunc("/api/v1/_conversions/", a.conversions.handleV1Conversions)
+	}
+	if a.taskItems != nil {
+		mux.HandleFunc("/api/v1/_task_item_conversions/", a.taskItems.handleV1TaskItemConversions)
+	}
 	mux.HandleFunc("/api/v1/_gantts/", a.gantt.handleV1Gantt)
 	mux.HandleFunc("/api/v1/_action/", a.write.handleV1Action)
 	mux.HandleFunc("/api/v1/_apps/", a.handleV1App)
@@ -209,6 +231,13 @@ func (a *App) handleV1DynamicRoutes(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// /{plural}/{ref}/_channels[/...] (TKT-ZU7P13) has routes of several
+	// depths, so it is matched before the switch on depth.
+	if rest, ok := splitChannelRoute(parts); ok {
+		a.channels.serve(w, r, typeName, parts[1], rest)
+		return
+	}
+
 	switch len(parts) {
 	case 1:
 		// /{plural} - collection
@@ -223,14 +252,21 @@ func (a *App) handleV1DynamicRoutes(w http.ResponseWriter, r *http.Request) {
 			a.handleV1SingleEntity(w, r, typeName, plural, parts[1])
 		}
 	case 3:
-		// /{plural}/{id}/relations, /{plural}/{id}/_export or /{plural}/{id}/restore
+		// /{plural}/{id}/relations, /{plural}/{id}/_export, /{plural}/{id}/restore,
+		// /{plural}/{id}/mentioned-by, /{plural}/{id}/_lease or /{plural}/{id}/_presence
 		switch parts[2] {
 		case "relations":
 			a.handleV1EntityRelations(w, r, typeName, parts[1])
+		case "_lease":
+			a.leases.handleClaim(w, r, typeName, parts[1])
+		case "_presence":
+			handlePresence(w, r, a.visibleReader, a.live.presence, typeName, parts[1])
 		case "_export":
 			a.export.handleV1ExportEntity(w, r, typeName, parts[1])
 		case "restore":
 			a.write.handleV1RestoreEntity(w, r, typeName, parts[1])
+		case "mentioned-by":
+			handleV1MentionedBy(a, w, r, typeName, parts[1])
 		default:
 			writeV1Error(w, r, http.StatusNotFound, "not_found", "Resource not found", "")
 		}
@@ -339,11 +375,19 @@ var errListLoad = errors.New("list load failed")
 func (a *App) listPage(
 	ctx context.Context, typeName string, query map[string][]string, page, perPage int,
 ) (rows []*entityPkg.Entity, total int, ordering *relationOrdering, err error) {
-	ctx, n, err := resolveListNarrowing(ctx, a, typeName, query)
+	// FIRST, before anything reads a row: the field gate's answer depends on
+	// the policy and the caller's roles only, so the refusal must not vary
+	// with what the type holds.
+	state := a.State()
+	gated, err := gateAppListQuery(ctx, a, state, typeName, query)
 	if err != nil {
 		return nil, 0, nil, err
 	}
-	if plan, empty, ok := n.pushdownPlan(ctx, a, typeName, query, page, perPage); ok {
+	ctx, n, err := resolveListNarrowing(ctx, a, state, typeName, query)
+	if err != nil {
+		return nil, 0, nil, err
+	}
+	if plan, empty, ok := n.pushdownPlan(ctx, typeName, gated, page, perPage); ok {
 		if empty {
 			return nil, 0, nil, nil
 		}
@@ -351,14 +395,18 @@ func (a *App) listPage(
 		return rows, total, nil, err
 	}
 	cond, scope := n.cond, n.scope
-	all, ordering, err := scopedSortedEntitiesScoped(ctx, a, typeName, query, scope)
+	all, ordering, err := scopedSortedEntitiesScoped(ctx, a, typeName, gated, scope)
 	if err != nil {
 		return nil, 0, nil, err
 	}
 	// AFTER the ACL scope and every filter, BEFORE paging and the count: the
 	// condition narrows the population the page and total describe, so
 	// applying it later would page one set and count another.
-	ctx = primeVerdicts(ctx, a.fieldResolver, all)
+	// Prime only when a condition will judge every row: otherwise the page
+	// is primed below, and priming the whole population here is wasted.
+	if cond != nil {
+		ctx = primeVerdicts(ctx, a.fieldResolver, all)
+	}
 	if all, err = applyViewCondition(ctx, all, cond, a.redactedForSuggestion, a.Services().Store); err != nil {
 		return nil, 0, nil, err
 	}
@@ -381,11 +429,16 @@ func (a *App) scopedSortedEntities(
 	if err != nil {
 		return nil, err
 	}
-	scope, err := viewQueryScope(a.queryScopes, a.Cfg(), a.Meta(), typeName, scopeName)
+	state := a.State()
+	scope, err := viewQueryScope(a.queryScopes, state.Cfg, state.Meta, typeName, scopeName)
 	if err != nil {
 		return nil, err
 	}
-	rows, _, err := scopedSortedEntitiesScoped(ctx, a, typeName, query, scope)
+	gated, err := gateAppListQuery(ctx, a, state, typeName, query)
+	if err != nil {
+		return nil, err
+	}
+	rows, _, err := scopedSortedEntitiesScoped(ctx, a, typeName, gated, scope)
 	return rows, err
 }
 
@@ -393,7 +446,8 @@ func (a *App) scopedSortedEntities(
 // scope already resolved, for callers that resolved it to decide something
 // else first (listPage uses it to gate the pushdown). It also returns the
 // relation ordering a page-scoped request was sorted by, if any; see
-// [resolvePageScope].
+// [resolvePageScope]. The query is a [gatedListQuery], so every property it
+// filters or sorts on is one the principal sees on every row.
 //
 // A package function taking the App rather than a method, to keep App under
 // its plimsoll load line — the discipline the directive at [App] records:
@@ -402,9 +456,10 @@ func scopedSortedEntitiesScoped(
 	ctx context.Context,
 	a *App,
 	typeName string,
-	query map[string][]string,
+	query gatedListQuery,
 	scope resolvedQueryScope,
 ) ([]*entityPkg.Entity, *relationOrdering, error) {
+	params := query.params
 	// Stamp the scope's request-scoped state ONCE, before any row is
 	// evaluated — a scope reading current_user resolves it here, not per row.
 	ctx, err := scope.bind(ctx)
@@ -413,7 +468,7 @@ func scopedSortedEntitiesScoped(
 	}
 	// The page scope resolves BEFORE the load, so an anchor the principal
 	// cannot see answers the uniform 404 whatever the type's verdict is.
-	pageIDs, ordering, pageScoped, err := resolvePageScope(ctx, a, query, typeName)
+	pageIDs, ordering, pageScoped, err := resolvePageScope(ctx, a, params, typeName)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -454,7 +509,7 @@ func scopedSortedEntitiesScoped(
 	// over relevance ranking, same approach SearchView uses for filtering.
 	// Backend errors surface as HTTP 500 rather than rendering an empty list
 	// and pretending the search succeeded.
-	searchResult, err := a.queries.freeTextIDsForType(ctx, queryGet(query, "q"), typeName)
+	searchResult, err := a.queries.freeTextIDsForType(ctx, queryGet(params, "q"), typeName)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -468,18 +523,13 @@ func scopedSortedEntitiesScoped(
 		entities = filtered
 	}
 
-	// Classify each filter[<key>] param as property vs relation ONCE, up
-	// front, so both passes agree on routing. The config's FilterControls are
-	// authoritative (RR-0HWAS0 / RR-B0JPPL): a relation filter applies only
-	// when a list or kanban control of this type configures it. Name-based
-	// GetRelationDef is only a fallback and only ever routes AWAY from
-	// properties, never toward relations without a control.
-	isRelationKey := relationFilterClassifier(a.Meta(), a.Cfg(), typeName)
-	entities, err = applyV1Filters(entities, query, typeName, isRelationKey)
+	// Each filter[<key>] param was classified as property vs relation ONCE,
+	// by the gate, so both passes agree on routing with the gate itself.
+	entities, err = applyV1Filters(entities, query)
 	if err != nil {
 		return nil, nil, err
 	}
-	entities, err = a.applyRelationFilters(ctx, entities, query, typeName, isRelationKey)
+	entities, err = a.applyRelationFilters(ctx, entities, params, typeName, query.isRelationKey)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -606,7 +656,7 @@ func (a *App) applyRelationFilters(
 
 		direction, _ := cfg.RelationFilterDirection(typeName, relation)
 		matched, merr := matchRelationFilterMany(
-			ctx, a.Services(), a.visibleReader, entities, relation, direction, want)
+			ctx, a.Services(), a.visibleReader, appRedactor(a), entities, relation, direction, want)
 		if merr != nil {
 			return nil, fmt.Errorf("%w: relation filter %q: %w", errListLoad, relation, merr)
 		}
@@ -634,9 +684,16 @@ func (a *App) applyRelationFilters(
 // A store failure is returned, never folded into an empty verdict map: an
 // empty map reads as "no row matches", which for a `ne` filter admits EVERY
 // row — a backend fault would silently widen a filter whose job is to narrow.
+//
+// The title compared is the one the principal is shown: each served neighbor
+// is redacted once with red before its display title is taken. The served
+// headers are gated but not redacted, so comparing their raw title would let
+// `filter[<relation>]=<guess>` confirm a display property that `visible:`
+// hides on the neighbor (BUG-WJSYQT review). The field gate does not cover
+// this key, because it names a relation, not a property of the listed type.
 func matchRelationFilterMany(
-	ctx context.Context, svc Services, visible visibleReader, rows []*entityPkg.Entity,
-	relation string, direction dataentryconfig.Direction, want string,
+	ctx context.Context, svc Services, visible visibleReader, red visibility.FieldRedactor,
+	rows []*entityPkg.Entity, relation string, direction dataentryconfig.Direction, want string,
 ) (map[string]bool, error) {
 	matched := make(map[string]bool, len(rows))
 	if len(rows) == 0 {
@@ -659,6 +716,7 @@ func matchRelationFilterMany(
 	if err != nil {
 		return nil, err
 	}
+	served = redactHeaders(ctx, red, served)
 	for _, re := range edges {
 		h, ok := served[re.targetID]
 		if !ok || svc.Meta.DisplayTitle(h.ID, h.Type, h.Properties) != want {
@@ -670,6 +728,23 @@ func matchRelationFilterMany(
 		matched[re.rowID] = true
 	}
 	return matched, nil
+}
+
+// redactHeaders redacts each header once with red, priming any `related(...)`
+// verdicts for the whole batch first so the cost does not grow per header.
+func redactHeaders(
+	ctx context.Context, red visibility.FieldRedactor, headers map[string]store.EntityHeader,
+) map[string]store.EntityHeader {
+	probes := make([]*entityPkg.Entity, 0, len(headers))
+	for _, h := range headers {
+		probes = append(probes, &entityPkg.Entity{ID: h.ID, Type: h.Type, Face: h.Face, Properties: h.Properties})
+	}
+	ctx = visibility.PrimeTraversals(ctx, red, probes)
+	out := make(map[string]store.EntityHeader, len(headers))
+	for id, h := range headers {
+		out[id] = visibility.RedactHeader(ctx, red, h)
+	}
+	return out
 }
 
 // relationFilterEdge is one edge of a relation filter, oriented from the
@@ -718,28 +793,60 @@ func relationFilterEdges(
 	return edges, neighborIDs, nil
 }
 
-// parseRelationFilterKey parses a `filter[<rel>]` or `filter[<rel>][<op>]` key
-// using the SAME `][`-split logic as applyV1Filters, so an operator segment is
-// recognized rather than being swallowed into the relation name (RR-6RF60V,
-// the old TrimPrefix/TrimSuffix bug). Returns (relation, operator, ok) with
-// operator defaulting to "eq". ok is false for a malformed key (empty relation,
-// too many segments).
-func parseRelationFilterKey(key string) (relation, operator string, ok bool) {
-	filterKey := strings.TrimPrefix(key, "filter[")
-	filterKey = strings.TrimSuffix(filterKey, "]")
-	filterKey = strings.TrimSuffix(filterKey, "][") // was "...[]"
-	parts := strings.Split(filterKey, "][")
-	if len(parts) > 2 || parts[0] == "" {
-		return "", "", false
+// filterKey is a parsed `filter[...]` query key.
+type filterKey struct {
+	// property is the property or relation the key names.
+	property string
+	// operator defaults to "eq".
+	operator string
+	// arrayForm records an explicit `[]` suffix: each repeated param is one
+	// member, verbatim. Without it, a lone param is the comma form. The
+	// suffix, not the number of params, is the signal, since a one-element
+	// array is indistinguishable from a comma list by count.
+	arrayForm bool
+}
+
+// parseFilterKey parses `filter[property]`, `filter[property][operator]` or
+// `filter[property][operator][]`. It is the ONE parser of the key shape: the
+// field gate, the Go filter, the relation pass and the pushdown all read keys
+// through it, so the gate checks exactly the property each of them evaluates
+// (BUG-WJSYQT).
+//
+// A malformed key like `filter[prop][][weird]` produces three segments; more
+// than two segments, or an empty property or operator, returns errBadFilter.
+// On an empty operator the property is still set, so a caller can route a
+// relation key before refusing.
+func parseFilterKey(key string) (filterKey, error) {
+	inner := strings.TrimSuffix(strings.TrimPrefix(key, "filter["), "]")
+	trimmed := strings.TrimSuffix(inner, "][") // was "...[]"
+	fk := filterKey{operator: "eq", arrayForm: trimmed != inner}
+	parts := strings.Split(trimmed, "][")
+	if len(parts) > 2 {
+		return filterKey{}, fmt.Errorf("%w: key %q has too many segments", errBadFilter, key)
 	}
-	operator = "eq"
+	fk.property = parts[0]
+	if fk.property == "" {
+		return filterKey{}, fmt.Errorf("%w: key %q has an empty property", errBadFilter, key)
+	}
 	if len(parts) == 2 {
 		if parts[1] == "" {
-			return "", "", false
+			return fk, fmt.Errorf("%w: key %q has an empty operator segment", errBadFilter, key)
 		}
-		operator = parts[1]
+		fk.operator = parts[1]
 	}
-	return parts[0], operator, true
+	return fk, nil
+}
+
+// parseRelationFilterKey is [parseFilterKey] for a caller that only needs to
+// know whether the key is well formed. Returns (relation, operator, ok) with
+// operator defaulting to "eq"; an operator segment is recognized rather than
+// being swallowed into the relation name (RR-6RF60V).
+func parseRelationFilterKey(key string) (relation, operator string, ok bool) {
+	fk, err := parseFilterKey(key)
+	if err != nil {
+		return "", "", false
+	}
+	return fk.property, fk.operator, true
 }
 
 // queryGet returns the first value for key from a raw query map, or "".
@@ -760,6 +867,7 @@ func setListHeaders(w http.ResponseWriter, r *http.Request, page, perPage, total
 	w.Header().Set("X-Per-Page", strconv.Itoa(perPage))
 }
 
+//archplan:auth=required
 func (a *App) handleV1ListEntities(w http.ResponseWriter, r *http.Request, typeName, plural string) {
 	query := r.URL.Query()
 	page, perPage := parseV1Pagination(query)
@@ -813,7 +921,7 @@ func (a *App) handleV1ListEntities(w http.ResponseWriter, r *http.Request, typeN
 
 	// Build response - always include relations for relation column support
 	data := make([]v1.Entity, 0, len(entities))
-	included := make(map[string]v1.Entity)
+	var included map[string]v1.Entity // nil when none; both encoders omit it
 	pageCtx := primeVerdicts(r.Context(), a.fieldResolver, entities)
 	for i, e := range entities {
 		v1Entity := a.serializer.forWireRelated(
@@ -838,11 +946,11 @@ func (a *App) handleV1ListEntities(w http.ResponseWriter, r *http.Request, typeN
 			v1Entity.World = worldProvenance(r.Context(), e)
 		}
 		data = append(data, v1Entity)
+	}
 
-		// Resolve includes if requested
-		if wantIncludes {
-			maps.Copy(included, a.resolveV1Includes(r.Context(), e, includes))
-		}
+	// Resolve includes for the whole page at once (TASK-550RD).
+	if wantIncludes {
+		included = a.resolveV1Includes(r.Context(), entities, includes)
 	}
 
 	if !serveListRowExtras(w, r, a, query, entities, data) {
@@ -860,7 +968,9 @@ func (a *App) handleV1ListEntities(w http.ResponseWriter, r *http.Request, typeN
 			// client never has to re-derive the condition.
 			RelationOrder: ordering.wire(),
 		},
-		Actions: a.affordances.computeCollectionActions(r.Context(), typeName),
+		// A list's toolbar buttons ride on the collection map (toolbaractions.go).
+		Actions: addToolbarActions(r.Context(), a.Cfg(), typeName,
+			a.affordances.computeCollectionActions(r.Context(), typeName)),
 	}
 
 	setListHeaders(w, r, page, perPage, total, plural)
@@ -945,6 +1055,7 @@ func (a *App) gateReadOrNotFound(w http.ResponseWriter, r *http.Request, typeNam
 	return true
 }
 
+//archplan:auth=authz
 func (a *App) handleV1GetEntity(w http.ResponseWriter, r *http.Request, typeName, plural, entityID string) {
 	ctx := r.Context()
 
@@ -979,8 +1090,7 @@ func (a *App) handleV1GetEntity(w http.ResponseWriter, r *http.Request, typeName
 	// edges, so a draft carried the published face's links too — the
 	// mixed-face response that reads as correct because the entity looks
 	// right and only its links are wrong.
-	outgoing, visibleNeighbors, werr := servedFaceEdges(
-		ctx, a.reader, a.worldNeighbors, entity)
+	outgoing, visibleNeighbors, werr := a.faceEdges.read(ctx, entity)
 	if werr != nil {
 		// A neighbor-resolution fault is an infrastructure failure, not an
 		// empty link set. Rendering it as "this world links to nothing"
@@ -991,6 +1101,11 @@ func (a *App) handleV1GetEntity(w http.ResponseWriter, r *http.Request, typeName
 	}
 	result := a.serializer.forWireScoped(ctx, entity, outgoing, visibleNeighbors, a.Meta(), plural)
 	result.Versions = fieldVersionsOf(&result, a.Meta())
+	// Roll-ups after the field version tokens and outside the ETag: they are
+	// computed from OTHER entities under the caller's grants, which neither
+	// covers, and the response is no-store.
+	newRollupSource(a).add(ctx, entity.Type, []rollupRow{{ref: entity.Ref(), props: result.Properties}},
+		worldScopeFrom(ctx), nil)
 
 	// Face provenance (TKT-WRLDAPI item 2). Attached HERE rather than inside
 	// forWire, even though forWire is the shared per-entity serializer,
@@ -1013,7 +1128,7 @@ func (a *App) handleV1GetEntity(w http.ResponseWriter, r *http.Request, typeName
 
 	// Handle includes for related entities
 	if includes := query.Get("include"); includes != "" {
-		result.Included = a.resolveV1Includes(ctx, entity, includes)
+		result.Included = a.resolveV1Includes(ctx, []*entityPkg.Entity{entity}, includes)
 	}
 
 	// Resolve the entity-ID code spans in the body so an edit form can render
@@ -1031,7 +1146,12 @@ func (a *App) handleV1GetEntity(w http.ResponseWriter, r *http.Request, typeName
 	// the caller's own grants, neither of which this validator ever covered.
 	// The response is `no-store` anyway, so a stale shared copy is not
 	// reachable.
-	result.Mentions = collectMentions(ctx, a.store, a.viewReader, a.Meta(), entity.Content)
+	result.Mentions = collectMentions(ctx, a.viewReader, a.Meta(), entity.Content)
+
+	// The advisory lease, after the read gate above and after the field
+	// version tokens, so it moves neither. It is not in the ETag either: a
+	// claim would then fail every If-Match the holder's client sends.
+	result.Lease = a.leases.entityLease(ctx, entity.ID)
 
 	// ETag for caching (visible-only path; deny-path above emits no ETag).
 	//
@@ -1041,11 +1161,18 @@ func (a *App) handleV1GetEntity(w http.ResponseWriter, r *http.Request, typeName
 	// RR-FRK1 duplication this PR is careful to avoid one function over — and
 	// it also opens a window in which the validator could describe a
 	// different edge set than the body it is validating.
-	etag := entityETagWithEdges(entity, outgoing)
+	etag := servedETag(ctx, a.affordances, entity, outgoing)
 	w.Header().Set("ETag", etag)
 
-	// Check If-None-Match
-	if r.Header.Get("If-None-Match") == etag {
+	// Check If-None-Match. When leases are wired the GET never answers 304:
+	// the ETag does not cover `_lease`, so a copy cached before a claim or a
+	// release would carry the wrong lease. The ETag is still sent, unchanged
+	// by the lease, so If-Match keeps working. A type with roll-ups never
+	// answers 304 either, for the same reason: they change with OTHER
+	// entities, which the ETag does not cover.
+	if a.leases == nil && len(a.Meta().RollupNames(entity.Type)) == 0 &&
+		r.Header.Get("If-None-Match") == etag {
+
 		w.WriteHeader(http.StatusNotModified)
 		return
 	}
@@ -1065,6 +1192,10 @@ func (a *App) handleV1GetEntity(w http.ResponseWriter, r *http.Request, typeName
 // backend error string can name tables, columns, or index paths.
 func writeListPipelineError(w http.ResponseWriter, r *http.Request, err error) {
 	switch {
+	case requestCanceled(r, err):
+		// The client went away: nobody reads the answer, and a cancel is not
+		// a fault (TKT-T2I7P2). The access log records it as 499.
+		return
 	case errors.Is(err, errBadFilter):
 		// Server-side log stays alongside the 400 (RR-6RF60V's logging
 		// intent, CONTROL-8-15): the response informs the caller, the log
@@ -1077,6 +1208,24 @@ func writeListPipelineError(w http.ResponseWriter, r *http.Request, err error) {
 		// filter key/operator, never store internals.
 		writeV1Error(w, r, http.StatusBadRequest, "invalid_filter",
 			"Invalid filter parameter", err.Error())
+	case errors.Is(err, errPropertyNotVisible):
+		// Client-caused: the caller filtered or sorted on a property its
+		// roles do not show on every row (BUG-WJSYQT). The detail names the
+		// property and the type, which are config, not secrets, and depends
+		// on no row (see listfieldgate.go).
+		problem := v1.Error{
+			Type:     "https://rela.dev/errors/property_not_visible",
+			Title:    "Cannot filter or sort on this property",
+			Status:   http.StatusBadRequest,
+			Detail:   err.Error(),
+			Instance: r.URL.Path,
+		}
+		if refusal, ok := errors.AsType[*propertyNotVisibleError](err); ok {
+			problem.Use, problem.Property = refusal.use, refusal.property
+		}
+		w.Header().Set("Content-Type", "application/problem+json")
+		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(problem)
 	case errors.Is(err, errBadQueryScope):
 		// Client-caused, like errBadFilter above: the caller named a scope
 		// that does not resolve, or repeated the parameter. Echo the detail
@@ -1125,7 +1274,10 @@ func writeListPipelineError(w http.ResponseWriter, r *http.Request, err error) {
 // backend error string can carry table/column names or other
 // internals an API client has no business seeing.
 func writeGateError(w http.ResponseWriter, r *http.Request, err error) {
-	if errors.Is(err, context.Canceled) {
+	if requestCanceled(r, err) {
+		return
+	}
+	if writeNoIdentity(w, r, err) {
 		return
 	}
 	slog.Warn("acl: read-gate query failed",
@@ -1137,6 +1289,54 @@ func writeGateError(w http.ResponseWriter, r *http.Request, err error) {
 	}
 	writeV1Error(w, r, http.StatusInternalServerError, "acl_query_failed",
 		"ACL read-permission check failed", "check server logs")
+}
+
+// writeNoIdentity answers 401 when err reports that the request reached code
+// below the edge with no bound identity ([acl.ErrNoIdentity]). It reports
+// whether it wrote a response.
+//
+// Every shared error mapper in this package calls it first (writeGateError,
+// writeInternalProblem, writeInternalJSONError, and writeIdentityFaultDeny for
+// a denied write), so the mapping lives in one place rather than in each
+// handler. The body is the one the JWT gate sends for a missing assertion.
+// It carries no WWW-Authenticate challenge: that names the JWT gate's
+// credential header, and a deployment without the gate has no scheme to name.
+//
+// In production attachACLRequest binds a Request on every /api request or
+// fails it, so reaching this means a route or a ctx lost the binding. That is
+// a wiring fault, hence the Error log, but the client is told what is true for
+// it: the request is not authenticated.
+//
+// A mismatched or foreign identity ([acl.ErrIdentityMismatch],
+// [acl.ErrForeignIdentity]) is not handled here. The caller did authenticate;
+// the server attached the wrong Request, which is a server fault and stays 500.
+//
+// Nothing here resolves the principal as a fallback. The edge binds it or the
+// request fails.
+func writeNoIdentity(w http.ResponseWriter, r *http.Request, err error) bool {
+	if !errors.Is(err, acl.ErrNoIdentity) {
+		return false
+	}
+	slog.ErrorContext(r.Context(), "acl: request reached a handler with no bound identity",
+		"err", err, "path", r.URL.Path, "method", r.Method)
+	writeV1Error(w, r, http.StatusUnauthorized, "unauthenticated", "Authentication required", "")
+	return true
+}
+
+// requestCanceled reports whether the client went away: the request's own
+// context was canceled. Once it is, no one reads the response, so the error
+// is answered with silence and not logged.
+//
+// The request context decides, not the error. The error does not always say
+// it is a cancel (pgx reports a statement stopped by a cancel request as
+// SQLSTATE 57014, which does not wrap context.Canceled), and an error that
+// does wrap context.Canceled may come from another context, such as a
+// shared singleflight call, while this client still waits for an answer.
+//
+// A deadline (context.DeadlineExceeded) is not a cancel: the server gave
+// up, and that is still logged and answered.
+func requestCanceled(r *http.Request, _ error) bool {
+	return errors.Is(r.Context().Err(), context.Canceled)
 }
 
 // internalErrorDetail is the detail of every 500 this package answers.
@@ -1154,15 +1354,33 @@ func writeInternalError(w http.ResponseWriter, r *http.Request, code, title stri
 // writeInternalErrorDetail is [writeInternalError] with a detail the caller
 // built from the request alone, never from err.
 func writeInternalErrorDetail(w http.ResponseWriter, r *http.Request, code, title, detail string, err error) {
+	writeInternalProblem(w, r, code, v1.Error{Title: title, Detail: detail}, err)
+}
+
+// writeInternalProblem is [writeInternalErrorDetail] for a problem with
+// extension fields. Like the detail, they are built from the request and
+// what it wrote, never from err. It sets the type, status and instance.
+func writeInternalProblem(w http.ResponseWriter, r *http.Request, code string, problem v1.Error, err error) {
+	if writeNoIdentity(w, r, err) {
+		return
+	}
 	if !logInternalError(r, code, err) {
 		return
 	}
-	writeV1Error(w, r, http.StatusInternalServerError, code, title, detail)
+	problem.Type = "https://rela.dev/errors/" + code
+	problem.Status = http.StatusInternalServerError
+	problem.Instance = r.URL.Path
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(problem.Status)
+	_ = json.NewEncoder(w).Encode(problem)
 }
 
 // writeInternalJSONError is [writeInternalError] for the settings and theme
 // endpoints, which answer with the plain {"error": message} body.
 func writeInternalJSONError(w http.ResponseWriter, r *http.Request, message string, err error) {
+	if writeNoIdentity(w, r, err) {
+		return
+	}
 	if !logInternalError(r, message, err) {
 		return
 	}
@@ -1172,7 +1390,7 @@ func writeInternalJSONError(w http.ResponseWriter, r *http.Request, message stri
 // logInternalError logs the cause of a 500. It reports false when the client
 // has gone away, in which case there is no one to answer.
 func logInternalError(r *http.Request, code string, err error) bool {
-	if errors.Is(err, context.Canceled) {
+	if requestCanceled(r, err) {
 		return false
 	}
 	slog.ErrorContext(r.Context(), "dataentry: request failed",
@@ -1182,6 +1400,7 @@ func logInternalError(r *http.Request, code string, err error) bool {
 
 // --- Relation Handlers ---
 
+//archplan:auth=authz
 func (a *App) handleV1EntityRelations(w http.ResponseWriter, r *http.Request, typeName, entityID string) {
 	// The path segment is an ADDRESS — `ID` or `ID@face` (BUG-VFHUWO); the
 	// face selects which tail's edges are served.
@@ -1403,6 +1622,7 @@ func resolveRelationEndpoints(entityID, peerID, direction string) (from, to stri
 	return entityID, peerID
 }
 
+//archplan:auth=authz
 func (a *App) handleV1GetRelationType(w http.ResponseWriter, r *http.Request, typeName, entityID, relType string) {
 	// An ADDRESS, gated as in handleV1EntityRelations (BUG-VFHUWO).
 	entity, found := readAddressedOr404(w, r, a.visibleReader, typeName, entityID)
@@ -1498,6 +1718,7 @@ func (a *App) handleV1RelationTarget(
 
 // --- Action Handlers ---
 
+//archplan:auth=authz
 func (a *App) handleV1EntityAction(w http.ResponseWriter, r *http.Request, typeName, entityID, action string) {
 	if r.Method != http.MethodPost {
 		writeV1Error(w, r, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed", "")
@@ -1514,6 +1735,7 @@ func (a *App) handleV1EntityAction(w http.ResponseWriter, r *http.Request, typeN
 
 // --- System Handlers ---
 
+//archplan:auth=required reason="metamodel; config is not a secret"
 func (a *App) handleV1Schema(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		writeV1Error(w, r, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed", "")
@@ -1574,6 +1796,7 @@ func (a *App) handleV1Schema(w http.ResponseWriter, r *http.Request) {
 	writeV1JSON(w, http.StatusOK, schema)
 }
 
+//archplan:auth=required reason="metamodel; config is not a secret"
 func (a *App) handleV1SchemaRoutes(w http.ResponseWriter, r *http.Request) {
 	s := a.State()
 	path := strings.TrimPrefix(r.URL.Path, "/api/v1/_schema/")
@@ -1600,6 +1823,9 @@ func (a *App) handleV1SchemaRoutes(w http.ResponseWriter, r *http.Request) {
 
 	case path == "relations":
 		writeV1JSON(w, http.StatusOK, s.Meta.Relations)
+
+	case path == "channels":
+		serveChannelSchema(w, r, a.channels.describer())
 
 	default:
 		writeV1Error(w, r, http.StatusNotFound, "not_found", "Resource not found", "")
@@ -1803,6 +2029,7 @@ func aboutDescription(s *Schema) string {
 	return ""
 }
 
+//archplan:auth=required reason="navigation config, served verbatim"
 func (a *App) handleV1Config(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		writeV1Error(w, r, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed", "")
@@ -1832,6 +2059,7 @@ func (a *App) handleV1Config(w http.ResponseWriter, r *http.Request) {
 		App: v1.AppConfig{
 			Name:              s.Cfg.App.Name,
 			Description:       s.Cfg.App.Description,
+			Language:          s.Cfg.App.Language,
 			PlantUMLServerURL: s.Cfg.App.PlantUMLServerURL,
 			DefaultWorld:      declaredDefaultWorld(s.Meta),
 			// The same nil check the history handler gates on, so the
@@ -1841,6 +2069,7 @@ func (a *App) handleV1Config(w http.ResponseWriter, r *http.Request) {
 		AboutDescription: aboutDescription(s),
 		Styles:           s.StyleMap,
 		Forms:            forms,
+		Channels:         s.Cfg.Channels,
 		Lists:            resolveListDirections(s, s.Cfg.Lists),
 		Views:            s.Cfg.Views,
 		EntityViews:      s.Cfg.EntityViews,
@@ -1848,6 +2077,7 @@ func (a *App) handleV1Config(w http.ResponseWriter, r *http.Request) {
 		Calendars:        resolveCalendarDirections(s, s.Cfg.Calendars),
 		Gantts:           s.Cfg.Gantts,
 		Dashboard:        s.Cfg.Dashboard,
+		Dashboards:       s.Cfg.Dashboards,
 		Actions:          s.Cfg.Actions,
 		Navigation:       s.Cfg.Navigation,
 		Spaces:           s.Cfg.Spaces,
@@ -1882,6 +2112,7 @@ func parseSearchLimit(raw string) (int, bool) {
 	return n, true
 }
 
+//archplan:auth=required
 func (a *App) handleV1Search(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		writeV1Error(w, r, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed", "")
@@ -1894,7 +2125,8 @@ func (a *App) handleV1Search(w http.ResponseWriter, r *http.Request) {
 			fmt.Sprintf("limit must be an integer between 1 and %d", maxSearchLimit), "")
 		return
 	}
-	relCtx, werr := parseSearchRelation(a.State().Meta, r.URL.Query())
+	meta := a.State().Meta
+	relCtx, werr := parseSearchRelation(meta, r.URL.Query())
 	if werr != nil {
 		writeV1Error(w, r, http.StatusBadRequest, werr.Code, werr.Detail, werr.Path)
 		return
@@ -1911,14 +2143,17 @@ func (a *App) handleV1Search(w http.ResponseWriter, r *http.Request) {
 	// other types. Only a declared type name is spliced in; any other value
 	// cannot match a row, which the exact filter below still ensures.
 	typeFilter := r.URL.Query().Get("type")
-	if _, declared := a.State().Meta.Entities[typeFilter]; declared {
+	if _, declared := meta.Entities[typeFilter]; declared {
 		query = "type:" + typeFilter + " " + query
 	}
 
 	// executeQuery is read-gated (TKT-BA8BSX): only entities the
 	// request principal may read come back, and gate/load/search
-	// failures surface instead of silently truncating.
-	entities, err := a.queries.executeQuery(r.Context(), query)
+	// failures surface instead of silently truncating. The limit lowers
+	// the relevance cap where that cannot change which rows survive the
+	// filters below (TKT-T2I7P2, see freeTextLimit).
+	entities, err := a.queries.executeQueryWith(r.Context(), query,
+		queryOptions{limit: limit, exactType: typeFilter})
 	if err != nil {
 		writeListPipelineError(w, r, err)
 		return
@@ -1954,7 +2189,6 @@ func (a *App) handleV1Search(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	meta := a.State().Meta
 	data := make([]v1.Entity, 0, len(entities))
 	pageCtx := primeVerdicts(r.Context(), a.fieldResolver, entities)
 	for _, e := range entities {
@@ -1965,7 +2199,7 @@ func (a *App) handleV1Search(w http.ResponseWriter, r *http.Request) {
 		// {ID, Title} of related entities this principal may not read.
 		// Flipping this requires per-target gating first (RR-QO01XY) —
 		// TestACLSearch_VisibleHitRelatedToHidden pins the invariant.
-		row := a.serializer.forWireRelated(pageCtx, e, nil, nil, nil, a.Meta(), plural)
+		row := a.serializer.forWireRelated(pageCtx, e, nil, nil, nil, meta, plural)
 		// Same provenance a list row carries, and nil in the default world
 		// for the same reason (see handleV1ListEntities).
 		if !worldScopeFrom(r.Context()).IsTrivial() {
@@ -1989,6 +2223,7 @@ func (a *App) handleV1Search(w http.ResponseWriter, r *http.Request) {
 	writeV1JSON(w, http.StatusOK, resp)
 }
 
+//archplan:auth=required
 func (a *App) handleV1Analyze(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		writeV1Error(w, r, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed", "")
@@ -2077,7 +2312,15 @@ func flattenIssues(sections []AnalysisSection) []visibleIssue {
 
 // --- Helper Functions ---
 
-// resolveV1Includes expands `?include=` into the `included` map.
+// resolveV1Includes expands `?include=` for a set of rows into the
+// `included` map. The single-entity GET passes one row; the list passes its
+// served page.
+//
+// The page is resolved in ONE batch per include level (TASK-550RD): one edge
+// read and one head resolution for all rows, one gate pass per entity type,
+// then one recursive call per nested expression. Resolving row by row made
+// the query count grow with the page — the Atlas task list with `include=*`
+// cost about 8,000 queries per poll.
 //
 // Candidate collection is world-aware (TKT-WRLDAPI item 4): under a
 // non-default world the neighbors come from the world-scoped seam, so an
@@ -2089,7 +2332,12 @@ func flattenIssues(sections []AnalysisSection) []visibleIssue {
 // serialization — is shared by both paths deliberately. The world decides
 // WHICH entities are candidates; it does not change how they are gated or
 // rendered, and forking that would be two visibility rules to keep in step.
-func (a *App) resolveV1Includes(ctx context.Context, entity *entityPkg.Entity, includes string) map[string]v1.Entity {
+func (a *App) resolveV1Includes(
+	ctx context.Context, rows []*entityPkg.Entity, includes string,
+) map[string]v1.Entity {
+	if len(rows) == 0 {
+		return nil
+	}
 	s := a.State()
 	included := make(map[string]v1.Entity)
 
@@ -2100,26 +2348,40 @@ func (a *App) resolveV1Includes(ctx context.Context, entity *entityPkg.Entity, i
 	// hub entity with 50 neighbors must not cost 50 GraphCount
 	// round-trips).
 	//
-	// nestedFor maps target.ID → the remaining nested-include
-	// expression (e.g. "implements.requires" → "requires" stored
-	// against the implements target). Recursion happens after the
-	// visibility filter so hidden neighbors don't trigger hidden nested
-	// probes.
-	candidates, nestedFor, err := includeCandidates(ctx, a.reader, a.worldNeighbors, entity, includes)
+	// nested pairs a target id with the remaining nested-include expression
+	// (e.g. "implements.requires" → "requires" against the implements
+	// target). Recursion happens after the visibility filter so hidden
+	// neighbors don't trigger hidden nested probes.
+	candidates, nested, err := includeCandidates(ctx, a.reader, a.worldNeighbors, rows, includes)
 	if err != nil {
 		// The include channel is a best-effort affordance (see
 		// filterVisibleIncludes): the authoritative read is the explicit GET.
 		// A world-resolution fault drops the block and logs rather than
-		// failing the whole entity response — but it must not be silent, or
+		// failing the whole response — but it must not be silent, or
 		// an outage reads as "this entity has no neighbors in this world".
-		slog.Warn("dataentry: resolving world-scoped includes failed; include block omitted",
-			"entity", entity.ID, "include", includes, "err", err)
+		slog.Warn("dataentry: resolving world-scoped includes failed; include block omitted for every row",
+			"first_entity", rows[0].ID, "rows", len(rows), "include", includes, "err", err)
 		return nil
 	}
 
+	// One entry per id, the LAST candidate winning — the map assignment the
+	// per-row loop made. A neighbor shared by many rows is serialized once.
 	visible := a.filterVisibleIncludes(ctx, candidates)
-	ctx = primeVerdicts(ctx, a.fieldResolver, visible)
+	byID := make(map[string]*entityPkg.Entity, len(visible))
+	order := make([]string, 0, len(visible))
 	for _, target := range visible {
+		if _, dup := byID[target.ID]; !dup {
+			order = append(order, target.ID)
+		}
+		byID[target.ID] = target
+	}
+	targets := make([]*entityPkg.Entity, 0, len(order))
+	for _, id := range order {
+		targets = append(targets, byID[id])
+	}
+
+	ctx = primeVerdicts(ctx, a.fieldResolver, targets)
+	for _, target := range targets {
 		entityDef := s.Meta.Entities[target.Type]
 		plural := entityDef.GetPlural(target.Type)
 		wired := a.serializer.forWireRelated(ctx, target, nil, nil, nil, a.Meta(), plural)
@@ -2134,10 +2396,24 @@ func (a *App) resolveV1Includes(ctx context.Context, entity *entityPkg.Entity, i
 		// cannot disagree about what a face resolution was.
 		wired.World = worldProvenance(ctx, target)
 		included[target.ID] = wired
+	}
 
-		if nested, ok := nestedFor[target.ID]; ok {
-			maps.Copy(included, a.resolveV1Includes(ctx, target, nested))
+	// Nested includes: one batch per distinct expression, over the visible
+	// targets that carry it.
+	var exprs []string
+	byExpr := make(map[string][]*entityPkg.Entity)
+	for _, n := range nested {
+		target, ok := byID[n.id]
+		if !ok {
+			continue
 		}
+		if _, known := byExpr[n.expr]; !known {
+			exprs = append(exprs, n.expr)
+		}
+		byExpr[n.expr] = append(byExpr[n.expr], target)
+	}
+	for _, expr := range exprs {
+		maps.Copy(included, a.resolveV1Includes(ctx, byExpr[expr], expr))
 	}
 	return included
 }
@@ -2157,70 +2433,44 @@ func (a *App) filterVisibleIncludes(ctx context.Context, candidates []*entityPkg
 }
 
 // applyV1Filters applies `filter[...]` query params to the entity slice. Pure
-// data transform — a free function, not App behavior (TKT-N26KLB M5.5).
+// data transform — a free function, not App behavior (TKT-N26KLB M5.5). It
+// takes a [gatedListQuery], so it never compares a property the principal
+// cannot see on every row (BUG-WJSYQT).
 // A malformed key or unsupported operator returns errBadFilter (HTTP 400)
 // instead of silently dropping the clause, which returned the unfiltered
 // superset and hid config/caller typos.
 //
-// isRelationKey identifies filter keys that target a metamodel relation rather
-// than an entity property; those are skipped here and handled by the relation
-// pass in scopedSortedEntities (which has ctx + config for direction-aware
-// traversal). A relation key would otherwise match no property and nuke the
-// whole result set (TKT-5U7QBR). A nil predicate treats every key as a
-// property filter (the pre-TKT-5U7QBR behavior).
+// The query's isRelationKey identifies filter keys that target a metamodel
+// relation rather than an entity property; those are skipped here and handled
+// by the relation pass in scopedSortedEntities (which has ctx + config for
+// direction-aware traversal). A relation key would otherwise match no property
+// and nuke the whole result set (TKT-5U7QBR). A nil predicate treats every key
+// as a property filter (the pre-TKT-5U7QBR behavior).
 //
-//nolint:gocognit,funlen // dispatches over every supported filter operator and value type; each branch is one operator's semantics, not extractable shared logic.
-func applyV1Filters(
-	entities []*entityPkg.Entity, query map[string][]string, _ string, isRelationKey func(string) bool,
-) ([]*entityPkg.Entity, error) {
+//nolint:gocognit // dispatches over every supported filter operator and value type; each branch is one operator's semantics, not extractable shared logic.
+func applyV1Filters(entities []*entityPkg.Entity, query gatedListQuery) ([]*entityPkg.Entity, error) {
 	filtered := entities
 
-	for key, values := range query {
+	for key, values := range query.params {
 		if !strings.HasPrefix(key, "filter[") || len(values) == 0 {
 			continue
 		}
 
-		// Parse filter[property] or filter[property][operator] or
-		// filter[property][operator][] (multi-value array form). Strip the
-		// optional `[]` array suffix before splitting so we get clean parts.
-		filterKey := strings.TrimPrefix(key, "filter[")
-		filterKey = strings.TrimSuffix(filterKey, "]")
-		trimmed := strings.TrimSuffix(filterKey, "][") // was "...[]"
-		// An explicit `[]` suffix declares the ARRAY form: each repeated param
-		// is one member, verbatim. Without it, a lone param is the comma form.
-		// The suffix — not the number of params — is the signal, since a
-		// one-element array is indistinguishable from a comma list by count.
-		isArrayForm := trimmed != filterKey
-		filterKey = trimmed
-		parts := strings.Split(filterKey, "][")
-
-		// Validate parsed shape. A malformed key like `filter[prop][][weird]`
-		// produces parts=["prop", "", "weird"] — more than 2 parts or an
-		// empty property/operator means the URL is bogus. Reject the request:
-		// the old skip-with-a-log "fail closed" still returned the unfiltered
-		// superset, which is fail-open at the result level.
-		if len(parts) > 2 {
-			return nil, fmt.Errorf("%w: key %q has too many segments", errBadFilter, key)
-		}
-		property := parts[0]
-		if property == "" {
-			return nil, fmt.Errorf("%w: key %q has an empty property", errBadFilter, key)
-		}
-
+		fk, err := parseFilterKey(key)
 		// Relation filter keys are handled by the direction-aware relation
 		// pass in scopedSortedEntities. Skip them here so a relation key
-		// (which matches no property) doesn't nuke the result set.
-		if isRelationKey != nil && isRelationKey(property) {
+		// (which matches no property) doesn't nuke the result set. A key with
+		// too many segments has no property and is refused below.
+		if fk.property != "" && query.isRelationKey != nil && query.isRelationKey(fk.property) {
 			continue
 		}
-
-		operator := "eq"
-		if len(parts) == 2 {
-			if parts[1] == "" {
-				return nil, fmt.Errorf("%w: key %q has an empty operator segment", errBadFilter, key)
-			}
-			operator = parts[1]
+		// Reject a malformed key: the old skip-with-a-log "fail closed" still
+		// returned the unfiltered superset, which is fail-open at the result
+		// level.
+		if err != nil {
+			return nil, err
 		}
+		property, operator, isArrayForm := fk.property, fk.operator, fk.arrayForm
 
 		// Reject unknown operators BEFORE the per-entity loop. A typo like
 		// `filter[status][equals]=done` used to be skipped with only a log —
@@ -2250,10 +2500,10 @@ func applyV1Filters(
 		var value string
 		var setValues []string
 		if operator == "in" || operator == "ne" {
-			value = resolveFilterVariablesInList(strings.Join(values, ","))
-			setValues = filterSetValues(values, isArrayForm)
+			value = resolveFilterVariablesInList(strings.Join(values, ","), query.user)
+			setValues = filterSetValues(values, isArrayForm, query.user)
 		} else {
-			value = resolveFilterVariable(values[len(values)-1])
+			value = resolveFilterVariable(values[len(values)-1], query.user)
 		}
 
 		var newFiltered []*entityPkg.Entity
@@ -2371,11 +2621,13 @@ func parseSortParam(query map[string][]string) []filter.SortSpec {
 // whether or not it was pushed into the database.
 //
 // meta may be nil; that yields byte-wise comparison for every property, which
-// is the right answer when no schema is available.
+// is the right answer when no schema is available. The query is a
+// [gatedListQuery], so a sort key is never a property hidden from the
+// principal on some row (BUG-WJSYQT).
 func applyV1Sorting(
-	entities []*entityPkg.Entity, query map[string][]string, meta *metamodel.Metamodel,
+	entities []*entityPkg.Entity, query gatedListQuery, meta *metamodel.Metamodel,
 ) []*entityPkg.Entity {
-	sortSpecs := parseSortParam(query)
+	sortSpecs := parseSortParam(query.params)
 	if len(sortSpecs) == 0 {
 		return entities
 	}
@@ -2457,29 +2709,45 @@ func addPaginationLinks(w http.ResponseWriter, _ *http.Request, page, perPage, t
 }
 
 // computeEntityETag reads the entity's edges itself. Callers that ALREADY hold
-// the edges they served should use [entityETagWithEdges] instead — see the
+// the edges they served should use [servedETag] instead — see the
 // duplication note at the single-entity GET's call site.
 func (a *App) computeEntityETag(ctx context.Context, e *entityPkg.Entity) string {
-	edges, err := etagEdges(ctx, a.reader, a.worldNeighbors, e)
+	edges, err := a.faceEdges.edges(ctx, e)
 	if err != nil {
-		return etagUnresolved(ctx, e)
+		return etagUnresolved(ctx, a.affordances, e)
 	}
-	return entityETagWithEdges(e, edges)
+	return servedETag(ctx, a.affordances, e, edges)
 }
 
 // etagUnresolved is the validator for an entity whose edges could not be
 // resolved. See the sentinel rationale on [entityETagWithEdges].
-func etagUnresolved(ctx context.Context, e *entityPkg.Entity) string {
+func etagUnresolved(ctx context.Context, aff affordanceService, e *entityPkg.Entity) string {
 	slog.Warn("dataentry: ETag: world-scoped edge read failed; "+
 		"folding a sentinel so the validator matches nothing",
 		"entity", e.ID, "world", worldFromContext(ctx).name)
-	return entityETagWithEdges(e, []*entityPkg.Relation{
+	return servedETag(ctx, aff, e, []*entityPkg.Relation{
 		{Type: "!unresolved", To: "!unresolved"},
 	})
 }
 
+// servedETag is the validator for e as the caller sees it: e's properties
+// minus those the caller's `visible:` grants hide, together with the edges
+// the response carried. Every entity ETag goes through it, so a GET, an
+// If-Match check and a PATCH response agree for one caller.
+//
+// Hashing a hidden value would make the ETag an offline guessing oracle for
+// it: a caller could hash candidate values and compare. It would also change
+// the ETag when only a hidden value changed, so the caller's next If-Match
+// would fail for a change it cannot see.
+func servedETag(
+	ctx context.Context, aff affordanceService, e *entityPkg.Entity, edges []*entityPkg.Relation,
+) string {
+	return entityETagWithEdges(e, aff.hiddenProperties(ctx, e), edges)
+}
+
 // entityETagWithEdges hashes e together with the edges the response actually
-// carried.
+// carried, leaving out the properties named in hidden. Callers use
+// [servedETag], which supplies hidden from the caller's grants.
 //
 // Taking the edges as a PARAMETER rather than reading them is what keeps the
 // validator and the body describing the same document: the GET computes them
@@ -2488,7 +2756,9 @@ func etagUnresolved(ctx context.Context, e *entityPkg.Entity) string {
 // A package function, not a method: it needs nothing from App, and App is
 // pinned at its plimsoll cap. (The ETag split briefly took it to 105, which is
 // the load line doing its job — see the App type doc.)
-func entityETagWithEdges(e *entityPkg.Entity, edges []*entityPkg.Relation) string {
+func entityETagWithEdges(
+	e *entityPkg.Entity, hidden map[string]struct{}, edges []*entityPkg.Relation,
+) string {
 	h := sha256.New()
 	_, _ = h.Write([]byte(e.ID))
 	_, _ = h.Write([]byte(e.Type))
@@ -2497,7 +2767,9 @@ func entityETagWithEdges(e *entityPkg.Entity, edges []*entityPkg.Relation) strin
 	// Sort properties so the hash is stable across map iteration order.
 	propKeys := make([]string, 0, len(e.Properties))
 	for k := range e.Properties {
-		propKeys = append(propKeys, k)
+		if _, h := hidden[k]; !h {
+			propKeys = append(propKeys, k)
+		}
 	}
 	sort.Strings(propKeys)
 	for _, k := range propKeys {
@@ -2613,10 +2885,21 @@ func writeV1Error(w http.ResponseWriter, r *http.Request, status int, errType, t
 
 // --- Conflicts API ---
 
-// handleV1Conflicts returns the list of conflicted files as JSON.
+// handleV1Conflicts returns the list of conflicted files as JSON. The list
+// names entity files, so it is served only to a principal who may sync
+// (git:sync); everyone else gets a 403. The paths are not row-gated: a
+// holder of git:sync sees the paths of entities they may not read.
+// Conflicts arise only on file storage, which runs locally, so the coarse
+// gate is accepted (BUG-T6HNKS).
+//
+//archplan:auth=authz reason="requires git:sync via permitsGitSync; paths are not row-gated (BUG-T6HNKS)"
 func (a *App) handleV1Conflicts(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		writeV1Error(w, r, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed", "")
+		return
+	}
+	if !permitsGitSync(a.acl, r) {
+		writeGitSyncForbidden(w, r, "Listing merge conflicts")
 		return
 	}
 
@@ -2650,6 +2933,11 @@ func (a *App) handleV1Conflicts(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleV1ConflictRoutes handles GET /api/v1/_conflicts/{path} and POST /api/v1/_conflicts/resolve.
+// Both require git:sync, like the list. The detail is gated here, before the
+// path is resolved, because it shows both sides of the file unredacted.
+// Resolve is gated in [writeHandler.handleV1ConflictResolve].
+//
+//archplan:auth=authz reason="detail requires git:sync via permitsGitSync; resolve is gated in its handler"
 func (a *App) handleV1ConflictRoutes(w http.ResponseWriter, r *http.Request) {
 	path := strings.TrimPrefix(r.URL.Path, "/api/v1/_conflicts/")
 
@@ -2660,6 +2948,10 @@ func (a *App) handleV1ConflictRoutes(w http.ResponseWriter, r *http.Request) {
 
 	if r.Method != http.MethodGet {
 		writeV1Error(w, r, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed", "")
+		return
+	}
+	if !permitsGitSync(a.acl, r) {
+		writeGitSyncForbidden(w, r, "Viewing a merge conflict")
 		return
 	}
 
@@ -2744,6 +3036,8 @@ func conflictAuditSubject(e *entityPkg.Entity, rel *entityPkg.Relation) *audit.S
 // entity-anchored document, the one-segment form a standalone one. Each shape
 // REJECTS the other kind rather than inventing or ignoring an entry id — see
 // handleV1StandaloneDocument.
+//
+//archplan:auth=authz
 func (a *App) handleV1Documents(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		writeV1Error(w, r, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed", "")
@@ -2901,6 +3195,8 @@ func extractEntityIDs(entities []*entityPkg.Entity) []string {
 //   - page_type: "entity", "list", "view", or "dashboard"
 //   - qualifier: specific list ID or view ID (optional)
 //   - entity_type: the entity type shown on the page (optional)
+//
+//archplan:auth=required reason="command list; exec is gated per command"
 func (a *App) handleV1Commands(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		writeV1Error(w, r, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed", "")
@@ -2924,6 +3220,8 @@ func (a *App) handleV1Commands(w http.ResponseWriter, r *http.Request) {
 
 // handleV1Templates returns templates for an entity type.
 // GET /api/v1/_templates/{entityType}
+//
+//archplan:auth=required
 func (a *App) handleV1Templates(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		writeV1Error(w, r, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed", "")
@@ -2969,6 +3267,8 @@ func (a *App) handleV1Templates(w http.ResponseWriter, r *http.Request) {
 // --- OpenAPI Spec ---
 
 // handleV1OpenAPI serves the OpenAPI 3.1 specification.
+//
+//archplan:auth=required reason="API description"
 func (a *App) handleV1OpenAPI(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		writeV1Error(w, r, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed", "")

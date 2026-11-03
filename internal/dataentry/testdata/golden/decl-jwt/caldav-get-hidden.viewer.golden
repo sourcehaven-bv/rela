@@ -1,0 +1,9 @@
+request: GET /api/v1/_caldav/principal/calendars/tickets/ticket--TKT-4@rela.ics
+identity: signed assertion for viewer@example.test
+status: 404
+reads: GraphQueryHeaders=2 ListRelations=2 MatchingFaces=1
+breadth: ListRelations=3/2 MatchingFaces=3/1
+bodies: GraphQuery=2/2
+versions: 
+body:
+404 Not Found: caldav: not found

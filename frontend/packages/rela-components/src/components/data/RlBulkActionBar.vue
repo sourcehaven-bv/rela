@@ -76,7 +76,7 @@ const tally = () =>
       <RlIconButton
         v-if="clearable"
         icon="x"
-        label="Clear selection"
+        :label="messages.chromeText({ key: 'clearSelection' })"
         class="rl-bulk-bar__clear"
         @click="emit('clear')"
       />

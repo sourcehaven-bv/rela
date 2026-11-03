@@ -18,6 +18,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/attachment"
 	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/caldavalias"
+	"github.com/Sourcehaven-BV/rela/internal/changefeed"
 	"github.com/Sourcehaven-BV/rela/internal/cmdexec"
 	"github.com/Sourcehaven-BV/rela/internal/config"
 	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
@@ -88,6 +89,11 @@ type appEntityWriter interface {
 		ctx context.Context, key entity.RelationKey, opts entity.RelationOptions,
 	) (*entity.Relation, error)
 	DeleteRelation(ctx context.Context, key entity.RelationKey) error
+	// ReplaceRelations is how CalDAV moves a to-do between the collections
+	// of a single-valued membership relation (TKT-65LVAK).
+	ReplaceRelations(
+		ctx context.Context, creates []entitymanager.RelationCreate, removes []entity.RelationKey,
+	) ([]*entity.Relation, error)
 	// DeleteEntityFace is here for the script runtime's Mutator, which App
 	// hands a.entityManager as.
 	DeleteEntityFace(ctx context.Context, id string, face entity.Face, cascade bool) (*entity.DeleteResult, error)
@@ -265,7 +271,9 @@ type App struct {
 	// Constructed in NewApp from the entity manager, which is required, so
 	// this is never nil — see copiesHandler's doc for why a nil-and-skip
 	// design would render a wiring bug as a valid domain answer.
-	copies *copiesHandler
+	copies      *copiesHandler
+	conversions *conversionHandler
+	taskItems   *taskItemConversionHandler
 	// worldNeighbors resolves an entity's LINKS under the request's world
 	// (TKT-WRLDAPI item 4). Nil until [SetWorldNeighbors] is called, in
 	// which case a world-bound response carries no relations — the pre-item-4
@@ -273,6 +281,10 @@ type App struct {
 	// `worlds` because the two are injected from different places: the world
 	// LOOKUP is a compiled map, this is a store-backed capability.
 	worldNeighbors *worldNeighbors
+	// faceEdges is the one gated read of a served face's edges, bound to
+	// worldNeighbors. Every single-entity response reads its edges through
+	// it. See [faceEdgeReader].
+	faceEdges faceEdgeReader
 	// comments owns the commentary routes (TKT-FIO205). Always non-nil; the
 	// SERVICE inside it is nil when the metamodel declares no enabled
 	// `comments:` block, which is the "feature absent" signal — the routes 404
@@ -280,7 +292,15 @@ type App struct {
 	comments *commentsHandler
 	// piles owns the piles routes (TKT-K3RJLH). Always non-nil; the service
 	// inside is nil until SetPiles, which is the "feature absent" signal.
-	piles    *pilesHandler
+	piles *pilesHandler
+	// leases owns the lease routes and `_lease` (TKT-4YPG4Q). Nil until
+	// [SetLeases], which is the "feature absent" signal; its methods accept
+	// a nil receiver.
+	leases *leasesHandler
+	// channels owns the channel routes (TKT-ZU7P13). Nil until
+	// [SetChannels], which is the "feature absent" signal; its methods
+	// accept a nil receiver.
+	channels *channelsHandler
 	searcher search.Searcher
 	// visibleSearcher is the ACL-scoped search seam (TKT-BA8BSX):
 	// executeQuery routes free-text searches through it so /_search
@@ -443,9 +463,10 @@ type App struct {
 	// snapshot is published in NewApp.
 	schema schemaProvider
 
-	// reloadMu serializes reloadConfig. schema.Reload publishes by
-	// load-then-store, so two overlapping reloads could publish the older
-	// file last. Readers never take it; they go through a.State().
+	// reloadMu serializes reloadConfig and reloadRealtime. schema.Reload
+	// publishes by load-then-store, so two overlapping reloads could publish
+	// the older file last, and each path checks one file against the other's
+	// state. Readers never take it; they go through a.State().
 	reloadMu sync.Mutex
 
 	// gitOps provides git operations when git is enabled. Set once in
@@ -459,9 +480,25 @@ type App struct {
 	// StartWatching; nil when watching is not active.
 	stopConfigWatch func()
 
-	// stopStoreWatch cancels the store-event -> SSE bridge subscription. Set by
-	// StartWatching; nil when watching is not active.
-	stopStoreWatch func()
+	// realtime reloads realtime.yaml; nil when realtime is not wired. Set
+	// once by [SetRealtime] before StartWatching.
+	realtime realtimeReloader
+	// stopRealtimeWatch releases the realtime.yaml subscription, like
+	// stopConfigWatch.
+	stopRealtimeWatch func()
+
+	// feed numbers store change events for SSE connections and lets them
+	// resume (TKT-3A1200). Built in NewApp and never reassigned, so request
+	// goroutines read it without a lock; StartWatching starts it and
+	// StopWatching closes it.
+	feed *changefeed.Bus
+
+	// sseTiming holds the SSE flush and ping intervals.
+	sseTiming sseTimings
+	// live holds the live-view subscriptions and their replay worker
+	// (TKT-HJ5Z9Y). Built in NewApp; the worker runs between StartWatching
+	// and StopWatching.
+	live *liveHub
 
 	// configure serves /api/v1/_configure; nil keeps the routes absent. Set
 	// once by [SetConfigure] before NewRouter.
@@ -535,10 +572,13 @@ type App struct {
 }
 
 // StopWatching releases the data-entry.yaml subscription started by
-// [App.StartWatching]. The store-level watcher (when present) has its
+// [App.StartWatching] and stops the change feed; open SSE streams keep
+// running without entity changes until the broker closes. The store-level watcher (when present) has its
 // own lifecycle managed by the store and is stopped during store
 // close, not here — asymmetric on purpose: dataentry doesn't own the
 // store, only its config subscription.
+// StopWatching closes the change feed for good: an App cannot start watching
+// again afterwards (rela-server builds a new App per configuration).
 // StopWatching is lifecycle-only and must be called from a single goroutine
 // (it is the StartWatching counterpart). The stop fields are not synchronized;
 // concurrent Start/Stop is not supported.
@@ -547,9 +587,15 @@ func (a *App) StopWatching() {
 		a.stopConfigWatch()
 		a.stopConfigWatch = nil
 	}
-	if a.stopStoreWatch != nil {
-		a.stopStoreWatch()
-		a.stopStoreWatch = nil
+	if a.stopRealtimeWatch != nil {
+		a.stopRealtimeWatch()
+		a.stopRealtimeWatch = nil
+	}
+	if a.live != nil {
+		a.live.stop()
+	}
+	if a.feed != nil {
+		a.feed.Close()
 	}
 }
 
@@ -767,6 +813,25 @@ func (r lateGatedReader) Family(ctx context.Context, id string) (visibility.Fami
 	return fr.Family(ctx, id)
 }
 
+// headerResolver is the gated batch re-load the analyze checks use for the
+// ids they report.
+type headerResolver interface {
+	ResolveHeadersErr(ctx context.Context, refs []entity.Ref) (map[entity.Ref]visibility.ResolvedHeader, error)
+}
+
+// ResolveHeadersErr forwards to the live gated reader. Every reader
+// gatedScriptReader returns provides it; one that did not would be a wiring
+// bug, so it is refused rather than answered ungated.
+func (r lateGatedReader) ResolveHeadersErr(
+	ctx context.Context, refs []entity.Ref,
+) (map[entity.Ref]visibility.ResolvedHeader, error) {
+	hr, ok := r.reader().(headerResolver)
+	if !ok {
+		return nil, errors.New("dataentry: script reader has no ResolveHeadersErr")
+	}
+	return hr.ResolveHeadersErr(ctx, refs)
+}
+
 // EntityVersions forwards to the live gated reader, so a validation rule
 // reads history as an action does. A reader without history answers
 // store.ErrHistoryUnsupported, which the binding raises.
@@ -871,7 +936,7 @@ func gatedScriptReader(
 		// Named so the NopACL path is greppable alongside every other
 		// ungated read site (TKT-1WV50C).
 		return visibility.Unrestricted(store, order).WithWorld(visibility.WorldOf(world)).
-			WithHistory(history.reader()).WithVersionTags(history.tags)
+			WithHistory(history.reader(), history.tags)
 	}
 	gate, err := visibility.NewDeclarativeGate(d, world)
 	if err != nil {
@@ -888,7 +953,7 @@ func gatedScriptReader(
 		slog.Error("dataentry: script reader unavailable; script reads REFUSED", "err", err)
 		return visibility.DenyReader{}
 	}
-	return sr.WithWorld(visibility.WorldOf(world)).WithHistory(history.reader()).WithVersionTags(history.tags)
+	return sr.WithWorld(visibility.WorldOf(world)).WithHistory(history.reader(), history.tags)
 }
 
 // scriptHistory is what a script reader serves history from: the version
@@ -1173,6 +1238,7 @@ func NewApp(
 	if avatarErr := checkAvatarUserType(cfg.Account, aclImpl, meta); avatarErr != nil {
 		return nil, fmt.Errorf("invalid %s: %w", ConfigFile, avatarErr)
 	}
+	warnListVisibilityConflicts(cfg, meta, aclImpl)
 
 	entCount, _ := st.CountEntities(context.Background(), store.EntityQuery{Faces: store.AllFaces()})
 	relCount, _ := st.CountRelations(context.Background(), store.RelationQuery{})
@@ -1183,6 +1249,11 @@ func NewApp(
 
 	families := &appFamilies{}
 	visible, err := newVisibleReader(st, families.scope)
+	if err != nil {
+		return nil, err
+	}
+
+	feed, err := changefeed.New()
 	if err != nil {
 		return nil, err
 	}
@@ -1206,6 +1277,8 @@ func NewApp(
 		kv:              kv,
 		acl:             aclImpl,
 		broker:          newEventBroker(),
+		feed:            feed,
+		sseTiming:       defaultSSETimings,
 		scriptEngine:    scriptEngine,
 		fieldResolver:   fieldResolver,
 		auditSink:       auditSink,
@@ -1215,6 +1288,8 @@ func NewApp(
 		attachmentUploads: attachment.NewLimiter(attachment.DefaultMaxUploads),
 	}
 	families.app = app
+	app.live = newLiveHub(func() *metamodel.Metamodel { return app.State().Meta })
+	app.faceEdges = faceEdgesOf(app)
 	// documentService needs scriptEngine (for Lua renders) and a closure
 	// that yields fresh lua.WriteDeps (so metamodel reloads propagate).
 	// Constructed after app because luaWriteDeps is a method on App.
@@ -1234,14 +1309,14 @@ func NewApp(
 
 	// The copy surface (RULING 9) is built ONCE, here, for both of its
 	// consumers: the `_copies` affordance below and the invoke handler.
-	copyOffers, copiesHandler, cerr := wireCopies(em, copyEdgeGate{
+	ts, tsErr := wireTypeChanges(em, copyEdgeGate{
 		affordances: func() affordanceService { return app.affordances },
 		visible:     app.visibleReader,
-	})
-	if cerr != nil {
-		return nil, fmt.Errorf("dataentry.NewApp: %w", cerr)
+	}, app.State, viewMention(app))
+	if tsErr != nil {
+		return nil, fmt.Errorf("dataentry.NewApp: %w", tsErr)
 	}
-	app.copies = copiesHandler
+	app.copies, app.conversions, app.taskItems = ts.copies, ts.conversions, ts.taskItems
 
 	// affordanceService shares the App's acl/fieldResolver/store and takes the
 	// metamodel per-request via app.State(). The two relation-graph reads are
@@ -1261,7 +1336,9 @@ func NewApp(
 			reader:  app.reader,
 			visible: app.visibleReader,
 		}.plan,
-		copies:           copyOffers,
+		copies:           ts.copyOffers,
+		conversions:      ts.conversionOffers,
+		taskItems:        ts.taskItemOffers,
 		schema:           app.State,
 		actionConditions: func() ViewConditionFunc { return app.viewConditions },
 	}
@@ -1457,6 +1534,7 @@ func NewApp(
 		acl:         func() acl.ACL { return app.acl },
 		audit:       func() audit.Audit { return app.auditSink },
 		fields:      func() FieldVerdictResolver { return app.fieldResolver },
+		faceEdges:   app.faceEdges,
 		affordances: app.affordances,
 		owner:       app.attachmentOwner,
 		uploads:     app.attachmentUploads,
@@ -1470,8 +1548,9 @@ func NewApp(
 	// so both paths stay behaviorally identical.
 	app.write = &writeHandler{
 		schema:      app.State,
+		rollups:     newRollupSource(app),
 		store:       st,
-		manager:     em, // concrete; writeHandler narrows to entityMutator
+		manager:     grantedManager{em}, // writeHandler narrows to entityMutator
 		softDeletes: softDeletesFor(em),
 
 		reader:      app.reader,
@@ -1482,9 +1561,7 @@ func NewApp(
 		visible:     app.visibleReader,
 		denyAfford:  app.denyAffordance,
 		computeETag: app.computeEntityETag,
-		faceEdges: func(ctx context.Context, e *entity.Entity) ([]*entity.Relation, map[string]bool, error) {
-			return servedFaceEdges(ctx, app.reader, app.worldNeighbors, e)
-		},
+		faceEdges:   app.faceEdges,
 		readVisible: func(ctx context.Context, typeName string, ref entity.Ref) (*entity.Entity, bool, error) {
 			return app.visibleReader.addressRef(ctx, typeName, ref)
 		},
@@ -1497,6 +1574,7 @@ func NewApp(
 		luaDeps:          app.luaWriteDeps,
 		versionTags:      func() lua.VersionTagWriter { return app.versionTags.writer },
 		oauth:            func() lua.OAuthTokens { return app.oauth },
+		attachRender:     func() lua.AttachRenderer { return actionAttachRenderer(app) },
 		fullScriptDetail: app.allowFullScriptDetail,
 		paths:            paths,
 		provision:        newProvisionSeam(app),
@@ -1649,19 +1727,12 @@ func (a *App) ProjectRoot() string {
 	return a.paths.Root
 }
 
-// colorToCSSClass maps a color name from config to a CSS class.
-var colorToCSSClass = map[string]string{
-	"blue":   "badge-blue",
-	"purple": "badge-purple",
-	"green":  "badge-green",
-	"gray":   "badge-gray",
-	"red":    "badge-red",
-	"orange": "badge-orange",
-	"yellow": "badge-yellow",
+// autoColors assigns colors to enum values that have no explicit style, as
+// bare-hue style classes. The order is fixed: changing it would recolor every
+// project that relies on it.
+var autoColors = []string{
+	"badge-blue", "badge-purple", "badge-green", "badge-orange", "badge-yellow", "badge-red", "badge-gray",
 }
-
-// autoColors assigns colors to enum values that have no explicit style.
-var autoColors = []string{"blue", "purple", "green", "orange", "yellow", "red", "gray"}
 
 func buildStyleMap(
 	cfg *Config, meta *metamodel.Metamodel,
@@ -1674,11 +1745,14 @@ func buildStyleMap(
 		sm[typeName] = make(map[string]string)
 		st[typeName] = true
 		for val, color := range valueColors {
-			if cls, ok := colorToCSSClass[color]; ok {
-				sm[typeName][val] = cls
-			} else {
+			// Config validation rejects an unknown color, so the grey
+			// fallback only covers a config that skipped validation.
+			c, err := dataentryconfig.ParseColor(color, cfg.OperatorColors())
+			if err != nil {
 				sm[typeName][val] = "badge-gray"
+				continue
 			}
+			sm[typeName][val] = c.StyleClass()
 		}
 	}
 
@@ -1690,7 +1764,7 @@ func buildStyleMap(
 		sm[typeName] = make(map[string]string)
 		st[typeName] = true
 		for i, val := range ct.Values {
-			sm[typeName][val] = colorToCSSClass[autoColors[i%len(autoColors)]]
+			sm[typeName][val] = autoColors[i%len(autoColors)]
 		}
 	}
 
@@ -1707,11 +1781,9 @@ func buildStyleMap(
 // makes the mirror unnecessary rather than merely correct today.
 //
 // The late-bound closures are the reason this cannot be a plain value copy.
-// aclImpl exists because tests reassign app.acl after construction;
-// faceEdges for the sharper case that [SetWorldNeighbors] runs after this
-// point in NewApp, so capturing app.worldNeighbors eagerly would freeze the
-// nil it holds now and send every view down the bare-id arm — the
-// face-merging read this seam exists to close.
+// aclImpl exists because tests reassign app.acl after construction.
+// faceEdges is late-bound inside [faceEdgeReader], because
+// [SetWorldNeighbors] runs after this point in NewApp.
 func newViewsHandler(app *App, st store.Store, logo *logoStore) *viewsHandler {
 	return &viewsHandler{
 		schema:      app.State,
@@ -1727,12 +1799,11 @@ func newViewsHandler(app *App, st store.Store, logo *logoStore) *viewsHandler {
 		logo:           logo,
 		gateRead:       app.gateReadOrNotFound,
 		aclImpl:        func() acl.ACL { return app.acl },
-		faceEdges: func(
-			ctx context.Context, e *entity.Entity,
-		) ([]*entity.Relation, error) {
-			edges, _, err := servedFaceEdges(
-				ctx, app.reader, app.worldNeighbors, e)
-			return edges, err
+		viewConditions: func() ViewConditionFunc { return app.viewConditions },
+		faceEdges:      app.faceEdges,
+		rollups: rollupSource{
+			schema: app.State, st: st,
+			fields: func() visibility.FieldScoper { return app.fieldResolver },
 		},
 	}
 }

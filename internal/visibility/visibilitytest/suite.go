@@ -25,6 +25,8 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
+	"github.com/Sourcehaven-BV/rela/internal/acl/acltest"
+	"github.com/Sourcehaven-BV/rela/internal/aclstore"
 	"github.com/Sourcehaven-BV/rela/internal/affordances"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
@@ -74,6 +76,7 @@ type world struct {
 	base   tracer.Tracer
 	gate   visibility.DeclarativeGate
 	redact visibility.PolicyRedactor
+	decl   *acl.Declarative
 }
 
 // Canonical policy. Principals:
@@ -168,7 +171,7 @@ func newWorld(t *testing.T) *world {
 	if err := yaml.Unmarshal([]byte(policyYAML), &p); err != nil {
 		t.Fatalf("unmarshal policy: %v", err)
 	}
-	d, err := acl.NewDeclarative(&p, acl.NewStoreGraph(st), st)
+	d, err := acl.NewDeclarative(&p, aclstore.MustNewGraph(st), st)
 	if err != nil {
 		t.Fatalf("NewDeclarative: %v", err)
 	}
@@ -188,7 +191,7 @@ func newWorld(t *testing.T) *world {
 	if err != nil {
 		t.Fatalf("tracer.New: %v", err)
 	}
-	return &world{store: st, base: base, gate: gate, redact: redact}
+	return &world{store: st, base: base, gate: gate, redact: redact, decl: d}
 }
 
 // storeLookup implements affordances.RelationLookup over the store.
@@ -219,9 +222,17 @@ func (l storeLookup) HasEdge(ctx context.Context, fromID, relType, toID string) 
 	return false
 }
 
-// ctxFor stamps a principal ctx for one of the canonical users.
-func ctxFor(user string) context.Context {
+// stampedCtx stamps a principal ctx for one of the canonical users, without
+// binding an identity. Only the missing-identity tests use it directly.
+func stampedCtx(user string) context.Context {
 	return principal.With(context.Background(), principal.Principal{User: user, Tool: principal.ToolDataEntry})
+}
+
+// ctxFor stamps a principal ctx for one of the canonical users and binds its
+// identity against the world's evaluator, as the request edge does.
+func (w *world) ctxFor(tb testing.TB, user string) context.Context {
+	tb.Helper()
+	return acltest.Bind(stampedCtx(user), tb, w.decl)
 }
 
 // mustGet loads an entity straight from the store (bypassing everything)
@@ -257,7 +268,7 @@ func testHiddenEqualsMissing(t *testing.T, mk ReaderMaker) {
 	t.Helper()
 	w := newWorld(t)
 	r := mk(t, w.gate, w.redact, w.store)
-	ctx := ctxFor("bob")
+	ctx := w.ctxFor(t, "bob")
 
 	eHidden, okHidden, errHidden := getOne(ctx, t, r, "secret", "SEC-1")
 	eMissing, okMissing, errMissing := getOne(ctx, t, r, "secret", "SEC-404")
@@ -278,13 +289,13 @@ func testStoredTypeMismatch(t *testing.T, mk ReaderMaker) {
 	// CLAIM — the stored entity is a secret he cannot read. The in-package
 	// stored-type check must turn this into a miss (RR-SRZK6X, the
 	// BUG-ZWTDH9 read-side analog).
-	e, ok, err := getOne(ctxFor("bob"), t, r, "project", "SEC-1")
+	e, ok, err := getOne(w.ctxFor(t, "bob"), t, r, "project", "SEC-1")
 	if e != nil || ok || err != nil {
 		t.Fatalf("cross-type Get = (%v,%v,%v), want (nil,false,nil)", e, ok, err)
 	}
 	// Even a fully-privileged principal gets a miss on a wrong claim: the
 	// check is Reader semantics, not policy.
-	e, ok, err = getOne(ctxFor("alice"), t, r, "project", "P-1")
+	e, ok, err = getOne(w.ctxFor(t, "alice"), t, r, "project", "P-1")
 	if e != nil || ok || err != nil {
 		t.Fatalf("alice cross-type Get = (%v,%v,%v), want (nil,false,nil)", e, ok, err)
 	}
@@ -296,7 +307,7 @@ func testRedactsOnCopy(t *testing.T, mk ReaderMaker) {
 	r := mk(t, w.gate, w.redact, w.store)
 	beforeProps := maps.Clone(mustGet(t, w.store, "P-1").Properties)
 
-	e, ok, err := getOne(ctxFor("bob"), t, r, "person", "P-1")
+	e, ok, err := getOne(w.ctxFor(t, "bob"), t, r, "person", "P-1")
 	if err != nil || !ok {
 		t.Fatalf("Get person P-1 = (ok=%v, err=%v)", ok, err)
 	}
@@ -317,7 +328,7 @@ func testHiddenTitleFallback(t *testing.T, mk ReaderMaker) {
 	w := newWorld(t)
 	r := mk(t, w.gate, w.redact, w.store)
 
-	e, ok, err := getOne(ctxFor("carol"), t, r, "person", "P-1")
+	e, ok, err := getOne(w.ctxFor(t, "carol"), t, r, "person", "P-1")
 	if err != nil || !ok {
 		t.Fatalf("Get person P-1 = (ok=%v, err=%v)", ok, err)
 	}
@@ -342,7 +353,7 @@ func testFilterMixed(t *testing.T, mk ReaderMaker) {
 		mustGet(t, w.store, "PRJ-2"),
 	}
 
-	out := r.Filter(ctxFor("bob"), in)
+	out := r.Filter(w.ctxFor(t, "bob"), in)
 	ids := make([]string, 0, len(out))
 	for _, e := range out {
 		ids = append(ids, e.ID)
@@ -358,7 +369,7 @@ func testFilterMixed(t *testing.T, mk ReaderMaker) {
 			}
 		}
 	}
-	if got := r.Filter(ctxFor("bob"), nil); got != nil {
+	if got := r.Filter(w.ctxFor(t, "bob"), nil); got != nil {
 		t.Fatalf("Filter(nil) = %v, want nil", got)
 	}
 }
@@ -371,7 +382,7 @@ func testFilterGateError(t *testing.T, mk ReaderMaker) {
 		mustGet(t, w.store, "PRJ-1"),
 		mustGet(t, w.store, "P-1"),
 	}
-	out := r.Filter(ctxFor("alice"), in)
+	out := r.Filter(w.ctxFor(t, "alice"), in)
 	if len(out) != 1 || out[0].ID != "PRJ-1" {
 		t.Fatalf("Filter with erroring person gate = %v, want [PRJ-1] only", out)
 	}
@@ -388,7 +399,7 @@ func testFilterRelations(t *testing.T, mk ReaderMaker) {
 		{From: "PRJ-1", Type: "relates", To: "P-1"},   // both visible → kept
 	}
 
-	out := r.FilterRelations(ctxFor("bob"), rels)
+	out := r.FilterRelations(w.ctxFor(t, "bob"), rels)
 	if len(out) != 1 || out[0].From != "PRJ-1" || out[0].To != "P-1" {
 		t.Fatalf("FilterRelations = %v, want only PRJ-1→P-1", out)
 	}
@@ -397,7 +408,7 @@ func testFilterRelations(t *testing.T, mk ReaderMaker) {
 	if counting.many > 3 {
 		t.Fatalf("FilterRelations made %d ReadableFacesMany calls, want ≤3 (one per distinct type)", counting.many)
 	}
-	if got := r.FilterRelations(ctxFor("bob"), nil); got != nil {
+	if got := r.FilterRelations(w.ctxFor(t, "bob"), nil); got != nil {
 		t.Fatalf("FilterRelations(nil) = %v, want nil", got)
 	}
 }
@@ -406,7 +417,7 @@ func testNilElementsDropped(t *testing.T, mk ReaderMaker) {
 	t.Helper()
 	w := newWorld(t)
 	r := mk(t, w.gate, w.redact, w.store)
-	ctx := ctxFor("bob")
+	ctx := w.ctxFor(t, "bob")
 
 	// A nil element is a caller bug, but a fail-closed filter must drop
 	// it, never panic (a recover() upstream could skip filtering).
@@ -425,9 +436,9 @@ func testBindScopesOperation(t *testing.T, mk ReaderMaker) {
 	w := newWorld(t)
 	r := mk(t, w.gate, w.redact, w.store)
 
-	// Bind opens one acl.Request for the operation; reads through the
-	// bound ctx behave identically to unbound ones.
-	bound, err := w.gate.Bind(ctxFor("bob"))
+	// The request edge binds the identity; the gate's Bind confirms the
+	// scope belongs to its evaluator and hands the ctx back.
+	bound, err := w.gate.Bind(w.ctxFor(t, "bob"))
 	if err != nil {
 		t.Fatalf("Bind: %v", err)
 	}
@@ -443,7 +454,11 @@ func testBindScopesOperation(t *testing.T, mk ReaderMaker) {
 	if err != nil || again != bound {
 		t.Fatalf("Bind(bound) = (%v, %v), want the same ctx back", again, err)
 	}
-	// An unstamped principal cannot bind — deny, never open.
+	// A ctx with no bound identity is refused: the gate does not resolve
+	// identity itself. Deny, never open.
+	if _, err := w.gate.Bind(stampedCtx("bob")); err == nil {
+		t.Fatal("Bind(stamped, unbound) succeeded, want error")
+	}
 	if _, err := w.gate.Bind(context.Background()); err == nil {
 		t.Fatal("Bind(unstamped) succeeded, want error")
 	}
@@ -454,7 +469,7 @@ func testUnstampedPrincipal(t *testing.T, mk ReaderMaker) {
 	w := newWorld(t)
 	r := mk(t, w.gate, w.redact, w.store)
 
-	// No principal on ctx → ForPrincipal rejects → gate error → deny.
+	// No identity bound on ctx → gate error → deny.
 	e, ok, err := getOne(context.Background(), t, r, "project", "PRJ-1")
 	if err == nil {
 		t.Fatalf("unstamped Get = (%v,%v,nil), want gate error (fail closed, never open)", e, ok)
@@ -465,6 +480,17 @@ func testUnstampedPrincipal(t *testing.T, mk ReaderMaker) {
 	if out := r.Filter(context.Background(), []*entity.Entity{mustGet(t, w.store, "PRJ-1")}); len(out) != 0 {
 		t.Fatalf("unstamped Filter = %v, want empty (fail closed)", out)
 	}
+
+	// A stamped principal with no bound identity fails closed the same way,
+	// even for alice, who may read everything: the gate never resolves
+	// identity on its own.
+	unbound := stampedCtx("alice")
+	if e, ok, err := getOne(unbound, t, r, "project", "PRJ-1"); err == nil || e != nil || ok {
+		t.Fatalf("unbound Get = (%v,%v,%v), want gate error and no entity", e, ok, err)
+	}
+	if out := r.Filter(unbound, []*entity.Entity{mustGet(t, w.store, "PRJ-1")}); len(out) != 0 {
+		t.Fatalf("unbound Filter = %v, want empty (fail closed)", out)
+	}
 }
 
 func testHideEverythingRedactor(t *testing.T, mk ReaderMaker) {
@@ -472,7 +498,7 @@ func testHideEverythingRedactor(t *testing.T, mk ReaderMaker) {
 	w := newWorld(t)
 	r := mk(t, w.gate, hideAllRedactor{}, w.store)
 
-	e, ok, err := getOne(ctxFor("alice"), t, r, "person", "P-1")
+	e, ok, err := getOne(w.ctxFor(t, "alice"), t, r, "person", "P-1")
 	if err != nil || !ok {
 		t.Fatalf("Get = (ok=%v, err=%v)", ok, err)
 	}
@@ -511,7 +537,7 @@ func testReaderRaceSmoke(t *testing.T, mk ReaderMaker) {
 		wg.Add(1)
 		go func(user string) {
 			defer wg.Done()
-			ctx := ctxFor(user) // independent ctx per goroutine: fresh acl.Request per call
+			ctx := w.ctxFor(t, user) // independent ctx per goroutine: fresh acl.Request per call
 			_, _, _ = getOne(ctx, t, r, "person", "P-1")
 			_ = r.Filter(ctx, []*entity.Entity{mustGet(t, w.store, "PRJ-1")})
 		}([]string{"alice", "bob", "carol"}[i%3])
@@ -539,7 +565,7 @@ func testHiddenNodePrunes(t *testing.T, mk TracerMaker) {
 	w := newWorld(t)
 	tr := mk(t, w.base, w.gate, w.redact, w.store)
 
-	got := tr.TraceFrom(ctxFor("bob"), "PRJ-1", 0)
+	got := tr.TraceFrom(w.ctxFor(t, "bob"), "PRJ-1", 0)
 	if got == nil {
 		t.Fatal("TraceFrom(PRJ-1) = nil for bob, want visible tree")
 	}
@@ -556,7 +582,7 @@ func testHiddenRoot(t *testing.T, mk TracerMaker) {
 	t.Helper()
 	w := newWorld(t)
 	tr := mk(t, w.base, w.gate, w.redact, w.store)
-	ctx := ctxFor("bob")
+	ctx := w.ctxFor(t, "bob")
 
 	if got := tr.TraceFrom(ctx, "SEC-1", 0); got != nil {
 		t.Fatalf("TraceFrom(hidden root) = %+v, want nil", got)
@@ -570,10 +596,10 @@ func testPathWithheld(t *testing.T, mk TracerMaker) {
 	t.Helper()
 	w := newWorld(t)
 	tr := mk(t, w.base, w.gate, w.redact, w.store)
-	ctx := ctxFor("bob")
+	ctx := w.ctxFor(t, "bob")
 
 	// Sanity: the path exists for a privileged principal.
-	if p := tr.FindPath(ctxFor("alice"), "PRJ-1", "PRJ-2"); len(p) == 0 {
+	if p := tr.FindPath(w.ctxFor(t, "alice"), "PRJ-1", "PRJ-2"); len(p) == 0 {
 		t.Fatal("premise broken: alice sees no PRJ-1..PRJ-2 path")
 	}
 	hidden := tr.FindPath(ctx, "PRJ-1", "PRJ-2") // exists, runs through SEC-1
@@ -591,7 +617,7 @@ func testOrphansFiltered(t *testing.T, mk TracerMaker) {
 	w := newWorld(t)
 	tr := mk(t, w.base, w.gate, w.redact, w.store)
 
-	got, err := tr.FindOrphans(ctxFor("bob"))
+	got, err := tr.FindOrphans(w.ctxFor(t, "bob"))
 	if err != nil {
 		t.Fatalf("FindOrphans: %v", err)
 	}
@@ -612,10 +638,10 @@ func testHasCycleHiddenStart(t *testing.T, mk TracerMaker) {
 	w := newWorld(t)
 	tr := mk(t, w.base, w.gate, w.redact, w.store)
 
-	if !tr.HasCycle(ctxFor("alice"), "SEC-3") {
+	if !tr.HasCycle(w.ctxFor(t, "alice"), "SEC-3") {
 		t.Fatal("premise broken: alice sees no SEC-3 cycle")
 	}
-	got, want := tr.HasCycle(ctxFor("bob"), "SEC-3"), tr.HasCycle(ctxFor("bob"), "NOPE")
+	got, want := tr.HasCycle(w.ctxFor(t, "bob"), "SEC-3"), tr.HasCycle(w.ctxFor(t, "bob"), "NOPE")
 	if got != want || got {
 		t.Fatalf("HasCycle(hidden start) = %v, HasCycle(missing start) = %v, want both false", got, want)
 	}
@@ -626,7 +652,7 @@ func testHiddenCycleTerminates(t *testing.T, mk TracerMaker) {
 	w := newWorld(t)
 	tr := mk(t, w.base, w.gate, w.redact, w.store)
 
-	got := tr.TraceFrom(ctxFor("bob"), "PRJ-4", 0)
+	got := tr.TraceFrom(w.ctxFor(t, "bob"), "PRJ-4", 0)
 	if got == nil {
 		t.Fatal("TraceFrom(PRJ-4) = nil for bob, want the root alone")
 	}
@@ -641,7 +667,7 @@ func testNodeRedactionAliasSafe(t *testing.T, mk TracerMaker) {
 	tr := mk(t, w.base, w.gate, w.redact, w.store)
 	beforeProps := maps.Clone(mustGet(t, w.store, "P-1").Properties)
 
-	got := tr.TraceFrom(ctxFor("bob"), "PRJ-1", 0)
+	got := tr.TraceFrom(w.ctxFor(t, "bob"), "PRJ-1", 0)
 	node := findNode(got, "P-1")
 	if node == nil {
 		t.Fatal("P-1 node missing from bob's trace")
@@ -660,7 +686,7 @@ func testTitleFallbacks(t *testing.T, mk TracerMaker) {
 	t.Helper()
 	w := newWorld(t)
 	tr := mk(t, w.base, w.gate, w.redact, w.store)
-	ctx := ctxFor("carol") // title hidden on person
+	ctx := w.ctxFor(t, "carol") // title hidden on person
 
 	got := tr.TraceFrom(ctx, "PRJ-1", 0)
 	node := findNode(got, "P-1")

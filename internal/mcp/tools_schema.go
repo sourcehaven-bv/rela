@@ -49,14 +49,22 @@ type relationTypeSummary struct {
 }
 
 type propertySchema struct {
-	Type        string   `json:"type"`
-	Required    bool     `json:"required,omitempty"`
-	List        bool     `json:"list,omitempty"`
-	Unique      bool     `json:"unique,omitempty"`
-	Computed    bool     `json:"computed,omitempty"`
+	Type     string `json:"type"`
+	Required bool   `json:"required,omitempty"`
+	List     bool   `json:"list,omitempty"`
+	Unique   bool   `json:"unique,omitempty"`
+	Computed bool   `json:"computed,omitempty"`
+	// Rollup marks a read-only aggregate over related entities, computed
+	// on read with the caller's access (TKT-6I2OPG).
+	Rollup      bool     `json:"rollup,omitempty"`
 	Values      []string `json:"values,omitempty"`
 	Default     string   `json:"default,omitempty"`
 	Description string   `json:"description,omitempty"`
+	// Min and Max are an integer property's declared bounds (TKT-BRAM1A).
+	// A value outside them is written with a warning. Nil: accepted — unset,
+	// and always nil on a non-integer property.
+	Min *int `json:"min,omitempty"`
+	Max *int `json:"max,omitempty"`
 }
 
 // relationEnd is one relation type as seen from an entity type: the relation
@@ -148,7 +156,7 @@ func (h schemaResourceHandler) overview(ctx context.Context) any {
 		count := countOrNil(h.store.CountEntities(ctx, store.EntityQuery{Type: name, Faces: store.InWorld(h.world)}))
 		entities = append(entities, entityTypeSummary{
 			Name:       name,
-			Label:      labelUnlessName(def.GetLabel(), name),
+			Label:      labelUnlessName(def.Label, name),
 			IDPrefixes: def.GetIDPrefixes(),
 			Count:      count,
 		})
@@ -164,7 +172,7 @@ func (h schemaResourceHandler) overview(ctx context.Context) any {
 		}
 		count := countOrNil(h.store.CountRelations(ctx, store.RelationQuery{Type: name}))
 		relations = append(relations, relationTypeSummary{
-			Name: name, From: def.GetFrom(), To: def.GetTo(), Count: count,
+			Name: name, From: def.From, To: def.To, Count: count,
 		})
 	}
 
@@ -182,7 +190,7 @@ func (h schemaResourceHandler) entityDetail(
 	count := countOrNil(h.store.CountEntities(ctx, store.EntityQuery{Type: name, Faces: store.InWorld(h.world)}))
 	detail := entityTypeDetail{
 		Name:            name,
-		Label:           labelUnlessName(def.GetLabel(), name),
+		Label:           labelUnlessName(def.Label, name),
 		Description:     def.Description,
 		IDType:          def.GetIDType(),
 		IDPrefixes:      def.GetIDPrefixes(),
@@ -198,11 +206,11 @@ func (h schemaResourceHandler) entityDetail(
 		if rel == nil {
 			continue
 		}
-		if slices.Contains(rel.GetFrom(), name) {
-			detail.Outgoing = append(detail.Outgoing, relationEnd{Relation: relName, Types: rel.GetTo()})
+		if slices.Contains(rel.From, name) {
+			detail.Outgoing = append(detail.Outgoing, relationEnd{Relation: relName, Types: rel.To})
 		}
-		if slices.Contains(rel.GetTo(), name) {
-			detail.Incoming = append(detail.Incoming, relationEnd{Relation: relName, Types: rel.GetFrom()})
+		if slices.Contains(rel.To, name) {
+			detail.Incoming = append(detail.Incoming, relationEnd{Relation: relName, Types: rel.From})
 		}
 	}
 
@@ -237,16 +245,16 @@ func (h schemaResourceHandler) relationDetail(
 	count := countOrNil(h.store.CountRelations(ctx, store.RelationQuery{Type: name}))
 	detail := relationTypeDetail{
 		Name:        name,
-		Label:       labelUnlessName(def.GetLabel(), name),
-		Description: def.GetDescription(),
-		From:        def.GetFrom(),
-		To:          def.GetTo(),
-		Symmetric:   def.IsSymmetric(),
+		Label:       labelUnlessName(def.Label, name),
+		Description: def.Description,
+		From:        def.From,
+		To:          def.To,
+		Symmetric:   def.Symmetric,
 		Owning:      def.Owning,
-		MinOutgoing: def.GetMinOutgoing(),
-		MaxOutgoing: def.GetMaxOutgoing(),
-		MinIncoming: def.GetMinIncoming(),
-		MaxIncoming: def.GetMaxIncoming(),
+		MinOutgoing: def.MinOutgoing,
+		MaxOutgoing: def.MaxOutgoing,
+		MinIncoming: def.MinIncoming,
+		MaxIncoming: def.MaxIncoming,
 		Count:       count,
 	}
 	if def.Inverse != nil {
@@ -270,16 +278,21 @@ func (h schemaResourceHandler) propertySchemas(defs map[string]metamodel.Propert
 				values = ct.Values
 			}
 		}
-		out[name] = propertySchema{
+		ps := propertySchema{
 			Type:        pd.Type,
 			Required:    pd.Required,
 			List:        pd.List,
 			Unique:      pd.Unique,
 			Computed:    pd.Computed != "",
+			Rollup:      pd.Rollup != nil,
 			Values:      values,
 			Default:     pd.Default,
 			Description: pd.Description,
 		}
+		if pd.Type == metamodel.PropertyTypeInteger {
+			ps.Min, ps.Max = pd.Min, pd.Max
+		}
+		out[name] = ps
 	}
 	return out
 }

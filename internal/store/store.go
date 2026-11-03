@@ -185,6 +185,22 @@ type Store interface {
 	Transactor
 }
 
+// FamilyReplacer is the optional store capability used by an entity
+// conversion after its family has been renamed. ReplaceEntityFamily changes
+// the type, properties, content and face coordinates of every row at id in one
+// transaction. Relations and attachments remain keyed to the entity family;
+// the entity manager rewrites relation types and tails in that same Tx.
+type FamilyReplacer interface {
+	ReplaceEntityFamily(ctx context.Context, id string, replacements []FamilyReplacement) error
+}
+
+// FamilyReplacement pairs one stored source face with its converted target
+// row. The source face is required even when the target coordinate changes.
+type FamilyReplacement struct {
+	SourceFace entity.Face
+	Entity     *entity.Entity
+}
+
 // Transactor groups writes into one serialized unit (DEC-8UIL0).
 //
 // Tx runs fn with a transaction-bound view of the store. The contract
@@ -498,8 +514,16 @@ type RelationQuery struct {
 	// bind-parameter budget has to pack the batch itself (for example by
 	// sending one JSON array). Pinned by storetest's ListEntityIDsLargeBatch.
 	EntityIDs []string
-	Cursor    string // pagination cursor from a previous page (empty = start); ignored by ListRelations
-	Limit     int    // max relations per page (0 = no limit); ignored by ListRelations
+	// PeerIDs filters the OTHER endpoint: the target for DirectionOutgoing,
+	// the source for DirectionIncoming, and either endpoint for
+	// DirectionBoth (the same rule as EntityIDs there). With EntityIDs it
+	// asks "edges between these ids and those" in one query, which an ACL
+	// probe of (member, target) pairs needs (BUG-E2W1LS): filtering on one
+	// side only reads every edge into a shared ancestor. Nil, empty and
+	// batch size follow EntityIDs.
+	PeerIDs []string
+	Cursor  string // pagination cursor from a previous page (empty = start); ignored by ListRelations
+	Limit   int    // max relations per page (0 = no limit); ignored by ListRelations
 
 	// FromFace filters on the state-specific tail of an edge
 	// (TKT-DOFYR1). nil — the zero value — leaves the tail UNFILTERED:
@@ -556,6 +580,10 @@ type AttachmentInfo struct {
 	FileName    string
 	ContentType string
 	Size        int64
+	// SHA256 is the lowercase hex SHA-256 of the stored bytes, computed by
+	// the backend from what it stored. Empty only when the backend could not
+	// read the bytes to hash them (fsstore, a file unreadable at list time).
+	SHA256 string
 }
 
 // AttachmentManager provides file attachment operations. Attachment bytes
@@ -933,7 +961,10 @@ type VersionMeta struct {
 	Version int
 	Op      VersionOp
 	PrevID  string // set only for VersionOpRename: the entity's former ID
-	Type    string
+	// PrevFace is the source coordinate of a face-changing conversion.
+	PrevFace    entity.Face
+	HasPrevFace bool
+	Type        string
 
 	// Face is the face this version captured; zero is the implicit face of a
 	// faceless type. A lineage is per (id, face), so every row of one
@@ -988,8 +1019,12 @@ type VersionInput struct {
 	// faces holding identical bytes do not dedup against one another.
 	Face entity.Face
 
-	Op            VersionOp
-	PrevID        string
+	Op     VersionOp
+	PrevID string
+	// PrevFace identifies the source face when a conversion changes the face
+	// coordinate. Empty preserves the historical same-face rename behavior.
+	PrevFace      entity.Face
+	HasPrevFace   bool
 	Type          string
 	Content       string
 	Properties    map[string]any
@@ -1685,6 +1720,40 @@ type VersionTagLookup interface {
 	// move running beside it cannot pair the tag with another row.
 	// ErrNotFound when absent.
 	VersionByTag(ctx context.Context, ref entity.Ref, name VersionTagName) (*VersionSnapshot, error)
+}
+
+// TaggedEntity is one entity face that has a version tagged with a given name
+// (TKT-7LRUPB). See [VersionTagIndex].
+type TaggedEntity struct {
+	// Ref is the face the tagged version belongs to now: the head of its
+	// lineage after every later rename. For a deleted entity it is the id and
+	// face it had when it was deleted.
+	Ref entity.Ref
+	// Type is the live row's type. For a deleted entity, which has no live
+	// row, it is the type of the tagged version.
+	Type string
+	// Version is the 1-based ordinal of the tagged version in the
+	// [HistoryReader.ListVersions] order of Ref. For a live entity it equals
+	// [VersionTagLookup.VersionByTag]'s ordinal for the same tag. It is 0 in
+	// one corner: Ref is a deleted id that a later entity took and renamed
+	// away, so Ref's listed history no longer holds the tagged version.
+	Version int
+	// Deleted reports that the lifecycle the tag belongs to has ended: a
+	// delete followed the tagged version, or the face has no live row (a soft
+	// delete). The id may since have been reused by a new entity.
+	Deleted bool
+}
+
+// VersionTagIndex lists the entities that carry a version tag, across
+// lifecycles. A [VersionService] that can tag implements it, next to
+// [VersionTagLookup]; type-assert the VersionService to it.
+type VersionTagIndex interface {
+	// TaggedEntities returns one row per version row tagged name, ordered by
+	// id and face. entityType, when not empty, keeps the rows of that type.
+	// Unlike [VersionTagLookup.VersionByTag], a tag whose lifecycle ended is
+	// listed, as a Deleted row. The store does no access control; callers
+	// gate rows as for history. One statement, whatever the row count.
+	TaggedEntities(ctx context.Context, name VersionTagName, entityType string) ([]TaggedEntity, error)
 }
 
 // VersionTaggerProvider is a [VersionService] that can build a

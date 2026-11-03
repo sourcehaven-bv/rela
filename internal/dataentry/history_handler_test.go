@@ -163,6 +163,40 @@ func doHistoryGet(app *App, typeName, idPath string) *httptest.ResponseRecorder 
 	return rec
 }
 
+// TestHandleV1History_TimelineOmitsVersionsOfAnotherType: a converted
+// entity's lineage reaches back to versions of its old type. The row gate
+// ran for the new type only, so those versions stay off the timeline; the
+// conversion's own version remains and names where the lineage came from.
+func TestHandleV1History_TimelineOmitsVersionsOfAnotherType(t *testing.T) {
+	f := newFixture()
+	tkt := entity.New("TKT-1", "ticket")
+	tkt.Properties = map[string]any{"title": "converted"}
+	f.AddNode(tkt)
+	app := newAppFromParts(nil, testMeta(), f)
+	before := snapshot("note", "old body", map[string]any{"title": "secret note"})
+	before.PrincipalUser = "note-author"
+	converted := snapshot("ticket", "body", map[string]any{"title": "converted"})
+	converted.Version, converted.Op, converted.PrevID = 2, store.VersionOpRename, "NOTE-1"
+	app.versions = historyStore{versions: map[string][]store.VersionSnapshot{"TKT-1": {before, converted}}}
+
+	rec := doHistoryGet(app, "ticket", "TKT-1")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("history: got %d; body=%s", rec.Code, rec.Body.String())
+	}
+	var body struct {
+		Versions []map[string]any `json:"versions"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if len(body.Versions) != 1 || body.Versions[0]["prev_id"] != "NOTE-1" {
+		t.Fatalf("versions = %v, want only the conversion version", body.Versions)
+	}
+	if bodyMentions(rec, "note-author") {
+		t.Error("timeline names the author of a version of the old type")
+	}
+}
+
 func bodyMentions(rec *httptest.ResponseRecorder, substr string) bool {
 	return strings.Contains(rec.Body.String(), substr)
 }

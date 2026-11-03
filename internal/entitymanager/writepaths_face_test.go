@@ -80,6 +80,7 @@ func newCascadeFaceManager(t *testing.T, st store.Store) (*entitymanager.Manager
 		ACL: acl.NopACL{}, Transitions: statemachine.EmptySet(),
 		FieldGate:   entitymanager.AllowAllFieldGate{},
 		Automations: engine, Cascade: runner,
+		AnchorGuard: entitymanager.NopAnchorGuard{},
 	})
 	if err != nil {
 		t.Fatalf("entitymanager.New: %v", err)
@@ -191,6 +192,7 @@ func TestCascadeHostDelete_DeletesEveryFace(t *testing.T) {
 				// host's delete does not consult the ACL.
 				ACL: acl.ReadOnlyACL{}, Transitions: statemachine.EmptySet(),
 				FieldGate: entitymanager.AllowAllFieldGate{}, VersionRecorder: rec,
+				AnchorGuard: entitymanager.NopAnchorGuard{},
 			})
 			if err != nil {
 				t.Fatalf("entitymanager.New: %v", err)
@@ -290,6 +292,7 @@ func TestDeleteEntityFace_RecordsTheRowReadInsideTheTx(t *testing.T) {
 				Store: &updateBeforeTx{Store: f.st}, Meta: meta, Templater: nopTemplater{},
 				Audit: audit.Nop{}, ACL: acl.NopACL{}, Transitions: statemachine.EmptySet(),
 				FieldGate: entitymanager.AllowAllFieldGate{}, VersionRecorder: rec,
+				AnchorGuard: entitymanager.NopAnchorGuard{},
 			})
 			if err != nil {
 				t.Fatalf("entitymanager.New: %v", err)

@@ -85,7 +85,7 @@ func (s *Service) buildLuaRuleContext(
 	// envelopePath here — so the modal gets a populated source slice for
 	// inline rules just like file-backed ones.
 	if sourceFS == nil {
-		sourceFS = inlineSourceFS(envelopePath, code)
+		sourceFS = inlineSourceFS(envelopePath, code, s.deps.SourceFS(ctx))
 	}
 	// Reader runtime: read-only bindings; no mutation, no AI.
 	// AI is intentionally absent — an AI-powered rule would call out on
@@ -307,19 +307,25 @@ func contractError(envelopePath, entityID, code, message string) *lua.ScriptErro
 //
 // Kept as a hand-rolled fs.FS (rather than testing/fstest.MapFS) so we
 // don't pull the testing scaffolding into a non-test production path.
-func inlineSourceFS(name, code string) fs.FS {
-	return inlineFS{name: name, data: []byte(code)}
+func inlineSourceFS(name, code string, project fs.FS) fs.FS {
+	return inlineFS{name: name, data: []byte(code), project: project}
 }
 
 // inlineFS is a single-file fs.FS used by validation surfaces to
-// expose an inline Lua rule's body for source-slice rendering.
+// expose an inline Lua rule's body for source-slice rendering. Any other
+// name is opened in project, so a failure inside a lib/ module the rule
+// required still gets its excerpt.
 type inlineFS struct {
-	name string
-	data []byte
+	name    string
+	data    []byte
+	project fs.FS // Nil: accepted — other names are not found.
 }
 
 func (m inlineFS) Open(name string) (fs.File, error) {
 	if name != m.name {
+		if m.project != nil {
+			return m.project.Open(name)
+		}
 		return nil, &fs.PathError{Op: "open", Path: name, Err: fs.ErrNotExist}
 	}
 	return &inlineFile{name: m.name, data: m.data}, nil

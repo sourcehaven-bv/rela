@@ -18,6 +18,7 @@ import { computed } from 'vue'
 import type { NavGroup, NavItem } from '../../types'
 import RlSidebarGroupHeader from './RlSidebarGroupHeader.vue'
 import RlSidebarNavItem from './RlSidebarNavItem.vue'
+import { useMessages } from '../../composables/useMessages'
 
 const props = withDefaults(
   defineProps<{
@@ -33,13 +34,14 @@ const props = withDefaults(
      * Set to Infinity to keep a group flat however long it gets.
      */
     groupThreshold?: number
-    /** Heading for items with no subgroup of their own. */
+    /** Heading for items with no subgroup of their own. Defaults to the `otherGroup` chrome text. */
     fallbackLabel?: string
   }>(),
-  { groupThreshold: 20, fallbackLabel: 'Other' },
+  { groupThreshold: 20, fallbackLabel: undefined },
 )
 
 const emit = defineEmits<{ select: [item: NavItem]; menu: []; add: [] }>()
+const messages = useMessages()
 
 /**
  * Whether to split. Both conditions matter: a long group with no subgroups
@@ -76,7 +78,14 @@ const sections = computed(() => {
   )
 
   return rest.length > 0
-    ? [...named, { id: '__rest', label: props.fallbackLabel, items: rest }]
+    ? [
+        ...named,
+        {
+          id: '__rest',
+          label: props.fallbackLabel ?? messages.chromeText({ key: 'otherGroup' }),
+          items: rest,
+        },
+      ]
     : named
 })
 </script>
@@ -142,8 +151,8 @@ const sections = computed(() => {
   box-sizing: border-box;
   min-height: var(--rl-sidebar-subheading-offset);
   z-index: var(--rl-z-sticky-raised);
-  background: var(--rl-color-bg-sunken);
-  box-shadow: 0 0 0 var(--rl-space-3) var(--rl-color-bg-sunken);
+  background: var(--rl-color-sidebar-bg);
+  box-shadow: 0 0 0 var(--rl-space-3) var(--rl-color-sidebar-bg);
   clip-path: inset(calc(-1 * var(--rl-space-3)) calc(-1 * var(--rl-space-3)) 0);
 }
 
@@ -167,8 +176,8 @@ const sections = computed(() => {
    * The spread is clipped at the bottom for the reason the header gives.
    */
   padding: var(--rl-space-2) var(--rl-space-2) var(--rl-space-1);
-  background: var(--rl-color-bg-sunken);
-  box-shadow: 0 0 0 var(--rl-space-3) var(--rl-color-bg-sunken);
+  background: var(--rl-color-sidebar-bg);
+  box-shadow: 0 0 0 var(--rl-space-3) var(--rl-color-sidebar-bg);
   clip-path: inset(calc(-1 * var(--rl-space-3)) calc(-1 * var(--rl-space-3)) 0);
   font-size: var(--rl-font-size-xs);
   font-weight: var(--rl-font-weight-medium);

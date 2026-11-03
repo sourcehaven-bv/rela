@@ -5,9 +5,13 @@ package appbuild_test
 import (
 	"context"
 	"log/slog"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/Sourcehaven-BV/rela/internal/appbuild"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/scheduler"
 	"github.com/Sourcehaven-BV/rela/internal/script"
@@ -43,24 +47,29 @@ validations:
 //
 //   - the action runs from actions/ through the Lua deps' project files;
 //   - the validation rule's lua_file is read from validations/;
+//   - both require a module from lib/, which only the database holds;
 //   - the background scheduler reads schedules.yaml through the config
 //     loader and runs its task's script from scripts/.
 func TestSQLite_DatabaseOnlyProjectRunsItsConfig(t *testing.T) {
 	root := t.TempDir()
 	writeFile(t, root, "schema.yaml", dbOnlySchema)
-	writeFile(t, root, "actions/greet.lua", "return { message = 'action from the database' }\n")
+	writeFile(t, root, "actions/greet.lua", "return { message = require('greeting').text }\n")
 	writeFile(t, root, "validations/no-bad.lua",
-		"if entity.properties.title == 'bad' then return { message = 'bad title' } end\nreturn nil\n")
+		"if require('rules.title').bad(entity) then return { message = 'bad title' } end\nreturn nil\n")
+	writeFile(t, root, "lib/greeting.lua", "return { text = 'action from the database' }\n")
+	writeFile(t, root, "lib/rules/title.lua",
+		"return { bad = function(e) return e.properties.title == 'bad' end }\n")
+	writeFile(t, root, "lib/README.md", "not a module, so not stored\n")
 	writeFile(t, root, "schedules.yaml",
 		"tasks:\n  - name: stamp\n    script: stamp.lua\n    every: 1h\n")
 	writeFile(t, root, "scripts/stamp.lua",
 		"rela.create_entity('item', { title = 'from the schedule' })\n")
 	writeFile(t, root, ".rela/.keep", "")
 	names := bake(t, root)
-	if len(names) != 5 {
-		t.Fatalf("stored %v, want the schema, schedules.yaml and three scripts", names)
+	if len(names) != 7 {
+		t.Fatalf("stored %v, want the schema, schedules.yaml, three scripts and two lib/ modules", names)
 	}
-	removeAll(t, root, "schema.yaml", "schedules.yaml", "actions", "validations", "scripts")
+	removeAll(t, root, "schema.yaml", "schedules.yaml", "actions", "validations", "scripts", "lib")
 
 	svc, err := discover(t, root)
 	if err != nil {
@@ -101,10 +110,25 @@ func TestSQLite_DatabaseOnlyProjectRunsItsConfig(t *testing.T) {
 		}
 	})
 
+	t.Run("escaping symlink on disk does not fall through to the database", func(t *testing.T) {
+		writeFile(t, root, "outside.lua", "return { text = 'outside lib' }\n")
+		if err := os.MkdirAll(filepath.Join(root, "lib"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(filepath.Join(root, "outside.lua"), filepath.Join(root, "lib", "greeting.lua")); err != nil {
+			t.Fatal(err)
+		}
+		defer removeAll(t, root, "lib", "outside.lua")
+		_, err := script.NewEngine().ExecuteAction(ctx, "greet.lua", svc.LuaWriteDeps(), nil, nil, 5*time.Second, "")
+		if err == nil || !strings.Contains(err.Error(), "cannot read module greeting") {
+			t.Fatalf("err = %v, want the escaping lib/ symlink refused (not served from disk or the database)", err)
+		}
+	})
+
 	t.Run("scheduled task", func(t *testing.T) {
 		runCtx, cancel := context.WithCancel(ctx)
 		defer cancel()
-		scheduler.StartBackground(runCtx, svc, slog.New(slog.DiscardHandler))
+		scheduler.StartBackground(runCtx, svc, appbuild.MustIdentityBinder(svc), slog.New(slog.DiscardHandler))
 
 		deadline := time.Now().Add(10 * time.Second)
 		for {

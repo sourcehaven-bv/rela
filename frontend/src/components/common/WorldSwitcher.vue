@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { useWorld } from '@/composables/useWorld'
 import { useSchemaStore } from '@/stores/schema'
 
@@ -12,6 +13,7 @@ import { useSchemaStore } from '@/stores/schema'
  * secret, and a missing entry reads as a misconfiguration. Hidden when the
  * schema declares fewer than two worlds, since there is nothing to choose.
  */
+const { t } = useI18n()
 const schemaStore = useSchemaStore()
 const { world, setWorld } = useWorld()
 
@@ -31,7 +33,7 @@ function onChange(event: Event) {
 
 <template>
   <label v-if="show" class="world-switcher">
-    <span class="world-label">World</span>
+    <span class="world-label">{{ t('switcher.world') }}</span>
     <select
       class="world-select"
       data-testid="world-switcher"

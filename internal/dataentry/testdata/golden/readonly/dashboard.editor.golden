@@ -1,0 +1,48 @@
+request: GET /api/v1/_dashboard
+identity: header editor@example.test
+status: 200
+reads: 
+breadth: 
+bodies: 
+versions: 
+body:
+{
+  "title": "Golden",
+  "cards": [
+    {
+      "title": "Tickets",
+      "query": "type:ticket",
+      "display": "count",
+      "index": 0
+    },
+    {
+      "title": "By status",
+      "query": "type:ticket",
+      "display": "breakdown",
+      "group_by": "status",
+      "index": 1
+    },
+    {
+      "title": "Open",
+      "query": "type:ticket prop:status=open",
+      "display": "table",
+      "columns": [
+        {
+          "property": "title",
+          "link": "detail"
+        },
+        {
+          "property": "secret"
+        }
+      ],
+      "index": 2
+    },
+    {
+      "title": "Admin only",
+      "query": "type:ticket",
+      "display": "count",
+      "permission": "report:all",
+      "index": 3
+    }
+  ]
+}

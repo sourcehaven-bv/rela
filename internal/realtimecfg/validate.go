@@ -1,0 +1,1082 @@
+package realtimecfg
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"maps"
+	"regexp"
+	"slices"
+	"sort"
+	"strings"
+	"time"
+
+	"gopkg.in/yaml.v3"
+
+	"github.com/Sourcehaven-BV/rela/internal/acl"
+	"github.com/Sourcehaven-BV/rela/internal/metamodel"
+	"github.com/Sourcehaven-BV/rela/internal/predicate"
+	"github.com/Sourcehaven-BV/rela/internal/predicatefns"
+	"github.com/Sourcehaven-BV/rela/internal/realtimelimits"
+	"github.com/Sourcehaven-BV/rela/internal/yamlscalar"
+)
+
+// namePattern is the grammar of channel type, message type, role, action and
+// trigger names. The channel store uses type names as path segments, so the
+// grammar keeps them short, lowercase and free of separators.
+var namePattern = regexp.MustCompile(`^[a-z][a-z0-9-]{0,62}$`)
+
+// propertyNamePattern is the grammar of message property names, which are
+// JSON keys in every message.
+var propertyNamePattern = regexp.MustCompile(`^[a-z][a-z0-9_]{0,62}$`)
+
+const nameRule = "must match ^[a-z][a-z0-9-]{0,62}$"
+
+// validator collects every problem in one pass, so the operator sees them
+// all at once rather than one per edit.
+type validator struct {
+	meta   *metamodel.Metamodel
+	policy *acl.Policy
+	// root is the parsed file, read for the key order a map loses.
+	root *yaml.Node
+	// file is the decoded file, read for the triggers a session's
+	// transitions check against.
+	file     *rawFile
+	problems []Problem
+	warnings []Problem
+	perms    map[string]bool
+}
+
+func (v *validator) add(key, reason string) {
+	v.problems = append(v.problems, Problem{Key: key, Reason: reason})
+}
+
+// warn records a part of the file that is left out rather than refused.
+func (v *validator) warn(key, reason string) {
+	v.warnings = append(v.warnings, Problem{Key: key, Reason: reason})
+}
+
+func (v *validator) compile(raw *rawFile) *Compiled {
+	v.perms = map[string]bool{}
+	v.file = raw
+	if raw.Version != 1 {
+		v.add("version", fmt.Sprintf("must be 1, got %d", raw.Version))
+	}
+	c := &Compiled{
+		limits:       v.limits(raw.Limits),
+		channelTypes: map[string]*ChannelType{},
+		triggers:     map[string]*Trigger{},
+	}
+	for _, name := range sortedKeys(raw.ChannelTypes) {
+		rct := raw.ChannelTypes[name]
+		if ct := v.channelType(name, &rct, c.limits); ct != nil {
+			c.channelTypes[name] = ct
+		}
+	}
+	for _, name := range sortedKeys(raw.Triggers) {
+		rt := raw.Triggers[name]
+		if t := v.trigger(name, &rt, raw, c); t != nil {
+			c.triggers[name] = t
+		}
+	}
+	grantChecker{v: v, c: c}.check()
+	c.waiting = buildWaiting(c.channelTypes)
+	if v.policy.PrincipalPropertyLookupEnabled() {
+		c.mentionUserType = strings.TrimSpace(v.policy.UserEntityType)
+	}
+	c.warnings = v.warnings
+	for p := range v.perms {
+		c.permissions = append(c.permissions, p)
+	}
+	sort.Strings(c.permissions)
+	return c
+}
+
+func (v *validator) limits(raw *rawLimits) Limits {
+	l := defaultLimits()
+	if raw == nil {
+		return l
+	}
+	l.LogRate = v.lowerRate("limits.post_rate", raw.PostRate, l.LogRate)
+	l.EphemeralRate = v.lowerRate("limits.signal_rate", raw.SignalRate, l.EphemeralRate)
+	l.MessageBytes = v.lowerInt("limits.message_bytes", raw.MessageBytes, l.MessageBytes)
+	l.ChannelsPerEntity = v.lowerInt("limits.channels_per_entity", raw.ChannelsPerEntity, l.ChannelsPerEntity)
+	l.PageLimit = v.lowerInt("limits.page_limit", raw.PageLimit, l.PageLimit)
+	return l
+}
+
+// lowerRate parses s, which may only lower limit. An empty s keeps limit.
+func (v *validator) lowerRate(key, s string, limit realtimelimits.Rate) realtimelimits.Rate {
+	if s == "" {
+		return limit
+	}
+	r, err := realtimelimits.ParseRate(s)
+	if err != nil {
+		v.add(key, err.Error())
+		return limit
+	}
+	if !r.AtMost(limit) {
+		v.add(key, fmt.Sprintf("%s is above the limit of %s, on average or in one burst; "+
+			"realtime.yaml may only lower it", r, limit))
+		return limit
+	}
+	return r
+}
+
+func (v *validator) lowerInt(key string, n *int, limit int) int {
+	if n == nil {
+		return limit
+	}
+	if *n <= 0 || *n > limit {
+		v.add(key, fmt.Sprintf("must be between 1 and %d; realtime.yaml may only lower it", limit))
+		return limit
+	}
+	return *n
+}
+
+func (v *validator) channelType(name string, raw *rawChannelType, limits Limits) *ChannelType {
+	key := "channel_types." + name
+	if !namePattern.MatchString(name) {
+		v.add(key, "channel type name "+nameRule)
+	}
+	ct := &ChannelType{
+		Name: name, Label: orDefault(raw.Label, name),
+		Roles: map[string]Role{}, MessageTypes: map[string]*MessageType{},
+	}
+	ct.AttachTo = v.attachTo(key+".attach_to", raw.AttachTo)
+	ct.Anchor = v.anchor(key+".anchor", raw.Anchor, ct.AttachTo)
+	ct.Cardinality = v.cardinality(key+".cardinality", raw.Cardinality)
+	ct.OnEntityDelete = v.onEntityDelete(key+".on_entity_delete", raw.OnEntityDelete)
+
+	for _, rn := range sortedKeys(raw.Roles) {
+		rr := raw.Roles[rn]
+		if !namePattern.MatchString(rn) {
+			v.add(key+".roles."+rn, "role name "+nameRule)
+		}
+		ct.Roles[rn] = Role{Name: rn, Label: orDefault(rr.Label, rn), Source: v.source(key+".roles."+rn, &rr, ct)}
+	}
+	read := rawRole{From: "attached"}
+	if raw.Read != nil {
+		read = *raw.Read
+	}
+	ct.Read = Role{
+		Name: "read", Label: read.Label, Source: v.source(key+".read", &read, ct),
+		RequireAnchorRead: true,
+	}
+
+	switch {
+	case ct.Cardinality == CardinalityMany && (raw.Create == nil || len(raw.Create.Roles) == 0):
+		v.add(key+".create", "a cardinality many channel type needs create.roles, or nobody can open a channel")
+	case ct.Cardinality == CardinalityOne && raw.Create != nil:
+		v.add(key+".create", "only a cardinality many channel type has create; a cardinality one channel opens on first write")
+	case raw.Create != nil:
+		ct.Create = &Gate{Label: raw.Create.Label, Roles: v.roleRefs(key+".create.roles", raw.Create.Roles, ct)}
+	}
+
+	if len(raw.MessageTypes) == 0 {
+		v.add(key+".message_types", "a channel type needs at least one message type")
+	}
+	for _, mn := range sortedKeys(raw.MessageTypes) {
+		rm := raw.MessageTypes[mn]
+		if mt := v.messageType(key+".message_types."+mn, mn, &rm, ct, limits); mt != nil {
+			ct.MessageTypes[mn] = mt
+		}
+	}
+	if raw.Typing {
+		ct.Typing = true
+		v.typing(key, raw, ct)
+	}
+	ct.Lifecycle = v.lifecycle(key+".lifecycle", raw.Lifecycle, ct)
+	ct.DetachedRetention = DefaultDetachedRetention()
+	if raw.DetachedRetention != "" {
+		p := v.period(key+".detached_retention", raw.DetachedRetention)
+		if d, fixed := p.Fixed(); !p.IsZero() && fixed && d < realtimelimits.OrphanGrace {
+			// A shorter retention could erase a batch the sweep would still
+			// put back: an orphan whose entity returns, or a pending batch
+			// whose write failed.
+			v.add(key+".detached_retention", fmt.Sprintf("must be at least %s", realtimelimits.OrphanGrace))
+		} else if !p.IsZero() {
+			ct.DetachedRetention = p
+		}
+	}
+	if ct.OnEntityDelete == OnDeleteDelete && ct.Lifecycle.Delete != nil && !ct.Lifecycle.Delete.Retention.IsZero() {
+		v.add(key+".on_entity_delete", "on_entity_delete: delete would erase channels that "+
+			"lifecycle.delete.retention must keep; use detach or block, or drop the retention")
+	}
+	ct.MessageOps = v.messageOps(key+".message_ops", raw.MessageOps, ct)
+	if raw.Session != nil {
+		order, _, err := mappingKeys(v.root, "channel_types", name, "session", "states")
+		if err != nil {
+			v.add(key+".session.states", err.Error())
+		}
+		ct.session = v.session(key+".session", raw.Session, order, ct, raw, limits)
+	} else {
+		messageInCheck{v: v, raw: raw, ct: ct}.withoutSession()
+	}
+	choiceChecker{v}.choices(raw, ct)
+	typeButtonChecker{v}.check(raw, ct)
+	return ct
+}
+
+func (v *validator) attachTo(key string, types []string) []string {
+	if len(types) == 0 {
+		v.add(key, "name at least one entity type")
+		return nil
+	}
+	out := make([]string, 0, len(types))
+	for i, t := range types {
+		k := fmt.Sprintf("%s[%d]", key, i)
+		switch {
+		case !v.meta.HasEntityType(t):
+			v.add(k, fmt.Sprintf("unknown entity type %q", t))
+		case v.meta.ResolveAlias(t) != t:
+			v.add(k, fmt.Sprintf("%q is an alias of %q; name the type itself", t, v.meta.ResolveAlias(t)))
+		case slices.Contains(out, t):
+			v.add(k, fmt.Sprintf("%q is listed twice", t))
+		default:
+			out = append(out, t)
+		}
+	}
+	return out
+}
+
+func (v *validator) anchor(key, s string, attachTo []string) Anchor {
+	switch Anchor(s) {
+	case "", AnchorFamily:
+		return AnchorFamily
+	case AnchorFace:
+		for _, t := range attachTo {
+			if len(metamodel.FaceOrderOf(v.meta, t)) == 0 {
+				v.add(key, fmt.Sprintf("anchor face needs every attach_to type to declare faces; %q declares none", t))
+			}
+		}
+		return AnchorFace
+	}
+	v.add(key, fmt.Sprintf("must be family or face, got %q", s))
+	return AnchorFamily
+}
+
+func (v *validator) cardinality(key, s string) Cardinality {
+	switch Cardinality(s) {
+	case "", CardinalityOne:
+		return CardinalityOne
+	case CardinalityMany:
+		return CardinalityMany
+	}
+	v.add(key, fmt.Sprintf("must be one or many, got %q", s))
+	return CardinalityOne
+}
+
+func (v *validator) onEntityDelete(key, s string) OnEntityDelete {
+	switch OnEntityDelete(s) {
+	case "", OnDeleteDetach:
+		return OnDeleteDetach
+	case OnDeleteDelete, OnDeleteBlock:
+		return OnEntityDelete(s)
+	}
+	v.add(key, fmt.Sprintf("must be delete, detach or block, got %q", s))
+	return OnDeleteDetach
+}
+
+// source compiles a role's single source. It reports a role with none or
+// with more than one.
+func (v *validator) source(key string, r *rawRole, ct *ChannelType) Source {
+	set := 0
+	for _, b := range []bool{r.From != "", r.Permission != "", r.PrincipalType != "", r.Creator} {
+		if b {
+			set++
+		}
+	}
+	if set != 1 {
+		v.add(key, "name exactly one of from, permission, principal_type or creator")
+		return Source{}
+	}
+	switch {
+	case r.Permission != "":
+		v.permission(key+".permission", r.Permission)
+		return Source{Kind: SourcePermission, Permission: r.Permission}
+	case r.PrincipalType != "":
+		return Source{Kind: SourcePrincipalType, PrincipalType: r.PrincipalType}
+	case r.Creator:
+		if ct.Cardinality != CardinalityMany {
+			v.add(key+".creator", "only a cardinality many channel has a creator")
+		}
+		return Source{Kind: SourceCreator}
+	case r.From == "attached":
+		return Source{Kind: SourceAttached}
+	}
+	prop, ok := strings.CutPrefix(r.From, "entity.")
+	if !ok || prop == "" {
+		v.add(key+".from", fmt.Sprintf("must be attached or entity.<property>, got %q", r.From))
+		return Source{}
+	}
+	for _, t := range ct.AttachTo {
+		v.identityProperty(key+".from", t, prop)
+	}
+	return Source{Kind: SourceEntityProperty, Property: prop}
+}
+
+// identityProperty checks that entityType has a string property prop that
+// can name a principal, and that acl.yaml does not restrict it: a role
+// decided by a hidden value would tell its members what the value is.
+func (v *validator) identityProperty(key, entityType, prop string) {
+	def, _ := v.meta.GetEntityDef(entityType)
+	pd, ok := def.Properties[prop]
+	if !ok {
+		v.add(key, fmt.Sprintf("%s has no property %q", entityType, prop))
+		return
+	}
+	if pd.Type != metamodel.PropertyTypeString {
+		v.add(key, fmt.Sprintf("%s.%s is a %s property; a role can match only a string property naming a principal",
+			entityType, prop, pd.Type))
+		return
+	}
+	if v.policy.FieldRestricted(entityType, prop) {
+		v.add(key, fmt.Sprintf("%s.%s is restricted by a visible: grant in acl.yaml; "+
+			"a role decided by it would disclose its value", entityType, prop))
+	}
+}
+
+// permission records perm for the acl audit and, when acl.yaml exists,
+// checks that some role grants it: a gate on a permission nobody holds is
+// closed for everyone, which is almost always a typo.
+func (v *validator) permission(key, perm string) {
+	v.perms[perm] = true
+	if v.policy == nil || acl.IsTagPermission(perm) || slices.Contains(acl.BuiltinPermissions(), perm) {
+		return
+	}
+	for _, role := range v.policy.Roles {
+		if slices.Contains(role.Permissions, perm) {
+			return
+		}
+	}
+	v.add(key, fmt.Sprintf("no role in acl.yaml grants permission %q", perm))
+}
+
+// roleRefs checks that every name is a declared role of ct.
+func (v *validator) roleRefs(key string, names []string, ct *ChannelType) []string {
+	for i, n := range names {
+		if _, ok := ct.Roles[n]; !ok {
+			v.add(fmt.Sprintf("%s[%d]", key, i), fmt.Sprintf("unknown role %q; declare it under roles", n))
+		}
+	}
+	return slices.Clone(names)
+}
+
+// gate compiles roles plus an optional permission. An operation with
+// neither would be declared and yet open to nobody.
+func (v *validator) gate(key string, roles []string, perm, label, denied string, ct *ChannelType) Gate {
+	if len(roles) == 0 && perm == "" {
+		v.add(key, "name roles or a permission")
+	}
+	if perm != "" {
+		v.permission(key+".permission", perm)
+	}
+	return Gate{Label: label, Roles: v.roleRefs(key+".roles", roles, ct), Permission: perm, Denied: denied}
+}
+
+func (v *validator) messageType(key, name string, raw *rawMessageType, ct *ChannelType, limits Limits) *MessageType {
+	if !namePattern.MatchString(name) {
+		v.add(key, "message type name "+nameRule)
+	}
+	mt := &MessageType{
+		Name: name, Label: orDefault(raw.Label, name),
+		Properties: map[string]Property{}, Actions: map[string]*Action{},
+	}
+	switch Persist(raw.Persist) {
+	case "", PersistLog:
+		mt.Persist = PersistLog
+		mt.Rate = v.lowerRate(key+".rate", raw.Rate, limits.LogRate)
+		if raw.TTL != "" {
+			v.add(key+".ttl", "only an ephemeral message type has a ttl")
+		}
+	case PersistEphemeral:
+		mt.Persist = PersistEphemeral
+		mt.Rate = v.lowerRate(key+".rate", raw.Rate, limits.EphemeralRate)
+		mt.TTL = v.ttl(key+".ttl", raw.TTL)
+		if raw.PromoteTo != nil {
+			v.add(key+".promote_to", "an ephemeral message is never stored, so it cannot be promoted")
+		}
+		if len(raw.Actions) > 0 {
+			v.add(key+".actions", "an ephemeral message is never stored, so it cannot carry actions")
+		}
+	default:
+		v.add(key+".persist", fmt.Sprintf("must be log or ephemeral, got %q", raw.Persist))
+	}
+	if raw.Unread.set() {
+		noUnread, problem := unreadOf(raw.Unread.node, mt.Persist)
+		if problem != "" {
+			v.add(key+".unread", problem)
+		}
+		mt.NoUnread = noUnread
+	}
+
+	if len(raw.Properties) > realtimelimits.MaxMessageProperties {
+		v.add(key+".properties", fmt.Sprintf("at most %d properties", realtimelimits.MaxMessageProperties))
+	}
+	for _, pn := range sortedKeys(raw.Properties) {
+		rp := raw.Properties[pn]
+		mt.Properties[pn] = v.property(key+".properties."+pn, pn, &rp, limits)
+	}
+	if raw.When != "" {
+		if env, err := messageEnv(mt.Properties); err != nil {
+			v.add(key+".when", err.Error())
+		} else if prog, err := predicate.Compile(env, raw.When); err != nil {
+			v.add(key+".when", "does not compile: "+err.Error())
+		} else {
+			mt.When = prog
+		}
+	}
+	if len(raw.Post) == 0 {
+		v.add(key+".post", "name the roles that may post this message type")
+	}
+	mt.Post = v.roleRefs(key+".post", raw.Post, ct)
+	if mt.Persist == PersistLog {
+		if raw.PromoteTo != nil {
+			v.add(key+".promote_to", "promote_to belongs on an action: declare an action with its own "+
+				"roles or permission and put promote_to there")
+		}
+		for _, an := range sortedKeys(raw.Actions) {
+			ra := raw.Actions[an]
+			ak := key + ".actions." + an
+			if !namePattern.MatchString(an) {
+				v.add(ak, "action name "+nameRule)
+			}
+			if slices.Contains(MessageOpNames(), an) {
+				v.add(ak, fmt.Sprintf("%q is reserved: a message's _actions lists it for the message operation "+
+					"of that name; choose another action name", an))
+			}
+			mt.Actions[an] = &Action{
+				Name:      an,
+				Gate:      v.gate(ak, ra.Roles, ra.Permission, orDefault(ra.Label, an), ra.Denied, ct),
+				PromoteTo: v.promote(ak+".promote_to", ra.PromoteTo, mt, ct),
+			}
+		}
+	}
+	return mt
+}
+
+// unreadOf reads a set `unread:` on a type with the given persist. It
+// answers NoUnread, and problem says why the value is refused. Only a
+// YAML boolean is taken: a quoted or `!!str` value is text, and an
+// unquoted yes, no, on or off is refused, as for `confirm:`, so a YAML 1.1
+// spelling cannot read differently in another tool. A signal type may not
+// have the key at all.
+//
+// Nil: rejected. The caller passes a set node.
+func unreadOf(n *yaml.Node, persist Persist) (noUnread bool, problem string) {
+	if persist == PersistEphemeral {
+		return false, "a signal is never stored, so it never counts as unread"
+	}
+	b, problem := strictBool(n)
+	if problem != "" {
+		return false, problem
+	}
+	return persist == PersistLog && !b, ""
+}
+
+// strictBool reads n as a YAML boolean. problem says why the value is
+// refused: an unquoted YAML 1.1 spelling such as yes or on, a quoted
+// value, or another scalar. `unread:` and `compose:` both read through it,
+// so the two keys cannot drift apart on what a boolean is.
+//
+// Nil: rejected. The caller passes a set node.
+func strictBool(n *yaml.Node) (b bool, problem string) {
+	if yamlscalar.PlainYAML11Bool(n) {
+		return false, fmt.Sprintf("%q is not a boolean; use true or false", strings.TrimSpace(n.Value))
+	}
+	if n.Tag != "!!bool" || n.Decode(&b) != nil {
+		return false, "must be true or false"
+	}
+	return b, ""
+}
+
+func (v *validator) ttl(key, s string) time.Duration {
+	if s == "" {
+		return realtimelimits.MaxEphemeralTTL
+	}
+	p, err := ParsePeriod(s)
+	if err != nil {
+		v.add(key, err.Error())
+		return realtimelimits.MaxEphemeralTTL
+	}
+	d, fixed := p.Fixed()
+	if !fixed || d > realtimelimits.MaxEphemeralTTL {
+		v.add(key, fmt.Sprintf("must be at most %s", realtimelimits.MaxEphemeralTTL))
+		return realtimelimits.MaxEphemeralTTL
+	}
+	return d
+}
+
+func (v *validator) property(key, name string, raw *rawProperty, limits Limits) Property {
+	if !propertyNamePattern.MatchString(name) {
+		v.add(key, "property name must match ^[a-z][a-z0-9_]{0,62}$")
+	}
+	p := Property{Name: name, Label: orDefault(raw.Label, name), Required: raw.Required, To: slices.Clone(raw.To)}
+	switch PropertyType(raw.Type) {
+	case PropertyString, PropertyMarkdown, PropertyInteger, PropertyBoolean,
+		PropertyDate, PropertyDatetime, PropertyRef:
+		p.Type = PropertyType(raw.Type)
+	case "":
+		v.add(key+".type", "name a type")
+	default:
+		ct, ok := v.meta.Types[raw.Type]
+		if !ok || len(ct.Values) == 0 {
+			v.add(key+".type", fmt.Sprintf("unknown type %q; use string, markdown, integer, boolean, date, "+
+				"datetime, ref or an enum type declared in schema.yaml", raw.Type))
+		} else {
+			p.Type, p.Enum, p.Values = PropertyEnum, raw.Type, slices.Clone(ct.Values)
+		}
+	}
+	if raw.List {
+		if p.Type == PropertyString {
+			p.List = true
+		} else {
+			v.add(key+".list", "only a string property may be a list")
+		}
+	}
+	maxRunes := limits.MessageBytes
+	if p.List {
+		maxRunes = realtimelimits.MaxListItemRunes
+		p.Max = realtimelimits.DefaultListItemRunes
+	}
+	if raw.Max != nil {
+		switch {
+		case p.Type != PropertyString && p.Type != PropertyMarkdown:
+			v.add(key+".max", "only a string or markdown property has a max")
+		case *raw.Max <= 0 || *raw.Max > maxRunes:
+			v.add(key+".max", fmt.Sprintf("must be between 1 and %d", maxRunes))
+		default:
+			p.Max = *raw.Max
+		}
+	}
+	if n, problem := maxItems(raw, p.List); problem != "" {
+		v.add(key+".max_items", problem)
+	} else {
+		p.MaxItems = n
+	}
+	switch {
+	case p.Type == PropertyRef && len(raw.To) == 0:
+		v.add(key+".to", "a ref property names the entity types it may point to")
+	case p.Type != PropertyRef && len(raw.To) > 0:
+		v.add(key+".to", "only a ref property has to")
+	}
+	for i, t := range raw.To {
+		if !v.meta.HasEntityType(t) {
+			v.add(fmt.Sprintf("%s.to[%d]", key, i), fmt.Sprintf("unknown entity type %q", t))
+		}
+	}
+	if raw.Notify != nil {
+		if p.Type != PropertyRef {
+			v.add(key+".notify", "only a ref property has notify; it says whether a value that names a "+
+				"person entity mentions that person")
+		}
+		p.NoNotify = !*raw.Notify
+	}
+	return p
+}
+
+// maxItems returns the item limit of a property from `max_items:`: the
+// limit of a list property, 0 for any other, or a problem. list is false
+// also when the author wrote `list: true` on a type that cannot be a list;
+// that already has its own problem, so max_items gets none. It is a
+// function and not a validator method because the validator is at its
+// method budget.
+func maxItems(raw *rawProperty, list bool) (limit int, problem string) {
+	switch {
+	case raw.MaxItems != nil && !raw.List:
+		return 0, "only a list property has max_items; add list: true"
+	case !list:
+		return 0, ""
+	case raw.MaxItems == nil:
+		return realtimelimits.MaxListItems, ""
+	case *raw.MaxItems <= 0 || *raw.MaxItems > realtimelimits.MaxListItems:
+		return 0, fmt.Sprintf("must be between 1 and %d", realtimelimits.MaxListItems)
+	}
+	return *raw.MaxItems, ""
+}
+
+// promote checks a promote_to block: the entity type and its face, each
+// mapped entity property and message property and their types, that every
+// required entity property is filled, and the relation linking the new
+// entity to every attach_to type. The mapping reads message properties
+// only, never the anchor entity.
+func (v *validator) promote(key string, raw *rawPromote, mt *MessageType, ct *ChannelType) *Promote {
+	if raw == nil {
+		return nil
+	}
+	p := &Promote{Type: raw.Type, Face: raw.Face, Map: map[string]string{}}
+	if raw.Relate != nil {
+		p.Relate = raw.Relate.Type
+	}
+	def := writeChecker{v}.entityTarget(key, raw.Type, raw.Face, raw.Relate, ct, "a promote")
+	if def == nil {
+		return p
+	}
+	for _, ep := range sortedKeys(raw.Map) {
+		mp := raw.Map[ep]
+		p.Map[ep] = mp
+		v.promoteMapping(key+".map."+ep, raw.Type, ep, mp, def, mt)
+	}
+	for _, ep := range requiredProps(def) {
+		mp, mapped := raw.Map[ep]
+		if !mapped {
+			v.add(key+".map", fmt.Sprintf("%s requires property %q; map a required message property to it", raw.Type, ep))
+			continue
+		}
+		if msgProp, ok := mt.Properties[mp]; ok && !msgProp.Required {
+			v.add(key+".map."+ep, fmt.Sprintf("%s requires property %q, but message property %s is optional; "+
+				"mark it required", raw.Type, ep, mp))
+		}
+	}
+	return p
+}
+
+// entityTarget checks what promote_to and a create output share: the
+// entity type (known, not an alias, not id_type: manual), its face, and the
+// relation linking the new entity to every attach_to type. It returns the
+// type's definition, or nil when the type is unknown. what names the
+// creator in a reason.
+func (v writeChecker) entityTarget(
+	key, typ, face string, relate *rawRelate, ct *ChannelType, what string,
+) *metamodel.EntityDef {
+	def, ok := v.meta.GetEntityDef(typ)
+	if !ok {
+		v.add(key+".type", fmt.Sprintf("unknown entity type %q", typ))
+		return nil
+	}
+	if canon := v.meta.ResolveAlias(typ); canon != typ {
+		v.add(key+".type", fmt.Sprintf("%q is an alias of %q; name the type itself", typ, canon))
+	}
+	if def.IsManualID() {
+		v.add(key+".type", fmt.Sprintf("%s uses id_type: manual, so each entity needs a typed id; "+
+			"%s has no id to give it", typ, what))
+	}
+	v.promoteFace(key+".face", typ, face)
+	if relate != nil {
+		for _, t := range ct.AttachTo {
+			if err := metamodel.NewValidator(v.meta).ValidateRelation(relate.Type, typ, t); err != nil {
+				v.add(key+".relate.type", fmt.Sprintf("cannot link %s to %s: %v", typ, t, err))
+			}
+		}
+	}
+	return def
+}
+
+// requiredProps returns the required properties of def that have no
+// default and are not computed, sorted: those a create must fill.
+func requiredProps(def *metamodel.EntityDef) []string {
+	var out []string
+	for _, ep := range sortedKeys(def.Properties) {
+		if pd := def.Properties[ep]; pd.Required && pd.Default == "" && pd.Computed == "" {
+			out = append(out, ep)
+		}
+	}
+	return out
+}
+
+// promoteMapping checks that message property mp exists and can fill entity
+// property ep of entityType.
+func (v *validator) promoteMapping(key, entityType, ep, mp string, def *metamodel.EntityDef, mt *MessageType) {
+	pd, ok := def.Properties[ep]
+	if !ok {
+		v.add(key, fmt.Sprintf("%s has no property %q", entityType, ep))
+		return
+	}
+	if pd.Computed != "" {
+		v.add(key, fmt.Sprintf("%s.%s is computed; it cannot be set", entityType, ep))
+		return
+	}
+	if pd.Rollup != nil {
+		v.add(key, fmt.Sprintf("%s.%s is a roll-up; it cannot be set", entityType, ep))
+		return
+	}
+	msgProp, ok := mt.Properties[mp]
+	if !ok {
+		v.add(key, fmt.Sprintf("message type %s has no property %q", mt.Name, mp))
+		return
+	}
+	if !promotable(msgProp, pd) {
+		v.add(key, fmt.Sprintf("message property %s (%s) cannot fill %s.%s, a %s property",
+			mp, msgProp.TypeName(), entityType, ep, pd.Type))
+	}
+}
+
+// promoteFace checks that a promote_to names a face exactly when its type
+// declares faces. A create of a faced type needs one, and taking the first
+// declared face would let a presentation order stand in for the operator's
+// intent.
+func (v *validator) promoteFace(key, typ, face string) {
+	faces := metamodel.FaceOrderOf(v.meta, typ)
+	switch {
+	case len(faces) == 0 && face != "":
+		v.add(key, typ+" declares no faces")
+	case len(faces) > 0 && face == "":
+		v.add(key, fmt.Sprintf("%s declares faces; name the face to create (%s)", typ, strings.Join(faces, ", ")))
+	case len(faces) > 0 && !slices.Contains(faces, face):
+		v.add(key, fmt.Sprintf("%s has no face %q; use one of %s", typ, face, strings.Join(faces, ", ")))
+	}
+}
+
+// promotable reports whether a message property's value can fill entity
+// property pd. Text and a ref (the entity id) fill a string; an enum fills a
+// string or the same enum type; every other type fills only its own type. A
+// list fills nothing.
+func promotable(mp Property, pd metamodel.PropertyDef) bool {
+	if mp.List {
+		return false
+	}
+	switch mp.Type {
+	case PropertyString, PropertyMarkdown, PropertyRef:
+		return pd.Type == metamodel.PropertyTypeString
+	case PropertyEnum:
+		return pd.Type == metamodel.PropertyTypeString || pd.Type == mp.Enum
+	case PropertyInteger:
+		return pd.Type == metamodel.PropertyTypeInteger
+	case PropertyBoolean:
+		return pd.Type == metamodel.PropertyTypeBoolean
+	case PropertyDate:
+		return pd.Type == metamodel.PropertyTypeDate
+	case PropertyDatetime:
+		return pd.Type == metamodel.PropertyTypeDatetime
+	}
+	return false
+}
+
+func (v *validator) lifecycle(key string, raw *rawLifecycle, ct *ChannelType) Lifecycle {
+	if raw == nil {
+		return Lifecycle{}
+	}
+	return Lifecycle{
+		Close:   v.lifecycleOp(key, LifecycleClose, raw.Close, ct, StateClosed),
+		Reopen:  v.lifecycleOp(key, LifecycleReopen, raw.Reopen, ct, StateOpen),
+		Archive: v.lifecycleOp(key, LifecycleArchive, raw.Archive, ct, StateArchived),
+		Delete:  v.lifecycleOp(key, LifecycleDelete, raw.Delete, ct, ""),
+	}
+}
+
+// lifecycleOp compiles the operation name under the lifecycle key
+// lifecycleKey. target is the state it moves to, or empty for delete.
+func (v *validator) lifecycleOp(
+	lifecycleKey, name string, raw *rawLifecycleOp, ct *ChannelType, target State,
+) *LifecycleOp {
+	if raw == nil {
+		return nil
+	}
+	key := lifecycleKey + "." + name
+	op := &LifecycleOp{
+		Gate:       v.gate(key, raw.Roles, raw.Permission, orDefault(raw.Label, name), raw.Denied, ct),
+		Conditions: map[string]*predicate.Program{},
+	}
+	if raw.From != "" {
+		op.From = v.state(key+".from", raw.From)
+		if op.From != "" && op.From == target {
+			v.add(key+".from", fmt.Sprintf("an operation cannot start from the state it moves to (%s)", target))
+		}
+	}
+	if raw.Condition != "" {
+		op.RequireAnchorRead = true
+		for _, t := range ct.AttachTo {
+			if rule, ok := v.compileRule(key+".condition", t, raw.Condition); ok {
+				op.Conditions[t] = rule.Program
+			}
+		}
+	}
+	if raw.Retention != "" {
+		if target != "" {
+			v.add(key+".retention", "only delete has a retention")
+		} else {
+			op.Retention = v.period(key+".retention", raw.Retention)
+		}
+	}
+	if raw.Auto != nil {
+		op.Auto = v.auto(key+".auto", raw.Auto, ct, target)
+	}
+	return op
+}
+
+func (v *validator) auto(key string, raw *rawAuto, ct *ChannelType, target State) *Auto {
+	if target != StateClosed && target != StateArchived {
+		v.add(key, "only close and archive run automatically")
+		return nil
+	}
+	if raw.When == "" && raw.After == "" {
+		v.add(key, "name when, after or both")
+		return nil
+	}
+	a := &Auto{When: map[string]Rule{}}
+	if raw.After != "" {
+		a.After = v.period(key+".after", raw.After)
+	}
+	if raw.When != "" {
+		for _, t := range ct.AttachTo {
+			rule, ok := v.compileRule(key+".when", t, raw.When)
+			if !ok {
+				continue
+			}
+			if ct.Anchor == AnchorFamily && v.facedAndRestricted(t) {
+				v.warn(key+".when", fmt.Sprintf("left out for %s: it declares faces and acl.yaml lets some "+
+					"readers see a face other than the default world's, so the rule would judge a face they "+
+					"may not see; use a channel type with anchor: face", t))
+				continue
+			}
+			a.When[t] = rule
+		}
+	}
+	return a
+}
+
+func (v *validator) messageOps(key string, raw *rawMessageOps, ct *ChannelType) MessageOps {
+	var ops MessageOps
+	if raw == nil {
+		return ops
+	}
+	if r := raw.EditOwn; r != nil {
+		ops.EditOwn = &EditOwn{Gate: v.gate(key+".edit_own", r.Roles, "", "", "", ct)}
+		if r.Within != "" {
+			ops.EditOwn.Within = v.period(key+".edit_own.within", r.Within)
+		}
+	}
+	if r := raw.DeleteOwn; r != nil {
+		ops.DeleteOwn = &DeleteOwn{Gate: v.gate(key+".delete_own", r.Roles, "", "", "", ct)}
+		if r.From != "" {
+			ops.DeleteOwn.From = v.state(key+".delete_own.from", r.From)
+		}
+	}
+	if r := raw.Remove; r != nil {
+		ops.Remove = &Remove{Gate: v.gate(key+".remove", r.Roles, "", "", "", ct), ReasonRequired: r.ReasonRequired}
+	}
+	return ops
+}
+
+func (v *validator) state(key, s string) State {
+	switch State(s) {
+	case StateOpen, StateClosed, StateArchived:
+		return State(s)
+	}
+	v.add(key, fmt.Sprintf("must be open, closed or archived, got %q", s))
+	return ""
+}
+
+func (v *validator) period(key, s string) Period {
+	p, err := ParsePeriod(s)
+	if err != nil {
+		v.add(key, err.Error())
+	}
+	return p
+}
+
+func (v *validator) trigger(name string, raw *rawTrigger, file *rawFile, c *Compiled) *Trigger {
+	key := "triggers." + name
+	if !namePattern.MatchString(name) {
+		v.add(key, "trigger name "+nameRule)
+	}
+	t := &Trigger{Name: name, EntityType: raw.EntityType, Channel: raw.Channel, PostType: raw.Post.Type,
+		Props: map[string]string{}}
+	switch TriggerOn(raw.On) {
+	case TriggerEnter, TriggerLeave, TriggerChange:
+		t.On = TriggerOn(raw.On)
+	default:
+		v.add(key+".on", fmt.Sprintf("must be enter, leave or change, got %q", raw.On))
+	}
+	switch WhenClosed(orDefault(raw.WhenClosed, string(WhenClosedSkip))) {
+	case WhenClosedSkip:
+		t.WhenClosed = WhenClosedSkip
+	case WhenClosedPost:
+		t.WhenClosed = WhenClosedPost
+	default:
+		v.add(key+".when_closed", fmt.Sprintf("must be skip or post, got %q", raw.WhenClosed))
+	}
+	if !v.meta.HasEntityType(raw.EntityType) {
+		v.add(key+".entity_type", fmt.Sprintf("unknown entity type %q", raw.EntityType))
+		return nil
+	}
+	if canon := v.meta.ResolveAlias(raw.EntityType); canon != raw.EntityType {
+		v.add(key+".entity_type", fmt.Sprintf("%q is an alias of %q; name the type itself", raw.EntityType, canon))
+		return nil
+	}
+	if raw.When == "" {
+		v.add(key+".when", "a trigger needs a when rule")
+	} else if rule, ok := v.compileRule(key+".when", raw.EntityType, raw.When); ok {
+		t.When = rule
+	}
+	ct, ok := file.ChannelTypes[raw.Channel]
+	if !ok {
+		v.add(key+".channel", fmt.Sprintf("unknown channel type %q", raw.Channel))
+		return t
+	}
+	if ct.Cardinality == string(CardinalityMany) {
+		v.add(key+".channel", "a trigger posts into a cardinality one channel type")
+	}
+	if !slices.Contains(ct.AttachTo, raw.EntityType) {
+		v.add(key+".channel", fmt.Sprintf("channel type %s does not attach to %s; a trigger posts into "+
+			"the changed entity's own channel", raw.Channel, raw.EntityType))
+	}
+	mt, ok := ct.MessageTypes[raw.Post.Type]
+	if !ok {
+		v.add(key+".post.type", fmt.Sprintf("channel type %s has no message type %q", raw.Channel, raw.Post.Type))
+		return t
+	}
+	if Persist(mt.Persist) == PersistEphemeral {
+		v.add(key+".post.type", fmt.Sprintf("message type %s is ephemeral; a trigger posts only log messages, "+
+			"because a signal would reach only the readers connected to the process that runs triggers", raw.Post.Type))
+		return t
+	}
+	maps.Copy(t.Props, raw.Post.Props)
+	// compile builds every channel type before triggers, so cmt is never
+	// nil here; the guard is defensive.
+	if cmt := compiledMessageType(c, raw.Channel, raw.Post.Type); cmt != nil {
+		v.literalPost(key+".post.props", cmt, t.Props, c.limits)
+	}
+	if v.facesUnsafe(raw.EntityType, c, raw.Channel) {
+		v.warn(key, fmt.Sprintf("left out: %s declares faces and acl.yaml lets some readers see a face other "+
+			"than the default world's, so a message about the family would describe a face they may not "+
+			"see; use a channel type with anchor: face", raw.EntityType))
+		return nil
+	}
+	return t
+}
+
+// compiledMessageType returns the compiled message type, or nil when its
+// channel type did not compile.
+func compiledMessageType(c *Compiled, channel, name string) *MessageType {
+	ct, ok := c.channelTypes[channel]
+	if !ok {
+		return nil
+	}
+	return ct.MessageTypes[name]
+}
+
+// literalPost checks the literal props a trigger or reminder posts as
+// realtime.validateProps and whenHolds will when the service posts them,
+// so a trigger or reminder that loads can post. A type whose `when:`
+// calls today() is refused first, because no literal can fix it. Then the
+// literal policy reports every problem it finds: a value is operator text
+// with no substitution, so `{{` is refused, and it may set only a string,
+// markdown or enum property. Only when the policy passes do the props go
+// through [MessageType.NormalizeProps], which reports its first refusal,
+// and the type's `when:`, as [buttonChecker.preset] does for a preset.
+func (v *validator) literalPost(key string, mt *MessageType, lit map[string]string, limits Limits) {
+	// A when: on today() would make the file load on one day and fail on
+	// the next, so it is refused rather than evaluated at an arbitrary date.
+	if mt.When != nil && slices.Contains(mt.When.Functions(), predicatefns.FuncToday) {
+		v.add(key, "the when: condition of message type "+mt.Name+" calls today(), so whether this "+
+			"trigger's or reminder's message meets it would depend on the date")
+		return
+	}
+	for pn := range lit {
+		if p, ok := mt.Properties[pn]; ok && p.Type == "" {
+			// A property's type is unknown, which refused the file at its
+			// .type key already. The rest of the check is skipped for every
+			// literal, not only this one, so the caller sees no new problem.
+			return
+		}
+	}
+	policyOK := true
+	for _, pn := range sortedKeys(lit) {
+		p, ok := mt.Properties[pn]
+		if !ok {
+			continue // NormalizeProps refuses an undeclared property.
+		}
+		switch {
+		case strings.Contains(lit[pn], "{{"):
+			v.add(key+"."+pn, "a trigger or reminder posts literal text; {{...}} substitution is not supported")
+			policyOK = false
+		case p.List:
+			// The compiled List: a raw list: true on a type that cannot be a
+			// list compiles to false, but the file is refused at its .list key.
+			v.add(key+"."+pn, "a trigger or reminder cannot set a list property; it posts one literal value")
+			policyOK = false
+		case p.Type != PropertyString && p.Type != PropertyMarkdown && p.Type != PropertyEnum:
+			v.add(key+"."+pn, fmt.Sprintf("a trigger or reminder sets a property to literal text, so it can set "+
+				"only string, markdown or enum properties; %s has type %s", pn, p.TypeName()))
+			policyOK = false
+		}
+	}
+	if !policyOK {
+		return
+	}
+	in := make(map[string]any, len(lit))
+	for pn, val := range lit {
+		in[pn] = val
+	}
+	np, err := mt.NormalizeProps(in, limits.MessageBytes)
+	var pe *propError
+	switch {
+	case errors.Is(err, ErrTooManyProps):
+		v.add(key, fmt.Sprintf("at most %d properties", realtimelimits.MaxMessageProperties))
+		return
+	case errors.Is(err, ErrTooLarge):
+		v.add(key, fmt.Sprintf("the message is over message_bytes (%d bytes)", limits.MessageBytes))
+		return
+	case errors.As(err, &pe):
+		v.add(key+"."+pe.prop, pe.reason)
+		return
+	case err != nil:
+		v.add(key, err.Error())
+		return
+	}
+	if mt.When == nil {
+		return
+	}
+	if !mt.Holds(context.Background(), mt.PredicateFields(np.Props), time.Time{}) {
+		v.add(key, "the message does not meet the when: condition of message type "+mt.Name)
+	}
+}
+
+// facesUnsafe reports whether a rule over entityType that acts on a
+// family-anchored channel would read a face some channel reader may not
+// see: the type declares faces and the policy admits readers through other
+// faces (see facesRestricted).
+func (v *validator) facesUnsafe(entityType string, c *Compiled, channel string) bool {
+	ct, ok := c.channelTypes[channel]
+	return ok && ct.Anchor == AnchorFamily && v.facedAndRestricted(entityType)
+}
+
+// facedAndRestricted reports whether entityType declares faces and
+// acl.yaml restricts which of them some readers see.
+func (v *validator) facedAndRestricted(entityType string) bool {
+	def, ok := v.meta.GetEntityDef(entityType)
+	return ok && len(def.Faces) > 0 && facesRestricted(v.policy, entityType)
+}
+
+func orDefault(s, def string) string {
+	if s == "" {
+		return def
+	}
+	return s
+}
+
+func sortedKeys[V any](m map[string]V) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// facesRestricted reports whether p may admit some reader to entityType
+// through a face other than the default world's prime face: a role reads
+// it through a face-named grant (type@face) or reads another world. A
+// value derived from the prime face is then not one every reader of the
+// family sees. Like [acl.Policy.FieldRestricted] the answer is policy-wide
+// and principal-independent.
+//
+// Nil: p is accepted and restricts nothing (no acl.yaml).
+func facesRestricted(p *acl.Policy, entityType string) bool {
+	if p == nil {
+		return false
+	}
+	for _, role := range p.Roles {
+		if len(role.Worlds) > 0 {
+			return true
+		}
+		for _, key := range role.Read {
+			if strings.HasPrefix(key, entityType+"@") {
+				return true
+			}
+		}
+	}
+	return false
+}

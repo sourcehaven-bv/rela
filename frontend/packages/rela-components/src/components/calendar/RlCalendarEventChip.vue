@@ -11,6 +11,9 @@ import { computed } from 'vue'
 import type { CalendarDay } from './calendarGrid'
 import { compareDays, sameDay } from './calendarGrid'
 import type { CalendarDragPayload, CalendarEvent } from './types'
+import { useMessages } from '../../composables/useMessages'
+
+const messages = useMessages()
 
 const props = withDefaults(
   defineProps<{
@@ -53,14 +56,16 @@ const span = computed<'single' | 'start' | 'middle' | 'end'>(() => {
 })
 
 const SPAN_MARKERS = {
-  start: { marker: '→', description: 'Continues on following days' },
-  middle: { marker: '↔', description: 'Continues before and after this day' },
-  end: { marker: '←', description: 'Continued from earlier days' },
+  start: { marker: '→', key: 'continuesAfter' },
+  middle: { marker: '↔', key: 'continuesBeforeAndAfter' },
+  end: { marker: '←', key: 'continuedFromBefore' },
 } as const
 
-const spanMarker = computed(() =>
-  span.value === 'single' ? undefined : SPAN_MARKERS[span.value],
-)
+const spanMarker = computed(() => {
+  if (span.value === 'single') return undefined
+  const { marker, key } = SPAN_MARKERS[span.value]
+  return { marker, description: messages.chromeText({ key }) }
+})
 
 const fields = computed(() => props.event.fields ?? [])
 </script>

@@ -277,6 +277,18 @@ var nonBrowserExemptPrefixes = []string{
 	// MCPPath, not a subtree. isCSRFExempt uses HasPrefix, so this also
 	// covers any future `/api/v1/_mcp/...` sub-route.
 	MCPPath,
+	// Advisory leases (TKT-4YPG4Q): renew, release and the caller's lease
+	// list. The claim lives on the data route /api/v1/{plural}/{id}/_lease
+	// and is already exempt through isNonBrowserExemptV1Path; without this
+	// entry a script or agent could claim a lease over HTTP but never renew
+	// or release it. A CSRF here gains nothing: renew and release act only on
+	// the lease named by the secret lease_id in the body, which a cross-site
+	// page does not know, and the list returns only the caller's own leases,
+	// which a cross-site page cannot read. isCSRFExempt still requires the
+	// no-cookie, no-Origin, no-Sec-Fetch shape, so a cookie-bearing
+	// cross-origin request keeps the same-origin check. No trailing slash, so
+	// that GET /api/v1/_leases is covered too.
+	leasesPath,
 	// NOTE: the /api/v1 data + schema routes are also non-browser exempt, but
 	// they can't be a static prefix ({plural} varies per type), so they're
 	// matched by isNonBrowserExemptV1Path (folded into isCSRFExempt) rather

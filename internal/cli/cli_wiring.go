@@ -136,6 +136,8 @@ type cliBundles struct {
 	attachment *attachment.Service
 	renametype *renametype.Service
 	analysis   *analysis.Service
+	leases     *leaseServices
+	channels   *channelServices
 }
 
 // newCLIBundles wires the focused services around an already-constructed
@@ -221,7 +223,20 @@ func newCLIBundles(svc *appbuild.Services) (*cliBundles, error) {
 	} else {
 		write.Tokens = broker
 	}
+	leases := &leaseServices{}
+	// Assigned only when present, for the same reason as Comments above.
+	if l := appbuild.Leases(svc); l != nil {
+		leases.Svc = l
+	}
+	channels := &channelServices{}
+	// Assigned only when present, for the same reason as Comments above.
+	if c := appbuild.ChannelService(svc); c != nil {
+		channels.Svc = c
+		channels.Follow = func(ctx context.Context) <-chan struct{} { return appbuild.FollowChannels(ctx, svc) }
+	}
 	return &cliBundles{
+		leases:     leases,
+		channels:   channels,
 		read:       &read,
 		write:      &write,
 		attachment: att,

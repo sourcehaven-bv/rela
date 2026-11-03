@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 
@@ -182,6 +183,15 @@ func budgetEpics(n int) int { return (n + budgetTicketsPerEpic - 1) / budgetTick
 // (person P1 → team T1).
 func newBudgetAppOn(t *testing.T, n int, base store.Store) (*App, *storetest.Counting, *acl.Declarative, context.Context) {
 	t.Helper()
+	return newBudgetAppWith(t, n, base, budgetMeta())
+}
+
+// newBudgetAppWith is [newBudgetAppOn] over meta, which must declare at
+// least the types and relations of [budgetMeta].
+func newBudgetAppWith(
+	t *testing.T, n int, base store.Store, meta *metamodel.Metamodel,
+) (*App, *storetest.Counting, *acl.Declarative, context.Context) {
+	t.Helper()
 	counting := storetest.NewCounting(base)
 	ctx := context.Background()
 	must := func(err error) {
@@ -242,14 +252,14 @@ func newBudgetAppOn(t *testing.T, n int, base store.Store) (*App, *storetest.Cou
 		must(err)
 	}
 
-	app := newAppFromParts(budgetConfig(), budgetMeta(), newFixture(), appbuildtest.WithStore(counting))
+	app := newAppFromParts(budgetConfig(), meta, newFixture(), appbuildtest.WithStore(counting))
 	d := mustNewACL(t, &acl.Policy{
 		Roles: map[string]acl.RoleDef{"editor": {
 			Read: []string{"*"}, Create: []string{"ticket"}, Update: []string{"ticket"}, Delete: []string{"ticket"},
 		}},
 		Assignments: map[string]string{"T1": "editor"},
 	}, app.store)
-	app.acl = d
+	setTestACL(t, app, d)
 	counting.Reset()
 	return app, counting, d, principalCtx("P1")
 }
@@ -264,16 +274,83 @@ func readsFor(t *testing.T, op budgetOp) (small, large int, detail string) {
 type budgetOp func(t *testing.T, app *App, d *acl.Declarative, ctx context.Context)
 
 // readsForOn is readsFor over a fresh store from newStore per size.
+//
+// It also runs op under [realisticBudgetPolicy] at both sizes and fails the
+// test when the reads differ there. The returned counts are the fixture
+// ACL's, so the pinned budgets are unchanged. The fixture ACL has no role
+// relations and no inheritance, and BUG-E2W1LS was a per-row cost only those
+// produce: every budget test passed while a production list ran 1,800
+// lookups. Running every shape under both ACLs means a new budget test
+// covers the realistic ACL without opting in.
 func readsForOn(t *testing.T, newStore func(*testing.T) store.Store, op budgetOp) (small, large int, detail string) {
+	t.Helper()
+	return readsForWith(t, newStore, budgetMeta, op)
+}
+
+// readsForWith is [readsForOn] over the metamodel newMeta returns.
+func readsForWith(
+	t *testing.T, newStore func(*testing.T) store.Store, newMeta func() *metamodel.Metamodel, op budgetOp,
+) (small, large int, detail string) {
 	t.Helper()
 	counts := make([]int, 0, 2)
 	for _, n := range []int{10, 50} {
-		app, counting, d, ctx := newBudgetAppOn(t, n, newStore(t))
+		app, counting, d, ctx := newBudgetAppWith(t, n, newStore(t), newMeta())
 		op(t, app, d, ctx)
 		counts = append(counts, counting.Reads())
 		detail = counting.String()
 	}
+	realistic := make([]int, 0, 2)
+	var realisticDetail string
+	for _, n := range []int{10, 50} {
+		app, counting, _, ctx := newBudgetAppWith(t, n, newStore(t), newMeta())
+		d := useRealisticBudgetPolicy(t, app, counting)
+		op(t, app, d, ctx)
+		realistic = append(realistic, counting.Reads())
+		realisticDetail = counting.String()
+	}
+	if realistic[0] != realistic[1] {
+		t.Errorf("under the realistic ACL, store reads grow with page size: %d at 10 rows, %d at 50 rows (%s)",
+			realistic[0], realistic[1], realisticDetail)
+	}
 	return counts[0], counts[1], detail
+}
+
+// realisticBudgetPolicy is the fixture ACL plus what a production acl.yaml
+// has: several roles, local roles conferred by relations, one of them
+// declared against the relation's direction (as Atlas's toegewezen_aan was,
+// so every probe misses), and inheritance through containment.
+func realisticBudgetPolicy() *acl.Policy {
+	return &acl.Policy{
+		Roles: map[string]acl.RoleDef{
+			"editor": {
+				Read: []string{"*"}, Create: []string{"ticket"}, Update: []string{"ticket"}, Delete: []string{"ticket"},
+			},
+			"assignee": {Update: []string{"ticket"}},
+			"lead":     {Update: []string{"ticket", "epic"}, Delete: []string{"ticket"}},
+		},
+		Assignments: map[string]string{"T1": "editor"},
+		RoleRelations: map[string]acl.RoleRelationDef{
+			// ticket → person: the resolver probes member → row, so it never
+			// matches, yet costs a probe per member per row unprimed.
+			"assigned-to": {Confers: "assignee"},
+			"leads":       {Confers: "lead"},
+		},
+		InheritRolesThrough: []string{"in-epic"},
+	}
+}
+
+// useRealisticBudgetPolicy installs [realisticBudgetPolicy] on app, with P1
+// leading the first epic, and resets the counter.
+func useRealisticBudgetPolicy(t *testing.T, app *App, counting *storetest.Counting) *acl.Declarative {
+	t.Helper()
+	if _, err := counting.CreateRelation(context.Background(),
+		entity.RelationKey{From: "P1", Type: "leads", To: "EP1"}, nil); err != nil {
+		t.Fatal(err)
+	}
+	d := mustNewACL(t, realisticBudgetPolicy(), app.store)
+	setTestACL(t, app, d)
+	counting.Reset()
+	return d
 }
 
 func assertBudget(t *testing.T, name string, small, large, pinned int, detail string) {
@@ -632,6 +709,11 @@ func TestQueryBudget_NavItemsWithInitialsAreSizeIndependent(t *testing.T) {
 
 // Pinned budgets: the measured store-call count per request shape after
 // TKT-1U8XYN. Raise one only with a reason in the commit.
+//
+// Measured with the neighbor gate wired, as production wires it
+// (BUG-J01V0Q). The fixture used to leave it unwired, which skipped the
+// gated edge reads. A page's edges are one relation query, not one per
+// face (worldreader.RelationReader.NeighborsForPage).
 const (
 	// list page: scoped count + one bounded page read (listpushdown.go),
 	// page edges, neighbor headers, membership walk.
@@ -643,7 +725,7 @@ const (
 	traversalScopeBudget = 6
 	// view: entry, two traverse passes, collection load, section columns +
 	// target headers, entry edges, membership walk.
-	viewSectionBudget = 11
+	viewSectionBudget = 12
 	// edge warnings: the test's own listing of the peers, ONE header read for
 	// every peer, and the membership walk.
 	edgeWarningsBudget = 4
@@ -666,12 +748,28 @@ const (
 	// list page with a relation context: listPageBudget plus the same two
 	// reads as searchLinkableBudget.
 	listLinkableBudget = 8
+	// list pages with ?include= (TASK-550RD): listPageBudget plus, per
+	// include level, the page's batched edge reads and ONE head resolution.
+	// Before batching: 8 + 4×rows (all), 8 + 3×rows (named) and 8 + 6×rows
+	// (nested), i.e. 208, 158 and 308 at 50 rows.
+	listIncludeAllBudget    = 8
+	listIncludeNamedBudget  = 8
+	listIncludeNestedBudget = 10
 	// recursive view: entry, the fixpoint's relation queries, the collection
 	// load, and the BFS frontier source gate's ONE header scan per level
 	// walked (BUG-9Z20WH). Measured, not derived; the point of the pin is that
 	// it does not move with row count — the fixture puts every ticket one
 	// level below the epic, so a per-node gate would make this grow.
 	recursiveViewBudget = 12
+	// mentioned-by: the target's address read, one index batch, ONE header
+	// read for that batch's sources, and the membership walk.
+	mentionedByBudget = 5
+	// backlinks view (TKT-HF0D5W): the entry read, one index batch, the
+	// resolver's ONE header read to gate it, the step's ONE header reload,
+	// and the edge and membership reads every view makes. Measured: 7 at 10
+	// and 50 sources. The separate MentionSources assertion pins the
+	// once-per-view read.
+	mentionsViewBudget = 7
 	// nested view: entry, the two traverse passes, the collection loads, the
 	// entry edges and the membership walk, plus the relation column's own
 	// reads — one ListRelations per ROW TYPE (epic and ticket) and the gated
@@ -798,7 +896,7 @@ func TestQueryBudget_NestedRelationColumnsResolveOverEmittedRowsOnly(t *testing.
 		Roles:       map[string]acl.RoleDef{"editor": {Read: []string{"*"}}},
 		Assignments: map[string]string{"T1": "editor"},
 	}, app.store)
-	app.acl = d
+	setTestACL(t, app, d)
 	breadth.Reset()
 
 	rec := viewsAs(principalCtx("P1"), t, app, d, "program", "PRG1")
@@ -871,5 +969,121 @@ func TestQueryBudget_NestedRelationColumnsResolveOverEmittedRowsOnly(t *testing.
 			"(allowance %d = %d/%d per row; %d children visible) — selection must precede "+
 			"resolution (RR-HKHPYG); breadth: %s",
 			got, emitted, limit, nestedRelationIDsPerRow, nestedRelationIDsPerRowDiv, visibleChildren, breadth)
+	}
+}
+
+// A backlinks page (TKT-Q6AKUN): every ticket's body mentions F1. The
+// sources come back in index batches, each gated with one header read, so
+// the count must not move with the number of mentioning tickets.
+func TestQueryBudget_MentionedByIsSizeIndependent(t *testing.T) {
+	counts := make([]int, 0, 2)
+	var detail string
+	for _, n := range []int{10, 50} {
+		app, counting, d, ctx := newBudgetAppOn(t, n, memstore.New())
+		for i := 1; i <= n; i++ {
+			id := fmt.Sprintf("TKT-%04d", i)
+			e := entity.New(id, "ticket")
+			e.SetString("title", "Ticket "+id)
+			e.Content = "Implements `F1`."
+			if err := counting.UpdateEntity(ctx, e); err != nil {
+				t.Fatal(err)
+			}
+		}
+		counting.Reset()
+		got := decodeMentionedBy(t, getMentionedByAs(ctx, t, app, d, http.MethodGet, "F1", "limit=100"))
+		if len(got.Items) != n {
+			t.Fatalf("n=%d: got %d sources", n, len(got.Items))
+		}
+		counts = append(counts, counting.Reads())
+		detail = counting.String()
+	}
+	assertBudget(t, "mentioned-by", counts[0], counts[1], mentionedByBudget, detail)
+}
+
+// A view with a `mentioned_by` step and a `columns_by_type` table
+// (TKT-HF0D5W). The index is read once per view, not once per fixpoint pass,
+// and nothing scales with the number of sources.
+func TestQueryBudget_MentionsViewIsSizeIndependent(t *testing.T) {
+	counts := make([]int, 0, 2)
+	var detail string
+	for _, n := range []int{10, 50} {
+		app, counting, d, ctx := newBudgetAppOn(t, n, memstore.New())
+		for i := 1; i <= n; i++ {
+			id := fmt.Sprintf("TKT-%04d", i)
+			e := entity.New(id, "ticket")
+			e.SetString("title", "Ticket "+id)
+			e.SetString("status", "open")
+			e.Content = "Implements `F1`."
+			if err := counting.UpdateEntity(ctx, e); err != nil {
+				t.Fatal(err)
+			}
+		}
+		app.Cfg().Views["fv"] = ViewConfig{
+			Entry:    ViewEntry{Type: "feature"},
+			Traverse: []ViewTraverse{{From: "entry", MentionedBy: true, CollectAs: "mentions"}},
+			Sections: []ViewSection{{
+				Heading: "Mentioned by", Source: "mentions", Display: "table",
+				Columns:       []ListColumn{{Property: "title"}},
+				ColumnsByType: map[string][]ListColumn{"ticket": {{Property: "title"}, {Property: "status"}}},
+			}},
+		}
+		counting.Reset()
+		rec := viewsAs(ctx, t, app, d, "feature", "F1")
+		got := decodeView(t, rec.Code, rec.Body.Bytes())
+		if rows := len(got.Sections[0].Groups[0].Rows); rows != n {
+			t.Fatalf("n=%d: got %d rows", n, rows)
+		}
+		if calls := counting.Calls()["MentionSources"]; calls != 1 {
+			t.Errorf("n=%d: MentionSources called %d times, want once per view", n, calls)
+		}
+		counts = append(counts, counting.Reads())
+		detail = counting.String()
+	}
+	assertBudget(t, "mentions view", counts[0], counts[1], mentionsViewBudget, detail)
+}
+
+// A list page with `?include=` — the SPA's relation-column shape, which the
+// Atlas task list polls with `include=*` (TASK-550RD). Each row's include
+// block used to be resolved on its own: edges, head resolution and a gate
+// pass per row, so a few hundred rows cost thousands of reads. The page is
+// now resolved in one batch per include level.
+func TestQueryBudget_ListIncludesAreSizeIndependent(t *testing.T) {
+	cases := []struct {
+		name    string
+		include string
+		pinned  int
+		// wantIncluded is an id the include block must carry, so the budget
+		// cannot pass on an empty block.
+		wantIncluded string
+	}{
+		{name: "all", include: "*", pinned: listIncludeAllBudget, wantIncluded: "F1"},
+		{name: "named", include: "implements,assigned-to", pinned: listIncludeNamedBudget, wantIncluded: "P1"},
+		{name: "nested", include: "assigned-to.member-of", pinned: listIncludeNestedBudget, wantIncluded: "T1"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			small, large, detail := readsFor(t, func(t *testing.T, app *App, d *acl.Declarative, ctx context.Context) {
+				t.Helper()
+				_, rec := listEntitiesAs(ctx, t, app, d, "ticket", "tickets",
+					"per_page=100&include="+url.QueryEscape(tc.include))
+				if rec.Code != http.StatusOK {
+					t.Fatalf("list: %d %s", rec.Code, rec.Body)
+				}
+				var body struct {
+					Data     []v1.Entity          `json:"data"`
+					Included map[string]v1.Entity `json:"included"`
+				}
+				if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+					t.Fatalf("decode: %v", err)
+				}
+				if len(body.Data) < 10 {
+					t.Fatalf("list returned %d rows", len(body.Data))
+				}
+				if _, ok := body.Included[tc.wantIncluded]; !ok {
+					t.Fatalf("include block lacks %s, so this budget proves nothing: %v", tc.wantIncluded, body.Included)
+				}
+			})
+			assertBudget(t, "list include="+tc.include, small, large, tc.pinned, detail)
+		})
 	}
 }

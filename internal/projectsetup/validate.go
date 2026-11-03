@@ -1,6 +1,7 @@
 package projectsetup
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"path/filepath"
@@ -10,12 +11,16 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/computed"
 	"github.com/Sourcehaven-BV/rela/internal/conditionlint"
+	"github.com/Sourcehaven-BV/rela/internal/config"
 	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
 	"github.com/Sourcehaven-BV/rela/internal/mailtemplate"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
+	"github.com/Sourcehaven-BV/rela/internal/migration"
 	"github.com/Sourcehaven-BV/rela/internal/project"
+	"github.com/Sourcehaven-BV/rela/internal/rollup"
 	"github.com/Sourcehaven-BV/rela/internal/scheduler"
 	"github.com/Sourcehaven-BV/rela/internal/storage"
+	"github.com/Sourcehaven-BV/rela/internal/subscription"
 	"github.com/Sourcehaven-BV/rela/internal/tokenstore"
 	"github.com/Sourcehaven-BV/rela/internal/worlds"
 )
@@ -35,38 +40,41 @@ type ValidateResult struct {
 	// ConnectionsError is why connections.yaml does not parse or validate.
 	// Nil when the file is valid or absent.
 	ConnectionsError error
+	// SubscriptionsError is why subscriptions.yaml does not parse or
+	// validate. Nil when the file is valid or absent.
+	SubscriptionsError error
 }
 
 // HasErrors returns true if any validation failed.
 func (r *ValidateResult) HasErrors() bool {
 	return r.MetamodelError != nil || r.DataEntryError != nil || r.MailTemplatesError != nil ||
-		r.SchedulesError != nil || r.ConnectionsError != nil
+		r.SchedulesError != nil || r.ConnectionsError != nil || r.SubscriptionsError != nil
 }
 
 // Validate validates project configuration files (metamodel.yaml, data-entry.yaml)
 // without loading the full graph. Use this for the `rela validate` command.
 // If startDir is empty, it uses the current working directory.
-func Validate(startDir string) (*ValidateResult, error) {
+func Validate(ctx context.Context, startDir string) (*ValidateResult, error) {
 	// coverage-ignore-start: main-or-wiring: constructs the real OS filesystem and delegates to ValidateWithFS, which
 	// is the tested seam
 	fs := storage.NewSafeFS(storage.NewOsFS())
-	return ValidateWithFS(startDir, fs)
+	return ValidateWithFS(ctx, startDir, fs)
 	// coverage-ignore-end
 }
 
 // ValidateWithFS validates using the provided filesystem.
-func ValidateWithFS(startDir string, fs storage.FS) (*ValidateResult, error) {
+func ValidateWithFS(ctx context.Context, startDir string, fs storage.FS) (*ValidateResult, error) {
 	// Discover project
-	ctx, err := project.Discover(startDir, fs)
+	proj, err := project.Discover(startDir, fs)
 	if err != nil {
 		return nil, errors.New("no project found: run 'rela init' to create one")
 	}
 
 	result := &ValidateResult{}
-	result.ProjectRoot = ctx.Root
+	result.ProjectRoot = proj.Root
 
 	// Validate metamodel
-	mm, _, err := metamodel.Load(ctx.SchemaPath, fs)
+	mm, _, err := metamodel.Load(proj.SchemaPath, fs)
 	switch {
 	case err != nil:
 		result.MetamodelError = err
@@ -83,6 +91,8 @@ func ValidateWithFS(startDir string, fs storage.FS) (*ValidateResult, error) {
 			result.MetamodelError = compileErr
 		} else if _, compileErr := computed.Compile(mm); compileErr != nil {
 			result.MetamodelError = compileErr
+		} else if _, compileErr := rollup.Compile(mm); compileErr != nil {
+			result.MetamodelError = compileErr
 		} else {
 			result.MetamodelValid = true
 			result.Metamodel = mm
@@ -90,7 +100,7 @@ func ValidateWithFS(startDir string, fs storage.FS) (*ValidateResult, error) {
 	}
 
 	// Validate data-entry.yaml if it exists
-	dataEntryPath := filepath.Join(ctx.Root, dataentryconfig.ConfigFile)
+	dataEntryPath := filepath.Join(proj.Root, dataentryconfig.ConfigFile)
 	result.DataEntryError = validateDataEntry(dataEntryPath, mm, fs)
 	if result.DataEntryError == nil {
 		if _, statErr := fs.Stat(dataEntryPath); statErr != nil || mm == nil {
@@ -99,9 +109,10 @@ func ValidateWithFS(startDir string, fs storage.FS) (*ValidateResult, error) {
 			result.DataEntryValid = true
 		}
 	}
-	result.MailTemplatesError, result.SchedulesError = validateScheduledMail(ctx.Root, mm, fs)
-	result.MailTemplatesPresent, _ = fileExists(filepath.Join(ctx.Root, mailtemplate.ConfigFile), fs)
-	result.ConnectionsError = validateConnections(ctx.Root, fs)
+	result.MailTemplatesError, result.SchedulesError = validateScheduledMail(proj.Root, mm, fs)
+	result.MailTemplatesPresent, _ = fileExists(filepath.Join(proj.Root, mailtemplate.ConfigFile), fs)
+	result.ConnectionsError = validateConnections(proj.Root, fs)
+	result.SubscriptionsError = validateSubscriptions(ctx, proj.Root, mm, fs)
 
 	return result, nil
 }
@@ -119,6 +130,23 @@ func validateConnections(root string, fs storage.FS) error {
 	}
 	_, err = tokenstore.ParseConnections(data)
 	return err
+}
+
+// validateSubscriptions checks subscriptions.yaml through the loader the
+// scheduler starts from, so a file that validates here also starts. An
+// absent file is valid, and without a schema there is nothing to check it
+// against (the schema error is reported on its own). An invalid
+// schedules.yaml stops the loader before it reaches subscriptions; that error
+// is reported as SchedulesError.
+func validateSubscriptions(ctx context.Context, root string, mm *metamodel.Metamodel, fs storage.FS) error {
+	if exists, _ := fileExists(filepath.Join(root, subscription.FileName), fs); !exists || mm == nil {
+		return nil
+	}
+	_, err := scheduler.LoadConfig(ctx, config.NewFSLoader(fs, root), mm)
+	if errors.Is(err, scheduler.ErrSubscriptions) {
+		return err
+	}
+	return nil
 }
 
 func validateScheduledMail(root string, mm *metamodel.Metamodel, fs storage.FS) (mailErr, schedulesErr error) {
@@ -198,7 +226,16 @@ func validateDataEntry(path string, mm *metamodel.Metamodel, fs storage.FS) erro
 // CheckDataEntry validates data-entry.yaml content against mm the way
 // `rela validate` does: structure, references, and every condition the
 // server compiles.
+//
+// Deprecated syntax is reported as a [*migration.Error], the error type the
+// server returns when it loads the file: a config that rela-server refuses
+// must not pass. Like the server, it stops there, so other errors in the file
+// show only after `rela migrate`, which rewrites the deprecated syntax.
 func CheckDataEntry(data []byte, mm *metamodel.Metamodel) error {
+	if detections := migration.DetectBytes(data, migration.FileTypeDataEntry); len(detections) > 0 {
+		return &migration.Error{FilePath: dataentryconfig.ConfigFile, Detections: detections}
+	}
+
 	var cfg dataentryconfig.Config
 	if err := yaml.Unmarshal(data, &cfg); err != nil {
 		return fmt.Errorf("parsing YAML: %w", err)
@@ -241,4 +278,36 @@ func fileExists(path string, fs storage.FS) (bool, error) {
 		return true, nil
 	}
 	return false, err
+}
+
+// CheckChannels checks data-entry.yaml's `channels:` section, kanban
+// `busy:` card fields and list `busy:` columns against the realtime
+// configuration schema describes (nil: realtime off). A file that does not
+// parse is left to [CheckDataEntry].
+func CheckChannels(data []byte, schema dataentryconfig.ChannelSchema) (errs, warnings []string) {
+	cfg, ok := realtimePresentation(data)
+	if !ok {
+		return nil, nil
+	}
+	return dataentryconfig.ValidateChannels(cfg, schema)
+}
+
+// HasRealtimePresentation reports whether data-entry.yaml content says
+// anything that must be checked against realtime.yaml: a non-empty
+// `channels:` section, a kanban card field with `busy:` (TKT-21G6JS) or a
+// list column with `busy:` (TKT-TU3XH4).
+func HasRealtimePresentation(data []byte) bool {
+	_, ok := realtimePresentation(data)
+	return ok
+}
+
+// realtimePresentation parses data and returns it when it has something
+// to check against realtime.yaml; see
+// [dataentryconfig.HasRealtimePresentation].
+func realtimePresentation(data []byte) (*dataentryconfig.Config, bool) {
+	var cfg dataentryconfig.Config
+	if err := yaml.Unmarshal(data, &cfg); err != nil || !dataentryconfig.HasRealtimePresentation(&cfg) {
+		return nil, false
+	}
+	return &cfg, true
 }

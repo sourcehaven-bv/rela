@@ -19,8 +19,10 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/Sourcehaven-BV/rela/internal/access"
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/cmdexec"
+	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/natsort"
@@ -118,6 +120,7 @@ func newGatedAuthorizer(d *acl.Declarative) (gatedAuthorizer, error) {
 	return gatedAuthorizer{d: d}, nil
 }
 
+//archplan:guard=authz reason="checks the command's config-declared permission; fails closed"
 func (gatedAuthorizer) Authorize(ctx context.Context, cmd CommandConfig) bool {
 	// View commands have no fine-grained control yet: `permission:` is not
 	// honored for them, so a granted permission must NOT open the gate.
@@ -183,11 +186,9 @@ func SelectCommandAuthorizer(
 	active acl.ACL, declarative *acl.Declarative, loopback, override bool, notify CommandAuthNotifier,
 ) (commandAuthorizer, error) {
 	// ReadOnly is checked before anything else: it is a stronger guarantee than
-	// "no policy" and must deny exec on every bind. Match both value and pointer
-	// forms (AuthorizeWrite has a value receiver, so &ReadOnlyACL{} also
-	// satisfies acl.ACL) — the same &-reachable bypass the old switch guarded.
-	switch active.(type) {
-	case acl.ReadOnlyACL, *acl.ReadOnlyACL:
+	// "no policy" and must deny exec on every bind. access.ModeOf matches the
+	// value and pointer forms, closing the &ReadOnlyACL{} bypass.
+	if access.ModeOf(active).RefusesWrites() {
 		return denyAuthorizer{}, nil
 	}
 
@@ -217,7 +218,8 @@ func SelectCommandAuthorizer(
 
 // resolveCommands returns commands available for a given page context.
 // pageType is "entity", "list", "view", or "dashboard".
-// qualifier is the specific list ID or view ID.
+// qualifier is the specific list ID or view ID, or for a dashboard its name
+// ("" for the default dashboard).
 // entityType is the entity type shown on the page (empty for dashboard).
 //
 // Commands the principal may not execute are omitted, so the SPA never renders
@@ -283,7 +285,12 @@ func matchesPage(cmd CommandConfig, pageType, qualifier, entityType string) bool
 			return true
 		}
 	case "dashboard":
-		if scope.Dashboard {
+		// The qualifier is the dashboard's name, "" (or "default") for the
+		// default one, as for `/_dashboard?name=`.
+		if qualifier == dataentryconfig.DefaultDashboardName {
+			qualifier = ""
+		}
+		if scope.Dashboard.IsSet() && scope.Dashboard.Name() == qualifier {
 			return true
 		}
 	}
@@ -615,7 +622,7 @@ func (h *commandHandler) buildCommandInput(
 			return nil, false
 		}
 		entities := listFromStoreByTypes(r.Context(), h.services(), []string{listCfg.EntityType})
-		entities = applyFilters(entities, listCfg.Filters)
+		entities = applyFilters(entities, listCfg.Filters, filterUser(r.Context()))
 		input = h.buildListInput(listID, entities)
 	case "view":
 		viewID := r.URL.Query().Get("view_id")
@@ -661,6 +668,7 @@ func (h *commandHandler) buildCommandInput(
 // browser tab, bypassing same-origin policy entirely.
 //
 //nolint:funlen // dispatches over every command context and argument shape inline; each branch is one command variant, and extracting them would fragment the request lifecycle.
+//archplan:auth=authz
 func (h *commandHandler) handleCommandExec(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -730,7 +738,9 @@ func (h *commandHandler) handleCommandExec(w http.ResponseWriter, r *http.Reques
 	// RELA_* env vars, never as shell text. A shell is intentional here —
 	// `script:` is documented as a shell snippet, and executing it is the
 	// feature. The trust boundary is the config file (operator/repo write
-	// access), enforced upstream by authorizeCommand.
+	// access), enforced upstream by authorizeCommand. The same reason
+	// covers the semgrep suppression below.
+	// nosemgrep: go.lang.security.audit.dangerous-exec-command.dangerous-exec-command
 	proc := exec.CommandContext(r.Context(), "sh", "-c", cmd.Script)
 	proc.Cancel = func() error { return proc.Process.Signal(syscall.SIGINT) }
 	proc.WaitDelay = cancelGrace
@@ -812,6 +822,8 @@ func (h *commandHandler) handleCommandExec(w http.ResponseWriter, r *http.Reques
 }
 
 // handleCommandCancel handles POST /api/command-cancel/{execID}.
+//
+//archplan:auth=required reason="owner check on the run, not an ACL decision"
 func (h *commandHandler) handleCommandCancel(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -937,6 +949,8 @@ func (h *commandHandler) mintFileToken(
 // handler's convention that hidden and nonexistent are indistinguishable. A 403
 // here would confirm that a token is real and names a file, to a caller who may
 // not have it.
+//
+//archplan:auth=authz
 func (h *commandHandler) handleCommandFile(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)

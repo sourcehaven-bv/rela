@@ -3,6 +3,12 @@ import { config } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import axios from 'axios'
 import { useToasts } from 'rela-components/components/feedback/useToasts'
+import { i18n } from '@/i18n'
+import { resetLanguageState } from '@/i18n/locale'
+
+// Every mounted component can call useI18n(). Tests run in English unless
+// they set another language through resetLanguageState.
+config.global.plugins.push(i18n)
 
 // Mock localStorage before any imports that might use it
 const localStorageMock = (() => {
@@ -32,6 +38,7 @@ Object.defineProperty(globalThis, 'localStorage', { value: localStorageMock })
 beforeEach(() => {
   setActivePinia(createPinia())
   useToasts().clear()
+  resetLanguageState()
 })
 
 // Mock crypto.randomUUID for toast IDs
@@ -140,9 +147,10 @@ class MockEventSource {
     this.readyState = MockEventSource.CLOSED
   }
 
-  // Test helper: emit an event
-  _emit(type: string, data?: string) {
-    const event = new MessageEvent(type, { data })
+  // Test helper: emit an event. lastEventId mimics the browser, which
+  // reports the most recent `id:` field on every event.
+  _emit(type: string, data?: string, lastEventId = '') {
+    const event = new MessageEvent(type, { data, lastEventId })
     const typeListeners = this.listeners.get(type)
     if (typeListeners) {
       typeListeners.forEach((listener) => listener(event))

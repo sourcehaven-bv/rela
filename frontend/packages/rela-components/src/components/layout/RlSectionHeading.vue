@@ -1,7 +1,7 @@
 <script setup lang="ts">
 /** Status dot + title + count, shared by board columns and table sections. */
 import type { Component } from 'vue'
-import type { StatusColor } from '../../types'
+import type { DotColor } from '../../types'
 import RlStatusDot from '../common/RlStatusDot.vue'
 import RlCount from '../common/RlCount.vue'
 import RlHeading from '../common/RlHeading.vue'
@@ -13,7 +13,7 @@ const messages = useMessages()
 withDefaults(
   defineProps<{
     title: string
-    color?: StatusColor
+    color?: DotColor
     /**
      * A glyph before the title, taken as a component so an app's own icon
      * registry can supply it. See `Section.icon`.

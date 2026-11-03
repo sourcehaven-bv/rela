@@ -29,11 +29,15 @@ func TestPosition_StoreMatchesGoPath(t *testing.T) {
 			ctx := gateCtxFor(aliceCtx(), t, d)
 			query := scope.toQuery()
 
-			_, n, err := resolveListNarrowing(ctx, app, scope.Type, query)
+			_, n, err := resolveListNarrowing(ctx, app, app.State(), scope.Type, query)
 			if err != nil {
 				t.Fatal(err)
 			}
-			if _, _, ok := n.pushdownPlan(ctx, app, scope.Type, query, 1, 1); !ok {
+			gated, err := gateAppListQuery(ctx, app, app.State(), scope.Type, query)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, _, ok := n.pushdownPlan(ctx, scope.Type, gated, 1, 1); !ok {
 				t.Fatal("scope is not pushable: the test would compare the Go path to itself")
 			}
 

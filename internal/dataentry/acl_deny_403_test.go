@@ -84,7 +84,7 @@ func TestHandler_ACLDeny_Returns403Structured(t *testing.T) {
 
 	app := newAppFromParts(&Config{}, nil, newFixture())
 	rebindApp(app, fs, paths, svc)
-	app.acl = d
+	setTestACL(t, app, d)
 	app.schema.Publish(&Schema{Cfg: &Config{}, Meta: meta})
 
 	bobCtx := principal.With(context.Background(),

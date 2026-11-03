@@ -1,10 +1,12 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, watch } from 'vue'
+import { I18nT, useI18n } from 'vue-i18n'
 import { RouterLink, useRouter } from 'vue-router'
 import SlimSelect from 'slim-select/vue'
 import 'slim-select/styles'
 import { useSchemaStore } from '@/stores'
 import { getEntityRelations, searchEntities, getEntity, getErrorMessage } from '@/api'
+import { SEARCH_DEBOUNCE_MS } from '@/utils/searchTiming'
 import { entityDisplayTitle } from '@/utils/entityDisplay'
 import InlineCreateFormModal from './InlineCreateFormModal.vue'
 // The shared boolean widget, rather than a local `<input type="checkbox">`.
@@ -48,6 +50,7 @@ const emit = defineEmits<{
 const router = useRouter()
 const schemaStore = useSchemaStore()
 const { world } = useWorld()
+const { t, locale } = useI18n()
 
 // State
 const entries = ref<RelationEntry[]>([])
@@ -197,7 +200,7 @@ async function loadRelations() {
       }
     }
   } catch (err) {
-    error.value = getErrorMessage(err, 'Failed to load relations')
+    error.value = getErrorMessage(err, t('form.relation.loadFailed'))
   } finally {
     loading.value = false
   }
@@ -295,14 +298,16 @@ function getInputType(propName: string): string {
 const slimDataCache = new Map<string, { text: string; value: string; placeholder?: boolean }[]>()
 
 function slimSelectData(propName: string) {
-  const cached = slimDataCache.get(propName)
+  // Keyed by language too: the placeholder row is interface text.
+  const cacheKey = `${locale.value}:${propName}`
+  const cached = slimDataCache.get(cacheKey)
   if (cached) return cached
   const values = getEnumValues(propName)
   const data = [
-    { text: 'Select...', value: '', placeholder: true as const },
+    { text: t('widgets.select.placeholder'), value: '', placeholder: true as const },
     ...values.map((v) => ({ text: v, value: v })),
   ]
-  slimDataCache.set(propName, data)
+  slimDataCache.set(cacheKey, data)
   return data
 }
 
@@ -331,7 +336,7 @@ watch(searchQuery, (q) => {
     searchResults.value = []
     return
   }
-  searchTimeout = setTimeout(() => doSearch(q), 200)
+  searchTimeout = setTimeout(() => doSearch(q), SEARCH_DEBOUNCE_MS)
 })
 
 // The search rows of one type. A source that picks a face is searched in
@@ -339,12 +344,12 @@ watch(searchQuery, (q) => {
 // each row says whether the principal may create this edge from its face
 // (`linkable`), and only those faces are offered (offersFace).
 async function searchType(q: string, type: string): Promise<Entity[]> {
-  if (!picksFace(type)) return (await searchEntities(q, type)).data
+  if (!picksFace(type)) return (await searchEntities(q, { type })).data
   const ambient = world.value || schemaStore.defaultWorld || DEFAULT_WORLD
   const worlds = [ambient, ...widenWorlds(schemaStore.worlds, ambient)]
   const link = { relation: props.field.relation ?? '', direction: 'incoming' as const }
   const lists = await Promise.all(
-    worlds.map((w) => searchEntities(q, type, undefined, w, link).then((r) => r.data))
+    worlds.map((w) => searchEntities(q, { type, world: w, link }).then((r) => r.data))
   )
   return faceCandidates(lists).filter(offersFace)
 }
@@ -584,12 +589,12 @@ function onDragEnd() {
   <div class="relation-cards">
     <label class="section-label">
       {{ relationLabel }}
-      <span v-if="hasPendingChanges" class="pending-badge">unsaved</span>
+      <span v-if="hasPendingChanges" class="pending-badge">{{ t('form.relation.unsaved') }}</span>
     </label>
 
     <div v-if="error" class="error-message">{{ error }}</div>
 
-    <div v-if="loading" class="loading-indicator">Loading relations...</div>
+    <div v-if="loading" class="loading-indicator">{{ t('form.relation.loading') }}</div>
 
     <!-- Relation cards -->
     <div v-else-if="entries.length" class="cards-list">
@@ -612,7 +617,11 @@ function onDragEnd() {
         @dragend="onDragEnd"
       >
         <div class="card-header">
-          <span v-if="isOrderable" class="drag-handle" title="Drag to reorder" aria-hidden="true"
+          <span
+            v-if="isOrderable"
+            class="drag-handle"
+            :title="t('form.relation.dragToReorder')"
+            aria-hidden="true"
             >⋮⋮</span
           >
           <div class="card-identity">
@@ -634,23 +643,23 @@ function onDragEnd() {
             v-if="!isIncoming"
             type="button"
             class="history-btn"
-            title="Relation history"
+            :title="t('form.relation.history')"
             @click="openRelationHistory(entry.id)"
           >
-            History
+            {{ t('editor.toolbar.history') }}
           </button>
           <span
             v-if="entry.editable === false"
             class="lock"
-            title="You cannot change this face's relations"
-            aria-label="read-only"
+            :title="t('form.relation.faceLocked')"
+            :aria-label="t('form.relation.readOnly')"
             >🔒</span
           >
           <button
             v-else-if="canRemove"
             type="button"
             class="remove-btn"
-            title="Remove relation"
+            :title="t('form.relation.remove')"
             @click="removeRelation(entry.id)"
           >
             &times;
@@ -700,7 +709,9 @@ function onDragEnd() {
     </div>
 
     <!-- Empty state -->
-    <div v-else-if="!loading" class="empty-state">No {{ relationLabel }} relations yet.</div>
+    <div v-else-if="!loading" class="empty-state">
+      {{ t('form.relation.empty', { relation: relationLabel }) }}
+    </div>
 
     <!-- Add relation -->
     <div v-if="showAddSearch" class="add-section">
@@ -708,10 +719,15 @@ function onDragEnd() {
         <input
           v-model="searchQuery"
           type="text"
-          :placeholder="`Search ${targetTypes.join(', ')}...`"
+          :placeholder="t('form.relation.searchPlaceholder', { types: targetTypes.join(', ') })"
           class="search-input"
         />
-        <RlSpinner v-if="searching" class="search-spinner" :size="16" label="Searching" />
+        <RlSpinner
+          v-if="searching"
+          class="search-spinner"
+          :size="16"
+          :label="t('form.relation.searching')"
+        />
 
         <div v-if="searchResults.length" class="search-results">
           <div
@@ -727,7 +743,7 @@ function onDragEnd() {
         </div>
 
         <div v-else-if="searchQuery && !searching" class="search-empty">
-          No matching entities found
+          {{ t('form.relation.noMatches') }}
         </div>
 
         <!-- Create a target that doesn't exist yet (TKT-OMUD56). -->
@@ -739,7 +755,7 @@ function onDragEnd() {
             class="add-new-btn"
             @click="openCreateModal(target)"
           >
-            + New {{ target.label }}
+            {{ t('form.relation.newButton', { type: target.label }) }}
           </button>
         </div>
       </div>
@@ -749,11 +765,23 @@ function onDragEnd() {
         <!-- The inline-created entity already exists independently of this
              link. Say so, or cancelling here looks like it was never created
              (RR-3UOH1I). -->
-        <p v-if="justCreated" class="created-notice" role="status">
-          Created <strong>{{ justCreated }}</strong> — link it below.
-        </p>
+        <I18nT
+          v-if="justCreated"
+          keypath="form.relation.createdNotice"
+          tag="p"
+          class="created-notice"
+          role="status"
+        >
+          <template #id>
+            <strong>{{ justCreated }}</strong>
+          </template>
+        </I18nT>
         <div class="selected-target">
-          Linking to: <strong>{{ selectedTarget.id }}</strong>
+          <I18nT keypath="form.relation.linkingTo" tag="span">
+            <template #id>
+              <strong>{{ selectedTarget.id }}</strong>
+            </template>
+          </I18nT>
           {{
             entityDisplayTitle(selectedTarget) !== selectedTarget.id
               ? `- ${entityDisplayTitle(selectedTarget)}`
@@ -801,13 +829,15 @@ function onDragEnd() {
         </div>
 
         <div class="new-relation-actions">
-          <RlButton variant="secondary" @click="cancelAdd">Cancel</RlButton>
-          <RlButton variant="primary" :disabled="!canLink" @click="addRelation"> Link </RlButton>
+          <RlButton variant="secondary" @click="cancelAdd">{{ t('common.cancel') }}</RlButton>
+          <RlButton variant="primary" :disabled="!canLink" @click="addRelation">
+            {{ t('form.relation.link') }}
+          </RlButton>
         </div>
       </div>
 
       <RlButton v-if="!selectedTarget" variant="secondary" class="cancel-search" @click="cancelAdd">
-        Cancel
+        {{ t('common.cancel') }}
       </RlButton>
 
       <InlineCreateFormModal
@@ -826,7 +856,7 @@ function onDragEnd() {
       class="add-btn"
       @click="showAddSearch = true"
     >
-      + Add {{ relationLabel }}
+      {{ t('form.relation.addButton', { relation: relationLabel }) }}
     </button>
   </div>
 </template>

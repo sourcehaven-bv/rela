@@ -78,6 +78,7 @@ func (h *cascadeHost) CreateEntity(
 	})
 	if err == nil {
 		h.recordCascade(ctx, audit.OpCreateEntity, entitySubject(e), "created")
+		notifyAliasesOfCreate(ctx, h.deps.AliasRewriter, e.ID, e.Face)
 	}
 	return e, err
 }
@@ -115,7 +116,8 @@ func (h *cascadeHost) WriteEntity(ctx context.Context, e *entity.Entity, set map
 	// check needs no computed comparison: next's computed values were just
 	// re-evaluated and may legitimately differ from stored's.
 	_, err := writeAutomationProperties(ctx, h.deps, e, set, func(_, next *entity.Entity) error {
-		if errs := h.deps.Meta.ValidateEntity(next.ID, next.Type, next.Properties); len(errs) > 0 {
+		v := metamodel.NewValidator(h.deps.Meta)
+		if errs := v.ValidateEntity(next.ID, next.Type, next.Properties); len(errs) > 0 {
 			// DEC-HWZHA: only HARD errors abort. Soft conditions (a required
 			// property left unset, an out-of-enum value) are tolerated on every
 			// other write path and must stay tolerated here, or a cascade would
@@ -168,9 +170,19 @@ func (h *cascadeHost) WriteRelation(ctx context.Context, r *entity.Relation) err
 	// This path writes the store directly, so it applies the owning rules
 	// itself (TKT-QO14GB), in one Tx with the write. Re-creating the
 	// identical owning edge passes the check and is the idempotent no-op
-	// below.
-	owning := metamodel.IsOwning(h.deps.Meta, r.Type)
+	// below. An automation may not grow a bounded relation past its bound
+	// either (TKT-65LVAK): the count shares the Tx too, and an edge that
+	// exists already is the same no-op, not a refusal.
+	bounded := relTypeHasMax(h.deps.Meta, r.Type)
 	write := func(ctx context.Context, st store.Store) error {
+		if bounded {
+			if _, gErr := st.GetRelation(ctx, r.Identity()); gErr == nil {
+				return store.ErrConflict
+			}
+			if cErr := checkRelationCapacity(ctx, st, h.deps.Meta, r.Identity(), nil, nil); cErr != nil {
+				return cErr
+			}
+		}
 		if err := CheckOwningEdge(ctx, h.deps.Meta, st, r.Identity()); err != nil {
 			return err
 		}
@@ -181,7 +193,7 @@ func (h *cascadeHost) WriteRelation(ctx context.Context, r *entity.Relation) err
 		return err
 	}
 	var err error
-	if owning {
+	if bounded || metamodel.IsOwning(h.deps.Meta, r.Type) {
 		err = h.deps.Store.Tx(ctx, func(st store.Store) error { return write(store.ContextInTx(ctx), st) })
 	} else {
 		err = write(ctx, h.deps.Store)
@@ -199,7 +211,7 @@ func (h *cascadeHost) WriteRelation(ctx context.Context, r *entity.Relation) err
 // ValidateRelation satisfies [autocascade.Host.ValidateRelation] by
 // delegating to the metamodel.
 func (h *cascadeHost) ValidateRelation(relType, fromType, toType string) error {
-	return h.deps.Meta.ValidateRelation(relType, fromType, toType)
+	return metamodel.NewValidator(h.deps.Meta).ValidateRelation(relType, fromType, toType)
 }
 
 // DeleteEntity satisfies [autocascade.Host.DeleteEntity]. The entityType
@@ -285,6 +297,7 @@ func (h *cascadeHost) recordCascade(
 		Subject:     subject,
 		Principal:   principal.From(ctx),
 		TriggeredBy: audit.TriggeredByFrom(ctx),
+		AssertedBy:  audit.AssertedByFrom(ctx),
 		Summary:     summary,
 	})
 }

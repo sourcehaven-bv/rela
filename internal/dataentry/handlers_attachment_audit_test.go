@@ -35,7 +35,7 @@ func TestAttachmentUpload_RejectionIsAudited(t *testing.T) {
 		Roles:       map[string]acl.RoleDef{"editor": {Read: []string{"ticket"}, Update: []string{"ticket"}}},
 		Assignments: map[string]string{"bob": "editor"},
 	}, app.store)
-	app.acl = d
+	setTestACL(t, app, d)
 	bobCtx := principal.With(context.Background(),
 		principal.Principal{User: "bob", Tool: principal.ToolDataEntry})
 
@@ -96,7 +96,7 @@ func TestAttachmentUpload_NonRejectionIsNotAudited(t *testing.T) {
 		Roles:       map[string]acl.RoleDef{"editor": {Read: []string{"ticket"}, Update: []string{"ticket"}}},
 		Assignments: map[string]string{"bob": "editor"},
 	}, app.store)
-	app.acl = d
+	setTestACL(t, app, d)
 	bobCtx := principal.With(context.Background(),
 		principal.Principal{User: "bob", Tool: principal.ToolDataEntry})
 

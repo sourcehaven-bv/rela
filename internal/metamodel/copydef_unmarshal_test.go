@@ -69,6 +69,15 @@ copies:
     on_success:
       message: "Published {title}"
       landing: { world: everything }
+  # keep needs fields: all, which the definition above cannot use beside its
+  # mapping, so it is exercised on a second definition.
+  keeper:
+    from: page@draft
+    to: page@published
+    fields: all
+    keep: [title]
+    guard:
+      permission: promote-page
 worlds:
   everything:
     select: published
@@ -98,6 +107,7 @@ worlds:
 		"Guard": def.Guard.Permission == "promote-page",
 		"OnSuccess": def.OnSuccess.Message == "Published {title}" &&
 			def.OnSuccess.Landing.World == "everything",
+		"Keep": len(m.Copies["keeper"].Keep) == 1 && m.Copies["keeper"].Keep[0] == "title",
 	}
 	for name, ok := range checks {
 		if !ok {

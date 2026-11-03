@@ -108,7 +108,7 @@ func TestSpaces_Resolution(t *testing.T) {
 	app := newTestAppV1(t)
 	installSpacesConfig(app, map[string]dataentryconfig.List{"all": {EntityType: "ticket"}}, nil, resolutionSpaces())
 	d := mustNewACL(t, gatedNavPolicy(), app.store)
-	app.acl = d
+	setTestACL(t, app, d)
 
 	cases := []struct {
 		name       string
@@ -144,7 +144,7 @@ func TestSpaces_PermissionIsPresentationOnly(t *testing.T) {
 	installSpacesConfig(app, map[string]dataentryconfig.List{"all": {EntityType: "ticket"}}, nil, resolutionSpaces())
 	seedEntity(app, &entity.Entity{ID: "TKT-1", Type: "ticket", Properties: map[string]any{"title": "T"}})
 	d := mustNewACL(t, gatedNavPolicy(), app.store)
-	app.acl = d
+	setTestACL(t, app, d)
 	ctx := gateCtxFor(principalCtx("bob"), t, d)
 
 	resp, _ := sidebarFor(ctx, t, app, "ops")
@@ -163,7 +163,7 @@ func TestSpaces_NonePermitted(t *testing.T) {
 	installSpacesConfig(app, map[string]dataentryconfig.List{"all": {EntityType: "ticket"}}, nil,
 		resolutionSpaces()[:1])
 	d := mustNewACL(t, gatedNavPolicy(), app.store)
-	app.acl = d
+	setTestACL(t, app, d)
 
 	resp, raw := sidebarFor(gateCtxFor(principalCtx("bob"), t, d), t, app, "ops")
 	require.Empty(t, resp.Space)
@@ -191,7 +191,7 @@ func TestSpaces_CreateFiltering(t *testing.T) {
 		},
 		Assignments: map[string]string{"alice": "author", "bob": "ticketer", "carol": "reader"},
 	}, app.store)
-	app.acl = d
+	setTestACL(t, app, d)
 
 	cases := []struct {
 		user string
@@ -238,11 +238,11 @@ func TestSpaces_HomeDerivation(t *testing.T) {
 		// A dashboard entry's href is "/"; as a home it would redirect to
 		// the space's own root forever.
 		{ID: "dash", Label: "Dash", Navigation: []dataentryconfig.NavigationEntry{
-			{Label: "Dashboard", Dashboard: true},
+			{Label: "Dashboard", Dashboard: dataentryconfig.DefaultDashboard},
 		}},
 	})
 	d := mustNewACL(t, gatedNavPolicy(), app.store)
-	app.acl = d
+	setTestACL(t, app, d)
 
 	homes := func(user string) map[string]string {
 		resp, _ := sidebarFor(gateCtxFor(principalCtx(user), t, d), t, app, "")
@@ -327,7 +327,7 @@ func TestSpaces_ConfigUnfiltered(t *testing.T) {
 	app := newTestAppV1(t)
 	installSpacesConfig(app, map[string]dataentryconfig.List{"all": {EntityType: "ticket"}}, nil, resolutionSpaces())
 	d := mustNewACL(t, gatedNavPolicy(), app.store)
-	app.acl = d
+	setTestACL(t, app, d)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/_config", http.NoBody).
 		WithContext(gateCtxFor(principalCtx("bob"), t, d))

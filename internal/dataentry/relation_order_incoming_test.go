@@ -125,7 +125,7 @@ func (a denyUpdateFrom) AuthorizeWrite(_ context.Context, req acl.WriteRequest) 
 // principal may not update makes the whole list not movable.
 func TestRelationOrder_IncomingNotMovableWhenOneSourceDenied(t *testing.T) {
 	app := newIncomingTabApp(t, metamodel.OrderableIncoming)
-	app.acl = denyUpdateFrom{from: "REC-M"}
+	setTestACL(t, app, denyUpdateFrom{from: "REC-M"})
 	resp, rec := listUngated(t, app, "recipes", "recipe", incomingTabQuery())
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 	require.NotNil(t, resp.Meta.RelationOrder)
@@ -134,9 +134,9 @@ func TestRelationOrder_IncomingNotMovableWhenOneSourceDenied(t *testing.T) {
 
 func TestRelationOrder_IncomingNotMovableWhenFieldReadOnly(t *testing.T) {
 	app := newIncomingTabApp(t, metamodel.OrderableIncoming)
-	app.fieldResolver = fakeResolver{rv: RelationVerdicts{Types: map[string]RelationVerdict{
+	setTestResolver(t, app, fakeResolver{rv: RelationVerdicts{Types: map[string]RelationVerdict{
 		"has-step": {Creatable: true, Removable: true, Fields: map[string]bool{metamodel.OrderPropertyIn: false}},
-	}}}
+	}}})
 	resp, rec := listUngated(t, app, "recipes", "recipe", incomingTabQuery())
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 	require.NotNil(t, resp.Meta.RelationOrder)
@@ -154,7 +154,7 @@ func (hiddenOrderInResolver) RelationFieldVerdicts(
 
 func TestRelationOrder_IncomingHiddenOrderFieldIsNotApplied(t *testing.T) {
 	app := newIncomingTabApp(t, metamodel.OrderableIncoming)
-	app.fieldResolver = hiddenOrderInResolver{}
+	setTestResolver(t, app, hiddenOrderInResolver{})
 	resp, rec := listUngated(t, app, "recipes", "recipe", incomingTabQuery())
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 	require.Nil(t, resp.Meta.RelationOrder)
@@ -206,9 +206,9 @@ func TestRelationPosition_IncomingBadRequests(t *testing.T) {
 
 func TestRelationPosition_IncomingOrderFieldNotWritable(t *testing.T) {
 	app := newIncomingTabApp(t, metamodel.OrderableIncoming)
-	app.fieldResolver = fakeResolver{rv: RelationVerdicts{Types: map[string]RelationVerdict{
+	setTestResolver(t, app, fakeResolver{rv: RelationVerdicts{Types: map[string]RelationVerdict{
 		"has-step": {Creatable: true, Removable: true, Fields: map[string]bool{metamodel.OrderPropertyIn: false}},
-	}}}
+	}}})
 	rec := patchIncoming(t, app, "REC-Z", `{"step":1}`)
 	require.Equal(t, http.StatusForbidden, rec.Code, rec.Body.String())
 	require.Contains(t, rec.Body.String(), "meta-read-only:has-step._order_in")

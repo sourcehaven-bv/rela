@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
+	"github.com/Sourcehaven-BV/rela/internal/aclstore"
 	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
@@ -32,6 +33,7 @@ func newManagerWithACL(
 		ACL:         aclImpl,
 		Transitions: statemachine.EmptySet(),
 		FieldGate:   entitymanager.AllowAllFieldGate{},
+		AnchorGuard: entitymanager.NopAnchorGuard{},
 	})
 	if err != nil {
 		t.Fatalf("entitymanager.New: %v", err)
@@ -53,6 +55,7 @@ func seedEntity(t *testing.T, store *countingStore, entityType, title string) {
 		ACL:         acl.NopACL{},
 		Transitions: statemachine.EmptySet(),
 		FieldGate:   entitymanager.AllowAllFieldGate{},
+		AnchorGuard: entitymanager.NopAnchorGuard{},
 	})
 	if err != nil {
 		t.Fatalf("seedEntity: New: %v", err)
@@ -75,6 +78,7 @@ func seedRelation(t *testing.T, store *countingStore, from, relType, to string) 
 		ACL:         acl.NopACL{},
 		Transitions: statemachine.EmptySet(),
 		FieldGate:   entitymanager.AllowAllFieldGate{},
+		AnchorGuard: entitymanager.NopAnchorGuard{},
 	})
 	if err != nil {
 		t.Fatalf("seedRelation: New: %v", err)
@@ -362,12 +366,17 @@ types:
 	// The policy: assignment to a ticket via `assigned-to` confers the
 	// editor role, which grants write on tickets. There is no global
 	// editor assignment — alice's only path to editing tickets is
-	// through her local edges.
+	// through her local edges. She reads every ticket through the global
+	// viewer role: a ticket she cannot read would be refused as not found
+	// (TKT-NXRFDU), and this test is about the write denial.
 	policy, err := acl.LoadPolicyBytes([]byte(`
 roles:
   editor: { create: [ticket], update: [ticket], delete: [ticket], read: [ticket] }
+  viewer: { read: [ticket] }
 role_relations:
   assigned-to: { confers: editor }
+assignments:
+  alice: viewer
 `))
 	if err != nil {
 		t.Fatalf("LoadPolicyBytes: %v", err)
@@ -381,6 +390,7 @@ role_relations:
 		FieldGate: entitymanager.AllowAllFieldGate{},
 		Store:     store, Meta: meta, Templater: nopTemplater{},
 		Audit: audit.Nop{}, ACL: acl.NopACL{}, Transitions: statemachine.EmptySet(),
+		AnchorGuard: entitymanager.NopAnchorGuard{},
 	})
 	if err != nil {
 		t.Fatalf("seed Manager.New: %v", err)
@@ -422,7 +432,7 @@ role_relations:
 	// Switch to the production ACL: Declarative with a store-backed
 	// Graph. This is the exact wiring shape appbuild produces.
 	sink := audit.NewMemory()
-	declarative, err := acl.NewDeclarative(policy, acl.NewStoreGraph(store), store)
+	declarative, err := acl.NewDeclarative(policy, aclstore.MustNewGraph(store), store)
 	if err != nil {
 		t.Fatalf("NewDeclarative: %v", err)
 	}
@@ -434,6 +444,7 @@ role_relations:
 		CopyVisibility: allowAllCopyVisibility(t, store),
 		Store:          store, Meta: meta, Templater: nopTemplater{},
 		Audit: sink, ACL: declarative, Transitions: statemachine.EmptySet(),
+		AnchorGuard: entitymanager.NopAnchorGuard{},
 	})
 	if err != nil {
 		t.Fatalf("entitymanager.New: %v", err)
@@ -441,8 +452,8 @@ role_relations:
 
 	// Stamp alice as the principal — the entry-point binary would
 	// normally do this; the test does it explicitly.
-	aliceCtx := principal.With(context.Background(),
-		principal.Principal{User: "alice", Tool: principal.ToolDataEntry})
+	aliceCtx := entitymanager.BindAs(principal.With(context.Background(),
+		principal.Principal{User: "alice", Tool: principal.ToolDataEntry}), t, mgr)
 
 	// Story step 1 — Alice edits the ticket she's assigned to. The v1
 	// resolver follows `alice --assigned-to--> TKT-001`, finds the
@@ -550,6 +561,7 @@ assignments:
 		FieldGate: entitymanager.AllowAllFieldGate{},
 		Store:     store, Meta: meta, Templater: nopTemplater{},
 		Audit: audit.Nop{}, ACL: acl.NopACL{}, Transitions: statemachine.EmptySet(),
+		AnchorGuard: entitymanager.NopAnchorGuard{},
 	})
 	if err != nil {
 		t.Fatalf("seed Manager.New: %v", err)
@@ -578,7 +590,7 @@ assignments:
 	tktID := tktRes.Entity.ID
 
 	sink := audit.NewMemory()
-	declarative, err := acl.NewDeclarative(policy, acl.NewStoreGraph(store), store)
+	declarative, err := acl.NewDeclarative(policy, aclstore.MustNewGraph(store), store)
 	if err != nil {
 		t.Fatalf("NewDeclarative: %v", err)
 	}
@@ -590,13 +602,14 @@ assignments:
 		CopyVisibility: allowAllCopyVisibility(t, store),
 		Store:          store, Meta: meta, Templater: nopTemplater{},
 		Audit: sink, ACL: declarative, Transitions: statemachine.EmptySet(),
+		AnchorGuard: entitymanager.NopAnchorGuard{},
 	})
 	if err != nil {
 		t.Fatalf("entitymanager.New: %v", err)
 	}
 
-	aliceCtx := principal.With(context.Background(),
-		principal.Principal{User: "alice", Tool: principal.ToolDataEntry})
+	aliceCtx := entitymanager.BindAs(principal.With(context.Background(),
+		principal.Principal{User: "alice", Tool: principal.ToolDataEntry}), t, mgr)
 
 	update := entity.New(tktID, "ticket")
 	update.SetString("title", "should be denied")

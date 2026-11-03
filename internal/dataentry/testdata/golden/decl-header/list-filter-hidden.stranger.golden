@@ -1,0 +1,17 @@
+request: GET /api/v1/tickets/?filter[secret][contains]=brav
+identity: header stranger@example.test
+status: 400
+reads: GraphQueryHeaders=1 ListRelations=1
+breadth: ListRelations=0/1
+bodies: GraphQuery=0/1
+versions: 
+body:
+{
+  "type": "https://rela.dev/errors/property_not_visible",
+  "title": "Cannot filter or sort on this property",
+  "status": 400,
+  "detail": "property not visible: cannot filter on \"secret\" of \"ticket\", because it is hidden from you on some or all rows",
+  "instance": "/api/v1/tickets/",
+  "use": "filter",
+  "property": "secret"
+}

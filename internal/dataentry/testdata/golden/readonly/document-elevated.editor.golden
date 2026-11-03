@@ -1,0 +1,14 @@
+request: GET /api/v1/_documents/elevated_report
+identity: header editor@example.test
+status: 403
+reads: 
+breadth: 
+bodies: 
+versions: 
+body:
+{
+  "type": "https://rela.dev/errors/permission_required",
+  "title": "document \"elevated_report\" reads with elevated privileges and requires the \"report:all\" permission under a configured acl.yaml",
+  "status": 403,
+  "instance": "/api/v1/_documents/elevated_report"
+}

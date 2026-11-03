@@ -163,6 +163,7 @@ func newCopyAuthzManagerFull(
 		FieldGate:    entitymanager.AllowAllFieldGate{},
 		CopyGuard:    guard,
 		CopyReadGate: gate,
+		AnchorGuard:  entitymanager.NopAnchorGuard{},
 	})
 	if err != nil {
 		t.Fatalf("entitymanager.New: %v", err)

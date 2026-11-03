@@ -155,7 +155,12 @@ function add(block: PlacedBlock, body: string) {
 function label(block: PlacedBlock): string {
   const count = block.comments.length
   if (count === 0) return messages.commentOnBlock({ kind: block.kind })
-  return messages.commentCountOnBlock({ count, noun: 'comment', kind: block.kind })
+  return messages.commentCountOnBlock({
+    count,
+    noun: messages.chromeText({ key: 'commentNoun' }),
+    pluralNoun: messages.chromeText({ key: 'comments' }),
+    kind: block.kind,
+  })
 }
 </script>
 
@@ -188,7 +193,7 @@ function label(block: PlacedBlock): string {
         role="dialog"
         :aria-label="label(block)"
       >
-        <p class="rl-block-comment-overlay__target">On this {{ block.kind }}</p>
+        <p class="rl-block-comment-overlay__target">{{ messages.onThisBlock({ kind: block.kind }) }}</p>
 
         <!-- The existing remarks, so this reads as a thread: a block has no
              highlight to click, so there is nowhere else they could appear. -->

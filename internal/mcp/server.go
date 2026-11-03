@@ -27,9 +27,11 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
+	"time"
 
 	mcpgo "github.com/modelcontextprotocol/go-sdk/mcp"
 
+	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/config"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/lua"
@@ -50,11 +52,6 @@ import (
 // `internal/appbuild` (enforced by arch-lint). The wiring site
 // (`internal/cli`) constructs a Deps from focused services and supplies
 // it to [NewServer]; tests build a Deps literal directly.
-//
-// ProjectRoot is the absolute project root, used by the lua tools to
-// resolve relative script paths. It is the only piece of the project
-// context MCP consumes — passing the string instead of a
-// `*project.Context` keeps that type from leaking into MCP test stubs.
 type Deps struct {
 	// Store is the READ handle for every MCP read surface — tools,
 	// resources, prompts and analyze alike. It is deliberately
@@ -72,30 +69,23 @@ type Deps struct {
 	// visibility-wrapped reader that resolves the ctx principal per call.
 	// Either way the handlers are identical; gating is entirely a wiring
 	// decision (DEC-ZBI39P).
-	Store         GraphReader
-	Traversals    TraversalBinder
+	Store GraphReader
+	// Related computes over an entity's related rows; see [RelatedReads].
+	Related       RelatedReads
 	Meta          *metamodel.Metamodel
 	Tracer        tracer.Tracer
 	Searcher      search.Searcher
 	Validator     validator.Validator
 	EntityManager EntityWriter
 	Config        config.Loader
-	// LuaWriteDeps and LuaCache back the lua_* tools, which exist only
-	// when the server is built [WithLuaTools]. A wiring that does not pass
-	// that option leaves both zero.
-	LuaWriteDeps lua.WriteDeps
-	LuaCache     *lua.Cache
-	Watcher      Watcher
-	ProjectRoot  string
-	Attachments  AttachmentDeps
-	// Comments backs list_comments, and CommentWriter the comment write
-	// tools (TKT-QIQO1W).
-	//
-	// Nil: accepted. A nil Comments means the project declares no
-	// `comments:` block and no comment tool is registered; a nil
-	// CommentWriter leaves out the write tools, as stdio `rela mcp` does.
-	Comments      CommentReader
-	CommentWriter CommentWriter
+	// Lua backs the lua_* tools; see [LuaDeps].
+	Lua         LuaDeps
+	Watcher     Watcher
+	Attachments AttachmentDeps
+	// Comments backs the comment tools (TKT-QIQO1W); see [CommentDeps].
+	Comments CommentDeps
+	// Commands backs the action and conversion tools; see [CommandDeps].
+	Commands CommandDeps
 	// World is the world the list and count surfaces (list_entities, the
 	// schema resource's counts, the overview prompt, search) read in when a
 	// call names none. It is required; wiring passes
@@ -106,6 +96,9 @@ type Deps struct {
 	// worlds.Compiled.Families. It is never a read world.
 	Families store.WorldScope
 
+	// Watch backs the watch tool. Both of its fields are required.
+	Watch WatchDeps
+
 	// Worlds lets a read tool name the world it reads in, and serves
 	// list_worlds.
 	//
@@ -113,6 +106,98 @@ type Deps struct {
 	// call naming a world other than the generated `default` is refused
 	// there.
 	Worlds WorldSelector
+
+	// Leases backs the lease tools, the lease show_entity carries, and the
+	// lease wake of watch.
+	//
+	// Nil: accepted. No lease tool is registered, show_entity carries no
+	// lease, and watch wakes on store changes only. Wiring assigns it only
+	// when the service exists, so a typed nil never reaches the interface.
+	//
+	// The lease tools are registered once, by [NewServer]. A reload that
+	// takes Leases from nil to non-nil does not add them; one that takes it
+	// to nil leaves them answering that leases are off. A watch reads
+	// Leases when it starts, so a Configure save that builds a new lease
+	// hub leaves an already-waiting watch subscribed to the old hub until
+	// its timeout.
+	Leases LeaseService
+
+	// BindIdentity is the request-edge step the server runs after it stamps
+	// its fallback principal (see [WithPrincipal]): it resolves that
+	// principal once and attaches its ACL request scope to the call's ctx.
+	// It travels in Deps so a reload swaps it together with the readers it
+	// must match. A call whose ctx already carries an identity is left
+	// alone; its transport resolved it. An error from it fails the call.
+	//
+	// Nil: accepted, for a wiring whose ACL has no request scope or whose
+	// transport always stamps the identity.
+	BindIdentity func(context.Context) (context.Context, error)
+
+	// Channels backs the channel tools and the read_channel wake of watch;
+	// see [ChannelDeps].
+	Channels ChannelDeps
+}
+
+// CommandDeps groups the tools that run a schema-declared command on an
+// entity: data-entry actions and type conversions.
+type CommandDeps struct {
+	// Actions backs list_actions and run_action (TKT-NW9QSN).
+	//
+	// Nil: accepted. The tools are then not registered, as under stdio
+	// `rela mcp`, which has no signed-in caller to run an action as.
+	Actions ActionRunner
+	// Conversions backs list_conversions and convert_entity.
+	//
+	// Nil: accepted. The tools are then not registered.
+	Conversions Converter
+}
+
+// LuaDeps backs the lua_* tools, which exist only when the server is built
+// [WithLuaTools]. A wiring that does not pass that option leaves it zero.
+//
+// Nil: Cache is accepted; a nil cache is the "no cache" signal that
+// lua.WithCache tolerates.
+//
+// ProjectRoot is the absolute project root, used by the lua tools to
+// resolve relative script paths. It is the only piece of the project
+// context MCP consumes — passing the string instead of a
+// `*project.Context` keeps that type from leaking into MCP test stubs.
+type LuaDeps struct {
+	WriteDeps   lua.WriteDeps
+	Cache       *lua.Cache
+	ProjectRoot string
+}
+
+// RelatedReads computes over an entity's related rows under the caller's
+// gate. Both come from the same gated read bundle as [Deps.Store].
+type RelatedReads struct {
+	// Traversals answers related(...) in a list_entities filter.
+	//
+	// Nil: accepted. A filter that traverses a relation is then refused.
+	Traversals TraversalBinder
+	// Rollups computes the roll-up properties (TKT-6I2OPG) show_entity
+	// serves.
+	//
+	// Nil: accepted. show_entity then serves no roll-up values; a value
+	// stored under a roll-up name is still dropped.
+	Rollups RollupReader
+}
+
+// WatchDeps is what the watch tool needs beyond the read surface.
+type WatchDeps struct {
+	// Changes pokes the watch tool when the store changes. Required; both
+	// wirings pass the store. It is read once per watch call.
+	Changes ChangeSource
+	// Rebind returns ctx with read access resolved again for its principal,
+	// so a watch does not reuse an upstream [acl.Request] whose cached roles
+	// may be stale. Required; wiring passes
+	// [appbuild.GatedReadBundle.Rebind].
+	Rebind func(context.Context) (context.Context, error)
+	// ChannelPoll is how often a watch with a read_channel or list_comments
+	// target replays those targets without a wake, to see posts and
+	// comments made in another process: rela-server, the CLI, another node.
+	// Zero means 2 seconds.
+	ChannelPoll time.Duration
 }
 
 // GraphReader is the read capability MCP requires of its store — the exact
@@ -173,6 +258,10 @@ type GraphReader interface {
 	// error instead of hiding the edges it touches. Aggregates fold from it,
 	// so a fault never reads as a missing relation (TKT-5LW875).
 	ListRelationsStrict(ctx context.Context, q store.RelationQuery) iter.Seq2[*entity.Relation, error]
+
+	// MentionedBy pages the readable entities whose body mentions target
+	// as an `id` code span ([visibility.Resolver.MentionedBy]).
+	MentionedBy(ctx context.Context, target, after string, limit int) (visibility.MentionPage, error)
 }
 
 // TraversalBinder answers the `related(...)` calls of a list_entities filter
@@ -226,11 +315,11 @@ type EntityWriter interface {
 
 // validate rejects a Deps missing any field whose zero value would
 // defer a failure to request time — a nil collaborator panics inside a
-// tool handler, and an empty ProjectRoot makes lua_run's script listing silently walk
-// the process CWD instead of the project's scripts/ dir. Catching these
-// at construction keeps the failure where it can be diagnosed.
+// tool handler. Catching these at construction keeps the failure where it
+// can be diagnosed. The Lua checks are in validateFor, because only a
+// server built [WithLuaTools] uses Lua.
 //
-// LuaCache is intentionally absent: a nil cache is a valid "no cache"
+// Lua.Cache is intentionally absent: a nil cache is a valid "no cache"
 // signal that lua.WithCache tolerates.
 func (d Deps) validate() error {
 	switch {
@@ -250,25 +339,39 @@ func (d Deps) validate() error {
 		return errors.New("mcp: Deps.Config is required")
 	case d.Watcher == nil:
 		return errors.New("mcp: Deps.Watcher is required")
-	case d.ProjectRoot == "":
-		return errors.New("mcp: Deps.ProjectRoot is required")
+	case d.Watch.Changes == nil:
+		return errors.New("mcp: Deps.Watch.Changes is required")
+	case d.Watch.Rebind == nil:
+		return errors.New("mcp: Deps.Watch.Rebind is required")
 	case !d.World.IsSet():
 		return errors.New("mcp: Deps.World is required (worlds.Compiled.DefaultWorld)")
 	case !d.Families.IsSet():
 		return errors.New("mcp: Deps.Families is required (worlds.Compiled.Families)")
 	}
+	if err := d.Channels.validate(); err != nil {
+		return err
+	}
 	return d.Attachments.validate()
 }
 
 // validateFor is Deps.validate plus the checks that depend on how s was
-// built: a server [WithLuaTools] needs the Lua write deps. A free function to
+// built: a server [WithLuaTools] needs the Lua write deps, and a server whose
+// channel tools are registered needs the channel service. A free function to
 // keep Server under its plimsoll load line.
 func validateFor(s *Server, d Deps) error {
 	if err := d.validate(); err != nil {
 		return err
 	}
-	if s.luaTools && d.LuaWriteDeps.EntityManager == nil {
-		return errors.New("mcp: WithLuaTools requires Deps.LuaWriteDeps")
+	if s.luaTools && d.Lua.WriteDeps.EntityManager == nil {
+		return errors.New("mcp: WithLuaTools requires Deps.Lua.WriteDeps")
+	}
+	// An empty root would make lua_run's script listing silently walk the
+	// process CWD instead of the project's scripts/ dir.
+	if s.luaTools && d.Lua.ProjectRoot == "" {
+		return errors.New("mcp: WithLuaTools requires Deps.Lua.ProjectRoot")
+	}
+	if s.channelTools && d.Channels.Reader == nil {
+		return errors.New("mcp: the channel tools are registered, so Deps.Channels is required")
 	}
 	return nil
 }
@@ -306,7 +409,7 @@ type Watcher interface {
 // registerTools points the affected AddTool lines at the field's methods.
 //
 // 38 → 25 (TKT-MGNE5L): the lua tools moved to luaHandler (the sole user of
-// LuaWriteDeps / LuaCache / ProjectRoot), the schema tools + resource reads
+// Lua deps / ProjectRoot), the schema tools + resource reads
 // to schemaResourceHandler (store + metamodel), and the prompt handlers to
 // promptHandler (store + metamodel + tracer + resolver). register* stay on
 // Server and point at the fields' methods. The remaining handlers genuinely
@@ -325,10 +428,17 @@ type Server struct {
 	mcp       *mcpgo.Server
 	logger    *slog.Logger
 	principal principal.Principal
+	// assertedBy is the OS user behind a `--run-as` principal; see
+	// [WithAssertedBy].
+	assertedBy string
 
 	// luaTools registers lua_eval / lua_run. Off unless the wiring
 	// asks for it with [WithLuaTools]; see that option for why.
 	luaTools bool
+
+	// channelTools records that the channel tools are registered: realtime
+	// was on when [NewServer] ran. A reload must then keep Deps.Channels.
+	channelTools bool
 
 	// pileReader and pileWriter back the pile tools, registered only when
 	// both are set ([WithPiles]). pilesSet records that WithPiles was used,
@@ -336,6 +446,8 @@ type Server struct {
 	pileReader PileReader
 	pileWriter PileWriter
 	pilesSet   bool
+	// watch serves the watch tool; built in registerTools.
+	watch *watchHandler
 
 	// state publishes the reloadable (Deps, handlerSet) pair. Read it per
 	// request via [Server.deps] / the s.<group>() accessors, never by
@@ -423,6 +535,10 @@ type handlerSet struct {
 	prompts   promptHandler
 	attach    attachmentHandler
 	comments  commentHandler
+	actions   actionHandler
+	convs     conversionHandler
+	leases    leaseHandler
+	channels  channelHandler
 }
 
 // handlers builds the extracted handler groups a [Server] carries. One
@@ -433,11 +549,20 @@ func (d Deps) handlers() handlerSet {
 	return handlerSet{
 		types:     types,
 		trace:     traceHandler{store: d.Store, tracer: d.Tracer, meta: d.Meta},
-		lua:       luaHandler{writeDeps: d.LuaWriteDeps, cache: d.LuaCache, projectRoot: d.ProjectRoot},
+		lua:       luaHandler{writeDeps: d.Lua.WriteDeps, cache: d.Lua.Cache, projectRoot: d.Lua.ProjectRoot},
 		schemaRes: schemaResourceHandler{store: d.Store, meta: d.Meta, world: d.World},
 		prompts:   promptHandler{store: d.Store, meta: d.Meta, tracer: d.Tracer, types: types, world: d.World},
 		attach:    attachmentHandler{store: d.Store, deps: d.Attachments},
-		comments:  commentHandler{reader: d.Comments, writer: d.CommentWriter},
+		comments:  commentHandler{reader: d.Comments.Reader, adder: d.Comments.Adder, writer: d.Comments.Writer},
+		actions:   actionHandler{runner: d.Commands.Actions},
+		convs:     conversionHandler{conv: d.Commands.Conversions, store: d.Store, watcher: d.Watcher},
+		leases:    leaseHandler{svc: d.Leases},
+		channels: channelHandler{
+			reader: d.Channels.Reader, sessions: d.Channels.Sessions, writer: d.Channels.Writer,
+			creator: d.Channels.Creator, inbox: d.Channels.Inbox, marker: d.Channels.Marker,
+			refuseSignals: d.Channels.RefuseSignals, localIdentity: d.Channels.LocalIdentity,
+			bindIdentity: d.Channels.BindIdentity,
+		},
 	}
 }
 
@@ -451,6 +576,14 @@ type Option func(*Server)
 // handlers (registration-time wrapping, not per-handler opt-in).
 func WithPrincipal(p principal.Principal) Option {
 	return func(s *Server) { s.principal = p }
+}
+
+// WithAssertedBy records the OS user who asserted the server's principal
+// with `--run-as`. The fallback stamp in principalMiddleware then carries
+// it to the graph audit (see [audit.WithAssertedBy]). Only stdio passes it;
+// a principal that came with the request is not self-asserted.
+func WithAssertedBy(user string) Option {
+	return func(s *Server) { s.assertedBy = user }
 }
 
 // WithLuaTools registers the Lua scripting tools (lua_eval,
@@ -492,12 +625,41 @@ func WithLuaTools() Option {
 // never the zero Principal.
 func (s *Server) principalMiddleware(next mcpgo.MethodHandler) mcpgo.MethodHandler {
 	return func(ctx context.Context, method string, req mcpgo.Request) (mcpgo.Result, error) {
+		// Capture state once per call: the binder below and every handler
+		// read this one snapshot.
+		// A Server literal in a test may not have published one yet.
+		snap := s.state.current()
+		if snap != nil {
+			ctx = withSnapshot(ctx, snap)
+		}
 		if _, stamped := principal.Stamped(ctx); stamped {
 			return next(ctx, method, req)
 		}
-		return next(principal.With(ctx, s.principal), method, req)
+		ctx = principal.With(ctx, s.principal)
+		if s.assertedBy != "" {
+			ctx = audit.WithAssertedBy(ctx, s.assertedBy)
+		}
+		if snap == nil {
+			return next(ctx, method, req)
+		}
+		if bind := snap.deps.BindIdentity; bind != nil {
+			bound, err := bind(ctx)
+			if err != nil {
+				// The resolve error can carry store or principal details, so
+				// it is logged and the client gets a fixed message.
+				s.logger.WarnContext(ctx, "mcp: could not resolve the caller's identity",
+					"method", method, "err", err)
+				return nil, errIdentityUnresolved
+			}
+			ctx = bound
+		}
+		return next(ctx, method, req)
 	}
 }
+
+// errIdentityUnresolved is the fixed error a call gets when the server could
+// not resolve its identity. The cause is logged, not returned.
+var errIdentityUnresolved = errors.New("mcp: could not resolve the caller's identity")
 
 // NewServer creates a new MCP server for a rela project. Returns an
 // error if [WithPrincipal] was not supplied — silently degrading to
@@ -522,6 +684,7 @@ func NewServer(deps Deps, version string, opts ...Option) (*Server, error) {
 		return nil, errors.New("mcp.NewServer: WithPiles requires both a PileReader and a PileWriter")
 	}
 	setDeps(s, deps)
+	s.channelTools = deps.Channels.Reader != nil && deps.Channels.Reader.Enabled()
 
 	// Capabilities are inferred by the go-sdk from the features actually
 	// registered below (tools/resources/prompts each gain listChanged when
@@ -530,7 +693,7 @@ func NewServer(deps Deps, version string, opts ...Option) (*Server, error) {
 	mcpServer := mcpgo.NewServer(
 		&mcpgo.Implementation{Name: "rela", Version: version},
 		&mcpgo.ServerOptions{
-			Instructions: serverInstructions(deps.Meta),
+			Instructions: serverInstructions(deps.Meta, s.channelTools),
 		},
 	)
 
@@ -553,8 +716,9 @@ func NewServer(deps Deps, version string, opts ...Option) (*Server, error) {
 // can decide whether the tools are relevant at all without spending a call.
 // It is built at construction: a schema hot-reload (TKT-NU247U) does not
 // renegotiate the session, so a type added later appears in the schema tool
-// but not here.
-func serverInstructions(meta *metamodel.Metamodel) string {
+// but not here. With the channel tools registered, it adds the rule for
+// their untrusted content.
+func serverInstructions(meta *metamodel.Metamodel, channels bool) string {
 	types := meta.EntityTypes()
 	natsort.Strings(types)
 	var b strings.Builder
@@ -566,8 +730,14 @@ func serverInstructions(meta *metamodel.Metamodel) string {
 	}
 	b.WriteString("Call schema (optionally with a type) before creating entities or filtering. " +
 		"Entity summaries carry a title resolved from the type's display property. " +
+		"Entities carry a `url` to their page in the web app when the server knows its address; " +
+		"use it when you link an entity for the user. " +
 		"Write results start with `WARNINGS (n):` when soft validation failed; the write still succeeded. " +
-		"In update_entity, a null property value removes the property; an empty string is ignored.")
+		"In update_entity, a null property value removes the property; an empty string is ignored. " +
+		"To wait for changes instead of polling, use watch.")
+	if channels {
+		b.WriteString(channelInstruction)
+	}
 	return b.String()
 }
 
@@ -595,6 +765,9 @@ func serverInstructions(meta *metamodel.Metamodel) string {
 // handlers, and Server.principalMiddleware preserves a principal already
 // stamped there in preference to the construction-time one.
 //
+// Each request's origin rides on its ctx, so entity results carry a `url`
+// into the web app on this transport (see [entityURL]).
+//
 // The request body limit is raised from the go-sdk's 4 MiB default to fit an
 // attach_file call at [MaxUploadBytes]; see maxRequestBodyBytes.
 //
@@ -614,7 +787,7 @@ func (s *Server) HTTPHandler() http.Handler {
 			MaxRequestBodyBytes:        maxRequestBodyBytes,
 		},
 	)
-	return newLargeRequestGate(largeRequestSlots).wrap(h)
+	return newLargeRequestGate(largeRequestSlots).wrap(withRequestBaseURL(h))
 }
 
 // Serve starts the MCP server on stdio and blocks until the peer

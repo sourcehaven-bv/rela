@@ -27,6 +27,9 @@ import RlButton from '../common/RlButton.vue'
 import RlIconButton from '../common/RlIconButton.vue'
 import RlText from '../common/RlText.vue'
 import type { ToastMessage } from './types'
+import { useMessages } from '../../composables/useMessages'
+
+const messages = useMessages()
 
 const props = withDefaults(defineProps<{ toast: ToastMessage }>(), {})
 
@@ -105,7 +108,7 @@ onBeforeUnmount(() => clearTimeout(timer))
 
     <RlIconButton
       icon="x"
-      label="Dismiss notification"
+      :label="messages.chromeText({ key: 'dismissNotification' })"
       :size="14"
       @click="emit('dismiss', toast.id)"
     />

@@ -1,12 +1,14 @@
 import { computed, onBeforeUnmount, type Ref } from 'vue'
 import { useQuery } from '@pinia/colada'
 import { listEntities } from '@/api'
+import { withSortFallback } from '@/api/entities'
 import { shouldDropHeldContent } from '@/api/errors'
 import { useEvents } from '@/composables/useEvents'
 import { useWorld } from '@/composables/useWorld'
 import { entityDisplayTitle } from '@/utils/entityDisplay'
 import { entityDetailHref } from '@/utils/entityRoute'
 import type { ListParams, SidebarEntities, SidebarGroup } from '@/types'
+import { cancelWhenVisible, runWhenVisible } from './visibleRefetch'
 
 /** How long a burst of entity changes is left to settle before refetching. */
 const EVENT_DEBOUNCE_MS = 1000
@@ -70,7 +72,11 @@ export function useNavEntities(groups: Ref<SidebarGroup[]>) {
     key: () => ['nav-entities', worldParam.value ?? '', ...entries.value.map(navEntitiesKey)],
     query: async ({ signal }) => {
       const settled = await Promise.allSettled(
-        entries.value.map((e) => listEntities(e.type, paramsFor(e), signal))
+        // A sort the server refuses (a property this reader cannot see on
+        // every row) is dropped rather than losing the entry's rows.
+        entries.value.map((e) =>
+          withSortFallback(paramsFor(e), (p) => listEntities(e.type, p, signal))
+        )
       )
       const rows = new Map<string, NavEntityRow[]>()
       settled.forEach((result, i) => {
@@ -96,13 +102,17 @@ export function useNavEntities(groups: Ref<SidebarGroup[]>) {
     if (entries.value.length > 0) void query.refetch()
   }
 
+  // A hidden tab refetches once, when it is shown again.
+  const refetchKey = Symbol('nav-entities')
+  const refetchWhenVisible = () => runWhenVisible(refetchKey, refetch)
   let timer: ReturnType<typeof setTimeout> | null = null
   on('entity:changed', () => {
     if (timer) clearTimeout(timer)
-    timer = setTimeout(refetch, EVENT_DEBOUNCE_MS)
+    timer = setTimeout(refetchWhenVisible, EVENT_DEBOUNCE_MS)
   })
-  on('refresh', refetch)
+  on('refresh', refetchWhenVisible)
   onBeforeUnmount(() => {
+    cancelWhenVisible(refetchKey)
     if (timer) clearTimeout(timer)
   })
 

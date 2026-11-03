@@ -479,7 +479,7 @@ func TestExecuteViewWithWhere(t *testing.T) {
 		}
 	})
 
-	t.Run("invalid where expression - continues with unfiltered", func(t *testing.T) {
+	t.Run("invalid where expression - fails the view", func(t *testing.T) {
 		view := ViewConfig{
 			Entry: ViewEntry{Type: "bouwblok"},
 			Traverse: []ViewTraverse{
@@ -491,15 +491,10 @@ func TestExecuteViewWithWhere(t *testing.T) {
 				},
 			},
 		}
-		result, err := app.views.executeView(context.Background(), view, "BOUWBLOK-001", defaultViewWorld())
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		// On invalid expression, should continue with unfiltered results
-		all := result.Collections["all"]
-		if len(all) != 4 {
-			ids := collectIDs(all)
-			t.Errorf("expected 4 unfiltered entities, got %v", ids)
+		// Validation refuses this config at load (BUG-WHEREWIDE). A view
+		// that still gets one fails rather than widening the collection.
+		if _, err := app.views.executeView(context.Background(), view, "BOUWBLOK-001", defaultViewWorld()); err == nil {
+			t.Fatal("want an error for an unparseable where, got a result")
 		}
 	})
 }
@@ -515,7 +510,7 @@ func TestFilterEntities(t *testing.T) {
 	}
 
 	t.Run("filter by type", func(t *testing.T) {
-		result, err := app.views.filterEntities(entities, "type = function")
+		result, err := filterEntities(app.views.schema(), entities, "type = function")
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -525,7 +520,7 @@ func TestFilterEntities(t *testing.T) {
 	})
 
 	t.Run("filter by type not equal", func(t *testing.T) {
-		result, err := app.views.filterEntities(entities, "type != function")
+		result, err := filterEntities(app.views.schema(), entities, "type != function")
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -535,7 +530,7 @@ func TestFilterEntities(t *testing.T) {
 	})
 
 	t.Run("invalid expression returns error", func(t *testing.T) {
-		_, err := app.views.filterEntities(entities, "no operator here")
+		_, err := filterEntities(app.views.schema(), entities, "no operator here")
 		if err == nil {
 			t.Error("expected error for invalid expression")
 		}

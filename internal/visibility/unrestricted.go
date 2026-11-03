@@ -35,7 +35,7 @@ type UnrestrictedReader struct {
 	// history: see [UnrestrictedReader.WithHistory].
 	history store.HistoryReader
 
-	// tags: see [UnrestrictedReader.WithVersionTags].
+	// tags: see [UnrestrictedReader.WithHistory].
 	tags VersionTagReader
 }
 
@@ -123,6 +123,14 @@ func (r *UnrestrictedReader) ResolveHeadersErr(
 	ctx context.Context, refs []entity.Ref,
 ) (map[entity.Ref]ResolvedHeader, error) {
 	return r.res.ResolveHeadersErr(ctx, worldIn(ctx, r.world), refs)
+}
+
+// MentionedBy pages the entities whose body mentions target, in the
+// reader's world. See [Resolver.MentionedBy].
+func (r *UnrestrictedReader) MentionedBy(
+	ctx context.Context, target, after string, limit int,
+) (MentionPage, error) {
+	return r.res.MentionedBy(ctx, worldIn(ctx, r.world), target, after, limit)
 }
 
 // ListEntities implements the script read surface: straight pass-through.

@@ -1,0 +1,14 @@
+request: POST /api/v1/_copies/publish
+identity: header admin@example.test
+status: 200
+reads: GetEntity=2 GetRelation=1 GraphQueryHeaders=1 ListRelations=1
+breadth: ListRelations=0/1
+bodies: GetEntity=0/2 GraphQuery=0/1
+versions: 
+body:
+{
+  "definition": "publish",
+  "entityId": "POL-2",
+  "face": "published",
+  "created": true
+}

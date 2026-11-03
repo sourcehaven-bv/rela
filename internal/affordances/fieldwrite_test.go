@@ -37,6 +37,8 @@ func TestCheckFieldWrite(t *testing.T) {
 		{name: "nil value skips enum", set: map[string]any{"tags": nil}},
 		{name: "first in name order", set: map[string]any{"status": "x", "salary": "1"},
 			wantID: "field-affordance:hidden:salary"},
+		{name: "unset in name order", unset: []string{"status", "salary"},
+			wantID: "field-affordance:hidden:salary"},
 		{name: "set before unset", set: map[string]any{"status": "x"}, unset: []string{"salary"},
 			wantID: "field-affordance:read-only:status"},
 	} {

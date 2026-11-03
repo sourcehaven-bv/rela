@@ -56,6 +56,9 @@ func (l *MemoryLocker) Acquire(ctx context.Context, key string) (func(), error) 
 	acquired := make(chan struct{})
 	go func() {
 		e.mu.Lock()
+		// The goroutine exits holding e.mu on purpose: ownership passes to the
+		// releaser returned below, or to the abandon path that unlocks it.
+		// nosemgrep: trailofbits.go.missing-unlock-before-return.missing-unlock-before-return
 		close(acquired)
 	}()
 

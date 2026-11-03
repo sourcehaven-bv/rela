@@ -107,8 +107,9 @@ func syncLua(ctx context.Context, t *testing.T, svc *appbuild.Services, src stri
 	return got, err
 }
 
-func asUser(user string) context.Context {
-	return principal.With(context.Background(), principal.Principal{User: user, Tool: principal.ToolScheduler})
+func asUser(tb testing.TB, svc *appbuild.Services, user string) context.Context {
+	tb.Helper()
+	return boundAs(tb, svc, principal.Principal{User: user, Tool: principal.ToolScheduler})
 }
 
 // AC12: a database backend starts with sync refs.
@@ -122,7 +123,7 @@ func TestRequireSyncBackend_DB(t *testing.T) {
 // conflict.
 func TestLuaWriteToken(t *testing.T) {
 	svc := newSyncServices(t)
-	connector, user := asUser("connector"), asUser("user")
+	connector, user := asUser(t, svc, "connector"), asUser(t, svc, "user")
 
 	got, err := syncLua(connector, t, svc, `
 local e, _, tok = rela.create_entity("ticket", {title = "a", points = 3, due = "2026-10-08", done = true,
@@ -182,7 +183,7 @@ rela.output("tag=" .. tostring(v) .. "," .. tostring(why))
 // and for a nested map, on every database backend.
 func TestLuaWriteToken_DecodedValues(t *testing.T) {
 	svc := newSyncServices(t)
-	got, err := syncLua(asUser("connector"), t, svc, `
+	got, err := syncLua(asUser(t, svc, "connector"), t, svc, `
 local e, _, tok = rela.create_entity("ticket", {title = "f", points = 2.5, basecamp = {id = "f1", url = "https://x.test/f1"}},
   nil, nil, {token = true})
 rela.output("create=" .. tostring(tok == rela.version_token(e.id)))
@@ -200,7 +201,7 @@ rela.output("float=" .. tostring(tok3 == rela.version_token(e.id)))
 // AC7: find_by_external_ref answers through the caller's reader.
 func TestLuaFindByExternalRef(t *testing.T) {
 	svc := newSyncServices(t)
-	connector, blind, admin := asUser("connector"), asUser("blind"), asUser("admin")
+	connector, blind, admin := asUser(t, svc, "connector"), asUser(t, svc, "blind"), asUser(t, svc, "admin")
 	got, err := syncLua(connector, t, svc, `
 local e = rela.create_entity("ticket", {title = "a", basecamp = {id = "42"}})
 rela.output("id=" .. e.id)
@@ -232,7 +233,7 @@ rela.output("unknown=" .. tostring(rela.find_by_external_ref("basecamp", "43")))
 // the refusals.
 func TestLuaSyncMerge(t *testing.T) {
 	svc := newSyncServices(t)
-	connector := asUser("connector")
+	connector := asUser(t, svc, "connector")
 	got, err := syncLua(connector, t, svc, `
 local e, _, tok = rela.create_entity("ticket", {title = "a", points = 1, basecamp = {id = "1"}}, "body", nil,
   {token = true})
@@ -265,7 +266,7 @@ rela.output("uncoercible=" .. tostring(ok))
 	require.Equal(t, "false", got["uncoercible"])
 
 	// A synced field the reader cannot see raises.
-	_, err = syncLua(asUser("blind"), t, svc, `
+	_, err = syncLua(asUser(t, svc, "blind"), t, svc, `
 local e = rela.list_entities("ticket")[1]
 rela.sync.merge(nil, e, {properties = {points = 1}}, {fields = {"points"}})`)
 	require.ErrorContains(t, err, "hidden")

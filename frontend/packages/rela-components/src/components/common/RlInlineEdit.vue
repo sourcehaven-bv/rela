@@ -24,7 +24,7 @@
  *
  * `trigger="explicit"` is for that case. See the prop.
  */
-import { nextTick, onBeforeUnmount, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import RlIcon from './RlIcon.vue'
 import { useMessages } from '../../composables/useMessages'
 
@@ -37,7 +37,7 @@ const props = withDefaults(
      * "Owner, Rita Bloem, edit", so the label is not repeated on screen.
      */
     label: string
-    /** Shown in the read view when there is nothing to show. */
+    /** Shown in the read view when there is nothing to show. Defaults to the `emptyValue` chrome text. */
     placeholder?: string
     /** Renders the value as static text, with no affordance to edit it. */
     disabled?: boolean
@@ -108,7 +108,6 @@ const props = withDefaults(
     keepOpenWithin?: () => Element[]
   }>(),
   {
-    placeholder: 'Empty',
     disabled: false,
     commitOnChange: false,
     empty: false,
@@ -118,6 +117,8 @@ const props = withDefaults(
     keepOpenWithin: () => [],
   },
 )
+
+const placeholderText = computed(() => props.placeholder ?? messages.chromeText({ key: 'emptyValue' }))
 
 const emit = defineEmits<{
   /** The user kept the edit. */
@@ -270,7 +271,7 @@ defineExpose({ start, cancel: () => stop('cancel') })
     >
       <span class="rl-inline-edit__value">
         <slot v-if="!empty" name="read" />
-        <span v-else class="rl-inline-edit__placeholder">{{ placeholder }}</span>
+        <span v-else class="rl-inline-edit__placeholder">{{ placeholderText }}</span>
       </span>
     </button>
 
@@ -303,7 +304,7 @@ defineExpose({ start, cancel: () => stop('cancel') })
 
       <span class="rl-inline-edit__value">
         <slot v-if="!empty" name="read" />
-        <span v-else class="rl-inline-edit__placeholder" @click="start">{{ placeholder }}</span>
+        <span v-else class="rl-inline-edit__placeholder" @click="start">{{ placeholderText }}</span>
       </span>
     </div>
 
@@ -311,7 +312,7 @@ defineExpose({ start, cancel: () => stop('cancel') })
          worse than none at all. -->
     <span v-else-if="!editing" class="rl-inline-edit__static">
       <slot v-if="!empty" name="read" />
-      <span v-else class="rl-inline-edit__placeholder">{{ placeholder }}</span>
+      <span v-else class="rl-inline-edit__placeholder">{{ placeholderText }}</span>
     </span>
 
     <div

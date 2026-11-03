@@ -6,6 +6,7 @@ import { runAction } from '@/api/actions'
 import { isInputFocused } from '@/utils/dom'
 import { getScriptError } from '@/api/errors'
 import { isAnyModalOpen } from './modalStack'
+import { t } from '@/i18n'
 import type { ActionConfig, Entity } from '@/types'
 
 /** Must match the CSS .row-leave-active transition duration in EntityList.vue. */
@@ -96,9 +97,9 @@ export function useActionFanout() {
     }
 
     if (errorCount > 0) {
-      uiStore.error(`${action.label}: ${errorCount} failed, ${successCount} succeeded`)
+      uiStore.error(t('list.action.partial', { label: action.label, failed: errorCount, succeeded: successCount }))
     } else {
-      uiStore.success(`${action.label}: ${successCount} updated`)
+      uiStore.success(t('list.action.done', { label: action.label, n: successCount }))
     }
     return { successCount, errorCount }
   }

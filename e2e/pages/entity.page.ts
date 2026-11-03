@@ -64,6 +64,22 @@ export class EntityPage extends BasePage {
     await expect(this.documentBody).toContainText(text);
   }
 
+  /** The schema-conversion dialog, once a conversion is opened. */
+  get conversionDialog(): Locator {
+    return this.page.getByRole('dialog');
+  }
+
+  /** Open a schema conversion from the header by its label. */
+  async openConversion(label: string) {
+    await this.page.getByRole('button', { name: label }).first().click();
+    await expect(this.conversionDialog).toBeVisible();
+  }
+
+  /** Press the dialog's primary action (Review, then Convert). */
+  async pressConversionAction(name: 'Review' | 'Convert') {
+    await this.conversionDialog.getByRole('button', { name, exact: true }).click();
+  }
+
   async navigateToEntity(entityType: string, id: string) {
     await this.navigateTo(`/entity/${entityType}/${id}`);
     await this.waitForSpinnerToDisappear();
@@ -466,6 +482,21 @@ export class EntityPage extends BasePage {
     return this.page.locator('.entity-body-editor .ProseMirror');
   }
 
+  /** The convert buttons on task items in the body editor (TKT-3IBLIP). */
+  get bodyTaskItemConvertButtons(): Locator {
+    return this.bodyEditor.locator('button.task-item-convert');
+  }
+
+  /** The task-item conversion dialog. */
+  get taskItemDialog(): Locator {
+    return this.page.locator('.task-item-dialog');
+  }
+
+  /** Presses a recipe in the task-item conversion dialog. */
+  async chooseTaskItemConversion(label: string) {
+    await this.taskItemDialog.getByRole('button', { name: label, exact: true }).click();
+  }
+
   /** The body's read view, which the edit swaps out synchronously. */
   get bodyReadView(): Locator {
     return this.page.locator('.rl-inline-edit__read').filter({ has: this.contentBody });
@@ -623,6 +654,24 @@ export class EntityPage extends BasePage {
    *  wait for the SPA route to settle on the target page. */
   async clickContentEntityRef(entityType: string, id: string): Promise<void> {
     await this.contentEntityRefLink(entityType, id).click();
+    await this.page.waitForURL(new RegExp(`/entity/${entityType}/${id}(\\?|$)`));
+  }
+
+  // ── Mentioned by (TKT-Q6AKUN) ──────────────────────────────────────────
+  // The card lists the entities whose body mentions this one.
+
+  /** The "Mentioned by" card; absent when nothing mentions the entity. */
+  get mentionedByPanel(): Locator {
+    return this.page.getByRole('region', { name: 'Mentioned by' });
+  }
+
+  /** The card's link to one source entity. */
+  mentionedByLink(entityType: string, id: string): Locator {
+    return this.mentionedByPanel.locator(`a[href="/entity/${entityType}/${id}"]`);
+  }
+
+  async clickMentionedBy(entityType: string, id: string): Promise<void> {
+    await this.mentionedByLink(entityType, id).click();
     await this.page.waitForURL(new RegExp(`/entity/${entityType}/${id}(\\?|$)`));
   }
 

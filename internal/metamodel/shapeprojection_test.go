@@ -48,8 +48,8 @@ func shapeFixture() *Metamodel {
 }
 
 func TestShapeProjectionHash_Deterministic(t *testing.T) {
-	a := shapeFixture().ShapeProjection()
-	b := shapeFixture().ShapeProjection()
+	a := NewShapeProjection(shapeFixture())
+	b := NewShapeProjection(shapeFixture())
 	if a.Hash() != b.Hash() {
 		t.Fatalf("hash not deterministic across equal metamodels: %s vs %s", a.Hash(), b.Hash())
 	}
@@ -57,13 +57,13 @@ func TestShapeProjectionHash_Deterministic(t *testing.T) {
 
 func TestShapeProjectionHash_DistinctFromRenderHash(t *testing.T) {
 	m := shapeFixture()
-	if m.ShapeProjection().Hash() == m.RenderProjection().Hash() {
+	if NewShapeProjection(m).Hash() == NewRenderProjection(m).Hash() {
 		t.Fatalf("shape hash and render hash must live in distinct hash spaces")
 	}
 }
 
 func TestShapeProjectionHash_CosmeticEditsDoNotMoveIt(t *testing.T) {
-	base := shapeFixture().ShapeProjection().Hash()
+	base := NewShapeProjection(shapeFixture()).Hash()
 
 	cosmetic := map[string]func(m *Metamodel){
 		"entity label": func(m *Metamodel) {
@@ -148,7 +148,7 @@ func TestShapeProjectionHash_CosmeticEditsDoNotMoveIt(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			m := shapeFixture()
 			mutate(m)
-			if got := m.ShapeProjection().Hash(); got != base {
+			if got := NewShapeProjection(m).Hash(); got != base {
 				t.Errorf("cosmetic edit %q moved the shape hash", name)
 			}
 		})
@@ -156,7 +156,7 @@ func TestShapeProjectionHash_CosmeticEditsDoNotMoveIt(t *testing.T) {
 }
 
 func TestShapeProjectionHash_ShapeEditsMoveIt(t *testing.T) {
-	base := shapeFixture().ShapeProjection().Hash()
+	base := NewShapeProjection(shapeFixture()).Hash()
 
 	shape := map[string]func(m *Metamodel){
 		"property type": func(m *Metamodel) {
@@ -240,7 +240,7 @@ func TestShapeProjectionHash_ShapeEditsMoveIt(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			m := shapeFixture()
 			mutate(m)
-			if got := m.ShapeProjection().Hash(); got == base {
+			if got := NewShapeProjection(m).Hash(); got == base {
 				t.Errorf("shape edit %q did not move the shape hash", name)
 			}
 		})
@@ -248,7 +248,7 @@ func TestShapeProjectionHash_ShapeEditsMoveIt(t *testing.T) {
 }
 
 func TestShapeProjection_JSONRoundTrip(t *testing.T) {
-	orig := shapeFixture().ShapeProjection()
+	orig := NewShapeProjection(shapeFixture())
 	data, err := orig.JSON()
 	if err != nil {
 		t.Fatalf("JSON: %v", err)
@@ -269,7 +269,7 @@ func TestShapeProjection_HashDistinguishesAbsentFromZeroCardinality(t *testing.T
 	r := b.Relations["assigned-to"]
 	r.MinOutgoing = &zero
 	b.Relations["assigned-to"] = r
-	if a.ShapeProjection().Hash() == b.ShapeProjection().Hash() {
+	if NewShapeProjection(a).Hash() == NewShapeProjection(b).Hash() {
 		t.Fatalf("absent and zero cardinality bounds must hash differently")
 	}
 }

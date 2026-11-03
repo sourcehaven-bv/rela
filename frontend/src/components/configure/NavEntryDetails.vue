@@ -8,7 +8,7 @@ import RlIconButton from 'rela-components/components/common/RlIconButton.vue'
 import RlText from 'rela-components/components/common/RlText.vue'
 import SortEditor from './SortEditor.vue'
 import IconPicker from './IconPicker.vue'
-import { useConfigDraftStore } from '@/stores/configDraft'
+import { useConfigDraftStore } from '@/configure/configDraft'
 import { propertiesOf, queryScopeNames, sortKeysOf, type NavEntryModel } from '@/configure/models'
 import { get, getIn, mapItems, newMap, str } from '@/configure/tree'
 

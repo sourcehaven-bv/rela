@@ -108,7 +108,7 @@ var (
 	mu      sync.Mutex
 	out     *bufio.Writer
 	gs      = map[uint64]*gstate{}
-	active  = map[uint64]struct{}{}
+	active  = map[uint64]uint64{} // running call ID → its caller on the same goroutine, or 0
 	pending = map[string][]pendingSpawn{}
 )
 
@@ -223,6 +223,64 @@ func (f Frame) Ctx(ctx context.Context) context.Context {
 	return context.WithValue(ctx, ctxKey{}, ctxVal{id: f.id, g: f.g})
 }
 
+// Suspension is the handle Suspend returns; the injected code defers its
+// Resume.
+type Suspension struct {
+	g  uint64
+	on bool
+}
+
+// Suspend is called by the wrapper the rewriter puts around an iterator's
+// yield parameter, before the consumer's loop body runs. f is the iterator's
+// frame. Until Resume, calls on this goroutine get the iterator's caller as
+// their parent: that is the call ranging over the iterator. The caller is
+// the frame below the iterator on the same goroutine, which is not always
+// its recorded parent (a ctx handoff can win, see decide).
+//
+// Wrappers nest. An iterator that hands yield to a helper, or an adapter
+// that yields from inside its own range loop, runs one wrapper per level.
+// The outermost iterator's wrapper runs last, so its entry ends on top and
+// names the real consumer.
+//
+// An iterator without a recorded caller keeps its own frame on top, so its
+// loop-body calls are still recorded, under the iterator.
+func Suspend(f Frame) Suspension {
+	if !f.on {
+		return Suspension{}
+	}
+	g := gid()
+	mu.Lock()
+	defer mu.Unlock()
+	st := gs[g]
+	if st == nil {
+		st = &gstate{}
+		gs[g] = st
+	}
+	top := f.id
+	if p := active[f.id]; p != 0 {
+		top = p
+	}
+	st.stack = append(st.stack, top)
+	return Suspension{g: g, on: true}
+}
+
+// Resume ends a Suspend once the loop body returns.
+func (s Suspension) Resume() {
+	if !s.on {
+		return
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	st := gs[s.g]
+	if st == nil || len(st.stack) == 0 {
+		return
+	}
+	st.stack = st.stack[:len(st.stack)-1]
+	if len(st.stack) == 0 {
+		delete(gs, s.g)
+	}
+}
+
 // Exit records the return of the call Enter recorded, with its results.
 func (f Frame) Exit(results ...any) {
 	if !f.on {
@@ -331,7 +389,7 @@ func decide(g uint64, cp ctxVal, pkg, fn string, creator uint64, closureVia stri
 
 	id := nextID.Add(1)
 	st.stack = append(st.stack, id)
-	active[id] = struct{}{}
+	active[id] = top
 	e := Event{Kind: "c", ID: id, Parent: parent, Via: via, G: g, Pkg: pkg, Fn: fn, T: int64(time.Since(start))}
 	return Frame{id: id, g: g, on: true, fn: fn}, e
 }

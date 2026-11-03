@@ -26,13 +26,13 @@ types: {}
 	if got := m.Entities["item"].Properties["doubled"].Computed; got != "entity.source * 2" {
 		t.Fatalf("Computed = %q", got)
 	}
-	before := m.ShapeProjection()
+	before := NewShapeProjection(m)
 	p := m.Entities["item"].Properties["doubled"]
 	p.Computed = "entity.source * 3"
 	item := m.Entities["item"]
 	item.Properties["doubled"] = p
 	m.Entities["item"] = item
-	after := m.ShapeProjection()
+	after := NewShapeProjection(m)
 	if before.Hash() == after.Hash() {
 		t.Fatal("computed expression must affect shape hash")
 	}

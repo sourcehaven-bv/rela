@@ -1,8 +1,16 @@
 import type { Component } from 'vue'
 
-export type StatusColor = 'green' | 'amber' | 'red' | 'grey' | 'blue'
+export type StatusColor = 'green' | 'amber' | 'red' | 'grey' | 'blue' | 'purple'
 
-export type TagColor = 'grey' | 'blue' | 'green' | 'amber' | 'red' | 'purple'
+/**
+ * The colour of a status dot: a named status colour, or the name of a palette
+ * custom property (`--rl-kit-red-700`) for a colour the named set lacks. Only
+ * a dot takes the property form, so a tag or a pill never has to paint an
+ * arbitrary colour behind text.
+ */
+export type DotColor = StatusColor | `--rl-${string}`
+
+export type TagColor = 'grey' | 'blue' | 'green' | 'amber' | 'yellow' | 'teal' | 'red' | 'purple'
 
 export interface Tag {
   id: string
@@ -40,9 +48,16 @@ export interface CollectionItem {
 export interface Section<T extends CollectionItem = CollectionItem> {
   id: string
   title: string
-  color?: StatusColor
+  color?: DotColor
   count?: number
   collapsed?: boolean
+  /**
+   * Lines of text under the heading, such as a card count and a total.
+   * Already formatted: the library does not know what a line means, only
+   * where it goes. A board column shows them under its heading, one per
+   * line, and joined on one line on its collapsed rail.
+   */
+  summary?: string[]
   /**
    * A glyph drawn before the title, carried as the component itself rather
    * than a name to look up.
@@ -70,7 +85,7 @@ export interface Section<T extends CollectionItem = CollectionItem> {
 export interface Swimlane<T extends CollectionItem = CollectionItem> {
   id: string
   title: string
-  color?: StatusColor
+  color?: DotColor
   /** Total across the lane's sections. Absent means count the items. */
   count?: number
   collapsed?: boolean
@@ -201,6 +216,11 @@ export interface Attachment {
   href?: string
   /** An image shown in place of the kind icon, such as a thumbnail. */
   preview?: string
+  /**
+   * The SHA-256 of the stored file, as lowercase hex. The card shows the
+   * first 12 characters and the full value as a tooltip.
+   */
+  checksum?: string
 }
 
 export interface Comment {

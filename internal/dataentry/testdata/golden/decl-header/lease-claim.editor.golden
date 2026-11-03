@@ -1,0 +1,13 @@
+request: POST /api/v1/tickets/TKT-1/_lease
+identity: header editor@example.test
+status: 201
+reads: GetRelation=1 GraphQueryHeaders=1 ListEntityHeaders=3 ListRelations=1
+breadth: ListEntityHeaders=3/3 ListRelations=0/1
+bodies: GraphQuery=0/1 ListEntityHeaders=0/3
+versions: 
+body:
+{
+  "lease_id": "<minted>",
+  "token": <minted>,
+  "expires_at": "<minted>"
+}

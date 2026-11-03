@@ -91,6 +91,8 @@ export function problemRoute(problem: ConfigProblem): string {
         return b ? configureRoute.board(b) : configureRoute.boards()
       case 'dashboard':
         return configureRoute.dashboard()
+      case 'dashboards':
+        return configureRoute.dashboard(b)
       case 'styles':
         return b ? configureRoute.choiceList(b) : configureRoute.choiceLists()
       default:

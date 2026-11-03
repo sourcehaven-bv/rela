@@ -1,0 +1,66 @@
+request: GET /api/v1/_history/ticket/TKT-1/1
+identity: signed assertion for stranger@example.test
+status: 200
+reads: GetRelation=1 GraphQueryHeaders=1 ListEntities=1 ListRelations=1
+breadth: ListEntities=1/1 ListRelations=0/1
+bodies: GraphQuery=0/1 ListEntities=1/1
+versions: GetVersion=1
+body:
+{
+  "created_at": "2025-03-01T10:00:00Z",
+  "entity": {
+    "_self": "/api/v1/tickets/TKT-1",
+    "id": "TKT-1",
+    "type": "ticket",
+    "_title": "Alpha",
+    "properties": {
+      "secret": "first-secret",
+      "status": "open",
+      "title": "Alpha"
+    },
+    "content": "Alpha body.",
+    "_actions": {
+      "delete": false,
+      "rename": false,
+      "update": false
+    },
+    "_fields": {
+      "note": {
+        "writable": false
+      },
+      "status": {
+        "options": {
+          "archived": false
+        }
+      }
+    },
+    "_relations": {
+      "implements": {
+        "removable": false
+      }
+    },
+    "_redacted": [],
+    "_attachments": {},
+    "_transitions": {
+      "status": [
+        {
+          "to": "closed",
+          "label": "Close",
+          "guard": "close-ticket",
+          "allowed": false,
+          "reason": "guard"
+        }
+      ]
+    },
+    "_copies": [],
+    "_conversions": [],
+    "_faces": []
+  },
+  "id": "TKT-1",
+  "op": "create",
+  "principal": {
+    "tool": "",
+    "user": "admin@example.test"
+  },
+  "version": 1
+}

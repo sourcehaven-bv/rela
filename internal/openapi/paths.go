@@ -2,6 +2,7 @@ package openapi
 
 import (
 	"fmt"
+	"maps"
 	"slices"
 	"sort"
 	"strings"
@@ -11,6 +12,8 @@ import (
 
 // addSystemPaths adds the static system endpoint paths.
 func (g *Generator) addSystemPaths(spec *Spec) {
+	g.addConversionPaths(spec)
+	g.addTaskItemConversionPaths(spec)
 	// GET /api/v1/_openapi.json
 	spec.Paths["/api/v1/_openapi.json"] = PathItem{
 		Get: &Operation{
@@ -29,9 +32,128 @@ func (g *Generator) addSystemPaths(spec *Spec) {
 		},
 	}
 
+	g.addLeaseRoutes(spec)
+	addChannelSchemaPath(spec)
+
 	// The SSE stream and the git routes are left out: they are browser
 	// surfaces outside the non-browser CSRF exemption, so a generic client
 	// would get 403 origin_missing from every call.
+}
+
+func (g *Generator) addConversionPaths(spec *Spec) {
+	stringList := &Schema{Type: "array", Items: StringSchema()}
+	body := &RequestBody{
+		Required:    true,
+		Description: "Source entity and values for required target fields",
+		Content: jsonContent(&Schema{Type: "object", Required: []string{"source_id"}, Properties: map[string]*Schema{
+			"source_id":      StringSchema(),
+			"source_face":    StringSchema(),
+			"target_id":      StringSchema(),
+			"properties":     {Type: "object", AdditionalProperties: &Schema{}},
+			"content":        StringSchema(),
+			"drop_relations": stringList,
+			"faces":          {Type: "object", AdditionalProperties: StringSchema()},
+		}}),
+	}
+	result := &Schema{Type: "object", Properties: map[string]*Schema{
+		"definition":        StringSchema(),
+		"old_id":            StringSchema(),
+		"entity_id":         StringSchema(),
+		"face":              StringSchema(),
+		"relations_dropped": {Type: "integer"},
+	}}
+	move := &Schema{Type: "object", Properties: map[string]*Schema{
+		"source_face": StringSchema(),
+		"target_face": StringSchema(),
+	}}
+	preview := &Schema{Type: "object", Properties: map[string]*Schema{
+		"target_type":       StringSchema(),
+		"required":          stringList,
+		"required_faces":    stringList,
+		"relations_to_drop": stringList,
+		"invalid_relations": stringList,
+		"target_faces":      stringList,
+		"invalid_faces":     stringList,
+		"moves":             {Type: "array", Items: move},
+	}}
+	refusals := map[string]Response{
+		"403": {Description: "Conversion is not permitted", Content: problemContent()},
+		"404": {Description: "Source entity not found", Content: problemContent()},
+		"409": {Description: "Conversion definition changed, or the target id is taken", Content: problemContent()},
+		"422": {Description: "Mapping or target validation failed", Content: problemContent()},
+	}
+	withOK := func(desc string, s *Schema) map[string]Response {
+		out := map[string]Response{"200": {Description: desc, Content: jsonContent(s)}}
+		maps.Copy(out, refusals)
+		return out
+	}
+	for name := range g.meta.Conversions {
+		path := "/api/v1/_conversions/" + name
+		spec.Paths[path] = PathItem{Post: &Operation{
+			OperationID: "convert" + capitalize(name), Summary: "Convert entity using " + name,
+			Tags: []string{"Entity conversions"}, RequestBody: body,
+			Responses: withOK("Converted entity identity", result),
+		}}
+		spec.Paths[path+"/preflight"] = PathItem{Post: &Operation{
+			OperationID: "preflight" + capitalize(name), Summary: "Preview " + name,
+			Tags: []string{"Entity conversions"}, RequestBody: body,
+			Responses: withOK("Required fields and relationship consequences", preview),
+		}}
+	}
+}
+
+func (g *Generator) addTaskItemConversionPaths(spec *Spec) {
+	body := &RequestBody{
+		Required:    true,
+		Description: "Source entity, the task item's text, and values for required target fields",
+		Content: jsonContent(&Schema{Type: "object", Required: []string{"source_id", "text"}, Properties: map[string]*Schema{
+			"source_id":   StringSchema(),
+			"source_face": StringSchema(),
+			"text":        StringSchema(),
+			"properties":  {Type: "object", AdditionalProperties: &Schema{}},
+		}}),
+	}
+	result := &Schema{Type: "object", Properties: map[string]*Schema{
+		"definition":  StringSchema(),
+		"entity_id":   StringSchema(),
+		"entity_type": StringSchema(),
+		"face":        StringSchema(),
+		"title":       StringSchema(),
+		"item":        {Type: "string", Enum: []string{metamodel.TaskItemLink, metamodel.TaskItemRemove}},
+	}}
+	preview := &Schema{Type: "object", Properties: map[string]*Schema{
+		"target_type": StringSchema(),
+		"required":    {Type: "array", Items: StringSchema()},
+	}}
+	refusals := map[string]Response{
+		"403": {Description: "Conversion is not permitted", Content: problemContent()},
+		"404": {Description: "Source entity not found", Content: problemContent()},
+		"409": {Description: "Definition changed, or the source changed during the conversion", Content: problemContent()},
+		"422": {Description: "Item text or target validation failed", Content: problemContent()},
+	}
+	convertRefusals := maps.Clone(refusals)
+	convertRefusals["500"] = Response{
+		Description: "The entity was created but its relation was not (conversion_incomplete names it in entity_id)",
+		Content:     problemContent(),
+	}
+	withOK := func(desc string, s *Schema, refusals map[string]Response) map[string]Response {
+		out := map[string]Response{"200": {Description: desc, Content: jsonContent(s)}}
+		maps.Copy(out, refusals)
+		return out
+	}
+	for name := range g.meta.TaskItemConversions {
+		path := "/api/v1/_task_item_conversions/" + name
+		spec.Paths[path] = PathItem{Post: &Operation{
+			OperationID: "convertTaskItem" + capitalize(name), Summary: "Convert a task item using " + name,
+			Tags: []string{"Task item conversions"}, RequestBody: body,
+			Responses: withOK("Created entity identity", result, convertRefusals),
+		}}
+		spec.Paths[path+"/preflight"] = PathItem{Post: &Operation{
+			OperationID: "preflightTaskItem" + capitalize(name), Summary: "Preview " + name,
+			Tags: []string{"Task item conversions"}, RequestBody: body,
+			Responses: withOK("Required fields the recipe leaves empty", preview, refusals),
+		}}
+	}
 }
 
 // addEntityPaths adds CRUD paths for an entity type.
@@ -142,7 +264,12 @@ func (g *Generator) addEntityPaths(spec *Spec, typeName string, def metamodel.En
 			Responses: map[string]Response{
 				"204": {Description: "Entity deleted"},
 				"404": {Description: "Entity not found", Content: problemContent()},
-				"409": {Description: "Cannot delete (has incoming relations)", Content: problemContent()},
+				"409": {
+					Description: "Cannot delete: the entity has incoming relations, a channel whose type sets " +
+						"on_entity_delete: block is attached (code channel_blocks_delete), or the entity changed " +
+						"during the delete (code conflict; retry)",
+					Content: problemContent(),
+				},
 			},
 		},
 	}
@@ -171,10 +298,51 @@ func (g *Generator) addEntityPaths(spec *Spec, typeName string, def metamodel.En
 		},
 	}
 
+	// Backlinks: the entities whose body mentions this one (TKT-Q6AKUN).
+	spec.Paths[basePath+"/{id}/mentioned-by"] = PathItem{
+		Parameters: []Parameter{
+			{Name: "id", In: "path", Required: true, Description: "Entity ID", Schema: StringSchema()},
+		},
+		Get: &Operation{
+			OperationID: fmt.Sprintf("get%sMentionedBy", capitalize(typeName)),
+			Summary:     "List the entities whose body mentions a " + def.Label,
+			Tags:        []string{tag},
+			Parameters: []Parameter{
+				{Name: "limit", In: "query", Description: "Page size, 1 to 200 (default 50)", Schema: IntegerSchema()},
+				{Name: "cursor", In: "query", Description: "next_cursor from the previous page", Schema: StringSchema()},
+			},
+			Responses: map[string]Response{
+				"200": {
+					Description: "One page of mentioning entities, in id order",
+					Content: jsonContent(&Schema{
+						Type: "object",
+						Properties: map[string]*Schema{
+							"items": ArraySchema(&Schema{
+								Type: "object",
+								Properties: map[string]*Schema{
+									"id":    StringSchema(),
+									"face":  StringSchema(),
+									"type":  StringSchema(),
+									"title": StringSchema(),
+								},
+							}),
+							"next_cursor": StringSchema(),
+							"truncated":   BooleanSchema(),
+						},
+					}),
+				},
+				"400": {Description: "Invalid limit or cursor", Content: jsonContent(Ref("Error"))},
+				"404": {Description: "Entity not found", Content: jsonContent(Ref("Error"))},
+			},
+		},
+	}
+
 	// Add relation type paths for valid outgoing relations
 	g.addRelationTypePaths(spec, typeName, def, basePath)
 
 	g.addAttachmentPaths(spec, typeName, def, basePath)
+	g.addLeasePath(spec, typeName, def, basePath)
+	g.addPresencePath(spec, typeName, def, basePath)
 
 	// Clone action
 	clonePath := basePath + "/{id}/_actions/clone"

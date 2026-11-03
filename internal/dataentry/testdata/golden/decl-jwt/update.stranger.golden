@@ -1,0 +1,14 @@
+request: PATCH /api/v1/tickets/TKT-3
+identity: signed assertion for stranger@example.test
+status: 403
+reads: GetEntity=1 GraphQueryHeaders=1 ListRelations=1
+breadth: ListRelations=0/1
+bodies: GetEntity=0/1 GraphQuery=0/1
+versions: 
+body:
+{
+  "error": "forbidden",
+  "reason": "verified principal resolves to no user entity; writes are rejected",
+  "rule_id": "reject",
+  "rule_kind": "unmatched-principal"
+}

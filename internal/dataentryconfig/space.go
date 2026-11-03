@@ -171,5 +171,5 @@ func validateSpaceHome(home NavigationEntry, name string, cfg *Config) []string 
 // isDestination reports whether the entry links to a page.
 func (n NavigationEntry) isDestination() bool {
 	return n.List != "" || n.Kanban != "" || n.Calendar != "" || n.Gantt != "" ||
-		n.Document != "" || n.Page != "" || n.Dashboard || n.Search || n.Settings
+		n.Document != "" || n.Page != "" || n.Dashboard.IsSet() || n.Search || n.Settings
 }

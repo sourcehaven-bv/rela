@@ -1,0 +1,223 @@
+/**
+ * How breakdown and table cards render values (TKT-69PZ09D): the way the rest
+ * of the app does. An enum value is a badge with its authored label and
+ * `styles:` colour, a `display: {currency}` integer an amount, a date
+ * formatted. Pure derivations over rows the dashboard already holds; the
+ * view calls them once per card (TKT-ERHWL0).
+ */
+import type { DashboardCardEntry, DashboardCardValue, Entity, EntityType } from '@/types'
+import { isPropertyRedacted } from '@/utils/affordances'
+import { createDenseCellResolver, type DenseCell } from '@/utils/denseCell'
+import { formatCellValue } from '@/utils/format'
+import { styleBarColor, styleClassFor } from '@/utils/styleColors'
+
+/** The schema lookups the derivations need; the schema store provides them. */
+export interface CardSchema {
+  getEntityType(name: string): EntityType | undefined
+  getEnumLabel(
+    value: string,
+    property?: string,
+    entityType?: string | EntityType
+  ): string | undefined
+  stylesForProperty(
+    property: string,
+    entityType?: string | EntityType
+  ): Record<string, string> | undefined
+  getList(id: string): { entity: string } | undefined
+}
+
+/**
+ * One breakdown group. `key` is the stored value ('' for rows without one).
+ * `label` is the text a non-badge row shows; a badge resolves its own label
+ * from the schema, which is the same authored label.
+ */
+export interface BreakdownItem {
+  key: string
+  label: string
+  count: number
+  percentage: number
+  /** The entity type the value belongs to, for its badge label and style. */
+  entityType?: string
+  /** True for a value of an enum property: it renders as a badge, like a list cell. */
+  badge: boolean
+  /** The bar colour from the value's `styles:` entry; absent means accent. */
+  color?: string
+}
+
+/** One table cell, resolved once per render rather than per template read. */
+export interface TableCell {
+  key: string
+  /** The detail route when the column links to the row. */
+  link?: string
+  /** The reader may not see this property on this row. */
+  hidden: boolean
+  /** The widget for the value, as a list cell renders it; absent means text. */
+  widget?: DenseCell
+  /** The formatted value when there is no widget: a link, or a plain value. */
+  text: string
+}
+
+export interface TableRow {
+  entity: Entity
+  cells: TableCell[]
+}
+
+/** The declared values of `property` on a type, when it is an enum there. */
+function enumValues(schema: CardSchema, type: string | undefined, property: string) {
+  if (!type) return undefined
+  const values = schema.getEntityType(type)?.properties[property]?.values
+  return values?.length ? values : undefined
+}
+
+function barColor(schema: CardSchema, type: string | undefined, property: string, value: string) {
+  if (!value) return undefined
+  return styleBarColor(styleClassFor(schema.stylesForProperty(property, type), value))
+}
+
+/**
+ * Orders breakdown groups the way the server orders a list card's groups
+ * (`groupCounts` in dashboard_fold.go), so a query card and a list card over
+ * the same rows agree: declared enum values first in declared order, then
+ * other values by count (most first) and value, and rows without a value last.
+ * Declared order rather than count, because a breakdown over a status or a
+ * pipeline stage reads in that order.
+ */
+function compareGroups(rank: (item: BreakdownItem) => number | undefined) {
+  return (a: BreakdownItem, b: BreakdownItem): number => {
+    if ((a.key === '') !== (b.key === '')) return a.key === '' ? 1 : -1
+    const ra = rank(a)
+    const rb = rank(b)
+    if (ra !== undefined && rb !== undefined) return ra - rb
+    if (ra !== undefined || rb !== undefined) return ra !== undefined ? -1 : 1
+    return b.count - a.count || (a.key < b.key ? -1 : a.key > b.key ? 1 : 0)
+  }
+}
+
+/**
+ * A property value as a group key, as the server's `axisKey` reads it: a
+ * string, a finite number or a boolean is its text; anything else, such as
+ * a list, counts as no value.
+ */
+export function groupKey(value: unknown): string {
+  if (typeof value === 'string') return value
+  if (typeof value === 'number') return Number.isFinite(value) ? String(value) : ''
+  if (typeof value === 'boolean') return String(value)
+  return ''
+}
+
+/**
+ * A query card's breakdown, grouped here over the rows the search returned.
+ * A row whose value is hidden from the reader is left out and makes the
+ * result `partial`, as the server does for a list card.
+ */
+export function queryBreakdown(
+  schema: CardSchema,
+  groupBy: string,
+  entities: Entity[],
+  unknownLabel: string
+): { items: BreakdownItem[]; partial: boolean } {
+  // Per value: its count and the type of the first row that had it. A query
+  // may match several types; each value takes its label and style from its
+  // own type.
+  const groups = new Map<string, { count: number; type: string }>()
+  const types = new Set<string>()
+  let partial = false
+  for (const entity of entities) {
+    if (isPropertyRedacted(groupBy, entity._redacted)) {
+      partial = true
+      continue
+    }
+    const key = groupKey(entity.properties[groupBy])
+    types.add(entity.type)
+    const group = groups.get(key)
+    if (group) group.count++
+    else groups.set(key, { count: 1, type: entity.type })
+  }
+
+  // Declared order needs one enum to rank against. Rows of several types
+  // may declare different enums, so such a breakdown orders by count.
+  const [onlyType] = types.size === 1 ? types : [undefined]
+  const declared = enumValues(schema, onlyType, groupBy)
+  const total = entities.length
+  const items = [...groups].map(([key, { count, type }]): BreakdownItem => ({
+    key,
+    label: key ? (schema.getEnumLabel(key, groupBy, type) ?? key) : unknownLabel,
+    count,
+    percentage: total > 0 ? (count / total) * 100 : 0,
+    entityType: type,
+    badge: !!enumValues(schema, type, groupBy) && key !== '',
+    color: barColor(schema, type, groupBy, key),
+  }))
+  const rank = (item: BreakdownItem) => {
+    const i = declared?.indexOf(item.key) ?? -1
+    return i >= 0 ? i : undefined
+  }
+  return { items: items.sort(compareGroups(rank)), partial }
+}
+
+/**
+ * A list card's breakdown, from the groups the server counted. The server
+ * already ordered them and resolved each label; the badge and colour come
+ * from the list's entity type.
+ */
+export function listBreakdown(
+  schema: CardSchema,
+  card: DashboardCardEntry,
+  value: DashboardCardValue,
+  unknownLabel: string
+): BreakdownItem[] {
+  const groupBy = card.group_by ?? ''
+  const type = card.list ? schema.getList(card.list)?.entity : undefined
+  const isEnum = !!enumValues(schema, type, groupBy)
+  return (value.groups ?? []).map((g) => ({
+    key: g.value,
+    label: g.label || unknownLabel,
+    count: g.count,
+    percentage: value.total > 0 ? (g.count / value.total) * 100 : 0,
+    entityType: type,
+    badge: isEnum && g.value !== '',
+    color: barColor(schema, type, groupBy, g.value),
+  }))
+}
+
+function cellLink(entity: Entity, col: { link?: string }): string | undefined {
+  return col.link === 'detail' ? `/entity/${entity.type}/${entity.id}` : undefined
+}
+
+/**
+ * A table card's cells, resolved as list cells are. Each row takes its
+ * widgets from its own type, since a query may match several. `tz` is the
+ * reader's display time zone.
+ */
+export function tableRows(
+  schema: CardSchema,
+  card: DashboardCardEntry,
+  entities: Entity[],
+  tz: string
+): TableRow[] {
+  const resolve = createDenseCellResolver()
+  const columns = card.columns ?? []
+  return entities.map((entity) => {
+    const type = schema.getEntityType(entity.type)
+    const cells = columns.map((col, i): TableCell => {
+      const key = `${i}:${col.property ?? col.relation ?? ''}`
+      const link = cellLink(entity, col)
+      const property = col.property
+      // A relation column has no value on the row; it stays blank, as before.
+      if (!property) return { key, link, hidden: false, text: '' }
+      // A hidden value shows the marker, also in a link column, where an
+      // empty link could not be clicked anyway.
+      if (isPropertyRedacted(property, entity._redacted)) return { key, hidden: true, text: '' }
+      const value = entity.properties[property]
+      const widget = link ? undefined : resolve(value, property, type, tz)
+      return {
+        key,
+        link,
+        hidden: false,
+        widget,
+        text: widget ? '' : type ? formatCellValue(value, property, type, tz) : String(value ?? ''),
+      }
+    })
+    return { entity, cells }
+  })
+}

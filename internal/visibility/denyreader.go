@@ -49,6 +49,11 @@ func (DenyReader) Family(context.Context, string) (Family, bool, error) {
 	return Family{}, false, ErrReaderUnavailable
 }
 
+// MentionedBy implements the script read surface by refusing.
+func (DenyReader) MentionedBy(context.Context, string, string, int) (MentionPage, error) {
+	return MentionPage{}, ErrReaderUnavailable
+}
+
 // ResolveHeaders implements the script read surface: every address misses,
 // because the reader is unavailable. The batch has no error result, so the
 // refusal is logged instead of returned as [ErrReaderUnavailable].

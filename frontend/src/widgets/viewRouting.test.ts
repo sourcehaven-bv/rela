@@ -5,6 +5,8 @@ import { viewFieldRoutingHint, densePropertyRoutingHint } from './viewRouting'
 import { defaultRegistry } from './registry'
 import TextWidget from './TextWidget.vue'
 import MultiSelectWidget from './MultiSelectWidget.vue'
+import FileWidget from './FileWidget.vue'
+import FileCellWidget from './FileCellWidget.vue'
 
 describe('viewFieldRoutingHint', () => {
   it('routes propType-having fields to enum-list', () => {
@@ -93,7 +95,7 @@ describe('densePropertyRoutingHint', () => {
     const cases: [PropertyDef, boolean][] = [
       [def({ type: 'string' }), true],
       [def({ type: 'boolean' }), true],
-      [def({ type: 'file' }), true],
+      [def({ type: 'file' }), false],
       [def({ type: 'integer' }), true],
       [def({ type: 'date' }), false],
       [def({ type: 'datetime' }), false],
@@ -135,18 +137,24 @@ describe('densePropertyRoutingHint', () => {
     expect(densePropertyRoutingHint(def({ type: 'boolean' }), 'done').kind).toBe('text')
   })
 
-  it('routes file to text, NOT a file widget, to avoid one image request per cell', () => {
-    expect(densePropertyRoutingHint(def({ type: 'file' }), 'attachment').kind).toBe('text')
+  it('routes file to the dense file cell, NOT FileWidget, to avoid one image request per cell', () => {
+    const hint = densePropertyRoutingHint(def({ type: 'file' }), 'attachment')
+    expect(hint.kind).toBe('file')
+    expect(defaultRegistry.resolveDense(hint)).toBe(FileCellWidget)
   })
 
-  it('never emits a hint kind that resolves to FileWidget', () => {
-    // WidgetHintKind has no 'file' member, so the hint path structurally
-    // cannot reach FileWidget. This pins that safety property against a
-    // future kind being added without revisiting dense surfaces.
-    const kinds = (['string', 'file', 'date', 'boolean', 'enum', 'rrule'] as const).map(
-      (t) => densePropertyRoutingHint(def({ type: t as PropertyDef['type'] }), 'p').kind
-    )
-    expect(kinds).not.toContain('file')
+  it('routes a list-valued file to the file cell too', () => {
+    expect(densePropertyRoutingHint(def({ type: 'file', list: true }), 'p').kind).toBe('file')
+  })
+
+  it('never resolves a dense hint to FileWidget', () => {
+    // FileWidget's display branch renders <img> previews: one request per
+    // image per cell. This pins that safety property against a future kind.
+    const types = ['string', 'file', 'date', 'boolean', 'enum', 'rrule'] as const
+    for (const t of types) {
+      const hint = densePropertyRoutingHint(def({ type: t as PropertyDef['type'] }), 'p')
+      expect(defaultRegistry.resolveDense(hint)).not.toBe(FileWidget)
+    }
   })
 
   it('does not warn for any built-in property type', () => {
@@ -164,7 +172,7 @@ describe('densePropertyRoutingHint', () => {
       'rrule',
     ]
     for (const t of types) {
-      defaultRegistry.resolveFromHint(densePropertyRoutingHint(def({ type: t }), 'p'))
+      defaultRegistry.resolveDense(densePropertyRoutingHint(def({ type: t }), 'p'))
     }
     expect(warn).not.toHaveBeenCalled()
     warn.mockRestore()

@@ -7,13 +7,13 @@ import (
 	"errors"
 	"fmt"
 	"iter"
-	"sort"
 	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/search"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/store/storeutil"
 )
@@ -32,6 +32,8 @@ const getEntitySQL = `SELECT id, type, face, properties, content, updated_at
 
 // GetEntity returns the face row ref addresses, or store.ErrNotFound. A
 // missing face is ErrNotFound even when sibling faces exist.
+//
+//archplan:sink=read
 func (s *Store) GetEntity(ctx context.Context, ref entity.Ref) (*entity.Entity, error) {
 	if !storeutil.Addressable(ref) {
 		return nil, store.ErrNotFound
@@ -266,6 +268,8 @@ func originValues(ctx context.Context) originCols {
 // CreateEntity inserts a new entity. Returns store.ErrConflict if the ID
 // exists. The created entity (with server-assigned updated_at) is delivered
 // to observers and an EventEntityCreated is emitted after commit.
+//
+//archplan:sink=write
 func (s *Store) CreateEntity(ctx context.Context, e *entity.Entity) error {
 	if err := validateID(e.ID); err != nil {
 		return err
@@ -345,14 +349,16 @@ func (s *Store) CreateEntity(ctx context.Context, e *entity.Entity) error {
 		INSERT INTO entities (id, face, type, properties, content, search_text, updated_at,
 		                      last_edited_by_user, last_edited_by_tool,
 		                      origin_kind, origin_source, origin_source_face,
-		                      origin_source_type, origin_definition)
-		VALUES ($1, $2, $3, $4, $5, $6, now(), $7, $8, $9, $10, $11, $12, $13)
+		                      origin_source_type, origin_definition,
+		                      mention_targets, mentions_hash)
+		VALUES ($1, $2, $3, $4, $5, $6, now(), $7, $8, $9, $10, $11, $12, $13, $14, $15)
 		ON CONFLICT (id, face) DO NOTHING
 		RETURNING updated_at`
+	targets, hash := mentionColumns(e.Content)
 	var updatedAt time.Time
 	err = tx.QueryRow(ctx, q, e.ID, e.Face, e.Type, props, e.Content, entitySearchText(e),
 		editorUser, editorTool,
-		o.kind, o.source, o.sourceFace, o.sourceType, o.definition).Scan(&updatedAt)
+		o.kind, o.source, o.sourceFace, o.sourceType, o.definition, targets, hash).Scan(&updatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return store.ErrConflict
 	}
@@ -383,6 +389,8 @@ func (s *Store) CreateEntity(ctx context.Context, e *entity.Entity) error {
 
 // UpdateEntity overwrites an existing entity. Returns store.ErrNotFound if the
 // entity does not exist.
+//
+//archplan:sink=write
 func (s *Store) UpdateEntity(ctx context.Context, e *entity.Entity) error {
 	_, err := s.updateEntityIf(ctx, e, store.UpdateCondition{})
 	return err
@@ -464,13 +472,15 @@ func (s *Store) updateEntityIf(
 		    updated_at = now(), seq = nextval('rela_seq'),
 		    last_edited_by_user = $7, last_edited_by_tool = $8,
 		    origin_kind = $9, origin_source = $10, origin_source_face = $11,
-		    origin_source_type = $12, origin_definition = $13
+		    origin_source_type = $12, origin_definition = $13,
+		    mention_targets = $14, mentions_hash = $15
 		WHERE id = $1 AND face = $2
 		RETURNING updated_at`
+	targets, hash := mentionColumns(e.Content)
 	var updatedAt time.Time
 	err = tx.QueryRow(ctx, q, e.ID, e.Face, e.Type, props, e.Content, entitySearchText(e),
 		editorUser, editorTool,
-		o.kind, o.source, o.sourceFace, o.sourceType, o.definition).Scan(&updatedAt)
+		o.kind, o.source, o.sourceFace, o.sourceType, o.definition, targets, hash).Scan(&updatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return "", store.ErrNotFound
 	}
@@ -520,6 +530,8 @@ func (s *Store) updateEntityIf(
 // Contrast the pre-CAS behavior, which is what `writeMu` could never fix: two
 // rela-server processes against one database (docs/postgres-backend.md) each
 // read, each compute, and the later write silently discards the earlier one.
+//
+//archplan:sink=write
 func (s *Store) UpdateEntityIf(
 	ctx context.Context, e *entity.Entity, cond store.UpdateCondition,
 ) (store.EntityVersion, error) {
@@ -530,6 +542,8 @@ func (s *Store) UpdateEntityIf(
 // store.ErrHasRelations if any relation references it. With cascade, deletes
 // referencing relations and the entity's attachments in one transaction,
 // returning the removed rows.
+//
+//archplan:sink=write
 func (s *Store) DeleteFamily(ctx context.Context, id string, cascade bool) (*store.DeleteResult, error) {
 	tx, err := s.db.Begin(ctx)
 	if err != nil {
@@ -637,6 +651,8 @@ func (s *Store) DeleteFamily(ctx context.Context, id string, cascade bool) (*sto
 // outgoing edges on the matching tail. The last face is the exception: with
 // no entity left, every incident edge goes too (RR-2466U1, see
 // store.EntityWriter.DeleteFace).
+//
+//archplan:sink=write
 func (s *Store) DeleteFace(ctx context.Context, ref entity.Ref) (*store.DeleteResult, error) {
 	if !storeutil.Addressable(ref) {
 		return nil, store.ErrNotFound
@@ -820,6 +836,8 @@ func renameTargetFree(ctx context.Context, tx pgx.Tx, newID, oldID string) error
 // RenameFamily changes an entity's ID, rewriting every relation endpoint and
 // re-keying attachments atomically. Returns store.ErrNotFound if oldID is
 // absent, store.ErrConflict if newID exists.
+//
+//archplan:sink=write
 func (s *Store) RenameFamily(ctx context.Context, oldID, newID string) (*store.RenameResult, error) {
 	if err := validateID(newID); err != nil {
 		return nil, err
@@ -1318,38 +1336,9 @@ func normalizeJSONMap(m map[string]any) map[string]any {
 	return m
 }
 
-// entitySearchText builds the lowercased text the search Backend matches
-// against. It mirrors search.MatchText's field selection exactly: entity ID,
-// content, and STRING-valued properties only (non-string props are excluded).
-func entitySearchText(e *entity.Entity) string {
-	// Order matters (TKT-1U8XYN): id, then string properties in key order,
-	// then the body. Ranking compares the query against the first
-	// searchRankPrefix bytes, so the identity and title-like properties
-	// decide relevance and the body only decides whether the row matches.
-	// Key order keeps the column deterministic; migration 0014 composes
-	// existing rows the same way.
-	var b strings.Builder
-	b.WriteString(strings.ToLower(e.ID))
-	b.WriteByte('\n')
-	keys := make([]string, 0, len(e.Properties))
-	strs := make(map[string]string, len(e.Properties))
-	for k, v := range e.Properties {
-		if str, ok := v.(string); ok {
-			keys = append(keys, k)
-			strs[k] = str
-		}
-	}
-	sort.Strings(keys)
-	for i, k := range keys {
-		if i > 0 {
-			b.WriteByte('\n')
-		}
-		b.WriteString(strings.ToLower(strs[k]))
-	}
-	b.WriteByte('\n')
-	b.WriteString(strings.ToLower(e.Content))
-	return b.String()
-}
+// entitySearchText is the search_text column of e. [search.IndexText] is the
+// one writer for it; migration 0014 composes existing rows the same way.
+func entitySearchText(e *entity.Entity) string { return search.IndexText(e) }
 
 // familyAdvisoryLockKey namespaces the per-entity family lock. Distinct from
 // migrateAdvisoryLockKey, reconcileAdvisoryLockKey and sweepAdvisoryLockKey —

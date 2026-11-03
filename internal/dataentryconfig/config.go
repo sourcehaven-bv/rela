@@ -19,6 +19,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig/icondefs"
 	"github.com/Sourcehaven-BV/rela/internal/git"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
+	"github.com/Sourcehaven-BV/rela/internal/yamlscalar"
 )
 
 // ConfigFile is the conventional filename for data-entry configuration within a rela project.
@@ -37,7 +38,7 @@ const (
 	WidgetRrule       = "rrule"
 	// WidgetFile is registered by the SPA (frontend/src/widgets/registry.ts)
 	// but had no Go constant until TKT-3R7RF3 needed to name it in the section
-	// field widget table. Note Metamodel.ResolveWidgetFromType has no `file`
+	// field widget table. Note metamodel.ResolveWidgetFromType has no `file`
 	// case and resolves a file property to "text" — a real divergence from the
 	// SPA's defaultWidgetFor, documented at sectionFieldWidgetTypes.
 	WidgetFile  = "file"
@@ -94,11 +95,11 @@ func (d Direction) IsIncoming() bool {
 // sections (a new view kind legitimately adds one) rather than god-object
 // accretion. Splitting it would churn the YAML shape for no design gain —
 // a breaking change to every project's config file, made to satisfy a lint.
-// A genuinely new top-level key therefore raises the pin by one; `spaces`
-// (TKT-GNKR5H), `account` (TKT-MJTD12), `pages` (TKT-ITQ0HL) and `piles`
-// (TKT-K3RJLH) are the most recent.
+// A genuinely new top-level key therefore raises the pin by one; `account`
+// (TKT-MJTD12), `pages` (TKT-ITQ0HL), `piles` (TKT-K3RJLH) and `channels`
+// (TKT-91BK6F) are the most recent.
 //
-//plimsoll:max-fields=26
+//plimsoll:max-fields=28
 type Config struct {
 	Version     string                       `yaml:"version"`
 	App         AppConfig                    `yaml:"app"`
@@ -116,10 +117,14 @@ type Config struct {
 	Feeds       map[string]Feed              `yaml:"feeds,omitempty" json:"feeds,omitempty"`
 	CalDAV      CalDAVConfig                 `yaml:"caldav,omitempty" json:"caldav,omitzero"`
 	Dashboard   *DashboardConfig             `yaml:"dashboard,omitempty"`
-	Commands    map[string]CommandConfig     `yaml:"commands,omitempty"`
-	Actions     map[string]Action            `yaml:"actions,omitempty"`
-	Webhooks    map[string]Webhook           `yaml:"webhooks,omitempty" json:"webhooks,omitempty"`
-	Navigation  []NavigationEntry            `yaml:"navigation"`
+	// Dashboards are named dashboards, each the shape of Dashboard, reached
+	// by `dashboard: <name>` and at /dashboard/<name>. Dashboard stays the
+	// default dashboard; the two coexist. The name "default" is reserved.
+	Dashboards map[string]DashboardConfig `yaml:"dashboards,omitempty" json:"dashboards,omitempty"`
+	Commands   map[string]CommandConfig   `yaml:"commands,omitempty"`
+	Actions    map[string]Action          `yaml:"actions,omitempty"`
+	Webhooks   map[string]Webhook         `yaml:"webhooks,omitempty" json:"webhooks,omitempty"`
+	Navigation []NavigationEntry          `yaml:"navigation"`
 
 	// Spaces are named entry points, each with its own navigation, home and
 	// Create menu; list order is switcher order. Mutually exclusive with a
@@ -145,6 +150,12 @@ type Config struct {
 	// Piles configures what a pile panel offers. Nil: accepted, means piles
 	// offer no actions and every registered transform. See [PilesConfig].
 	Piles *PilesConfig `yaml:"piles,omitempty" json:"piles,omitempty"`
+
+	// Channels presents the message types of realtime.yaml, keyed by
+	// channel type. Nil: accepted, means every message type is presented
+	// by its realtime.yaml labels, required properties first. See
+	// [ChannelPresentation].
+	Channels map[string]ChannelPresentation `yaml:"channels,omitempty" json:"channels,omitempty"`
 }
 
 // EntityViewConfig declares UX bindings for a metamodel entity type.
@@ -158,6 +169,12 @@ type EntityViewConfig struct {
 	// Duplicate narrows what a duplicate of this type carries over
 	// (TKT-Z8K2FS). Nil means every property the caller can see carries.
 	Duplicate *DuplicateConfig `yaml:"duplicate,omitempty" json:"duplicate,omitempty"`
+
+	// MentionedByPanel switches the built-in "Mentioned by" panel on this
+	// type's entity page (TKT-HF0D5W). Nil means shown. The panel also steps
+	// aside when the type's view collects backlinks itself through a
+	// `mentioned_by` traverse step, so the backlinks never show twice.
+	MentionedByPanel *bool `yaml:"mentioned_by_panel,omitempty" json:"mentioned_by_panel,omitempty"`
 }
 
 // DuplicateConfig narrows what the Duplicate affordance copies from a source
@@ -210,7 +227,8 @@ func (d *DuplicateConfig) CarriesProperty(name string) bool {
 // An action has either a declarative property mutation (Set) or a Lua script
 // (Script), but not both. When referenced by a list's Actions field, the
 // action is available as a keyboard-driven bulk operation on selected rows.
-// When referenced by a navigation entry, it appears as a sidebar button. With
+// When referenced by a navigation entry, it appears as a sidebar button, and
+// by a list's ToolbarActions, as a button in the list header. With
 // AvailableOn set, it appears on matching entity detail pages instead.
 type Action struct {
 	Description string            `yaml:"description,omitempty" json:"description,omitempty"`
@@ -334,22 +352,12 @@ func (c *ActionConfirm) UnmarshalYAML(value *yaml.Node) error {
 	// YAML 1.2 reads an unquoted yes/no/on/off as a string, so `confirm: yes`
 	// would silently become the dialog text "yes". Refuse it; a quoted value
 	// is taken as the text the operator meant.
-	if value.Style&(yaml.DoubleQuotedStyle|yaml.SingleQuotedStyle) == 0 && isYAML11Bool(value.Value) {
+	if yamlscalar.PlainYAML11Bool(value) {
 		return fmt.Errorf("confirm: %q is not a boolean; use true or false, or quote it to show it as text",
-			value.Value)
+			strings.TrimSpace(value.Value))
 	}
 	*c = ActionConfirm{Enabled: value.Value != "", Text: value.Value}
 	return nil
-}
-
-// isYAML11Bool reports whether s is one of the YAML 1.1 boolean spellings
-// that YAML 1.2 reads as a plain string.
-func isYAML11Bool(s string) bool {
-	switch strings.ToLower(s) {
-	case "yes", "no", "y", "n", "on", "off":
-		return true
-	}
-	return false
 }
 
 // MarshalYAML writes the same shape UnmarshalYAML reads.
@@ -401,6 +409,17 @@ type ActionRequest struct {
 type AppConfig struct {
 	Name        string `yaml:"name"`
 	Description string `yaml:"description"`
+	// Language is the project's default interface language for the web app,
+	// as a BCP 47 tag ("nl", "nl-BE"). It applies when the user has chosen
+	// no language on the Settings page, and it wins over the browser's
+	// language. Empty means "follow the browser".
+	//
+	// It covers the app's own text (menus, buttons, errors), not the
+	// operator's labels, which are already written in one language.
+	// Validated at load: the tag must parse, and its base language must be
+	// one of [SupportedUILanguages]. A region (nl-BE) is kept for date and
+	// number formatting.
+	Language string `yaml:"language,omitempty"`
 	// DefaultWorld names the world a request lands in when the URL carries no
 	// `?world=`. Empty (the default) means the default world — the raw stored
 	// faces, which is right for an authoring tool and wrong for a reader.
@@ -898,6 +917,22 @@ type List struct {
 	PageSize    int      `yaml:"page_size" json:"page_size,omitempty"`
 	Actions     []string `yaml:"actions,omitempty" json:"actions,omitempty"`
 
+	// ToolbarActions are ids of actions offered as buttons in the list's page
+	// header, beside the create button. They run WITHOUT a selected row,
+	// through the same entity-less POST /_action/{id} path as a navigation
+	// entry's `action:`, so each must name a script action that is not
+	// entity-bound (no `available_on:`) and has a label (validateActions).
+	//
+	// A list key rather than an `available_on: {lists: ...}` scope on the
+	// action: available_on makes an action entity-bound, and every surface
+	// that references an action by id (list `actions:`, navigation `action:`,
+	// `piles.actions`) names it from the surface side.
+	//
+	// Placement, not authorization: the list response offers a button as
+	// `_actions["action:<id>"]` only to principals holding the action's
+	// `permission:`, and the action endpoint re-checks it on every run.
+	ToolbarActions []string `yaml:"toolbar_actions,omitempty" json:"toolbar_actions,omitempty"`
+
 	// ExportRender is an optional Lua script (relative path under scripts/,
 	// e.g. "docs/ticket_report.lua") that renders THIS LIST for export. When
 	// set, "Export as PDF/ODT" on the list routes through the script instead
@@ -918,11 +953,13 @@ type List struct {
 	GroupBy *ListGroupBy `yaml:"group_by,omitempty" json:"group_by,omitempty"`
 }
 
-// ListColumn defines a column in a list view.
-// A column references either a Property (entity property) or a Relation
-// (relation type whose target titles are shown comma-separated).
-// For relation columns, Direction controls whether to show outgoing (default)
-// or incoming edges. Use "incoming" to display entities that point to the current row.
+// ListColumn defines a column in a list view. A column is one of four
+// kinds, and sets exactly one of their keys: a Property (entity property),
+// a Relation (relation type whose target titles are shown comma-separated),
+// Face (the face each row was served in) or Busy (a channel type's busy
+// indicator). For relation columns, Direction controls whether to show
+// outgoing (default) or incoming edges. Use "incoming" to display entities
+// that point to the current row.
 type ListColumn struct {
 	Property  string    `yaml:"property" json:"property,omitempty"`
 	Relation  string    `yaml:"relation" json:"relation,omitempty"`
@@ -934,6 +971,12 @@ type ListColumn struct {
 	// "Vastgesteld" or "Concept"), for a type that declares faces. It takes
 	// neither Property nor Relation.
 	Face bool `yaml:"face" json:"face,omitempty"`
+	// Busy names a channel type (TKT-TU3XH4). The column shows a busy
+	// indicator while a channel of that type on the row is in a working
+	// state, as [KanbanCardField.Busy] does on a card. It takes no other key
+	// than Label, is never the first column, and a list has at most one.
+	// Lists only: dashboard card and view section columns refuse it.
+	Busy string `yaml:"busy" json:"busy,omitempty"`
 }
 
 // SortSpec defines a single sort criterion for a list or dashboard card.
@@ -1090,19 +1133,32 @@ func (c *Config) HasPropertyFilterControl(entityType, property string) bool {
 // exists only because List.Description predated the feature and was already
 // present in configs, and a Kanban has no such legacy field to accommodate.
 type Kanban struct {
-	EntityType       string           `yaml:"entity_type" json:"entity"`
-	Title            string           `yaml:"title" json:"title"`
-	Header           string           `yaml:"header" json:"header,omitempty"`
-	Footer           string           `yaml:"footer" json:"footer,omitempty"`
-	ColumnProperty   string           `yaml:"column_property" json:"column_property"`
-	Columns          []KanbanColumn   `yaml:"columns,omitempty" json:"columns,omitempty"`
-	SwimlaneProperty string           `yaml:"swimlane_property,omitempty" json:"swimlane_property,omitempty"`
-	Swimlanes        []KanbanSwimlane `yaml:"swimlanes,omitempty" json:"swimlanes,omitempty"`
-	Card             KanbanCard       `yaml:"card" json:"card"`
-	EditForm         string           `yaml:"edit_form,omitempty" json:"edit_form,omitempty"`
-	CreateForm       string           `yaml:"create_form,omitempty" json:"create_form,omitempty"`
-	Filters          []FilterConfig   `yaml:"filters,omitempty" json:"filters,omitempty"`
-	FilterControls   []FilterControl  `yaml:"filter_controls,omitempty" json:"filter_controls,omitempty"`
+	EntityType     string `yaml:"entity_type" json:"entity"`
+	Title          string `yaml:"title" json:"title"`
+	Header         string `yaml:"header" json:"header,omitempty"`
+	Footer         string `yaml:"footer" json:"footer,omitempty"`
+	ColumnProperty string `yaml:"column_property" json:"column_property"`
+	// ColumnsFrom takes the columns from a single-valued relation instead of
+	// an enum property (TKT-KJ3Q07). Exclusive with ColumnProperty.
+	ColumnsFrom      *KanbanColumnsFrom `yaml:"columns_from,omitempty" json:"columns_from,omitempty"`
+	Columns          []KanbanColumn     `yaml:"columns,omitempty" json:"columns,omitempty"`
+	SwimlaneProperty string             `yaml:"swimlane_property,omitempty" json:"swimlane_property,omitempty"`
+	Swimlanes        []KanbanSwimlane   `yaml:"swimlanes,omitempty" json:"swimlanes,omitempty"`
+	Card             KanbanCard         `yaml:"card" json:"card"`
+	// Layout is "" (columns side by side) or [LayoutWall]. A wall shows the
+	// cards as a wrapping grid. Without columns it is one grid of all cards;
+	// with ColumnsFrom the cards without a target form a pile on top, the
+	// targets are groups below it, and dropping a card on a loose card
+	// creates a new target (TKT-0VBQW0H).
+	Layout string `yaml:"layout,omitempty" json:"layout,omitempty"`
+	// ColumnSummary adds one line per entry under each column heading, such
+	// as a count of the cards or the sum of an amount (TKT-SVLQQ6). Computed
+	// by the SPA over the cards the reader can see.
+	ColumnSummary  []Summary       `yaml:"column_summary,omitempty" json:"column_summary,omitempty"`
+	EditForm       string          `yaml:"edit_form,omitempty" json:"edit_form,omitempty"`
+	CreateForm     string          `yaml:"create_form,omitempty" json:"create_form,omitempty"`
+	Filters        []FilterConfig  `yaml:"filters,omitempty" json:"filters,omitempty"`
+	FilterControls []FilterControl `yaml:"filter_controls,omitempty" json:"filter_controls,omitempty"`
 	// Condition mirrors [List.Condition], but is NOT YET SUPPORTED on a
 	// kanban and is refused at config load.
 	//
@@ -1122,6 +1178,30 @@ type Kanban struct {
 	// fallback to unfiltered — that is the difference between a typo showing
 	// nothing and a typo showing archived records to everyone.
 	QueryScope string `yaml:"query_scope,omitempty" json:"query_scope,omitempty"`
+}
+
+// Kanban layouts and card styles; "" is the default for both.
+const (
+	LayoutWall    = "wall"
+	CardStyleNote = "note"
+)
+
+// KanbanColumnsFrom declares a board whose columns are the targets of a
+// single-valued relation on the card type.
+//
+// OfferedBy names a relation from the page anchor to the same target type.
+// On a page tab, the columns are the anchor's targets in `_order_out` order.
+// Off a page, or without OfferedBy, the columns are every target, ordered by
+// OrderBy (a property of the target type) and then by title.
+//
+// StyleFrom names an enum property of the target type. Each column takes its
+// color from its target's value of that property, through the app styles,
+// the same way a relation field's `style_from` colors its badge.
+type KanbanColumnsFrom struct {
+	Relation  string `yaml:"relation" json:"relation"`
+	OfferedBy string `yaml:"offered_by,omitempty" json:"offered_by,omitempty"`
+	OrderBy   string `yaml:"order_by,omitempty" json:"order_by,omitempty"`
+	StyleFrom string `yaml:"style_from,omitempty" json:"style_from,omitempty"`
 }
 
 // KanbanColumn defines a column in the kanban board.
@@ -1154,6 +1234,9 @@ type KanbanSwimlane struct {
 type KanbanCard struct {
 	Title  string            `yaml:"title" json:"title"`
 	Fields []KanbanCardField `yaml:"fields,omitempty" json:"fields,omitempty"`
+	// Style is "" (the default card) or [CardStyleNote], a sticky note
+	// without the card's id.
+	Style string `yaml:"style,omitempty" json:"style,omitempty"`
 }
 
 // Calendar defines a calendar view: entities carrying a date property laid out
@@ -1409,6 +1492,12 @@ type GanttSource struct {
 // (relation type whose target titles are shown). For relation fields,
 // Direction controls whether to show outgoing (default) or incoming edges.
 //
+// A Relation together with a Property shows that property of each related
+// entity instead of its title (TKT-8Z2LT3). Property then names a property of
+// the types at the other end of the relation, not of the card's own type.
+// Kanban cards only: the board reads the related entities from its gated
+// `include=*` fetch, which calendar chips and gantt tooltips do not have.
+//
 // This is a dedicated type rather than a reuse of ViewSectionField: the
 // latter is shared by form relations, side panels, and view sections, and
 // widening it would leak card-relation semantics into all of them. An
@@ -1426,6 +1515,12 @@ type KanbanCardField struct {
 	// alone: no Property or Relation. The count is served only to a reader
 	// who holds `comment:read` across the project (TKT-WA25G2).
 	Comments bool `yaml:"comments,omitempty" json:"comments,omitempty"`
+	// Busy names a channel type with a session. The card shows an indicator
+	// while a channel of that type on its entity is in a state with status
+	// working. It stands alone, like Comments, and at most one field of a
+	// card may set it (TKT-21G6JS). Its label is hidden unless ShowLabel
+	// is true; see [KanbanCardField.LabelShown].
+	Busy string `yaml:"busy,omitempty" json:"busy,omitempty"`
 	// Label overrides the displayed name. Left empty it is DERIVED from the
 	// property or relation name, so an author never restates `assignee` as
 	// "Assignee" — only a genuine rename needs writing down.
@@ -1444,13 +1539,20 @@ type KanbanCardField struct {
 
 // LabelShown reports whether this field's label should render.
 // Nil: an unset ShowLabel means true — labels are the safe default, since an
-// unlabelled ambiguous value is worse than a redundant one.
+// unlabelled ambiguous value is worse than a redundant one. A busy field is
+// the exception and defaults to false: its indicator already names the
+// channel type to a screen reader, so a label would say the type twice.
 func (f KanbanCardField) LabelShown() bool {
-	return f.ShowLabel == nil || *f.ShowLabel
+	if f.ShowLabel == nil {
+		return f.Busy == ""
+	}
+	return *f.ShowLabel
 }
 
 // DisplayLabel is the label to render: the explicit override when set,
-// otherwise the relation or property name it was derived from.
+// otherwise the relation or property name it was derived from. A field that
+// shows a related entity's property is labeled by the property, the value it
+// shows. A busy field is labeled by its channel type.
 func (f KanbanCardField) DisplayLabel() string {
 	if f.Label != "" {
 		return f.Label
@@ -1458,7 +1560,10 @@ func (f KanbanCardField) DisplayLabel() string {
 	if f.Comments {
 		return "comments"
 	}
-	if f.Relation != "" {
+	if f.Busy != "" {
+		return f.Busy
+	}
+	if f.Relation != "" && f.Property == "" {
 		return f.Relation
 	}
 	return f.Property
@@ -1472,18 +1577,18 @@ func (f KanbanCardField) DisplayLabel() string {
 // [Config]: each exported field is one key of a navigation entry in
 // data-entry.yaml, so a new entry kind raises the pin by one.
 //
-//plimsoll:max-fields=22
+//plimsoll:max-fields=23
 type NavigationEntry struct {
 	// Direct item fields
-	Label     string `yaml:"label,omitempty" json:"label,omitempty"`
-	List      string `yaml:"list,omitempty" json:"list,omitempty"`
-	Dashboard bool   `yaml:"dashboard,omitempty" json:"dashboard,omitempty"`
-	Kanban    string `yaml:"kanban,omitempty" json:"kanban,omitempty"`
-	Calendar  string `yaml:"calendar,omitempty" json:"calendar,omitempty"`
-	Gantt     string `yaml:"gantt,omitempty" json:"gantt,omitempty"`
-	Search    bool   `yaml:"search,omitempty" json:"search,omitempty"`
-	Settings  bool   `yaml:"settings,omitempty" json:"settings,omitempty"`
-	Action    string `yaml:"action,omitempty" json:"action,omitempty"`
+	Label     string       `yaml:"label,omitempty" json:"label,omitempty"`
+	List      string       `yaml:"list,omitempty" json:"list,omitempty"`
+	Dashboard DashboardRef `yaml:"dashboard,omitempty" json:"dashboard,omitempty"`
+	Kanban    string       `yaml:"kanban,omitempty" json:"kanban,omitempty"`
+	Calendar  string       `yaml:"calendar,omitempty" json:"calendar,omitempty"`
+	Gantt     string       `yaml:"gantt,omitempty" json:"gantt,omitempty"`
+	Search    bool         `yaml:"search,omitempty" json:"search,omitempty"`
+	Settings  bool         `yaml:"settings,omitempty" json:"settings,omitempty"`
+	Action    string       `yaml:"action,omitempty" json:"action,omitempty"`
 	// Document names a STANDALONE document (one with no entity_type) under
 	// documents:. Entity-anchored documents cannot appear here — they need
 	// an entry id the sidebar has no way to supply. Enforced by
@@ -1492,6 +1597,11 @@ type NavigationEntry struct {
 	// Page names a page under pages:. The entry opens the page on the first
 	// tab the principal may see.
 	Page string `yaml:"page,omitempty" json:"page,omitempty"`
+	// Pile names one of the principal's own piles. The entry opens that pile
+	// in the flyout, and the pile is created on first use, so every user gets
+	// it without making it. A pile is per user and outside the config, so
+	// the name is all the config can say.
+	Pile string `yaml:"pile,omitempty" json:"pile,omitempty"`
 
 	// Entities names an entity type whose members the sidebar lists, one link
 	// per entity (TKT-PEKL8L). Only valid inside a group, and without a
@@ -1846,15 +1956,53 @@ type DashboardConfig struct {
 	Cards       []DashboardCard `yaml:"cards" json:"cards"`
 }
 
-// DashboardCard defines a single card on the dashboard, driven by a search query.
+// DashboardCard defines a single card on the dashboard. Its rows come from a
+// configured list (`list:`) or from a search query (`query:`); exactly one is
+// set.
 type DashboardCard struct {
-	Title   string       `yaml:"title" json:"title"`
-	Query   string       `yaml:"query" json:"query"`
-	Display string       `yaml:"display" json:"display"` // "count", "table", "breakdown"
+	Title string `yaml:"title" json:"title"`
+	// List names a `lists:` entry. The card shows exactly the rows that list
+	// shows the same principal, and the server computes its value
+	// (/api/v1/_dashboard/card). Matrix and ratio cards require it.
+	List string `yaml:"list,omitempty" json:"list,omitempty"`
+	// Query is a search query the SPA runs through /api/v1/_search.
+	Query   string       `yaml:"query,omitempty" json:"query,omitempty"`
+	Display string       `yaml:"display" json:"display"` // count, table, breakdown, matrix, ratio
 	GroupBy string       `yaml:"group_by,omitempty" json:"group_by,omitempty"`
 	Columns []ListColumn `yaml:"columns,omitempty" json:"columns,omitempty"`
 	Sort    []SortSpec   `yaml:"sort,omitempty" json:"sort,omitempty"`
 	Limit   int          `yaml:"limit,omitempty" json:"limit,omitempty"`
+
+	// Rows and MatrixColumns name the properties a matrix card counts by. In
+	// YAML the column axis is `columns: <property>`; a sequence under the same
+	// key is a table card's column list (see UnmarshalYAML).
+	Rows          string `yaml:"rows,omitempty" json:"rows,omitempty"`
+	MatrixColumns string `yaml:"-" json:"matrix_columns,omitempty"`
+	// ToneBy names an enum property whose most severe value colors a matrix
+	// cell. Severity is the declared order: the last value is the most severe.
+	ToneBy string `yaml:"tone_by,omitempty" json:"tone_by,omitempty"`
+	// Colors maps a ToneBy value to a tone (success, warning, error, info,
+	// new) or a palette color name.
+	Colors map[string]string `yaml:"colors,omitempty" json:"colors,omitempty"`
+	// RowsLabel and ColumnsLabel title a matrix card's axes. Empty means the
+	// property's schema label, or its name when it has none (TKT-BRAM1A).
+	RowsLabel    string `yaml:"rows_label,omitempty" json:"rows_label,omitempty"`
+	ColumnsLabel string `yaml:"columns_label,omitempty" json:"columns_label,omitempty"`
+	// RowsOrder and ColumnsOrder are `asc` (the default) or `desc`. Desc
+	// reverses an axis, so the highest value of an integer, or the last
+	// declared value of an enum, comes first.
+	RowsOrder    string `yaml:"rows_order,omitempty" json:"rows_order,omitempty"`
+	ColumnsOrder string `yaml:"columns_order,omitempty" json:"columns_order,omitempty"`
+	// Match names a query scope on the list's type. A ratio card shows how
+	// many of the list's rows it matches.
+	Match string `yaml:"match,omitempty" json:"match,omitempty"`
+
+	// Width is how much of the dashboard row the tile takes (TKT-H21TYS):
+	// "normal" (one cell; also when empty), "wide" (two columns, or the whole
+	// row when the grid has fewer) or "full" (the whole row). It is a named
+	// size, not a column count, because the grid's column count follows the
+	// viewport, which the operator cannot know.
+	Width string `yaml:"width,omitempty" json:"width,omitempty"`
 
 	// Permission optionally hides this card from the dashboard for principals
 	// who do not hold the named global ACL permission (TKT-53KICM). Empty —
@@ -1907,7 +2055,37 @@ type ViewTraverse struct {
 	Recursive      bool   `yaml:"recursive,omitempty" json:"recursive,omitempty"`
 	MaxDepth       int    `yaml:"max_depth,omitempty" json:"max_depth,omitempty"`
 	Where          string `yaml:"where,omitempty" json:"where,omitempty"`
+
+	// Condition is a predicate expression ANDed with Where, for a rule Where
+	// cannot express: `and`/`or`, grouping, negation and the date functions.
+	// `entity.type` names the entity type, so one step can keep, say, the
+	// unfinished tasks and every project.
+	//
+	// A separate key from Where for the reason [List.Condition] gives: the
+	// two syntaxes overlap without erroring, so the key declares the dialect.
+	//
+	// Compiled at config load (conditionlint.CompileViewConditions) once per
+	// entity type the step can collect after a `where:` on `type`
+	// ([TraverseConditionTypes]), so a
+	// condition that does not compile is a startup error. Evaluated against
+	// the redacted entity, like a list condition. `related(...)` is refused:
+	// the step runs inside the view's fixpoint loop.
+	Condition string `yaml:"condition,omitempty" json:"condition,omitempty"`
+
+	// MentionedBy collects the entities whose body mentions the entry, in
+	// place of following a relation (TKT-HF0D5W). It takes `from: entry`
+	// only, and no `follow`, `follow_incoming`, `recursive` or `max_depth`.
+	//
+	// The step reads the backlink index once per view, not once per fixpoint
+	// pass, and collects at most [MentionedByStepLimit] sources in id order.
+	// `where:` narrows while collecting, so the cap counts matching sources.
+	// A source the principal cannot read is never collected.
+	MentionedBy bool `yaml:"mentioned_by,omitempty" json:"mentioned_by,omitempty"`
 }
+
+// MentionedByStepLimit caps the sources one `mentioned_by` traverse step
+// collects. It matches the largest page the mentioned-by endpoint serves.
+const MentionedByStepLimit = 200
 
 // Render modes for view section fields (TKT-HOIX1). A field renders as a
 // view-oriented display value unless it opts in to inline editing.
@@ -1935,6 +2113,22 @@ type ViewSection struct {
 	GroupBy      string             `yaml:"group_by,omitempty" json:"group_by,omitempty"`
 	EmptyMessage string             `yaml:"empty_message,omitempty" json:"empty_message,omitempty"`
 	Link         string             `yaml:"link,omitempty" json:"link,omitempty"`
+
+	// HideEmpty leaves the whole section, heading included, out of the view
+	// when its source collection is empty (TKT-JT101B). False keeps the default: an empty
+	// section renders its EmptyMessage (or "No items").
+	//
+	// Validation refuses it in three places where hiding would be wrong
+	// rather than merely unusual (see validateSectionHideEmpty):
+	//   - with EmptyMessage, which only ever shows on an empty section;
+	//   - with Create, whose button would vanish exactly when the section is
+	//     empty, which is when it is most needed;
+	//   - on a section whose source is the entry, which is never "empty",
+	//     or that has no source.
+	//
+	// A side-panel section refuses it too: that path never omits sections,
+	// and its Add and Link buttons would disappear with an empty section.
+	HideEmpty bool `yaml:"hide_empty,omitempty" json:"hide_empty,omitempty"`
 
 	// Children names a SECOND collection to nest under each row of Source,
 	// making this section two levels deep. Required by `display: nested` and
@@ -1969,6 +2163,20 @@ type ViewSection struct {
 	// ignored.
 	ParentColumns map[string][]ListColumn `yaml:"parent_columns,omitempty" json:"parent_columns,omitempty"`
 	ChildColumns  map[string][]ListColumn `yaml:"child_columns,omitempty" json:"child_columns,omitempty"`
+
+	// FieldsByType and ColumnsByType give a FLAT section per-type
+	// definitions, for a collection that holds several entity types: the
+	// sources of a `mentioned_by` step, or a relation with several `to:`
+	// types (TKT-HF0D5W). Each row uses its own type's list. A type absent
+	// from the map uses Fields or Columns.
+	//
+	// FieldsByType serves `list`, `cards`, `content` and `properties`.
+	// ColumnsByType serves `table`, which then renders one group per type,
+	// each with its own header; it cannot be combined with `group_by`, and
+	// Columns is required when the map does not cover every type the
+	// collection can hold. The same key/property rules as ParentColumns apply.
+	FieldsByType  map[string][]ViewSectionField `yaml:"fields_by_type,omitempty" json:"fields_by_type,omitempty"`
+	ColumnsByType map[string][]ListColumn       `yaml:"columns_by_type,omitempty" json:"columns_by_type,omitempty"`
 
 	// Create opts this section into offering a "create related entity" button
 	// (TKT-R4BMJM). Nil — the default, and what every auto-generated view emits
@@ -2219,12 +2427,22 @@ func (c *SectionCreate) UnmarshalYAML(value *yaml.Node) error {
 // authored line into N errors the operator must override back field by field.
 // Validating one would also need each field's property type — exactly the
 // metamodel-dependent context RR-4ICH8M moved the field-level check out of.
+//
+// Relation shows the entry's outgoing edges of that relation as a field
+// instead of a property: the targets' titles, changed in place with a picker.
+// It replaces Property (exactly one of the two is set) and is only valid in a
+// `source: entry` / `display: properties` section, where the entry type is
+// known and the field sits among the entry's own properties.
 type ViewSectionField struct {
-	Property string `yaml:"property" json:"property"`
-	Label    string `yaml:"label,omitempty" json:"label,omitempty"`
-	Span     Span   `yaml:"span,omitempty" json:"span,omitempty"`
-	Render   string `yaml:"render,omitempty" json:"render,omitempty"`
-	Widget   string `yaml:"widget,omitempty" json:"widget,omitempty"`
+	Property string `yaml:"property,omitempty" json:"property,omitempty"`
+	Relation string `yaml:"relation,omitempty" json:"relation,omitempty"`
+	// StyleFrom names an enum property of a relation field's target; each
+	// target shows as a badge colored by that enum's `styles` (TKT-CADCFX).
+	StyleFrom string `yaml:"style_from,omitempty" json:"style_from,omitempty"`
+	Label     string `yaml:"label,omitempty" json:"label,omitempty"`
+	Span      Span   `yaml:"span,omitempty" json:"span,omitempty"`
+	Render    string `yaml:"render,omitempty" json:"render,omitempty"`
+	Widget    string `yaml:"widget,omitempty" json:"widget,omitempty"`
 }
 
 // ResolveFieldRender returns the effective render mode for a field within a
@@ -2287,7 +2505,9 @@ type CommandScope struct {
 	Views       []string `yaml:"views,omitempty"`
 	Lists       []string `yaml:"lists,omitempty"`
 	EntityTypes []string `yaml:"entity_types,omitempty"`
-	Dashboard   bool     `yaml:"dashboard,omitempty"`
+	// Dashboard shows the command on a dashboard: `true` for the default
+	// dashboard, a name for one under `dashboards:`.
+	Dashboard DashboardRef `yaml:"dashboard,omitempty"`
 }
 
 // DocumentConfig defines how to render a document, either from an entry

@@ -52,11 +52,11 @@ func (h schemaResourceHandler) handleReadMetamodel(
 ) (*mcpgo.ReadResourceResult, error) {
 	meta := h.meta
 	result := map[string]any{
-		"version":   meta.GetVersion(),
-		"namespace": meta.GetNamespace(),
-		"entities":  meta.GetEntities(),
-		"relations": meta.GetRelations(),
-		"types":     meta.GetTypes(),
+		"version":   meta.Version,
+		"namespace": meta.Namespace,
+		"entities":  meta.Entities,
+		"relations": meta.Relations,
+		"types":     meta.Types,
 	}
 	if len(meta.Validations) > 0 {
 		result["validations"] = meta.Validations

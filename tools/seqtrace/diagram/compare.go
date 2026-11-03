@@ -10,9 +10,13 @@ import (
 // Scenario is one rendered request, as stored in a diagram directory's
 // steps.json so two runs can be compared.
 type Scenario struct {
-	Name    string   `json:"name,omitempty"` // from -names; may be empty
-	Handler string   `json:"handler"`
-	Base    string   `json:"base"` // output file name without extension
+	Name    string `json:"name,omitempty"` // from -names; may be empty
+	Handler string `json:"handler"`
+	Base    string `json:"base"` // output file name without extension
+	// Guards is "off" when the server ran without access control, so the
+	// trace says nothing about authorization. archplan's security checks
+	// skip such scenarios as guard evidence.
+	Guards  string   `json:"guards,omitempty"`
 	Diagram *Diagram `json:"diagram"`
 }
 

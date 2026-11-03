@@ -41,7 +41,7 @@ func OpenSQLiteData(ctx context.Context, path string) (*SQLiteData, error) {
 	if err != nil {
 		return nil, err
 	}
-	st, err := sqlitestore.New(db)
+	st, err := sqlitestore.New(ctx, db)
 	if err != nil {
 		_ = db.Close()
 		return nil, err

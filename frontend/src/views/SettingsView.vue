@@ -36,6 +36,7 @@ import RlButton from 'rela-components/components/common/RlButton.vue'
 import RlIconButton from 'rela-components/components/common/RlIconButton.vue'
 import RlStatusRegion from 'rela-components/components/feedback/RlStatusRegion.vue'
 import RlSelect from 'rela-components/components/form/RlSelect.vue'
+import LanguageSetting from '@/components/settings/LanguageSetting.vue'
 import type { SelectOption } from 'rela-components/components/form/types'
 
 // Per-role color text inputs accept hex with optional `#` and 3 or 6
@@ -1334,6 +1335,8 @@ onMounted(() => {
           <RlButton variant="secondary" size="sm" @click="handleResetPalette">Reset</RlButton>
         </div>
       </div>
+
+      <LanguageSetting />
 
       <!-- Display timezone -->
       <div class="settings-card">

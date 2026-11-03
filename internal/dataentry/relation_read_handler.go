@@ -29,10 +29,9 @@ import (
 // caller whether an edge to a hidden entity exists.
 //
 // Field meta redaction reuses visibleRelationMeta against the source row the
-// gate resolved. The ETag is over the RAW relation (canonical.HashRelation),
-// never the redacted body, so it is a stable If-Match token independent of
-// the reader's field visibility (the entity-side RR-IWXMDW invariant, applied
-// to relations).
+// gate resolved. The ETag hashes the relation as this caller sees it, with
+// hidden meta removed: a digest over a hidden value would let the caller
+// guess it offline, and a 304 would reveal when it changed (BUG-J01V0Q).
 //
 // It is a package function taking *App (not an App method) so it does not add
 // to App's god-object method count (plimsoll, TKT-N0IKN9).
@@ -71,15 +70,18 @@ func handleV1GetRelationTarget(
 		return
 	}
 
-	// ETag over the RAW relation (reader-independent → lossless If-Match).
-	etag := canonical.HashRelation(*rel)
+	// Redact BEFORE hashing, and so before the 304 check: the validator is
+	// over the caller's view only.
+	meta := a.affordances.visibleRelationMeta(ctx, src, relType, rel.Properties)
+	view := *rel
+	view.Properties = meta
+	etag := canonical.HashRelation(view)
 	w.Header().Set("ETag", etag)
 	if r.Header.Get("If-None-Match") == etag {
 		w.WriteHeader(http.StatusNotModified)
 		return
 	}
 
-	meta := a.affordances.visibleRelationMeta(ctx, src, relType, rel.Properties)
 	writeV1JSON(w, http.StatusOK, relationReadResponse{
 		From:     src.ID,
 		Type:     relType,
