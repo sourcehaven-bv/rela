@@ -19,7 +19,7 @@ describe('makeRefResolver', () => {
 
   it('carries the current id of a renamed entity', () => {
     const r = makeRefResolver({ 'FEAT-1': { id: 'TKT-9', type: 'ticket', title: 'Converted' } })!
-    expect(r('FEAT-1')).toMatchObject({ targetId: 'TKT-9', type: 'ticket' })
+    expect(r('FEAT-1')).toMatchObject({ entityId: 'TKT-9', type: 'ticket' })
   })
 
   it('returns null for an id the server declined to resolve', () => {

@@ -214,7 +214,7 @@ describe('markdown', () => {
 
       it('links a renamed entity at its current id and keeps the old id out of the href', () => {
         const resolver = (id: string) =>
-          id === 'FEAT-1' ? { type: 'ticket', title: 'Converted', targetId: 'TKT-9' } : null
+          id === 'FEAT-1' ? { type: 'ticket', title: 'Converted', entityId: 'TKT-9' } : null
         const result = renderMarkdown('see `FEAT-1`', resolver)
         expect(result).toContain('href="/entity/ticket/TKT-9"')
         expect(result).toContain('Converted')

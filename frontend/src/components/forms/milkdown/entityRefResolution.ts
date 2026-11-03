@@ -38,7 +38,7 @@ export const entityRefResolutionKey = new PluginKey('rela-entity-ref-resolution'
 interface ResolvedAttrs {
   title: string | null
   entityType: string | null
-  targetId: string | null
+  entityId: string | null
   inaccessible: boolean
   resolvedFromServer: boolean
 }
@@ -60,7 +60,7 @@ function keepExisting(node: Node): ResolvedAttrs {
   return {
     title: (node.attrs.title as string | null) ?? null,
     entityType: (node.attrs.entityType as string | null) ?? null,
-    targetId: (node.attrs.targetId as string | null) ?? null,
+    entityId: (node.attrs.entityId as string | null) ?? null,
     inaccessible: node.attrs.inaccessible === true,
     resolvedFromServer: node.attrs.resolvedFromServer === true,
   }
@@ -80,7 +80,7 @@ function clearToId(): ResolvedAttrs {
   return {
     title: null,
     entityType: null,
-    targetId: null,
+    entityId: null,
     inaccessible: false,
     resolvedFromServer: false,
   }
@@ -116,7 +116,7 @@ function resolveAttrs(
     // a blank link.
     title: hit.title || null,
     entityType: hit.type,
-    targetId: hit.targetId ?? null,
+    entityId: hit.entityId ?? null,
     inaccessible: hit.inaccessible === true,
     resolvedFromServer: true,
   }
@@ -126,7 +126,7 @@ function attrsDiffer(node: Node, next: ResolvedAttrs): boolean {
   return (
     node.attrs.title !== next.title ||
     node.attrs.entityType !== next.entityType ||
-    node.attrs.targetId !== next.targetId ||
+    node.attrs.entityId !== next.entityId ||
     node.attrs.inaccessible !== next.inaccessible ||
     // Included so the first successful resolution of a picker-inserted
     // reference records its provenance, even when the title it confirms is

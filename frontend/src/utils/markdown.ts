@@ -24,7 +24,7 @@ let mermaidCounter = 0
  */
 export interface EntityRef {
   /** The id to link to, when it differs from the referenced id (a rename). */
-  targetId?: string
+  entityId?: string
   type: string
   title: string
   inaccessible?: boolean
@@ -273,7 +273,7 @@ function rewriteEntityRefToken(token: unknown, resolve: EntityRefResolver, world
   if (!visibleTitle) return
 
   const query = world ? `?world=${encodeURIComponent(world)}` : ''
-  const href = relaBase() + `entity/${hit.type}/${hit.targetId ?? token.text}${query}`
+  const href = relaBase() + `entity/${hit.type}/${hit.entityId ?? token.text}${query}`
   // Inaccessible targets get a trailing lock affordance; keep the
   // readable title when one was supplied (the lock only conveys "the
   // underlying file is encrypted") and only fall back to the bare ID

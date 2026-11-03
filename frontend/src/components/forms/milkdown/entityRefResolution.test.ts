@@ -41,7 +41,7 @@ describe('entity ref resolution', () => {
         id: 'TKT-ABC',
         title: null,
         entityType: null,
-        targetId: null,
+        entityId: null,
         inaccessible: false,
         resolvedFromServer: false,
       },
@@ -62,7 +62,7 @@ describe('entity ref resolution', () => {
         id: 'TKT-ABC',
         title: 'Fix the thing',
         entityType: 'ticket',
-        targetId: null,
+        entityId: null,
         inaccessible: false,
         // Recorded so a later map that omits this id clears the title rather
         // than leaving a stale one on screen.
@@ -76,9 +76,9 @@ describe('entity ref resolution', () => {
   it('links a retired id to its successor and keeps the id in the markdown', async () => {
     const { editor, state, root } = await makeEditor('See `FEAT-1`.\n')
     const resolver: EntityRefResolver = (id) =>
-      id === 'FEAT-1' ? { type: 'ticket', title: 'Converted', targetId: 'TKT-9' } : null
+      id === 'FEAT-1' ? { type: 'ticket', title: 'Converted', entityId: 'TKT-9' } : null
     const next = state.apply(buildResolutionTransaction(state, resolver)!)
-    expect(refAttrs(next)[0]).toMatchObject({ id: 'FEAT-1', targetId: 'TKT-9' })
+    expect(refAttrs(next)[0]).toMatchObject({ id: 'FEAT-1', entityId: 'TKT-9' })
     editor.ctx.set(editorStateCtx, next)
     expect(editor.action(getMarkdown())).toBe('See `FEAT-1`.\n')
     await editor.destroy()
