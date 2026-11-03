@@ -16,6 +16,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/tracer"
 	"github.com/Sourcehaven-BV/rela/internal/validator"
+	"github.com/Sourcehaven-BV/rela/internal/visibility"
 )
 
 // analyzeReader is the narrow, consumer-side ENTITY-read surface the analyze
@@ -42,11 +43,14 @@ import (
 // The header type has no Content field, so this property is now enforced
 // by the compiler rather than by remembering.
 //
-// The per-ID GetAddress in the orphan and validation checks stays: they
-// resolve a bounded set of ids (never a whole-store scan), and their
-// gated re-load is load-bearing for the leak TKT-3FL2S6 closed.
+// The orphan and validation checks re-load the ids they report through the
+// same gated reader, because that re-load is load-bearing for the leak
+// TKT-3FL2S6 closed. They do it with ResolveHeadersErr, one batch of up to
+// [resolveBatch] refs per call, never one GetAddress per id: on atlas the
+// per-id re-load was about 1,300 of the 12,000 statements one request cost
+// (TKT-QM833U).
 type analyzeReader interface {
-	GetAddress(ctx context.Context, addr string) (*entity.Entity, error)
+	ResolveHeadersErr(ctx context.Context, refs []entity.Ref) (map[entity.Ref]visibility.ResolvedHeader, error)
 	ListEntityHeaders(ctx context.Context, q store.EntityQuery) iter.Seq2[store.EntityHeader, error]
 	ListEntities(ctx context.Context, q store.EntityQuery) iter.Seq2[*entity.Entity, error]
 	ListRelationsStrict(ctx context.Context, q store.RelationQuery) iter.Seq2[*entity.Relation, error]
@@ -118,6 +122,11 @@ type AnalysisIssue struct {
 // is how truncation is known, and that extra row is discarded rather than
 // reported.
 const maxSectionIssues = 100
+
+// resolveBatch is how many refs the orphan and validation checks re-load per
+// ResolveHeadersErr call. The call's cost does not depend on the number of
+// refs, so the bound only limits the size of one query.
+const resolveBatch = 512
 
 // AnalysisSection groups issues by analysis category.
 type AnalysisSection struct {
@@ -249,47 +258,60 @@ func (svc analyzeService) analyzeOrphans(ctx context.Context, meta *metamodel.Me
 	// The tracer is gated: an orphan is judged over the edges and faces
 	// this principal may read, and Faces lists only readable faces
 	// (RR-VN71BT). A family counts once, on any face (BUG-95W7MV).
-	found, _ := svc.tracer.FindOrphans(ctx)
+	found, err := svc.tracer.FindOrphans(ctx)
+	if err != nil {
+		return checkFailed(ctx, section, "Orphans", err)
+	}
 
-	// Each orphan id is re-loaded through the GATED reader before it can become
-	// an issue: a hidden entity's GetAddress returns not-found and is dropped, and
-	// a visible one is redacted. So even if the tracer yielded a raw id (it does
-	// not — svc.tracer is gated too), no hidden entity reaches the wire. Do NOT
-	// emit an issue straight from an orphan id/type without this gated re-load —
+	// Each orphan is re-loaded through the GATED reader before it can become
+	// an issue: a hidden entity is not served and is dropped, and a visible
+	// one is redacted. So even if the tracer yielded a raw id (it does not —
+	// svc.tracer is gated too), no hidden entity reaches the wire. Do NOT emit
+	// an issue straight from an orphan id/type without this gated re-load —
 	// that would reopen the leak this arc closed (TKT-3FL2S6).
 	//
 	// The ids are sorted BEFORE loading, and loading stops one past the cap:
 	// a project where every entity is an orphan would otherwise re-load the
-	// entire store as full entities — 20k orphans of ~100 KB was ~930 MB of
-	// live heap, the single largest remaining contributor to the analyze OOM
-	// (TKT-1ESTYJ). Sorting first keeps WHICH orphans get reported
-	// deterministic and id-ordered rather than dependent on how far the load
-	// got.
+	// entire store (TKT-1ESTYJ). Sorting first keeps WHICH orphans get
+	// reported deterministic and id-ordered rather than dependent on how far
+	// the load got. The re-load is batched (TKT-QM833U) and reads headers
+	// only: an orphan issue needs the type and the display title, never the
+	// body.
 	//
 	// A faced family has no row at the bare id, so it is re-loaded at its
 	// first readable face and reported with its faces.
 	sort.Slice(found, func(i, j int) bool { return natsort.Less(found[i].ID, found[j].ID) })
-	st := svc.reads
-	for _, o := range found {
-		if len(section.Issues) > maxSectionIssues {
-			break
+	for start := 0; start < len(found) && len(section.Issues) <= maxSectionIssues; start += resolveBatch {
+		chunk := found[start:min(start+resolveBatch, len(found))]
+		refs := make([]entity.Ref, len(chunk))
+		msgs := make([]string, len(chunk))
+		for i, o := range chunk {
+			refs[i], msgs[i] = entity.Ref{ID: o.ID}, "No relations"
+			if len(o.Faces) > 0 {
+				refs[i] = entity.Ref{ID: o.ID, Face: o.Faces[0]}
+				msgs[i] = "No relations on any face (" + joinFaces(o.Faces) + ")"
+			}
 		}
-		addr, msg := o.ID, "No relations"
-		if len(o.Faces) > 0 {
-			addr = entity.FormatStateRef(o.ID, o.Faces[0])
-			msg = "No relations on any face (" + joinFaces(o.Faces) + ")"
-		}
-		e, err := st.GetAddress(ctx, addr)
+		resolved, err := svc.reads.ResolveHeadersErr(ctx, refs)
 		if err != nil {
-			continue
+			return checkFailed(ctx, section, "Orphans", err)
 		}
-		section.Issues = append(section.Issues, AnalysisIssue{
-			EntityID:   e.ID,
-			EntityType: e.Type,
-			Title:      safeDisplayTitle(meta, e),
-			Message:    msg,
-			Severity:   "warning",
-		})
+		for i, ref := range refs {
+			if len(section.Issues) > maxSectionIssues {
+				break
+			}
+			rh, ok := resolved[ref]
+			if !ok || !rh.Served() {
+				continue
+			}
+			section.Issues = append(section.Issues, AnalysisIssue{
+				EntityID:   rh.Header.ID,
+				EntityType: rh.Header.Type,
+				Title:      safeHeaderTitle(meta, rh.Header),
+				Message:    msgs[i],
+				Severity:   "warning",
+			})
+		}
 	}
 
 	return capIssues(section)
@@ -450,16 +472,7 @@ func (svc analyzeService) analyzeCardinality(ctx context.Context, meta *metamode
 
 	findings, err := schema.CheckCardinalityFindings(ctx, svc.reads, meta, nil)
 	if err != nil {
-		// A partial answer would read as a clean graph, so say the check
-		// did not run. The cause stays in the server log.
-		if ctx.Err() == nil {
-			slog.Warn("analyze: cardinality check failed", "err", err)
-		}
-		section.Issues = append(section.Issues, AnalysisIssue{
-			Message:  "Cardinality could not be checked; see the server log",
-			Severity: "error",
-		})
-		return section
+		return checkFailed(ctx, section, "Cardinality", err)
 	}
 
 	for _, f := range findings {
@@ -552,29 +565,24 @@ func (svc analyzeService) analyzeValidations(ctx context.Context, meta *metamode
 		Description: "Custom validation rules defined in the metamodel",
 	}
 
-	st := svc.reads
 	validator := svc.validator
 
+	// Every rule runs, also once the section is full: complete reporting was
+	// chosen over the time a full section could save (TKT-QM833U). Only the
+	// violations that can still be reported are re-loaded: issues are capped
+	// in order (see [capIssues]), so a violation past one-beyond-the-cap could
+	// never reach the wire.
 	for _, rule := range meta.Validations {
 		full, err := validator.CheckRuleFull(ctx, rule)
 		if err != nil {
+			section.Issues = append(section.Issues, ruleNotChecked(ctx, rule.Name, err))
 			continue
 		}
-		severity := rule.GetSeverity()
-		for _, v := range full.Violations {
-			e, err := st.GetAddress(ctx, v.EntityID)
-			if err != nil {
-				continue
-			}
-			section.Issues = append(section.Issues, AnalysisIssue{
-				EntityID:    e.ID,
-				EntityType:  e.Type,
-				Title:       safeDisplayTitle(meta, e),
-				Message:     rule.Description,
-				RuleMessage: v.Message,
-				Severity:    severity,
-				Detail:      v.Detail,
-			})
+		room := maxSectionIssues + 1 - len(section.Issues)
+		issues, err := svc.violationIssues(ctx, meta, rule, full.Violations, room)
+		section.Issues = append(section.Issues, issues...)
+		if err != nil {
+			section.Issues = append(section.Issues, ruleNotChecked(ctx, rule.Name, err))
 		}
 		// Surface Lua failures and load failures so the UI shows
 		// "rule did not run" rather than silently dropping them.
@@ -601,6 +609,96 @@ func (svc analyzeService) analyzeValidations(ctx context.Context, meta *metamode
 	}
 
 	return capIssues(section)
+}
+
+// violationIssues turns at most room of a rule's violations into issues, in
+// violation order. Each violator is re-loaded through the GATED reader, in
+// batches of [resolveBatch]: a violator the requester may not read is not
+// served and is dropped, and a served one is redacted before its title is
+// built (TKT-3FL2S6). A bare id resolves in the reader's world, as
+// GetAddress did.
+func (svc analyzeService) violationIssues(
+	ctx context.Context, meta *metamodel.Metamodel, rule metamodel.ValidationRule,
+	violations []validator.RuleViolation, room int,
+) ([]AnalysisIssue, error) {
+	var out []AnalysisIssue
+	severity := rule.GetSeverity()
+	for start := 0; start < len(violations) && len(out) < room; start += resolveBatch {
+		chunk := violations[start:min(start+resolveBatch, len(violations))]
+		// A violation id that is not an address is a miss, as GetAddress
+		// answered it: it gets no ref and so no issue.
+		refs := make([]entity.Ref, len(chunk))
+		parsed := make([]bool, len(chunk))
+		batch := make([]entity.Ref, 0, len(chunk))
+		for i, v := range chunk {
+			addr, err := entity.ParseAddress(v.EntityID)
+			if err != nil {
+				continue
+			}
+			ref, named := addr.Named()
+			if !named {
+				ref = entity.Ref{ID: addr.ID()}
+			}
+			refs[i], parsed[i] = ref, true
+			batch = append(batch, ref)
+		}
+		resolved, err := svc.reads.ResolveHeadersErr(ctx, batch)
+		if err != nil {
+			return out, err
+		}
+		for i, v := range chunk {
+			if len(out) >= room {
+				break
+			}
+			if !parsed[i] {
+				continue
+			}
+			rh, ok := resolved[refs[i]]
+			if !ok || !rh.Served() {
+				continue
+			}
+			out = append(out, AnalysisIssue{
+				EntityID:    rh.Header.ID,
+				EntityType:  rh.Header.Type,
+				Title:       safeHeaderTitle(meta, rh.Header),
+				Message:     rule.Description,
+				RuleMessage: v.Message,
+				Severity:    severity,
+				Detail:      v.Detail,
+			})
+		}
+	}
+	return out, nil
+}
+
+// checkFailed replaces section's issues with one error saying the check,
+// named as it is shown, did not run: a partial answer would read as a clean graph. The cause stays in
+// the server log, and is not logged when the request was cancelled.
+func checkFailed(ctx context.Context, section AnalysisSection, check string, err error) AnalysisSection {
+	if ctx.Err() == nil {
+		slog.Warn("analyze: check failed", "check", check, "err", err)
+	}
+	section.Issues = []AnalysisIssue{{
+		Message:  check + " could not be checked; see the server log",
+		Severity: "error",
+	}}
+	section.Truncated = false
+	return section
+}
+
+// ruleNotChecked is the issue for a validation rule that could not be
+// evaluated or whose violators could not be re-loaded. It names the rule and
+// keeps the rest of the section, so one failing rule does not hide the
+// others. The cause stays in the server log.
+func ruleNotChecked(ctx context.Context, rule string, err error) AnalysisIssue {
+	if ctx.Err() == nil {
+		slog.Warn("analyze: validation rule could not be checked", "rule", rule, "err", err)
+	}
+	return AnalysisIssue{
+		Title:    rule,
+		Message:  "Validation rule could not be checked; see the server log",
+		Severity: "error",
+	}
 }
 
 // scriptErrorSummary builds a single-line summary for the AnalysisIssue

@@ -183,6 +183,15 @@ func budgetEpics(n int) int { return (n + budgetTicketsPerEpic - 1) / budgetTick
 // (person P1 → team T1).
 func newBudgetAppOn(t *testing.T, n int, base store.Store) (*App, *storetest.Counting, *acl.Declarative, context.Context) {
 	t.Helper()
+	return newBudgetAppWith(t, n, base, budgetMeta())
+}
+
+// newBudgetAppWith is [newBudgetAppOn] over meta, which must declare at
+// least the types and relations of [budgetMeta].
+func newBudgetAppWith(
+	t *testing.T, n int, base store.Store, meta *metamodel.Metamodel,
+) (*App, *storetest.Counting, *acl.Declarative, context.Context) {
+	t.Helper()
 	counting := storetest.NewCounting(base)
 	ctx := context.Background()
 	must := func(err error) {
@@ -243,7 +252,7 @@ func newBudgetAppOn(t *testing.T, n int, base store.Store) (*App, *storetest.Cou
 		must(err)
 	}
 
-	app := newAppFromParts(budgetConfig(), budgetMeta(), newFixture(), appbuildtest.WithStore(counting))
+	app := newAppFromParts(budgetConfig(), meta, newFixture(), appbuildtest.WithStore(counting))
 	d := mustNewACL(t, &acl.Policy{
 		Roles: map[string]acl.RoleDef{"editor": {
 			Read: []string{"*"}, Create: []string{"ticket"}, Update: []string{"ticket"}, Delete: []string{"ticket"},
@@ -275,9 +284,17 @@ type budgetOp func(t *testing.T, app *App, d *acl.Declarative, ctx context.Conte
 // covers the realistic ACL without opting in.
 func readsForOn(t *testing.T, newStore func(*testing.T) store.Store, op budgetOp) (small, large int, detail string) {
 	t.Helper()
+	return readsForWith(t, newStore, budgetMeta, op)
+}
+
+// readsForWith is [readsForOn] over the metamodel newMeta returns.
+func readsForWith(
+	t *testing.T, newStore func(*testing.T) store.Store, newMeta func() *metamodel.Metamodel, op budgetOp,
+) (small, large int, detail string) {
+	t.Helper()
 	counts := make([]int, 0, 2)
 	for _, n := range []int{10, 50} {
-		app, counting, d, ctx := newBudgetAppOn(t, n, newStore(t))
+		app, counting, d, ctx := newBudgetAppWith(t, n, newStore(t), newMeta())
 		op(t, app, d, ctx)
 		counts = append(counts, counting.Reads())
 		detail = counting.String()
@@ -285,7 +302,7 @@ func readsForOn(t *testing.T, newStore func(*testing.T) store.Store, op budgetOp
 	realistic := make([]int, 0, 2)
 	var realisticDetail string
 	for _, n := range []int{10, 50} {
-		app, counting, _, ctx := newBudgetAppOn(t, n, newStore(t))
+		app, counting, _, ctx := newBudgetAppWith(t, n, newStore(t), newMeta())
 		d := useRealisticBudgetPolicy(t, app, counting)
 		op(t, app, d, ctx)
 		realistic = append(realistic, counting.Reads())

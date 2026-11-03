@@ -34,6 +34,14 @@ type rowRedactor interface {
 	RedactRow(ctx context.Context, e *entity.Entity) *entity.Entity
 }
 
+// pushdownRedactor is the field redaction the pushdown list path needs: a
+// page at a time, so the verdicts can be primed for the page.
+// [ScriptReader.ListEntities] and [ScriptReader.CountEntities] both pick
+// pushdown on it, so a list and its count take the same path.
+type pushdownRedactor interface {
+	redactPage(ctx context.Context, rows []*entity.Entity) []*entity.Entity
+}
+
 // headerRedactor is [rowRedactor] for a content-free row.
 type headerRedactor interface {
 	RedactHeaderRow(ctx context.Context, h store.EntityHeader) store.EntityHeader
@@ -43,6 +51,51 @@ type headerRedactor interface {
 // reader's field redactor, and no row gate. Like RedactRow it only narrows.
 func (r *PolicyReader) RedactHeaderRow(ctx context.Context, h store.EntityHeader) store.EntityHeader {
 	return RedactHeader(ctx, r.redact, h)
+}
+
+// redactPage is the [pageRedactor] of the pushdown path: it primes the page's
+// verdicts, then redacts each row as [PolicyReader.RedactRow] does. See
+// [primePage].
+func (r *PolicyReader) redactPage(ctx context.Context, rows []*entity.Entity) []*entity.Entity {
+	ctx = primePage(ctx, r.redact, rows)
+	out := make([]*entity.Entity, len(rows))
+	for i, e := range rows {
+		out[i] = r.redacted(ctx, e)
+	}
+	return out
+}
+
+// primePage primes red's verdicts for rows: the requester's local roles on
+// them ([acl.PrimeLocalRoles]), then red's own traversals
+// ([PrimeTraversals]). Without it, every field verdict on every row walks
+// the role relations with one edge lookup per (relation × member ×
+// ancestor): 8,730 single-row reads for one atlas `_analyze` (TKT-QM833U).
+//
+// Only a [TraversalPrimer] is primed: a redactor that is not one (NopRedactor)
+// never asks for local roles, and priming it would add queries.
+//
+// A ctx that is already primed for these rows costs no queries: both primes
+// skip the ids they already hold for the same request. So a handler that
+// primes its rows itself, and then reads them through this path, does the
+// work once. A failed prime leaves the per-row checks, which give the same
+// answer.
+func primePage(ctx context.Context, red FieldRedactor, rows []*entity.Entity) context.Context {
+	if _, ok := red.(TraversalPrimer); !ok || len(rows) == 0 {
+		return ctx
+	}
+	present := make([]*entity.Entity, 0, len(rows))
+	ids := make([]string, 0, len(rows))
+	for _, e := range rows {
+		if e != nil {
+			present = append(present, e)
+			ids = append(ids, e.ID)
+		}
+	}
+	if len(present) == 0 {
+		return ctx
+	}
+	ctx = acl.PrimeLocalRoles(ctx, ids)
+	return PrimeTraversals(ctx, red, present)
 }
 
 // RedactRow implements [rowRedactor]: field redaction with no row gate.
@@ -166,11 +219,15 @@ func composeReadScope(
 // hidden properties to callers — the #1188 finding this package exists to
 // close (RR-1W1G6K). The row gate and the field gate are separate
 // mechanisms; pushing one down does not push down the other.
+//
+// redact receives the rows in pages (see [redactingSeq]), so a redactor that
+// checks local roles answers a page with a few batch queries instead of one
+// edge lookup per row (TKT-QM833U).
 func listPushdown(
 	ctx context.Context,
 	provider ReadQueryProvider,
 	raw store.Store,
-	redact func(context.Context, *entity.Entity) *entity.Entity,
+	redact pageRedactor,
 	q store.EntityQuery,
 ) (iter.Seq2[*entity.Entity, error], bool) {
 	scope, ok, err := composeReadScope(ctx, provider, raw, q)
@@ -215,25 +272,77 @@ func countPushdown(
 	return 0, true, errEmptyScope
 }
 
-// redactingSeq applies the field redactor to every row of src.
+// pageRedactor redacts a page of rows in one call and returns them in the
+// same order. Taking the page rather than a row is what lets the redactor
+// prime its verdicts for the page first, as PolicyReader.redactPage does.
+type pageRedactor func(ctx context.Context, rows []*entity.Entity) []*entity.Entity
+
+// redactPageSizes are the page sizes [redactingSeq] redacts in: a modest page
+// first, so a consumer that stops after a few rows (a Lua `list_entities`
+// with a limit) reads ahead at most that many rows, then [headerGateChunk]
+// once the scan is clearly long. Each page costs one prime, so a scan costs
+// one prime up to 64 rows, and one more per 512 rows after that.
+var redactPageSizes = []int{64, headerGateChunk}
+
+// redactingSeq applies the field redactor to every row of src, a page at a
+// time.
+//
+// Each page is primed and redacted on ctx itself, never on the ctx a previous
+// page was primed on, so local-role primes do not pile up over a whole-type
+// scan. A traversal memo that ctx already carries is shared, though: each
+// page adds its rows to it, so it grows with the rows read, as it would if
+// the caller had primed them all. Nil rows are dropped. Rows are only ever
+// yielded through redact.
+//
+// A page's verdicts are a snapshot taken when the page is primed. An action
+// script that changes a role-conferring edge while it iterates sees up to a
+// page of rows redacted as before the change. The primed ctx never leaves
+// the redactor, so no write authorizes on it.
 //
 // Errors propagate verbatim and terminate the sequence: a store failure must
-// reach the caller, never present as a short list (TKT-FVQ4).
+// reach the caller, never present as a short list (TKT-FVQ4). Rows buffered
+// before the error, in the current page, are dropped, as
+// [ScriptReader.ListEntityHeaders] does: the caller sees the error, and a
+// partial page could read as a complete one. Earlier pages were already
+// yielded.
 func redactingSeq(
 	ctx context.Context,
 	src iter.Seq2[*entity.Entity, error],
-	redact func(context.Context, *entity.Entity) *entity.Entity,
+	redact pageRedactor,
 ) iter.Seq2[*entity.Entity, error] {
 	return func(yield func(*entity.Entity, error) bool) {
+		pageNo := 0
+		page := make([]*entity.Entity, 0, redactPageSizes[0])
+		flush := func() bool {
+			if len(page) == 0 {
+				return true
+			}
+			for _, e := range redact(ctx, page) {
+				if !yield(e, nil) {
+					return false
+				}
+			}
+			page = page[:0]
+			pageNo++
+			return true
+		}
 		for e, err := range src {
 			if err != nil {
 				yield(nil, err)
 				return
 			}
-			if !yield(redact(ctx, e), nil) {
+			if e == nil {
+				continue
+			}
+			page = append(page, e)
+			if len(page) < redactPageSizes[min(pageNo, len(redactPageSizes)-1)] {
+				continue
+			}
+			if !flush() {
 				return
 			}
 		}
+		flush()
 	}
 }
 
