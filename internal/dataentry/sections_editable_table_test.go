@@ -66,8 +66,8 @@ func TestBuildTableSection_EditDataOnlyForEditableColumns(t *testing.T) {
 			}
 			row := rows[0]
 			if !tc.wantEdit {
-				if row.Props != nil || row.FieldVerdicts != nil {
-					t.Fatalf("read-only table row carries edit data: %+v %+v", row.Props, row.FieldVerdicts)
+				if row.Props != nil || row.FieldAffordances != nil {
+					t.Fatalf("read-only table row carries edit data: %+v %+v", row.Props, row.FieldAffordances)
 				}
 				return
 			}
@@ -77,10 +77,10 @@ func TestBuildTableSection_EditDataOnlyForEditableColumns(t *testing.T) {
 			if _, ok := row.Props["priority"]; ok {
 				t.Errorf("hidden priority leaked into Props: %+v", row.Props)
 			}
-			if _, ok := row.FieldVerdicts["priority"]; ok {
-				t.Errorf("hidden priority leaked into FieldVerdicts: %+v", row.FieldVerdicts)
+			if _, ok := row.FieldAffordances["priority"]; ok {
+				t.Errorf("hidden priority leaked into FieldVerdicts: %+v", row.FieldAffordances)
 			}
-			if v := row.FieldVerdicts["status"]; v.Writable == nil || *v.Writable {
+			if v := row.FieldAffordances["status"]; v.Writable == nil || *v.Writable {
 				t.Errorf("status verdict = %+v, want read-only", v)
 			}
 			wire := viewRowToV1(row)

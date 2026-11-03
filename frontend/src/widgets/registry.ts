@@ -1,5 +1,6 @@
 import type { Component } from 'vue'
 import type { PropertyDef } from '@/types'
+import { isNumericProperty } from '@/types/schema'
 import type {
   DenseHintKind,
   WidgetEntry,
@@ -30,7 +31,7 @@ export function defaultWidgetFor(propertyDef?: PropertyDef): string {
   if (propertyDef?.type === 'boolean') return 'checkbox'
   if (propertyDef?.type === 'date') return 'date'
   if (propertyDef?.type === 'datetime') return 'datetime'
-  if (propertyDef?.type === 'integer' || propertyDef?.type === 'decimal') return 'number'
+  if (isNumericProperty(propertyDef)) return 'number'
   if (propertyDef?.type === 'rrule') return 'rrule'
   if (propertyDef?.type === 'file') return 'file'
   if (propertyDef?.type === 'external_ref') return 'external-ref'

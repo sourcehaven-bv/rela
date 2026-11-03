@@ -21,7 +21,7 @@ import { addressedEntry, type RelationCardState } from './relationsPatch'
 import { faceCandidates, offersFace, widenWorlds } from './familyCandidates'
 import { DEFAULT_WORLD, useWorld } from '@/composables/useWorld'
 import type { RelationAffordance } from '@/types'
-import { ORDER_PROPERTY_OUT, ORDER_PROPERTY_IN } from '@/types/schema'
+import { ORDER_PROPERTY_OUT, ORDER_PROPERTY_IN, isNumericProperty } from '@/types/schema'
 import { computeNewOrder, extractFiniteNumber } from '@/composables/useRelationReorder'
 import RlButton from 'rela-components/components/common/RlButton.vue'
 import RlSpinner from 'rela-components/components/common/RlSpinner.vue'
@@ -288,7 +288,7 @@ function getInputType(propName: string): string {
   const def = getPropertyDef(propName)
   if (!def) return 'text'
   if (def.type === 'date') return 'date'
-  if (def.type === 'integer' || def.type === 'decimal') return 'number'
+  if (isNumericProperty(def)) return 'number'
   if (def.type === 'boolean') return 'checkbox'
   return 'text'
 }

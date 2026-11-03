@@ -16,6 +16,7 @@
 import { computed, type Component } from 'vue'
 import type { ViewCell, ViewColumn, ViewRow } from '@/api/views'
 import type { FieldAffordance, PropertyDef } from '@/types'
+import { isNumericProperty } from '@/types/schema'
 import type { AutoSaveErrorInfo, SaveStatus } from '@/composables/useAutoSave'
 import { useSectionAutoSave, type AutoSaveOwner } from '@/composables/useSectionAutoSave'
 import { useSchemaStore } from '@/stores'
@@ -62,7 +63,7 @@ const editColumns = computed<(EditColumn | undefined)[]>(() =>
       label: col.label || propertyDef.label || col.property,
       propertyDef,
       widget: defaultRegistry.resolve(undefined, propertyDef),
-      numeric: propertyDef.type === 'integer' || propertyDef.type === 'decimal',
+      numeric: isNumericProperty(propertyDef),
     }
   })
 )

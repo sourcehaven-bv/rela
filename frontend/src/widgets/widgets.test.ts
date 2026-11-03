@@ -188,6 +188,19 @@ describe('NumberWidget on a decimal', () => {
     expect(step(dec())).toBe('any')
   })
 
+  // A value over its scale is a warning (DEC-HWZHA): a native step would make
+  // the browser refuse to submit it.
+  it('drops the scale step while the value has more digits than the scale', () => {
+    const step = (modelValue: string) =>
+      mount(NumberWidget, {
+        props: { modelValue, mode: 'edit' as const, propertyName: 'p', propertyDef: dec({ scale: 2 }) },
+      })
+        .find('input')
+        .attributes('step')
+    expect(step('12.34')).toBe('0.01')
+    expect(step('12.345')).toBe('any')
+  })
+
   it('bounds the input by the declared range', () => {
     const w = mount(NumberWidget, {
       props: { modelValue: '2.5', mode: 'edit' as const, propertyName: 'p', propertyDef: dec({ min: 0, max: 5 }) },

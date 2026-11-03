@@ -1089,8 +1089,8 @@ func viewRowToV1(row SectionRowData) v1.ViewRow {
 		Self:       row.Self,
 		Props:      row.Props,
 	}
-	if row.FieldVerdicts != nil {
-		fa := row.FieldVerdicts
+	if row.FieldAffordances != nil {
+		fa := row.FieldAffordances
 		v1Row.FieldAffordances = &fa
 	}
 	for _, cell := range row.Cells {

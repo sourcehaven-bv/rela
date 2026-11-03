@@ -14,6 +14,7 @@ import type { WidgetProps } from './types'
 import { useStringValue } from './useStringValue'
 import { useSchemaStore } from '@/stores/schema'
 import { formatDisplayNumber } from '@/utils/format'
+import { isNumericProperty } from '@/types/schema'
 
 const props = defineProps<WidgetProps>()
 const schemaStore = useSchemaStore()
@@ -45,7 +46,7 @@ const isDecimal = computed(() => props.propertyDef?.type === 'decimal')
 const bounds = computed(() => {
   const none = { min: undefined, max: undefined }
   const def = props.propertyDef
-  if (def?.type !== 'integer' && def?.type !== 'decimal') return none
+  if (!def || !isNumericProperty(def)) return none
   const raw = props.modelValue
   const n = typeof raw === 'number' ? raw : raw == null || raw === '' ? undefined : Number(raw)
   if (
@@ -59,12 +60,20 @@ const bounds = computed(() => {
 
 // A decimal's stepper moves by its smallest declared digit, so `scale: 2`
 // steps by 0.01. Without a scale any number of digits is valid ("any"); the
-// browser's default step of 1 would mark 12.5 invalid.
+// browser's default step of 1 would mark 12.5 invalid. A value with more
+// digits than the scale is a warning too (DEC-HWZHA), so like `bounds` the
+// step is dropped while it would make the browser refuse to submit.
 const step = computed(() => {
   if (!isDecimal.value) return undefined
   const scale = props.propertyDef?.scale
-  return scale === undefined ? 'any' : scale === 0 ? '1' : `0.${'0'.repeat(scale - 1)}1`
+  if (scale === undefined || fractionDigits(props.modelValue) > scale) return 'any'
+  return scale === 0 ? '1' : `0.${'0'.repeat(scale - 1)}1`
 })
+
+function fractionDigits(value: unknown): number {
+  const point = String(value ?? '').indexOf('.')
+  return point < 0 ? 0 : String(value).length - point - 1
+}
 
 function onInput(event: Event) {
   const raw = (event.target as HTMLInputElement).value

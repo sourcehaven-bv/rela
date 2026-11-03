@@ -213,11 +213,11 @@ export class EntityPage extends BasePage {
     return this.sectionByHeading(heading).locator(`.property-row[data-property="${property}"]`);
   }
 
-  /** The edit control for a property. Its id (`inline-<property>`) is set on
-   *  the widget's own element rather than a wrapper. A toggle is live all the
-   *  time; any other value shows its control only once opened. */
+  /** The edit control for a property. Its id (`inline-<entity id>-<property>`)
+   *  is set on the widget's own element rather than a wrapper. A toggle is live
+   *  all the time; any other value shows its control only once opened. */
   private sectionFieldControl(heading: string, property: string) {
-    return this.sectionFieldRow(heading, property).locator(`#inline-${property}`);
+    return this.sectionFieldRow(heading, property).locator(`[id^="inline-"][id$="-${property}"]`);
   }
 
   /** Assert every field in a section keeps its label and value inside its

@@ -999,6 +999,9 @@ price: "12.50"
 An unquoted number (`price: 12.5`) is accepted too. YAML reads it as a binary
 number, so a trailing zero you typed is lost: rela reads the shortest decimal
 text for that number, `12.5`. Quote a decimal to keep its exact text.
+The same holds for a write through the API, MCP or a script: send a decimal
+as a string. A number is stored as its shortest decimal text, so a value with
+more than about 15 significant digits has already lost its last digits.
 Exponents (`1e3`), a leading or trailing point (`.5`, `5.`), thousands
 separators and values longer than 64 characters are not decimals; validation
 reports them as invalid values.

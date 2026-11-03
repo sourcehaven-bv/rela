@@ -215,11 +215,11 @@ type SectionRowData struct {
 	Content    string
 	// Self addresses the row, face included — see [v1.ViewRow.Self].
 	Self string
-	// Props and FieldVerdicts are set only when one of the row's columns is
+	// Props and FieldAffordances are set only when one of the row's columns is
 	// editable (TKT-4Q2EIVZ), with the same contract as on
 	// [SectionEntityData].
-	Props         map[string]any
-	FieldVerdicts map[string]v1.FieldAffordance
+	Props            map[string]any
+	FieldAffordances map[string]v1.FieldAffordance
 }
 
 // GroupData holds a group of rows/entities for grouped table/card display.
@@ -469,7 +469,7 @@ func withRowEditData(
 		return row
 	}
 	row.Props = aff.copyVisibleProperties(ctx, e)
-	row.FieldVerdicts = aff.computeFieldAffordances(ctx, e)
+	row.FieldAffordances = aff.computeFieldAffordances(ctx, e)
 	return row
 }
 

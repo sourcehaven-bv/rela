@@ -228,3 +228,9 @@ export interface TemplateRelation {
   relation: string
   target: string
 }
+
+// isNumericProperty reports whether a property holds a number: an `integer`
+// or a `decimal` (TKT-DTUAG3U). Number inputs and number formatting key on it.
+export function isNumericProperty(def?: Pick<PropertyDef, 'type'>): boolean {
+  return def?.type === 'integer' || def?.type === 'decimal'
+}

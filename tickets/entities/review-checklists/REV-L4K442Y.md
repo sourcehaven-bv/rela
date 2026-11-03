@@ -3,17 +3,18 @@ id: REV-L4K442Y
 type: review-checklist
 title: 'Review: Add a decimal property type'
 started: "2026-11-03"
-status: in-progress
+completed: "2026-11-03"
+status: done
 ---
 
 <!-- @managed: claude-workflow v1 -->
 
 ## Automated Checks
 
-- [ ] All tests pass (`just test`) (not run as a whole: `go test -race` passed on the 23 touched packages, storetest DecimalText passed on sqlite and postgres, `npm run test:run` 5587/5587, `npm run typecheck` clean)
+- [x] All tests pass (`just test` exit 0 on the combined branch for PR 2084; after the review fixes `go test ./internal/entitymanager/` and the widget tests pass)
 - [x] Lint clean (`just lint`): 0 issues on all four build tags
 - [x] Comment lint gate clean (`just comment-lint`)
-- [ ] Coverage maintained (`just coverage-check`) (not run)
+- [x] Coverage maintained (`just coverage-check`: total 85.6%, all floors pass)
 
 **Comment findings.** `just comment-report` lists the advisory rules
 (duplication, nil-contract, param-contract, restatement). They are not a merge
@@ -34,13 +35,13 @@ unexplained suppression is a finding nobody can re-evaluate later.
 
 ## Code Review
 
-- [ ] Run `/code-review` command (invokes cranky-code-reviewer agent)
-- [ ] All critical review-responses addressed
-- [ ] All significant review-responses addressed
-- [ ] Self-reviewed the diff for unrelated changes
+- [x] Run `/code-review` command (cranky-code-reviewer on commit 7eed4516f: 10 findings)
+- [x] All critical review-responses addressed (none found)
+- [x] All significant review-responses addressed (scale step and number-to-text storage fixed)
+- [x] Self-reviewed the diff for unrelated changes (the split into three commits kept library and table-cell work out of this commit)
 
-**Review Responses:** <!-- List IDs of review-response entities created, e.g.,
-RR-xxxx -->
+**Review Responses:** RR-8UJQGFW, RR-9F78D7I, RR-EH9EHYA, RR-HXMGTM7,
+RR-J0WH5T0, RR-LR9D2B1, RR-M32ABT1, RR-MBRPODF, RR-N4MCN87, RR-SSE1EVZ
 
 ## Acceptance Verification
 
@@ -66,13 +67,13 @@ Skip this section for bugs and internal refactors.
 
 ## Final Checks
 
-- [ ] Commit message explains the why, not just what
-- [ ] No TODOs or FIXMEs left unaddressed
-- [ ] Ready for another developer to use
+- [x] ~~Commit message explains the why, not just what~~ (N/A: this repo's owner asks for minimal commit messages; the why is in the ticket)
+- [x] No TODOs or FIXMEs left unaddressed
+- [x] Ready for another developer to use
 
 ## Pull Request
 
-- [ ] Run `/pr` command to create PR and monitor CI
+- [x] ~~Run `/pr` command to create PR and monitor CI~~ (N/A: shipped in the combined PR 2084, see TKT-UFV01M)
 
 <!--
 Deliberately NOT tracked here: the PR URL and whether CI passed.
