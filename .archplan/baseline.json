@@ -2516,6 +2516,30 @@
       "at": "2026-10-30T07:30:00Z",
       "title": "src holds 2 groups of files that neither refer to each other.",
       "size": 2
+    },
+    "concepts.data_clump-ed50428be469": {
+      "state": "accepted",
+      "reason": "Design: owner, pile and create are the parameters of a pile push; each surface (automation, Lua, MCP, HTTP, service) takes them at its own call site, as the consumer-side interface rule asks. TKT-EY4W0P.",
+      "at": "2026-11-04T00:45:00Z",
+      "title": "The fields create, owner and pile appear together in 7 types across 6 components."
+    },
+    "types.synonyms-05fe711bc75c": {
+      "state": "accepted",
+      "reason": "Design: autocascade declares the push it needs at its call site instead of importing piles (consumer-side interfaces); notify added Key, Reason and SkipSelf to both. TKT-EY4W0P.",
+      "at": "2026-11-04T00:45:00Z",
+      "title": "PileRequest (autocascade) and PushRequest (piles) share most of their fields."
+    },
+    "types.synonyms-e17b4522d205": {
+      "state": "accepted",
+      "reason": "Design: metamodel.PileDecl is the schema.yaml shape (strings as written); piles.Declared is the parsed policy the service runs on. metamodel does not import piles. TKT-EO2GCM.",
+      "at": "2026-11-04T00:45:00Z",
+      "title": "PileDecl (metamodel) and Declared (piles) share most of their fields."
+    },
+    "types.synonyms-f958cc3a26f6": {
+      "state": "accepted",
+      "reason": "Design: Lua and MCP each declare the push they need at the call site (consumer-side interfaces). Unchanged by this branch; it crossed the threshold here. TKT-EO2GCM.",
+      "at": "2026-11-04T00:45:00Z",
+      "title": "PilePush (lua) and PilePush (mcp) share most of their fields."
     }
   },
   "labels": {},
