@@ -1541,6 +1541,12 @@ type ViewSection struct {
 	// budget. The scan-budget case is the signal docs/acl-security.md
 	// accepts for the mentioned-by endpoint.
 	Incomplete bool `json:"incomplete,omitempty"`
+	// Entry reports that the section shows the entry itself (`source:
+	// entry`). The SPA places a channel type with `placement:
+	// above_relations` before the first section without it (TKT-VXBE16H).
+	// It also appears on side-panel and custom view responses, where nothing
+	// reads it yet.
+	Entry bool `json:"entry,omitempty"`
 
 	// RelationOrder is set when the section's rows are the entry's targets
 	// over one orderable relation, shown in relation order; see

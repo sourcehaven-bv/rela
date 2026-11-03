@@ -1434,6 +1434,13 @@ see, and appears at the face the world serves. A source whose served face does
 not itself mention `{id}` is left out. A hidden or missing `{id}` gets the same
 404 as the entity GET. A bad `limit` or `cursor` is a 400.
 
+### Sections that show the entry
+
+A section built from `source: entry` carries `"entry": true`; other sections
+omit the field. The web app places a channel type with `placement:
+above_relations` before the first section without it (see Channel placement
+in the data-entry guide).
+
 ### Backlinks in a view
 
 A view can collect backlinks with a `mentioned_by` traverse step and show them

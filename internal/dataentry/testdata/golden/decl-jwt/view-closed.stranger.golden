@@ -117,7 +117,8 @@ body:
         }
       ],
       "isGrouped": false,
-      "hasContent": false
+      "hasContent": false,
+      "entry": true
     },
     {
       "heading": "",
@@ -126,7 +127,8 @@ body:
       "isEmpty": false,
       "isGrouped": false,
       "content": "Follows `TKT-1`.",
-      "hasContent": true
+      "hasContent": true,
+      "entry": true
     },
     {
       "heading": "Children",

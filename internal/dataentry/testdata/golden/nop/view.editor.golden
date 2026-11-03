@@ -107,7 +107,8 @@ body:
         }
       ],
       "isGrouped": false,
-      "hasContent": false
+      "hasContent": false,
+      "entry": true
     },
     {
       "heading": "",
@@ -116,7 +117,8 @@ body:
       "isEmpty": false,
       "isGrouped": false,
       "content": "Alpha body.",
-      "hasContent": true
+      "hasContent": true,
+      "entry": true
     },
     {
       "heading": "Children",

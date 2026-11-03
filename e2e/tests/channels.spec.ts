@@ -14,6 +14,7 @@ import {
   SESSION,
   addCompactSession,
   addFeatureOwner,
+  addRoomAboveRelations,
   setFeatureOwner,
   writePolicyRealtime,
   writeRoomProject,
@@ -597,5 +598,40 @@ facedTest.describe("channels on a faced type", () => {
     await published.expectNoMessage("On the draft face");
     await reader.expectNoMessage("On the draft face");
     await draft.expectNoMessage("Later on the published face");
+  });
+});
+
+const placedTest = base.extend<ChannelFixtures>({
+  serverUrl: async ({ testProject, serverBinary }, use, testInfo) => {
+    writeRoomProject(testProject);
+    addRoomAboveRelations(testProject);
+    await serveWithPrincipalHeader(serverBinary, testProject, testInfo, use, CHANNEL_USERS.lead);
+  },
+  as: asFixture,
+});
+
+// TKT-VXBE16H: `channels.room.placement: above_relations` moves the channel
+// from the end of the page to before the first relation section.
+placedTest.describe("channel placement", () => {
+  placedTest.describe.configure({ timeout: 120_000 });
+
+  placedTest("a channel placed above the relations sits before them", async ({ as }) => {
+    const alice = await as(CHANNEL_USERS.lead);
+    await alice.openEntity("feature", FEATURE);
+    await alice.expectChannel(ROOM.label);
+
+    // The generated view shows properties and the body, then one section per
+    // relation. The one channels block sits between them.
+    await expect(alice.panel).toHaveCount(1);
+    const sections = alice.page.locator(".view-section");
+    await expect(sections.last()).toBeVisible();
+    const top = async (l: typeof sections) => (await l.boundingBox())!.y;
+    const panelTop = await top(alice.panel);
+    expect(await top(sections.first())).toBeLessThan(panelTop);
+    expect(await top(sections.last())).toBeGreaterThan(panelTop);
+
+    // It still works where it sits.
+    await alice.post("Placed above the relations");
+    await alice.expectMessage("Placed above the relations");
   });
 });

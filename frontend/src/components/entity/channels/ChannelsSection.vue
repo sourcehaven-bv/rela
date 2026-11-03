@@ -29,8 +29,15 @@
  * Channel routes take no `?world=`: the server refuses a non-default world
  * there, and the address carries the face (R14). The page world goes on
  * entity links only.
+ *
+ * `types` narrows the section to some channel types: a page with a channel
+ * type placed above the relations has two sections (TKT-VXBE16H). Each lists
+ * and links only its own types, so a `?channel=` link for the other section's
+ * type leaves this one as it is. Each section holds at most two live keys:
+ * its list, or its list and the one channel open in single mode, or the
+ * channel chosen from the list.
  */
-import { computed, nextTick, ref, watch } from 'vue'
+import { computed, nextTick, ref, useId, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
 import { createChannel, type ChannelAnchor } from '@/api/channels'
@@ -50,6 +57,10 @@ const props = defineProps<{
   entityId: string
   /** The page world, for entity links. */
   world?: string
+  /** The channel types this section shows; absent, every type. */
+  types?: readonly string[]
+  /** The heading; absent, "Channels". */
+  heading?: string
 }>()
 
 const { t } = useI18n()
@@ -70,8 +81,16 @@ const list = useEntityChannels(anchor, {
   live: () => !channelOpen.value || single.value,
 })
 
+/** Whether this section shows channels of the type. */
+function shows(type: string): boolean {
+  return props.types === undefined || props.types.includes(type)
+}
+
 const groups = computed(() =>
-  channelGroups(list.types.value, (name) => channelSchema.channelType(name))
+  channelGroups(
+    list.types.value.filter((tl) => shows(tl.type)),
+    (name) => channelSchema.channelType(name)
+  )
 )
 const rows = computed(() => groups.value.flatMap((g) => g.channels))
 const canCreate = computed(() => groups.value.some((g) => g.canCreate))
@@ -114,6 +133,7 @@ const open = computed(() => {
 })
 
 const visible = computed(() => groups.value.length > 0)
+const headingId = useId()
 
 // --- Deep link (?channel=) -----------------------------------------------------
 
@@ -133,7 +153,7 @@ function linkedKey(raw: unknown): string | null {
   const value = Array.isArray(raw) ? raw[0] : raw
   if (typeof value !== 'string' || value === '') return null
   const { channelType, name } = parseChannelKey(value)
-  return channelType ? channelKey(channelType, name) : null
+  return channelType && shows(channelType) ? channelKey(channelType, name) : null
 }
 
 function applyLink() {
@@ -264,9 +284,9 @@ async function submitCreate(title: string) {
 </script>
 
 <template>
-  <section v-if="visible" ref="root" class="channels-panel" aria-labelledby="channels-panel-title">
+  <section v-if="visible" ref="root" class="channels-panel" :aria-labelledby="headingId">
     <header class="channels-panel__header">
-      <h2 id="channels-panel-title">{{ t('channels.title') }}</h2>
+      <h2 :id="headingId">{{ heading ?? t('channels.title') }}</h2>
     </header>
     <div class="channels-panel__body">
       <RlEntityChannels

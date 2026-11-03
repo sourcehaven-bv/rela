@@ -1,0 +1,49 @@
+import { describe, it, expect } from 'vitest'
+import type { ChannelPresentation } from '@/types'
+import { aboveRelationsIndex, placementOf, typesAt } from './channelPlacement'
+
+describe('placementOf', () => {
+  it.each<[ChannelPresentation | undefined, string]>([
+    [undefined, 'end'],
+    [{}, 'end'],
+    [{ placement: '' }, 'end'],
+    [{ placement: 'above_relations' }, 'above_relations'],
+    // A value from a newer server keeps the default.
+    [{ placement: 'tab' }, 'end'],
+    [{ placement: 'Above_Relations' }, 'end'],
+  ])('%j is %s', (p, want) => {
+    expect(placementOf(p)).toBe(want)
+  })
+})
+
+describe('typesAt', () => {
+  const presentations: Record<string, ChannelPresentation> = {
+    run: { placement: 'above_relations' },
+    review: { placement: 'above_relations', session: { display: 'compact' } },
+    chat: { session: { display: 'compact' } },
+  }
+  const at = (name: string) => presentations[name]
+  const names = ['chat', 'run', 'notes', 'review']
+
+  it('keeps the given order per block', () => {
+    expect(typesAt(names, at, 'above_relations')).toEqual(['run', 'review'])
+    expect(typesAt(names, at, 'end')).toEqual(['chat', 'notes'])
+  })
+
+  it('puts every type at the end without placements', () => {
+    expect(typesAt(names, () => undefined, 'end')).toEqual(names)
+    expect(typesAt(names, () => undefined, 'above_relations')).toEqual([])
+  })
+})
+
+describe('aboveRelationsIndex', () => {
+  it.each<[string, { entry?: boolean }[], number]>([
+    ['generated view: properties, body, relations', [{ entry: true }, { entry: true }, {}, {}], 2],
+    ['custom view starting with a relation table', [{}, { entry: true }], 0],
+    ['only entry sections', [{ entry: true }, { entry: true }], 2],
+    ['no sections', [], 0],
+    ['entry: false counts as not the entry', [{ entry: true }, { entry: false }], 1],
+  ])('%s', (_name, sections, want) => {
+    expect(aboveRelationsIndex(sections)).toBe(want)
+  })
+})

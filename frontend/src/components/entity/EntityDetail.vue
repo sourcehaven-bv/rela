@@ -55,6 +55,7 @@ import type { Component } from 'vue'
 import DocumentsPanel from '@/components/entity/DocumentsPanel.vue'
 import CommentsPanel from '@/components/entity/CommentsPanel.vue'
 import ChannelsPanel from '@/components/entity/ChannelsPanel.vue'
+import { aboveRelationsIndex } from '@/components/entity/channels/channelPlacement'
 import MentionedByPanel from '@/components/entity/MentionedByPanel.vue'
 import CommentIndicator from '@/components/entity/CommentIndicator.vue'
 import TextSelectionComment from '@/components/entity/TextSelectionComment.vue'
@@ -247,6 +248,8 @@ const pageState = computed<'pending' | 'loaded' | 'error'>(() => {
   return loading.value ? 'pending' : 'loaded'
 })
 const viewData = ref<ViewResponse | null>(null)
+/** Where the above_relations channels block goes among the view sections. */
+const aboveRelationsAt = computed(() => aboveRelationsIndex(viewData.value?.sections ?? []))
 // The world viewData was fetched in. Reference links in the rendered content
 // carry it rather than the live `worldParam`, so a link opens its target in
 // the world its title was resolved in, also while a world switch refetches.
@@ -2650,19 +2653,29 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
 
       <!-- Sections -->
       <div v-if="viewData" class="sections">
-        <section
-          v-for="(section, sectionIndex) in viewData.sections"
-          :id="section.sectionId"
-          :key="section.sectionId"
-          class="view-section"
-          :aria-labelledby="
-            sectionRendersGenericHeading(section) ? `${section.sectionId}-heading` : undefined
-          "
-          :aria-label="
-            sectionRendersGenericHeading(section) ? undefined : section.heading || undefined
-          "
-        >
-          <!--
+        <!-- A channel type placed above the relations (TKT-VXBE16H) renders
+             before the first section that does not show the entry, or after
+             the last section when every one does. The block renders nothing
+             when no channel type is placed there. -->
+        <template v-for="(section, sectionIndex) in viewData.sections" :key="section.sectionId">
+          <ChannelsPanel
+            v-if="sectionIndex === aboveRelationsAt"
+            placement="above_relations"
+            :entity-type="entityType"
+            :entity-id="entityRef(entry)"
+            :world="worldParam"
+          />
+          <section
+            :id="section.sectionId"
+            class="view-section"
+            :aria-labelledby="
+              sectionRendersGenericHeading(section) ? `${section.sectionId}-heading` : undefined
+            "
+            :aria-label="
+              sectionRendersGenericHeading(section) ? undefined : section.heading || undefined
+            "
+          >
+            <!--
             The heading row carries the section's opt-in create affordance
             (TKT-R4BMJM). It sits HERE, above the six display branches, rather
             than inside each of them: the button is one affordance, and copying
@@ -2673,32 +2686,32 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
             The row renders when there is a heading OR an affordance, so a
             section that opted in still gets its button when it has no heading.
           -->
-          <div
-            v-if="sectionRendersGenericHeading(section) || section.create"
-            class="section-heading-row"
-          >
-            <h2
-              v-if="sectionRendersGenericHeading(section)"
-              :id="`${section.sectionId}-heading`"
-              class="section-heading"
+            <div
+              v-if="sectionRendersGenericHeading(section) || section.create"
+              class="section-heading-row"
             >
-              {{ section.heading }}
-              <span v-if="section === entryContentSection && checkboxStats" class="cb-stats"
-                >({{ checkboxStats.checked }}/{{ checkboxStats.total }})</span
+              <h2
+                v-if="sectionRendersGenericHeading(section)"
+                :id="`${section.sectionId}-heading`"
+                class="section-heading"
               >
-            </h2>
-            <SectionCreateButton
-              :create="section.create"
-              :menu-label="t('common.new')"
-              @select="startCreate"
-            />
-          </div>
+                {{ section.heading }}
+                <span v-if="section === entryContentSection && checkboxStats" class="cb-stats"
+                  >({{ checkboxStats.checked }}/{{ checkboxStats.total }})</span
+                >
+              </h2>
+              <SectionCreateButton
+                :create="section.create"
+                :menu-label="t('common.new')"
+                @select="startCreate"
+              />
+            </div>
 
-          <div v-if="section.isEmpty" class="section-empty">
-            {{ section.emptyMessage || t('entity.noItems') }}
-          </div>
+            <div v-if="section.isEmpty" class="section-empty">
+              {{ section.emptyMessage || t('entity.noItems') }}
+            </div>
 
-          <!--
+            <!--
             Properties section routing (TKT-IHC7B):
             - At least one writable field → SectionEditForm (inline edit).
             - All non-writable                → PropertyDisplay (read-only).
@@ -2706,167 +2719,167 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
             remount on entity-id change so its lifecycle handles route
             navigation cleanly (RR-FB1D + RR-FB2A).
           -->
-          <SectionEditForm
-            v-else-if="
-              section.display === 'properties' &&
-              entry &&
-              sectionShouldRouteToInlineEdit(section, entry)
-            "
-            :key="`${entry.type}/${entityRef(entry)}`"
-            :heading="section.heading"
-            :entity-type="entry.type"
-            :entity-id="entityRef(entry)"
-            :initial-values="entry.properties"
-            :initial-versions="entry._versions"
-            :attachments="entry._attachments"
-            :fields="memoBuildSectionEditFields(section, entry)"
-            :on-property-applied="handlePropertyApplied"
-            :run-write="runSessionWrite"
-            :on-error="handleSectionEditError"
-            :on-verdict-flip="handleVerdictFlip"
-            :on-attachment-changed="() => loadView()"
-            :on-relation-changed="() => loadView()"
-          >
-            <template v-if="commentsEnabled" #label-affordance="{ property, index }">
-              <!-- A relation row's key is not a property a comment can anchor to. -->
-              <CommentIndicator
-                v-if="!property.startsWith('relation:')"
-                :entity-type="entityType"
-                :entity-id="entityRef(entry)"
-                :anchor="{ kind: 'property', ref: property }"
-                :comments="commentsForProperty(property)"
-                :flip="shouldFlipPopover(memoBuildSectionEditFields(section, entry), index)"
-                @changed="onCommentsChanged"
-              />
-            </template>
-          </SectionEditForm>
-          <PropertyDisplay
-            v-else-if="section.display === 'properties'"
-            :properties="mapFieldsToProperties(section.fields)"
-            :entity-type="entry.type"
-          >
-            <!-- Comment affordance per field (TKT-FIO205). Filled only here:
+            <SectionEditForm
+              v-else-if="
+                section.display === 'properties' &&
+                entry &&
+                sectionShouldRouteToInlineEdit(section, entry)
+              "
+              :key="`${entry.type}/${entityRef(entry)}`"
+              :heading="section.heading"
+              :entity-type="entry.type"
+              :entity-id="entityRef(entry)"
+              :initial-values="entry.properties"
+              :initial-versions="entry._versions"
+              :attachments="entry._attachments"
+              :fields="memoBuildSectionEditFields(section, entry)"
+              :on-property-applied="handlePropertyApplied"
+              :run-write="runSessionWrite"
+              :on-error="handleSectionEditError"
+              :on-verdict-flip="handleVerdictFlip"
+              :on-attachment-changed="() => loadView()"
+              :on-relation-changed="() => loadView()"
+            >
+              <template v-if="commentsEnabled" #label-affordance="{ property, index }">
+                <!-- A relation row's key is not a property a comment can anchor to. -->
+                <CommentIndicator
+                  v-if="!property.startsWith('relation:')"
+                  :entity-type="entityType"
+                  :entity-id="entityRef(entry)"
+                  :anchor="{ kind: 'property', ref: property }"
+                  :comments="commentsForProperty(property)"
+                  :flip="shouldFlipPopover(memoBuildSectionEditFields(section, entry), index)"
+                  @changed="onCommentsChanged"
+                />
+              </template>
+            </SectionEditForm>
+            <PropertyDisplay
+              v-else-if="section.display === 'properties'"
+              :properties="mapFieldsToProperties(section.fields)"
+              :entity-type="entry.type"
+            >
+              <!-- Comment affordance per field (TKT-FIO205). Filled only here:
                  the same component renders list cells and kanban cards, where
                  a comment control would be noise. -->
-            <template v-if="commentsEnabled" #label-affordance="{ property, index }">
-              <CommentIndicator
-                :entity-type="entityType"
-                :entity-id="entityRef(entry)"
-                :anchor="{ kind: 'property', ref: property.name }"
-                :comments="commentsForProperty(property.name)"
-                :flip="shouldFlipPopover(section.fields, index)"
-                @changed="onCommentsChanged"
-              />
-            </template>
-          </PropertyDisplay>
+              <template v-if="commentsEnabled" #label-affordance="{ property, index }">
+                <CommentIndicator
+                  :entity-type="entityType"
+                  :entity-id="entityRef(entry)"
+                  :anchor="{ kind: 'property', ref: property.name }"
+                  :comments="commentsForProperty(property.name)"
+                  :flip="shouldFlipPopover(section.fields, index)"
+                  @changed="onCommentsChanged"
+                />
+              </template>
+            </PropertyDisplay>
 
-          <!-- Entry content with mermaid + interactive checkboxes.
+            <!-- Entry content with mermaid + interactive checkboxes.
                Function ref instead of string ref because this template lives
                inside a v-for: Vue would otherwise collect template-refs of
                the same name into an array per iteration. -->
-          <!--
+            <!--
             The body edits in place (EntityBody). Its read view is this host,
             unchanged: links, checkboxes and comment marks keep their clicks.
           -->
-          <EntityBody
-            v-else-if="section === entryContentSection"
-            :key="servedRef ?? ''"
-            :content="entryContentSection.content || ''"
-            :editable="canEditBody"
-            :ref-resolver="refResolver"
-            :source="taskItemSource"
-            :task-item-conversions="entry?._task_item_conversions"
-            @edit="onBodyEdit"
-            @input="onBodyInput"
-            @done="onBodyDone"
-          >
-            <template #read>
-              <div class="entry-content-host">
-                <div
-                  :ref="
-                    (el) => {
-                      contentRef = el as HTMLElement | null
-                    }
-                  "
-                  class="content-body md-body"
-                  :data-comment-source="entryContentSection.content || ''"
-                  @click="contentClick"
-                  v-html="renderedEntryContent"
-                />
-                <!-- Select-to-comment over the body (TKT-FIO205 stage 2). Absolute
+            <EntityBody
+              v-else-if="section === entryContentSection"
+              :key="servedRef ?? ''"
+              :content="entryContentSection.content || ''"
+              :editable="canEditBody"
+              :ref-resolver="refResolver"
+              :source="taskItemSource"
+              :task-item-conversions="entry?._task_item_conversions"
+              @edit="onBodyEdit"
+              @input="onBodyInput"
+              @done="onBodyDone"
+            >
+              <template #read>
+                <div class="entry-content-host">
+                  <div
+                    :ref="
+                      (el) => {
+                        contentRef = el as HTMLElement | null
+                      }
+                    "
+                    class="content-body md-body"
+                    :data-comment-source="entryContentSection.content || ''"
+                    @click="contentClick"
+                    v-html="renderedEntryContent"
+                  />
+                  <!-- Select-to-comment over the body (TKT-FIO205 stage 2). Absolute
                      within .entry-content-host, so its offsets are relative to the
                      body rather than the viewport. -->
-                <TextSelectionComment
-                  v-if="commentsEnabled"
-                  :entity-type="entityType"
-                  :entity-id="entityRef(entry)"
-                  :container="contentRef"
-                  @added="loadComments"
-                />
+                  <TextSelectionComment
+                    v-if="commentsEnabled"
+                    :entity-type="entityType"
+                    :entity-id="entityRef(entry)"
+                    :container="contentRef"
+                    @added="loadComments"
+                  />
 
-                <!-- Comment affordances for blocks that cannot be text-selected:
+                  <!-- Comment affordances for blocks that cannot be text-selected:
                      images and mermaid/PlantUML diagrams. They anchor to the
                      block's SOURCE markdown, so they ride the same `text` kind. -->
-                <BlockCommentOverlay
-                  v-if="commentsEnabled"
-                  :entity-type="entityType"
-                  :entity-id="entityRef(entry)"
-                  :container="contentRef"
-                  :render-key="renderedEntryContent"
-                  :comments="comments"
-                  @added="loadComments"
-                />
+                  <BlockCommentOverlay
+                    v-if="commentsEnabled"
+                    :entity-type="entityType"
+                    :entity-id="entityRef(entry)"
+                    :container="contentRef"
+                    :render-key="renderedEntryContent"
+                    :comments="comments"
+                    @added="loadComments"
+                  />
 
-                <!-- The thread for a clicked highlight. Anchored to the mark, which
+                  <!-- The thread for a clicked highlight. Anchored to the mark, which
                      lives in v-html output and so has no component of its own. -->
-                <TextCommentPopover
-                  v-if="commentsEnabled && textCommentPos && openTextComments.length > 0"
-                  :entity-type="entityType"
-                  :entity-id="entityRef(entry)"
-                  :comments="openTextComments"
-                  :position="textCommentPos"
-                  :can-accept="canAccept"
-                  @changed="onCommentsChanged"
-                  @accept="acceptSuggestion"
-                  @close="closeTextComment"
-                />
-              </div>
-            </template>
-          </EntityBody>
+                  <TextCommentPopover
+                    v-if="commentsEnabled && textCommentPos && openTextComments.length > 0"
+                    :entity-type="entityType"
+                    :entity-id="entityRef(entry)"
+                    :comments="openTextComments"
+                    :position="textCommentPos"
+                    :can-accept="canAccept"
+                    @changed="onCommentsChanged"
+                    @accept="acceptSuggestion"
+                    @close="closeTextComment"
+                  />
+                </div>
+              </template>
+            </EntityBody>
 
-          <!-- Other content sections (e.g. content cards from a configured view). -->
-          <div
-            v-else-if="section.display === 'content' && section.hasContent"
-            class="content-block"
-          >
+            <!-- Other content sections (e.g. content cards from a configured view). -->
             <div
-              class="markdown-content md-body"
-              v-html="renderMarkdown(section.content || '', { refResolver, world: viewWorld })"
-            />
-          </div>
-
-          <div
-            v-else-if="section.display === 'content' && section.entities?.length"
-            class="content-cards"
-          >
-            <article
-              v-for="ent in section.entities"
-              :id="anchorId(section.sectionId, ent.id)"
-              :key="ent.id"
-              :data-entity-id="ent.id"
-              class="content-card"
+              v-else-if="section.display === 'content' && section.hasContent"
+              class="content-block"
             >
-              <header class="card-header">
-                <component
-                  :is="entityTarget(ent) ? RouterLink : 'span'"
-                  class="card-header-link"
-                  v-bind="entityTarget(ent) ? { to: entityTarget(ent) } : {}"
-                >
-                  <span class="entity-type">{{ ent.type }}</span>
-                  <span class="entity-title">{{ ent.title }}</span>
-                  <span class="entity-id">{{ ent.id }}</span>
-                </component>
-                <!--
+              <div
+                class="markdown-content md-body"
+                v-html="renderMarkdown(section.content || '', { refResolver, world: viewWorld })"
+              />
+            </div>
+
+            <div
+              v-else-if="section.display === 'content' && section.entities?.length"
+              class="content-cards"
+            >
+              <article
+                v-for="ent in section.entities"
+                :id="anchorId(section.sectionId, ent.id)"
+                :key="ent.id"
+                :data-entity-id="ent.id"
+                class="content-card"
+              >
+                <header class="card-header">
+                  <component
+                    :is="entityTarget(ent) ? RouterLink : 'span'"
+                    class="card-header-link"
+                    v-bind="entityTarget(ent) ? { to: entityTarget(ent) } : {}"
+                  >
+                    <span class="entity-type">{{ ent.type }}</span>
+                    <span class="entity-title">{{ ent.title }}</span>
+                    <span class="entity-id">{{ ent.id }}</span>
+                  </component>
+                  <!--
                   Per-neighbour provenance (RULING 12/14). Each collection
                   entity resolved through the world INDEPENDENTLY, so one
                   section can mix `chain` and `fallback-default` — the badge is
@@ -2877,35 +2890,109 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
                   row, not part of the link's accessible name — folding it in
                   would make the link read "Guide GUIDE-1 nl".
                 -->
-                <WorldBadge :world="ent._world" :entity-type="ent.type" />
-              </header>
-              <div
-                v-if="ent.hasContent"
-                class="markdown-content md-body"
-                v-html="renderMarkdown(ent.content || '', { refResolver, world: viewWorld })"
-              />
-            </article>
-          </div>
+                  <WorldBadge :world="ent._world" :entity-type="ent.type" />
+                </header>
+                <div
+                  v-if="ent.hasContent"
+                  class="markdown-content md-body"
+                  v-html="renderMarkdown(ent.content || '', { refResolver, world: viewWorld })"
+                />
+              </article>
+            </div>
 
-          <div v-else-if="section.display === 'cards'" class="cards-grid">
-            <article
-              v-for="ent in section.entities"
-              :id="anchorId(section.sectionId, ent.id)"
-              :key="ent.id"
-              :data-entity-id="ent.id"
-              class="entity-card"
-            >
-              <!--
+            <div v-else-if="section.display === 'cards'" class="cards-grid">
+              <article
+                v-for="ent in section.entities"
+                :id="anchorId(section.sectionId, ent.id)"
+                :key="ent.id"
+                :data-entity-id="ent.id"
+                class="entity-card"
+              >
+                <!--
                 Navigation handler moved from <article> to .card-header
                 (TKT-IHC7C / RR-FC1B): clicks on inline-edit widgets
                 inside the card must not bubble to the row-level click
                 because that would navigate away mid-edit. The header
                 still navigates; cells stay editable.
               -->
-              <header class="card-header">
+                <header class="card-header">
+                  <component
+                    :is="entityTarget(ent) ? RouterLink : 'span'"
+                    class="card-header-link"
+                    v-bind="entityTarget(ent) ? { to: entityTarget(ent) } : {}"
+                  >
+                    <span class="entity-type">{{ ent.type }}</span>
+                    <span class="entity-title">{{ ent.title }}</span>
+                    <span class="entity-id">{{ ent.id }}</span>
+                  </component>
+                  <!-- Per-neighbour provenance; see the first WorldBadge above. -->
+                  <WorldBadge :world="ent._world" :entity-type="ent.type" />
+                  <button
+                    v-if="ent.editFormId"
+                    class="edit-btn"
+                    :title="t('common.edit')"
+                    @click.stop="navigateToEdit(ent.editFormId, ent)"
+                  >
+                    &times;
+                  </button>
+                </header>
+                <SectionEditForm
+                  v-if="rowShouldRouteToInlineEdit(ent, section.entities?.length ?? 0)"
+                  :key="`${ent.type}/${entityRef(ent)}`"
+                  :entity-type="ent.type"
+                  :entity-id="entityRef(ent)"
+                  :initial-values="ent._props ?? {}"
+                  :fields="memoBuildRowEditFields(ent)"
+                  :on-property-applied="handleRowPropertyApplied"
+                  :run-write="runSessionWrite"
+                  :on-error="handleSectionEditError"
+                  :on-verdict-flip="handleVerdictFlip"
+                >
+                  <!-- Indicator rendered inline in the card (TKT-IHC7C). NOT
+                     teleported: the former <Teleport> target span lived in
+                     the same render subtree as the Teleport itself, so Vue
+                     could leave the teleported child orphaned with a null
+                     instance that crashed on route-driven unmount (#997). -->
+                  <template #indicator="{ status, error }">
+                    <span class="card-indicator-slot">
+                      <AutoSaveIndicator :status="status" :error="error" />
+                    </span>
+                  </template>
+                </SectionEditForm>
+                <div v-else-if="ent.fields?.length" class="card-fields">
+                  <div v-for="row in fieldRowsFor(ent)" :key="row.field.label" class="card-field">
+                    <span class="field-label">{{ row.field.label }}:</span>
+                    <!-- The wire-level inaccessibleReason map is keyed on
+                       the entry's properties, not the per-entity card
+                       row's. We don't have a per-card reason map today
+                       (see RR-UD2E follow-up), so InaccessibleField
+                       falls back to the generic tooltip. -->
+                    <InaccessibleField v-if="row.field.inaccessible" />
+                    <component
+                      :is="row.widget"
+                      v-else
+                      :model-value="rowDisplayValue(ent, row.field)"
+                      :mode="'display'"
+                      :property-name="row.hint.propertyName"
+                      :entity-type="ent.type"
+                      class="field-value"
+                    />
+                  </div>
+                </div>
+              </article>
+            </div>
+
+            <ul v-else-if="section.display === 'list'" class="entity-list">
+              <li
+                v-for="ent in section.entities"
+                :id="anchorId(section.sectionId, ent.id)"
+                :key="ent.id"
+                :data-entity-id="ent.id"
+                class="list-item"
+              >
                 <component
                   :is="entityTarget(ent) ? RouterLink : 'span'"
-                  class="card-header-link"
+                  class="list-link"
                   v-bind="entityTarget(ent) ? { to: entityTarget(ent) } : {}"
                 >
                   <span class="entity-type">{{ ent.type }}</span>
@@ -2914,393 +3001,332 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
                 </component>
                 <!-- Per-neighbour provenance; see the first WorldBadge above. -->
                 <WorldBadge :world="ent._world" :entity-type="ent.type" />
-                <button
-                  v-if="ent.editFormId"
-                  class="edit-btn"
-                  :title="t('common.edit')"
-                  @click.stop="navigateToEdit(ent.editFormId, ent)"
+                <SectionEditForm
+                  v-if="rowShouldRouteToInlineEdit(ent, section.entities?.length ?? 0)"
+                  :key="`${ent.type}/${entityRef(ent)}`"
+                  :entity-type="ent.type"
+                  :entity-id="entityRef(ent)"
+                  :initial-values="ent._props ?? {}"
+                  :fields="memoBuildRowEditFields(ent)"
+                  :on-property-applied="handleRowPropertyApplied"
+                  :run-write="runSessionWrite"
+                  :on-error="handleSectionEditError"
+                  :on-verdict-flip="handleVerdictFlip"
                 >
-                  &times;
-                </button>
-              </header>
-              <SectionEditForm
-                v-if="rowShouldRouteToInlineEdit(ent, section.entities?.length ?? 0)"
-                :key="`${ent.type}/${entityRef(ent)}`"
-                :entity-type="ent.type"
-                :entity-id="entityRef(ent)"
-                :initial-values="ent._props ?? {}"
-                :fields="memoBuildRowEditFields(ent)"
-                :on-property-applied="handleRowPropertyApplied"
-                :run-write="runSessionWrite"
-                :on-error="handleSectionEditError"
-                :on-verdict-flip="handleVerdictFlip"
-              >
-                <!-- Indicator rendered inline in the card (TKT-IHC7C). NOT
+                  <!-- Indicator rendered inline in the row (TKT-IHC7C). NOT
                      teleported: the former <Teleport> target span lived in
                      the same render subtree as the Teleport itself, so Vue
                      could leave the teleported child orphaned with a null
                      instance that crashed on route-driven unmount (#997). -->
-                <template #indicator="{ status, error }">
-                  <span class="card-indicator-slot">
-                    <AutoSaveIndicator :status="status" :error="error" />
-                  </span>
-                </template>
-              </SectionEditForm>
-              <div v-else-if="ent.fields?.length" class="card-fields">
-                <div v-for="row in fieldRowsFor(ent)" :key="row.field.label" class="card-field">
-                  <span class="field-label">{{ row.field.label }}:</span>
-                  <!-- The wire-level inaccessibleReason map is keyed on
-                       the entry's properties, not the per-entity card
-                       row's. We don't have a per-card reason map today
-                       (see RR-UD2E follow-up), so InaccessibleField
-                       falls back to the generic tooltip. -->
-                  <InaccessibleField v-if="row.field.inaccessible" />
-                  <component
-                    :is="row.widget"
-                    v-else
-                    :model-value="rowDisplayValue(ent, row.field)"
-                    :mode="'display'"
-                    :property-name="row.hint.propertyName"
-                    :entity-type="ent.type"
-                    class="field-value"
-                  />
-                </div>
-              </div>
-            </article>
-          </div>
-
-          <ul v-else-if="section.display === 'list'" class="entity-list">
-            <li
-              v-for="ent in section.entities"
-              :id="anchorId(section.sectionId, ent.id)"
-              :key="ent.id"
-              :data-entity-id="ent.id"
-              class="list-item"
-            >
-              <component
-                :is="entityTarget(ent) ? RouterLink : 'span'"
-                class="list-link"
-                v-bind="entityTarget(ent) ? { to: entityTarget(ent) } : {}"
-              >
-                <span class="entity-type">{{ ent.type }}</span>
-                <span class="entity-title">{{ ent.title }}</span>
-                <span class="entity-id">{{ ent.id }}</span>
-              </component>
-              <!-- Per-neighbour provenance; see the first WorldBadge above. -->
-              <WorldBadge :world="ent._world" :entity-type="ent.type" />
-              <SectionEditForm
-                v-if="rowShouldRouteToInlineEdit(ent, section.entities?.length ?? 0)"
-                :key="`${ent.type}/${entityRef(ent)}`"
-                :entity-type="ent.type"
-                :entity-id="entityRef(ent)"
-                :initial-values="ent._props ?? {}"
-                :fields="memoBuildRowEditFields(ent)"
-                :on-property-applied="handleRowPropertyApplied"
-                :run-write="runSessionWrite"
-                :on-error="handleSectionEditError"
-                :on-verdict-flip="handleVerdictFlip"
-              >
-                <!-- Indicator rendered inline in the row (TKT-IHC7C). NOT
-                     teleported: the former <Teleport> target span lived in
-                     the same render subtree as the Teleport itself, so Vue
-                     could leave the teleported child orphaned with a null
-                     instance that crashed on route-driven unmount (#997). -->
-                <template #indicator="{ status, error }">
-                  <span class="list-indicator-slot">
-                    <AutoSaveIndicator :status="status" :error="error" />
-                  </span>
-                </template>
-              </SectionEditForm>
-              <span v-else-if="ent.fields?.length" class="list-fields">
-                <template v-for="row in fieldRowsFor(ent)" :key="row.field.label">
-                  <!-- Per-card inaccessibility reason isn't on the wire
+                  <template #indicator="{ status, error }">
+                    <span class="list-indicator-slot">
+                      <AutoSaveIndicator :status="status" :error="error" />
+                    </span>
+                  </template>
+                </SectionEditForm>
+                <span v-else-if="ent.fields?.length" class="list-fields">
+                  <template v-for="row in fieldRowsFor(ent)" :key="row.field.label">
+                    <!-- Per-card inaccessibility reason isn't on the wire
                        today (see RR-UD2E follow-up); InaccessibleField
                        falls back to the generic tooltip. -->
-                  <InaccessibleField v-if="row.field.inaccessible" />
-                  <component
-                    :is="row.widget"
-                    v-else
-                    :model-value="rowDisplayValue(ent, row.field)"
-                    :mode="'display'"
-                    :property-name="row.hint.propertyName"
-                    :entity-type="ent.type"
-                  />
-                </template>
-              </span>
-            </li>
-          </ul>
+                    <InaccessibleField v-if="row.field.inaccessible" />
+                    <component
+                      :is="row.widget"
+                      v-else
+                      :model-value="rowDisplayValue(ent, row.field)"
+                      :mode="'display'"
+                      :property-name="row.hint.propertyName"
+                      :entity-type="ent.type"
+                    />
+                  </template>
+                </span>
+              </li>
+            </ul>
 
-          <RelatedSectionRows
-            v-else-if="section.display === 'related'"
-            :entities="section.entities ?? []"
-            :anchor="(id: string) => anchorId(section.sectionId, id)"
-            :world="worldParam"
-            :page-entity="entry ? refBareId(entry.id) : undefined"
-          />
+            <RelatedSectionRows
+              v-else-if="section.display === 'related'"
+              :entities="section.entities ?? []"
+              :anchor="(id: string) => anchorId(section.sectionId, id)"
+              :world="worldParam"
+              :page-entity="entry ? refBareId(entry.id) : undefined"
+            />
 
-          <div v-else-if="section.display === 'table'" class="table-wrapper">
-            <template v-if="section.isGrouped && section.groups?.length">
-              <div
-                v-for="group in section.groups"
-                :key="group.entityType || group.groupName"
-                class="table-group"
-              >
-                <h3 class="group-heading">{{ group.groupName }}</h3>
-                <table class="data-table">
-                  <thead>
-                    <tr>
-                      <th
-                        v-for="col in group.columns ?? section.columns"
-                        :key="col.property || col.relation"
+            <div v-else-if="section.display === 'table'" class="table-wrapper">
+              <template v-if="section.isGrouped && section.groups?.length">
+                <div
+                  v-for="group in section.groups"
+                  :key="group.entityType || group.groupName"
+                  class="table-group"
+                >
+                  <h3 class="group-heading">{{ group.groupName }}</h3>
+                  <table class="data-table">
+                    <thead>
+                      <tr>
+                        <th
+                          v-for="col in group.columns ?? section.columns"
+                          :key="col.property || col.relation"
+                        >
+                          {{ col.label || col.property || col.relation }}
+                        </th>
+                        <th class="actions-col" />
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr
+                        v-for="row in group.rows"
+                        :id="anchorId(section.sectionId, row.entityId)"
+                        :key="row.entityId"
                       >
-                        {{ col.label || col.property || col.relation }}
-                      </th>
-                      <th class="actions-col" />
-                    </tr>
-                  </thead>
-                  <tbody>
-                    <tr
-                      v-for="row in group.rows"
-                      :id="anchorId(section.sectionId, row.entityId)"
-                      :key="row.entityId"
-                    >
-                      <td v-for="(cell, idx) in row.cells" :key="idx">
-                        <a
-                          v-if="cell.link"
-                          :href="cell.link"
-                          @click="
-                            onCellLinkClick(
-                              $event,
-                              {
-                                id: cell.entityId || row.entityId,
-                                type: cell.entityType || row.entityType,
-                              },
-                              cell.link
-                            )
-                          "
-                        >
-                          <ViewTableCell
-                            :values="cell.values"
-                            :property="(group.columns ?? section.columns)?.[idx]?.property"
-                            :entity-type="row.entityType"
-                          />
-                        </a>
-                        <template v-else>
-                          <ViewTableCell
-                            :values="cell.values"
-                            :property="(group.columns ?? section.columns)?.[idx]?.property"
-                            :entity-type="row.entityType"
-                            :entity-id="entityRef({ id: row.entityId, _self: row._self })"
-                          />
-                        </template>
-                      </td>
-                      <td class="actions-cell">
-                        <button
-                          v-if="row.editFormId"
-                          class="icon-btn"
-                          :title="t('common.edit')"
-                          @click="
-                            navigateToEdit(row.editFormId, { id: row.entityId, _self: row._self })
-                          "
-                        >
-                          &#9998;
-                        </button>
-                      </td>
-                    </tr>
-                  </tbody>
-                </table>
-              </div>
-            </template>
+                        <td v-for="(cell, idx) in row.cells" :key="idx">
+                          <a
+                            v-if="cell.link"
+                            :href="cell.link"
+                            @click="
+                              onCellLinkClick(
+                                $event,
+                                {
+                                  id: cell.entityId || row.entityId,
+                                  type: cell.entityType || row.entityType,
+                                },
+                                cell.link
+                              )
+                            "
+                          >
+                            <ViewTableCell
+                              :values="cell.values"
+                              :property="(group.columns ?? section.columns)?.[idx]?.property"
+                              :entity-type="row.entityType"
+                            />
+                          </a>
+                          <template v-else>
+                            <ViewTableCell
+                              :values="cell.values"
+                              :property="(group.columns ?? section.columns)?.[idx]?.property"
+                              :entity-type="row.entityType"
+                              :entity-id="entityRef({ id: row.entityId, _self: row._self })"
+                            />
+                          </template>
+                        </td>
+                        <td class="actions-cell">
+                          <button
+                            v-if="row.editFormId"
+                            class="icon-btn"
+                            :title="t('common.edit')"
+                            @click="
+                              navigateToEdit(row.editFormId, { id: row.entityId, _self: row._self })
+                            "
+                          >
+                            &#9998;
+                          </button>
+                        </td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+              </template>
 
-            <table v-else class="data-table">
-              <thead>
-                <tr>
-                  <th v-if="sectionReorder.movable(section)" class="order-col">
-                    <span class="rl-visually-hidden">{{ t('entity.order') }}</span>
-                  </th>
-                  <th v-for="col in section.columns" :key="col.property || col.relation">
-                    {{ col.label || col.property || col.relation }}
-                  </th>
-                  <th class="actions-col" />
-                </tr>
-              </thead>
-              <tbody>
-                <!--
+              <table v-else class="data-table">
+                <thead>
+                  <tr>
+                    <th v-if="sectionReorder.movable(section)" class="order-col">
+                      <span class="rl-visually-hidden">{{ t('entity.order') }}</span>
+                    </th>
+                    <th v-for="col in section.columns" :key="col.property || col.relation">
+                      {{ col.label || col.property || col.relation }}
+                    </th>
+                    <th class="actions-col" />
+                  </tr>
+                </thead>
+                <tbody>
+                  <!--
                   A section in relation order the reader may change gets a
                   handle per row. The row component is the <tr> itself, so
                   the cells below are the same either way.
                 -->
-                <component
-                  :is="sectionReorder.movable(section) ? OrderedSectionRow : 'tr'"
-                  v-for="row in section.rows"
-                  :id="anchorId(section.sectionId, row.entityId)"
-                  :key="row.entityId"
-                  v-bind="
-                    sectionReorder.movable(section)
-                      ? {
-                          rowId: row.entityId,
-                          title: sectionRowLabel(row),
-                          group: `section-${sectionIndex}`,
-                        }
-                      : {}
-                  "
-                  @reorder="(move: RowMove) => sectionReorder.onReorder(sectionIndex, move)"
-                >
-                  <td v-for="(cell, idx) in row.cells" :key="idx">
-                    <a
-                      v-if="cell.link"
-                      :href="cell.link"
-                      @click="
-                        onCellLinkClick(
-                          $event,
-                          {
-                            id: cell.entityId || row.entityId,
-                            type: cell.entityType || row.entityType,
-                          },
-                          cell.link
-                        )
-                      "
-                    >
-                      <ViewTableCell
-                        :values="cell.values"
-                        :property="section.columns?.[idx]?.property"
-                        :entity-type="row.entityType"
-                      />
-                    </a>
-                    <template v-else>
-                      <ViewTableCell
-                        :values="cell.values"
-                        :property="section.columns?.[idx]?.property"
-                        :entity-type="row.entityType"
-                        :entity-id="entityRef({ id: row.entityId, _self: row._self })"
-                      />
-                    </template>
-                  </td>
-                  <td class="actions-cell">
-                    <button
-                      v-if="row.editFormId"
-                      class="icon-btn"
-                      :title="t('common.edit')"
-                      @click="
-                        navigateToEdit(row.editFormId, { id: row.entityId, _self: row._self })
-                      "
-                    >
-                      &#9998;
-                    </button>
-                  </td>
-                </component>
-              </tbody>
-            </table>
-            <span v-if="sectionReorder.movable(section)" class="rl-visually-hidden" role="status">{{
-              sectionReorder.statusOf(sectionIndex)
-            }}</span>
-          </div>
+                  <component
+                    :is="sectionReorder.movable(section) ? OrderedSectionRow : 'tr'"
+                    v-for="row in section.rows"
+                    :id="anchorId(section.sectionId, row.entityId)"
+                    :key="row.entityId"
+                    v-bind="
+                      sectionReorder.movable(section)
+                        ? {
+                            rowId: row.entityId,
+                            title: sectionRowLabel(row),
+                            group: `section-${sectionIndex}`,
+                          }
+                        : {}
+                    "
+                    @reorder="(move: RowMove) => sectionReorder.onReorder(sectionIndex, move)"
+                  >
+                    <td v-for="(cell, idx) in row.cells" :key="idx">
+                      <a
+                        v-if="cell.link"
+                        :href="cell.link"
+                        @click="
+                          onCellLinkClick(
+                            $event,
+                            {
+                              id: cell.entityId || row.entityId,
+                              type: cell.entityType || row.entityType,
+                            },
+                            cell.link
+                          )
+                        "
+                      >
+                        <ViewTableCell
+                          :values="cell.values"
+                          :property="section.columns?.[idx]?.property"
+                          :entity-type="row.entityType"
+                        />
+                      </a>
+                      <template v-else>
+                        <ViewTableCell
+                          :values="cell.values"
+                          :property="section.columns?.[idx]?.property"
+                          :entity-type="row.entityType"
+                          :entity-id="entityRef({ id: row.entityId, _self: row._self })"
+                        />
+                      </template>
+                    </td>
+                    <td class="actions-cell">
+                      <button
+                        v-if="row.editFormId"
+                        class="icon-btn"
+                        :title="t('common.edit')"
+                        @click="
+                          navigateToEdit(row.editFormId, { id: row.entityId, _self: row._self })
+                        "
+                      >
+                        &#9998;
+                      </button>
+                    </td>
+                  </component>
+                </tbody>
+              </table>
+              <span
+                v-if="sectionReorder.movable(section)"
+                class="rl-visually-hidden"
+                role="status"
+                >{{ sectionReorder.statusOf(sectionIndex) }}</span
+              >
+            </div>
 
-          <!-- display: nested — a two-level parent→child tree.
+            <!-- display: nested — a two-level parent→child tree.
                Native <details> rather than a JS-managed expanded set: the
                browser gives keyboard support, find-in-page expansion and the
                correct ARIA for free, and the section has no cross-row state
                that would need lifting. -->
-          <!-- The server cut rows at the node cap. Without saying so the list
+            <!-- The server cut rows at the node cap. Without saying so the list
                reads as complete, which is the whole reason the flag exists. -->
-          <div v-else-if="section.display === 'nested'" class="nested-tree-wrap">
-            <p v-if="section.truncated" class="nested-truncated">
-              {{ t('entity.nestedTruncated') }}
-            </p>
-            <div class="nested-tree">
-              <!-- Open by default: a collapsed tree hides the thing the section
+            <div v-else-if="section.display === 'nested'" class="nested-tree-wrap">
+              <p v-if="section.truncated" class="nested-truncated">
+                {{ t('entity.nestedTruncated') }}
+              </p>
+              <div class="nested-tree">
+                <!-- Open by default: a collapsed tree hides the thing the section
                    exists to show, and the node budget already bounds how much
                    arrives. Native <details> keeps keyboard support,
                    find-in-page expansion and the right ARIA for free. -->
-              <details
-                v-for="node in section.tree"
-                :id="anchorId(section.sectionId, node.entity.id)"
-                :key="node.entity.id"
-                class="nested-node"
-                open
-              >
-                <summary class="nested-row">
-                  <ChevronRight class="nested-twisty" :size="18" aria-hidden="true" />
-                  <!-- .stop so following the link does not ALSO toggle the
+                <details
+                  v-for="node in section.tree"
+                  :id="anchorId(section.sectionId, node.entity.id)"
+                  :key="node.entity.id"
+                  class="nested-node"
+                  open
+                >
+                  <summary class="nested-row">
+                    <ChevronRight class="nested-twisty" :size="18" aria-hidden="true" />
+                    <!-- .stop so following the link does not ALSO toggle the
                        disclosure: Chrome routes <summary> activation through the
                        bubbling click, so stopping it there suppresses the toggle
                        while the twisty and the rest of the row still expand.
                        The child link below needs no .stop — it is not inside a
                        <summary>, so it has nothing to suppress. -->
-                  <component
-                    :is="entityTarget(node.entity) ? RouterLink : 'span'"
-                    class="nested-link"
-                    v-bind="entityTarget(node.entity) ? { to: entityTarget(node.entity) } : {}"
-                    @click.stop
-                  >
-                    <span class="entity-title">{{ node.entity.title }}</span>
-                    <span class="entity-id">{{ node.entity.id }}</span>
-                  </component>
-                  <WorldBadge :world="node.entity._world" :entity-type="node.entity.type" />
-                  <span class="nested-values">
                     <component
-                      :is="cell.widget"
-                      v-for="cell in nestedCellsFor(node)"
-                      :key="cell.property"
-                      :model-value="cell.value"
-                      :mode="'display'"
-                      :property-name="cell.propertyName"
-                    />
-                  </span>
-                </summary>
-
-                <div v-if="node.children?.length" class="nested-children">
-                  <div
-                    v-for="child in node.children"
-                    :id="anchorId(section.sectionId, child.entity.id)"
-                    :key="child.entity.id"
-                    :data-entity-id="child.entity.id"
-                    class="nested-child"
-                  >
-                    <component
-                      :is="entityTarget(child.entity) ? RouterLink : 'span'"
+                      :is="entityTarget(node.entity) ? RouterLink : 'span'"
                       class="nested-link"
-                      v-bind="entityTarget(child.entity) ? { to: entityTarget(child.entity) } : {}"
+                      v-bind="entityTarget(node.entity) ? { to: entityTarget(node.entity) } : {}"
+                      @click.stop
                     >
-                      <span class="entity-title">{{ child.entity.title }}</span>
-                      <span class="entity-id">{{ child.entity.id }}</span>
+                      <span class="entity-title">{{ node.entity.title }}</span>
+                      <span class="entity-id">{{ node.entity.id }}</span>
                     </component>
-                    <WorldBadge :world="child.entity._world" :entity-type="child.entity.type" />
+                    <WorldBadge :world="node.entity._world" :entity-type="node.entity.type" />
                     <span class="nested-values">
                       <component
                         :is="cell.widget"
-                        v-for="cell in nestedCellsFor(child)"
+                        v-for="cell in nestedCellsFor(node)"
                         :key="cell.property"
                         :model-value="cell.value"
                         :mode="'display'"
                         :property-name="cell.propertyName"
-                        :entity-type="child.entity.type"
                       />
                     </span>
+                  </summary>
+
+                  <div v-if="node.children?.length" class="nested-children">
+                    <div
+                      v-for="child in node.children"
+                      :id="anchorId(section.sectionId, child.entity.id)"
+                      :key="child.entity.id"
+                      :data-entity-id="child.entity.id"
+                      class="nested-child"
+                    >
+                      <component
+                        :is="entityTarget(child.entity) ? RouterLink : 'span'"
+                        class="nested-link"
+                        v-bind="
+                          entityTarget(child.entity) ? { to: entityTarget(child.entity) } : {}
+                        "
+                      >
+                        <span class="entity-title">{{ child.entity.title }}</span>
+                        <span class="entity-id">{{ child.entity.id }}</span>
+                      </component>
+                      <WorldBadge :world="child.entity._world" :entity-type="child.entity.type" />
+                      <span class="nested-values">
+                        <component
+                          :is="cell.widget"
+                          v-for="cell in nestedCellsFor(child)"
+                          :key="cell.property"
+                          :model-value="cell.value"
+                          :mode="'display'"
+                          :property-name="cell.propertyName"
+                          :entity-type="child.entity.type"
+                        />
+                      </span>
+                    </div>
                   </div>
-                </div>
-                <div v-else class="nested-children nested-empty">{{ t('entity.noItems') }}</div>
+                  <div v-else class="nested-children nested-empty">{{ t('entity.noItems') }}</div>
 
-                <!-- The server withheld children; say so rather than letting the
+                  <!-- The server withheld children; say so rather than letting the
                      list read as complete. -->
-                <div v-if="node.hasMoreChildren" class="nested-children nested-more">
-                  {{
-                    t('entity.showingChildren', {
-                      shown: node.children?.length ?? 0,
-                      total: node.childCount,
-                    })
-                  }}
-                </div>
-              </details>
+                  <div v-if="node.hasMoreChildren" class="nested-children nested-more">
+                    {{
+                      t('entity.showingChildren', {
+                        shown: node.children?.length ?? 0,
+                        total: node.childCount,
+                      })
+                    }}
+                  </div>
+                </details>
+              </div>
             </div>
-          </div>
 
-          <!-- A backlinks collection the server could not fill completely
+            <!-- A backlinks collection the server could not fill completely
                (TKT-HF0D5W). Without the note the list reads as complete. -->
-          <p v-if="section.incomplete" class="section-incomplete">
-            {{ t('entity.sectionIncomplete') }}
-          </p>
-        </section>
+            <p v-if="section.incomplete" class="section-incomplete">
+              {{ t('entity.sectionIncomplete') }}
+            </p>
+          </section>
+        </template>
+        <ChannelsPanel
+          v-if="aboveRelationsAt === viewData.sections.length"
+          placement="above_relations"
+          :entity-type="entityType"
+          :entity-id="entityRef(entry)"
+          :world="worldParam"
+        />
 
         <!-- External documents (renders only when configured for this type).
              Nested here (not a sibling of .sections) so it picks up the
