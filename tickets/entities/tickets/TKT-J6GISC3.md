@@ -38,8 +38,10 @@ does not disclose content. Git keeps the history. No id is reserved.
 otherwise it answers the uniform 404. Tombstones are never listed or served on
 their own.
 - **Conformance:** `storetest ` asserts that a mention of the old id resolves
-after a rename on every backend. Id reservation and text rewriting differ by
-backend and are declared as `Capabilities `.
+after a rename on every backend. Each case runs on every backend and checks
+the text against `store.RetiredIDs`: a store that retires ids leaves the text
+alone, the others rewrite it. No case skips, because the Postgres job fails on
+a skipped test.
 - **Docs:** on fs, a mention added after the rename (merged branch, hand edit)
 stays dangling, and a reused id captures it.
 

@@ -165,11 +165,8 @@ func RunMentionTests(t *testing.T, f Factory) {
 				assert.Empty(t, sources(t, s, "REQ-001"), "no body names the old id any more")
 			})
 
-			t.Run("RenameRewritesEveryFace", func(t *testing.T) {
+			t.Run("RenameKeepsMentionsOnEveryFace", func(t *testing.T) {
 				s := open(t)
-				if _, retires := s.(store.RetiredIDs); retires {
-					t.Skip("store retires ids instead of rewriting text")
-				}
 				create(t, s, body("REQ-001", "requirement", ""))
 				create(t, s, faced(t, "PAGE-1", "page", "draft", "`REQ-001`"))
 				create(t, s, faced(t, "PAGE-1", "page", "published", "`REQ-001` too"))
@@ -178,7 +175,11 @@ func RunMentionTests(t *testing.T, f Factory) {
 				assert.Equal(t, []string{"PAGE-1@draft", "PAGE-1@published"}, ids(sources(t, s, "REQ-900")))
 				draft, err := s.GetEntity(ctx(), entity.Ref{ID: "PAGE-1", Face: "draft"})
 				require.NoError(t, err)
-				assert.Equal(t, "`REQ-900`", draft.Content)
+				want := "`REQ-900`"
+				if _, retires := s.(store.RetiredIDs); retires {
+					want = "`REQ-001`"
+				}
+				assert.Equal(t, want, draft.Content)
 			})
 
 			t.Run("SoftDeleteHidesAndUnmarkRestores", func(t *testing.T) {
