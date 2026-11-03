@@ -423,12 +423,14 @@ type meta struct {
 // sessionHead is the session snapshot in meta.yaml (see
 // [channels.Session]), as flat keys. A meta.yaml from before sessions has
 // none and reads as unset; one from before the cause has no session_cause
-// and reads 0.
+// and reads 0; one from before the previous state has no session_previous
+// and reads empty.
 type sessionHead struct {
 	SessionState     string    `yaml:"session_state,omitempty"`
 	SessionGen       int64     `yaml:"session_gen,omitempty"`
 	SessionEnteredAt time.Time `yaml:"session_entered_at,omitempty"`
 	SessionCause     int64     `yaml:"session_cause,omitempty"`
+	SessionPrevious  string    `yaml:"session_previous,omitempty"`
 }
 
 // jobRecord is one log record of a job move: its seq, its segment and the
@@ -462,7 +464,7 @@ type reminderMeta struct {
 
 func (m *meta) setSession(s channels.Session) {
 	m.SessionState, m.SessionGen, m.SessionEnteredAt = s.State, s.Generation, s.EnteredAt
-	m.SessionCause = s.Cause
+	m.SessionCause, m.SessionPrevious = s.Cause, s.Previous
 	m.SessionNextDueAt, m.SessionRestarts = s.NextDueAt, s.Restarts
 	m.SessionReminders = nil
 	if len(s.Reminders) > 0 {
@@ -538,7 +540,8 @@ func (m *meta) channel(k channels.Key) channels.Channel {
 		LastSeq:    m.LastSeq, Rev: m.Rev,
 		Session: channels.Session{
 			State: m.SessionState, Generation: m.SessionGen, EnteredAt: utc(m.SessionEnteredAt),
-			Cause: m.SessionCause, NextDueAt: utc(m.SessionNextDueAt), Restarts: m.restarts(), Reminders: m.reminders(),
+			Cause: m.SessionCause, Previous: m.SessionPrevious, NextDueAt: utc(m.SessionNextDueAt),
+			Restarts: m.restarts(), Reminders: m.reminders(),
 		},
 	}
 }

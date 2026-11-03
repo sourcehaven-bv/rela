@@ -99,6 +99,13 @@ export interface ChannelSession {
    * before causes were.
    */
   cause?: number
+  /**
+   * The state the session was in before it entered its state. A re-entry
+   * keeps it. Absent for a session that never left its initial state, and
+   * for one that last moved before the field existed. Stored history: it
+   * may name a state the configuration no longer declares.
+   */
+  previous?: string
 }
 
 /** A session state's status, after the MCP tasks statuses. */
@@ -759,6 +766,7 @@ export const CHANNEL_WIRE_FIELDS: Record<string, readonly string[]> = {
     'timers',
     'reminders',
     'cause',
+    'previous',
   ]),
   ChannelSessionWaiting: wireKeys<ChannelSessionWaiting>()(['role', 'label', 'holders']),
   ChannelSessionReminder: wireKeys<ChannelSessionReminder>()([

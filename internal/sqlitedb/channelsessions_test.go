@@ -50,7 +50,7 @@ func TestMigrateChannelSessions(t *testing.T) {
 	var err error
 	for _, col := range []string{
 		"session_state", "session_gen", "session_entered_at", "session_next_due_at", "session_restarts",
-		"session_reminders", "created_by_user", "last_at", "session_cause",
+		"session_reminders", "created_by_user", "last_at", "session_cause", "session_previous",
 	} {
 		_, err = raw.Exec(`ALTER TABLE channels DROP COLUMN ` + col)
 		require.NoError(t, err)

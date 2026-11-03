@@ -450,6 +450,18 @@ export function addBusyBoard(dir: string): void {
   writeAtomic(file, yaml.replace(/^kanbans:\n/m, board));
 }
 
+/**
+ * Gives ROOM a compact session header (TKT-56TPOTE): adds
+ * `channels.room.session.display: compact` to the data-entry.yaml written by
+ * the fixture.
+ */
+export function addCompactSession(dir: string): void {
+  const file = path.join(dir, "data-entry.yaml");
+  const yaml = fs.readFileSync(file, "utf8");
+  if (/^channels:/m.test(yaml)) throw new Error("addCompactSession: data-entry.yaml already has a channels block");
+  writeAtomic(file, `${yaml.trimEnd()}\nchannels:\n  ${ROOM.type}:\n    session:\n      display: compact\n`);
+}
+
 /** Adds an `owner` string property to `feature` in the schema.yaml in dir. */
 export function addFeatureOwner(dir: string): void {
   const schemaFile = path.join(dir, "schema.yaml");

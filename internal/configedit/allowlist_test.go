@@ -229,6 +229,8 @@ navigation:
 		{"add a calendar", de + "calendars:\n  due:\n    sources: [{entity_type: ticket, date: due}]\n", nil},
 		{"add a timeline", de + "gantts:\n  plan: {hierarchy: [contains]}\n", nil},
 		{"set a message type display", de + "channels:\n  run:\n    messages:\n      claim: {display: hidden}\n", nil},
+		{"set a session display", de + "channels:\n  run:\n    session: {display: compact}\n", nil},
+		{"add an empty session block", de + "channels:\n  run:\n    session: {}\n", nil},
 		{"add a busy column", strings.Replace(de, "      - property: title\n", "      - property: title\n      - busy: run\n", 1), nil},
 		{"add a busy column to a dashboard card", de + "dashboard:\n  cards:\n    - title: T\n      query: type:ticket\n" +
 			"      display: table\n      columns: [{property: title}, {busy: run}]\n",

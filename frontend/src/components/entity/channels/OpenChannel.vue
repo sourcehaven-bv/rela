@@ -652,7 +652,11 @@ const pickerTypes = picker.types
       @choose="decisionsApi.onChoose"
     >
       <template v-if="session.value" #session>
-        <RlChannelSession ref="sessionHeader" :session="session.value">
+        <RlChannelSession
+          ref="sessionHeader"
+          :session="session.value"
+          :compact="presentation?.session?.display === 'compact'"
+        >
           <template v-if="decisions.length" #decisions>
             <RlChannelDecisions
               :decisions="decisions"

@@ -1234,11 +1234,14 @@ That includes channels that existed before their type gained a session.
 After a move, `entered_at` is the time of the message that caused it, and
 `cause` is that message's seq. A move by a timer, a session that never
 moved, and a move stored before this release have no `cause`. Such a
-session gets one at its next move by a message; nothing is backfilled.
-The web app then finds the waiting message by its session notice, as
-before. Closing and reopening a channel leaves its state as it is; see
-[Timers](#timers) for what happens to its deadlines. Removing the message
-that caused a move does not undo the move.
+session gets one at its next move by a message; nothing is backfilled. The
+web app then finds the waiting message by its session notice, as before.
+The session also stores `previous`, the state it left at its last move to
+another state. A move back into the same state keeps it. A session that
+never moved, and one that last moved before this release, have no
+`previous`; nothing is backfilled. Closing and reopening a channel leaves
+its state as it is; see [Timers](#timers) for what happens to its
+deadlines. Removing the message that caused a move does not undo the move.
 
 **Stranded states.** A channel whose stored state the file no longer
 declares is stranded. It reads with `stranded: true`, its stored state name
@@ -2087,10 +2090,10 @@ so they do not make the channel unread either.
 On a channel type with a session, a header between the title and the
 messages shows the session's label and its states, in the order the file
 declares them. The current state is highlighted. The states a transition
-out of it leads to are marked with a dotted outline; the header marks no
-earlier state as done, because rela keeps only the current state and a
-session may branch. No state is a button: only a message moves a session.
-Exactly one status applies, in this order:
+out of it leads to are marked with a dotted outline. The header marks no
+earlier state as done, because a session may branch and an earlier state in
+the list may never have happened. No state is a button: only a message
+moves a session. Exactly one status applies, in this order:
 
 1. **Stranded.** The stored state is no longer declared. No state is
    highlighted, and a warning says "‹state› is no longer a state of this
@@ -2130,6 +2133,9 @@ the browser tab is visible. See
 On a narrow panel the header folds into one line, such as "Session ·
 Contained", "Completed · AP notified", "Contained · Paused" or "Stranded ·
 triage", with a **Show all states** button that unfolds the list.
+To fold the list at every width, and show the previous, current and next
+states in its place, set `display: compact` on the session in
+`data-entry.yaml`. See "Compact session header" in the data-entry guide.
 
 The composer lists the message types that would move the session first,
 each marked with an icon. It selects a type that moves nothing by
@@ -2626,7 +2632,7 @@ the session move.
 ```json
 "session": {
   "state": "contained", "label": "Contained", "status": "input_required", "generation": 1,
-  "entered_at": "2026-10-21T09:12:03Z",
+  "entered_at": "2026-10-21T09:12:03Z", "cause": 4, "previous": "detected",
   "waiting_for": [ { "role": "lead", "label": "the incident lead", "holders": ["USR-1"] } ],
   "waiting_on_me": true,
   "transitions": [ { "message_type": "assessed", "to": "assessed", "guarded": true, "entry": 0 } ]
@@ -2639,6 +2645,11 @@ the session move.
 `waiting_on_me` depend on the reader. `entered_at` is left out for a
 channel that is not stored yet, so a read of such a channel does not change
 with the clock. A stored channel that never moved gives its creation time.
+`cause` and `previous` are the message that caused the last move and the
+state it left (see
+[Sessions](#sessions)).
+`previous` is stored history, so it may name a state the file no longer
+declares.
 
 `transitions` lists the `on:` entries of the current state, with `by:
 "trigger"` when only a trigger fires one and `guarded: true` when the entry

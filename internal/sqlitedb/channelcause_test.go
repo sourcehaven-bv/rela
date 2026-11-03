@@ -21,6 +21,7 @@ func TestMigrate_v31ToV32SessionCause(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "v31.db")
 	raw := openChannelDB(t, path)
 	for _, stmt := range []string{
+		`ALTER TABLE channels DROP COLUMN session_previous`,
 		`ALTER TABLE channels DROP COLUMN session_cause`,
 		`PRAGMA user_version = 31`,
 	} {
@@ -43,6 +44,6 @@ func TestMigrate_v31ToV32SessionCause(t *testing.T) {
 	require.Zero(t, cause, "no backfill")
 	var version int
 	require.NoError(t, raw.QueryRow(`PRAGMA user_version`).Scan(&version))
-	require.Equal(t, 32, version)
+	require.Equal(t, 33, version)
 	require.Equal(t, sqlitedb.SchemaVersion(), version)
 }

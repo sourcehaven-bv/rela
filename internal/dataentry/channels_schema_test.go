@@ -334,7 +334,7 @@ func TestChannelSchema_Off(t *testing.T) {
 
 // TestConfig_ServesChannels pins that the `channels:` block reaches the
 // SPA in `_config`, next to forms, in field order, with a message type's
-// `display:` (TKT-03DMXH).
+// `display:` (TKT-03DMXH) and the session header's `display:` (TKT-56TPOTE).
 func TestConfig_ServesChannels(t *testing.T) {
 	app := newTestAppV1(t)
 	app.State().Cfg.Channels = map[string]dataentryconfig.ChannelPresentation{"room": {
@@ -345,6 +345,7 @@ func TestConfig_ServesChannels(t *testing.T) {
 			}},
 			"claim": {Display: dataentryconfig.MessageDisplayHidden},
 		},
+		Session: &dataentryconfig.SessionPresentation{Display: dataentryconfig.SessionDisplayCompact},
 	}}
 	rec := httptest.NewRecorder()
 	app.handleV1Config(rec, httptest.NewRequest(http.MethodGet, "/api/v1/_config", http.NoBody))
@@ -356,5 +357,6 @@ func TestConfig_ServesChannels(t *testing.T) {
 	require.JSONEq(t, `{"room":{"messages":{"text":{"fields":[
 		{"property":"body","label":"Message","widget":"textarea"},
 		{"property":"about","span":6}]},
-		"claim":{"display":"hidden"}}}}`, string(raw.Channels))
+		"claim":{"display":"hidden"}},
+		"session":{"display":"compact"}}}`, string(raw.Channels))
 }

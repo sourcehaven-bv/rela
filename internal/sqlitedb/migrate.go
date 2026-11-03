@@ -12,7 +12,7 @@ import (
 // schemaVersion is the shape of the tables this binary expects. Bump it
 // whenever schemaSQL changes shape, and append the step that carries an
 // existing database forward to [migrations].
-const schemaVersion = 32
+const schemaVersion = 33
 
 // SchemaVersion reports the table shape this binary expects, so the CLI can
 // show a real number rather than prose.
@@ -327,6 +327,20 @@ var migrations = []migration{
 			return addChannelColumns(ctx, conn, channelCauseColumns)
 		},
 	},
+	{
+		// v32 → v33: the state each channel's session was in before its
+		// current one (TKT-56TPOTE). No backfill: a row stored before it
+		// reads empty until its next move to another state.
+		to: 33,
+		apply: func(ctx context.Context, conn *sql.Conn) error {
+			return addChannelColumns(ctx, conn, channelPreviousColumns)
+		},
+	},
+}
+
+// channelPreviousColumns are the session previous-state column of channels.
+var channelPreviousColumns = []struct{ name, def string }{
+	{"session_previous", "TEXT NOT NULL DEFAULT ''"},
 }
 
 // channelCauseColumns are the session cause column of channels.

@@ -69,6 +69,7 @@ func TestMigrate_v27ToV28ChannelReads(t *testing.T) {
 		`DROP TABLE channel_reads`,
 		`ALTER TABLE channel_messages DROP COLUMN counts`,
 		`ALTER TABLE channels DROP COLUMN last_at`,
+		`ALTER TABLE channels DROP COLUMN session_previous`,
 		`ALTER TABLE channels DROP COLUMN session_cause`,
 		`PRAGMA user_version = 27`,
 	} {

@@ -185,6 +185,9 @@ var editable = map[File][]string{
 		// A message type's display only folds or hides it in the web app;
 		// the messages stay readable everywhere, so it restricts nothing.
 		"channels.*.messages.*.display",
+		// A compact session header (TKT-56TPOTE) only folds the state list
+		// in the web app; it restricts nothing.
+		"channels.*.session.display",
 
 		// A busy column (TKT-TU3XH4) is display only, like a kanban busy
 		// card field; the save checks it against realtime.yaml.

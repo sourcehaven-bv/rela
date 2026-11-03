@@ -72,13 +72,21 @@ function isDisplay(d: unknown): d is ChannelMessageDisplay {
 }
 
 /**
+ * The presentation as the app uses it: what the library takes, plus the
+ * session header's display, which the app turns into the `compact` prop.
+ */
+export type PresentationView = ChannelPresentation & { session?: { display: 'compact' } }
+
+/**
  * The data-entry.yaml presentation as the library takes it. A form field
  * may omit `property`; a channel field names one (the server refuses any
  * other at load), so a field without one is left out rather than trusted.
+ * A session display other than `compact`, say from a newer server, is
+ * dropped, so the header keeps its default.
  */
 export function presentationView(
   p: AppChannelPresentation | undefined
-): ChannelPresentation | undefined {
+): PresentationView | undefined {
   if (!p) return undefined
   const messages: NonNullable<ChannelPresentation['messages']> = {}
   for (const [type, mp] of Object.entries(p.messages ?? {})) {
@@ -87,6 +95,7 @@ export function presentationView(
       ...(isDisplay(mp.display) ? { display: mp.display } : {}),
     }
   }
+  if (p.session?.display === 'compact') return { messages, session: { display: 'compact' } }
   return { messages }
 }
 
@@ -317,6 +326,7 @@ export function sessionView(
   if (cs.waiting_for?.length)
     view.waitingFor = cs.waiting_for.map((w) => ({ label: w.label || w.role }))
   if (cs.waiting_on_me) view.waitingOnMe = true
+  if (cs.previous && s.states.some((st) => st.name === cs.previous)) view.previous = cs.previous
   return view
 }
 

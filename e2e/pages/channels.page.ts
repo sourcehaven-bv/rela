@@ -95,7 +95,46 @@ export class ChannelsPage extends BasePage {
 
   /** The stepper marks `label` as the current state. */
   async expectSessionAt(label: string, timeout = 15_000) {
-    await expect(this.session.locator('[aria-current="step"]')).toContainText(label, { timeout });
+    await expect(this.session.locator('[aria-current="step"]:visible')).toContainText(label, { timeout });
+  }
+
+  /**
+   * Sets the session header's width in rem. The header is its own size
+   * container, so this picks the wide or the narrow layout without
+   * resizing the page.
+   */
+  async setSessionWidth(rem: number) {
+    await this.session.evaluate((el, w) => {
+      (el as HTMLElement).style.width = `${w}rem`;
+    }, rem);
+  }
+
+  /** The full list of states in the session header. */
+  get sessionSteps(): Locator {
+    return this.session.locator('.rl-channel-session__steps');
+  }
+
+  /** The short list of a compact session header. */
+  get sessionContext(): Locator {
+    return this.session.getByRole('list', { name: 'Session steps' });
+  }
+
+  /** The one-line summary of a folded session header. */
+  get sessionSummary(): Locator {
+    return this.session.locator('.rl-channel-session__summary');
+  }
+
+  /** The toggle that shows or hides the full list. */
+  get sessionToggle(): Locator {
+    return this.session.locator('.rl-channel-session__toggle');
+  }
+
+  /**
+   * The short list holds `items` in order, each as the text a screen reader
+   * hears: `Previous state: Drafting`, `Current state: Review`.
+   */
+  async expectSessionContext(items: string[], timeout = 15_000) {
+    await expect(this.sessionContext.locator('li .rl-visually-hidden')).toHaveText(items, { timeout });
   }
 
   /** The session's live region holds the activity line with `text`, or is empty of it. */

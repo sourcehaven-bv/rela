@@ -4,11 +4,10 @@
  * with the current one marked.
  *
  * The order is declaration order and nothing more. The stepper marks no
- * earlier state as done: the server keeps only the current state, and in a
- * branching flow a mark by position would claim steps that never happened.
- * Instead it marks the next states, where a transition out of the current
- * state leads. A state is never a button: the composer is the only way to
- * move a session.
+ * earlier state as done: in a branching flow a mark by position would claim
+ * steps that never happened. Instead it marks the next states, where a
+ * transition out of the current state leads. A state is never a button: the
+ * composer is the only way to move a session.
  *
  * Exactly one status applies, in this order: stranded, loading, final,
  * paused, normal. A stranded session (its stored state is no longer
@@ -33,6 +32,16 @@
  * signal: the current item has `aria-current="step"`, a next item has an
  * outline and hidden text, a final item an icon or hidden text.
  *
+ * `compact` (data-entry.yaml `channels.<type>.session.display`) folds the
+ * list at every width. At 32rem and wider the fold shows a short list in
+ * place of the summary: the previous state (`session.previous`, the state
+ * the session left), the current state and the next states, each with
+ * hidden text that names its role. The toggle shows the full list and
+ * removes the short one. While the short list is shown, only its current
+ * item carries `aria-current`; once it is removed, the full list's does.
+ * Without a current state (stranded or loading) the summary shows instead.
+ * Below 32rem a compact stepper folds like any other.
+ *
  * In the normal status a `working` state shows an activity line in the
  * same live region: "Working…" and a busy indicator with the state's
  * label. So the strip announces both whose turn it is and that someone is
@@ -53,7 +62,14 @@ import RlBusyIndicator from '../feedback/RlBusyIndicator.vue'
 import type { ChannelSessionView } from './types'
 import { useMessages, type ChannelTextKey } from '../../composables/useMessages'
 
-const props = defineProps<{ session: ChannelSessionView }>()
+const props = withDefaults(
+  defineProps<{
+    session: ChannelSessionView
+    /** Folds the list at every width, with the short list at 32rem and wider. */
+    compact?: boolean
+  }>(),
+  { compact: false },
+)
 
 const strings = useMessages()
 const t = (key: ChannelTextKey) => strings.channelText({ key })
@@ -120,13 +136,56 @@ function stepText(name: string, label: string, final?: boolean): string | undefi
   return isNext || final ? strings.channelSessionStep({ label, next: isNext, final: !!final }) : undefined
 }
 
+/** A state of the short list of a compact stepper. */
+interface ContextItem {
+  name: string
+  label: string
+  role: 'previous' | 'current' | 'next'
+}
+
+/**
+ * The short list: the previous state, when it is declared and not the
+ * current one; the current state; the next states except the current one,
+ * in declaration order. Next states show only in the normal status, as in
+ * the full list.
+ */
+const contextItems = computed<ContextItem[]>(() => {
+  const cur = current.value
+  if (!props.compact || cur === undefined) return []
+  const byName = new Map(props.session.states.map((s) => [s.name, s]))
+  const items: ContextItem[] = []
+  const prev = props.session.previous ? byName.get(props.session.previous) : undefined
+  if (prev && prev.name !== cur) items.push({ name: prev.name, label: prev.label, role: 'previous' })
+  items.push({ name: cur, label: props.session.currentLabel, role: 'current' })
+  for (const s of props.session.states) {
+    if (s.name !== cur && next.value.has(s.name)) items.push({ name: s.name, label: s.label, role: 'next' })
+  }
+  return items
+})
+const showContext = computed(() => contextItems.value.length > 0)
+/**
+ * Whether the short list is in the page. While it is, the full list's
+ * current item drops `aria-current`, so the markup, not only CSS, has one
+ * current item.
+ */
+const contextShown = computed(() => showContext.value && !expanded.value)
+
 const pausedText = computed(() =>
   t(props.session.paused === 'archived' ? 'sessionPausedArchived' : 'sessionPausedClosed'),
 )
 </script>
 
 <template>
-  <section ref="root" class="rl-channel-session" tabindex="-1" :aria-labelledby="labelId">
+  <section
+    ref="root"
+    class="rl-channel-session"
+    :class="{
+      'rl-channel-session--compact': compact,
+      'rl-channel-session--no-context': compact && !showContext,
+    }"
+    tabindex="-1"
+    :aria-labelledby="labelId"
+  >
     <div class="rl-channel-session__inner">
       <div :id="labelId" class="rl-channel-session__label">
         <span class="rl-channel-session__kicker">{{ t('session') }}</span>
@@ -134,6 +193,50 @@ const pausedText = computed(() =>
       </div>
 
       <p class="rl-channel-session__summary">{{ summary }}</p>
+      <ol
+        v-if="contextShown"
+        class="rl-channel-session__context"
+        :aria-label="t('sessionContext')"
+      >
+        <li
+          v-for="(item, i) in contextItems"
+          :key="`${item.role}:${item.name}`"
+          class="rl-channel-session__context-item"
+          :data-role="item.role"
+          :aria-current="item.role === 'current' ? 'step' : undefined"
+        >
+          <RlIcon
+            v-if="i > 0 && item.role !== contextItems[i - 1].role"
+            name="arrow-right"
+            :size="12"
+            class="rl-channel-session__arrow"
+          />
+          <span
+            class="rl-channel-session__step"
+            :class="{
+              'rl-channel-session__step--current': item.role === 'current',
+              'rl-channel-session__step--next': item.role === 'next',
+            }"
+          >
+            <span class="rl-channel-session__bullet">
+              <RlIcon v-if="item.role === 'current' && status === 'final' && ticked" name="check" :size="10" />
+            </span>
+            <span aria-hidden="true">{{ item.label }}</span>
+            <span class="rl-visually-hidden">
+              {{ strings.channelSessionContextItem({ role: item.role, label: item.label }) }}
+            </span>
+            <template v-if="item.role === 'current' && status === 'final'">
+              <RlTag v-if="failed" :label="outcome" color="red" />
+              <span v-else class="rl-channel-session__caption">{{ outcome }}</span>
+            </template>
+            <RlTag
+              v-if="item.role === 'current' && inputRequired"
+              :label="t('sessionInputRequired')"
+              color="amber"
+            />
+          </span>
+        </li>
+      </ol>
       <button
         type="button"
         class="rl-channel-session__toggle"
@@ -154,7 +257,7 @@ const pausedText = computed(() =>
             'rl-channel-session__step--current': s.name === current,
             'rl-channel-session__step--next': s.name !== current && next.has(s.name),
           }"
-          :aria-current="s.name === current ? 'step' : undefined"
+          :aria-current="s.name === current && !contextShown ? 'step' : undefined"
         >
           <span class="rl-channel-session__bullet">
             <RlIcon v-if="s.name === current && status === 'final' && ticked" name="check" :size="10" />
@@ -240,9 +343,71 @@ const pausedText = computed(() =>
   font-weight: var(--rl-font-weight-semibold);
 }
 
-.rl-channel-session__summary,
+.rl-channel-session__summary {
+  display: none;
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  font-weight: var(--rl-font-weight-semibold);
+}
+
 .rl-channel-session__toggle {
   display: none;
+  align-items: center;
+  gap: var(--rl-space-1);
+  padding: 2px var(--rl-space-2);
+  border: 1px solid var(--rl-color-border-strong);
+  border-radius: var(--rl-radius-md);
+  background: transparent;
+  color: var(--rl-color-text);
+  font: inherit;
+  font-size: var(--rl-font-size-xs);
+  cursor: pointer;
+}
+
+.rl-channel-session__toggle:focus-visible {
+  outline: var(--rl-focus-ring-width) solid var(--rl-color-focus);
+  outline-offset: 1px;
+}
+
+/* A compact stepper folds the full list at every width; the short list
+   stands in for it. */
+.rl-channel-session--compact .rl-channel-session__toggle {
+  display: inline-flex;
+}
+
+.rl-channel-session--compact .rl-channel-session__steps:not(.rl-channel-session__steps--expanded) {
+  display: none;
+}
+
+.rl-channel-session--compact .rl-channel-session__steps--expanded {
+  flex-basis: 100%;
+}
+
+/* Without a current state there is no short list, so the summary says
+   where the session is. */
+.rl-channel-session--no-context .rl-channel-session__summary {
+  display: block;
+}
+
+.rl-channel-session__context {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--rl-space-1);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.rl-channel-session__context-item {
+  display: flex;
+  align-items: center;
+  gap: var(--rl-space-1);
+}
+
+.rl-channel-session__arrow {
+  color: var(--rl-color-text-subtle);
 }
 
 .rl-channel-session__steps {
@@ -348,29 +513,16 @@ const pausedText = computed(() =>
 
   .rl-channel-session__summary {
     display: block;
-    flex: 1;
-    min-width: 0;
-    margin: 0;
-    font-weight: var(--rl-font-weight-semibold);
   }
 
   .rl-channel-session__toggle {
     display: inline-flex;
-    align-items: center;
-    gap: var(--rl-space-1);
-    padding: 2px var(--rl-space-2);
-    border: 1px solid var(--rl-color-border-strong);
-    border-radius: var(--rl-radius-md);
-    background: transparent;
-    color: var(--rl-color-text);
-    font: inherit;
-    font-size: var(--rl-font-size-xs);
-    cursor: pointer;
   }
 
-  .rl-channel-session__toggle:focus-visible {
-    outline: var(--rl-focus-ring-width) solid var(--rl-color-focus);
-    outline-offset: 1px;
+  /* Below 32rem a compact stepper folds like any other: the summary, not
+     the short list. */
+  .rl-channel-session--compact .rl-channel-session__context {
+    display: none;
   }
 
   .rl-channel-session__steps {

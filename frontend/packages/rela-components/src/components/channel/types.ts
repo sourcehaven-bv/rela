@@ -286,6 +286,11 @@ export interface ChannelSessionView {
   current?: string
   /** The current state's label, or the stored name when stranded or loading. */
   currentLabel: string
+  /**
+   * The declared state the session was in before the current one; absent
+   * when the session never left its first state. A compact stepper shows it.
+   */
+  previous?: string
   /** The states a transition out of the current state leads to. */
   next: string[]
   /** The current state is one the session ends in. */

@@ -235,7 +235,7 @@ func utc(t time.Time) time.Time {
 
 const chanCols = `id, anchor_id, anchor_face, type, name, incarnation, state, title, created_by,
 	created_at, closed_at, archived_at, reopened_at, last_seq, rev, session_state, session_gen, session_entered_at,
-	session_next_due_at, session_restarts, session_reminders, session_cause`
+	session_next_due_at, session_restarts, session_reminders, session_cause, session_previous`
 
 // openSinceSQL is when an open channel entered its state, as
 // [channels.Channel.StateSince] reads it.
@@ -261,7 +261,7 @@ func (e *damagedRowError) Unwrap() error { return e.err }
 func scanChannel(r interface{ Scan(...any) error }) (row, error) { return scanChannelWith(r) }
 
 // chanColCount is the number of chanCols scanChannelWith scans.
-const chanColCount = 22
+const chanColCount = 23
 
 // scanChannelWith scans the chanCols of a row, and then extra, the columns
 // a query selects after them.
@@ -274,7 +274,8 @@ func scanChannelWith(r interface{ Scan(...any) error }, extra ...any) (row, erro
 	dest := make([]any, 0, chanColCount+len(extra))
 	dest = append(dest, &out.id, &c.Key.ID, &face, &c.Key.Type, &c.Key.Name, &c.Incarnation, &c.State, &c.Title, &by,
 		&created, &closed, &archived, &reopened, &c.LastSeq, &c.Rev,
-		&c.Session.State, &c.Session.Generation, &entered, &due, &restarts, &reminders, &c.Session.Cause)
+		&c.Session.State, &c.Session.Generation, &entered, &due, &restarts, &reminders,
+		&c.Session.Cause, &c.Session.Previous)
 	if err := r.Scan(append(dest, extra...)...); err != nil {
 		return out, err
 	}
@@ -594,9 +595,9 @@ func bumpSession(
 	at := micros(lastAt)
 	_, err := q.Exec(ctx, `UPDATE channels SET last_seq = ?, rev = ?, session_state = ?, session_gen = ?,
 		session_entered_at = ?, session_next_due_at = ?, session_restarts = ?, session_reminders = ?,
-		session_cause = ?, last_at = CASE WHEN ? > last_at THEN ? ELSE last_at END WHERE id = ?`,
+		session_cause = ?, session_previous = ?, last_at = CASE WHEN ? > last_at THEN ? ELSE last_at END WHERE id = ?`,
 		lastSeq, rev, sess.State, sess.Generation, micros(sess.EnteredAt), micros(sess.NextDueAt),
-		encodeRestarts(sess.Restarts), encodeReminders(sess.Reminders), sess.Cause, at, at, id)
+		encodeRestarts(sess.Restarts), encodeReminders(sess.Reminders), sess.Cause, sess.Previous, at, at, id)
 	return err
 }
 
