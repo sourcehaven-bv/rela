@@ -38,6 +38,11 @@ type Metamodel struct {
 	// internal/comments.
 	Comments *CommentsConfig `yaml:"comments,omitempty"`
 
+	// Piles declares the piles every user holds, keyed by pile key (see
+	// [PileDecl]). Policy only: pile items are per-user state outside the
+	// graph. See internal/piles.
+	Piles map[string]PileDecl `yaml:"piles,omitempty"`
+
 	// Transforms is the view-export registry: named markdown -> format
 	// conversions run via an external command (e.g. pandoc). Registering a
 	// transform here makes it available to every markdown-producing surface
@@ -1550,6 +1555,7 @@ type AutomationAction struct {
 	CreateRelation *CreateRelationAction `yaml:"create_relation,omitempty"`
 	CreateEntity   *CreateEntityAction   `yaml:"create_entity,omitempty"`
 	AddToPile      *AddToPileAction      `yaml:"add_to_pile,omitempty"`
+	Notify         *NotifyAction         `yaml:"notify,omitempty"`
 	Lua            string                `yaml:"lua,omitempty"`      // Inline Lua code to execute
 	LuaFile        string                `yaml:"lua_file,omitempty"` // Path to Lua script in scripts/ directory
 
@@ -1617,6 +1623,32 @@ type AddToPileAction struct {
 
 // CreatePile reports whether a missing pile is created. It defaults to true.
 func (a *AddToPileAction) CreatePile() bool { return a.Create == nil || *a.Create }
+
+// NotifyAction puts the triggering entity on the declared pile Pile of every
+// user the To path reaches, except the user who made the write.
+type NotifyAction struct {
+	// Pile is a key of the schema's `piles:` block. Required.
+	Pile string `yaml:"pile"`
+	// To names the recipients.
+	To NotifyTarget `yaml:"to"`
+	// Reason is a key of the pile's reasons, recorded on the item.
+	Reason string `yaml:"reason,omitempty"`
+}
+
+// NotifyTarget is the path from the triggering entity to its recipients:
+// follow the Via relations, then read Property on every entity reached. The
+// property holds a person: an entity id under person mapping, else a login.
+type NotifyTarget struct {
+	// Via are the relations to follow, as in `related()`: a canonical name
+	// walks the relation forwards, an inverse id walks it backwards. Empty
+	// reads Property on the triggering entity itself.
+	Via StringOrSlice `yaml:"via,omitempty"`
+	// Type picks the entity type the last relation lands on when it may land
+	// on several.
+	Type string `yaml:"type,omitempty"`
+	// Property holds the recipient. Required.
+	Property string `yaml:"property"`
+}
 
 // AutomationCheck specifies a validation condition.
 type AutomationCheck struct {

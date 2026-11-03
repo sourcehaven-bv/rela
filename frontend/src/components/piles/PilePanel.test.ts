@@ -14,6 +14,8 @@ const api = vi.hoisted(() => ({
   getPile: vi.fn(),
   addPileItems: vi.fn(),
   removePileItems: vi.fn(),
+  markPileItemsRead: vi.fn(),
+  markPileAllRead: vi.fn(),
 }))
 vi.mock('@/api/piles', async (orig) => ({
   ...(await orig<typeof import('@/api/piles')>()),
@@ -156,5 +158,70 @@ describe('PilePanel', () => {
     await flushPromises()
 
     expect(wrapper.text()).not.toContain('Quick entry')
+  })
+
+  describe('a declared pile with read state', () => {
+    const feed: Pile = {
+      ...pileWith([
+        {
+          id: 'TKT-1',
+          face: '',
+          address: 'TKT-1',
+          type: 'ticket',
+          title: 'Quick entry',
+          actor: 'Bob',
+          reason: 'completed a task',
+          read: false,
+        },
+        {
+          id: 'RISK-1',
+          face: '',
+          address: 'RISK-1',
+          type: 'risk',
+          title: 'Supplier lock-in',
+          actor: 'Ann',
+          read: true,
+        },
+      ]),
+      key: 'inbox',
+      locked: true,
+      read_state: true,
+      unread: 1,
+    }
+
+    beforeEach(() => {
+      api.listPiles.mockResolvedValue({ piles: [feed], icons: ['bell'] })
+      api.getPile.mockResolvedValue(feed)
+    })
+
+    it('lists items in time order with who caused them, and offers no rename or delete', async () => {
+      const wrapper = await mountPanel()
+      const rows = wrapper.findAll('[data-testid="pile-row"]')
+      expect(rows.map((r) => r.text())).toEqual([
+        expect.stringContaining('Bob completed a task'),
+        expect.stringContaining('Ann'),
+      ])
+      expect(rows[0].classes()).toContain('pile-panel__row--unread')
+      expect(rows[1].classes()).not.toContain('pile-panel__row--unread')
+      expect(wrapper.findAll('[data-testid="pile-group"] h3')).toHaveLength(0)
+      // The menu is open: copy is offered, rename and delete are not.
+      await wrapper.find('.pile-panel__head-actions button[aria-haspopup]').trigger('click')
+      await flushPromises()
+      expect(document.body.textContent).toContain('Copy IDs')
+      expect(document.body.querySelector('[data-testid="pile-rename"]')).toBeNull()
+      expect(document.body.querySelector('[data-testid="pile-delete"]')).toBeNull()
+    })
+
+    it('marks every item read, or the ticked ones', async () => {
+      const wrapper = await mountPanel()
+      await wrapper.find('[data-testid="pile-read-all"]').trigger('click')
+      await flushPromises()
+      expect(api.markPileAllRead).toHaveBeenCalledWith(pileId)
+
+      await wrapper.find('[data-testid="pile-row"] input[type="checkbox"]').setValue(true)
+      await wrapper.find('[data-testid="pile-mark-read"]').trigger('click')
+      await flushPromises()
+      expect(api.markPileItemsRead).toHaveBeenCalledWith(pileId, ['TKT-1'])
+    })
   })
 })

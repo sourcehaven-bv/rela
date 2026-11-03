@@ -69,8 +69,10 @@ type document struct {
 }
 
 type storedPile struct {
-	ID      string    `json:"id"`
-	Owner   string    `json:"owner"`
+	ID    string `json:"id"`
+	Owner string `json:"owner"`
+	// Key is set on a declared pile.
+	Key     string    `json:"key,omitempty"`
 	Name    string    `json:"name"`
 	Icon    string    `json:"icon"`
 	Created time.Time `json:"created"`
@@ -83,10 +85,15 @@ type storedPile struct {
 // form, so a document never fails to load over a ref that does not
 // re-serialize.
 type storedItem struct {
-	ID    string    `json:"id"`
-	Face  string    `json:"face,omitempty"`
-	Added time.Time `json:"added"`
+	ID     string     `json:"id"`
+	Face   string     `json:"face,omitempty"`
+	Added  time.Time  `json:"added"`
+	Actor  string     `json:"actor,omitempty"`
+	Reason string     `json:"reason,omitempty"`
+	ReadAt *time.Time `json:"read_at,omitempty"`
 }
+
+func (it storedItem) read() bool { return it.ReadAt != nil }
 
 func (it storedItem) ref() entity.Ref { return entity.Ref{ID: it.ID, Face: entity.Face(it.Face)} }
 
@@ -194,21 +201,25 @@ func (d *document) find(owner, id string) int {
 	return slices.IndexFunc(d.Piles, func(p storedPile) bool { return p.ID == id && p.Owner == owner })
 }
 
-// nameTaken reports whether owner has a pile other than exceptID named name,
-// compared case-insensitively.
+// nameTaken reports whether owner has a pile without a key, other than
+// exceptID, named name, compared case-insensitively. Declared piles take no
+// part in the name rule.
 func (d *document) nameTaken(owner, name, exceptID string) bool {
 	return slices.ContainsFunc(d.Piles, func(p storedPile) bool {
-		return p.Owner == owner && p.ID != exceptID && strings.EqualFold(p.Name, name)
+		return p.Owner == owner && p.Key == "" && p.ID != exceptID && strings.EqualFold(p.Name, name)
 	})
 }
 
 func (p storedPile) export() piles.Pile {
 	items := make([]piles.Item, len(p.Items))
 	for i, it := range p.Items {
-		items[i] = piles.Item{Ref: it.ref(), Added: it.Added}
+		items[i] = piles.Item{Ref: it.ref(), Added: it.Added, Actor: it.Actor, Reason: it.Reason}
+		if it.ReadAt != nil {
+			items[i].ReadAt = *it.ReadAt
+		}
 	}
 	return piles.Pile{
-		ID: p.ID, Owner: p.Owner, Name: p.Name, Icon: p.Icon,
+		ID: p.ID, Owner: p.Owner, Key: p.Key, Name: p.Name, Icon: p.Icon,
 		Created: p.Created, Updated: p.Updated, Items: items,
 	}
 }
@@ -249,9 +260,23 @@ func (s *Store) PileByName(ctx context.Context, owner, name string) (piles.Pile,
 	var out piles.Pile
 	err := s.read(ctx, func(d *document) error {
 		i := slices.IndexFunc(d.Piles, func(p storedPile) bool {
-			return p.Owner == owner && strings.EqualFold(p.Name, name)
+			return p.Owner == owner && p.Key == "" && strings.EqualFold(p.Name, name)
 		})
 		if i < 0 {
+			return piles.ErrNotFound
+		}
+		out = d.Piles[i].export()
+		return nil
+	})
+	return out, err
+}
+
+// PileByKey finds the owner's declared pile with that key.
+func (s *Store) PileByKey(ctx context.Context, owner, key string) (piles.Pile, error) {
+	var out piles.Pile
+	err := s.read(ctx, func(d *document) error {
+		i := slices.IndexFunc(d.Piles, func(p storedPile) bool { return p.Owner == owner && p.Key == key })
+		if key == "" || i < 0 {
 			return piles.ErrNotFound
 		}
 		out = d.Piles[i].export()
@@ -266,17 +291,23 @@ func (s *Store) CreatePile(ctx context.Context, p piles.Pile, refs []entity.Ref,
 		if slices.ContainsFunc(d.Piles, func(q storedPile) bool { return q.ID == p.ID }) {
 			return false, piles.ErrIDTaken
 		}
-		if d.nameTaken(p.Owner, p.Name, "") {
-			return false, piles.ErrNameTaken
-		}
-		count := 0
-		for _, q := range d.Piles {
-			if q.Owner == p.Owner {
-				count++
+		if p.Key != "" {
+			if slices.ContainsFunc(d.Piles, func(q storedPile) bool { return q.Owner == p.Owner && q.Key == p.Key }) {
+				return false, piles.ErrKeyTaken
 			}
-		}
-		if count >= maxPiles {
-			return false, piles.ErrLimit
+		} else {
+			if d.nameTaken(p.Owner, p.Name, "") {
+				return false, piles.ErrNameTaken
+			}
+			count := 0
+			for _, q := range d.Piles {
+				if q.Owner == p.Owner && q.Key == "" {
+					count++
+				}
+			}
+			if count >= maxPiles {
+				return false, piles.ErrLimit
+			}
 		}
 		refs = firstUnique(refs, maxItems)
 		items := make([]storedItem, len(refs))
@@ -284,7 +315,7 @@ func (s *Store) CreatePile(ctx context.Context, p piles.Pile, refs []entity.Ref,
 			items[i] = storedItem{ID: r.ID, Face: string(r.Face), Added: p.Created}
 		}
 		d.Piles = append(d.Piles, storedPile{
-			ID: p.ID, Owner: p.Owner, Name: p.Name, Icon: p.Icon,
+			ID: p.ID, Owner: p.Owner, Key: p.Key, Name: p.Name, Icon: p.Icon,
 			Created: p.Created, Updated: p.Updated, Items: items,
 		})
 		return true, nil
@@ -318,10 +349,11 @@ func (s *Store) DeletePile(ctx context.Context, owner, id string) error {
 	})
 }
 
-// AddItems puts the new refs on top; past maxItems it evicts the oldest or,
-// with [piles.KeepExisting], adds only what fits.
+// AddItems puts the new refs on top; with opts.Bump a ref already on the
+// pile moves to the top as well. Past the cap it evicts per opts.Overflow
+// or, with [piles.KeepExisting], adds only the fresh refs that fit.
 func (s *Store) AddItems(
-	ctx context.Context, owner, id string, refs []entity.Ref, now time.Time, maxItems int, overflow piles.Overflow,
+	ctx context.Context, owner, id string, refs []entity.Ref, opts piles.AddOptions,
 ) (int, error) {
 	added := 0
 	err := s.write(ctx, func(d *document) (bool, error) {
@@ -334,26 +366,84 @@ func (s *Store) AddItems(
 		for _, it := range p.Items {
 			present[it.ref()] = true
 		}
-		var fresh []storedItem
-		for _, r := range firstUnique(refs, maxItems) {
-			if !present[r] {
-				fresh = append(fresh, storedItem{ID: r.ID, Face: string(r.Face), Added: now})
+		var fresh, bumped []storedItem
+		for _, r := range firstUnique(refs, opts.MaxItems) {
+			it := storedItem{ID: r.ID, Face: string(r.Face), Added: opts.Now, Actor: opts.Actor, Reason: opts.Reason}
+			switch {
+			case !present[r]:
+				fresh = append(fresh, it)
+			case opts.Bump:
+				bumped = append(bumped, it)
 			}
 		}
-		if overflow != piles.EvictOldest {
-			fresh = fresh[:min(len(fresh), max(maxItems-len(p.Items), 0))]
+		if opts.Overflow == piles.KeepExisting {
+			fresh = fresh[:min(len(fresh), max(opts.MaxItems-len(p.Items), 0))]
 		}
-		if len(fresh) == 0 {
+		if len(fresh)+len(bumped) == 0 {
 			return false, nil
 		}
-		added = len(fresh)
-		p.Items = append(fresh, p.Items...)
-		if len(p.Items) > maxItems {
-			p.Items = p.Items[:maxItems]
+		added = len(fresh) + len(bumped)
+		top := mergeTop(refs, fresh, bumped)
+		moved := make(map[entity.Ref]bool, len(bumped))
+		for _, it := range bumped {
+			moved[it.ref()] = true
 		}
+		rest := slices.DeleteFunc(p.Items, func(it storedItem) bool { return moved[it.ref()] })
+		top = append(top, rest...)
+		p.Items = evict(top, opts.MaxItems, opts.Overflow)
 		return true, nil
 	})
 	return added, err
+}
+
+// mergeTop orders the fresh and bumped items as their refs came in, the
+// first newest.
+func mergeTop(refs []entity.Ref, fresh, bumped []storedItem) []storedItem {
+	byRef := make(map[entity.Ref]storedItem, len(fresh)+len(bumped))
+	for _, it := range fresh {
+		byRef[it.ref()] = it
+	}
+	for _, it := range bumped {
+		byRef[it.ref()] = it
+	}
+	out := make([]storedItem, 0, len(byRef))
+	for _, r := range refs {
+		if it, ok := byRef[r]; ok {
+			out = append(out, it)
+			delete(byRef, r)
+		}
+	}
+	return out
+}
+
+// evict cuts items, newest first, to limit. [piles.EvictReadFirst] drops
+// read items before unread ones; every other overflow drops the oldest. The
+// survivors keep their order.
+func evict(items []storedItem, limit int, overflow piles.Overflow) []storedItem {
+	if len(items) <= limit {
+		return items
+	}
+	if overflow != piles.EvictReadFirst {
+		return items[:limit]
+	}
+	keep := make(map[int]bool, limit)
+	for i, it := range items {
+		if len(keep) < limit && !it.read() {
+			keep[i] = true
+		}
+	}
+	for i := range items {
+		if len(keep) < limit {
+			keep[i] = true
+		}
+	}
+	out := make([]storedItem, 0, limit)
+	for i, it := range items {
+		if keep[i] {
+			out = append(out, it)
+		}
+	}
+	return out
 }
 
 // RemoveItems drops refs from the pile, ignoring refs not on it.
@@ -369,6 +459,46 @@ func (s *Store) RemoveItems(ctx context.Context, owner, id string, refs []entity
 		}
 		before := len(d.Piles[i].Items)
 		d.Piles[i].Items = slices.DeleteFunc(d.Piles[i].Items, func(it storedItem) bool { return drop[it.ref()] })
+		return len(d.Piles[i].Items) != before, nil
+	})
+}
+
+// MarkRead stamps unread items naming refs, or all unread items, with now.
+func (s *Store) MarkRead(ctx context.Context, owner, id string, refs []entity.Ref, all bool, now time.Time) error {
+	want := make(map[entity.Ref]bool, len(refs))
+	for _, r := range refs {
+		want[r] = true
+	}
+	return s.write(ctx, func(d *document) (bool, error) {
+		i := d.find(owner, id)
+		if i < 0 {
+			return false, piles.ErrNotFound
+		}
+		changed := false
+		for j := range d.Piles[i].Items {
+			it := &d.Piles[i].Items[j]
+			if !it.read() && (all || want[it.ref()]) {
+				stamp := now
+				it.ReadAt = &stamp
+				changed = true
+			}
+		}
+		return changed, nil
+	})
+}
+
+// PruneItems drops items read before readBefore or added before addedBefore.
+func (s *Store) PruneItems(ctx context.Context, owner, id string, readBefore, addedBefore time.Time) error {
+	return s.write(ctx, func(d *document) (bool, error) {
+		i := d.find(owner, id)
+		if i < 0 {
+			return false, piles.ErrNotFound
+		}
+		before := len(d.Piles[i].Items)
+		d.Piles[i].Items = slices.DeleteFunc(d.Piles[i].Items, func(it storedItem) bool {
+			return (!readBefore.IsZero() && it.ReadAt != nil && it.ReadAt.Before(readBefore)) ||
+				(!addedBefore.IsZero() && it.Added.Before(addedBefore))
+		})
 		return len(d.Piles[i].Items) != before, nil
 	})
 }
@@ -390,7 +520,8 @@ func (s *Store) RenameEntity(ctx context.Context, oldID, newID string) error {
 	})
 }
 
-// RenameOwner moves oldOwner's piles to newOwner.
+// RenameOwner moves oldOwner's piles to newOwner, and the actor of every
+// item oldOwner caused.
 //
 // It runs for a renamed person, whose new id is fresh, so newOwner normally
 // holds no piles. If it does, they can only be a leftover the delete hook
@@ -401,17 +532,30 @@ func (s *Store) RenameOwner(ctx context.Context, oldOwner, newOwner string) erro
 		return nil
 	}
 	return s.write(ctx, func(d *document) (bool, error) {
-		movedNames := map[string]bool{}
+		movedNames, movedKeys := map[string]bool{}, map[string]bool{}
+		moving := renameActor(d, oldOwner, newOwner)
 		for _, p := range d.Piles {
-			if p.Owner == oldOwner {
+			if p.Owner != oldOwner {
+				continue
+			}
+			moving = true
+			if p.Key != "" {
+				movedKeys[p.Key] = true
+			} else {
 				movedNames[strings.ToLower(p.Name)] = true
 			}
 		}
-		if len(movedNames) == 0 {
+		if !moving {
 			return false, nil
 		}
 		d.Piles = slices.DeleteFunc(d.Piles, func(p storedPile) bool {
-			return p.Owner == newOwner && movedNames[strings.ToLower(p.Name)]
+			if p.Owner != newOwner {
+				return false
+			}
+			if p.Key != "" {
+				return movedKeys[p.Key]
+			}
+			return movedNames[strings.ToLower(p.Name)]
 		})
 		for pi := range d.Piles {
 			if d.Piles[pi].Owner == oldOwner {
@@ -420,6 +564,21 @@ func (s *Store) RenameOwner(ctx context.Context, oldOwner, newOwner string) erro
 		}
 		return true, nil
 	})
+}
+
+// renameActor rewrites the actor on every item oldOwner caused, in anyone's
+// pile, and reports whether any changed.
+func renameActor(d *document, oldOwner, newOwner string) bool {
+	changed := false
+	for pi := range d.Piles {
+		for ii := range d.Piles[pi].Items {
+			if d.Piles[pi].Items[ii].Actor == oldOwner {
+				d.Piles[pi].Items[ii].Actor = newOwner
+				changed = true
+			}
+		}
+	}
+	return changed
 }
 
 // DeleteOwner drops every pile owned by owner.

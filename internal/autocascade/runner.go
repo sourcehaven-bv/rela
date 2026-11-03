@@ -27,6 +27,10 @@ type Runner struct {
 	//
 	// Nil: accepted; add_to_pile actions are then skipped.
 	piles PilePusher
+	// recipients finds notify recipients (see Deps.Recipients).
+	//
+	// Nil: accepted; notify actions with a `via:` path are then skipped.
+	recipients RecipientFinder
 	// noPiles logs the skipped-actions warning once per Runner.
 	noPiles sync.Once
 }
@@ -49,6 +53,12 @@ type Deps struct {
 	// those actions and log one warning; a pile push is best-effort and
 	// never fails a write, so its absence must not either.
 	Piles PilePusher
+	// Recipients finds the users a `notify` action with a `via:` path
+	// reaches.
+	//
+	// Nil: accepted, for the same reason as Piles; such actions are skipped
+	// with a warning.
+	Recipients RecipientFinder
 }
 
 // New constructs a Runner. Required collaborators must be non-nil per
@@ -57,7 +67,7 @@ func New(d Deps) (*Runner, error) {
 	if d.Engine == nil {
 		return nil, errors.New("autocascade: New: Engine is required")
 	}
-	return &Runner{engine: d.Engine, background: d.Background, piles: d.Piles}, nil
+	return &Runner{engine: d.Engine, background: d.Background, piles: d.Piles, recipients: d.Recipients}, nil
 }
 
 // queueItem is one pending automation result to process during a BFS
@@ -116,6 +126,7 @@ func (r *Runner) Process(ctx context.Context, host Host, req Request) (Outcome, 
 
 		// Push the trigger onto piles. Best-effort: never an outcome error.
 		r.pushPiles(ctx, item.trigger, item.autoResult.PilesToPush)
+		r.notify(ctx, item.trigger, item.autoResult.Notifications)
 
 		// Collect warnings/errors from this automation result.
 		outcome.Warnings = append(outcome.Warnings, item.autoResult.Warnings...)
@@ -236,6 +247,7 @@ func (r *Runner) runCreatedEntityAutomation(
 	// Return queue item if there's more work to do.
 	hasWork := len(newAutoResult.EntitiesToCreate) > 0 || len(newAutoResult.RelationsToCreate) > 0 ||
 		len(newAutoResult.LuaToExecute) > 0 || len(newAutoResult.PilesToPush) > 0 ||
+		len(newAutoResult.Notifications) > 0 ||
 		len(newAutoResult.Warnings) > 0 || len(newAutoResult.Errors) > 0
 	if hasWork {
 		return &queueItem{created, newAutoResult}

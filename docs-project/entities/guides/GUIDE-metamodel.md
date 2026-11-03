@@ -3110,6 +3110,64 @@ Found 2 errors, 1 warnings across 2 rules
 3. **Combine with cardinality**: Use cardinality constraints for relation rules, validations for property rules
 4. **Check for empty values**: Use `property!=` to require that a property has any value
 
+## Declared Piles
+
+A pile is a personal stack of entities that one user collects (see Piles in
+the data entry guide). The top-level `piles:` block declares piles that every
+user has, such as favorites and notifications:
+
+```yaml
+piles:
+  favorites:
+    name: Favorites
+    icon: star
+  inbox:
+    name: Notifications
+    icon: bell
+    on_repeat: bump
+    read_state: true
+    auto_read: on_open
+    clear_read_after: 7d
+    expire_after: 90d
+    reasons:
+      done: completed a task
+      assigned: assigned you
+```
+
+The key (`favorites`, `inbox`) names the pile in `notify` actions, `pile:`
+navigation entries and toggles. A key starts with a lowercase letter and holds
+lowercase letters, digits, `-` and `_`.
+
+| Field              | Required | Description                                                                                      |
+| ------------------ | -------- | ------------------------------------------------------------------------------------------------ |
+| `name`             | yes      | The name users see.                                                                              |
+| `icon`             | no       | A pile icon: `layers`, `star`, `flag`, `bookmark`, `inbox`, `folder`, `tag`, `heart`, `clock`, `target` or `bell`. Defaults to `layers`. |
+| `on_repeat`        | no       | What adding an entity that is already on the pile does. `keep` (default) leaves it where it is. `bump` moves it to the top and marks it unread. |
+| `read_state`       | no       | Items are read or unread, and users can mark them read. Required for `notify`.                   |
+| `auto_read`        | no       | `off` (default) or `on_open`: an item becomes read when its owner opens the entity. Needs `read_state`. |
+| `clear_read_after` | no       | Drop an item this long after it was read. Needs `read_state`.                                    |
+| `expire_after`     | no       | Drop an item this long after it was added, read or not.                                          |
+| `reasons`          | no       | Reason keys a `notify` action may record, each with the text users see.                          |
+
+A duration is a Go duration such as `12h` or `90m`, or a whole number of days
+or weeks such as `7d` or `2w`. It must be positive.
+
+A declared pile differs from a pile a user makes:
+
+- Every user has it. It is created the first time the user's piles are read.
+- It is locked. Users cannot rename, re-icon or delete it. Its name and icon
+  always come from the schema.
+- It does not count toward the limit of 50 piles, and its name does not clash
+  with the user's own piles.
+- When it is full, read items are dropped before unread ones, so a new
+  notification always lands.
+- Expired items are hidden at once and removed on the next write.
+
+Removing a pile from the schema does not delete it. Each user keeps it as an
+ordinary pile they can rename or delete.
+
+`piles:` is allowed only in the root schema file, not in an included file.
+
 ## Automations
 
 Automations are trigger-action rules that execute when entities change. They enable
@@ -3335,7 +3393,7 @@ of the entity is kept, so `POL-1@draft` lands on the pile as that face.
 
 | Field    | Required | Description                                                         |
 | -------- | -------- | ------------------------------------------------------------------- |
-| `pile`   | yes      | The pile name. Supports interpolation.                              |
+| `pile`   | yes      | The pile name, or the key of a declared pile. Supports interpolation. |
 | `owner`  | no       | The user whose pile receives the entity. Supports interpolation.    |
 | `create` | no       | Create the pile when it does not exist. Defaults to `true`.         |
 
@@ -3359,6 +3417,55 @@ of the entity is kept, so `POL-1@draft` lands on the pile as that face.
 - On PostgreSQL the push runs outside the entity's transaction. If the
   write then rolls back, the pile holds a reference to an entity that does
   not exist. Readers skip it, so it is harmless.
+
+**Notify**:
+
+```yaml
+automations:
+  - name: tell-project-owner
+    on:
+      entity: [task]
+      property: status
+      becomes: done
+    do:
+      - notify:
+          pile: inbox
+          reason: done
+          to: {via: part-of, property: owner}
+```
+
+This action puts the triggering entity on a declared pile of other users. The
+common case is to tell the owner of a project that someone completed one of
+its tasks.
+
+| Field         | Required | Description                                                                                      |
+| ------------- | -------- | ------------------------------------------------------------------------------------------------ |
+| `pile`        | yes      | The key of a declared pile with `read_state: true`.                                              |
+| `reason`      | no       | One of the pile's `reasons`. Users see its text next to the item.                                |
+| `to.property` | yes      | The property that holds the recipients: a person id, or a list of them.                           |
+| `to.via`      | no       | A relation path from the triggering entity to the entity that holds `to.property`. Without it, the property is read from the triggering entity. |
+| `to.type`     | no       | Limits the last step of `to.via` to one entity type.                                             |
+
+A notification goes to another user, so `notify` needs person mapping:
+`user_entity_type` and `principal_property` in `acl.yaml`. Without it no
+notification is sent, and the server logs a warning for each one.
+
+- `to.via` is written like a traversal in `related(...)` (see
+  [Filtering on related entities](#filtering-on-related-entities)): relation
+  names, outgoing or by their inverse name. It needs `on.entity:`, and it is
+  resolved for each of those types when the schema loads. A path that does not
+  resolve, or that ends on a type without `to.property`, stops the load.
+- The user who made the write is never notified. A notification is about what
+  others do.
+- Each item records who made the write and the reason. The pile shows both,
+  for example "Bob completed a task".
+- Recipients are found from the stored graph, whatever the writing user may
+  read. When the recipient opens the pile, each item is checked against the
+  recipient's own access.
+- A path reaches at most 1000 entities. Further recipients are skipped.
+- Like `add_to_pile`, the action is best-effort: a failure is logged with the
+  automation name and the entity, never the recipient, and the write
+  succeeds. It must be the only action in its list entry.
 
 ### Template Variables
 

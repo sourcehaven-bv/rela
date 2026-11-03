@@ -257,6 +257,8 @@ own piles only.
 | `remove_from_pile` | Take entities off one of your piles | `pile` (name or id), `ids` |
 
 - `ids` takes addresses: `TKT-1` or `POL-1@draft`, up to 500 per call.
+- `pile` may be the key of a pile the schema declares, such as `inbox`. A
+  declared pile cannot be renamed or deleted.
 - `add_to_pile` resolves each id like `update_entity`. You must be able to
   read it, and a bare id of a type with several readable faces is refused,
   naming the faces. Nothing is added unless every id resolves.

@@ -81,7 +81,7 @@ function startNew() {
         </RlButton>
       </template>
       <RlMenuItem
-        v-for="p in piles.piles.value"
+        v-for="p in piles.collected.value"
         :key="p.id"
         :icon="pileIcon(p.icon)"
         data-testid="add-to-pile-item"
@@ -89,7 +89,7 @@ function startNew() {
       >
         {{ p.name }}
       </RlMenuItem>
-      <RlMenuSeparator v-if="piles.piles.value.length" />
+      <RlMenuSeparator v-if="piles.collected.value.length" />
       <RlMenuItem icon="plus" data-testid="add-to-new-pile" @click="startNew">{{
         newLabelText
       }}</RlMenuItem>

@@ -803,6 +803,8 @@ work on the piles of the user the script runs as.
   be able to read it, and a bare id of a type with several readable faces
   raises an error that names the faces.
 - `create` defaults to `true`: a missing pile is created.
+- `pile` may be the key of a pile the schema declares, such as `"inbox"`. The
+  key reaches that pile for every user; the pile is created on first use.
 - `owner` puts the entities on another user's pile. It must be an existing
   entity of the ACL's `user_entity_type` (a person). The push is write-only:
   `add` then always returns `0`, and a missing pile (with `create = false`)

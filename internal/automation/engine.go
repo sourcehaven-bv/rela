@@ -115,6 +115,9 @@ func NewEngineFromMetamodel(
 	if err := rejectFilePropertyWrites(meta, automations); err != nil {
 		return nil, err
 	}
+	if err := resolveNotifyPaths(meta, e.automations); err != nil {
+		return nil, err
+	}
 	return e, nil
 }
 
@@ -311,6 +314,15 @@ func convertFromMetamodel(def metamodel.AutomationDef) (Automation, error) {
 				Create: a.AddToPile.CreatePile(),
 			}
 		}
+		if a.Notify != nil {
+			action.Notify = &NotifyAction{
+				Pile:     a.Notify.Pile,
+				Reason:   a.Notify.Reason,
+				Via:      []string(a.Notify.To.Via),
+				Type:     a.Notify.To.Type,
+				Property: a.Notify.To.Property,
+			}
+		}
 		auto.Do[i] = action
 	}
 
@@ -338,6 +350,7 @@ func (e *Engine) Process(ctx context.Context, event Event) *Result {
 		EntitiesToCreate:  make([]EntityToCreate, 0),
 		LuaToExecute:      make([]LuaToExecute, 0),
 		PilesToPush:       make([]PileToPush, 0),
+		Notifications:     make([]NotificationToSend, 0),
 		Warnings:          make([]string, 0),
 		Errors:            make([]string, 0),
 	}
@@ -554,6 +567,10 @@ func (e *Engine) executeAction(action Action, event Event, result *Result, autom
 
 	if action.AddToPile != nil && event.Entity != nil {
 		e.planPilePush(*action.AddToPile, event, result, automationName)
+	}
+
+	if action.Notify != nil && event.Entity != nil {
+		e.planNotify(*action.Notify, event, result, automationName)
 	}
 
 	if action.CreateEntity != nil {

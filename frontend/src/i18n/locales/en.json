@@ -1002,7 +1002,8 @@
       "tag": "Tag",
       "heart": "Heart",
       "clock": "Clock",
-      "target": "Target"
+      "target": "Target",
+      "bell": "Bell"
     },
     "dialog": {
       "rename": "Rename pile",
@@ -1034,7 +1035,17 @@
       "run": "Run",
       "copied": "Copied {n} ID | Copied {n} IDs",
       "copyFailed": "Could not copy to the clipboard",
-      "deleteMessage": "Delete the pile {name}? The entities on it are not affected."
+      "deleteMessage": "Delete the pile {name}? The entities on it are not affected.",
+      "cause": "{actor} {reason}",
+      "markRead": "Mark read",
+      "markAllRead": "Mark all read"
+    },
+    "locked": "This pile comes with the app and cannot be changed",
+    "markReadFailed": "Could not mark items read on {name}",
+    "unreadCount": "{n} unread",
+    "toggle": {
+      "add": "Add to {name}",
+      "remove": "Remove from {name}"
     }
   },
   "kanban": {

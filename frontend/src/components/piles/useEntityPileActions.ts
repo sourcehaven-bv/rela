@@ -39,7 +39,7 @@ export function useEntityPileActions(address: () => string | null, onRemoved: ()
   const actions = computed<EntityAction[]>(() => {
     const addr = address()
     if (!piles.available.value || addr === null) return []
-    const out: EntityAction[] = piles.piles.value.map((p) => ({
+    const out: EntityAction[] = piles.collected.value.map((p) => ({
       id: `pile:${p.id}`,
       label: t('piles.addTo', { name: p.name }),
       group: 'manage',

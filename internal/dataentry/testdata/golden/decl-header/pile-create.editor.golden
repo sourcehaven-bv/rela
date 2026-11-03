@@ -19,14 +19,16 @@ body:
       "face": "",
       "address": "TKT-1",
       "type": "ticket",
-      "title": "Alpha"
+      "title": "Alpha",
+      "added": "<now>"
     },
     {
       "id": "TKT-4",
       "face": "",
       "address": "TKT-4",
       "type": "ticket",
-      "title": "Delta"
+      "title": "Delta",
+      "added": "<now>"
     }
   ]
 }

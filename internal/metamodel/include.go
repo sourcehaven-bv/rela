@@ -28,6 +28,7 @@ type partialMetamodel struct {
 	Checkers            map[string]CheckerDef            `yaml:"checkers"`
 	TaskItemConversions map[string]TaskItemConversionDef `yaml:"task_item_conversions"`
 	DefaultWorld        string                           `yaml:"default_world"`
+	Piles               map[string]PileDecl              `yaml:"piles"`
 }
 
 // includeState tracks file processing state during recursive include resolution.
@@ -171,6 +172,10 @@ func resolveIncludes(
 	// `task_item_conversions:` for the same reason as `copies:`.
 	if len(partial.TaskItemConversions) > 0 {
 		return nil, &IncludeHasRootFieldError{Path: includePath, Field: "task_item_conversions"}
+	}
+	// `piles:` for the same reason as `copies:`.
+	if len(partial.Piles) > 0 {
+		return nil, &IncludeHasRootFieldError{Path: includePath, Field: "piles"}
 	}
 	// `default_world:` names a world, and worlds are root-only.
 	if partial.DefaultWorld != "" {

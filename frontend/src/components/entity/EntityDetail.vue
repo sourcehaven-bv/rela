@@ -66,6 +66,7 @@ import { applyHighlights, type HighlightRange } from '@/utils/commentHighlight'
 import CommandModal from '@/components/entity/CommandModal.vue'
 import ExportMenu from '@/components/entity/ExportMenu.vue'
 import AddToPileMenu from '@/components/piles/AddToPileMenu.vue'
+import PileToggles from '@/components/piles/PileToggles.vue'
 import NewPileDialog from '@/components/piles/NewPileDialog.vue'
 import { useEntityPileActions } from '@/components/piles/useEntityPileActions'
 import SectionCreateButton from '@/components/entity/SectionCreateButton.vue'
@@ -2460,6 +2461,7 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
             @edit="onTitleEdit"
             @commit="saveTitle"
           />
+          <PileToggles v-if="servedRef" :address="servedRef" :entity-type="entityType" />
           <div
             v-if="entry?._lease || presence.viewers.value.length || presence.more.value"
             class="header-presence"

@@ -64,10 +64,16 @@ func New(db DBTX) (*Store, error) {
 // nameIndex is the unique index that refuses a duplicate name.
 const nameIndex = "piles_owner_name_idx"
 
+// keyIndex is the unique index that refuses a second copy of a declared pile.
+const keyIndex = "piles_owner_key_idx"
+
 // idKey is the primary key that refuses a duplicate pile id.
 const idKey = "piles_pkey"
 
-const pileColumns = `id, owner, name, icon, created_at, updated_at`
+const pileColumns = `id, owner, key, name, icon, created_at, updated_at`
+
+// itemColumns are the item columns scanItem reads, after the pile id.
+const itemColumns = `entity_id, face, added_at, actor, reason, read_at`
 
 // lockOwner serializes the owner's creates and adds for the rest of tx.
 func lockOwner(ctx context.Context, tx pgx.Tx, owner string) error {
@@ -105,7 +111,7 @@ func (s *Store) ListPiles(ctx context.Context, owner string) ([]piles.Pile, erro
 
 	// One query for every pile's items, in stack order.
 	itemRows, err := s.db.Query(ctx, `
-		SELECT i.pile_id, i.entity_id, i.face, i.added_at
+		SELECT i.pile_id, i.entity_id, i.face, i.added_at, i.actor, i.reason, i.read_at
 		FROM pile_items i JOIN piles p ON p.id = i.pile_id
 		WHERE p.owner = $1
 		ORDER BY i.pile_id, i.seq DESC`, owner)
@@ -138,10 +144,19 @@ func (s *Store) GetPile(ctx context.Context, owner, id string) (piles.Pile, erro
 	return s.onePile(ctx, `SELECT `+pileColumns+` FROM piles WHERE owner = $1 AND id = $2`, owner, id)
 }
 
-// PileByName finds the owner's pile by case-insensitive name.
+// PileByName finds the owner's pile by case-insensitive name, among the
+// piles without a key.
 func (s *Store) PileByName(ctx context.Context, owner, name string) (piles.Pile, error) {
 	return s.onePile(ctx,
-		`SELECT `+pileColumns+` FROM piles WHERE owner = $1 AND lower(name) = lower($2)`, owner, name)
+		`SELECT `+pileColumns+` FROM piles WHERE owner = $1 AND key = '' AND lower(name) = lower($2)`, owner, name)
+}
+
+// PileByKey finds the owner's declared pile with that key.
+func (s *Store) PileByKey(ctx context.Context, owner, key string) (piles.Pile, error) {
+	if key == "" {
+		return piles.Pile{}, piles.ErrNotFound
+	}
+	return s.onePile(ctx, `SELECT `+pileColumns+` FROM piles WHERE owner = $1 AND key = $2`, owner, key)
 }
 
 func (s *Store) onePile(ctx context.Context, query string, args ...any) (piles.Pile, error) {
@@ -167,7 +182,7 @@ func (s *Store) onePile(ctx context.Context, query string, args ...any) (piles.P
 // items returns one pile's items, newest first.
 func (s *Store) items(ctx context.Context, pileID string) ([]piles.Item, error) {
 	rows, err := s.db.Query(ctx, `
-		SELECT pile_id, entity_id, face, added_at FROM pile_items
+		SELECT pile_id, `+itemColumns+` FROM pile_items
 		WHERE pile_id = $1 ORDER BY seq DESC`, pileID)
 	if err != nil {
 		return nil, fmt.Errorf("pgpiles: read items: %w", err)
@@ -190,19 +205,26 @@ func (s *Store) items(ctx context.Context, pileID string) ([]piles.Item, error) 
 
 func scanPile(row pgx.CollectableRow) (piles.Pile, error) {
 	var p piles.Pile
-	err := row.Scan(&p.ID, &p.Owner, &p.Name, &p.Icon, &p.Created, &p.Updated)
+	err := row.Scan(&p.ID, &p.Owner, &p.Key, &p.Name, &p.Icon, &p.Created, &p.Updated)
 	p.Created, p.Updated = p.Created.UTC(), p.Updated.UTC()
 	p.Items = []piles.Item{}
 	return p, err
 }
 
 func scanItem(row pgx.Row, pileID *string) (piles.Item, error) {
-	var id, face string
+	var id, face, actor, reason string
 	var added time.Time
-	if err := row.Scan(pileID, &id, &face, &added); err != nil {
+	var readAt *time.Time
+	if err := row.Scan(pileID, &id, &face, &added, &actor, &reason, &readAt); err != nil {
 		return piles.Item{}, err
 	}
-	return piles.Item{Ref: entity.Ref{ID: id, Face: entity.Face(face)}, Added: added.UTC()}, nil
+	it := piles.Item{
+		Ref: entity.Ref{ID: id, Face: entity.Face(face)}, Added: added.UTC(), Actor: actor, Reason: reason,
+	}
+	if readAt != nil {
+		it.ReadAt = readAt.UTC()
+	}
+	return it, nil
 }
 
 // CreatePile stores p with refs as its first items, under the owner lock.
@@ -211,18 +233,25 @@ func (s *Store) CreatePile(ctx context.Context, p piles.Pile, refs []entity.Ref,
 		if err := lockOwner(ctx, tx, p.Owner); err != nil {
 			return err
 		}
-		var count int
-		if err := tx.QueryRow(ctx, `SELECT count(*) FROM piles WHERE owner = $1`, p.Owner).Scan(&count); err != nil {
-			return fmt.Errorf("pgpiles: count piles: %w", err)
-		}
-		if count >= maxPiles {
-			return piles.ErrLimit
+		if p.Key == "" {
+			// Declared piles count toward no limit: the schema bounds them.
+			var count int
+			if err := tx.QueryRow(ctx,
+				`SELECT count(*) FROM piles WHERE owner = $1 AND key = ''`, p.Owner).Scan(&count); err != nil {
+				return fmt.Errorf("pgpiles: count piles: %w", err)
+			}
+			if count >= maxPiles {
+				return piles.ErrLimit
+			}
 		}
 		_, err := tx.Exec(ctx, `
-			INSERT INTO piles (`+pileColumns+`) VALUES ($1, $2, $3, $4, $5, $6)`,
-			p.ID, p.Owner, p.Name, p.Icon, p.Created, p.Updated)
+			INSERT INTO piles (`+pileColumns+`) VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+			p.ID, p.Owner, p.Key, p.Name, p.Icon, p.Created, p.Updated)
 		if isNameClash(err) {
 			return piles.ErrNameTaken
+		}
+		if isUniqueViolation(err, keyIndex) {
+			return piles.ErrKeyTaken
 		}
 		if isUniqueViolation(err, idKey) {
 			return piles.ErrIDTaken
@@ -230,7 +259,7 @@ func (s *Store) CreatePile(ctx context.Context, p piles.Pile, refs []entity.Ref,
 		if err != nil {
 			return fmt.Errorf("pgpiles: create pile: %w", err)
 		}
-		_, err = insertItems(ctx, tx, p.ID, firstUnique(refs, maxItems), p.Created)
+		_, err = insertItems(ctx, tx, p.ID, firstUnique(refs, maxItems), piles.AddOptions{Now: p.Created})
 		return err
 	})
 }
@@ -265,10 +294,10 @@ func (s *Store) DeletePile(ctx context.Context, owner, id string) error {
 }
 
 // AddItems puts refs on top of the pile in one transaction under the owner
-// lock: past maxItems it evicts the oldest or, with [piles.KeepExisting],
-// inserts only what fits.
+// lock. Past the cap it evicts per opts.Overflow or, with
+// [piles.KeepExisting], inserts only the fresh refs that fit.
 func (s *Store) AddItems(
-	ctx context.Context, owner, id string, refs []entity.Ref, now time.Time, maxItems int, overflow piles.Overflow,
+	ctx context.Context, owner, id string, refs []entity.Ref, opts piles.AddOptions,
 ) (int, error) {
 	added := 0
 	err := s.inTx(ctx, func(tx pgx.Tx) error {
@@ -278,14 +307,14 @@ func (s *Store) AddItems(
 		if err := ownedBy(ctx, tx, owner, id); err != nil {
 			return err
 		}
-		fresh := firstUnique(refs, maxItems)
-		if overflow != piles.EvictOldest {
+		todo := firstUnique(refs, opts.MaxItems)
+		if opts.Overflow == piles.KeepExisting {
 			var err error
-			if fresh, err = fitting(ctx, tx, id, fresh, maxItems); err != nil {
+			if todo, err = fitting(ctx, tx, id, todo, opts); err != nil {
 				return err
 			}
 		}
-		n, err := insertItems(ctx, tx, id, fresh, now)
+		n, err := insertItems(ctx, tx, id, todo, opts)
 		if err != nil {
 			return err
 		}
@@ -293,9 +322,13 @@ func (s *Store) AddItems(
 		if n == 0 {
 			return nil
 		}
+		order := `seq DESC`
+		if opts.Overflow == piles.EvictReadFirst {
+			order = `(read_at IS NULL) DESC, seq DESC`
+		}
 		_, err = tx.Exec(ctx, `
 			DELETE FROM pile_items WHERE pile_id = $1 AND seq NOT IN (
-				SELECT seq FROM pile_items WHERE pile_id = $1 ORDER BY seq DESC LIMIT $2)`, id, maxItems)
+				SELECT seq FROM pile_items WHERE pile_id = $1 ORDER BY `+order+` LIMIT $2)`, id, opts.MaxItems)
 		if err != nil {
 			return fmt.Errorf("pgpiles: evict: %w", err)
 		}
@@ -304,10 +337,13 @@ func (s *Store) AddItems(
 	return added, err
 }
 
-// fitting returns the refs not yet on the pile, cut to the room left under
-// maxItems. Every add to a pile holds the owner lock, so the count cannot
-// change before the insert.
-func fitting(ctx context.Context, tx pgx.Tx, pileID string, refs []entity.Ref, maxItems int) ([]entity.Ref, error) {
+// fitting returns the refs to write: those not yet on the pile, cut to the
+// room left under the cap when opts.Overflow is [piles.KeepExisting], plus,
+// with opts.Bump, those already on it. Every add to a pile holds the owner
+// lock, so the items cannot change before the insert.
+func fitting(
+	ctx context.Context, tx pgx.Tx, pileID string, refs []entity.Ref, opts piles.AddOptions,
+) ([]entity.Ref, error) {
 	rows, err := tx.Query(ctx, `SELECT entity_id, face FROM pile_items WHERE pile_id = $1`, pileID)
 	if err != nil {
 		return nil, fmt.Errorf("pgpiles: read items: %w", err)
@@ -320,32 +356,45 @@ func fitting(ctx context.Context, tx pgx.Tx, pileID string, refs []entity.Ref, m
 	if err != nil {
 		return nil, fmt.Errorf("pgpiles: read items: %w", err)
 	}
-	room := max(maxItems-len(present), 0)
-	fresh := make([]entity.Ref, 0, min(len(refs), room))
+	room := len(refs)
+	if opts.Overflow == piles.KeepExisting {
+		room = max(opts.MaxItems-len(present), 0)
+	}
+	out := make([]entity.Ref, 0, len(refs))
 	for _, r := range refs {
-		if len(fresh) == room {
-			break
-		}
-		if !slices.Contains(present, r) {
-			fresh = append(fresh, r)
+		switch {
+		case slices.Contains(present, r):
+			if opts.Bump {
+				out = append(out, r)
+			}
+		case room > 0:
+			out = append(out, r)
+			room--
 		}
 	}
-	return fresh, nil
+	return out, nil
 }
 
-// insertItems adds refs as the newest items, the first ref newest, and
-// returns how many were new. Rows go in last ref first, one statement each in
-// a single batch, so the sequence hands the first ref the highest seq; a
-// single INSERT ... SELECT would leave that order to the planner.
-func insertItems(ctx context.Context, tx pgx.Tx, pileID string, refs []entity.Ref, added time.Time) (int, error) {
+// insertItems writes refs as the newest items, the first ref newest, and
+// returns how many were added or, with opts.Bump, moved to the top. Rows go
+// in last ref first, one statement each in a single batch, so the sequence
+// hands the first ref the highest seq; a single INSERT ... SELECT would
+// leave that order to the planner.
+func insertItems(ctx context.Context, tx pgx.Tx, pileID string, refs []entity.Ref, opts piles.AddOptions) (int, error) {
 	if len(refs) == 0 {
 		return 0, nil
+	}
+	conflict := `DO NOTHING`
+	if opts.Bump {
+		conflict = `DO UPDATE SET seq = nextval('pile_item_seq'), added_at = EXCLUDED.added_at,
+			actor = EXCLUDED.actor, reason = EXCLUDED.reason, read_at = NULL`
 	}
 	batch := &pgx.Batch{}
 	for _, r := range slices.Backward(refs) {
 		batch.Queue(`
-			INSERT INTO pile_items (pile_id, entity_id, face, added_at) VALUES ($1, $2, $3, $4)
-			ON CONFLICT DO NOTHING`, pileID, r.ID, string(r.Face), added)
+			INSERT INTO pile_items (pile_id, entity_id, face, added_at, actor, reason) VALUES ($1, $2, $3, $4, $5, $6)
+			ON CONFLICT (pile_id, entity_id, face) `+conflict,
+			pileID, r.ID, string(r.Face), opts.Now, opts.Actor, opts.Reason)
 	}
 	results := tx.SendBatch(ctx, batch)
 	inserted := 0
@@ -382,6 +431,59 @@ func (s *Store) RemoveItems(ctx context.Context, owner, id string, refs []entity
 	return nil
 }
 
+// MarkRead stamps unread items naming refs, or all unread items, with now.
+func (s *Store) MarkRead(ctx context.Context, owner, id string, refs []entity.Ref, all bool, now time.Time) error {
+	if err := ownedBy(ctx, s.db, owner, id); err != nil {
+		return err
+	}
+	if all {
+		_, err := s.db.Exec(ctx,
+			`UPDATE pile_items SET read_at = $2 WHERE pile_id = $1 AND read_at IS NULL`, id, now)
+		if err != nil {
+			return fmt.Errorf("pgpiles: mark read: %w", err)
+		}
+		return nil
+	}
+	if len(refs) == 0 {
+		return nil
+	}
+	ids, faces := split(refs)
+	_, err := s.db.Exec(ctx, `
+		UPDATE pile_items i SET read_at = $4
+		FROM unnest($2::text[], $3::text[]) AS r(entity_id, face)
+		WHERE i.pile_id = $1 AND i.entity_id = r.entity_id AND i.face = r.face AND i.read_at IS NULL`,
+		id, ids, faces, now)
+	if err != nil {
+		return fmt.Errorf("pgpiles: mark read: %w", err)
+	}
+	return nil
+}
+
+// PruneItems drops items read before readBefore or added before addedBefore.
+func (s *Store) PruneItems(ctx context.Context, owner, id string, readBefore, addedBefore time.Time) error {
+	if err := ownedBy(ctx, s.db, owner, id); err != nil {
+		return err
+	}
+	if readBefore.IsZero() && addedBefore.IsZero() {
+		return nil
+	}
+	var rb, ab *time.Time
+	if !readBefore.IsZero() {
+		rb = &readBefore
+	}
+	if !addedBefore.IsZero() {
+		ab = &addedBefore
+	}
+	_, err := s.db.Exec(ctx, `
+		DELETE FROM pile_items WHERE pile_id = $1 AND (
+			($2::timestamptz IS NOT NULL AND read_at < $2) OR ($3::timestamptz IS NOT NULL AND added_at < $3))`,
+		id, rb, ab)
+	if err != nil {
+		return fmt.Errorf("pgpiles: prune items: %w", err)
+	}
+	return nil
+}
+
 // RenameEntity rewrites items naming oldID, in one transaction. Where the
 // new ref is already on a pile, the existing item keeps its place and the
 // renamed one is dropped.
@@ -397,8 +499,8 @@ func (s *Store) RenameEntity(ctx context.Context, oldID, newID string) error {
 	}
 	return s.inTx(ctx, func(tx pgx.Tx) error {
 		if _, err := tx.Exec(ctx, `
-			INSERT INTO pile_items (pile_id, entity_id, face, seq, added_at)
-			SELECT pile_id, $2, face, seq, added_at FROM pile_items WHERE entity_id = $1
+			INSERT INTO pile_items (pile_id, entity_id, face, seq, added_at, actor, reason, read_at)
+			SELECT pile_id, $2, face, seq, added_at, actor, reason, read_at FROM pile_items WHERE entity_id = $1
 			ON CONFLICT DO NOTHING`, oldID, newID); err != nil {
 			return fmt.Errorf("pgpiles: rename items: %w", err)
 		}
@@ -430,12 +532,17 @@ func (s *Store) RenameOwner(ctx context.Context, oldOwner, newOwner string) erro
 		}
 		if _, err := tx.Exec(ctx, `
 			DELETE FROM piles t WHERE t.owner = $2 AND EXISTS (
-				SELECT 1 FROM piles o WHERE o.owner = $1 AND lower(o.name) = lower(t.name))`,
+				SELECT 1 FROM piles o WHERE o.owner = $1 AND (
+					(o.key = '' AND t.key = '' AND lower(o.name) = lower(t.name)) OR
+					(o.key <> '' AND o.key = t.key)))`,
 			oldOwner, newOwner); err != nil {
 			return fmt.Errorf("pgpiles: rename owner drop clashing piles: %w", err)
 		}
 		if _, err := tx.Exec(ctx, `UPDATE piles SET owner = $2 WHERE owner = $1`, oldOwner, newOwner); err != nil {
 			return fmt.Errorf("pgpiles: rename owner: %w", err)
+		}
+		if _, err := tx.Exec(ctx, `UPDATE pile_items SET actor = $2 WHERE actor = $1`, oldOwner, newOwner); err != nil {
+			return fmt.Errorf("pgpiles: rename actor: %w", err)
 		}
 		return nil
 	})
