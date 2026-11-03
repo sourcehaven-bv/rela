@@ -3,9 +3,11 @@ id: TKT-YK30D1
 type: ticket
 title: 'Inbox 6: cross-process live delivery'
 kind: enhancement
-priority: low
-effort: m
-status: backlog
+priority: high
+effort: l
+started: "2026-11-02"
+completed: "2026-11-03"
+status: done
 ---
 
 ## Description

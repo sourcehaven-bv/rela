@@ -31,3 +31,11 @@ func OutputsFor(s *Services, join bool) (realtime.OutputWriter, error) {
 	}
 	return newManagerOutputs(s.entityManager, s.store, s.meta, j, s.aclDeclarative)
 }
+
+// DetachChannelHintsForTest detaches s's hint endpoint, so its sends fail
+// fast as a backend without hints. Test-only: the benchmark compares the two.
+func DetachChannelHintsForTest(s *Services) {
+	if s.channelHints != nil {
+		s.channelHints.detach(s.hintAttach)
+	}
+}

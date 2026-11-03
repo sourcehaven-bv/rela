@@ -396,7 +396,7 @@ func TestLocal_AddressedOptIn(t *testing.T) {
 	plain, addr := l.Subscribe(), l.SubscribeAddressed()
 	k := roomKey()
 	for i := range 3000 {
-		l.markAddressed([]string{fmt.Sprint("user-", i)}, k, markKindMessage)
+		l.markAddressed([]string{fmt.Sprint("user-", i)}, k, markKindMessage, true)
 	}
 	keys, resync := plain.Take()
 	require.False(t, resync, "a plain subscription never resyncs from addressed keys")
@@ -407,10 +407,10 @@ func TestLocal_AddressedOptIn(t *testing.T) {
 	_, resync = addr.Take()
 	require.True(t, resync)
 
-	l.markAddressed([]string{"bob", "alice"}, k, markKindMessage)
+	l.markAddressed([]string{"bob", "alice"}, k, markKindMessage, true)
 	require.Equal(t, []string{"alice", "bob"}, addr.TakeAddressed())
 	require.Nil(t, addr.TakeAddressed(), "TakeAddressed empties the set")
-	l.markAddressed([]string{"bob"}, k, markKindMessage)
+	l.markAddressed([]string{"bob"}, k, markKindMessage, true)
 	addr.mu.Lock()
 	addr.resync = true
 	addr.mu.Unlock()
@@ -437,8 +437,8 @@ func TestLocal_SubscribeWhileMarking(t *testing.T) {
 			case <-stop:
 				return
 			default:
-				l.markAddressed([]string{"alice"}, k, markKindMessage)
-				l.markFor(channels.Reader{User: "alice"}, k)
+				l.markAddressed([]string{"alice"}, k, markKindMessage, true)
+				l.markFor(channels.Reader{User: "alice"}, true, k)
 			}
 		}
 	})
@@ -449,8 +449,8 @@ func TestLocal_SubscribeWhileMarking(t *testing.T) {
 	close(stop)
 	wg.Wait()
 	addr, reads := l.SubscribeAddressed(), l.SubscribeLive()
-	l.markAddressed([]string{"alice"}, k, markKindMessage)
-	l.markFor(channels.Reader{User: "alice"}, k)
+	l.markAddressed([]string{"alice"}, k, markKindMessage, true)
+	l.markFor(channels.Reader{User: "alice"}, true, k)
 	require.Equal(t, []string{"alice"}, addr.TakeAddressed())
 	require.Equal(t, map[channels.Reader][]channels.Key{{User: "alice"}: {k}}, reads.TakeReads())
 }

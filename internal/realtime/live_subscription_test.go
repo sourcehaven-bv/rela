@@ -37,8 +37,8 @@ func TestSubscribeLive(t *testing.T) {
 		t.Parallel()
 		l, hub := newLive(t)
 		plain := l.Subscribe()
-		l.markAddressed([]string{"alice"}, keyOf("TKT-1"), markKindMoved)
-		l.markFor(alice, keyOf("TKT-2"))
+		l.markAddressed([]string{"alice"}, keyOf("TKT-1"), markKindMoved, true)
+		l.markFor(alice, true, keyOf("TKT-2"))
 		l.markEphemeral(keyOf("TKT-3"))
 		require.Equal(t, []channels.Key{keyOf("TKT-1")}, hub.TakeDurable())
 		require.Equal(t, []string{"alice"}, hub.TakeAddressed())
@@ -54,10 +54,10 @@ func TestSubscribeLive(t *testing.T) {
 		overflow func(l *Local)
 	}{
 		{"durable", func(l *Local) { l.mark(keyOf("TKT-1"), keyOf("TKT-2"), keyOf("TKT-3")) }},
-		{"reads", func(l *Local) { l.markFor(alice, keyOf("TKT-1"), keyOf("TKT-2"), keyOf("TKT-3")) }},
+		{"reads", func(l *Local) { l.markFor(alice, true, keyOf("TKT-1"), keyOf("TKT-2"), keyOf("TKT-3")) }},
 		{"addressed", func(l *Local) {
 			for _, u := range []string{"a", "b", "c"} {
-				l.markAddressed([]string{u}, keyOf("TKT-1"), markKindMessage)
+				l.markAddressed([]string{u}, keyOf("TKT-1"), markKindMessage, true)
 			}
 		}},
 	} {
@@ -128,7 +128,7 @@ func TestTakeLive_OneCriticalSection(t *testing.T) {
 	t.Run("one mark", func(t *testing.T) {
 		t.Parallel()
 		l, hub := newLive(t)
-		l.markAddressed([]string{"alice"}, keyOf("TKT-1"), markKindMoved)
+		l.markAddressed([]string{"alice"}, keyOf("TKT-1"), markKindMoved, true)
 		l.markMessage(keyOf("TKT-2"))
 		c := hub.TakeLive()
 		require.Equal(t, LiveChanges{

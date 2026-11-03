@@ -90,7 +90,7 @@ func newGuardFixture(t *testing.T) guardFixture {
 // the real channel alias hook, as assemble wires them.
 func (f guardFixture) manager(t *testing.T, g entitymanager.AnchorGuard) *entitymanager.Manager {
 	t.Helper()
-	aliases, err := channelAliasesFor(f.cs, f.st, f.guard.tombs, nil)
+	aliases, err := channelAliasesFor(f.cs, f.st, f.guard.tombs, nil, nil)
 	require.NoError(t, err)
 	mgr, err := entitymanager.New(entitymanager.Deps{
 		Store: f.st, Meta: f.meta, Templater: gcNopTemplater{}, Audit: audit.Nop{},
@@ -246,15 +246,15 @@ func TestChannelGuard_BeforeRename(t *testing.T) {
 	require.NoError(t, undo.Restore(ctx))
 	assert.Equal(t, []string{"INC-2/chat"}, entityKeys(t, f.cs, "INC-2"))
 
-	noAliases, err := channelAliasesFor(nil, f.st, nil, nil)
+	noAliases, err := channelAliasesFor(nil, f.st, nil, nil, nil)
 	require.NoError(t, err)
 	require.Nil(t, noAliases)
-	_, err = channelAliasesFor(f.cs, f.st, nil, nil)
+	_, err = channelAliasesFor(f.cs, f.st, nil, nil, nil)
 	require.Error(t, err, "the alias hooks over a store need a confirmer")
-	nopGuard, err := newChannelGuard(nil, nil, nil, nil)
+	nopGuard, err := newChannelGuard(nil, guardInputs{})
 	require.NoError(t, err)
 	_, nop := nopGuard.(entitymanager.NopAnchorGuard)
-	_, err = newChannelGuard(f.cs, nil, nil, nil)
+	_, err = newChannelGuard(nil, guardInputs{store: f.cs})
 	require.Error(t, err, "a guard over a store needs a confirmer")
 	assert.True(t, nop)
 	assert.True(t, f.guard.Active())

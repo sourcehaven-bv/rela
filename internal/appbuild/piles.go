@@ -45,6 +45,11 @@ type refHolders struct {
 	channelTombs *tombstoneConfirmer
 	// channelAliases are the channel store's post-commit alias hooks.
 	channelAliases *channelAliases
+	// channelHints is the hint relay realtimeLocal sends through, shared
+	// like realtimeLocal; nil when the backend has no hints. hintEndpoint
+	// is this assembly's endpoint on it, which finishAssembly attaches.
+	channelHints *hintRelay
+	hintEndpoint hintEndpoint
 }
 
 // buildRefHolders builds the services that hold references by entity id:
@@ -82,21 +87,55 @@ func buildRefHolders(
 	if h.channelTombs, err = newTombstoneConfirmer(h.channels); err != nil {
 		return refHolders{}, err
 	}
-	if h.channelAliases, err = channelAliasesFor(h.channels, st, h.channelTombs, base.realtime); err != nil {
-		return refHolders{}, err
-	}
 	// The channel service needs the entity manager, which needs these
 	// holders, so assembly builds it later (see buildRealtimeService). Its
-	// process-local state is made here: the alias fanout needs it.
-	if h.realtimeLocal = base.realtimeLocal; h.realtimeLocal == nil {
-		if h.realtimeLocal, err = realtime.NewLocal(time.Now); err != nil {
-			return refHolders{}, err
-		}
+	// process-local state is made here: the alias fanout and the alias
+	// hooks need it.
+	h.hintEndpoint = hintEndpointFor(h.channels, st)
+	if h.realtimeLocal, h.channelHints, err = sharedLocal(base, h.hintEndpoint != nil); err != nil {
+		return refHolders{}, err
+	}
+	if h.channelAliases, err = channelAliasesFor(
+		h.channels, st, h.channelTombs, base.realtime, h.realtimeLocal); err != nil {
+		stopNewLocalOnError(base, h.realtimeLocal, err)
+		return refHolders{}, err
 	}
 	if h.dueWake = base.dueWake; h.dueWake == nil {
 		h.dueWake = realtime.NewDueWake()
 	}
 	return h, nil
+}
+
+// guardInputs are the channel guard's collaborators among h.
+func (h refHolders) guardInputs() guardInputs {
+	return guardInputs{store: h.channels, tombs: h.channelTombs, dueWake: h.dueWake, marker: h.realtimeLocal}
+}
+
+// sharedLocal returns the predecessor's process-local channel state and
+// hint relay, or new ones for a first assembly. A backend with hints gets a
+// Local that sends them through a new relay.
+func sharedLocal(base *SharedBase, hints bool) (*realtime.Local, *hintRelay, error) {
+	if base.realtimeLocal != nil {
+		return base.realtimeLocal, base.channelHints, nil
+	}
+	if !hints {
+		l, err := realtime.NewLocal(time.Now)
+		return l, nil, err
+	}
+	relay := newHintRelay()
+	l, err := realtime.NewLocalWithHints(time.Now, relay)
+	return l, relay, err
+}
+
+// stopNewLocalOnError stops l when the assembly that made it failed (err
+// set) and l is not a predecessor's: its hint sender runs from the start,
+// and a host that retries a failing reload would leak one per attempt.
+//
+// Nil: l is accepted (nothing to stop).
+func stopNewLocalOnError(base *SharedBase, l *realtime.Local, err error) {
+	if err != nil && l != nil && l != base.realtimeLocal {
+		l.Stop()
+	}
 }
 
 // newPilesService builds the piles service over backend, with the owner check

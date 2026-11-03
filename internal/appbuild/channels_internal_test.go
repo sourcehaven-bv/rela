@@ -32,7 +32,7 @@ func newChannelAliases(t *testing.T) (*channelAliases, channels.Store, *memstore
 	st := memstore.New()
 	tombs, err := newTombstoneConfirmer(cs)
 	require.NoError(t, err)
-	a, err := channelAliasesFor(cs, st, tombs, nil)
+	a, err := channelAliasesFor(cs, st, tombs, nil, nil)
 	require.NoError(t, err)
 	a.now = func() time.Time { return time.Date(2026, 10, 12, 9, 0, 0, 0, time.UTC) }
 	return a, cs, st
@@ -214,7 +214,7 @@ func TestAliasFanout_EntityCreated(t *testing.T) {
 	a.store = failingChannels{Store: cs}
 	appendTo(t, cs, chanKey("T-1", "", "room"))
 	require.Error(t, n.EntityCreated(ctx, "T-1", ""))
-	none, err := channelAliasesFor(nil, st, nil, nil)
+	none, err := channelAliasesFor(nil, st, nil, nil, nil)
 	require.NoError(t, err)
 	require.Nil(t, none)
 }

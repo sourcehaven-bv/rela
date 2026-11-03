@@ -1445,7 +1445,8 @@ func newDesktopApp(fsys storage.FS, projCtx *project.Context, svc *appbuild.Serv
 	return app, nil
 }
 
-// startBackground starts svc's scheduler, lease watcher and realtime worker.
+// startBackground starts svc's scheduler, lease watcher, realtime worker and
+// channel hint follower.
 // All stop with ctx; the returned channel closes once all have, and is
 // awaited before svc closes.
 func startBackground(
@@ -1454,12 +1455,14 @@ func startBackground(
 	sched := scheduler.StartBackground(ctx, svc, bind, slog.Default())
 	leases := appbuild.WatchLeases(ctx, svc)
 	worker := appbuild.RunRealtimeWorker(ctx, svc)
+	follower := appbuild.FollowChannels(ctx, svc)
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
 		<-sched
 		<-leases
 		<-worker
+		<-follower
 	}()
 	return done
 }

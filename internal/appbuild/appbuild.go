@@ -215,6 +215,11 @@ type Services struct {
 	// realtimeLocal is the process-local state under channelService, which a
 	// re-assembly shares.
 	realtimeLocal *realtime.Local
+	// channelHints is realtimeLocal's hint relay, shared with it; nil when
+	// the backend has no hints. hintAttach is this assembly's endpoint on
+	// it, detached when the assembly closes.
+	channelHints *hintRelay
+	hintAttach   *hintAttachment
 	// dueWake is the session due-time wake under channelService and the
 	// realtime worker, which a re-assembly shares.
 	dueWake *realtime.DueWake
@@ -2107,6 +2112,9 @@ type SharedBase struct {
 	// buckets, ephemeral signals, live subscribers), reused so a schema
 	// reload resets none of them. Nil for a first assembly.
 	realtimeLocal *realtime.Local
+	// channelHints is the predecessor's hint relay, reused with
+	// realtimeLocal. Nil for a first assembly or a backend without hints.
+	channelHints *hintRelay
 	// dueWake is the predecessor's session due-time wake, reused with
 	// realtimeLocal. Nil for a first assembly.
 	dueWake *realtime.DueWake
@@ -2159,6 +2167,7 @@ func (b *SharedBase) ForReassembly(prev *Services) *SharedBase {
 	next.pileStore = prev.pileStore
 	next.leaseShared = prev.leaseShared
 	next.realtimeLocal = prev.realtimeLocal
+	next.channelHints = prev.channelHints
 	next.dueWake = prev.dueWake
 	next.storeSchema = prev.storeSchema
 	return &next
@@ -2399,10 +2408,10 @@ func buildEntityManager(
 	autoEngine *automation.Engine, cascadeRunner *autocascade.Runner,
 	readDeps lua.ReadDeps, pileWriter lua.PileWriter, versions store.VersionService, tw TransitionWiring,
 	computedSet *computed.Set, attachLocker lock.Locker, fieldGate entitymanager.FieldWriteGate,
-	channelStore channels.Store, tombs *tombstoneConfirmer, dueWake *realtime.DueWake,
+	guard guardInputs,
 ) (*entitymanager.Manager, error) {
 	// Boot refuses a realtime.yaml that would strand stored channels.
-	anchorGuard, err := channelGuardFor(base, channelStore, tombs, dueWake)
+	anchorGuard, err := channelGuardFor(base, guard)
 	if err != nil {
 		return nil, err
 	}
@@ -2745,15 +2754,12 @@ func assemble(
 	// connection pool too), so every error path below this point must stop it.
 	// Boot could get away without this — a failed boot exits the process — but
 	// assembly is now also a RELOAD path (TKT-NU247U): a schema that loads yet
-	// fails to assemble would otherwise leak one queue per save.
-	defer func() {
-		if retErr != nil {
-			closeJobQueue(jobQueue)
-		}
-	}()
-
+	// fails to assemble would otherwise leak one queue per save. The same
+	// holds for a new realtime Local, whose hint sender runs from the start.
+	//
 	// Before automation: add_to_pile actions push through refs.piles.
 	refs, err := buildRefHolders(base, st, overrides, aclDeclarative, fieldPol.redactor, resolvedACL)
+	defer func() { abandonFailedAssembly(base, jobQueue, refs.realtimeLocal, retErr) }()
 	if err != nil {
 		return nil, err
 	}
@@ -2784,7 +2790,7 @@ func assemble(
 		refs.channelAliases, refs.realtimeLocal)
 	mgr, err := buildEntityManager(base, st, fanout, templater,
 		resolvedACL, autoEngine, cascadeRunner, readDeps, pileWriterFor(refs.piles), versions, tw, computedSet,
-		attachLocker, fieldPol.gate, refs.channels, refs.channelTombs, refs.dueWake)
+		attachLocker, fieldPol.gate, refs.guardInputs())
 	// coverage-ignore-start: defensive: buildStateKV only errors when NewRootedFS fails on a non-empty CacheDir, which
 	// requires filepath.Abs to
 	// fail — unreachable with valid inputs (see the scupper in buildStateKV)
@@ -2895,6 +2901,9 @@ func finishAssembly(
 		return nil, err
 	}
 	s.channelService, s.realtimeLocal, s.dueWake = svc, refs.realtimeLocal, refs.dueWake
+	if s.channelHints = refs.channelHints; s.channelHints != nil && refs.hintEndpoint != nil {
+		s.hintAttach = s.channelHints.attach(refs.hintEndpoint)
+	}
 	tags, err := buildVersionTags(s)
 	if err != nil {
 		return nil, err
@@ -3186,6 +3195,21 @@ func (s *Services) stopBackgroundServices() {
 		closeJobQueue(s.jobQueue)
 		s.jobQueue = nil
 	}
+	// Last: the workers above may still have written to a channel.
+	retireChannelHints(s)
+}
+
+// abandonFailedAssembly stops what a failed assembly (err set) started
+// before it failed: the job queue, and a realtime Local it made rather than
+// took from a predecessor.
+//
+// Nil: q and l are accepted (nothing to stop).
+func abandonFailedAssembly(base *SharedBase, q jobs.Queue, l *realtime.Local, err error) {
+	if err == nil {
+		return
+	}
+	closeJobQueue(q)
+	stopNewLocalOnError(base, l, err)
 }
 
 // closeJobQueue stops q within the shutdown budget. Shared by the teardown

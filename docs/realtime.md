@@ -1993,7 +1993,7 @@ entities on which the caller holds a waiting role, and at most 20 000
 candidate channels per call. With the file store, a type with a creator
 waiting role makes each inbox call read the `meta.yaml` of every channel of
 that type. An agent that watches `list_inbox` repeats the call at most every
-2 seconds after a change in its process, and at most every 15 seconds on the
+2 seconds after a change it hears of, and at most every 15 seconds on the
 poll. The database backends read the creator from an index.
 
 Read markers have fixed limits. An unread count stops at 100. Marking read
@@ -2418,8 +2418,8 @@ process reaches the board depends on the backend:
 
 | Backend | A move by stdio `rela mcp` or `rela channel` |
 | --- | --- |
-| Files (default) | Live when the transition has outputs: the server sees the entity file change. Otherwise within about 12 seconds, on the board's periodic safety check. |
-| PostgreSQL | Live when the transition has outputs: the server hears the entity write. Otherwise within about 14 seconds, on the board's periodic safety check. |
+| Files (default) | Live, within about half a second: the server hears of the move (see [Changes from other processes](#changes-from-other-processes)). If that notice is lost, within about 12 seconds, on the board's periodic safety check. |
+| PostgreSQL | Live: the server hears of the move. If that notice is lost, within about 14 seconds, on the board's periodic safety check. |
 | SQLite | Not possible while rela-server runs, because only one process may open the project. Agents use remote MCP, which runs inside rela-server. |
 
 A list updates the same way, for the rows it watches. A paged list
@@ -2767,9 +2767,9 @@ messages to fetch. A mark that does not move the marker sends no frame.
 The inbox (`/api/v1/_inbox`) and its summary (`/api/v1/_inbox/summary`)
 can be subscribed to as well. [Inbox](#inbox) says when they get a frame.
 
-A single server process delivers frames for the messages posted through it;
-it does not yet poll for messages posted by another process. The inbox is
-the exception: it is checked again at least every 15 seconds.
+A server process also delivers frames for changes made by another process,
+such as `rela channel post`, stdio `rela mcp` or a second rela-server: see
+[Changes from other processes](#changes-from-other-processes).
 
 ## Agents and other processes
 
@@ -2786,12 +2786,51 @@ from rela-server:
 - It refuses a post of an `ephemeral` message type with `signals_not_kept`,
   because no one else would see the signal. Remote MCP keeps signals.
 - Its rate limits count per process, not across all writers.
-- A `watch` on `read_channel`, and `rela channel watch`, learn about posts
-  from other processes by polling every 2 seconds. On remote MCP the poll runs every 5 seconds and
-  only matters for posts made by another rela-server process; a post in the
-  same process ends the wait at once.
-- A post from another process reaches open browsers only when they fetch the
-  channel again. rela-server does not send a live frame for it.
+- A post in the same process ends a `watch` on `read_channel`, or
+  `rela channel watch`, at once. A post in another process ends it when the
+  process hears of it (see below). The watch still polls, every 2 seconds
+  (every 5 seconds on remote MCP), in case a notice is lost.
+
+### Changes from other processes
+
+Every process that writes to a channel tells the other processes on the
+same project which channels changed. A long-running process listens:
+rela-server, the desktop app, stdio `rela mcp` and `rela channel watch`.
+It then updates its live frames, watches and inbox as if the change had
+been made in that process. A post from `rela channel post` or an agent
+therefore reaches an open browser and a waiting `watch` without a refetch.
+
+The notice says only which channels changed and what kind of change it
+was. It holds no message text and no property values. The process that
+listens replays every subscription as its own subscriber, with that
+subscriber's access, as for a local change.
+
+How the notice travels depends on the backend:
+
+| Backend | Transport | Delay |
+| --- | --- | --- |
+| Files (default) | A small journal, `.rela/channels/_feed/changes.jsonl`, that each listener reads every 250 ms. It rotates at 1 MiB. | Usually under half a second. |
+| PostgreSQL | `NOTIFY` on the `rela_channels` channel, on the connection the store already uses for its change feed. | Usually immediate. |
+| SQLite | None: one process at a time. | Not applicable. |
+
+A notice can be lost, for example when a process stops right after a write,
+or when the database connection drops. A listener that notices a gap, or
+receives too many notices at once, rechecks every subscriber, at most once
+every 5 seconds. The same limit applies when another process asks for a
+full recheck, for example after it put back the channels of a delete that
+failed: such a change can take up to 5 seconds to show. A loss it cannot
+notice is picked up by the polls and
+safety checks described elsewhere in this guide, as before. A short-lived
+command such as `rela channel post` sends its last notices before it exits,
+waiting at most 3 seconds.
+
+On the file backend every process must be able to read the journal, which
+only its owner can read. Run the processes that share a project as the same
+user; a process that cannot read it logs a warning once a minute.
+
+Typing and other `ephemeral` signals are not sent: they live in one
+process. A process older than this release neither sends nor listens; it
+behaves as before.
 
 **SQLite.** The SQLite backend admits one process at a time. While
 rela-server runs on it, stdio `rela mcp` cannot open the project, and remote
@@ -2880,8 +2919,10 @@ property on the entity. An agent waits for its turn like this:
    with the cursor, up to 50 seconds per call, and go back to step 1 when it
    reports a change.
 
-A post in another process is seen within the 2-second channel poll, and an
-edit of the entity wakes the watch too. A
+A post in another process wakes the watch when this process hears of it
+(see [Changes from other processes](#changes-from-other-processes)), at the
+latest at the 2-second channel poll. An edit of the entity wakes the watch
+too. A
 channel type without a session answers `no_session`, decided from the
 configuration, so the answer is the same for an entity that exists and one
 that does not. The answer starts with the same untrusted-content `notice` as
@@ -3161,9 +3202,10 @@ login still reaches it.
 
 **The wake.** A post or edit that addresses a principal wakes an MCP
 `watch` on that principal's own `list_inbox`, when the watch asks for
-`mention` or `reply`. This works only within one process. A watch in
-another process, such as stdio `rela mcp` while the web app takes the
-post, sees the mention on its next poll, at most 15 seconds later.
+`mention` or `reply`. A watch in another process, such as stdio `rela mcp`
+while the web app takes the post, wakes when that process hears of the post
+(see [Changes from other processes](#changes-from-other-processes)), and at
+the latest on its next poll, at most 15 seconds later.
 
 **Agents and untrusted text.** Anyone who may post can put text in front
 of an agent by mentioning its job identity. An inbox entry carries no
@@ -3341,7 +3383,9 @@ someone else, the channel closes, or you lose access. An unread channel,
 a mention and a reply leave it when you mark the channel read or post in
 it. A post in the same process
 and an edit of an entity wake the watch at once. A post in another process
-is seen by the poll, which replays the inbox at most every 15 seconds.
+wakes it when this process hears of it (see
+[Changes from other processes](#changes-from-other-processes)); the poll,
+which replays the inbox at most every 15 seconds, catches a lost notice.
 
 A plain message wakes the watch only when its channel is among the
 channels the inbox looked at for unread messages (see Unread channels). A
@@ -3380,7 +3424,8 @@ Equal requests are the same subscription: `kinds=mention,waiting` and
 
 Like every live path, the server replays the GET as you and sends a frame
 only when the answer changed. It replays your inbox when one of these
-happens in the server process:
+happens in the server process, or in another process that tells it (see
+[Changes from other processes](#changes-from-other-processes)):
 
 - a stored change in a channel of a type that has a waiting state: a
   message, an edit, a removal, a session or lifecycle move, or an action;
@@ -3413,8 +3458,8 @@ changes.
 The server also replays every inbox subscription once every 14 seconds
 (12 seconds with the file store), whether or not anything changed. The
 people are spread over the steps of that period, so each step replays
-only a share of them. That picks up a post made in another process, such
-as `rela channel post` or stdio `rela mcp`, within 15 seconds.
+only a share of them. That picks up, within 15 seconds, a post made in
+another process whose notice was lost.
 
 An inbox whose last replay was refused, for example because realtime was
 off, is replayed again only after an entity edit or when realtime is
