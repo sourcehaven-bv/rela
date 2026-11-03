@@ -253,6 +253,7 @@ const CHANNEL_TEXT_NL: Record<ChannelTextKey, string> = {
   sessionPausedArchived: 'Gepauzeerd zolang het kanaal gearchiveerd is',
   sessionShowAll: 'Alle stappen tonen',
   sessionHideAll: 'Stappen verbergen',
+  sessionContext: 'Stappen van de sessie',
   decisions: 'Beslissingen',
   choices: 'Keuzes',
 }
@@ -365,6 +366,8 @@ export const NL_MESSAGES: Messages = {
   },
   channelSessionStep: ({ label, next, final }) =>
     [label, ...(next ? ['volgende'] : []), ...(final ? ['eindstap'] : [])].join(', '),
+  channelSessionContextItem: ({ role, label }) =>
+    `${{ previous: 'Vorige stap', current: 'Huidige stap', next: 'Volgende stap' }[role]}: ${label}`,
   channelTyping: ({ names, others }) => {
     if (others > 0) {
       return `${names.join(', ')} en ${others} ${others === 1 ? 'ander' : 'anderen'} typen…`

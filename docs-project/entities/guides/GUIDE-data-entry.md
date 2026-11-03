@@ -1492,6 +1492,49 @@ A mention or reply in a quiet message still shows in the inbox. Clicking
 it opens the channel at that message and shows it in full, also when its
 type is `hidden` or `collapsed`.
 
+### Compact session header
+
+A channel type with a session shows a header with every state of the
+session. With many states, the list wraps over several rows. `display:
+compact` on the session folds the header to the states that matter now:
+
+```yaml
+channels:
+  run:
+    session:
+      display: compact
+```
+
+| Value | In the web app |
+| --- | --- |
+| `compact` | The header shows the state the session came from, the current state and the states it can move to next. **Show all states** unfolds the full list. |
+| absent or empty | The header shows the full list. On a narrow panel it folds to one line, as described in the realtime guide. |
+
+In a compact header:
+
+- The previous state is the state the session was in before it entered the
+  current one. A move into the same state again keeps it. A session that
+  has not left its first state has none, and neither has a session that
+  last moved before this release.
+- The next states are the states a transition out of the current state
+  leads to. They have a dotted outline, as in the full list.
+- The current state keeps its tags, such as **Input required**, or its
+  outcome when the session has ended. An ended or paused session shows no
+  next states.
+- When the session is loading or stranded, the header shows the one-line
+  summary instead, such as "Stranded · triage".
+- **Show all states** unfolds the full list below and hides the short one.
+  Press it again to fold the list. The web app does not remember it.
+- On a narrow panel the compact header folds to one line, as the header
+  does without the key.
+
+A screen reader hears the short list as "Session steps", with each state
+named as the previous, current or next state.
+
+The server refuses `session.display` with any value other than `compact`,
+and any other key under `session`. A channel type without a session gets a
+warning, because the key has no effect there.
+
 ### Unread messages
 
 The channel list on an entity page shows a badge on each channel with

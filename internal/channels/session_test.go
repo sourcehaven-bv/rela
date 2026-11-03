@@ -128,10 +128,23 @@ func TestDecideSession_SeesChannel(t *testing.T) {
 }
 
 func TestApplySession(t *testing.T) {
-	c := Channel{Session: Session{State: "open", Generation: 2}}
+	c := Channel{Session: Session{State: "open", Generation: 2, Previous: "new"}}
 	ApplySession(&c, SessionMove{From: "open", To: "done"}, t0, 9)
-	require.Equal(t, Session{State: "done", Generation: 3, EnteredAt: NormTime(t0), Cause: 9}, c.Session)
+	require.Equal(t, Session{State: "done", Generation: 3, EnteredAt: NormTime(t0), Cause: 9, Previous: "open"}, c.Session)
 	require.Equal(t, time.UTC, c.Session.EnteredAt.Location())
+}
+
+// TestApplySession_Previous pins TKT-56TPOTE: a move records the state it
+// left, the first move records the initial state the move resolved, and a
+// re-entry keeps the previous state rather than recording itself.
+func TestApplySession_Previous(t *testing.T) {
+	c := Channel{}
+	ApplySession(&c, SessionMove{From: "detected", To: "contained"}, t0, 1)
+	require.Equal(t, "detected", c.Session.Previous, "the first move records the initial state")
+	ApplySession(&c, SessionMove{From: "contained", To: "contained"}, t0, 2)
+	require.Equal(t, "detected", c.Session.Previous, "a re-entry keeps the previous state")
+	ApplySession(&c, SessionMove{From: "contained", To: "assessed"}, t0, 0)
+	require.Equal(t, "contained", c.Session.Previous, "a timer move records it too")
 }
 
 func TestSessionNoticeAndAudit(t *testing.T) {

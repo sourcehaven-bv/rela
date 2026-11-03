@@ -343,3 +343,162 @@ export const WorkingClosed: Story = {
     await expect(within(canvasElement).getByRole('status')).toBeEmptyDOMElement()
   },
 }
+
+const wide: Story['render'] = (args) => ({
+  components: { RlChannelSession },
+  setup: () => ({ args }),
+  template: '<div style="width:60rem"><RlChannelSession v-bind="args" /></div>',
+})
+
+/** The short list of a compact stepper, by role and visible label. */
+function contextItems(canvasElement: HTMLElement): string[] {
+  return [...canvasElement.querySelectorAll<HTMLElement>('.rl-channel-session__context > li')].map(
+    (li) => `${li.dataset.role}:${li.querySelector('[aria-hidden="true"]:not(svg)')!.textContent!.trim()}`
+  )
+}
+
+/**
+ * The items with aria-current that are rendered. A list with display:none
+ * is outside the accessibility tree, so its item does not count.
+ */
+function shownCurrent(canvasElement: HTMLElement): HTMLElement[] {
+  return [...canvasElement.querySelectorAll<HTMLElement>('li[aria-current="step"]')].filter((li) =>
+    li.checkVisibility()
+  )
+}
+
+function fullList(canvasElement: HTMLElement): HTMLElement {
+  return canvasElement.querySelector<HTMLElement>('.rl-channel-session__steps')!
+}
+
+/**
+ * A compact stepper on a wide panel: the short list shows the previous,
+ * current and next states, the full list is folded behind the toggle, and
+ * unfolding it removes the short list so one item carries aria-current.
+ */
+export const Compact: Story = {
+  args: { compact: true, session: { ...breachSessionAssessed, previous: 'contained' } },
+  render: wide,
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement)
+    await expect(contextItems(canvasElement)).toEqual(['previous:Contained', 'current:Risk assessed', 'next:AP notified'])
+    await expect(canvas.getByRole('list', { name: 'Session steps' })).toBeVisible()
+    await expect(canvas.getByText('Previous state: Contained')).toBeInTheDocument()
+    await expect(canvas.getByText('Current state: Risk assessed')).toBeInTheDocument()
+    await expect(canvas.getByText('Next state: AP notified')).toBeInTheDocument()
+    await expect(canvas.getByText('GDPR breach response')).toBeVisible()
+    await expect(canvas.getByText('Session · Risk assessed')).not.toBeVisible()
+    await expect(fullList(canvasElement)).not.toBeVisible()
+    await expect(shownCurrent(canvasElement)).toHaveLength(1)
+
+    const toggle = canvas.getByRole('button', { name: 'Show all states' })
+    await expect(toggle).toHaveAttribute('aria-expanded', 'false')
+    await userEvent.click(toggle)
+    await expect(toggle).toHaveAttribute('aria-expanded', 'true')
+    await expect(fullList(canvasElement)).toBeVisible()
+    await expect(canvas.queryByRole('list', { name: 'Session steps' })).toBeNull()
+    await expect(shownCurrent(canvasElement)).toHaveLength(1)
+    await expect(canvas.getByText('Session · Risk assessed')).not.toBeVisible()
+  },
+}
+
+/** The current item keeps the Input required tag. */
+export const CompactInputRequired: Story = {
+  args: { compact: true, session: { ...breachSessionInputRequired, previous: 'detected' } },
+  render: wide,
+  play: async ({ canvasElement }) => {
+    await expect(contextItems(canvasElement)).toEqual(['previous:Detected', 'current:Contained', 'next:Risk assessed'])
+    const cur = canvasElement.querySelector('.rl-channel-session__context > li[aria-current="step"]')!
+    await expect(cur).toHaveTextContent('Input required')
+  },
+}
+
+/** A final state shows no next states and its outcome on the current item. */
+export const CompactFinal: Story = {
+  args: { compact: true, session: { ...breachSessionFinal, status: 'completed', previous: 'assessed' } },
+  render: wide,
+  play: async ({ canvasElement }) => {
+    await expect(contextItems(canvasElement)).toEqual(['previous:Risk assessed', 'current:AP notified'])
+    const cur = canvasElement.querySelector('.rl-channel-session__context > li[aria-current="step"]')!
+    await expect(cur).toHaveTextContent('Completed')
+  },
+}
+
+/** A paused session shows no next states and keeps its paused caption. */
+export const CompactPaused: Story = {
+  args: { compact: true, session: { ...breachSessionAssessed, previous: 'contained', paused: 'closed' } },
+  render: wide,
+  play: async ({ canvasElement }) => {
+    await expect(contextItems(canvasElement)).toEqual(['previous:Contained', 'current:Risk assessed'])
+    await expect(within(canvasElement).getByText('Paused while the channel is closed')).toBeVisible()
+  },
+}
+
+/** Without a current state the summary shows in place of the short list. */
+export const CompactLoading: Story = {
+  args: { compact: true, session: { ...breachSessionLoading, previous: 'detected' } },
+  render: wide,
+  play: async ({ canvasElement }) => {
+    await expect(contextItems(canvasElement)).toEqual([])
+    await expect(within(canvasElement).getByText('Session · triaged · Loading')).toBeVisible()
+    await expect(fullList(canvasElement)).not.toBeVisible()
+  },
+}
+
+/** A stranded session shows its summary and warning, not a short list. */
+export const CompactStranded: Story = {
+  args: { compact: true, session: breachSessionStranded },
+  render: wide,
+  play: async ({ canvasElement }) => {
+    await expect(contextItems(canvasElement)).toEqual([])
+    await expect(within(canvasElement).getByText('Stranded · triage')).toBeVisible()
+  },
+}
+
+/** A session that never moved has no previous item. */
+export const CompactNoPrevious: Story = {
+  args: { compact: true, session: breachSessionDetected },
+  render: wide,
+  play: async ({ canvasElement }) => {
+    await expect(contextItems(canvasElement)).toEqual(['current:Detected', 'next:Contained', 'next:Dismissed'])
+  },
+}
+
+/**
+ * A state that leads back to itself is not listed as next, and a previous
+ * state equal to the current one is left out.
+ */
+export const CompactSelfTransition: Story = {
+  args: {
+    compact: true,
+    session: { ...breachSessionAssessed, previous: 'assessed', next: ['assessed', 'notified'] },
+  },
+  render: wide,
+  play: async ({ canvasElement }) => {
+    await expect(contextItems(canvasElement)).toEqual(['current:Risk assessed', 'next:AP notified'])
+  },
+}
+
+/** Below 32rem a compact stepper folds like any other: summary and toggle. */
+export const CompactNarrow: Story = {
+  args: { compact: true, session: { ...breachSessionAssessed, previous: 'contained' } },
+  render: narrow,
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement)
+    await expect(canvas.getByText('Session · Risk assessed')).toBeVisible()
+    await expect(canvas.queryByRole('list', { name: 'Session steps' })).toBeNull()
+    await expect(fullList(canvasElement)).not.toBeVisible()
+    await userEvent.click(canvas.getByRole('button', { name: 'Show all states' }))
+    await expect(fullList(canvasElement)).toBeVisible()
+  },
+}
+
+/** A wide stepper without compact shows the full list and no toggle. */
+export const AutoWide: Story = {
+  render: wide,
+  play: async ({ canvasElement }) => {
+    await expect(fullList(canvasElement)).toBeVisible()
+    await expect(contextItems(canvasElement)).toEqual([])
+    await expect(canvasElement.querySelector('.rl-channel-session__toggle')).not.toBeVisible()
+  },
+}

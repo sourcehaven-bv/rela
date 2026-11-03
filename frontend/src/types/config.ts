@@ -209,6 +209,11 @@ export type ChannelField = Pick<
 export interface ChannelPresentation {
   /** Keyed by message type. */
   messages?: Record<string, { fields?: ChannelField[]; display?: ChannelMessageDisplay }>
+  /**
+   * The session header. `display: compact` folds the list of states at
+   * every width; absent, it folds only in a narrow panel.
+   */
+  session?: { display?: string }
 }
 
 export interface RelationProperty {

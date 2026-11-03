@@ -65,27 +65,42 @@ func (fakeChannelSchema) BusyFacts(ct string) (BusyFacts, bool) {
 
 // docsExampleChannelsDisplay returns the first yaml block after the "Quiet
 // message types" heading of docs/data-entry.md, the generated copy of
-// GUIDE-data-entry.md. It fails the test when the heading or the block is
-// gone, so the documented example stays a validated case.
+// GUIDE-data-entry.md, so the documented example stays a validated case.
 func docsExampleChannelsDisplay(t *testing.T) string {
+	t.Helper()
+	return docsYAMLAfter(t, "### Quiet message types")
+}
+
+// docsYAMLAfter returns the first yaml block after heading in
+// docs/data-entry.md. It fails the test when the heading or the block is
+// gone.
+func docsYAMLAfter(t *testing.T, heading string) string {
 	t.Helper()
 	data, err := os.ReadFile(filepath.Join("..", "..", "docs", "data-entry.md"))
 	if err != nil {
 		t.Fatalf("read docs: %v", err)
 	}
-	_, section, ok := strings.Cut(string(data), "\n### Quiet message types\n")
+	_, section, ok := strings.Cut(string(data), "\n"+heading+"\n")
 	if !ok {
-		t.Fatal(`docs/data-entry.md has no "### Quiet message types" heading`)
+		t.Fatalf("docs/data-entry.md has no %q heading", heading)
 	}
 	_, block, ok := strings.Cut(section, "\n```yaml\n")
 	if !ok {
-		t.Fatal(`no yaml block after "### Quiet message types"`)
+		t.Fatalf("no yaml block after %q", heading)
 	}
 	block, _, ok = strings.Cut(block, "\n```")
 	if !ok {
-		t.Fatal(`the yaml block after "### Quiet message types" is not closed`)
+		t.Fatalf("the yaml block after %q is not closed", heading)
 	}
 	return block
+}
+
+// docsExampleSessionDisplay returns the first yaml block after the
+// "Compact session header" heading of docs/data-entry.md, so the documented
+// example stays a validated case.
+func docsExampleSessionDisplay(t *testing.T) string {
+	t.Helper()
+	return docsYAMLAfter(t, "### Compact session header")
 }
 
 // TestChannelsPresentation_Validate pins the `channels:` checks: the shape
@@ -152,6 +167,22 @@ func TestChannelsPresentation_Validate(t *testing.T) {
 		{"display on a field", "channels: {room: {messages: {text: {fields: [{property: body, display: hidden}]}}}}",
 			`fields[0]: unknown key "display"`},
 		{"docs example", docsExampleChannelsDisplay(t), ""},
+
+		{"session compact", "channels: {run: {session: {display: compact}}}", ""},
+		{"session display empty", `channels: {run: {session: {display: ""}}}`, ""},
+		{"session display null", "channels: {run: {session: {display: null}}}", ""},
+		{"session empty", "channels: {run: {session: {}}}", ""},
+		{"session null", "channels: {run: {session: null}}", ""},
+		{"session with messages", "channels: {run: {session: {display: compact}, messages: {claim: {display: hidden}}}}", ""},
+		{"session bad value", "channels: {run: {session: {display: full}}}",
+			`channels.run.session.display: unknown value "full" (valid values: compact)`},
+		{"session wrong case", "channels: {run: {session: {display: Compact}}}",
+			`channels.run.session.display: unknown value "Compact"`},
+		{"session unknown key", "channels: {run: {session: {display: compact, layout: x}}}",
+			`channels.run.session: unknown key "layout" (valid keys: display)`},
+		{"session on unknown type", "channels: {hall: {session: {display: compact}}}",
+			`realtime.yaml declares no channel type "hall"`},
+		{"session docs example", docsExampleSessionDisplay(t), ""},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -219,10 +250,10 @@ func TestChannelsUnknownKeys_Sorted(t *testing.T) {
 		"  alpha: {x: 1}\n" +
 		"  mid: {messages: {q: {y: 1}, c: {y: 1}}}\n")
 	want := []string{
-		`channels.alpha: unknown key "x" (valid keys: messages)`,
+		`channels.alpha: unknown key "x" (valid keys: messages, session)`,
 		`channels.mid.messages.c: unknown key "y" (valid keys: fields, display)`,
 		`channels.mid.messages.q: unknown key "y" (valid keys: fields, display)`,
-		`channels.zed: unknown key "x" (valid keys: messages)`,
+		`channels.zed: unknown key "x" (valid keys: messages, session)`,
 		`channels.zed.messages.a: unknown key "y" (valid keys: fields, display)`,
 		`channels.zed.messages.b: unknown key "y" (valid keys: fields, display)`,
 	}
@@ -292,6 +323,38 @@ func TestValidateChannels_Display(t *testing.T) {
 	want := `channels.room.messages.poll: channel type room declares no message type "poll"`
 	if len(errs) != 1 || errs[0] != want || len(warnings) != 0 {
 		t.Fatalf("errs %v, warnings %v; want [%s]", errs, warnings, want)
+	}
+}
+
+// TestValidateChannels_SessionDisplay pins TKT-56TPOTE AC 1: a session
+// display on a channel type without a session is a warning, not an error,
+// because a project may change the two files one at a time. An empty
+// display says nothing, so it does not warn.
+func TestValidateChannels_SessionDisplay(t *testing.T) {
+	const want = "channels.room.session.display: channel type room declares no session, so this has no effect"
+	for _, tc := range []struct {
+		name    string
+		yaml    string
+		warning string
+	}{
+		{"compact without session", "channels: {room: {session: {display: compact}}}", want},
+		{"compact with session", "channels: {run: {session: {display: compact}}}", ""},
+		{"empty without session", "channels: {room: {session: {}}}", ""},
+		{"null without session", "channels: {room: {session: null}}", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var cfg Config
+			if err := yaml.Unmarshal([]byte(tc.yaml), &cfg); err != nil {
+				t.Fatal(err)
+			}
+			errs, warnings := ValidateChannels(&cfg, fakeChannelSchema{})
+			if len(errs) != 0 {
+				t.Fatalf("errs = %v; want none", errs)
+			}
+			if tc.warning == "" && len(warnings) != 0 || tc.warning != "" && !slices.Equal(warnings, []string{tc.warning}) {
+				t.Fatalf("warnings = %v; want %q", warnings, tc.warning)
+			}
+		})
 	}
 }
 

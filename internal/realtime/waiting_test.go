@@ -592,3 +592,27 @@ func TestSession_Entries(t *testing.T) {
 		require.Equal(t, []EntryRef{{MessageType: "decide", Entry: 3}, {MessageType: "decide", Entry: 4}}, got.Entries)
 	})
 }
+
+// TestSessionView_Previous pins TKT-56TPOTE AC 4: the session view serves
+// the state the session left, on Head and in the JSON, and leaves it out
+// for a session that never moved.
+func TestSessionView_Previous(t *testing.T) {
+	t.Parallel()
+	h := newPocHarness(t)
+	h.pocDriveTo(t, "new")
+	o := pocOwner()
+	head, err := h.svc.Head(as(o), pocRun)
+	require.NoError(t, err)
+	require.Empty(t, head.Channel.Session.Previous)
+	b, err := json.Marshal(head)
+	require.NoError(t, err)
+	require.NotContains(t, string(b), `"previous"`)
+
+	h.pocDriveTo(t, "planning")
+	head, err = h.svc.Head(as(o), pocRun)
+	require.NoError(t, err)
+	require.Equal(t, "queued", head.Channel.Session.Previous)
+	b, err = json.Marshal(head)
+	require.NoError(t, err)
+	require.Contains(t, string(b), `"previous":"queued"`)
+}

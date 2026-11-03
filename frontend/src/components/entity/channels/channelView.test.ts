@@ -465,6 +465,18 @@ describe('presentationView', () => {
     >[0]
     expect(presentationView(p)).toEqual({ messages: { claim: { fields: undefined } } })
   })
+
+  it('passes a compact session display', () => {
+    expect(presentationView({ session: { display: 'compact' } })).toEqual({
+      messages: {},
+      session: { display: 'compact' },
+    })
+  })
+
+  it('drops an unknown session display, so the header keeps its default', () => {
+    expect(presentationView({ session: { display: 'folded' } })).toEqual({ messages: {} })
+    expect(presentationView({ session: {} })).toEqual({ messages: {} })
+  })
 })
 
 describe('sessions', () => {
@@ -533,6 +545,19 @@ describe('sessions', () => {
   }
 
   describe('sessionView', () => {
+    it('maps a previous state the type declares', () => {
+      const got = sessionView(
+        breach,
+        channelWith({ ...inDetected, state: 'contained', previous: 'detected' })
+      )
+      expect(got?.previous).toBe('detected')
+    })
+
+    it('drops a previous state the type no longer declares', () => {
+      const got = sessionView(breach, channelWith({ ...inDetected, previous: 'triage' }))
+      expect(got).not.toHaveProperty('previous')
+    })
+
     it('marks the current state and the distinct next states', () => {
       expect(sessionView(breach, channelWith(inDetected))).toEqual({
         label: 'GDPR breach response',

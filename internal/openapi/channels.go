@@ -898,6 +898,10 @@ func channelSessionSchema() *Schema {
 			"timers":    ArraySchema(Ref(channelTimerRef)),
 			"reminders": ArraySchema(Ref(channelReminderRef)),
 			"cause":     causeSchema(),
+			"previous": {Type: "string", Description: "The state the session was in before it entered its state. " +
+				"A re-entry keeps it. Absent for a session that never left its initial state, and for one that last " +
+				"moved before this field existed. Stored history: it may name a state the configuration no longer " +
+				"declares."},
 		},
 		Required: []string{"state", "status", "generation"},
 	}

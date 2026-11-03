@@ -487,6 +487,7 @@
         "final": true,
         "generation": 2,
         "label": "Reviewed",
+        "previous": "contained",
         "state": "reviewed",
         "status": "completed"
       },
@@ -609,6 +610,7 @@
         "entered_at": "2026-01-02T03:04:05Z",
         "generation": 1,
         "label": "Contained",
+        "previous": "detected",
         "reminders": [
           {
             "count": 1,
@@ -752,6 +754,7 @@
               "final": true,
               "generation": 1,
               "label": "Contained",
+              "previous": "detected",
               "state": "contained",
               "status": "completed"
             },
@@ -951,6 +954,7 @@
         "entered_at": "2026-01-02T03:04:05Z",
         "generation": 1,
         "label": "Contained",
+        "previous": "detected",
         "state": "contained",
         "status": "working",
         "transitions": [
@@ -1002,6 +1006,7 @@
         "entered_at": "2026-01-02T03:04:05Z",
         "generation": 1,
         "label": "Contained",
+        "previous": "detected",
         "state": "contained",
         "status": "working",
         "transitions": [
@@ -1089,6 +1094,7 @@
         "entered_at": "2026-01-02T03:04:05Z",
         "generation": 1,
         "label": "Contained",
+        "previous": "detected",
         "reminders": [
           {
             "count": 1,
@@ -1527,6 +1533,7 @@
         "final": true,
         "generation": 1,
         "label": "Contained",
+        "previous": "detected",
         "state": "contained",
         "status": "completed"
       },
@@ -1571,6 +1578,7 @@
         "final": true,
         "generation": 1,
         "label": "Contained",
+        "previous": "detected",
         "state": "contained",
         "status": "completed"
       },

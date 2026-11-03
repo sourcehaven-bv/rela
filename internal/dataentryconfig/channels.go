@@ -17,7 +17,28 @@ import (
 type ChannelPresentation struct {
 	// Messages are keyed by message type.
 	Messages map[string]MessagePresentation `yaml:"messages,omitempty" json:"messages,omitempty"`
+	// Session presents the channel type's session header. Nil: the header
+	// folds by width, as without the key.
+	Session *SessionPresentation `yaml:"session,omitempty" json:"session,omitempty"`
 }
+
+// SessionPresentation is how the web app shows a channel type's session
+// header (TKT-56TPOTE). [SessionDisplayCompact] folds the header at every
+// width: the current state with its previous and next states, and the
+// full list behind a toggle. Empty folds it only on a narrow panel.
+type SessionPresentation struct {
+	Display SessionDisplay `yaml:"display,omitempty" json:"display,omitempty"`
+}
+
+// SessionDisplay is how the web app shows a session header; see
+// [SessionPresentation]. The empty value folds it by width.
+type SessionDisplay string
+
+// SessionDisplayCompact folds the session header at every width.
+const SessionDisplayCompact SessionDisplay = "compact"
+
+// sessionDisplayValues lists the valid non-empty values of [SessionDisplay].
+var sessionDisplayValues = []SessionDisplay{SessionDisplayCompact}
 
 // MessagePresentation orders and labels the properties of one message
 // type. Fields is the composer order and the display order under a
@@ -51,10 +72,10 @@ const (
 // messageDisplayValues lists the valid non-empty values of [MessageDisplay].
 var messageDisplayValues = []MessageDisplay{MessageDisplayCollapsed, MessageDisplayHidden}
 
-// messageDisplayList is messageDisplayValues as the error text names them.
-func messageDisplayList() string {
-	names := make([]string, len(messageDisplayValues))
-	for i, d := range messageDisplayValues {
+// displayList joins display values as the error text names them.
+func displayList[D ~string](values []D) string {
+	names := make([]string, len(values))
+	for i, d := range values {
 		names[i] = string(d)
 	}
 	return strings.Join(names, ", ")
@@ -110,8 +131,9 @@ type BusyFacts struct {
 }
 
 var (
-	channelPresentationKeys = []string{"messages"}
+	channelPresentationKeys = []string{"messages", "session"}
 	messagePresentationKeys = []string{"fields", "display"}
+	sessionPresentationKeys = []string{"display"}
 	channelFieldKeys        = []string{"property", "label", "placeholder", "help", "widget", "span", "hidden"}
 )
 
@@ -145,10 +167,14 @@ func validateChannelsShape(data []byte, cfg *Config) []string {
 	errs := channelsUnknownKeys(data)
 	for _, ctName := range sortedMapKeys(cfg.Channels) {
 		ct := cfg.Channels[ctName]
+		if sp := ct.Session; sp != nil && sp.Display != "" && !slices.Contains(sessionDisplayValues, sp.Display) {
+			errs = append(errs, fmt.Sprintf("channels.%s.session.display: unknown value %q (valid values: %s)",
+				ctName, sp.Display, displayList(sessionDisplayValues)))
+		}
 		for _, mtName := range sortedMapKeys(ct.Messages) {
 			if d := ct.Messages[mtName].Display; d != "" && !slices.Contains(messageDisplayValues, d) {
 				errs = append(errs, fmt.Sprintf("channels.%s.messages.%s.display: unknown value %q (valid values: %s)",
-					ctName, mtName, d, messageDisplayList()))
+					ctName, mtName, d, displayList(messageDisplayValues)))
 			}
 			prefix := fmt.Sprintf("channels.%s.messages.%s.fields", ctName, mtName)
 			seen := map[string]bool{}
@@ -187,6 +213,8 @@ func channelsUnknownKeys(data []byte) []string {
 		ct := raw.Channels[ctName]
 		prefix := "channels." + ctName
 		errs = append(errs, unknownKeysIn(prefix, ct, channelPresentationKeys)...)
+		session, _ := ct["session"].(map[string]any)
+		errs = append(errs, unknownKeysIn(prefix+".session", session, sessionPresentationKeys)...)
 		messages, _ := ct["messages"].(map[string]any)
 		for _, mtName := range sortedMapKeys(messages) {
 			mt := messages[mtName]
@@ -331,7 +359,8 @@ func busyFieldErrors(b busyField, schema ChannelSchema) (errs, warnings []string
 // checkChannelBlock checks the `channels:` block against schema. A message
 // type with `display: hidden` that realtime.yaml still counts as unread is
 // a warning, not an error: a project may change the two files one at a
-// time.
+// time. A session display on a channel type without a session is a warning
+// for the same reason; it has no effect.
 func checkChannelBlock(cfg *Config, schema ChannelSchema) (errs, warnings []string) {
 	ctNames := schema.ChannelTypeNames()
 	for _, ctName := range sortedMapKeys(cfg.Channels) {
@@ -340,6 +369,13 @@ func checkChannelBlock(cfg *Config, schema ChannelSchema) (errs, warnings []stri
 			continue
 		}
 		ct := cfg.Channels[ctName]
+		if ct.Session != nil && ct.Session.Display != "" {
+			// BusyFacts carries HasSession; the name predates this second use.
+			if facts, _ := schema.BusyFacts(ctName); !facts.HasSession {
+				warnings = append(warnings, fmt.Sprintf("channels.%s.session.display: channel type %s declares "+
+					"no session, so this has no effect", ctName, ctName))
+			}
+		}
 		for _, mtName := range sortedMapKeys(ct.Messages) {
 			prefix := fmt.Sprintf("channels.%s.messages.%s", ctName, mtName)
 			facts, ok := schema.MessageType(ctName, mtName)

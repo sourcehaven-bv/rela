@@ -2,7 +2,7 @@ import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
 import type { Browser } from "@playwright/test";
-import { test as base, SEED, contextsAs, serveWithPrincipalHeader } from "./fixtures";
+import { test as base, expect, SEED, contextsAs, serveWithPrincipalHeader } from "./fixtures";
 import { FACED_SEED, FACED_USERS, writeFacedProject } from "./faced-project";
 import {
   CHANNEL_USERS,
@@ -12,6 +12,7 @@ import {
   POLICY_ROOM,
   ROOM,
   SESSION,
+  addCompactSession,
   addFeatureOwner,
   setFeatureOwner,
   writePolicyRealtime,
@@ -318,6 +319,103 @@ composeDecisionTest.describe("compose decisions", () => {
       await p.expectSessionAt(DECISIONS.drafting);
       await p.expectMessage("Add the rollback plan");
     }
+  });
+});
+
+// The session header by width and display (TKT-56TPOTE). The header is its
+// own size container; jsdom does not evaluate container queries, so the
+// four combinations of display and width are pinned here.
+sessionTest.describe("session header layout", () => {
+  sessionTest.describe.configure({ timeout: 120_000 });
+
+  sessionTest("without a display the list shows when wide and folds when narrow", async ({ as }) => {
+    const alice = await as(CHANNEL_USERS.lead);
+    await alice.openEntity("feature", FEATURE);
+    await alice.expectChannel(ROOM.label);
+    await alice.expectSessionAt(SESSION.from);
+
+    await alice.setSessionWidth(60);
+    await expect(alice.sessionSteps).toBeVisible();
+    await expect(alice.sessionSummary).toBeHidden();
+    await expect(alice.sessionToggle).toBeHidden();
+    await expect(alice.sessionContext).toHaveCount(0);
+
+    await alice.setSessionWidth(24);
+    await expect(alice.sessionSummary).toHaveText(`Session · ${SESSION.from}`);
+    await expect(alice.sessionToggle).toBeVisible();
+    await expect(alice.sessionSteps).toBeHidden();
+    await alice.sessionToggle.click();
+    await expect(alice.sessionSteps).toBeVisible();
+    await expect(alice.sessionSteps).toHaveCSS("flex-direction", "column");
+  });
+});
+
+const compactTest = base.extend<ChannelFixtures>({
+  serverUrl: async ({ testProject, serverBinary }, use, testInfo) => {
+    writeRoomProject(testProject, { decisions: true });
+    addCompactSession(testProject);
+    await serveWithPrincipalHeader(serverBinary, testProject, testInfo, use, CHANNEL_USERS.lead);
+  },
+  as: asFixture,
+});
+
+compactTest.describe("compact session header", () => {
+  compactTest.describe.configure({ timeout: 120_000 });
+
+  compactTest("shows the previous, current and next states, and the full list on request", async ({ as }) => {
+    const alice = await as(CHANNEL_USERS.lead);
+    await alice.openEntity("feature", FEATURE);
+    await alice.expectChannel(ROOM.label);
+    await alice.setSessionWidth(60);
+
+    // A session that never moved has no previous state.
+    await alice.expectSessionContext([`Current state: ${DECISIONS.drafting}`, `Next state: ${DECISIONS.review}`]);
+    await expect(alice.sessionSteps).toBeHidden();
+    await expect(alice.sessionSummary).toBeHidden();
+    await expect(alice.sessionToggle).toHaveText("Show all states");
+
+    // The move stores Drafting as the previous state. Review leads back to
+    // Drafting and on to Approved, in declaration order.
+    await alice.selectMessageType(DECISIONS.containedLabel);
+    await alice.post("Ready for review", DECISIONS.noteLabel);
+    await alice.expectSessionContext([
+      `Previous state: ${DECISIONS.drafting}`,
+      `Current state: ${DECISIONS.review}`,
+      `Next state: ${DECISIONS.drafting}`,
+      `Next state: ${DECISIONS.approved}`,
+    ]);
+
+    // Unfolding shows the full list on its own row and removes the short
+    // one, so one item carries aria-current.
+    await alice.sessionToggle.click();
+    await expect(alice.sessionToggle).toHaveAttribute("aria-expanded", "true");
+    await expect(alice.sessionSteps).toBeVisible();
+    await expect(alice.sessionContext).toHaveCount(0);
+    // expectSessionAt fails in strict mode when two items carry aria-current.
+    await alice.expectSessionAt(DECISIONS.review);
+    await expect(alice.sessionSteps).toHaveCSS("flex-direction", "row");
+    await alice.sessionToggle.click();
+    await expect(alice.sessionContext).toBeVisible();
+
+    // A reload reads the previous state from the store.
+    await alice.openEntity("feature", FEATURE);
+    await alice.expectChannel(ROOM.label);
+    await alice.setSessionWidth(60);
+    await alice.expectSessionContext([
+      `Previous state: ${DECISIONS.drafting}`,
+      `Current state: ${DECISIONS.review}`,
+      `Next state: ${DECISIONS.drafting}`,
+      `Next state: ${DECISIONS.approved}`,
+    ]);
+
+    // Below 32rem the compact header folds like any other.
+    await alice.setSessionWidth(24);
+    await expect(alice.sessionContext).toBeHidden();
+    await expect(alice.sessionSummary).toHaveText(`Session · ${DECISIONS.review}`);
+    await expect(alice.sessionSteps).toBeHidden();
+    await alice.sessionToggle.click();
+    await expect(alice.sessionSteps).toBeVisible();
+    await expect(alice.sessionSteps).toHaveCSS("flex-direction", "column");
   });
 });
 

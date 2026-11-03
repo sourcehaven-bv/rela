@@ -84,6 +84,10 @@ type MarkReadRequest struct {
 // Cause is the seq of the message whose post moved the session into its
 // state. It is absent for a timer move, a session that never moved, and a
 // move stored before causes were.
+//
+// Previous is the state the session was in before it entered its state. A
+// re-entry keeps it. It is absent for a session that never left its
+// initial state, and for one that last moved before the field existed.
 type ChannelSession struct {
 	State       string                     `json:"state"`
 	Label       string                     `json:"label,omitempty"`
@@ -99,6 +103,7 @@ type ChannelSession struct {
 	Timers      []ChannelSessionTimer      `json:"timers,omitempty"`
 	Reminders   []ChannelSessionReminder   `json:"reminders,omitempty"`
 	Cause       int64                      `json:"cause,omitempty"`
+	Previous    string                     `json:"previous,omitempty"`
 }
 
 // ChannelSessionWaiting is one role an input_required state waits for.

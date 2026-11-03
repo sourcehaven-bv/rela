@@ -128,7 +128,7 @@ func TestPost_ExpectGenerationStoreRefuses(t *testing.T) {
 	head, err := h.store.Store.Head(context.Background(), pocKey())
 	require.NoError(t, err)
 	require.Equal(t, channels.Session{
-		State: "approving", Generation: 5, EnteredAt: head.Session.EnteredAt, Cause: lastSeq - 1,
+		State: "approving", Generation: 5, EnteredAt: head.Session.EnteredAt, Cause: lastSeq - 1, Previous: "working",
 	}, head.Session)
 }
 
